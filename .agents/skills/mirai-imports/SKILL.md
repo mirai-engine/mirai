@@ -125,11 +125,9 @@ the assets.
   with the manifest finds a build without the source. A Final build is named under `imports`, a
   Fast one under `imports-fast`, and peers share both; `builds` names the one this machine chose.
   The editor never imports by itself.
-- **A share serves what the host has; a refresh takes what its build accepts.** A refresh that
-  does not cook (the editor's, a play build's, a join's) takes a Final or a Fast build, from the
-  store first and then from the source, before importing anything; one that cooks asks only
-  `imports` and can finalize a current local build. Only a Final build reaches a cook, and a
-  package with no Final reachable fails by name.
+- **A share serves what the host has; a refresh takes what its build accepts.** Editor, play,
+  join and dev game refreshes accept Final or Fast from the store or a peer before importing.
+  A release game requires Final, and its refresh can upgrade a current local Fast build.
 - **What imports and cooks build is kept as refs into the machine store** (`cook/cache`): an
   object named by `(cache-<name>, <key>-<version>)`, found by any program or machine that shares
   the store's objects; a miss asks the caller's `cache.Source` before building, what a pass needs
@@ -154,8 +152,8 @@ the assets.
   in the usual order. Importing with or without the job system gives the same files.
 - **Without an optimizer, close and with the same bytes.** The hot loops (BLAKE3 of the payloads,
   the quadrics of simplification) do four values per instruction with `#simd[4]` and add in the
-  order of the scalar loop: the tool and the dev engine (`-o:minimal`) write the same as
-  `--release`.
+  order of the scalar loop. At the same import settings and texture quality, dev and release
+  write the same bytes.
 - **Importing is a transaction.** `import_model` leaves nothing if it fails (own arena, freed by
   `model_destroy`); `import_write` removes the documents it created and names nothing if it fails
   midway. Errors name the file, the line or the prim.
@@ -196,11 +194,9 @@ the assets.
 - **Textures in blocks are encoded with a perceptual metric and RDO** at
   `RDO_LAMBDA_DEFAULT` unless the setting `rdo_lambda` says otherwise.
 - **The editor never waits for the final encode** (`textures.Encode_Speed`): its imports take the
-  Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`). The
-  refresh of a build that does not cook (the editor's) and `mirai import` build Fast too and take
-  Fast or Final, so the command takes what the editor's import left; only the refresh of a build
-  that cooks, or of `mirai package engine` (`--final`), requires Final, and the editor builds
-  Final a texture that is a document.
+  Final of the texture cache, else build Fast (no RDO, low effort, `Texture_Flag.Fast`).
+  `mirai import` uses the same policy unless asked for `--final`. The editor builds a texture
+  that is a document Final.
 - **One algorithm, once.** Mips, color rules and block compression in `cook/textures` (the
   encoders are `compressor:blocks`); PBR conversions in `cook/import/pbr.odin`; triangulation,
   simplification, hulls and convex decomposition in `std/geom`; transforms with `std/math`.
@@ -209,7 +205,8 @@ the assets.
 
 ## Verification
 
-- `mirai test cook/import` (source space, PBR, levels, sounds, hand grips),
+- `mirai test cook/import` (source space, PBR, levels, sounds, hand grips, bounded and ordered Final
+  texture refresh),
   `cook/rig` (fit and weights over a body of boxes, each animal stretched by its skin, meshes
   that are neither a person nor an animal), `cook/import/obj`, `cook/import/gltf` (with the rig
   fits of `rig_test.odin` and the decoding of `meshopt_test.odin`), `cook/import/usd`,
@@ -229,9 +226,9 @@ the assets.
   content, ships package assets from their objects and looks the cache up once per pass) and
   `cook/import/sources/cook_test.odin` (Final refresh reuses a current whole-source build
   and encodes only its Fast textures from the cache, with the same outputs as a clean import;
-  a refresh that does not cook accepts either quality; a peer with only fetched builds cooks
+  a dev refresh accepts either quality; a peer with only fetched builds cooks
   what the sources cook, sources inside a root stay behind and a missing build fails by package;
-  a refresh takes builds from a second store and asks that store for Final when cooking).
+  a refresh takes builds from a second store and asks that store for Final in release).
 - Parallel: import a map with `mirai import --rebuild` over a copy of an import made without the
   job system (or before the change) and compare the trees with `diff -r`: the same bytes.
 - Also test `cook/prefab` if the imported hierarchy changes, and `asset` if an asset format or its

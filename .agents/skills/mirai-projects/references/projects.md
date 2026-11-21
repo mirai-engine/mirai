@@ -640,7 +640,7 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   takes the build a peer chose for its manifest, and one no peer gives is reported with why the
   editor did not build. A join ends within a bounded time without progress whatever a peer
   does or withholds: what is wanted while no chunk byte arrives and no object completes for a
-  while fails, reported by path, and the files after it are asked. A build that cooks refreshes
+  while fails, reported by path, and the files after it are asked. A release game refreshes
   requiring Final, so a Fast build a join took never ships. A refresh asks the source for every
   manifest and build it lacks in one batch before it goes package by package, so it waits for the
   peers about once, not once per package. It prints progress at a steady pace and, at the end,

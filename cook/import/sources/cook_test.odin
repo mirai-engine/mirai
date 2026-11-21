@@ -15,11 +15,10 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
 
-// A texture the editor imported Fast ships Final: the refresh of a build that
-// cooks encodes it from its cached input with the id it has, a cook without it
-// says so, and the refresh of a build that does not cook takes either as it is.
+// Dev cooks can use a Fast texture as it is. A release refresh encodes it
+// from its cached input with the id it has, and a release cook requires Final.
 @(test)
-a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
+dev_cooks_a_fast_texture_and_release_finalizes_it :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     folder,assets:=test_project(t,"cook-fast")
     if folder=="" {return}
@@ -62,18 +61,21 @@ a_cook_ships_a_fast_texture_final_from_its_source :: proc(t:^testing.T) {
     added:=project_add(folder,manifest,"",nil,fast,context.temp_allocator)
     testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added)
 
-    // The refresh of a build that does not cook takes Fast; that of one that cooks builds Final, with the id it has.
     kept:=project_refresh(folder,fast,context.temp_allocator)
-    testing.expectf(t,kept.ingested==0 && len(kept.failures)==0 && len(kept.missing)==0,"Fast is current for a build that does not cook: %v",kept)
+    testing.expectf(t,kept.ingested==0 && len(kept.failures)==0 && len(kept.missing)==0,"Fast is current for dev: %v",kept)
     cook_manifest:=fmt.tprintf("%s/%s",folder,build.COOK_FILE)
     testing.expect(t,os.write_entire_file(cook_manifest,`{"roots":["noise.tex"]}`)==nil)
-    // The cook reads the project as it is: it says who builds the texture Final.
+    dev:=build.cook_assets({assets=assets,output=fmt.tprintf("%s/dev",folder),manifest=cook_manifest,root=folder,store=s,quick=true,allocator=context.temp_allocator})
+    if !testing.expectf(t,dev.error==.None,"%v %s",dev.error,dev.detail) {return}
+    dev_id,dev_flags,dev_blocks:=level_of(t,&types,fmt.tprintf("%s/dev/noise.tex",folder))
+    testing.expect(t,dev_id==fast_id && .Fast in dev_flags && slice.equal(dev_blocks,fast_blocks),"dev preserves Fast blocks")
+
     report:=build.cook_assets({assets=assets,output=fmt.tprintf("%s/program",folder),manifest=cook_manifest,root=folder,store=s,allocator=context.temp_allocator})
-    testing.expectf(t,report.error==.Source_Failed && strings.contains(report.detail,"noise") && strings.contains(report.detail,"mirai build game"),"%v %s",report.error,report.detail)
+    testing.expectf(t,report.error==.Source_Failed && strings.contains(report.detail,"noise") && strings.contains(report.detail,"mirai build game --release"),"%v %s",report.error,report.detail)
     refreshed:=project_refresh(folder,final_options,context.temp_allocator)
     testing.expectf(t,refreshed.ingested==0 && len(refreshed.failures)==0 && len(refreshed.missing)==0,"%v",refreshed)
     kept=project_refresh(folder,fast,context.temp_allocator)
-    testing.expectf(t,kept.ingested==0 && len(kept.failures)==0,"Final is current for a build that does not cook: %v",kept)
+    testing.expectf(t,kept.ingested==0 && len(kept.failures)==0,"Final is also current for dev: %v",kept)
     report=build.cook_assets({assets=assets,output=fmt.tprintf("%s/game",folder),manifest=cook_manifest,root=folder,store=s,allocator=context.temp_allocator})
     testing.expectf(t,report.error==.None,"%v %s",report.error,report.detail)
     shipped_id,shipped_flags,shipped_blocks:=level_of(t,&types,fmt.tprintf("%s/game/noise.tex",folder))
@@ -252,13 +254,10 @@ a_build_is_the_same_objects_whatever_codec_its_store_writes :: proc(t:^testing.T
     }
 }
 
-// A source of builds that holds only a Fast build of a package: the refresh
-// of a cook never asks for it and fails by the package's name, the refresh of
-// a build that does not cook takes it without importing, and a cook still
-// ships nothing Fast. Once the source holds the Final build, the refresh of
-// the cook takes it and the game ships it.
+// Dev refresh takes a peer's Fast build without importing. Release refresh
+// needs Final and reports the package by name until the peer has it.
 @(test)
-a_cook_never_takes_a_fast_build_a_source_holds :: proc(t:^testing.T) {
+a_release_cook_never_takes_a_fast_build_a_source_holds :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     top:=base.test_folder(t,"cook-fast-source")
     if top=="" {return}

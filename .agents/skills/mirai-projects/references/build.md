@@ -310,7 +310,9 @@ store that the package manifests a project or plugin pins name
   installed engine's own), then ingested from its source when the source is on this machine; a
   package none of them gives fails the build by its name, saying what gives it
   (`Import_Failed`). There is no other step: a checkout that was just cloned runs after any build.
-  A build that cooks requires Final textures; the others take Fast, as the editor imports them.
+  The CLI's dev game build accepts the editor's Fast imports. `mirai build game --release`
+  requires Final through the optimized import program. A game export started from an editor
+  uses that editor's import program.
 - **Without sources.** A machine whose store holds the builds (fetched from a peer, or a copy of
   another store) builds and ships with no source: it imports nothing.
 - **What ships.** The cook writes what the registry resolves, documents of the project and the
@@ -331,8 +333,8 @@ reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail
 
 - **Packages.** The registry of the cook lists the outputs of the packages of the project and of
   each plugin beside their files. A package the store does not list whole is `Package_Missing`,
-  by its name, and a texture still Fast is `Source_Failed`, naming its package: nothing is
-  cooked.
+  by its name. A release cook that encounters a Fast texture reports `Source_Failed` and names
+  its package.
 
 - **Roots.** Every `.scene` (code reaches a prefab only by instantiating it) and `.records`
   of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
@@ -363,10 +365,9 @@ reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail
   which is copied; `"keep"` copies them all. The blocks stay in the texture cache by the
   `content_hash` of the `.tex`
   ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
-- **Fast textures.** A texture the editor imported Fast ships Final, whatever `"textures"` says:
-  the [refresh](../../mirai-imports/references/imports.md#library) before a cook selects or builds
-  Final textures, preserving their ids. The refresh of an editor build accepts Fast textures.
-  A cook that finds a Fast texture fails with `Source_Failed`.
+- **Fast textures.** The [refresh](../../mirai-imports/references/imports.md#library) before a
+  release cook selects or builds Final textures, preserving their ids regardless of `"textures"`.
+  A dev cook can use the Fast blocks as imported.
 - **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
   (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
 - **Prefab instances.** A scene with a stale instance is written with its instances up

@@ -3,11 +3,24 @@ package build
 import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
 import "mirai:std/subprocess"
+
+@(test)
+only_a_release_game_refresh_requires_final_textures :: proc(t:^testing.T) {
+    Case :: struct {target:Target,quick,final:bool}
+    for c in ([]Case{{.Game,true,false},{.Game,false,true},{.Editor,false,false}}) {
+        job:=Job{target=c.target,imports={"project"},import_program="mirai-import"}
+        if c.target==.Game {job.cook={assets="project/assets",quick=c.quick}}
+        args:=job_imports_command(&job)
+        testing.expect_value(t,slice.contains(args,"--final"),c.final)
+        testing.expect(t,slice.equal(args[len(args)-2:],[]string{"--refresh","project"}))
+    }
+}
 
 // A failed refresh says why: what the import program said on its error
 // output, else how it ended and the source it was importing.

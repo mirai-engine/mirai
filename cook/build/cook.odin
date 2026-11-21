@@ -35,9 +35,9 @@ import "mirai:store"
 // asset depends on, and so on. The rest stays behind and is listed in the
 // report. The assets of the project and of each plugin are their files and
 // the outputs of the packages each root pins, listed from the store of the
-// build (asset.root_packages_in), which its refresh brought to Final builds:
-// a package not listed whole fails the cook by its name, and a texture still
-// Fast is not shipped. What a package was imported from, inside a root, is a
+// build (asset.root_packages_in), which its refresh brought up to date:
+// a package not listed whole fails the cook by its name. Release requires Final
+// textures and dev also accepts Fast. What a package was imported from, inside a root, is a
 // source and stays behind. A texture that stores RGBA8 is written in the
 // blocks of its use, unless only interfaces show it, and the blocks are kept
 // in the texture cache for the next cook; a scene or prefab with a stale prefab
@@ -72,7 +72,7 @@ Cook_Desc :: struct {
     root:string,          // of the project, where its packages.mirai is. "": a project without packages
     worker:jobs.Worker_Ref, // where the files are cooked, in parallel on its system. No system: a system of the cook, a thread per core
     server:bool, // for a dedicated server: what is only shown or heard (asset.Kind_Info.presentation) stays behind, and is not missing
-    quick:bool,  // a cook that checks a change (a dev game): the profile Balanced in place of Ultra
+    quick:bool,  // dev: accepts Fast textures and uses Balanced compression
     far:bool,    // the far meshes of the scenes sections reference: the game streams sections (plugin streaming)
     keys:string, // the file where the cook keeps what each file it wrote was made of: a later cook writes again only what changed. "": every file
     allocator:runtime.Allocator, // of the report. Unset: context.allocator
@@ -386,7 +386,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     keys_reuse(&work)
     textures_lookup(&work)
 
-    jobs.parallel_for(on.system,on.worker,len(work.probed),1,texture_probe,&work)
+    if !desc.quick {jobs.parallel_for(on.system,on.worker,len(work.probed),1,texture_probe,&work)}
     jobs.parallel_for(on.system,on.worker,len(work.order),1,files_cook,&work)
 
     // The report is the one of a cook on one thread: the first file that failed, by path, and the rest by path.
@@ -509,8 +509,7 @@ work_types :: proc(work:^Cook_Work,worker:int) -> ^asset.Types {
     return types
 }
 
-// A texture still built Fast is not shipped: the imports of the editor build one so until its
-// Final is there, and the refresh before the cook requires Final.
+// The refresh before a release cook requires Final textures.
 @(private="file")
 texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
     context.allocator=work.allocator
@@ -527,7 +526,7 @@ texture_probe :: proc(work:^Cook_Work,first,last:int,worker:int) {
         view,error:=asset.texture_view(&file,types)
         if error!=.None || .Fast not_in view.info.flags {continue}
         if name,listed:=work.owners[work.files[at].id];listed {
-            result.problem=work_text(work,"the package %s has only a build with Fast textures here, and a game ships Final: `mirai build game` refreshes it requiring Final, which a machine with its source must ingest with this engine, or a peer that has that build must give",name)
+            result.problem=work_text(work,"the package %s has only a build with Fast textures here: run `mirai build game --release` with its source, or fetch a Final build from a peer",name)
         } else {
             result.problem=work_text(work,"it was written Fast, and a game ships Final: write it again Final")
         }

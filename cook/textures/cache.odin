@@ -46,8 +46,14 @@ cache_read :: proc(c:cache.Cache,key:u64,types:^asset.Types,allocator:=context.a
     if error!=.None {return}
     info:=view.info
     built={width=int(info.width),height=int(info.height),layers=int(info.layers),format=info.format,flags=info.flags,alpha_coverage=info.alpha_coverage,allocator=allocator}
-    built.mips=make([][]u8,len(view.mips),allocator)
-    for _,level in view.mips {built.mips[level]=slice.clone(asset.texture_mip(view,level),allocator)}
+    allocation:mem.Allocator_Error
+    if built.mips,allocation=make([][]u8,len(view.mips),allocator);allocation!=nil {return {},false}
+    for _,level in view.mips {
+        if built.mips[level],allocation=slice.clone(asset.texture_mip(view,level),allocator);allocation!=nil {
+            built_destroy(&built)
+            return {},false
+        }
+    }
     return built,true
 }
 

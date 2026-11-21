@@ -52,60 +52,115 @@ texture_input_keep :: proc(c:cache.Cache,key:u64,types:^asset.Types,source:textu
 
 @(private="file")
 texture_input_build :: proc(c:cache.Cache,final:Texture_Final,types:^asset.Types,
-                            worker:jobs.Worker_Ref) -> (built:textures.Built,ok:bool) {
-    if built,ok=textures.cache_read(c,final.key,types,context.temp_allocator);ok {return}
+                            worker:jobs.Worker_Ref) -> (built:textures.Built,error:asset.Error) {
+    cached:bool
+    if built,cached=textures.cache_read(c,final.key,types,context.temp_allocator);cached {return}
     file:asset.Asset
-    if !cache.load(c,TEXTURE_INPUT_CACHE,final.key,TEXTURE_INPUT_VERSION,&file,context.temp_allocator) {return}
+    if !cache.load(c,TEXTURE_INPUT_CACHE,final.key,TEXTURE_INPUT_VERSION,&file,context.temp_allocator) {
+        return {},.Not_Found
+    }
     defer asset.asset_close(&file)
-    if file.blob.header.kind!=TEXTURE_INPUT_KIND {return}
-    recipe,error:=asset.asset_row(&file,types,"input",Texture_Input,whole=true)
-    if error!=.None || recipe.options.speed!=.Final ||
-       textures.settings_hash(recipe.options)!=final.settings {return}
+    if file.blob.header.kind!=TEXTURE_INPUT_KIND {return {},.Corrupt}
+    recipe:=asset.asset_row(&file,types,"input",Texture_Input,whole=true) or_return
+    if recipe.options.speed!=.Final || textures.settings_hash(recipe.options)!=final.settings {
+        return {},.Corrupt
+    }
 
-    texels,texel_error:=asset.asset_rows(&file,types,"texels","",u8)
-    if texel_error!=.None {return}
+    texels:=asset.asset_rows(&file,types,"texels","",u8) or_return
     source:=textures.Source{
         texels=texels,width=recipe.width,height=recipe.height,layers=recipe.layers,
         format=recipe.format,cube=recipe.cube,
     }
     build_error:textures.Error
     built,build_error=textures.build(source,recipe.options,context.temp_allocator,worker)
-    if build_error!=.None {return}
+    switch build_error {
+    case .None:
+    case .Out_Of_Memory: return {},.Out_Of_Memory
+    case .Too_Large: return {},.Too_Large
+    case .Invalid,.Unsupported: return {},.Corrupt
+    }
     _=textures.cache_write(c,final.key,types,&built)
-    return built,true
+    return built,.None
+}
+
+@(private="file")
+Finalize_Item :: struct {
+    output:^asset.Build_Output,
+    error:asset.Error,
 }
 
 // Updates build after publishing Final. A missing cache input leaves the
 // build untouched so the caller can import from the source.
 finalize_build :: proc(s:^store.Store,build:^asset.Build,worker:jobs.Worker_Ref) ->
     (object:store.Hash,error:asset.Error) {
+    if s==nil || build==nil {return {},.Invalid}
     final:=build^
     final.final=true
-    final.outputs=make([dynamic]asset.Build_Output,0,len(build.outputs),context.temp_allocator)
+    allocation:mem.Allocator_Error
+    final.outputs,allocation=make([dynamic]asset.Build_Output,len(build.outputs),context.temp_allocator)
+    if allocation!=nil {return {},.Out_Of_Memory}
+    defer if error!=.None {delete(final.outputs)}
+    copy(final.outputs[:],build.outputs[:])
+
     scratch:mem.Dynamic_Arena
-    mem.dynamic_arena_init(&scratch,context.allocator,context.allocator,block_size=1<<20,out_band_size=1<<20)
+    mem.dynamic_arena_init(&scratch,context.allocator,context.allocator,
+        block_size=1<<20,out_band_size=1<<20)
     defer mem.dynamic_arena_destroy(&scratch)
     context.temp_allocator=base.dynamic_arena_allocator(&scratch)
-    for output in build.outputs {
-        output:=output
-        if output.kind==asset.KIND_TEXTURE {
-            output.object=texture_finalize(s,output,worker) or_return
-            free_all(context.temp_allocator)
+    width:=1 if worker.system==nil else jobs.worker_count(worker.system)
+    items,items_error:=make([]Finalize_Item,min(width,len(final.outputs)),context.temp_allocator)
+    if items_error!=nil {return {},.Out_Of_Memory}
+    Work :: struct {s:^store.Store,worker:jobs.Worker_Ref,items:[]Finalize_Item}
+    work:=Work{s,worker,items}
+    run :: proc(work:^Work,first,last,worker:int) {
+        on:=jobs.worker_ref_at(work.worker,worker)
+        if on.system!=nil {context.allocator=on.system.allocator}
+        for &item in work.items[first:last] {
+            object,error:=texture_finalize(work.s,item.output,on)
+            item.output.object=object
+            item.error=error
         }
-        if _,no_room:=append(&final.outputs,output);no_room!=nil {return {},.Out_Of_Memory}
+    }
+    // An encoder can help run other textures while it waits on its own block jobs.
+    for next:=0;next<len(final.outputs); {
+        count:=0
+        for next<len(final.outputs) && count<len(items) {
+            output:=&final.outputs[next]
+            next+=1
+            if output.kind!=asset.KIND_TEXTURE {continue}
+            items[count]=Finalize_Item{output=output}
+            count+=1
+        }
+        if worker.system!=nil {
+            jobs.parallel_for(worker.system,worker.worker,count,1,run,&work)
+        } else {
+            run(&work,0,count,worker.worker)
+        }
+        for item in items[:count] {
+            if item.error!=.None {return {},item.error}
+        }
     }
     object=asset.build_put(s,&final) or_return
     digits:[64]u8
-    if store.ref_set(s,asset.REF_IMPORTS,store.hex(final.key,&digits),object)!=.None {
-        return {},.IO
+    switch store.ref_set(s,asset.REF_IMPORTS,store.hex(final.key,&digits),object) {
+    case .None:
+    case .Out_Of_Memory: return {},.Out_Of_Memory
+    case .Corrupt,.Unsupported_Layout: return {},.Corrupt
+    case .Missing: return {},.Not_Found
+    case .Io,.No_Space,.Invalid_Argument: return {},.IO
     }
     build^=final
     return object,.None
 }
 
 @(private="file")
-texture_finalize :: proc(s:^store.Store,output:asset.Build_Output,worker:jobs.Worker_Ref) ->
+texture_finalize :: proc(s:^store.Store,output:^asset.Build_Output,worker:jobs.Worker_Ref) ->
     (object:store.Hash,error:asset.Error) {
+    scratch:mem.Dynamic_Arena
+    mem.dynamic_arena_init(&scratch,context.allocator,context.allocator,
+        block_size=1<<20,out_band_size=1<<20)
+    defer mem.dynamic_arena_destroy(&scratch)
+    context.temp_allocator=base.dynamic_arena_allocator(&scratch)
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
     defer asset.types_destroy(&types)
@@ -116,12 +171,12 @@ texture_finalize :: proc(s:^store.Store,output:asset.Build_Output,worker:jobs.Wo
     if file.blob.header.id!=output.id {return {},.Corrupt}
     if .Fast not_in view.info.flags {return output.object,.None}
 
-    final,recipe_error:=asset.asset_row(&file,&types,TEXTURE_FINAL,Texture_Final,whole=true)
-    if recipe_error!=.None || view.source==nil || final.key==0 {return {},.Not_Found}
-    built,ok:=texture_input_build({store=s},final^,&types,worker)
-    if !ok || .Fast in built.flags || built.format!=view.info.format ||
+    final:=asset.asset_row(&file,&types,TEXTURE_FINAL,Texture_Final,whole=true) or_return
+    if view.source==nil || final.key==0 {return {},.Not_Found}
+    built:=texture_input_build({store=s},final^,&types,worker) or_return
+    if .Fast in built.flags || built.format!=view.info.format ||
        built.width!=int(view.info.width) || built.height!=int(view.info.height) ||
-       built.layers!=int(view.info.layers) {return {},.Not_Found}
+       built.layers!=int(view.info.layers) {return {},.Corrupt}
     info:=view.source^
     info.settings_hash=final.settings
     desc:=textures.built_desc(&built,output.id,&info)
