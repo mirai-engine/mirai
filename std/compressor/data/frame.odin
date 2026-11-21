@@ -2,15 +2,16 @@ package data
 
 import "base:intrinsics"
 
-@(private) BLOCK_BYTES :: 128<<10
+@(private) BLOCK_BYTES :: 256<<10
 @(private) MAX_BYTES :: int(max(i32))
-@(private) WINDOW :: (512<<10)-1
+@(private) WINDOW_BITS :: 22
+@(private) WINDOW :: (1<<WINDOW_BITS)-1
 @(private) MIN_MATCH :: 3
 @(private) SPEED_MIN :: 4
 @(private) SEQUENCES_MAX :: BLOCK_BYTES/MIN_MATCH
 
 @(private)
-Block_Mode :: enum u8 {Raw,LZ,Entropy}
+Block_Mode :: enum u8 {Raw,LZ,Entropy,Delta}
 
 // src in the format of the profile into dst, of at least bound bytes. Deterministic.
 encode :: proc(e:^Encoder,profile:Profile,src,dst:[]u8,open:=false) -> (size:int,error:Error) {
@@ -26,7 +27,10 @@ encode :: proc(e:^Encoder,profile:Profile,src,dst:[]u8,open:=false) -> (size:int
         if err!=nil {return 0,.Out_Of_Memory}
         e^={allocator=allocator,mdc=work}
     }
-    if e.mdc!=nil {index_begin(e.mdc,len(src),profile)}
+    if e.mdc!=nil && len(src)>=MIN_MATCH {
+        if error:=encode_memory(e.mdc,len(src),profile,e.allocator);error!=.None {return 0,error}
+        index_begin(e.mdc,len(src),profile)
+    }
     for first:=0;first<len(src);first+=BLOCK_BYTES {
         last:=min(first+BLOCK_BYTES,len(src))
         header:=size
@@ -39,7 +43,7 @@ encode :: proc(e:^Encoder,profile:Profile,src,dst:[]u8,open:=false) -> (size:int
 }
 
 @(private)
-decode_mdc1 :: proc "contextless" (d:^Decoder,src,dst:[]u8) -> Error {
+decode_mdc2 :: proc "contextless" (d:^Decoder,src,dst:[]u8) -> Error {
     if len(src)>bound(len(dst)) {return .Corrupt}
     if len(dst)==0 {return .None}
     if len(src)==0 || buffers_overlap(src,dst) {return .Corrupt}
@@ -61,9 +65,10 @@ decode_mdc1 :: proc "contextless" (d:^Decoder,src,dst:[]u8) -> Error {
             copy(dst[first:last],body)
         case .LZ:
             if !decode_speed(body,dst[:last],first) {return .Corrupt}
-        case .Entropy:
+        case .Entropy,.Delta:
             if d==nil || d.mdc==nil {return .Out_Of_Memory}
-            if !decode_entropy(d.mdc,body,dst[:last],first) {return .Corrupt}
+            delta:=Block_Mode(wire[0])==.Delta
+            if !decode_entropy(d.mdc,body,dst[:last],first,delta) {return .Corrupt}
         case: return .Corrupt
         }
         at+=n
@@ -94,7 +99,7 @@ length_write :: #force_inline proc "contextless" (dst:[]u8,n:int) -> int {
 @(private)
 length_read :: #force_inline proc "contextless" (src:[]u8,at:^int) -> int {
     value:=0
-    for shift in 0..<3 {
+    for shift in 0..<4 {
         if at^>=len(src) {return -1}
         byte:=int(src[at^])
         at^+=1
@@ -109,30 +114,42 @@ length_read :: #force_inline proc "contextless" (src:[]u8,at:^int) -> int {
 
 @(private)
 length_size :: #force_inline proc "contextless" (n:int) -> int {
-    return 1+int(n>=128)+int(n>=1<<14)
+    return 1+int(n>=128)+int(n>=1<<14)+int(n>=1<<21)
 }
 
 @(private)
 copy_sequence :: #force_inline proc "contextless" (dst,literals:[]u8,
-    out,lit,ll,ml,distance:int) -> bool #no_bounds_check {
+    out,lit,ll,ml,distance:int,$PADDED:bool) -> bool #no_bounds_check {
     at:=out+ll
-    invalid:=(len(literals)-lit-ll)|(len(dst)-at-ml)|(distance-1)|(at-distance)
-    if invalid<0 {return false}
-    if ll<=16 && lit<=len(literals)-16 && out<=len(dst)-16 {
+    from:=at-distance
+    fast:=(len(dst)-16-at)|(16-ll)|(16-ml)|(distance-16)|from
+    when !PADDED {fast|=len(literals)-16-lit}
+    if fast>=0 {
         copy16(&dst[out],&literals[lit])
-    } else if ll>0 {
-        intrinsics.mem_copy_non_overlapping(&dst[out],&literals[lit],ll)
+        copy16(&dst[at],&dst[from])
+        return true
     }
+    return copy_sequence_tail(dst,literals,out,lit,ll,ml,distance,PADDED)
+}
+
+@(private="file")
+copy_sequence_tail :: proc "contextless" (dst,literals:[]u8,
+    out,lit,ll,ml,distance:int,$PADDED:bool) -> bool #no_bounds_check {
+    at:=out+ll
+    invalid:=(len(dst)-at-ml)|(distance-1)|(at-distance)
+    when !PADDED {invalid|=len(literals)-lit-ll}
+    if invalid<0 {return false}
+    if ll>0 {intrinsics.mem_copy_non_overlapping(&dst[out],&literals[lit],ll)}
     copy_match(dst,at,distance,ml)
     return true
 }
 
-@(private="file")
-Short_Match :: #simd[16]u8
+@(private)
+Bytes16 :: #simd[16]u8
 
 // The last distance bytes of the preceding vector, repeated to fill a vector.
 @(private="file")
-SHORT_MATCH_ORDER :: [15]Short_Match{
+SHORT_MATCH_ORDER :: [15]Bytes16{
     {15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15},
     {14,15,14,15,14,15,14,15,14,15,14,15,14,15,14,15},
     {13,14,15,13,14,15,13,14,15,13,14,15,13,14,15,13},
@@ -153,12 +170,12 @@ SHORT_MATCH_ORDER :: [15]Short_Match{
 @(private="file")
 copy_short_match :: #force_inline proc "contextless" (dst:[]u8,at,distance:int) #no_bounds_check {
     orders:=SHORT_MATCH_ORDER
-    previous:=intrinsics.unaligned_load((^Short_Match)(&dst[at-16]))
+    previous:=intrinsics.unaligned_load((^Bytes16)(&dst[at-16]))
     tiled:=intrinsics.simd_runtime_swizzle(previous,orders[distance-1])
-    intrinsics.unaligned_store((^Short_Match)(&dst[at]),tiled)
+    intrinsics.unaligned_store((^Bytes16)(&dst[at]),tiled)
 }
 
-@(private="file")
+@(private)
 copy_match :: #force_inline proc "contextless" (dst:[]u8,at,distance,count:int) #no_bounds_check {
     from:=at-distance
     if count<=16 && len(dst)-at>=16 {
@@ -210,8 +227,8 @@ copy_match :: #force_inline proc "contextless" (dst:[]u8,at,distance,count:int) 
 
 @(private="file")
 copy16 :: #force_inline proc "contextless" (dst,src:^u8) {
-    word:=intrinsics.unaligned_load((^u128)(src))
-    intrinsics.unaligned_store((^u128)(dst),word)
+    word:=intrinsics.unaligned_load((^Bytes16)(src))
+    intrinsics.unaligned_store((^Bytes16)(dst),word)
 }
 
 @(private="file")

@@ -136,7 +136,7 @@ are kept here and, where the license asks for it, in the header of the file.
   `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp`,
   `ffx_frameinterpolation.cpp` and `ffx_fsr3.cpp`. Game, with the `fsr` plugin.
 - **Zstandard 1.5.7** (BSD-3-Clause; © Meta Platforms, Inc. and affiliates),
-  <https://github.com/facebook/zstd>. MDC1's Huffman entropy coder and its supporting bitstreams,
+  <https://github.com/facebook/zstd>. MDC2's Huffman entropy coder and its supporting bitstreams,
   histogram and FSE weight coding in `std/compressor/data` derive from the upstream Huffman and
   entropy libraries. See `std/compressor/data/LICENSE-zstd.txt`. Game.
 

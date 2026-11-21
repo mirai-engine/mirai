@@ -61,7 +61,7 @@ execute_speed :: proc "contextless" (commands,literals,dst:[]u8,
             if extra<0 {return false}
             ml+=extra
         }
-        if !copy_sequence(dst,literals,out,lit,ll,ml,distance) {return false}
+        if !copy_sequence(dst,literals,out,lit,ll,ml,distance,false) {return false}
         lit+=ll
         out+=ll+ml
     }
