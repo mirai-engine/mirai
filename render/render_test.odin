@@ -1383,6 +1383,78 @@ render_a_table_holds_no_page_past_its_pool :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+render_a_large_shadow_pool_gives_and_grants_its_high_pages :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 32, 32, test_settings()) {return}
+	defer fixture_destroy(&f)
+	d := f.device
+	pages := rhi.buffer_create(d, {size = u64(abi.SHADOW_WORDS) * 4,
+		usage = {.Storage, .Transfer_Dst, .Transfer_Src}, name = "test shadow pages"})
+	defer rhi.buffer_destroy(d, pages)
+	REACH :: 4 * abi.SHADOW_MAP_ROWS
+	map_data: [(REACH + SHADOW_SLOTS * abi.SHADOW_REACH_WORDS + 3) / 4][4]u32
+	maps := rhi.buffer_create(d, {size = size_of(map_data),
+		usage = {.Storage, .Transfer_Dst}, name = "test shadow maps"})
+	defer rhi.buffer_destroy(d, maps)
+	table := rhi.texture_create(d, {width = 1, height = 1, format = .R32_Uint,
+		usage = {.Storage}, name = "test shadow table"})
+	defer rhi.texture_destroy(d, table)
+	if !testing.expect(t, pages != 0 && maps != 0 && table != 0, rhi.device_error(d)) {return}
+
+	COUNT :: abi.SHADOW_POOL_PAGES
+	GRANTED :: COUNT - 128
+	words := make([]u32, abi.SHADOW_WORDS)
+	defer delete(words)
+	if !testing.expect(t, rhi.buffer_upload_slice(d, maps, 0, map_data[:])) {return}
+	dispatch :: proc(t: ^testing.T, f: ^Fixture, pages, maps: rhi.Buffer, table: rhi.Texture,
+		step: Shadow_Pages_Step, words: []u32) -> bool {
+		d, r := f.device, f.renderer
+		if !testing.expect(t, rhi.buffer_upload_slice(d, pages, 0, words)) {return false}
+		cmd, began := rhi.frame_begin(d, present = false)
+		if !testing.expect(t, began, rhi.device_error(d)) {return false}
+		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Shadow_Pages_Sort])
+		params := Shadow_Pages_Params{
+			step = u32(step), pool = COUNT, reach = REACH, budget = 2 * GRANTED, chunks = COUNT,
+		}
+		set_params(cmd, &params)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, maps)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, pages)
+		rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, r.dummy_uint)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS3, table)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS4, r.dummy_texture)
+		rhi.cmd_dispatch(cmd, 1)
+		if !testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d)) {return false}
+		rhi.device_wait_idle(d)
+		return true
+	}
+
+	if !dispatch(t, &f, pages, maps, table, .Pool, words) {return}
+	result: [COUNT]u32
+	if !testing.expect(t, rhi.buffer_read_slice(d, pages, u64(abi.SHADOW_WORDS_VICTIMS) * 4,
+		result[:])) {return}
+	for victim, page in result {
+		if !testing.expectf(t, victim == u32(page), "victim %d is page %d", page, victim) {return}
+	}
+
+	words[abi.SHADOW_WORDS_COUNTS + abi.SHADOW_COUNT_DRAWN] = COUNT
+	words[abi.SHADOW_WORDS_HAS] = 2
+	for page in 0 ..< COUNT {
+		words[abi.SHADOW_WORDS_OWNER + page] = abi.SHADOW_FINEST_ENTRY + page + 1
+		words[abi.SHADOW_WORDS_KNOWN + page] = 1
+		words[abi.SHADOW_WORDS_JOBS + page] = COUNT - 1 - page
+	}
+	if !dispatch(t, &f, pages, maps, table, .Grant, words) {return}
+	if !testing.expect(t, rhi.buffer_read_slice(d, pages, u64(abi.SHADOW_WORDS_COST) * 4,
+		result[:])) {return}
+	for cost, page in result {
+		want := 2 if page < int(GRANTED) else abi.SHADOW_COST_WAITS
+		if !testing.expectf(t, cost == want, "page %d has cost %#x, expected %#x",
+			page, cost, want) {return}
+	}
+	expect_clean(t, d)
+}
+
 // A frame asked for counts what each mesh and each material of the view cost
 // it: the instances, clusters and triangles the view drew, the pixels each
 // owns and what the maps of the sun drew of it; a mesh out of the view or
