@@ -13,6 +13,10 @@ a_scenario_step_holds_unless_its_check_fails_or_its_until_runs_out :: proc(t:^te
         {`{"for":5}`,`{"ran":5,"met":false}`,true,""},
         {`{"for":5,"until":[{}]}`,`{"ran":5,"met":false}`,false,"until did not hold"},
         {`{"for":5,"until":[{}]}`,`{"ran":2,"met":true}`,true,""},
+        {`{"conditions":[{}]}`,`{"passed":false,"failure":"expected == 1, got 2"}`,
+         false,"expected == 1, got 2"},
+        {`{"for":5,"until":[{}]}`,`{"ran":5,"met":false,"failure":"expected > 7, got 6"}`,
+         false,"timed out: expected > 7, got 6"},
         {`{}`,`null`,true,""},
     }
     for c in cases {

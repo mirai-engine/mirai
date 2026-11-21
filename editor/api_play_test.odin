@@ -22,6 +22,7 @@ import "mirai:std/serial"
 @(private) Probe_Score :: struct {points:int,state:Probe_State,seen:core.Seen}
 @(private) Probe_Ping :: struct {entity:core.Entity,amount:int}
 @(private) Probe_Pings :: struct {queue:core.Queue(Probe_Ping)}
+@(private) Probe_Ping_Events :: struct {queue:core.Events(Probe_Ping)}
 @(private) Probe_Standing :: struct {standing:bool `mirai:"transient"`}
 // on: the driven body runs and jumps over probe_level_top as a character would.
 @(private) Probe_Climb :: struct {on:bool,velocity,rise:f32,platform:core.Entity}
@@ -51,6 +52,7 @@ Probe_World :: struct {
     jumps:core.Jumps,
     score:Probe_Score,
     pings:Probe_Pings,
+    ping_events:Probe_Ping_Events,
     view:core.View,
     queries:core.World_Queries,
     climb:Probe_Climb,
@@ -298,6 +300,87 @@ the_game_that_plays_is_changed_and_read_by_its_storages_and_conditions :: proc(t
     testing.expect(t,strings.contains(error.message,"points") && strings.contains(error.message,"state"),error.message)
     error,_=probe_call(f,"play.check",`{"conditions":[{"storage":"Probe_Score","field":"state","compare":"Below","text":"Won"}]}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
+}
+
+@(test)
+play_conditions_match_multiple_entities_and_wait_with_the_same_comparisons :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    api_state(&f.s).step_frame=probe_frame
+    r:=run_find(&f.s,0)
+    w:=run_ref(&f.s,r)
+    running:=cast(^Probe_World)w.data
+    core.edit(&running.names,f.foe)^=core.name_make("Hero")
+    core.add(&running.standings,f.hero,Probe_Standing{standing=true})
+    core.settle(&f.info,w.data,nil)
+    cases:=[?]struct {condition:string,passed:bool}{
+        {`{"entity":"Hero","count":true,"compare":"Equal","value":2}`,true},
+        {`{"entity":"Hero","count":true,"compare":"At_Least","number":2}`,true},
+        {`{"entity":"Hero","count":true,"compare":"At_Most","number":1}`,false},
+        {`{"entity":"Hero","component":"Probe_Health","count":true,"compare":"Equal","value":1}`,true},
+        {`{"component":"Probe_Health","count":true,"compare":"Equal","value":1}`,true},
+        {`{"entity":"Hero","field":"Transform"}`,false},
+        {`{"entity":"Hero","match":"any","field":"Probe_Health"}`,true},
+        {`{"entity":"Hero","match":"All","field":"Probe_Health"}`,false},
+        {`{"entity":"Hero","match":"Any","field":"Probe_Standing.standing","compare":"Equal","value":true}`,true},
+        {`{"entity":"Hero","match":"Any","field":"Probe_Health","compare":"Gone"}`,true},
+        {`{"entity":"Unknown","match":"All","field":"Probe_Health","compare":"Gone"}`,false},
+        {`{"entity":"Hero","match":"Any","field":"Transform.position","compare":"Approx","value":[1.01,0,0],"tolerance":0.02}`,true},
+        {`{"entity":"Hero","match":"All","field":"Name.text","compare":"Contains","value":"er"}`,true},
+    }
+    for c in cases {
+        params:=fmt.tprintf(`{{"conditions":[%s]}}`,c.condition)
+        error,text:=probe_call(f,"play.check",params)
+        testing.expectf(t,error.code==0 && api.json_member(text,"passed")==fmt.tprintf("%v",c.passed),
+            "%s -> %v %s",c.condition,error,text)
+        api_result_shape_expect(t,text,Api_Play_Check_Result)
+    }
+
+    error,text:=probe_call(f,"play.step",`{"for":3,"until":[
+        {"entity":"Hero","match":"All","field":"Transform.position.x","compare":"Above","value":20}
+    ]}`)
+    testing.expectf(t,error.code==0 && api.json_member(text,"met")=="false" && running.time.tick==3,
+        "%v %s",error,text)
+    for part in ([]string{"until[0]","matched 2 entities","Transform.position.x","expected","> 20","got"," = 1"," = 5"}) {
+        testing.expect(t,strings.contains(text,part),text)
+    }
+    api_result_shape_expect(t,text,Api_Play_Step_Result)
+}
+
+@(test)
+play_conditions_read_queue_events_and_runtime_problems_without_consuming_them :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    r:=run_find(&f.s,0)
+    w:=run_ref(&f.s,r)
+    running:=cast(^Probe_World)w.data
+    core.push(&running.pings.queue,Probe_Ping{amount=7})
+    core.push(&running.ping_events.queue,Probe_Ping{amount=8})
+    problems:=host.app_world_storage(f.s.app,w.data,core.Problems)
+    conditions:=`{"conditions":[
+        {"storage":"Probe_Pings","field":"queue.items","length":true,"compare":"Equal","value":1},
+        {"storage":"Probe_Ping_Events","field":"queue.log.items.0.amount","compare":"Equal","value":8},
+        {"storage":"Probe_Ping_Events","field":"queue.log.items.1","compare":"Gone"},
+        {"problem":"probe.broken","compare":"Gone"},
+        {"no_problems":true}
+    ]}`
+    revisions:=slice.clone(core.world_revisions(w),context.temp_allocator)
+    error,text:=probe_call(f,"play.check",conditions)
+    testing.expectf(t,error.code==0 && api.json_member(text,"passed")=="true","%v %s",error,text)
+    testing.expect(t,slice.equal(core.world_revisions(w),revisions),"condition reads leave revisions alone")
+    core.report(problems,core.NONE,"probe.broken","Place the test fixture")
+    error,text=probe_call(f,"play.check",conditions)
+    testing.expectf(t,error.code==0 && api.json_member(text,"passed")=="false","%v %s",error,text)
+    testing.expect(t,strings.contains(text,"probe.broken") && strings.contains(text,"Place the test fixture"),text)
+    error,text=probe_call(f,"play.check",`{"conditions":[{"problem":"probe.broken"}]}`)
+    testing.expectf(t,error.code==0 && api.json_member(text,"passed")=="true","%v %s",error,text)
+    core.problems_clear(problems)
+    error,_=probe_call(f,"play.check",`{"conditions":[{"problem":"probe.broken","compare":"Gone"}]}`)
+    testing.expect(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,"no longer retained"))
+    error,text=probe_call(f,"play.check",`{"conditions":[{"no_problems":true}]}`)
+    testing.expectf(t,error.code==0 && api.json_member(text,"passed")=="false","%v %s",error,text)
 }
 
 // The structs of its params and of its result are the only description of a
@@ -1109,7 +1192,7 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
     error,text=probe_call(f,"play.scenario.run",strings.concatenate({`{"path":"`,folder,`"}`},context.temp_allocator))
     testing.expectf(t,error.code==0,"%v",error)
     api_result_shape_expect(t,text,Api_Play_Scenario_Result)
-    Step :: struct {method,name:string,passed:bool,tick:u64}
+    Step :: struct {method,name:string,passed:bool,tick:u64,result:json.Value}
     Report :: struct {path:string,passed:bool,failure:string,tick:u64,steps:int,ran:[]Step}
     Result :: struct {passed:bool,total,failed:int,scenarios:[]Report}
     result:Result
@@ -1120,13 +1203,22 @@ a_scenario_plays_its_steps_in_order_from_the_first_tick_and_ends_at_the_first_th
         testing.expect(t,strings.has_suffix(weakens.path,"a_weakens.mirai") && weakens.passed && weakens.failure=="" && len(weakens.ran)==4,text)
         testing.expect(t,len(weakens.ran)==4 && weakens.ran[0].name=="weaken" && weakens.ran[2].passed && weakens.tick==0,text)
         testing.expect(t,!misses.passed && misses.steps==3 && len(misses.ran)==2 && misses.ran[0].passed && !misses.ran[1].passed,text)
-        testing.expect(t,strings.contains(misses.failure,"steps[1] play.check: did not hold"),misses.failure)
+        for part in ([]string{"steps[1]","tick 0","Probe_Score","expected == 5","got 0"}) {
+            testing.expect(t,strings.contains(misses.failure,part),misses.failure)
+        }
+        if len(misses.ran)==2 {
+            body,object:=misses.ran[1].result.(json.Object)
+            rows,list:=body["results"].(json.Array)
+            if testing.expect(t,object && list && len(rows)==1,text) {
+                row:=rows[0].(json.Object)
+                testing.expect_value(t,row["value"].(json.Integer),0)
+            }
+        }
     }
-    testing.expect(t,strings.contains(api.json_compact(text),`"result":{"passed":false,"tick":0,"results":[{"passed":false,"value":0}]}`),text)
     testing.expect(t,run_find(&f.s,0)==nil,"the game stops after each scenario")
     // A step that fails, an until that runs out and files the methods would not take.
     cases:=[?]struct{text,says:string}{
-        {`{"steps":[{"method":"play.check","params":{"conditions":[{"storage":"Nothing"}]}}]}`,"steps[0] play.check: conditions[0]"},
+        {`{"steps":[{"method":"play.check","params":{"conditions":[{"storage":"Nothing"}]}}]}`,"steps[0] play.check (tick 0): conditions[0]"},
         {`{"steps":[{"method":"play.step","params":{"drive":{"position":[100,0,0],"move":"move"},"for":2}}]}`,"the drive did not arrive"},
         {`{"steps":[{"method":"play.step","params":{"ticks":"many"}}]}`,"steps[0].params"},
         {`{"steps":[{"method":"scene.open","params":{"path":"other.scene"}}]}`,"steps are play methods"},

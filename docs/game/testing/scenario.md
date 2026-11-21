@@ -12,7 +12,7 @@ time. The first step that fails ends it.
   {"name": "the game opens", "method": "play.step", "params": {"for": 30}},
   {"name": "walk forward", "method": "play.step", "params": {"for": "1s", "keys": ["W"]}},
   {"name": "the player walked", "method": "play.check", "params": {"conditions": [
-    {"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}]}}
+    {"entity": "Player", "field": "world_position.2", "compare": "Below", "value": 4.5}]}}
 ]}
 ```
 
@@ -26,32 +26,19 @@ time. The first step that fails ends it.
 
 ## Conditions
 
-`play.check` reads conditions on the game now; all must hold.
-
-```json
-{"entity": "Player", "field": "world_position.2", "compare": "Below", "number": 4.5}
-{"storage": "Shell", "field": "page", "compare": "Equal", "text": "Pause"}
-{"storage": "Clock", "field": "paused", "compare": "Equal", "number": 1}
-{"entity": "Door", "field": "Open", "compare": "Exists"}
-{"entity": "Pickup", "compare": "Gone"}
-```
-
-- The subject is an `entity`, by its name, a path Parent/Child, its id or its handle, or a
-  `storage`. `field` names the value inside it: `Component.field.0.field` for an entity
-  (`Motion.linear.1`, where `a[0].b` is `a.0.b`).
-- `compare` is `Exists` unless given; `mirai rpc --project . describe play.check` lists the
-  operators. A number is `number` (a bool is 1 or 0); an enum member or a text is `text`.
-- Names of components, storages and fields: `component.list` and `scene.inspect` with
-  `"world": "Game"`; `Open`, `Door` and `Pickup` above stand for your own.
+`play.check` asserts conditions at the current tick. See the
+[assertion reference](scenario-assertions.md#scenario-assertion-reference) for matching multiple
+entities, counting matches, comparing fields, and checking problems and events.
 
 ## Wait
 
-`play.step` with `until` runs ticks until the conditions hold; `for` is the most it runs, and
-none run when they hold already. If they never hold, the step and the scenario fail.
+Use the same conditions with `play.step` and `until`. It evaluates them before the first
+tick and after each tick. `for` limits the wait. A scenario fails at the deadline if a
+condition still fails, reporting the step, tick, expected condition, and last reading.
 
 ```json
-{"name": "the scene starts over", "method": "play.step", "params": {"for": 900, "until": [
-  {"entity": "Player", "field": "world_position.2", "compare": "Above", "number": 4.5}]}}
+{"name": "the door opens", "method": "play.step", "params": {"for": 90, "until": [
+  {"entity": "Door", "field": "Door.open", "compare": "Equal", "value": true}]}}
 ```
 
 ## Input

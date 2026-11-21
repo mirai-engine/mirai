@@ -53,6 +53,7 @@ Api_Play_Step_Result :: struct {
     using play:Api_Play_Result `mirai:"inline"`,
     ran:int `mirai:"label=The ticks it ran"`,
     met:bool `mirai:"label=With until: whether they held when it stopped"`,
+    failure:string `mirai:"optional,label=The first unmet until condition when the step stops"`,
     drive:Api_Play_Drive_Result `mirai:"optional,label=With drive: where the player ended and why it stopped; ran says its ticks"`,
     trace:Api_Play_Trace_Table `mirai:"optional,label=With trace: the values it read"`,
 }
@@ -510,6 +511,15 @@ api_play_step_write :: proc(s:^Session,call:^api.Call,r:^Run,ran:int,met:bool,tr
     result:=api.call_result(call,Api_Play_Step_Result)
     api_play_result_fill(s,&result.play,r)
     result.ran,result.met=ran,met
+    if !met && r!=nil {
+        params:=api.call_params(call,Api_Play_Step_Params)
+        until:=params.until[:api.json_count(api.json_member(call.raw,"until"))]
+        if target:=run_player(s,r.owner,params.player);target!=nil && len(until)>0 {
+            reads:[len(params.until)]Api_Condition_Read
+            _,problem:=api_conditions_read(s,run_ref(s,target),until,reads[:],"until")
+            result.failure=problem if problem!="" else api_condition_failure(reads[:len(until)],"until",call.allocator)
+        }
+    }
     if drive!=nil {result.drive=api_drive_result(drive)}
     if trace!=nil {result.trace=api_trace_table(s,trace,call.allocator)}
 }

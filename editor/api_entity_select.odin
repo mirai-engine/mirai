@@ -51,19 +51,33 @@ api_entity_path :: proc(w:core.World_Ref,e:core.Entity,allocator:=context.temp_a
     return strings.to_string(b)
 }
 
-// The entity a text names; NONE when none does, and then several says why
-// when the text fits more than one, for whoever reads it as a miss.
-api_entity_find :: proc(w:core.World_Ref,text:string,allocator:=context.temp_allocator) -> (e:core.Entity,several:string) {
+@(private)
+api_entities_named :: proc(w:core.World_Ref,text:string,allocator:=context.temp_allocator) -> []core.Entity {
     if value,is_hex:=api_entity_hex(text);is_hex {
-        if found:=api_entity(w,base.Entity_Id(value));found!=core.NONE {return found,""}
-        if core.alive(core.world_entities(w),core.Entity(value)) {return core.Entity(value),""}
+        found:=api_entity(w,base.Entity_Id(value))
+        if found==core.NONE && core.alive(core.world_entities(w),core.Entity(value)) {
+            found=core.Entity(value)
+        }
+        if found!=core.NONE {
+            match,error:=make([]core.Entity,1,allocator)
+            if error!=nil {return nil}
+            match[0]=found
+            return match
+        }
     }
-    matches:=make([dynamic]core.Entity,context.temp_allocator)
-    if names:=core.world_table_of(w,core.Name);names!=nil {
+    matches:=make([dynamic]core.Entity,allocator)
+    if names:=core.world_table_read(core.world_read(w),core.Name);names!=nil {
         for candidate in names.entities {
             if api_entity_path_is(w,candidate,text) {append(&matches,candidate)}
         }
     }
+    return matches[:]
+}
+
+// The entity a text names; NONE when none does, and then several says why
+// when the text fits more than one, for whoever reads it as a miss.
+api_entity_find :: proc(w:core.World_Ref,text:string,allocator:=context.temp_allocator) -> (e:core.Entity,several:string) {
+    matches:=api_entities_named(w,text)
     if len(matches)==1 {return matches[0],""}
     if len(matches)==0 {return core.NONE,""}
     b:=strings.builder_make(allocator)

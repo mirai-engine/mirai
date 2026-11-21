@@ -634,13 +634,12 @@ result of `play.status`, `paused`, `simulating` and `input_released` are the use
 - One syntax names a value in Play, for `play.check`, `until` and `trace`:
   `Component.field.0.field` (`a[0].b` reads as `a.0.b`), or a key of the document of the entity
   (`world_position.2`).
-- `play.check` (`read_only`): each condition reads a value (`field`) of an `entity`, of a storage
-  or of the `view`, as `scene.inspect` or `play.view` write them, and compares it with `number` or
-  `text`; without `field`, the entity gives its `world_position`. With `view` the entity named is
-  `points.0`.
-  `Exists` and `Gone` say whether the entity, the component or the field is there: what is not
-  there is a reading, not an error. A name or a field the game does not have is `-32602` with what
-  exists. A `passed:false` is a result, not a failure.
+- `play.check` (`read_only`): reads the same
+  [conditions](../../../../docs/game/testing/scenario-assertions.md#scenario-assertion-reference)
+  as `play.step` with `until`.
+  Fields of an entity, storage or view read as `scene.inspect` or `play.view` write them.
+  The first unmet condition is in `failure` with its expected and actual values. A name or
+  field the game does not know is `-32602`. A valid condition that fails gives `passed:false`.
 - `play.view` (`read_only`): what the player sees, read from the run's `core.View` and the camera
   of the focused local slot of `engine/camera`: the camera with its place and lens, its mode and
   the blend into it (`progress` of the time, `weight` after the ease; 1 when it does not blend),

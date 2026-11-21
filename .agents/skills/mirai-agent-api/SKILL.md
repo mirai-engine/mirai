@@ -49,7 +49,8 @@ difference with the catalog, it rules.
   and a repro of a run as a scenario: the `playtest` plugin, `play.observe`, `play.qa.*` and
   `play.explore` in [Play](references/methods.md#play).
 - Writing a gameplay test once as a file and playing it again after every change, from the API
-  or from CI: [scenarios](../../../docs/game/testing/scenario.md),
+  or from CI: [scenarios](../../../docs/game/testing/scenario.md) and their
+  [assertions](../../../docs/game/testing/scenario.md#conditions),
   [`mirai play test`](references/api.md#mirai-play-test).
 - Values of entities at past ticks without changing the game, and whether replaying the past
   repeats it (first tick and field that differ): [`play.history`](references/methods.md#play).
@@ -194,7 +195,8 @@ positions misses both.
   a method does not change the selection of the user unless changing it is what it is for.
 - The caller names things as a person does: an entity by its name, a path, an id or a handle,
   in every param that takes one (`entity`, or its role: `parent`, `target`...), and an asset by its
-  path. The engine resolves them and a name that fits several is an error, never the first match.
+  path. A selector for one entity requires a unique match. Scenario assertions can explicitly
+  quantify or count matches as described in the scenario assertion reference.
 - What is written for the API is taken as it can only be meant, in one place, never per method
   ([conventions](references/api.md#method-conventions)); saved assets and binary data are read
   exactly.
