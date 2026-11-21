@@ -20,6 +20,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   [host](../mirai-core/references/host.md#gpu-that-stops-working)
 - Shader generation (`cook/shaders/`, `mirai shaders`, `mirai setup slang`) →
   [shaders](references/shaders.md#shader-toolchain)
+- GPU block compression during a texture cook →
+  [cook shaders](references/shaders.md#texture-cook-shaders)
 - Programs and extensions of a project, reload in `host` →
   [shaders](references/shaders.md#project-generation)
 - Renderer, scene entry, pools and vertices (`render/`) →

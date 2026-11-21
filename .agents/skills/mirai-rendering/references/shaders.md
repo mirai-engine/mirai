@@ -332,6 +332,17 @@
 - `renderer_init` receives a loaded generation in `Renderer_Desc.shaders`;
   `renderer_reload_shaders` replaces it at once ([loading in host](#loading-in-host)).
 
+### Texture cook shaders
+
+Engine generation compiles `shaders/cook` into a separate manifest under `shaders/build/cook`.
+The installed engine carries it for the cooker, the sole consumer. BC6H and BC7 use the tables
+the asset decoders share with the generator.
+
+With a `cook/textures.Gpu_Context`, an immediate transaction fits each block and, for a Final cook
+with a positive lambda, a second dispatch reads the immutable fits of its tile. It prices reuse
+of modes, endpoints and indices against decoded error. Low-variance blocks tolerate less error.
+Every BC7 candidate keeps exact alpha extrema and the side of an enabled cutoff for each texel.
+
 ## Cache and fingerprints
 
 - **Shared cache** (`cache.odin`): `<main checkout>/.mirai/cache/shaders`
