@@ -1,13 +1,5 @@
-//! per vfx program
 #include "native.slang"
-// A mesh per particle of the run of the list an emitter draws for one of its
-// meshes (params.mesh), in the G-buffer with the
-// fragment of the engine: lit, shadowed and reflected like the scene. It
-// turns as its effect says and moves by its velocity. The draw is indexed by
-// the draw list of the clusters of level 0 of the mesh (render.mesh_draw_range):
-// a vertex is its cluster << DRAW_VERTEX_BITS | the vertex in it. Those of
-// materials of another Surface program than params.program (INVALID: any),
-// which a draw of their own takes (render.pass_mesh_programs), are collapsed.
+// Each indirect draw covers a mesh level and one run of the emitter’s draw list.
 #include "gbuffer_vertex.slang"
 #include "particle_programs.slang"
 struct Params_Block { uint emitter; uint program; uint mesh; uint pad1; };
@@ -16,25 +8,29 @@ struct Params_Block { uint emitter; uint program; uint mesh; uint pad1; };
 [shader("vertex")]
 Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_VulkanInstanceID) {
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
-    Particle_Emitter e = particle_emitters[params.emitter];
+
     Mesh mesh = meshes[params.mesh];
-    Cluster c = mesh_cluster(mesh, vertex_id >> DRAW_VERTEX_BITS);
-    uint material = e.mesh.w != 0u ? e.mesh.w : (cluster_material(mesh, c) & 0xffffffu);
-    bool shown = params.program == INVALID || material_row(material).program_id == params.program;
-    if (!cluster_resident(mesh, c) || !shown) {
+    Cluster c;
+    Mesh_Point v;
+    if (!particle_mesh_point(mesh, vertex_id, c, v)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
-    Mesh_Point v = cluster_point(mesh, c, vertex_id & ((1u << DRAW_VERTEX_BITS) - 1u));
+    uint material = particle_emitters[params.emitter].mesh.w;
+    if (material == 0u) material = cluster_material(mesh, c) & 0xffffffu;
+    if (params.program != INVALID && material_row(material).program_id != params.program) {
+        output.position = float4(2.0, 2.0, 2.0, 1.0);
+        return output;
+    }
     // The first instance of the draw is where the run of its mesh starts in the list.
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];
-    Particle_Look look = particle_program_look(params.emitter, index, p);
+    Particle_Look look = particle_draw_look(params.emitter, index);
     float3x3 rotation = particle_mesh_rotation(params.emitter, p);
     float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);
     float3 prev_world = world - particle_world_vector(params.emitter, p.velocity) * particle_frame_step().x;
-    output.out_normal = normalize(particle_mesh_vector(params.emitter, rotation, v.normal));
-    output.out_tangent = float4(normalize(particle_mesh_vector(params.emitter, rotation, v.tangent.xyz)), v.tangent.w);
+    output.out_normal = particle_unit(particle_mesh_vector(params.emitter, rotation, v.normal), v.normal);
+    output.out_tangent = float4(particle_unit(particle_mesh_vector(params.emitter, rotation, v.tangent.xyz), v.tangent.xyz), v.tangent.w);
     output.out_color = material_vertex_tint(material_row(material), v.color.rgb) * look.color.rgb;
     output.out_vertex_color = v.color;
     output.out_emission = float3(0.0);

@@ -81,6 +81,7 @@ grids_load :: proc(sync:^Particle_Sync,pass:^erender.Pass) {
         first:=base+u64(entry.offset)
         if !erender.pass_buffer_write(pass,world,first,data,load.size) || !erender.pass_buffer_write(pass,world,first+u64(load.size),data,load.size) {continue}
         entry.loaded,entry.cleared=entry.cached,entry.first
+        entry.texture_dirty=true
     }
     clear(&sync.loads)
 }
