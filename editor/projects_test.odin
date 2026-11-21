@@ -192,3 +192,48 @@ projects_open_runs_off_the_frame_and_reports_stages_and_cancel :: proc(t:^testin
     }
     testing.expect(t,!projects_opening(&p) && !p.cancelling && !p.next)
 }
+
+@(test)
+all_projects_discovers_siblings_and_skips_temporary_copies :: proc(t:^testing.T) {
+    testing.expect(t,projects_is_temporary("C:/Users/a/proj/.mirai/tmp/copy"))
+    testing.expect(t,!projects_is_temporary("C:/Users/a/proj"))
+
+    folder:=base.test_folder(t,"projects-all")
+    if folder=="" {return}
+    root:=project.path_absolute(folder,context.temp_allocator)
+    engine:=project.path(root,"mirai",allocator=context.temp_allocator)
+    siblings:=project.path(root,"mirai-projects",allocator=context.temp_allocator)
+    make_proj :: proc(t:^testing.T,dir,name:string) {
+        testing.expect(t,base.make_directory_all(dir)==nil)
+        m:=project.manifest_default(name)
+        testing.expect_value(t,project.manifest_write(project.path(dir,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
+    }
+    make_proj(t,project.path(engine,"demo",allocator=context.temp_allocator),"Demo")
+    p_alpha:=project.path(siblings,"alpha",allocator=context.temp_allocator)
+    p_zeta:=project.path(siblings,"zeta",allocator=context.temp_allocator)
+    p_beta:=project.path(siblings,"beta",allocator=context.temp_allocator)
+    make_proj(t,p_alpha,"Alpha")
+    make_proj(t,p_zeta,"Zeta")
+    make_proj(t,p_beta,"Beta")
+    testing.expect(t,base.make_directory_all(project.path(siblings,"not-a-project",allocator=context.temp_allocator))==nil)
+
+    p:=new(Projects)
+    defer free(p)
+    project.recent_add(&p.recent,p_zeta,100)
+    s:=Session{projects=p,engine_root=engine}
+
+    // Recent view shows only what is in recent.
+    p.show_all=false
+    projects_rows_read(&s)
+    testing.expect_value(t,p.row_count,1)
+    testing.expect_value(t,base.text_get(p.rows[0].name[:]),"Zeta")
+
+    // All projects keeps recent first, then adds siblings & engine demo alphabetically without duplicates.
+    p.show_all=true
+    projects_rows_read(&s)
+    testing.expect_value(t,p.row_count,4)
+    testing.expect_value(t,base.text_get(p.rows[0].name[:]),"Zeta")
+    testing.expect_value(t,base.text_get(p.rows[1].name[:]),"Alpha")
+    testing.expect_value(t,base.text_get(p.rows[2].name[:]),"Beta")
+    testing.expect_value(t,base.text_get(p.rows[3].name[:]),"Demo")
+}

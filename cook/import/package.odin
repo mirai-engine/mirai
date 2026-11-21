@@ -2,12 +2,14 @@ package importer
 
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:cook/textures"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:std/blake3"
@@ -249,7 +251,9 @@ output_id :: proc(s:^store.Store,path:string,kind:asset.Fourcc,name:string) -> (
 writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     s:=w.options.store
     writer_identity(w)
-    p:=asset.Package{id=w.package_id,name=name,documents=w.documents,catalog_path=w.catalog_path,
+    catalog:=w.catalog_path
+    if catalog=="" {catalog=catalog_path_for(w.options.root,w.path,context.temp_allocator)}
+    p:=asset.Package{id=w.package_id,name=name,documents=w.documents,catalog_path=catalog,
         identity=w.identity,inputs=w.inputs,assets=w.outputs}
     p.origin={path=origin_of(w.origin),folder=os.is_dir(w.path),importer=importer}
     if settings:=settings_text(w.report.settings,context.temp_allocator);settings!="{}" {p.settings=settings}
@@ -283,6 +287,112 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
     }
     w.report.package_id,w.report.manifest,w.report.build,w.report.key,w.report.final=w.package_id,manifest,build,w.key,b.final
     return true
+}
+
+// Default library folder for source under root: keeps every import inside a
+// top-level root folder (the project name when root/assets holds files or
+// multiple folders), peeling away any leading wrapper folder that contains
+// only one subfolder and no files.
+catalog_path_for :: proc(root,source:string,allocator:=context.allocator) -> string {
+    if source=="" {return ""}
+    scratch:=context.temp_allocator
+    abs_source:=project.path_absolute(source,scratch)
+    source_dir:=abs_source if os.is_dir(abs_source) else filepath.dir(abs_source)
+    if root!="" {
+        assets_dir:=project.path_absolute(project.folder_path(root,.Assets,scratch),scratch)
+        rel,ok:=relative_under(assets_dir,source_dir,scratch)
+        if ok {
+            return catalog_peel(assets_dir,project_catalog_root(root,scratch),rel,allocator)
+        }
+    }
+    base_name:=asset.safe_name(filepath.base(source_dir))
+    if !asset.folder_valid(base_name) {return ""}
+    return strings.clone(base_name,allocator)
+}
+
+// Walks rel (forward-slash relative path under base_dir) peeling single-child
+// wrapper folders (directories with zero regular files and exactly one
+// non-hidden subdirectory). If at least one wrapper is peeled, the first
+// non-wrapper folder becomes the root; otherwise root_label prefixes rel.
+catalog_peel :: proc(base_dir,root_label,rel:string,allocator:=context.allocator) -> string {
+    scratch:=context.temp_allocator
+    parts:=strings.split(rel,"/",scratch) if rel!="" else nil
+    cur:=base_dir
+    start:=0
+    peeled:=false
+    for start<len(parts) {
+        single,is_single:=dir_single_subfolder(cur,scratch)
+        if !is_single || !strings.equal_fold(single,parts[start]) {break}
+        peeled=true
+        cur=project.path(cur,single,allocator=scratch)
+        start+=1
+    }
+    out:=make([dynamic]string,0,len(parts)+1,scratch)
+    if peeled {
+        // The last peeled directory is the new root itself (start >= 1).
+        for seg in parts[start-1:] {
+            clean:=asset.safe_name(seg)
+            if clean!="" {append(&out,clean)}
+        }
+    } else {
+        if clean:=asset.safe_name(root_label);clean!="" {append(&out,clean)}
+        for seg in parts {
+            clean:=asset.safe_name(seg)
+            if clean!="" {append(&out,clean)}
+        }
+    }
+    if len(out)==0 {return ""}
+    joined:=strings.join(out[:],"/",allocator)
+    if !asset.folder_valid(joined) {
+        delete(joined,allocator)
+        return ""
+    }
+    return joined
+}
+
+@(private="file")
+project_catalog_root :: proc(root:string,allocator:=context.allocator) -> string {
+    m,err:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))
+    if err.code==.None {
+        if name:=asset.safe_name(base.text_get(m.name[:]));name!="" {
+            return strings.clone(name,allocator)
+        }
+    }
+    return strings.clone(asset.safe_name(filepath.base(project.path_absolute(root,context.temp_allocator))),allocator)
+}
+
+@(private="file")
+dir_single_subfolder :: proc(dir:string,allocator:=context.allocator) -> (name:string,ok:bool) {
+    entries,err:=os.read_all_directory_by_path(dir,context.temp_allocator)
+    if err!=nil {return "",false}
+    only:string
+    dirs:=0
+    for e in entries {
+        if len(e.name)==0 || e.name[0]=='.' {continue}
+        if e.type!=.Directory {return "",false}
+        dirs+=1
+        if dirs>1 {return "",false}
+        only=e.name
+    }
+    if dirs!=1 {return "",false}
+    return strings.clone(only,allocator),true
+}
+
+@(private="file")
+relative_under :: proc(root,path:string,allocator:=context.allocator) -> (rel:string,ok:bool) {
+    a,_:=strings.replace_all(root,"\\","/",context.temp_allocator)
+    b,_:=strings.replace_all(path,"\\","/",context.temp_allocator)
+    a=strings.trim_right(a,"/")
+    b=strings.trim_right(b,"/")
+    if len(b)<len(a) {return "",false}
+    when ODIN_OS==.Windows {
+        if !strings.equal_fold(b[:len(a)],a) {return "",false}
+    } else {
+        if b[:len(a)]!=a {return "",false}
+    }
+    if len(b)==len(a) {return "",true}
+    if b[len(a)]!='/' {return "",false}
+    return strings.clone(b[len(a)+1:],allocator),true
 }
 
 // Fixes what the import is made from once its inputs are whole: its identity

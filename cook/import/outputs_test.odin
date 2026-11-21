@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:cook/textures"
+import "mirai:project"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import "mirai:store"
@@ -114,6 +115,44 @@ the_outputs_of_a_source_are_the_assets_its_package_lists :: proc(t:^testing.T) {
     gone,gone_ok:=pass(t,s,root,source,bytes,{"Granite"})
     left,_,_:=test_package(t,s,gone.report)
     testing.expect(t,gone_ok && len(left.assets)==3,"Wood is no longer listed")
+}
+
+@(test)
+default_catalog_path_peels_single_child_wrappers_and_keeps_a_root :: proc(t:^testing.T) {
+    a:=context.temp_allocator
+    // Case 1: project assets/ has multiple folders -> project name from manifest is the root.
+    r1,a1,_:=test_assets(t,"cat-multi")
+    if r1=="" {return}
+    m1:=project.manifest_default("MyPack")
+    testing.expect_value(t,project.manifest_write(project.path(r1,project.PROJECT_FILE,allocator=a),&m1).code,project.Error_Code.None)
+    os.make_directory_all(fmt.tprintf("%s/Rocks",a1))
+    os.make_directory_all(fmt.tprintf("%s/Crystals",a1))
+    f1:=fmt.tprintf("%s/Rocks/stone.glb",a1)
+    _=os.write_entire_file(f1,"x")
+    testing.expect_value(t,catalog_path_for(r1,f1,a),"MyPack/Rocks")
+
+    // Case 2: file directly in assets/ -> project name is the root.
+    f1root:=fmt.tprintf("%s/hero.glb",a1)
+    _=os.write_entire_file(f1root,"x")
+    testing.expect_value(t,catalog_path_for(r1,f1root,a),"MyPack")
+
+    // Case 3: assets/ has only one wrapper folder (Crystal_cave) with multiple folders inside -> Crystal_cave becomes the root.
+    r2,a2,_:=test_assets(t,"cat-single")
+    if r2=="" {return}
+    os.make_directory_all(fmt.tprintf("%s/Crystal_cave/Maps",a2))
+    os.make_directory_all(fmt.tprintf("%s/Crystal_cave/Meshes",a2))
+    f2:=fmt.tprintf("%s/Crystal_cave/Maps/L_showcase.umap",a2)
+    _=os.write_entire_file(f2,"x")
+    testing.expect_value(t,catalog_path_for(r2,f2,a),"Crystal_cave/Maps")
+
+    // Case 4: nested single-folder chain WrapperA/WrapperB/{Maps,Rocks} -> peels both to WrapperB.
+    r3,a3,_:=test_assets(t,"cat-chain")
+    if r3=="" {return}
+    os.make_directory_all(fmt.tprintf("%s/WrapperA/WrapperB/Maps",a3))
+    os.make_directory_all(fmt.tprintf("%s/WrapperA/WrapperB/Rocks",a3))
+    f3:=fmt.tprintf("%s/WrapperA/WrapperB/Maps/main.umap",a3)
+    _=os.write_entire_file(f3,"x")
+    testing.expect_value(t,catalog_path_for(r3,f3,a),"WrapperB/Maps")
 }
 
 // A quad of one material, which a model of the test draws.
