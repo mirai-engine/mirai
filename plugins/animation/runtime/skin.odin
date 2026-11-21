@@ -60,6 +60,8 @@ Skin_Instance :: struct {
 Skin_Update :: struct {slot:int,drawn,basis:mm.Transform,exact:u64}
 // morphed: its weights changed, and go to the renderer with the palette or on their own.
 Skin_Draw :: struct {work,slot:int,morphed:bool}
+// One budget slot per root rig, shared by every skinned mesh following its pose.
+Skin_Rig_Budget :: struct {seen,work_frame:u64,candidate:i32}
 
 // The rigs of the meshes the application loaded, by asset: one per
 // application, which every world reads.
@@ -79,6 +81,8 @@ Skin_Instances :: struct {
     updates:[dynamic]Skin_Update,
     draws:[dynamic]Skin_Draw,
     candidates:[dynamic]Budget_Candidate,
+    work_group:[dynamic]u32,
+    rig_groups:core.Entity_Map(Skin_Rig_Budget),
     workspace:Palette_Workspace,
     frame:u64,
 }
@@ -130,6 +134,7 @@ animation_skin_release :: proc(state:^Skin_Instances,renderer:^erender.Renderer)
     if state.allocator.procedure!=nil {context.allocator=state.allocator}
     for &instance in state.instances.values {skin_instance_free(renderer,&instance)}
     core.entity_map_clear(&state.instances)
+    core.entity_map_clear(&state.rig_groups)
 }
 
 // What the rigs hold in memory.
@@ -146,8 +151,29 @@ skin_instances_free :: proc(state:^Skin_Instances) {
     if state.allocator.procedure!=nil {context.allocator=state.allocator}
     for &instance in state.instances.values {skin_instance_free(nil,&instance)}
     core.entity_map_destroy(&state.instances)
-    delete(state.work);delete(state.updates);delete(state.draws);delete(state.candidates);palette_workspace_free(&state.workspace)
+    core.entity_map_destroy(&state.rig_groups)
+    delete(state.work);delete(state.updates);delete(state.draws);delete(state.candidates);delete(state.work_group);palette_workspace_free(&state.workspace)
     state^={}
+}
+
+// Root rig of a pose chain (Pose_Source leaders), so every skinned mesh of one character
+// shares one animation-budget decision and never updates out of phase with its own body.
+@(private)
+skin_budget_root :: proc(playback:core.Ref(Playback),owner:core.Entity) -> core.Entity {
+    root:=owner
+    for _ in 0..<8 {
+        pose:=constraint_playing(playback,root)
+        if pose==nil || pose.leader==core.NONE || pose.leader==root {break}
+        root=pose.leader
+    }
+    return root
+}
+
+@(private)
+budget_policy_merge :: proc "contextless" (a,b:Animation_Budget) -> Animation_Budget {
+    period:=b.period if a.period==0 else (a.period if b.period==0 else min(a.period,b.period))
+    sig:=b.significance if !finite(b.significance) else (a.significance if !finite(a.significance) else max(a.significance,b.significance))
+    return {period=period,significance=sig}
 }
 
 // The rig of a mesh, read again when its file changes; max(u32) without
@@ -230,8 +256,8 @@ animation_skin :: proc(
     morphing:=morphs.ptr.states[:] if morphs.ptr!=nil else nil
     posed:=len(rigs)+core.count(skins)
     capacity:=posed+len(morphing)
-    if reserve(&state.work,capacity)!=nil || reserve(&state.updates,capacity)!=nil || reserve(&state.draws,capacity)!=nil || reserve(&state.candidates,capacity)!=nil {memory_problem(problems,core.NONE,"the skinned meshes of the world, so none is drawn in this frame");return}
-    clear(&state.work);clear(&state.updates);clear(&state.draws);clear(&state.candidates)
+    if reserve(&state.work,capacity)!=nil || reserve(&state.updates,capacity)!=nil || reserve(&state.draws,capacity)!=nil || reserve(&state.candidates,capacity)!=nil || reserve(&state.work_group,capacity)!=nil {memory_problem(problems,core.NONE,"the skinned meshes of the world, so none is drawn in this frame");return}
+    clear(&state.work);clear(&state.updates);clear(&state.draws);clear(&state.candidates);clear(&state.work_group)
     alpha:=mm.saturate(frame.alpha)
     for row in 0..<capacity {
         rigid:=row>=posed
@@ -339,6 +365,14 @@ animation_skin :: proc(
         }
         work_index:=-1
         if !rigid {
+            rig_root:=skin_budget_root(playback,owner)
+            group_slot:=core.entity_map_index(&state.rig_groups,rig_root)
+            if group_slot<0 {
+                if _,kept:=core.entity_map_put(&state.rig_groups,rig_root,Skin_Rig_Budget{});!kept {memory_problem(problems,entity,"its skinned mesh");continue}
+                group_slot=core.entity_map_index(&state.rig_groups,rig_root)
+            }
+            group:=&state.rig_groups.values[group_slot]
+            group.seen=state.frame
             // Without a change in the last tick, previous and local are the same pose.
             // Shown as it is in this tick, it stays so until the next one rather than going back.
             exact:=alpha>=1 || fresh || pose.changed!=playback.ptr.frame || instance.exact==pose.changed+1
@@ -356,7 +390,12 @@ animation_skin :: proc(
                     continue
                 }
                 policy:=ANIMATION_BUDGET_DEFAULT
-                if policies!=nil {if value,present:=core.get(policies,owner);present {policy=value}}
+                if policies!=nil {
+                    if value,present:=core.get(policies,rig_root);present {policy=value}
+                    if owner!=rig_root {
+                        if value,present:=core.get(policies,owner);present {policy=budget_policy_merge(policy,value)}
+                    }
+                }
                 work_index=len(state.work)
                 append(&state.work,Pose_Palette_Work{parents=playing_topology(pose).parents[:],previous=playing_pose(pose,.Previous),current=playing_pose(pose,.Local),local=instance.local,world=instance.world,joints=rig.joints,palette=instance.palette,basis=basis,inverse=inverse,alpha=1 if exact else alpha,bone_offset=1,enabled=true})
                 append(&state.updates,Skin_Update{slot=slot,drawn=drawn,basis=basis,exact=pose.changed+1 if exact else 0})
@@ -366,15 +405,26 @@ animation_skin :: proc(
                     radius:=.5*linalg.length(source.bounds_max-source.bounds_min)*max(abs(drawn.scale.x),abs(drawn.scale.y),abs(drawn.scale.z))
                     pixels=budget_pixels(view.ptr^,mm.transform_point(drawn,.5*(source.bounds_min+source.bounds_max)),radius)
                 }
-                append(&state.candidates,Budget_Candidate{entity=entity,slot=u32(slot),policy=policy,pixels=pixels,force=instance.reset || !instance.copied || !time.playing})
+                force:=instance.reset || !instance.copied || !time.playing
+                if group.work_frame!=state.frame {
+                    group.work_frame=state.frame
+                    group.candidate=i32(len(state.candidates))
+                    append(&state.candidates,Budget_Candidate{entity=rig_root,slot=u32(group_slot),policy=policy,pixels=pixels,force=force})
+                } else {
+                    candidate:=&state.candidates[group.candidate]
+                    candidate.pixels=max(candidate.pixels,pixels)
+                    candidate.force ||= force
+                    candidate.policy=budget_policy_merge(candidate.policy,policy)
+                }
+                append(&state.work_group,u32(group.candidate))
             }
         }
         append(&state.draws,Skin_Draw{work=work_index,slot=slot,morphed=morphed})
     }
     if !palette_workspace_prepare(&state.workspace,len(state.instances.values),allocator) {memory_problem(problems,core.NONE,"the skinned meshes of the world, so none is drawn in this frame");return}
     if budget!=nil {
-        if budget_prepare(budget,len(state.instances.values),problems) && budget_select(budget,state.candidates[:],state.frame,frame.dt,config,problems) {
-            for &work,i in state.work {work.enabled=budget.selected[i]}
+        if budget_prepare(budget,len(state.rig_groups.values),problems) && budget_select(budget,state.candidates[:],state.frame,frame.dt,config,problems) {
+            for &work,i in state.work {work.enabled=budget.selected[state.work_group[i]]}
         }
     }
     system:=job_system if config.parallel else nil
@@ -434,5 +484,9 @@ animation_skin :: proc(
         if instance.seen==state.frame {continue}
         skin_instance_free(renderer,&instance)
         core.entity_map_remove_at(&state.instances,at)
+    }
+    #reverse for &group,at in state.rig_groups.values {
+        if group.seen==state.frame {continue}
+        core.entity_map_remove_at(&state.rig_groups,at)
     }
 }
