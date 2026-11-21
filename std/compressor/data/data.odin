@@ -18,7 +18,7 @@ Profile :: enum u8 {
 // Four characters, stored beside what a format wrote so that a read finds what decodes it.
 Format :: distinct u32
 
-MDC1 :: Format(u32('M')|u32('D')<<8|u32('C')<<16|u32('1')<<24)
+MDC2 :: Format(u32('M')|u32('D')<<8|u32('C')<<16|u32('2')<<24)
 // The LZ of the private implementation, also the streams Unreal packages hold. This one does not
 // decode it: Unknown_Format.
 MLZ1 :: Format(u32('M')|u32('L')<<8|u32('Z')<<16|u32('1')<<24)
@@ -50,7 +50,13 @@ encoder_init :: proc(e:^Encoder,allocator:=context.allocator) -> Error {
 }
 
 encoder_destroy :: proc(e:^Encoder) {
-    if e.mdc!=nil {free(e.mdc,e.allocator)}
+    if e.mdc!=nil {
+        delete(e.mdc.paths,e.allocator)
+        delete(e.mdc.long_previous,e.allocator)
+        delete(e.mdc.previous,e.allocator)
+        delete(e.mdc.offset_counts,e.allocator)
+        free(e.mdc,e.allocator)
+    }
     e^={}
 }
 
@@ -70,7 +76,7 @@ decoder_destroy :: proc(d:^Decoder) {
 // The format a profile writes. open: only the formats of this implementation, which every build
 // reads; this one has no others.
 format :: proc "contextless" (profile:Profile,open:=false) -> Format {
-    return MDC1
+    return MDC2
 }
 
 // The most encode writes for size bytes, whatever the profile.
@@ -84,7 +90,7 @@ bound :: proc "contextless" (size:int) -> int {
 // What format wrote into src, into all of dst, which is its decoded size. Never reads or writes
 // outside them, whatever src holds.
 decode :: proc(d:^Decoder,format:Format,src,dst:[]u8) -> Error {
-    if format!=MDC1 {return .Unknown_Format}
-    if len(src)>MAX_BYTES || len(dst)>MAX_BYTES {return .Corrupt}
-    return decode_mdc1(d,src,dst)
+    if format!=MDC2 {return .Unknown_Format}
+    if len(dst)>MAX_BYTES {return .Corrupt}
+    return decode_mdc2(d,src,dst)
 }

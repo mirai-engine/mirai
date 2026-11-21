@@ -52,14 +52,18 @@ journal sends over the network, editor thumbnails, the shaders the executables e
   (restoring layouts of blocks of textures) and `blocks` (block encoders and layouts, engine-time).
   Nothing else in the engine imports a codec. The CLI names it
   ([build](../../mirai-projects/references/build.md#compressor)): the open one,
-  `std/compressor` (MDC1, no block layout), or the private `mirai-compression` with the same
-  packages and declarations, which also decodes MDC1 through `compressor_open`. Open builds encode
+  `std/compressor` (MDC2, no block layout), or the private `mirai-compression` with the same
+  packages and declarations, which also decodes MDC2 through `compressor_open`. Open builds encode
   blocks on the GPU in
   [texture cooking](../../mirai-imports/references/imports.md#textures-cooktextures).
 - **Profiles.** A write says what it favors (`data.Profile`): `Fast` for what the editor,
   imports and a running game save; a cook writes with `Ultra` (a shipped game) or `Balanced` (a
   dev game), and what streams while playing with `profile_streamed` of it (`Speed` in place of
-  `Ultra`). All open profiles write MDC1. A read needs no profile: the stream names its format.
+  `Ultra`). All open profiles write MDC2. A read needs no profile: the stream names its format.
+- **MDC2 blocks.** Entropy tags carry short lengths directly and take longer lengths from a byte
+  stream. Aligned distances use fewer extra bits. A block can store literal differences against
+  the bytes at its previous match distance. Each block can match into earlier blocks in its
+  piece. The decoder uses preallocated scratch to reconstruct it.
 - **Codecs.** What a write may use (`Codecs`): `None`, the zero value, no stage of a compressor;
   `Open`, the formats every build reads; `Best`, what the compressor of the build has. Every
   document is written `None` but the files a cook ships, which take `project_codecs`
