@@ -91,11 +91,27 @@ register :: proc(s:^editor.Session) {
 }
 
 @(private)
-sets :: proc(s:^editor.Session) -> (abilities:core.Records(ab.Ability),kits:core.Records(ab.Ability_Kit)) {
-    if s.app==nil {return}
-    if i:=core.record_of_ref(s.info,core.Record(ab.Ability));i>=0 {abilities.set=host.app_record_set(s.app,i)}
-    if i:=core.record_of_ref(s.info,core.Record(ab.Ability_Kit));i>=0 {kits.set=host.app_record_set(s.app,i)}
-    return
+records :: proc(s:^editor.Session,$T:typeid) -> core.Records(T) {
+    if s.app!=nil {
+        if i:=core.record_of_ref(s.info,core.Record(T));i>=0 {return {host.app_record_set(s.app,i)}}
+    }
+    return {}
+}
+
+@(private)
+sets :: proc(s:^editor.Session) -> ab.Ability_Data {
+    return {records(s,ab.Ability),records(s,ab.Ability_Kit),
+        records(s,ab.Ability_Hitbox),records(s,ab.Ability_Feedback)}
+}
+
+@(private)
+sheet_cache :: proc(s:^editor.Session,data:ab.Ability_Data) -> ^ab.Ability_Sheets {
+    if s.app==nil {return nil}
+    shared:=core.world_ref(s.app.shared,s.info,.Shared)
+    cache:=core.world_storage_of(shared,ab.Ability_Sheets)
+    context.allocator=s.app.allocator
+    if cache==nil || !ab.sheets_refresh(cache,data) {return nil}
+    return cache
 }
 
 @(private)
@@ -140,7 +156,13 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         return
     }
     u,_:=core.get(users,e)
-    abilities,kits:=sets(s)
+    state:ab.Ability_State
+    track:ab.Ability_Tracking
+    state_found:=false
+    if rows:=core.world_table_of(world,ab.Ability_State);rows!=nil {state,state_found=core.get(rows,e)}
+    if rows:=core.world_table_of(world,ab.Ability_Tracking);rows!=nil {track,_=core.get(rows,e)}
+    data:=sets(s)
+    abilities,kits:=data.abilities,data.kits
     time:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
     dt:=time.dt
@@ -150,41 +172,41 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     }
     r:=api.call_result(call,Inspect_Result)
     if u.kit!={} {r.kit=core.record_name(kits,u.kit) if core.record_name(kits,u.kit)!="" else "missing row"}
-    r.ability=row_name(abilities,u.ability)
-    active:=ab.ability_sheet(abilities,u.ability)
+    r.ability=row_name(abilities,state.ability)
+    active:=ab.record_sheet(abilities,state.ability)
     at:ab.Ability_Time
     if active!=nil {
-        at={local=i64(time.tick-u.start) if time.tick>=u.start else 0,own=u.own}
+        at={local=i64(time.tick-state.start) if time.tick>=state.start else 0,own=state.own}
         r.seconds,r.own_seconds,r.duration=f32(at.local)*dt,at.own*dt,active.duration
         windows:=make([dynamic]Window_Result,call.allocator)
         for &win,i in active.windows {
             if !ab.ability_window_open(win,dt,at) {continue}
             shown:=Window_Result{index=i,from=win.from,to=win.to,cancel_into=bits_names(s,call,ab.Ability_Tag,u64(win.cancel_into))}
             if win.clock==.Own {shown.clock="own"}
-            if win.hitbox.shape!=.None {shown.hitbox=fmt.tprintf("%v",win.hitbox.shape)}
+            if hitbox:=ab.record_sheet(data.hitboxes,win.hitbox);hitbox!=nil {shown.hitbox=fmt.tprintf("%v",hitbox.shape)}
             if win.cue!=ab.CUE_NONE {shown.cue=value_name(s,ab.Ability_Cue,i64(win.cue))}
             append(&windows,shown)
         }
         r.windows=windows[:]
     }
-    r.statuses=bits_names(s,call,ab.Ability_Status,u64(u.statuses))
+    r.statuses=bits_names(s,call,ab.Ability_Status,u64(state.statuses))
     attributes:=make([dynamic]Attribute_Result,call.allocator)
     for entry,i in u.attributes {
-        if entry.attribute!=ab.ATTRIBUTE_NONE {append(&attributes,Attribute_Result{value_name(s,ab.Ability_Attribute,i64(entry.attribute)),entry.base,u.values[i],entry.max})}
+        if entry.attribute!=ab.ATTRIBUTE_NONE {append(&attributes,Attribute_Result{value_name(s,ab.Ability_Attribute,i64(entry.attribute)),entry.base,state.values[i] if state_found else entry.base,entry.max})}
     }
     r.attributes=attributes[:]
     buffer:=make([dynamic]Buffer_Result,call.allocator)
-    for b in u.buffer {
-        if b.ability!={} {append(&buffer,Buffer_Result{row_name(abilities,b.ability),f32(time.tick-b.tick)*dt if time.tick>=b.tick else 0,b.running && u.ability!={} && u.start==b.run})}
+    for b in track.buffer {
+        if b.ability!={} {append(&buffer,Buffer_Result{row_name(abilities,b.ability),f32(time.tick-b.tick)*dt if time.tick>=b.tick else 0,b.running && state.ability!={} && state.start==b.run})}
     }
     r.buffer=buffer[:]
     cooldowns:=make([dynamic]Cooldown_Result,call.allocator)
-    for c in u.cooldowns {
+    for c in track.cooldowns {
         if c.until>time.tick {append(&cooldowns,Cooldown_Result{row_name(abilities,c.ability),f32(c.until-time.tick)*dt})}
     }
     r.cooldowns=cooldowns[:]
     timers:=make([dynamic]Timer_Result,call.allocator)
-    for timer in u.timers {
+    for timer in track.timers {
         if timer.until<=time.tick {continue}
         shown:=Timer_Result{tags=bits_names(s,call,ab.Ability_Tag,u64(timer.tags)),statuses=bits_names(s,call,ab.Ability_Status,u64(timer.statuses)),stacks=int(timer.stacks),seconds_left=f32(timer.until-time.tick)*dt}
         if timer.period>0 {shown.every,shown.amount=value_name(s,ab.Ability_Attribute,i64(timer.attribute)),timer.amount}
@@ -193,19 +215,26 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     }
     r.timers=timers[:]
     candidates:=make([dynamic]Candidate_Result,call.allocator)
-    if kit:=ab.kit_sheet(kits,u.kit);kit!=nil {
+    sheets:=sheet_cache(s,data)
+    if sheets==nil {
+        api.call_failf(call,api.SERVER_ERROR,"out of memory for ability validation")
+        return
+    }
+    if kit:=ab.record_sheet(kits,u.kit);kit!=nil {
         params:ab.Ability_World
         params.time=time
         if t:=core.world_table_of(world,phys.Character);t!=nil {params.characters=core.read(t)}
-        text:[512]u8
         for ref in kit.abilities {
             if ref=={} {continue}
-            a:=ab.ability_sheet(abilities,ref)
-            blocked:string
-            switch {
-            case a==nil: blocked="its row is missing"
-            case ab.ability_check(a,text[:])!="": blocked=fmt.tprintf("its sheet is not valid: %s",ab.ability_check(a,text[:]))
-            case: blocked=block_text(ab.start_block(&params,time.tick,dt,e,&u,kit,active,at,a,ref))
+            row:=ab.record_row(abilities,ref)
+            a:=ab.record_at(abilities,row)
+            blocked:="its row is missing"
+            if a!=nil {
+                if problem:=base.text_get(sheets.abilities[row][:]);problem!="" {
+                    blocked=fmt.tprintf("its sheet is not valid: %s",problem)
+                } else {
+                    blocked=block_text(ab.start_block(&params,time.tick,dt,e,&u,&state,&track,state.statuses,kit,active,at,a,ref))
+                }
             }
             append(&candidates,Candidate_Result{row_name(abilities,ref),blocked})
         }
@@ -230,28 +259,25 @@ block_text :: proc(block:ab.Ability_Block) -> string {
 
 @(private)
 check :: proc(s:^editor.Session,call:^api.Call) {
-    abilities,kits:=sets(s)
-    text:[512]u8
+    data:=sets(s)
+    sheets:=sheet_cache(s,data)
+    if sheets==nil {
+        api.call_failf(call,api.SERVER_ERROR,"out of memory for ability validation")
+        return
+    }
     problems:=make([dynamic]Check_Problem,call.allocator)
-    missing :: proc(rows:core.Records(ab.Ability),ref:core.Record(ab.Ability)) -> bool {return ref!={} && ab.ability_sheet(rows,ref)==nil}
-    for i in 0..<core.records_count(abilities) {
-        a,ref:=core.records_at(abilities,i)
-        table,row:=table_name(abilities.set,ref.table),core.record_name(abilities,ref)
-        if t:=ab.ability_check(&a,text[:]);t!="" {append(&problems,Check_Problem{table,row,fmt.tprint(t)})}
-        if missing(abilities,a.next) {append(&problems,Check_Problem{table,row,"next names a row no table of Ability has: pick another row or none"})}
-        for win,k in a.windows {
-            if missing(abilities,win.hitbox.effect.use) {append(&problems,Check_Problem{table,row,fmt.tprintf("windows[%d].hitbox.effect.use names a row no table of Ability has: pick another row or none",k)})}
-        }
-    }
-    for i in 0..<core.records_count(kits) {
-        k,ref:=core.records_at(kits,i)
-        table,row:=table_name(kits.set,ref.table),core.record_name(kits,ref)
-        if t:=ab.kit_check(&k,text[:]);t!="" {append(&problems,Check_Problem{table,row,fmt.tprint(t)})}
-        for a,n in k.abilities {
-            if missing(abilities,a) {append(&problems,Check_Problem{table,row,fmt.tprintf("abilities[%d] names a row no table of Ability has: pick another row or none",n)})}
-        }
-    }
-    api.call_result(call,Check_Result)^={problems[:],core.records_count(abilities),core.records_count(kits)}
+    for &problem,i in sheets.abilities {add_problem(&problems,data.abilities.set,i,problem[:])}
+    for &problem,i in sheets.kits {add_problem(&problems,data.kits.set,i,problem.problem[:])}
+    for &problem,i in sheets.hitboxes {add_problem(&problems,data.hitboxes.set,i,problem[:])}
+    api.call_result(call,Check_Result)^={problems[:],len(sheets.abilities),len(sheets.kits)}
+}
+
+@(private)
+add_problem :: proc(problems:^[dynamic]Check_Problem,set:^core.Record_Set,i:int,text:[]u8) {
+    message:=base.text_get(text)
+    if message=="" {return}
+    row:=&set.rows[i]
+    append(problems,Check_Problem{table_name(set,row.table),base.text_get(row.name[:]),fmt.tprint(message)})
 }
 
 @(private)
@@ -269,12 +295,13 @@ use :: proc(s:^editor.Session,call:^api.Call) {
         api.call_failf(call,api.INVALID_PARAMS,"%s is not an entity with an Ability_User in the running game: add one, or pick another entity",base.text_get(p.entity[:]))
         return
     }
-    abilities,_:=sets(s)
+    abilities:=records(s,ab.Ability)
     name,table:=base.text_get(p.ability[:]),base.text_get(p.table[:])
     found:core.Record(ab.Ability)
     matches:=0
     for i in 0..<core.records_count(abilities) {
-        _,ref:=core.records_at(abilities,i)
+        row:=&abilities.set.rows[i]
+        ref:=core.Record(ab.Ability){row.table,row.row}
         if core.record_name(abilities,ref)!=name || table!="" && table_name(abilities.set,ref.table)!=table {continue}
         found=ref
         matches+=1

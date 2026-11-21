@@ -1,7 +1,8 @@
 package abilities
 
 import "core:fmt"
-import "core:mem"
+import "mirai:core"
+import inp "mirai:engine/input"
 import locomotion "plugins:locomotion/runtime"
 
 // What is wrong with a sheet and how to fix it, written into out; empty when it is valid. The
@@ -9,6 +10,7 @@ import locomotion "plugins:locomotion/runtime"
 ability_check :: proc(a:^Ability,out:[]u8) -> string {
     if a==nil {return ""}
     if a.input.on>max(Ability_Trigger) {return fmt.bprintf(out,"input.on is %d, not a trigger: use none, pressed, released, held or down",u8(a.input.on))}
+    if a.input.on!=.None && int(a.input.action)>=inp.ACTION_CAPACITY {return "input.action is outside the input map: pick an action"}
     if !seconds_ok(a.input.hold) {return fmt.bprintf(out,"input.hold is %v: give the seconds the action is held, 0 or more",a.input.hold)}
     if !seconds_ok(a.input.after) {return fmt.bprintf(out,"input.after is %v: give the seconds into a running ability from which the input counts, 0 or more",a.input.after)}
     if a.input.wait>max(Ability_Wait) {return fmt.bprintf(out,"input.wait is %d: use buffer or running",u8(a.input.wait))}
@@ -26,25 +28,33 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
     }
     for &w,i in a.windows {
         if w.to==0 {
-            empty:=Ability_Window{}
-            if mem.compare_ptrs(&w,&empty,size_of(Ability_Window))!=0 {return fmt.bprintf(out,"windows[%d] does something but its to is 0, which leaves it unused: give it the second it closes at",i)}
+            if w!=(Ability_Window{}) {return fmt.bprintf(out,"windows[%d] does something but its to is 0, which leaves it unused: give it the second it closes at",i)}
             continue
         }
         if !finite(w.from) || !finite(w.to) || w.from<0 || w.from>=w.to {return fmt.bprintf(out,"windows[%d] runs from %v to %v: from must be 0 or more and below to",i,w.from,w.to)}
         if w.clock>max(Ability_Clock) {return fmt.bprintf(out,"windows[%d].clock is %d: use world or own",i,u8(w.clock))}
         if w.clock==.World && w.to>a.duration {return fmt.bprintf(out,"windows[%d] closes at %v, after the duration %v: close it by then or lengthen the ability",i,w.to,a.duration)}
         if text:=modifier_check(w.modify,out);text!="" {return fmt.bprintf(out,"windows[%d].modify %s",i,text)}
-        if w.hitbox.shape>max(Hitbox_Shape) {return fmt.bprintf(out,"windows[%d].hitbox.shape is %d: use none, box, sphere or capsule",i,u8(w.hitbox.shape))}
-        if w.hitbox.shape!=.None {
-            h:=w.hitbox
-            for v in h.center {if !finite(v) {return fmt.bprintf(out,"windows[%d].hitbox.center is not a point: give finite metres",i)}}
-            used:=3 if h.shape==.Box else 2 if h.shape==.Capsule else 1
-            for k in 0..<used {if !finite(h.size[k]) || h.size[k]<=0 {return fmt.bprintf(out,"windows[%d].hitbox.size[%d] is %v: a %v needs it above 0 (box: half extents; sphere: x radius; capsule: x radius and y half height)",i,k,h.size[k],h.shape)}}
-            if text:=effect_check(h.effect,out);text!="" {return fmt.bprintf(out,"windows[%d].hitbox.effect %s",i,text)}
-        }
         for v in w.move.velocity {if !finite(v) {return fmt.bprintf(out,"windows[%d].move.velocity is not a velocity: give finite metres per second",i)}}
         if w.move.mix>max(locomotion.Move_Mix) {return fmt.bprintf(out,"windows[%d].move.mix is %d: use additive or override",i,u8(w.move.mix))}
     }
+    return ""
+}
+
+hitbox_check :: proc(h:^Ability_Hitbox,out:[]u8) -> string {
+    if h.shape==.None || h.shape>max(Hitbox_Shape) {
+        return "shape must be box, sphere or capsule"
+    }
+    for v in h.center {
+        if !finite(v) {return "center is not a point: give finite metres"}
+    }
+    used:=3 if h.shape==.Box else 2 if h.shape==.Capsule else 1
+    for i in 0..<used {
+        if !finite(h.size[i]) || h.size[i]<=0 {
+            return fmt.bprintf(out,"size[%d] must be finite and above 0 for a %v",i,h.shape)
+        }
+    }
+    if text:=effect_check(h.effect,out);text!="" {return fmt.bprintf(out,"effect %s",text)}
     return ""
 }
 
@@ -80,16 +90,30 @@ modifier_check :: proc(m:Ability_Modifier,out:[]u8) -> string {
     return ""
 }
 
-// The attributes of a user that are not amounts, written into out; empty when they are valid.
-attributes_check :: proc(user:^Ability_User,out:[]u8) -> string {
+Attribute_Problem :: enum u8 {None, Number, Duplicate}
+
+attributes_check :: proc(user:^Ability_User) -> (problem:Attribute_Problem,index:int) {
+    seen:[256]bool
     for entry,i in user.attributes {
         if entry.attribute==ATTRIBUTE_NONE {continue}
-        if !finite(entry.base) || !finite(entry.max) || !finite(entry.regen) || entry.max<0 {return fmt.bprintf(out,"attributes[%d] has a base, max or regen that is not a number, or a negative max: give finite values and a max of 0 or more",i)}
-        for other in user.attributes[:i] {
-            if other.attribute==entry.attribute {return fmt.bprintf(out,"attributes[%d] repeats an attribute of an earlier entry: keep one entry per attribute",i)}
+        if !finite(entry.base) || !finite(entry.max) || !finite(entry.regen) || entry.max<0 {
+            return .Number,i
         }
+        id:=int(entry.attribute)
+        if seen[id] {return .Duplicate,i}
+        seen[id]=true
     }
-    return ""
+    return
+}
+
+attribute_report :: proc(problems:^core.Problems,e:core.Entity,problem:Attribute_Problem,i:int) {
+    switch problem {
+    case .None:
+    case .Number:
+        core.report(problems,e,"abilities.attributes","attributes[%d] needs a finite base, max and regen and a max of 0 or more",i)
+    case .Duplicate:
+        core.report(problems,e,"abilities.attributes","attributes[%d] repeats an attribute: keep one entry per attribute",i)
+    }
 }
 
 @(private)
