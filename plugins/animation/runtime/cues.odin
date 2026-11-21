@@ -36,9 +36,9 @@ animation_cues :: proc(
         if row<0 {continue}
         config:=core.view_at(bindings,row)
         for i in 0..<len(config.bindings) {
-            cue:=&config.ptr.bindings[i]
+            cue:=&config.bindings[i]
             if cue.marker[0]==0 || base.name_hash(base.text_get(cue.marker[:]))!=event.name {continue}
-            pose,placed:=cue_pose(cue,event.entity,playback.ptr,skeletons.ptr,transforms,parents,worlds)
+            pose,placed:=cue_pose(cue,event.entity,playback,skeletons,transforms,parents,worlds)
             if !placed {
                 core.report(problems,event.entity,"animation.cue_anchor",
                     "the marker cue needs an entity transform or a valid bone or socket")
@@ -51,12 +51,12 @@ animation_cues :: proc(
 
 @(private)
 cue_pose :: proc(
-    cue:^Animation_Cue,entity:core.Entity,playback:^Playback,skeletons:^Skeleton_Assets,
+    cue:^Animation_Cue,entity:core.Entity,playback:core.Ref(Playback),skeletons:core.Ref(Skeleton_Assets),
     transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
 ) -> (mm.Transform,bool) {
     if cue.anchor==.Entity {return constraint_world(transforms,parents,worlds,entity)}
-    if playback==nil || cue.name[0]==0 {return {},false}
+    if cue.name[0]==0 {return {},false}
     rig:=constraint_playing(playback,entity)
     if rig==nil || rig.seen!=playback.frame || !rig.pose_ready {return {},false}
     name:=base.name_hash(base.text_get(cue.name[:]))
@@ -65,7 +65,7 @@ cue_pose :: proc(
     switch cue.anchor {
     case .Entity:
     case .Bone: bone=bone_find(rig,name)
-    case .Socket: bone,offset=spatial_socket_find(rig,skeletons,name)
+    case .Socket: bone,offset=spatial_socket_find(rig,skeletons.ptr,name)
     }
     poses:=playing_pose(rig,.World)
     if bone<0 || bone>=len(poses) {return {},false}

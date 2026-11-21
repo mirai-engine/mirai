@@ -81,10 +81,10 @@ rig_operations_preserve_named_operations_generations_and_copied_per_rig_state ::
         if !testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60) && test_rigs_retarget(&state,&playback,&modifiers,&characters,&problems)) {return}
         for kind in kinds {
             for name in ([2]string{"first","second"}) {
-                diagnostic,found:=animation_rig_diagnostic(&modifiers,state.entity,kind,base.name_hash(name))
+                diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),state.entity,kind,base.name_hash(name))
                 testing.expect(t,found && diagnostic.rig==state.entity && diagnostic.kind==kind)
             }
-            _,found:=animation_rig_diagnostic(&modifiers,state.entity,kind,base.name_hash("missing"))
+            _,found:=animation_rig_diagnostic(core.ref(&modifiers),state.entity,kind,base.name_hash("missing"))
             testing.expect(t,!found)
         }
     }
@@ -94,14 +94,14 @@ rig_operations_preserve_named_operations_generations_and_copied_per_rig_state ::
     modifier(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({.4,1,0}),weight=.5,enabled=true,goal=true},"second","hand")
     modifier(&requests,{rig=rig,kind=.Spring,position={1,0,0},weight=.5,enabled=true,goal=true},"second")
     modifier_take(&modifiers,&characters,&requests,&problems,0)
-    prepared:=modifier_rig(&modifiers,rig)
+    prepared:=modifier_rig(core.ref(&modifiers),rig)
     testing.expect_value(t,modifier_override(prepared,.Chain_IK,1).target.position,mm.Vec3{.3,1,0})
     testing.expect_value(t,test_modifier_weight(&modifiers,rig,.Chain_IK,"second"),f32(.75))
     testing.expect_value(t,modifier_override(prepared,.Multi_IK,1).target.position,mm.Vec3{.4,1,0})
     testing.expect(t,test_rigs_apply(&states[1],&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&states[1],type_info_of(Playing));defer playing_free(&copied_state)
-    testing.expect(t,raw_data(modifier_rig(&copied,rig).multi_states)!=raw_data(prepared.multi_states))
+    testing.expect(t,raw_data(modifier_rig(core.ref(&copied),rig).multi_states)!=raw_data(prepared.multi_states))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<16 {
@@ -122,9 +122,9 @@ rig_operations_preserve_named_operations_generations_and_copied_per_rig_state ::
     base.text_set(chain.name[:],"new")
     test_modifier_profile(&modifiers,&characters,replacement,{chain_ik={chain}})
     testing.expect(t,test_rigs_apply(&new_state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,0))
-    _,old_diagnostic:=animation_rig_diagnostic(&modifiers,states[0].entity,.Chain_IK,base.name_hash("first"))
+    _,old_diagnostic:=animation_rig_diagnostic(core.ref(&modifiers),states[0].entity,.Chain_IK,base.name_hash("first"))
     testing.expect(t,!old_diagnostic)
-    diagnostic,found:=animation_rig_diagnostic(&modifiers,replacement,.Chain_IK,base.name_hash("new"))
+    diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),replacement,.Chain_IK,base.name_hash("new"))
     testing.expect(t,found && diagnostic.rig==replacement)
 }
 
@@ -158,7 +158,7 @@ multi_ik_full_and_partial_weights_preserve_solver_pose_and_diagnostics :: proc(t
             result.reached=result.residual<=settings.tolerance
         }
         for local,i in playing_pose(&state,.Local) {testing.expect_value(t,local,playing_pose(&reference,.Local)[i]);testing.expect_value(t,playing_pose(&state,.World)[i],playing_pose(&reference,.World)[i])}
-        diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Multi_IK,base.name_hash("body"))
+        diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),rig,.Multi_IK,base.name_hash("body"))
         testing.expect(t,found && diagnostic.valid && diagnostic.residual==result.residual && diagnostic.angular_error==result.angular_error && diagnostic.iterations==result.iterations && diagnostic.reached==result.reached)
     }
 }
@@ -195,7 +195,7 @@ profile_reload_allocation_failure_preserves_spring_state_controls_and_recovers_a
     if !testing.expect(t,test_rigs_apply(&w.playback.states[0],&w.modifiers,&profiles,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)) {return}
     modifier(&w.requests,{rig=entity,kind=.Spring,weight=.4,enabled=true},"tail")
     modifier_take(&w.modifiers,&profiles,&w.requests,nil,.1)
-    current:=modifier_rig(&w.modifiers,entity)
+    current:=modifier_rig(core.ref(&w.modifiers),entity)
     revision,inputs:=current.revision,w.modifiers.inputs
     control,joint:=modifier_states(current,.Spring)[0],current.spring_states[0].springs[2]
     buffer:=raw_data(current.spring_states)
@@ -288,7 +288,7 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     chain.target=spatial_definition_point({1.5,1,0});chain.pole,chain.use_pole={0,0,2},true
     prepared:=test_modifier_profile(&modifiers,&characters,rig,{chain_ik={chain}})
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
-    diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Chain_IK,base.name_hash("arm"))
+    diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),rig,.Chain_IK,base.name_hash("arm"))
     testing.expect(t,found && diagnostic.valid && diagnostic.reached && diagnostic.residual<.001)
     modifier_states(prepared,.Chain_IK)[0].base_enabled=false
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end;spring.settings.gravity={};spring.settings.force={2,0,0}
@@ -312,12 +312,12 @@ chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls
     context=saved
     testing.expect(t,stable && problems.count==0)
     for value,i in playing_pose(&state,.Local) {testing.expect_value(t,value,playing_pose(&copied_state,.Local)[i])}
-    testing.expect_value(t,prepared.spring_states[0].springs,modifier_rig(&copied,rig).spring_states[0].springs)
+    testing.expect_value(t,prepared.spring_states[0].springs,modifier_rig(core.ref(&copied),rig).spring_states[0].springs)
     state.bound+=1;state.targets[4]=base.name_hash("replaced")
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,0))
     state.bound+=1;state.aliases[4]=state.targets[4]
     testing.expect(t,!test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,0))
-    diagnostic,found=animation_rig_diagnostic(&modifiers,rig,.Spring,base.name_hash("tail"));testing.expect(t,found && !diagnostic.valid)
+    diagnostic,found=animation_rig_diagnostic(core.ref(&modifiers),rig,.Spring,base.name_hash("tail"));testing.expect(t,found && !diagnostic.valid)
 }
 
 @(test)
@@ -363,7 +363,7 @@ rig_goal_persistence_keeps_independent_effectors_and_accepts_chain_retarget_goal
     characters:Character_Assets;defer character_assets_free(&characters)
     test_modifier_profile(&w.modifiers,&characters,body,{multi_ik={multi}})
     test_modifier_profile(&w.modifiers,&characters,transfer,{retarget_chains={chain}})
-    prepared:=modifier_rig(&w.modifiers,body)
+    prepared:=modifier_rig(core.ref(&w.modifiers),body)
     modifier(&w.requests,{rig=body,kind=.Multi_IK,target=spatial_point({1,2,3}),weight=1,enabled=true,goal=true},"hands","left")
     modifier(&w.requests,{rig=body,kind=.Multi_IK,target=spatial_point({4,5,6}),weight=1,enabled=true,goal=true},"hands","right")
     modifier(&w.requests,{rig=transfer,kind=.Chain_Retarget,weight=.4,enabled=true,goal=true},"chain")
@@ -393,15 +393,15 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     base.text_set(multi.name[:],"body")
         test_modifier_profile(&modifiers,&characters,rig,{multi_ik={multi}})
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
-    diagnostic,found:=animation_rig_diagnostic(&modifiers,rig,.Multi_IK,base.name_hash("body"));testing.expect(t,found && diagnostic.valid && diagnostic.reached)
+    diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),rig,.Multi_IK,base.name_hash("body"));testing.expect(t,found && diagnostic.valid && diagnostic.reached)
     requests:Animation_Requests;defer delete(requests.modifiers.items)
     modifier(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({.5,1.8,0}),weight=1,enabled=true,goal=true},"body","hand")
     modifier_take(&modifiers,&characters,&requests,nil,0)
-    testing.expect_value(t,modifier_override(modifier_rig(&modifiers,rig),.Multi_IK,0).target.position,mm.Vec3{.5,1.8,0})
+    testing.expect_value(t,modifier_override(modifier_rig(core.ref(&modifiers),rig),.Multi_IK,0).target.position,mm.Vec3{.5,1.8,0})
     copy(playing_pose(&state,.Local),state.rest[:]);testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
-    testing.expect(t,raw_data(modifier_rig(&copied,rig).multi_states[0].backup)!=raw_data(modifier_rig(&modifiers,rig).multi_states[0].backup))
+    testing.expect(t,raw_data(modifier_rig(core.ref(&copied),rig).multi_states[0].backup)!=raw_data(modifier_rig(core.ref(&modifiers),rig).multi_states[0].backup))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<60 {
@@ -412,7 +412,7 @@ multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solve
     context=saved
     testing.expect(t,stable)
     for pose,i in playing_pose(&state,.Local) {testing.expect_value(t,pose,playing_pose(&copied_state,.Local)[i])}
-    testing.expect_value(t,modifier_rig(&modifiers,rig).multi_states[0].diagnostic,modifier_rig(&copied,rig).multi_states[0].diagnostic)
+    testing.expect_value(t,modifier_rig(core.ref(&modifiers),rig).multi_states[0].diagnostic,modifier_rig(core.ref(&copied),rig).multi_states[0].diagnostic)
 }
 
 @(test)
@@ -433,26 +433,26 @@ look_and_ik_publish_their_residual_and_whether_they_reach_in_the_constraints_of_
     inputs:=Constraint_Inputs{problems=&problems}
     constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0,characters=&characters)
     testing.expect_value(t,problems.count,0)
-    reached,found:=animation_rig_diagnostic(&cache,rig,.IK,base.name_hash("near"))
+    reached,found:=animation_rig_diagnostic(core.ref(&cache),rig,.IK,base.name_hash("near"))
     testing.expect(t,found && reached.rig==rig && reached.kind==.IK && reached.valid && reached.reached && reached.residual<.001)
-    missed,missed_found:=animation_rig_diagnostic(&cache,rig,.IK,base.name_hash("far"))
+    missed,missed_found:=animation_rig_diagnostic(core.ref(&cache),rig,.IK,base.name_hash("far"))
     testing.expect(t,missed_found && missed.valid && !missed.reached && abs(missed.residual-2)<1e-3,"an unreachable target is a residual, not an invalid solve")
-    aimed,aimed_found:=animation_rig_diagnostic(&cache,rig,.Look,base.name_hash("joint3"))
+    aimed,aimed_found:=animation_rig_diagnostic(core.ref(&cache),rig,.Look,base.name_hash("joint3"))
     testing.expect(t,aimed_found && aimed.valid && aimed.reached && aimed.residual<1e-3 && aimed.angular_error<1e-3)
-    _,beyond:=animation_rig_diagnostic(&cache,rig,.Look,base.name_hash("missing"));_,elsewhere:=animation_rig_diagnostic(nil,rig,.IK,base.name_hash("near"))
+    _,beyond:=animation_rig_diagnostic(core.ref(&cache),rig,.Look,base.name_hash("missing"));_,elsewhere:=animation_rig_diagnostic({},rig,.IK,base.name_hash("near"))
     testing.expect(t,!beyond && !elsewhere)
     // With an offset (eyes above the bone) the ray from the offset passes through the target.
     looks[0].offset={0,.2,-.1}
     copy(playing_pose(&state,.Local),state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0,characters=&characters)
-    aimed,_=animation_rig_diagnostic(&cache,rig,.Look,base.name_hash("joint3"))
+    aimed,_=animation_rig_diagnostic(core.ref(&cache),rig,.Look,base.name_hash("joint3"))
     testing.expect(t,problems.count==0 && aimed.valid && aimed.reached && aimed.residual<1e-3,"the eyes aim at the target")
     looks[0].target=spatial_definition_point({5,1,0});looks[0].max_angle=.2
     copy(playing_pose(&state,.Local),state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0,characters=&characters)
-    aimed,_=animation_rig_diagnostic(&cache,rig,.Look,base.name_hash("joint3"))
+    aimed,_=animation_rig_diagnostic(core.ref(&cache),rig,.Look,base.name_hash("joint3"))
     testing.expect(t,problems.count==0 && aimed.valid && !aimed.reached && aimed.angular_error>1 && aimed.residual>1,"a look held by max_angle says how far it misses")
     modifier_states(prepared,.Look)[0].base_enabled=false
     copy(playing_pose(&state,.Local),state.rest[:]);constraints_apply(&state,&playback,inputs,&cache,&transforms,{},0,characters=&characters)
-    aimed,_=animation_rig_diagnostic(&cache,rig,.Look,base.name_hash("joint3"))
+    aimed,_=animation_rig_diagnostic(core.ref(&cache),rig,.Look,base.name_hash("joint3"))
     testing.expect(t,!aimed.valid)
 }
 
@@ -486,14 +486,14 @@ the_sampled_pose_of_a_rig_is_the_one_before_its_rig_operations :: proc(t:^testin
         return true
     }
     tick(&playback,state,inputs,&characters,&transforms,&reaching)
-    sampled,sampled_ok:=pose_space(&playback,rig,context.temp_allocator,.Sampled)
-    finished,finished_ok:=pose_space(&playback,rig,context.temp_allocator)
+    sampled,sampled_ok:=pose_space(core.ref(&playback),rig,context.temp_allocator,.Sampled)
+    finished,finished_ok:=pose_space(core.ref(&playback),rig,context.temp_allocator)
     testing.expect(t,sampled_ok && finished_ok && problems.count==0)
     testing.expect(t,!same(sampled,finished),"the Multi IK row moves the chain after the sampled pose")
     tick(&playback,state,inputs,&characters,&transforms,&still)
-    sampled,_=pose_space(&playback,rig,context.temp_allocator,.Sampled)
-    finished,_=pose_space(&playback,rig,context.temp_allocator)
+    sampled,_=pose_space(core.ref(&playback),rig,context.temp_allocator,.Sampled)
+    finished,_=pose_space(core.ref(&playback),rig,context.temp_allocator)
     testing.expect(t,same(sampled,finished),"no row moves a bone")
-    _,posed:=pose_space(&playback,core.entity_make(9,1),context.temp_allocator,.Sampled)
+    _,posed:=pose_space(core.ref(&playback),core.entity_make(9,1),context.temp_allocator,.Sampled)
     testing.expect(t,!posed)
 }

@@ -217,7 +217,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
         state.driven_ready=false
         return false
     }
-    leader:=constraint_playing(playback,state.leader) if followed else nil
+    leader:=constraint_playing(core.ref(playback),state.leader) if followed else nil
     state.driven_ready=false
     if leader!=nil || len(pose.curve_drives)>0 {
         leader_curves:=playing_curves(leader) if leader!=nil else nil
@@ -314,7 +314,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
 curve_materials_apply :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,playing:^Playing,slots:int,lives:^core.Table(erender.Material_Live),entity:core.Entity) -> (fits:bool) {
     fits=true
     if playing==nil {return}
-    rig:=modifier_rig(runtime,playing.entity)
+    rig:=modifier_rig(core.ref(runtime),playing.entity)
     pose:=modifier_pose(rig,characters)
     if pose==nil || len(pose.curve_materials)==0 {return}
     live:=core.staged(lives,entity)

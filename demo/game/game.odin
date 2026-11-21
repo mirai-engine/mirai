@@ -54,22 +54,27 @@ THROWN_CUBE_SIZE :: f32(0.25) // m, the side of a thrown cube
 
 // On a body that opens doors, changes samples and throws cubes.
 @(component,replicated)
-Player :: struct {
-    thrown:i32 `mirai:"transient,hidden"`, // cubes thrown in this run, for the HUD
-}
+Player :: struct {}
+
+@(component,derived)
+Player_State :: struct {thrown:i32}
 
 @(component)
 Spin :: struct {
     degrees_per_second:[3]f32,
-    angles:[3]f32 `mirai:"transient"`, // Euler degrees in X, Y, Z order, added up since the first tick
 }
+
+@(component,derived)
+Spin_State :: struct {angles:[3]f32} // Euler degrees in X, Y, Z order
 
 @(component)
 Bob :: struct {
     height:f32 `mirai:"min=0,unit=m"`,
     speed:f32,
-    base_y:f32 `mirai:"transient"`, // where the entity was when it started
 }
+
+@(component,derived)
+Bob_State :: struct {base_y:f32}
 
 @(component)
 Door :: struct {
@@ -78,17 +83,22 @@ Door :: struct {
     reach:f32 `mirai:"min=0,unit=m,local"`,  // how near the player has to stand
     open:bool,
     lamp:core.Entity `mirai:"local"`,         // glows green while the door is open, red while it is closed
-    closed_y:f32 `mirai:"transient,local"`,   // where the door was when it started
 }
 
-// A thrown cube: a body that gets its velocity once it exists. Until then
-// its row is new (core.added): it is written when it is launched.
+@(component,derived)
+Door_State :: struct {closed_y:f32,open:bool}
+
+// A thrown cube gets its launch velocity once its body exists.
 @(component)
 Projectile :: struct {
     speed:f32 `mirai:"min=0,unit=m/s"`, // along the forward of the entity
     seconds_left:f32 `mirai:"min=0,unit=s"`, // it goes this long after it is launched
-    until:u64 `mirai:"readonly,hidden"`,    // the tick it goes at
-    velocity:[3]f32 `mirai:"transient"`,
+}
+
+@(component,derived)
+Projectile_State :: struct {
+    until:u64, // the tick it goes at
+    velocity:[3]f32,
 }
 
 CAPTION_CAPACITY :: 128
@@ -114,8 +124,10 @@ Pulse :: struct {
     speed:f32,
     low:f32 `mirai:"min=0"`,
     high:f32 `mirai:"min=0"`,
-    base:[3]f32 `mirai:"transient"`, // the emission of the entity when it started
 }
+
+@(component,derived)
+Pulse_State :: struct {base:[3]f32}
 
 @(storage)
 Game :: struct {
@@ -129,6 +141,14 @@ EXHIBIT_DEFAULT :: Exhibit{reach=4}
 SWATCH_DEFAULT :: Swatch{reach=3}
 PULSE_DEFAULT :: Pulse{speed=2,low=0.3,high=1}
 PROJECTILE_DEFAULT :: Projectile{speed=THROW_SPEED,seconds_left=CUBE_SECONDS}
+
+@(private)
+demo_state :: proc(states:^core.Table($T),e:core.Entity,initial:T,problems:^core.Problems) -> ^T {
+    if state:=core.staged(states,e);state!=nil {return state}
+    if core.add(states,e,initial) {return core.staged(states,e)}
+    core.report(problems,e,"demo.state","out of memory for %v to store demo state",typeid_of(T))
+    return nil
+}
 
 // The actions the game reads, those of interface_demo.odin too; move and look are of the engine
 // (inp.Move_Action, inp.Look_Action) and jump of the locomotion (locomotion.Walk_Action).
@@ -202,7 +222,7 @@ Demo_Controls :: struct {
 // What the seat of a body pressed this tick: open a door, change a sample, throw a cube.
 @(step="fixed")
 game_use :: proc(
-    players:^core.Table(Player),doors:^core.Table(Door),swatches:^core.Table(Swatch),inputs:^core.Table(inp.Move_Input,.Read),
+    players:^core.Table(Player,.Read),player_states:^core.Table(Player_State),doors:^core.Table(Door,.Read),door_states:^core.Table(Door_State),swatches:^core.Table(Swatch),inputs:^core.Table(inp.Move_Input,.Read),
     controls:Demo_Controls,names:^core.Table(core.Name,.Read),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
@@ -215,8 +235,8 @@ game_use :: proc(
             for at in 0..<core.count(doors) {
                 other:=core.entity_at(doors,at)
                 // A door that has not taken its place yet (game_doors) does not open.
-                if core.added(doors,at) || !in_reach(controls.sight.worlds,feet,other,core.at(doors,at).reach) {continue}
-                door:=core.edit_at(doors,at)
+                if !core.has(door_states,other) || !in_reach(controls.sight.worlds,feet,other,core.at(doors,at).reach) {continue}
+                door:=core.edit(door_states,other)
                 door.open=!door.open
                 log.infof("%s %s",core.name_get(names,other),door.open?"opened":"closed")
             }
@@ -231,21 +251,25 @@ game_use :: proc(
             from:=origin+aim*0.8
             turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
             scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
-            core.edit_at(players,row).thrown+=1
+            if state:=demo_state(player_states,e,Player_State{},spawner.problems);state!=nil {state.thrown+=1}
         }
     }
 }
 
 // Doors slide towards where their state, or a button pressed for them, says, at a constant speed.
 @(step="fixed")
-game_doors :: proc(doors:^core.Table(Door),buttons:^core.Table(Floor_Button,.Read),transforms:^core.Table(core.Transform),time:core.Time) {
+game_doors :: proc(doors:^core.Table(Door,.Read),states:^core.Table(Door_State),buttons:^core.Table(Floor_Button,.Read),pressed:^core.Table(Floor_Button_State,.Read),transforms:^core.Table(core.Transform),time:core.Time,problems:^core.Problems) {
     for row in 0..<core.count(doors) {
         e:=core.entity_at(doors,row)
         placed,has_place:=core.get(transforms,e)
         if !has_place {continue}
-        if core.added(doors,row) && core.at(doors,row).closed_y!=placed.position.y {core.edit_at(doors,row).closed_y=placed.position.y}
         door:=core.at(doors,row)
-        target:=door.closed_y+(door_opened(doors,buttons,e)?door.travel:0)
+        state,ready:=core.get(states,e)
+        if !ready {
+            state={closed_y=placed.position.y,open=door.open}
+            if demo_state(states,e,state,problems)==nil {continue}
+        }
+        target:=state.closed_y+(door_opened(state.open,buttons,pressed,e)?door.travel:0)
         if placed.position.y==target {continue}
         step:=door.speed*time.dt
         if local:=core.free(transforms,e);local!=nil {local.position.y+=clamp(target-local.position.y,-step,step)}
@@ -272,8 +296,10 @@ game_swatches :: proc(meshes:^core.Table(render.Mesh_Renderer),swatches:^core.Ta
 // it as one kinematic request with both motions, the rest is written in place.
 @(step="fixed")
 game_animate :: proc(
-    spins:^core.Table(Spin),bobs:^core.Table(Bob),transforms:^core.Table(core.Transform),
+    spins:^core.Table(Spin,.Read),bobs:^core.Table(Bob,.Read),transforms:^core.Table(core.Transform),
+    spin_states:^core.Table(Spin_State),bob_states:^core.Table(Bob_State),
     worlds:^core.Table(core.World_Transform,.Read),bodies:^phys.Body_Requests,time:core.Time,
+    problems:^core.Problems,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(spins) {
@@ -282,42 +308,52 @@ game_animate :: proc(
         placed,body:=core.get(worlds,e)
         if local==nil && !body {continue}
         spin:=core.at(spins,row)
-        angles:=spin.angles
-        if core.added(spins,row) {angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD}
-        angles+=spin.degrees_per_second*time.dt
-        for &angle in angles {angle=math.mod(angle,360)}
-        if spin.angles!=angles {core.edit_at(spins,row).angles=angles}
-        turned:=mm.quat_from_euler(angles*mm.RAD_PER_DEG)
+        state,ready:=core.get(spin_states,e)
+        if !ready {state.angles=mm.quat_to_euler(local!=nil?local.rotation:placed.rotation)*mm.DEG_PER_RAD}
+        state.angles+=spin.degrees_per_second*time.dt
+        for &angle in state.angles {angle=math.mod(angle,360)}
+        written:=demo_state(spin_states,e,state,problems)
+        if written==nil {continue}
+        written.angles=state.angles
+        turned:=mm.quat_from_euler(state.angles*mm.RAD_PER_DEG)
         if local!=nil {
             local.rotation=turned
             continue
         }
         position:=placed.position
-        if at:=core.row_of(bobs,e);at>=0 {position.y=bob_height(bobs,at,position.y,seconds)}
+        if bob,found:=core.get(bobs,e);found {position.y=bob_height(bob,bob_states,e,position.y,seconds,problems)}
         phys.move_kinematic(bodies,e,position,turned)
     }
     for row in 0..<core.count(bobs) {
         e:=core.entity_at(bobs,row)
+        bob:=core.at(bobs,row)
         if local:=core.free(transforms,e);local!=nil {
-            local.position.y=bob_height(bobs,row,local.position.y,seconds)
+            local.position.y=bob_height(bob,bob_states,e,local.position.y,seconds,problems)
         } else if placed,body:=core.get(worlds,e);body && !core.has(spins,e) {
-            phys.move_kinematic(bodies,e,{placed.position.x,bob_height(bobs,row,placed.position.y,seconds),placed.position.z},placed.rotation)
+            position:=placed.position
+            position.y=bob_height(bob,bob_states,e,position.y,seconds,problems)
+            phys.move_kinematic(bodies,e,position,placed.rotation)
         }
     }
 }
 
 @(private="file")
-bob_height :: proc(bobs:^core.Table(Bob),row:int,y,seconds:f32) -> f32 {
-    if core.added(bobs,row) && core.at(bobs,row).base_y!=y {core.edit_at(bobs,row).base_y=y}
-    bob:=core.at(bobs,row)
-    return bob.base_y+math.sin(seconds*bob.speed)*bob.height
+bob_height :: proc(bob:Bob,states:^core.Table(Bob_State),e:core.Entity,y,seconds:f32,problems:^core.Problems) -> f32 {
+    state,ready:=core.get(states,e)
+    if !ready {
+        state.base_y=y
+        if demo_state(states,e,state,problems)==nil {return y}
+    }
+    return state.base_y+math.sin(seconds*bob.speed)*bob.height
 }
 
 // Emission: pulses breathe, the lamp of a door shows its state, the nose of a dog flashes when it barks.
 @(step="fixed")
 game_glow :: proc(
-    tints:^core.Table(render.Material_Values),pulses:^core.Table(Pulse),doors:^core.Table(Door,.Read),buttons:^core.Table(Floor_Button,.Read),barkers:^core.Table(Barker,.Read),
-    hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),time:core.Time,
+    tints:^core.Table(render.Material_Values),pulses:^core.Table(Pulse,.Read),pulse_states:^core.Table(Pulse_State),
+    doors:^core.Table(Door,.Read),door_states:^core.Table(Door_State,.Read),buttons:^core.Table(Floor_Button,.Read),
+    pressed:^core.Table(Floor_Button_State,.Read),barkers:^core.Table(Barker,.Read),
+    hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),time:core.Time,problems:^core.Problems,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(pulses) {
@@ -326,21 +362,25 @@ game_glow :: proc(
         if at<0 {continue}
         tint:=core.view_at(tints,at)
         pulse:=core.at(pulses,row)
-        if core.added(pulses,row) && pulse.base!=tint.emission {
-            pulse.base=tint.emission
-            core.edit_at(pulses,row).base=pulse.base
+        state,ready:=core.get(pulse_states,entity)
+        if !ready {
+            state.base=tint.emission
+            if demo_state(pulse_states,entity,state,problems)==nil {continue}
         }
         wave:=0.5+0.5*math.sin(seconds*pulse.speed)
-        glow_set(tints,entity,pulse.base*(pulse.low+(pulse.high-pulse.low)*wave))
+        glow_set(tints,entity,state.base*(pulse.low+(pulse.high-pulse.low)*wave))
     }
     for row in 0..<core.count(doors) {
         door:=core.at(doors,row)
-        glow:=door_opened(doors,buttons,core.entity_at(doors,row))?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
+        e:=core.entity_at(doors,row)
+        state,ready:=core.get(door_states,e)
+        glow:=door_opened(state.open if ready else door.open,buttons,pressed,e)?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
         glow_set(tints,door.lamp,glow)
     }
     for row in 0..<core.count(buttons) {
         button:=core.at(buttons,row)
-        glow:=button.pressed?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
+        state,_:=core.get(pressed,core.entity_at(buttons,row))
+        glow:=state.pressed?DOOR_OPEN_GLOW:DOOR_CLOSED_GLOW
         glow_set(tints,button.plate,glow)
     }
     for row in 0..<core.count(barkers) {
@@ -358,35 +398,35 @@ game_glow :: proc(
 // destruct leaves alone what is not one.
 @(step="fixed",stage="react")
 game_projectiles :: proc(
-    es:core.Commands,projectiles:^core.Table(Projectile),transforms:^core.Table(core.Transform,.Read),body_states:^core.Table(core.Motion,.Read),
+    es:core.Commands,projectiles:^core.Table(Projectile,.Read),states:^core.Table(Projectile_State),transforms:^core.Table(core.Transform,.Read),body_states:^core.Table(core.Motion,.Read),
     events:core.Ref(phys.Physics_Events),bodies:^phys.Body_Requests,
-    damage:^destruct.Destruct_Requests,time:core.Time,
+    damage:^destruct.Destruct_Requests,time:core.Time,problems:^core.Problems,
 ) {
-    strike :: proc(projectiles:^core.Table(Projectile),damage:^destruct.Destruct_Requests,cube,struck:core.Entity,point:[3]f32) {
-        row:=core.row_of(projectiles,cube)
-        if row<0 || core.added(projectiles,row) {return}
-        destruct.damage(damage,struck,point,PROJECTILE_REACH,core.at(projectiles,row).velocity*PROJECTILE_MASS)
+    strike :: proc(states:^core.Table(Projectile_State),damage:^destruct.Destruct_Requests,cube,struck:core.Entity,point:[3]f32) {
+        projectile,launched:=core.get(states,cube)
+        if !launched {return}
+        destruct.damage(damage,struck,point,PROJECTILE_REACH,projectile.velocity*PROJECTILE_MASS)
     }
     for contact in events.contact_begin.items {
-        strike(projectiles,damage,contact.a,contact.b,contact.point)
-        strike(projectiles,damage,contact.b,contact.a,contact.point)
+        strike(states,damage,contact.a,contact.b,contact.point)
+        strike(states,damage,contact.b,contact.a,contact.point)
     }
     for row in 0..<core.count(projectiles) {
         e:=core.entity_at(projectiles,row)
         state,has:=core.get(body_states,e)
-        if core.added(projectiles,row) {
+        projectile,launched:=core.get(states,e)
+        if !launched {
             local,placed:=core.get(transforms,e)
             if !has || !placed {continue}
-            projectile:=core.edit_at(projectiles,row)
-            projectile.velocity=mm.quat_forward(local.rotation)*projectile.speed
-            projectile.until=core.deadline(time,projectile.seconds_left)
+            config:=core.at(projectiles,row)
+            projectile.velocity=mm.quat_forward(local.rotation)*config.speed
+            projectile.until=core.deadline(time,config.seconds_left)
+            if demo_state(states,e,projectile,problems)==nil {continue}
             phys.set_velocity(bodies,e,projectile.velocity,{6,4,0})
-            continue
-        }
-        if core.due(time,core.at(projectiles,row).until) {
+        } else if core.due(time,projectile.until) {
             core.destroy(es,e)
-        } else if has && core.at(projectiles,row).velocity!=state.linear {
-            core.edit_at(projectiles,row).velocity=state.linear
+        } else if has && projectile.velocity!=state.linear {
+            core.edit(states,e).velocity=state.linear
         }
     }
 }
@@ -431,14 +471,15 @@ exhibit_caption :: proc(out:[]u8,exhibits:^core.Table(Exhibit,$A),worlds:^core.T
 
 @(step="frame")
 player_hud :: proc(
-    huds:^core.Table(Player_Hud),players:^core.Table(Player,.Read),doors:^core.Table(Door,.Read),swatches:^core.Table(Swatch,.Read),exhibits:^core.Table(Exhibit,.Read),
+    huds:^core.Table(Player_Hud),players:^core.Table(Player,.Read),player_states:^core.Table(Player_State,.Read),doors:^core.Table(Door,.Read),door_states:^core.Table(Door_State,.Read),swatches:^core.Table(Swatch,.Read),exhibits:^core.Table(Exhibit,.Read),
     barkers:^core.Table(Barker,.Read),demos:^core.Table(Control_Demo,.Read),
     worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),
 ) {
     for row in 0..<core.count(huds) {
         body:=core.entity_at(huds,row)
         next:Player_Hud
-        player,has_player:=core.get(players,body)
+        has_player:=core.has(players,body)
+        player,_:=core.get(player_states,body)
         barker,has_barker:=core.get(barkers,body)
         if placed,has_world:=core.get(worlds,body);has_world && (has_player || has_barker) {
             feet:=placed.position
@@ -446,7 +487,9 @@ player_hud :: proc(
             next.control,next.dog,next.barks=core.count(demos)>0,has_barker,i32(barker.count)
             for at in 0..<core.count(doors) {
                 if next.hint!=.None || !in_reach(worlds,feet,core.entity_at(doors,at),core.at(doors,at).reach) {continue}
-                next.hint=core.at(doors,at).open?.Close_Door:.Open_Door
+                door,ready:=core.get(door_states,core.entity_at(doors,at))
+                open:=door.open if ready else core.at(doors,at).open
+                next.hint=.Close_Door if open else .Open_Door
             }
             materials:=SWATCH_MATERIALS
             for at in 0..<core.count(swatches) {

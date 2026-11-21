@@ -64,24 +64,21 @@ play_clip :: proc(requests:^Animation_Requests,entity:core.Entity,clip:string,
 }
 
 // Whether the clip of an entity plays in this tick. False for an entity that plays nothing.
-animation_playing :: proc(playback:^Playback,entity:core.Entity) -> bool {
-    if playback==nil {return false}
+animation_playing :: proc(playback:core.Ref(Playback),entity:core.Entity) -> bool {
     state:=constraint_playing(playback,entity)
     return state!=nil && state.seen==playback.frame && state.playing
 }
 
 // The rate and loop policy of the base clip, including changes requested in Play.
-animation_clip_clock :: proc(playback:^Playback,entity:core.Entity) -> (speed:f32,loop:bool) {
-    if playback==nil {return}
+animation_clip_clock :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (speed:f32,loop:bool) {
     state:=constraint_playing(playback,entity)
     if state!=nil {return state.speed,state.selection.loop}
     return
 }
 
 // The source and name of the clip sampled by the base clock.
-animation_clip_identity :: proc(playback:^Playback,sources:^Source_Assets,app:^host.App,
+animation_clip_identity :: proc(playback:core.Ref(Playback),sources:core.Ref(Source_Assets),app:^host.App,
     entity:core.Entity) -> (id:base.Asset_Id,name:[asset.ANIMATION_NAME_CAPACITY]u8,ok:bool) {
-    if playback==nil {return}
     state:=constraint_playing(playback,entity)
     if state==nil || state.clip<0 {return}
     content:=animation_playing_content(sources,app,state)
@@ -92,8 +89,7 @@ animation_clip_identity :: proc(playback:^Playback,sources:^Source_Assets,app:^h
 
 // The markers of the clip an entity plays, in time order, which content.markers names by their
 // id; none while it plays no clip.
-animation_markers :: proc(playback:^Playback,sources:^Source_Assets,app:^host.App,entity:core.Entity) -> (markers:[]lib.Marker,content:^host.Content_Animation) {
-    if playback==nil {return}
+animation_markers :: proc(playback:core.Ref(Playback),sources:core.Ref(Source_Assets),app:^host.App,entity:core.Entity) -> (markers:[]lib.Marker,content:^host.Content_Animation) {
     state:=constraint_playing(playback,entity)
     if state==nil || state.clip<0 {return}
     content=animation_playing_content(sources,app,state)
@@ -103,8 +99,8 @@ animation_markers :: proc(playback:^Playback,sources:^Source_Assets,app:^host.Ap
 
 // The entity the clip of an animated entity calls target as its tracks bind it: itself for 0, none
 // when nothing it animates has that name.
-animation_bound :: proc(playback:^Playback,entity:core.Entity,target:u64) -> core.Entity {
-    state:=constraint_playing(playback,entity) if playback!=nil else nil
+animation_bound :: proc(playback:core.Ref(Playback),entity:core.Entity,target:u64) -> core.Entity {
+    state:=constraint_playing(playback,entity)
     return field_entity(state,target) if state!=nil else core.NONE
 }
 
@@ -401,7 +397,7 @@ Field_Playback :: struct {
 field_playback_free :: proc(fields:^Field_Playback) {delete(fields.fields);fields^={}}
 
 @(private)
-fields_stamp :: proc "contextless" (playback:^Playback) -> u64 {
+fields_stamp :: proc "contextless" (playback:core.Ref(Playback)) -> u64 {
     stamp:=base.hash_combine(playback.binding_revision,u64(len(playback.states)))
     for &state in playback.states {
         stamp=base.hash_combine(stamp,u64(state.entity))
@@ -461,7 +457,7 @@ field_resolve :: proc(world:core.World_Ref,schema:^serial.Schema,component,path:
 // Finds the component and the field each "@field" curve of what plays writes. What cannot be
 // written is a problem of the animated entity and is left out.
 @(private)
-fields_bind :: proc(fields:^Field_Playback,world:core.World_Ref,playback:^Playback,sources:^Source_Assets,app:^host.App,problems:^core.Problems) -> bool {
+fields_bind :: proc(fields:^Field_Playback,world:core.World_Ref,playback:core.Ref(Playback),sources:core.Ref(Source_Assets),app:^host.App,problems:^core.Problems) -> bool {
     clear(&fields.fields)
     schema:serial.Schema
     serial.schema_init(&schema,context.temp_allocator)
@@ -548,9 +544,8 @@ field_write :: proc "contextless" (bound:Field_Bound,data:[^]u8,value:mm.Vec4) -
 
 // Writes the fields the "@field" curves of the playing clips drive, on the ticks their clip moves.
 @(step="fixed",loops="game editor",stage="simulate",after="animation_sample")
-animation_fields :: proc(world:core.World_Ref,playing:core.Ref(Playback),fields:^Field_Playback,content_sources:core.Ref(Source_Assets),app:^host.App,problems:^core.Problems) {
-    if app==nil || app.assets==nil {return}
-    playback,sources:=playing.ptr,content_sources.ptr
+animation_fields :: proc(world:core.World_Ref,playback:core.Ref(Playback),fields:^Field_Playback,sources:core.Ref(Source_Assets),app:^host.App,problems:^core.Problems) {
+    if app==nil || app.assets==nil || playback.ptr==nil {return}
     if stamp:=fields_stamp(playback);stamp!=fields.stamp || fields.info!=world.info {
         if !fields_bind(fields,world,playback,sources,app,problems) {
             clear(&fields.fields);fields.stamp=0

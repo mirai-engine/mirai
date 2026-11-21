@@ -433,8 +433,7 @@ root_motion_to_rig :: proc "contextless" (state:^Playing,root:u64,moved:mm.Vec3,
     return mm.transform_vector(above,moved),linalg.normalize(above.rotation*turned*conj(above.rotation))
 }
 
-animation_bone_transform :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Ref) -> (mm.Transform,bool) {
-    if playback==nil {return mm.TRANSFORM_IDENTITY,false}
+animation_bone_transform :: proc(playback:core.Ref(Playback),rig:core.Entity,bone:Bone_Ref) -> (mm.Transform,bool) {
     state:=constraint_playing(playback,rig)
     index:=bone_resolve(state,bone)
     if state==nil || !state.pose_ready || index<0 || index>=len(playing_pose(state,.World)) {return mm.TRANSFORM_IDENTITY,false}
@@ -461,8 +460,7 @@ pose_request_offer :: proc(queue:^core.Queue(Pose_Request),request:Pose_Request)
     core.offer(queue,request)
 }
 
-animation_bone_bind :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Ref) -> (Bone_Handle,bool) {
-    if playback==nil {return {},false}
+animation_bone_bind :: proc(playback:core.Ref(Playback),rig:core.Entity,bone:Bone_Ref) -> (Bone_Handle,bool) {
     state:=constraint_playing(playback,rig)
     index:=bone_resolve(state,bone)
     if index<0 {return {},false}
@@ -470,8 +468,7 @@ animation_bone_bind :: proc(playback:^Playback,rig:core.Entity,bone:Bone_Ref) ->
 }
 
 // World poses of the current sampled animation, before physics and constraints.
-animation_sample_pose :: proc(playback:^Playback,rig:core.Entity,out:[]mm.Transform,parent_world:=mm.TRANSFORM_IDENTITY) -> (count:int,revision:u64,ok:bool) {
-    if playback==nil {return}
+animation_sample_pose :: proc(playback:core.Ref(Playback),rig:core.Entity,out:[]mm.Transform,parent_world:=mm.TRANSFORM_IDENTITY) -> (count:int,revision:u64,ok:bool) {
     state:=constraint_playing(playback,rig)
     if state==nil || state.seen!=playback.frame {return}
     count,revision=len(playing_pose(state,.Sampled)),state.bound

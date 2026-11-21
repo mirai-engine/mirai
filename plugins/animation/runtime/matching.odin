@@ -174,8 +174,8 @@ travel_turn :: proc "contextless" (from,to:mm.Vec3,remaining:f32) -> mm.Vec3 {
 }
 
 // False for an entity that plays no locomotion of a .character.
-animation_match :: proc(playback:^Playback,entity:core.Entity) -> (value:Animation_Match,ok:bool) {
-    state:=constraint_playing(playback,entity) if playback!=nil else nil
+animation_match :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (value:Animation_Match,ok:bool) {
+    state:=constraint_playing(playback,entity)
     if state==nil || !state.program.matched || !state.program.ready {return}
     m:=state.program.match
     return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=state.stack>0 && state.layers[0].weight>0,searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
@@ -246,8 +246,8 @@ match_database_key :: proc(library:^host.Content_Animation,state:^Playing,source
 
 // The database the matching of a rig searches, of library, what it plays: nil for a rig that
 // plays no locomotion of a .character, before its first tick or when its database could not be built.
-animation_match_database :: proc(matches:^Character_Assets,library:^host.Content_Animation,state:^Playing) -> ^lib.Match_Database {
-    if matches==nil || library==nil || state==nil || !state.program.matched || !state.program.ready {return nil}
+animation_match_database :: proc(matches:core.Ref(Character_Assets),library:^host.Content_Animation,state:^Playing) -> ^lib.Match_Database {
+    if matches.ptr==nil || library==nil || state==nil || !state.program.matched || !state.program.ready {return nil}
     key:=match_database_key(library,state,state.program.library)
     for &content in matches.contents {
         if content.id!=state.program.asset || content.revision!=state.program.revision || !content.valid {continue}

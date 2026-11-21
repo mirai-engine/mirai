@@ -27,20 +27,24 @@ Gallery_Hud :: struct {
 }
 
 @(step="frame")
-gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:^core.Table(Gallery_Player,.Read),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel,.Read),seats:^core.Table(inp.Seat,.Read)) {
+gallery_hud :: proc(huds:^core.Table(Gallery_Hud),players:^core.Table(Gallery_Player,.Read),states:^core.Table(Gallery_Player_State,.Read),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel_Setup,.Read),seats:^core.Table(inp.Seat,.Read)) {
     for row in 0..<core.count(huds) {
         seat:=core.entity_at(huds,row)
         player,found:=core.get(players,seat)
         if !found {continue}
+        state,_:=core.get(states,seat)
         body:=inp.body_of(seats,seat)
         next:Gallery_Hud
         if body==player.spider && body!=core.NONE {
             next.place=.Spider
-        } else if focus,focused:=core.get(panels,player.focus);focused {
-            next.place,next.title=.Panel,focus.title
-        } else if item,near:=core.get(gallery,player.near);near {
-            next.place,next.title,next.detail=.Station,item.title,item.detail
-            for at in 0..<core.count(panels) {if core.at(panels,at).station==player.near {next.use=.Adjust}}
+        } else if focus,focused:=core.get(panels,state.focus);focused {
+            next.place=.Panel
+            next.title=focus.title
+        } else if item,near:=core.get(gallery,state.near);near {
+            next.place=.Station
+            next.title=item.title
+            next.detail=item.detail
+            for at in 0..<core.count(panels) {if core.at(panels,at).station==state.near {next.use=.Adjust}}
             if next.use==.Nothing && item.kind==.Spider {next.use=.Drive}
         }
         if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}

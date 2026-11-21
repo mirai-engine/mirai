@@ -132,8 +132,8 @@ Morph_State :: struct {
     error:Morph_Error,
     unknown:u16,
 }
-animation_morph_state :: proc(playback:^Morph_Playback,entity:core.Entity) -> (state:Morph_State,ok:bool) {
-    playing:=morph_playing(playback,entity)
+animation_morph_state :: proc(playback:core.Ref(Morph_Playback),entity:core.Entity) -> (state:Morph_State,ok:bool) {
+    playing:=morph_playing(playback.ptr,entity)
     if playing==nil {return}
     return {playing.current[:],playing.mesh,playing.source,playing.stamp,playing.error,playing.unknown},true
 }
@@ -187,9 +187,9 @@ morph_rig_read :: proc(rig:^Skin_Rig,view:asset.Mesh_View,allocator:mem.Allocato
 // Whose animation drives the weights of an entity: the one named, itself
 // when it is a rig that follows another, the rig of its Pose_Source, or its
 // nearest animated ancestor.
-morph_source :: proc(entity:core.Entity,config:Morph_Weights,animations:^core.Table(Animation,$A),sources:^core.Table(Pose_Source,$B),parents:^core.Table(core.Parent,$C),playback:^Playback=nil) -> core.Entity {
+morph_source :: proc(entity:core.Entity,config:Morph_Weights,animations:^core.Table(Animation,$A),sources:^core.Table(Pose_Source,$B),parents:^core.Table(core.Parent,$C),playback:core.Ref(Playback)={}) -> core.Entity {
     if config.source!=core.NONE {return config.source}
-    if playback!=nil {if own:=constraint_playing(playback,entity);own!=nil && own.leader!=core.NONE {return entity}}
+    if own:=constraint_playing(playback,entity);own!=nil && own.leader!=core.NONE {return entity}
     if source,has:=core.get(sources,entity);has {return source.rig}
     return core.ancestor_with(parents,animations,entity)
 }
@@ -231,7 +231,7 @@ morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path_
 animation_morph :: proc(
     meshes:^core.Table(erender.Mesh_Renderer,.Read),configs:^core.Table(Morph_Weights,.Read),animations:^core.Table(Animation,.Read),
     targets:^core.Table(Animation_Target,.Read),sources:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
-    playback:core.Ref(Playback),modifiers:core.Ref(Modifier_Runtime),cache:^Skin_Runtime,state:^Morph_Playback,libraries:^Source_Assets,app:^host.App,time:core.Time,
+    playback:core.Ref(Playback),modifiers:core.Ref(Modifier_Runtime),cache:^Skin_Runtime,state:^Morph_Playback,libraries:core.Ref(Source_Assets),app:^host.App,time:core.Time,
     problems:^core.Problems,
 ) {
     if app.assets==nil {return}
@@ -281,18 +281,18 @@ animation_morph :: proc(
             if !morph_bind(&playing,rig,config,path,stamp) {playing.stamp=0;morph_problem(problems,playing.entity,playing.error,playing.unknown);continue}
             if playing.error!=.None {morph_problem(problems,playing.entity,playing.error,playing.unknown)}
         }
-        playing.source=morph_source(playing.entity,config,animations,sources,parents,playback.ptr)
+        playing.source=morph_source(playing.entity,config,animations,sources,parents,playback)
         copy(playing.previous[:],playing.current[:])
-        source:=constraint_playing(playback.ptr,playing.source)
-        if source!=nil && (source.seen!=playback.ptr.frame || !source.curves_ready) {source=nil}
+        source:=constraint_playing(playback,playing.source)
+        if source!=nil && (source.seen!=playback.frame || !source.curves_ready) {source=nil}
         content:=animation_playing_content(libraries,app,source) if source!=nil && playing.by_name else nil
-        if !morph_compose(&playing,rig,config,source,modifiers.ptr,content) {playing.error=.Invalid_Value;morph_problem(problems,playing.entity,.Invalid_Value,0)}
+        if !morph_compose(&playing,rig,config,source,modifiers,content) {playing.error=.Invalid_Value;morph_problem(problems,playing.entity,.Invalid_Value,0)}
         if !time.playing {copy(playing.previous[:],playing.current[:])}
     }
 }
 
 @(private)
-morph_compose :: proc(playing:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,source:^Playing,modifiers:^Modifier_Runtime=nil,content:^host.Content_Animation=nil) -> bool {
+morph_compose :: proc(playing:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,source:^Playing,modifiers:core.Ref(Modifier_Runtime)={},content:^host.Content_Animation=nil) -> bool {
     curves:=playing_curves(source) if source!=nil else nil
     layout:=source.curve_layout if source!=nil && source.driven_ready else 0
     if source!=nil && (playing.curve_asset!=source.asset || playing.curve_generation!=source.generation || playing.curve_count!=len(curves) || playing.curve_layout!=layout) {

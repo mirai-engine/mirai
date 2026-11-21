@@ -35,8 +35,8 @@ game_showcase :: proc(
     }
     lift:=core.entity_named(names,SHOWCASE_LIFT)
     animated:=core.has(animations,lift)
-    lift_time,_,_,has_progress:=anim.animation_progress(playback.ptr,lift)
-    running:=animated && anim.animation_playing(playback.ptr,lift)
+    lift_time,_,_,has_progress:=anim.animation_progress(playback,lift)
+    running:=animated && anim.animation_playing(playback,lift)
     for row in 0..<core.count(shown) {
         was:=core.at(shown,row)
         next:=was

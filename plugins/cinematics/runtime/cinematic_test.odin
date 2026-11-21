@@ -254,7 +254,7 @@ a_head_of_a_scrubbed_clip_shows_one_shot :: proc(t:^testing.T) {
     look :: proc(f:^Cinematic_Fixture,head:f32) -> (seen:Seen) {
         anim.animation_command(&f.requests,f.timeline,.Seek,head)
         fixture_tick(f,1,0,playing=false)
-        seen.shot,seen.previous=cinematic_shot(&f.playback,&f.content_sources,&f.app,&f.entities,core.read(&f.cameras),f.timeline,head)
+        seen.shot,seen.previous=cinematic_shot(core.ref(&f.playback),core.ref(&f.content_sources),&f.app,&f.entities,core.read(&f.cameras),f.timeline,head)
         place,_:=core.get(core.read(&f.transforms),f.wide);seen.wide=place.position
         lens,_:=core.get(core.read(&f.cameras),f.close);seen.fov=lens.fov
         return
@@ -269,7 +269,7 @@ a_head_of_a_scrubbed_clip_shows_one_shot :: proc(t:^testing.T) {
     testing.expect(t,late.shot.camera==f.close && late.shot.time==.5 && late.shot.blend.seconds==.5 && late.previous.camera==f.wide)
     testing.expect(t,early.shot.camera==f.wide && early.previous.camera==core.NONE && early.wide==[3]f32{2,0,0})
     testing.expect_value(t,look(f,.9).shot.camera,f.gone)
-    shot,previous:=cinematic_shot(&f.playback,&f.content_sources,&f.app,&f.entities,core.read(&f.cameras),f.timeline,nan)
+    shot,previous:=cinematic_shot(core.ref(&f.playback),core.ref(&f.content_sources),&f.app,&f.entities,core.read(&f.cameras),f.timeline,nan)
     testing.expect(t,shot.camera==core.NONE && previous.camera==core.NONE,"no time of the clip has no shot")
     core.destroy(&f.entities,f.gone);test_world_settle(&f.w)
     testing.expect_value(t,look(f,.9).shot.camera,f.close)
@@ -326,7 +326,7 @@ a_scrubbed_timeline_plays_from_its_start_in_a_play :: proc(t:^testing.T) {
     for i in 0..<3 {
         clear(&play.requests.plays.items)
         fixture_tick(play,u64(i+1),DT)
-        at,_,_,_:=anim.animation_progress(&play.playback,play.timeline)
+        at,_,_,_:=anim.animation_progress(core.ref(&play.playback),play.timeline)
         asked[i]=-1
         for request in play.requests.plays.items {if request.entity==play.hero {asked[i]=request.at;testing.expect(t,request.driven && !request.seek)}}
         testing.expectf(t,abs(at-DT*f32(i+1))<1e-5,"tick %d: the clip plays from its start, at %v",i+1,at)

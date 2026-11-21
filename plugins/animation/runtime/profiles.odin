@@ -127,8 +127,8 @@ modifier_rig_free :: proc(rig:^Modifier_Rig) {
     rig^={}
 }
 
-modifier_rig :: proc(runtime:^Modifier_Runtime,entity:core.Entity) -> ^Modifier_Rig {
-    if runtime==nil {return nil}
+modifier_rig :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.Entity) -> ^Modifier_Rig {
+    if runtime.ptr==nil {return nil}
     index:=core.entity_index(entity)
     if index>=len(runtime.rows) || runtime.rows[index]<=0 {return nil}
     row:=int(runtime.rows[index])-1
@@ -139,7 +139,7 @@ modifier_rig :: proc(runtime:^Modifier_Runtime,entity:core.Entity) -> ^Modifier_
 
 @(private)
 modifier_rig_add :: proc(runtime:^Modifier_Runtime,entity:core.Entity) -> ^Modifier_Rig {
-    if rig:=modifier_rig(runtime,entity);rig!=nil {return rig}
+    if rig:=modifier_rig(core.ref(runtime),entity);rig!=nil {return rig}
     index:=core.entity_index(entity)
     if index>=len(runtime.rows) && !program_array_resize(&runtime.rows,index+1) {return nil}
     if append(&runtime.rigs,Modifier_Rig{entity=entity})!=1 {return nil}
@@ -210,7 +210,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
             entity:=core.entity_at(animations,row)
             id:=animation_character(loaded,core.at(animations,row))
             if id=={} {continue}
-            rig:=modifier_rig(runtime,entity)
+            rig:=modifier_rig(core.ref(runtime),entity)
             hint:=rig.character if rig!=nil else 0
             content:=character_content(characters,loaded,allocator,id,&hint)
             if content==nil {
@@ -260,9 +260,9 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
     return true
 }
 
-modifier_grounding :: proc(runtime:^Modifier_Runtime,rig:^Modifier_Rig,profile:Foot_Grounding) -> Foot_Grounding {
+modifier_grounding :: proc(runtime:core.Ref(Modifier_Runtime),rig:^Modifier_Rig,profile:Foot_Grounding) -> Foot_Grounding {
     config:=profile
-    if runtime==nil || rig==nil || len(modifier_states(rig,.Grounding))==0 {return config}
+    if runtime.ptr==nil || rig==nil || len(modifier_states(rig,.Grounding))==0 {return config}
     config.weight,config.enabled=modifier_weight(&modifier_states(rig,.Grounding)[0],runtime.time)
     if override:=modifier_override(rig,.Grounding,0);override!=nil {
         config.global_contact=override.weight
@@ -270,8 +270,8 @@ modifier_grounding :: proc(runtime:^Modifier_Runtime,rig:^Modifier_Rig,profile:F
     return config
 }
 
-modifier_profile :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,entity:core.Entity) -> ^Pose_Profile {
-    return modifier_pose(modifier_rig(runtime,entity),characters)
+modifier_profile :: proc(runtime:core.Ref(Modifier_Runtime),characters:core.Ref(Character_Assets),entity:core.Entity) -> ^Pose_Profile {
+    return modifier_pose(modifier_rig(runtime,entity),characters.ptr)
 }
 
 @(private)
@@ -328,9 +328,9 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core
     }
     for row in 0..<core.count(animations) {
         e:=core.entity_at(animations,row)
-        clip_time,_,_,ok:=animation_progress(playback,e)
+        clip_time,_,_,ok:=animation_progress(core.ref(playback),e)
         if !ok {continue}
-        state:=constraint_playing(playback,e)
+        state:=constraint_playing(core.ref(playback),e)
         now:=Animation_Progress{time=clip_time,selection=state.selection,speed=state.speed,playing=state.playing}
         if at:=core.row_of(progress,e);at<0 {
             if !core.add(progress,e,now) {return false}

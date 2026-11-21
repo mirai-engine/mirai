@@ -14,8 +14,12 @@ import mm "mirai:std/math"
 @(component,description="The player of the animation gallery: it walks Mirai, adjusts the panel of the station it stands at and can drive the procedural spider.")
 Gallery_Player :: struct {
     mirai,spider:core.Entity,
-    focus:core.Entity `mirai:"hidden,readonly,transient"`, // the panel it adjusts
-    near:core.Entity `mirai:"hidden,readonly,transient"`,  // the station its body stands at
+}
+
+@(component,derived)
+Gallery_Player_State :: struct {
+    focus:core.Entity, // the panel it adjusts
+    near:core.Entity,  // the station its body stands at
 }
 
 MIRAI_WALK_SPEED :: 2.9154 // m/s the walk clip covers
@@ -36,7 +40,7 @@ gallery_player_fall :: proc(players:^core.Table(Gallery_Player,.Read),worlds:^co
 // E at a station: frame its panel, or drive the spider; E again, or at the spider, gives the
 // walk back to Mirai.
 @(step="fixed")
-gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel,.Read),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read),actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests) {
+gallery_interact :: proc(players:^core.Table(Gallery_Player,.Read),states:^core.Table(Gallery_Player_State),gallery:^core.Table(Animation_Gallery,.Read),panels:^core.Table(Gallery_Panel_Setup,.Read),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read),actions:inp.Input_Of(Action),requests:^inp.Seat_Requests,cameras:^cam.Camera_Requests,problems:^core.Problems) {
     for row in 0..<core.count(players) {
         player:=core.at(players,row)
         seat:=core.entity_at(players,row)
@@ -49,12 +53,13 @@ gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:^core.Table
                 if distance<closest {closest,near=distance,core.entity_at(gallery,at)}
             }
         }
-        next:=player
+        state,_:=core.get(states,seat)
+        next:=state
         next.near=near
         if inp.seat_pressed(actions,seat,.Use) {
             if body!=player.mirai && body!=core.NONE {
                 inp.drive(requests,seat,player.mirai)
-            } else if player.focus!=core.NONE {
+            } else if state.focus!=core.NONE {
                 cam.camera_override_remove(cameras,seat)
                 next.focus=core.NONE
                 inp.drive(requests,seat,player.mirai)
@@ -70,7 +75,9 @@ gallery_interact :: proc(players:^core.Table(Gallery_Player),gallery:^core.Table
                 }
             }
         }
-        if next!=player {core.edit_at(players,row)^=next}
+        if next!=state {
+            if output:=demo_state(states,seat,next,problems);output!=nil {output^=next}
+        }
     }
 }
 
@@ -81,10 +88,11 @@ GALLERY_PLAQUE_DISTANCE :: 10 // m from the body of the player within which the 
 // The plaques show near the body of the player and a panel only while its player adjusts it: a
 // widget without size is not drawn.
 @(step="fixed")
-gallery_widgets :: proc(players:^core.Table(Gallery_Player,.Read),labels:^core.Table(Gallery_Label,.Read),panels:^core.Table(Gallery_Panel,.Read),widgets:^core.Table(gui.World_Widget),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read)) {
+gallery_widgets :: proc(players:^core.Table(Gallery_Player,.Read),states:^core.Table(Gallery_Player_State,.Read),labels:^core.Table(Gallery_Label,.Read),panels:^core.Table(Gallery_Panel_Setup,.Read),widgets:^core.Table(gui.World_Widget),worlds:^core.Table(core.World_Transform,.Read),seats:^core.Table(inp.Seat,.Read)) {
     player,found:=core.first(players)
     if !found {return}
-    focus:=core.at(players,0).focus
+    state,_:=core.get(states,player)
+    focus:=state.focus
     body,_:=core.get(worlds,inp.body_of(seats,player) if focus==core.NONE else core.at(players,0).mirai)
     for row in 0..<core.count(labels) {
         e:=core.entity_at(labels,row)

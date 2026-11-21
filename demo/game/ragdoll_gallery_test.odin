@@ -20,9 +20,9 @@ ragdoll_gallery_without_memory_reports_it :: proc(t:^testing.T) {
         return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
     }
     entities:core.Entities;core.entities_init(&entities);defer core.entities_destroy(&entities)
-    gallery:core.Table(Ragdoll_Gallery);configs:core.Table(rag.Ragdoll)
+    gallery:core.Table(Ragdoll_Gallery);states:core.Table(Ragdoll_Gallery_State);configs:core.Table(rag.Ragdoll)
     core.table_init(&gallery,"Ragdoll_Gallery");core.table_init(&configs,"Ragdoll")
-    defer core.table_destroy(&gallery);defer core.table_destroy(&configs)
+    defer core.table_destroy(&gallery);defer core.table_destroy(&states);defer core.table_destroy(&configs)
     rig:=core.create(&entities)
     core.add(&gallery,rig,Ragdoll_Gallery{})
     core.add(&configs,rig,rag.Ragdoll{})
@@ -34,7 +34,7 @@ ragdoll_gallery_without_memory_reports_it :: proc(t:^testing.T) {
         requests:Ragdoll_Gallery_Requests
         requests.queue.items=make([dynamic]core.Entity,runtime.Allocator{limit_proc,&limit})
         problems^={}
-        ragdoll_gallery_update(&gallery,&configs,&requests,core.Time{},problems)
+        ragdoll_gallery_update(core.read(&gallery),&states,&configs,&requests,core.Time{},problems)
         ragdoll_gallery_cycle(&requests,rig)
         done=len(requests.queue.items)==1
         testing.expectf(t,done==(problems.count==0),"%d requests served: a cycle is queued, or the update said why not",served)

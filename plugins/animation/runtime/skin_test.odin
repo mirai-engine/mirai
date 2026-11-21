@@ -144,7 +144,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     // A tick that changes the poses, which the frames between it and the next interpolate.
     w.playback.frame+=1
     for root,i in roots {
-        pose:=constraint_playing(&w.playback,root)
+        pose:=constraint_playing(core.ref(&w.playback),root)
         pose.changed=w.playback.frame
         playing_pose(pose,.Local)[0].rotation=mm.quat_axis_angle({0,0,1},0.3)
         playing_pose(pose,.Local)[0].scale={1.3,0.8,-1.1}
@@ -183,7 +183,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
     core.add(&w.hidden,draws[0],{});test_world_settle(&w)
     tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=0.5})
     testing.expect(t,core.entity_map_get(&state.instances,draws[0])==nil)
-    shown:=constraint_playing(&w.playback,roots[0]);playing_pose(shown,.Previous)[2]=playing_pose(shown,.Local)[2];playing_pose(shown,.Local)[2].position.y+=1;shown.changed=w.playback.frame
+    shown:=constraint_playing(core.ref(&w.playback),roots[0]);playing_pose(shown,.Previous)[2]=playing_pose(shown,.Local)[2];playing_pose(shown,.Local)[2].position.y+=1;shown.changed=w.playback.frame
     core.remove(&w.hidden,draws[0]);test_world_settle(&w)
     for alpha in ([2]f32{0,0.5}) {
         tick(&app,&cache,&state,&w,&problems,&posed,{playing=true},{alpha=alpha})

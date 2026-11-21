@@ -95,7 +95,7 @@ modifier_control_slot :: proc(rig:^Modifier_Rig,kind:Modifier_Kind,name:u64) -> 
     return found
 }
 
-modifier_influence :: proc(runtime:^Modifier_Runtime,entity:core.Entity,kind:Modifier_Kind,name:u64) -> (weight:f32,enabled:bool,alpha,target,remaining:f32,requested:bool,found:bool) {
+modifier_influence :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.Entity,kind:Modifier_Kind,name:u64) -> (weight:f32,enabled:bool,alpha,target,remaining:f32,requested:bool,found:bool) {
     rig:=modifier_rig(runtime,entity)
     slot:=modifier_control_slot(rig,kind,name)
     if slot<0 {return}
@@ -199,7 +199,7 @@ modifier_take :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,req
     defer if finite(dt) && dt>0 {runtime.time+=f64(dt)}
     for request in core.take(&requests.modifiers) {
         request:=request
-        rig:=modifier_rig(runtime,request.rig)
+        rig:=modifier_rig(core.ref(runtime),request.rig)
         slot:=modifier_control_slot(rig,request.kind,request.name)
         error:=Modifier_Request_Error.None
         effector:=0
@@ -245,7 +245,7 @@ modifier_take :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,req
     }
 }
 
-animation_rig_diagnostic :: proc(runtime:^Modifier_Runtime,entity:core.Entity,kind:Modifier_Kind,name:u64) -> (Rig_Diagnostic,bool) {
+animation_rig_diagnostic :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.Entity,kind:Modifier_Kind,name:u64) -> (Rig_Diagnostic,bool) {
     rig:=modifier_rig(runtime,entity)
     index:=modifier_control_slot(rig,kind,name)
     if index<0 {return {},false}

@@ -26,7 +26,7 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
         animation,animated:=core.get(animations,entity)
         if !animated {continue}
         id:=anim.animation_character(app.assets,animation)
-        set:=anim.character_cached(sets.ptr,id)
+        set:=anim.character_cached(sets,id)
         if set==nil || len(set.set.match.clips)==0 {continue}
         character:=core.at(states,row)
         body,_:=core.get(characters,entity)
@@ -41,7 +41,7 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
         facing:=mm.quat_forward(mm.quat_axis_angle({0,1,0},asked.look_yaw))
         state,_:=core.get(found,entity)
         goal:=anim.Match_Goal{rig=entity,mode=u16(character.mode),velocity=going.linear,facing=facing,wall=state.wall_normal,turn_rate=body.turn_speed}
-        playing,matching:=anim.animation_match(playback.ptr,entity)
+        playing,matching:=anim.animation_match(playback,entity)
         if matching && character.mode==locomotion.MODE_FALLING && playing.landing_modes&(1<<u32(locomotion.MODE_FALLING))!=0 {
             if time,_,lands:=phys.character_landing(physics,entity);lands {goal.time_to_land=time}
         }

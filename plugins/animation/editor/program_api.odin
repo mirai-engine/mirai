@@ -214,7 +214,7 @@ program_grounding_diagnostic :: proc(world:core.World_Ref,entity:core.Entity,slo
     modifiers:=core.world_storage_of(world,anim.Modifier_Runtime)
     playback:=core.world_storage_of(world,anim.Playback)
     if modifiers==nil || playback==nil {return}
-    rig:=anim.modifier_rig(modifiers,entity)
+    rig:=anim.modifier_rig(core.ref(modifiers),entity)
     record:=&rig.grounding[0].record if rig!=nil && len(rig.grounding)>0 else nil
     state:^anim.Playing
     for &value in playback.states {if value.entity==entity {state=&value;break}}
@@ -253,14 +253,14 @@ program_modifier_inspect :: proc(s:^editor.Session,call:^api.Call,world:core.Wor
             definition,_:=program_modifier_definition(profile,kind,u16(slot));weight,enabled:=definition.weight,definition.enabled
             alpha,target:f32=1,1;requested:=true;remaining:f32
             name:=base.name_hash(base.text_get(definition.name[:]))
-            if w,on,a,t,left,wanted,found:=anim.modifier_influence(runtime,entity,kind,name);found {
+            if w,on,a,t,left,wanted,found:=anim.modifier_influence(core.ref(runtime),entity,kind,name);found {
                 weight,enabled,alpha,target,remaining,requested=w,on,a,t,left,wanted
             }
             row:=Instance_Modifier{kind=kind,weight=weight,enabled=enabled}
             base.text_set(row.name[:],base.text_get(definition.name[:]))
             if p.diagnostics {
                 row.alpha,row.target_alpha,row.requested_enabled,row.fade_remaining=alpha,target,requested,remaining
-                diagnostic,_:=anim.animation_rig_diagnostic(runtime,entity,kind,name)
+                diagnostic,_:=anim.animation_rig_diagnostic(core.ref(runtime),entity,kind,name)
                 row.diagnostic={valid=diagnostic.valid,reached=diagnostic.reached,residual=diagnostic.residual,angular_error=diagnostic.angular_error,iterations=diagnostic.iterations}
                 if kind==.Grounding {row.diagnostic=program_grounding_diagnostic(world,entity,u16(slot),profile.grounding)}
             }
