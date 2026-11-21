@@ -110,8 +110,8 @@ unpack_symbols :: proc "contextless" (w:^Decode_Work,src,dst:[]u8) -> ([]u8,bool
         for &byte in dst {byte=value}
         return dst,true
     }
-    if len(dst)<4096 {
-        w.table[0]=8
+    if len(dst)<1024 {
+        w.table[0]=zstd.HUF_DECODER_FAST_TABLELOG-1
         head,err:=zstd.huf_read_dtable_x1_wksp(&w.table[0],raw_data(src),len(src),
             &w.huff[0],size_of(w.huff))
         if err!=.None || head>=len(src) {return nil,false}
@@ -163,42 +163,71 @@ Entropy_Streams :: struct {
 }
 
 @(private)
-build_symbols :: proc "contextless" (w:^Encode_Work,src:[]u8,
-    first:int) -> (streams:Entropy_Streams) {
-    streams.dictionary=offset_dictionary(w)
-    reps:=INITIAL_OFFSETS
-    lengths:=Bit_Writer{bytes=w.length_bits[:]}
-    distances:=Bit_Writer{bytes=w.offset_bits[:]}
-    pos:=first
+Symbol_Writer :: struct {
+    streams:Entropy_Streams,
+    lengths,distances:Bit_Writer,
+    reps:Offsets,
+    pos,count:int,
+}
+
+@(private)
+symbol_writer :: #force_inline proc "contextless" (w:^Encode_Work,first:int) -> Symbol_Writer {
+    return {lengths={bytes=raw_data(w.length_bits[:])},distances={bytes=raw_data(w.offset_bits[:])},
+        reps=INITIAL_OFFSETS,pos=first}
+}
+
+@(private)
+symbol_write :: #force_inline proc "contextless" (w:^Encode_Work,b:^Symbol_Writer,src:[]u8,
+    ll,ml:int,distance:u32,$DICTIONARY:bool) #no_bounds_check {
     literal_codes,match_codes:=LITERAL_CODES,MATCH_CODES
-    for s,i in w.sequences[:w.sequence_count] {
-        ll,ml:=int(s.literals),int(s.length)
-        l,m:=literal_code(ll),match_code(ml)
-        slot:=offset_code(reps,s.distance,&streams.dictionary)
-        w.tags[i]=u8(l<<5|m)
-        w.offsets[i]=u8(slot)
-        if l==7 {
-            for n:=ll-32;;n>>=7 {
-                bit_write(&lengths,n&127|int(n>=128)<<7,8)
-                if n<128 {break}
-            }
-        } else {
-            bit_write(&lengths,ll-literal_codes[l].base,literal_codes[l].bits)
+    l,m:=literal_code(ll),match_code(ml)
+    slot:=offset_code(b.reps,distance,&b.streams.dictionary if DICTIONARY else nil)
+    w.tags[b.count]=u8(l<<5|m)
+    w.offsets[b.count]=u8(slot)
+    b.count+=1
+    if l==7 {
+        for n:=ll-32;;n>>=7 {
+            bit_write(&b.lengths,n&127|int(n>=128)<<7,8)
+            if n<128 {break}
         }
-        bit_write(&lengths,ml-match_codes[m].base,match_codes[m].bits)
-        if slot>=3 && slot<OFFSET_CLASSES {
-            width:=offset_width(slot)
-            shift:=ALIGN_BITS if slot>=OFFSET_NORMAL else 0
-            bit_write(&distances,int(s.distance>>uint(shift))-(1<<uint(width)),width)
-        }
-        reps=offset_push(reps,slot,s.distance)
-        streams.literals+=copy(w.literals[streams.literals:],src[pos:][:ll])
-        pos+=ll+ml
     }
-    streams.literals+=copy(w.literals[streams.literals:],src[pos:])
-    streams.length_bits=bit_finish(&lengths)
-    streams.offset_bits=bit_finish(&distances)
-    return
+    lc,mc:=literal_codes[l],match_codes[m]
+    low:=ll-lc.base if l<7 else 0
+    bit_write(&b.lengths,low|(ml-mc.base)<<uint(lc.bits),lc.bits+mc.bits)
+    if slot>=3 && slot<OFFSET_CLASSES {
+        width:=offset_width(slot)
+        shift:=ALIGN_BITS if slot>=OFFSET_NORMAL else 0
+        bit_write(&b.distances,int(distance>>uint(shift))-(1<<uint(width)),width)
+    }
+    b.reps=offset_push(b.reps,slot,distance)
+    if ll<=8 && b.pos<=len(src)-8 {
+        word:=intrinsics.unaligned_load((^u64)(&src[b.pos]))
+        intrinsics.unaligned_store((^u64)(&w.literals[b.streams.literals]),word)
+    } else {
+        copy(w.literals[b.streams.literals:],src[b.pos:][:ll])
+    }
+    b.streams.literals+=ll
+    b.pos+=ll+ml
+}
+
+@(private)
+symbol_finish :: #force_inline proc "contextless" (w:^Encode_Work,b:^Symbol_Writer,
+    src:[]u8) -> Entropy_Streams {
+    w.sequence_count=b.count
+    b.streams.literals+=copy(w.literals[b.streams.literals:],src[b.pos:])
+    b.streams.length_bits=bit_finish(&b.lengths)
+    b.streams.offset_bits=bit_finish(&b.distances)
+    return b.streams
+}
+
+@(private)
+build_symbols :: proc "contextless" (w:^Encode_Work,src:[]u8,first:int) -> Entropy_Streams {
+    writer:=symbol_writer(w,first)
+    writer.streams.dictionary=offset_dictionary(w)
+    for s in w.sequences[:w.sequence_count] {
+        symbol_write(w,&writer,src,int(s.literals),int(s.length),s.distance,true)
+    }
+    return symbol_finish(w,&writer,src)
 }
 
 @(private)
@@ -228,18 +257,17 @@ write_entropy :: proc "contextless" (w:^Encode_Work,streams:^Entropy_Streams,dst
 }
 
 @(private="file")
-Bit_Writer :: struct {bytes:[]u8,at,width:int,value:u32}
+Bit_Writer :: struct {bytes:[^]u8,at,width:int,value:u32}
 
 @(private="file")
-bit_write :: #force_inline proc "contextless" (w:^Bit_Writer,value,width:int) {
-    w.value|=u32(value)<<uint(w.width)
-    w.width+=width
-    for w.width>=8 {
-        w.bytes[w.at]=u8(w.value)
-        w.at+=1
-        w.value>>=8
-        w.width-=8
-    }
+bit_write :: #force_inline proc "contextless" (w:^Bit_Writer,value,width:int) #no_bounds_check {
+    if width==0 {return}
+    combined:=w.value|u32(value)<<uint(w.width)
+    total:=w.width+width
+    intrinsics.unaligned_store((^u32le)(&w.bytes[w.at]),u32le(combined))
+    w.at+=total>>3
+    w.value=combined>>uint(total&~7)
+    w.width=total&7
 }
 
 @(private="file")
@@ -250,33 +278,33 @@ bit_finish :: proc "contextless" (w:^Bit_Writer) -> int {
 }
 
 @(private="file")
-Bit_Reader :: struct {bytes:[]u8,at:int,tail:u64}
+Bit_Reader :: struct {src:[^]u8,at,last:int,tail:u64}
 
 @(private="file")
-bit_reader :: proc "contextless" (extra:[]u8) -> Bit_Reader {
-    r:=Bit_Reader{bytes=extra}
-    last:=extra[max(0,len(extra)-8):]
-    for byte,i in last {r.tail|=u64(byte)<<uint(i*8)}
-    return r
+bit_reader :: #force_inline proc "contextless" (r:^Bit_Reader,extra:[]u8) {
+    r.at=0
+    r.last=max(0,len(extra)-8)
+    if len(extra)>=8 {
+        r.src=raw_data(extra)
+    } else {
+        r.tail=0
+        if len(extra)>0 {intrinsics.mem_copy_non_overlapping(&r.tail,raw_data(extra),len(extra))}
+        r.src=([^]u8)(&r.tail)
+    }
 }
 
 @(private="file")
-bit_read :: #force_inline proc "contextless" (r:^Bit_Reader,width:int) -> int #no_bounds_check {
-    if width==0 {return 0}
-    bit:=r.at
-    if bit+width>len(r.bytes)*8 {return -1}
-    r.at+=width
-    byte:=bit>>3
-    tail_at:=max(0,len(r.bytes)-8)
-    word:=r.tail>>uint((byte-tail_at)*8) if byte>=tail_at else
-        u64(intrinsics.unaligned_load((^u64le)(&r.bytes[byte])))
-    return int(word>>uint(bit&7)&((u64(1)<<uint(width))-1))
+bit_peek :: #force_inline proc "contextless" (r:^Bit_Reader) -> u64 {
+    // Clamp the load even for a corrupt cursor. bit_end validates the consumed extent.
+    byte:=min(r.at>>3,r.last)
+    word:=u64(intrinsics.unaligned_load((^u64le)(&r.src[byte])))
+    return word>>uint(min(r.at-byte*8,63))
 }
 
 @(private="file")
-bit_end :: #force_inline proc "contextless" (r:Bit_Reader) -> bool {
-    if (r.at+7)/8!=len(r.bytes) {return false}
-    return r.at&7==0 || r.bytes[len(r.bytes)-1]>>uint(r.at&7)==0
+bit_end :: #force_inline proc "contextless" (bits:[]u8,at:int) -> bool {
+    if (at+7)/8!=len(bits) {return false}
+    return at&7==0 || bits[len(bits)-1]>>uint(at&7)==0
 }
 
 @(private)
@@ -298,61 +326,80 @@ decode_entropy :: proc "contextless" (w:^Decode_Work,src,dst:[]u8,first:int) -> 
     if count<0 || raw<0 || count>(extent-raw)/MIN_MATCH || raw>extent ||
        nt<0 || no<0 || nl<0 || length_bytes<0 || nt+no+nl+length_bytes>len(src)-at {return false}
     tags,a:=unpack_symbols(w,src[at:][:nt],w.tags[:count])
+    if !a {return false}
     at+=nt
     offsets,b:=unpack_symbols(w,src[at:][:no],w.offsets[:count])
+    if !b {return false}
     at+=no
     literals,c:=unpack_symbols(w,src[at:][:nl],w.literals[:raw])
+    if !c {return false}
     at+=nl
-    return a && b && c && execute_entropy(tags,offsets,literals,src[at:][:length_bytes],
+    if count==0 {
+        return at==len(src) && raw==extent && copy(dst[first:],literals)==extent
+    }
+    return execute_entropy(tags,offsets,literals,src[at:][:length_bytes],
         src[at+length_bytes:],dst,first,&dict)
 }
 
 @(private="file")
 execute_entropy :: proc "contextless" (tags,offsets,literals,length_bits,offset_bits,dst:[]u8,
     first:int,dict:^Offset_Dictionary) -> bool #no_bounds_check {
-    lengths:=bit_reader(length_bits)
-    distances:=bit_reader(offset_bits)
-    reps:=INITIAL_OFFSETS
+    lengths,distances:Bit_Reader
+    bit_reader(&lengths,length_bits)
+    bit_reader(&distances,offset_bits)
+    // Distance base above the extra bit count and alignment shift.
+    slots:[OFFSET_CLASSES+len(dict.distances)]u32
+    for distance,i in INITIAL_OFFSETS {slots[i]=distance<<8}
+    for slot in 3..<OFFSET_CLASSES {
+        shift:=ALIGN_BITS if slot>=OFFSET_NORMAL else 0
+        width:=offset_width(slot)
+        slots[slot]=u32(width)|u32(shift)<<5|u32(1)<<uint(width+shift+8)
+    }
+    for distance,i in dict.distances[:dict.count] {slots[OFFSET_CLASSES+i]=distance<<8}
     lit,out:=0,first
     literal_codes,match_codes:=LITERAL_CODES,MATCH_CODES
     for token,i in tags {
         l,m:=int(token>>5),int(token&31)
         slot:=int(offsets[i])
         if m>=len(match_codes) || slot>=OFFSET_CLASSES+dict.count {return false}
-        ll,ml:=literal_codes[l],match_codes[m]
-        literal:=ll.base
-        if l==7 {
-            for shift in 0..<3 {
-                byte:=bit_read(&lengths,8)
-                if byte<0 || (shift>0 && byte==0) {return false}
-                literal+=(byte&127)<<uint(7*shift)
-                if byte<128 {break}
-                if shift==2 {return false}
+        literal,match:=l,m+MIN_MATCH
+        if l>=4 || m>=8 {
+            ll,ml:=literal_codes[l],match_codes[m]
+            value:=bit_peek(&lengths)
+            literal=ll.base
+            if l==7 {
+                for shift in 0..<3 {
+                    byte:=int(u8(value))
+                    if shift>0 && byte==0 {return false}
+                    literal+=(byte&127)<<uint(7*shift)
+                    value>>=8
+                    lengths.at+=8
+                    if byte<128 {break}
+                    if shift==2 {return false}
+                }
             }
+            literal+=int(value)&((1<<uint(ll.bits))-1)
+            match=ml.base+(int(value>>uint(ll.bits))&((1<<uint(ml.bits))-1))
+            lengths.at+=ll.bits+ml.bits
         }
-        value:=bit_read(&lengths,ll.bits+ml.bits)
-        if value<0 {return false}
-        literal+=value&((1<<uint(ll.bits))-1)
-        match:=ml.base+(value>>uint(ll.bits))
 
-        distance:u32
-        if slot<3 {
-            distance=reps[slot]
-        } else if slot<OFFSET_CLASSES {
-            width:=offset_width(slot)
-            offset:=bit_read(&distances,width)
-            if offset<0 {return false}
-            shift:=ALIGN_BITS if slot>=OFFSET_NORMAL else 0
-            distance=(u32(1)<<uint(width)|u32(offset))<<uint(shift)
-        } else {
-            distance=dict.distances[slot-OFFSET_CLASSES]
+        code:=slots[slot]
+        distance:=code>>8
+        width:=uint(code&31)
+        if width!=0 {
+            offset:=u32(bit_peek(&distances))&((u32(1)<<width)-1)
+            distances.at+=int(width)
+            distance|=offset<<uint(code>>5&3)
         }
-        reps=offset_push(reps,slot,distance)
+        slots[2]=slots[1] if slot>1 else slots[2]
+        slots[1]=slots[0] if slot!=0 else slots[1]
+        slots[0]=distance<<8
         if !copy_sequence(dst,literals,out,lit,literal,match,int(distance)) {return false}
         lit+=literal
         out+=literal+match
     }
-    if !bit_end(lengths) || !bit_end(distances) || len(literals)-lit!=len(dst)-out {return false}
+    if !bit_end(length_bits,lengths.at) || !bit_end(offset_bits,distances.at) ||
+       len(literals)-lit!=len(dst)-out {return false}
     copy(dst[out:],literals[lit:])
     return true
 }

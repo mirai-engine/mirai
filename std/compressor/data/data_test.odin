@@ -87,6 +87,8 @@ speed_uses_lz_and_entropy_pays_for_its_header :: proc(t:^testing.T) {
 
     cases:=[?]struct{profile:Profile,pattern:Pattern,mode:Block_Mode}{
         {.Fast,.Random,.Raw},
+        {.Fast,.Repeated,.Entropy},
+        {.Fast,.Palette,.Entropy},
         {.Speed,.Repeated,.LZ},
         {.Speed,.Palette,.Raw},
         {.Balanced,.Repeated,.Entropy},
@@ -191,7 +193,7 @@ invalid_commands_and_unavailable_scratch_report_errors :: proc(t:^testing.T) {
 
 @(test)
 speed_matches_copy_exactly_across_overlap_and_end :: proc(t:^testing.T) {
-    wire:[51]u8
+    wire:[83]u8
     wire[0],wire[1]=u8(Block_Mode.LZ),8
     wire[2],wire[4],wire[5]=20,20,4
     wire[8]=2
@@ -199,17 +201,20 @@ speed_matches_copy_exactly_across_overlap_and_end :: proc(t:^testing.T) {
     for distance in 1..=30 {
         for length in SPEED_MIN..=32 {
             wire[6],wire[9]=u8(distance),u8(length-SPEED_MIN)
-            expected,out:[81]u8
+            expected,out:[113]u8
             copy(expected[:20],wire[10:30])
             copy(expected[20:28],expected[:8])
             copy(expected[28:30],wire[30:32])
             for at in 30..<30+length {expected[at]=expected[at-distance]}
             copy(expected[30+length:],wire[32:])
 
-            actual:=out[:49+length]
-            result:=decode(nil,MDC1,wire[:],actual)
-            if !testing.expectf(t,result==.None && string(actual)==string(expected[:len(actual)]),
-                "distance %d length %d: %v",distance,length,result) {return}
+            for tail in ([3]int{0,19,51}) {
+                actual:=out[:30+length+tail]
+                result:=decode(nil,MDC1,wire[:32+tail],actual)
+                if !testing.expectf(t,result==.None &&
+                    string(actual)==string(expected[:len(actual)]),
+                    "distance %d length %d tail %d: %v",distance,length,tail,result) {return}
+            }
         }
     }
 }

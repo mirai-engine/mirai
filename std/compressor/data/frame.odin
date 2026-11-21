@@ -32,7 +32,7 @@ encode_mdc1 :: proc(e:^Encoder,profile:Profile,src,dst:[]u8) -> (size:int,error:
         if err!=nil {return 0,.Out_Of_Memory}
         e^={allocator=allocator,mdc=work}
     }
-    if e.mdc!=nil {index_begin(e.mdc,len(src))}
+    if e.mdc!=nil {index_begin(e.mdc,len(src),profile)}
     for first:=0;first<len(src);first+=BLOCK_BYTES {
         last:=min(first+BLOCK_BYTES,len(src))
         header:=size
@@ -122,15 +122,8 @@ length_size :: #force_inline proc "contextless" (n:int) -> int {
 copy_sequence :: #force_inline proc "contextless" (dst,literals:[]u8,
     out,lit,ll,ml,distance:int) -> bool #no_bounds_check {
     at:=out+ll
-    if ll<=16 && ml<=32 && out<=len(dst)-48 && lit<=len(literals)-16 &&
-       distance>=16 && distance<=at {
-        copy16(&dst[out],&literals[lit])
-        from:=at-distance
-        copy16(&dst[at],&dst[from])
-        if ml>16 {copy16(&dst[at+16],&dst[from+16])}
-        return true
-    }
-    if ll>len(literals)-lit || ll+ml>len(dst)-out || distance<=0 || distance>at {return false}
+    invalid:=(len(literals)-lit-ll)|(len(dst)-at-ml)|(distance-1)|(at-distance)
+    if invalid<0 {return false}
     if ll<=16 && lit<=len(literals)-16 && out<=len(dst)-16 {
         copy16(&dst[out],&literals[lit])
     } else if ll>0 {
@@ -141,8 +134,49 @@ copy_sequence :: #force_inline proc "contextless" (dst,literals:[]u8,
 }
 
 @(private="file")
+Short_Match :: #simd[16]u8
+
+// The last distance bytes of the preceding vector, repeated to fill a vector.
+@(private="file")
+SHORT_MATCH_ORDER :: [15]Short_Match{
+    {15,15,15,15,15,15,15,15,15,15,15,15,15,15,15,15},
+    {14,15,14,15,14,15,14,15,14,15,14,15,14,15,14,15},
+    {13,14,15,13,14,15,13,14,15,13,14,15,13,14,15,13},
+    {12,13,14,15,12,13,14,15,12,13,14,15,12,13,14,15},
+    {11,12,13,14,15,11,12,13,14,15,11,12,13,14,15,11},
+    {10,11,12,13,14,15,10,11,12,13,14,15,10,11,12,13},
+    {9,10,11,12,13,14,15,9,10,11,12,13,14,15,9,10},
+    {8,9,10,11,12,13,14,15,8,9,10,11,12,13,14,15},
+    {7,8,9,10,11,12,13,14,15,7,8,9,10,11,12,13},
+    {6,7,8,9,10,11,12,13,14,15,6,7,8,9,10,11},
+    {5,6,7,8,9,10,11,12,13,14,15,5,6,7,8,9},
+    {4,5,6,7,8,9,10,11,12,13,14,15,4,5,6,7},
+    {3,4,5,6,7,8,9,10,11,12,13,14,15,3,4,5},
+    {2,3,4,5,6,7,8,9,10,11,12,13,14,15,2,3},
+    {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,1},
+}
+
+@(private="file")
+copy_short_match :: #force_inline proc "contextless" (dst:[]u8,at,distance:int) #no_bounds_check {
+    orders:=SHORT_MATCH_ORDER
+    previous:=intrinsics.unaligned_load((^Short_Match)(&dst[at-16]))
+    tiled:=intrinsics.simd_runtime_swizzle(previous,orders[distance-1])
+    intrinsics.unaligned_store((^Short_Match)(&dst[at]),tiled)
+}
+
+@(private="file")
 copy_match :: #force_inline proc "contextless" (dst:[]u8,at,distance,count:int) #no_bounds_check {
     from:=at-distance
+    if count<=16 && len(dst)-at>=16 {
+        if distance>=16 {
+            copy16(&dst[at],&dst[from])
+            return
+        }
+        if at>=16 {
+            copy_short_match(dst,at,distance)
+            return
+        }
+    }
     if count<=32 && distance>=16 && len(dst)-at>=32 {
         copy16(&dst[at],&dst[from])
         if count>16 {copy16(&dst[at+16],&dst[from+16])}

@@ -34,9 +34,9 @@ Encode_Work :: struct {
     sequences:[SEQUENCES_MAX]Sequence,
     sequence_count:int,
     tags,offsets:[SEQUENCES_MAX]u8,
-    literals:[BLOCK_BYTES]u8,
-    length_bits:[BLOCK_BYTES/8]u8,
-    offset_bits:[3*SEQUENCES_MAX]u8,
+    literals:[BLOCK_BYTES+8]u8,
+    length_bits:[BLOCK_BYTES/8+4]u8,
+    offset_bits:[3*SEQUENCES_MAX+4]u8,
     packed:[BLOCK_BYTES+2*SEQUENCES_MAX]u8,
     candidate:[BLOCK_BYTES+1]u8,
     huff:Huff_Work,
@@ -47,27 +47,34 @@ Encode_Work :: struct {
 Match :: struct {length,distance:int}
 
 @(private)
-index_begin :: proc "contextless" (w:^Encode_Work,size:int) {
+index_begin :: proc "contextless" (w:^Encode_Work,size:int,profile:Profile) {
     bits:=clamp(high_bit(size),6,HASH_BITS)
     w.hash_shift=uint(32-bits)
     intrinsics.mem_zero(&w.head,(1<<uint(bits))*size_of(u32))
-    intrinsics.mem_zero(&w.long_head,(1<<uint(bits))*size_of(u32))
+    if profile==.Fast || profile==.Ultra {
+        intrinsics.mem_zero(&w.long_head,(1<<uint(bits))*size_of(u32))
+    }
 }
 
 @(private)
 encode_block :: proc "contextless" (w:^Encode_Work,profile:Profile,src:[]u8,first:int,
     dst:[]u8) -> int {
     if len(src)-first>=MIN_MATCH {
-        if profile<=.Speed {
-            parse_speed(w,src,first,profile)
+        if profile==.Speed {
+            parse_speed(w,src,first)
             if n:=write_speed(w,src,first,dst);n>0 {return n}
         } else {
-            for at in first..=len(src)-MIN_MATCH {index_at(w,src,at,true)}
-            if profile==.Ultra {
-                for at in first..=len(src)-8 {index_long(w,src,at)}
+            streams:Entropy_Streams
+            if profile==.Fast {
+                streams=parse_fast(w,src,first)
+            } else {
+                for at in first..=len(src)-MIN_MATCH {index_at(w,src,at,true)}
+                if profile==.Ultra {
+                    for at in first..=len(src)-8 {index_long(w,src,at)}
+                }
+                parse_greedy(w,src,first,21 if profile==.Balanced else 18)
+                streams=build_symbols(w,src,first)
             }
-            parse_greedy(w,src,first,profile)
-            streams:=build_symbols(w,src,first)
             size:=write_entropy(w,&streams,dst)
             if profile==.Ultra {
                 for _ in 0..<2 {
@@ -96,7 +103,7 @@ hash_at :: #force_inline proc "contextless" (src:[]u8,at:int,shift:uint,short:bo
         word=u32(src[at])|u32(src[at+1])<<8|u32(src[at+2])<<16
     }
     if short {word&=0xffffff}
-    return (word*0x9e3779b1)>>shift
+    return hash32(word,shift)
 }
 
 @(private="file")
@@ -109,13 +116,14 @@ index_at :: #force_inline proc "contextless" (w:^Encode_Work,src:[]u8,at:int,sho
 @(private="file")
 index_long :: #force_inline proc "contextless" (w:^Encode_Work,src:[]u8,at:int) {
     word:=u64(intrinsics.unaligned_load((^u64le)(&src[at])))
-    h:=u32((word*0x9e3779b97f4a7c15)>>uint(w.hash_shift+32))
+    h:=hash64(word,w.hash_shift)
     w.long_previous[at&(CHAIN_SIZE-1)]=w.long_head[h]
     w.long_head[h]=u32(at+1)
 }
 
 @(private="file")
-match_end :: #force_inline proc "contextless" (src:[]u8,left,right,start,limit:int) -> int {
+match_end :: #force_inline proc "contextless" (src:[]u8,
+    left,right,start,limit:int) -> int #no_bounds_check {
     n:=start
     for n+8<=limit {
         a:=intrinsics.unaligned_load((^u64le)(&src[left+n]))
@@ -175,32 +183,86 @@ emit :: #force_inline proc "contextless" (w:^Encode_Work,literals:int,m:Match) {
 }
 
 @(private="file")
-parse_speed :: proc "contextless" (w:^Encode_Work,src:[]u8,first:int,profile:Profile) {
+parse_speed :: proc "contextless" (w:^Encode_Work,src:[]u8,first:int) {
     w.sequence_count=0
-    depth,minimum,skip_shift:=1,SPEED_MIN,6
-    if profile==.Speed {depth,minimum,skip_shift=16,12,10}
     start,at,indexed:=first,first,first
     last:=len(src)-SPEED_MIN
     for at<=last {
         if indexed<=at {index_at(w,src,at,false);indexed=at+1}
-        m:=find_match(w,src,at,depth,int(max(u16)),minimum,profile==.Speed)
+        m:=find_match(w,src,at,16,int(max(u16)),12,true)
         if m.length==0 {
-            at+=1+min((at-start)>>uint(skip_shift),31)
+            at+=1+min((at-start)>>10,31)
             continue
         }
-        if profile==.Speed && at<last && m.length<SEARCH_LENGTH {
+        if at<last && m.length<SEARCH_LENGTH {
             if indexed<=at+1 {index_at(w,src,at+1,false);indexed=at+2}
-            next:=find_match(w,src,at+1,depth,int(max(u16)),minimum,true)
+            next:=find_match(w,src,at+1,16,int(max(u16)),12,true)
             if next.length>m.length+1 {at+=1;continue}
         }
         if m.length==SEARCH_LENGTH {m.length=match_end(src,at-m.distance,at,m.length,len(src)-at)}
         emit(w,at-start,m)
         start=at+m.length
         at=start
-        if profile==.Speed {
-            for i in max(indexed,at-8)..<min(at,last+1) {index_at(w,src,i,false)}
-        }
+        for i in max(indexed,at-8)..<min(at,last+1) {index_at(w,src,i,false)}
     }
+}
+
+@(private="file")
+fast_index :: #force_inline proc "contextless" (head:^([1<<HASH_BITS]u32),hash:u32,at:int) -> int {
+    previous:=head[hash]
+    head[hash]=u32(at+1)
+    return int(previous)-1
+}
+
+@(private="file")
+hash32 :: #force_inline proc "contextless" (word:u32,shift:uint) -> u32 {
+    return (word*0x9e3779b1)>>shift
+}
+
+@(private="file")
+hash64 :: #force_inline proc "contextless" (word:u64,shift:uint) -> u32 {
+    return u32((word*0x9e3779b97f4a7c15)>>(shift+32))
+}
+
+@(private="file")
+parse_fast :: proc "contextless" (w:^Encode_Work,src:[]u8,
+    first:int) -> Entropy_Streams #no_bounds_check {
+    writer:=symbol_writer(w,first)
+    start,at:=first,first
+    rep:=1
+    shift:=w.hash_shift
+    last:=len(src)-8
+    for at<=last {
+        word:=u64(intrinsics.unaligned_load((^u64le)(&src[at])))
+        short:=fast_index(&w.head,hash32(u32(word),shift),at)
+        long:=fast_index(&w.long_head,hash64(word,shift),at)
+        from,n:=long,0
+        if long>=0 && at-long<=WINDOW &&
+           u64(intrinsics.unaligned_load((^u64le)(&src[long])))==word {
+            n=8
+        } else if at>=rep &&
+                  u32(intrinsics.unaligned_load((^u32le)(&src[at-rep])))==u32(word) {
+            from,n=at-rep,4
+        } else if short>=0 && at-short<=WINDOW &&
+                  u32(intrinsics.unaligned_load((^u32le)(&src[short])))==u32(word) {
+            from,n=short,4
+        }
+        if n==0 {
+            at+=1+min((at-start)>>4,15)
+            continue
+        }
+        end:=at+match_end(src,from,at,n,len(src)-at)
+        for at>start && from>0 && src[at-1]==src[from-1] {at-=1;from-=1}
+        rep=at-from
+        symbol_write(w,&writer,src,at-start,end-at,u32(rep),false)
+        if end-2<=last {
+            seed:=u64(intrinsics.unaligned_load((^u64le)(&src[end-2])))
+            fast_index(&w.head,hash32(u32(seed),shift),end-2)
+            fast_index(&w.long_head,hash64(seed,shift),end-2)
+        }
+        start,at=end,end
+    }
+    return symbol_finish(w,&writer,src)
 }
 
 @(private="file")
@@ -231,10 +293,9 @@ match_score :: #force_inline proc "contextless" (m:Match,reps:Offsets,penalty:in
 }
 
 @(private="file")
-parse_greedy :: proc "contextless" (w:^Encode_Work,src:[]u8,first:int,profile:Profile) {
+parse_greedy :: proc "contextless" (w:^Encode_Work,src:[]u8,first,penalty:int) {
     w.sequence_count=0
     start,at:=first,first
-    penalty:=32 if profile==.Balanced else 20
     reps:=INITIAL_OFFSETS
     last:=len(src)-MIN_MATCH
     for at<=last {
