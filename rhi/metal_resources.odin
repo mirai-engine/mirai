@@ -35,8 +35,6 @@ mtl_format :: proc "contextless" (f: Format) -> MTL.PixelFormat {
 	case .D32_Float:     return .Depth32Float
 	case .BC1_Unorm:     return .BC1_RGBA
 	case .BC1_Srgb:      return .BC1_RGBA_sRGB
-	case .BC3_Unorm:     return .BC3_RGBA
-	case .BC3_Srgb:      return .BC3_RGBA_sRGB
 	case .BC5_Unorm:     return .BC5_RGUnorm
 	case .BC7_Unorm:     return .BC7_RGBAUnorm
 	case .BC7_Srgb:      return .BC7_RGBAUnorm_sRGB

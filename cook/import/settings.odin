@@ -70,7 +70,7 @@ rig_from_name :: proc(name:string) -> (rig:Rig,ok:bool) {
 }
 
 Import_Settings :: struct {
-    textures:textures.Encoding, // .Blocks: BC1, BC3, BC5, BC6H or BC7 by the use of each image; .Uncompressed: RGBA8, RGBA16 or RGBA16F by what it holds
+    textures:textures.Encoding, // .Blocks by use; .Uncompressed by source precision
     rdo_lambda:int,             // of textures in blocks, up to textures.RDO_LAMBDA_MAX: how much error their rate-distortion optimization trades for files that compress smaller. 0: textures.RDO_LAMBDA_DEFAULT; below 0: none
     image:Image_Use,            // of an image imported on its own
     alpha_coverage:f32,         // of an image imported on its own, above 0: the cutoff of the masked material that shows it, whose coverage every level keeps

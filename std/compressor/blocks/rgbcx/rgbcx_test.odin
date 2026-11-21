@@ -76,19 +76,19 @@ channel_error::proc(a,b:^Test_Block,ch:int) -> (error:u64) {
 }
 
 @(test)
-test_bc1_bc3_psnr::proc(t:^testing.T) {
+test_bc1_psnr::proc(t:^testing.T) {
     tables:=new_tables(.Ideal)
     defer free(tables)
 
     low_gradient_err,low_noise_err:u64
     levels:=[2]u32{0,MAX_LEVEL}
     for level,level_index in levels {
-        gradient_err,noise_err,bc3_gradient_err,bc3_alpha_err,bc3_hq_alpha_err:u64
+        gradient_err,noise_err:u64
         state:=u32(0x1234567)
         for _ in 0..<TEST_BLOCKS {
             g:=gradient_block(&state)
             n:=noise_block(&state)
-            dst:[16]u8
+            dst:[8]u8
             out:Test_Block
 
             encode_bc1(tables,level,&dst[0],&g[0],true,false)
@@ -98,24 +98,12 @@ test_bc1_bc3_psnr::proc(t:^testing.T) {
             encode_bc1(tables,level,&dst[0],&n[0],true,false)
             unpack_bc1(&dst[0],&out[0],true,.Ideal)
             noise_err+=rgb_error(&n,&out)
-
-            encode_bc3(tables,level,&dst[0],&g[0])
-            testing.expect(t,unpack_bc3(&dst[0],&out[0],.Ideal),"BC3 must not use 3-color blocks")
-            bc3_gradient_err+=rgb_error(&g,&out)
-            bc3_alpha_err+=channel_error(&g,&out,3)
-
-            encode_bc3_hq(tables,level,&dst[0],&g[0],BC4_DEFAULT_SEARCH_RAD,BC4_USE_ALL_MODES)
-            testing.expect(t,unpack_bc3(&dst[0],&out[0],.Ideal),"BC3 must not use 3-color blocks")
-            bc3_hq_alpha_err+=channel_error(&g,&out,3)
         }
 
-        // A 7-step full-range ramp limits BC1 to about 30 dB and BC4 to about 35 dB.
+        // A 7-step full-range ramp limits BC1 to about 30 dB.
         bound:=level_index==0?29.5:30.0
         expect_rgb_psnr(t,gradient_err,bound)
-        expect_rgb_psnr(t,bc3_gradient_err,bound)
         expect_rgb_psnr(t,noise_err,level_index==0?8:12)
-        expect_psnr(t,bc3_alpha_err,16*TEST_BLOCKS,34)
-        testing.expect(t,bc3_hq_alpha_err<=bc3_alpha_err)
         if level_index==1 {
             testing.expect(t,gradient_err<=low_gradient_err,"the max level must not lose to level 0")
             testing.expect(t,noise_err<=low_noise_err,"the max level must not lose to level 0")
@@ -182,10 +170,6 @@ test_solid_blocks::proc(t:^testing.T) {
                 testing.expect(t,abs(i32(out[i*4+1])-i32(g))<=4)
                 testing.expect(t,abs(i32(out[i*4+2])-i32(b))<=8)
             }
-
-            encode_bc3(tables,level,&dst[0],&src[0])
-            testing.expect(t,unpack_bc3(&dst[0],&out[0],.Ideal),"BC3 must not use 3-color blocks")
-            for i in 0..<16 {testing.expect_value(t,out[i*4+3],a)}
         }
 
         modes:=[3]u32{BC4_USE_MODE6_FLAG,BC4_USE_MODE8_FLAG,BC4_USE_ALL_MODES}
@@ -202,17 +186,16 @@ test_solid_blocks::proc(t:^testing.T) {
 
 @(test)
 test_deterministic::proc(t:^testing.T) {
-    run::proc(mode:Bc1_Approx_Mode) -> (result:[TEST_BLOCKS*5][16]u8) {
+    run::proc(mode:Bc1_Approx_Mode) -> (result:[TEST_BLOCKS][4][16]u8) {
         tables:=new_tables(mode)
         defer free(tables)
         state:=u32(0x99887766)
-        for i in 0..<TEST_BLOCKS {
+        for &blocks in result {
             n:=noise_block(&state)
-            encode_bc1(tables,MAX_LEVEL,&result[i*5][0],&n[0],true,true)
-            encode_bc1(tables,10,&result[i*5+1][0],&n[0],true,false)
-            encode_bc3(tables,MAX_LEVEL,&result[i*5+2][0],&n[0])
-            encode_bc5(&result[i*5+3][0],&n[0],0,1,4)
-            encode_bc5_hq(&result[i*5+4][0],&n[0],0,1,4,BC4_DEFAULT_SEARCH_RAD,BC4_USE_ALL_MODES)
+            encode_bc1(tables,MAX_LEVEL,&blocks[0][0],&n[0],true,true)
+            encode_bc1(tables,10,&blocks[1][0],&n[0],true,false)
+            encode_bc5(&blocks[2][0],&n[0],0,1,4)
+            encode_bc5_hq(&blocks[3][0],&n[0],0,1,4,BC4_DEFAULT_SEARCH_RAD,BC4_USE_ALL_MODES)
         }
         return
     }
@@ -239,8 +222,6 @@ test_hostile_inputs::proc(t:^testing.T) {
             out:Test_Block
             encode_bc1(tables,level,&dst[0],&n[0],true,true)
             unpack_bc1(&dst[0],&out[0],false,mode)
-            encode_bc3(tables,level,&dst[0],&n[0])
-            unpack_bc3(&dst[0],&out[0],mode)
         }
 
         for _ in 0..<256 {
@@ -248,7 +229,6 @@ test_hostile_inputs::proc(t:^testing.T) {
             for i in 0..<16 {block[i]=u8(next_random(&state))}
             out:Test_Block
             unpack_bc1(&block[0],&out[0],true,mode)
-            unpack_bc3(&block[0],&out[0],mode)
             unpack_bc4(&block[0],&out[0],4)
             unpack_bc5(&block[0],&out[0],0,1,4)
         }
@@ -261,7 +241,6 @@ test_hostile_inputs::proc(t:^testing.T) {
     }
 
     encode_bc1(nil,0,nil,nil,false,false)
-    encode_bc3(nil,0,nil,nil)
     encode_bc4(nil,nil,4)
     encode_bc5(nil,nil,0,1,4)
     tables_init(nil,.Ideal)

@@ -1317,7 +1317,6 @@ assets_texture_levels :: proc(view:asset.Texture_View,limits:render.Texture_Limi
     case .RGBA16:  data.format=.RGBA16_Unorm
     case .RGBA16F: data.format=.RGBA16_Float
     case .BC1:     data.format=srgb?.BC1_Srgb:.BC1_Unorm
-    case .BC3:     data.format=srgb?.BC3_Srgb:.BC3_Unorm
     case .BC5:     data.format=.BC5_Unorm
     case .BC6H:    data.format=.BC6H_Ufloat
     case .BC7:     data.format=srgb?.BC7_Srgb:.BC7_Unorm

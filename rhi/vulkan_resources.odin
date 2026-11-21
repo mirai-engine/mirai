@@ -33,8 +33,6 @@ vk_format :: proc "contextless" (f: Format) -> vk.Format {
 	case .D32_Float:     return .D32_SFLOAT
 	case .BC1_Unorm:     return .BC1_RGB_UNORM_BLOCK
 	case .BC1_Srgb:      return .BC1_RGB_SRGB_BLOCK
-	case .BC3_Unorm:     return .BC3_UNORM_BLOCK
-	case .BC3_Srgb:      return .BC3_SRGB_BLOCK
 	case .BC5_Unorm:     return .BC5_UNORM_BLOCK
 	case .BC7_Unorm:     return .BC7_UNORM_BLOCK
 	case .BC7_Srgb:      return .BC7_SRGB_BLOCK

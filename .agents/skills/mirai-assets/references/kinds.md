@@ -113,7 +113,7 @@ per bone.
 
 ## Texture
 
-- 8-bit formats `RGBA8`, `BC1`, `BC3`, `BC5` and `BC7`; `RGBA16` (16 linear bits, data that keeps
+- 8-bit formats `RGBA8`, `BC1`, `BC5` and `BC7`; `RGBA16` (16 linear bits, data that keeps
   its precision), `RGBA16F` and `BC6H` (linear half floats: HDR, light above 1; BC6H unsigned and
   without alpha). `cook/textures` encodes them ([compression](formats.md#compression)).
 - **Levels, smallest first.** `texels` holds the levels from the smallest to level 0, compressed:
@@ -124,13 +124,13 @@ per bone.
   (`compressor:blocks`), which restore only whole: one of its tail (the levels of side
   `TEXTURE_TAIL` or less, which every read takes) and one of its larger levels; one per level
   compresses larger.
-- **Planes of fields.** A BC1, BC3 or BC5 texture whose blocks are not `Fast` stores each level as
+- **Planes of fields.** A BC1 or BC5 texture whose blocks are not `Fast` stores each level as
   planes of the fields of its blocks (`Fields`: endpoints and indices apart,
   `asset/texture_fields.odin`): written without a compressor (`Codecs.None`) always, since they
   compress smaller where the bytes rest; written compressed when that stream is smaller, which the
   writer decides per texture compressing both with the profile `Fast` of its codecs. The read joins
   them back.
-- `Srgb` says it is color: stored with the sRGB curve in `RGBA8`, `BC1`, `BC3` and `BC7`, linear in
+- `Srgb` says it is color: stored with the sRGB curve in `RGBA8`, `BC1` and `BC7`, linear in
   the others.
 - **Layers.** `layers` is the number of images of each level (one if the file does not store it):
   those of an array or, with `Cube`, six faces per cube (+X, -X, +Y, -Y, +Z, -Z), square. A level

@@ -13,7 +13,7 @@ import "rdo"
 // Names the blocks this implementation makes in caches and in the keys of imports.
 NAME :: "open"
 
-Block_Format :: enum u8 {BC1,BC3,BC5,BC6H,BC7}
+Block_Format :: enum u8 {BC1,BC5,BC6H,BC7}
 
 Pixel_Format :: enum u8 {RGBA8,RGBA16F}
 
@@ -62,9 +62,9 @@ encode :: proc(format:Block_Format,src:Surface,options:Options,dst:[]u8,allocato
     if options.fast {
         params.bc7_uber_level=0
         params.bc1_quality_level=4
-        params.use_hq_bc345=false
+        params.use_hq_bc45=false
     }
-    formats:=#partial [Block_Format]rdo.Format{.BC1=.BC1,.BC3=.BC3,.BC5=.BC5,.BC7=.BC7}
+    formats:=#partial [Block_Format]rdo.Format{.BC1=.BC1,.BC5=.BC5,.BC7=.BC7}
     return .None if rdo.encode(formats[format],src.pixels[:src.width*src.height*4],src.width,src.height,params,dst,worker,allocator) else .Out_Of_Memory
 }
 

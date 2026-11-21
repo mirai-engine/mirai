@@ -166,7 +166,6 @@ Format :: enum u8 {
 	D32_Float,
 	// Block compressed, 4x4 texels per block (Features.texture_bc).
 	BC1_Unorm, BC1_Srgb, // 8 bytes: rgb
-	BC3_Unorm, BC3_Srgb, // 16 bytes: rgb and alpha
 	BC5_Unorm,           // 16 bytes: two channels
 	BC7_Unorm, BC7_Srgb, // 16 bytes: rgb or rgba
 	BC6H_Ufloat,         // 16 bytes: rgb half floats without sign
@@ -182,7 +181,7 @@ format_size :: proc "contextless" (f: Format) -> int {
 	case .RGBA8_Unorm, .RGBA8_Srgb, .BGRA8_Unorm, .BGRA8_Srgb, .RG16_Float, .RG16_Sint, .R32_Float, .R32_Uint, .RG11B10_Float, .D32_Float: return 4
 	case .RGBA16_Float, .RGBA16_Unorm, .RG32_Float, .RG32_Uint: return 8
 	case .RGBA32_Float, .RGBA32_Uint:                        return 16
-	case .BC1_Unorm, .BC1_Srgb, .BC3_Unorm, .BC3_Srgb, .BC5_Unorm, .BC6H_Ufloat, .BC7_Unorm, .BC7_Srgb: return 0 // not per texel: see format_rows
+	case .BC1_Unorm, .BC1_Srgb, .BC5_Unorm, .BC6H_Ufloat, .BC7_Unorm, .BC7_Srgb: return 0 // not per texel: see format_rows
 	}
 	return 0
 }
@@ -192,7 +191,7 @@ format_is_depth :: proc "contextless" (f: Format) -> bool {return f == .D32_Floa
 format_block_size :: proc "contextless" (f: Format) -> int {
 	#partial switch f {
 	case .BC1_Unorm, .BC1_Srgb:             return 8
-	case .BC3_Unorm, .BC3_Srgb, .BC5_Unorm, .BC6H_Ufloat, .BC7_Unorm, .BC7_Srgb: return 16
+	case .BC5_Unorm, .BC6H_Ufloat, .BC7_Unorm, .BC7_Srgb: return 16
 	}
 	return 0
 }
@@ -933,7 +932,6 @@ format_linear :: proc "contextless" (f: Format) -> Format {
 	case .RGBA8_Srgb: return .RGBA8_Unorm
 	case .BGRA8_Srgb: return .BGRA8_Unorm
 	case .BC1_Srgb:   return .BC1_Unorm
-	case .BC3_Srgb:   return .BC3_Unorm
 	case .BC7_Srgb:   return .BC7_Unorm
 	}
 	return f

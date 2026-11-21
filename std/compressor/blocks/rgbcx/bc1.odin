@@ -888,7 +888,7 @@ encode_solid::proc "contextless" (t:^Tables,dst:[^]u8,fr,fg,fb:u8,allow_3color:b
         max16=i32(t.match5_equals_1[fr].hi)<<11|i32(t.match6_equals_1[fg].hi)<<5|i32(t.match5_equals_1[fb].hi)
         min16=i32(t.match5_equals_1[fr].lo)<<11|i32(t.match6_equals_1[fg].lo)<<5|i32(t.match5_equals_1[fb].lo)
         if min16==max16 {
-            // 3-color blocks are forbidden so BC3 never uses punchthrough mode.
+            // Keep the endpoints ordered for four-color mode.
             mask=0
             if min16>0 {
                 min16-=1

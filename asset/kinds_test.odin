@@ -285,7 +285,6 @@ texture_round_trips_every_format_and_checks_level_sizes :: proc(t:^testing.T) {
     types.codecs=.Open // what a cook ships: the streams under test
     testing.expect_value(t,texture_level_size(.RGBA8,5,3),60)
     testing.expect_value(t,texture_level_size(.BC1,5,3),16)
-    testing.expect_value(t,texture_level_size(.BC3,8,8),64)
     testing.expect_value(t,texture_level_size(.BC5,1,1),16)
     testing.expect_value(t,texture_level_size(.BC7,5,9),2*3*16)
     testing.expect_value(t,texture_mip_count(8,2),4)

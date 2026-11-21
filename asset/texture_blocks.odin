@@ -21,14 +21,13 @@ texture_bc1_palette :: proc "contextless" (c0,c1:u16) -> [4][3]f32 {
 }
 
 // Texels of a color block, row by row, in 0..1. alpha tells the texels the
-// three color mode leaves transparent. The color block of BC3 is always four
-// color, whatever the order of its endpoints.
-texture_bc1_block_decode :: proc "contextless" (block:[8]u8,four_color:=false) -> (texels:[16][3]f32,alpha:[16]f32) {
+// three color mode leaves transparent.
+texture_bc1_block_decode :: proc "contextless" (block:[8]u8) -> (texels:[16][3]f32,alpha:[16]f32) {
     c0:=u16(block[0])|u16(block[1])<<8
     c1:=u16(block[2])|u16(block[3])<<8
     palette:=texture_bc1_palette(c0,c1)
     opaque:=[4]f32{1,1,1,1}
-    if c0<=c1 && !four_color {
+    if c0<=c1 {
         palette[2]=(palette[0]+palette[1])/2
         palette[3]={}
         opaque[3]=0
@@ -41,7 +40,7 @@ texture_bc1_block_decode :: proc "contextless" (block:[8]u8,four_color:=false) -
     return
 }
 
-// Values of a single channel block (the alpha of BC3, each half of BC5), in 0..1.
+// Values of a single channel block (each half of BC5), in 0..1.
 texture_bc4_block_decode :: proc "contextless" (block:[8]u8) -> (values:[16]f32) {
     a,b:=f32(block[0]),f32(block[1])
     bits:u64
@@ -62,7 +61,7 @@ texture_bc4_block_decode :: proc "contextless" (block:[8]u8) -> (values:[16]f32)
     return
 }
 
-// One image of a level of a format of 8 bits (RGBA8, BC1, BC3, BC5, BC7) as
+// One image of a level of a format of 8 bits (RGBA8, BC1, BC5, BC7) as
 // RGBA8, rows from the top, with the values it stores. A BC5 level gets the
 // third component of its unit vector in blue. False for another format and
 // when either slice does not hold an image of that size.
@@ -87,10 +86,6 @@ texture_level_rgba8 :: proc "contextless" (format:Texture_Format,level:[]u8,widt
             case .RGBA8,.RGBA16,.RGBA16F,.BC6H:
             case .BC1:
                 colors,alpha:=texture_bc1_block_decode(first)
-                for c,i in colors {texels[i]={to_byte(c.r),to_byte(c.g),to_byte(c.b),to_byte(alpha[i])}}
-            case .BC3:
-                alpha:=texture_bc4_block_decode(first)
-                colors,_:=texture_bc1_block_decode(second,four_color=true)
                 for c,i in colors {texels[i]={to_byte(c.r),to_byte(c.g),to_byte(c.b),to_byte(alpha[i])}}
             case .BC5:
                 xs,ys:=texture_bc4_block_decode(first),texture_bc4_block_decode(second)

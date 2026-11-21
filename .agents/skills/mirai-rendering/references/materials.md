@@ -189,8 +189,8 @@ previews studio use it.
   `Graphics_Settings`) enters from its first level that fits.
 - `texture_add` receives RGBA8 pixels made at runtime, generates its chain on the CPU and uploads
   it uncompressed; `texture_image` replaces the pixels of an image that its owner draws again.
-- **Compression.** BC7 for color with and without alpha, BC1 and BC3 for data maps without and
-  with alpha, BC5 for normal maps (Z is rebuilt in the shader) and BC6H for HDR; uncompressed,
+- **Compression.** BC7 for color and data maps with non-opaque alpha, BC1 for opaque data maps,
+  BC5 for normal maps (Z is rebuilt in the shader) and BC6H for HDR; uncompressed,
   RGBA8, RGBA16 (data precision) and RGBA16F (HDR). The renderer uploads the file's format; the
   encoders are in `cook/textures`
   ([imports](../../mirai-imports/references/imports.md#textures-cooktextures)). Without

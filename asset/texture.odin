@@ -19,12 +19,12 @@ import "mirai:std/base"
 //
 // A level is half the one above, rounded down, and never smaller than 1. It
 // holds its layers one after another: the images of an array, or the faces
-// of its cubes. Block formats store 4x4 blocks: BC1 in 8 bytes, BC3, BC5,
-// BC6H and BC7 in 16. With the flag Fields, each level of BC1, BC3 or BC5
+// of its cubes. Block formats store 4x4 blocks: BC1 in 8 bytes, BC5, BC6H
+// and BC7 in 16. With the flag Fields, each level of BC1 or BC5
 // stores the fields of its blocks one plane after another
 // (texture_fields_split).
 
-TEXTURE_VERSION :: 3
+TEXTURE_VERSION :: 4
 TEXTURE_MAX_SIZE :: 16384
 TEXTURE_MAX_MIPS :: 15
 // Of an array or of cube faces: the least every GPU Mirai runs on takes.
@@ -38,16 +38,15 @@ TEXTURE_TAIL :: 128
 Texture_Format :: enum u8 {
     RGBA8,   // rows from the top of the image
     BC1,     // rgb: data maps without alpha
-    BC3,     // rgba: data maps with alpha
     BC5,     // two channels: tangent-space normals
-    BC7,     // color, with or without alpha
+    BC7,     // color or data maps with alpha
     RGBA16,  // 16-bit channels, linear: data that keeps its precision
     RGBA16F, // half floats, linear: HDR with alpha, negative values or kept uncompressed
     BC6H,    // rgb half floats without sign, linear: HDR light and color
 }
 
 Texture_Flag :: enum u8 {
-    Srgb,       // color: stored as sRGB in RGBA8, BC1, BC3 and BC7, linear in the others; filtered as light
+    Srgb,       // color: stored as sRGB in RGBA8, BC1 and BC7, linear in the others; filtered as light
     Normal_Map, // levels are averaged as vectors and renormalized
     Cube,       // its layers are the faces +X, -X, +Y, -Y, +Z and -Z of cubes, sampled with a direction of the world
     Fast,       // blocks of the fast encode the editor imports with; a cook encodes them again from the source
@@ -116,7 +115,7 @@ texture_level_size :: proc "contextless" (format:Texture_Format,width,height:int
     case .RGBA8: return width*height*4
     case .RGBA16,.RGBA16F: return width*height*8
     case .BC1: return ((width+3)/4)*((height+3)/4)*8
-    case .BC3,.BC5,.BC6H,.BC7: return ((width+3)/4)*((height+3)/4)*16
+    case .BC5,.BC6H,.BC7: return ((width+3)/4)*((height+3)/4)*16
     }
     return 0
 }
@@ -125,7 +124,7 @@ texture_level_size :: proc "contextless" (format:Texture_Format,width,height:int
 texture_block_bytes :: proc "contextless" (format:Texture_Format) -> int {
     #partial switch format {
     case .BC1: return 8
-    case .BC3,.BC5,.BC6H,.BC7: return 16
+    case .BC5,.BC6H,.BC7: return 16
     }
     return 0
 }

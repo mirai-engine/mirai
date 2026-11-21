@@ -206,7 +206,7 @@ For a renderer that generates frames (`rhi/present.odin`):
     makes its textures resident (`useResources`).
 - An upload writes a whole mip or a region in whole blocks (`texture_region_resolve`) of all the
   layers, one after another in the data; `texture_read` leaves in shader-read state a texture that
-  has only the `Sampled` usage. BC1, BC3, BC5, BC6H and BC7 are uploaded by blocks where
+  has only the `Sampled` usage. BC1, BC5, BC6H and BC7 are uploaded by blocks where
   `Features.texture_bc` says the device samples them.
 - `cmd_copy_texture` copies mip 0 of a texture into another on the GPU, with its bytes as they
   are: the two have one size and layers, and one format or two that differ only in the sRGB

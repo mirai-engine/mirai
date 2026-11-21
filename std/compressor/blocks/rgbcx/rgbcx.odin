@@ -1,4 +1,4 @@
-// BC1, BC3, BC4 and BC5 block encoder and decoder.
+// BC1, BC4 and BC5 block encoder and decoder.
 package rgbcx
 
 MIN_LEVEL::0
@@ -8,7 +8,6 @@ MIN_TOTAL_ORDERINGS::1
 MAX_TOTAL_ORDERINGS3::32
 MAX_TOTAL_ORDERINGS4::128
 DEFAULT_TOTAL_ORDERINGS_TO_TRY::10
-DEFAULT_TOTAL_ORDERINGS_TO_TRY3::1
 
 BC4_DEFAULT_SEARCH_RAD::3
 BC4_USE_MODE8_FLAG::1
@@ -18,9 +17,6 @@ BC4_USE_ALL_MODES::3
 DXT1_SELECTOR_BITS::2
 DXT1_SELECTOR_VALUES::1<<DXT1_SELECTOR_BITS
 DXT1_SELECTOR_MASK::DXT1_SELECTOR_VALUES-1
-DXT5_SELECTOR_BITS::3
-DXT5_SELECTOR_VALUES::1<<DXT5_SELECTOR_BITS
-DXT5_SELECTOR_MASK::DXT5_SELECTOR_VALUES-1
 
 ENCODE_BC1_USE_LIKELY_TOTAL_ORDERINGS::2
 ENCODE_BC1_TWO_LEAST_SQUARES_PASSES::4
@@ -165,25 +161,6 @@ encode_bc1::proc(t:^Tables,level:u32,dst,pixels:[^]u8,allow_3color,use_transpare
     }
 
     encode_bc1_flags(t,dst,pixels,flags,orderings4,orderings3)
-}
-
-// Low-level BC3 encoder. 3-color blocks are removed from flags: most GPUs do not support them in BC3.
-encode_bc3_flags::proc(t:^Tables,dst,pixels:[^]u8,flags,total_orderings_to_try:u32) {
-    if t==nil || dst==nil || pixels==nil {return}
-    encode_bc4(dst,pixels[3:],4)
-    encode_bc1_flags(t,dst[8:],pixels,flags&~(ENCODE_BC1_USE_3COLOR_BLOCKS_FOR_BLACK_PIXELS|ENCODE_BC1_USE_3COLOR_BLOCKS),total_orderings_to_try,DEFAULT_TOTAL_ORDERINGS_TO_TRY3)
-}
-
-encode_bc3::proc(t:^Tables,level:u32,dst,pixels:[^]u8) {
-    if t==nil || dst==nil || pixels==nil {return}
-    encode_bc4(dst,pixels[3:],4)
-    encode_bc1(t,level,dst[8:],pixels,false,false)
-}
-
-encode_bc3_hq::proc(t:^Tables,level:u32,dst,pixels:[^]u8,search_rad,mode_mask:u32) {
-    if t==nil || dst==nil || pixels==nil {return}
-    encode_bc4_hq(dst,pixels[3:],4,search_rad,mode_mask)
-    encode_bc1(t,level,dst[8:],pixels,false,false)
 }
 
 @(private,rodata)
@@ -419,14 +396,6 @@ unpack_bc4::proc(block,out:[^]u8,stride:u32) {
     for i in 0..<u32(16) {
         out[i*stride]=vals[(selector_bits>>(u64(i)*3))&7]
     }
-}
-
-// Returns false if the color block uses 3-color punchthrough mode, which most GPUs do not support in BC3.
-unpack_bc3::proc(block,out:[^]u8,mode:Bc1_Approx_Mode) -> bool {
-    if block==nil || out==nil {return false}
-    success:=!unpack_bc1(block[8:],out,true,mode)
-    unpack_bc4(block,out[3:],4)
-    return success
 }
 
 unpack_bc5::proc(block,out:[^]u8,chan0,chan1,stride:u32) {

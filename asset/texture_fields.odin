@@ -3,13 +3,12 @@ package asset
 // The fields of the blocks of a level as planes: every block's bytes of one
 // field, then those of the next. Endpoints and indices are each alike among
 // neighbors, and apart they give LZ longer matches and simpler
-// statistics. BC1: endpoints | indices. BC3: alpha endpoints | alpha indices
-// | color endpoints | color indices. BC5: the endpoints of both channels |
+// statistics. BC1: endpoints | indices. BC5: the endpoints of both channels |
 // the indices of both.
 
 // Whether a format can store its levels as planes of fields.
 texture_fields_format :: proc "contextless" (format:Texture_Format) -> bool {
-    return format==.BC1 || format==.BC3 || format==.BC5
+    return format==.BC1 || format==.BC5
 }
 
 // The planes of the fields of the blocks of a level into planes, of the same
@@ -34,8 +33,6 @@ fields_move :: proc "contextless" (format:Texture_Format,blocks,planes:[]u8,join
     switch format {
     case .BC1:
         if join {fields_copy(b,p,count,true,8,{0,4,0,0},{4,4,0,0})} else {fields_copy(b,p,count,false,8,{0,4,0,0},{4,4,0,0})}
-    case .BC3:
-        if join {fields_copy(b,p,count,true,16,{0,2,8,12},{2,6,4,4})} else {fields_copy(b,p,count,false,16,{0,2,8,12},{2,6,4,4})}
     case .BC5:
         if join {fields_copy(b,p,count,true,16,{0,8,2,10},{2,2,6,6})} else {fields_copy(b,p,count,false,16,{0,8,2,10},{2,2,6,6})}
     case .RGBA8,.BC7,.RGBA16,.RGBA16F,.BC6H:
