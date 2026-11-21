@@ -45,7 +45,9 @@ a_params_struct_binds_each_field_as_its_parameter :: proc(t:^testing.T) {
     if folder=="" {return}
     game_source:=`package game
 import "mirai:core"
-@(step="fixed") game_look :: proc(marks:^core.Table(core.Mark),look:core.Looker,spots:^core.Table(core.Spot,.Read)) {}
+@(params) Outer :: struct {look:core.Looker,spots:^core.Table(core.Spot,.Read)}
+@(params) Middle :: struct {outer:Outer}
+@(step="fixed",require="core.Spot") game_look :: proc(marks:^core.Table(core.Mark),group:Middle,world:core.World_Read) {}
 @(step="fixed") game_move :: proc(move:core.Mover,asks:^core.Asks,clock:core.Clock) {}
 `
     p,ok:=params_project(t,folder,PARAMS_CORE,game_source)
@@ -53,8 +55,14 @@ import "mirai:core"
     output:=world_generate(&p,context.temp_allocator)
     if !testing.expectf(t,len(output.errors)==0,"%v",output.errors) {return}
     for text in ([]string{output.game_world,output.editor_world}) {
-        testing.expect_value(t,strings.count(text,"p_game.game_look(&w.mark,p_core.Looker{spots=p_core.read(&w.spot),asks=p_core.ref(&w.asks),clock=w.clock},p_core.read(&w.spot))"),2)
-        testing.expect_value(t,strings.count(text,"p_game.game_move(p_core.Mover{spots=&w.spot,asks=&w.asks,tally=&w.tally},&w.asks,w.clock)"),2)
+        testing.expect_value(t,strings.count(text,"p_game.game_look(&w.mark,p_game.Middle{outer=p_game.Outer{look=p_core.Looker{spots=read_1,asks=p_core.ref(&w.asks),clock=w.clock},spots=read_1}},p_core.world_read(p_core.world_ref(w,app.info)))"),1)
+        testing.expect_value(t,strings.count(text,"p_game.game_move(p_core.Mover{spots=&w.spot,asks=&w.asks,tally=&w.tally},&w.asks,w.clock)"),1)
+        _,_,look:=strings.partition(text,"call_game_look :: proc")
+        look,_,_=strings.partition(look,"\n}\n")
+        testing.expect(t,strings.count(look,"p_core.read(&w.spot)")==1)
+        guard:=strings.index(look,"if p_core.count(&w.spot)==0 {return}")
+        profile:=strings.index(look,"profile_step_begin")
+        testing.expect(t,guard>=0 && profile>guard && !strings.contains(look,"p_core.settle(app.info"))
         at:=strings.index(text,"call_game_move :: proc")
         if !testing.expect(t,at>=0) {continue}
         call:=text[at:]
@@ -98,18 +106,18 @@ import "mirai:core"
     testing.expectf(t,loose && twice && !pushes && itself,"%v",errors)
 }
 
-// A @(params) holds parameters of steps and is received by value: one
-// inside another, one received by pointer, a field that is no parameter and
-// one with no fields are errors that say what to write.
+// A @(params) groups step parameters by value. A cycle, a pointer, or
+// a field that cannot be bound has a diagnostic.
 @(test)
-a_params_struct_has_only_parameters_and_does_not_nest :: proc(t:^testing.T) {
+a_params_struct_rejects_cycles_and_invalid_fields :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"params")
     if folder=="" {return}
     p,ok:=params_project(t,folder,PARAMS_CORE,"package game\n")
     if !ok {return}
     errors:=params_errors(t,&p,`package game
 import "mirai:core"
-@(params) Outer :: struct {look:core.Looker,marks:^core.Table(core.Mark,.Read)}
+@(params) Outer :: struct {inner:Inner}
+@(params) Inner :: struct {outer:Outer}
 @(params) Odd :: struct {count:int}
 @(params) Empty :: struct {}
 @(params,component) Both :: struct {value:f32}
@@ -118,7 +126,7 @@ import "mirai:core"
 `)
     found:[6]bool
     for message in errors {
-        found[0]||=strings.contains(message,"Outer has a field of Looker, another @(params): they do not nest")
+        found[0]||=strings.contains(message,"Outer nests itself through @(params)")
         found[1]||=strings.contains(message,"the field count of Odd is int")
         found[2]||=strings.contains(message,"Empty is @(params) and has no fields")
         found[3]||=strings.contains(message,"Both is @(params) and a component")

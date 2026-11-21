@@ -1,5 +1,8 @@
 package core
 
+import "base:runtime"
+import "core:mem"
+
 // A value for each of some entities: what a library keeps of the entities of
 // a table, as a voice, a clock or what the renderer was told. The values are
 // dense, with their entity at the same index of entities, and an entity finds
@@ -11,14 +14,51 @@ package core
 Entity_Map :: struct($T:typeid) {
     values:[dynamic]T,
     entities:[dynamic]Entity, // by value
-    rows:[dynamic]i32,        // by entity index: value+1, 0 without one
+    rows:[dynamic]i32, // directory length, directory (page offset + 1), then packed pages
+}
+
+@(private="file")
+entity_rows_slot :: #force_inline proc "contextless" (rows:[]i32,index:int) -> int {
+    page:=index>>ROWS_PAGE_BITS
+    if len(rows)==0 || page>=int(rows[0]) || rows[1+page]==0 {return -1}
+    return int(rows[0])+int(rows[1+page])+(index&(ROWS_PAGE-1))
+}
+
+@(private="file")
+entity_rows_count :: #force_inline proc "contextless" (rows:[]i32) -> int {
+    return len(rows)==0?0:int(rows[0])
+}
+
+@(private="file")
+entity_rows_reserve :: proc(rows:^[dynamic]i32,pages,missing:int) -> bool {
+    before:=entity_rows_count(rows[:])
+    directory:=pages<=before?before:max(pages,2*before)
+    values:=max(len(rows)-before-1,0)
+    if missing>(int(max(i32))-directory-values-1)/ROWS_PAGE {return false}
+    needed:=1+directory+values+missing*ROWS_PAGE
+    if needed>cap(rows) && reserve(rows,max(needed,2*cap(rows)))!=nil {return false}
+    if directory!=before {
+        (cast(^runtime.Raw_Dynamic_Array)rows).len=1+directory+values
+        copy(rows[directory+1:],rows[before+1:][:values])
+        mem.zero_slice(rows[before+1:directory+1])
+        rows[0]=i32(directory)
+    }
+    return true
+}
+
+@(private="file")
+entity_rows_add :: proc(rows:^[dynamic]i32,page:int) -> bool {
+    if rows[page+1]!=0 {return true}
+    start:=len(rows)
+    if resize(rows,start+ROWS_PAGE)!=nil {return false}
+    rows[1+page]=i32(start-int(rows[0]))
+    return true
 }
 
 // Where the value of an entity is in values; -1 without one.
 entity_map_index :: #force_inline proc "contextless" (m:^Entity_Map($T),e:Entity) -> int {
-    i:=entity_index(e)
-    if i>=len(m.rows) {return -1}
-    at:=int(m.rows[i])-1
+    slot:=entity_rows_slot(m.rows[:],entity_index(e))
+    at:=slot<0?-1:int(m.rows[slot])-1
     if at<0 || m.entities[at]!=e {return -1}
     return at
 }
@@ -33,9 +73,8 @@ entity_map_get :: #force_inline proc "contextless" (m:^Entity_Map($T),e:Entity) 
 // index, or NONE. Before putting e, a value that holds something to release
 // looks here for the one it would replace.
 entity_map_held :: #force_inline proc "contextless" (m:^Entity_Map($T),e:Entity) -> Entity {
-    i:=entity_index(e)
-    if i>=len(m.rows) || m.rows[i]==0 {return NONE}
-    return m.entities[m.rows[i]-1]
+    slot:=entity_rows_slot(m.rows[:],entity_index(e))
+    return slot<0 || m.rows[slot]==0?NONE:m.entities[m.rows[slot]-1]
 }
 
 // Gives an entity a value, or replaces the one it has or the one of another
@@ -44,17 +83,25 @@ entity_map_held :: #force_inline proc "contextless" (m:^Entity_Map($T),e:Entity)
 entity_map_put :: proc(m:^Entity_Map($T),e:Entity,value:T) -> (^T,bool) {
     if e==NONE {return nil,false}
     i:=entity_index(e)
-    if i<len(m.rows) && m.rows[i]!=0 {
-        at:=int(m.rows[i])-1
+    slot:=entity_rows_slot(m.rows[:],i)
+    if slot>=0 && m.rows[slot]!=0 {
+        at:=int(m.rows[slot])-1
         m.values[at]=value
         m.entities[at]=e
         return &m.values[at],true
     }
-    if !entity_map_reserve(m,len(m.values)+1,i+1) {return nil,false}
+    if !entity_map_reserve(m,len(m.values)+1) {return nil,false}
+    if slot<0 {
+        page:=i>>ROWS_PAGE_BITS
+        if !entity_rows_reserve(&m.rows,page+1,1) || !entity_rows_add(&m.rows,page) {
+            return nil,false
+        }
+        slot=entity_rows_slot(m.rows[:],i)
+    }
     // Reserved: neither asks for memory.
     if _,err:=append(&m.values,value);err!=nil {return nil,false}
     if _,err:=append(&m.entities,e);err!=nil {pop(&m.values);return nil,false}
-    m.rows[i]=i32(len(m.values))
+    m.rows[slot]=i32(len(m.values))
     return &m.values[len(m.values)-1],true
 }
 
@@ -65,9 +112,15 @@ entity_map_reserve :: proc(m:^Entity_Map($T),count:int,indices:=0) -> bool {
         capacity:=max(count,2*cap(m.values))
         if reserve(&m.values,capacity)!=nil || reserve(&m.entities,capacity)!=nil {return false}
     }
-    if indices>len(m.rows) {
-        if indices>cap(m.rows) && reserve(&m.rows,max(indices,2*cap(m.rows)))!=nil {return false}
-        if resize(&m.rows,indices)!=nil {return false}
+    if indices<=0 {return true}
+    pages:=((indices-1)>>ROWS_PAGE_BITS)+1
+    directory:=entity_rows_count(m.rows[:])
+    missing:=pages-min(pages,directory)
+    for at in 1..=min(pages,directory) {missing+=int(m.rows[at]==0)}
+    if missing==0 {return true}
+    if !entity_rows_reserve(&m.rows,pages,missing) {return false}
+    for page in 0..<pages {
+        if !entity_rows_add(&m.rows,page) {return false}
     }
     return true
 }
@@ -76,7 +129,12 @@ entity_map_reserve :: proc(m:^Entity_Map($T),count:int,indices:=0) -> bool {
 // which allocates only when dst lacks the room. False without memory.
 entity_map_copy :: proc(dst,src:^Entity_Map($T)) -> bool {
     if dst==src {return true}
-    if non_zero_resize(&dst.values,len(src.values))!=nil || non_zero_resize(&dst.entities,len(src.entities))!=nil || non_zero_resize(&dst.rows,len(src.rows))!=nil {return false}
+    if !entity_map_reserve(dst,len(src.values)) || reserve(&dst.rows,len(src.rows))!=nil {
+        return false
+    }
+    (cast(^runtime.Raw_Dynamic_Array)&dst.values).len=len(src.values)
+    (cast(^runtime.Raw_Dynamic_Array)&dst.entities).len=len(src.entities)
+    (cast(^runtime.Raw_Dynamic_Array)&dst.rows).len=len(src.rows)
     copy(dst.values[:],src.values[:])
     copy(dst.entities[:],src.entities[:])
     copy(dst.rows[:],src.rows[:])
@@ -85,13 +143,13 @@ entity_map_copy :: proc(dst,src:^Entity_Map($T)) -> bool {
 
 // Takes out the value at an index of values: the last one takes its place.
 entity_map_remove_at :: proc(m:^Entity_Map($T),at:int) {
-    m.rows[entity_index(m.entities[at])]=0
+    m.rows[entity_rows_slot(m.rows[:],entity_index(m.entities[at]))]=0
     last:=len(m.values)-1
     if at!=last {
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         m.values[at]=m.values[last]
         m.entities[at]=m.entities[last]
-        m.rows[entity_index(m.entities[at])]=i32(at+1)
+        m.rows[entity_rows_slot(m.rows[:],entity_index(m.entities[at]))]=i32(at+1)
     }
     pop(&m.values)
     pop(&m.entities)
@@ -143,7 +201,7 @@ entity_map_prune :: proc(m:^Entity_Map($T),table:^Table($C,$A),c:Changes) -> (co
 
 // No value; the memory stays for the next ones. What the values hold is the caller's.
 entity_map_clear :: proc(m:^Entity_Map($T)) {
-    for e in m.entities {m.rows[entity_index(e)]=0}
+    for e in m.entities {m.rows[entity_rows_slot(m.rows[:],entity_index(e))]=0}
     clear(&m.values)
     clear(&m.entities)
 }

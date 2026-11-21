@@ -231,7 +231,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     edits_drop(t)
     when CHECK_WRITES {clear(&t.settled.values)}
     t.added,old_table.added=old_table.added,t.added
-    t.edited,old_table.edited=old_table.edited,t.edited
+    t.edits,old_table.edits=old_table.edits,t.edits
     count:=t.values.len
     old:=t.values
     size,align:=to.info.size,to.info.align
@@ -243,7 +243,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     if values.data!=nil {values_convert(m,from.info,to.info,to.default,(cast([^]u8)values.data)[:size*count],(cast([^]u8)old.data)[:from.info.size*count],count)}
     if values.data==nil && count>0 {
         // The rows cannot stay without values: they go, as with a table that is gone.
-        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
+        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);t.off=t.off[:0];t.turns=t.turns[:0];clear(&t.owners)
         rows_zero(t)
         t.on=0
         t.version=version_top(t)+1

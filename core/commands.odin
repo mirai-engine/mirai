@@ -29,7 +29,7 @@ destroy :: proc{entity_destroy,commands_destroy}
 // Gives the entity a row of T at the end of the function. An entity that has
 // one already keeps it: its table has its writer.
 commands_add :: proc(c:Commands,e:Entity,value:$T) {
-    t:=world_table_of(World_Ref{c.data,c.info,.World},T)
+    t:=world_table_of(world_ref(c.data,c.info),T)
     if t==nil {
         fail("%v is no component of this World: declare it @(component) in a library",typeid_of(T))
         return
@@ -45,7 +45,7 @@ commands_add :: proc(c:Commands,e:Entity,value:$T) {
 // for the component (<NAME>_DEFAULT or <name>_default() of its package), or
 // zero, also when T is no component of it.
 commands_default :: proc(c:Commands,$T:typeid) -> (value:T) {
-    if _,info:=world_table(World_Ref{c.data,c.info,.World},T);info!=nil && info.default!=nil {info.default(&value)}
+    if _,info:=world_table(world_ref(c.data,c.info),T);info!=nil && info.default!=nil {info.default(&value)}
     return
 }
 default :: commands_default
@@ -55,11 +55,11 @@ commands_add_default :: proc(c:Commands,e:Entity,$T:typeid) {commands_add(c,e,co
 
 // Takes the row of T from the entity at the end of the function.
 commands_remove :: proc(c:Commands,e:Entity,$T:typeid) {
-    if t:=world_table_of(World_Ref{c.data,c.info,.World},T);t!=nil {remove(t,e)}
+    if t:=world_table_of(world_ref(c.data,c.info),T);t!=nil {remove(t,e)}
 }
 
 // The row of T an add of this function waits to give the entity; nil without one.
 commands_added :: proc(c:Commands,e:Entity,$T:typeid) -> ^T {
-    t:=world_table_of(World_Ref{c.data,c.info,.World},T)
+    t:=world_table_of(world_ref(c.data,c.info),T)
     return t!=nil?cast(^T)raw_added(raw(t),type_info_of(T),e):nil
 }

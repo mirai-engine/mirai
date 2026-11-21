@@ -126,7 +126,7 @@ fire :: proc(weapons:core.Records(Weapon),holders:^core.Table(Holder,.Read)) {}
         testing.expectf(t,strings.contains(world,`records[1]={"Weapon","game",typeid_of(p_game.Weapon),type_info_of(p_game.Weapon),typeid_of(p_core.Record(p_game.Weapon)),record_default_game_weapon,true}`),"%s",world)
         testing.expect(t,strings.contains(world,`record_default_game_weapon :: proc(dst:rawptr) {(cast(^p_game.Weapon)dst)^=p_game.WEAPON_DEFAULT}`))
         testing.expect(t,strings.contains(world,`p_core.Records(p_game.Weapon){p_host.app_record_set(app,1)}`))
-        testing.expect(t,strings.contains(world,`{"Stats","",type_info_of(p_game.Stats)}`),"A type of the package is one a column may hold")
+        testing.expect(t,strings.contains(world,`{"Weapon_Rarity","",type_info_of(p_game.Weapon_Rarity)}`) && !strings.contains(world,"type_info_of(p_game.Stats)"),"Only a type referenced by a record is offered")
         testing.expect(t,!strings.contains(world,"p_game.Hidden") && !strings.contains(world,`{"Holder",""`),"Neither a private type nor a component")
         testing.expect(t,strings.contains(world,"info.records,info.record_codes=records,record_codes"))
         testing.expect(t,!strings.contains(world,"weapon:p_game.Weapon"),"A record is no data of the World")
