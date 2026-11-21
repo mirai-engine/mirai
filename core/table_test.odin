@@ -580,11 +580,15 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     testing.expect(t,table_copy(&copied,&names))
     value,found=get(&copied,far)
     testing.expect(t,found && value==2 && has(&copied,near))
-    // A table a storage holds is copied and freed as any value is.
+    // A table a storage holds is copied and freed as any value is, including after edits.
+    edit(&names,near)^=3
+    table_settle(&names,&es)
     held:Table(i32)
     testing.expect(t,value_copy(&held,&names,type_info_of(Table(i32))))
     value,found=get(&held,far)
-    testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]))
+    testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]) && held.edits==nil)
+    edit(&held,near)^=4
+    table_settle(&held,&es)
     value_free(&held,type_info_of(Table(i32)))
     seen:Seen
     _=changes(&names,&seen)
