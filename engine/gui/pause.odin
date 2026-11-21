@@ -48,7 +48,7 @@ clock_apply :: proc(gui:^Gui,paused:bool,requests:^core.Clock_Requests,role:core
 // Whether the game should hold the mouse.
 mouse_wanted :: proc(seats:^core.Table(inp.Seat,.Read),state:^inp.Seats,bindings:^inp.Input_Map,look:inp.Action,modal:bool) -> bool {
     if modal || !inp.action_reads_mouse(bindings,look) {return false}
-    return inp.body_of(seats,inp.focused(state,seats))!=core.NONE
+    return inp.body_of(seats,inp.focused(core.ref(state),seats))!=core.NONE
 }
 
 // After the screens have ended: what they ask of the game and the window.

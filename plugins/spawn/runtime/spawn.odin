@@ -100,6 +100,7 @@ Apply :: struct {
     assets:^host.Assets,
     bodies:^core.Table(Seat_Body),
     seats:^core.Table(input.Seat,.Read),
+    state:core.Ref(input.Seats),
     points:^core.Table(Spawn_Point,.Read),
     placer:core.Placer,
     driving:^input.Seat_Requests,
@@ -125,10 +126,10 @@ spawn_seat_bodies :: proc(es:core.Commands,bodies:^core.Table(Seat_Body,.Read)) 
 @(step="fixed",stage="input",after="input_seats")
 spawn_step :: proc(
     commands:core.Commands,assets:^host.Assets,free:core.Ref(cam.Free_Camera),bodies:^core.Table(Seat_Body),
-    seats:^core.Table(input.Seat,.Read),points:^core.Table(Spawn_Point,.Read),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
+    seats:^core.Table(input.Seat,.Read),state:core.Ref(input.Seats),points:^core.Table(Spawn_Point,.Read),placer:core.Placer,driving:^input.Seat_Requests,requests:^Spawn_Requests,spawning:^Spawning,
     settings:core.Ref(Spawn_Settings),network:core.Ref(core.Network),time:core.Time,origin:core.Ref(scene.Play_Origin),at_origin:^Spawned_At_Origin,problems:^core.Problems,
 ) {
-    a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
+    a:=Apply{commands=commands,assets=assets,bodies=bodies,seats=seats,state=state,points=points,placer=placer,driving=driving,spawning=spawning,at_origin=at_origin,problems=problems}
     if settings.ptr!=nil {a.settings=settings.ptr^}
     if origin.ptr!=nil {a.origin=origin.ptr^}
     client:=network.role==.Client
@@ -249,7 +250,7 @@ spawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
 
 @(private)
 respawn_body :: proc(a:^Apply,r:Spawn_Request) -> bool {
-    point:=spawn_pick(a,r.entity,r.point,input.seat_of(a.seats,r.entity)!=core.NONE,false) or_return
+    point:=spawn_pick(a,r.entity,r.point,input.seat_of(a.state,r.entity)!=core.NONE,false) or_return
     placed:=mm.Transform{a.origin.position,a.origin.rotation,{1,1,1}}
     if point!=core.NONE {placed=spawn_place(a,point) or_return}
     if !core.place(a.placer,r.entity,placed.position,placed.rotation,at_rest=true) {

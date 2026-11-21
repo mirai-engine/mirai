@@ -125,7 +125,7 @@ Animation_Gallery_Diagnostics :: struct {
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
 @(step="fixed",stage="apply",after="animation_motor_drive")
-gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seats:^core.Table(inp.Seat,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
+gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seat_state:core.Ref(inp.Seats),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
@@ -150,7 +150,7 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),drives:
         case .Walker,.Jumper,.Spider:
         case: continue
         }
-        if inp.seat_of(seats,entity)!=core.NONE {core.remove(drives,entity);continue}
+        if inp.seat_of(seat_state,entity)!=core.NONE {core.remove(drives,entity);continue}
         config,configured:=core.get(walks,entity)
         if !configured {continue}
         input:=locomotion.Locomotion_Drive{look_yaw=mm.yaw_of_direction(mm.quat_forward(placed.rotation))}

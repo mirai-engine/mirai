@@ -5,6 +5,7 @@ import "core:math"
 import "core:strings"
 import "core:testing"
 import "mirai:core"
+import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import "mirai:host"
 import wire "mirai:net"
@@ -66,6 +67,7 @@ state_and_owner_refused_by_a_full_frame_are_sent_on_the_next_interval :: proc(t:
             core.edit(&server.transforms,entities[0][0]).position={5,0,0}
             net_test_own(server,entities[0][1],connected)
             core.settle(&info,server,nil)
+            inp.input_seat_index(core.ref(&server.entities),core.read(&server.seats),&server.seat_state,&problems[0])
             object:=wire.object_of_user(&sessions[0].host,u64(entities[0][0]))
             error:wire.Error
             for _ in 0..=sessions[0].host.desc.frame_ops {error=wire.object_set_priority(&sessions[0].host,object,1)}

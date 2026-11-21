@@ -38,11 +38,10 @@ tick.
   `spawn` gave it ([networking](#networking)).
 - **Devices.** Keyboard and mouse go to the focused slot (`Seats.focus`). With one player, all
   gamepads are theirs; with several, gamepad `i` belongs to slot `i`.
-- `Seat` is `shared`: `input` writes those of this machine with `seat_feed(seat, device,
-  bindings, gained)` and the network those of the connections with `seat_receive(seat, bindings,
-  sent)`, each only its own. Its actions,
-  held buttons, re-arming, blocks, `peer` and `body` are `local`: `Seat` is replicated, with
-  what the game hangs from it.
+- `Seat` carries the player's identity, slot and driven body. It is replicated with what the
+  game hangs from it. Its `peer`, `player` and `body` are local to each end.
+- `Seat_States` keeps runtime input by seat entity. `seat_feed` updates it from local devices,
+  and multiplayer uses `seat_receive` for the actions sent by connections.
 - **Frame actions.** `Frame_Actions` holds the presentation actions of each local slot, from its
   devices in the contexts of its seat: the orbit of a camera turns with those of the slot whose
   seat drives its body.
@@ -101,8 +100,6 @@ inspector use them.
   replace those of the layers under it. The project's file holds what Project Settings > Input
   and `settings.set` changed; the player's options, what the player rebinds (a game changes the
   setting with `input_settings_put` and `input_settings_remove`, and the save library writes it).
-  An old `input.mirai` in a project is not read: the map says to move its bindings there
-  (`input.old_file`).
 - **Building.** `input_map_build` builds the map from the defaults and the setting, the first time
   and whenever the setting is written (its revision), with no game function. An entry the code does
   not take (an action it does not declare, a binding its kind does not read) is the world problem
@@ -134,8 +131,8 @@ nobody drives it).
 - **Blocks.** `input_block(r, owner, seat, mask)` removes the actions of `mask` from the seat until
   `input_unblock(r, owner)`; with `seat` null, from all local seats (a modal menu of the window).
   An `owner` has one block: requesting another replaces it. They apply when writing:
-  `input_drive` leaves in `Seat.blocked` the union of the seat's active blocks, and the read only
-  looks at that mask.
+  `input_drive` records the union of the seat's active blocks in `Seat_State.blocked`. Reads use
+  that mask.
 
 ### Contexts
 
@@ -148,8 +145,8 @@ only while it is in it, and it is always in the base one, below everything.
 - `input_context_enter(r, owner, seat, context, modal)` in `^inp.Context_Requests` puts the seat
   (null: all local ones) in it until `input_context_leave(r, owner)`. An `owner` has one; the one
   that entered last stays on top. `input_contexts` (`fixed`, stage `begin`) applies them before any
-  seat reads its devices and leaves the stack in `Seat.contexts`; those of an owner that no longer
-  exists go away.
+  seat reads its devices and leaves the stack in `Seat_State.contexts`. An owner that goes away
+  takes its contexts with it.
 - **Capture.** A context on top takes from those below the keys, buttons and axes that its actions
   read: the menu confirms with South while jumping, also on South, waits. A code of one gamepad
   counts also for that of all, and the other way round. A `modal` one leaves them nothing.
@@ -193,7 +190,9 @@ end of a networked session has its own seats.
   frame of the body's vertical, and `core.Vertical.turn` (ground that turns) is added to the look.
   A seat that changes to a camera that looks with the body starts looking where the camera it left
   looked.
-- A seat drives at most one body and a body has one seat (`body_of`, `seat_of`).
+- A seat drives at most one body and a body has one seat. `body_of` reads the seat table.
+  `seat_of` reads the body index in `core.Ref(inp.Seats)`, refreshed in fixed before driving
+  and updated as requests change bodies.
 - `Seats` is derived: loading a scene or a save starts it anew, with its blocks, and whoever
   requested them requests them again.
 - Cleanup removes dead references. A block whose `owner` died is released with re-arming; if its
@@ -413,8 +412,8 @@ game with its own mode passes its setup. The editor offers them as recipes in Cr
   the connection leaves it waits turned off for its player; if it does not return in time, it goes
   away and `spawn` destroys the body it gave it
   ([players](../../mirai-networking/references/multiplayer.md#authority-and-players)).
-- `Seats` and `Seat` are part of the `World`: a network correction restores them with
-  the copy of the world and the tick is simulated again.
+- A network correction restores `Seats`, `Seat` and `Seat_States` with the world, then
+  simulates the tick again.
 
 ## Verification
 
@@ -424,8 +423,8 @@ game with its own mode passes its setup. The editor offers them as recipes in Cr
   in `holds_test.odin`, a hold that acts from the next tick whatever the bindings, its contexts,
   blocks and capacity, and the same holds giving the same ticks; in `remote_test.odin`, the actions
   another end sent, a repeated tick and hostile ones; the bindings of `Input_Settings`, the
-  player's over the project's after a restart, the entries refused with their fix and an old
-  `input.mirai`, in `input_test.odin`. The editor: `mirai test editor
+  player's over the project's after a restart and the entries refused with their fix, in
+  `input_test.odin`. The editor: `mirai test editor
   renaming_an_action_follows_the_code_in_input_settings
   the_bindings_are_set_as_settings_and_refused_with_the_fix`.
   `mirai test plugins/spawn/runtime`: the bodies of a seat that leaves and when seats get bodies.

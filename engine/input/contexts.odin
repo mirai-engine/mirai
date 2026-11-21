@@ -53,10 +53,10 @@ Context_Requests :: struct {
 // Puts a seat (none: every local seat) in a context until owner leaves it.
 // An owner has one context: entering another replaces it.
 input_context_enter :: proc(r:^Context_Requests,owner,seat:core.Entity,input_context:Input_Context,modal:=false) {
-    core.push(&r.queue,Context_Request{owner=owner,seat=seat,input_context=input_context,modal=modal})
+    core.offer(&r.queue,Context_Request{owner=owner,seat=seat,input_context=input_context,modal=modal})
 }
 input_context_leave :: proc(r:^Context_Requests,owner:core.Entity) {
-    core.push(&r.queue,Context_Request{owner=owner,leave=true})
+    core.offer(&r.queue,Context_Request{owner=owner,leave=true})
 }
 
 // Whether an owner has seats in a context now.
@@ -70,20 +70,31 @@ in_context :: proc "contextless" (state:^Input_Contexts,owner:core.Entity) -> bo
 // The contexts as they were asked, without what refers to what no longer
 // exists, in the stack of each seat.
 @(step="fixed",stage="begin")
-input_contexts :: proc(es:core.Ref(core.Entities),seats:^core.Table(Seat),state:^Input_Contexts,requests:^Context_Requests,problems:^core.Problems) {
+input_contexts :: proc(es:core.Ref(core.Entities),seats:^core.Table(Seat,.Read),states:^Seat_States,state:^Input_Contexts,requests:^Context_Requests,problems:^core.Problems) {
+    core.queue_serve(&requests.queue,CONTEXT_ENTRY_CAPACITY*2,problems,"input.contexts_requests",
+        "context requests","the input request capacity")
     for request in core.take(&requests.queue) {context_request_apply(es.ptr,seats,state,request,problems)}
     for &entry in state.entries {
         if !entry.active {continue}
         if entry.seat!=core.NONE && !core.alive(es.ptr,entry.seat) || entry.owner!=core.NONE && !core.alive(es.ptr,entry.owner) {entry.active=false}
     }
-    for row in 0..<core.count(seats) {
-        stack:=context_stack(state,core.entity_at(seats,row),seat_local(seats.values[row]))
-        if seats.values[row].contexts!=stack {core.edit_at(seats,row).contexts=stack}
+    if core.touched(seats,&states.seen) {
+        for i:=len(states.entries.entities)-1;i>=0;i-=1 {
+            e:=states.entries.entities[i]
+            if core.raw_find(core.raw(seats),type_info_of(Seat),e)==nil {
+                core.entity_map_remove_at(&states.entries,i)
+            }
+        }
+    }
+    for &seat,row in seats.values[:core.count(seats)] {
+        entity:=core.entity_at(seats,row)
+        stack:=context_stack(state,entity,seat_local(seat))
+        if source:=seat_runtime_edit(states,entity);source!=nil {source.contexts=stack}
     }
 }
 
 @(private)
-context_request_apply :: proc(es:^core.Entities,seats:^core.Table(Seat),state:^Input_Contexts,r:Context_Request,problems:^core.Problems) {
+context_request_apply :: proc(es:^core.Entities,seats:^core.Table(Seat,.Read),state:^Input_Contexts,r:Context_Request,problems:^core.Problems) {
     own:^Context_Entry
     for &entry in state.entries {
         if entry.active && entry.owner==r.owner {own=&entry;break}
@@ -141,5 +152,30 @@ context_stack :: proc "contextless" (state:^Input_Contexts,seat:core.Entity,loca
         if entry.modal {stack.modal|=1<<u8(i)}
     }
     stack.count=u8(count)
+    return
+}
+
+@(private)
+context_levels :: proc "contextless" (contexts:^Context_Stack) -> (layers:[CONTEXT_CAPACITY]u8,higher:[CONTEXT_CAPACITY]u16) {
+    layers[CONTEXT_BASE],layers[CONTEXT_ALWAYS]=1,1
+    if contexts==nil || contexts.count==0 {return}
+    floor:=u8(1)
+    for c,i in contexts.layers[:min(int(contexts.count),CONTEXT_LAYERS)] {
+        if int(c)>=CONTEXT_CAPACITY {continue}
+        layers[c]=u8(i+2)
+        if contexts.modal&(1<<u8(i))!=0 {floor=u8(i+2)}
+    }
+    for &level,c in layers {
+        if c==int(CONTEXT_ALWAYS) {level=1}
+        else if level<floor {level=0}
+    }
+    at_level:[CONTEXT_LAYERS+2]u16
+    for level,c in layers {
+        if level>0 {at_level[level]|=u16(1)<<u8(c)}
+    }
+    for i:=len(at_level)-2;i>=1;i-=1 {at_level[i]|=at_level[i+1]}
+    for level,c in layers {
+        if level>0 && int(level)+1<len(at_level) {higher[c]=at_level[level+1]}
+    }
     return
 }

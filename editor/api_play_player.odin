@@ -47,7 +47,7 @@ play_player_snapshot :: proc(w:core.World_Ref) -> (value:Api_Play_Player_Result)
     players:=core.world_storage_of(w,input.Seats)
     seats:=core.world_table_of(w,input.Seat)
     if players==nil || seats==nil {return}
-    player:=input.focused(players,seats)
+    player:=input.focused(core.ref(players),seats)
     if !core.alive(core.world_entities(w),player) {return}
     value.available=true
     value.seat=play_player_entity(w,player)

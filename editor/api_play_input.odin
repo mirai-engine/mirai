@@ -157,16 +157,13 @@ api_play_input :: proc(s:^Session,call:^api.Call) {
     queued:=0
     if p.release_all {
         if requests!=nil {
-            source,_:=core.get(seats,seat)
-            for hold in source.holds[:source.hold_count] {input.let_go(requests,seat,hold.action);queued+=1}
-            for i in 0..<len(requests.queue.items) {
-                asked:=requests.queue.items[i]
-                if asked.seat==seat && asked.value!={} {input.let_go(requests,seat,asked.action);queued+=1}
-            }
+            states:=core.ref(core.world_storage_of(w,input.Seat_States))
+            tick:=core.world_storage_of(w,core.Time)
+            held,n:=input.holds_at(input.seat_runtime(states,seat),seat,core.ref(requests),tick!=nil?tick.tick:0)
+            for hold in held[:n] {if input.let_go(requests,seat,hold.action) {queued+=1}}
         }
     }
-    for h in holds[:count] {core.push(&requests.queue,h)}
-    queued+=count
+    for h in holds[:count] {if input.hold(requests,h.seat,h.action,h.value,h.ticks) {queued+=1}}
     result:=api.call_result(call,Api_Play_Input_Result)
     if seat!=core.NONE {api_handle_put(result.seat[:],seat)}
     if t:=core.world_storage_of(w,core.Time);t!=nil {result.tick=t.tick}

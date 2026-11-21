@@ -28,7 +28,8 @@ Source :: struct {
     gamepad:int,       // of the player; -1: any
     bindings:^inp.Input_Map,
     actions:^inp.Actions, // of the frame, for the window
-    seat_state:^inp.Seats, // whose blocks the interface being built reads its actions past
+    seat_state:core.Ref(inp.Seats),
+    seat_runtime:core.Ref(inp.Seat_States), // whose blocks the interface being built reads its actions past
     seats:^core.Table(inp.Seat,.Read),
     cameras:^core.Table(render.Camera,.Read),
     exposures:^core.Table(render.Exposure,.Read),
@@ -61,14 +62,14 @@ Particle_Texture :: struct {
 
 @(private)
 source_bind :: proc(
-    s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),bindings:core.Ref(inp.Input_Map),
+    s:^Surface,gui:^Gui,app:^host.App,p:int,seat_state:core.Ref(inp.Seats),seat_runtime:core.Ref(inp.Seat_States),seats:^core.Table(inp.Seat,.Read),bindings:core.Ref(inp.Input_Map),
     actions:core.Ref(inp.Frame_Actions),cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),
     view_volumes:^core.Table(render.View_Volume,.Read),zones:volume.Where,settings:UI_Settings,gamepad:int,effects:^UI_Effects,sounds:^audio.Sound_Requests,
 ) {
     seat:=p>0?inp.local_seat(seats,p-1):core.NONE
     settings:=settings
     s.source={
-        gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.slots[clamp(seat_state.focus,0,inp.LOCAL_CAPACITY-1)],seat_state=seat_state.ptr,seats=seats,
+        gui=gui,app=app,surface=s,effects=effects,sounds=sounds,player=p,seat=seat,gamepad=gamepad,bindings=bindings.ptr,actions=&actions.ptr.slots[clamp(seat_state.focus,0,inp.LOCAL_CAPACITY-1)],seat_state=seat_state,seat_runtime=seat_runtime,seats=seats,
         cameras=cameras,exposures=exposures,view_volumes=view_volumes,zones=zones,pixels=s.key.scale*max(app.density,0.01),
         pack=host.content_prompts(app,settings.prompts),
     }
@@ -232,7 +233,7 @@ source_action :: proc(user:rawptr,action:u64) -> (down,pressed:bool) {
     state:inp.Action_State
     if src.player>0 {
         owner:=src.building!=nil?src.building.entity:core.NONE
-        state=inp.seat_action_for(src.seat_state,src.seats,src.seat,found,owner)
+        state=inp.seat_action_for(src.seat_state,src.seat_runtime,src.seats,src.seat,found,owner)
     } else if src.actions!=nil {
         state=inp.action(src.actions,found)
     }

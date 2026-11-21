@@ -26,6 +26,7 @@ menu_bindings :: proc() -> (m:Input_Map) {
     input_map_bind(&m,CONFIRM,binding_key(.Space))
     input_map_bind(&m,CONFIRM,binding_gamepad_button(.South))
     m.actions[CONFIRM].input_context=MENU
+    input_map_compile(&m)
     return
 }
 
@@ -38,6 +39,7 @@ the_always_context_reads_under_a_modal_one :: proc(t:^testing.T) {
     input_map_action(&m,PAUSE,.Button)
     input_map_bind(&m,PAUSE,binding_key(.Escape))
     m.actions[PAUSE].input_context=CONTEXT_ALWAYS
+    input_map_compile(&m)
     device:=core.Input{keys_down={.Escape},keys_pressed={.Escape}}
     modal:=Context_Stack{layers={0=MENU},count=1,modal=1}
     actions:Actions
@@ -47,6 +49,7 @@ the_always_context_reads_under_a_modal_one :: proc(t:^testing.T) {
     actions_update(&actions,&m,&device,1.0/60)
     testing.expect(t,action(&actions,PAUSE).pressed,"without a seat in a context, it reads too")
     input_map_bind(&m,CONFIRM,binding_key(.Escape))
+    input_map_compile(&m)
     actions={}
     actions_update(&actions,&m,&device,1.0/60,&modal)
     testing.expect(t,action(&actions,CONFIRM).pressed && !action(&actions,PAUSE).down,"the context that reads Escape keeps it")
@@ -90,34 +93,34 @@ seats_enter_and_leave_contexts_by_owner :: proc(t:^testing.T) {
     test_world_settle(&w)
     state:Input_Contexts
     problems:core.Problems
-    stack :: proc(seats:^core.Table(Seat),e:core.Entity) -> Context_Stack {return seats.values[core.row_of(seats,e)].contexts}
+    stack :: proc(states:^Seat_States,e:core.Entity) -> Context_Stack {return seat_runtime_edit(states,e).contexts}
 
     input_context_enter(&w.context_requests,inventory,core.NONE,MENU)
     input_context_enter(&w.context_requests,map_screen,second,MAP,modal=true)
-    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
-    testing.expect(t,stack(&w.seats,first)==Context_Stack{layers={0=MENU},count=1},"none puts every local seat in it")
-    testing.expect(t,stack(&w.seats,second)==Context_Stack{layers={0=MENU,1=MAP},count=2,modal=0b10},"the one entered last is on top")
+    input_contexts(core.ref(&w.entities),core.read(&w.seats),&w.runtime,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.runtime,first)==Context_Stack{layers={0=MENU},count=1},"none puts every local seat in it")
+    testing.expect(t,stack(&w.runtime,second)==Context_Stack{layers={0=MENU,1=MAP},count=2,modal=0b10},"the one entered last is on top")
     testing.expect(t,in_context(&state,inventory) && in_context(&state,map_screen))
 
     // Asked again with the same context, it keeps its place.
     input_context_enter(&w.context_requests,inventory,core.NONE,MENU)
-    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
-    testing.expect(t,stack(&w.seats,second).layers[1]==MAP)
+    input_contexts(core.ref(&w.entities),core.read(&w.seats),&w.runtime,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.runtime,second).layers[1]==MAP)
 
     input_context_leave(&w.context_requests,inventory)
-    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
-    testing.expect(t,stack(&w.seats,first).count==0 && stack(&w.seats,second)==Context_Stack{layers={0=MAP},count=1,modal=1})
+    input_contexts(core.ref(&w.entities),core.read(&w.seats),&w.runtime,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.runtime,first).count==0 && stack(&w.runtime,second)==Context_Stack{layers={0=MAP},count=1,modal=1})
 
     // An owner that goes takes its seats out.
     core.destroy(&w.entities,map_screen)
-    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
-    testing.expect(t,stack(&w.seats,second).count==0 && !in_context(&state,map_screen))
+    input_contexts(core.ref(&w.entities),core.read(&w.seats),&w.runtime,&state,&w.context_requests,&problems)
+    testing.expect(t,stack(&w.runtime,second).count==0 && !in_context(&state,map_screen))
     testing.expect_value(t,problems.count,0)
 
     input_context_enter(&w.context_requests,inventory,core.NONE,CONTEXT_BASE)
     input_context_enter(&w.context_requests,inventory,core.NONE,Input_Context(CONTEXT_CAPACITY))
     input_context_enter(&w.context_requests,inventory,map_screen,MENU)
-    input_contexts(core.ref(&w.entities),&w.seats,&state,&w.context_requests,&problems)
+    input_contexts(core.ref(&w.entities),core.read(&w.seats),&w.runtime,&state,&w.context_requests,&problems)
     for code in ([]string{"input.context_base","input.context_value","input.context_seat"}) {
         testing.expectf(t,core.problem_find(&problems,inventory,code)!=nil,"%s is a problem",code)
     }
@@ -129,7 +132,7 @@ seats_enter_and_leave_contexts_by_owner :: proc(t:^testing.T) {
 @(test)
 a_button_held_across_a_change_of_context_waits_for_its_release :: proc(t:^testing.T) {
     m:=menu_bindings()
-    seat:Seat
+    seat:Seat_State
     seat.contexts=Context_Stack{layers={0=MENU},count=1}
     device:=core.Input{keys_down={.Space},keys_pressed={.Space}}
     seat_feed(&seat,&device,&m,false,1.0/60)
@@ -170,6 +173,9 @@ input_settings_name_contexts_and_chords :: proc(t:^testing.T) {
     menu:=Context_Stack{layers={0=MENU},count=1}
     actions:Actions
     device:=core.Input{keys_down={.Left_Control,.S},keys_pressed={.Left_Control,.S}}
+    actions_update(&actions,&m,&device,1.0/60)
+    testing.expect(t,action(&actions,JUMP).pressed && !action(&actions,SAVE).down,
+        "the disabled chord cannot consume the base binding")
     actions_update(&actions,&m,&device,1.0/60,&menu)
     testing.expect(t,action(&actions,SAVE).pressed && !action(&actions,JUMP).down,"the menu takes S, and Ctrl+S saves")
 

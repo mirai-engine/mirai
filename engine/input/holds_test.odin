@@ -33,6 +33,7 @@ hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
     for binding in jump {input_map_bind(&f.bindings,HOLD_JUMP,binding)}
     input_map_action(&f.bindings,HOLD_CONFIRM,.Button)
     f.bindings.actions[HOLD_CONFIRM].input_context=HOLD_MENU
+    input_map_compile(&f.bindings)
     f.time.tick=10
     return true
 }
@@ -42,11 +43,11 @@ hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
 // connection takes them as its client sends them to the server.
 @(private="file")
 hold_test_tick :: proc(f:^Hold_Test) {
-    input_holds(&f.seats,&f.hold_requests,f.time,&f.problems)
+    input_holds(core.read(&f.seats),&f.runtime,&f.hold_requests,f.time,&f.problems)
     device:core.Input
-    seat_feed(core.edit(&f.seats,f.local),&device,&f.bindings,false,1.0/60)
-    sent,_:=seat_remote(core.read(&f.seats),f.local,&f.bindings)
-    seat_receive(core.edit(&f.seats,f.remote),&f.bindings,sent,1.0/60)
+    seat_feed(seat_runtime_edit(&f.runtime,f.local),&device,&f.bindings,false,1.0/60)
+    sent,_:=seat_remote(core.ref(&f.runtime),f.local,core.ref(&f.bindings))
+    seat_receive(seat_runtime_edit(&f.runtime,f.remote),&f.bindings,sent,1.0/60)
     core.time_advance(&f.time)
 }
 
@@ -57,12 +58,11 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
         f:Hold_Test
         if !hold_test_init(t,&f,..jump) {return}
         defer test_world_destroy(&f.w)
-        read:=&f.seats
-        typed:=Input_Of(Hold_Test_Action){seats=core.read(read)}
+        typed:=Input_Of(Hold_Test_Action){seats=core.read(&f.seats),runtime=core.ref(&f.runtime)}
         hold(&f.hold_requests,f.local,HOLD_JUMP,{1,0},3)
         hold(&f.hold_requests,f.local,HOLD_MOVE,{0,1})
         testing.expect(t,!seat_down(typed,f.local,.Jump),"nothing acts before the tick")
-        _,ahead:=holds_at(f.seats.values[core.row_of(read,f.local)],f.local,&f.hold_requests,f.time.tick)
+        _,ahead:=holds_at(seat_runtime(core.ref(&f.runtime),f.local),f.local,core.ref(&f.hold_requests),f.time.tick)
         testing.expect_value(t,ahead,2)
         hold_test_tick(&f)
         testing.expect(t,seat_pressed(typed,f.local,.Jump),"pressed on the next tick")
@@ -72,14 +72,14 @@ a_held_action_reaches_its_seat_from_the_next_tick_whatever_its_bindings :: proc(
         hold_test_tick(&f)
         hold_test_tick(&f)
         testing.expect(t,seat_down(typed,f.remote,.Jump) && !seat_pressed(typed,f.remote,.Jump))
-        testing.expect(t,abs(seat_action(core.read(read),f.remote,HOLD_JUMP).held-3.0/60)<1e-6)
+        testing.expect(t,abs(seat_action(core.ref(&f.runtime),f.remote,HOLD_JUMP).held-3.0/60)<1e-6)
         // Its seat still has the jump, which the next tick no longer holds.
-        _,ahead=holds_at(f.seats.values[core.row_of(read,f.local)],f.local,&f.hold_requests,f.time.tick)
-        testing.expect(t,ahead==1 && f.seats.values[core.row_of(read,f.local)].hold_count==2)
+        _,ahead=holds_at(seat_runtime(core.ref(&f.runtime),f.local),f.local,core.ref(&f.hold_requests),f.time.tick)
+        testing.expect(t,ahead==1 && seat_runtime(core.ref(&f.runtime),f.local).hold_count==2)
         hold_test_tick(&f)
-        state:=seat_action(core.read(read),f.remote,HOLD_JUMP)
+        state:=seat_action(core.ref(&f.runtime),f.remote,HOLD_JUMP)
         testing.expect(t,state.released && state.tapped && abs(state.released_held-3.0/60)<1e-6,"released after its ticks")
-        testing.expect_value(t,f.seats.values[core.row_of(read,f.local)].hold_count,1)
+        testing.expect_value(t,seat_runtime(core.ref(&f.runtime),f.local).hold_count,1)
         testing.expect_value(t,seat_vector(typed,f.local,.Move),[2]f32{0,1})
         // Until it is let go: released on the tick after.
         let_go(&f.hold_requests,f.local,HOLD_MOVE)
@@ -94,13 +94,12 @@ a_held_action_keeps_the_contexts_blocks_and_capacity_of_its_seat :: proc(t:^test
     f:Hold_Test
     if !hold_test_init(t,&f,binding_key(.Space)) {return}
     defer test_world_destroy(&f.w)
-    read:=&f.seats
-    typed:=Input_Of(Hold_Test_Action){seats=core.read(read)}
+    typed:=Input_Of(Hold_Test_Action){seats=core.read(&f.seats),runtime=core.ref(&f.runtime)}
     hold(&f.hold_requests,f.local,HOLD_CONFIRM,{1,0})
     hold_test_tick(&f)
     testing.expect(t,!seat_down(typed,f.local,.Confirm),"an action of a context the seat is not in")
     let_go(&f.hold_requests,f.local,HOLD_CONFIRM)
-    seat:=core.edit(&f.seats,f.local)
+    seat:=seat_runtime_edit(&f.runtime,f.local)
     seat.contexts.layers[0],seat.contexts.count=HOLD_MENU,1
     hold_test_tick(&f)
     hold(&f.hold_requests,f.local,HOLD_CONFIRM,{1,0})
@@ -113,8 +112,8 @@ a_held_action_keeps_the_contexts_blocks_and_capacity_of_its_seat :: proc(t:^test
     hold(&f.hold_requests,f.remote,HOLD_JUMP,{1,0})
     hold_test_tick(&f)
     testing.expect_value(t,f.problems.count,3)
-    testing.expect_value(t,f.seats.values[core.row_of(read,f.remote)].hold_count,0)
-    testing.expect_value(t,f.seats.values[core.row_of(read,f.local)].hold_count,u8(HOLD_CAPACITY))
+    testing.expect_value(t,seat_runtime(core.ref(&f.runtime),f.remote).hold_count,0)
+    testing.expect_value(t,seat_runtime(core.ref(&f.runtime),f.local).hold_count,u8(HOLD_CAPACITY))
 }
 
 @(test)
@@ -123,8 +122,7 @@ the_same_holds_on_the_same_seats_give_the_same_ticks :: proc(t:^testing.T) {
         f:Hold_Test
         if !hold_test_init(t,&f,binding_key(.Space)) {return}
         defer test_world_destroy(&f.w)
-        read:=&f.seats
-        typed:=Input_Of(Hold_Test_Action){seats=core.read(read)}
+        typed:=Input_Of(Hold_Test_Action){seats=core.read(&f.seats),runtime=core.ref(&f.runtime)}
         for tick in 0..<len(states) {
             switch tick {
             case 0: hold(&f.hold_requests,f.local,HOLD_JUMP,{1,0},2)
@@ -133,7 +131,7 @@ the_same_holds_on_the_same_seats_give_the_same_ticks :: proc(t:^testing.T) {
             case 6: let_go(&f.hold_requests,f.local,HOLD_JUMP)
             }
             hold_test_tick(&f)
-            states[tick]={seat_action(core.read(read),f.local,HOLD_JUMP),seat_action(core.read(read),f.local,HOLD_MOVE)}
+            states[tick]={seat_action(core.ref(&f.runtime),f.local,HOLD_JUMP),seat_action(core.ref(&f.runtime),f.local,HOLD_MOVE)}
         }
         return
     }

@@ -42,14 +42,38 @@ Seat :: struct {
     peer:u64 `mirai:"transient,readonly,local"`,          // the connection of another end, on a server; on a client, any value but 0 for the seat of another player; 0: this machine, or a player away
     player:u64 `mirai:"readonly,hidden,local"`,           // server: the hash of the secret the player of another end presents, which gets the seat back; 0: this machine
     body:core.Entity `mirai:"local"`,                     // the body it drives: a seat of a scene drives it from the start; none: none
-    actions:Actions `mirai:"transient,hidden,local"`,
-    held:Action_Mask `mirai:"transient,hidden,local"`,    // buttons its source holds
-    rearm:Action_Mask `mirai:"transient,hidden,local"`,   // held buttons that wait for their release
-    blocked:Action_Mask `mirai:"transient,hidden,local"`, // actions an input block takes
-    contexts:Context_Stack `mirai:"transient,hidden,local"`, // the input contexts it is in
-    fed:Context_Stack `mirai:"transient,hidden,local"`,      // those its actions were computed in last
-    holds:[HOLD_CAPACITY]Action_Hold `mirai:"transient,hidden,local"`, // actions given besides its devices (holds.odin)
-    hold_count:u8 `mirai:"transient,hidden,local"`,
+}
+
+Seat_Sample :: struct {
+    actions:Actions,
+    held:Action_Mask,
+    rearm:Action_Mask, // held buttons that wait for their release
+    fed:Context_Stack, // contexts where the actions were last computed
+}
+
+Seat_State :: struct {
+    using sample:Seat_Sample,
+    blocked:Action_Mask,
+    contexts:Context_Stack,
+    holds:[HOLD_CAPACITY]Action_Hold, // actions given besides its devices (holds.odin)
+    hold_count:u8,
+}
+
+@(storage,shared)
+Seat_States :: struct {
+    entries:core.Entity_Map(Seat_State),
+    seen:core.Seen,
+}
+
+seat_runtime :: proc "contextless" (states:core.Ref(Seat_States),seat:core.Entity) -> ^Seat_State {
+    return states.ptr==nil?nil:core.entity_map_get(&states.entries,seat)
+}
+
+seat_runtime_edit :: proc(states:^Seat_States,seat:core.Entity) -> ^Seat_State {
+    if states==nil {return nil}
+    if value:=core.entity_map_get(&states.entries,seat);value!=nil {return value}
+    value,_:=core.entity_map_put(&states.entries,seat,Seat_State{})
+    return value
 }
 
 // A seat of this machine: not one of another end, nor of a player away.
@@ -80,6 +104,8 @@ Seats :: struct {
     focus:int,            // the local slot the keyboard and the mouse go to
     keyboard:int,         // the slot that had them last tick, plus one; 0: none
     blocks:[BLOCK_CAPACITY]Block,
+    drivers:core.Entity_Map(core.Entity),
+    seen:core.Seen,
 }
 
 Request_Kind :: enum u8 {
@@ -105,19 +131,19 @@ Seat_Requests :: struct {
 }
 
 drive :: proc(r:^Seat_Requests,seat,body:core.Entity) {
-    core.push(&r.queue,Seat_Request{kind=.Drive,seat=seat,entity=body})
+    core.offer(&r.queue,Seat_Request{kind=.Drive,seat=seat,entity=body})
 }
 release :: proc(r:^Seat_Requests,seat:core.Entity) {
-    core.push(&r.queue,Seat_Request{kind=.Release,seat=seat})
+    core.offer(&r.queue,Seat_Request{kind=.Release,seat=seat})
 }
 focus :: proc(r:^Seat_Requests,slot:int) {
-    core.push(&r.queue,Seat_Request{kind=.Focus,slot=slot})
+    core.offer(&r.queue,Seat_Request{kind=.Focus,slot=slot})
 }
 input_block :: proc(r:^Seat_Requests,owner,seat:core.Entity,mask:=ALL_ACTIONS) {
-    core.push(&r.queue,Seat_Request{kind=.Block_Add,owner=owner,seat=seat,mask=mask})
+    core.offer(&r.queue,Seat_Request{kind=.Block_Add,owner=owner,seat=seat,mask=mask})
 }
 input_unblock :: proc(r:^Seat_Requests,owner:core.Entity) {
-    core.push(&r.queue,Seat_Request{kind=.Block_Remove,owner=owner})
+    core.offer(&r.queue,Seat_Request{kind=.Block_Remove,owner=owner})
 }
 
 // The body a seat drives; none without one.
@@ -127,12 +153,38 @@ body_of :: proc(seats:^core.Table(Seat,$A),seat:core.Entity) -> core.Entity {
 }
 
 // The seat that drives a body; none without one.
-seat_of :: proc(seats:^core.Table(Seat,$A),body:core.Entity) -> core.Entity {
-    if body==core.NONE {return core.NONE}
-    for value,row in seats.values[:core.count(seats)] {
-        if value.body==body {return core.entity_at(seats,row)}
+seat_of :: proc "contextless" (state:core.Ref(Seats),body:core.Entity) -> core.Entity {
+    if state.ptr!=nil {
+        if seat:=core.entity_map_get(&state.drivers,body);seat!=nil {return seat^}
     }
     return core.NONE
+}
+
+@(step="fixed",stage="input",before="input_seats")
+input_seat_index :: proc(es:core.Ref(core.Entities),seats:^core.Table(Seat,.Read),state:^Seats,problems:^core.Problems) {
+    seat_index_sync(es,seats,state,problems)
+}
+
+@(private)
+seat_index_sync :: proc(es:core.Ref(core.Entities),seats:^core.Table(Seat,.Read),state:^Seats,problems:^core.Problems) -> bool {
+    seen:=state.seen
+    if !core.touched(seats,&seen) {return true}
+    index:=&state.drivers
+    indices:=len(index.rows)
+    for &slot in seats.values[:core.count(seats)] {
+        if core.alive(es.ptr,slot.body) {indices=max(indices,core.entity_index(slot.body)+1)}
+    }
+    if !core.entity_map_reserve(index,core.count(seats),indices) {
+        core.report(problems,core.NONE,"input.seat_index","out of memory for the body-to-seat index; free memory")
+        return false
+    }
+    core.entity_map_clear(index)
+    for &slot,row in seats.values[:core.count(seats)] {
+        if !core.alive(es.ptr,slot.body) || core.entity_map_get(index,slot.body)!=nil {continue}
+        core.entity_map_put(index,slot.body,core.entity_at(seats,row))
+    }
+    state.seen=seen
+    return true
 }
 
 // The seat of a local slot; none without one.
@@ -144,17 +196,16 @@ local_seat :: proc(seats:^core.Table(Seat,$A),slot:int) -> core.Entity {
 }
 
 // The local seat with the keyboard and the mouse.
-focused :: proc(state:^Seats,seats:^core.Table(Seat,$A)) -> core.Entity {
-    return state.local_count>0?local_seat(seats,state.focus):core.NONE
+focused :: proc(state:core.Ref(Seats),seats:^core.Table(Seat,$A)) -> core.Entity {
+    return state.ptr!=nil && state.local_count>0?local_seat(seats,state.focus):core.NONE
 }
 
 // The state of an action of a seat this tick: released while it is blocked
 // or waits for its release, and for what is not a seat. Code reads its own
 // actions with seat_state and Input_Of.
-seat_action :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,a:Action) -> Action_State {
-    row:=core.row_of(seats,seat)
-    if row<0 {return {}}
-    source:=&seats.values[row]
+seat_action :: proc(states:core.Ref(Seat_States),seat:core.Entity,a:Action) -> Action_State {
+    source:=seat_runtime(states,seat)
+    if source==nil {return {}}
     if (source.blocked|source.rearm)&action_bit(a)!=0 {return {}}
     return action(&source.actions,a)
 }
@@ -163,15 +214,15 @@ seat_action :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,a:Action) -> Act
 // own blocks, so that what takes the actions of a seat (a modal screen) still
 // gets them; released while a block of another owner takes it or it waits
 // for its release.
-seat_action_for :: proc(state:^Seats,seats:^core.Table(Seat,$A),seat:core.Entity,a:Action,owner:core.Entity) -> Action_State {
-    row:=core.row_of(seats,seat)
-    if row<0 {return {}}
-    source:=&seats.values[row]
+seat_action_for :: proc(state:core.Ref(Seats),states:core.Ref(Seat_States),seats:^core.Table(Seat,$A),seat:core.Entity,a:Action,owner:core.Entity) -> Action_State {
+    if !core.has(seats,seat) {return {}}
+    source:=seat_runtime(states,seat)
+    if source==nil {return {}}
     bit:=action_bit(a)
     if source.rearm&bit!=0 {return {}}
     if source.blocked&bit!=0 {
-        if state==nil || owner==core.NONE {return {}}
-        local:=seat_local(source^)
+        if state.ptr==nil || owner==core.NONE {return {}}
+        local:=seat_local(core.get(seats,seat) or_else Seat{})
         for block in state.blocks {
             if block.active && block.owner!=owner && block.mask&bit!=0 && (block.seat==seat || block.seat==core.NONE && local) {return {}}
         }
@@ -180,10 +231,9 @@ seat_action_for :: proc(state:^Seats,seats:^core.Table(Seat,$A),seat:core.Entity
 }
 
 // The button actions of a seat that are down this tick, as seat_down sees them.
-seat_buttons :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input_Map) -> (mask:Action_Mask) {
-    row:=core.row_of(seats,seat)
-    if row<0 {return}
-    source:=&seats.values[row]
+seat_buttons :: proc(states:core.Ref(Seat_States),seat:core.Entity,bindings:core.Ref(Input_Map)) -> (mask:Action_Mask) {
+    source:=seat_runtime(states,seat)
+    if source==nil {return}
     for state,i in source.actions.states[:source.actions.count] {
         if state.down && bindings.actions[i].kind==.Button {mask|=action_bit(Action(i))}
     }
@@ -192,8 +242,8 @@ seat_buttons :: proc(seats:^core.Table(Seat,$A),seat:core.Entity,bindings:^Input
 
 // The state of an action of the seat that drives a body this tick; released
 // while nobody drives it.
-body_action :: proc(seats:^core.Table(Seat,.Read),body:core.Entity,a:Action) -> Action_State {
-    return seat_action(seats,seat_of(seats,body),a)
+body_action :: proc(state:core.Ref(Seats),states:core.Ref(Seat_States),body:core.Entity,a:Action) -> Action_State {
+    return seat_action(states,seat_of(state,body),a)
 }
 
 // The seats of this machine: how many there are, and the actions of each for
@@ -203,7 +253,7 @@ body_action :: proc(seats:^core.Table(Seat,.Read),body:core.Entity,a:Action) -> 
 @(step="fixed",stage="input")
 input_seats :: proc(
     es:core.Commands,app:^host.App,seats:^core.Table(Seat),state:^Seats,run:^Run_Players,
-    device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
+    states:^Seat_States,device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {
     if run.count==0 {run.count=app.launch.players}
     // A server has players of its own only when the run asks for them: one
@@ -220,11 +270,11 @@ input_seats :: proc(
             if keeps!=nil {core.add(keeps,seat,core.Keep{})}
         }
     }
-    for row in 0..<core.count(seats) {
-        if !seat_local(seats.values[row]) {continue}
-        slot:=int(seats.values[row].slot)
+    for &seat,row in seats.values[:core.count(seats)] {
+        if !seat_local(seat) {continue}
+        slot:=int(seat.slot)
         own:=slot<count?slot_input(device,slot,count,state.focus):core.Input{}
-        seat_feed(core.edit_at(seats,row),&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1,time.dt)
+        seat_feed(seat_runtime_edit(states,core.entity_at(seats,row)),&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1,time.dt)
     }
     state.keyboard=count>0?state.focus+1:0
 }
@@ -233,7 +283,8 @@ input_seats :: proc(
 // got the device from another (gained) waits for the release of what it
 // holds; one whose contexts changed, for the release of the buttons that went
 // down with the change, as jump on the button that closed a menu.
-seat_feed :: proc(seat:^Seat,device:^core.Input,bindings:^Input_Map,gained:bool,dt:f32) {
+seat_feed :: proc(seat:^Seat_State,device:^core.Input,bindings:^Input_Map,gained:bool,dt:f32) {
+    if seat==nil {return}
     before:=seat.held
     actions_update(&seat.actions,bindings,device,dt,&seat.contexts,seat.holds[:seat.hold_count])
     seat.held=held_buttons(&seat.actions,bindings)
@@ -276,6 +327,7 @@ Apply :: struct {
     moves:^core.Table(Move_Input),
     seats:^core.Table(Seat),
     state:^Seats,
+    states:^Seat_States,
     role:core.Network_Role,
     elsewhere:^core.Table(core.Remote,.Read),
     problems:^core.Problems,
@@ -286,18 +338,21 @@ Apply :: struct {
 // blocks take.
 @(step="fixed",stage="input")
 input_drive :: proc(
-    es:core.Ref(core.Entities),moves:^core.Table(Move_Input),seats:^core.Table(Seat),state:^Seats,requests:^Seat_Requests,
+    es:core.Ref(core.Entities),moves:^core.Table(Move_Input),seats:^core.Table(Seat),state:^Seats,states:^Seat_States,requests:^Seat_Requests,
     network:core.Ref(core.Network),elsewhere:^core.Table(core.Remote,.Read),problems:^core.Problems,
 ) {
-    a:=Apply{es=es.ptr,moves=moves,seats=seats,state=state,role=network.role,elsewhere=elsewhere,problems=problems}
+    a:=Apply{es=es.ptr,moves=moves,seats=seats,state=state,states=states,role=network.role,elsewhere=elsewhere,problems=problems}
+    core.queue_serve(&requests.queue,BLOCK_CAPACITY*2,problems,"input.seats_requests",
+        "seat requests","the input request capacity")
+    if !seat_index_sync(es,core.read(seats),state,problems) {return}
     for request in core.take(&requests.queue) {request_apply(&a,request)}
     upkeep(&a)
-    blocks_apply(seats,state)
+    blocks_apply(seats,state,states)
 }
 
 // Each seat takes the actions its active blocks take.
 @(private)
-blocks_apply :: proc(seats:^core.Table(Seat),state:^Seats) {
+blocks_apply :: proc(seats:^core.Table(Seat),state:^Seats,states:^Seat_States) {
     for row in 0..<core.count(seats) {
         e:=core.entity_at(seats,row)
         mask:Action_Mask
@@ -305,7 +360,7 @@ blocks_apply :: proc(seats:^core.Table(Seat),state:^Seats) {
         for block in state.blocks {
             if block.active && (block.seat==e || block.seat==core.NONE && local) {mask|=block.mask}
         }
-        if seats.values[row].blocked!=mask {core.edit_at(seats,row).blocked=mask}
+        if source:=seat_runtime(core.ref(states),e);source!=nil {source.blocked=mask}
     }
 }
 
@@ -329,17 +384,17 @@ request_apply :: proc(a:^Apply,r:Seat_Request) {
             core.report(a.problems,r.owner,"input.block_mask","an input block that takes no action (mask 0) was refused; pass the bits of the actions to take, or ALL_ACTIONS")
         case r.seat!=core.NONE && !core.alive(a.es,r.seat):
             core.report(a.problems,r.owner,"input.block_seat","an input block of seat 0x%016x was refused: that seat is not alive; block a live seat",u64(r.seat))
-        case !block_set(state,a.seats,r):
+        case !block_set(state,a.seats,a.states,r):
             core.report(a.problems,r.owner,"input.blocks_full","an input block was refused: %d input blocks are active, as many as fit; remove the ones no longer needed with input_unblock",BLOCK_CAPACITY)
         }
     case .Block_Remove:
-        block_clear(state,a.seats,r.owner)
+        block_clear(state,a.seats,a.states,r.owner)
     }
 }
 
 // Why a request to drive a body was refused.
 @(private)
-Refusal :: enum u8 {None,Not_A_Seat,Not_Alive,Taken,Server_Decides}
+Refusal :: enum u8 {None,Not_A_Seat,Not_Alive,Taken,Server_Decides,Capacity}
 
 @(private)
 refusal_report :: proc(a:^Apply,r:Seat_Request,refusal:Refusal) {
@@ -352,6 +407,8 @@ refusal_report :: proc(a:^Apply,r:Seat_Request,refusal:Refusal) {
         core.report(a.problems,r.seat,"input.body_gone","driving entity 0x%016x was refused: it is not alive; drive a live body",u64(r.entity))
     case .Taken:
         core.report(a.problems,r.seat,"input.body_taken","driving entity 0x%016x was refused: another seat drives it; release it first",u64(r.entity))
+    case .Capacity:
+        core.report(a.problems,r.seat,"input.seat_index","out of memory for the body-to-seat index; free memory and ask to drive again")
     case .Server_Decides:
         core.report(a.problems,r.seat,"input.server_decides","%s was refused: a client takes only the bodies it owns; in a network game ask the server, which decides who drives each body",request)
     }
@@ -374,27 +431,24 @@ body_assign :: proc(a:^Apply,seat,body:core.Entity) -> Refusal {
     if !seated(a,seat) {return .Not_A_Seat}
     if body!=core.NONE {
         if !core.alive(a.es,body) {return .Not_Alive}
-        if driver:=seat_of(a.seats,body);driver!=core.NONE && driver!=seat {return .Taken}
+        if driver:=seat_of(core.ref(a.state),body);driver!=core.NONE && driver!=seat {return .Taken}
     }
     // Letting go decides nothing of a body: a client lets go of what the server gave someone else.
     if !decides(a,body) {return .Server_Decides}
-    source:=core.edit(a.seats,seat)
-    previous:=source.body
+    previous:=body_of(a.seats,seat)
     if previous==body {return .None}
-    source.body=body
+    if body!=core.NONE {
+        if _,ok:=core.entity_map_put(&a.state.drivers,body,seat);!ok {return .Capacity}
+    }
+    core.edit(a.seats,seat).body=body
+    if seat_of(core.ref(a.state),previous)==seat {core.entity_map_remove(&a.state.drivers,previous)}
     if left:=core.edit(a.moves,previous);left!=nil {left.move,left.buttons={},{}}
-    rearm(a,seat)
+    if source:=seat_runtime(core.ref(a.states),seat);source!=nil {source.rearm|=source.held}
     return .None
 }
 
-// The buttons a seat holds now wait for their release before it can use them.
 @(private)
-rearm :: proc(a:^Apply,seat:core.Entity) {
-    if source:=core.edit(a.seats,seat);source!=nil && source.held!=0 {source.rearm|=source.held}
-}
-
-@(private)
-block_set :: proc(state:^Seats,seats:^core.Table(Seat),r:Seat_Request) -> bool {
+block_set :: proc(state:^Seats,seats:^core.Table(Seat),states:^Seat_States,r:Seat_Request) -> bool {
     free:^Block
     for &item in state.blocks {
         if item.active && item.owner==r.owner {
@@ -404,31 +458,32 @@ block_set :: proc(state:^Seats,seats:^core.Table(Seat),r:Seat_Request) -> bool {
         if !item.active && free==nil {free=&item}
     }
     if free==nil {return false}
-    if free.active && free.seat!=r.seat {block_release(seats,free)}
+    if free.active && free.seat!=r.seat {block_release(seats,states,free)}
     free^={owner=r.owner,seat=r.seat,mask=r.mask,active=true}
     return true
 }
 
 // What the block held back and is still held waits for its release.
 @(private)
-block_release :: proc(seats:^core.Table(Seat),block:^Block) {
+block_release :: proc(seats:^core.Table(Seat),states:^Seat_States,block:^Block) {
     if !block.active {return}
     for row in 0..<core.count(seats) {
         e,source:=core.entity_at(seats,row),&seats.values[row]
-        if (e==block.seat || block.seat==core.NONE && seat_local(source^)) && source.held&block.mask!=0 {core.edit_at(seats,row).rearm|=source.held&block.mask}
+        if e!=block.seat && !(block.seat==core.NONE && seat_local(source^)) {continue}
+        if runtime:=seat_runtime(core.ref(states),e);runtime!=nil {runtime.rearm|=runtime.held&block.mask}
     }
     block.active=false
 }
 
 @(private)
-block_clear :: proc(state:^Seats,seats:^core.Table(Seat),owner:core.Entity) {
+block_clear :: proc(state:^Seats,seats:^core.Table(Seat),states:^Seat_States,owner:core.Entity) {
     for &item in state.blocks {
-        if item.active && item.owner==owner {block_release(seats,&item)}
+        if item.active && item.owner==owner {block_release(seats,states,&item)}
     }
 }
 
 // Whether an owner blocks input now.
-blocking :: proc "contextless" (state:^Seats,owner:core.Entity) -> bool {
+blocking :: proc "contextless" (state:core.Ref(Seats),owner:core.Entity) -> bool {
     for item in state.blocks {
         if item.active && item.owner==owner {return true}
     }
@@ -439,8 +494,9 @@ blocking :: proc "contextless" (state:^Seats,owner:core.Entity) -> bool {
 @(private)
 upkeep :: proc(a:^Apply) {
     es:=a.es
-    for value,row in a.seats.values[:core.count(a.seats)] {
+    for &value,row in a.seats.values[:core.count(a.seats)] {
         if value.body==core.NONE || core.alive(es,value.body) {continue}
+        core.entity_map_remove(&a.state.drivers,value.body)
         core.edit_at(a.seats,row).body=core.NONE
     }
     for &item in a.state.blocks {
@@ -448,7 +504,7 @@ upkeep :: proc(a:^Apply) {
         if item.seat!=core.NONE && !core.alive(es,item.seat) {
             item.active=false
         } else if item.owner!=core.NONE && !core.alive(es,item.owner) {
-            block_release(a.seats,&item)
+            block_release(a.seats,a.states,&item)
         }
     }
 }
