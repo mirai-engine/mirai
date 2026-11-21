@@ -1,5 +1,6 @@
 package build
 
+import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
 import "mirai:std/subprocess"
@@ -79,6 +80,92 @@ a_change_inside_a_procedure_links_what_links_against_it_again :: proc(t:^testing
     if !declared_ok {return}
     testing.expect_value(t,declared.compiled,2)
     testing.expect_value(t,declared.relinked,0)
+}
+
+@(test)
+a_game_step_body_relinks_editor_world_and_a_changed_component_recompiles_it :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=slashes(project.path_absolute(#directory+"../.."),context.temp_allocator)
+    compiler,found:=compiler_find(root)
+    if !testing.expect(t,found,"no Odin compiler") {return}
+    folder:=base.test_folder(t,"game-relink")
+    if folder=="" {return}
+    source:="game/game/step.odin"
+    step :: proc(value_type:string,increment:int) -> string {
+        return fmt.tprintf(`package game
+
+import "project:game/support"
+
+@(component)
+Counter :: struct {{value:%s}}
+
+@(step="fixed")
+tick :: proc(counter:^Counter) {{
+    counter.value+=%s(support.Value(%d))
+}}
+`,value_type,value_type,increment)
+    }
+    engine,game:=fixture_write(t,folder,[][2]string{
+        {"engine/core/data.odin","package core\n"},
+        {"game/project.mirai",`{"name":"Game Relink"}`},
+        {source,step("i32",1)},
+        {"game/game/support/value.odin","package support\n\nValue :: i32\n"},
+        {"game/.mirai/gen/editor/main.odin",`package editor
+
+import "generated:editor_world"
+
+@(export)
+frame :: proc() {editor_world.frame()}
+`},
+        {"game/.mirai/gen/editor_world/world.odin",`package editor_world
+
+import "project:game"
+import "project:game/support"
+
+frame :: proc() -> support.Value {
+    counter:game.Counter
+    game.tick(&counter)
+    return support.Value(counter.value)
+}
+`},
+    })
+    p,error:=project.open(game,engine)
+    if !testing.expect_value(t,error.code,project.Error_Code.None) {return}
+    defer project.close(&p)
+    decl:=engine_paths(engine,.Dev).decl
+    if !testing.expect(t,base.make_directory_all(decl)==nil) {return}
+    desc:=Desc{project=&p,target=.Editor,dev=true,engine=.Dev,refresh_skip=true}
+    for value_type,at in ([]string{"i32","i32","i64","i64"}) {
+        if at==1 || at==2 {
+            write_error:=os.write_entire_file(project.path(folder,source),step(value_type,2))
+            if !testing.expect(t,write_error==nil) {return}
+        }
+        job:=plugin_job(&p,compiler)
+        defer job_destroy(job)
+        job.prefix=fmt.tprintf("editor-test-%d",at)
+        job.published=target_output(&p,.Editor,"",context.temp_allocator)
+        job.flags=target_flags(&p,.Editor,nil,context.temp_allocator,true)
+        job.masked=plugins_folder(p.root,plugins_mode(&p,true))
+        job.stamp_file=project.path(job.work,"editor.stamp")
+        job.sources_file=project.path(job.work,"editor.sources.json")
+        job.sources_staged=project.path(job.work,fmt.tprintf("%s.sources.json",job.prefix))
+        job.link_file=project.path(job.work,"editor.link")
+        failure:=job_plugins_plan(job,&p,desc)
+        if !testing.expectf(t,failure==.None,"%v: %s",failure,job.result.text) {return}
+        job_schedule(job)
+        result:=job_wait(job)
+        if !testing.expectf(t,result.status!=.Failed,"%v: %v %s",
+            result.failure,result.diagnostics,result.text) {return}
+        testing.expect_value(t,result.status,.Up_To_Date if at==3 else .Built)
+        testing.expect_value(t,result.plugins_built,0 if at==3 else 1)
+        testing.expect_value(t,result.plugins_relinked,0)
+        testing.expect_value(t,result.relinked,at==1)
+        if at==1 {
+            data,read_error:=os.read_entire_file(job.published,context.temp_allocator)
+            testing.expect(t,read_error==nil && strings.contains(string(data),job.plugins[0].file),
+                "the editor library imports the new game library")
+        }
+    }
 }
 
 // The hash of the name of a plugin library is masked in the foreign imports

@@ -1,6 +1,8 @@
 package sources
 
 import "core:fmt"
+import "core:io"
+import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:path/filepath"
@@ -74,6 +76,54 @@ ingested :: proc(t:^testing.T,source:string,options:Library_Options,loc:=#caller
     report,error=ingest(source,options,allocator=context.temp_allocator)
     ok=testing.expectf(t,error.code==.None,"%s: %s",source,error.message,loc=loc)
     return
+}
+
+@(test)
+refresh_releases_package_scratch_before_the_next_package :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-scratch")
+    if top=="" {return}
+    s:=test_store(t,fmt.tprintf("%s/store",top))
+    if s==nil {return}
+    root:=fmt.tprintf("%s/game",top)
+    options:=Library_Options{store=s,root=root,fast_textures=true}
+    for i in 0..<4 {
+        path:=fmt.tprintf("%s/texture-%d.png",top,i)
+        if !testing.expect(t,os.write_entire_file(path,png_bytes(8,8,{200,40,40}))==nil) {return}
+        _,added,error:=project_ingest(root,path,"textures",options,allocator=context.temp_allocator)
+        if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+        if !report_clean(t,added) {return}
+    }
+
+    tracking:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracking,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracking)
+    Sample :: struct {tracking:^mem.Tracking_Allocator,live:[4]i64,count:int}
+    sample:=Sample{tracking=&tracking}
+    options.progress={
+        data=&sample,
+        procedure=proc(
+            data:rawptr,mode:io.Stream_Mode,bytes:[]byte,offset:i64,whence:io.Seek_From,
+        ) -> (i64,io.Error) {
+            if !strings.has_prefix(string(bytes),"package ") {return i64(len(bytes)),nil}
+            held:=cast(^Sample)data
+            if held.count<len(held.live) {
+                held.live[held.count]=held.tracking.current_memory_allocated
+            }
+            held.count+=1
+            scratch,error:=mem.alloc_bytes(8<<20,allocator=context.temp_allocator)
+            if error!=nil {return 0,.Short_Write}
+            scratch[0]=1
+            return i64(len(bytes)),nil
+        },
+    }
+    context.allocator=mem.tracking_allocator(&tracking)
+    report:=project_refresh(root,options)
+    defer library_report_destroy(&report)
+    if !report_clean(t,report) || !testing.expect_value(t,sample.count,len(sample.live)) {return}
+    for live in sample.live[1:] {
+        extra:=live-sample.live[0]
+        testing.expectf(t,extra<8<<20,"scratch still live at next package: %d",extra)
+    }
 }
 
 @(test)
