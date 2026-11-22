@@ -719,28 +719,35 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
 // whole tree and its private files, and what pointed at the change follows it.
 // What is not a file the change touched is refused with why. One undo gives the
 // view before; an edit on disk after the last snapshot reaches the next one.
+// Every other rewrite (describe, restore, abandon of a parent, rebase) carries
+// the change's private files onto what it writes in its one operation, those
+// of a scope the device that rewrites does not read too.
 @(test)
 a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     f,ok:=fixture(t,"kai-split");if !ok {return}
     defer store.close(&f.s)
     o:Test_Org
     test_org_make(t,&o);defer test_org_destroy(&o)
-    scope:=random_id(Scope_Id)
+    scope,vault:=random_id(Scope_Id),random_id(Scope_Id)
     scope_add(t,&o,scope,.Reader,true,20,"secrets/**")
+    scope_add(t,&o,vault,.Admin,true,20,"vault/**")
     refold(t,&o)
     alice,bob:=device_of(&o.alice,0),device_of(&o.bob,0)
-    kl:Log
+    kl,vl:Log
     log_init(&kl);defer log_destroy(&kl)
-    kf:Keyring_Fold
+    log_init(&vl);defer log_destroy(&vl)
+    kf,kv:Keyring_Fold
     testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&f.s,o.project.id,scope,&alice,21),Error.None)
     defer keyring_fold_destroy(&kf)
-    routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf},device=alice}
+    testing.expect_value(t,keyring_create(&kv,&vl,&o.fold,&f.s,o.project.id,vault,&alice,21),Error.None)
+    defer keyring_fold_destroy(&kv)
+    routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf,&kv},device=alice}
     root,other:=folder_of(&f,"a"),folder_of(&f,"b")
-    for file in ([][2]string{{"keep.txt","keep"},{"edit.txt","v1"},{"gone.txt","bye"},{"art/a.txt","a1"},{"art/b.txt","b1"},{"d","dee"},{"f.txt","1\n2\n3\n"},{"secrets/key.txt","old secret"}}) {
+    for file in ([][2]string{{"keep.txt","keep"},{"edit.txt","v1"},{"gone.txt","bye"},{"art/a.txt","a1"},{"art/b.txt","b1"},{"d","dee"},{"f.txt","1\n2\n3\n"},{"secrets/key.txt","old secret"},{"vault/plan.txt","admins only"}}) {
         write(t,root,file[0],file[1])
     }
     w,b:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&f.s,o.alice.devices[0],{overlay=&routing}),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&f.s,o.alice.devices[0],overlay=&routing),Error.None) {return}
     defer workspace_close(&w)
     origin:=repo_working(&w.repo)
 
@@ -778,7 +785,8 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     defer workspace_close(&b)
     testing.expect_value(t,workspace_switch(&b,split),Error.None)
 
-    routing_bob:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf},device=bob}
+    routing_bob:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf,&kv},device=bob}
+    b.repo.overlay=&routing_bob
     Refusal :: struct {paths:[]string,says:string}
     refusals:=[]Refusal{
         {nil,"no path picked"},
@@ -791,7 +799,7 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     }
     for refusal in refusals {
         why:string
-        _,_,re:=change_split(&b.repo,split,refusal.paths,nil,&routing_bob,&why)
+        _,_,re:=change_split(&b.repo,split,refusal.paths,nil,&why)
         testing.expectf(t,re==.Invalid_Argument && strings.contains(why,refusal.says),"%v: %v %q",refusal.paths,re,why)
     }
 
@@ -802,11 +810,11 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     // A split cut after its objects and before its commit moved nothing: neither its operation
     // nor the records of its overlays.
     b.repo.cut_commit=true
-    cut_first,cut_second,ce:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&routing_bob,&why)
+    cut_first,cut_second,ce:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&why)
     testing.expect_value(t,ce,Error.Io)
     testing.expect(t,b.repo.view_address==before,"the view is the one before the cut split")
     testing.expect(t,cut_first!={} && overlay_record_error(&f.s,o.project.id,scope,cut_first)==.Missing && overlay_record_error(&f.s,o.project.id,scope,cut_second)==.Missing,"no overlay record of the cut split was set")
-    first,second,se:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&routing_bob,&why)
+    first,second,se:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&why)
     if !testing.expectf(t,se==.None,"%v %s",se,why) {return}
     after:=b.repo.view_address
     op,_:=op_get(&f.s,b.repo.op,context.temp_allocator)
@@ -864,6 +872,49 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     testing.expect_value(t,paths_of(&f.s,z.tree,now.tree),"edit.txt")
     opened,oe=open_files(t,&f.s,&kf,&alice,report.revision)
     testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the next snapshot follows the second's private files")
+
+    // Each rewrite by bob, who reads one scope and not the other, carries the change's records
+    // in its operation: alice opens both scopes on what it wrote, bob only his, and one undo
+    // gives the change back with its own.
+    Private :: struct {secret,vault:string,bob:Error}
+    private_at :: proc(t:^testing.T,s:^store.Store,kf,kv:^Keyring_Fold,alice,bob:^Overlay_Device,revision:Revision) -> (p:Private) {
+        opened,_:=open_files(t,s,kf,alice,revision)
+        p.secret=opened["secrets/key.txt"]
+        opened,_=open_files(t,s,kv,alice,revision)
+        p.vault=opened["vault/plan.txt"]
+        _,p.bob=open_files(t,s,kv,bob,revision)
+        if opened,_=open_files(t,s,kf,bob,revision);opened["secrets/key.txt"]!=p.secret {p.secret="bob reads another"}
+        return
+    }
+    want:=Private{"new secret","admins only",.Unauthorized}
+    testing.expect_value(t,repo_refresh(&b.repo),Error.None)
+    held:=report.revision
+    testing.expect_value(t,private_at(t,&f.s,&kf,&kv,&alice,&bob,held),want)
+    Rewrite_Kind :: enum {Describe,Restore,Abandon_Parent,Rebase}
+    for kind in Rewrite_Kind {
+        before_view:=b.repo.view_address
+        e:Error
+        switch kind {
+        case .Describe: _,e=change_describe(&b.repo,held,"described")
+        case .Restore: _,e=change_restore(&b.repo,held,first)
+        case .Abandon_Parent: e=change_abandon(&b.repo,first)
+        case .Rebase: _,e=change_rebase(&b.repo,held,{origin})
+        }
+        if !testing.expectf(t,e==.None,"%v: %v",kind,e) {return}
+        rewritten:Revision
+        o,_:=op_get(&f.s,b.repo.op,context.temp_allocator)
+        for rw in o.rewrites {
+            if rw.from==held {rewritten=rw.to}
+        }
+        if !testing.expectf(t,rewritten!={},"%v rewrites the change",kind) {return}
+        testing.expectf(t,private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten)==want,"%v carries the private files: %v",kind,private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten))
+        after_view:=b.repo.view_address
+        testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
+        testing.expectf(t,b.repo.view_address==before_view && private_at(t,&f.s,&kf,&kv,&alice,&bob,held)==want,"undoing %v gives the change back with its private files",kind)
+        testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
+        testing.expectf(t,b.repo.view_address==after_view && private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten)==want,"doing %v again keeps them",kind)
+        held=rewritten
+    }
 }
 
 @(test)

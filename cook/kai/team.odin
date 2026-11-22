@@ -37,14 +37,14 @@ project_route :: proc(p:^Project) -> vcs.Error {
         }
     }
     p.routing={org=&p.org.fold,project=project,keyrings=p.keyrings[:],device=device,public_allow=p.public_allow[:]}
-    w.options.overlay=&p.routing
+    w.repo.overlay=&p.routing
     return .None
 }
 
 @(private)
 route_drop :: proc(p:^Project) {
     if !p.routed {return}
-    p.workspace.options.overlay=nil
+    p.workspace.repo.overlay=nil
     for k in p.keyrings {
         l:=k.log
         vcs.keyring_fold_destroy(k)

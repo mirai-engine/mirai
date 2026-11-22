@@ -69,7 +69,7 @@ project_prepare :: proc(p:^Project,s:^store.Store,types:^asset.Types) -> vcs.Wor
 project_create :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
     identity:=identity_load(s) or_return
     options:=project_prepare(p,s,types)
-    if e:=vcs.workspace_create(&p.workspace,root,s,identity,options,allocator);e!=.None {
+    if e:=vcs.workspace_create(&p.workspace,root,s,identity,options,allocator=allocator);e!=.None {
         project_close(p)
         return e
     }
@@ -258,7 +258,7 @@ undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_a
     before,working:=w.state.tree,vcs.repo_working(r)
     vcs.op_undo(r,target) or_return
     vcs.workspace_update(w) or_return
-    vcs.overlay_checkout(w.options.overlay,r.s,w.root,working,vcs.repo_working(r)) or_return
+    vcs.overlay_checkout(w.repo.overlay,r.s,w.root,working,vcs.repo_working(r)) or_return
     return undone,files_changed(w,before,changed,allocator)
 }
 
@@ -282,7 +282,7 @@ restore :: proc(w:^vcs.Workspace,from:vcs.Revision,changed:^[dynamic]string,allo
     before,working:=w.state.tree,vcs.repo_working(r)
     vcs.change_restore(r,working,from) or_return
     vcs.workspace_update(w) or_return
-    vcs.overlay_checkout(w.options.overlay,r.s,w.root,working,from) or_return
+    vcs.overlay_checkout(w.repo.overlay,r.s,w.root,working,from) or_return
     return files_changed(w,before,changed,allocator)
 }
 
@@ -297,7 +297,7 @@ new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,ch
     working:=[1]vcs.Revision{vcs.repo_working(&w.repo)}
     if len(on)==0 {on=working[:]}
     revision=vcs.workspace_new(w,on,description) or_return
-    vcs.overlay_checkout(w.options.overlay,w.repo.s,w.root,working[0],revision) or_return
+    vcs.overlay_checkout(w.repo.overlay,w.repo.s,w.root,working[0],revision) or_return
     return revision,files_changed(w,before,changed,allocator)
 }
 
@@ -312,7 +312,7 @@ split :: proc(w:^vcs.Workspace,change:string,paths:[]string,description:Maybe(st
         refused^=fmt.tprintf("%q names no single visible change: @, @-, a bookmark or a prefix of at least %d digits of a change id",change,CHANGE_TEXT_MIN)
         return {},{},.Invalid_Argument
     }
-    return vcs.change_split(&w.repo,revision,paths,description,w.options.overlay,refused)
+    return vcs.change_split(&w.repo,revision,paths,description,refused)
 }
 
 @(private)

@@ -96,9 +96,11 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
 
 - Every change to what a repository shows is an operation: it points to its parent operations, to
   the view after it and to the changes it rewrote. One operation is one batch of the store made
-  visible by one commit, with the records of the private overlays that follow what it wrote (a
-  snapshot's, a split's), so a cut midway leaves the repository and its overlays as they were, and
-  one undo takes the whole operation back.
+  visible by one commit, with the records of the private overlays that follow what it wrote, so a
+  cut midway leaves the repository and its overlays as they were, and one undo takes the whole
+  operation back. Every rewrite carries its overlay records in the operation's commit: `tx_commit`
+  gives each revision a transaction wrote the records of the one it replaced (the first half of a
+  split, its parents'), unless the operation sealed its own, so no operation can drop them.
 - A view is the visible heads (no visible change descends from another), each workspace's working
   copy and the bookmarks; a bookmark two operations moved apart holds the terms of a conflict,
   with the same algebra as files.

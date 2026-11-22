@@ -20,9 +20,11 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
   the public tree, a seed or a web view cannot leak what a person kept private. Routing is part of
   the snapshot, never a pass after it, because a secret scanned only after publication is already
   published.
-- A change holds the overlay written for its own commit or, before it has one, its first parent's. A
-  rebase carries an overlay to the new commit by signing a new record over the same sealed tree and
-  objects, so it needs no key and encrypts nothing again.
+- A change holds the overlay written for its own commit or, before it has one, its first parent's.
+  Every rewrite (a snapshot, describe, restore, rebase, split, the descendants it moves) carries the
+  overlays to the new commit in its operation's commit by signing a new record over the same sealed
+  tree and objects, so it needs no key and encrypts nothing again: a device that does not read a
+  scope carries its records all the same and never leaves a rewritten change without them.
 - A reader's working copy shows the private files of the scopes its device reads: a switch writes
   those of the change it moves to, and removes the ones the change it left held and that still hold
   what that change had, so a local edit is never deleted. A scope the device may no longer read

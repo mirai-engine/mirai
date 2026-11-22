@@ -1375,7 +1375,7 @@ plain_hash :: proc(path:string) -> (hash:store.Hash,size:u64,error:Error) {
 // writes nothing. Their refs are added to refs, which the operation that makes
 // commit sets in its one commit.
 overlay_publish :: proc(r:^Overlay_Routing,s:^store.Store,plan:^Overlay_Plan,commit:Revision,refs:^[dynamic]store.Ref_Set) -> Error {
-    if r==nil {return .None}
+    if r==nil || plan==nil {return .None}
     t:=time.now()._nsec
     for &p in plan.scopes {
         if p.readable {

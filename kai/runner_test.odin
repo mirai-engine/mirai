@@ -192,7 +192,8 @@ join_ended :: proc(b:^Box,data:rawptr) -> bool {
 // is denied, and a middle that answers the ticket with its own key is
 // refused. Then a change Alice snapshots and bookmarks arrives on Bob's
 // machine with its whole closure, and an encrypted overlay arrives and opens
-// for Bob, a reader of its scope, and for no other key. Once Alice removes
+// for Bob, a reader of its scope, and for no other key, as it does on what
+// Alice's describe, restore and rebase of the change write. Once Alice removes
 // Bob, his machine is disconnected and gets nothing newer.
 @(test)
 two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
@@ -297,9 +298,9 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
     _=os.write_entire_file(fmt.tprintf("%s/secrets/key.txt",root),transmute([]u8)string("the private words"))
     routing:=Overlay_Routing{org=&o.fold,project=project,keyrings=keyrings[:],device=machine_overlay_device(alice)}
     w:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&alice.store,alice.identity,{overlay=&routing}),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&alice.store,alice.identity,overlay=&routing),Error.None) {return}
+    defer workspace_close(&w)
     commit:=repo_working(&w.repo)
-    workspace_close(&w)
     ovl_ns:[len(OVERLAY_PREFIX)+64+1+32]u8
     hex:[64]u8
     runner_changed(a,overlay_namespace(project,scope,&ovl_ns),store.hex(commit,&hex))
@@ -331,7 +332,43 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
         stranger.dh,stranger.dh_secret=Dh_Key(key.public),key.private
         other:Overlay
         testing.expect(t,overlay_open(&other,&bob.store,bob_rings[0],&stranger,commit,context.temp_allocator)!=.None,"a key no envelope names opens nothing")
+
     }
+
+    // What each rewrite of alice's writes holds the change's private file, and bob, told of its
+    // record, opens the same bytes there. Each round folds again what box_until let go.
+    Rewrite_Kind :: enum {Describe,Restore,Rebase}
+    held:=commit
+    for kind in Rewrite_Kind {
+        ao:Org_State
+        testing.expect_value(t,org_state_load(&alice.store,org,&ao,context.temp_allocator),Error.None)
+        alice_rings:=make([dynamic]^Keyring_Fold,context.temp_allocator)
+        machine_keyrings(&alice.store,&ao,&alice_rings,context.temp_allocator)
+        routing=Overlay_Routing{org=&ao.fold,project=project,keyrings=alice_rings[:],device=machine_overlay_device(alice)}
+        rewritten:Revision
+        re:Error
+        switch kind {
+        case .Describe: rewritten,re=change_describe(&w.repo,held,"described")
+        case .Restore: rewritten,re=change_restore(&w.repo,held,g.revision)
+        case .Rebase: rewritten,re=change_rebase(&w.repo,held,{g.revision})
+        }
+        if !testing.expectf(t,re==.None,"%v: %v",kind,re) {break}
+        runner_changed(a,overlay_namespace(project,scope,&ovl_ns),store.hex(rewritten,&hex))
+        og.commit=rewritten
+        if !testing.expectf(t,box_until(b,10,&og,arrived),"the record of what %v wrote reaches bob",kind) {break}
+        testing.expect_value(t,org_state_load(&bob.store,org,&bo,context.temp_allocator),Error.None)
+        bob_rings=make([dynamic]^Keyring_Fold,context.temp_allocator)
+        machine_keyrings(&bob.store,&bo,&bob_rings,context.temp_allocator)
+        if !testing.expect_value(t,len(bob_rings),1) {break}
+        device:=machine_overlay_device(bob)
+        ov:Overlay
+        testing.expect_value(t,overlay_open(&ov,&bob.store,bob_rings[0],&device,rewritten,context.temp_allocator),Error.None)
+        bytes,fe:=overlay_file(&ov,&bob.store,"secrets/key.txt",context.temp_allocator)
+        testing.expectf(t,fe==.None && string(bytes)=="the private words","bob reads the private file of what %v wrote",kind)
+        overlay_close(&ov)
+        held=rewritten
+    }
+    w.repo.overlay=nil
 
     // Bob is removed: alice's agent drops him and he gets nothing newer.
     testing.expect_value(t,machine_member_remove(alice,org,bob.user),Error.None)

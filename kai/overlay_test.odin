@@ -130,7 +130,7 @@ scoped_plaintext_never_enters_public_store :: proc(t:^testing.T) {
     keyrings:=[]^Keyring_Fold{&kf}
     routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings=keyrings,device=alice}
     w:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],{overlay=&routing}),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],overlay=&routing),Error.None) {return}
     defer workspace_close(&w)
     first:=repo_working(&w.repo)
 
@@ -244,7 +244,7 @@ removed_member_cannot_decrypt_post_rotation_epoch :: proc(t:^testing.T) {
     put_file(t,root,"secrets/a.txt",transmute([]u8)string(SECRET))
     routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf,&ff},device=alice}
     w:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],{overlay=&routing}),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],overlay=&routing),Error.None) {return}
     defer workspace_close(&w)
 
     _,e=log_append(&o.org,.Member_Remove,body_make(Subject_Body{subject=o.carol.log.id}),&o.alice.devices[0],30)
@@ -367,7 +367,7 @@ deny_set_and_publish_scanner_block_leaks :: proc(t:^testing.T) {
     put_file(t,root,"readme.txt",transmute([]u8)string("public"))
     routing:=Overlay_Routing{public_allow={".env.example"}}
     w:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],{overlay=&routing}),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],overlay=&routing),Error.None) {return}
     defer workspace_close(&w)
     for path in ([]string{".env",".env.local","deploy/server.pem","tls/site.key","home/id_rsa","certs/store.p12"}) {
         put_file(t,root,path,transmute([]u8)string("x"))
@@ -561,7 +561,7 @@ overlay_rebase_keeps_ciphertext_and_ddc_outputs_inherit_scopes :: proc(t:^testin
     put_file(t,root,"secrets/a.txt",transmute([]u8)string(SECRET))
     routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf,&of},device=alice}
     w:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],{overlay=&routing}),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&s,o.alice.devices[0],overlay=&routing),Error.None) {return}
     defer workspace_close(&w)
     from:=repo_working(&w.repo)
     to:=test_change(t,&s,&o.bob.devices[0],"rebased")
@@ -770,7 +770,7 @@ public_peer_sees_zero_overlay_metadata_or_chunks :: proc(t:^testing.T) {
     put_file(t,root,"secrets/big.bin",random_bytes(OVERLAY_CHUNK_MAX+100))
     routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf},device=alice}
     w:Workspace
-    if !testing.expect_value(t,workspace_create(&w,root,&m.stores[0],o.alice.devices[0],{overlay=&routing}),Error.None) {return}
+    if !testing.expect_value(t,workspace_create(&w,root,&m.stores[0],o.alice.devices[0],overlay=&routing),Error.None) {return}
     defer workspace_close(&w)
     revision:=repo_working(&w.repo)
     test_link(t,&m.stores[0],w.repo.id,o.project.id)
