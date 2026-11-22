@@ -1,278 +1,128 @@
 # Frame graph
 
-The passes run on the GPU; the CPU uploads the dirty data through the ring. Texture views are
-recorded first and then the window ones. Each view goes through passes 2 to 16, which are the
-stages of the standard `Full` pipeline; a [pipeline](views.md#render-pipelines) can omit stages
-or interleave its own passes.
+Passes run on GPU; CPU uploads dirty data through the frame ring. Texture views record before
+window views. Passes 2–16 form standard `Full`; custom [pipelines](views.md#render-pipelines) may
+omit or interleave stages.
 
 ## Passes
 
-1. **upload**: skinning of the poses that changed; instances, materials, lights and their
-   [tree](lights.md#local-lights) if they changed; the `Geometry` stage of the extensions; the refit
-   of the ray structure in use and, with hardware RT, the native TLAS; new indices of [meshes drawn
-   whole](scene.md#scene-and-instances). What does not fit in the frame's transient memory is
-   uploaded with the next one. Then **air**: the tables of the [atmosphere](gi.md#atmosphere) that
-   change with the air. Each view, at its start, redoes the row of its sky and its aerial
-   perspective if its eye or the sun moved.
-2. **cull (phase 0)**, per instance and then per cluster (`cull.comp`, `cull_clusters.comp`).
-   - First one thread per drawn [batch](scene.md#instance-batches), which lists for both phases
-     the slots of those whose box passes the tests of the view; then one per instance and per slot
-     listed: frustum and occlusion of its box, under the transform of the previous frame, against
-     the depth pyramid of the previous frame (with the previous camera): what moves is not hidden
-     by where it was. One that passes delivers, in
-     chunks of up to 64, the clusters of the levels the cut can take at some point of its box: a
-     distant object whose root already suffices delivers only the root. One that is hidden stays
-     a candidate for phase 1.
-   - One thread per cluster of the chunks: the level cut (`cut.slang`, projected error against
-     `lod_error_pixels`), frustum, normal cone (of a material that is not two-sided) and the
-     pyramid. A visible one is listed with its raster bin (two-sided or not, tested or not: a
-     masked material or an instance that fades) and its Surface program, and counted in it; one
-     of a tested bin also in a depth bucket of its box. One that the pyramid hides stays a
-     candidate for phase 1. One of a material with a Surface program turns on the resolve of
-     that program. `cull_bins.comp` places the clusters of the phase in the range of their bin of
-     the visible list, those of phase 1 after those of phase 0, those of a tested bin nearest
-     first by their buckets.
-   - An instance with all its blend materials is not drawn here; one with blend triangles that
-     passes the tests (in any phase) turns on the glass passes with their dispatch sizes.
-3. **visibility and resolve**
-   - Before the raster of each phase, a round of compute passes lists what it draws
-     (`raster_lists.slang`): each vertex of a cluster placed once, by the function the resolve
-     places it with, and the triangles of it the raster may give a pixel: not those past a side
-     of the view, with no pixel center in their box, or seen from behind where the material is
-     not two-sided, by the margin of the grid of the device (`Device_Info.subpixel_bits`).
-   - A round takes [a share](scene.md#scene-and-instances) of the lists (`Cull_List.Raster_*`) of
-     what the view needs, also where a round of the shadow maps grew them more: a cluster with no
-     room is drawn in the round after (up to `RASTER_ROUNDS`), over the depth of those before.
-   - Each round rasters its triangles into the visibility target (`visibility.slang`: the entry of
-     the visible list and the triangle, one word a pixel) with the hardware depth: one indexed
-     indirect draw per raster bin, whose fragment reads the word of its primitive. The untested bins
-     write it alone, without discard, so hidden fragments are rejected before they run; the tested
-     ones, drawn nearest first, decide a pixel by the fade and the [mask map](materials.md#alpha)
-     alone (their vertices give the uv it reads and the row), without texture feedback. Blend: not
-     drawn here. The same on Vulkan and Metal, without mesh shaders or 64-bit atomics.
-   - After both phases, `vis_classify.frag` gives each pixel the depth of its Surface program
-     (0 for the rows) from the visible list, in a 16-bit target, and the resolve of the rows draws a
-     triangle over the view, and that of each program the cull saw the rectangle its visible
-     clusters project to, at that depth with an equal test before the fragment runs (early
-     tests: a pixel of another program is a helper): the
-     material runs once per visible pixel, with the stage of its program
-     ([programs](materials.md#surface-programs-in-rays-and-raster)). It builds the triangle again
-     with the function of the raster (`gbuffer_build.slang`), so both place it at the same bits,
-     takes its barycentrics at the pixel and the exact gradients of its inputs, reads the material
-     row the visible list gives its cluster and its textures from the table, without binds per
-     material or per object, and writes the targets with `gbuffer_output.slang`; the passes read
-     them only with `include/gbuffer.slang` (`gbuffer_read`, `gbuffer_normal`, `gbuffer_shading`).
-   - A reflectance target exists only while a visible instance has an opaque material that does
-     not reflect like the default one ([materials](materials.md#evaluation)), and a
-     [layers](materials.md#layers-openpbr) one only while a visible one has them; without them,
-     the passes derive the reflectance or bind an empty target, and the scene does not change
-     light mode. Visible means in the view's frustum, in that of a nested view or in the `Gbuffer`
-     stage of an extension that says which mesh and material it draws (`frame_gbuffer_mesh`); the
-     one that draws all the level 0 clusters of a mesh that the cull does not see says so too
-     (`frame_mesh_whole`), and the pages of that mesh are all loaded and not evicted while it
-     asks. Nested views are known after `Mask`: if they ask for the reflectance and the view's
-     G-buffer was drawn without it, a pass fills it with the one given by the albedo and the
-     metallic of their pixels, and the constants flag (`FRAME_FLAG_REFLECTANCE`) changes before
-     the passes that read it.
-4. **occlusion**
-   - Maximum depth pyramid of the frame; phase 1 retests the instances and clusters rejected by
-     occlusion and draws the visible ones. An object does not appear late even if the occluder
-     moves or the camera jumps.
-   - The pyramid is made from the depth target, several levels a dispatch: a texel covers the
-     pixels of the view under it (a level as large as it takes to cover the view), with the
-     farthest depth of them, a step farther so a surface does not hide itself. A box is tested
-     at the level where its footprint spans at most 4x4 texels. `Stats.resolved_pixels`,
-     `resolve_helpers` and `resolve_quads_again` count what the resolve shaded.
-   - Phase 1 tests against the pyramid made with the
-     depth of phase 0; after its raster the pyramid is redone with that of both phases, which is the
-     one that phase 0 of the next frame tests: what was rescued occludes from there. A pass of the
-     `Gbuffer` stage tests against it and redoes it with what it draws (`pass_depth_pyramid_build`):
-     the next frame's phase 0 sees those surfaces too, and its phase 1 rescues what only they hid.
-   - The cull lists (chunks, visible clusters and candidates, the chunks and clusters of the
-     shadow maps, and the vertices and triangles of the raster, theirs too) count what does not fit
-     (`Stats.cull_dropped`, of the view that lacked most) and grow to it for the frames after, as
-     the material points do. What they asked for in a scene (`Capacity_Marks`) is kept by its id
-     in the cache of the project, which a game ships (`host/capacities.odin`); a scene opened
-     again starts its lists there. A frame shows holes only where a list fills past what any run
-     of that scene asked for, not again at that size; a mark only grows.
-   - Then, the `Simulate` extension stages (first window view, or texture view in a
-     textures-only frame: what moves on the GPU against this depth, like the
-     [particles](../../mirai-world/references/vfx.md)) and `Gbuffer` (each view: surfaces of an
-     extension in the G-buffer).
-   - With extension passes: `Mask` stage, G-buffers of [nested views](views.md#nested-views) and
-     `Surface` stage.
-5. **direct**
-   - Sun, local lights (all with size) and lights from
-     [extensions](views.md#extension-hooks-and-constants), with the diffuse lobe and the GGX
-     specular: the output is reflected radiance.
-   - The light of a pixel comes from `direct_samples` samples spread over the lights of its cell
-     of the [grid](lights.md#direct-light-of-a-view), in this order: the grid when the lights
-     change, the shadow maps of the lights that cover much of the view and of the sun,
-     `direct_rays` (one point of each 2×2 traces a sample), `direct_samples`, and `direct_points`,
-     `direct_spread` and `direct_filter`, which filter the points, take them to the pixels, where
-     the sun gives its light, and add the lights that cast no shadows from the
-     [lists](lights.md#lists-of-a-cell) `light_lists` makes of them for the tiles of the screen.
-   - The points that trace their own rays (glass, overlays, the back side) use `direct_lighting`.
-6. **reflect**: the pixels smoother than `reflection_roughness` trace a ray from their lobe and a
-   second pass filters the rays of the frame; it is omitted while no material of the table can go
-   below that limit ([traced reflections](materials.md#traced-reflections)).
-7. **ddgi**: with indirect light, in the first window view, the
-   [probe volume](gi.md#probe-volume) marks the probes that scene changes reach and those that
-   pixels use, chooses by priority those it updates and writes their atlases and positions. With
-   a still scene it updates none but, in turns, those whose rays meet a Surface program that reads
-   the time: its hits are traced in every update of their probe.
-8. **contact**: the [contact occlusion](gi.md#contact-occlusion) traces its short rays at points
-   over frames and takes them, with the probe light of each point, to the pixels.
-9. **composite**: `direct + indirect_compose + emission`
-   ([indirect composition](materials.md#indirect-composition)), or the view's
-   [inspection mode](settings.md#inspection-modes). Under an atmosphere, the image that is shown
-   takes the aerial perspective.
-   - The specular lobe takes the traced reflection in the proportion that it traced and the
-     volume around its dominant direction in the rest.
-   - The [grid](#reference-grid) is composed only in the background.
-   - With extension passes and without an inspection mode, the [`Lit`](views.md#extension-stages)
-     stage over the lit opaque image. With glass in view and `Lit`
-     passes, the raster of the layers (step 11) goes before: the stage runs behind the nearest
-     layer and again in front, over the lit glass.
-10. **overlay**: up to four additional Surface materials per instance, in order, over opaque or
-    masked geometry. A draw per instance whose vertex shader takes the clusters of the view's cut
-    and collapses the others, so they cover what the G-buffer drew; they test depth equal without
-    writing it and do not enter the BVH/TLAS
-    ([overlays](../../mirai-core/references/host.md#loaded-assets)).
-11. **translucent**: the nearest transmissive surfaces form the glass layers. Blends draw forward
-    back to front between them and overflow glass filters in that order, against the opaque depth:
-    each instance its blended clusters of the levels its cut takes, none where the pyramid hides
-    it, and one nearer than every glass in its screen tiles only in front of the nearest layer.
-12. **glass**: lights each layer once per pixel, from the farthest to the nearest
-    ([glass](materials.md#glass)). The cull can suppress shading dispatches when no blended
-    instance passes. Glass reflections use the projected bounds of glass that can trace.
-    - The `Blend` stage of the extensions (the particle sprites): what is left behind the nearest
-      layer after the layer raster, the rest after the glass; without glass in view, a batch after
-      composite.
-    - Over the lit glass and before `Blend` on the front side: the `Lit` stage in front of the
-      nearest layer and then what the solid the camera is in absorbs and scatters (`glass_inside`).
-13. **taa**: temporal anti-aliasing and rescaling to window resolution.
-    - A moving pixel takes a tenth of the new frame. One still on screen (less than a quarter of a
-      pixel per frame) averages its frames up to 64, four turns of the sixteen jitter points: an
-      edge or a highlight finer than a pixel does not flicker. Each pixel counts its frames since
-      its history starts (`Targets.taa_frames`), so a newly uncovered pixel or a newly cut view
-      settles as fast as before; what changes beyond the surrounding colors is seen at once, by
-      the clipping to the box.
-    - The box is the variance in YCoCg of the 3×3 pixels of this frame. On a still pixel it widens
-      as its history fills (`TAA_STILL_GAMMA`): the box of the jittered samples of a single frame
-      moves with the jitter next to a high-contrast edge (a checkerboard, or its reflection), and
-      clipped to it the average of the previous frames jumped on every frame. A light change on a
-      smooth surface remains outside the box.
-    - Samples are weighed and clipped as light exposed by the view's exposure, compressed: a
-      highlight weighs by how bright it shows, whatever the light scale. The history stays in
-      render units.
-    - Where the `Blend` stage covered the pixel (`Targets.reactive`) the history weighs less.
-      Where the pixel's direct light was marked because what casts its shadow changed
-      ([shadows](lights.md#shadows)), the pixel keeps what a moving one keeps: a shadow that moves
-      over a still floor leaves no trail. An upscaler that replaces TAA does not receive that
-      mark.
-    - The history stores in its alpha the depth of the pixel (that of its sample, or that of the
-      nearest neighbor when it followed its motion).
-    - Disocclusion rejection: if the history shows something nearer than everything the pixel has
-      around it, and wider than a pixel, the pixel starts over. A still edge and a thin wire
-      reject nothing: the image is, byte for byte, the same as without the rejection.
-14. **exposure + postprocess HDR**
-    - `exposure` measures the image before TAA and adapts the view's exposure on the GPU
-      ([exposure](display.md#exposure)).
-    - The [`Post`](views.md#extension-stages) extension stage: plugin passes over the resolved
-      image, each writing the next, which the PostProcess programs read.
-    - Each view runs the list of its `Camera.slot`: that of its local player
-      (`renderer_set_view_postprocesses`) or, with 0, that of the frame
-      (`renderer_set_postprocesses`).
-    - Ordered PostProcess programs read the last image a pass wrote (`Display`, or `Taa` of
-      `Resolve` or of an [own pass](views.md#render-pipelines) in its place), exposed (mid gray is
-      0.18), and write alternating targets, before the tonemap. The stack's targets are created
-      when an active entry uses them. An effect's result goes back toward what it read by its
-      `fade`; one faded out does not run, though a limited inspection counts it.
-    - Besides that image, the effects read only what the `Output` stage declares in
-      `stage_contract`: the linear depth, the normal and the mask of the [outlines](#outlines).
-      Each effect measures its time with its side and its place in the list
-      (`postprocess hdr 1`).
-    - `View_Inspection.postprocess` of a view runs only the first effects of each side (the eye of
-      the stack inspector); without a limit they all run.
-15. **tonemap + postprocess LDR + ui**
-    - Exposure and a read of the display LUT (the project's transform and sRGB:
-      [transform](display.md#display-transform)), with triangular dithering of up to one 8-bit
-      level on each side, fixed between frames and null at pure black and white.
-    - Composes the [outlines](#outlines) layer.
-    - The LDR PostProcess programs process the tonemapped image before the UI.
-    - On top, in this order: world panels, debug lines and UI layers
-      ([UI](ui.md#ui-world-panels-and-debug-lines)).
-16. **present**: copy to the swapchain. The LDR image is kept for `renderer_capture`.
+1. **upload & air.** Dirty pose skinning; dirty instances/materials/lights +
+   [tree](lights.md#local-lights); `Geometry` extensions; ray refit + hw TLAS; new
+   [whole-mesh](scene.md#scene-and-instances) indices (overflows defer a frame). Then
+   [atmosphere](gi.md#atmosphere) tables (`air`) and per-view sky row / aerial on eye/sun move.
+2. **cull (phase 0)** (`cull.comp`, `cull_clusters.comp`, `cull_bins.comp`). Batch boxes ->
+   instances + batch slots (prev transform vs prev pyramid) -> <= 64 cluster chunks -> cluster LOD
+   (`cut.slang`, `lod_error_pixels`), frustum, normal cone, pyramid. Bins clusters (two-sided /
+   tested depth-bucketed nearest-first), enables Surface program resolves and glass dispatches;
+   all-blend skips opaque cull.
+3. **visibility & resolve.** Per-round compute (`raster_lists.slang`, `Cull_List.Raster_*`, up to
+   `RASTER_ROUNDS`, `Device_Info.subpixel_bits` margin) emits vertices/triangles. `visibility.slang`
+   rasters 1 indexed indirect draw/bin (untested: no discard; tested: nearest-first via fade +
+   [mask map](materials.md#alpha), no feedback; no blends). `vis_classify.frag` writes 16-bit
+   program depth; early-Z equal resolve runs material once/pixel (`gbuffer_build.slang`,
+   `gbuffer_output.slang`; read only via `include/gbuffer.slang`). Optional reflectance/layers
+   targets exist only when visible (`frame_gbuffer_mesh`, `frame_mesh_whole` pins level-0 pages;
+   nested views after `Mask` backfill reflectance + `FRAME_FLAG_REFLECTANCE`).
+4. **occlusion & extension geometry.** Max depth pyramid (4x4 footprint, +1 step) -> phase 1
+   retest/raster -> rebuild pyramid (`pass_depth_pyramid_build` for `Gbuffer` extensions).
+   `Stats.resolved_pixels`, `resolve_helpers`, `resolve_quads_again`; `Stats.cull_dropped` grows
+   lists and caches peaks in `Capacity_Marks` (`host/capacities.odin`). Runs `Simulate` (first
+   window view, or texture view if textures-only; [particles](../../mirai-world/references/vfx.md)),
+   `Gbuffer`, `Mask`, [nested](views.md#nested-views) G-buffers and `Surface`.
+5. **direct.** Sun, local and [extension](views.md#extension-hooks-and-constants) lights (diffuse +
+   GGX): light grid, shadow maps, `direct_rays` (1/2x2), `direct_samples`, `direct_points`,
+   `direct_spread`, `direct_filter`, shadowless `light_lists`
+   ([direct light](lights.md#direct-light-of-a-view)). Glass/overlays/back-side use
+   `direct_lighting`.
+6. **reflect.** Traces + filters roughness < `reflection_roughness`; skipped if no material goes
+   below it ([reflections](materials.md#traced-reflections)).
+7. **ddgi.** First window view updates [probe volume](gi.md#probe-volume) by priority; still scenes
+   update only time-reading Surface programs in turns.
+8. **contact.** [Contact occlusion](gi.md#contact-occlusion) short rays + probe light to pixels.
+9. **composite.** `direct + indirect_compose + emission`
+   ([composition](materials.md#indirect-composition)) or [inspection](settings.md#inspection-modes)
+   + aerial + background [grid](#reference-grid). Blends traced/probe specular. Runs
+   [`Lit`](views.md#extension-stages) (with glass visible, step 11 layer raster runs earlier so
+   `Lit` runs behind and in front of nearest layer).
+10. **overlay.** <= 4 Surface materials/instance over opaque/masked (depth-equal, no write,
+    excluded from BVH/TLAS, [overlays](../../mirai-core/references/host.md#loaded-assets)).
+11. **translucent.** Peels nearest glass layers; draws forward blends + overflow glass
+    back-to-front against opaque depth (pyramid-culled; nearer-than-glass draws only in front).
+12. **glass.** Shades layers back-to-front ([glass](materials.md#glass); culled when absent;
+    projected bounds for reflections). Runs `Blend` (behind after peels, front after glass; once
+    after composite without glass), front `Lit` and `glass_inside`.
+13. **taa.** Upscales to window: 10% moving, <= 64-frame still average (4x16 jitter,
+    `Targets.taa_frames`), 3x3 YCoCg variance clamp (`TAA_STILL_GAMMA` widens when still),
+    exposed-compressed weights (render-unit history), `Targets.reactive` (`Blend` coverage) and
+    shadow-change marks (not passed to upscalers), depth in alpha, disocclusion reset (preserves
+    still edges/thin wires).
+14. **exposure & HDR post.** Pre-TAA [exposure](display.md#exposure) meter, `Post` stage, ordered
+    HDR PostProcess stack per `Camera.slot` (`renderer_set_view_postprocesses`) or frame
+    (`renderer_set_postprocesses`): mid-gray 0.18, lazy targets, `fade` 0 skips, reads only
+    `Output` `stage_contract` (linear depth, normal, outline mask), timed `postprocess hdr 1`,
+    capped by `View_Inspection.postprocess`.
+15. **tonemap, LDR post & UI.** Exposure + [display LUT](display.md#display-transform) + fixed
+    1-LSB triangular dither (null at 0/1) -> [outlines](#outlines) -> LDR PostProcess -> world
+    panels -> debug lines -> [UI layers](ui.md#ui-world-panels-and-debug-lines).
+16. **present.** Copy to swapchain; retains LDR for `renderer_capture`.
+
+```slang
+#define GBUFFER_ALBEDO SLOT_PASS0
+#define GBUFFER_NORMAL SLOT_PASS1
+#define GBUFFER_EMISSION SLOT_PASS2
+#include "gbuffer.slang"
+
+Gbuffer_Pixel g = gbuffer_read(p);
+Shading s = gbuffer_shading(g, pixel);
+float3 rest_pos = pixel.position - pixel_rest(p, linear_depth);
+```
 
 ## Outlines
 
-- One mechanism for the editor and the game. The level of an instance (`Instance_Desc.highlight`)
-  is an editor one (`Renderer.highlight`) or a game style (`Renderer.outlines`, `outline_level`),
-  which the entity's [`Outline`](../../mirai-gameplay/references/libraries.md#render) writes; the
-  styles are described in `Highlight_Style`.
-- On an instance the editor level replaces the game one (`instance_outline` of `engine/render`).
-  On screen every editor level covers the game ones. The levels the editor reserves:
-  [shapes](../../mirai-editor/references/editor.md#figures-of-whoever-works).
-- A level shows something (`highlight_levels_shown`) when its editor style has a radius and a coat
-  or a color that is not transparent; every game style does, since a PostProcess may read the mask.
-  Who draws an outline of its own (a batch that stands for an entity) sends it only at those levels.
-- **Mask.** It draws only the highlighted instances, after the G-buffer and with its own depth
-  buffer: the surrounding geometry does not clip it. It is rasterized without jitter at the
-  window point resolution, independent of `Settings.resolution`, and respects the material's alpha
-  cutoff. The filter and the PostProcess (`mirai_outline`) read it, and they see only the game
-  styles.
-- **Occlusion.** The visible depth is queried in scene coordinates, with its jitter and a
-  conservative footprint of 2×2 texels (`include/highlight.slang`); of the occluded part what
-  remains is what the level's `Highlight_Style.behind` says.
-- **Filter.** A compute prepares a premultiplied layer at point resolution that the tonemap
-  composes after TAA. The dispatch is limited to a conservative on-screen bound of the
-  highlighted instances, expanded by the radius; outside it the tonemap omits the layer, and a
-  bound that crosses the camera plane covers the screen.
-- Moving the camera recomputes the bound without rebuilding scene, instances or TLAS. A coplanar
-  surface does not enable passes or clip the mask.
-- An `outline_only` instance with `highlight` is drawn only in the mask and counts as visible
-  (`highlight_drawn`): the editor shows this way what an agent deleted.
+- Unified editor (`Renderer.highlight`) and game (`Renderer.outlines`, `outline_level`,
+  [`Outline`](../../mirai-gameplay/references/libraries.md#render)) via `Instance_Desc.highlight`
+  and `Highlight_Style`. Editor levels override and cover game styles (`instance_outline`,
+  [editor shapes](../../mirai-editor/references/editor.md#figures-of-whoever-works)).
+  `highlight_levels_shown` lists active levels (all game styles stay active for PostProcess masks).
+- **Mask, occlusion & filter.** Drawn after G-buffer into own depth at unjittered point resolution
+  (ignores `Settings.resolution`), honoring alpha cutoff; PostProcess (`mirai_outline`) sees game
+  styles only. Occlusion tests 2x2 scene depth (`include/highlight.slang`), scaling by
+  `Highlight_Style.behind`. Premultiplied compute filters conservative screen bound (+ radius; full
+  screen if crossing camera plane) for tonemap; camera move updates bound without scene/TLAS
+  rebuilds. `outline_only` draws only in mask (`highlight_drawn`).
+
+```odin
+r.outlines.width = 2.5
+r.outlines.colors[0] = {0.2, 0.9, 1.0, 1.0}
+r.outlines.behind[0] = 0.3
+inst.highlight = render.outline_level(1)
+```
 
 ## Reference grid
 
-- `Environment.ground_grid` (the asset preview views; in a scene the grid is an editor viewport
-  option) enables in composite a procedural Y=0 plane with antialiased lines, X/Z axes, quadrants
-  and distance fade.
-- The linear depth limits it to the background without opaque surfaces, also when the model
-  crosses the origin; the later transparent pass attenuates it with the material.
-- TAA reprojects its world position.
-- It adds no meshes, pickables, shadows or bounds.
-- `scene_set_environment` changes the environment without rebuilding the TLAS; a preview lighting
-  change discards histories and clears probes reusing their resources.
+- `Environment.ground_grid` draws a procedural Y=0 plane in composite background (antialiased
+  lines, X/Z axes, quadrants, distance fade), depth-limited, blend-attenuated, TAA-reprojected,
+  with no meshes/picking/shadows/bounds. `scene_set_environment` updates without TLAS rebuild;
+  preview lighting resets histories and clears probes in place.
 
 ## Statistics
 
-`renderer_stats` reports:
+- `renderer_stats` reports GPU intervals (`cmd_timestamp` under `host.profile_request` /
+  `rhi.timestamps_want`, else `frame` + always-on `cmd_measure_begin`/`cmd_measure_end` for shadow
+  maps), cull/probe/ray counts, capacity drops ([UI](ui.md#capacities)), textures/memory/compression
+  ([materials](materials.md#textures)) and `Stats.counters`.
+- Intervals align to `time.tick_now` (Metal encoder boundaries + CPU/GPU pair; Vulkan
+  `VK_KHR_calibrated_timestamps`/EXT, else placed late at collect). `renderer_gpu_submissions` /
+  `renderer_gpu_clear` (`rhi.frame_timings`) capture every submission of a host frame
+  (`Stats.timings` holds only the last finished).
+- **Per-mesh/material cost (`profile.cost`).** `renderer_cost_ask` / `renderer_cost` bind `cost`
+  variants on the first non-cut frame of the first window view (visibility pixels + forward
+  fragments per filter/light pair). GPU timings name peels `glass layers` and forward `translucent`.
 
-- GPU time of each interval between `cmd_timestamp` while someone asks for it
-  (`host.profile_request` or a recording; `rhi.timestamps_want`), and otherwise a `frame` interval
-  but for those `cmd_measure_begin` and `cmd_measure_end` bound, which every frame measures (the
-  maps of the shadows, which pace their bound by them). Metal samples at the start and end of each
-  encoder (the only thing Apple Silicon supports): an interval goes from the first start to the last
-  end of its encoders. The intervals are on the `time.tick_now` clock, converted with a CPU and GPU
-  clock pair sampled when they are collected: Metal always, Vulkan with
-  `VK_KHR_calibrated_timestamps` (or the EXT) in the domain of `tick_now` (QPC on Windows,
-  `CLOCK_MONOTONIC_RAW` on Linux). Without the extension, Vulkan places the last timestamp of the
-  frame at the moment it collects it: it keeps the durations but arrives late;
-- `renderer_gpu_submissions`: a copy of the timings of each submission since
-  `renderer_gpu_clear`, with the `rhi` frame it was (`rhi.frame_timings`), for whoever accounts for
-  every submission of a host frame; `Stats.timings` is only the last one the GPU finished;
-- visible, culled and occluded instances, probes and estimated rays per frame;
-- what was discarded by capacity ([UI limits](ui.md#capacities));
-- materials, textures, their memory, reduced textures and compression
-  ([materials](materials.md#textures));
-- the counters of the [extensions](views.md#extension-stages) (`Stats.counters`).
-
-`renderer_cost_ask` and `renderer_cost` count one frame of the first view of the window by mesh and
-by material (`profile.cost` answers it). Only that frame binds the `cost` variants of the cull, of
-the raster rounds and of the cull of the maps. It counts opaque pixels from the visibility
-target and forward fragments behind the glass layers once per filter and light pair. The frame
-counted is the first one whose view culls against the pyramid of its frame before: one after a cut
-(a capture, a camera set) culls without occlusion and would count what no other frame draws.
-GPU timings report `glass layers` for the peels and `translucent` for the forward raster.
+```odin
+for sub in render.renderer_gpu_submissions(r) { _ = sub.timings }
+render.renderer_gpu_clear(r)
+if problem := render.renderer_cost_ask(r); problem == "" {
+    if cost, ready := render.renderer_cost(r); ready { _ = cost.meshes }
+}
+```
