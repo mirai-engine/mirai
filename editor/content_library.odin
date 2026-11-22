@@ -409,15 +409,12 @@ content_library_crumbs :: proc(s:^Session,act:^Content_Actions,name,folder:strin
 // The state of fetching a package of a peer, as its card says it.
 @(private)
 content_package_state :: proc(s:^Session,p:^Content_Package) -> (text:string,failed:bool,why:string) {
-    st:=collab_state(s)
-    if st!=nil && st.take!=nil && st.take.id==p.id {
-        t:=st.take
-        if !sync.atomic_load(&t.done) || t.thread!=nil {
-            received:=share.node_totals(st.node).received-t.received
-            if p.bytes>0 {return fmt.tprintf("Fetching %d%%",min(int(received*100/u64(p.bytes)),99)),false,""}
-            return "Fetching",false,""
-        }
-        if t.error!="" {return "Not added",true,t.error}
+    if received,fetching:=content_package_fetch(s,p);fetching {
+        if p.bytes>0 {return content_bytes_progress(received,u64(p.bytes)),false,""}
+        return "Fetching",false,""
+    }
+    if st:=collab_state(s);st!=nil && st.take!=nil && st.take.id==p.id && !st.take.cancelled && st.take.error!="" {
+        return "Not added",true,st.take.error
     }
     // A package of a peer's root is not in this machine's library yet: adding takes it, even when its build is here.
     peer:=content_package_peer(s,p)
@@ -426,6 +423,32 @@ content_package_state :: proc(s:^Session,p:^Content_Package) -> (text:string,fai
     case p.bytes>=0: return fmt.tprintf("%s to fetch",share.bytes_text(p.bytes)),false,""
     }
     return "To fetch",false,""
+}
+
+// The fetch of the package p of a peer while it runs and was not cancelled:
+// the chunk bytes received since it began.
+@(private)
+content_package_fetch :: proc(s:^Session,p:^Content_Package) -> (received:u64,fetching:bool) {
+    st:=collab_state(s)
+    if st==nil || st.take==nil || st.take.id!=p.id || st.take.cancelled {return}
+    t:=st.take
+    if sync.atomic_load(&t.done) && t.thread==nil {return}
+    return share.node_totals(st.node).received-t.received,true
+}
+
+// done bytes of total as "done / total" in the unit of total: 1.2 / 3.4 GB,
+// 128 / 512 MB, 2.5 / 8.0 MB, 12 / 40 KB.
+@(private)
+content_bytes_progress :: proc(done,total:u64) -> string {
+    done:=min(done,total)
+    KB,MB,GB :: f64(1<<10),f64(1<<20),f64(1<<30)
+    switch {
+    case total>=1<<30:  return fmt.tprintf("%.1f / %.1f GB",f64(done)/GB,f64(total)/GB)
+    case total>=10<<20: return fmt.tprintf("%d / %d MB",done>>20,u64(f64(total)/MB+0.5))
+    case total>=1<<20:  return fmt.tprintf("%.1f / %.1f MB",f64(done)/MB,f64(total)/MB)
+    case total>=1<<10:  return fmt.tprintf("%d / %d KB",done>>10,u64(f64(total)/KB+0.5))
+    }
+    return fmt.tprintf("%d / %d B",done,total)
 }
 
 @(private)
@@ -468,14 +491,10 @@ content_package_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,dep
                     ui.icon(ctx,arrow,ui.tone(ctx,"text_muted"),CONTENT_TREE_ARROW)
                 } else {ui.spacer(ctx,CONTENT_TREE_ARROW,1)}
             }
-            if ui.box(ctx,{width=ui.fixed(20),height=ui.fixed(20),align_x=.Center,align_y=.Center,radius=2,clip_x=true,clip_y=true}) {
-                if quad.kind!=.Solid {ui.image(ctx,{quad=quad,width=ui.GROW,height=ui.GROW})} else {ui.icon(ctx,icon,color,14)}
-            }
+            content_row_icon(ctx,icon,color,quad)
             ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM if selected else 0)
-            ui.spacer(ctx,-1,1)
             if item=={} && state!="" {ui.label(ctx,state,ui.metric(ctx,"font_small"),ink)}
             content_package_button(s,p,key,item,added)
-            ui.spacer(ctx,4,1)
         }
     } else {
         names:=u8(2)
@@ -496,17 +515,44 @@ content_package_item :: proc(s:^Session,card:Content_Card,group:u64,cell:f32,dep
     return
 }
 
+// What ends the row or the badge of a package, in a square as wide in each:
+// Add, the check of one added, or the ring its fetch fills, which the pointer
+// turns into the cross that cancels it.
 @(private)
 content_package_button :: proc(s:^Session,p:^Content_Package,key:u64,item:base.Asset_Id,added:bool) {
     ctx:=s.gui.ctx
     if added {
-        ui.icon(ctx,.Check,ui.tone(ctx,"text_muted"),12)
+        if ui.box(ctx,{width=ui.fixed(CONTENT_SLOT),height=ui.fixed(CONTENT_SLOT),align_x=.Center,align_y=.Center}) {
+            ui.icon(ctx,.Check,ui.tone(ctx,"text_muted"),12)
+        }
+        return
+    }
+    if received,fetching:=content_package_fetch(s,p);fetching && item=={} {
+        fraction:=f32(f64(received)/f64(p.bytes)) if p.bytes>0 else 0
+        content_fetch_ring(s,ui.id(ctx,"content_package_fetch",int(key)),fraction)
         return
     }
     tip:="Add folder to project" if item=={} else "Add asset to project"
     if content_add_button(s,ui.id(ctx,"content_package_add",int(key)),tip) {
         content_package_add(s,i32(s.content.libraries.roots[p.root].peer+1),p.id,content_create_place(s.content),item)
     }
+}
+
+CONTENT_RING :: 14 // side of the ring of a fetch in its square
+
+@(private)
+content_fetch_ring :: proc(s:^Session,id:ui.Id,fraction:f32) {
+    ctx:=s.gui.ctx
+    square:=ui.Layout{width=ui.fixed(CONTENT_SLOT),height=ui.fixed(CONTENT_SLOT),align_x=.Center,align_y=.Center}
+    it:=ui.button_begin(ctx,id,{variant="ghost",holds=true,layout=&square})
+    if it.hot {
+        ui.icon(ctx,.Cross,ui.tone(ctx,"text"),12)
+    } else {
+        ui.progress(ctx,{value=min(fraction,0.99),width=ui.fixed(CONTENT_RING),height=ui.fixed(CONTENT_RING),
+            fill=ui.tone(ctx,"accent"),track=ui.tone(ctx,"well_stroke"),fill_mode=.Radial,stroke_width=2})
+    }
+    ui.button_end(ctx)
+    if it.clicked {collab_take_cancel(collab_state(s))}
 }
 
 @(private)
@@ -530,7 +576,7 @@ content_library_badge :: proc(ctx:^ui.Context) -> ui.Box {
 content_add_button :: proc(s:^Session,id:ui.Id,tip:string) -> bool {
     disabled:=s.mode!=.Edit || content_package_busy(s)
     return ui.button(s.gui.ctx,id,{icon=.Plus,tip=tip,variant="ghost",
-        width=20,height=20,icon_size=12,disabled=disabled}).clicked
+        width=CONTENT_SLOT,height=CONTENT_SLOT,icon_size=12,disabled=disabled}).clicked
 }
 
 // What a click, a press and the right button do on a package: select it,

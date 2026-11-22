@@ -67,7 +67,7 @@ Platform :: struct {
     input:Input,
     clock:Frame_Clock,
     pacing:Frame_Pacing,
-    background:u32, // frames per second at most while the window has no focus; 0: as with it
+    background:Background,
     fixed_dt:f32,
     window:Window,
     live:Live_Frame,

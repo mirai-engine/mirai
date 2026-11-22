@@ -62,7 +62,9 @@ all phases except `fixed`, which belongs to the game; while editing, all with `d
 With the window unfocused, outside Play and Simulate and without an agent driving it (a call in
 progress or within the last `API_ACTIVE`), the editor drops to `EDITOR_BACKGROUND_FPS`
 (`platform.set_background`): behind other windows it does not compete for the GPU with other
-programs or with measurements. A manual headless does not draw between calls.
+programs or with measurements. While its session moves bytes with peers (a join, a package taken,
+chunks served or received) it is `awake`: the node steps once a frame, so neither the focus nor a
+minimized window slows a transfer. A manual headless does not draw between calls.
 
 Editor steps, in order; a plugin step orders itself against them with `after`
 ([extensions](extensions.md#package-rules)):
