@@ -410,7 +410,9 @@ build :: proc(
             if store_error!=.None {return {},store_error}
         }
         if i+1==count {break}
+        mips_zone:=jobs.worker_zone_begin(worker,"texture.mips")
         reduced,ok:=next(level,&transfer,options,coverage,allocator)
+        base.profile_end(mips_zone)
         if !ok {return {},.Out_Of_Memory}
         if !use_gpu {
             source_destroy(&owned)
@@ -526,19 +528,29 @@ reduce_taps :: #force_inline proc(source,target,index:int) -> (taps:Taps) {
 }
 
 // The next level of each layer of src into dst, of the same format and layers.
+// Halving both sides, each texel is the mean of four, in the order of the taps.
 @(private="file")
 reduce :: proc(src,dst:Source,transfer:^Transfer,normal_map:bool) {
     sw,sh,dw,dh:=src.width,src.height,dst.width,dst.height
+    half:=sw==2*dw && sh==2*dh
     for layer in 0..<max(src.layers,1) {
         from,to:=layer*sw*sh,layer*dw*dh
         for y in 0..<dh {
             rows:=reduce_taps(sh,dh,y)
             for x in 0..<dw {
-                columns:=reduce_taps(sw,dw,x)
                 sum:[4]f32
-                for j in 0..<rows.count {
-                    for i in 0..<columns.count {
-                        sum+=texel_read(src.texels,src.format,from+(rows.first+j)*sw+columns.first+i,transfer)*(rows.weights[j]*columns.weights[i])
+                if half {
+                    at:=from+2*y*sw+2*x
+                    sum+=texel_read(src.texels,src.format,at,transfer)*0.25
+                    sum+=texel_read(src.texels,src.format,at+1,transfer)*0.25
+                    sum+=texel_read(src.texels,src.format,at+sw,transfer)*0.25
+                    sum+=texel_read(src.texels,src.format,at+sw+1,transfer)*0.25
+                } else {
+                    columns:=reduce_taps(sw,dw,x)
+                    for j in 0..<rows.count {
+                        for i in 0..<columns.count {
+                            sum+=texel_read(src.texels,src.format,from+(rows.first+j)*sw+columns.first+i,transfer)*(rows.weights[j]*columns.weights[i])
+                        }
                     }
                 }
                 if normal_map {
