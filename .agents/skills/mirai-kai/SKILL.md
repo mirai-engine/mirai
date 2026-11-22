@@ -156,9 +156,9 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   open no workspace: only an editor someone drives records history.
 - The plaintext of a scoped file never enters the public store, a public change never names an
   overlay, and a node or seed never holds a scope key.
-- A peer that is not a member reads a set of addresses and nothing else: the user logs while
-  pending, what the shared bookmarks of public projects reach while anonymous (never a device's refs
-  or a proposal), what its grant covers.
+- A peer reads a set of addresses and nothing else of the store: what its org reaches as a member
+  or a node, the user logs while pending, what the shared bookmarks of public projects reach while
+  anonymous (never a device's refs or a proposal), what its grant covers.
 - Nothing polls: a ref that moved is told to the peers that may read it.
 - A stable frame or tick allocates nothing; what peers, browsers and sockets send is bounded and
   refused with a reason, never trusted.
@@ -183,7 +183,7 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `concurrent_admin_removals_fold_deterministically`, `pairing_rejects_mitm_label_grinding`,
   `grants_verify_against_the_org` and `device_refs_reject_rollback` in `kai`.
 - Mesh: `org_members_sync_refs_and_ddc_over_sim_network`,
-  `anonymous_peer_gets_only_the_public_closure`,
+  `a_member_gets_only_what_its_org_reaches`, `anonymous_peer_gets_only_the_public_closure`,
   `a_grant_holder_reads_and_writes_only_its_scope_until_it_ends`,
   `two_agents_pair_and_sync_a_change_over_loopback_udp`,
   `a_relay_node_joins_two_agents_that_cannot_reach_each_other`,

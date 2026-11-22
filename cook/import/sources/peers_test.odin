@@ -207,7 +207,9 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
     for &m in machines {mesh_start(&m)}
 
     // The cooks are other machines of the same stores: they reach the agents
-    // through the control, as another process would.
+    // through the control, as another process would. Once the runners step on
+    // their threads, the test writes only through them: a runner's own machine
+    // tells its agents directly, from the thread that writes.
     cooks:=new([5]vcs.Machine)
     defer free(cooks)
     meshes:=new([5]ka.Mesh_Cache)
@@ -257,14 +259,14 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
     props:=fmt.aprintf("%s/assets/props",a_root)
     defer {delete(a_root);delete(b_root);delete(props)}
     for made in ([]string{props,fmt.tprintf("%s/assets/private",a_root),fmt.tprintf("%s/assets",b_root)}) {os.make_directory_all(made)}
-    if !testing.expect_value(t,ka.project_create(pa,a_root,&alice.machine.store),vcs.Error.None) {return}
+    if !testing.expect_value(t,ka.project_create(pa,a_root,&cooks[0].store),vcs.Error.None) {return}
     defer ka.project_close(pa)
-    project,je:=ka.project_join(pa,&alice.machine,org,false)
-    if !testing.expectf(t,je==.None,"alice makes the project: %s",alice.machine.why) {return}
-    _,se:=vcs.machine_scope_add(&alice.machine,org,project,{"assets/private/**"},.Admin,false)
+    project,je:=ka.project_join(pa,&cooks[0],org,false)
+    if !testing.expectf(t,je==.None,"alice makes the project: %s",cooks[0].why) {return}
+    _,se:=vcs.machine_scope_add(&cooks[0],org,project,{"assets/private/**"},.Admin,false)
     testing.expect_value(t,se,vcs.Error.None)
     Logged :: struct {m:^vcs.Machine,project:vcs.Log_Id}
-    logged:=Logged{&bob.machine,project}
+    logged:=Logged{&cooks[1],project}
     project_logged :: proc(data:rawptr) -> bool {
         x:=(^Logged)(data)
         l:vcs.Log
@@ -272,9 +274,9 @@ a_cook_takes_derived_data_a_peer_built :: proc(t:^testing.T) {
         return vcs.log_open(&x.m.store,&l,x.project,.Project)==.None
     }
     if !testing.expect(t,until(10,&logged,project_logged),"the project's log reaches bob") {return}
-    if !testing.expect_value(t,ka.project_create(pb,b_root,&bob.machine.store),vcs.Error.None) {return}
+    if !testing.expect_value(t,ka.project_create(pb,b_root,&cooks[1].store),vcs.Error.None) {return}
     defer ka.project_close(pb)
-    if !testing.expectf(t,ka.project_link(pb,&bob.machine,project)==.None,"bob links the project: %s",bob.machine.why) {return}
+    if !testing.expectf(t,ka.project_link(pb,&cooks[1],project)==.None,"bob links the project: %s",cooks[1].why) {return}
 
     // Alice imports a model with a texture, and an image of the scope.
     model,secret:=fmt.tprintf("%s/concave.obj",props),fmt.tprintf("%s/assets/private/secret.png",a_root)
