@@ -3,9 +3,10 @@ package physics
 import "core:testing"
 import "mirai:core"
 
-// A section that brings more bodies than a tick makes, and takes them away
+// A section that brings more colliders than a tick makes, and takes them away
 // in one settle: they come over the next ticks, what does not move first,
-// and leave over ticks too.
+// and leave over ticks too. The static ones are shapes of the static body of
+// the world, not bodies.
 @(test)
 bodies_come_and_go_a_part_of_each_tick :: proc(t:^testing.T) {
     f:Physics_Test
@@ -18,7 +19,7 @@ bodies_come_and_go_a_part_of_each_tick :: proc(t:^testing.T) {
     box:=physics_test_box(&f,{0,1,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
     made :: proc(f:^Physics_Test,entities:[]core.Entity) -> (count:int) {
         for e in entities {
-            if l:=link_find(&f.state,e);l!=nil && l.kind==.Body {count+=1}
+            if l:=link_find(&f.state,e);l!=nil && l.kind!=.None {count+=1}
         }
         return
     }
@@ -30,7 +31,7 @@ bodies_come_and_go_a_part_of_each_tick :: proc(t:^testing.T) {
     physics_test_step(&f)
     testing.expect_value(t,made(&f,floors[:]),COUNT)
     testing.expect_value(t,made(&f,{box}),1)
-    testing.expect_value(t,int(f.state.stats.bodies_created),COUNT+1)
+    testing.expect_value(t,int(f.state.stats.bodies_created),1)
 
     for e in floors {core.disable(&f.colliders,e)}
     physics_test_step(&f)

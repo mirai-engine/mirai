@@ -53,7 +53,7 @@ World_Desc :: struct {
 world_desc_default :: proc() -> World_Desc {
     return {
         allocator=context.allocator,
-        body_capacity=4096,shape_capacity=4096,contact_capacity=16384,joint_capacity=1024,
+        body_capacity=4096,shape_capacity=32768,contact_capacity=16384,joint_capacity=1024,
         hull_capacity=256,mesh_capacity=1024,heightfield_capacity=1024,event_capacity=1024,
         character_capacity=256,fluid_capacity=64,static_change_capacity=1024,
         breakable_capacity=64,piece_capacity=2048,bond_capacity=8192,

@@ -40,9 +40,13 @@ query_support :: proc(user:rawptr,id:u64) -> (mm.Transform,bool) {
     return {transform.p,transform.q,{1,1,1}},true
 }
 
+// A Collider on the static body of the world is solid too: a query that ignores it skips its shapes.
 @(private)
 query_solid :: proc(user:rawptr,e:core.Entity) -> bool {
-    return body_of(core.ref(cast(^Physics_State)user),e)!=0
+    state:=cast(^Physics_State)user
+    if body_of(core.ref(state),e)!=0 {return true}
+    l:=link_find(state,e)
+    return l!=nil && l.kind==.Compound && sim.shape_valid(&state.world,l.shape)
 }
 
 // The triangles of the static collision whose boxes meet `box`, in world space, that block `filter`, for
