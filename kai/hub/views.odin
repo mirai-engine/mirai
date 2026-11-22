@@ -183,31 +183,26 @@ org_views :: proc(h:^Hub,o:^kai.Runner_Org) -> ^Org_Views {
     context.allocator=virtual.arena_allocator(&w.arena)
     w.projects=make([dynamic]Project_Bookmarks)
     for p in o.agent.org.projects {
+        shared:=make([dynamic]kai.Bookmark_Target,context.temp_allocator)
+        kai.agent_shared_bookmarks(&o.agent,p.id,&shared)
         b:=Project_Bookmarks{project=p.id}
-        b.shared,b.shared_main=project_bookmarks(h,o,w,p.id,false)
-        b.member,b.member_main=project_bookmarks(h,o,w,p.id,true)
+        b.shared,b.shared_main=project_bookmarks(h,o,shared[:],p.id,false)
+        b.member,b.member_main=project_bookmarks(h,o,shared[:],p.id,true)
         append(&w.projects,b)
     }
     return w
 }
 
-// The bookmarks of a project, in the views' arena: the moves its log keeps,
-// the policy allowed and a writer signed, then for a member each name a
-// device publishes that no move keeps, at its newest record; and the index of
-// main, -1 without bookmarks.
+// The bookmarks of a project, in the views' arena: its shared ones, as the
+// project's fold holds them, then for a member each name a device publishes
+// that no move keeps, at its newest record; and the index of main, -1 without
+// bookmarks.
 @(private)
-project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,w:^Org_Views,project:kai.Log_Id,member:bool) -> (bookmarks:[]Bookmark_View,main:int) {
+project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,shared:[]kai.Bookmark_Target,project:kai.Log_Id,member:bool) -> (bookmarks:[]Bookmark_View,main:int) {
     s:=store_of(h)
     out:=make([dynamic]Bookmark_View)
-    if l:=kai.agent_log(&o.agent,project);l!=nil && len(l.items)>0 {
-        landed:=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
-        kai.project_snapshots(s,l,&o.agent.org,&landed,context.temp_allocator)
-        f:kai.Project_Fold
-        if kai.project_fold(&f,l,&o.agent.org,landed[:],context.temp_allocator)==.None {
-            for b in f.bookmarks {
-                if served(o,member,b.target) {append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,landed=true})}
-            }
-        }
+    for b in shared {
+        if served(o,member,b.target) {append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,landed=true})}
     }
     ns:[len(kai.REFS_PREFIX)+64]u8
     refs,e:=store.ref_list(s,kai.refs_namespace(project,&ns),context.temp_allocator)

@@ -684,10 +684,19 @@ machine_keyrings :: proc(s:^store.Store,o:^Org_State,out:^[dynamic]^Keyring_Fold
         l,le:=new(Log,allocator)
         if le!=nil {return .Out_Of_Memory}
         log_init(l,id,allocator)
-        if _,load:=log_load(s,l,r.hash,false);load!=.None {continue}
         k,ke:=new(Keyring_Fold,allocator)
-        if ke!=nil {return .Out_Of_Memory}
-        if keyring_fold(k,l,&o.fold,s,allocator)!=.None {continue}
+        if ke!=nil {
+            log_destroy(l)
+            free(l,allocator)
+            return .Out_Of_Memory
+        }
+        if _,load:=log_load(s,l,r.hash,false);load!=.None || keyring_fold(k,l,&o.fold,s,allocator)!=.None {
+            keyring_fold_destroy(k)
+            free(k,allocator)
+            log_destroy(l)
+            free(l,allocator)
+            continue
+        }
         append(out,k)
     }
     return .None
@@ -730,19 +739,23 @@ machine_grant_revoke :: proc(m:^Machine,org:Log_Id,grant:[]u8) -> Error {
 machine_publish_refs :: proc(m:^Machine,project:Log_Id,refs:[]Bookmark_Ref) -> Error {
     l:Log
     log_init(&l,project,context.temp_allocator)
-    if log_open(&m.store,&l,project,.Project)==.None {
-        if org,public:=project_org(&l);public {
-            o:Org_State
-            if e:=machine_org_open(m,org,&o);e!=.None {return e}
-            held,_,_:=device_refs_get(&m.store,project,m.identity.key,context.temp_allocator)
-            for r in refs {
-                before:Revision
-                for h in held.refs {
-                    if h.name==r.name {before=h.target}
-                }
-                if before==r.target {continue}
-                machine_publish_check(m,&o.fold,project,true,before,r.target) or_return
+    org:Log_Id
+    public:bool
+    if log_open(&m.store,&l,project,.Project)==.None {org,public=project_org(&l)}
+    o:Org_State
+    opened:=false
+    defer if opened {org_state_destroy(&o)}
+    if public {
+        machine_org_open(m,org,&o) or_return
+        opened=true
+        held,_,_:=device_refs_get(&m.store,project,m.identity.key,context.temp_allocator)
+        for r in refs {
+            before:Revision
+            for h in held.refs {
+                if h.name==r.name {before=h.target}
             }
+            if before==r.target {continue}
+            machine_publish_check(m,&o.fold,project,true,before,r.target) or_return
         }
     }
     if _,e:=device_refs_publish(&m.store,project,&m.identity,refs,machine_now());e!=.None {
@@ -753,10 +766,9 @@ machine_publish_refs :: proc(m:^Machine,project:Log_Id,refs:[]Bookmark_Ref) -> E
     machine_tell(m,refs_namespace(project,&ns),refs_name(m.identity.key,&name))
     // The overlays a snapshot wrote for the targets, which may keep their
     // public tree and so their revision, reach the peers with them.
-    if org,_:=project_org(&l);org!={} {
-        o:Org_State
-        if org_state_load(&m.store,org,&o,context.temp_allocator)==.None {
-            defer org_state_destroy(&o)
+    if org!={} {
+        if !opened {opened=org_state_load(&m.store,org,&o,context.temp_allocator)==.None}
+        if opened {
             for sc in o.fold.scopes {
                 if sc.project!=project {continue}
                 ons:[len(OVERLAY_PREFIX)+64+1+32]u8

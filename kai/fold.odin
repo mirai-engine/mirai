@@ -995,13 +995,13 @@ org_role_replay :: proc(f:^Org_Fold,user:Log_Id,e:int,within:bool) -> Role {
     for x in f.transfers {
         if seen(f,int(x),e,within) && !slice.contains(entries[:],x) {append(&entries,x)}
     }
-    context.user_ptr=f.log
-    slice.sort_by(entries[:],proc(a,b:u32) -> bool {
-        l:=(^Log)(context.user_ptr)
-        return l.rank[a]<l.rank[b]
-    })
+    // In the order of the walk: rank is a position, one per entry.
+    ranked:=make([]u32,len(entries),context.temp_allocator)
+    for x,k in entries {ranked[k]=f.log.rank[x]}
+    slice.sort(ranked)
     role:=Role.None
-    for x in entries {
+    for r in ranked {
+        x:=f.log.order[r]
         entry:=&f.log.items[x].entry
         #partial switch entry.type {
         case .Org_Genesis: role=.Owner

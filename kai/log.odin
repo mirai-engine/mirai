@@ -799,11 +799,7 @@ log_index :: proc(l:^Log) -> Error {
         }
         if head {append(&l.heads,u32(i))}
     }
-    context.user_ptr=l
-    slice.sort_by(l.heads[:],proc(a,b:u32) -> bool {
-        l:=(^Log)(context.user_ptr)
-        return hash_less(l.items[a].address,l.items[b].address)
-    })
+    items_by_address(l,l.heads[:])
     l.indexed=true
     return .None
 }
@@ -996,6 +992,16 @@ LOG_HEADS_MAX :: 1<<12 // heads an index names; a log with more is folded from i
 // The ref name of a log: the hex of its id.
 log_name :: proc(id:Log_Id,buffer:^[64]u8) -> string {return store.hex(id,buffer)}
 
+// Sorts the indexes of items of l by their entries' addresses.
+@(private)
+items_by_address :: proc(l:^Log,items:[]u32) {
+    Keyed :: struct {address:store.Hash,item:u32}
+    keyed:=make([]Keyed,len(items),context.temp_allocator)
+    for x,k in items {keyed[k]={l.items[x].address,x}}
+    slice.sort_by(keyed,proc(a,b:Keyed) -> bool {return hash_less(a.address,b.address)})
+    for x,k in keyed {items[k]=x.item}
+}
+
 // Puts item i in the pages, from the root, which it makes for the first entry.
 @(private)
 page_insert :: proc(l:^Log,i:int) -> Error {
@@ -1050,11 +1056,7 @@ page_save :: proc(s:^store.Store,l:^Log,k:int) -> (address:store.Hash,error:Erro
     p:=&l.pages[k]
     write_value(&w,Log_Page_Head{magic=KAI_MAGIC,depth=p.depth,leaf=b8(p.leaf),count=p.count})
     if p.leaf {
-        context.user_ptr=l
-        slice.sort_by(p.items[:],proc(a,b:u32) -> bool {
-            l:=(^Log)(context.user_ptr)
-            return hash_less(l.items[a].address,l.items[b].address)
-        })
+        items_by_address(l,p.items[:])
         for i in p.items {
             write_value(&w,u32(len(l.items[i].bytes)))
             write_bytes(&w,l.items[i].bytes)
