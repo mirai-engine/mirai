@@ -371,7 +371,7 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     web:=#load_directory("web")
     names:=make([dynamic]string,context.temp_allocator)
     for w in web {append(&names,w.name)}
-    testing.expect(t,slice.contains(names[:],"index.html") && slice.contains(names[:],"app.js") && slice.contains(names[:],"vue.js"),"the frontend is embedded")
+    testing.expect(t,slice.contains(names[:],"index.html") && slice.contains(names[:],"app.js") && slice.contains(names[:],"dom.js") && !slice.contains(names[:],"vue.js"),"the frontend is embedded, with no framework")
     TYPES :: [?][2]string{{".html","text/html; charset=utf-8"},{".js","text/javascript; charset=utf-8"},{".css","text/css; charset=utf-8"}}
     for w in web {
         a:=call(f,"GET",fmt.tprintf("/%s",w.name))

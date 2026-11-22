@@ -1,69 +1,57 @@
 // The node's JSON API (GET /api describes it) and what the page knows of the
 // node and of who is signed in.
-import {reactive} from './vue.js'
+import {state} from './dom.js'
 
-export const state = reactive({
-    node: null,    // GET /api/node
-    session: null, // GET /api/session, null when signed out
+export const app = state({
+    node: null,     // GET /api/node
+    session: null,  // GET /api/session, null when signed out
     approval: null, // a device approval the page waits for: {command, state}
+    problem: null,  // the error of the last action that failed, shown until dismissed
 })
 
 export class ApiError extends Error {
     constructor(status, message) {
         super(message)
+        this.name = 'ApiError'
         this.status = status
     }
 }
 
-async function failure(response) {
+const UNREACHABLE = 'the node does not answer: check that it runs and that this machine reaches it'
+
+// The response of a route, or an ApiError with the text the node gave.
+export async function apiRaw(path, init = {}) {
+    let response
+    try {
+        response = await fetch(path, {credentials: 'same-origin', ...init})
+    } catch {
+        throw new ApiError(0, UNREACHABLE)
+    }
+    if (response.ok) return response
     let text = `${response.status} ${response.statusText}`
     try {
         const body = await response.json()
-        if (body && typeof body.error === 'string') text = body.error
+        if (typeof body?.error === 'string') text = body.error
     } catch {}
-    return new ApiError(response.status, text)
+    throw new ApiError(response.status, text)
 }
 
-// The answer of a route of the API; its error text when it fails.
+// The JSON answer of a route; with a body, a POST of it.
 export async function api(path, body) {
-    const init = {credentials: 'same-origin', headers: {}}
-    if (body !== undefined) {
-        init.method = 'POST'
-        init.headers['Content-Type'] = 'application/json'
-        init.body = JSON.stringify(body)
-    }
-    let response
-    try {
-        response = await fetch(path, init)
-    } catch {
-        throw new ApiError(0, 'the node does not answer: check that it runs and that this machine reaches it')
-    }
-    if (!response.ok) throw await failure(response)
-    return response.json()
-}
-
-// The raw answer of a route that does not answer JSON, as the file route.
-export async function apiRaw(path) {
-    let response
-    try {
-        response = await fetch(path, {credentials: 'same-origin'})
-    } catch {
-        throw new ApiError(0, 'the node does not answer: check that it runs and that this machine reaches it')
-    }
-    if (!response.ok) throw await failure(response)
-    return response
+    const init = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}
+    return (await apiRaw(path, init)).json()
 }
 
 export async function refreshSession() {
     try {
-        state.session = await api('/api/session')
+        app.set({session: await api('/api/session')})
     } catch (error) {
         if (error.status !== 401) throw error
-        state.session = null
+        app.set({session: null})
     }
 }
 
 // The session's role in an org, or '' when it is no member.
 export function roleIn(org) {
-    return state.session?.orgs.find(o => o.org === org)?.role ?? ''
+    return app.session?.orgs.find(o => o.org === org)?.role ?? ''
 }

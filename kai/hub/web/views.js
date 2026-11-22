@@ -1,104 +1,114 @@
 // The public views: the node's projects and, for each, its overview, files,
 // changes, diffs and the evolution of a change.
-import {h} from './vue.js'
-import {api, apiRaw, roleIn, state} from './api.js'
-import {DiffView, errorBox, fileDiff, frame, href, link, navigate, short, size, useLoad, when} from './ui.js'
+import {html} from './dom.js'
+import {api, apiRaw, app, roleIn} from './api.js'
+import {ago, badge, diffView, empty, fileDiff, hash, href, icon, loaded, navigate, plural, short, size, when} from './ui.js'
 import {detailDecode, summaryDecode} from './preview.js'
 
-// A project's title and tabs above one of its views.
-export function projectHead(p, active) {
+// A project's name and tabs above one of its views.
+export function projectHead(p, tab) {
     const base = `/p/${p.id}`
     const tabs = [['overview', base, 'Overview'], ['tree', `${base}/tree`, 'Files'], ['changes', `${base}/changes`, 'Changes']]
     if (roleIn(p.org)) tabs.push(['stacks', `${base}/stacks`, 'Stacks'], ['proposals', `${base}/proposals`, 'Proposals'], ['org', `/org/${p.org}`, 'Org'])
-    return h('header', {class: 'project'}, [
-        h('h1', [link(base, p.name || short(p.id)), p.public ? null : h('span', {class: 'badge'}, 'private')]),
-        h('nav', {class: 'tabs'}, tabs.map(([key, target, label]) => link(target, label, {class: key === active ? 'active' : ''}))),
-    ])
+    return html`<header class="project-head">
+        <h1><a href=${base}>${p.name || short(p.id)}</a>${p.public ? null : html`<span class="badge private">${icon('lock')}private</span>`}</h1>
+        <nav class="tabs" aria-label="Project">${tabs.map(([key, target, label]) =>
+            html`<a href=${target} class=${key === tab ? 'active' : null} aria-current=${key === tab ? 'page' : null}>${label}</a>`)}</nav>
+    </header>`
 }
 
 export function loadProject(id) {
     return api(`/api/projects/${id}`)
 }
 
-// A view of a project: its head, then what body makes of the project and data.
-export function projectView(props, active, fetcher, body) {
-    const load = useLoad(async () => {
-        const project = await loadProject(props.params.project)
-        return {project, data: fetcher ? await fetcher(project) : null}
-    })
-    return () => frame(load, ({project, data}) => [projectHead(project, active), body(project, data, load)])
+// A view of a project: its head, then what body makes of the project and of
+// what fetch answers for it.
+export function projectPage(id, tab, fetch, body) {
+    return loaded(async () => {
+        const project = await loadProject(id)
+        return {project, data: fetch ? await fetch(project) : null}
+    }, ({project, data}, view) => [projectHead(project, tab), body(project, data, view)]).node
 }
 
 function revisionPicker(project, current, target) {
     const names = project.bookmarks.map(b => b.name)
     const value = current || project.main || ''
-    const options = names.map(n => h('option', {value: n, selected: n === value}, n))
-    if (value && !names.includes(value)) options.unshift(h('option', {value, selected: true}, short(value)))
-    return h('label', {class: 'picker'}, ['Revision ', h('select', {onChange: e => navigate(target(e.target.value))}, options)])
+    const options = names.map(n => html`<option value=${n} ?selected=${n === value}>${n}</option>`)
+    if (value && !names.includes(value)) options.unshift(html`<option value=${value} selected>${short(value)}</option>`)
+    return html`<label class="picker" title="Revision">${icon('bookmark')}<select aria-label="Revision" @change=${e => navigate(target(e.target.value))}>${options}</select></label>`
 }
 
 function crumbs(project, rev, path) {
     const parts = path ? path.split('/') : []
-    const out = [link(href(`/p/${project.id}/tree`, {rev}), project.name || 'root')]
-    parts.forEach((name, i) => {
-        out.push(' / ')
-        const sub = parts.slice(0, i + 1).join('/')
-        out.push(i === parts.length - 1 ? h('strong', name) : link(href(`/p/${project.id}/tree`, {rev, path: sub}), name))
-    })
-    return h('p', {class: 'crumbs'}, out)
+    const at = i => href(`/p/${project.id}/tree`, {rev, path: parts.slice(0, i + 1).join('/')})
+    return html`<nav class="crumbs" aria-label="Path">
+        <a href=${href(`/p/${project.id}/tree`, {rev})}>${project.name || 'root'}</a>
+        ${parts.map((name, i) => [html`<span class="sep">/</span>`, i === parts.length - 1 ? html`<strong>${name}</strong>` : html`<a href=${at(i)}>${name}</a>`])}
+    </nav>`
 }
 
-export const Home = {
-    props: ['params', 'query'],
-    setup() {
-        const load = useLoad(() => api('/api/projects'))
-        return () => [
-            h('h1', 'Projects'),
-            state.node ? h('p', {class: 'quiet'}, `Node ${short(state.node.device)} · ${state.node.modes.join(', ')} · ${state.node.orgs} org${state.node.orgs === 1 ? '' : 's'}`) : null,
-            frame(load, d => d.projects.length === 0
-                ? h('p', {class: 'quiet'}, 'This node serves no project yet.')
-                : h('ul', {class: 'list'}, d.projects.map(p => h('li', [
-                    link(`/p/${p.id}`, p.name || short(p.id)), ' ', p.public ? null : h('span', {class: 'badge'}, 'private'),
-                ])))),
-            state.session?.orgs.length ? [h('h2', 'Your orgs'), h('ul', {class: 'list'}, state.session.orgs.map(o => h('li', [link(`/org/${o.org}`, o.name || short(o.org)), ` · ${o.role}`])))] : null,
-        ]
-    },
+export function Home() {
+    const node = app.node
+    const orgs = app.session?.orgs ?? []
+    const projects = loaded(() => api('/api/projects'), d => d.projects.length === 0
+        ? empty('No projects yet', 'This node serves no project. Publish one with mirai kai.')
+        : html`<ul class="cards">${d.projects.map(p => html`<li><a class="card" href=${`/p/${p.id}`}>
+            <span class="card-title">${icon(p.public ? 'folder' : 'lock')}${p.name || short(p.id)}</span>
+            <span class="quiet">${p.public ? 'Public' : 'Private'} · ${hash(p.id)}</span>
+        </a></li>`)}</ul>`)
+    return html`<div class="page">
+        <header class="page-head">
+            <h1>Projects</h1>
+            <p class="quiet">Node ${hash(node.device)} · ${node.modes.join(', ')} · ${plural(node.orgs, 'org')}</p>
+        </header>
+        ${projects.node}
+        ${orgs.length ? html`<section>
+            <h2>Your orgs</h2>
+            <ul class="cards">${orgs.map(o => html`<li><a class="card" href=${`/org/${o.org}`}>
+                <span class="card-title">${o.name || short(o.org)}</span><span class="quiet">${o.role}</span>
+            </a></li>`)}</ul>
+        </section>` : null}
+    </div>`
 }
 
-export const Overview = {
-    props: ['params', 'query'],
-    setup(props) {
-        return projectView(props, 'overview', null, p => [
-            h('h2', 'Bookmarks'),
-            p.bookmarks.length === 0 ? h('p', {class: 'quiet'}, 'No bookmark yet.') : h('table', {class: 'grid'}, h('tbody', p.bookmarks.map(b => h('tr', [
-                h('td', link(href(`/p/${p.id}/tree`, {rev: b.name}), b.name)),
-                h('td', link(`/p/${p.id}/change/${b.revision}`, h('code', short(b.revision)))),
-                h('td', {class: 'quiet'}, b.landed ? 'landed' : `${short(b.device)} · ${when(b.time)}`),
-                h('td', link(href(`/p/${p.id}/changes`, {rev: b.name}), 'changes')),
-            ])))),
-            p.readme ? [h('h2', p.readme.path), h('pre', {class: 'readme'}, p.readme.text), p.readme.truncated ? h('p', {class: 'quiet'}, 'The README goes on past what the node shows.') : null] : null,
-        ])
-    },
+export function Overview({params}) {
+    return projectPage(params.project, 'overview', null, p => html`<div class="split">
+        <div class="main-column">${p.readme ? html`<article class="box">
+            <header class="box-head">${icon('file')}<strong>${p.readme.path}</strong></header>
+            <pre class="prose">${p.readme.text}</pre>
+            ${p.readme.truncated ? html`<p class="quiet pad">The README goes on past what the node shows.</p>` : null}
+        </article>` : empty('No README', 'Add a README.md at the root and it shows here.')}</div>
+        <aside class="side-column">
+            <h2 class="side-title">Bookmarks</h2>
+            ${p.bookmarks.length === 0 ? empty('No bookmarks yet') : html`<ul class="box rows">${p.bookmarks.map(b => html`<li class="item">
+                <div class="item-main">
+                    <a href=${href(`/p/${p.id}/tree`, {rev: b.name})}><strong>${b.name}</strong></a>
+                    ${b.landed ? badge('landed') : null}
+                </div>
+                <div class="meta">${hash(b.revision, `/p/${p.id}/change/${b.revision}`)}
+                    ${b.landed ? null : html`<span>${hash(b.device)} · ${ago(b.time)}</span>`}
+                    <a href=${href(`/p/${p.id}/changes`, {rev: b.name})}>History</a></div>
+            </li>`)}</ul>`}
+        </aside>
+    </div>`)
 }
 
-export const Tree = {
-    props: ['params', 'query'],
-    setup(props) {
-        const {rev, path = ''} = props.query
-        return projectView(props, 'tree', p => api(href(`/api/projects/${p.id}/tree`, {rev, path})), (p, d) => [
-            revisionPicker(p, rev, r => href(`/p/${p.id}/tree`, {rev: r, path})),
-            crumbs(p, rev, d.path),
-            h('table', {class: 'grid'}, h('tbody', [...d.entries].sort((a, b) => (b.kind === 'folder') - (a.kind === 'folder') || a.name.localeCompare(b.name)).map(e => {
-                const full = d.path ? `${d.path}/${e.name}` : e.name
-                const folder = e.kind === 'folder'
-                return h('tr', [
-                    h('td', link(href(`/p/${p.id}/${folder ? 'tree' : 'file'}`, {rev, path: full}), folder ? `${e.name}/` : e.name)),
-                    h('td', {class: 'quiet'}, folder ? `${e.files} file${e.files === 1 ? '' : 's'}` : size(e.size)),
-                    h('td', e.conflicts || e.kind === 'conflict' ? h('span', {class: 'badge warn'}, 'conflict') : e.kind === 'executable' ? h('span', {class: 'badge'}, 'executable') : null),
-                ])
-            }))),
-        ])
-    },
+const byFolderThenName = (a, b) => (b.kind === 'folder') - (a.kind === 'folder') || a.name.localeCompare(b.name)
+
+export function Tree({params, query}) {
+    const {rev, path = ''} = query
+    return projectPage(params.project, 'tree', p => api(href(`/api/projects/${p.id}/tree`, {rev, path})), (p, d) => html`<section class="box">
+        <header class="box-head toolbar">${revisionPicker(p, rev, r => href(`/p/${p.id}/tree`, {rev: r, path}))}${crumbs(p, rev, d.path)}</header>
+        ${d.entries.length === 0 ? empty('Empty folder') : html`<ul class="rows files">${[...d.entries].sort(byFolderThenName).map(e => {
+            const full = d.path ? `${d.path}/${e.name}` : e.name
+            const folder = e.kind === 'folder'
+            return html`<li class="item file-row">
+                <a href=${href(`/p/${p.id}/${folder ? 'tree' : 'file'}`, {rev, path: full})}>${icon(folder ? 'folder' : 'file')}<span>${e.name}</span></a>
+                ${e.conflicts || e.kind === 'conflict' ? badge('conflict') : e.kind === 'executable' ? badge('executable', 'neutral') : null}
+                <span class="quiet size">${folder ? plural(e.files, 'file') : size(e.size)}</span>
+            </li>`
+        })}</ul>`}
+    </section>`)
 }
 
 const IMAGES = [
@@ -147,60 +157,70 @@ async function fileLoad(p, rev, path) {
 
 // The summary of an asset beside its thumbnail, as peers published them.
 function previewBox(p, rev, path, preview) {
-    if (!preview) return null
-    if (preview.state === 'fetching') return h('p', {class: 'quiet'}, 'The node is fetching the summary of this asset from its peers: reload in a moment.')
-    if (!preview.summary) return null
-    return h('div', {class: 'preview'}, [
-        preview.thumbnail ? h('img', {class: 'thumb', src: href(`/api/projects/${p.id}/thumbnail`, {rev, path}), alt: path}) : null,
-        h('dl', {class: 'facts'}, [
-            h('dt', 'Kind'), h('dd', preview.summary.kind),
-            preview.summary.facts.map(f => [h('dt', f.label), h('dd', f.value)]),
-        ]),
-    ])
+    if (preview?.state === 'fetching') return html`<p class="waiting pad"><span class="spinner" aria-hidden="true"></span>The node is fetching the summary of this asset from its peers: reload in a moment.</p>`
+    if (!preview?.summary) return null
+    return html`<div class="preview">
+        ${preview.thumbnail ? html`<img class="thumb" src=${href(`/api/projects/${p.id}/thumbnail`, {rev, path})} alt=${path}>` : null}
+        <dl class="facts">
+            <dt>Kind</dt><dd>${preview.summary.kind}</dd>
+            ${preview.summary.facts.map(f => [html`<dt>${f.label}</dt>`, html`<dd>${f.value}</dd>`])}
+        </dl>
+    </div>`
 }
 
-export const FileView = {
-    props: ['params', 'query'],
-    setup(props) {
-        const {rev, path = ''} = props.query
-        const raw = href(`/api/projects/${props.params.project}/file`, {rev, path})
-        return projectView(props, 'tree', p => fileLoad(p, rev, path), (p, f) => {
-            let body
-            const shown = previewBox(p, rev, path, f.preview)
-            if (f.large) body = [shown, h('p', {class: 'quiet'}, f.large)]
-            else if (f.image) body = [h('p', {class: 'quiet'}, `Image, ${size(f.size)}`), h('img', {class: 'shown', src: f.image, alt: path})]
-            else if (f.binary !== undefined) {
-                body = shown ? [shown, h('p', h('a', {href: raw}, 'Download'))] : [
-                    h('p', {class: 'quiet'}, `Binary file, ${size(f.binary)}. Its first bytes:`),
-                    h('pre', {class: 'bytes'}, Array.from(f.head, b => b.toString(16).padStart(2, '0')).join(' ')),
-                    h('p', h('a', {href: raw}, 'Download')),
-                ]
-            } else {
-                const lines = f.text.endsWith('\n') ? f.text.slice(0, -1).split('\n') : f.text.split('\n')
-                body = h('div', {class: 'scroll'}, h('table', {class: 'code'}, h('tbody', lines.map((t, i) => h('tr', [h('td', {class: 'num'}, i + 1), h('td', {class: 'text'}, t)])))))
-            }
-            return [revisionPicker(p, rev, r => href(`/p/${p.id}/file`, {rev: r, path})), crumbs(p, rev, path), body]
-        })
-    },
+function fileBody(p, rev, path, f) {
+    const raw = href(`/api/projects/${p.id}/file`, {rev, path})
+    const download = html`<a class="button" href=${raw}>Download</a>`
+    const shown = previewBox(p, rev, path, f.preview)
+    if (f.large) return [shown, html`<p class="quiet pad">${f.large}</p>`]
+    if (f.image) return html`<div class="image-frame"><img class="shown" src=${f.image} alt=${path}></div>`
+    if (f.binary !== undefined) return shown ? [shown, html`<p class="pad">${download}</p>`] : html`<div class="pad">
+        <p class="quiet">Binary file, ${size(f.binary)}. Its first bytes:</p>
+        <pre class="bytes">${Array.from(f.head, b => b.toString(16).padStart(2, '0')).join(' ')}</pre>
+        <p>${download}</p>
+    </div>`
+    const lines = f.text.endsWith('\n') ? f.text.slice(0, -1).split('\n') : f.text.split('\n')
+    return html`<div class="scroll"><table class="code"><tbody>${lines.map((t, i) =>
+        html`<tr><td class="num">${i + 1}</td><td class="text">${t}</td></tr>`)}</tbody></table></div>`
 }
 
-export const Changes = {
-    props: ['params', 'query'],
-    setup(props) {
-        const {rev} = props.query
-        const page = Number(props.query.page || 0)
-        return projectView(props, 'changes', p => api(href(`/api/projects/${p.id}/changes`, {rev, page: page || undefined})), (p, d) => [
-            revisionPicker(p, rev, r => href(`/p/${p.id}/changes`, {rev: r})),
-            d.changes.length === 0 ? h('p', {class: 'quiet'}, 'No changes on this page.') : h('ul', {class: 'list changes'}, d.changes.map(c => h('li', [
-                link(`/p/${p.id}/change/${c.revision}`, c.summary || '(no description)'),
-                h('div', {class: 'quiet'}, [h('code', short(c.change)), ` · ${short(c.author)} · ${when(c.written)}`]),
-            ]))),
-            h('nav', {class: 'pages'}, [
-                page > 0 ? link(href(`/p/${p.id}/changes`, {rev, page: page - 1 || undefined}), '← Newer') : null,
-                d.more ? link(href(`/p/${p.id}/changes`, {rev, page: page + 1}), 'Older →') : null,
-            ]),
-        ])
-    },
+function fileSize(f) {
+    if (f.text !== undefined) return `${plural(f.text.split('\n').length - (f.text.endsWith('\n') ? 1 : 0), 'line')}`
+    if (f.image) return `Image · ${size(f.size)}`
+    if (f.binary !== undefined) return size(f.binary)
+    return ''
+}
+
+export function FileView({params, query}) {
+    const {rev, path = ''} = query
+    return projectPage(params.project, 'tree', p => fileLoad(p, rev, path), (p, f) => html`<section class="box">
+        <header class="box-head toolbar">
+            ${revisionPicker(p, rev, r => href(`/p/${p.id}/file`, {rev: r, path}))}${crumbs(p, rev, path)}
+            <span class="toolbar-end quiet">${fileSize(f)}<a href=${href(`/api/projects/${p.id}/file`, {rev, path})}>Raw</a></span>
+        </header>
+        ${fileBody(p, rev, path, f)}
+    </section>`)
+}
+
+function changeRow(p, c) {
+    return html`<li class="item">
+        <div class="item-main"><a href=${`/p/${p.id}/change/${c.revision}`}><strong>${c.summary || '(no description)'}</strong></a></div>
+        <div class="meta">${hash(c.change)}<span>${hash(c.author)}</span>${ago(c.written)}</div>
+    </li>`
+}
+
+export function Changes({params, query}) {
+    const {rev} = query
+    const page = Number(query.page || 0)
+    const at = n => href(`/p/${params.project}/changes`, {rev, page: n || undefined})
+    return projectPage(params.project, 'changes', p => api(href(`/api/projects/${p.id}/changes`, {rev, page: page || undefined})), (p, d) => html`<section class="box">
+        <header class="box-head toolbar">${revisionPicker(p, rev, r => href(`/p/${p.id}/changes`, {rev: r}))}</header>
+        ${d.changes.length === 0 ? empty('No changes on this page') : html`<ul class="rows">${d.changes.map(c => changeRow(p, c))}</ul>`}
+    </section>
+    <nav class="pager">
+        ${page > 0 ? html`<a class="button" href=${at(page - 1)}>← Newer</a>` : html`<span></span>`}
+        ${d.more ? html`<a class="button" href=${at(page + 1)}>Older →</a>` : null}
+    </nav>`)
 }
 
 // What a change attaches, by type: "turn × 2".
@@ -211,35 +231,46 @@ function attachedText(list) {
 }
 
 export function person(name, key) {
-    return name ? [name, ' ', h('code', {class: 'quiet'}, short(key))] : h('code', short(key))
+    return name ? html`<span class="person">${name} ${hash(key)}</span>` : hash(key)
 }
 
-export const Change = {
-    props: ['params', 'query'],
-    setup(props) {
-        const revision = props.params.revision
-        return projectView(props, 'changes', p => api(`/api/projects/${p.id}/changes/${revision}`), (p, c) => [
-            h('h2', (c.description.split('\n')[0]) || '(no description)'),
-            c.description.includes('\n') ? h('pre', {class: 'readme'}, c.description) : null,
-            h('dl', {class: 'facts'}, [
-                h('dt', 'Change'), h('dd', link(`/p/${p.id}/evolution/${c.change}`, h('code', c.change))),
-                h('dt', 'Revision'), h('dd', h('code', c.revision)),
-                h('dt', 'Author'), h('dd', person(c.author_name, c.author)),
-                c.coauthors.length ? [h('dt', 'Co-authors'), h('dd', c.coauthors.map((a, i) => [i ? ', ' : '', person(a.name, a.key)]))] : null,
-                h('dt', 'Created'), h('dd', when(c.created)),
-                h('dt', 'Written'), h('dd', when(c.written)),
-                c.attachments?.length ? [h('dt', 'Attached'), h('dd', attachedText(c.attachments))] : null,
-                h('dt', 'Parents'), h('dd', c.parents.length ? c.parents.map((r, i) => [i ? ', ' : '', link(`/p/${p.id}/change/${r}`, h('code', short(r)))]) : 'none'),
-            ]),
-            h('h2', 'Files'),
-            c.files_complete ? null : errorBox('Some files of this change are not on this node yet.'),
-            c.files.length === 0 ? h('p', {class: 'quiet'}, 'No file changes.') : h('table', {class: 'grid'}, h('tbody', c.files.map(f => h('tr', [
-                h('td', h('span', {class: `badge ${f.status}`}, f.status)),
-                h('td', link(href(`/p/${p.id}/diff`, {from: c.parents[0], to: c.revision, path: f.path}), f.path)),
-                h('td', {class: 'quiet'}, f.after ? size(f.after.size) : ''),
-            ])))),
-        ])
-    },
+const joined = (list, item) => list.map((x, i) => [i ? ', ' : '', item(x)])
+
+// A file of a change, with its status, linked to its diff.
+export function fileRow(f, target) {
+    return html`<li class="item file-row">
+        ${badge(f.status)}<a href=${target}><span>${f.path}</span></a><span class="quiet size">${f.after ? size(f.after.size) : ''}</span>
+    </li>`
+}
+
+export function Change({params}) {
+    const revision = params.revision
+    return projectPage(params.project, 'changes', p => api(`/api/projects/${p.id}/changes/${revision}`), (p, c) => {
+        const [title, ...rest] = c.description.split('\n')
+        const body = rest.join('\n').trim()
+        return html`<div class="page">
+            <header class="page-head">
+                <h2 class="title">${title || '(no description)'}</h2>
+                ${body ? html`<pre class="prose">${body}</pre>` : null}
+            </header>
+            <dl class="facts box pad">
+                <dt>Change</dt><dd>${hash(c.change, `/p/${p.id}/evolution/${c.change}`)} <a href=${`/p/${p.id}/evolution/${c.change}`}>Evolution</a></dd>
+                <dt>Revision</dt><dd>${hash(c.revision)}</dd>
+                <dt>Author</dt><dd>${person(c.author_name, c.author)}</dd>
+                ${c.coauthors.length ? [html`<dt>Co-authors</dt>`, html`<dd>${joined(c.coauthors, a => person(a.name, a.key))}</dd>`] : null}
+                <dt>Created</dt><dd>${when(c.created)}</dd>
+                <dt>Written</dt><dd>${when(c.written)}</dd>
+                ${c.attachments?.length ? [html`<dt>Attached</dt>`, html`<dd>${attachedText(c.attachments)}</dd>`] : null}
+                <dt>Parents</dt><dd>${c.parents.length ? joined(c.parents, r => hash(r, `/p/${p.id}/change/${r}`)) : 'none'}</dd>
+            </dl>
+            <section>
+                <h2>Files <span class="count">${c.files.length}</span></h2>
+                ${c.files_complete ? null : html`<div class="notice warn">${icon('alert')}<p>Some files of this change are not on this node yet.</p></div>`}
+                ${c.files.length === 0 ? empty('No file changes') : html`<ul class="box rows">${c.files.map(f =>
+                    fileRow(f, href(`/p/${p.id}/diff`, {from: c.parents[0], to: c.revision, path: f.path})))}</ul>`}
+            </section>
+        </div>`
+    })
 }
 
 // The line diff of a file, and of a binary one what peers recorded of the
@@ -259,52 +290,50 @@ const MARKS = {'+': 'add', '-': 'remove', '~': 'change'}
 
 // What a change did to an asset: its rows and fields, by entity.
 function assetDetail(d) {
-    return [
-        h('p', {class: 'quiet'}, `Asset: +${d.added} −${d.removed} ~${d.changed}`),
-        h('div', {class: 'scroll'}, h('table', {class: 'diff'}, h('tbody', d.rows.map(r => h('tr', {class: MARKS[r.mark]}, [
-            h('td', {class: 'num'}, r.name),
-            h('td', {class: 'text'}, `${r.mark} ${r.text}`),
-        ]))))),
-        d.cut ? h('p', {class: 'quiet'}, `${d.cut} more row${d.cut === 1 ? '' : 's'} not shown.`) : null,
-    ]
+    return html`<div>
+        <p class="pad stat"><span class="added">+${d.added}</span><span class="removed">−${d.removed}</span><span class="changed">~${d.changed}</span> entities</p>
+        <div class="scroll"><table class="diff asset"><tbody>${d.rows.map(r =>
+            html`<tr class=${MARKS[r.mark]}><td class="name">${r.name}</td><td class="sign">${r.mark}</td><td class="text">${r.text}</td></tr>`)}</tbody></table></div>
+        ${d.cut ? html`<p class="quiet pad">${plural(d.cut, 'more row')} not shown.</p>` : null}
+    </div>`
 }
 
-export const Diff = {
-    props: ['params', 'query'],
-    setup(props) {
-        const {from, to, path} = props.query
-        return projectView(props, 'changes', p => diffLoad(p, from, to, path), (p, d) => [
-            h('h2', path),
-            h('p', {class: 'quiet'}, [
-                from ? link(`/p/${p.id}/change/${from}`, h('code', short(from))) : 'nothing', ' → ', link(`/p/${p.id}/change/${to}`, h('code', short(to))),
-                d.lines.length ? ` · +${d.added} −${d.removed}` : '',
-                ' · ', link(href(`/p/${p.id}/file`, {rev: to, path}), 'file'),
-            ]),
-            d.asset ? assetDetail(d.asset) : null,
-            d.assetState === 'fetching' ? h('p', {class: 'quiet'}, 'The node is fetching what peers recorded of this change: reload in a moment.') : null,
-            h(DiffView, {diff: d}),
-        ])
-    },
+// The head of a file's diff: its path, what it adds and removes, and links.
+export function diffHead(d, path, links) {
+    return html`<header class="box-head file-head">
+        ${icon('file')}<strong class="path">${path}</strong>
+        ${d.lines.length ? html`<span class="stat"><span class="added">+${d.added}</span><span class="removed">−${d.removed}</span></span>` : null}
+        <span class="toolbar-end">${links}</span>
+    </header>`
 }
 
-export const Evolution = {
-    props: ['params', 'query'],
-    setup(props) {
-        return projectView(props, 'changes', p => api(`/api/projects/${p.id}/evolution/${props.params.change}`), (p, e) => [
-            h('h2', ['Evolution of ', h('code', short(e.change))]),
-            h('ol', {class: 'list'}, e.revisions.map((r, i) => h('li', [
-                link(`/p/${p.id}/change/${r.revision}`, r.summary || '(no description)'),
-                h('div', {class: 'quiet'}, [h('code', short(r.revision)), ` · ${short(r.author)} · ${when(r.written)} · ${r.files.length} file${r.files.length === 1 ? '' : 's'}`]),
-                e.interdiffs[i - 1] ? interdiff(p, e.interdiffs[i - 1]) : null,
-            ]))),
-        ])
-    },
+export function Diff({params, query}) {
+    const {from, to, path} = query
+    return projectPage(params.project, 'changes', p => diffLoad(p, from, to, path), (p, d) => html`<div class="page">
+        <p class="quiet range">${from ? hash(from, `/p/${p.id}/change/${from}`) : 'nothing'} → ${hash(to, `/p/${p.id}/change/${to}`)}</p>
+        <section class="box diff-box">
+            ${diffHead(d, path, html`<a href=${href(`/p/${p.id}/file`, {rev: to, path})}>View file</a>`)}
+            ${d.asset ? assetDetail(d.asset) : null}
+            ${d.assetState === 'fetching' ? html`<p class="waiting pad"><span class="spinner" aria-hidden="true"></span>The node is fetching what peers recorded of this change: reload in a moment.</p>` : null}
+            ${diffView(d)}
+        </section>
+    </div>`)
 }
 
 function interdiff(p, d) {
-    if (d.files.length === 0) return h('p', {class: 'quiet'}, 'Same content as the revision before.')
-    return h('div', {class: 'interdiff'}, [
-        h('span', {class: 'quiet'}, 'Since the revision before: '),
-        d.files.map((f, i) => [i ? ', ' : '', link(href(`/p/${p.id}/diff`, {from: d.from, to: d.to, path: f.path}), f.path)]),
-    ])
+    if (d.files.length === 0) return html`<p class="quiet">Same content as the revision before.</p>`
+    return html`<p class="interdiff"><span class="quiet">Since the revision before:</span> ${joined(d.files, f =>
+        html`<a href=${href(`/p/${p.id}/diff`, {from: d.from, to: d.to, path: f.path})}>${f.path}</a>`)}</p>`
+}
+
+export function Evolution({params}) {
+    return projectPage(params.project, 'changes', p => api(`/api/projects/${p.id}/evolution/${params.change}`), (p, e) => html`<div class="page">
+        <header class="page-head"><h2 class="title">Evolution of ${hash(e.change)}</h2>
+            <p class="quiet">${plural(e.revisions.length, 'revision')} of one change, oldest first.</p></header>
+        <ol class="timeline">${e.revisions.map((r, i) => html`<li>
+            <a href=${`/p/${p.id}/change/${r.revision}`}><strong>${r.summary || '(no description)'}</strong></a>
+            <div class="meta">${hash(r.revision)}<span>${hash(r.author)}</span>${ago(r.written)}<span>${plural(r.files.length, 'file')}</span></div>
+            ${e.interdiffs[i - 1] ? interdiff(p, e.interdiffs[i - 1]) : null}
+        </li>`)}</ol>
+    </div>`)
 }

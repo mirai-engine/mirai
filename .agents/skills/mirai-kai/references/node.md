@@ -147,8 +147,15 @@ WantedBy=multi-user.target
 
 - `kai/hub/web` is embedded as it is, at build time, and served flat; names that start with a dot
   are not served and a path with no dot that names no file gets `index.html`, so the page routes
-  itself. It is ES modules over the vendored Vue runtime, written with render functions: no template
-  compiler, no bundler, no `node_modules`, so building needs no Node.
+  itself. It is ES modules with no framework, no third-party code and no build step: what is in
+  the folder is what ships, so building needs no Node.
+- Views are `html` tagged templates (`web/dom.js`, the whole toolkit): a value becomes a text
+  node, an attribute, a property or a listener, never markup, so repository content cannot become
+  part of the page. Nothing draws on its own: a view draws when its route or data changes or an
+  action asks (`mount` answers the function that draws again), and the shared `state` calls its
+  watchers on `set`. A form keeps its own DOM, and the proposal keeps its composers across draws,
+  so what is being typed survives a reload. A failed action surfaces in one place, `report`, with
+  the node's text.
 - The pure modules (`blake3.js`, `entry.js`, `preview.js`) must agree with the node bit for bit:
   BLAKE3 across chunk boundaries, recovery texts, web key ids, the layout of an entry and the
   check of a draft, which tampered or mismatched drafts fail, and the previews the node takes.

@@ -3,7 +3,7 @@
 // user asked and signs their BLAKE3. A new user is born of its passkey alone:
 // this page makes no key of its own, and the user's first device, linked
 // later, sets its recovery key.
-import {api, refreshSession, state} from './api.js'
+import {api, app, refreshSession} from './api.js'
 import {blake3} from './blake3.js'
 import {
     attestedCredential, b64, deviceLinkCode, draftCheck, entryUnsigned, equal, layoutCheck,
@@ -44,7 +44,7 @@ function remember(credential, cose) {
 }
 
 function passkeysWork() {
-    if (!state.node?.passkeys_work) throw new Error('passkeys need the node over HTTPS on its domain: this address serves reads; approve with a device instead')
+    if (!app.node?.passkeys_work) throw new Error('passkeys need the node over HTTPS on its domain: this address serves reads; approve with a device instead')
     if (!window.PublicKeyCredential) throw new Error('this browser has no passkeys: approve with a device instead')
 }
 
@@ -55,7 +55,7 @@ function webauthnError(error) {
 }
 
 async function assertion(challenge, credential) {
-    const publicKey = {challenge, rpId: state.node.rp_id, userVerification: 'required', timeout: TIMEOUT_MS}
+    const publicKey = {challenge, rpId: app.node.rp_id, userVerification: 'required', timeout: TIMEOUT_MS}
     if (credential) publicKey.allowCredentials = [{type: 'public-key', id: credential}]
     let c
     try {
@@ -83,7 +83,7 @@ export async function signIn() {
 
 export async function signOut() {
     await api('/api/session/end', {})
-    state.session = null
+    app.set({session: null})
 }
 
 // A new passkey of this site: its credential id and its COSE key.
@@ -92,7 +92,7 @@ async function passkeyCreate(name) {
     let c
     try {
         c = await navigator.credentials.create({publicKey: {
-            rp: {id: state.node.rp_id, name: 'Kai'},
+            rp: {id: app.node.rp_id, name: 'Kai'},
             user: {id: crypto.getRandomValues(new Uint8Array(16)), name, displayName: name},
             challenge: crypto.getRandomValues(new Uint8Array(32)),
             pubKeyCredParams: [{type: 'public-key', alg: -8}, {type: 'public-key', alg: -7}],
@@ -113,7 +113,7 @@ async function passkeyCreate(name) {
 // Answers the user id, which waits on the node until an admin adds it.
 export async function register(name) {
     const {credential, cose} = await passkeyCreate(name)
-    const rp = state.node.rp_id
+    const rp = app.node.rp_id
     const unsigned = entryUnsigned({
         type: TYPES.passkey_genesis, author: webKeyId(cose, rp), time: BigInt(Date.now()) * 1000000n,
         body: passkeyGenesisBody(credential, cose, rp, name), sig: SIG_WEBAUTHN,
@@ -126,19 +126,20 @@ export async function register(name) {
 
 // Waits for a device to answer an approval the page shows.
 async function approvalWait(a) {
-    state.approval = {command: a.command, state: 'waiting'}
-    const shown = state.approval
+    const shown = {command: a.command, state: 'waiting'}
+    app.set({approval: shown})
     try {
         for (;;) {
             await new Promise(done => setTimeout(done, POLL_MS))
-            if (state.approval !== shown) throw new Error('the approval was dismissed')
+            if (app.approval !== shown) throw new Error('the approval was dismissed')
             const r = await api(`/api/approvals/${a.id}/state`, {secret: a.secret})
             shown.state = r.state
+            app.set({approval: shown})
             if (r.state === 'approved') return r
             if (r.state !== 'waiting') throw new Error(`the approval was ${r.state}: ask again`)
         }
     } finally {
-        if (state.approval === shown) state.approval = null
+        if (app.approval === shown) app.set({approval: null})
     }
 }
 
@@ -155,12 +156,12 @@ export async function link(user, name) {
 // command shown and offers itself; answers its offer, with the code it shows.
 export async function linkOffer() {
     const a = await api('/api/approvals', {kind: 'device'})
-    state.approval = {command: a.command, state: 'waiting'}
-    const shown = state.approval
+    const shown = {command: a.command, state: 'waiting'}
+    app.set({approval: shown})
     try {
         for (;;) {
             await new Promise(done => setTimeout(done, POLL_MS))
-            if (state.approval !== shown) throw new Error('the link was dismissed')
+            if (app.approval !== shown) throw new Error('the link was dismissed')
             const r = await api(`/api/approvals/${a.id}/state`, {secret: a.secret})
             if (r.state !== 'waiting') throw new Error(`the link was ${r.state}: ask again`)
             if (!r.offer) continue
@@ -168,13 +169,13 @@ export async function linkOffer() {
             return r.offer
         }
     } finally {
-        if (state.approval === shown) state.approval = null
+        if (app.approval === shown) app.set({approval: null})
     }
 }
 
 // Signs the Device_Add of an offer the person compared the code of.
 export async function linkDevice(offer) {
-    return write({type: 'device_add', log: state.session.user, device: offer.device, dh: offer.dh, kem: offer.kem, proof: offer.proof, name: offer.name})
+    return write({type: 'device_add', log: app.session.user, device: offer.device, dh: offer.dh, kem: offer.kem, proof: offer.proof, name: offer.name})
 }
 
 // Signs in without a passkey: a device of the user approves the login.
@@ -189,18 +190,18 @@ let layout = ''
 // The author this session's passkey signs as: its web key id, from the COSE
 // key this browser made when it has it, else as the session names it.
 function author() {
-    const named = unhex(state.session.passkey, 32)
+    const named = unhex(app.session.passkey, 32)
     const credential = storageGet(sessionStorage, CREDENTIAL)
     const cose = credential && known()[credential]
-    if (cose && !equal(webKeyId(unb64(cose), state.node.rp_id), named)) throw new Error('the node names another passkey for this session than the one it signed in with: sign in again')
+    if (cose && !equal(webKeyId(unb64(cose), app.node.rp_id), named)) throw new Error('the node names another passkey for this session than the one it signed in with: sign in again')
     return named
 }
 
 // Writes an entry: the draft is checked, then its BLAKE3 signed by the
 // passkey; a session without one has a device sign it.
 export async function write(action) {
-    if (!state.session) throw new Error('sign in first')
-    if (!state.session.passkey) {
+    if (!app.session) throw new Error('sign in first')
+    if (!app.session.passkey) {
         const a = await api('/api/approvals', {kind: 'entry', draft: action})
         return approvalWait(a)
     }

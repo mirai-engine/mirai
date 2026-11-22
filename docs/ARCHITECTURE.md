@@ -359,9 +359,8 @@ Numbered layers; a package only imports lower layers.
   only verifies, the Linux sandbox, and the commands a node runs (`serve`, `pair join`,
   `web approve`). It imports `kai`, `net`, `net/tls`, `store` and `std/*`, nothing of the engine
   and nothing of the editor or `cook/*`. Its frontend, `kai/hub/web`, is embedded as it is: ES
-  modules over a vendored Vue runtime with render functions, no build step, so building needs no
-  Node; the page parses and checks every draft against what the user asked and signs its BLAKE3
-  itself.
+  modules with no framework or third-party code and no build step, so building needs no Node; the
+  page parses and checks every draft against what the user asked and signs its BLAKE3 itself.
 - **5** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).
