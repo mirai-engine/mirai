@@ -402,13 +402,16 @@ shared_cache_prunes_entries_unused_for_a_month_at_most_once_a_day :: proc(t:^tes
     for relative in ([]string{"stages/used.json","stages/used.spv","stages/used.metal"}) {
         testing.expectf(t,exists(shared,relative),"%s is kept: its entry was used",relative)
     }
-    // Once a day at most.
+    // Once a day at most, and only after a full pass finishes within its budget.
     entry.fingerprint="later"
     testing.expect(t,cache_stage_write(shared,entry,files,both))
     age(shared,long_ago)
-    cache_prune(shared,now)
+    testing.expect(t,cache_prune(shared,now))
     testing.expect(t,exists(shared,"stages/later.json"),"the cache was pruned today")
-    cache_prune(shared,time.time_add(now,25*time.Hour))
+    // A tiny budget interrupts the next day's pass without writing `pruned`, so a follow-up finishes it.
+    next_day:=time.time_add(now,25*time.Hour)
+    testing.expect(t,!cache_prune(shared,next_day,budget=time.Nanosecond),"tiny budget stops before finishing")
+    testing.expect(t,cache_prune(shared,next_day),"follow-up pass completes because pruned marker was not updated")
     testing.expect(t,!exists(shared,"stages/later.json") && !exists(shared,"stages/used.json"))
 }
 

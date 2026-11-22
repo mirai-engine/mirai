@@ -408,12 +408,16 @@ engine_plan :: proc(root,compiler:string,mode:Engine_Mode,paths:Engine_Paths,lib
         plan.library_flags[which]=flags[:]
         loads:[]string
         if slice.contains(libraries[which].packages,ENGINE_EMBEDS_SHADERS) {loads=embedded[:] if mode==.Release else embedded[:1]}
-        sources:=slice.clone_to_dynamic(engine_sources(root,libraries[which].packages,..loads),context.temp_allocator)
+        raw_sources:=engine_sources(root,libraries[which].packages,..loads)
+        sources:=make([dynamic]string,0,len(raw_sources),context.temp_allocator)
         // A loaded file leaves the stage as it was: what the library embeds compiles it again.
+        // In Dev, render loads shaders from shaders/build on disk instead of the embedded pack,
+        // so changes to the pack (e.g. from Release) must not invalidate the Dev engine stamp.
         embeds:=make([dynamic]string,context.temp_allocator)
-        for source in sources {
-            if strings.has_suffix(source,".odin") || (mode==.Dev && project.path_same(source,embedded[2])) {continue}
-            append(&embeds,source)
+        for source in raw_sources {
+            if mode==.Dev && project.path_same(source,embedded[2]) {continue}
+            append(&sources,source)
+            if !strings.has_suffix(source,".odin") {append(&embeds,source)}
         }
         library.sources,_=fingerprint(root,compiler,flags[:],sources[:])
         library.tools,_=fingerprint(root,compiler,flags[:],embeds[:])

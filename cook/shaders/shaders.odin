@@ -1147,6 +1147,10 @@ generate :: proc(options:Options,allocator:=context.allocator) -> (result:Result
     result.error=strings.clone(result.error,allocator)
     result.diagnostics=diagnostics_clone(result.diagnostics,allocator)
     for &each in result.slowest {each.name=strings.clone(each.name,allocator)}
+    // Prune after the cache lock and staging folder are released.
+    if result.error=="" && result.compiled>0 {
+        cache_prune(workspace.cache_folder(path_clean(options.root,context.temp_allocator),CACHE_NAME,context.temp_allocator),time.now())
+    }
     return
 }
 
@@ -1226,7 +1230,10 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     g.progress=options.progress
     g.runner=&g.progress.runner if g.progress!=nil else &g.own_runner
     // Generations with one stamp publish into one output: they take turns.
-    lock,locked:=workspace.lock_acquire(strings.concatenate({g.cache,".lock"},scratch),fmt.tprintf("pid %d",os.get_pid()))
+    lock,locked:=workspace.lock_acquire(strings.concatenate({g.cache,".lock"},scratch),fmt.tprintf("pid %d",os.get_pid()),proc(holder:string) {
+        if holder!="" {fmt.eprintfln("mirai: waiting for shader generation lock (%s)...",holder)}
+        else {fmt.eprintln("mirai: waiting for shader generation lock...")}
+    })
     if !locked {fail(&result,allocator,"could not create %s",g.cache);return}
     defer workspace.lock_release(&lock)
     // A compiler older than the pinned one is replaced here: a generation with
@@ -1511,7 +1518,6 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
     stamp_write(g,request,staging,outputs[:],{slang=g.version,metal_tools=g.metal_tools,
         shaders=stage_count,tests=test_count,programs=len(catalog.programs),
         engine=identity,shipped=shipped})
-    if result.compiled>0 {cache_prune(g.shared,time.now())}
     return
 }
 

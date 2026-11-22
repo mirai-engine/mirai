@@ -133,6 +133,7 @@ Options :: struct {
     api_port:int,    // of the agent API; 0: the default one
     api_port_any:bool, // --api-port 0: a free one the system picks, never the default, which stays the user's editor's
     no_api:bool,
+    check_api:bool,  // registers project and plugin API methods without opening scenes or assets, then exits
     name:string,     // in a shared session
     share:int,       // >0: shares the scene on this port; <0: the default one
     join:string,     // an address: enters the session of another editor
@@ -383,7 +384,7 @@ run :: proc(info:^core.World_Info,args:[]string,frame:proc(s:^Session) -> bool) 
     previous:=context.logger
     context.logger=console_logger(s.console,previous)
     gpu_failure_notify(s)
-    for frame(s) {}
+    for !s.quit && frame(s) {}
     context.logger=previous
     next:subprocess.Process
     starts:=s.projects!=nil && s.projects.starts
@@ -443,7 +444,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         window_desc=window,vsync=windowed,fixed_dt=windowed?0:HEADLESS_DT,
         // Without a window the mixer plays to nowhere, in real time: what play.record mixes is there.
         audio=windowed || !options.no_gpu?.Device:.None,audio_driver=windowed?"":"dummy",
-        assets_root=os.is_dir(assets)?assets:"",assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
+        assets_root=!options.check_api && os.is_dir(assets)?assets:"",assets_cache=project.cache_path(root,project.REGISTRY_CACHE,allocator=context.temp_allocator),
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts[:],shaders_root=root,store_root=store_root,
@@ -475,7 +476,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     s.engine_stamp=engine_stamp_here(s)
     s.library_stamp=library_stamp_here(s)
     s.assets_root=strings.clone(assets)
-    if store_root!="" {
+    if !options.check_api && store_root!="" {
         if opened,error:=store.open(store_root);error==.None {s.store=opened} else {log.warnf("the store at %s does not open (%v): nothing imports until the editor starts with --store <folder>",store_root,error)}
     }
     s.has_project=has_project
@@ -494,37 +495,40 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     if options.launcher {projects_show(s)} else if has_project && !options.headless {projects_remember(s)}
     if options.git_init && has_project {git_init_later(s,options.git_remote,options.git_lfs)}
 
-    if options.view!="" {view_parse(&s.viewport.orbit,options.view)}
-    scene:=options.scene
-    if scene=="" && options.documents=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
-    host.load_startup(app,time.duration_nanoseconds(time.tick_since(started)))
-    // The window of a person shows from the first frame, which draws the scene
-    // loading: what the start opens is read at the end of that frame.
-    deferred:=start_deferred(options)
-    switch {
-    case options.documents!="" && deferred:
-        s.start_documents=strings.clone(options.documents)
-    case options.documents!="":
-        if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
-    case scene!="" && deferred:
-        start_open(s,scene)
-    case scene!="":
-        if error:=scene_open(s,scene);error!=.None {
-            fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
-            if options.scene!="" {
-                close(s)
-                return nil,EDITOR_SCENE
+    if !options.check_api {
+        if options.view!="" {view_parse(&s.viewport.orbit,options.view)}
+        scene:=options.scene
+        if scene=="" && options.documents=="" && has_project {scene=project.start_scene(root,context.temp_allocator)}
+        host.load_startup(app,time.duration_nanoseconds(time.tick_since(started)))
+        // The window of a person shows from the first frame, which draws the scene
+        // loading: what the start opens is read at the end of that frame.
+        deferred:=start_deferred(options)
+        switch {
+        case options.documents!="" && deferred:
+            s.start_documents=strings.clone(options.documents)
+        case options.documents!="":
+            if why:=documents_restore(s,options.documents);why!="" {log.errorf("The document tabs could not all be opened again: %s",why)}
+        case scene!="" && deferred:
+            start_open(s,scene)
+        case scene!="":
+            if error:=scene_open(s,scene);error!=.None {
+                fmt.eprintfln("mirai: could not open the scene %s: %s",scene,document_error_text(error))
+                if options.scene!="" {
+                    close(s)
+                    return nil,EDITOR_SCENE
+                }
             }
         }
-    }
-    if options.select!="" {
-        if deferred {s.start_select=strings.clone(options.select)} else {select_ids(s,options.select)}
+        if options.select!="" {
+            if deferred {s.start_select=strings.clone(options.select)} else {select_ids(s,options.select)}
+        }
     }
     // A headless editor is driven through its API: one that cannot open it ends.
     if !services_open(s,options) && options.headless {
         close(s)
         return nil,EDITOR_API
     }
+    if options.check_api {s.quit=true}
     s.ready_ns=platform.clock_ns()
     return s,EDITOR_OK
 }
@@ -1322,6 +1326,7 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
             if !parsed || port<0 || port>65535 {return o,false}
             if port==0 {o.api_port_any=true} else {o.api_port=port}
         case "--no-api":     o.no_api=true
+        case "--check-api":  o.check_api,o.headless,o.no_gpu,o.no_api=true,true,true,true
         case "--name":       o.name=value(args,&i) or_return
         case "--launcher":   o.launcher=true
         case "--from-launcher": o.from_launcher=true

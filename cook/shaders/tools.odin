@@ -401,7 +401,7 @@ tool_admit :: proc(runner:^Runner,command:[]string,memory:Memory,allocator:runti
             append(&running,Admitted{each.charge,held})
         }
         sync.unlock(&runner.lock)
-        lock,listed:=ledger_lock(memory.ledger)
+        lock,listed:=ledger_lock(memory.ledger,runner)
         if listed {
             clear(&running)
             ledger_update(memory.ledger,&running)
@@ -437,17 +437,23 @@ runner_compiling :: proc(runner:^Runner) -> int {
     return count
 }
 
-// Takes the lock of a ledger; false when there is none or it cannot be made.
 @(private)
-ledger_lock :: proc(path:string) -> (lock:workspace.Lock,ok:bool) {
+LEDGER_LOCK_TIMEOUT :: 30*time.Second
+
+// Takes the lock of a ledger; false when there is none, it cannot be made,
+// the runner was cancelled or the timeout elapsed.
+@(private)
+ledger_lock :: proc(path:string,runner:^Runner=nil) -> (lock:workspace.Lock,ok:bool) {
     if path=="" {return}
     lock_path:=strings.concatenate({path,".lock"},context.temp_allocator)
     what:=fmt.tprintf("pid %d",os.get_pid())
+    started:=time.tick_now()
     for {
+        if runner!=nil && runner_cancelled(runner) {return {},false}
         taken,failed:bool
         lock,taken,_,failed=workspace.lock_take(lock_path,what)
         if taken {return lock,true}
-        if failed {return {},false}
+        if failed || time.tick_since(started)>=LEDGER_LOCK_TIMEOUT {return {},false}
         time.sleep(time.Millisecond)
     }
 }
