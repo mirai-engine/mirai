@@ -299,7 +299,7 @@ Entry_Head :: struct #packed {
   `Encrypted LAN beacon -> global IPv6 -> portmap (existing PCP/NAT-PMP/UPnP) -> rendezvous UDP
   hole punch -> E2E encrypted relay -> seed`.
 - **LAN Beacon (no mDNS):** Broadcast/multicast every 30 s with rotating keyed tags
-  `org_tag = BLAKE3_keyed(D, "org" || bucket)[:12]` and `dev_tag` (`bucket = unix/600`). Unlinkable
+  `org_tag = BLAKE3(D || "org" || bucket)[:12]` and `dev_tag` (`bucket = unix/600`). Unlinkable
   noise to non-members; `D` rotates on member removal.
 - **Stateless Rendezvous & Relay (`relay` mode):** Holds org logs only; observes reflexive IP:port
   on 2 ports to detect hard/symmetric NATs (skipping futile punching); coordinates simultaneous UDP
@@ -327,7 +327,7 @@ Entry_Head :: struct #packed {
 - **Chunk sealing (no convergent encryption):** Each private file gets a random `file_id[16]` kept
   across edits. `(k_enc, k_nonce) = HKDF(K_epoch, "kai-1/file" || file_id)`. Each FastCDC chunk is
   compressed with MDC2, padded with Padme (~1.5% avg overhead), and sealed with `AEGIS-256` using
-  keyed nonce `BLAKE3_keyed(k_nonce, q)` — deduplicates edits within the same file/epoch while
+  keyed nonce `BLAKE3(k_nonce || q)` — deduplicates edits within the same file/epoch while
   preventing confirmation attacks. Rebasing re-signs `Overlay_Record` without re-encrypting chunks.
 - **Zero-knowledge seeds:** Seeds store and serve overlay ciphertext and keyrings without holding
   any scope key.
