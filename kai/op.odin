@@ -593,10 +593,12 @@ split_tree :: proc(r:^Repo,c:^Change,paths:[]string,refused:^string) -> (tree:st
             if _,e:=inject_at(&files,at,File{path=d.path,kind=d.after.kind,address=d.after.address,size=d.after.size});e!=nil {return {},.Out_Of_Memory}
         }
     }
-    if a,b,clash:=names_clash(files[:]);clash {
-        return {},split_refuse(refused,a," and ",b,": the first change would hold a file and a folder of one name, or two names that differ only in case: pick both or neither")
+    clash:[2]string
+    tree,error=tree_build(r.s,files[:],&clash)
+    if error==.Invalid_Argument && clash[0]!="" {
+        return {},split_refuse(refused,clash[0]," and ",clash[1],": the first change would hold a file and a folder of one name, or two names that differ only in case: pick both or neither")
     }
-    return tree_build(r.s,files[:])
+    return
 }
 
 // Splits revision in two by paths, each a file it added, changed or removed,
@@ -644,30 +646,6 @@ change_split :: proc(r:^Repo,revision:Revision,paths:[]string,description:Maybe(
             if overlay_record_error(r.s,overlay.project,sc.scope,rw.from)==.Missing {continue}
             overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,rw.from,rw.to,now) or_return
         }
-    }
-    return
-}
-
-// Two paths of files, sorted, that no tree holds together: a file and a
-// folder of one name, or names that differ only in case.
-@(private)
-names_clash :: proc(files:[]File) -> (a,b:string,clash:bool) {
-    held:=make(map[string]string,context.temp_allocator)    // a file's path folded: its path
-    folders:=make(map[string]string,context.temp_allocator) // a folder's path folded: its path
-    for f in files {
-        lower:=strings.to_lower(f.path,context.temp_allocator)
-        if other,found:=held[lower];found {return other,f.path,true}
-        if other,found:=folders[lower];found {return other,f.path,true}
-        for i in 0..<len(lower) {
-            if lower[i]!='/' {continue}
-            if other,found:=held[lower[:i]];found {return other,f.path,true}
-            if other,found:=folders[lower[:i]];found {
-                if other!=f.path[:i] {return other,f.path,true}
-                continue
-            }
-            folders[lower[:i]]=f.path[:i]
-        }
-        held[lower]=f.path
     }
     return
 }

@@ -208,9 +208,22 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
         return folder_decode(b,folder_totals,&out)
     },"a folder",versioned=false)
     out:=make([dynamic]Tree_Entry,context.temp_allocator)
-    folded:=[]Tree_Entry{{name="A",kind=.File,address={0=1},size=1,files=1},{name="a",kind=.File,address={0=2},size=1,files=1}}
-    folded_bytes,folded_totals,_:=folder_encode(folded,context.temp_allocator)
-    testing.expect_value(t,folder_decode(folded_bytes,folded_totals,&out),Error.Corrupt)
+    // Names that differ only in case, side by side in byte order or apart ("Ab" < "B" < "aB").
+    f,opened:=fixture(t,"kai-hostile-fold")
+    if !opened {return}
+    defer store.close(&f.s)
+    for names in ([?][3]string{{"A","a","b"},{"Ab","B","aB"},{"\u00c9t\u00e9","b","\u00e9t\u00e9"}}) {
+        folded:=[3]Tree_Entry{}
+        for name,k in names {folded[k]={name=name,kind=.File,address={0=u8(k+1)},size=1,files=1}}
+        folded_bytes,folded_totals,_:=folder_encode(folded[:],context.temp_allocator)
+        testing.expectf(t,folder_decode(folded_bytes,folded_totals,&out)==.Corrupt,"%v decodes",names)
+        files:=[3]File{}
+        for name,k in names {files[k]={path=name,kind=.File,address=empty_address()}}
+        slice.sort_by(files[:],proc(a,b:File) -> bool {return a.path<b.path})
+        clash:[2]string
+        _,e:=tree_build(&f.s,files[:],&clash)
+        testing.expectf(t,e==.Invalid_Argument && clash[0]!="" && strings.equal_fold(clash[0],clash[1]),"%v builds: %v %v",names,e,clash)
+    }
 
     index:Stat_Index
     index.rows=make([dynamic]Stat_Row,context.temp_allocator)
