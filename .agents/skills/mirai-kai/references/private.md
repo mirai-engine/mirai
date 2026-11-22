@@ -22,10 +22,10 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
   published.
 - A change holds the overlay written for its own commit or, before it has one, its first parent's.
   Every rewrite (a snapshot, describe, rebase, split, the descendants it moves) carries the
-  overlays to the new commit in its operation's commit, and a restore those of the change it
-  restores from, by signing a new record over the same sealed tree and objects, so it needs no
-  key and encrypts nothing again: a device that does not read a scope carries its records all the
-  same and never leaves a rewritten change without them.
+  overlays to the new commit in its operation's commit, a restore those of the change it restores
+  from and a new change its parent's, by signing a new record over the same sealed tree and
+  objects, so it needs no key and encrypts nothing again: a device that does not read a scope
+  carries its records all the same and never leaves a rewritten change without them.
 - A reader's working copy shows the private files of the scopes its device reads: a switch writes
   those of the change it moves to, and removes the ones the change it left held and that still hold
   what that change had, so a local edit is never deleted. A scope the device may no longer read

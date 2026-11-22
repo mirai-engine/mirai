@@ -722,7 +722,7 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
 // Every other rewrite (describe, abandon of a parent, rebase) carries the
 // change's private files onto what it writes in its one operation, those of
 // a scope the device that rewrites does not read too; a restore gives it
-// those of the change it restores from.
+// those of the change it restores from, and a new change its parent's.
 @(test)
 a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     f,ok:=fixture(t,"kai-split");if !ok {return}
@@ -891,18 +891,19 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     testing.expect_value(t,repo_refresh(&b.repo),Error.None)
     held:=report.revision
     testing.expect_value(t,private_at(t,&f.s,&kf,&kv,&alice,&bob,held),want)
-    Rewrite_Kind :: enum {Describe,Restore,Abandon_Parent,Rebase}
+    Rewrite_Kind :: enum {New,Describe,Restore,Abandon_Parent,Rebase}
     for kind in Rewrite_Kind {
         before_view:=b.repo.view_address
         e:Error
+        rewritten:Revision
         switch kind {
+        case .New: rewritten,e=change_new(&b.repo,{held},"next")
         case .Describe: _,e=change_describe(&b.repo,held,"described")
         case .Restore: _,e=change_restore(&b.repo,held,first)
         case .Abandon_Parent: e=change_abandon(&b.repo,first)
         case .Rebase: _,e=change_rebase(&b.repo,held,{origin})
         }
         if !testing.expectf(t,e==.None,"%v: %v",kind,e) {return}
-        rewritten:Revision
         o,_:=op_get(&f.s,b.repo.op,context.temp_allocator)
         for rw in o.rewrites {
             if rw.from==held {rewritten=rw.to}

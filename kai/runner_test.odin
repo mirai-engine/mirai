@@ -193,7 +193,7 @@ join_ended :: proc(b:^Box,data:rawptr) -> bool {
 // refused. Then a change Alice snapshots and bookmarks arrives on Bob's
 // machine with its whole closure, and an encrypted overlay arrives and opens
 // for Bob, a reader of its scope, and for no other key, as it does on what
-// Alice's describe, restore and rebase of the change write. Once Alice removes
+// Alice's new, describe, restore and rebase of the change write. Once Alice removes
 // Bob, his machine is disconnected and gets nothing newer.
 @(test)
 two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
@@ -336,8 +336,9 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
     }
 
     // What each rewrite of alice's writes holds the change's private file (a restore, the one of
-    // the change it restores from), and bob, told of its record, opens the same bytes there. Each round folds again what box_until let go.
-    Rewrite_Kind :: enum {Describe,Restore,Rebase}
+    // the change it restores from; a new change, its parent's), and bob, told of its record,
+    // opens the same bytes there. Each round folds again what box_until let go.
+    Rewrite_Kind :: enum {New,Describe,Restore,Rebase}
     held:=commit
     for kind in Rewrite_Kind {
         ao:Org_State
@@ -348,6 +349,7 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
         rewritten:Revision
         re:Error
         switch kind {
+        case .New: rewritten,re=change_new(&w.repo,{held},"next")
         case .Describe: rewritten,re=change_describe(&w.repo,held,"described")
         case .Restore: rewritten,re=change_restore(&w.repo,held,commit)
         case .Rebase: rewritten,re=change_rebase(&w.repo,held,{g.revision})

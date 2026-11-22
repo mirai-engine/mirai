@@ -388,13 +388,18 @@ tx_commit :: proc(tx:^Tx,kind:Op_Kind,description:string,undone:=store.Hash{},pa
     return graph_extend(&r.graph,r.s,r.view.heads[:])
 }
 
-// A new change in the transaction: its revision.
+// A new change in the transaction: its revision. It takes the overlay
+// records of its first parent that has one.
 change_create :: proc(tx:^Tx,parents:[]Revision,tree:store.Hash,description:string,id:=Change_Id{},created:=i64(0)) -> (revision:Revision,error:Error) {
     now:=time.now()._nsec
     c:=Change{id=id,tree=tree,author=tx.r.identity.key,created=created,written=now,parents=parents,description=description}
     if c.id==({}) {c.id=random_id(Change_Id)}
     if c.created==0 {c.created=now}
-    return change_put(tx.r.s,&c,&tx.r.identity)
+    revision=change_put(tx.r.s,&c,&tx.r.identity) or_return
+    for p in parents {
+        if _,e:=append(&tx.carries,Rewrite{p,revision});e!=nil {return {},.Out_Of_Memory}
+    }
+    return
 }
 
 // Makes identity the author of c, which another key may have signed: that
