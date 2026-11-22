@@ -36,3 +36,7 @@ primitive, for example `render.debug_line(draw, from, to, {1,1,0,1})`. Lines, ra
 spheres, arrows and crosses share the renderer's depth-tested debug line pass. A primitive
 draws once by default. Pass `duration` in frame seconds to keep it visible longer. The request
 returns false if the bounded queue is full or the duration is invalid.
+
+A direction that belongs to an entity (where a sun shines, where a spawn point faces) is an
+`render.Arrow` component instead: a solid arrow the editor always shows and the game draws only
+with `in_game` on.

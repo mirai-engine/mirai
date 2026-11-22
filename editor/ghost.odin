@@ -212,6 +212,9 @@ ghost_draw :: proc(s:^Session,w:core.World_Ref) {
             host.extras_instance_add(&s.app.extras,instance)
         }
     }
-    if len(p.parts)==0 {gpu.debug_circle(&v.lines,point,{0,1,0},GHOST_MARKER,GHOST_COLOR,32)}
+    if len(p.parts)==0 {
+        surface:=d.kind==.Preset && cards(s)[d.card].surface && hit.entity!=core.NONE && !hit.indicator
+        gpu.debug_circle(&v.lines,point,surface?hit.normal:[3]f32{0,1,0},GHOST_MARKER,GHOST_COLOR,32)
+    }
     host.assets_commit(s.app.assets)
 }

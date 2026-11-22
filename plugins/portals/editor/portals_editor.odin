@@ -44,7 +44,7 @@ portals_cards_default :: proc() -> (cards:Portals_Cards) {
 @(storage)
 Portals_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
-// The opening of each selected portal, the side it shows (+Z), and the way to its exit.
+// The opening of each selected portal and the way to its exit; its Arrow shows the side it shows.
 @(step="frame")
 portals_gizmo :: proc(s:^editor.Session,gizmo:^Portals_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,portal:portals.Portal) {
@@ -65,7 +65,6 @@ portals_gizmo :: proc(s:^editor.Session,gizmo:^Portals_Gizmo,app:^host.App) {
                 erender.debug_line(lines,mm.transform_point(placed,corner),mm.transform_point(placed,corners[(i+1)%4]),color)
             }
         }
-        erender.debug_arrow(lines,placed.position,placed.position+mm.quat_rotate(placed.rotation,[3]f32{0,0,1})*0.75,color)
         if !portal.mirror && editor.entity_alive(w,portal.exit) {
             erender.debug_arrow(lines,placed.position,editor.entity_world(w,portal.exit).position,color,0.3)
         }

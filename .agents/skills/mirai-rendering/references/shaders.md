@@ -91,8 +91,9 @@
   line, the manifest names it and `render/shaders_gen.odin` gives it as `<STAGE>_<NAME>`
   (`REFLECT_COMP_COLOR`). The renderer has one `Pipeline_Id` per stage: a pass asks
   `pipeline_of` for the stage with its constants. The renderer starts with the pipelines of the
-  tracer in use without constants and with the sets the settings select (`variants_listed`); the
-  other sets go to the pipeline thread behind what frames ask for. A frame does not wait for one
+  tracer in use without constants and with the sets a pass has no stage to fall back to (listed
+  in `pipelines_list`); the sets that only spare work go to the pipeline thread after it starts
+  (`pipeline_variants_ask`), or without one to the frame that asks. A frame does not wait for one
   being made (unless the renderer has no `pipeline_thread`): it takes the stage without the
   constants that only spare work or degrade (`optional`: `unlayered`, `color`), or skips the
   pass, with `Stats.problem`. One the device refuses is not asked for again until the shaders

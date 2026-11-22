@@ -5,13 +5,14 @@
 struct Params_Block {
     float2 viewport;  // of the output, in pixels
     uint depth_test;  // 1: lines are hidden behind the scene
-    uint pad;
+    uint triangles;   // 1: shaded by how much they face the view
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 
 struct Stage_Input {
     [[vk::location(0)]] float4 in_color : TEXCOORD0;
     [[vk::location(1)]] float in_depth : TEXCOORD1;
+    [[vk::location(2)]] float3 in_view : TEXCOORD2;
     float4 pixel : SV_Position;
 };
 struct Stage_Output {
@@ -20,7 +21,11 @@ struct Stage_Output {
 [shader("fragment")]
 Stage_Output main(Stage_Input input) {
     Stage_Output output;
+    // The derivatives go before the discard, while the quad is whole.
+    float3 normal = cross(ddx(input.in_view), ddy(input.in_view));
+    float facing = abs(dot(normal, input.in_view)) / max(length(normal) * length(input.in_view), 1e-20);
     if (params.depth_test != 0u && overlay_occluded(scene_depth, input.pixel.xy / params.viewport, input.in_depth)) discard;
     output.out_color = input.in_color;
+    if (params.triangles != 0u) output.out_color.rgb *= lerp(0.45, 1.0, facing);
     return output;
 }
