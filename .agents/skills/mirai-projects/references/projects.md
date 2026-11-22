@@ -1,841 +1,340 @@
 # Projects, plugins and build
 
-Targets, jobs, fingerprint, project shaders, cooking and shipped game (`cook/build`):
-[build](build.md).
+Build targets, jobs, fingerprint, shaders, cooking, and shipping (`cook/build`): [build](build.md).
 
 ## Layout
 
 ```text
 <project>/
-  project.mirai     manifest: what makes the folder a project
-  settings.mirai    project settings, the bindings in Input_Settings: what differs (optional)
-  cook.mirai        cooking roots that no scene names (optional)
-  packages.mirai    the packages of the machine store the project uses, by the hash of their
-                    manifest, and the folder each is listed in (optional; a plugin may have one)
-  packages/         <package id>.mirai: the text of each manifest packages.mirai pins (settings,
-                    origin and asset ids), so a clone has them without the store
-  assets/           assets, by theme: what is authored, the art sources beside what they make,
-                    and the documents their imports write
-  game/             game library of the project
-  editor/           editor package of the project (engine-time)
-  plugins/<name>/   plugin.mirai, runtime/, editor/, shaders/, assets/
-  shaders/          own Slang programs
-  panels/           editor panels built by the chat agent (engine-time)
-  tests/scenarios/  gameplay tests the editor plays (`mirai play test`), optional
-  .mirai/           generated; not edited or versioned
-    gen/            generated packages: the worlds and the root of each target
-    plugins/        libraries of the engine plugins, with their stages and declarations
-    editor<ext>     library of mirai-editor and of the players it opens; play<ext>, that of
-                    mirai-player
-    *-live-<pid>-*  copies each process loads; they delete themselves
-    game/           shipped game, if no other folder is requested
-    shaders/        shader generation of the project
-    build/          files of the jobs, sources and fingerprint of the last build per target
-    cache/          machine caches (asset registry, textures, built meshes, compressed .anim)
-    share/          what sharing keeps on this machine: the last snapshot joined, the index of
-                    the files and the name of the offer (sharing a project, below)
-    thumbs/         views of scenes the editor took
+  project.mirai       project manifest (required)
+  settings.mirai      project/machine settings overrides (optional)
+  cook.mirai          extra cooking roots (optional)
+  packages.mirai      pinned store package manifests + folders (optional)
+  packages/           <package id>.mirai texts pinned by packages.mirai
+  assets/             authored assets, art sources, import documents
+  game/               runtime game library
+  editor/             engine-time editor package
+  plugins/<name>/     plugin.mirai, runtime/, editor/, shaders/, assets/
+  shaders/            custom Slang programs
+  panels/             chat-built editor panels (engine-time)
+  tests/scenarios/    mirai play test scenarios (optional)
+  .mirai/             generated (git-ignored): gen/, plugins/, editor<ext>, play<ext>,
+                      *-live-<pid>-*, game/, shaders/, build/, cache/, share/, thumbs/
 ```
 
-The first-party plugins are in `<engine>/plugins/<name>/` with the same shape; the engine binaries,
-in `<engine>/.mirai/engine/<dev|release>/` ([below](#engine-binaries)). The names come from
-`project.FOLDER_NAMES`, `project.PART_NAMES` and the constants of `project/project.odin`.
+First-party plugins live in `<engine>/plugins/<name>/`; engine binaries in
+`<engine>/.mirai/engine/<dev|release>/`. Constants: `project/project.odin`.
 
 ## Manifests
 
-`project.Manifest` and `project.Plugin_Manifest` (`project/manifest.odin`, with the meaning of each
-field) are written as JSON by the schema of the struct (`std/serial`): enums by name, `bit_set` as a
-list of members, a list of names as a list of strings that replaces the whole one. A missing field
-keeps its default; one the struct does not have is an error.
+`project.Manifest` and `project.Plugin_Manifest` (`project/manifest.odin`) serialize via
+`std/serial` JSON schema (enums by name, `bit_set` as string list, missing fields use defaults,
+unknown fields error).
 
-- `build.optimization` and `build.debug` apply to the `editor` and `play` libraries; the shipped
-  game always compiles at `-o:speed` and the engine binaries always carry `-debug`.
-- `version` and `identifier` are those of the game: the player gives them to the system with the
-  title (`SDL_SetAppMetadata`). `icon` is a PNG relative to the project: the player puts it on its
-  window and the shipped game carries it at the same path. `thumbnail`, another PNG relative to the
-  project, is the image the [project list](../../mirai-editor/references/panels.md#projects)
-  shows it with; it does not go into the shipped game.
-- The `section=` tags of `Manifest` build the Game, Window and Build sections of the Project
-  category of the
-  [settings dialog](../../mirai-editor/references/panels.md#project-settings); `plugins` and
-  `sources` are `hidden` because the Plugins category edits them.
-- `sources`: the plugins of `plugins/` that come from git, each at a full commit; `catalog` marks
-  one installed from the catalog, which updates itself to the commit the catalog lists. Its folder
-  is a checkout that the project repository ignores; `mirai plugin` and the Plugins category write
-  it ([git plugins](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
-- `test_dependencies`: plugins that its tests import besides its dependencies; they are never
-  activated with it
-  ([imports](../../mirai-plugins/references/plugins.md#dependencies-and-compatibility)).
-- `asset_kinds`: the kinds of asset a plugin adds, its one declaration of them: each by its
-  extension, the four letters its files begin with (`kind`), the `version` of its files
-  ([versions](../../mirai-assets/references/formats.md#versions)), whether it is a document git
-  merges and diffs ([git and assets](../../mirai-assets/references/cli.md#git)) and how the editor
-  shows it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A
-  build writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it),
-  with `<STEM>_KIND`, `<STEM>_EXTENSION` and `<STEM>_VERSION` for each `.stem`; git keeps the
-  file, so the plugin tests without a build. `program_uses` says what its assets draw the
-  programs of the materials they depend on as, directly or through their meshes
-  ([program uses](../../mirai-rendering/references/shaders.md#programs-and-stages)).
-- `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
-  repository with LFS keeps them in it as it keeps the sources of the engine's formats
-  ([git and assets](../../mirai-assets/references/cli.md#git)).
-- `build.compression`: the compression of shipped assets. Leave it empty for MDC2 or use
-  `none` to store the assets without a data codec
-  ([asset cooking](build.md#asset-cooking)).
-- `development`: a tool for making the game (`profiler`, `tracy`). It goes into the `editor` and
-  `play` libraries; the shipped game is generated with `shipped_world`, the world without them, and
-  if its code reaches them the build fails with `Engine_Time_Code`.
-- `automatic`: a bridge between plugins, active exactly when all its dependencies are, after them;
-  no project names it. A project that names `physics`, `destruct` and `multiplayer` adds only
-  `destruct_multiplayer`. The editor's plugin lists do not show it.
-- `icon` of a plugin: a PNG relative to its folder, with `/`, which the editor's plugin lists show
-  next to its name (cropped to the center square, in a small cell of the preview atlas); without it
-  or if it cannot be read, the generic icon. One from the catalog that is not installed uses the
-  PNG of its entry
-  ([catalog](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
-- `project.Error` carries an `Error_Code` (its comment says what `subject` is in each), the plugin
-  if the error is in its manifest and, for `.Text`, the line, the column and `detail`.
-  `error_text` writes it for whoever fixes it: the CLI and the editor use it.
-- `manifest_merge` puts on a manifest the fields a JSON object brings and validates it: what
-  `project.set` uses ([catalog](../../mirai-agent-api/references/methods.md#project)).
+- **Project fields:** `version`/`identifier` (`SDL_SetAppMetadata`), `icon` (shipped PNG),
+  `thumbnail` (project list PNG), `start_scene`, `plugins`, `sources` (git-pinned plugins at full
+  commit; `catalog` tracks catalog commit; managed by `mirai plugin`), `window`, `build`
+  (`optimization`/`debug` for `editor`/`play`; shipped game always `-o:speed`; `compression` empty
+  = MDC2 or `"none"`). `section=` tags drive settings dialog (`plugins`/`sources` are `hidden`).
+- **Plugin fields:** `dependencies`, `test_dependencies` (test-only imports, never auto-active),
+  `parts`, `development` (omitted from `shipped_world`; reaching it fails `Engine_Time_Code`),
+  `automatic` (auto-activates when all dependencies are active; forbidden in `project.mirai`),
+  `icon` (<=128 px PNG), `import_sources` (LFS extensions), `asset_kinds` (writes tracked
+  `kinds_gen.odin` with `<STEM>_KIND`/`_EXTENSION`/`_VERSION`; `program_uses` declares material
+  shader uses).
+- **Errors & merge:** `project.Error` carries `Error_Code`, `plugin`, `subject`, and `.Text`
+  `line`/`column`/`detail`; `error_text` formats for CLI/editor. `manifest_merge` applies partial
+  JSON (`project.set`).
+
+```json
+{
+  "name": "MyGame",
+  "version": "0.1.0",
+  "start_scene": "main.scene",
+  "plugins": ["physics", "multiplayer"],
+  "window": {"title": "My Game", "mode": "Windowed", "width": 1280, "height": 720},
+  "build": {"optimization": "Speed", "debug": false, "defines": [], "compression": ""}
+}
+```
+
+```json
+{
+  "name": "my_plugin",
+  "version": "0.1.0",
+  "dependencies": ["physics"],
+  "parts": ["Runtime", "Editor"]
+}
+```
 
 ## Project settings
 
-A **setting** is a `@(storage,setting)` storage of an engine library, of an active plugin or of the
-game ([attributes](../../../../docs/ARCHITECTURE.md#the-generated-world)). A **machine setting**,
-`@(storage,setting="machine")`, is a preference of whoever uses the engine on this machine (the
-graphics quality), not a design datum of the game. A settings file has one section per setting,
-with the name of the type and the schema of the manifests.
+`@(storage,setting)` stores project settings; `@(storage,setting="machine")` stores machine
+preferences. Layered bottom to top (`SETTINGS_FROM_TOP`: `.Player`, `.Project`, `.Engine`):
 
-- Layers, from bottom to top:
-  1. the values from code: the default `NAME_DEFAULT` of each storage or, with a GPU device,
-     `name_for_device(device:rhi.Device_Info)` if the package declares it
-     (`Storage_Info.for_device`, which `host.app_settings` leaves in `project.Setting.base`);
-  2. `settings.mirai` in `machine_folder(engine root)`, the `.mirai` of the main checkout of the
-     engine (`shared_root`): the machine settings on this machine, outside git, the same for all
-     worktrees of the engine;
-  3. `<project>/settings.mirai`: any setting, also the machine ones (a project can fix its
-     quality);
-  4. in the player, `settings.mirai` of the player's options (layer `.Player`, in `App.options`,
-     `<user data>/Mirai/<project>`): only machine settings, the ones the player chose (the
-     bindings too); `host.app_options_save` writes it with what differs from the layers below,
-     when it rests after a change ([options](../../mirai-gameplay/references/libraries.md#save)).
-- The engine file only reads and writes machine settings, so a design datum does not pass from one
-  project to another with a type of the same name: a section of a project setting there is not
-  applied, it is kept and the editor warns on load (`settings_misplaced`).
-- Each file stores only what differs from the layers below, field by field (an array of entries,
-  up to the last that differs). An array tagged `keyed`, of structs whose first field is a text
-  that names each entry, is layered by those names: a file holds the entries that differ from the
-  one with their name below, and reading it replaces those whole and keeps the others. When
-  reading, a field the type does not have is omitted; when writing, the sections that no setting
-  names (of an inactive plugin) are kept.
-- `host` applies the layers to the `World` settings when creating each world and to the `Shared`
-  ones when creating the application (`host.app_settings`); the editor and the development player
-  receive the engine root ([installed engine](#installed-engine), through
-  `project.engine_root_find`).
-- The shipped game has no engine: `mirai build game` writes next to the executable a
-  `settings.mirai` that combines the machine sections of the engine file (the ones
-  `Generated.machine_settings` names) and the project file. If a file is not valid JSON, the build
-  fails with `Settings_Invalid` and names file, line and column.
-- API of `project`:
-  - `Setting{name, info, value, default, machine}` and `Settings_Layer` (`.Project`, `.Engine`,
-    `.Player`, with the player's folder in `player`); `SETTINGS_FROM_TOP` gives their order.
-  - `shared_root(root)` is the main checkout of a git worktree (it reads `.git`, `gitdir:` and
-    `commondir`; the root itself if it is not a worktree) and `machine_folder(engine_root)`, its
-    `.mirai`: where the engine stores what belongs to the machine (the engine layer, the
-    [editor preferences](../../mirai-editor/references/panels.md#preferences)).
-  - `settings_file(layer, root, engine_root)` gives the path of a layer, `settings_under(layer)`
-    the layers below it and `settings_held(settings, layer)` the settings its file stores.
-  - `settings_load(settings, root, engine_root, layers)` applies the requested layers;
-    `settings_save(settings, layer, root, engine_root)` writes one;
-    `settings_merge(root, engine_root, machine)` gives the combined text the shipped game carries;
-    `settings_misplaced(settings, root, engine_root)` names the sections of project settings the
-    engine file has.
-  - Lower level: `settings_parse(text, settings)`, `settings_read(path, settings)` (a file that
-    does not exist leaves the values), `settings_default`, `settings_clone`,
-    `settings_text(settings, below, kept)` and `settings_write(path, settings, below)`.
-  - `Rest` writes a file a while after the last change to what it holds, once for a burst of
-    changes: the options and the profile of the player, and the editor preferences, use it.
-- In the editor, File > Project settings shows them with the rows of the Details panel and stores
-  each change in the chosen layer
-  ([dialog](../../mirai-editor/references/panels.md#project-settings)); through the API,
-  `settings.get` and `settings.set`.
-- The defaults are exposed in the [reflection of the generated
-  world](../../mirai-core/references/generator.md#changing-the-generator); the inspector uses them
-  to revert each property.
+1. Code defaults (`NAME_DEFAULT` or GPU `name_for_device` -> `Setting.base`).
+2. `machine_folder(engine_root)/settings.mirai` (`shared_root` `.mirai`, shared across worktrees;
+   machine settings only — project sections there warn via `settings_misplaced`).
+3. `<project>/settings.mirai` (any setting).
+4. Player `<user data>/Mirai/<project>/settings.mirai` (`.Player`, machine settings + bindings via
+   `host.app_options_save`).
 
-Settings of the engine and its plugins:
+- Files store only diffs against lower layers; `keyed` struct arrays layer by first text field.
+  Unknown fields are ignored on read; inactive-plugin sections are preserved on write.
+  `MIRAI_NO_MACHINE_SETTINGS` skips `.Engine` layer.
+- Shipped games merge `.Engine` machine sections + `.Project` (`settings_merge`); malformed JSON
+  fails with `Settings_Invalid`.
+- **API (`project`):** `Setting`, `Settings_Layer`, `shared_root`, `machine_folder`,
+  `settings_file`, `settings_under`, `settings_held`, `settings_load`, `settings_save`,
+  `settings_merge`, `settings_misplaced`, `settings_parse`/`read`/`default`/`clone`/`text`/
+  `write`, `Rest` (debounced writer). Editor UI: File > Project settings; API: `settings.get` /
+  `settings.set`.
+- **Built-in settings:** `Graphics_Settings` (machine), `Display_Settings` (machine),
+  `Audio_Output` (machine), `Input_Settings` (machine, keyed), `Particle_Settings`,
+  `Physics_Settings`, `Net_Settings` (`Shared`), `Spawn_Settings`.
 
-- `Graphics_Settings` (`render`, machine): renderer quality, with a default according to the GPU,
-  frame limit, VSync and the game's FPS counter
-  ([graphics](../../mirai-editor/references/panels.md#graphics)).
-- `Particle_Settings` (plugin `vfx`): live particles at once across all emitters.
-- `Physics_Settings` (plugin `physics`): capacities, substeps and gravity; read when its world is
-  created.
-- `Display_Settings` (`render`, machine): mode, size and screen of the player's window over those
-  of `project.mirai`.
-- `Audio_Output` (`audio`, machine): the sound output by its name.
-- `Net_Settings` (plugin `multiplayer`, `Shared`): port, protocol, version, capacities and
-  tolerances.
-- `Spawn_Settings` (plugin `spawn`): `prefab`, the player prefab, of which each player that has
-  no body gets one at a spawn point; none, and no point with one, the game gives them a body.
-- `Input_Settings` (`engine/input`, machine): the bindings of the actions the project or the
-  player changed, a keyed entry per action
-  ([actions](../../mirai-gameplay/references/control.md#actions)).
+```odin
+import "mirai:project"
+
+p, err := project.open(".", project.engine_root_find("."))
+if err.code != .None {return}
+defer project.close(&p)
+
+layers := project.settings_layers_of_process()
+_ = project.settings_load(settings, p.root, p.engine_root, layers)
+_ = project.settings_save(settings, .Project, p.root, p.engine_root)
+```
 
 ## The `project` package
 
-`open(root, engine_root)` reads `project.mirai`, discovers the plugins and orders the active ones;
-the `Project` owns everything it points to.
+`open(root, engine_root)` reads `project.mirai`, validates all plugins in `<root>/plugins/` and
+`<engine_root>/plugins/` (even inactive ones; missing/undeclared part folders error), and
+topologically orders `active` plugins (dependencies first; inactive cycles ignored).
 
-- **Discovery**: a plugin is a subfolder of `<root>/plugins/` or `<engine_root>/plugins/` with
-  `plugin.mirai`; the others are ignored. The inactive ones are also validated: a broken manifest
-  or a part declared without a folder (or a folder not declared in `parts`) is a project error.
-- **Order**: `active` are the plugins the project names and their dependencies, each after its own
-  and, apart from that, in the project's order. A cycle between inactive plugins is not an error.
-- The caches of `.mirai/cache` (`cache_path`) and `.mirai/thumbs` cost only time if deleted: the
-  [registry](../../mirai-assets/references/formats.md#registry), the
-  [compressed animations](../../mirai-core/references/host.md#content) and the
-  [previews](../../mirai-editor/references/panels.md#previews) are made again, and the
-  [capacities](../../mirai-rendering/references/frame-graph.md#passes) of the scenes are learned
-  again, with holes the first time a list fills.
-- **A cache never makes a valid asset fail.** An entry is keyed on everything it depends on (the
-  formats and versions of what wrote it), and every read checks it against the asset: one that
-  does not read or does not match, as one an older build left in a copied project, is made again
-  from the asset and written over.
-- `shader_generation(root)` is where a build publishes the shader generation;
-  `shader_generation_find(root)` gives the one a run loads (that one, or `<root>/shaders` of a
-  shipped game).
-- `user_folder(root)` resolves the project's per-user saves, player options and pipeline cache
-  by its manifest name, under the Mirai folder in the system's user data directory.
+- Deleting `.mirai/cache` (`cache_path`) or `.mirai/thumbs` costs only rebuild time. Caches key on
+  format/version and self-heal on mismatch: **a cache never makes a valid asset fail**.
+- `shader_generation(root)` / `shader_generation_find(root)` locate published or shipped shaders;
+  `user_folder(root)` resolves per-user saves/options/pipeline cache.
 
 ## Which packages go in
 
-The [generator](../../mirai-core/references/generator.md) reads `core`, `engine/**`, the `runtime/`
-of each active plugin and `game/` for the game and the editor; the engine's `editor/`, that of each
-active plugin and that of the project, only for the editor. The collections are `project:game`,
-`project:editor`, `project:plugins/<n>/<part>` and, for the engine plugins,
-`plugins:<n>/<part>`.
+Generator scans `core`, `engine/**`, active plugin `runtime/`, and `game/` for game+editor;
+`editor/`, active plugin `editor/`, and project `editor/` for editor only. Collections:
+`project:game`, `project:editor`, `project:plugins/<n>/<part>`, `plugins:<n>/<part>`, `generated`
+(`.mirai/gen`), plus `-custom-attribute:`.
 
-- A folder goes in if it has some `.odin` that is not `_test.odin` and, in a plugin, if its `parts`
-  declares it. Each subfolder with sources is a package, except those starting with `.` and
-  `testdata`.
-- A runtime package never imports an `editor/`: the game build checks it
-  ([exclusion](build.md#exclusion-guarantee)).
-- In the shipped game `mirai` is `<engine>` and `plugins`, `<engine>/plugins`; in the libraries,
-  `mirai` is the `decl/` of the engine binaries and `plugins`, the declarations of the plugin
-  libraries. Every build adds `generated` (`.mirai/gen`) and the generator's `-custom-attribute:`.
+- Folders need at least one non-`_test.odin` file (skipping `.*` and `testdata`); plugin folders
+  must be declared in `parts`.
+- Shipped `game` maps `mirai`/`plugins` to sources; library builds map them to `decl/` and plugin
+  decls. Runtime packages never import `editor/` ([exclusion](build.md#exclusion-guarantee)).
 
 ## Plugin libraries
 
-`cook/build/plugins.odin`. Each part (`runtime`, `editor`) of an active plugin, of the engine or of
-the project, is a library of its own with all its packages, and so are the project's `game/` and
-`editor/`; one per optimization (`minimal` in dev, the manifest's otherwise), so switching
-from one to the other compiles nothing. The library of the project is the generated world alone: a
-change inside a procedure of the game compiles the game library and links the world again; a
-changed declaration of the game compiles the world too.
+`cook/build/plugins.odin`. Every active plugin part (`runtime`, `editor`), plus project `game/` and
+`editor/`, compiles into its own shared library per optimization (`minimal` in dev, manifest's
+otherwise); the project library holds only the generated world.
 
-- The library goes to `project.PLUGIN_LIBRARIES` with the name those who link it look for
-  (`@rpath/`, `soname` or the `LIBRARY` of the import library):
-  `plugin-<name>-<part>-<optimization>-<fingerprint>`, `project-<...>-<optimization>-<fingerprint>`
-  for the project's (`plugin_library_name`). A build that changes it publishes it under another
-  name, so an editor that loaded the previous one loads the new one next to it; those of its
-  family that are no longer the current one are deleted when nobody has them loaded.
-  `project.PLUGIN_LIBRARIES` is the folder of all of them.
-- Under `plugins/<optimization>/`: `decl/<name>/<part>` the declarations of the engine plugins
-  (`build.declare`, prefix `plugins.`), the collection `plugins`, and `decl-project/` those of the
-  project (prefix `project.`), the collection `project` of the world; `stage-<id>/` the copy a
-  library is compiled from, as the collection `staged`, beside its declarations and at their
-  depth: its packages import each other through it and every other package is its declarations;
-  `<id>.stamp` the fingerprint of the last build. Each package also writes what it declares and
-  names, so a part is keyed, as the engine libraries are, on the declarations its sources name of
-  the engine and of the parts before it (one index), with the names of the libraries it links.
-- The declarations copy the body of `#force_inline`, generic or `where` procedures and declare the
-  others as functions of the library, the private ones
-  [only when named](#engine-binaries). An `@(private="file")` one is private in the declarations
-  file and exported with the name of its file (`mirai.<package>.<file>.<name>`), so a copied body
-  can call it.
-- Order: those of the engine plugins and then those of the project, each with the runtime parts in
-  the order of the plugins (dependencies first) and then the editor ones; `game/` after the runtime
-  parts of the project and `editor/` last. A part imports the runtime of its plugin (the editor
-  one) and the parts of the plugins it depends on, with its own, each with all its packages;
-  `game/` and `editor/` import every part before them that their part may.
-- Flags: those of the project library, with the same [modules](build.md#targets).
-- Currency: the fingerprint joins its sources, the declarations of the plugins it imports, the
-  hashes of the [engine declarations](#engine-binaries) those sources and declarations name, the
-  compiler and the flags. An engine change that declares the same compiles no plugin, and a
-  changed declaration compiles only the parts that name it or something that reaches it. A part
-  that names something without a hash follows every build of the engine.
-- The stale ones are declared first, in order. On Windows `declare` writes a module definition of
-  each with what it exports, and the `lld-link` Odin carries makes its import library from it
-  before anything compiles (`import_libraries_make`): every library, and the library of the
-  project, compiles at once, linking against import libraries that are already there, and links
-  without one of its own. Elsewhere a library links against the ones it needs themselves, so each
-  compiles as soon as those are published, and the project's after all. They run at once up to
-  `compilers_at_once()` (by cores and
-  free memory; `MIRAI_COMPILERS` sets it) inside a single [turn](build.md#turns-between-processes).
-  If one fails, the job kills the others.
-- Shared cache: `<main>/.mirai/cache/plugins/`, with the most recently used `PLUGIN_CACHE_ENTRIES`.
-  The fingerprint does not name the project: the sources count relative to the engine root and the
-  declarations of what it imports, relative to their folder. With the same flags, all the projects
-  of an engine and its worktrees share the libraries, and an [installed engine](#installed-engine)
-  brings its own. A stale part is declared anyway and, if the cache has its fingerprint, it is
-  copied. A project with `build.debug` does not use it: the debug information names the files of
-  the build that made it. The project's own libraries do not use it either.
-- Loading: the project library finds them by `rpath`; on Windows `host.project_library_load` tells
-  the loader the folder (`SetDllDirectoryW`). Each library is linked with its own array of
-  per-thread memory cleaners of the Odin runtime (`-unexported_symbol` on macOS, `-Bsymbolic` on
-  Linux): it is a weak symbol from a few places that the loader would share.
+- **Naming & staging:** Published to `project.PLUGIN_LIBRARIES` as
+  `plugin|project-<name>-<part>-<opt>-<fingerprint>` (old copies delete once unloaded). Under
+  `plugins/<opt>/`: `decl/`, `decl-project/`, `stage-<id>/` (`staged` collection), `<id>.stamp`.
+- **Declarations:** `#force_inline`, generic, and `where` procs copy bodies; others are foreign
+  exports. Private procs export only when referenced (`@(private="file")` exports as
+  `mirai.<pkg>.<file>.<name>`).
+- **Currency & parallel build:** Fingerprints hash sources, imported plugin decls, referenced
+  [engine declarations](#engine-binaries), compiler, and flags. Windows builds import libs upfront
+  via `lld-link` so all libraries compile in parallel; macOS/Linux compile in dependency order up
+  to `compilers_at_once()` (`MIRAI_COMPILERS`).
+- **Shared cache:** `<main>/.mirai/cache/plugins/` (`PLUGIN_CACHE_ENTRIES` LRU) shares engine
+  plugin libs across projects/worktrees when `build.debug` is false. Each library isolates Odin's
+  per-thread cleaner array (`-unexported_symbol` on macOS, `-Bsymbolic` on Linux; Windows uses
+  `SetDllDirectoryW`).
 
 ## Engine binaries
 
-`build.engine_build({engine_root, mode, defines, force})` first generates the engine shaders
-([shaders](../../mirai-rendering/references/shaders.md); if they fail, it ends with `.Shaders`) and
-compiles into `<engine>/.mirai/engine/<mode>/` each part once per version of what it is built from.
-Each mode has its folder: switching between them compiles nothing.
+`build.engine_build({engine_root, mode, defines, force})` generates engine shaders (`.Shaders` on
+failure) and compiles into `<engine>/.mirai/engine/<mode>/`.
 
-- **Defines.** A define is one value for every library of a build. The defines of a project that
-  a `#config` of an engine package reads (`engine_defines`) build its engine in
-  `<mode>-<hash of them>/`, which `edit`, `play`, `session` and the build of the project use: a
-  library compiles with the defines its own sources read, and its declarations write each
-  `#config` as the value it took, so a define compiles the library that reads it and those that
-  name what it changed, and the shared cache gives the rest. An installed engine refuses such a
-  define, and a build in an editor that runs the binaries of other defines ends with
-  `Engine_Defines`, saying which and what to run.
-- **Packages and layers.** `ENGINE_PACKAGES` (`cook/build/engine.odin`) is the only list of the
-  packages of the engine, each after the ones it imports, with its layer: the build, the shipped
-  game, the installed engine and the allocation lint read it. A layer is one of the
-  [package map](../../../../docs/ARCHITECTURE.md#package-map), and the cuts are where no import
-  goes up: what needs no renderer (`std`, `audio`, `platform`, `rhi`, `project`, `core`), the rest
-  of what a game or a plugin imports, and, engine-time, `cook` and the editor. A package goes in
-  the lowest layer that has what it imports, and a C library with the package that binds it.
-  Physics, destruction, game networking, control and cinematics are
-  [plugin libraries](#plugin-libraries).
-- **Libraries.** What is rebuilt is a library, so the mode decides the cut (`engine_libraries`).
-  Release has one library per layer: the compiler optimizes across the packages of each. Dev has
-  one per unit (`Engine_Package.unit`): a package that is edited often is a unit of its own, so
-  the body of a procedure compiles its package and nothing else, and the packages that change
-  little share one, because every library pays a compile of the Odin runtime and a link whatever
-  its size. A new package is a line in `ENGINE_PACKAGES`, among those of its layer and its unit
-  and after what it imports.
-- **Debug information.** Release builds carry it, for the crash reports of what ships. Dev builds
-  do not: it is written again with every library that compiles; `MIRAI_ODIN_FLAGS=-debug` asks
-  for it.
-- **What crosses between libraries** is what crosses to a project: calls, with the context and
-  its allocators, and data. Each library has its own Odin runtime and type table, so none looks up
-  a type of another by `typeid`
-  ([reflection](../../../../docs/ARCHITECTURE.md#the-generated-world)),
-  and a package-level variable would be one per library that reads it.
-- `decl/` has the declarations of every library, the `mirai` collection of the project libraries,
-  with the `#load` relative to each declaration so an installed engine serves them anywhere.
-  `engine.stamp` stores, of each library and of the programs, what they were built from.
-- **Declarations by name.** `declare` also writes, per package, what each declaration is and
-  which others its text names, and `engine.declared` gives each declaration the hash of itself
-  and of everything it reaches that way: a type with the types of its fields, also behind a
-  pointer, a procedure with those of its signature, a copied body with what it calls
-  (`cook/build/declared.odin`). Whoever compiles against the declarations (a library, a program,
-  a plugin part) hashes the ones its own sources name, `name.Declaration` after the name of each
-  import. A name counts wherever it is written: more is followed, never less.
-- Programs `mirai-editor` and `mirai-player`, which load the `editor` library of the project
-  ([host](../../mirai-core/references/host.md#project-libraries)), and over the editor
-  library `mirai-import`, that of `mirai import`
-  ([import](../../mirai-imports/references/imports.md#what-is-written)) and of `mirai share`
-  and `mirai join` ([sharing](#sharing-a-project)), and `mirai-author`,
-  that of `mirai ui` and `mirai scene`
-  ([documents](../../mirai-agent-api/references/api.md#mirai-ui-and-mirai-scene)): this way the
-  `mirai` tool links neither importers nor renderer and compiles before the generated shaders
-  exist.
-- **Stage and declarations.** `build.declare` reads each file with `core:odin/parser` and writes
-  the stage, with each procedure exported as `mirai.<package>.<name>`, and the declaration: types
-  and constants as they are, generic, `inline`, `where`, `defer` or `deferred_*` procedures and
-  those with an `any` in their signature (`..any`, `[]any`) with their body (they are compiled in
-  the caller: an `any` carries a typeid that only the caller's type table knows, so `fmt` in the
-  library would print an enum or a struct of a plugin as nothing) and the rest `foreign` towards
-  the library. A private procedure is declared and exported only when the text of the declarations
-  of its package names it (a copied body or value, a default value of a declared procedure): no
-  other package can call it, so changing one that is not named changes no declaration. Nothing
-  of the engine is recompiled with what uses it. It writes only the files whose text changes.
-- **Currency by parts.** A library is recompiled by its sources (without `_test.odin`; in release
-  the one with `render` also by `shaders/build/manifest.json`, the hash of the code it embeds; in
-  dev only by `render/shaders_gen.odin`, which says what the stages bind and not their code) or by
-  a change in the declarations of other libraries that its sources name; the
-  programs, by the compiler, the flags or the declarations they name. A change in the body of a
-  procedure compiles its library and nothing else; a new declaration, nothing that does not name
-  it. The libraries whose sources changed are declared first, all of them, so what every part
-  compiles against is known before any compiles; then the stamp zeroes what is about to compile,
-  so a build that stops halfway leaves those parts for the next one, and the compilers run at
-  once (`compilers_at_once`), all of them where the import libraries are made ahead (Windows,
-  [plugin libraries](#plugin-libraries)) and elsewhere each once the libraries it links against
-  stand. `stage/` is what
-  the libraries compile from, as the collection `staged`: the packages of a library import each
-  other through it and every other package is its declarations. A build without a stamp of its
-  version and `--force` remove the stage and the declarations.
-- **Mode.** Every command that builds or picks engine binaries is dev (everything at `-o:minimal`,
-  to check changes) unless `--release` is given (`-o:speed`, for the CPU figures and to ship)
-  (`build_mode_take`); `session restart` too. No command takes its mode from what was built before.
-  Only `package engine` is always `--release`; a game to ship is `build game --release`.
-  `build.engine_current` says whether `engine_build` would do nothing, without taking a turn or
-  writing.
-- **Shared cache.** `<main>/.mirai/cache/engine-libraries/<library>-<mode>-<fingerprint>/` stores
-  a library with its debug information, by what it is built from (its
-  sources, the compiler, the flags and the declarations it names), with the most recently used
-  `ENGINE_CACHE_ENTRIES`. `engine_build` declares what changed and copies each library the cache
-  has instead of compiling it: checkouts whose branches differ in a few packages share the rest.
-- **Platform.** The link options of SDL3 and of each binary go in a single
-  `-extra-linker-flags`, because Odin does not allow repeating it. SDL3 is copied next to the
-  programs.
-- **What each binary picks up.** `mirai edit`, `mirai play` and `mirai build editor` update the
-  engine binaries before compiling the project. `mirai build editor` then hands the `mirai
-  session` session of the project what it built (`build.start` target `built`): the libraries, as
-  below, and the shader generation, which it loads as one it published; another program that runs
-  the binaries goes on with those it started with and is named
-  ([sessions](../../mirai-agent-api/references/api.md#sessions)). A change in `game/`, the plugins
-  or the project's `editor/` asks only for the project build.
-- **Taking a build in place (dev only).** Each export of a dev engine library calls its procedure
-  through a table of its package (`Declare_Desc.slots`, `project.LIBRARY_SLOTS`), filled when the
-  library loads. A running editor loads a rebuilt library beside the one it runs and stores the
-  new table over the old one, slot by slot (`host.engine_library_swap`): the next call into the
-  library from any other runs the new code. `build.engine_swap` decides from the stamps, and the
-  editor restarts with its documents, saying why in one line, when any library that changed:
-  declares otherwise (`Library_Declared.hash`, of its `DECLARED_NAMES`: a type layout, a constant,
-  a signature, a copied body, a declaration added or removed: what another library compiled in);
-  keeps what a second copy would not share (`pinned`: a C library linked into it, a package
-  variable, `@(thread_local)` included); or when the compiler or the flags changed. Release
-  libraries have no table and call directly. What the old copy holds survives because no copy is
-  ever unloaded: procedure values stored in data (allocators, callbacks, an SDL event watch, the
-  `frame` the program passed to `editor.launch` goes through the table) and threads it started
-  (job workers, the audio feeder, the pipeline thread) go on in the code they began with and reach
-  the new one at their next call into another library; the API methods are registered again; GPU
-  objects and every world stay where they are, since an unchanged declaration is an unchanged
-  layout; its read-only tables stay readable. An `@(init)` of the new copy runs in that copy.
-- **`mirai edit` without a project**, in a folder that is not one, opens the last project if the
-  launcher asks for it (`project.Recent_Projects.open_last`) and the
-  [launcher](../../mirai-editor/references/panels.md#projects) if not.
-- **LLVM that does not finish.** A multiple assignment of a value of more than 64 bytes (restoring
-  backups at once, a `a,b=b,a` swap of storages) makes `-o:speed` spend minutes in that procedure,
-  without an error (odin-lang/Odin#7937). One value per assignment is written with the comment
-  `// One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).`, and a swap of
-  storages goes through `slice.ptr_swap_non_overlapping`. `mirai test cook/build` fails with those
-  `store`s ([workaround](../../../../docs/ODIN_WORKAROUNDS.md)), but it does not see the split
-  form. To find another case: compile with `-use-separate-modules` and inspect the compiler that
-  is left alone with `sample` or `lldb` (the LLVM values name the variable), or mark in a copy of
-  the stage the procedures of a file with `@(optimization_mode="none")` until the time drops.
+- **Defines:** Project defines read by engine `#config` (`engine_defines`) isolate binaries in
+  `<mode>-<hash>/`. Installed engines refuse them; mismatching a running editor fails
+  `Engine_Defines`.
+- **Layers & units:** `ENGINE_PACKAGES` (`cook/build/engine.odin`) orders packages bottom-up across
+  `Base`, `Engine`, `Cook`, `Editor`. Release compiles 1 library/layer; dev compiles 1 library/unit
+  (fast body-only rebuilds). Release carries debug info; dev omits it (`MIRAI_ODIN_FLAGS=-debug`).
+- **Boundary:** Each library has its own Odin runtime/type table (no cross-library `typeid` lookup;
+  no shared globals). `build.declare` exports `mirai.<pkg>.<name>`, copying generic/`inline`/
+  `where`/`defer`/`deferred_*`/any-taking procs into `decl/`, and indexes transitive hashes in
+  `engine.declared` (`cook/build/declared.odin`).
+- **Programs:** `mirai-editor`, `mirai-player`, `mirai-import` (`import`/`share`/`join`), and
+  `mirai-author` (`ui`/`scene`) keep `mirai` CLI free of renderer/importers.
+- **Mode & cache:** Dev (`-o:minimal`) by default; `--release` (`-o:speed`) when requested
+  (`package engine` always `--release`). `build.engine_current` checks without locking. Shared
+  cache: `<main>/.mirai/cache/engine-libraries/` (`ENGINE_CACHE_ENTRIES`). SDL3 flags combine into a
+  single `-extra-linker-flags`.
+- **In-place hot-swap (dev only):** Exports dispatch through `Declare_Desc.slots`
+  (`host.engine_library_swap`). `mirai build editor` pushes rebuilt libraries + shaders to the
+  open session (`build.start` `built`); `build.engine_swap` restarts the editor if decls/layouts,
+  compiler/flags, or `pinned` (C lib/globals/`@(thread_local)`) libraries changed.
+- **LLVM workaround (odin-lang/Odin#7937):** Avoid multi-assignment/swaps of >64-byte values under
+  `-o:speed` (use single stores + `slice.ptr_swap_non_overlapping`; caught by `mirai test
+  cook/build`, see [ODIN_WORKAROUNDS.md](../../../../docs/ODIN_WORKAROUNDS.md)).
 
 ## Installed engine
 
-An engine is a checkout of the repository, which compiles its binaries from the sources, or an
-**installed engine**: the folder that `mirai package engine --out <folder>` assembles, with the
-binaries already compiled and `engine.mirai` (`project.ENGINE_FILE`) at the root. It is for whoever
-makes games and does not want to compile the engine: it compiles projects and never itself. The
-workflow `.github/workflows/release.yml` assembles it on each platform with a tag
-`v<ENGINE_VERSION>`, tests it decompressed away from the checkout and attaches it to a draft
-release of the tag; run by hand, it leaves the packages as artifacts.
+Assembled by `mirai package engine --out <folder>` (CI `.github/workflows/release.yml` on tag
+`v<ENGINE_VERSION>`), marked by `engine.mirai` (`project.ENGINE_FILE`). Compiles projects, never
+itself.
 
-- **Root.** `project.engine_root_find` is the only lookup, for the CLI, the editor and the player:
-  the given one (`--engine` of the editor), `MIRAI_ROOT` or the closest folder upwards from the
-  executable or from the working one that is an engine (`engine.mirai`, or `AGENTS.md` and
-  `tools/mirai`). The CLI sets `MIRAI_ROOT` for its children.
-- **Shape.** That of a checkout, so `engine_paths`, `decl/` and their relative `#load`s (sources,
-  SPIR-V) serve the same:
-
-  ```text
-  engine.mirai           version, commit, platform, Odin and Slang it was assembled with
-  bin/mirai              the CLI, without the sh launcher: it does not need Git Bash
-  .mirai/engine/release/   libraries, programs, SDL3, decl/, engine.declared and engine.stamp
-  .mirai/cache/plugins/  libraries of the engine plugins, minimal and speed
-  .deps/                 Odin, Slang and spirv-val/opt/cross; SDL3 on Linux and macOS
-  builds/                a store with the builds of the packages its plugins pin
-  core/ engine/ ...      Odin sources without tests, plugins/, third_party/freetype already built
-  shaders/ templates/ assets/fonts/ editor/assets/ .agents/skills/ THIRD_PARTY_NOTICES.md
-  ```
-
-  It also carries the resources the declarations load at their original engine-relative paths.
-  The code of `cook/` and `tools/` lives in the binaries.
-- **Sources.** They go because the generator reads the attributes of `core`, `engine`, `editor` and
-  the plugins in their sources (`decl/` does not keep `@(step)`) and `mirai build game` compiles
-  the game from them in a single module ([shipped game](build.md#shipped-game)). The editor's agent
-  does not read them: it works in the project and sees the engine through `decl/`.
-- **What it does not do.** `engine_build` does not compile: the engine is up to date if it has all
-  its binaries and, if one is missing, it fails with `Engine_Incomplete`. It brings only the
-  `--release` binaries (`ENGINE_MODE_INSTALLED`): dev compiles the project and its plugins at
-  `-o:minimal` against them. The CLI is not recompiled, FreeType comes built and the engine shaders
-  generated. `build tools`, `worktree`, `package`, `bench`, `render` and `shaders` without
-  `--project` ask for a checkout.
-- **Plugins.** The package brings in its cache the libraries of the engine plugins for projects
-  without `defines` or `debug`, in `minimal` and `speed`. The packaged engine compiles the
-  libraries of the runtime and editor parts selected from its plugin catalog. An installed
-  engine fingerprints its compiler by size and `engine.mirai` because decompression changes its date
-  ([fingerprint](build.md#fingerprint)). With other flags they are compiled and stay in the cache.
-- **Machine state.** Settings, recent projects, preferences, caches and locks stay in
-  `<package>/.mirai`, as in a checkout: the package is portable and is decompressed into a
-  writable folder.
-- **Requirements.** The system linker, for the game code: Visual Studio Build Tools with C++ on
-  Windows, clang on Linux, Xcode Command Line Tools on macOS; `mirai doctor` checks it. The
-  binaries are not signed: on macOS the quarantine has to be removed from them.
-- **Assembling.** `mirai package engine` runs in a checkout with its dependencies in `.deps`: Odin,
-  Slang from `mirai setup slang`, the SPIR-V tools (Vulkan SDK on Windows,
-  `scripts/setup_linux_deps.py` with `VULKAN_SDK_VERSION` on Linux) and an SDL3 the package can
-  carry: that of `scripts/setup_linux_deps.py`, or on macOS that of `scripts/setup_macos_deps.py`,
-  which relocates the Homebrew one with id `@rpath` and gathers the SPIR-V tools with their
-  libraries. It compiles the engine `--release` and the CLI at `-o:speed`, copies, writes
-  `engine.mirai` and only then compiles the plugins, whose fingerprint depends on it.
-- On Windows a path of more than 260 characters is not written: the package is assembled and
-  decompressed in a short folder.
+- **Root lookup (`project.engine_root_find`):** `--engine`, `MIRAI_ROOT`, or nearest ancestor with
+  `engine.mirai` (or `AGENTS.md` + `tools/mirai`). CLI propagates `MIRAI_ROOT`.
+- **Contents:** `engine.mirai`, `bin/mirai`, `.mirai/engine/release/` (with `decl/`, stamps),
+  `.mirai/cache/plugins/` (`minimal` + `speed`), `.deps/` (Odin, Slang, SPIR-V tools, SDL3),
+  `builds/` (Final plugin package store), non-test engine/plugin sources (for generator + shipped
+  `build game`), `shaders/`, `templates/`, fonts, `.agents/skills/`, `THIRD_PARTY_NOTICES.md`.
+- **Behavior:** `engine_build` verifies presence only (`Engine_Incomplete` if missing); dev projects
+  link `-o:minimal` against `--release` engine binaries. `build tools`, `worktree`, `package`,
+  `bench`, `render`, and bare `shaders` require a checkout. Compiler fingerprints by size +
+  `engine.mirai`. Needs system C/C++ linker (`mirai doctor`); unsigned on macOS (remove quarantine);
+  keep Windows install path short (<260 chars).
 
 ## Commands
 
-`mirai <command>` without arguments gives the usage of each subcommand. The tools of an area are in
-its skill:
-[Slang and shaders](../../mirai-rendering/references/shaders.md#shader-toolchain),
+Run `mirai <command>` for usage. Area CLIs:
+[shaders](../../mirai-rendering/references/shaders.md#shader-toolchain),
 [assets](../../mirai-assets/references/cli.md),
 [imports](../../mirai-imports/references/imports.md#what-is-written),
 [images](../../mirai-agent-api/references/image.md),
 [`render check`](../../mirai-rendering/references/verification.md#render-check),
-[`bench compare`](../../mirai-agent-api/references/methods.md#profiling), `mirai texts`
-([texts](../../mirai-assets/references/kinds.md#texts)) and, for an open editor,
-[sessions](../../mirai-agent-api/references/api.md#sessions),
-[`rpc`](../../mirai-agent-api/references/api.md#mirai-rpc),
-[`mcp`](../../mirai-agent-api/references/api.md#mirai-mcp) and
-[`capture`](../../mirai-agent-api/references/api.md#mirai-capture). All pass the platform flags,
-print diagnostics as `file(line:column) Error: message` and end with 1 if a job fails.
+[`bench compare`](../../mirai-agent-api/references/methods.md#profiling),
+[`texts`](../../mirai-assets/references/kinds.md#texts), and
+[sessions/`rpc`/`mcp`/`capture`](../../mirai-agent-api/references/api.md#sessions). Diagnostics
+print `file(line:column) Error: message`; exit 1 on failure.
 
 ## Common commands
 
-The project is the current folder if omitted; for the demo pass `demo`. The compiler, Slang and the
-tools come from `.deps`, also from a worktree. Commands are written in bash (Git Bash on Windows):
-from the `mirai` root it is `./mirai`, and PowerShell, cmd and Python `subprocess` use `mirai.cmd`,
-by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine)).
+Omit `[project]` for cwd (`demo` for demo). Use `./mirai` in bash; absolute `mirai.cmd` in
+PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/needed).
 
 | Operation | Command |
 | --- | --- |
-| Create a worktree ready to build | `mirai worktree new <name> [--from <branch>]` |
-| Build and open the editor | `mirai edit [project] [--release] [--store folder] [editor arguments]` |
-| Build and run the game | `mirai play [project] [--release] [--store folder] [player arguments]` |
-| Build the editor without opening it | `mirai build editor [project] [--release] [--store folder]` |
-| Build the shippable game | `mirai build game [project] [--out folder] [--store folder]` |
-| Build its dedicated server | `mirai build server [project] [--out folder]` |
-| Build only the engine | `mirai build engine [--release] [--force]` |
-| Generate the world without building | `mirai generate [project] [--store folder]` |
-| Run the content tool of a project | `mirai content [project] [-- arguments]` |
-| Ingest a source from anywhere and add it to a project | `mirai import <file> [--project P] [--folder F] [settings]` |
-| Bring the packages a project pins to builds of this engine | `mirai import --refresh <root> [--final] [--store folder] [--from folder]` |
-| Serve a project peer to peer until stopped | `mirai share [project] [--port N] [--store S]` |
-| Receive a shared project, or update a folder joined before | `mirai join <invitation> [folder] [--address A] [--port N] [--store S]` |
-| Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
-| Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
-| Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
-| Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
-| Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |
-| Call the editor API | `mirai rpc <method> [key=value...\|json] [--select c] [--wait-until c=v] [--project P]` |
-| Capture without UI | `mirai capture [project] --out x.png [--camera NAME] [--reference r.png]` |
-| Validate demo image and cost | `mirai render check [project] [--views a,b] [--quality] [--release]` |
-| Measure the cost against main | `mirai bench compare [project] --base main` |
-| Fly a scene and find its hitches | `mirai bench flight [project] <flight> [--limit MS]` |
-| Measure compiling pipelines | `mirai bench pipelines [project] [--scene S] [--frames N]` |
-| Compare and crop images | `mirai image diff\|mottle\|stats\|montage\|crop\|zoom\|pick ...` |
-| Measure only between measurements | `mirai measure -- <command> [arguments...]` |
-| See who is building or measuring | `mirai locks` |
-| Search the code | `rg <pattern> [folder]` |
-| Check the machine and a project | `mirai doctor [project]` |
-| Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
-| Assemble the installed engine (binary) | `mirai package engine --out <folder> [--store folder]` |
+| New worktree | `mirai worktree new <name> [--from <branch>]` |
+| Edit / Play | `mirai edit\|play [project] [--release] [--store dir] [args]` |
+| Build targets | `mirai build editor\|game\|server\|engine [project] [--release] [--out dir] [--store dir] [--force]` |
+| Generate / Content | `mirai generate [project] [--store dir]` / `mirai content [project] [-- args]` |
+| Import / Refresh | `mirai import <file> [--project P] [--folder F]` / `mirai import --refresh <root> [--final]` |
+| Share / Join | `mirai share [project] [--port N] [--store S]` / `mirai join <invite> [dir] [--address A]` |
+| Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
+| Git plugins | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
+| Typecheck + lints | `mirai check [<pkg> [-flag...]]` (alloc lint `tools/mirai/alloc_lint.odin`; solver/render lint `tools/mirai/solver_lint.odin`) |
+| Run tests | `mirai test [<pkg>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]` |
+| Editor session | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store dir]` |
+| RPC / Capture | `mirai rpc <method> [k=v\|json] [--select c] [--wait-until c=v]` / `mirai capture [P] --out x.png [--camera N] [--reference r.png]` |
+| Perf / Images | `mirai render check` / `mirai bench compare --base main` / `mirai bench flight\|pipelines` / `mirai image ...` |
+| Locks / Measure | `mirai measure -- <cmd>` / `mirai locks` / `mirai doctor [project]` / `mirai setup git\|path\|rg` / `mirai package engine --out dir` |
 
-- Every command that builds does it in dev unless `--release` is asked for
-  ([AGENTS.md](../../../../AGENTS.md#common-commands)).
-- The builds of all checkouts share a few turns by themselves; do not set `-thread-count`. Tests and
-  builds do not wait for a measurement: they run with low priority while it lasts, and what reaches
-  the GPU waits for it to end ([turns](build.md#turns-between-processes)).
-- **Session against the editor:** `mirai session start`, then `mirai rpc` or `mirai capture`, and
-  `mirai session stop`; after a change of project code, `build.start` loads it into the open
-  session; after a change of engine code or shaders, `mirai build editor`, which hands the build
-  to the session (in place, or restarting it with the reason); after a failure, `mirai rpc
-  engine.diagnostics`. With the project open in a window, `session start --copy` drives a copy.
-- **Search:** for the Odin code in `.deps`, pass its path to `rg` or `--no-ignore`. If `rg` is not
-  there, `mirai setup rg` installs it pinned in `.deps` and in the PATH.
-- **When handing a command to the user** to try a change, `edit` and `play` go without a flag;
-  `--release` only if it is for measuring. From a worktree, start with a `cd` to its path from
-  miari, quoted, separated with `;` and not `&&` so that it also works in PowerShell 5.1. If it
-  compiles, compile it first with the same arguments, so that it tells the user "unchanged".
-- **Deleting folders:** a worktree is removed with `git worktree remove`; another folder, with
-  `rm -rf`, which in Git Bash deletes a junction without following it.
-- Run arguments: [editor](../../mirai-editor/references/editor.md#arguments) and
-  [player](../../mirai-core/references/host.md#the-player).
+```sh
+./mirai session start demo
+./mirai rpc scene.inspect --select entity
+./mirai capture demo --out bin/view.png --camera Main
+./mirai session stop demo
+./mirai check core && ./mirai test core --no-gpu
+```
+
+- Do not pass `-thread-count` (shared turns handle concurrency;
+  [turns](build.md#turns-between-processes)).
+- Handing commands to the user: pre-build first so it prints "unchanged"; separate `cd` with `;`
+  for PowerShell 5.1. Remove worktrees with `git worktree remove`, other folders with `rm -rf`.
 
 ## Project
 
-- `mirai new` copies `templates/<T>` (`empty` by default) to a folder that does not exist or is
-  empty, and over it `templates/common`, what every template shares, which has no `project.mirai`
-  and so is no template; `--list` gives the first line of the `README.md` of each template. It
-  writes the project's `.gitattributes`, which no template carries
-  ([git and assets](../../mirai-assets/references/cli.md#git)), and makes the project a git
-  repository when it is in none: the editor keeps its changes with
-  [git](../../mirai-editor/references/git.md#pending-and-kept).
-- `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
-  of the running `mirai`, with or without an editor; a project keeps no copy of it.
-- `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
-  the first build. `.deps` and the caches (engine binaries, C libraries, shader stages) are those
-  of the main checkout ([dependencies](build.md#dependencies-and-worktrees)). Its own tool generates
-  its shaders and test worlds. The launcher builds the tool from the worktree sources. A
-  worktree from `git worktree add` needs nothing more: its first `mirai` command builds the tool,
-  which needs no generated file.
-- `mirai doctor [project]` checks the machine and the project, says how to fix each finding and
-  ends with 1 if there are errors. It requires `git config core.symlinks` and `.claude/skills` as a
-  symbolic link to `.agents/skills`: without it, the skills do not reach the agents (on Windows
-  developer mode is needed).
+- `mirai new [dir]` copies `templates/<T>` (`empty` default) + `templates/common`, writes
+  `.gitattributes`, and runs `git init` if needed (`--list` lists templates).
+- `mirai docs [topic] [section]` (and MCP `docs`) serves `docs/game` from the engine root.
+- `mirai worktree new` creates `<main>/.worktrees/<name>` sharing `.deps` and caches.
+- `mirai doctor [project]` validates machine/project (exit 1 on error; requires `core.symlinks` and
+  `.claude/skills` -> `.agents/skills`).
 
 ## Sharing a project
 
-`cook/share` gives one person's project to another, peer to peer, with no server and no git: the
-files of the project travel as a snapshot, and its heavy content as the builds of its packages,
-by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
+`cook/share` transfers projects peer-to-peer over `net` and
+[exchange](../../mirai-store/references/exchange.md).
 
-- **Snapshot.** Every file under the root that `project.own_path` accepts: all but the generated
-  folder and the folders of version control, and but the sources of the packages the project pins
-  whose chosen build the host has whole (the origin and every input its import read), which a
-  joiner takes as builds and never imports; a source the host has no build of travels. It is a
-  tree of objects of the store: each file an
-  object of its bytes, cut on content, so a changed file shares the chunks the change did not
-  touch; each folder an object whose bytes list its entries sorted by name (a file with its
-  executable bit, or a folder, by the address and size of its object, a folder with the files and
-  bytes under it), whose meta carries the name of the project in the root only; a folder holds at
-  least one file. The same files give the same tree, so two snapshots that differ in one file
-  share every folder off its path, and a join after a change asks for those folders, the file's
-  new chunks and the nodes above them, a bound of the depth whatever the size of the project. No
-  limit is set on the size of a file. The size of an entry is that of what was put, so a file
-  saved while the snapshot is taken gives a consistent entry. The index in `.mirai/share` keeps
-  the address of each file by its size and time, so a file that did not change is not read again;
-  it learns a file only once it is settled (the rule of the source hashes of the library), so an
-  edit of the same size within the same time is read.
-- **What a file carries.** Its bytes and its executable bit. Not its time: a joined file gets the
-  time it is written, which keeps build tools' staleness right. Not its other permissions: a
-  read-only file of the host is shared as any other, and a read-only file or folder of the joiner
-  is never replaced or removed, but reported. A link or a special file is left out with a message
-  that says to replace it with the file it points to.
-- **Share.** `mirai share` takes the snapshot, opens a server host with its port mapped as
-  [collaboration](../../mirai-editor/references/collaboration.md) does, prints one invitation
-  once the router answered, and serves until it is stopped (Ctrl+C), printing who comes and goes
-  and how much went out. The ref `shares/<hash of the invitation's secret>` holds the offer with its
-  snapshot and whether the host has a live scene. A joiner finds it by the code and the names
-  peers list reveal no secret. Peers read the namespaces
-  of snapshots, package manifests, builds (Final and Fast, each under its own namespace), the build
-  the machine chose for each manifest and `cook/cache` results: the owner exposes the whole machine
-  library to whoever holds the invitation, never the origins or the sources of the machine. A
-  lease holds the snapshot, its folders and files and the builds the project pins.
-- **Join.** `mirai join` accepts invitations from a command-line share or a live editor. It asks
-  for the offer of the invitation only from the host it connects to,
-  so a peer that joined from the joiner cannot name another; folders and files come from any
-  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose
-  names could leave the folder, are absolute, name a device, repeat or collide where case is folded,
-  whose folders nest beyond the bound, hold more entries or bytes than a folder can or declare
-  files and sizes they do not hold (so the files read never exceed the bound, also from a folder
-  repeated under many names); checks that the disks have room; fetches the files, the project's
-  manifest and its start scene first and then the smallest first, many at once, and writes each
-  chunk by chunk at its offset into a temporary file renamed into place, so memory does not grow
-  with a file; then builds the project's editor from the files that arrived, without its refresh,
-  for the importers of its plugins, and, once every file was written (a join with a file not
-  written refreshes no package), refreshes the packages as an editor does, with the peers as
-  the `cache.Source` of the library: a Final or a Fast build from the store, then from the peers,
-  by key, and a source in the folder is imported, in the quality an editor imports, only when no
-  peer gives a build of it; such an import asks the peers for the results of `cook/cache`
-  (encoded textures, their inputs, cooked meshes) before building them. The shader generation and
-  the pipelines of the GPU are compiled on each machine. Where the editor does not build, a
-  package whose importer is a plugin's
-  takes the build a peer chose for its manifest, and one no peer gives is reported with why the
-  editor did not build. A join ends within a bounded time without progress whatever a peer
-  does or withholds: what is wanted while no chunk byte arrives and no object completes for a
-  while fails, reported by path, and the files after it are asked. A release game refreshes
-  requiring Final, so a Fast build a join took never ships. A refresh asks the source for every
-  manifest and build it lacks in one batch before it goes package by package, so it waits for the
-  peers about once, not once per package. It prints progress at a steady pace and, at the end,
-  how to open the project. The store keeps what arrived: a join stopped and run again fetches only
-  the rest. The lease of the node holds what a share serves and what a join fetches and wrote.
-- **Updating.** A folder joined before keeps its last snapshot in `.mirai/share`, by path, the base
-  of three ways: a file the host changed or removed is replaced or removed when the joiner left it
-  as it was; a file both changed is kept and reported, never overwritten. Each file is checked
-  again just before it is written or removed, so an edit made while the join runs is kept too.
-  The join puts the base's tree in the store before it asks, so what the host did not change since
-  is not asked, and a file to replace whose base the store lost is put from the folder first, cut
-  as the host's, so the chunks both versions share are not asked either.
-- **Links.** A join never follows a link (a symbolic link, or a junction on Windows) inside its
-  folder: a file whose path passes through one, the file itself included, is neither written nor
-  removed but reported by path, with the link to replace, and so is the whole join when the
-  generated folder's state goes through one. Each path is checked when the join plans it and
-  again just before its rename or removal. The folder itself may be a link: it is the place the
-  joiner named.
-- **Case.** A join probes whether the folder's file system folds case (APFS, NTFS). There paths
-  compare in lower case, so a host's rename that changes only case is the same file: it is
-  renamed in place, folders first, and never removed. Elsewhere it is a removal and a new file.
-- **Incomplete.** A file that cannot be written or removed (read-only, a read-only folder, held
-  open, an object no peer has) is listed by path with why and how to fix it, the rest is done, and
-  `mirai join` exits with 3. The base it keeps holds the last entry of each such file, so running
-  the same join again does only those.
-- **Peers.** While a join runs it serves what it has, with an invitation of its own, so a third
-  machine joins from either. After a join, `mirai share` in the folder serves it too.
-- **Editors.** A collaboration session of the editor carries its project with this same node and
-  join over its own connections
-  ([the project](../../mirai-editor/references/collaboration.md#the-project)).
-- Reaching a host is the invitation's: on another network one side needs a router that maps a port;
-  the failures say so, as they say an invitation whose share ended, another version of Mirai, a
-  store of another layout, a disk without room and a package no connected peer has a build of.
+- **Snapshot:** Content-chunked store tree of `project.own_path` files (excludes `.mirai`, VCS, and
+  sources of pinned packages whose build the host has whole). Preserves bytes + executable bit
+  only; skips symlinks/special files with a notice. `.mirai/share` caches settled file hashes.
+- **Share (`mirai share`):** Maps port, prints invite, serves ref `shares/<hash(secret)>` plus
+  snapshots, manifests, Final/Fast builds, and `cook/cache` (never raw origins/sources) under a
+  lease.
+- **Join (`mirai join`):** Fetches offer only from host, validates tree paths/bounds/case-folding
+  (APFS/NTFS in-place case renames) and disk space, downloads manifest + start scene first into
+  atomic temp files, builds editor for plugin importers, and batch-refreshes packages from peers
+  before falling back to local import (release builds still require Final). Re-joins do 3-way merge
+  against `.mirai/share` base (preserving local edits), never follow symlinks/junctions, serve
+  while downloading, and exit `3` if any file failed (retry completes remaining).
+
+```sh
+./mirai share demo
+./mirai join <invitation-code> ./demo-copy
+```
 
 ## Tool and machine
 
-- `mirai setup git [folder]` wires the clone the folder is in, once per clone
-  ([git and assets](../../mirai-assets/references/cli.md#git)); `mirai doctor` reports a clone
-  whose `.gitattributes` names the drivers and whose configuration lacks them.
-- `mirai setup path` puts the `bin/` of this copy of the engine first in the user's `PATH` and
-  removes that of another copy; it is run once per copy, because a build replaces `bin/mirai` in
-  place. `mirai setup rg` installs the pinned ripgrep in `.deps` and puts it in the `PATH`: it is
-  what agents search with, because it respects `.gitignore`.
-- **Launcher.** `mirai` (sh; Git Bash on Windows) compiles the tool only if `bin/mirai` or its list
-  of sources (`bin/mirai.sources.json`, or `mirai.exe.sources.json` on Windows so that Windows and
-  WSL share a checkout) is missing, and creates no subprocesses until it reaches it, because in Git
-  Bash each one is expensive. It looks for Odin in `MIRAI_ODIN`, in `.deps` (its own or, if there
-  is none, that of the main checkout) and in the `PATH`. It compiles aside and puts the executable
-  in place by renaming the one in use (an open `mirai mcp` does not block it); if it does not
-  compile, it continues with the previous one.
-- `mirai.cmd`, for PowerShell, cmd and Python `subprocess` (by its absolute path: `cmd` takes a
-  relative `./mirai.cmd` for a switch), runs the launcher with the `bash.exe` of Git for Windows,
-  not with the `bash` of the `PATH`, which on Windows is usually WSL's; without Git Bash it fails
-  and says what to install. The extensionless `mirai` is a shell script Windows cannot run.
-- **Tool refresh.** On start, the tool compares those sources (without the `*_test.odin`) with its
-  executable and, if any changed, it recompiles itself and runs the command with the new one. It
-  compiles with `-ignore-unknown-attributes` and without `-custom-attribute`: the new sources may
-  use attributes that the running build does not know.
-- **C library.** The engine and editor build and `mirai test` prepare FreeType if it is not built
-  with the current sources: from the shared cache, or with the host's C toolchain (MSVC on Windows;
-  `CC` or `cc` and `ar` on Linux and macOS) ([cache](build.md#dependencies-and-worktrees)).
+- `mirai setup git [dir]` installs asset git drivers; `mirai setup path` prepends `bin/` to `PATH`;
+  `mirai setup rg` installs pinned ripgrep in `.deps`.
+- **Launcher:** `mirai` (sh / Git Bash) builds `bin/mirai` only if missing `bin/mirai` or
+  `bin/mirai[.exe].sources.json` (Odin from `MIRAI_ODIN`, `.deps`, or `PATH`), replacing
+  atomically. `mirai.cmd` invokes Git for Windows `bash.exe` (avoiding WSL).
+- **Self-refresh & FreeType:** Tool checks non-test sources on start and rebuilds itself with
+  `-ignore-unknown-attributes`. Builds/tests build or fetch FreeType from shared cache.
 
 ## Checks and tests
 
-`check`, and `test` of a package of the engine, pass the attributes and the collections of Mirai:
-`mirai`, and `plugins` or
-`project` when the package or what it imports uses them (`project` is the closest folder upwards
-with `project.mirai`); a hand-given `-collection:` wins. `check` adds
-`-define:MIRAI_TEST_SHADERS=true`, which also checks the tests with generated shaders. Before that
-they generate the engine shaders, which git does not store; a `-target:` of another system also
-generates its backend, because the tables embed only the generated ones.
+`mirai check` and `mirai test` inject Mirai collections (`mirai`, `plugins`, `project`) and
+attributes, generating engine shaders first (`check` sets `-define:MIRAI_TEST_SHADERS=true`).
 
-`mirai test` takes one or more packages: an argument that is a folder with Odin sources is a
-package and the following ones, tests of that package; without tests it runs the whole package. It
-first compiles the executables of the engine packages that need it, at once up to
-`compilers_at_once()` like the [plugin libraries](#plugin-libraries) and inside a single turn, and
-then runs them one after another in the order asked.
-
-- One runner (`cook/build/tests.odin`) builds and runs every test executable, for `mirai test` and
-  for `build.test`. A package of the engine compiles from its sources (its tests use internals)
-  into `bin/tests/`. A package of a project (a `project.mirai` above it) is a `Test` job of its
-  editor, in its turn: it compiles against the libraries the editor links, after the engine
-  binaries when their sources changed, into `<project>/.mirai/build/tests/`.
-- Every test executable runs in the root of the engine, also one of a project package: a relative
-  path in a test is relative to the engine root (`demo/assets/...`).
-- The compiler reads every `.odin` of a folder, tests included. The libraries of a project compile
-  its game, editor and plugins from `.mirai/build/stage`, a copy without the `_test.odin` (as the
-  engine and plugin stages leave them out); only a test build reads the project itself. What the
-  compiler says of the stage, and what it read of it, is said of the project.
-- A test of a project package sees the engine through its declarations, which carry no test file:
-  what a game's tests use is public API of the engine, as the test-world builder of `core`
-  ([test worlds](../../mirai-core/references/core.md#test-worlds)).
-- An executable compiles again only when the [fingerprint](build.md#fingerprint) of what its last
-  build read changed, the `_test.odin` of every folder it read included, or its flags or the
-  compiler: a date that moves or a checkout that restores the text compiles nothing. The last
-  line says how many executables were built and how many stood.
-
-- Names are looked up among the `@(test)` of the sources before compiling: one that is not there
-  cuts the command with 2 and names the similar ones. They reach the executable as `-tests:`, so
-  asking for other tests does not compile.
-- An argument that ends in `.odin` asks for the tests of that file: the name of a file of the
-  package before it, or a path to one. A file that is not there or declares no test cuts the
-  command like a wrong name.
-- `--no-gpu` leaves out the tests of the files that reach the device of the GPU tests. A test
-  reaches it when it names `rhi/shared_device` or `rhi.device_create`, itself or through the
-  declarations of the test files of its package; it is read from the text, like the names, so a
-  GPU test takes the device in its test files and not through what is no test. `--list` takes the
-  files and `--no-gpu` too, and shows what would run.
-- A package with no test to run (it declares none, or `--failed` or `--no-gpu` leave none) is not
-  compiled: it is named in one line and is no failure, also when it is the only one asked.
-- `--failed` runs those that failed last time in the package: each run removes the ones that ran
-  and adds the ones that failed.
-- A package that does not compile is named in its place, with what the compiler said, and the
-  others run.
-- Its threads reserve 8 MB of stack on every system (`TEST_STACK_FLAG`: Windows gives 1 MB),
-  unless the flags of the call bring linker flags of their own.
-- If no test starts or ends within `--timeout` (`TEST_TIMEOUT`; 0 does not watch; a benchmark only
-  with `--timeout`), `mirai test` kills the executable and names the ones that were running; also
-  if it crashes before the summary. It knows it through `ODIN_TEST_LOG_STATE_CHANGES`: a flag that
-  turns it off turns the watching off.
-- A run that is not a benchmark does not wait for a measurement: while one runs, it goes with low
-  priority ([turns](build.md#turns-between-processes)).
-- It compiles at `-o:minimal` and runs without a window. The CPU suites of the data core and of
-  gameplay (tables, generator, scene, saves, input, cinematics, physics, destruction, GUI,
-  animation, audio, frame and assets of the host, API protocol) run together with `mirai test core
-  cook/build engine/scene engine/save engine/input std/input plugins/cinematics/runtime
-  plugins/physics/runtime plugins/physics/runtime/sim
-  plugins/destruct/runtime engine/gui std/anim audio host
-  editor/api`; `host` includes GPU tests and `editor/api` uses loopback sockets.
-- **CI.** `.github/workflows/checks.yml` runs on every pull request to `main`, on Windows without
-  GPU (`MIRAI_ALLOW_GPU_SKIP=1`): `mirai check` of each folder with Odin sources outside
-  `third_party` and `templates`, and `mirai test` of the CPU suites it lists. A
-  suite enters the list when it passes on `main`.
+- **Runner (`cook/build/tests.odin`):** Engine packages compile into `bin/tests/`; project packages
+  compile via `Test` job into `<project>/.mirai/build/tests/` against editor libraries (seeing only
+  public engine `decl/`). All test binaries run with cwd = engine root and 8 MB stack
+  (`TEST_STACK_FLAG`), cached by [fingerprint](build.md#fingerprint) (including `_test.odin`).
+- **Selection & flags:** Validates `@(test)` names and `.odin` files before compiling (exit 2 on
+  unknown); passes `-tests:` without recompiling. `--no-gpu` skips files touching
+  `rhi/shared_device` or `rhi.device_create`; `--list` previews; `--failed` re-runs failures;
+  `--timeout` (`TEST_TIMEOUT`, via `ODIN_TEST_LOG_STATE_CHANGES`) kills hung runs. Runs at
+  `-o:minimal`, low priority during measurements.
+- **CPU suites & CI:** `.github/workflows/checks.yml` runs on PRs to `main` (Windows,
+  `MIRAI_ALLOW_GPU_SKIP=1`), executing `mirai check` on all non-`third_party`/`templates` packages
+  and listed CPU `mirai test` suites (`core`, `cook/build`, `engine/*`, `std/*`, `plugins/*`,
+  `audio`, `host`, `editor/api`).
 
 ## Paths in Git Bash
 
-An argument or a variable that starts with `/` reaches a native program as a Windows path
-(`/tmp/x` → `C:/Users/.../Temp/x`); to pass a POSIX path (`wsl`, `docker`), prefix
-`MSYS_NO_PATHCONV=1`. Inside the JSON of `mirai rpc` there is no conversion: the editor API reads
-`/c/x` and `/cygdrive/c/x` as `C:/x` (`project.path_native`) and rejects a path with a root and
-without a drive (`/x`, `\x`).
+Leading `/` converts to Windows paths (prefix `MSYS_NO_PATHCONV=1` for POSIX args). JSON in
+`mirai rpc` is unconverted; `project.path_native` translates `/c/x` and `/cygdrive/c/x` and rejects
+drive-less roots (`/x`, `\x`).
 
 ## External scripts
 
-What is external to the engine (preparing dependencies, benchmarks, reports) are `scripts/*.py`:
-self-contained Python (PEP 723, with the header of the existing ones) run with `uv run
-scripts/<script>.py`, without a `.venv` in the repo. A script uses `mirai` or the editor API like
-any user and nothing in the engine depends on them; bash remains only in the launcher.
+`scripts/*.py` are standalone PEP 723 scripts run via `uv run scripts/<script>.py` (no `.venv`, no
+engine dependency). Wrap timed scripts with `mirai measure -- uv run scripts/<script>.py`.
 
-- Hitches while flying a scene are measured by `mirai bench flight`, without scripts of keys;
-  the frame cost against the base is measured by `mirai bench compare`, without pair scripts;
-  `scripts/bench_compare.py` is for another measurement the user asks for, whose table goes in the
-  task's final report.
-- A script that measures times runs with `mirai measure -- uv run scripts/<script>.py`
-  ([turns](build.md#turns-between-processes)); `mirai measure -- ./mirai <args>` also works on
-  Windows, with the Git Bash of `mirai.cmd`.
-- `scripts/check_docs.py` checks the documentation: links and anchors, frontmatter, line width,
-  repeated headings, files and tests it names, the skill table of `README.md` and the import of
-  `AGENTS.md`. Its rules are tested by `scripts/tests/test_check_docs.py`.
-- `scripts/video_frames.py` takes the frames (a labelled strip like those of `play.capture`) and
-  the sound of a section of a YouTube or X video, or of a file, to compare with Mirai captures. It
-  needs Windows, and what it downloads stays in `.mirai/tmp/video_frames`, never in git.
+- `scripts/check_docs.py` (tested by `scripts/tests/test_check_docs.py`): validates doc links,
+  anchors, frontmatter, 100-char width, headings, tracked source names, Verification test names,
+  `README.md` skill table, and `CLAUDE.md` `@AGENTS.md`.
+- `scripts/bench_compare.py`: custom benchmarks (`mirai bench compare`/`flight` handle standard).
+- `scripts/video_frames.py` (Windows): extracts reference strips/audio into
+  `.mirai/tmp/video_frames`.
 
 ## ACP agents
 
-`mirai agent` installs and manages the ACP adapters of Codex and Claude in the user folder of the
-machine (`project.agents_folder`, `<user data>/Mirai/Editor agents/<agent>/`, or `--home`), outside
-every project and checkout; the client, the user's installation that goes first and the history
-are in [AI tasks](../../mirai-editor/references/ai-tasks.md#connections-and-installation). It runs
-only by an explicit action: opening Mirai or a chat downloads nothing.
-
-- The packages come from the public npm registry even if npm or Bun have another configured.
-  `Automatic` chooses Bun, Node or pnpm, whichever is available, in that order, without downloading
-  any. With `pnpm` the client runs `mirai-acp` with `--silent` to reserve stdout for ACP.
-- Claude is installed without optional dependencies with Bun and Node, because it uses the user's
-  Claude Code; `--claude-code` first runs Anthropic's official installer.
-- Each installation is prepared in a temporary folder next to the destination and published when it
-  ends; on error or cancellation (`--cancel-file`) the previous one stays, and the editor waits for
-  that end.
-- `installation.json` stores version, runtime and `codex_binary`, the official Codex binary the
-  adapter receives as `CODEX_PATH` if the user has none of their own.
+`mirai agent` installs Codex/Claude ACP adapters into `<user data>/Mirai/Editor agents/<agent>/`
+(`project.agents_folder` or `--home`) only on explicit user action (public npm registry; Bun ->
+Node -> pnpm `--silent`; `--claude-code` runs Anthropic installer). Atomic swap via temp dir;
+`--cancel-file` aborts safely; `installation.json` records `codex_binary` (`CODEX_PATH`).
 
 ## Templates
 
-Choice and content of each template:
-[demo and templates](../../mirai-gameplay/references/demo.md#templates).
+See [demo and templates](../../mirai-gameplay/references/demo.md#templates).
 
 ## Known limits
 
-- The assets of a plugin are reloaded in an open editor only with `assets_scan`: the watching looks
-  at the project folder.
-- Only the engine plugins have a library of their own. The first build of the plugin libraries is
-  slower than that of a single library.
-- The plugin libraries were tested on macOS and Windows; on Linux, not run.
-- Those of the build, cooking and shaders: [build](build.md#known-limits).
+- Plugin assets reload in an open editor only on `assets_scan` (watcher monitors project dir).
+- First plugin-library build is slower than a single library; plugin libs are untested on Linux.
+- Build/cook/shader limits: [build](build.md#known-limits).
