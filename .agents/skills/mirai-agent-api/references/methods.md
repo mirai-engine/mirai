@@ -71,11 +71,11 @@ Protocol and errors: [api.md](api.md).
 - `render.inspect_entity`: per-entity visibility/culling/skinning diagnosis without guessing.
 
 ```json
-// Params:  {"entity": "Player", "world": "Game"}  // world: "Auto"|"Document"|"Game"
+// Params:  {"entity": "Player", "world": "Game"}  // world: "Auto"|"Scene"|"Game"
 // Result:  {"entity": "0x...", "name": "Player", "has_mesh": true, "mesh": "...",
-//           "visible": true, "culled_reason": "", "lod": 0, "aabb_min": [...],
-//           "aabb_max": [...], "distance": 4.2, "textures_pending": 0,
-//           "materials": [...], "skinned": true, "skin_updated": true}
+//           "visible": true, "culled_reason": "None", "lod": 0, "levels": 4,
+//           "aabb_min": [...], "aabb_max": [...], "distance": 4.2,
+//           "textures_pending": 0, "materials": [...], "skinned": true, "skin_updated": true}
 ```
 
 - `view.viewport`: returns the cached turn viewport snapshot without recapturing.
@@ -177,9 +177,9 @@ Entity selectors and transactions: [api.md](api.md#method-conventions).
 - `scene.audit`: static preflight check on the document or game world.
 
 ```json
-// Params:  {"world": "Auto", "blend_ratio_warn": 0.35}  // world: "Auto"|"Document"|"Game"
-// Result:  {"passed": false, "summary": "...",
-//           "flags": [{"severity": "Warn", "area": "Render", "code": "...",
+// Params:  {"world": "Auto", "blend_ratio_warn": 0.25}  // world: "Auto"|"Document"|"Game"
+// Result:  {"passed": false, "summary": {"entities": 42, "mesh_entities": 30, ...},
+//           "flags": [{"severity": "Warn", "area": "Material", "code": "...",
 //                      "entity": "Wall", "message": "...", "fix": "..."}]}
 ```
 
