@@ -794,7 +794,16 @@ route_change :: proc(c:^Call) {
         json_end_object(&j)
     }
     json_end_array(&j)
-    json_member_int(&j,"turns",i64(len(ch.turns)))
+    json_key(&j,"attachments")
+    json_array(&j)
+    for a in ch.attachments {
+        json_object(&j)
+        json_member_string(&j,"type",kai.attachment_type_text(a.type))
+        object:=a.object
+        json_member_hex(&j,"object",object[:])
+        json_end_object(&j)
+    }
+    json_end_array(&j)
     json_key(&j,"files")
     json_array(&j)
     for d in edits {

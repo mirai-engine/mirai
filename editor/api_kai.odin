@@ -286,7 +286,7 @@ api_kai_log :: proc(s:^Session,call:^api.Call) {
     for row,i in rows {
         r.changes[i]={
             change=ka.change_text(row.change.id,call.allocator),description=row.change.description,working=row.working,
-            bookmarks=row.bookmarks,conflicts=int(row.conflicts),coauthors=len(row.change.coauthors),turns=len(row.change.turns),
+            bookmarks=row.bookmarks,conflicts=int(row.conflicts),coauthors=len(row.change.coauthors),turns=kai_turns(row.change.attachments),
         }
         if shared:=kai_shared_names(s,row.revision,call.allocator);shared!="" {
             names:=make([dynamic]string,0,len(row.bookmarks)+1,call.allocator)

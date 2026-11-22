@@ -18,9 +18,13 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
 - A change keeps its `Change_Id` across rewrites; its revision is the address of its object. The
   operation that rewrote it records the predecessor, never the change, so a revision is
   content-addressed and never depends on the history of rewrites.
-- A change is signed by its author's device key. Who else made it goes in its coauthors and
-  agent turns (`Turn_Ref`: the agent's identity object, the public review record of the turn,
-  never a private chat). The author is accountable; coauthors only record.
+- A change is signed by its author's device key. Who else made it goes in its coauthors; the
+  author is accountable, coauthors only record.
+- A change carries a short, bounded list of attachments: objects of the store its writer
+  names with a type that writer owns (the editor attaches the record of an agent's turn). Kai
+  never reads them; it serves, keeps and walks them as it does the change's tree, in the
+  members', public and grant closures and in what a sweep keeps. The list is ascending and
+  without repeats, so one change has one form; any other list is `Corrupt`.
 
 ## Trees
 

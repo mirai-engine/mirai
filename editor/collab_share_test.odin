@@ -561,10 +561,13 @@ collab_coauthorship_and_agent_turns_record_in_change :: proc(t:^testing.T) {
     c,e:=vcs.change_get(w.repo.s,vcs.repo_working(&w.repo),context.temp_allocator)
     if !testing.expect_value(t,e,vcs.Error.None) {return}
     testing.expectf(t,len(c.coauthors)==1 && c.coauthors[0]==guest_key,"the guest is a coauthor: %v",c.coauthors)
-    testing.expectf(t,len(c.turns)==1 && c.turns[0].task==TASK,"the agent's turn is recorded: %v",c.turns)
+    task:u64
+    read:bool
+    if len(c.attachments)==1 && c.attachments[0].type==KAI_TURN {task,read=kai_turn_read(w.repo.s,c.attachments[0].object)}
+    testing.expectf(t,read && task==TASK,"the agent's turn is recorded: %v",c.attachments)
     testing.expect(t,c.author==host.s.kai.key,"the host signs the change")
     // Once recorded, nothing is recorded twice.
     testing.expect_value(t,kai_snapshot(&host.s),"")
     again,_:=vcs.change_get(w.repo.s,vcs.repo_working(&w.repo),context.temp_allocator)
-    testing.expect(t,len(again.coauthors)==1 && len(again.turns)==1)
+    testing.expect(t,len(again.coauthors)==1 && len(again.attachments)==1)
 }

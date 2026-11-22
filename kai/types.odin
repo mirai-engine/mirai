@@ -14,6 +14,7 @@ import "mirai:store"
 
 KAI_MAGIC :: u32('K')|u32('A')<<8|u32('I')<<16|u32('1')<<24
 VERSION :: 1 // of every kind of record
+CHANGE_VERSION :: 2 // of the head of a change
 
 Change_Id :: distinct [16]u8 // random at creation, kept across rewrites
 Revision :: store.Hash        // the address of one Change object
@@ -23,12 +24,13 @@ Signature :: distinct [64]u8
 Repo_Id :: distinct [16]u8
 Workspace_Id :: distinct [16]u8
 
-// An agent's turn a change records: the agent's Identity object, the public
-// review record of the turn and the task it served.
-Turn_Ref :: struct #packed {
-    agent:store.Hash,
-    record:store.Hash,
-    task:u64,
+// An object of the store a change carries for its writer, which Kai does
+// not interpret: what kind of object it is (an id its writer owns, four
+// ASCII letters by convention, which views show as text) and its address.
+// What a change attaches is served, kept and walked as its tree is.
+Attachment :: struct #packed {
+    type:u32,
+    object:store.Hash,
 }
 
 // Who signs: an Ed25519 public key and the seed of its private key.
@@ -84,7 +86,7 @@ error_text :: proc(error:Error) -> string {
 
 PARENTS_MAX :: 255
 COAUTHORS_MAX :: 64
-TURNS_MAX :: 64
+ATTACHMENTS_MAX :: 64
 CONFLICT_SIDES_MAX :: 16
 CONFLICT_TERMS_MAX :: 2*CONFLICT_SIDES_MAX-1
 DESCRIPTION_MAX :: 1<<20      // bytes of the description of a change or operation

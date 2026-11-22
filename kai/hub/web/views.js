@@ -203,6 +203,13 @@ export const Changes = {
     },
 }
 
+// What a change attaches, by type: "turn × 2".
+function attachedText(list) {
+    const counts = new Map()
+    for (const a of list) counts.set(a.type, (counts.get(a.type) || 0) + 1)
+    return [...counts].map(([type, n]) => n > 1 ? `${type} × ${n}` : type).join(', ')
+}
+
 export function person(name, key) {
     return name ? [name, ' ', h('code', {class: 'quiet'}, short(key))] : h('code', short(key))
 }
@@ -221,7 +228,7 @@ export const Change = {
                 c.coauthors.length ? [h('dt', 'Co-authors'), h('dd', c.coauthors.map((a, i) => [i ? ', ' : '', person(a.name, a.key)]))] : null,
                 h('dt', 'Created'), h('dd', when(c.created)),
                 h('dt', 'Written'), h('dd', when(c.written)),
-                c.turns ? [h('dt', 'Agent turns'), h('dd', String(c.turns))] : null,
+                c.attachments?.length ? [h('dt', 'Attached'), h('dd', attachedText(c.attachments))] : null,
                 h('dt', 'Parents'), h('dd', c.parents.length ? c.parents.map((r, i) => [i ? ', ' : '', link(`/p/${p.id}/change/${r}`, h('code', short(r)))]) : 'none'),
             ]),
             h('h2', 'Files'),

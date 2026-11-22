@@ -658,7 +658,7 @@ change_split :: proc(r:^Repo,revision:Revision,paths:[]string,description:Maybe(
     if d,given:=description.?;given {head.description=d}
     first=change_put(r.s,&head,&r.identity) or_return
     parents:=[1]Revision{first}
-    rest:=Change{id=random_id(Change_Id),tree=c.tree,author=r.identity.key,created=now,written=now,parents=parents[:],coauthors=head.coauthors,turns=c.turns}
+    rest:=Change{id=random_id(Change_Id),tree=c.tree,author=r.identity.key,created=now,written=now,parents=parents[:],coauthors=head.coauthors,attachments=c.attachments}
     second=change_put(r.s,&rest,&r.identity) or_return
     if _,e:=append(&tx.rewrites,Rewrite{revision,first});e!=nil {return {},{},.Out_Of_Memory}
     tx_rewrite(&tx,revision,second) or_return

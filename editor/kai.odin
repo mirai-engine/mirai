@@ -30,10 +30,40 @@ KAI_LOG_ROWS :: 64        // changes the tab and kai.log show by default
 KAI_DESCRIPTION_BYTES :: 1024
 
 // Who changed the working copy since the last snapshot: the key of an editor
-// of a session the host applied, or the turn of an agent.
+// of a session the host applied, or the task of an agent's turn.
 Kai_Author :: struct {
     key:vcs.Key,
-    turn:vcs.Turn_Ref,
+    task:u64,
+}
+
+// What a change attaches for an agent's turn: a Kai_Turn object. Kai carries
+// it without reading it; what a turn is stays the editor's.
+KAI_TURN :: u32('t')|u32('u')<<8|u32('r')<<16|u32('n')<<24
+KAI_TURN_VERSION :: 1
+
+Kai_Turn :: struct #packed {
+    version:u32,
+    reserved:u32,
+    task:u64, // the task of the AI chat whose turn edited
+}
+
+// The task of the turn object at address; ok false when it is no turn.
+kai_turn_read :: proc(s:^store.Store,address:store.Hash) -> (task:u64,ok:bool) {
+    o,e:=store.object_open(s,address)
+    if e!=.None {return}
+    defer store.object_close(&o)
+    turn:Kai_Turn
+    if store.object_size(&o)!=size_of(Kai_Turn) || store.object_read(&o,0,([^]u8)(&turn)[:size_of(turn)])!=.None {return}
+    if turn.version!=KAI_TURN_VERSION || turn.reserved!=0 || turn.task==0 {return}
+    return turn.task,true
+}
+
+// How many agents' turns a change's attachments are.
+kai_turns :: proc(attachments:[]vcs.Attachment) -> (n:int) {
+    for a in attachments {
+        if a.type==KAI_TURN {n+=1}
+    }
+    return
 }
 
 // Requests: the history and a host of a session push; kai_snapshot takes.
@@ -240,7 +270,7 @@ kai_authors_follow :: proc(s:^Session) {
 @(private)
 kai_author_push :: proc(q:^Kai_Authorship,author:history.Edit_Author) {
     if author==history.EDIT_AUTHOR_USER || author==history.EDIT_AUTHOR_API {return}
-    core.push(&q.queue,Kai_Author{turn={task=u64(author)}})
+    core.push(&q.queue,Kai_Author{task=u64(author)})
 }
 
 // An editor of a session changed the project: the host records it as a coauthor.
@@ -259,10 +289,12 @@ kai_snapshot :: proc(s:^Session) -> string {
     kai_authors_follow(s)
     authors:=core.take(&s.kai_authorship.queue)
     keys:=make([dynamic]vcs.Key,0,len(authors),context.temp_allocator)
-    turns:=make([dynamic]vcs.Turn_Ref,0,len(authors),context.temp_allocator)
+    turns:=make([dynamic]vcs.Attachment,0,len(authors),context.temp_allocator)
     for a in authors {
         if a.key!=({}) {append(&keys,a.key)}
-        if a.turn!=({}) {append(&turns,a.turn)}
+        if a.task==0 {continue}
+        turn:=Kai_Turn{version=KAI_TURN_VERSION,task=a.task}
+        if address,pe:=store.put(w.repo.s,([^]u8)(&turn)[:size_of(turn)]);pe==.None {append(&turns,vcs.Attachment{KAI_TURN,address})}
     }
     _,e:=ka.snapshot_authored(w,keys[:],turns[:])
     // A refusal stays until a snapshot holds; one of a publish, until a publish does.
@@ -540,7 +572,7 @@ kai_read :: proc(s:^Session) {
         v.rows[i]={
             change=ka.change_text(row.change.id,a),description=row.change.description,
             bookmarks=strings.join(names[:],", ",a),working=row.working,conflicts=row.conflicts,
-            authors=len(row.change.coauthors),turns=len(row.change.turns),revision=row.revision,
+            authors=len(row.change.coauthors),turns=kai_turns(row.change.attachments),revision=row.revision,
         }
     }
     if st.picked!={} {

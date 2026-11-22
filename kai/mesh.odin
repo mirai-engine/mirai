@@ -1537,6 +1537,7 @@ walk_children :: proc(s:^store.Store,item:Walk_Item,b:^Walk_Buffers,stack:^[dyna
         if e!=.None {return}
         for p in c.parents {append(stack,Walk_Item{p,.Change})}
         append(stack,Walk_Item{c.tree,.Folder})
+        for a in c.attachments {append(stack,Walk_Item{a.object,.File})}
     case .Folder:
         clear(&b.entries)
         if _,e:=folder_get(s,item.address,&b.entries,nil,context.temp_allocator);e!=.None {return}
@@ -1565,7 +1566,7 @@ walk_children :: proc(s:^store.Store,item:Walk_Item,b:^Walk_Buffers,stack:^[dyna
 }
 
 // The Kai objects reachable from revisions: changes, their parents, their
-// trees, folders, conflicts and files. present gets those in the store,
+// trees, folders, conflicts and files, and the objects they attach. present gets those in the store,
 // missing those that are not (what lies under them is not walked).
 closure_walk :: proc(s:^store.Store,revisions:[]Revision,present,missing:^[dynamic]store.Hash) {
     stack:=make([dynamic]Walk_Item,context.temp_allocator)
@@ -1587,7 +1588,7 @@ closure_walk :: proc(s:^store.Store,revisions:[]Revision,present,missing:^[dynam
 }
 
 // The Kai objects under revisions that a grant of path scope reads: every
-// change and its parents, the files scope covers with the conflicts at such
+// change, its parents and what it attaches, the files scope covers with the conflicts at such
 // paths and what they name, and the folders on the way to them. A folder
 // that holds nothing scope covers is left out, as is every file it does not
 // cover. An empty scope covers all of it (closure_walk).
@@ -1609,6 +1610,7 @@ closure_walk_scoped :: proc(s:^store.Store,revisions:[]Revision,scope:string,pre
         if e!=.None {continue}
         append(present,r)
         append(&stack,..c.parents)
+        for a in c.attachments {append(present,a.object)}
         scoped_folder(s,c.tree,"",scope,0,present,&folders)
     }
 }

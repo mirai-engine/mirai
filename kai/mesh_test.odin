@@ -287,7 +287,13 @@ a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
         for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[k],l)}
     }
     alice:=&o.alice.devices[0]
-    work:=test_change(t,&m.stores[0],alice,"published work")
+    // What a change attaches reaches the peers it is served to, as its tree does.
+    attached,ae:=store.put(&m.stores[0],transmute([]u8)string("an agent's turn"))
+    testing.expect_value(t,ae,store.Error.None)
+    work_change:=change_get(&m.stores[0],test_change(t,&m.stores[0],alice,"published work"),context.temp_allocator) or_else Change{}
+    work_change.attachments={{1,attached}}
+    work,we:=change_put(&m.stores[0],&work_change,alice)
+    testing.expect_value(t,we,Error.None)
     elsewhere:=test_change(t,&m.stores[0],alice,"another org's work")
     later:=test_change(t,&m.stores[0],alice,"published later")
     built,be:=store.put(&m.stores[0],transmute([]u8)string("a cook's output"))
@@ -318,7 +324,7 @@ a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
         }
         return true
     }
-    w:=Wanted{{work,built,elsewhere,kept,later},{.Complete,.Complete,.Missing,.Missing,.Missing}}
+    w:=Wanted{{work,attached,built,elsewhere,kept,later},{.Complete,.Complete,.Complete,.Missing,.Missing,.Missing}}
     for address in w.addresses {testing.expect_value(t,exchange.want(&b.x,address),exchange.Error.None)}
     testing.expectf(t,mesh_until(m,5,&w,settled),"a member gets what the org reaches only: %v",a.stats)
     for address in w.addresses {exchange.forget(&b.x,address)}

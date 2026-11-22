@@ -253,7 +253,12 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
             for b in row.bookmarks {fmt.printf(" [%s]",b)}
             if row.conflicts>0 {fmt.printf(" (%d in conflict)",row.conflicts)}
             if len(row.change.coauthors)>0 {fmt.printf(" +%d authors",len(row.change.coauthors))}
-            if len(row.change.turns)>0 {fmt.printf(" +%d agent turns",len(row.change.turns))}
+            for a,k in row.change.attachments {
+                if k>0 && row.change.attachments[k-1].type==a.type {continue}
+                n:=0
+                for b in row.change.attachments[k:] {n+=int(b.type==a.type)}
+                fmt.printf(" +%d %s",n,vcs.attachment_type_text(a.type))
+            }
             fmt.printfln(" %s",description_line(row.change.description))
         }
     case "diff":

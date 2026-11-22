@@ -116,7 +116,9 @@ the tab reads the detail again on the team's poll, a method waits for them.
   changed it goes through the queue `Kai_Authorship`: the steps of the history since the last
   snapshot push the turn of the agent that made them, and the host of a session pushes the key of
   each editor whose edits or files it applies (each says it in its Hello). A snapshot drains the
-  queue into the coauthors and turns of the working change (`ka.snapshot_authored`).
+  queue into the coauthors of the working change and, for each agent's turn, an attachment of
+  type `turn` naming a small object of the turn (`Kai_Turn`) the editor puts in the store
+  (`ka.snapshot_authored`). What a turn is stays the editor's: Kai carries the attachment unread.
 
 ## Verification
 

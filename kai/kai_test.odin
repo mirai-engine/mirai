@@ -154,9 +154,27 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
     identity:=identity_make()
     parent:=Revision{0=1}
     other:=Revision{0=2}
-    c:=Change{id={0=9},tree={0=3},author=identity.key,created=5,written=6,parents={parent,other},coauthors={Key{0=4}},turns={Turn_Ref{task=7}},description="fix the door"}
+    c:=Change{id={0=9},tree={0=3},author=identity.key,created=5,written=6,parents={parent,other},coauthors={Key{0=4}},attachments={{1,{0=7}},{1,{0=8}},{2,{0=1}}},description="fix the door"}
     change_bytes,e:=change_encode(&c,&identity,context.temp_allocator)
     testing.expect_value(t,e,Error.None)
+    // An attachment list out of order, repeated, untyped, of no object or past its bound is refused.
+    head_size:=size_of(Change_Head)+len(c.parents)*size_of(Revision)+len(c.coauthors)*size_of(Key)
+    for bad in ([]Attachment{{1,{0=7}},{1,{0=6}},{0,{0=9}},{1,{}}}) {
+        forged_list:=slice.clone(change_bytes,context.temp_allocator)
+        (^Attachment)(&forged_list[head_size+size_of(Attachment)])^=bad
+        _,de:=change_decode(forged_list,context.temp_allocator)
+        testing.expectf(t,de==.Corrupt,"an attachment list with %v second is refused",bad)
+    }
+    listed:=make([]Attachment,ATTACHMENTS_MAX+1,context.temp_allocator)
+    for &a,i in listed {a={1,{0=u8(i+1),1=u8(i>>8)+1}}}
+    past:=c
+    past.attachments=listed
+    _,e=change_encode(&past,&identity,context.temp_allocator)
+    testing.expect_value(t,e,Error.Too_Large)
+    past_bytes:=slice.clone(change_bytes,context.temp_allocator)
+    (^Change_Head)(raw_data(past_bytes)).attachments=ATTACHMENTS_MAX+1
+    _,e=change_decode(past_bytes,context.temp_allocator)
+    testing.expect_value(t,e,Error.Corrupt)
     testing.expect(t,change_verify(change_bytes),"a change verifies by its author")
     forged:=slice.clone(change_bytes,context.temp_allocator)
     forged[size_of(Change_Head)+3]~=1
@@ -453,7 +471,21 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     first,_:=change_snapshot(&r,tree(&f.s,"first\n"))
     kept,_:=change_snapshot(&r,tree(&f.s,"kept\n"))
     testing.expect_value(t,bookmark_set(&r,"main",kept),Error.None)
-    published_change:=Change{id=random_id(Change_Id),tree=tree(&f.s,"published\n"),author=identity.key,created=1,written=1,description="only a device names it"}
+    // What a change attaches is kept as its tree is, and so is what a kept view's change attaches.
+    attached,ae:=store.put(&f.s,transmute([]u8)string("an agent's turn"))
+    testing.expect_value(t,ae,store.Error.None)
+    attached_kept,ake:=store.put(&f.s,transmute([]u8)string("a turn of the working copy"))
+    testing.expect_value(t,ake,store.Error.None)
+    working:=change_get(&f.s,repo_working(&r),context.temp_allocator) or_else Change{}
+    working.attachments={{1,attached_kept}}
+    rewrite_tx,_:=tx_begin(&r)
+    testing.expect_value(t,change_sign_as(&working,&r.identity),Error.None)
+    working_revision,we:=change_put(&f.s,&working,&r.identity)
+    testing.expect_value(t,we,Error.None)
+    testing.expect_value(t,tx_rewrite(&rewrite_tx,repo_working(&r),working_revision),Error.None)
+    testing.expect_value(t,tx_commit(&rewrite_tx,.Snapshot,"attach"),Error.None)
+    kept=working_revision
+    published_change:=Change{id=random_id(Change_Id),tree=tree(&f.s,"published\n"),author=identity.key,created=1,written=1,attachments={{1,attached}},description="only a device names it"}
     published,_:=change_put(&f.s,&published_change,&identity)
     _,pe:=device_refs_publish(&f.s,{0=1},&identity,{{"work",published}},1)
     testing.expect_value(t,pe,Error.None)
@@ -477,6 +509,7 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     testing.expect_value(t,newest.kind,Op_Kind.Prune)
     for op in old {testing.expectf(t,object_present(&f.s,op)==(op==before),"%v: only the operation the workspace's ref names stays",op)}
     testing.expect(t,!object_present(&f.s,first),"a revision only old operations reached is reclaimed")
+    testing.expect(t,object_present(&f.s,attached) && object_present(&f.s,attached_kept),"what a kept change attaches survives the sweep")
     for revision in ([]Revision{kept,published,repo_working(&r)}) {
         files:=make([dynamic]File,context.temp_allocator)
         c,ce:=change_get(&f.s,revision,context.temp_allocator)

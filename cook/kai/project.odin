@@ -99,28 +99,28 @@ project_close :: proc(p:^Project) {
     p^={}
 }
 
-// Snapshots the working copy and records coauthors and agent turns in it:
-// those it does not name yet join it, the author excepted.
-snapshot_authored :: proc(w:^vcs.Workspace,coauthors:[]vcs.Key,turns:[]vcs.Turn_Ref) -> (report:vcs.Snapshot_Report,error:vcs.Error) {
+// Snapshots the working copy and records coauthors and attachments in it
+// (an editor's agent turns): those it does not name yet join it, the author
+// excepted, up to the bounds of a change.
+snapshot_authored :: proc(w:^vcs.Workspace,coauthors:[]vcs.Key,attachments:[]vcs.Attachment) -> (report:vcs.Snapshot_Report,error:vcs.Error) {
     report=vcs.workspace_snapshot(w) or_return
-    if len(coauthors)==0 && len(turns)==0 {return}
+    if len(coauthors)==0 && len(attachments)==0 {return}
     r:=&w.repo
     c:=vcs.change_get(r.s,report.revision,context.temp_allocator) or_return
     keys:=make([dynamic]vcs.Key,context.temp_allocator)
-    refs:=make([dynamic]vcs.Turn_Ref,context.temp_allocator)
+    list:=make([dynamic]vcs.Attachment,context.temp_allocator)
     if _,e:=append(&keys,..c.coauthors);e!=nil {return report,.Out_Of_Memory}
-    if _,e:=append(&refs,..c.turns);e!=nil {return report,.Out_Of_Memory}
+    if _,e:=append(&list,..c.attachments);e!=nil {return report,.Out_Of_Memory}
     for k in coauthors {
         if k==r.identity.key || k==c.author || k==({}) || slice.contains(keys[:],k) || len(keys)==vcs.COAUTHORS_MAX {continue}
         if _,e:=append(&keys,k);e!=nil {return report,.Out_Of_Memory}
     }
-    for t in turns {
-        if t==({}) || slice.contains(refs[:],t) || len(refs)==vcs.TURNS_MAX {continue}
-        if _,e:=append(&refs,t);e!=nil {return report,.Out_Of_Memory}
+    for a in attachments {
+        if _,e:=vcs.attachment_add(&list,a);e==.Out_Of_Memory {return report,e}
     }
-    if len(keys)==len(c.coauthors) && len(refs)==len(c.turns) {return}
+    if len(keys)==len(c.coauthors) && len(list)==len(c.attachments) {return}
     tx:=vcs.tx_begin(r) or_return
-    c.coauthors,c.turns=keys[:],refs[:]
+    c.coauthors,c.attachments=keys[:],list[:]
     vcs.change_sign_as(&c,&r.identity) or_return
     rewritten:=vcs.change_put(r.s,&c,&r.identity) or_return
     vcs.tx_rewrite(&tx,report.revision,rewritten) or_return
