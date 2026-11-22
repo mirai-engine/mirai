@@ -226,7 +226,7 @@ the_rows_of_what_moved_are_those_a_walk_of_every_link_brings_back :: proc(t:^tes
 }
 
 // A body and a character the simulation has no room for are not tried again while nothing is let go: the
-// ticks that move another body go only through it. An owned body ended frees room, and the body is made in
+// ticks that move a static collider go only through it. An owned body ended frees room, and the body is made in
 // the next tick even with nothing written; a Character taken out frees room for the other.
 @(test)
 what_has_no_room_waits_until_something_is_let_go :: proc(t:^testing.T) {
@@ -251,7 +251,7 @@ what_has_no_room_waits_until_something_is_let_go :: proc(t:^testing.T) {
     ground:=core.create(&f.entities)
     owned,error:=owned_body_create(&f.state,{7,ground,1},{0,-2,0},1)
     if !testing.expect(t,owned!={} && error==.None) {return}
-    box:=physics_test_box(&f,{3,0,0},{0.5,0.5,0.5})
+    box:=physics_test_box(&f,{3,0,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
     other:=character(&f,{-4,1,0})
     physics_test_step(&f,0)
     if !testing.expect(t,!made(&f,box,.Body) && !made(&f,other,.Character)) {return}

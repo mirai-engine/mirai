@@ -145,6 +145,17 @@ body_wake_touching :: proc(w:^World,index:i32) {
 body_update_mass :: proc(w:^World,index:i32) {
     body:=&w.bodies[index]
     stamp(w,body)
+    // What does not move has no mass nor reach: the shapes of a static body, as the many of the static body
+    // of a world, are not walked.
+    if body.type==.Static {
+        if .Mass_Override not_in body.flags {
+            body.flags-={.Mass_Given}
+            body.mass,body.inv_mass,body.inertia,body.inv_inertia,body.local_center=0,0,{},{},{}
+        }
+        body.center=body.position+q_rotate(body.rotation,body.local_center)
+        body.max_extent,body.min_extent=0,0
+        return
+    }
     body.max_extent,body.min_extent=0,max(f32)
     mass:f32
     center:Vec3

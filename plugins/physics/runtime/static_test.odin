@@ -3,6 +3,7 @@ package physics
 import "core:testing"
 import "mirai:core"
 import mm "mirai:std/math"
+import sim "plugins:physics/runtime/sim"
 
 @(private="file")
 box_near :: proc(a,b:mm.Aabb) -> bool {
@@ -137,4 +138,49 @@ static_bounds_hold_every_static_collider_but_the_sensors :: proc(t:^testing.T) {
     physics_test_step(&f,0)
     box,ok=static_bounds(physics)
     testing.expect(t,ok && box.max.x<10)
+}
+
+// A Collider without a Rigid_Body is a shape of the static body of the world: a level of them takes one
+// body. What hits it, touches it or ignores it names its entity; moved by its Transform, its shape moves
+// where it is; moved as a body, it gets a body of its own.
+@(test)
+a_static_collider_is_a_shape_of_the_world_until_it_moves_as_a_body :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.settings={bodies=3,shapes=8,contacts=16,characters=1}
+    f.gravity={0,-9.81,0}
+    floors:[3]core.Entity
+    for &e,i in floors {e=physics_test_box(&f,{f32(i)*4,0,0},{1,0.1,1})}
+    physics_test_step(&f,0)
+    testing.expect_value(t,f.state.world.body_count,1)
+    for e,i in floors {
+        testing.expect_value(t,body_of(core.ref(&f.state),e),Body_Handle{})
+        hit,found:=raycast(core.ref(&f.state),{f32(i)*4,5,0},{0,-1,0})
+        testing.expect(t,found && hit.entity==e && hit.collider==e)
+        _,found=raycast(core.ref(&f.state),{f32(i)*4,5,0},{0,-1,0},ignore=e)
+        testing.expect(t,!found)
+    }
+    shapes:=f.state.stats.shapes_created
+    core.edit(&f.transforms,floors[1]).position.z=10
+    physics_test_step(&f,0)
+    testing.expect_value(t,f.state.stats.shapes_created,shapes)
+    hit,found:=raycast(core.ref(&f.state),{4,5,10},{0,-1,0})
+    testing.expect(t,found && hit.entity==floors[1])
+
+    box:=physics_test_box(&f,{8,1,0},{0.2,0.2,0.2},RIGID_BODY_DYNAMIC)
+    touched:=false
+    for _ in 0..<60 {
+        physics_test_step(&f)
+        for c in f.events.contact_begin.items {touched||=c.a==floors[2] && c.b==box || c.b==floors[2] && c.a==box}
+    }
+    testing.expect(t,touched,"the box lands on the floor it names")
+
+    move_kinematic(&f.requests,floors[0],{0,0,-6})
+    physics_test_step(&f,0)
+    body:=body_of(core.ref(&f.state),floors[0])
+    testing.expect(t,body!={} && sim.body_type(&f.state.world,body)==.Static && f.state.world.body_count==3)
+    hit,found=raycast(core.ref(&f.state),{0,5,-6},{0,-1,0})
+    testing.expect(t,found && hit.entity==floors[0] && hit.body==body)
+    testing.expect_value(t,f.problems.count,0)
 }

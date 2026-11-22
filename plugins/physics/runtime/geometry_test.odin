@@ -189,14 +189,15 @@ a_collider_of_a_mesh_file_waits_for_its_job_and_keeps_its_shape_when_other_asset
     core.add(&g.statics,generated,render.Mesh_Renderer{mesh=made})
     core.add(&g.colliders,generated,collider_mesh())
     geometry_test_step(&g)
-    testing.expect_value(t,g.state.stats.bodies_created,u64(0))
+    testing.expect_value(t,g.state.stats.shapes_created,u64(0))
     for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
     // The tree of the Mesh collider at its scale is a job of its own, after the file.
-    for tick:=0;tick<4 && g.state.stats.bodies_created<3;tick+=1 {
+    for tick:=0;tick<4 && g.state.stats.shapes_created<3;tick+=1 {
         geometry_test_step(&g)
         for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
     }
-    testing.expect_value(t,g.state.stats.bodies_created,u64(3))
+    testing.expect_value(t,g.state.stats.shapes_created,u64(3))
+    testing.expect_value(t,g.state.stats.bodies_created,u64(0))
     testing.expect_value(t,g.problems.count,0)
     for floor in ([2]core.Entity{surface,generated}) {
         x:=floor==surface?f32(1.5):21.5
@@ -257,11 +258,15 @@ an_auto_collider_is_the_triangles_of_a_still_mesh_and_the_pieces_of_a_moving_one
     body.gravity_scale=0
     core.add(&g.rigids,moving,body)
     core.add(&g.rigids,other,body)
-    for tick:=0;tick<8 && g.state.stats.bodies_created<3;tick+=1 {
+    made :: proc(g:^Geometry_Test,e:core.Entity) -> bool {
+        l:=link_find(&g.state,e)
+        return l!=nil && l.kind!=.None
+    }
+    for tick:=0;tick<8 && !(made(&g,still) && made(&g,moving) && made(&g,other));tick+=1 {
         geometry_test_step(&g)
         for jobs.pending(&g.meshes.counter) {jobs.wait(&g.app.jobs,jobs.OWNER,&g.meshes.counter)}
     }
-    testing.expect_value(t,g.state.stats.bodies_created,u64(3))
+    testing.expect_value(t,g.state.stats.bodies_created,u64(2))
     testing.expect_value(t,g.problems.count,0)
     l:=link_find(&g.state,still)
     testing.expect(t,l!=nil && l.mesh!={} && l.hull=={} && l.pieces.count==0,"a still body collides with the triangles of its mesh")

@@ -450,6 +450,31 @@ shape_local_transform :: proc(w:^World,h:Shape_Handle) -> Transform {
     shape,_:=shape_read(w,h)
     return shape!=nil?shape.local:Transform{}
 }
+// Moves a shape of a static body in the frame of the body, as a Collider on the static body of a world that
+// another function moved: what touches it wakes and its pairs are searched again, its contacts kept. False
+// for a handle that is not live, a shape of a body that is not static or a transform that is not finite.
+shape_set_local :: proc(w:^World,h:Shape_Handle,local:Transform) -> bool {
+    if !finite(local) {return false}
+    shape,index:=shape_get(w,h)
+    if shape==nil || w.bodies[shape.body].type!=.Static {return false}
+    body:=&w.bodies[shape.body]
+    w.grounds_stale=true
+    for key:=body.contact_list;key>=0; {
+        contact:=&w.contacts[key>>1]
+        side:=key&1
+        if (contact.shape_a==index || contact.shape_b==index) && contact.flags&{.Touching,.Overlap}=={.Touching} {body_wake(w,side==0?contact.body_b:contact.body_a)}
+        key=contact.edges[side].next
+    }
+    if shape.filter.block!=0 {static_log_push(w,shape.aabb)}
+    shape.local={local.p,q_normalize(local.q)}
+    shape.aabb=shape_aabb(w,shape,body_transform_of(body))
+    shape.fat=shape.aabb
+    shape_moved(w,index)
+    if shape.proxy>=0 {spatial.dynamic_tree_move(&w.trees[STATIC_TREE],shape.proxy,shape.fat)}
+    if shape.filter.block!=0 {static_log_push(w,shape.aabb)}
+    return true
+}
+
 shape_user_data :: proc(w:^World,h:Shape_Handle) -> u64 {
     shape,_:=shape_read(w,h)
     return shape==nil?0:shape.user_data

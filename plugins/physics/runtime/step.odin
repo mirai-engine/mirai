@@ -603,7 +603,7 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     case has_character:
         if l.kind!=.Character && l.kind!=.None {link_release(s,l)}
         character_sync(s,e,l,config,collider,has_collider,collider_changed || row_changed(s.characters,s.changes[2],e))
-    case owner!=core.NONE:
+    case owner!=core.NONE || has_collider && !has_rigid && !l.own:
         compound_sync(s,e,l,collider,owner,collider_changed)
     case has_rigid || has_collider:
         if l.kind==.Compound || l.kind==.Character {link_release(s,l)}
@@ -777,14 +777,22 @@ scale_turns :: proc "contextless" (rotation:mm.Quat,scale:[3]f32) -> bool {
     return true
 }
 
+// The shapes of a collider on the body of owner, or with owner NONE, those of a Collider without a body of
+// its own on the static body of the world, where the entity is in the world: a level of static colliders
+// takes shapes, not bodies.
 @(private)
 compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core.Entity,collider_changed:bool) {
     state:=s.state
     w:=&state.world
     if l.kind==.Body || l.kind==.Character || l.kind==.Compound && l.owner!=owner {link_release(s,l)}
-    holder:=link_at(s,owner)
-    if holder!=nil {entity_sync(s,owner)}
-    if holder==nil || holder.kind!=.Body || !sim.body_valid(w,holder.body) {
+    holder:=sim.Body_Handle{}
+    if owner==core.NONE {
+        holder=world_body(state)
+    } else if link:=link_at(s,owner);link!=nil {
+        entity_sync(s,owner)
+        if link.kind==.Body && sim.body_valid(w,link.body) {holder=link.body}
+    }
+    if holder=={} {
         link_release(s,l)
         s.unmade=true
         return
@@ -797,13 +805,16 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     }
     shown:=shown_of(s,e,collider)
     filter:=collision_of(s,e,collider,collider_changed)
-    key:=shape_key(collider,scale,relative,shown)
-    changed:=l.kind!=.Compound || l.made!=key || l.body!=holder.body
-    if changed && l.kind==.Compound && l.body==holder.body && shown.generated && sim.shape_valid(w,l.shape) && (!collider_changed || shape_material_same(w,l.shape,collider)) && collider_geometry_unchanged(s,l,e,collider,scale,relative) {
+    // Where the shapes go is not what they are: on a static body they move where they are (shapes_place).
+    pose:=sim.Transform{relative.position,relative.rotation}
+    key:=shape_key(collider,scale,{rotation=1,scale=scale},shown)
+    changed:=l.kind!=.Compound || l.made!=key || l.body!=holder
+    if changed && l.kind==.Compound && l.body==holder && shown.generated && sim.shape_valid(w,l.shape) && (!collider_changed || shape_material_same(w,l.shape,collider)) && collider_geometry_unchanged(s,l,e,collider,scale,relative) {
         l.made=key
         changed=false
     }
-    if !changed && !link_shapes_lost(s,l) {
+    if !changed && !link_shapes_lost(s,l) && (l.pose==pose || shapes_place(s,l,pose)) {
+        l.pose=pose
         shapes_restyle(s,l,collider,filter,collider_changed)
         return
     }
@@ -814,8 +825,25 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     state.stats.shapes_destroyed+=pieces_shapes_destroy(s,l)
     geometry_release(s,l)
     if sheared {shape_problem(s,e,collider,.Sheared)}
-    if failure:=collider_shapes_make(s,l,e,holder.body,collider,scale,filter,&relative);failure!=.None {shape_problem(s,e,collider,failure)}
-    l.kind,l.owner,l.body,l.made=.Compound,owner,holder.body,key
+    if failure:=collider_shapes_make(s,l,e,holder,collider,scale,filter,&relative);failure!=.None {shape_problem(s,e,collider,failure)}
+    l.kind,l.owner,l.body,l.made,l.pose=.Compound,owner,holder,key,pose
+}
+
+// Moves the shapes of a compound on a static body from where they are to pose, each keeping its offset. False
+// on a body that moves, whose shapes are made again.
+@(private)
+shapes_place :: proc(s:^Sync,l:^Link,pose:sim.Transform) -> bool {
+    w:=&s.state.world
+    if sim.body_type(w,l.body)!=.Static {return false}
+    place :: proc(w:^sim.World,shape:sim.Shape_Handle,from,to:sim.Transform) -> bool {
+        local:=sim.shape_local_transform(w,shape)
+        back:=mm.quat_inverse(from.q)
+        offset:=sim.Transform{mm.quat_rotate(back,local.p-from.p),back*local.q}
+        return sim.shape_set_local(w,shape,{to.p+mm.quat_rotate(to.q,offset.p),linalg.normalize(to.q*offset.q)})
+    }
+    placed:=place(w,l.shape,l.pose,pose)
+    for piece in pieces_of(s.state,l) {placed&&=place(w,piece.shape,l.pose,pose)}
+    return placed
 }
 
 // What a Hull, Mesh or Heightfield collider shows. A mesh without a file is an immutable generated id, also
@@ -838,7 +866,8 @@ body_mass_update :: proc(w:^sim.World,body:sim.Body_Handle,rigid:Rigid_Body,has_
     if has_rigid && rigid.type==.Dynamic {sim.body_set_mass(w,body,rigid.mass)}
 }
 
-// Ends what the link holds: the body, or the shape of a compound, and the geometry made for it.
+// Ends what the link holds: the body, or the shape of a compound, and the geometry made for it. Whether the
+// entity has a body of its own stays.
 @(private)
 link_release :: proc(s:^Sync,l:^Link) {
     state:=s.state
@@ -867,7 +896,7 @@ link_release :: proc(s:^Sync,l:^Link) {
             state.stats.characters_destroyed+=1
         }
     }
-    l^={}
+    l^={own=l.own}
 }
 
 HEIGHT_EPSILON :: f32(1e-4) // m of capsule height that are no change
@@ -1232,6 +1261,11 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             continue
         }
         l:=link_find(state,e)
+        if l!=nil && l.kind==.Compound && l.owner==core.NONE {
+            // A body that does not move takes no velocity, impulse or force.
+            if request.kind!=.Kinematic && request.kind!=.Manipulate {continue}
+            l=body_own(s,e,l)
+        }
         if l==nil || l.kind==.None || l.kind==.Compound {
             why:=l!=nil && l.kind==.Compound?"its Collider is part of the body of an ancestor":"it has no body in the simulation"
             request_problem(s,e,request.kind,"physics.request_body",why,"send it to an entity with a Rigid_Body, a Collider of its own or a Character")
@@ -1314,6 +1348,17 @@ requests_apply :: proc(s:^Sync,requests:[]Body_Request) {
             }
         }
     }
+}
+
+// Takes a Collider off the static body of the world, as a kinematic move, a manipulation or a joint does:
+// it gets a body of its own, static, which it keeps.
+@(private)
+body_own :: proc(s:^Sync,e:core.Entity,l:^Link) -> ^Link {
+    l.own=true
+    // A sync in the tick already went through it.
+    if at:=link_index(s.state,l);at<len(s.state.visited) {s.state.visited[at]=s.state.pass-1}
+    entity_sync(s,e)
+    return link_find(s.state,e)
 }
 
 // A force or impulse over a volume that the simulation refused.
@@ -1489,7 +1534,7 @@ pull_set :: proc(state:^Physics_State,h:^Held,l:^Link) -> bool {
     mass,_,inertia:=sim.body_mass_properties(w,l.body)
     force:=PULL_WEIGHTS*PULL_GRAVITY*mass
     gyration:=mass>0?math.sqrt((inertia[0,0]+inertia[1,1]+inertia[2,2])/(3*mass)):0
-    desc:=sim.Joint_Desc{body_a=joint_world_body(state),body_b=l.body}
+    desc:=sim.Joint_Desc{body_a=world_body(state),body_b=l.body,collide_connected=true}
     pose:=h.pose[.Manipulation]
     if sim.joint_drive_pose(&desc,pose.p,pose.q,PULL_HERTZ,1,force,force*gyration)!=.None {return false}
     if sim.joint_valid(w,h.pull) {
@@ -1514,13 +1559,13 @@ events_forward :: proc(s:^Sync,events:^Physics_Events,sent:^[6]int) {
     for &count,i in sent {count=min(count,lengths[i])}
     for event in list.contact_begin[sent[0]:] {
         core.push(&events.contact_begin,Contact_Begin{
-            a=core.Entity(event.users.body_a),b=core.Entity(event.users.body_b),collider_a=core.Entity(event.users.shape_a),collider_b=core.Entity(event.users.shape_b),
+            a=user_entity(event.users.body_a,event.users.shape_a),b=user_entity(event.users.body_b,event.users.shape_b),collider_a=core.Entity(event.users.shape_a),collider_b=core.Entity(event.users.shape_b),
             point=event.point,normal=event.normal,impulse=event.impulse,material=base.Asset_Id(event.surface),
         })
     }
-    for event in list.contact_end[sent[1]:] {core.push(&events.contact_end,Contact_End{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b)})}
-    for event in list.overlap_begin[sent[2]:] {core.push(&events.overlap_begin,Overlap_Event{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
-    for event in list.overlap_end[sent[3]:] {core.push(&events.overlap_end,Overlap_Event{core.Entity(event.users.body_a),core.Entity(event.users.body_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
+    for event in list.contact_end[sent[1]:] {core.push(&events.contact_end,Contact_End{user_entity(event.users.body_a,event.users.shape_a),user_entity(event.users.body_b,event.users.shape_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b)})}
+    for event in list.overlap_begin[sent[2]:] {core.push(&events.overlap_begin,Overlap_Event{user_entity(event.users.body_a,event.users.shape_a),user_entity(event.users.body_b,event.users.shape_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
+    for event in list.overlap_end[sent[3]:] {core.push(&events.overlap_end,Overlap_Event{user_entity(event.users.body_a,event.users.shape_a),user_entity(event.users.body_b,event.users.shape_b),core.Entity(event.users.shape_a),core.Entity(event.users.shape_b),event.crossed})}
     for event in list.sleep[sent[4]:] {core.push(&events.sleep,Body_Event{core.Entity(event.user_data)})}
     for event in list.wake[sent[5]:] {core.push(&events.wake,Body_Event{core.Entity(event.user_data)})}
     sent^=lengths

@@ -37,8 +37,16 @@ query_filter_response :: #force_inline proc "contextless" (filter:Query_Filter,t
 query_response :: #force_inline proc "contextless" (w:^World,shape:^Shape,filter:Query_Filter) -> Response {
     if !filter.debris && .Debris in w.bodies[shape.body].flags {return .Ignore}
     if filter.ignore_body!={} && body_handle(w,shape.body)==filter.ignore_body {return .Ignore}
-    if filter.ignore_user_data!=0 && w.bodies[shape.body].user_data==filter.ignore_user_data {return .Ignore}
+    if filter.ignore_user_data!=0 && shape_owner_data(w,shape)==filter.ignore_user_data {return .Ignore}
     return query_filter_response(filter,shape.filter)
+}
+
+// What a shape stands for: the user data of its body, or its own on a body without any, as the static
+// body of a world carries the shapes of many owners.
+@(private)
+shape_owner_data :: #force_inline proc "contextless" (w:^World,shape:^Shape) -> u64 {
+    if user:=w.bodies[shape.body].user_data;user!=0 {return user}
+    return shape.user_data
 }
 
 // The hits after the first that blocks are dropped.

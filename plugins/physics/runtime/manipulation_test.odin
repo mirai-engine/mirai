@@ -86,11 +86,13 @@ moving_a_collider_only_wall_pushes_bodies_then_restores_static_motion :: proc(t:
     box:=physics_test_box(&f,{1.1,0,0},{0.5,0.5,0.5},RIGID_BODY_DYNAMIC)
     physics_test_step(&f,0)
     testing.expect_value(t,manipulation_owner(core.ref(&f.state),wall),wall)
-    wall_body:=body_of(core.ref(&f.state),wall)
+    testing.expect_value(t,body_of(core.ref(&f.state),wall),sim.Body_Handle{})
     for tick in 1..=30 {
         manipulation_target(&f.requests,wall,{f32(tick)/30,0,0})
         physics_test_step(&f)
     }
+    // The manipulation gave it a body of its own.
+    wall_body:=body_of(core.ref(&f.state),wall)
     moved:=physics_test_pose(&f,box).position.x
     testing.expect(t,moved>1.9)
     testing.expect_value(t,sim.body_type(&f.state.world,wall_body),Body_Type.Kinematic)
@@ -246,11 +248,11 @@ large_manipulations_reach_the_target_before_releasing_and_can_return :: proc(t:^
     defer physics_test_destroy(&f)
     wall:=physics_test_box(&f,{0,0,0},{0.5,0.5,0.5})
     physics_test_step(&f,0)
-    body:=body_of(core.ref(&f.state),wall)
     rotation:=mm.quat_axis_angle({0,1,0},2)
     manipulation_target(&f.requests,wall,{50,0,0},rotation)
     manipulation_end(&f.requests,wall)
     physics_test_step(&f)
+    body:=body_of(core.ref(&f.state),wall)
     testing.expect_value(t,sim.body_type(&f.state.world,body),Body_Type.Kinematic)
     testing.expect(t,sim.body_position(&f.state.world,body).x<10)
     for _ in 0..<30 {physics_test_step(&f)}

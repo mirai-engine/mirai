@@ -25,7 +25,8 @@ constants and parameters: `types.odin` and the comments of each file.
 - A body falls with the world gravity or, with `Own_Gravity`, with its own
   (`world_set_body_gravity`, `body_gravity`); the gravity scale multiplies either one.
 - Mass, center and inertia come from the shapes (`density` in kg/m³). A dynamic without mass
-  receives 1 kg. `body_set_mass_properties` sets them by hand.
+  receives 1 kg. `body_set_mass_properties` sets them by hand. A static body has none and its
+  shapes are not walked when they come and go: one body can carry the static shapes of a level.
 - Every creation and setter refuses a value that is not finite (NaN or infinite), as Box2D checks
   its inputs: it returns a null handle or false and changes nothing.
 - 3×3 matrices are inverted with a tolerance relative to their scale: a 1 mm steel ball spins and a
@@ -454,6 +455,8 @@ Without allocation, on caller buffers, with a `Query_Filter`.
 
 - The query acts as a shape of its filter. Each target meets it with the weaker response of
   the two. `include_sensors` also reports overlaps, and the debris option includes debris.
+- `ignore_body` skips the shapes of a body; `ignore_user_data`, those whose body has that user data
+  or, on a body without any (the static body a world keeps for many owners), whose own has it.
 - `ray_cast_closest` and `ray_cast_any` see blockers. `ray_cast_all` sorts by distance and
   ends at the first blocker, keeping the preceding overlaps. With more hits than capacity
   it keeps the nearest ones.
@@ -490,8 +493,9 @@ What whoever builds from the level needs, like the navmesh, without allocating.
   - It only reads the world: several threads can call it at once while nobody changes it.
 - **Change log.** A ring of `World_Desc.static_change_capacity` world boxes, with a counter that
   only grows, notes where static collision changed:
-  - a shape created or destroyed on a static body, or a static shape whose filter changes
-    (`shape_set_filter` with another filter): the box of the shape;
+  - a shape created, destroyed or moved (`shape_set_local`: where it was and where it ended up) on a
+    static body, or a static shape whose filter changes (`shape_set_filter` with another filter):
+    the box of the shape;
   - a static body moved (`body_set_transform`: where it was and where it ended up), destroyed, or
     that becomes static or stops being so (`body_set_type`): the box of all its shapes.
 

@@ -225,9 +225,13 @@ Overlaps:
 ## Binding and world step
 
 - A `Collider` with `Rigid_Body` is on the entity's body. Without it, on that of the nearest
-  ancestor that has one (in the relative pose it has) or, if no ancestor has one, on a static body
-  of its own. A compound body has several shapes; its children with a collider are not separate
-  bodies.
+  ancestor that has one (in the relative pose it has) or, if no ancestor has one, it is a shape of
+  the static body of the world at its world pose: a level of static colliders takes shapes
+  (`Physics_Settings.shapes`), not bodies, and `body_of` gives it no body. Its `Transform` moves its
+  shape where it is, keeping its contacts. A kinematic move, a manipulation or a `Joint` that names
+  it gives it a static body of its own, which it keeps: a joint to the world body would keep what it
+  holds from colliding with every static collider. A compound body has several shapes; its children
+  with a collider are not separate bodies.
 - `Physics_Settings` (storage) sets the capacities when the simulation world is created; zero takes
   the value of the package. Gravity is a component ([gravity](#gravity)). `hulls`, `meshes` and
   `heightfields` budget the resident geometry (the defaults of `sim.world_desc_default` leave room
@@ -570,9 +574,10 @@ preview decides which bodies it leaves dynamic and discards or confirms its resu
 
 They are emptied and filled every step, with queues reserved when the world is prepared; they are
 read in a function of the `react` stage ([order](../../mirai-core/references/generator.md#order)).
-`a`, `b`, `entity` and `other` are the entities of the bodies; `collider_*`, those of the colliders
-that touched, which distinguish head, foot or weapon of the same body. `NONE` is a body without an
-entity; the detached ones of a destructible name their group entity, and the root group, the owner.
+`a`, `b`, `entity` and `other` are the entities of the bodies, or of the colliders on the static
+body of the world; `collider_*`, those of the colliders that touched, which distinguish head, foot
+or weapon of the same body. `NONE` is a body without an entity; the detached ones of a
+destructible name their group entity, and the root group, the owner.
 A box, sphere or outline [`Volume`](../../mirai-gameplay/references/libraries.md#volume) on an
 entity without a `Collider`, `Rigid_Body` or `Character` is a static sensor of preset `Trigger`,
 made by the sync from the volume (`zone_collider`; an outline, as the hulls of its convex pieces,
@@ -584,8 +589,9 @@ shape without an end. This is the one way a zone says what went in; there is no 
 
 ## Queries
 
-On `core.Ref(Physics_State)`, with a `Query_Filter` and `ignore` (entity whose body is omitted). A
-`Hit` carries body entity, `collider`, point, normal, distance, `overlap` (does not block the
+On `core.Ref(Physics_State)`, with a `Query_Filter` and `ignore` (entity whose body is omitted, or
+its shapes on the static body of the world). A `Hit` carries body entity (that of the collider on
+the static body of the world), `collider`, point, normal, distance, `overlap` (does not block the
 query), `material` (what a collider of one material per place shows there, as `Contact_Begin`
 does; zero otherwise), body and shape. A query that starts inside a shape gives distance zero and
 null normal. Without simulation (`!ready`) it returns nothing.

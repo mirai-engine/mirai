@@ -43,7 +43,9 @@ Physics_State :: struct {
     joints:core.Entity_Map(Joint_Link), // by entity with a Joint
     fluids:core.Entity_Map(Fluid_Link), // by entity with a Fluid
     fluids_synced:u64, // the versions of the tables the fluids were last made from
-    world_body:sim.Body_Handle, // the static body joints to the world hold on to
+    // The static body of the world: it carries the shapes of every Collider without a body of its own, and
+    // joints to the world or to such a Collider hold on to it.
+    world_body:sim.Body_Handle,
     geometry:[dynamic]Geometry_Mark, // by slot of the hulls, then the meshes, then the heightfields of the world
     sources:[dynamic]Geometry_Source, // by slot as geometry: what it was made from, to share it
     source_stamps:[dynamic]u64, // of the chunks of sources, as link_stamps
@@ -114,7 +116,9 @@ Link :: struct {
     mesh:sim.Mesh_Handle,
     heightfield:sim.Heightfield_Handle,
     character:sim.Character_Handle,
-    owner:core.Entity, // compound: the ancestor whose body carries the shape
+    owner:core.Entity, // compound: the ancestor whose body carries the shape; NONE on the static body of the world
+    own:bool, // a Collider without a Rigid_Body that a move, a manipulation or a joint took off the static body of the world
+    pose:sim.Transform, // compound: where its shapes are in the frame of the body, but their own offsets
     made:u64, // a hash of what its shapes or its capsule were made from (shape_key): another asks to make them again
 }
 
@@ -312,7 +316,7 @@ gravity :: proc(physics:core.Ref(Physics_State)) -> [3]f32 {
 // The body of an entity that has a Rigid_Body, a Collider or a Character; zero until the tick after they appear.
 body_of :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> sim.Body_Handle {
     link:=link_find(physics.ptr,e)
-    if link==nil {return {}}
+    if link==nil || link.kind==.Compound && link.owner==core.NONE {return {}}
     if link.kind==.Character {return sim.character_body(&physics.world,link.character)}
     return link.body
 }
@@ -396,16 +400,19 @@ geometry_budget :: proc(physics:core.Ref(Physics_State),kind:Collider_Kind) -> (
     return
 }
 
-// The entity a body follows; NONE for a body created outside the components.
+// The entity a body follows; NONE for a body created outside the components, as the static body of the
+// world, whose shapes stand each for its own entity (Hit.entity).
 entity_of :: proc(physics:core.Ref(Physics_State),body:sim.Body_Handle) -> core.Entity {
     return core.Entity(sim.body_user_data(&physics.world,body))
 }
 
-// Compound colliders name their owning body; characters cannot be held.
+// Compound colliders name their owning body; characters cannot be held. A Collider on the static body of
+// the world is its own owner: a manipulation gives it a body of its own.
 manipulation_owner :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> core.Entity {
     if physics.ptr==nil || !physics.ready {return core.NONE}
     owner:=e
     l:=link_find(physics.ptr,e)
+    if l!=nil && l.kind==.Compound && l.owner==core.NONE {return e}
     if l!=nil && l.kind==.Compound {
         owner=l.owner
         l=link_find(physics.ptr,owner)
@@ -415,7 +422,7 @@ manipulation_owner :: proc(physics:core.Ref(Physics_State),e:core.Entity) -> cor
 }
 
 // entity is the body that was hit and collider the entity of its collider, another one when the collider
-// is a child of the body. overlap: the shape does not block the query. A query that starts inside a shape
+// is a child of the body; for a Collider without a body both are its entity. overlap: the shape does not block the query. A query that starts inside a shape
 // reports distance zero and a zero normal. material: what the collider shows where it was hit when it
 // shows one per place, as a terrain does by cell; zero for a collider of one surface.
 Hit :: struct {
@@ -432,10 +439,20 @@ Hit :: struct {
 QUERY_HIT_CAPACITY :: 64
 OVERLAP_CAPACITY :: 256
 
+// The entity a shape stands for: that of its body, or its own on a body without one, as the static body of
+// the world.
+@(private)
+shape_entity :: proc(world:^sim.World,body:sim.Body_Handle,shape:sim.Shape_Handle) -> core.Entity {
+    return user_entity(sim.body_user_data(world,body),sim.shape_user_data(world,shape))
+}
+
+@(private)
+user_entity :: proc "contextless" (body,shape:u64) -> core.Entity {return core.Entity(body!=0?body:shape)}
+
 @(private)
 hit_of :: proc(world:^sim.World,found:sim.Ray_Hit,max_distance:f32) -> Hit {
     return {
-        entity=core.Entity(sim.body_user_data(world,found.body)),collider=core.Entity(sim.shape_user_data(world,found.shape)),
+        entity=shape_entity(world,found.body,found.shape),collider=core.Entity(sim.shape_user_data(world,found.shape)),
         point=found.point,normal=found.normal,distance=found.fraction*max_distance,overlap=found.overlap,material=base.Asset_Id(found.surface),body=found.body,shape=found.shape,
     }
 }
@@ -525,7 +542,7 @@ closest_point :: proc(physics:core.Ref(Physics_State),point:[3]f32,max_distance:
     if ignore!=core.NONE {prepared.ignore_body,prepared.ignore_user_data=body_of(physics,ignore),u64(ignore)}
     found:=sim.closest_point(&physics.world,point,max_distance,prepared) or_return
     return {
-        entity=core.Entity(sim.body_user_data(&physics.world,found.body)),collider=core.Entity(sim.shape_user_data(&physics.world,found.shape)),
+        entity=shape_entity(&physics.world,found.body,found.shape),collider=core.Entity(sim.shape_user_data(&physics.world,found.shape)),
         point=found.point,normal=found.normal,distance=found.distance,body=found.body,shape=found.shape,
     },true
 }
@@ -563,9 +580,9 @@ overlap :: proc(physics:core.Ref(Physics_State),geometry:sim.Geometry,transform:
     found.seen.shift=64
     for slots:=len(keys)-1;slots>1;slots>>=1 {found.seen.shift-=1}
     found.seen.capacity=min(len(results),OVERLAP_CAPACITY)
-    visit :: proc(user:rawptr,_:sim.Shape_Handle,body:sim.Body_Handle) -> bool {
+    visit :: proc(user:rawptr,shape:sim.Shape_Handle,body:sim.Body_Handle) -> bool {
         r:=cast(^Overlap_Results)user
-        e:=core.Entity(sim.body_user_data(r.world,body))
+        e:=shape_entity(r.world,body,shape)
         if e==core.NONE {return true}
         slot,added:=base.hash_map_insert(&r.seen,u64(e))
         if added {r.entities[r.seen.count-1]=e}
