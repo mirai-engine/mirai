@@ -327,22 +327,26 @@ machine_device_revoke :: proc(m:^Machine,device:Key) -> Error {
 }
 
 // Writes a Witness of the removal at removal, of the log removal_log, in each
-// log of the org this store holds where one of keys signed: the org's own
-// for a device's revocation, its projects', proposals' and keyrings' for any.
-// Its parents are the heads this device knows, so what the removed keys
-// signed before stands there; a log where this device holds no right takes
-// none of it, and is left to a device that does.
-machine_witness :: proc(m:^Machine,o:^Org_State,removal_log:Log_Id,removal:store.Hash,keys:[]Key) -> Error {
+// log of the org this store holds that witnesses_due says lacks one: the
+// org's own for a device's revocation, and every project, open proposal and
+// keyring where a key it affects signed or held a right. Its parents are the
+// heads this device knows, so what the removed keys signed before stands
+// there; a log where this device holds no right takes none of it, and is
+// left to a device that does.
+machine_witness :: proc(m:^Machine,o:^Org_State,removal_log:Log_Id,removal:store.Hash,_:[]Key) -> Error {
     org:=o.log.id
     body:=witness_body(removal_log,removal)
     user,ctx:=machine_user_head(m),org_context(&o.fold,m.user)
-    signed :: proc(l:^Log,keys:[]Key) -> bool {
-        for &item in l.items {
-            if slice.contains(keys,item.entry.author) {return true}
+    due:=make([dynamic]Witness_Due,context.temp_allocator)
+    lacks :: proc(o:^Org_State,l:^Log,removal:store.Hash,due:^[dynamic]Witness_Due) -> bool {
+        clear(due)
+        if witnesses_due(&o.fold,l,due)!=.None {return false}
+        for d in due {
+            if d.removal==removal {return true}
         }
         return false
     }
-    if removal_log!=org && signed(&o.log,keys) {
+    if removal_log!=org && lacks(o,&o.log,removal,&due) {
         if _,e:=log_append(&o.log,.Witness,body,&m.identity,machine_now(),user);e!=.None {return machine_fail(m,e,"the witness does not sign")}
         machine_log_save(m,&o.log) or_return
     }
@@ -353,7 +357,12 @@ machine_witness :: proc(m:^Machine,o:^Org_State,removal_log:Log_Id,removal:store
         if !ok || id==org || !log_of_org(&m.store,&o.fold,id,r.hash) {continue}
         l:=new(Log,context.temp_allocator)
         log_init(l,id,context.temp_allocator)
-        if _,le:=log_load(&m.store,l,r.hash,false);le!=.None || !signed(l,keys) {continue}
+        if _,le:=log_load(&m.store,l,r.hash,false);le!=.None {continue}
+        if l.kind==.Proposal {
+            f:Proposal_Fold
+            if proposal_fold(&f,l,&o.fold,context.temp_allocator)!=.None || f.status!=.Open {continue}
+        }
+        if !lacks(o,l,removal,&due) {continue}
         if _,ae:=log_append(l,.Witness,body,&m.identity,machine_now(),user,ctx);ae!=.None {return machine_fail(m,ae,"the witness does not sign")}
         machine_log_save(m,l) or_return
     }

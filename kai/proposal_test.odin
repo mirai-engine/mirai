@@ -671,16 +671,43 @@ a_removed_writer_keeps_its_past :: proc(t:^testing.T) {
     expect_ok(t,proposal_open(&l,o.project.id,"main","Bob's","",alice,21,{},old))
     expect_ok(t,proposal_revise(&l,{{random_id(Change_Id),{0=2}}},alice,22,{},old))
     approval,_:=proposal_verdict(&l,.Approve,{0=2},bob,23,{},old)
+    // A proposal bob never signed in.
+    untouched:Log
+    log_init(&untouched);defer log_destroy(&untouched)
+    expect_ok(t,proposal_open(&untouched,o.project.id,"main","Alice's","",alice,24,{},old))
 
     removal,e:=log_append(&o.org,.Member_Remove,body_make(Subject_Body{subject=o.bob.log.id}),alice,30)
     testing.expect_value(t,e,Error.None)
     org_refold(t,&o)
+    // The removal is due in every log bob held a right in, signed there or not.
+    due:=make([dynamic]Witness_Due,context.temp_allocator)
+    for log in ([]^Log{&o.project,&l,&untouched}) {
+        clear(&due)
+        testing.expect_value(t,witnesses_due(&o.fold,log,&due),Error.None)
+        testing.expectf(t,len(due)==1 && due[0].removal==removal,"%v: the removal is due",log.kind)
+    }
     test_witness(t,&o.project,o.org.id,removal,alice,at(&o),31)
     test_witness(t,&l,o.org.id,removal,alice,at(&o),32)
+    test_witness(t,&untouched,o.org.id,removal,alice,at(&o),32)
+    // A proposal opened after the removal needs no witness: every entry of it is judged with it.
+    born_after:Log
+    log_init(&born_after);defer log_destroy(&born_after)
+    expect_ok(t,proposal_open(&born_after,o.project.id,"main","Later","",alice,35,{},at(&o)))
+    clear(&due)
+    testing.expect_value(t,witnesses_due(&o.fold,&born_after,&due),Error.None)
+    testing.expect_value(t,len(due),0)
 
     // After the witness, bob signs under the org's entry from before his removal.
     m2:=test_move(t,&o.project,"main",{0=3},bob,old,33,nil,{{0=1}})
     late,_:=proposal_verdict(&l,.Changes,{0=2},bob,34,{},old)
+    first_late,_:=proposal_comment(&untouched,{},"",{},{},"late",bob,36,{},old)
+    born_late,_:=proposal_comment(&born_after,{},"",{},{},"late",bob,36,{},old)
+    for c in ([]struct{log:^Log,entry:store.Hash}{{&untouched,first_late},{&born_after,born_late}}) {
+        g:Proposal_Fold
+        testing.expect_value(t,proposal_fold(&g,c.log,&o.fold),Error.None)
+        testing.expect(t,!g.valid[log_find(c.log,c.entry)],"a removed writer's first entry in a log it never signed in does not stand")
+        proposal_fold_destroy(&g)
+    }
 
     p:Project_Fold
     testing.expect_value(t,project_fold(&p,&o.project,&o.fold),Error.None)

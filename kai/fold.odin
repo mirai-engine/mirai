@@ -353,11 +353,16 @@ log_has_witness :: proc(l:^Log,removal:store.Hash) -> bool {return log_witness_f
 Witness_Due :: struct {log:Log_Id,removal:store.Hash,keys:[]Key}
 
 // The removals of the org's members, devices and grants that l, the Org_Log
-// or a Project, Proposal or Keyring log of the org, has no witness of while a
-// key they affect has signed in it, appended to out: what a device that
-// holds a right in l writes, its parents those of witness_parents. A
-// Witness entry already there that names the removal, by a key it does not
-// affect, counts, valid or not, so nothing is written twice.
+// or a Project, open Proposal or Keyring log of the org, has no witness of,
+// appended to out: what a device that holds a right in l writes, its parents
+// those of witness_parents. One is due where a key it affects signed, and,
+// whether or not one did, where the key held a right when the removal came
+// and the log already was (log_born_before): so a removed key has no log to
+// sign first in. A log born after a removal needs none, since every entry of
+// it is judged with the removal, and a settled proposal none (it counts for
+// nothing until a reopen, after which the agents that load it witness what
+// it lacks). A Witness entry already there that names the removal, by a key
+// it does not affect, counts, valid or not, so nothing is written twice.
 witnesses_due :: proc(org:^Org_Fold,l:^Log,out:^[dynamic]Witness_Due) -> Error {
     authors:=make(map[Key]bool,context.temp_allocator)
     named:=make(map[store.Hash]bool,context.temp_allocator)
@@ -368,40 +373,59 @@ witnesses_due :: proc(org:^Org_Fold,l:^Log,out:^[dynamic]Witness_Due) -> Error {
             named[b.removal]=true
         }
     }
-    due :: proc(authors:^map[Key]bool,named:^map[store.Hash]bool,log:Log_Id,removal:store.Hash,keys:[]Key,out:^[dynamic]Witness_Due) -> Error {
-        if removal in named {return .None}
-        for k in keys {
-            if k in authors {
-                own,e:=slice.clone(keys,context.temp_allocator)
-                if e!=nil {return .Out_Of_Memory}
-                if _,ae:=append(out,Witness_Due{log,removal,own});ae!=nil {return .Out_Of_Memory}
-                return .None
-            }
-        }
+    due :: proc(authors:^map[Key]bool,named:^map[store.Hash]bool,log:Log_Id,removal:store.Hash,keys:[]Key,eager:bool,out:^[dynamic]Witness_Due) -> Error {
+        if removal in named || len(keys)==0 {return .None}
+        signed:=eager
+        for k in keys {signed||=k in authors}
+        if !signed {return .None}
+        own,e:=slice.clone(keys,context.temp_allocator)
+        if e!=nil {return .Out_Of_Memory}
+        if _,ae:=append(out,Witness_Due{log,removal,own});ae!=nil {return .Out_Of_Memory}
         return .None
+    }
+    born:=-1
+    if l!=org.log {
+        if born=log_born_at(org,l);born<0 {return .None}
     }
     for u in org.users {
         if u.log==l {continue}
+        held:=log_right(l.kind,org_role(org,u.log.id))
         for d in u.devices {
-            if d.revoked {due(&authors,&named,u.log.id,u.log.items[d.revoke].address,{d.key},out) or_return}
+            if !d.revoked {continue}
+            removal:=u.log.items[d.revoke].address
+            due(&authors,&named,u.log.id,removal,{d.key},held && (born<0 || !revocation_before(org,removal,born)),out) or_return
         }
         for w in u.web_keys {
-            if w.revoked {due(&authors,&named,u.log.id,u.log.items[w.revoke].address,{w.key},out) or_return}
+            if !w.revoked {continue}
+            removal:=u.log.items[w.revoke].address
+            due(&authors,&named,u.log.id,removal,{w.key},held && (born<0 || !revocation_before(org,removal,born)),out) or_return
         }
     }
     if l==org.log {return .None}
+    project:=l.id
+    if l.kind==.Proposal {
+        if g:=log_find(l,l.id);g>=0 {
+            b,_,_:=body_head(l.items[g].entry.body,Proposal_Open_Body)
+            project=b.project
+        }
+    }
     for i in org.log.order {
         r:=int(i)
         entry:=&org.log.items[r].entry
         if !org.valid[r] {continue}
         keys:=make([dynamic]Key,context.temp_allocator)
+        eager:=!log_within(org.log,r,born)
         #partial switch entry.type {
         case .Member_Remove,.Role_Set:
             user:=entry.type==.Member_Remove?(^Subject_Body)(raw_data(entry.body)).subject:(^Member_Body)(raw_data(entry.body)).user
+            before:=org_role_replay(org,user,r,false)
+            after:=Role.None
             if entry.type==.Role_Set {
                 b,_,_:=body_head(entry.body,Member_Body)
-                if org_role_replay(org,user,r,false)<=b.role {continue}
+                if before<=b.role {continue}
+                after=b.role
             }
+            eager&&=log_right(l.kind,before) && !log_right(l.kind,after)
             if u:=org_user(org,user);u!=nil {
                 for d in u.devices {append(&keys,d.key)}
                 for w in u.web_keys {append(&keys,w.key)}
@@ -411,14 +435,65 @@ witnesses_due :: proc(org:^Org_Fold,l:^Log,out:^[dynamic]Witness_Due) -> Error {
             }
         case .Grant_Revoke:
             b,_,_:=body_head(entry.body,Subject_Body)
+            granted:=false
             for &g in org.granted {
-                if g.address==b.subject && g.grant.subject_key!={} {append(&keys,g.grant.subject_key)}
+                if g.address!=b.subject || g.grant.subject_key=={} {continue}
+                append(&keys,g.grant.subject_key)
+                granted||=.Check in g.grant.rights && (g.grant.project=={} || g.grant.project==project)
             }
+            // A holder signs only checks, in the proposals of its project.
+            eager&&=l.kind==.Proposal && granted
         case: continue
         }
-        due(&authors,&named,org.log.id,org.log.items[r].address,keys[:],out) or_return
+        due(&authors,&named,org.log.id,org.log.items[r].address,keys[:],eager,out) or_return
     }
     return .None
+}
+
+// Whether a role holds a right in a log of kind: a writer's in a project's
+// and a keyring's, any member's in the org's and a proposal's.
+@(private)
+log_right :: proc "contextless" (kind:Log_Kind,role:Role) -> bool {
+    #partial switch kind {
+    case .Project,.Keyring: return role>=.Writer
+    }
+    return role>=.Reader
+}
+
+// The org's entry the genesis of l, a Project, Proposal or Keyring log, was
+// signed under; -1 when it names none valid here.
+log_born_at :: proc(org:^Org_Fold,l:^Log) -> int {
+    g:=log_find(l,l.id)
+    if g<0 {return -1}
+    return org_context_of(org,l,g)
+}
+
+// Whether the org's log at its entry born holds a valid witness of the
+// revocation at removal, of a user's log: a log born there came after it.
+@(private)
+revocation_before :: proc(org:^Org_Fold,removal:store.Hash,born:int) -> bool {
+    for w:=log_witness_first(org.log,removal);w>=0;w=log_witness_next(org.log,w) {
+        if log_within(org.log,w,born) {return true}
+    }
+    return false
+}
+
+// Whether the key that signed entry e of l, a Project, Proposal or Keyring
+// log, was revoked before l was born: its revocation is witnessed in the
+// org's log in the causal past of the org entry l's genesis was signed under,
+// so no entry of l is its, witnessed in l or not.
+@(private)
+revoked_before_log :: proc(org:^Org_Fold,u:^User_Fold,l:^Log,e:int) -> bool {
+    born:=log_born_at(org,l)
+    if born<0 {return false}
+    author:=l.items[e].entry.author
+    for d in u.devices {
+        if d.key==author && d.revoked {return revocation_before(org,u.log.items[d.revoke].address,born)}
+    }
+    for w in u.web_keys {
+        if w.key==author && w.revoked {return revocation_before(org,u.log.items[w.revoke].address,born)}
+    }
+    return false
 }
 
 // The parents of a witness a device writes when it finds a removal reached l:
@@ -1122,13 +1197,16 @@ org_role_at :: proc(f:^Org_Fold,user:Log_Id,head:int) -> Role {
 // The role user held for entry e of l, a Project, Proposal or Keyring log,
 // signed under the org's entry at: its role there, lowered by each valid
 // Member_Remove or Role_Set of the user the causal past of at does not hold
-// that e does not stand against in l (log_witnessed).
+// that e does not stand against in l (log_witnessed), or that the org entry
+// l's genesis was signed under holds (l was born after it).
 @(private)
 org_role_signed_at :: proc(f:^Org_Fold,user:Log_Id,at:int,l:^Log,e:int) -> Role {
     role:=org_role_at(f,user,at)
+    born:=log_born_at(f,l)
     for x:=subjects_first(&f.about,user);x>=0 && role!=.None;x=subjects_next(&f.about,x) {
         entry:=&f.log.items[x].entry
-        if (entry.type!=.Member_Remove && entry.type!=.Role_Set) || log_within(f.log,x,at) || log_witnessed(l,f.log.items[x].address,e) {continue}
+        if (entry.type!=.Member_Remove && entry.type!=.Role_Set) || log_within(f.log,x,at) {continue}
+        if !(born>=0 && log_within(f.log,x,born)) && log_witnessed(l,f.log.items[x].address,e) {continue}
         if entry.type==.Member_Remove {
             role=.None
         } else {
@@ -1149,10 +1227,11 @@ org_context_of :: proc(f:^Org_Fold,l:^Log,e:int) -> int {
 
 // The role the author u of entry e of l, a Project, Proposal or Keyring log,
 // held when it signed (org_role_signed_at at its org_ctx); None when its
-// org_ctx is no valid entry of the org.
+// org_ctx is no valid entry of the org, or its key was revoked before l was
+// born (revoked_before_log).
 org_role_signed :: proc(f:^Org_Fold,u:^User_Fold,l:^Log,e:int) -> Role {
     at:=org_context_of(f,l,e)
-    if at<0 {return .None}
+    if at<0 || revoked_before_log(f,u,l,e) {return .None}
     return role_recovered(org_role_signed_at(f,u.log.id,at,l,e),user_recovered_at(u,l.items[e].entry.author_ctx))
 }
 
@@ -1275,11 +1354,12 @@ org_grant_right :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,now:i64) 
 // past of the entry's org_ctx, so is its issuer as an admin there with the
 // rights it gave; the entry's time, never before its causal past or its
 // org_ctx's, is inside the grant; and no revocation of the grant, nor removal
-// or lowering of its issuer, is in that past or has reached l without e
-// (log_witnessed).
+// or lowering of its issuer, is in that past, in the past of the org entry
+// l's genesis was signed under, or has reached l without e (log_witnessed).
 org_grant_signed :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,l:^Log,e:int) -> bool {
     at:=org_context_of(f,l,e)
     if key=={} || at<0 {return false}
+    born:=log_born_at(f,l)
     time:=max(l.time[e],f.log.time[at])
     grants: for &x in f.granted {
         g:=&x.grant
@@ -1287,7 +1367,7 @@ org_grant_signed :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,l:^Log,e
         if !log_within(f.log,int(x.entry),at) || time<g.not_before || time>g.not_after || g.not_after-g.not_before>GRANT_NANOSECONDS_MAX {continue}
         for r:=subjects_first(&f.about,x.address);r>=0;r=subjects_next(&f.about,r) {
             if f.log.items[r].entry.type!=.Grant_Revoke {continue}
-            if log_within(f.log,r,at) || !log_witnessed(l,f.log.items[r].address,e) {continue grants}
+            if log_within(f.log,r,at) || (born>=0 && log_within(f.log,r,born)) || !log_witnessed(l,f.log.items[r].address,e) {continue grants}
         }
         issued:=org_role_signed_at(f,x.issuer,at,l,e)
         head:=log_find(f.log,g.org_head)

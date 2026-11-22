@@ -40,8 +40,9 @@ How the machines of an org find each other and what each may read from the other
   when a view or a merge asks for it, until the next fold lets it go; past the bound a log is left
   in the store and counted in `logs_refused`
   (`a_settled_proposal_stays_in_the_store_until_asked_for`).
-- When an agent folds a removal that a log it holds a right in lacks a witness of, while the
-  affected key signed there, it writes the witness ([folding](identity.md#folding-and-revocation)).
+- When an agent folds a removal that a log it holds a right in lacks a witness of (the org's, a
+  project, an open proposal or a keyring born before the removal), it writes the witness
+  ([folding](identity.md#folding-and-revocation)).
 - A seed fetches what the closure of every bookmark lacks. A machine whose peers have not delivered
   a file yet asks the mesh for it: the editor reads again on its poll, a method waits for the bytes.
 

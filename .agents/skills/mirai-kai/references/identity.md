@@ -82,6 +82,14 @@ and `kai/refs_ddc.odin`.
   witness; with none yet, the removal has not reached the log and its entries stand
   (`revocation_witness_rejects_backdated_entries`, `a_removed_writer_keeps_its_past`,
   `removing_a_keyring_signer_keeps_its_epochs`).
+- A removal is witnessed in every log of the org where the key held a right when it came, signed
+  there or not: the org's for a device, each project and keyring for a writer, each open proposal
+  for any member. So a removed key has no log to sign first in. A log born after the removal (its
+  genesis signed under an org entry that holds it, or for a device a witness of its revocation in
+  the org's log) takes none: every entry of it is judged with the removal. A closed or landed
+  proposal takes none either: it counts for nothing until it is reopened, a landed move reads it
+  only at the heads the move names, and the agents that load it once it is open again witness what
+  it lacks, with parents that leave out what the removed keys signed.
 - A witness is valid when it names a valid removal, its author is not affected by it and holds a
   right in the log (a member in the org's and a proposal's log, a writer in a project's and a
   keyring's), and no valid witness of that removal is in its causal past. Witnesses unite: a
@@ -89,7 +97,9 @@ and `kai/refs_ddc.odin`.
   after every witness counts nowhere. An agent's witness builds on what other keys signed, so an
   entry of the removed key that no one built on stays out; an entry signed after the removal gets
   in only if a key holding a right there builds on it before it sees the removal, as it could sign
-  its own.
+  its own. A dishonest member's witness gains it nothing: on heads that hold a removed key's late
+  entries it lets them stand, which the member could do by signing those entries itself, and on
+  old heads it voids nothing an honest witness holds.
 - A revoked device stays in its user's log so it cannot be added again; there, its entries count
   only in the causal past of the revocation.
 - A policy guards the moves outside the causal past of the project heads its `Policy_Set` names;
