@@ -40,6 +40,7 @@ playtest_register :: proc(s:^editor.Session) {
     observe_api_register(s)
     qa_api_register(s)
     explore_api_register(s)
+    audit_api_register(s)
 }
 
 playtest_free :: proc(p:^Playtest) {

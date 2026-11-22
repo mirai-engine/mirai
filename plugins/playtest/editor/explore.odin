@@ -465,6 +465,8 @@ explore_ui_play :: proc(x:^Explore_Run) {
 @(private)
 explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (problem:string) {
     s:=x.s
+    // A run that has not ticked has not built its Input_Map yet.
+    if !explore_idle(x,min(2,x.total)) {return}
     w:=editor.run_ref(s,x.r)
     m,requests:=core.world_storage_of(w,input.Input_Map),core.world_storage_of(w,input.Hold_Requests)
     if m==nil || requests==nil {return "This game has no input actions: its world does not take engine/input"}
@@ -472,7 +474,6 @@ explore_world_play :: proc(x:^Explore_Run,p:^Api_Play_Explore_Params) -> (proble
     can_jump:bool
     move,jump,can_jump,problem=editor.play_actions(s,m,base.text_get(p.move[:]),base.text_get(p.jump[:]))
     if problem!="" {return}
-    if !explore_idle(x,min(2,x.total)) {return}
     _,body:=editor.play_focused(editor.run_ref(s,x.r))
     for wait:=0;body==core.NONE;wait+=1 {
         if wait>=EXPLORE_WARM_TICKS {
