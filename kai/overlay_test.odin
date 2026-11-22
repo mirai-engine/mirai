@@ -1158,21 +1158,6 @@ an_epoch_key_opens_only_with_both_device_secrets :: proc(t:^testing.T) {
     fmt.printfln("kai: a Device_Add with its ML-KEM-768 key is %d bytes; an envelope %d; an epoch of 10 devices %d bytes of entry and %d of envelopes",sizes[0],size_of(Envelope),sizes[1],10*size_of(Envelope))
 }
 
-// Whether the epoch's key is wrapped for the device dh.
-keyring_wraps :: proc(k:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> bool {
-    for x in k.envelopes {
-        if x.epoch==epoch && x.envelope.dh==dh {return true}
-    }
-    body,ok:=keyring_epoch(k,epoch)
-    if !ok {return false}
-    envelopes,e:=keyring_envelopes(k,body)
-    if e!=.None {return false}
-    _,found:=slice.binary_search_by(envelopes,dh,proc(e:Envelope,dh:Dh_Key) -> slice.Ordering {
-        return e.dh==dh?.Equal:(dh_less(e.dh,dh)?.Less:.Greater)
-    })
-    return found
-}
-
 // One opened overlay: its record, key and entries.
 Overlay :: struct {
     record:Overlay_Record, // its objects in the temp allocator

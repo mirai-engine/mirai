@@ -331,6 +331,21 @@ keyring_envelopes :: proc(k:^Keyring_Fold,body:Epoch_Add_Body,allocator:=context
     return envelopes,.None
 }
 
+// Whether the epoch's key is wrapped for the device dh.
+keyring_wraps :: proc(k:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> bool {
+    for x in k.envelopes {
+        if x.epoch==epoch && x.envelope.dh==dh {return true}
+    }
+    body,ok:=keyring_epoch(k,epoch)
+    if !ok {return false}
+    envelopes,e:=keyring_envelopes(k,body)
+    if e!=.None {return false}
+    _,found:=slice.binary_search_by(envelopes,dh,proc(e:Envelope,dh:Dh_Key) -> slice.Ordering {
+        return e.dh==dh?.Equal:(dh_less(e.dh,dh)?.Less:.Greater)
+    })
+    return found
+}
+
 // Whether a write must wait for a rotation: no epoch yet, or the newest one
 // still wraps its key for a device that may no longer read the scope. An
 // epoch whose envelopes are not here yet is judged once they are.
