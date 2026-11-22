@@ -231,19 +231,23 @@ all_projects_discovers_siblings_and_skips_temporary_copies :: proc(t:^testing.T)
 
     p:=new(Projects)
     defer free(p)
+    project.recent_add(&p.recent,project.path(siblings,"gone",allocator=context.temp_allocator),50)
     project.recent_add(&p.recent,p_zeta,100)
     s:=Session{projects=p,engine_root=engine}
 
-    // Recent view shows only what is in recent.
+    // Recent view shows only what is in recent; its count beside the tabs is that of All projects,
+    // without the recent projects that are gone.
     p.show_all=false
     projects_rows_read(&s)
-    testing.expect_value(t,p.row_count,1)
+    testing.expect_value(t,p.row_count,2)
     testing.expect_value(t,base.text_get(p.rows[0].name[:]),"Zeta")
+    testing.expect_value(t,p.all_count,4)
 
     // All projects keeps recent first, then adds siblings & engine demo alphabetically without duplicates.
     p.show_all=true
     projects_rows_read(&s)
     testing.expect_value(t,p.row_count,4)
+    testing.expect_value(t,p.all_count,4)
     testing.expect_value(t,base.text_get(p.rows[0].name[:]),"Zeta")
     testing.expect_value(t,base.text_get(p.rows[1].name[:]),"Alpha")
     testing.expect_value(t,base.text_get(p.rows[2].name[:]),"Beta")

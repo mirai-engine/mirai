@@ -88,6 +88,7 @@ Projects :: struct {
     recent:project.Recent_Projects,
     rows:[PROJECTS_ALL_CAPACITY]Projects_Row, // shown list, read when the screen opens or switches view
     row_count:int,
+    all_count:int,  // the projects All projects lists, in either view: the count beside the tabs
     selected:int,   // the row chosen to open, from 1; 0: none
     engine_branch:[64]u8,           // checked out in the repository of the engine
     home:[project.RECENT_PATH]u8,   // of the user: the paths under it are shown from ~
@@ -153,8 +154,9 @@ projects_hide :: proc(s:^Session) {
     p.shown,p.creating=false,false
 }
 
-// What the screen says of each project and the image of its tile: read
-// once, when it opens or switches between Recent and All projects. No row stays selected.
+// What the screen says of each project and the image of its tile, and how many All projects
+// lists: read once, when it opens or switches between Recent and All projects. No row stays
+// selected.
 @(private)
 projects_rows_read :: proc(s:^Session) {
     p:=s.projects
@@ -166,24 +168,43 @@ projects_rows_read :: proc(s:^Session) {
     level:=Thumbnail_Level.Large if images && f32(PROJECTS_TILE)*max(s.app.density,1)>THUMBNAIL_SIZE else .Small
     sides:=THUMBNAIL_SIDES
     tz:=region if has_region else nil
-    recent_total:=project.recent_count(&p.recent)
-    for i in 0..<recent_total {
+    kept:=0 // recent projects still on disk, the ones All projects lists
+    for i in 0..<project.recent_count(&p.recent) {
         if p.row_count>=PROJECTS_ALL_CAPACITY {break}
         entry:=&p.recent.projects[i]
         folder:=base.text_get(entry.path[:])
         row:=projects_row_fill(s,folder,entry.opened,i,now,tz,images,level,sides)
+        if !row.missing {kept+=1}
         if p.show_all && row.missing {continue}
         p.rows[p.row_count]=row
         p.row_count+=1
     }
+    found:=projects_discover(p,s.engine_root,PROJECTS_ALL_CAPACITY-kept)
+    p.all_count=kept+len(found)
     if !p.show_all {return}
-    recent_kept:=p.row_count
+    for folder in found {
+        p.rows[p.row_count]=projects_row_fill(s,folder,0,-1,now,tz,images,level,sides)
+        p.row_count+=1
+    }
+    if len(found)>1 {
+        slice.sort_by(p.rows[kept:p.row_count],proc(a,b:Projects_Row) -> bool {
+            a,b:=a,b
+            return strings.to_lower(base.text_get(a.name[:]),context.temp_allocator)<strings.to_lower(base.text_get(b.name[:]),context.temp_allocator)
+        })
+    }
+}
+
+// Projects on this machine that are not recent, up to limit: those beside the recent ones, in
+// ~/Mirai, in the engine and beside it in mirai-projects.
+@(private="file")
+projects_discover :: proc(p:^Projects,engine_root:string,limit:int) -> []string {
     roots:=make([dynamic]string,context.temp_allocator)
     add_root :: proc(roots:^[dynamic]string,dir:string) {
         if dir=="" || strings.contains(dir,"/.mirai/") || !os.is_dir(dir) {return}
         for existing in roots^ {if project.path_same(existing,dir) {return}}
         append(roots,dir)
     }
+    recent_total:=project.recent_count(&p.recent)
     for i in 0..<recent_total {
         folder:=base.text_get(p.recent.projects[i].path[:])
         if slash:=strings.last_index_byte(folder,'/');slash>0 {add_root(&roots,folder[:slash])}
@@ -191,39 +212,29 @@ projects_rows_read :: proc(s:^Session) {
     if home:=base.text_get(p.home[:]);home!="" {
         add_root(&roots,project.path(home,"Mirai",allocator=context.temp_allocator))
     }
-    if s.engine_root!="" {
-        add_root(&roots,s.engine_root)
-        if slash:=strings.last_index_byte(s.engine_root,'/');slash>0 {
-            add_root(&roots,project.path(s.engine_root[:slash],"mirai-projects",allocator=context.temp_allocator))
+    if engine_root!="" {
+        add_root(&roots,engine_root)
+        if slash:=strings.last_index_byte(engine_root,'/');slash>0 {
+            add_root(&roots,project.path(engine_root[:slash],"mirai-projects",allocator=context.temp_allocator))
         }
     }
-    for dir in roots {
+    found:=make([dynamic]string,context.temp_allocator)
+    roots_loop: for dir in roots {
         entries,err:=os.read_all_directory_by_path(dir,context.temp_allocator)
         if err!=nil {continue}
-        for e in entries {
-            if p.row_count>=PROJECTS_ALL_CAPACITY {break}
+        entries_loop: for e in entries {
+            if len(found)>=limit {break roots_loop}
             if e.type!=.Directory || len(e.name)==0 || e.name[0]=='.' {continue}
             folder:=project.path_absolute(project.path(dir,e.name,allocator=context.temp_allocator),context.temp_allocator)
             if !os.is_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)) {continue}
-            if projects_rows_has(p,folder) {continue}
-            p.rows[p.row_count]=projects_row_fill(s,folder,0,-1,now,tz,images,level,sides)
-            p.row_count+=1
+            for i in 0..<recent_total {
+                if project.path_same(base.text_get(p.recent.projects[i].path[:]),folder) {continue entries_loop}
+            }
+            for existing in found {if project.path_same(existing,folder) {continue entries_loop}}
+            append(&found,folder)
         }
     }
-    if p.row_count>recent_kept+1 {
-        slice.sort_by(p.rows[recent_kept:p.row_count],proc(a,b:Projects_Row) -> bool {
-            a,b:=a,b
-            return strings.to_lower(base.text_get(a.name[:]),context.temp_allocator)<strings.to_lower(base.text_get(b.name[:]),context.temp_allocator)
-        })
-    }
-}
-
-@(private="file")
-projects_rows_has :: proc(p:^Projects,folder:string) -> bool {
-    for i in 0..<p.row_count {
-        if project.path_same(base.text_get(p.rows[i].path[:]),folder) {return true}
-    }
-    return false
+    return found[:]
 }
 
 @(private="file")
@@ -844,9 +855,9 @@ projects_content :: proc(s:^Session,popup:bool) {
             p.scroll=0
             projects_rows_read(s)
         }
-        if count>0 {
+        if p.all_count>0 {
             if ui.box(ctx,{width=ui.FIT,height=ui.fixed(20),padding={7,0,7,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=10}) {
-                ui.label(ctx,fmt.tprintf("%d",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+                ui.label(ctx,fmt.tprintf("%d",p.all_count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             }
         }
         ui.spacer(ctx)
