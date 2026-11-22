@@ -152,7 +152,13 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
     case "prune": return kai_prune(store_root)
     }
     root:=project.path_absolute(a.folder,context.temp_allocator)
-    if !project_folder(root) {fmt.eprintfln("mirai kai: %s has no %s: give the folder of a project with --project",root,project.PROJECT_FILE);return 2}
+    // A project of an org comes into a folder that holds none of it yet.
+    if verb=="init" && len(a.positionals)==1 {
+        os.make_directory_all(root)
+    } else if !project_folder(root) {
+        fmt.eprintfln("mirai kai: %s has no %s: give the folder of a project with --project",root,project.PROJECT_FILE)
+        return 2
+    }
     if store_root=="" {store_root=store.default_root(context.temp_allocator)}
     s,store_error:=store.open(store_root)
     if store_error!=.None {fmt.eprintfln("mirai kai: the store at %s does not open (%v): give another with --store",store_root,store_error);return 1}
@@ -173,7 +179,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         fmt.printfln("%s is a Kai workspace: its files are change %s.",root,ka.change_text(working_change(p).id))
         if project_id!={} {
             if ka.project_link(p,&k.machine,project_id)!=.None {return kai_why("init",&k)}
-            fmt.printfln("It works on project %s: mirai kai bookmarks shows where its changes are.",a.positionals[0])
+            fmt.printfln("It works on project %s: mirai kai bookmarks shows where its changes are, mirai kai new <bookmark> starts on one.",a.positionals[0])
         }
         return 0
     }
