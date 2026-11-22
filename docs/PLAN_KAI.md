@@ -379,8 +379,8 @@ Entry_Head :: struct #packed {
 - **Peer vs browser transport:** All peer-to-peer traffic (editor, CLI, seed, relay, DDC) runs
   exclusively over `mirai:net` UDP (Noise `IK` + AEGIS-128L, zero TCP/TLS handshake overhead).
   HTTPS is used **only** for web browsers hitting KaiHub.
-- **Transport for browsers:** HTTP over TLS 1.3 (1-RTT, 0-RTT resume; HTTP/3 over QUIC optional
-  via `quiche` or a thin edge proxy like Caddy) serving a static **Vue** frontend plus a clean
+- **Transport for browsers:** HTTP over TLS 1.3 (1-RTT, early data refused; HTTP/3 over QUIC
+  optional via a thin edge proxy like Caddy) serving a static **Vue** frontend plus a clean
   JSON/binary API straight from `mirai kai serve` (no Postgres, Redis or Node backend).
 - **Views:**
   - Public: project overview, public bookmarks, README, file tree/viewer (including Mirai asset
@@ -462,9 +462,9 @@ Entry_Head :: struct #packed {
 3. **`core:crypto/noise` vs `net/secure.odin` handshakes:** Use Odin's `core:crypto/noise` only if
    benchmark/allocation checks confirm zero allocations per handshake; otherwise extend
    `net/secure.odin` directly. *Default: check first in M0.*
-4. **Browser HTTPS / HTTP3 edge for `mirai kai serve`:** Built-in TLS 1.3 (`picotls`, MIT C lib)
-   inside `mirai kai serve` for single-binary deploys, or optional HTTP/3 (QUIC) via `quiche` /
-   thin Caddy front when HTTP/3 is desired. *Default: built-in TLS 1.3 first, HTTP/3 optional.*
-5. **Pre-implementation checks (M0):** Verify static `linux_arm64` linking with `picotls`,
-   `core:crypto` verification of WebAuthn Ed25519/P-256 signatures, and WebAuthn PRF browser
-   support for optional client-side `.env` viewing in KaiHub.
+4. **Browser HTTPS / HTTP3 edge for `mirai kai serve`:** Built-in TLS 1.3 in Odin (`net/tls`, over
+   `core:crypto`: no C library to cross-compile) inside `mirai kai serve` for single-binary
+   deploys, with certificates by ACME TLS-ALPN-01 on the same port; optional HTTP/3 (QUIC) via a
+   thin Caddy front when HTTP/3 is desired. *Decided: built-in TLS 1.3, HTTP/3 optional.*
+5. **Pre-implementation checks:** Verify the static `linux_arm64` link of `mirai kai serve` and
+   WebAuthn PRF browser support for optional client-side `.env` viewing in KaiHub.
