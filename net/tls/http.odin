@@ -132,7 +132,6 @@ make_received :: proc(allocator:runtime.Allocator) -> ([dynamic]u8,Http_Error) {
 }
 
 // "https://host[:port]/path" or "http://...": its parts, the port 443 or 80 when it says none.
-@(private)
 url_split :: proc(url:string) -> (host:string,port:int,path:string,ok:bool) {
     rest:string
     switch {

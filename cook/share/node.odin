@@ -8,6 +8,7 @@ import "core:sync"
 import "mirai:asset"
 import "mirai:cook/cache"
 import "mirai:exchange"
+import vcs "mirai:kai"
 import "mirai:std/jobs"
 import "mirai:store"
 import wire "mirai:net"
@@ -89,7 +90,7 @@ Node :: struct {
     lease_at:f64,
     lease_due:bool,
     stopped:bool,
-    hooks:^Join_Hooks,
+    hooks:[vcs.TEST_ONLY]^Join_Hooks,
     offer_lease:store.Lease, // owned by the thread that offers the project
 }
 

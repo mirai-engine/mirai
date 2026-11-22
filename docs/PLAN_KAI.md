@@ -52,8 +52,8 @@ proposed design; facts about current code are cited by file.
   working copy snapshots automatically.
 - **`COLLAB_FILE_BYTES` (32 MiB cap) and Git fallback** (`editor/collab_files.odin`): `File` sends
   `{path, address, size}` fetched over `exchange`.
-- **Duplicate 3-way merge and `map[string]Known` stat cache** (`cook/share/join.odin`,
-  `.mirai/share/index`): replaced by `kai.merge` and chunked `Stat_Row` workspace index in `store`.
+- **Duplicate 3-way merge** (`cook/share/join.odin`): replaced by `kai.merge`. Its
+  `map[string]Known` stat cache (`.mirai/share/index`) is not yet replaced by `kai`'s `Stat_Index`.
 - **Capped Myers diff** (the old `editor/diff` package, `max_edits=2048`, O(D^2) trace): replaced
   by `std/diff` Histogram diff + 3-way merge in O(n+m) memory.
 
@@ -125,16 +125,15 @@ Change_Head :: struct #packed {
     created:     i64,            // ns, kept across rewrites
     written:     i64,            // ns, this revision
     parents:     u8,             // <= PARENTS_MAX (255)
-    coauthors:   u8,             // <= COAUTHORS_MAX (64)
-    turns:       u8,             // <= TURNS_MAX (64)
+    coauthors:   u8,             // <= COAUTHORS_MAX
+    attachments: u8,             // <= ATTACHMENTS_MAX
     reserved2:   u8,
     description: u32,            // UTF-8 byte length
-} // + [parents]Revision, [coauthors]Key, [turns]Turn_Ref, description, Signature
+} // + [parents]Revision, [coauthors]Key, [attachments]Attachment ascending, description, Signature
 
-Turn_Ref :: struct #packed {
-    agent:  store.Hash,          // Identity object
-    record: store.Hash,          // public review record (never private chat transcript)
-    task:   u64,
+Attachment :: struct #packed {
+    type:   u32,                 // what the object is, as its writer names it (an agent's turn)
+    object: store.Hash,
 }
 ```
 
@@ -146,14 +145,14 @@ Turn_Ref :: struct #packed {
   ```odin
   Term :: struct #packed {address: store.Hash, size: u64, kind: Entry_Kind, reserved: [7]u8}
   Conflict_Head :: struct #packed {
-      magic: u32, version: u16, sides: u8, reserved: u8, driver: u32,
+      magic: u32, sides: u8, reserved: u8,
   } // + alternating terms: side0, base0, side1, base1, ..., side_n (sides <= 16)
   ```
   Equal `(side, base)` pairs cancel on write; a single remaining side collapses to a plain entry;
   all-folder terms recurse; rebasing composes terms without losing information.
 - **Operation Log and Views:**
-  - `Op_Kind :: enum u8 {Snapshot, New, Describe, Rewrite, Merge, Abandon, Restore, Bookmark,
-    Workspace, Import, Undo, Proposal, Prune}`.
+  - `Op_Kind :: enum u8 {Snapshot, New, Describe, Rewrite, Merge, Restore, Bookmark, Workspace,
+    Undo, Prune}`.
   - Each `Operation` points to parent ops, a `View` (sorted `heads`, `workspaces`, and `bookmarks`
     where diverged bookmarks use the same conflict algebra) and `rewrites: []{from, to: Revision}`.
   - One op = one `store` batch commit (single flush, atomic).
@@ -257,7 +256,7 @@ Entry_Head :: struct #packed {
   - Pure, deterministic procedures run on `std/jobs`: `merge(terms, reader, put) ->
     Resolved|Conflicted|Unsupported|Error` and `anchor(from, to, ^Anchor) -> bool`.
   - `cook/kai` registers the Mirai asset driver over `asset.document_merge` / `scene_merge`
-    (row-by-id, field-by-field) and caches results in `cook/cache` by `(driver, version, terms)`.
+    (row-by-id, field-by-field).
   - **Non-blocking conflict resolution:** Checkout writes the driver's partial result (document
     with conflicts defaulted or text diff3 markers) and records `{path, conflict, written_hash}`.
     On snapshot, if the file still hashes to `written_hash`, it remains a `Conflict`; any edit by a
@@ -398,11 +397,12 @@ Entry_Head :: struct #packed {
   snapshots changes (one writer); guests keep a read-only workspace on the host's change.
 - **Co-authorship via queue:** `Kai_Authorship :: @(storage, queue)` receives `{key, turn}` from
   both local history commits and host collab apply (Hello adds the editor's identity `Key`). The
-  snapshot owner drains it into `Change.coauthors` and `Change.turns`.
+  snapshot owner drains it into `Change.coauthors` and `Change.attachments` (a turn is an
+  attachment of the editor's type).
 - **No `COLLAB_FILE_BYTES`:** Collab `File` messages send `{path, address, size, present}` and
   peers fetch chunks over the session's existing `exchange` node. `File_Unsent` and Git-dirty file
   listing on join are deleted.
-- **AI agents:** Short in-editor turns stay in `editor/history` and attach `Turn_Ref` to snapshots.
+- **AI agents:** Short in-editor turns stay in `editor/history` and are attachments of snapshots.
   Long/parallel agent tasks get their own sibling `Workspace` and land via `Proposal` + signed
   `Check` events.
 
@@ -464,9 +464,8 @@ Entry_Head :: struct #packed {
     log or kind), verified offline by every peer. The server drafts the unsigned bytes (heads,
     author context, time) but gives no challenge: the browser checks every field and hashes the
     bytes itself.
-  - Optional client-side viewing of private overlays (`.env`) in the browser uses the WebAuthn
-    **PRF** extension when supported to derive a local decryption key inside the browser while
-    keeping the server 100% zero-knowledge.
+  - Viewing private overlays in the browser (through the WebAuthn PRF extension) is not built:
+    the web view shows no scoped file.
 
 ---
 
@@ -504,9 +503,8 @@ Entry_Head :: struct #packed {
     `deny_set_and_publish_scanner_block_leaks`.
 - **M5 — Proposals, ARM64 Server and KaiHub Web View:** `Proposal_Log` with structural/line
   re-anchoring and signed `Check` events; headless `linux_arm64` `mirai kai serve` (TLS 1.3 +
-  ACME + Landlock/seccomp, JSON API + static Vue frontend); passkey-first WebAuthn login/signing
-  (+ optional WebAuthn PRF client-side overlay decryption); `mirai-kai` skill and `ARCHITECTURE.md`
-  update.
+  ACME + Landlock/seccomp, JSON API + static Vue frontend); passkey-first WebAuthn login/signing;
+  `mirai-kai` skill and `ARCHITECTURE.md` update.
   - Focal tests: `proposal_comments_reanchor_across_rewrites`,
     `landing_enforces_policy_and_zero_conflicts`,
     `webauthn_login_and_signed_verdict_verify_offline`,
@@ -539,5 +537,5 @@ Entry_Head :: struct #packed {
    `core:crypto`: no C library to cross-compile) inside `mirai kai serve` for single-binary
    deploys, with certificates by ACME TLS-ALPN-01 on the same port; optional HTTP/3 (QUIC) via a
    thin Caddy front when HTTP/3 is desired. *Decided: built-in TLS 1.3, HTTP/3 optional.*
-5. **Pre-implementation checks:** WebAuthn PRF browser support for optional client-side `.env`
-   viewing in KaiHub. *The static `linux_arm64` link is checked: musl, prebuilt, with ld.lld.*
+5. **Pre-implementation checks:** the static `linux_arm64` link is checked: musl, prebuilt, with
+   ld.lld.

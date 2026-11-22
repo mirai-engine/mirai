@@ -208,7 +208,7 @@ Workspace :: struct {
     touched:[dynamic]string,  // paths the editor reported changed since the last snapshot
     touched_all:bool,         // the touched set is complete: a snapshot stats only those
     options:Workspace_Options,
-    cut_after:int,            // a test cuts a switch after this many files; <0 never
+    cut_after:[TEST_ONLY]int, // cuts a checkout after this many files; 0 never
     allocator:runtime.Allocator,
 }
 
@@ -221,7 +221,7 @@ Snapshot_Report :: struct {
 
 @(private)
 workspace_init :: proc(w:^Workspace,root:string,options:Workspace_Options,allocator:runtime.Allocator) -> Error {
-    w^={options=options,cut_after=-1,allocator=allocator}
+    w^={options=options,allocator=allocator}
     trimmed:=strings.trim_right(root,"/\\")
     cloned,e:=strings.clone(trimmed,allocator)
     if e!=nil {return .Out_Of_Memory}
@@ -230,9 +230,9 @@ workspace_init :: proc(w:^Workspace,root:string,options:Workspace_Options,alloca
     w.index.rows=make([dynamic]Stat_Row,allocator)
     w.index.pool=make([dynamic]u8,allocator)
     w.touched=make([dynamic]string,allocator)
-    folder:=workspace_path(w,STATE_FOLDER)
+    folder:=path_join(w.root,STATE_FOLDER)
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return .Io}
-    w.lock=lock_take(workspace_path(w,STATE_FOLDER+"/lock")) or_return
+    w.lock=lock_take(path_join(w.root,STATE_FOLDER+"/lock")) or_return
     return .None
 }
 
@@ -242,7 +242,7 @@ workspace_init :: proc(w:^Workspace,root:string,options:Workspace_Options,alloca
 workspace_create :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity,options:=Workspace_Options{},overlay:^Overlay_Routing=nil,allocator:=context.allocator) -> (error:Error) {
     workspace_init(w,root,options,allocator) or_return
     defer if error!=.None {workspace_close(w)}
-    if os.exists(workspace_path(w,STATE_FOLDER+"/workspace")) {return .Invalid_Argument}
+    if os.exists(path_join(w.root,STATE_FOLDER+"/workspace")) {return .Invalid_Argument}
     repo_create(&w.repo,s,identity,random_id(Workspace_Id),options.drivers,allocator) or_return
     w.repo.overlay=overlay
     working:=change_get(s,repo_working(&w.repo),context.temp_allocator) or_return
@@ -252,29 +252,12 @@ workspace_create :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identi
     return .None
 }
 
-// Another workspace of the repository of from at root, an empty folder: a new
-// change on the parent of from's working copy, written there.
-workspace_add :: proc(w:^Workspace,root:string,from:^Workspace,identity:Identity,options:=Workspace_Options{},allocator:=context.allocator) -> (error:Error) {
-    workspace_init(w,root,options,allocator) or_return
-    defer if error!=.None {workspace_close(w)}
-    s:=from.repo.s
-    repo_open(&w.repo,s,from.repo.id,random_id(Workspace_Id),identity,options.drivers,allocator) or_return
-    working:=change_get(s,view_workspace(&w.repo.view,from.repo.workspace),context.temp_allocator) or_return
-    parent:=len(working.parents)>0 ? working.parents[0] : view_workspace(&w.repo.view,from.repo.workspace)
-    revision:=workspace_add_to_view(&w.repo,w.repo.workspace,parent) or_return
-    empty:=tree_empty(s) or_return
-    w.state.repo,w.state.id,w.state.op,w.state.tree=w.repo.id,w.repo.workspace,w.repo.op,empty
-    state_save(w,&w.state) or_return
-    c:=change_get(s,revision,context.temp_allocator) or_return
-    return checkout(w,c.tree)
-}
-
 // Opens the workspace at root, taking its lock: Locked while another process
 // holds it.
 workspace_open :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity,options:=Workspace_Options{},allocator:=context.allocator) -> (error:Error) {
     workspace_init(w,root,options,allocator) or_return
     defer if error!=.None {workspace_close(w)}
-    bytes,read_error:=os.read_entire_file(workspace_path(w,STATE_FOLDER+"/workspace"),context.temp_allocator)
+    bytes,read_error:=os.read_entire_file(path_join(w.root,STATE_FOLDER+"/workspace"),context.temp_allocator)
     if read_error!=nil {return .Missing}
     state_decode(bytes,&w.state,allocator) or_return
     if e:=repo_open(&w.repo,s,w.state.repo,w.state.id,identity,options.drivers,allocator);e!=.None {return e==.Missing?.Other_Store:e}
@@ -356,14 +339,9 @@ workspace_touched :: proc(w:^Workspace,paths:[]string,complete:=true) -> Error {
 }
 
 @(private)
-workspace_path :: proc(w:^Workspace,relative:string) -> string {
-    return strings.concatenate({w.root,"/",relative},context.temp_allocator)
-}
-
-@(private)
 state_save :: proc(w:^Workspace,st:^Workspace_State) -> Error {
     bytes:=state_encode(st,context.temp_allocator) or_return
-    return file_replace(workspace_path(w,STATE_FOLDER+"/workspace"),bytes,false)
+    return file_replace(path_join(w.root,STATE_FOLDER+"/workspace"),bytes,false)
 }
 
 // The ref of the stat index of the workspace id.
@@ -537,7 +515,7 @@ own_path :: proc(w:^Workspace,relative:string) -> bool {
 @(private)
 folder_scan :: proc(w:^Workspace,folder:string,depth:int,out:^[dynamic]Found,report:^Snapshot_Report) -> Error {
     if depth>DEPTH_MAX {return .Too_Large}
-    listed,e:=os.read_all_directory_by_path(folder=="" ? w.root : workspace_path(w,folder),context.temp_allocator)
+    listed,e:=os.read_all_directory_by_path(folder=="" ? w.root : path_join(w.root,folder),context.temp_allocator)
     if e!=nil {return .Io}
     for info in listed {
         relative:=folder=="" ? info.name : strings.concatenate({folder,"/",info.name},context.temp_allocator)
@@ -579,7 +557,7 @@ touched_scan :: proc(w:^Workspace,out:^[dynamic]Found,report:^Snapshot_Report) -
     }
     for t,k in w.touched {
         if slice.contains(w.touched[:k],t) || !own_path(w,t) || !path_valid(t) {continue}
-        info,e:=os.lstat(workspace_path(w,t),context.temp_allocator)
+        info,e:=os.lstat(path_join(w.root,t),context.temp_allocator)
         if e!=nil {continue}
         #partial switch info.type {
         case .Directory:
@@ -771,8 +749,10 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
     sibling_index(w,&sibling)
     written:=0
     for d in changes {
-        if w.cut_after>=0 && written>=w.cut_after {return .Io}
-        path:=workspace_path(w,d.path)
+        when ODIN_TEST {
+            if w.cut_after[0]>0 && written>=w.cut_after[0] {return .Io}
+        }
+        path:=path_join(w.root,d.path)
         // A conflict this path held is replaced.
         for m,k in w.state.conflicts {
             if m.path!=d.path {continue}
@@ -839,9 +819,9 @@ folders_prune :: proc(w:^Workspace,relative:string) {
         slash:=strings.last_index_byte(rest,'/')
         if slash<0 {return}
         rest=rest[:slash]
-        listed,e:=os.read_all_directory_by_path(workspace_path(w,rest),context.temp_allocator)
+        listed,e:=os.read_all_directory_by_path(path_join(w.root,rest),context.temp_allocator)
         if e!=nil || len(listed)>0 {return}
-        os.remove(workspace_path(w,rest))
+        os.remove(path_join(w.root,rest))
     }
 }
 
@@ -895,17 +875,6 @@ index_merge :: proc(index:^Stat_Index,updates:[]Index_Update) -> Error {
     clear(&index.rows)
     append(&index.rows,..merged[:])
     return .None
-}
-
-// Makes revision this workspace's working copy and writes its files, after a
-// snapshot keeps what was on disk.
-workspace_switch :: proc(w:^Workspace,revision:Revision) -> Error {
-    workspace_snapshot(w) or_return
-    c:=change_get(w.repo.s,revision,context.temp_allocator) or_return
-    tx:=tx_begin(&w.repo) or_return
-    workspace_point(&tx,w.repo.workspace,revision) or_return
-    tx_commit(&tx,.Workspace,"switch workspace") or_return
-    return checkout(w,c.tree)
 }
 
 // A new empty change on parents as this workspace's working copy, written.

@@ -20,11 +20,10 @@ CHANGE_TEXT :: 12               // hex digits a change id is shown with
 CHANGE_TEXT_MIN :: 4            // the fewest digits a change is named by
 
 // It must not move once opened: the workspace keeps its drivers, which point
-// into it. Its merges are kept in the store's cache.
+// into it.
 Project :: struct {
     types:asset.Types,
     driver:Asset_Driver,
-    merges:Cached_Driver,
     drivers:[1]vcs.Driver,
     workspace:vcs.Workspace,
     owns_types:bool,
@@ -50,7 +49,7 @@ project_exists :: proc(root:string) -> bool {
 }
 
 @(private)
-project_prepare :: proc(p:^Project,s:^store.Store,types:^asset.Types) -> vcs.Workspace_Options {
+project_prepare :: proc(p:^Project,types:^asset.Types) -> vcs.Workspace_Options {
     if types==nil {
         asset.types_init(&p.types)
         p.owns_types=true
@@ -58,8 +57,7 @@ project_prepare :: proc(p:^Project,s:^store.Store,types:^asset.Types) -> vcs.Wor
     } else {
         p.driver.types=types
     }
-    p.merges={driver=driver(&p.driver),store=s,types=p.driver.types}
-    p.drivers[0]=cached(&p.merges)
+    p.drivers[0]=driver(&p.driver)
     return workspace_options(p.drivers[:])
 }
 
@@ -68,7 +66,7 @@ project_prepare :: proc(p:^Project,s:^store.Store,types:^asset.Types) -> vcs.Wor
 // the engine's.
 project_create :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
     identity:=identity_load(s) or_return
-    options:=project_prepare(p,s,types)
+    options:=project_prepare(p,types)
     if e:=vcs.workspace_create(&p.workspace,root,s,identity,options,allocator=allocator);e!=.None {
         project_close(p)
         return e
@@ -80,7 +78,7 @@ project_create :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=
 project_open :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
     if !project_exists(root) {return .Missing}
     identity:=identity_load(s) or_return
-    options:=project_prepare(p,s,types)
+    options:=project_prepare(p,types)
     if e:=vcs.workspace_open(&p.workspace,root,s,identity,options,allocator);e!=.None {
         project_close(p)
         return e
@@ -333,7 +331,7 @@ conflict_sides :: proc(w:^vcs.Workspace,path:string,allocator:=context.temp_allo
     for m in w.state.conflicts {
         if m.path!=path {continue}
         t:=vcs.terms_make(vcs.Term,context.temp_allocator)
-        if _,e:=vcs.conflict_get(w.repo.s,m.conflict,&t);e!=.None || len(t.adds)!=2 {return}
+        if e:=vcs.conflict_get(w.repo.s,m.conflict,&t);e!=.None || len(t.adds)!=2 {return}
         read :: proc(s:^store.Store,term:vcs.Term,allocator:runtime.Allocator) -> (bytes:[]u8,ok:bool) {
             if term.address=={} || term.kind==.Folder {return nil,term.address=={}}
             b,e:=vcs.file_bytes(s,term.address,allocator)

@@ -20,10 +20,10 @@ import "mirai:store"
 // alike; what needs a workspace is in cook/kai.
 
 MACHINE_GRANT_PREFIX :: "grant-" // + the hex of a grant's address: the grant text this machine holds
-GRANT_TEXT_VERSION :: 1
-@(private) GRANT_TEXT_HEAD :: 1+32+1
+GRANT_TEXT_VERSION :: 2
+@(private) GRANT_TEXT_HEAD :: 1+32
 @(private) GRANT_BYTES_MAX :: size_of(Grant_Head)+GRANT_PATH_MAX+size_of(Signature)
-@(private) GRANT_TEXT_BYTES_MAX :: GRANT_TEXT_HEAD+TICKET_ADDRESSES*TICKET_ADDRESS+2+GRANT_BYTES_MAX+4
+@(private) GRANT_TEXT_BYTES_MAX :: GRANT_TEXT_HEAD+1+TICKET_ADDRESSES*CARRIED_ADDRESS+GRANT_BYTES_MAX+4
 GRANT_TEXT_MAX :: (GRANT_TEXT_BYTES_MAX*4+2)/3 // the longest a grant's text is
 @(private) LABEL_GRANT_TEXT :: "kai-1/grant-text"
 
@@ -648,83 +648,27 @@ Grant_Text :: struct {
     address_count:int,
 }
 
-@(private)
-grant_text_sum :: proc(bytes:[]u8) -> [32]u8 {
-    return keyed_hash(transmute([]u8)string(LABEL_GRANT_TEXT),bytes)
-}
-
-// The bytes of a grant's text, before base64url, into buffer.
-@(private)
-grant_text_bytes :: proc(g:Grant_Text,buffer:^[GRANT_TEXT_BYTES_MAX]u8) -> (bytes:[]u8,error:Error) {
-    if len(g.grant)>GRANT_BYTES_MAX {return nil,.Too_Large}
-    buffer[0]=GRANT_TEXT_VERSION
-    issuer:=g.issuer
-    copy(buffer[1:],issuer[:])
-    at:=GRANT_TEXT_HEAD
-    addresses:=g.addresses
-    for a in addresses[:clamp(g.address_count,0,TICKET_ADDRESSES)] {
-        if a.kind!=.IP4 && a.kind!=.IP6 {continue}
-        buffer[at]=u8(a.kind)
-        endian.unchecked_put_u16le(buffer[at+1:],a.port)
-        ip:=a.ip
-        copy(buffer[at+3:],ip[:])
-        at+=TICKET_ADDRESS
-        buffer[GRANT_TEXT_HEAD-1]+=1
-    }
-    endian.unchecked_put_u16le(buffer[at:],u16(len(g.grant)))
-    at+=2
-    at+=copy(buffer[at:],g.grant)
-    sum:=grant_text_sum(buffer[:at])
-    at+=copy(buffer[at:],sum[:4])
-    return buffer[:at],.None
-}
-
 grant_text_encode :: proc(g:Grant_Text,allocator:=context.allocator) -> (text:string,error:Error) {
-    buffer:[GRANT_TEXT_BYTES_MAX]u8
-    bytes:=grant_text_bytes(g,&buffer) or_return
-    out,e:=make([]u8,(len(bytes)*4+2)/3+1,allocator)
+    if len(g.grant)>GRANT_BYTES_MAX {return "",.Too_Large}
+    head:[GRANT_TEXT_HEAD]u8
+    head[0]=GRANT_TEXT_VERSION
+    issuer,addresses:=g.issuer,g.addresses
+    copy(head[1:],issuer[:])
+    scratch:[GRANT_TEXT_BYTES_MAX]u8
+    out,e:=make([]u8,GRANT_TEXT_MAX,allocator)
     if e!=nil {return "",.Out_Of_Memory}
-    n:=base64url_encode(bytes,out)
-    return string(out[:n]),.None
+    return carried_encode(LABEL_GRANT_TEXT,head[:],addresses[:clamp(g.address_count,0,TICKET_ADDRESSES)],g.grant,scratch[:],out),.None
 }
 
-// The grant's text from the bytes of grant_text_bytes; its grant points into bytes.
-@(private)
-grant_text_read :: proc(bytes:[]u8) -> (g:Grant_Text,ok:bool) {
-    if len(bytes)<GRANT_TEXT_HEAD+2+4 || bytes[0]!=GRANT_TEXT_VERSION {return}
-    sum:=grant_text_sum(bytes[:len(bytes)-4])
-    if !bytes_equal(sum[:4],bytes[len(bytes)-4:]) {return}
-    copy(g.issuer[:],bytes[1:33])
-    count:=int(bytes[33])
-    at:=GRANT_TEXT_HEAD
-    if count>TICKET_ADDRESSES || len(bytes)<at+count*TICKET_ADDRESS+2+4 {return}
-    for k in 0..<count {
-        kind:=net.Address_Kind(bytes[at])
-        if kind!=.IP4 && kind!=.IP6 {return {},false}
-        a:=net.Address{kind=kind,port=endian.unchecked_get_u16le(bytes[at+1:])}
-        copy(a.ip[:],bytes[at+3:at+TICKET_ADDRESS])
-        g.addresses[k]=a
-        at+=TICKET_ADDRESS
-    }
-    g.address_count=count
-    size:=int(endian.unchecked_get_u16le(bytes[at:]))
-    at+=2
-    if at+size+4!=len(bytes) {return {},false}
-    g.grant=bytes[at:at+size]
-    return g,true
-}
-
-// The grant's text as grant_text_encode wrote it, its bytes in allocator.
-grant_text_decode :: proc(text:string,allocator:=context.allocator) -> (g:Grant_Text,raw:[]u8,ok:bool) {
-    clean:=strings.trim_space(text)
-    if len(clean)>GRANT_TEXT_MAX {return}
-    buffer,e:=make([]u8,GRANT_TEXT_BYTES_MAX,allocator)
+// The grant's text as grant_text_encode wrote it; its grant in allocator.
+grant_text_decode :: proc(text:string,allocator:=context.allocator) -> (g:Grant_Text,ok:bool) {
+    raw,e:=make([]u8,GRANT_TEXT_BYTES_MAX,allocator)
     if e!=nil {return}
-    n:=base64url_decode(clean,buffer)
-    if n<0 {return}
-    raw=buffer[:n]
-    g,ok=grant_text_read(raw)
-    return
+    head,count,tail,read:=carried_decode(LABEL_GRANT_TEXT,text,GRANT_TEXT_HEAD,&g.addresses,raw)
+    if !read || head[0]!=GRANT_TEXT_VERSION {return {},false}
+    copy(g.issuer[:],head[1:])
+    g.address_count,g.grant=count,tail
+    return g,true
 }
 
 // Issues a grant of the org as machine_grant does and gives the text its
@@ -742,7 +686,8 @@ machine_grant_issue :: proc(m:^Machine,org:Log_Id,subject_dh:Dh_Key,subject_key:
 // Takes a grant its issuer gave this machine: the store keeps its text, and
 // the machine serves the grant's org, reaching first for the issuer.
 machine_grant_load :: proc(m:^Machine,text:string) -> (grant:Grant,error:Error) {
-    gt,raw,ok:=grant_text_decode(text,context.temp_allocator)
+    clean:=strings.trim_space(text)
+    gt,ok:=grant_text_decode(clean,context.temp_allocator)
     if !ok {return {},machine_fail(m,.Corrupt,"the grant's text does not read: copy it again, whole")}
     g,e:=grant_decode(gt.grant)
     if e!=.None || !signature_valid(g.issuer,gt.grant[:len(gt.grant)-size_of(Signature)],g.signature) {return {},machine_fail(m,.Corrupt,"the grant does not read or is not signed by its issuer: ask for it again")}
@@ -750,7 +695,7 @@ machine_grant_load :: proc(m:^Machine,text:string) -> (grant:Grant,error:Error) 
         return {},machine_fail(m,.Unauthorized,"the grant is for another machine: give its issuer the subject mirai kai identity prints here")
     }
     if machine_now()>g.not_after {return {},machine_fail(m,.Expired,"the grant expired: ask its issuer for a new one")}
-    object,pe:=store.put(&m.store,raw)
+    object,pe:=store.put(&m.store,transmute([]u8)clean)
     if pe!=.None {return {},machine_fail(m,store_error(pe),"the store refused the grant: give this user access to the store")}
     name:=machine_grant_name(store.address_of_bytes(gt.grant))
     if se:=store.ref_set(&m.store,MACHINE_NAMESPACE,name,object);se!=.None {return {},machine_fail(m,store_error(se),"the store refused the grant's ref")}
@@ -782,9 +727,9 @@ machine_grants_held :: proc(s:^store.Store,out:^[dynamic]Held_Grant,allocator:=c
     if e!=.None {return store_error(e)}
     for r in refs {
         if !strings.has_prefix(r.name,MACHINE_GRANT_PREFIX) {continue}
-        raw,re:=file_bytes(s,r.hash,allocator)
+        text,re:=file_bytes(s,r.hash,context.temp_allocator)
         if re!=.None {continue}
-        gt,ok:=grant_text_read(raw)
+        gt,ok:=grant_text_decode(string(text),allocator)
         if !ok {continue}
         g,ge:=grant_decode(gt.grant)
         if ge!=.None {continue}

@@ -2,6 +2,7 @@ package hub
 
 import "core:crypto"
 import "core:crypto/ed25519"
+import "core:encoding/base64"
 import "core:strings"
 import "mirai:kai"
 import "mirai:store"
@@ -107,10 +108,8 @@ session_new :: proc(h:^Hub,user:kai.Log_Id,web_key:kai.Key,credential:[]u8,devic
     s^={used=true,user=user,web_key=web_key,device=device,created=h.now,seen=h.now}
     s.credential_len=copy(s.credential[:],credential)
     crypto.rand_bytes(s.token[:])
-    j:=json_make()
-    json_base64(&j,s.token[:])
-    token:=json_text(&j)
-    cookie=strings.concatenate({"Set-Cookie: ",COOKIE,"=",token[1:len(token)-1],"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=43200\r\n"},context.temp_allocator)
+    token:=base64.encode(s.token[:],base64.ENC_URL_TABLE,context.temp_allocator,{.No_Padding})
+    cookie=strings.concatenate({"Set-Cookie: ",COOKIE,"=",token,"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=43200\r\n"},context.temp_allocator)
     return
 }
 
@@ -386,7 +385,7 @@ route_user_create :: proc(c:^Call) {
     body:=len(unsigned)>=size_of(kai.Entry_Head)?unsigned[size_of(kai.Entry_Head):]:nil
     id,cose,rp,_,parts:=kai.passkey_parts(body)
     if head.kind!=.Passkey_Genesis || !parts || string(id)!=string(credential) {
-        fail(c,400,"the entry is a Passkey_Genesis of the passkey that signs it: GET /api/entries lays it out")
+        fail(c,400,"the entry is a Passkey_Genesis of the passkey that signs it, as kai/log.odin lays it out")
         return
     }
     if rp!=c.h.desc.rp_id {
@@ -400,7 +399,7 @@ route_user_create :: proc(c:^Call) {
             challenge:=store.address_of_bytes(unsigned)
             fail(c,401,kai.webauthn_failure_text(kai.webauthn_verify(&key,rp,challenge[:],&a,true)))
         } else {
-            fail(c,400,"the genesis does not read: build it as GET /api/entries lays it out")
+            fail(c,400,"the genesis does not read: build it as Passkey_Genesis_Body of kai/log.odin lays it out")
         }
         return
     }
@@ -520,10 +519,8 @@ approval_answer :: proc(c:^Call,a:^Approval) {
 }
 
 approval_link :: proc(h:^Hub,a:^Approval) -> string {
-    j:=json_make()
-    json_hex(&j,a.id[:])
-    id:=json_text(&j)
-    return strings.concatenate({"kai://approve?origin=",percent_encode(h.origin),"&id=",id[1:len(id)-1]},context.temp_allocator)
+    id:[2*len(a.id)]u8
+    return strings.concatenate({"kai://approve?origin=",percent_encode(h.origin),"&id=",kai.hex_text(a.id[:],id[:])},context.temp_allocator)
 }
 
 HEX_UPPER :: [16]u8{'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'}

@@ -5,14 +5,9 @@ package kai_assets
 
 import "core:slice"
 import "mirai:asset"
-import "mirai:cook/cache"
 import "mirai:project"
 import "mirai:std/base"
-import "mirai:store"
 import vcs "mirai:kai"
-
-DRIVER_ASSET :: 3
-DRIVER_ASSET_VERSION :: 1
 
 // What the asset driver reads documents with. It must outlive the drivers
 // made from it.
@@ -25,62 +20,7 @@ Asset_Driver :: struct {
 // changed apart is a conflict whose partial result keeps ours there. A file
 // that is not an asset is left to the next driver.
 driver :: proc(d:^Asset_Driver) -> vcs.Driver {
-    return {id=DRIVER_ASSET,version=DRIVER_ASSET_VERSION,data=d,merge=asset_merge,anchor=asset_anchor}
-}
-
-// A driver whose Resolved and Conflicted results are kept in the cache
-// MERGE_CACHE (cook/cache) of the machine's store by its id, its version and
-// the addresses of the three terms: a driver is pure, so the same terms merge
-// once. Results are not asked of peers: a miss waits for the mesh longer than
-// a merge takes. It must outlive the drivers made from it.
-Cached_Driver :: struct {
-    driver:vcs.Driver,
-    store:^store.Store, // nil: nothing is kept
-    types:^asset.Types,
-}
-
-MERGE_CACHE :: "kai-merges"
-@(private) MERGE_KIND :: asset.Fourcc(0x47524d4b) // KMRG: a result, as a row, and the merged bytes
-
-cached :: proc(c:^Cached_Driver) -> vcs.Driver {
-    d:=c.driver
-    d.data,d.merge=c,cached_merge
-    if c.driver.anchor!=nil {d.anchor=cached_anchor}
-    return d
-}
-
-@(private)
-cached_merge :: proc(data:rawptr,input:^vcs.Driver_Input,out:^[dynamic]u8) -> vcs.Driver_Result {
-    c:=(^Cached_Driver)(data)
-    inner:=c.driver
-    if c.store==nil || c.types==nil || input.terms[1]=={} || input.terms[2]=={} {return inner.merge(inner.data,input,out)}
-    key:=base.hash_combine(base.hash64(slice.to_bytes(input.terms[:])),u64(u8(input.has_base)))|1
-    version:=u64(inner.id)<<32|u64(inner.version)
-    file:asset.Asset
-    if cache.load({store=c.store},MERGE_CACHE,key,version,&file,context.temp_allocator) {
-        defer asset.asset_close(&file)
-        result,re:=asset.asset_row(&file,c.types,"result",vcs.Driver_Result,whole=true)
-        bytes,be:=asset.asset_rows(&file,c.types,"bytes","",u8,whole=true)
-        if file.blob.header.kind==MERGE_KIND && re==.None && be==.None && (result^==.Resolved || result^==.Conflicted) {
-            clear(out)
-            if _,f:=append(out,..bytes);f==nil {return result^}
-        }
-    }
-    result:=inner.merge(inner.data,input,out)
-    if result!=.Resolved && result!=.Conflicted {return result}
-    doc:asset.Document
-    asset.document_init(&doc,MERGE_KIND,cache.id(key,version),context.temp_allocator)
-    defer asset.document_destroy(&doc)
-    if _,e:=asset.document_put_row(&doc,c.types,"result",&result);e!=.None {return result}
-    if _,e:=asset.document_put(&doc,c.types,"bytes",out[:],{.Bulk});e!=.None {return result}
-    if bytes,e:=asset.document_bytes(&doc,context.temp_allocator);e==.None {_=cache.put({store=c.store},MERGE_CACHE,key,version,bytes)}
-    return result
-}
-
-@(private)
-cached_anchor :: proc(data:rawptr,from,to:[]u8,anchor:^vcs.Anchor) -> (moved,known:bool) {
-    c:=(^Cached_Driver)(data)
-    return c.driver.anchor(c.driver.data,from,to,anchor)
+    return {data=d,merge=asset_merge,anchor=asset_anchor}
 }
 
 // Tracks what a project owns: not its generated folder nor version control

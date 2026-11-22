@@ -10,24 +10,14 @@ import "mirai:net/tls"
 // `mirai kai web approve` and the tests use. https:// is checked against the
 // ISRG roots, or the roots given; http:// is taken only for loopback.
 
-Origin :: struct {secure:bool,host:string,port:int}
+Origin :: struct {secure:bool,host:string}
 
 origin_parse :: proc(text:string) -> (o:Origin,ok:bool) {
-    rest:string
-    switch {
-    case strings.has_prefix(text,"https://"): o.secure,o.port,rest=true,443,text[len("https://"):]
-    case strings.has_prefix(text,"http://"): o.port,rest=80,text[len("http://"):]
-    case: return
-    }
-    if rest=="" || strings.index_any(rest,"/?#@ ")>=0 {return}
-    o.host=rest
-    if cut:=strings.last_index_byte(rest,':');cut>=0 && !strings.has_suffix(rest,"]") {
-        n,parsed:=strconv.parse_int(rest[cut+1:],10)
-        if !parsed || n<=0 || n>65535 {return}
-        o.host,o.port=rest[:cut],n
-    }
+    host,_,path,split:=tls.url_split(text)
+    if !split || path!="/" || strings.has_suffix(text,"/") {return}
+    o={secure=strings.has_prefix(text,"https://"),host=host}
     if !o.secure {
-        address:=net.parse_address(strings.trim(o.host,"[]"))
+        address:=net.parse_address(o.host)
         loopback:=o.host=="localhost"
         switch a in address {
         case net.IP4_Address: loopback=a[0]==127
@@ -35,7 +25,7 @@ origin_parse :: proc(text:string) -> (o:Origin,ok:bool) {
         }
         if !loopback {return}
     }
-    return o,o.host!=""
+    return o,true
 }
 
 // A request with a JSON body or none; roots nil trusts the ISRG roots.

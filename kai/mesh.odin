@@ -177,7 +177,6 @@ Agent :: struct {
     peers:[AGENT_PEERS]Agent_Peer,
     tags:u64,
     logs:[dynamic]^Log,
-    user_folds:[dynamic]^User_Fold,
     user_list:[dynamic]^User_Fold,
     org:Org_Fold,
     folded:bool,                // org holds a fold
@@ -228,7 +227,6 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     if a.desc.allocator.procedure==nil {a.desc.allocator=context.allocator}
     allocator:=a.desc.allocator
     a.logs=make([dynamic]^Log,allocator)
-    a.user_folds=make([dynamic]^User_Fold,allocator)
     a.user_list=make([dynamic]^User_Fold,allocator)
     a.allowed=make([dynamic]Allowed,allocator)
     a.closure.identity=make([dynamic]store.Hash,allocator)
@@ -303,7 +301,6 @@ agent_destroy :: proc(a:^Agent) {
         free(l,a.desc.allocator)
     }
     delete(a.logs)
-    delete(a.user_folds)
     delete(a.user_list)
     delete(a.allowed)
     delete(a.behind)
@@ -324,11 +321,10 @@ agent_destroy :: proc(a:^Agent) {
 agent_folds_drop :: proc(a:^Agent) {
     if a.folded {org_fold_destroy(&a.org)}
     a.folded=false
-    for f in a.user_folds {
+    for f in a.user_list {
         user_fold_destroy(f)
         free(f,a.desc.allocator)
     }
-    clear(&a.user_folds)
     clear(&a.user_list)
 }
 
@@ -525,7 +521,6 @@ agent_refold :: proc(a:^Agent) {
             free(f,a.desc.allocator)
             continue
         }
-        append(&a.user_folds,f)
         append(&a.user_list,f)
     }
     if l:=agent_log(a,a.desc.org);l!=nil && len(l.items)>0 {
@@ -1042,23 +1037,6 @@ agent_tell :: proc(a:^Agent,namespace,name:string) {
     }
 }
 
-// Appends an entry this device signs to the log of id, saves it, tells the
-// peers and folds again: the entry's address.
-agent_append :: proc(a:^Agent,id:Log_Id,type:Entry_Type,body:[]u8,time:i64) -> (address:store.Hash,error:Error) {
-    l:=agent_log(a,id)
-    if l==nil {return {},.Missing}
-    identity:=a.desc.identity
-    ctx,org_ctx:store.Hash
-    if u:=agent_log(a,a.desc.user);u!=nil {
-        heads:=make([dynamic]store.Hash,context.temp_allocator)
-        if log_heads(u,&heads)==.None && len(heads)>0 {ctx=heads[0]}
-    }
-    if org_bound(l.kind) && a.folded {org_ctx=org_context(&a.org,a.desc.user)}
-    address=log_append(l,type,body,&identity,time,ctx,org_ctx) or_return
-    agent_saved(a,l) or_return
-    return
-}
-
 // Takes a log changed outside the agent (made, or given by a pairing): saves
 // it, tells the peers and folds again.
 agent_log_add :: proc(a:^Agent,l:^Log) -> Error {
@@ -1077,31 +1055,6 @@ agent_saved :: proc(a:^Agent,l:^Log) -> Error {
     exchange.ref_changed(&a.x,l.kind==.User?USER_NAMESPACE:LOG_NAMESPACE,log_name(l.id,&name),address)
     agent_refold(a)
     return .None
-}
-
-// Publishes this device's refs of a project and tells the peers.
-agent_publish_refs :: proc(a:^Agent,project:Log_Id,refs:[]Bookmark_Ref,time:i64) -> (address:store.Hash,error:Error) {
-    identity:=a.desc.identity
-    address=device_refs_publish(a.desc.store,project,&identity,refs,time) or_return
-    ns:[len(REFS_PREFIX)+64]u8
-    name:[32]u8
-    namespace:=refs_namespace(project,&ns)
-    exchange.ref_changed(&a.x,namespace,refs_name(identity.key,&name),address)
-    agent_closure(a)
-    members_ref(a,.Refs,namespace,address)
-    return
-}
-
-// Publishes what this device built for key and tells the peers.
-agent_publish_ddc :: proc(a:^Agent,key:store.Hash,objects:[]store.Hash,tainted:[]Scope_Id,time:i64) -> (nondeterministic:bool,error:Error) {
-    identity:=a.desc.identity
-    nondeterministic=ddc_publish(a.desc.store,a.desc.org,&identity,key,objects,tainted,time) or_return
-    ns:[len(DDC_PREFIX)+64]u8
-    name:[64]u8
-    namespace,hex:=ddc_namespace(a.desc.org,&ns),store.hex(key,&name)
-    agent_tell(a,namespace,hex)
-    if address,e:=store.ref_get(a.desc.store,namespace,hex);e==.None {members_ref(a,.DDC,namespace,address)}
-    return
 }
 
 // Merges what arrived.
@@ -1397,9 +1350,10 @@ agent_project_fold :: proc(a:^Agent,l:^Log,f:^Project_Fold) -> bool {
 // Rebuilds the chunks restricted peers may get.
 @(private)
 agent_closure :: proc(a:^Agent) {
+    scratch:=scratch_make()
     identity:=make([dynamic]store.Hash,context.temp_allocator)
     if refs,e:=store.ref_list(a.desc.store,USER_NAMESPACE,context.temp_allocator);e==.None {
-        for r in refs {log_objects(a.desc.store,r.hash,&identity)}
+        for r in refs {log_objects(a.desc.store,r.hash,&identity,scratch)}
     }
     public:=make([dynamic]store.Hash,context.temp_allocator)
     targets:=make([dynamic]Revision,context.temp_allocator)
@@ -1410,7 +1364,7 @@ agent_closure :: proc(a:^Agent) {
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(a.desc.store,targets[:],&present,&missing)
     append(&roots,..present[:])
-    for r in roots {object_chunks(a.desc.store,r,&public)}
+    for r in roots {object_chunks(a.desc.store,r,&public,scratch)}
     slice.sort_by(identity[:],hash_less)
     slice.sort_by(public[:],hash_less)
     grants:=make([dynamic]Grant_Closure,context.temp_allocator)
@@ -1525,6 +1479,7 @@ members_settled :: proc(a:^Agent,out:^[dynamic]Walk_Item) {
 // envelopes.
 @(private)
 members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
+    scratch:=scratch_make()
     if len(l.items)==0 {return}
     namespace:=LOG_NAMESPACE
     switch l.kind {
@@ -1608,6 +1563,7 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
 // come from the org yet, waits in the frontier (walk_admits).
 @(private)
 members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
+    scratch:=scratch_make()
     m:=&a.members
     stack:=make([dynamic]Walk_Item,context.temp_allocator)
     append(&stack,..roots)
@@ -1627,7 +1583,7 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
         }
         seen[item.address]=true
         at:=len(added)
-        if !object_chunks(a.desc.store,item.address,&added) {
+        if !object_chunks(a.desc.store,item.address,&added,scratch) {
             resize(&added,at)
             if item.address!=empty {m.frontier[item.address]=item}
             continue
@@ -1655,6 +1611,7 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
 // this file).
 @(private)
 agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
+    scratch:=scratch_make()
     if !a.folded || x.entry<0 || x.entry>=len(a.org.log.items) {return}
     g,e:=grant_decode(a.org.log.items[x.entry].entry.body)
     if e!=.None {return}
@@ -1675,7 +1632,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         }
         if !keep {continue}
         if address,ref_error:=store.ref_get(a.desc.store,LOG_NAMESPACE,log_name(l.id,&name));ref_error==.None {
-            log_objects(a.desc.store,address,out)
+            log_objects(a.desc.store,address,out,scratch)
         }
     }
     if g.rights&{.Read,.Write,.Check}!={} {
@@ -1683,7 +1640,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         roots:=make([dynamic]store.Hash,context.temp_allocator)
         agent_targets(a,g.project,false,&targets,&roots,proven=true)
         closure_walk_scoped(a.desc.store,targets[:],g.path,&roots)
-        for r in roots {object_chunks(a.desc.store,r,out)}
+        for r in roots {object_chunks(a.desc.store,r,out,scratch)}
     }
     // The untainted derived data whose outputs came from the org, as the members' set takes it.
     if .DDC in g.rights {
@@ -1697,7 +1654,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         present:=make([dynamic]store.Hash,context.temp_allocator)
         missing:=make([dynamic]store.Hash,context.temp_allocator)
         walk_all(&w,roots[:],&present,&missing)
-        for o in present {object_chunks(a.desc.store,o,out)}
+        for o in present {object_chunks(a.desc.store,o,out,scratch)}
     }
 }
 
@@ -1771,8 +1728,8 @@ scoped_folder :: proc(s:^store.Store,address:store.Hash,prefix,scope:string,dept
     terms:=terms_make(Term,context.temp_allocator)
     covered:=false
     for entry in entries {
-        path,pe:=path_join(prefix,entry.name,context.temp_allocator)
-        if pe!=.None {continue}
+        path,pe:=path_join(prefix,entry.name)
+        if pe!=nil {continue}
         switch entry.kind {
         case .Folder: covered|=scoped_folder(s,entry.address,path,scope,depth+1,present,folders)
         case .File,.Executable:
@@ -1783,7 +1740,7 @@ scoped_folder :: proc(s:^store.Store,address:store.Hash,prefix,scope:string,dept
             if !grant_covers(scope,path) {continue}
             clear(&terms.adds)
             clear(&terms.removes)
-            if _,ce:=conflict_get(s,entry.address,&terms);ce!=.None {continue}
+            if ce:=conflict_get(s,entry.address,&terms);ce!=.None {continue}
             append(present,entry.address)
             covered=true
             for list in ([2][]Term{terms.adds[:],terms.removes[:]}) {
@@ -1803,11 +1760,21 @@ scoped_folder :: proc(s:^store.Store,address:store.Hash,prefix,scope:string,dept
 }
 
 // The addresses of every chunk of the object at address: its nodes and data.
-// whole: every node of it was read.
-object_chunks :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) -> (whole:bool) {
-    buffer,e:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
-    if e!=nil {return false}
-    return node_chunks(s,address,buffer,out,0)
+// whole: every node of it was read. Its nodes are read into scratch
+// (store.CHUNK_MAX bytes, scratch_make), which a walk allocates once.
+object_chunks :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,scratch:[]u8) -> (whole:bool) {
+    return len(scratch)>=store.CHUNK_MAX && node_chunks(s,address,scratch,out,0)
+}
+
+// Whether every chunk of the object at address is in the store; scratch as
+// object_chunks takes it.
+object_whole :: proc(s:^store.Store,address:store.Hash,scratch:[]u8) -> bool {
+    return len(scratch)>=store.CHUNK_MAX && node_chunks(s,address,scratch,nil,0)
+}
+
+scratch_make :: proc() -> []u8 {
+    buffer,_:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    return buffer
 }
 
 @(private)
@@ -1817,17 +1784,21 @@ node_chunks :: proc(s:^store.Store,address:store.Hash,buffer:[]u8,out:^[dynamic]
     if e!=.None {return false}
     n,parse_error:=store.node_parse(bytes)
     if parse_error!=.None {return false}
-    append(out,address)
+    // Without out, whether the leaves are here too.
+    if out!=nil {append(out,address)}
     entries,clone_error:=slice.clone(n.entries,context.temp_allocator)
     if clone_error!=nil {return false}
     level:=n.level
     whole:=true
     for entry in entries {
-        if level==0 {
+        if level>0 {
+            whole&=node_chunks(s,entry.address,buffer,out,depth+1)
+        } else if out!=nil {
             append(out,entry.address)
         } else {
-            whole&=node_chunks(s,entry.address,buffer,out,depth+1)
+            whole&=store.chunk_here(s,entry.address)
         }
+        if !whole && out==nil {return false}
     }
     return whole
 }

@@ -132,8 +132,8 @@ WantedBy=multi-user.target
   approve: it shows a link and `mirai kai web approve <link>` on that device shows what it would
   sign and signs it only after a yes.
 - A write is a log entry. The server drafts the unsigned bytes (heads, author and org contexts,
-  time) and gives **no challenge**; the page parses them against the layout of
-  `GET /api/entries`, checks every field against what the user asked and signs the BLAKE3 of the
+  time) and gives **no challenge**; the page parses them as `entry.js` lays an
+  entry out, checks every field against what the user asked and signs the BLAKE3 of the
   bytes with its passkey (or a device does). The server verifies it as every peer will, appends
   it and tells the peers. This is why a compromised or malicious node cannot make a user say
   something: it can refuse to relay, never forge.

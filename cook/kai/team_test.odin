@@ -410,9 +410,9 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
         for k in keyrings {
             if r2,_,re:=vcs.overlay_record_get(&g.m.store,k.project,k.scope,r,context.temp_allocator);re==.None {
                 for o in r2.objects {
-                    if !vcs.object_whole(&g.m.store,o) {return false}
+                    if !vcs.object_whole(&g.m.store,o,vcs.scratch_make()) {return false}
                 }
-                return vcs.object_whole(&g.m.store,r2.tree_root)
+                return vcs.object_whole(&g.m.store,r2.tree_root,vcs.scratch_make())
             }
         }
         return false
@@ -474,8 +474,8 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     testing.expect_value(t,vcs.machine_keyrings(&bob.m.store,&pb.org,&rings,context.temp_allocator),vcs.Error.None)
     if testing.expect_value(t,len(rings),1) {
         device:=vcs.machine_overlay_device(&bob.m)
-        ov:vcs.Overlay
-        testing.expect(t,vcs.overlay_open(&ov,&bob.m.store,rings[0],&device,resealed,context.temp_allocator)!=.None,"nor does it open for him")
+        _,ke:=vcs.keyring_epoch_key(rings[0],&device,rings[0].epoch)
+        testing.expect(t,ke!=.None,"nor does the scope's epoch open for him")
     }
 
     // An anonymous peer reads what the shared bookmarks reach: none of the overlay's chunks are in it.
@@ -485,8 +485,8 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     rec,_,re:=vcs.overlay_record_get(&alice.m.store,project,o.fold.scopes[0].scope,resealed,context.temp_allocator)
     testing.expect_value(t,re,vcs.Error.None)
     chunks:=make([dynamic]store.Hash,context.temp_allocator)
-    for x in rec.objects {vcs.object_chunks(&alice.m.store,x,&chunks)}
-    vcs.object_chunks(&alice.m.store,rec.tree_root,&chunks)
+    for x in rec.objects {vcs.object_chunks(&alice.m.store,x,&chunks,vcs.scratch_make())}
+    vcs.object_chunks(&alice.m.store,rec.tree_root,&chunks,vcs.scratch_make())
     leaked:=0
     for x in chunks {
         if vcs.closure_has(a.closure.public[:],x) {leaked+=1}

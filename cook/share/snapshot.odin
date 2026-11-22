@@ -11,6 +11,7 @@ import importer "mirai:cook/import"
 import "mirai:project"
 import vcs "mirai:kai"
 import "mirai:std/jobs"
+import "mirai:std/serial"
 import "mirai:store"
 
 // A snapshot: the files of a project as a tree of Kai (kai.tree_build), the
@@ -388,18 +389,8 @@ entry_take :: proc(
 
 // Writes data whole at path through a rename, making its folder.
 file_save :: proc(path:string,data:[]u8) -> bool {
-    folder,_:=os.split_path(path)
-    os.make_directory_all(folder)
-    temp:=fmt.tprintf("%s.%d.tmp",path,os.get_pid())
-    if os.write_entire_file(temp,data)!=nil {
-        os.remove(temp)
-        return false
-    }
-    if os.rename(temp,path)!=nil {
-        os.remove(temp)
-        return false
-    }
-    return true
+    os.make_directory_all(os.dir(path))
+    return serial.file_write_atomic(path,data)==.None
 }
 
 @(private)

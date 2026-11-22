@@ -55,12 +55,7 @@ file_detail :: proc(w:^vcs.Workspace,revision:vcs.Revision,path:string,out:^File
     }
     if found<0 {return .Invalid_Argument}
     d:=diffs[found]
-    out^={path=strings.clone(path,allocator),before=d.before.size,after=d.after.size,mark='M'}
-    switch {
-    case d.after.kind==.Conflict: out.mark='C'
-    case d.before.address=={}: out.mark='A'
-    case d.after.address=={}: out.mark='D'
-    }
+    out^={path=strings.clone(path,allocator),before=d.before.size,after=d.after.size,mark=vcs.diff_mark(d)}
     if d.before.size>DETAIL_BYTES || d.after.size>DETAIL_BYTES {
         out.kind=.Oversized
         return .None

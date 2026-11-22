@@ -15,8 +15,8 @@ import "mirai:store"
 // The pure modules of the frontend (web/blake3.js and web/entry.js) run
 // under the system's node against what this side makes: BLAKE3 across chunk
 // and tree boundaries, devices' link codes, web key ids, the credential of an
-// authenticator's data, a new user's Passkey_Genesis, the entry layout of
-// GET /api/entries, and the server's draft of every write a browser makes,
+// authenticator's data, a new user's Passkey_Genesis, the constants of an
+// entry, and the server's draft of every write a browser makes,
 // which the check takes, and tampered or mismatched drafts it refuses.
 // Without node the run is reported skipped.
 @(test)
@@ -90,8 +90,29 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     f.hub.now=f.now
     waiting_step(&f.hub)
     cookie:=sign_in(t,f,&p256)
-    entries:=call(f,"GET","/api/entries")
-    fmt.sbprintf(&b,`"layout":%s,`,entries.body)
+    constants:=json_make()
+    json_object(&constants)
+    json_member_int(&constants,"MAGIC",i64(kai.KAI_MAGIC))
+    json_member_int(&constants,"VERSION",i64(kai.VERSIONS[.Log_Page]))
+    json_member_int(&constants,"HEAD",size_of(kai.Entry_Head))
+    json_member_int(&constants,"PARENTS_MAX",kai.ENTRY_PARENTS_MAX)
+    json_member_int(&constants,"BODY_MAX",kai.ENTRY_BODY_MAX)
+    json_member_int(&constants,"KEM_PUBLIC",kai.KEM_PUBLIC)
+    json_member_int(&constants,"NAME_MAX",kai.NAME_MAX)
+    names :: proc(j:^Json,key:string,text:[$E]string) {
+        json_key(j,key)
+        json_object(j)
+        for name,value in text {
+            if name!="" {json_member_int(j,name,i64(value))}
+        }
+        json_end_object(j)
+    }
+    names(&constants,"TYPES",TYPE_TEXT)
+    names(&constants,"ROLES",ROLE_TEXT)
+    names(&constants,"VERDICTS",VERDICT_TEXT)
+    names(&constants,"ANCHORS",ANCHOR_TEXT)
+    json_end_object(&constants)
+    fmt.sbprintf(&b,`"constants":%s,`,json_text(&constants))
 
     // The server's draft of every write a browser makes.
     device_identity:=kai.identity_make()

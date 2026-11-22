@@ -1,6 +1,8 @@
 package kai
 
+import "base:runtime"
 import "core:bytes"
+import "core:crypto"
 import "core:crypto/mlkem"
 import "core:fmt"
 import "core:math/rand"
@@ -152,11 +154,11 @@ scoped_plaintext_never_enters_public_store :: proc(t:^testing.T) {
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(&s,{first},&present,&missing)
     chunks:=make([dynamic]store.Hash,context.temp_allocator)
-    for p in present {object_chunks(&s,p,&chunks)}
+    for p in present {object_chunks(&s,p,&chunks,scratch_make())}
     private:=make([dynamic]store.Hash,context.temp_allocator)
-    object_chunks(&s,record_address,&private)
-    object_chunks(&s,record.tree_root,&private)
-    for a in record.objects {object_chunks(&s,a,&private)}
+    object_chunks(&s,record_address,&private,scratch_make())
+    object_chunks(&s,record.tree_root,&private,scratch_make())
+    for a in record.objects {object_chunks(&s,a,&private,scratch_make())}
     for a in private {testing.expect(t,!slice.contains(chunks[:],a),"a public chunk is an overlay's")}
 
     for device in ([]^Overlay_Device{&alice,&bob,&carol}) {
@@ -905,7 +907,7 @@ mesh_until :: proc(m:^Mesh,seconds:f64,data:rawptr,done:proc(m:^Mesh,data:rawptr
 object_whole :: proc(s:^store.Store,address:store.Hash) -> bool {
     if !object_present(s,address) {return false}
     chunks:=make([dynamic]store.Hash,context.temp_allocator)
-    object_chunks(s,address,&chunks)
+    object_chunks(s,address,&chunks,scratch_make())
     for c in chunks {
         if !store.chunk_has(s,c) {return false}
     }
@@ -1154,4 +1156,71 @@ an_epoch_key_opens_only_with_both_device_secrets :: proc(t:^testing.T) {
         if item.entry.type==.Epoch_Add {sizes[1]=len(item.bytes)}
     }
     fmt.printfln("kai: a Device_Add with its ML-KEM-768 key is %d bytes; an envelope %d; an epoch of 10 devices %d bytes of entry and %d of envelopes",sizes[0],size_of(Envelope),sizes[1],10*size_of(Envelope))
+}
+
+// Whether the epoch's key is wrapped for the device dh.
+keyring_wraps :: proc(k:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> bool {
+    for x in k.envelopes {
+        if x.epoch==epoch && x.envelope.dh==dh {return true}
+    }
+    body,ok:=keyring_epoch(k,epoch)
+    if !ok {return false}
+    envelopes,e:=keyring_envelopes(k,body)
+    if e!=.None {return false}
+    _,found:=slice.binary_search_by(envelopes,dh,proc(e:Envelope,dh:Dh_Key) -> slice.Ordering {
+        return e.dh==dh?.Equal:(dh_less(e.dh,dh)?.Less:.Greater)
+    })
+    return found
+}
+
+// One opened overlay: its record, key and entries.
+Overlay :: struct {
+    record:Overlay_Record, // its objects in the temp allocator
+    address:store.Hash,
+    key:Epoch_Key,
+    entries:[dynamic]Overlay_Entry,
+    tree:[]u8, // what the paths point into
+    allocator:runtime.Allocator,
+}
+
+// Opens the overlay of the keyring's scope at commit with device's key.
+overlay_open :: proc(o:^Overlay,s:^store.Store,k:^Keyring_Fold,device:^Overlay_Device,commit:Revision,allocator:=context.allocator) -> (error:Error) {
+    o^={allocator=allocator}
+    o.entries=make([dynamic]Overlay_Entry,allocator)
+    defer if error!=.None {overlay_close(o)}
+    // One store per value until odin-lang/Odin#7937.
+    record,address:=overlay_record_get(s,k.project,k.scope,commit,context.temp_allocator) or_return
+    o.record=record
+    o.address=address
+    o.key=keyring_epoch_key(k,device,o.record.epoch) or_return
+    sealed:=object_get(s,o.record.tree_root,.Overlay_Tree,context.temp_allocator,limit=OVERLAY_TREE_MAX) or_return
+    o.tree=tree_open(sealed,k.project,k.scope,o.record.epoch,&o.key,&o.entries,allocator) or_return
+    // The record names exactly the tree's file objects.
+    objects:=make([dynamic]store.Hash,context.temp_allocator)
+    for e in o.entries {
+        if e.object!={} && !slice.contains(objects[:],e.object) {append(&objects,e.object)}
+    }
+    slice.sort_by(objects[:],hash_less)
+    if !slice.equal(objects[:],o.record.objects) {return .Corrupt}
+    return .None
+}
+
+overlay_close :: proc(o:^Overlay) {
+    crypto.zero_explicit(&o.key,size_of(o.key))
+    if o.tree!=nil {crypto.zero_explicit(raw_data(o.tree),len(o.tree))}
+    delete(o.tree,o.allocator)
+    delete(o.entries)
+    o^={}
+}
+
+// The plaintext of the overlay's file at path, in allocator.
+overlay_file :: proc(o:^Overlay,s:^store.Store,path:string,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
+    for &e in o.entries {
+        if e.path!=path {continue}
+        z:Sealer
+        sealer_init(&z,context.temp_allocator) or_return
+        defer sealer_destroy(&z)
+        return open_file(&z,s,o.record.scope,o.record.epoch,&o.key,&e,allocator)
+    }
+    return nil,.Missing
 }

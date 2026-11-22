@@ -23,7 +23,7 @@ import "mirai:store"
 // is what the store's sweep reclaims (store_prune). Undo does not cross a
 // prune.
 
-Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Abandon,Restore,Bookmark,Workspace,Import,Undo,Proposal,Prune}
+Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Restore,Bookmark,Workspace,Undo,Prune}
 
 OP_RETENTION :: i64(30*24*time.Hour) // ns of operations a prune keeps behind it
 LOCAL_PREFIX :: "kai-local-" // + repository id: the refs of its workspaces, which no peer is served
@@ -120,13 +120,13 @@ Repo :: struct {
     view_address:store.Hash,
     view:View,
     graph:Graph_Index,
-    known:[dynamic]store.Hash, // operations other refs named that op descends from
+    known:map[store.Hash]struct{}, // what other workspaces' refs name now that op descends from
     allocator:runtime.Allocator,
     namespace_bytes:[64]u8,
     namespace:string,
     ref_bytes:[64]u8,
     ref:string,
-    cut_commit:bool, // a test cuts the next commit after its objects, before its refs
+    cut_commit:[TEST_ONLY]bool, // cuts the next commit after its objects, before its refs
     overlay:^Overlay_Routing, // routes a snapshot's private paths and carries the records of the overlays onto what an operation rewrites; nil: neither
 }
 
@@ -146,7 +146,7 @@ repo_init :: proc(r:^Repo,s:^store.Store,id:Repo_Id,workspace:Workspace_Id,ident
     r^={s=s,id=id,workspace=workspace,identity=identity,merger={s=s,drivers=drivers},allocator=allocator}
     view_init(&r.view,allocator)
     graph_init(&r.graph,allocator)
-    r.known=make([dynamic]store.Hash,allocator)
+    r.known=make(map[store.Hash]struct{},allocator)
     repo_names(r)
 }
 
@@ -186,20 +186,21 @@ repo_refresh :: proc(r:^Repo) -> Error {
     refs,e:=store.ref_list(r.s,r.namespace,context.temp_allocator)
     if e!=.None {return store_error(e)}
     candidates:=make([dynamic]store.Hash,context.temp_allocator)
+    known:=make([dynamic]store.Hash,context.temp_allocator)
     for ref in refs {
-        if len(ref.name)<3 || ref.name[:3]!="ws-" {continue}
-        if ref.hash==r.op || slice.contains(r.known[:],ref.hash) || slice.contains(candidates[:],ref.hash) {continue}
-        if _,f:=append(&candidates,ref.hash);f!=nil {return .Out_Of_Memory}
+        if len(ref.name)<3 || ref.name[:3]!="ws-" || ref.hash==r.op || slice.contains(candidates[:],ref.hash) {continue}
+        if _,f:=append(ref.hash in r.known ? &known : &candidates,ref.hash);f!=nil {return .Out_Of_Memory}
     }
+    // Only what the refs name now stays known.
+    clear(&r.known)
+    for k in known {r.known[k]={}}
     if r.op!={} {
         if _,f:=append(&candidates,r.op);f!=nil {return .Out_Of_Memory}
     }
     if len(candidates)==0 {return .Missing}
     heads:=op_heads(r.s,candidates[:]) or_return
     for c in candidates {
-        if !slice.contains(heads[:],c) && c!=r.op {
-            if _,f:=append(&r.known,c);f!=nil {return .Out_Of_Memory}
-        }
+        if !slice.contains(heads[:],c) && c!=r.op {r.known[c]={}}
     }
     if len(heads)==1 {
         if heads[0]==r.op {return .None}
@@ -209,40 +210,27 @@ repo_refresh :: proc(r:^Repo) -> Error {
     return op_heads_merge(r,heads[:])
 }
 
-// The operations among candidates no other one descends from.
+// The operations among candidates no other one descends from: one walk
+// down from all of them at once.
 @(private)
 op_heads :: proc(s:^store.Store,candidates:[]store.Hash) -> (heads:[dynamic]store.Hash,error:Error) {
     heads=make([dynamic]store.Hash,context.temp_allocator)
+    below:=make(map[store.Hash]struct{},context.temp_allocator)
+    stack:=make([dynamic]store.Hash,context.temp_allocator)
+    if _,e:=append(&stack,..candidates);e!=nil {return heads,.Out_Of_Memory}
+    for len(stack)>0 {
+        op:=op_get_kept(s,pop(&stack)) or_continue
+        for p in op.parents {
+            if p in below {continue}
+            below[p]={}
+            if _,e:=append(&stack,p);e!=nil {return heads,.Out_Of_Memory}
+        }
+    }
     for c in candidates {
-        below:=false
-        for other in candidates {
-            if other==c {continue}
-            if op_descends(s,other,c) or_return {below=true;break}
-        }
-        if !below {
-            if _,e:=append(&heads,c);e!=nil {return heads,.Out_Of_Memory}
-        }
+        if c in below {continue}
+        if _,e:=append(&heads,c);e!=nil {return heads,.Out_Of_Memory}
     }
     return heads,.None
-}
-
-// Whether op a descends from op b.
-@(private)
-op_descends :: proc(s:^store.Store,a,b:store.Hash) -> (descends:bool,error:Error) {
-    seen:=make(map[store.Hash]struct{},context.temp_allocator)
-    stack:=make([dynamic]store.Hash,context.temp_allocator)
-    if _,e:=append(&stack,a);e!=nil {return false,.Out_Of_Memory}
-    for len(stack)>0 {
-        n:=pop(&stack)
-        op:=op_get_kept(s,n) or_continue
-        for p in op.parents {
-            if p==b {return true,.None}
-            if p in seen {continue}
-            seen[p]={}
-            if _,e:=append(&stack,p);e!=nil {return false,.Out_Of_Memory}
-        }
-    }
-    return false,.None
 }
 
 // The ancestors of op, itself included.
@@ -376,9 +364,11 @@ tx_commit :: proc(tx:^Tx,kind:Op_Kind,description:string,undone:=store.Hash{},pa
     bytes:=op_encode(&op,context.temp_allocator) or_return
     address:=object_put(r.s,.Operation,bytes) or_return
     if _,e:=append(&tx.refs,store.Ref_Set{r.namespace,r.ref,address});e!=nil {return .Out_Of_Memory}
-    if r.cut_commit {
-        r.cut_commit=false
-        return .Io
+    when ODIN_TEST {
+        if r.cut_commit[0] {
+            r.cut_commit[0]=false
+            return .Io
+        }
     }
     if e:=store.refs_set(r.s,tx.refs[:]);e!=.None {return store_error(e)}
     v:=view_clone(&tx.view,r.allocator) or_return
@@ -686,8 +676,8 @@ split_tree :: proc(r:^Repo,c:^Change,paths:[]string,refused:^string) -> (tree:st
 // takes from it only the picked files over its parents' tree; the second, a
 // new change on the first with no description, keeps its whole tree, and what
 // pointed at revision (children, heads, bookmarks, workspaces) moves onto it.
-// Both keep its coauthors and turns, with its author among the coauthors when
-// another key signs them. A working copy split this way keeps its files.
+// Both keep its coauthors and attachments, with its author among the
+// coauthors when another key signs them. A working copy split this way keeps its files.
 // The second takes the change's private files and the first its parents',
 // since no private path is picked. An Invalid_Argument says why in refused,
 // in the temp allocator.
@@ -736,58 +726,6 @@ change_snapshot :: proc(r:^Repo,tree:store.Hash,plan:^Overlay_Plan=nil) -> (revi
     overlay_publish(r.overlay,r.s,plan,revision,&tx.refs) or_return
     tx_commit(&tx,.Snapshot,"snapshot working copy") or_return
     return
-}
-
-// Moves revision onto other parents.
-change_rebase :: proc(r:^Repo,revision:Revision,onto:[]Revision) -> (rewritten:Revision,error:Error) {
-    if len(onto)==0 || len(onto)>PARENTS_MAX {return {},.Invalid_Argument}
-    c:=change_get(r.s,revision,context.temp_allocator) or_return
-    from_tree:=parents_tree(r,c.parents) or_return
-    onto_tree:=parents_tree(r,onto) or_return
-    tree:=tree_rebase(&r.merger,c.tree,from_tree,onto_tree) or_return
-    tx:=tx_begin(r) or_return
-    c.parents=onto
-    c.tree=tree
-    c.written=time.now()._nsec
-    change_sign_as(&c,&r.identity) or_return
-    rewritten=change_put(r.s,&c,&r.identity) or_return
-    tx_rewrite(&tx,revision,rewritten) or_return
-    if _,e:=append(&tx.view.heads,rewritten);e!=nil {return {},.Out_Of_Memory}
-    tx_commit(&tx,.Rewrite,"rebase change") or_return
-    return
-}
-
-// Abandons revision: its children move onto its parents, a bookmark on it
-// moves to its first parent, and a workspace on it gets a new empty change on
-// its parents.
-change_abandon :: proc(r:^Repo,revision:Revision) -> Error {
-    c:=change_get(r.s,revision,context.temp_allocator) or_return
-    tx:=tx_begin(r) or_return
-    if _,e:=append(&tx.rewrites,Rewrite{revision,{}});e!=nil {return .Out_Of_Memory}
-    parents,e:=slice.clone(c.parents,context.temp_allocator)
-    if e!=nil {return .Out_Of_Memory}
-    tx.mapping[revision]=parents
-    for &h,k in tx.view.heads {
-        if h!=revision {continue}
-        ordered_remove(&tx.view.heads,k)
-        break
-    }
-    for p in c.parents {
-        if _,f:=append(&tx.view.heads,p);f!=nil {return .Out_Of_Memory}
-    }
-    for &b in tx.view.bookmarks {
-        parent:=len(c.parents)>0 ? c.parents[0] : Revision{}
-        for &a in b.terms.adds {if a==revision {a=parent}}
-        for &x in b.terms.removes {if x==revision {x=parent}}
-        terms_simplify(&b.terms)
-    }
-    bookmarks_prune(&tx.view)
-    for &w in tx.view.workspaces {
-        if w.revision!=revision {continue}
-        tree:=parents_tree(r,c.parents) or_return
-        w.revision=change_create(&tx,c.parents,tree,"") or_return
-    }
-    return tx_commit(&tx,.Abandon,"abandon change")
 }
 
 // Drops bookmarks that came down to nothing.

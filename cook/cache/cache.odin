@@ -208,17 +208,19 @@ store_source :: proc(from:^store.Store) -> Source {
         from:=(^store.Store)(user)
         source:=store.read_index(from)
         target:=store.read_index(into)
-        for name,k in names {given[k]=copy_ref(&source,&target,namespace,name)}
+        scratch,no_room:=make([]u8,COPY_SCRATCH)
+        defer delete(scratch)
+        for name,k in names {given[k]=no_room==nil && copy_ref(&source,&target,namespace,name,scratch)}
     }
-    copy_ref :: proc(from,into:^store.Store,namespace,name:string) -> bool {
+    copy_ref :: proc(from,into:^store.Store,namespace,name:string,scratch:[]u8) -> bool {
         object,error:=store.ref_get(from,namespace,name)
-        if error!=.None || object_copy(from,into,object)!=.None {return false}
+        if error!=.None || object_copy(from,into,object,scratch)!=.None {return false}
         if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST || namespace==asset.REF_BUILDS {
             b,build_error:=asset.build_get(from,object,context.temp_allocator)
             if build_error!=.None {return false}
             objects:=asset.Build_Objects{build=&b,with_thumbnails=true}
             for address in asset.build_object_next(&objects) {
-                if object_copy(from,into,address)!=.None {return false}
+                if object_copy(from,into,address,scratch)!=.None {return false}
             }
         }
         return store.ref_set(into,namespace,name,object)==.None
@@ -226,25 +228,27 @@ store_source :: proc(from:^store.Store) -> Source {
     return {fetch=fetch,user=from}
 }
 
+// What object_copy reads chunks into, a slot per level of a walk, since a
+// node's entries point into its slot: a walk over many objects allocates it
+// once.
+COPY_SCRATCH :: (store.NODE_LEVEL_MAX+2)*store.CHUNK_MAX
+
 // Copies into the batch of into every chunk of the object at address that into
 // lacks, nodes and data, from from: the ref that names it commits it.
-object_copy :: proc(from,into:^store.Store,address:store.Hash) -> store.Error {
+object_copy :: proc(from,into:^store.Store,address:store.Hash,scratch:[]u8) -> store.Error {
     if asset.object_whole(into,address) {return .None}
-    copy_chunk :: proc(from,into:^store.Store,address:store.Hash,level:int,depth:int) -> store.Error {
-        if depth>store.NODE_LEVEL_MAX+1 {return .Corrupt}
-        buffer,no_room:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
-        if no_room!=nil {return .Out_Of_Memory}
-        defer delete(buffer,context.temp_allocator)
-        bytes:=store.chunk_read(from,address,buffer) or_return
+    copy_chunk :: proc(from,into:^store.Store,address:store.Hash,level:int,scratch:[]u8) -> store.Error {
+        if len(scratch)<store.CHUNK_MAX {return .Corrupt}
+        bytes:=store.chunk_read(from,address,scratch[:store.CHUNK_MAX]) or_return
         if store.address_of_bytes(bytes)!=address {return .Corrupt}
         if !store.chunk_here(into,address) {store.chunk_put(into,address,bytes) or_return}
         if level<0 {return .None}
         n:=store.node_parse(bytes) or_return
         if level!=DATA_OR_ANY && n.level!=level {return .Corrupt}
-        for e in n.entries {copy_chunk(from,into,e.address,n.level-1 if n.level>0 else -1,depth+1) or_return}
+        for e in n.entries {copy_chunk(from,into,e.address,n.level-1 if n.level>0 else -1,scratch[store.CHUNK_MAX:]) or_return}
         return .None
     }
-    return copy_chunk(from,into,address,DATA_OR_ANY,0)
+    return copy_chunk(from,into,address,DATA_OR_ANY,scratch)
 }
 
 @(private="file")

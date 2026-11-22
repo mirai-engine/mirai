@@ -360,10 +360,6 @@ witness_valid :: proc(org:^Org_Fold,users:[]^User_Fold,l:^Log,e:int) -> bool {
 // writer knows them when it first sees the removal.
 witness_body :: proc(log:Log_Id,removal:store.Hash) -> []u8 {return body_make(Witness_Body{log=log,removal=removal})}
 
-// Whether l holds a valid witness of the removal at removal, as its last fold
-// found.
-log_has_witness :: proc(l:^Log,removal:store.Hash) -> bool {return log_witness_first(l,removal)>=0}
-
 // A removal a log may need a witness of: where it is, and the keys it affects.
 Witness_Due :: struct {log:Log_Id,removal:store.Hash,keys:[]Key}
 
@@ -871,7 +867,6 @@ Org_Fold :: struct {
     projects:[dynamic]Org_Project,
     scopes:[dynamic]Org_Scope,
     policies:[dynamic]Org_Policy,
-    grants:[dynamic]store.Hash,  // recorded in the log
     revoked:[dynamic]store.Hash, // grants revoked
     nodes:[dynamic]Org_Node,
     publics:[dynamic]Org_Public,
@@ -890,7 +885,6 @@ org_fold :: proc(f:^Org_Fold,l:^Log,users:[]^User_Fold,allocator:=context.alloca
     f.projects=make([dynamic]Org_Project,allocator)
     f.scopes=make([dynamic]Org_Scope,allocator)
     f.policies=make([dynamic]Org_Policy,allocator)
-    f.grants=make([dynamic]store.Hash,allocator)
     f.revoked=make([dynamic]store.Hash,allocator)
     f.nodes=make([dynamic]Org_Node,allocator)
     f.publics=make([dynamic]Org_Public,allocator)
@@ -909,7 +903,6 @@ org_fold_destroy :: proc(f:^Org_Fold) {
     delete(f.projects)
     delete(f.scopes)
     delete(f.policies)
-    delete(f.grants)
     delete(f.revoked)
     delete(f.nodes)
     delete(f.publics)
@@ -1231,10 +1224,8 @@ org_apply :: proc(f:^Org_Fold) {
             }
             append(&f.policies,Org_Policy{b.project,bookmark,int(b.approvals),u32(e)})
         case .Grant:
-            address:=store.address_of_bytes(entry.body)
-            append(&f.grants,address)
             if g,ge:=grant_decode(entry.body);ge==.None && f.authors[e]!=0 {
-                append(&f.granted,Org_Grant{u32(e),address,f.users[f.authors[e]-1].log.id,g})
+                append(&f.granted,Org_Grant{u32(e),store.address_of_bytes(entry.body),f.users[f.authors[e]-1].log.id,g})
             }
         case .Grant_Revoke:
             b,_,_:=body_head(entry.body,Subject_Body)
@@ -1355,7 +1346,7 @@ grant_encode :: proc(g:^Grant,identity:^Identity,allocator:=context.allocator) -
     if len(g.path)>GRANT_PATH_MAX {return nil,.Too_Large}
     if g.issuer!=identity.key || g.org=={} || g.org_head=={} || g.not_after<=g.not_before || !utf8.valid_string(g.path) {return nil,.Invalid_Argument}
     head:=g.head
-    head.magic,head.version,head.reserved,head.reserved2,head.path_len=KAI_MAGIC,VERSIONS[.Log_Page],0,{},u16(len(g.path))
+    head.magic,head.version,head.reserved,head.reserved2,head.path_len=KAI_MAGIC,VERSIONS[.Grant],0,{},u16(len(g.path))
     w:=writer_make(allocator)
     write_value(&w,head)
     write_string(&w,g.path)
@@ -1369,7 +1360,7 @@ grant_encode :: proc(g:^Grant,identity:^Identity,allocator:=context.allocator) -
 grant_decode :: proc(bytes:[]u8) -> (g:Grant,error:Error) {
     r:=Reader{data=bytes}
     g.head=read_value(&r,Grant_Head)
-    if r.short || g.magic!=KAI_MAGIC || g.version!=VERSIONS[.Log_Page] || g.reserved!=0 || !zero(g.reserved2[:]) || g.path_len>GRANT_PATH_MAX {return {},.Corrupt}
+    if r.short || g.magic!=KAI_MAGIC || g.version!=VERSIONS[.Grant] || g.reserved!=0 || !zero(g.reserved2[:]) || g.path_len>GRANT_PATH_MAX {return {},.Corrupt}
     if transmute(u8)g.rights&~transmute(u8)RIGHTS_ALL!=0 || g.org=={} || g.org_head=={} || g.not_after<=g.not_before {return {},.Corrupt}
     g.path=string(read_bytes(&r,int(g.path_len)))
     g.signature=read_value(&r,Signature)

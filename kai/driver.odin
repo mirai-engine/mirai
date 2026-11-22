@@ -5,9 +5,9 @@ import "mirai:store"
 
 // A driver merges the sides of one file and moves an anchor from one version
 // of a file to another. It is a pure, deterministic procedure of its inputs:
-// the same terms give the same bytes, so its result may be kept by its terms.
-// Drivers are asked in the order given, then the built-in text and binary
-// ones; one that does not know the file says Unsupported.
+// the same inputs give the same bytes. Drivers are asked in the order given,
+// then the built-in text and binary ones; one that does not know the file
+// says Unsupported.
 
 Driver_Result :: enum u8 {
     Resolved,    // out holds the merged file
@@ -19,8 +19,7 @@ Driver_Result :: enum u8 {
 Driver_Input :: struct {
     path:string,
     base,ours,theirs:[]u8,
-    has_base:bool,            // false: both sides added the file
-    terms:[3]store.Hash,      // the addresses of base, ours and theirs
+    has_base:bool, // false: both sides added the file
 }
 
 Anchor_Kind :: enum u8 {File,Lines,Structural}
@@ -35,40 +34,27 @@ Anchor :: struct {
 }
 
 Driver :: struct {
-    id:u32,      // recorded in the conflicts it judges; not 0
-    version:u32, // raised when its results change
     data:rawptr,
     merge:proc(data:rawptr,input:^Driver_Input,out:^[dynamic]u8) -> Driver_Result,
     // known false: not a file this driver knows; moved false: what the anchor named is gone
     anchor:proc(data:rawptr,from,to:[]u8,anchor:^Anchor) -> (moved,known:bool),
 }
 
-DRIVER_TEXT :: 1
-DRIVER_BINARY :: 2
-
-driver_text :: proc() -> Driver {
-    return {id=DRIVER_TEXT,version=1,merge=text_merge}
-}
-
-driver_binary :: proc() -> Driver {
-    return {id=DRIVER_BINARY,version=1,merge=binary_merge}
-}
-
 // Asks the drivers, then text and binary, until one knows the file.
-drivers_merge :: proc(drivers:[]Driver,input:^Driver_Input,out:^[dynamic]u8) -> (result:Driver_Result,driver:u32) {
+drivers_merge :: proc(drivers:[]Driver,input:^Driver_Input,out:^[dynamic]u8) -> (result:Driver_Result) {
     for d in drivers {
         if d.merge==nil {continue}
         clear(out)
         result=d.merge(d.data,input,out)
-        if result!=.Unsupported {return result,d.id}
+        if result!=.Unsupported {return}
     }
-    builtin:=[2]Driver{driver_text(),driver_binary()}
+    builtin:=[2]Driver{{merge=text_merge},{merge=binary_merge}}
     for d in builtin {
         clear(out)
         result=d.merge(d.data,input,out)
-        if result!=.Unsupported {return result,d.id}
+        if result!=.Unsupported {return}
     }
-    return .Unsupported,0
+    return .Unsupported
 }
 
 // Moves an anchor with the first driver that knows the file, else as text
@@ -81,7 +67,7 @@ drivers_anchor :: proc(drivers:[]Driver,from,to:[]u8,anchor:^Anchor) -> bool {
     return text_anchor(from,to,anchor)
 }
 
-// A file is binary when a NUL appears in its first bytes, as git judges it.
+// A file is binary when a NUL appears in its first 8000 bytes.
 binary :: proc "contextless" (bytes:[]u8) -> bool {
     for b in bytes[:min(len(bytes),8000)] {
         if b==0 {return true}

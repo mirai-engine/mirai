@@ -736,3 +736,45 @@ a_forged_org_head_stalls_a_peer_no_longer_than_its_bound :: proc(t:^testing.T) {
     }
     testing.expect(t,slice.contains(c.unfound[:],s.o.alice.log.id),"alice's devices make carol behind no more")
 }
+
+// Appends an entry this device signs to the log of id, saves it, tells the
+// peers and folds again: the entry's address.
+agent_append :: proc(a:^Agent,id:Log_Id,type:Entry_Type,body:[]u8,time:i64) -> (address:store.Hash,error:Error) {
+    l:=agent_log(a,id)
+    if l==nil {return {},.Missing}
+    identity:=a.desc.identity
+    ctx,org_ctx:store.Hash
+    if u:=agent_log(a,a.desc.user);u!=nil {
+        heads:=make([dynamic]store.Hash,context.temp_allocator)
+        if log_heads(u,&heads)==.None && len(heads)>0 {ctx=heads[0]}
+    }
+    if org_bound(l.kind) && a.folded {org_ctx=org_context(&a.org,a.desc.user)}
+    address=log_append(l,type,body,&identity,time,ctx,org_ctx) or_return
+    agent_saved(a,l) or_return
+    return
+}
+
+// Publishes this device's refs of a project and tells the peers.
+agent_publish_refs :: proc(a:^Agent,project:Log_Id,refs:[]Bookmark_Ref,time:i64) -> (address:store.Hash,error:Error) {
+    identity:=a.desc.identity
+    address=device_refs_publish(a.desc.store,project,&identity,refs,time) or_return
+    ns:[len(REFS_PREFIX)+64]u8
+    name:[32]u8
+    namespace:=refs_namespace(project,&ns)
+    exchange.ref_changed(&a.x,namespace,refs_name(identity.key,&name),address)
+    agent_closure(a)
+    members_ref(a,.Refs,namespace,address)
+    return
+}
+
+// Publishes what this device built for key and tells the peers.
+agent_publish_ddc :: proc(a:^Agent,key:store.Hash,objects:[]store.Hash,tainted:[]Scope_Id,time:i64) -> (nondeterministic:bool,error:Error) {
+    identity:=a.desc.identity
+    nondeterministic=ddc_publish(a.desc.store,a.desc.org,&identity,key,objects,tainted,time) or_return
+    ns:[len(DDC_PREFIX)+64]u8
+    name:[64]u8
+    namespace,hex:=ddc_namespace(a.desc.org,&ns),store.hex(key,&name)
+    agent_tell(a,namespace,hex)
+    if address,e:=store.ref_get(a.desc.store,namespace,hex);e==.None {members_ref(a,.DDC,namespace,address)}
+    return
+}

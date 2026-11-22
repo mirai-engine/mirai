@@ -206,8 +206,7 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `op_heads_of_two_workspaces_merge`, `a_switch_cut_midway_recovers_on_status`,
   `a_change_splits_by_paths_and_undoes_in_one_operation` and `kai_imports_stay_engine_agnostic`
   in `kai`; `histogram_diff_and_merge3_cases` in `std/diff`;
-  `a_scene_merges_by_field_through_the_driver` and
-  `a_driver_result_is_kept_by_its_terms_and_version` in `cook/kai`.
+  `a_scene_merges_by_field_through_the_driver` in `cook/kai`.
 - Identity: `revocation_witness_rejects_backdated_entries`, `a_removed_writer_keeps_its_past`,
   `concurrent_admin_removals_fold_deterministically`, `pairing_rejects_mitm_label_grinding`,
   `grants_verify_against_the_org`, `a_grant_signs_checks_only_while_it_holds`,

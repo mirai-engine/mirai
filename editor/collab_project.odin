@@ -9,6 +9,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "mirai:cook/share"
+import vcs "mirai:kai"
 import "mirai:platform"
 import wire "mirai:net"
 import "mirai:project"
@@ -392,8 +393,8 @@ collab_join_text :: proc(j:^Collab_Join) -> string {
     case .Snapshot:   return "Asking for the project..."
     case .Files:
         left:=state.left>=0?fmt.tprintf(", %s left",share.seconds_text(state.left)):""
-        return fmt.tprintf("Files: %d of %d, %s of %s, %s/s%s",state.files_done,state.files,share.bytes_text(state.bytes_done),share.bytes_text(state.bytes),share.bytes_text(i64(state.rate)),left)
-    case .Packages:   return fmt.tprintf("Builds: %s, %s/s",share.bytes_text(i64(state.received)),share.bytes_text(i64(state.rate)))
+        return fmt.tprintf("Files: %d of %d, %s of %s, %s/s%s",state.files_done,state.files,vcs.bytes_text(state.bytes_done),vcs.bytes_text(state.bytes),vcs.bytes_text(i64(state.rate)),left)
+    case .Packages:   return fmt.tprintf("Builds: %s, %s/s",vcs.bytes_text(i64(state.received)),vcs.bytes_text(i64(state.rate)))
     case .Done:
     }
     return ""

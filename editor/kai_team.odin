@@ -366,8 +366,10 @@ kai_team_poll :: proc(s:^Session) {
             t.org_info_count=n
         }
     }
-    vcs.machine_reload(&t.machine)
     kai_detail_retry(s)
+    // A running agent says when the org changed; without one, the refs are read.
+    if t.connected && !changed {return}
+    vcs.machine_reload(&t.machine)
     signature:=kai_team_signature(s)
     if signature!=t.signature {
         t.signature=signature
@@ -496,19 +498,9 @@ kai_team_read :: proc(s:^Session) {
         diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
         if ka.diff(&st.project.workspace,item.revision,&diffs,a)!=.None {continue}
         files:=make([]Kai_File,len(diffs),a)
-        for d,k in diffs {files[k]={d.path,kai_mark(d),true}}
+        for d,k in diffs {files[k]={d.path,vcs.diff_mark(d),true}}
         v.changes[i]=files
     }
-}
-
-// A added, D removed, M changed, C in conflict.
-kai_mark :: proc(d:vcs.Diff) -> u8 {
-    switch {
-    case d.after.kind==.Conflict: return 'C'
-    case d.before.address=={}: return 'A'
-    case d.after.address=={}: return 'D'
-    }
-    return 'M'
 }
 
 // The machine to act on, or why there is none.

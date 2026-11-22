@@ -134,7 +134,7 @@ walk_children :: proc(w:^Walk,item:Walk_Item,stack:^[dynamic]Walk_Item) {
     case .Conflict:
         clear(&w.terms.adds)
         clear(&w.terms.removes)
-        if _,e:=conflict_get(s,item.address,&w.terms);e!=.None {return}
+        if conflict_get(s,item.address,&w.terms)!=.None {return}
         for list in ([2][]Term{w.terms.adds[:],w.terms.removes[:]}) {
             for t in list {append(stack,Walk_Item{t.address,t.kind==.Folder?.Folder:.File,false})}
         }
@@ -183,7 +183,7 @@ walk_children :: proc(w:^Walk,item:Walk_Item,stack:^[dynamic]Walk_Item) {
             append(stack,Walk_Item{d.output_root,.Output,d.producer!=w.own})
         }
     case .Overlay:
-        bytes,e:=overlay_get(s,item.address,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+        bytes,e:=object_get(s,item.address,.Overlay_Record,context.temp_allocator,limit=OVERLAY_RECORD_MAX)
         if e!=.None {return}
         r,re:=overlay_record_decode(bytes)
         if re!=.None {return}
@@ -230,10 +230,10 @@ closure_walk :: proc(s:^store.Store,revisions:[]Revision,present,missing:^[dynam
 
 // The chunks of the index at address and of every page below it, as far as
 // the store holds them: what a peer reads of a log.
-log_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) {
+log_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,scratch:[]u8) {
     w:=walk_make(s)
     present:=make([dynamic]store.Hash,context.temp_allocator)
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     walk_all(&w,{{address,.Log,false}},&present,&missing)
-    for o in present {object_chunks(s,o,out)}
+    for o in present {object_chunks(s,o,out,scratch)}
 }

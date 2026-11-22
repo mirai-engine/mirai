@@ -213,8 +213,7 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     asset.types_init(&types)
     defer asset.types_destroy(&types)
     asset_driver:=kai_assets.Asset_Driver{types=&types}
-    merges:=kai_assets.Cached_Driver{driver=kai_assets.driver(&asset_driver),store=n.s,types=&types}
-    drivers:=[1]vcs.Driver{kai_assets.cached(&merges)}
+    drivers:=[1]vcs.Driver{kai_assets.driver(&asset_driver)}
     plan.drivers=drivers[:]
     if error=join_room(&d,&snap,&plan,folder,allocator);error!="" {return}
 
@@ -599,11 +598,11 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     store_info,_:=os.stat(s.root,context.temp_allocator)
     folder_info,_:=os.stat(existing,context.temp_allocator)
     if store_known && folder_known && store_info.device==folder_info.device && store_info.device!=0 {
-        if fetch+write>store_free {return fmt.aprintf("the disk of %s and %s has %s free and the join needs %s: free space, or give another folder or --store",s.root,folder,bytes_text(store_free),bytes_text(fetch+write),allocator=allocator)}
+        if fetch+write>store_free {return fmt.aprintf("the disk of %s and %s has %s free and the join needs %s: free space, or give another folder or --store",s.root,folder,vcs.bytes_text(store_free),vcs.bytes_text(fetch+write),allocator=allocator)}
         return ""
     }
-    if store_known && fetch>store_free {return fmt.aprintf("the disk of the store at %s has %s free and the join needs %s there: free space, or give another --store",s.root,bytes_text(store_free),bytes_text(fetch),allocator=allocator)}
-    if folder_known && write>folder_free {return fmt.aprintf("the disk of %s has %s free and the join needs %s there: free space, or give another folder",folder,bytes_text(folder_free),bytes_text(write),allocator=allocator)}
+    if store_known && fetch>store_free {return fmt.aprintf("the disk of the store at %s has %s free and the join needs %s there: free space, or give another --store",s.root,vcs.bytes_text(store_free),vcs.bytes_text(fetch),allocator=allocator)}
+    if folder_known && write>folder_free {return fmt.aprintf("the disk of %s has %s free and the join needs %s there: free space, or give another folder",folder,vcs.bytes_text(folder_free),vcs.bytes_text(write),allocator=allocator)}
     return ""
 }
 
@@ -649,7 +648,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
         return a.size<b.size || a.size==b.size && a.k<b.k
     })
     for one,at in sized {order[at]=one.k}
-    say(d,"fetching %d files, %s",len(order),bytes_text(total))
+    say(d,"fetching %d files, %s",len(order),vcs.bytes_text(total))
     progress_set(d,{phase=.Files,files=len(order),bytes=total,left=-1,kept=len(report.kept)})
     Active :: struct {k:int,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
@@ -711,7 +710,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             received_at,printed=t.received,now
             left:=total-done-here
             eta:=rate>0?f64(left)/rate:-1
-            say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),bytes_text(done+here),bytes_text(total),bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
+            say(d,"%d of %d files, %s of %s, %s/s, %s left",next-len(active),len(order),vcs.bytes_text(done+here),vcs.bytes_text(total),vcs.bytes_text(i64(rate)),eta<0?"time":seconds_text(max(eta,0)))
         }
         if d.progress!=nil {
             left:=total-done-here
@@ -732,7 +731,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
         if error:=join_alive(d,allocator);error!="" {return error}
     }
     elapsed:=node_now(n)-started
-    say(d,"fetched %d files, %s in %s (%s/s)",len(order),bytes_text(total),seconds_text(elapsed),bytes_text(i64(f64(total)/max(elapsed,1e-3))))
+    say(d,"fetched %d files, %s in %s (%s/s)",len(order),vcs.bytes_text(total),seconds_text(elapsed),vcs.bytes_text(i64(f64(total)/max(elapsed,1e-3))))
     return ""
 }
 
@@ -837,7 +836,9 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
             continue
         }
         os.change_mode(temp,mode)
-        if h:=d.node.hooks;h!=nil && h.saved!=nil {h.saved(h.data,e.path)}
+        when ODIN_TEST {
+            if h:=d.node.hooks[0];h!=nil && h.saved!=nil {h.saved(h.data,e.path)}
+        }
         // The copy of a large file takes time: an edit made meanwhile is kept too.
         if again,_,still:=index_address(index,e.path,target);still!=present || still && again!=here {
             os.remove(temp)
@@ -890,9 +891,9 @@ join_merge :: proc(plan:^Plan,s:^store.Store,e:^vcs.File,w:^Write,target,temp:st
     if ours_error!=nil || len(ours)>vcs.DRIVER_BYTES_MAX {return false}
     theirs,theirs_error:=os.read_entire_file(temp,context.temp_allocator)
     if theirs_error!=nil {return false}
-    input:=vcs.Driver_Input{path=e.path,base=origin,ours=ours,theirs=theirs,has_base=true,terms={w.origin,w.base,e.address}}
+    input:=vcs.Driver_Input{path=e.path,base=origin,ours=ours,theirs=theirs,has_base=true}
     out:=make([dynamic]u8,context.temp_allocator)
-    if result,_:=vcs.drivers_merge(plan.drivers,&input,&out);result!=.Resolved {return false}
+    if vcs.drivers_merge(plan.drivers,&input,&out)!=.Resolved {return false}
     return os.write_entire_file(temp,out[:])==nil
 }
 
@@ -1066,7 +1067,7 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
         if now-printed<d.pace {continue}
         t:=node_totals(n)
         rate:=f64(t.received-last)/(now-printed)
-        if t.received!=last {say(d,"builds: %s received, %s/s",bytes_text(i64(t.received-from)),bytes_text(i64(rate)))}
+        if t.received!=last {say(d,"builds: %s received, %s/s",vcs.bytes_text(i64(t.received-from)),vcs.bytes_text(i64(rate)))}
         last,printed=t.received,now
         if d.progress!=nil {
             sync.mutex_guard(&d.progress.lock)
@@ -1117,16 +1118,6 @@ offer_set :: proc(s:^store.Store,folder,name:string,address:store.Hash,project_n
     }
     file_save(file,transmute([]u8)name)
     return .None
-}
-
-bytes_text :: proc(bytes:i64) -> string {
-    value:=f64(bytes)
-    switch {
-    case value>=1<<30: return fmt.tprintf("%.2f GiB",value/(1<<30))
-    case value>=1<<20: return fmt.tprintf("%.1f MiB",value/(1<<20))
-    case value>=1<<10: return fmt.tprintf("%.1f KiB",value/(1<<10))
-    }
-    return fmt.tprintf("%d bytes",bytes)
 }
 
 seconds_text :: proc(seconds:f64) -> string {

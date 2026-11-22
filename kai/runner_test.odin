@@ -312,9 +312,9 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
         r,_,e:=overlay_record_get(&b.machines[1].store,g.project,g.scope,g.commit,context.temp_allocator)
         if e!=.None {return false}
         for x in r.objects {
-            if !object_whole(&b.machines[1].store,x) {return false}
+            if !object_whole(&b.machines[1].store,x,scratch_make()) {return false}
         }
-        return object_whole(&b.machines[1].store,r.tree_root)
+        return object_whole(&b.machines[1].store,r.tree_root,scratch_make())
     }
     if !testing.expect(t,box_until(b,10,&og,arrived),"the overlay's ciphertext reaches bob") {return}
     bo:Org_State
@@ -787,18 +787,19 @@ org_held :: proc(b:^Box,data:rawptr) -> bool {
     rings:=make([dynamic]^Keyring_Fold,context.temp_allocator)
     machine_keyrings(s,&o,&rings,context.temp_allocator)
     if len(rings)!=1 || rings[0].epoch==0 {return false}
+    scratch:=scratch_make()
     for e in 1..=rings[0].epoch {
         body,ok:=keyring_epoch(rings[0],e)
-        if !ok || !object_whole(s,body.envelopes) {return false}
+        if !ok || !object_whole(s,body.envelopes,scratch) {return false}
     }
     present:=make([dynamic]store.Hash,context.temp_allocator)
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(s,{g.commit},&present,&missing)
     if len(missing)>0 || len(present)==0 {return false}
     r,_,re:=overlay_record_get(s,g.project,g.scope,g.commit,context.temp_allocator)
-    if re!=.None || !object_whole(s,r.tree_root) {return false}
+    if re!=.None || !object_whole(s,r.tree_root,scratch) {return false}
     for x in r.objects {
-        if !object_whole(s,x) {return false}
+        if !object_whole(s,x,scratch) {return false}
     }
     return true
 }

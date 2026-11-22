@@ -155,6 +155,7 @@ views_stamps :: proc(o:^kai.Runner_Org) -> [2]int {
 }
 
 // The views of org o, made again when its agent changed; nil without memory.
+// The views of an org the node left go when another's are made.
 org_views :: proc(h:^Hub,o:^kai.Runner_Org) -> ^Org_Views {
     stamps:=views_stamps(o)
     w:^Org_Views
@@ -162,6 +163,15 @@ org_views :: proc(h:^Hub,o:^kai.Runner_Org) -> ^Org_Views {
         if x.org==o.id {w=x}
     }
     if w==nil {
+        for k:=0;k<len(h.views); {
+            if org_find(h,h.views[k].org)!=nil {
+                k+=1
+                continue
+            }
+            virtual.arena_destroy(&h.views[k].arena)
+            free(h.views[k],h.allocator)
+            unordered_remove(&h.views,k)
+        }
         w=new(Org_Views,h.allocator)
         if w==nil {return nil}
         if virtual.arena_init_growing(&w.arena)!=nil {
@@ -367,14 +377,6 @@ key_owner :: proc(o:^kai.Runner_Org,key:kai.Key) -> (user:^kai.User_Fold,device_
         }
     }
     return nil,""
-}
-
-@(private)
-short_hex :: proc(bytes:[]u8) -> string {
-    j:=json_make()
-    json_hex(&j,bytes[:min(len(bytes),6)])
-    text:=json_text(&j)
-    return text[1:len(text)-1]
 }
 
 @(private)
@@ -737,10 +739,10 @@ parse_count :: proc(text:string) -> (n:int,ok:bool) {
 
 @(private)
 diff_status :: proc(d:kai.Diff) -> string {
-    switch {
-    case d.after.kind==.Conflict: return "conflict"
-    case d.before.address=={}: return "added"
-    case d.after.address=={}: return "removed"
+    switch kai.diff_mark(d) {
+    case 'C': return "conflict"
+    case 'A': return "added"
+    case 'D': return "removed"
     }
     return "modified"
 }

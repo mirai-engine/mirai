@@ -49,7 +49,6 @@ import "mirai:store"
 // mode, and a fixed 32-byte key prefix makes the same PRF.
 
 OVERLAY_PREFIX :: "kai-ovl-"
-OVERLAY_MAGIC :: u32('K')|u32('O')<<8|u32('V')<<16|u32('1')<<24
 OVERLAY_CHUNK_MAX :: store.CHUNK_MAX-(8<<10) // plaintext bytes of a chunk: sealed, it fits one store chunk
 OVERLAY_FILES_MAX :: 1<<16
 OVERLAY_FILE_CHUNKS_MAX :: 4096 // sealed chunks of a file, one group each in its object's root
@@ -323,28 +322,13 @@ scope_readers :: proc(org:^Org_Fold,scope:Org_Scope,out:^[dynamic]Scope_Reader) 
 // Missing while the object is not here.
 keyring_envelopes :: proc(k:^Keyring_Fold,body:Epoch_Add_Body,allocator:=context.temp_allocator) -> (envelopes:[]Envelope,error:Error) {
     if k.store==nil {return nil,.Missing}
-    bytes:=overlay_get(k.store,body.envelopes,.Envelopes,ENVELOPES_MAX*size_of(Envelope),allocator) or_return
+    bytes:=object_get(k.store,body.envelopes,.Envelopes,allocator,limit=ENVELOPES_MAX*size_of(Envelope)) or_return
     if len(bytes)!=int(body.devices)*size_of(Envelope) {return nil,.Corrupt}
     envelopes=slice.reinterpret([]Envelope,bytes)
     for i in 1..<len(envelopes) {
         if !dh_less(envelopes[i-1].dh,envelopes[i].dh) {return nil,.Corrupt}
     }
     return envelopes,.None
-}
-
-// Whether the epoch's key is wrapped for the device dh.
-keyring_wraps :: proc(k:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> bool {
-    for x in k.envelopes {
-        if x.epoch==epoch && x.envelope.dh==dh {return true}
-    }
-    body,ok:=keyring_epoch(k,epoch)
-    if !ok {return false}
-    envelopes,e:=keyring_envelopes(k,body)
-    if e!=.None {return false}
-    _,found:=slice.binary_search_by(envelopes,dh,proc(e:Envelope,dh:Dh_Key) -> slice.Ordering {
-        return e.dh==dh?.Equal:(dh_less(e.dh,dh)?.Less:.Greater)
-    })
-    return found
 }
 
 // Whether a write must wait for a rotation: no epoch yet, or the newest one
@@ -756,23 +740,6 @@ open_chunk :: proc(z:^Sealer,keys:^File_Keys,aad:[]u8,sealed:[]u8) -> (plain:[]u
 
 // --- Overlay objects ---
 
-@(private)
-overlay_get :: proc(s:^store.Store,address:store.Hash,kind:Object_Kind,limit:int,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
-    o,open:=store.object_open(s,address)
-    if open!=.None {return nil,store_error(open)}
-    defer store.object_close(&o)
-    meta_check(store.object_meta(&o),kind,0) or_return
-    size:=store.object_size(&o)
-    if size>u64(limit) {return nil,.Too_Large}
-    made,made_error:=make([]u8,int(size),allocator)
-    if made_error!=nil {return nil,.Out_Of_Memory}
-    if e:=store.object_read(&o,0,made);e!=.None {
-        delete(made,allocator)
-        return nil,store_error(e)
-    }
-    return made,.None
-}
-
 // Reads the file at path once and puts it sealed as an object of one native
 // group per chunk; an empty file has no object. content is the BLAKE3 of the
 // plaintext.
@@ -911,7 +878,7 @@ tree_key :: proc(key:^Epoch_Key) -> (k:[32]u8) {
 tree_seal :: proc(entries:[]Overlay_Entry,project:Log_Id,scope:Scope_Id,epoch:u32,key:^Epoch_Key,allocator:=context.allocator) -> (sealed:[]u8,error:Error) {
     if len(entries)>OVERLAY_FILES_MAX {return nil,.Too_Large}
     w:=writer_make(context.temp_allocator)
-    write_value(&w,Overlay_Tree_Head{magic=OVERLAY_MAGIC,count=u32(len(entries))})
+    write_value(&w,Overlay_Tree_Head{magic=KAI_MAGIC,count=u32(len(entries))})
     for e in entries {
         head:=e.head
         head.reserved,head.path_len=0,u16(len(e.path))
@@ -958,7 +925,7 @@ tree_open :: proc(sealed:[]u8,project:Log_Id,scope:Scope_Id,epoch:u32,key:^Epoch
 tree_decode :: proc(plain:[]u8,out:^[dynamic]Overlay_Entry) -> Error {
     r:=Reader{data=plain}
     head:=read_value(&r,Overlay_Tree_Head)
-    if r.short || head.magic!=OVERLAY_MAGIC || head.reserved!=0 || head.count>OVERLAY_FILES_MAX {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 || head.count>OVERLAY_FILES_MAX {return .Corrupt}
     if !count_fits(&r,u64(head.count),size_of(Overlay_Entry_Head)) {return .Corrupt}
     heads:=read_bytes(&r,int(head.count)*size_of(Overlay_Entry_Head))
     for k in 0..<int(head.count) {
@@ -1003,7 +970,7 @@ overlay_record_encode :: proc(r:^Overlay_Record,identity:^Identity,allocator:=co
     }
     if r.seq==0 || (r.seq==1)!=(r.prev=={}) || r.commit=={} || r.tree_root=={} || r.epoch==0 || r.author!=identity.key {return nil,.Invalid_Argument}
     head:=r.head
-    head.magic,head.reserved,head.files=OVERLAY_MAGIC,0,u32(len(r.objects))
+    head.magic,head.reserved,head.files=KAI_MAGIC,0,u32(len(r.objects))
     w:=writer_make(allocator)
     write_value(&w,head)
     write_bytes(&w,slice.to_bytes(r.objects))
@@ -1018,7 +985,7 @@ overlay_record_encode :: proc(r:^Overlay_Record,identity:^Identity,allocator:=co
 overlay_record_decode :: proc(bytes:[]u8) -> (r:Overlay_Record,error:Error) {
     rd:=Reader{data=bytes}
     r.head=read_value(&rd,Overlay_Record_Head)
-    if rd.short || r.magic!=OVERLAY_MAGIC || r.reserved!=0 || r.files>OVERLAY_FILES_MAX {return {},.Corrupt}
+    if rd.short || r.magic!=KAI_MAGIC || r.reserved!=0 || r.files>OVERLAY_FILES_MAX {return {},.Corrupt}
     if r.seq==0 || (r.seq==1)!=(r.prev=={}) || r.commit=={} || r.tree_root=={} || r.epoch==0 {return {},.Corrupt}
     if !count_fits(&rd,u64(r.files),size_of(store.Hash)) {return {},.Corrupt}
     r.objects=slice.reinterpret([]store.Hash,read_bytes(&rd,int(r.files)*size_of(store.Hash)))
@@ -1065,17 +1032,10 @@ overlay_record_get :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:R
     name:[64]u8
     a,e:=store.ref_get(s,overlay_namespace(project,scope,&ns),store.hex(commit,&name))
     if e!=.None {return {},{},store_error(e)}
-    bytes:=overlay_get(s,a,.Overlay_Record,OVERLAY_RECORD_MAX,allocator) or_return
+    bytes:=object_get(s,a,.Overlay_Record,allocator,limit=OVERLAY_RECORD_MAX) or_return
     r=overlay_record_decode(bytes) or_return
     if r.project!=project || r.scope!=scope || r.commit!=commit {return {},{},.Corrupt}
     return r,a,.None
-}
-
-// Why the record of scope at commit does not read: None when it does, Missing
-// when there is none.
-overlay_record_error :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:Revision) -> Error {
-    _,_,e:=overlay_record_get(s,project,scope,commit,context.temp_allocator)
-    return e
 }
 
 // Signs and stores the record of scope at commit and points its ref at it: it
@@ -1118,7 +1078,7 @@ overlay_accept :: proc(s:^store.Store,org:^Org_Fold,namespace,name:string,addres
         if sc.project==project && sc.scope==scope {known=true}
     }
     if !known {return {},false,.Unauthorized}
-    bytes:=overlay_get(s,address,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
+    bytes:=object_get(s,address,.Overlay_Record,context.temp_allocator,limit=OVERLAY_RECORD_MAX) or_return
     r=overlay_record_decode(bytes) or_return
     if r.project!=project || r.scope!=scope || r.commit!=commit {return {},false,.Corrupt}
     if !signed_valid(bytes,r.author) {return {},false,.Unauthorized}
@@ -1167,60 +1127,6 @@ overlay_rebase :: proc(s:^store.Store,identity:^Identity,project:Log_Id,scope:Sc
     return overlay_record_write(s,identity,&r,old_address,old.seq,refs)
 }
 
-// --- Reading an overlay ---
-
-// One opened overlay: its record, key and entries.
-Overlay :: struct {
-    record:Overlay_Record, // its objects in the temp allocator
-    address:store.Hash,
-    key:Epoch_Key,
-    entries:[dynamic]Overlay_Entry,
-    tree:[]u8, // what the paths point into
-    allocator:runtime.Allocator,
-}
-
-// Opens the overlay of the keyring's scope at commit with device's key.
-overlay_open :: proc(o:^Overlay,s:^store.Store,k:^Keyring_Fold,device:^Overlay_Device,commit:Revision,allocator:=context.allocator) -> (error:Error) {
-    o^={allocator=allocator}
-    o.entries=make([dynamic]Overlay_Entry,allocator)
-    defer if error!=.None {overlay_close(o)}
-    // One store per value until odin-lang/Odin#7937.
-    record,address:=overlay_record_get(s,k.project,k.scope,commit,context.temp_allocator) or_return
-    o.record=record
-    o.address=address
-    o.key=keyring_epoch_key(k,device,o.record.epoch) or_return
-    sealed:=overlay_get(s,o.record.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
-    o.tree=tree_open(sealed,k.project,k.scope,o.record.epoch,&o.key,&o.entries,allocator) or_return
-    // The record names exactly the tree's file objects.
-    objects:=make([dynamic]store.Hash,context.temp_allocator)
-    for e in o.entries {
-        if e.object!={} && !slice.contains(objects[:],e.object) {append(&objects,e.object)}
-    }
-    slice.sort_by(objects[:],hash_less)
-    if !slice.equal(objects[:],o.record.objects) {return .Corrupt}
-    return .None
-}
-
-overlay_close :: proc(o:^Overlay) {
-    crypto.zero_explicit(&o.key,size_of(o.key))
-    if o.tree!=nil {crypto.zero_explicit(raw_data(o.tree),len(o.tree))}
-    delete(o.tree,o.allocator)
-    delete(o.entries)
-    o^={}
-}
-
-// The plaintext of the overlay's file at path, in allocator.
-overlay_file :: proc(o:^Overlay,s:^store.Store,path:string,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
-    for &e in o.entries {
-        if e.path!=path {continue}
-        z:Sealer
-        sealer_init(&z,context.temp_allocator) or_return
-        defer sealer_destroy(&z)
-        return open_file(&z,s,o.record.scope,o.record.epoch,&o.key,&e,allocator)
-    }
-    return nil,.Missing
-}
-
 // --- Routing a snapshot ---
 
 // What a snapshot routes by: the org's scopes of the project and the keyrings
@@ -1262,6 +1168,7 @@ Plan_Scope :: struct {
     objects:[dynamic]store.Hash,
     tree:store.Hash,
     readable:bool, // this device holds the key: it seals; otherwise it carries base
+    rotate:bool,   // a write waits for a rotation (keyring_needs_rotation)
 }
 
 // The private part of one snapshot, between overlay_route and overlay_publish.
@@ -1321,11 +1228,12 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
                 key,key_error:=keyring_epoch_key(p.keyring,&r.device,rec.epoch)
                 if key_error!=.None {break}
                 defer crypto.zero_explicit(&key,size_of(key))
-                sealed:=overlay_get(s,rec.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
+                sealed:=object_get(s,rec.tree_root,.Overlay_Tree,context.temp_allocator,limit=OVERLAY_TREE_MAX) or_return
                 tree_open(sealed,r.project,sc.scope,rec.epoch,&key,&p.previous,context.temp_allocator) or_return
                 break
             }
-            if p.keyring!=nil && p.keyring.epoch>0 && !keyring_needs_rotation(p.keyring) {
+            p.rotate=p.keyring!=nil && keyring_needs_rotation(p.keyring)
+            if p.keyring!=nil && p.keyring.epoch>0 && !p.rotate {
                 if key,e:=keyring_epoch_key(p.keyring,&r.device,p.keyring.epoch);e==.None {
                     p.key,p.readable=key,true
                 }
@@ -1335,7 +1243,7 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
             for e in p.previous {
                 _,listed:=slice.binary_search_by(found[:],e.path,proc(f:Found,path:string) -> slice.Ordering {return slice.cmp(f.path,path)})
                 if listed {continue}
-                info,stat_error:=os.lstat(workspace_join(root,e.path),context.temp_allocator)
+                info,stat_error:=os.lstat(path_join(root,e.path),context.temp_allocator)
                 if stat_error!=nil || info.type!=.Regular {continue}
                 if _,f:=append(found,found_of(e.path,info));f!=nil {return .Out_Of_Memory}
             }
@@ -1364,7 +1272,7 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
         // A device that may no longer read the scope leaves its last copy
         // out: the record it follows is carried as it is.
         if !p.readable && p.keyring!=nil && !device_reads(r.org,sc,&r.device) {
-            hash,_,he:=plain_hash(workspace_join(root,f.path))
+            hash,_,he:=plain_hash(path_join(root,f.path))
             unchanged:=false
             for e in p.previous {unchanged||=he==.None && e.path==f.path && e.content==hash}
             if unchanged {continue}
@@ -1372,7 +1280,7 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
         refusal:=Overlay_Refusal.None
         switch {
         case p.keyring==nil || p.keyring.epoch==0: refusal=.No_Keyring
-        case keyring_needs_rotation(p.keyring): refusal=.Rotate
+        case p.rotate: refusal=.Rotate
         case !p.readable: refusal=.Unreadable
         }
         if refusal!=.None {r.refusal,r.refused_path,r.refused_scope=refusal,strings.clone(f.path,context.temp_allocator),sc.scope}
@@ -1397,11 +1305,6 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
     }
     base.truncate(found,kept)
     return overlay_seal(r,s,root,plan)
-}
-
-@(private)
-workspace_join :: proc(root,relative:string) -> string {
-    return strings.concatenate({root,"/",relative},context.temp_allocator)
 }
 
 // Seals the files of each readable scope of plan and their tree. A file that
@@ -1436,7 +1339,7 @@ overlay_seal :: proc(r:^Overlay_Routing,s:^store.Store,root:string,plan:^Overlay
             if kept[i] {continue}
             if f.file_id=={} {
                 // A path new to the overlay takes the id of a vanished path of the same content.
-                content,_,e:=plain_hash(workspace_join(root,f.path))
+                content,_,e:=plain_hash(path_join(root,f.path))
                 if e!=.None {return e}
                 for old,k in p.previous {
                     if !taken[k] && old.content==content {
@@ -1446,7 +1349,7 @@ overlay_seal :: proc(r:^Overlay_Routing,s:^store.Store,root:string,plan:^Overlay
                 }
                 if f.file_id=={} {f.file_id=random_id(File_Id)}
             }
-            f.object,f.content,f.size=seal_file(&z,s,workspace_join(root,f.path),p.scope.scope,epoch,&p.key,f.file_id) or_return
+            f.object,f.content,f.size=seal_file(&z,s,path_join(root,f.path),p.scope.scope,epoch,&p.key,f.file_id) or_return
         }
         for f in p.files {
             if f.object!={} && !slice.contains(p.objects[:],f.object) {append(&p.objects,f.object)}
@@ -1502,7 +1405,7 @@ overlay_publish :: proc(r:^Overlay_Routing,s:^store.Store,plan:^Overlay_Plan,com
             rec:=Overlay_Record{head={commit=commit,project=r.project,scope=p.scope.scope,epoch=p.keyring.epoch,tree_root=p.tree,time=t},objects=p.objects[:]}
             overlay_record_write(s,&r.device.identity,&rec,p.base,p.base_seq,refs) or_return
         } else if p.base!={} {
-            base:=overlay_get(s,p.base,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
+            base:=object_get(s,p.base,.Overlay_Record,context.temp_allocator,limit=OVERLAY_RECORD_MAX) or_return
             rec:=overlay_record_decode(base) or_return
             if rec.commit==commit {continue}
             rec.commit,rec.time=commit,t
@@ -1552,7 +1455,7 @@ overlay_checkout :: proc(r:^Overlay_Routing,s:^store.Store,root:string,before,af
         if e:=overlay_entries_at(r,s,k,before,&old,nil,nil);e!=.None && e!=.Unauthorized {return e}
         if device_reads(r.org,sc,&r.device) {overlay_entries_at(r,s,k,after,&new,&epoch,&key) or_return}
         for &e in new {
-            path:=workspace_join(root,e.path)
+            path:=path_join(root,e.path)
             if hash,_,he:=plain_hash(path);he==.None && hash==e.content {continue}
             bytes:=open_file(&z,s,sc.scope,epoch,&key,&e,context.temp_allocator) or_return
             defer crypto.zero_explicit(raw_data(bytes),len(bytes))
@@ -1565,7 +1468,7 @@ overlay_checkout :: proc(r:^Overlay_Routing,s:^store.Store,root:string,before,af
             kept:=false
             for n in new {kept||=n.path==e.path}
             if kept {continue}
-            path:=workspace_join(root,e.path)
+            path:=path_join(root,e.path)
             if hash,_,he:=plain_hash(path);he==.None && hash==e.content {os.remove(path)}
         }
     }
@@ -1586,7 +1489,7 @@ overlay_entries_at :: proc(r:^Overlay_Routing,s:^store.Store,k:^Keyring_Fold,rev
         if e!=.None {return e}
         x:=keyring_epoch_key(k,&r.device,rec.epoch) or_return
         defer crypto.zero_explicit(&x,size_of(x))
-        sealed:=overlay_get(s,rec.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
+        sealed:=object_get(s,rec.tree_root,.Overlay_Tree,context.temp_allocator,limit=OVERLAY_TREE_MAX) or_return
         tree_open(sealed,r.project,k.scope,rec.epoch,&x,out,context.temp_allocator) or_return
         if epoch!=nil {epoch^,key^=rec.epoch,x}
         return .None
@@ -1647,7 +1550,7 @@ blob_aad :: proc(head:[]u8,index:int,last:bool,out:^[len(LABEL_BLOB)+BLOB_HEAD_M
 @(private)
 blob_keys :: proc(keyrings:[]^Keyring_Fold,device:^Overlay_Device,project:Log_Id,scopes:[]Scope_Id,epochs:[]u32,head:^[BLOB_HEAD_MAX]u8) -> (size:int,keys:File_Keys,error:Error) {
     if len(scopes)==0 || len(scopes)>TAINTED_MAX {return 0,{},.Invalid_Argument}
-    h:=Blob_Head{magic=OVERLAY_MAGIC,scopes=u8(len(scopes)),project=project}
+    h:=Blob_Head{magic=KAI_MAGIC,scopes=u8(len(scopes)),project=project}
     size=copy(head[:],mem.ptr_to_bytes(&h))
     epoch_keys:[TAINTED_MAX]Epoch_Key
     defer crypto.zero_explicit(&epoch_keys,size_of(epoch_keys))
@@ -1793,7 +1696,7 @@ overlay_blob_open :: proc(b:^Blob_Reader,s:^store.Store,keyrings:[]^Keyring_Fold
     if e:=store.group_read(&b.o,0,0,b.head[:size]);e!=.None {return store_error(e)}
     r:=Reader{data=b.head[:size]}
     head:=read_value(&r,Blob_Head)
-    if r.short || head.magic!=OVERLAY_MAGIC || head.reserved!=0 || head.scopes==0 || int(head.scopes)>TAINTED_MAX || size!=size_of(Blob_Head)+int(head.scopes)*(size_of(Scope_Id)+4) {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 || head.scopes==0 || int(head.scopes)>TAINTED_MAX || size!=size_of(Blob_Head)+int(head.scopes)*(size_of(Scope_Id)+4) {return .Corrupt}
     scopes:[TAINTED_MAX]Scope_Id
     epochs:[TAINTED_MAX]u32
     for i in 0..<int(head.scopes) {

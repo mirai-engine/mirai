@@ -43,7 +43,7 @@ Tcp_Stream :: struct {
     opened,active,sent,probed:f64,
     input:[2+FRAME_MAX]u8,
     input_len:int,
-    output:[]u8,         // TCP_OUTPUT_MAX
+    output:[TCP_OUTPUT_MAX]u8,
     output_len:int,
 }
 
@@ -111,27 +111,25 @@ runner_tcp_open :: proc(r:^Runner,node:Dh_Key,address:net.Address) -> bool {
     s:=tcp_stream_new(r,socket,address,true)
     if s==nil {return false}
     s.connecting,s.node=true,node
-    copy(s.output,RELAY_TCP_MAGIC)
+    copy(s.output[:],RELAY_TCP_MAGIC)
     s.output_len=len(RELAY_TCP_MAGIC)
     return true
 }
 
 @(private)
 tcp_stream_new :: proc(r:^Runner,socket:cnet.TCP_Socket,address:net.Address,link:bool) -> ^Tcp_Stream {
-    s,e:=new(Tcp_Stream,r.allocator)
-    if e!=nil {
+    s:^Tcp_Stream
+    if len(r.tcp_spare)>0 {
+        s=pop(&r.tcp_spare)
+    } else if len(r.tcp)<2*TCP_STREAMS_MAX {
+        made,e:=new(Tcp_Stream,r.allocator)
+        if e==nil {s=made}
+    }
+    if s==nil {
         cnet.close(socket)
         return nil
     }
-    output,oe:=make([]u8,TCP_OUTPUT_MAX,r.allocator)
-    if oe!=nil || len(r.tcp)>=2*TCP_STREAMS_MAX {
-        delete(output,r.allocator)
-        free(s,r.allocator)
-        cnet.close(socket)
-        return nil
-    }
-    s.socket,s.address,s.link,s.output=socket,address,link,output
-    s.opened,s.active,s.sent,s.probed=r.now,r.now,r.now,r.now
+    s^={socket=socket,address=address,link=link,opened=r.now,active=r.now,sent=r.now,probed=r.now}
     if _,ae:=append(&r.tcp,s);ae!=nil {
         tcp_stream_free(r,s)
         return nil
@@ -140,10 +138,11 @@ tcp_stream_new :: proc(r:^Runner,socket:cnet.TCP_Socket,address:net.Address,link
 }
 
 @(private)
+// Closes s and keeps it for the next connection.
 tcp_stream_free :: proc(r:^Runner,s:^Tcp_Stream) {
     if !s.failed {cnet.close(s.socket)}
-    delete(s.output,r.allocator)
-    free(s,r.allocator)
+    s.failed=true
+    if _,e:=append(&r.tcp_spare,s);e!=nil {free(s,r.allocator)}
 }
 
 @(private)
@@ -157,7 +156,9 @@ tcp_fail :: proc(s:^Tcp_Stream) {
 @(private)
 runner_tcp_close :: proc(r:^Runner) {
     for s in r.tcp {tcp_stream_free(r,s)}
+    for s in r.tcp_spare {free(s,r.allocator)}
     delete(r.tcp)
+    delete(r.tcp_spare)
     if r.has_tcp {cnet.close(r.tcp_listener)}
     r.has_tcp=false
 }
@@ -279,7 +280,7 @@ tcp_pump :: proc(r:^Runner,s:^Tcp_Stream) {
     if s.output_len>0 {
         n,e:=cnet.send_tcp(s.socket,s.output[:s.output_len])
         if n>0 {
-            copy(s.output,s.output[n:s.output_len])
+            copy(s.output[:],s.output[n:s.output_len])
             s.output_len-=n
             s.sent=r.now
         }

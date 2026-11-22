@@ -1,5 +1,6 @@
 package kai_assets
 
+import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "mirai:asset"
@@ -20,6 +21,7 @@ SUMMARY_NAMES :: 8          // entities, clips or tables a summary names
 SUMMARY_SCAN_MAX :: 1<<16   // rows a summary reads of one table
 PREVIEW_CHANGES_MAX :: 64   // changes a publish walks back from its bookmarks
 PREVIEW_FILES_MAX :: 256    // files one publish makes previews of
+PREVIEW_BYTES_MAX :: 64<<20 // bytes of assets one publish reads
 
 // What gives the thumbnail of an asset, as a PNG of at most
 // vcs.PREVIEW_SIDE_MAX pixels a side, into out: false when there is none
@@ -37,7 +39,7 @@ asset_summary :: proc(bytes:[]u8,allocator:=context.allocator) -> (record:[]u8,o
     facts:=make([dynamic]vcs.Preview_Fact,context.temp_allocator)
     kind:=kind_name(header.kind)
     if len(bytes)>SUMMARY_FILE_MAX {
-        append(&facts,vcs.Preview_Fact{"File",bytes_text(len(bytes))})
+        append(&facts,vcs.Preview_Fact{"File",vcs.bytes_text(i64(len(bytes)))})
         r,e:=vcs.preview_summary_encode(kind,facts[:],allocator)
         return r,e==.None
     }
@@ -131,7 +133,7 @@ asset_summary :: proc(bytes:[]u8,allocator:=context.allocator) -> (record:[]u8,o
             fact(&facts,t.name,fmt.tprintf("%d row%s",t.rows,t.rows==1?"":"s"))
         }
     }
-    fact(&facts,"File",bytes_text(len(bytes)))
+    fact(&facts,"File",vcs.bytes_text(i64(len(bytes))))
     r,e:=vcs.preview_summary_encode(kind,facts[:],allocator)
     return r,e==.None
 }
@@ -187,15 +189,6 @@ clip_length :: proc(doc:^asset.Document,clip:int) -> (length:f64,known:bool) {
     return
 }
 
-@(private)
-bytes_text :: proc(n:int) -> string {
-    switch {
-    case n>=1<<20: return fmt.tprintf("%.1f MiB",f64(n)/f64(1<<20))
-    case n>=1<<10: return fmt.tprintf("%.1f KiB",f64(n)/f64(1<<10))
-    }
-    return fmt.tprintf("%d bytes",n)
-}
-
 // The detail of what changed from before to after, the bytes of the two sides
 // of an asset (nil: not there), as a preview record (vcs.preview_detail_encode),
 // in allocator: false when they are not an asset of one kind.
@@ -215,8 +208,9 @@ asset_detail :: proc(before,after:[]u8,allocator:=context.allocator) -> (record:
 // the summary of each asset a change leaves, the detail of what it did to it
 // and, from thumbnails, its thumbnail. A path a scope of the org takes gets
 // none, nor does anything when the org's scopes do not read. Walks at most
-// PREVIEW_CHANGES_MAX changes and PREVIEW_FILES_MAX files; what was published
-// before is not made again. Returns how many records it published.
+// PREVIEW_CHANGES_MAX changes, PREVIEW_FILES_MAX files and PREVIEW_BYTES_MAX
+// bytes, one file at a time in memory; what was published before is not made
+// again. Returns how many records it published.
 previews_publish :: proc(m:^vcs.Machine,s:^store.Store,org,project:vcs.Log_Id,targets,known:[]vcs.Revision,thumbnails:=Thumbnail_Source{}) -> (published:int) {
     state:vcs.Org_State
     if vcs.org_state_load(&m.store,org,&state,context.temp_allocator)!=.None || !state.folded {return}
@@ -226,10 +220,13 @@ previews_publish :: proc(m:^vcs.Machine,s:^store.Store,org,project:vcs.Log_Id,ta
     stack:=make([dynamic]vcs.Revision,context.temp_allocator)
     append(&stack,..targets)
     diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
-    done:=make(map[store.Hash]bool,context.temp_allocator)
-    png:=make([dynamic]u8,context.temp_allocator)
-    changes,files:=0,0
-    for len(stack)>0 && changes<PREVIEW_CHANGES_MAX && files<PREVIEW_FILES_MAX {
+    // Grown while a file's temporary memory is taken back: not in it.
+    done:=make(map[store.Hash]bool)
+    defer delete(done)
+    png:=make([dynamic]u8)
+    defer delete(png)
+    changes,files,read:=0,0,u64(0)
+    for len(stack)>0 && changes<PREVIEW_CHANGES_MAX && files<PREVIEW_FILES_MAX && read<PREVIEW_BYTES_MAX {
         r:=pop(&stack)
         if r=={} || seen[r] {continue}
         seen[r]=true
@@ -244,12 +241,14 @@ previews_publish :: proc(m:^vcs.Machine,s:^store.Store,org,project:vcs.Log_Id,ta
         clear(&diffs)
         if vcs.tree_diff(s,base_tree,c.tree,&diffs,context.temp_allocator)!=.None {continue}
         for d in diffs {
-            if files>=PREVIEW_FILES_MAX {break}
+            if files>=PREVIEW_FILES_MAX || read>=PREVIEW_BYTES_MAX {break}
             if d.after.kind==.Conflict || d.before.kind==.Conflict {continue}
             if _,taken:=vcs.scope_of(&state.fold,project,d.path);taken {continue}
+            runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
             sides:[2][]u8
             for f,k in ([2]vcs.File{d.before,d.after}) {
                 if f.address=={} || f.size>SUMMARY_FILE_MAX {continue}
+                read+=f.size
                 bytes,be:=vcs.file_bytes(s,f.address,context.temp_allocator)
                 if be!=.None {continue}
                 if _,he:=asset.header_read(bytes);he==.None {sides[k]=bytes}
