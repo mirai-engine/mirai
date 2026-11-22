@@ -28,6 +28,7 @@ Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Abandon,Restore,Bookmark
 OP_RETENTION :: i64(30*24*time.Hour) // ns of operations a prune keeps behind it
 OP_VERSION :: 2 // of the head of an operation
 LOCAL_PREFIX :: "kai-local-" // + repository id: the refs of its workspaces, which no peer is served
+OP_MERGES_PASSED :: 64 // merges of operation heads an undo in a workspace passes to find what it takes back
 
 Op_Head :: struct #packed {
     magic:u32,
@@ -813,11 +814,15 @@ workspace_add_to_view :: proc(r:^Repo,id:Workspace_Id,parent:Revision) -> (revis
 
 // Takes back what op did, keeping what came after it: the view of the
 // undone operation's parent merged with the current one against op's.
-// Pruned when op is a prune or came before one the repository stands after.
+// Pruned when op is a prune or came before one the repository stands after;
+// Merged when op only merged operations workspaces wrote apart: the engine
+// made it and it holds no edit of its own, so what to take back is one of the
+// operations under it (op_undo_target).
 op_undo :: proc(r:^Repo,op:store.Hash) -> Error {
     undone:=op_get(r.s,op,context.temp_allocator) or_return
     if len(undone.parents)==0 {return .Invalid_Argument}
     if undone.kind==.Prune || (op_pruned(r.s,r.op,op) or_return) {return .Pruned}
+    if undone.kind==.Merge {return .Merged}
     parent:=op_get(r.s,undone.parents[0],context.temp_allocator) or_return
     base,theirs:View
     view_init(&base,context.temp_allocator)
@@ -828,6 +833,27 @@ op_undo :: proc(r:^Repo,op:store.Hash) -> Error {
     ours:=view_clone(&r.view,context.temp_allocator) or_return
     view_merge(&base,&ours,&theirs,&tx.view) or_return
     return tx_commit(&tx,.Undo,"undo operation",undone=op)
+}
+
+// The operation an undo in r's workspace takes back: the newest one, or,
+// past the merges of operation heads above it, the one under each merge that
+// this workspace wrote, else the newest of its parents.
+op_undo_target :: proc(r:^Repo) -> (op:store.Hash,error:Error) {
+    op=r.op
+    for _ in 0..<OP_MERGES_PASSED {
+        o:=op_get(r.s,op,context.temp_allocator) or_return
+        if o.kind!=.Merge || len(o.parents)==0 {return op,.None}
+        newest:=i64(min(i64))
+        for p in o.parents {
+            parent:=op_get(r.s,p,context.temp_allocator) or_return
+            if parent.workspace==r.workspace {
+                op=p
+                break
+            }
+            if parent.time>newest {op,newest=p,parent.time}
+        }
+    }
+    return {},.Merged
 }
 
 // Writes a prune of the repository's operation log at now (ns), after the

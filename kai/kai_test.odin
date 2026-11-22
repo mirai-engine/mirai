@@ -411,6 +411,25 @@ every_operation_undoes :: proc(t:^testing.T) {
         testing.expectf(t,op_undo(&r,r.op)==.None,"the undo of %v undoes",step)
         testing.expectf(t,r.view_address==after,"undoing the undo of %v gives the view after it",step)
     }
+
+    // A merge of operations two workspaces wrote apart is the engine's: it is not undone, and an
+    // undo in a workspace takes back its own operation under the merge, keeping the other's.
+    second:Repo
+    testing.expect_value(t,repo_open(&second,&f.s,r.id,random_id(Workspace_Id),identity_make()),Error.None)
+    defer repo_close(&second)
+    testing.expect_value(t,bookmark_set(&second,"theirs",first),Error.None)
+    testing.expect_value(t,bookmark_set(&r,"ours",first),Error.None)
+    own:=r.op
+    testing.expect_value(t,repo_refresh(&r),Error.None)
+    merge,_:=op_get(&f.s,r.op,context.temp_allocator)
+    testing.expect_value(t,merge.kind,Op_Kind.Merge)
+    merged:=r.view_address
+    testing.expect_value(t,op_undo(&r,r.op),Error.Merged)
+    testing.expect(t,r.view_address==merged,"a refused undo changes nothing")
+    target,te:=op_undo_target(&r)
+    testing.expect(t,te==.None && target==own,"the undo takes back this workspace's operation under the merge")
+    testing.expect_value(t,op_undo(&r,target),Error.None)
+    testing.expect(t,view_bookmark(&r.view,"ours")==nil && view_bookmark(&r.view,"theirs")!=nil,"what the other workspace did stays")
 }
 
 // A prune keeps what the workspaces' refs name and the operations of the
@@ -514,6 +533,17 @@ op_heads_of_two_workspaces_merge :: proc(t:^testing.T) {
     // The other workspace reads the merge as its newest operation.
     testing.expect_value(t,repo_refresh(&b.repo),Error.None)
     testing.expect(t,b.repo.op==a.repo.op && b.repo.view_address==a.repo.view_address)
+
+    // Undoing the merge itself would drop what one side did: it is refused. An undo in a
+    // workspace takes back its own operation under it, and the view keeps the other's.
+    testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.Merged)
+    target,te:=op_undo_target(&b.repo)
+    testing.expect_value(t,te,Error.None)
+    undone,_:=op_get(&f.s,target,context.temp_allocator)
+    testing.expect(t,undone.workspace==b.repo.workspace && undone.kind==.Bookmark,"b's own bookmark")
+    testing.expect_value(t,op_undo(&b.repo,target),Error.None)
+    testing.expect(t,view_bookmark(&b.repo.view,"from-b")==nil && view_bookmark(&b.repo.view,"from-a")!=nil,"only b's operation is taken back")
+    testing.expect_value(t,len(b.repo.view.workspaces),2)
 }
 
 @(test)

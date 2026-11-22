@@ -56,6 +56,7 @@ Error :: enum u8 {
     Expired,          // past the time a signed record allows
     Other_Store,      // the repository of a workspace is not in the store it is opened with
     Pruned,           // an operation behind a prune of the operation log, which undo does not cross
+    Merged,           // an operation that only merged what workspaces wrote apart, which has nothing of its own to undo
 }
 
 error_text :: proc(error:Error) -> string {
@@ -76,6 +77,7 @@ error_text :: proc(error:Error) -> string {
     case .Rollback: return "a record older than the one held: a peer offered stale refs, fetch from another"
     case .Expired: return "the signed record is past its time: ask its issuer for a new one"
     case .Pruned: return "that operation is behind a prune of the operation log, which undo does not cross: restore an older change with mirai kai restore instead"
+    case .Merged: return "that operation only merged what two workspaces of the repository wrote apart and made no edit of its own: undo the operation under it that made the edit, from the workspace that made it"
     }
     return ""
 }

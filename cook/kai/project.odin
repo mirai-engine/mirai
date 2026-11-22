@@ -246,15 +246,17 @@ diff :: proc(w:^vcs.Workspace,revision:vcs.Revision,out:^[dynamic]vcs.Diff,alloc
     return vcs.tree_diff(r.s,before,c.tree,out,allocator)
 }
 
-// Undoes the newest operation of the repository after a snapshot, and writes
-// the working copy as the view after it has it: what files that changed, in
-// allocator. Undoing an undo is a redo.
+// Undoes the newest operation of the repository after a snapshot, past the
+// merges of operation heads to the one this workspace wrote (op_undo_target),
+// and writes the working copy as the view after it has it: what files that
+// changed, in allocator. Undoing an undo is a redo.
 undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_allocator) -> (undone:vcs.Operation,error:vcs.Error) {
     r:=&w.repo
     vcs.workspace_snapshot(w) or_return
-    undone=vcs.op_get(r.s,r.op,allocator) or_return
+    target:=vcs.op_undo_target(r) or_return
+    undone=vcs.op_get(r.s,target,allocator) or_return
     before,working:=w.state.tree,vcs.repo_working(r)
-    vcs.op_undo(r,r.op) or_return
+    vcs.op_undo(r,target) or_return
     vcs.workspace_update(w) or_return
     vcs.overlay_checkout(w.options.overlay,r.s,w.root,working,vcs.repo_working(r)) or_return
     return undone,files_changed(w,before,changed,allocator)
