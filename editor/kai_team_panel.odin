@@ -46,17 +46,35 @@ kai_row_button :: proc(ctx:^ui.Context,name,rest:string,icon:ui.Icon=.None,tip:=
     return
 }
 
-// Buttons that grow side by side, of the field variant; the index of the one clicked, -1.
+// Buttons that grow side by side, of the field variant, or one under another
+// when side by side the tab would cut a label; the index of the one clicked, -1.
 @(private)
-kai_buttons :: proc(ctx:^ui.Context,name:string,labels:[]string,accent:=-1,disabled:=false) -> (clicked:int) {
+kai_buttons :: proc(s:^Session,name:string,labels:[]string,accent:=-1,disabled:=false) -> (clicked:int) {
+    ctx:=s.gui.ctx
     clicked=-1
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,direction=kai_side_by_side(s,labels)?.Row:.Column}) {
         for label,i in labels {
-            if ui.button(ctx,ui.id(ctx,name,i),{label=label,variant=i==accent?"accent":"field",width=-1,center=true,disabled=disabled}).clicked {clicked=i}
+            // Side by side each keeps the room of its label, and they share what is left.
+            l:=ui.Layout{width=ui.grow(min=ui.text_width(&ctx.font,label,ui.metric(ctx,"font"))+2*KAI_BUTTON_SIDE)}
+            if ui.button(ctx,ui.id(ctx,name,i),{label=label,variant=i==accent?"accent":"field",width=-1,center=true,disabled=disabled,layout=&l}).clicked {clicked=i}
         }
     }
     return
 }
+
+// Whether buttons of labels fit their texts side by side in the tab.
+@(private)
+kai_side_by_side :: proc(s:^Session,labels:[]string) -> bool {
+    ctx:=s.gui.ctx
+    if s.kai.state.width<=0 {return true}
+    size:=ui.metric(ctx,"font")
+    needed:=f32(6*(len(labels)-1))
+    for label in labels {needed+=ui.text_width(&ctx.font,label,size)+2*KAI_BUTTON_SIDE}
+    return needed<=s.kai.state.width
+}
+
+// The room a button keeps on each side of its label.
+KAI_BUTTON_SIDE :: 10
 
 // A field of the team views.
 @(private)
@@ -153,13 +171,11 @@ kai_proposals_build :: proc(s:^Session) {
         return
     }
     f:=&t.fields
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
-        kai_field(ctx,"kai_target",f.target[:],&f.target_length,"main",ui.fixed(96))
-        kai_field(ctx,"kai_title",f.title[:],&f.title_length,"Title: the parent's description")
-    }
+    kai_field(ctx,"kai_target",f.target[:],&f.target_length,"main")
+    kai_field(ctx,"kai_title",f.title[:],&f.title_length,"Title: the parent's description")
     target:=kai_typed(f.target[:],f.target_length)
     if target=="" {target="main"}
-    if kai_buttons(ctx,"kai_open",{"Open proposal"},0)==0 {
+    if kai_buttons(s,"kai_open",{"Open proposal"},0)==0 {
         title:=kai_typed(f.title[:],f.title_length)
         if title!="" {kai_ask(s,"kai.proposals",`{{"open":%s,"title":%s}}`,kai_quote(target),kai_quote(title))} else {kai_ask(s,"kai.proposals",`{{"open":%s}}`,kai_quote(target))}
         f.title_length=0
@@ -179,7 +195,7 @@ kai_proposals_build :: proc(s:^Session) {
         }
         if it.clicked {
             t.proposal=row.id
-            t.fields.file,t.fields.entity=-1,false
+            t.fields.file,t.fields.entity,t.fields.key=-1,false,0
             kai_team_read(s)
         }
         ui.id_pop(ctx)
@@ -231,17 +247,10 @@ kai_proposal_build :: proc(s:^Session) {
         kai_row_names(ctx,description,fmt.bprintf(text[:],"%02x%02x%02x",change[0],change[1],change[2]),ui.tone(ctx,"text"))
         for &file,k in v.changes[i] {
             ui.id_push(ctx,ui.id(ctx,"file",k))
-            row:=ui.id(ctx,"row")
-            it:=ui.interact(ctx,row,{.Focusable})
-            picked:=f.file==index
-            on:=ai_pointer_on(ctx,row)
-            if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={KAI_ROW_PAD+12,0,KAI_ROW_PAD,0},fill=picked?ui.tone(ctx,"chip_active"):on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
-                slash:=strings.last_index_byte(file.path,'/')
-                kai_row_names(ctx,file.path[slash+1:],slash>0?file.path[:slash]:"",ui.tone(ctx,"text"))
-                letter:=[1]u8{file.mark}
-                ui.label(ctx,string(letter[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,file.mark=='A'?"success":file.mark=='M'?"text_muted":"danger"))
+            if kai_file_open_row(ctx,&file,f.file==index) {
+                f.file,f.entity,f.key,f.lines_length=index,false,0,0
+                if message:=kai_detail_open(s,.Proposals,item.revision,file.path,index);message!="" {notify(s,message)}
             }
-            if it.clicked {f.file=picked?-1:index;f.entity=false}
             index+=1
             ui.id_pop(ctx)
         }
@@ -283,44 +292,16 @@ kai_proposal_build :: proc(s:^Session) {
     case x.blocking=="": kai_line(ctx,"It may land.","success")
     case: kai_line(ctx,x.blocking,"danger")
     }
-    // A comment hangs on the proposal, on the file picked in the stack, on
-    // lines of it, or on the entity selected in the scene.
-    file:=kai_stack_file(v,f.file)
-    kai_field(ctx,"kai_comment",f.comment[:],&f.comment_length,"Comment",multiline=true)
-    selected:=s.selection!=nil && len(s.selection.entities)==1
-    if file!="" {
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
-            kai_row_names(ctx,"On",file,ui.tone(ctx,"text_muted"))
-            if !f.entity {kai_field(ctx,"kai_lines",f.lines[:],&f.lines_length,"Lines 3-7",ui.fixed(80))}
-            if selected && (strings.has_suffix(file,".scene") || strings.has_suffix(file,".prefab")) {
-                ui.checkbox(ctx,ui.id(ctx,"kai_on_entity"),&f.entity)
-                ui.label(ctx,"Selected entity",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            }
-        }
-    }
-    comment:=kai_typed(f.comment[:],f.comment_length)
-    if kai_buttons(ctx,"kai_comment_go",{"Comment"},disabled=comment=="")==0 {
-        proposal:=kai_quote(hex)
-        lines:=kai_typed(f.lines[:],f.lines_length)
-        switch {
-        case file=="": kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s}}`,proposal,kai_quote(comment))
-        case f.entity && selected:
-            entity:=api_entity_id(edited_world(s),s.selection.entities[0])
-            kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s,"file":%s,"entity":%d}}`,proposal,kai_quote(comment),kai_quote(file),u64(entity))
-        case lines!="": kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s,"file":%s,"lines":%s}}`,proposal,kai_quote(comment),kai_quote(file),kai_quote(lines))
-        case: kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s,"file":%s}}`,proposal,kai_quote(comment),kai_quote(file))
-        }
-        f.comment_length,f.lines_length=0,0
-    }
+    kai_comment_build(s)
     open:=x.status==.Open
-    switch kai_buttons(ctx,"kai_verdict",{"Approve","Request changes","Withdraw"},disabled=!open) {
+    switch kai_buttons(s,"kai_verdict",{"Approve","Request changes","Withdraw"},disabled=!open) {
     case 0: kai_ask(s,"kai.proposal",`{{"proposal":%s,"verdict":"approve"}}`,kai_quote(hex))
     case 1: kai_ask(s,"kai.proposal",`{{"proposal":%s,"verdict":"changes"}}`,kai_quote(hex))
     case 2: kai_ask(s,"kai.proposal",`{{"proposal":%s,"verdict":"withdraw"}}`,kai_quote(hex))
     }
+    kai_field(ctx,"kai_check_command",f.command[:],&f.command_length,"Command, as mirai test kai")
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
-        kai_field(ctx,"kai_check_name",f.check[:],&f.check_length,"Check",ui.fixed(80))
-        kai_field(ctx,"kai_check_command",f.command[:],&f.command_length,"Command, as mirai test kai")
+        kai_field(ctx,"kai_check_name",f.check[:],&f.check_length,"Check")
         name,command:=kai_typed(f.check[:],f.check_length),kai_typed(f.command[:],f.command_length)
         if ui.button(ctx,ui.id(ctx,"kai_run_check"),{label="Run",variant="field",disabled=!open || name=="" || command==""}).clicked {
             words:=strings.fields(command,context.temp_allocator)
@@ -330,10 +311,58 @@ kai_proposal_build :: proc(s:^Session) {
         }
     }
     labels:=[3]string{"Revise",open?"Close":"Reopen","Land"}
-    switch kai_buttons(ctx,"kai_proposal_act",labels[:],accent=open && x.blocking==""?2:-1,disabled=x.status==.Landed) {
+    switch kai_buttons(s,"kai_proposal_act",labels[:],accent=open && x.blocking==""?2:-1,disabled=x.status==.Landed) {
     case 0: kai_ask(s,"kai.proposal",`{{"proposal":%s,"revise":true}}`,kai_quote(hex))
     case 1: kai_ask(s,"kai.proposal",open?`{{"proposal":%s,"close":true}}`:`{{"proposal":%s,"reopen":true}}`,kai_quote(hex))
     case 2: if open && x.blocking=="" {kai_ask(s,"kai.proposal",`{{"proposal":%s,"land":true}}`,kai_quote(hex))}
+    }
+}
+
+// The comment on the open proposal: on the whole of it, on the file picked
+// in the stack, on lines of it (typed, or picked in its detail), on the
+// entity picked in its detail, or on the entity selected in the scene.
+@(private)
+kai_comment_build :: proc(s:^Session) {
+    ctx:=s.gui.ctx
+    t:=&s.kai.state.team
+    v:=&t.view
+    f:=&t.fields
+    id:=v.proposal.id
+    digits:[12]u8
+    hex:=fmt.bprintf(digits[:],"%02x%02x%02x",id[0],id[1],id[2])
+    file:=kai_stack_file(v,f.file)
+    kai_field(ctx,"kai_comment",f.comment[:],&f.comment_length,"Comment",multiline=true)
+    selected:=s.selection!=nil && len(s.selection.entities)==1
+    if file!="" {
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
+            kai_row_names(ctx,"On",file,ui.tone(ctx,"text_muted"))
+            text:[32]u8
+            switch {
+            case f.key!=0: ui.label(ctx,fmt.bprintf(text[:],"#%x",f.key),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            case !f.entity: kai_field(ctx,"kai_lines",f.lines[:],&f.lines_length,"Lines 3-7",ui.fixed(80))
+            }
+        }
+        if f.key==0 && selected && (strings.has_suffix(file,".scene") || strings.has_suffix(file,".prefab")) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
+                ui.checkbox(ctx,ui.id(ctx,"kai_on_entity"),&f.entity)
+                ui.label(ctx,"Selected entity",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            }
+        }
+    }
+    comment:=kai_typed(f.comment[:],f.comment_length)
+    if kai_buttons(s,"kai_comment_go",{"Comment"},disabled=comment=="")==0 {
+        proposal:=kai_quote(hex)
+        lines:=kai_typed(f.lines[:],f.lines_length)
+        switch {
+        case file=="": kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s}}`,proposal,kai_quote(comment))
+        case f.key!=0: kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s,"file":%s,"entity":%d}}`,proposal,kai_quote(comment),kai_quote(file),f.key)
+        case f.entity && selected:
+            entity:=api_entity_id(edited_world(s),s.selection.entities[0])
+            kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s,"file":%s,"entity":%d}}`,proposal,kai_quote(comment),kai_quote(file),u64(entity))
+        case lines!="": kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s,"file":%s,"lines":%s}}`,proposal,kai_quote(comment),kai_quote(file),kai_quote(lines))
+        case: kai_ask(s,"kai.proposal",`{{"proposal":%s,"comment":%s,"file":%s}}`,proposal,kai_quote(comment),kai_quote(file))
+        }
+        f.comment_length,f.lines_length=0,0
     }
 }
 
@@ -368,11 +397,9 @@ kai_team_build :: proc(s:^Session) {
             }
             ui.id_pop(ctx)
         }
-        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
-            if ui.button(ctx,ui.id(ctx,"kai_rotate_open"),{label="Rotate recovery key",variant="field",width=-1,center=true}).clicked {kai_dialog_open(s,.Rotate)}
-            if ui.button(ctx,ui.id(ctx,"kai_subject"),{label="Copy subject",variant="field",width=-1,center=true}).clicked && s.app!=nil && s.app.platform!=nil {
-                platform.clipboard_set(s.app.platform,me.subject)
-            }
+        switch kai_buttons(s,"kai_identity_act",{"Rotate recovery key","Copy subject"}) {
+        case 0: kai_dialog_open(s,.Rotate)
+        case 1: if s.app!=nil && s.app.platform!=nil {platform.clipboard_set(s.app.platform,me.subject)}
         }
     }
     if me.user!={} {kai_orgs_build(s)}
@@ -414,7 +441,7 @@ kai_orgs_build :: proc(s:^Session) {
         kai_row_names(ctx,o.name!=""?o.name:"(its log is not here yet)",fmt.bprintf(text[:],"you: %s",ka.role_text(o.role)),ui.tone(ctx,"text"))
         if v.org<0 && admin {
             kai_line(ctx,"Put the open project in it: public lets anyone read it, org only its members.")
-            switch kai_buttons(ctx,"kai_add",{"Public","Org only"}) {
+            switch kai_buttons(s,"kai_add",{"Public","Org only"}) {
             case 0: kai_ask(s,"kai.org",`{{"org":"%s","add":"public"}}`,kai_org_text(id))
             case 1: kai_ask(s,"kai.org",`{{"org":"%s","add":"org"}}`,kai_org_text(id))
             }
@@ -462,11 +489,11 @@ kai_orgs_build :: proc(s:^Session) {
         }
         if v.org==i && admin {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
-                kai_field(ctx,"kai_policy_bookmark",f.bookmark[:],&f.bookmark_length,"main",ui.fixed(72))
-                kai_field(ctx,"kai_policy_approvals",f.approvals[:],&f.approvals_length,"Approvals",ui.fixed(72))
-                kai_field(ctx,"kai_policy_checks",f.checks[:],&f.checks_length,"Checks, as unit,lint")
+                kai_field(ctx,"kai_policy_bookmark",f.bookmark[:],&f.bookmark_length,"main")
+                kai_field(ctx,"kai_policy_approvals",f.approvals[:],&f.approvals_length,"Approvals")
             }
-            if kai_buttons(ctx,"kai_policy",{"Set policy"})==0 {
+            kai_field(ctx,"kai_policy_checks",f.checks[:],&f.checks_length,"Checks, as unit,lint")
+            if kai_buttons(s,"kai_policy",{"Set policy"})==0 {
                 bookmark:=kai_typed(f.bookmark[:],f.bookmark_length)
                 if bookmark=="" {bookmark="main"}
                 approvals,_:=strconv.parse_int(kai_typed(f.approvals[:],f.approvals_length),10)
@@ -477,7 +504,7 @@ kai_orgs_build :: proc(s:^Session) {
                 kai_ask(s,"kai.bookmarks",`{{"policy":%s,"approvals":%d,"checks":[%s]}}`,kai_quote(bookmark),approvals,strings.join(checks[:],",",context.temp_allocator))
             }
         }
-        if o.role!=.Owner && kai_buttons(ctx,"kai_leave",{"Leave the org"})==0 {kai_ask(s,"kai.org",`{{"org":"%s","leave":true}}`,kai_org_text(id))}
+        if o.role!=.Owner && kai_buttons(s,"kai_leave",{"Leave the org"})==0 {kai_ask(s,"kai.org",`{{"org":"%s","leave":true}}`,kai_org_text(id))}
         ui.id_pop(ctx)
     }
 }
@@ -495,7 +522,7 @@ kai_pairing_build :: proc(s:^Session) {
     if me.user!={} {
         labels:=[3]string{"Member","Second device","Node"}
         offers:=len(v.orgs)>0?3:1
-        switch kai_buttons(ctx,"kai_offer",offers==3?labels[:]:labels[1:2]) {
+        switch kai_buttons(s,"kai_offer",offers==3?labels[:]:labels[1:2]) {
         case 0: kai_ask(s,"kai.pair",offers==3?`{"offer":"member"}`:`{"offer":"device"}`)
         case 1: kai_ask(s,"kai.pair",`{"offer":"device"}`)
         case 2: kai_ask(s,"kai.pair",`{"offer":"node"}`)
@@ -507,12 +534,13 @@ kai_pairing_build :: proc(s:^Session) {
             }
         }
     }
+    kai_field(ctx,"kai_ticket",f.ticket[:],&f.ticket_length,"Ticket from another machine")
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
-        kai_field(ctx,"kai_ticket",f.ticket[:],&f.ticket_length,"Ticket from another machine")
-        if me.user=={} {kai_field(ctx,"kai_device_name",f.name[:],&f.name_length,"This device's name",ui.fixed(120))}
+        // A device with no user joins with its host's name unless one is typed.
+        if me.user=={} {kai_field(ctx,"kai_device_name",f.name[:],&f.name_length,"This device's name")} else {ui.spacer(ctx)}
         ticket,name:=kai_typed(f.ticket[:],f.ticket_length),kai_typed(f.name[:],f.name_length)
-        if ui.button(ctx,ui.id(ctx,"kai_join"),{label="Join",variant="field",disabled=ticket=="" || (me.user=={} && name=="") || t.joining}).clicked {
-            if me.user=={} {kai_ask(s,"kai.pair",`{{"join":%s,"name":%s}}`,kai_quote(ticket),kai_quote(name))} else {kai_ask(s,"kai.pair",`{{"join":%s}}`,kai_quote(ticket))}
+        if ui.button(ctx,ui.id(ctx,"kai_join"),{label="Join",variant="field",disabled=ticket=="" || t.joining}).clicked {
+            if me.user=={} && name!="" {kai_ask(s,"kai.pair",`{{"join":%s,"name":%s}}`,kai_quote(ticket),kai_quote(name))} else {kai_ask(s,"kai.pair",`{{"join":%s}}`,kai_quote(ticket))}
             f.ticket_length=0
         }
     }
@@ -554,8 +582,8 @@ kai_scopes_build :: proc(s:^Session) {
         kai_row_names(ctx,x.path,"kept public",ui.tone(ctx,"text"))
         ui.id_pop(ctx)
     }
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
-        kai_field(ctx,"kai_patterns",f.patterns[:],&f.patterns_length,"Patterns, as secrets/** .env")
+    kai_field(ctx,"kai_patterns",f.patterns[:],&f.patterns_length,"Patterns, as secrets/** .env")
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
         if ui.button(ctx,ui.id(ctx,"kai_readers"),{label=ka.role_text(f.readers),variant="ghost",size=ui.metric(ctx,"font_small")}).clicked {
             f.readers=f.readers==.Owner?.Reader:vcs.Role(u8(f.readers)+1)
         }
@@ -563,7 +591,7 @@ kai_scopes_build :: proc(s:^Session) {
         ui.label(ctx,"History",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
     typed:=kai_typed(f.patterns[:],f.patterns_length)
-    if kai_buttons(ctx,"kai_scope_add",{"Add scope"},disabled=typed=="")==0 {
+    if kai_buttons(s,"kai_scope_add",{"Add scope"},disabled=typed=="")==0 {
         patterns:=strings.fields(typed,context.temp_allocator)
         quoted:=make([]string,len(patterns),context.temp_allocator)
         for p,i in patterns {quoted[i]=kai_quote(p)}
@@ -588,8 +616,7 @@ kai_dialog_build :: proc(s:^Session) {
     case .None: g.modal=.None
     case .Recovery:
         if ui.modal(ctx,shell_id(g,"kai_recovery"),{width=420}) {
-            ui.label(ctx,"Recovery key",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
-            ui.text(ctx,"Shown once: write it down and keep it offline. It replaces every device of the user when they are lost.",ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))
+            ui.label(ctx,"Recovery key, shown once",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             key:=string(t.recovery[:t.recovery_length])
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={8,6,8,6},fill=ui.tone(ctx,"field"),radius=4}) {
                 ui.text(ctx,key,ui.prose(ctx,ui.metric(ctx,"font"),ui.tone(ctx,"text")))

@@ -7,6 +7,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/cache"
 import ka "mirai:cook/kai"
 import "mirai:editor/api"
 import vcs "mirai:kai"
@@ -123,6 +124,14 @@ editor_kai_snapshot_diff_conflict_and_undo :: proc(t:^testing.T) {
     testing.expect_value(t,kai_describe(s,vcs.repo_working(&w.repo),"move the lamp"),"")
     ours:=vcs.repo_working(&w.repo)
 
+    // What the change did to the scene: the lamp's transform changed, by field.
+    moved:=Api_Kai_Log_Params{file="level.scene"}
+    call,logged:=kai_call(s,api_kai_log,&moved,Api_Kai_Log)
+    if !testing.expectf(t,!call.failed,"%s",call.error.message) {return}
+    lamp_row:=false
+    for row in logged.detail.rows {lamp_row||=row.mark=="~" && row.entity==u64(KAI_LAMP) && row.name=="Lamp" && strings.contains(row.text,"Transform")}
+    testing.expectf(t,logged.detail.kind=="asset" && logged.detail.status=="M" && lamp_row,"%v",logged.detail)
+
     // Theirs, on the origin: the files go back to it; the lamp moves elsewhere and brightens.
     parents:=[1]vcs.Revision{origin}
     testing.expect_value(t,kai_new(s,parents[:],"brighten"),"")
@@ -162,6 +171,36 @@ editor_kai_snapshot_diff_conflict_and_undo :: proc(t:^testing.T) {
     testing.expect_value(t,len(w.state.conflicts),0)
     x,_=kai_lamp(t,types,file)
     testing.expect_value(t,x,9)
+
+    // A text by its lines with their numbers, a binary or oversized file by
+    // its sizes, a huge diff cut with its count.
+    notes:=fmt.tprintf("%s/notes.txt",k.root)
+    kai_write(t,s,notes,transmute([]u8)string("one\ntwo\nthree\n"))
+    testing.expect_value(t,kai_new(s,nil,""),"")
+    kai_write(t,s,notes,transmute([]u8)string("one\n2\nthree\nfour\n"))
+    kai_write(t,s,fmt.tprintf("%s/blob.bin",k.root),[]u8{0,1,2,0})
+    kai_write(t,s,fmt.tprintf("%s/huge.txt",k.root),transmute([]u8)strings.repeat("line\n",ka.DETAIL_ROWS+500,context.temp_allocator))
+    kai_write(t,s,fmt.tprintf("%s/large.txt",k.root),make([]u8,ka.DETAIL_BYTES+1,context.temp_allocator))
+    detail :: proc(s:^Session,file:string) -> Api_Kai_Detail {
+        p:=Api_Kai_Log_Params{file=file,change="@"}
+        _,r:=kai_call(s,api_kai_log,&p,Api_Kai_Log)
+        return r.detail
+    }
+    lines:=detail(s,"notes.txt")
+    marks:=make([dynamic]string,context.temp_allocator)
+    for row in lines.rows {append(&marks,fmt.tprintf("%s%d/%d %s",row.mark,row.old,row.new,row.text))}
+    testing.expectf(t,lines.kind=="text" && lines.added==2 && lines.removed==1 && strings.join(marks[:],"|",context.temp_allocator)==" 1/1 one|-2/0 two|+0/2 2| 3/3 three|+0/4 four","%v",marks[:])
+    binary:=detail(s,"blob.bin")
+    testing.expectf(t,binary.kind=="binary" && binary.status=="A" && binary.before==0 && binary.after==4 && len(binary.rows)==0,"%v",binary)
+    large:=detail(s,"large.txt")
+    testing.expectf(t,large.kind=="oversized" && large.after==ka.DETAIL_BYTES+1 && len(large.rows)==0,"%v",large)
+    huge:=detail(s,"huge.txt")
+    testing.expectf(t,len(huge.rows)==ka.DETAIL_ROWS && huge.cut==500 && huge.added==ka.DETAIL_ROWS+500,"%d rows, %d cut",len(huge.rows),huge.cut)
+    wrong:=[?]Api_Kai_Log_Params{{change="@"},{file="nowhere.txt"}}
+    for &p in wrong {
+        call,_=kai_call(s,api_kai_log,&p,Api_Kai_Log)
+        testing.expectf(t,call.failed && call.error.code==api.INVALID_PARAMS,"%v %s",p,call.error.message)
+    }
 }
 
 @(private="file")
@@ -283,15 +322,18 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     }
 
     // A user each; the recovery key comes once, in a dialog.
-    ana:=Api_Kai_Identity_Params{name="ana"}
+    ana:=Api_Kai_Identity_Params{name="ana",device="studio-pc"}
     call,me:=kai_call(a,api_kai_identity,&ana,Api_Kai_Identity)
     if !kai_ok(t,call,"ana") {return}
-    testing.expect(t,me.handle=="ana" && me.recovery!="" && a.kai.state.team.dialog==.Recovery)
+    testing.expect_value(t,me.device,"studio-pc")
+    testing.expect(t,me.handle=="ana" && a.kai.state.team.recovery_length>0 && a.kai.state.team.dialog==.Recovery)
     kai_dialog_close(a)
     bo:=Api_Kai_Identity_Params{name="bo"}
     call,me=kai_call(b,api_kai_identity,&bo,Api_Kai_Identity)
     if !kai_ok(t,call,"bo") {return}
     bo_device:=strings.clone(me.device,context.temp_allocator)
+    host:[vcs.NAME_MAX]u8
+    testing.expectf(t,bo_device==vcs.device_name_of("",&host) && !strings.contains(bo_device,"."),"a device is named by its host: %s",bo_device)
     kai_dialog_close(b)
 
     // The org and the project in it; main at the first change, guarded.
@@ -348,6 +390,32 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
         if !call.failed {break}
         if !testing.expectf(t,kai_tick(a,b,started),"the org's logs reach the second: %s",call.error.message) {return}
     }
+    // The editors' imports share what they build through the mesh: what the
+    // first one's import keeps, the second one's takes without building it.
+    org:=kai_mesh_org(a)
+    testing.expect(t,org!={} && kai_mesh_org(b)==org,"both share the org's derived data")
+    built,taken:=new(Kai_Mesh_Import),new(Kai_Mesh_Import)
+    defer {free(built);free(taken)}
+    put_source,put_shared:=kai_mesh_import_open(built,a.store.root,org)
+    defer kai_mesh_import_close(built)
+    take_source,take_shared:=kai_mesh_import_open(taken,b.store.root,org)
+    defer kai_mesh_import_close(taken)
+    if !testing.expect(t,put_shared && take_shared,"an import opens the mesh's cache") {return}
+    KEY,VERSION :: 0x5eed,3
+    pixels:=make([]u8,4*4*4,context.temp_allocator)
+    for &p,i in pixels {p=u8(i)}
+    mips:=[1][]u8{pixels}
+    doc:asset.Document
+    testing.expect_value(t,asset.texture_document(&doc,&ka_.assets.types,{id=cache.id(KEY,VERSION),width=4,height=4,format=.RGBA8,mips=mips[:]},context.temp_allocator),asset.Error.None)
+    texture,_:=asset.document_bytes(&doc,context.temp_allocator)
+    asset.document_destroy(&doc)
+    testing.expect(t,cache.put({store=&a.store,source=put_source},"textures",KEY,VERSION,texture),"the first editor's import keeps and publishes it")
+    loaded:asset.Asset
+    if testing.expect(t,cache.load({store=&b.store,source=take_source},"textures",KEY,VERSION,&loaded),"the second editor's import takes it") {
+        testing.expect(t,loaded.blob.header.id==cache.id(KEY,VERSION))
+        asset.asset_close(&loaded)
+    }
+
     on_main:=Api_Kai_New_Params{parents={"main"}}
     for {
         call,_=kai_call(b,api_kai_new,&on_main,Api_Kai_Change)
@@ -387,6 +455,12 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     call,seen=kai_call(a,api_kai_proposal,&comment,Api_Kai_Proposal)
     if !kai_ok(t,call,"comment") {return}
     testing.expectf(t,len(seen.comments)==1 && seen.comments[0].lines=="1-2" && seen.comments[0].change==change && !seen.comments[0].outdated,"%v",seen.comments)
+    // The first reads what the change did to b.txt: its bytes come from the second.
+    look:=Api_Kai_Proposal_Params{proposal=id,file="b.txt"}
+    call,seen=kai_call(a,api_kai_proposal,&look,Api_Kai_Proposal)
+    if !kai_ok(t,call,"detail") {return}
+    rows:=seen.detail.rows
+    testing.expectf(t,seen.detail.kind=="text" && seen.detail.change==change && len(rows)==2 && rows[0].mark=="+" && rows[0].new==1 && rows[0].text=="one" && rows[1].text=="two","%v",seen.detail)
     verdict:=Api_Kai_Proposal_Params{proposal=id,verdict="approve"}
     call,seen=kai_call(a,api_kai_proposal,&verdict,Api_Kai_Proposal)
     if !kai_ok(t,call,"approve") {return}
@@ -414,11 +488,14 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     }
 }
 
+// The width of the Kai tab: that of the left panel inside its padding.
+@(private="file") KAI_TAB :: LEFT_WIDTH.min-2*PANEL_PADDING
+
 @(private="file")
 kai_panel_frame :: proc(s:^Session,input:ui.Input) -> ui.Frame {
     ctx:=s.gui.ctx
     ui.frame_begin(ctx,input)
-    if ui.box(ctx,{width=ui.fixed(320),height=ui.fixed(860),direction=.Column,gap=6}) {kai_panel_build(s,320,860)}
+    if ui.box(ctx,{width=ui.fixed(KAI_TAB),height=ui.fixed(860),direction=.Column,gap=6}) {kai_panel_build(s,KAI_TAB,860)}
     if s.gui.modal==.Kai {kai_dialog_build(s)}
     return ui.frame_end(ctx)
 }
@@ -450,6 +527,28 @@ kai_panel_asked :: proc(s:^Session) -> (method,params:string) {
     asked:=&c.asked[c.asked_count-1]
     method,params=strings.clone(asked.method,context.temp_allocator),strings.clone(string(asked.params[:asked.length]),context.temp_allocator)
     return
+}
+
+// Whether the controls of ids show their texts whole: a button its label, a
+// field its placeholder inside its padding.
+@(private="file")
+kai_fit :: proc(t:^testing.T,s:^Session,controls:[]struct{id:ui.Id,text:string,field:bool},loc:=#caller_location) {
+    ctx:=s.gui.ctx
+    for c in controls {
+        rect,found:=ui.widget_rect(ctx,c.id)
+        if !testing.expectf(t,found,"%q is there",c.text,loc=loc) {continue}
+        needed:=ui.text_width(&ctx.font,c.text,ui.metric(ctx,"font"))+(c.field?16:0)
+        testing.expectf(t,rect.w+0.5>=needed,"%q fits: %.1f of %.1f",c.text,rect.w,needed,loc=loc)
+    }
+}
+
+// The id of a row of the tab inside the scopes of names.
+@(private="file")
+kai_row_id :: proc(ctx:^ui.Context,scopes:[]struct{name:string,index:int},name:string) -> ui.Id {
+    for x in scopes {ui.id_push(ctx,ui.id(ctx,x.name,x.index))}
+    id:=ui.id(ctx,name)
+    for _ in scopes {ui.id_pop(ctx)}
+    return id
 }
 
 // A frame of the tab that changes nothing allocates nothing, in each view.
@@ -529,6 +628,13 @@ editor_kai_team_views_ask_their_methods_and_keep_still_frames :: proc(t:^testing
     if !kai_ok(t,call,"open") {return}
     kai_team_read(s)
     kai_panel_stable(t,s,"team")
+    // At the tab's width every control shows its text whole.
+    kai_fit(t,s,{
+        {ui.id(&ctx,"kai_offer",0),"Member",false},{ui.id(&ctx,"kai_offer",1),"Second device",false},{ui.id(&ctx,"kai_offer",2),"Node",false},
+        {ui.id(&ctx,"kai_identity_act",0),"Rotate recovery key",false},{ui.id(&ctx,"kai_identity_act",1),"Copy subject",false},
+        {ui.id(&ctx,"kai_ticket"),"Ticket from another machine",true},{kai_row_id(&ctx,{{"org",0}},"kai_policy_approvals"),"Approvals",true},
+        {kai_row_id(&ctx,{{"org",0}},"kai_policy_checks"),"Checks, as unit,lint",true},{ui.id(&ctx,"kai_patterns"),"Patterns, as secrets/** .env",true},
+    })
     if !kai_panel_click(t,s,ui.id(&ctx,"kai_offer",0)) {return}
     method,params=kai_panel_asked(s)
     testing.expect(t,method=="kai.pair" && strings.contains(params,`"member"`),params)
@@ -543,6 +649,15 @@ editor_kai_team_views_ask_their_methods_and_keep_still_frames :: proc(t:^testing
     method,params=kai_panel_asked(s)
     testing.expect(t,method=="kai.bookmarks" && strings.contains(params,`"move":"next"`),params)
     api_state(s).commands.asked_count=0
+    // A change of the log shows its files; one opens what the change did to it.
+    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"change",1}},"row")) {return}
+    if !testing.expectf(t,len(st.view.picked)==1 && st.view.picked[0].path=="b.txt","%v",st.view.picked) {return}
+    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"change",1},{"file",0}},"row")) {return}
+    testing.expect(t,st.detail.open && st.detail.tab==.Changes && st.detail.view.kind==.Text,"the file's detail opens")
+    kai_panel_stable(t,s,"a change's file")
+    kai_detail_close(st)
+    st.picked={}
+    kai_read(s)
 
     // Proposals: the list, then one open; Approve asks for the verdict.
     team.tab=.Proposals
@@ -551,6 +666,30 @@ editor_kai_team_views_ask_their_methods_and_keep_still_frames :: proc(t:^testing
     kai_team_read(s)
     if !testing.expect(t,team.view.shown) {return}
     kai_panel_stable(t,s,"a proposal")
+    kai_fit(t,s,{
+        {ui.id(&ctx,"kai_verdict",0),"Approve",false},{ui.id(&ctx,"kai_verdict",1),"Request changes",false},{ui.id(&ctx,"kai_verdict",2),"Withdraw",false},
+        {ui.id(&ctx,"kai_proposal_act",0),"Revise",false},{ui.id(&ctx,"kai_proposal_act",2),"Land",false},
+        {ui.id(&ctx,"kai_check_command"),"Command, as mirai test kai",true},
+    })
+
+    // A file of the stack opens what its change did; a click on a line starts
+    // a comment there, which then shows under it.
+    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"item",0},{"file",0}},"row")) {return}
+    d:=&st.detail
+    if !testing.expectf(t,d.open && d.view.path=="b.txt" && len(d.view.rows)==1 && d.view.rows[0].mark=='+',"%v",d.view) {return}
+    kai_panel_stable(t,s,"a file's detail")
+    if !kai_panel_click(t,s,kai_row_id(&ctx,{{"entry",0}},"row")) {return}
+    testing.expect(t,team.fields.file==0 && string(team.fields.lines[:team.fields.lines_length])=="1","the line picked is the comment's")
+    team.fields.comment_length=copy(team.fields.comment[:],"why b")
+    kai_panel_still(t,s)
+    if !kai_panel_click(t,s,ui.id(&ctx,"kai_comment_go",0)) {return}
+    method,params=kai_panel_asked(s)
+    testing.expect(t,method=="kai.proposal" && strings.contains(params,`"file":"b.txt"`) && strings.contains(params,`"lines":"1"`),params)
+    commands_run(s)
+    testing.expectf(t,len(d.entries)==2 && d.entries[1].note==0,"the comment shows under its line: %v",d.entries[:])
+    kai_panel_stable(t,s,"a file's detail with a comment")
+    if !kai_panel_click(t,s,ui.id(&ctx,"kai_detail_back")) {return}
+    testing.expect(t,!d.open,"back to the proposal")
     if !kai_panel_click(t,s,ui.id(&ctx,"kai_verdict",0)) {return}
     method,params=kai_panel_asked(s)
     testing.expect(t,method=="kai.proposal" && strings.contains(params,`"verdict":"approve"`),params)
@@ -589,12 +728,23 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
     identities:=[?]struct{p:Api_Kai_Identity_Params,want:string}{
         {{name="a",revoke="b"},"give one of"},
         {{name=long},"1 to 64 bytes"},
+        {{revoke="b",device="pc"},"goes with name"},
+        {{name="a",device=long},"1 to 64 bytes"},
     }
     for c in identities {
         p:=c.p
         call,_:=kai_call(s,api_kai_identity,&p,Api_Kai_Identity)
         refused(t,call,c.want)
     }
+    // With no window to show a recovery key to, neither making a user nor
+    // rotating its key makes anything.
+    s.headless=true
+    for &p in ([]Api_Kai_Identity_Params{{name="ana"},{recovery="ABCD"}}) {
+        call,_:=kai_call(s,api_kai_identity,&p,Api_Kai_Identity)
+        testing.expectf(t,call.failed && strings.contains(call.error.message,"mirai kai identity"),"%v %s",p,call.error.message)
+    }
+    testing.expect(t,s.kai.state.team.machine.user=={} && s.kai.state.team.dialog==.None,"nothing was made")
+    s.headless=false
     orgs:=[?]struct{p:Api_Kai_Org_Params,want:string}{
         {{add="everyone"},"public or org"},
         {{member="x",role="god"},"reader, writer or admin"},
@@ -631,6 +781,8 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
     proposals:=[?]struct{p:Api_Kai_Proposal_Params,want:string}{
         {{},"name one"},
         {{proposal="ab",lines="1-2"},"go with comment"},
+        {{proposal="ab",file="a.txt",verdict="approve"},"file goes with comment"},
+        {{proposal="ab",change="@"},"goes with file"},
         {{proposal="ab",comment="x",file="a.txt",lines="9-1"},"A-B"},
         {{proposal="ab",comment="x",entity=5},"hang on a file"},
         {{proposal="ab",verdict="maybe"},"approve, changes or withdraw"},

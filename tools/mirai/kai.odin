@@ -725,7 +725,6 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
         fmt.printfln("Ticket, valid ten minutes: on the other machine run\n  mirai kai pair join %s",ticket)
         fmt.println("then mirai kai pair approve here, comparing the codes both show.")
     case "join":
-        if m.user=={} && a.name=="" {fmt.eprintln("mirai kai pair join: --name names this device for the user it joins, as laptop");return 2}
         name,ne:=vcs.machine_pair_name(m,a.name)
         if ne!=.None {return kai_why("pair",k)}
         if e:=vcs.control_pair_join(c,positionals[1],name);e!=.None {fmt.eprintfln("mirai kai pair: %s",c.why);return 1}

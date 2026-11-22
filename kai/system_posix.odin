@@ -72,3 +72,12 @@ interfaces6 :: proc(out:^[dynamic]u32) {
         if index:=posix.if_nametoindex(name);index!=0 {append(out,u32(index))}
     }
 }
+
+// This machine's host name, in buffer; empty when the system gives none.
+@(private)
+host_name :: proc(buffer:[]u8) -> string {
+    if len(buffer)<2 || posix.gethostname(raw_data(buffer),uint(len(buffer)-1))!=.OK {return ""}
+    n:=0
+    for n<len(buffer) && buffer[n]!=0 {n+=1}
+    return string(buffer[:n])
+}

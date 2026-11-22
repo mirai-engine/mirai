@@ -53,6 +53,8 @@ Api_Kai_Change :: struct {change:string}
 
 Api_Kai_Log_Params :: struct {
     limit:int `mirai:"optional,min=1,max=4096,label=Changes listed, newest first"`,
+    file:string `mirai:"optional,label=A file change changed, from the folder of the project: detail says what it did to it"`,
+    change:string `mirai:"optional,label=With file: the change; none: the working copy"`,
 }
 Api_Kai_Log_Row :: struct {
     change:string,
@@ -63,7 +65,33 @@ Api_Kai_Log_Row :: struct {
     coauthors:int `mirai:"label=Editors of a session besides its author"`,
     turns:int `mirai:"label=Turns of agents recorded in it"`,
 }
-Api_Kai_Log :: struct {changes:[]Api_Kai_Log_Row}
+Api_Kai_Log :: struct {
+    changes:[]Api_Kai_Log_Row,
+    detail:Api_Kai_Detail `mirai:"optional,label=Of file: what change did to it"`,
+}
+
+Api_Kai_Detail_Row :: struct {
+    mark:string `mirai:"label=+ added, - removed, ~ a field of an asset changed, a space kept; empty: a fold of kept lines"`,
+    old:int `mirai:"optional,label=Of a text: its line before the change, from 1"`,
+    new:int `mirai:"optional,label=Of a text: its line after the change, from 1, as the lines of a comment name it"`,
+    skipped:int `mirai:"optional,label=Of a fold: the kept lines it stands for"`,
+    text:string `mirai:"label=The line, or the path in the asset and its values"`,
+    entity:u64 `mirai:"optional,label=Of an asset: the entity or row it is on, as the entity of a comment names it"`,
+    name:string `mirai:"optional,label=Of entity: its name"`,
+}
+Api_Kai_Detail :: struct {
+    file:string,
+    change:string,
+    status:string `mirai:"label=A added; D removed; M changed; C in conflict"`,
+    kind:string `mirai:"label=text, asset, binary or oversized: of the last two only the sizes"`,
+    before:int `mirai:"label=Bytes before the change"`,
+    after:int `mirai:"label=Bytes after it"`,
+    added:int `mirai:"label=Lines added; of an asset, rows and fields"`,
+    removed:int,
+    changed:int `mirai:"label=Of an asset: fields changed"`,
+    rows:[]Api_Kai_Detail_Row,
+    cut:int `mirai:"label=Rows past the bound of a detail, not given"`,
+}
 
 Api_Kai_Undone :: struct {undone:string `mirai:"label=The operation taken back"`}
 
@@ -119,7 +147,7 @@ kai_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="kai.new",summary="Starts a new change as the working copy, on the working copy or on given changes, whose trees merge; what does not merge is a conflict in its files that never blocks.",params=type_info_of(Api_Kai_New_Params),result=type_info_of(Api_Kai_Change),run=api_kai_new})
     api_register(s,st,{name="kai.split",summary="Splits a change by files: the first keeps its id, parents and description with only the files picked; the second, a new change on it, holds the rest, and what pointed at the change moves onto it. The files on disk stay as they are.",params=type_info_of(Api_Kai_Split_Params),result=type_info_of(Api_Kai_Split),run=api_kai_split})
     api_register(s,st,{name="kai.describe",summary="Gives a change its description.",params=type_info_of(Api_Kai_Describe_Params),result=type_info_of(Api_Kai_Change),run=api_kai_describe})
-    api_register(s,st,{name="kai.log",summary="The visible changes, newest first, with their bookmarks, conflicts, coauthors and agent turns.",params=type_info_of(Api_Kai_Log_Params),result=type_info_of(Api_Kai_Log),flags={.Read_Only},run=api_kai_log})
+    api_register(s,st,{name="kai.log",summary="The visible changes, newest first, with their bookmarks, conflicts, coauthors and agent turns; with file, what a change did to that file: its lines, or an asset's rows and fields.",params=type_info_of(Api_Kai_Log_Params),result=type_info_of(Api_Kai_Log),flags={.Read_Only},run=api_kai_log})
     api_register(s,st,{name="kai.undo",summary="Takes back the newest operation of the repository and writes the files as it leaves them; undoing an undo redoes it.",result=type_info_of(Api_Kai_Undone),flags={.Destructive},run=api_kai_undo})
     api_register(s,st,{name="kai.restore",summary="Gives the working copy the files of another change and writes them.",params=type_info_of(Api_Kai_Restore_Params),result=type_info_of(Api_Kai_Done),flags={.Destructive},run=api_kai_restore})
     api_register(s,st,{name="kai.conflicts",summary="The files of the working copy in conflict; an asset with its fields both sides changed apart, ours and theirs.",result=type_info_of(Api_Kai_Conflicts),flags={.Read_Only},run=api_kai_conflicts})
@@ -233,8 +261,21 @@ api_kai_describe :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_kai_log :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Kai_Log_Params)
+    if p.change!="" && p.file=="" {
+        api.call_fail(call,api.INVALID_PARAMS,"change goes with file: name the file whose detail it gives")
+        return
+    }
     w:=api_kai_workspace(s,call)
     if w==nil {return}
+    revision:vcs.Revision
+    if p.file!="" {
+        if p.change=="" {
+            vcs.workspace_touched(w,nil,false)
+            if !api_kai_ended(call,kai_snapshot(s)) {return}
+        }
+        found:bool
+        if revision,found=api_kai_revision(s,call,p.change!=""?p.change:"@");!found {return}
+    }
     rows:=make([dynamic]ka.Log_Row,context.temp_allocator)
     if e:=ka.log(w,p.limit>0?p.limit:KAI_LOG_ROWS,&rows,call.allocator);e!=.None {api.call_fail(call,api.SERVER_ERROR,vcs.error_text(e));return}
     r:=api.call_result(call,Api_Kai_Log)
@@ -251,6 +292,32 @@ api_kai_log :: proc(s:^Session,call:^api.Call) {
             r.changes[i].bookmarks=names[:]
         }
     }
+    if p.file!="" {api_kai_detail(s,call,revision,p.file,&r.detail)}
+}
+
+// What the change at revision did to the file at path, into out: false when
+// the call failed.
+@(private)
+api_kai_detail :: proc(s:^Session,call:^api.Call,revision:vcs.Revision,path:string,out:^Api_Kai_Detail) -> bool {
+    a:=call.allocator
+    d:ka.File_Detail
+    if message,_:=kai_detail_read(s,revision,path,&d,a,ka.MESH_WAIT);message!="" {
+        api.call_fail(call,api.INVALID_PARAMS,message)
+        return false
+    }
+    kinds:=[ka.Detail_Kind]string{.Text="text",.Asset="asset",.Binary="binary",.Oversized="oversized"}
+    mark:=[1]u8{d.mark}
+    out^={file=d.path,change=api_kai_text(kai_workspace(s),revision,call),status=strings.clone(string(mark[:]),a),kind=kinds[d.kind],before=int(d.before),after=int(d.after),added=d.added,removed=d.removed,changed=d.changed,cut=d.cut}
+    out.rows=make([]Api_Kai_Detail_Row,len(d.rows),a)
+    for row,i in d.rows {
+        x:=&out.rows[i]
+        x^={old=int(row.old),new=int(row.new),skipped=int(row.skipped),text=row.text,entity=row.key,name=row.name}
+        if row.mark!=0 {
+            m:=[1]u8{row.mark}
+            x.mark=strings.clone(string(m[:]),a)
+        }
+    }
+    return true
 }
 
 @(private)

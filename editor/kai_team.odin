@@ -114,6 +114,7 @@ Kai_Fields :: struct {
     command_length:int,
     file:int,       // the file of the open proposal's stack a comment hangs on: its index over every change, -1 the proposal
     entity:bool,    // the comment hangs on the entity selected in the scene
+    key:u64,        // the comment hangs on this entity, picked in the file's detail
     history:bool,   // a new scope keeps earlier epochs readable
     readers:vcs.Role,
 }
@@ -344,6 +345,7 @@ kai_team_poll :: proc(s:^Session) {
         }
     }
     vcs.machine_reload(&t.machine)
+    kai_detail_retry(s)
     signature:=kai_team_signature(s)
     if signature!=t.signature {
         t.signature=signature
@@ -414,10 +416,14 @@ kai_team_signature :: proc(s:^Session) -> (signature:store.Hash) {
     return
 }
 
-// What the team views show, read again into the arena.
+// What the team views show, read again into the arena. A detail open in
+// Proposals places the comments again, or closes when its proposal is gone.
 kai_team_read :: proc(s:^Session) {
     st:=s.kai.state
     t:=&st.team
+    defer if st.detail.open && st.detail.tab==.Proposals {
+        if t.view.shown {kai_detail_place(s)} else {kai_detail_close(st)}
+    }
     vmem.arena_destroy(&t.arena)
     t.view={org=-1}
     if !t.opened || vmem.arena_init_growing(&t.arena)!=nil {return}

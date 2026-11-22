@@ -78,3 +78,11 @@ interfaces6 :: proc(out:^[dynamic]u32) {
         return
     }
 }
+
+// This machine's host name, in buffer; empty when the system gives none.
+@(private)
+host_name :: proc(buffer:[]u8) -> string {
+    name,found:=os.lookup_env("COMPUTERNAME",context.temp_allocator)
+    if !found {return ""}
+    return string(buffer[:copy(buffer,name)])
+}

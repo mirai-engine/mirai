@@ -36,14 +36,21 @@ user_name :: proc(f:^User_Fold) -> string {
     return string(tail)
 }
 
-// The name of device k of a user: what its Device_Add calls it, or the first
-// hex digits of its key for the device the user was made on.
+// The name of device k of a user: what its Device_Add or the genesis calls
+// it, or the first hex digits of its key when the genesis names none.
 device_name :: proc(f:^User_Fold,k:int,allocator:=context.temp_allocator) -> string {
     d:=f.devices[k]
     entry:=&f.log.items[d.added].entry
-    if entry.type==.Device_Add {
+    #partial switch entry.type {
+    case .Device_Add:
         _,tail,_:=body_head(entry.body,Device_Add_Body)
         return string(tail)
+    case .User_Genesis:
+        head,_,_:=body_head(entry.body,User_Genesis_Body)
+        if n:=len(genesis_device_name(&head));n>0 {
+            at:=int(offset_of(User_Genesis_Body,device_name))
+            return string(entry.body[at:at+n])
+        }
     }
     key:=d.key
     buffer,e:=make([]u8,8,allocator)
@@ -108,12 +115,14 @@ device_display :: proc(o:^Org_State,device:Key,allocator:=context.temp_allocator
 
 // The name a pairing this machine joins gives the other end: <handle>/<device>
 // as its user's log names them, or, on a device with no user yet, device, the
-// name the user's log will give it. NAME_MAX bytes at most, cut between
+// name the user's log will give it (this machine's host name when empty). NAME_MAX bytes at most, cut between
 // characters.
 machine_pair_name :: proc(m:^Machine,device:string,allocator:=context.temp_allocator) -> (name:string,error:Error) {
     if m.user=={} {
-        if !name_valid(device) {return "",machine_fail(m,.Invalid_Argument,"a device with no user joins with the name its user will know it by: 1 to 64 bytes of text, as laptop")}
-        text,e:=strings.clone(device,allocator)
+        buffer:[NAME_MAX]u8
+        named:=device_name_of(device,&buffer)
+        if !name_valid(named) {return "",machine_fail(m,.Invalid_Argument,"a device with no user joins with the name its user will know it by: 1 to 64 bytes of text, as laptop")}
+        text,e:=strings.clone(named,allocator)
         if e!=nil {return "",machine_fail(m,.Out_Of_Memory,"no memory for the name")}
         return text,.None
     }

@@ -90,7 +90,7 @@ Verdict_Kind :: enum u8 {Approve,Changes,Withdraw}
 Check_State :: enum u8 {Pending,Passed,Failed}
 
 // The fixed part of each body; what follows it is said beside it.
-User_Genesis_Body :: struct #packed {recovery:Key,device:Key,dh:Dh_Key,proof:Signature} // + name. proof: the device signs LABEL_DEVICE || recovery
+User_Genesis_Body :: struct #packed {recovery:Key,device:Key,dh:Dh_Key,proof:Signature,device_name:[NAME_MAX]u8} // + name. proof: the device signs LABEL_DEVICE || recovery; device_name: the first device's, zero-padded
 Device_Add_Body :: struct #packed {device:Key,dh:Dh_Key,proof:Signature}               // + name. proof: the device signs LABEL_DEVICE || log id
 Device_Revoke_Body :: struct #packed {device:Key,horizons:u8}                          // + horizons × (Horizon, [heads]store.Hash)
 Horizon :: struct #packed {log_id:Log_Id,heads:u8}
@@ -253,6 +253,13 @@ tail_string :: proc "contextless" (r:^Reader) -> string {
     return string(read_bytes(r,int(n)))
 }
 
+// The name of the device a user was made on, as its genesis gives it.
+genesis_device_name :: proc(head:^User_Genesis_Body) -> string {
+    n:=0
+    for n<len(head.device_name) && head.device_name[n]!=0 {n+=1}
+    return string(head.device_name[:n])
+}
+
 @(private)
 name_valid :: proc(name:string,empty:=false) -> bool {
     return (empty || len(name)>0) && len(name)<=NAME_MAX && utf8.valid_string(name)
@@ -266,8 +273,8 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
     switch t {
     case .None: return false
     case .User_Genesis:
-        _,tail,ok:=body_head(body,User_Genesis_Body)
-        return ok && name_valid(string(tail))
+        head,tail,ok:=body_head(body,User_Genesis_Body)
+        return ok && name_valid(string(tail)) && name_valid(genesis_device_name(&head),true)
     case .Device_Add:
         _,tail,ok:=body_head(body,Device_Add_Body)
         return ok && name_valid(string(tail))
