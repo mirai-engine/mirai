@@ -34,6 +34,7 @@ Render_World :: struct {
     offsets:core.Table(Draw_Offset),
     layers:core.Table(Layers),
     cameras:core.Table(Camera),
+    arrows:core.Table(Arrow),
     hierarchy:core.Hierarchy,
     view:core.View,
     outline_styles:Outline_Styles,

@@ -90,7 +90,11 @@ import "mirai:core"
         for gone in ([]string{"Step_Edge","info.edges","info.parallel","worker"}) {
             testing.expectf(t,!strings.contains(text,gone),"the generated world still says %s",gone)
         }
-        testing.expect(t,strings.contains(text,"steps[0]={\"core_last\",\"core\",{.Fixed,},{.Game,},call_core_last}"),text)
+        // A step says who declares it: an engine package, or the game of the project.
+        last,logic:=step_written(text,"core_last"),step_written(text,"game_logic")
+        testing.expect(t,strings.contains(last,"phases={.Fixed,}") && strings.contains(last,"call=call_core_last"),last)
+        testing.expect(t,strings.contains(last,`plugin=""`) && strings.contains(last,"game=false"),last)
+        testing.expect(t,strings.contains(logic,"game=true"),logic)
         // What game_spawn made is settled inside its call, before game_count is called.
         _,_,rest:=strings.partition(text,"call_game_spawn :: proc(world,shared,editor:rawptr,app_data:rawptr) {")
         body,_,_:=strings.partition(rest,"\n}\n")
@@ -294,4 +298,14 @@ import "mirai:core"
     testing.expect(t,os.write_entire_file(project.path(p.engine_root,"core","data.odin",allocator=context.temp_allocator),"package core\n@(storage) Clock :: struct {tick:u64}\n")==nil)
     output=world_generate(&p,context.temp_allocator)
     testing.expectf(t,errors_have(output.errors,"game_decide is server, and the world has no core.Network"),"%v",output.errors)
+}
+
+// The row of info.steps the generated world writes for a function, by
+// name: its fields, whatever their order.
+@(private)
+step_written :: proc(text,name:string) -> string {
+    at:=strings.index(text,fmt.tprintf("={{name=%q,",name))
+    if at<0 {return ""}
+    row:=text[at:]
+    return row[:strings.index_byte(row,'\n')]
 }

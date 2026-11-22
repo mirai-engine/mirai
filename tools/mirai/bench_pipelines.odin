@@ -34,7 +34,7 @@ Bench_Pipelines_Options :: struct {
 Bench_Pipelines_Run :: struct {
     startup_ms,resident_ms:f64,
     made,kept,late:int,
-    driver_ms,longest_ms,waited_ms:f64,
+    driver_ms,longest_ms:f64,
     store:string,
     found:bool,
 }
@@ -103,7 +103,6 @@ bench_pipelines_parse :: proc(output:string) -> (run:Bench_Pipelines_Run) {
             run.made,run.kept,run.late=int(made),int(kept),int(late)
             run.driver_ms,_=bench_pipelines_between(line,"kept), "," ms in the driver")
             run.longest_ms,_=bench_pipelines_between(line,"longest "," ms")
-            run.waited_ms,_=bench_pipelines_between(line,"frames late, "," ms waited")
             if at:=strings.index(line,"store ");at>=0 {
                 rest:=line[at+len("store "):]
                 if end:=strings.index_byte(rest,';');end>=0 {run.store=strings.clone(rest[:end],context.temp_allocator)}
@@ -199,7 +198,6 @@ bench_pipelines_table :: proc(o:Bench_Pipelines_Options,runs:[2]Bench_Pipelines_
     fmt.sbprintfln(&b,"| Driver time, ms summed | %.0f | %.0f |",cold.driver_ms,warm.driver_ms)
     fmt.sbprintfln(&b,"| Longest pipeline, ms | %.1f | %.1f |",cold.longest_ms,warm.longest_ms)
     fmt.sbprintfln(&b,"| Frames late (materials as rows) | %d | %d |",cold.late,warm.late)
-    fmt.sbprintfln(&b,"| Frames waited, ms | %.0f | %.0f |",cold.waited_ms,warm.waited_ms)
     fmt.sbprintfln(&b,"| Kept pipelines found | %s | %s |",cold.store,warm.store)
     if doubt!="" {fmt.sbprintfln(&b,"\nThe cold start may not have been cold: %s.",doubt)}
     return strings.to_string(b)
