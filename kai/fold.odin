@@ -411,8 +411,9 @@ witnesses_due :: proc(org:^Org_Fold,l:^Log,out:^[dynamic]Witness_Due) -> Error {
     }
     for i in org.log.order {
         r:=int(i)
+        // An entry appended to the org's log since its fold (a witness just written) is no removal it knows.
+        if r>=len(org.valid) || !org.valid[r] {continue}
         entry:=&org.log.items[r].entry
-        if !org.valid[r] {continue}
         keys:=make([dynamic]Key,context.temp_allocator)
         eager:=!log_within(org.log,r,born)
         #partial switch entry.type {
