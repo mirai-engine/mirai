@@ -16,6 +16,7 @@ import "mirai:core"
 import "mirai:cook/build"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
+import ka "mirai:cook/kai"
 import "mirai:cook/textures"
 import "mirai:host"
 import vcs "mirai:kai"
@@ -85,7 +86,6 @@ Import_Job :: struct {
     plugin_formats:[]Import_Format_Provider, // with the format.data their prepare gave
     wholes:[]Source_Importer,                // with the state their prepare gave, in imports.wholes
     store:store.Store,    // the session's
-    mesh_org:vcs.Log_Id,  // the org whose peers' derived data the cook takes and to which it publishes; zero: none
     options:sources.Library_Options,
     allocator:mem.Allocator,
     started:time.Tick,
@@ -241,7 +241,6 @@ import_file :: proc(s:^Session,source:string,folder:Maybe(string)=nil,profiled:=
     job:=new(Import_Job,allocator)
     job^={allocator=allocator,started=time.tick_now(),profiled=profiled,claimed=claimed}
     job.store=s.store
-    job.mesh_org=kai_mesh_org(s)
     job.source=strings.clone(origin,allocator)
     job.root,job.prefix=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator)
     if explicit {job.folder=strings.clone(rest,allocator)}
@@ -327,10 +326,13 @@ import_run :: proc(job:^Import_Job) {
     defer if threaded {jobs.system_destroy(&js)}
     if threaded {job.options.worker={system=&js,worker=jobs.OWNER}}
     defer job.options.worker={}
-    mesh:Kai_Mesh_Import
-    if source,shared:=kai_mesh_import_open(&mesh,job.store.root,job.mesh_org);shared {job.options.source=source}
-    defer kai_mesh_import_close(&mesh)
-    defer job.options.source={}
+    // What the peers of the project's org built is taken, and what the import builds is published.
+    shared,close:=ka.peers_open(job.store.root,job.root)
+    if close!=nil {job.options.source=shared}
+    defer if close!=nil {
+        close(shared)
+        job.options.source={}
+    }
     if job.profiled {
         timed:=importer.Import_Options{worker=job.options.worker}
         if importer.profile_begin(&job.profile,&timed,job.allocator) {job.options.worker=timed.worker} else {job.profiled=false}

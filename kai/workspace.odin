@@ -281,6 +281,17 @@ workspace_open :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity
     return .None
 }
 
+// The repository of the workspace at root, read without taking its lock: what
+// another process asks of a workspace an editor holds. False when root holds none.
+workspace_repo_of :: proc(root:string) -> (repo:Repo_Id,ok:bool) {
+    bytes,e:=os.read_entire_file(strings.concatenate({root,"/",STATE_FOLDER,"/workspace"},context.temp_allocator),context.temp_allocator)
+    if e!=nil {return}
+    r:=Reader{data=bytes}
+    head:=read_value(&r,State_Head)
+    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.repo=={} {return}
+    return head.repo,true
+}
+
 workspace_close :: proc(w:^Workspace) {
     if w.repo.s!=nil {repo_close(&w.repo)}
     for m in w.state.conflicts {delete(m.path,w.allocator)}

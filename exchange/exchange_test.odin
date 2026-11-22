@@ -1031,7 +1031,12 @@ ref_changed_hint_wakes_peer :: proc(t:^testing.T) {
 
 // Allowed addresses of test_serve, fixed while the exchange runs.
 @(private)
-Test_Allowed :: struct {addresses:[dynamic]store.Hash}
+Test_Allowed :: struct {addresses,asked:[dynamic]store.Hash}
+
+@(private)
+test_asked :: proc(user:rawptr,peer:Peer_Id,address:store.Hash) {
+    append(&(^Test_Allowed)(user).asked,address)
+}
 
 @(private)
 test_serve :: proc(user:rawptr,peer:Peer_Id,address:store.Hash) -> bool {
@@ -1063,7 +1068,8 @@ anonymous_peer_cannot_fetch_unexposed_chunks :: proc(t:^testing.T) {
     defer test_world_destroy(&w)
     allowed:Test_Allowed
     allowed.addresses=make([dynamic]store.Hash,context.temp_allocator)
-    if !test_star(t,&w,"exchange-serve",{serve=test_serve,user=&allowed},restricted=1<<1) {return}
+    allowed.asked=make([dynamic]store.Hash,context.temp_allocator)
+    if !test_star(t,&w,"exchange-serve",{serve=test_serve,asked=test_asked,user=&allowed},restricted=1<<1) {return}
     s:=&w.nodes[0].s
     public:=test_put(t,s,200<<10,1)
     private:=test_put(t,s,200<<10,2)
@@ -1093,4 +1099,7 @@ anonymous_peer_cannot_fetch_unexposed_chunks :: proc(t:^testing.T) {
     want(&w.nodes[2].x,private)
     want(&w.nodes[2].x,half)
     testing.expect(t,test_until_complete(&w,2,{private,half},5),"a peer that is not restricted gets every chunk")
+    told:=false
+    for a in allowed.asked {told||=a==private}
+    testing.expect(t,told,"the end that serves is told what its peers ask")
 }

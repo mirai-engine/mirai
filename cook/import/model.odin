@@ -59,7 +59,10 @@ Import_Options :: struct {
     // and meshes built before by what they are built from (tex.cache_read,
     // mesh_cook).
     store:^mstore.Store,
-    cache_source:cache.Source, // asked on a miss of those caches before building
+    cache_source:cache.Source, // asked on a miss of those caches before building, and told what they and the import keep
+    // What the import is made from, absolute: its source and its inputs. The
+    // import sets it once they are fixed (writer_identity); cache_source is told it.
+    cache_from:[]string,
     // The manifest of the package the source was ingested as, whose ids and
     // settings the import keeps; zero: the one the store names for the path
     // of the source (package_previous), else a new package.

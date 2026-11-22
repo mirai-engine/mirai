@@ -477,13 +477,14 @@ engine_program_sources :: proc(paths:Engine_Paths) -> [4]Engine_Program {
 
 import "core:os"
 import "mirai:cook/import/sources"
+import ka "mirai:cook/kai"
 import "mirai:cook/share"
 import "mirai:editor"
 
 main :: proc() {
     args:=os.args[1:]
     if len(args)>0 && (args[0]=="share" || args[0]=="join") {os.exit(share.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library_built))}
-    os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))
+    os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library,ka.peers_open))
 }
 `,paths.import_program},
         {"author program","author",`package main

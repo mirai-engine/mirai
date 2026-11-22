@@ -48,6 +48,7 @@ AGENT_LOGS :: 256
 AGENT_FETCHES :: 256
 AGENT_QUERIES :: 64
 AGENT_HINTS :: 256
+AGENT_ASKED :: 1024 // the last chunks peers asked for, which a ddc node keeps while they are fetched
 USER_NAMESPACE :: "kai-user"
 
 Agent_Desc :: struct {
@@ -143,7 +144,11 @@ Agent :: struct {
     now:f64,
     dirty:bool, // a seed walks its closure again
     stats:Agent_Stats,
+    asked:[AGENT_ASKED]Agent_Asked, // a ring: what peers asked for last, at asked_next-1
+    asked_next:int,
 }
+
+Agent_Asked :: struct {address:store.Hash,at:i64} // ns
 
 Agent_Stats :: struct {
     logs_merged,refs_accepted,ddc_accepted,overlays_accepted,objects_fetched:int,
@@ -181,7 +186,7 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     agent_channels(a)
     if exchange.init(&a.x,{
         store=desc.store,channel=0,peers=AGENT_PEERS,hints=AGENT_HINTS,
-        expose=agent_expose,serve=agent_serve,hint=agent_hint,user=a,allocator=allocator,
+        expose=agent_expose,serve=agent_serve,hint=agent_hint,asked=agent_asked,user=a,allocator=allocator,
     })!=.None {
         agent_destroy(a)
         return .Out_Of_Memory
@@ -665,6 +670,13 @@ agent_serve :: proc(user:rawptr,peer:exchange.Peer_Id,address:store.Hash) -> boo
     case .Member,.Node: return true
     }
     return false
+}
+
+@(private)
+agent_asked :: proc(user:rawptr,peer:exchange.Peer_Id,address:store.Hash) {
+    a:=(^Agent)(user)
+    a.asked[a.asked_next%AGENT_ASKED]={address,time.now()._nsec}
+    a.asked_next+=1
 }
 
 @(private)

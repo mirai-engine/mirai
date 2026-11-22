@@ -431,7 +431,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     rebuilt:bool
     {
         job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,
-            engine=engine.mode,store_root=store_root,refresh_skip=library_only})
+            engine=engine.mode,store_root=store_root,refresh_skip=library_only,peers=kai_assets.peers_open})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {
