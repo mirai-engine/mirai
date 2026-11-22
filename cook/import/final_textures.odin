@@ -35,8 +35,9 @@ texture_input_has :: proc(c:cache.Cache,key:u64) -> bool {
 
 @(private)
 texture_input_keep :: proc(c:cache.Cache,key:u64,types:^asset.Types,source:textures.Source,
-                           options:textures.Build_Options) {
+                           options:textures.Build_Options,worker:jobs.Worker_Ref) {
     if c.store==nil {return}
+    jobs.worker_zone(worker,"texture.input")
     recipe:=Texture_Input{source.width,source.height,source.layers,source.format,source.cube,options}
     doc:asset.Document
     asset.document_init(&doc,TEXTURE_INPUT_KIND,cache.id(key,TEXTURE_INPUT_VERSION))

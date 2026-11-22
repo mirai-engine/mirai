@@ -10,9 +10,11 @@ import "mirai:rhi"
 // of the engine compiled for one program, <stem>__<program>[_<variant>],
 // draws the materials of that program, and the stage itself those without
 // one. The pipeline of a program is that of the stage with the fragment stage
-// of the program, asked for ahead of time when the program first gets rows in
-// the scene (programs_ask), or when a draw first needs it (pipeline_thread.odin);
-// until it is made, the stage itself draws those materials as their rows. The
+// of the program, made with the renderer for every program of its shaders
+// (programs_listed). One whose stages changed since (an edit in the editor)
+// is asked for ahead of time when the program first gets rows in the scene
+// (programs_ask), or when a draw first needs it (pipeline_thread.odin); until
+// it is made, the stage itself draws those materials as their rows. The
 // resolve of the visibility target draws the pixels of one program
 // (resolve_programs_draw); a draw of the clusters of an instance, the clusters
 // of the materials of one program (instance_programs_draw).
@@ -86,9 +88,9 @@ program_graphics_entry :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32
 // whose pipeline is target^; target^ until it is made, or while the shaders
 // in use have no stage of that program. now: a draw that is read back at once
 // (a thumbnail) waits for it. early: asked ahead of time, before a draw needs
-// it, which raises it.
+// it, which raises it; speculative: early, for a variant that only spares work.
 @(private)
-program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now := false, early := false) -> rhi.Pipeline {
+program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now := false, early := false, speculative := false) -> rhi.Pipeline {
 	if program == 0 || program == GPU_NONE {return target^}
 	entry, found := program_graphics_entry(r, target, program)
 	if entry == nil {return target^}
@@ -97,7 +99,7 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 		if desc, ok := pipeline_desc_of(r, target); ok && desc.fragment != nil {
 			if entry.code = program_stage(r, desc.fragment, program); entry.code != nil {
 				desc.fragment, desc.name = entry.code, entry.code.name
-				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now, early = early) {entry^ = {}}
+				if !pipeline_make(r, &entry.pipeline, graphics = desc, now = now, early = early, speculative = speculative) {entry^ = {}}
 			}
 		}
 	} else if entry.pipeline == 0 && entry.code != nil && !early {
@@ -105,6 +107,44 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 		if now {renderer_pipelines_wait(r, &entry.pipeline)}
 	}
 	return entry.pipeline if entry.pipeline != 0 else target^
+}
+
+// The pipelines of every Surface program of the shaders for the stages of
+// list of the rays wanted a renderer makes, into builds: those of the stages
+// of the engine the program was compiled for, of its points and of its
+// vertices. What a program was not compiled for is not asked for: a draw
+// that needs it says so (program_missing). False when builds has no memory.
+@(private)
+programs_listed :: proc(r: ^Renderer, list: ^Pipeline_List, wanted: bit_set[Pipeline_Rays], builds: ^[dynamic]Pipeline_Build) -> bool {
+	info := rhi.device_info(r.device)
+	for program in renderer_programs(r) {
+		if program.domain != .Surface {continue}
+		for item in list.items[:list.count] {
+			// Not those that count the cost of what a frame draws, which a request asks for.
+			if !item.graphics || !item.required && !item.clip || item.target == nil || item.rays not_in wanted || !pipeline_possible(info, item) {continue}
+			code := program_stage(r, item.desc.fragment, program.id, report = false)
+			if code == nil {continue}
+			entry, found := program_graphics_entry(r, item.target, program.id)
+			if entry == nil || found {continue}
+			entry^ = {target = item.target, program = program.id, code = code}
+			desc := item.desc
+			desc.fragment, desc.name = code, code.name
+			if _, error := append(builds, Pipeline_Build{target = &entry.pipeline, graphics = desc, cost = pipeline_cost(desc, {})}); error != nil {return false}
+		}
+		if program.id >= POINTS_PROGRAM_CAPACITY {continue}
+		computes := [2]^Program_Computes{&r.points.stages, &r.vertex_stages}
+		stems := [2]string{"surface_points", "surface_vertices"}
+		for table, i in computes {
+			if table.asked[program.id] {continue}
+			name: [192]u8
+			code := program_shader(r, fmt.bprintf(name[:], "%s__%s.comp", stems[i], program.name))
+			if code == nil {continue}
+			table.asked[program.id], table.codes[program.id] = true, code
+			compute := rhi.Compute_Pipeline_Desc{shader = code, name = code.name}
+			if _, error := append(builds, Pipeline_Build{target = &table.pipelines[program.id], compute = compute, cost = pipeline_cost({}, compute)}); error != nil {return false}
+		}
+	}
+	return true
 }
 
 // When a program first gets rows in the scene, with pipelines_async: the
@@ -203,9 +243,10 @@ pipeline_desc_of :: proc(r: ^Renderer, target: ^rhi.Pipeline) -> (rhi.Graphics_P
 // The code of a stage of the engine or of an extension compiled for a Surface
 // program, from that of the stage itself: <stem>__<program>[_<variant>]<suffix>,
 // for the split of its name into a stem and a variant the shaders in use
-// have. nil without a program or without such a stage.
+// have. nil without a program or without such a stage, which report keeps
+// as a problem of the frame (program_missing).
 @(private)
-program_stage :: proc(r: ^Renderer, stage: ^rhi.Shader_Code, program: u32) -> ^rhi.Shader_Code {
+program_stage :: proc(r: ^Renderer, stage: ^rhi.Shader_Code, program: u32, report := true) -> ^rhi.Shader_Code {
 	if program == 0 || program == GPU_NONE || stage == nil {return nil}
 	program_name := ""
 	for candidate in renderer_programs(r) {if candidate.id == program && candidate.domain == .Surface {program_name = candidate.name}}
@@ -219,7 +260,7 @@ program_stage :: proc(r: ^Renderer, stage: ^rhi.Shader_Code, program: u32) -> ^r
 		if code := program_shader(r, wanted); code != nil {return code}
 		if code := extension_shader(r, wanted); code != nil {return code}
 	}
-	program_missing(r, stage.name, program)
+	if report {program_missing(r, stage.name, program)}
 	return nil
 }
 
@@ -323,6 +364,31 @@ ui_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipe
 		}
 		run_first, run_program = at, program
 	}
+}
+
+// The Surface programs of the blended materials of an instance, each once in
+// order of id, 0 for those without one: the draws of the passes of its blended
+// triangles, whose vertices (gbuffer.vert, blended) collapse the clusters of
+// the other materials.
+@(private)
+instance_blended_programs :: proc(s: ^Scene_State, instance: u32) -> (programs: [asset.MESH_MAX_SLOTS]u32, count: int) {
+	inst := &s.instances[instance]
+	mesh := inst.meta.x & INSTANCE_MESH_MASK
+	if int(mesh) >= len(s.meshes) {return}
+	m := &s.meshes[mesh]
+	if m.slot_count == 0 {return {}, 1}
+	for packed in s.indices[m.slot_word:][:m.slot_count] {
+		row := instance_row(packed, inst.meta.y, &inst.slot_materials)
+		if int(row) >= len(s.materials) || s.materials[row].alpha_mode != u32(asset.Alpha_Mode.Blend) {continue}
+		program := s.materials[row].program_id
+		at := 0
+		for at < count && programs[at] < program {at += 1}
+		if at < count && programs[at] == program {continue}
+		copy(programs[at + 1:count + 1], programs[at:count])
+		programs[at] = program
+		count += 1
+	}
+	return
 }
 
 // Draws the clusters of an instance for a pass whose stage has its pipeline

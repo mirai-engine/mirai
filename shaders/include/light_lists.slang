@@ -38,6 +38,19 @@
 // The texels of a block, and the texel of a word of the list whose block starts at `block`.
 static const int2 LIGHT_LIST_BLOCK = int2(int(LIGHT_LIST_TILE), int(LIGHT_LIST_WORDS / LIGHT_LIST_TILE));
 int2 light_list_texel(int2 block, uint word) { return block + int2(int(word % LIGHT_LIST_TILE), int(word / LIGHT_LIST_TILE)); }
+// The blocks of the lists of the blended instances of a view
+// (translucent_draws.comp): where the n-th starts; the word of how many cells
+// split an instance along each side, and back; and the block of the cell of
+// an instance, whose first block and that word are `cells`, that holds a
+// point of its box.
+int2 light_list_block(uint n) { return int2(int(n % TRANSLUCENT_LIST_COLUMNS), int(n / TRANSLUCENT_LIST_COLUMNS)) * LIGHT_LIST_BLOCK; }
+uint translucent_cells_word(uint3 sides) { return sides.x | (sides.y << 8u) | (sides.z << 16u); }
+uint3 translucent_cells_sides(uint word) { return max(uint3(word & 255u, (word >> 8u) & 255u, (word >> 16u) & 255u), uint3(1u)); }
+uint translucent_cell_block(uint2 cells, float3 position, float3 low, float3 high) {
+    uint3 sides = translucent_cells_sides(cells.y);
+    uint3 at = uint3(clamp(floor((position - low) / max(high - low, 1e-6) * float3(sides)), 0.0, float3(sides - 1u)));
+    return cells.x + at.x + sides.x * (at.y + sides.y * at.z);
+}
 
 #ifndef LIGHT_LISTS_WRITTEN
 [[vk::binding(SLOT_LIGHT_LISTS, 0)]] Texture2D<uint> light_lists : register(MIRAI_REGISTER(t, SLOT_LIGHT_LISTS), space0);

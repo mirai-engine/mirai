@@ -298,6 +298,9 @@ Fields of `Card`:
 - `chosen` and `facing`, what a card computes that a scene cannot hold: an empty `Asset_Id` field
   of what it places whose `kind=` names the asset chosen in the content browser takes it (the
   `.ui` of Interface, Panel and Billboard), and the placed entity turns to the camera (Panel).
+- `surface`: what it places lands on the surface under the pointer with its +Y along the normal,
+  and an entity with its `component`, moved alone by the center of the gizmo, follows the surface
+  under the pointer the same way (Decal).
 
 Rules:
 

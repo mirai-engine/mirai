@@ -153,6 +153,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   where it rests, never by skipping what lies near.
 - Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
   light through glass comes from the light, one that projects a texture.
+- Forward blends trace no shadow rays: the maps of the view shadow them, they mark the pages they
+  read, and a light that no map holds at a point reaches it whole.
 - What is decided per instance (its class, the row of its material with its own values) is built
   on the CPU when the instance is given: no stage builds it again per pixel or per hit.
 - A graphics option keeps a choice, and a preset a step above another, only where the image
@@ -211,12 +213,13 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   its scene is given; without it, what the scene is given is only an edit.
 - No engine stage evaluates a Surface program except its own (`//! per surface program`): raster
   uses the program's pipeline (`program_graphics`) and rays ask for it through the material points
-  (`points.slang`). A frame draws the program as its row until its pipeline is ready, unless
-  `Graphics_Settings.shaders` is `Before_Playing`, where it waits for non-speculative jobs.
-  Speculative jobs are made last, cheapest first. One thread is reserved for non-speculative
-  jobs and work a frame requests.
-  With a window, startup compilation runs off the window thread while a CPU-painted screen
-  reports progress. Closing during a driver compile writes the cache and exits.
+  (`points.slang`). The renderer starts with the pipelines of every program of its shaders: no
+  frame of a game draws a program as its row; one edited since draws as its row until its
+  pipeline is ready. There is no setting of when shaders compile. Variants that only spare work
+  are speculative jobs, made after startup, cheapest first, by one thread alone; the others are
+  reserved for what frames request. With a window, startup compilation runs off the window
+  thread while the UI pipeline, made first, draws progress, Cancel and the window buttons.
+  Cancel or closing during a driver compile writes the cache and exits.
 - A masked material is cut by its mask map alone: no visibility raster, shadow map or traversal
   runs a program for coverage ([alpha](references/materials.md#alpha)).
 - The material of opaque scene geometry runs once per visible pixel: its clusters are rasterized

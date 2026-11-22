@@ -66,15 +66,10 @@ VIEW_DISTANCE_MIN :: f32(0.25)
 VIEW_DISTANCE_MAX :: f32(500)
 DRAG_THRESHOLD :: f32(4)      // points a press travels before it is a drag
 GRID_EXTENT :: 40             // lines of 1 m each side of the center
-// The arrows that say where a sun shines to: around its disc, metres.
-SUN_ARROWS :: 6
-SUN_ARROW_RING :: f32(0.45)
-SUN_ARROW_START :: f32(0.35)
-SUN_ARROW_LENGTH :: f32(0.7)
-SUN_ARROW_HEAD :: f32(0.16)
 SPOT_CONE_LINES :: 8 // from a selected spot to the edge of its cone
 GRID_MAJOR :: 10
 LINE_CAPACITY :: 4096         // vertices of the lines the editor draws in a frame
+ARROW_CAPACITY :: 256         // Arrows the editor draws in a frame
 // A disc is an object of the world: INDICATOR_SIZE m of radius, which the scene in front of it
 // covers, and which takes less of the screen the farther it is; nearer than where that would take
 // more than INDICATOR_RADIUS points, it keeps that (indicator_size).
@@ -171,6 +166,8 @@ Viewport :: struct {
     ghosts_seen:[5]core.Seen,        // the poses, the meshes, Hidden, the parents and Disabled the ghosts were made from
     lines_storage:[dynamic]gpu.Debug_Vertex,
     lines:gpu.Debug_Lines,
+    arrows_storage:[dynamic]gpu.Debug_Vertex,
+    arrows:gpu.Debug_Lines,
     pick:Entity_Pick,               // a field of the inspector waiting for an entity
     follow:int,                     // the other editor of the session whose camera this one follows, plus one; 0: none
     followed:Orbit,                 // the orbit it was given last: another means the user moved it
@@ -223,10 +220,12 @@ viewport_init :: proc(v:^Viewport) {
     v.ev100=VIEWPORT_EV100_DEFAULT
     resize(&v.lines_storage,LINE_CAPACITY)
     v.lines=gpu.debug_lines_make(v.lines_storage[:],true)
+    resize(&v.arrows_storage,ARROW_CAPACITY*gpu.DEBUG_ARROW_VERTICES)
+    v.arrows=gpu.debug_lines_make(v.arrows_storage[:],true,true)
 }
 
 viewport_free :: proc(v:^Viewport) {
-    v.lines={}
+    v.lines,v.arrows={},{}
     core.value_free(v,type_info_of(Viewport))
     v^={}
 }
@@ -757,7 +756,9 @@ placement_commit :: proc(s:^Session,w:core.World_Ref,d:Drag,hit:Pick,select:bool
     opened,edit_ready:=edit_open(s,d.kind==.Preset?fmt.tprintf("Add %s",cards(s)[d.card].label):fmt.tprintf("Add %s",asset_label(&d)))
     if !edit_ready {return}
     defer edit_close(s,opened)
-    e:=entity_create(s,{recipe=recipe,name=d.kind==.Asset?asset_label(&d):"",transform={position=point,rotation=1,scale={1,1,1}}})
+    rotation:=mm.Quat(1)
+    if d.kind==.Preset && cards(s)[d.card].surface && hit.entity!=core.NONE && !hit.indicator {rotation=surface_rotation(rotation,hit.normal)}
+    e:=entity_create(s,{recipe=recipe,name=d.kind==.Asset?asset_label(&d):"",transform={position=point,rotation=rotation,scale={1,1,1}}})
     if placement_sound(d) {
         if t:=core.world_table_of(w,eaudio.Audio_Source);t!=nil {
             if source:=core.raw_added(core.raw(t),type_info_of(eaudio.Audio_Source),e);source!=nil {(^eaudio.Audio_Source)(source).sound=d.asset_id}
@@ -1078,12 +1079,13 @@ REACH_FAINT :: u8(150)  // alpha of the outer shape of a reach
 REACH_WIDTH :: f32(2)   // points
 REACH_SEGMENTS :: 64    // of a circle
 
-// The lines of the grid on the ground, around where the camera looks.
+// The lines of the grid on the ground, around where the camera looks, and the Arrows.
 @(private)
 grid_lines :: proc(s:^Session) {
     v:=s.viewport
     lines:=&v.lines
     gpu.debug_lines_clear(lines)
+    gpu.debug_lines_clear(&v.arrows)
     if play_viewed(s) || camera_previewing(s) {return}
     w:=shown_world(s)
     if v.show_grid {
@@ -1102,21 +1104,12 @@ grid_lines :: proc(s:^Session) {
             gpu.debug_line(lines,{center.x-extent,0,z},{center.x+extent,0,z},color_z)
         }
     }
-    // Where each sun shines to: a sheaf of short arrows from its place.
-    if suns:=core.world_table_of(w,erender.Sun);suns!=nil && v.show_indicators {
-        for e in suns.entities[:core.count(suns)] {
-            if entity_hidden(w,e) {continue}
-            world:=entity_world(w,e)
-            to:=mm.quat_forward(world.rotation)
-            side:=linalg.normalize(linalg.cross(to,abs(to.y)<0.9?[3]f32{0,1,0}:[3]f32{1,0,0}))
-            up:=linalg.cross(side,to)
-            color:=[4]f32{1,0.84,0.47,0.9}
-            gpu.debug_arrow(lines,world.position+to*SUN_ARROW_START,world.position+to*(SUN_ARROW_START+SUN_ARROW_LENGTH),color,SUN_ARROW_HEAD)
-            for i in 0..<SUN_ARROWS {
-                angle:=f32(i)/SUN_ARROWS*2*math.PI
-                from:=world.position+(side*math.cos(angle)+up*math.sin(angle))*SUN_ARROW_RING+to*SUN_ARROW_START
-                gpu.debug_arrow(lines,from,from+to*SUN_ARROW_LENGTH,color,SUN_ARROW_HEAD)
-            }
+    // Every Arrow, also those the game does not draw.
+    if arrows:=core.world_table_of(w,erender.Arrow);arrows!=nil && v.show_indicators {
+        for e,row in arrows.entities[:core.count(arrows)] {
+            arrow:=arrows.values[row]
+            if entity_hidden(w,e) || arrow.selected && !history.selection_has(s.selection,e) {continue}
+            erender.arrow_draw(&v.arrows,entity_world(w,e),arrow)
         }
     }
 }

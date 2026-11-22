@@ -446,7 +446,9 @@ which does not change size so that few projects do not leave a large empty windo
   opened with Open folder, a new project, or a switch from another project. Cancelling stops the
   build without blocking a frame and leaves the project unopened. The launcher ends; the editor of
   a project ends as on exit, asking only if agents work. Closed, the process waits for the editor
-  it started, which writes in its same terminal: `mirai edit` ends with the last editor.
+  it started, which writes in its same terminal: `mirai edit` ends with the last editor. The
+  editor a launcher started (`--from-launcher`) starts the launcher again when Cancel ends the
+  compilation of the shaders it starts with; closing its window just ends it.
 - **New project**, or a template of the list, shows the form with that template; Create copies it
   (`build.project_create`) and opens it; the new editor makes it a
   [Kai](kai.md#working-copy) workspace.

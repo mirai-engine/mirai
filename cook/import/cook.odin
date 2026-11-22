@@ -190,7 +190,7 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
                     if !texture_input_has(c,final_key) {
                         if source,error:=texture_source(bytes,made,decoded,make,options.worker);error==.None {
                             defer textures.source_destroy(&source)
-                            texture_input_keep(c,final_key,&types,source,build)
+                            texture_input_keep(c,final_key,&types,source,build,options.worker)
                         }
                     }
                 }
@@ -208,7 +208,7 @@ texture_cook :: proc(bytes:[]u8,made:textures.Source,decoded:textures.Image,buil
     if .Fast in cooked.built.flags {
         cooked.final={final_key,cooked.settings}
         cooked.settings=fast_settings(build)
-        texture_input_keep(c,final_key,&types,source,build)
+        if !texture_input_has(c,final_key) {texture_input_keep(c,final_key,&types,source,build,options.worker)}
     } else {
         key=final_key
     }

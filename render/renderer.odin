@@ -28,6 +28,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:os"
 import "core:reflect"
+import "core:slice"
 import "core:sync"
 import "core:thread"
 import "core:time"
@@ -80,7 +81,6 @@ Settings :: struct {
 	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
 	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
-	pipelines_first:      bool, // a frame waits for the pipelines asked for, those asked ahead of time too, instead of drawing without them while they are made
 }
 
 // Outlines drawn after tonemapping around instances with an outline level:
@@ -328,7 +328,7 @@ Pipeline_Id :: enum {
 	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Reflect_Resolve,
 	Translucent, Glass_Overflow,
 	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Pages_Sort, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages (the steps that sort the pool apart) and the farthest depth of the cache
-	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside,
+	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside, Translucent_Draws,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
 	Visibility_Clip, Visibility_Two_Sided_Clip, Visibility_Tested_Clip, Visibility_Tested_Two_Sided_Clip,
@@ -336,7 +336,7 @@ Pipeline_Id :: enum {
 	Resolve, Resolve_Plain, Resolve_Layers, // the G-buffer from the visibility target: with the reflectance target, without it, with the layers target
 	Resolve_Nested, Resolve_Nested_Plain, Resolve_Nested_Layers, // the same of the nested views of a view
 	Rest, // where the vertex hook moved each pixel from where it rests (rest.comp)
-	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
+	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines, Debug_Triangles,
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
 	Debug_Views,
@@ -344,6 +344,7 @@ Pipeline_Id :: enum {
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
 	Depth_Probe, Ui_Particles,
 	Points,
+	Overlay_Alpha, Overlay_Additive, Overlay_Multiply, // the layers of an instance by their blend (overlays.odin)
 }
 
 // A pipeline of a stage that traces rays, or of one with constants: the
@@ -464,9 +465,10 @@ Renderer_Desc :: struct {
 	pipeline_thread:       bool,
 	profile:               ^base.Profile, // the zones of the stages of a frame go to its ring jobs.OWNER while it records; nil: none
 	// While the pipelines it starts with are made (from seconds to minutes when
-	// the driver has none of them compiled), called on the calling thread about
-	// ten times a second with how many are. nil: renderer_init makes them on
-	// the calling thread too.
+	// the driver has none of them compiled), called on the calling thread at
+	// the pace of a frame with how many are: it may draw the window with
+	// renderer_startup_frame. nil: renderer_init makes them on the calling
+	// thread too.
 	on_pipelines:          proc(user: rawptr, made, total: int),
 	on_pipelines_user:     rawptr,
 }
@@ -483,8 +485,6 @@ Frame_Detail :: struct {
 }
 
 Frame_Desc :: struct {
-	pipeline_wait:      proc(user: rawptr) -> bool, // polls the window while waiting, false on close
-	pipeline_wait_user: rawptr,
 	camera: Camera,
 	detail: Frame_Detail,
 	camera_cut:bool,
@@ -497,7 +497,7 @@ Frame_Desc :: struct {
 	ui_textures:    []Ui_Texture_Draw, // world panels drawn into textures, before the views
 	effect_views:   []Effect_View,     // what extensions draw into textures (the Effect stage), before the UI that shows them
 	probes:         []Depth_Probe,     // pixels whose depth goes back to the CPU (renderer_depth_probes)
-	debug:  []Debug_Lines, // line batches, over the panels and under the screen UI
+	debug:  []Debug_Lines, // line and triangle batches, over the panels and under the screen UI
 	// Drawn only into the image renderer_capture reads, for a world that is
 	// not shown: nothing reaches the window, and the probe volume keeps the
 	// light of the world that is.
@@ -618,8 +618,6 @@ Renderer :: struct {
 	view_postprocesses:[VIEW_CAPACITY]Postprocess_List, // of each local view, by Camera.slot - 1
 	programs:        Program_Catalog, // of the shaders in use, read when first asked for
 	time,previous_time,delta_time:f32,
-	overlay_pipelines:[asset.Overlay_Blend]rhi.Pipeline,
-	overlay_hw_pipelines:[asset.Overlay_Blend]rhi.Pipeline,
 	blit_format:     rhi.Format,
 	linear_sampler:  rhi.Sampler,
 	point_sampler:   rhi.Sampler,
@@ -678,6 +676,7 @@ Renderer :: struct {
 	program_graphics:     [PROGRAM_GRAPHICS_CAPACITY]Program_Graphics, // the raster stages of Surface programs (program_stages.odin)
 	pipeline_thread:      ^Pipeline_Thread, // makes the variants of the stages, and the pipelines of programs with pipelines_async; nil: where they are asked for
 	pipelines_async:      bool, // Renderer_Desc.pipeline_thread
+	startup:              Startup_Screen, // while renderer_init makes the pipelines (renderer_startup_frame)
 	stats_readback:  [rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer,
 	cost:            Cost_State, // the count of a frame by mesh and material a request asked for (cost.odin)
 	ui_offscreen:    Ui_Offscreen_State,
@@ -809,7 +808,9 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 			return false
 		}
 	}
-	if !create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}, desc.on_pipelines, desc.on_pipelines_user) || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
+	created := create_pipelines(r, {.Any, tracer_wanted(r, r.settings)}, programs = true, progress = desc.on_pipelines, progress_user = desc.on_pipelines_user)
+	startup_screen_destroy(r)
+	if !created || !pipelines_init(r) || !dfg_build(r) || !display_build(r, DISPLAY_SDR) {return false}
 	hardware, made := tracer_settle(r, r.settings, retry = false)
 	if !made {return false}
 	r.hardware_rt = hardware
@@ -851,8 +852,6 @@ renderer_destroy :: proc(r: ^Renderer) {
 	pipelines_destroy(r)
 	program_graphics_destroy(r)
 	stage_pipelines_destroy(r)
-	for p in r.overlay_pipelines {if p!=0 {rhi.pipeline_destroy(d,p)}}
-	for p in r.overlay_hw_pipelines {if p!=0 {rhi.pipeline_destroy(d,p)}}
 	for b in r.ui_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.ui_shape_buffers {if b!=0 {rhi.buffer_destroy(d,b)}}
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
@@ -925,12 +924,20 @@ Pipeline_Make :: struct {
 	required: bool, // the renderer fails without it
 	graphics: bool,
 	desc:     rhi.Graphics_Pipeline_Desc,
+}
+
+// A pipeline create_pipelines makes into target.
+@(private)
+Pipeline_Build :: struct {
+	target:   ^rhi.Pipeline,
+	graphics: rhi.Graphics_Pipeline_Desc,
+	compute:  rhi.Compute_Pipeline_Desc, // made instead when it has a shader
 	cost:     int, // bytes of its code: the driver takes longer with more
 }
 
 @(private)
 Pipeline_List :: struct {
-	items: [2 * (len(Pipeline_Id) + len(asset.Overlay_Blend)) + PIPELINE_VARIANTS]Pipeline_Make, // a stage that traces rays lists one for each tracer; create_pipelines adds variants
+	items: [2 * len(Pipeline_Id) + PIPELINE_VARIANTS]Pipeline_Make, // a stage that traces rays lists one for each tracer; create_pipelines adds variants
 	count: int,
 }
 
@@ -941,9 +948,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	list.count = 0
 	// A stage that traces rays has a shader for each tracer (`//! variant hw`),
 	// whose pipelines are kept as variants; one that only a tracer runs, in r.pipelines.
-	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, required := true, twin := false) {
-		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays if twin else .Any), shaders = {shader, shader}, name = reflect.enum_string(id),
-			rays = rays, required = required})
+	compute :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, shader: Shader_Id, rays := Pipeline_Rays.Any, required := true, twin := false, constants := rhi.Shader_Constants{}) {
+		pipeline_listed(list, {id = id, target = pipeline_slot(r, id, rays if twin else .Any, constants), shaders = {shader, shader}, constants = constants,
+			name = reflect.enum_string(id), rays = rays, required = required && constants == {}})
 	}
 	traced :: proc(list: ^Pipeline_List, r: ^Renderer, id: Pipeline_Id, software, hardware: Shader_Id) {
 		compute(list, r, id, software, .Software, twin = true)
@@ -957,6 +964,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	}
 	compute(list, r, .Cull, .Cull_Comp)
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
+	// The variants a pass has no stage to fall back to while they are made
+	// (pipeline_of without them `optional`) are listed: made with the stages.
+	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp, constants = {CULL_CLUSTERS_COMP_CANDIDATES})
 	compute(list, r, .Cull_Bins, .Cull_Bins_Comp)
 	compute(list, r, .Cull_Stats_Fold, .Cull_Stats_Fold_Comp)
 	compute(list, r, .Bc_Reassemble, .Bc_Reassemble_Comp)
@@ -1002,12 +1012,15 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Exposure_Adapt, .Exposure_Adapt_Comp)
 	traced(list, r, .Reflect, .Reflect_Comp, .Reflect_Hw_Comp)
 	compute(list, r, .Reflect_Resolve, .Reflect_Resolve_Comp)
+	compute(list, r, .Reflect_Resolve, .Reflect_Resolve_Comp, constants = {REFLECT_RESOLVE_COMP_GLASS})
 	compute(list, r, .History_Scale, .History_Scale_Comp)
 	compute(list, r, .Air_Transmittance, .Air_Transmittance_Comp)
 	compute(list, r, .Air_Scattering, .Air_Scattering_Comp)
 	compute(list, r, .Air_Sky, .Air_Sky_Comp)
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
 	compute(list, r, .Glass_Levels, .Glass_Levels_Comp)
+	compute(list, r, .Translucent_Draws, .Translucent_Draws_Comp)
+	compute(list, r, .Translucent_Draws, .Translucent_Draws_Comp, constants = {TRANSLUCENT_DRAWS_COMP_CELLS})
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
 	// Only rays traced by software run them: they walk or refit the software BVH.
@@ -1066,20 +1079,21 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	traced(list, r, .Glass_Light, .Glass_Light_Comp, .Glass_Light_Hw_Comp)
 	traced(list, r, .Glass_Inside, .Glass_Inside_Comp, .Glass_Inside_Hw_Comp)
 	graphics(list, r, .Glass_Layer, {
-		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Layer_Frag],
+		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Layer_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG32_Uint, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
 		name = "glass layer",
 	})
 	graphics(list, r, .Glass_Layer_Layers, {
-		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Layer_Layers_Frag],
+		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Layer_Layers_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG32_Uint, 4 = .R32_Float, 5 = .RGBA8_Srgb, 6 = .RGBA32_Uint}, color_count = 7,
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
 		name = "glass layer with layers",
 	})
 	translucent := rhi.Graphics_Pipeline_Desc{
-		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Filter_Frag],
+		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Filter_Frag],
 		color_formats = {0 = .RGBA16_Float}, color_count = 1, blend = {0 = .Multiply},
+		depth_format = .D32_Float, depth_test = true, depth_compare = .Greater_Equal,
 		cull = .None, name = "translucent",
 	}
 	graphics(list, r, .Glass_Filter, translucent)
@@ -1177,6 +1191,10 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Debug_Lines, {
 		vertex = &r.shader_codes[.Debug_Vert], fragment = &r.shader_codes[.Debug_Frag],
 		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, blend = {0 = .Alpha}, topology = .Lines, name = "debug lines",
+	})
+	graphics(list, r, .Debug_Triangles, {
+		vertex = &r.shader_codes[.Debug_Vert], fragment = &r.shader_codes[.Debug_Frag],
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, blend = {0 = .Alpha}, cull = .Back, name = "debug triangles",
 	})
 	overlay_pipelines_list(r, list)
 }
@@ -1285,7 +1303,7 @@ variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	pipelines_list(r, &stages)
 	info := rhi.device_info(r.device)
 	for item in stages.items[:stages.count] {
-		if item.target == nil || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
+		if item.target == nil || item.constants != {} || item.graphics && item.rays == .Any || !pipeline_possible(info, item) {continue}
 		code := &r.shader_codes[item.shaders[1]]
 		for bits in u32(1) ..< u32(1) << uint(min(len(code.constants), rhi.MAX_SHADER_CONSTANTS)) {
 			if list.count == len(list.items) {break}
@@ -1301,11 +1319,14 @@ variants_listed :: proc(r: ^Renderer, list: ^Pipeline_List) {
 }
 
 // The variants of the tracer in use that are not made, asked of the pipeline
-// thread behind what frames ask for. One past the jobs of the thread is asked
-// before a later frame.
+// thread behind what frames ask for, with pipelines_async: those that spare
+// work, which a frame takes the stage without until they are made. One past
+// the jobs of the thread is asked before a later frame. Without
+// pipelines_async a frame makes the one it asks for (pipeline_of).
 @(private)
 pipeline_variants_ask :: proc(r: ^Renderer) {
 	r.variants_wanted = false
+	if !r.pipelines_async {return}
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
 	list: Pipeline_List
 	variants_listed(r, &list)
@@ -1330,53 +1351,65 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 	return (item.rays != .Hardware || info.features.ray_query) && (item.rays != .Software || SOFTWARE_TRACER) && (!item.clip || info.features.clip_distance)
 }
 
-// Makes the pipelines of r of the rays in make that it lacks and the device
-// can, with their variants, the costliest first, on a thread a core (half the logical processors):
-// the driver compiles each one for up to seconds. A transaction that may
-// allocate. Once r.reload_stop is set, from any thread, none more is made.
-// With progress they are made on a thread of their own while the calling one
-// reports how many are (Renderer_Desc.on_pipelines). False when one the
-// renderer needs is not there; those of rays traced by hardware are not needed
-// (tracer_missing).
+// Makes the pipelines of r of the rays wanted that it lacks and the device
+// can, the costliest first, on a thread a core (half the logical processors):
+// the driver compiles each one for up to seconds. The variants of the stages
+// that only spare work are left to the pipeline thread (pipeline_variants_ask).
+// programs: those of the stages of every Surface program of the shaders too
+// (programs_listed), so no frame draws a program as its row while they are
+// made. A transaction that may allocate. Once r.reload_stop is set, from any
+// thread, none more is made. With progress they are made on a thread of their
+// own while the calling one reports how many are (Renderer_Desc.on_pipelines),
+// after the pipeline of the screen UI, made first so it can draw
+// (renderer_startup_frame). False when one the renderer needs is not there;
+// those of rays traced by hardware are not needed (tracer_missing).
 @(private)
-create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays], progress: proc(user: rawptr, made, total: int) = nil, progress_user: rawptr = nil) -> bool {
+create_pipelines :: proc(r: ^Renderer, wanted: bit_set[Pipeline_Rays], programs := false, progress: proc(user: rawptr, made, total: int) = nil, progress_user: rawptr = nil) -> bool {
 	list: Pipeline_List
 	pipelines_list(r, &list)
-	variants_listed(r, &list)
 	info := rhi.device_info(r.device)
-	Work :: struct {
-		r:     ^Renderer,
-		list:  ^Pipeline_List,
-		order: [len(Pipeline_List{}.items)]int,
-		count: int,
-		made:  int, // atomic
-		done:  sync.Sema,
+	if progress != nil && r.pipelines[.Ui] == 0 {
+		for item in list.items[:list.count] {
+			if item.target != &r.pipelines[.Ui] {continue}
+			graphics, compute := pipeline_desc(r, item)
+			pipeline_make(r, item.target, graphics, compute, now = true)
+		}
 	}
-	work := Work{r = r, list = &list}
-	for &item, i in list.items[:list.count] {
-		if item.target == nil || item.rays not_in make || item.target^ != 0 || !pipeline_possible(info, item) {continue}
+	builds, no_builds := make([dynamic]Pipeline_Build, 0, list.count, r.allocator)
+	if no_builds != nil {
+		set_error(r, "pipelines: out of memory for their list")
+		return false
+	}
+	defer delete(builds)
+	for item in list.items[:list.count] {
+		if item.target == nil || item.rays not_in wanted || item.target^ != 0 || !pipeline_possible(info, item) {continue}
 		if v := variant_of(r, item.target); v != nil {
 			if pipeline_asked(r, item.target) {continue}
 			v.state = .Asked
 		}
-		for id in item.shaders[:2 if item.graphics else 1] {
-			item.cost += len(rhi.shader_code_bytes(r.shader_codes[id]))
+		graphics, compute := pipeline_desc(r, item)
+		if _, error := append(&builds, Pipeline_Build{item.target, graphics, compute, pipeline_cost(graphics, compute)}); error != nil {
+			set_error(r, "pipelines: out of memory for their list")
+			return false
 		}
-		at := work.count
-		for at > 0 && list.items[work.order[at - 1]].cost < item.cost {
-			work.order[at] = work.order[at - 1]
-			at -= 1
-		}
-		work.order[at] = i
-		work.count += 1
 	}
+	if programs && !programs_listed(r, &list, wanted, &builds) {
+		set_error(r, "pipelines: out of memory for the list of those of the programs")
+		return false
+	}
+	slice.sort_by(builds[:], proc(a, b: Pipeline_Build) -> bool {return a.cost > b.cost})
+	Work :: struct {
+		r:      ^Renderer,
+		builds: []Pipeline_Build,
+		made:   int, // atomic
+		done:   sync.Sema,
+	}
+	work := Work{r = r, builds = builds[:]}
 	run :: proc(work: ^Work, first, last: int, worker: int) {
 		r := work.r
-		for at in first ..< last {
+		for build in work.builds[first:last] {
 			if r.reload_stop != nil && sync.atomic_load(r.reload_stop) {return}
-			item := &work.list.items[work.order[at]]
-			graphics, compute := pipeline_desc(r, item^)
-			pipeline_make(r, item.target, graphics, compute, now = true)
+			pipeline_make(r, build.target, build.graphics, build.compute, now = true)
 			sync.atomic_add(&work.made, 1)
 		}
 	}
@@ -1384,38 +1417,49 @@ create_pipelines :: proc(r: ^Renderer, make: bit_set[Pipeline_Rays], progress: p
 	// them on a thread that is not the owner of r.jobs.
 	run_all :: proc(work: ^Work) {
 		defer sync.sema_post(&work.done, 1)
+		count := len(work.builds)
 		js: jobs.Job_System
-		if jobs.system_init(&js, {threads = clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(work.count, 1))) - 1}) {
-			jobs.parallel_for(&js, jobs.OWNER, work.count, 1, run, work)
+		if jobs.system_init(&js, {threads = clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(count, 1))) - 1}) {
+			jobs.parallel_for(&js, jobs.OWNER, count, 1, run, work)
 			jobs.system_destroy(&js)
 		} else {
-			run(work, 0, work.count, jobs.OWNER)
+			run(work, 0, count, jobs.OWNER)
 		}
 	}
-	maker := thread.create_and_start_with_poly_data(&work, run_all) if progress != nil && work.count > 0 else nil
+	maker := thread.create_and_start_with_poly_data(&work, run_all) if progress != nil && len(builds) > 0 else nil
 	if maker == nil {
 		run_all(&work)
 	} else {
-		for !sync.sema_wait_with_timeout(&work.done, PIPELINE_POLL_INTERVAL) {
-			progress(progress_user, sync.atomic_load(&work.made), work.count)
+		for !sync.sema_wait_with_timeout(&work.done, PIPELINE_PROGRESS_INTERVAL) {
+			progress(progress_user, sync.atomic_load(&work.made), len(builds))
 		}
 		thread.join(maker)
 		thread.destroy(maker)
 	}
 	for item in list.items[:list.count] {
-		if item.rays == .Hardware || item.rays not_in make || !item.required || !pipeline_possible(info, item) || item.target == nil || item.target^ != 0 {continue}
+		if item.rays == .Hardware || item.rays not_in wanted || !item.required || !pipeline_possible(info, item) || item.target == nil || item.target^ != 0 {continue}
 		set_error(r, "pipeline %s: %s", pipeline_name(r, item), rhi.device_error(r.device))
 		return false
 	}
 	return true
 }
 
+// Bytes of the code of the shaders of a pipeline: the driver takes longer with more.
+@(private)
+pipeline_cost :: proc(graphics: rhi.Graphics_Pipeline_Desc, compute: rhi.Compute_Pipeline_Desc) -> (cost: int) {
+	if compute.shader != nil {return len(rhi.shader_code_bytes(compute.shader^))}
+	if graphics.vertex != nil {cost += len(rhi.shader_code_bytes(graphics.vertex^))}
+	if graphics.fragment != nil {cost += len(rhi.shader_code_bytes(graphics.fragment^))}
+	return
+}
+
 // Threads that make the pipelines of a renderer at most, with the one that asks.
 @(private)
 PIPELINE_THREADS_MAX :: 16
 
+// How often create_pipelines reports to Renderer_Desc.on_pipelines: a frame.
 @(private)
-PIPELINE_POLL_INTERVAL :: 100 * time.Millisecond
+PIPELINE_PROGRESS_INTERVAL :: 16 * time.Millisecond
 
 @(private)
 pipeline_name :: proc(r: ^Renderer, item: Pipeline_Make) -> string {
@@ -1450,7 +1494,7 @@ tracer_wanted :: proc(r: ^Renderer, settings: Settings) -> Pipeline_Rays {
 @(private)
 tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardware: bool, ok: bool) {
 	if tracer_wanted(r, settings) == .Hardware {
-		if retry && tracer_missing(r, .Hardware) != "" {create_pipelines(r, {.Hardware})}
+		if retry && tracer_missing(r, .Hardware) != "" {create_pipelines(r, {.Hardware}, programs = true)}
 		missing := tracer_missing(r, .Hardware)
 		if missing == "" {r.hardware_rt_note = ""; return true, true}
 		r.hardware_rt_note = fmt.bprintf(r.note_buffer[:], "the pipeline %s of rays traced by hardware was not made (%s): rays are traced by software. A newer GPU driver may make it", missing, rhi.device_error(r.device))
@@ -1461,7 +1505,7 @@ tracer_settle :: proc(r: ^Renderer, settings: Settings, retry: bool) -> (hardwar
 		return false, false
 	}
 	if tracer_missing(r, .Software) == "" {return false, true}
-	if !create_pipelines(r, {.Software}) || tracer_missing(r, .Software) != "" {
+	if !create_pipelines(r, {.Software}, programs = true) || tracer_missing(r, .Software) != "" {
 		set_error(r, "the pipeline %s of rays traced by software was not made (%s). Freeing GPU memory or a newer GPU driver may make it", tracer_missing(r, .Software), rhi.device_error(r.device))
 		return false, false
 	}

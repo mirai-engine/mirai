@@ -379,6 +379,13 @@ gizmo_drag :: proc(s:^Session,w:core.World_Ref) {
         case .Move:
             if item.flat {return}
             p.position=mm.transform_inverse_point(item.parent,item.world.position+move)
+            // Moved by its center alone, what sits on surfaces goes onto the one under the pointer.
+            if drag.handle==.Center && len(gz.items)==1 && surface_entity(s,w,item.entity) {
+                if hit:=pick_ray(s,w,viewport_ray(v,v.pointer),batches=true);hit.entity!=core.NONE && hit.entity!=item.entity {
+                    p.position=mm.transform_inverse_point(item.parent,hit.position)
+                    p.rotation=linalg.normalize(conj(item.parent.rotation)*surface_rotation(item.world.rotation,hit.normal))
+                }
+            }
         case .Rotate:
             if item.flat {return}
             local_axis:=mm.quat_rotate(conj(item.parent.rotation),drag.axes[k])

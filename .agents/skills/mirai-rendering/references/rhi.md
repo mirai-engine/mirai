@@ -320,7 +320,8 @@ For a renderer that generates frames (`rhi/present.odin`):
   wrote there since this one read or wrote it.
 - Reading it removes the staging files of writers that ended (`serial.file_remove_stale`); that
   of a process that runs stays. `host` uses `pipelines.bin` in the
-  [project user folder](../../mirai-core/references/host.md#the-application).
+  [project user folder](../../mirai-core/references/host.md#the-application); the headless
+  device of the texture cook keeps its own, so an import does not compile its encoders again.
 - Metal shares library and function between identical sources; the caller may free `Shader_Code`
   after creating the pipeline.
 

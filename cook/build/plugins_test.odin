@@ -335,6 +335,27 @@ a_plugin_that_imports_a_plugin_it_does_not_depend_on_is_an_error :: proc(t:^test
     testing.expect(t,!project.plugin_reaches(p.plugins,user,"absent",true))
 }
 
+// The row of a step in info.steps says who declares it: a plugin by its
+// name, and not the game.
+@(test)
+a_plugin_step_says_its_plugin :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=base.test_folder(t,"plugin-step-owner")
+    if folder=="" {return}
+    engine,game:=fixture_write(t,folder,{
+        {"engine/core/data.odin","package core\n\nRef :: struct($T:typeid) {ptr:^T}\n\n@(storage)\nClock :: struct {tick:u64}\n"},
+        {"engine/plugins/thing/plugin.mirai",`{"name": "thing", "version": "1.0.0", "parts": ["Runtime"]}`},
+        {"engine/plugins/thing/runtime/thing.odin","package thing\n\nimport \"mirai:core\"\n\n@(step=\"fixed\")\nthing_tick :: proc(clock:core.Ref(core.Clock)) {}\n"},
+        {"game/project.mirai",`{"name": "Owner", "plugins": ["thing"]}`},
+    })
+    p,error:=project.open(game,engine)
+    if !testing.expectf(t,error.code==.None,"the project opens: %v",error) {return}
+    world:=world_generate(&p,context.temp_allocator)
+    if !testing.expectf(t,len(world.errors)==0,"%v",world.errors) {return}
+    row:=step_written(world.game_world,"thing_tick")
+    testing.expect(t,strings.contains(row,`plugin="thing"`) && strings.contains(row,"game=false"),row)
+}
+
 // A step of a plugin library receives a @(params) of core: the world builds
 // it in the call, and through the declarations, which keep the attribute,
 // what calls the library passes it by value to the step that writes through it.

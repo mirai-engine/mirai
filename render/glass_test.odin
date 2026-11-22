@@ -3,6 +3,7 @@ package mirai_render
 import "core:math"
 import "core:mem"
 import "core:testing"
+import "mirai:render/abi"
 import "mirai:rhi"
 
 // No jitter and no probes: a pixel shows one surface point, lit by the sun
@@ -594,10 +595,18 @@ glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 	scene_given(r, {floor, pane, wall}, nil, SUN, {})
 	hidden := shown(t, &f, above, {0, 1, 0}, 4)
 	testing.expectf(t, abs(hidden.r - hidden.g) < 0.01 && hidden.r > 0.5, "the wall hides the glass: %v", hidden)
+	// The draw of the pane, the one blended instance of the view (translucent_draws.comp).
+	pane_indices :: proc(f: ^Fixture) -> u32 {
+		draw: [1]rhi.Draw_Indexed_Indirect
+		if !rhi.buffer_read_slice(f.device, f.renderer.scene.translucent_draws, 0, draw[:]) {return max(u32)}
+		return draw[0].index_count
+	}
+	testing.expect_value(t, pane_indices(&f), 0)
 	scene_given(r, {floor, pane}, nil, SUN, {})
 	first := shown(t, &f, above, {0, 1, 0}, 1)
 	settled := shown(t, &f, above, {0, 1, 0}, 3)
 	testing.expectf(t, first.g < 0.6 * first.r && abs(first.r - settled.r) < 0.02 && abs(first.g - settled.g) < 0.02, "the glass is there in the first frame without the wall: %v, then %v", first, settled)
+	testing.expectf(t, pane_indices(&f) > 0, "without the wall the pane is drawn")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -782,5 +791,56 @@ glass_seen_from_inside_bends_out_reflects_past_the_critical_angle_absorbs_and_sc
 		seen := shown(t, &f, outside, {0, -1.9, 0})
 		testing.expectf(t, seen.g > 2 * seen.b, "%v: from outside the floor shows through the top: %v", provider, seen)
 	}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// A blended sheet among many lights, with and without shadows, takes the
+// light of every one that reaches each of its points: the same whether the
+// lists of its instance hold them (translucent_draws.comp) or, a wide sheet
+// whose box reaches more than a list holds, those of the cells it is split into.
+@(test)
+blended_light_is_the_same_from_the_lists_of_its_instance_as_from_those_of_its_cells :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 64, 64, glass_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	decal := DEFAULT_MATERIAL
+	decal.base_color = {0.8, 0.8, 0.8}
+	decal.opacity = 0.5
+	decal.alpha_mode = .Blend
+	materials_set(r, {decal})
+	sheet := sheet_mesh(r)
+	lights := make([dynamic]Light_Desc, context.temp_allocator)
+	for x in 0 ..< 20 {
+		for z in 0 ..< 20 {
+			append(&lights, Light_Desc{position = {-11.4 + 1.2 * f32(x), 1, -11.4 + 1.2 * f32(z)}, color = {1, 0.8, 0.6},
+				intensity = 2, range = 1.8, shadowless = (x + z) % 3 != 0})
+		}
+	}
+	camera := Camera{position = {0, 4, 0.01}, forward = {0, -1, 0}, up = {0, 0, -1}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	at := Vec3{0.3, 0.5, 0.2}
+	seen: [2]Vec3
+	cuts, lists, sides: [2]u32
+	for side, i in ([2]f32{2, 40}) {
+		floor := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({}, {30, 1, 30}), tint = {1, 1, 1}}
+		blended := Instance_Desc{object_id = 2, mesh = sheet, transform = placed(at, {side, 1, side}), material = 1, tint = {1, 1, 1}}
+		testing.expect(t, scene_given(r, {floor, blended}, lights[:], {}, {}), r.error)
+		seen[i] = shown(t, &f, camera, at, 4)
+		cut: [1]u32
+		testing.expect(t, rhi.buffer_read_slice(f.device, r.scene.translucent_cuts, 0, cut[:]))
+		cuts[i] = cut[0]
+		words := make([]u32, (abi.TRANSLUCENT_LIST_COLUMNS * LIGHT_LIST_TILE) * (u32(r.scene.translucent_draws_capacity + abi.TRANSLUCENT_CELLS) / abi.TRANSLUCENT_LIST_COLUMNS) * LIGHT_LIST_ROWS, context.temp_allocator)
+		testing.expect(t, golden_read_texture(f.device, r.scene.translucent_lists, mem.slice_data_cast([]u8, words)))
+		lists[i] = words[0]
+		cells: [2][2]u32
+		testing.expect(t, rhi.buffer_read_slice(f.device, r.scene.translucent_entries, 0, cells[:]))
+		sides[i] = cells[1].y
+	}
+	WALK :: 0xFFFFFFFF
+	testing.expectf(t, cuts[0] != WALK && lists[0] != WALK && lists[0] > 0, "the lists of the sheet alone hold its lights: %v nodes with shadows, %v without", cuts[0], lists[0])
+	testing.expectf(t, (cuts[1] == WALK || lists[1] == WALK) && sides[0] == 0x010101 && sides[1] != 0x010101,
+		"the box of the wide sheet reaches more than a list holds (%v, %v) and is split (%x), the other not (%x)", cuts[1], lists[1], sides[1], sides[0])
+	delta := seen[0] - seen[1]
+	testing.expectf(t, seen[0].x > 0 && max(abs(delta.x), abs(delta.y), abs(delta.z)) <= 1e-3 * seen[0].x, "the same light from the lists of the sheet and of a cell: %v and %v", seen[0], seen[1])
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

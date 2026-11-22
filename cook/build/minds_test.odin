@@ -70,7 +70,7 @@ Zombie_Act :: enum u8 {Wander,Chase,Circle}
         call=call[:strings.index(call,"\n}\n")]
         testing.expect(t,strings.contains(call,"if w.network.role==.Client {return}"),call)
         testing.expect(t,strings.contains(call,"p_core.table_settle(&w.hunger,&w.entities)"),call)
-        testing.expect(t,strings.contains(text,`steps[0]={"zombie_think","game",{.Fixed,},{.Game,},call_zombie_think}`),"its step is named after its think")
+        testing.expect(t,strings.contains(step_written(text,"zombie_think"),"call=call_zombie_think"),"its step is named after its think")
     }
 }
 

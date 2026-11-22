@@ -1,6 +1,9 @@
 #include "native.slang"
 // highlight: the mask of the editor's highlight, drawn without the jitter of the view.
 //! constant highlight MIRAI_EDITOR_HIGHLIGHT
+// blended: the passes of the blended triangles (glass and translucents) draw
+// those alone, and collapse the clusters of the other materials of the mesh.
+//! constant blended MIRAI_BLENDED_ONLY
 // A draw of the clusters of an instance of the scene (glass, overlays, the
 // highlight), indexed by where the frame listed its mesh (render/mesh_draws.odin):
 // the instance of the draw is that of the scene and the vertex its cluster
@@ -26,7 +29,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     bool drawn = MIRAI_EDITOR_HIGHLIGHT ? cluster_finest_resident(mesh, c) : cluster_in_cut(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
     Material m = materials[material_of(instance_row(index), inst, cluster_material(mesh, c))].shared;
     uint program = MIRAI_EDITOR_HIGHLIGHT && m.alpha_mode != ALPHA_BLEND ? 0u : m.program_id;
-    drawn = drawn && (draw.program == INVALID || program == draw.program);
+    drawn = drawn && (draw.program == INVALID || program == draw.program) && (!MIRAI_BLENDED_ONLY || m.alpha_mode == ALPHA_BLEND);
     if (!drawn) {
         // Outside the volume of the view: the triangle has no area to raster.
         output.position = float4(2.0, 2.0, 2.0, 1.0);

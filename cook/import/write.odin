@@ -662,7 +662,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
 
     jobs:=make([dynamic]Texture_Job,context.temp_allocator)
     for image,i in model.images {
-        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,alpha_fill=image.alpha_fill,channels=image.channels,index=i,version=model.version,cooked=image.cooked}
+        job:=Texture_Job{name=image.name,srgb=image.srgb,normal_map=image.normal_map,green_down=image.green_down,keep_precision=image.keep_precision,alpha_cutoff=image.alpha_cutoff,alpha_fill=image.alpha_fill,channels=image.channels,index=i,version=model.version}
         if image.path!="" {
             data,read_error:=read_whole(image.path)
             if read_error!=.None {
@@ -723,6 +723,7 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         for &kept,i in cook_meshes {kept=given_meshes[i] || kept_meshes[i]!={}}
         model_cook(model,w.options,cook_meshes,kept_images)
     }
+    for &job in jobs {job.cooked=model.images[job.index].cooked}
 
     image_ids:=make([]base.Asset_Id,len(model.images),w.allocator)
     w.report.image_ids=image_ids

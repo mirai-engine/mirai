@@ -196,28 +196,52 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	testing.expectf(t, rhi.device_validation_errors(device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(device), rhi.device_validation_message(device))
 }
 
-// The variants are made with the renderer. One the device refuses is asked
-// for once, not at every frame: the frames take the stage without its
+// The renderer starts with the variants a pass has no stage to fall back to,
+// and leaves those that only spare work for later: the pipeline thread, or
+// without pipelines_async the frame that asks. One the device refuses is
+// asked for once, not at every frame: the frames take the stage without its
 // constant, and Stats.problem says so.
 @(test)
-variants_are_made_with_the_renderer_and_a_refused_one_once :: proc(t: ^testing.T) {
+variants_that_spare_work_come_later_and_a_refused_one_once :: proc(t: ^testing.T) {
 	f: Fixture
 	if !fixture_init(t, &f, 64, 48, DEFAULT_SETTINGS) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
+	testing.expect(t, pipeline_slot(r, .Reflect_Resolve, .Any, {REFLECT_RESOLVE_COMP_GLASS})^ != 0 && pipeline_slot(r, .Cull_Clusters, .Any, {CULL_CLUSTERS_COMP_CANDIDATES})^ != 0, "the renderer starts with the variants a pass cannot go without")
 	unlayered := pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})
-	testing.expect(t, unlayered^ != 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ != 0, "the renderer starts with the variants without layers")
+	testing.expect(t, unlayered^ == 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ == 0, "and without those that spare work")
 
 	// As a change of the shaders that the driver fails to compile.
 	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Composite_Comp].name, {COMPOSITE_COMP_UNLAYERED})
 	defer rhi.device_refuse_pipeline(f.device, "", {})
-	rhi.pipeline_destroy(f.device, unlayered^)
-	unlayered^ = 0
-	pipelines_drop(r)
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 100 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expectf(t, rhi.device_refused_pipelines(f.device) == 1, "the refused variant was asked for %d times in 100 frames", rhi.device_refused_pipelines(f.device))
 	testing.expectf(t, strings.contains(renderer_stats(r).problem, "refused the pipeline Composite"), "the frames say it: %s", renderer_stats(r).problem)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// With on_pipelines the renderer makes the pipeline of the UI before the
+// others, and the screen that reports them draws UI alone with it, its images
+// gone with renderer_init.
+@(test)
+startup_screen_draws_ui_with_the_pipeline_made_first :: proc(t: ^testing.T) {
+	f: Fixture
+	reported := 0
+	report :: proc(user: rawptr, made, total: int) {(^int)(user)^ += 1}
+	if !fixture_init(t, &f, 64, 48, desc = {on_pipelines = report, on_pipelines_user = &reported}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	testing.expect(t, r.startup.target == 0 && r.startup.lut == 0 && r.startup.materials == 0, "renderer_init took the images of the screen")
+	color := Vec4{0.9, 0.2, 0.1, 1}
+	square := [6]Ui_Vertex{
+		{position = {4, 4, 0}, color = color}, {position = {28, 4, 0}, color = color}, {position = {28, 20, 0}, color = color},
+		{position = {4, 4, 0}, color = color}, {position = {28, 20, 0}, color = color}, {position = {4, 20, 0}, color = color},
+	}
+	layers := [1]Ui_Layer{{vertices = square[:]}}
+	renderer_startup_frame(r, layers[:], 64, 48, {32, 24}, {0.06, 0.07, 0.08, 1})
+	testing.expect(t, r.startup.target != 0 && r.startup.size == {64, 48}, rhi.device_error(f.device))
+	startup_screen_destroy(r)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

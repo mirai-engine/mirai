@@ -8,6 +8,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/build"
 import "mirai:cook/author"
 import "mirai:cook/textures"
 import "mirai:core"
@@ -136,6 +137,7 @@ Options :: struct {
     share:int,       // >0: shares the scene on this port; <0: the default one
     join:string,     // an address: enters the session of another editor
     launcher:bool,   // only the projects of the machine, to open one (projects.odin)
+    from_launcher:bool, // a launcher opened it: a Cancel of the shaders it starts with goes back to one
     gpu_turn:uintptr, // the handle of the turn of the GPU the tool gave it (gpu_turn.odin)
 }
 
@@ -428,6 +430,11 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     mounts:=[1]asset.Registry_Mount{{folder=project.path(engine,EDITOR_ASSETS,allocator=context.temp_allocator),prefix=EDITOR_ASSETS_PREFIX}}
     store_root:=options.store!=""?project.path_absolute(options.store,context.temp_allocator):store.default_root(context.temp_allocator)
     windowed:=!options.headless
+    back:Launcher_Return
+    if options.from_launcher && engine!="" {
+        program,_:=os.get_executable_path(context.temp_allocator)
+        back={program=program,template=build.template_folder(engine,allocator=context.temp_allocator),args=options_passed(args)}
+    }
     app,app_error:=host.app_create({
         info=info,root=root,engine_root=engine,threads=jobs.THREADS_AUTO,
         window=windowed,gpu=!options.no_gpu,gpu_validation=options.validation,
@@ -440,6 +447,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         asset_mounts=mounts[:],shaders_root=root,store_root=store_root,
         pipeline_cache=project.path(project.machine_folder(engine,context.temp_allocator),project.PIPELINES_FILE,allocator=context.temp_allocator) if engine!="" else "",
         gpu_late_record=project.path(root,".mirai",GPU_LATE_RECORD,allocator=context.temp_allocator) if has_project else "",
+        on_pipelines_cancel=launcher_return if back.program!="" else nil,on_pipelines_cancel_user=&back,
     })
     if app==nil {
         fmt.eprintfln("mirai: the editor could not start: %v",app_error)
@@ -1309,6 +1317,7 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
         case "--no-api":     o.no_api=true
         case "--name":       o.name=value(args,&i) or_return
         case "--launcher":   o.launcher=true
+        case "--from-launcher": o.from_launcher=true
         case "--join":       o.join=value(args,&i) or_return
         case "--share":
             o.share=-1
