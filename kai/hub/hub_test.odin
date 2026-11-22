@@ -219,6 +219,53 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         testing.expectf(t,a.status==v.status && strings.contains(a.body,v.has),"GET %s: %d %s",v.path,a.status,a.body[:min(len(a.body),160)])
         expect_clean(t,a,P,Q)
     }
+    // The frontend: every file with its type and nothing that would replace the policy every
+    // answer carries, nothing the policy blocks (inline script or style, eval, modules from
+    // elsewhere), and the page for a path of its router.
+    testing.expect(t,strings.contains(SECURITY_HEADERS,"script-src 'self'; style-src 'self'"),"the policy allows this origin's scripts and styles alone")
+    web:=#load_directory("web")
+    names:=make([dynamic]string,context.temp_allocator)
+    for w in web {append(&names,w.name)}
+    testing.expect(t,slice.contains(names[:],"index.html") && slice.contains(names[:],"app.js") && slice.contains(names[:],"vue.js"),"the frontend is embedded")
+    TYPES :: [?][2]string{{".html","text/html; charset=utf-8"},{".js","text/javascript; charset=utf-8"},{".css","text/css; charset=utf-8"}}
+    for w in web {
+        a:=call(f,"GET",fmt.tprintf("/%s",w.name))
+        want:=""
+        for x in TYPES {
+            if strings.has_suffix(w.name,x[0]) {want=x[1]}
+        }
+        testing.expectf(t,a.status==200 && a.content_type==want && a.body==string(w.data) && a.headers=="","%s is served as %q: %d %q",w.name,want,a.status,a.content_type)
+        text:=string(w.data)
+        for banned in ([?]string{"eval(","new Function","<style",`style="`,"javascript:","document.write"}) {
+            testing.expectf(t,!strings.contains(text,banned),"%s holds no %q",w.name,banned)
+        }
+        if strings.has_suffix(w.name,".html") {
+            rest:=text
+            for at:=strings.index(rest,"<script");at>=0;at=strings.index(rest,"<script") {
+                tag:=rest[at:]
+                tag=tag[:strings.index_byte(tag,'>')+1]
+                testing.expectf(t,strings.contains(tag,`src="/`) && strings.contains(tag,`type="module"`),"a script of %s is a module of this origin: %s",w.name,tag)
+                rest=rest[at+len(tag):]
+            }
+        }
+        if strings.has_suffix(w.name,".js") {
+            rest:=text
+            for at:=strings.index(rest," from '");at>=0;at=strings.index(rest," from '") {
+                rest=rest[at+len(" from '"):]
+                specifier:=rest[:strings.index_byte(rest,'\'')]
+                testing.expectf(t,strings.has_prefix(specifier,"./") && slice.contains(names[:],specifier[2:]),"%s imports %q, a file beside it",w.name,specifier)
+            }
+        }
+        if strings.has_suffix(w.name,".css") {
+            testing.expectf(t,!strings.contains(text,"url(") && !strings.contains(text,"@import"),"%s loads nothing",w.name)
+        }
+    }
+    for path in ([?]string{"/",fmt.tprintf("/p/%s/tree",P),fmt.tprintf("/proposal/%s",hex(f.proposal[:]))}) {
+        a:=call(f,"GET",path)
+        testing.expectf(t,a.status==200 && strings.has_prefix(a.content_type,"text/html") && strings.contains(a.body,`src="/app.js"`),"GET %s answers the page: %d",path,a.status)
+    }
+    testing.expect(t,call(f,"GET","/missing.js").status==404,"a file that is not there is no page")
+
     file:=call(f,"GET",fmt.tprintf("/api/projects/%s/file?path=bin.dat",P))
     testing.expect(t,strings.contains(file.headers,"sandbox") && strings.contains(file.headers,"attachment"),"a binary file is an attachment, sandboxed")
     // The private project and member routes answer an anonymous client nothing.
@@ -302,7 +349,7 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     stacks:=call(f,"GET",fmt.tprintf("/api/projects/%s/stacks",P),cookie=cookie)
     testing.expectf(t,strings.contains(stacks.body,"alice/") && strings.contains(stacks.body,":main"),"stacks are <handle>/<device>:<bookmark>: %s",stacks.body)
     proposal:=call(f,"GET",fmt.tprintf("/api/proposals/%s",hex(f.proposal[:])),cookie=cookie)
-    testing.expectf(t,strings.contains(proposal.body,change) && strings.contains(proposal.body,"\"blocked\""),"the proposal's stack: %s",proposal.body)
+    testing.expectf(t,strings.contains(proposal.body,change) && strings.contains(proposal.body,"\"blocked\"") && strings.contains(proposal.body,`"opener_name":"alice"`),"the proposal's stack and opener: %s",proposal.body)
 
     // A verdict: the server drafts the bytes, the browser signs their BLAKE3.
     Draft_Answer :: struct {unsigned:string,author_ctx:string}
@@ -386,9 +433,29 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         state=call(f,"POST",fmt.tprintf("/api/approvals/%s/state",id),fmt.tprintf(`{{"secret":"%s"}}`,ap.secret))
         testing.expect(t,state.cookie!="","the browser's session")
         who:=call(f,"GET","/api/session",cookie=state.cookie)
-        testing.expect(t,strings.contains(who.body,hex(f.alice.user[:])) && strings.contains(who.body,"\"passkey\":false"),"it is alice's, without a passkey")
+        testing.expect(t,strings.contains(who.body,hex(f.alice.user[:])) && strings.contains(who.body,"\"passkey\":null"),"it is alice's, without a passkey")
         again:=call(f,"POST",fmt.tprintf("/api/approvals/%s/state",id),fmt.tprintf(`{{"secret":"%s"}}`,ap.secret))
         testing.expect(t,again.cookie=="","a login is given once")
+
+        // A write of that session: the device signs it, and its agent may bring the entry to
+        // the node before its answer does.
+        write:Approval_Answer
+        asked:=fmt.tprintf(`{{"kind":"entry","draft":{{"type":"proposal_comment","log":"%s","text":"From a device"}}}}`,hex(f.proposal[:]))
+        if json_read(t,call(f,"POST","/api/approvals",asked,state.cookie),&write) {
+            write_ask:Approval_Ask
+            json_read(t,call(f,"GET",fmt.tprintf("/api/approvals/%s",write.id)),&write_ask)
+            signed,_,write_why:=approve_answer(&f.second,&write_ask,f.hub.origin)
+            testing.expectf(t,write_why=="",write_why)
+            synced:kai.Log
+            kai.log_init(&synced,f.proposal,context.temp_allocator)
+            testing.expect_value(t,kai.log_open(&f.second.store,&synced,f.proposal,.Proposal),kai.Error.None)
+            kai.log_save(&f.alice.store,&synced)
+            testing.expect_value(t,store.commit(&f.alice.store),store.Error.None)
+            answer:=call(f,"POST",fmt.tprintf("/api/approvals/%s",write.id),string(signed))
+            testing.expectf(t,answer.status==200,"an entry the node holds already is approved: %d %s",answer.status,answer.body)
+            polled:=call(f,"POST",fmt.tprintf("/api/approvals/%s/state",write.id),fmt.tprintf(`{{"secret":"%s"}}`,write.secret))
+            testing.expectf(t,strings.contains(polled.body,`"approved"`) && strings.contains(polled.body,`"address"`),"the browser learns where it is kept: %s",polled.body)
+        }
     }
     // And a passkey alice's browser made, which the device adds to her user.
     alice_key:=passkey_make()
@@ -404,7 +471,8 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         b:=call(f,"POST",fmt.tprintf("/api/approvals/%s",ap.id),string(body))
         testing.expectf(t,b.status==200,"the Web_Key_Add is kept: %d %s",b.status,b.body)
         who:=call(f,"GET","/api/session",cookie=sign_in(t,f,&alice_key))
-        testing.expect(t,strings.contains(who.body,hex(f.alice.user[:])) && strings.contains(who.body,"\"passkey\":true"),"the new passkey signs alice in")
+        web_key:=kai.web_key_id(passkey_cose(&alice_key),RP)
+        testing.expect(t,strings.contains(who.body,hex(f.alice.user[:])) && strings.contains(who.body,fmt.tprintf("\"passkey\":\"%s\"",hex(web_key[:]))),"the new passkey signs alice in, as the author its entries name")
     }
 }
 
