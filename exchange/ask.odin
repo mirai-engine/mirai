@@ -75,13 +75,20 @@ want_begin :: proc(x:^Exchange,i:int) {
     w.state,w.total,w.here=.Asking,-1,0
     w.walking,w.walked,w.blocked,w.walk_job,w.shared,w.depth=false,false,false,false,false,0
     w.settling,w.committing=false,false
+    if w.rootless {
+        w.rootless=false
+        x.rootless-=1
+    }
     order_place(x,i)
     if store.chunk_here(x.desc.store,w.address) {
         // Its owner reads the size of a root here from the store.
         if !w.measure {want_walk_root(x,i)}
         return
     }
-    need_add(x,i,.Root,w.address,0,0)
+    if !need_add(x,i,.Root,w.address,0,0) {
+        w.rootless=true
+        x.rootless+=1
+    }
 }
 
 // Starts the walk of a want at its root, which is here: a job reads it.
@@ -97,6 +104,10 @@ want_walk_root :: proc(x:^Exchange,i:int) {
 want_release :: proc(x:^Exchange,i:int) {
     needs_clear(x,i)
     w:=&x.wants[i]
+    if w.rootless {
+        w.rootless=false
+        x.rootless-=1
+    }
     if w.settling {
         w.settling=false
         x.settling-=1
@@ -218,13 +229,13 @@ need_find :: proc(x:^Exchange,address:store.Hash) -> int {
     return int(x.need_slots[need_slot(x,address)])
 }
 
-// Records a chunk want i lacks; nothing when the table is full, so the walk
-// stops there and finds it again later.
+// Records a chunk want i lacks. False when the table is full: nothing is
+// recorded, and the caller makes the want find it again (walk_take, want_begin).
 @(private)
-need_add :: proc(x:^Exchange,i:int,kind:Need_Kind,address:store.Hash,level:int,size:u64) {
-    if x.need_count==len(x.needs) {return}
+need_add :: proc(x:^Exchange,i:int,kind:Need_Kind,address:store.Hash,level:int,size:u64) -> bool {
+    if x.need_count==len(x.needs) {return false}
     slot:=need_slot(x,address)
-    if x.need_slots[slot]>=0 {return}
+    if x.need_slots[slot]>=0 {return true}
     k:=x.need_free[len(x.needs)-1-x.need_count]
     x.need_count+=1
     x.need_serial+=1
@@ -238,6 +249,22 @@ need_add :: proc(x:^Exchange,i:int,kind:Need_Kind,address:store.Hash,level:int,s
     x.free+=1
     x.need_slots[slot]=k
     x.dirty=true
+    return true
+}
+
+// The roots of wants that found the table of needs full, asked once it has room.
+@(private)
+rootless_ask :: proc(x:^Exchange) {
+    if x.rootless==0 || x.need_count==len(x.needs) {return}
+    for k in 0..<x.want_count {
+        i:=x.order[k]
+        w:=&x.wants[i]
+        if !w.rootless {continue}
+        if w.state==.Asking && !w.walking && !need_add(x,i,.Root,w.address,0,0) {return}
+        w.rootless=false
+        x.rootless-=1
+        attend(x,i)
+    }
 }
 
 @(private)

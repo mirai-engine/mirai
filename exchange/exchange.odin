@@ -147,7 +147,8 @@ Want :: struct {
     blocked:bool,    // the walk waits for the node of the entry at the top of its stack
     waiting_for:store.Hash, // that node
     walk_job:bool,   // a walk job holds the stack
-    shared:bool,     // the walk passed a chunk another want needs
+    shared:bool,     // the walk passed a chunk another want needs, or one a full table of needs did not take
+    rootless:bool,   // its root is not here and a full table of needs did not take it: asked once there is room
     settling:bool,   // complete once the batch that holds its last chunk is committed
     committing:bool, // in the commit job running
 }
@@ -275,6 +276,7 @@ Exchange :: struct {
     need_free:[]i32,
     need_count:int,
     need_serial:u32,
+    rootless:int,     // wants whose root waits for room in the table of needs
     peers:[]Peer,
     queries:[]Query_Slot,
     want_slots:[]i32, // open addressing by address, -1 empty
@@ -555,6 +557,7 @@ update :: proc(x:^Exchange,now:f64) {
         control_flush(x,i)
         if !p.bad {serve_pump(x,i)}
     }
+    rootless_ask(x)
     asking(x)
     settle(x)
     queries_send(x)

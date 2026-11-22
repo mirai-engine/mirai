@@ -531,7 +531,9 @@ walk_graft :: proc(x:^Exchange,wi:int,k:^Walker) {
     if w.depth==0 {w.walked=true}
 }
 
-// Records what a walk found that is not asked already.
+// Records what a walk found that is not asked already. What a full table of
+// needs does not take, the walk has passed: the want walks again from its root
+// once its needs arrived, as for a chunk another want needs.
 @(private)
 walk_take :: proc(x:^Exchange,wi:int,found:[]Walk_Found) {
     w:=&x.wants[wi]
@@ -540,7 +542,7 @@ walk_take :: proc(x:^Exchange,wi:int,found:[]Walk_Found) {
             if int(x.needs[k].want)!=wi {w.shared=true}
             continue
         }
-        need_add(x,wi,f.kind,f.address,f.level,f.size)
+        if !need_add(x,wi,f.kind,f.address,f.level,f.size) {w.shared=true}
     }
 }
 
