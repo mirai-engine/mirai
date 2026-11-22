@@ -129,7 +129,8 @@ Grant_Closure :: struct {
 // not another org's, nor a repository in no org, nor what a cook kept.
 //
 // It grows as refs move: a ref that changed is walked from its object, down
-// to what the set already holds, and an object the walk reaches that is not
+// to what the set already holds (a change brings the overlay records its
+// scopes keep for it, whose refs no one tells), and an object the walk reaches that is not
 // here waits in the frontier until it arrives. It is built whole when the
 // agent starts and when the org's projects or scopes change.
 Members :: struct {
@@ -1285,6 +1286,14 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
         }
         delete_key(&m.frontier,item.address)
         walk_children(a.desc.store,item,&b,&stack)
+        // A change's overlays: a snapshot writes their refs without telling the agent.
+        if item.kind!=.Change || !a.folded {continue}
+        name:[64]u8
+        for sc in a.org.scopes {
+            ns:[len(OVERLAY_PREFIX)+64+1+32]u8
+            namespace:=overlay_namespace(sc.project,sc.scope,&ns)
+            if record,e:=store.ref_get(a.desc.store,namespace,store.hex(item.address,&name));e==.None {members_roots(a,.Overlay,namespace,record,&stack)}
+        }
     }
     if len(added)==0 {return}
     for c in added {m.chunks[c]={}}
