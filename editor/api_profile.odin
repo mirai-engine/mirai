@@ -83,7 +83,7 @@ Api_Profile_Frame_Stats :: struct {
 Api_Profile_Zone :: struct {
     name:string,
     thread:string `mirai:"label=main or workers"`,
-    owner:Profile_Owner `mirai:"label=Who declares the loop function it measures: the game of the project or a plugin; Engine for the rest"`,
+    owner:Profile_Owner `mirai:"optional,label=Who declares the loop function it measures; absent on a zone that measures none"`,
     plugin:string `mirai:"optional,label=Of a Plugin owner"`,
     calls_per_frame:f32,
     self_ms:f32 `mirai:"label=Mean per frame without the zones inside"`,
@@ -760,10 +760,13 @@ api_profile_save :: proc(s:^Session,call:^api.Call) {
 @(private)
 api_profile_compare :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Profile_Compare_Params)
+    name:=base.text_get(p.baseline[:])
+    if name!="" && p.base>0 {api.call_fail(call,api.INVALID_PARAMS,"base and baseline both name what to compare against: pass one or the other");return}
+    if name!="" && !s.has_project {api.call_fail(call,api.SERVER_ERROR,"Without a project there are no baselines: compare against a capture with base");return}
     b:=api_profile_get(s,call,p.id)
     if b==nil {return}
     after:=profile_digest(b)
-    if name:=base.text_get(p.baseline[:]);name!="" {
+    if name!="" {
         before,error:=profile_baseline_load(s.project_root,name,call.allocator)
         if error!="" {api.call_fail(call,api.INVALID_PARAMS,error);return}
         api.call_result(call,Api_Profile_Compare)^=profile_compare(&before,&after,p.top)
@@ -837,10 +840,6 @@ profile_compare :: proc(a,b:^Profile_Digest,top:int) -> (out:Api_Profile_Compare
 delta :: proc(x,y:f64) -> Api_Profile_Delta {
     return {profile_ms(x),profile_ms(y),profile_ms(y-x),f32(x>0?math.round((y-x)/x*1000)/10:0)}
 }
-
-
-
-
 
 @(private="file")
 difference_check :: proc(list:^[dynamic]Api_Profile_Difference,field:string,x,y:$T,blocking:bool) {

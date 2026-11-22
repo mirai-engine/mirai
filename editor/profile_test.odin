@@ -452,23 +452,54 @@ compare_of :: proc(a,b:^Profile_Capture) -> Api_Profile_Compare {
     return profile_compare(&x,&y,8)
 }
 
-// A zone of a loop function belongs to whoever declares it; any other zone
-// is the engine's. The summary says so of each zone.
+// A zone of a loop function belongs to whoever declares it: the game, a
+// plugin or the engine. A zone of no loop function has no owner, and its
+// answer leaves owner out.
 @(test)
 a_zone_belongs_to_whoever_declares_its_function :: proc(t:^testing.T) {
-    steps:=[]core.Step_Info{{name="a",game=true},{name="b",plugin="terrain"},{name="editor"}}
-    Case :: struct {zone:string,want:Profile_Zone_Owner}
-    for c in ([]Case{{"a",{owner=.Game}},{"b",{.Plugin,"terrain"}},{"editor",{}},{"job",{}}}) {
-        got:=profile_zone_owner(steps,c.zone)
-        testing.expectf(t,got==c.want,"%s: %v",c.zone,got)
+    Want :: struct {zone:string,owner:Profile_Owner,plugin:string}
+    Case :: struct {steps:[]core.Step_Info,wants:[]Want}
+    cases:=[]Case{
+        {{{name="a",game=true},{name="b",plugin="terrain"}},{{"a",.Game,""},{"b",.Plugin,"terrain"},{"job",{},""}}},
+        {{{name="job"}},{{"job",.Engine,""},{"a",{},""}}},
     }
     capture:Profile_Capture
     if !testing.expect(t,capture_fixture(&capture,1,12)) {return}
     defer profile_capture_free(&capture)
-    for name,i in capture.names {capture.owners[i]=profile_zone_owner(steps,name)}
-    for zone in profile_summary(&capture,8).zones {
-        if zone.name=="b" {testing.expect(t,zone.owner==.Plugin && zone.plugin=="terrain",zone.plugin)}
-        if zone.name=="a" {testing.expect_value(t,zone.owner,Profile_Owner.Game)}
+    for c in cases {
+        for name,i in capture.names {capture.owners[i]=profile_zone_owner(c.steps,name)}
+        zones:=profile_summary(&capture,8).zones
+        for want in c.wants {
+            at:=-1
+            for zone,i in zones {if zone.name==want.zone {at=i}}
+            if !testing.expectf(t,at>=0,"%s is in the summary",want.zone) {continue}
+            zone:=zones[at]
+            testing.expectf(t,zone.owner==want.owner && zone.plugin==want.plugin,"%s: %v %q",zone.name,zone.owner,zone.plugin)
+            text,encoded:=serial.text_encode(zone,.Line,context.temp_allocator,sparse=true)
+            testing.expect(t,encoded)
+            testing.expectf(t,strings.contains(string(text),`"owner"`)==(want.owner!=Profile_Owner(0)),"%s: %s",zone.name,text)
+        }
+    }
+}
+
+// profile.compare takes a capture or a baseline to compare against, not
+// both, and a baseline only in a project.
+@(test)
+profile_compare_refuses_two_bases_and_a_baseline_without_project :: proc(t:^testing.T) {
+    s:Session
+    defer for &c in s.profiles.captures {profile_capture_free(&c)}
+    if !testing.expect(t,capture_fixture(&s.profiles.captures[0],1,4)) {return}
+    if !testing.expect(t,capture_fixture(&s.profiles.captures[1],2,12)) {return}
+    Case :: struct {base:int,has_project:bool,code:int,says:string}
+    for c in ([]Case{{1,true,api.INVALID_PARAMS,"one or the other"},{0,false,api.SERVER_ERROR,"Without a project"}}) {
+        params:=Api_Profile_Compare_Params{base=c.base,id=2,top=8}
+        base.text_set(params.baseline[:],"before")
+        s.has_project=c.has_project
+        method:=api.Method{params_id=Api_Profile_Compare_Params,result_id=Api_Profile_Compare}
+        result:=make([]u8,size_of(Api_Profile_Compare),context.temp_allocator)
+        call:=api.Call{method=&method,params=&params,result=raw_data(result),allocator=context.temp_allocator}
+        api_profile_compare(&s,&call)
+        testing.expectf(t,call.failed && call.error.code==c.code && strings.contains(call.error.message,c.says),"%v: %v",c,call.error)
     }
 }
 
@@ -504,7 +535,10 @@ a_baseline_keeps_what_compare_reads_and_refuses_another_file :: proc(t:^testing.
         {`{"version":1,"frames":2,"mean_ms":-1}`,"is not a baseline"},
         {`{"version":1,"frames":2,"mean_ms":5,"zones":[{"name":"","self_ms":1}]}`,"is not a baseline"},
         {`{"frames":2,"mean_ms":5}`,"is not a baseline"},
-        {strings.concatenate({`{"version":`,fmt.tprint(PROFILE_BASELINE_VERSION+1),`,"frames":2,"mean_ms":5}`}),"format"},
+        {`{"version":-1,"frames":2,"mean_ms":5}`,"is not a baseline"},
+        {fmt.tprintf(`{{"version":%d,"frames":2,"mean_ms":5}}`,PROFILE_BASELINE_VERSION+1),"format"},
+        // A later format may rename or drop the fields this one reads.
+        {fmt.tprintf(`{{"version":%d,"frames":{{"count":2}},"zones":"elsewhere"}}`,PROFILE_BASELINE_VERSION+1),"format"},
     }
     for kase in cases {
         testing.expect(t,os.write_entire_file(path,transmute([]u8)kase.text)==nil)
