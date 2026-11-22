@@ -1,431 +1,201 @@
 # Project build: `cook/build`
 
-`cook/build` (engine-time) generates the world, compiles the libraries and the game of a project,
-generates its shaders, cooks its assets and assembles the shipped game. The engine binaries it
-compiles against: [engine binaries](projects.md#engine-binaries). Which folders go in:
+Generates worlds, compiles project libraries and executables, compiles project shaders, cooks
+assets, and assembles shipped games. See [engine binaries](projects.md#engine-binaries) and
 [packages](projects.md#which-packages-go-in).
 
 ## Targets
 
-`world_write_files(&p)` writes the generated packages that changed to `.mirai/gen/`, with the
-errors of the attributes.
+`world_write_files(&p)` writes changed generated packages to `.mirai/gen/`.
 
-- `Editor`: exports `mirai_project_info` over `gen/editor_world` (world of the editor, the game,
-  the `editor/` of the project and the active plugins). A library (`-build-mode:dll`) of the
-  generated world alone, against the engine `decl/` and the declarations of the
-  [plugin libraries](projects.md#plugin-libraries), which hold the code of the active plugins and
-  of the project and which the job compiles first if they are stale; with the optimization and
-  the `-debug` of the manifest; output `.mirai/editor<ext>`. The editor loads it, and
-  `mirai-player` runs its game (`mirai play`, `player.start`, the editor's attached players).
-  Optimized (`Size`, `Speed`, `Aggressive`) it is a single LLVM module, as the shipped game
-  compiles it, because a `#force_inline` procedure of another package is not inlined across
-  modules; in dev (`minimal`) or `None`, one module per package
+- **`Editor`:** Exports `mirai_project_info` over `gen/editor_world` as `-build-mode:dll`
+  (`.mirai/editor<ext>`), linking engine `decl/` and
+  [plugin libraries](projects.md#plugin-libraries). Loaded by `mirai-editor` and `mirai-player`
+  (`mirai play`, `player.start`). `Size`/`Speed`/`Aggressive` compile as one LLVM module
+  (cross-package `#force_inline`); `Minimal`/`None` use `-use-separate-modules`
   (`library_optimization_append`).
-- `Game`: a `main` that calls `host.player_run` over `gen/shipped_world`, the world without the
-  development plugins, which only this target generates. It compiles the whole engine, the
-  plugins and the game from the sources, `-o:speed` with `--release` (the build that ships) and
-  `-o:minimal` otherwise; executable `<output>/<executable><ext>` (`.mirai/game` or `--out`). With
-  `Desc.server` (`mirai build server`) it is the [dedicated server](#dedicated-server), the same
-  executable in `.mirai/server`.
-
-A library compiles only the code of the project: it sees the engine through its declarations. A
-check and a test build read the project itself, with its tests.
+- **`Game`:** Standalone `main` calling `host.player_run` over `gen/shipped_world` (no
+  `development` plugins), compiling engine + plugins + game from source (`-o:speed` with
+  `--release`, else `-o:minimal`) into `.mirai/game` or `--out`. `Desc.server` builds the
+  [dedicated server](#dedicated-server) (`.mirai/server`).
 
 ## Flags and environment
 
-- Every target gets the `defines` of the manifest (a library of the engine, those its sources
-  read: [defines](projects.md#engine-binaries)), `platform_flags`, `MIRAI_ODIN_FLAGS` and
-  `Desc.flags`; `mirai` applies the same flags and the same environment (`platform_environment`) to
-  `test`, `check` and `build`. SDL3 comes from `.deps/linux-amd64/sdl3` on Linux (from
-  `scripts/setup_linux_deps.py`, with its folder as `rpath`), on macOS from
-  `.deps/macos-arm64/sdl3` if `scripts/setup_macos_deps.py` prepared it (with id `@rpath`, it
-  travels next to the programs and the game) or from Homebrew, and from the compiler's `vendor/sdl3`
-  on Windows.
-- Memory cap of each compiler process (`compiler_memory`,
-  [limit](../../mirai-std/references/subprocess.md#api)): by default half of the machine's memory,
-  bounded to stay above the largest compilation; `MIRAI_COMPILER_MEMORY` sets it in GiB (`0`: no
-  cap). macOS has no reliable limit for another process: there is no cap there and `mirai doctor`
-  says so.
-  - Past the cap, LLVM stops with `LLVM ERROR: out of memory` instead of taking the machine's
-    memory: the build fails with `Out_Of_Memory`, and `mirai` and the editor say it is most likely
-    odin-lang/Odin#7937 and that the `no_store_of_an_aggregate_of_more_than_64_bytes` test of
-    `cook/build` finds it.
-  - If the cap cuts the compiler outside LLVM, it crashes without a message (on Windows,
-    `0xC0000005`); the failure gives the code and says the cap may be low.
-- The compiler is `Desc.compiler` or `compiler_find(root)`: `MIRAI_ODIN`, the Odin of
-  `deps_folder(root)` or `odin` in `PATH`; in a worktree nothing needs to be set. Slang and the
-  SPIR-V tools are looked up in `deps_folder(root)` (`mirai setup slang`); generation requires the
-  pinned Slang or a later one
-  ([toolchain](../../mirai-rendering/references/shaders.md#tools)).
+- All targets/checks/tests apply manifest `defines` (engine libs take only `#config` ones),
+  `platform_flags`, `MIRAI_ODIN_FLAGS`, `Desc.flags`, and `platform_environment`. SDL3 resolves from
+  `.deps/linux-amd64/sdl3` (Linux), `.deps/macos-arm64/sdl3` or Homebrew (macOS), or compiler
+  `vendor/sdl3` (Windows).
+- **Compiler memory cap (`compiler_memory`):** Half of RAM by default; `MIRAI_COMPILER_MEMORY`
+  sets GiB (`0` = uncapped; unsupported on macOS, reported by `mirai doctor`). LLVM OOM fails with
+  `Out_Of_Memory` (hints odin-lang/Odin#7937 and `no_store_of_an_aggregate_of_more_than_64_bytes`);
+  hard OOM (`0xC0000005` on Windows) reports exit code and cap hint.
+- **Tools:** Compiler from `Desc.compiler`, `MIRAI_ODIN`, `deps_folder(root)`, or `PATH`. Slang and
+  SPIR-V tools come from `deps_folder(root)` (`mirai setup slang`).
 
 ## Dependencies and worktrees
 
-`cook/workspace` (engine-time) resolves where the dependencies and the cache live, for `cook/build`
-and `tools/mirai`. The main checkout of a worktree is `project.shared_root(root)`
-([settings](projects.md#project-settings)).
+`cook/workspace` resolves shared paths via `project.shared_root(root)` (main checkout of a
+worktree):
 
-- `deps_folder(root)`: `<root>/.deps` or, if it does not exist, the one of the main checkout; if
-  neither exists, `<root>/.deps`, where the installations write.
-- `cache_folder(root, name)`: `<main>/.mirai/cache/<name>`, shared between checkouts.
-- C libraries (FreeType): in the cache under a key of the hash of their sources without carriage
-  returns and of their definitions. `<library>.key`, next to the one of a checkout, stores the key
-  it was built with: with the same one nothing else is looked at; with another, it is copied from
-  the cache or compiled and stored.
-- Engine plugin libraries, by the fingerprint of each part
-  ([plugin libraries](projects.md#plugin-libraries)), and shader stages, by content
-  ([cache](../../mirai-rendering/references/shaders.md#cache-and-fingerprints)): a new worktree
-  copies nothing.
+- `deps_folder(root)`: `<root>/.deps`, else main checkout's `.deps`.
+- `cache_folder(root, name)`: `<main>/.mirai/cache/<name>` (FreeType keyed by `<library>.key`,
+  engine/plugin libraries, shader stages). New worktrees copy nothing.
 
 ### Turns between processes
 
-- The locks (`workspace.lock_*`, in `<main>/.mirai/cache/locks/`) are between processes and the
-  system releases them when the process ends; `<lock>.owner` says who holds it and the one waiting
-  reports it, like `mirai locks`.
-- The builds of a machine share up to four turns (`build.lock`, `build-1.lock`…), one per two
-  physical cores, those after the first only with 4 GB free; a generation of shaders has
-  `shaders.lock` and waits for no compilation. Within a checkout or a project they go one at a
-  time (`<folder>/.mirai/build-turn.lock`), because they write the same files. They take them only
-  when there is something to compile:
-  - `build`, `edit`, `play`, `session start` and `import` first check, without the lock, the C
-    libraries, the engine and its shaders (`build.engine_current`), the project shaders
-    (`build.shaders_current`) and the library (`target_state`). If everything is up to date they
-    say "unchanged" without waiting; if not, they take the lock and each step checks again.
-    `build game` always takes it.
-  - `mirai test` and `mirai check` generate the engine shaders under the lock only if there are
-    stages to compile; `mirai test` compiles the executables of all its packages of the engine
-    under one lock and runs them outside it; a package of a project holds it until its executable
-    runs.
-  - `workspace.builds_since` says whether someone compiled since a moment, so that whoever measures
-    knows whether builds happened during the measurement. The editor's builds neither take the lock
-    nor are annotated.
-- What measures times runs alone among all checkouts: it takes `measure.lock`, then waits until
-  there are no builds and no GPU work of others in flight (`workspace.measure_try`), and holds it
-  only while it times. `mirai measure` holds it for the life of its command; `mirai test` when it
-  runs a benchmark (a `-define` whose name has `BENCH` and whose value is neither `false` nor
-  `0`), for the run of that package after its build; `bench compare`, `bench flight` and `render
-  check` (except `--quality`), from their editors open, built and started outside it, until they
-  close; `profile.capture` with `advance`, for the frames it times after it settles, waiting at
-  most its `wait` and then failing with who holds the turn
-  ([profiling](../../mirai-agent-api/references/methods.md#profiling)).
-  - Builds and tests that use no GPU do not wait for the measurement: each compiler
-    (`build.compiler_limits`, also the editor's) and each test run that starts while one is
-    running goes with `subprocess.Priority.Low`. The priority is decided when each process starts;
-    what started earlier is not stopped.
-  - What would put work on the GPU waits for it to end, saying for whom (`workspace.measured`):
-    a GPU turn that is not a person's, a command that draws in a session it reuses (`capture`,
-    `record`, `play test`), and in a manual editor a call whose method draws or runs frames
-    (`Draws` or `As_User`) and the settling of `profile.capture`; `mirai rpc` says it waits.
-  - Each measuring command says what else loads the GPU (`workspace.gpu_load`): the other
-    programs of the engine open, sessions other agents keep open among them, which it does not
-    wait for, and a GPU busy while nothing measured draws, which makes the times not count.
-  - A process with `MIRAI_MEASURE` is part of a measurement while that one holds `measure.lock`:
-    it neither takes it nor waits for it. Whoever measures sets it for its children, and an
-    editor opened inside them inherits it, also before the measurement takes its turn. The
-    editor of a session is no child of the command that calls it: `mirai rpc` sends its
-    `MIRAI_MEASURE` with the call, and `profile.capture` runs in that turn while the lock names
-    the same measurement.
-- What opens a device of the GPU holds one of the GPU turns of the machine (`gpu-<n>.lock`, at
-  most `workspace.GPU_TURNS`) for as long as the device lives, so that what runs at once fits the
-  card. A turn is given, under `gpu.lock`, while the charges of those that hold one and its own
-  fit the card minus a part left to the desktop and to what holds no turn (`gpu_admits`); the
-  first one always. The card is what the devices opened said of their adapter (the editor and
-  `mirai doctor --probe-gpu` keep it in the cache, `gpu/card`), assumed before; whatever device
-  says it last, a card of its own memory outranks one that shares the system's, and of two of a
-  kind the smaller is kept: what is not kept is refused with why, in the log of who said it. An
-  editor is charged the peak the last session of its project held (the editor keeps it in
-  `gpu/peaks/`, which a copy of the project shares: one above the kept peak is written at once and
-  the end writes its own, which lowers it only if the driver never pressed the session against
-  its budget), a charge larger than any card before; a test run or the probe, without a project,
-  a fixed charge. While it runs an editor raises the charge of its turn to the most it held, and
-  never lowers it; `mirai locks` says when what the holders held passes the card beside its part.
-  The owner of a turn ends with its charge; the one waiting names the holders and since when,
-  like `mirai locks`, once and again when they or their charges change. It waits as long as it
-  takes, open sessions of other agents included, which close within minutes; it fails, naming
-  them, only when waiting cannot help (the room is held by the command itself, an ancestor of it
-  or the session of its project) or at the limit the command has (`mirai test --timeout`,
-  `session start --timeout`).
-  - A session opens on the adapter `session start` prints; one that opens on another adapter than
-    the card the turns account for, and that `MIRAI_GPU` does not name, is closed with why: its
-    frames and measures would mean nothing. A person's own editor opens on whatever there is.
-  - Every program of the engine a command starts takes it: `session start|restart` (also the one
-    `rpc`, `capture`, `record` and `play test` open), `edit`, `play` (but `--no-gpu`), the editors
-    of `render check` and `bench compare`, `mirai test` of a package whose tests run reach the
-    device of the GPU tests, and the probe. An editor gets its turn handed over: it inherits the
-    handle of the lock (`subprocess.start`/`detached` with `inherit`, `--gpu-turn`) and gives it to
-    the editor it starts again as, after a Build or a lost GPU, or from the launcher; the command
-    then lets go of it (`lock_hand_over`). A player and a test run hold it through the command.
-    An editor that `build editor` restarts keeps the one it has.
-  - A holder that ends frees its turn: the system closes its handle, whatever its owner file says.
-    A manual editor that holds a device and gets no call for `api.SESSION_IDLE` closes itself as
-    `engine.shutdown` closes it, so a session an agent forgot does not hold the card; the next
-    `rpc` or `capture` opens it again.
-  - A person (`edit` or `play` with a window, run from a terminal) takes a turn without waiting,
-    neither for room nor for a measurement, and counts for the others; with every turn held it
-    runs without one.
-  - While a measurement runs, no GPU turn starts but those of a person and of the measurement
-    (its process and those with `MIRAI_MEASURE`). The owner of a turn says whether its holder
-    works or is open and idle (`workspace.gpu_turn_mark`): a test, a player and an editor that
-    starts work; a manual editor is open while it waits for calls and works while one draws; the
-    editor of a person and a windowed one are open. A measurement waits for the turns that work
-    and are neither its own nor of its measurement (`workspace.gpu_work`). Every command takes
-    its GPU turns before `measure.lock` (a benchmark of `mirai test` its turn, `bench`, `bench
-    flight` and `render check` their editors), and `workspace.measure_try` says the turn of the
-    process idle while it waits, so the two never wait for each other; only what runs under
-    `mirai measure` takes a turn inside the measurement. The
-    owner of a turn of a measurement names it, and one is given beside the others of the same
-    measurement while no one else holds a turn, also beyond the card: the two editors of `bench
-    compare` run at once.
-- The self-refresh of `bin/mirai` uses one lock per checkout (`bin/.refresh.lock`): if another
-  process already rebuilt it, it uses that one.
+OS-released locks live in `<main>/.mirai/cache/locks/` (`<lock>.owner` shown by `mirai locks`).
+
+- **Build turns:** Up to 4 (`build.lock`, `build-1.lock`..., 1 per 2 physical cores, extra turns
+  require 4 GB free) + per-folder `.mirai/build-turn.lock`. `shaders.lock` is independent. Commands
+  check currency unlocked (`engine_current`, `shaders_current`, `target_state`) and print
+  "unchanged" without waiting (`build game` always locks). `workspace.builds_since` detects builds
+  during measurements; editor builds neither lock nor annotate.
+- **Measurement turn (`measure.lock`):** Exclusive across checkouts (`mirai measure`, benchmark
+  `mirai test` with `BENCH` define, `bench compare`/`flight`, `render check` without `--quality`,
+  `profile.capture` with `advance`). Non-GPU builds/tests run at `subprocess.Priority.Low` without
+  waiting; non-user GPU work waits (`workspace.measured`). `workspace.gpu_load` reports concurrent
+  load. `MIRAI_MEASURE` propagates membership to child processes and `mirai rpc`.
+- **GPU turns (`gpu-<n>.lock`, max `workspace.GPU_TURNS`, under `gpu.lock`):** Admits concurrent
+  processes whose VRAM charges fit the card (`gpu/card`, per-project peaks in `gpu/peaks/`) minus
+  desktop headroom (`gpu_admits`; first turn always admitted). Dedicated GPU outranks integrated;
+  mismatched non-`MIRAI_GPU` sessions close with reason. Editors inherit turns via `--gpu-turn`
+  (`lock_hand_over`) and auto-close after `api.SESSION_IDLE`. User windowed `edit`/`play` never
+  waits. Measurements take GPU turns *before* `measure.lock` (`measure_try` marks own turn idle) so
+  deadlocks cannot occur and `bench compare` runs both editors together.
+- `bin/mirai` self-refresh serializes via `bin/.refresh.lock`.
 
 ### Implicit Vulkan layers
 
-`mirai test` and the `--headless` programs (edit, play, session, capture) run with
-`VK_IMPLICIT_LAYER_PATH` pointing at an empty cache folder: an installed overlay (Epic, Steam, OBS)
-with a broken manifest would be reported as a loader error. `MIRAI_KEEP_LAYERS=1` keeps the layers.
+`mirai test` and `--headless` runs point `VK_IMPLICIT_LAYER_PATH` to an empty cache folder to block
+broken overlays (Epic/Steam/OBS). Set `MIRAI_KEEP_LAYERS=1` to keep them.
 
 ## Jobs
 
 ```odin
-job:=build.job_start({project=&p,target=.Editor})   // does not wait for the compiler
-for !build.job_poll(job) {/* another frame */}
-result:=&job.result
-build.job_destroy(job)
+import "mirai:cook/build"
+
+job := build.job_start({project=&p, target=.Editor})
+for !build.job_poll(job) { /* next frame */ }
+res := &job.result
+defer build.job_destroy(job)
 ```
 
-- `Desc`, `Result`, `Status` and `Failure` are in `cook/build/build.odin`, with what each value
-  means. The job owns everything `Result` points to; `job_destroy` cancels if needed.
-- When the build publishes its target or finds it current, the job refreshes its packages with
-  the import program. Polling keeps the job running until the import program exits.
-- `job_cancel` stops the compiler and import process trees. The published target stands.
-- `target_state` says, without writing, whether the output is missing, stale or up to date.
-- `Result.diagnostics` are the messages of `-json-errors` and the warnings of the generator; `text`,
-  everything else the compiler printed (the linker is not structured).
-- A compilation failure or a failure of the engine-time check does not publish the executable or
-  store its fingerprint. In `Game`, copy and cooking happen after the executable is published,
-  inside the call that finishes the job: `Copy_Failed` and `Cook_Failed` do not revert that
-  publication and may leave the folder incomplete; a later job distributes again even if the
-  executable is up to date.
+- `Desc`, `Result`, `Status`, `Failure`: `cook/build/build.odin`. `job_destroy` cancels active work
+  and frees `Result`. `target_state` checks staleness without writing.
+- After target compile/up-to-date, the job refreshes pinned packages via `mirai-import` before
+  completing; `job_cancel` kills compiler + import trees, leaving prior output intact.
+- `Result.diagnostics` holds `-json-errors` + generator warnings; `Result.text` holds unstructured
+  output (linker). Compile or `Engine_Time_Code` failures never publish; `Game` `Copy_Failed`/
+  `Cook_Failed` leave the executable published and re-run on next job.
 
 ## Outputs
 
-- The compiler writes to `.mirai/build/<target>-<moment>-<pid>.*` and, if it compiles, the output
-  goes with a rename to the published path. If the system does not allow replacing a file in use
-  (Windows), the previous one is renamed to `.old` in `.mirai/build` and deleted when it is free;
-  with `-debug`, the `.pdb` stays there with the job's name until another job compiles the target.
-- A job deletes its files when it ends. Only one that compiled deletes those of other jobs of the
-  same target, and only the ones older than `STALE_AFTER` (they may belong to a running job of
-  another process).
+Compiles to `.mirai/build/<target>-<moment>-<pid>.*` and atomically renames into place (Windows
+renames busy files to `.old` for later cleanup; `-debug` `.pdb` stays until next build). Each job
+cleans its own temp files; only a successful compile sweeps other jobs' files older than
+`STALE_AFTER`.
 
 ## Fingerprint
 
-`.mirai/build/<target>.sources.json` lists the sources the compiler exported in the last
-successful build and `<target>.stamp` stores their fingerprint (`fingerprint`,
-`cook/build/compiler.odin`): the size and date of the compiler (for an
-[installed engine](projects.md#installed-engine), its size and `engine.mirai`: decompressing the
-package changes the dates), the flags except `-thread-count:N`, the name and **content** of the
-`.odin` files of each folder the build read a source from, **except the `*_test.odin`** (a test
-invalidates no build, not even the self-refresh of `bin/mirai`), and what is loaded with `#load`.
-A test executable counts the `*_test.odin` too: a build of tests reads those of every package it
-imports ([checks and tests](projects.md#checks-and-tests)).
+`<target>.sources.json` and `<target>.stamp` (`cook/build/compiler.odin`) hash compiler size+mtime
+(or size + `engine.mirai` for [installed engines](projects.md#installed-engine)), flags except
+`-thread-count:N`, engine-relative paths, and CR-stripped contents of `.odin` (excluding
+`*_test.odin` except for test executables) and `#load` files.
 
-- The content is read without carriage returns and paths count relative to the engine root: the
-  same content in another checkout, or after a checkout or merge that leaves the files the same,
-  gives the same fingerprint. The output does not count, nor do the folders next to the compiler,
-  which change with it.
-- If a source changed after the compiler started, the fingerprint is not stored.
-- `Game`: with another `--out` and the same fingerprint, the executable is copied instead of
-  recompiled.
+- If a source mutates after compile start, no stamp is saved.
+- `Game` with a new `--out` and matching fingerprint copies the executable without recompiling.
 
 ## Project shaders
 
-The Slang programs of `<project>/shaders/` and of the `shaders/` of each active plugin with the
-`Shaders` part are compiled in the **project generation**: the engine stages with the catalog of
-programs that includes them, published in `project.shader_generation(root)`. Contract of the
-programs, cache, loading and reload:
-[rendering](../../mirai-rendering/references/shaders.md#project-generation).
+Compiles `<project>/shaders/` + active plugin `shaders/` into `project.shader_generation(root)`
+([rendering](../../mirai-rendering/references/shaders.md#project-generation)).
 
 ```odin
-job:=build.shaders_start(&p)          // does not wait: generates on its own thread
-for !build.shaders_poll(job) {/* another frame */}
-result:=&job.result
-build.shaders_destroy(job)            // waits for a generation in progress
+job := build.shaders_start(&p)
+for !build.shaders_poll(job) { /* next frame */ }
+res := &job.result
+build.shaders_destroy(job) // waits if still running
 ```
 
-- `first` names stages that are compiled before the rest; while the job runs, `shaders_first(job)`
-  gives a generation that loads by itself with them
-  ([first stages](../../mirai-rendering/references/shaders.md#early-stages-and-cancellation)).
-  `shaders_cancel` does not block: it kills the compilers and the job ends `Cancelled`.
-- The generation is a transaction: a failure or a cancellation leave what is published as it was;
-  `None` (neither the project nor its plugins have programs) deletes the one of a previous build.
-- Without Slang or without the SPIR-V tools it fails with the generator's message, which names the
-  tool and how to install it; without `engine_root` it fails without trying.
-- `mirai build editor` ends with 1 if the project shaders fail; `edit` and `play` continue and
-  report it.
+- `first` stages build early (`shaders_first(job)`); `shaders_cancel` kills compilers (`Cancelled`).
+- Transactional: failure/cancel preserves prior generation; `None` deletes any old generation.
+- Missing Slang/SPIR-V tools or `engine_root` fail with install guidance. `mirai build editor`
+  exits 1 on shader failure; `edit`/`play` report and continue.
 
 ## Shipped game
 
-The `Game` folder (`Desc.output`, or `.mirai/game`) receives the executable, `project.mirai`, the
-icon it names if it exists, `settings.mirai` with the
-[combined](projects.md#project-settings) settings, `assets/` with what was
-[cooked](#asset-cooking) of the project and of each active plugin that declares `Assets` (in
-`assets/plugins/<name>/`), `shaders/` with the manifest, the catalog and the code of this system of
-the published generation (no Slang sources; `mirai build game` generates the shaders first),
-SDL3 if the system does not provide it, and the
-[capacities](../../mirai-rendering/references/frame-graph.md#passes) the runs of the project
-reached in each scene, in its `.mirai/cache`, where the game goes on filling them.
-
-The copy replaces files and merges folders without deleting anything from the destination, except
-`assets/`, which ends up exactly with what was cooked, without the sources among the
-assets. The code, `cook.mirai` and the `plugin.mirai` are not copied. `mirai play` copies nothing:
-`mirai-player` runs with `--project <project>` and reads assets and shaders from the project.
+`Game` output (`Desc.output` or `.mirai/game`) receives: executable, `project.mirai`, `icon`,
+merged `settings.mirai`, cooked `assets/` (project + `assets/plugins/<name>/`), compiled `shaders/`
+(no Slang sources), SDL3 if needed, and `.mirai/cache` scene capacities. Replaces `assets/`
+cleanly (no raw sources); skips code, `cook.mirai`, and `plugin.mirai`. `mirai play` copies
+nothing.
 
 ## Dedicated server
 
-`mirai build server` builds the folder of a server nobody plays on: the same executable as `Game`
-(with the same fingerprint it copies it), run with `--dedicated`
-([player](../../mirai-core/references/host.md#arguments)). It leaves out what is only seen or
-heard: neither the icon nor `shaders/` (it does not generate the project's), and its cooking leaves
-behind the `presentation` asset kinds of `asset.KINDS` (textures, sounds, interfaces, fonts and
-prompts) without counting them as missing. It carries `settings.mirai`, with the bindings Project
-Settings > Input changed, and SDL3, which the executable links.
+`mirai build server` ships the `Game` executable (reused by fingerprint) for `--dedicated`
+([player](../../mirai-core/references/host.md#arguments)), omitting icon, `shaders/`, and
+`presentation` asset kinds (textures, sounds, UI, fonts, prompts), while keeping `settings.mirai`
+and SDL3.
+
+```sh
+./mirai build game demo --release --out bin/demo-ship
+./mirai build server demo --out bin/demo-server
+```
 
 ## Imported sources
 
-The meshes, textures, sounds and fonts an import builds are not versioned: they are objects of a
-store that the package manifests a project or plugin pins name
-([library](../../mirai-imports/references/imports.md#library)).
+Imported assets live in a content-addressed store (`store.default_root` or `--store <dir>`, passed
+to `Desc.store_root`, `mirai-import`, cook, editor, and player).
 
-- **The store is a value.** The machine's (`store.default_root`), or the one `--store <folder>`
-  names on `build`, `play`, `play test`, `edit`, `generate`, `session`, `import`, `asset ls|deps`
-  and `package`: it reaches the build (`Desc.store_root`), the import program, the cook, the
-  editor and the player alike.
-- **A build refreshes, and says so.** Every build of a project runs the refresh of the project and
-  of each active plugin with a `packages.mirai` once its target stands (`job_imports`,
-  `build.imports_refresh`): the editor, the game, the server, `mirai play` and the builds the
-  editor starts. It uses the engine's import program, since the tool builds without the
-  importers, which reads the formats the plugins of the project add from its editor library; the
-  game, compiled from the engine's sources, builds those binaries too when it has packages. A
-  build is taken from the store, then from a second store (`--from` of `mirai import`; an
-  installed engine's own), then ingested from its source when the source is on this machine; a
-  package none of them gives fails the build by its name, saying what gives it
-  (`Import_Failed`). There is no other step: a checkout that was just cloned runs after any build.
-  The CLI's dev game build accepts the editor's Fast imports. `mirai build game --release`
-  requires Final through the optimized import program. A game export started from an editor
-  uses that editor's import program.
-- **Without sources.** A machine whose store holds the builds (fetched from a peer, or a copy of
-  another store) builds and ships with no source: it imports nothing.
-- **What ships.** The cook writes what the registry resolves, documents of the project and the
-  objects of builds alike, each as a file in the container format at its path in the assets of
-  the game (an object gives the file `asset.object_file` gives), with the index: a shipped game
-  never opens a store. One lookup of the texture cache serves the whole pass.
-- **The installed engine** carries `builds/` (`project.ENGINE_STORE`), a store with the Final
-  builds of the packages its plugins pin, made when it is packaged: a refresh on the machine that
-  installs it copies them into that machine's store (`cache.store_source`, as a peer gives them),
-  so nothing is imported there.
+- Every project build refreshes `packages.mirai` (`job_imports`/`build.imports_refresh`) using
+  `mirai-import`: checks local store -> `--from` / installed engine `builds/` -> local source
+  ingest (`Import_Failed` if unavailable). Dev accepts Fast imports; `mirai build game --release`
+  requires Final.
+- Store-only machines build and ship without raw sources. Cooking writes resolved assets + `.index`
+  as loose container files so shipped games never open a store.
 
 ## Asset cooking
 
-`cook_assets` (`cook/build/cook.odin`) leaves in a folder the assets the game can reach. The `Game`
-job calls it with the project assets, `cook.mirai`, the asset folders of the active plugins and the
-store of the build, which lists their packages (`asset.root_packages_in`) and whose texture cache it
-reads and fills; a failure is `Cook_Failed` with `Result.cook.error` and `detail`.
+`cook_assets` (`cook/build/cook.odin`) writes reachable game assets (failure: `Cook_Failed` with
+`Result.cook.error` + `detail`).
 
-- **Packages.** The registry of the cook lists the outputs of the packages of the project and of
-  each plugin beside their files. A package the store does not list whole is `Package_Missing`,
-  by its name. A release cook that encounters a Fast texture reports `Source_Failed` and names
-  its package.
+```json
+{
+  "roots": ["surfaces/metal/Chrome.mat", "characters/player/",
+            "3b4cb4195321a2f7fe61aa57ece0c255"],
+  "textures": "blocks"
+}
+```
 
-- **Roots.** Every `.scene` (code reaches a prefab only by instantiating it) and `.records`
-  of the folder and what `cook.mirai` (`COOK_FILE`) names: the other assets only code refers to (a
-  material chosen by name).
-
-  ```json
-  {
-    "roots": ["surfaces/metal/Chrome.mat", "characters/player/",
-    "3b4cb4195321a2f7fe61aa57ece0c255"], "textures": "blocks"
-  }
-  ```
-
-  A root is a path from `assets/` (a file, whether or not it is an asset), a folder ending in `/`
-  or an asset id. A root that names nothing is `Root_Missing`; a malformed `cook.mirai` or one with
-  another key, `Manifest_Invalid`; in both cases nothing is cooked.
-- **Plugins.** The folder of each plugin is mounted under `plugins/<name>` and everything in it is
-  a root (its code uses it), except what a package of a root was imported from (its origin and
-  inputs inside the root), which stays behind.
-- **Parallel.** Files are cooked on a job system (`Cook_Desc.worker`, else one of the cook with a
-  thread per core), the largest first; what is written and the report are those of a cook on one
-  thread, and an error is the first by path. Prefab resolution and texture cache writes take a lock.
-  A dev game is cooked with the profile `Balanced` (`Cook_Desc.quick`), a release one with
-  `Ultra`.
-- **Scope.** The roots and, transitively, the dependencies each asset declares; the rest goes to
-  `dropped`. A dependency that is not any file goes to `missing` and does not stop the cooking.
-- **Textures.** With `"textures": "blocks"` (default), an RGBA8 texture is written in blocks
-  according to its use (`textures.blocks_of`), except one that only interfaces (`.ui`) display,
-  which is copied; `"keep"` copies them all. The blocks stay in the texture cache by the
-  `content_hash` of the `.tex`
-  ([texture cache](../../mirai-imports/references/imports.md#texture-cache)).
-- **Fast textures.** The [refresh](../../mirai-imports/references/imports.md#library) before a
-  release cook selects or builds Final textures, preserving their ids regardless of `"textures"`.
-  A dev cook can use the Fast blocks as imported.
-- **Animations.** An `.anim` is written cooked: its clips sampled as the runtime plays them
-  (`asset.animation_compress`, [storage](../../mirai-std/references/anim-storage.md)).
-- **Prefab instances.** A scene with a stale instance is written with its instances up
-  to date, by an `asset.Prefab_Resolver` of the project prefabs
-  ([instances](../../mirai-assets/references/scenes.md#resolution-against-the-current-prefab)); the
-  shipped game loads them without checking them. If it cannot, `Resolve_Failed` with the file.
-- **Far meshes.** A game with the `streaming` plugin (`Cook_Desc.far`) ships beside each scene a
-  section references its far mesh, `<scene>.far.mesh` with the id `asset.far_mesh_id` gives
-  (`cook/far`): the game shows it and makes none
-  ([far shape](../../mirai-gameplay/references/libraries.md#plugin-streaming)).
-- **Convex pieces.** A mesh without colliders of its source that a cooked scene or prefab moves
-  with an `Auto` `Collider` (its `Rigid_Body`, or that of its nearest ancestor with one, not
-  `Static`) ships with its convex pieces (`asset.mesh_pieces_put`), decomposed once and kept in the
-  collision cache (`Cook_Desc.collision_cache`): a shipped game reads them and decomposes nothing.
-- **Compression.** Shipped assets use the setting in `build.compression`. A cook writes eligible
-  texture mips using whichever representation compresses smaller. When compression is disabled,
-  the cook encodes BCn blocks without RDO. Cook keys include the compression setting and format.
-- Every other asset is written again compressed for shipping (`asset.document_repack` with
-  `SHIP`, [compression](../../mirai-assets/references/formats.md#compression)), and so are the
-  textures it writes in blocks; a file that is not an asset is copied byte by byte.
-- **Index.** The folder receives `.index` (`asset.REGISTRY_INDEX`), what a scan would find; with
-  it `host.assets_init` does not look at the files
-  ([registry](../../mirai-assets/references/formats.md#registry)).
-- **Check.** Each written asset is read again and must have the same id, type and hash. The files
-  of a previous cooking that this one did not write are deleted.
-- **Only what changed.** The key of a file is what it is made of: how the cook writes it, its
-  content and that of every asset it needs (`registry_closure`); `Cook_Desc.keys` (in the build
-  folder of the project) keeps it with the output as it was left. A file whose key and output did
-  not change is neither read nor written again (`reused`); `COOK_KEYS_VERSION` rises when the
-  cook writes a file otherwise from the same inputs.
-- Two files with one id stop the cook (`Duplicate_Id`), naming both.
-- `mirai build game` prints the report (`cook_summary`), verifies each cooked asset with the rules
-  of `mirai asset verify` (it ends with 1 if one fails) and says how much the game weighs.
+- **Roots & plugins:** Every `.scene`, prefab, `.records`, `.strings`, `cook.mirai` (`COOK_FILE`:
+  `assets/` paths, trailing-`/` dirs, or asset IDs), and all plugin `assets/` files (minus package
+  sources) mounted at `plugins/<name>`. Errors: `Root_Missing`, `Manifest_Invalid`,
+  `Package_Missing`, `Source_Failed` (Fast texture in release), `Duplicate_Id`, `Resolve_Failed`.
+- **Scope & transforms:** Transitive dependencies (`dropped` / `missing` reported); parallel worker
+  cook (deterministic order; `Balanced` in dev `quick`, `Ultra` in release).
+  - *Textures:* `"blocks"` (default) BCn-encodes RGBA8 (UI-only copied), cached by `content_hash`;
+    `"keep"` copies raw. Release requires Final.
+  - *Animations:* Pre-compressed via `asset.animation_compress`.
+  - *Prefabs / Far / Collision:* Resolves stale prefab instances (`asset.Prefab_Resolver`), emits
+    `<scene>.far.mesh` when `streaming` is active (`Cook_Desc.far`), and bakes `Auto` dynamic mesh
+    convex pieces (`asset.mesh_pieces_put`, `Cook_Desc.collision_cache`).
+  - *Compression & check:* Respects `build.compression` (`document_repack` `SHIP`, skips RDO if
+    `"none"`), writes `.index` (`asset.REGISTRY_INDEX`), verifies ID/type/hash on readback, removes
+    stale outputs, and skips unchanged files via `Cook_Desc.keys` (`COOK_KEYS_VERSION`).
 
 ## Exclusion guarantee
 
-After compiling the game and before publishing it, `engine_time_packages` looks, among the sources
-the compiler says it read (`-export-dependencies:json`), for those of the engine's `editor/` and
-`cook/`, the `plugins/*/editor/`, the `editor/` and the generated editor packages of the project,
-and the development plugins. If there is any, the job fails with `Engine_Time_Code` and does not
-publish. A new engine-time folder of the engine is added there.
-
-The compiler also reads the `_test.odin` files of every package the game imports, with their
-imports: a test of a runtime package does not import an engine-time one, and the build writes the
-test worlds they declare from the generated world, as a check does. A GPU test of a plugin
-loads the shaders that `mirai test` generates for it (`package_test_shaders`) instead of generating
-them with `cook/shaders`.
+Before publishing `Game`, `engine_time_packages` inspects `-export-dependencies:json` for engine
+`editor/`/`cook/`, `plugins/*/editor/`, project `editor/`/editor gen, and `development` plugins,
+failing with `Engine_Time_Code` on any match. Because Odin parses `_test.odin` imports too,
+runtime package tests must not import engine-time packages (GPU tests use `package_test_shaders`).
 
 ## Known limits
 
-- Cooking does not group assets in a file: they are loose files with an index.
-- What code refers to and is not in `cook.mirai` is not shipped: cooking does not read code.
-- The first shader generation of a project and each edit of the code of a Surface program compile
-  all the stages that evaluate materials for the system's backend, because each one contains the
-  code of all the programs. An edit of only metadata publishes and validates the catalog without
-  compiling stages ([toolchain](../../mirai-rendering/references/shaders.md#shader-toolchain));
-  PostProcess code compiles one stage.
-- A shader generation in progress is not cancelled on close: `shaders_destroy` and closing the
-  editor wait for it.
-- If the project stops having programs, an already shipped game keeps its `shaders/`.
-- The game on Windows is a console one.
+- Cooked assets ship as loose files with `.index` (not packed into a single archive).
+- Code-only asset refs missing from `cook.mirai` are not cooked.
+- First project shader build or Surface code edits recompile all material stages (metadata-only
+  edits skip stages; PostProcess compiles one stage).
+- `shaders_destroy` and editor exit wait for an active shader generation instead of cancelling.
+- Removing all project shaders leaves old `shaders/` in an already-shipped output folder.
+- Windows shipped games build as console executables.
