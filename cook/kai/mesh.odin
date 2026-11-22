@@ -181,6 +181,7 @@ mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
         time.sleep(20*time.Millisecond)
     }
     from:=store.read_index(&c.machine.store)
+    scratch:[]u8
     for &w,k in wanted {
         if w.state!=.Found {continue}
         objects,e:=vcs.ddc_output_get(&from,w.output_root,context.temp_allocator)
@@ -189,7 +190,8 @@ mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
             if objects,e=output_unseal(c,&from,into,objects[0]);e!=.None || len(objects)==0 {continue}
         } else if into.root!=from.root {
             whole:=true
-            for o in objects {whole&&=cache.object_copy(&from,into,o)==.None}
+            if scratch==nil {scratch=make([]u8,cache.COPY_SCRATCH,context.temp_allocator)}
+            for o in objects {whole&&=cache.object_copy(&from,into,o,scratch)==.None}
             if !whole {continue}
         }
         given[k]=store.ref_set(into,namespace,names[k],objects[0])==.None

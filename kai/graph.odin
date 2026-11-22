@@ -98,15 +98,16 @@ graph_is_ancestor :: proc(g:^Graph_Index,a,b:Revision) -> bool {
     if !fa || !fb {return false}
     if ia==ib {return true}
     floor:=g.generation[ia]
-    seen:=make(map[u32]struct{},context.temp_allocator)
+    seen,e:=make([]bool,len(g.revisions),context.temp_allocator)
+    if e!=nil {return false}
     stack:=make([dynamic]u32,context.temp_allocator)
     if _,e:=append(&stack,ib);e!=nil {return false}
     for len(stack)>0 {
         n:=pop(&stack)
         for p in graph_parents(g,n) {
             if p==ia {return true}
-            if g.generation[p]<=floor || p in seen {continue}
-            seen[p]={}
+            if g.generation[p]<=floor || seen[p] {continue}
+            seen[p]=true
             if _,e:=append(&stack,p);e!=nil {return false}
         }
     }
@@ -127,7 +128,8 @@ graph_merge_bases :: proc(g:^Graph_Index,a,b:Revision,out:^[dynamic]Revision) ->
     LEFT :: u8(1)
     RIGHT :: u8(2)
     STALE :: u8(4)
-    flags:=make(map[u32]u8,context.temp_allocator)
+    flags,made:=make([]u8,len(g.revisions),context.temp_allocator)
+    if made!=nil {return .Out_Of_Memory}
     heap:=make([dynamic]u32,context.temp_allocator)
     less :: proc(g:^Graph_Index,x,y:u32) -> bool {return g.generation[x]>g.generation[y] || (g.generation[x]==g.generation[y] && x>y)}
     push :: proc(g:^Graph_Index,heap:^[dynamic]u32,n:u32) -> runtime.Allocator_Error {
@@ -174,8 +176,8 @@ graph_merge_bases :: proc(g:^Graph_Index,a,b:Revision,out:^[dynamic]Revision) ->
             f|=STALE
         }
         for p in graph_parents(g,n) {
-            old,seen:=flags[p]
-            if seen && old|f==old {continue}
+            old:=flags[p]
+            if old|f==old {continue}
             flags[p]=old|f
             if push(g,&heap,p)!=nil {return .Out_Of_Memory}
         }

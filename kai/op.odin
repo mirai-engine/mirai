@@ -120,7 +120,7 @@ Repo :: struct {
     view_address:store.Hash,
     view:View,
     graph:Graph_Index,
-    known:[dynamic]store.Hash, // operations other refs named that op descends from
+    known:map[store.Hash]struct{}, // what other workspaces' refs name now that op descends from
     allocator:runtime.Allocator,
     namespace_bytes:[64]u8,
     namespace:string,
@@ -146,7 +146,7 @@ repo_init :: proc(r:^Repo,s:^store.Store,id:Repo_Id,workspace:Workspace_Id,ident
     r^={s=s,id=id,workspace=workspace,identity=identity,merger={s=s,drivers=drivers},allocator=allocator}
     view_init(&r.view,allocator)
     graph_init(&r.graph,allocator)
-    r.known=make([dynamic]store.Hash,allocator)
+    r.known=make(map[store.Hash]struct{},allocator)
     repo_names(r)
 }
 
@@ -186,20 +186,21 @@ repo_refresh :: proc(r:^Repo) -> Error {
     refs,e:=store.ref_list(r.s,r.namespace,context.temp_allocator)
     if e!=.None {return store_error(e)}
     candidates:=make([dynamic]store.Hash,context.temp_allocator)
+    known:=make([dynamic]store.Hash,context.temp_allocator)
     for ref in refs {
-        if len(ref.name)<3 || ref.name[:3]!="ws-" {continue}
-        if ref.hash==r.op || slice.contains(r.known[:],ref.hash) || slice.contains(candidates[:],ref.hash) {continue}
-        if _,f:=append(&candidates,ref.hash);f!=nil {return .Out_Of_Memory}
+        if len(ref.name)<3 || ref.name[:3]!="ws-" || ref.hash==r.op || slice.contains(candidates[:],ref.hash) {continue}
+        if _,f:=append(ref.hash in r.known ? &known : &candidates,ref.hash);f!=nil {return .Out_Of_Memory}
     }
+    // Only what the refs name now stays known.
+    clear(&r.known)
+    for k in known {r.known[k]={}}
     if r.op!={} {
         if _,f:=append(&candidates,r.op);f!=nil {return .Out_Of_Memory}
     }
     if len(candidates)==0 {return .Missing}
     heads:=op_heads(r.s,candidates[:]) or_return
     for c in candidates {
-        if !slice.contains(heads[:],c) && c!=r.op {
-            if _,f:=append(&r.known,c);f!=nil {return .Out_Of_Memory}
-        }
+        if !slice.contains(heads[:],c) && c!=r.op {r.known[c]={}}
     }
     if len(heads)==1 {
         if heads[0]==r.op {return .None}
@@ -209,40 +210,27 @@ repo_refresh :: proc(r:^Repo) -> Error {
     return op_heads_merge(r,heads[:])
 }
 
-// The operations among candidates no other one descends from.
+// The operations among candidates no other one descends from: one walk
+// down from all of them at once.
 @(private)
 op_heads :: proc(s:^store.Store,candidates:[]store.Hash) -> (heads:[dynamic]store.Hash,error:Error) {
     heads=make([dynamic]store.Hash,context.temp_allocator)
+    below:=make(map[store.Hash]struct{},context.temp_allocator)
+    stack:=make([dynamic]store.Hash,context.temp_allocator)
+    if _,e:=append(&stack,..candidates);e!=nil {return heads,.Out_Of_Memory}
+    for len(stack)>0 {
+        op:=op_get_kept(s,pop(&stack)) or_continue
+        for p in op.parents {
+            if p in below {continue}
+            below[p]={}
+            if _,e:=append(&stack,p);e!=nil {return heads,.Out_Of_Memory}
+        }
+    }
     for c in candidates {
-        below:=false
-        for other in candidates {
-            if other==c {continue}
-            if op_descends(s,other,c) or_return {below=true;break}
-        }
-        if !below {
-            if _,e:=append(&heads,c);e!=nil {return heads,.Out_Of_Memory}
-        }
+        if c in below {continue}
+        if _,e:=append(&heads,c);e!=nil {return heads,.Out_Of_Memory}
     }
     return heads,.None
-}
-
-// Whether op a descends from op b.
-@(private)
-op_descends :: proc(s:^store.Store,a,b:store.Hash) -> (descends:bool,error:Error) {
-    seen:=make(map[store.Hash]struct{},context.temp_allocator)
-    stack:=make([dynamic]store.Hash,context.temp_allocator)
-    if _,e:=append(&stack,a);e!=nil {return false,.Out_Of_Memory}
-    for len(stack)>0 {
-        n:=pop(&stack)
-        op:=op_get_kept(s,n) or_continue
-        for p in op.parents {
-            if p==b {return true,.None}
-            if p in seen {continue}
-            seen[p]={}
-            if _,e:=append(&stack,p);e!=nil {return false,.Out_Of_Memory}
-        }
-    }
-    return false,.None
 }
 
 // The ancestors of op, itself included.

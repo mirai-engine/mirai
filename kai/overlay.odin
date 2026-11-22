@@ -1049,6 +1049,7 @@ Plan_Scope :: struct {
     objects:[dynamic]store.Hash,
     tree:store.Hash,
     readable:bool, // this device holds the key: it seals; otherwise it carries base
+    rotate:bool,   // a write waits for a rotation (keyring_needs_rotation)
 }
 
 // The private part of one snapshot, between overlay_route and overlay_publish.
@@ -1112,7 +1113,8 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
                 tree_open(sealed,r.project,sc.scope,rec.epoch,&key,&p.previous,context.temp_allocator) or_return
                 break
             }
-            if p.keyring!=nil && p.keyring.epoch>0 && !keyring_needs_rotation(p.keyring) {
+            p.rotate=p.keyring!=nil && keyring_needs_rotation(p.keyring)
+            if p.keyring!=nil && p.keyring.epoch>0 && !p.rotate {
                 if key,e:=keyring_epoch_key(p.keyring,&r.device,p.keyring.epoch);e==.None {
                     p.key,p.readable=key,true
                 }
@@ -1159,7 +1161,7 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
         refusal:=Overlay_Refusal.None
         switch {
         case p.keyring==nil || p.keyring.epoch==0: refusal=.No_Keyring
-        case keyring_needs_rotation(p.keyring): refusal=.Rotate
+        case p.rotate: refusal=.Rotate
         case !p.readable: refusal=.Unreadable
         }
         if refusal!=.None {r.refusal,r.refused_path,r.refused_scope=refusal,strings.clone(f.path,context.temp_allocator),sc.scope}
