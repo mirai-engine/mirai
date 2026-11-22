@@ -106,7 +106,8 @@ description: Mirai standard library for games, with the packages `std/base`, `st
 - BLAKE3 of bytes, and the values of its 64 KiB groups a blob is checked by piece by piece
   (`std/blake3`): the code; the official vectors are its test.
 - Line diff of texts, its view rows and the three-way merge that keeps bytes and line breaks as
-  they are (`std/diff`): the code; its tests in `std/diff/diff_test.odin`.
+  they are (`std/diff`): the code; its tests in `std/diff/diff_test.odin`; where Kai uses it:
+  [drivers](../mirai-kai/references/model.md#drivers-and-diff).
 - Streams, schemas, hashes, import and migration of values (`std/serial`):
   [std/serial](../mirai-assets/references/serial.md#stdserial).
 - What the structure of a `.ui` is judged by (`std/ui_format`):

@@ -512,6 +512,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Build the shippable game | `mirai build game [project] [--out folder] [--store folder]` |
 | Build its dedicated server | `mirai build server [project] [--out folder]` |
 | Build only the engine | `mirai build engine [--release] [--force]` |
+| Build the Kai node, static for a small Linux server | `mirai build kai [--target linux_arm64]` |
 | Generate the world without building | `mirai generate [project] [--store folder]` |
 | Run the content tool of a project | `mirai content [project] [-- arguments]` |
 | Ingest a source from anywhere and add it to a project | `mirai import <file> [--project P] [--folder F] [settings]` |
@@ -520,8 +521,10 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Receive a shared project, or update a folder joined before | `mirai join <invitation> [folder] [--address A] [--port N] [--store S]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
-| Version control of a project, no editor | `mirai kai init\|status\|snapshot\|new\|describe\|log\|diff\|undo\|restore\|conflicts\|bookmarks ... [--project P] [--store S]` |
-| The machine's Kai identity and mesh | `mirai kai identity\|agent [--stay]\|org new <name> [--project P]\|pair offer\|join\|approve\|peers ... [--store S]` |
+| Version control of a project, no editor | `mirai kai init\|status\|snapshot\|new\|describe\|split\|log\|diff\|undo\|restore\|conflicts\|verify\|bookmarks ... [--project P] [--store S]` |
+| The machine's Kai identity and mesh | `mirai kai identity\|agent [--stay]\|pair offer\|join\|approve\|peers ... [--store S]` |
+| Orgs, grants, private scopes, proposals and checks | `mirai kai org\|grant\|scope\|public\|proposal\|check ... [--project P] [--store S]` |
+| The Kai node and its web sign-in | `mirai kai serve --mode relay\|seed\|seed+ddc --store S [--domain N]`, `mirai kai web approve <link>` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |
@@ -567,7 +570,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
   makes the project a Kai workspace of its own (`cook/kai.project_create`) in the store of the
   machine or the one `--store` names, whose first change holds its files: the editor keeps its
   changes with [Kai](../../mirai-editor/references/kai.md#working-copy), and `mirai kai` does with
-  no editor. A project's version control is Kai alone: no `.gitignore`, `.gitattributes` or LFS.
+  no editor. What Kai is, and sharing with a team, is [mirai-kai](../../mirai-kai/SKILL.md).
 - `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
@@ -583,9 +586,11 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 
 ## Sharing a project
 
-`cook/share` gives one person's project to another, peer to peer, with no server and no git: the
+`cook/share` gives one person's project to another, peer to peer, with no server and no org: the
 files of the project travel as a snapshot, and its heavy content as the builds of its packages,
-by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
+by key, through [exchange](../../mirai-store/references/exchange.md) over `net`. It is a one-off
+hand-over; a team that works on a project together, with history, review and an always-on node,
+uses [Kai](../../mirai-kai/SKILL.md).
 
 - **Snapshot.** Every file under the root that `project.own_path` accepts: all but the generated
   folder and the folders of version control, and but the sources of the packages the project pins

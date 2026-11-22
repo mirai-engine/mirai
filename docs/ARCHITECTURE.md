@@ -334,8 +334,8 @@ Numbered layers; a package only imports lower layers.
   `rhi/shared_device` is the device the GPU tests share; only tests import it, also the GPU tests of
   `rhi`, in `rhi/tests`.
 - **2** `net/tls`: TLS 1.3 server and client as a state machine without I/O, and an ACME client
-  that proves names by TLS-ALPN-01 over a byte stream its caller supplies; on `core:crypto` and
-  `std` alone. `mirai kai serve` puts its HTTPS under it.
+  that proves names by TLS-ALPN-01 over a byte stream its caller supplies; on `core:` and `std`
+  alone, with no C library. `kai/hub` puts the HTTPS of `mirai kai serve` under it.
 - **3** `exchange`: objects and refs of `store` between peers over the connections of `net` hosts;
   a headless peer and the editor link it.
 - **3** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
@@ -345,14 +345,23 @@ Numbered layers; a package only imports lower layers.
   `View`, world reflection, the authority of this end (`Network`, `Remote`, `owned`), the motion
   and pose that another owner requests (`Motion`, `Pose_Target`), the requested places (`Places`,
   `place`, the only way to teleport) and world queries (`World_Queries`).
+- **4** `kai`: [Kai](../.agents/skills/mirai-kai/SKILL.md), the version control of a project and
+  the mesh of the machines of an org: changes, trees, conflicts as values, the operation log,
+  workspaces, the signed logs of users, orgs, projects and proposals, pairing, the sync agent with
+  its relay and beacon, encrypted overlays and derived data. It imports `std/*`, `store`,
+  `exchange`, `net` and `core:` alone, never `core`, `asset`, `project`, `host`, `engine/*`,
+  `cook/*` or `editor`: what is Mirai's enters as a driver and a filter from `cook/kai`
+  (`kai_imports_stay_engine_agnostic` enforces it). No runtime layer imports it: only `cook/*`,
+  `editor` and the tools do, so a game's code never reaches it.
 - **5** `kai/hub`: KaiHub, the web view of a Kai node: a bounded HTTP/1.1 server whose parser
   has no I/O, over `net/tls` with ACME certificates (plain HTTP on loopback only), the JSON API
   that describes itself at `GET /api`, sessions and passkey or device-signed writes the server
   only verifies, the Linux sandbox, and the commands a node runs (`serve`, `pair join`,
-  `web approve`). It imports `kai`, `net/tls`, `store` and `std/*`, nothing of the engine. Its
-  frontend, `kai/hub/web`, is embedded as it is: ES modules over a vendored Vue runtime with
-  render functions, no build step, so building needs no Node; the page parses and checks every
-  draft against what the user asked and signs its BLAKE3 itself.
+  `web approve`). It imports `kai`, `net`, `net/tls`, `store` and `std/*`, nothing of the engine
+  and nothing of the editor or `cook/*`. Its frontend, `kai/hub/web`, is embedded as it is: ES
+  modules over a vendored Vue runtime with render functions, no build step, so building needs no
+  Node; the page parses and checks every draft against what the user asked and signs its BLAKE3
+  itself.
 - **5** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).
@@ -369,14 +378,18 @@ Numbered layers; a package only imports lower layers.
   `cook/install` (a project's plugins that come from git, and the catalog). The importers are
   `cook/import` (core, no formats), one package per format (`cook/import/obj`, `gltf`, `usd`, `fbx`,
   which reads with the C library of `third_party/ufbx`) and `cook/import/sources` (the table of
-  formats and `import_source`, on top of `cook/prefab`). `cook/share` shares a project peer to
-  peer: its snapshot, and its packages refreshed through the library from `exchange` peers.
+  formats and `import_source`, on top of `cook/prefab`). `cook/kai` is what Kai knows of Mirai on
+  top of `kai`, `asset`, `project` and `cook/cache`: the asset merge driver, the project filter and
+  the operations that need a workspace; the editor and `mirai kai` call it alike.
+  `cook/share` shares a project peer to peer: its snapshot, and its packages refreshed through the
+  library from `exchange` peers.
   `cook/author` is what an interface or a
   scene is authored with as a nested document, between its text and the file of the asset, on top of
   `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui` and
   `mirai scene` go through it, and the presets an entity is made from are there.
 - **7** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
-  collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
+  collaboration, the Kai tab, prefabs and AI, whose chat search uses the C library of
+  `third_party/sqlite`.
   `editor/kit` holds the widgets only the editor and its plugins use and reads its theme, a style
   file of the kind a game's interfaces use, so `ui` is what a game contains.
 - **8** `plugins/<name>`: first-party plugins, imported as `plugins:<name>/runtime` and
@@ -392,7 +405,8 @@ Numbered layers; a package only imports lower layers.
   says what each one does.
 - **no layer** `tools/mirai`: the `mirai` CLI; `mirai --help` lists its commands.
 - **no layer** `tools/kai`: `mirai-kai`, the headless Kai node, which imports `kai/hub` alone so
-  that it links statically for Linux (`mirai build kai --target linux_arm64`, with musl).
+  that it links statically for Linux (`mirai build kai --target linux_arm64`, with musl); it is
+  how a node is deployed ([node](../.agents/skills/mirai-kai/references/node.md#deployment)).
 - **no layer** `demo`, `templates`, `tools/demo_content`: the demo project, the `mirai new`
   templates and the generator of the demo's assets.
 - **no layer** `shaders/`: the single Slang source.

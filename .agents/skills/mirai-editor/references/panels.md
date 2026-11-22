@@ -57,7 +57,7 @@ and in Play it stays minimized; the chat opens only in the pause, where the rail
 ([Play](editor.md#play)). **Hierarchy**
 shows the outliner or, with an asset document in front, the hierarchy its plugin provides
 (`Asset_Document_Provider.hierarchy`). Each document type has its tabs (`DOCUMENT_LIBRARY_TABS`): a
-scene all, a prefab all but World, an asset document Content, AI and Git (and Hierarchy if its
+scene all, a prefab all but World, an asset document Content, AI and Kai (and Hierarchy if its
 plugin builds it). If the chosen one is not there, the first that is shown (`library_tab_shown`) and
 the choice is kept for the other documents.
 

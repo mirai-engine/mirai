@@ -1,13 +1,18 @@
 # Kai in the editor
 
-The version control of a project is Kai, in process: the editor opens the project as a workspace
-of its own repository in the machine's store, or makes one of its files when it has none
-(`editor/kai.odin`). The Kai tab of the left panel (`editor/kai_panel.odin`,
-`editor/kai_team_panel.odin`) and the `kai.*` methods (`editor/api_kai.odin`,
-`editor/api_kai_team.odin`) act on it through `cook/kai` and `kai`, as `mirai kai` does with no
-editor ([projects](../../mirai-projects/references/projects.md#common-commands)): a procedure the
-editor needs from the command moves into `cook/kai`. Git is not involved: a project has no
-repository of git, no index and no merge mode, and `git.*` methods are unknown.
+Kai, the version control of a project and the mesh of its team, is owned by
+[mirai-kai](../../mirai-kai/SKILL.md): what a change, a conflict, an operation, an org or a proposal
+is, and why. This file is only the editor's part: the Kai tab of the left panel
+(`editor/kai_panel.odin`, `editor/kai_team_panel.odin`, `editor/kai_detail.odin`), what the editor
+pushes to a workspace and the `kai.*` methods (`editor/api_kai.odin`, `editor/api_kai_team.odin`).
+Everything the tab does goes through `cook/kai` and `kai`, as `mirai kai` does with no editor
+([commands](../../mirai-projects/references/projects.md#common-commands)): a procedure the editor
+needs from the command moves into `cook/kai`.
+
+The editor opens the project as a workspace of its own repository in the machine's store, or makes
+one of its files when it has none (`editor/kai.odin`). A guest of a collaboration session opens no
+workspace, and neither does a run that ends by itself after a count of frames (a check of a build,
+a capture): only an editor someone drives records history, and a host records what its guests do.
 
 The tab has three views: Changes (the working copy, the bookmarks and the log), Proposals and
 Team. Each button of the team views asks for its `kai.*` method, which runs between frames as a
@@ -25,18 +30,8 @@ the tab reads the detail again on the team's poll, a method waits for them.
 
 ## Working copy
 
-- The working copy is a change (`@`): there is nothing to stage or keep. What the files hold is
-  recorded by a snapshot, which reads only the files that changed.
-- Leaving files out of a change is a split by whole files (`ka.split`, `kai.split`, `mirai kai
-  split`): the first half keeps the change's id with the files picked, the second holds the rest
-  and takes the working copy, whose files stay as they are. Each file of CHANGES has a check, all
-  on by default; New change with some off splits instead, the description going to the closed
-  half. Checks are kept by path, and the files are read again after the snapshot: a file that
-  appeared since is checked. A conflict of the parents the change did not touch has no check. The
-  check of CHANGES is on while any file is: a click then unchecks them all, and with none checks
-  them all.
-- What the editor writes (history files, the registry's flush, a scene) and what the watch of
-  the project folder sees are pushed as touched paths (`kai_touched`): a snapshot then stats only
+- What the editor writes (history files, the registry's flush, a scene) and what the watch of the
+  project folder sees are pushed as touched paths (`kai_touched`): a snapshot then stats only
   those. The working copy snapshots once the files are quiet (`KAI_QUIET`) and nothing is held in
   memory, a gesture open or a game playing. A watch that overflows makes the next snapshot read the
   folder.
@@ -45,12 +40,17 @@ the tab reads the detail again on the team's poll, a method waits for them.
 - An operation (new change, describe, undo, restore, resolve, bookmark) first writes what the
   editor holds and snapshots; the files it writes are read again where they are loaded, and the
   document in front whose file went closes.
-- Undo takes back the newest operation of the repository and writes the files as the view after it
-  has them; undoing an undo redoes it. It is not the undo of the document.
-- A change is named by `@`, `@-`, a bookmark or a prefix of its id (`ka.revision_find`).
-- A click on a change of the log lists the files it changed, each of which opens its detail; the
-  button of the row starts a new change on it.
-- A guest of a collaboration session opens no workspace: the host records the session's changes.
+- Undo takes back the newest operation of the repository, as
+  [Kai defines it](../../mirai-kai/references/model.md#operations-and-undo); it is not the undo of
+  the document.
+- Each file of CHANGES has a check, all on by default; New change with some off splits instead
+  (`ka.split`, `kai.split`, `mirai kai split`), the description going to the closed half. Checks
+  are kept by path, and the files are read again after the snapshot: a file that appeared since is
+  checked. A conflict of the parents the change did not touch has no check. The check of CHANGES is
+  on while any file is: a click then unchecks them all, and with none checks them all.
+- A change is named by `@`, `@-`, a bookmark or a prefix of its id (`ka.revision_find`). A click on
+  a change of the log lists the files it changed, each of which opens its detail; the button of the
+  row starts a new change on it.
 
 ## Team
 
@@ -58,24 +58,25 @@ the tab reads the detail again on the team's poll, a method waits for them.
   machine has a user or an org, or a pairing starts, it runs it in a thread of its own. When a
   `mirai kai agent` or another editor already runs it for the store, the editor reaches that one.
   Either way the editor talks to it only through its control channel, and what the editor's
-  machine writes tells it (`Machine.changed`).
+  machine writes tells it (`Machine.changed`); the runner itself is
+  [the mesh's](../../mirai-kai/references/mesh.md#the-runner).
 - A poll between frames looks at the runner, the pairing request that waits, how a pairing this
   machine joins goes, the peers, and the machine's refs and logs. When any changed, what the team
   views show is read again into their arena, and a change of the logs routes the workspace's
   snapshots again (`ka.project_route`); a frame that changes nothing reads and allocates nothing.
 - A machine with no user is offered one by its handle. The recovery key is shown once in a dialog
   that only its button closes (not Escape nor a press outside), and is zeroed when it closes;
-  rotating it asks for the key the user has now. No result of a method carries a recovery key:
-  an editor with no window refuses to make a user or rotate its key before making anything, and
+  rotating it asks for the key the user has now. No result of a method carries a recovery key: an
+  editor with no window refuses to make a user or rotate its key before making anything, and
   `mirai kai identity` does it in a terminal.
-- A device is named where it is made, the first one in its user's genesis: by the name given, or
-  by the machine's host name (`vcs.device_name_of`).
-- Pairing: a ticket is offered as a member, a second device or a node, and copied; another
-  machine joins with it. The approving side gets one request at a time in a dialog: who asks as
-  `<handle>/<device>` (the joining machine names itself from its user's log,
-  `vcs.machine_pair_name`; a device with no user yet gives the name its user will know it by),
-  the code, and Deny and Approve alike, neither the default: Enter and Escape answer nothing. The
-  runner keeps the timeout and the pause after denials.
+- A device is named where it is made: by the name given, or by the machine's host name
+  (`vcs.device_name_of`).
+- Pairing ([how it works](../../mirai-kai/references/identity.md#pairing)): a ticket is offered as a
+  member, a second device or a node, and copied; another machine joins with it. The approving side
+  gets one request at a time in a dialog: who asks as `<handle>/<device>` (the joining machine names
+  itself from its user's log, `vcs.machine_pair_name`; a device with no user yet gives the name its
+  user will know it by), the code, and Deny and Approve alike, neither the default: Enter and
+  Escape answer nothing.
 - The org of the project: making one, putting the open project in it (public or the org's alone),
   or working on one of its projects from this workspace (`link`); members with their roles and
   devices, nodes and projects with their policies; a role, a removal, a transfer and leaving.
@@ -84,32 +85,30 @@ the tab reads the detail again on the team's poll, a method waits for them.
   starts a change on one. A shared bookmark moves for the whole org to the working copy's parent,
   refused with the policy's reason when one guards it; a name typed shares that parent under it.
   The workspace's bookmarks publish as this device's refs after each operation that changed them.
-- Proposals: one opens on a shared bookmark with the changes from it to the working copy's parent.
-  Its view has the stack with what each change did to each file, the comments placed on the
-  current stack (outdated ones marked), verdicts, checks and what keeps it from landing. A comment
-  hangs on the proposal, on a file picked in the stack, on lines of a text file, or on the entity
-  selected in the scene. A file of the stack opens its detail, with the comments on it under
-  their lines or entities; a click on a line (a shift-click spans from the one before) or on an
-  entity's row starts a comment there. A check runs its command in the project's folder, whose
-  working copy must hold the proposal's final revision.
-- Private files: the scopes of the project with their patterns, readers and history, added,
-  removed and rotated. What refused the last snapshot (a path of the deny set, a scope waiting for
-  rotation, a scope with no keyring here) or the last publish (a leak the publish scanner found)
-  heads CHANGES with the button that resolves it, Keep public or Rotate the key; it stays until a
-  snapshot, or a publish, holds.
+- Proposals ([the model](../../mirai-kai/references/proposals.md#proposals)): one opens on a shared
+  bookmark with the changes from it to the working copy's parent. Its view has the stack with what
+  each change did to each file, the comments placed on the current stack (outdated ones marked),
+  verdicts, checks and what keeps it from landing. A comment hangs on the proposal, on a file picked
+  in the stack, on lines of a text file, or on the entity selected in the scene. A file of the stack
+  opens its detail, with the comments on it under their lines or entities; a click on a line (a
+  shift-click spans from the one before) or on an entity's row starts a comment there. A check runs
+  its command in the project's folder, whose working copy must hold the proposal's final revision.
+- Private files ([the model](../../mirai-kai/references/private.md#scopes-and-routing)): the scopes
+  of the project with their patterns, readers and history, added, removed and rotated. What refused
+  the last snapshot (a path of the deny set, a scope waiting for rotation, a scope with no keyring
+  here) or the last publish (a leak the publish scanner found) heads CHANGES with the button that
+  resolves it, Keep public or Rotate the key; it stays until a snapshot, or a publish, holds.
 - The imports of the editor take derived data the org's peers built from the mesh on a miss and
   publish what they build (`ka.mesh_source`), while the runner runs and the project is the org's.
 
 ## Conflicts
 
-- A change on several parents merges their trees with the drivers of `cook/kai` (an asset row by
-  row and field by field, text by lines). What does not merge is a conflict in its file that never
-  blocks: the file is written with ours where the sides disagree, and the tab lists it.
 - A conflicted asset unfolds into its fields (`ka.conflict_fields`), ours and theirs, read from the
   sides of the conflict. Resolve writes it with theirs for the fields picked; Take ours and Take
   theirs write one side whole, which is how text and binary files resolve. The conflict then goes
   and a snapshot records the file (`ka.conflict_settle`); any other edit of the file resolves it
-  too.
+  too. [What a conflict is](../../mirai-kai/references/model.md#conflicts) and how the asset driver
+  merges are Kai's.
 
 ## Authors
 
@@ -139,4 +138,5 @@ the tab reads the detail again on the team's poll, a method waits for them.
   frame allocates nothing, its buttons ask for their methods, the dialogs have no default, and
   every team method says how to fix params that do not fit.
 - In a session: `kai.status`, `kai.new`, `kai.split`, `kai.conflicts`, `kai.resolve` and
-  `kai.undo` once each, and `capture` with `ui` of the Kai tab in each of its views.
+  `kai.undo` once each, and `capture` with `ui` of the Kai tab in each of its views. The rest of
+  Kai is verified by [its skill](../../mirai-kai/SKILL.md#verification).
