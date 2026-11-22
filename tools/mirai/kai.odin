@@ -923,7 +923,7 @@ kai_org_print :: proc(m:^vcs.Machine,id:vcs.Log_Id) {
     v:ka.Org_View
     x:=id
     if ka.org_view(m,id,&v)!=.None {
-        fmt.printfln("Org %s: its log is not here yet",short(x[:]))
+        fmt.printfln("Org %s: its log is not here yet: the agent fetches it from the machine it paired with, and mirai kai pair join with a new ticket reaches one again",short(x[:]))
         return
     }
     fmt.printfln("Org %s %s, owner %s",short(x[:]),v.name,v.owner!=""?v.owner:"?")

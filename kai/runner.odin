@@ -1604,7 +1604,16 @@ runner_pair_answer :: proc(r:^Runner,approve:bool,code:string="") -> Error {
                 append(&payload,..g[:])
             }
         case .Member:
-            machine_member_add(m,o.org,o.info.log_id,o.role) or_return
+            // One who is a member already keeps its role: the pairing only
+            // brings its machine to this one again.
+            member:=false
+            {
+                s:Org_State
+                machine_org_open(m,o.org,&s) or_return
+                member=org_role(&s.fold,o.info.log_id)!=.None
+                org_state_destroy(&s)
+            }
+            if !member {machine_member_add(m,o.org,o.info.log_id,o.role) or_return}
             id:=o.org
             append(&payload,..id[:])
         case .Node:

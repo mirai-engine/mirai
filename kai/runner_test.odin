@@ -275,6 +275,23 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
     g:=Goal{k=1,dh=Dh_Key(alice.dh.public)}
     if !testing.expect(t,box_until(b,10,&g,connected_by),"bob's agent connects to alice and is admitted") {return}
 
+    // Pairing a member again brings its machine back and changes no role.
+    ticket,_=runner_pair_offer(a,.Member,org,.Reader,{},&buffer)
+    testing.expect_value(t,runner_pair_join(c,ticket,"bob's laptop"),Error.None)
+    if !testing.expect(t,box_until(b,10,&ALICE,request_shown)) {return}
+    request,_=runner_pair_request(a)
+    testing.expect_value(t,runner_pair_answer(a,true,request.code),Error.None)
+    testing.expect(t,box_until(b,5,&BOB,join_ended))
+    testing.expect_value(t,runner_pair_progress(c).phase,Pair_Phase.Approved)
+    {
+        again:Org_State
+        if testing.expect_value(t,machine_org_open(alice,org,&again),Error.None) {
+            testing.expect_value(t,org_role(&again.fold,bob.user),Role.Writer)
+            org_state_destroy(&again)
+        }
+    }
+    if !testing.expect(t,box_until(b,10,&g,connected_by),"bob's agent is connected to alice after the second pairing") {return}
+
     // A change alice snapshots and bookmarks arrives at bob's.
     project,pe:=machine_project_add(alice,org,random_id(Repo_Id),"game",false)
     testing.expect_value(t,pe,Error.None)
