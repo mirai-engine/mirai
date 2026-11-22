@@ -595,7 +595,8 @@ api_kai_proposals :: proc(s:^Session,call:^api.Call) {
 }
 
 kai_status_text :: proc(status:vcs.Proposal_Status) -> string {
-    return strings.to_lower(fmt.tprint(status),context.temp_allocator)
+    texts:=[vcs.Proposal_Status]string{.Open="open",.Closed="closed",.Landed="landed"}
+    return texts[status]
 }
 
 @(private)

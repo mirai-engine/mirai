@@ -213,6 +213,27 @@ kai_call :: proc(s:^Session,run:proc(s:^Session,call:^api.Call),params:^$P,$R:ty
     return
 }
 
+// kai_call with the call's allocator given, and a temporary one of its own
+// that is overwritten once the call returns: what a result keeps in
+// temporary memory reads garbage then.
+@(private="file")
+kai_call_apart :: proc(s:^Session,run:proc(s:^Session,call:^api.Call),params:^$P,$R:typeid,allocator:mem.Allocator) -> (call:api.Call,result:^R) {
+    scratch:=make([]u8,16<<20)
+    defer delete(scratch)
+    temporary:mem.Arena
+    mem.arena_init(&temporary,scratch)
+    {
+        context.temp_allocator=mem.arena_allocator(&temporary)
+        method:=new(api.Method,allocator)
+        method^={params_id=P,result_id=R}
+        result=new(R,allocator)
+        call={method=method,params=params,result=result,allocator=allocator}
+        run(s,&call)
+    }
+    for &b in scratch {b=0xaa}
+    return
+}
+
 // The paths a change changed, in order, space-separated.
 @(private="file")
 kai_paths :: proc(w:^vcs.Workspace,revision:vcs.Revision) -> string {
@@ -473,6 +494,16 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     land:=Api_Kai_Proposal_Params{proposal=id,land=true}
     call,seen=kai_call(a,api_kai_proposal,&land,Api_Kai_Proposal)
     if !kai_ok(t,call,"land") {return}
+    testing.expect_value(t,seen.status,"landed")
+    // What a result holds lives in the call's allocator: the temporary one is overwritten once
+    // the call returns.
+    owned:=make([]u8,1<<20)
+    defer delete(owned)
+    own:mem.Arena
+    mem.arena_init(&own,owned)
+    apart:=Api_Kai_Proposal_Params{proposal=id}
+    call,seen=kai_call_apart(a,api_kai_proposal,&apart,Api_Kai_Proposal,mem.arena_allocator(&own))
+    if !kai_ok(t,call,"view apart") {return}
     testing.expect_value(t,seen.status,"landed")
 
     // Both see main moved to the change that landed.
