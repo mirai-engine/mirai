@@ -2,9 +2,9 @@
 name: mirai-std
 description: Mirai standard library for games, with the packages `std/base`, `std/jobs`, `std/math`,
   `std/anim` (clips, poses, motion matching, inertialization, IK), `std/ai` (A*, tiled navmesh,
-  avoidance, minds, considerations), `std/input`, `std/geom`, `std/spatial` and `std/subprocess`.
-  Use when
-  changing, extending or consuming any of those packages; enemies and NPCs that decide are in
+  avoidance, minds, considerations), `std/input`, `std/geom`, `std/spatial`, `std/subprocess` and
+  `std/diff` (line diff of texts and three-way merge). Use when changing, extending or consuming
+  any of those packages; enemies and NPCs that decide are in
   `mirai-world`.
 ---
 
@@ -105,6 +105,8 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   BVH are in [physics](../mirai-physics/references/physics.md#stdspatial).
 - BLAKE3 of bytes, and the values of its 64 KiB groups a blob is checked by piece by piece
   (`std/blake3`): the code; the official vectors are its test.
+- Line diff of texts, its view rows and the three-way merge that keeps bytes and line breaks as
+  they are (`std/diff`): the code; its tests in `std/diff/diff_test.odin`.
 - Streams, schemas, hashes, import and migration of values (`std/serial`):
   [std/serial](../mirai-assets/references/serial.md#stdserial).
 - What the structure of a `.ui` is judged by (`std/ui_format`):

@@ -323,7 +323,7 @@ project's world through
 Numbered layers; a package only imports lower layers.
 
 - **0** `std/*`: standard library (base, blake3, math, serial, jobs, spatial, geom, anim, ai, input,
-  subprocess, ui_format, compressor/data). It does not depend on the engine.
+  subprocess, ui_format, compressor/data, diff). It does not depend on the engine.
   `std/ui_format` is what the structure of a `.ui` is judged by (node kinds, override fields,
   limits), which `ui` builds and `asset` checks without importing each other.
 - **1** `project`: `project.mirai` and `plugin.mirai` manifests, the layout of a project.

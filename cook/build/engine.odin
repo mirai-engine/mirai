@@ -77,7 +77,7 @@ Engine_Package :: struct {
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/input","std"},
-    {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},{.Base,"std/compressor/data","std"},
+    {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},{.Base,"std/compressor/data","std"},{.Base,"std/diff","std"},
     {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"store","system"},{.Base,"core",""},
 
@@ -91,7 +91,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/author","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},
     {.Cook,"cook/share","cook"},{.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
-    {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
+    {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
     {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor/kit","editor-parts"},{.Editor,"editor",""},
 }
 

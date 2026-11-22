@@ -170,7 +170,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   pointer because the server must stay where it was born.
 - A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`, `^Edits`),
   not the `Session`, when it needs nothing else. What does not need the `Session` is its own
-  package under `editor/` (`acp`, `ai_store`, `diff`, `git`, `history`, `records`), and `editor`
+  package under `editor/` (`acp`, `ai_store`, `git`, `history`, `records`), and `editor`
   keeps the thin part that reaches the session; `history` declares the storages `Edits` and
   `Selection`. Files outside `ai_*.odin` do not reach the
   fields of `Ai`: they go through `editor/ai_outside.odin` and the procedures of the tasks.
@@ -256,7 +256,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; git commands
   and what they print: `mirai test editor/git`; the journal and undo without a session:
   `mirai test editor/history`; the rows and texts of a table of game data:
-  `mirai test editor/records`; the line diff: `mirai test editor/diff`. The editor's tests need
+  `mirai test editor/records`. The editor's tests need
   more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
 - Commands: `editor/commands_test.odin` (every entry calls a registered method with params it
   takes or only changes what the person sees, a gesture runs between frames as a step of the
