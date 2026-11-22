@@ -37,7 +37,7 @@ Identity :: struct {
     seed:[32]u8,
 }
 
-Object_Kind :: enum u8 {None,Folder,Conflict,Change,View,Operation,Stat_Index}
+Object_Kind :: enum u8 {None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set}
 
 Error :: enum u8 {
     None,
@@ -51,6 +51,9 @@ Error :: enum u8 {
     Locked,           // another process holds the workspace
     Stale,            // the workspace's change is no longer in the view
     Unsupported,      // the system cannot do it here (a reflink across volumes)
+    Unauthorized,     // a signature, or the right of its author, does not hold
+    Rollback,         // a signed record not newer than the one held
+    Expired,          // past the time a signed record allows
 }
 
 error_text :: proc(error:Error) -> string {
@@ -66,6 +69,9 @@ error_text :: proc(error:Error) -> string {
     case .Locked: return "another process holds this workspace: close it first"
     case .Stale: return "the workspace's change is gone from the repository: switch to another change"
     case .Unsupported: return "the file system cannot do it here"
+    case .Unauthorized: return "a signature or the right of its author does not hold: fetch the logs of the org again, or ask an admin for the right"
+    case .Rollback: return "a record older than the one held: a peer offered stale refs, fetch from another"
+    case .Expired: return "the signed record is past its time: ask its issuer for a new one"
     }
     return ""
 }
