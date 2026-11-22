@@ -10,6 +10,7 @@ import "core:crypto/siphash"
 import "core:crypto/x25519"
 import "core:encoding/endian"
 import "core:mem"
+import "mirai:std/blake3"
 
 // Every connection is sealed, and its first datagram already carries data.
 //
@@ -37,12 +38,67 @@ import "core:mem"
 // and a new key derived from the old one every rekey_interval datagrams, long
 // before a nonce could repeat and far below what one key may seal. The client's
 // datagram 0 is the payload of its Initiate, so its AEGIS key starts at 1.
+//
+// A connection between identities is the Noise handshake IK
+// (Noise_IK_25519_ChaChaPoly_SHA256), against the server's identity
+// (Host_Desc.identity), which the client knows before it writes anything:
+//
+//     <- s
+//     ...
+//     -> e, es, s, ss  Initiate_Identity: the payload is the client's claim and its datagram 0
+//     <- e, ee, se     Response
+//
+// Its Initiate shows the client's identity only to the holder of the
+// server's, and its MAC is keyed by the server's public key alone: it keeps out
+// whoever does not know where it talks, nothing else, and the same rate,
+// filters and cookies as an Initiate stand behind it. That Initiate can be
+// replayed once the server forgot it, so the server answers it but hands its
+// game nothing until a datagram under the keys of the connection proves the
+// client holds its e and its s: only then does authorize read the claim, and
+// the connection and its datagram 0 reach the game.
 
 KEY_BYTES :: 32
 Key :: [KEY_BYTES]u8
 @(private) TAG_BYTES :: aegis.TAG_SIZE_128 // also the tag of ChaCha20-Poly1305 in the handshake
 @(private) REKEY_INTERVAL :: 1<<24
-@(private) NOISE_PROTOCOL :: "Noise_NKpsk0_25519_ChaChaPoly_SHA256"
+@(private) NOISE_NK :: "Noise_NKpsk0_25519_ChaChaPoly_SHA256"
+@(private) NOISE_IK :: "Noise_IK_25519_ChaChaPoly_SHA256"
+@(private) LABEL_IDENTITY_MAC :: "kai-1/mac"
+@(private) SEALED_KEY_BYTES :: KEY_BYTES+TAG_BYTES // s in an Initiate_Identity
+
+// The X25519 static key pair of an identity.
+Dh_Key :: struct {private,public:Key}
+
+// What a server's authorize says of the identity of a connection that proved it holds its keys.
+// Pending: the connection reaches the game, which serves it only what lets the two catch up
+// (host_authorize asks again); Refuse ends it with Unauthorized, or with Revoked once admitted.
+Verdict :: enum u8 {Refuse,Pending,Accept}
+Peer_Class :: enum u8 {Anonymous,Member,Node,Grant}
+Authorization :: struct {verdict:Verdict,class:Peer_Class}
+// Decides who a server with an identity admits: peer is the client's identity and claim what it
+// presented with it. check runs on the network half (the worker thread when one runs), when the
+// connection is confirmed and on host_authorize; it reads only what it is given and what that thread
+// may read.
+Authorize :: struct {
+    data:rawptr,
+    check:proc(data:rawptr,peer:Key,claim:[]u8) -> Authorization,
+}
+CLAIM_BYTES :: 256 // the most a claim takes
+
+// A new identity. Not ok when the system gives no secure random bytes.
+dh_key :: proc() -> (key:Dh_Key,ok:bool) {
+    when !crypto.HAS_RAND_BYTES {return}
+    private:Key
+    defer crypto.zero_explicit(&private,KEY_BYTES)
+    crypto.rand_bytes(private[:])
+    return dh_key_from(&private),true
+}
+// The identity of a private key.
+dh_key_from :: proc(private:^Key) -> (key:Dh_Key) {
+    key.private=private^
+    x25519.scalarmult_basepoint(key.public[:],key.private[:])
+    return
+}
 @(private) LABEL_SECRET :: "mirai-net-3 secret"
 @(private) LABEL_REKEY :: "mirai-net-3 rekey"
 
@@ -92,6 +148,7 @@ Host_Secure :: struct {
     seen_since:f64,
     busy_until:f64,     // server with an invitation: until then an Initiate needs a cookie
     mac:Key,            // the key of the MAC that ends an Initiate: whoever knows s and the secret has it
+    identity_mac:Key,   // server with an identity: that of an Initiate_Identity, which whoever knows its public key has
 }
 
 @(private)
@@ -103,6 +160,12 @@ Peer_Secure :: struct {
     response:[RESPONSE_BYTES]u8, // server: the Response, again for every copy of that Initiate until confirmed
     send,receive,receive_old:Key,
     send_epoch,receive_epoch:u64,
+    peer:Key,       // the identity of the other end of an identity connection; zero for any other
+    authorization:Authorization,
+    claim:[CLAIM_BYTES]u8, // server: what the client of an identity connection presented
+    claim_size:int,
+    early:[EARLY_BYTES]u8, // server: its datagram 0, until confirmed
+    early_size:int,
 }
 
 // The symmetric state of a handshake (Noise, section 5.2).
@@ -129,6 +192,17 @@ secure_host_init :: proc(h:^Host) {
         s.public=d.invite.public
     }
     s.mac=mac_key(&s.public,&s.psk)
+    if d.mode==.Server && d.identity!={} {s.identity_mac=identity_mac_key(&d.identity.public)}
+}
+
+// The key of the MAC of an Initiate_Identity to the server of identity public.
+@(private)
+identity_mac_key :: proc(public:^Key) -> Key {
+    hasher:blake3.Hasher
+    blake3.init(&hasher)
+    blake3.update(&hasher,transmute([]u8)string(LABEL_IDENTITY_MAC))
+    blake3.update(&hasher,public[:])
+    return Key(blake3.final(&hasher))
 }
 
 // The key of the MAC of an Initiate to the server of key s, with the pre-shared key psk.
@@ -243,14 +317,19 @@ secure_exchange :: proc(out,scalar,point:^Key) -> bool {
     return crypto.compare_constant_time(out[:],zero[:])==0
 }
 
+// h starts as the name of the protocol, padded with zeros, or as its hash when it is longer than one.
 @(private)
-noise_init :: proc(n:^Noise,prologue:[]u8,responder:^Key) {
-    // The name is longer than the hash: h starts as its hash.
-    ctx:sha2.Context_256
-    sha2.init_256(&ctx)
-    sha2.update(&ctx,transmute([]u8)string(NOISE_PROTOCOL))
-    sha2.final(&ctx,n.h[:])
-    n.ck,n.k,n.n=n.h,{},0
+noise_init :: proc(n:^Noise,name:string,prologue:[]u8,responder:^Key) {
+    n^={}
+    if len(name)<=KEY_BYTES {
+        copy(n.h[:],name)
+    } else {
+        ctx:sha2.Context_256
+        sha2.init_256(&ctx)
+        sha2.update(&ctx,transmute([]u8)string(name))
+        sha2.final(&ctx,n.h[:])
+    }
+    n.ck=n.h
     noise_mix_hash(n,prologue)
     noise_mix_hash(n,responder[:])
 }
@@ -321,46 +400,64 @@ noise_split :: proc(n:^Noise,initiator,responder:^Key) {
     crypto.zero_explicit(n,size_of(Noise))
 }
 
-// Client: -> psk, e, es. The message is e, then the payload, sealed in place, then its tag. False when the
-// server's key leaves nothing secret.
+// Client: -> psk, e, es with the pre-shared key psk, or with its identity -> e, es, s, ss. The
+// message is e, then s sealed with an identity, then the payload, sealed in place, then its tag.
+// False when a key of the server leaves nothing secret.
 @(private)
-noise_initiate :: proc(n:^Noise,ephemeral:^Key,prologue:[]u8,server,psk:^Key,message:[]u8) -> bool {
-    noise_init(n,prologue,server)
-    noise_mix_key_and_hash(n,psk[:])
+noise_initiate :: proc(n:^Noise,ephemeral:^Key,prologue:[]u8,server:^Key,psk:^Key,identity:^Dh_Key,message:[]u8) -> bool {
+    noise_init(n,identity==nil?NOISE_NK:NOISE_IK,prologue,server)
+    if identity==nil {noise_mix_key_and_hash(n,psk[:])}
     crypto.rand_bytes(ephemeral[:])
     x25519.scalarmult_basepoint(message[:KEY_BYTES],ephemeral[:])
     noise_mix_hash(n,message[:KEY_BYTES])
-    noise_mix_key(n,message[:KEY_BYTES])
+    if identity==nil {noise_mix_key(n,message[:KEY_BYTES])}
     shared:Key
     defer crypto.zero_explicit(&shared,KEY_BYTES)
     if !secure_exchange(&shared,ephemeral,server) {return false}
     noise_mix_key(n,shared[:])
+    at:=KEY_BYTES
+    if identity!=nil {
+        copy(message[at:],identity.public[:])
+        noise_encrypt(n,message[at:][:KEY_BYTES],message[at+KEY_BYTES:][:TAG_BYTES])
+        at+=SEALED_KEY_BYTES
+        if !secure_exchange(&shared,&identity.private,server) {return false}
+        noise_mix_key(n,shared[:])
+    }
     end:=len(message)-TAG_BYTES
-    noise_encrypt(n,message[KEY_BYTES:end],message[end:])
+    noise_encrypt(n,message[at:end],message[end:])
     return true
 }
 
-// Server: opens an Initiate's message in place. False when it does not open: another s or secret, a
-// point of small order, or damage.
+// Server: opens an Initiate's message in place; with peer, an Initiate_Identity, whose client's
+// identity goes to peer. False when it does not open: another s or secret, a point of small order,
+// or damage.
 @(private)
-noise_accept :: proc(n:^Noise,prologue:[]u8,private,public,psk:^Key,message:[]u8) -> bool {
-    noise_init(n,prologue,public)
-    noise_mix_key_and_hash(n,psk[:])
+noise_accept :: proc(n:^Noise,prologue:[]u8,private,public,psk:^Key,message:[]u8,peer:^Key=nil) -> bool {
+    noise_init(n,peer==nil?NOISE_NK:NOISE_IK,prologue,public)
+    if peer==nil {noise_mix_key_and_hash(n,psk[:])}
     initiator:=(^Key)(raw_data(message))
     noise_mix_hash(n,initiator[:])
-    noise_mix_key(n,initiator[:])
+    if peer==nil {noise_mix_key(n,initiator[:])}
     shared:Key
     defer crypto.zero_explicit(&shared,KEY_BYTES)
     if !secure_exchange(&shared,private,initiator) {return false}
     noise_mix_key(n,shared[:])
+    at:=KEY_BYTES
+    if peer!=nil {
+        if !noise_decrypt(n,message[at:][:KEY_BYTES],message[at+KEY_BYTES:][:TAG_BYTES]) {return false}
+        peer^=(^Key)(&message[at])^
+        at+=SEALED_KEY_BYTES
+        if !secure_exchange(&shared,private,peer) {return false}
+        noise_mix_key(n,shared[:])
+    }
     end:=len(message)-TAG_BYTES
-    return noise_decrypt(n,message[KEY_BYTES:end],message[end:])
+    return noise_decrypt(n,message[at:end],message[end:])
 }
 
-// Server: <- e, ee. The message is e, then the payload, sealed in place, then its tag; the keys of the
-// connection go to s.
+// Server: <- e, ee, and se to the client's identity peer when there is one. The message is e, then the
+// payload, sealed in place, then its tag; the keys of the connection go to s.
 @(private)
-noise_respond :: proc(n:^Noise,initiator:^Key,message:[]u8,s:^Peer_Secure) -> bool {
+noise_respond :: proc(n:^Noise,initiator:^Key,message:[]u8,s:^Peer_Secure,peer:^Key=nil) -> bool {
     ephemeral,shared:Key
     defer {
         crypto.zero_explicit(&ephemeral,KEY_BYTES)
@@ -369,9 +466,13 @@ noise_respond :: proc(n:^Noise,initiator:^Key,message:[]u8,s:^Peer_Secure) -> bo
     crypto.rand_bytes(ephemeral[:])
     x25519.scalarmult_basepoint(message[:KEY_BYTES],ephemeral[:])
     noise_mix_hash(n,message[:KEY_BYTES])
-    noise_mix_key(n,message[:KEY_BYTES])
+    if peer==nil {noise_mix_key(n,message[:KEY_BYTES])}
     if !secure_exchange(&shared,&ephemeral,initiator) {return false}
     noise_mix_key(n,shared[:])
+    if peer!=nil {
+        if !secure_exchange(&shared,&ephemeral,peer) {return false}
+        noise_mix_key(n,shared[:])
+    }
     end:=len(message)-TAG_BYTES
     noise_encrypt(n,message[KEY_BYTES:end],message[end:])
     noise_split(n,&s.receive,&s.send)
@@ -379,17 +480,22 @@ noise_respond :: proc(n:^Noise,initiator:^Key,message:[]u8,s:^Peer_Secure) -> bo
     return true
 }
 
-// Client: reads a Response in place; the keys of the connection go to s. False when it is not from the
-// holder of s and the secret.
+// Client: reads a Response in place, with the private key of its identity when it presented one; the keys
+// of the connection go to s. False when it is not from the holder of s and the secret, or of the
+// server's identity.
 @(private)
-noise_finish :: proc(n:^Noise,ephemeral:^Key,message:[]u8,s:^Peer_Secure) -> bool {
+noise_finish :: proc(n:^Noise,ephemeral:^Key,message:[]u8,s:^Peer_Secure,identity:^Key=nil) -> bool {
     responder:=(^Key)(raw_data(message))
     noise_mix_hash(n,responder[:])
-    noise_mix_key(n,responder[:])
+    if identity==nil {noise_mix_key(n,responder[:])}
     shared:Key
     defer crypto.zero_explicit(&shared,KEY_BYTES)
     if !secure_exchange(&shared,ephemeral,responder) {return false}
     noise_mix_key(n,shared[:])
+    if identity!=nil {
+        if !secure_exchange(&shared,identity,responder) {return false}
+        noise_mix_key(n,shared[:])
+    }
     end:=len(message)-TAG_BYTES
     if !noise_decrypt(n,message[KEY_BYTES:end],message[end:]) {return false}
     noise_split(n,&s.send,&s.receive)

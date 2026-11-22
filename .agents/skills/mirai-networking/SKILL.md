@@ -84,8 +84,8 @@ neither the data world nor physics. A replicated object is an opaque game id plu
 - `net/transport.odin`: `Address`, `Transport`, `Udp`, `Sim_Network`. `net/conditioner.odin`:
   `Conditioner`.
 - `net/host.odin`: `Host`, the two halves, frames, commands, worker.
-- `net/peer.odin`: handshake, headers, acks, RTT, send limit. `net/secure.odin`,
-  `net/invite.odin`.
+- `net/peer.odin`: handshake, headers, acks, RTT, send limit. `net/secure.odin` (Noise `NKpsk0`
+  and `IK`, identities and `Authorize`), `net/invite.odin`.
 - `net/channel.odin`: channels and fragmentation.
 - `net/protocol.odin`: `Protocol`, fragments, composite types, descriptors, state serialization.
   `net/collection.odin`: flat collections of slots with stable identity.
@@ -144,11 +144,11 @@ In `plugins/multiplayer/runtime`:
   returns `Error` or counts in the statistics. Replicated traffic, even damaged, does not
   allocate.
 - **Every connection is sealed, and its first datagram carries data:** the handshake is the Noise
-  pattern `NKpsk0` over the key and the secret of the invitation, and the Initiate carries the
-  client's datagram 0. An address hears only the Response, one per copy of its Initiate (and the
-  Disconnect if the game closes it), until a datagram under the keys of the connection comes from
-  it; an Initiate that does not open, or a Hello to a host with an invitation, hears nothing. There
-  is no unsealed mode.
+  pattern `NKpsk0` over the key and the secret of the invitation, or `IK` between identities, and
+  the Initiate carries the client's datagram 0. An address hears only the Response, one per copy
+  of its Initiate (and the Disconnect if the game closes it), until a datagram under the keys of
+  the connection comes from it; an Initiate that does not open, or a Hello to a host with an
+  invitation, hears nothing. There is no unsealed mode.
 - **An Initiate opens once** while the key of its server lasts, also one refused: a later copy,
   from anywhere, makes no connection and delivers nothing again. What the replay filter cannot take
   or holds by mistake, and what comes while the server ran out of key exchanges, gets a Retry: a
@@ -158,10 +158,13 @@ In `plugins/multiplayer/runtime`:
   address, never everyone: guessers do not shut out who brings the invitation.
 - **The key of an invitation belongs to its share:** made when it starts, kept in memory by its
   owner and its `Host`, gone when it ends; its private key is never written down.
-- **Two ways in, nothing else:** by address (a server without an invitation admits anyone who
-  reaches it, after a Hello and its Key) and by invitation code (only its holders). The code carries
-  the host's key and secret and its real addresses, on its network and on its router; a client asks
-  only those, never guesses others.
+- **Three ways in, nothing else:** by address (a server without an invitation admits anyone who
+  reaches it, after a Hello and its Key), by invitation code (only its holders) and by identity
+  (only who its `authorize` admits). The code carries the host's key and secret and its real
+  addresses, on its network and on its router; a client asks only those, never guesses others.
+- **An identity is admitted only once confirmed:** an Initiate_Identity can be replayed, so its
+  connection reaches `authorize` and the game only after a datagram under its keys; a refusal on
+  `host_authorize` ends it with `Revoked`.
 - **Every byte from the network is hostile.** It is read with `Bit_Reader`, which never leaves the
   buffer; every index, type, mask and length is validated before use. A datagram that cannot be
   interpreted closes the connection with `Protocol_Error`; it is never half-applied over another
@@ -282,6 +285,7 @@ In `plugins/multiplayer/runtime`:
   `conditioner`, `replication`,
   `descriptor_boundary`, `large_state`, `collection`, `references`, `convergence`, `grid`, `scope`,
   `authority`, `interpolation`, `clock`, `worker`, `baseline` (pools and shared baselines),
+  `identity` (IK, authorize, revocation, hostile Initiate_Identity),
   `replication` (re-typing:
   `an_object_retyped_keeps_its_replica_and_takes_the_fragments_of_its_new_type`),
   `packing` (packet fill) and `portmap` ([port-mapping](references/port-mapping.md)).

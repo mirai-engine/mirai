@@ -57,9 +57,11 @@ Disconnect_Reason :: enum u8 {
     Capacity,          // this end ran out of room for what the other end sent
     Kicked,
     Denied_Security,      // the server answered with keys that leave nothing secret or that it could not have made
-    Replaced,             // another connection of the same player took its place
+    Replaced,             // another connection of the same player, or of the same identity, took its place
     Scene_Missing,        // the client does not have the scene the server is in
     Denied_Player,        // the client presented no player, or a second one
+    Unauthorized,         // the server's authorize refused the identity of the client
+    Revoked,              // the server's authorize refused it again (host_authorize) after it was admitted
 }
 
 Host_Desc :: struct {
@@ -83,11 +85,14 @@ Host_Desc :: struct {
     handshakes_per_update:int, // server: key exchanges computed in one update, default 8
     replication:Replication_Desc,
     hold:bool,                // server: a connection that arrives is held (connection_hold) until it is let go
+    identity:Dh_Key,          // made by dh_key. Server: what identity connections are made against (secure.odin); client: what host_connect_identity presents
+    authorize:Authorize,      // server: who of the identities it admits; exactly when it has one
     allocator:runtime.Allocator,
 }
 
 Command_Kind :: enum u8 {
-    Connected,          // tick: the ticks of history of the server (host_history)
+    Connected,          // tick: the ticks of history of the server (host_history); authorization; data: the identity of the other end of an identity connection
+
     Disconnected,       // reason
     Message,            // channel, data
     Object_Created,     // object, type, role, simulation, tick, mask, words; retyped: of a replica this end has, which is of this type from now on
@@ -98,6 +103,7 @@ Command_Kind :: enum u8 {
     Input,              // tick, data: the input structure of a client, on a server
     Authority_Requested,// object, connection
     Authority_Changed,  // object, connection holding it now, zero when it went back to the server
+    Authorized,         // server: authorization, what host_authorize found anew for an identity connection
 }
 
 // What the network half hands back. data and words point into the buffer of
@@ -117,6 +123,7 @@ Command :: struct {
     more:bool,    // Message: a piece of a reliable message whose next bytes come in the next Message of the channel
     retyped:bool, // Object_Created: the replica of this object goes on, with the type and the whole state of the command
     complete:bool, // Object_Updated: the replica holds the whole state of the server's tick after it (an update that follows a message about it)
+    authorization:Authorization, // Connected, Authorized: an identity connection on a server as its authorize says; Accept and Anonymous for every other
     mask:u64,     // fields that changed, one bit each as numbered by the object type
     data:[]u8,
     words:[]u32,  // quantized state: object_read and event_read turn it into structures
@@ -157,7 +164,7 @@ Op_Kind :: enum u8 {
     Tick,Connect,Disconnect,Message,
     Object_Create,Object_Retype,Object_State,Object_Destroy,Object_Owner,Object_Priority,Object_Position,Object_Radius,Object_Filter,
     Object_Parent,Authority_Grant,Authority_Request,Authority_Release,View,Event,Input,Object_Visibility,Connection_Visibility,Hold,Clock,
-    Object_Group,Connection_Group,
+    Object_Group,Connection_Group,Authorize,
 }
 @(private)
 Op :: struct {
@@ -171,7 +178,7 @@ Op :: struct {
     offset,size:u32,
 }
 @(private)
-Connect_Request :: struct {candidates:[CANDIDATES]Address,count:int}
+Connect_Request :: struct {candidates:[CANDIDATES]Address,count:int,identity:bool,peer:Key,claim:[CLAIM_BYTES]u8,claim_size:int}
 // Bytes of messages given to the game channels of one connection: 4 more than each one's data.
 // streaming: bytes of the message message_send streams on each channel that it has not queued yet.
 @(private)
@@ -337,6 +344,9 @@ host_init :: proc(h:^Host,desc:Host_Desc) -> Error {
             return refuse(h,"invite.public","the key of an invitation: invite_decode refuses the rest")
         }
     }
+    if d.identity!={} && d.identity!=dh_key_from(&d.identity.private) {return refuse(h,"identity","a key made by dh_key, with its private key")}
+    if d.mode==.Server && (d.identity=={})!=(d.authorize.check==nil) {return refuse(h,"authorize","a procedure exactly when identity is set: a server with an identity decides who it admits")}
+    if d.mode==.Client && d.authorize.check!=nil {return refuse(h,"authorize","none on a client: its server decides who it admits")}
     b:=&h.back
     b.rng=d.seed
     b.scale=1
@@ -469,8 +479,23 @@ frame_submit :: proc(h:^Host) {
 // first datagram, which a client with an invitation sends at once and the
 // server takes once.
 host_connect :: proc(h:^Host,addresses:..Address) -> Error {
-    if h.desc.mode!=.Client {return .Invalid}
     request:Connect_Request
+    return connect_push(h,&request,addresses)
+}
+// Client: connects as host_connect does, with the Noise handshake IK from its identity
+// (Host_Desc.identity) to the host whose identity is peer, and presents claim, at most CLAIM_BYTES,
+// to its authorize. The server's game hears of the connection only once its client proved it holds
+// its keys and authorize admitted it.
+host_connect_identity :: proc(h:^Host,peer:Key,claim:[]u8,addresses:..Address) -> Error {
+    peer:=peer
+    if h.desc.identity=={} || len(claim)>CLAIM_BYTES || !key_usable(&peer) {return .Invalid}
+    request:=Connect_Request{identity=true,peer=peer,claim_size=len(claim)}
+    copy(request.claim[:],claim)
+    return connect_push(h,&request,addresses)
+}
+@(private)
+connect_push :: proc(h:^Host,request:^Connect_Request,addresses:[]Address) -> Error {
+    if h.desc.mode!=.Client {return .Invalid}
     for address in addresses {
         if address.kind==.None || slice.contains(request.candidates[:request.count],address) {continue}
         if request.count==CANDIDATES {return .Invalid}
@@ -478,7 +503,14 @@ host_connect :: proc(h:^Host,addresses:..Address) -> Error {
         request.count+=1
     }
     if request.count==0 {return .Invalid}
-    return op_push(h,{kind=.Connect},mem.ptr_to_bytes(&request))?.None:.Full
+    return op_push(h,{kind=.Connect},mem.ptr_to_bytes(request))?.None:.Full
+}
+// Server: asks authorize again about an identity connection, or about every one when it is zero,
+// after the membership it decides by changed. One it refuses now ends with Revoked; one whose
+// authorization changed is reported in an Authorized command.
+host_authorize :: proc(h:^Host,connection:Connection=0) -> Error {
+    if h.desc.mode!=.Server || h.desc.authorize.check==nil {return .Invalid}
+    return op_push(h,{kind=.Authorize,handle=u64(connection)})?.None:.Full
 }
 // Closes a connection and tells the other end why. Zero closes every connection.
 host_disconnect :: proc(h:^Host,connection:Connection=0,reason:=Disconnect_Reason.Closed) -> Error {
@@ -722,6 +754,11 @@ op_apply :: proc(h:^Host,frame:^Frame,op:^Op) {
             if peer.state==.Free || (op.handle!=0 && u64(peer_handle(h,&peer))!=op.handle) {continue}
             peer_drop(h,&peer,Disconnect_Reason(op.a),true)
         }
+    case .Authorize:
+        for &peer in b.peers {
+            if peer.state!=.Connected || peer.secure.peer==(Key{}) || (op.handle!=0 && u64(peer_handle(h,&peer))!=op.handle) {continue}
+            peer_reauthorize(h,&peer)
+        }
     case .Message:
         // c: max for a whole message, else the size of a streamed one with its first bytes, 0 with the rest.
         data:=op_data(frame,op)
@@ -813,6 +850,7 @@ back_due :: proc(h:^Host) -> f64 {
         switch p.state {
         case .Free:
         case .Connecting: due=min(due,p.next_handshake-b.now)
+        case .Confirming: due=min(due,p.started+h.desc.connect_timeout-b.now)
         case .Connected:
             if !p.secure.confirmed {
                 due=min(due,p.started+h.desc.connect_timeout-b.now)
