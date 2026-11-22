@@ -1522,8 +1522,10 @@ overlay_blob_begin :: proc(b:^Blob_Sealer,s:^store.Store,keyrings:[]^Keyring_Fol
     made:runtime.Allocator_Error
     b.buffer,made=make([]u8,OVERLAY_CHUNK_MAX,allocator)
     if made!=nil {return .Out_Of_Memory}
-    e:store.Error
-    if b.p,e=store.put_begin(s);e!=.None {return store_error(e)}
+    p,e:=store.put_begin(s)
+    if e!=.None {return store_error(e)}
+    // One store per value until odin-lang/Odin#7937.
+    b.p=p
     if e=store.put_native(&b.p,BLOB_HEAD_TAG,0,0,b.head[:b.head_size],nil);e!=.None {
         store.put_abandon(&b.p)
         return store_error(e)
@@ -1606,7 +1608,9 @@ overlay_blob_open :: proc(b:^Blob_Reader,s:^store.Store,keyrings:[]^Keyring_Fold
     b^={group=1}
     o,open:=store.object_open(s,address)
     if open!=.None {return store_error(open)}
-    b.o,b.open=o,true
+    // One store per value until odin-lang/Odin#7937.
+    b.o=o
+    b.open=true
     defer if error!=.None {overlay_blob_close(b)}
     overlay_kind_check(&b.o,.Blob) or_return
     groups:=store.object_groups(&b.o)
