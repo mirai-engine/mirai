@@ -333,6 +333,9 @@ Numbered layers; a package only imports lower layers.
   and keeps in `store` the records of imports (package and build manifests, `packages.mirai`).
   `rhi/shared_device` is the device the GPU tests share; only tests import it, also the GPU tests of
   `rhi`, in `rhi/tests`.
+- **2** `net/tls`: TLS 1.3 server and client as a state machine without I/O, and an ACME client
+  that proves names by TLS-ALPN-01 over a byte stream its caller supplies; on `core:crypto` and
+  `std` alone. `mirai kai serve` puts its HTTPS under it.
 - **3** `exchange`: objects and refs of `store` between peers over the connections of `net` hosts;
   a headless peer and the editor link it.
 - **3** `render`, `platform`: hybrid renderer and SDL3. `render/abi` declares the constants the
