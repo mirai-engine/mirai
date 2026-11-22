@@ -305,7 +305,7 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, id: Pipeline
 	pipeline :: proc(r: ^Renderer, target, quiet: ^rhi.Pipeline, program: u32) -> rhi.Pipeline {
 		if quiet != target && !textures_feedback_turn(r, program) {
 			if program == 0 {return quiet^}
-			if made := program_graphics(r, quiet, program, early = true); made != quiet^ {return made}
+			if made := program_graphics(r, quiet, program, early = true, speculative = true); made != quiet^ {return made}
 		}
 		return program_graphics(r, target, program)
 	}
@@ -545,7 +545,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     pipelines_install(r)
     if r.variants_wanted {pipeline_variants_ask(r)}
     if r.scene.programs_arrived {programs_ask(r)}
-    ready:=pipelines_before_frame(r,frame)
     base.profile_end(zone)
     // What the extensions asked of this frame lasts for it alone.
     defer {
@@ -554,7 +553,6 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         r.antialiasing_offered_count=r.antialiasing_count
         r.antialiasing_count=0
     }
-    if !ready {return false}
     r.previous_time,r.time=r.time,frame.time
     // After another world the time may jump by what loading it took: the
     // frame keeps the pace of the one before.

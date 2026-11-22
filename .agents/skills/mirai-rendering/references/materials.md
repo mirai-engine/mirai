@@ -438,13 +438,16 @@ tests: the pieces of a mesh, numbered in UV1, fly in with a turn as its `progres
 
 ### Program pipelines
 
+- The renderer starts with the pipelines of every Surface program of its shaders, for each
+  engine stage the program was compiled for, and of its points and vertices
+  (`programs_listed`, in `create_pipelines`): no frame draws a program as its row, the first one
+  and a spawn in the middle of a game included.
 - With a window, or with a surface that another process shows (the `--surface` player of a network
   Play, `App_Desc.shown`), the host creates the renderer with `pipeline_thread`
-  (`pipeline_thread.odin`, a thread a core but one): when a program first gets rows in the scene
-  the pipelines of the stages its rows are drawn with on the camera (the three resolves, or the
-  glass layer and filter) and of its points are asked for ahead of time (`programs_ask`); the
-  first draw or resolve that needs one puts it before those, and a frame does not wait for the
-  driver. Until a frame finds
+  (`pipeline_thread.odin`, a thread a core but one). A program whose stages changed since (an edit
+  in the editor, `program_stages_publish`) has its pipelines asked for ahead of time when it first
+  gets rows (`programs_ask`); the first draw or resolve that needs one puts it before those, and a
+  frame does not wait for the driver. Until a frame finds
   it made (`pipelines_install`, at the start), the stage itself draws those materials as their rows
   and their points are read as the row (the record unwritten, `point_record_given`).
 - Without either of the two (headless sessions, tests, captures) the pipeline is made where it is
