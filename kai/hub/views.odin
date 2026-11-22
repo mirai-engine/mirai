@@ -8,10 +8,13 @@ import "mirai:std/diff"
 import "mirai:store"
 
 // The read routes. A project is what an org the node serves lists; its
-// revisions are those its bookmarks reach (the device refs of its members
-// and the moves of its log), indexed in one graph per project, so a revision
-// of another project is never answered through it. A path a scope of the org
-// takes is left out of every listing, though public trees never hold one.
+// revisions are those its bookmarks reach, indexed in one graph per project
+// and audience, so a revision of another project is never answered through
+// it. A member reads the shared bookmarks, the device refs of the members and
+// the proposals' stacks; anyone else only the shared bookmarks, the moves of
+// the project's log a writer signed and the policy allowed. A path a scope of
+// the org takes is left out of every listing, though public trees never hold
+// one.
 
 FILE_MAX :: 8<<20        // bytes of a file the file route answers
 DIFF_FILE_MAX :: 1<<20   // bytes of each side a diff reads
@@ -36,6 +39,7 @@ Project_View :: struct {
     org:^kai.Runner_Org,
     id:kai.Log_Id,
     public:bool,
+    member:bool, // the session's user is a member of the org
     name:string,
     log:^kai.Log,
     bookmarks:[dynamic]Bookmark_View,
@@ -45,6 +49,7 @@ Project_View :: struct {
 
 Project_Graph :: struct {
     project:kai.Log_Id,
+    member:bool,
     sum:store.Hash, // of the targets it was extended with last
     graph:kai.Graph_Index,
     used:f64,
@@ -81,8 +86,9 @@ project_open :: proc(c:^Call,id_text:string) -> (v:Project_View,ok:bool) {
         if !o.agent.folded {continue}
         for p in o.agent.org.projects {
             if p.id!=id {continue}
-            if !p.public && session_role(c,o)==.None {break}
-            v={org=o,id=id,public=p.public,main=-1}
+            member:=session_role(c,o)!=.None
+            if !p.public && !member {break}
+            v={org=o,id=id,public=p.public,member=member,main=-1}
             v.log=kai.agent_log(&o.agent,id)
             v.name=project_name(v.log)
             v.bookmarks=make([dynamic]Bookmark_View,context.temp_allocator)
@@ -106,22 +112,17 @@ project_name :: proc(l:^kai.Log) -> string {
     return ""
 }
 
-// The bookmarks of a project: the moves its log keeps, then each name a
-// device publishes that no move keeps, at its newest record.
+// The bookmarks of a project: the moves its log keeps, then for a member each
+// name a device publishes that no move keeps, at its newest record.
 @(private)
 project_bookmarks :: proc(h:^Hub,v:^Project_View) {
     s:=store_of(h)
-    if v.log!=nil && len(v.log.items)>0 {
-        proposals:=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
-        project_proposals(h,v.org,v.id,&proposals)
-        f:kai.Project_Fold
-        if kai.project_fold(&f,v.log,&v.org.agent.org,proposals[:],context.temp_allocator)==.None {
-            for b in f.bookmarks {append(&v.bookmarks,Bookmark_View{name=b.name,revision=b.target,landed=true})}
-        }
-    }
+    shared:=make([dynamic]kai.Bookmark_Target,context.temp_allocator)
+    kai.agent_shared_bookmarks(&v.org.agent,v.id,&shared)
+    for b in shared {append(&v.bookmarks,Bookmark_View{name=b.name,revision=b.target,landed=true})}
     ns:[len(kai.REFS_PREFIX)+64]u8
     refs,e:=store.ref_list(s,kai.refs_namespace(v.id,&ns),context.temp_allocator)
-    if e==.None {
+    if e==.None && v.member {
         for ref in refs {
             bytes,ge:=kai.object_get(s,ref.hash,.Device_Refs,context.temp_allocator)
             if ge!=.None {continue}
@@ -165,15 +166,15 @@ proposal_project :: proc(l:^kai.Log) -> kai.Log_Id {
     return ok?b.project:{}
 }
 
-// The graph of the revisions a project's bookmarks and proposals reach,
-// extended when they change. A revision whose objects are not here yet is
-// left out until they are.
+// The graph of the revisions a project's bookmarks reach, and for a member
+// its proposals, extended when they change. A revision whose objects are not
+// here yet is left out until they are.
 @(private)
 project_graph :: proc(h:^Hub,v:^Project_View) -> ^kai.Graph_Index {
     targets:=make([dynamic]kai.Revision,context.temp_allocator)
     for b in v.bookmarks {append(&targets,b.revision)}
     for l in v.org.agent.logs {
-        if l.kind!=.Proposal || proposal_project(l)!=v.id {continue}
+        if !v.member || l.kind!=.Proposal || proposal_project(l)!=v.id {continue}
         for &item in l.items {
             if item.entry.type!=.Proposal_Revise {continue}
             _,tail,ok:=kai.body_head(item.entry.body,kai.Proposal_Revise_Body)
@@ -185,7 +186,7 @@ project_graph :: proc(h:^Hub,v:^Project_View) -> ^kai.Graph_Index {
     sum:=store.address_of_bytes(slice.to_bytes(targets[:]))
     g:^Project_Graph
     for &x in h.graphs {
-        if x.project==v.id {g=&x}
+        if x.project==v.id && x.member==v.member {g=&x}
     }
     if g==nil {
         if len(h.graphs)>=GRAPHS_MAX {
@@ -196,7 +197,7 @@ project_graph :: proc(h:^Hub,v:^Project_View) -> ^kai.Graph_Index {
             kai.graph_destroy(&h.graphs[oldest].graph)
             unordered_remove(&h.graphs,oldest)
         }
-        append(&h.graphs,Project_Graph{project=v.id})
+        append(&h.graphs,Project_Graph{project=v.id,member=v.member})
         g=&h.graphs[len(h.graphs)-1]
         kai.graph_init(&g.graph,h.allocator)
     }

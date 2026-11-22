@@ -41,7 +41,7 @@ or anonymous (an empty claim). The namespace decides who reads it:
 | --- | --- |
 | `kai-user` | pending, member, node, grant (they prove who is a member) |
 | `kai-log` | member, node, grant: org, project, proposal and keyring logs |
-| `kai-refs-<project>` | member, node; a grant of read, write or check on it; anonymous if public |
+| `kai-refs-<project>` | member, node; a grant of read, write or check on it |
 | `kai-ddc-<org>` | member, node; a grant of ddc |
 | `kai-ovl-<project>-<scope>` | member, node: ciphertext only |
 
@@ -49,6 +49,10 @@ or anonymous (an empty claim). The namespace decides who reads it:
   the public closure is: pending peers get the user logs, anonymous ones the closures of public
   projects, a grant what its scope covers ([grants](identity.md#grants)). An address outside the set
   is not served, whatever the peer asks (`anonymous_peer_gets_only_the_public_closure`).
+- The public closure is what the shared bookmarks of a public project reach: the moves of its log a
+  writer signed and its policy allowed. A device's refs and a proposal's stacks are work in progress
+  and stay out of it, and an anonymous peer is listed no ref: it asks by address what the node's
+  public view lists.
 - A peer that is not a member or a node is restricted: it writes nothing, except a grant holder's
   refs under the write right.
 - The local namespaces (`kai-local-*` for a workspace's operations, the machine's own for its user,

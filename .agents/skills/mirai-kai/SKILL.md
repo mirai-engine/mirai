@@ -156,7 +156,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
 - The plaintext of a scoped file never enters the public store, a public change never names an
   overlay, and a node or seed never holds a scope key.
 - A peer that is not a member reads a set of addresses and nothing else: the user logs while
-  pending, the public closure while anonymous, what its grant covers.
+  pending, what the shared bookmarks of public projects reach while anonymous (never a device's refs
+  or a proposal), what its grant covers.
 - Nothing polls: a ref that moved is told to the peers that may read it.
 - A stable frame or tick allocates nothing; what peers, browsers and sockets send is bounded and
   refused with a reason, never trusted.

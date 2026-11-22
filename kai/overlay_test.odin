@@ -696,6 +696,8 @@ public_peer_sees_zero_overlay_metadata_or_chunks :: proc(t:^testing.T) {
     a,sd,c:=&m.agents[0],&m.agents[1],&m.agents[2]
     _,pe:=agent_publish_refs(a,o.project.id,{{"main",revision}},1)
     testing.expect_value(t,pe,Error.None)
+    _,pe=agent_append(a,o.project.id,.Bookmark_Move,body_make(Bookmark_Move_Body{to=revision},transmute([]u8)string("main")),2)
+    testing.expect_value(t,pe,Error.None)
     testing.expect_value(t,agent_connect(sd,Dh_Key(o.alice.dhs[0].public),false,net.address_memory(mesh_endpoint(0))),Error.None)
     testing.expect_value(t,agent_connect(c,Dh_Key(o.alice.dhs[0].public),true,net.address_memory(mesh_endpoint(0))),Error.None)
 

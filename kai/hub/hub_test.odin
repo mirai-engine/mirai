@@ -241,11 +241,12 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     defer fixture_close(f)
     if !fixture_open(t,f,"kai-hub-views") {return}
     P,Q:=hex(f.public[:]),hex(f.private[:])
-    r1,r3:=hex(f.r1[:]),hex(f.r3[:])
+    r1,r3,rw:=hex(f.r1[:]),hex(f.r3[:]),hex(f.rw[:])
     change:=hex(f.change[:])
 
+    // Work in progress, which only a device ref names, never reaches an anonymous caller.
     expect_clean :: proc(t:^testing.T,a:Answer,P,Q:string,loc:=#caller_location) {
-        for leak in ([?]string{PRIVATE_MARKER,SCOPED_MARKER,Q,"secrets/","kai-ovl"}) {
+        for leak in ([?]string{PRIVATE_MARKER,SCOPED_MARKER,WIP_MARKER,Q,"secrets/","kai-ovl","\"wip\""}) {
             testing.expectf(t,!strings.contains(a.body,leak),"no %q in %s",leak,a.body[:min(len(a.body),120)],loc=loc)
         }
     }
@@ -270,6 +271,9 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         {fmt.tprintf("/api/projects/%s/file?path=secrets/key.txt",P),404,""},
         {fmt.tprintf("/api/projects/%s/diff?from=%s&to=%s&path=secrets/key.txt",P,r1,r3),404,""},
         {fmt.tprintf("/api/projects/%s/changes/%s",P,hex(f.rq[:])),404,""},
+        {fmt.tprintf("/api/projects/%s/changes/%s",P,rw),404,""},
+        {fmt.tprintf("/api/projects/%s/file?path=wip.txt&rev=%s",P,rw),404,""},
+        {fmt.tprintf("/api/projects/%s/tree?rev=wip",P),404,""},
     }
     for v in public_visits {
         a:=call(f,"GET",v.path)
@@ -346,8 +350,7 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     Evolution :: struct {revisions:[]struct {revision:string},interdiffs:[]struct {files:[]struct {path:string}}}
     ev:Evolution
     if json_read(t,call(f,"GET",fmt.tprintf("/api/projects/%s/evolution/%s",P,change)),&ev) {
-        testing.expect(t,len(ev.revisions)==2 && ev.revisions[0].revision==hex(f.r2[:]) && ev.revisions[1].revision==r3,"the change's two revisions, oldest first")
-        testing.expect(t,len(ev.interdiffs)==1 && len(ev.interdiffs[0].files)==2,"the interdiff names a.txt and b.md")
+        testing.expect(t,len(ev.revisions)==1 && ev.revisions[0].revision==r3,"anonymously, only the revision main reaches: the proposal's is a member's")
     }
 
     // A browser makes a new user with its passkey: recovery and device keys of its own.
@@ -439,6 +442,20 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         testing.expectf(t,b.status==200,"GET %s as a member: %d",path,b.status)
     }
     testing.expect(t,strings.contains(call(f,"GET","/api/projects",cookie=cookie).body,Q),"a member lists the private project")
+    ev={}
+    if json_read(t,call(f,"GET",fmt.tprintf("/api/projects/%s/evolution/%s",P,change),cookie=cookie),&ev) {
+        testing.expect(t,len(ev.revisions)==2 && ev.revisions[0].revision==hex(f.r2[:]) && ev.revisions[1].revision==r3,"the change's two revisions, oldest first")
+        testing.expect(t,len(ev.interdiffs)==1 && len(ev.interdiffs[0].files)==2,"the interdiff names a.txt and b.md")
+    }
+    project:=call(f,"GET",fmt.tprintf("/api/projects/%s",P),cookie=cookie)
+    testing.expectf(t,strings.contains(project.body,"\"wip\"") && strings.contains(project.body,rw),"a member reads the devices' bookmarks: %s",project.body[:min(len(project.body),200)])
+    testing.expect(t,call(f,"GET",fmt.tprintf("/api/projects/%s/changes/%s",P,rw),cookie=cookie).status==200,"a member reads work in progress")
+    // Once a shared bookmark reaches the work, anyone reads it.
+    testing.expect_value(t,kai.machine_bookmark_move(&f.alice,f.public,"main",f.rw),kai.Error.None)
+    kai.runner_update(&f.runner)
+    shared:=call(f,"GET",fmt.tprintf("/api/projects/%s",P))
+    testing.expectf(t,strings.contains(shared.body,rw) && !strings.contains(shared.body,"\"wip\""),"main is listed at the work, the device's name is not: %s",shared.body[:min(len(shared.body),200)])
+    testing.expect(t,strings.contains(call(f,"GET",fmt.tprintf("/api/projects/%s/file?path=wip.txt&rev=%s",P,rw)).body,WIP_MARKER),"the work reads anonymously once shared")
     stacks:=call(f,"GET",fmt.tprintf("/api/projects/%s/stacks",P),cookie=cookie)
     testing.expectf(t,strings.contains(stacks.body,"alice/") && strings.contains(stacks.body,":main"),"stacks are <handle>/<device>:<bookmark>: %s",stacks.body)
     proposal:=call(f,"GET",fmt.tprintf("/api/proposals/%s",hex(f.proposal[:])),cookie=cookie)

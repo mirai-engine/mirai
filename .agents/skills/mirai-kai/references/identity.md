@@ -41,8 +41,8 @@ and `kai/refs_ddc.odin`.
   the web key id (the BLAKE3 of the COSE key and the relying party), which the user's log records
   with `Web_Key_Add`. An entry therefore verifies alone and the fold says whose it is.
 - The org, project, proposal and keyring logs are read only by members, nodes and grant holders: the
-  roster, policies and scopes are not for anonymous readers, who get a public project's refs and
-  closure alone ([access](mesh.md#who-reads-what)).
+  roster, policies and scopes are not for anonymous readers, who get what a public project's shared
+  bookmarks reach alone ([access](mesh.md#who-reads-what)).
 - Adding to a log is always: build the entry, sign it with this device, fold the log again, keep the
   entry only when the fold takes it, save, and tell the mesh. An entry the fold refuses names what
   this device lacks (a role, a policy), through `m.why`.
