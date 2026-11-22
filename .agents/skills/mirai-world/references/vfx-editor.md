@@ -8,7 +8,7 @@ storage whose only field is the provider, with its default:
 
 - The manifest (`plugin.mirai`) declares `.particle` as **Particle**, with its icon and color: a
   family of its own in the content browser filters; an `Asset_Id` field whose name has `particle`
-  (`sub_particle`) takes effects; git merges its files field by field.
+  (`sub_particle`) takes effects; Kai merges its files field by field.
 - `Vfx_Clicks` (`editor.Asset_Click_Provider`): a click on an effect assigns it.
 - `Vfx_Documents` (`editor.Asset_Document_Provider` with `between`): the
   [document](#particle-document), which also makes the content browser list the type.

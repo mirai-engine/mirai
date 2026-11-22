@@ -7,7 +7,7 @@ import "mirai:project"
 import "mirai:std/base"
 
 // What the manifest of each plugin of the engine declares of its kinds is what
-// its code compiles against: the file a build writes is the one git keeps.
+// its code compiles against: the file a build writes is the one version control keeps.
 @(test)
 the_constants_of_the_kinds_of_each_plugin_are_those_its_manifest_declares :: proc(t:^testing.T) {
     root:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)

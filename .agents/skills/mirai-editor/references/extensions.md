@@ -75,7 +75,7 @@ Outline of `paint` and `terrain` (`plugins/*/editor/`):
    not the file. `editor/revision_history.odin` is the chain of revisions: the tool keeps the head
    of each source it edited (what the file has at the owners' revision) and steps between two
    revisions that undo and redo change with it. `revision_sync` takes each head to its owners'
-   revision and writes it; if the file changed outside (git, another tool), the revision takes what
+   revision and writes it; if the file changed outside (Kai, another tool), the revision takes what
    it has. A new step replaces what was undone since its revision; past `REVISION_STEPS_CAPACITY`
    the oldest goes. What a step keeps, how it changes with the head and how the source is read and
    written is given by the tool in a `Revision_Source`.

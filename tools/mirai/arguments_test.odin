@@ -46,7 +46,6 @@ every_command_refuses_unknown_options_and_answers_help :: proc(t:^testing.T) {
         {{"asset","unpack","a.mesh","--nope"},2},
         {{"asset","ls","-x"},2},
         {{"asset","dump","-x"},2},
-        {{"asset","merge","a","b","c","-x"},2},
         {{"mcp","--nope"},2},
         {{"texts","export","-x"},2},
     }

@@ -47,7 +47,8 @@ lands on Close. In a narrow window the bar drops its dividers and some labels (`
 
 **Rail and left panel:** the rail (44 points, under the bar, colored like it) has the tabs Create
 ([create](#create)), Content Browser (the startup one), Hierarchy, World ([world](#world)), AI
-and Source control as icons. A click on the one shown folds the panel, on another shows that one.
+and Kai ([Kai](kai.md#working-copy)) as icons. A click on the one shown folds the panel, on
+another shows that one.
 The panel is fixed at the side of the rail, the height of the window, 320 points wide and with its
 right corners rounded;
 the scene runs 16 points under it, so those corners show the scene (with the panel folded it starts
@@ -447,8 +448,8 @@ which does not change size so that few projects do not leave a large empty windo
   a project ends as on exit, asking only if agents work. Closed, the process waits for the editor
   it started, which writes in its same terminal: `mirai edit` ends with the last editor.
 - **New project**, or a template of the list, shows the form with that template; Create copies it
-  (`build.project_create`) and opens it; the new editor starts with `--git-init` and makes the
-  repository, with the remote and Git LFS the form says.
+  (`build.project_create`) and opens it; the new editor makes it a
+  [Kai](kai.md#working-copy) workspace.
 - Beside it, Plugins is a list with a check per plugin the project can receive: those of the
   engine and the template, on as the template names them and reread on changing it; those of the
   catalog, off; and the added repositories. The automatic ones do not appear: they arrive with
@@ -459,9 +460,9 @@ which does not change size so that few projects do not leave a large empty windo
   and git ([git plugins](../../mirai-plugins/references/plugins.md#git-plugins-and-catalog)).
   Each row carries the plugin's icon
   ([`icon`](../../mirai-projects/references/projects.md#manifests)) or the generic one.
-- Each row says the branch of the repository the folder is on (read from `.git`, without running
-  git), "No repository" or "Folder not found" with Remove. An editor with a window is first noted
-  in the list on opening a project; a `--headless` one does not touch it.
+- A row whose folder or `project.mirai` is gone says "Folder not found", with Remove. An editor
+  with a window is first noted in the list on opening a project; a `--headless` one does not touch
+  it.
 - Each row's square shows the manifest's `thumbnail`, covering it with its center; if it has none
   or it cannot be read, the view that an editor of the project saved of its initial scene
   ([scene previews](#previews)); if neither, the initial of the name. The launcher is another

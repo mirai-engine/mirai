@@ -35,16 +35,16 @@ proposed design; facts about current code are cited by file.
 
 ### Code deleted from Mirai in Phase 2
 
-- **Subprocess Git client and text parsing** (`editor/git/git.odin`, `editor/git.odin`,
-  `editor/api_git.odin`): replaced by in-process `kai` over `store` + `kai.*` API; `git.*` becomes
+- **Subprocess Git client and text parsing** (the old `editor/git` package and the Git files of
+  `editor`): replaced by in-process `kai` over `store` + `kai.*` API; `git.*` becomes
   unknown.
-- **Fixed-width path/hash structs** (`[260]u8`, `[16]u8` in `editor/git/git.odin`): replaced by
+- **Fixed-width path/hash structs** (`[260]u8`, `[16]u8` in the old `editor/git`): replaced by
   string pools (`offset`, `len`) and full 32-byte `store.Hash`.
 - **Staging index** (`Keep`/`Unkeep`, `pending`/`kept`, `git_keep_front`): replaced by working
   copy as a change (`@`) and post-hoc `split`.
-- **Blocking merge mode** (`editor/git_merge.odin`, `editor/git_review.odin`, `git show :N:`):
+- **Blocking merge mode** (the old merge and review of the Git tab, `git show :N:`):
   replaced by algebraic `Conflict` values stored in trees that never block work.
-- **External merge/diff drivers, `.gitattributes`, LFS** (`cook/build/git.odin`,
+- **External merge/diff drivers, `.gitattributes`, LFS** (the old Git setup of `cook/build`,
   `mirai setup git`): replaced by in-process `Driver` procedures in `cook/kai` and FastCDC in
   `store`.
 - **Git-required and pending-quit modals** (`git_missing_modal`, `git_pending_modal`): deleted;
@@ -422,8 +422,8 @@ Entry_Head :: struct #packed {
     `a_switch_cut_midway_recovers_on_status`, `kai_imports_stay_engine_agnostic`.
 - **M2 — Editor, Collab and Git Deletion:** replace `editor/git*` with Kai panel and `kai.*` API;
   `Kai_Authorship` queue; collab files by address (delete `COLLAB_FILE_BYTES`); `cook/share` join
-  on `kai.merge`; delete all Git project support (`cook/build/git.odin`, `git.*`, `.gitattributes`,
-  LFS).
+  on `kai.merge`; delete all Git project support (the Git setup of `cook/build`, `git.*`,
+  `.gitattributes`, LFS).
   - Focal tests: `editor_kai_snapshot_diff_conflict_and_undo`,
     `a_large_file_travels_in_a_session_by_address`,
     `collab_coauthorship_and_agent_turns_record_in_change`.

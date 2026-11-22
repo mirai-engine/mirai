@@ -68,17 +68,14 @@ keeps its default; one the struct does not have is an error.
   ([imports](../../mirai-plugins/references/plugins.md#dependencies-and-compatibility)).
 - `asset_kinds`: the kinds of asset a plugin adds, its one declaration of them: each by its
   extension, the four letters its files begin with (`kind`), the `version` of its files
-  ([versions](../../mirai-assets/references/formats.md#versions)), whether it is a document git
-  merges and diffs ([git and assets](../../mirai-assets/references/cli.md#git)) and how the editor
+  ([versions](../../mirai-assets/references/formats.md#versions)) and how the editor
   shows it ([asset types](../../mirai-editor/references/extensions.md#asset-types-of-a-plugin)). A
   build writes from it `kinds_gen.odin` into the package `folder` names (`runtime` without it),
-  with `<STEM>_KIND`, `<STEM>_EXTENSION` and `<STEM>_VERSION` for each `.stem`; git keeps the
-  file, so the plugin tests without a build. `program_uses` says what its assets draw the
+  with `<STEM>_KIND`, `<STEM>_EXTENSION` and `<STEM>_VERSION` for each `.stem`; version control
+  keeps the file, so the plugin tests without a build. `program_uses` says what its assets draw the
   programs of the materials they depend on as, directly or through their meshes
   ([program uses](../../mirai-rendering/references/shaders.md#programs-and-stages)).
-- `import_sources`: the extensions of the files the importers of a plugin read (`.umap`): a
-  repository with LFS keeps them in it as it keeps the sources of the engine's formats
-  ([git and assets](../../mirai-assets/references/cli.md#git)).
+- `import_sources`: the extensions of the files the importers of a plugin read (`.umap`).
 - `build.compression`: the compression of shipped assets. Leave it empty for MDC2 or use
   `none` to store the assets without a data codec
   ([asset cooking](build.md#asset-cooking)).
@@ -523,6 +520,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Receive a shared project, or update a folder joined before | `mirai join <invitation> [folder] [--address A] [--port N] [--store S]` |
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
+| Version control of a project, no editor | `mirai kai init\|status\|snapshot\|new\|describe\|log\|diff\|undo\|restore\|conflicts\|bookmarks ... [--project P] [--store S]` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |
@@ -537,7 +535,6 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | See who is building or measuring | `mirai locks` |
 | Search the code | `rg <pattern> [folder]` |
 | Check the machine and a project | `mirai doctor [project]` |
-| Merge and diff assets with git, once per clone | `mirai setup git [folder]` |
 | Assemble the installed engine (binary) | `mirai package engine --out <folder> [--store folder]` |
 
 - Every command that builds does it in dev unless `--release` is asked for
@@ -566,10 +563,10 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 - `mirai new` copies `templates/<T>` (`empty` by default) to a folder that does not exist or is
   empty, and over it `templates/common`, what every template shares, which has no `project.mirai`
   and so is no template; `--list` gives the first line of the `README.md` of each template. It
-  writes the project's `.gitattributes`, which no template carries
-  ([git and assets](../../mirai-assets/references/cli.md#git)), and makes the project a git
-  repository when it is in none: the editor keeps its changes with
-  [git](../../mirai-editor/references/git.md#pending-and-kept).
+  makes the project a Kai workspace of its own (`cook/kai.project_create`) in the store of the
+  machine or the one `--store` names, whose first change holds its files: the editor keeps its
+  changes with [Kai](../../mirai-editor/references/kai.md#working-copy), and `mirai kai` does with
+  no editor. A project's version control is Kai alone: no `.gitignore`, `.gitattributes` or LFS.
 - `mirai docs [topic] [section]` and the `docs` tool of `mirai mcp` serve `docs/game` from the root
   of the running `mirai`, with or without an editor; a project keeps no copy of it.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` on a new branch and prints the `cd` and
@@ -680,9 +677,6 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
 
 ## Tool and machine
 
-- `mirai setup git [folder]` wires the clone the folder is in, once per clone
-  ([git and assets](../../mirai-assets/references/cli.md#git)); `mirai doctor` reports a clone
-  whose `.gitattributes` names the drivers and whose configuration lacks them.
 - `mirai setup path` puts the `bin/` of this copy of the engine first in the user's `PATH` and
   removes that of another copy; it is run once per copy, because a build replaces `bin/mirai` in
   place. `mirai setup rg` installs the pinned ripgrep in `.deps` and puts it in the `PATH`: it is

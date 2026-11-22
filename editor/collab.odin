@@ -14,6 +14,7 @@ import "mirai:core"
 import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
+import vcs "mirai:kai"
 import "mirai:platform"
 import wire "mirai:net"
 import gpu "mirai:render"
@@ -43,7 +44,7 @@ import "mirai:ui"
 // its address on its network and on its router, and the key of the session.
 
 COLLAB_PORT :: share.PORT
-COLLAB_VERSION :: 8 // of the messages: an editor of another one has another version of the project
+COLLAB_VERSION :: 9 // of the messages: an editor of another one has another version of the project
 COLLAB_PEERS :: share.PEERS
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
@@ -95,8 +96,7 @@ Collab_Message :: enum u8 {
     Play_Mark,Play_Scene_Request,Play_Scene,           // the scene of a game of the host on the network (collab_play.odin)
     Agents,                                            // the agents of an editor (collab_agents.odin)
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
-    File,                                              // an asset file an editor changed (collab_files.odin)
-    File_Unsent,                                       // an asset file an editor changed that is too large to travel
+    File,                                              // an asset file an editor changed, by its address (collab_files.odin)
     Project,                                           // the host offers a new snapshot of its project (collab_project.odin)
 }
 
@@ -113,6 +113,7 @@ Collab_Peer :: struct {
     name:[COLLAB_NAME_BYTES]u8,
     name_length:int,
     client:u64,          // Collab.client of the editor
+    key:vcs.Key,         // the identity its changes are recorded under (Kai)
     orbit:Orbit,
     has_pose:bool,
     playing:bool,        // is inside a Play or a Simulate of their own
@@ -204,8 +205,7 @@ Collab_State :: struct {
     agents_at:f64,
     files_out:[dynamic]string, // asset files changed here since the last update, by their paths in the registry
     applying_file:bool,        // a file of another end is being put: its change is not this end's
-    unsent:[COLLAB_UNSENT]Collab_Unsent, // the files that did not travel; the first unsent_count
-    unsent_count:int,
+    fetches:[dynamic]Collab_Fetch, // files of other ends whose chunks are being fetched
     virtual:bool,      // on the network of a test, whose clock is now
     now:f64,
     node_jobs:^jobs.Job_System, // of the exchange of node
@@ -490,6 +490,8 @@ collab_destroy :: proc(s:^Session) {
     for &peer in st.peers {collab_peer_free(&peer)}
     for path in st.files_out {delete(path)}
     delete(st.files_out)
+    for &f in st.fetches {collab_fetch_free(st,&f)}
+    delete(st.fetches)
     delete(st.reason,runtime.heap_allocator())
     collab_tables_free(st)
     history.journal_reading(s.edits,false)
@@ -636,6 +638,7 @@ collab_update :: proc(s:^Session) {
         collab_edits_send(s,st)
         collab_files_send(s,st)
     }
+    if st.phase==.Joined {collab_files_poll(s,st)}
     if st.phase==.Joined && now-st.presence_at>=COLLAB_PRESENCE_INTERVAL {
         st.presence_at=now
         collab_presence_send(s,st)
@@ -758,6 +761,8 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         layout:=serial.read_u32(&r)
         name:=serial.read_string(&r)
         client:=serial.read_u64(&r)
+        key:vcs.Key
+        copy(key[:],serial.read_bytes(&r,len(key)))
         if r.failed || client==0 {return}
         if layout!=st.layout {
             wire.host_disconnect(&st.host,st.peers[from].connection,.Denied_Version)
@@ -776,7 +781,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             break
         }
         peer:=&st.peers[from]
-        peer.client=client
+        peer.client,peer.key=client,key
         peer.name_length=copy(peer.name[:COLLAB_NAME_BYTES-1],name)
         w:serial.Writer
         collab_begin(&w,.Welcome)
@@ -808,8 +813,11 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         // What this end edited goes before what it applies, so the edits of the others are not taken for its own.
         collab_edits_send(s,st)
         collab_edit_apply(s,st,data,own)
-        // The host sends what a guest edited to everybody, the sender included.
-        if st.role==.Host {collab_broadcast(st,data)}
+        // The host sends what a guest edited to everybody, the sender included, and records who changed it.
+        if st.role==.Host {
+            collab_broadcast(st,data)
+            kai_coauthor(s,st.peers[from].key)
+        }
         st.received_edits+=1
     case .Presence:
         id:=int(serial.read_u8(&r))
@@ -864,7 +872,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             peer.used,peer.joined=true,true
             peer.name_length=copy(peer.name[:COLLAB_NAME_BYTES-1],name)
         }
-        collab_unsent_prune(st)
     case .Reject:
         if st.role==.Guest {collab_end(st,"the host ended the session");return}
         // A guest that leaves frees its place now, and what it selected with it.
@@ -892,8 +899,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,data,&r)}
     case .Project:
         if st.role==.Guest {collab_update_request(st)}
-    case .File_Unsent:
-        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
     }
 }
 
@@ -907,13 +912,15 @@ collab_hello :: proc(s:^Session,st:^Collab_State) {
     serial.write_scalar(&w,st.layout)
     serial.write_string(&w,string(c.name[:c.name_length]))
     serial.write_scalar(&w,collab_client(c))
+    key:vcs.Key
+    if s.kai!=nil {key=s.kai.key}
+    serial.write_bytes(&w,key[:])
     collab_queue(&st.peers[0],serial.writer_bytes(&w))
 }
 
 @(private)
 collab_roster_send :: proc(st:^Collab_State) {
     if st.role!=.Host {return}
-    collab_unsent_prune(st)
     w:serial.Writer
     collab_begin(&w,.Roster)
     count:=0
