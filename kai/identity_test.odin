@@ -629,6 +629,26 @@ test_change :: proc(t:^testing.T,s:^store.Store,author:^Identity,text:string) ->
     return revision
 }
 
+// Links repo to project in s, as making a workspace of the project does: what
+// its operations keep is the project's org's on this machine (provenance.odin).
+test_link :: proc(t:^testing.T,s:^store.Store,repo:Repo_Id,project:Log_Id,loc:=#caller_location) {
+    testing.expect_value(t,store.ref_set(s,MACHINE_NAMESPACE,machine_repo_name(repo),project),store.Error.None,loc=loc)
+    testing.expect_value(t,store.commit(s),store.Error.None,loc=loc)
+}
+
+// Writes revisions as a workspace of project in s does: a repository linked
+// to the project whose bookmarks name them.
+test_written :: proc(t:^testing.T,s:^store.Store,project:Log_Id,revisions:..Revision,loc:=#caller_location) {
+    r:Repo
+    testing.expect_value(t,repo_create(&r,s,identity_make(),random_id(Workspace_Id)),Error.None,loc=loc)
+    defer repo_close(&r)
+    for revision,i in revisions {
+        name:=fmt.tprintf("written-%d",i)
+        testing.expect_value(t,bookmark_set(&r,name,revision),Error.None,loc=loc)
+    }
+    test_link(t,s,r.id,project,loc)
+}
+
 // Copies the object at address from one store to another, as a fetch does.
 @(private)
 test_copy :: proc(t:^testing.T,from,to:^store.Store,address:store.Hash,kind:Object_Kind) -> store.Hash {

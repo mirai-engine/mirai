@@ -151,6 +151,8 @@ org_members_sync_refs_and_ddc_over_sim_network :: proc(t:^testing.T) {
     g:=Mesh_Goal{project=o.project.id,org=o.org.id,alice=o.alice.devices[0].key,bob=o.bob.devices[0].key}
     g.changes[0]=test_change(t,&m.stores[0],&o.alice.devices[0],"alice's work")
     g.changes[1]=test_change(t,&m.stores[1],&o.bob.devices[0],"bob's work")
+    test_written(t,&m.stores[0],o.project.id,g.changes[0])
+    test_written(t,&m.stores[1],o.project.id,g.changes[1])
     if !mesh_start(t,m,0,o.alice.devices[0],o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
     if !mesh_start(t,m,1,o.bob.devices[0],o.bob.dhs[0],o.bob.log.id,o.org.id) {return}
     if !mesh_start(t,m,2,seed_identity,seed_dh,{},o.org.id,seed=true) {return}
@@ -206,6 +208,7 @@ anonymous_peer_gets_only_the_public_closure :: proc(t:^testing.T) {
     for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[0],l)}
     work:=test_change(t,&m.stores[0],&o.alice.devices[0],"work in progress")
     private:=test_change(t,&m.stores[0],&o.alice.devices[0],"not published")
+    test_written(t,&m.stores[0],o.project.id,work,private)
     if !mesh_start(t,m,0,o.alice.devices[0],o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
     stranger:=identity_make()
     stranger_dh,_:=net.dh_key()
@@ -274,7 +277,10 @@ anonymous_peer_gets_only_the_public_closure :: proc(t:^testing.T) {
 // change a device's ref names, derived data and every object its output
 // lists, and a change a ref names later, once it does; never a change of the
 // store no ref of the org names (another org's, a repository in no org) nor
-// a blob a cook kept, though the member asks by their addresses.
+// a blob a cook kept, though the member asks by their addresses. A member who
+// signs refs naming another org's change on the machine, or one of a
+// repository in no org, gets nothing for it: the change did not come from
+// the org, so it is one this machine lacks for it.
 @(test)
 a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
     m:=new(Mesh)
@@ -295,7 +301,14 @@ a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
     work,we:=change_put(&m.stores[0],&work_change,alice)
     testing.expect_value(t,we,Error.None)
     elsewhere:=test_change(t,&m.stores[0],alice,"another org's work")
+    loose:=test_change(t,&m.stores[0],alice,"a repository in no org")
     later:=test_change(t,&m.stores[0],alice,"published later")
+    test_written(t,&m.stores[0],o.project.id,work,later)
+    // A second org on the machine, whose project's workspace wrote elsewhere.
+    other:Test_Org
+    test_org_make(t,&other);defer test_org_destroy(&other)
+    for l in ([]^Log{&other.org,&other.project}) {log_save(&m.stores[0],l)}
+    test_written(t,&m.stores[0],other.project.id,elsewhere)
     built,be:=store.put(&m.stores[0],transmute([]u8)string("a cook's output"))
     testing.expect_value(t,be,store.Error.None)
     kept,ke:=store.put(&m.stores[0],transmute([]u8)string("what a cook kept for itself"))
@@ -336,6 +349,26 @@ a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
     testing.expect_value(t,exchange.want(&b.x,later),exchange.Error.None)
     l:=Wanted{{later},{.Complete}}
     testing.expect(t,mesh_until(m,5,&l,settled),"what a moved ref reaches is served")
+    exchange.forget(&b.x,later)
+
+    // Bob signs refs that name the other org's change and the loose one: alice takes them, and
+    // serves neither.
+    bob_refs,be2:=agent_publish_refs(b,o.project.id,{{"theirs",elsewhere},{"loose",loose}},1)
+    testing.expect_value(t,be2,Error.None)
+    Taken :: struct {project:Log_Id,device:Key,refs:store.Hash}
+    taken:=Taken{o.project.id,o.bob.devices[0].key,bob_refs}
+    accepted :: proc(m:^Mesh,data:rawptr) -> bool {
+        w:=(^Taken)(data)
+        ns:[len(REFS_PREFIX)+64]u8
+        name:[32]u8
+        return ref_is(&m.stores[0],refs_namespace(w.project,&ns),refs_name(w.device,&name),w.refs)
+    }
+    if !testing.expect(t,mesh_until(m,5,&taken,accepted),"alice takes bob's refs") {return}
+    named:=Wanted{{elsewhere,loose},{.Missing,.Missing}}
+    for address in named.addresses {testing.expect_value(t,exchange.want(&b.x,address),exchange.Error.None)}
+    testing.expect(t,mesh_until(m,5,&named,settled),"no member of the org is served another org's change or a loose one")
+    testing.expect(t,!(elsewhere in a.members.chunks) && !(loose in a.members.chunks) && !closure_has(a.closure.public[:],elsewhere))
+    testing.expect(t,!object_present(&m.stores[1],elsewhere) && !object_present(&m.stores[1],loose))
 }
 
 // An agent that closes tells its peers: they drop it at once, not after the
@@ -420,6 +453,7 @@ a_grant_holder_reads_and_writes_only_its_scope_until_it_ends :: proc(t:^testing.
     for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[0],l)}
     alice:=&o.alice.devices[0]
     base:=grant_change(t,&m.stores[0],alice,{},{"docs/guide.txt","secret/plan.txt"},{"the guide","the plan"})
+    test_written(t,&m.stores[0],o.project.id,base)
     files:=make([dynamic]File,context.temp_allocator)
     c,ce:=change_get(&m.stores[0],base,context.temp_allocator)
     testing.expect_value(t,ce,Error.None)
@@ -459,6 +493,7 @@ a_grant_holder_reads_and_writes_only_its_scope_until_it_ends :: proc(t:^testing.
     // Its edit under docs/ is taken; one that changes secret/ is not.
     inside:=grant_change(t,&m.stores[1],&holder,base,{"docs/guide.txt","secret/plan.txt"},{"a better guide","the plan"})
     outside:=grant_change(t,&m.stores[1],&holder,inside,{"docs/guide.txt","secret/plan.txt"},{"a better guide","another plan"})
+    test_written(t,&m.stores[1],o.project.id,inside,outside)
     first,pe:=agent_publish_refs(h,o.project.id,{{"main",inside}},1)
     testing.expect_value(t,pe,Error.None)
     Taken :: struct {project:Log_Id,holder:Key,refs:store.Hash}

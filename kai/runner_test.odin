@@ -276,6 +276,7 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
     testing.expect_value(t,pe,Error.None)
     g.project,g.device=project,alice.identity.key
     g.revision=test_change(t,&alice.store,&alice.identity,"alice's work")
+    test_written(t,&alice.store,project,g.revision)
     testing.expect_value(t,machine_publish_refs(alice,project,{{"main",g.revision}}),Error.None)
     _,g.refs,_=device_refs_get(&alice.store,project,alice.identity.key,context.temp_allocator)
     if !testing.expectf(t,box_until(b,10,&g,refs_arrived),"the change reaches bob: %v",c.orgs[0].agent.stats) {return}
@@ -342,6 +343,7 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
     bob_dh:=Dh_Key(bob.dh.public)
     testing.expect(t,box_until(b,5,&bob_dh,gone),"a removed member's connection is revoked")
     newer:=test_change(t,&alice.store,&alice.identity,"after bob left")
+    test_written(t,&alice.store,project,newer)
     testing.expect_value(t,machine_publish_refs(alice,project,{{"main",newer}}),Error.None)
     box_steps(b,2)
     testing.expect(t,!object_present(&bob.store,newer),"bob gets nothing newer")
@@ -380,6 +382,7 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     if !box_start(t,b,0) {return}
     first:=Goal{k=2,project=project,device=alice.identity.key}
     first.revision=test_change(t,&alice.store,&alice.identity,"before bob came")
+    test_written(t,&alice.store,project,first.revision)
     testing.expect_value(t,machine_publish_refs(alice,project,{{"main",first.revision}}),Error.None)
     _,first.refs,_=device_refs_get(&alice.store,project,alice.identity.key,context.temp_allocator)
     if !testing.expectf(t,box_until(b,10,&first,refs_arrived),"the seed mirrors: node %v folded %v projects %d peers %v",b.runners[2].orgs[0].agent.stats,b.runners[2].orgs[0].agent.folded,len(b.runners[2].orgs[0].agent.org.projects),node_classes(&b.runners[2])) {return}
@@ -400,6 +403,7 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     testing.expect(t,box_until(b,5,&relayed,connected_by),"each end sees the connection relayed")
     second:=Goal{k=1,project=project,device=alice.identity.key}
     second.revision=test_change(t,&alice.store,&alice.identity,"while blocked")
+    test_written(t,&alice.store,project,second.revision)
     testing.expect_value(t,machine_publish_refs(alice,project,{{"main",second.revision}}),Error.None)
     _,second.refs,_=device_refs_get(&alice.store,project,alice.identity.key,context.temp_allocator)
     testing.expect(t,box_until(b,10,&second,refs_arrived),"a change crosses")
@@ -424,6 +428,7 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     if !testing.expectf(t,box_until(b,20,&relayed,connected_by),"the node relays the two over TCP: %v",ladder_of(&b.runners[lower],Dh_Key(b.machines[1-lower].dh.public))) {return}
     third:=Goal{k=1,project=project,device=alice.identity.key}
     third.revision=test_change(t,&alice.store,&alice.identity,"over tcp")
+    test_written(t,&alice.store,project,third.revision)
     testing.expect_value(t,machine_publish_refs(alice,project,{{"main",third.revision}}),Error.None)
     _,third.refs,_=device_refs_get(&alice.store,project,alice.identity.key,context.temp_allocator)
     testing.expect(t,box_until(b,10,&third,refs_arrived),"a change crosses over TCP")

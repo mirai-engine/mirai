@@ -766,6 +766,7 @@ public_peer_sees_zero_overlay_metadata_or_chunks :: proc(t:^testing.T) {
     if !testing.expect_value(t,workspace_create(&w,root,&m.stores[0],o.alice.devices[0],{overlay=&routing}),Error.None) {return}
     defer workspace_close(&w)
     revision:=repo_working(&w.repo)
+    test_link(t,&m.stores[0],w.repo.id,o.project.id)
     record,record_address,re:=overlay_record_get(&m.stores[0],o.project.id,scope,revision,context.temp_allocator)
     if !testing.expect_value(t,re,Error.None) {return}
 

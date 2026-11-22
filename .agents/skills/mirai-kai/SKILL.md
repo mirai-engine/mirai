@@ -163,9 +163,10 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   open no workspace: only an editor someone drives records history.
 - The plaintext of a scoped file never enters the public store, a public change never names an
   overlay, and a node or seed never holds a scope key.
-- A peer reads a set of addresses and nothing else of the store: what its org reaches as a member
-  or a node, the user logs while pending, what the shared bookmarks of public projects reach while
-  anonymous (never a device's refs or a proposal), what its grant covers.
+- A peer reads a set of addresses and nothing else of the store: what its org reaches, from
+  roots that came from the org, as a member or a node, the user logs while pending, what the
+  shared bookmarks of public projects reach while anonymous (never a device's refs or a
+  proposal), what its grant covers.
 - Nothing polls: a ref that moved is told to the peers that may read it.
 - A stable frame or tick allocates nothing; what peers, browsers and sockets send is bounded and
   refused with a reason, never trusted.
@@ -206,7 +207,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.
 - Proposals: `proposal_comments_reanchor_across_rewrites`,
   `landing_enforces_policy_and_zero_conflicts`,
-  `a_project_of_10000_landed_moves_folds_without_reading_its_proposals` (prints the folds' times) and
+  `a_project_of_10000_landed_moves_folds_without_reading_its_proposals` (prints the folds' times)
+  and
   `a_team_reviews_and_lands_a_proposal_through_the_shared_operations` (`cook/kai`).
 - Node: `hub_serves_public_and_member_views`, `hub_api_describes_every_route`,
   `hub_http_refuses_hostile_requests`, `webauthn_login_and_signed_verdict_verify_offline`,

@@ -5,6 +5,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:exchange"
+import "mirai:std/base"
 import "mirai:std/blake3"
 import net "mirai:net"
 import "mirai:store"
@@ -128,6 +129,8 @@ Grant_Closure :: struct {
 // object an output lists. Nothing else of the store is served, whoever asks:
 // not another org's, nor a repository in no org, nor what a cook kept.
 //
+// A change or an output a ref names is walked only when it came from the org
+// (provenance.odin); one that did not waits in the frontier as one not here.
 // It grows as refs move: a ref that changed is walked from its object, down
 // to what the set already holds (a change brings the overlay records its
 // scopes keep for it, whose refs no one tells), and an object the walk reaches that is not
@@ -135,8 +138,9 @@ Grant_Closure :: struct {
 // agent starts and when the org's projects or scopes change.
 Members :: struct {
     chunks:map[store.Hash]struct{},
-    frontier:map[store.Hash]Walk_Kind,
+    frontier:map[store.Hash]Walk_Item, // what is not here yet, or not from the org yet
     shape:store.Hash, // of the projects and scopes it was built for
+    provenance:Provenance,
 }
 
 // One thread touches an agent: the one that calls agent_update. Its exchange
@@ -203,7 +207,8 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     a.closure.public=make([dynamic]store.Hash,allocator)
     a.closure.grants=make([dynamic]Grant_Closure,allocator)
     a.members.chunks=make(map[store.Hash]struct{},allocator)
-    a.members.frontier=make(map[store.Hash]Walk_Kind,allocator)
+    a.members.frontier=make(map[store.Hash]Walk_Item,allocator)
+    provenance_init(&a.members.provenance,allocator)
     a.fetches=make([dynamic]Agent_Fetch,allocator)
     a.hints=make([dynamic]Agent_Fetch,allocator)
     a.deferred=make([dynamic]Agent_Fetch,allocator)
@@ -211,6 +216,7 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
         agent_destroy(a)
         return .Out_Of_Memory
     }
+    provenance_load(&a.members.provenance,desc.store,desc.org)
     agent_channels(a)
     if exchange.init(&a.x,{
         store=desc.store,channel=0,peers=AGENT_PEERS,hints=AGENT_HINTS,
@@ -275,6 +281,7 @@ agent_destroy :: proc(a:^Agent) {
     delete(a.closure.grants)
     delete(a.members.chunks)
     delete(a.members.frontier)
+    provenance_destroy(&a.members.provenance)
     delete(a.fetches)
     delete(a.hints)
     delete(a.deferred)
@@ -478,8 +485,8 @@ agent_refold :: proc(a:^Agent) {
             append(&a.allowed,e==.None?Allowed{dh=g.subject_dh,class=.Grant,project=g.project,rights=g.rights,entry=i}:Allowed{dh=g.subject_dh,class=.None})
         }
     }
-    agent_closure(a)
     members_refold(a)
+    agent_closure(a)
     net.host_authorize(&a.server)
     // What this end makes of the servers it connected to.
     for &p,i in a.peers {
@@ -1013,8 +1020,9 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .Object:
         a.stats.objects_fetched+=1
         a.dirty=true
+        provenance_received(&a.members.provenance,a.desc.store,f.address)
         agent_closure(a)
-        if kind,waiting:=a.members.frontier[f.address];waiting {members_walk(a,{{f.address,kind}})}
+        if item,waiting:=a.members.frontier[f.address];waiting {members_walk(a,{item})}
         agent_retry(a,.None)
     }
 }
@@ -1065,6 +1073,7 @@ agent_update :: proc(a:^Agent,now:f64) {
         a.dirty=false
         agent_seed(a)
     }
+    if a.members.provenance.dirty {_=provenance_save(&a.members.provenance,a.desc.store,a.desc.org)}
     exchange.update(&a.x,now)
     net.host_update(&a.server,now)
     for k in 0..<a.client_count {net.host_update(&a.clients[k],now)}
@@ -1110,9 +1119,23 @@ agent_class_from :: proc "contextless" (z:net.Authorization) -> Agent_Class {
 // The revisions every device's refs of the projects name and the moves of
 // their shared bookmarks a writer signed, only project unless it is zero.
 // When public, only what the shared bookmarks of the public projects name.
+// With proven, only those that came from the org (provenance_has): what a
+// closure served from them reaches.
 @(private)
-agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision,refs_objects:^[dynamic]store.Hash) {
+agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision,refs_objects:^[dynamic]store.Hash,proven:=false) {
     if !a.folded {return}
+    at:=len(out)
+    defer if proven {
+        p:=&a.members.provenance
+        k:=at
+        for r in out[at:] {
+            if provenance_has(p,r) {
+                out[k]=r
+                k+=1
+            }
+        }
+        base.truncate(out,k)
+    }
     for p in a.org.projects {
         if (public && !p.public) || (project!={} && p.id!=project) {continue}
         if public {
@@ -1181,7 +1204,8 @@ agent_closure :: proc(a:^Agent) {
     public:=make([dynamic]store.Hash,context.temp_allocator)
     targets:=make([dynamic]Revision,context.temp_allocator)
     roots:=make([dynamic]store.Hash,context.temp_allocator)
-    agent_targets(a,{},true,&targets,&roots)
+    agent_provenance(a)
+    agent_targets(a,{},true,&targets,&roots,proven=true)
     present:=make([dynamic]store.Hash,context.temp_allocator)
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(a.desc.store,targets[:],&present,&missing)
@@ -1214,6 +1238,13 @@ agent_closure :: proc(a:^Agent) {
     }
 }
 
+// Proves what the newest operations of the workspaces of the org's projects
+// on this machine name, before a set served from refs is walked.
+@(private)
+agent_provenance :: proc(a:^Agent) {
+    if a.folded {provenance_local(&a.members.provenance,a.desc.store,&a.org,false)}
+}
+
 // What the org's projects and scopes are: the members' set is built again
 // when it changes.
 @(private)
@@ -1241,6 +1272,7 @@ members_refold :: proc(a:^Agent) {
         m.shape=shape
         clear(&m.chunks)
         clear(&m.frontier)
+        if a.folded {provenance_rebuild(&m.provenance,a.desc.store,&a.org)}
         members_logs(a,&roots)
         if a.folded {
             members_settled(a,&roots)
@@ -1256,8 +1288,9 @@ members_refold :: proc(a:^Agent) {
             }
         }
     } else {
+        agent_provenance(a)
         members_logs(a,&roots)
-        for address,kind in m.frontier {append(&roots,Walk_Item{address,kind})}
+        for _,item in m.frontier {append(&roots,item)}
     }
     members_walk(a,roots[:])
 }
@@ -1301,7 +1334,7 @@ members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
             if item.entry.type!=.Bookmark_Move {continue}
             if _,role:=org_device_role(&a.org,item.entry.author);role<.Writer {continue}
             b,_,_:=body_head(item.entry.body,Bookmark_Move_Body)
-            append(out,Walk_Item{b.to,.Change})
+            append(out,Walk_Item{b.to,.Change,true})
         }
     case .Proposal:
         k:=log_find(l,l.id)
@@ -1310,7 +1343,7 @@ members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
         for item in l.items {
             if item.entry.type!=.Proposal_Revise {continue}
             _,tail,_:=body_head(item.entry.body,Proposal_Revise_Body)
-            for st in slice.reinterpret([]Stack_Item,tail) {append(out,Walk_Item{st.revision,.Change})}
+            for st in slice.reinterpret([]Stack_Item,tail) {append(out,Walk_Item{st.revision,.Change,true})}
         }
     case .Keyring:
         k:=log_find(l,l.id)
@@ -1340,6 +1373,7 @@ members_namespace :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,out:^[dynami
 @(private)
 members_ref :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Hash) {
     roots:=make([dynamic]Walk_Item,context.temp_allocator)
+    agent_provenance(a)
     members_roots(a,kind,namespace,address,&roots)
     members_walk(a,roots[:])
 }
@@ -1355,20 +1389,21 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
     case .Refs:
         project,ok:=store.parse_hex(namespace[len(REFS_PREFIX):])
         if !ok || org_project_index(&a.org,project)<0 {return}
-        append(out,Walk_Item{address,.File})
+        append(out,Walk_Item{address,.File,false})
         bytes,e:=object_get(a.desc.store,address,.Device_Refs,context.temp_allocator)
         if e!=.None {return}
         d,de:=device_refs_decode(bytes,context.temp_allocator)
         if de!=.None {return}
-        for b in d.refs {append(out,Walk_Item{b.target,.Change})}
+        for b in d.refs {append(out,Walk_Item{b.target,.Change,true})}
     case .DDC:
         buffer:[len(DDC_PREFIX)+64]u8
         if namespace!=ddc_namespace(a.desc.org,&buffer) {return}
-        append(out,Walk_Item{address,.File})
+        append(out,Walk_Item{address,.File,false})
         records:=make([dynamic][]u8,context.temp_allocator)
         if ddc_set_read(a.desc.store,address,&records)!=.None {return}
         for bytes in records {
-            if d,e:=ddc_record_decode(bytes);e==.None {append(out,Walk_Item{d.output_root,.Output})}
+            // What this machine built for the org is the org's.
+            if d,e:=ddc_record_decode(bytes);e==.None {append(out,Walk_Item{d.output_root,.Output,d.producer!=a.desc.identity.key})}
         }
     case .Overlay:
         project,scope,ok:=overlay_namespace_parse(namespace)
@@ -1376,13 +1411,13 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
         known:=false
         for sc in a.org.scopes {known||=sc.project==project && sc.scope==scope}
         if !known {return}
-        append(out,Walk_Item{address,.File})
+        append(out,Walk_Item{address,.File,false})
         bytes,e:=overlay_get(a.desc.store,address,.Record,OVERLAY_RECORD_MAX,context.temp_allocator)
         if e!=.None {return}
         r,re:=overlay_record_decode(bytes)
         if re!=.None {return}
-        append(out,Walk_Item{r.tree_root,.File})
-        for o in r.objects {append(out,Walk_Item{o,.File})}
+        append(out,Walk_Item{r.tree_root,.File,false})
+        for o in r.objects {append(out,Walk_Item{o,.File,false})}
     }
 }
 
@@ -1400,11 +1435,16 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
     for len(stack)>0 {
         item:=pop(&stack)
         if item.address=={} || item.address in m.chunks || seen[item.address] {continue}
+        // A root a ref names that did not come from the org is one this machine lacks for it.
+        if item.root && !provenance_has(&m.provenance,item.address) {
+            if item.address!=empty {m.frontier[item.address]=item}
+            continue
+        }
         seen[item.address]=true
         at:=len(added)
         if !object_chunks(a.desc.store,item.address,&added) {
             resize(&added,at)
-            if item.address!=empty {m.frontier[item.address]=item.kind}
+            if item.address!=empty {m.frontier[item.address]=item}
             continue
         }
         delete_key(&m.frontier,item.address)
@@ -1452,7 +1492,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
     if g.rights&{.Read,.Write,.Check}!={} {
         targets:=make([dynamic]Revision,context.temp_allocator)
         roots:=make([dynamic]store.Hash,context.temp_allocator)
-        agent_targets(a,g.project,false,&targets,&roots)
+        agent_targets(a,g.project,false,&targets,&roots,proven=true)
         closure_walk_scoped(a.desc.store,targets[:],g.path,&roots)
         for r in roots {object_chunks(a.desc.store,r,out)}
     }
@@ -1511,7 +1551,7 @@ object_present :: proc(s:^store.Store,address:store.Hash) -> bool {
 Walk_Kind :: enum u8 {Change,Folder,Conflict,File,Output}
 
 @(private)
-Walk_Item :: struct {address:store.Hash,kind:Walk_Kind}
+Walk_Item :: struct {address:store.Hash,kind:Walk_Kind,root:bool} // root: named by a ref, walked once it came from the org
 
 @(private)
 Walk_Buffers :: struct {entries:[dynamic]Tree_Entry,terms:Terms(Term)}
@@ -1528,9 +1568,9 @@ walk_children :: proc(s:^store.Store,item:Walk_Item,b:^Walk_Buffers,stack:^[dyna
     case .Change:
         c,e:=change_get(s,item.address,context.temp_allocator)
         if e!=.None {return}
-        for p in c.parents {append(stack,Walk_Item{p,.Change})}
-        append(stack,Walk_Item{c.tree,.Folder})
-        for a in c.attachments {append(stack,Walk_Item{a.object,.File})}
+        for p in c.parents {append(stack,Walk_Item{p,.Change,false})}
+        append(stack,Walk_Item{c.tree,.Folder,false})
+        for a in c.attachments {append(stack,Walk_Item{a.object,.File,false})}
     case .Folder:
         clear(&b.entries)
         if _,e:=folder_get(s,item.address,&b.entries,nil,context.temp_allocator);e!=.None {return}
@@ -1541,19 +1581,19 @@ walk_children :: proc(s:^store.Store,item:Walk_Item,b:^Walk_Buffers,stack:^[dyna
             case .Folder: kind=.Folder
             case .Conflict: kind=.Conflict
             }
-            append(stack,Walk_Item{entry.address,kind})
+            append(stack,Walk_Item{entry.address,kind,false})
         }
     case .Conflict:
         clear(&b.terms.adds)
         clear(&b.terms.removes)
         if _,e:=conflict_get(s,item.address,&b.terms);e!=.None {return}
         for list in ([2][]Term{b.terms.adds[:],b.terms.removes[:]}) {
-            for t in list {append(stack,Walk_Item{t.address,t.kind==.Folder?.Folder:.File})}
+            for t in list {append(stack,Walk_Item{t.address,t.kind==.Folder?.Folder:.File,false})}
         }
     case .Output:
         objects,e:=ddc_output_get(s,item.address,context.temp_allocator)
         if e!=.None {return}
-        for o in objects {append(stack,Walk_Item{o,.File})}
+        for o in objects {append(stack,Walk_Item{o,.File,false})}
     case .File:
     }
 }
@@ -1564,7 +1604,7 @@ walk_children :: proc(s:^store.Store,item:Walk_Item,b:^Walk_Buffers,stack:^[dyna
 closure_walk :: proc(s:^store.Store,revisions:[]Revision,present,missing:^[dynamic]store.Hash) {
     stack:=make([dynamic]Walk_Item,context.temp_allocator)
     seen:=make(map[store.Hash]bool,context.temp_allocator)
-    for r in revisions {append(&stack,Walk_Item{r,.Change})}
+    for r in revisions {append(&stack,Walk_Item{r,.Change,false})}
     empty:=empty_address()
     b:=walk_buffers()
     for len(stack)>0 {

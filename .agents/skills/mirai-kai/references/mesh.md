@@ -68,6 +68,15 @@ or anonymous (an empty claim). The namespace decides who reads it:
   is built whole when the agent starts or the org's projects or scopes change, a walk of the
   whole history that reads every node of every object once; a ref that moves adds what it reaches
   down to what the set holds, and an object not here yet joins once it arrives.
+- An object enters an org's sets only from a root that came from the org: a change or an output
+  its agent fetched from a peer (one local object per org lists them), what the operations a
+  repository linked to one of its projects keep reach, or an output this machine published for
+  it. A ref names any address it likes and the store holds every org's objects, so a change a
+  ref names that came from none of these (another org's on the machine, a repository in no org)
+  is one this machine lacks for the org: it is not served and waits until it comes from the
+  org's peers. The cost is one hash per change or output received through the org and a walk of
+  the linked repositories' kept views when the set is built whole; below a root, the walk is
+  trusted, as its closure is the org's.
 - What a restricted peer may fetch is a smaller set made the same way: pending peers get the user
   logs, anonymous ones the closures of public projects, a grant what its scope covers
   ([grants](identity.md#grants)). An address outside the set is not served, whatever the peer asks
@@ -78,8 +87,9 @@ or anonymous (an empty claim). The namespace decides who reads it:
   public view lists.
 - A peer that is not a member or a node is restricted: it writes nothing, except a grant holder's
   refs under the write right.
-- The local namespaces (`kai-local-*` for a workspace's operations and a node's waiting users, the
-  machine's own for its user, orgs and projects) are never exposed to any peer.
+- The local namespaces (`kai-local-*` for a workspace's operations, a node's waiting users, the
+  kept verdicts of landed moves and what came from each org; the machine's own for its user,
+  orgs and projects) are never exposed to any peer.
 
 ## The connection ladder
 
