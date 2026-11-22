@@ -22,6 +22,9 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 
 ## Map
 
+- Debugging and verifying animation in real Play (`capture` filmstrip + `debug`,
+  `animation.inspect`, `animation.history`, `play.audit`) vs isolated `animation.capture`:
+  [debugging cheatsheet](../mirai-agent-api/SKILL.md#debugging-and-verification-cheatsheet).
 - Animating an uploaded or generated character or animal that arrives without a rig (template rig at
   import and Mesh2Motion clips):
   [auto-rig](references/animation-autorig.md#animating-a-character-that-arrives-without-a-rig).
@@ -128,8 +131,11 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
    `plugins/animation/runtime`; what physics reads in `plugins/animation_physics`; authoring, API
    and preview in `plugins/animation/editor`.
 2. To animate a character, declare the intent (`animation.character.setup`, `animation.request`,
-   `animation.clip.edit`) and look at the result with `animation.analyze` and `animation.capture`
-   before touching keys.
+   `animation.clip.edit`), check metrics with `animation.analyze`, preview isolated poses with
+   `animation.capture`, and verify real Play locomotion with `capture` filmstrips (`debug:
+   ["Skeleton","Collision","Trajectory"]`), `animation.inspect` (`Match`/`Pose`) and
+   `animation.history`
+   ([cheatsheet](../mirai-agent-api/SKILL.md#debugging-and-verification-cheatsheet)).
 3. Change the data in its owner and expose it by name: plain components and storages, requests by
    queue to the writer, no pointers stored between frames.
 4. If an asset or a schema changes, version it and update all its consumers, including the demo
@@ -260,5 +266,8 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   `std/anim/matching_test.odin`.
 - API methods: generate and compile the demo editor and check them with `mirai rpc describe` and a
   real call.
-- What is visual (skinning, morphs, rigs, locomotion) is checked with a capture with graphics
-  validation, with real physics for locomotion; CPU tests do not vouch for the GPU integration.
+- What is visual (skinning, morphs, rigs, locomotion) is checked with a real Play `capture`
+  filmstrip (`debug: ["Skeleton","Bounds","Collision","Trajectory"]`) and graphics validation, plus
+  `render.inspect_entity` (`skinned`, `skin_updated`) and `animation.inspect` (`Match`/`Pose`).
+  `animation.capture` is an isolated preview without physics/world; CPU tests never vouch for GPU
+  skinning or live locomotion.

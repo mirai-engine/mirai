@@ -6,8 +6,9 @@ per decision and a small, slow one plays as well as a fast one.
 
 ## Agent
 
-`.claude/agents/playtester.md` says how it plays. It needs the `playtest` plugin, which the game
-template enables; its tools reach the plugin through `call`, so nothing else pays for them.
+`.claude/agents/playtester.md` (shipped in `templates/common/.claude/agents/playtester.md`) drives
+the game over MCP or `mirai rpc`. It needs the `playtest` plugin, which the game template enables;
+its tools reach the plugin through `call`, so nothing else pays for them.
 
 - Launch it with one goal that names what it needs, since it cannot look anything up: what to
   reach or do, the names of the entities to look for, when to stop, and a file to write a report
@@ -23,7 +24,12 @@ mirai rpc --project . play.check '{"conditions":[{"entity":"Player","field":"wor
   --select results[0].value
 mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gone"}]}' \
   --select passed
+mirai rpc --project . render.inspect_entity '{"entity":"Player","world":"Game"}'
 ```
+
+- `render.inspect_entity` diagnoses invisible, culled or unskinned meshes (`visible`,
+  `culled_reason`, `lod`, `aabb_min`, `aabb_max`, `distance`, `textures_pending`, `materials`,
+  `skinned`, `skin_updated`).
 
 - `play.observe` answers the tick, the focused player, whether it is stuck, new problems, the top
   screen with its buttons (their `rect` is in the window points `play.step` takes) and the
@@ -43,8 +49,12 @@ mirai rpc --project . play.check '{"conditions":[{"entity":"Door","compare":"Gon
 mirai rpc --project . capture '{"path":"C:/work/now.png"}' --select path,width,height
 mirai rpc --project . capture \
   '{"path":"C:/work/walk.png","every":10,"count":9,"follow":"Player",
+    "debug":["Skeleton","Bounds","Collision","Trajectory"],
     "segments":[{"for":80,"keys":["W"]}]}'
 ```
+
+- `debug` draws optional overlays (`Bounds`, `Skeleton`, `Collision`, `Trajectory`) in offscreen
+  single captures and filmstrips without `ui:true`.
 
 - With `path` the answer is only where the file is: open it when the numbers do not decide.
   Without it MCP also returns the image, which costs tokens.
