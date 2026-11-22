@@ -752,15 +752,11 @@ diff_status :: proc(d:kai.Diff) -> string {
 
 // The files a change edits from its first parent, without scoped ones.
 change_edits :: proc(s:^store.Store,v:^Project_View,ch:^kai.Change,out:^[dynamic]kai.Diff) -> kai.Error {
-    base:store.Hash
+    base:store.Hash // none: the change adds every file
     if len(ch.parents)>0 {
         p,e:=kai.change_get(s,ch.parents[0],context.temp_allocator)
         if e!=.None {return e}
         base=p.tree
-    } else {
-        empty,e:=kai.tree_empty(s)
-        if e!=.None {return e}
-        base=empty
     }
     all:=make([dynamic]kai.Diff,context.temp_allocator)
     kai.tree_diff(s,base,ch.tree,&all,context.temp_allocator) or_return
