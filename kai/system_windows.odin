@@ -85,6 +85,32 @@ interfaces6 :: proc(out:^[dynamic]u32) {
     }
 }
 
+// The broadcast address of every IPv4 network this machine is on. A beacon
+// goes to each: the limited broadcast leaves through one interface alone,
+// the system's choice, which on a machine with several is often not the LAN.
+@(private)
+broadcasts4 :: proc(out:^[dynamic][4]u8) {
+    size:u32=16*1024
+    for _ in 0..<4 {
+        buffer,e:=make([]u8,int(size),context.temp_allocator)
+        if e!=nil {return}
+        first:=(^win.IP_Adapter_Addresses)(raw_data(buffer))
+        result:=win.GetAdaptersAddresses(.IPv4,{.Skip_Anycast,.Skip_Multicast,.Skip_DNS_Server,.Skip_Friendly_Name},nil,first,&size)
+        if result==ERROR_BUFFER_OVERFLOW {continue}
+        if result!=0 {return}
+        for a:=first;a!=nil;a=a.Next {
+            if a.OperStatus!=.Up {continue}
+            for u:=a.FirstUnicastAddress;u!=nil;u=u.Next {
+                address:=(^win.sockaddr_in)(u.Address.lpSockaddr)
+                if address==nil || address.sin_family!=win.ADDRESS_FAMILY(win.AF_INET) || u.OnLinkPrefixLength>32 {continue}
+                mask:=u.OnLinkPrefixLength==0?u32be(0):u32be(~u32(0)<<(32-u32(u.OnLinkPrefixLength)))
+                broadcast4_add(out,transmute([4]u8)address.sin_addr.s_addr,mask)
+            }
+        }
+        return
+    }
+}
+
 // This machine's host name, in buffer; empty when the system gives none.
 @(private)
 host_name :: proc(buffer:[]u8) -> string {

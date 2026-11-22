@@ -914,6 +914,16 @@ runner_want :: proc(r:^Runner,o:^Runner_Org,dh:Dh_Key) -> (sent,waiting:bool) {
     return false,waiting
 }
 
+// Adds the broadcast address of the network of ip under mask, once; loopback
+// and a point-to-point link have none.
+@(private)
+broadcast4_add :: proc(out:^[dynamic][4]u8,ip:[4]u8,mask:u32be) {
+    if ip[0]==127 || mask==~u32be(0) {return}
+    b:=transmute([4]u8)(transmute(u32be)ip|~mask)
+    for have in out {if have==b {return}}
+    append(out,b)
+}
+
 // The beacons of every org this device serves, every BEACON_SECONDS.
 @(private)
 runner_beacons :: proc(r:^Runner) {
@@ -925,11 +935,15 @@ runner_beacons :: proc(r:^Runner) {
     unix:=time.now()._nsec/1_000_000_000
     targets:=r.desc.beacon_targets
     if len(targets)==0 {
-        // The IPv4 broadcast, and the link-local multicast of every interface
-        // with IPv6, which reaches a LAN without IPv4 or that drops broadcasts.
+        // The broadcast of every IPv4 network, and the link-local multicast of
+        // every interface with IPv6, which reaches a LAN without IPv4 or that
+        // drops broadcasts. A system that lists no network gets the limited one.
         port:=r.desc.beacon_port<=0?BEACON_PORT:r.desc.beacon_port
         all:=make([dynamic]net.Address,context.temp_allocator)
-        append(&all,net.address_ip4(255,255,255,255,port))
+        networks:=make([dynamic][4]u8,context.temp_allocator)
+        broadcasts4(&networks)
+        if len(networks)==0 {append(&networks,[4]u8{255,255,255,255})}
+        for n in networks {append(&all,net.address_ip4(n[0],n[1],n[2],n[3],port))}
         indexes:=make([dynamic]u32,context.temp_allocator)
         interfaces6(&indexes)
         for index in indexes {append(&all,net.Address{kind=.IP6,port=u16(port),ip=BEACON_GROUP6,zone=index})}

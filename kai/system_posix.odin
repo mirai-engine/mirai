@@ -78,6 +78,23 @@ interfaces6 :: proc(out:^[dynamic]u32) {
     }
 }
 
+// The broadcast address of every IPv4 network this machine is on. A beacon
+// goes to each: the limited broadcast leaves through one interface alone,
+// the system's choice, which on a machine with several is often not the LAN.
+@(private)
+broadcasts4 :: proc(out:^[dynamic][4]u8) {
+    interfaces,e:=cnet.enumerate_interfaces(context.temp_allocator)
+    if e!=nil {return}
+    for interface in interfaces {
+        if cnet.Link_States.Up not_in interface.link.state {continue}
+        for lease in interface.unicast {
+            ip,is_ip4:=lease.address.(cnet.IP4_Address)
+            mask,has_mask:=cnet.Address(lease.netmask).(cnet.IP4_Address)
+            if is_ip4 && has_mask {broadcast4_add(out,([4]u8)(ip),transmute(u32be)mask)}
+        }
+    }
+}
+
 // This machine's host name, in buffer; empty when the system gives none.
 @(private)
 host_name :: proc(buffer:[]u8) -> string {
