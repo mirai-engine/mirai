@@ -215,7 +215,12 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     index_save(folder,&index)
     if error!="" {return}
 
-    // The packages, their builds from the peers.
+    // The packages, their builds from the peers, once every file is here: a
+    // source some of whose files did not arrive would import other assets.
+    if len(report.failed)>0 {
+        say(&d,"the packages are refreshed once every file is written")
+        return
+    }
     if os.exists(project.path(folder,asset.PACKAGES_FILE,allocator=context.temp_allocator)) {
         say(&d,"refreshing the packages of the project")
         progress_phase(&d,.Packages,&report)

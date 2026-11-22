@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:io"
 import "core:os"
+import "core:path/slashpath"
 import "core:strconv"
 import "core:strings"
 import "core:sync"
@@ -193,6 +194,7 @@ share_command :: proc(args:[]string,output,errors:io.Writer) -> int {
         return 1
     }
     fmt.wprintfln(output,"snapshot of %s: %d files, %s (%d read into the store at %s, %s)",root,o.taken.files,bytes_text(o.taken.bytes),o.taken.put,s.root,seconds_text(time.duration_seconds(time.tick_since(started))))
+    if o.taken.sources>0 {fmt.wprintfln(output,"%d sources of built packages left out: joiners take the builds",o.taken.sources)}
     for problem in o.problems {fmt.wprintfln(errors,"warning: a joiner will not get it: %s",problem)}
     h:=new(Udp_Host,context.temp_allocator)
     if !host_open(h,.Server,port>=0?port:PORT,key) {
@@ -266,13 +268,13 @@ offer :: proc(
     if !name_valid(o.name) {o.name="project"}
     o.name=strings.clone(o.name,allocator)
     served:=make([dynamic]store.Hash,context.temp_allocator)
-    o.snapshot,o.address,o.taken,error=snapshot_take(s,root,o.name,&served,worker,allocator,cancel)
+    built:=library_served(s,root,&served,cancel)
+    if offer_cancelled(cancel) {return {},OFFER_CANCELLED}
+    o.snapshot,o.address,o.taken,error=snapshot_take(s,root,o.name,&served,worker,allocator,cancel,&built)
     if error!="" {return}
     packages,_:=asset.root_packages_in(s,root,allocator)
     o.problems=packages.problems
     for e in o.snapshot.entries {append(&served,e.address)}
-    library_served(s,root,&served,cancel)
-    if offer_cancelled(cancel) {return {},OFFER_CANCELLED}
     lease,lease_error:=node_lease_open(s,served[:])
     if lease_error!=.None {
         return {},fmt.aprintf("the project lease could not be kept (%v)",
@@ -297,9 +299,11 @@ offer_refresh :: proc(n:^Node) -> store.Error {
 }
 
 // What the packages the project at root pins need: their manifests and the
-// builds this machine chose for them, with every blob they list.
+// builds this machine chose for them, with every blob they list. Gives the
+// sources of those whose build is here whole, which a joiner does not need.
 @(private)
-library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash,cancel:^bool) {
+library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash,cancel:^bool) -> (built:Built_Sources) {
+    built=make(Built_Sources,context.temp_allocator)
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if error!=.None {return}
     index:=store.read_index(s)
@@ -317,7 +321,26 @@ library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash,ca
         if build_error!=.None {continue}
         objects:=asset.Build_Objects{build=&b,with_thumbnails=true}
         for address in asset.build_object_next(&objects) {append(served,address)}
+        if !asset.build_whole(&index,&b) {continue}
+        origin:=source_relative(p.origin.path)
+        if origin=="" {continue}
+        built[origin]=true
+        folder:=slashpath.dir(p.origin.path,context.temp_allocator)
+        for input in p.inputs {
+            if path:=source_relative(fmt.tprintf("%s/%s",folder,input));path!="" {built[path]=true}
+        }
     }
+    return
+}
+
+// The path of a source a manifest names, relative to the project, in lower
+// case; "" for one outside the project.
+@(private)
+source_relative :: proc(path:string) -> string {
+    if path=="" || strings.has_prefix(path,"/") || strings.index_byte(path,':')>=0 {return ""}
+    cleaned:=slashpath.clean(path,context.temp_allocator)
+    if cleaned=="." || cleaned==".." || strings.has_prefix(cleaned,"../") {return ""}
+    return strings.to_lower(cleaned,context.temp_allocator)
 }
 
 @(private)

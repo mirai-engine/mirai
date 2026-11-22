@@ -710,3 +710,56 @@ a_failed_pin_leaves_the_root_as_it_was :: proc(t:^testing.T) {
     p,load_error:=asset.package_load(s,root,&list.packages[0],context.temp_allocator)
     testing.expectf(t,load_error==.None && p.name=="first","the pin before reads its manifest: %v",load_error)
 }
+
+// A project that pins one origin twice (a list written before pins of an
+// origin replaced each other) is left with one pin by a refresh: the one whose
+// identity is that of the source here, else the last pinned, so the source is
+// never imported once per pin.
+@(test)
+a_refresh_keeps_one_pin_of_an_origin_pinned_twice :: proc(t:^testing.T) {
+    top:=base.test_folder(t,"library-pinned-twice")
+    if top=="" {return}
+    game:=fmt.tprintf("%s/game",top)
+    source:=copy_in(game,DEMO,"gallery/vase_color.png")
+    s:=test_store(t,fmt.tprintf("%s/store",top))
+    if s==nil {return}
+    options:=Library_Options{store=s,root=game,fast_textures=true}
+    imported,ok:=ingested(t,source,options)
+    if !ok {return}
+    if !report_clean(t,project_add(game,imported.manifest,"",nil,options,context.temp_allocator)) {return}
+    current,_:=asset.package_get(s,imported.manifest,context.temp_allocator)
+    stale:=current
+    stale.id,stale.identity={0x5747,0x4c45},store.address_of_bytes(transmute([]u8)string("another machine"))
+    stale_manifest,put_error:=asset.package_put(s,&stale)
+    if !testing.expect_value(t,put_error,asset.Error.None) {return}
+    pin_twice :: proc(t:^testing.T,s:^store.Store,game:string,first,last:asset.Project_Package) {
+        list:asset.Packages
+        list.packages=make([dynamic]asset.Project_Package,context.temp_allocator)
+        append(&list.packages,first,last)
+        for &entry in list.packages {testing.expect_value(t,asset.package_file_save(s,game,&entry),asset.Error.None)}
+        testing.expect_value(t,asset.packages_save(game,&list),asset.Error.None)
+    }
+    pinned_ids :: proc(game:string) -> [dynamic]base.Asset_Id {
+        ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
+        list,_,_:=asset.packages_load(game,context.temp_allocator)
+        for entry in list.packages {append(&ids,entry.id)}
+        return ids
+    }
+    current_pin:=asset.Project_Package{id=current.id,manifest=imported.manifest}
+    stale_pin:=asset.Project_Package{id=stale.id,manifest=stale_manifest}
+    // The source is here: the pin it was imported as stays, though pinned first.
+    pin_twice(t,s,game,current_pin,stale_pin)
+    report:=project_refresh(game,options,context.temp_allocator)
+    report_clean(t,report)
+    ids:=pinned_ids(game)
+    testing.expectf(t,len(ids)==1 && ids[0]==current.id && report.packages==1 && report.ingested==0,"%v %v",ids[:],report)
+    testing.expectf(t,len(report.warnings)==1,"the removed pin is said: %v",report.warnings[:])
+    testing.expect(t,!os.exists(asset.package_file(game,stale.id)),"the manifest file of the removed pin goes with it")
+    // Without the source: the last pinned stays.
+    testing.expect(t,os.remove(source)==nil)
+    pin_twice(t,s,game,stale_pin,current_pin)
+    report=project_refresh(game,options,context.temp_allocator)
+    report_clean(t,report)
+    ids=pinned_ids(game)
+    testing.expectf(t,len(ids)==1 && ids[0]==current.id && report.ingested==0,"%v %v",ids[:],report)
+}

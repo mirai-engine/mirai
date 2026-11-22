@@ -38,7 +38,8 @@ import "mirai:store"
 //   source must ingest it. A manifest the store lacks comes from the
 //   project's file of it, else from the caller's source. What it asks the
 //   source for is asked together first (refresh_prefetch). It never removes a
-//   blob, a ref or a file, and never builds without the source.
+//   blob, a ref or a file but the pin of an origin pinned twice (pins_collapse),
+//   and never builds without the source.
 //
 // Following a package writes or follows its documents in the project's folder
 // of it: from the build's baselines (importer.documents_follow), and for a
@@ -360,10 +361,11 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
         report_line(&report.failures,"%s/%s does not read (%v): fix it from its history; nothing was refreshed",top,asset.PACKAGES_FILE,error)
         return
     }
-    report.packages=len(list.packages)
-    if len(list.packages)==0 {return}
     index:=store.read_index(options.store)
     l.index=&index
+    pins_collapse(&l,top,&list,&report)
+    report.packages=len(list.packages)
+    if len(list.packages)==0 {return}
     project_follow_begin(&l,top)
     refresh_prefetch(&l,top,list.packages[:])
     for &entry,at in list.packages {
@@ -375,6 +377,59 @@ project_refresh :: proc(root:string,options:Library_Options,allocator:=context.a
         package_refresh(&l,top,entry,&report,false)
     }
     return
+}
+
+// One origin is one package (project_pin_many): pins of an origin besides the
+// one a refresh keeps are removed from list and from the project at top, with
+// a warning. It keeps the pin whose identity is that of the source here, else
+// the last pinned.
+@(private="file")
+pins_collapse :: proc(l:^Library_State,top:string,list:^asset.Packages,report:^Library_Report) {
+    s:=library_index(l)
+    origins:=make([]string,len(list.packages),l.temp)
+    sources:=make([]string,len(list.packages),l.temp)
+    count:=make(map[string]int,l.temp)
+    for &entry,at in list.packages {
+        scratch:mem.Dynamic_Arena
+        mem.dynamic_arena_init(&scratch,block_size=1<<20,out_band_size=1<<20)
+        defer mem.dynamic_arena_destroy(&scratch)
+        context.temp_allocator=base.dynamic_arena_allocator(&scratch)
+        p,error:=asset.package_load(s,top,&entry,context.temp_allocator)
+        if error!=.None || p.origin.path=="" {continue}
+        origins[at]=fmt.aprintf("%s\x00%s",p.origin.importer,p.origin.path,allocator=l.temp)
+        sources[at]=strings.clone(p.origin.path,l.temp)
+        count[origins[at]]+=1
+    }
+    keep:=make(map[string]int,l.temp)
+    for origin,at in origins {
+        if origin=="" || count[origin]<2 {continue}
+        if kept,chosen:=keep[origin];chosen && kept<0 {continue}
+        keep[origin]=at
+        entry:=list.packages[at]
+        p,error:=asset.package_load(s,top,&entry,context.temp_allocator)
+        if error!=.None {continue}
+        source:=importer.origin_path(p.origin.path,top)
+        if source!="" && !importer.unsafe_path(source) && os.exists(source) && !source_changed(l,&p,source) {
+            // Current: no later pin replaces it. The sign marks the choice as made.
+            keep[origin]=-1-at
+        }
+    }
+    if len(keep)==0 {return}
+    removed:=make([dynamic]base.Asset_Id,l.temp)
+    for at:=len(list.packages)-1;at>=0;at-=1 {
+        origin:=origins[at]
+        kept,collapsed:=keep[origin]
+        if origin=="" || !collapsed || (kept<0 ? -1-kept : kept)==at {continue}
+        append(&removed,list.packages[at].id)
+        id_text:[64]u8
+        report_line(&report.warnings,"package %s: %s was pinned again as another package, which this project keeps; this pin was removed",base.asset_id_format(list.packages[at].id,id_text[:32]),sources[at])
+        ordered_remove(&list.packages,at)
+    }
+    if error:=asset.packages_save(top,list);error!=.None {
+        report_line(&report.failures,"%s/%s could not be written (%v): check the project's files and refresh again",top,asset.PACKAGES_FILE,error)
+        return
+    }
+    for id in removed {asset.package_file_remove(top,id)}
 }
 
 // Pins entry in the packages.mirai of the project at root, in place of the

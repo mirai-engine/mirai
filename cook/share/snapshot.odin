@@ -20,8 +20,9 @@ import "mirai:store"
 // the files and bytes under it. The meta of every folder is SNAPSHOT_MAGIC and
 // the length of a name, the project's in the root and none below it. Two
 // snapshots that differ in one file share every folder off its path. What
-// each machine makes (project.own_path) is left out, and a folder holds at
-// least one file. The same files give the same tree.
+// each machine makes (project.own_path) is left out, and so are the sources a
+// caller names (Built_Sources); a folder holds at least one file. The same
+// files give the same tree.
 //
 // In memory, and as the base a joined folder keeps, a snapshot is its files
 // by path, sorted bytewise.
@@ -607,16 +608,22 @@ Take_Report :: struct {
     files:int,
     bytes:i64,
     put:int,           // files read into the store now: the others were current
+    sources:int,       // files and folders left out as the sources of built packages
     skipped:[]string,  // what was left out, why and how to share it
 }
 
-// The snapshot of the project at root: every file of its own put in s (one
-// the index knows unchanged and the store has is not read again), then its
-// folders; address is its root. Each folder put is added to folders. Jobs of
-// worker, when given, hash and append the chunks of a file. In allocator.
+// The sources of the packages a project pins whose build the store has whole,
+// by path relative to the project in lower case, files and folders: a joiner
+// takes their builds from the peers, so a snapshot leaves them out.
+Built_Sources :: map[string]bool
+
+// The snapshot of the project at root: every file of its own but built, put in
+// s (one the index knows unchanged and the store has is not read again), then
+// its folders; address is its root. Each folder put is added to folders. Jobs
+// of worker, when given, hash and append the chunks of a file. In allocator.
 snapshot_take :: proc(
     s:^store.Store,root,name:string,folders:^[dynamic]store.Hash=nil,
-    worker:=jobs.Worker_Ref{},allocator:=context.allocator,cancel:^bool=nil,
+    worker:=jobs.Worker_Ref{},allocator:=context.allocator,cancel:^bool=nil,built:^Built_Sources=nil,
 ) -> (snap:Snapshot,address:store.Hash,report:Take_Report,error:string) {
     index:=index_load(root,allocator)
     // The root read once: each file then asks only what this value knows.
@@ -637,6 +644,10 @@ snapshot_take :: proc(
             if offer_cancelled(cancel) {return {},{},{},OFFER_CANCELLED}
             relative:=folder==""?strings.clone(info.name,context.temp_allocator):fmt.tprintf("%s/%s",folder,info.name)
             if !project.own_path(relative) {continue}
+            if built!=nil && strings.to_lower(relative,context.temp_allocator) in built {
+                report.sources+=1
+                continue
+            }
             #partial switch info.type {
             case .Directory:
                 append(&todo,relative)
