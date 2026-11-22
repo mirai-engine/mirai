@@ -343,15 +343,28 @@ node_lease_open :: proc(s:^store.Store,live:[]store.Hash) -> (store.Lease,store.
 // before the ref is set there. The names of one call are asked together, and
 // the objects of their builds fetched together. For a thread other than the pump's.
 node_source :: proc(n:^Node) -> cache.Source {
-    return {fetch=node_fetch,user=n}
+    return {fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+        node_fetch((^Node)(user),nil,into,namespace,names,given)
+    },user=n}
+}
+
+// node_source whose fetches give nothing once the flag cancel is set
+// (exchange.fetch_cancel), the waits for the peers ending at once. Lives
+// while it is asked.
+Node_Fetching :: struct {node:^Node,cancel:^bool}
+
+node_source_cancellable :: proc(f:^Node_Fetching) -> cache.Source {
+    return {fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+        f:=(^Node_Fetching)(user)
+        node_fetch(f.node,f.cancel,into,namespace,names,given)
+    },user=f}
 }
 
 @(private)
-node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
-    n:=(^Node)(user)
+node_fetch :: proc(n:^Node,cancel:^bool,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
     if into!=n.s || len(names)==0 {return}
     addresses:=make([]store.Hash,len(names),context.temp_allocator)
-    refs_fetch(&n.x,namespace,names,addresses)
+    refs_fetch(&n.x,namespace,names,addresses,cancel)
     if namespace==asset.REF_IMPORTS || namespace==asset.REF_IMPORTS_FAST || namespace==asset.REF_BUILDS {
         objects:=make([dynamic]store.Hash,context.temp_allocator)
         for &address in addresses {
@@ -364,7 +377,7 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
             roots:=asset.Build_Objects{build=&b,with_thumbnails=true}
             for root in asset.build_object_next(&roots) {append(&objects,root)}
         }
-        objects_fetch(&n.x,objects[:])
+        objects_fetch(&n.x,objects[:],cancel)
         for &address in addresses {
             if address=={} {continue}
             b,build_error:=asset.build_get(into,address,context.temp_allocator)
@@ -381,23 +394,23 @@ node_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string
 // the batch Missing, which says nothing of the others: the batch is asked
 // again by halves, so m missing of n cost about m log n round trips, not n.
 @(private)
-refs_fetch :: proc(x:^exchange.Exchange,namespace:string,names:[]string,addresses:[]store.Hash) {
-    error:=exchange.fetch_refs(x,namespace,names,addresses)
+refs_fetch :: proc(x:^exchange.Exchange,namespace:string,names:[]string,addresses:[]store.Hash,cancel:^bool=nil) {
+    error:=exchange.fetch_refs(x,namespace,names,addresses,cancel=cancel)
     if error!=.Missing || len(names)==1 {return}
     half:=len(names)/2
-    refs_fetch(x,namespace,names[:half],addresses[:half])
-    refs_fetch(x,namespace,names[half:],addresses[half:])
+    refs_fetch(x,namespace,names[:half],addresses[:half],cancel)
+    refs_fetch(x,namespace,names[half:],addresses[half:],cancel)
 }
 
 // The objects of addresses fetched together, by halves when some peer lacks one.
 @(private)
-objects_fetch :: proc(x:^exchange.Exchange,addresses:[]store.Hash) {
+objects_fetch :: proc(x:^exchange.Exchange,addresses:[]store.Hash,cancel:^bool=nil) {
     if len(addresses)==0 {return}
-    error:=exchange.fetch_all(x,addresses)
+    error:=exchange.fetch_all(x,addresses,cancel=cancel)
     if error!=.Missing || len(addresses)==1 {return}
     half:=len(addresses)/2
-    objects_fetch(x,addresses[:half])
-    objects_fetch(x,addresses[half:])
+    objects_fetch(x,addresses[:half],cancel)
+    objects_fetch(x,addresses[half:],cancel)
 }
 
 // The name of the snapshot a share offers under the secret of its invitation:

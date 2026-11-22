@@ -28,6 +28,9 @@ in `exchange/wire.odin`.
   together: a caller that needs many objects or refs waits on the set, since each blocking call
   costs at least a round trip. Success is what the store says now: a kept want whose object was
   swept is asked again. `destroy` wakes every waiter with `Closed` and frees once none is left.
+  A blocking call given a `cancel` flag returns `Cancelled` as soon as `fetch_cancel` sets it,
+  letting go of what only it wanted; `cook/share` `package_take` cancels so
+  (`package_take_cancel`).
 
 ## Invariants
 
