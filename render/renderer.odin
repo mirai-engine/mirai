@@ -1020,6 +1020,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
 	compute(list, r, .Glass_Levels, .Glass_Levels_Comp)
 	compute(list, r, .Translucent_Draws, .Translucent_Draws_Comp)
+	compute(list, r, .Translucent_Draws, .Translucent_Draws_Comp, constants = {TRANSLUCENT_DRAWS_COMP_CELLS})
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
 	// Only rays traced by software run them: they walk or refit the software BVH.

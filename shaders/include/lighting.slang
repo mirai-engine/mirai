@@ -1162,6 +1162,24 @@ bool lights_changed(float3 position, float3 normal, float bias, uint budget, uin
     return false;
 }
 
+// Whether a point traces shadow rays: one of a stage that does not
+// (MIRAI_NO_SHADOW_RAYS: translucent.frag) takes the shadow of each light from
+// its maps alone, and a light that no map holds there reaches it whole.
+#ifdef MIRAI_NO_SHADOW_RAYS
+static const bool SHADOW_RAYS = false;
+#else
+static const bool SHADOW_RAYS = true;
+#endif
+
+// The cut of the lights with shadows and the light of those without that a
+// point of direct_lighting takes: by walking the tree, unless the stage gives
+// what was decided for a cell that holds the point (MIRAI_LIGHTS_GIVEN:
+// translucent.frag, from the lists of its instance).
+#ifndef MIRAI_LIGHTS_GIVEN
+uint point_light_cut(float3 position, float3 normal, uint budget, uint share) { return light_cut(position, normal, budget, share); }
+float3 point_shadowless_lighting(Shading s, float known, uint share) { return shadowless_lighting(s, known, share); }
+#endif
+
 // The direct light a point reflects towards its viewer: the sun, the local
 // lights and those of extensions, each through its shadow ray. The local
 // lights are the nodes of the cut of the point, at most `budget`: the lights
@@ -1185,7 +1203,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
     uint share = (which & LIGHTS_BOUNCED) != 0u ? LIGHT_SHARE_BOUNCED : (which & LIGHTS_SCATTERED) != 0u ? LIGHT_SHARE_SCATTERED : LIGHT_SHARE_ALL;
     bool changes = (which & LIGHTS_CHANGES) != 0u;
     float sun_share = share == LIGHT_SHARE_BOUNCED ? frame.sun_shares.x : share == LIGHT_SHARE_SCATTERED ? frame.sun_shares.y : 1.0;
-    uint local_items = (which & LIGHTS_LOCAL) != 0u ? light_cut(s.position, s.normal, budget, share) : 0u;
+    uint local_items = (which & LIGHTS_LOCAL) != 0u ? point_light_cut(s.position, s.normal, budget, share) : 0u;
     uint items = 1u + local_items;
 #ifdef MIRAI_HOOK_LIGHTS
     if ((which & LIGHTS_EXTENSION) != 0u) items += mirai_extension_light_count();
@@ -1242,22 +1260,22 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             beyond_reach = light.beyond_reach;
         }
         float through = 1.0;
-        for (uint segment = 0u; segment < 2u && mapped < 0.0 && !thin; segment++) {
+        for (uint segment = 0u; segment < 2u && mapped < 0.0 && !thin && SHADOW_RAYS; segment++) {
             if (!trace_visible(from, direction, reach, item <= local_items)) through = 0.0;
             if (segment != 0u || beyond_reach <= 0.0 || through <= 0.0) break;
             from = beyond_origin;
             direction = beyond_direction;
             reach = beyond_reach;
         }
-        if (mapped >= 0.0 || thin) through = mapped;
+        if (mapped >= 0.0 || thin && SHADOW_RAYS) through = mapped;
         if (item > local_items) {
             extension += radiance * through;
             continue;
         }
 #else
-        float through = mapped >= 0.0 || thin ? mapped : float(trace_visible(origin, direction, reach));
+        float through = mapped >= 0.0 ? mapped : !SHADOW_RAYS ? 1.0 : thin ? mapped : float(trace_visible(origin, direction, reach));
 #endif
-        if (thin && through < 1.0) radiance *= light_through(through, mapped >= 0.0, origin, direction, reach, s.diffuse);
+        if (thin && through < 1.0 && SHADOW_RAYS) radiance *= light_through(through, mapped >= 0.0, origin, direction, reach, s.diffuse);
         else radiance *= through;
         if (item == 0u) sun = radiance;
         else local += radiance;
@@ -1269,7 +1287,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
 #ifdef MIRAI_HOOK_LIGHTS
         known += extension;
 #endif
-        local += shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
+        local += point_shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
         if (changes) changed = changed || lights_moved_near(s.position);
     }
 #ifdef MIRAI_HOOK_LIGHTS

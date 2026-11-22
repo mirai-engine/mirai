@@ -161,6 +161,12 @@ trace their own rays take both kinds from the tree:
 - The lists are those of the whole light of each light (`LIGHT_SHARE_ALL`): a cell for the
   probes or the media needs its own, since the estimate a group errs against is that of the
   share.
+- **Cells of the blended surfaces** (`translucent_draws.comp`, `light_cells.slang`): each
+  blended instance a view draws is a cell, its box with every normal, or where that reaches more
+  than a list holds, the cells it is split into along its sides, from the `TRANSLUCENT_CELLS` a
+  view keeps. A cell also keeps the nodes of the lights with shadows that `light_cut` gives any
+  point of it. A point of a forward blend takes every one of them that reaches it, with no
+  budget since it traces no rays, and the list of its cell; it walks only past what they hold.
 
 ### Cutoff of a point that traces its own rays
 

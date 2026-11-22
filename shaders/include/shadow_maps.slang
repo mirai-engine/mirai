@@ -506,7 +506,8 @@ void shadow_mark_late(Shadow_Map m, float3 position, float3 swayed = float3(0.0)
             if ((view_shadow_marks[word] & bit) != 0u) continue;
             uint before;
             InterlockedOr(view_shadow_marks[word], bit, before);
-            if ((before & bit) == 0u && shadow_entry_asks(shadow_table_entry(m.rect.x, entry))) view_shadow_marks[SHADOW_STEP_NEW] = 1u;
+            // Atomic like the mark: the draws of a pass may all ask at once.
+            if ((before & bit) == 0u && shadow_entry_asks(shadow_table_entry(m.rect.x, entry))) InterlockedOr(view_shadow_marks[SHADOW_STEP_NEW], 1u);
         }
     }
 }
