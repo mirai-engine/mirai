@@ -770,6 +770,41 @@ lan_beacon_tags_are_unlinkable :: proc(t:^testing.T) {
     testing.expect(t,(^Beacon)(&same_bucket[0]).org_tag==b0.org_tag && (^Beacon)(&same_bucket[0]).dev_tag!=b0.dev_tag)
 }
 
+// The beacons' secret changes whenever someone leaves who could read them: a
+// member removed, a device of a member revoked, a node removed.
+@(test)
+the_discovery_secret_rotates_when_a_member_device_or_node_goes :: proc(t:^testing.T) {
+    o:Test_Org
+    test_org_make(t,&o)
+    defer test_org_destroy(&o)
+    laptop:=test_device(t,&o.bob)
+    node:=identity_make()
+    node_dh,_:=net.dh_key()
+    _,e:=log_append(&o.org,.Node_Add,body_make(Node_Add_Body{node=node.key,dh=Dh_Key(node_dh.public),modes={.Seed}}),&o.alice.devices[0],20)
+    testing.expect_value(t,e,Error.None)
+    refold :: proc(t:^testing.T,o:^Test_Org) -> [32]u8 {
+        org_fold_destroy(&o.fold)
+        test_users_destroy(o.folds[:])
+        test_users_fold(t,{&o.alice,&o.bob,&o.carol},o.folds[:],o.users[:])
+        testing.expect_value(t,org_fold(&o.fold,&o.org,o.users[:]),Error.None)
+        return org_discovery(&o.fold)
+    }
+    before:=refold(t,&o)
+    Case :: struct {name:string,log:^Log,type:Entry_Type,body:[]u8,author:^Identity}
+    cases:=[]Case{
+        {"a device of a member revoked",&o.bob.log,.Device_Revoke,revoke_body(o.bob.devices[laptop].key,{}),&o.bob.devices[0]},
+        {"a node removed",&o.org,.Node_Remove,body_make(Node_Remove_Body{node=node.key}),&o.alice.devices[0]},
+        {"a member removed",&o.org,.Member_Remove,body_make(Subject_Body{subject=o.carol.log.id}),&o.alice.devices[0]},
+    }
+    for c,i in cases {
+        _,e=log_append(c.log,c.type,c.body,c.author,i64(30+i))
+        testing.expect_value(t,e,Error.None)
+        after:=refold(t,&o)
+        testing.expectf(t,after!=before,"%s rotates the secret",c.name)
+        before=after
+    }
+}
+
 // The relay tells cone NATs to punch, the lower key first, and relays the
 // rest; it forwards a sealed datagram unchanged between admitted devices,
 // within each sender's byte quota, which refills with time.

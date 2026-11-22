@@ -27,7 +27,8 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
 - `kai` (layer 4): records, trees, conflicts, operations, workspaces, the logs, pairing, the mesh,
   overlays and proposals. It imports `std/*`, `store`, `exchange`, `net` and `core:` alone.
 - `kai/hub` (layer 5): the node's commands, HTTPS server, JSON API and web frontend. It imports
-  `kai`, `net/tls`, `store` and `std/*`. `tools/kai` is `mirai-kai`, which imports `kai/hub` alone.
+  `kai`, `net`, `net/tls`, `store` and `std/*`. `tools/kai` is `mirai-kai`, which imports
+  `kai/hub` alone.
 - `net/tls` (layer 2): TLS 1.3 and an ACME client, without I/O.
 - `cook/kai` (layer 7): what Kai knows of Mirai, the asset driver and the project filter, and the
   operations that need a workspace. `editor` and `tools/mirai` call it and `kai` alike.
@@ -156,9 +157,9 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   open no workspace: only an editor someone drives records history.
 - The plaintext of a scoped file never enters the public store, a public change never names an
   overlay, and a node or seed never holds a scope key.
-- A peer that is not a member reads a set of addresses and nothing else: the user logs while
-  pending, what the shared bookmarks of public projects reach while anonymous (never a device's refs
-  or a proposal), what its grant covers.
+- A peer reads a set of addresses and nothing else of the store: what its org reaches as a member
+  or a node, the user logs while pending, what the shared bookmarks of public projects reach while
+  anonymous (never a device's refs or a proposal), what its grant covers.
 - Nothing polls: a ref that moved is told to the peers that may read it.
 - A stable frame or tick allocates nothing; what peers, browsers and sockets send is bounded and
   refused with a reason, never trusted.
@@ -183,7 +184,7 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `concurrent_admin_removals_fold_deterministically`, `pairing_rejects_mitm_label_grinding`,
   `grants_verify_against_the_org` and `device_refs_reject_rollback` in `kai`.
 - Mesh: `org_members_sync_refs_and_ddc_over_sim_network`,
-  `anonymous_peer_gets_only_the_public_closure`,
+  `a_member_gets_only_what_its_org_reaches`, `anonymous_peer_gets_only_the_public_closure`,
   `a_grant_holder_reads_and_writes_only_its_scope_until_it_ends`,
   `two_agents_pair_and_sync_a_change_over_loopback_udp`,
   `a_relay_node_joins_two_agents_that_cannot_reach_each_other`,
@@ -203,7 +204,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `headless_arm64_server_builds_and_serves_public_and_member_views` (builds the static
   executable and runs it where a linux/arm64 runtime exists).
 - TLS: `tls13_known_answer_vectors`, `tls13_refuses_hostile_and_downgraded_input`,
-  `tls13_interoperates_with_system_tools` and
-  `acme_orders_a_certificate_by_tls_alpn_from_a_fake_directory`.
+  `tls13_interoperates_with_system_tools`,
+  `acme_orders_a_certificate_by_tls_alpn_from_a_fake_directory` and
+  `hub_serves_while_an_acme_order_dials` (skipped where no route makes a connect wait).
 - Editor: [its focal tests](../mirai-editor/references/kai.md#verification).
 - Documentation: `uv run scripts/check_docs.py`.

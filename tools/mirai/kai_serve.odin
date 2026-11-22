@@ -27,6 +27,15 @@ MUSL_PREBUILT :: shaders.Prebuilt{
     required="usr/lib/libc.a",concatenated=true,
 }
 
+// The compiler's builtins, linked after musl as any C toolchain links them:
+// musl's long-double formatting calls compiler-rt's quad-float routines.
+COMPILER_RT_PREBUILT :: shaders.Prebuilt{
+    name="compiler-rt (aarch64)",version="17.0.6-r1",folder="linux-arm64-compiler-rt",asset="compiler-rt-17.0.6-r1.apk",
+    url="https://dl-cdn.alpinelinux.org/alpine/v3.20/main/aarch64/compiler-rt-17.0.6-r1.apk",
+    sha256="f07da8ac6f70405d4faac9eca82efade203724b1d49d64294d6a44e6ec6d34bb",
+    top="usr/lib/llvm17/lib/clang/17/lib/linux",required="libclang_rt.builtins-aarch64.a",concatenated=true,
+}
+
 // The linker of a static linux_arm64 executable: ld.lld in PATH, or
 // Homebrew's lld on macOS.
 lld_find :: proc() -> (path:string,found:bool) {
@@ -44,17 +53,19 @@ lld_find :: proc() -> (path:string,found:bool) {
 }
 
 // Builds package_path as a static linux_arm64 executable at bin/<output>-linux-arm64:
-// Odin's objects for the target linked by ld.lld with the pinned musl.
+// Odin's objects for the target linked by ld.lld with the pinned musl and compiler-rt.
 build_static_linux_arm64 :: proc(root,package_path,output:string,debug:bool) -> int {
     lld,has_lld:=lld_find()
     if !has_lld {
         fmt.eprintln("mirai build kai --target linux_arm64: ld.lld is not in PATH: install LLVM's lld (macOS: brew install lld; Debian and Ubuntu: apt install lld) and build again")
         return 1
     }
-    message,installed:=shaders.prebuilt_install(root,MUSL_PREBUILT)
-    if !installed {
-        fmt.eprintfln("mirai build kai --target linux_arm64: %s",message)
-        return 1
+    for p in ([?]shaders.Prebuilt{MUSL_PREBUILT,COMPILER_RT_PREBUILT}) {
+        message,installed:=shaders.prebuilt_install(root,p)
+        if !installed {
+            fmt.eprintfln("mirai build kai --target linux_arm64: %s",message)
+            return 1
+        }
     }
     musl:=join(shaders.prebuilt_folder(root,MUSL_PREBUILT),"usr","lib")
     bin:=join(root,"bin")
@@ -74,7 +85,8 @@ build_static_linux_arm64 :: proc(root,package_path,output:string,debug:bool) -> 
     for entry in entries {
         if strings.has_suffix(entry.name,".o") {append(&link,entry.fullpath)}
     }
-    append(&link,join(musl,"libc.a"),join(musl,"crtn.o"))
+    builtins:=join(shaders.prebuilt_folder(root,COMPILER_RT_PREBUILT),COMPILER_RT_PREBUILT.required)
+    append(&link,join(musl,"libc.a"),builtins,join(musl,"crtn.o"))
     if !debug {append(&link,"--strip-all")}
     if code:=run(root,link[:]);code!=0 {
         os.remove(staging)

@@ -2,16 +2,20 @@
 package hub
 
 import "base:intrinsics"
+import "core:os"
 import "core:strings"
 import "core:sys/linux"
 
-// The confinement of a node on Linux, once its sockets are open: Landlock
-// lets it touch only the folder of its store (the device's keys and the web
-// certificates live there), read the files the resolver of ACME reads and,
-// where the kernel's Landlock has network rules, bind and connect TCP only on
-// the ports the node uses; seccomp lets through only the system calls the
-// node makes, signals only to its own threads and maps nothing executable,
-// any other call failing with EPERM. A kernel without them refuses the
+// The confinement of a node on Linux, once its sockets are open and its
+// secrets read: Landlock lets it read the root of its store, where the
+// device's keys and the ACME account key are files, and write only in the
+// folders directly in it (the store's own and the web certificate's); it
+// reads the files the resolver of ACME reads and, where the kernel's Landlock
+// has network rules, binds and connects TCP only on the ports the node uses.
+// seccomp lets through only the system calls the node makes, clone only as
+// a thread of the process, signals only to its own threads and maps nothing
+// executable, any other call failing with EPERM; clone3 fails with ENOSYS,
+// so a C library falls back to clone. A kernel without them refuses the
 // sandbox, and serve says why.
 
 @(private="file") LANDLOCK_CREATE_RULESET_VERSION :: 1
@@ -25,7 +29,12 @@ import "core:sys/linux"
 @(private="file") SECCOMP_MODE_FILTER :: 2
 @(private="file") SECCOMP_RET_ALLOW :: 0x7fff0000
 @(private="file") SECCOMP_RET_EPERM :: 0x00050000|1
+@(private="file") SECCOMP_RET_ENOSYS :: 0x00050000|38
 @(private="file") READ_FILE :: u64(1)<<2
+@(private="file") READ_DIR :: u64(1)<<3
+// What musl's pthread_create gives clone: VM, FS, FILES, SIGHAND, THREAD,
+// SYSVSEM, SETTLS, PARENT_SETTID, CHILD_CLEARTID and DETACHED.
+@(private="file") CLONE_THREAD_FLAGS :: 0x100|0x200|0x400|0x800|0x10000|0x40000|0x80000|0x100000|0x200000|0x400000
 @(private="file") AUDIT_ARCH :: u32(0xC00000B7) when ODIN_ARCH==.arm64 else u32(0xC000003E)
 
 @(private="file")
@@ -47,12 +56,13 @@ ALLOWED :: [?]uintptr{
     linux.SYS_read,linux.SYS_write,linux.SYS_readv,linux.SYS_writev,linux.SYS_pread64,linux.SYS_pwrite64,
     linux.SYS_openat,linux.SYS_close,linux.SYS_lseek,linux.SYS_fstat,linux.SYS_statx,linux.SYS_getdents64,
     linux.SYS_mkdirat,linux.SYS_unlinkat,linux.SYS_renameat,linux.SYS_renameat2,linux.SYS_ftruncate,linux.SYS_fallocate,
-    linux.SYS_fsync,linux.SYS_fdatasync,linux.SYS_flock,linux.SYS_fcntl,linux.SYS_ioctl,linux.SYS_fstatfs,linux.SYS_statfs,
+    linux.SYS_fsync,linux.SYS_fdatasync,linux.SYS_flock,linux.SYS_fcntl,linux.SYS_fstatfs,linux.SYS_statfs,
     linux.SYS_munmap,linux.SYS_mremap,linux.SYS_madvise,linux.SYS_brk,linux.SYS_membarrier,
-    linux.SYS_futex,linux.SYS_set_robust_list,linux.SYS_rseq,linux.SYS_set_tid_address,linux.SYS_clone,linux.SYS_clone3,
+    linux.SYS_futex,linux.SYS_set_robust_list,linux.SYS_rseq,linux.SYS_set_tid_address,
     linux.SYS_exit,linux.SYS_exit_group,linux.SYS_gettid,linux.SYS_getpid,
     linux.SYS_rt_sigaction,linux.SYS_rt_sigprocmask,linux.SYS_rt_sigreturn,linux.SYS_sigaltstack,linux.SYS_restart_syscall,
-    linux.SYS_sched_yield,linux.SYS_sched_getaffinity,linux.SYS_nanosleep,linux.SYS_clock_nanosleep,
+    linux.SYS_sched_yield,linux.SYS_sched_getaffinity,linux.SYS_sched_setscheduler,
+    linux.SYS_sched_get_priority_min,linux.SYS_sched_get_priority_max,linux.SYS_nanosleep,linux.SYS_clock_nanosleep,
     linux.SYS_clock_gettime,linux.SYS_clock_getres,linux.SYS_gettimeofday,linux.SYS_getrandom,
     linux.SYS_socket,linux.SYS_bind,linux.SYS_listen,linux.SYS_accept4,linux.SYS_connect,linux.SYS_getsockname,
     linux.SYS_getpeername,linux.SYS_setsockopt,linux.SYS_getsockopt,linux.SYS_sendto,linux.SYS_recvfrom,
@@ -77,7 +87,8 @@ when ODIN_ARCH==.amd64 {
 }
 
 // Confines the process to the store's folder, the TCP ports it binds and
-// connects to, and the system calls it uses.
+// connects to, and the system calls it uses. The folders it may write are
+// the ones directly in the store's root when it applies.
 sandbox_apply :: proc(store_root:string,ports:Sandbox_Ports) -> (applied:bool,why:string) {
     abi:=int(intrinsics.syscall(linux.SYS_landlock_create_ruleset,0,0,LANDLOCK_CREATE_RULESET_VERSION))
     if abi<1 || abi>4096 {return false,"the kernel has no Landlock"}
@@ -94,8 +105,14 @@ sandbox_apply :: proc(store_root:string,ports:Sandbox_Ports) -> (applied:bool,wh
     ruleset:=int(intrinsics.syscall(linux.SYS_landlock_create_ruleset,uintptr(&attr),uintptr(attr_size),0))
     if ruleset<0 {return false,"Landlock refused the ruleset"}
     defer linux.close(linux.Fd(ruleset))
+    if !path_rule(ruleset,store_root,READ_FILE|READ_DIR,{.DIRECTORY}) {return false,"the store's folder does not open for Landlock"}
+    entries,le:=os.read_all_directory_by_path(store_root,context.temp_allocator)
+    if le!=nil {return false,"the store's folder does not list"}
     executable:=u64(1)
-    if !path_rule(ruleset,store_root,handled &~ executable) {return false,"the store's folder does not open for Landlock"}
+    for entry in entries {
+        // Files and links are left out: open refuses them as directories.
+        path_rule(ruleset,entry.fullpath,handled &~ executable,{.DIRECTORY,.NOFOLLOW})
+    }
     for file in ([?]string{"/etc/resolv.conf","/etc/hosts","/etc/nsswitch.conf","/etc/gai.conf"}) {
         path_rule(ruleset,file,READ_FILE)
     }
@@ -117,19 +134,20 @@ sandbox_apply :: proc(store_root:string,ports:Sandbox_Ports) -> (applied:bool,wh
 }
 
 @(private="file")
-path_rule :: proc(ruleset:int,path:string,access:u64) -> bool {
-    fd,e:=linux.open(strings.clone_to_cstring(path,context.temp_allocator),{.PATH,.CLOEXEC})
+path_rule :: proc(ruleset:int,path:string,access:u64,flags:=linux.Open_Flags{}) -> bool {
+    fd,e:=linux.open(strings.clone_to_cstring(path,context.temp_allocator),flags+{.PATH,.CLOEXEC})
     if e!=.NONE {return false}
     defer linux.close(fd)
     rule:=Path_Beneath{allowed_access=access,parent_fd=i32(fd)}
     return int(intrinsics.syscall(linux.SYS_landlock_add_rule,uintptr(ruleset),LANDLOCK_RULE_PATH_BENEATH,uintptr(&rule),0))==0
 }
 
-SECCOMP_LENGTH :: 6+len(ALLOWED)+len(ALLOWED_ARCH)+7
+SECCOMP_LENGTH :: 8+len(ALLOWED)+len(ALLOWED_ARCH)+10
 
 // The seccomp filter of the node, whose process is pid: the calls it makes,
-// mmap and mprotect without PROT_EXEC, tgkill to its own threads; any other
-// call, or another architecture's, fails with EPERM.
+// mmap and mprotect without PROT_EXEC, tgkill to its own threads, clone as a
+// thread; clone3 fails with ENOSYS and any other call, or another
+// architecture's, with EPERM.
 seccomp_program :: proc(pid:u32) -> (filter:[SECCOMP_LENGTH]Sock_Filter) {
     LD :: 0x20 // BPF_LD|BPF_W|BPF_ABS
     JEQ :: 0x15 // BPF_JMP|BPF_JEQ|BPF_K
@@ -138,10 +156,10 @@ seccomp_program :: proc(pid:u32) -> (filter:[SECCOMP_LENGTH]Sock_Filter) {
     allowed:=ALLOWED
     arch:=ALLOWED_ARCH
     n:=len(allowed)+len(arch)
-    // Past the list, a refusal; then the checks of arguments and the two
+    // Past the list, a refusal; then the checks of arguments and the
     // answers they jump to: BPF jumps only forward.
-    prot,signal:=7+n,9+n
-    deny,allow:=11+n,12+n
+    prot,signal,thread:=9+n,11+n,13+n
+    nosys,deny,allow:=15+n,16+n,17+n
     to :: proc(from,target:int) -> u8 {return u8(target-from-1)}
     filter[0]={LD,0,0,4} // seccomp_data.arch
     filter[1]={JEQ,0,to(1,deny),AUDIT_ARCH}
@@ -149,15 +167,20 @@ seccomp_program :: proc(pid:u32) -> (filter:[SECCOMP_LENGTH]Sock_Filter) {
     filter[3]={JEQ,to(3,prot),0,u32(linux.SYS_mmap)}
     filter[4]={JEQ,to(4,prot),0,u32(linux.SYS_mprotect)}
     filter[5]={JEQ,to(5,signal),0,u32(linux.SYS_tgkill)}
+    filter[6]={JEQ,to(6,thread),0,u32(linux.SYS_clone)}
+    filter[7]={JEQ,to(7,nosys),0,u32(linux.SYS_clone3)}
     for i in 0..<n {
         nr:=i<len(allowed)?allowed[i]:arch[i-len(allowed)]
-        filter[6+i]={JEQ,to(6+i,allow),0,u32(nr)}
+        filter[8+i]={JEQ,to(8+i,allow),0,u32(nr)}
     }
-    filter[6+n]={RET,0,0,SECCOMP_RET_EPERM}
+    filter[8+n]={RET,0,0,SECCOMP_RET_EPERM}
     filter[prot]={LD,0,0,16+8*2} // the low word of args[2]: prot
     filter[prot+1]={JSET,to(prot+1,deny),to(prot+1,allow),PROT_EXEC}
     filter[signal]={LD,0,0,16} // the low word of args[0]: the thread group
     filter[signal+1]={JEQ,to(signal+1,allow),to(signal+1,deny),pid}
+    filter[thread]={LD,0,0,16} // the low word of args[0]: clone's flags, all the kernel reads
+    filter[thread+1]={JEQ,to(thread+1,allow),to(thread+1,deny),CLONE_THREAD_FLAGS}
+    filter[nosys]={RET,0,0,SECCOMP_RET_ENOSYS}
     filter[deny]={RET,0,0,SECCOMP_RET_EPERM}
     filter[allow]={RET,0,0,SECCOMP_RET_ALLOW}
     return

@@ -6,9 +6,10 @@ import "core:sys/linux"
 import "core:testing"
 
 // The seccomp program lets through the calls the node makes, and refuses
-// kill, an executable mapping, a signal to another process's threads, a call
-// it does not make and another architecture's calls: run here as the kernel
-// runs it, on the seccomp_data of each call.
+// kill, an executable mapping, a signal to another process's threads, a clone
+// that is no thread of the process, an ioctl, a call it does not make and
+// another architecture's calls; clone3 fails as unknown: run here as the
+// kernel runs it, on the seccomp_data of each call.
 @(test)
 hub_seccomp_program_refuses_what_the_node_does_not_do :: proc(t:^testing.T) {
     PID :: 4242
@@ -34,6 +35,9 @@ hub_seccomp_program_refuses_what_the_node_does_not_do :: proc(t:^testing.T) {
     }
     ALLOW :: 0x7fff0000
     EPERM :: 0x00050001
+    ENOSYS :: 0x00050026
+    THREAD :: 0x7d0f00 // musl's pthread_create
+    SIGCHLD :: 17
     Case :: struct {name:string,nr:uintptr,args:[6]u64,arch:u32,want:u32}
     cases:=[]Case{
         {"read",linux.SYS_read,{},0,ALLOW},
@@ -45,6 +49,13 @@ hub_seccomp_program_refuses_what_the_node_does_not_do :: proc(t:^testing.T) {
         {"mmap executable",linux.SYS_mmap,{0,4096,5,0x22,0,0},0,EPERM},
         {"mprotect executable",linux.SYS_mprotect,{0x1000,4096,4,0,0,0},0,EPERM},
         {"mprotect read",linux.SYS_mprotect,{0x1000,4096,1,0,0,0},0,ALLOW},
+        {"clone of a thread",linux.SYS_clone,{THREAD,0x7f0000,0,0,0,0},0,ALLOW},
+        {"clone of a process, as fork",linux.SYS_clone,{SIGCHLD,0,0,0,0,0},0,EPERM},
+        {"clone of a thread in a new namespace",linux.SYS_clone,{THREAD|0x20000000,0,0,0,0,0},0,EPERM},
+        {"clone3",linux.SYS_clone3,{0x1000,88,0,0,0,0},0,ENOSYS},
+        {"the scheduling of a new thread",linux.SYS_sched_setscheduler,{PID+1,0,0x1000,0,0,0},0,ALLOW},
+        {"ioctl of a terminal",linux.SYS_ioctl,{1,0x5413,0,0,0,0},0,EPERM},
+        {"ioctl FICLONE",linux.SYS_ioctl,{3,0x40049409,4,0,0,0},0,EPERM},
         {"execve",linux.SYS_execve,{},0,EPERM},
         {"ptrace",linux.SYS_ptrace,{},0,EPERM},
         {"read of another architecture",linux.SYS_read,{},0x40000003,EPERM},

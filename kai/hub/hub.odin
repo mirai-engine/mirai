@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:crypto"
 import "core:crypto/x509"
 import "core:mem"
+import "core:mem/virtual"
 import "core:net"
 import "core:strings"
 import "core:time"
@@ -80,6 +81,7 @@ Hub :: struct {
     approvals_made:u64,
     rates:[]Rate,
     graphs:[dynamic]Project_Graph,
+    views:[dynamic]^Org_Views,
     certs:Certs,
     stats:Hub_Stats,
 }
@@ -87,6 +89,7 @@ Hub :: struct {
 Hub_Stats :: struct {
     requests,refused,connections:int,
     ddc_found,ddc_missing:int,
+    folds:int, // times the views of an org were made
 }
 
 Session :: struct {
@@ -119,6 +122,7 @@ hub_start :: proc(h:^Hub,desc:Hub_Desc) -> (why:string) {
     h.desc.acme_directory=strings.clone(desc.acme_directory,h.allocator)
     h.start=time.tick_now()
     h.graphs=make([dynamic]Project_Graph,h.allocator)
+    h.views=make([dynamic]^Org_Views,h.allocator)
     rates,e:=make([]Rate,RATES_MAX,h.allocator)
     if e!=nil {return "out of memory"}
     h.rates=rates
@@ -187,6 +191,11 @@ hub_stop :: proc(h:^Hub) {
     for &a in h.approvals {approval_clear(&a)}
     for &g in h.graphs {kai.graph_destroy(&g.graph)}
     delete(h.graphs)
+    for w in h.views {
+        virtual.arena_destroy(&w.arena)
+        free(w,h.allocator)
+    }
+    delete(h.views)
     delete(h.rates,h.allocator)
     certs_stop(h)
     delete(h.origin,h.allocator)

@@ -22,7 +22,7 @@ optional: an org with no node works on a LAN and between machines that can reach
   digits are compared ([pairing](identity.md#pairing)).
 - A node signs nothing for a user, holds no org key and no scope key. Everything it keeps is what
   members and the mesh already hold, plus the keys of its own device and its web certificates, in
-  its store's folder, owner-only.
+  its store's folder, owner-only ([confinement](#confinement)).
 
 ## Deployment
 
@@ -31,7 +31,8 @@ optional: an org with no node works on a LAN and between machines that can reach
   `bin/mirai-kai-linux-arm64` from any system that has `ld.lld` (`brew install lld`, `apt install
   lld`). Odin's `core:os` needs a C library on Linux and Odin does not link a Linux target from
   another system, so the build compiles to objects and links them statically against a pinned,
-  prebuilt musl that `mirai` downloads and checks by hash. The result has no dynamic loader and
+  prebuilt musl and the compiler's builtins (compiler-rt, which musl's long-double formatting
+  calls), both of which `mirai` downloads and checks by hash. The result has no dynamic loader and
   needs nothing installed on the machine.
 - Why a VM and a real filesystem: rendezvous needs a stable public address and the real source
   address of UDP datagrams (a container bridge's NAT breaks hole punching), and the
@@ -98,6 +99,9 @@ WantedBy=multi-user.target
   start, so serving allocates nothing per connection or record; deadlines end a slow or idle
   connection. An error is `{error}` with
   what failed and how to fix it (`hub_http_refuses_hostile_requests`).
+- A read takes prepared state: the hub keeps the folds of each org's proposals and the bookmarks
+  of its projects, made again when the agent folds its logs (and, for refs and objects that came,
+  at most once per step of the hub), so a flood of anonymous requests costs parsing and lookups.
 - `hub_api_describes_every_route` checks that what `GET /api` describes is what the table
   dispatches.
 
@@ -157,11 +161,19 @@ WantedBy=multi-user.target
 
 ## Confinement
 
-- On Linux, after its sockets are open, the node applies Landlock and a seccomp filter: it may touch
-  only its store's folder, the files its DNS resolver reads, bind and connect TCP only on the ports
-  it uses, and make only the system calls it makes; `mmap` and `mprotect` map nothing executable,
-  signals go to its own threads, and any other call (or another architecture's) fails with `EPERM`.
-  A kernel without them makes `serve` refuse and say why.
+- On Linux, after its sockets are open and its secrets read, the node applies Landlock and a
+  seccomp filter. It reads its store's root, where the device's keys and the ACME account key are
+  files, and writes only in the folders directly in it as they are when the sandbox applies: the
+  store's own and `kai-web`. It reads the files its DNS resolver reads, binds and connects TCP only
+  on the ports it uses and makes only the system calls it makes.
+- No key is reachable for writing once the node is confined but the certificate's key and chain in
+  `kai-web`, which a renewal must keep. The control file the agent leaves at the root when it stops
+  is harmless: a client takes the agent's lock before it reads the file.
+- `mmap` and `mprotect` map nothing executable, signals go to the node's own threads, `clone` makes
+  only a thread of the process (the flags musl's `pthread_create` gives), `clone3` fails with
+  `ENOSYS` so a C library falls back to `clone`, the node makes no `ioctl`, and any other call (or
+  another architecture's) fails with `EPERM`. A kernel without Landlock or seccomp makes `serve`
+  refuse and say why.
 - The filter is tested to refuse what the node does not do
   (`hub_seccomp_program_refuses_what_the_node_does_not_do`). Elsewhere a node runs as it is: only
   Linux confines.

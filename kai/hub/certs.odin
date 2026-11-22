@@ -11,20 +11,23 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "mirai:kai"
+import mnet "mirai:net"
 import "mirai:net/tls"
 
 // The certificates of the hub's TLS: given by the caller (tests), or ordered
 // by ACME TLS-ALPN-01 for --domain on the TLS port itself and renewed when a
-// third of their life is left. While an order waits for the directory, a poll
-// or a socket, the hub and the runner go on stepping, so the directory's
-// validation connection is answered and serving does not stall. The
-// certificate's key, its chain and the ACME account key are kept owner-only
-// at the root of the store, beside the device's keys.
+// third of their life is left. While an order waits for the directory, a poll,
+// a lookup or a socket, the hub and the runner go on stepping, so the directory's
+// validation connection is answered and serving does not stall. The ACME
+// account key is kept owner-only at the root of the store, beside the
+// device's keys, and read once before the node confines itself; the
+// certificate's key and chain, which a renewal writes, in a folder of their own.
 // The directory's HTTPS is checked against the ISRG roots embedded here,
 // whatever the system trusts.
 
-WEB_KEY_FILE :: "kai-web-key"          // the P-256 scalar of the certificate's key
-WEB_CHAIN_FILE :: "kai-web-chain.pem"  // its chain, leaf first
+WEB_FOLDER :: "kai-web"                // owner-only, beside the store's folders
+WEB_KEY_FILE :: "kai-web/key"          // the P-256 scalar of the certificate's key
+WEB_CHAIN_FILE :: "kai-web/chain.pem"  // its chain, leaf first
 WEB_ACCOUNT_FILE :: "kai-web-account"  // the P-256 scalar of the ACME account
 LETS_ENCRYPT :: "https://acme-v02.api.letsencrypt.org/directory"
 CERT_CHECK_SECONDS :: 12*3600.0
@@ -49,6 +52,7 @@ Certs :: struct {
     roots:[len(ISRG_ROOTS)]x509.Certificate,
     root_list:[len(ISRG_ROOTS)]^x509.Certificate,
     roots_count:int,
+    account:ecdsa.Private_Key,  // the ACME account's, read or made at the start
     next:f64,
     ordering:bool,
 }
@@ -74,6 +78,8 @@ certs_start :: proc(h:^Hub) -> string {
         c.root_list[i]=&c.roots[i]
         c.roots_count=i+1
     }
+    web_folder(h)
+    if !p256_secret(h,WEB_ACCOUNT_FILE,&c.account) {return "the ACME account key does not read or write in the store's folder: give this user access to it"}
     if certs_load(h) {
         event(h,"TLS certificate for %s loaded from the store",h.desc.domains[0])
     }
@@ -89,6 +95,7 @@ certs_stop :: proc(h:^Hub) {
         chain_free(h,c.chain)
     }
     for &r in c.roots[:c.roots_count] {x509.destroy(&r,h.allocator)}
+    ecdsa.private_key_clear(&c.account)
     crypto.zero_explicit(&c.challenge,size_of(c.challenge))
     crypto.zero_explicit(&c.list,size_of(c.list))
 }
@@ -126,6 +133,13 @@ store_file :: proc(h:^Hub,name:string) -> string {
     return strings.concatenate({store_of(h).root,"/",name},context.temp_allocator)
 }
 
+// Makes the folder of the certificate's files, owner-only: before the node
+// confines itself, since then it writes only in folders that exist.
+@(private)
+web_folder :: proc(h:^Hub) {
+    os.make_directory(store_file(h,WEB_FOLDER),{.Read_User,.Write_User,.Execute_User})
+}
+
 // Writes bytes owner-only, whole or not at all, and on the disk before it answers.
 @(private)
 secret_write :: proc(path:string,bytes:[]u8) -> bool {
@@ -150,6 +164,7 @@ certs_save :: proc(h:^Hub,key:^ecdsa.Private_Key,chain:[][]u8) -> bool {
     scalar:[32]u8
     defer crypto.zero_explicit(&scalar,32)
     ecdsa.private_key_bytes(key,scalar[:])
+    web_folder(h)
     text:=make([dynamic]u8,context.temp_allocator)
     for der in chain {
         block,e:=pem.encode("CERTIFICATE",der,true,context.temp_allocator)
@@ -225,14 +240,8 @@ certs_step :: proc(h:^Hub) {
     c.ordering=true
     defer c.ordering=false
     event(h,"ordering a TLS certificate for %s by ACME",strings.join(h.desc.domains,", ",context.temp_allocator))
-    account,key:ecdsa.Private_Key
-    defer ecdsa.private_key_clear(&account)
+    key:ecdsa.Private_Key
     defer ecdsa.private_key_clear(&key)
-    if !p256_secret(h,WEB_ACCOUNT_FILE,&account) {
-        event(h,"the ACME account key does not write to the store: give this user access to it")
-        c.next=h.now+CERT_RETRY_SECONDS
-        return
-    }
     if !ecdsa.private_key_generate(&key,.SECP256R1) {
         c.next=h.now+CERT_RETRY_SECONDS
         return
@@ -241,7 +250,7 @@ certs_step :: proc(h:^Hub) {
     roots:=h.desc.acme_roots
     if roots==nil {roots=c.root_list[:c.roots_count]}
     transport:=tls.Transport{data=h,dial=order_dial,read=order_read,write=order_write,close=order_close}
-    a:=tls.Acme{directory=directory,roots=roots,transport=transport,account_key=&account,data=h,serve=acme_serve,wait=acme_wait}
+    a:=tls.Acme{directory=directory,roots=roots,transport=transport,account_key=&c.account,data=h,serve=acme_serve,wait=acme_wait}
     chain,e:=tls.acme_order(&a,h.desc.domains,&key,h.allocator)
     if e!=.None {
         event(h,"the ACME order failed (%v %s): it is tried again in an hour; the domain must point at this machine and its TLS port must be reachable on 443",e,tls.acme_problem(&a))
@@ -297,46 +306,77 @@ order_step :: proc(h:^Hub) {
 @(private)
 acme_wait :: proc(data:rawptr,seconds:int) {
     h:=(^Hub)(data)
-    start:=time.tick_now()
-    for time.duration_seconds(time.tick_since(start))<f64(seconds) {order_step(h)}
+    end:=hub_clock(h)+f64(seconds)
+    for hub_clock(h)<end {order_step(h)}
 }
 
-// The system's TCP for ACME, without blocking: while a socket would block, the
-// hub steps, for at most ORDER_SOCKET_SECONDS.
+// The system's TCP for ACME, without blocking: while a lookup, a connect or a
+// socket would block, the hub steps, for at most ORDER_SOCKET_SECONDS of the
+// hub's clock.
 @(private) ORDER_SOCKET_SECONDS :: 30.0
 
+// The name is looked up on a thread of its own, which the dial waits for even
+// past its deadline: the resolver's own timeouts end it.
 @(private)
 order_dial :: proc(data:rawptr,host:string,port:int) -> (stream:uintptr,ok:bool) {
-    socket,err:=net.dial_tcp_from_hostname_with_port_override(host,port)
-    if err!=nil {return 0,false}
-    if net.set_blocking(socket,false)!=nil {
-        net.close(socket)
-        return 0,false
+    h:=(^Hub)(data)
+    end:=hub_clock(h)+ORDER_SOCKET_SECONDS
+    text:=strings.index_byte(host,':')<0?fmt.tprintf("%s:%d",host,port):fmt.tprintf("[%s]:%d",host,port)
+    r:mnet.Resolve
+    if !mnet.resolve_start(&r,text) {return 0,false}
+    found:[2]mnet.Address
+    count:=0
+    for {
+        addresses,done:=mnet.resolve_poll(&r)
+        if done {
+            count=copy(found[:],addresses)
+            break
+        }
+        order_step(h)
     }
-    return uintptr(socket),true
+    mnet.resolve_end(&r)
+    // IPv4 first, as the system's dial does; the IPv6 address comes first in found.
+    #reverse for address in found[:count] {
+        any,ce:=net.create_socket(address.kind==.IP6?.IP6:.IP4,.TCP)
+        if ce!=nil {continue}
+        socket:=any.(net.TCP_Socket)
+        net.set_option(socket,.TCP_Nodelay,true)
+        if net.set_blocking(socket,false)==nil && mnet.socket_connect(net.Socket(socket),address) {
+            for hub_clock(h)<end {
+                ready,connected:=mnet.socket_connected(net.Socket(socket))
+                if connected {return uintptr(socket),true}
+                if ready {break}
+                order_step(h)
+            }
+        }
+        net.close(socket)
+    }
+    return 0,false
 }
 
 @(private)
 order_read :: proc(data:rawptr,stream:uintptr,buffer:[]u8) -> (count:int,ok:bool) {
-    start:=time.tick_now()
-    for time.duration_seconds(time.tick_since(start))<ORDER_SOCKET_SECONDS {
+    h:=(^Hub)(data)
+    end:=hub_clock(h)+ORDER_SOCKET_SECONDS
+    for hub_clock(h)<end {
         n,err:=net.recv_tcp(net.TCP_Socket(stream),buffer)
         if err==nil {return n,true}
         if err!=.Would_Block && err!=.Interrupted {return 0,false}
-        order_step((^Hub)(data))
+        order_step(h)
     }
     return 0,false
 }
 
 @(private)
 order_write :: proc(data:rawptr,stream:uintptr,bytes:[]u8) -> bool {
-    start:=time.tick_now()
+    h:=(^Hub)(data)
+    end:=hub_clock(h)+ORDER_SOCKET_SECONDS
     for at:=0;at<len(bytes); {
         n,err:=net.send_tcp(net.TCP_Socket(stream),bytes[at:])
         at+=max(n,0)
         if err==.Would_Block || err==.Interrupted {
-            if time.duration_seconds(time.tick_since(start))>ORDER_SOCKET_SECONDS {return false}
-            order_step((^Hub)(data))
+            if hub_clock(h)>end {return false}
+            order_step(h)
             continue
         }
         if err!=nil {return false}

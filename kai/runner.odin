@@ -491,7 +491,8 @@ runner_changed :: proc(r:^Runner,namespace,name:string) {
     for o in r.orgs {agent_changed(&o.agent,namespace,name)}
 }
 
-// What Machine.changed calls when the machine and the runner live in one process.
+// What Machine.changed calls when the machine is the runner's own: it reaches
+// the agents directly, so only the runner's thread writes through that machine.
 runner_machine_changed :: proc(r:^Runner) -> Machine_Changed {
     return {data=r,procedure=proc(data:rawptr,namespace,name:string) {runner_changed((^Runner)(data),namespace,name)}}
 }

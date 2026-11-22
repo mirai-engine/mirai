@@ -270,6 +270,98 @@ anonymous_peer_gets_only_the_public_closure :: proc(t:^testing.T) {
     testing.expect(t,!object_present(&m.stores[1],private))
 }
 
+// A member is served what its org reaches and nothing else of the store: a
+// change a device's ref names, derived data and every object its output
+// lists, and a change a ref names later, once it does; never a change of the
+// store no ref of the org names (another org's, a repository in no org) nor
+// a blob a cook kept, though the member asks by their addresses.
+@(test)
+a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
+    m:=new(Mesh)
+    defer free(m)
+    if !mesh_init(t,m,"kai-mesh-member") {return}
+    defer mesh_destroy(m)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    for k in 0..<2 {
+        for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[k],l)}
+    }
+    alice:=&o.alice.devices[0]
+    work:=test_change(t,&m.stores[0],alice,"published work")
+    elsewhere:=test_change(t,&m.stores[0],alice,"another org's work")
+    later:=test_change(t,&m.stores[0],alice,"published later")
+    built,be:=store.put(&m.stores[0],transmute([]u8)string("a cook's output"))
+    testing.expect_value(t,be,store.Error.None)
+    kept,ke:=store.put(&m.stores[0],transmute([]u8)string("what a cook kept for itself"))
+    testing.expect_value(t,ke,store.Error.None)
+    testing.expect_value(t,store.commit(&m.stores[0]),store.Error.None)
+    if !mesh_start(t,m,0,o.alice.devices[0],o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
+    if !mesh_start(t,m,1,o.bob.devices[0],o.bob.dhs[0],o.bob.log.id,o.org.id) {return}
+    a,b:=&m.agents[0],&m.agents[1]
+    _,e:=agent_publish_refs(a,o.project.id,{{"main",work}},1)
+    testing.expect_value(t,e,Error.None)
+    _,e=agent_publish_ddc(a,store.address_of_bytes(transmute([]u8)string("cook key")),{built},nil,1)
+    testing.expect_value(t,e,Error.None)
+    testing.expect_value(t,agent_connect(b,Dh_Key(o.alice.dhs[0].public),false,net.address_memory(mesh_endpoint(0))),Error.None)
+    admitted :: proc(m:^Mesh,data:rawptr) -> bool {
+        _,n:=agent_peers(&m.agents[0])
+        return n==1
+    }
+    if !testing.expect(t,mesh_until(m,5,nil,admitted),"alice admits bob") {return}
+
+    Wanted :: struct {addresses:[]store.Hash,states:[]exchange.State}
+    settled :: proc(m:^Mesh,data:rawptr) -> bool {
+        w:=(^Wanted)(data)
+        for address,k in w.addresses {
+            p,_:=exchange.progress(&m.agents[1].x,address)
+            if p.state!=w.states[k] {return false}
+        }
+        return true
+    }
+    w:=Wanted{{work,built,elsewhere,kept,later},{.Complete,.Complete,.Missing,.Missing,.Missing}}
+    for address in w.addresses {testing.expect_value(t,exchange.want(&b.x,address),exchange.Error.None)}
+    testing.expectf(t,mesh_until(m,5,&w,settled),"a member gets what the org reaches only: %v",a.stats)
+    for address in w.addresses {exchange.forget(&b.x,address)}
+    for address in ([]store.Hash{elsewhere,kept,later}) {testing.expect(t,!object_present(&m.stores[1],address))}
+
+    // A ref that moves to it brings the later change into what bob is served.
+    _,e=agent_publish_refs(a,o.project.id,{{"main",later}},2)
+    testing.expect_value(t,e,Error.None)
+    testing.expect_value(t,exchange.want(&b.x,later),exchange.Error.None)
+    l:=Wanted{{later},{.Complete}}
+    testing.expect(t,mesh_until(m,5,&l,settled),"what a moved ref reaches is served")
+}
+
+// An agent that closes tells its peers: they drop it at once, not after the
+// silence that ends a connection, and ask others for what they wanted of it.
+@(test)
+a_closed_agent_leaves_its_peers_at_once :: proc(t:^testing.T) {
+    m:=new(Mesh)
+    defer free(m)
+    if !mesh_init(t,m,"kai-mesh-leave") {return}
+    defer mesh_destroy(m)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    for k in 0..<2 {
+        for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[k],l)}
+    }
+    if !mesh_start(t,m,0,o.alice.devices[0],o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
+    if !mesh_start(t,m,1,o.bob.devices[0],o.bob.dhs[0],o.bob.log.id,o.org.id) {return}
+    testing.expect_value(t,agent_connect(&m.agents[1],Dh_Key(o.alice.dhs[0].public),false,net.address_memory(mesh_endpoint(0))),Error.None)
+    connected :: proc(m:^Mesh,data:rawptr) -> bool {
+        _,n:=agent_peers(&m.agents[1])
+        return n==1
+    }
+    if !testing.expect(t,mesh_until(m,5,nil,connected),"bob connects to alice") {return}
+    agent_close(&m.agents[0])
+    m.running[0]=false
+    left :: proc(m:^Mesh,data:rawptr) -> bool {
+        n,_:=agent_peers(&m.agents[1])
+        return n==0
+    }
+    testing.expect(t,mesh_until(m,0.5,nil,left),"bob drops alice as soon as she closes")
+}
+
 @(private="file")
 grant_issue :: proc(t:^testing.T,a:^Agent,o:^Test_Org,holder:Key,dh:Dh_Key,rights:Rights,path:string,not_after:i64) {
     g:=Grant{head={org=o.org.id,org_head=test_heads(agent_log(a,o.org.id))[0],issuer=o.alice.devices[0].key,subject_dh=dh,subject_key=holder,rights=rights,project=o.project.id,not_before=time.now()._nsec-i64(time.Second),not_after=not_after},path=path}

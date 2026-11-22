@@ -52,12 +52,17 @@ does not use it: that is [net](../../mirai-networking/SKILL.md)'s own Noise tran
 - The caller serves the port. `acme_order` takes a `Transport` (a byte stream to a host; the
   system's TCP is `tcp_transport`) and a callback `serve` that it calls while an order waits, so the
   hub keeps answering browsers, relay frames and the directory's validation connection while the
-  order is pending: ordering never stalls serving. The hub presents the challenge credential while
+  order is pending: ordering never stalls serving. The hub's transport looks the directory's name
+  up on a thread of its own and connects without blocking, stepping the hub while either waits
+  (`hub_serves_while_an_acme_order_dials`). The hub presents the challenge credential while
   ACME says so and withdraws it, wiping the copy, before ACME frees it.
-- The account key is a P-256 key made once and each order makes a new certificate key; both are kept
-  owner-only at the root of the store, beside the device's keys, written whole or not at all and on
-  disk before the hub answers. The chain is kept as PEM and loaded again only when it serves every
-  domain and is not due.
+- The account key is a P-256 key made once, kept owner-only at the root of the store beside the
+  device's keys, and read or made when the hub starts, before the node confines itself; the hub
+  holds it in memory. Each order makes a new certificate key, kept with its chain (as PEM) in the
+  store's `kai-web` folder, the one place a confined node writes a key
+  ([confinement](node.md#confinement)). Both are written owner-only, whole or not at all and on
+  disk before the hub answers. The chain is loaded again only when it serves every domain and is
+  not due.
 - A certificate is renewed when a third of its life is left (`renewal_due`). A failed order leaves
   the one served in place and is tried again later; a `Refused` or `Invalid` authorization carries
   the directory's problem text so the log says why (an unreachable port 443 and a name that does not

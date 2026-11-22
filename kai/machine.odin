@@ -380,9 +380,10 @@ org_state_destroy :: proc(o:^Org_State) {
 }
 
 // The discovery secret D of an org: what its LAN beacons are keyed by. It
-// hashes the org's genesis, which only members and nodes read, and every
-// valid Member_Remove, so it changes when a member goes and the one removed
-// cannot follow it.
+// hashes the org's genesis, which only members and nodes read, every valid
+// Member_Remove and Node_Remove, and the Device_Revoke of every device of a
+// member, so it changes when a member, a device or a node goes and the one
+// that went cannot follow it.
 org_discovery :: proc(f:^Org_Fold) -> (secret:[32]u8) {
     h:blake3.Hasher
     blake3.init(&h)
@@ -391,7 +392,13 @@ org_discovery :: proc(f:^Org_Fold) -> (secret:[32]u8) {
     removes:=make([dynamic]store.Hash,context.temp_allocator)
     for item,i in l.items {
         if genesis(item.entry.type) {blake3.update(&h,item.bytes)}
-        if item.entry.type==.Member_Remove && f.valid[i] {append(&removes,item.address)}
+        if (item.entry.type==.Member_Remove || item.entry.type==.Node_Remove) && f.valid[i] {append(&removes,item.address)}
+    }
+    for u in f.users {
+        if org_role(f,u.log.id)==.None {continue}
+        for d in u.devices {
+            if d.revoked && int(d.revoke)<len(u.log.items) {append(&removes,u.log.items[d.revoke].address)}
+        }
     }
     slice.sort_by(removes[:],hash_less)
     for &r in removes {blake3.update(&h,r[:])}

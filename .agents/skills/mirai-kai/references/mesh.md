@@ -18,7 +18,12 @@ How the machines of an org find each other and what each may read from the other
   one `exchange` over all of them. A connection presents the org's id as its claim, and `authorize`
   decides who it is from the org's logs ([access](#who-reads-what)); when the logs change it runs
   again, so a peer not admitted yet becomes a member as soon as it has the log entries that admit
-  it, and a removed one is disconnected with `Revoked`.
+  it, and a removed one is disconnected with `Revoked`. An agent that closes tells its peers, so
+  they ask others at once (`a_closed_agent_leaves_its_peers_at_once`).
+- One thread touches a runner and its agents: the exchange has no worker, so what it serves and
+  what peers ask run on that thread too. The runner's own machine tells it of a write directly, so
+  only that thread writes through it; any other thread or process writes through a machine of its
+  own, which tells the runner through its control.
 - The runner is owned by the editor while it is open (in a thread of its own), by `mirai kai agent`
   (which exits when idle unless told `--stay`) or by a node. A lock file held for as long as it runs
   keeps it to one runner per store. Others reach it over loopback: it writes an owner-only file with
@@ -45,10 +50,19 @@ or anonymous (an empty claim). The namespace decides who reads it:
 | `kai-ddc-<org>` | member, node; a grant of ddc |
 | `kai-ovl-<project>-<scope>` | member, node: ciphertext only |
 
-- Chunks are content-addressed, so what a restricted peer may fetch is a set of addresses made as
-  the public closure is: pending peers get the user logs, anonymous ones the closures of public
-  projects, a grant what its scope covers ([grants](identity.md#grants)). An address outside the set
-  is not served, whatever the peer asks (`anonymous_peer_gets_only_the_public_closure`).
+- Chunks are content-addressed and an address is no secret, so every peer is served from a set of
+  addresses. A member or a node gets what its org reaches, as far as it is here: the user logs and
+  the org's logs, the closures of what its projects' shared bookmarks, device refs and proposals'
+  stacks name, the device refs, its overlays' records and ciphertext, and its derived data with
+  every object an output lists. Nothing else of the store is served to it: not another org's, a
+  repository in no org nor what a cook kept (`a_member_gets_only_what_its_org_reaches`). The set
+  is built whole when the agent starts or the org's projects or scopes change, a walk of the
+  whole history that reads every node of every object once; a ref that moves adds what it reaches
+  down to what the set holds, and an object not here yet joins once it arrives.
+- What a restricted peer may fetch is a smaller set made the same way: pending peers get the user
+  logs, anonymous ones the closures of public projects, a grant what its scope covers
+  ([grants](identity.md#grants)). An address outside the set is not served, whatever the peer asks
+  (`anonymous_peer_gets_only_the_public_closure`).
 - The public closure is what the shared bookmarks of a public project reach: the moves of its log a
   writer signed and its policy allowed. A device's refs and a proposal's stacks are work in progress
   and stay out of it, and an anonymous peer is listed no ref: it asks by address what the node's
