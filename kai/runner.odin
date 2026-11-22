@@ -1863,6 +1863,16 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
     return .Waiting,{}
 }
 
+// Asks the org's peers for the object at address: true once it is whole here.
+runner_object_ask :: proc(r:^Runner,org:Log_Id,address:store.Hash) -> bool {
+    if address=={} {return false}
+    if object_whole(&r.machine.store,address) {return true}
+    for o in r.orgs {
+        if o.id==org {agent_want_object(&o.agent,address)}
+    }
+    return false
+}
+
 // Whether every chunk of the object at address is in the store.
 object_whole :: proc(s:^store.Store,address:store.Hash) -> bool {
     buffer,e:=make([]u8,store.CHUNK_MAX,context.temp_allocator)

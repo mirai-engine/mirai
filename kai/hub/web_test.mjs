@@ -48,7 +48,7 @@ const recovery = await signer(bytes(u.recovery_seed)), device = await signer(byt
 const recoveryKey = bytes(u.genesis).slice(E.HEAD, E.HEAD + 32)
 const proof = await sign(device, E.deviceMessage(recoveryKey))
 expect(E.hex(proof) === u.proof, "the device's proof")
-const body = E.userGenesisBody({recovery: recoveryKey, device: bytes(u.genesis).slice(E.HEAD + 32, E.HEAD + 64), dh: bytes(u.dh), proof, name: u.name})
+const body = E.userGenesisBody({recovery: recoveryKey, device: bytes(u.genesis).slice(E.HEAD + 32, E.HEAD + 64), dh: bytes(u.dh), proof, deviceName: 'browser', name: u.name})
 const u1 = E.entryUnsigned({type: E.TYPES.user_genesis, author: recoveryKey, time: BigInt(u.time), body, sig: E.SIG_ED25519})
 const genesis = E.concat(u1, await sign(recovery, u1))
 expect(E.hex(genesis) === u.genesis, 'the genesis')

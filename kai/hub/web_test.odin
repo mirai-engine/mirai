@@ -85,7 +85,9 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     kai.identity_derive(&device)
     dh:=kai.Dh_Key(kai.random_id(store.Hash))
     proof:=kai.device_proof(&device,transmute([32]u8)recovery.key)
-    genesis_body:=kai.body_make(kai.User_Genesis_Body{recovery=recovery.key,device=device.key,dh=dh,proof=proof},transmute([]u8)string("bob ü"))
+    genesis_head:=kai.User_Genesis_Body{recovery=recovery.key,device=device.key,dh=dh,proof=proof}
+    copy(genesis_head.device_name[:],"browser")
+    genesis_body:=kai.body_make(genesis_head,transmute([]u8)string("bob ü"))
     now:=time.now()._nsec
     gd:=kai.Draft{type=.User_Genesis,time=now,body=genesis_body}
     genesis,user,_:=kai.entry_sign(&gd,&recovery,context.temp_allocator)

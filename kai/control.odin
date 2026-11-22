@@ -31,7 +31,7 @@ CONTROL_WAIT :: 0.2
 @(private) ANSWER_HEAD :: 1+4+1
 @(private) PEER_BYTES :: 32+32+3
 
-Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Addresses}
+Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Addresses,Object_Ask}
 
 Control_Server :: struct {
     lock:Lock,
@@ -199,6 +199,12 @@ control_do :: proc(r:^Runner,op:u8,body:[]u8,w:^Answer_Writer) -> Error {
         state,output_root:=runner_ddc_ask(r,org,key)
         answer_put(w,{u8(state)})
         answer_put(w,output_root[:])
+    case .Object_Ask:
+        if len(body)!=64 {return .Invalid_Argument}
+        org,address:Log_Id
+        copy(org[:],body[:32])
+        copy(address[:],body[32:])
+        answer_put(w,{u8(runner_object_ask(r,org,address))})
     case .Addresses:
         if len(body)!=0 {return .Invalid_Argument}
         list:=make([dynamic]net.Address,context.temp_allocator)
@@ -343,6 +349,19 @@ peers_parse :: proc(answer:[]u8,list:^[dynamic]Runner_Peer_Info) -> Error {
         append(list,p)
     }
     return .None
+}
+
+// Asks the org's peers for the object at address, as the bytes of a file of a
+// change still on its way: whole says it is in the runner's store now.
+control_object_ask :: proc(c:^Control,org:Log_Id,address:store.Hash) -> (whole:bool,error:Error) {
+    body:[64]u8
+    o,a:=org,address
+    copy(body[:],o[:])
+    copy(body[32:],a[:])
+    buffer:[FRAME_MAX]u8
+    answer:=control_call(c,.Object_Ask,body[:],&buffer) or_return
+    if len(answer)!=1 || answer[0]>1 {return false,.Corrupt}
+    return answer[0]==1,.None
 }
 
 // The addresses the runner's socket is reached at, as a ticket gives them.

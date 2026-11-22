@@ -135,7 +135,7 @@ export async function register(name) {
     const recoveryKey = await publicRaw(recovery.publicKey)
     const body = userGenesisBody({
         recovery: recoveryKey, device: await publicRaw(device.publicKey), dh: await publicRaw(dh.publicKey),
-        proof: await ed25519Sign(device.privateKey, deviceMessage(recoveryKey)), name,
+        proof: await ed25519Sign(device.privateKey, deviceMessage(recoveryKey)), deviceName: 'browser', name,
     })
     const now = BigInt(Date.now()) * 1000000n
     const u1 = entryUnsigned({type: TYPES.user_genesis, author: recoveryKey, time: now, body, sig: SIG_ED25519})

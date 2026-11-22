@@ -243,10 +243,13 @@ export function deviceMessage(recovery) {
     return concat(utf8(LABEL_DEVICE), recovery)
 }
 
-export function userGenesisBody({recovery, device, dh, proof, name}) {
-    const n = utf8(name)
+export function userGenesisBody({recovery, device, dh, proof, deviceName, name}) {
+    const n = utf8(name), d = utf8(deviceName)
     if (n.length < 1 || n.length > NAME_MAX) throw new Error(`a name is 1 to ${NAME_MAX} bytes`)
-    return concat(recovery, device, dh, proof, n)
+    if (d.length > NAME_MAX) throw new Error(`a device's name is at most ${NAME_MAX} bytes`)
+    const padded = new Uint8Array(NAME_MAX)
+    padded.set(d)
+    return concat(recovery, device, dh, proof, padded, n)
 }
 
 // The recovery key as the CLI prints it once: Crockford Base32 of the seed and
