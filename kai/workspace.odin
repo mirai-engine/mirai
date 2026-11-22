@@ -538,7 +538,7 @@ folder_scan :: proc(w:^Workspace,folder:string,depth:int,out:^[dynamic]Found,rep
 
 @(private)
 found_of :: proc(relative:string,info:os.File_Info) -> Found {
-    return {path=relative,size=u64(max(info.size,0)),mtime_ns=time.to_unix_nanoseconds(info.modification_time),inode=u64(info.inode),
+    return {path=relative,size=u64(max(info.size,0)),mtime_ns=time.to_unix_nanoseconds(info.modification_time),inode=file_inode(info),
         executable=info.mode&os.Permissions_Execute_All!={}}
 }
 
@@ -723,7 +723,7 @@ sibling_clone :: proc(w:^Workspace,sibling:^Stat_Index,relative:string,address:s
     if !known || row.address!=address || row.flags&STAT_RACY!=0 || (row.flags&STAT_EXECUTABLE!=0)!=executable {return false}
     path:=strings.concatenate({w.options.sibling,"/",relative},context.temp_allocator)
     info,e:=os.lstat(path,context.temp_allocator)
-    if e!=nil || info.type!=.Regular || u64(max(info.size,0))!=row.size || time.to_unix_nanoseconds(info.modification_time)!=row.mtime_ns || u64(info.inode)!=row.inode {return false}
+    if e!=nil || info.type!=.Regular || u64(max(info.size,0))!=row.size || time.to_unix_nanoseconds(info.modification_time)!=row.mtime_ns || file_inode(info)!=row.inode {return false}
     return file_clone(path,temp)==.None
 }
 
@@ -800,7 +800,7 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
             info,e:=os.lstat(path,context.temp_allocator)
             if e!=nil {return .Io}
             // Racy: it was written now.
-            u.row=Stat_Row{size=u64(max(info.size,0)),mtime_ns=time.to_unix_nanoseconds(info.modification_time),inode=u64(info.inode),address=address,flags=STAT_RACY}
+            u.row=Stat_Row{size=u64(max(info.size,0)),mtime_ns=time.to_unix_nanoseconds(info.modification_time),inode=file_inode(info),address=address,flags=STAT_RACY}
             if executable {u.row.flags|=STAT_EXECUTABLE}
         }
         if _,e:=append(&updates,u);e!=nil {return .Out_Of_Memory}

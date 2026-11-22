@@ -35,6 +35,12 @@ file_clone :: proc(from,to:string) -> Error {
     return .Unsupported
 }
 
+// What tells a file from another that took its place with the same size and
+// time: nothing here. A folder's listing gives no file index, and one read
+// from the file alone would differ from it in every row.
+@(private)
+file_inode :: proc(info:os.File_Info) -> u64 {return 0}
+
 // Lets other sockets of this user bind the port too: SO_REUSEADDR does it on
 // Windows, and every one of them gets a broadcast to it.
 @(private)

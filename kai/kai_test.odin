@@ -764,7 +764,12 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     v:Workspace
     testing.expect_value(t,workspace_add(&v,sibling_root,&w,identity,{sibling=root}),Error.None)
     testing.expect_value(t,workspace_switch(&v,one),Error.None)
-    testing.expect_value(t,read(sibling_root,"a.txt"),"A1")
+    // Where the file system clones, the sibling's file is taken by its row with no read of its
+    // bytes; where it does not, the store writes it.
+    probe:=strings.concatenate({sibling_root,"/probe"},context.temp_allocator)
+    cloned:=file_clone(a_path,probe)==.None
+    os.remove(probe)
+    testing.expect_value(t,read(sibling_root,"a.txt"),cloned?"A1":"a1")
     testing.expect_value(t,read(sibling_root,"b.txt"),"b1")
     testing.expect_value(t,read(sibling_root,"c/d.txt"),"d1")
     workspace_close(&v)

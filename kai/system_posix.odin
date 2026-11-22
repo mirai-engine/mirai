@@ -30,6 +30,11 @@ lock_release :: proc(lock:^Lock) {
     lock^={}
 }
 
+// What tells a file from another that took its place with the same size and
+// time: its inode.
+@(private)
+file_inode :: proc(info:os.File_Info) -> u64 {return u64(info.inode)}
+
 // Lets other sockets of this user bind the port too: every one of them gets
 // a broadcast to it.
 @(private)
