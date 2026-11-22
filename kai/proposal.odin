@@ -12,7 +12,8 @@ import "mirai:store"
 // comments name the change they were made on and follow it across rewrites;
 // a verdict binds to a stack's head revision and carries over to a later one
 // only when every change makes the same edits (an empty interdiff); a check
-// binds to a revision and counts when its author holds the Check right; a land
+// binds to a revision and counts when its author holds the Check right, as a
+// writer or under a grant; a land
 // moves the bookmark in the Project_Log and names that move.
 
 // --- Writing: the bodies, for a browser that signs them, and the entries ---
@@ -137,16 +138,22 @@ stack_revision :: proc(items:[]Stack_Item,change:Change_Id) -> Revision {
     return {}
 }
 
-// Counts the approvals of f again, with those of an earlier stack that carry
-// over to the current one: every change of both makes the same edits, as a
-// rebase that touched none of their files. A peer settles its proposals before
-// it folds the project, whose policy reads f.approvals.
+// Settles f against the store: whether a change of the current stack has a
+// conflict, and its approvals counted again with those of an earlier stack
+// that carry over to the current one, every change of both making the same
+// edits, as a rebase that touched none of their files. A peer settles its
+// proposals before it folds the project, whose moves read both.
 proposal_settle :: proc(s:^store.Store,f:^Proposal_Fold) -> Error {
     stacks:=make([dynamic]Proposal_Stack,context.temp_allocator)
     proposal_stacks(f,&stacks) or_return
-    f.approvals=0
+    f.approvals,f.conflicted=0,false
     if len(stacks)==0 {return .None}
     current:=stacks[len(stacks)-1].items
+    for item in current {
+        c:=change_get(s,item.revision,context.temp_allocator) or_return
+        totals:=tree_totals(s,c.tree) or_return
+        if totals.conflicts>0 {f.conflicted=true}
+    }
     for v in f.verdicts {
         if v.verdict!=.Approve {continue}
         if v.revision==f.revision {
@@ -230,8 +237,8 @@ Comment_Place :: struct {
 // Places every valid comment of f on the current stack: a comment follows its
 // change from the revision it was made on (that of the last stack in its causal
 // past) to the current one; lines move by a line diff, a structural anchor
-// by the first of drivers with an anchor procedure, a file anchor stays while
-// the file does.
+// by the first of drivers that knows the file, a file anchor stays while the
+// file does.
 proposal_reanchor :: proc(s:^store.Store,f:^Proposal_Fold,drivers:[]Driver,out:^[dynamic]Comment_Place) -> Error {
     clear(out)
     stacks:=make([dynamic]Proposal_Stack,context.temp_allocator)
@@ -277,7 +284,7 @@ anchor_move :: proc(s:^store.Store,from,to:Revision,path:string,drivers:[]Driver
     if !in_before {return false,.None}
     old:=file_bytes(s,before.address,context.temp_allocator) or_return
     new:=file_bytes(s,after.address,context.temp_allocator) or_return
-    if anchor.kind==.Lines {return text_anchor(nil,old,new,anchor),.None}
+    if anchor.kind==.Lines {return text_anchor(old,new,anchor),.None}
     return drivers_anchor(drivers,old,new,anchor),.None
 }
 
@@ -298,9 +305,11 @@ land_refusal_text :: proc(r:Land_Refusal) -> string {
     return ""
 }
 
-// Whether the proposal f folds meets the org's policy p: approvals, settled,
-// and every check p requires passed on the final revision.
+// Whether the proposal f folds, settled, meets the org's policy p: no
+// conflict, its approvals, and every check p requires passed on the final
+// revision.
 proposal_policy :: proc(org:^Org_Fold,p:^Org_Policy,f:^Proposal_Fold) -> Land_Refusal {
+    if f.conflicted {return .Conflicts}
     if f.approvals<p.approvals {return .Approvals}
     b,tail,_:=body_head(org.log.items[p.entry].entry.body,Policy_Set_Body)
     r:=Reader{data=tail}
@@ -327,12 +336,8 @@ proposal_can_land :: proc(s:^store.Store,f:^Proposal_Fold) -> (refusal:Land_Refu
     for &item in f.log.items {
         if !entry_verify(item.bytes,&item.entry) {return .Unverified,.None}
     }
-    for item in stacks[len(stacks)-1].items {
-        c:=change_get(s,item.revision,context.temp_allocator) or_return
-        totals:=tree_totals(s,c.tree) or_return
-        if totals.conflicts>0 {return .Conflicts,.None}
-    }
     proposal_settle(s,f) or_return
+    if f.conflicted {return .Conflicts,.None}
     target:=proposal_target(f)
     for &p in f.org.policies {
         if p.project==f.project && p.bookmark==target {return proposal_policy(f.org,&p,f),.None}

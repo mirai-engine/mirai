@@ -1368,6 +1368,18 @@ grant_verify :: proc(f:^Org_Fold,bytes:[]u8,now:i64) -> (g:Grant,error:Error) {
     return g,.None
 }
 
+// Whether key signs with right on project at time, under a grant the org's
+// log carries.
+org_grant_right :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,time:i64) -> bool {
+    if key=={} {return false}
+    for &item,i in f.log.items {
+        if !f.valid[i] || item.entry.type!=.Grant {continue}
+        g,e:=grant_verify(f,item.entry.body,time)
+        if e==.None && g.subject_key==key && right in g.rights && (g.project=={} || g.project==project) {return true}
+    }
+    return false
+}
+
 // --- Project_Log ---
 
 Bookmark_Target :: struct {name:string,target:Revision}
@@ -1429,9 +1441,13 @@ project_rules :: proc(f:^Project_Fold) -> Rules {
             if entry.type!=.Bookmark_Move || f.org_id=={} || role<.Writer {return false}
             b,tail,_:=body_head(entry.body,Bookmark_Move_Body)
             name:=string(tail[int(b.from)*size_of(Revision):])
+            pf:=move_proposal(f,b.to,b.proposal)
+            if pf!=nil && pf.conflicted {return false}
             for &p in f.org.policies {
                 if p.project!=f.log.id || p.bookmark!=name {continue}
-                return policy_holds(f,&p,b.to,b.proposal)
+                pb,_,_:=body_head(f.org.log.items[p.entry].entry.body,Policy_Set_Body)
+                if pb.approvals==0 && pb.checks==0 {return true}
+                return pf!=nil && proposal_policy(f.org,&p,pf)==.None
             }
             return true
         },
@@ -1463,19 +1479,16 @@ project_rules :: proc(f:^Project_Fold) -> Rules {
     }
 }
 
-// Whether a move to revision under proposal meets the policy: the proposal is
-// one this end folded and settled (proposal_settle), not closed, on this
-// project, at revision, with the approvals and passing checks the policy asks.
+// The proposal a move to revision names: one this end folded and settled
+// (proposal_settle), not closed, on this project, at revision. nil when the
+// move names none or this end folded no such one.
 @(private)
-policy_holds :: proc(f:^Project_Fold,p:^Org_Policy,revision:Revision,proposal:store.Hash) -> bool {
-    b,_,_:=body_head(f.org.log.items[p.entry].entry.body,Policy_Set_Body)
-    if b.approvals==0 && b.checks==0 {return true}
-    if proposal=={} {return false}
+move_proposal :: proc(f:^Project_Fold,revision:Revision,proposal:store.Hash) -> ^Proposal_Fold {
+    if proposal=={} {return nil}
     for pf in f.proposals {
-        if pf.log.id!=proposal || pf.project!=f.log.id || pf.status==.Closed || pf.revision!=revision {continue}
-        return proposal_policy(f.org,p,pf)==.None
+        if pf.log.id==proposal && pf.project==f.log.id && pf.status!=.Closed && pf.revision==revision {return pf}
     }
-    return false
+    return nil
 }
 
 // --- Proposal_Log (its writing, re-anchoring and landing: proposal.odin) ---
@@ -1494,6 +1507,7 @@ Proposal_Fold :: struct {
     revision:Revision, // the head of the stack last revised
     verdicts:[dynamic]Proposal_Approval, // the last of each user
     approvals:int,                       // of revision
+    conflicted:bool,                     // a change of the stack has a conflict, as proposal_settle found
     checks:[dynamic]Proposal_Check,      // of revision, the last of each name
     comments:int,
 }
@@ -1541,7 +1555,10 @@ proposal_rules :: proc(f:^Proposal_Fold) -> Rules {
             f:=(^Proposal_Fold)(data)
             entry:=&f.log.items[e].entry
             u:=author_user(f.org.users,f.log,e)
-            if u==nil {return false}
+            if u==nil {
+                // A runner outside the org checks under a grant of the Check right.
+                return entry.type==.Proposal_Check && f.status==.Open && org_grant_right(f.org,entry.author,.Check,f.project,entry.time)
+            }
             role:=org_role(f.org,u.log.id)
             if role==.None {return false}
             #partial switch entry.type {

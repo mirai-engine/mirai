@@ -70,17 +70,17 @@ asset_merge :: proc(data:rawptr,input:^vcs.Driver_Input,out:^[dynamic]u8) -> vcs
 // A structural anchor stays while its entity is in the scene; lines do not
 // apply to an asset.
 @(private)
-asset_anchor :: proc(data:rawptr,from,to:[]u8,anchor:^vcs.Anchor) -> bool {
+asset_anchor :: proc(data:rawptr,from,to:[]u8,anchor:^vcs.Anchor) -> (moved,known:bool) {
     d:=(^Asset_Driver)(data)
+    scene:asset.Scene
+    if asset.scene_read(&scene,d.types,to)!=.None {return false,false}
+    defer asset.scene_destroy(&scene)
     switch anchor.kind {
-    case .File: return true
-    case .Lines: return false
+    case .File: return true,true
+    case .Lines: return false,true
     case .Structural:
-        scene:asset.Scene
-        if asset.scene_read(&scene,d.types,to)!=.None {return false}
-        defer asset.scene_destroy(&scene)
         _,found:=asset.scene_entity_find(&scene,base.Entity_Id(anchor.key))
-        return found
+        return found,true
     }
-    return false
+    return false,true
 }

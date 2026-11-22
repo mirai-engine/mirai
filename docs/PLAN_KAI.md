@@ -400,8 +400,9 @@ Entry_Head :: struct #packed {
     `User_Log` via `Web_Key_Add`); linking an editor/CLI device uses QR or the commitment-hardened
     8-digit code.
   - Read sessions are authenticated by a signed WebAuthn challenge (`__Host-` HttpOnly cookie);
-    writes (comments, approvals, verdicts, org actions) are WebAuthn signatures over
-    `BLAKE3(entry body)` verified offline by every peer.
+    writes (comments, approvals, verdicts, org actions) are WebAuthn signatures over the BLAKE3
+    of the entry's signed bytes (head, parents and body, so a relay cannot change its author,
+    log or kind), verified offline by every peer.
   - Optional client-side viewing of private overlays (`.env`) in the browser uses the WebAuthn
     **PRF** extension when supported to derive a local decryption key inside the browser while
     keeping the server 100% zero-knowledge.

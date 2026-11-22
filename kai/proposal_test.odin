@@ -70,13 +70,14 @@ expect_ok :: proc(t:^testing.T,_:store.Hash,e:Error,loc:=#caller_location) {
 }
 
 // A scene driver that names an entity by a line "entity <key>": the anchor
-// holds while the entity does.
+// holds while the entity does. A file with no such line is not its own.
 @(private="file")
-scene_anchor :: proc(data:rawptr,from,to:[]u8,anchor:^Anchor) -> bool {
+scene_anchor :: proc(data:rawptr,from,to:[]u8,anchor:^Anchor) -> (moved,known:bool) {
     (^int)(data)^+=1
-    if anchor.kind!=.Structural {return true}
+    if !strings.contains(string(to),"entity ") {return false,false}
+    if anchor.kind!=.Structural {return true,true}
     needle:=fmt.tprintf("entity %d\n",anchor.key)
-    return strings.contains(string(from),needle) && strings.contains(string(to),needle)
+    return strings.contains(string(from),needle) && strings.contains(string(to),needle),true
 }
 
 @(private="file")
@@ -114,14 +115,15 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
     on_7,e4:=proposal_comment(&l,{kind=.Structural,key=7,field=1},"world.scene",x,{},"the lamp",carol,22)
     whole,e5:=proposal_comment(&l,{kind=.File},"a.txt",x,{},"the file",carol,22)
     general,e6:=proposal_comment(&l,{kind=.File},"",{},{},"looks good",carol,22)
-    testing.expect(t,e1==.None && e2==.None && e3==.None && e4==.None && e5==.None && e6==.None)
+    on_text,e7:=proposal_comment(&l,{kind=.Structural,key=7,field=1},"a.txt",x,{},"not a scene",carol,22)
+    testing.expect(t,e1==.None && e2==.None && e3==.None && e4==.None && e5==.None && e6==.None && e7==.None)
     expect_ok(t,proposal_verdict(&l,.Approve,r1,alice,23))
 
     f:Proposal_Fold
     defer proposal_fold_destroy(&f)
     review_fold(t,&s,&f,&l,&o.fold)
     testing.expect_value(t,f.approvals,1)
-    testing.expect_value(t,f.comments,6)
+    testing.expect_value(t,f.comments,7)
 
     // A rewrite: two lines before, "two" deleted, entity 7 removed.
     A2,SCENE2::"zero\nhalf\none\nthree\nfour\nfive\n","entity 42\nentity 9\n"
@@ -135,7 +137,7 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
     drivers:=[]Driver{{id=7,version=1,data=&calls,anchor=scene_anchor}}
     places:=make([dynamic]Comment_Place,context.temp_allocator)
     testing.expect_value(t,proposal_reanchor(&s,&f,drivers,&places),Error.None)
-    testing.expect_value(t,len(places),6)
+    testing.expect_value(t,len(places),7)
     p:=place_of(places[:],&l,shifted)
     testing.expect(t,!p.outdated && p.anchor.line==4 && p.path=="a.txt","a line moves with the lines inserted before it")
     testing.expect(t,place_of(places[:],&l,gone).outdated,"a deleted line is outdated")
@@ -144,7 +146,8 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
     testing.expect(t,!place_of(places[:],&l,whole).outdated,"a file anchor stays while the file does")
     p=place_of(places[:],&l,general)
     testing.expect(t,!p.outdated && p.change=={},"a comment on the proposal hangs on no change")
-    testing.expect_value(t,calls,2)
+    testing.expect(t,!place_of(places[:],&l,on_text).outdated,"a file no driver knows keeps its anchor")
+    testing.expect_value(t,calls,3)
 
     // Approved again, then rebased onto a base that adds an unrelated file:
     // the edits are the same, so the approval carries over.
@@ -191,8 +194,9 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
 
 // Landing asks for zero conflicts, the approvals and the passing checks of
 // the target's policy on the final revision, checks by a signer with the
-// Check right, and every entry signed; then the move it writes holds for
-// every peer that folds the project.
+// Check right (a writer, or a runner under a grant), and every entry signed;
+// then the move it writes holds for every peer that folds the project, and
+// one to a conflicted revision does not, whatever approved it.
 @(test)
 landing_enforces_policy_and_zero_conflicts :: proc(t:^testing.T) {
     s,ok:=review_store(t,"kai-proposal-land");if !ok {return}
@@ -240,6 +244,15 @@ landing_enforces_policy_and_zero_conflicts :: proc(t:^testing.T) {
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
     expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=2},carol,32))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
+    runner:=identity_make()
+    expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=5},&runner,32))
+    testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
+    grant:=Grant{head={org=o.org.id,org_head=test_heads(&o.org)[0],issuer=alice.key,subject_key=runner.key,rights={.Check},project=o.project.id,not_before=0,not_after=1000}}
+    grant_bytes,ge:=grant_encode(&grant,alice,context.temp_allocator)
+    testing.expect_value(t,ge,Error.None)
+    expect_ok(t,log_append(&o.org,.Grant,grant_bytes,alice,15))
+    org_refold(t,&o)
+    testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.None)
     expect_ok(t,proposal_check(&l,r1,"ci",.Failed,{0=3},bob,33))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
     expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=4},bob,34))
@@ -268,9 +281,21 @@ landing_enforces_policy_and_zero_conflicts :: proc(t:^testing.T) {
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Not_Open)
     testing.expect_value(t,f.status,Proposal_Status.Landed)
 
-    // Every peer folds the move as valid, and a move around the policy as not.
-    proposals:=[]^Proposal_Fold{&f}
-    expect_ok(t,log_append(&o.project,.Bookmark_Move,body_make(Bookmark_Move_Body{to=rc,from=1},slice.to_bytes([]Revision{r1}),transmute([]u8)string("main")),alice,41))
+    // Every peer folds the move as valid; a move around the policy, and one
+    // to a conflicted revision that a proposal approved, as not.
+    l2:Log
+    log_init(&l2);defer log_destroy(&l2)
+    expect_ok(t,proposal_open(&l2,o.project.id,"main","Conflicted","",bob,41))
+    expect_ok(t,proposal_revise(&l2,{{x,rc}},bob,42))
+    expect_ok(t,proposal_verdict(&l2,.Approve,rc,alice,43))
+    expect_ok(t,proposal_check(&l2,rc,"ci",.Passed,{0=6},bob,43))
+    f2:Proposal_Fold
+    defer proposal_fold_destroy(&f2)
+    review_fold(t,&s,&f2,&l2,&o.fold)
+    testing.expect(t,f2.conflicted && f2.approvals==1 && len(f2.checks)==1,"the conflicted stack is approved and checked")
+    proposals:=[]^Proposal_Fold{&f,&f2}
+    expect_ok(t,log_append(&o.project,.Bookmark_Move,body_make(Bookmark_Move_Body{to=rc,from=1},slice.to_bytes([]Revision{r1}),transmute([]u8)string("main")),alice,44))
+    expect_ok(t,log_append(&o.project,.Bookmark_Move,body_make(Bookmark_Move_Body{to=rc,proposal=l2.id,from=1},slice.to_bytes([]Revision{r1}),transmute([]u8)string("main")),bob,45))
     testing.expect_value(t,project_fold(&project,&o.project,&o.fold,proposals),Error.None)
     defer project_fold_destroy(&project)
     targets:=make([dynamic]Revision,context.temp_allocator)

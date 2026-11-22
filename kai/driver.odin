@@ -39,14 +39,15 @@ Driver :: struct {
     version:u32, // raised when its results change
     data:rawptr,
     merge:proc(data:rawptr,input:^Driver_Input,out:^[dynamic]u8) -> Driver_Result,
-    anchor:proc(data:rawptr,from,to:[]u8,anchor:^Anchor) -> bool, // nil: anchors stay as they are
+    // known false: not a file this driver knows; moved false: what the anchor named is gone
+    anchor:proc(data:rawptr,from,to:[]u8,anchor:^Anchor) -> (moved,known:bool),
 }
 
 DRIVER_TEXT :: 1
 DRIVER_BINARY :: 2
 
 driver_text :: proc() -> Driver {
-    return {id=DRIVER_TEXT,version=1,merge=text_merge,anchor=text_anchor}
+    return {id=DRIVER_TEXT,version=1,merge=text_merge}
 }
 
 driver_binary :: proc() -> Driver {
@@ -70,13 +71,14 @@ drivers_merge :: proc(drivers:[]Driver,input:^Driver_Input,out:^[dynamic]u8) -> 
     return .Unsupported,0
 }
 
-// Moves an anchor with the first driver that has an anchor procedure, else
-// as text for lines. False when what it named is gone.
+// Moves an anchor with the first driver that knows the file, else as text
+// for lines. False when what it named is gone.
 drivers_anchor :: proc(drivers:[]Driver,from,to:[]u8,anchor:^Anchor) -> bool {
     for d in drivers {
-        if d.anchor!=nil {return d.anchor(d.data,from,to,anchor)}
+        if d.anchor==nil {continue}
+        if moved,known:=d.anchor(d.data,from,to,anchor);known {return moved}
     }
-    return text_anchor(nil,from,to,anchor)
+    return text_anchor(from,to,anchor)
 }
 
 // A file is binary when a NUL appears in its first bytes, as git judges it.
@@ -128,7 +130,7 @@ binary_merge :: proc(_:rawptr,input:^Driver_Input,out:^[dynamic]u8) -> Driver_Re
 // Moves the lines of an anchor to where they are in to; false when its first
 // line is gone.
 @(private)
-text_anchor :: proc(_:rawptr,from,to:[]u8,anchor:^Anchor) -> bool {
+text_anchor :: proc(from,to:[]u8,anchor:^Anchor) -> bool {
     if anchor.kind!=.Lines {return true}
     lines:=make([dynamic]diff.Line,context.temp_allocator)
     if _,e:=diff.lines(string(from),string(to),&lines,context.temp_allocator);e!=.None {return false}
