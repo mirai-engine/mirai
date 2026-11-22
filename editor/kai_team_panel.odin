@@ -55,7 +55,7 @@ kai_buttons :: proc(s:^Session,name:string,labels:[]string,accent:=-1,disabled:=
     if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,direction=kai_side_by_side(s,labels)?.Row:.Column}) {
         for label,i in labels {
             // Side by side each keeps the room of its label, and they share what is left.
-            l:=ui.Layout{width=ui.grow(min=ui.text_width(&ctx.font,label,ui.metric(ctx,"font"))+2*KAI_BUTTON_SIDE)}
+            l:=ui.Layout{width=ui.grow(min=ui.text_width(&ctx.font,label,ui.metric(ctx,"font"))+2*KAI_BUTTON_SIDE),height=ui.fixed(ui.metric(ctx,"control"))}
             if ui.button(ctx,ui.id(ctx,name,i),{label=label,variant=i==accent?"accent":"field",width=-1,center=true,disabled=disabled,layout=&l}).clicked {clicked=i}
         }
     }
