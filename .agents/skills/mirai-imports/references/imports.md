@@ -359,6 +359,10 @@ checkout, worktree and project of the machine, keeps manifests and builds.
   code of the plugin that imports it whole) is ingested again with the ids its manifest gives, and
   the project pins the new manifest. A document changed since it was last written is left as it is,
   with a warning that names it ([changed documents](#changed-documents)): the rest is written.
+- **One origin is one pin.** Pinning a package whose origin another pin has replaces that pin,
+  and a refresh of a list that pins an origin twice keeps one, the one whose identity is that of
+  the source here, else the last pinned, and removes the others with their manifest files and a
+  warning, so a source is never imported once per pin.
 - **It never removes** an object, a ref or a file of a project because a source is missing. What
   it cannot build or fetch stays listed as not built.
 - A source a plugin imports whole has a key only its importer knows: the refresh takes the build

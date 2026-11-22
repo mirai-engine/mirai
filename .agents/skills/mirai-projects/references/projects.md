@@ -590,7 +590,10 @@ files of the project travel as a snapshot, and its heavy content as the builds o
 by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
 
 - **Snapshot.** Every file under the root that `project.own_path` accepts: all but the generated
-  folder and the folders of version control. It is a tree of objects of the store: each file an
+  folder and the folders of version control, and but the sources of the packages the project pins
+  whose chosen build the host has whole (the origin and every input its import read), which a
+  joiner takes as builds and never imports; a source the host has no build of travels. It is a
+  tree of objects of the store: each file an
   object of its bytes, cut on content, so a changed file shares the chunks the change did not
   touch; each folder an object whose bytes list its entries sorted by name (a file with its
   executable bit, or a folder, by the address and size of its object, a folder with the files and
@@ -629,10 +632,14 @@ by key, through [exchange](../../mirai-store/references/exchange.md) over `net`.
   manifest and its start scene first and then the smallest first, many at once, and writes each
   chunk by chunk at its offset into a temporary file renamed into place, so memory does not grow
   with a file; then builds the project's editor from the files that arrived, without its refresh,
-  for the importers of its plugins, and refreshes the packages as an editor does, with the peers as
+  for the importers of its plugins, and, once every file was written (a join with a file not
+  written refreshes no package), refreshes the packages as an editor does, with the peers as
   the `cache.Source` of the library: a Final or a Fast build from the store, then from the peers,
   by key, and a source in the folder is imported, in the quality an editor imports, only when no
-  peer gives a build of it. Where the editor does not build, a package whose importer is a plugin's
+  peer gives a build of it; such an import asks the peers for the results of `cook/cache`
+  (encoded textures, their inputs, cooked meshes) before building them. The shader generation and
+  the pipelines of the GPU are compiled on each machine. Where the editor does not build, a
+  package whose importer is a plugin's
   takes the build a peer chose for its manifest, and one no peer gives is reported with why the
   editor did not build. A join ends within a bounded time without progress whatever a peer
   does or withholds: what is wanted while no chunk byte arrives and no object completes for a

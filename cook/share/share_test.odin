@@ -295,7 +295,8 @@ host_project :: proc(t:^testing.T,w:^Test_Net) -> (root:string,ok:bool) {
 host_offer :: proc(t:^testing.T,w:^Test_Net,root:string) -> bool {
     s:=&w.peers[0].s
     folders:=make([dynamic]store.Hash,context.temp_allocator)
-    snap,address,_,error:=snapshot_take(s,root,"game",&folders,allocator=context.temp_allocator)
+    built:=library_served(s,root,&folders,nil)
+    snap,address,_,error:=snapshot_take(s,root,"game",&folders,allocator=context.temp_allocator,built=&built)
     if !testing.expectf(t,error=="","%s",error) {return false}
     digits:[64]u8
     if !testing.expect_value(t,offer_set(s,root,offer_name(w.peers[0].key.secret,&digits),address),.None) {return false}
@@ -766,6 +767,33 @@ a_join_writes_what_it_can_and_running_it_again_completes_it :: proc(t:^testing.T
     same_files(t,root,joined)
 }
 
+// A join that could not write every file refreshes no package: a source not
+// all of whose files arrived would import other assets than the host's. Run
+// again once the files are written, it refreshes them.
+@(test)
+a_join_with_files_not_written_refreshes_no_package :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-incomplete-packages",2) {return}
+    defer test_net_destroy(&w)
+    root,ok:=host_project(t,&w)
+    if !ok {return}
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    if _,error:=test_join(t,&w,1,join_desc(&w,0,joined));!testing.expectf(t,error=="","%s",error) {return}
+    file_put(root,"assets/deep/a/b/c.txt",transmute([]u8)string("changed"))
+    if !host_offer(t,&w,root) {return}
+    locked:=fmt.tprintf("%s/assets/deep/a/b/c.txt",joined)
+    os.change_mode(locked,os.Permissions_Read_All)
+    defer os.change_mode(locked,os.Permissions_Default_File)
+    report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    if !testing.expectf(t,error=="","%s",error) {return}
+    testing.expectf(t,len(report.failed)==1 && report.packages.packages==0,"no package is refreshed: %v",report)
+    os.change_mode(locked,os.Permissions_Default_File)
+    again,again_error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    if !testing.expectf(t,again_error=="","%s",again_error) {return}
+    testing.expectf(t,len(again.failed)==0 && again.packages.packages==1 && len(again.packages.missing)==0 && len(again.packages.failures)==0,"%v",again)
+}
+
 @(test)
 a_stopped_join_resumes_without_fetching_again_what_it_has :: proc(t:^testing.T) {
     w:Test_Net
@@ -1143,13 +1171,61 @@ a_join_from_a_host_with_only_fast_builds_fetches_them_and_imports_nothing :: pro
     joined:=fmt.tprintf("%s/joined",w.folder)
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,error=="","%s",error) {return}
-    testing.expect(t,os.exists(fmt.tprintf("%s/assets/poster.tga",joined)),"the source is in the joined folder")
+    testing.expect(t,!os.exists(fmt.tprintf("%s/assets/poster.tga",joined)),"the source of a built package stays with the host")
     testing.expectf(t,report.packages.fetched==1 && report.packages.ingested==0 && len(report.packages.missing)==0 && len(report.packages.failures)==0,"%v",report.packages)
     digits:[64]u8
     key:=store.hex(imported.key,&digits)
     fast,fast_error:=store.ref_get(&w.peers[1].s,asset.REF_IMPORTS_FAST,key)
     _,final_error:=store.ref_get(&w.peers[1].s,asset.REF_IMPORTS,key)
     testing.expect(t,fast_error==.None && fast==imported.build && final_error==.Missing,"the joiner names the Fast build as Fast")
+}
+
+// The source of a package the host built, and every input its import read,
+// stay with the host: a joiner takes the build. A source whose build the host
+// does not have travels, so a joiner can import it.
+@(test)
+the_sources_of_built_packages_stay_with_the_host :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-sources",2) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+    DEMO :: #directory+"/../../demo/assets/gallery/"
+    for name in ([3]string{"vase.obj","vase.mtl","vase_color.png"}) {
+        data,_:=os.read_entire_file(fmt.tprintf("%s%s",DEMO,name),context.temp_allocator)
+        file_put(root,fmt.tprintf("assets/models/%s",name),data)
+    }
+    file_put(root,"assets/sounds/beep.wav",wav(4800,2))
+    file_put(root,"assets/sounds/unbuilt.wav",wav(4800,3))
+    options:=sources.Library_Options{store=&w.peers[0].s,root=root,fast_textures=true}
+    manifests:[3]store.Hash
+    for name,k in ([3]string{"models/vase.obj","sounds/beep.wav","sounds/unbuilt.wav"}) {
+        imported,error:=sources.ingest(fmt.tprintf("%s/assets/%s",root,name),options,allocator=context.temp_allocator)
+        if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+        added:=sources.project_add(root,imported.manifest,"",nil,options,context.temp_allocator)
+        if !testing.expectf(t,len(added.failures)==0 && len(added.missing)==0,"%v",added) {return}
+        manifests[k]=imported.manifest
+    }
+    p,_:=asset.package_get(&w.peers[0].s,manifests[0],context.temp_allocator)
+    testing.expectf(t,len(p.inputs)==2,"the model read its material and texture: %v",p.inputs)
+    // The host no longer has a build of one: its source is what a joiner needs.
+    unbuilt,_:=asset.package_get(&w.peers[0].s,manifests[2],context.temp_allocator)
+    digits:[64]u8
+    testing.expect_value(t,store.ref_remove(&w.peers[0].s,asset.REF_BUILDS,store.hex(asset.build_select(manifests[2],&unbuilt),&digits)),store.Error.None)
+    if !host_offer(t,&w,root) {return}
+    test_connect(&w,1,0)
+    joined:=fmt.tprintf("%s/joined",w.folder)
+    report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
+    if !testing.expectf(t,error=="","%s",error) {return}
+    for name in ([3]string{"vase.obj","vase.mtl","vase_color.png"}) {
+        testing.expectf(t,!os.exists(fmt.tprintf("%s/assets/models/%s",joined,name)),"%s stays with the host",name)
+    }
+    testing.expect(t,!os.exists(fmt.tprintf("%s/assets/sounds/beep.wav",joined)),"a built sound stays with the host")
+    testing.expect(t,os.exists(fmt.tprintf("%s/assets/sounds/unbuilt.wav",joined)),"a source the host has no build of travels")
+    testing.expectf(t,len(report.packages.failures)==0 && len(report.packages.missing)==0,"%v",report.packages)
+    listed,listed_error:=asset.root_packages(joined,w.peers[1].s.root,context.temp_allocator)
+    testing.expect_value(t,listed_error,asset.Error.None)
+    testing.expectf(t,len(listed.problems)==0 && len(listed.listed)>0,"the joiner reads every package: %v",listed.problems)
 }
 
 // A source a plugin imports whole: "ROOM <name>", a document of the kind ROOM.
