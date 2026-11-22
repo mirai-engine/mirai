@@ -31,9 +31,6 @@ texts of the licenses are at the [end](#license-texts).
   <https://compiler-rt.llvm.org>, its `libclang_rt.builtins-aarch64.a` as Alpine's `compiler-rt`
   package builds it, fetched into `.deps/linux-arm64-compiler-rt`. Node: linked statically into
   `bin/mirai-kai-linux-arm64` by `mirai build kai --target linux_arm64`.
-- **Vue 3.5.13** (MIT; © 2018-present Yuxi (Evan) You), <https://vuejs.org>, its runtime-only
-  build `dist/vue.runtime.esm-browser.prod.js` unchanged as `kai/hub/web/vue.js`. Node and editor:
-  embedded in `mirai-kai` and `mirai`, which serve it to browsers as part of KaiHub.
 - **Odin** `base`, `core` and `vendor` (BSD-3-Clause; © 2016-2025 Ginger Bill),
   <https://odin-lang.org>. Game; the compiler, in the package.
 - **Slang** (Apache-2.0 with LLVM exception; © Slang contributors), <https://shader-slang.org>.
