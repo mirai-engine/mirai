@@ -1,6 +1,7 @@
 package main
 
 import "core:bufio"
+import "core:crypto"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
@@ -1159,11 +1160,11 @@ kai_proposal :: proc(p:^ka.Project,k:^Kai_Machine,project_id:vcs.Log_Id,a:^Kai_A
 
 @(private="file")
 crypto_zero :: proc(buffer:^[vcs.RECOVERY_TEXT]u8) {
-    for &b in buffer {b=0}
+    crypto.zero_explicit(buffer,size_of(buffer^))
 }
 
 // Wipes a recovery key typed in, which lives in the temp allocator.
 @(private="file")
 crypto_zero_text :: proc(text:string) {
-    for &b in transmute([]u8)text {b=0}
+    crypto.zero_explicit(raw_data(text),len(text))
 }

@@ -1,5 +1,6 @@
 package editor
 
+import "core:crypto"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
@@ -282,7 +283,7 @@ api_kai_identity :: proc(s:^Session,call:^api.Call) {
     switch action {
     case "name":
         buffer:[vcs.RECOVERY_TEXT]u8
-        defer for &b in buffer {b=0}
+        defer crypto.zero_explicit(&buffer,size_of(buffer))
         recovery,e:=vcs.machine_user_create(m,p.name,&buffer,p.device)
         if e!=.None {api_kai_why(call,m,e);return}
         t.recovery_length=copy(t.recovery[:],recovery)
@@ -295,7 +296,7 @@ api_kai_identity :: proc(s:^Session,call:^api.Call) {
         kai_team_wrote(s)
     case "recovery":
         buffer:[vcs.RECOVERY_TEXT]u8
-        defer for &b in buffer {b=0}
+        defer crypto.zero_explicit(&buffer,size_of(buffer))
         recovery,e:=vcs.machine_recovery_rotate(m,strings.trim_space(p.recovery),&buffer)
         if e!=.None {api_kai_why(call,m,e);return}
         t.recovery_length=copy(t.recovery[:],recovery)
@@ -306,7 +307,7 @@ api_kai_identity :: proc(s:^Session,call:^api.Call) {
             return
         }
         buffer:[vcs.RECOVERY_TEXT]u8
-        defer for &b in buffer {b=0}
+        defer crypto.zero_explicit(&buffer,size_of(buffer))
         recovery,e:=vcs.machine_recovery_rotate(m,"",&buffer)
         if e!=.None {api_kai_why(call,m,e);return}
         t.recovery_length=copy(t.recovery[:],recovery)
