@@ -3,6 +3,7 @@ package kai
 import "core:crypto/ecdsa"
 import "core:crypto/ed25519"
 import "core:crypto/hash"
+import "core:encoding/asn1"
 import "core:encoding/base64"
 import "core:encoding/cbor"
 import "core:encoding/json"
@@ -17,7 +18,10 @@ import "mirai:store"
 // server that relays it can change nothing of it. The key is a COSE key a
 // Web_Key_Add of the user's log records; its web key id, the entry's author,
 // is the BLAKE3 of that key and its relying party, so an entry carries both
-// and verifies alone, and the fold says whose key it is.
+// and verifies alone, and the fold says whose key it is. A login needs the
+// user present; a write also needs the user verified (PIN or biometric), and
+// an ES256 write carries the low S of the two that verify, so a signature has
+// one encoding and an entry one address.
 
 Cose_Alg :: enum u8 {EdDSA,ES256}
 
@@ -32,7 +36,7 @@ Web_Assertion :: struct {
     signature:[]u8, // EdDSA: 64 bytes; ES256: ASN.1 DER
 }
 
-Webauthn_Failure :: enum u8 {None,Malformed,Key,Type,Challenge,Origin,Rp_Id,Presence,Signature}
+Webauthn_Failure :: enum u8 {None,Malformed,Key,Type,Challenge,Origin,Rp_Id,Presence,Verification,Signature}
 
 webauthn_failure_text :: proc(failure:Webauthn_Failure) -> string {
     switch failure {
@@ -44,6 +48,7 @@ webauthn_failure_text :: proc(failure:Webauthn_Failure) -> string {
     case .Origin: return "the assertion comes from another origin: sign on https://<relying party id>"
     case .Rp_Id: return "the authenticator signed for another relying party: use the passkey of this site"
     case .Presence: return "the authenticator saw no user present: touch it when it asks"
+    case .Verification: return "the authenticator did not verify the user: a write needs the passkey's PIN or biometric"
     case .Signature: return "the signature is not the passkey's: sign again with the passkey registered"
     }
     return ""
@@ -55,6 +60,7 @@ CLIENT_DATA_MAX :: 1024
 AUTHENTICATOR_DATA_MIN :: 37 // rpIdHash, flags and the sign counter
 AUTHENTICATOR_DATA_MAX :: 1024
 FLAG_USER_PRESENT :: 0x01
+FLAG_USER_VERIFIED :: 0x04
 
 // What follows an entry's u16 length when it is signed by WebAuthn.
 Assertion_Head :: struct #packed {cose:u16,rp:u8,authenticator:u16,client:u16,signature:u8} // + cose, rp id, authenticatorData, clientDataJSON, signature
@@ -130,9 +136,10 @@ cbor_int :: proc(v:cbor.Value) -> (value:i64,ok:bool) {
 }
 
 // Checks an assertion of key for the relying party rp_id over challenge: a
-// webauthn.get on https://<rp_id> naming the challenge, authenticator data for
-// rp_id with the user present, and the key's signature over both.
-webauthn_verify :: proc(key:^Cose_Key,rp_id:string,challenge:[]u8,a:^Web_Assertion) -> Webauthn_Failure {
+// webauthn.get on https://<rp_id>, on any port, naming the challenge,
+// authenticator data for rp_id with the user present, and the key's signature
+// over both. A write's also has the user verified and a low S.
+webauthn_verify :: proc(key:^Cose_Key,rp_id:string,challenge:[]u8,a:^Web_Assertion,write:bool) -> Webauthn_Failure {
     data,client:=a.authenticator_data,a.client_data_json
     if len(rp_id)==0 || len(rp_id)>RP_ID_MAX || len(data)<AUTHENTICATOR_DATA_MIN || len(data)>AUTHENTICATOR_DATA_MAX {return .Malformed}
     if len(client)==0 || len(client)>CLIENT_DATA_MAX || !utf8.valid_string(string(client)) {return .Malformed}
@@ -148,11 +155,12 @@ webauthn_verify :: proc(key:^Cose_Key,rp_id:string,challenge:[]u8,a:^Web_Asserti
     expected,encode_error:=base64.encode(challenge,base64.ENC_URL_TABLE,context.temp_allocator,{.No_Padding})
     if encode_error!=nil {return .Malformed}
     if c.challenge!=expected {return .Challenge}
-    if c.cross_origin || !strings.has_prefix(c.origin,"https://") || c.origin[len("https://"):]!=rp_id {return .Origin}
+    if c.cross_origin || !origin_of_rp(c.origin,rp_id) {return .Origin}
     rp_hash:[32]u8
     hash.hash_string_to_buffer(.SHA256,rp_id,rp_hash[:])
     if string(data[:32])!=string(rp_hash[:]) {return .Rp_Id}
     if data[32]&FLAG_USER_PRESENT==0 {return .Presence}
+    if write && data[32]&FLAG_USER_VERIFIED==0 {return .Verification}
     message,made:=make([]u8,len(data)+32,context.temp_allocator)
     if made!=nil {return .Malformed}
     copy(message,data)
@@ -165,9 +173,68 @@ webauthn_verify :: proc(key:^Cose_Key,rp_id:string,challenge:[]u8,a:^Web_Asserti
     case .ES256:
         public:ecdsa.Public_Key
         if !ecdsa.public_key_set_bytes(&public,.SECP256R1,key.public[:]) {return .Key}
+        if write {
+            _,low,canonical:=es256_low_s(a.signature,context.temp_allocator)
+            if !canonical || string(low)!=string(a.signature) {return .Signature}
+        }
         if !ecdsa.verify_asn1(&public,.SHA256,message,a.signature) {return .Signature}
     }
     return .None
+}
+
+// Whether origin is https://<rp_id>, with a port or without.
+@(private)
+origin_of_rp :: proc(origin,rp_id:string) -> bool {
+    if !strings.has_prefix(origin,"https://") {return false}
+    rest:=origin[len("https://"):]
+    if !strings.has_prefix(rest,rp_id) {return false}
+    port:=rest[len(rp_id):]
+    if port=="" {return true}
+    if port[0]!=':' || len(port)<2 || len(port)>6 || port[1]=='0' {return false}
+    for c in transmute([]u8)port[1:] {
+        if c<'0' || c>'9' {return false}
+    }
+    return true
+}
+
+// The order n of P-256 and n/2, big-endian.
+@(private) P256_ORDER :: [32]u8{0xff,0xff,0xff,0xff,0,0,0,0,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xbc,0xe6,0xfa,0xad,0xa7,0x17,0x9e,0x84,0xf3,0xb9,0xca,0xc2,0xfc,0x63,0x25,0x51}
+@(private) P256_HALF_ORDER :: [32]u8{0x7f,0xff,0xff,0xff,0x80,0,0,0,0x7f,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xde,0x73,0x7d,0x56,0xd3,0x8b,0xcf,0x42,0x79,0xdc,0xe5,0x61,0x7e,0x31,0x92,0xa8}
+
+// The DER of an ES256 signature with s replaced by n-s when it is above n/2,
+// in allocator: high tells it was; canonical that the signature read as DER
+// of two integers below n.
+@(private)
+es256_low_s :: proc(signature:[]u8,allocator:=context.allocator) -> (high:bool,low:[]u8,canonical:bool) {
+    cursor:asn1.Cursor
+    asn1.cursor_init(&cursor,signature)
+    sequence,e:=asn1.read_sequence(&cursor)
+    if e!=.None || asn1.done(&cursor)!=.None {return}
+    r_bytes,re:=asn1.read_unsigned_integer_bytes(&sequence)
+    s_bytes,se:=asn1.read_unsigned_integer_bytes(&sequence)
+    if re!=.None || se!=.None || asn1.done(&sequence)!=.None || len(r_bytes)>32 || len(s_bytes)>32 {return}
+    r,s:[32]u8
+    copy(r[32-len(r_bytes):],r_bytes)
+    copy(s[32-len(s_bytes):],s_bytes)
+    order,half:=P256_ORDER,P256_HALF_ORDER
+    if string(r[:])>=string(order[:]) || string(s[:])>=string(order[:]) {return}
+    if string(s[:])>string(half[:]) {
+        high=true
+        borrow:=0
+        for i:=31;i>=0;i-=1 {
+            d:=int(order[i])-int(s[i])-borrow
+            borrow=d<0?1:0
+            s[i]=u8(d+256*borrow)
+        }
+    }
+    trim :: proc(b:[]u8) -> []u8 {
+        b:=b
+        for len(b)>1 && b[0]==0 {b=b[1:]}
+        return b
+    }
+    out,me:=asn1.marshal(asn1.sequence({asn1.integer_unsigned(trim(r[:])),asn1.integer_unsigned(trim(s[:]))}),allocator)
+    if me!=.None {return}
+    return high,out,true
 }
 
 // The web key id of a COSE key for a relying party: what entries it signs
@@ -212,6 +279,10 @@ entry_webauthn_begin :: proc(d:^Draft,web_key:Key,allocator:=context.allocator) 
 // checked: its bytes in allocator and its address.
 entry_webauthn_finish :: proc(unsigned:[]u8,cose:[]u8,rp_id:string,a:^Web_Assertion,allocator:=context.allocator) -> (bytes:[]u8,address:store.Hash,error:Error) {
     if len(cose)>COSE_KEY_MAX || len(rp_id)>RP_ID_MAX || len(a.authenticator_data)>AUTHENTICATOR_DATA_MAX || len(a.client_data_json)>CLIENT_DATA_MAX || len(a.signature)>255 {return nil,{},.Too_Large}
+    a:=a^
+    if key,parsed:=cose_key_parse(cose);parsed && key.alg==.ES256 {
+        if _,low,canonical:=es256_low_s(a.signature,context.temp_allocator);canonical {a.signature=low}
+    }
     size:=size_of(Assertion_Head)+len(cose)+len(rp_id)+len(a.authenticator_data)+len(a.client_data_json)+len(a.signature)
     if size>ASSERTION_MAX {return nil,{},.Too_Large}
     w:=writer_make(allocator)
@@ -247,5 +318,5 @@ entry_assertion_valid :: proc(signed:[]u8,e:^Entry) -> bool {
     key,ok:=cose_key_parse(cose)
     if !ok {return false}
     challenge:=store.address_of_bytes(signed)
-    return webauthn_verify(&key,rp_id,challenge[:],&a)==.None
+    return webauthn_verify(&key,rp_id,challenge[:],&a,true)==.None
 }

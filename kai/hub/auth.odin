@@ -40,6 +40,8 @@ Approval :: struct {
     cose_len:int,
     address:store.Hash,  // the entry kept
     taken:bool,          // Login: the session was given
+    asker:[16]u8,        // the address of the browser that asked
+    serial:u64,          // the order approvals were made in
 }
 
 approval_clear :: proc(a:^Approval) {
@@ -64,7 +66,7 @@ session_of :: proc(h:^Hub,r:^Request) -> ^Session {
         if !ok || len(token)!=32 {return nil}
         for &s in h.sessions {
             if !s.used || crypto.compare_constant_time(s.token[:],token)!=1 {continue}
-            if h.now-s.created>SESSION_SECONDS || h.now-s.seen>SESSION_IDLE_SECONDS {
+            if h.now-s.created>SESSION_SECONDS || h.now-s.seen>SESSION_IDLE_SECONDS || !session_holds(h,&s) {
                 crypto.zero_explicit(&s,size_of(Session))
                 return nil
             }
@@ -76,8 +78,20 @@ session_of :: proc(h:^Hub,r:^Request) -> ^Session {
     return nil
 }
 
-// A new session for user; the oldest goes when all are taken.
-session_new :: proc(h:^Hub,user:kai.Log_Id,web_key:kai.Key,credential:[]u8) -> (s:^Session,cookie:string) {
+// Whether what started a session still holds in the user's fold: its passkey,
+// or the device that approved it, not revoked.
+@(private)
+session_holds :: proc(h:^Hub,s:^Session) -> bool {
+    u:=user_fold_of(h,s.user)
+    if u==nil {return false}
+    if s.web_key=={} {return kai.user_device_active(u,s.device)}
+    p,found:=passkey_of(h,u,s.credential[:s.credential_len])
+    return found && p.key==s.web_key
+}
+
+// A new session for user, by its passkey or by the device that approved it;
+// the oldest goes when all are taken.
+session_new :: proc(h:^Hub,user:kai.Log_Id,web_key:kai.Key,credential:[]u8,device:kai.Key={}) -> (s:^Session,cookie:string) {
     slot:=0
     for x,i in h.sessions {
         if !x.used {
@@ -87,7 +101,7 @@ session_new :: proc(h:^Hub,user:kai.Log_Id,web_key:kai.Key,credential:[]u8) -> (
         if x.seen<h.sessions[slot].seen {slot=i}
     }
     s=&h.sessions[slot]
-    s^={used=true,user=user,web_key=web_key,created=h.now,seen=h.now}
+    s^={used=true,user=user,web_key=web_key,device=device,created=h.now,seen=h.now}
     s.credential_len=copy(s.credential[:],credential)
     crypto.rand_bytes(s.token[:])
     j:=json_make()
@@ -194,21 +208,19 @@ Passkey :: struct {
     added:store.Hash, // its Web_Key_Add
 }
 
-passkey_find :: proc(h:^Hub,credential:[]u8) -> (p:Passkey,found:bool) {
-    for o in runner_of(h).orgs {
-        for u in o.agent.user_list {
-            for w in u.web_keys {
-                if w.revoked {continue}
-                item:=&u.log.items[w.added]
-                head,tail,ok:=kai.body_head(item.entry.body,kai.Web_Key_Add_Body)
-                if !ok || len(tail)!=int(head.credential)+int(head.cose)+int(head.rp) {continue}
-                id:=tail[:head.credential]
-                cose:=tail[head.credential:][:head.cose]
-                rp:=string(tail[int(head.credential)+int(head.cose):])
-                if rp!=h.desc.rp_id || string(id)!=string(credential) {continue}
-                return {user=u,key=w.key,cose=cose,added=item.address},true
-            }
-        }
+// The passkey of user u with that credential id, not revoked. A credential id
+// is the browser's word only: another user may record the same one.
+passkey_of :: proc(h:^Hub,u:^kai.User_Fold,credential:[]u8) -> (p:Passkey,found:bool) {
+    for w in u.web_keys {
+        if w.revoked {continue}
+        item:=&u.log.items[w.added]
+        head,tail,ok:=kai.body_head(item.entry.body,kai.Web_Key_Add_Body)
+        if !ok || len(tail)!=int(head.credential)+int(head.cose)+int(head.rp) {continue}
+        id:=tail[:head.credential]
+        cose:=tail[head.credential:][:head.cose]
+        rp:=string(tail[int(head.credential)+int(head.cose):])
+        if rp!=h.desc.rp_id || string(id)!=string(credential) {continue}
+        return {user=u,key=w.key,cose=cose,added=item.address},true
     }
     return
 }
@@ -225,18 +237,25 @@ route_sign_in :: proc(c:^Call) {
         fail(c,401,"the challenge is not one this server gave, it expired or it was used: ask for a new one")
         return
     }
-    p,found:=passkey_find(c.h,credential)
+    // Every user that records the credential id is tried: the one whose key signed is the one.
+    p:Passkey
+    failure:=kai.Webauthn_Failure.None
+    found:=false
+    users: for o in runner_of(c.h).orgs {
+        for u in o.agent.user_list {
+            candidate,has:=passkey_of(c.h,u,credential)
+            if !has {continue}
+            key,parsed:=kai.cose_key_parse(candidate.cose)
+            if !parsed {continue}
+            failure=kai.webauthn_verify(&key,c.h.desc.rp_id,challenge,&a,false)
+            if failure==.None {
+                p,found=candidate,true
+                break users
+            }
+        }
+    }
     if !found {
-        fail(c,401,"no user of this node has that passkey: register it first")
-        return
-    }
-    key,parsed:=kai.cose_key_parse(p.cose)
-    if !parsed {
-        fail(c,401,"the passkey's key does not read")
-        return
-    }
-    if failure:=kai.webauthn_verify(&key,c.h.desc.rp_id,challenge,&a);failure!=.None {
-        fail(c,401,kai.webauthn_failure_text(failure))
+        fail(c,401,failure==.None?"no user of this node has that passkey: register it first":kai.webauthn_failure_text(failure))
         return
     }
     _,cookie:=session_new(c.h,p.user.log.id,p.key,credential)
@@ -295,6 +314,11 @@ route_user_create :: proc(c:^Call) {
             return
         }
     }
+    name:[64]u8
+    if _,e:=store.ref_get(s,kai.USER_NAMESPACE,kai.log_name(l.id,&name));e==.None {
+        fail(c,409,"this user exists on this node: a browser makes only new users; add a passkey to an existing one with POST /api/passkeys/link")
+        return
+    }
     f:kai.User_Fold
     if kai.user_fold(&f,&l,context.temp_allocator)!=.None || !f.valid[0] || !f.valid[1] || len(f.web_keys)!=1 {
         fail(c,400,"the new user's log does not hold: the genesis is signed by its recovery key with the device's proof, and the Web_Key_Add by the recovery key")
@@ -319,33 +343,56 @@ route_user_create :: proc(c:^Call) {
     json_response(c,&j,201)
 }
 
-// Saves a log and tells the peers of the runner.
+// Saves a log with the entries the store keeps of it already, so a log from a
+// browser only adds to the stored one, and tells the peers of the runner.
 @(private)
 log_keep :: proc(h:^Hub,l:^kai.Log) -> string {
     s:=store_of(h)
+    name:[64]u8
+    if address,e:=store.ref_get(s,kai.log_namespace(l.kind),kai.log_name(l.id,&name));e==.None {
+        if _,le:=kai.log_load(s,l,address,false);le!=.None {return "the store's copy of the log does not read: see the node's disk"}
+    }
     if _,e:=kai.log_save(s,l);e!=.None {return "the store does not take the log: see the node's disk"}
     if store.commit(s)!=.None {return "the store does not commit: see the node's disk"}
-    name:[64]u8
     kai.runner_changed(runner_of(h),kai.log_namespace(l.kind),store.hex(l.id,&name))
     return ""
 }
 
 // --- approvals ---
 
+// A new approval. One a browser asks without a session (a login, a passkey
+// link) takes the place of the oldest of its address past
+// APPROVALS_PER_ADDRESS, or of the oldest of all when the table is full.
 @(private)
 approval_new :: proc(c:^Call,kind:Approval_Kind) -> ^Approval {
     h:=c.h
-    slot:=-1
+    asker:[16]u8
+    if c.conn!=nil {asker=c.conn.address}
+    anonymous:=kind!=.Entry
+    slot,mine,oldest,oldest_mine:=-1,0,-1,-1
     for &a,i in h.approvals {
         if a.used && h.now-a.created>APPROVAL_SECONDS {approval_clear(&a)}
-        if !a.used && slot<0 {slot=i}
+        if !a.used {
+            if slot<0 {slot=i}
+            continue
+        }
+        if a.kind==.Entry {continue}
+        if oldest<0 || a.serial<h.approvals[oldest].serial {oldest=i}
+        if a.asker==asker {
+            mine+=1
+            if oldest_mine<0 || a.serial<h.approvals[oldest_mine].serial {oldest_mine=i}
+        }
     }
+    if anonymous && mine>=APPROVALS_PER_ADDRESS {slot=oldest_mine}
+    if slot<0 && anonymous {slot=oldest}
     if slot<0 {
         fail(c,503,"too many approvals wait: try again in a few minutes")
         return nil
     }
     a:=&h.approvals[slot]
-    a^={used=true,kind=kind,created=h.now}
+    if a.used {approval_clear(a)}
+    h.approvals_made+=1
+    a^={used=true,kind=kind,created=h.now,asker=asker,serial=h.approvals_made}
     crypto.rand_bytes(a.id[:])
     crypto.rand_bytes(a.secret[:])
     crypto.rand_bytes(a.challenge[:])
@@ -614,7 +661,7 @@ route_approval_state :: proc(c:^Call) {
     json_response(c,&j)
     if a.kind==.Login && a.state==.Approved && !a.taken {
         a.taken=true
-        _,cookie:=session_new(c.h,a.user,{},nil)
+        _,cookie:=session_new(c.h,a.user,{},nil,a.device)
         c.response.headers=cookie
     }
 }

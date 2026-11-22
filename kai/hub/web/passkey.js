@@ -54,7 +54,7 @@ function webauthnError(error) {
 }
 
 async function assertion(challenge, credential) {
-    const publicKey = {challenge, rpId: state.node.rp_id, userVerification: 'preferred', timeout: TIMEOUT_MS}
+    const publicKey = {challenge, rpId: state.node.rp_id, userVerification: 'required', timeout: TIMEOUT_MS}
     if (credential) publicKey.allowCredentials = [{type: 'public-key', id: credential}]
     let c
     try {
@@ -95,7 +95,7 @@ async function passkeyCreate(name) {
             user: {id: crypto.getRandomValues(new Uint8Array(16)), name, displayName: name},
             challenge: crypto.getRandomValues(new Uint8Array(32)),
             pubKeyCredParams: [{type: 'public-key', alg: -8}, {type: 'public-key', alg: -7}],
-            authenticatorSelection: {residentKey: 'required', userVerification: 'preferred'},
+            authenticatorSelection: {residentKey: 'required', userVerification: 'required'},
             attestation: 'none',
             timeout: TIMEOUT_MS,
         }})

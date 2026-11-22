@@ -235,6 +235,109 @@ tls13_refuses_hostile_and_downgraded_input :: proc(t:^testing.T) {
         }
     }
 
+    // Records without application data, in a row, end the connection: KeyUpdates that ask for
+    // an answer, empty records and user_canceled alerts.
+    for kind in 0..<3 {
+        client,_:=create(client_config,.Client)
+        defer destroy(client)
+        server,_:=create(server_config,.Server)
+        defer destroy(server)
+        if !testing.expect_value(t,pump(client,server),Error.None) {continue}
+        err:Error
+        for _ in 0..<IDLE_RECORDS_MAX*4 {
+            switch kind {
+            case 0: _=key_update(client,true)
+            case 1: _=record_seal(client,.Application_Data,{})
+            case 2: _=record_seal(client,.Alert,{1,u8(Alert.User_Canceled)})
+            }
+            if err=pump(client,server);err!=nil {break}
+        }
+        testing.expectf(t,err==.Unexpected_Message && server.state==.Failed,"idle records of kind %d: %v",kind,err)
+    }
+    // Data between them keeps the connection.
+    {
+        client,_:=create(client_config,.Client)
+        defer destroy(client)
+        server,_:=create(server_config,.Server)
+        defer destroy(server)
+        if testing.expect_value(t,pump(client,server),Error.None) {
+            buffer:[4]u8
+            for _ in 0..<IDLE_RECORDS_MAX*4 {
+                _=record_seal(client,.Application_Data,{})
+                _,_=write(client,{'x'})
+                if !testing.expect_value(t,pump(client,server),Error.None) {break}
+                _,_=read(server,buffer[:])
+            }
+        }
+    }
+    // ChangeCipherSpec once, after the ClientHello.
+    {
+        client,_:=create(client_config,.Client)
+        defer destroy(client)
+        server,_:=create(server_config,.Server)
+        defer destroy(server)
+        err,_:=feed(server,pending(client))
+        testing.expect_value(t,err,Error.None)
+        err,_=feed(server,record_of(.Change_Cipher_Spec,{1}))
+        testing.expect_value(t,err,Error.None)
+        expect_failure(t,"a second ChangeCipherSpec",server,record_of(.Change_Cipher_Spec,{1}),.Unexpected_Message)
+    }
+    // A key used for as many records as its AEAD may protect is used for no more.
+    {
+        client,_:=create(client_config,.Client)
+        defer destroy(client)
+        server,_:=create(server_config,.Server)
+        defer destroy(server)
+        if testing.expect_value(t,pump(client,server),Error.None) {
+            client.write.seq=1<<24+1<<23
+            server.read.seq=client.write.seq
+            client.suite=.CHACHA20_POLY1305_SHA256 // its limit lets the client seal
+            _=record_seal(client,.Application_Data,{'x'})
+            client.suite=server.suite
+            expect_failure(t,"a record past the key's limit",server,pending(client),.Unexpected_Message)
+        }
+    }
+
+    // Extensions a server sends unasked, or in a message that may not carry them.
+    {
+        client,_:=create(client_config,.Client)
+        defer destroy(client)
+        server,_:=create(server_config,.Server)
+        defer destroy(server)
+        _,_=feed(server,pending(client))
+        _,server_hello:=first_record(server)
+        Extra :: struct {name:string,message:Message,extension:[]u8,want:Error}
+        extras:=[]Extra{
+            {"renegotiation_info in ServerHello",.Server_Hello,{0xff,0x01,0,1,0},.Unsupported_Extension},
+            {"server_name in ServerHello",.Server_Hello,{0,0,0,0},.Illegal_Parameter},
+            {"ALPN in EncryptedExtensions, not offered",.Encrypted_Extensions,{0,16,0,5,0,3,2,'h','2'},.Unsupported_Extension},
+            {"key_share in EncryptedExtensions",.Encrypted_Extensions,{0,51,0,0},.Illegal_Parameter},
+        }
+        for x in extras {
+            c,_:=create(client_config,.Client)
+            defer destroy(c)
+            m:=make([dynamic]u8,context.temp_allocator)
+            if x.message==.Server_Hello {
+                append(&m,..server_hello)
+                c.group=server.group
+                // The extensions' length is the two bytes before the end of the fixed fields.
+                at:=4+2+32+1+int(server_hello[4+2+32])+2+1
+                n:=int(m[at])<<8|int(m[at+1])+len(x.extension)
+                m[at],m[at+1]=u8(n>>8),u8(n)
+                append(&m,..x.extension)
+            } else {
+                c.state=.Wait_Encrypted_Extensions
+                append(&m,u8(Message.Encrypted_Extensions),0,0,0,0,0)
+                append(&m,..x.extension)
+                m[5]=u8(len(x.extension))
+            }
+            size:=len(m)-4
+            m[1],m[2],m[3]=u8(size>>16),u8(size>>8),u8(size)
+            err:=client_message(c,m[:])
+            testing.expectf(t,err==x.want,"%s: %v, want %v",x.name,err,x.want)
+        }
+    }
+
     // A credential without its key is never presented.
     {
         client,_:=create(client_config,.Client)

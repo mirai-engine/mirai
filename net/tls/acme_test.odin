@@ -323,8 +323,10 @@ fake_validate :: proc(f:^Fake,a:^Fake_Authorization) -> bool {
     // is what the validation reads.
     client,_:=create({host=a.domain,roots={&f.ca.certificate},alpn={"acme-tls/1"}},.Client)
     defer destroy(client)
-    if pump(client,server)!=.Bad_Certificate || protocol(server)!=ACME_ALPN || server.credential==nil {return false}
-    leaf:=&server.credential.leaf
+    if pump(client,server)!=.Bad_Certificate || protocol(server)!=ACME_ALPN {return false}
+    presented:=credential_select(server)
+    if presented==nil {return false}
+    leaf:=&presented.leaf
     if x509.verify_hostname(leaf,a.domain)!=.None {return false}
     key_authorization:=strings.concatenate({a.token,".",thumbprint(f.account_jwk)},context.temp_allocator)
     digest:[32]u8
@@ -469,6 +471,14 @@ acme_orders_a_certificate_by_tls_alpn_from_a_fake_directory :: proc(t:^testing.T
     defer x509.destroy(&next)
     testing.expect(t,next_ok && string(next.serial)!=string(leaf.serial),"the renewal is the same certificate")
     testing.expect_value(t,f.validations,4)
+
+    // A URL whose host could end the request line or add a header does not split.
+    for url in ([?]string{"https://a.test\r\nX: 1/p","https://a.test\n/p","https://a b/p","https://a@b/p","https://a.test:443\r\n/p"}) {
+        _,_,_,split:=url_split(url)
+        testing.expectf(t,!split,"%q splits",url)
+    }
+    _,_,_,split:=url_split("https://[::1]:8443/directory")
+    testing.expect(t,split,"an IPv6 host splits")
 
     // A site that does not serve the challenge fails the authorization.
     a.serve=proc(data:rawptr,credential:^Credential,serving:bool) {}

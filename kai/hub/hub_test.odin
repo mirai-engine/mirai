@@ -1,8 +1,13 @@
 package hub
 
+import "base:runtime"
+import "core:crypto/ecdsa"
+import "core:crypto/x509"
 import "core:fmt"
 import "core:math/rand"
+import "core:mem"
 import "core:net"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:testing"
@@ -143,6 +148,55 @@ hub_http_refuses_hostile_requests :: proc(t:^testing.T) {
         _,closed:=read(f,s)
         testing.expect(t,closed,"an idle connection ends")
         net.close(s)
+    }
+    // An answer taken too slowly ends its connection, however steadily it is taken; a large
+    // answer's buffer is freed once sent.
+    for slow in ([2]bool{true,false}) {
+        f.now+=1
+        s,ok:=open(t,f)
+        if !ok {continue}
+        defer net.close(s)
+        conn:^Conn
+        slot:=-1
+        for _ in 0..<50 {
+            hub_step(h)
+            for c,i in h.conns {
+                if c!=nil && c.opened==f.now {conn,slot=c,i}
+            }
+            if conn!=nil {break}
+        }
+        if !testing.expect(t,conn!=nil,"the connection is taken") {continue}
+        size:=slow?16<<20:1<<20
+        answer:=make([]u8,size)
+        defer delete(answer)
+        conn_queue(conn,answer)
+        conn.answer_at=h.now
+        start,received,closed:=f.now,0,false
+        buffer:=make([]u8,64<<10)
+        defer delete(buffer)
+        for _ in 0..<400 {
+            // The reader takes some of the answer at every step, never all it could.
+            taken:=0
+            for _ in 0..<8 {
+                hub_step(h)
+                // The hub's side ends first: the client still reads what the system holds.
+                if h.conns[slot]!=conn {
+                    closed=true
+                    break
+                }
+                n,_:=net.recv_tcp(s,buffer)
+                taken+=n
+            }
+            received+=taken
+            if closed || received==size {break}
+            if slow {f.now+=WRITE_SECONDS/4}
+        }
+        if slow {
+            testing.expectf(t,closed && received<size && f.now-start<=RESPONSE_SECONDS+WRITE_SECONDS,"a slow reader holds its answer: %d of %d bytes in %.0f s",received,size,f.now-start)
+        } else {
+            hub_step(h)
+            testing.expectf(t,received==size && cap(conn.output)<=OUTPUT_KEEP,"a sent answer keeps %d bytes",cap(conn.output))
+        }
     }
     // More connections from one address than it takes: the rest are closed at once.
     sockets:[CONNECTIONS_PER_ADDRESS+4]net.TCP_Socket
@@ -318,7 +372,43 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     testing.expectf(t,a.status==400,"a Web_Key_Add another key signed is refused: %d",a.status)
     a=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(genesis),b64(add)))
     testing.expectf(t,a.status==201 && strings.contains(a.body,hex(bob[:])),"the new user is kept: %d %s",a.status,a.body)
+    // Its first two entries again do not replace the log that grew since.
+    {
+        l:kai.Log
+        kai.log_init(&l,bob,context.temp_allocator)
+        testing.expect_value(t,kai.log_open(&f.alice.store,&l,bob,.User),kai.Error.None)
+        later:=passkey_make()
+        later_body,_:=kai.web_key_add_body(later.credential[:],passkey_cose(&later),RP)
+        _,le:=kai.log_append(&l,.Web_Key_Add,later_body,&recovery,102)
+        testing.expect_value(t,le,kai.Error.None)
+        kai.log_save(&f.alice.store,&l)
+        store.commit(&f.alice.store)
+        a=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(genesis),b64(add)),address={0=0xfd,1=1})
+        testing.expectf(t,a.status==409,"a replayed user is refused: %d %s",a.status,a.body)
+        kept:kai.Log
+        kai.log_init(&kept,bob,context.temp_allocator)
+        kai.log_open(&f.alice.store,&kept,bob,.User)
+        testing.expectf(t,len(kept.items)==3,"the user's log keeps its %d entries",len(kept.items))
+    }
     testing.expect_value(t,kai.machine_member_add(&f.alice,f.org,bob,.Writer),kai.Error.None)
+    // carol records bob's credential id with a passkey of her own: it blocks neither.
+    carol_key:=passkey_make()
+    carol_key.credential=bob_key.credential
+    {
+        carol_recovery,carol_device:=kai.identity_make(),kai.identity_make()
+        carol_dh,_:=mnet.dh_key()
+        body:=kai.body_make(kai.User_Genesis_Body{recovery=carol_recovery.key,device=carol_device.key,dh=kai.Dh_Key(carol_dh.public),proof=kai.device_proof(&carol_device,transmute([32]u8)carol_recovery.key)},transmute([]u8)string("carol"))
+        d:=kai.Draft{type=.User_Genesis,time=100,body=body}
+        carol_genesis,carol,_:=kai.entry_sign(&d,&carol_recovery,context.temp_allocator)
+        key_body,_:=kai.web_key_add_body(carol_key.credential[:],passkey_cose(&carol_key),RP)
+        d={type=.Web_Key_Add,log_id=carol,parents={carol},time=101,body=key_body}
+        carol_add,_,_:=kai.entry_sign(&d,&carol_recovery,context.temp_allocator)
+        a=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(carol_genesis),b64(carol_add)),address={0=0xfd,1=2})
+        testing.expectf(t,a.status==201,"carol is kept: %d %s",a.status,a.body)
+        testing.expect_value(t,kai.machine_member_add(&f.alice,f.org,carol,.Reader),kai.Error.None)
+        who:=call(f,"GET","/api/session",cookie=sign_in(t,f,&carol_key))
+        testing.expectf(t,strings.contains(who.body,hex(carol[:])),"carol signs in with her passkey: %s",who.body)
+    }
 
     // It signs in; a challenge counts once, and a forged assertion is refused.
     cookie:=sign_in(t,f,&bob_key)
@@ -412,6 +502,7 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     // A browser without a passkey: alice's second device approves its login.
     Approval_Answer :: struct {id,secret,link,command:string}
     ap:Approval_Answer
+    approved_cookie:string
     if json_read(t,call(f,"POST","/api/approvals",`{"kind":"login"}`),&ap) {
         testing.expect(t,strings.has_prefix(ap.link,"kai://approve?") && strings.has_prefix(ap.command,"mirai kai web approve "),"a link and the command that opens it")
         origin,id,ok:=link_parse(ap.link)
@@ -435,6 +526,7 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         testing.expect(t,state.status==403 && state.cookie=="","another secret gets nothing")
         state=call(f,"POST",fmt.tprintf("/api/approvals/%s/state",id),fmt.tprintf(`{{"secret":"%s"}}`,ap.secret))
         testing.expect(t,state.cookie!="","the browser's session")
+        approved_cookie=state.cookie
         who:=call(f,"GET","/api/session",cookie=state.cookie)
         testing.expect(t,strings.contains(who.body,hex(f.alice.user[:])) && strings.contains(who.body,"\"passkey\":null"),"it is alice's, without a passkey")
         again:=call(f,"POST",fmt.tprintf("/api/approvals/%s/state",id),fmt.tprintf(`{{"secret":"%s"}}`,ap.secret))
@@ -469,6 +561,15 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     if json_read(t,link,&ap) {
         ask:Approval_Ask
         json_read(t,call(f,"GET",fmt.tprintf("/api/approvals/%s",ap.id)),&ask)
+        // What the device would sign is shown before it signs anything.
+        before:kai.Log
+        kai.log_init(&before,f.alice.user,context.temp_allocator)
+        kai.log_open(&f.second.store,&before,f.alice.user,.User)
+        shown,summary,shown_why:=approve_answer(&f.second,&ask,f.hub.origin,false)
+        after:kai.Log
+        kai.log_init(&after,f.alice.user,context.temp_allocator)
+        kai.log_open(&f.second.store,&after,f.alice.user,.User)
+        testing.expectf(t,shown==nil && summary!="" && shown_why=="" && len(after.items)==len(before.items),"asking what to approve signs nothing: %q %s",summary,shown_why)
         body,_,why:=approve_answer(&f.second,&ask,f.hub.origin)
         testing.expectf(t,why=="",why)
         b:=call(f,"POST",fmt.tprintf("/api/approvals/%s",ap.id),string(body))
@@ -477,6 +578,43 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         web_key:=kai.web_key_id(passkey_cose(&alice_key),RP)
         testing.expect(t,strings.contains(who.body,hex(f.alice.user[:])) && strings.contains(who.body,fmt.tprintf("\"passkey\":\"%s\"",hex(web_key[:]))),"the new passkey signs alice in, as the author its entries name")
     }
+
+    // A README a scope takes is not shown.
+    testing.expect(t,strings.contains(call(f,"GET",fmt.tprintf("/api/projects/%s",P)).body,"Welcome to the site"),"the README is shown")
+    _,se:=kai.machine_scope_add(&f.alice,f.org,f.public,{"README.md"},.Writer,false)
+    testing.expect_value(t,se,kai.Error.None)
+    testing.expect(t,!strings.contains(call(f,"GET",fmt.tprintf("/api/projects/%s",P)).body,"Welcome to the site"),"a scoped README is shown")
+
+    // A session ends with the revocation of its passkey, or of the device that approved it.
+    testing.expect(t,call(f,"GET","/api/session",cookie=cookie).status==200 && call(f,"GET","/api/session",cookie=approved_cookie).status==200,"both sessions read")
+    {
+        l:kai.Log
+        kai.log_init(&l,bob,context.temp_allocator)
+        testing.expect_value(t,kai.log_open(&f.alice.store,&l,bob,.User),kai.Error.None)
+        _,re:=kai.log_append(&l,.Device_Revoke,kai.revoke_body(kai.web_key_id(passkey_cose(&bob_key),RP),{}),&recovery,200)
+        testing.expect_value(t,re,kai.Error.None)
+        testing.expect_value(t,kai.agent_log_add(&f.runner.orgs[0].agent,&l),kai.Error.None)
+    }
+    testing.expect_value(t,call(f,"GET","/api/session",cookie=cookie).status,401)
+    testing.expect_value(t,kai.machine_device_revoke(&f.alice,f.second.identity.key),kai.Error.None)
+    testing.expect_value(t,call(f,"GET","/api/session",cookie=approved_cookie).status,401)
+
+    // Logins asked without a session: an address holds at most APPROVALS_PER_ADDRESS, and a
+    // full table makes room by the oldest, so a browser always gets one.
+    for i in 0..<APPROVALS_MAX+8 {
+        a=call(f,"POST","/api/approvals",`{"kind":"login"}`,address={0=0xfd,1=3,2=u8(i)})
+        testing.expectf(t,a.status==201,"login approval %d: %d %s",i,a.status,a.body)
+    }
+    own:=[16]u8{0=0xfd,1=4}
+    for _ in 0..<APPROVALS_PER_ADDRESS*3 {
+        a=call(f,"POST","/api/approvals",`{"kind":"login"}`,address=own)
+        testing.expect_value(t,a.status,201)
+    }
+    held:=0
+    for x in f.hub.approvals {
+        if x.used && x.asker==own {held+=1}
+    }
+    testing.expect_value(t,held,APPROVALS_PER_ADDRESS)
 }
 
 LIMITS_CREATE_REFILL :: 700.0
@@ -564,4 +702,151 @@ hub_hands_the_relay_over_tcp_to_the_runner :: proc(t:^testing.T) {
         time.sleep(time.Millisecond)
     }
     testing.expectf(t,adopted==1 && held==1,"the runner takes the relay's connection and the hub keeps the TLS one: %d %d",adopted,held)
+}
+
+// The hub presents only credentials alive at each ClientHello: a connection
+// made while ACME's challenge was served gets nothing for acme-tls/1 once it
+// ends, and the copy is wiped. The chain it keeps loads back whole, and no
+// content of its files makes the loader do more than refuse. Over TLS, only
+// a request's progress keeps a connection: KeyUpdates do not.
+@(test)
+hub_certificates_live_only_while_served_and_load_back :: proc(t:^testing.T) {
+    f:=new(Fixture)
+    defer free(f)
+    defer fixture_close(f)
+    if !fixture_open(t,f,"kai-hub-certs") {return}
+    h:=&f.hub
+    now:=time.now()
+    keys:[4]ecdsa.Private_Key // root, intermediate, leaf, challenge
+    publics:[4][65]u8
+    for &k,i in keys {
+        testing.expect(t,ecdsa.private_key_generate(&k,.SECP256R1))
+        ecdsa.private_key_public_bytes(&k,publics[i][:])
+    }
+    defer for &k in keys {ecdsa.private_key_clear(&k)}
+    from,to:=time.time_add(now,-time.Hour),time.time_add(now,90*24*time.Hour)
+    root_der,e0:=tls.certificate_make({names={"Kai Root"},public_key=publics[0][:],not_before=from,not_after=to,issuer=&keys[0],authority=true},context.temp_allocator)
+    middle_der,e1:=tls.certificate_make({names={"Kai Middle"},public_key=publics[1][:],not_before=from,not_after=to,issuer=&keys[0],issuer_name="Kai Root",authority=true},context.temp_allocator)
+    leaf_der,e2:=tls.certificate_make({names={RP},public_key=publics[2][:],not_before=from,not_after=to,issuer=&keys[1],issuer_name="Kai Middle"},context.temp_allocator)
+    challenge_der,e3:=tls.certificate_make({names={RP},public_key=publics[3][:],not_before=from,not_after=to,issuer=&keys[3]},context.temp_allocator)
+    if !testing.expect(t,e0==nil && e1==nil && e2==nil && e3==nil,"the test certificates") {return}
+    root,re:=x509.parse(root_der,context.temp_allocator)
+    challenge_root,ce:=x509.parse(challenge_der,context.temp_allocator)
+    if !testing.expect(t,re==.None && ce==.None) {return}
+
+    // ACME offers its challenge, a connection opens, ACME withdraws and frees it.
+    {
+        chain:=[][]u8{challenge_der}
+        challenge,ie:=tls.credential_init(chain,&keys[3],ALPN_ACME)
+        if !testing.expect_value(t,ie,tls.Error.None) {return}
+        acme_serve(h,&challenge,true)
+        testing.expect(t,h.certs.serving,"the hub serves the challenge")
+        server,_:=tls.create(certs_config(h),.Server)
+        defer tls.destroy(server)
+        acme_serve(h,&challenge,false)
+        tls.credential_destroy(&challenge)
+        testing.expect(t,!h.certs.serving && mem.check_zero(mem.ptr_to_bytes(&h.certs.list)) && mem.check_zero(mem.ptr_to_bytes(&h.certs.challenge)),"the withdrawn challenge is wiped")
+        client,_:=tls.create({host=RP,roots={&challenge_root},alpn={ALPN_ACME}},.Client)
+        defer tls.destroy(client)
+        _,err:=tls.receive(server,tls.pending(client))
+        testing.expectf(t,err==.Unrecognized_Name,"a connection made while the challenge was served presents it after: %v",err)
+    }
+
+    // A chain of three, kept and loaded back.
+    chain:=[][]u8{leaf_der,middle_der,root_der}
+    testing.expect(t,certs_save(h,&keys[2],chain),"the chain is kept")
+    testing.expect(t,certs_load(h),"the kept chain loads")
+    testing.expect(t,h.certs.has && len(h.certs.chain)==3 && string(h.certs.chain[1])==string(middle_der) && string(h.certs.chain[2])==string(root_der),"the chain loads whole")
+    if info,se:=os.stat(store_file(h,WEB_KEY_FILE),context.temp_allocator);testing.expect(t,se==nil) {
+        testing.expect(t,info.mode&{.Read_Group,.Write_Group,.Read_Other,.Write_Other}=={},"the key is the owner's only")
+    }
+    // Whatever the files hold, the loader takes it or refuses it.
+    pem_text,_:=os.read_entire_file(store_file(h,WEB_CHAIN_FILE),context.temp_allocator)
+    scalar:[32]u8
+    ecdsa.private_key_bytes(&keys[2],scalar[:])
+    Content :: struct {name,chain:string,key:[]u8,loads:bool}
+    contents:=[]Content{
+        {"empty","",scalar[:],false},
+        {"blank lines","\n \n\t\n",scalar[:],false},
+        {"no PEM","garbage",scalar[:],false},
+        {"the chain and white space after it",strings.concatenate({string(pem_text),"\n  \n\t"},context.temp_allocator),scalar[:],true},
+        {"the chain cut",string(pem_text[:len(pem_text)/2]),scalar[:],true},
+        {"a block that is no certificate","-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",scalar[:],false},
+        {"a block of another label","-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",scalar[:],false},
+        {"too many certificates",strings.repeat(string(pem_text),3,context.temp_allocator),scalar[:],false},
+        {"a short key",string(pem_text),scalar[:31],false},
+        {"another key",string(pem_text),publics[0][1:33],false},
+    }
+    for c in contents {
+        testing.expect(t,secret_write(store_file(h,WEB_CHAIN_FILE),transmute([]u8)c.chain) && secret_write(store_file(h,WEB_KEY_FILE),c.key))
+        testing.expectf(t,certs_load(h)==c.loads,"%s: loads %v",c.name,!c.loads)
+    }
+    noise:[2048]u8
+    for _ in 0..<200 {
+        runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+        n:=rand.int_max(len(noise))
+        _=rand.read(noise[:n])
+        if rand.int_max(2)==0 {copy(noise[:],"-----BEGIN CERTIFICATE-----\n")}
+        secret_write(store_file(h,WEB_CHAIN_FILE),noise[:n])
+        certs_load(h)
+    }
+
+    // A hub on TLS: a connection that only sends KeyUpdates is idle.
+    credential,ie:=tls.credential_init(chain[:2],&keys[2])
+    if !testing.expect_value(t,ie,tls.Error.None) {return}
+    defer tls.credential_destroy(&credential)
+    credentials:=[]tls.Credential{credential}
+    secure:=new(Hub)
+    defer free(secure)
+    if why:=hub_start(secure,{runner=&f.runner,rp_id=RP,https_port=-1,https_loopback=true,credentials=credentials,clock={&f.now,fixture_clock}});!testing.expectf(t,why=="","the TLS hub starts: %s",why) {return}
+    defer hub_stop(secure)
+    socket,de:=net.dial_tcp(net.Endpoint{net.IP4_Loopback,secure.https_port})
+    if !testing.expect(t,de==nil) {return}
+    defer net.close(socket)
+    net.set_blocking(socket,false)
+    client,_:=tls.create({host=RP,roots={&root}},.Client)
+    defer tls.destroy(client)
+    // Steps the hub and the client; whether the hub closed the connection.
+    exchange :: proc(h:^Hub,socket:net.TCP_Socket,client:^tls.Conn) -> (closed:bool) {
+        buffer:[4096]u8
+        for _ in 0..<50 {
+            hub_step(h)
+            if p:=tls.pending(client);len(p)>0 {
+                n,_:=net.send_tcp(socket,p)
+                tls.sent(client,n)
+            }
+            n,e:=net.recv_tcp(socket,buffer[:])
+            if e==nil && n==0 {return true}
+            if e!=nil && e!=.Would_Block {return true}
+            for at:=0;at<n; {
+                taken,te:=tls.receive(client,buffer[at:n])
+                at+=taken
+                if te!=nil || taken==0 {break}
+            }
+        }
+        return false
+    }
+    exchange(secure,socket,client)
+    if !testing.expect(t,tls.connected(client),"the client connects") {return}
+    closed:=false
+    for _ in 0..<3 {
+        f.now+=IDLE_SECONDS*0.6
+        tls.key_update(client,false)
+        if closed=exchange(secure,socket,client);closed {break}
+    }
+    testing.expect(t,closed,"KeyUpdates keep an idle connection")
+
+    // The peer's close_notify ends the connection at once.
+    {
+        other,oe:=net.dial_tcp(net.Endpoint{net.IP4_Loopback,secure.https_port})
+        if !testing.expect(t,oe==nil) {return}
+        defer net.close(other)
+        net.set_blocking(other,false)
+        peer,_:=tls.create({host=RP,roots={&root}},.Client)
+        defer tls.destroy(peer)
+        exchange(secure,other,peer)
+        testing.expect(t,tls.connected(peer),"the second client connects")
+        tls.close(peer)
+        testing.expect(t,exchange(secure,other,peer),"a close_notify leaves the connection open")
+    }
 }

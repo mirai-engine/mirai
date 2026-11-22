@@ -31,6 +31,7 @@ HEAD_SECONDS :: 10.0     // a request's head must arrive whole within this
 BODY_SECONDS :: 30.0     // and its body
 IDLE_SECONDS :: 60.0     // a connection between requests
 WRITE_SECONDS :: 60.0    // an answer the peer does not take
+RESPONSE_SECONDS :: 180.0 // an answer must be taken whole within this
 HANDSHAKE_SECONDS :: 10.0
 SESSIONS_MAX :: 1024
 SESSION_SECONDS :: 12*3600.0
@@ -38,6 +39,7 @@ SESSION_IDLE_SECONDS :: 2*3600.0
 CHALLENGES_MAX :: 256
 CHALLENGE_SECONDS :: 120.0
 APPROVALS_MAX :: 64
+APPROVALS_PER_ADDRESS :: 4 // waiting approvals one address asks without a session
 APPROVAL_SECONDS :: 600.0
 RATES_MAX :: 4096
 COOKIE :: "__Host-kai"
@@ -72,6 +74,7 @@ Hub :: struct {
     sessions:[SESSIONS_MAX]Session,
     challenges:[CHALLENGES_MAX]Challenge,
     approvals:[APPROVALS_MAX]Approval,
+    approvals_made:u64,
     rates:[]Rate,
     graphs:[dynamic]Project_Graph,
     certs:Certs,
@@ -88,6 +91,7 @@ Session :: struct {
     token:[32]u8,
     user:kai.Log_Id,
     web_key:kai.Key,   // the passkey that started it; zero when a device approved it
+    device:kai.Key,    // the device that approved it
     credential:[255]u8,
     credential_len:int,
     created,seen:f64,

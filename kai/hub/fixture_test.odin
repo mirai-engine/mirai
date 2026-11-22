@@ -182,8 +182,9 @@ fixture_close :: proc(f:^Fixture) {
 
 Answer :: struct {status:int,body:string,content_type:string,headers:string,cookie:string}
 
-// One request as a browser sends it, answered by the hub's routes.
-call :: proc(f:^Fixture,method,path:string,body:="",cookie:="") -> Answer {
+// One request as a browser sends it, answered by the hub's routes; from
+// address when one is given.
+call :: proc(f:^Fixture,method,path:string,body:="",cookie:="",address:=[16]u8{}) -> Answer {
     b:=strings.builder_make(context.temp_allocator)
     fmt.sbprintf(&b,"%s %s HTTP/1.1\r\nHost: %s\r\n",method,path,RP)
     if cookie!="" {fmt.sbprintf(&b,"Cookie: %s\r\n",cookie)}
@@ -192,7 +193,12 @@ call :: proc(f:^Fixture,method,path:string,body:="",cookie:="") -> Answer {
     p:=request_parse(b.buf[:])
     if p.status!=200 {return {status=p.status}}
     f.hub.now=f.now
-    r:=dispatch(&f.hub,nil,&p.request)
+    conn:^Conn
+    if address!={} {
+        conn=new(Conn,context.temp_allocator)
+        conn.address=address
+    }
+    r:=dispatch(&f.hub,conn,&p.request)
     a:=Answer{status=r.status,body=string(r.body),content_type=r.content_type,headers=r.headers}
     if at:=strings.index(r.headers,COOKIE+"=");at>=0 {
         rest:=r.headers[at:]
@@ -260,14 +266,14 @@ passkey_assert :: proc(p:^Test_Passkey,challenge:[]u8,origin:=ORIGIN,rp:=RP) -> 
     return fmt.tprintf(`{{"credential":"%s","authenticator_data":"%s","client_data_json":"%s","signature":"%s"}}`,b64(p.credential[:]),b64(data),b64(transmute([]u8)client),b64(signature))
 }
 
-// The same assertion with a byte in the middle of its signature changed: a
-// digit whose bits all count, unlike the last one's.
+// The same assertion with its signature's last byte changed: in the bytes,
+// since a base64 character can differ only in bits the decoding drops.
 passkey_forge :: proc(assertion:string) -> string {
     at:=strings.index(assertion,`"signature":"`)+len(`"signature":"`)
-    out:=transmute([]u8)strings.clone(assertion,context.temp_allocator)
-    middle:=at+strings.index_byte(string(out[at:]),'"')/2
-    out[middle]=out[middle]=='A'?'B':'A'
-    return string(out)
+    end:=strings.index_byte(assertion[at:],'"')+at
+    signature:=slice.clone(unb64(assertion[at:end]),context.temp_allocator)
+    signature[len(signature)-1]~=1
+    return strings.concatenate({assertion[:at],b64(signature),assertion[end:]},context.temp_allocator)
 }
 
 // Signs in with p: the session's cookie, or "".

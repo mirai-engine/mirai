@@ -2,6 +2,7 @@ package tls
 
 import "core:crypto/x509"
 import "core:math/rand"
+import "core:mem"
 import "core:testing"
 
 // A CA and the leaves it issues: a.test and b.test for any protocol, and a credential that
@@ -114,9 +115,7 @@ tls13_handshake_and_records_round_trip_in_memory :: proc(t:^testing.T) {
         testing.expectf(t,client.retried==c.retry && server.retried==c.retry,"%s: retry %v",c.name,server.retried)
         testing.expectf(t,protocol(client)==c.alpn && protocol(server)==c.alpn,"%s: protocol %q",c.name,protocol(server))
         testing.expectf(t,server_name(server)==c.host,"%s: server name %q",c.name,server_name(server))
-        if c.alpn=="acme-tls/1" {
-            testing.expectf(t,server.credential==&server_config.credentials[0],"%s: not the challenge",c.name)
-        }
+        testing.expectf(t,mem.check_zero(mem.ptr_to_bytes(&client.key_share)) && mem.check_zero(mem.ptr_to_bytes(&server.key_share)),"%s: a key share outlives the key exchange",c.name)
         data:=make([]u8,c.size)
         defer delete(data)
         for &b in data {b=u8(rand.uint32())}

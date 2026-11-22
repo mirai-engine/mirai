@@ -132,6 +132,12 @@ url_split :: proc(url:string) -> (host:string,port:int,path:string,ok:bool) {
         port=strconv.parse_int(authority[colon+1:],10) or_return
     }
     if host=="" || port<=0 || port>0xffff {return}
+    for b in transmute([]u8)host {
+        switch b {
+        case 'a'..='z','A'..='Z','0'..='9','-','.',':','_':
+        case: return
+        }
+    }
     for b in transmute([]u8)path {
         if b<=' ' || b>=0x7f {return}
     }

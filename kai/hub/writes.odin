@@ -155,7 +155,12 @@ route_draft :: proc(c:^Call) {
     if !body_parse(c,&b) {return}
     d,ok:=draft_build(c,&b)
     if !ok {return}
-    p,found:=passkey_find(c.h,s.credential[:s.credential_len])
+    u:=user_fold_of(c.h,s.user)
+    if u==nil {
+        fail(c,401,"the session's user is no longer on this node: sign in again")
+        return
+    }
+    p,found:=passkey_of(c.h,u,s.credential[:s.credential_len])
     if !found || p.key!=s.web_key {
         fail(c,401,"the session's passkey is no longer its user's: sign in again")
         return
@@ -203,8 +208,10 @@ route_entry_append :: proc(c:^Call) {
         fail(c,400,"unsigned is base64url of the draft's bytes")
         return
     }
-    p,found:=passkey_find(c.h,credential)
-    if !found || p.user.log.id!=s.user {
+    p:Passkey
+    found:=false
+    if u:=user_fold_of(c.h,s.user);u!=nil {p,found=passkey_of(c.h,u,credential)}
+    if !found {
         fail(c,401,"the passkey is not one of the session's user")
         return
     }
@@ -213,7 +220,7 @@ route_entry_append :: proc(c:^Call) {
         if e==.Unauthorized {
             key,_:=kai.cose_key_parse(p.cose)
             challenge:=store.address_of_bytes(unsigned)
-            fail(c,401,kai.webauthn_failure_text(kai.webauthn_verify(&key,c.h.desc.rp_id,challenge[:],&a)))
+            fail(c,401,kai.webauthn_failure_text(kai.webauthn_verify(&key,c.h.desc.rp_id,challenge[:],&a,true)))
         } else {
             fail(c,400,"the unsigned bytes are not an entry by this passkey: take them from a draft, unchanged")
         }

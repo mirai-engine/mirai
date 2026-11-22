@@ -411,6 +411,7 @@ readme_write :: proc(j:^Json,v:^Project_View,s:^store.Store) {
         return
     }
     for name in ([?]string{"README.md","README","readme.md","README.txt","Readme.md"}) {
+        if scoped(v,name) {continue}
         entry,found,_:=kai.tree_file(s,ch.tree,name)
         if !found {continue}
         o,oe:=store.object_open(s,entry.address)
@@ -800,6 +801,16 @@ route_diff :: proc(c:^Call) {
         fail(c,404,"no such file in these revisions")
         return
     }
+    lines:=make([dynamic]diff.Line,context.temp_allocator)
+    stats:diff.Stats
+    if !binary && !too_large {
+        de:diff.Error
+        stats,de=diff.lines(texts[0],texts[1],&lines,context.temp_allocator)
+        if de!=.None {
+            too_large=true
+            clear(&lines)
+        }
+    }
     j:=json_make()
     json_object(&j)
     json_member_string(&j,"path",path)
@@ -811,13 +822,6 @@ route_diff :: proc(c:^Call) {
         json_object(&j)
         json_member_int(&j,"size",size)
         json_end_object(&j)
-    }
-    lines:=make([dynamic]diff.Line,context.temp_allocator)
-    stats:diff.Stats
-    if !binary && !too_large {
-        de:diff.Error
-        stats,de=diff.lines(texts[0],texts[1],&lines,context.temp_allocator)
-        if de!=.None {too_large=true}
     }
     json_member_int(&j,"added",i64(stats.added))
     json_member_int(&j,"removed",i64(stats.removed))
