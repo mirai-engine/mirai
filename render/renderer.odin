@@ -344,6 +344,7 @@ Pipeline_Id :: enum {
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
 	Depth_Probe, Ui_Particles,
 	Points,
+	Overlay_Alpha, Overlay_Additive, Overlay_Multiply, // the layers of an instance by their blend (overlays.odin)
 }
 
 // A pipeline of a stage that traces rays, or of one with constants: the
@@ -617,8 +618,6 @@ Renderer :: struct {
 	view_postprocesses:[VIEW_CAPACITY]Postprocess_List, // of each local view, by Camera.slot - 1
 	programs:        Program_Catalog, // of the shaders in use, read when first asked for
 	time,previous_time,delta_time:f32,
-	overlay_pipelines:[asset.Overlay_Blend]rhi.Pipeline,
-	overlay_hw_pipelines:[asset.Overlay_Blend]rhi.Pipeline,
 	blit_format:     rhi.Format,
 	linear_sampler:  rhi.Sampler,
 	point_sampler:   rhi.Sampler,
@@ -853,8 +852,6 @@ renderer_destroy :: proc(r: ^Renderer) {
 	pipelines_destroy(r)
 	program_graphics_destroy(r)
 	stage_pipelines_destroy(r)
-	for p in r.overlay_pipelines {if p!=0 {rhi.pipeline_destroy(d,p)}}
-	for p in r.overlay_hw_pipelines {if p!=0 {rhi.pipeline_destroy(d,p)}}
 	for b in r.ui_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.ui_shape_buffers {if b!=0 {rhi.buffer_destroy(d,b)}}
 	for b in r.debug_buffers {if b != 0 {rhi.buffer_destroy(d, b)}}
@@ -940,7 +937,7 @@ Pipeline_Build :: struct {
 
 @(private)
 Pipeline_List :: struct {
-	items: [2 * (len(Pipeline_Id) + len(asset.Overlay_Blend)) + PIPELINE_VARIANTS]Pipeline_Make, // a stage that traces rays lists one for each tracer; create_pipelines adds variants
+	items: [2 * len(Pipeline_Id) + PIPELINE_VARIANTS]Pipeline_Make, // a stage that traces rays lists one for each tracer; create_pipelines adds variants
 	count: int,
 }
 
