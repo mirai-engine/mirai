@@ -170,6 +170,7 @@ share_join :: proc(t:^testing.T,n:^Share_Net,first:=0,folder:="") -> bool {
     context.temp_allocator=mem.arena_allocator(&n.frame)
     if !share_start_host(t,n,first) {return false}
     code:=wire.invite_encode(wire.invite_make(collab_state(&n.host.s).invite,COLLAB_PORT),context.temp_allocator)
+    testing.expect(t,!collab_transferring(&n.host.s),"a host without guests transfers nothing")
     error:=collab_join(&n.guest.s,code,"Ben",folder,at=wire.address_memory(first),
         transport=wire.sim_endpoint_transport(&n.sim,first+1))
     if !testing.expect_value(t,error,Collab_Error.None) {return false}
@@ -264,6 +265,13 @@ a_guest_with_an_empty_folder_joins_with_the_hosts_files_and_packages_then_its_sc
     testing.expect(t,api_entity(edited_world(&guest.s),crate)!=core.NONE,"the guest has the host's scene")
     state:=share.join_progress_read(&st.join.progress)
     testing.expect_value(t,state.phase,share.Join_Phase.Done)
+    // The chunks the host served keep its frames at full pace until the transfer is over;
+    // then both editors may slow down behind other windows again.
+    n.now+=0.1
+    share_step(n)
+    testing.expect(t,collab_transferring(&host.s),"the host serves the guest's join")
+    for _ in 0..<3 {n.now+=1;share_step(n)}
+    testing.expect(t,!collab_transferring(&host.s) && !collab_transferring(&guest.s),"an idle session transfers nothing")
 }
 
 @(test)

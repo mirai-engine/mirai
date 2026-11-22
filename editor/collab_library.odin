@@ -61,6 +61,7 @@ Collab_Take :: struct {
     assets:[]base.Asset_Id,
     error:string,
     received:u64, // of the node when it began
+    cancelled:bool, // on the editor's thread: nothing is added once it ends
     arena:mem.Dynamic_Arena,
     allocator:runtime.Allocator,
 }
@@ -231,6 +232,13 @@ collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Packa
     return ""
 }
 
+// Cancels the take that runs: the project does not change when it ends.
+@(private)
+collab_take_cancel :: proc(st:^Collab_State) {
+    if st==nil || st.take==nil || st.take.thread==nil {return}
+    st.take.cancelled=true
+}
+
 // The end of a take, on the editor's thread: added as a package of this machine.
 @(private)
 collab_take_update :: proc(s:^Session,st:^Collab_State) {
@@ -240,6 +248,7 @@ collab_take_update :: proc(s:^Session,st:^Collab_State) {
     thread.destroy(t.thread)
     t.thread=nil
     if st.libraries!=nil {st.libraries.at=-COLLAB_LIBRARY_SECONDS}
+    if t.cancelled {return}
     name:=base.text_get(t.name[:])
     if t.error!="" {
         notify(s,fmt.tprintf("%s was not added: %s",name,t.error))
@@ -415,6 +424,7 @@ api_packages_peers_answer :: proc(s:^Session,call:^api.Call) {
         done:=sync.atomic_load(&t.done)
         r.adding={name=strings.clone(base.text_get(t.name[:]),a),adding=!done,received=share.node_totals(st.node).received-t.received}
         if done {r.adding.error=strings.clone(t.error,a)}
+        if t.cancelled {r.adding.error="cancelled in the editor; the project did not change"}
     }
 }
 

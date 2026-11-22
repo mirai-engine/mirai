@@ -652,6 +652,22 @@ collab_update :: proc(s:^Session) {
     }
 }
 
+COLLAB_MOVING_RATE :: 1024.0 // chunk bytes per second with the peers from which the node transfers
+
+// Whether the session moves bytes with peers: a join or a package being
+// taken, or chunks the node serves or receives. The node steps once a frame,
+// so meanwhile the editor's frames are not slowed behind other windows or
+// while minimized; once the transfer ends they are again.
+@(private)
+collab_transferring :: proc(s:^Session) -> bool {
+    st:=collab_state(s)
+    if st==nil || st.node==nil || st.phase==.Ended {return false}
+    if t:=st.take;t!=nil && t.thread!=nil {return true}
+    if j:=st.join;j!=nil && !j.finished {return true}
+    totals:=share.node_totals(st.node)
+    return totals.connected>0 && totals.send_rate+totals.receive_rate>=COLLAB_MOVING_RATE
+}
+
 @(private)
 collab_snapshot_loading :: proc(st:^Collab_State) -> bool {
     incoming:=st.peers[0].incoming[:]

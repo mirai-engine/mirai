@@ -558,8 +558,9 @@ start_run :: proc(s:^Session) {
 advance :: proc(s:^Session) -> bool {
     app:=s.app
     if api_idle(s) {return !s.quit}
-    // Behind other windows, out of Play and without an agent driving it, the editor runs slow.
-    background:=u32(0) if playing(s) || api_active(s) else EDITOR_BACKGROUND_FPS
+    // Behind other windows, out of Play and without an agent driving it, the editor runs slow;
+    // never while it transfers with peers, minimized or not.
+    background:=platform.Background{limit=0 if playing(s) || api_active(s) else EDITOR_BACKGROUND_FPS,awake=collab_transferring(s)}
     if app.platform.background!=background {platform.set_background(app.platform,background)}
     if !host.app_frame_begin(app) {
         app.quit=false

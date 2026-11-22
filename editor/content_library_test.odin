@@ -3,6 +3,7 @@ package editor
 import "core:fmt"
 import "core:slice"
 import "core:testing"
+import "core:thread"
 import "mirai:asset"
 import "mirai:cook/share"
 import "mirai:core"
@@ -210,4 +211,91 @@ the_browser_asks_peers_only_for_the_thumbnails_of_visible_cards :: proc(t:^testi
         asked_last||=want.key==last
     }
     testing.expect(t,asked_first && !asked_last,"the first card is in sight, the last is not")
+}
+
+@(test)
+fetched_bytes_read_as_done_over_total_in_the_unit_of_the_total :: proc(t:^testing.T) {
+    cases:=[]struct{done,total:u64,text:string}{
+        {0,512,"0 / 512 B"},
+        {12<<10,40<<10,"12 / 40 KB"},
+        {5<<19,8<<20,"2.5 / 8.0 MB"},
+        {128<<20,512<<20,"128 / 512 MB"},
+        {1288490188,3650722201,"1.2 / 3.4 GB"},
+        // What the node received for others too never reads past the total.
+        {900<<20,512<<20,"512 / 512 MB"},
+    }
+    for c in cases {testing.expect_value(t,content_bytes_progress(c.done,c.total),c.text)}
+}
+
+// The rows of a peer's library end in one column: the add of a folder and of
+// a package, then the ring of a fetch in the place of its add, whose click
+// cancels it and gives the add back.
+@(test)
+library_rows_end_in_one_column_and_a_fetch_cancels_from_its_ring :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !prefab_fixture_init(t,f,"library-fetch") {return}
+    defer prefab_fixture_destroy(f)
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    f.s.gui.ctx=&ctx
+    c:=CONTENT_DEFAULT
+    defer core.value_free(&c,type_info_of(Content))
+    f.s.content=&c
+    f.s.headless=true
+    folder:="Crystal Cave"
+    public:=[]share.Peer_Package{
+        {id={1,1},name="scene",catalog_path=folder,bytes=512<<20},
+        {id={1,2},name="lamp",catalog_path=folder,bytes=512<<20},
+    }
+    // Listed once the registry settled: what content_libraries_update would read is what is set.
+    content_test_still(&f.s)
+    c.libraries.roots,c.libraries.packages=content_library_listing(nil,[]Content_Peer_Listing{{peer=1,name="Ana",list=public}},false,context.temp_allocator)
+    c.libraries.ready,c.libraries.key=true,{f.assets.registry.revision,0,c.library_revision,0}
+    c.revision+=1
+
+    group:=content_library_folder_group(0,folder)
+    row:=ui.id_derive(&ctx,100,"content_folder",int(group))
+    folder_add:=ui.id_derive(&ctx,row,"content_library_folder_add",int(content_library_folder_group(2,folder)))
+    key:=base.hash_combine(content_library_group(0),base.hash_combine(1,2))
+    package_add:=ui.id_derive(&ctx,100,"content_package_add",int(key))
+    ring:=ui.id_derive(&ctx,100,"content_package_fetch",int(key))
+    content_test_still(&f.s)
+    folder_rect,folder_found:=ui.widget_rect(&ctx,folder_add)
+    package_rect,package_found:=ui.widget_rect(&ctx,package_add)
+    if !testing.expect(t,folder_found && package_found) {return}
+    testing.expect_value(t,package_rect.x+package_rect.w,folder_rect.x+folder_rect.w)
+    testing.expect_value(t,package_rect.w,folder_rect.w)
+
+    node:=new(share.Node);defer free(node)
+    st:=new(Collab_State);defer free(st)
+    st.node=node
+    take:=new(Collab_Take);defer free(take)
+    take.id=public[1].id
+    take.thread=thread.create_and_start(proc() {})
+    st.take=take
+    collab_of(&f.s).state=st
+    defer collab_of(&f.s).state=nil
+    content_test_still(&f.s)
+    p:^Content_Package
+    for &q in c.libraries.packages {if q.id==take.id {p=&q}}
+    if !testing.expect(t,p!=nil) {return}
+    text,_,_:=content_package_state(&f.s,p)
+    testing.expect_value(t,text,"0 / 512 MB")
+    ring_rect,ring_found:=ui.widget_rect(&ctx,ring)
+    _,add_found:=ui.widget_rect(&ctx,package_add)
+    testing.expect(t,ring_found && !add_found,"the ring takes the place of the add")
+    testing.expect_value(t,ring_rect,package_rect)
+
+    content_test_click(t,&f.s,ring)
+    testing.expect(t,take.cancelled,"the click on the ring cancels the fetch")
+    content_test_still(&f.s)
+    _,add_found=ui.widget_rect(&ctx,package_add)
+    testing.expect(t,add_found,"a cancelled fetch gives its add back")
+    text,_,_=content_package_state(&f.s,p)
+    testing.expect_value(t,text,"512.0 MiB to fetch")
+    // Its end adds nothing and tells nothing.
+    take.done=true
+    collab_take_update(&f.s,st)
+    testing.expect(t,take.thread==nil && take.error=="")
 }

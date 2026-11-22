@@ -90,9 +90,25 @@ frame_clock_dt :: proc(p:^Platform,now:u64,presented:bool) -> f32 {
 
 pacing :: proc(p:^Platform) -> Frame_Pacing {return p.pacing}
 set_pacing :: proc(p:^Platform,pacing:Frame_Pacing) {p.pacing=pacing}
-// The rate a window without focus goes at, at most: an application that does
-// not need to run behind others (an editor out of Play) lowers what it costs.
-set_background :: proc(p:^Platform,limit:u32) {p.background=limit}
+
+// How a window without focus, or one that shows nothing, paces the loop.
+// limit: frames per second at most without focus, 0: as with it; an
+// application that does not need to run behind others (an editor out of
+// Play) lowers what it costs. awake: the loop carries work the screen does
+// not show (transfers with peers), so neither the focus nor a hidden window
+// slows it: each frame lasts what a shown one does.
+Background :: struct {limit:u32,awake:bool}
+
+set_background :: proc(p:^Platform,background:Background) {p.background=background}
+
+// Time a frame has to last, from what it showed and whether its window has
+// the focus (always, headless).
+frame_budget_ns :: proc "contextless" (pacing:Frame_Pacing,background:Background,shown,focused:bool,refresh_hz:f32,images:u32) -> u64 {
+    budget:=pacing_budget_ns(pacing,shown || background.awake,refresh_hz)
+    if shown && images>1 {budget*=u64(images)}
+    if background.awake || focused || background.limit==0 {return budget}
+    return max(budget,1_000_000_000/u64(background.limit))
+}
 
 // Ends the frame: sleeps what is left of its budget. presented is false when
 // nothing was drawn, so the loop idles instead of spinning. The first frame
@@ -100,14 +116,13 @@ set_background :: proc(p:^Platform,limit:u32) {p.background=limit}
 // two when it generated one: the limit and vsync count the images.
 frame_end :: proc(p:^Platform,presented:=true,images:=u32(1)) {
     if p.window.veil>0 {window_veil_frame(&p.window,presented)}
-    shown:=presented
+    shown,focused:=presented,true
     if !p.headless {
         w:=&p.input.frame.window
         shown=presented && w.visible && !w.minimized
+        focused=w.focused
     }
-    budget:=pacing_budget_ns(p.pacing,shown,p.window.refresh_hz)
-    if shown && images>1 {budget*=u64(images)}
-    if !p.headless && p.background>0 && !p.input.frame.window.focused {budget=max(budget,1_000_000_000/u64(p.background))}
+    budget:=frame_budget_ns(p.pacing,p.background,shown,focused,p.window.refresh_hz,images)
     now:=clock_ns()
     target:=pacing_target_ns(p.clock.pace_target,now,budget)
     if target>now {

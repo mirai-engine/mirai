@@ -1783,6 +1783,16 @@ asset_list_row_begin :: proc(s:^Session,id:ui.Id,value:base.Asset_Id,kind:asset.
     return
 }
 
+CONTENT_SLOT :: 20 // side of the square of the icon of a row of the browser, and of what ends it
+
+// The icon or the cover of a row in its square, as wide in every row.
+@(private)
+content_row_icon :: proc(ctx:^ui.Context,icon:ui.Icon,color:ui.Color,cover:=ui.Quad{}) {
+    if ui.box(ctx,{width=ui.fixed(CONTENT_SLOT),height=ui.fixed(CONTENT_SLOT),align_x=.Center,align_y=.Center,radius=2,clip_x=true,clip_y=true}) {
+        if cover.kind!=.Solid {ui.image(ctx,{quad=cover,width=ui.GROW,height=ui.GROW})} else {ui.icon(ctx,icon,color,14)}
+    }
+}
+
 // The box of a row of a list of assets: the fill of a selected row of the
 // editor while it is selected, the field under the pointer, and the ring of
 // the keyboard, the only light one, while the keys moved to it.
@@ -2098,7 +2108,7 @@ content_folder_cell :: proc(s:^Session,card:Content_Card,id:ui.Id,cell:f32,names
     keyboard:=content_keyboard(ctx,it)
     if c.view.mode==.List {
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,marked,it.hot,keyboard)) {
-            ui.icon(ctx,icon,ui.tone(ctx,"text_muted"),16)
+            content_row_icon(ctx,icon,ui.tone(ctx,"text_muted"))
             ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
             if library_folder {content_library_folder_button(s,id,card.library,card.folder)}
         }
@@ -2150,9 +2160,7 @@ content_header :: proc(s:^Session,line:Content_Line,id:ui.Id,width:f32,marked:bo
         }
         cover:ui.Quad
         if line.cover>0 {cover=texture_quad(s,s.app.assets.registry.files[line.cover-1].id)}
-        if ui.box(ctx,{width=ui.fixed(20),height=ui.fixed(20),align_x=.Center,align_y=.Center,radius=2,clip_x=true,clip_y=true}) {
-            if cover.kind!=.Solid {ui.image(ctx,{quad=cover,width=ui.GROW,height=ui.GROW})} else {ui.icon(ctx,icon,color,14)}
-        }
+        content_row_icon(ctx,icon,color,cover)
         ui.label(ctx,line.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM)
         if line.virtual==.Library && line.path!="" {content_library_folder_button(s,id,line.library,line.path)}
     }
