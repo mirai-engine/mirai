@@ -31,7 +31,8 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   one read of its root.
 - A path must be valid on every system: relative, with `/`, no `.` or `..`, no reserved name,
   and two paths that differ only in case, or a file and a folder of one name, are refused at
-  snapshot (`names_clash`). Links and special files are never tracked.
+  snapshot by `tree_build`, which compares the sorted names of each folder. Links and special
+  files are never tracked.
 - A tree never names a private overlay. What a scope takes is
   [sealed apart](private.md#scopes-and-routing), so the public change is readable by anyone it
   is shared with.
@@ -87,8 +88,9 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
 
 - Every change to what a repository shows is an operation: it points to its parent operations, to
   the view after it and to the changes it rewrote. One operation is one batch of the store made
-  visible by one commit, so a cut midway leaves the repository as it was, and one undo takes the
-  whole operation back.
+  visible by one commit, with the records of the private overlays that follow what it wrote (a
+  snapshot's, a split's), so a cut midway leaves the repository and its overlays as they were, and
+  one undo takes the whole operation back.
 - A view is the visible heads (no visible change descends from another), each workspace's working
   copy and the bookmarks; a bookmark two operations moved apart holds the terms of a conflict,
   with the same algebra as files.
@@ -97,7 +99,9 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   are merged by the next one that reads both (`op_heads_merge`): each view merged against their
   common operation, so working in two folders of one repository needs no coordination.
 - Undo is an operation. The view it writes takes back what the undone one did and keeps what came
-  after, so an undo can be undone, and undoing is never the undo of the editor's document.
+  after, so an undo can be undone, and undoing is never the undo of the editor's document. An
+  overlay record belongs to the revision it was written for and an operation writes only those of
+  revisions it made, so the view an undo gives back reads its private files as they were.
 - A rewrite (describe, rebase, restore, split) moves every descendant onto the new revision and
   rebases its tree; a bookmark on an abandoned change moves to its first parent. A split by whole
   files keeps the first half's id and its description and puts the rest in a new change on it that
@@ -122,8 +126,10 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   never scans the folder; a watch that overflows makes the next snapshot read it whole.
 - A switch (checkout) writes only the files that differ, through a temporary file and a rename,
   and records its target first, so one cut midway is finished by the next status or snapshot
-  (`a_switch_cut_midway_recovers_on_status`). A clean file of a sibling workspace is cloned where
-  the volume can (APFS `clonefile`, `FICLONE`) and copied where it cannot.
+  (`a_switch_cut_midway_recovers_on_status`). A file a sibling workspace's saved stat index says
+  it holds, settled and still of the row's size, time and inode, is cloned without reading it
+  where the volume can (APFS `clonefile`, `FICLONE`) and copied where it cannot; any other comes
+  from the store. A snapshot takes its new index into memory only once it is saved.
 - What a workspace tracks is a `Filter` its owner gives: for a project it is `project.own_path`,
   which leaves out the generated folder and the folders of version control. Kai has no ignore
   file: what is not the project's is decided where the project is defined.

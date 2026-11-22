@@ -2,6 +2,7 @@ package kai_assets
 
 import "base:runtime"
 import "core:crypto"
+import "core:mem"
 import "core:path/filepath"
 import "core:strings"
 import "core:sync"
@@ -24,7 +25,7 @@ import vcs "mirai:kai"
 //
 // A result made from a file of one of the project's scopes inherits those
 // scopes (vcs.overlay_taint): its record names them as tainted and its output
-// is one sealed blob of the chunks of its objects (vcs.overlay_blob_seal),
+// is one sealed blob of the chunks of its objects (vcs.Blob_Sealer),
 // which only a device that reads every one of those scopes opens. Nodes,
 // grant holders and members below the scopes' readers hold ciphertext at most.
 
@@ -258,88 +259,103 @@ output_tainted :: proc(s:^store.Store,org:vcs.Log_Id,key,output_root:store.Hash)
 
 // One sealed blob of every chunk of objects, nodes and data, after the list of
 // objects: u32 version, u32 objects, the objects, then each chunk as its
-// address, u32 size and bytes.
+// address, u32 size and bytes, sealed as it is walked.
 @(private)
 output_seal :: proc(c:^Mesh_Cache,s:^store.Store,objects:[]store.Hash,tainted:[]vcs.Scope_Id) -> (sealed:store.Hash,error:vcs.Error) {
-    bytes:=make([dynamic]u8,context.temp_allocator)
-    put_u32 :: proc(bytes:^[dynamic]u8,v:u32) {
-        b:=transmute([4]u8)u32le(v)
-        append(bytes,..b[:])
-    }
-    put_u32(&bytes,SEALED_VERSION)
-    put_u32(&bytes,u32(len(objects)))
-    for o in objects {
-        address:=o
-        append(&bytes,..address[:])
-    }
+    device:=vcs.machine_device_of(&c.machine.store) or_return
+    defer crypto.zero_explicit(&device,size_of(device))
+    b:vcs.Blob_Sealer
+    vcs.overlay_blob_begin(&b,&c.machine.store,c.keyrings[:],&device,c.project,tainted) or_return
+    head:=[2]u32le{SEALED_VERSION,u32le(len(objects))}
+    vcs.overlay_blob_write(&b,mem.slice_to_bytes(head[:]))
+    vcs.overlay_blob_write(&b,mem.slice_to_bytes(objects))
     seen:=make(map[store.Hash]bool,context.temp_allocator)
     buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
-    walk :: proc(s:^store.Store,address:store.Hash,level,depth:int,buffer:[]u8,bytes:^[dynamic]u8,seen:^map[store.Hash]bool) -> vcs.Error {
+    walk :: proc(s:^store.Store,address:store.Hash,level,depth:int,buffer:[]u8,b:^vcs.Blob_Sealer,seen:^map[store.Hash]bool) -> vcs.Error {
         if depth>store.NODE_LEVEL_MAX+1 {return .Corrupt}
         if address in seen^ {return .None}
         seen^[address]=true
         chunk,e:=store.chunk_read(s,address,buffer)
         if e!=.None || store.address_of_bytes(chunk)!=address {return .Corrupt}
         a:=address
-        append(bytes,..a[:])
-        size:=transmute([4]u8)u32le(u32(len(chunk)))
-        append(bytes,..size[:])
-        append(bytes,..chunk)
+        size:=u32le(len(chunk))
+        vcs.overlay_blob_write(b,a[:])
+        vcs.overlay_blob_write(b,mem.ptr_to_bytes(&size))
+        vcs.overlay_blob_write(b,chunk)
         if level<0 {return .None}
         n,pe:=store.node_parse(chunk)
         if pe!=.None || level!=ROOT_LEVEL && n.level!=level {return .Corrupt}
         entries:=make([]store.Entry,len(n.entries),context.temp_allocator)
         copy(entries,n.entries)
         below:=n.level-1 if n.level>0 else -1
-        for x in entries {walk(s,x.address,below,depth+1,buffer,bytes,seen) or_return}
+        for x in entries {walk(s,x.address,below,depth+1,buffer,b,seen) or_return}
         return .None
     }
-    for o in objects {walk(s,o,ROOT_LEVEL,0,buffer,&bytes,&seen) or_return}
-    device:=vcs.machine_device_of(&c.machine.store) or_return
-    defer crypto.zero_explicit(&device,size_of(device))
-    return vcs.overlay_blob_seal(&c.machine.store,c.keyrings[:],&device,c.project,tainted,bytes[:])
+    for o in objects {
+        if e:=walk(s,o,ROOT_LEVEL,0,buffer,&b,&seen);e!=.None {
+            vcs.overlay_blob_abandon(&b)
+            return {},e
+        }
+    }
+    return vcs.overlay_blob_finish(&b)
 }
 
 // Opens the sealed blob of an output into the batch of into, chunk by chunk,
 // each checked against its address: the objects it holds, the first the one
-// the cache ref names.
+// the cache ref names. What it holds at once is one record and one opened chunk.
 @(private)
 output_unseal :: proc(c:^Mesh_Cache,from,into:^store.Store,sealed:store.Hash) -> (objects:[]store.Hash,error:vcs.Error) {
     if !c.scoped {return nil,.Unauthorized}
     device:=vcs.machine_device_of(&c.machine.store) or_return
     defer crypto.zero_explicit(&device,size_of(device))
-    bytes:=vcs.overlay_blob_open(from,c.keyrings[:],&device,sealed,context.temp_allocator) or_return
-    at:=0
-    take_u32 :: proc(bytes:[]u8,at:^int) -> (v:u32,ok:bool) {
-        if len(bytes)-at^<4 {return}
-        v=u32((^u32le)(raw_data(bytes[at^:]))^)
-        at^+=4
-        return v,true
+    r:vcs.Blob_Reader
+    vcs.overlay_blob_open(&r,from,c.keyrings[:],&device,sealed) or_return
+    defer vcs.overlay_blob_close(&r)
+    RECORD :: size_of(store.Hash)+4
+    pending:=make([]u8,RECORD+store.CHUNK_MAX+vcs.OVERLAY_CHUNK_MAX,context.temp_allocator)
+    have:=0
+    count:=-1
+    listed:=make([dynamic]store.Hash,context.temp_allocator)
+    for {
+        plain:=vcs.overlay_blob_next(&r) or_return
+        if len(plain)==0 {break}
+        have+=copy(pending[have:],plain)
+        at:=0
+        for {
+            rest:=pending[at:have]
+            if count<0 {
+                if len(rest)<8 {break}
+                head:=(^[2]u32le)(raw_data(rest))^
+                if head[0]!=SEALED_VERSION || head[1]==0 || int(head[1])>vcs.DDC_OUTPUT_MAX {return nil,.Corrupt}
+                count=int(head[1])
+                at+=8
+            } else if len(listed)<count {
+                if len(rest)<size_of(store.Hash) {break}
+                o:store.Hash
+                copy(o[:],rest)
+                append(&listed,o)
+                at+=size_of(store.Hash)
+            } else {
+                if len(rest)<RECORD {break}
+                size:=int((^u32le)(raw_data(rest[size_of(store.Hash):]))^)
+                if size==0 || size>store.CHUNK_MAX {return nil,.Corrupt}
+                if len(rest)<RECORD+size {break}
+                address:store.Hash
+                copy(address[:],rest)
+                chunk:=rest[RECORD:][:size]
+                if store.address_of_bytes(chunk)!=address {return nil,.Corrupt}
+                if !store.chunk_here(into,address) && store.chunk_put(into,address,chunk)!=.None {return nil,.Io}
+                at+=RECORD+size
+            }
+        }
+        copy(pending,pending[at:have])
+        have-=at
     }
-    version,_:=take_u32(bytes,&at)
-    count,counted:=take_u32(bytes,&at)
-    if version!=SEALED_VERSION || !counted || count==0 || int(count)>(len(bytes)-at)/size_of(store.Hash) {return nil,.Corrupt}
-    objects=make([]store.Hash,count,context.temp_allocator)
-    for &o in objects {
-        copy(o[:],bytes[at:])
-        at+=size_of(store.Hash)
-    }
-    for at<len(bytes) {
-        if len(bytes)-at<size_of(store.Hash)+4 {return nil,.Corrupt}
-        address:store.Hash
-        copy(address[:],bytes[at:])
-        at+=size_of(store.Hash)
-        size,_:=take_u32(bytes,&at)
-        if int(size)>len(bytes)-at || size==0 || int(size)>store.CHUNK_MAX {return nil,.Corrupt}
-        chunk:=bytes[at:][:size]
-        at+=int(size)
-        if store.address_of_bytes(chunk)!=address {return nil,.Corrupt}
-        if !store.chunk_here(into,address) && store.chunk_put(into,address,chunk)!=.None {return nil,.Io}
-    }
-    for o in objects {
+    if have!=0 || count<0 || len(listed)!=count {return nil,.Corrupt}
+    for o in listed {
         if !asset.object_whole(into,o,false) {return nil,.Corrupt}
     }
-    return objects,.None
+    return listed[:],.None
 }
 
 @(private="file")

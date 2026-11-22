@@ -109,10 +109,13 @@ or anonymous (an empty claim). The namespace decides who reads it:
   grant. Records of one key with different outputs are both kept and flagged nondeterministic: the
   build is not deterministic and the mesh says so instead of choosing.
 - A lookup asks the store, then LAN peers, then the rest, and answers `Found` only once every object
-  of the output is whole here, or `Missing` after a bounded time.
+  of the output is whole here, or `Missing` after a bounded time. Lookups at once and the uses a
+  ddc node remembers have fixed tables: one lookup more is a miss, one use more replaces the
+  oldest.
 - An output built from private inputs inherits their scopes: it is sealed under the newest epoch of
   every one at once, so only a device that reads them all opens it ([private
-  files](private.md#what-a-peer-sees)).
+  files](private.md#what-a-peer-sees)). It is sealed and opened a chunk at a time, as a private
+  file is, so neither holds more than a chunk of it.
 - The cook is `cook/kai/mesh.odin`: a miss of `cook/cache` asks the machine's runner through its
   control for a record of the project's org and a build publishes its own, with the key the hash of
   the cache ref. With no runner the cook builds alone, which is the same result slower
