@@ -96,7 +96,7 @@ a_ddc_node_drops_least_used_outputs_past_its_quota :: proc(t:^testing.T) {
         testing.expectf(t,(re==.None)==kept,"key %d is kept %v",k,kept)
     }
     for k in 2..<4 {
-        for o in outputs[k] {testing.expectf(t,!object_whole(s,o),"what key %d dropped leaves the store",k)}
+        for o in outputs[k] {testing.expectf(t,!object_whole(s,o,scratch_make()),"what key %d dropped leaves the store",k)}
     }
     for k in ([]int{0,1}) {
         found,output_root:=runner_ddc_ask(&r,org,keys[k])
@@ -104,7 +104,7 @@ a_ddc_node_drops_least_used_outputs_past_its_quota :: proc(t:^testing.T) {
         testing.expectf(t,found==.Found && ge==.None && len(objects)==2 && objects[0]==outputs[k][0],"key %d is still served",k)
     }
     for address in ([?]store.Hash{revision,root,file,busy_result}) {
-        testing.expectf(t,object_whole(s,address),"%v survives the sweep",address)
+        testing.expectf(t,object_whole(s,address,scratch_make()),"%v survives the sweep",address)
     }
 
     // The tables of lookups and of uses are bounded: a lookup past the bound is a miss, and a

@@ -1296,9 +1296,10 @@ agent_shared_bookmarks :: proc(a:^Agent,project:Log_Id,out:^[dynamic]Bookmark_Ta
 // Rebuilds the chunks restricted peers may get.
 @(private)
 agent_closure :: proc(a:^Agent) {
+    scratch:=scratch_make()
     identity:=make([dynamic]store.Hash,context.temp_allocator)
     if refs,e:=store.ref_list(a.desc.store,USER_NAMESPACE,context.temp_allocator);e==.None {
-        for r in refs {log_objects(a.desc.store,r.hash,&identity)}
+        for r in refs {log_objects(a.desc.store,r.hash,&identity,scratch)}
     }
     public:=make([dynamic]store.Hash,context.temp_allocator)
     targets:=make([dynamic]Revision,context.temp_allocator)
@@ -1309,7 +1310,7 @@ agent_closure :: proc(a:^Agent) {
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(a.desc.store,targets[:],&present,&missing)
     append(&roots,..present[:])
-    for r in roots {object_chunks(a.desc.store,r,&public)}
+    for r in roots {object_chunks(a.desc.store,r,&public,scratch)}
     slice.sort_by(identity[:],hash_less)
     slice.sort_by(public[:],hash_less)
     grants:=make([dynamic]Grant_Closure,context.temp_allocator)
@@ -1423,6 +1424,7 @@ members_settled :: proc(a:^Agent,out:^[dynamic]Walk_Item) {
 // envelopes.
 @(private)
 members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
+    scratch:=scratch_make()
     if len(l.items)==0 {return}
     namespace:=LOG_NAMESPACE
     switch l.kind {
@@ -1464,7 +1466,7 @@ members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
     address,e:=store.ref_get(a.desc.store,namespace,log_name(l.id,&name))
     if e!=.None {return}
     chunks:=make([dynamic]store.Hash,context.temp_allocator)
-    log_objects(a.desc.store,address,&chunks)
+    log_objects(a.desc.store,address,&chunks,scratch)
     for c in chunks {a.members.chunks[c]={}}
 }
 
@@ -1519,7 +1521,7 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
         for sc in a.org.scopes {known||=sc.project==project && sc.scope==scope}
         if !known {return}
         append(out,Walk_Item{address,.File,false})
-        bytes,e:=overlay_get(a.desc.store,address,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+        bytes,e:=object_get(a.desc.store,address,.Overlay_Record,context.temp_allocator,limit=OVERLAY_RECORD_MAX)
         if e!=.None {return}
         r,re:=overlay_record_decode(bytes)
         if re!=.None {return}
@@ -1532,6 +1534,7 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
 // holds; an object that is not here, or not whole, waits in the frontier.
 @(private)
 members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
+    scratch:=scratch_make()
     m:=&a.members
     stack:=make([dynamic]Walk_Item,context.temp_allocator)
     append(&stack,..roots)
@@ -1549,7 +1552,7 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
         }
         seen[item.address]=true
         at:=len(added)
-        if !object_chunks(a.desc.store,item.address,&added) {
+        if !object_chunks(a.desc.store,item.address,&added,scratch) {
             resize(&added,at)
             if item.address!=empty {m.frontier[item.address]=item}
             continue
@@ -1577,6 +1580,7 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
 // this file).
 @(private)
 agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
+    scratch:=scratch_make()
     if !a.folded || x.entry<0 || x.entry>=len(a.org.log.items) {return}
     g,e:=grant_decode(a.org.log.items[x.entry].entry.body)
     if e!=.None {return}
@@ -1597,7 +1601,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         }
         if !keep {continue}
         if address,ref_error:=store.ref_get(a.desc.store,LOG_NAMESPACE,log_name(l.id,&name));ref_error==.None {
-            log_objects(a.desc.store,address,out)
+            log_objects(a.desc.store,address,out,scratch)
         }
     }
     if g.rights&{.Read,.Write,.Check}!={} {
@@ -1605,7 +1609,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         roots:=make([dynamic]store.Hash,context.temp_allocator)
         agent_targets(a,g.project,false,&targets,&roots,proven=true)
         closure_walk_scoped(a.desc.store,targets[:],g.path,&roots)
-        for r in roots {object_chunks(a.desc.store,r,out)}
+        for r in roots {object_chunks(a.desc.store,r,out,scratch)}
     }
     if .DDC in g.rights {
         ns:[len(DDC_PREFIX)+64]u8
@@ -1613,15 +1617,15 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         if ref_error!=.None {return}
         records:=make([dynamic][]u8,context.temp_allocator)
         for r in refs {
-            object_chunks(a.desc.store,r.hash,out)
+            object_chunks(a.desc.store,r.hash,out,scratch)
             clear(&records)
             if ddc_set_read(a.desc.store,r.hash,&records)!=.None {continue}
             for bytes in records {
                 d,de:=ddc_record_decode(bytes)
                 if de!=.None || d.tainted>0 {continue}
-                object_chunks(a.desc.store,d.output_root,out)
+                object_chunks(a.desc.store,d.output_root,out,scratch)
                 objects,_:=ddc_output_get(a.desc.store,d.output_root,context.temp_allocator)
-                for o in objects {object_chunks(a.desc.store,o,out)}
+                for o in objects {object_chunks(a.desc.store,o,out,scratch)}
             }
         }
     }
@@ -1773,8 +1777,8 @@ scoped_folder :: proc(s:^store.Store,address:store.Hash,prefix,scope:string,dept
     terms:=terms_make(Term,context.temp_allocator)
     covered:=false
     for entry in entries {
-        path,pe:=path_join(prefix,entry.name,context.temp_allocator)
-        if pe!=.None {continue}
+        path,pe:=path_join(prefix,entry.name)
+        if pe!=nil {continue}
         switch entry.kind {
         case .Folder: covered|=scoped_folder(s,entry.address,path,scope,depth+1,present,folders)
         case .File,.Executable:
@@ -1805,11 +1809,21 @@ scoped_folder :: proc(s:^store.Store,address:store.Hash,prefix,scope:string,dept
 }
 
 // The addresses of every chunk of the object at address: its nodes and data.
-// whole: every node of it was read.
-object_chunks :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) -> (whole:bool) {
-    buffer,e:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
-    if e!=nil {return false}
-    return node_chunks(s,address,buffer,out,0)
+// whole: every node of it was read. Its nodes are read into scratch
+// (store.CHUNK_MAX bytes, scratch_make), which a walk allocates once.
+object_chunks :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,scratch:[]u8) -> (whole:bool) {
+    return len(scratch)>=store.CHUNK_MAX && node_chunks(s,address,scratch,out,0)
+}
+
+// Whether every chunk of the object at address is in the store; scratch as
+// object_chunks takes it.
+object_whole :: proc(s:^store.Store,address:store.Hash,scratch:[]u8) -> bool {
+    return len(scratch)>=store.CHUNK_MAX && node_chunks(s,address,scratch,nil,0)
+}
+
+scratch_make :: proc() -> []u8 {
+    buffer,_:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    return buffer
 }
 
 @(private)
@@ -1819,17 +1833,21 @@ node_chunks :: proc(s:^store.Store,address:store.Hash,buffer:[]u8,out:^[dynamic]
     if e!=.None {return false}
     n,parse_error:=store.node_parse(bytes)
     if parse_error!=.None {return false}
-    append(out,address)
+    // Without out, whether the leaves are here too.
+    if out!=nil {append(out,address)}
     entries,clone_error:=slice.clone(n.entries,context.temp_allocator)
     if clone_error!=nil {return false}
     level:=n.level
     whole:=true
     for entry in entries {
-        if level==0 {
+        if level>0 {
+            whole&=node_chunks(s,entry.address,buffer,out,depth+1)
+        } else if out!=nil {
             append(out,entry.address)
         } else {
-            whole&=node_chunks(s,entry.address,buffer,out,depth+1)
+            whole&=store.chunk_here(s,entry.address)
         }
+        if !whole && out==nil {return false}
     }
     return whole
 }

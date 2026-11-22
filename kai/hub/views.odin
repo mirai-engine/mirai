@@ -375,14 +375,6 @@ key_owner :: proc(o:^kai.Runner_Org,key:kai.Key) -> (user:^kai.User_Fold,device_
 }
 
 @(private)
-short_hex :: proc(bytes:[]u8) -> string {
-    j:=json_make()
-    json_hex(&j,bytes[:min(len(bytes),6)])
-    text:=json_text(&j)
-    return text[1:len(text)-1]
-}
-
-@(private)
 summary_line :: proc(text:string) -> string {
     line:=text
     if cut:=strings.index_byte(line,'\n');cut>=0 {line=line[:cut]}
@@ -742,10 +734,10 @@ parse_count :: proc(text:string) -> (n:int,ok:bool) {
 
 @(private)
 diff_status :: proc(d:kai.Diff) -> string {
-    switch {
-    case d.after.kind==.Conflict: return "conflict"
-    case d.before.address=={}: return "added"
-    case d.after.address=={}: return "removed"
+    switch kai.diff_mark(d) {
+    case 'C': return "conflict"
+    case 'A': return "added"
+    case 'D': return "removed"
     }
     return "modified"
 }

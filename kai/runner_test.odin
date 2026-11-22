@@ -311,9 +311,9 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
         r,_,e:=overlay_record_get(&b.machines[1].store,g.project,g.scope,g.commit,context.temp_allocator)
         if e!=.None {return false}
         for x in r.objects {
-            if !object_whole(&b.machines[1].store,x) {return false}
+            if !object_whole(&b.machines[1].store,x,scratch_make()) {return false}
         }
-        return object_whole(&b.machines[1].store,r.tree_root)
+        return object_whole(&b.machines[1].store,r.tree_root,scratch_make())
     }
     if !testing.expect(t,box_until(b,10,&og,arrived),"the overlay's ciphertext reaches bob") {return}
     bo:Org_State

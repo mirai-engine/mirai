@@ -170,3 +170,18 @@ conflict_settle :: proc(w:^vcs.Workspace,path:string) -> vcs.Error {
     }
     return .Invalid_Argument
 }
+
+// Resolves the conflict at path: the file written as conflict_resolved says,
+// or removed, and settled. Io when the file could not be written or removed.
+conflict_resolve :: proc(w:^vcs.Workspace,types:^asset.Types,path:string,whole:Resolve_Whole,theirs:[]string) -> vcs.Error {
+    bytes,removed,e:=conflict_resolved(w,types,path,whole,theirs)
+    if e!=.None {return e}
+    file:=project.path(w.root,path,allocator=context.temp_allocator)
+    if removed {
+        if os.exists(file) && os.remove(file)!=nil {return .Io}
+    } else {
+        os.make_directory_all(os.dir(file))
+        if serial.file_write_atomic(file,bytes)!=.None {return .Io}
+    }
+    return conflict_settle(w,path)
+}

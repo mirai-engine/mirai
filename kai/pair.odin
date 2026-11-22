@@ -2,6 +2,7 @@ package kai
 
 import "core:crypto"
 import "core:crypto/chacha20poly1305"
+import "core:encoding/base64"
 import "core:encoding/endian"
 import "core:mem"
 import net "mirai:net"
@@ -99,122 +100,81 @@ Ticket :: struct {
 }
 
 TICKET_ADDRESSES :: 4
-@(private) TICKET_VERSION :: 2
-@(private) TICKET_HEAD :: 1+1+16+32+8+1
-@(private) TICKET_ADDRESS :: 1+2+16
-@(private) TICKET_BYTES_MAX :: TICKET_HEAD+TICKET_ADDRESSES*TICKET_ADDRESS+4
+@(private) TICKET_VERSION :: 3
+@(private) TICKET_HEAD :: 1+1+16+32+8
+@(private) TICKET_BYTES_MAX :: TICKET_HEAD+1+TICKET_ADDRESSES*CARRIED_ADDRESS+4
 TICKET_TEXT :: (TICKET_BYTES_MAX*4+2)/3 // the longest a ticket's text is
 
-// The ticket as base64url without padding, its last four bytes a checksum.
 ticket_encode :: proc(t:Ticket,buffer:^[TICKET_TEXT]u8) -> string {
-    bytes:[TICKET_BYTES_MAX]u8
-    bytes[0],bytes[1]=TICKET_VERSION,u8(t.mode)
-    id,responder:=t.id,t.responder
-    copy(bytes[2:],id[:])
-    copy(bytes[18:],responder[:])
-    endian.unchecked_put_u64le(bytes[50:],u64(t.expires))
-    at:=TICKET_HEAD
-    count:=0
-    addresses:=t.addresses
-    for a in addresses[:clamp(t.address_count,0,TICKET_ADDRESSES)] {
-        if a.kind!=.IP4 && a.kind!=.IP6 {continue}
-        bytes[at]=u8(a.kind)
-        endian.unchecked_put_u16le(bytes[at+1:],a.port)
-        ip:=a.ip
-        copy(bytes[at+3:],ip[:])
-        at+=TICKET_ADDRESS
-        count+=1
-    }
-    bytes[TICKET_HEAD-1]=u8(count)
-    sum:=ticket_sum(bytes[:at])
-    copy(bytes[at:],sum[:4])
-    n:=base64url_encode(bytes[:at+4],buffer[:])
-    return string(buffer[:n])
+    head:[TICKET_HEAD]u8
+    head[0],head[1]=TICKET_VERSION,u8(t.mode)
+    id,responder,addresses:=t.id,t.responder,t.addresses
+    copy(head[2:],id[:])
+    copy(head[18:],responder[:])
+    endian.unchecked_put_u64le(head[50:],u64(t.expires))
+    scratch:[TICKET_BYTES_MAX]u8
+    return carried_encode(LABEL_TICKET,head[:],addresses[:clamp(t.address_count,0,TICKET_ADDRESSES)],nil,scratch[:],buffer[:])
 }
 
 ticket_decode :: proc(text:string) -> (t:Ticket,ok:bool) {
-    bytes:[TICKET_BYTES_MAX]u8
-    if len(text)>TICKET_TEXT {return}
-    size:=base64url_decode(text,bytes[:])
-    if size<TICKET_HEAD+4 {return}
-    count:=int(bytes[TICKET_HEAD-1])
-    if count>TICKET_ADDRESSES || size!=TICKET_HEAD+count*TICKET_ADDRESS+4 {return}
-    sum:=ticket_sum(bytes[:size-4])
-    if bytes[0]!=TICKET_VERSION || bytes[1]>u8(max(Pair_Mode)) || !bytes_equal(sum[:4],bytes[size-4:size]) {return}
-    t.mode=Pair_Mode(bytes[1])
-    copy(t.id[:],bytes[2:18])
-    copy(t.responder[:],bytes[18:50])
-    t.expires=i64(endian.unchecked_get_u64le(bytes[50:]))
-    for k in 0..<count {
-        at:=TICKET_HEAD+k*TICKET_ADDRESS
-        kind:=net.Address_Kind(bytes[at])
-        if kind!=.IP4 && kind!=.IP6 {return {},false}
-        a:=net.Address{kind=kind,port=endian.unchecked_get_u16le(bytes[at+1:])}
-        copy(a.ip[:],bytes[at+3:at+TICKET_ADDRESS])
-        t.addresses[k]=a
-    }
+    scratch:[TICKET_BYTES_MAX]u8
+    head,count,tail,read:=carried_decode(LABEL_TICKET,text,TICKET_HEAD,&t.addresses,scratch[:])
+    if !read || len(tail)!=0 || head[0]!=TICKET_VERSION || head[1]>u8(max(Pair_Mode)) {return {},false}
+    t.mode=Pair_Mode(head[1])
+    copy(t.id[:],head[2:18])
+    copy(t.responder[:],head[18:50])
+    t.expires=i64(endian.unchecked_get_u64le(head[50:]))
     t.address_count=count
     return t,true
 }
 
+// A text a person carries between machines, a ticket or a grant's: head (its
+// version first), how many addresses follow, the addresses, tail, and four
+// bytes of the BLAKE3 keyed by label of all that, in base64url.
+@(private) CARRIED_ADDRESS :: 1+2+16
+
 @(private)
-ticket_sum :: proc(bytes:[]u8) -> [32]u8 {
-    h:blake3.Hasher
-    blake3.init(&h)
-    blake3.update(&h,transmute([]u8)string(LABEL_TICKET))
-    blake3.update(&h,bytes)
-    return blake3.final(&h)
+carried_encode :: proc(label:string,head:[]u8,addresses:[]net.Address,tail:[]u8,scratch,out:[]u8) -> string {
+    at:=copy(scratch,head)
+    count:=at
+    scratch[count]=0
+    at+=1
+    for a in addresses[:min(len(addresses),TICKET_ADDRESSES)] {
+        if a.kind!=.IP4 && a.kind!=.IP6 {continue}
+        scratch[at]=u8(a.kind)
+        endian.unchecked_put_u16le(scratch[at+1:],a.port)
+        ip:=a.ip
+        copy(scratch[at+3:],ip[:])
+        at+=CARRIED_ADDRESS
+        scratch[count]+=1
+    }
+    at+=copy(scratch[at:],tail)
+    sum:=keyed_hash(transmute([]u8)label,scratch[:at])
+    at+=copy(scratch[at:],sum[:4])
+    text,_:=base64.encode_into_buf(out,scratch[:at],base64.ENC_URL_TABLE,{.No_Padding})
+    return string(text)
 }
 
-@(private) BASE64URL :: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-
+// The head, addresses and tail of a carried text whose head is head_size
+// bytes, in scratch; false when it does not read or its sum differs.
 @(private)
-base64url_encode :: proc(bytes,out:[]u8) -> int {
-    alphabet:=BASE64URL
-    n,bits,acc:=0,uint(0),u32(0)
-    for b in bytes {
-        acc=acc<<8|u32(b)
-        bits+=8
-        for bits>=6 {
-            bits-=6
-            out[n]=alphabet[(acc>>bits)&63]
-            n+=1
-        }
+carried_decode :: proc(label,text:string,head_size:int,addresses:^[TICKET_ADDRESSES]net.Address,scratch:[]u8) -> (head:[]u8,count:int,tail:[]u8,ok:bool) {
+    if len(text)>(len(scratch)*4+2)/3 {return}
+    bytes,e:=base64.decode_into_buf(scratch,text,base64.DEC_URL_TABLE,{.Strict,.No_Padding})
+    if e!=nil || len(bytes)<head_size+1+4 {return}
+    sum:=keyed_hash(transmute([]u8)label,bytes[:len(bytes)-4])
+    if !bytes_equal(sum[:4],bytes[len(bytes)-4:]) {return}
+    count=int(bytes[head_size])
+    at:=head_size+1
+    if count>TICKET_ADDRESSES || len(bytes)-4<at+count*CARRIED_ADDRESS {return}
+    for k in 0..<count {
+        kind:=net.Address_Kind(bytes[at])
+        if kind!=.IP4 && kind!=.IP6 {return}
+        addresses[k]={kind=kind,port=endian.unchecked_get_u16le(bytes[at+1:])}
+        copy(addresses[k].ip[:],bytes[at+3:at+CARRIED_ADDRESS])
+        at+=CARRIED_ADDRESS
     }
-    if bits>0 {
-        out[n]=alphabet[(acc<<(6-bits))&63]
-        n+=1
-    }
-    return n
-}
-
-// The bytes of text into out: their count, -1 when text is not base64url or
-// does not fit.
-@(private)
-base64url_decode :: proc(text:string,out:[]u8) -> int {
-    n,bits,acc:=0,uint(0),u32(0)
-    for c in transmute([]u8)text {
-        v:u32
-        switch c {
-        case 'A'..='Z': v=u32(c-'A')
-        case 'a'..='z': v=u32(c-'a')+26
-        case '0'..='9': v=u32(c-'0')+52
-        case '-': v=62
-        case '_': v=63
-        case: return -1
-        }
-        acc=acc<<6|v
-        bits+=6
-        if bits>=8 {
-            bits-=8
-            if n>=len(out) {return -1}
-            out[n]=u8(acc>>bits)
-            n+=1
-        }
-        acc&=(1<<bits)-1
-    }
-    if acc!=0 {return -1}
-    return n
+    return bytes[:head_size],count,bytes[at:len(bytes)-4],true
 }
 
 // One end of a pairing handshake.

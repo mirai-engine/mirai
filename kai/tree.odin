@@ -289,7 +289,8 @@ files_walk :: proc(w:^Files_Walk,address:store.Hash,expected:^Totals,prefix:stri
     if w.folders!=nil {append(w.folders,address)}
     for e in entries {
         if e.kind!=.Folder && w.out==nil {continue}
-        path:=path_join(prefix,e.name,w.allocator) or_return
+        path,pe:=path_join(prefix,e.name,w.allocator)
+        if pe!=nil {return .Out_Of_Memory}
         if len(path)>PATH_MAX {return .Corrupt}
         if e.kind==.Folder {
             t:=Totals{e.files,e.conflicts,e.size}
@@ -307,6 +308,16 @@ files_walk :: proc(w:^Files_Walk,address:store.Hash,expected:^Totals,prefix:stri
 Diff :: struct {
     path:string,
     before,after:File, // path unset; present when address is not zero
+}
+
+// A added, D removed, M changed, C in conflict.
+diff_mark :: proc "contextless" (d:Diff) -> u8 {
+    switch {
+    case d.after.kind==.Conflict: return 'C'
+    case d.before.address=={}: return 'A'
+    case d.after.address=={}: return 'D'
+    }
+    return 'M'
 }
 
 // The files that differ from tree a to tree b, sorted by path, in allocator.
@@ -344,7 +355,8 @@ diff_folders :: proc(s:^store.Store,a,b:store.Hash,prefix:string,depth:int,out:^
         }
         name:=l.address!={} ? l.name : r.name
         if l.address==r.address && l.kind==r.kind {continue}
-        path:=path_join(prefix,name,allocator) or_return
+        path,pe:=path_join(prefix,name,allocator)
+        if pe!=nil {return .Out_Of_Memory}
         lf,rf:=l.kind==.Folder && l.address!={},r.kind==.Folder && r.address!={}
         // A file before the folder of its name: a checkout removes it first.
         if (l.address!={} && !lf) || (r.address!={} && !rf) {
@@ -398,13 +410,9 @@ part_valid :: proc(part:string) -> bool {
     return true
 }
 
+// prefix/name, or name when prefix is empty.
 @(private)
-path_join :: proc(prefix,name:string,allocator:runtime.Allocator) -> (path:string,error:Error) {
-    e:runtime.Allocator_Error
-    if prefix=="" {
-        path,e=strings.clone(name,allocator)
-    } else {
-        path,e=strings.concatenate({prefix,"/",name},allocator)
-    }
-    return path,e!=nil ? .Out_Of_Memory : .None
+path_join :: proc(prefix,name:string,allocator:=context.temp_allocator) -> (path:string,error:runtime.Allocator_Error) #optional_allocator_error {
+    if prefix=="" {return strings.clone(name,allocator)}
+    return strings.concatenate({prefix,"/",name},allocator)
 }

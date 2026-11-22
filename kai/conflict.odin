@@ -276,7 +276,7 @@ merge_folders :: proc(m:^Merger,t:^Terms(Term),path:string,depth:int) -> (entry:
             }
             append(k%2==0?&child.adds:&child.removes,term)
         }
-        child_path:=path=="" ? name : join_path(path,name)
+        child_path:=path_join(path,name)
         e,here:=merge_terms(m,&child,child_path,depth+1) or_return
         if !here {continue}
         e.name=name
@@ -285,15 +285,6 @@ merge_folders :: proc(m:^Merger,t:^Terms(Term),path:string,depth:int) -> (entry:
     if len(items)==0 {return {},false,.None}
     entry=folder_put(m.s,items[:]) or_return
     return entry,true,.None
-}
-
-@(private)
-join_path :: proc(a,b:string) -> string {
-    bytes:=make([]u8,len(a)+1+len(b),context.temp_allocator)
-    copy(bytes,a)
-    bytes[len(a)]='/'
-    copy(bytes[len(a)+1:],b)
-    return string(bytes)
 }
 
 // Asks the drivers to merge a file of two sides and one base: the result and

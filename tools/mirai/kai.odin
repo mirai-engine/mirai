@@ -210,7 +210,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         if e!=.None {return kai_failed(verb,e)}
         c:=working_change(p)
         fmt.printfln("Working copy %s %s",ka.change_text(c.id),description_line(c.description))
-        for d in st.changes {fmt.printfln("  %s %s",diff_mark(d),d.path)}
+        for d in st.changes {fmt.printfln("  %c %s",vcs.diff_mark(d),d.path)}
         if len(st.changes)==0 {fmt.println("  no changes")}
         if st.conflicts>0 {fmt.printfln("%d files in conflict: mirai kai conflicts lists them",st.conflicts)}
     case "snapshot":
@@ -270,7 +270,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         }
         diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
         if e:=ka.diff(w,target,&diffs);e!=.None {return kai_failed(verb,e)}
-        for d in diffs {fmt.printfln("%s %s",diff_mark(d),d.path)}
+        for d in diffs {fmt.printfln("%c %s",vcs.diff_mark(d),d.path)}
     case "undo":
         undone,e:=ka.undo(w,nil)
         if e!=.None {return kai_refused(verb,p,e)}
@@ -497,17 +497,6 @@ description_line :: proc(text:string) -> string {
     line:=text
     if cut:=strings.index_byte(line,'\n');cut>=0 {line=line[:cut]}
     return line
-}
-
-// A added, D removed, M changed, C in conflict.
-@(private="file")
-diff_mark :: proc(d:vcs.Diff) -> string {
-    switch {
-    case d.after.kind==.Conflict: return "C"
-    case d.before.address=={}: return "A"
-    case d.after.address=={}: return "D"
-    }
-    return "M"
 }
 
 // The machine of the store, with the running agent told of what it writes.

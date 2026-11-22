@@ -529,13 +529,14 @@ ddc_output_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (objects:[
 // The objects of output_root that are not whole here, into lacking: the
 // output itself while it is not here. Whole once lacking stays empty.
 ddc_output_lacking :: proc(s:^store.Store,output_root:store.Hash,lacking:^[dynamic]store.Hash) -> (objects:[]store.Hash,error:Error) {
-    if !object_whole(s,output_root) {
+    scratch:=scratch_make()
+    if !object_whole(s,output_root,scratch) {
         append(lacking,output_root)
         return nil,.None
     }
     objects=ddc_output_get(s,output_root,context.temp_allocator) or_return
     for o in objects {
-        if !object_whole(s,o) {append(lacking,o)}
+        if !object_whole(s,o,scratch) {append(lacking,o)}
     }
     return objects,.None
 }

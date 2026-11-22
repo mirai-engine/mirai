@@ -153,11 +153,11 @@ scoped_plaintext_never_enters_public_store :: proc(t:^testing.T) {
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(&s,{first},&present,&missing)
     chunks:=make([dynamic]store.Hash,context.temp_allocator)
-    for p in present {object_chunks(&s,p,&chunks)}
+    for p in present {object_chunks(&s,p,&chunks,scratch_make())}
     private:=make([dynamic]store.Hash,context.temp_allocator)
-    object_chunks(&s,record_address,&private)
-    object_chunks(&s,record.tree_root,&private)
-    for a in record.objects {object_chunks(&s,a,&private)}
+    object_chunks(&s,record_address,&private,scratch_make())
+    object_chunks(&s,record.tree_root,&private,scratch_make())
+    for a in record.objects {object_chunks(&s,a,&private,scratch_make())}
     for a in private {testing.expect(t,!slice.contains(chunks[:],a),"a public chunk is an overlay's")}
 
     for device in ([]^Overlay_Device{&alice,&bob,&carol}) {
@@ -721,7 +721,7 @@ mesh_until :: proc(m:^Mesh,seconds:f64,data:rawptr,done:proc(m:^Mesh,data:rawptr
 object_whole :: proc(s:^store.Store,address:store.Hash) -> bool {
     if !object_present(s,address) {return false}
     chunks:=make([dynamic]store.Hash,context.temp_allocator)
-    object_chunks(s,address,&chunks)
+    object_chunks(s,address,&chunks,scratch_make())
     for c in chunks {
         if !store.chunk_has(s,c) {return false}
     }
@@ -1007,7 +1007,7 @@ overlay_open :: proc(o:^Overlay,s:^store.Store,k:^Keyring_Fold,device:^Overlay_D
     o.record=record
     o.address=address
     o.key=keyring_epoch_key(k,device,o.record.epoch) or_return
-    sealed:=overlay_get(s,o.record.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
+    sealed:=object_get(s,o.record.tree_root,.Overlay_Tree,context.temp_allocator,limit=OVERLAY_TREE_MAX) or_return
     o.tree=tree_open(sealed,k.project,k.scope,o.record.epoch,&o.key,&o.entries,allocator) or_return
     // The record names exactly the tree's file objects.
     objects:=make([dynamic]store.Hash,context.temp_allocator)

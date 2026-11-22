@@ -37,7 +37,7 @@ asset_summary :: proc(bytes:[]u8,allocator:=context.allocator) -> (record:[]u8,o
     facts:=make([dynamic]vcs.Preview_Fact,context.temp_allocator)
     kind:=kind_name(header.kind)
     if len(bytes)>SUMMARY_FILE_MAX {
-        append(&facts,vcs.Preview_Fact{"File",bytes_text(len(bytes))})
+        append(&facts,vcs.Preview_Fact{"File",vcs.bytes_text(i64(len(bytes)))})
         r,e:=vcs.preview_summary_encode(kind,facts[:],allocator)
         return r,e==.None
     }
@@ -131,7 +131,7 @@ asset_summary :: proc(bytes:[]u8,allocator:=context.allocator) -> (record:[]u8,o
             fact(&facts,t.name,fmt.tprintf("%d row%s",t.rows,t.rows==1?"":"s"))
         }
     }
-    fact(&facts,"File",bytes_text(len(bytes)))
+    fact(&facts,"File",vcs.bytes_text(i64(len(bytes))))
     r,e:=vcs.preview_summary_encode(kind,facts[:],allocator)
     return r,e==.None
 }
@@ -185,15 +185,6 @@ clip_length :: proc(doc:^asset.Document,clip:int) -> (length:f64,known:bool) {
         if scanned>=SUMMARY_SCAN_MAX {break}
     }
     return
-}
-
-@(private)
-bytes_text :: proc(n:int) -> string {
-    switch {
-    case n>=1<<20: return fmt.tprintf("%.1f MiB",f64(n)/f64(1<<20))
-    case n>=1<<10: return fmt.tprintf("%.1f KiB",f64(n)/f64(1<<10))
-    }
-    return fmt.tprintf("%d bytes",n)
 }
 
 // The detail of what changed from before to after, the bytes of the two sides

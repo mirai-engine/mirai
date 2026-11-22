@@ -479,32 +479,12 @@ kai_resolve :: proc(s:^Session,path:string,whole:ka.Resolve_Whole,theirs:[]strin
     if w==nil {return message}
     types:=kai_types(s)
     if types==nil {return "The editor has no assets"}
-    bytes,removed,e:=ka.conflict_resolved(w,types,path,whole,theirs)
-    if e!=.None {return fmt.tprintf("%s is not in conflict, or its sides do not read: kai.conflicts lists the files",path)}
-    file:=project.path(s.project_root,path,allocator=context.temp_allocator)
-    if removed {
-        if os.exists(file) && os.remove(file)!=nil {return fmt.tprintf("%s could not be removed",path)}
-    } else if !file_disk_write(file,bytes) {
-        return fmt.tprintf("%s could not be written",path)
-    }
+    e:=ka.conflict_resolve(w,types,path,whole,theirs)
+    if e==.Io {return fmt.tprintf("%s could not be written or removed: give this user access to it",path)}
+    if e==.Invalid_Argument {return fmt.tprintf("%s is not in conflict, or its sides do not read: kai.conflicts lists the files",path)}
     changed:=[1]string{path}
-    e=ka.conflict_settle(w,path)
     if s.kai.state.unfolded==path {kai_unfold(s,"")}
     return kai_finish(s,e,changed[:])
-}
-
-@(private)
-file_disk_write :: proc(file:string,bytes:[]u8) -> bool {
-    if dir:=os.dir(file);dir!="" && !os.is_dir(dir) {
-        if os.make_directory_all(dir)!=nil {return false}
-    }
-    temp:=strings.concatenate({file,".kai-tmp"},context.temp_allocator)
-    if os.write_entire_file(temp,bytes)!=nil {return false}
-    if os.rename(temp,file)!=nil {
-        os.remove(temp)
-        return false
-    }
-    return true
 }
 
 // Shows the fields in conflict of a file; "" folds it.
@@ -545,13 +525,7 @@ kai_read :: proc(s:^Session) {
             if f.path==d.path {f.changed,listed=true,true;break}
         }
         if listed {continue}
-        mark:=u8('M')
-        switch {
-        case d.after.kind==.Conflict: mark='C'
-        case d.before.address=={}: mark='A'
-        case d.after.address=={}: mark='D'
-        }
-        append(&files,Kai_File{d.path,mark,true})
+        append(&files,Kai_File{d.path,vcs.diff_mark(d),true})
     }
     v.files=files[:]
     // A check of a file no longer listed goes.
@@ -579,7 +553,7 @@ kai_read :: proc(s:^Session) {
         changed:=make([dynamic]vcs.Diff,context.temp_allocator)
         if ka.diff(w,st.picked,&changed,a)==.None {
             v.picked=make([]Kai_File,len(changed),a)
-            for d,k in changed {v.picked[k]={d.path,kai_mark(d),true}}
+            for d,k in changed {v.picked[k]={d.path,vcs.diff_mark(d),true}}
         } else {
             st.picked={}
         }

@@ -1,5 +1,6 @@
 package kai
 
+import "core:fmt"
 import "core:strconv"
 import "core:strings"
 import "core:unicode/utf8"
@@ -315,4 +316,15 @@ preview_published :: proc(m:^Machine,org:Log_Id,key:store.Hash) -> bool {
         if d.producer==m.identity.key {return true}
     }
     return false
+}
+
+// A size in bytes as a person reads it, in the temporary allocator.
+bytes_text :: proc(bytes:i64) -> string {
+    value:=f64(bytes)
+    switch {
+    case value>=1<<30: return fmt.tprintf("%.2f GiB",value/(1<<30))
+    case value>=1<<20: return fmt.tprintf("%.1f MiB",value/(1<<20))
+    case value>=1<<10: return fmt.tprintf("%.1f KiB",value/(1<<10))
+    }
+    return fmt.tprintf("%d bytes",bytes)
 }

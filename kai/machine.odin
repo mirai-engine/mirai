@@ -705,7 +705,7 @@ machine_grant :: proc(m:^Machine,org:Log_Id,subject_dh:Dh_Key,subject_key:Key,ri
     log_heads(&l,&heads)
     if len(heads)==0 {return nil,machine_fail(m,.Corrupt,"the org's log has no head")}
     now:=machine_now()
-    g:=Grant{head={magic=KAI_MAGIC,version=VERSIONS[.Log_Page],rights=rights,org=org,org_head=heads[0],issuer=m.identity.key,subject_dh=subject_dh,subject_key=subject_key,project=project,not_before=now,not_after=now+i64(days)*24*3600*1_000_000_000,path_len=u16(len(path))},path=path}
+    g:=Grant{head={magic=KAI_MAGIC,version=VERSIONS[.Grant],rights=rights,org=org,org_head=heads[0],issuer=m.identity.key,subject_dh=subject_dh,subject_key=subject_key,project=project,not_before=now,not_after=now+i64(days)*24*3600*1_000_000_000,path_len=u16(len(path))},path=path}
     bytes=grant_encode(&g,&m.identity,allocator) or_return
     if _,e:=machine_org_append(m,org,.Grant,bytes);e!=.None {
         delete(bytes,allocator)

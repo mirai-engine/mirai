@@ -117,7 +117,8 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
     }
     defer kai.runner_stop(r)
     key:=m.identity.key
-    fmt.printfln("Kai node %s (%s) on UDP port %d, serving %d orgs.",short_hex(key[:]),mode,kai.runner_port(r),len(m.orgs))
+    short:[12]u8
+    fmt.printfln("Kai node %s (%s) on UDP port %d, serving %d orgs.",kai.hex_text(key[:],short[:]),mode,kai.runner_port(r),len(m.orgs))
     if tcp:=kai.runner_tcp_port(r);tcp!=0 {fmt.printfln("Relay over TCP on port %d for devices whose UDP is blocked.",tcp)}
     if len(m.orgs)==0 {
         fmt.printfln("It serves no org yet. To pair it, an admin of the org runs on their machine\n  mirai kai pair offer node --org <org> --modes %s\nthen here, while this runs:\n  %s kai pair join <ticket> --store %s\nand approves on their machine with mirai kai pair approve when both show the same code.",mode=="relay"?"relay":mode=="seed"?"relay,seed":"relay,seed,ddc",program,root)

@@ -1,6 +1,7 @@
 package hub
 
 import "core:encoding/base64"
+import "mirai:kai"
 import "mirai:std/serial"
 import "mirai:store"
 
@@ -9,7 +10,6 @@ import "mirai:store"
 // close a string or a page.
 
 JSON_DEPTH :: 32
-HEX_DIGITS :: [16]u8{'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'}
 
 Json :: struct {
     w:serial.Writer,
@@ -88,14 +88,8 @@ json_null :: proc(j:^Json) {
 }
 
 json_hex :: proc(j:^Json,bytes:[]u8) {
-    json_separate(j)
-    serial.write_u8(&j.w,'"')
-    digits:=HEX_DIGITS
-    for c in bytes {
-        serial.write_u8(&j.w,digits[c>>4])
-        serial.write_u8(&j.w,digits[c&15])
-    }
-    serial.write_u8(&j.w,'"')
+    buffer,_:=make([]u8,2*len(bytes),context.temp_allocator)
+    json_string(j,kai.hex_text(bytes,buffer))
 }
 
 json_hash :: proc(j:^Json,h:store.Hash) {

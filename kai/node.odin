@@ -255,7 +255,7 @@ overlay_prune :: proc(s:^store.Store,now:i64) -> Error {
         if le!=.None {continue}
         for ref in refs {
             if commit,ok:=store.parse_hex(ref.name);ok && commit in reached {continue}
-            bytes,ge:=overlay_get(s,ref.hash,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+            bytes,ge:=object_get(s,ref.hash,.Overlay_Record,context.temp_allocator,limit=OVERLAY_RECORD_MAX)
             if ge==.None {
                 if record,de:=overlay_record_decode(bytes);de==.None && record.time>=now-OP_RETENTION {continue}
             }
@@ -345,7 +345,7 @@ store_roots :: proc(s:^store.Store,live:^[dynamic]store.Hash,targets:^[dynamic]R
         case !sealed:
         case strings.has_prefix(namespace,OVERLAY_PREFIX):
             for ref in refs {
-                bytes,ge:=overlay_get(s,ref.hash,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+                bytes,ge:=object_get(s,ref.hash,.Overlay_Record,context.temp_allocator,limit=OVERLAY_RECORD_MAX)
                 if ge!=.None {continue}
                 record,de:=overlay_record_decode(bytes)
                 if de!=.None {continue}

@@ -1949,38 +1949,11 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
 // Asks the org's peers for the object at address: true once it is whole here.
 runner_object_ask :: proc(r:^Runner,org:Log_Id,address:store.Hash) -> bool {
     if address=={} {return false}
-    if object_whole(&r.machine.store,address) {return true}
+    if object_whole(&r.machine.store,address,scratch_make()) {return true}
     for o in r.orgs {
         if o.id==org {agent_want_object(&o.agent,address)}
     }
     return false
-}
-
-// Whether every chunk of the object at address is in the store.
-object_whole :: proc(s:^store.Store,address:store.Hash) -> bool {
-    buffer,e:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
-    if e!=nil {return false}
-    return chunk_whole(s,address,buffer,0)
-}
-
-@(private)
-chunk_whole :: proc(s:^store.Store,address:store.Hash,buffer:[]u8,depth:int) -> bool {
-    if depth>store.NODE_LEVEL_MAX {return false}
-    bytes,e:=store.chunk_read(s,address,buffer)
-    if e!=.None {return false}
-    n,parse_error:=store.node_parse(bytes)
-    if parse_error!=.None {return false}
-    entries,clone_error:=slice.clone(n.entries,context.temp_allocator)
-    if clone_error!=nil {return false}
-    level:=n.level
-    for entry in entries {
-        if level==0 {
-            if !store.chunk_here(s,entry.address) {return false}
-        } else if !chunk_whole(s,entry.address,buffer,depth+1) {
-            return false
-        }
-    }
-    return true
 }
 
 @(private)

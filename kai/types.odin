@@ -44,6 +44,7 @@ Identity :: struct {
 Object_Kind :: enum u8 {
     None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output,Log_Page,
     Overlay_Record,Overlay_Tree,Overlay_File,Overlay_Blob,Envelopes,Landings,Provenance,
+    Grant, // not an object: the bytes of a grant, in a Grant entry or a grant's text
 }
 
 // The format of each kind of object, which the meta of its root carries:
@@ -52,8 +53,8 @@ Object_Kind :: enum u8 {
 // Log_Page in their own head.
 VERSIONS :: [Object_Kind]u16{
     .None=0,.Folder=1,.Conflict=2,.Change=2,.View=1,.Operation=3,.Stat_Index=1,.Log=2,.Device_Refs=2,
-    .DDC_Set=2,.DDC_Output=2,.Log_Page=3,.Overlay_Record=1,.Overlay_Tree=1,.Overlay_File=1,.Overlay_Blob=1,
-    .Envelopes=1,.Landings=1,.Provenance=1,
+    .DDC_Set=2,.DDC_Output=2,.Log_Page=3,.Overlay_Record=2,.Overlay_Tree=2,.Overlay_File=1,.Overlay_Blob=2,
+    .Envelopes=1,.Landings=1,.Provenance=1,.Grant=1,
 }
 
 Error :: enum u8 {
@@ -167,9 +168,9 @@ object_meta :: proc "contextless" (kind:Object_Kind) -> [size_of(Meta)]u8 {
     return transmute([size_of(Meta)]u8)Meta{magic=KAI_MAGIC,kind=kind,version=versions[kind]}
 }
 
-// The bytes of the object at address, which must be a record of kind; extra
-// is what the meta carries after Meta, into extra_out.
-object_get :: proc(s:^store.Store,address:store.Hash,kind:Object_Kind,allocator:=context.allocator,extra_out:[]u8=nil) -> (bytes:[]u8,error:Error) {
+// The bytes of the object at address, which must be a record of kind of at
+// most limit bytes; extra is what the meta carries after Meta, into extra_out.
+object_get :: proc(s:^store.Store,address:store.Hash,kind:Object_Kind,allocator:=context.allocator,extra_out:[]u8=nil,limit:=RECORD_MAX) -> (bytes:[]u8,error:Error) {
     o,open:=store.object_open(s,address)
     if open!=.None {return nil,store_error(open)}
     defer store.object_close(&o)
@@ -177,7 +178,7 @@ object_get :: proc(s:^store.Store,address:store.Hash,kind:Object_Kind,allocator:
     meta_check(meta,kind,len(extra_out)) or_return
     copy(extra_out,meta[size_of(Meta):])
     size:=store.object_size(&o)
-    if size>RECORD_MAX {return nil,.Too_Large}
+    if size>u64(limit) {return nil,.Too_Large}
     made,made_error:=make([]u8,int(size),allocator)
     if made_error!=nil {return nil,.Out_Of_Memory}
     if e:=store.object_read(&o,0,made);e!=.None {
@@ -308,7 +309,7 @@ hash_less :: proc(a,b:store.Hash) -> bool {
     return false
 }
 
-@(private)
+// The bytes as lowercase hex into buffer, as many as it holds.
 hex_text :: proc(bytes:[]u8,buffer:[]u8) -> string {
     DIGITS:=[16]u8{'0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'}
     n:=min(len(bytes),len(buffer)/2)

@@ -90,8 +90,8 @@ kai_detail_open :: proc(s:^Session,tab:Kai_Tab,revision:vcs.Revision,path:string
     switch v.kind {
     case .Text: d.title=fmt.aprintf("%s  +%d -%d",id,v.added,v.removed,allocator=a)
     case .Asset: d.title=fmt.aprintf("%s  +%d -%d ~%d",id,v.added,v.removed,v.changed,allocator=a)
-    case .Binary: d.title=fmt.aprintf("%s  binary, %s to %s",id,kai_bytes(v.before),kai_bytes(v.after),allocator=a)
-    case .Oversized: d.title=fmt.aprintf("%s  too large to show, %s to %s",id,kai_bytes(v.before),kai_bytes(v.after),allocator=a)
+    case .Binary: d.title=fmt.aprintf("%s  binary, %s to %s",id,vcs.bytes_text(i64(v.before)),vcs.bytes_text(i64(v.after)),allocator=a)
+    case .Oversized: d.title=fmt.aprintf("%s  too large to show, %s to %s",id,vcs.bytes_text(i64(v.before)),vcs.bytes_text(i64(v.after)),allocator=a)
     }
     kai_detail_place(s)
     return ""
@@ -113,15 +113,6 @@ kai_detail_close :: proc(st:^Kai_State) {
     delete(d.entries)
     delete(d.heights)
     d^={}
-}
-
-@(private)
-kai_bytes :: proc(n:u64) -> string {
-    switch {
-    case n>=1<<20: return fmt.tprintf("%.1f MB",f64(n)/(1<<20))
-    case n>=1<<10: return fmt.tprintf("%.1f KB",f64(n)/(1<<10))
-    }
-    return fmt.tprintf("%d bytes",n)
 }
 
 // The entries of the detail: its rows, and in Proposals the comments on its

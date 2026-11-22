@@ -1306,7 +1306,7 @@ grant_encode :: proc(g:^Grant,identity:^Identity,allocator:=context.allocator) -
     if len(g.path)>GRANT_PATH_MAX {return nil,.Too_Large}
     if g.issuer!=identity.key || g.org=={} || g.org_head=={} || g.not_after<=g.not_before || !utf8.valid_string(g.path) {return nil,.Invalid_Argument}
     head:=g.head
-    head.magic,head.version,head.reserved,head.reserved2,head.path_len=KAI_MAGIC,VERSIONS[.Log_Page],0,{},u16(len(g.path))
+    head.magic,head.version,head.reserved,head.reserved2,head.path_len=KAI_MAGIC,VERSIONS[.Grant],0,{},u16(len(g.path))
     w:=writer_make(allocator)
     write_value(&w,head)
     write_string(&w,g.path)
@@ -1320,7 +1320,7 @@ grant_encode :: proc(g:^Grant,identity:^Identity,allocator:=context.allocator) -
 grant_decode :: proc(bytes:[]u8) -> (g:Grant,error:Error) {
     r:=Reader{data=bytes}
     g.head=read_value(&r,Grant_Head)
-    if r.short || g.magic!=KAI_MAGIC || g.version!=VERSIONS[.Log_Page] || g.reserved!=0 || !zero(g.reserved2[:]) || g.path_len>GRANT_PATH_MAX {return {},.Corrupt}
+    if r.short || g.magic!=KAI_MAGIC || g.version!=VERSIONS[.Grant] || g.reserved!=0 || !zero(g.reserved2[:]) || g.path_len>GRANT_PATH_MAX {return {},.Corrupt}
     if transmute(u8)g.rights&~transmute(u8)RIGHTS_ALL!=0 || g.org=={} || g.org_head=={} || g.not_after<=g.not_before {return {},.Corrupt}
     g.path=string(read_bytes(&r,int(g.path_len)))
     g.signature=read_value(&r,Signature)
