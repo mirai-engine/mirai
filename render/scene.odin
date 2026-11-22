@@ -447,6 +447,8 @@ Scene_State :: struct {
 	mesh_draws_wanted:    u32, // the most a frame asked for since the marks were set: it grows to it
 	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for since the marks were set (renderer_capacity_marks_set): they grow to it
 	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test; then the groups of slots the cull lists
+	translucent_draws:    rhi.Buffer, // rhi.Draw_Indexed_Indirect of each entry of translucent a view draws (translucent_draws.comp)
+	translucent_draws_capacity: int,
 	batch:                Batch_State,
 	tlas:                 rhi.Accel,
 	tlas_capacity:        u32,
@@ -2613,6 +2615,12 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.candidate_buffer = rhi.buffer_create(d, {size = u64(capacity * size_of(u32)), usage = {.Storage}, name = "occlusion candidates"})
 		s.candidate_capacity = capacity
 	}
+	if len(s.translucent) > s.translucent_draws_capacity || s.translucent_draws == 0 {
+		capacity := max(len(s.translucent) + len(s.translucent) / 2, 64)
+		if s.translucent_draws != 0 {rhi.buffer_destroy(d, s.translucent_draws)}
+		s.translucent_draws = rhi.buffer_create(d, {size = u64(capacity * size_of(rhi.Draw_Indexed_Indirect)), usage = {.Storage, .Indirect}, name = "draws of the blended instances"})
+		s.translucent_draws_capacity = capacity if s.translucent_draws != 0 else 0
+	}
 	// The native TLAS holds the instances and those of the batches rays meet.
 	if tlas_count := max(len(s.instances) + s.batch.hw_count, 1); r.hardware_rt && (u32(tlas_count) > s.tlas_capacity || s.tlas == 0) {
 		capacity := max(tlas_count + tlas_count / 2, 64)
@@ -2657,7 +2665,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.light_tree_capacity = capacity
 		s.lights_dirty = true
 	}
-	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.visible_moved != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.mesh_draws != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
+	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.visible_moved != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.mesh_draws != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && s.translucent_draws != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
 	if !ok {set_error(r, "scene buffers: %s", rhi.device_error(d))}
 	return ok
 }
@@ -2865,7 +2873,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

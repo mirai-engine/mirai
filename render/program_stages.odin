@@ -366,6 +366,31 @@ ui_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rhi.Pipe
 	}
 }
 
+// The Surface programs of the blended materials of an instance, each once in
+// order of id, 0 for those without one: the draws of the passes of its blended
+// triangles, whose vertices (gbuffer.vert, blended) collapse the clusters of
+// the other materials.
+@(private)
+instance_blended_programs :: proc(s: ^Scene_State, instance: u32) -> (programs: [asset.MESH_MAX_SLOTS]u32, count: int) {
+	inst := &s.instances[instance]
+	mesh := inst.meta.x & INSTANCE_MESH_MASK
+	if int(mesh) >= len(s.meshes) {return}
+	m := &s.meshes[mesh]
+	if m.slot_count == 0 {return {}, 1}
+	for packed in s.indices[m.slot_word:][:m.slot_count] {
+		row := instance_row(packed, inst.meta.y, &inst.slot_materials)
+		if int(row) >= len(s.materials) || s.materials[row].alpha_mode != u32(asset.Alpha_Mode.Blend) {continue}
+		program := s.materials[row].program_id
+		at := 0
+		for at < count && programs[at] < program {at += 1}
+		if at < count && programs[at] == program {continue}
+		copy(programs[at + 1:count + 1], programs[at:count])
+		programs[at] = program
+		count += 1
+	}
+	return
+}
+
 // Draws the clusters of an instance for a pass whose stage has its pipeline
 // in target: those of its materials without a program with that pipeline,
 // and those of each Surface program of its materials with the stage of the

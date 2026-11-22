@@ -196,7 +196,66 @@ translucent_before_glass :: proc(p: ^Pass, f: ^Gpu_Frame) {
 	}
 }
 
-// A draw of one program binds its pipeline and draw constants, then draws.
+// The indirect draw of each entry of p.translucent (translucent_draws.comp),
+// once a frame of the view and outside a render pass: the levels of its mesh
+// its cut can take, or none where the depth pyramid of this frame hides it.
+@(private)
+translucent_draws_record :: proc(p: ^Pass) -> bool {
+	if p.translucent_drawn {return true}
+	r, cmd, t := p.r, p.cmd, p.t
+	s := &r.scene
+	count := len(p.translucent)
+	if count == 0 || count > s.translucent_draws_capacity {return false}
+	instances := rhi.frame_alloc(r.device, u64(count) * size_of(u32), 16)
+	if instances.ptr == nil {return false}
+	for entry, k in p.translucent {([^]u32)(instances.ptr)[k] = entry.instance}
+	Params :: struct {count, hiz_levels, occlusion, pad: u32}
+	params := Params{count = u32(count), hiz_levels = t.hiz_levels, occlusion = 1 if p.pyramid else 0}
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Translucent_Draws])
+	set_params(cmd, &params)
+	rhi.cmd_bind_transient(cmd, SLOT_PASS0, instances)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.hiz[p.current] if p.pyramid else r.dummy_texture)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.translucent_draws)
+	rhi.cmd_dispatch(cmd, groups(u32(count), 64))
+	p.translucent_drawn = true
+	return true
+}
+
+// Consecutive entries of p.translucent drawn with one pipeline and program,
+// as one indirect draw of all of them.
+@(private = "file")
+Translucent_Run :: struct {
+	pipeline: rhi.Pipeline,
+	program, first, count: u32,
+}
+
+@(private = "file")
+translucent_run_end :: proc(p: ^Pass, run: ^Translucent_Run, plain: rhi.Transient) {
+	if run.count == 0 {return}
+	cmd := p.cmd
+	rhi.cmd_bind_pipeline(cmd, run.pipeline)
+	if run.program == 0 {rhi.cmd_bind_transient(cmd, SLOT_DRAW, plain)} else {
+		drawn := [4]u32{run.program, 0, 0, 0}
+		rhi.cmd_set_constants(cmd, SLOT_DRAW, &drawn, size_of(drawn))
+	}
+	rhi.cmd_draw_indexed_indirect(cmd, p.r.scene.translucent_draws, u64(run.first) * size_of(rhi.Draw_Indexed_Indirect), run.count)
+	run.count = 0
+}
+
+// The draws of the blended programs of entry k with the stage of target.
+@(private = "file")
+translucent_entry_draw :: proc(p: ^Pass, run: ^Translucent_Run, target: ^rhi.Pipeline, k: int, plain: rhi.Transient) {
+	programs, count := instance_blended_programs(&p.r.scene, p.translucent[k].instance)
+	for program in programs[:count] {
+		pipeline := program_graphics(p.r, target, program)
+		if run.count > 0 && (run.pipeline != pipeline || run.program != program || run.first + run.count != u32(k)) {
+			translucent_run_end(p, run, plain)
+		}
+		if run.count == 0 {run^ = {pipeline = pipeline, program = program, first = u32(k)}}
+		run.count += 1
+	}
+}
+
 // Split between complete instances so the command count stays within the pass bound.
 @(private = "file")
 glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipeline) {
@@ -209,20 +268,23 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, pass)
 	commands := 0
-	for entry in p.translucent {
+	run: Translucent_Run
+	for entry, k in p.translucent {
 		if !entry.glass {continue}
 		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
 		needed := 3 * int(max(s.meshes[mesh].slot_count, 1))
 		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+			translucent_run_end(p, &run, plain)
 			rhi.cmd_end_render_pass(cmd)
 			for &color in pass.colors[:pass.color_count] {color.load = .Load}
 			pass.depth.load = .Load
 			rhi.cmd_begin_render_pass(cmd, pass)
 			commands = 0
 		}
-		instance_programs_draw(r, cmd, target, entry.instance, false, plain_constants = plain)
+		translucent_entry_draw(p, &run, target, k, plain)
 		commands += needed
 	}
+	translucent_run_end(p, &run, plain)
 	rhi.cmd_end_render_pass(cmd)
 }
 
@@ -231,6 +293,7 @@ glass_layers :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	p.glass_medium = glass_medium(r, p.camera.position)
 	rhi.cmd_timestamp(cmd, "glass layers")
+	if !translucent_draws_record(p) {return}
 	for k in 0 ..< glass_layer_count(r) {
 		layer := t.glass[k]
 		nearer := t.glass[k - 1].depth if k > 0 else r.dummy_texture
@@ -261,6 +324,7 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	if !p.draw_forward && !overflow {return}
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "translucent")
+	if !translucent_draws_record(p) {return}
 	s := &r.scene
 	#assert((3 * asset.MESH_MAX_SLOTS + 1) * 3 <= rhi.MAX_RENDER_PASS_COMMANDS)
 	plain := rhi.frame_alloc(r.device, 4 * size_of(u32))
@@ -285,7 +349,8 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	commands := 0
-	for entry in p.translucent {
+	run: Translucent_Run
+	for entry, k in p.translucent {
 		forward := entry.forward && !(behind && entry.before)
 		draws := 0
 		for target, i in targets {
@@ -295,6 +360,7 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
 		needed := (3 * int(max(s.meshes[mesh].slot_count, 1)) + 1) * draws
 		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+			translucent_run_end(p, &run, plain)
 			rhi.cmd_end_render_pass(cmd)
 			rhi.cmd_begin_render_pass(cmd, &pass)
 			commands = 0
@@ -302,13 +368,15 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 		for target, i in targets {
 			if target == nil || (i < 2 ? !entry.glass : !forward) {continue}
 			if filter := u32(1 if i < 2 else 0); filter != params.overflow {
+				translucent_run_end(p, &run, plain)
 				params.overflow = filter
 				set_params(cmd, &params)
 			}
-			instance_programs_draw(r, cmd, target, entry.instance, false, plain_constants = plain)
+			translucent_entry_draw(p, &run, target, k, plain)
 		}
 		commands += needed
 	}
+	translucent_run_end(p, &run, plain)
 	rhi.cmd_end_render_pass(cmd)
 }
 

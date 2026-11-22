@@ -328,7 +328,7 @@ Pipeline_Id :: enum {
 	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Reflect_Resolve,
 	Translucent, Glass_Overflow,
 	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Pages_Sort, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages (the steps that sort the pool apart) and the farthest depth of the cache
-	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside,
+	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside, Translucent_Draws,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
 	Visibility, Visibility_Two_Sided, Visibility_Tested, Visibility_Tested_Two_Sided,
 	Visibility_Clip, Visibility_Two_Sided_Clip, Visibility_Tested_Clip, Visibility_Tested_Two_Sided_Clip,
@@ -1019,6 +1019,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Air_Sky, .Air_Sky_Comp)
 	compute(list, r, .Air_Aerial, .Air_Aerial_Comp)
 	compute(list, r, .Glass_Levels, .Glass_Levels_Comp)
+	compute(list, r, .Translucent_Draws, .Translucent_Draws_Comp)
 	compute(list, r, .Points, .Points_Comp)
 	compute(list, r, .Skin, .Skin_Comp)
 	// Only rays traced by software run them: they walk or refit the software BVH.
@@ -1077,19 +1078,19 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	traced(list, r, .Glass_Light, .Glass_Light_Comp, .Glass_Light_Hw_Comp)
 	traced(list, r, .Glass_Inside, .Glass_Inside_Comp, .Glass_Inside_Hw_Comp)
 	graphics(list, r, .Glass_Layer, {
-		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Layer_Frag],
+		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Layer_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG32_Uint, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
 		name = "glass layer",
 	})
 	graphics(list, r, .Glass_Layer_Layers, {
-		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Layer_Layers_Frag],
+		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Layer_Layers_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG32_Uint, 4 = .R32_Float, 5 = .RGBA8_Srgb, 6 = .RGBA32_Uint}, color_count = 7,
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
 		name = "glass layer with layers",
 	})
 	translucent := rhi.Graphics_Pipeline_Desc{
-		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Filter_Frag],
+		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Filter_Frag],
 		color_formats = {0 = .RGBA16_Float}, color_count = 1, blend = {0 = .Multiply},
 		depth_format = .D32_Float, depth_test = true, depth_compare = .Greater_Equal,
 		cull = .None, name = "translucent",

@@ -140,8 +140,9 @@ or interleave its own passes.
     writing it and do not enter the BVH/TLAS
     ([overlays](../../mirai-core/references/host.md#loaded-assets)).
 11. **translucent**: the nearest transmissive surfaces form the glass layers. Blends draw forward
-    back to front between them and overflow glass filters in that order, against the opaque depth;
-    a blend nearer than every glass in its screen tiles draws only in front of the nearest layer.
+    back to front between them and overflow glass filters in that order, against the opaque depth:
+    each instance its blended clusters of the levels its cut takes, none where the pyramid hides
+    it, and one nearer than every glass in its screen tiles only in front of the nearest layer.
 12. **glass**: lights each layer once per pixel, from the farthest to the nearest
     ([glass](materials.md#glass)). The cull can suppress shading dispatches when no blended
     instance passes. Glass reflections use the projected bounds of glass that can trace.
@@ -149,8 +150,7 @@ or interleave its own passes.
       layer after the layer raster, the rest after the glass; without glass in view, a batch after
       composite.
     - Over the lit glass and before `Blend` on the front side: the `Lit` stage in front of the
-      nearest layer and then what the solid the camera is in absorbs and scatters
-      (`glass_inside`).
+      nearest layer and then what the solid the camera is in absorbs and scatters (`glass_inside`).
 13. **taa**: temporal anti-aliasing and rescaling to window resolution.
     - A moving pixel takes a tenth of the new frame. One still on screen (less than a quarter of a
       pixel per frame) averages its frames up to 64, four turns of the sixteen jitter points: an
