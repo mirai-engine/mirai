@@ -32,11 +32,10 @@ ASSET_COMMANDS :: [?]Asset_Command{
     {"ls","ls <folder> [--cache <file>] [--store <folder>]","Assets of a folder: id, kind, bytes, dependencies and path",asset_ls},
     {"deps","deps <file> [--root <folder>] [--store <folder>] [--all|--users]","Dependencies of an asset, or the assets that depend on it",asset_deps},
     {"verify","verify <file>...","Checks the container, hash, tables and the rules of the kind; of a scene, what mirai scene check says",asset_verify},
-    {"dump","dump <file> [--schema|--textconv]","The whole asset as JSON, a scene or a .ui as its document, or as the text git diffs",asset_dump},
+    {"dump","dump <file> [--schema]","The whole asset as JSON, a scene or a .ui as its document",asset_dump},
     {"get","get <file> <path>","A table, a row or a value as JSON",asset_get},
     {"set","set <file> <path>=<value>...","Changes values and rewrites the file",asset_set},
     {"diff","diff <a> <b>","Differences by row key and field path",asset_diff},
-    {"merge","merge <base> <ours> <theirs> [--out <file>]","Three-way merge by row and field; writes into <ours> as a git merge driver",asset_merge},
     {"unpack","unpack <file> <folder>","asset.json and one file per bulk column",asset_unpack},
     {"pack","pack <folder> <file>","The binary file of an unpack folder",asset_pack},
     {"repack","repack <file>...","Rewrites files in the store's canonical asset representation",asset_repack},
@@ -500,41 +499,26 @@ author_files :: proc(root,kind,verb:string,files:[]string,build_engine:bool) -> 
     return state.exit_code,string(stdout),string(stderr),""
 }
 
-// --textconv is what git diffs through diff.mirai.textconv: the text of
-// Text_Options.diff, a scene and a .ui as their documents, and of a file this
-// build does not read, one line that says why, so that a diff or a log that
-// reaches one goes on.
 asset_dump :: proc(root:string,args:[]string) -> int {
     file:=""
     options:asset.Text_Options
     for arg in args {
         switch {
         case arg=="--schema": options.schema=true
-        case arg=="--textconv": options.diff=true
         case !positional(arg): return unknown("dump",arg)
         case file=="": file=arg
         case: return misuse("dump")
         }
     }
-    if file=="" || options.schema && options.diff {return misuse("dump")}
+    if file=="" {return misuse("dump")}
     doc:asset.Document
-    if options.diff {
-        if error:=asset.document_load(&doc,file);error!=.None {
-            fmt.printfln("mirai asset dump: %s",error_text(error))
-            return 0
-        }
-    } else if !load("dump",file,&doc) {return 1}
+    if !load("dump",file,&doc) {return 1}
     if kind,authored:=authored_kind(doc.kind);authored {
         if options.schema {return failed("dump",file,"a %s is dumped as its document, which has no schema: mirai asset info lists its tables",kind)}
-        code,out,errors,problem:=author_files(root,kind,"read",{file},!options.diff)
+        code,out,errors,problem:=author_files(root,kind,"read",{file},true)
         switch {
         case problem=="" && code==0:
             fmt.print(out)
-            return 0
-        case options.diff:
-            line:=problem!=""?problem:strings.trim_space(errors)
-            if cut:=strings.index_byte(line,'\n');cut>=0 {line=line[:cut]}
-            fmt.printfln("mirai asset dump: %s",line)
             return 0
         case problem!="":
             return failed("dump",file,problem)
@@ -623,62 +607,6 @@ asset_diff :: proc(_:string,args:[]string) -> int {
     if error!=.None {fmt.eprintfln("mirai asset diff: %v",error);return 2}
     print(&w)
     return count==0?0:1
-}
-
-// The merge driver of git (merge=mirai: "mirai asset merge %O %A %B"): the
-// result goes into ours, and one line per conflict to stdout. An empty base is
-// a file both sides added. Exit 1 with conflicts, whose values the merge left
-// as ours had them; 2 when a file is not an asset or the result is not valid
-// (as mirai asset verify says, when ours was), and then ours stays as it was.
-asset_merge :: proc(_:string,args:[]string) -> int {
-    files:=make([dynamic]string,context.temp_allocator)
-    out:=""
-    for i:=0;i<len(args);i+=1 {
-        if args[i]=="--out" && i+1<len(args) {out=args[i+1];i+=1;continue}
-        if !positional(args[i]) {return unknown("merge",args[i])}
-        append(&files,args[i])
-    }
-    if len(files)!=3 {return misuse("merge")}
-    if out=="" {out=files[1]}
-    ours,origin,theirs:asset.Document
-    if !load("merge",files[1],&ours) || !load("merge",files[2],&theirs) {return 2}
-    base_doc:^asset.Document
-    if info,error:=os.stat(files[0],context.temp_allocator);error==nil && info.size>0 {
-        if !load("merge",files[0],&origin) {return 2}
-        base_doc=&origin
-    }
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    m:asset.Merge;defer asset.merge_destroy(&m)
-    if error:=asset.scene_merge(&m,&types,&ours,base_doc,&theirs);error!=.None {failed("merge",files[1],error_text(error));return 2}
-    data,error:=asset.document_bytes(&ours)
-    if error!=.None {failed("merge",files[1],error_text(error));return 2}
-    if ours.kind==asset.KIND_SCENE {
-        check:asset.Scene
-        if problem:=asset.scene_read(&check,&types,data);problem!=.None {failed("merge",files[1],"the result is not a valid scene: %s",error_text(problem));return 2}
-        asset.scene_destroy(&check)
-    }
-    // Rows of a kind may name rows of another table by position, which a merge of rows does not
-    // follow: a merge that breaks what ours kept is not written.
-    if before:=verify(files[1],&types);before=="" {
-        merged:asset.Asset
-        if problem:=asset.asset_open(&merged,data);problem!=.None {failed("merge",files[1],"the result does not read: %s",error_text(problem));return 2}
-        defer asset.asset_close(&merged)
-        if reason:=verify_asset(&merged,out,&types);reason!="" {failed("merge",files[1],"the result is not valid: %s",reason);return 2}
-    }
-    if serial.file_write_atomic(out,data)!=.None {failed("merge",out,"could not be written");return 2}
-    w:serial.Writer;serial.writer_init(&w)
-    for conflict in m.conflicts {
-        serial.text_write_raw(&w,"! ")
-        switch conflict.kind {
-        case .Value: serial.text_write_raw(&w,"value ")
-        case .Removed: serial.text_write_raw(&w,conflict.ours?"removed-by-theirs ":"removed-by-ours ")
-        case .Table: serial.text_write_raw(&w,"table ")
-        }
-        serial.text_write_raw(&w,conflict.path)
-        serial.write_u8(&w,'\n')
-    }
-    print(&w)
-    return len(m.conflicts)==0?0:1
 }
 
 // The kinds whose text is the document of mirai scene and mirai ui, by the

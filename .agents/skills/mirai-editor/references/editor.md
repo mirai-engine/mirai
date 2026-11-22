@@ -47,8 +47,7 @@ The editor prints its usage (`USAGE_TEXT`) on an unknown argument. What the usag
 - The editor itself passes: `--documents` (manifest of all tabs after a Build), `--gpu-lost` (what
   stopped the GPU of the editor that restarted it:
   [GPU that stops working](#gpu-that-stops-working)), `--view`, `--select`, `--launcher` (only the
-  [projects](panels.md#projects) screen) and `--git-init`, `--git-lfs` and `--git-remote` (the
-  project becomes a repository as soon as git responds: [git](git.md#operations)).
+  [projects](panels.md#projects) screen).
 - The exit codes are the `EDITOR_*` constants of `editor.odin`; that of a manual headless without
   the API driving it says why on stderr.
 

@@ -207,88 +207,12 @@ what_another_editor_selected_is_edited_and_stays_outlined :: proc(t:^testing.T) 
     testing.expect_value(t,levels[core.entity_index(e)],agent_level(1))
 }
 
-// A file too large to travel stays where it was edited, and every editor of
-// the session is told which, by whom and what makes it the same for all;
-// once it travels, nobody is told of it any more.
+// A large message crosses a session as one, under loss: the reliable channel
+// streams it from the queue of its peer and the other end takes it whole from
+// its pieces.
 @(test)
-a_file_too_large_to_travel_is_told_to_every_editor :: proc(t:^testing.T) {
-    host_end,guest_end:=new(Prefab_Fixture),new(Prefab_Fixture)
-    defer {free(host_end);free(guest_end)}
-    if !prefab_fixture_init(t,host_end,"collab-file-host") {return}
-    defer prefab_fixture_destroy(host_end)
-    if !prefab_fixture_init(t,guest_end,"collab-file-guest") {return}
-    defer prefab_fixture_destroy(guest_end)
-    for f,i in ([2]^Prefab_Fixture{host_end,guest_end}) {
-        st:=new(Collab_State)
-        st.role,st.phase,st.self=i==0?.Host:.Guest,.Joined,u8(i)
-        st.peers[0]={used=true,joined=true}
-        st.peers[1]={used=true,joined=true}
-        st.peers[2]={used=i==0,joined=i==0} // another guest, for what the host passes on
-        st.peers[1].name_length=copy(st.peers[1].name[:],"Ana")
-        f.collab.state=st
-    }
-    defer for f in ([2]^Prefab_Fixture{host_end,guest_end}) {
-        st:=f.collab.state
-        for &peer in st.peers {
-            for message in peer.out {delete(message)}
-            delete(peer.out);delete(peer.incoming)
-        }
-        for path in st.files_out {delete(path)}
-        delete(st.files_out)
-        free(st)
-        f.collab.state=nil
-    }
-    // What the guest changed goes to the host, which passes it on; how many messages the other guest got.
-    send :: proc(guest,host:^Prefab_Fixture) -> (passed:int) {
-        collab_files_send(&guest.s,guest.collab.state)
-        out:=&guest.collab.state.peers[0].out
-        for message in out {
-            collab_receive(&host.s,host.collab.state,1,message,0)
-            delete(message)
-        }
-        clear(out)
-        other:=&host.collab.state.peers[2].out
-        passed=len(other)
-        for message in other {delete(message)}
-        clear(other)
-        return
-    }
-    status :: proc(f:^Prefab_Fixture) -> (result:Api_Collab_Status) {
-        method:=api.Method{result_id=Api_Collab_Status}
-        call:=api.Call{method=&method,result=&result,allocator=context.temp_allocator}
-        api_collab_status(&f.s,&call)
-        return
-    }
-    file:=fmt.tprintf("%s/paint.bin",guest_end.root)
-    large:=make([]u8,COLLAB_FILE_BYTES+1);defer delete(large)
-    cases:=[?]struct{bytes:[]u8,travels:bool}{{large[:64],true},{large,false},{large,false},{large[:32],true}}
-    for c,at in cases {
-        guest_end.s.toast_length,host_end.s.toast_length=0,0
-        if !testing.expect(t,file_set(&guest_end.s,file,c.bytes)) {return}
-        passed:=send(guest_end,host_end)
-        held,found:=asset.registry_memory_find(&host_end.assets.registry,"paint.bin")
-        told:=at>0 && cases[at-1].travels!=c.travels && !c.travels
-        for f,i in ([2]^Prefab_Fixture{host_end,guest_end}) {
-            toast:=string(f.s.toast[:f.s.toast_length])
-            testing.expectf(t,told==(strings.contains(toast,"paint.bin") && strings.contains(toast,"repository")),"case %d, end %d: %s",at,i,toast)
-            if i==0 && told {testing.expect(t,strings.contains(toast,"Ana"),toast)}
-            result:=status(f)
-            if !testing.expectf(t,result.unsent_count==(c.travels?0:1),"case %d, end %d: %d files unsent",at,i,result.unsent_count) || c.travels {continue}
-            testing.expect(t,base.text_get(result.unsent[0].path[:])=="paint.bin" && result.unsent[0].peer==1 && result.unsent[0].bytes==u64(len(large)))
-        }
-        if c.travels {
-            testing.expectf(t,found && len(held.data)==len(c.bytes) && passed>0,"case %d: the file reached the host and went on",at)
-        } else {
-            testing.expectf(t,(!found || len(held.data)!=len(c.bytes)) && passed==(told?1:0),"case %d: %d messages passed on",at,passed)
-        }
-    }
-}
-
-// A file of COLLAB_FILE_BYTES crosses a session as one message, under loss:
-// the reliable channel streams it from the queue of its peer and the other
-// end takes it whole from its pieces.
-@(test)
-a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T) {
+a_large_message_crosses_a_session_whole_under_loss :: proc(t:^testing.T) {
+    SIZE :: 32<<20
     network:wire.Sim_Network
     if !testing.expect(t,wire.sim_network_init(&network,{seed=3,endpoints=2,packets=8192})) {return}
     defer wire.sim_network_destroy(&network)
@@ -305,8 +229,8 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
     wire.sim_endpoint_conditions(&network,0,{loss=0.05})
     wire.host_connect(&guest.host,wire.address_memory(0))
     w:serial.Writer
-    collab_begin(&w,.File,COLLAB_FILE_BYTES+8)
-    for i in 0..<COLLAB_FILE_BYTES {serial.write_scalar(&w,u8(i*13+i>>16))}
+    collab_begin(&w,.Snapshot,SIZE+8)
+    for i in 0..<SIZE {serial.write_scalar(&w,u8(i*13+i>>16))}
     file:=serial.writer_bytes(&w)
     now:=0.0
     queued,arrived:=false,false
@@ -326,12 +250,12 @@ a_file_as_large_as_a_session_carries_crosses_as_one_message :: proc(t:^testing.T
             if command.kind!=.Message {continue}
             message,whole:=collab_incoming(guest,&guest.peers[0],command)
             if !whole {continue}
-            testing.expect(t,len(message)==len(file) && mem.compare(message,file)==0,"the file arrives whole and as it was sent")
+            testing.expect(t,len(message)==len(file) && mem.compare(message,file)==0,"the message arrives whole and as it was sent")
             arrived=true
         }
         if arrived {break}
     }
-    testing.expect(t,arrived,"the file arrives")
+    testing.expect(t,arrived,"the message arrives")
 }
 
 // The code collab.status returns is the whole code: it decodes to the invitation of the host.

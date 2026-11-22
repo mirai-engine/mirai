@@ -156,7 +156,8 @@ Deleting a file is asked of the user with both providers; moving is not (`ai_per
 
 - Claude receives in `session/new`, `load` and `resume` rules for its session
   (`_meta.claudeCode.options.settings`, `AI_CLAUDE_SESSION_META`): `ask` for the commands that
-  delete and for `asset_delete`, `panel_delete` and `git_discard`, and `allow` for `mv`. An `ask`
+  delete and for `asset_delete`, `panel_delete`, `kai_restore` and `kai_undo`, and `allow` for
+  `mv`. An `ask`
   rule beats the `allow` ones and the user's default mode.
 - Codex runs without asking what its sandbox permits, so the editor writes
   `.codex/rules/mirai.rules` in the project (`prefix_rule` with `decision="prompt"`) and marks it

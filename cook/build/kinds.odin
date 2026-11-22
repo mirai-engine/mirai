@@ -10,7 +10,7 @@ import "mirai:std/base"
 // adds (project.Asset_Kind): a build generates into the package of each kind
 // the constants its code names, <STEM>_KIND (the four letters its files begin
 // with), <STEM>_EXTENSION and <STEM>_VERSION, where .stem is its extension.
-// The file is kept by git, so the plugin compiles and tests without a build,
+// The file is kept under version control, so the plugin compiles and tests without a build,
 // and a build writes it only when the manifest says something else.
 
 KINDS_FILE :: "kinds_gen.odin"

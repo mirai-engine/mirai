@@ -395,10 +395,6 @@ inspector_build :: proc(s:^Session,w:core.World_Ref,width,max_height:f32) {
     preview:=s.edits.preview
     if preview {ui.disabled_begin(ctx)}
     defer if preview {ui.disabled_end(ctx)}
-    if git_review_shown(s) {
-        git_review_build(s,w,width,max_height)
-        return
-    }
     active:=history.selection_active(s.selection)
     if !entity_alive(w,active) {
         if task,id,shown:=ai_review_shown(s);shown {

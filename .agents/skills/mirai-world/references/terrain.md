@@ -45,7 +45,7 @@ Chunks:
   derived marker is removed.
 - Changing `Terrain.source` retires the previous children and takes the resident revision.
 - A source is read again when its file's stamp changes in the asset registry (`terrain_stamp`): a
-  stroke, an undo or a change outside the editor (git, a tool).
+  stroke, an undo or a change outside the editor (Kai, a tool).
 - Changing `Terrain.source` retires the previous children. Changing representation or distribution
   replaces geometries; a local change keeps the identities of the unaffected chunks.
 
@@ -474,7 +474,7 @@ Preview and confirmation:
   revision restored by the steps and puts it in the registry, which the flush writes; one equal to
   the disk's is no change.
 - If the file changes without the revision changing: with an undo or redo in between, the file
-  takes the head; if not, it changed outside the tool (git, another tool), the revision
+  takes the head; if not, it changed outside the tool (Kai, another tool), the revision
   has what the file has and the step that leads to it stores, of what changed, that of the previous
   revision (`steps_rebase`): undo returns to it and redo does not bring back what was discarded.
 - On opening the document, the revision resolved from the file enters the initial base with

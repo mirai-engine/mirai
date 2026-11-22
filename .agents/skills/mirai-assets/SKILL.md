@@ -19,10 +19,8 @@ instances, registry).
 
 - Inspecting or editing a file: [subcommands](references/cli.md#subcommands),
   [paths](references/cli.md#paths) and
-  [editing by unpack and pack](references/cli.md#editing-by-unpackpack); three-way merge:
-  [merge](references/cli.md#merge).
-- Which kinds git merges and diffs, `.gitattributes` and the drivers of a clone
-  (`mirai setup git`): [git](references/cli.md#git).
+  [editing by unpack and pack](references/cli.md#editing-by-unpackpack); three-way merge, which
+  Kai's asset driver runs: [merge](references/cli.md#merge).
 - Container, tables, `Asset`/`Document`, types, versions, registry and asset JSON:
   [container](references/formats.md#container), [typed tables](references/formats.md#typed-tables),
   [asset types](references/formats.md#asset-types), [versions](references/formats.md#versions),
@@ -53,8 +51,8 @@ instances, registry).
 1. **Look before touching.** Inspect with the [CLI](references/cli.md); the file's schema allows
    reading any type.
 2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`; a scene or a `.ui`, by
-   its document (`mirai scene|ui read` and `write`), its only text: `dump` and the diffs of git
-   print it ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for
+   its document (`mirai scene|ui read` and `write`), its only text: `dump`
+   prints it ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for
    scenes. Scenes and prefabs, the demo's too, are files of `assets/` written by `scene.write`,
    `mirai scene write` or the editor; no code builds them. Meshes from code go through
    `asset.content_mesh` over the shapes of `std/geom`
@@ -140,9 +138,8 @@ instances, registry).
 
 - `mirai test std/serial` and `mirai test asset`, whose cases are named for what they check;
   generated assets, with `mirai asset verify`. Focal tests by topic:
-  - merge: `asset/merge_test.odin`; git: `cook/build/git_test.odin` (the attributes follow the
-    kinds), and by hand a repository after `mirai setup git` with two branches that edit different
-    fields and the same field of a scene (`git diff`, `git merge`);
+  - merge: `asset/merge_test.odin`; through Kai:
+    `a_scene_merges_by_field_through_the_driver` of `cook/kai`;
   - prefab instances: `asset/scene_test.odin`, `mirai test engine/scene` (on loading) and
     `cook/build/cook_test.odin` (on cooking);
   - textures: `asset/kinds_test.odin` (round trip of every format, layers, partial reads of the
@@ -157,8 +154,8 @@ instances, registry).
     renamed field and what a load reports it loses:
     `a_renamed_field_keeps_its_value_through_each_name_it_had` of `std/serial` and
     `a_scene_saved_with_another_layout_of_a_component_loads_it_by_field_names` of `engine/scene`;
-  - the document of a scene or a `.ui` from a file outside the assets (what `dump` and git
-    show): `the_commands_read_write_and_check_the_document_of_an_asset` of `cook/author`;
+  - the document of a scene or a `.ui` from a file outside the assets (what `dump` shows):
+    `the_commands_read_write_and_check_the_document_of_an_asset` of `cook/author`;
   - records of packages: `package_records_read_back_what_they_write`,
     `packages_resolve_lists_the_objects_of_what_a_project_uses`,
     `package_records_refuse_hostile_text` and `a_root_carries_the_manifests_it_pins` of

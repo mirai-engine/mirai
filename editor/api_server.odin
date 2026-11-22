@@ -328,7 +328,7 @@ api_idle :: proc(s:^Session) -> bool {
 @(private)
 api_jobs :: proc(s:^Session) {
     import_poll(s)
-    git_poll(s)
+    kai_poll(s)
     projects_poll(s)
     plugins_git_poll(s)
     play_plugin_poll(s)
@@ -524,9 +524,7 @@ api_trampoline :: proc(call:^api.Call) {
     if edits!=nil && !api_call_as_user(call) {edits.author=turn!=nil?history.Edit_Author(turn.id):history.EDIT_AUTHOR_API}
     api_refusal_begin(entry.session)
     event(entry.session,st.person?"command":"api",call.method.name)
-    if missing:=git_missing(entry.session);missing!="" && api_call_edits(call) && !strings.has_prefix(call.method.name,"git.") {
-        api.call_fail(call,api.SERVER_ERROR,missing)
-    } else if !api_measured_wait(entry.session,st,call) {
+    if !api_measured_wait(entry.session,st,call) {
         // It failed saying for whom it waited.
     } else if st.in_call>1 || st.person || api_disk_sync(entry.session,call) {
         entry.run(entry.session,call)

@@ -555,6 +555,7 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
         file_put(root,fmt.tprintf("files/%s.txt",name),transmute([]u8)fmt.tprintf("%s 1",name))
     }
     file_put(root,"Folder/inside.txt",transmute([]u8)string("inside 1"))
+    file_put(root,"files/both_merge.txt",transmute([]u8)string("a\nb\nc\n"))
     if !host_offer(t,&w,root) {return}
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
@@ -570,6 +571,9 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     file_put(joined,"files/host_removes_joiner_changes.txt",transmute([]u8)string("joiner 2"))
     os.remove(fmt.tprintf("%s/files/joiner_removes_host_changes.txt",joined))
     file_put(joined,"files/joiner_changes.txt",transmute([]u8)string("joiner 2"))
+    // Both changed other lines: the text merges.
+    file_put(root,"files/both_merge.txt",transmute([]u8)string("A\nb\nc\n"))
+    file_put(joined,"files/both_merge.txt",transmute([]u8)string("a\nb\nC\n"))
     // Renames that change only the case: of a file, of a file with its bytes, of a folder.
     os.rename(fmt.tprintf("%s/files/Case_only.txt",root),fmt.tprintf("%s/files/case_only.txt",root))
     os.rename(fmt.tprintf("%s/files/Case_changed.txt",root),fmt.tprintf("%s/files/case_changed.txt",root))
@@ -590,9 +594,11 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     testing.expect_value(t,read(joined,"joiner_removes_host_changes.txt"),"(none)")
     testing.expect_value(t,read(joined,"joiner_changes.txt"),"joiner 2")
     testing.expect_value(t,read(joined,"same.txt"),"same 1")
+    testing.expect_value(t,read(joined,"both_merge.txt"),"A\nb\nC\n")
+    testing.expect_value(t,report.merged,1)
     // Where case folds, a rename by case is one file renamed in place; elsewhere one removed and one written.
     folds:=folds_case(joined)
-    testing.expectf(t,report.written==(folds?3:5) && report.removed==(folds?1:4),"the host's changes and its new file are written, its removals applied: %d, %d",report.written,report.removed)
+    testing.expectf(t,report.written==(folds?4:6) && report.removed==(folds?1:4),"the host's changes and its new file are written, its removals applied: %d, %d",report.written,report.removed)
     names :: proc(folder:string) -> string {
         listed,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
         list:=make([dynamic]string,context.temp_allocator)

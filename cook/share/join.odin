@@ -10,8 +10,10 @@ import "core:sync"
 import "core:thread"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import kai_assets "mirai:cook/kai"
 import "mirai:cook/textures"
 import "mirai:exchange"
+import vcs "mirai:kai"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/jobs"
@@ -32,8 +34,10 @@ import wire "mirai:net"
 // A folder joined before keeps the snapshot it last took
 // (<folder>/.mirai/share/snapshot), the base of three ways: a file the host
 // changed or removed is replaced or removed when the joiner left it as it
-// was; a file both changed is kept and reported, never overwritten, also
-// when the joiner changes it while the join runs. A file that cannot be
+// was; a file both changed is merged by the drivers of Kai (an asset row by
+// row and field by field, text by lines) when they resolve it, and otherwise
+// kept and reported, never overwritten, also when the joiner changes it while
+// the join runs. A file that cannot be
 // written or removed is reported with why and how to fix it, the rest is
 // done, and the folder keeps as its base the last entry of each such file, so
 // running the join again completes it.
@@ -101,6 +105,7 @@ Join_Report :: struct {
     files:int,      // of the snapshot
     written:int,    // files written now
     removed:int,    // files the host removed, removed here
+    merged:int,     // files both changed, merged and written
     kept:[dynamic]string,   // files left as they are on purpose, each with why
     failed:[dynamic]string, // files not written or removed, each with why and how to fix it: the join is incomplete
     fetched:i64,    // bytes of files received now
@@ -115,13 +120,15 @@ Plan :: struct {
     folds:bool,                 // the folder's file system folds case: paths compare in lower case
     last_folded:map[string]int, // with folds: the entries of the last snapshot by their path in lower case
     snap_folded:map[string]int, // with folds: those of the snapshot
+    drivers:[]vcs.Driver,       // what merges a file both changed
 }
 
 // An entry of the snapshot to write, with the file as the plan found it here:
 // absent, or with the address base. done: written, or left on purpose.
 // refused: its path passes through a link here, and it is not written.
+// merge: both changed it since origin, the entry of the last snapshot.
 @(private)
-Write :: struct {at:int,present:bool,base:store.Hash,done:bool,refused:bool}
+Write :: struct {at:int,present:bool,base:store.Hash,done:bool,refused:bool,merge:bool,origin:store.Hash}
 
 // An entry of the last snapshot the host removed and the joiner did not change.
 @(private)
@@ -206,6 +213,12 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     report.files=len(snap.entries)
     node_serve(n,..folders[:])
     plan:=join_plan(&snap,&last,&index,folder,&report,allocator)
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    asset_driver:=kai_assets.Asset_Driver{types=&types}
+    drivers:=[1]vcs.Driver{kai_assets.driver(&asset_driver)}
+    plan.drivers=drivers[:]
     if error=join_room(&d,&snap,&plan,folder,allocator);error!="" {return}
 
     // The files, smallest first, then what the host removed.
@@ -430,6 +443,8 @@ join_plan :: proc(snap,last:^Snapshot,index:^Index,folder:string,report:^Join_Re
             append(&plan.write,Write{at=at,present=true,base=here})
         case based && base.address==e.address:
             // Only the joiner changed it: it is the joiner's.
+        case based:
+            append(&plan.write,Write{at=at,present=true,base=here,merge=true,origin=base.address})
         case:
             kept(report,"%s: you changed it and the host has another one; yours is kept",e.path)
         }
@@ -815,6 +830,12 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
             failed(report,"%s could not be written (%v): free space on its disk, or give this user access to %s, and run the join again",target,os_error,temp_folder)
             continue
         }
+        if w.merge && !join_merge(plan,s,e,w,target,temp) {
+            os.remove(temp)
+            kept(report,"%s: you changed it and the host has another one, and they do not merge; yours is kept",e.path)
+            w.done=true
+            continue
+        }
         os.change_mode(temp,mode)
         if h:=d.node.hooks;h!=nil && h.saved!=nil {h.saved(h.data,e.path)}
         // The copy of a large file takes time: an edit made meanwhile is kept too.
@@ -845,10 +866,34 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
             failed(report,"%s could not be replaced (%v): close what holds it, or give this user access, and run the join again",target,rename_error)
             continue
         }
-        if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {index_learn(index,e.path,info,e.address)}
+        if w.merge {
+            // Its address is the merge's, read the next time.
+            delete_key(index,e.path)
+            report.merged+=1
+        } else if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {
+            index_learn(index,e.path,info,e.address)
+        }
         report.written+=1
         w.done=true
     }
+}
+
+// Merges into temp, which holds the host's file, the joiner's at target and
+// their base, the entry of the last snapshot: false when the base is gone
+// from the store, a side does not read or the drivers do not resolve it.
+@(private)
+join_merge :: proc(plan:^Plan,s:^store.Store,e:^Entry,w:^Write,target,temp:string) -> bool {
+    if e.size>vcs.DRIVER_BYTES_MAX {return false}
+    origin,origin_error:=vcs.file_bytes(s,w.origin,context.temp_allocator)
+    if origin_error!=.None {return false}
+    ours,ours_error:=os.read_entire_file(target,context.temp_allocator)
+    if ours_error!=nil || len(ours)>vcs.DRIVER_BYTES_MAX {return false}
+    theirs,theirs_error:=os.read_entire_file(temp,context.temp_allocator)
+    if theirs_error!=nil {return false}
+    input:=vcs.Driver_Input{path=e.path,base=origin,ours=ours,theirs=theirs,has_base=true,terms={w.origin,w.base,e.address}}
+    out:=make([dynamic]u8,context.temp_allocator)
+    if result,_:=vcs.drivers_merge(plan.drivers,&input,&out);result!=.Resolved {return false}
+    return os.write_entire_file(temp,out[:])==nil
 }
 
 @(private)

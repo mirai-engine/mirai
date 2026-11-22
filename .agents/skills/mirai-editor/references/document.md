@@ -99,7 +99,8 @@ Procedures:
 
 - Quitting while an agent works asks first (`Pending.Quit`), and so do New and Open of a scene
   while agents work or a session is shared. Closing a tab asks nothing: its file holds it.
-  Quitting with [pending changes](git.md#pending-and-kept) lists them, to keep or discard.
+  Quitting asks nothing of the files: the working copy of [Kai](kai.md#working-copy) is a
+  change that holds them.
 - The dialog says how many agents are working and how many changes await review. Accepting stops
   the agents first (`ai_working_stop`), and from that moment the API rejects their calls; Cancel
   lets them work. The review ends with the editor:
@@ -188,7 +189,7 @@ What the editor has is what its files hold.
 - **Undo and redo are steps**: they rewrite the files they change.
 - **Play never writes**: the flush waits while a game plays and writes at stop the asset edits
   made meanwhile. Players in other processes read the files as they are.
-- **The file wins**: a document whose file changes outside the editor (git, a tool) is read again
+- **The file wins**: a document whose file changes outside the editor (Kai, a tool) is read again
   at the next flush, with a new history (`document_file_follow`); the editor knows its own writes
   by the stamp of what it wrote.
 - **A document without a file is not written.** File > New asks for the file first and `scene.new`

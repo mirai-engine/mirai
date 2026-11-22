@@ -479,7 +479,7 @@ the registry's memory as a file of the undo step that creates it.
   ([history](terrain.md#tool)), the tool stores the head of each source and each step only the
   cells, types and info that changed (`foliage_history.odin`); undo and redo change them with the
   head and `foliage_sync` writes it with `editor.file_set`. The file is rewritten when the step
-  ends; one changed outside the tool (git, another tool) is taken as the current revision, without
+  ends; one changed outside the tool (Kai, another tool) is taken as the current revision, without
   redo bringing back what it replaced.
 - Radius, densities, Ground only and the Reapply checkboxes are stored in the editor preferences
   (`Foliage_Tool`).
