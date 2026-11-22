@@ -866,3 +866,35 @@ peers_exchange_compressed_objects_both_ways :: proc(t:^testing.T) {
         testing.expectf(t,test_peer(n).received<u64(size),"its chunks came encoded: %d bytes for %d",test_peer(n).received,size)
     }
 }
+
+// A walk that finds more chunks than the table of needs takes has passed
+// them: the want walks again for them, and is complete only once its object
+// reads whole. Wants whose roots find the table full ask them once it has room.
+@(test)
+wants_past_a_full_table_of_needs_complete_whole :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_world(t,&w,"exchange-needs-full",2,desc={needs=64}) {return}
+    server:=test_host(&w,0,.Server)
+    client:=test_host(&w,1,.Client)
+    if !testing.expect(t,server!=nil && client!=nil && test_connect(&w,client,w.nodes[0].endpoints[0])) {return}
+    // Two objects whose roots the receiver has: their walks find their data at once.
+    walked:[2]store.Hash
+    buffer:=make([]u8,store.CHUNK_MAX,context.temp_allocator)
+    for &root,k in walked {
+        root=test_put(t,&w.nodes[0].s,48*store.CHUNK_AVG,u64(k)+41)
+        bytes,read_error:=store.chunk_read(&w.nodes[0].s,root,buffer)
+        if !testing.expect_value(t,read_error,store.Error.None) {return}
+        testing.expect_value(t,store.chunk_put(&w.nodes[1].s,root,bytes),store.Error.None)
+    }
+    testing.expect_value(t,store.commit(&w.nodes[1].s),store.Error.None)
+    // More small objects than the table holds needs.
+    small:[80]store.Hash
+    for &root,k in small {root=test_put(t,&w.nodes[0].s,100,u64(k)+500)}
+    all:=make([dynamic]store.Hash,context.temp_allocator)
+    append(&all,..walked[:])
+    append(&all,..small[:])
+    for root in all {testing.expect_value(t,want(&w.nodes[1].x,root),Error.None)}
+    testing.expect(t,test_until_complete(&w,1,all[:],60),"every want completes")
+    for root,k in all {testing.expectf(t,test_whole(&w.nodes[1].s,root),"object %d reads whole once complete",k)}
+}

@@ -46,7 +46,9 @@ in `exchange/wire.odin`.
   per peer, each sized to what the peer delivers in a round trip, so they keep twice that
   outstanding without queueing a low priority want ahead of a later high one. A root not here
   counts only against the entries of an ask, since most objects are small. A want keeps at most
-  `WALK_AHEAD` chunks found and not asked, so many wants share the table of needs.
+  `WALK_AHEAD` chunks found and not asked, so many wants share the table of needs. What a full
+  table does not take is never dropped: a walk that passed it walks again from the root once its
+  needs arrived, and a root waits for room; a want is `Complete` only once its whole tree is here.
 - Chunks are spread among the connected peers; a peer that lacks one is not asked for it again for
   a while, and a want that no peer can be asked for, or one of whose chunks no peer has, is
   `Missing`, asked again when a peer joins. What a peer was asked stays reserved to it only while
