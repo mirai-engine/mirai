@@ -1,6 +1,7 @@
 package editor
 
 import "base:runtime"
+import "core:crypto"
 import "core:fmt"
 import vmem "core:mem/virtual"
 import "core:strings"
@@ -189,7 +190,7 @@ kai_team_close :: proc(s:^Session) {
     if t.opened {vcs.machine_close(&t.machine)}
     vmem.arena_destroy(&t.arena)
     kai_refusal_set(t,{})
-    for &b in t.recovery {b=0}
+    crypto.zero_explicit(&t.recovery,size_of(t.recovery))
     t^={}
 }
 
@@ -573,9 +574,9 @@ kai_dialog_open :: proc(s:^Session,dialog:Kai_Dialog) {
 kai_dialog_close :: proc(s:^Session) {
     if s.kai!=nil && s.kai.state!=nil {
         t:=&s.kai.state.team
-        for &b in t.recovery {b=0}
+        crypto.zero_explicit(&t.recovery,size_of(t.recovery))
         t.recovery_length=0
-        for &b in t.fields.recovery {b=0}
+        crypto.zero_explicit(&t.fields.recovery,size_of(t.fields.recovery))
         t.fields.recovery_length=0
         t.dialog=.None
     }

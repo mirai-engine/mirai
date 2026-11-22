@@ -359,14 +359,11 @@ ddc_record_decode :: proc(bytes:[]u8) -> (d:DDC_Record,error:Error) {
 // Whether producer may publish derived data for the org: a device of a
 // writer, a node in DDC mode, or the signing key of a grant with the ddc
 // right that holds now.
-ddc_producer_allowed :: proc(org:^Org_Fold,producer:Key,grants:[][]u8,now:i64) -> bool {
+ddc_producer_allowed :: proc(org:^Org_Fold,producer:Key,now:i64) -> bool {
     if _,role:=org_device_role(org,producer);role>=.Writer {return true}
     if k:=org_node(org,producer);k>=0 && .DDC in org.nodes[k].modes {return true}
-    for bytes in grants {
-        g,e:=grant_verify(org,bytes,now)
-        if e==.None && .DDC in g.rights && g.subject_key==producer {return true}
-    }
-    return false
+    _,granted:=org_grant_right(org,producer,.DDC,{},now)
+    return granted
 }
 
 // The records of the set at address, each one's bytes.
@@ -441,7 +438,7 @@ ddc_publish :: proc(s:^store.Store,org:Log_Id,identity:^Identity,key:store.Hash,
 // Merges the set a peer gave at address into the one held for key: each of
 // its records signed by an allowed producer for this org and key. Records of
 // a producer that is not allowed are skipped.
-ddc_accept :: proc(s:^store.Store,org:^Org_Fold,key:store.Hash,address:store.Hash,grants:[][]u8,now:i64) -> (changed,nondeterministic:bool,error:Error) {
+ddc_accept :: proc(s:^store.Store,org:^Org_Fold,key:store.Hash,address:store.Hash,now:i64) -> (changed,nondeterministic:bool,error:Error) {
     incoming:=make([dynamic][]u8,context.temp_allocator)
     ddc_set_read(s,address,&incoming) or_return
     set:=make([dynamic][]u8,context.temp_allocator)
@@ -455,7 +452,7 @@ ddc_accept :: proc(s:^store.Store,org:^Org_Fold,key:store.Hash,address:store.Has
     }
     for record in incoming {
         d,e:=ddc_record_decode(record)
-        if e!=.None || d.org!=org.log.id || d.key!=key || !signed_valid(record,d.producer) || !ddc_producer_allowed(org,d.producer,grants,now) {continue}
+        if e!=.None || d.org!=org.log.id || d.key!=key || !signed_valid(record,d.producer) || !ddc_producer_allowed(org,d.producer,now) {continue}
         added:=ddc_set_add(&set,record) or_return
         changed|=added
     }

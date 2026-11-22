@@ -375,12 +375,12 @@ proposal_land :: proc(s:^store.Store,f:^Proposal_Fold,project:^Project_Fold,iden
 // out ends sorted by move; each fold owns its log (project_snapshots_destroy).
 project_snapshots :: proc(s:^store.Store,l:^Log,org:^Org_Fold,out:^[dynamic]^Proposal_Fold,allocator:=context.allocator) -> Error {
     held:=landings_read(s,l.id)
-    validity:=org_validity(org)
+    state:=org_state(org)
     for &item in l.items {
         if item.entry.type!=.Bookmark_Move {continue}
         b,heads,_,name:=move_parts(item.entry.body)
         if b.proposal=={} {continue}
-        if closure_has(held,landing_key(org,l.id,name,item.address,validity)) {
+        if closure_has(held,landing_key(org,l.id,name,item.address,state)) {
             pf,pe:=new(Proposal_Fold,allocator)
             if pe!=nil {return .Out_Of_Memory}
             pf^={org=org,project=l.id,status=.Open,revision=b.to,move=item.address,kept=true,allocator=allocator}
@@ -399,10 +399,11 @@ project_snapshots :: proc(s:^store.Store,l:^Log,org:^Org_Fold,out:^[dynamic]^Pro
         snapshot,se:=new(Log,allocator)
         if se!=nil {return .Out_Of_Memory}
         log_init(snapshot,b.proposal,allocator)
-        for &x,i in full.items {
+        // In a topological order: the genesis first, which a witness needs before it.
+        for i in full.order {
             within:=false
-            for t in tips {within||=log_within(&full,i,t)}
-            if within {log_add(snapshot,x.bytes,false) or_return}
+            for t in tips {within||=log_within(&full,int(i),t)}
+            if within {log_add(snapshot,full.items[i].bytes,false) or_return}
         }
         pf,pe:=new(Proposal_Fold,allocator)
         if pe!=nil {
@@ -442,13 +443,19 @@ project_snapshots_destroy :: proc(list:^[dynamic]^Proposal_Fold,allocator:=conte
 // A move that lands a proposal is checked against the proposal as it was at
 // the heads the move names, which never change, so a machine keeps each
 // verdict that held and folds the project again without reading those
-// proposals. A verdict is kept by a key that names all it was judged on: the
-// move (which names the proposal and its heads), the policy entry it was
-// held to and the validity of the org's and users' entries, which a removal
-// that arrives late may still change (org_validity). The keys of a project
-// are one sorted object under LANDINGS_NAMESPACE, which no peer is served and
-// a prune does not touch; a key no move has any more is let go when the set
-// is written again, so it holds at most one key per move.
+// proposals. The snapshot's entries are judged against the org's and users'
+// logs as this machine holds them, and an entry of those that arrives late
+// changes the verdict even when it voids nothing there: a removal a witness
+// of the snapshot names makes that witness valid and leaves out what the
+// removed key signed outside it, a concurrent removal voids the org entry an
+// approval was signed under, a device's addition makes its verdict count. So
+// a verdict is kept by a key that names all it was judged on: the move (which
+// names the proposal, its heads and the org entry it was signed under), the
+// policy entry it was held to, and the heads of the org's log and of every
+// user log the org folds (org_state). The keys of a project are one sorted
+// object under LANDINGS_NAMESPACE, which no peer is served; a key no move has
+// any more is let go when the set is written again, so it holds at most one
+// key per move.
 
 LANDINGS_NAMESPACE :: "kai-local-landed" // + /<project hex>: its kept verdicts
 LANDINGS_MAX :: 1<<20 // keys of one project's kept verdicts
@@ -468,24 +475,23 @@ landings_read :: proc(s:^store.Store,project:Log_Id) -> []store.Hash {
     return keys
 }
 
-// The digest of which entries of the org's and its users' logs are void:
-// it changes when a late removal voids one that a verdict may have counted.
-org_validity :: proc(org:^Org_Fold) -> store.Hash {
-    void:=make([dynamic]store.Hash,context.temp_allocator)
-    for valid,i in org.valid {
-        if !valid {append(&void,org.log.items[i].address)}
-    }
+// The digest of the heads of the org's log and of the user logs it folds:
+// what the entries a verdict counted were judged by.
+org_state :: proc(org:^Org_Fold) -> store.Hash {
+    heads:=make([dynamic]store.Hash,context.temp_allocator)
+    one:=make([dynamic]store.Hash,context.temp_allocator)
+    log_heads(org.log,&one)
+    append(&heads,..one[:])
     for u in org.users {
-        for valid,i in u.valid {
-            if !valid {append(&void,u.log.items[i].address)}
-        }
+        log_heads(u.log,&one)
+        append(&heads,..one[:])
     }
-    slice.sort_by(void[:],hash_less)
-    return store.address_of_bytes(slice.to_bytes(void[:]))
+    slice.sort_by(heads[:],hash_less)
+    return store.address_of_bytes(slice.to_bytes(heads[:]))
 }
 
 // The key of the verdict of the move at move of bookmark name in project.
-landing_key :: proc(org:^Org_Fold,project:Log_Id,name:string,move,validity:store.Hash) -> store.Hash {
+landing_key :: proc(org:^Org_Fold,project:Log_Id,name:string,move,state:store.Hash) -> store.Hash {
     policy:store.Hash
     for &p in org.policies {
         if p.project==project && p.bookmark==name {
@@ -493,22 +499,21 @@ landing_key :: proc(org:^Org_Fold,project:Log_Id,name:string,move,validity:store
             break
         }
     }
-    parts:=[3]store.Hash{move,policy,validity}
+    parts:=[3]store.Hash{move,policy,state}
     return store.address_of_bytes(slice.to_bytes(parts[:]))
 }
 
-// Writes the keys of the moves of f whose verdict holds, its snapshots' and
-// those kept before, when they differ from the set held.
+// Writes the keys of the moves of f that land a proposal and that its fold
+// holds, when they differ from the set held.
 landings_keep :: proc(s:^store.Store,f:^Project_Fold) -> Error {
     held:=landings_read(s,f.log.id)
-    validity:=org_validity(f.org)
+    state:=org_state(f.org)
     keys:=make([dynamic]store.Hash,context.temp_allocator)
     for pf in f.proposals {
         e:=log_find(f.log,pf.move)
-        if e<0 || f.log.items[e].entry.type!=.Bookmark_Move {continue}
+        if e<0 || !f.valid[e] || f.log.items[e].entry.type!=.Bookmark_Move {continue}
         _,_,_,name:=move_parts(f.log.items[e].entry.body)
-        key:=landing_key(f.org,f.log.id,name,pf.move,validity)
-        if pf.kept || landing_holds(f,pf,name) {append(&keys,key)}
+        append(&keys,landing_key(f.org,f.log.id,name,pf.move,state))
     }
     if len(keys)>LANDINGS_MAX {return .Too_Large}
     slice.sort_by(keys[:],hash_less)
@@ -517,21 +522,4 @@ landings_keep :: proc(s:^store.Store,f:^Project_Fold) -> Error {
     address:=object_put(s,.Landings,slice.to_bytes(keys_unique)) or_return
     name:[64]u8
     return store_error(store.ref_set(s,LANDINGS_NAMESPACE,log_name(f.log.id,&name),address))
-}
-
-// Whether the proposal pf, as the move of bookmark name it lands names it,
-// meets what project_authorized asks of it: no conflict, and the policy.
-@(private)
-landing_holds :: proc(f:^Project_Fold,pf:^Proposal_Fold,name:string) -> bool {
-    if pf.conflicted || pf.status!=.Open || pf.project!=f.log.id {return false}
-    e:=log_find(f.log,pf.move)
-    if e<0 {return false}
-    b,_,_,_:=move_parts(f.log.items[e].entry.body)
-    if pf.revision!=b.to {return false}
-    for &p in f.org.policies {
-        if p.project!=f.log.id || p.bookmark!=name {continue}
-        pb,_,_,_:=policy_parts(f.org.log.items[p.entry].entry.body)
-        return (pb.approvals==0 && pb.checks==0) || proposal_policy(f.org,&p,pf)==.None
-    }
-    return true
 }

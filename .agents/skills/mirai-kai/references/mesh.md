@@ -108,6 +108,12 @@ or anonymous (an empty claim). The namespace decides who reads it:
   org's peers. The cost is one hash per change or output received through the org and a walk of
   the linked repositories' kept views when the set is built whole; below a root, the walk is
   trusted, as its closure is the org's.
+- Every address a peer's signed record holds passes one gate (`walk_admits`) in the walk that
+  builds a set: a change or an output a record names counts only once it came from the org, and
+  anything else a record names (a log's pages, a keyring's envelopes, an overlay's sealed tree and
+  files, a ref's own object) only when it is the kind of object the record says. What a check
+  printed has no kind to tell it by and is never served. The sweep walks the same links without
+  the gate ([retention](model.md#operations-and-undo)).
 - What a restricted peer may fetch is a smaller set made the same way: pending peers get the user
   logs, anonymous ones the closures of public projects, a grant what its scope covers
   ([grants](identity.md#grants)). An address outside the set is not served, whatever the peer asks

@@ -521,6 +521,51 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     seal(t,&f.s,&identity,first,gone_tree)
     seal(t,&f.s,&identity,kept,older_tree)
     seal(t,&f.s,&identity,kept,newer_tree)
+    // Every other kind of Kai object, which only the links inside Kai records reach: logs of every
+    // kind, one of many pages, a proposal with a check, a keyring's envelopes, derived data, the
+    // kept verdicts and what came from an org.
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    bob:=&o.bob.devices[0]
+    for i in 0..<3*LOG_PAGE_ENTRIES {test_move(t,&o.project,"main",published,bob,o.org.items[0].address,i64(20+i))}
+    proposal:Log
+    log_init(&proposal);defer log_destroy(&proposal)
+    _,e:=proposal_open(&proposal,o.project.id,"main","work","",bob,30,{},o.org.items[0].address)
+    testing.expect_value(t,e,Error.None)
+    _,e=proposal_revise(&proposal,{{published_change.id,published}},bob,31,{},o.org.items[0].address)
+    testing.expect_value(t,e,Error.None)
+    printed:=sealed(t,&f.s,"what the check printed")
+    _,e=proposal_check(&proposal,published,"test",.Passed,printed,bob,32,{},o.org.items[0].address)
+    testing.expect_value(t,e,Error.None)
+    envelopes,ee:=object_put(&f.s,.Envelopes,slice.to_bytes([]Envelope{{dh={0=1}}}))
+    testing.expect_value(t,ee,Error.None)
+    keyring:Log
+    log_init(&keyring);defer log_destroy(&keyring)
+    _,e=log_append(&keyring,.Keyring_Genesis,body_make(Keyring_Genesis_Body{org=o.org.id,project=o.project.id,scope={0=7}}),&o.alice.devices[0],40,{},o.org.items[0].address)
+    testing.expect_value(t,e,Error.None)
+    _,e=log_append(&keyring,.Epoch_Add,body_make(Epoch_Add_Body{epoch=1,devices=1,envelopes=envelopes}),&o.alice.devices[0],41,{},o.org.items[0].address)
+    testing.expect_value(t,e,Error.None)
+    logs:=[]^Log{&o.alice.log,&o.bob.log,&o.org,&o.project,&proposal,&keyring}
+    for l in logs {
+        _,se:=log_save(&f.s,l)
+        testing.expect_value(t,se,Error.None)
+    }
+    // A user no org admitted yet, as a node keeps it in a local namespace.
+    _,e=log_save_in(&f.s,&o.carol.log,"kai-local-waiting")
+    testing.expect_value(t,e,Error.None)
+    built:=sealed(t,&f.s,"a cook's output")
+    _,e=ddc_publish(&f.s,o.org.id,&identity,{0=9},{built},nil,1)
+    testing.expect_value(t,e,Error.None)
+    landed,le:=object_put(&f.s,.Landings,slice.to_bytes([]store.Hash{{0=1}}))
+    testing.expect_value(t,le,Error.None)
+    name:[64]u8
+    testing.expect_value(t,store.ref_set(&f.s,LANDINGS_NAMESPACE,log_name(o.project.id,&name),landed),store.Error.None)
+    p:Provenance
+    provenance_init(&p,context.temp_allocator)
+    p.received[published]={}
+    p.dirty=true
+    testing.expect_value(t,provenance_save(&p,&f.s,o.org.id),Error.None)
+    loose:=sealed(t,&f.s,"what nothing names")
     before:=r.op
     old:=make([dynamic]store.Hash,context.temp_allocator)
     testing.expect_value(t,op_retained(&f.s,{r.op},&old),Error.None)
@@ -541,6 +586,25 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     testing.expect_value(t,newest.kind,Op_Kind.Prune)
     for op in old {testing.expectf(t,object_present(&f.s,op)==(op==before),"%v: only the operation the workspace's ref names stays",op)}
     testing.expect(t,!object_present(&f.s,first),"a revision only old operations reached is reclaimed")
+    testing.expect(t,!object_present(&f.s,loose),"an object nothing reaches is reclaimed")
+    for l in logs {
+        whole:Log
+        log_init(&whole,l.id,context.temp_allocator)
+        testing.expectf(t,log_open(&f.s,&whole,l.id,l.kind)==.None && len(whole.items)==len(l.items),"a log of kind %v reads whole after the sweep",l.kind)
+    }
+    waiting:Log
+    log_init(&waiting,{},context.temp_allocator)
+    waiting_address,_:=store.ref_get(&f.s,"kai-local-waiting",log_name(o.carol.log.id,&name))
+    _,we2:=log_load(&f.s,&waiting,waiting_address,false)
+    testing.expect(t,we2==.None && len(waiting.items)==len(o.carol.log.items),"a log of a local namespace reads whole")
+    records:=make([dynamic]DDC_Record,context.temp_allocator)
+    testing.expect_value(t,ddc_lookup(&f.s,o.org.id,{0=9},&records),Error.None)
+    testing.expect(t,len(records)==1 && object_present(&f.s,records[0].output_root) && object_present(&f.s,built),"derived data kept stays whole")
+    for address in ([]store.Hash{printed,envelopes,landed}) {testing.expectf(t,object_present(&f.s,address),"%v: what a log entry or a local ref names stays",address)}
+    q:Provenance
+    provenance_init(&q,context.temp_allocator)
+    provenance_load(&q,&f.s,o.org.id)
+    testing.expect(t,published in q.received,"what came from an org stays known")
     testing.expect(t,object_present(&f.s,attached) && object_present(&f.s,attached_kept),"what a kept change attaches survives the sweep")
     testing.expect_value(t,overlay_record_error(&f.s,{0=7},{0=7},first),Error.Missing)
     testing.expect(t,!object_present(&f.s,gone_tree),"the overlay of a revision the prune let go goes with it")
@@ -557,7 +621,7 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     testing.expect_value(t,op_undo(&r,r.op),Error.Pruned)
     testing.expect_value(t,op_undo(&r,before),Error.Pruned)
     view:=r.view_address
-    _,e:=change_describe(&r,repo_working(&r),"after the prune")
+    _,e=change_describe(&r,repo_working(&r),"after the prune")
     testing.expect_value(t,e,Error.None)
     after:=r.view_address
     testing.expect_value(t,op_undo(&r,r.op),Error.None)
@@ -704,6 +768,42 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     testing.expect_value(t,read(sibling_root,"b.txt"),"b1")
     testing.expect_value(t,read(sibling_root,"c/d.txt"),"d1")
     workspace_close(&v)
+
+    // A switch between trees whose names sort apart by folder and by whole path (a folder's
+    // walk gives a/x before a-b, the bytes after it) keeps the stat index in order, both ways:
+    // the workspace opens again and snapshots.
+    order_root:=folder_of(&f,"order")
+    names:=[]string{"a-b","a/x","a.b","a0","Z/x","a/y/z","Z-"}
+    for p in names {write(t,order_root,p,"1")}
+    u:Workspace
+    testing.expect_value(t,workspace_create(&u,order_root,&f.s,identity),Error.None)
+    first:=repo_working(&u.repo)
+    _,ne:=workspace_new(&u,{first})
+    testing.expect_value(t,ne,Error.None)
+    for p in names {write(t,order_root,p,"2",50*time.Minute)}
+    write(t,order_root,"a/w","2",50*time.Minute)
+    write(t,order_root,"a-c","2",50*time.Minute)
+    later_report,le:=workspace_snapshot(&u)
+    testing.expect_value(t,le,Error.None)
+    for target in ([]Revision{first,later_report.revision}) {
+        testing.expect_value(t,workspace_switch(&u,target),Error.None)
+        saved:Stat_Index
+        saved.rows.allocator,saved.pool.allocator=context.temp_allocator,context.temp_allocator
+        testing.expect(t,index_read(&f.s,u.repo.namespace,u.repo.workspace,&saved) && len(saved.rows)==len(u.index.rows),"the index a switch saved reads again")
+        kept:=0
+        for row in u.index.rows {kept+=int(row.path_len)}
+        testing.expect(t,len(u.index.pool)<=2*kept,"the paths of removed rows leave the pool")
+        workspace_close(&u)
+        testing.expect_value(t,workspace_open(&u,order_root,&f.s,identity),Error.None)
+        report,se:=workspace_snapshot(&u)
+        testing.expect_value(t,se,Error.None)
+        testing.expect(t,report.revision==target,"the switched files snapshot as the target's")
+        for row,k in u.index.rows {
+            if k>0 {testing.expect(t,stat_path(&u.index,u.index.rows[k-1])<stat_path(&u.index,row),"the index is in the order of its paths")}
+        }
+    }
+    testing.expect_value(t,read(order_root,"a-c"),"2")
+    workspace_close(&u)
 
     // The folder opened with a store that never held its repository says so.
     workspace_close(&w)

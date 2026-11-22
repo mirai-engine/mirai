@@ -228,25 +228,15 @@ store_prune :: proc(s:^store.Store,now:i64) -> Error {
     return store_error(store.commit(s))
 }
 
-// Removes the ref of each overlay record whose revision no change kept
-// reaches (store_roots, then the parents of each change) and that was
-// written before now less OP_RETENTION: a record of a revision still to come
-// stays while operations of its age would.
+// Removes the ref of each overlay record whose revision nothing kept reaches
+// (store_reach) and that was written before now less OP_RETENTION: a record
+// of a revision still to come stays while operations of its age would.
 @(private)
 overlay_prune :: proc(s:^store.Store,now:i64) -> Error {
-    targets:=make([dynamic]Revision,context.temp_allocator)
-    scratch:=make([dynamic]store.Hash,context.temp_allocator)
-    store_roots(s,&scratch,&targets,false) or_return
-    reached:=make(map[Revision]struct{},context.temp_allocator)
-    stack:=make([dynamic]Revision,context.temp_allocator)
-    append(&stack,..targets[:])
-    for len(stack)>0 {
-        revision:=pop(&stack)
-        if revision=={} || revision in reached {continue}
-        reached[revision]={}
-        c:=change_get(s,revision,context.temp_allocator) or_continue
-        append(&stack,..c.parents)
-    }
+    kept:=make([dynamic]store.Hash,context.temp_allocator)
+    store_reach(s,&kept,false) or_return
+    reached:=make(map[store.Hash]struct{},context.temp_allocator)
+    for address in kept {reached[address]={}}
     namespaces,e:=store.ref_namespaces(s,context.temp_allocator)
     if e!=.None {return store_error(e)}
     for namespace in namespaces {
@@ -267,104 +257,55 @@ overlay_prune :: proc(s:^store.Store,now:i64) -> Error {
 
 // What a sweep of s keeps that no ref names directly, since the sweep follows
 // refs and the chunks of objects, not the links inside Kai records: the
-// operations each repository's log reaches (op_retained) and their views, the
-// closures of what those views, the shared bookmarks, the proposals' stacks
-// and the devices' refs name, the envelopes of the keyrings' epochs, the
-// sealed tree and files of each overlay record a ref names (not the records
-// before it, which nothing reads), and every object of the outputs of the
-// derived data kept.
+// operations each repository's log reaches (op_retained) and their views, and
+// everything the refs of every other namespace reach (reach.odin): each log's
+// pages and what its entries name, the closures of the changes they, the
+// views and the devices' refs name, the sealed tree and files of the overlay
+// record each ref names (not the records before it, which nothing reads), and
+// every object of the outputs of the derived data kept.
 store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
-    targets:=make([dynamic]Revision,context.temp_allocator)
-    store_roots(s,live,&targets,true) or_return
-    missing:=make([dynamic]store.Hash,context.temp_allocator)
-    closure_walk(s,targets[:],live,&missing)
-    return .None
+    return store_reach(s,live,true)
 }
 
-// The revisions what store_live keeps reaches, to targets, and the objects
-// it keeps besides their closures, to live; with sealed, those of the
-// overlays and derived data too.
+// What store_live keeps, to live; with overlays, what the overlays' refs
+// reach too.
 @(private)
-store_roots :: proc(s:^store.Store,live:^[dynamic]store.Hash,targets:^[dynamic]Revision,sealed:bool) -> Error {
+store_reach :: proc(s:^store.Store,live:^[dynamic]store.Hash,overlays:bool) -> Error {
     namespaces,e:=store.ref_namespaces(s,context.temp_allocator)
     if e!=.None {return store_error(e)}
-    records:=make([dynamic][]u8,context.temp_allocator)
+    roots:=make([dynamic]Walk_Item,context.temp_allocator)
     for namespace in namespaces {
+        if !overlays && strings.has_prefix(namespace,OVERLAY_PREFIX) {continue}
         refs,le:=store.ref_list(s,namespace,context.temp_allocator)
         if le!=.None {continue}
-        switch {
-        case strings.has_prefix(namespace,LOCAL_PREFIX):
-            heads:=make([dynamic]store.Hash,context.temp_allocator)
-            for ref in refs {
-                if strings.has_prefix(ref.name,"ws-") {append(&heads,ref.hash)}
-            }
-            ops:=make([dynamic]store.Hash,context.temp_allocator)
-            op_retained(s,heads[:],&ops) or_return
-            for address in ops {
-                append(live,address)
-                o:=op_get_kept(s,address) or_continue
-                append(live,o.view)
-                v:View
-                view_init(&v,context.temp_allocator)
-                if view_get(s,o.view,&v)!=.None {continue}
-                append(targets,..v.heads[:])
-                for w in v.workspaces {append(targets,w.revision)}
-                for b in v.bookmarks {
-                    append(targets,..b.terms.adds[:])
-                    append(targets,..b.terms.removes[:])
-                }
-            }
-        case namespace==LOG_NAMESPACE:
-            for ref in refs {
-                l:Log
-                log_init(&l,{},context.temp_allocator)
-                if _,le:=log_load(s,&l,ref.hash,false);le!=.None {continue}
-                for &item in l.items {
-                    #partial switch item.entry.type {
-                    case .Bookmark_Move:
-                        b,_,ok:=body_head(item.entry.body,Bookmark_Move_Body)
-                        if ok {append(targets,b.to)}
-                    case .Proposal_Revise:
-                        _,tail,ok:=body_head(item.entry.body,Proposal_Revise_Body)
-                        if !ok || len(tail)%size_of(Stack_Item)!=0 {continue}
-                        for stack in slice.reinterpret([]Stack_Item,tail) {append(targets,stack.revision)}
-                    case .Epoch_Add:
-                        b,_,ok:=body_head(item.entry.body,Epoch_Add_Body)
-                        if ok {append(live,b.envelopes)}
-                    }
-                }
-            }
-        case strings.has_prefix(namespace,REFS_PREFIX):
-            for ref in refs {
-                bytes,ge:=object_get(s,ref.hash,.Device_Refs,context.temp_allocator)
-                if ge!=.None {continue}
-                d,de:=device_refs_decode(bytes,context.temp_allocator)
-                if de!=.None {continue}
-                for b in d.refs {append(targets,b.target)}
-            }
-        case !sealed:
-        case strings.has_prefix(namespace,OVERLAY_PREFIX):
-            for ref in refs {
-                bytes,ge:=overlay_get(s,ref.hash,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
-                if ge!=.None {continue}
-                record,de:=overlay_record_decode(bytes)
-                if de!=.None {continue}
-                append(live,record.tree_root)
-                append(live,..record.objects)
-            }
-        case strings.has_prefix(namespace,DDC_PREFIX):
-            for ref in refs {
-                clear(&records)
-                if ddc_set_read(s,ref.hash,&records)!=.None {continue}
-                for bytes in records {
-                    d,de:=ddc_record_decode(bytes)
-                    if de!=.None {continue}
-                    append(live,d.output_root)
-                    objects,_:=ddc_output_get(s,d.output_root,context.temp_allocator)
-                    append(live,..objects)
-                }
+        if !strings.has_prefix(namespace,LOCAL_PREFIX) || len(namespace)!=len(LOCAL_PREFIX)+2*size_of(Repo_Id) {
+            for ref in refs {append(&roots,ref_item(s,ref.hash))}
+            continue
+        }
+        heads:=make([dynamic]store.Hash,context.temp_allocator)
+        for ref in refs {
+            if strings.has_prefix(ref.name,"ws-") {append(&heads,ref.hash)}
+        }
+        ops:=make([dynamic]store.Hash,context.temp_allocator)
+        op_retained(s,heads[:],&ops) or_return
+        for address in ops {
+            append(live,address)
+            o:=op_get_kept(s,address) or_continue
+            append(live,o.view)
+            v:View
+            view_init(&v,context.temp_allocator)
+            if view_get(s,o.view,&v)!=.None {continue}
+            for h in v.heads {append(&roots,Walk_Item{h,.Change,false})}
+            for x in v.workspaces {append(&roots,Walk_Item{x.revision,.Change,false})}
+            for b in v.bookmarks {
+                for r in b.terms.adds {append(&roots,Walk_Item{r,.Change,false})}
+                for r in b.terms.removes {append(&roots,Walk_Item{r,.Change,false})}
             }
         }
     }
+    w:=walk_make(s)
+    w.entries=true
+    missing:=make([dynamic]store.Hash,context.temp_allocator)
+    walk_all(&w,roots[:],live,&missing)
     return .None
 }

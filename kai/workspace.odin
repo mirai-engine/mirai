@@ -853,7 +853,8 @@ Index_Update :: struct {
     remove:bool,
 }
 
-// Puts updates, sorted by path, into the index in one pass.
+// Puts updates, sorted by path, into the index in one pass. The paths of the
+// rows removed leave the pool once they are more than the paths kept.
 @(private)
 index_merge :: proc(index:^Stat_Index,updates:[]Index_Update) -> Error {
     if len(updates)==0 {return .None}
@@ -877,6 +878,20 @@ index_merge :: proc(index:^Stat_Index,updates:[]Index_Update) -> Error {
     }
     append(&merged,..index.rows[k:])
     if reserve(&index.rows,len(merged))!=nil {return .Out_Of_Memory}
+    kept:=0
+    for row in merged {kept+=int(row.path_len)}
+    if len(index.pool)-kept>kept {
+        pool,made:=make([dynamic]u8,0,kept,context.temp_allocator)
+        if made!=nil {return .Out_Of_Memory}
+        for &row in merged {
+            at:=len(pool)
+            append(&pool,..index.pool[row.path_at:][:row.path_len])
+            row.path_at=u32(at)
+        }
+        if reserve(&index.pool,len(pool))!=nil {return .Out_Of_Memory}
+        clear(&index.pool)
+        append(&index.pool,..pool[:])
+    }
     clear(&index.rows)
     append(&index.rows,..merged[:])
     return .None

@@ -1035,13 +1035,13 @@ org_role_replay :: proc(f:^Org_Fold,user:Log_Id,e:int,within:bool) -> Role {
     for x in f.transfers {
         if seen(f,int(x),e,within) && !slice.contains(entries[:],x) {append(&entries,x)}
     }
-    context.user_ptr=f.log
-    slice.sort_by(entries[:],proc(a,b:u32) -> bool {
-        l:=(^Log)(context.user_ptr)
-        return l.rank[a]<l.rank[b]
-    })
+    // In the order of the walk: rank is a position, one per entry.
+    ranked:=make([]u32,len(entries),context.temp_allocator)
+    for x,k in entries {ranked[k]=f.log.rank[x]}
+    slice.sort(ranked)
     role:=Role.None
-    for x in entries {
+    for r in ranked {
+        x:=f.log.order[r]
         entry:=&f.log.items[x].entry
         #partial switch entry.type {
         case .Org_Genesis: role=.Owner
@@ -1401,13 +1401,14 @@ grant_verify :: proc(f:^Org_Fold,bytes:[]u8,now:i64) -> (g:Grant,error:Error) {
 }
 
 // The grant the org's log carries under which key signs with right on
-// project now; ok is false when none holds.
+// project now; ok is false when none holds. The ddc right is over the org's
+// derived data, whatever project the grant names.
 org_grant_right :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,now:i64) -> (g:Grant,ok:bool) {
     if key=={} {return}
     for &x in f.granted {
         if x.grant.subject_key!=key {continue}
         held,e:=grant_verify(f,f.log.items[x.entry].entry.body,now)
-        if e==.None && right in held.rights && (held.project=={} || held.project==project) {return held,true}
+        if e==.None && right in held.rights && (held.project=={} || held.project==project || right==.DDC) {return held,true}
     }
     return
 }

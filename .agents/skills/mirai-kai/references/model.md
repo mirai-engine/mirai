@@ -42,6 +42,10 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   is shared with.
 - Tree diff and merge compare folder addresses first and read only folders that differ, so their
   cost follows what changed and not the size of the project.
+- Wherever Kai assumes an order of paths (a diff, the stat index and its merge, a list a binary
+  search reads, the files `tree_build` takes) it is the order of their bytes. A folder's walk
+  gives `a/x` before `a-b`, so `tree_diff` sorts what it found; a path still comes before every
+  path under it, which a checkout needs to remove a file before writing the folder of its name.
 
 ## Conflicts
 
@@ -125,9 +129,13 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   workspace's ref names. The log keeps what the workspaces' refs name and the operations not older
   than the newest prune's time less `OP_RETENTION`; undo does not cross a prune. The store's sweep
   follows refs and not the links inside Kai records, so whoever sweeps names as live what
-  `store_live` names: the operations kept and their views, and the closures of what they, the
-  shared bookmarks, the proposals' stacks and the devices' refs name, the sealed tree and files of
-  the overlay record each ref names, and the derived data kept. An overlay record belongs to its
+  `store_live` names: the operations kept and their views, and everything any other ref reaches,
+  walked by the kind of the object it names (`kai/reach.odin`): each log's pages and what their
+  entries name (moves, proposals' stacks, a check's output, a keyring's envelopes), the closures
+  of the changes they, the views and the devices' refs name, the sealed tree and files of the
+  overlay record each ref names, and the derived data kept. That walker is the one place that
+  says what a Kai object or entry names: the sweep and every set a peer is served read it, so a
+  new kind is added there once. An overlay record belongs to its
   revision: the prune drops the ref of one whose revision nothing kept reaches once it is older
   than the operations kept, and the records an overlay ref replaced are never kept, since
   nothing reads them, so private history is bounded as the operation log is. A node prunes when

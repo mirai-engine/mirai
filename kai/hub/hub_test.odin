@@ -781,6 +781,34 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         if x.used && x.asker==own {held+=1}
     }
     testing.expect_value(t,held,APPROVALS_PER_ADDRESS)
+
+    // A read writes nothing: a root change's files diff against no tree, which a store that
+    // never held a repository lacks.
+    {
+        folder:=base.test_folder(t,"kai-hub-read")
+        if folder=="" {return}
+        bare,other:store.Store
+        be,oe:store.Error
+        bare,be=store.open(strings.concatenate({folder,"/bare"},context.temp_allocator))
+        other,oe=store.open(strings.concatenate({folder,"/other"},context.temp_allocator))
+        if !testing.expect(t,be==.None && oe==.None) {return}
+        defer store.close(&bare)
+        defer store.close(&other)
+        empty,_:=kai.tree_empty(&other)
+        file,_:=store.put(&bare,transmute([]u8)string("a root's file"))
+        root,_:=kai.tree_build(&bare,{{path="a.txt",kind=.File,address=file,size=13}})
+        identity:=kai.identity_make()
+        ch:=kai.Change{id=kai.random_id(kai.Change_Id),tree=root,author=identity.key,created=1,written=1}
+        _,ce:=kai.change_put(&bare,&ch,&identity)
+        testing.expect_value(t,ce,kai.Error.None)
+        ro:=new(kai.Runner_Org)
+        defer free(ro)
+        v:=Project_View{org=ro}
+        edits:=make([dynamic]kai.Diff,context.temp_allocator)
+        testing.expect_value(t,change_edits(&bare,&v,&ch,&edits),kai.Error.None)
+        testing.expect(t,len(edits)==1 && edits[0].path=="a.txt","a root change adds its files")
+        testing.expect(t,!store.chunk_has(&bare,empty),"reading a change puts nothing in the store")
+    }
 }
 
 LIMITS_CREATE_REFILL :: 700.0

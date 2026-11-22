@@ -317,6 +317,11 @@ name_valid :: proc(name:string,empty:=false) -> bool {
 @(private)
 role_valid :: proc "contextless" (role:Role) -> bool {return role>=.Reader && role<=.Admin}
 
+// Whether role is the lowest that reads a scope: any role, the owner's too, for a
+// scope only the owner reads (licensed assets, the org's own secrets).
+@(private)
+readers_valid :: proc "contextless" (role:Role) -> bool {return role>=.Reader && role<=.Owner}
+
 // Whether body is a well-formed body of type t.
 body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
     switch t {
@@ -362,7 +367,7 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
         return ok && len(tail)==0 && role_valid(head.role)
     case .Scope_Add:
         head,tail,ok:=body_head(body,Scope_Add_Body)
-        if !ok || head.patterns==0 || head.patterns>PATTERNS_MAX || !role_valid(head.readers) {return false}
+        if !ok || head.patterns==0 || head.patterns>PATTERNS_MAX || !readers_valid(head.readers) {return false}
         r:=Reader{data=tail}
         for _ in 0..<head.patterns {
             if p:=tail_string(&r);len(p)==0 || !utf8.valid_string(p) {return false}
@@ -796,11 +801,7 @@ log_index :: proc(l:^Log) -> Error {
         }
         if head {append(&l.heads,u32(i))}
     }
-    context.user_ptr=l
-    slice.sort_by(l.heads[:],proc(a,b:u32) -> bool {
-        l:=(^Log)(context.user_ptr)
-        return hash_less(l.items[a].address,l.items[b].address)
-    })
+    items_by_address(l,l.heads[:])
     l.indexed=true
     return .None
 }
@@ -993,6 +994,16 @@ LOG_HEADS_MAX :: 1<<12 // heads an index names; a log with more is folded from i
 // The ref name of a log: the hex of its id.
 log_name :: proc(id:Log_Id,buffer:^[64]u8) -> string {return store.hex(id,buffer)}
 
+// Sorts the indexes of items of l by their entries' addresses.
+@(private)
+items_by_address :: proc(l:^Log,items:[]u32) {
+    Keyed :: struct {address:store.Hash,item:u32}
+    keyed:=make([]Keyed,len(items),context.temp_allocator)
+    for x,k in items {keyed[k]={l.items[x].address,x}}
+    slice.sort_by(keyed,proc(a,b:Keyed) -> bool {return hash_less(a.address,b.address)})
+    for x,k in keyed {items[k]=x.item}
+}
+
 // Puts item i in the pages, from the root, which it makes for the first entry.
 @(private)
 page_insert :: proc(l:^Log,i:int) -> Error {
@@ -1047,11 +1058,7 @@ page_save :: proc(s:^store.Store,l:^Log,k:int) -> (address:store.Hash,error:Erro
     p:=&l.pages[k]
     write_value(&w,Log_Page_Head{magic=KAI_MAGIC,depth=p.depth,leaf=b8(p.leaf),count=p.count})
     if p.leaf {
-        context.user_ptr=l
-        slice.sort_by(p.items[:],proc(a,b:u32) -> bool {
-            l:=(^Log)(context.user_ptr)
-            return hash_less(l.items[a].address,l.items[b].address)
-        })
+        items_by_address(l,p.items[:])
         for i in p.items {
             write_value(&w,u32(len(l.items[i].bytes)))
             write_bytes(&w,l.items[i].bytes)
@@ -1213,31 +1220,6 @@ log_entry_get :: proc(s:^store.Store,address,entry:store.Hash,allocator:=context
         return nil,false,.None
     }
     return nil,false,.Corrupt
-}
-
-// The chunks of the index at address and of every page below it, as far as
-// the store holds them: what a peer reads of a log.
-log_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) {
-    head,_,e:=log_index_read(s,address)
-    if e!=.None {return}
-    object_chunks(s,address,out)
-    page_objects(s,head.root,out,0)
-}
-
-@(private)
-page_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,depth:int) {
-    if depth>31 {return}
-    bytes,e:=object_get(s,address,.Log_Page,context.temp_allocator)
-    if e!=.None {return}
-    object_chunks(s,address,out)
-    r:=Reader{data=bytes}
-    h:=read_value(&r,Log_Page_Head)
-    if r.short || h.leaf {return}
-    children:=slice.reinterpret([]store.Hash,read_bytes(&r,256*size_of(store.Hash)))
-    if r.short {return}
-    for c in children {
-        if c!={} {page_objects(s,c,out,depth+1)}
-    }
 }
 
 // The pages of the log whose index is at address that the store lacks,

@@ -1,5 +1,6 @@
 package editor
 
+import "core:crypto"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
@@ -651,7 +652,7 @@ kai_dialog_build :: proc(s:^Session) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
                 if ui.button(ctx,shell_id(g,"kai_rotate_go"),{label="Rotate",variant="accent",width=92,height=28,center=true,disabled=f.recovery_length==0}).clicked {
                     kai_ask(s,"kai.identity",`{{"recovery":%s}}`,kai_quote(string(f.recovery[:f.recovery_length])))
-                    for &b in f.recovery {b=0}
+                    crypto.zero_explicit(&f.recovery,size_of(f.recovery))
                     f.recovery_length=0
                 }
                 if ui.button(ctx,shell_id(g,"kai_rotate_cancel"),{label="Cancel",variant="field",width=92,height=28,center=true}).clicked {closed=true}
@@ -667,7 +668,7 @@ kai_dialog_build :: proc(s:^Session) {
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
                 if ui.button(ctx,shell_id(g,"kai_recover_go"),{label="Recover",variant="accent",width=92,height=28,center=true,disabled=f.recovery_length==0 || f.recover_user_length==0}).clicked {
                     kai_ask(s,"kai.identity",`{{"recover":%s,"recovery":%s}}`,kai_quote(string(f.recover_user[:f.recover_user_length])),kai_quote(string(f.recovery[:f.recovery_length])))
-                    for &b in f.recovery {b=0}
+                    crypto.zero_explicit(&f.recovery,size_of(f.recovery))
                     f.recovery_length=0
                     f.recover_user_length=0
                     closed=true

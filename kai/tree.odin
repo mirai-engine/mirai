@@ -309,12 +309,21 @@ Diff :: struct {
     before,after:File, // path unset; present when address is not zero
 }
 
-// The files that differ from tree a to tree b, sorted by path, in allocator.
-// Folders of equal address are not read. With missing, a folder the store
-// lacks is appended to it and what lies under it is left out of out.
+// The files that differ from tree a to tree b, appended to out sorted by
+// path, in allocator; a zero tree is an empty one. Folders of equal address
+// are not read. With missing, a folder the store lacks is appended to it and
+// what lies under it is left out of out.
+//
+// Paths are ordered by their bytes wherever Kai assumes an order (a diff, the
+// stat index and its merge, a list a binary search reads): a folder's walk
+// gives a/x before a-b, which that order puts after it, so the diff is sorted
+// once its walk ends. A path still comes before every path under it.
 tree_diff :: proc(s:^store.Store,a,b:store.Hash,out:^[dynamic]Diff,allocator:=context.allocator,missing:^[dynamic]store.Hash=nil) -> Error {
     if a==b {return .None}
-    return diff_folders(s,a,b,"",0,out,allocator,missing)
+    at:=len(out)
+    diff_folders(s,a,b,"",0,out,allocator,missing) or_return
+    slice.sort_by(out[at:],proc(x,y:Diff) -> bool {return x.path<y.path})
+    return .None
 }
 
 @(private)

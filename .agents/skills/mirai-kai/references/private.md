@@ -7,9 +7,10 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
 ## Scopes and routing
 
 - A scope is an entry of the org's log (`Scope_Add`): patterns, the lowest role that reads it
-  (`readers`) and whether it keeps history. The patterns live only in the org's log, which public
-  readers never get, so what a public reader can learn about private files is nothing, not even that
-  they exist (`public_peer_sees_zero_overlay_metadata_or_chunks`).
+  (`readers`, the owner's alone for what only the owner may read) and whether it keeps history.
+  The patterns live only in the org's log, which public readers never get, so what a public
+  reader can learn about private files is nothing, not even that they exist
+  (`public_peer_sees_zero_overlay_metadata_or_chunks`).
 - A pattern is `*` and `?` within one name, `**` across folders, `**/` for zero or more. One without
   `/` matches the last name of a path, one with `/` the whole path from the root, one ending in `/`
   everything under that folder. The first scope in the log's order whose pattern matches takes a
