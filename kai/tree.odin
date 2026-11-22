@@ -261,14 +261,15 @@ diff_folders :: proc(s:^store.Store,a,b:store.Hash,prefix:string,depth:int,out:^
         if l.address==r.address && l.kind==r.kind {continue}
         path:=path_join(prefix,name,allocator) or_return
         lf,rf:=l.kind==.Folder && l.address!={},r.kind==.Folder && r.address!={}
-        if lf || rf {
-            diff_folders(s,lf?l.address:{},rf?r.address:{},path,depth+1,out,allocator) or_return
-        }
+        // A file before the folder of its name: a checkout removes it first.
         if (l.address!={} && !lf) || (r.address!={} && !rf) {
             d:=Diff{path=path}
             if !lf && l.address!={} {d.before={kind=l.kind,address=l.address,size=l.size}}
             if !rf && r.address!={} {d.after={kind=r.kind,address=r.address,size=r.size}}
             append(out,d)
+        }
+        if lf || rf {
+            diff_folders(s,lf?l.address:{},rf?r.address:{},path,depth+1,out,allocator) or_return
         }
     }
     return .None

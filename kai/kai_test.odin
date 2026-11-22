@@ -432,6 +432,146 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     _=two
 }
 
+// A change splits by paths in one operation: the first half keeps its id,
+// parents and description with the files picked over its parents, a conflict
+// it inherits and its parents' private files; the second, on it, keeps the
+// whole tree and its private files, and what pointed at the change follows it.
+// What is not a file the change touched is refused with why. One undo gives the
+// view before; an edit on disk after the last snapshot reaches the next one.
+@(test)
+a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
+    f,ok:=fixture(t,"kai-split");if !ok {return}
+    defer store.close(&f.s)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    scope:=random_id(Scope_Id)
+    scope_add(t,&o,scope,.Reader,true,20,"secrets/**")
+    refold(t,&o)
+    alice,bob:=device_of(&o.alice,0),device_of(&o.bob,0)
+    kl:Log
+    log_init(&kl);defer log_destroy(&kl)
+    kf:Keyring_Fold
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&alice,21),Error.None)
+    defer keyring_fold_destroy(&kf)
+    routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf},device=alice}
+    root,other:=folder_of(&f,"a"),folder_of(&f,"b")
+    for file in ([][2]string{{"keep.txt","keep"},{"edit.txt","v1"},{"gone.txt","bye"},{"art/a.txt","a1"},{"art/b.txt","b1"},{"d","dee"},{"f.txt","1\n2\n3\n"},{"secrets/key.txt","old secret"}}) {
+        write(t,root,file[0],file[1])
+    }
+    w,b:Workspace
+    if !testing.expect_value(t,workspace_create(&w,root,&f.s,o.alice.devices[0],{overlay=&routing}),Error.None) {return}
+    defer workspace_close(&w)
+    origin:=repo_working(&w.repo)
+
+    // A merge whose f.txt is in conflict, and on it the work to split.
+    left,_:=workspace_new(&w,{origin})
+    write(t,root,"f.txt","one\n2\n3\n",50*time.Minute)
+    report,_:=workspace_snapshot(&w)
+    left=report.revision
+    _,_=workspace_new(&w,{origin})
+    write(t,root,"f.txt","uno\n2\n3\n",50*time.Minute)
+    report,_=workspace_snapshot(&w)
+    right:=report.revision
+    _,e:=workspace_new(&w,{left,right},"work")
+    testing.expect_value(t,e,Error.None)
+    write(t,root,"edit.txt","v2",40*time.Minute)
+    write(t,root,"new.txt","new",40*time.Minute)
+    write(t,root,"art/a.txt","a2",40*time.Minute)
+    write(t,root,"art/c.txt","c2",40*time.Minute)
+    write(t,root,"secrets/key.txt","new secret",40*time.Minute)
+    os.remove(strings.concatenate({root,"/gone.txt"},context.temp_allocator))
+    os.remove(strings.concatenate({root,"/d"},context.temp_allocator))
+    write(t,root,"d/x.txt","x",40*time.Minute)
+    report,e=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+    split:=report.revision
+    before_split,_:=change_get(&f.s,split,context.temp_allocator)
+    totals,_:=tree_totals(&f.s,before_split.tree)
+    testing.expect_value(t,totals.conflicts,1)
+
+    // A bookmark and a child on it, and another workspace, of another key, on it too.
+    testing.expect_value(t,bookmark_set(&w.repo,"wip",split),Error.None)
+    child,_:=change_new(&w.repo,{split},"child")
+    testing.expect_value(t,workspace_switch(&w,split),Error.None)
+    testing.expect_value(t,workspace_add(&b,other,&w,o.bob.devices[0]),Error.None)
+    defer workspace_close(&b)
+    testing.expect_value(t,workspace_switch(&b,split),Error.None)
+
+    routing_bob:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf},device=bob}
+    Refusal :: struct {paths:[]string,says:string}
+    refusals:=[]Refusal{
+        {nil,"no path picked"},
+        {{"art/../x"},"not a path"},
+        {{"missing.txt"},"did not add, change or remove"},
+        {{"f.txt"},"did not add, change or remove"},          // a conflict it inherits
+        {{"secrets/key.txt"},"did not add, change or remove"}, // private: never in the public tree
+        {{"edit.txt","gone.txt","new.txt","art","d","d/x.txt"},"with new"},
+        {{"d/x.txt"},"d and d/x.txt"},
+    }
+    for refusal in refusals {
+        why:string
+        _,_,re:=change_split(&b.repo,split,refusal.paths,nil,&routing_bob,&why)
+        testing.expectf(t,re==.Invalid_Argument && strings.contains(why,refusal.says),"%v: %v %q",refusal.paths,re,why)
+    }
+
+    // An edit on disk after the last snapshot.
+    write(t,root,"edit.txt","v3, on disk",30*time.Minute)
+    before:=b.repo.view_address
+    why:string
+    first,second,se:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&routing_bob,&why)
+    if !testing.expectf(t,se==.None,"%v %s",se,why) {return}
+    after:=b.repo.view_address
+    op,_:=op_get(&f.s,b.repo.op,context.temp_allocator)
+    testing.expect(t,op.kind==.Rewrite && len(op.parents)==1,"one operation")
+    a,_:=change_get(&f.s,first,context.temp_allocator)
+    z,_:=change_get(&f.s,second,context.temp_allocator)
+    testing.expect(t,a.id==before_split.id && a.created==before_split.created && a.description=="work" && slice.equal(a.parents,before_split.parents),"the first keeps the change's id, parents and text")
+    testing.expect(t,a.author==o.bob.devices[0].key && slice.contains(a.coauthors,o.alice.devices[0].key),"the author that did not sign is a coauthor")
+    testing.expect(t,z.id!=a.id && z.description=="" && len(z.parents)==1 && z.parents[0]==first && z.tree==before_split.tree,"the second is the whole tree on the first")
+    paths_of :: proc(s:^store.Store,from,to:store.Hash) -> string {
+        diffs:=make([dynamic]Diff,context.temp_allocator)
+        tree_diff(s,from,to,&diffs,context.temp_allocator)
+        names:=make([dynamic]string,context.temp_allocator)
+        for d in diffs {append(&names,d.path)}
+        return strings.join(names[:]," ",context.temp_allocator)
+    }
+    base,_:=parents_tree(&b.repo,a.parents)
+    testing.expect_value(t,paths_of(&f.s,base,a.tree),"art/a.txt art/c.txt d d/x.txt gone.txt new.txt")
+    testing.expect_value(t,paths_of(&f.s,a.tree,z.tree),"edit.txt")
+    totals,_=tree_totals(&f.s,a.tree)
+    testing.expect_value(t,totals.conflicts,1)
+    testing.expect(t,view_workspace(&b.repo.view,w.repo.workspace)==second && view_workspace(&b.repo.view,b.repo.workspace)==second,"both workspaces are on the second")
+    mark:=view_bookmark(&b.repo.view,"wip")
+    value,_:=terms_resolved(&mark.terms)
+    testing.expect(t,value==second,"the bookmark follows the second")
+    testing.expect(t,!slice.contains(b.repo.view.heads[:],split) && !slice.contains(b.repo.view.heads[:],first))
+    moved:Revision
+    for h in b.repo.view.heads {
+        if c,_:=change_get(&f.s,h,context.temp_allocator);c.description=="child" {moved=h}
+    }
+    moved_change,_:=change_get(&f.s,moved,context.temp_allocator)
+    testing.expect(t,moved!=child && len(moved_change.parents)==1 && moved_change.parents[0]==second && moved_change.tree==tree_of(t,&f.s,child),"the child moves onto the second as it was")
+    opened,oe:=open_files(t,&f.s,&kf,&alice,first)
+    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="old secret","the first has its parents' private files")
+    opened,oe=open_files(t,&f.s,&kf,&alice,second)
+    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the second has the change's private files")
+
+    testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
+    testing.expect(t,b.repo.view_address==before,"one undo gives the view before the split")
+    testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
+    testing.expect(t,b.repo.view_address==after,"undoing the undo splits again")
+
+    // The working copy kept its files, and the edit on disk reaches the second.
+    testing.expect_value(t,read(root,"edit.txt"),"v3, on disk")
+    report,e=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+    now,_:=change_get(&f.s,report.revision,context.temp_allocator)
+    testing.expect(t,now.id==z.id && now.parents[0]==first,"the working copy is the second")
+    testing.expect_value(t,paths_of(&f.s,z.tree,now.tree),"edit.txt")
+    opened,oe=open_files(t,&f.s,&kf,&alice,report.revision)
+    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the next snapshot follows the second's private files")
+}
+
 @(test)
 kai_imports_stay_engine_agnostic :: proc(t:^testing.T) {
     folder,_:=os.split_path(#file)

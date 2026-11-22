@@ -16,12 +16,12 @@ import "mirai:store"
 @(private="file")
 SECRET :: "kai-secret-7Qx2Vb9LmZ4pR8sT1wYc6NdF3hJ0aE5u"
 
-@(private="file")
+@(private)
 device_of :: proc(u:^Test_User,k:int) -> Overlay_Device {
     return {identity=u.devices[k],dh=Dh_Key(u.dhs[k].public),dh_secret=u.dhs[k].private}
 }
 
-@(private="file")
+@(private)
 scope_add :: proc(t:^testing.T,o:^Test_Org,scope:Scope_Id,readers:Role,history:bool,time:i64,patterns:..string) {
     body:=body_make(Scope_Add_Body{project=o.project.id,scope=scope,readers=readers,history=b8(history),patterns=u8(len(patterns))},strings_tail(..patterns))
     _,e:=log_append(&o.org,.Scope_Add,body,&o.alice.devices[0],time)
@@ -29,7 +29,7 @@ scope_add :: proc(t:^testing.T,o:^Test_Org,scope:Scope_Id,readers:Role,history:b
 }
 
 // Folds the users and the org again after their logs changed.
-@(private="file")
+@(private)
 refold :: proc(t:^testing.T,o:^Test_Org,keyrings:..^Keyring_Fold) {
     org_fold_destroy(&o.fold)
     test_users_destroy(o.folds[:])
@@ -78,7 +78,7 @@ random_bytes :: proc(n:int) -> []u8 {
     return b
 }
 
-@(private="file")
+@(private)
 open_files :: proc(t:^testing.T,s:^store.Store,k:^Keyring_Fold,device:^Overlay_Device,commit:Revision) -> (files:map[string]string,error:Error) {
     o:Overlay
     if error=overlay_open(&o,s,k,device,commit,context.temp_allocator);error!=.None {return}

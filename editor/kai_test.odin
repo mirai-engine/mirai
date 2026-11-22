@@ -6,6 +6,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import ka "mirai:cook/kai"
+import "mirai:editor/api"
 import vcs "mirai:kai"
 import "mirai:std/base"
 import "mirai:store"
@@ -152,4 +153,84 @@ editor_kai_snapshot_diff_conflict_and_undo :: proc(t:^testing.T) {
     testing.expect_value(t,len(w.state.conflicts),0)
     x,_=kai_lamp(t,types,file)
     testing.expect_value(t,x,9)
+}
+
+@(private="file")
+kai_call :: proc(s:^Session,run:proc(s:^Session,call:^api.Call),params:^$P,$R:typeid) -> (call:api.Call,result:^R) {
+    method:=new(api.Method,context.temp_allocator)
+    method^={params_id=P,result_id=R}
+    result=new(R,context.temp_allocator)
+    call={method=method,params=params,result=result,allocator=context.temp_allocator}
+    run(s,&call)
+    return
+}
+
+// The paths a change changed, in order, space-separated.
+@(private="file")
+kai_paths :: proc(w:^vcs.Workspace,revision:vcs.Revision) -> string {
+    diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
+    ka.diff(w,revision,&diffs)
+    names:=make([dynamic]string,context.temp_allocator)
+    for d in diffs {append(&names,d.path)}
+    return strings.join(names[:]," ",context.temp_allocator)
+}
+
+// kai.split closes a change with the files named and leaves the rest in the
+// working copy; New change does the same with the files checked in CHANGES,
+// kept by path while the list changes under them, and with every file checked
+// starts a new change as before.
+@(test)
+editor_kai_new_change_takes_only_the_checked_files :: proc(t:^testing.T) {
+    k:=new(Kai_Fixture);defer free(k)
+    if !kai_fixture_init(t,k,"kai-editor-split") {return}
+    defer kai_fixture_destroy(k)
+    s:=&k.s
+    for name in ([]string{"a.txt","b.txt","c.txt"}) {
+        testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",k.root,name),transmute([]u8)string("one"))==nil)
+    }
+    kai_open(s)
+    w:=kai_workspace(s)
+    if !testing.expectf(t,w!=nil,"the workspace opens: %v",s.kai.error) {return}
+    st:=s.kai.state
+    testing.expect_value(t,kai_new(s,nil,""),"")
+    for name in ([]string{"a.txt","b.txt","c.txt"}) {kai_write(t,s,fmt.tprintf("%s/%s",k.root,name),transmute([]u8)string("two"))}
+
+    // kai.split: a.txt closes, b.txt and c.txt stay in the working copy.
+    params:=Api_Kai_Split_Params{files={"a.txt"},description="a only"}
+    call,split:=kai_call(s,api_kai_split,&params,Api_Kai_Split)
+    if !testing.expectf(t,!call.failed,"%s",call.error.message) {return}
+    working:=vcs.repo_working(&w.repo)
+    c,_:=vcs.change_get(w.repo.s,working,context.temp_allocator)
+    closed,_:=vcs.change_get(w.repo.s,c.parents[0],context.temp_allocator)
+    testing.expect(t,split.second==ka.change_text(c.id) && split.first==ka.change_text(closed.id) && closed.description=="a only")
+    testing.expect_value(t,kai_paths(w,c.parents[0]),"a.txt")
+    testing.expect_value(t,kai_paths(w,working),"b.txt c.txt")
+    wrong:=Api_Kai_Split_Params{files={"zzz.txt"}}
+    call,_=kai_call(s,api_kai_split,&wrong,Api_Kai_Split)
+    testing.expectf(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,"zzz.txt"),"%s",call.error.message)
+
+    // c.txt unchecked; a snapshot then lists 0.txt first, and d.txt is only on disk.
+    kai_check(st,"c.txt",false)
+    kai_write(t,s,fmt.tprintf("%s/0.txt",k.root),transmute([]u8)string("new"))
+    v:=&st.view
+    testing.expectf(t,len(v.files)==3 && v.files[0].path=="0.txt" && v.files[2].path=="c.txt","%v",v.files)
+    testing.expect(t,kai_checked(st,"0.txt") && kai_checked(st,"b.txt") && !kai_checked(st,"c.txt"),"checks stay with their files")
+    d:=fmt.tprintf("%s/d.txt",k.root)
+    testing.expect(t,os.write_entire_file(d,transmute([]u8)string("disk"))==nil)
+    kai_touched(s,d)
+    testing.expect_value(t,kai_new_checked(s,"b and new"),"")
+    working=vcs.repo_working(&w.repo)
+    c,_=vcs.change_get(w.repo.s,working,context.temp_allocator)
+    closed,_=vcs.change_get(w.repo.s,c.parents[0],context.temp_allocator)
+    testing.expect_value(t,closed.description,"b and new")
+    testing.expect_value(t,kai_paths(w,c.parents[0]),"0.txt b.txt d.txt")
+    testing.expect_value(t,kai_paths(w,working),"c.txt")
+    testing.expect(t,kai_checked(st,"c.txt"),"after New change every file is checked again")
+
+    // Every file checked: a new empty change; none checked: refused.
+    testing.expect_value(t,kai_new_checked(s,""),"")
+    testing.expect(t,kai_paths(w,vcs.repo_working(&w.repo))=="" && kai_paths(w,working)=="c.txt")
+    kai_write(t,s,fmt.tprintf("%s/e.txt",k.root),transmute([]u8)string("e"))
+    kai_checks_reset(st,true)
+    testing.expect(t,strings.contains(kai_new_checked(s,""),"No file is checked"))
 }

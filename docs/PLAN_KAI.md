@@ -41,7 +41,8 @@ proposed design; facts about current code are cited by file.
 - **Fixed-width path/hash structs** (`[260]u8`, `[16]u8` in the old `editor/git`): replaced by
   string pools (`offset`, `len`) and full 32-byte `store.Hash`.
 - **Staging index** (`Keep`/`Unkeep`, `pending`/`kept`, `git_keep_front`): replaced by working
-  copy as a change (`@`) and post-hoc `split`.
+  copy as a change (`@`) and post-hoc `split` by whole files (`kai.change_split`, one operation;
+  the first half keeps the change's id). No persistent marks; picking hunks stays in Phase 3.
 - **Blocking merge mode** (the old merge and review of the Git tab, `git show :N:`):
   replaced by algebraic `Conflict` values stored in trees that never block work.
 - **External merge/diff drivers, `.gitattributes`, LFS** (the old Git setup of `cook/build`,

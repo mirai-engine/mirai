@@ -42,7 +42,8 @@ Kai_Authorship :: struct {using queue:core.Queue(Kai_Author)}
 
 Kai_File :: struct {
     path:string,
-    mark:u8, // A added, D removed, M changed, C in conflict
+    mark:u8,      // A added, D removed, M changed, C in conflict
+    changed:bool, // by the working change: a conflict of its parents is listed but not
 }
 
 Kai_Row :: struct {
@@ -80,6 +81,8 @@ Kai_State :: struct {
     view:Kai_View,
     unfolded:string,       // the conflict whose fields show; in the heap
     picks:[dynamic]bool,   // by field of view.fields: theirs
+    unchecked_all:bool,      // CHANGES: every file unchecked but the toggled ones; false: checked
+    toggled:[dynamic]string, // paths whose check is the other one, in the heap
     description:[KAI_DESCRIPTION_BYTES]u8,
     description_length:int,
     scroll:[2]f32,
@@ -147,6 +150,8 @@ kai_close :: proc(s:^Session) {
     vmem.arena_destroy(&st.arena)
     delete(st.unfolded)
     delete(st.picks)
+    kai_checks_reset(st,false)
+    delete(st.toggled)
     free(st)
     k.state=nil
 }
@@ -316,6 +321,74 @@ kai_new :: proc(s:^Session,parents:[]vcs.Revision,description:string) -> string 
     return kai_finish(s,e,changed[:])
 }
 
+// Whether the file at path is checked in CHANGES: what New change closes.
+kai_checked :: proc(st:^Kai_State,path:string) -> bool {
+    toggled:=false
+    for p in st.toggled {if p==path {toggled=true;break}}
+    return st.unchecked_all==toggled
+}
+
+// Checks or unchecks the file at path.
+kai_check :: proc(st:^Kai_State,path:string,checked:bool) {
+    if kai_checked(st,path)==checked {return}
+    for p,k in st.toggled {
+        if p!=path {continue}
+        delete(p)
+        unordered_remove(&st.toggled,k)
+        return
+    }
+    append(&st.toggled,strings.clone(path))
+}
+
+// Every file checked, or none.
+kai_checks_reset :: proc(st:^Kai_State,unchecked:bool) {
+    for p in st.toggled {delete(p)}
+    clear(&st.toggled)
+    st.unchecked_all=unchecked
+}
+
+// Closes the working change with the files checked in CHANGES, described with
+// description when given, and leaves the others in a new working change; with
+// every file checked, a new change as kai_new. The files are read again after
+// the snapshot, so one that changed since the click goes by its own check.
+kai_new_checked :: proc(s:^Session,description:string) -> string {
+    w,message:=kai_prepare(s)
+    if w==nil {return message}
+    st:=s.kai.state
+    diffs:=make([dynamic]vcs.Diff,context.temp_allocator)
+    if e:=ka.diff(w,vcs.repo_working(&w.repo),&diffs);e!=.None {return kai_finish(s,e,nil)}
+    picked:=make([dynamic]string,0,len(diffs),context.temp_allocator)
+    for d in diffs {
+        if kai_checked(st,d.path) {append(&picked,d.path)}
+    }
+    if len(picked)==len(diffs) {
+        changed:=make([dynamic]string,context.temp_allocator)
+        _,e:=ka.new_change(w,nil,description,&changed)
+        if e==.None {kai_checks_reset(st,false)}
+        return kai_finish(s,e,changed[:])
+    }
+    if len(picked)==0 {return "No file is checked: check the files the change closes with"}
+    _,_,text,_:=kai_split(s,"@",picked[:],description)
+    if text=="" {kai_checks_reset(st,false)}
+    return text
+}
+
+// Splits the change text names by paths: the first keeps the change with the
+// picked files and description when given, the second the rest. invalid: the
+// message says which argument was wrong.
+kai_split :: proc(s:^Session,change:string,paths:[]string,description:string) -> (first,second:vcs.Revision,message:string,invalid:bool) {
+    w:^vcs.Workspace
+    if w,message=kai_prepare(s);w==nil {return}
+    text:Maybe(string)
+    if description!="" {text=description}
+    refused:string
+    e:vcs.Error
+    first,second,e=ka.split(w,change,paths,text,&refused)
+    message=kai_finish(s,e,nil)
+    if e==.Invalid_Argument && refused!="" {message,invalid=refused,true}
+    return
+}
+
 kai_describe :: proc(s:^Session,revision:vcs.Revision,description:string) -> string {
     w,message:=kai_prepare(s)
     if w==nil {return message}
@@ -412,10 +485,12 @@ kai_read :: proc(s:^Session) {
     ka.diff(w,working,&diffs,a)
     // A conflict of a merge is in its parents' tree too: listed whether it changed or not.
     files:=make([dynamic]Kai_File,0,len(diffs)+len(w.state.conflicts),a)
-    for m in w.state.conflicts {append(&files,Kai_File{strings.clone(m.path,a),'C'})}
+    for m in w.state.conflicts {append(&files,Kai_File{strings.clone(m.path,a),'C',false})}
     for d in diffs {
         listed:=false
-        for f in files {if f.path==d.path {listed=true;break}}
+        for &f in files {
+            if f.path==d.path {f.changed,listed=true,true;break}
+        }
         if listed {continue}
         mark:=u8('M')
         switch {
@@ -423,9 +498,17 @@ kai_read :: proc(s:^Session) {
         case d.before.address=={}: mark='A'
         case d.after.address=={}: mark='D'
         }
-        append(&files,Kai_File{d.path,mark})
+        append(&files,Kai_File{d.path,mark,true})
     }
     v.files=files[:]
+    // A check of a file no longer listed goes.
+    for k:=0;k<len(st.toggled); {
+        listed:=false
+        for f in v.files {if f.path==st.toggled[k] {listed=true;break}}
+        if listed {k+=1;continue}
+        delete(st.toggled[k])
+        unordered_remove(&st.toggled,k)
+    }
     rows:=make([dynamic]ka.Log_Row,context.temp_allocator)
     ka.log(w,KAI_LOG_ROWS,&rows,a)
     v.rows=make([]Kai_Row,len(rows),a)

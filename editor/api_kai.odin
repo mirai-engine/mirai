@@ -34,6 +34,16 @@ Api_Kai_New_Params :: struct {
     description:string `mirai:"optional"`,
 }
 
+Api_Kai_Split_Params :: struct {
+    files:[]string `mirai:"label=Project paths of the files the first change takes, as kai.status lists them; a folder takes every file under it"`,
+    change:string `mirai:"optional,label=The change to split; none: the working copy"`,
+    description:string `mirai:"optional,label=The first change's description; none: the change's own"`,
+}
+Api_Kai_Split :: struct {
+    first:string `mirai:"label=The change with the files picked: it keeps the change's id"`,
+    second:string `mirai:"label=A new change on the first with the rest: what pointed at the change, the working copy too, is on it now"`,
+}
+
 Api_Kai_Describe_Params :: struct {
     change:string `mirai:"optional,label=The change to describe; none: the working copy"`,
     description:string,
@@ -100,6 +110,7 @@ kai_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="kai.status",summary="The working copy as the Kai tab shows it, snapshot first: its change, what it changed, the files in conflict and the newest operation.",result=type_info_of(Api_Kai_Status),run=api_kai_status})
     api_register(s,st,{name="kai.snapshot",summary="Records the files of the project as they are now as the working copy, with the editors and agent turns that changed them since.",result=type_info_of(Api_Kai_Snapshot),run=api_kai_snapshot})
     api_register(s,st,{name="kai.new",summary="Starts a new change as the working copy, on the working copy or on given changes, whose trees merge; what does not merge is a conflict in its files that never blocks.",params=type_info_of(Api_Kai_New_Params),result=type_info_of(Api_Kai_Change),run=api_kai_new})
+    api_register(s,st,{name="kai.split",summary="Splits a change by files: the first keeps its id, parents and description with only the files picked; the second, a new change on it, holds the rest, and what pointed at the change moves onto it. The files on disk stay as they are.",params=type_info_of(Api_Kai_Split_Params),result=type_info_of(Api_Kai_Split),run=api_kai_split})
     api_register(s,st,{name="kai.describe",summary="Gives a change its description.",params=type_info_of(Api_Kai_Describe_Params),result=type_info_of(Api_Kai_Change),run=api_kai_describe})
     api_register(s,st,{name="kai.log",summary="The visible changes, newest first, with their bookmarks, conflicts, coauthors and agent turns.",params=type_info_of(Api_Kai_Log_Params),result=type_info_of(Api_Kai_Log),flags={.Read_Only},run=api_kai_log})
     api_register(s,st,{name="kai.undo",summary="Takes back the newest operation of the repository and writes the files as it leaves them; undoing an undo redoes it.",result=type_info_of(Api_Kai_Undone),flags={.Destructive},run=api_kai_undo})
@@ -186,6 +197,21 @@ api_kai_new :: proc(s:^Session,call:^api.Call) {
     }
     if !api_kai_ended(call,kai_new(s,parents[:],p.description)) {return}
     api.call_result(call,Api_Kai_Change).change=api_kai_text(w,vcs.repo_working(&w.repo),call)
+}
+
+@(private)
+api_kai_split :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Kai_Split_Params)
+    w:=api_kai_workspace(s,call)
+    if w==nil {return}
+    first,second,message,invalid:=kai_split(s,p.change!=""?p.change:"@",p.files,p.description)
+    if message!="" {
+        api.call_fail(call,invalid?api.INVALID_PARAMS:api.SERVER_ERROR,message)
+        return
+    }
+    r:=api.call_result(call,Api_Kai_Split)
+    r.first=api_kai_text(w,first,call)
+    r.second=api_kai_text(w,second,call)
 }
 
 @(private)

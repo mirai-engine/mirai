@@ -6,10 +6,11 @@ import vcs "mirai:kai"
 import "mirai:ui"
 
 // The Kai tab of the left panel: the working change with its description,
-// what it changed, a file in conflict unfolded into its fields with the side
-// each takes, the bookmarks and the log. Undo takes back the newest
-// operation; a click on a change of the log starts a new change on it. It
-// draws what kai_read left: a frame reads nothing of the repository.
+// what it changed, each file with a check of whether New change closes it,
+// a file in conflict unfolded into its fields with the side each takes, the
+// bookmarks and the log. Undo takes back the newest operation; a click on a
+// change of the log starts a new change on it. It draws what kai_read left: a
+// frame reads nothing of the repository.
 
 KAI_HEAD :: 22
 KAI_ROW_PAD :: 4
@@ -39,13 +40,17 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
             if message:=kai_describe(s,vcs.repo_working(&w.repo),typed);message!="" {notify(s,message)} else {st.description_length=0}
         }
         if ui.button(ctx,ui.id(ctx,"kai_new"),{label="New change",variant="accent",width=-1,center=true}).clicked {
-            if message:=kai_new(s,nil,typed);message!="" {notify(s,message)} else {st.description_length=0}
+            if message:=kai_new_checked(s,typed);message!="" {notify(s,message)} else {st.description_length=0}
         }
     }
     if ui.scroll_area(ctx,ui.id(ctx,"kai_scroll"),&st.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
-        kai_head(ctx,"CHANGES",len(v.files))
-        for &file,i in v.files {
-            ui.id_push(ctx,ui.id(ctx,"file",i))
+        all:=true
+        for f in v.files {
+            if f.changed && !kai_checked(st,f.path) {all=false;break}
+        }
+        if kai_head(ctx,"CHANGES",len(v.files),&all) {kai_checks_reset(st,!all)}
+        for &file in v.files {
+            ui.id_push(ctx,ui.id(ctx,file.path))
             kai_file_row(s,&file)
             if file.mark=='C' && file.path==st.unfolded {kai_fields_build(s)}
             ui.id_pop(ctx)
@@ -67,18 +72,22 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
     }
 }
 
+// A title and its count; with check, a checkbox before it: changed when clicked.
 @(private)
-kai_head :: proc(ctx:^ui.Context,title:string,count:int) {
-    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(KAI_HEAD),gap=4,align_y=.Center,padding={0,0,KAI_ROW_PAD,0}}) {
+kai_head :: proc(ctx:^ui.Context,title:string,count:int,check:^bool=nil) -> (changed:bool) {
+    if ui.box(ctx,{width=ui.GROW,height=ui.fixed(KAI_HEAD),gap=check!=nil?8:4,align_y=.Center,padding={check!=nil?KAI_ROW_PAD:0,0,KAI_ROW_PAD,0}}) {
+        if check!=nil {changed=ui.checkbox(ctx,ui.id(ctx,"kai_check_all"),check)}
         ui.label(ctx,title,ui.metric(ctx,"font_caption"),ui.tone(ctx,"text_caption"))
         ui.spacer(ctx)
         text:[16]u8
         ui.label(ctx,fmt.bprintf(text[:],"%d",count),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
     }
+    return
 }
 
-// A changed file: its name and folder, and its mark; one in conflict unfolds
-// into its fields.
+// A changed file: its check, name and folder, and its mark; one in conflict
+// unfolds into its fields. A conflict of the parents the change did not touch
+// has no check: no new change closes it.
 @(private)
 kai_file_row :: proc(s:^Session,file:^Kai_File) {
     ctx:=s.gui.ctx
@@ -86,6 +95,13 @@ kai_file_row :: proc(s:^Session,file:^Kai_File) {
     it:=ui.interact(ctx,row,{.Focusable})
     on:=ai_pointer_on(ctx,row)
     if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0},fill=on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
+        st:=s.kai.state
+        if file.changed {
+            checked:=kai_checked(st,file.path)
+            if ui.checkbox(ctx,ui.id(ctx,"check"),&checked) {kai_check(st,file.path,checked)}
+        } else {
+            ui.spacer(ctx,ui.CHECKBOX_SIDE,ui.CHECKBOX_SIDE)
+        }
         conflict:=file.mark=='C'
         if conflict {
             open:=s.kai.state.unfolded==file.path
