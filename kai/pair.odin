@@ -20,7 +20,16 @@ import "mirai:store"
 //   P2 R->I: ticket | e_R | enc(s_R) | enc(N_R || R_info)
 //   P3 I->R: ticket | enc(s_I) | enc(N_I || I_info)
 //   code   = BLAKE3(LABEL_PAIR_CODE || e_I || e_R || s_I || s_R || N_I || N_R) mod 10^8
+//   K  I->R: ticket | part | sealed(part of I's ML-KEM key), PAIR_KEM_PARTS of them
 //   P4 R->I: ticket | counter | sealed(Pending | Approved | Denied, signed entries)
+//
+// A device's ML-KEM key does not fit P3: P3's info carries its BLAKE3, which
+// the device's proof signs too, and the key follows in K frames sealed under
+// the keys the handshake split. R takes the key only when the parts hash to
+// what P3 said, and shows the request only then. The code covers what it
+// covered before; a middle that swaps the key must swap the hash in P3,
+// which only an end of the Noise session can write, and its own session's
+// code differs from the other end's.
 //
 // R takes one request at a time; a person must approve it (nothing is the
 // default), an unanswered one is denied after PAIR_TIMEOUT, and PAIR_DENIALS
@@ -42,9 +51,13 @@ PAIR_CODE_TEXT :: 9 // dddd-dddd
 @(private) PAIR_TAG :: chacha20poly1305.TAG_SIZE
 @(private) PAIR_NONCE :: 32
 @(private) PAIR_HEAD :: 1+16 // type and ticket id
+PAIR_KEM_PARTS :: 2
+PAIR_KEM_PART :: KEM_PUBLIC/PAIR_KEM_PARTS
+PAIR_K_SIZE :: PAIR_HEAD+1+PAIR_KEM_PART+PAIR_TAG
+#assert(PAIR_KEM_PART*PAIR_KEM_PARTS==KEM_PUBLIC)
 
-Pair_Message :: enum u8 {None,P1,P2,P3,P4}
-Pair_Mode :: enum u8 {Device,Member,Node}
+Pair_Message :: enum u8 {None,P1,P2,P3,P4,K}
+Pair_Mode :: enum u8 {Device,Member,Node,Recover} // Recover: a machine with no user reaches the org, to fetch the user logs it recovers from
 Pair_Status :: enum u8 {Pending,Approved,Denied}
 
 Pair_Error :: enum u8 {
@@ -56,6 +69,7 @@ Pair_Error :: enum u8 {
     Busy,         // another request is being answered
     Paused,       // too many denials: pairing waits
     Too_Large,
+    Key,          // a device's ML-KEM key that is not the one its handshake named
 }
 
 pair_error_text :: proc(error:Pair_Error) -> string {
@@ -68,6 +82,7 @@ pair_error_text :: proc(error:Pair_Error) -> string {
     case .Busy: return "another pairing request is open: answer it first"
     case .Paused: return "too many pairing requests were denied: wait ten minutes"
     case .Too_Large: return "a pairing message is past its bound"
+    case .Key: return "the device's ML-KEM key is not the one its handshake named: pair again"
     }
     return ""
 }
@@ -219,6 +234,8 @@ Pair :: struct {
     send,receive:[PAIR_KEY]u8, // after the handshake
     sent,received:u64,
     code:[PAIR_CODE_TEXT]u8,
+    kem:[KEM_PUBLIC]u8, // responder: the initiator's ML-KEM key, as its K parts came
+    kem_parts:u8,       // the parts that came, a bit each
 }
 
 // Starts one end. seed, when given, makes the ephemeral key and the nonce
@@ -502,14 +519,56 @@ pair_read_p4 :: proc(p:^Pair,message:[]u8) -> (status:Pair_Status,payload:[]u8,e
     return Pair_Status(body[0]),body[1:],.None
 }
 
+// Initiator: K part of its ML-KEM key kem, sealed under the handshake's keys.
+pair_write_key :: proc(p:^Pair,kem:^[KEM_PUBLIC]u8,part:int,out:[]u8) -> (message:[]u8,error:Pair_Error) {
+    if !p.initiator || p.step<.P3 || part<0 || part>=PAIR_KEM_PARTS {return nil,.Corrupt}
+    if len(out)<PAIR_K_SIZE {return nil,.Too_Large}
+    pair_head(p,out,.K)
+    out[PAIR_HEAD]=u8(part)
+    body:=out[PAIR_HEAD+1:][:PAIR_KEM_PART]
+    copy(body,kem[part*PAIR_KEM_PART:][:PAIR_KEM_PART])
+    ctx:chacha20poly1305.Context
+    iv:=net.noise_iv(u64(part))
+    chacha20poly1305.init(&ctx,p.send[:])
+    chacha20poly1305.seal(&ctx,body,out[PAIR_HEAD+1+PAIR_KEM_PART:][:PAIR_TAG],iv[:],out[:PAIR_HEAD+1],body)
+    chacha20poly1305.reset(&ctx)
+    return out[:PAIR_K_SIZE],.None
+}
+
+// Responder: takes a K part; complete is true once every part came and they
+// hash to kem_hash, what P3's info said; Key when they hash to another.
+pair_read_key :: proc(p:^Pair,message:[]u8,kem_hash:[32]u8) -> (complete:bool,error:Pair_Error) {
+    if p.initiator || p.step!=.P3 {return false,.Corrupt}
+    if len(message)!=PAIR_K_SIZE || message[0]!=u8(Pair_Message.K) {return false,.Corrupt}
+    if !bytes_equal(message[1:PAIR_HEAD],p.ticket[:]) {return false,.Ticket}
+    part:=int(message[PAIR_HEAD])
+    if part>=PAIR_KEM_PARTS {return false,.Corrupt}
+    if p.kem_parts&(1<<uint(part))==0 {
+        sealed:[PAIR_KEM_PART]u8
+        copy(sealed[:],message[PAIR_HEAD+1:][:PAIR_KEM_PART])
+        ctx:chacha20poly1305.Context
+        iv:=net.noise_iv(u64(part))
+        chacha20poly1305.init(&ctx,p.receive[:])
+        ok:=chacha20poly1305.open(&ctx,p.kem[part*PAIR_KEM_PART:][:PAIR_KEM_PART],iv[:],message[:PAIR_HEAD+1],sealed[:],message[PAIR_HEAD+1+PAIR_KEM_PART:][:PAIR_TAG])
+        chacha20poly1305.reset(&ctx)
+        if !ok {return false,.Corrupt}
+        p.kem_parts|=1<<uint(part)
+    }
+    if p.kem_parts!=(1<<PAIR_KEM_PARTS)-1 {return false,.None}
+    if blake3.hash(p.kem[:])!=kem_hash {return false,.Key}
+    return true,.None
+}
+
 // What each end says of itself in its payload: the mode, the log it speaks
 // for (R: the user log a device joins or the org; I: its own user log when it
-// joins as a member), its signing key and, for a device, the proof it holds it
-// over the user log it joins. A name follows.
+// joins as a member), its signing key and, for a device, the BLAKE3 of its
+// ML-KEM key, which K frames carry, and the proof it holds its keys over the
+// user log it joins. A name follows.
 Pair_Info :: struct #packed {
     mode:Pair_Mode,
     log_id:Log_Id,
     device:Key,
+    kem:[32]u8,
     proof:Signature,
 }
 
@@ -568,12 +627,14 @@ pair_gate_expire :: proc(g:^Pair_Gate,now:i64) -> bool {
     return true
 }
 
-// The entry that links the device the pairing p met to the user's log,
-// signed by approver, an active device or the recovery key of the user.
+// The entry that links the device the pairing p met to the user's log, with
+// the ML-KEM key its K frames carried, signed by approver, an active device
+// or the recovery key of the user.
 pair_approve_device :: proc(p:^Pair,user:^Log,approver:^Identity,time:i64) -> (address:store.Hash,error:Error) {
     info,name,ok:=pair_info_decode(pair_info(p))
     if !ok || info.mode!=.Device || p.step!=.P3 || user.kind!=.User {return {},.Invalid_Argument}
-    body:=body_make(Device_Add_Body{device=info.device,dh=pair_remote(p),proof=info.proof},transmute([]u8)name)
+    if p.kem_parts!=(1<<PAIR_KEM_PARTS)-1 || blake3.hash(p.kem[:])!=info.kem {return {},.Invalid_Argument}
+    body:=body_make(Device_Add_Body{device=info.device,dh=pair_remote(p),kem=p.kem,proof=info.proof},transmute([]u8)name)
     return log_append(user,.Device_Add,body,approver,time)
 }
 

@@ -29,7 +29,6 @@ View :: struct {
 
 View_Head :: struct #packed {
     magic:u32,
-    version:u16,
     reserved:u16,
     heads:u32,
     workspaces:u32,
@@ -120,7 +119,7 @@ view_encode :: proc(v:^View,allocator:=context.allocator) -> (bytes:[]u8,error:E
         pool+=len(b.name)
     }
     w:=writer_make(allocator)
-    write_value(&w,View_Head{magic=KAI_MAGIC,version=VERSION,heads=u32(len(v.heads)),workspaces=u32(len(v.workspaces)),
+    write_value(&w,View_Head{magic=KAI_MAGIC,heads=u32(len(v.heads)),workspaces=u32(len(v.workspaces)),
         bookmarks=u32(len(v.bookmarks)),terms=u32(terms),pool=u32(pool)})
     for h in v.heads {write_value(&w,h)}
     for ws in v.workspaces {write_value(&w,ws)}
@@ -145,7 +144,7 @@ view_encode :: proc(v:^View,allocator:=context.allocator) -> (bytes:[]u8,error:E
 view_decode :: proc(bytes:[]u8,v:^View) -> Error {
     r:=Reader{data=bytes}
     head:=read_value(&r,View_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.reserved!=0 {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 {return .Corrupt}
     if head.heads>HEADS_MAX || head.workspaces>WORKSPACES_MAX || head.bookmarks>BOOKMARKS_MAX || head.terms>BOOKMARKS_MAX*CONFLICT_TERMS_MAX {return .Corrupt}
     size:=u64(size_of(View_Head))+u64(head.heads)*size_of(Revision)+u64(head.workspaces)*size_of(View_Workspace)+
         u64(head.bookmarks)*size_of(Bookmark_Record)+u64(head.terms)*size_of(Revision)+u64(head.pool)

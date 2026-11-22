@@ -45,6 +45,22 @@ import "mirai:store"
 // peers that read it, so nothing polls. When the logs change, authorize runs
 // again: a Pending peer becomes a member, a removed one is Revoked, and each
 // end tells the peer it admitted every ref the peer may now read.
+//
+// Behind: a peer that reaches the org only through a peer that withholds a
+// removal would take what the removed key signs. A device's refs name the
+// heads of the org's log its device had, and an org's Witness names the
+// removal in a user's log: a signed record of a writer, or a valid witness,
+// that names an entry this end lacks makes it behind. It asks every peer for
+// the logs again, says so (Agent_Stats.behind), and takes no write while it
+// is (a log of a project, a proposal or a keyring, device refs, derived data
+// or an overlay record): they wait, deferred, and are fetched again once it
+// is not. A signer's time and heads are its own claims, so what was signed
+// after the point cannot be told from what was before: every write waits.
+// An entry named that does not come within BEHIND_SECONDS is let go, and the
+// user whose device named it stalls this end no more: a member who names
+// heads that do not exist holds it once, for that long, and never again; a
+// peer cut off longer than that takes writes again, and still says it let
+// entries go (Agent_Stats.unfound).
 
 AGENT_PROTOCOL :: u32(0x3149414b) // "KAI1"
 AGENT_PEERS :: 16
@@ -54,6 +70,8 @@ AGENT_FETCHES :: 256
 AGENT_QUERIES :: 64
 AGENT_HINTS :: 256
 AGENT_ASKED :: 1024 // the last chunks peers asked for, which a ddc node keeps while they are fetched
+BEHIND_SECONDS :: 600.0 // an entry a peer named waits this long to come, then is let go
+BEHIND_MAX :: 64        // entries named and lacking an agent waits for at once
 USER_NAMESPACE :: "kai-user"
 
 Agent_Desc :: struct {
@@ -175,14 +193,23 @@ Agent :: struct {
     members:Members,
     asked:[AGENT_ASKED]Agent_Asked, // a ring: what peers asked for last, at asked_next-1
     asked_next:int,
+    behind:[dynamic]Agent_Behind,
+    unfound:[dynamic]Log_Id, // users whose devices named an entry that never came: they make this end behind no more
 }
 
 Agent_Asked :: struct {address:store.Hash,at:i64} // ns
+
+// An entry a record or a witness named that this end lacks: of the org's log,
+// or the removal of a user's log a witness names.
+@(private)
+Agent_Behind :: struct {entry:store.Hash,log:Log_Id,named_by:Log_Id,since:f64} // named_by: the user whose device named it
 
 Agent_Stats :: struct {
     logs_merged,refs_accepted,ddc_accepted,overlays_accepted,objects_fetched:int,
     refused:int, // records a peer gave that did not hold: bad signature, no right, rollback
     refolds:int,
+    behind:int,  // entries of the org's logs peers named that are not here yet: writes wait
+    unfound:int, // entries named that did not come in time and were let go
     logs_refused:int, // logs past AGENT_LOGS loaded at once, left in the store: land or close proposals, or split the org
 }
 
@@ -212,7 +239,9 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     a.fetches=make([dynamic]Agent_Fetch,allocator)
     a.hints=make([dynamic]Agent_Fetch,allocator)
     a.deferred=make([dynamic]Agent_Fetch,allocator)
-    if reserve(&a.fetches,AGENT_FETCHES)!=nil || reserve(&a.hints,AGENT_HINTS)!=nil || reserve(&a.deferred,AGENT_FETCHES)!=nil {
+    a.behind=make([dynamic]Agent_Behind,allocator)
+    a.unfound=make([dynamic]Log_Id,allocator)
+    if reserve(&a.fetches,AGENT_FETCHES)!=nil || reserve(&a.hints,AGENT_HINTS)!=nil || reserve(&a.deferred,AGENT_FETCHES)!=nil || reserve(&a.behind,BEHIND_MAX)!=nil || reserve(&a.unfound,BEHIND_MAX)!=nil {
         agent_destroy(a)
         return .Out_Of_Memory
     }
@@ -276,6 +305,8 @@ agent_destroy :: proc(a:^Agent) {
     delete(a.user_folds)
     delete(a.user_list)
     delete(a.allowed)
+    delete(a.behind)
+    delete(a.unfound)
     delete(a.closure.identity)
     delete(a.closure.public)
     for g in a.closure.grants {delete(g.chunks)}
@@ -389,7 +420,7 @@ agent_witnesses :: proc(a:^Agent) {
     due:=make([dynamic]Witness_Due,context.temp_allocator)
     parents:=make([dynamic]store.Hash,context.temp_allocator)
     written:=false
-    for l in a.logs {
+    logs: for l in a.logs {
         if len(l.items)==0 || (l.kind!=.Org && !org_bound(l.kind)) || (l.kind==.Org && l.id!=a.desc.org) {continue}
         if (l.kind==.Project || l.kind==.Keyring) && role<.Writer {continue}
         if l.kind==.Project && org_project_index(&a.org,l.id)<0 {continue}
@@ -406,6 +437,8 @@ agent_witnesses :: proc(a:^Agent) {
                 exchange.ref_changed(&a.x,log_namespace(l.kind),log_name(l.id,&name),address)
                 written=true
             }
+            // The org's fold is of the log before the witness: the refold below writes the rest.
+            if l.kind==.Org {break logs}
         }
     }
     if written {agent_refold(a)}
@@ -503,8 +536,99 @@ agent_refold :: proc(a:^Agent) {
     for i in 0..<AGENT_PEERS {
         if a.peers[i].used {agent_ask(a,i)}
     }
+    agent_behind_witnesses(a)
+    agent_behind_settle(a)
     agent_retry(a,.None)
     agent_witnesses(a)
+}
+
+// Whether this end is behind: an entry a peer named is not here yet, so it
+// takes no write (see the head of this file).
+agent_is_behind :: proc(a:^Agent) -> bool {return len(a.behind)>0}
+
+// Notes that a device of the user named_by named entry of log, which this end
+// lacks, and asks every peer for the logs again. A user whose devices named
+// one that never came is not heard again.
+@(private)
+agent_behind_add :: proc(a:^Agent,entry:store.Hash,log:Log_Id,named_by:Log_Id) {
+    if named_by=={} || slice.contains(a.unfound[:],named_by) || len(a.behind)>=BEHIND_MAX {return}
+    for b in a.behind {
+        if b.entry==entry {return}
+    }
+    append(&a.behind,Agent_Behind{entry,log,named_by,a.now})
+    a.stats.behind=len(a.behind)
+    for &p,i in a.peers {
+        if !p.used || (p.client>=0 && a.client_anonymous[p.client]) {continue}
+        agent_query(a,i,LOG_NAMESPACE,"")
+        agent_query(a,i,USER_NAMESPACE,"")
+    }
+}
+
+// Lets go of what came and of what waited past BEHIND_SECONDS; once nothing
+// waits, the writes held back merge and every peer is asked again for what
+// did not fit the deferred list.
+@(private)
+agent_behind_settle :: proc(a:^Agent) {
+    if len(a.behind)==0 {return}
+    for k:=0;k<len(a.behind); {
+        b:=a.behind[k]
+        l:=agent_log(a,b.log)
+        if l!=nil && log_find(l,b.entry)>=0 {
+            unordered_remove(&a.behind,k)
+            continue
+        }
+        if a.now-b.since>BEHIND_SECONDS {
+            if !slice.contains(a.unfound[:],b.named_by) {
+                if len(a.unfound)>=BEHIND_MAX {ordered_remove(&a.unfound,0)}
+                append(&a.unfound,b.named_by)
+            }
+            a.stats.unfound+=1
+            unordered_remove(&a.behind,k)
+            continue
+        }
+        k+=1
+    }
+    a.stats.behind=len(a.behind)
+    if len(a.behind)>0 {return}
+    agent_retry(a,.None)
+    for i in 0..<AGENT_PEERS {
+        if a.peers[i].used {agent_ask(a,i)}
+    }
+}
+
+// The removals in users' logs that the org's witnesses name and this end
+// lacks: a witness of a member's device that names one.
+@(private)
+agent_behind_witnesses :: proc(a:^Agent) {
+    if !a.folded {return}
+    for item in a.org.log.items {
+        if item.entry.type!=.Witness {continue}
+        b,_,ok:=body_head(item.entry.body,Witness_Body)
+        if !ok || b.log==a.desc.org {continue}
+        user,role:=org_device_role(&a.org,item.entry.author)
+        if role==.None {continue}
+        if l:=agent_log(a,b.log);l!=nil && log_find(l,b.removal)>=0 {continue}
+        agent_behind_add(a,b.removal,b.log,user)
+    }
+}
+
+// Whether the device refs at address, signed by a device that may write the
+// project, name heads of the org's log this end lacks: it is behind then.
+@(private)
+agent_refs_behind :: proc(a:^Agent,project:Log_Id,address:store.Hash) -> bool {
+    bytes,e:=object_get(a.desc.store,address,.Device_Refs,context.temp_allocator)
+    if e!=.None {return false}
+    r,de:=device_refs_decode(bytes,context.temp_allocator)
+    if de!=.None || r.project!=project || !signed_valid(bytes,r.device) {return false}
+    user,_:=org_device_role(&a.org,r.device)
+    if _,writer:=device_may_write(&a.org,project,r.device,time.now()._nsec);!writer || user=={} || slice.contains(a.unfound[:],user) {return false}
+    lacking:=false
+    for h in r.org_heads {
+        if log_find(a.org.log,h)>=0 {continue}
+        agent_behind_add(a,h,a.desc.org,user)
+        lacking=true
+    }
+    return lacking
 }
 
 // Merges again what was deferred, of kind or of every kind for None.
@@ -658,12 +782,13 @@ agent_peer_add :: proc(a:^Agent,h:^net.Host,connection:net.Connection,client:int
 @(private)
 agent_reclass :: proc(a:^Agent,i:int,class:Agent_Class) {
     p:=&a.peers[i]
-    // What was asked of the peer goes with its exchange peer: it is asked again below.
+    // Its names are asked again below; its exchange peer keeps what is under
+    // way on the connection, under a new tag that what was served for the old
+    // class does not match.
     agent_queries_end(a,i)
-    exchange.peer_remove(&a.x,p.host,p.connection)
     a.tags+=1
     p.class,p.tag=class,a.tags
-    if exchange.peer_add(&a.x,p.host,p.connection,p.tag,true)!=.None {
+    if exchange.peer_set(&a.x,p.host,p.connection,p.tag,true)!=.None {
         net.host_disconnect(p.host,p.connection)
         return
     }
@@ -938,6 +1063,10 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .User,.Log:
         id,ok:=store.parse_hex(name)
         if !ok {return}
+        if f.kind==.Log && id!=a.desc.org && agent_is_behind(a) {
+            agent_defer(a,f)
+            return
+        }
         if f.kind==.Log && id!=a.desc.org && !(a.folded && (org_project_index(&a.org,id)>=0 || keyring_of_org(a.desc.store,&a.org,id,f.address) || proposal_of_org(a.desc.store,&a.org,id,f.address))) {
             // Its genesis may be in pages still to come: they are fetched, and the log placed then.
             pages:=make([dynamic]store.Hash,context.temp_allocator)
@@ -967,6 +1096,10 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .Refs:
         project,ok:=store.parse_hex(namespace[len(REFS_PREFIX):])
         if !ok || !a.folded {return}
+        if agent_refs_behind(a,project,f.address) || agent_is_behind(a) {
+            agent_defer(a,f)
+            return
+        }
         missing:=make([dynamic]store.Hash,context.temp_allocator)
         changed,e:=device_refs_accept(a.desc.store,&a.org,project,name,f.address,time.now()._nsec,&missing)
         if e==.Missing && len(missing)>0 {
@@ -989,6 +1122,10 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .DDC:
         key,ok:=store.parse_hex(name)
         if !ok || !a.folded {return}
+        if agent_is_behind(a) {
+            agent_defer(a,f)
+            return
+        }
         grants:=make([dynamic][]u8,context.temp_allocator)
         for item,i in a.org.log.items {
             if a.org.valid[i] && item.entry.type==.Grant {append(&grants,item.entry.body)}
@@ -1006,6 +1143,10 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         }
     case .Overlay:
         if !a.folded {return}
+        if agent_is_behind(a) {
+            agent_defer(a,f)
+            return
+        }
         r,changed,e:=overlay_accept(a.desc.store,&a.org,namespace,name,f.address)
         if e!=.None {
             a.stats.refused+=1
@@ -1032,6 +1173,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
 agent_update :: proc(a:^Agent,now:f64) {
     a.now=now
     if a.grants_turn!=0 && time.now()._nsec>a.grants_turn {agent_refold(a)}
+    agent_behind_settle(a)
     agent_poll(a,&a.server,-1)
     for k in 0..<a.client_count {agent_poll(a,&a.clients[k],k)}
     for &q in a.queries {
@@ -1324,7 +1466,8 @@ members_settled :: proc(a:^Agent,out:^[dynamic]Walk_Item) {
 }
 
 // What the log l gives the members' set: the chunks of its index and pages,
-// which are objects of their own, and the revisions it names.
+// which are objects of their own, the revisions it names and a keyring's
+// envelopes.
 @(private)
 members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
     if len(l.items)==0 {return}
@@ -1356,6 +1499,13 @@ members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
         known:=false
         for sc in a.org.scopes {known||=sc.project==b.project && sc.scope==b.scope}
         if b.org!=a.desc.org || !known {return}
+        // The envelopes of each epoch are an object of their own, fetched with the log.
+        for item in l.items {
+            if item.entry.type!=.Epoch_Add {continue}
+            e,_,_:=body_head(item.entry.body,Epoch_Add_Body)
+            append(out,Walk_Item{e.envelopes,.File,false})
+            if !object_present(a.desc.store,e.envelopes) {agent_want_object(a,e.envelopes)}
+        }
     }
     name:[64]u8
     address,e:=store.ref_get(a.desc.store,namespace,log_name(l.id,&name))
@@ -1416,7 +1566,7 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
         for sc in a.org.scopes {known||=sc.project==project && sc.scope==scope}
         if !known {return}
         append(out,Walk_Item{address,.File,false})
-        bytes,e:=overlay_get(a.desc.store,address,.Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+        bytes,e:=overlay_get(a.desc.store,address,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
         if e!=.None {return}
         r,re:=overlay_record_decode(bytes)
         if re!=.None {return}
@@ -1453,13 +1603,17 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
         }
         delete_key(&m.frontier,item.address)
         walk_children(a.desc.store,item,&b,&stack)
-        // A change's overlays: a snapshot writes their refs without telling the agent.
+        // A change's overlays: a snapshot writes their refs without telling the
+        // agent, which tells the peers that read them here.
         if item.kind!=.Change || !a.folded {continue}
         name:[64]u8
         for sc in a.org.scopes {
             ns:[len(OVERLAY_PREFIX)+64+1+32]u8
             namespace:=overlay_namespace(sc.project,sc.scope,&ns)
-            if record,e:=store.ref_get(a.desc.store,namespace,store.hex(item.address,&name));e==.None {members_roots(a,.Overlay,namespace,record,&stack)}
+            if record,e:=store.ref_get(a.desc.store,namespace,store.hex(item.address,&name));e==.None {
+                members_roots(a,.Overlay,namespace,record,&stack)
+                exchange.ref_changed(&a.x,namespace,store.hex(item.address,&name),record)
+            }
         }
     }
     if len(added)==0 {return}

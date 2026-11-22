@@ -22,8 +22,9 @@ Draft_Body :: struct {
     anchor:struct {kind:string,line,lines:u32},
     user:string,
     role:string,
-    device:string, // device_add: the device's Ed25519 key, its X25519 key, its proof and name
+    device:string, // device_add: the device's Ed25519 key, its X25519 and ML-KEM keys, its proof and name
     dh:string,
+    kem:string,
     proof:string,
     name:string,
 }
@@ -128,11 +129,13 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
     case .Device_Add:
         head:kai.Device_Add_Body
         proof,pok:=base64_parse(b.proof,64)
-        if !hex_parse(b.device,head.device[:]) || !hex_parse(b.dh,head.dh[:]) || !pok || len(proof)!=64 {
-            fail(c,400,"device and dh are 64 hex, proof base64url of the device's signature: take them from the device's offer")
+        kem,kok:=base64_parse(b.kem,kai.KEM_PUBLIC)
+        if !hex_parse(b.device,head.device[:]) || !hex_parse(b.dh,head.dh[:]) || !pok || len(proof)!=64 || !kok || len(kem)!=kai.KEM_PUBLIC {
+            fail(c,400,"device and dh are 64 hex, kem base64url of the device's ML-KEM-768 key, proof base64url of the device's signature: take them from the device's offer")
             return
         }
         copy(head.proof[:],proof)
+        copy(head.kem[:],kem)
         d.body=kai.body_make(head,transmute([]u8)b.name)
     case .Member_Add,.Role_Set,.Member_Remove:
         user,uok:=hash_parse(b.user)

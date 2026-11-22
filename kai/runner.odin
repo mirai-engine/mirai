@@ -271,6 +271,8 @@ Pair_Join :: struct {
     to:net.Address,      // the responder, once it answered
     last:[FRAME_MAX]u8,
     last_len:int,
+    keys:[PAIR_KEM_PARTS][1+PAIR_K_SIZE]u8, // a device's K frames, sent with each repeat of P3
+    key_frames:int,
     sent:f64,
     started:f64,
     name:[NAME_MAX]u8,
@@ -411,8 +413,15 @@ route_of :: proc(org:Log_Id) -> (route:[RUNNER_ROUTE]u8) {
 // the orgs it left; all of them when the machine's user changed.
 runner_reload :: proc(r:^Runner) {
     m:=r.machine
+    // The machines this end paired with stay its first peers when its user changes (a recovery).
+    kept:=make([dynamic]struct{org:Log_Id,peer:Runner_Peer},context.temp_allocator)
     if m.user!=r.user {
-        for o in r.orgs {runner_org_close(r,o)}
+        for o in r.orgs {
+            for p in o.peers {
+                if p.first {append(&kept,struct{org:Log_Id,peer:Runner_Peer}{o.id,Runner_Peer{dh=p.dh,first=true,lan=p.lan,lan_seen=p.lan_seen,attempt=-1}})}
+            }
+            runner_org_close(r,o)
+        }
         clear(&r.orgs)
         r.user=m.user
     }
@@ -429,6 +438,11 @@ runner_reload :: proc(r:^Runner) {
         for o in r.orgs {found||=o.id==id}
         if found || len(r.orgs)>=RUNNER_ORGS {continue}
         if o:=runner_org_open(r,id);o!=nil {append(&r.orgs,o)}
+    }
+    for k in kept {
+        for o in r.orgs {
+            if o.id==k.org && runner_peer_index(o,k.peer.dh)<0 && len(o.peers)<RUNNER_PEERS {append(&o.peers,k.peer)}
+        }
     }
 }
 
@@ -562,6 +576,14 @@ runner_org_watch :: proc(r:^Runner,o:^Runner_Org) {
     if s.logs_merged!=o.stats.logs_merged {runner_event(r,"merged %d logs",s.logs_merged-o.stats.logs_merged)}
     if s.ddc_accepted!=o.stats.ddc_accepted {runner_event(r,"took %d derived data records",s.ddc_accepted-o.stats.ddc_accepted)}
     if s.overlays_accepted!=o.stats.overlays_accepted {runner_event(r,"took %d private overlays",s.overlays_accepted-o.stats.overlays_accepted)}
+    if s.behind!=o.stats.behind {
+        if s.behind>0 {
+            runner_event(r,"behind the org's logs: %d entries peers named are not here yet; their writes wait until a peer gives them",s.behind)
+        } else {
+            runner_event(r,"no longer behind the org's logs")
+        }
+    }
+    if s.unfound!=o.stats.unfound {runner_event(r,"let go of %d entries peers named that never came",s.unfound-o.stats.unfound)}
     if s.refs_accepted!=o.stats.refs_accepted || s.objects_fetched!=o.stats.objects_fetched {runner_bookmarks_event(r,o)}
     if (s.ddc_accepted!=o.stats.ddc_accepted || s.objects_fetched!=o.stats.objects_fetched) && .DDC in r.desc.modes {runner_ddc_mirror(r,o)}
     o.stats=s
@@ -1459,6 +1481,15 @@ Runner_Peer_Info :: struct {
     node:bool,
 }
 
+// How current an org's agent is: the entries of the org's logs peers named
+// that are not here yet (writes wait while there are any), and those let go
+// after BEHIND_SECONDS.
+Runner_Org_Info :: struct {org:Log_Id,behind,unfound:int}
+
+runner_orgs_info :: proc(r:^Runner,out:^[dynamic]Runner_Org_Info) {
+    for o in r.orgs {append(out,Runner_Org_Info{o.id,o.agent.stats.behind,o.agent.stats.unfound})}
+}
+
 runner_peers :: proc(r:^Runner,out:^[dynamic]Runner_Peer_Info) {
     for o in r.orgs {
         for p,i in o.agent.peers {
@@ -1483,6 +1514,8 @@ runner_pair_offer :: proc(r:^Runner,mode:Pair_Mode,org:Log_Id,role:Role,modes:No
         if !slice.contains(m.orgs[:],org) {return "",machine_fail(m,.Invalid_Argument,"this machine does not serve that org")}
     case .Node:
         if modes=={} {return "",machine_fail(m,.Invalid_Argument,"a node serves relay, seed or ddc")}
+        if !slice.contains(m.orgs[:],org) {return "",machine_fail(m,.Invalid_Argument,"this machine does not serve that org")}
+    case .Recover:
         if !slice.contains(m.orgs[:],org) {return "",machine_fail(m,.Invalid_Argument,"this machine does not serve that org")}
     }
     if r.offer.active && r.offer.shown {return "",machine_fail(m,.Locked,"another pairing request waits for an answer: answer it first")}
@@ -1543,6 +1576,12 @@ runner_pair_answer :: proc(r:^Runner,approve:bool,code:string="") -> Error {
             machine_node_add(m,o.org,o.info.device,pair_remote(&o.pair),o.modes,{o.from}) or_return
             id:=o.org
             append(&payload,..id[:])
+        case .Recover:
+            // Nothing is signed: the other machine reaches the org as a peer
+            // not admitted, which reads the user logs alone, until its user
+            // is recovered onto it.
+            id:=o.org
+            append(&payload,..id[:])
         }
     }
     runner_pair_finish(r,yes?.Approved:.Denied,payload[:])
@@ -1577,6 +1616,7 @@ runner_pair_join :: proc(r:^Runner,text:string,name:string) -> Error {
     switch t.mode {
     case .Device: if m.user!={} {return machine_fail(m,.Invalid_Argument,"this device belongs to a user already: only a device without one is linked")}
     case .Member: if m.user=={} {return machine_fail(m,.Invalid_Argument,"this device has no user: mirai kai identity makes one first")}
+    case .Recover: if m.user!={} {return machine_fail(m,.Invalid_Argument,"this device belongs to a user already: a user is recovered onto a device that has none")}
     case .Node:
     }
     if r.join.active {return machine_fail(m,.Locked,"this machine is joining another pairing: wait for it to end")}
@@ -1605,6 +1645,7 @@ runner_pair_resend :: proc(r:^Runner) {
     j.sent=r.now
     if j.to.kind!=.None {
         runner_send(r,j.to,j.last[:j.last_len])
+        for k in 0..<j.key_frames {runner_send(r,j.to,j.keys[k][:])}
         return
     }
     for a in j.ticket.addresses[:j.ticket.address_count] {runner_send(r,a,j.last[:j.last_len])}
@@ -1646,7 +1687,7 @@ runner_pair_read :: proc(r:^Runner,from:net.Address,message:[]u8) {
     if len(message)<PAIR_HEAD {return}
     switch Pair_Message(message[0]) {
     case .None:
-    case .P1,.P3: runner_pair_responder(r,from,message)
+    case .P1,.P3,.K: runner_pair_responder(r,from,message)
     case .P2,.P4: runner_pair_initiator(r,from,message)
     }
 }
@@ -1700,14 +1741,38 @@ runner_pair_responder :: proc(r:^Runner,from:net.Address,message:[]u8) {
         }
         o.info=info
         o.name_len=copy(o.name[:],name)
-        o.step,o.shown=.P3,true
-        runner_event(r,"pairing request from %s: code %s",name,pair_code(&o.pair))
-        out,_:=pair_write_p4(&o.pair,.Pending,nil,o.last[1:])
-        o.last[0]=FRAME_PAIR
-        o.last_len=1+len(out)
-        runner_send(r,from,o.last[:o.last_len])
+        o.step=.P3
+        // A device shows once its ML-KEM key came whole in the K frames.
+        if info.mode!=.Device {runner_pair_show(r)}
+    case .K:
+        if o.step!=.P3 || from!=o.from {return}
+        if o.shown {
+            runner_send(r,from,o.last[:o.last_len])
+            return
+        }
+        complete,e:=pair_read_key(&o.pair,message,o.info.kem)
+        if e==.Key {
+            runner_event(r,"pairing refused: %s",pair_error_text(e))
+            pair_gate_close(&o.gate,false,now)
+            pair_end(&o.pair)
+            o.step=.None
+            return
+        }
+        if complete {runner_pair_show(r)}
     case .None,.P2,.P4:
     }
+}
+
+// Shows the open request: its code waits for the person's answer.
+@(private)
+runner_pair_show :: proc(r:^Runner) {
+    o:=&r.offer
+    o.shown=true
+    runner_event(r,"pairing request from %s: code %s",string(o.name[:o.name_len]),pair_code(&o.pair))
+    out,_:=pair_write_p4(&o.pair,.Pending,nil,o.last[1:])
+    o.last[0]=FRAME_PAIR
+    o.last_len=1+len(out)
+    runner_send(r,o.from,o.last[:o.last_len])
 }
 
 @(private)
@@ -1729,9 +1794,11 @@ runner_pair_initiator :: proc(r:^Runner,from:net.Address,message:[]u8) {
         }
         info:=Pair_Info{mode=j.ticket.mode,device=m.identity.key}
         switch j.ticket.mode {
-        case .Device: info.proof=device_proof(&m.identity,transmute([32]u8)remote.log_id)
+        case .Device:
+            info.kem=machine_kem_hash(m)
+            info.proof=device_proof(&m.identity,transmute([32]u8)remote.log_id,Dh_Key(m.dh.public),info.kem)
         case .Member: info.log_id=m.user
-        case .Node:
+        case .Node,.Recover:
         }
         buffer:[PAIR_INFO_MAX]u8
         out,e:=pair_write_p3(&j.pair,pair_info_encode(info,string(j.name[:j.name_len]),&buffer),j.last[1:])
@@ -1740,6 +1807,14 @@ runner_pair_initiator :: proc(r:^Runner,from:net.Address,message:[]u8) {
             return
         }
         j.last_len=1+len(out)
+        if j.ticket.mode==.Device {
+            kem:=machine_kem_public(m)
+            for k in 0..<PAIR_KEM_PARTS {
+                j.keys[k][0]=FRAME_PAIR
+                pair_write_key(&j.pair,&kem,k,j.keys[k][1:])
+            }
+            j.key_frames=PAIR_KEM_PARTS
+        }
         j.to,j.phase,j.code=from,.Waiting,j.pair.code
         runner_pair_resend(r)
         runner_event(r,"pairing code %s: check that the other machine shows the same",string(j.code[:]))
@@ -1758,7 +1833,7 @@ runner_pair_initiator :: proc(r:^Runner,from:net.Address,message:[]u8) {
                 runner_event(r,"pairing approved")
             }
         }
-    case .None,.P1,.P3:
+    case .None,.P1,.P3,.K:
     }
 }
 

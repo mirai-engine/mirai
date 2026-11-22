@@ -255,7 +255,7 @@ overlay_prune :: proc(s:^store.Store,now:i64) -> Error {
         if le!=.None {continue}
         for ref in refs {
             if commit,ok:=store.parse_hex(ref.name);ok && commit in reached {continue}
-            bytes,ge:=overlay_get(s,ref.hash,.Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+            bytes,ge:=overlay_get(s,ref.hash,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
             if ge==.None {
                 if record,de:=overlay_record_decode(bytes);de==.None && record.time>=now-OP_RETENTION {continue}
             }
@@ -269,9 +269,10 @@ overlay_prune :: proc(s:^store.Store,now:i64) -> Error {
 // refs and the chunks of objects, not the links inside Kai records: the
 // operations each repository's log reaches (op_retained) and their views, the
 // closures of what those views, the shared bookmarks, the proposals' stacks
-// and the devices' refs name, the sealed tree and files of each overlay
-// record a ref names (not the records before it, which nothing reads), and
-// every object of the outputs of the derived data kept.
+// and the devices' refs name, the envelopes of the keyrings' epochs, the
+// sealed tree and files of each overlay record a ref names (not the records
+// before it, which nothing reads), and every object of the outputs of the
+// derived data kept.
 store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
     targets:=make([dynamic]Revision,context.temp_allocator)
     store_roots(s,live,&targets,true) or_return
@@ -327,6 +328,9 @@ store_roots :: proc(s:^store.Store,live:^[dynamic]store.Hash,targets:^[dynamic]R
                         _,tail,ok:=body_head(item.entry.body,Proposal_Revise_Body)
                         if !ok || len(tail)%size_of(Stack_Item)!=0 {continue}
                         for stack in slice.reinterpret([]Stack_Item,tail) {append(targets,stack.revision)}
+                    case .Epoch_Add:
+                        b,_,ok:=body_head(item.entry.body,Epoch_Add_Body)
+                        if ok {append(live,b.envelopes)}
                     }
                 }
             }
@@ -341,7 +345,7 @@ store_roots :: proc(s:^store.Store,live:^[dynamic]store.Hash,targets:^[dynamic]R
         case !sealed:
         case strings.has_prefix(namespace,OVERLAY_PREFIX):
             for ref in refs {
-                bytes,ge:=overlay_get(s,ref.hash,.Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+                bytes,ge:=overlay_get(s,ref.hash,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
                 if ge!=.None {continue}
                 record,de:=overlay_record_decode(bytes)
                 if de!=.None {continue}

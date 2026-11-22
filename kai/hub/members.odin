@@ -418,6 +418,20 @@ route_stats :: proc(c:^Call) {
         json_end_object(&j)
     }
     json_end_array(&j)
+    json_key(&j,"orgs")
+    json_array(&j)
+    infos:=make([dynamic]kai.Runner_Org_Info,context.temp_allocator)
+    kai.runner_orgs_info(r,&infos)
+    for x in infos {
+        o:=org_find(h,x.org)
+        if o==nil || session_role(c,o)==.None {continue}
+        json_object(&j)
+        json_member_hash(&j,"org",x.org)
+        json_member_int(&j,"behind",i64(x.behind))
+        json_member_int(&j,"unfound",i64(x.unfound))
+        json_end_object(&j)
+    }
+    json_end_array(&j)
     json_key(&j,"relay")
     json_object(&j)
     forwarded,dropped:u64

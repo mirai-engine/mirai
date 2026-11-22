@@ -154,6 +154,7 @@ object_kind :: proc(s:^store.Store,address:store.Hash) -> Object_Kind {
     meta:=store.object_meta(&o)
     if len(meta)<size_of(Meta) {return .None}
     head:=(^Meta)(raw_data(meta))^
-    if head.magic!=KAI_MAGIC || head.version!=VERSION {return .None}
+    versions:=VERSIONS
+    if head.magic!=KAI_MAGIC || head.kind>max(Object_Kind) || head.version!=versions[head.kind] {return .None}
     return head.kind
 }

@@ -21,6 +21,7 @@ import "mirai:store"
 
 SETTLED_NANOSECONDS :: 2_000_000_000
 STATE_FOLDER :: ".mirai/kai"
+STATE_VERSION :: 1 // of the state file of a workspace, which is no object of the store
 
 Stat_Row :: struct #packed {
     size:u64,
@@ -38,7 +39,6 @@ STAT_RACY :: u16(2)
 
 Stat_Head :: struct #packed {
     magic:u32,
-    version:u16,
     reserved:u16,
     rows:u32,
     pool:u32,
@@ -57,7 +57,7 @@ stat_path :: proc(index:^Stat_Index,row:Stat_Row) -> string {
 stat_encode :: proc(index:^Stat_Index,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
     if len(index.rows)>FILES_MAX {return nil,.Too_Large}
     w:=writer_make(allocator)
-    write_value(&w,Stat_Head{magic=KAI_MAGIC,version=VERSION,rows=u32(len(index.rows)),pool=u32(len(index.pool))})
+    write_value(&w,Stat_Head{magic=KAI_MAGIC,rows=u32(len(index.rows)),pool=u32(len(index.pool))})
     for row in index.rows {write_value(&w,row)}
     write_bytes(&w,index.pool[:])
     if w.failed {return nil,.Out_Of_Memory}
@@ -70,7 +70,7 @@ stat_decode :: proc(bytes:[]u8,index:^Stat_Index) -> Error {
     clear(&index.pool)
     r:=Reader{data=bytes}
     head:=read_value(&r,Stat_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.reserved!=0 || head.rows>FILES_MAX {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 || head.rows>FILES_MAX {return .Corrupt}
     if u64(len(bytes))!=u64(size_of(Stat_Head))+u64(head.rows)*size_of(Stat_Row)+u64(head.pool) {return .Corrupt}
     pool:=bytes[len(bytes)-int(head.pool):]
     if _,e:=append(&index.pool,..pool);e!=nil {return .Out_Of_Memory}
@@ -148,7 +148,7 @@ state_encode :: proc(st:^Workspace_State,allocator:=context.allocator) -> (bytes
     pool:=0
     for m in st.conflicts {pool+=len(m.path)}
     w:=writer_make(allocator)
-    write_value(&w,State_Head{magic=KAI_MAGIC,version=VERSION,repo=st.repo,id=st.id,op=st.op,tree=st.tree,target=st.target,
+    write_value(&w,State_Head{magic=KAI_MAGIC,version=STATE_VERSION,repo=st.repo,id=st.id,op=st.op,tree=st.tree,target=st.target,
         conflicts=u32(len(st.conflicts)),pool=u32(pool)})
     at:=0
     for m in st.conflicts {
@@ -164,7 +164,7 @@ state_encode :: proc(st:^Workspace_State,allocator:=context.allocator) -> (bytes
 state_decode :: proc(bytes:[]u8,st:^Workspace_State,allocator:=context.allocator) -> Error {
     r:=Reader{data=bytes}
     head:=read_value(&r,State_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.reserved!=0 || head.tree=={} || head.op=={} || head.conflicts>FILES_MAX {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.version!=STATE_VERSION || head.reserved!=0 || head.tree=={} || head.op=={} || head.conflicts>FILES_MAX {return .Corrupt}
     if u64(len(bytes))!=u64(size_of(State_Head))+u64(head.conflicts)*size_of(Conflict_Record)+u64(head.pool) {return .Corrupt}
     st.repo,st.id,st.op,st.tree,st.target=head.repo,head.id,head.op,head.tree,head.target
     pool:=bytes[len(bytes)-int(head.pool):]
@@ -322,7 +322,7 @@ state_head_of :: proc(root:string) -> (head:State_Head,ok:bool) {
     if e!=nil {return}
     r:=Reader{data=bytes}
     head=read_value(&r,State_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.repo=={} || head.id=={} {return {},false}
+    if r.short || head.magic!=KAI_MAGIC || head.version!=STATE_VERSION || head.repo=={} || head.id=={} {return {},false}
     return head,true
 }
 

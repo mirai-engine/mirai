@@ -174,7 +174,7 @@ export async function linkOffer() {
 
 // Signs the Device_Add of an offer the person compared the code of.
 export async function linkDevice(offer) {
-    return write({type: 'device_add', log: state.session.user, device: offer.device, dh: offer.dh, proof: offer.proof, name: offer.name})
+    return write({type: 'device_add', log: state.session.user, device: offer.device, dh: offer.dh, kem: offer.kem, proof: offer.proof, name: offer.name})
 }
 
 // Signs in without a passkey: a device of the user approves the login.

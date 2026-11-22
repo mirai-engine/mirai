@@ -16,21 +16,34 @@ and `kai/refs_ddc.odin`.
   most a writer's rights in any org: it reads, comments, approves and signs checks, and holds no
   admin or owner right, whatever role an admin gives it.
 - A **device** (a machine, a node or a browser's passkey) has an Ed25519 signing key and an X25519
-  key. A machine makes them the first time it opens its store and keeps the seeds in owner-only
-  files at the store's root, beside the objects they sign for; a copy of the store is a copy of the
-  device, so a store is never shared between machines.
+  key, and a machine also an ML-KEM-768 key the [epoch keys](private.md#keyrings-and-epochs) are
+  wrapped to. A machine makes them together the first time it opens its store and keeps the seeds in
+  owner-only files at the store's root, beside the objects they sign for (a node reads them before
+  its sandbox closes); a copy of the store is a copy of the device, so a store is never shared
+  between machines. The user's log records the device's public keys where it adds it (the
+  device-born genesis and `Device_Add`; a passkey has none), and an ML-KEM key that is no
+  encapsulation key makes the entry `Corrupt`.
 - The **recovery key** is an Ed25519 key shown once as Crockford Base32 with a checksum, to be kept
   offline. It is never stored and never crosses an API: no result of a method or a route carries it,
   an editor with no window refuses to make or rotate one before making anything, and `mirai kai
   identity` does it in a terminal. It may sign the entry that links a device when no device is
-  active, and rotating it (`Recovery_Rotate`) needs the one in force.
+  active, and rotating it (`Recovery_Rotate`) needs the one in force. A rotated key signs nothing
+  beside its rotation: what it signs on parents that skip the rotation is void.
+- **Recovering** a user after every device is lost: on a fresh store, its user's log comes from a
+  machine of one of its orgs through a `recover` pairing (nothing is signed: the new machine
+  reaches the org as a peer not admitted, which reads the user logs alone), and `mirai kai
+  identity recover <user>` (or the editor's Team view) takes the recovery key as printed: it signs
+  this device into the log and revokes every device still active; passkeys stay. A mistyped key
+  says what is wrong with it (a character, the count of digits, the checksum) and never echoes it
+  (`a_user_recovers_onto_a_new_device_with_its_recovery_key`).
 - There is no org key. An org is a log folded from its members' signatures, and its **discovery
   secret** `D` is derived from the org's genesis, each valid removal of a member or a node in it
   and each revocation of a member's device, so only members and nodes know it and it changes when
   any of them goes: the one that went cannot follow the LAN beacons any more.
 - A device proves it holds its key when it joins a log: the genesis and each `Device_Add` carry the
-  device's signature over the recovery key or the log it joins, so a key cannot be added without its
-  holder. A name is given where a device is made (the host's name when none is).
+  device's signature over the recovery key or the log it joins, its X25519 key and the BLAKE3 of
+  its ML-KEM key, so no key of a device can be added or swapped without its holder. A name is given
+  where a device is made (the host's name when none is).
 
 ## The signed logs
 
@@ -90,6 +103,8 @@ and `kai/refs_ddc.odin`.
   proposal takes none either: it counts for nothing until it is reopened, a landed move reads it
   only at the heads the move names, and the agents that load it once it is open again witness what
   it lacks, with parents that leave out what the removed keys signed.
+  The org's own witness of a device's revocation also lets the org's heads carry it to a peer
+  that lacks it.
 - A witness is valid when it names a valid removal, its author is not affected by it and holds a
   right in the log (a member in the org's and a proposal's log, a writer in a project's and a
   keyring's), and no valid witness of that removal is in its causal past. Witnesses unite: a
@@ -124,13 +139,19 @@ and `kai/refs_ddc.odin`.
 
 ## Pairing
 
-- Pairing links a second device to a user (`Device_Add`), adds a member (`Member_Add`) or adds a
-  node (`Node_Add`). The responder offers a ticket (base64url with a checksum): which pairing,
-  against which responder key, until when, and where the responder listens. The logs, envelopes and
-  keyrings the new end needs come through the mesh once it connects.
+- Pairing links a second device to a user (`Device_Add`), adds a member (`Member_Add`), adds a node
+  (`Node_Add`) or lets a machine with no user reach an org to recover its user (`recover`). The
+  responder offers a ticket (base64url with a checksum): which pairing, against which responder key,
+  until when, and where the responder listens. The logs, envelopes and keyrings the new end needs
+  come through the mesh once it connects.
 - The handshake is `Noise_XX_25519_ChaChaPoly_SHA256` with a commitment: the initiator commits to
   its static key and nonce in its first message and reveals them only after the responder showed its
-  own; the responder checks the commitment before any code exists. The eight digits both screens
+  own; the responder checks the commitment before any code exists. A device's ML-KEM key does not
+  fit the third message: its info carries the key's BLAKE3, and the key follows in two frames
+  sealed under the keys the handshake split; the responder shows the request only once they hash
+  to what the info said. The code covers what it covered before, and a middle that swaps the key
+  must swap the hash too, which only an end of the session writes, so the two screens' codes
+  differ (`pairing_links_a_device_and_adds_a_member`). The eight digits both screens
   show hash only values each side fixed before it saw the other's nonce: no label, no info and no
   transcript hash enter them, so a man in the middle has nothing left to vary
   (`pairing_rejects_mitm_label_grinding`).
@@ -164,9 +185,11 @@ and `kai/refs_ddc.odin`.
 ## Device refs
 
 - A device writes only its own ref, `kai-refs-<project>/<device>`, naming a record it signed with a
-  sequence number: bookmark names and their targets. A peer takes a newer record only when it is
-  signed, its device may write the project now and its sequence is higher than the one held, so a
-  peer or a seed cannot roll a device's bookmarks back (`device_refs_reject_rollback`).
+  sequence number: bookmark names and their targets, and the heads of the org's log its store had,
+  by which a peer fed a stale org log learns it is [behind](mesh.md#behind). A peer takes a newer
+  record only when it is signed, its device may write the project now and its sequence is higher
+  than the one held, so a peer or a seed cannot roll a device's bookmarks back
+  (`device_refs_reject_rollback`).
 - Ref names stay in the store's character set; what people read, `<handle>/<device>:<bookmark>`,
   comes from the logs.
 - The bookmarks of a workspace publish as its device's refs after each operation that changed them,

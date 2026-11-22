@@ -15,7 +15,6 @@ import "mirai:store"
 
 Change_Head :: struct #packed {
     magic:u32,
-    version:u16,
     reserved:u16,
     id:Change_Id,
     tree:store.Hash, // the root folder
@@ -52,7 +51,7 @@ change_encode :: proc(c:^Change,identity:^Identity,allocator:=context.allocator)
     if !attachments_valid(c.attachments) {return nil,.Invalid_Argument}
     w:=writer_make(allocator)
     write_value(&w,Change_Head{
-        magic=KAI_MAGIC,version=CHANGE_VERSION,id=c.id,tree=c.tree,author=c.author,created=c.created,written=c.written,
+        magic=KAI_MAGIC,id=c.id,tree=c.tree,author=c.author,created=c.created,written=c.written,
         parents=u8(len(c.parents)),coauthors=u8(len(c.coauthors)),attachments=u8(len(c.attachments)),description=u32(len(c.description)),
     })
     for p in c.parents {
@@ -76,7 +75,7 @@ change_encode :: proc(c:^Change,identity:^Identity,allocator:=context.allocator)
 change_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (c:Change,error:Error) {
     r:=Reader{data=bytes}
     head:=read_value(&r,Change_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=CHANGE_VERSION || head.reserved!=0 || head.reserved2!=0 {return {},.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 || head.reserved2!=0 {return {},.Corrupt}
     if head.tree=={} || head.coauthors>COAUTHORS_MAX || head.attachments>ATTACHMENTS_MAX || head.description>DESCRIPTION_MAX {return {},.Corrupt}
     size:=size_of(Change_Head)+int(head.parents)*size_of(Revision)+int(head.coauthors)*size_of(Key)+int(head.attachments)*size_of(Attachment)+int(head.description)+size_of(Signature)
     if len(bytes)!=size {return {},.Corrupt}

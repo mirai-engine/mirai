@@ -154,7 +154,7 @@ fixture_store :: proc(t:^testing.T,f:^Fixture,folder:string) -> bool {
     u:kai.Log
     kai.log_init(&u,a.user,context.temp_allocator)
     testing.expect_value(t,kai.log_open(&a.store,&u,a.user,.User),kai.Error.None)
-    body:=kai.body_make(kai.Device_Add_Body{device=s.identity.key,dh=kai.Dh_Key(s.dh.public),proof=kai.device_proof(&s.identity,transmute([32]u8)a.user)},transmute([]u8)string("laptop"))
+    body:=kai.body_make(kai.Device_Add_Body{device=s.identity.key,dh=kai.Dh_Key(s.dh.public),kem=kai.machine_kem_public(s),proof=kai.device_proof(&s.identity,transmute([32]u8)a.user,kai.Dh_Key(s.dh.public),kai.machine_kem_hash(s))},transmute([]u8)string("laptop"))
     _,e=kai.log_append(&u,.Device_Add,body,&a.identity,60)
     testing.expect_value(t,e,kai.Error.None)
     _,e=kai.log_save(&a.store,&u)

@@ -24,7 +24,9 @@ Api_Kai_Identity_Params :: struct {
     name:string `mirai:"optional,label=Makes the user of this device with this handle, when it has none; its recovery key shows to the person in the editor's window, never in a result"`,
     device:string `mirai:"optional,label=With name: this device's name; none: the machine's host name"`,
     revoke:string `mirai:"optional,label=A device of the user to revoke, by its name or a prefix of its key"`,
-    recovery:string `mirai:"optional,label=The recovery key the user has now, as it was shown: rotates it, and the new one shows to the person in the editor's window"`,
+    recovery:string `mirai:"optional,label=The recovery key the user has now, as it was shown: rotates it, and the new one shows to the person in the editor's window; with recover, the key that recovers"`,
+    recover:string `mirai:"optional,label=With recovery: the id of a user whose devices were lost, recovered onto this device, which has none; its log must be here (a recovery pairing brings it), and its other devices are revoked"`,
+    first_recovery:bool `mirai:"optional,label=Sets the first recovery key of a user born of a passkey; it shows to the person in the editor's window"`,
 }
 Api_Kai_Identity :: struct {
     user:string `mirai:"label=The id of the user; empty: this device has none yet"`,
@@ -73,7 +75,7 @@ Api_Kai_Org :: struct {
 Api_Kai_Orgs :: struct {orgs:[]Api_Kai_Org}
 
 Api_Kai_Pair_Params :: struct {
-    offer:string `mirai:"optional,label=member, device or node: a ticket another machine joins with"`,
+    offer:string `mirai:"optional,label=member, device, node or recover: a ticket another machine joins with; recover lets a machine with no user reach the org to fetch the user it recovers"`,
     org:string `mirai:"optional,label=With offer member or node: the org; none: the only one"`,
     role:string `mirai:"optional,label=With offer member: reader, writer or admin; writer when none"`,
     modes:string `mirai:"optional,label=With offer node: relay, seed and ddc apart by commas; relay,seed when none"`,
@@ -85,7 +87,7 @@ Api_Kai_Pair_Params :: struct {
 Api_Kai_Pair :: struct {
     ticket:string `mirai:"optional,label=The ticket offered now: valid ten minutes"`,
     asking:bool `mirai:"label=A pairing request waits for an answer here"`,
-    mode:string `mirai:"optional,label=Of the request: member, device or node"`,
+    mode:string `mirai:"optional,label=Of the request: member, device, node or recover"`,
     who:string `mirai:"optional,label=Of the request: <handle>/<device>"`,
     code:string `mirai:"optional,label=Of the request: compare it with the one the other machine shows"`,
     joining:string `mirai:"label=How the pairing this machine joins goes: none, asking, waiting, approved, denied or failed"`,
@@ -94,9 +96,11 @@ Api_Kai_Pair :: struct {
 }
 
 Api_Kai_Peer :: struct {who,org,rung:string}
+Api_Kai_Behind :: struct {org:string,behind,unfound:int}
 Api_Kai_Peers :: struct {
     mesh:string `mirai:"label=Who runs the machine's mesh"`,
     peers:[]Api_Kai_Peer `mirai:"label=Connected now, and by which rung of the ladder"`,
+    behind:[]Api_Kai_Behind `mirai:"label=Orgs whose logs peers named entries of that are not here yet (behind: writes wait until a peer gives them), or that never came (unfound: let go)"`,
 }
 
 Api_Kai_Proposals_Params :: struct {
@@ -256,14 +260,18 @@ api_kai_devices :: proc(devices:[]ka.Device_View,call:^api.Call) -> []Api_Kai_De
 @(private)
 api_kai_identity :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Kai_Identity_Params)
-    action,ok:=api_kai_action(call,{"name","revoke","recovery"},{p.name!="",p.revoke!="",p.recovery!=""})
+    action,ok:=api_kai_action(call,{"name","revoke","recovery","recover","first_recovery"},{p.name!="",p.revoke!="",p.recovery!="" && p.recover=="",p.recover!="",p.first_recovery})
     if !ok {return}
+    if action=="recover" && p.recovery=="" {
+        api.call_fail(call,api.INVALID_PARAMS,"recover takes recovery: the user's recovery key, as it was shown")
+        return
+    }
     if p.device!="" && action!="name" {
         api.call_fail(call,api.INVALID_PARAMS,"device goes with name: it names this device when its user is made")
         return
     }
     // A recovery key is a secret for a person: it shows in the editor's window, never in a result.
-    if (action=="name" || action=="recovery") && (s.headless || s.gui==nil) {
+    if (action=="name" || action=="recovery" || action=="first_recovery") && (s.headless || s.gui==nil) {
         api.call_fail(call,api.SERVER_ERROR,"a recovery key is shown to a person, and this editor has no window: make the user or rotate its key in an editor with a window, or with mirai kai identity in a terminal")
         return
     }
@@ -292,6 +300,23 @@ api_kai_identity :: proc(s:^Session,call:^api.Call) {
         if e!=.None {api_kai_why(call,m,e);return}
         t.recovery_length=copy(t.recovery[:],recovery)
         kai_dialog_open(s,.Recovery)
+    case "first_recovery":
+        if vcs.machine_user_recovered(m) {
+            api.call_fail(call,api.INVALID_PARAMS,"the user has a recovery key: rotate it with recovery, the key it has now")
+            return
+        }
+        buffer:[vcs.RECOVERY_TEXT]u8
+        defer for &b in buffer {b=0}
+        recovery,e:=vcs.machine_recovery_rotate(m,"",&buffer)
+        if e!=.None {api_kai_why(call,m,e);return}
+        t.recovery_length=copy(t.recovery[:],recovery)
+        kai_dialog_open(s,.Recovery)
+        kai_team_wrote(s)
+    case "recover":
+        user,e:=vcs.machine_user_find(m,p.recover)
+        if e==.None {e=vcs.machine_recover(m,user,p.recovery)}
+        if e!=.None {api_kai_why(call,m,e);return}
+        kai_team_wrote(s)
     }
     v:=&t.view.identity
     if m.user!={} {
@@ -403,8 +428,9 @@ api_kai_pair :: proc(s:^Session,call:^api.Call) {
         case "member": mode=.Member
         case "device": mode=.Device
         case "node": mode=.Node
+        case "recover": mode=.Recover
         case:
-            api.call_failf(call,api.INVALID_PARAMS,"offer is member, device or node, not %q: member adds a user to the org, device links a second device of this user, node adds a relay or seed",p.offer)
+            api.call_failf(call,api.INVALID_PARAMS,"offer is member, device, node or recover, not %q: member adds a user to the org, device links a second device of this user, node adds a relay or seed, recover lets a machine with no user fetch the user it recovers",p.offer)
             return
         }
         if p.role!="" {role=ka.role_of(p.role)}
@@ -470,7 +496,7 @@ api_kai_pair :: proc(s:^Session,call:^api.Call) {
         if request,asking,e:=vcs.control_pair_request(c);e==.None {
             kai_pair_asked(s,request,asking)
             if asking {
-                modes:=[vcs.Pair_Mode]string{.Device="device",.Member="member",.Node="node"}
+                modes:=[vcs.Pair_Mode]string{.Device="device",.Member="member",.Node="node",.Recover="recover"}
                 r.asking,r.mode,r.code=true,modes[request.mode],strings.clone(request.code,call.allocator)
                 r.who=vcs.pair_request_who(m,request,call.allocator)
             }
@@ -499,6 +525,8 @@ api_kai_peers :: proc(s:^Session,call:^api.Call) {
     r.mesh=kai_runner_text(t)
     r.peers=make([]Api_Kai_Peer,len(t.view.peers),call.allocator)
     for p,i in t.view.peers {r.peers[i]={strings.clone(p.who,call.allocator),strings.clone(p.org,call.allocator),strings.clone(p.rung,call.allocator)}}
+    r.behind=make([]Api_Kai_Behind,len(t.view.behind),call.allocator)
+    for b,i in t.view.behind {r.behind[i]={strings.clone(b.org,call.allocator),b.behind,b.unfound}}
 }
 
 // The workspace and the machine of a method of the project.

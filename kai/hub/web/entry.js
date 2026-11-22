@@ -5,11 +5,12 @@
 import {blake3} from './blake3.js'
 
 export const MAGIC = 0x3149414b // the bytes K A I 1
-export const VERSION = 2
+export const VERSION = 3
 export const HEAD = 152
 export const PARENTS_MAX = 8
 export const BODY_MAX = 64 << 10
 export const NAME_MAX = 64
+export const KEM_PUBLIC = 1184
 export const SIG_ED25519 = 0
 export const SIG_WEBAUTHN = 1
 export const TIME_SKEW_NS = 600n * 1000000000n
@@ -189,7 +190,7 @@ export function actionBody(a) {
     case 'device_add': {
         const name = utf8(a.name || '')
         if (name.length < 1 || name.length > NAME_MAX) throw new Error(`a device's name is 1 to ${NAME_MAX} bytes`)
-        return concat(need(unhex(a.device, 32), 'device is 64 hex'), need(unhex(a.dh, 32), 'dh is 64 hex'), need(unb64Sized(a.proof, 64), 'proof is base64url of 64 bytes'), name)
+        return concat(need(unhex(a.device, 32), 'device is 64 hex'), need(unhex(a.dh, 32), 'dh is 64 hex'), need(unb64Sized(a.kem, KEM_PUBLIC), `kem is base64url of ${KEM_PUBLIC} bytes`), need(unb64Sized(a.proof, 64), 'proof is base64url of 64 bytes'), name)
     }
     }
     throw new Error(`a browser does not write entries of type ${a.type}`)
@@ -228,7 +229,7 @@ export function draftCheck(bytes, action, author, now) {
 export function layoutCheck(d) {
     const differs = 'the node lays entries out otherwise than this page: reload it'
     if (d?.entry?.size !== HEAD || d.constants?.magic !== MAGIC || d.constants?.version !== VERSION) return differs
-    if (d.constants.ENTRY_PARENTS_MAX !== PARENTS_MAX || d.constants.ENTRY_BODY_MAX !== BODY_MAX) return differs
+    if (d.constants.ENTRY_PARENTS_MAX !== PARENTS_MAX || d.constants.ENTRY_BODY_MAX !== BODY_MAX || d.bodies?.device_add?.size !== 64 + KEM_PUBLIC + 64) return differs
     const tables = [[TYPES, d.types], [ROLES, d.enums?.role], [VERDICTS, d.enums?.verdict], [ANCHORS, d.enums?.anchor]]
     for (const [ours, theirs] of tables) {
         for (const name in ours) if (theirs?.[name] !== ours[name]) return differs

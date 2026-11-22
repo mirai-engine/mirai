@@ -36,10 +36,25 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
 ## Keyrings and epochs
 
 - Each scope has a `Keyring_Log`. An epoch is a random 32-byte key wrapped for every active device
-  of the members who may read the scope: an ephemeral X25519 key, an HKDF of the shared secret
-  salted with both public keys, and AEGIS-256. When the scope keeps history, the new epoch also
-  wraps the previous key, so a reader who has the latest can open every earlier epoch; a scope that
-  keeps none wraps nothing earlier.
+  of the members who may read the scope, under X25519 and ML-KEM-768 at once: a fresh X25519 share
+  and an ML-KEM encapsulation to the device's key, both shared secrets through HKDF-SHA256 salted
+  with the BLAKE3 of the KEM ciphertext, the share and the device's two public keys, then
+  AEGIS-256 (`an_epoch_key_opens_only_with_both_device_secrets`). Both must be broken to open it,
+  because sealed files stay for years with parties that hold no key (a seed's operator, members
+  who do not read the scope, former members), and the per-device wrap is what a quantum computer
+  would break. The rest of the sealing is symmetric and stays as it is.
+- The envelopes of an epoch are one `Envelopes` object of the store, sorted by device, that the
+  `Epoch_Add` names: a list of devices does not fit an entry's body. Whatever keeps a keyring
+  alive (`store_live`, a member's set) and syncs it to a peer walks it with the log. When the
+  scope keeps history, the entry holds the previous key under the new one (`previous`), so a
+  reader who has the latest opens every earlier epoch; a scope that keeps none wraps nothing.
+- Not hybrid, on purpose, one reason each:
+  - the mesh's handshakes: a datagram cannot carry ML-KEM, and nothing stored depends on them;
+  - pairing's key agreement: it lives seconds, and the ML-KEM key it carries is bound by the
+    device's proof, which the log keeps;
+  - TLS: a recorded session holds what the web view serves, never a scope key;
+  - the logs' signatures: a signature must hold only until the peers hold the entry, and every
+    peer keeps it then, so a forgery made later changes no log anyone holds.
 - A write is refused while the newest epoch still wraps for a device that may no longer read the
   scope: after a member or a device leaves, any remaining reader rotates (`mirai kai scope rotate`,
   the editor's Rotate the key) and writing goes on. Rotation is lazy on purpose: nothing needs to be

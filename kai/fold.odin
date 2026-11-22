@@ -242,11 +242,22 @@ fold_voids :: proc(fold:Fold,r:int,valid,voided:[]bool) -> int {
     switch f in fold {
     case ^User_Fold:
         entry:=&f.log.items[r].entry
-        if entry.type!=.Device_Revoke {break}
-        b,_,_:=body_head(entry.body,Device_Revoke_Body)
-        for x:=subjects_first(&f.authors,store.Hash(b.device));x>=0;x=subjects_next(&f.authors,x) {
-            if x==r || !valid[x] || f.log.items[x].entry.type==.Device_Revoke || log_before(f.log,x,r) {continue}
-            void(f.log,x,valid,voided,&again)
+        #partial switch entry.type {
+        case .Device_Revoke:
+            b,_,_:=body_head(entry.body,Device_Revoke_Body)
+            for x:=subjects_first(&f.authors,store.Hash(b.device));x>=0;x=subjects_next(&f.authors,x) {
+                if x==r || !valid[x] || f.log.items[x].entry.type==.Device_Revoke || log_before(f.log,x,r) {continue}
+                void(f.log,x,valid,voided,&again)
+            }
+        case .Recovery_Rotate:
+            // A rotated recovery key signs nothing beside its rotation: what
+            // it signs on parents that skip it, a stolen key's work, is void.
+            old:=user_recovery_before(f,r)
+            if old=={} {break}
+            for x:=subjects_first(&f.authors,store.Hash(old));x>=0;x=subjects_next(&f.authors,x) {
+                if x==r || !valid[x] || f.log.items[x].entry.type==.Recovery_Rotate || !log_concurrent(f.log,r,x) {continue}
+                void(f.log,x,valid,voided,&again)
+            }
         }
     case ^Org_Fold:
         if !org_removal(f.log.items[r].entry.type) {break}
@@ -633,7 +644,7 @@ user_authorized :: proc(f:^User_Fold,e:int) -> bool {
     switch entry.type {
     case .User_Genesis:
         b,_,_:=body_head(entry.body,User_Genesis_Body)
-        return entry.sig_kind==.Ed25519 && entry.author==b.recovery && device_proof_valid(b.device,transmute([32]u8)b.recovery,b.proof)
+        return entry.sig_kind==.Ed25519 && entry.author==b.recovery && device_proof_valid(b.device,transmute([32]u8)b.recovery,b.dh,b.kem[:],b.proof)
     case .Passkey_Genesis:
         key,ok:=web_key_of(entry.body)
         return entry.sig_kind==.WebAuthn && ok && entry.author==key
@@ -656,7 +667,7 @@ user_authorized :: proc(f:^User_Fold,e:int) -> bool {
     case .Device_Add:
         b,_,_:=body_head(entry.body,Device_Add_Body)
         known,_,_:=user_key_before(f,b.device,e)
-        return (by_recovery || by_device || by_passkey) && !known && device_proof_valid(b.device,transmute([32]u8)f.log.id,b.proof)
+        return (by_recovery || by_device || by_passkey) && !known && device_proof_valid(b.device,transmute([32]u8)f.log.id,b.dh,b.kem[:],b.proof)
     case .Device_Revoke:
         b,_,_:=body_head(entry.body,Device_Revoke_Body)
         known,_,_:=user_key_before(f,b.device,e)
@@ -701,6 +712,17 @@ user_apply :: proc(f:^User_Fold) {
             if key,ok:=web_key_of(entry.body);ok && user_web_key_index(f,key)<0 {append(&f.web_keys,User_Web_Key{key=key,added=u32(e)})}
         }
     }
+}
+
+// The ML-KEM encapsulation key of device d of the user, as the entry that
+// added it holds it.
+user_device_kem :: proc(f:^User_Fold,d:Device) -> []u8 {
+    entry:=&f.log.items[d.added].entry
+    #partial switch entry.type {
+    case .User_Genesis: return entry.body[offset_of(User_Genesis_Body,kem):][:KEM_PUBLIC]
+    case .Device_Add: return entry.body[offset_of(Device_Add_Body,kem):][:KEM_PUBLIC]
+    }
+    return nil
 }
 
 // Where key is a device of the state, -1 when it is not one. A revoked
@@ -1293,7 +1315,7 @@ grant_encode :: proc(g:^Grant,identity:^Identity,allocator:=context.allocator) -
     if len(g.path)>GRANT_PATH_MAX {return nil,.Too_Large}
     if g.issuer!=identity.key || g.org=={} || g.org_head=={} || g.not_after<=g.not_before || !utf8.valid_string(g.path) {return nil,.Invalid_Argument}
     head:=g.head
-    head.magic,head.version,head.reserved,head.reserved2,head.path_len=KAI_MAGIC,VERSION,0,{},u16(len(g.path))
+    head.magic,head.version,head.reserved,head.reserved2,head.path_len=KAI_MAGIC,VERSIONS[.Log_Page],0,{},u16(len(g.path))
     w:=writer_make(allocator)
     write_value(&w,head)
     write_string(&w,g.path)
@@ -1307,7 +1329,7 @@ grant_encode :: proc(g:^Grant,identity:^Identity,allocator:=context.allocator) -
 grant_decode :: proc(bytes:[]u8) -> (g:Grant,error:Error) {
     r:=Reader{data=bytes}
     g.head=read_value(&r,Grant_Head)
-    if r.short || g.magic!=KAI_MAGIC || g.version!=VERSION || g.reserved!=0 || !zero(g.reserved2[:]) || g.path_len>GRANT_PATH_MAX {return {},.Corrupt}
+    if r.short || g.magic!=KAI_MAGIC || g.version!=VERSIONS[.Log_Page] || g.reserved!=0 || !zero(g.reserved2[:]) || g.path_len>GRANT_PATH_MAX {return {},.Corrupt}
     if transmute(u8)g.rights&~transmute(u8)RIGHTS_ALL!=0 || g.org=={} || g.org_head=={} || g.not_after<=g.not_before {return {},.Corrupt}
     g.path=string(read_bytes(&r,int(g.path_len)))
     g.signature=read_value(&r,Signature)
@@ -1673,18 +1695,19 @@ Keyring_Envelope :: struct {epoch:u32,envelope:Envelope}
 Keyring_Fold :: struct {
     log:^Log,
     org:^Org_Fold,
+    store:^store.Store, // where the envelopes of its epochs are
     valid:[]bool,
     project:Log_Id,
     scope:Scope_Id,
     epoch:u32, // the newest; 0 before the first
-    envelopes:[dynamic]Keyring_Envelope,
+    envelopes:[dynamic]Keyring_Envelope, // those Envelope_Adds gave
     epochs:[dynamic]u32, // the walk: valid Epoch_Adds
     added:Subject_Lists, // valid Envelope_Adds by epoch and device
     allocator:runtime.Allocator,
 }
 
-keyring_fold :: proc(f:^Keyring_Fold,l:^Log,org:^Org_Fold,allocator:=context.allocator) -> Error {
-    f^={log=l,org=org,allocator=allocator}
+keyring_fold :: proc(f:^Keyring_Fold,l:^Log,org:^Org_Fold,s:^store.Store,allocator:=context.allocator) -> Error {
+    f^={log=l,org=org,store=s,allocator=allocator}
     f.envelopes=make([dynamic]Keyring_Envelope,allocator)
     if l.kind!=.Keyring || len(l.items)==0 {return .Invalid_Argument}
     valid,e:=make([]bool,len(l.items),allocator)
@@ -1701,10 +1724,11 @@ keyring_fold_destroy :: proc(f:^Keyring_Fold) {
     f^={}
 }
 
-// The key of epoch wrapped for the device dh.
-keyring_envelope :: proc(f:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> (envelope:Envelope,found:bool) {
-    for k in f.envelopes {
-        if k.epoch==epoch && k.envelope.dh==dh {return k.envelope,true}
+// The Epoch_Add of epoch that holds.
+keyring_epoch :: proc(f:^Keyring_Fold,epoch:u32) -> (body:Epoch_Add_Body,ok:bool) {
+    for x in f.epochs {
+        if !f.valid[x] {continue}
+        if b,_,_:=body_head(f.log.items[x].entry.body,Epoch_Add_Body);b.epoch==epoch {return b,true}
     }
     return
 }
@@ -1720,7 +1744,8 @@ envelope_subject :: proc(epoch:u32,dh:Dh_Key) -> store.Hash {
 
 // The rules of a Keyring_Log, against the epochs of the entry's causal past:
 // a writer, as it was when it signed, starts it, adds the next epoch and adds
-// an envelope to an epoch there that has none for that device. Concurrent
+// an envelope to an epoch there that no Envelope_Add gave for that device
+// before (a device that reads it tries each one it has). Concurrent
 // epochs of one number: the first in order wins, the other is not authorized.
 @(private)
 keyring_authorized :: proc(f:^Keyring_Fold,e:int) -> bool {
@@ -1748,13 +1773,6 @@ keyring_authorized :: proc(f:^Keyring_Fold,e:int) -> bool {
         for x:=subjects_first(&f.added,envelope_subject(b.epoch,b.envelope.dh));x>=0;x=subjects_next(&f.added,x) {
             if log_before(f.log,x,e) {return false}
         }
-        for x in f.epochs {
-            a,tail,_:=body_head(f.log.items[x].entry.body,Epoch_Add_Body)
-            if a.epoch!=b.epoch || !log_before(f.log,int(x),e) {continue}
-            for v in slice.reinterpret([]Envelope,tail) {
-                if v.dh==b.envelope.dh {return false}
-            }
-        }
         return true
     }
     return false
@@ -1771,9 +1789,8 @@ keyring_apply :: proc(f:^Keyring_Fold) {
             b,_,_:=body_head(entry.body,Keyring_Genesis_Body)
             f.project,f.scope=b.project,b.scope
         case .Epoch_Add:
-            b,tail,_:=body_head(entry.body,Epoch_Add_Body)
+            b,_,_:=body_head(entry.body,Epoch_Add_Body)
             f.epoch=max(f.epoch,b.epoch)
-            for envelope in slice.reinterpret([]Envelope,tail) {append(&f.envelopes,Keyring_Envelope{b.epoch,envelope})}
         case .Envelope_Add:
             b,_,_:=body_head(entry.body,Envelope_Add_Body)
             append(&f.envelopes,Keyring_Envelope{b.epoch,b.envelope})

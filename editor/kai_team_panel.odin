@@ -335,17 +335,17 @@ kai_comment_build :: proc(s:^Session) {
     selected:=s.selection!=nil && len(s.selection.entities)==1
     if file!="" {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
-            kai_row_names(ctx,"On",file,ui.tone(ctx,"text_muted"))
+            kai_row_names(ctx,"On",file,ui.tone(ctx,"text_faint"))
             text:[32]u8
             switch {
-            case f.key!=0: ui.label(ctx,fmt.bprintf(text[:],"#%x",f.key),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+            case f.key!=0: ui.label(ctx,fmt.bprintf(text[:],"#%x",f.key),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
             case !f.entity: kai_field(ctx,"kai_lines",f.lines[:],&f.lines_length,"Lines 3-7",ui.fixed(80))
             }
         }
         if f.key==0 && selected && (strings.has_suffix(file,".scene") || strings.has_suffix(file,".prefab")) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
                 ui.checkbox(ctx,ui.id(ctx,"kai_on_entity"),&f.entity)
-                ui.label(ctx,"Selected entity",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+                ui.label(ctx,"Selected entity",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
             }
         }
     }
@@ -378,7 +378,7 @@ kai_team_build :: proc(s:^Session) {
     me:=&v.identity
     kai_head(ctx,"IDENTITY",len(me.devices))
     if me.user=={} {
-        kai_line(ctx,"This device has no user: make one, or join another device of yours with its ticket below.")
+        kai_line(ctx,"This device has no user: make one, join another device of yours with its ticket below, or recover yours with its recovery key.")
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6}) {
             kai_field(ctx,"kai_handle",f.name[:],&f.name_length,"Handle")
             name:=kai_typed(f.name[:],f.name_length)
@@ -386,6 +386,7 @@ kai_team_build :: proc(s:^Session) {
                 kai_ask(s,"kai.identity",`{{"name":%s}}`,kai_quote(name))
                 f.name_length=0
             }
+            if ui.button(ctx,ui.id(ctx,"kai_user_recover"),{label="Recover",variant="field"}).clicked {kai_dialog_open(s,.Recover)}
         }
     } else {
         kai_row_names(ctx,me.handle,fmt.bprintf(text[:],"this device: %s",me.device),ui.tone(ctx,"text"))
@@ -397,15 +398,29 @@ kai_team_build :: proc(s:^Session) {
             }
             ui.id_pop(ctx)
         }
-        switch kai_buttons(s,"kai_identity_act",{"Rotate recovery key","Copy subject"}) {
-        case 0: kai_dialog_open(s,.Rotate)
+        switch kai_buttons(s,"kai_identity_act",{me.recovered?"Rotate recovery key":"Set a recovery key","Copy subject"}) {
+        case 0:
+            if me.recovered {
+                kai_dialog_open(s,.Rotate)
+            } else {
+                kai_ask(s,"kai.identity",`{"first_recovery":true}`)
+            }
         case 1: if s.app!=nil && s.app.platform!=nil {platform.clipboard_set(s.app.platform,me.subject)}
         }
     }
     if me.user!={} {kai_orgs_build(s)}
     kai_pairing_build(s)
-    if len(v.peers)>0 {
+    if len(v.peers)>0 || len(v.behind)>0 {
         kai_head(ctx,"PEERS",len(v.peers))
+        for &b,i in v.behind {
+            ui.id_push(ctx,ui.id(ctx,"behind",i))
+            if b.behind>0 {
+                kai_row_names(ctx,b.org,fmt.bprintf(text[:],"behind: %d entries peers named are not here, writes wait",b.behind),ui.tone(ctx,"danger"))
+            } else {
+                kai_row_names(ctx,b.org,fmt.bprintf(text[:],"let go of %d entries peers named that never came",b.unfound),ui.tone(ctx,"text_faint"))
+            }
+            ui.id_pop(ctx)
+        }
         for &p,i in v.peers {
             ui.id_push(ctx,ui.id(ctx,"peer",i))
             kai_row_names(ctx,p.who,fmt.bprintf(text[:],"%s, %s",p.org,p.rung),ui.tone(ctx,"text"))
@@ -588,7 +603,7 @@ kai_scopes_build :: proc(s:^Session) {
             f.readers=f.readers==.Owner?.Reader:vcs.Role(u8(f.readers)+1)
         }
         ui.checkbox(ctx,ui.id(ctx,"kai_history"),&f.history)
-        ui.label(ctx,"History",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+        ui.label(ctx,"History",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
     }
     typed:=kai_typed(f.patterns[:],f.patterns_length)
     if kai_buttons(s,"kai_scope_add",{"Add scope"},disabled=typed=="")==0 {
@@ -643,13 +658,31 @@ kai_dialog_build :: proc(s:^Session) {
             }
         }
         if closed {kai_dialog_close(s)}
+    case .Recover:
+        closed:=false
+        if ui.modal(ctx,shell_id(g,"kai_recover"),{width=420,close=&closed}) {
+            ui.label(ctx,"Recover a user onto this device",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
+            ui.text_field(ctx,shell_id(g,"kai_recover_user"),f.recover_user[:],&f.recover_user_length,{placeholder="The user's id, or its first eight hex digits",live=true})
+            ui.text_field(ctx,shell_id(g,"kai_recover_key"),f.recovery[:],&f.recovery_length,{placeholder="The recovery key, as it was shown",live=true,password=true})
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_x=.End,align_y=.Center}) {
+                if ui.button(ctx,shell_id(g,"kai_recover_go"),{label="Recover",variant="accent",width=92,height=28,center=true,disabled=f.recovery_length==0 || f.recover_user_length==0}).clicked {
+                    kai_ask(s,"kai.identity",`{{"recover":%s,"recovery":%s}}`,kai_quote(string(f.recover_user[:f.recover_user_length])),kai_quote(string(f.recovery[:f.recovery_length])))
+                    for &b in f.recovery {b=0}
+                    f.recovery_length=0
+                    f.recover_user_length=0
+                    closed=true
+                }
+                if ui.button(ctx,shell_id(g,"kai_recover_cancel"),{label="Cancel",variant="field",width=92,height=28,center=true}).clicked {closed=true}
+            }
+        }
+        if closed {kai_dialog_close(s)}
     case .Pair:
         if ui.modal(ctx,shell_id(g,"kai_pair"),{width=380}) {
             r:=&t.request
-            modes:=[vcs.Pair_Mode]string{.Device="as a second device of this user",.Member="to join the org",.Node="as a node of the org"}
+            modes:=[vcs.Pair_Mode]string{.Device="as a second device of this user",.Member="to join the org",.Node="as a node of the org",.Recover="to reach the org and fetch the user it recovers"}
             ui.label(ctx,"Pairing request",ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
             text:[320]u8
-            ui.text(ctx,fmt.bprintf(text[:],"%s asks %s. Approve only if the other machine shows the same code.",string(r.who[:r.who_length]),modes[r.mode]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted")))
+            ui.text(ctx,fmt.bprintf(text[:],"%s asks %s. Approve only if the other machine shows the same code.",string(r.who[:r.who_length]),modes[r.mode]),ui.prose(ctx,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint")))
             ui.label(ctx,string(r.code[:]),ui.metric(ctx,"font_title"),ui.tone(ctx,"text"),center=true,font=ui.FONT_SEMIBOLD)
             if ui.box(ctx,{width=ui.GROW,height=ui.fixed(28),gap=8,align_y=.Center}) {
                 if ui.button(ctx,shell_id(g,"kai_pair_deny"),{label="Deny",variant="field",width=-1,height=28,center=true}).clicked {kai_ask(s,"kai.pair",`{"answer":"deny"}`)}
@@ -661,14 +694,14 @@ kai_dialog_build :: proc(s:^Session) {
     }
 }
 
-// Escape closes the rotation; the recovery key and a pairing request wait
+// Escape closes the rotation and the recovery; the recovery key and a pairing request wait
 // for their buttons.
 kai_dialog_escape :: proc(s:^Session) {
     if s.kai==nil || s.kai.state==nil {
         s.gui.modal=.None
         return
     }
-    if s.kai.state.team.dialog==.Rotate {kai_dialog_close(s)}
+    if d:=s.kai.state.team.dialog;d==.Rotate || d==.Recover {kai_dialog_close(s)}
 }
 
 // An org or a project by the first hex digits of its id, as kai.org takes it.

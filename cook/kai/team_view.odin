@@ -194,6 +194,7 @@ Identity_View :: struct {
     device:string,       // this device's name
     devices:[]Device_View,
     subject:string,      // what a grant is issued to: its device key and X25519 key in hex
+    recovered:bool,      // the user has a recovery key; one born of a passkey has none until a device sets it
 }
 
 identity_view :: proc(m:^vcs.Machine,v:^Identity_View,allocator:=context.temp_allocator) -> vcs.Error {
@@ -213,6 +214,7 @@ identity_view :: proc(m:^vcs.Machine,v:^Identity_View,allocator:=context.temp_al
     }
     defer vcs.user_fold_destroy(&f)
     v.handle=strings.clone(vcs.user_name(&f),allocator)
+    v.recovered=f.recovery!={}
     devices:=make([]Device_View,len(f.devices),allocator)
     for d,k in f.devices {
         devices[k]={key=d.key,name=strings.clone(vcs.device_name(&f,k),allocator),revoked=d.revoked,this=d.key==m.identity.key}

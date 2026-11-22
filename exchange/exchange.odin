@@ -481,6 +481,20 @@ peer_add :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection,tag:=u64(0)
     return .Full
 }
 
+// Gives a peer another tag and restriction in place, as its owner learns who
+// it is: what it was asked and the answers on their way stay its own, so
+// nothing it sends later reads as unasked. Removing it and adding it again
+// would start the connection over in its middle.
+peer_set :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection,tag:u64,restricted:bool) -> Error {
+    sync.mutex_guard(&x.lock)
+    i:=peer_find(x,h,connection)
+    if i<0 {return .Invalid}
+    p:=&x.peers[i]
+    p.tag,p.restricted=tag,restricted
+    x.dirty,x.ask_due=true,true
+    return .None
+}
+
 // Stops exchanging with a connection: what it gave stays, what it was asked goes to others.
 peer_remove :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) {
     sync.mutex_guard(&x.lock)
