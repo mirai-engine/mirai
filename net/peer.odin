@@ -58,6 +58,8 @@ MAX_CONNECTIONS :: 1024
 @(private) HANDSHAKE_INTERVAL :: 0.2
 @(private) COOKIE_SECONDS :: 10
 @(private) INITIATE_HEADER :: 37  // type, salt, version, protocol hash, and the stamp and cookie of a Key (zero with an invitation)
+@(private) IDENTITY_BYTES :: SEALED_KEY_BYTES+2 // what an Initiate_Identity adds before its claim: s sealed, and the size of the claim
+@(private) IDENTITY_INITIATE_BYTES :: INITIATE_HEADER+KEY_BYTES+IDENTITY_BYTES+TAG_BYTES+MAC_BYTES+CHECKSUM_BYTES // the least an Initiate_Identity takes
 @(private) EARLY_BYTES :: PACKET_BYTES-INITIATE_HEADER-KEY_BYTES-TAG_BYTES-MAC_BYTES-CHECKSUM_BYTES // the most of a body an Initiate carries
 @(private) ACK_DELAY :: 0.03
 @(private) ACK_KEPT :: 320 // bits of runs an acknowledgement keeps to while a lost chunk waits: what chunk_longest leaves
@@ -68,7 +70,7 @@ MAX_CONNECTIONS :: 1024
 @(private) ACCEPT_BYTES :: 10   // object capacity, ticks of history and the slot of the connection: the payload of a Response
 @(private) RESPONSE_BYTES :: 1+8+KEY_BYTES+ACCEPT_BYTES+TAG_BYTES+CHECKSUM_BYTES
 @(private) CANDIDATES :: 2      // addresses a client asks at once: those of an invitation
-@(private) TRANSPORT_VERSION :: 13 // of the layout of the handshake and of the datagrams after it: raised when it changes
+@(private) TRANSPORT_VERSION :: 14 // of the layout of the handshake and of the datagrams after it: raised when it changes
 
 Connection_Stats :: struct {
     rtt,rtt_variance,jitter:f32, // seconds
@@ -94,13 +96,16 @@ Connection_Stats :: struct {
     queue_free:[USER_CHANNELS]u32, // bytes free in the queue of each game channel; a message takes 4 more than its data
 }
 
-@(private) Packet_Type :: enum u8 {Hello,Key,Initiate,Response,Denied,Retry,Data,Disconnect}
-@(private) Peer_State :: enum u8 {Free,Connecting,Connected}
+@(private) Packet_Type :: enum u8 {Hello,Key,Initiate,Response,Denied,Retry,Data,Disconnect,Initiate_Identity}
+// Confirming: a server's identity connection whose client has not answered under its keys yet; its
+// game does not know it.
+@(private) Peer_State :: enum u8 {Free,Connecting,Connected,Confirming}
 // The connection attempt of a client: where it asks, and its handshake. With
 // an invitation the same Initiate goes to every candidate each interval and
 // the first Response that opens is the connection; without one, a Hello goes
 // to every candidate until one answers with its Key, and the Initiate goes to
-// that one. Answers count only from a candidate.
+// that one. With an identity, as with an invitation. Answers count only from
+// a candidate.
 @(private)
 Attempt :: struct {
     candidates:[CANDIDATES]Address,
@@ -108,10 +113,13 @@ Attempt :: struct {
     denied:[CANDIDATES]bool,
     why:Disconnect_Reason, // why a candidate refused it: the attempt ends with it once every candidate did, or when its time is up
     keyed:bool,            // without an invitation: a server answered with its Key
+    identity:bool,         // an Initiate_Identity, from Host_Desc.identity to the identity server
     at:Address,            // that server
     stamp,cookie:u64,      // of its Key
-    server:Key,            // its s
+    server:Key,            // its s, or its identity
     mac:Key,               // of the MAC of its Initiates
+    claim:[CLAIM_BYTES]u8, // what an Initiate_Identity presents
+    claim_size:int,
     noise:Noise,           // the handshake after the Initiate
     ephemeral:Key,         // its e
     early:[EARLY_BYTES]u8, // its datagram 0, which every Initiate carries, also one written again for a Retry
@@ -306,10 +314,11 @@ peer_from :: proc(h:^Host,connection:Connection) -> ^Peer {
 // a sender cannot choose where its datagrams look.
 @(private)
 address_key :: proc(b:^Back,address:Address) -> u64 {
-    message:[19]u8
+    message:[19+KEY_BYTES]u8
     address:=address
     message[0],message[1],message[2]=u8(address.kind),u8(address.port),u8(address.port>>8)
     copy(message[3:],address.ip[:])
+    copy(message[19:],address.peer[:])
     return siphash.sum_2_4(message[:],b.secret[:])
 }
 @(private)
@@ -376,6 +385,11 @@ peer_connect :: proc(h:^Host,request:^Connect_Request) {
     a:=&h.back.attempt
     a^={}
     a.candidates,a.candidate_count=request.candidates,clamp(request.count,1,CANDIDATES)
+    a.server,a.mac=h.back.secure.public,h.back.secure.mac
+    if request.identity {
+        a.identity,a.server,a.mac=true,request.peer,identity_mac_key(&request.peer)
+        a.claim,a.claim_size=request.claim,clamp(request.claim_size,0,CLAIM_BYTES)
+    }
 }
 // The candidate of the attempt at address, -1 if none.
 @(private)
@@ -402,8 +416,62 @@ peer_established :: proc(h:^Host,p:^Peer,history:int) {
     if p.state==.Free {peer_list(&h.back,p)}
     p.state=.Connected
     p.last_receive=h.back.now
-    command_push(h,{kind=.Connected,connection=peer_handle(h,p),tick=u32(history)})
+    s:=&p.secure
+    if s.peer=={} || h.desc.mode==.Client {s.authorization={verdict=.Accept}}
+    command_push(h,{kind=.Connected,connection=peer_handle(h,p),tick=u32(history),authorization=s.authorization},s.peer=={}?nil:s.peer[:])
     if h.desc.mode==.Server {repl_peer_connected(h,p)}
+}
+
+// Server: the client of an identity connection answered under its keys, so it holds its e and its s:
+// authorize decides whether the connection reaches the game, and its datagram 0 with it. Another
+// connection of that identity gives way to it. False when it ended.
+@(private)
+peer_admit :: proc(h:^Host,p:^Peer) -> bool {
+    s:=&p.secure
+    s.authorization=authorize_check(h,p)
+    if s.authorization.verdict==.Refuse {
+        peer_notice(h,p,.Unauthorized)
+        peer_drop(h,p,.Unauthorized,false)
+        h.back.stats.handshakes_refused+=1
+        return false
+    }
+    for &other in h.back.peers {
+        if &other!=p && other.state==.Connected && other.secure.peer==s.peer {peer_drop(h,&other,.Replaced,true)}
+    }
+    peer_established(h,p,h.history)
+    r:serial.Bit_Reader
+    serial.bit_reader_init(&r,s.early[:s.early_size])
+    p.stats.packets_received+=1
+    p.stats.bytes_received+=u64(s.early_size)
+    received:=peer_receive(h,p,&r,0)
+    crypto.zero_explicit(&s.early,size_of(s.early))
+    s.early_size=0
+    if !received && p.state==.Connected {
+        h.back.stats.packets_invalid+=1
+        peer_drop(h,p,.Protocol_Error,true)
+    }
+    return p.state==.Connected
+}
+// Server: authorize again about an identity connection (host_authorize).
+@(private)
+peer_reauthorize :: proc(h:^Host,p:^Peer) {
+    was:=p.secure.authorization
+    now:=authorize_check(h,p)
+    if now.verdict==.Refuse {
+        peer_drop(h,p,.Revoked,true)
+        return
+    }
+    p.secure.authorization=now
+    if now!=was {command_push(h,{kind=.Authorized,connection=peer_handle(h,p),authorization=now})}
+}
+// What authorize says of the identity and claim of a connection: Refuse for what is not a verdict.
+@(private)
+authorize_check :: proc(h:^Host,p:^Peer) -> Authorization {
+    a:=h.desc.authorize
+    s:=&p.secure
+    result:=a.check(a.data,s.peer,s.claim[:s.claim_size])
+    if result.verdict>max(Verdict) || result.class>max(Peer_Class) {return {}}
+    return result
 }
 
 // Frees the slot and reports the end of the connection, or of the attempt.
@@ -412,7 +480,8 @@ peer_drop :: proc(h:^Host,p:^Peer,reason:Disconnect_Reason,notify:bool) {
     if p.state==.Free {return}
     if notify && p.state==.Connected {peer_notice(h,p,reason)}
     if p.state==.Connected {repl_peer_disconnected(h,p)}
-    command_push(h,{kind=.Disconnected,connection=peer_handle(h,p),reason=reason})
+    // The game never heard of a connection that was confirming.
+    if p.state!=.Confirming {command_push(h,{kind=.Disconnected,connection=peer_handle(h,p),reason=reason})}
     peer_unlist(&h.back,p)
     p.state=.Free
     p.generation+=1
@@ -438,6 +507,9 @@ peer_service :: proc(h:^Host,p:^Peer) {
     now:=h.back.now
     switch p.state {
     case .Free:
+    case .Confirming:
+        // A replay, or a client that left.
+        if now-p.started>h.desc.connect_timeout {peer_drop(h,p,.Connect_Timeout,false)}
     case .Connecting:
         if now-p.started>h.desc.connect_timeout {
             denied:=h.back.attempt.why
@@ -599,12 +671,13 @@ data_open :: proc(h:^Host,p:^Peer,bytes:[]u8) -> (body:[]u8,counter:u64,ok:bool)
 
 @(private)
 cookie_make :: proc(b:^Back,address:Address,salt,stamp:u64) -> u64 {
-    message:[35]u8
+    message:[35+KEY_BYTES]u8
     salt,stamp,address:=salt,stamp,address
     message[0],message[1],message[2]=u8(address.kind),u8(address.port),u8(address.port>>8)
     copy(message[3:19],address.ip[:])
     mem.copy(&message[19],&salt,8)
     mem.copy(&message[27],&stamp,8)
+    copy(message[35:],address.peer[:])
     return siphash.sum_2_4(message[:],b.secret[:])
 }
 
@@ -632,7 +705,7 @@ handshake_send :: proc(h:^Host,w:^serial.Bit_Writer,to:Address,pad:=0) {
 @(private)
 handshake_attempt :: proc(h:^Host,p:^Peer) {
     a:=&h.back.attempt
-    if !h.back.secure.invited && !a.keyed {
+    if !h.back.secure.invited && !a.identity && !a.keyed {
         for candidate,i in a.candidates[:a.candidate_count] {
             if a.denied[i] {continue}
             w:serial.Bit_Writer
@@ -668,7 +741,7 @@ initiate_prologue :: proc(h:^Host,header:[]u8) -> (prologue:[4+INITIATE_HEADER]u
 initiate_write :: proc(h:^Host,p:^Peer) -> bool {
     a:=&h.back.attempt
     w:serial.Bit_Writer
-    serial.bit_writer_init(&w,a.early[:])
+    serial.bit_writer_init(&w,a.early[:EARLY_BYTES-(a.identity?IDENTITY_BYTES+a.claim_size:0)])
     first:=p.record_tail
     budget,more:=repl_budget(h,p),false
     body_write(h,p,&w,p.send_seq,&budget,&more,true)
@@ -682,21 +755,25 @@ initiate_write :: proc(h:^Host,p:^Peer) -> bool {
 initiate_seal :: proc(h:^Host,p:^Peer) -> bool {
     a:=&h.back.attempt
     out:=a.initiate[:]
-    out[0]=u8(Packet_Type.Initiate)
+    out[0]=u8(a.identity?Packet_Type.Initiate_Identity:Packet_Type.Initiate)
     endian.unchecked_put_u64le(out[1:],p.salt)
     endian.unchecked_put_u32le(out[9:],h.desc.version)
     endian.unchecked_put_u64le(out[13:],host_protocol_hash(h))
     endian.unchecked_put_u64le(out[21:],a.stamp)
     endian.unchecked_put_u64le(out[29:],a.cookie)
     at:=INITIATE_HEADER+KEY_BYTES
+    if a.identity {
+        at+=SEALED_KEY_BYTES
+        endian.unchecked_put_u16le(out[at:],u16(a.claim_size))
+        at+=2+copy(out[at+2:],a.claim[:a.claim_size])
+    }
     total:=max(at+a.early_size+TAG_BYTES+MAC_BYTES+CHECKSUM_BYTES,HANDSHAKE_BYTES)
     copy(out[at:],a.early[:a.early_size])
     mem.zero_slice(out[at+a.early_size:total])
     prologue:=initiate_prologue(h,out[:INITIATE_HEADER])
-    server:=a.keyed?&a.server:&h.back.secure.public
     mac_at:=total-CHECKSUM_BYTES-MAC_BYTES
-    if !noise_initiate(&a.noise,&a.ephemeral,prologue[:],server,&h.back.secure.psk,out[INITIATE_HEADER:mac_at]) {return false}
-    mac:=mac_of(a.keyed?&a.mac:&h.back.secure.mac,out[:mac_at])
+    if !noise_initiate(&a.noise,&a.ephemeral,prologue[:],&a.server,&h.back.secure.psk,a.identity?&h.desc.identity:nil,out[INITIATE_HEADER:mac_at]) {return false}
+    mac:=mac_of(&a.mac,out[:mac_at])
     copy(out[mac_at:],mac[:])
     checksum_write(out[:total],h.back.key)
     a.initiate_size=total
@@ -742,7 +819,7 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         // The connection of the slot it names; from another address, only if it opens under its key.
         slot:=int(bytes[3])|int(bytes[4])<<8
         p:=slot<len(b.peers)?&b.peers[slot]:nil
-        if p==nil || p.state!=.Connected {b.stats.packets_invalid+=1;return}
+        if p==nil || p.state!=.Connected && p.state!=.Confirming {b.stats.packets_invalid+=1;return}
         roamed:=p.address!=from
         body,counter,authentic:=data_open(h,p,bytes)
         if !authentic || roamed && p.recv_any && counter<=p.recv_counter {
@@ -755,6 +832,7 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         if !p.secure.confirmed {
             p.secure.confirmed=true
             p.secure.initiator,p.secure.response={},{}
+            if p.state==.Confirming && !peer_admit(h,p) {return}
         }
         serial.bit_reader_init(&r,body)
         if type==.Disconnect {
@@ -772,8 +850,8 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     }
     if !checksum_check(bytes,b.key) {b.stats.packets_invalid+=1;return}
     server:=h.desc.mode==.Server
-    if type==.Initiate {
-        if !server || len(bytes)<HANDSHAKE_BYTES {b.stats.packets_invalid+=1;return}
+    if type==.Initiate || type==.Initiate_Identity {
+        if !server || len(bytes)<(type==.Initiate?HANDSHAKE_BYTES:IDENTITY_INITIATE_BYTES) {b.stats.packets_invalid+=1;return}
         initiate_receive(h,bytes,from)
         return
     }
@@ -809,7 +887,7 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         serial.bit_read_bytes(&r,key[:])
         if server || r.error || p==nil {b.stats.packets_invalid+=1;return}
         a:=&b.attempt
-        if b.secure.invited || a.keyed || a.denied[candidate] {return}
+        if b.secure.invited || a.identity || a.keyed || a.denied[candidate] {return}
         // The other candidate may be the server: one of another version is another machine.
         if version!=h.desc.version {candidate_deny(h,p,candidate,.Denied_Version);return}
         if !key_usable(&key) {
@@ -826,7 +904,7 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         if server || r.error || p==nil {b.stats.packets_invalid+=1;return}
         // The same datagram 0, under the server's cookie and a new e, to the address that gave it.
         a:=&b.attempt
-        if !b.secure.invited || a.initiate_size==0 || stamp==0 || stamp==a.stamp {return}
+        if !b.secure.invited && !a.identity || a.initiate_size==0 || stamp==0 || stamp==a.stamp {return}
         a.stamp,a.cookie=stamp,cookie
         if !initiate_seal(h,p) {return}
         transport_send_copy(h,from,a.initiate[:a.initiate_size])
@@ -837,12 +915,13 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
         defer crypto.zero_explicit(&noise,size_of(Noise))
         session:Peer_Secure
         message:=bytes[9:RESPONSE_BYTES-CHECKSUM_BYTES]
-        if !noise_finish(&noise,&a.ephemeral,message,&session) {
+        if !noise_finish(&noise,&a.ephemeral,message,&session,a.identity?&h.desc.identity.private:nil) {
             p.secure.refused=true
             b.stats.packets_invalid+=1
             return
         }
         session.confirmed=true
+        if a.identity {session.peer=a.server}
         p.secure=session
         crypto.zero_explicit(a,size_of(Attempt))
         peer_readdress(b,p,from)
@@ -868,33 +947,40 @@ packet_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     }
 }
 
-// Server: an Initiate. Its MAC says its sender knew s and the secret: what does
-// not have it hears nothing. A copy of one that made a connection still waiting
-// for its client gets its Response again, from that address only. Without a
-// cookie, while the server is busy, when the filter of those is full or holds
-// it, the sender gets a Retry with a cookie instead; with a cookie, one the
-// filter holds gets a fresh one. One that opens enters the filter whatever comes
-// next, makes the connection, answers, and hands the game what its payload carries.
+// Server: an Initiate. Its MAC says its sender knew s and the secret (an
+// Initiate_Identity: the server's identity): what does not have it hears
+// nothing. A copy of one that made a connection still waiting for its client
+// gets its Response again, from that address only. Without a cookie, while the
+// server is busy, when the filter of those is full or holds it, the sender gets
+// a Retry with a cookie instead; with a cookie, one the filter holds gets a
+// fresh one. One that opens enters the filter whatever comes next, makes the
+// connection and answers. An Initiate hands the game what its payload carries at
+// once; an Initiate_Identity, whose copies outlive the filter with the
+// identity, waits Confirming until its client answers under its keys
+// (peer_admit), and only replaces a connection from its address that is
+// confirming too.
 @(private)
 initiate_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     b:=&h.back
+    identity:=Packet_Type(bytes[0])==.Initiate_Identity
     header:=bytes[:INITIATE_HEADER]
     salt:=endian.unchecked_get_u64le(header[1:])
     version:=endian.unchecked_get_u32le(header[9:])
     hash:=endian.unchecked_get_u64le(header[13:])
     stamp:=endian.unchecked_get_u64le(header[21:])
     cookie:=endian.unchecked_get_u64le(header[29:])
+    if identity && h.desc.identity=={} {b.stats.handshakes_dropped+=1;return}
     mac_at:=len(bytes)-CHECKSUM_BYTES-MAC_BYTES
-    mac:=mac_of(&b.secure.mac,bytes[:mac_at])
+    mac:=mac_of(identity?&b.secure.identity_mac:&b.secure.mac,bytes[:mac_at])
     if crypto.compare_constant_time(mac[:],bytes[mac_at:][:MAC_BYTES])!=1 {b.stats.handshakes_dropped+=1;return}
     if version!=h.desc.version {handshake_deny(h,from,salt,.Denied_Version);return}
     now:=u64(b.now*1000)
     cookied:=stamp!=0 || cookie!=0
-    if cookied && (stamp>now || now-stamp>COOKIE_SECONDS*1000 || cookie!=cookie_make(b,from,salt,stamp)) || !cookied && !b.secure.invited {b.stats.handshakes_dropped+=1;return}
+    if cookied && (stamp>now || now-stamp>COOKIE_SECONDS*1000 || cookie!=cookie_make(b,from,salt,stamp)) || !cookied && !b.secure.invited && !identity {b.stats.handshakes_dropped+=1;return}
     message:=bytes[INITIATE_HEADER:mac_at]
     initiator:=(^Key)(raw_data(message))^
     p:=peer_find(b,from)
-    if p!=nil && p.state==.Connected && !p.secure.confirmed && p.secure.initiator==initiator {
+    if p!=nil && (p.state==.Connected || p.state==.Confirming) && !p.secure.confirmed && p.secure.initiator==initiator {
         transport_send_copy(h,from,p.secure.response[:])
         return
     }
@@ -917,23 +1003,41 @@ initiate_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     noise:Noise
     defer crypto.zero_explicit(&noise,size_of(Noise))
     prologue:=initiate_prologue(h,header)
+    peer:Key
+    opened:bool
+    if identity {
+        opened=noise_accept(&noise,prologue[:],&h.desc.identity.private,&h.desc.identity.public,nil,message,&peer)
+    } else {
+        opened=noise_accept(&noise,prologue[:],&b.secure.private,&b.secure.public,&b.secure.psk,message)
+    }
     // A made-up key or damage: no answer tells it so, and the address waits for its next try.
-    if !noise_accept(&noise,prologue[:],&b.secure.private,&b.secure.public,&b.secure.psk,message) {
+    if !opened {
         failed.due=max(failed.due,b.now)+FAILED_INTERVAL
         b.stats.handshakes_dropped+=1
         return
     }
     // Opened, it is never taken again, also if it is refused now.
     seen_add(&b.secure,seen,cookied)
+    payload:=message[KEY_BYTES:len(message)-TAG_BYTES]
+    claim:[]u8
+    if identity {
+        payload=payload[SEALED_KEY_BYTES:]
+        size:=int(endian.unchecked_get_u16le(payload))
+        if size>CLAIM_BYTES || 2+size>len(payload) {b.stats.packets_invalid+=1;return}
+        claim,payload=payload[2:][:size],payload[2+size:]
+    }
     if hash!=host_protocol_hash(h) {handshake_deny(h,from,salt,.Denied_Protocol);return}
-    slot:=p
+    // A confirmed connection from the address gives way only to one that is confirmed in turn.
+    replaced:=p
+    if identity && p!=nil && p.state==.Connected {replaced=nil}
+    slot:=replaced
     for &candidate in b.peers {
         if slot!=nil {break}
         if candidate.state==.Free {slot=&candidate}
     }
     if slot==nil {handshake_deny(h,from,salt,.Denied_Full);return}
     // A new attempt from the address of a connection replaces it.
-    if p!=nil {peer_drop(h,p,.Closed,false)}
+    if replaced!=nil {peer_drop(h,replaced,.Closed,false)}
     peer_reset(h,slot,from)
     slot.salt=salt
     slot.secure.initiator=initiator
@@ -944,13 +1048,23 @@ initiate_receive :: proc(h:^Host,bytes:[]u8,from:Address) {
     endian.unchecked_put_u32le(answer[0:],u32(h.desc.replication.max_objects))
     endian.unchecked_put_u32le(answer[4:],u32(h.history))
     endian.unchecked_put_u16le(answer[8:],u16(slot.index))
-    if !noise_respond(&noise,&slot.secure.initiator,out[9:RESPONSE_BYTES-CHECKSUM_BYTES],&slot.secure) {return}
+    if !noise_respond(&noise,&slot.secure.initiator,out[9:RESPONSE_BYTES-CHECKSUM_BYTES],&slot.secure,identity?&peer:nil) {return}
     checksum_write(out,b.key)
+    if identity {
+        s:=&slot.secure
+        s.peer=peer
+        s.claim_size=copy(s.claim[:],claim)
+        s.early_size=copy(s.early[:],payload)
+        slot.state=.Confirming
+        peer_list(b,slot)
+        transport_send_copy(h,from,out)
+        return
+    }
     peer_established(h,slot,h.history)
     transport_send_copy(h,from,out)
     // The payload is datagram 0 of the client.
     r:serial.Bit_Reader
-    serial.bit_reader_init(&r,message[KEY_BYTES:len(message)-TAG_BYTES])
+    serial.bit_reader_init(&r,payload)
     slot.stats.packets_received+=1
     slot.stats.bytes_received+=u64(len(bytes))
     if !peer_receive(h,slot,&r,0) && slot.state==.Connected {

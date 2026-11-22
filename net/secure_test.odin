@@ -309,9 +309,9 @@ the_handshake_is_noise_nkpsk0_and_both_ends_take_the_keys_it_splits :: proc(t:^t
         e:Key
         message:[KEY_BYTES+5+TAG_BYTES]u8
         copy(message[KEY_BYTES:],"hello")
-        testing.expect(t,noise_initiate(&n,&e,prologue,&public,&psk,message[:]))
+        testing.expect(t,noise_initiate(&n,&e,prologue,&public,&psk,nil,message[:]))
         hs:noise.Handshake_State
-        testing.expect_value(t,noise.handshake_init(&hs,false,prologue,&s_key,nil,NOISE_PROTOCOL,psk[:]),noise.Status.Ok)
+        testing.expect_value(t,noise.handshake_init(&hs,false,prologue,&s_key,nil,NOISE_NK,psk[:]),noise.Status.Ok)
         buffer:[256]u8
         reply,payload,status:=noise.handshake_responder_step(&hs,message[:],{'o','k'},buffer[:])
         testing.expect(t,status==.Handshake_Complete && string(payload)=="hello")
@@ -326,7 +326,7 @@ the_handshake_is_noise_nkpsk0_and_both_ends_take_the_keys_it_splits :: proc(t:^t
     }
     {
         hs:noise.Handshake_State
-        testing.expect_value(t,noise.handshake_init(&hs,true,prologue,nil,&rs,NOISE_PROTOCOL,psk[:]),noise.Status.Ok)
+        testing.expect_value(t,noise.handshake_init(&hs,true,prologue,nil,&rs,NOISE_NK,psk[:]),noise.Status.Ok)
         buffer:[256]u8
         first,_,status:=noise.handshake_initiator_step(&hs,nil,{'h','i'},buffer[:])
         testing.expect_value(t,status,noise.Status.Handshake_Pending)
@@ -347,6 +347,79 @@ the_handshake_is_noise_nkpsk0_and_both_ends_take_the_keys_it_splits :: proc(t:^t
     }
 }
 
+// The identity handshake is Noise IK as the Noise framework defines it, both
+// ways: each end learns the other's static key and both take the same keys.
+@(test)
+the_identity_handshake_is_noise_ik_and_both_ends_take_the_keys_it_splits :: proc(t:^testing.T) {
+    server,client:Dh_Key
+    {
+        a,b:Key
+        for &x,i in a {x=u8(i*13+5)}
+        for &x,i in b {x=u8(i*11+2)}
+        server,client=dh_key_from(&a),dh_key_from(&b)
+    }
+    prologue:=[]u8{5,6,7}
+    s_key,c_key:ecdh.Private_Key
+    testing.expect(t,ecdh.private_key_set_bytes(&s_key,.X25519,server.private[:]) && ecdh.private_key_set_bytes(&c_key,.X25519,client.private[:]))
+    rs:ecdh.Public_Key
+    testing.expect(t,ecdh.public_key_set_bytes(&rs,.X25519,server.public[:]))
+    // What the other end seals first, this end's receive key opens.
+    split_agree :: proc(t:^testing.T,hs:^noise.Handshake_State,ours:^Peer_Secure) {
+        cs:noise.Cipher_States
+        testing.expect_value(t,noise.handshake_split(hs,&cs),noise.Status.Ok)
+        sealed:[1+TAG_BYTES]u8
+        _,status:=noise.seal_message(&cs,nil,{'x'},sealed[:])
+        testing.expect_value(t,status,noise.Status.Ok)
+        ctx:chacha20poly1305.Context
+        iv:=noise_iv(0)
+        chacha20poly1305.init(&ctx,ours.receive[:])
+        plain:[1]u8
+        testing.expect(t,chacha20poly1305.open(&ctx,plain[:],iv[:],nil,sealed[:1],sealed[1:]) && plain[0]=='x')
+    }
+    at:=KEY_BYTES+SEALED_KEY_BYTES
+    {
+        n:Noise
+        e:Key
+        message:[KEY_BYTES+SEALED_KEY_BYTES+5+TAG_BYTES]u8
+        copy(message[at:],"hello")
+        testing.expect(t,noise_initiate(&n,&e,prologue,&server.public,nil,&client,message[:]))
+        hs:noise.Handshake_State
+        testing.expect_value(t,noise.handshake_init(&hs,false,prologue,&s_key,nil,NOISE_IK),noise.Status.Ok)
+        buffer:[256]u8
+        reply,payload,status:=noise.handshake_responder_step(&hs,message[:],{'o','k'},buffer[:])
+        testing.expect(t,status==.Handshake_Complete && string(payload)=="hello")
+        identity,known:=noise.handshake_peer_identity(&hs)
+        learned:Key
+        if known==.Ok {ecdh.public_key_bytes(identity,learned[:])}
+        testing.expect(t,learned==client.public)
+        response:[KEY_BYTES+2+TAG_BYTES]u8
+        testing.expect_value(t,copy(response[:],reply),len(response))
+        ours:Peer_Secure
+        testing.expect(t,noise_finish(&n,&e,response[:],&ours,&client.private) && string(response[KEY_BYTES:][:2])=="ok")
+        split_agree(t,&hs,&ours)
+    }
+    {
+        hs:noise.Handshake_State
+        testing.expect_value(t,noise.handshake_init(&hs,true,prologue,&c_key,&rs,NOISE_IK),noise.Status.Ok)
+        buffer:[256]u8
+        first,_,status:=noise.handshake_initiator_step(&hs,nil,{'h','i'},buffer[:])
+        testing.expect_value(t,status,noise.Status.Handshake_Pending)
+        message:[KEY_BYTES+SEALED_KEY_BYTES+2+TAG_BYTES]u8
+        testing.expect_value(t,copy(message[:],first),len(message))
+        initiator:=(^Key)(&message[0])^
+        n:Noise
+        peer:Key
+        testing.expect(t,noise_accept(&n,prologue,&server.private,&server.public,nil,message[:],&peer) && string(message[at:][:2])=="hi" && peer==client.public)
+        ours:Peer_Secure
+        response:[KEY_BYTES+TAG_BYTES]u8
+        testing.expect(t,noise_respond(&n,&initiator,response[:],&ours,&peer))
+        more:[64]u8
+        _,_,done:=noise.handshake_initiator_step(&hs,response[:],nil,more[:])
+        testing.expect_value(t,done,noise.Status.Handshake_Complete)
+        split_agree(t,&hs,&ours)
+    }
+}
+
 // What a recorded connection gives whoever lacks its keys. Its Initiate opens
 // only with s, so without s the right secret fails like any other: there is
 // nothing to try secrets against. With s and the secret its Initiate opens, but
@@ -361,7 +434,7 @@ recorded_traffic_neither_tests_the_secret_nor_opens_once_its_keys_are_gone :: pr
     e:Key
     initiate:[KEY_BYTES+5+TAG_BYTES]u8
     copy(initiate[KEY_BYTES:],"early")
-    testing.expect(t,noise_initiate(&client,&e,prologue,&key.public,&psk,initiate[:]))
+    testing.expect(t,noise_initiate(&client,&e,prologue,&key.public,&psk,nil,initiate[:]))
     recorded:=initiate
     testing.expect(t,noise_accept(&server,prologue,&key.private,&key.public,&psk,initiate[:]) && string(initiate[KEY_BYTES:][:5])=="early")
     on_server,on_client:Peer_Secure

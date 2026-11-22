@@ -34,6 +34,12 @@ the update, and asks for as many as its command buffer has room for.
   signature per system) and receives both IPv6 and IPv4 peers. An IPv4 peer arrives as
   `::ffff:a.b.c.d` and `address_from_endpoint` returns it as IPv4; sending to it from that socket
   maps it again.
+- **Addresses**: `IP4`, `IP6`, `Memory` (an endpoint of a `Sim_Network`) and `Relay`: a peer a
+  relay node forwards to, made by `address_relay` from the node (IPv4 or IPv6 with a port) and
+  the peer's static key, which takes it apart again (`address_relay_node`); each peer behind a
+  node is another address. `address_global` says whether an address reaches across the internet
+  (public IPv4, global unicast IPv6) and `address_global6` finds this machine's global IPv6
+  address, which needs no mapping. No transport of the engine sends to a `Relay` address yet.
 - **Names**: `resolve_start` resolves in its own thread, `resolve_poll` answers without waiting
   (IPv6 first) and `resolve_end` releases the thread. A literal address does not query the
   resolver; `address_parse` does not accept host names.
@@ -155,11 +161,34 @@ like `replication.hysteresis`) and the values it admits.
   owner and its `Host` keep it in memory, and it is gone when the share ends; its private key is
   never written down nor put on a command line. Nobody can try secrets against recorded traffic:
   that takes `s`.
-- **Two ways in.** By address: a server whose `Host_Desc.invite` is none makes its `s` in
+- **Three ways in.** By address: a server whose `Host_Desc.invite` is none makes its `s` in
   `host_init` and gives it in its Key; anyone who reaches it joins with `host_connect` and that
   address. By invitation: `Host_Desc.invite` is the share's key at the server and what the code
-  carries at the client; a host with one answers nothing else, so a client without it hears nothing
-  and times out with `Connect_Timeout`.
+  carries at the client; a host with one answers no Hello, so a client without it hears nothing
+  and times out with `Connect_Timeout`. By identity, below. The first two are `Anonymous` and
+  `Accept` in their `Connected`.
+- **Identity connections** (`host_connect_identity`): the Noise pattern `IK`
+  (`Noise_IK_25519_ChaChaPoly_SHA256`) from the client's `Host_Desc.identity` (a `Dh_Key`) to the
+  server's, which the client knows. Its *Initiate_Identity* (`-> e, es, s, ss`) carries `e`, the
+  client's `s` sealed, and sealed its claim (at most `CLAIM_BYTES`) and datagram 0; the Response
+  (`<- e, ee, se`) is laid out as the other. Its MAC is keyed by
+  `BLAKE3("kai-1/mac" || server identity)`, so it only keeps out whoever does not know the
+  server's public key; the cookie, Retry, filters and the rate per address are those of an
+  Initiate with an invitation. The Noise name enters the handshake hash and the type byte the
+  prologue.
+  - Its Initiate authenticates the client but can be replayed once the server forgot it (the
+    filter lasts as long as the host, the identity longer). So the server keeps the connection
+    `Confirming`, unknown to its game, until a datagram under its keys comes; only then does
+    `Host_Desc.authorize` read the identity and the claim, on the network half. `Refuse` ends it
+    with `Unauthorized`; `Pending` and `Accept` give `Connected` with the authorization and the
+    client's identity as data, then datagram 0. A replay is answered, never confirmed, and frees
+    after `connect_timeout` without a word to the game.
+  - A confirmed connection of an identity replaces an older one of the same identity
+    (`Replaced`); an Initiate_Identity from the address of a confirmed connection takes another
+    slot, so a replay from there costs nothing.
+  - `host_authorize` asks `authorize` again, for one connection or all, after the membership it
+    decides by changed: a refusal ends the connection with `Revoked` at both ends, a changed answer
+    comes as an `Authorized` command (`Pending` to `Accept` once the peer caught up).
 - **Invitation codes** (`net/invite.odin`): the host says where it is, as ICE gathers a host and a
   reflexive candidate: `invite_make` takes its address on its network (`address_lan`) and, once
   the router mapped its port, the mapped one. `invite_encode` writes the version, both IPv4

@@ -726,7 +726,7 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
         if !whole {return}
         collab_receive(s,st,from,message,now)
         if st.phase!=.Ended {clear(&sender.incoming)}
-    case .Object_Created,.Object_Updated,.Object_Destroyed,.Role_Changed,.Event,.Input,.Authority_Requested,.Authority_Changed:
+    case .Object_Created,.Object_Updated,.Object_Destroyed,.Role_Changed,.Event,.Input,.Authority_Requested,.Authority_Changed,.Authorized:
     }
 }
 
