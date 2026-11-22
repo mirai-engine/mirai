@@ -94,6 +94,7 @@ Connection_Stats :: struct {
     send_limit:f32,              // bytes per second congestion control allows now
     send_limit_cuts:u64,         // times it cut the limit for congestion
     queue_free:[USER_CHANNELS]u32, // bytes free in the queue of each game channel; a message takes 4 more than its data
+    address:Address,             // where the other end is now: it changes when it roams
 }
 
 @(private) Packet_Type :: enum u8 {Hello,Key,Initiate,Response,Denied,Retry,Data,Disconnect,Initiate_Identity}

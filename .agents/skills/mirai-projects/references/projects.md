@@ -521,6 +521,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Documents of interfaces and scenes, no editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins of a project | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Version control of a project, no editor | `mirai kai init\|status\|snapshot\|new\|describe\|log\|diff\|undo\|restore\|conflicts\|bookmarks ... [--project P] [--store S]` |
+| The machine's Kai identity and mesh | `mirai kai identity\|agent [--stay]\|org new <name> [--project P]\|pair offer\|join\|approve\|peers ... [--store S]` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |

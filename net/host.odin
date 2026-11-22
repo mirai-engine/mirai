@@ -722,6 +722,7 @@ back_update :: proc(h:^Host,now:f64) {
         }
         system:=&peer.channels[CHANNEL_SYSTEM]
         h.shared_system_free[i]=u32(len(system.queue.data)-system.queue.used)
+        peer.stats.address=peer.address
         h.shared_connection_stats[i]=peer.stats
         h.shared_connection_handles[i]=peer.state==.Connected?peer_handle(h,&peer):0
     }

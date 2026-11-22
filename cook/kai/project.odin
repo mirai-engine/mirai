@@ -13,7 +13,6 @@ import vcs "mirai:kai"
 // the machine, signed by the identity of this machine, with the asset driver.
 // The editor and `mirai kai` go through these procedures alike.
 
-IDENTITY_FILE :: "kai-identity" // in the root of the store: the seed of this machine's key
 CHANGE_TEXT :: 12               // hex digits a change id is shown with
 CHANGE_TEXT_MIN :: 4            // the fewest digits a change is named by
 
@@ -39,26 +38,6 @@ Log_Row :: struct {
 // Whether root holds a workspace.
 project_exists :: proc(root:string) -> bool {
     return os.exists(project.path(root,vcs.STATE_FOLDER+"/workspace",allocator=context.temp_allocator))
-}
-
-// The identity of this machine: the seed kept in the root of the store, made
-// the first time.
-identity_load :: proc(s:^store.Store) -> (identity:vcs.Identity,error:vcs.Error) {
-    file:=project.path(s.root,IDENTITY_FILE,allocator=context.temp_allocator)
-    if bytes,read_error:=os.read_entire_file(file,context.temp_allocator);read_error==nil {
-        if len(bytes)!=len(identity.seed) {return {},.Corrupt}
-        copy(identity.seed[:],bytes)
-        if !vcs.identity_derive(&identity) {return {},.Corrupt}
-        return identity,.None
-    }
-    identity=vcs.identity_make()
-    temp:=strings.concatenate({file,".tmp"},context.temp_allocator)
-    if os.write_entire_file(temp,identity.seed[:],{.Read_User,.Write_User})!=nil {return {},.Io}
-    if os.rename(temp,file)!=nil {
-        os.remove(temp)
-        return {},.Io
-    }
-    return identity,.None
 }
 
 @(private)

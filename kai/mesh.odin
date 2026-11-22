@@ -48,6 +48,7 @@ Agent_Desc :: struct {
     server:net.Transport,       // what other agents connect to
     seed:bool,                  // fetch the whole closure of every bookmark of the org's projects
     host_seed:u64,              // of the hosts' salts; 0 takes it from the system
+    connect_timeout:f64,        // seconds a connection the agent makes may take; 0: net's default
     allocator:runtime.Allocator, // nil: context.allocator
 }
 
@@ -176,7 +177,7 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     for t,i in clients {
         if net.host_init(&a.clients[i],{
             mode=.Client,transport=t,channels=a.channels[:],protocol_id=AGENT_PROTOCOL,seed=desc.host_seed==0?0:desc.host_seed+u64(i)+1,
-            identity=desc.dh,allocator=allocator,
+            identity=desc.dh,connect_timeout=desc.connect_timeout,allocator=allocator,
         })!=.None {
             a.client_count=i
             agent_close(a)
@@ -360,15 +361,56 @@ agent_authorize :: proc(data:rawptr,peer:net.Key,claim:[]u8) -> net.Authorizatio
 // Connects to the agent with the X25519 key peer at addresses, as a member
 // of the org, or anonymously to read public projects.
 agent_connect :: proc(a:^Agent,peer:Dh_Key,anonymous:bool,addresses:..net.Address) -> Error {
+    _,e:=agent_dial(a,peer,anonymous,..addresses)
+    return e
+}
+
+// Connects as agent_connect does: the client host the connection is on, which
+// is free again once it ended or failed (agent_client_busy).
+agent_dial :: proc(a:^Agent,peer:Dh_Key,anonymous:bool,addresses:..net.Address) -> (client:int,error:Error) {
     for k in 0..<a.client_count {
         if a.client_busy[k] {continue}
         claim:=anonymous?nil:a.desc.org[:]
         p:=peer
-        if net.host_connect_identity(&a.clients[k],net.Key(p),claim,..addresses)!=.None {return .Invalid_Argument}
+        if net.host_connect_identity(&a.clients[k],net.Key(p),claim,..addresses)!=.None {return -1,.Invalid_Argument}
         a.client_busy[k],a.client_anonymous[k]=true,anonymous
-        return .None
+        return k,.None
     }
-    return .Too_Large
+    return -1,.Too_Large
+}
+
+// Whether the client host k has a connection or an attempt.
+agent_client_busy :: proc(a:^Agent,k:int) -> bool {return k>=0 && k<a.client_count && a.client_busy[k]}
+
+// Closes the connection to peer i.
+agent_drop :: proc(a:^Agent,i:int) {
+    p:=&a.peers[i]
+    if p.used {net.host_disconnect(p.host,p.connection)}
+}
+
+// Takes a ref this machine wrote outside the agent (another process, or an
+// operation of the machine): a log is read again and folded, anything else is
+// told to the peers that read it.
+agent_changed :: proc(a:^Agent,namespace,name:string) {
+    kind:=fetch_kind(a,namespace)
+    address,e:=store.ref_get(a.desc.store,namespace,name)
+    if kind==.None || e!=.None {return}
+    #partial switch kind {
+    case .User,.Log:
+        id,ok:=store.parse_hex(name)
+        if !ok {return}
+        l:=agent_log_take(a,id)
+        if l==nil {return}
+        changed,_:=log_load(a.desc.store,l,address,false)
+        exchange.ref_changed(&a.x,namespace,name,address)
+        if changed {agent_refold(a)}
+    case .Refs:
+        exchange.ref_changed(&a.x,namespace,name,address)
+        a.dirty=true
+        agent_closure(a)
+    case:
+        exchange.ref_changed(&a.x,namespace,name,address)
+    }
 }
 
 // The peers connected now, and how many of them are members or nodes.
@@ -416,6 +458,8 @@ agent_peer_add :: proc(a:^Agent,h:^net.Host,connection:net.Connection,client:int
 @(private)
 agent_reclass :: proc(a:^Agent,i:int,class:Agent_Class) {
     p:=&a.peers[i]
+    // What was asked of the peer goes with its exchange peer: it is asked again below.
+    agent_queries_end(a,i)
     exchange.peer_remove(&a.x,p.host,p.connection)
     a.tags+=1
     sync.mutex_lock(&a.lock)
@@ -434,13 +478,8 @@ agent_reclass :: proc(a:^Agent,i:int,class:Agent_Class) {
 agent_peer_drop :: proc(a:^Agent,h:^net.Host,connection:net.Connection) {
     for &p,i in a.peers {
         if !p.used || p.host!=h || p.connection!=connection {continue}
+        agent_queries_end(a,i)
         exchange.peer_remove(&a.x,h,connection)
-        for &q in a.queries {
-            if q.used && q.peer==i {
-                exchange.query_end(&a.x,q.query)
-                q.used=false
-            }
-        }
         if p.client>=0 {a.client_busy[p.client]=false}
         sync.mutex_lock(&a.lock)
         p={}
@@ -449,6 +488,16 @@ agent_peer_drop :: proc(a:^Agent,h:^net.Host,connection:net.Connection) {
     }
     for k in 0..<a.client_count {
         if h==&a.clients[k] {a.client_busy[k]=false}
+    }
+}
+
+@(private)
+agent_queries_end :: proc(a:^Agent,i:int) {
+    for &q in a.queries {
+        if q.used && q.peer==i {
+            exchange.query_end(&a.x,q.query)
+            q.used=false
+        }
     }
 }
 

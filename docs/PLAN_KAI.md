@@ -256,7 +256,8 @@ Entry_Head :: struct #packed {
 ### 6.1 Keys and Pairing (Fixing ECO's Pairing Vulnerability)
 - **Keys:** Offline Ed25519 Recovery key `R` (printed Base32 with checksum); per-device Ed25519
   `ds` + X25519 `dh` stored in an owner-only file; node keys (`ds`, `dh`); scope epoch keys `K`;
-  org discovery secret `D`. No org private key, no email, no passwords.
+  org discovery secret `D`, derived from the org's genesis and its valid `Member_Remove`s, which
+  only members and nodes read. No org private key, no email, no passwords.
 - **Security audit finding in external ECO's pairing:** ECO derived its 8-digit verification code
   from the `Noise_XX` transcript hash after message 3, letting a MITM grind the 64-byte label in
   message 3 (~10^8 tries, feasible in seconds on multi-core/GPU) to force matching codes on both
@@ -267,8 +268,10 @@ Entry_Head :: struct #packed {
   P2 R->I: ticket_id | e_R | enc(s_R) | enc(N_R || R_info)
   P3 I->R: ticket_id | enc(s_I) | enc(N_I || I_info)   (R verifies commit before showing code)
   code   = BLAKE3("kai-1/pair-code" || e_I || e_R || s_I || s_R || N_I || N_R) mod 10^8 -> dddd-dddd
-  P4 R->I: sealed Pending|Approved|Denied (+ signed log entries & wrapped scope keys)
+  P4 R->I: sealed Pending|Approved|Denied (+ the ids of the user and orgs joined)
   ```
+  The ticket also carries the addresses R listens at. The logs, envelopes and keyrings the new
+  device, member or node needs come through the mesh once it connects to R.
   Every input to `code` is fixed before seeing the other side's nonce; mutable labels stay out of
   `code`. One request at a time, 5-minute timeout, No default, 5 denials pause 10 minutes.
   - Same flow links a user's second device (`Device_Add` + `Envelope_Add`), pairs a new org member
@@ -294,17 +297,22 @@ Entry_Head :: struct #packed {
 ## 7. Automatic P2P Mesh, Relay/Seed and DDC
 
 - **One local agent per machine** (owned by the open editor or `mirai kai agent` exiting when idle)
-  sharing one UDP socket over the machine `store`.
+  sharing one UDP socket over the machine `store`: one sync agent per org, routed by a hash of the
+  org's id in front of each datagram. A lock file in the store keeps it to one runner per store;
+  other processes of the user reach it over loopback with a token from an owner-only file.
 - **Connection ladder (parallel race, seamless upgrade on better path):**
   `Encrypted LAN beacon -> global IPv6 -> portmap (existing PCP/NAT-PMP/UPnP) -> rendezvous UDP
   hole punch -> E2E encrypted relay -> seed`.
-- **LAN Beacon (no mDNS):** Broadcast/multicast every 30 s with rotating keyed tags
-  `org_tag = BLAKE3(D || "org" || bucket)[:12]` and `dev_tag` (`bucket = unix/600`). Unlinkable
-  noise to non-members; `D` rotates on member removal.
+- **LAN Beacon (no mDNS):** IPv4 broadcast every 30 s, and at once when an org's `D` changes,
+  with rotating keyed tags `org_tag = BLAKE3(D || "org" || bucket)[:12]` and `dev_tag`
+  (`bucket = unix/600`). Unlinkable noise to non-members; `D` rotates on member removal. The
+  device that does not dial (the higher `dh`) answers a beacon with its own.
 - **Stateless Rendezvous & Relay (`relay` mode):** Holds org logs only; observes reflexive IP:port
   on 2 ports to detect hard/symmetric NATs (skipping futile punching); coordinates simultaneous UDP
-  hole punching (lower `dh` initiates); otherwise relays opaque E2E-encrypted `net` datagrams with
-  per-device byte quotas (and TCP 443 length-prefixed fallback when UDP is blocked, no TLS/HTTP).
+  hole punching (lower `dh` initiates), and plans for a device asked about once it greets the node;
+  otherwise relays opaque E2E-encrypted `net` datagrams with per-device byte quotas (and TCP 443
+  length-prefixed fallback when UDP is blocked, no TLS/HTTP). Device and node authenticate their
+  rendezvous messages with a key from `X25519(dh, dh)`.
 - **Immediate propagation (no polling):** `exchange` gains `Ref_Changed{namespace, name, address}`
   hint; on connect peers query `names_ask`/`ref_ask`, then react to hints.
 - **Signed DDC:** `DDC_Record{key, output_root, producer, tainted_scopes[], sig}` under
@@ -458,7 +466,9 @@ Entry_Head :: struct #packed {
   editor Kai panel for identity, pairing, orgs, grants, scopes, sync, DDC through `cook/cache` and
   proposals.
   - Focal tests: `two_agents_pair_and_sync_a_change_over_loopback_udp`,
-    `a_cook_takes_derived_data_a_peer_built`, `editor_kai_pairs_and_lands_a_proposal`.
+    `a_relay_node_joins_two_agents_that_cannot_reach_each_other`,
+    `runner_refuses_hostile_datagrams`, `a_cook_takes_derived_data_a_peer_built`,
+    `editor_kai_pairs_and_lands_a_proposal`.
 
 ---
 
