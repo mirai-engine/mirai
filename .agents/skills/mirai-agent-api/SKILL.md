@@ -148,12 +148,26 @@ goal requires visual or gameplay judgment; it works over MCP or `mirai rpc`.
 
 ### 5. Remote Windows sessions (`eco`)
 
+`eco` on Windows requires Git Bash, so remote recipes are POSIX shell like local ones. Never wrap
+a command in PowerShell or `cmd.exe`: their quoting and encoding mangle arguments.
+
 ```bash
-# Launch detached breakaway session on a copy (survives shell exit, avoids user editor lock)
-eco run -- mirai session start --copy <project>
-# Forward the remote API port locally for direct mirai rpc / MCP calls
-eco forward 127.0.0.1:<local_port> 127.0.0.1:<remote_port>
+# 1. One program: eco starts it directly, no shell in between
+eco run -- C:/src/mirai/bin/mirai.exe build engine
+# 2. Several commands: one Git Bash script; arguments after the script are $1, $2...
+eco run --sh -- 'cd C:/src/mirai && git pull --ff-only && bin/mirai.exe build tools'
+job=$(eco start --sh -- 'cd C:/src/mirai && bin/mirai.exe build editor')  # long: detached job
+eco attach "$job"
+# 3. RPC/MCP: start a session there (it outlives the command and prints {"port": N, ...}),
+#    forward a free local port to N and call through it with the local mirai
+eco run --sh -- 'cd C:/src/mirai && bin/mirai.exe session start --copy demo'
+eco forward 127.0.0.1:17940 127.0.0.1:N &
+mirai rpc --port 17940 engine.diagnostics '{}' --select problems
+mirai mcp --port 17940
 ```
+
+A forward keeps the editor's loopback-only API on loopback at both ends; the local port must not be
+one that a local editor uses. `--project` names a local project, so remote calls take `--port`.
 
 ## Workflow
 
