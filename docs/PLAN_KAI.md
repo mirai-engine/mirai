@@ -451,6 +451,15 @@ Entry_Head :: struct #packed {
     `webauthn_login_and_signed_verdict_verify_offline`,
     `headless_arm64_server_builds_and_serves_public_and_member_views`.
 
+- **M6 — Running Mesh and Product Surface:** M3 to M5 give the logs, pairing, mesh, relay and
+  proposals as state logic proved over a simulated network; M6 runs them. The agent over real
+  UDP (`net` host with identity, LAN beacon, portmap, rendezvous and relay), the identity and
+  logs of a machine persisted in its `store`, `mirai kai agent`, and the `mirai kai` commands and
+  editor Kai panel for identity, pairing, orgs, grants, scopes, sync, DDC through `cook/cache` and
+  proposals.
+  - Focal tests: `two_agents_pair_and_sync_a_change_over_loopback_udp`,
+    `a_cook_takes_derived_data_a_peer_built`, `editor_kai_pairs_and_lands_a_proposal`.
+
 ---
 
 ## 12. Open Decisions (with Defaults)
