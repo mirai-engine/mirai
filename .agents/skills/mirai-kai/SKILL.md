@@ -46,7 +46,7 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
   [surfaces](references/model.md#surfaces).
 - Users, devices, the recovery key, orgs, roles and rights:
   [keys](references/identity.md#keys), [the logs](references/identity.md#the-signed-logs),
-  [folding](references/identity.md#folding-and-revocation) and
+  [folding, removals and witnesses](references/identity.md#folding-and-revocation) and
   [roles](references/identity.md#roles-and-rights).
 - Pairing a device, a member or a node: [pairing](references/identity.md#pairing).
 - Access for someone outside the org: [grants](references/identity.md#grants); what a device
@@ -147,8 +147,14 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   failed and how to fix it.
 - Nothing is decided by a server. Membership, roles, policies and landings are folds of signed
   logs that every peer computes alike; a node holds no org key and signs for no user.
+- An entry holds if its author held the right when it signed (the org entry it names) and no
+  witness of a later removal in its log leaves it out: removing a member or a device never undoes
+  what it signed before, and stops what it signs after, backdated or not.
+- A removal names no other log: a user's log tells no reader which orgs, projects or proposals its
+  devices signed in.
 - The browser signs only what it computed: the server drafts the bytes of an entry and gives no
-  challenge for a write, the page checks every field and signs the BLAKE3 of the bytes itself.
+  challenge for a write, the page checks every field and signs the BLAKE3 of the bytes itself. A
+  user born in a browser is its passkey alone: the page makes no recovery or device key.
 - A recovery key is shown once and never crosses an API or a result; a method of an editor with no
   window refuses to make or rotate one.
 - A run of the editor that ends by itself (a check of a build, a capture) and a guest of a session
@@ -175,10 +181,13 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `a_change_splits_by_paths_and_undoes_in_one_operation` and `kai_imports_stay_engine_agnostic`
   in `kai`; `histogram_diff_and_merge3_cases` in `std/diff`;
   `a_scene_merges_by_field_through_the_driver` in `cook/kai`.
-- Identity: `revocation_horizon_rejects_backdated_entries`,
+- Identity: `revocation_witness_rejects_backdated_entries`, `a_removed_writer_keeps_its_past`,
   `concurrent_admin_removals_fold_deterministically`, `pairing_rejects_mitm_label_grinding`,
-  `grants_verify_against_the_org` and `device_refs_reject_rollback` in `kai`.
+  `grants_verify_against_the_org`, `a_grant_signs_checks_only_while_it_holds`,
+  `a_log_of_100000_entries_folds_and_appends_in_bounds` (prints the fold's time) and
+  `device_refs_reject_rollback` in `kai`.
 - Mesh: `org_members_sync_refs_and_ddc_over_sim_network`,
+  `a_settled_proposal_stays_in_the_store_until_asked_for`,
   `anonymous_peer_gets_only_the_public_closure`,
   `a_grant_holder_reads_and_writes_only_its_scope_until_it_ends`,
   `two_agents_pair_and_sync_a_change_over_loopback_udp`,
@@ -186,7 +195,7 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `runner_refuses_hostile_datagrams` and `a_ddc_node_drops_least_used_outputs_past_its_quota` in
   `kai`; `a_cook_takes_derived_data_a_peer_built` in `cook/kai`.
 - Private files: `scoped_plaintext_never_enters_public_store`,
-  `removed_member_cannot_decrypt_post_rotation_epoch`,
+  `removed_member_cannot_decrypt_post_rotation_epoch`, `removing_a_keyring_signer_keeps_its_epochs`,
   `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.
 - Proposals: `proposal_comments_reanchor_across_rewrites`,
   `landing_enforces_policy_and_zero_conflicts` and

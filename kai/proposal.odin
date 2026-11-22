@@ -67,38 +67,38 @@ proposal_check_body :: proc(revision:Revision,name:string,state:Check_State,log_
 
 // Opens a proposal in l, an empty log: the address of its genesis, the
 // proposal's id.
-proposal_open :: proc(l:^Log,project:Log_Id,target,title,text:string,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+proposal_open :: proc(l:^Log,project:Log_Id,target,title,text:string,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
     if len(l.items)>0 {return {},.Invalid_Argument}
     body:=proposal_open_body(project,target,title,text) or_return
-    return log_append(l,.Proposal_Open,body,identity,time,author_ctx)
+    return log_append(l,.Proposal_Open,body,identity,time,author_ctx,org_ctx)
 }
 
-proposal_revise :: proc(l:^Log,stack:[]Stack_Item,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+proposal_revise :: proc(l:^Log,stack:[]Stack_Item,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
     body:=proposal_revise_body(stack) or_return
-    return log_append(l,.Proposal_Revise,body,identity,time,author_ctx)
+    return log_append(l,.Proposal_Revise,body,identity,time,author_ctx,org_ctx)
 }
 
-proposal_comment :: proc(l:^Log,anchor:Anchor,path:string,change:Change_Id,reply_to:store.Hash,text:string,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+proposal_comment :: proc(l:^Log,anchor:Anchor,path:string,change:Change_Id,reply_to:store.Hash,text:string,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
     body:=proposal_comment_body(anchor,path,change,reply_to,text) or_return
-    return log_append(l,.Proposal_Comment,body,identity,time,author_ctx)
+    return log_append(l,.Proposal_Comment,body,identity,time,author_ctx,org_ctx)
 }
 
-proposal_verdict :: proc(l:^Log,verdict:Verdict_Kind,revision:Revision,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+proposal_verdict :: proc(l:^Log,verdict:Verdict_Kind,revision:Revision,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
     body:=proposal_verdict_body(verdict,revision) or_return
-    return log_append(l,.Proposal_Verdict,body,identity,time,author_ctx)
+    return log_append(l,.Proposal_Verdict,body,identity,time,author_ctx,org_ctx)
 }
 
-proposal_check :: proc(l:^Log,revision:Revision,name:string,state:Check_State,log_root:store.Hash,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+proposal_check :: proc(l:^Log,revision:Revision,name:string,state:Check_State,log_root:store.Hash,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
     body:=proposal_check_body(revision,name,state,log_root) or_return
-    return log_append(l,.Proposal_Check,body,identity,time,author_ctx)
+    return log_append(l,.Proposal_Check,body,identity,time,author_ctx,org_ctx)
 }
 
-proposal_close :: proc(l:^Log,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
-    return log_append(l,.Proposal_Close,nil,identity,time,author_ctx)
+proposal_close :: proc(l:^Log,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+    return log_append(l,.Proposal_Close,nil,identity,time,author_ctx,org_ctx)
 }
 
-proposal_reopen :: proc(l:^Log,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
-    return log_append(l,.Proposal_Reopen,nil,identity,time,author_ctx)
+proposal_reopen :: proc(l:^Log,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+    return log_append(l,.Proposal_Reopen,nil,identity,time,author_ctx,org_ctx)
 }
 
 // --- Reading ---
@@ -345,9 +345,10 @@ proposal_can_land :: proc(s:^store.Store,f:^Proposal_Fold) -> (refusal:Land_Refu
 }
 
 // Lands f when proposal_can_land allows: a Bookmark_Move in the project's log
-// from the target's targets to the final revision, naming the proposal, then
-// the proposal's Land naming the move. The folds of both logs are then stale.
-proposal_land :: proc(s:^store.Store,f:^Proposal_Fold,project:^Project_Fold,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (move:store.Hash,refusal:Land_Refusal,error:Error) {
+// from the target's targets to the final revision, naming the proposal and
+// the heads of its log it was checked at, then the proposal's Land naming
+// the move. The folds of both logs are then stale.
+proposal_land :: proc(s:^store.Store,f:^Proposal_Fold,project:^Project_Fold,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{}) -> (move:store.Hash,refusal:Land_Refusal,error:Error) {
     if project.log.id!=f.project {return {},.None,.Invalid_Argument}
     refusal=proposal_can_land(s,f) or_return
     if refusal!=.None {return}
@@ -355,9 +356,70 @@ proposal_land :: proc(s:^store.Store,f:^Proposal_Fold,project:^Project_Fold,iden
     from:=make([dynamic]Revision,context.temp_allocator)
     project_bookmark(project,target,&from)
     if len(from)>CONFLICT_SIDES_MAX {return {},.None,.Too_Large}
-    body:=body_make(Bookmark_Move_Body{to=f.revision,proposal=f.log.id,from=u8(len(from))},slice.to_bytes(from[:]),transmute([]u8)target)
+    heads:=make([dynamic]store.Hash,context.temp_allocator)
+    log_heads(f.log,&heads) or_return
+    if len(heads)>ENTRY_PARENTS_MAX {return {},.None,.Too_Large}
+    body:=move_body(target,from[:],f.revision,f.log.id,heads[:])
     if body==nil {return {},.None,.Out_Of_Memory}
-    move=log_append(project.log,.Bookmark_Move,body,identity,time,author_ctx) or_return
-    _=log_append(f.log,.Proposal_Land,body_make(Proposal_Land_Body{revision=f.revision,bookmark_move=move}),identity,time,author_ctx) or_return
+    move=log_append(project.log,.Bookmark_Move,body,identity,time,author_ctx,org_ctx) or_return
+    _=log_append(f.log,.Proposal_Land,body_make(Proposal_Land_Body{revision=f.revision,bookmark_move=move}),identity,time,author_ctx,org_ctx) or_return
     return
+}
+
+// The proposal of each move of the project's log l that lands one, folded
+// and settled as it was at the heads of its log the move names, appended to
+// out: what project_fold checks those moves against. A move whose proposal's
+// entries this store lacks gets none and does not hold until they come; one
+// whose changes it lacks, the same. Each fold owns its log
+// (project_snapshots_destroy).
+project_snapshots :: proc(s:^store.Store,l:^Log,org:^Org_Fold,out:^[dynamic]^Proposal_Fold,allocator:=context.allocator) -> Error {
+    for &item in l.items {
+        if item.entry.type!=.Bookmark_Move {continue}
+        b,heads,_,_:=move_parts(item.entry.body)
+        if b.proposal=={} {continue}
+        full:Log
+        log_init(&full,b.proposal,context.temp_allocator)
+        if log_open(s,&full,b.proposal,.Proposal)!=.None {continue}
+        log_index(&full) or_return
+        tips:=make([dynamic]int,context.temp_allocator)
+        for h in heads {
+            if k:=log_find(&full,h);k>=0 && full.complete[k] {append(&tips,k)}
+        }
+        if len(tips)!=len(heads) {continue}
+        snapshot,se:=new(Log,allocator)
+        if se!=nil {return .Out_Of_Memory}
+        log_init(snapshot,b.proposal,allocator)
+        for &x,i in full.items {
+            within:=false
+            for t in tips {within||=log_within(&full,i,t)}
+            if within {log_add(snapshot,x.bytes,false) or_return}
+        }
+        pf,pe:=new(Proposal_Fold,allocator)
+        if pe!=nil {
+            log_destroy(snapshot)
+            free(snapshot,allocator)
+            return .Out_Of_Memory
+        }
+        if proposal_fold(pf,snapshot,org,allocator)!=.None || proposal_settle(s,pf)!=.None {
+            proposal_fold_destroy(pf)
+            free(pf,allocator)
+            log_destroy(snapshot)
+            free(snapshot,allocator)
+            continue
+        }
+        pf.move=item.address
+        if _,ae:=append(out,pf);ae!=nil {return .Out_Of_Memory}
+    }
+    return .None
+}
+
+project_snapshots_destroy :: proc(list:^[dynamic]^Proposal_Fold,allocator:=context.allocator) {
+    for pf in list {
+        l:=pf.log
+        proposal_fold_destroy(pf)
+        free(pf,allocator)
+        log_destroy(l)
+        free(l,allocator)
+    }
+    clear(list)
 }

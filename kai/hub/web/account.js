@@ -2,13 +2,13 @@
 // linking a passkey to an existing user, or by a device's approval.
 import {h, reactive} from './vue.js'
 import {state} from './api.js'
-import {link as linkPasskey, register, signIn, signInByDevice} from './passkey.js'
+import {link as linkPasskey, linkDevice, linkOffer, register, signIn, signInByDevice} from './passkey.js'
 import {button, Copy, errorBox, navigate, useAction} from './ui.js'
 
 export const SignIn = {
     props: ['params', 'query'],
     setup() {
-        const form = reactive({name: '', user: '', made: null, linked: false})
+        const form = reactive({name: '', user: '', made: null, linked: false, offer: null, device: false})
         const passkey = useAction(async () => {
             await signIn()
             navigate('/')
@@ -25,14 +25,34 @@ export const SignIn = {
             await signInByDevice()
             navigate('/')
         })
+        const offer = useAction(async () => {
+            form.offer = await linkOffer()
+        })
+        const confirm = useAction(async () => {
+            await linkDevice(form.offer)
+            form.offer = null
+            form.device = true
+        })
         return () => {
-            if (state.session) return [h('h1', 'Signed in'), h('p', `You are ${state.session.name || state.session.user}.`)]
+            if (state.session) {
+                return [
+                    h('h1', 'Signed in'),
+                    h('p', `You are ${state.session.name || state.session.user}.`),
+                    state.session.passkey ? h('section', [
+                        h('h2', 'Link a device'),
+                        h('p', {class: 'quiet'}, 'Makes a machine a device of yours. A user made with a passkey has no recovery key until its first device sets one: run mirai kai identity recovery there.'),
+                        form.device ? h('p', 'The device is yours now.') : form.offer ? [
+                            h('p', `${form.offer.name} offers itself with the code ${form.offer.code}. Link it only if the machine shows the same.`),
+                            h('div', {class: 'row'}, button('Link it', confirm)),
+                            errorBox(confirm.error),
+                        ] : [h('div', {class: 'row'}, button('Link a device', offer)), errorBox(offer.error)],
+                    ]) : null,
+                ]
+            }
             if (form.made) {
                 return [
                     h('h1', 'Your user is made'),
-                    h('p', 'This is your recovery key. It is shown once and nowhere kept: write it down and keep it safe. It recovers your user when every device and passkey is lost.'),
-                    h('pre', {class: 'recovery'}, form.made.recovery),
-                    h('p', 'Your user id: give it to an admin of an org this node serves. Once they add you, sign in with your passkey.'),
+                    h('p', 'Your user id: give it to an admin of an org this node serves. It waits on this node until they add you; then sign in with your passkey and link a device of yours, which sets your recovery key.'),
                     h(Copy, {text: form.made.user}),
                     h('div', {class: 'row'}, button('Sign in', passkey)),
                     errorBox(passkey.error),
@@ -49,7 +69,7 @@ export const SignIn = {
                 ]),
                 h('section', [
                     h('h2', 'New here'),
-                    h('p', {class: 'quiet'}, 'Makes a user whose first passkey is this one. This browser makes its recovery key and signs your user\'s first entries; the node only keeps them.'),
+                    h('p', {class: 'quiet'}, 'Makes a user of this passkey alone: it signs your user\'s first entry, the node only keeps it.'),
                     h('form', {class: 'row', onSubmit: e => {
                         e.preventDefault()
                         create.run()

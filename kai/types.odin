@@ -37,7 +37,7 @@ Identity :: struct {
     seed:[32]u8,
 }
 
-Object_Kind :: enum u8 {None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output}
+Object_Kind :: enum u8 {None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output,Log_Page}
 
 Error :: enum u8 {
     None,
@@ -62,7 +62,7 @@ error_text :: proc(error:Error) -> string {
     case .None: return "no error"
     case .Corrupt: return "a Kai record does not read: fetch it again from a peer"
     case .Missing: return "an object of the repository is not in the store: fetch it from a peer"
-    case .Too_Large: return "past a bound of Kai (files, folder entries, depth, path, parents or sides of a conflict): split it"
+    case .Too_Large: return "past a bound of Kai (files, folder entries, depth, path, parents, sides of a conflict or entries of a log): split it"
     case .Invalid_Argument: return "an argument out of its range"
     case .Out_Of_Memory: return "memory ran out"
     case .Io: return "the file system refused an operation: give this user access to the folder"

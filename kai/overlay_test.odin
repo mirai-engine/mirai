@@ -292,13 +292,52 @@ removed_member_cannot_decrypt_post_rotation_epoch :: proc(t:^testing.T) {
     testing.expect_value(t,e,Error.Unauthorized)
 
     // Revoking the late device needs a rotation too, and the next epoch shuts it out.
-    _,e=log_append(&o.bob.log,.Device_Revoke,revoke_body(late.identity.key,{}),&o.bob.devices[0],50)
+    _,e=log_append(&o.bob.log,.Device_Revoke,revoke_body(late.identity.key),&o.bob.devices[0],50)
     testing.expect_value(t,e,Error.None)
     refold(t,&o,&kf,&ff)
     testing.expect(t,keyring_needs_rotation(&kf))
     _,e=rotate_scope_epoch(&kf,&alice,51)
     testing.expect_value(t,e,Error.None)
     _,e=keyring_epoch_key(&kf,&late,kf.epoch)
+    testing.expect_value(t,e,Error.Unauthorized)
+}
+
+// Removing the writer who started a scope's keyring and signed its first
+// epoch keeps both: every reader left opens the old epoch and the one rotated
+// after, since the writer's entries are judged as of when they were signed.
+@(test)
+removing_a_keyring_signer_keeps_its_epochs :: proc(t:^testing.T) {
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    scope:=random_id(Scope_Id)
+    scope_add(t,&o,scope,.Reader,true,20,"secrets/**")
+    refold(t,&o)
+    alice,bob,carol:=device_of(&o.alice,0),device_of(&o.bob,0),device_of(&o.carol,0)
+    kl:Log
+    log_init(&kl);defer log_destroy(&kl)
+    kf:Keyring_Fold
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&bob,22),Error.None)
+    defer keyring_fold_destroy(&kf)
+    k1,e:=keyring_epoch_key(&kf,&carol,1)
+    testing.expect_value(t,e,Error.None)
+
+    removal,re:=log_append(&o.org,.Member_Remove,body_make(Subject_Body{subject=o.bob.log.id}),&o.alice.devices[0],30)
+    testing.expect_value(t,re,Error.None)
+    refold(t,&o,&kf)
+    _,e=log_append(&kl,.Witness,witness_body(o.org.id,removal),&o.alice.devices[0],31,{},test_heads(&o.org)[0])
+    testing.expect_value(t,e,Error.None)
+    testing.expect_value(t,keyring_refold(&kf),Error.None)
+    testing.expect(t,kf.valid[0] && kf.epoch==1,"the removed writer's genesis and epoch stand")
+    testing.expect(t,keyring_needs_rotation(&kf))
+    epoch,ee:=rotate_scope_epoch(&kf,&alice,32)
+    testing.expect_value(t,ee,Error.None)
+    testing.expect_value(t,epoch,u32(2))
+    for reader in ([]^Overlay_Device{&alice,&carol}) {
+        old,oe:=keyring_epoch_key(&kf,reader,1)
+        _,ne:=keyring_epoch_key(&kf,reader,2)
+        testing.expect(t,oe==.None && ne==.None && old==k1,"a reader left opens the old epoch and the new")
+    }
+    _,e=keyring_epoch_key(&kf,&bob,2)
     testing.expect_value(t,e,Error.Unauthorized)
 }
 

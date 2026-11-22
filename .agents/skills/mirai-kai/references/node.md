@@ -104,17 +104,28 @@ WantedBy=multi-user.target
   read session is a random token in a `__Host-` cookie (HttpOnly, Secure, SameSite=Strict); it
   reads, and a write still needs a signature of the user's own.
 - A passkey signs in over a challenge the server gave and used once. A user who has no log makes one
-  in the browser: the page creates an Ed25519 recovery key (shown once, never sent) and a device
-  key, signs the genesis and the `Web_Key_Add` itself, and the server only verifies and keeps them.
-  A browser with no passkey, or a second passkey for an existing user, asks a device of the user to
+  in the browser from its passkey alone: the passkey signs the `Passkey_Genesis` the page built,
+  and the page generates no key, so the node never holds a recovery or device key of it. One
+  passkey makes one user on a node.
+- A user nobody admitted waits on the node that made it, under `kai-local-waiting`, which no peer
+  is served: it is not among the user logs peers sync and counts against no org's logs. When a
+  member adds it (`Member_Add`) its log joins the synced ones; past `WAITING_MAX` waiting users the
+  oldest goes, and the create route is rate-limited per address. A waiting user that signs in is
+  told to wait for an admin.
+- A passkey-born user links its first device from the browser: the page asks a link
+  (`POST /api/approvals`, kind device), `mirai kai web approve <link>` on the machine offers its
+  keys and proof and waits, both show the same eight digits, and the passkey signs the
+  `Device_Add` the page built from the offer. The machine then takes the user's log and becomes its
+  device; `mirai kai identity recovery` there sets the user's first recovery key.
+- A browser with no passkey, or a second passkey for an existing user, asks a device of the user to
   approve: it shows a link and `mirai kai web approve <link>` on that device shows what it would
   sign and signs it only after a yes.
-- A write is a log entry. The server drafts the unsigned bytes (heads, author context, time) and
-  gives **no challenge**; the page parses them against the layout of `GET /api/entries`, checks
-  every field against what the user asked and signs the BLAKE3 of the bytes with its passkey (or a
-  device does). The server verifies it as every peer will, appends it and tells the peers. This is
-  why a compromised or malicious node cannot make a user say something: it can refuse to relay,
-  never forge.
+- A write is a log entry. The server drafts the unsigned bytes (heads, author and org contexts,
+  time) and gives **no challenge**; the page parses them against the layout of
+  `GET /api/entries`, checks every field against what the user asked and signs the BLAKE3 of the
+  bytes with its passkey (or a device does). The server verifies it as every peer will, appends
+  it and tells the peers. This is why a compromised or malicious node cannot make a user say
+  something: it can refuse to relay, never forge.
 - A passkey signs a write only with the user verified (PIN or biometric), and a P-256 write keeps
   the low `S` of its signature, so a signature and therefore an entry has one encoding and one
   address.

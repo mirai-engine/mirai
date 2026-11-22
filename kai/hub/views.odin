@@ -112,10 +112,10 @@ project_name :: proc(l:^kai.Log) -> string {
 project_bookmarks :: proc(h:^Hub,v:^Project_View) {
     s:=store_of(h)
     if v.log!=nil && len(v.log.items)>0 {
-        proposals:=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
-        project_proposals(h,v.org,v.id,&proposals)
+        landed:=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
+        kai.project_snapshots(s,v.log,&v.org.agent.org,&landed,context.temp_allocator)
         f:kai.Project_Fold
-        if kai.project_fold(&f,v.log,&v.org.agent.org,proposals[:],context.temp_allocator)==.None {
+        if kai.project_fold(&f,v.log,&v.org.agent.org,landed[:],context.temp_allocator)==.None {
             for b in f.bookmarks {append(&v.bookmarks,Bookmark_View{name=b.name,revision=b.target,landed=true})}
         }
     }
@@ -148,6 +148,7 @@ project_bookmarks :: proc(h:^Hub,v:^Project_View) {
 // The proposal logs of a project the agent holds, folded and settled.
 @(private)
 project_proposals :: proc(h:^Hub,o:^kai.Runner_Org,project:kai.Log_Id,out:^[dynamic]^kai.Proposal_Fold) {
+    kai.agent_proposals_open(&o.agent,project)
     for l in o.agent.logs {
         if l.kind!=.Proposal || len(l.items)==0 || proposal_project(l)!=project {continue}
         f:=new(kai.Proposal_Fold,context.temp_allocator)
@@ -255,30 +256,14 @@ hash_less :: proc(a,b:store.Hash) -> bool {
 }
 
 @(private)
-user_name :: proc(u:^kai.User_Fold) -> string {
-    for &item in u.log.items {
-        if item.entry.type!=.User_Genesis {continue}
-        _,tail,ok:=kai.body_head(item.entry.body,kai.User_Genesis_Body)
-        if ok {return string(tail)}
-    }
-    return ""
-}
+user_name :: proc(u:^kai.User_Fold) -> string {return kai.user_name(u)}
 
 // The user a device or passkey key belongs to in the org's agent, and its
 // name and the device's.
 key_owner :: proc(o:^kai.Runner_Org,key:kai.Key) -> (user:^kai.User_Fold,device_name:string) {
     for u in o.agent.user_list {
-        for d in u.devices {
-            if d.key!=key {continue}
-            l:=u.log
-            item:=&l.items[d.added]
-            #partial switch item.entry.type {
-            case .Device_Add:
-                _,tail,_:=kai.body_head(item.entry.body,kai.Device_Add_Body)
-                return u,string(tail)
-            }
-            k:=key
-            return u,short_hex(k[:])
+        for d,k in u.devices {
+            if d.key==key {return u,kai.device_name(u,k)}
         }
         for w in u.web_keys {
             if w.key==key {return u,"passkey"}

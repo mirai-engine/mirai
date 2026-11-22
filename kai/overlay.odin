@@ -324,7 +324,8 @@ keyring_refold :: proc(k:^Keyring_Fold) -> Error {
 // Starts the Keyring_Log of a scope at l, empty, with its first epoch: k is
 // its fold. The caller saves the log.
 keyring_create :: proc(k:^Keyring_Fold,l:^Log,org:^Org_Fold,project:Log_Id,scope:Scope_Id,device:^Overlay_Device,time:i64,allocator:=context.allocator) -> Error {
-    _,e:=log_append(l,.Keyring_Genesis,body_make(Keyring_Genesis_Body{org=org.log.id,project=project,scope=scope}),&device.identity,time)
+    user,_:=org_device_role(org,device.identity.key)
+    _,e:=log_append(l,.Keyring_Genesis,body_make(Keyring_Genesis_Body{org=org.log.id,project=project,scope=scope}),&device.identity,time,{},org_context(org,user))
     if e!=.None {return e}
     keyring_fold(k,l,org,allocator) or_return
     if k.project!=project {return .Unauthorized}
@@ -363,7 +364,8 @@ rotate_scope_epoch :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64) -> (
     if history {envelopes[len(readers)]=prev_wrap(org,k.scope,epoch,&key,&previous)}
     body:=body_make(Epoch_Add_Body{epoch=epoch,envelopes=u16(count)},slice.to_bytes(envelopes))
     if body==nil {return 0,.Out_Of_Memory}
-    log_append(k.log,.Epoch_Add,body,&device.identity,time) or_return
+    user,_:=org_device_role(k.org,device.identity.key)
+    log_append(k.log,.Epoch_Add,body,&device.identity,time,{},org_context(k.org,user)) or_return
     keyring_refold(k) or_return
     if k.epoch!=epoch {return 0,.Unauthorized}
     return epoch,.None
@@ -960,15 +962,14 @@ overlay_accept :: proc(s:^store.Store,org:^Org_Fold,namespace,name:string,addres
     return r,true,.None
 }
 
-// Whether the Log object at address is the Keyring_Log id of a scope of org,
-// its entries verified.
+// Whether the log whose index is at address is the Keyring_Log id of a scope
+// of org: its genesis, read alone and verified, says.
 keyring_of_org :: proc(s:^store.Store,org:^Org_Fold,id:Log_Id,address:store.Hash) -> bool {
-    l:Log
-    log_init(&l,id,context.temp_allocator)
-    if _,e:=log_load(s,&l,address,true);e!=.None || l.kind!=.Keyring {return false}
-    k:=log_find(&l,id)
-    if k<0 || l.items[k].entry.type!=.Keyring_Genesis {return false}
-    b,_,_:=body_head(l.items[k].entry.body,Keyring_Genesis_Body)
+    bytes,found,_:=log_entry_get(s,address,id)
+    if !found {return false}
+    entry,de:=entry_decode(bytes)
+    if de!=.None || entry.type!=.Keyring_Genesis || !entry_verify(bytes,&entry) {return false}
+    b,_,_:=body_head(entry.body,Keyring_Genesis_Body)
     if b.org!=org.log.id {return false}
     for sc in org.scopes {
         if sc.project==b.project && sc.scope==b.scope {return true}

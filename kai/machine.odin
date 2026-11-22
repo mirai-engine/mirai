@@ -492,9 +492,12 @@ machine_org_create :: proc(m:^Machine,name:string) -> (org:Log_Id,error:Error) {
 machine_project_add :: proc(m:^Machine,org:Log_Id,repo:Repo_Id,name:string,public:bool) -> (project:Log_Id,error:Error) {
     if !name_valid(name) {return {},machine_fail(m,.Invalid_Argument,"a project's name is 1 to 64 bytes of text: give another")}
     if p,_,linked:=machine_project_of(m,repo);linked {return p,machine_fail(m,.Invalid_Argument,"this repository is a project of an org already")}
+    o:Org_State
+    machine_org_open(m,org,&o) or_return
+    defer org_state_destroy(&o)
     l:Log
     log_init(&l,{},context.temp_allocator)
-    if _,e:=log_append(&l,.Project_Genesis,body_make(Project_Genesis_Body{org=org,public=b8(public)},transmute([]u8)name),&m.identity,machine_now(),machine_user_head(m));e!=.None {
+    if _,e:=log_append(&l,.Project_Genesis,body_make(Project_Genesis_Body{org=org,public=b8(public)},transmute([]u8)name),&m.identity,machine_now(),machine_user_head(m),org_context(&o.fold,m.user));e!=.None {
         return {},machine_fail(m,e,"the project's first entry does not sign")
     }
     machine_org_append(m,org,.Project_Add,body_make(Project_Add_Body{project=l.id,public=b8(public)})) or_return
@@ -534,15 +537,43 @@ machine_member_add :: proc(m:^Machine,org,user:Log_Id,role:Role) -> Error {
     return e
 }
 
+// Removes a member, and witnesses the removal in the org's logs where its
+// keys signed, so what it signed before stands there and nothing after.
 machine_member_remove :: proc(m:^Machine,org,user:Log_Id) -> Error {
-    _,e:=machine_org_append(m,org,.Member_Remove,body_make(Subject_Body{subject=user}))
-    return e
+    address:=machine_org_append(m,org,.Member_Remove,body_make(Subject_Body{subject=user})) or_return
+    return machine_witness_member(m,org,user,address)
 }
 
+// Sets a member's role; a lower one is witnessed as a removal is.
 machine_role_set :: proc(m:^Machine,org,user:Log_Id,role:Role) -> Error {
     if !role_valid(role) {return machine_fail(m,.Invalid_Argument,"a member's role is reader, writer or admin")}
-    _,e:=machine_org_append(m,org,.Role_Set,body_make(Member_Body{user=user,role=role}))
-    return e
+    before:Role
+    {
+        o:Org_State
+        machine_org_open(m,org,&o) or_return
+        before=org_role(&o.fold,user)
+        org_state_destroy(&o)
+    }
+    address:=machine_org_append(m,org,.Role_Set,body_make(Member_Body{user=user,role=role})) or_return
+    if role>=before {return .None}
+    return machine_witness_member(m,org,user,address)
+}
+
+@(private)
+machine_witness_member :: proc(m:^Machine,org,user:Log_Id,removal:store.Hash) -> Error {
+    o:Org_State
+    machine_org_open(m,org,&o) or_return
+    defer org_state_destroy(&o)
+    keys:=make([dynamic]Key,context.temp_allocator)
+    if u:=org_state_user(&o,user);u!=nil {
+        for d in u.devices {append(&keys,d.key)}
+        for w in u.web_keys {append(&keys,w.key)}
+    }
+    // The grants it issued sign under it.
+    for &g in o.fold.granted {
+        if g.issuer==user && g.grant.subject_key!={} {append(&keys,g.grant.subject_key)}
+    }
+    return machine_witness(m,&o,org,removal,keys[:])
 }
 
 machine_owner_transfer :: proc(m:^Machine,org,user:Log_Id) -> Error {
@@ -657,9 +688,15 @@ machine_grant :: proc(m:^Machine,org:Log_Id,subject_dh:Dh_Key,subject_key:Key,ri
     return bytes,.None
 }
 
+// Revokes a grant, and witnesses it where its holder signed.
 machine_grant_revoke :: proc(m:^Machine,org:Log_Id,grant:[]u8) -> Error {
-    _,e:=machine_org_append(m,org,.Grant_Revoke,body_make(Subject_Body{subject=store.address_of_bytes(grant)}))
-    return e
+    address:=machine_org_append(m,org,.Grant_Revoke,body_make(Subject_Body{subject=store.address_of_bytes(grant)})) or_return
+    g,e:=grant_decode(grant)
+    if e!=.None || g.subject_key=={} {return .None}
+    o:Org_State
+    machine_org_open(m,org,&o) or_return
+    defer org_state_destroy(&o)
+    return machine_witness(m,&o,org,address,{g.subject_key})
 }
 
 // Publishes this device's bookmarks of a project, signed, and tells the mesh.

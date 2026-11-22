@@ -350,67 +350,69 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         testing.expect(t,len(ev.interdiffs)==1 && len(ev.interdiffs[0].files)==2,"the interdiff names a.txt and b.md")
     }
 
-    // A browser makes a new user with its passkey: recovery and device keys of its own.
+    // A browser makes a new user of its passkey alone: no recovery key, no device.
     bob_key:=passkey_make()
-    recovery,device:=kai.identity_make(),kai.identity_make()
-    dh,_:=mnet.dh_key()
-    genesis_body:=kai.body_make(kai.User_Genesis_Body{recovery=recovery.key,device=device.key,dh=kai.Dh_Key(dh.public),proof=kai.device_proof(&device,transmute([32]u8)recovery.key)},transmute([]u8)string("bob"))
-    gd:=kai.Draft{type=.User_Genesis,time=100,body=genesis_body}
-    genesis,bob,_:=kai.entry_sign(&gd,&recovery,context.temp_allocator)
-    wk,_:=kai.web_key_add_body(bob_key.credential[:],passkey_cose(&bob_key),RP)
-    wd:=kai.Draft{type=.Web_Key_Add,log_id=bob,parents={bob},time=101,body=wk}
-    add,_,_:=kai.entry_sign(&wd,&recovery,context.temp_allocator)
-    wrong_rp,_:=kai.web_key_add_body(bob_key.credential[:],passkey_cose(&bob_key),"evil.test")
-    wd.body=wrong_rp
-    evil,_,_:=kai.entry_sign(&wd,&recovery,context.temp_allocator)
-    a:=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(genesis),b64(evil)))
-    testing.expectf(t,a.status==400,"a passkey of another site is refused: %d",a.status)
-    stranger:=kai.identity_make()
-    wd.body=wk
-    unsigned,_,_:=kai.entry_sign(&wd,&stranger,context.temp_allocator)
-    a=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(genesis),b64(unsigned)))
-    testing.expectf(t,a.status==400,"a Web_Key_Add another key signed is refused: %d",a.status)
-    a=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(genesis),b64(add)))
-    testing.expectf(t,a.status==201 && strings.contains(a.body,hex(bob[:])),"the new user is kept: %d %s",a.status,a.body)
-    // Its first two entries again do not replace the log that grew since.
+    evil_status,_:=passkey_born(t,f,&bob_key,"bob",rp="evil.test")
+    testing.expectf(t,evil_status==400,"a passkey of another site is refused: %d",evil_status)
+    stranger_key:=passkey_make()
+    stranger_key.credential=bob_key.credential
+    forged_status,_:=passkey_born(t,f,&bob_key,"bob",signer=&stranger_key)
+    testing.expectf(t,forged_status==401 || forged_status==400,"a genesis another passkey signed is refused: %d",forged_status)
+    status,bob:=passkey_born(t,f,&bob_key,"bob")
+    if !testing.expectf(t,status==201,"the new user is kept: %d",status) {return}
+    again,_:=passkey_born(t,f,&bob_key,"bob",address={0=0xfd,1=1})
+    testing.expectf(t,again==409,"a replayed user is refused: %d",again)
+    // Nobody admitted it: it waits on this node alone, apart from the user logs peers sync.
+    name:[64]u8
+    _,synced:=store.ref_get(&f.alice.store,kai.USER_NAMESPACE,kai.log_name(bob,&name))
+    testing.expect(t,synced==.Missing && user_fold_of(&f.hub,bob)==nil,"an uninvited user is no user log a peer gets")
     {
-        l:kai.Log
-        kai.log_init(&l,bob,context.temp_allocator)
-        testing.expect_value(t,kai.log_open(&f.alice.store,&l,bob,.User),kai.Error.None)
-        later:=passkey_make()
-        later_body,_:=kai.web_key_add_body(later.credential[:],passkey_cose(&later),RP)
-        _,le:=kai.log_append(&l,.Web_Key_Add,later_body,&recovery,102)
-        testing.expect_value(t,le,kai.Error.None)
-        kai.log_save(&f.alice.store,&l)
-        store.commit(&f.alice.store)
-        a=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(genesis),b64(add)),address={0=0xfd,1=1})
-        testing.expectf(t,a.status==409,"a replayed user is refused: %d %s",a.status,a.body)
-        kept:kai.Log
-        kai.log_init(&kept,bob,context.temp_allocator)
-        kai.log_open(&f.alice.store,&kept,bob,.User)
-        testing.expectf(t,len(kept.items)==3,"the user's log keeps its %d entries",len(kept.items))
+        ch:struct {challenge:string}
+        json_read(t,call(f,"POST","/api/session/challenge"),&ch)
+        w:=call(f,"POST","/api/session",fmt.tprintf(`{{"challenge":"%s","assertion":%s}}`,ch.challenge,passkey_assert(&bob_key,unb64(ch.challenge))))
+        testing.expectf(t,w.status==403 && strings.contains(w.body,"waits"),"a waiting user is told to wait: %d %s",w.status,w.body)
     }
+    // A full waiting set lets the oldest go.
+    {
+        first:kai.Log_Id
+        for i in 0..<WAITING_MAX {
+            k:=passkey_make()
+            st,u:=passkey_born(t,f,&k,fmt.tprintf("guest %d",i),address={0=0xfe,1=u8(i),2=u8(i>>8)})
+            testing.expect_value(t,st,201)
+            if i==0 {first=u}
+            f.now+=0.001
+        }
+        _,left:=store.ref_get(&f.alice.store,WAITING_NAMESPACE,kai.log_name(bob,&name))
+        testing.expect(t,left==.Missing,"the oldest waiting user goes when the set is full")
+        _,kept:=store.ref_get(&f.alice.store,WAITING_NAMESPACE,kai.log_name(first,&name))
+        testing.expect(t,kept==.None,"the newer stay")
+        again,bob=passkey_born(t,f,&bob_key,"bob",address={0=0xfd,1=5})
+        testing.expect_value(t,again,201)
+    }
+    // An admin adds it: its log joins the user logs the node syncs.
     testing.expect_value(t,kai.machine_member_add(&f.alice,f.org,bob,.Writer),kai.Error.None)
+    f.now+=2
+    f.hub.now=f.now
+    waiting_step(&f.hub)
+    _,synced=store.ref_get(&f.alice.store,kai.USER_NAMESPACE,kai.log_name(bob,&name))
+    _,waits:=store.ref_get(&f.alice.store,WAITING_NAMESPACE,kai.log_name(bob,&name))
+    testing.expect(t,synced==.None && waits==.Missing && user_fold_of(&f.hub,bob)!=nil,"an admitted user's log joins the synced ones")
     // carol records bob's credential id with a passkey of her own: it blocks neither.
     carol_key:=passkey_make()
     carol_key.credential=bob_key.credential
     {
-        carol_recovery,carol_device:=kai.identity_make(),kai.identity_make()
-        carol_dh,_:=mnet.dh_key()
-        body:=kai.body_make(kai.User_Genesis_Body{recovery=carol_recovery.key,device=carol_device.key,dh=kai.Dh_Key(carol_dh.public),proof=kai.device_proof(&carol_device,transmute([32]u8)carol_recovery.key)},transmute([]u8)string("carol"))
-        d:=kai.Draft{type=.User_Genesis,time=100,body=body}
-        carol_genesis,carol,_:=kai.entry_sign(&d,&carol_recovery,context.temp_allocator)
-        key_body,_:=kai.web_key_add_body(carol_key.credential[:],passkey_cose(&carol_key),RP)
-        d={type=.Web_Key_Add,log_id=carol,parents={carol},time=101,body=key_body}
-        carol_add,_,_:=kai.entry_sign(&d,&carol_recovery,context.temp_allocator)
-        a=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(carol_genesis),b64(carol_add)),address={0=0xfd,1=2})
-        testing.expectf(t,a.status==201,"carol is kept: %d %s",a.status,a.body)
+        st,carol:=passkey_born(t,f,&carol_key,"carol",address={0=0xfd,1=2})
+        testing.expectf(t,st==201,"carol is kept: %d",st)
         testing.expect_value(t,kai.machine_member_add(&f.alice,f.org,carol,.Reader),kai.Error.None)
+        f.now+=2
+        f.hub.now=f.now
+        waiting_step(&f.hub)
         who:=call(f,"GET","/api/session",cookie=sign_in(t,f,&carol_key))
         testing.expectf(t,strings.contains(who.body,hex(carol[:])),"carol signs in with her passkey: %s",who.body)
     }
 
     // It signs in; a challenge counts once, and a forged assertion is refused.
+    a:Answer
     cookie:=sign_in(t,f,&bob_key)
     Challenge_Answer :: struct {challenge:string}
     ch:Challenge_Answer
@@ -497,6 +499,48 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         found:=false
         for v in pf.verdicts {found||=v.user==bob && v.verdict==.Approve && v.revision==f.r3}
         testing.expect(t,found,"the verdict is bob's approval of the stack's head")
+    }
+
+    // Bob's passkey links a machine as his first device, which then sets his
+    // first recovery key; till then he acts as a writer at most, admin or not.
+    linked:kai.Machine
+    testing.expect_value(t,kai.machine_open(&linked,fmt.tprintf("%s/linked",f.folder)),kai.Error.None)
+    defer kai.machine_close(&linked)
+    {
+        Link :: struct {id,secret,link:string}
+        ln:Link
+        if !json_read(t,call(f,"POST","/api/approvals",`{"kind":"device"}`,cookie),&ln) {return}
+        ask:Approval_Ask
+        json_read(t,call(f,"GET",fmt.tprintf("/api/approvals/%s",ln.id)),&ask)
+        offer_body,summary,why:=approve_answer(&linked,&ask,f.hub.origin)
+        testing.expectf(t,why=="" && strings.contains(summary,"link this device"),"the machine offers itself: %s",why)
+        b:=call(f,"POST",fmt.tprintf("/api/approvals/%s",ln.id),string(offer_body))
+        code:[9]u8
+        testing.expectf(t,b.status==200 && strings.contains(b.body,kai.device_link_code(linked.identity.key,&code)),"both ends show the code: %d %s",b.status,b.body)
+        State :: struct {state:string,offer:struct {device,dh,proof,name,code:string}}
+        st:State
+        json_read(t,call(f,"POST",fmt.tprintf("/api/approvals/%s/state",ln.id),fmt.tprintf(`{{"secret":"%s"}}`,ln.secret)),&st)
+        testing.expect(t,st.offer.code==kai.device_link_code(linked.identity.key,&code),"the browser reads the machine's offer")
+        action:=fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","proof":"%s","name":"%s"}}`,hex(bob[:]),st.offer.device,st.offer.dh,st.offer.proof,st.offer.name)
+        dd:Draft_Answer
+        if !json_read(t,call(f,"POST","/api/drafts",action,cookie),&dd) {return}
+        challenge:=store.address_of_bytes(unb64(dd.unsigned))
+        added:=call(f,"POST","/api/entries",fmt.tprintf(`{{"unsigned":"%s","assertion":%s}}`,dd.unsigned,passkey_assert(&bob_key,challenge[:])),cookie)
+        testing.expectf(t,added.status==201,"the passkey signs the Device_Add: %d %s",added.status,added.body)
+        json_read(t,call(f,"GET",fmt.tprintf("/api/approvals/%s",ln.id)),&ask)
+        testing.expect(t,ask.linked!="" && len(ask.entries)>=2,"the link answers with the user's log")
+        testing.expect_value(t,device_link_take(&linked,bob,ask.entries),"")
+        testing.expect(t,linked.user==bob,"the machine is bob's device")
+        testing.expect_value(t,kai.machine_role_set(&f.alice,f.org,bob,.Admin),kai.Error.None)
+        testing.expect_value(t,kai.org_role(&f.runner.orgs[0].agent.org,bob),kai.Role.Writer)
+        buffer:[kai.RECOVERY_TEXT]u8
+        text,re:=kai.machine_recovery_rotate(&linked,"",&buffer)
+        testing.expect(t,re==.None && len(text)==kai.RECOVERY_TEXT,"the device sets the first recovery key")
+        l:kai.Log
+        kai.log_init(&l,bob,context.temp_allocator)
+        kai.log_open(&linked.store,&l,bob,.User)
+        testing.expect_value(t,kai.agent_log_add(&f.runner.orgs[0].agent,&l),kai.Error.None)
+        testing.expect_value(t,kai.org_role(&f.runner.orgs[0].agent.org,bob),kai.Role.Admin)
     }
 
     // A browser without a passkey: alice's second device approves its login.
@@ -590,8 +634,8 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     {
         l:kai.Log
         kai.log_init(&l,bob,context.temp_allocator)
-        testing.expect_value(t,kai.log_open(&f.alice.store,&l,bob,.User),kai.Error.None)
-        _,re:=kai.log_append(&l,.Device_Revoke,kai.revoke_body(kai.web_key_id(passkey_cose(&bob_key),RP),{}),&recovery,200)
+        testing.expect_value(t,kai.log_open(&linked.store,&l,bob,.User),kai.Error.None)
+        _,re:=kai.log_append(&l,.Device_Revoke,kai.revoke_body(kai.web_key_id(passkey_cose(&bob_key),RP)),&linked.identity,200)
         testing.expect_value(t,re,kai.Error.None)
         testing.expect_value(t,kai.agent_log_add(&f.runner.orgs[0].agent,&l),kai.Error.None)
     }
@@ -849,4 +893,20 @@ hub_certificates_live_only_while_served_and_load_back :: proc(t:^testing.T) {
         tls.close(peer)
         testing.expect(t,exchange(secure,other,peer),"a close_notify leaves the connection open")
     }
+}
+
+// A user born of key, as a browser makes it: its Passkey_Genesis for rp,
+// signed by signer (key when nil) over the BLAKE3 of its unsigned bytes and
+// posted; the status and the user the node names.
+passkey_born :: proc(t:^testing.T,f:^Fixture,key:^Test_Passkey,name:string,rp:=RP,signer:^Test_Passkey=nil,address:=[16]u8{}) -> (status:int,user:kai.Log_Id) {
+    cose:=passkey_cose(key)
+    body:=kai.body_make(kai.Passkey_Genesis_Body{credential=u8(len(key.credential)),cose=u16(len(cose)),rp=u8(len(rp))},key.credential[:],cose,transmute([]u8)rp,transmute([]u8)name)
+    d:=kai.Draft{type=.Passkey_Genesis,time=100,body=body}
+    unsigned,challenge,e:=kai.entry_webauthn_begin(&d,kai.web_key_id(cose,rp),context.temp_allocator)
+    testing.expect_value(t,e,kai.Error.None)
+    a:=call(f,"POST","/api/users",fmt.tprintf(`{{"unsigned":"%s","assertion":%s}}`,b64(unsigned),passkey_assert(signer==nil?key:signer,challenge[:])),address=address)
+    Made :: struct {user:string}
+    m:Made
+    if a.status==201 && json_read(t,a,&m) {user,_=hash_parse(m.user)}
+    return a.status,user
 }

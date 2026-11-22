@@ -251,7 +251,8 @@ WEB_USAGE :: "kai web approve <link> [--yes] [--store S]"
 
 // What an approval asks, as GET /api/approvals/{id} answers it.
 Approval_Ask :: struct {
-    kind,state,rp_id,origin,challenge,user,type,log,body,credential,cose:string,
+    kind,state,rp_id,origin,challenge,user,type,log,body,credential,cose,linked:string,
+    entries:[]string, // device: the user's log once it names this machine
 }
 
 // The link a browser shows: its hub's origin and the approval's id.
@@ -296,6 +297,21 @@ approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string,sign:=true
         json_member_hex(&j,"device",key[:])
         json_key(&j,"signature")
         json_base64(&j,signature[:])
+    case "device":
+        user,uok:=hash_parse(ask.user)
+        if !uok {return nil,"","the approval names no user"}
+        if m.user!={} {return nil,"","this device belongs to a user already: a browser links only a device with none"}
+        code:[9]u8
+        summary=fmt.tprintf("link this device to the user %s on %s; the browser must show %s",ask.user[:12],origin,kai.device_link_code(m.identity.key,&code))
+        if !sign {return nil,summary,""}
+        proof:=kai.device_proof(&m.identity,transmute([32]u8)user)
+        name_buffer:[kai.NAME_MAX]u8
+        key,dh:=m.identity.key,m.dh.public
+        json_member_hex(&j,"device",key[:])
+        json_member_hex(&j,"dh",dh[:])
+        json_key(&j,"proof")
+        json_base64(&j,proof[:])
+        json_member_string(&j,"name",kai.device_name_of("",&name_buffer))
     case "entry","passkey":
         user,uok:=hash_parse(ask.user)
         if !uok || user!=m.user {return nil,"","the approval is for another user than this device's"}
@@ -327,16 +343,8 @@ approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string,sign:=true
         kai.log_init(&l,log,context.temp_allocator)
         if kai.log_open(&m.store,&l,log,kind)!=.None {return nil,"","this device's store does not hold that log: let its agent sync first"}
         if !sign {return nil,summary,""}
-        ctx:store.Hash
-        if kind!=.User {
-            u:kai.Log
-            kai.log_init(&u,m.user,context.temp_allocator)
-            if kai.log_open(&m.store,&u,m.user,.User)==.None {
-                heads:=make([dynamic]store.Hash,context.temp_allocator)
-                if kai.log_heads(&u,&heads)==.None && len(heads)>0 {ctx=heads[0]}
-            }
-        }
-        address,e:=kai.log_append(&l,type,body_bytes,&m.identity,time.now()._nsec,ctx)
+        ctx,org_ctx:=kai.machine_entry_ctx(m,&l)
+        address,e:=kai.log_append(&l,type,body_bytes,&m.identity,time.now()._nsec,ctx,org_ctx)
         if e!=.None {return nil,"",kai.error_text(e)}
         if _,se:=kai.log_save(&m.store,&l);se!=.None || store.commit(&m.store)!=.None {return nil,"","this device's store does not take the entry"}
         name:[64]u8
@@ -404,7 +412,7 @@ web_command :: proc(program:string,args:[]string,store_root:="") -> int {
         m.changed=kai.control_machine_changed(&c)
     }
     defer if m.changed.procedure!=nil {kai.control_close(&c)}
-    if m.user=={} {
+    if m.user=={} && ask.kind!="device" {
         fmt.eprintfln("%s kai web approve: this device has no user: mirai kai identity makes one, or pair it",program)
         return 1
     }
@@ -435,6 +443,47 @@ web_command :: proc(program:string,args:[]string,store_root:="") -> int {
         fmt.eprintfln("%s kai web approve: %s",program,why)
         return 1
     }
+    if ask.kind=="device" {
+        if why=device_link_wait(m,origin,path,ask.user);why!="" {
+            fmt.eprintfln("%s kai web approve: %s",program,why)
+            return 1
+        }
+        fmt.println("Linked: this device is the user's now. It has no recovery key yet: mirai kai identity recovery sets the first.")
+        return 0
+    }
     fmt.printfln("Approved: %s.",summary)
     return 0
+}
+
+DEVICE_LINK_SECONDS :: 600
+
+// Waits for the browser to sign this device's Device_Add, then takes the
+// user's log it answers with: why it did not, or "".
+device_link_wait :: proc(m:^kai.Machine,origin,path,user_text:string) -> string {
+    user,_:=hash_parse(user_text)
+    end:=time.tick_now()
+    for time.duration_seconds(time.tick_since(end))<DEVICE_LINK_SECONDS {
+        time.sleep(2*time.Second)
+        response,why:=client_call(origin,"GET",path,nil)
+        if why!="" {return why}
+        ask:Approval_Ask
+        if response.status!=200 || json.unmarshal(response.body,&ask,.JSON,context.temp_allocator)!=nil {return fmt.tprintf("the hub answered %d: %s",response.status,string(response.body))}
+        if ask.state=="expired" || ask.state=="denied" {return fmt.tprintf("the link was %s: ask a new one in the browser",ask.state)}
+        if ask.linked=="" {continue}
+        return device_link_take(m,user,ask.entries)
+    }
+    return "the browser did not link the device in time: ask a new link"
+}
+
+// Takes the user's log the hub gave once it names this device.
+device_link_take :: proc(m:^kai.Machine,user:kai.Log_Id,entries:[]string) -> string {
+    list:=make([dynamic][]u8,context.temp_allocator)
+    for text in entries {
+        bytes,ok:=base64_parse(text,kai.ENTRY_BODY_MAX+4096)
+        if !ok {return "an entry of the user's log does not read"}
+        append(&list,bytes)
+    }
+    if kai.machine_user_linked(m,user,list[:])!=.None {return m.why}
+    if store.commit(&m.store)!=.None {return "this device's store does not take the user's log"}
+    return ""
 }

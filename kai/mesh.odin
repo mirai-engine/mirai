@@ -44,7 +44,7 @@ import "mirai:store"
 AGENT_PROTOCOL :: u32(0x3149414b) // "KAI1"
 AGENT_PEERS :: 16
 AGENT_CLIENTS :: 8
-AGENT_LOGS :: 256
+AGENT_LOGS :: 4096 // logs an agent holds loaded at once: closed and landed proposals load when asked for
 AGENT_FETCHES :: 256
 AGENT_QUERIES :: 64
 AGENT_HINTS :: 256
@@ -154,6 +154,7 @@ Agent_Stats :: struct {
     logs_merged,refs_accepted,ddc_accepted,overlays_accepted,objects_fetched:int,
     refused:int, // records a peer gave that did not hold: bad signature, no right, rollback
     refolds:int,
+    logs_refused:int, // logs past AGENT_LOGS loaded at once, left in the store: land or close proposals, or split the org
 }
 
 @(private)
@@ -266,7 +267,11 @@ agent_log :: proc(a:^Agent,id:Log_Id) -> ^Log {
 @(private)
 agent_log_take :: proc(a:^Agent,id:Log_Id) -> ^Log {
     if l:=agent_log(a,id);l!=nil {return l}
-    if len(a.logs)>=AGENT_LOGS {return nil}
+    if len(a.logs)>=AGENT_LOGS {agent_unload_settled(a)}
+    if len(a.logs)>=AGENT_LOGS {
+        a.stats.logs_refused+=1
+        return nil
+    }
     l,e:=new(Log,a.desc.allocator)
     if e!=nil {return nil}
     log_init(l,id,a.desc.allocator)
@@ -275,6 +280,91 @@ agent_log_take :: proc(a:^Agent,id:Log_Id) -> ^Log {
         return nil
     }
     return l
+}
+
+// The log of id, loaded from the store when this agent does not hold it: a
+// closed or landed proposal, which the next fold unloads again.
+agent_log_open :: proc(a:^Agent,id:Log_Id) -> ^Log {
+    if l:=agent_log(a,id);l!=nil {return l}
+    name:[64]u8
+    for namespace in ([2]string{LOG_NAMESPACE,USER_NAMESPACE}) {
+        address,e:=store.ref_get(a.desc.store,namespace,log_name(id,&name))
+        if e!=.None {continue}
+        l:=agent_log_take(a,id)
+        if l==nil {return nil}
+        if _,le:=log_load(a.desc.store,l,address,false);le!=.None && le!=.Missing {return nil}
+        return l
+    }
+    return nil
+}
+
+// Loads every proposal of project the store holds, open or not: what a view
+// of them all reads, until the next fold unloads the settled ones.
+agent_proposals_open :: proc(a:^Agent,project:Log_Id) {
+    refs,e:=store.ref_list(a.desc.store,LOG_NAMESPACE,context.temp_allocator)
+    if e!=.None {return}
+    for r in refs {
+        id,ok:=store.parse_hex(r.name)
+        if !ok || agent_log(a,id)!=nil {continue}
+        if head,_,he:=log_index_read(a.desc.store,r.hash);he!=.None || head.kind!=.Proposal {continue}
+        bytes,found,_:=log_entry_get(a.desc.store,r.hash,id)
+        if !found {continue}
+        if entry,de:=entry_decode(bytes);de==.None && entry.type==.Proposal_Open {
+            if b,_,_:=body_head(entry.body,Proposal_Open_Body);b.project==project {agent_log_open(a,id)}
+        }
+    }
+}
+
+// Unloads the proposals that are closed or landed: they stay in the store.
+@(private)
+agent_unload_settled :: proc(a:^Agent) {
+    if !a.folded {return}
+    for k:=len(a.logs)-1;k>=0;k-=1 {
+        l:=a.logs[k]
+        if l.kind!=.Proposal || len(l.items)==0 {continue}
+        f:Proposal_Fold
+        if proposal_fold(&f,l,&a.org,context.temp_allocator)!=.None {continue}
+        settled:=f.status!=.Open
+        proposal_fold_destroy(&f)
+        if !settled {continue}
+        log_destroy(l)
+        free(l,a.desc.allocator)
+        ordered_remove(&a.logs,k)
+    }
+}
+
+// Writes, in each log of the org this agent holds and its user has a right
+// in, a Witness of each removal that reached this end and not that log yet
+// (witnesses_due): what stops a removed key there.
+@(private)
+agent_witnesses :: proc(a:^Agent) {
+    if !a.folded || a.desc.user=={} {return}
+    role:=org_role(&a.org,a.desc.user)
+    if role==.None {return}
+    identity:=a.desc.identity
+    due:=make([dynamic]Witness_Due,context.temp_allocator)
+    parents:=make([dynamic]store.Hash,context.temp_allocator)
+    written:=false
+    for l in a.logs {
+        if len(l.items)==0 || (l.kind!=.Org && !org_bound(l.kind)) || (l.kind==.Org && l.id!=a.desc.org) {continue}
+        if (l.kind==.Project || l.kind==.Keyring) && role<.Writer {continue}
+        if l.kind==.Project && org_project_index(&a.org,l.id)<0 {continue}
+        clear(&due)
+        if witnesses_due(&a.org,l,&due)!=.None {continue}
+        for d in due {
+            if witness_parents(l,d.keys,&parents)!=.None || len(parents)==0 {continue}
+            user:store.Hash
+            if u:=agent_log(a,a.desc.user);u!=nil && len(u.heads)>0 {user=u.items[u.heads[0]].address}
+            org_ctx:=org_bound(l.kind)?org_context(&a.org,a.desc.user):{}
+            if _,e:=log_append(l,.Witness,witness_body(d.log,d.removal),&identity,time.now()._nsec,user,org_ctx,parents[:]);e!=.None {continue}
+            if address,se:=log_save(a.desc.store,l);se==.None {
+                name:[64]u8
+                exchange.ref_changed(&a.x,log_namespace(l.kind),log_name(l.id,&name),address)
+                written=true
+            }
+        }
+    }
+    if written {agent_refold(a)}
 }
 
 // Reads the logs the store holds.
@@ -319,6 +409,7 @@ agent_refold :: proc(a:^Agent) {
             org_fold_destroy(&a.org)
         }
     }
+    agent_unload_settled(a)
     sync.mutex_lock(&a.lock)
     clear(&a.allowed)
     // A member's active device is admitted; a revoked one, or any device of
@@ -370,6 +461,7 @@ agent_refold :: proc(a:^Agent) {
         if a.peers[i].used {agent_ask(a,i)}
     }
     agent_retry(a,.None)
+    agent_witnesses(a)
 }
 
 // Merges again what was deferred, of kind or of every kind for None.
@@ -753,12 +845,13 @@ agent_append :: proc(a:^Agent,id:Log_Id,type:Entry_Type,body:[]u8,time:i64) -> (
     l:=agent_log(a,id)
     if l==nil {return {},.Missing}
     identity:=a.desc.identity
-    ctx:store.Hash
+    ctx,org_ctx:store.Hash
     if u:=agent_log(a,a.desc.user);u!=nil {
         heads:=make([dynamic]store.Hash,context.temp_allocator)
         if log_heads(u,&heads)==.None && len(heads)>0 {ctx=heads[0]}
     }
-    address=log_append(l,type,body,&identity,time,ctx) or_return
+    if org_bound(l.kind) && a.folded {org_ctx=org_context(&a.org,a.desc.user)}
+    address=log_append(l,type,body,&identity,time,ctx,org_ctx) or_return
     agent_saved(a,l) or_return
     return
 }
@@ -814,13 +907,23 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         id,ok:=store.parse_hex(name)
         if !ok {return}
         if f.kind==.Log && id!=a.desc.org && !(a.folded && (org_project_index(&a.org,id)>=0 || keyring_of_org(a.desc.store,&a.org,id,f.address) || proposal_of_org(a.desc.store,&a.org,id,f.address))) {
+            // Its genesis may be in pages still to come: they are fetched, and the log placed then.
+            pages:=make([dynamic]store.Hash,context.temp_allocator)
+            log_pages_missing(a.desc.store,f.address,&pages)
+            for m in pages {agent_want_object(a,m)}
             agent_defer(a,f)
             return
         }
-        l:=agent_log_take(a,id)
+        l:=agent_log_open(a,id)
+        if l==nil {l=agent_log_take(a,id)}
         if l==nil {return}
-        changed,e:=log_merge(a.desc.store,l,f.address)
-        if e!=.None && !changed {
+        // The pages a peer's log has that this store lacks come as objects, then the merge runs again.
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        changed,e:=log_merge(a.desc.store,l,f.address,&missing)
+        if e==.Missing && len(missing)>0 {
+            for m in missing {agent_want_object(a,m)}
+            agent_defer(a,f)
+        } else if e!=.None && !changed {
             a.stats.refused+=1
             return
         }
@@ -884,7 +987,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         a.stats.objects_fetched+=1
         a.dirty=true
         agent_closure(a)
-        agent_retry(a,.Refs)
+        agent_retry(a,.None)
     }
 }
 
@@ -1024,7 +1127,7 @@ agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision
 agent_closure :: proc(a:^Agent) {
     identity:=make([dynamic]store.Hash,context.temp_allocator)
     if refs,e:=store.ref_list(a.desc.store,USER_NAMESPACE,context.temp_allocator);e==.None {
-        for r in refs {object_chunks(a.desc.store,r.hash,&identity)}
+        for r in refs {log_objects(a.desc.store,r.hash,&identity)}
     }
     public:=make([dynamic]store.Hash,context.temp_allocator)
     targets:=make([dynamic]Revision,context.temp_allocator)
@@ -1088,7 +1191,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         }
         if !keep {continue}
         if address,ref_error:=store.ref_get(a.desc.store,LOG_NAMESPACE,log_name(l.id,&name));ref_error==.None {
-            object_chunks(a.desc.store,address,out)
+            log_objects(a.desc.store,address,out)
         }
     }
     if g.rights&{.Read,.Write,.Check}!={} {

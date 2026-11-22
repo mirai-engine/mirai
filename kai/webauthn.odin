@@ -257,13 +257,12 @@ web_key_add_body :: proc(credential:[]u8,cose:[]u8,rp_id:string) -> (body:[]u8,e
     return body,body==nil?.Out_Of_Memory:.None
 }
 
-// The web key id a Web_Key_Add body records, when its key reads.
+// The web key id a Web_Key_Add or Passkey_Genesis body records, when its key
+// reads.
 @(private)
 web_key_of :: proc(body:[]u8) -> (key:Key,ok:bool) {
-    head,tail,read:=body_head(body,Web_Key_Add_Body)
-    if !read || len(tail)!=int(head.credential)+int(head.cose)+int(head.rp) {return}
-    cose:=tail[head.credential:][:head.cose]
-    rp_id:=string(tail[int(head.credential)+int(head.cose):])
+    _,cose,rp_id,_,read:=passkey_parts(body)
+    if !read {return}
     if _,parsed:=cose_key_parse(cose);!parsed {return}
     return web_key_id(cose,rp_id),true
 }

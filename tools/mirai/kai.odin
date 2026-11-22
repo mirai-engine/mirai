@@ -682,10 +682,14 @@ kai_identity_change :: proc(k:^Kai_Machine,positionals:[]string) -> int {
         if e!=.None || vcs.machine_device_revoke(m,device)!=.None {return kai_why("identity revoke",k)}
         fmt.printfln("Device %s is revoked: what it signs from now on counts nowhere.",positionals[1])
     case "recovery":
-        fmt.print("The recovery key now, as it was printed: ")
-        reader:bufio.Reader
-        bufio.reader_init(&reader,os.to_stream(os.stdin),allocator=context.temp_allocator)
-        line,_:=bufio.reader_read_string(&reader,'\n',context.temp_allocator)
+        // A user born of a passkey has none yet: this device sets the first.
+        line:string
+        if vcs.machine_user_recovered(m) {
+            fmt.print("The recovery key now, as it was printed: ")
+            reader:bufio.Reader
+            bufio.reader_init(&reader,os.to_stream(os.stdin),allocator=context.temp_allocator)
+            line,_=bufio.reader_read_string(&reader,'\n',context.temp_allocator)
+        }
         buffer:[vcs.RECOVERY_TEXT]u8
         defer crypto_zero(&buffer)
         recovery,e:=vcs.machine_recovery_rotate(m,strings.trim_space(line),&buffer)

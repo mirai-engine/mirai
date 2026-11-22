@@ -1,12 +1,13 @@
 // Passkeys and signed writes. The server never hands this page a challenge
 // to sign for a write: the page checks the draft's bytes against what the
-// user asked and signs their BLAKE3. A new user's keys are made here with
-// WebCrypto; the recovery key leaves only as the text shown once.
+// user asked and signs their BLAKE3. A new user is born of its passkey alone:
+// this page makes no key of its own, and the user's first device, linked
+// later, sets its recovery key.
 import {api, refreshSession, state} from './api.js'
 import {blake3} from './blake3.js'
 import {
-    attestedCredential, b64, concat, deviceMessage, draftCheck, entryUnsigned, equal, hex, layoutCheck,
-    recoveryText, SIG_ED25519, TYPES, unb64, unhex, userGenesisBody, webKeyAddBody, webKeyId,
+    attestedCredential, b64, deviceLinkCode, draftCheck, entryUnsigned, equal, layoutCheck,
+    passkeyGenesisBody, SIG_WEBAUTHN, TYPES, unb64, unhex, webKeyId,
 } from './entry.js'
 
 const TIMEOUT_MS = 120000
@@ -107,49 +108,20 @@ async function passkeyCreate(name) {
     return made
 }
 
-async function ed25519Sign(key, message) {
-    return new Uint8Array(await crypto.subtle.sign({name: 'Ed25519'}, key, message))
-}
-
-async function publicRaw(key) {
-    return new Uint8Array(await crypto.subtle.exportKey('raw', key))
-}
-
-// A user whose first passkey is this one: the recovery key and a device key
-// made here sign the genesis of its log and the Web_Key_Add of the passkey.
-// Answers the user id and the recovery text, which is shown once.
+// A user whose first passkey is this one, and nothing else: the passkey
+// signs the genesis of its log over the BLAKE3 of the bytes this page built.
+// Answers the user id, which waits on the node until an admin adds it.
 export async function register(name) {
     const {credential, cose} = await passkeyCreate(name)
-    const subtle = crypto.subtle
-    let recovery, device, dh
-    try {
-        recovery = await subtle.generateKey({name: 'Ed25519'}, true, ['sign', 'verify'])
-        device = await subtle.generateKey({name: 'Ed25519'}, false, ['sign', 'verify'])
-        dh = await subtle.generateKey({name: 'X25519'}, false, ['deriveBits'])
-    } catch {
-        throw new Error('this browser makes no Ed25519 or X25519 keys: use a current browser, or link the passkey to a user from a device')
-    }
-    const pkcs8 = new Uint8Array(await subtle.exportKey('pkcs8', recovery.privateKey))
-    if (pkcs8.length !== 48) throw new Error('the browser exports the recovery key in an unknown form')
-    const seed = pkcs8.slice(16)
-    const recoveryKey = await publicRaw(recovery.publicKey)
-    const body = userGenesisBody({
-        recovery: recoveryKey, device: await publicRaw(device.publicKey), dh: await publicRaw(dh.publicKey),
-        proof: await ed25519Sign(device.privateKey, deviceMessage(recoveryKey)), deviceName: 'browser', name,
+    const rp = state.node.rp_id
+    const unsigned = entryUnsigned({
+        type: TYPES.passkey_genesis, author: webKeyId(cose, rp), time: BigInt(Date.now()) * 1000000n,
+        body: passkeyGenesisBody(credential, cose, rp, name), sig: SIG_WEBAUTHN,
     })
-    const now = BigInt(Date.now()) * 1000000n
-    const u1 = entryUnsigned({type: TYPES.user_genesis, author: recoveryKey, time: now, body, sig: SIG_ED25519})
-    const genesis = concat(u1, await ed25519Sign(recovery.privateKey, u1))
-    const log = blake3(genesis)
-    const u2 = entryUnsigned({
-        type: TYPES.web_key_add, log, parents: [log], author: recoveryKey, time: now + 1n,
-        body: webKeyAddBody(credential, cose, state.node.rp_id), sig: SIG_ED25519,
-    })
-    const add = concat(u2, await ed25519Sign(recovery.privateKey, u2))
-    const made = await api('/api/users', {entries: [b64(genesis), b64(add)]})
-    if (made.user !== hex(log)) throw new Error('the node kept another user than the one this page made')
+    const signed = await assertion(blake3(unsigned), credential)
+    const made = await api('/api/users', {unsigned: b64(unsigned), assertion: signed})
     remember(credential, cose)
-    return {user: made.user, recovery: recoveryText(seed)}
+    return {user: made.user}
 }
 
 // Waits for a device to answer an approval the page shows.
@@ -177,6 +149,32 @@ export async function link(user, name) {
     const a = await api('/api/passkeys/link', {user, credential: b64(credential), cose: b64(cose)})
     remember(credential, cose)
     await approvalWait(a)
+}
+
+// Links a machine as a device of this session's user: the machine runs the
+// command shown and offers itself; answers its offer, with the code it shows.
+export async function linkOffer() {
+    const a = await api('/api/approvals', {kind: 'device'})
+    state.approval = {command: a.command, state: 'waiting'}
+    const shown = state.approval
+    try {
+        for (;;) {
+            await new Promise(done => setTimeout(done, POLL_MS))
+            if (state.approval !== shown) throw new Error('the link was dismissed')
+            const r = await api(`/api/approvals/${a.id}/state`, {secret: a.secret})
+            if (r.state !== 'waiting') throw new Error(`the link was ${r.state}: ask again`)
+            if (!r.offer) continue
+            if (r.offer.code !== deviceLinkCode(unhex(r.offer.device, 32))) throw new Error('the node gives another code than the device\'s key makes: do not link it')
+            return r.offer
+        }
+    } finally {
+        if (state.approval === shown) state.approval = null
+    }
+}
+
+// Signs the Device_Add of an offer the person compared the code of.
+export async function linkDevice(offer) {
+    return write({type: 'device_add', log: state.session.user, device: offer.device, dh: offer.dh, proof: offer.proof, name: offer.name})
 }
 
 // Signs in without a passkey: a device of the user approves the login.

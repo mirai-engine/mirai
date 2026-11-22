@@ -27,8 +27,16 @@ How the machines of an org find each other and what each may read from the other
   channel.
 - Nothing polls. A write of this machine reaches the runner as `Machine.changed`; a ref that moved
   is told to the peers that may read its namespace; on connect each end asks the other's names per
-  namespace and fetches a ref that differs. Logs merge by union of verified entries, refs and
-  derived data by their own rules.
+  namespace and fetches a ref that differs. A log's ref names its index: the pages the store lacks
+  are fetched in turn, and the log merges by union of verified entries; refs and derived data merge
+  by their own rules.
+- An agent holds loaded the logs of its org it folds: users, the org, projects, keyrings and open
+  proposals, at most `AGENT_LOGS` at once. A closed or landed proposal stays in the store and loads
+  when a view or a merge asks for it, until the next fold lets it go; past the bound a log is left
+  in the store and counted in `logs_refused`
+  (`a_settled_proposal_stays_in_the_store_until_asked_for`).
+- When an agent folds a removal that a log it holds a right in lacks a witness of, while the
+  affected key signed there, it writes the witness ([folding](identity.md#folding-and-revocation)).
 - A seed fetches what the closure of every bookmark lacks. A machine whose peers have not delivered
   a file yet asks the mesh for it: the editor reads again on its poll, a method waits for the bytes.
 
@@ -51,8 +59,8 @@ or anonymous (an empty claim). The namespace decides who reads it:
   is not served, whatever the peer asks (`anonymous_peer_gets_only_the_public_closure`).
 - A peer that is not a member or a node is restricted: it writes nothing, except a grant holder's
   refs under the write right.
-- The local namespaces (`kai-local-*` for a workspace's operations, the machine's own for its user,
-  orgs and projects) are never exposed to any peer.
+- The local namespaces (`kai-local-*` for a workspace's operations and a node's waiting users, the
+  machine's own for its user, orgs and projects) are never exposed to any peer.
 
 ## The connection ladder
 

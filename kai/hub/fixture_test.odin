@@ -126,13 +126,20 @@ fixture_store :: proc(t:^testing.T,f:^Fixture,folder:string) -> bool {
     testing.expect_value(t,kai.machine_publish_refs(a,f.private,{{"main",f.rq}}),kai.Error.None)
 
     ctx:=user_head(a)
+    oc:store.Hash
+    {
+        o:kai.Org_State
+        testing.expect_value(t,kai.org_state_load(&a.store,f.org,&o,context.temp_allocator),kai.Error.None)
+        oc=kai.org_context(&o.fold,a.user)
+        kai.org_state_destroy(&o)
+    }
     l:kai.Log
     kai.log_init(&l,{},context.temp_allocator)
-    _,e=kai.proposal_open(&l,f.public,"main","Rewrite a","Two takes of a.",&a.identity,50,ctx)
+    _,e=kai.proposal_open(&l,f.public,"main","Rewrite a","Two takes of a.",&a.identity,50,ctx,oc)
     testing.expect_value(t,e,kai.Error.None)
-    _,e=kai.proposal_revise(&l,{{f.change,f.r2}},&a.identity,51,ctx)
+    _,e=kai.proposal_revise(&l,{{f.change,f.r2}},&a.identity,51,ctx,oc)
     testing.expect_value(t,e,kai.Error.None)
-    _,e=kai.proposal_revise(&l,{{f.change,f.r3}},&a.identity,52,ctx)
+    _,e=kai.proposal_revise(&l,{{f.change,f.r3}},&a.identity,52,ctx,oc)
     testing.expect_value(t,e,kai.Error.None)
     _,e=kai.log_save(&a.store,&l)
     testing.expect_value(t,e,kai.Error.None)

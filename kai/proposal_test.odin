@@ -64,6 +64,20 @@ org_refold :: proc(t:^testing.T,o:^Test_Org) {
     testing.expect_value(t,org_fold(&o.fold,&o.org,o.users[:]),Error.None)
 }
 
+// The org's entry a member signs the project's and proposals' entries under now.
+@(private="file")
+at :: proc(o:^Test_Org) -> store.Hash {return test_heads(&o.org)[0]}
+
+@(private="file")
+proposal_check_body_of :: proc(revision:Revision,name:string,state:Check_State) -> []u8 {
+    body,_:=proposal_check_body(revision,name,state,{0=7})
+    return body
+}
+
+// Saves l to s, as a peer that holds it does.
+@(private="file")
+machine_log_put :: proc(s:^store.Store,l:^Log) -> (store.Hash,Error) {return log_save(s,l)}
+
 @(private="file")
 expect_ok :: proc(t:^testing.T,_:store.Hash,e:Error,loc:=#caller_location) {
     testing.expect_value(t,e,Error.None,loc=loc)
@@ -107,17 +121,17 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
 
     l:Log
     log_init(&l);defer log_destroy(&l)
-    expect_ok(t,proposal_open(&l,o.project.id,"main","Five","adds five",bob,20))
-    expect_ok(t,proposal_revise(&l,{{x,r1}},bob,21))
-    shifted,e1:=proposal_comment(&l,{kind=.Lines,line=3,lines=1},"a.txt",x,{},"why three?",carol,22)
-    gone,e2:=proposal_comment(&l,{kind=.Lines,line=2,lines=1},"a.txt",x,shifted,"two goes",carol,22)
-    on_42,e3:=proposal_comment(&l,{kind=.Structural,key=42,field=1},"world.scene",x,{},"the door",carol,22)
-    on_7,e4:=proposal_comment(&l,{kind=.Structural,key=7,field=1},"world.scene",x,{},"the lamp",carol,22)
-    whole,e5:=proposal_comment(&l,{kind=.File},"a.txt",x,{},"the file",carol,22)
-    general,e6:=proposal_comment(&l,{kind=.File},"",{},{},"looks good",carol,22)
-    on_text,e7:=proposal_comment(&l,{kind=.Structural,key=7,field=1},"a.txt",x,{},"not a scene",carol,22)
+    expect_ok(t,proposal_open(&l,o.project.id,"main","Five","adds five",bob,20,{},at(&o)))
+    expect_ok(t,proposal_revise(&l,{{x,r1}},bob,21,{},at(&o)))
+    shifted,e1:=proposal_comment(&l,{kind=.Lines,line=3,lines=1},"a.txt",x,{},"why three?",carol,22,{},at(&o))
+    gone,e2:=proposal_comment(&l,{kind=.Lines,line=2,lines=1},"a.txt",x,shifted,"two goes",carol,22,{},at(&o))
+    on_42,e3:=proposal_comment(&l,{kind=.Structural,key=42,field=1},"world.scene",x,{},"the door",carol,22,{},at(&o))
+    on_7,e4:=proposal_comment(&l,{kind=.Structural,key=7,field=1},"world.scene",x,{},"the lamp",carol,22,{},at(&o))
+    whole,e5:=proposal_comment(&l,{kind=.File},"a.txt",x,{},"the file",carol,22,{},at(&o))
+    general,e6:=proposal_comment(&l,{kind=.File},"",{},{},"looks good",carol,22,{},at(&o))
+    on_text,e7:=proposal_comment(&l,{kind=.Structural,key=7,field=1},"a.txt",x,{},"not a scene",carol,22,{},at(&o))
     testing.expect(t,e1==.None && e2==.None && e3==.None && e4==.None && e5==.None && e6==.None && e7==.None)
-    expect_ok(t,proposal_verdict(&l,.Approve,r1,alice,23))
+    expect_ok(t,proposal_verdict(&l,.Approve,r1,alice,23,{},at(&o)))
 
     f:Proposal_Fold
     defer proposal_fold_destroy(&f)
@@ -128,7 +142,7 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
     // A rewrite: two lines before, "two" deleted, entity 7 removed.
     A2,SCENE2::"zero\nhalf\none\nthree\nfour\nfive\n","entity 42\nentity 9\n"
     r2:=revision_of(t,&s,bob,x,base,{{"a.txt",A2},{"world.scene",SCENE2}})
-    expect_ok(t,proposal_revise(&l,{{x,r2}},bob,30))
+    expect_ok(t,proposal_revise(&l,{{x,r2}},bob,30,{},at(&o)))
     review_fold(t,&s,&f,&l,&o.fold)
     testing.expect_value(t,f.revision,r2)
     testing.expect_value(t,f.approvals,0)
@@ -151,10 +165,10 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
 
     // Approved again, then rebased onto a base that adds an unrelated file:
     // the edits are the same, so the approval carries over.
-    expect_ok(t,proposal_verdict(&l,.Approve,r2,alice,31))
+    expect_ok(t,proposal_verdict(&l,.Approve,r2,alice,31,{},at(&o)))
     base2:=revision_of(t,&s,bob,random_id(Change_Id),base,{{"a.txt",A0},{"b.txt","bee\n"},{"world.scene",SCENE0}})
     r3:=revision_of(t,&s,bob,x,base2,{{"a.txt",A2},{"b.txt","bee\n"},{"world.scene",SCENE2}})
-    expect_ok(t,proposal_revise(&l,{{x,r3}},bob,40))
+    expect_ok(t,proposal_revise(&l,{{x,r3}},bob,40,{},at(&o)))
     review_fold(t,nil,&f,&l,&o.fold)
     testing.expect_value(t,f.approvals,0)
     testing.expect_value(t,proposal_settle(&s,&f),Error.None)
@@ -164,7 +178,7 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
 
     // The same edit on another file breaks the carry-over.
     r4:=revision_of(t,&s,bob,x,base2,{{"a.txt",A2},{"b.txt","bees\n"},{"world.scene",SCENE2}})
-    expect_ok(t,proposal_revise(&l,{{x,r4}},bob,50))
+    expect_ok(t,proposal_revise(&l,{{x,r4}},bob,50,{},at(&o)))
     review_fold(t,&s,&f,&l,&o.fold)
     testing.expect_value(t,f.approvals,0)
 
@@ -188,7 +202,7 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
     testing.expect_value(t,e,Error.Invalid_Argument)
     _,e=proposal_open_body(o.project.id,"","t","")
     testing.expect_value(t,e,Error.Invalid_Argument)
-    _,e=proposal_open(&l,o.project.id,"main","again","",bob,60)
+    _,e=proposal_open(&l,o.project.id,"main","again","",bob,60,{},at(&o))
     testing.expect_value(t,e,Error.Invalid_Argument)
 }
 
@@ -231,31 +245,34 @@ landing_enforces_policy_and_zero_conflicts :: proc(t:^testing.T) {
         testing.expect_value(t,e,Error.None)
         return refusal
     }
-    expect_ok(t,proposal_open(&l,o.project.id,"main","Two","",bob,20))
+    expect_ok(t,proposal_open(&l,o.project.id,"main","Two","",bob,20,{},at(&o)))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Unrevised)
-    expect_ok(t,proposal_revise(&l,{{x,rc}},bob,21))
-    expect_ok(t,proposal_verdict(&l,.Approve,rc,alice,22))
-    expect_ok(t,proposal_check(&l,rc,"ci",.Passed,{0=1},bob,22))
+    expect_ok(t,proposal_revise(&l,{{x,rc}},bob,21,{},at(&o)))
+    expect_ok(t,proposal_verdict(&l,.Approve,rc,alice,22,{},at(&o)))
+    expect_ok(t,proposal_check(&l,rc,"ci",.Passed,{0=1},bob,22,{},at(&o)))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Conflicts)
 
-    expect_ok(t,proposal_revise(&l,{{x,r1}},bob,30))
+    expect_ok(t,proposal_revise(&l,{{x,r1}},bob,30,{},at(&o)))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Approvals)
-    expect_ok(t,proposal_verdict(&l,.Approve,r1,alice,31))
+    expect_ok(t,proposal_verdict(&l,.Approve,r1,alice,31,{},at(&o)))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
-    expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=2},carol,32))
+    expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=2},carol,32,{},at(&o)))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
     runner:=identity_make()
-    expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=5},&runner,32))
-    testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
+    before_grant:=at(&o)
     grant:=Grant{head={org=o.org.id,org_head=test_heads(&o.org)[0],issuer=alice.key,subject_key=runner.key,rights={.Check},project=o.project.id,not_before=0,not_after=1000}}
     grant_bytes,ge:=grant_encode(&grant,alice,context.temp_allocator)
     testing.expect_value(t,ge,Error.None)
     expect_ok(t,log_append(&o.org,.Grant,grant_bytes,alice,15))
     org_refold(t,&o)
-    testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.None)
-    expect_ok(t,proposal_check(&l,r1,"ci",.Failed,{0=3},bob,33))
+    // A check under the grant counts only when signed under an org entry that holds the grant.
+    expect_ok(t,log_append(&l,.Proposal_Check,proposal_check_body_of(r1,"ci",.Passed),&runner,32,{},before_grant))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
-    expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=4},bob,34))
+    expect_ok(t,log_append(&l,.Proposal_Check,proposal_check_body_of(r1,"ci",.Passed),&runner,32,{},at(&o)))
+    testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.None)
+    expect_ok(t,proposal_check(&l,r1,"ci",.Failed,{0=3},bob,33,{},at(&o)))
+    testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Checks)
+    expect_ok(t,proposal_check(&l,r1,"ci",.Passed,{0=4},bob,34,{},at(&o)))
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.None)
 
     // A copy of the log with a forged entry does not land.
@@ -263,7 +280,7 @@ landing_enforces_policy_and_zero_conflicts :: proc(t:^testing.T) {
         forged_log:Log
         log_init(&forged_log,l.id);defer log_destroy(&forged_log)
         for item in l.items {log_add(&forged_log,item.bytes,false)}
-        d:=Draft{type=.Proposal_Verdict,log_id=l.id,parents=test_heads(&l),time=35,body=body_make(Proposal_Verdict_Body{verdict=.Approve,revision=r1})}
+        d:=Draft{type=.Proposal_Verdict,log_id=l.id,parents=test_heads(&l),org_ctx=at(&o),time=35,body=body_make(Proposal_Verdict_Body{verdict=.Approve,revision=r1})}
         forged,_,_:=entry_sign(&d,carol,context.temp_allocator)
         forged[len(forged)-1]~=1
         _,e:=log_add(&forged_log,forged,false)
@@ -275,28 +292,48 @@ landing_enforces_policy_and_zero_conflicts :: proc(t:^testing.T) {
 
     project:Project_Fold
     testing.expect_value(t,project_fold(&project,&o.project,&o.fold),Error.None)
-    move,refusal,le:=proposal_land(&s,&f,&project,bob,40)
+    pre_land:=slice.clone(test_heads(&l),context.temp_allocator)
+    move,refusal,le:=proposal_land(&s,&f,&project,bob,40,{},at(&o))
     project_fold_destroy(&project)
     testing.expect(t,le==.None && refusal==.None,"the proposal lands")
     testing.expect_value(t,can_land(t,&s,&f,&l,&o),Land_Refusal.Not_Open)
     testing.expect_value(t,f.status,Proposal_Status.Landed)
 
-    // Every peer folds the move as valid; a move around the policy, and one
-    // to a conflicted revision that a proposal approved, as not.
+    // Every peer folds the move as valid, whatever becomes of the proposal
+    // after: revised, approved otherwise, reopened; a move around the
+    // policy, and one to a conflicted revision that a proposal approved, as not.
+    {
+        // Concurrent with the landing, so they count in the proposal's fold.
+        revise_body,_:=proposal_revise_body({{x,rc}})
+        verdict_body,_:=proposal_verdict_body(.Changes,r1)
+        expect_ok(t,log_append(&l,.Proposal_Revise,revise_body,bob,42,{},at(&o),pre_land))
+        expect_ok(t,log_append(&l,.Proposal_Verdict,verdict_body,alice,43,{},at(&o),pre_land))
+        expect_ok(t,machine_log_put(&s,&l))
+        snaps:=make([dynamic]^Proposal_Fold,context.temp_allocator)
+        testing.expect_value(t,project_snapshots(&s,&o.project,&o.fold,&snaps),Error.None)
+        defer project_snapshots_destroy(&snaps)
+        later:Project_Fold
+        testing.expect_value(t,project_fold(&later,&o.project,&o.fold,snaps[:]),Error.None)
+        defer project_fold_destroy(&later)
+        testing.expect(t,later.valid[log_find(&o.project,move)],"a landed move stays when its proposal changes after")
+    }
     l2:Log
     log_init(&l2);defer log_destroy(&l2)
-    expect_ok(t,proposal_open(&l2,o.project.id,"main","Conflicted","",bob,41))
-    expect_ok(t,proposal_revise(&l2,{{x,rc}},bob,42))
-    expect_ok(t,proposal_verdict(&l2,.Approve,rc,alice,43))
-    expect_ok(t,proposal_check(&l2,rc,"ci",.Passed,{0=6},bob,43))
+    expect_ok(t,proposal_open(&l2,o.project.id,"main","Conflicted","",bob,41,{},at(&o)))
+    expect_ok(t,proposal_revise(&l2,{{x,rc}},bob,42,{},at(&o)))
+    expect_ok(t,proposal_verdict(&l2,.Approve,rc,alice,43,{},at(&o)))
+    expect_ok(t,proposal_check(&l2,rc,"ci",.Passed,{0=6},bob,43,{},at(&o)))
     f2:Proposal_Fold
     defer proposal_fold_destroy(&f2)
     review_fold(t,&s,&f2,&l2,&o.fold)
     testing.expect(t,f2.conflicted && f2.approvals==1 && len(f2.checks)==1,"the conflicted stack is approved and checked")
-    proposals:=[]^Proposal_Fold{&f,&f2}
-    expect_ok(t,log_append(&o.project,.Bookmark_Move,body_make(Bookmark_Move_Body{to=rc,from=1},slice.to_bytes([]Revision{r1}),transmute([]u8)string("main")),alice,44))
-    expect_ok(t,log_append(&o.project,.Bookmark_Move,body_make(Bookmark_Move_Body{to=rc,proposal=l2.id,from=1},slice.to_bytes([]Revision{r1}),transmute([]u8)string("main")),bob,45))
-    testing.expect_value(t,project_fold(&project,&o.project,&o.fold,proposals),Error.None)
+    expect_ok(t,machine_log_put(&s,&l2))
+    expect_ok(t,log_append(&o.project,.Bookmark_Move,move_body("main",{r1},rc),alice,44,{},at(&o)))
+    expect_ok(t,log_append(&o.project,.Bookmark_Move,move_body("main",{r1},rc,l2.id,test_heads(&l2)),bob,45,{},at(&o)))
+    proposals:=make([dynamic]^Proposal_Fold,context.temp_allocator)
+    testing.expect_value(t,project_snapshots(&s,&o.project,&o.fold,&proposals),Error.None)
+    defer project_snapshots_destroy(&proposals)
+    testing.expect_value(t,project_fold(&project,&o.project,&o.fold,proposals[:]),Error.None)
     defer project_fold_destroy(&project)
     targets:=make([dynamic]Revision,context.temp_allocator)
     project_bookmark(&project,"main",&targets)
@@ -454,14 +491,15 @@ webauthn_login_and_signed_verdict_verify_offline :: proc(t:^testing.T) {
 
     bob:=&o.bob.devices[0]
     revision:=Revision{0=9}
+    oc:=at(&o)
     l:Log
     log_init(&l);defer log_destroy(&l)
-    expect_ok(t,proposal_open(&l,o.project.id,"main","Web","",bob,20))
-    expect_ok(t,proposal_revise(&l,{{random_id(Change_Id),revision}},bob,21))
+    expect_ok(t,proposal_open(&l,o.project.id,"main","Web","",bob,20,{},at(&o)))
+    expect_ok(t,proposal_revise(&l,{{random_id(Change_Id),revision}},bob,21,{},at(&o)))
 
     web_key:=web_key_id(passkey_key,RP)
-    browser_sign :: proc(t:^testing.T,l:^Log,p:^Passkey,cose:[]u8,web_key:Key,type:Entry_Type,body:[]u8,author_ctx:store.Hash,time:i64) -> []u8 {
-        d:=Draft{type=type,log_id=l.id,parents=test_heads(l),author_ctx=author_ctx,time=time,body=body}
+    browser_sign :: proc(t:^testing.T,l:^Log,p:^Passkey,cose:[]u8,web_key:Key,type:Entry_Type,body:[]u8,author_ctx,org_ctx:store.Hash,time:i64) -> []u8 {
+        d:=Draft{type=type,log_id=l.id,parents=test_heads(l),author_ctx=author_ctx,org_ctx=org_ctx,time=time,body=body}
         unsigned,challenge,e:=entry_webauthn_begin(&d,web_key,context.temp_allocator)
         testing.expect_value(t,e,Error.None)
         a:=passkey_assert(p,RP,ORIGIN,challenge[:])
@@ -470,15 +508,15 @@ webauthn_login_and_signed_verdict_verify_offline :: proc(t:^testing.T) {
         return bytes
     }
     verdict_body,_:=proposal_verdict_body(.Approve,revision)
-    verdict:=browser_sign(t,&l,&passkey,passkey_key,web_key,.Proposal_Verdict,verdict_body,ctx,30)
+    verdict:=browser_sign(t,&l,&passkey,passkey_key,web_key,.Proposal_Verdict,verdict_body,ctx,oc,30)
     comment_body,_:=proposal_comment_body({kind=.File},"",{},{},"before the key")
-    early:=browser_sign(t,&l,&passkey,passkey_key,web_key,.Proposal_Comment,comment_body,alice_genesis,30)
+    early:=browser_sign(t,&l,&passkey,passkey_key,web_key,.Proposal_Comment,comment_body,alice_genesis,oc,30)
     stranger:=passkey_make(.EdDSA)
     stranger_key:=passkey_cose(&stranger)
-    unknown:=browser_sign(t,&l,&stranger,stranger_key,web_key_id(stranger_key,RP),.Proposal_Comment,comment_body,ctx,30)
+    unknown:=browser_sign(t,&l,&stranger,stranger_key,web_key_id(stranger_key,RP),.Proposal_Comment,comment_body,ctx,oc,30)
 
     {
-        d:=Draft{type=.Proposal_Verdict,log_id=l.id,parents=test_heads(&l),author_ctx=ctx,time=31,body=verdict_body}
+        d:=Draft{type=.Proposal_Verdict,log_id=l.id,parents=test_heads(&l),author_ctx=ctx,org_ctx=oc,time=31,body=verdict_body}
         unsigned,_,_:=entry_webauthn_begin(&d,web_key,context.temp_allocator)
         replayed:=passkey_assert(&passkey,RP,ORIGIN,{1,2,3})
         _,_,e:=entry_webauthn_finish(unsigned,passkey_key,RP,&replayed,context.temp_allocator)
@@ -490,7 +528,7 @@ webauthn_login_and_signed_verdict_verify_offline :: proc(t:^testing.T) {
     // An ES256 signature verifies with s and with n-s: a write keeps only the low one, so
     // the two give one entry and one address.
     {
-        d:=Draft{type=.Proposal_Comment,log_id=l.id,parents=test_heads(&l),author_ctx=ctx,time=32,body=comment_body}
+        d:=Draft{type=.Proposal_Comment,log_id=l.id,parents=test_heads(&l),author_ctx=ctx,org_ctx=oc,time=32,body=comment_body}
         unsigned,challenge,_:=entry_webauthn_begin(&d,web_key,context.temp_allocator)
         high:Web_Assertion
         for _ in 0..<64 {
@@ -540,10 +578,119 @@ webauthn_login_and_signed_verdict_verify_offline :: proc(t:^testing.T) {
     testing.expect(t,!f.valid[log_find(&peer,store.address_of_bytes(early))],"an author_ctx before the key was added does not count")
     testing.expect(t,!f.valid[log_find(&peer,store.address_of_bytes(unknown))],"a passkey no user added does not count")
 
-    // Revoked with no horizon in the proposal's log, the passkey's verdict stops counting.
-    expect_ok(t,log_append(&o.alice.log,.Device_Revoke,revoke_body(web_key,{}),&o.alice.recovery,40))
+    // Revoked, the passkey's verdict stands until a witness reaches the
+    // proposal's log, and then as what came before it; what it signs after
+    // counts nowhere.
+    revoke,_:=log_append(&o.alice.log,.Device_Revoke,revoke_body(web_key),&o.alice.recovery,40)
     org_refold(t,&o)
     proposal_fold_destroy(&f)
     testing.expect_value(t,proposal_fold(&f,&peer,&o.fold),Error.None)
-    testing.expect_value(t,f.approvals,0)
+    testing.expect_value(t,f.approvals,1)
+    expect_ok(t,log_append(&peer,.Witness,witness_body(o.alice.log.id,revoke),bob,41,{},at(&o)))
+    withdraw_body,_:=proposal_verdict_body(.Withdraw,revision)
+    late:=browser_sign(t,&peer,&passkey,passkey_key,web_key,.Proposal_Verdict,withdraw_body,ctx,oc,42)
+    _,e:=log_add(&peer,late,true)
+    testing.expect_value(t,e,Error.None)
+    proposal_fold_destroy(&f)
+    testing.expect_value(t,proposal_fold(&f,&peer,&o.fold),Error.None)
+    testing.expect_value(t,f.approvals,1)
+    testing.expect(t,!f.valid[log_find(&peer,store.address_of_bytes(late))],"a revoked passkey's entry after the witness counts nowhere")
+}
+
+// A check under a grant is judged by the grant's validity at the check's
+// time, which is never before its causal past: an expired grant cannot sign
+// one that counts by claiming an old time, a check counts for the revision of
+// the last Revise in its causal past, and a revocation keeps the checks made
+// before it reached the proposal and voids the later ones.
+@(test)
+a_grant_signs_checks_only_while_it_holds :: proc(t:^testing.T) {
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    alice,bob:=&o.alice.devices[0],&o.bob.devices[0]
+    runner:=identity_make()
+    grant_of :: proc(t:^testing.T,o:^Test_Org,issuer:^Identity,runner:Key,not_after:i64) -> []u8 {
+        g:=Grant{head={org=o.org.id,org_head=test_heads(&o.org)[0],issuer=issuer.key,subject_key=runner,rights={.Check},project=o.project.id,not_before=0,not_after=not_after}}
+        bytes,e:=grant_encode(&g,issuer,context.temp_allocator)
+        testing.expect_value(t,e,Error.None)
+        return bytes
+    }
+    expect_ok(t,log_append(&o.org,.Grant,grant_of(t,&o,alice,runner.key,50),alice,15))
+    org_refold(t,&o)
+    r1,r2:=Revision{0=1},Revision{0=2}
+    x:=random_id(Change_Id)
+    l:Log
+    log_init(&l);defer log_destroy(&l)
+    expect_ok(t,proposal_open(&l,o.project.id,"main","Checks","",bob,20,{},at(&o)))
+    before_revise:=slice.clone(test_heads(&l),context.temp_allocator)
+    expect_ok(t,proposal_revise(&l,{{x,r1}},bob,100,{},at(&o)))
+    f:Proposal_Fold
+    defer proposal_fold_destroy(&f)
+    // Claimed at 10, it builds on a Revise at 100: past the grant's end at 50.
+    stale,_:=log_append(&l,.Proposal_Check,proposal_check_body_of(r1,"ci",.Passed),&runner,10,{},at(&o))
+    review_fold(t,nil,&f,&l,&o.fold)
+    testing.expect(t,!f.valid[log_find(&l,stale)] && len(f.checks)==0,"an expired grant signs no check that counts")
+
+    expect_ok(t,log_append(&o.org,.Grant,grant_of(t,&o,alice,runner.key,1000),alice,16))
+    org_refold(t,&o)
+    held,_:=log_append(&l,.Proposal_Check,proposal_check_body_of(r1,"ci",.Passed),&runner,110,{},at(&o))
+    blind,_:=log_append(&l,.Proposal_Check,proposal_check_body_of(r1,"lint",.Passed),&runner,111,{},at(&o),before_revise)
+    review_fold(t,nil,&f,&l,&o.fold)
+    testing.expect(t,f.valid[log_find(&l,held)] && len(f.checks)==1 && f.checks[0].name=="ci","a check under the grant in force counts")
+    testing.expect(t,f.valid[log_find(&l,blind)],"a check that saw no Revise is signed under the grant")
+
+    // Revoked: the check before the witness stands, the one after it does not.
+    grant:=o.fold.granted[len(o.fold.granted)-1]
+    revoke,_:=log_append(&o.org,.Grant_Revoke,body_make(Subject_Body{subject=grant.address}),alice,17)
+    org_refold(t,&o)
+    review_fold(t,nil,&f,&l,&o.fold)
+    testing.expect(t,f.valid[log_find(&l,held)],"a revocation not witnessed here keeps the log as it was")
+    expect_ok(t,log_append(&l,.Witness,witness_body(o.org.id,revoke),bob,120,{},at(&o)))
+    after,_:=log_append(&l,.Proposal_Check,proposal_check_body_of(r1,"ci",.Failed),&runner,121,{},test_heads(&o.org)[0])
+    review_fold(t,nil,&f,&l,&o.fold)
+    testing.expect(t,f.valid[log_find(&l,held)] && !f.valid[log_find(&l,after)],"what came before the witness stands; what came after does not")
+    testing.expect(t,len(f.checks)==1 && f.checks[0].state==.Passed)
+    expect_ok(t,proposal_revise(&l,{{x,r2}},bob,130,{},at(&o)))
+    review_fold(t,nil,&f,&l,&o.fold)
+    testing.expect_value(t,len(f.checks),0)
+}
+
+// A writer removed from the org keeps what it did: its moves of a shared
+// bookmark and its approvals stand and main does not move back, while what it
+// signs after the removal reached those logs, under an old org entry, counts
+// nowhere.
+@(test)
+a_removed_writer_keeps_its_past :: proc(t:^testing.T) {
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    alice,bob:=&o.alice.devices[0],&o.bob.devices[0]
+    old:=at(&o)
+    m1:=test_move(t,&o.project,"main",{0=1},bob,old,20)
+    l:Log
+    log_init(&l);defer log_destroy(&l)
+    expect_ok(t,proposal_open(&l,o.project.id,"main","Bob's","",alice,21,{},old))
+    expect_ok(t,proposal_revise(&l,{{random_id(Change_Id),{0=2}}},alice,22,{},old))
+    approval,_:=proposal_verdict(&l,.Approve,{0=2},bob,23,{},old)
+
+    removal,e:=log_append(&o.org,.Member_Remove,body_make(Subject_Body{subject=o.bob.log.id}),alice,30)
+    testing.expect_value(t,e,Error.None)
+    org_refold(t,&o)
+    test_witness(t,&o.project,o.org.id,removal,alice,at(&o),31)
+    test_witness(t,&l,o.org.id,removal,alice,at(&o),32)
+
+    // After the witness, bob signs under the org's entry from before his removal.
+    m2:=test_move(t,&o.project,"main",{0=3},bob,old,33,nil,{{0=1}})
+    late,_:=proposal_verdict(&l,.Changes,{0=2},bob,34,{},old)
+
+    p:Project_Fold
+    testing.expect_value(t,project_fold(&p,&o.project,&o.fold),Error.None)
+    defer project_fold_destroy(&p)
+    targets:=make([dynamic]Revision,context.temp_allocator)
+    project_bookmark(&p,"main",&targets)
+    testing.expect(t,p.valid[log_find(&o.project,m1)] && !p.valid[log_find(&o.project,m2)],"the move before stands, the backdated one does not")
+    testing.expect(t,len(targets)==1 && targets[0]==Revision{0=1},"main stays where bob moved it")
+    f:Proposal_Fold
+    defer proposal_fold_destroy(&f)
+    testing.expect_value(t,proposal_fold(&f,&l,&o.fold),Error.None)
+    testing.expect(t,f.valid[log_find(&l,approval)] && !f.valid[log_find(&l,late)],"the approval stands, the later verdict does not")
+    testing.expect_value(t,f.approvals,1)
 }

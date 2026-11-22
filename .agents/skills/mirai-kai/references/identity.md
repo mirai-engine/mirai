@@ -7,7 +7,14 @@ and `kai/refs_ddc.odin`.
 ## Keys
 
 - A **user** is a log (`User_Log`), not an account: no email, no password, no OAuth. Its genesis
-  holds a recovery key `R`, the first device and its name.
+  holds a recovery key `R`, the first device and its name; or, for a user born in a browser
+  (`Passkey_Genesis`), only the passkey that signs it.
+- A user born of a passkey has no recovery key and no device: the page that makes it generates
+  no key. Its passkey may link devices and passkeys (`Device_Add`, `Web_Key_Add`) while it has no
+  recovery key, and nothing else of the user's log; its first device sets the recovery key
+  (`Recovery_Rotate` signed by a device when the user has none). Until then the user acts with at
+  most a writer's rights in any org: it reads, comments, approves and signs checks, and holds no
+  admin or owner right, whatever role an admin gives it.
 - A **device** (a machine, a node or a browser's passkey) has an Ed25519 signing key and an X25519
   key. A machine makes them the first time it opens its store and keeps the seeds in owner-only
   files at the store's root, beside the objects they sign for; a copy of the store is a copy of the
@@ -31,9 +38,16 @@ and `kai/refs_ddc.odin`.
   DAG and one fold. An entry names up to eight parents by address (the BLAKE3 of its bytes); a log's
   id is the address of its genesis. An entry has its author's key and the head of the author's user
   log when it signed (`author_ctx`), so a peer can tell whether the device was active then.
-- The entries of a log are kept as one object under `kai-log/<id>` (`kai-user/<id>` for a user,
-  because a peer not admitted yet must read it to prove who it is). Peers merge by union of verified
-  entries: an entry that does not verify is skipped and the rest are taken.
+- An entry of a project's, a proposal's or a keyring's log also names the entry of the org's log
+  it was signed under (`org_ctx`): its author's rights are judged there, never in the org's state
+  of now.
+- A log is kept as pages of a trie by entry address under a small index (kind, count, root page,
+  heads) that the ref `kai-log/<id>` names (`kai-user/<id>` for a user, because a peer not
+  admitted yet must read it to prove who it is). A leaf of more than `LOG_PAGE_ENTRIES` entries
+  splits by the next byte, so the pages are a function of the entries alone: peers holding the
+  same entries hold the same index, and an append rewrites one leaf, the branches above it and
+  the index. A peer fetches the pages it lacks and merges by union of verified entries: an entry
+  that does not verify is skipped and the rest are taken.
 - Every kind of entry has a body whose fixed part is a packed struct and whose tail holds strings;
   whether a body is well formed is checked before the fold sees it. `GET /api/entries` on a node
   lays the bytes out for clients that sign in a browser.
@@ -49,19 +63,39 @@ and `kai/refs_ddc.odin`.
 
 ## Folding and revocation
 
-- Every peer folds the same entries to the same state: a topological walk, ties by address. An entry
-  counts only if its author held the right in the state of its causal past. The walk runs again
-  while a void changes who holds a right, which ends because the voided set only grows.
+- Every peer folds the same entries to the same state: one walk of a topological order, ties by
+  address. In a user's or the org's log an entry counts only if its author held the right in the
+  state of its causal past, which the walk replays per subject from the entries before it.
+  Ancestry is a lookup in chain clocks, so a log folds in near-linear time; the worst case is a
+  removal that voids entries the walk passed, which walks again from the first of them.
 - A removal voids what its subject wrote concurrently, and the removal itself is never voided, so
   two admins who remove each other both go (`concurrent_admin_removals_fold_deterministically`).
-- A `Device_Revoke` names, for each log the device signed in, the heads whose causal past its
-  entries must be in. Whatever the device signs later, backdated or not, is outside that past and
-  counts nowhere (`revocation_horizon_rejects_backdated_entries`). That is how a stolen device is
-  stopped with no clock and no server; a revoked device stays in the log so it cannot be added
-  again.
-- An org's member removal is in the org's own DAG, so its causal past is its horizon. A policy
-  guards the moves outside the causal past of the project heads its `Policy_Set` names; the moves
-  inside keep the rules they were made under.
+- In a project's, a proposal's or a keyring's log an entry holds if its author held the right at
+  its `org_ctx`, lowered by each removal or lowering `Role_Set` of the author that `org_ctx` does
+  not hold and that the entry does not stand against.
+- **Witnesses.** A removal says nothing of other logs: a `User_Log` names no org, project or
+  proposal. What it affects in another log (a `Device_Revoke` there, a `Member_Remove`, a lowering
+  `Role_Set` or a `Grant_Revoke` in the org's other logs) reaches that log as a `Witness` entry,
+  written by a key that holds a right there when it first sees the removal: the machine that
+  removes, with every head it knows, and any member's agent that finds a removal a log lacks. In
+  that log an entry by the affected key stands if and only if it is in the causal past of a valid
+  witness; with none yet, the removal has not reached the log and its entries stand
+  (`revocation_witness_rejects_backdated_entries`, `a_removed_writer_keeps_its_past`,
+  `removing_a_keyring_signer_keeps_its_epochs`).
+- A witness is valid when it names a valid removal, its author is not affected by it and holds a
+  right in the log (a member in the org's and a proposal's log, a writer in a project's and a
+  keyring's), and no valid witness of that removal is in its causal past. Witnesses unite: a
+  dishonest one written on old heads cannot void what an honest one holds, and an entry signed
+  after every witness counts nowhere. An agent's witness builds on what other keys signed, so an
+  entry of the removed key that no one built on stays out; an entry signed after the removal gets
+  in only if a key holding a right there builds on it before it sees the removal, as it could sign
+  its own.
+- A revoked device stays in its user's log so it cannot be added again; there, its entries count
+  only in the causal past of the revocation.
+- A policy guards the moves outside the causal past of the project heads its `Policy_Set` names;
+  the moves inside keep the rules they were made under.
+- An entry's time is the signer's, but never before its causal past or its `org_ctx`: what the
+  fold reads as its time is the latest of them.
 - What is void is decided by the fold and never by arrival time: a peer that was offline merges what
   it missed and finds the same state every other peer has.
 
@@ -101,9 +135,13 @@ and `kai/refs_ddc.odin`.
 
 - A grant gives a key outside the org some rights for at most thirty days: org, org head, issuer,
   the subject's X25519 key, rights (read, write, ddc, check, relay), project, a path scope and its
-  end. It is verified against the org's log (issued by an admin at that head and still one, within
-  the issuer's rights, not expired, not revoked), so a revoked or expired grant cuts its holder off
-  at that moment, with `Revoked` on the connection.
+  end. For a connection or a record it is verified against the org's log now (issued by an admin
+  at that head and still one, within the issuer's rights, not expired, not revoked), so a revoked
+  or expired grant cuts its holder off at that moment, with `Revoked` on the connection.
+- An entry a holder signs under a grant (a check) is judged as of its signing: the grant is in the
+  causal past of the entry's `org_ctx` with its issuer an admin there, the entry's time (never
+  before its causal past) is inside the grant, and a revocation of the grant, or a removal of its
+  issuer, voids it only through a witness as above (`a_grant_signs_checks_only_while_it_holds`).
 - The issuer hands it over as text with its agent's X25519 key and addresses; the holder's agent
   reaches the issuer first and is admitted as `Grant`. A holder is never a member, so it connects to
   every peer itself.

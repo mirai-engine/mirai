@@ -13,8 +13,8 @@ import "mirai:store"
 
 // The pure modules of the frontend (web/blake3.js and web/entry.js) run
 // under the system's node against what this side makes: BLAKE3 across chunk
-// and tree boundaries, recovery texts, web key ids, the credential of an
-// authenticator's data, a new user's first entries, the entry layout of
+// and tree boundaries, devices' link codes, web key ids, the credential of an
+// authenticator's data, a new user's Passkey_Genesis, the entry layout of
 // GET /api/entries, and the server's draft of every write a browser makes,
 // which the check takes, and tampered or mismatched drafts it refuses.
 // Without node the run is reported skipped.
@@ -36,17 +36,6 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         for &x,k in input {x=u8(k%251)}
         fmt.sbprintf(&b,`%s{{"size":%d,"hash":"%s"}}`,i>0?",":"",n,hex_of(store.address_of_bytes(input)))
     }
-    fmt.sbprint(&b,`],"recovery":[`)
-    for k in 0..<4 {
-        seed:[32]u8
-        switch k {
-        case 1: for &x in seed {x=255}
-        case 2,3: seed=transmute([32]u8)kai.random_id(store.Hash)
-        }
-        buffer:[kai.RECOVERY_TEXT]u8
-        fmt.sbprintf(&b,`%s{{"seed":"%s","text":"%s"}}`,k>0?",":"",hex(seed[:]),kai.recovery_encode(seed,&buffer))
-    }
-
     // Passkeys of both kinds a node takes, and their authenticator data with and without extensions.
     p256:=passkey_make()
     ed:=make([dynamic]u8,context.temp_allocator)
@@ -77,35 +66,36 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         }
     }
 
-    // A new user's genesis and the Web_Key_Add of its passkey, as a browser signs them.
-    recovery,device:kai.Identity
-    recovery.seed=transmute([32]u8)kai.random_id(store.Hash)
-    device.seed=transmute([32]u8)kai.random_id(store.Hash)
-    kai.identity_derive(&recovery)
-    kai.identity_derive(&device)
-    dh:=kai.Dh_Key(kai.random_id(store.Hash))
-    proof:=kai.device_proof(&device,transmute([32]u8)recovery.key)
-    genesis_head:=kai.User_Genesis_Body{recovery=recovery.key,device=device.key,dh=dh,proof=proof}
-    copy(genesis_head.device_name[:],"browser")
-    genesis_body:=kai.body_make(genesis_head,transmute([]u8)string("bob ü"))
+    // A new user's genesis, as a browser builds it for its passkey to sign, and the link codes of devices.
     now:=time.now()._nsec
-    gd:=kai.Draft{type=.User_Genesis,time=now,body=genesis_body}
-    genesis,user,_:=kai.entry_sign(&gd,&recovery,context.temp_allocator)
-    wk,_:=kai.web_key_add_body(p256.credential[:],coses[0],RP)
-    wd:=kai.Draft{type=.Web_Key_Add,log_id=user,parents={user},time=now+1,body=wk}
-    add,_,_:=kai.entry_sign(&wd,&recovery,context.temp_allocator)
-    fmt.sbprintf(&b,`],"user":{{"recovery_seed":"%s","device_seed":"%s","dh":"%s","proof":"%s","name":"bob ü","time":"%d",`,
-        hex(recovery.seed[:]),hex(device.seed[:]),hex(dh[:]),hex(proof[:]),now)
-    fmt.sbprintf(&b,`"genesis":"%s","log":"%s","web_key_add":"%s","credential":"%s","cose":"%s","rp":"%s"}},`,
-        hex(genesis),hex_of(user),hex(add[:len(add)-size_of(kai.Signature)]),b64(p256.credential[:]),b64(coses[0]),RP)
-    a:=call(f,"POST","/api/users",fmt.tprintf(`{{"entries":["%s","%s"]}}`,b64(genesis),b64(add)))
+    body:=kai.body_make(kai.Passkey_Genesis_Body{credential=u8(len(p256.credential)),cose=u16(len(coses[0])),rp=u8(len(RP))},p256.credential[:],coses[0],transmute([]u8)string(RP),transmute([]u8)string("bob ü"))
+    gd:=kai.Draft{type=.Passkey_Genesis,time=now,body=body}
+    unsigned,challenge,_:=kai.entry_webauthn_begin(&gd,kai.web_key_id(coses[0],RP),context.temp_allocator)
+    fmt.sbprintf(&b,`],"user":{{"name":"bob ü","time":"%d","unsigned":"%s","credential":"%s","cose":"%s","rp":"%s"}},"codes":[`,now,hex(unsigned),b64(p256.credential[:]),b64(coses[0]),RP)
+    for k in 0..<4 {
+        device:=kai.Key(kai.random_id(store.Hash))
+        code:[9]u8
+        fmt.sbprintf(&b,`%s{{"device":"%s","code":"%s"}}`,k>0?",":"",hex(device[:]),kai.device_link_code(device,&code))
+    }
+    fmt.sbprint(&b,`],`)
+    a:=call(f,"POST","/api/users",fmt.tprintf(`{{"unsigned":"%s","assertion":%s}}`,b64(unsigned),passkey_assert(&p256,challenge[:])))
     if !testing.expectf(t,a.status==201,"the browser's user is kept: %d %s",a.status,a.body) {return}
+    Made :: struct {user:string}
+    made:Made
+    json_read(t,a,&made)
+    user,_:=hash_parse(made.user)
     testing.expect_value(t,kai.machine_member_add(&f.alice,f.org,user,.Writer),kai.Error.None)
+    f.now+=2
+    f.hub.now=f.now
+    waiting_step(&f.hub)
     cookie:=sign_in(t,f,&p256)
     entries:=call(f,"GET","/api/entries")
     fmt.sbprintf(&b,`"layout":%s,`,entries.body)
 
     // The server's draft of every write a browser makes.
+    device_identity:=kai.identity_make()
+    device_key,device_dh:=device_identity.key,kai.Dh_Key(kai.random_id(store.Hash))
+    device_proof:=kai.device_proof(&device_identity,transmute([32]u8)user)
     P,O:=hex_of(f.proposal),hex_of(f.org)
     change,r1,r3,me:=hex(f.change[:]),hex_of(f.r1),hex_of(f.r3),hex_of(user)
     actions:=[?]string{
@@ -121,6 +111,7 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         fmt.tprintf(`{{"type":"member_add","log":"%s","user":"%s","role":"reader"}}`,O,me),
         fmt.tprintf(`{{"type":"role_set","log":"%s","user":"%s","role":"admin"}}`,O,me),
         fmt.tprintf(`{{"type":"member_remove","log":"%s","user":"%s"}}`,O,me),
+        fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","proof":"%s","name":"laptop"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_proof[:])),
     }
     // What the user asked otherwise than each draft says, by the draft it is checked against.
     Mismatch :: struct {draft:int,action:string}
@@ -133,6 +124,7 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         {9,fmt.tprintf(`{{"type":"member_add","log":"%s","user":"%s","role":"writer"}}`,O,me)},
         {11,fmt.tprintf(`{{"type":"member_remove","log":"%s","user":"%s"}}`,O,P)},
         {1,fmt.tprintf(`{{"type":"proposal_comment","log":"%s","text":"On a file","change":"%s","path":"src/a.txt","anchor":{{"kind":"file"}}}}`,O,change)},
+        {12,fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","proof":"%s","name":"phone"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_proof[:]))},
     }
     Draft_Answer :: struct {unsigned:string}
     drafts:[len(actions)][]u8
@@ -152,11 +144,16 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     for action,i in actions {
         u:=drafts[i]
         Tamper :: struct {name:string,at,value:int}
-        for x in ([?]Tamper{{"the magic",0,'X'},{"the version",4,2},{"the type",6,int(kai.Entry_Type.Proposal_Land)},{"the log",8,-1},{"the author",40,-1},{"the author's context",72,0},{"the signature kind",116,0},{"a reserved byte",118,1}}) {
+        for x in ([?]Tamper{{"the magic",0,'X'},{"the version",4,3},{"the type",6,int(kai.Entry_Type.Proposal_Land)},{"the log",8,-1},{"the author",40,-1},{"the author's context",72,0},{"the org's context",104,0},{"the signature kind",148,0},{"a reserved byte",150,1}}) {
             bad:=make([]u8,len(u),context.temp_allocator)
             copy(bad,u)
             if x.name=="the author's context" {
                 for &c in bad[72:104] {c=0}
+            } else if x.name=="the org's context" {
+                // Zero where it must name an org entry, an entry where none belongs.
+                zeroed:=true
+                for c in bad[104:136] {zeroed&&=c==0}
+                for &c,k in bad[104:136] {c=zeroed?u8(k+1):0}
             } else if x.value<0 {
                 bad[x.at]~=1
             } else {
@@ -166,8 +163,8 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         }
         later:=make([]u8,len(u),context.temp_allocator)
         copy(later,u)
-        stamp,_:=endian.get_i64(later[104:],.Little)
-        endian.put_i64(later[104:],.Little,stamp+2*i64(time.Hour))
+        stamp,_:=endian.get_i64(later[136:],.Little)
+        endian.put_i64(later[136:],.Little,stamp+2*i64(time.Hour))
         refuse(&b,&first,fmt.tprintf("draft %d two hours late",i),action,later)
         orphan:=make([dynamic]u8,context.temp_allocator)
         append(&orphan,..u[:size_of(kai.Entry_Head)])
@@ -178,8 +175,8 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         append(&longer,..u)
         append(&longer,0)
         refuse(&b,&first,fmt.tprintf("draft %d with a byte past its body",i),action,longer[:])
-        length,_:=endian.get_u32(u[112:],.Little)
-        endian.put_u32(longer[112:],.Little,length+1)
+        length,_:=endian.get_u32(u[144:],.Little)
+        endian.put_u32(longer[144:],.Little,length+1)
         refuse(&b,&first,fmt.tprintf("draft %d with a longer body",i),action,longer[:])
         if length>0 {
             flipped:=make([]u8,len(u),context.temp_allocator)
