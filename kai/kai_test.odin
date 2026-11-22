@@ -430,6 +430,13 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     testing.expect_value(t,read(root,"e.txt"),"<missing>")
     testing.expect(t,w.state.target=={},"no switch is left under way")
     _=two
+
+    // The folder opened with a store that never held its repository says so.
+    workspace_close(&w)
+    other,oe:=store.open(strings.concatenate({f.folder,"/other"},context.temp_allocator))
+    testing.expect_value(t,oe,store.Error.None)
+    defer store.close(&other)
+    testing.expect_value(t,workspace_open(&w,root,&other,identity_make()),Error.Other_Store)
 }
 
 // A change splits by paths in one operation: the first half keeps its id,

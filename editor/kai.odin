@@ -111,10 +111,12 @@ kai_types :: proc(s:^Session) -> ^asset.Types {
 }
 
 // Opens the workspace of the project, or makes one of its files: once per
-// project, with the machine's store. A guest of a session opens none.
+// project, with the machine's store. A guest of a session opens none, nor
+// does a run that ends by itself after a count of frames (a check of a build,
+// a capture): only an editor that someone drives records history.
 kai_open :: proc(s:^Session) {
     k:=s.kai
-    if k==nil || k.tried || k.state!=nil || !s.has_project || s.store.root=="" {return}
+    if k==nil || k.tried || k.state!=nil || !s.has_project || s.store.root=="" || s.frames>0 {return}
     if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return}
     k.tried=true
     if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}

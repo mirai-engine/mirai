@@ -54,6 +54,7 @@ Error :: enum u8 {
     Unauthorized,     // a signature, or the right of its author, does not hold
     Rollback,         // a signed record not newer than the one held
     Expired,          // past the time a signed record allows
+    Other_Store,      // the repository of a workspace is not in the store it is opened with
 }
 
 error_text :: proc(error:Error) -> string {
@@ -68,6 +69,7 @@ error_text :: proc(error:Error) -> string {
     case .No_Space: return "the volume is full: free space there"
     case .Locked: return "another process holds this workspace: close it first"
     case .Stale: return "the workspace's change is gone from the repository: switch to another change"
+    case .Other_Store: return "the repository of this folder's workspace is not in this store: open it with the store it was made in, or delete its .mirai/kai folder to start a new history here"
     case .Unsupported: return "the file system cannot do it here"
     case .Unauthorized: return "a signature or the right of its author does not hold: fetch the logs of the org again, or ask an admin for the right"
     case .Rollback: return "a record older than the one held: a peer offered stale refs, fetch from another"

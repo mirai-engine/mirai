@@ -276,7 +276,7 @@ workspace_open :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity
     bytes,read_error:=os.read_entire_file(workspace_path(w,STATE_FOLDER+"/workspace"),context.temp_allocator)
     if read_error!=nil {return .Missing}
     state_decode(bytes,&w.state,allocator) or_return
-    repo_open(&w.repo,s,w.state.repo,w.state.id,identity,options.drivers,allocator) or_return
+    if e:=repo_open(&w.repo,s,w.state.repo,w.state.id,identity,options.drivers,allocator);e!=.None {return e==.Missing?.Other_Store:e}
     index_load(w)
     return .None
 }

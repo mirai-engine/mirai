@@ -100,6 +100,12 @@ editor_kai_snapshot_diff_conflict_and_undo :: proc(t:^testing.T) {
     file:=fmt.tprintf("%s/level.scene",k.root)
     testing.expect(t,os.write_entire_file(file,kai_scene(t,types,0,3))==nil)
 
+    // A run that ends after a count of frames records no history.
+    s.frames=1
+    kai_open(s)
+    testing.expect(t,kai_workspace(s)==nil && !ka.project_exists(k.root),"a bounded run makes no workspace")
+    s.frames=0
+
     // The project becomes a workspace: its files are the first change.
     kai_open(s)
     w:=kai_workspace(s)
