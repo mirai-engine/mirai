@@ -106,7 +106,16 @@ projects_show_their_thumbnail_or_the_view_of_their_start_scene :: proc(t:^testin
     defer {thumbnail_file_destroy(&file);delete(image)}
     m:=project.manifest_default("racer")
     testing.expect(t,!projects_thumbnail_read(root,&m,THUMBNAIL_SIZE,&file,&image))
-    // The view an editor of the project kept of its start scene.
+    // Desktop/window icon is shown when no thumbnail or captured start scene exists.
+    icon_pic:=img.Image{pixels=make([]u8,2*2*4,context.temp_allocator),width=2,height=2}
+    for i in 0..<4 {copy(icon_pic.pixels[i*4:][:4],([]u8{20,40,200,255}))}
+    testing.expect_value(t,img.image_write(project.path(root,"icon.png",allocator=context.temp_allocator),icon_pic),img.Error.None)
+    base.text_set(m.icon[:],"icon.png")
+    if testing.expect(t,projects_thumbnail_read(root,&m,THUMBNAIL_SIZE,&file,&image)) {
+        testing.expect_value(t,[4]u8{image[0],image[1],image[2],image[3]},[4]u8{20,40,200,255})
+    }
+    // The view an editor of the project kept of its start scene takes precedence over the icon,
+    // even when only the large captured size is on disk.
     id:=base.Asset_Id{0x7261636572,1}
     base.text_set(m.start_scene[:],"levels/main.scene")
     testing.expect(t,base.make_directory_all(project.path(root,ASSETS_FOLDER,"levels",allocator=context.temp_allocator))==nil)
@@ -115,10 +124,13 @@ projects_show_their_thumbnail_or_the_view_of_their_start_scene :: proc(t:^testin
     scratch:=make([dynamic]u8,context.temp_allocator)
     testing.expect_value(t,asset.blob_build(&w,asset.KIND_SCENE,0,id,{},{},nil,&scratch),asset.Error.None)
     testing.expect(t,os.write_entire_file(project.path(root,ASSETS_FOLDER,"levels/main.scene",allocator=context.temp_allocator),serial.writer_bytes(&w))==nil)
-    testing.expect(t,!projects_thumbnail_read(root,&m,THUMBNAIL_SIZE,&file,&image))
-    view:=make([]u8,THUMBNAIL_SIZE*THUMBNAIL_SIZE*4,context.temp_allocator)
-    for i in 0..<THUMBNAIL_SIZE*THUMBNAIL_SIZE {view[i*4+1],view[i*4+3]=180,255}
-    testing.expect(t,thumbnail_save(thumbnail_folder_of(root),id,THUMBNAIL_SIZE,THUMBNAIL_CAPTURED,view,&file))
+    // Scene has no captured view yet -> still falls back to desktop icon.
+    if testing.expect(t,projects_thumbnail_read(root,&m,THUMBNAIL_SIZE,&file,&image)) {
+        testing.expect_value(t,[4]u8{image[0],image[1],image[2],image[3]},[4]u8{20,40,200,255})
+    }
+    large_view:=make([]u8,THUMBNAIL_LARGE*THUMBNAIL_LARGE*4,context.temp_allocator)
+    for i in 0..<THUMBNAIL_LARGE*THUMBNAIL_LARGE {large_view[i*4+1],large_view[i*4+3]=180,255}
+    testing.expect(t,thumbnail_save(thumbnail_folder_of(root),id,THUMBNAIL_LARGE,THUMBNAIL_CAPTURED,large_view,&file))
     // A thumbnail the manifest names and the project does not have leaves the view.
     base.text_set(m.thumbnail[:],"art/cover.png")
     if testing.expect(t,projects_thumbnail_read(root,&m,THUMBNAIL_SIZE,&file,&image)) {

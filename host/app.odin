@@ -68,6 +68,7 @@ App_Desc :: struct {
     animation_cache:string,      // folder where the content keeps the .anim it compressed; "": none
     collision_cache:string,      // folder where the convex pieces of meshes are kept (asset.mesh_collision_pieces); "": none
     shaders_root:string,         // folder whose shader generation is loaded; "": the one that holds assets_root
+    pipeline_cache:string,       // file where Vulkan keeps compiled pipelines across runs; "": MIRAI_PIPELINES_PATH else user_folder/pipelines.bin
     asset_mounts:[]asset.Registry_Mount, // besides those of the plugins of the project root, which the application mounts
 }
 

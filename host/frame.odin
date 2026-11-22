@@ -83,6 +83,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
     // Compiled once, the pipelines of a project are read back from its user
     // folder: building them all again takes the GPU driver many seconds.
     pipelines:=os.get_env(project.PIPELINES_PATH_ENV,context.temp_allocator)
+    if pipelines=="" {pipelines=desc.pipeline_cache}
     if pipelines=="" {
         if folder:=project.user_folder(app.root,context.temp_allocator);folder!="" {
             pipelines,_=filepath.join({folder,project.PIPELINES_FILE},context.temp_allocator)

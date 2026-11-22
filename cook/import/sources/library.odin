@@ -419,12 +419,33 @@ project_pin_lock_report :: proc(report:^Library_Report,root:string) {
 @(private="file")
 project_pin_many :: proc(root:string,s:^store.Store,list:^asset.Packages,entries:[]asset.Project_Package,backups:^importer.Document_Backups) -> asset.Error {
     indices:=make(map[base.Asset_Id]int,context.temp_allocator)
-    for &entry,at in list.packages {indices[entry.id]=at}
+    by_origin:=make(map[string]int,context.temp_allocator)
+    for &entry,at in list.packages {
+        indices[entry.id]=at
+        if p,err:=asset.package_load(s,root,&entry,context.temp_allocator);err==.None && p.origin.path!="" {
+            by_origin[fmt.tprintf("%s\x00%s",p.origin.importer,p.origin.path)]=at
+        }
+    }
+    stale:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for entry in entries {
+        origin_key:=""
+        if p,err:=asset.package_get(s,entry.manifest,context.temp_allocator);err==.None && p.origin.path!="" {
+            origin_key=fmt.tprintf("%s\x00%s",p.origin.importer,p.origin.path)
+        }
         if at,replaced:=indices[entry.id];replaced {
             list.packages[at]=entry
+            if origin_key!="" {by_origin[origin_key]=at}
+        } else if origin_key!="" && origin_key in by_origin {
+            at:=by_origin[origin_key]
+            old_id:=list.packages[at].id
+            delete_key(&indices,old_id)
+            append(&stale,old_id)
+            list.packages[at]=entry
+            indices[entry.id]=at
         } else {
-            indices[entry.id]=len(list.packages)
+            at:=len(list.packages)
+            indices[entry.id]=at
+            if origin_key!="" {by_origin[origin_key]=at}
             if _,no_room:=append(&list.packages,entry);no_room!=nil {return .Out_Of_Memory}
         }
     }
@@ -432,6 +453,10 @@ project_pin_many :: proc(root:string,s:^store.Store,list:^asset.Packages,entries
     for &entry in entries {
         importer.document_backup(backups,asset.package_file(root,entry.id)) or_return
         asset.package_file_save(s,root,&entry) or_return
+    }
+    for old_id in stale {
+        importer.document_backup(backups,asset.package_file(root,old_id)) or_return
+        asset.package_file_remove(root,old_id) or_return
     }
     return asset.packages_save(root,list)
 }
