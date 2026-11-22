@@ -250,6 +250,7 @@ library_add_start :: proc(s:^Session,root:Library_Root,name:string,requests:[]so
     job:=new(Import_Job,allocator)
     job^={allocator=allocator,started=time.tick_now(),group_add=group}
     job.store=s.store
+    job.mesh_org=kai_mesh_org(s)
     job.source=strings.clone(name,allocator)
     job.root,job.prefix=strings.clone(root.root,allocator),strings.clone(root.prefix,allocator)
     job.additions=library_add_clone(requests,allocator)

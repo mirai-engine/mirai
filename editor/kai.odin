@@ -86,6 +86,7 @@ Kai_State :: struct {
     description:[KAI_DESCRIPTION_BYTES]u8,
     description_length:int,
     scroll:[2]f32,
+    team:Kai_Team,
 }
 
 @(storage)
@@ -94,6 +95,7 @@ Kai :: struct {
     tried:bool,       // opening was tried for this project
     error:vcs.Error,  // why it is not open
     key:vcs.Key,      // this editor's identity in every session and change
+    mesh_loopback:bool, // the runner the editor starts listens on 127.0.0.1 alone: tests
 }
 
 // The workspace of the project; nil when it has none open.
@@ -138,6 +140,7 @@ kai_open :: proc(s:^Session) {
             log.warnf("the files of %s are not watched (%v): a snapshot reads the whole folder",s.project_root,error)
         }
     }
+    kai_team_open(s)
     kai_read(s)
 }
 
@@ -146,6 +149,7 @@ kai_close :: proc(s:^Session) {
     if k==nil || k.state==nil {return}
     st:=k.state
     if st.watching && s.app!=nil && s.app.platform!=nil {platform.watch_destroy(s.app.platform,st.watch)}
+    kai_team_close(s)
     ka.project_close(&st.project)
     vmem.arena_destroy(&st.arena)
     delete(st.unfolded)
@@ -194,6 +198,7 @@ kai_poll :: proc(s:^Session) {
         }
     }
     kai_authors_follow(s)
+    kai_team_poll(s)
     if !st.touched || platform.clock_seconds()-st.touched_at<KAI_QUIET || !kai_files_settled(s) {return}
     kai_snapshot(s)
 }
@@ -253,7 +258,15 @@ kai_snapshot :: proc(s:^Session) -> string {
         if a.turn!=({}) {append(&turns,a.turn)}
     }
     _,e:=ka.snapshot_authored(w,keys[:],turns[:])
+    // A refusal stays until a snapshot holds; one of a publish, until a publish does.
+    t:=&st.team
+    if refusal:=ka.snapshot_refusal(&st.project);e==.Unauthorized && refusal.path!="" {
+        kai_refusal_set(t,refusal)
+    } else if e==.None && t.refusal.text!="" && t.refusal.line==0 {
+        kai_refusal_set(t,{})
+    }
     kai_read(s)
+    if e==.Unauthorized && t.refusal.text!="" {return t.refusal.text}
     if e!=.None {return vcs.error_text(e)}
     return ""
 }
@@ -307,6 +320,7 @@ kai_prepare :: proc(s:^Session) -> (w:^vcs.Workspace,message:string) {
 @(private)
 kai_finish :: proc(s:^Session,e:vcs.Error,changed:[]string) -> string {
     kai_wrote(s,changed)
+    if e==.None {kai_publish(s)}
     kai_read(s)
     if e!=.None {return vcs.error_text(e)}
     return ""
@@ -513,9 +527,12 @@ kai_read :: proc(s:^Session) {
     ka.log(w,KAI_LOG_ROWS,&rows,a)
     v.rows=make([]Kai_Row,len(rows),a)
     for row,i in rows {
+        names:=make([dynamic]string,0,len(row.bookmarks)+1,context.temp_allocator)
+        append(&names,..row.bookmarks)
+        if shared:=kai_shared_names(s,row.revision);shared!="" {append(&names,shared)}
         v.rows[i]={
             change=ka.change_text(row.change.id,a),description=row.change.description,
-            bookmarks=strings.join(row.bookmarks,", ",a),working=row.working,conflicts=row.conflicts,
+            bookmarks=strings.join(names[:],", ",a),working=row.working,conflicts=row.conflicts,
             authors=len(row.change.coauthors),turns=len(row.change.turns),revision=row.revision,
         }
     }

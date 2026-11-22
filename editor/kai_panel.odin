@@ -5,12 +5,15 @@ import "core:strings"
 import vcs "mirai:kai"
 import "mirai:ui"
 
-// The Kai tab of the left panel: the working change with its description,
-// what it changed, each file with a check of whether New change closes it,
-// a file in conflict unfolded into its fields with the side each takes, the
-// bookmarks and the log. Undo takes back the newest operation; a click on a
-// change of the log starts a new change on it. It draws what kai_read left: a
-// frame reads nothing of the repository.
+// The Kai tab of the left panel, in three views. Changes: the working change
+// with its description, what it changed, each file with a check of whether
+// New change closes it, a file in conflict unfolded into its fields with the
+// side each takes, what refused the last snapshot with what resolves it, the
+// bookmarks (the workspace's, the org's and every device's) and the log.
+// Undo takes back the newest operation; a click on a change of the log or on
+// a shared bookmark starts a new change on it. Proposals and Team are the
+// team's (kai_team_panel.odin). It draws what kai_read and kai_team_read
+// left: a frame reads nothing of the repository.
 
 KAI_HEAD :: 22
 KAI_ROW_PAD :: 4
@@ -24,10 +27,17 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
     }
     st:=s.kai.state
     v:=&st.view
+    kai_tabs_build(s)
+    if st.team.tab!=.Changes {
+        if ui.scroll_area(ctx,ui.id(ctx,"kai_team_scroll"),&st.team.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=4}) {
+            if st.team.tab==.Proposals {kai_proposals_build(s)} else {kai_team_build(s)}
+        }
+        return
+    }
     if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=6,align_y=.Center}) {
         ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),ui.tone(ctx,"text_muted"),14)
+        // The id takes the room the button leaves: a spacer beside it would halve that room.
         ui.label(ctx,v.title,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,fade=true)
-        ui.spacer(ctx)
         label:=v.redo?"Redo":"Undo"
         if ui.button(ctx,ui.id(ctx,"kai_undo"),{label=label,icon=.Revert,icon_size=12,variant="field",disabled=v.operation==""}).clicked {
             if _,message:=kai_undo(s);message!="" {notify(s,message)}
@@ -44,24 +54,28 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
         }
     }
     if ui.scroll_area(ctx,ui.id(ctx,"kai_scroll"),&st.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=2}) {
-        all:=true
+        kai_refusal_build(s)
+        // Checked while any file is: a click then unchecks them all, and with none checks them all.
+        some:=false
         for f in v.files {
-            if f.changed && !kai_checked(st,f.path) {all=false;break}
+            if f.changed && kai_checked(st,f.path) {some=true;break}
         }
-        if kai_head(ctx,"CHANGES",len(v.files),&all) {kai_checks_reset(st,!all)}
+        if kai_head(ctx,"CHANGES",len(v.files),&some) {kai_checks_reset(st,!some)}
         for &file in v.files {
             ui.id_push(ctx,ui.id(ctx,file.path))
             kai_file_row(s,&file)
             if file.mark=='C' && file.path==st.unfolded {kai_fields_build(s)}
             ui.id_pop(ctx)
         }
-        if len(v.bookmarks)>0 {
-            kai_head(ctx,"BOOKMARKS",len(v.bookmarks))
+        shared:=st.team.view.org>=0
+        if len(v.bookmarks)>0 || shared {
+            kai_head(ctx,"BOOKMARKS",len(v.bookmarks)+len(st.team.view.shared))
             for b in v.bookmarks {
                 if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0}}) {
                     ui.label(ctx,b,ui.metric(ctx,"font_small"),ui.tone(ctx,"text"),0,fade=true)
                 }
             }
+            kai_shared_build(s)
         }
         kai_head(ctx,"LOG",len(v.rows))
         for &row,i in v.rows {

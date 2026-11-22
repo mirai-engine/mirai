@@ -316,7 +316,7 @@ kai_refuse :: proc(verb:string,a:^Kai_Args) -> int {
         case "list","leave": fits=n==1
         case "new","remove","transfer": fits=n==2
         case "add": fits=n==2 && (a.positionals[1]=="public" || a.positionals[1]=="org")
-        case "role": fits=n==3 && kai_role(a.positionals[2])!=.None
+        case "role": fits=n==3 && ka.role_of(a.positionals[2])!=.None
         case: fits=false
         }
     case "grant":
@@ -336,7 +336,7 @@ kai_refuse :: proc(verb:string,a:^Kai_Args) -> int {
         case "remove","rotate": fits=n==2
         case "add":
             fits=n>=2
-            if fits && a.readers!="" && kai_role(a.readers)==.None && a.readers!="owner" {fmt.eprintln("mirai kai scope add: --readers is reader, writer, admin or owner");return 2}
+            if fits && a.readers!="" && ka.role_of(a.readers)==.None && a.readers!="owner" {fmt.eprintln("mirai kai scope add: --readers is reader, writer, admin or owner");return 2}
         case: fits=false
         }
     case "public": fits=n==2 && sub=="add"
@@ -358,16 +358,6 @@ kai_refuse :: proc(verb:string,a:^Kai_Args) -> int {
     }
     if !fits {return kai_usage()}
     return 0
-}
-
-@(private="file")
-kai_role :: proc(text:string) -> vcs.Role {
-    switch text {
-    case "reader": return .Reader
-    case "writer": return .Writer
-    case "admin": return .Admin
-    }
-    return .None
 }
 
 @(private="file")
@@ -421,13 +411,9 @@ kai_anchor :: proc(a:^Kai_Args) -> (path:string,anchor:vcs.Anchor,ok:bool) {
     case a.lines!="":
         cut:=strings.last_index_byte(a.lines,':')
         if cut<=0 {return}
-        span:=a.lines[cut+1:]
-        first,last:=span,span
-        if dash:=strings.index_byte(span,'-');dash>=0 {first,last=span[:dash],span[dash+1:]}
-        x,ox:=strconv.parse_int(first)
-        y,oy:=strconv.parse_int(last)
-        if !ox || !oy || x<1 || y<x || y>int(max(u32)) {return}
-        return a.lines[:cut],{kind=.Lines,line=u32(x),lines=u32(y-x+1)},true
+        lines,parsed:=ka.lines_of(a.lines[cut+1:])
+        if !parsed {return}
+        return a.lines[:cut],lines,true
     case a.entity!="":
         cut:=strings.last_index_byte(a.entity,'#')
         if cut<=0 {return}
@@ -602,21 +588,18 @@ kai_bookmarks :: proc(p:^ka.Project,k:^Kai_Machine,machined:^bool,store_root:str
         if _,e:=vcs.workspace_snapshot(w);e!=.None {return kai_refused("bookmarks",p,e)}
         target,ok:=resolve(p,k,positionals[2])
         if !ok {return 1}
-        project,_,e:=ka.project_of(p,&k.machine)
-        if e!=.None || vcs.machine_bookmark_move(&k.machine,project,positionals[1],target)!=.None {return kai_why("bookmarks move",k)}
+        if ka.bookmark_move(p,&k.machine,positionals[1],target)!=.None {return kai_why("bookmarks move",k)}
         c,_:=vcs.change_get(w.repo.s,target,context.temp_allocator)
         fmt.printfln("%s moved to %s for the whole org.",positionals[1],ka.change_text(c.id))
     case "policy":
         if !machine(k,machined,store_root) {return 1}
-        project,org,e:=ka.project_of(p,&k.machine)
-        if e!=.None {return kai_why("bookmarks policy",k)}
         checks:=make([dynamic]string,context.temp_allocator)
         if a.checks!="" {
             for c in strings.split(a.checks,",",context.temp_allocator) {
                 if c!="" {append(&checks,c)}
             }
         }
-        if vcs.machine_policy_set(&k.machine,org,project,positionals[1],max(a.approvals,0),checks[:])!=.None {return kai_why("bookmarks policy",k)}
+        if ka.policy_set(p,&k.machine,positionals[1],max(a.approvals,0),checks[:])!=.None {return kai_why("bookmarks policy",k)}
         fmt.printfln("%s now moves only by a proposal with %d approvals and the checks %v.",positionals[1],max(a.approvals,0),checks[:])
     }
     return 0
@@ -731,18 +714,10 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
             e:vcs.Error
             if org,e=vcs.machine_org_find(m,a.org);e!=.None {return kai_why("pair",k)}
         }
-        role:=kai_role(a.role)
+        role:=ka.role_of(a.role)
         if role==.None {fmt.eprintln("mirai kai pair offer: --role is reader, writer or admin");return 2}
-        modes:vcs.Node_Modes
-        for part in strings.split(a.modes,",",context.temp_allocator) {
-            switch part {
-            case "":
-            case "relay": modes+={.Relay}
-            case "seed": modes+={.Seed}
-            case "ddc": modes+={.DDC}
-            case: fmt.eprintln("mirai kai pair offer: --modes takes relay, seed and ddc");return 2
-            }
-        }
+        modes,modes_ok:=ka.node_modes_of(a.modes)
+        if !modes_ok {fmt.eprintln("mirai kai pair offer: --modes takes relay, seed and ddc");return 2}
         if mode==.Node && modes=={} {modes={.Relay,.Seed}}
         buffer:[vcs.TICKET_TEXT]u8
         ticket,e:=vcs.control_pair_offer(c,mode,org,role,modes,&buffer)
@@ -750,9 +725,9 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
         fmt.printfln("Ticket, valid ten minutes: on the other machine run\n  mirai kai pair join %s",ticket)
         fmt.println("then mirai kai pair approve here, comparing the codes both show.")
     case "join":
-        name:=a.name
-        if name=="" {name=os.get_env("USER",context.temp_allocator)}
-        if name=="" {name="device"}
+        if m.user=={} && a.name=="" {fmt.eprintln("mirai kai pair join: --name names this device for the user it joins, as laptop");return 2}
+        name,ne:=vcs.machine_pair_name(m,a.name)
+        if ne!=.None {return kai_why("pair",k)}
         if e:=vcs.control_pair_join(c,positionals[1],name);e!=.None {fmt.eprintfln("mirai kai pair: %s",c.why);return 1}
         shown:=false
         for {
@@ -773,7 +748,7 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
         request,ok,e:=vcs.control_pair_request(c)
         if e!=.None {fmt.eprintfln("mirai kai pair: %s",c.why);return 1}
         if !ok {fmt.eprintln("mirai kai pair: no pairing request waits: the other machine runs mirai kai pair join with the ticket first");return 1}
-        fmt.printfln("%v %q asks to pair, code %s.",request.mode,request.name,request.code)
+        fmt.printfln("%v %s asks to pair, code %s.",request.mode,vcs.pair_request_who(m,request),request.code)
         approve:=!a.deny
         if !a.deny && a.code=="" {
             fmt.print("Does the other machine show the same code? yes/no: ")
@@ -849,7 +824,7 @@ kai_team :: proc(verb,store_root:string,a:^Kai_Args) -> int {
         switch sub {
         case "remove": e=vcs.machine_member_remove(m,org,user)
         case "transfer": e=vcs.machine_owner_transfer(m,org,user)
-        case "role": e=vcs.machine_role_set(m,org,user,kai_role(positionals[2]))
+        case "role": e=vcs.machine_role_set(m,org,user,ka.role_of(positionals[2]))
         }
         if e!=.None {return kai_why(command,&k)}
         fmt.printfln("Done: the org's peers take it at once.")
@@ -885,52 +860,44 @@ kai_team :: proc(verb,store_root:string,a:^Kai_Args) -> int {
 
 @(private="file")
 kai_org_print :: proc(m:^vcs.Machine,id:vcs.Log_Id) {
-    o:vcs.Org_State
+    v:ka.Org_View
     x:=id
-    if vcs.org_state_load(&m.store,id,&o,context.temp_allocator)!=.None {
+    if ka.org_view(m,id,&v)!=.None {
         fmt.printfln("Org %s: its log is not here yet",short(x[:]))
         return
     }
-    owner:="?"
-    if u:=vcs.org_state_user(&o,o.fold.owner);u!=nil {owner=vcs.user_name(u)}
-    fmt.printfln("Org %s %s, owner %s",short(x[:]),vcs.log_title(&o.log),owner)
-    for member in o.fold.members {
+    fmt.printfln("Org %s %s, owner %s",short(x[:]),v.name,v.owner!=""?v.owner:"?")
+    for member in v.members {
         user:=member.user
-        u:=vcs.org_state_user(&o,user)
-        if u==nil {
-            fmt.printfln("  member %s %v (its log is not here yet)",short(user[:]),member.role)
+        if member.handle=="" {
+            fmt.printfln("  member %s %s (its log is not here yet)",short(user[:]),ka.role_text(member.role))
             continue
         }
         devices:=make([dynamic]string,context.temp_allocator)
-        for d,k in u.devices {
+        for d in member.devices {
             key:=d.key
-            mark:=d.revoked?" revoked":d.key==m.identity.key?" (this device)":""
-            append(&devices,fmt.tprintf("%s %s%s",vcs.device_name(u,k),short(key[:]),mark))
+            mark:=d.revoked?" revoked":d.this?" (this device)":""
+            append(&devices,fmt.tprintf("%s %s%s",d.name,short(key[:]),mark))
         }
-        fmt.printfln("  member %s %s %v: %s",vcs.user_name(u),short(user[:]),member.role,strings.join(devices[:],", ",context.temp_allocator))
+        fmt.printfln("  member %s %s %s: %s",member.handle,short(user[:]),ka.role_text(member.role),strings.join(devices[:],", ",context.temp_allocator))
     }
-    for p in o.fold.projects {
+    for p in v.projects {
         pid:=p.id
-        l:vcs.Log
-        vcs.log_init(&l,pid,context.temp_allocator)
-        name:="(its log is not here yet)"
-        if vcs.log_open(&m.store,&l,pid,.Project)==.None {name=vcs.log_title(&l)}
-        fmt.printfln("  project %s %s (%s)",short(pid[:]),name,p.public?"public":"org")
-        for &policy in o.fold.policies {
-            if policy.project==pid {fmt.printfln("    policy %s: %s",policy.bookmark,vcs.org_policy_text(&o.fold,&policy))}
-        }
-        for sc in o.fold.scopes {
-            if sc.project!=pid {continue}
-            patterns:=make([dynamic]string,context.temp_allocator)
-            vcs.org_scope_patterns(&o.fold,sc,&patterns)
-            scope:=sc.scope
-            fmt.printfln("    scope %s %s, read by %v%s",ka.hex(scope[:4]),strings.join(patterns[:]," ",context.temp_allocator),sc.readers,sc.history?", keeps history":"")
+        fmt.printfln("  project %s %s (%s)",short(pid[:]),p.name!=""?p.name:"(its log is not here yet)",p.public?"public":"org")
+        for policy in p.policies {fmt.printfln("    policy %s: %s",policy.bookmark,policy.text)}
+        for sc in v.scopes {
+            if sc.project==pid {kai_scope_print("    ",sc)}
         }
     }
-    for n in o.fold.nodes {
+    for n in v.nodes {
         key:=n.key
-        fmt.printfln("  node %s %v",short(key[:]),n.modes)
+        fmt.printfln("  node %s %s",short(key[:]),ka.node_modes_text(n.modes))
     }
+}
+
+@(private="file")
+kai_scope_print :: proc(indent:string,sc:ka.Scope_View) {
+    fmt.printfln("%sscope %s %s, read by %s%s",indent,sc.id,strings.join(sc.patterns," ",context.temp_allocator),ka.role_text(sc.readers),sc.history?", keeps history":"")
 }
 
 @(private="file")
@@ -1006,34 +973,28 @@ kai_review :: proc(verb:string,p:^ka.Project,store_root:string,a:^Kai_Args) -> i
     case "scope":
         switch sub {
         case "list":
-            o:vcs.Org_State
-            if vcs.org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {return kai_why(command,&k)}
-            for sc in o.fold.scopes {
-                if sc.project!=project_id {continue}
-                patterns:=make([dynamic]string,context.temp_allocator)
-                vcs.org_scope_patterns(&o.fold,sc,&patterns)
-                scope:=sc.scope
-                fmt.printfln("scope %s %s, read by %v%s",ka.hex(scope[:4]),strings.join(patterns[:]," ",context.temp_allocator),sc.readers,sc.history?", keeps history":"")
+            v:ka.Org_View
+            if ka.org_view(m,org,&v)!=.None {return kai_why(command,&k)}
+            for sc in v.scopes {
+                if sc.project==project_id {kai_scope_print("",sc)}
             }
-            for x in o.fold.publics {
-                if x.project==project_id && x.fingerprint=={} {fmt.printfln("public %s",x.path)}
+            for x in v.publics {
+                if x.project==project_id {fmt.printfln("public %s",x.path)}
             }
         case "add":
             readers:=vcs.Role.Writer
-            if a.readers=="owner" {readers=.Owner} else if a.readers!="" {readers=kai_role(a.readers)}
-            scope,se:=vcs.machine_scope_add(m,org,project_id,positionals[1:],readers,a.history)
+            if a.readers=="owner" {readers=.Owner} else if a.readers!="" {readers=ka.role_of(a.readers)}
+            scope,se:=ka.scope_add(p,m,positionals[1:],readers,a.history)
             if se!=.None {return kai_why(command,&k)}
             fmt.printfln("Scope %s: what its patterns match is sealed for its readers from the next snapshot on.",ka.hex(scope[:4]))
         case "remove","rotate":
-            o:vcs.Org_State
-            if vcs.org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {return kai_why(command,&k)}
-            sc,found:=vcs.org_scope_find(&o.fold,project_id,positionals[1])
-            if found!=1 {fmt.eprintfln("mirai kai %s: no single scope of the project has that id: mirai kai scope list shows them",command);return 1}
+            scope,fe:=ka.scope_find(p,m,positionals[1])
+            if fe!=.None {return kai_why(command,&k)}
             if sub=="remove" {
-                if vcs.machine_scope_remove(m,org,project_id,sc.scope)!=.None {return kai_why(command,&k)}
+                if ka.scope_remove(p,m,scope)!=.None {return kai_why(command,&k)}
                 fmt.println("Scope removed: its paths are no longer sealed in the next snapshots.")
             } else {
-                epoch,re:=vcs.machine_scope_rotate(m,org,project_id,sc.scope)
+                epoch,re:=ka.scope_rotate(p,m,scope)
                 if re!=.None {return kai_why(command,&k)}
                 fmt.printfln("The scope's key is at epoch %d, wrapped for its readers now.",epoch)
             }
@@ -1079,7 +1040,7 @@ kai_proposal :: proc(p:^ka.Project,k:^Kai_Machine,project_id:vcs.Log_Id,a:^Kai_A
         revisions,ok:=stack(p,k,positionals[2:],command)
         if !ok {return 1}
         title:=a.message
-        if title=="" {title=description_line(working_parent_description(p))}
+        if title=="" {title=description_line(ka.proposal_title(p))}
         id,e:=ka.proposal_open(p,m,positionals[1],title,a.text,revisions[:])
         if e!=.None {return kai_why(command,k)}
         fmt.printfln("Proposal %s on %s opened: reviewers see it at once.",short(id[:]),positionals[1])
@@ -1137,14 +1098,6 @@ kai_proposal :: proc(p:^ka.Project,k:^Kai_Machine,project_id:vcs.Log_Id,a:^Kai_A
         fmt.println("Done: the org's peers see it at once.")
     }
     return 0
-}
-
-@(private="file")
-working_parent_description :: proc(p:^ka.Project) -> string {
-    r,e:=ka.revision_find(&p.workspace,"@-")
-    if e!=.None {return ""}
-    c,_:=vcs.change_get(p.workspace.repo.s,r,context.temp_allocator)
-    return c.description
 }
 
 @(private="file")

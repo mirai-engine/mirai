@@ -57,7 +57,7 @@ DOCUMENT_LIBRARY_TABS :: [Document_Type]Library_Tabs{
     .Asset={.Content,.Ai,.Kai},
 }
 Bottom_Tab :: enum u8 {Console,Build}
-Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Import_Changes}
+Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Import_Changes,Kai}
 
 Splitter :: enum u8 {None,Bottom,Right}
 
@@ -1606,6 +1606,7 @@ modal_build :: proc(s:^Session) {
     case .Settings: settings_modal(s)
     case .Delete_Asset: asset_delete_modal(s)
     case .Import_Changes: import_changes_modal(s)
+    case .Kai: kai_dialog_build(s)
     }
 }
 
