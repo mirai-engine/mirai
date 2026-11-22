@@ -826,14 +826,14 @@ ddc_records_keep_differing_outputs :: proc(t:^testing.T) {
     name:[64]u8
     set,_:=store.ref_get(&b,ddc_namespace(o.org.id,&ns),store.hex(key,&name))
     copied:=test_copy(t,&b,&a,set,.DDC_Set)
-    changed,flagged,ae2:=ddc_accept(&a,&o.fold,key,copied,nil,1)
+    changed,flagged,ae2:=ddc_accept(&a,&o.fold,key,copied,1)
     testing.expect(t,ae2==.None && changed && !flagged)
 
     // A reader's record is skipped; alice's other output is kept beside bob's.
     ddc_publish(&b,o.org.id,&o.carol.devices[0],key,{y},nil,2)
     set,_=store.ref_get(&b,ddc_namespace(o.org.id,&ns),store.hex(key,&name))
     copied=test_copy(t,&b,&a,set,.DDC_Set)
-    changed,flagged,_=ddc_accept(&a,&o.fold,key,copied,nil,2)
+    changed,flagged,_=ddc_accept(&a,&o.fold,key,copied,2)
     testing.expect(t,!changed && !flagged)
     flagged,_=ddc_publish(&a,o.org.id,&o.alice.devices[0],key,{y,x},nil,3)
     testing.expect(t,flagged,"two outputs of one key are nondeterminism")

@@ -11,6 +11,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:std/base"
+import net "mirai:net"
 import "mirai:store"
 
 @(private="file")
@@ -658,14 +659,18 @@ a_grant_signs_checks_only_while_it_holds :: proc(t:^testing.T) {
 // A writer removed from the org keeps what it did: its moves of a shared
 // bookmark and its approvals stand and main does not move back, while what it
 // signs after the removal reached those logs, under an old org entry, counts
-// nowhere.
+// nowhere. A member's agent that starts after the removal serves what main
+// names to its peers and to anonymous readers.
 @(test)
 a_removed_writer_keeps_its_past :: proc(t:^testing.T) {
+    s,ok:=review_store(t,"kai-removed-writer");if !ok {return}
+    defer store.close(&s)
     o:Test_Org
     test_org_make(t,&o);defer test_org_destroy(&o)
     alice,bob:=&o.alice.devices[0],&o.bob.devices[0]
     old:=at(&o)
-    m1:=test_move(t,&o.project,"main",{0=1},bob,old,20)
+    work:=test_change(t,&s,bob,"bob's work")
+    m1:=test_move(t,&o.project,"main",work,bob,old,20)
     l:Log
     log_init(&l);defer log_destroy(&l)
     expect_ok(t,proposal_open(&l,o.project.id,"main","Bob's","",alice,21,{},old))
@@ -698,7 +703,7 @@ a_removed_writer_keeps_its_past :: proc(t:^testing.T) {
     testing.expect_value(t,len(due),0)
 
     // After the witness, bob signs under the org's entry from before his removal.
-    m2:=test_move(t,&o.project,"main",{0=3},bob,old,33,nil,{{0=1}})
+    m2:=test_move(t,&o.project,"main",{0=3},bob,old,33,nil,{work})
     late,_:=proposal_verdict(&l,.Changes,{0=2},bob,34,{},old)
     first_late,_:=proposal_comment(&untouched,{},"",{},{},"late",bob,36,{},old)
     born_late,_:=proposal_comment(&born_after,{},"",{},{},"late",bob,36,{},old)
@@ -715,12 +720,27 @@ a_removed_writer_keeps_its_past :: proc(t:^testing.T) {
     targets:=make([dynamic]Revision,context.temp_allocator)
     project_bookmark(&p,"main",&targets)
     testing.expect(t,p.valid[log_find(&o.project,m1)] && !p.valid[log_find(&o.project,m2)],"the move before stands, the backdated one does not")
-    testing.expect(t,len(targets)==1 && targets[0]==Revision{0=1},"main stays where bob moved it")
+    testing.expect(t,len(targets)==1 && targets[0]==work,"main stays where bob moved it")
     f:Proposal_Fold
     defer proposal_fold_destroy(&f)
     testing.expect_value(t,proposal_fold(&f,&l,&o.fold),Error.None)
     testing.expect(t,f.valid[log_find(&l,approval)] && !f.valid[log_find(&l,late)],"the approval stands, the later verdict does not")
     testing.expect_value(t,f.approvals,1)
+
+    for log in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {
+        _,se:=log_save(&s,log)
+        testing.expect_value(t,se,Error.None)
+    }
+    test_written(t,&s,o.project.id,work)
+    sim:net.Sim_Network
+    net.sim_network_init(&sim,{seed=3,endpoints=2,packets=64})
+    defer net.sim_network_destroy(&sim)
+    a:=new(Agent)
+    defer free(a)
+    testing.expect_value(t,agent_init(a,{store=&s,identity=o.alice.devices[0],dh=o.alice.dhs[0],user=o.alice.log.id,org=o.org.id,host_seed=7,server=net.sim_endpoint_transport(&sim,0)},{net.sim_endpoint_transport(&sim,1)}),Error.None)
+    defer agent_close(a)
+    testing.expect(t,work in a.members.chunks,"a member is served what main names after its writer left")
+    testing.expect(t,closure_has(a.closure.public[:],work),"so is an anonymous reader")
 }
 
 // A landed move's verdict against its proposal at the heads the move names

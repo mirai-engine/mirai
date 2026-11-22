@@ -1361,13 +1361,14 @@ grant_verify :: proc(f:^Org_Fold,bytes:[]u8,now:i64) -> (g:Grant,error:Error) {
 }
 
 // The grant the org's log carries under which key signs with right on
-// project now; ok is false when none holds.
+// project now; ok is false when none holds. The ddc right is over the org's
+// derived data, whatever project the grant names.
 org_grant_right :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,now:i64) -> (g:Grant,ok:bool) {
     if key=={} {return}
     for &x in f.granted {
         if x.grant.subject_key!=key {continue}
         held,e:=grant_verify(f,f.log.items[x.entry].entry.body,now)
-        if e==.None && right in held.rights && (held.project=={} || held.project==project) {return held,true}
+        if e==.None && right in held.rights && (held.project=={} || held.project==project || right==.DDC) {return held,true}
     }
     return
 }

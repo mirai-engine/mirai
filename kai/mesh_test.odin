@@ -290,10 +290,37 @@ a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
     defer mesh_destroy(m)
     o:Test_Org
     test_org_make(t,&o);defer test_org_destroy(&o)
+    scope:=Scope_Id{0=5}
+    scope_add(t,&o,scope,.Writer,false,14,"*.env")
     for k in 0..<2 {
         for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[k],l)}
     }
     alice:=&o.alice.devices[0]
+    // Signed records of the org that name objects it does not own: a keyring's epoch whose
+    // envelopes are another object, an overlay record whose tree and files are, and derived data
+    // whose output no peer of the org sent.
+    stray :: proc(t:^testing.T,s:^store.Store,text:string) -> store.Hash {
+        address,e:=store.put(s,transmute([]u8)text)
+        testing.expect_value(t,e,store.Error.None)
+        return address
+    }
+    named_envelopes,named_tree,named_file,named_built:=stray(t,&m.stores[0],"named as envelopes"),stray(t,&m.stores[0],"named as a sealed tree"),stray(t,&m.stores[0],"named as a sealed file"),stray(t,&m.stores[0],"another org's output")
+    keyring:Log
+    log_init(&keyring);defer log_destroy(&keyring)
+    _,ke1:=log_append(&keyring,.Keyring_Genesis,body_make(Keyring_Genesis_Body{org=o.org.id,project=o.project.id,scope=scope}),alice,15,{},o.org.items[0].address)
+    _,ke2:=log_append(&keyring,.Epoch_Add,body_make(Epoch_Add_Body{epoch=1,devices=1,envelopes=named_envelopes}),&o.bob.devices[0],16,{},o.org.items[0].address)
+    testing.expect(t,ke1==.None && ke2==.None)
+    log_save(&m.stores[0],&keyring)
+    overlay:=Overlay_Record{head={commit={0=3},project=o.project.id,scope=scope,epoch=1,tree_root=named_tree,time=1},objects={named_file}}
+    overlay_address,oe:=overlay_record_write(&m.stores[0],&o.bob.devices[0],&overlay,{},0)
+    testing.expect_value(t,oe,Error.None)
+    other_output,ooe:=ddc_output_put(&m.stores[0],{named_built})
+    testing.expect_value(t,ooe,Error.None)
+    other_record:=DDC_Record{head={org=o.org.id,key={0=4},output_root=other_output,producer=o.bob.devices[0].key,time=1}}
+    other_bytes,ore:=ddc_record_encode(&other_record,&o.bob.devices[0],context.temp_allocator)
+    testing.expect_value(t,ore,Error.None)
+    _,dse:=ddc_set_write(&m.stores[0],o.org.id,{0=4},{other_bytes})
+    testing.expect_value(t,dse,Error.None)
     // What a change attaches reaches the peers it is served to, as its tree does.
     attached,ae:=store.put(&m.stores[0],transmute([]u8)string("an agent's turn"))
     testing.expect_value(t,ae,store.Error.None)
@@ -343,6 +370,21 @@ a_member_gets_only_what_its_org_reaches :: proc(t:^testing.T) {
     testing.expectf(t,mesh_until(m,5,&w,settled),"a member gets what the org reaches only: %v",a.stats)
     for address in w.addresses {exchange.forget(&b.x,address)}
     for address in ([]store.Hash{elsewhere,kept,later}) {testing.expect(t,!object_present(&m.stores[1],address))}
+    testing.expect(t,overlay_address in a.members.chunks,"the org's overlay record is served")
+    for address in ([]store.Hash{named_envelopes,named_tree,named_file,other_output,named_built}) {
+        testing.expectf(t,!(address in a.members.chunks),"%v: what a record names is served only as the kind it says, and an output only from the org",address)
+    }
+    // A holder of a ddc grant is served the org's derived data, and no output that did not come from it.
+    holder:=identity_make()
+    holder_dh,_:=net.dh_key()
+    grant_issue(t,a,&o,holder.key,Dh_Key(holder_dh.public),{.DDC},"",time.now()._nsec+i64(time.Hour))
+    agent_closure(a)
+    granted:[]store.Hash
+    for g in a.closure.grants {
+        if g.dh==Dh_Key(holder_dh.public) {granted=g.chunks[:]}
+    }
+    testing.expect(t,closure_has(granted,built),"a ddc grant is served the org's output")
+    testing.expect(t,!closure_has(granted,other_output) && !closure_has(granted,named_built),"a ddc grant is not served an output that did not come from the org")
 
     // A ref that moves to it brings the later change into what bob is served.
     _,e=agent_publish_refs(a,o.project.id,{{"main",later}},2)

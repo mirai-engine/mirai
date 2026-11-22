@@ -1126,11 +1126,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
             agent_defer(a,f)
             return
         }
-        grants:=make([dynamic][]u8,context.temp_allocator)
-        for item,i in a.org.log.items {
-            if a.org.valid[i] && item.entry.type==.Grant {append(&grants,item.entry.body)}
-        }
-        changed,_,e:=ddc_accept(a.desc.store,&a.org,key,f.address,grants[:],time.now()._nsec)
+        changed,_,e:=ddc_accept(a.desc.store,&a.org,key,f.address,time.now()._nsec)
         if e!=.None {
             a.stats.refused+=1
             return
@@ -1263,7 +1259,8 @@ agent_class_from :: proc "contextless" (z:net.Authorization) -> Agent_Class {
 }
 
 // The revisions every device's refs of the projects name and the moves of
-// their shared bookmarks a writer signed, only project unless it is zero.
+// their shared bookmarks the project's fold holds, only project unless it is
+// zero.
 // When public, only what the shared bookmarks of the public projects name.
 // With proven, only those that came from the org (provenance_has): what a
 // closure served from them reaches.
@@ -1290,13 +1287,13 @@ agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision
             for b in shared {append(out,b.target)}
             continue
         }
-        if l:=agent_log(a,p.id);l!=nil {
-            for item in l.items {
-                if item.entry.type!=.Bookmark_Move {continue}
-                if _,role:=org_device_role(&a.org,item.entry.author);role<.Writer {continue}
-                b,_,_:=body_head(item.entry.body,Bookmark_Move_Body)
-                append(out,b.to)
+        f:Project_Fold
+        if l:=agent_log(a,p.id);agent_project_fold(a,l,&f) {
+            moves:=make([dynamic]Walk_Item,context.temp_allocator)
+            for &item,e in l.items {
+                if f.valid[e] {entry_names(&item.entry,&moves)}
             }
+            for m in moves {append(out,m.address)}
         }
         ns:[len(REFS_PREFIX)+64]u8
         refs,e:=store.ref_list(a.desc.store,refs_namespace(p.id,&ns),context.temp_allocator)
@@ -1330,14 +1327,21 @@ agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision
 // proposal as the move names it (project_snapshots). Their names live in the
 // temp allocator.
 agent_shared_bookmarks :: proc(a:^Agent,project:Log_Id,out:^[dynamic]Bookmark_Target) {
-    l:=agent_log(a,project)
-    if !a.folded || l==nil || len(l.items)==0 {return}
-    proposals:=make([dynamic]^Proposal_Fold,context.temp_allocator)
-    if project_snapshots(a.desc.store,l,&a.org,&proposals,context.temp_allocator)!=.None {return}
     f:Project_Fold
-    if project_fold(&f,l,&a.org,proposals[:],context.temp_allocator)!=.None {return}
-    _=landings_keep(a.desc.store,&f)
-    append(out,..f.bookmarks[:])
+    if agent_project_fold(a,agent_log(a,project),&f) {append(out,..f.bookmarks[:])}
+}
+
+// The fold of the project's log l, in the temp allocator, with the proposals
+// its moves land as each move names them: the one source of which moves hold
+// and where the shared bookmarks are.
+@(private)
+agent_project_fold :: proc(a:^Agent,l:^Log,f:^Project_Fold) -> bool {
+    if !a.folded || l==nil || len(l.items)==0 {return false}
+    proposals:=make([dynamic]^Proposal_Fold,context.temp_allocator)
+    if project_snapshots(a.desc.store,l,&a.org,&proposals,context.temp_allocator)!=.None {return false}
+    if project_fold(f,l,&a.org,proposals[:],context.temp_allocator)!=.None {return false}
+    _=landings_keep(a.desc.store,f)
+    return true
 }
 
 // Rebuilds the chunks restricted peers may get.
@@ -1465,8 +1469,9 @@ members_settled :: proc(a:^Agent,out:^[dynamic]Walk_Item) {
     }
 }
 
-// What the log l gives the members' set: the chunks of its index and pages,
-// which are objects of their own, the revisions it names and a keyring's
+// What the log l gives the members' set: its index and pages, which are
+// objects of their own, and what the entries its fold holds name
+// (entry_names): a project's moves, a proposal's stacks and a keyring's
 // envelopes.
 @(private)
 members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
@@ -1477,21 +1482,17 @@ members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
     case .Org: if l.id!=a.desc.org {return}
     case .Project:
         if !a.folded || org_project_index(&a.org,l.id)<0 {return}
-        for item in l.items {
-            if item.entry.type!=.Bookmark_Move {continue}
-            if _,role:=org_device_role(&a.org,item.entry.author);role<.Writer {continue}
-            b,_,_:=body_head(item.entry.body,Bookmark_Move_Body)
-            append(out,Walk_Item{b.to,.Change,true})
+        f:Project_Fold
+        if agent_project_fold(a,l,&f) {
+            for &item,e in l.items {
+                if f.valid[e] {entry_names(&item.entry,out)}
+            }
         }
     case .Proposal:
         k:=log_find(l,l.id)
         if !a.folded || k<0 || l.items[k].entry.type!=.Proposal_Open {return}
         if b,_,_:=body_head(l.items[k].entry.body,Proposal_Open_Body);org_project_index(&a.org,b.project)<0 {return}
-        for item in l.items {
-            if item.entry.type!=.Proposal_Revise {continue}
-            _,tail,_:=body_head(item.entry.body,Proposal_Revise_Body)
-            for st in slice.reinterpret([]Stack_Item,tail) {append(out,Walk_Item{st.revision,.Change,true})}
-        }
+        for &item in l.items {entry_names(&item.entry,out)}
     case .Keyring:
         k:=log_find(l,l.id)
         if !a.folded || k<0 || l.items[k].entry.type!=.Keyring_Genesis {return}
@@ -1500,19 +1501,14 @@ members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
         for sc in a.org.scopes {known||=sc.project==b.project && sc.scope==b.scope}
         if b.org!=a.desc.org || !known {return}
         // The envelopes of each epoch are an object of their own, fetched with the log.
-        for item in l.items {
-            if item.entry.type!=.Epoch_Add {continue}
-            e,_,_:=body_head(item.entry.body,Epoch_Add_Body)
-            append(out,Walk_Item{e.envelopes,.File,false})
-            if !object_present(a.desc.store,e.envelopes) {agent_want_object(a,e.envelopes)}
+        at:=len(out)
+        for &item in l.items {entry_names(&item.entry,out)}
+        for x in out[at:] {
+            if x.kind==.Envelopes && !object_present(a.desc.store,x.address) {agent_want_object(a,x.address)}
         }
     }
     name:[64]u8
-    address,e:=store.ref_get(a.desc.store,namespace,log_name(l.id,&name))
-    if e!=.None {return}
-    chunks:=make([dynamic]store.Hash,context.temp_allocator)
-    log_objects(a.desc.store,address,&chunks)
-    for c in chunks {a.members.chunks[c]={}}
+    if address,e:=store.ref_get(a.desc.store,namespace,log_name(l.id,&name));e==.None {append(out,Walk_Item{address,.Log,false})}
 }
 
 // What every ref of namespace reaches.
@@ -1532,10 +1528,9 @@ members_ref :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Hash
     members_walk(a,roots[:])
 }
 
-// The objects a ref of the org's namespace at address names: device refs and
-// the revisions they name, a DDC set and the outputs of its records, an
-// overlay's record, tree and sealed files. Nothing for a namespace that is
-// not the org's.
+// The item a ref of the org's namespace at address is, whose walk gives what
+// it names: device refs, a DDC set, an overlay's record. Nothing for a
+// namespace that is not the org's.
 @(private)
 members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Hash,out:^[dynamic]Walk_Item) {
     if !a.folded || address=={} {return}
@@ -1543,40 +1538,24 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
     case .Refs:
         project,ok:=store.parse_hex(namespace[len(REFS_PREFIX):])
         if !ok || org_project_index(&a.org,project)<0 {return}
-        append(out,Walk_Item{address,.File,false})
-        bytes,e:=object_get(a.desc.store,address,.Device_Refs,context.temp_allocator)
-        if e!=.None {return}
-        d,de:=device_refs_decode(bytes,context.temp_allocator)
-        if de!=.None {return}
-        for b in d.refs {append(out,Walk_Item{b.target,.Change,true})}
+        append(out,Walk_Item{address,.Refs,false})
     case .DDC:
         buffer:[len(DDC_PREFIX)+64]u8
         if namespace!=ddc_namespace(a.desc.org,&buffer) {return}
-        append(out,Walk_Item{address,.File,false})
-        records:=make([dynamic][]u8,context.temp_allocator)
-        if ddc_set_read(a.desc.store,address,&records)!=.None {return}
-        for bytes in records {
-            // What this machine built for the org is the org's.
-            if d,e:=ddc_record_decode(bytes);e==.None {append(out,Walk_Item{d.output_root,.Output,d.producer!=a.desc.identity.key})}
-        }
+        append(out,Walk_Item{address,.DDC_Set,false})
     case .Overlay:
         project,scope,ok:=overlay_namespace_parse(namespace)
         if !ok {return}
         known:=false
         for sc in a.org.scopes {known||=sc.project==project && sc.scope==scope}
         if !known {return}
-        append(out,Walk_Item{address,.File,false})
-        bytes,e:=overlay_get(a.desc.store,address,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator)
-        if e!=.None {return}
-        r,re:=overlay_record_decode(bytes)
-        if re!=.None {return}
-        append(out,Walk_Item{r.tree_root,.File,false})
-        for o in r.objects {append(out,Walk_Item{o,.File,false})}
+        append(out,Walk_Item{address,.Overlay,false})
     }
 }
 
 // Adds to the members' set the chunks of what roots reach, down to what it
-// holds; an object that is not here, or not whole, waits in the frontier.
+// holds; an object that is not here, or not whole, or a root that did not
+// come from the org yet, waits in the frontier (walk_admits).
 @(private)
 members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
     m:=&a.members
@@ -1585,12 +1564,14 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
     seen:=make(map[store.Hash]bool,context.temp_allocator)
     added:=make([dynamic]store.Hash,context.temp_allocator)
     empty:=empty_address()
-    b:=walk_buffers()
+    w:=walk_make(a.desc.store)
+    w.proven,w.own=&m.provenance,a.desc.identity.key
     for len(stack)>0 {
         item:=pop(&stack)
         if item.address=={} || item.address in m.chunks || seen[item.address] {continue}
-        // A root a ref names that did not come from the org is one this machine lacks for it.
-        if item.root && !provenance_has(&m.provenance,item.address) {
+        admit:=walk_admits(&w,item)
+        if admit==.No {continue}
+        if admit==.Wait {
             if item.address!=empty {m.frontier[item.address]=item}
             continue
         }
@@ -1602,7 +1583,7 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
             continue
         }
         delete_key(&m.frontier,item.address)
-        walk_children(a.desc.store,item,&b,&stack)
+        walk_children(&w,item,&stack)
         // A change's overlays: a snapshot writes their refs without telling the
         // agent, which tells the peers that read them here.
         if item.kind!=.Change || !a.folded {continue}
@@ -1654,23 +1635,19 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         closure_walk_scoped(a.desc.store,targets[:],g.path,&roots)
         for r in roots {object_chunks(a.desc.store,r,out)}
     }
+    // The untainted derived data whose outputs came from the org, as the members' set takes it.
     if .DDC in g.rights {
         ns:[len(DDC_PREFIX)+64]u8
         refs,ref_error:=store.ref_list(a.desc.store,ddc_namespace(a.desc.org,&ns),context.temp_allocator)
         if ref_error!=.None {return}
-        records:=make([dynamic][]u8,context.temp_allocator)
-        for r in refs {
-            object_chunks(a.desc.store,r.hash,out)
-            clear(&records)
-            if ddc_set_read(a.desc.store,r.hash,&records)!=.None {continue}
-            for bytes in records {
-                d,de:=ddc_record_decode(bytes)
-                if de!=.None || d.tainted>0 {continue}
-                object_chunks(a.desc.store,d.output_root,out)
-                objects,_:=ddc_output_get(a.desc.store,d.output_root,context.temp_allocator)
-                for o in objects {object_chunks(a.desc.store,o,out)}
-            }
-        }
+        roots:=make([dynamic]Walk_Item,context.temp_allocator)
+        for r in refs {append(&roots,Walk_Item{r.hash,.DDC_Set,false})}
+        w:=walk_make(a.desc.store)
+        w.untainted,w.proven,w.own=true,&a.members.provenance,a.desc.identity.key
+        present:=make([dynamic]store.Hash,context.temp_allocator)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        walk_all(&w,roots[:],&present,&missing)
+        for o in present {object_chunks(a.desc.store,o,out)}
     }
 }
 
@@ -1700,82 +1677,6 @@ object_present :: proc(s:^store.Store,address:store.Hash) -> bool {
     if e!=.None {return false}
     store.object_close(&o)
     return true
-}
-
-// What an object of a walk is: a Kai change, folder or conflict, whose
-// objects are walked too; a DDC_Output, whose listed objects are; or any other
-// object, whose chunks are all there is (a file, a log, a record).
-@(private)
-Walk_Kind :: enum u8 {Change,Folder,Conflict,File,Output}
-
-@(private)
-Walk_Item :: struct {address:store.Hash,kind:Walk_Kind,root:bool} // root: named by a ref, walked once it came from the org
-
-@(private)
-Walk_Buffers :: struct {entries:[dynamic]Tree_Entry,terms:Terms(Term)}
-
-@(private)
-walk_buffers :: proc() -> Walk_Buffers {
-    return {entries=make([dynamic]Tree_Entry,context.temp_allocator),terms=terms_make(Term,context.temp_allocator)}
-}
-
-// Pushes the objects item names onto stack.
-@(private)
-walk_children :: proc(s:^store.Store,item:Walk_Item,b:^Walk_Buffers,stack:^[dynamic]Walk_Item) {
-    switch item.kind {
-    case .Change:
-        c,e:=change_get(s,item.address,context.temp_allocator)
-        if e!=.None {return}
-        for p in c.parents {append(stack,Walk_Item{p,.Change,false})}
-        append(stack,Walk_Item{c.tree,.Folder,false})
-        for a in c.attachments {append(stack,Walk_Item{a.object,.File,false})}
-    case .Folder:
-        clear(&b.entries)
-        if _,e:=folder_get(s,item.address,&b.entries,nil,context.temp_allocator);e!=.None {return}
-        for entry in b.entries {
-            kind:Walk_Kind
-            switch entry.kind {
-            case .File,.Executable: kind=.File
-            case .Folder: kind=.Folder
-            case .Conflict: kind=.Conflict
-            }
-            append(stack,Walk_Item{entry.address,kind,false})
-        }
-    case .Conflict:
-        clear(&b.terms.adds)
-        clear(&b.terms.removes)
-        if _,e:=conflict_get(s,item.address,&b.terms);e!=.None {return}
-        for list in ([2][]Term{b.terms.adds[:],b.terms.removes[:]}) {
-            for t in list {append(stack,Walk_Item{t.address,t.kind==.Folder?.Folder:.File,false})}
-        }
-    case .Output:
-        objects,e:=ddc_output_get(s,item.address,context.temp_allocator)
-        if e!=.None {return}
-        for o in objects {append(stack,Walk_Item{o,.File,false})}
-    case .File:
-    }
-}
-
-// The Kai objects reachable from revisions: changes, their parents, their
-// trees, folders, conflicts and files, and the objects they attach. present gets those in the store,
-// missing those that are not (what lies under them is not walked).
-closure_walk :: proc(s:^store.Store,revisions:[]Revision,present,missing:^[dynamic]store.Hash) {
-    stack:=make([dynamic]Walk_Item,context.temp_allocator)
-    seen:=make(map[store.Hash]bool,context.temp_allocator)
-    for r in revisions {append(&stack,Walk_Item{r,.Change,false})}
-    empty:=empty_address()
-    b:=walk_buffers()
-    for len(stack)>0 {
-        item:=pop(&stack)
-        if item.address=={} || seen[item.address] {continue}
-        seen[item.address]=true
-        if !object_present(s,item.address) {
-            if item.address!=empty {append(missing,item.address)}
-            continue
-        }
-        append(present,item.address)
-        walk_children(s,item,&b,&stack)
-    }
 }
 
 // The Kai objects under revisions that a grant of path scope reads: every

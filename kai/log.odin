@@ -1213,31 +1213,6 @@ log_entry_get :: proc(s:^store.Store,address,entry:store.Hash,allocator:=context
     return nil,false,.Corrupt
 }
 
-// The chunks of the index at address and of every page below it, as far as
-// the store holds them: what a peer reads of a log.
-log_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) {
-    head,_,e:=log_index_read(s,address)
-    if e!=.None {return}
-    object_chunks(s,address,out)
-    page_objects(s,head.root,out,0)
-}
-
-@(private)
-page_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,depth:int) {
-    if depth>31 {return}
-    bytes,e:=object_get(s,address,.Log_Page,context.temp_allocator)
-    if e!=.None {return}
-    object_chunks(s,address,out)
-    r:=Reader{data=bytes}
-    h:=read_value(&r,Log_Page_Head)
-    if r.short || h.leaf {return}
-    children:=slice.reinterpret([]store.Hash,read_bytes(&r,256*size_of(store.Hash)))
-    if r.short {return}
-    for c in children {
-        if c!={} {page_objects(s,c,out,depth+1)}
-    }
-}
-
 // The pages of the log whose index is at address that the store lacks,
 // appended to out: what to fetch before the log reads whole.
 log_pages_missing :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) -> Error {
