@@ -12,7 +12,16 @@ repository of git, no index and no merge mode, and `git.*` methods are unknown.
 The tab has three views: Changes (the working copy, the bookmarks and the log), Proposals and
 Team. Each button of the team views asks for its `kai.*` method, which runs between frames as a
 call of an agent does; opening a proposal, picking the file a comment hangs on and typing only
-change what the person sees.
+change what the person sees. A row of buttons that would cut a label side by side at the tab's
+width stacks them, and a row of fields holds only what fits.
+
+A file of a change opens in the tab where the view's list was (`editor/kai_detail.odin`), with
+what the change did to it as `ka.file_detail` reads it, the same that `kai.log` and `kai.proposal`
+give with `file`: a text by its lines with their numbers, the lines it did not touch folded; an
+asset by the rows and fields its driver tells apart, each on its entity; a binary or oversized
+file by its sizes. A detail keeps `ka.DETAIL_ROWS` rows and counts the rest, is read once into its
+own arena when it opens, and draws only the rows in sight. Bytes a peer has are asked of the mesh:
+the tab reads the detail again on the team's poll, a method waits for them.
 
 ## Working copy
 
@@ -39,6 +48,8 @@ change what the person sees.
 - Undo takes back the newest operation of the repository and writes the files as the view after it
   has them; undoing an undo redoes it. It is not the undo of the document.
 - A change is named by `@`, `@-`, a bookmark or a prefix of its id (`ka.revision_find`).
+- A click on a change of the log lists the files it changed, each of which opens its detail; the
+  button of the row starts a new change on it.
 - A guest of a collaboration session opens no workspace: the host records the session's changes.
 
 ## Team
@@ -54,7 +65,11 @@ change what the person sees.
   snapshots again (`ka.project_route`); a frame that changes nothing reads and allocates nothing.
 - A machine with no user is offered one by its handle. The recovery key is shown once in a dialog
   that only its button closes (not Escape nor a press outside), and is zeroed when it closes;
-  rotating it asks for the key the user has now.
+  rotating it asks for the key the user has now. No result of a method carries a recovery key:
+  an editor with no window refuses to make a user or rotate its key before making anything, and
+  `mirai kai identity` does it in a terminal.
+- A device is named where it is made, the first one in its user's genesis: by the name given, or
+  by the machine's host name (`vcs.device_name_of`).
 - Pairing: a ticket is offered as a member, a second device or a node, and copied; another
   machine joins with it. The approving side gets one request at a time in a dialog: who asks as
   `<handle>/<device>` (the joining machine names itself from its user's log,
@@ -73,8 +88,10 @@ change what the person sees.
   Its view has the stack with what each change did to each file, the comments placed on the
   current stack (outdated ones marked), verdicts, checks and what keeps it from landing. A comment
   hangs on the proposal, on a file picked in the stack, on lines of a text file, or on the entity
-  selected in the scene. A check runs its command in the project's folder, whose working copy must
-  hold the proposal's final revision.
+  selected in the scene. A file of the stack opens its detail, with the comments on it under
+  their lines or entities; a click on a line (a shift-click spans from the one before) or on an
+  entity's row starts a comment there. A check runs its command in the project's folder, whose
+  working copy must hold the proposal's final revision.
 - Private files: the scopes of the project with their patterns, readers and history, added,
   removed and rotated. What refused the last snapshot (a path of the deny set, a scope waiting for
   rotation, a scope with no keyring here) or the last publish (a leak the publish scanner found)
@@ -105,7 +122,8 @@ change what the person sees.
 ## Verification
 
 - `editor_kai_snapshot_diff_conflict_and_undo` (`editor/kai_test.odin`): snapshot, what a change
-  shows, a merge with a conflict resolved by field, undo and redo.
+  shows and the detail of each kind of file, a merge with a conflict resolved by field, undo and
+  redo.
 - `editor_kai_new_change_takes_only_the_checked_files` (`editor/kai_test.odin`): `kai.split` and
   New change with files unchecked while the list changes; the split itself is
   `a_change_splits_by_paths_and_undoes_in_one_operation` in `kai`.
@@ -113,7 +131,9 @@ change what the person sees.
   key of a guest and the turn of an agent recorded in the host's change.
 - `editor_kai_pairs_and_lands_a_proposal` (`editor/kai_test.odin`): two editors with their stores
   and runners on 127.0.0.1 pair with the code, work on one project, and comment, approve, check
-  and land a proposal; a move around the policy answers it.
+  and land a proposal, reading a file's detail whose bytes the other has; a move around the
+  policy answers it; a device named by its host; what one editor's import keeps through the mesh,
+  the other's takes.
 - `editor_kai_team_views_ask_their_methods_and_keep_still_frames` and
   `editor_kai_team_methods_refuse_hostile_params` (`editor/kai_test.odin`): each view's stable
   frame allocates nothing, its buttons ask for their methods, the dialogs have no default, and

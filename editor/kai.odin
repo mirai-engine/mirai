@@ -63,6 +63,7 @@ Kai_View :: struct {
     description:string,
     files:[]Kai_File,     // what the working copy changed from its parents
     rows:[]Kai_Row,       // the log, newest first
+    picked:[]Kai_File,    // what the change picked in the log did
     bookmarks:[]string,   // name and change, as the tab lists them
     operation:string,     // the newest operation: what Undo takes back
     redo:bool,            // the newest operation is an undo
@@ -86,6 +87,9 @@ Kai_State :: struct {
     description:[KAI_DESCRIPTION_BYTES]u8,
     description_length:int,
     scroll:[2]f32,
+    width:f32,             // of the tab this frame: what its rows of buttons lay out in
+    picked:vcs.Revision,   // the change of the log whose files show
+    detail:Kai_Detail,     // a file of a change, open in the tab
     team:Kai_Team,
 }
 
@@ -152,6 +156,7 @@ kai_close :: proc(s:^Session) {
     st:=k.state
     if st.watching && s.app!=nil && s.app.platform!=nil {platform.watch_destroy(s.app.platform,st.watch)}
     kai_team_close(s)
+    kai_detail_close(st)
     ka.project_close(&st.project)
     vmem.arena_destroy(&st.arena)
     delete(st.unfolded)
@@ -536,6 +541,15 @@ kai_read :: proc(s:^Session) {
             change=ka.change_text(row.change.id,a),description=row.change.description,
             bookmarks=strings.join(names[:],", ",a),working=row.working,conflicts=row.conflicts,
             authors=len(row.change.coauthors),turns=len(row.change.turns),revision=row.revision,
+        }
+    }
+    if st.picked!={} {
+        changed:=make([dynamic]vcs.Diff,context.temp_allocator)
+        if ka.diff(w,st.picked,&changed,a)==.None {
+            v.picked=make([]Kai_File,len(changed),a)
+            for d,k in changed {v.picked[k]={d.path,kai_mark(d),true}}
+        } else {
+            st.picked={}
         }
     }
     marks:=make([dynamic]string,a)

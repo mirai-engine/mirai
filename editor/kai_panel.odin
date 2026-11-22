@@ -10,10 +10,12 @@ import "mirai:ui"
 // New change closes it, a file in conflict unfolded into its fields with the
 // side each takes, what refused the last snapshot with what resolves it, the
 // bookmarks (the workspace's, the org's and every device's) and the log.
-// Undo takes back the newest operation; a click on a change of the log or on
-// a shared bookmark starts a new change on it. Proposals and Team are the
-// team's (kai_team_panel.odin). It draws what kai_read and kai_team_read
-// left: a frame reads nothing of the repository.
+// Undo takes back the newest operation; a click on a change of the log
+// shows the files it changed, each of which opens what the change did to it
+// (kai_detail.odin), and its button, or a click on a shared bookmark, starts
+// a new change on it. Proposals and Team are the team's
+// (kai_team_panel.odin). It draws what kai_read and kai_team_read left: a
+// frame reads nothing of the repository.
 
 KAI_HEAD :: 22
 KAI_ROW_PAD :: 4
@@ -27,7 +29,12 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
     }
     st:=s.kai.state
     v:=&st.view
+    st.width=width
     kai_tabs_build(s)
+    if st.detail.open && st.detail.tab==st.team.tab {
+        kai_detail_build(s)
+        return
+    }
     if st.team.tab!=.Changes {
         if ui.scroll_area(ctx,ui.id(ctx,"kai_team_scroll"),&st.team.scroll,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=4}) {
             if st.team.tab==.Proposals {kai_proposals_build(s)} else {kai_team_build(s)}
@@ -177,25 +184,56 @@ kai_fields_build :: proc(s:^Session) {
     }
 }
 
-// A change of the log: its id, description and bookmarks; a click starts a
-// new change on it.
+// A change of the log: its id, description and bookmarks; a click shows the
+// files it changed, and its button starts a new change on it.
 @(private)
 kai_log_row :: proc(s:^Session,row:^Kai_Row) {
     ctx:=s.gui.ctx
+    st:=s.kai.state
     id:=ui.id(ctx,"row")
     it:=ui.interact(ctx,id,{.Focusable})
     on:=ai_pointer_on(ctx,id)
-    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")-4),gap=8,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0},fill=on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
+    picked:=st.picked==row.revision
+    if ui.box(ctx,{id=id,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")-4),gap=8,align_y=.Center,padding={KAI_ROW_PAD,0,KAI_ROW_PAD,0},fill=picked?ui.tone(ctx,"chip_active"):on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
         if ui.box(ctx,{width=ui.fixed(7),height=ui.fixed(7),fill=row.working?ui.tone(ctx,"accent"):ui.tone(ctx,"text_faint"),radius=3.5}) {}
         ui.label(ctx,row.change[:min(len(row.change),8)],ui.metric(ctx,"font_small"),ui.tone(ctx,"text_faint"))
         text:=row.description!="" ? row.description : "(no description)"
         if cut:=strings.index_byte(text,'\n');cut>=0 {text=text[:cut]}
         kai_row_names(ctx,text,row.bookmarks,row.conflicts>0?ui.tone(ctx,"danger"):ui.tone(ctx,"text"))
+        if !row.working && ui.icon_button(ctx,ui.id(ctx,"new"),.Plus,ui.metric(ctx,"row")-4,tip="Start a change on it").clicked {
+            parents:=[1]vcs.Revision{row.revision}
+            if message:=kai_new(s,parents[:],"");message!="" {notify(s,message)}
+            return
+        }
     }
-    if it.clicked && !row.working {
-        parents:=[1]vcs.Revision{row.revision}
-        if message:=kai_new(s,parents[:],"");message!="" {notify(s,message)}
+    if it.clicked {
+        st.picked=picked?{}:row.revision
+        kai_read(s)
+        return
     }
+    if !picked {return}
+    for &file,k in st.view.picked {
+        ui.id_push(ctx,ui.id(ctx,"file",k))
+        if kai_file_open_row(ctx,&file) {
+            if message:=kai_detail_open(s,.Changes,row.revision,file.path);message!="" {notify(s,message)}
+        }
+        ui.id_pop(ctx)
+    }
+}
+
+// A file a change changed, indented under it: its name, folder and mark; true when it is clicked.
+@(private)
+kai_file_open_row :: proc(ctx:^ui.Context,file:^Kai_File,picked:=false) -> bool {
+    row:=ui.id(ctx,"row")
+    it:=ui.interact(ctx,row,{.Focusable})
+    on:=ai_pointer_on(ctx,row)
+    if ui.box(ctx,{id=row,width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center,padding={KAI_ROW_PAD+12,0,KAI_ROW_PAD,0},fill=picked?ui.tone(ctx,"chip_active"):on?ui.tone(ctx,"chip"):{},radius=ui.metric(ctx,"radius_control")}) {
+        slash:=strings.last_index_byte(file.path,'/')
+        kai_row_names(ctx,file.path[slash+1:],slash>0?file.path[:slash]:"",ui.tone(ctx,"text"))
+        letter:=[1]u8{file.mark}
+        ui.label(ctx,string(letter[:]),ui.metric(ctx,"font_small"),ui.tone(ctx,file.mark=='A'?"success":file.mark=='M'?"text_muted":"danger"))
+    }
+    return it.clicked
 }
 
 // A name and what follows it, faint, cut with an ellipsis where the row ends.

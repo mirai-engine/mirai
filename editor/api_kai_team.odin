@@ -21,9 +21,10 @@ Api_Kai_Device :: struct {
 }
 
 Api_Kai_Identity_Params :: struct {
-    name:string `mirai:"optional,label=Makes the user of this device with this handle, when it has none"`,
+    name:string `mirai:"optional,label=Makes the user of this device with this handle, when it has none; its recovery key shows to the person in the editor's window, never in a result"`,
+    device:string `mirai:"optional,label=With name: this device's name; none: the machine's host name"`,
     revoke:string `mirai:"optional,label=A device of the user to revoke, by its name or a prefix of its key"`,
-    recovery:string `mirai:"optional,label=The recovery key the user has now, as it was shown: rotates it, and the new one is in the result once"`,
+    recovery:string `mirai:"optional,label=The recovery key the user has now, as it was shown: rotates it, and the new one shows to the person in the editor's window"`,
 }
 Api_Kai_Identity :: struct {
     user:string `mirai:"label=The id of the user; empty: this device has none yet"`,
@@ -32,7 +33,6 @@ Api_Kai_Identity :: struct {
     subject:string `mirai:"label=What a grant is issued to: the device key and X25519 key"`,
     devices:[]Api_Kai_Device,
     orgs:[]string `mirai:"label=The orgs this machine serves"`,
-    recovery:string `mirai:"optional,label=The recovery key made now: shown once, write it down and keep it offline"`,
 }
 
 Api_Kai_Org_Params :: struct {
@@ -78,7 +78,7 @@ Api_Kai_Pair_Params :: struct {
     role:string `mirai:"optional,label=With offer member: reader, writer or admin; writer when none"`,
     modes:string `mirai:"optional,label=With offer node: relay, seed and ddc apart by commas; relay,seed when none"`,
     join:string `mirai:"optional,label=A ticket another machine offered"`,
-    name:string `mirai:"optional,label=With join, on a device with no user: the name its user will know it by"`,
+    name:string `mirai:"optional,label=With join, on a device with no user: the name its user will know it by; none: the machine's host name"`,
     answer:string `mirai:"optional,label=approve or deny: the pairing request that waits"`,
     code:string `mirai:"optional,label=With approve: the code the other machine shows, dddd-dddd"`,
 }
@@ -122,7 +122,8 @@ Api_Kai_Proposals :: struct {
 Api_Kai_Proposal_Params :: struct {
     proposal:string `mirai:"label=A proposal by a prefix of its id, as kai.proposals lists it"`,
     comment:string `mirai:"optional,label=Comments with this text"`,
-    file:string `mirai:"optional,label=With comment: the file it hangs on, from the folder of the project"`,
+    file:string `mirai:"optional,label=A file of the stack, from the folder of the project: a comment hangs on it, or alone, detail says what its change did to it"`,
+    change:string `mirai:"optional,label=With file: the change of the stack whose detail; none: the topmost that changed it"`,
     lines:string `mirai:"optional,label=With comment and file: lines of a text file, A-B from 1"`,
     entity:u64 `mirai:"optional,label=With comment and file: the id of an entity of the scene"`,
     reply:string `mirai:"optional,label=With comment: the comment it answers, by a prefix of its id"`,
@@ -171,6 +172,7 @@ Api_Kai_Proposal :: struct {
     checks:[]Api_Kai_Check,
     blocking:string `mirai:"label=What keeps it from landing; empty: it may land"`,
     passed:bool `mirai:"optional,label=Of the check run now"`,
+    detail:Api_Kai_Detail `mirai:"optional,label=Of file: what its change did to it"`,
 }
 
 Api_Kai_Scopes_Params :: struct {
@@ -256,6 +258,15 @@ api_kai_identity :: proc(s:^Session,call:^api.Call) {
     p:=api.call_params(call,Api_Kai_Identity_Params)
     action,ok:=api_kai_action(call,{"name","revoke","recovery"},{p.name!="",p.revoke!="",p.recovery!=""})
     if !ok {return}
+    if p.device!="" && action!="name" {
+        api.call_fail(call,api.INVALID_PARAMS,"device goes with name: it names this device when its user is made")
+        return
+    }
+    // A recovery key is a secret for a person: it shows in the editor's window, never in a result.
+    if (action=="name" || action=="recovery") && (s.headless || s.gui==nil) {
+        api.call_fail(call,api.SERVER_ERROR,"a recovery key is shown to a person, and this editor has no window: make the user or rotate its key in an editor with a window, or with mirai kai identity in a terminal")
+        return
+    }
     m:=api_kai_machine(s,call)
     if m==nil {return}
     t:=&s.kai.state.team
@@ -264,9 +275,8 @@ api_kai_identity :: proc(s:^Session,call:^api.Call) {
     case "name":
         buffer:[vcs.RECOVERY_TEXT]u8
         defer for &b in buffer {b=0}
-        recovery,e:=vcs.machine_user_create(m,p.name,&buffer)
+        recovery,e:=vcs.machine_user_create(m,p.name,&buffer,p.device)
         if e!=.None {api_kai_why(call,m,e);return}
-        r.recovery=strings.clone(recovery,call.allocator)
         t.recovery_length=copy(t.recovery[:],recovery)
         kai_dialog_open(s,.Recovery)
         kai_team_wrote(s)
@@ -280,7 +290,6 @@ api_kai_identity :: proc(s:^Session,call:^api.Call) {
         defer for &b in buffer {b=0}
         recovery,e:=vcs.machine_recovery_rotate(m,strings.trim_space(p.recovery),&buffer)
         if e!=.None {api_kai_why(call,m,e);return}
-        r.recovery=strings.clone(recovery,call.allocator)
         t.recovery_length=copy(t.recovery[:],recovery)
         kai_dialog_open(s,.Recovery)
     }
@@ -572,8 +581,14 @@ api_kai_proposal :: proc(s:^Session,call:^api.Call) {
     if !ok {return}
     anchor:vcs.Anchor
     switch {
-    case action!="comment" && (p.file!="" || p.lines!="" || p.entity!=0 || p.reply!=""):
-        api.call_fail(call,api.INVALID_PARAMS,"file, lines, entity and reply go with comment: give its text")
+    case action!="comment" && action!="" && p.file!="":
+        api.call_fail(call,api.INVALID_PARAMS,"file goes with comment, or alone for its detail")
+        return
+    case action!="comment" && (p.lines!="" || p.entity!=0 || p.reply!=""):
+        api.call_fail(call,api.INVALID_PARAMS,"lines, entity and reply go with comment: give its text")
+        return
+    case p.change!="" && p.file=="":
+        api.call_fail(call,api.INVALID_PARAMS,"change goes with file: name the file whose detail it gives")
         return
     case (p.lines!="" || p.entity!=0) && p.file=="":
         api.call_fail(call,api.INVALID_PARAMS,"lines and entity hang on a file: give it with file")
@@ -646,6 +661,25 @@ api_kai_proposal :: proc(s:^Session,call:^api.Call) {
     r:=api.call_result(call,Api_Kai_Proposal)
     api_kai_proposal_fill(r,v,call)
     r.passed=passed
+    if p.file=="" || action!="" {return}
+    revision:vcs.Revision
+    if p.change!="" {
+        found:bool
+        if revision,found=api_kai_revision(s,call,p.change);!found {return}
+    } else {
+        // The topmost change of the stack that changed the file.
+        #reverse for files,i in v.changes {
+            for file in files {
+                if file.path==p.file {revision=v.proposal.stack[i].revision}
+            }
+            if revision!={} {break}
+        }
+        if revision=={} {
+            api.call_failf(call,api.INVALID_PARAMS,"file: no change of the stack changed %q: give a file stack lists",p.file)
+            return
+        }
+    }
+    if !api_kai_detail(s,call,revision,p.file,&r.detail) {return}
 }
 
 @(private)

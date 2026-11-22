@@ -196,8 +196,8 @@ Entry_Head :: struct #packed {
   horizon: [](log_id, heads)}` invalidates any entry by that device outside the causal past of the
   named heads. `Member_Remove` lives in the org DAG itself, so its causal past is its horizon.
 - **Log kinds:**
-  - `User_Log`: `Genesis{R_pub, first_device}`, `Device_Add{ds, dh, name}`, `Device_Revoke`,
-    `Recovery_Rotate{R'}`, `Web_Key_Add{credential_id, cose_pub, rp_id}`.
+  - `User_Log`: `Genesis{R_pub, first_device, its name}`, `Device_Add{ds, dh, name}`,
+    `Device_Revoke`, `Recovery_Rotate{R'}`, `Web_Key_Add{credential_id, cose_pub, rp_id}`.
   - `Org_Log` (readable only by org members/nodes): `Genesis`, `Member_Add`, `Member_Remove`,
     `Role_Set` (`owner > admin > writer > reader`), `Owner_Transfer`, `Project_Add{public|org}`,
     `Scope_Add{project_id, scope_id, patterns[], readers, history}`, `Scope_Remove`,

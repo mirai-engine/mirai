@@ -242,16 +242,19 @@ recovery_sum :: proc(seed:[32]u8) -> [32]u8 {
 }
 
 // Makes the user of this device: its User_Log, whose genesis the new recovery
-// key signs. The recovery key is in the text returned, once: print it and
+// key signs and names this device device, or this machine's host name. The recovery key is in the text returned, once: print it and
 // keep it offline; it is not stored.
-machine_user_create :: proc(m:^Machine,name:string,buffer:^[RECOVERY_TEXT]u8) -> (recovery:string,error:Error) {
+machine_user_create :: proc(m:^Machine,name:string,buffer:^[RECOVERY_TEXT]u8,device:="") -> (recovery:string,error:Error) {
     if m.user!={} {return "",machine_fail(m,.Invalid_Argument,"this device belongs to a user already: one user per device")}
     if !name_valid(name) {return "",machine_fail(m,.Invalid_Argument,"a user's name is 1 to 64 bytes of text: give another")}
+    head:=User_Genesis_Body{device=m.identity.key,dh=Dh_Key(m.dh.public)}
+    if !name_valid(device_name_of(device,&head.device_name)) {return "",machine_fail(m,.Invalid_Argument,"a device's name is 1 to 64 bytes of text, as laptop: give another")}
     r:=identity_make()
     defer crypto.zero_explicit(&r,size_of(Identity))
+    head.recovery,head.proof=r.key,device_proof(&m.identity,transmute([32]u8)r.key)
     l:Log
     log_init(&l,{},context.temp_allocator)
-    body:=body_make(User_Genesis_Body{recovery=r.key,device=m.identity.key,dh=Dh_Key(m.dh.public),proof=device_proof(&m.identity,transmute([32]u8)r.key)},transmute([]u8)name)
+    body:=body_make(head,transmute([]u8)name)
     if _,e:=log_append(&l,.User_Genesis,body,&r,machine_now());e!=.None {return "",machine_fail(m,e,"the user's first entry does not sign")}
     machine_log_save(m,&l) or_return
     if e:=store.ref_set(&m.store,MACHINE_NAMESPACE,MACHINE_USER,l.id);e!=.None {return "",machine_fail(m,store_error(e),"the store refused the user's ref: give this user access to the store")}
@@ -698,4 +701,26 @@ machine_publish_ddc :: proc(m:^Machine,org:Log_Id,key:store.Hash,objects:[]store
     name:[64]u8
     machine_tell(m,ddc_namespace(org,&ns),store.hex(key,&name))
     return
+}
+
+// The name a device is made with, in buffer: given, or else this machine's
+// host name up to its first dot, of letters, digits, - and _ alone and
+// NAME_MAX bytes at most ("device" when the system gives none).
+device_name_of :: proc(given:string,buffer:^[NAME_MAX]u8) -> string {
+    buffer^={}
+    if given!="" {
+        if len(given)>NAME_MAX {return given}
+        return string(buffer[:copy(buffer[:],given)])
+    }
+    host:[256]u8
+    n:=0
+    for c in transmute([]u8)host_name(host[:]) {
+        if c=='.' || n==NAME_MAX {break}
+        if (c>='a' && c<='z') || (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='-' || c=='_' {
+            buffer[n]=c
+            n+=1
+        }
+    }
+    if n==0 {n=copy(buffer[:],"device")}
+    return string(buffer[:n])
 }
