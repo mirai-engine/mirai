@@ -29,7 +29,8 @@ Field_Conflict :: struct {
 Resolve_Whole :: enum u8 {Fields,Ours,Theirs}
 
 // The fields in conflict of the file at path; asset false for a file that is
-// not an asset both sides of which read (text, binary): it resolves whole.
+// not an asset both sides of which read (text, binary), or whose merge the
+// driver refused: it resolves whole.
 conflict_fields :: proc(w:^vcs.Workspace,types:^asset.Types,path:string,out:^[dynamic]Field_Conflict,allocator:=context.temp_allocator) -> (is_asset:bool,error:vcs.Error) {
     ours_bytes,origin_bytes,theirs_bytes,has_base,ok:=conflict_sides(w,path,allocator)
     if !ok {return false,.Invalid_Argument}
@@ -43,6 +44,8 @@ conflict_fields :: proc(w:^vcs.Workspace,types:^asset.Types,path:string,out:^[dy
     merged:asset.Document
     if asset.document_read(&merged,ours_bytes,allocator)!=.None {return false,.None}
     if asset.scene_merge(&m,types,&merged,has_base?&origin:nil,&theirs)!=.None {return false,.None}
+    merged_bytes,e:=asset.document_bytes(&merged,allocator)
+    if e!=.None || merge_refused(types,merged_bytes,ours_bytes) {return false,.None}
     for c in m.conflicts {
         row:=Field_Conflict{kind=c.kind,path=c.path,table=c.table,key=c.key,ours_has=c.ours,theirs_has=c.theirs}
         if c.kind==.Value {

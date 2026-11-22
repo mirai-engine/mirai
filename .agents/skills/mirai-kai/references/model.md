@@ -80,8 +80,10 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   when both sides changed them.
 - Mirai assets merge in `cook/kai` through `asset.scene_merge`: a document by row id and field by
   field, a scene keeping its hierarchy valid, and what both sides changed apart a conflict whose
-  partial result keeps ours. A result that does not read again as a scene is `Error`, not a
-  result. Resolving a conflicted asset by field is `cook/kai/conflicts.odin`, shown in the
+  partial result keeps ours; a result that breaks the rules of its kind where ours kept them
+  conflicts whole as ours. `Error` is a failure to merge (memory): its file conflicts too and
+  materializes as ours, never stopping the rest of the tree. Resolving a conflicted asset by field
+  is `cook/kai/conflicts.odin`, shown in the
   [editor](../../mirai-editor/references/kai.md#conflicts); the merge rules of the asset are
   [asset merge](../../mirai-assets/references/cli.md#merge).
 - An anchor of a comment is a file, lines or a structural key (an entity and a table or field).

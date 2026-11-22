@@ -33,7 +33,7 @@ every_command_refuses_unknown_options_and_answers_help :: proc(t:^testing.T) {
         {{"worktree","new","x","--nope"},2},
         {{"plugin","add","--nope"},2},
         {{"agent","install","-x"},2},
-        {{"setup","git","-x"},2},
+        {{"setup","rg","-x"},2},
         {{"setup","slang","--nope"},2},
         {{"shaders","--nope"},2},
         {{"shaders","check","-x"},2},

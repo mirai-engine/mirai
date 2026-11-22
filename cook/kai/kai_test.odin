@@ -163,3 +163,70 @@ asset_summaries_are_stable_and_follow_their_bytes :: proc(t:^testing.T) {
     _,dok=asset_detail(transmute([]u8)string("a"),transmute([]u8)string("b"),context.temp_allocator)
     testing.expect(t,!dok,"text has no asset detail")
 }
+
+// Rows of one table that name rows of another by what they hold, which a
+// merge of rows does not follow. Ours removed what theirs then names: the
+// merge breaks the rules of the kind, and the file conflicts whole as ours had
+// it. What each side changed in a table of its own goes together.
+@(test)
+a_merge_that_breaks_its_kind_conflicts_as_ours :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    skeleton :: proc(t:^testing.T,types:^asset.Types,bones:[]asset.Skeleton_Bone,sockets:[]asset.Skeleton_Socket={}) -> []u8 {
+        doc:asset.Document
+        if !testing.expect_value(t,asset.skeleton_document(&doc,types,{id={0x5e1,1},bones=bones,sockets=sockets},context.temp_allocator),asset.Error.None) {return nil}
+        bytes,e:=asset.document_bytes(&doc,context.temp_allocator)
+        testing.expect_value(t,e,asset.Error.None)
+        return bytes
+    }
+    texts :: proc(t:^testing.T,types:^asset.Types,languages:[]string,keys:[]string,entries:[]asset.String_Entry,text:string) -> []u8 {
+        rows:=make([]asset.String_Language,len(languages),context.temp_allocator)
+        for code,at in languages {asset.text_set(rows[at].code[:],code)}
+        names:=make([]asset.String_Key,len(keys),context.temp_allocator)
+        for name,at in keys {asset.text_set(names[at].name[:],name)}
+        bytes,e:=asset.strings_bytes(types,{id={0x5e2,1},languages=rows,keys=names,entries=entries,text=transmute([]u8)text},context.temp_allocator)
+        testing.expect_value(t,e,asset.Error.None)
+        return bytes
+    }
+    bones:=[2]asset.Skeleton_Bone{{parent=-1,rotation=1,scale={1,1,1}},{parent=0,rotation=1,scale={1,1,1}}}
+    asset.text_set(bones[0].name[:],"root");asset.text_set(bones[0].path[:],"root");bones[0].target=base.name_hash("root")
+    asset.text_set(bones[1].name[:],"arm");asset.text_set(bones[1].path[:],"root/arm");bones[1].target=base.name_hash("root/arm")
+    socket:=asset.Skeleton_Socket{bone=bones[1].path,offset={rotation=1,scale={1,1,1}}};asset.text_set(socket.name[:],"hand")
+    raised:=bones
+    raised[1].translation[1]=2
+    one:=[]asset.String_Entry{{key=0,language=0,offset=0,length=1}}
+    two:=[]asset.String_Entry{{key=0,language=0,offset=0,length=1},{key=1,language=0,offset=1,length=1}}
+
+    Case :: struct {name:string,origin,breaks,theirs,own:[]u8,merged:[2][2]string}
+    cases:=[]Case{
+        {"skeleton",
+            skeleton(t,&types,bones[:]),
+            skeleton(t,&types,bones[:1]),                     // ours removed the arm
+            skeleton(t,&types,bones[:],{socket}),             // theirs hung the hand from it
+            skeleton(t,&types,raised[:]),                     // ours raised the arm
+            {{"bones[1].translation[1]","2"},{"sockets[0].name",`"hand"`}}},
+        {"strings",
+            texts(t,&types,{"en"},{"a","b"},one,"A"),
+            texts(t,&types,{"en"},{"a"},one,"A"),             // ours removed the key b
+            texts(t,&types,{"en"},{"a","b"},two,"AB"),        // theirs gave it a text
+            texts(t,&types,{"en-US"},{"a","b"},one,"A"),      // ours renamed the language
+            {{"languages[0].code",`"en-US"`},{"entries[1].key","1"}}},
+    }
+    d:=Asset_Driver{types=&types}
+    drivers:=[1]vcs.Driver{driver(&d)}
+    out:=make([dynamic]u8,context.temp_allocator)
+    for c in cases {
+        input:=vcs.Driver_Input{path="assets/a",base=c.origin,ours=c.breaks,theirs=c.theirs,has_base=true}
+        result:=vcs.drivers_merge(drivers[:],&input,&out)
+        testing.expectf(t,result==.Conflicted && string(out[:])==string(c.breaks),"%s: a merge that breaks it conflicts as ours: %v",c.name,result)
+
+        input.ours=c.own
+        result=vcs.drivers_merge(drivers[:],&input,&out)
+        if !testing.expectf(t,result==.Resolved,"%s: tables of its own merge: %v",c.name,result) {continue}
+        doc:asset.Document
+        if !testing.expectf(t,asset.document_read(&doc,out[:],context.temp_allocator)==.None,"%s: the merge reads",c.name) {continue}
+        for pair in c.merged {
+            got:=value_text(&doc,pair[0],context.temp_allocator)
+            testing.expectf(t,got==pair[1],"%s: %s is %s, not %q",c.name,pair[0],pair[1],got)
+        }
+    }
+}

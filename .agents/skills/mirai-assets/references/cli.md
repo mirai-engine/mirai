@@ -27,7 +27,9 @@ subcommands with their usage.
 - **`verify`** checks container, hash, decompression, schema and tables, that the stored
   dependencies are the derived ones and that each value meets its schema. For the engine's types it
   checks their version (for one the build does not read, the reason is `version_message`, with the
-  `mirai import` that rebuilds it) and their rules (`*_check`). For a `.ui` it only checks the
+  `mirai import` that rebuilds it) and their rules (`*_check`). All but the values against their
+  schema (the editor's check) and the sample rate of a sound (the mixer's) is `asset.verify`, which
+  the merge of Kai also applies ([merge](#merge)). For a `.ui` it only checks the
   tree's structure (`asset.ui_check`): the rest is validated on loading it
   ([interface](kinds.md#interface)). The scenes that pass then go through `mirai scene check`
   against the game of their project: whether their documents write them back, and each component
@@ -78,8 +80,7 @@ mesh.flags.Skinned                     a bit set member, as bool
 
 `asset.document_merge` and `asset.scene_merge` merge three versions of a document into ours and
 list what did not merge. Kai merges assets through them: the asset driver of `cook/kai`, which
-the editor, `mirai kai` and the join of `cook/share` use; a scene that does not read after the
-merge is no result.
+the editor, `mirai kai` and the join of `cook/share` use.
 
 - Rows are paired as in `diff` and values field by field: a field that one side left as it was in
   `<base>` takes the other's. A vector is a whole value. A column whose type only theirs changed
@@ -92,6 +93,11 @@ merge is no result.
   does not enter.
 - Without a key, a table is a set of rows; a `Bulk` table is compared whole. Without a base (a
   file both added), every difference is a conflict.
+- Rows of one table may name rows of another by what they hold (a socket its bone by path, an
+  entry of `.strings` its key by row), which pairing rows does not follow. A merged asset that
+  breaks the rules of its kind (`asset.verify`, the inspector `verify` shares) or a scene that
+  does not read, where ours kept them, is no result: the file conflicts whole as ours, like a
+  binary file, and resolves as one side.
 - In scenes (`asset.scene_merge`): a removed parent leaves the child at the root, a
   cycle between the two sides is opened with ours' parent, the instances theirs added with an id
   that ours already gave take a new one (with their members and overrides), and the `Scene_Info`

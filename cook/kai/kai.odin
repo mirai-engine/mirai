@@ -54,15 +54,35 @@ asset_merge :: proc(data:rawptr,input:^vcs.Driver_Input,out:^[dynamic]u8) -> vcs
     if asset.scene_merge(&m,d.types,&ours,base_doc,&theirs)!=.None {return .Error}
     bytes,e:=asset.document_bytes(&ours,context.temp_allocator)
     if e!=.None {return .Error}
-    // Rows of a kind may name rows of another table by position, which a merge
-    // of rows does not follow: a scene that does not read is no result.
-    if ours.kind==asset.KIND_SCENE {
-        check:asset.Scene
-        if asset.scene_read(&check,d.types,bytes)!=.None {return .Error}
-        asset.scene_destroy(&check)
+    if merge_refused(d.types,bytes,input.ours) {
+        if _,f:=append(out,..input.ours);f!=nil {return .Error}
+        return .Conflicted
     }
     if _,f:=append(out,..bytes);f!=nil {return .Error}
     return len(m.conflicts)==0 ? .Resolved : .Conflicted
+}
+
+// Rows of one table may name rows of another by what they hold, which a merge
+// of rows does not follow: a merged asset that breaks the rules of its kind
+// where ours kept them is no result, and the file conflicts whole, as ours.
+@(private)
+merge_refused :: proc(types:^asset.Types,merged,ours:[]u8) -> bool {
+    return !kind_valid(types,merged) && kind_valid(types,ours)
+}
+
+// Whether bytes are an asset its kind allows (asset.verify) and, of a scene,
+// one that reads.
+@(private)
+kind_valid :: proc(types:^asset.Types,bytes:[]u8) -> bool {
+    a:asset.Asset
+    if asset.asset_open(&a,bytes)!=.None {return false}
+    defer asset.asset_close(&a)
+    if asset.verify(&a,types,"")!="" {return false}
+    if a.blob.header.kind!=asset.KIND_SCENE {return true}
+    scene:asset.Scene
+    if asset.scene_read(&scene,types,bytes)!=.None {return false}
+    asset.scene_destroy(&scene)
+    return true
 }
 
 // A structural anchor stays while its entity is in the scene; lines do not

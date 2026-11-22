@@ -94,27 +94,6 @@ print :: proc(w:^serial.Writer) {
 }
 
 @(private="file")
-error_text :: proc(error:asset.Error) -> string {
-    switch error {
-    case .None: return "no error"
-    case .Truncated: return "the file is truncated"
-    case .Not_An_Asset: return "not a Mirai asset"
-    case .Version: return "a container or kind version this build does not read"
-    case .Corrupt: return "the directory, a chunk or a table contradict each other"
-    case .Hash: return "the content does not match its hash"
-    case .Too_Large: return "needs more memory than the limit"
-    case .Schema: return "the schema table is not valid"
-    case .Codec_Missing: return "it uses an unsupported compression format: regenerate it with this version of Mirai"
-    case .Out_Of_Memory: return "out of memory"
-    case .Not_Found: return "does not exist"
-    case .IO: return "could not be read or written"
-    case .Invalid: return "contains something the format does not allow"
-    case .Not_Here: return "a part of it is not in the store yet: fetch it from a peer that has it, or build it again"
-    }
-    return "unknown error"
-}
-
-@(private="file")
 locate_text :: proc(location:asset.Location,error:asset.Locate_Error) -> string {
     switch error {
     case .None: return ""
@@ -177,7 +156,7 @@ rule_text :: proc(rule:asset.Text_Rule) -> string {
 @(private="file")
 load :: proc(command,path:string,doc:^asset.Document) -> bool {
     if error:=asset.document_load(doc,path);error!=.None {
-        failed(command,path,error_text(error))
+        failed(command,path,asset.error_text(error))
         return false
     }
     return true
@@ -196,7 +175,7 @@ asset_info :: proc(_:string,args:[]string) -> int {
     if code:=positionals("info",args);code!=0 {return code}
     if len(args)!=1 {return misuse("info")}
     a:asset.Asset
-    if error:=asset.asset_load(&a,args[0]);error!=.None {return failed("info",args[0],error_text(error))}
+    if error:=asset.asset_load(&a,args[0]);error!=.None {return failed("info",args[0],asset.error_text(error))}
     defer asset.asset_close(&a)
     w:serial.Writer;serial.writer_init(&w)
     header:=a.blob.header
@@ -254,7 +233,7 @@ asset_ls :: proc(_:string,args:[]string) -> int {
     packages:=packages_beside(folder,store_root)
     r:asset.Registry
     asset.registry_init(&r,folder,cache,listed=packages.listed)
-    if error:=asset.registry_scan(&r);error!=.None {return failed("ls",folder,error_text(error))}
+    if error:=asset.registry_scan(&r);error!=.None {return failed("ls",folder,asset.error_text(error))}
     w:serial.Writer;serial.writer_init(&w)
     problems:=len(packages.problems)
     for problem in packages.problems {serial.text_write_raw(&w,fmt.tprintf("! package %s\n",problem))}
@@ -300,7 +279,7 @@ asset_deps :: proc(_:string,args:[]string) -> int {
     }
     if file=="" || (all || users) && folder=="" || all && users {return misuse("deps")}
     a:asset.Asset
-    if error:=asset.asset_load(&a,file);error!=.None {return failed("deps",file,error_text(error))}
+    if error:=asset.asset_load(&a,file);error!=.None {return failed("deps",file,asset.error_text(error))}
     w:serial.Writer;serial.writer_init(&w)
     if folder=="" {
         for id in a.dependencies {write_id(&w,id);serial.write_u8(&w,'\n')}
@@ -311,7 +290,7 @@ asset_deps :: proc(_:string,args:[]string) -> int {
     for problem in packages.problems {fmt.eprintfln("mirai asset deps: %s",problem)}
     r:asset.Registry
     asset.registry_init(&r,folder,listed=packages.listed)
-    if error:=asset.registry_scan(&r);error!=.None {return failed("deps",folder,error_text(error))}
+    if error:=asset.registry_scan(&r);error!=.None {return failed("deps",folder,asset.error_text(error))}
     id:=a.blob.header.id
     missing:=0
     switch {
@@ -333,82 +312,27 @@ asset_deps :: proc(_:string,args:[]string) -> int {
     return missing==0?0:1
 }
 
-// Everything that can be checked of a file without knowing who will use it,
-// and the rules of its kind when it is one the engine defines.
+// Everything that can be checked of a file without knowing who will use it:
+// the rules of its kind (asset.verify), then what the editor checks of a
+// value against its schema and the sample rate the mixer plays.
 @(private)
 verify :: proc(path:string,types:^asset.Types) -> string {
     a:asset.Asset
-    if error:=asset.asset_load(&a,path);error!=.None {return error_text(error)}
+    if error:=asset.asset_load(&a,path);error!=.None {return asset.error_text(error)}
     defer asset.asset_close(&a)
-    return verify_asset(&a,path,types)
-}
-
-// path: where the asset is, for what it says of a version this build does not read.
-@(private="file")
-verify_asset :: proc(a:^asset.Asset,path:string,types:^asset.Types) -> string {
-    if !asset.blob_verify_hash(&a.blob) {return error_text(.Hash)}
-    for &table in a.tables {
-        for _,column in table.columns {
-            if _,error:=asset.asset_column_data(a,&table,column);error!=.None {return fmt.tprintf("table %s: a chunk cannot be decompressed",table.name)}
-        }
-    }
-    doc:asset.Document
-    if error:=asset.document_from_asset(&doc,a);error!=.None {return error_text(error)}
-    defer asset.document_destroy(&doc)
-    if asset.document_check(&doc)!=.None {return "the tables contradict each other"}
-    derived:[dynamic]base.Asset_Id
-    defer delete(derived)
-    if asset.document_dependencies(&doc,&derived)!=.None {return "a row has too many references"}
-    same:=len(derived)==len(a.dependencies)
-    for id,at in derived {same&&=at<len(a.dependencies) && a.dependencies[at]==id}
-    if !same {return "the stored dependencies are not the ones its values name"}
-    for table in doc.tables {
+    if reason:=asset.verify(&a,types,path);reason!="" {return reason}
+    for table in a.tables {
         for column in table.columns {
-            if !schema_limits(&doc.schema,column.type) {continue}
+            if !schema_limits(&a.schema,column.type) {continue}
             for row in 0..<table.rows {
                 path:=fmt.tprintf("%s[%d]",table.name,row)
-                if message,ok:=api.value_check(&doc.schema,column.type,column.data[row*column.size:][:column.size],path,context.temp_allocator);!ok {return fmt.tprintf("a value outside its schema: %s",message)}
+                if message,ok:=api.value_check(&a.schema,column.type,column.data[row*column.size:][:column.size],path,context.temp_allocator);!ok {return fmt.tprintf("a value outside its schema: %s",message)}
             }
         }
     }
-    // An asset this build does not read says how to make it again.
-    if known,found:=asset.kind_info(a.blob.header.kind);found && known.version!=0 && a.blob.header.kind_version!=known.version {
-        return asset.version_message(a,types,path,allocator=context.temp_allocator)
-    }
-    switch a.blob.header.kind {
-    case asset.KIND_MESH:
-        view,error:=asset.mesh_view(a,types)
-        if error!=.None {return "mesh: counts or ranges outside their tables"}
-        if !asset.mesh_check_indices(view) {return "mesh: an index, slot, weight or position out of range"}
-    case asset.KIND_TEXTURE:
-        if _,error:=asset.texture_view(a,types);error!=.None {return "texture: inconsistent size, format, layers or levels"}
-    case asset.KIND_MATERIAL:
-        if _,error:=asset.material_view(a,types);error!=.None {return "material: a value out of range or an invalid name"}
-    case asset.KIND_SCENE:
-        view,error:=asset.scene_view(a,types)
-        if error!=.None {return "scene: a component table names rows that do not exist or are out of order"}
-        if asset.scene_view_check(view)!=.None {return "scene: repeated ids, missing or cyclic parents, or prefab records without an entity"}
-        roots:=0
-        for parent in view.parents {roots+=int(parent==0)}
-        if asset.asset_prefab(a) && roots!=1 {return fmt.tprintf("scene: a prefab with %d roots: put its entities under one in the editor, or make it a scene there",roots)}
-    case asset.KIND_ANIMATION:
-        if _,error:=asset.animation_view(a,types);error!=.None {return "animation: an invalid range, key or name"}
-    case asset.KIND_SKELETON:
-        if _,error:=asset.skeleton_view(a,types);error!=.None {return "skeleton: an invalid hierarchy, transform or bone reference"}
-    case asset.KIND_SOUND:
-        view,error:=asset.sound_view(a,types)
-        if error!=.None {return "sound: inconsistent channels, sample rate, loop start, lossless data or file"}
+    if a.blob.header.kind==asset.KIND_SOUND {
+        view,_:=asset.sound_view(&a,types)
         if view.info.encoding==.Lossless && view.info.sample_rate!=audio.MIXER_RATE {return fmt.tprintf("sound: coded at %d Hz, not the %d Hz the mixer plays: import its source again with mirai import",view.info.sample_rate,audio.MIXER_RATE)}
-    case asset.KIND_UI:
-        if !asset.ui_check(a,types) {return "interface: nodes out of preorder or without a box, or a style, image, animation, track or key that does not exist"}
-    case asset.KIND_FONT:
-        if _,error:=asset.font_view(a,types);error!=.None {return "font: the file is not a TrueType or OpenType font with the outlines it declares"}
-    case asset.KIND_STRINGS:
-        if _,error:=asset.strings_view(a,types);error!=.None {return "strings: an empty or repeated language or key, or an entry out of order, repeated, or outside the text or the UTF-8"}
-    case asset.KIND_PROMPTS:
-        if _,error:=asset.prompts_view(a,types);error!=.None {return "prompts: a family or an entry that does not exist, a key too many or too few, a part outside its texture, or a repeated entry"}
-    case asset.KIND_RECORDS:
-        if _,error:=asset.records_view(a,types);error!=.None {return "records: no type of rows, columns that are not valid (a name that is not a word or is there twice, options that do not fit its kind) or that a table of rows of another's type has, no defaults, a row with the id 0, a repeated id or name, or a name that is not a word"}
     }
     return ""
 }
@@ -527,7 +451,7 @@ asset_dump :: proc(root:string,args:[]string) -> int {
         return 1
     }
     w:serial.Writer;serial.writer_init(&w)
-    if error:=asset.document_text_write(&doc,&w,options);error!=.None {return failed("dump",file,error_text(error))}
+    if error:=asset.document_text_write(&doc,&w,options);error!=.None {return failed("dump",file,asset.error_text(error))}
     print(&w)
     return 0
 }
@@ -593,7 +517,7 @@ asset_set :: proc(_:string,args:[]string) -> int {
         if serial.text_read(&reader,&doc.schema,location.type,location.bytes,location.is_text) {serial.text_end(&reader)}
         if reader.error.code!=.None {return failed("set",args[0],"%s: %s in '%s' (column %d)",path,serial.text_error_words(reader.error.code),text,reader.error.offset+1)}
     }
-    if error:=asset.document_save(&doc,args[0]);error!=.None {return failed("set",args[0],error_text(error))}
+    if error:=asset.document_save(&doc,args[0]);error!=.None {return failed("set",args[0],asset.error_text(error))}
     return 0
 }
 
@@ -635,7 +559,7 @@ asset_unpack :: proc(_:string,args:[]string) -> int {
     if kind,authored:=authored_kind(doc.kind);authored {return failed("unpack",args[0],authored_refusal(kind))}
     if os.make_directory_all(args[1])!=nil && !os.is_dir(args[1]) {return failed("unpack",args[1],"the folder could not be created")}
     w:serial.Writer;serial.writer_init(&w)
-    if error:=asset.document_text_write(&doc,&w,{schema=true,bulk=.Files});error!=.None {return failed("unpack",args[0],error_text(error))}
+    if error:=asset.document_text_write(&doc,&w,{schema=true,bulk=.Files});error!=.None {return failed("unpack",args[0],asset.error_text(error))}
     if serial.file_write_atomic(join(args[1],MANIFEST),serial.writer_bytes(&w))!=.None {return failed("unpack",join(args[1],MANIFEST),"could not be written")}
     for table in doc.tables {
         if .Bulk not_in table.flags {continue}
@@ -669,7 +593,7 @@ asset_pack :: proc(_:string,args:[]string) -> int {
         return 1
     }
     if kind,authored:=authored_kind(doc.kind);authored {return failed("pack",manifest,authored_refusal(kind))}
-    if error:=asset.document_save(&doc,args[1]);error!=.None {return failed("pack",args[1],error_text(error))}
+    if error:=asset.document_save(&doc,args[1]);error!=.None {return failed("pack",args[1],asset.error_text(error))}
     return 0
 }
 
@@ -704,12 +628,12 @@ asset_repack :: proc(root:string,args:[]string) -> int {
         case: repacked,error=asset.document_repack(data,.Fast,.None,context.temp_allocator)
         }
         if error!=.None {
-            bad+=failed("repack",path,error_text(error))
+            bad+=failed("repack",path,asset.error_text(error))
             continue
         }
         if string(repacked)==string(data) {continue}
         if serial.file_write_atomic(path,repacked)!=.None {
-            bad+=failed("repack",path,error_text(.IO))
+            bad+=failed("repack",path,asset.error_text(.IO))
             continue
         }
         written+=1
