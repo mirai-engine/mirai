@@ -201,10 +201,13 @@ Entry_Head :: struct #packed {
   - `Org_Log` (readable only by org members/nodes): `Genesis`, `Member_Add`, `Member_Remove`,
     `Role_Set` (`owner > admin > writer > reader`), `Owner_Transfer`, `Project_Add{public|org}`,
     `Scope_Add{project_id, scope_id, patterns[], readers, history}`, `Scope_Remove`,
-    `Policy_Set{project_id, bookmark, approvals, required_checks[]}`, `Grant`, `Grant_Revoke`,
-    `Node_Add{ds, dh, addrs[], modes}`, `Node_Remove`.
+    `Policy_Set{project_id, bookmark, approvals, required_checks[], project_heads[]}`, `Grant`,
+    `Grant_Revoke`, `Node_Add{ds, dh, addrs[], modes}`, `Node_Remove`,
+    `Public_Add{project_id, path, leak_fingerprint?}`.
   - `Project_Log`: `Bookmark_Move{bookmark, from[], to, proposal_head?}` (shared bookmarks like
-    `main`; conflicts use the same algebra; every peer verifies `Policy_Set` locally).
+    `main`; conflicts use the same algebra; every peer verifies `Policy_Set` locally). A policy
+    guards the moves outside the causal past of the project heads its `Policy_Set` names; those
+    inside keep the rules they were made under.
   - `Proposal_Log` (replaces GitHub PRs): `Open{project, target, title, text}`,
     `Revise{stack[change_id -> revision]}`, `Comment{anchor, reply_to, text}`,
     `Verdict{approve|changes|withdraw, revision}`, `Check{revision, name, state, log_root}`,
@@ -279,7 +282,10 @@ Entry_Head :: struct #packed {
     (`Member_Add`), or pairs an ARM64 node (`Node_Add`).
 - **Scoped Grants (non-members / CI / contractors):**
   `Grant{org_id, org_head, issuer, subject_dh, rights(read|write|ddc|check|relay), project_id,
-  path_scope, not_after <= 30d, sig}` verified against `Org_Log` and `Grant_Revoke`.
+  path_scope, not_after <= 30d, sig}` verified against `Org_Log` and `Grant_Revoke`. The issuer
+  hands it over as text with its agent's X25519 key and addresses; the holder's agent reaches the
+  issuer first and is admitted as `Grant`: it reads the user and org logs, and the refs of its
+  project when it holds read, write or check.
 
 ### 6.2 `mirai:net` Contract Extensions
 - Extend [net/secure.odin](../net/secure.odin) with Noise `IK` (`Noise_IK_25519_ChaChaPoly_SHA256`)
@@ -345,9 +351,12 @@ Entry_Head :: struct #packed {
   -> bool` checked for `Anonymous` peers against a per-project `Public_Closure` (sorted addresses
   reachable from `public` bookmarks).
 - **Leak guardrails:** Built-in deny set (`.env*`, `*.pem`, `*.key`, `id_*`, `*.p12`) refused at
-  snapshot unless scoped or explicitly marked `kai public add`; WIP refs never exposed anonymously;
-  publish-to-public diff scanner blocks keys/PEM/high-entropy assignments unless waived by signed
-  entry; DDC outputs inherit input scopes.
+  snapshot unless scoped or kept public by an admin's `Public_Add` (`mirai kai public add <path>`);
+  WIP refs never exposed anonymously; publish-to-public diff scanner blocks keys/PEM/high-entropy
+  assignments unless an admin's `Public_Add` waives that leak (`mirai kai public add
+  <path>:<line>`); DDC outputs inherit input scopes. A device that may no longer read a scope
+  loses its files from its working copy on the next move and keeps its last copy out of its
+  snapshots.
 
 ---
 

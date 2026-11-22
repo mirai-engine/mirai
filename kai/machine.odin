@@ -510,17 +510,18 @@ machine_repo_name :: proc(repo:Repo_Id) -> string {
 
 // The project and org the repository of a workspace is.
 machine_project_of :: proc(m:^Machine,repo:Repo_Id) -> (project,org:Log_Id,ok:bool) {
-    id,e:=store.ref_get(&m.store,MACHINE_NAMESPACE,machine_repo_name(repo))
+    return store_project_of(&m.store,repo)
+}
+
+// The project and org the repository of a workspace is in the machine of store s.
+store_project_of :: proc(s:^store.Store,repo:Repo_Id) -> (project,org:Log_Id,ok:bool) {
+    id,e:=store.ref_get(s,MACHINE_NAMESPACE,machine_repo_name(repo))
     if e!=.None {return}
     l:Log
     log_init(&l,id,context.temp_allocator)
-    if log_open(&m.store,&l,id,.Project)!=.None || len(l.items)==0 {return}
-    for item in l.items {
-        if item.entry.type!=.Project_Genesis {continue}
-        b,_,read:=body_head(item.entry.body,Project_Genesis_Body)
-        if read {return id,b.org,true}
-    }
-    return
+    if log_open(s,&l,id,.Project)!=.None || len(l.items)==0 {return}
+    org,_=project_org(&l)
+    return id,org,org!={}
 }
 
 machine_member_add :: proc(m:^Machine,org,user:Log_Id,role:Role) -> Error {
@@ -563,10 +564,17 @@ machine_node_remove :: proc(m:^Machine,org:Log_Id,node:Key) -> Error {
 
 machine_policy_set :: proc(m:^Machine,org,project:Log_Id,bookmark:string,approvals:int,checks:[]string) -> Error {
     if approvals<0 || approvals>255 || len(checks)>CHECKS_MAX {return machine_fail(m,.Invalid_Argument,"a policy asks 0 to 255 approvals and at most 32 checks")}
+    if !bookmark_name_valid(bookmark) || len(bookmark)>255 {return machine_fail(m,.Invalid_Argument,"a bookmark's name is 1 to 255 bytes of text without spaces")}
     texts:=make([dynamic]string,context.temp_allocator)
     append(&texts,bookmark)
     append(&texts,..checks)
-    body:=body_make(Policy_Set_Body{project=project,approvals=u8(approvals),checks=u8(len(checks))},strings_tail(..texts[:]))
+    // The moves the project's log holds now keep the rules they were made under.
+    l:Log
+    log_init(&l,project,context.temp_allocator)
+    heads:=make([dynamic]store.Hash,context.temp_allocator)
+    if log_open(&m.store,&l,project,.Project)==.None {log_heads(&l,&heads)}
+    if len(heads)>ENTRY_PARENTS_MAX {resize(&heads,ENTRY_PARENTS_MAX)}
+    body:=body_make(Policy_Set_Body{project=project,approvals=u8(approvals),checks=u8(len(checks)),heads=u8(len(heads))},slice.to_bytes(heads[:]),strings_tail(..texts[:]))
     _,e:=machine_org_append(m,org,.Policy_Set,body)
     return e
 }
@@ -651,7 +659,25 @@ machine_grant_revoke :: proc(m:^Machine,org:Log_Id,grant:[]u8) -> Error {
 }
 
 // Publishes this device's bookmarks of a project, signed, and tells the mesh.
+// In a public project the publish scanner checks what each bookmark adds.
 machine_publish_refs :: proc(m:^Machine,project:Log_Id,refs:[]Bookmark_Ref) -> Error {
+    l:Log
+    log_init(&l,project,context.temp_allocator)
+    if log_open(&m.store,&l,project,.Project)==.None {
+        if org,public:=project_org(&l);public {
+            o:Org_State
+            if e:=machine_org_open(m,org,&o);e!=.None {return e}
+            held,_,_:=device_refs_get(&m.store,project,m.identity.key,context.temp_allocator)
+            for r in refs {
+                before:Revision
+                for h in held.refs {
+                    if h.name==r.name {before=h.target}
+                }
+                if before==r.target {continue}
+                machine_publish_check(m,&o.fold,project,true,before,r.target) or_return
+            }
+        }
+    }
     if _,e:=device_refs_publish(&m.store,project,&m.identity,refs,machine_now());e!=.None {
         return machine_fail(m,e,"the bookmarks do not publish: names are [a-z0-9._-] and a store this user may write")
     }

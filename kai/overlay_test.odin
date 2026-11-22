@@ -306,7 +306,7 @@ removed_member_cannot_decrypt_post_rotation_epoch :: proc(t:^testing.T) {
 // refused at snapshot unless public_allow marks it, and a publish to public
 // reports each line holding a private key, a token or a random secret
 // assigned to a secret's name, with its path and line, unless an admin's
-// signed waiver names it.
+// Public_Add waives it.
 @(test)
 deny_set_and_publish_scanner_block_leaks :: proc(t:^testing.T) {
     folder_root:=base.test_folder(t,"kai-overlay-leaks")
@@ -343,7 +343,7 @@ deny_set_and_publish_scanner_block_leaks :: proc(t:^testing.T) {
     testing.expect_value(t,e,Error.None)
     c,_:=change_get(&s,repo_working(&w.repo),context.temp_allocator)
     leaks:=make([dynamic]Leak,context.temp_allocator)
-    testing.expect_value(t,publish_scan(&s,&o.fold,{},c.tree,nil,&leaks,context.temp_allocator),Error.None)
+    testing.expect_value(t,publish_scan(&s,&o.fold,o.project.id,{},c.tree,&leaks,context.temp_allocator),Error.None)
     Expected :: struct {path:string,line:int,kind:Leak_Kind}
     expected:=[]Expected{{"app.cfg",1,.Assignment},{"ci.yml",2,.Token},{"deploy/key.txt",3,.Private_Key}}
     if testing.expectf(t,len(leaks)==len(expected),"%v",leaks) {
@@ -352,16 +352,18 @@ deny_set_and_publish_scanner_block_leaks :: proc(t:^testing.T) {
         }
     }
 
-    // Alice is the owner: her waiver holds. Carol reads only, and a waiver bob
-    // did not sign is forged.
-    waivers:=[]Waiver{
-        waiver_sign(&o.alice.devices[0],leaks[0].fingerprint),
-        waiver_sign(&o.carol.devices[0],leaks[1].fingerprint),
-        {fingerprint=leaks[2].fingerprint,author=o.bob.devices[0].key,signature=waiver_sign(&o.alice.devices[0],leaks[2].fingerprint).signature},
+    // Alice is the owner: her Public_Add waives its leak. Carol only reads:
+    // the fold does not take hers.
+    Waive :: struct {by:^Test_User,leak:Leak}
+    for x,k in ([]Waive{{&o.alice,leaks[0]},{&o.carol,leaks[1]}}) {
+        body:=body_make(Public_Add_Body{project=o.project.id,fingerprint=x.leak.fingerprint},transmute([]u8)x.leak.path)
+        _,e=log_append(&o.org,.Public_Add,body,&x.by.devices[0],time.now()._nsec+i64(k))
+        testing.expect_value(t,e,Error.None)
     }
-    testing.expect_value(t,publish_scan(&s,&o.fold,{},c.tree,waivers,&leaks,context.temp_allocator),Error.None)
+    refold(t,&o)
+    testing.expect_value(t,publish_scan(&s,&o.fold,o.project.id,{},c.tree,&leaks,context.temp_allocator),Error.None)
     testing.expect(t,len(leaks)==2 && leaks[0].path=="ci.yml" && leaks[1].path=="deploy/key.txt")
-    testing.expect_value(t,publish_scan(&s,&o.fold,c.tree,c.tree,nil,&leaks,context.temp_allocator),Error.None)
+    testing.expect_value(t,publish_scan(&s,&o.fold,o.project.id,c.tree,c.tree,&leaks,context.temp_allocator),Error.None)
     testing.expect_value(t,len(leaks),0)
 }
 

@@ -311,8 +311,7 @@ land_refusal_text :: proc(r:Land_Refusal) -> string {
 proposal_policy :: proc(org:^Org_Fold,p:^Org_Policy,f:^Proposal_Fold) -> Land_Refusal {
     if f.conflicted {return .Conflicts}
     if f.approvals<p.approvals {return .Approvals}
-    b,tail,_:=body_head(org.log.items[p.entry].entry.body,Policy_Set_Body)
-    r:=Reader{data=tail}
+    b,_,r,_:=policy_parts(org.log.items[p.entry].entry.body)
     tail_string(&r)
     for _ in 0..<b.checks {
         name:=tail_string(&r)

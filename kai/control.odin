@@ -2,7 +2,9 @@ package kai
 
 import "core:crypto"
 import "core:encoding/endian"
+import "core:mem"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import net "mirai:net"
@@ -29,7 +31,7 @@ CONTROL_WAIT :: 0.2
 @(private) ANSWER_HEAD :: 1+4+1
 @(private) PEER_BYTES :: 32+32+3
 
-Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Object_Ask}
+Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Object_Ask,Addresses}
 
 Control_Server :: struct {
     lock:Lock,
@@ -203,6 +205,16 @@ control_do :: proc(r:^Runner,op:u8,body:[]u8,w:^Answer_Writer) -> Error {
         copy(org[:],body[:32])
         copy(address[:],body[32:])
         answer_put(w,{u8(runner_object_ask(r,org,address))})
+    case .Addresses:
+        if len(body)!=0 {return .Invalid_Argument}
+        list:=make([dynamic]net.Address,context.temp_allocator)
+        runner_addresses(r,&list)
+        n:=min(len(list),TICKET_ADDRESSES)
+        answer_put(w,{u8(n)})
+        for a in list[:n] {
+            x,_:=node_address_of(a)
+            answer_put(w,mem.ptr_to_bytes(&x))
+        }
     }
     return .None
 }
@@ -335,6 +347,17 @@ peers_parse :: proc(answer:[]u8,list:^[dynamic]Runner_Peer_Info) -> Error {
         if e[64]>u8(max(Agent_Class)) || e[65]>u8(max(Rung)) {return .Corrupt}
         p.class,p.rung,p.node=Agent_Class(e[64]),Rung(e[65]),e[66]!=0
         append(list,p)
+    }
+    return .None
+}
+
+// The addresses the runner's socket is reached at, as a ticket gives them.
+control_addresses :: proc(c:^Control,out:^[dynamic]net.Address) -> Error {
+    buffer:[FRAME_MAX]u8
+    answer:=control_call(c,.Addresses,nil,&buffer) or_return
+    if len(answer)<1 || len(answer)!=1+int(answer[0])*size_of(Node_Address) {return .Corrupt}
+    for a in slice.reinterpret([]Node_Address,answer[1:]) {
+        if address,ok:=node_address_net(a);ok {append(out,address)}
     }
     return .None
 }

@@ -12,7 +12,9 @@ import vcs "mirai:kai"
 
 // A project under Kai: its workspace at the project's root over the store of
 // the machine, signed by the identity of this machine, with the asset driver.
-// The editor and `mirai kai` go through these procedures alike.
+// When its repository is a project of an org, its snapshots route the private
+// paths of the org's scopes into encrypted overlays (project_route). The
+// editor and `mirai kai` go through these procedures alike.
 
 CHANGE_TEXT :: 12               // hex digits a change id is shown with
 CHANGE_TEXT_MIN :: 4            // the fewest digits a change is named by
@@ -25,6 +27,11 @@ Project :: struct {
     drivers:[1]vcs.Driver,
     workspace:vcs.Workspace,
     owns_types:bool,
+    routing:vcs.Overlay_Routing, // what the workspace's snapshots route by, while routed
+    org:vcs.Org_State,
+    keyrings:[dynamic]^vcs.Keyring_Fold,
+    public_allow:[dynamic]string,
+    routed:bool,
 }
 
 // What a change in a log shows.
@@ -76,10 +83,15 @@ project_open :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=ni
         project_close(p)
         return e
     }
+    if e:=project_route(p);e!=.None {
+        project_close(p)
+        return e
+    }
     return .None
 }
 
 project_close :: proc(p:^Project) {
+    route_drop(p)
     if p.workspace.repo.s!=nil || p.workspace.root!="" {vcs.workspace_close(&p.workspace)}
     if p.owns_types {asset.types_destroy(&p.types)}
     p^={}
@@ -228,9 +240,10 @@ undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_a
     r:=&w.repo
     vcs.workspace_snapshot(w) or_return
     undone=vcs.op_get(r.s,r.op,allocator) or_return
-    before:=w.state.tree
+    before,working:=w.state.tree,vcs.repo_working(r)
     vcs.op_undo(r,r.op) or_return
     vcs.workspace_update(w) or_return
+    vcs.overlay_checkout(w.options.overlay,r.s,w.root,working,vcs.repo_working(r)) or_return
     return undone,files_changed(w,before,changed,allocator)
 }
 
@@ -245,8 +258,9 @@ restore :: proc(w:^vcs.Workspace,from:vcs.Revision,changed:^[dynamic]string,allo
 }
 
 // A new change on parents (the working copy when none) as the working copy,
-// written: what files that changed. With several parents their trees merge,
-// and what does not merge is a conflict in its files.
+// written, with the private files this device reads: what public files that
+// changed. With several parents their trees merge, and what does not merge is
+// a conflict in its files.
 new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,changed:^[dynamic]string,allocator:=context.temp_allocator) -> (revision:vcs.Revision,error:vcs.Error) {
     vcs.workspace_snapshot(w) or_return
     before:=w.state.tree
@@ -254,6 +268,7 @@ new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,ch
     working:=[1]vcs.Revision{vcs.repo_working(&w.repo)}
     if len(on)==0 {on=working[:]}
     revision=vcs.workspace_new(w,on,description) or_return
+    vcs.overlay_checkout(w.options.overlay,w.repo.s,w.root,working[0],revision) or_return
     return revision,files_changed(w,before,changed,allocator)
 }
 

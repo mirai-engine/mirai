@@ -61,7 +61,6 @@ LABEL_CHUNK :: "kai-1/chunk"
 LABEL_TREE :: "kai-1/tree"
 LABEL_BLOB :: "kai-1/blob"
 LABEL_LEAK :: "kai-1/leak"
-LABEL_WAIVER :: "kai-1/waiver"
 
 // Paths refused at snapshot unless a scope or public_allow takes them.
 DENY_PATTERNS :: [?]string{".env*","*.pem","*.key","id_*","*.p12"}
@@ -1096,9 +1095,10 @@ plan_find :: proc(plan:^Overlay_Plan,scope:Scope_Id) -> ^Plan_Scope {
 // scope's pattern matches goes into that scope's part of plan, sealed; a path
 // of the deny set no scope takes and public_allow does not mark refuses the
 // snapshot, as does a scoped path whose keyring must rotate first or that this
-// device cannot read. previous are the revisions whose overlays this snapshot
-// follows, the first that has one; their private paths not in found are
-// stated again, so a snapshot of the touched paths keeps them.
+// device cannot read, unless the device may no longer read its scope and the
+// file is its last copy, unchanged. previous are the revisions whose overlays
+// this snapshot follows, the first that has one; their private paths not in
+// found are stated again, so a snapshot of the touched paths keeps them.
 overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]Revision,found:^[dynamic]Found,plan:^Overlay_Plan) -> Error {
     plan.scopes=make([dynamic]Plan_Scope,context.temp_allocator)
     if r!=nil {r.refused=""}
@@ -1147,7 +1147,7 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
         sc,scoped:=scope_of(org,project,f.path)
         if !scoped {
             if overlay_denied(f.path) && !public_allowed(r,f.path) {
-                if r!=nil {r.refused=strings.concatenate({f.path,": a path of the deny set, scope it in the org or mark it with kai public add"},context.temp_allocator)}
+                if r!=nil {r.refused=strings.concatenate({f.path,": a path of the deny set: scope it with mirai kai scope add, or an admin keeps it public with mirai kai public add ",f.path},context.temp_allocator)}
                 return .Unauthorized
             }
             found[kept]=f
@@ -1155,12 +1155,22 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
             continue
         }
         p:=plan_find(plan,sc.scope)
+        // A device that may no longer read the scope leaves its last copy
+        // out: the record it follows is carried as it is.
+        if !p.readable && p.keyring!=nil && !device_reads(r.org,sc,&r.device) {
+            hash,_,he:=plain_hash(workspace_join(root,f.path))
+            unchanged:=false
+            for e in p.previous {unchanged||=he==.None && e.path==f.path && e.content==hash}
+            if unchanged {continue}
+        }
         switch {
         case p.keyring==nil || p.keyring.epoch==0:
-            r.refused=strings.concatenate({f.path,": its scope has no keyring here, fetch the org's logs or create the scope's keyring"},context.temp_allocator)
+            r.refused=strings.concatenate({f.path,": its scope has no keyring here: let the agent fetch the org's logs"},context.temp_allocator)
             return .Unauthorized
         case keyring_needs_rotation(p.keyring):
-            r.refused=strings.concatenate({f.path,": its scope's newest epoch is still readable by a removed member or device, rotate it first"},context.temp_allocator)
+            id:=sc.scope
+            buffer:[32]u8
+            r.refused=strings.concatenate({f.path,": its scope's newest key is still readable by a removed member or device: a reader rotates it with mirai kai scope rotate ",hex_text(id[:4],buffer[:])},context.temp_allocator)
             return .Unauthorized
         case !p.readable:
             r.refused=strings.concatenate({f.path,": this device cannot read its scope"},context.temp_allocator)
@@ -1303,6 +1313,72 @@ overlay_previous :: proc(r:^Repo) -> []Revision {
     return previous[:]
 }
 
+// The private files a reader's working copy shows: after a move from the
+// change before to the change after, the files each scope this device reads
+// holds at after are written, and those it held at before and not at after
+// are removed while they still hold what before had. A change holds the
+// files of its own overlay or, before it has one, of its first parent's. A
+// scope this device may no longer read takes its files away.
+overlay_checkout :: proc(r:^Overlay_Routing,s:^store.Store,root:string,before,after:Revision) -> Error {
+    if r==nil || r.org==nil {return .None}
+    z:Sealer
+    sealer_init(&z,context.temp_allocator) or_return
+    defer sealer_destroy(&z)
+    for sc in r.org.scopes {
+        if sc.project!=r.project {continue}
+        k:=keyring_of(r,sc.scope)
+        if k==nil {continue}
+        old:=make([dynamic]Overlay_Entry,context.temp_allocator)
+        new:=make([dynamic]Overlay_Entry,context.temp_allocator)
+        epoch:u32
+        key:Epoch_Key
+        defer crypto.zero_explicit(&key,size_of(key))
+        // An epoch this device holds no key of is no file of its.
+        if e:=overlay_entries_at(r,s,k,before,&old,nil,nil);e!=.None && e!=.Unauthorized {return e}
+        if device_reads(r.org,sc,&r.device) {overlay_entries_at(r,s,k,after,&new,&epoch,&key) or_return}
+        for &e in new {
+            path:=workspace_join(root,e.path)
+            if hash,_,he:=plain_hash(path);he==.None && hash==e.content {continue}
+            bytes:=open_file(&z,s,sc.scope,epoch,&key,&e,context.temp_allocator) or_return
+            defer crypto.zero_explicit(raw_data(bytes),len(bytes))
+            if dir,_:=os.split_path(path);dir!="" {
+                if os.make_directory_all(dir)!=nil && !os.is_dir(dir) {return .Io}
+            }
+            file_replace(path,bytes,bool(e.executable)) or_return
+        }
+        for e in old {
+            kept:=false
+            for n in new {kept||=n.path==e.path}
+            if kept {continue}
+            path:=workspace_join(root,e.path)
+            if hash,_,he:=plain_hash(path);he==.None && hash==e.content {os.remove(path)}
+        }
+    }
+    return .None
+}
+
+// The entries of the overlay of k's scope at revision, or at its first parent
+// that has one, and the key of its epoch.
+@(private)
+overlay_entries_at :: proc(r:^Overlay_Routing,s:^store.Store,k:^Keyring_Fold,revision:Revision,out:^[dynamic]Overlay_Entry,epoch:^u32,key:^Epoch_Key) -> Error {
+    if revision=={} {return .None}
+    candidates:=make([dynamic]Revision,context.temp_allocator)
+    append(&candidates,revision)
+    if c,e:=change_get(s,revision,context.temp_allocator);e==.None {append(&candidates,..c.parents)}
+    for rev in candidates {
+        rec,_,e:=overlay_record_get(s,r.project,k.scope,rev,context.temp_allocator)
+        if e==.Missing {continue}
+        if e!=.None {return e}
+        x:=keyring_epoch_key(k,&r.device,rec.epoch) or_return
+        defer crypto.zero_explicit(&x,size_of(x))
+        sealed:=overlay_get(s,rec.tree_root,.Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
+        tree_open(sealed,r.project,k.scope,rec.epoch,&x,out,context.temp_allocator) or_return
+        if epoch!=nil {epoch^,key^=rec.epoch,x}
+        return .None
+    }
+    return .None
+}
+
 // --- Derived data of private inputs ---
 
 // The scopes of the project that inputs fall in, in Org_Log order: what an
@@ -1414,35 +1490,6 @@ Leak :: struct {
     fingerprint:store.Hash,
 }
 
-// An admin's signed consent to publish one leak.
-Waiver :: struct #packed {
-    fingerprint:store.Hash,
-    author:Key,
-    signature:Signature,
-}
-
-@(private)
-waiver_message :: proc(fingerprint:store.Hash) -> (message:[len(LABEL_WAIVER)+32]u8) {
-    f:=fingerprint
-    copy(message[:],LABEL_WAIVER)
-    copy(message[len(LABEL_WAIVER):],f[:])
-    return
-}
-
-waiver_sign :: proc(identity:^Identity,fingerprint:store.Hash) -> Waiver {
-    message:=waiver_message(fingerprint)
-    return {fingerprint=fingerprint,author=identity.key,signature=sign(identity,message[:])}
-}
-
-// Whether a waiver is signed by a device of an admin of the org.
-waiver_valid :: proc(org:^Org_Fold,w:Waiver) -> bool {
-    if org==nil {return false}
-    message:=waiver_message(w.fingerprint)
-    if !signature_valid(w.author,message[:],w.signature) {return false}
-    _,role:=org_device_role(org,w.author)
-    return role>=.Admin
-}
-
 // Prefixes of tokens issuers give, each followed by at least TOKEN_TAIL_MIN token characters.
 @(private) TOKEN_PREFIXES :: [?]string{"ghp_","gho_","ghu_","ghs_","ghr_","github_pat_","glpat-","xoxb-","xoxp-","xoxa-","xapp-","sk_live_","rk_live_","sk-proj-","sk-ant-","AKIA","ASIA","AIza","npm_","pypi-","hf_","SG."}
 @(private) TOKEN_TAIL_MIN :: 16
@@ -1514,9 +1561,10 @@ leak_fingerprint :: proc(path:string,line:string) -> store.Hash {
 // The leaks a publish of tree to would add over tree from (zero: everything
 // in to): each line of an added or changed text file that holds a private
 // key, a token of a known issuer or a long random value assigned to a name
-// of a secret, unless a valid waiver names its fingerprint. A file with a NUL
-// in its first block is binary and not read.
-publish_scan :: proc(s:^store.Store,org:^Org_Fold,from,to:store.Hash,waivers:[]Waiver,out:^[dynamic]Leak,allocator:=context.allocator) -> Error {
+// of a secret, unless an admin waived its fingerprint for the project with a
+// Public_Add of the org's log. A file with a NUL in its first block is binary
+// and not read.
+publish_scan :: proc(s:^store.Store,org:^Org_Fold,project:Log_Id,from,to:store.Hash,out:^[dynamic]Leak,allocator:=context.allocator) -> Error {
     clear(out)
     diffs:=make([dynamic]Diff,context.temp_allocator)
     tree_diff(s,from,to,&diffs,context.temp_allocator) or_return
@@ -1541,23 +1589,25 @@ publish_scan :: proc(s:^store.Store,org:^Org_Fold,from,to:store.Hash,waivers:[]W
                     if len(line_buffer)<SCAN_LINE_MAX {append(&line_buffer,c)}
                     continue
                 }
-                scan_line(org,d.path,string(line_buffer[:]),number,waivers,out,allocator) or_return
+                scan_line(org,project,d.path,string(line_buffer[:]),number,out,allocator) or_return
                 clear(&line_buffer)
                 number+=1
             }
         }
-        if len(line_buffer)>0 {scan_line(org,d.path,string(line_buffer[:]),number,waivers,out,allocator) or_return}
+        if len(line_buffer)>0 {scan_line(org,project,d.path,string(line_buffer[:]),number,out,allocator) or_return}
     }
     return .None
 }
 
 @(private)
-scan_line :: proc(org:^Org_Fold,path,line:string,number:int,waivers:[]Waiver,out:^[dynamic]Leak,allocator:runtime.Allocator) -> Error {
+scan_line :: proc(org:^Org_Fold,project:Log_Id,path,line:string,number:int,out:^[dynamic]Leak,allocator:runtime.Allocator) -> Error {
     kind,found:=line_leak(strings.trim_right(line,"\r"))
     if !found {return .None}
     fingerprint:=leak_fingerprint(path,line)
-    for w in waivers {
-        if w.fingerprint==fingerprint && waiver_valid(org,w) {return .None}
+    if org!=nil {
+        for p in org.publics {
+            if p.project==project && p.fingerprint==fingerprint {return .None}
+        }
     }
     p,e:=strings.clone(path,allocator)
     if e!=nil {return .Out_Of_Memory}

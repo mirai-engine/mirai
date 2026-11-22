@@ -12,14 +12,15 @@ import "mirai:store"
 // The sync agent of one machine: one identity host others connect to, client
 // hosts for the connections it makes, and one exchange over all of them. A
 // connection presents the org's id as its claim; authorize admits the
-// devices of members and the nodes the org's log names, leaves an identity it
-// does not know yet Pending, and an empty claim Anonymous. What each class
-// reads, by namespace:
+// devices of members and the nodes the org's log names, the holder of a grant
+// the log carries as Grant, leaves an identity it does not know yet Pending,
+// and an empty claim Anonymous. What each class reads, by namespace:
 //
-//   kai-user              User_Logs: Pending, Member, Node (they prove who is a member)
-//   kai-log               Org, Project, Proposal and Keyring logs: Member, Node
-//   kai-refs-<project>    device refs: Member, Node; Anonymous for a public project
-//   kai-ddc-<org>         derived data: Member, Node
+//   kai-user              User_Logs: Pending, Member, Node, Grant (they prove who is a member)
+//   kai-log               Org, Project, Proposal and Keyring logs: Member, Node, Grant
+//   kai-refs-<project>    device refs: Member, Node; Grant of read, write or check on it;
+//                         Anonymous for a public project
+//   kai-ddc-<org>         derived data: Member, Node; Grant of ddc
 //   kai-ovl-<project>-<scope>  overlay records, ciphertext only: Member, Node
 //
 // Pending and Anonymous peers are restricted: they get only the chunks of the
@@ -52,7 +53,7 @@ Agent_Desc :: struct {
     allocator:runtime.Allocator, // nil: context.allocator
 }
 
-Agent_Class :: enum u8 {None,Pending,Member,Node,Anonymous}
+Agent_Class :: enum u8 {None,Pending,Member,Node,Anonymous,Grant}
 
 @(private)
 Agent_Peer :: struct {
@@ -88,7 +89,7 @@ Agent_Query :: struct {
 }
 
 @(private)
-Allowed :: struct {dh:Dh_Key,class:Agent_Class}
+Allowed :: struct {dh:Dh_Key,class:Agent_Class,project:Log_Id,rights:Rights} // project and rights: a Grant's
 
 // The chunks restricted peers may get: those of the user logs for Pending
 // ones, those of the public projects' closures for Anonymous ones. Read by
@@ -302,13 +303,24 @@ agent_refold :: proc(a:^Agent) {
             removed:=!member && slice.contains(a.org.removed[:],u.log.id)
             for d in u.devices {
                 if member {
-                    append(&a.allowed,Allowed{d.dh,d.revoked?.None:.Member})
+                    append(&a.allowed,Allowed{dh=d.dh,class=d.revoked?.None:.Member})
                 } else if removed {
-                    append(&a.allowed,Allowed{d.dh,.None})
+                    append(&a.allowed,Allowed{dh=d.dh,class=.None})
                 }
             }
         }
-        for n in a.org.nodes {append(&a.allowed,Allowed{n.dh,.Node})}
+        for n in a.org.nodes {append(&a.allowed,Allowed{dh=n.dh,class=.Node})}
+        // A grant in force admits its holder; one revoked or expired refuses it.
+        now:=time.now()._nsec
+        for item,i in a.org.log.items {
+            if !a.org.valid[i] || item.entry.type!=.Grant {continue}
+            g,e:=grant_verify(&a.org,item.entry.body,now)
+            if e==.Corrupt {continue}
+            held:=false
+            for x in a.allowed {held||=x.dh==g.subject_dh}
+            if held {continue}
+            append(&a.allowed,e==.None?Allowed{g.subject_dh,.Grant,g.project,g.rights}:Allowed{dh=g.subject_dh,class=.None})
+        }
     }
     sync.mutex_unlock(&a.lock)
     agent_closure(a)
@@ -336,12 +348,17 @@ agent_refold :: proc(a:^Agent) {
 
 @(private)
 agent_class_of :: proc(a:^Agent,dh:Dh_Key) -> Agent_Class {
+    return agent_allowed(a,dh).class
+}
+
+@(private)
+agent_allowed :: proc(a:^Agent,dh:Dh_Key) -> Allowed {
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
     for x in a.allowed {
-        if x.dh==dh {return x.class}
+        if x.dh==dh {return x}
     }
-    return .Pending
+    return {dh=dh,class=.Pending}
 }
 
 @(private)
@@ -352,6 +369,7 @@ agent_authorize :: proc(data:rawptr,peer:net.Key,claim:[]u8) -> net.Authorizatio
     switch agent_class_of(a,Dh_Key(peer)) {
     case .Member: return {.Accept,.Member}
     case .Node: return {.Accept,.Node}
+    case .Grant: return {.Accept,.Grant}
     case .None: return {.Refuse,.Anonymous}
     case .Pending,.Anonymous:
     }
@@ -558,18 +576,21 @@ agent_expose :: proc(user:rawptr,peer:exchange.Peer_Id,namespace:string) -> bool
     if k<0 {return false}
     class:=a.peers[k].class
     admitted:=class==.Member || class==.Node
+    grant:Allowed
+    if class==.Grant {grant=agent_allowed(a,a.peers[k].dh)}
     switch {
-    case namespace==USER_NAMESPACE: return admitted || class==.Pending
-    case namespace==LOG_NAMESPACE: return admitted
+    case namespace==USER_NAMESPACE: return admitted || class==.Pending || class==.Grant
+    case namespace==LOG_NAMESPACE: return admitted || class==.Grant
     case strings.has_prefix(namespace,REFS_PREFIX):
         id,ok:=store.parse_hex(namespace[len(REFS_PREFIX):])
         if !ok || !a.folded {return false}
         k:=org_project_index(&a.org,id)
         if k<0 {return false}
-        return admitted || (class==.Anonymous && a.org.projects[k].public)
+        granted:=class==.Grant && (grant.project=={} || grant.project==id) && grant.rights&{.Read,.Write,.Check}!={}
+        return admitted || granted || (class==.Anonymous && a.org.projects[k].public)
     case strings.has_prefix(namespace,DDC_PREFIX):
         buffer:[len(DDC_PREFIX)+64]u8
-        return admitted && namespace==ddc_namespace(a.desc.org,&buffer)
+        return (admitted || (class==.Grant && .DDC in grant.rights)) && namespace==ddc_namespace(a.desc.org,&buffer)
     case strings.has_prefix(namespace,OVERLAY_PREFIX):
         project,scope,ok:=overlay_namespace_parse(namespace)
         if !ok || !admitted || !a.folded {return false}
@@ -592,7 +613,7 @@ agent_serve :: proc(user:rawptr,peer:exchange.Peer_Id,address:store.Hash) -> boo
     #partial switch class {
     case .Pending: return closure_has(a.closure.identity[:],address)
     case .Anonymous: return closure_has(a.closure.public[:],address)
-    case .Member,.Node: return true
+    case .Member,.Node,.Grant: return true
     }
     return false
 }
@@ -731,7 +752,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .User,.Log:
         id,ok:=store.parse_hex(name)
         if !ok {return}
-        if f.kind==.Log && id!=a.desc.org && !(a.folded && (org_project_index(&a.org,id)>=0 || keyring_of_org(a.desc.store,&a.org,id,f.address))) {
+        if f.kind==.Log && id!=a.desc.org && !(a.folded && (org_project_index(&a.org,id)>=0 || keyring_of_org(a.desc.store,&a.org,id,f.address) || proposal_of_org(a.desc.store,&a.org,id,f.address))) {
             for d in a.deferred {
                 if d.address==f.address {return}
             }
@@ -878,17 +899,26 @@ agent_class_from :: proc "contextless" (z:net.Authorization) -> Agent_Class {
     #partial switch z.class {
     case .Member: return .Member
     case .Node: return .Node
+    case .Grant: return .Grant
     }
     return .Anonymous
 }
 
-// The revisions every device's refs of the projects name, public ones only
-// when public.
+// The revisions every device's refs of the projects name and the moves of
+// their shared bookmarks a writer signed, public projects only when public.
 @(private)
 agent_targets :: proc(a:^Agent,public:bool,out:^[dynamic]Revision,refs_objects:^[dynamic]store.Hash) {
     if !a.folded {return}
     for p in a.org.projects {
         if public && !p.public {continue}
+        if l:=agent_log(a,p.id);l!=nil {
+            for item in l.items {
+                if item.entry.type!=.Bookmark_Move {continue}
+                if _,role:=org_device_role(&a.org,item.entry.author);role<.Writer {continue}
+                b,_,_:=body_head(item.entry.body,Bookmark_Move_Body)
+                append(out,b.to)
+            }
+        }
         ns:[len(REFS_PREFIX)+64]u8
         refs,e:=store.ref_list(a.desc.store,refs_namespace(p.id,&ns),context.temp_allocator)
         if e!=.None {continue}
@@ -899,6 +929,19 @@ agent_targets :: proc(a:^Agent,public:bool,out:^[dynamic]Revision,refs_objects:^
             d,decode_error:=device_refs_decode(bytes,context.temp_allocator)
             if decode_error!=.None {continue}
             for b in d.refs {append(out,b.target)}
+        }
+    }
+    // Every stack a proposal of a project of the org was revised to: reviewers read them.
+    if public {return}
+    for l in a.logs {
+        if l.kind!=.Proposal {continue}
+        k:=log_find(l,l.id)
+        if k<0 || l.items[k].entry.type!=.Proposal_Open {continue}
+        if b,_,_:=body_head(l.items[k].entry.body,Proposal_Open_Body);org_project_index(&a.org,b.project)<0 {continue}
+        for item in l.items {
+            if item.entry.type!=.Proposal_Revise {continue}
+            _,tail,_:=body_head(item.entry.body,Proposal_Revise_Body)
+            for st in slice.reinterpret([]Stack_Item,tail) {append(out,st.revision)}
         }
     }
 }

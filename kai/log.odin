@@ -35,6 +35,7 @@ Entry_Type :: enum u8 {
     Project_Genesis,Bookmark_Move,
     Proposal_Open,Proposal_Revise,Proposal_Comment,Proposal_Verdict,Proposal_Check,Proposal_Land,Proposal_Close,Proposal_Reopen,
     Keyring_Genesis,Epoch_Add,Envelope_Add,
+    Public_Add,
 }
 
 Sig_Kind :: enum u8 {Ed25519,WebAuthn} // WebAuthn: the assertion of a browser's passkey (webauthn.odin)
@@ -101,7 +102,7 @@ Subject_Body :: struct #packed {subject:store.Hash}                             
 Project_Add_Body :: struct #packed {project:Log_Id,public:b8}
 Scope_Add_Body :: struct #packed {project:Log_Id,scope:Scope_Id,readers:Role,history:b8,patterns:u8} // + patterns × (u8 length, bytes)
 Scope_Remove_Body :: struct #packed {project:Log_Id,scope:Scope_Id}
-Policy_Set_Body :: struct #packed {project:Log_Id,approvals:u8,checks:u8}                // + bookmark and checks, each u8 length and bytes
+Policy_Set_Body :: struct #packed {project:Log_Id,approvals:u8,checks:u8,heads:u8}    // + [heads]store.Hash of the project's log, whose causal past keeps the rules before it; bookmark and checks, each u8 length and bytes
 Node_Add_Body :: struct #packed {node:Key,dh:Dh_Key,modes:Node_Modes,addresses:u8}     // + [addresses]Node_Address
 Node_Address :: struct #packed {kind:u8,port:u16,ip:[16]u8}                             // kind: 1 IPv4, 2 IPv6
 Node_Remove_Body :: struct #packed {node:Key}
@@ -120,6 +121,9 @@ Keyring_Genesis_Body :: struct #packed {org:Log_Id,project:Log_Id,scope:Scope_Id
 Envelope :: struct #packed {dh:Dh_Key,wrapped:[WRAPPED_BYTES]u8}
 Epoch_Add_Body :: struct #packed {epoch:u32,envelopes:u16}                              // + [envelopes]Envelope
 Envelope_Add_Body :: struct #packed {epoch:u32,envelope:Envelope}
+// A path of the project kept public though the deny set holds it, or, with a
+// fingerprint, one leak the publish scanner found there waived.
+Public_Add_Body :: struct #packed {project:Log_Id,fingerprint:store.Hash}                  // + path
 
 entry_log_kind :: proc "contextless" (t:Entry_Type) -> (kind:Log_Kind,ok:bool) {
     switch t {
@@ -129,6 +133,7 @@ entry_log_kind :: proc "contextless" (t:Entry_Type) -> (kind:Log_Kind,ok:bool) {
     case .Project_Genesis,.Bookmark_Move: return .Project,true
     case .Proposal_Open,.Proposal_Revise,.Proposal_Comment,.Proposal_Verdict,.Proposal_Check,.Proposal_Land,.Proposal_Close,.Proposal_Reopen: return .Proposal,true
     case .Keyring_Genesis,.Epoch_Add,.Envelope_Add: return .Keyring,true
+    case .Public_Add: return .Org,true
     }
     return {},false
 }
@@ -230,6 +235,17 @@ body_head :: proc "contextless" (body:[]u8,$T:typeid) -> (head:T,tail:[]u8,ok:bo
     return head,body[size_of(T):],true
 }
 
+// A Policy_Set's fixed part, the heads of the project's log it names, and a
+// reader at its bookmark, which its checks follow.
+policy_parts :: proc "contextless" (body:[]u8) -> (head:Policy_Set_Body,heads:[]store.Hash,r:Reader,ok:bool) {
+    tail:[]u8
+    head,tail,ok=body_head(body,Policy_Set_Body)
+    if !ok || head.heads>ENTRY_PARENTS_MAX || len(tail)<int(head.heads)*size_of(store.Hash) {return {},nil,{},false}
+    heads=slice.reinterpret([]store.Hash,tail[:int(head.heads)*size_of(store.Hash)])
+    r=Reader{data=tail[len(heads)*size_of(store.Hash):]}
+    return
+}
+
 // The next u8-length-prefixed string of a tail.
 @(private)
 tail_string :: proc "contextless" (r:^Reader) -> string {
@@ -300,14 +316,13 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
         }
         return !r.short && r.at==len(tail)
     case .Policy_Set:
-        head,tail,ok:=body_head(body,Policy_Set_Body)
+        head,_,r,ok:=policy_parts(body)
         if !ok || head.checks>CHECKS_MAX {return false}
-        r:=Reader{data=tail}
         if b:=tail_string(&r);len(b)==0 {return false}
         for _ in 0..<head.checks {
             if c:=tail_string(&r);len(c)==0 {return false}
         }
-        return !r.short && r.at==len(tail)
+        return !r.short && r.at==len(r.data)
     case .Grant:
         _,error:=grant_decode(body)
         return error==.None
@@ -340,6 +355,9 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
         return ok && head.state<=max(Check_State) && name_valid(string(tail))
     case .Proposal_Close,.Proposal_Reopen:
         return len(body)==0
+    case .Public_Add:
+        _,tail,ok:=body_head(body,Public_Add_Body)
+        return ok && path_valid(string(tail))
     case .Epoch_Add:
         head,tail,ok:=body_head(body,Epoch_Add_Body)
         return ok && head.envelopes>0 && head.envelopes<=ENVELOPES_MAX && len(tail)==int(head.envelopes)*size_of(Envelope)
@@ -975,6 +993,7 @@ Org_Project :: struct {id:Log_Id,public:bool}
 Org_Scope :: struct {project:Log_Id,scope:Scope_Id,readers:Role,history:bool,entry:u32}
 Org_Policy :: struct {project:Log_Id,bookmark:string,approvals:int,entry:u32}
 Org_Node :: struct {key:Key,dh:Dh_Key,modes:Node_Modes,entry:u32}
+Org_Public :: struct {project:Log_Id,fingerprint:store.Hash,path:string} // path into the log's bytes
 
 Org_Fold :: struct {
     log:^Log,
@@ -989,6 +1008,7 @@ Org_Fold :: struct {
     grants:[dynamic]store.Hash,  // recorded in the log
     revoked:[dynamic]store.Hash, // grants revoked
     nodes:[dynamic]Org_Node,
+    publics:[dynamic]Org_Public,
 }
 
 org_fold :: proc(f:^Org_Fold,l:^Log,users:[]^User_Fold,allocator:=context.allocator) -> Error {
@@ -1001,6 +1021,7 @@ org_fold :: proc(f:^Org_Fold,l:^Log,users:[]^User_Fold,allocator:=context.alloca
     f.grants=make([dynamic]store.Hash,allocator)
     f.revoked=make([dynamic]store.Hash,allocator)
     f.nodes=make([dynamic]Org_Node,allocator)
+    f.publics=make([dynamic]Org_Public,allocator)
     if l.kind!=.Org || len(l.items)==0 {return .Invalid_Argument}
     valid,e:=make([]bool,len(l.items),allocator)
     if e!=nil {return .Out_Of_Memory}
@@ -1018,6 +1039,7 @@ org_fold_destroy :: proc(f:^Org_Fold) {
     delete(f.grants)
     delete(f.revoked)
     delete(f.nodes)
+    delete(f.publics)
     delete(f.valid,allocator)
     f^={}
 }
@@ -1117,6 +1139,7 @@ org_rules :: proc(f:^Org_Fold) -> Rules {
             clear(&f.grants)
             clear(&f.revoked)
             clear(&f.nodes)
+            clear(&f.publics)
         },
         authorized=proc(data:rawptr,e:int) -> bool {
             f:=(^Org_Fold)(data)
@@ -1174,6 +1197,9 @@ org_rules :: proc(f:^Org_Fold) -> Rules {
             case .Node_Remove:
                 b,_,_:=body_head(entry.body,Node_Remove_Body)
                 return role>=.Admin && org_node(f,b.node)>=0
+            case .Public_Add:
+                b,_,_:=body_head(entry.body,Public_Add_Body)
+                return role>=.Admin && org_project_index(f,b.project)>=0
             }
             return false
         },
@@ -1225,8 +1251,7 @@ org_rules :: proc(f:^Org_Fold) -> Rules {
                     }
                 }
             case .Policy_Set:
-                b,tail,_:=body_head(entry.body,Policy_Set_Body)
-                r:=Reader{data=tail}
+                b,_,r,_:=policy_parts(entry.body)
                 bookmark:=tail_string(&r)
                 for p,i in f.policies {
                     if p.project==b.project && p.bookmark==bookmark {
@@ -1245,6 +1270,9 @@ org_rules :: proc(f:^Org_Fold) -> Rules {
             case .Node_Remove:
                 b,_,_:=body_head(entry.body,Node_Remove_Body)
                 if k:=org_node(f,b.node);k>=0 {ordered_remove(&f.nodes,k)}
+            case .Public_Add:
+                b,tail,_:=body_head(entry.body,Public_Add_Body)
+                append(&f.publics,Org_Public{b.project,b.fingerprint,string(tail)})
             }
         },
         removal=proc(data:rawptr,r:int) -> bool {
@@ -1445,8 +1473,12 @@ project_rules :: proc(f:^Project_Fold) -> Rules {
             if pf!=nil && pf.conflicted {return false}
             for &p in f.org.policies {
                 if p.project!=f.log.id || p.bookmark!=name {continue}
-                pb,_,_:=body_head(f.org.log.items[p.entry].entry.body,Policy_Set_Body)
+                pb,heads,_,_:=policy_parts(f.org.log.items[p.entry].entry.body)
                 if pb.approvals==0 && pb.checks==0 {return true}
+                // A move the policy's heads hold came before it.
+                for h in heads {
+                    if k:=log_find(f.log,h);k>=0 && log_within(f.log,e,k) {return true}
+                }
                 return pf!=nil && proposal_policy(f.org,&p,pf)==.None
             }
             return true

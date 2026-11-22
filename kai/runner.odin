@@ -583,40 +583,69 @@ runner_bookmarks_event :: proc(r:^Runner,o:^Runner_Org) {
 }
 
 // Who the org's log says this runner reaches for: every active device of a
-// member but its own, and every node; the beacon's devices with them.
+// member but its own, and every node; the beacon's devices with them. A
+// machine that holds a grant of the org reaches first for its issuer, and,
+// being no member, connects to every peer itself.
 @(private)
 runner_org_peers :: proc(r:^Runner,o:^Runner_Org) {
     a:=&o.agent
     clear(&o.beacon_devices)
     o.has_secret=a.folded
-    if !a.folded {return}
+    issuers:=make([dynamic]Runner_Peer,context.temp_allocator)
+    held:=make([dynamic]Held_Grant,context.temp_allocator)
+    machine_grants_held(&r.machine.store,&held)
+    now:=time.now()._nsec
+    for &h in held {
+        if h.grant.org!=o.id || now>h.grant.not_after {continue}
+        p:=Runner_Peer{dh=h.text.issuer,attempt=-1,first=true}
+        p.address_count=copy(p.addresses[:],h.text.addresses[:h.text.address_count])
+        append(&issuers,p)
+    }
+    if !a.folded {
+        for p in issuers {
+            if runner_peer_index(o,p.dh)<0 && len(o.peers)<RUNNER_PEERS {append(&o.peers,p)}
+        }
+        return
+    }
     o.secret=org_discovery(&a.org)
     mine:=Dh_Key(r.machine.dh.public)
+    holder:=r.machine.user=={} || org_role(&a.org,r.machine.user)==.None
     wanted:=make([dynamic]Runner_Peer,context.temp_allocator)
     for u in a.user_list {
         if org_role(&a.org,u.log.id)==.None {continue}
         for d in u.devices {
             if d.revoked {continue}
             append(&o.beacon_devices,d.dh)
-            if d.dh!=mine {append(&wanted,Runner_Peer{dh=d.dh,attempt=-1})}
+            if d.dh!=mine {append(&wanted,Runner_Peer{dh=d.dh,attempt=-1,first=holder})}
         }
     }
     for n in a.org.nodes {
         append(&o.beacon_devices,n.dh)
         if n.dh==mine {continue}
-        p:=Runner_Peer{dh=n.dh,node=true,modes=n.modes,attempt=-1}
+        p:=Runner_Peer{dh=n.dh,node=true,modes=n.modes,attempt=-1,first=holder}
         list:=make([dynamic]net.Address,context.temp_allocator)
         org_node_addresses(&a.org,n,&list)
         p.address_count=copy(p.addresses[:],list[:])
         append(&wanted,p)
     }
+    for &p in issuers {
+        k:=-1
+        for w,i in wanted {
+            if w.dh==p.dh {k=i}
+        }
+        if k<0 {
+            append(&wanted,p)
+        } else if wanted[k].address_count==0 {
+            wanted[k].address_count=copy(wanted[k].addresses[:],p.addresses[:p.address_count])
+        }
+    }
     // What was learned of a peer that stays stays.
     for &w in wanted {
         for old in o.peers {
             if old.dh!=w.dh {continue}
-            addresses,count,node,modes:=w.addresses,w.address_count,w.node,w.modes
+            addresses,count,node,modes,first:=w.addresses,w.address_count,w.node,w.modes,w.first||old.first
             w=old
-            w.addresses,w.address_count,w.node,w.modes=addresses,count,node,modes
+            w.addresses,w.address_count,w.node,w.modes,w.first=addresses,count,node,modes,first
         }
     }
     clear(&o.peers)
@@ -720,7 +749,7 @@ runner_ladder_peer :: proc(r:^Runner,o:^Runner_Org,p:^Runner_Peer) {
         case .LAN:
             if lan_fresh {
                 dialed=runner_dial(r,o,p,rung_of(p.lan),p.lan)
-            } else if p.node && p.address_count>0 {
+            } else if p.address_count>0 {
                 dialed=runner_dial(r,o,p,rung_of(p.addresses[0]),..p.addresses[:min(p.address_count,2)])
             }
         case .IPv6:
@@ -886,13 +915,16 @@ runner_announced :: proc(r:^Runner) -> [dynamic]Node_Address {
     return out
 }
 
-// What tickets advertise: the given addresses, or this machine's LAN and
-// global ones with the socket's port.
+// What tickets advertise: the given addresses, or this machine's loopback,
+// LAN and global ones with the socket's port. Loopback comes first: a system
+// firewall that holds a new program's incoming traffic until someone allows
+// it (macOS does) never holds it, so two stores of one machine pair anyway.
 runner_addresses :: proc(r:^Runner,out:^[dynamic]net.Address) {
     if len(r.desc.addresses)>0 {
         append(out,..r.desc.addresses)
         return
     }
+    append(out,net.address_loopback(int(r.port)))
     interfaces,e:=cnet.enumerate_interfaces(context.temp_allocator)
     if e==nil {
         for interface in interfaces {
@@ -908,7 +940,6 @@ runner_addresses :: proc(r:^Runner,out:^[dynamic]net.Address) {
     if r.mapping_on {
         if status:=net.mapping_poll(&r.mapping);status.phase==.Mapped {append(out,status.external)}
     }
-    if len(out)==0 {append(out,net.address_loopback(int(r.port)))}
 }
 
 // Datagrams of the socket u (0 main, 1 a relay node's second port, 2 beacons).
