@@ -557,6 +557,48 @@ change_restore :: proc(r:^Repo,revision:Revision,from:Revision) -> (rewritten:Re
     return
 }
 
+@(private)
+split_refuse :: proc(refused:^string,parts:..string) -> Error {
+    if refused!=nil {refused^=strings.concatenate(parts,context.temp_allocator)}
+    return .Invalid_Argument
+}
+
+// The tree of the first half of a split of c: its parents' tree with what c
+// did to the picked paths.
+@(private)
+split_tree :: proc(r:^Repo,c:^Change,paths:[]string,refused:^string) -> (tree:store.Hash,error:Error) {
+    base:=parents_tree(r,c.parents) or_return
+    diffs:=make([dynamic]Diff,context.temp_allocator)
+    tree_diff(r.s,base,c.tree,&diffs,context.temp_allocator) or_return
+    picked:=make([]bool,len(diffs),context.temp_allocator)
+    for p in paths {
+        hit:=false
+        for d,k in diffs {
+            if d.path==p || (len(d.path)>len(p) && d.path[len(p)]=='/' && strings.has_prefix(d.path,p)) {picked[k],hit=true,true}
+        }
+        if !hit {return {},split_refuse(refused,p,": the change did not add, change or remove it: pick what its diff lists")}
+    }
+    if !slice.contains(picked,false) {return {},split_refuse(refused,"every file the change touched is picked: start a new change with new instead")}
+
+    files:=make([dynamic]File,context.temp_allocator)
+    tree_files(r.s,base,&files,context.temp_allocator) or_return
+    slice.sort_by(files[:],proc(a,b:File) -> bool {return a.path<b.path})
+    for d,k in diffs {
+        if !picked[k] {continue}
+        at,found:=slice.binary_search_by(files[:],d.path,proc(f:File,path:string) -> slice.Ordering {return slice.cmp(f.path,path)})
+        switch {
+        case d.after.address=={}: if found {ordered_remove(&files,at)}
+        case found: files[at]={path=d.path,kind=d.after.kind,address=d.after.address,size=d.after.size}
+        case:
+            if _,e:=inject_at(&files,at,File{path=d.path,kind=d.after.kind,address=d.after.address,size=d.after.size});e!=nil {return {},.Out_Of_Memory}
+        }
+    }
+    if a,b,clash:=names_clash(files[:]);clash {
+        return {},split_refuse(refused,a," and ",b,": the first change would hold a file and a folder of one name, or two names that differ only in case: pick both or neither")
+    }
+    return tree_build(r.s,files[:])
+}
+
 // Splits revision in two by paths, each a file it added, changed or removed,
 // or a folder whose files under it go too. The first keeps its id, created
 // time, parents and description (description, when given, replaces it) and
@@ -569,45 +611,12 @@ change_restore :: proc(r:^Repo,revision:Revision,from:Revision) -> (rewritten:Re
 // first takes its parents', since no private path is picked). An
 // Invalid_Argument says why in refused, in the temp allocator.
 change_split :: proc(r:^Repo,revision:Revision,paths:[]string,description:Maybe(string)=nil,overlay:^Overlay_Routing=nil,refused:^string=nil) -> (first,second:Revision,error:Error) {
-    refuse :: proc(refused:^string,parts:..string) -> Error {
-        if refused!=nil {refused^=strings.concatenate(parts,context.temp_allocator)}
-        return .Invalid_Argument
-    }
-    if len(paths)==0 {return {},{},refuse(refused,"no path picked: name the files or folders the first change takes")}
+    if len(paths)==0 {return {},{},split_refuse(refused,"no path picked: name the files or folders the first change takes")}
     for p in paths {
-        if !path_valid(p) {return {},{},refuse(refused,p,": not a path of the project: relative, with forward slashes, no empty, . or .. part")}
+        if !path_valid(p) {return {},{},split_refuse(refused,p,": not a path of the project: relative, with forward slashes, no empty, . or .. part")}
     }
     c:=change_get(r.s,revision,context.temp_allocator) or_return
-    base:=parents_tree(r,c.parents) or_return
-    diffs:=make([dynamic]Diff,context.temp_allocator)
-    tree_diff(r.s,base,c.tree,&diffs,context.temp_allocator) or_return
-    picked:=make([]bool,len(diffs),context.temp_allocator)
-    for p in paths {
-        hit:=false
-        for d,k in diffs {
-            if d.path==p || (len(d.path)>len(p) && d.path[len(p)]=='/' && strings.has_prefix(d.path,p)) {picked[k],hit=true,true}
-        }
-        if !hit {return {},{},refuse(refused,p,": the change did not add, change or remove it: pick what its diff lists")}
-    }
-    if !slice.contains(picked,false) {return {},{},refuse(refused,"every file the change touched is picked: start a new change with new instead")}
-
-    files:=make([dynamic]File,context.temp_allocator)
-    tree_files(r.s,base,&files,context.temp_allocator) or_return
-    slice.sort_by(files[:],proc(a,b:File) -> bool {return a.path<b.path})
-    for d,k in diffs {
-        if !picked[k] {continue}
-        at,found:=slice.binary_search_by(files[:],d.path,proc(f:File,path:string) -> slice.Ordering {return slice.cmp(f.path,path)})
-        switch {
-        case d.after.address=={}: if found {ordered_remove(&files,at)}
-        case found: files[at]={path=d.path,kind=d.after.kind,address=d.after.address,size=d.after.size}
-        case:
-            if _,e:=inject_at(&files,at,File{path=d.path,kind=d.after.kind,address=d.after.address,size=d.after.size});e!=nil {return {},{},.Out_Of_Memory}
-        }
-    }
-    if a,b,clash:=names_clash(files[:]);clash {
-        return {},{},refuse(refused,a," and ",b,": the first change would hold a file and a folder of one name, or two names that differ only in case: pick both or neither")
-    }
-    tree:=tree_build(r.s,files[:]) or_return
+    tree:=split_tree(r,&c,paths,refused) or_return
 
     now:=time.now()._nsec
     tx:=tx_begin(r) or_return
