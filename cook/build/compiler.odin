@@ -287,7 +287,9 @@ sources_newer :: proc(sources_file,output,root:string) -> (newer,known:bool) {
 // of every folder the last build read a source from, by name and content, so
 // a file added to a package counts and a checkout or a merge that leaves the
 // sources as they were does not. A path under root counts relative to it: the
-// same sources in another checkout of the repository give the same identity.
+// same sources in another checkout of the repository give the same identity;
+// one under project_folder relative to that, so a copy of the project
+// is the build of the project it was copied from.
 // Flags that only change how fast the compiler runs do not count. The
 // libraries next to the compiler are the compiler: their folders are not
 // read. latest is the newest modification among those files. The sources
@@ -295,8 +297,9 @@ sources_newer :: proc(sources_file,output,root:string) -> (newer,known:bool) {
 // imports masked (link_names_mask): what tells a compile from a link (relink.odin).
 // tests: the build is of tests, which also reads the _test.odin files.
 @(private)
-fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:="",tests:=false) -> (hash:u64,latest:time.Time) {
+fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:="",tests:=false,project_folder:="") -> (hash:u64,latest:time.Time) {
     root:=slashes(root,context.temp_allocator)
+    project_root:=slashes(project_folder,context.temp_allocator)
     masked:=slashes(masked,context.temp_allocator)
     file_mix :: proc(hash:u64,name,path:string,latest:^time.Time,masked:string) -> u64 {
         hash:=base.hash_combine(hash,base.name_hash(name))
@@ -319,7 +322,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
     }
     for flag in flags {
         if strings.has_prefix(flag,"-thread-count:") {continue}
-        hash=base.hash_combine(hash,base.name_hash(root_relative(flag,root)))
+        hash=base.hash_combine(hash,base.name_hash(root_relative(flag,root,project_root)))
     }
     folders:=make(map[string]bool,context.temp_allocator)
     compiler_folder:=compiler[:max(strings.last_index_byte(compiler,'/'),0)]
@@ -330,12 +333,12 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
             continue
         }
         // What a source loads with #load.
-        hash=file_mix(hash,root_relative(source,root),source,&latest,masked)
+        hash=file_mix(hash,root_relative(source,root,project_root),source,&latest,masked)
     }
     listed,_:=slice.map_keys(folders,context.temp_allocator)
     slice.sort(listed)
     for folder in listed {
-        hash=base.hash_combine(hash,base.name_hash(root_relative(folder,root)))
+        hash=base.hash_combine(hash,base.name_hash(root_relative(folder,root,project_root)))
         if !os.is_dir(folder) {continue}
         entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
         if error!=nil {continue}
@@ -361,19 +364,24 @@ compiler_date :: proc(root,compiler:string,modified:time.Time) -> u64 {
     return u64(time.to_unix_nanoseconds(modified))
 }
 
-// text with root written as <root> where it appears, so that what names a
-// path of this checkout names the same one of another.
+// text with root written as <root>, and folder as <project>, where they
+// appear, the longer first: what names a path of this checkout names the same
+// one of another, and one of a project the same one of its copy.
 @(private)
-root_relative :: proc(text,root:string) -> string {
-    if root=="" {return text}
-    slashed:=slashes(text,context.temp_allocator)
-    when ODIN_OS==.Windows {
-        at:=strings.index(strings.to_lower(slashed,context.temp_allocator),strings.to_lower(root,context.temp_allocator))
-    } else {
-        at:=strings.index(slashed,root)
+root_relative :: proc(text,root:string,folder:="") -> string {
+    named :: proc(text,root,name:string) -> string {
+        if root=="" {return text}
+        slashed:=slashes(text,context.temp_allocator)
+        when ODIN_OS==.Windows {
+            at:=strings.index(strings.to_lower(slashed,context.temp_allocator),strings.to_lower(root,context.temp_allocator))
+        } else {
+            at:=strings.index(slashed,root)
+        }
+        if at<0 {return text}
+        return strings.concatenate({slashed[:at],name,slashed[at+len(root):]},context.temp_allocator)
     }
-    if at<0 {return text}
-    return strings.concatenate({slashed[:at],"<root>",slashed[at+len(root):]},context.temp_allocator)
+    if len(folder)>len(root) {return named(named(text,folder,"<project>"),root,"<root>")}
+    return named(named(text,root,"<root>"),folder,"<project>")
 }
 
 // A compiler that runs, with the files its error and output streams go to:
@@ -446,6 +454,7 @@ Stamp_Desc :: struct {
     sources_file:string,   // what the last build that stamped read
     sources_staged:string, // what this compiler read, which takes the place of sources_file; "": sources_file stands (a link again)
     root,compiler:string,
+    project:string,        // the folder of the project it builds; "": none
     flags:[]string,
     tests:bool,
     started:time.Time,     // when the compiler started
@@ -456,7 +465,7 @@ Stamp_Desc :: struct {
 @(private)
 publish_and_stamp :: proc(staged,published,retired:string,sources:[]string,stamp:Stamp_Desc) -> (published_ok,stamped:bool) {
     if !publish(staged,published,retired) {return false,false}
-    hash,latest:=fingerprint(stamp.root,stamp.compiler,stamp.flags,sources,tests=stamp.tests)
+    hash,latest:=fingerprint(stamp.root,stamp.compiler,stamp.flags,sources,tests=stamp.tests,project_folder=stamp.project)
     if stamp.sources_staged!="" {_=os.remove(stamp.sources_file)}
     stamped=len(sources)>0 && time.diff(latest,stamp.started)>0 && (stamp.sources_staged=="" || os.rename(stamp.sources_staged,stamp.sources_file)==nil)
     if stamped {stamped=os.write_entire_file(stamp.file,fmt.tprintf("%x %s",hash,published))==nil}

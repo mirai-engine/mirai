@@ -1191,13 +1191,13 @@ assets_mesh_bounds :: proc(a:^Assets,id:base.Asset_Id) -> (low,high:[3]f32,ok:bo
 
 // Whether the file of a mesh may hold a rig, a skin or morphs: false only
 // for a mesh loaded from its file without either, whose file needs no
-// reading for them.
+// reading for them. One still arriving has not said yet.
 assets_mesh_rigged :: proc(a:^Assets,id:base.Asset_Id) -> bool {
     if a==nil {return true}
     ref,known:=a.index[id]
     if !known || ref.kind!=.Mesh {return true}
     entry:=&a.meshes[ref.index]
-    return entry.failed || entry.generated || entry.skeleton!={} || entry.morphs>0
+    return entry.failed || entry.generated || entry.arriving || entry.skeleton!={} || entry.morphs>0
 }
 
 assets_heightfield :: proc(a:^Assets,id:base.Asset_Id) -> (field:Assets_Heightfield,ok:bool) {

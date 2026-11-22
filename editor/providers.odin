@@ -154,6 +154,20 @@ Body_Measure :: struct {
     jump_height:f32, // m a jump of it rises
 }
 
+// What the plugins that pose rigs say of their poses (animation): the audit of
+// the playtest plugin reads them along the ticks, never by the name of a
+// component. poses appends one a rig posed in its last tick, in allocator.
+Rig_Provider :: struct {
+    poses:proc(s:^Session,w:core.World_Ref,out:^[dynamic]Rig_Pose,allocator:runtime.Allocator),
+}
+
+Rig_Pose :: struct {
+    entity:core.Entity,
+    playing:bool,    // it plays what should move it: a clip of some length or a .character, at a speed, not ended
+    bones:[][3]f32,  // m, where each bone is in the space of the entity, which moves none of them
+    names:[]string,  // of each bone, "" when unknown
+}
+
 // The body what steers is told for when none says its own: the character physics makes by default.
 BODY_PERSON :: Body_Measure{height=1.8,step_height=0.3,speed=5,jump_height=1.2}
 

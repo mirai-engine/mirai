@@ -42,7 +42,7 @@ build_fingerprint_ignores_tests_and_tracks_runtime_source_changes :: proc(t:^tes
 }
 
 @(test)
-build_fingerprint_follows_content_not_dates_checkouts_or_thread_counts :: proc(t:^testing.T) {
+build_fingerprint_follows_content_not_dates_checkouts_copies_or_thread_counts :: proc(t:^testing.T) {
     roots:[2]string
     for &root in roots {
         root=base.test_folder(t,"fingerprint-root")
@@ -58,6 +58,14 @@ build_fingerprint_follows_content_not_dates_checkouts_or_thread_counts :: proc(t
         hashes[i],_=fingerprint(root,"odin",flags,{source})
     }
     testing.expect_value(t,hashes[1],hashes[0])
+    // A project in the checkout and its copy under its own generated folder build the same.
+    copies:[2]u64
+    for folder,i in ([2]string{project.path(roots[0],"demo",allocator=context.temp_allocator),project.path(roots[0],"demo",".mirai","tmp","copy",allocator=context.temp_allocator)}) {
+        file:=project.path(folder,"game","game.odin",allocator=context.temp_allocator)
+        if !testing.expect(t,base.make_directory_all(os.dir(file))==nil && os.write_entire_file(file,"package game")==nil) {return}
+        copies[i],_=fingerprint(roots[0],"odin",{fmt.tprintf("-collection:project=%s",folder)},{file},project_folder=folder)
+    }
+    testing.expect_value(t,copies[1],copies[0])
     source:=project.path(roots[0],"core","core.odin",allocator=context.temp_allocator)
     threaded,_:=fingerprint(roots[0],"odin",{"-o:speed",fmt.tprintf("-collection:mirai=%s",roots[0]),"-thread-count:2"},{source})
     testing.expect_value(t,threaded,hashes[0])
