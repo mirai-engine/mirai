@@ -106,6 +106,45 @@ device_display :: proc(o:^Org_State,device:Key,allocator:=context.temp_allocator
     return text
 }
 
+// The name a pairing this machine joins gives the other end: <handle>/<device>
+// as its user's log names them, or, on a device with no user yet, device, the
+// name the user's log will give it. NAME_MAX bytes at most, cut between
+// characters.
+machine_pair_name :: proc(m:^Machine,device:string,allocator:=context.temp_allocator) -> (name:string,error:Error) {
+    if m.user=={} {
+        if !name_valid(device) {return "",machine_fail(m,.Invalid_Argument,"a device with no user joins with the name its user will know it by: 1 to 64 bytes of text, as laptop")}
+        text,e:=strings.clone(device,allocator)
+        if e!=nil {return "",machine_fail(m,.Out_Of_Memory,"no memory for the name")}
+        return text,.None
+    }
+    l:Log
+    f:User_Fold
+    machine_user_open(m,&l,&f) or_return
+    defer user_fold_destroy(&f)
+    k:=user_device_index(&f,m.identity.key)
+    if k<0 {return "",machine_fail(m,.Invalid_Argument,"this device is not in its user's log: pair it again")}
+    text,e:=strings.concatenate({user_name(&f),"/",device_name(&f,k)},allocator)
+    if e!=nil {return "",machine_fail(m,.Out_Of_Memory,"no memory for the name")}
+    cut:=min(len(text),NAME_MAX)
+    for cut>0 && cut<len(text) && text[cut]&0xC0==0x80 {cut-=1}
+    return text[:cut],.None
+}
+
+// Who a pairing request comes from, as the person who answers it reads it:
+// <handle>/<device>. A second device of this machine's user calls itself by
+// its own name alone, which goes after the user's.
+pair_request_who :: proc(m:^Machine,request:Pair_Request,allocator:=context.temp_allocator) -> string {
+    parts:=[3]string{"","",request.name}
+    l:Log
+    f:User_Fold
+    opened:=request.mode==.Device && m.user!={} && machine_user_open(m,&l,&f)==.None
+    if opened {parts[0],parts[1]=user_name(&f),"/"}
+    text,e:=strings.concatenate(parts[:],allocator)
+    if opened {user_fold_destroy(&f)}
+    if e!=nil {return ""}
+    return text
+}
+
 // The member of the org text names: its user's name, or a prefix of the hex
 // of its id.
 machine_member :: proc(m:^Machine,org:Log_Id,text:string) -> (user:Log_Id,error:Error) {
@@ -742,6 +781,7 @@ leak_text :: proc(kind:Leak_Kind) -> string {
 // Refuses publishing revision to over from in a public project when the
 // publish scanner finds a leak: m.why names its file, line and waiver.
 machine_publish_check :: proc(m:^Machine,org:^Org_Fold,project:Log_Id,public:bool,from,to:Revision) -> Error {
+    m.leak={}
     if !public {return .None}
     trees:[2]store.Hash
     for r,k in ([2]Revision{from,to}) {
@@ -754,6 +794,7 @@ machine_publish_check :: proc(m:^Machine,org:^Org_Fold,project:Log_Id,public:boo
     if e:=publish_scan(&m.store,org,project,trees[0],trees[1],&leaks,context.temp_allocator);e!=.None {return machine_fail(m,e,"the publish scanner does not read the change's files: let the agent fetch them")}
     if len(leaks)==0 {return .None}
     l:=leaks[0]
+    m.leak=l
     more:=len(leaks)>1?fmt.tprintf(" (and %d more)",len(leaks)-1):""
     return machine_fail(m,.Unauthorized,fmt.tprintf("%s:%d holds %s and the project is public%s: remove it, or an admin waives it with mirai kai public add %s:%d",l.path,l.line,leak_text(l.kind),more,l.path,l.line))
 }

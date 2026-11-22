@@ -101,7 +101,10 @@ project_link :: proc(p:^Project,m:^vcs.Machine,project:vcs.Log_Id) -> vcs.Error 
 // working copy.
 public_add :: proc(p:^Project,m:^vcs.Machine,path:string,line:int) -> vcs.Error {
     project,org:=project_of(p,m) or_return
-    if line<=0 {return vcs.machine_public_add(m,org,project,path)}
+    if line<=0 {
+        vcs.machine_public_add(m,org,project,path) or_return
+        return project_route(p)
+    }
     bytes,e:=os.read_entire_file(strings.concatenate({p.workspace.root,"/",path},context.temp_allocator),context.temp_allocator)
     if e!=nil {
         m.why="the file does not read in the working copy: give its path from the project's folder"

@@ -41,6 +41,7 @@ Machine :: struct {
     orgs:[dynamic]Log_Id,     // the orgs it serves, as member or node
     changed:Machine_Changed,
     why:string,               // what the last failure was and how to fix it
+    leak:Leak,                // what the publish scanner refused last, its path in the temp allocator
     allocator:runtime.Allocator,
 }
 

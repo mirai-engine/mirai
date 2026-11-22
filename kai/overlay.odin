@@ -1041,6 +1041,18 @@ Overlay_Routing :: struct {
     device:Overlay_Device,
     public_allow:[]string, // patterns kai public add marked: deny-set paths they match stay public
     refused:string,        // out: why the last snapshot was refused, in the temp allocator
+    refusal:Overlay_Refusal, // out: what refused it, of refused_path
+    refused_path:string,   // out: in the temp allocator
+    refused_scope:Scope_Id, // out: of a scoped path
+}
+
+// What refused a snapshot.
+Overlay_Refusal :: enum u8 {
+    None,
+    Denied,     // a path of the deny set no scope takes: an admin keeps it public, or a scope takes it
+    No_Keyring, // its scope has no keyring here yet
+    Rotate,     // its scope's newest key is still readable by a removed member or device: a reader rotates it
+    Unreadable, // this device cannot read its scope
 }
 
 @(private)
@@ -1101,7 +1113,7 @@ plan_find :: proc(plan:^Overlay_Plan,scope:Scope_Id) -> ^Plan_Scope {
 // found are stated again, so a snapshot of the touched paths keeps them.
 overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]Revision,found:^[dynamic]Found,plan:^Overlay_Plan) -> Error {
     plan.scopes=make([dynamic]Plan_Scope,context.temp_allocator)
-    if r!=nil {r.refused=""}
+    if r!=nil {r.refused,r.refusal,r.refused_path,r.refused_scope="",.None,"",{}}
     if r!=nil && r.org!=nil {
         for sc in r.org.scopes {
             if sc.project!=r.project {continue}
@@ -1147,7 +1159,10 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
         sc,scoped:=scope_of(org,project,f.path)
         if !scoped {
             if overlay_denied(f.path) && !public_allowed(r,f.path) {
-                if r!=nil {r.refused=strings.concatenate({f.path,": a path of the deny set: scope it with mirai kai scope add, or an admin keeps it public with mirai kai public add ",f.path},context.temp_allocator)}
+                if r!=nil {
+                    r.refused=strings.concatenate({f.path,": a path of the deny set: scope it with mirai kai scope add, or an admin keeps it public with mirai kai public add ",f.path},context.temp_allocator)
+                    r.refusal,r.refused_path=.Denied,strings.clone(f.path,context.temp_allocator)
+                }
                 return .Unauthorized
             }
             found[kept]=f
@@ -1163,16 +1178,24 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
             for e in p.previous {unchanged||=he==.None && e.path==f.path && e.content==hash}
             if unchanged {continue}
         }
+        refusal:=Overlay_Refusal.None
         switch {
-        case p.keyring==nil || p.keyring.epoch==0:
+        case p.keyring==nil || p.keyring.epoch==0: refusal=.No_Keyring
+        case keyring_needs_rotation(p.keyring): refusal=.Rotate
+        case !p.readable: refusal=.Unreadable
+        }
+        if refusal!=.None {r.refusal,r.refused_path,r.refused_scope=refusal,strings.clone(f.path,context.temp_allocator),sc.scope}
+        switch refusal {
+        case .None,.Denied:
+        case .No_Keyring:
             r.refused=strings.concatenate({f.path,": its scope has no keyring here: let the agent fetch the org's logs"},context.temp_allocator)
             return .Unauthorized
-        case keyring_needs_rotation(p.keyring):
+        case .Rotate:
             id:=sc.scope
             buffer:[32]u8
             r.refused=strings.concatenate({f.path,": its scope's newest key is still readable by a removed member or device: a reader rotates it with mirai kai scope rotate ",hex_text(id[:4],buffer[:])},context.temp_allocator)
             return .Unauthorized
-        case !p.readable:
+        case .Unreadable:
             r.refused=strings.concatenate({f.path,": this device cannot read its scope"},context.temp_allocator)
             return .Unauthorized
         }
