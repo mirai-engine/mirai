@@ -33,11 +33,13 @@ import "mirai:store"
 // socket serves every org. A device reaches a peer by the ladder of rungs,
 // best first: a LAN address a beacon gave, the global IPv6 and mapped
 // addresses a node passed on, the reflexive address a node saw (both ends
-// punch at once), then the node's relay. A connection on a worse rung is
+// punch at once), then the node's relay, then the node's relay over TCP
+// (tcp.odin) when UDP to the node is blocked. A connection on a worse rung is
 // replaced when a better one appears. A node is the same runner with modes:
 // relay (rendezvous, NAT kind on two ports, forwarding under per-device
-// quotas), seed (it mirrors every closure and overlay ciphertext) and ddc (it
-// keeps derived data). Nothing polls: data moves by the exchange's hints.
+// quotas, over UDP and TCP), seed (it mirrors every closure and overlay
+// ciphertext) and ddc (it keeps derived data). Nothing polls: data moves by
+// the exchange's hints.
 
 RUNNER_ROUTE :: 8
 FRAME_MAX :: 1+RELAY_ENVELOPE+1+RUNNER_ROUTE+net.PACKET_BYTES // the longest datagram of the socket
@@ -71,7 +73,7 @@ IDLE_SECONDS :: 120            // an agent with nothing to do for this long may 
 @(private) BATCH :: 32
 @(private) Z_MAC :: 16
 
-Rung :: enum u8 {None,LAN,IPv6,Mapped,Punched,Relayed}
+Rung :: enum u8 {None,LAN,IPv6,Mapped,Punched,Relayed,Tcp}
 
 rung_text :: proc(r:Rung) -> string {
     switch r {
@@ -81,6 +83,7 @@ rung_text :: proc(r:Rung) -> string {
     case .Mapped: return "mapped"
     case .Punched: return "punched"
     case .Relayed: return "relayed"
+    case .Tcp: return "relayed over tcp"
     }
     return ""
 }
@@ -100,6 +103,8 @@ Runner_Desc :: struct {
     control:bool,                // let local processes reach it (control.odin): one runner per store
     host_seed:u64,               // tests: salts of the hosts; 0 from the system
     ddc_quota:i64,               // a ddc node: bytes of derived data outputs it keeps; 0: no bound (node.odin)
+    tcp_port:int,                // a relay node: where its relay over TCP listens when no HTTPS listener shares the port (tcp.odin); 0: none, -1: the system picks
+    relay_tcp_port:int,          // tests: the TCP port of relay nodes; 0: RELAY_TCP_PORT
     event:Runner_Event,          // what it did, as a line of text
     allocator:runtime.Allocator, // nil: context.allocator
 }
@@ -208,6 +213,11 @@ Runner :: struct {
     ddc_use:[dynamic]DDC_Use,   // a ddc node: when each key was last asked through it
     ddc_found,ddc_missing:int,  // lookups through this runner that ended
     ddc_swept:f64,
+    tcp:[dynamic]^Tcp_Stream,   // the relay over TCP: a node's connections from devices, a device's to its nodes
+    tcp_listener:cnet.TCP_Socket,
+    has_tcp:bool,
+    tcp_port:int,
+    over_udp:bool,              // what runner_frame reads came over the UDP socket
 }
 
 @(private)
@@ -275,13 +285,12 @@ DDC_State :: enum u8 {Waiting,Found,Missing}
 DDC_Lookup :: struct {
     org:Log_Id,
     key:store.Hash,
-    object:bool,      // a lookup of the object at key, not of a record
     started:f64,
     asked:bool,
     lan_done:bool,
     queries:[AGENT_PEERS]exchange.Query,
     query_used:[AGENT_PEERS]bool,
-    output:store.Hash,
+    output:store.Hash, // the output_root of a record that came
 }
 
 DDC_SECONDS :: 10.0 // a lookup gives up
@@ -300,6 +309,7 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
     r.observe_ports=make([dynamic]Node_Observe,allocator)
     r.ddc=make([dynamic]DDC_Lookup,allocator)
     r.ddc_use=make([dynamic]DDC_Use,allocator)
+    r.tcp=make([dynamic]^Tcp_Stream,allocator)
     relay_init(&r.relay,RELAY_RATE,RELAY_BURST,allocator)
     r.start=time.tick_now()
     m:=r.machine
@@ -328,6 +338,7 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
             return .Io
         }
     }
+    if .Relay in desc.modes && desc.tcp_port!=0 {runner_tcp_listen(r,bind)}
     if desc.beacon && desc.beacon_port>=0 {
         port:=desc.beacon_port==0?BEACON_PORT:desc.beacon_port
         r.has_beacon_socket=beacon_socket_open(&r.beacon_socket,port,false)
@@ -358,6 +369,7 @@ runner_free :: proc(r:^Runner) {
     pair_end(&r.offer.pair)
     pair_end(&r.join.pair)
     relay_destroy(&r.relay)
+    runner_tcp_close(r)
     delete(r.orgs)
     delete(r.keys)
     delete(r.relay_seen)
@@ -484,6 +496,7 @@ runner_update :: proc(r:^Runner,wait:f64=0) {
     if wait>0 {r.transport.wait(r.transport.data,wait)}
     r.now=time.duration_seconds(time.tick_since(r.start))
     runner_receive(r,&r.udp,0)
+    runner_tcp_step(r)
     if .Relay in r.desc.modes {runner_receive(r,&r.observe,1)}
     if r.has_beacon_socket {runner_receive(r,&r.beacon_socket,2)}
     if r.has_beacon_socket6 {runner_receive(r,&r.beacon_socket6,2)}
@@ -543,24 +556,28 @@ runner_org_watch :: proc(r:^Runner,o:^Runner_Org) {
     if s.ddc_accepted!=o.stats.ddc_accepted {runner_event(r,"took %d derived data records",s.ddc_accepted-o.stats.ddc_accepted)}
     if s.overlays_accepted!=o.stats.overlays_accepted {runner_event(r,"took %d private overlays",s.overlays_accepted-o.stats.overlays_accepted)}
     if s.refs_accepted!=o.stats.refs_accepted || s.objects_fetched!=o.stats.objects_fetched {runner_bookmarks_event(r,o)}
-    if s.ddc_accepted!=o.stats.ddc_accepted && .DDC in r.desc.modes {runner_ddc_mirror(r,o)}
+    if (s.ddc_accepted!=o.stats.ddc_accepted || s.objects_fetched!=o.stats.objects_fetched) && .DDC in r.desc.modes {runner_ddc_mirror(r,o)}
     o.stats=s
 }
 
-// A ddc node keeps the outputs of the derived data it holds, so members take
-// them when their producer is away.
+// A ddc node keeps every object of the outputs of the derived data it holds,
+// so members take them when their producer is away.
 @(private)
 runner_ddc_mirror :: proc(r:^Runner,o:^Runner_Org) {
     ns:[len(DDC_PREFIX)+64]u8
     refs,e:=store.ref_list(&r.machine.store,ddc_namespace(o.id,&ns),context.temp_allocator)
     if e!=.None {return}
     records:=make([dynamic][]u8,context.temp_allocator)
+    lacking:=make([dynamic]store.Hash,context.temp_allocator)
     for ref in refs {
         clear(&records)
         if ddc_set_read(&r.machine.store,ref.hash,&records)!=.None {continue}
         for bytes in records {
             d,de:=ddc_record_decode(bytes)
-            if de==.None && !object_whole(&r.machine.store,d.output) {agent_want_object(&o.agent,d.output)}
+            if de!=.None {continue}
+            clear(&lacking)
+            ddc_output_lacking(&r.machine.store,d.output_root,&lacking)
+            for l in lacking {agent_want_object(&o.agent,l)}
         }
     }
 }
@@ -688,12 +705,31 @@ runner_peer_rung :: proc(r:^Runner,o:^Runner_Org,i:int) -> Rung {
     if !p.used {return .None}
     if p.client>=0 {
         for q in o.peers {
-            if q.dh==p.dh && q.rung!=.None {return q.rung}
+            if q.dh!=p.dh || q.rung==.None {continue}
+            if q.rung==.Relayed && runner_tcp_carries(r,q.relay) {return .Tcp}
+            return q.rung
         }
     }
     stats,ok:=net.connection_stats(p.host,p.connection)
     if !ok {return .None}
+    if runner_tcp_carries(r,stats.address) {return .Tcp}
     return rung_of(stats.address)
+}
+
+// Whether a connection of the relay over TCP carries what goes to address:
+// to a node, or to a peer it relays to.
+@(private)
+runner_tcp_carries :: proc(r:^Runner,address:net.Address) -> bool {
+    to:=address
+    if address.kind==.Relay {
+        node,_,ok:=net.address_relay_node(address)
+        if !ok {return false}
+        to=node
+    }
+    for s in r.tcp {
+        if !s.failed && s.address==to && (s.link || s.greeted) {return true}
+    }
+    return false
 }
 
 // An address as IPv4 a.b.c.d:port or [IPv6]:port.
@@ -759,7 +795,7 @@ runner_ladder_peer :: proc(r:^Runner,o:^Runner_Org,p:^Runner_Peer) {
     if !p.node && !p.first && !dh_less(Dh_Key(r.machine.dh.public),p.dh) {return}
     if r.now<p.next_try {return}
     planned:=p.planned>0 && r.now-p.planned<RETRY_SECONDS
-    for p.stage<=int(Rung.Relayed) {
+    for p.stage<=int(Rung.Tcp) {
         dialed:=false
         switch Rung(p.stage) {
         case .None:
@@ -767,6 +803,8 @@ runner_ladder_peer :: proc(r:^Runner,o:^Runner_Org,p:^Runner_Peer) {
             if lan_fresh {
                 dialed=runner_dial(r,o,p,rung_of(p.lan),p.lan)
             } else if p.address_count>0 {
+                // What goes to a node its TCP connection carries is the TCP rung.
+                if l:=runner_tcp_link(r,p.addresses[0]);l!=nil && !l.failed {break}
                 dialed=runner_dial(r,o,p,rung_of(p.addresses[0]),..p.addresses[:min(p.address_count,2)])
             }
         case .IPv6:
@@ -786,6 +824,20 @@ runner_ladder_peer :: proc(r:^Runner,o:^Runner_Org,p:^Runner_Peer) {
             if !p.node && !p.hard && p.target.kind!=.None && planned {dialed=runner_dial(r,o,p,.Punched,p.target)}
         case .Relayed:
             if !p.node && p.relay.kind==.Relay && planned {dialed=runner_dial(r,o,p,.Relayed,p.relay)}
+        case .Tcp:
+            // UDP to the relay node failed: its relay over TCP.
+            if !p.node || .Relay not_in p.modes || p.address_count==0 {break}
+            l:=runner_tcp_link(r,p.addresses[0])
+            if l!=nil && l.failed {
+                runner_tcp_drop(r,l)
+                break
+            }
+            if l==nil {
+                if !runner_tcp_open(r,p.dh,p.addresses[0]) {break}
+                return
+            }
+            if l.connecting {return}
+            dialed=runner_dial(r,o,p,.Tcp,p.addresses[0])
         }
         if dialed {return}
         p.stage+=1
@@ -975,6 +1027,8 @@ runner_addresses :: proc(r:^Runner,out:^[dynamic]net.Address) {
 @(private)
 runner_receive :: proc(r:^Runner,u:^net.Udp,port:int) {
     t:=net.udp_transport(u)
+    r.over_udp=port==0
+    defer r.over_udp=false
     for {
         batch:[BATCH]net.Datagram
         for &d,i in batch {d.bytes=r.receive[i][:]}
@@ -1043,8 +1097,10 @@ runner_deliver :: proc(r:^Runner,from:net.Address,server:bool,route,datagram:[]u
     }
 }
 
+// Sends over the relay's TCP connection that stands for to, else over UDP.
 @(private)
 runner_send :: proc(r:^Runner,to:net.Address,bytes:[]u8) {
+    if len(r.tcp)>0 && runner_tcp_send(r,to,bytes) {return}
     runner_send_on(r,&r.udp,to,bytes)
 }
 
@@ -1140,7 +1196,7 @@ runner_forward :: proc(r:^Runner,from:net.Address,bytes:[]u8) {
     runner_send(r,r.relay.devices[k].observed[0],frame[:33+n])
 }
 
-Z_Type :: enum u8 {None,Hello,Welcome,Want,Plan,Punch}
+Z_Type :: enum u8 {None,Hello,Welcome,Want,Plan,Punch,Probe}
 
 @(private)
 Z_Head :: struct #packed {
@@ -1188,7 +1244,7 @@ runner_shared :: proc(r:^Runner,dh:Dh_Key) -> (key:[32]u8,ok:bool) {
 }
 
 @(private)
-runner_z_send :: proc(r:^Runner,to_dh:Dh_Key,to:net.Address,type:Z_Type,body:[]u8) {
+runner_z_send :: proc(r:^Runner,to_dh:Dh_Key,to:net.Address,type:Z_Type,body:[]u8,udp:=false) {
     key,ok:=runner_shared(r,to_dh)
     if !ok || len(body)>512 {return}
     frame:[size_of(Z_Head)+512+Z_MAC]u8
@@ -1198,14 +1254,18 @@ runner_z_send :: proc(r:^Runner,to_dh:Dh_Key,to:net.Address,type:Z_Type,body:[]u
     size:=size_of(Z_Head)+len(body)
     mac:=keyed_hash(key[:],frame[:size])
     copy(frame[size:],mac[:Z_MAC])
-    runner_send(r,to,frame[:size+Z_MAC])
+    if udp {
+        runner_send_on(r,&r.udp,to,frame[:size+Z_MAC])
+    } else {
+        runner_send(r,to,frame[:size+Z_MAC])
+    }
 }
 
 @(private)
 runner_z_read :: proc(r:^Runner,from:net.Address,bytes:[]u8,port:int) {
     if len(bytes)<size_of(Z_Head)+Z_MAC {return}
     head:=(^Z_Head)(raw_data(bytes))^
-    if head.type==.Punch || head.type<.Hello || head.type>.Punch {return}
+    if head.type==.Punch || head.type<.Hello || head.type>.Probe {return}
     now:=time.now()._nsec
     if abs(now-head.time)>RENDEZVOUS_SKEW {return}
     key,ok:=runner_shared(r,head.from)
@@ -1245,6 +1305,9 @@ runner_admitted :: proc(r:^Runner,dh:Dh_Key) -> bool {
 @(private)
 runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int) {
     #partial switch head.type {
+    case .Probe:
+        // Answered the way it came: over UDP, a device on TCP learns UDP works again.
+        if len(body)==0 && port==0 && runner_admitted(r,head.from) {runner_z_send(r,head.from,from,.Probe,nil)}
     case .Hello:
         if len(body)<2 || body[0]!=u8(port) || len(body)!=2+int(body[1])*size_of(Node_Address) || body[1]>4 {return}
         if !runner_admitted(r,head.from) {
@@ -1329,6 +1392,9 @@ runner_plan :: proc(r:^Runner,a,b:Dh_Key) -> bool {
 @(private)
 runner_device_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8) {
     #partial switch head.type {
+    case .Probe:
+        if len(body)!=0 || !r.over_udp {return}
+        if l:=runner_tcp_link(r,from);l!=nil && !l.failed && l.node==head.from {runner_tcp_upgrade(r,l)}
     case .Welcome:
         if len(body)!=size_of(Z_Welcome) {return}
         w:=(^Z_Welcome)(raw_data(body))^
@@ -1731,9 +1797,10 @@ runner_pair_take :: proc(r:^Runner,payload:[]u8) -> bool {
 }
 
 // Looks for what a peer built for key in the org: what the store holds, then
-// LAN peers, then the rest; once a record is here its output is fetched.
-// Waiting until it is whole here or DDC_SECONDS pass.
-runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,output:store.Hash) {
+// LAN peers, then the rest; once a record is here every object its output
+// lists is fetched. Found with the record's output_root once they are all
+// whole here; Missing when DDC_SECONDS pass, or when no peer has one of them.
+runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,output_root:store.Hash) {
     served:^Runner_Org
     for o in r.orgs {
         if o.id==org {served=o}
@@ -1742,23 +1809,41 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
     if .DDC in r.desc.modes {runner_ddc_touch(r,org,key)}
     records:=make([dynamic]DDC_Record,context.temp_allocator)
     ddc_lookup(&r.machine.store,org,key,&records)
+    // The first output whole here, else what the first one that reads lacks.
+    lacking:=make([dynamic]store.Hash,context.temp_allocator)
+    wanted:store.Hash
     for d in records {
-        if object_whole(&r.machine.store,d.output) {
+        clear(&lacking)
+        if _,e:=ddc_output_lacking(&r.machine.store,d.output_root,&lacking);e!=.None {continue}
+        if len(lacking)==0 {
             runner_ddc_end(r,org,key)
             r.ddc_found+=1
-            return .Found,d.output
+            return .Found,d.output_root
         }
+        wanted=d.output_root
+        break
     }
     for &l in r.ddc {
-        if l.org!=org || l.key!=key || l.object {continue}
+        if l.org!=org || l.key!=key {continue}
         if r.now-l.started>DDC_SECONDS {
             runner_ddc_end(r,org,key)
             r.ddc_missing+=1
             return .Missing,{}
         }
-        if len(records)>0 && l.output!=records[0].output {
-            l.output=records[0].output
-            agent_want_object(&served.agent,l.output)
+        if wanted!={} {
+            l.output=wanted
+            given_up:=true
+            for m in lacking {
+                agent_want_object(&served.agent,m)
+                progress,known:=exchange.progress(&served.agent.x,m)
+                given_up&&=known && progress.state==.Missing
+            }
+            // Every peer was asked for what the output lacks and none has it.
+            if given_up {
+                runner_ddc_end(r,org,key)
+                r.ddc_missing+=1
+                return .Missing,{}
+            }
         }
         // Every peer answered and none had it, nor is a record on its way.
         if l.output=={} && l.lan_done && len(served.agent.fetches)==0 {
@@ -1772,38 +1857,10 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
         }
         return .Waiting,{}
     }
-    l:=DDC_Lookup{org=org,key=key,started=r.now}
-    if len(records)>0 {
-        l.output=records[0].output
-        agent_want_object(&served.agent,l.output)
-    }
+    l:=DDC_Lookup{org=org,key=key,started=r.now,output=wanted}
+    for m in lacking {agent_want_object(&served.agent,m)}
     append(&r.ddc,l)
     return .Waiting,{}
-}
-
-// Fetches the object at address from the org's peers: Found once it is
-// whole here, Missing when none gave it in DDC_SECONDS.
-runner_object_ask :: proc(r:^Runner,org:Log_Id,address:store.Hash) -> DDC_State {
-    if object_whole(&r.machine.store,address) {
-        runner_ddc_end(r,org,address)
-        return .Found
-    }
-    served:^Runner_Org
-    for o in r.orgs {
-        if o.id==org {served=o}
-    }
-    if served==nil || address=={} {return .Missing}
-    for &l in r.ddc {
-        if l.org!=org || l.key!=address || !l.object {continue}
-        if r.now-l.started>DDC_SECONDS {
-            runner_ddc_end(r,org,address)
-            return .Missing
-        }
-        return .Waiting
-    }
-    append(&r.ddc,DDC_Lookup{org=org,key=address,output=address,object=true,started=r.now})
-    agent_want_object(&served.agent,address)
-    return .Waiting
 }
 
 // Whether every chunk of the object at address is in the store.

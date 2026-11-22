@@ -101,13 +101,16 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
     }
     r:=new(kai.Runner)
     defer free(r)
-    if e:=kai.runner_start(r,{machine=m,port=port,modes=modes,control=true,ddc_quota=quota,event={procedure=print}});e!=.None {
+    // The hub's HTTPS listener on the relay's port hands the relay's connections over.
+    tcp_port:=https_port==kai.RELAY_TCP_PORT?0:kai.RELAY_TCP_PORT
+    if e:=kai.runner_start(r,{machine=m,port=port,modes=modes,control=true,ddc_quota=quota,tcp_port=tcp_port,event={procedure=print}});e!=.None {
         fmt.eprintfln("%s kai serve: %s",program,m.why)
         return 1
     }
     defer kai.runner_stop(r)
     key:=m.identity.key
     fmt.printfln("Kai node %s (%s) on UDP port %d, serving %d orgs.",short_hex(key[:]),mode,kai.runner_port(r),len(m.orgs))
+    if tcp:=kai.runner_tcp_port(r);tcp!=0 {fmt.printfln("Relay over TCP on port %d for devices whose UDP is blocked.",tcp)}
     if len(m.orgs)==0 {
         fmt.printfln("It serves no org yet. To pair it, an admin of the org runs on their machine\n  mirai kai pair offer node --org <org> --modes %s\nthen here, while this runs:\n  %s kai pair join <ticket> --store %s\nand approves on their machine with mirai kai pair approve when both show the same code.",mode=="relay"?"relay":mode=="seed"?"relay,seed":"relay,seed,ddc",program,root)
     }

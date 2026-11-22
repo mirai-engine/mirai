@@ -688,9 +688,11 @@ machine_publish_refs :: proc(m:^Machine,project:Log_Id,refs:[]Bookmark_Ref) -> E
     return .None
 }
 
-// Publishes what this device built for key, signed, and tells the mesh.
-machine_publish_ddc :: proc(m:^Machine,org:Log_Id,key,output:store.Hash,tainted:[]Scope_Id) -> (nondeterministic:bool,error:Error) {
-    nondeterministic,error=ddc_publish(&m.store,org,&m.identity,key,output,tainted,machine_now())
+// Publishes what this device built for key, signed, and tells the mesh:
+// objects, the one the key's cache ref names first, then every other one the
+// result consists of (ddc_publish).
+machine_publish_ddc :: proc(m:^Machine,org:Log_Id,key:store.Hash,objects:[]store.Hash,tainted:[]Scope_Id) -> (nondeterministic:bool,error:Error) {
+    nondeterministic,error=ddc_publish(&m.store,org,&m.identity,key,objects,tainted,machine_now())
     if error!=.None {return false,machine_fail(m,error,"the derived data does not publish to the store")}
     ns:[len(DDC_PREFIX)+64]u8
     name:[64]u8

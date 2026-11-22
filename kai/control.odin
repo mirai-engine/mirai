@@ -31,7 +31,7 @@ CONTROL_WAIT :: 0.2
 @(private) ANSWER_HEAD :: 1+4+1
 @(private) PEER_BYTES :: 32+32+3
 
-Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Object_Ask,Addresses}
+Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Addresses}
 
 Control_Server :: struct {
     lock:Lock,
@@ -196,15 +196,9 @@ control_do :: proc(r:^Runner,op:u8,body:[]u8,w:^Answer_Writer) -> Error {
         org,key:Log_Id
         copy(org[:],body[:32])
         copy(key[:],body[32:])
-        state,output:=runner_ddc_ask(r,org,key)
+        state,output_root:=runner_ddc_ask(r,org,key)
         answer_put(w,{u8(state)})
-        answer_put(w,output[:])
-    case .Object_Ask:
-        if len(body)!=64 {return .Invalid_Argument}
-        org,address:Log_Id
-        copy(org[:],body[:32])
-        copy(address[:],body[32:])
-        answer_put(w,{u8(runner_object_ask(r,org,address))})
+        answer_put(w,output_root[:])
     case .Addresses:
         if len(body)!=0 {return .Invalid_Argument}
         list:=make([dynamic]net.Address,context.temp_allocator)
@@ -433,7 +427,9 @@ pair_progress_parse :: proc(answer:[]u8) -> (progress:Pair_Progress,error:Error)
     return {phase=Pair_Phase(answer[0]),code=strings.clone(code,context.temp_allocator),why=strings.clone(why,context.temp_allocator)},.None
 }
 
-control_ddc_ask :: proc(c:^Control,org:Log_Id,key:store.Hash) -> (state:DDC_State,output:store.Hash,error:Error) {
+// What runner_ddc_ask answers: Found with the output_root of a record whose
+// every object is whole in the runner's store.
+control_ddc_ask :: proc(c:^Control,org:Log_Id,key:store.Hash) -> (state:DDC_State,output_root:store.Hash,error:Error) {
     body:[64]u8
     o,k:=org,key
     copy(body[:],o[:])
@@ -444,19 +440,9 @@ control_ddc_ask :: proc(c:^Control,org:Log_Id,key:store.Hash) -> (state:DDC_Stat
 }
 
 @(private)
-ddc_answer_parse :: proc(answer:[]u8) -> (state:DDC_State,output:store.Hash,error:Error) {
+ddc_answer_parse :: proc(answer:[]u8) -> (state:DDC_State,output_root:store.Hash,error:Error) {
     if len(answer)!=33 || answer[0]>u8(max(DDC_State)) {return .Missing,{},.Corrupt}
-    copy(output[:],answer[1:])
-    return DDC_State(answer[0]),output,.None
+    copy(output_root[:],answer[1:])
+    return DDC_State(answer[0]),output_root,.None
 }
 
-control_object_ask :: proc(c:^Control,org:Log_Id,address:store.Hash) -> (state:DDC_State,error:Error) {
-    body:[64]u8
-    o,a:=org,address
-    copy(body[:],o[:])
-    copy(body[32:],a[:])
-    out:[FRAME_MAX]u8
-    answer:=control_call(c,.Object_Ask,body[:],&out) or_return
-    if len(answer)!=1 || answer[0]>u8(max(DDC_State)) {return .Missing,.Corrupt}
-    return DDC_State(answer[0]),.None
-}

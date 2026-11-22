@@ -329,7 +329,9 @@ Entry_Head :: struct #packed {
 - **Immediate propagation (no polling):** `exchange` gains `Ref_Changed{namespace, name, address}`
   hint; on connect peers query `names_ask`/`ref_ask`, then react to hints.
 - **Signed DDC:** `DDC_Record{key, output_root, producer, tainted_scopes[], sig}` under
-  `kai-ddc-<org hex>/<key hex>`. Accepted only from writers or `ddc`-grant holders; differing
+  `kai-ddc-<org hex>/<key hex>`; `output_root` names a `DDC_Output` object listing every object
+  the output consists of, the one the key's cache ref names first, so nodes mirror and serve it
+  whole without reading assets. Accepted only from writers or `ddc`-grant holders; differing
   outputs for the same key are both kept and flagged as nondeterminism; lookups batch LAN peers
   before seed.
 
@@ -405,8 +407,9 @@ Entry_Head :: struct #packed {
 
 ### Web Repo and Review View (`KaiHub`, Replaces GitHub PRs)
 - **Peer vs browser transport:** All peer-to-peer traffic (editor, CLI, seed, relay, DDC) runs
-  exclusively over `mirai:net` UDP (Noise `IK` + AEGIS-128L, zero TCP/TLS handshake overhead).
-  HTTPS is used **only** for web browsers hitting KaiHub.
+  over `mirai:net` datagrams (Noise `IK` + AEGIS-128L, zero TCP/TLS handshake overhead): UDP, or,
+  as the last rung when UDP is blocked, length-prefixed over the node's TCP 443, which the hub
+  tells apart from TLS by its first byte. HTTPS is used **only** for web browsers hitting KaiHub.
 - **Transport for browsers:** HTTP over TLS 1.3 (1-RTT, early data refused; HTTP/3 over QUIC
   optional via a thin edge proxy like Caddy) serving a static **Vue** frontend plus a clean
   JSON/binary API straight from `mirai kai serve` (no Postgres, Redis or Node backend).

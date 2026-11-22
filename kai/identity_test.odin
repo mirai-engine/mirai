@@ -656,7 +656,8 @@ device_refs_reject_rollback :: proc(t:^testing.T) {
 }
 
 // Derived data is taken from writers and ddc producers; two outputs for one
-// key are both kept and flagged.
+// key are both kept and flagged. An output lists its result first and every
+// other object once, sorted; hostile lists are refused.
 @(test)
 ddc_records_keep_differing_outputs :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"kai-ddc")
@@ -670,7 +671,7 @@ ddc_records_keep_differing_outputs :: proc(t:^testing.T) {
     test_org_make(t,&o);defer test_org_destroy(&o)
     key:=store.address_of_bytes(transmute([]u8)string("shader key"))
     x,y:=store.Hash{0=1},store.Hash{0=2}
-    nondeterministic,e:=ddc_publish(&b,o.org.id,&o.bob.devices[0],key,x,nil,1)
+    nondeterministic,e:=ddc_publish(&b,o.org.id,&o.bob.devices[0],key,{x},nil,1)
     testing.expect(t,e==.None && !nondeterministic)
     ns:[len(DDC_PREFIX)+64]u8
     name:[64]u8
@@ -680,16 +681,55 @@ ddc_records_keep_differing_outputs :: proc(t:^testing.T) {
     testing.expect(t,ae2==.None && changed && !flagged)
 
     // A reader's record is skipped; alice's other output is kept beside bob's.
-    ddc_publish(&b,o.org.id,&o.carol.devices[0],key,y,nil,2)
+    ddc_publish(&b,o.org.id,&o.carol.devices[0],key,{y},nil,2)
     set,_=store.ref_get(&b,ddc_namespace(o.org.id,&ns),store.hex(key,&name))
     copied=test_copy(t,&b,&a,set,.DDC_Set)
     changed,flagged,_=ddc_accept(&a,&o.fold,key,copied,nil,2)
     testing.expect(t,!changed && !flagged)
-    flagged,_=ddc_publish(&a,o.org.id,&o.alice.devices[0],key,y,nil,3)
+    flagged,_=ddc_publish(&a,o.org.id,&o.alice.devices[0],key,{y,x},nil,3)
     testing.expect(t,flagged,"two outputs of one key are nondeterminism")
     records:=make([dynamic]DDC_Record,context.temp_allocator)
     testing.expect_value(t,ddc_lookup(&a,o.org.id,key,&records),Error.None)
-    testing.expect(t,len(records)==2 && records[0].output==x && records[1].output==y)
+    xr,_:=ddc_output_put(&a,{x})
+    yr,_:=ddc_output_put(&a,{y,x})
+    roots:=[2]store.Hash{records[0].output_root,records[1].output_root}
+    testing.expect(t,len(records)==2 && slice.contains(roots[:],xr) && slice.contains(roots[:],yr) && hash_less(roots[0],roots[1]))
+
+    z:=store.Hash{0=3}
+    listed,le:=ddc_output_put(&a,{z,y,x,y,z,x})
+    objects,ge:=ddc_output_get(&a,listed,context.temp_allocator)
+    testing.expect(t,le==.None && ge==.None && len(objects)==3 && objects[0]==z && objects[1]==x && objects[2]==y,"the result first, then the others sorted, each once")
+    _,e=ddc_output_put(&a,{})
+    testing.expect_value(t,e,Error.Invalid_Argument)
+    _,e=ddc_output_put(&a,{x,{}})
+    testing.expect_value(t,e,Error.Invalid_Argument)
+    many:=make([]store.Hash,DDC_OUTPUT_MAX+1,context.temp_allocator)
+    for &m,i in many {m=store.Hash{0=1,1=u8(i),2=u8(i>>8),3=u8(i>>16)}}
+    _,e=ddc_output_put(&a,many)
+    testing.expect_value(t,e,Error.Too_Large)
+    Case :: struct {head:DDC_Output_Head,listed:[]store.Hash,cut:int}
+    good:=DDC_Output_Head{magic=KAI_MAGIC,version=DDC_VERSION,count=3}
+    cases:=[]Case{
+        {head=good,listed={z,x,y}},
+        {head={magic=KAI_MAGIC,version=DDC_VERSION,count=0}},
+        {head={magic=KAI_MAGIC,version=DDC_VERSION,count=DDC_OUTPUT_MAX+1},listed={z,x,y}},
+        {head=good,listed={z,x}},
+        {head=good,listed={z,x,y,y}},
+        {head=good,listed={z,y,x}},
+        {head=good,listed={z,x,x}},
+        {head=good,listed={z,x,z}},
+        {head=good,listed={z,{},y}},
+        {head={magic=KAI_MAGIC,version=DDC_VERSION-1,count=3},listed={z,x,y}},
+        {head={magic=KAI_MAGIC,version=DDC_VERSION,reserved=1,count=3},listed={z,x,y}},
+        {head=good,listed={z,x,y},cut=1},
+    }
+    for c,i in cases {
+        w:=writer_make(context.temp_allocator)
+        write_value(&w,c.head)
+        for l in c.listed {write_value(&w,l)}
+        _,de:=ddc_output_decode(w.data[:len(w.data)-c.cut],context.temp_allocator)
+        testing.expectf(t,(de==.None)==(i==0),"case %d decodes %v",i,de)
+    }
 }
 
 // The beacon of a device reads as that device only with the org's secret,

@@ -6,13 +6,17 @@ import "core:time"
 import "mirai:store"
 
 // What a ddc node keeps of derived data: every key of an org's DDC namespace
-// with the outputs here, swept least recently used first once their bytes
-// pass the node's quota. A key is used when its newest record arrives and
-// when a lookup through this node asks for it. The store's sweep follows refs
-// only, not the links inside Kai records, so the sweep names as live what a
-// node serves besides: the closures of every project's bookmarks and
-// proposals, every overlay record with its sealed tree and files, and the
-// outputs of the keys it keeps. A store that holds a workspace is not swept.
+// with every object its outputs list here, dropped least recently used first
+// once their bytes pass the node's quota; a key a lookup through this node
+// still fetches, or whose objects the node is fetching, is not dropped. A key
+// is used when its newest record arrives and when a lookup through this node
+// asks for it. The store's own sweep reclaims what was dropped (store.sweep
+// with reclaim), so the quota holds on disk once it returns. The sweep follows
+// refs only, not the links inside Kai records, so the node names as live what
+// it serves besides: the closures of every project's bookmarks and proposals,
+// every overlay record with its sealed tree and files, every object of the
+// outputs of the keys it keeps, and what its agents fetch and hold back. A
+// store that holds a workspace is not swept.
 
 DDC_SWEEP_SECONDS :: 60.0 // between two looks at the quota
 
@@ -48,9 +52,9 @@ runner_ddc_stats :: proc(r:^Runner,org:Log_Id) -> (stats:DDC_Stats) {
             d,de:=ddc_record_decode(bytes)
             if de!=.None {continue}
             outputs+=1
-            if object_whole(s,d.output) {
+            if size,here:=ddc_output_bytes(s,d.output_root);here {
                 whole=true
-                stats.bytes+=object_bytes(s,d.output)
+                stats.bytes+=size
             }
         }
         if whole {stats.whole+=1} else {stats.missing+=1}
@@ -58,6 +62,17 @@ runner_ddc_stats :: proc(r:^Runner,org:Log_Id) -> (stats:DDC_Stats) {
     }
     stats.lookups_found,stats.lookups_missing=r.ddc_found,r.ddc_missing
     return
+}
+
+// The bytes of every object of the output at output_root, when all are whole here.
+@(private)
+ddc_output_bytes :: proc(s:^store.Store,output_root:store.Hash) -> (bytes:i64,whole:bool) {
+    lacking:=make([dynamic]store.Hash,context.temp_allocator)
+    objects,e:=ddc_output_lacking(s,output_root,&lacking)
+    if e!=.None || len(lacking)>0 {return}
+    bytes=object_bytes(s,output_root)
+    for o in objects {bytes+=object_bytes(s,o)}
+    return bytes,true
 }
 
 @(private)
@@ -82,16 +97,20 @@ runner_ddc_touch :: proc(r:^Runner,org:Log_Id,key:store.Hash) {
 }
 
 // Drops the least recently used keys of every org until the outputs fit the
-// quota, then sweeps the store of what no ref holds any more.
+// quota, then has the store's sweep reclaim what no ref holds any more.
 @(private)
 runner_ddc_quota :: proc(r:^Runner) {
     if r.desc.ddc_quota<=0 || .DDC not_in r.desc.modes || r.now-r.ddc_swept<DDC_SWEEP_SECONDS && r.ddc_swept>0 {return}
     r.ddc_swept=r.now
     s:=&r.machine.store
-    Held :: struct {org:Log_Id,key:store.Hash,used:i64,bytes:i64}
+    Held :: struct {org:Log_Id,key:store.Hash,used:i64,bytes:i64,busy:bool}
     held:=make([dynamic]Held,context.temp_allocator)
     total:i64
     records:=make([dynamic][]u8,context.temp_allocator)
+    fetching:=make(map[store.Hash]bool,context.temp_allocator)
+    for o in r.orgs {
+        for f in o.agent.fetches {fetching[f.address]=true}
+    }
     for o in r.orgs {
         ns:[len(DDC_PREFIX)+64]u8
         refs,e:=store.ref_list(s,ddc_namespace(o.id,&ns),context.temp_allocator)
@@ -102,11 +121,15 @@ runner_ddc_quota :: proc(r:^Runner) {
             clear(&records)
             if ddc_set_read(s,ref.hash,&records)!=.None {continue}
             item:=Held{org=o.id,key=key}
+            for l in r.ddc {item.busy||=l.org==o.id && l.key==key}
             for bytes in records {
                 d,de:=ddc_record_decode(bytes)
                 if de!=.None {continue}
                 item.used=max(item.used,d.time)
-                if object_whole(s,d.output) {item.bytes+=object_bytes(s,d.output)}
+                if size,whole:=ddc_output_bytes(s,d.output_root);whole {item.bytes+=size}
+                item.busy||=fetching[d.output_root]
+                objects,_:=ddc_output_get(s,d.output_root,context.temp_allocator)
+                for x in objects {item.busy||=fetching[x]}
             }
             for u in r.ddc_use {
                 if u.org==o.id && u.key==key {item.used=max(item.used,u.at)}
@@ -120,6 +143,7 @@ runner_ddc_quota :: proc(r:^Runner) {
     dropped:=0
     for item in held {
         if total<=r.desc.ddc_quota {break}
+        if item.busy {continue}
         ns:[len(DDC_PREFIX)+64]u8
         name:[64]u8
         if store.ref_remove(s,ddc_namespace(item.org,&ns),store.hex(item.key,&name))!=.None {continue}
@@ -143,7 +167,7 @@ runner_ddc_quota :: proc(r:^Runner) {
     }
     live:=make([dynamic]store.Hash,context.temp_allocator)
     runner_live(r,&live)
-    result,e:=store.sweep(s,live[:])
+    result,e:=store.sweep(s,live[:],reclaim=true)
     if e!=.None {
         runner_event(r,"the store sweep after dropping %d derived data keys failed: %s",dropped,store.error_text(e))
         return
@@ -153,14 +177,20 @@ runner_ddc_quota :: proc(r:^Runner) {
 
 // What the node serves that no ref names directly: the closures of the
 // projects' bookmarks, landed moves and proposal stacks, the overlay records
-// with their chains, sealed trees and files, and the outputs of the derived
-// data it keeps.
+// with their chains, sealed trees and files, every object of the outputs of
+// the derived data it keeps, and what its agents and lookups fetch or hold
+// back.
 @(private)
 runner_live :: proc(r:^Runner,live:^[dynamic]store.Hash) {
     s:=&r.machine.store
     targets:=make([dynamic]Revision,context.temp_allocator)
     roots:=make([dynamic]store.Hash,context.temp_allocator)
+    for l in r.ddc {
+        if l.output!={} {append(live,l.output)}
+    }
     for o in r.orgs {
+        for f in o.agent.fetches {append(live,f.address)}
+        for f in o.agent.deferred {append(live,f.address)}
         agent_targets(&o.agent,{},false,&targets,&roots)
         for l in o.agent.logs {
             for &item in l.items {
@@ -205,7 +235,11 @@ runner_live :: proc(r:^Runner,live:^[dynamic]store.Hash) {
                 clear(&records)
                 if ddc_set_read(s,ref.hash,&records)!=.None {continue}
                 for bytes in records {
-                    if d,de:=ddc_record_decode(bytes);de==.None {append(live,d.output)}
+                    d,de:=ddc_record_decode(bytes)
+                    if de!=.None {continue}
+                    append(live,d.output_root)
+                    objects,_:=ddc_output_get(s,d.output_root,context.temp_allocator)
+                    append(live,..objects)
                 }
             }
         }

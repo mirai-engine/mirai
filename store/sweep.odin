@@ -14,7 +14,8 @@ import "mirai:std/base"
 // One sweep runs at a time on a root, by the claim tmp/sweep/owner. It marks
 // what the live roots reach (every ref, every lease's addresses, what its
 // caller names) and what was written or touched within GRACE; copies the live
-// chunks of sealed packs that are mostly dead, or small, into its own pack;
+// chunks of sealed packs that are mostly dead, or small, into its own pack
+// (with reclaim, of every one that holds a dead chunk);
 // writes the next generation of every sealed pack, refs folded; retires the
 // replaced packs; and then rechecks the commits other writers made meanwhile,
 // copying back from a retired pack what one of them touched or named. Active
@@ -93,6 +94,7 @@ Sweep :: struct {
     generation:u64,         // the one it publishes
     out:Sweep_Out,
     result:Sweep_Result,
+    reclaim:bool,
 }
 
 @(private)
@@ -111,7 +113,12 @@ Sweep_Out :: struct {
     stage:^Stage,
 }
 
-sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Result,error:Error) {
+// reclaim: the bytes of what no root reaches leave the disk in this sweep.
+// Every sealed pack that holds a dead chunk is compacted, and what this value
+// wrote is kept only when a root reaches it, however fresh: live must then
+// name all of it the caller still needs. What other writers wrote within
+// GRACE stays.
+sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil,reclaim:=false) -> (result:Sweep_Result,error:Error) {
     if s==nil || s.state==nil {return {},.Invalid_Argument}
     at:=now.? or_else time.now()
     // Another sweep running on the root does this one's work.
@@ -127,7 +134,7 @@ sweep :: proc(s:^Store,live:[]Hash,now:Maybe(time.Time)=nil) -> (result:Sweep_Re
         state.writer.seq+=1
     }
     claims_settle(s,at) or_return
-    w:=Sweep{s=s,now=at._nsec}
+    w:=Sweep{s=s,now=at._nsec,reclaim=reclaim}
     w.live=make(Live_Set,s.state.allocator)
     w.moved=make(map[Hash]Moved,s.state.allocator)
     w.copied=make(map[Hash]struct{},s.state.allocator)
@@ -229,8 +236,8 @@ dead_writers_find :: proc(w:^Sweep) -> Error {
     return .None
 }
 
-// Marks what the roots reach and every chunk written or
-// touched within GRACE.
+// Marks what the roots reach and every chunk written or touched within GRACE
+// (with reclaim, but those this value wrote).
 @(private)
 sweep_mark :: proc(w:^Sweep) -> Error {
     s:=w.s
@@ -250,12 +257,17 @@ sweep_mark :: proc(w:^Sweep) -> Error {
     }) or_return
     live_add(&w.live,targets[:]) or_return
     for target in w.live {walk(w,target,-1,0) or_return}
+    own:=state.writer.id
+    reclaim:=w.reclaim && own!=({})
     for l,i in g.locations {
+        if reclaim && int(l.pack)<len(g.packs) && g.packs[l.pack].writer==own {continue}
         if w.now-location_time(s,g.addresses[i],l)<i64(GRACE) {w.marks_generation[i]=true}
     }
     for k,i in state.table.keys {
         if k=={} {continue}
-        if w.now-location_time(s,k,state.table.values[i])<i64(GRACE) {w.marks_table[i]=true}
+        l:=state.table.values[i]
+        if reclaim && int(l.pack)<len(state.packs) && state.packs[l.pack].id.writer==own {continue}
+        if w.now-location_time(s,k,l)<i64(GRACE) {w.marks_table[i]=true}
     }
     // What was touched within GRACE and only a retired pack holds comes back.
     for address,touched in state.touched {
@@ -440,7 +452,7 @@ sweep_compact :: proc(w:^Sweep) -> Error {
     }
     for &p,i in state.packs {
         if !pack_foldable(&p) {continue}
-        w.compacted[i]=p.dead || live[i]*2<total[i] || total[i]==0 || (small>=2 && total[i]<PACK_SMALL)
+        w.compacted[i]=p.dead || live[i]*2<total[i] || total[i]==0 || (small>=2 && total[i]<PACK_SMALL) || (w.reclaim && live[i]<total[i])
     }
     // Copy each live chunk once, preserving its latest timestamp.
     chosen:=make(map[Hash]int,16,context.temp_allocator)

@@ -161,7 +161,7 @@ invite_error_text :: proc(error:Invite_Error) -> string {
 address_lan :: proc(port:int) -> Address {
     if probe,error:=cnet.make_unbound_udp_socket(.IP4);error==nil {
         // Connecting a datagram socket sends nothing: it asks the routing table.
-        connected:=portmap_socket_connect(cnet.Socket(probe),address_ip4(1,1,1,1,53))
+        connected:=socket_connect(cnet.Socket(probe),address_ip4(1,1,1,1,53))
         endpoint,endpoint_error:=cnet.bound_endpoint(probe)
         cnet.close(probe)
         if local:=address_from_endpoint(endpoint);connected && endpoint_error==nil && local.kind==.IP4 && address_lan_usable(local.ip[:4]) {

@@ -29,7 +29,8 @@ import "mirai:store"
 // project's proposals; with read, write or check, the project's device refs
 // and every change under them, but of each tree only the files its path scope
 // covers (grant_covers), the conflicts at such paths and the folders on the
-// way to them; with ddc, the DDC records and their untainted outputs. Chunks
+// way to them; with ddc, the DDC records and every object their untainted
+// outputs list, as far as they are here. Chunks
 // are content-addressed, so this is a set of addresses, made as the public
 // closure is. A holder writes its refs only under the write right, and only
 // changes inside its path scope (device_refs_accept); it is cut off with
@@ -782,9 +783,9 @@ agent_publish_refs :: proc(a:^Agent,project:Log_Id,refs:[]Bookmark_Ref,time:i64)
 }
 
 // Publishes what this device built for key and tells the peers.
-agent_publish_ddc :: proc(a:^Agent,key,output:store.Hash,tainted:[]Scope_Id,time:i64) -> (nondeterministic:bool,error:Error) {
+agent_publish_ddc :: proc(a:^Agent,key:store.Hash,objects:[]store.Hash,tainted:[]Scope_Id,time:i64) -> (nondeterministic:bool,error:Error) {
     identity:=a.desc.identity
-    nondeterministic=ddc_publish(a.desc.store,a.desc.org,&identity,key,output,tainted,time) or_return
+    nondeterministic=ddc_publish(a.desc.store,a.desc.org,&identity,key,objects,tainted,time) or_return
     ns:[len(DDC_PREFIX)+64]u8
     name:[64]u8
     agent_tell(a,ddc_namespace(a.desc.org,&ns),store.hex(key,&name))
@@ -852,6 +853,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         if changed {
             a.stats.ddc_accepted+=1
             agent_tell(a,namespace,name)
+            agent_closure(a)
         }
     case .Overlay:
         if !a.folded {return}
@@ -1094,7 +1096,11 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
             clear(&records)
             if ddc_set_read(a.desc.store,r.hash,&records)!=.None {continue}
             for bytes in records {
-                if d,de:=ddc_record_decode(bytes);de==.None && d.tainted==0 {object_chunks(a.desc.store,d.output,out)}
+                d,de:=ddc_record_decode(bytes)
+                if de!=.None || d.tainted>0 {continue}
+                object_chunks(a.desc.store,d.output_root,out)
+                objects,_:=ddc_output_get(a.desc.store,d.output_root,context.temp_allocator)
+                for o in objects {object_chunks(a.desc.store,o,out)}
             }
         }
     }
