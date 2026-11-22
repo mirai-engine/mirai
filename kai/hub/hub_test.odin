@@ -529,6 +529,23 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         testing.expectf(t,b.status==200,"GET %s as a member: %d",path,b.status)
     }
     testing.expect(t,strings.contains(call(f,"GET","/api/projects",cookie=cookie).body,Q),"a member lists the private project")
+    // The second org's change is no member's of the first: not by its address, nor through
+    // theirs, a device ref of the first's project that names it, as the mesh would not serve it.
+    rb:=hex(f.rb[:])
+    for path in ([?]string{
+        fmt.tprintf("/api/projects/%s/changes/%s",P,rb),fmt.tprintf("/api/projects/%s/tree?rev=%s",P,rb),
+        fmt.tprintf("/api/projects/%s/file?path=plan.txt&rev=%s",P,rb),fmt.tprintf("/api/projects/%s/summary?path=bin.dat&rev=%s",P,rb),
+        fmt.tprintf("/api/projects/%s/tree?rev=theirs",P),fmt.tprintf("/api/projects/%s/file?path=plan.txt&rev=theirs",P),
+        fmt.tprintf("/api/projects/%s/summary?path=bin.dat&rev=theirs",P),fmt.tprintf("/api/projects/%s/changes?rev=theirs",P),
+        fmt.tprintf("/api/projects/%s/changes/%s",hex(f.theirs[:]),rb),
+    }) {
+        b:=call(f,"GET",path,cookie=cookie)
+        testing.expectf(t,b.status==404 && !strings.contains(b.body,OTHER_MARKER),"GET %s as a member of the first org: %d %s",path,b.status,b.body[:min(len(b.body),160)])
+    }
+    overview:=call(f,"GET",fmt.tprintf("/api/projects/%s",P),cookie=cookie)
+    testing.expectf(t,overview.status==200 && !strings.contains(overview.body,rb),"the overview lists no bookmark at the second org's change: %s",overview.body[:min(len(overview.body),200)])
+    theirs:=call(f,"GET",fmt.tprintf("/api/projects/%s/stacks",P),cookie=cookie)
+    testing.expectf(t,theirs.status==200 && !strings.contains(theirs.body,`"summary":"Theirs"`),"a stack shows no change of the second org: %s",theirs.body)
     ev={}
     if json_read(t,call(f,"GET",fmt.tprintf("/api/projects/%s/evolution/%s",P,change),cookie=cookie),&ev) {
         testing.expect(t,len(ev.revisions)==2 && ev.revisions[0].revision==hex(f.r2[:]) && ev.revisions[1].revision==r3,"the change's two revisions, oldest first")

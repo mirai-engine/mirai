@@ -11,7 +11,8 @@ import "mirai:store"
 // The read routes. A project is what an org the node serves lists; its
 // revisions are those its bookmarks reach, indexed in one graph per project
 // and audience, so a revision of another project is never answered through
-// it. A member reads the shared bookmarks, the device refs of the members and
+// it, and only what the caller could be served over the mesh in its class
+// (served) is: a ref that names another org's change names nothing here. A member reads the shared bookmarks, the device refs of the members and
 // the proposals' stacks; anyone else only the shared bookmarks, the moves of
 // the project's log a writer signed and the policy allowed. A path a scope of
 // the org takes is left out of every listing, though public trees never hold
@@ -87,6 +88,15 @@ store_of :: proc(h:^Hub) -> ^store.Store {return &h.desc.runner.machine.store}
 session_role :: proc(c:^Call,o:^kai.Runner_Org) -> kai.Role {
     if c.session==nil || !o.agent.folded {return .None}
     return kai.org_role(&o.agent.org,c.session.user)
+}
+
+// Whether a caller of org o, a member of it or not, could be served the object
+// at address over the mesh: a member what the org's members' set holds,
+// anyone else what its public closure holds. Every address a route takes or
+// reaches passes it; the sets are the agent's, kept as refs move.
+served :: proc(o:^kai.Runner_Org,member:bool,address:store.Hash) -> bool {
+    if member {return address in o.agent.members.chunks}
+    return kai.closure_has(o.agent.closure.public[:],address)
 }
 
 org_find :: proc(h:^Hub,id:kai.Log_Id) -> ^kai.Runner_Org {
@@ -194,7 +204,9 @@ project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,w:^Org_Views,project:kai.Log_
         kai.project_snapshots(s,l,&o.agent.org,&landed,context.temp_allocator)
         f:kai.Project_Fold
         if kai.project_fold(&f,l,&o.agent.org,landed[:],context.temp_allocator)==.None {
-            for b in f.bookmarks {append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,landed=true})}
+            for b in f.bookmarks {
+                if served(o,member,b.target) {append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,landed=true})}
+            }
         }
     }
     ns:[len(kai.REFS_PREFIX)+64]u8
@@ -206,6 +218,7 @@ project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,w:^Org_Views,project:kai.Log_
             d,de:=kai.device_refs_decode(bytes,context.temp_allocator)
             if de!=.None || d.project!=project {continue}
             names: for b in d.refs {
+                if !served(o,member,b.target) {continue}
                 for &held in out {
                     if held.name!=b.name {continue}
                     if held.landed {continue names}
@@ -266,7 +279,9 @@ project_graph :: proc(h:^Hub,v:^Project_View) -> ^kai.Graph_Index {
             if item.entry.type!=.Proposal_Revise {continue}
             _,tail,ok:=kai.body_head(item.entry.body,kai.Proposal_Revise_Body)
             if !ok || len(tail)%size_of(kai.Stack_Item)!=0 {continue}
-            for s in slice.reinterpret([]kai.Stack_Item,tail) {append(&targets,s.revision)}
+            for s in slice.reinterpret([]kai.Stack_Item,tail) {
+                if served(v.org,true,s.revision) {append(&targets,s.revision)}
+            }
         }
     }
     slice.sort_by(targets[:],hash_less)
@@ -317,7 +332,7 @@ revision_resolve :: proc(c:^Call,v:^Project_View,text:string) -> (r:kai.Revision
             return
         }
     }
-    if r not_in v.graph.lookup {
+    if r not_in v.graph.lookup || !served(v.org,v.member,r) {
         fail(c,404,"that revision is not one of this project's, or its objects have not reached this node yet")
         return
     }

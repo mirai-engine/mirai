@@ -13,14 +13,16 @@ import mnet "mirai:net"
 import "mirai:std/base"
 import "mirai:store"
 
-// A node with an org of a public and a private project, and the browsers,
-// machines and passkeys that talk to it.
+// A node with an org of a public and a private project, a second org of
+// alice's with a private project, and the browsers, machines and passkeys
+// that talk to them.
 
 RP :: "kai.test"
 ORIGIN :: "https://kai.test"
 PRIVATE_MARKER :: "PRIVATE-MARKER-7f3a"
 SCOPED_MARKER :: "SCOPED-MARKER-91c2"
 WIP_MARKER :: "WIP-MARKER-5d0e"
+OTHER_MARKER :: "OTHER-MARKER-a41b"
 
 Fixture :: struct {
     folder:string,
@@ -38,6 +40,8 @@ Fixture :: struct {
     rw:kai.Revision,           // work in progress over r3 that only a device ref names
     change:kai.Change_Id,
     proposal:kai.Log_Id,
+    other,theirs:kai.Log_Id,   // the second org and its project
+    rb:kai.Revision,           // the second org's change
 }
 
 @(private="file")
@@ -62,6 +66,18 @@ revision_make :: proc(t:^testing.T,m:^kai.Machine,id:kai.Change_Id,parent:kai.Re
     testing.expect_value(t,ce,kai.Error.None)
     testing.expect_value(t,store.commit(s),store.Error.None)
     return revision
+}
+
+// Writes revisions as a workspace of project on m does: a repository linked
+// to the project whose bookmarks name them, so they came from its org.
+@(private="file")
+written :: proc(t:^testing.T,m:^kai.Machine,project:kai.Log_Id,revisions:..kai.Revision) {
+    r:kai.Repo
+    testing.expect_value(t,kai.repo_create(&r,&m.store,m.identity,kai.random_id(kai.Workspace_Id)),kai.Error.None)
+    defer kai.repo_close(&r)
+    for revision,i in revisions {testing.expect_value(t,kai.bookmark_set(&r,fmt.tprintf("written-%d",i),revision),kai.Error.None)}
+    testing.expect_value(t,kai.machine_project_link(m,r.id,project),kai.Error.None)
+    testing.expect_value(t,store.commit(&m.store),store.Error.None)
 }
 
 @(private="file")
@@ -125,8 +141,12 @@ fixture_store :: proc(t:^testing.T,f:^Fixture,folder:string) -> bool {
     },30,"Change a, rewritten")
     f.rq=revision_make(t,a,kai.random_id(kai.Change_Id),{},{{"secret.txt",PRIVATE_MARKER}},40,"Vault")
     f.rw=revision_make(t,a,kai.random_id(kai.Change_Id),f.r3,{{"README.md","# Site\nWelcome to the site.\n"},{"wip.txt",WIP_MARKER}},45,"Half done")
+    written(t,a,f.public,f.r1,f.r2,f.r3,f.rw)
+    written(t,a,f.private,f.rq)
     testing.expect_value(t,kai.machine_bookmark_move(a,f.public,"main",f.r3),kai.Error.None)
-    testing.expect_value(t,kai.machine_publish_refs(a,f.public,{{"main",f.r3},{"wip",f.rw}}),kai.Error.None)
+    // theirs names the second org's change, which it writes below.
+    f.rb=revision_make(t,a,kai.random_id(kai.Change_Id),{},{{"plan.txt",OTHER_MARKER},{"bin.dat","\x00\x01\x02\x00binary"}},70,"Theirs")
+    testing.expect_value(t,kai.machine_publish_refs(a,f.public,{{"main",f.r3},{"wip",f.rw},{"theirs",f.rb}}),kai.Error.None)
     testing.expect_value(t,kai.machine_publish_refs(a,f.private,{{"main",f.rq}}),kai.Error.None)
 
     ctx:=user_head(a)
@@ -164,6 +184,14 @@ fixture_store :: proc(t:^testing.T,f:^Fixture,folder:string) -> bool {
     for c in ([?]Copy{{a.user,.User},{f.org,.Org},{f.proposal,.Proposal}}) {log_copy(t,&a.store,&s.store,c.id,c.kind)}
     testing.expect_value(t,kai.machine_user_set(s,a.user),kai.Error.None)
     testing.expect_value(t,kai.machine_org_join(s,f.org),kai.Error.None)
+
+    // The second org, whose members are not the first's.
+    f.other,e=kai.machine_org_create(a,"elsewhere")
+    testing.expect_value(t,e,kai.Error.None)
+    f.theirs,e=kai.machine_project_add(a,f.other,kai.random_id(kai.Repo_Id),"theirs",false)
+    testing.expect_value(t,e,kai.Error.None)
+    written(t,a,f.theirs,f.rb)
+    testing.expect_value(t,kai.machine_publish_refs(a,f.theirs,{{"main",f.rb}}),kai.Error.None)
     return true
 }
 

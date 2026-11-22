@@ -199,7 +199,7 @@ route_proposal :: proc(c:^Call) {
             change:=item.change
             json_member_hex(&j,"change",change[:])
             json_member_hash(&j,"revision",item.revision)
-            if ch,e:=kai.change_get(s,item.revision,context.temp_allocator);e==.None {json_member_string(&j,"summary",summary_line(ch.description))}
+            if ch,e:=kai.change_get(s,item.revision,context.temp_allocator);e==.None && served(o,true,item.revision) {json_member_string(&j,"summary",summary_line(ch.description))}
             json_end_object(&j)
         }
     }

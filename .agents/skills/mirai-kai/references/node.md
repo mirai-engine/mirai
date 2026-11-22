@@ -88,6 +88,10 @@ WantedBy=multi-user.target
   revisions there. Member reads are stacks, proposals with their comments and verdicts, the org's
   roster and the derived data dashboard (hits, misses, keys with more than one output). The routes
   for the node's own state are read by any member of an org it serves.
+- A route answers only what the mesh would serve the caller in its class
+  ([access](mesh.md#who-reads-what)): anyone but a member of the project's org what the public
+  closure holds, a member what its org's set holds. A ref or a proposal that names another org's
+  change, or its address in a route, gets 404; the check reads the agent's sets and walks nothing.
 - A POST is JSON from this origin only (a page of another origin cannot post a form), and reads
   carry the cookie only on this site. Every answer carries headers that allow only what the origin
   serves (no third party, no framing); a file of a repository is shown and never run, with a sandbox
