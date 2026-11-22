@@ -3,6 +3,7 @@ package hub
 import "base:runtime"
 import "core:crypto"
 import "core:crypto/x509"
+import "core:mem"
 import "core:net"
 import "core:strings"
 import "core:time"
@@ -70,7 +71,9 @@ Hub :: struct {
     has_secure:bool,
     http_port,https_port:int,
     origin:string,                 // what browsers name: https://rp_id, with the port when it is not 443
-    conns:[CONNECTIONS_MAX]^Conn,
+    conns:[CONNECTIONS_MAX]^Conn,  // the slots of pool in use
+    pool:[]Conn,                   // CONNECTIONS_MAX, made at start with their buffers
+    tls_memory:[]u8,               // CONNECTIONS_MAX connections of TLS, one for each of pool
     sessions:[SESSIONS_MAX]Session,
     challenges:[CHALLENGES_MAX]Challenge,
     approvals:[APPROVALS_MAX]Approval,
@@ -119,6 +122,10 @@ hub_start :: proc(h:^Hub,desc:Hub_Desc) -> (why:string) {
     rates,e:=make([]Rate,RATES_MAX,h.allocator)
     if e!=nil {return "out of memory"}
     h.rates=rates
+    if !pool_make(h) {
+        hub_stop(h)
+        return "out of memory: the hub keeps the memory of its connections from its start"
+    }
     if desc.http_port!=0 {
         port:=max(desc.http_port,0)
         socket,le:=net.listen_tcp({net.IP4_Loopback,port})
@@ -172,6 +179,9 @@ hub_stop :: proc(h:^Hub) {
         if c!=nil {conn_free(h,c)}
         c=nil
     }
+    for &c in h.pool {delete(c.output)}
+    delete(h.pool,h.allocator)
+    if h.tls_memory!=nil {_=mem.free_bytes(h.tls_memory,h.allocator)}
     if h.has_plain {net.close(h.plain)}
     if h.has_secure {net.close(h.secure)}
     for &a in h.approvals {approval_clear(&a)}

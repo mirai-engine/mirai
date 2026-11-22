@@ -10,7 +10,9 @@ import "core:net"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:sync"
 import "core:testing"
+import "core:thread"
 import "core:time"
 import "mirai:kai"
 import mnet "mirai:net"
@@ -116,6 +118,41 @@ hub_http_refuses_hostile_requests :: proc(t:^testing.T) {
         data,closed:=read(f,s,"\"projects\"")
         testing.expectf(t,!closed && strings.count(data,"HTTP/1.1 200 OK")==2 && strings.index(data,"\"device\"")<strings.index(data,"\"projects\""),"pipelined: %s",data)
         net.close(s)
+    }
+    // Connections take a slot of the pool made at start: serving them takes nothing from the
+    // hub's allocator.
+    {
+        track:mem.Tracking_Allocator
+        mem.tracking_allocator_init(&track,f.hub.allocator)
+        defer mem.tracking_allocator_destroy(&track)
+        kept:=f.hub.allocator
+        f.hub.allocator=mem.tracking_allocator(&track)
+        for _ in 0..<3 {
+            s,ok:=open(t,f)
+            if !ok {continue}
+            net.send_tcp(s,transmute([]u8)string("GET /api/node HTTP/1.1\r\nHost: a\r\n\r\n"))
+            read(f,s,"\"device\"")
+            net.close(s)
+            for _ in 0..<20 {hub_step(&f.hub)}
+        }
+        f.hub.allocator=kept
+        testing.expectf(t,track.total_allocation_count==0,"serving three connections allocated %d times",track.total_allocation_count)
+    }
+    // The client of `mirai kai web approve` reads an answer of the hub, served by another thread.
+    {
+        Served :: struct {hub:^Hub,stop:bool}
+        served:=Served{hub=&f.hub}
+        th:=thread.create_and_start_with_poly_data(&served,proc(served:^Served) {
+            for !sync.atomic_load(&served.stop) {
+                hub_update(served.hub)
+                time.sleep(time.Millisecond)
+            }
+        })
+        r,why:=client_call(fmt.tprintf("http://127.0.0.1:%d",f.hub.http_port),"GET","/api/node",nil)
+        sync.atomic_store(&served.stop,true)
+        thread.join(th)
+        thread.destroy(th)
+        testing.expectf(t,why=="" && r.status==200 && strings.contains(string(r.body),"\"device\""),"the client's call: %s %d",why,r.status)
     }
     // Garbage, an oversized head and an oversized body each get their refusal and the connection ends.
     for raw in ([?]string{

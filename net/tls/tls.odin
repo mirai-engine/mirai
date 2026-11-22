@@ -245,14 +245,33 @@ Conn :: struct {
     peer_key:Peer_Key,
 }
 
+// The memory of a connection, a multiple of CONN_ALIGN: what create takes, or what a caller that
+// keeps its connections in a pool gives create_at.
+CONN_BYTES :: (size_of(Conn)+RECORD_BYTES+HANDSHAKE_MAX+OUTPUT_BYTES+HANDSHAKE_MAX+CONN_ALIGN-1)&~(CONN_ALIGN-1)
+CONN_ALIGN :: 64
+#assert(align_of(Conn)<=CONN_ALIGN)
+
 // A connection for role, which writes its first flight at once (a client its ClientHello).
 // Only this call allocates; destroy frees what it took.
 create :: proc(config:Config,role:Role,allocator:=context.allocator) -> (c:^Conn,err:Error) {
     if !config_valid(config,role) {return nil,.Bad_Config}
-    size:=size_of(Conn)+RECORD_BYTES+HANDSHAKE_MAX+OUTPUT_BYTES+HANDSHAKE_MAX
-    memory,merr:=mem.make_aligned([]u8,size,align_of(Conn),allocator)
+    memory,merr:=mem.make_aligned([]u8,CONN_BYTES,CONN_ALIGN,allocator)
     if merr!=nil {return nil,.Out_Of_Memory}
+    return conn_init(memory,config,role,allocator)
+}
+
+// A connection in memory the caller keeps: CONN_BYTES at an address aligned to CONN_ALIGN, zero
+// or wiped by the destroy of the connection before. It allocates nothing, and destroy wipes it
+// and frees nothing.
+create_at :: proc(memory:[]u8,config:Config,role:Role) -> (c:^Conn,err:Error) {
+    if !config_valid(config,role) || len(memory)<CONN_BYTES || uintptr(raw_data(memory))%CONN_ALIGN!=0 {return nil,.Bad_Config}
+    return conn_init(memory[:CONN_BYTES],config,role,{})
+}
+
+@(private)
+conn_init :: proc(memory:[]u8,config:Config,role:Role,allocator:runtime.Allocator) -> (c:^Conn,err:Error) {
     c=(^Conn)(raw_data(memory))
+    c^={}
     c.allocator,c.memory,c.config,c.role=allocator,memory,config,role
     if c.config.suites=={} {c.config.suites=ALL_SUITES}
     if c.config.groups=={} {c.config.groups=ALL_GROUPS}
@@ -276,7 +295,7 @@ create :: proc(config:Config,role:Role,allocator:=context.allocator) -> (c:^Conn
     return c,nil
 }
 
-// Wipes the keys of a connection and frees it.
+// Wipes the keys and the memory of a connection, and frees it when create took it.
 destroy :: proc(c:^Conn) {
     if c==nil {return}
     aead.reset(&c.read.aead)
@@ -286,7 +305,7 @@ destroy :: proc(c:^Conn) {
     ecdh.private_key_clear(&c.key_share)
     memory,allocator:=c.memory,c.allocator
     crypto.zero_explicit(raw_data(memory),len(memory))
-    _=mem.free_bytes(memory,allocator)
+    if allocator.procedure!=nil {_=mem.free_bytes(memory,allocator)}
 }
 
 // Hands the connection bytes received from the peer. taken can be fewer than len(bytes): the

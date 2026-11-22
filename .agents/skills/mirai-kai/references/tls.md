@@ -15,7 +15,8 @@ does not use it: that is [net](../../mirai-networking/SKILL.md)'s own Noise tran
   and gives what to send (`pending`, then `sent`); between those it reads and writes application
   data. The same procedures run over a system socket, an in-memory pair in a test and the hub's
   connections, so the protocol is tested without a network.
-- A connection takes **one block of memory at creation and allocates nothing after it**. A record is
+- A connection takes **one block of memory at creation and allocates nothing after it**, or lives in
+  memory its caller keeps (`create_at`, the hub's pool) and allocates nothing at all. A record is
   decrypted in place in the input buffer and its data waits there until `read` takes it, and
   `receive` takes no more bytes until then nor while the output has no room for an answer (an alert,
   a KeyUpdate). This is what makes a flood of connections a bounded cost and what lets a node serve

@@ -93,7 +93,9 @@ WantedBy=multi-user.target
 - Everything is bounded: the HTTP parser has no I/O and refuses what two readers of one stream could
   take differently (any `Transfer-Encoding`, two lengths, a body on a GET, folded or bare-line-break
   headers); connections, per-address connections, sessions, challenges, approvals and request rates
-  per address have fixed tables; deadlines end a slow or idle connection. An error is `{error}` with
+  per address have fixed tables, and the connections with their buffers and TLS are a pool made at
+  start, so serving allocates nothing per connection or record; deadlines end a slow or idle
+  connection. An error is `{error}` with
   what failed and how to fix it (`hub_http_refuses_hostile_requests`).
 - `hub_api_describes_every_route` checks that what `GET /api` describes is what the table
   dispatches.
