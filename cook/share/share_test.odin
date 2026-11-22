@@ -529,6 +529,22 @@ a_join_reproduces_the_files_and_loads_the_packages_without_sources :: proc(t:^te
 }
 
 @(test)
+a_join_writes_identical_folders_at_each_path :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-identical-folders",2) {return}
+    defer test_net_destroy(&w)
+    root:=fmt.tprintf("%s/host",w.folder)
+    file_put(root,"project.mirai",transmute([]u8)string("{}\n"))
+    file_put(root,"assets/a/item.txt",transmute([]u8)string("same file"))
+    file_put(root,"assets/b/item.txt",transmute([]u8)string("same file"))
+    if !host_offer(t,&w,root) {return}
+    test_connect(&w,1,0)
+    report,error:=test_join(t,&w,1,join_desc(&w,0,""))
+    if !testing.expectf(t,error=="","%s",error) {return}
+    same_files(t,root,report.folder)
+}
+
+@(test)
 a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     w:Test_Net
     if !test_net(t,&w,"share-update",2) {return}
