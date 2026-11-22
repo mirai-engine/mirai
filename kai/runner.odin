@@ -207,10 +207,10 @@ Runner :: struct {
     observe_ports:[dynamic]Node_Observe,
     offer:Pair_Offer,
     join:Pair_Join,
-    ddc:[dynamic]DDC_Lookup,
+    ddc:[dynamic]DDC_Lookup,    // lookups under way, at most DDC_LOOKUPS_MAX
     control:Control_Server,
     active:f64,                 // when it last had something to do
-    ddc_use:[dynamic]DDC_Use,   // a ddc node: when each key was last asked through it
+    ddc_use:[dynamic]DDC_Use,   // a ddc node: when each key was last asked through it, at most DDC_USES_MAX
     ddc_found,ddc_missing:int,  // lookups through this runner that ended
     ddc_swept:f64,
     tcp:[dynamic]^Tcp_Stream,   // the relay over TCP: a node's connections from devices, a device's to its nodes
@@ -294,6 +294,7 @@ DDC_Lookup :: struct {
 }
 
 DDC_SECONDS :: 10.0 // a lookup gives up
+DDC_LOOKUPS_MAX :: 64 // lookups at once; one more is a miss
 
 // Starts the runner of the machine: its socket, an agent for every org it
 // serves, and the control others reach it by.
@@ -307,9 +308,14 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
     r.relay_seen=make([dynamic]Relay_Seen,allocator)
     r.wants=make([dynamic]Relay_Want,allocator)
     r.observe_ports=make([dynamic]Node_Observe,allocator)
-    r.ddc=make([dynamic]DDC_Lookup,allocator)
-    r.ddc_use=make([dynamic]DDC_Use,allocator)
+    ddc_error,use_error:runtime.Allocator_Error
+    r.ddc,ddc_error=make([dynamic]DDC_Lookup,0,DDC_LOOKUPS_MAX,allocator)
+    r.ddc_use,use_error=make([dynamic]DDC_Use,0,DDC_USES_MAX,allocator)
     r.tcp=make([dynamic]^Tcp_Stream,allocator)
+    if ddc_error!=nil || use_error!=nil {
+        runner_free(r)
+        return .Out_Of_Memory
+    }
     relay_init(&r.relay,RELAY_RATE,RELAY_BURST,allocator)
     r.start=time.tick_now()
     m:=r.machine
@@ -1856,6 +1862,11 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
             }
         }
         return .Waiting,{}
+    }
+    if len(r.ddc)>=DDC_LOOKUPS_MAX {
+        runner_event(r,"a derived data lookup is refused: %d run at once, so the cook makes it itself",DDC_LOOKUPS_MAX)
+        r.ddc_missing+=1
+        return .Missing,{}
     }
     l:=DDC_Lookup{org=org,key=key,started=r.now,output=wanted}
     for m in lacking {agent_want_object(&served.agent,m)}

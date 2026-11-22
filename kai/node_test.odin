@@ -106,4 +106,18 @@ a_ddc_node_drops_least_used_outputs_past_its_quota :: proc(t:^testing.T) {
     for address in ([?]store.Hash{revision,root,file,busy_result}) {
         testing.expectf(t,object_whole(s,address),"%v survives the sweep",address)
     }
+
+    // The tables of lookups and of uses are bounded: a lookup past the bound is a miss, and a
+    // use past it takes the place of the oldest.
+    for len(r.ddc)<DDC_LOOKUPS_MAX {
+        state,_:=runner_ddc_ask(&r,org,random_id(store.Hash))
+        if !testing.expect(t,state==.Waiting,"a lookup under the bound waits") {break}
+    }
+    refused,_:=runner_ddc_ask(&r,org,random_id(store.Hash))
+    testing.expect(t,refused==.Missing && len(r.ddc)==DDC_LOOKUPS_MAX,"a lookup past the bound is a miss")
+    for len(r.ddc_use)<DDC_USES_MAX {append(&r.ddc_use,DDC_Use{org,random_id(store.Hash),time.now()._nsec})}
+    r.ddc_use[7].at=0
+    latest:=random_id(store.Hash)
+    runner_ddc_touch(&r,org,latest)
+    testing.expect(t,len(r.ddc_use)==DDC_USES_MAX && r.ddc_use[7].key==latest,"a use past the bound takes the oldest's place")
 }
