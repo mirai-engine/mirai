@@ -1,6 +1,7 @@
 package kai
 
 import "core:fmt"
+import cnet "core:net"
 import "core:os"
 import "core:testing"
 import "core:time"
@@ -42,9 +43,9 @@ box_close :: proc(b:^Box) {
 }
 
 @(private="file")
-box_start :: proc(t:^testing.T,b:^Box,k:int,modes:=Node_Modes{},bind:=net.Address{kind=.IP4,ip={0=127,3=1}},beacon_port:=-1) -> bool {
+box_start :: proc(t:^testing.T,b:^Box,k:int,modes:=Node_Modes{},bind:=net.Address{kind=.IP4,ip={0=127,3=1}},beacon_port:=-1,tcp_port:=0,relay_tcp_port:=0) -> bool {
     b.machines[k].changed={}
-    e:=runner_start(&b.runners[k],{machine=&b.machines[k],bind=bind,modes=modes,beacon=true,beacon_port=beacon_port,observe_port=0,host_seed=u64(1000+k*100)})
+    e:=runner_start(&b.runners[k],{machine=&b.machines[k],bind=bind,modes=modes,beacon=true,beacon_port=beacon_port,observe_port=0,host_seed=u64(1000+k*100),tcp_port=tcp_port,relay_tcp_port=relay_tcp_port})
     if !testing.expect_value(t,e,Error.None) {return false}
     b.running[k]=true
     r:=&b.runners[k]
@@ -349,7 +350,9 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
 // A node in relay and seed mode on 127.0.0.1. Alice publishes a change while
 // Bob is away; the node mirrors it, Alice closes, and Bob takes it from the
 // node alone. Then Alice comes back with every direct path between the two
-// blocked: the node plans a hole punch, which fails, and relays them.
+// blocked: the node plans a hole punch, which fails, and relays them. With UDP
+// to the node blocked too, both reach it over its relay's TCP port, which
+// relays them as well; once the node answers over UDP again, Alice leaves TCP.
 @(test)
 a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T) {
     b:=new(Box)
@@ -363,7 +366,9 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     testing.expect_value(t,e,Error.None)
     log_copy(t,&bob.store,&alice.store,bob.user,.User)
     testing.expect_value(t,machine_member_add(alice,org,bob.user,.Writer),Error.None)
-    if !box_start(t,b,2,{.Relay,.Seed}) {return}
+    if !box_start(t,b,2,{.Relay,.Seed},tcp_port=-1) {return}
+    tcp_port:=runner_tcp_port(&b.runners[2])
+    testing.expect(t,tcp_port>0,"the node listens for its relay over TCP")
     testing.expect_value(t,machine_node_add(alice,org,node.identity.key,Dh_Key(node.dh.public),{.Relay,.Seed},b.addresses[2][:]),Error.None)
     testing.expect_value(t,machine_org_join(node,org),Error.None)
     for id in ([]Log_Id{org,alice.user}) {log_copy(t,&alice.store,&bob.store,id,id==org?.Org:.User)}
@@ -402,6 +407,138 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     forwarded:=u64(0)
     for d in stats {forwarded+=d.forwarded}
     testing.expect(t,forwarded>0,"the node forwarded datagrams")
+
+    // UDP to the node is blocked as well, on both of its ports: each comes
+    // back, the one that is dialed first.
+    observe:=b.addresses[2][0]
+    observe.port=b.runners[2].observe.address.port
+    for k in ([]int{1-lower,lower}) {
+        box_stop(b,k)
+        if !box_start(t,b,k,relay_tcp_port=tcp_port) {return}
+        b.blocked[k][0],b.blocked[k][1],b.blocked[k][2]=b.addresses[1-k][0],b.addresses[2][0],observe
+        b.runners[k].desc.blocked=b.blocked[k][:3]
+        over_tcp:=Goal{k=k,dh=Dh_Key(node.dh.public),rung=.Tcp}
+        if !testing.expectf(t,box_until(b,20,&over_tcp,connected_by),"%d reaches the node over TCP: %v",k,ladder_of(&b.runners[k],Dh_Key(node.dh.public))) {return}
+    }
+    relayed.k,relayed.dh,relayed.rung=lower,Dh_Key(b.machines[1-lower].dh.public),.Tcp
+    if !testing.expectf(t,box_until(b,20,&relayed,connected_by),"the node relays the two over TCP: %v",ladder_of(&b.runners[lower],Dh_Key(b.machines[1-lower].dh.public))) {return}
+    third:=Goal{k=1,project=project,device=alice.identity.key}
+    third.revision=test_change(t,&alice.store,&alice.identity,"over tcp")
+    testing.expect_value(t,machine_publish_refs(alice,project,{{"main",third.revision}}),Error.None)
+    _,third.refs,_=device_refs_get(&alice.store,project,alice.identity.key,context.temp_allocator)
+    testing.expect(t,box_until(b,10,&third,refs_arrived),"a change crosses over TCP")
+
+    // UDP to the node opens again for Alice: its next probe takes her back.
+    b.runners[0].desc.blocked=b.blocked[0][:1]
+    for s in b.runners[0].tcp {s.probed=-TCP_PROBE_SECONDS}
+    back:=Goal{k=0,dh=Dh_Key(node.dh.public),rung=.LAN}
+    testing.expectf(t,box_until(b,10,&back,connected_by),"alice reaches the node over UDP again: %v",ladder_of(&b.runners[0],Dh_Key(node.dh.public)))
+}
+
+// The relay's TCP port of a node: a wrong magic, a frame past its bounds, a
+// magic or frame that stops coming, and more connections from one address
+// than it takes are refused within their bounds; random frames are dropped
+// as random datagrams are, and the node goes on.
+@(test)
+a_relay_node_refuses_hostile_and_slow_tcp :: proc(t:^testing.T) {
+    b:=new(Box)
+    defer free(b)
+    if !box_open(t,b,"kai-runner-tcp",1) {return}
+    defer box_close(b)
+    if !box_start(t,b,0,{.Relay},tcp_port=-1) {return}
+    r:=&b.runners[0]
+    endpoint:=cnet.Endpoint{cnet.IP4_Loopback,runner_tcp_port(r)}
+    open :: proc(endpoint:cnet.Endpoint,bytes:[]u8) -> cnet.TCP_Socket {
+        socket,e:=cnet.dial_tcp(endpoint)
+        if e!=nil {return {}}
+        cnet.send_tcp(socket,bytes)
+        return socket
+    }
+    streams :: proc(r:^Runner) -> int {
+        n:=0
+        for s in r.tcp {
+            if !s.failed {n+=1}
+        }
+        return n
+    }
+    settle :: proc(b:^Box) {
+        for _ in 0..<20 {
+            box_step(b)
+            time.sleep(time.Millisecond)
+        }
+    }
+    magic:=RELAY_TCP_MAGIC
+    frame :: proc(size:int,head:u8,out:[]u8) -> []u8 {
+        out[0],out[1]=u8(size>>8),u8(size)
+        for &x,i in out[2:][:min(size,len(out)-2)] {x=u8(i*31)}
+        if size>0 {out[2]=head}
+        return out[:2+min(size,len(out)-2)]
+    }
+    Case :: struct {name:string,bytes:[]u8}
+    cut:[64]u8
+    big:[8]u8
+    small:[8]u8
+    cases:=[]Case{
+        {"a TLS hello is no magic",{0x16,3,1,0,5}},
+        {"a wrong magic",transmute([]u8)string("GET / HTTP/1.1\r\n")},
+        {"a frame past FRAME_MAX",frame(FRAME_MAX+1,FRAME_SERVER,big[:])},
+        {"a frame under two bytes",frame(1,FRAME_SERVER,small[:])},
+    }
+    for c in cases {
+        bytes:=make([dynamic]u8,context.temp_allocator)
+        if c.name!=cases[0].name && c.name!=cases[1].name {append(&bytes,..transmute([]u8)magic)}
+        append(&bytes,..c.bytes)
+        socket:=open(endpoint,bytes[:])
+        defer cnet.close(socket)
+        settle(b)
+        testing.expectf(t,streams(r)==0,"%s ends the connection",c.name)
+    }
+    // A magic, then a frame, that stop coming end at their deadlines.
+    for stalled in 0..<2 {
+        bytes:=make([dynamic]u8,context.temp_allocator)
+        append(&bytes,..transmute([]u8)magic[:stalled==0?4:len(magic)])
+        if stalled==1 {append(&bytes,..frame(40,FRAME_SERVER,cut[:])[:10])}
+        socket:=open(endpoint,bytes[:])
+        defer cnet.close(socket)
+        settle(b)
+        testing.expect(t,streams(r)==1,"a connection that is on its way is held")
+        for s in r.tcp {
+            s.opened-=TCP_MAGIC_SECONDS+1
+            s.active-=TCP_IDLE_SECONDS+1
+        }
+        settle(b)
+        testing.expectf(t,streams(r)==0,"a connection stalled at %d ends",stalled)
+    }
+    // Random frames are dropped; the connection and the node go on.
+    sockets:[TCP_PER_ADDRESS+2]cnet.TCP_Socket
+    state:=u64(0x9e3779b97f4a7c15)
+    for &socket,i in sockets {
+        socket=open(endpoint,transmute([]u8)magic)
+        if i>0 {continue}
+        kinds:=[]u8{FRAME_SERVER,FRAME_CLIENT,FRAME_RELAY,FRAME_FROM,FRAME_RENDEZVOUS,FRAME_BEACON,FRAME_PAIR,FRAME_LOCAL,0}
+        for round in 0..<300 {
+            state=state*6364136223846793005+1442695040888963407
+            out:[2+FRAME_MAX]u8
+            f:=frame(2+int(state>>33)%(FRAME_MAX-1),kinds[round%len(kinds)],out[:])
+            for &x in f[3:] {
+                state=state*6364136223846793005+1442695040888963407
+                x=u8(state>>56)
+            }
+            cnet.send_tcp(socket,f)
+            if round%50==0 {box_step(b)}
+        }
+    }
+    settle(b)
+    defer for socket in sockets {cnet.close(socket)}
+    testing.expectf(t,streams(r)==TCP_PER_ADDRESS,"one address holds at most %d connections: %d",TCP_PER_ADDRESS,streams(r))
+    // What a peer does not read is queued up to its bound, then dropped.
+    s:=r.tcp[0]
+    datagram:[FRAME_MAX]u8
+    for _ in 0..<2*TCP_OUTPUT_MAX/FRAME_MAX {
+        testing.expect(t,runner_tcp_send(r,s.address,datagram[:]),"the connection carries what goes to its address")
+    }
+    testing.expect(t,s.output_len<=TCP_OUTPUT_MAX,"the queue stays within its bound")
+    testing.expect(t,len(r.orgs)==0 && r.has_tcp,"the node goes on")
 }
 
 // Two members on ::1 alone. Bob's beacon reaches Alice's IPv6 beacon socket,

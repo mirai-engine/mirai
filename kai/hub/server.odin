@@ -2,13 +2,16 @@ package hub
 
 import "core:net"
 import "core:strings"
+import "mirai:kai"
 import "mirai:net/tls"
 
 // The connections of the hub over the system's TCP, without blocking: each
 // step takes what a socket holds, hands it to TLS when the connection is
 // secure, parses requests one at a time and sends what the answer and TLS
 // give. A connection ends on any refusal, past its deadlines or after
-// REQUESTS_PER_CONNECTION requests.
+// REQUESTS_PER_CONNECTION requests. The secure port is the node's relay over
+// TCP too: a connection whose first byte is the relay's magic, never that of
+// a TLS record, goes to the runner (kai.runner_tcp_adopt).
 
 INPUT_MAX :: HEAD_MAX+BODY_MAX
 @(private) RAW_MAX :: 16<<10
@@ -16,7 +19,10 @@ INPUT_MAX :: HEAD_MAX+BODY_MAX
 Conn :: struct {
     socket:net.TCP_Socket,
     address:[16]u8,       // of the peer, IPv4 as IPv4-mapped
+    source:net.Endpoint,
     secure:bool,
+    sniffed:bool,         // its first byte was read
+    given:bool,           // the runner holds the socket
     tls:^tls.Conn,
     raw:[RAW_MAX]u8,      // received, not yet taken by TLS
     raw_len:int,
@@ -58,7 +64,7 @@ accept_all :: proc(h:^Hub,listener:net.TCP_Socket,secure:bool) -> (busy:bool) {
             net.close(socket)
             continue
         }
-        c.socket,c.address,c.secure=socket,address,secure
+        c.socket,c.address,c.source,c.secure=socket,address,source,secure
         c.opened,c.active=h.now,h.now
         c.output=make([dynamic]u8,h.allocator)
         if secure {
@@ -91,7 +97,7 @@ address_bytes :: proc(a:net.Address) -> (out:[16]u8) {
 }
 
 conn_free :: proc(h:^Hub,c:^Conn) {
-    net.close(c.socket)
+    if !c.given {net.close(c.socket)}
     if c.tls!=nil {tls.destroy(c.tls)}
     delete(c.output)
     free(c,h.allocator)
@@ -146,6 +152,14 @@ conn_receive :: proc(h:^Hub,c:^Conn) -> (busy:bool) {
         } else {
             if c.input_len==0 {c.request_at=h.now}
             c.input_len+=n
+        }
+    }
+    if c.secure && !c.closed && !c.sniffed && c.raw_len>0 {
+        c.sniffed=true
+        if c.raw[0]==kai.RELAY_TCP_MAGIC[0] {
+            kai.runner_tcp_adopt(h.desc.runner,c.socket,c.source,c.raw[:c.raw_len])
+            c.given,c.closed=true,true
+            return true
         }
     }
     if c.secure && !c.closed {busy|=conn_tls_in(h,c)}

@@ -6,8 +6,11 @@ import "core:net"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "mirai:kai"
 import mnet "mirai:net"
+import "mirai:net/tls"
+import "mirai:std/base"
 import "mirai:store"
 
 // Hostile requests are refused, each ending its connection, and the server
@@ -450,4 +453,47 @@ hub_api_describes_every_route :: proc(t:^testing.T) {
     testing.expect(t,len(d.notes)>0)
     testing.expect(t,strings.contains(call(f,"POST","/api/node").body,"another method"),"a known path with another method says so")
     testing.expect(t,call(f,"GET","/api/nothing").status==404)
+}
+
+// The node's HTTPS port is its relay's over TCP too: a connection that opens
+// with the relay's magic goes to the runner, one that opens with a TLS record
+// stays with the hub.
+@(test)
+hub_hands_the_relay_over_tcp_to_the_runner :: proc(t:^testing.T) {
+    f:=new(Fixture)
+    defer free(f)
+    folder:=base.test_folder(t,"kai-hub-relay-tcp")
+    if folder=="" || !fixture_store(t,f,folder) {return}
+    defer fixture_close(f)
+    e:=kai.runner_start(&f.runner,{machine=&f.alice,bind=mnet.address_loopback(0),modes={.Relay,.Seed},observe_port=0,beacon_port=-1,host_seed=7})
+    if !testing.expect_value(t,e,kai.Error.None) {return}
+    f.running=true
+    // The relay's connection never reaches a handshake: no certificate is needed.
+    credentials:=[]tls.Credential{{}}
+    why:=hub_start(&f.hub,{runner=&f.runner,rp_id=RP,https_port=-1,https_loopback=true,credentials=credentials})
+    if !testing.expectf(t,why=="","the hub starts: %s",why) {return}
+    f.serving=true
+    endpoint:=net.Endpoint{net.IP4_Loopback,f.hub.https_port}
+    relay,re:=net.dial_tcp(endpoint)
+    secure,se:=net.dial_tcp(endpoint)
+    if !testing.expect(t,re==nil && se==nil,"both connect") {return}
+    defer net.close(relay)
+    defer net.close(secure)
+    net.send_tcp(relay,transmute([]u8)string(kai.RELAY_TCP_MAGIC))
+    net.send_tcp(secure,[]u8{0x16,3,1,0,5})
+    adopted,held:=0,0
+    for _ in 0..<100 {
+        hub_update(&f.hub)
+        kai.runner_update(&f.runner)
+        adopted,held=0,0
+        for s in f.runner.tcp {
+            if s.greeted {adopted+=1}
+        }
+        for c in f.hub.conns {
+            if c!=nil {held+=1}
+        }
+        if adopted==1 && held==1 {break}
+        time.sleep(time.Millisecond)
+    }
+    testing.expectf(t,adopted==1 && held==1,"the runner takes the relay's connection and the hub keeps the TLS one: %d %d",adopted,held)
 }

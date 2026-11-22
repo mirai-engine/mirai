@@ -83,7 +83,7 @@ portmap_worker :: proc(m:^Port_Mapping) {
     if gateway.port==0 {gateway.port=5351}
     probe,error:=cnet.make_unbound_udp_socket(.IP4)
     if error!=nil {portmap_publish(m,{phase=.Unavailable});return}
-    if !portmap_socket_connect(cnet.Socket(probe),gateway) {cnet.close(probe);portmap_publish(m,{phase=.Unavailable});return}
+    if !socket_connect(cnet.Socket(probe),gateway) {cnet.close(probe);portmap_publish(m,{phase=.Unavailable});return}
     endpoint,ep_error:=cnet.bound_endpoint(probe)
     cnet.close(probe)
     local:=address_from_endpoint(endpoint)

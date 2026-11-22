@@ -160,7 +160,7 @@ org_members_sync_refs_and_ddc_over_sim_network :: proc(t:^testing.T) {
     g.bob_refs,e=agent_publish_refs(b,o.project.id,{{"main",g.changes[1]}},1)
     testing.expect_value(t,e,Error.None)
     g.ddc_key=store.address_of_bytes(transmute([]u8)string("cook key"))
-    _,e=agent_publish_ddc(b,g.ddc_key,store.Hash{0=7},nil,1)
+    _,e=agent_publish_ddc(b,g.ddc_key,{store.Hash{0=7}},nil,1)
     testing.expect_value(t,e,Error.None)
 
     testing.expect_value(t,agent_connect(b,Dh_Key(o.alice.dhs[0].public),false,net.address_memory(mesh_endpoint(0))),Error.None)

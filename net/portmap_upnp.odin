@@ -143,14 +143,14 @@ portmap_http :: proc(m:^Port_Mapping,endpoint:Address,request:[]u8,buffer:[]u8,r
     if error!=nil {return}
     socket:=any.(cnet.TCP_Socket)
     defer cnet.close(socket)
-    if cnet.set_blocking(socket,false)!=nil || !portmap_socket_connect(cnet.Socket(socket),endpoint) {return}
+    if cnet.set_blocking(socket,false)!=nil || !socket_connect(cnet.Socket(socket),endpoint) {return}
     start:=time.tick_now()
     deadline:=releasing?0.5:2.0
     sent,received:=0,0
     connected:=false
     for portmap_seconds(start)<deadline && (releasing || !portmap_stopped(m)) {
         if !connected {
-            ready,valid:=portmap_socket_connected(cnet.Socket(socket))
+            ready,valid:=socket_connected(cnet.Socket(socket))
             if ready && !valid {return}
             if !ready {portmap_pause();continue}
             connected=true

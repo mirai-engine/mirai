@@ -12,13 +12,19 @@ import "mirai:store"
 // Display names come from the logs; store names stay in [a-z0-9._-].
 //
 // Signed derived data (DDC): what a writer or a holder of a ddc grant built,
-// under kai-ddc-<org hex>/<key hex>, as a set of records. Two records of one
-// key with different outputs are both kept: the build is not deterministic.
+// under kai-ddc-<org hex>/<key hex>, as a set of records. A record names its
+// output by output_root, a DDC_Output object that lists every object the
+// output consists of, the one the key's cache ref names first: Kai moves,
+// mirrors and serves a result whole without reading what it is. Two records
+// of one key with different outputs are both kept: the build is not
+// deterministic.
 
 REFS_PREFIX :: "kai-refs-"
 DDC_PREFIX :: "kai-ddc-"
 DEVICE_REFS_MAX :: 1024
 DDC_RECORDS_MAX :: 64
+DDC_OUTPUT_MAX :: 1<<16 // objects one output lists
+DDC_VERSION :: 2        // of DDC records, sets and outputs
 TAINTED_MAX :: 64
 
 Device_Refs_Head :: struct #packed {
@@ -264,8 +270,8 @@ DDC_Record_Head :: struct #packed {
     tainted:u8,
     reserved:u8,
     org:Log_Id,
-    key:store.Hash,    // what the build was asked: its inputs and recipe
-    output:store.Hash, // the root of what it produced
+    key:store.Hash,         // what the build was asked: its inputs and recipe
+    output_root:store.Hash, // the DDC_Output of what it produced
     producer:Key,
     time:i64,
 } // + [tainted]Scope_Id (private scopes it read), Signature
@@ -280,7 +286,14 @@ DDC_Set_Head :: struct #packed {
     magic:u32,
     version:u16,
     count:u16,
-} // + count × (u16 length, record), sorted by output, one per output
+} // + count × (u16 length, record), sorted by output_root, one per output_root
+
+DDC_Output_Head :: struct #packed {
+    magic:u32,
+    version:u16,
+    reserved:u16,
+    count:u32,
+} // + [count]store.Hash: the result, then the others sorted, each once
 
 ddc_namespace :: proc(org:Log_Id,buffer:^[len(DDC_PREFIX)+64]u8) -> string {
     copy(buffer[:],DDC_PREFIX)
@@ -291,9 +304,9 @@ ddc_namespace :: proc(org:Log_Id,buffer:^[len(DDC_PREFIX)+64]u8) -> string {
 
 ddc_record_encode :: proc(d:^DDC_Record,identity:^Identity,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
     if len(d.tainted_scopes)>TAINTED_MAX {return nil,.Too_Large}
-    if identity.key!=d.producer || d.org=={} || d.key=={} || d.output=={} {return nil,.Invalid_Argument}
+    if identity.key!=d.producer || d.org=={} || d.key=={} || d.output_root=={} {return nil,.Invalid_Argument}
     head:=d.head
-    head.magic,head.version,head.tainted,head.reserved=KAI_MAGIC,VERSION,u8(len(d.tainted_scopes)),0
+    head.magic,head.version,head.tainted,head.reserved=KAI_MAGIC,DDC_VERSION,u8(len(d.tainted_scopes)),0
     w:=writer_make(allocator)
     write_value(&w,head)
     for t in d.tainted_scopes {write_value(&w,t)}
@@ -307,7 +320,7 @@ ddc_record_encode :: proc(d:^DDC_Record,identity:^Identity,allocator:=context.al
 ddc_record_decode :: proc(bytes:[]u8) -> (d:DDC_Record,error:Error) {
     r:=Reader{data=bytes}
     d.head=read_value(&r,DDC_Record_Head)
-    if r.short || d.magic!=KAI_MAGIC || d.version!=VERSION || d.reserved!=0 || d.tainted>TAINTED_MAX || d.org=={} || d.key=={} || d.output=={} {return {},.Corrupt}
+    if r.short || d.magic!=KAI_MAGIC || d.version!=DDC_VERSION || d.reserved!=0 || d.tainted>TAINTED_MAX || d.org=={} || d.key=={} || d.output_root=={} {return {},.Corrupt}
     d.tainted_scopes=slice.reinterpret([]Scope_Id,read_bytes(&r,int(d.tainted)*size_of(Scope_Id)))
     d.signature=read_value(&r,Signature)
     if r.short || r.at!=len(bytes) {return {},.Corrupt}
@@ -333,7 +346,7 @@ ddc_set_read :: proc(s:^store.Store,address:store.Hash,out:^[dynamic][]u8) -> Er
     bytes:=object_get(s,address,.DDC_Set,context.temp_allocator) or_return
     r:=Reader{data=bytes}
     head:=read_value(&r,DDC_Set_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.count==0 || head.count>DDC_RECORDS_MAX {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.version!=DDC_VERSION || head.count==0 || head.count>DDC_RECORDS_MAX {return .Corrupt}
     for _ in 0..<head.count {
         size:=read_value(&r,u16)
         record:=read_bytes(&r,int(size))
@@ -347,7 +360,7 @@ ddc_set_read :: proc(s:^store.Store,address:store.Hash,out:^[dynamic][]u8) -> Er
 @(private)
 ddc_set_write :: proc(s:^store.Store,org:Log_Id,key:store.Hash,records:[][]u8) -> (address:store.Hash,error:Error) {
     w:=writer_make(context.temp_allocator)
-    write_value(&w,DDC_Set_Head{magic=KAI_MAGIC,version=VERSION,count=u16(len(records))})
+    write_value(&w,DDC_Set_Head{magic=KAI_MAGIC,version=DDC_VERSION,count=u16(len(records))})
     for r in records {
         write_value(&w,u16(len(r)))
         write_bytes(&w,r)
@@ -367,21 +380,23 @@ ddc_set_add :: proc(set:^[dynamic][]u8,record:[]u8) -> (added:bool,error:Error) 
     d:=ddc_record_decode(record) or_return
     for r in set {
         other,_:=ddc_record_decode(r)
-        if other.output==d.output {return false,.None}
+        if other.output_root==d.output_root {return false,.None}
     }
     if len(set)>=DDC_RECORDS_MAX {return false,.Too_Large}
     if _,e:=append(set,record);e!=nil {return false,.Out_Of_Memory}
     slice.sort_by(set[:],proc(a,b:[]u8) -> bool {
         x,_:=ddc_record_decode(a)
         y,_:=ddc_record_decode(b)
-        return hash_less(x.output,y.output)
+        return hash_less(x.output_root,y.output_root)
     })
     return true,.None
 }
 
-// Signs and adds this end's record of what key produced.
-ddc_publish :: proc(s:^store.Store,org:Log_Id,identity:^Identity,key,output:store.Hash,tainted:[]Scope_Id,time:i64) -> (nondeterministic:bool,error:Error) {
-    d:=DDC_Record{head={org=org,key=key,output=output,producer=identity.key,time=time},tainted_scopes=tainted}
+// Signs and adds this end's record of what key produced: objects, the one
+// the key's cache ref names first, then every other one it consists of.
+ddc_publish :: proc(s:^store.Store,org:Log_Id,identity:^Identity,key:store.Hash,objects:[]store.Hash,tainted:[]Scope_Id,time:i64) -> (nondeterministic:bool,error:Error) {
+    output_root:=ddc_output_put(s,objects) or_return
+    d:=DDC_Record{head={org=org,key=key,output_root=output_root,producer=identity.key,time=time},tainted_scopes=tainted}
     record:=ddc_record_encode(&d,identity,context.temp_allocator) or_return
     set:=make([dynamic][]u8,context.temp_allocator)
     ns:[len(DDC_PREFIX)+64]u8
@@ -419,7 +434,7 @@ ddc_accept :: proc(s:^store.Store,org:^Org_Fold,key:store.Hash,address:store.Has
     return changed,len(set)>1,.None
 }
 
-// The outputs recorded for key, sorted: more than one is nondeterminism. The
+// The records of key, sorted by output: more than one is nondeterminism. The
 // records' tainted scopes live in the temp allocator.
 ddc_lookup :: proc(s:^store.Store,org:Log_Id,key:store.Hash,out:^[dynamic]DDC_Record) -> Error {
     clear(out)
@@ -434,4 +449,64 @@ ddc_lookup :: proc(s:^store.Store,org:Log_Id,key:store.Hash,out:^[dynamic]DDC_Re
         if _,append_error:=append(out,d);append_error!=nil {return .Out_Of_Memory}
     }
     return .None
+}
+
+// Puts the DDC_Output of objects: the first as given, the others sorted, each
+// once. Its address is a record's output_root.
+ddc_output_put :: proc(s:^store.Store,objects:[]store.Hash) -> (address:store.Hash,error:Error) {
+    if len(objects)==0 || objects[0]=={} {return {},.Invalid_Argument}
+    if len(objects)>DDC_OUTPUT_MAX {return {},.Too_Large}
+    rest:=make([dynamic]store.Hash,0,len(objects),context.temp_allocator)
+    for o in objects[1:] {
+        if o=={} {return {},.Invalid_Argument}
+        if o!=objects[0] {append(&rest,o)}
+    }
+    slice.sort_by(rest[:],hash_less)
+    w:=writer_make(context.temp_allocator)
+    write_value(&w,DDC_Output_Head{magic=KAI_MAGIC,version=DDC_VERSION})
+    write_value(&w,objects[0])
+    count:=1
+    for o,i in rest {
+        if i>0 && rest[i-1]==o {continue}
+        write_value(&w,o)
+        count+=1
+    }
+    if w.failed {return {},.Out_Of_Memory}
+    (^DDC_Output_Head)(raw_data(w.data))^.count=u32(count)
+    return object_put(s,.DDC_Output,w.data[:])
+}
+
+// The objects of the DDC_Output at address, the result first, in allocator:
+// Corrupt unless the others are sorted and each is there once.
+ddc_output_get :: proc(s:^store.Store,address:store.Hash,allocator:=context.allocator) -> (objects:[]store.Hash,error:Error) {
+    bytes:=object_get(s,address,.DDC_Output,context.temp_allocator) or_return
+    return ddc_output_decode(bytes,allocator)
+}
+
+ddc_output_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (objects:[]store.Hash,error:Error) {
+    r:=Reader{data=bytes}
+    head:=read_value(&r,DDC_Output_Head)
+    if r.short || head.magic!=KAI_MAGIC || head.version!=DDC_VERSION || head.reserved!=0 || head.count==0 || head.count>DDC_OUTPUT_MAX {return nil,.Corrupt}
+    if len(bytes)-r.at!=int(head.count)*size_of(store.Hash) {return nil,.Corrupt}
+    listed:=slice.reinterpret([]store.Hash,bytes[r.at:])
+    for o,i in listed {
+        if o=={} || (i>0 && o==listed[0]) || (i>1 && !hash_less(listed[i-1],o)) {return nil,.Corrupt}
+    }
+    made,e:=slice.clone(listed,allocator)
+    if e!=nil {return nil,.Out_Of_Memory}
+    return made,.None
+}
+
+// The objects of output_root that are not whole here, into lacking: the
+// output itself while it is not here. Whole once lacking stays empty.
+ddc_output_lacking :: proc(s:^store.Store,output_root:store.Hash,lacking:^[dynamic]store.Hash) -> (objects:[]store.Hash,error:Error) {
+    if !object_whole(s,output_root) {
+        append(lacking,output_root)
+        return nil,.None
+    }
+    objects=ddc_output_get(s,output_root,context.temp_allocator) or_return
+    for o in objects {
+        if !object_whole(s,o) {append(lacking,o)}
+    }
+    return objects,.None
 }
