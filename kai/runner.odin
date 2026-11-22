@@ -98,7 +98,7 @@ Runner_Desc :: struct {
     beacon_targets:[]net.Address, // where beacons go; empty: the IPv4 broadcast and BEACON_GROUP6 on every interface, at beacon_port
     portmap:bool,                // ask the router for a mapping of the port
     addresses:[]net.Address,     // what tickets and nodes advertise; empty: found from the interfaces
-    blocked:[]net.Address,       // tests: addresses the socket neither sends to nor hears from
+    blocked:[TEST_ONLY][]net.Address, // what the socket neither sends to nor hears from
     control:bool,                // let local processes reach it (control.odin): one runner per store
     host_seed:u64,               // tests: salts of the hosts; 0 from the system
     ddc_quota:i64,               // a ddc node: bytes of derived data outputs it keeps; 0: no bound (node.odin)
@@ -1066,8 +1066,10 @@ runner_receive :: proc(r:^Runner,u:^net.Udp,port:int) {
 
 @(private)
 runner_blocked :: proc(r:^Runner,a:net.Address) -> bool {
-    for b in r.desc.blocked {
-        if b.kind==a.kind && b.ip==a.ip && b.port==a.port {return true}
+    when ODIN_TEST {
+        for b in r.desc.blocked[0] {
+            if b.kind==a.kind && b.ip==a.ip && b.port==a.port {return true}
+        }
     }
     return false
 }

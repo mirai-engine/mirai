@@ -836,7 +836,9 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
             continue
         }
         os.change_mode(temp,mode)
-        if h:=d.node.hooks;h!=nil && h.saved!=nil {h.saved(h.data,e.path)}
+        when ODIN_TEST {
+            if h:=d.node.hooks[0];h!=nil && h.saved!=nil {h.saved(h.data,e.path)}
+        }
         // The copy of a large file takes time: an edit made meanwhile is kept too.
         if again,_,still:=index_address(index,e.path,target);still!=present || still && again!=here {
             os.remove(temp)

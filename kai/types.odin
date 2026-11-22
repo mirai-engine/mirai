@@ -12,6 +12,10 @@ import "core:crypto/ed25519"
 import "core:mem"
 import "mirai:store"
 
+// 1 in a test build, else 0: a field [TEST_ONLY]T is a fault a test sets,
+// read under `when ODIN_TEST`, and ships as nothing.
+TEST_ONLY :: 1 when ODIN_TEST else 0
+
 KAI_MAGIC :: u32('K')|u32('A')<<8|u32('I')<<16|u32('1')<<24
 
 Change_Id :: distinct [16]u8 // random at creation, kept across rewrites

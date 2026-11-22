@@ -126,7 +126,7 @@ Repo :: struct {
     namespace:string,
     ref_bytes:[64]u8,
     ref:string,
-    cut_commit:bool, // a test cuts the next commit after its objects, before its refs
+    cut_commit:[TEST_ONLY]bool, // cuts the next commit after its objects, before its refs
     overlay:^Overlay_Routing, // routes a snapshot's private paths and carries the records of the overlays onto what an operation rewrites; nil: neither
 }
 
@@ -376,9 +376,11 @@ tx_commit :: proc(tx:^Tx,kind:Op_Kind,description:string,undone:=store.Hash{},pa
     bytes:=op_encode(&op,context.temp_allocator) or_return
     address:=object_put(r.s,.Operation,bytes) or_return
     if _,e:=append(&tx.refs,store.Ref_Set{r.namespace,r.ref,address});e!=nil {return .Out_Of_Memory}
-    if r.cut_commit {
-        r.cut_commit=false
-        return .Io
+    when ODIN_TEST {
+        if r.cut_commit[0] {
+            r.cut_commit[0]=false
+            return .Io
+        }
     }
     if e:=store.refs_set(r.s,tx.refs[:]);e!=.None {return store_error(e)}
     v:=view_clone(&tx.view,r.allocator) or_return

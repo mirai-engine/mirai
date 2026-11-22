@@ -208,7 +208,7 @@ Workspace :: struct {
     touched:[dynamic]string,  // paths the editor reported changed since the last snapshot
     touched_all:bool,         // the touched set is complete: a snapshot stats only those
     options:Workspace_Options,
-    cut_after:int,            // a test cuts a switch after this many files; <0 never
+    cut_after:[TEST_ONLY]int, // cuts a checkout after this many files; 0 never
     allocator:runtime.Allocator,
 }
 
@@ -221,7 +221,7 @@ Snapshot_Report :: struct {
 
 @(private)
 workspace_init :: proc(w:^Workspace,root:string,options:Workspace_Options,allocator:runtime.Allocator) -> Error {
-    w^={options=options,cut_after=-1,allocator=allocator}
+    w^={options=options,allocator=allocator}
     trimmed:=strings.trim_right(root,"/\\")
     cloned,e:=strings.clone(trimmed,allocator)
     if e!=nil {return .Out_Of_Memory}
@@ -754,7 +754,9 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
     sibling_index(w,&sibling)
     written:=0
     for d in changes {
-        if w.cut_after>=0 && written>=w.cut_after {return .Io}
+        when ODIN_TEST {
+            if w.cut_after[0]>0 && written>=w.cut_after[0] {return .Io}
+        }
         path:=workspace_path(w,d.path)
         // A conflict this path held is replaced.
         for m,k in w.state.conflicts {
