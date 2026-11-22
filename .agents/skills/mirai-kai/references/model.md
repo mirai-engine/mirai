@@ -123,9 +123,13 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   than the newest prune's time less `OP_RETENTION`; undo does not cross a prune. The store's sweep
   follows refs and not the links inside Kai records, so whoever sweeps names as live what
   `store_live` names: the operations kept and their views, and the closures of what they, the
-  shared bookmarks, the proposals' stacks and the devices' refs name, the overlays and the derived
-  data kept. A node prunes when it sweeps for its quota; on a machine `mirai kai prune` and
-  `kai.prune` run `cook/kai`'s `prune`, which also names what the asset library holds.
+  shared bookmarks, the proposals' stacks and the devices' refs name, the sealed tree and files of
+  the overlay record each ref names, and the derived data kept. An overlay record belongs to its
+  revision: the prune drops the ref of one whose revision nothing kept reaches once it is older
+  than the operations kept, and the records an overlay ref replaced are never kept, since
+  nothing reads them, so private history is bounded as the operation log is. A node prunes when
+  it sweeps for its quota; on a machine `mirai kai prune` and `kai.prune` run `cook/kai`'s
+  `prune`, which also names what the asset library holds.
 
 ## Workspaces
 

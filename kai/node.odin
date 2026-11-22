@@ -203,8 +203,10 @@ runner_ddc_quota :: proc(r:^Runner) {
 }
 
 // Writes a prune (repo_prune) at now (ns) into the operation log of every
-// repository of s: a sweep that names what store_live names then reclaims
-// what only the operations past the retention reached.
+// repository of s, and lets go the overlay records of revisions nothing kept
+// reaches any more and older than the prune keeps operations (overlay_prune):
+// a sweep that names what store_live names then reclaims what only the
+// operations past the retention reached, their private files with it.
 store_prune :: proc(s:^store.Store,now:i64) -> Error {
     namespaces,e:=store.ref_namespaces(s,context.temp_allocator)
     if e!=.None {return store_error(e)}
@@ -221,19 +223,70 @@ store_prune :: proc(s:^store.Store,now:i64) -> Error {
         repo_close(&r)
         if pe!=.None {return pe}
     }
+    if ce:=store.commit(s);ce!=.None {return store_error(ce)}
+    overlay_prune(s,now) or_return
     return store_error(store.commit(s))
+}
+
+// Removes the ref of each overlay record whose revision no change kept
+// reaches (store_roots, then the parents of each change) and that was
+// written before now less OP_RETENTION: a record of a revision still to come
+// stays while operations of its age would.
+@(private)
+overlay_prune :: proc(s:^store.Store,now:i64) -> Error {
+    targets:=make([dynamic]Revision,context.temp_allocator)
+    scratch:=make([dynamic]store.Hash,context.temp_allocator)
+    store_roots(s,&scratch,&targets,false) or_return
+    reached:=make(map[Revision]struct{},context.temp_allocator)
+    stack:=make([dynamic]Revision,context.temp_allocator)
+    append(&stack,..targets[:])
+    for len(stack)>0 {
+        revision:=pop(&stack)
+        if revision=={} || revision in reached {continue}
+        reached[revision]={}
+        c:=change_get(s,revision,context.temp_allocator) or_continue
+        append(&stack,..c.parents)
+    }
+    namespaces,e:=store.ref_namespaces(s,context.temp_allocator)
+    if e!=.None {return store_error(e)}
+    for namespace in namespaces {
+        if !strings.has_prefix(namespace,OVERLAY_PREFIX) {continue}
+        refs,le:=store.ref_list(s,namespace,context.temp_allocator)
+        if le!=.None {continue}
+        for ref in refs {
+            if commit,ok:=store.parse_hex(ref.name);ok && commit in reached {continue}
+            bytes,ge:=overlay_get(s,ref.hash,.Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+            if ge==.None {
+                if record,de:=overlay_record_decode(bytes);de==.None && record.time>=now-OP_RETENTION {continue}
+            }
+            if re:=store.ref_remove(s,namespace,ref.name);re!=.None && re!=.Missing {return store_error(re)}
+        }
+    }
+    return .None
 }
 
 // What a sweep of s keeps that no ref names directly, since the sweep follows
 // refs and the chunks of objects, not the links inside Kai records: the
 // operations each repository's log reaches (op_retained) and their views, the
 // closures of what those views, the shared bookmarks, the proposals' stacks
-// and the devices' refs name, the overlay records with their chains, sealed
-// trees and files, and every object of the outputs of the derived data kept.
+// and the devices' refs name, the sealed tree and files of each overlay
+// record a ref names (not the records before it, which nothing reads), and
+// every object of the outputs of the derived data kept.
 store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
+    targets:=make([dynamic]Revision,context.temp_allocator)
+    store_roots(s,live,&targets,true) or_return
+    missing:=make([dynamic]store.Hash,context.temp_allocator)
+    closure_walk(s,targets[:],live,&missing)
+    return .None
+}
+
+// The revisions what store_live keeps reaches, to targets, and the objects
+// it keeps besides their closures, to live; with sealed, those of the
+// overlays and derived data too.
+@(private)
+store_roots :: proc(s:^store.Store,live:^[dynamic]store.Hash,targets:^[dynamic]Revision,sealed:bool) -> Error {
     namespaces,e:=store.ref_namespaces(s,context.temp_allocator)
     if e!=.None {return store_error(e)}
-    targets:=make([dynamic]Revision,context.temp_allocator)
     records:=make([dynamic][]u8,context.temp_allocator)
     for namespace in namespaces {
         refs,le:=store.ref_list(s,namespace,context.temp_allocator)
@@ -253,11 +306,11 @@ store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
                 v:View
                 view_init(&v,context.temp_allocator)
                 if view_get(s,o.view,&v)!=.None {continue}
-                append(&targets,..v.heads[:])
-                for w in v.workspaces {append(&targets,w.revision)}
+                append(targets,..v.heads[:])
+                for w in v.workspaces {append(targets,w.revision)}
                 for b in v.bookmarks {
-                    append(&targets,..b.terms.adds[:])
-                    append(&targets,..b.terms.removes[:])
+                    append(targets,..b.terms.adds[:])
+                    append(targets,..b.terms.removes[:])
                 }
             }
         case namespace==LOG_NAMESPACE:
@@ -269,11 +322,11 @@ store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
                     #partial switch item.entry.type {
                     case .Bookmark_Move:
                         b,_,ok:=body_head(item.entry.body,Bookmark_Move_Body)
-                        if ok {append(&targets,b.to)}
+                        if ok {append(targets,b.to)}
                     case .Proposal_Revise:
                         _,tail,ok:=body_head(item.entry.body,Proposal_Revise_Body)
                         if !ok || len(tail)%size_of(Stack_Item)!=0 {continue}
-                        for stack in slice.reinterpret([]Stack_Item,tail) {append(&targets,stack.revision)}
+                        for stack in slice.reinterpret([]Stack_Item,tail) {append(targets,stack.revision)}
                     }
                 }
             }
@@ -283,22 +336,17 @@ store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
                 if ge!=.None {continue}
                 d,de:=device_refs_decode(bytes,context.temp_allocator)
                 if de!=.None {continue}
-                for b in d.refs {append(&targets,b.target)}
+                for b in d.refs {append(targets,b.target)}
             }
+        case !sealed:
         case strings.has_prefix(namespace,OVERLAY_PREFIX):
             for ref in refs {
-                address:=ref.hash
-                for _ in 0..<OVERLAY_FILES_MAX {
-                    if address=={} {break}
-                    bytes,ge:=overlay_get(s,address,.Record,OVERLAY_RECORD_MAX,context.temp_allocator)
-                    if ge!=.None {break}
-                    record,de:=overlay_record_decode(bytes)
-                    if de!=.None {break}
-                    append(live,record.tree_root)
-                    append(live,..record.objects)
-                    address=record.prev
-                    if address!={} {append(live,address)}
-                }
+                bytes,ge:=overlay_get(s,ref.hash,.Record,OVERLAY_RECORD_MAX,context.temp_allocator)
+                if ge!=.None {continue}
+                record,de:=overlay_record_decode(bytes)
+                if de!=.None {continue}
+                append(live,record.tree_root)
+                append(live,..record.objects)
             }
         case strings.has_prefix(namespace,DDC_PREFIX):
             for ref in refs {
@@ -314,7 +362,5 @@ store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
             }
         }
     }
-    missing:=make([dynamic]store.Hash,context.temp_allocator)
-    closure_walk(s,targets[:],live,&missing)
     return .None
 }

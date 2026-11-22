@@ -489,6 +489,22 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     published,_:=change_put(&f.s,&published_change,&identity)
     _,pe:=device_refs_publish(&f.s,{0=1},&identity,{{"work",published}},1)
     testing.expect_value(t,pe,Error.None)
+    // Overlay records: one of a revision only old operations reach, and two of the kept working
+    // copy, the second following the first.
+    sealed :: proc(t:^testing.T,s:^store.Store,text:string) -> store.Hash {
+        address,e:=store.put(s,transmute([]u8)text)
+        testing.expect_value(t,e,store.Error.None)
+        return address
+    }
+    seal :: proc(t:^testing.T,s:^store.Store,identity:^Identity,commit:Revision,tree:store.Hash) {
+        r:=Overlay_Record{head={commit=commit,project={0=7},scope={0=7},epoch=1,tree_root=tree,time=time.now()._nsec}}
+        _,e:=overlay_record_write(s,identity,&r,{},0)
+        testing.expect_value(t,e,Error.None)
+    }
+    gone_tree,older_tree,newer_tree:=sealed(t,&f.s,"sealed tree of the first"),sealed(t,&f.s,"sealed tree, before"),sealed(t,&f.s,"sealed tree, after")
+    seal(t,&f.s,&identity,first,gone_tree)
+    seal(t,&f.s,&identity,kept,older_tree)
+    seal(t,&f.s,&identity,kept,newer_tree)
     before:=r.op
     old:=make([dynamic]store.Hash,context.temp_allocator)
     testing.expect_value(t,op_retained(&f.s,{r.op},&old),Error.None)
@@ -510,6 +526,11 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     for op in old {testing.expectf(t,object_present(&f.s,op)==(op==before),"%v: only the operation the workspace's ref names stays",op)}
     testing.expect(t,!object_present(&f.s,first),"a revision only old operations reached is reclaimed")
     testing.expect(t,object_present(&f.s,attached) && object_present(&f.s,attached_kept),"what a kept change attaches survives the sweep")
+    testing.expect_value(t,overlay_record_error(&f.s,{0=7},{0=7},first),Error.Missing)
+    testing.expect(t,!object_present(&f.s,gone_tree),"the overlay of a revision the prune let go goes with it")
+    held,_,he:=overlay_record_get(&f.s,{0=7},{0=7},kept,context.temp_allocator)
+    testing.expect(t,he==.None && held.tree_root==newer_tree && object_present(&f.s,newer_tree),"the record a kept revision's ref names stays whole")
+    testing.expect(t,!object_present(&f.s,older_tree) && !object_present(&f.s,held.prev),"the records before it, which nothing reads, go")
     for revision in ([]Revision{kept,published,repo_working(&r)}) {
         files:=make([dynamic]File,context.temp_allocator)
         c,ce:=change_get(&f.s,revision,context.temp_allocator)
