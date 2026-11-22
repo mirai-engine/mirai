@@ -51,6 +51,17 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
   alive (`store_live`, a member's set) and syncs it to a peer walks it with the log. When the
   scope keeps history, the entry holds the previous key under the new one (`previous`), so a
   reader who has the latest opens every earlier epoch; a scope that keeps none wraps nothing.
+- A reader that comes after an epoch gets its key with no rotation, which is for whoever loses
+  access: a device its user's log links, a member added with a role that reaches `readers`, or one
+  a `Role_Set` raises to it. The agent of any device that reads the scope and holds the newest key
+  (the one that approved the pairing, or the first to see the new device or member) wraps that
+  key for it in an `Envelope_Add`, one envelope for one device and epoch in the entry itself, so
+  the log carries it wherever it goes (`envelope_adds_give_the_newest_key_to_readers_alone`). With
+  history the newest key opens every earlier epoch; without, the newcomer reads from the newest
+  on. The fold takes an `Envelope_Add` from a member who read the scope at its `org_ctx`, for a key
+  of a user who read it there, to an epoch in its causal past, once per epoch and key; it does
+  not ask whether that key still reads, so an envelope a revoked device or a removed member got
+  asks for the rotation as one in the `Envelopes` object does.
 - Not hybrid, on purpose, one reason each:
   - the mesh's handshakes: a datagram cannot carry ML-KEM, and nothing stored depends on them;
   - pairing's key agreement: it lives seconds, and the ML-KEM key it carries is bound by the

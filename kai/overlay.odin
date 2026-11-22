@@ -37,7 +37,8 @@ import "mirai:store"
 //                   confirms a guessed plaintext.
 //
 // A scope's epoch key is wrapped for every device that may read the scope,
-// in an Envelopes object an Epoch_Add names; when the scope keeps history the
+// in an Envelopes object an Epoch_Add names, and for one that may read it
+// later in an Envelope_Add of its own; when the scope keeps history the
 // Epoch_Add wraps the previous key under the new one too. A device's
 // envelope is a hybrid of X25519 and ML-KEM-768, so a key sealed today stays
 // sealed for whoever keeps the store until both are broken. A write is refused while the newest epoch still wraps for a device
@@ -460,6 +461,39 @@ rotate_scope_epoch :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64) -> (
     keyring_refold(k) or_return
     if k.epoch!=epoch {return 0,.Unauthorized}
     return epoch,.None
+}
+
+// Wraps the newest epoch's key for each device that may read the scope and
+// has no envelope of it yet, one Envelope_Add each, signed by device, which
+// must read the scope and hold the key: what lets a device just linked, or a
+// member just let read the scope, read its files with no rotation, since a
+// rotation is for whoever loses access. With history the newest key opens
+// every earlier epoch; without, a reader added later reads from the newest
+// on. added is how many it wrote; the caller saves the log when any.
+keyring_share :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64) -> (added:int,error:Error) {
+    scope,ok:=keyring_scope(k)
+    if !ok || k.epoch==0 || k.store==nil || !device_reads(k.org,scope,device) {return 0,.None}
+    readers:=make([dynamic]Scope_Reader,context.temp_allocator)
+    scope_readers(k.org,scope,&readers) or_return
+    key:Epoch_Key
+    defer crypto.zero_explicit(&key,size_of(key))
+    held:=false
+    user,_:=org_device_role(k.org,device.identity.key)
+    ctx:=org_context(k.org,user)
+    for r in readers {
+        if keyring_wraps(k,k.epoch,r.dh) {continue}
+        if !held {
+            e:Error
+            if key,e=keyring_epoch_key(k,device,k.epoch);e!=.None {return 0,e==.Unauthorized?.None:e}
+            held=true
+        }
+        envelope,wrapped:=envelope_wrap(k.org.log.id,k.scope,k.epoch,r.dh,r.kem,&key)
+        if !wrapped {continue}
+        log_append(k.log,.Envelope_Add,body_make(Envelope_Add_Body{epoch=k.epoch,envelope=envelope}),&device.identity,time,{},ctx) or_return
+        added+=1
+    }
+    if added>0 {keyring_refold(k) or_return}
+    return added,.None
 }
 
 // --- Patterns ---

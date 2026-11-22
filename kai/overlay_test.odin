@@ -349,6 +349,108 @@ removing_a_keyring_signer_keeps_its_epochs :: proc(t:^testing.T) {
     testing.expect_value(t,e,Error.Unauthorized)
 }
 
+// A reader's new device, a member let read the scope by a role it now has and
+// a member added with such a role get the newest key from a reader that holds
+// it, one Envelope_Add each, with no rotation; a member who does not read the
+// scope gets none. An envelope added by a non-reader, for a key no user's log
+// holds, for a member who does not read, or to an epoch that is not there is
+// refused, and a revoked device's added envelope still asks for a rotation.
+@(test)
+envelope_adds_give_the_newest_key_to_readers_alone :: proc(t:^testing.T) {
+    folder_root:=base.test_folder(t,"kai-overlay-envelope-add")
+    if folder_root=="" {return}
+    s,se:=store.open(folder(folder_root,"store"))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&s)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    dave:Test_User
+    test_user(t,&dave,"dave");defer log_destroy(&dave.log)
+    folds:[4]User_Fold
+    users:[4]^User_Fold
+    fold:Org_Fold
+    defer {org_fold_destroy(&fold);test_users_destroy(folds[:])}
+    four :: proc(t:^testing.T,o:^Test_Org,dave:^Test_User,folds:[]User_Fold,users:[]^User_Fold,fold:^Org_Fold,k:^Keyring_Fold=nil) {
+        org_fold_destroy(fold)
+        test_users_destroy(folds)
+        test_users_fold(t,{&o.alice,&o.bob,&o.carol,dave},folds,users)
+        testing.expect_value(t,org_fold(fold,&o.org,users),Error.None)
+        if k!=nil {testing.expect_value(t,keyring_refold(k),Error.None)}
+    }
+    scope:=random_id(Scope_Id)
+    scope_add(t,&o,scope,.Writer,true,20,"secrets/**")
+    four(t,&o,&dave,folds[:],users[:],&fold)
+    alice,bob,carol:=device_of(&o.alice,0),device_of(&o.bob,0),device_of(&o.carol,0)
+    kl:Log
+    log_init(&kl);defer log_destroy(&kl)
+    kf:Keyring_Fold
+    testing.expect_value(t,keyring_create(&kf,&kl,&fold,&s,o.project.id,scope,&alice,22),Error.None)
+    defer keyring_fold_destroy(&kf)
+    k1,_:=keyring_epoch_key(&kf,&alice,1)
+
+    // Bob links a device: alice wraps the key for it alone, and nothing rotates.
+    second:=test_device(t,&o.bob)
+    four(t,&o,&dave,folds[:],users[:],&fold,&kf)
+    phone:=device_of(&o.bob,second)
+    _,e:=keyring_epoch_key(&kf,&phone,1)
+    testing.expect_value(t,e,Error.Unauthorized)
+    added,ae:=keyring_share(&kf,&alice,30)
+    testing.expect(t,ae==.None && added==1,"one envelope, for the new device")
+    key,ke:=keyring_epoch_key(&kf,&phone,1)
+    testing.expect(t,ke==.None && key==k1,"the new device reads the scope at once")
+    testing.expect(t,kf.epoch==1 && !keyring_needs_rotation(&kf),"no rotation")
+    testing.expect(t,!keyring_wraps(&kf,1,carol.dh),"a member who does not read the scope gets no envelope")
+    added,_=keyring_share(&kf,&phone,31)
+    testing.expect_value(t,added,0)
+
+    // Hostile adds: each is refused by the fold.
+    garbage:=random_id(Epoch_Key)
+    carol_kem,_:=kem_public(&carol.kem_seed)
+    stranger_dh,_:=net.dh_key()
+    stranger_seed:=random_id([KEM_SEED]u8)
+    stranger_kem,_:=kem_public(&stranger_seed)
+    Hostile :: struct {author:^Identity,user:Log_Id,epoch:u32,dh:Dh_Key,kem:[]u8,why:string}
+    for h in ([]Hostile{
+        {&o.carol.devices[0],o.carol.log.id,1,carol.dh,carol_kem[:],"by a member who does not read the scope"},
+        {&o.alice.devices[0],o.alice.log.id,1,Dh_Key(stranger_dh.public),stranger_kem[:],"for a key no user's log holds"},
+        {&o.alice.devices[0],o.alice.log.id,1,carol.dh,carol_kem[:],"for a member who does not read the scope"},
+        {&o.alice.devices[0],o.alice.log.id,5,carol.dh,carol_kem[:],"to an epoch that is not there"},
+    }) {
+        envelope,_:=envelope_wrap(o.org.id,scope,h.epoch,h.dh,h.kem,&garbage)
+        address,he:=log_append(&kl,.Envelope_Add,body_make(Envelope_Add_Body{epoch=h.epoch,envelope=envelope}),h.author,32,{},org_context(&fold,h.user))
+        testing.expect_value(t,he,Error.None)
+        testing.expect_value(t,keyring_refold(&kf),Error.None)
+        at:=log_find(&kl,address)
+        testing.expectf(t,at>=0 && !kf.valid[at],"an envelope add %s is refused",h.why)
+    }
+    testing.expect(t,!keyring_wraps(&kf,1,carol.dh) && !keyring_needs_rotation(&kf))
+
+    // Carol's role now reaches the scope's readers, and dave joins as a writer: a reader's agent wraps for both.
+    _,e=log_append(&o.org,.Role_Set,body_make(Member_Body{user=o.carol.log.id,role=.Writer}),&o.alice.devices[0],40)
+    testing.expect_value(t,e,Error.None)
+    _,e=log_append(&o.org,.Member_Add,body_make(Member_Body{user=dave.log.id,role=.Writer}),&o.alice.devices[0],41)
+    testing.expect_value(t,e,Error.None)
+    four(t,&o,&dave,folds[:],users[:],&fold,&kf)
+    added,ae=keyring_share(&kf,&phone,42)
+    testing.expect(t,ae==.None && added==2,"one envelope each for carol and dave")
+    david:=device_of(&dave,0)
+    for reader in ([]^Overlay_Device{&carol,&david}) {
+        key,ke=keyring_epoch_key(&kf,reader,1)
+        testing.expect(t,ke==.None && key==k1,"a member let read the scope reads it")
+    }
+    testing.expect(t,kf.epoch==1 && !keyring_needs_rotation(&kf))
+
+    // A revoked device's added envelope asks for a rotation, which shuts it out.
+    _,e=log_append(&o.bob.log,.Device_Revoke,revoke_body(phone.identity.key),&o.bob.devices[0],50)
+    testing.expect_value(t,e,Error.None)
+    four(t,&o,&dave,folds[:],users[:],&fold,&kf)
+    testing.expect(t,keyring_needs_rotation(&kf),"a revoked device's envelope asks for a rotation")
+    _,e=rotate_scope_epoch(&kf,&bob,51)
+    testing.expect_value(t,e,Error.None)
+    _,e=keyring_epoch_key(&kf,&phone,2)
+    testing.expect_value(t,e,Error.Unauthorized)
+}
+
 // Leaks are stopped twice: a path of the deny set that no scope takes is
 // refused at snapshot unless public_allow marks it, and a publish to public
 // reports each line holding a private key, a token or a random secret

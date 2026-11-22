@@ -224,6 +224,7 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `asset_summaries_are_stable_and_follow_their_bytes` in `cook/kai`.
 - Private files: `scoped_plaintext_never_enters_public_store`,
   `removed_member_cannot_decrypt_post_rotation_epoch`, `removing_a_keyring_signer_keeps_its_epochs`,
+  `envelope_adds_give_the_newest_key_to_readers_alone`,
   `an_epoch_key_opens_only_with_both_device_secrets` (prints a device's entry, an envelope and an
   epoch of 10 devices),
   `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.

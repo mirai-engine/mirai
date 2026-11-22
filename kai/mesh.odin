@@ -1,6 +1,7 @@
 package kai
 
 import "base:runtime"
+import "core:crypto"
 import "core:slice"
 import "core:strings"
 import "core:time"
@@ -444,6 +445,45 @@ agent_witnesses :: proc(a:^Agent) {
     if written {agent_refold(a)}
 }
 
+// Wraps the newest key of each scope this device reads for the readers of
+// it that have none yet (keyring_share): a device the user's log just linked,
+// or a member the org just let read the scope, reads its files with no
+// rotation. The device's secrets are read only when one lacks an envelope.
+@(private)
+agent_share :: proc(a:^Agent) {
+    if !a.folded || a.desc.user=={} || agent_is_behind(a) {return}
+    device:=Overlay_Device{identity=a.desc.identity,dh=Dh_Key(a.desc.dh.public)}
+    defer crypto.zero_explicit(&device,size_of(device))
+    loaded,written:=false,false
+    readers:=make([dynamic]Scope_Reader,context.temp_allocator)
+    for l in a.logs {
+        if l.kind!=.Keyring || len(l.items)==0 {continue}
+        k:Keyring_Fold
+        if keyring_fold(&k,l,&a.org,a.desc.store,context.temp_allocator)!=.None {continue}
+        scope,ok:=keyring_scope(&k)
+        if !ok || k.epoch==0 || !device_reads(&a.org,scope,&device) {continue}
+        clear(&readers)
+        if scope_readers(&a.org,scope,&readers)!=.None {continue}
+        lacking:=false
+        for r in readers {lacking||=!keyring_wraps(&k,k.epoch,r.dh)}
+        if !lacking {continue}
+        if !loaded {
+            held,e:=machine_device_of(a.desc.store)
+            if e!=.None {return}
+            device,loaded=held,true
+        }
+        added,e:=keyring_share(&k,&device,time.now()._nsec)
+        if e!=.None || added==0 {continue}
+        if address,se:=log_save(a.desc.store,l);se==.None {
+            name:[64]u8
+            exchange.ref_changed(&a.x,log_namespace(l.kind),log_name(l.id,&name),address)
+            written=true
+        }
+    }
+    // What members are served takes the new pages in.
+    if written {agent_refold(a)}
+}
+
 // Reads the logs the store holds.
 @(private)
 agent_load :: proc(a:^Agent) {
@@ -540,6 +580,7 @@ agent_refold :: proc(a:^Agent) {
     agent_behind_settle(a)
     agent_retry(a,.None)
     agent_witnesses(a)
+    agent_share(a)
 }
 
 // Whether this end is behind: an entry a peer named is not here yet, so it

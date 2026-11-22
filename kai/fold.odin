@@ -149,6 +149,10 @@ fold_begin :: proc(fold:Fold) -> Error {
     case ^Keyring_Fold:
         f.epochs=make([dynamic]u32,f.allocator)
         subjects_make(&f.added,len(f.log.items),f.allocator) or_return
+        if k:=log_find(f.log,f.log.id);k>=0 {
+            b,_,_:=body_head(f.log.items[k].entry.body,Keyring_Genesis_Body)
+            f.project,f.scope=b.project,b.scope
+        }
     }
     return .None
 }
@@ -782,6 +786,14 @@ user_signed :: proc(f:^User_Fold,l:^Log,e:int) -> bool {
 user_device_active :: proc(f:^User_Fold,device:Key) -> bool {
     k:=user_device_index(f,device)
     return k>=0 && !f.devices[k].revoked
+}
+
+// Whether the user has or had a device of X25519 key dh.
+user_dh_known :: proc(f:^User_Fold,dh:Dh_Key) -> bool {
+    for d in f.devices {
+        if d.dh==dh {return true}
+    }
+    return false
 }
 
 // The user whose active device has the X25519 key dh.
@@ -1743,15 +1755,20 @@ envelope_subject :: proc(epoch:u32,dh:Dh_Key) -> store.Hash {
 }
 
 // The rules of a Keyring_Log, against the epochs of the entry's causal past:
-// a writer, as it was when it signed, starts it, adds the next epoch and adds
-// an envelope to an epoch there that no Envelope_Add gave for that device
-// before (a device that reads it tries each one it has). Concurrent
-// epochs of one number: the first in order wins, the other is not authorized.
+// a writer, as it was when it signed, starts it and adds the next epoch;
+// concurrent epochs of one number: the first in order wins, the other is not
+// authorized. A member who read the scope when it signed (a device that holds
+// the key wraps it) adds an envelope to an epoch there for a device or a
+// recovery key of a user who read the scope at the entry's org_ctx, unless an
+// Envelope_Add gave that one before. Whether its target still reads is not
+// asked here: an envelope of the newest epoch for one who no longer does is
+// what keyring_needs_rotation finds.
 @(private)
 keyring_authorized :: proc(f:^Keyring_Fold,e:int) -> bool {
     entry:=&f.log.items[e].entry
     u:=author_user(f.org.users,f.log,e)
-    if u==nil || org_role_signed(f.org,u,f.log,e)<.Writer {return false}
+    if u==nil {return false}
+    role:=org_role_signed(f.org,u,f.log,e)
     epoch:=u32(0)
     for x in f.epochs {
         if log_before(f.log,int(x),e) {
@@ -1759,6 +1776,16 @@ keyring_authorized :: proc(f:^Keyring_Fold,e:int) -> bool {
             epoch=max(epoch,b.epoch)
         }
     }
+    if entry.type==.Envelope_Add {
+        b,_,_:=body_head(entry.body,Envelope_Add_Body)
+        scope,ok:=keyring_scope(f)
+        if !ok || role<max(scope.readers,Role.Reader) || b.epoch<1 || b.epoch>epoch || !envelope_target(f.org,scope,org_context_of(f.org,f.log,e),b.envelope.dh) {return false}
+        for x:=subjects_first(&f.added,envelope_subject(b.epoch,b.envelope.dh));x>=0;x=subjects_next(&f.added,x) {
+            if log_before(f.log,x,e) {return false}
+        }
+        return true
+    }
+    if role<.Writer {return false}
     #partial switch entry.type {
     case .Witness: return witness_valid(f.org,f.org.users,f.log,e)
     case .Keyring_Genesis:
@@ -1767,13 +1794,19 @@ keyring_authorized :: proc(f:^Keyring_Fold,e:int) -> bool {
     case .Epoch_Add:
         b,_,_:=body_head(entry.body,Epoch_Add_Body)
         return b.epoch==epoch+1
-    case .Envelope_Add:
-        b,_,_:=body_head(entry.body,Envelope_Add_Body)
-        if b.epoch<1 || b.epoch>epoch {return false}
-        for x:=subjects_first(&f.added,envelope_subject(b.epoch,b.envelope.dh));x>=0;x=subjects_next(&f.added,x) {
-            if log_before(f.log,x,e) {return false}
-        }
-        return true
+    }
+    return false
+}
+
+// Whether dh is the key of a device, revoked or not, or of a recovery key of
+// a user who read scope at the org's entry at: one an epoch may be wrapped
+// for. It holds for good once it does.
+@(private)
+envelope_target :: proc(org:^Org_Fold,scope:Org_Scope,at:int,dh:Dh_Key) -> bool {
+    if at<0 {return false}
+    for u in org.users {
+        if !user_dh_known(u,dh) {continue}
+        return role_recovered(org_role_at(org,u.log.id,at),u.recovery!={})>=scope.readers
     }
     return false
 }

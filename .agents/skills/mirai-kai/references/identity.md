@@ -143,7 +143,9 @@ and `kai/refs_ddc.odin`.
   (`Node_Add`) or lets a machine with no user reach an org to recover its user (`recover`). The
   responder offers a ticket (base64url with a checksum): which pairing, against which responder key,
   until when, and where the responder listens. The logs, envelopes and keyrings the new end needs
-  come through the mesh once it connects.
+  come through the mesh once it connects, and a reader's agent wraps the newest key of each scope
+  the new device or member reads for it, with no rotation
+  ([keyrings](private.md#keyrings-and-epochs)).
 - The handshake is `Noise_XX_25519_ChaChaPoly_SHA256` with a commitment: the initiator commits to
   its static key and nonce in its first message and reveals them only after the responder showed its
   own; the responder checks the commitment before any code exists. A device's ML-KEM key does not

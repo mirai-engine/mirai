@@ -193,13 +193,14 @@ join_ended :: proc(b:^Box,data:rawptr) -> bool {
 // refused. Then a change Alice snapshots and bookmarks arrives on Bob's
 // machine with its whole closure, and an encrypted overlay arrives and opens
 // for Bob, a reader of its scope, and for no other key, as it does on what
-// Alice's new, describe, restore and rebase of the change write. Once Alice removes
-// Bob, his machine is disconnected and gets nothing newer.
+// Alice's new, describe, restore and rebase of the change write. A machine
+// Alice links then opens it with no rotation. Once Alice removes Bob, his
+// machine is disconnected and gets nothing newer.
 @(test)
 two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
     b:=new(Box)
     defer free(b)
-    if !box_open(t,b,"kai-runner-pair",2) {return}
+    if !box_open(t,b,"kai-runner-pair",3) {return}
     defer box_close(b)
     alice,bob:=&b.machines[0],&b.machines[1]
     user_make(t,alice,"alice")
@@ -371,6 +372,39 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
         held=rewritten
     }
     w.repo.overlay=nil
+
+    // Alice links a second machine: her agent wraps the scope's newest key for it, which opens the
+    // private file as soon as the logs arrive, with no rotation.
+    desktop:=&b.machines[2]
+    if !box_start(t,b,2) {return}
+    box_beacons(b,0,1,2)
+    box_beacons(b,2,0)
+    ticket,_=runner_pair_offer(a,.Device,{},.None,{},&buffer)
+    testing.expect_value(t,runner_pair_join(&b.runners[2],ticket,"alice's desktop"),Error.None)
+    if !testing.expect(t,box_until(b,10,&ALICE,request_shown)) {return}
+    request,_=runner_pair_request(a)
+    testing.expect_value(t,runner_pair_answer(a,true,request.code),Error.None)
+    DESKTOP:=2
+    testing.expect(t,box_until(b,5,&DESKTOP,join_ended))
+    testing.expect(t,desktop.user==alice.user,"the second machine is alice's device")
+    og.commit=held
+    reads :: proc(b:^Box,data:rawptr) -> bool {
+        g:=(^Overlay_Goal)(data)
+        m:=&b.machines[2]
+        if len(m.orgs)==0 {return false}
+        o:Org_State
+        if org_state_load(&m.store,m.orgs[0],&o,context.temp_allocator)!=.None {return false}
+        rings:=make([dynamic]^Keyring_Fold,context.temp_allocator)
+        machine_keyrings(&m.store,&o,&rings,context.temp_allocator)
+        if len(rings)!=1 {return false}
+        device:=machine_overlay_device(m)
+        ov:Overlay
+        if overlay_open(&ov,&m.store,rings[0],&device,g.commit,context.temp_allocator)!=.None {return false}
+        defer overlay_close(&ov)
+        bytes,e:=overlay_file(&ov,&m.store,"secrets/key.txt",context.temp_allocator)
+        return e==.None && string(bytes)=="the private words" && rings[0].epoch==1
+    }
+    testing.expect(t,box_until(b,15,&og,reads),"alice's new machine reads the private file with no rotation")
 
     // Bob is removed: alice's agent drops him and he gets nothing newer.
     testing.expect_value(t,machine_member_remove(alice,org,bob.user),Error.None)
