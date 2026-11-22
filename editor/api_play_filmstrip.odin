@@ -1,5 +1,6 @@
 package editor
 
+import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
@@ -7,7 +8,9 @@ import "core:mem"
 import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor/api"
+import input "mirai:engine/input"
 import "mirai:host"
+import gpu "mirai:render"
 import mm "mirai:std/math"
 
 // A filmstrip of capture: the game stepped as play.step steps it and
@@ -35,6 +38,9 @@ Api_Filmstrip :: struct {
     cells:[]Api_Filmstrip_Cell,
     taken:int,
     counted:Api_Capture_Seen, // of the last cell, with the most textures any cell found pending
+    debug:Api_Capture_Debug,
+    lines:gpu.Debug_Lines,    // of debug over the cell taken
+    trail:[dynamic][3]f32,    // where the entity Trajectory follows was after each tick, room made for all
 }
 
 @(private) FILMSTRIP_PAST_AROUND :: u64(60) // ticks a filmstrip of the past shows on each side of its tick
@@ -185,6 +191,19 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
     strip.run={owner=r.owner,player=p.player,timeline=timeline,sampler=strip,every=1}
     strip.count=len(strip.ticks)
     strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
+    if p.debug!={} {
+        strip.debug=p.debug
+        strip.lines=api_capture_debug_make(call) or_return
+        if .Trajectory in p.debug {
+            if strip.follow==core.NONE && core.world_storage_of(w,input.Seats)==nil {
+                api.call_fail(call,api.INVALID_PARAMS,"Trajectory follows follow, or else the body of the focused seat, and this game has no seats: give follow")
+                return
+            }
+            error:runtime.Allocator_Error
+            if strip.trail,error=make([dynamic][3]f32,0,api_timeline_ticks(timeline)+1,call.allocator);error!=nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the path of Trajectory");return}
+        }
+        api_capture_debug_draw(s,call,w,strip.debug,strip.follow,nil,&strip.lines) or_return
+    }
     return strip,true
 }
 
@@ -225,10 +244,22 @@ api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_C
 // in the grid with the tick in its corner.
 @(private)
 api_filmstrip_take :: proc(s:^Session,strip:^Api_Filmstrip,ran:int) -> string {
+    if .Trajectory in strip.debug && ran>=len(strip.trail) && len(strip.trail)<cap(strip.trail) {
+        if r:=run_player(s,strip.run.owner,strip.run.player);r!=nil {
+            w:=run_ref(s,r)
+            if body:=api_filmstrip_traced(w,strip.follow);body!=core.NONE {append(&strip.trail,api_entity_middle(w,body))}
+        }
+    }
     if strip.taken>=strip.count || strip.ticks!=nil && ran!=strip.ticks[strip.taken] {return ""}
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {return "The game ended"}
-    pixels,width,height,drawn:=api_play_pixels(s,r,strip.frames,strip.window)
+    debug:[]gpu.Debug_Lines
+    if strip.debug!={} {
+        call:=api.Call{allocator=context.temp_allocator}
+        if !api_capture_debug_draw(s,&call,run_ref(s,r),strip.debug,strip.follow,strip.trail[:],&strip.lines) {return call.error.message}
+        debug=([^]gpu.Debug_Lines)(&strip.lines)[:1]
+    }
+    pixels,width,height,drawn:=api_play_pixels(s,r,strip.frames,strip.window,debug=debug)
     if !drawn {return fmt.tprintf("The game could not be drawn: %s",host.app_draw_problem(s.app))}
     defer delete(pixels,s.app.allocator)
     w:=run_ref(s,r)
@@ -266,6 +297,18 @@ api_filmstrip_take :: proc(s:^Session,strip:^Api_Filmstrip,ran:int) -> string {
     }
     strip.taken+=1
     return ""
+}
+
+// What Trajectory follows: the entity followed, or else the body the focused
+// seat of the game drives; none while it drives none.
+@(private)
+api_filmstrip_traced :: proc(w:core.World_Ref,follow:core.Entity) -> core.Entity {
+    if follow!=core.NONE {return core.alive(core.world_entities(w),follow)?follow:core.NONE}
+    seats,state:=core.world_table_of(w,input.Seat),core.world_storage_of(w,input.Seats)
+    if seats==nil || state==nil || state.local_count==0 {return core.NONE}
+    seat,known:=core.get(seats,input.local_seat(seats,state.focus))
+    if !known || !core.alive(core.world_entities(w),seat.body) {return core.NONE}
+    return seat.body
 }
 
 // Where a world point shows in pixels of an image whose rect (x y width

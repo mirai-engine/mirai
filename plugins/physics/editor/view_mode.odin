@@ -88,6 +88,26 @@ collision_view_draw :: proc(c:^Collision_View,w:core.World_Ref,layers:sim.Collis
     if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
 }
 
+// The colliders of a world over the image capture takes with debug Collision,
+// colored as the modes color them.
+@(storage)
+Collision_Capture :: struct {provider:editor.Capture_Overlay_Provider}
+
+COLLISION_CAPTURE_DEFAULT :: Collision_Capture{provider={draw=collision_capture_draw}}
+
+@(private)
+collision_capture_draw :: proc(s:^editor.Session,w:core.World_Ref,shown:editor.Api_Capture_Debug,lines:^erender.Debug_Lines) -> editor.Api_Capture_Debug {
+    if .Collision not_in shown {return {}}
+    state:=core.world_storage_of(w,phys.Physics_State)
+    if state==nil || !state.ready {return {.Collision}}
+    scratch,error:=make([]sim.Debug_Line,COLLISION_VIEW_LINES,context.temp_allocator)
+    if error!=nil {return {.Collision}}
+    out:=sim.Debug_Draw{lines=scratch}
+    sim.world_debug_draw(&state.world,&out,{.Shapes})
+    for line in out.lines[:out.line_count] {erender.debug_line(lines,line.a,line.b,COLLISION_COLORS[line.kind])}
+    return {.Collision}
+}
+
 // By what the body of a shape is: what does not move in blue, what moves in
 // green (dimmer asleep), what only overlaps in orange.
 @(private,rodata)

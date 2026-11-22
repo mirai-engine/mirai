@@ -6,11 +6,13 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import img "mirai:cook/image"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:project"
 import gpu "mirai:render"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 Api_Viewport_Params :: struct {
     request:[64]u8 `mirai:"optional,text,label=An older message of the turn by the folder of its snapshot under .mirai/ai; empty: the message of the turn of the caller"`,
@@ -22,10 +24,15 @@ Api_Viewport_Result :: struct {
 
 Api_Capture_Of :: enum u8 {Auto,Scene,Game}
 
+// What capture draws over the image alone to show what the frames do not.
+Api_Capture_Debug_Flag :: enum u8 {Bounds,Skeleton,Collision,Trajectory}
+Api_Capture_Debug :: bit_set[Api_Capture_Debug_Flag;u8]
+
 Api_Capture_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made; the answer is only where it is and its size. Without it one under .mirai/captures and MCP also returns the image"`,
     ui:bool `mirai:"optional,label=The whole window with the editor around what it shows, as the user sees it; false: the image alone"`,
     of:Api_Capture_Of `mirai:"optional,label=What the image alone shows. Game: the game of the caller through its camera with its own interfaces. Scene: what the viewport shows through its camera without panels or gizmos or grid or selection. Auto: Game while the caller has one playing, otherwise Scene"`,
+    debug:Api_Capture_Debug `mirai:"optional,label=Lines over the image alone and over every cell of a filmstrip, seen through what is in front: Bounds the box in the world of each mesh drawn (follow in another color), Skeleton the bones, joints and sockets of the rigs as they posed, Collision the colliders of the bodies, Trajectory the path of follow (or else of the body of the focused seat) along the ticks of a filmstrip. Neither the document nor the viewport changes"`,
     frames:int `mirai:"optional,min=0,max=3600,label=Frames drawn first so that what builds up over time settles; 0: as many as the image needs and its textures streamed in. At most 120 of a game"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Not of a game: the step of each frame of a manual editor"`,
     seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=Not of a game: the clock of the window when the frames start, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
@@ -43,6 +50,9 @@ Api_Capture_Params :: struct {
 }
 
 // A game draws at most these frames for an image.
+// The lines debug draws over an image, two vertices each; those past it are left out.
+API_CAPTURE_DEBUG_VERTICES :: 65536
+
 API_CAPTURE_GAME_FRAMES :: 120
 
 // The longest a capture of automatic frames waits for textures to stream in.
@@ -92,6 +102,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     if p.ui && p.of!=.Auto {api.call_fail(call,api.INVALID_PARAMS,"of chooses what the image alone shows: leave it out with ui");return}
     if p.ui && (p.width>0 || p.height>0) {api.call_fail(call,api.INVALID_PARAMS,"width and height size the image alone: leave ui out with them, or leave them out for the window");return}
     if p.generated && !p.ui {api.call_fail(call,api.INVALID_PARAMS,"generated reads the image the window showed: pass ui true with it");return}
+    if p.debug!={} && p.ui {api.call_fail(call,api.INVALID_PARAMS,"debug draws over the image alone: leave ui out with it");return}
     filmstrip:=(p.every[0]!=0 && base.text_get(p.every[:])!="0") || api_filmstrip_spread(call,p)
     if filmstrip && p.of==.Scene {api.call_fail(call,api.INVALID_PARAMS,"a filmstrip steps the game: leave of out, or give Game");return}
     game:=!p.ui && p.of!=.Scene && (r!=nil || p.of==.Game)
@@ -102,6 +113,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     }
     strip,ok:=api_filmstrip_read(s,call,r,own,p)
     if !ok {return}
+    if .Trajectory in p.debug && strip==nil {api.call_fail(call,api.INVALID_PARAMS,"Trajectory is the path along the ticks of a filmstrip: give every with count, or segments");return}
     region:img.Region
     if strip!=nil {
         if p.width>0 || p.height>0 {api.call_fail(call,api.INVALID_PARAMS,"width and height size one image: a filmstrip takes the size of its cell or a region");return}
@@ -126,6 +138,14 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     // Nothing is drawn while a compilation of programs makes the first frames draw stand-ins.
     if ok,_:=api_view_wait(s,call,p.dt,started,window_frames=!game && strip==nil);!ok {return}
     if strip!=nil {api_filmstrip_run(s,call,strip,path,given=="");return}
+    debug:[]gpu.Debug_Lines
+    if p.debug!={} {
+        lines,made:=api_capture_debug_make(call)
+        if !made {return}
+        if !api_capture_debug_draw(s,call,game?run_ref(s,r):shown_world(s),p.debug,core.NONE,nil,&lines) {return}
+        debug=make([]gpu.Debug_Lines,1,call.allocator)
+        debug[0]=lines
+    }
     pixels:[]u8
     width,height:int
     wait:=p.frames==0?API_CAPTURE_TEXTURES_WAIT:time.Duration(0)
@@ -133,7 +153,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         frames:=p.frames>0?p.frames:API_CAPTURE_SETTLE
         for {
             drawn:bool
-            pixels,width,height,drawn=api_play_pixels(s,r,frames,wait=wait)
+            pixels,width,height,drawn=api_play_pixels(s,r,frames,wait=wait,debug=debug)
             if !drawn {api.call_failf(call,api.SERVER_ERROR,"The game could not be drawn: %s",host.app_draw_problem(s.app));return}
             // What those frames found being made: drawn again once it is, its own frames
             // streaming what arrives, without stepping the game.
@@ -168,7 +188,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         }
         size:=api_capture_size(api_capture_viewport(s.app),p.width,p.height)
         read:bool
-        pixels,width,height,read=api_capture_image(s,p.ui,size,p.generated,wait)
+        pixels,width,height,read=api_capture_image(s,p.ui,size,p.generated,wait,debug)
         if !read {api.call_failf(call,api.SERVER_ERROR,"The image of %dx%d could not be drawn or read: %s",size.x,size.y,host.app_draw_problem(s.app));return}
     }
     seen:=api_capture_seen(s.app)
@@ -183,6 +203,55 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         pixels,width,height=cropped.pixels,cropped.width,cropped.height
     }
     api_capture_answer(s,call,path,pixels,width,height,given=="",seen)
+}
+
+// The storage of the lines debug draws over an image, in the allocator of
+// the call; false after failing it.
+@(private)
+api_capture_debug_make :: proc(call:^api.Call) -> (lines:gpu.Debug_Lines,ok:bool) {
+    storage,error:=make([]gpu.Debug_Vertex,API_CAPTURE_DEBUG_VERTICES,call.allocator)
+    if error!=nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the lines of debug");return}
+    return gpu.debug_lines_make(storage,depth_test=false),true
+}
+
+API_CAPTURE_BOUNDS :: [4]f32{0.2,1,0.4,1}
+API_CAPTURE_FOLLOWED :: [4]f32{1,0.85,0.1,1}
+API_CAPTURE_TRAIL :: [4]f32{1,0.25,0.9,1}
+
+// The lines of debug over an image of w as it is now, in place of those
+// lines held: the world boxes of the meshes it draws (those of follow and
+// what hangs from it in their own color) and trail, the path taken; the
+// plugins draw the rest. False after failing the call for a flag no plugin
+// of the project draws.
+@(private)
+api_capture_debug_draw :: proc(s:^Session,call:^api.Call,w:core.World_Ref,debug:Api_Capture_Debug,follow:core.Entity,trail:[][3]f32,lines:^gpu.Debug_Lines) -> bool {
+    gpu.debug_lines_clear(lines)
+    if .Bounds in debug && s.app.assets!=nil {
+        items:=scene_items(s,w)
+        for item in scene_item_next(&items) {
+            if !item.body {continue}
+            low,high,known:=mesh_bounds(s.app.assets,item.mesh)
+            if !known {continue}
+            box:=mm.aabb_transform({low,high},mm.transform_matrix(item.world))
+            followed:=follow!=core.NONE && entity_under(w,item.entity,follow)
+            gpu.debug_box(lines,box.min,box.max,API_CAPTURE_FOLLOWED if followed else API_CAPTURE_BOUNDS)
+        }
+    }
+    if .Trajectory in debug && len(trail)>0 {
+        for i in 1..<len(trail) {gpu.debug_line(lines,trail[i-1],trail[i],API_CAPTURE_TRAIL)}
+        gpu.debug_sphere(lines,trail[len(trail)-1],0.1,API_CAPTURE_TRAIL,12)
+    }
+    missing:=debug-{.Bounds,.Trajectory}
+    if missing=={} {return true}
+    found:[PROVIDER_CAPACITY]Capture_Overlay_Provider
+    for provider in found[:provided_all(s,found[:])] {
+        if provider.draw!=nil {missing-=provider.draw(s,w,missing,lines)}
+    }
+    if missing!={} {
+        api.call_failf(call,api.INVALID_PARAMS,"debug %v: no plugin of the project draws it (Collision is of physics, Skeleton of animation); leave it out or add the plugin",missing)
+        return false
+    }
+    return true
 }
 
 // Window frames until no texture of what the window shows is pending or the
@@ -289,7 +358,7 @@ api_pixels_scale :: proc(pixels:[]u8,width,height:int,size:[2]i32,allocator:runt
 // through its camera, with the interfaces of the game and nothing of the editor; with window, the
 // Play of the user as the next frames of the window. wait: as app_capture_world, off the screen.
 @(private)
-api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,drawn:bool) {
+api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false,wait:=time.Duration(0),debug:[]gpu.Debug_Lines=nil) -> (pixels:[]u8,width,height:int,drawn:bool) {
     if r.owner==0 && window {
         before:=s.app.stats.frames_drawn
         api_frames(s,frames,0)
@@ -298,7 +367,7 @@ api_play_pixels :: proc(s:^Session,r:^Run,frames:int,window:=false,wait:=time.Du
     }
     input:=s.app.ui_input
     s.app.ui_input=run_ui_input(r,input)
-    pixels,width,height,drawn=host.app_capture_world(s.app,r.world,frames,allocator=s.app.allocator,wait=wait)
+    pixels,width,height,drawn=host.app_capture_world(s.app,r.world,frames,allocator=s.app.allocator,wait=wait,debug=debug)
     s.app.ui_input=input
     s.view_cut=true
     return

@@ -868,8 +868,9 @@ app_pending :: proc(app:^App) -> (pending:App_Pending) {
 // the editor when its loop is the one that draws world, as the window does.
 // wait above 0: its frames stream the textures of what it sees and it goes on
 // past frames, up to that long, while one is pending, then frames more for
-// them to settle. False: app_draw_problem says why. Between frames.
-app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
+// them to settle. debug: lines of the caller drawn over every frame, with a
+// size too. False: app_draw_problem says why. Between frames.
+app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:rawptr=nil,allocator:=context.allocator,wait:=time.Duration(0),debug:[]render.Debug_Lines=nil) -> (pixels:[]u8,width,height:int,ok:bool) {
     r:=app.renderer
     if r==nil || world==nil || app.drawable.x<=0 || app.drawable.y<=0 || size.x<0 || size.y<0 {return}
     ui_only:=app.ui_only
@@ -901,6 +902,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         if !alone {run_phase(app,loop,.Ui,{.Ui},world,editor)}
         offscreen_origin(app,ref)
         run_phase(app,loop,.Render,{.Render},world,editor)
+        if !alone {for lines in debug {extras_debug_lines_add(extras,lines)}}
         desc:=render.Frame_Desc{
             camera=app.camera,ui=extras.layers[:extras.layer_count],camera_cut=frame==0,inspection=app.inspection,time=app.time,
             views=app.views[:app.view_count],panels=extras.panels[:extras.panel_count],debug=extras.debug[:extras.debug_count],
@@ -908,7 +910,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
             offscreen=true,streamed=wait>0,detail=app.detail,
         }
         seen:=[1]render.Frame_View{{camera=app.camera,camera_cut=frame==0,rect={0,0,size.x,size.y},texture=texture,inspection=app.inspection}}
-        if alone {desc.ui,desc.views,desc.panels,desc.debug=nil,seen[:],nil,nil}
+        if alone {desc.ui,desc.views,desc.panels,desc.debug=nil,seen[:],nil,debug}
         drawn=render.renderer_frame(r,desc)
         extras.layer_count,extras.panel_count,extras.debug_count=0,0,0
         clear(&extras.instances)
