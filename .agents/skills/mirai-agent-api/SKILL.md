@@ -124,7 +124,7 @@ mirai rpc --project . render.inspect_entity '{"entity":"Player","world":"Game"}'
 #     distance, textures_pending, materials, skinned, skin_updated}
 
 # Console/validation/world problems + per-mesh/material draw cost + frame timings
-mirai rpc --project . engine.diagnostics '{}' --select validation_messages,problems
+mirai rpc --project . engine.diagnostics '{}' --select validation,problems
 mirai rpc --project . profile.cost '{}' --select meshes,materials
 mirai rpc --project . profile.capture '{"frames":30,"allow_limited":true}' --select summary
 ```
@@ -152,7 +152,7 @@ goal requires visual or gameplay judgment; it works over MCP or `mirai rpc`.
 # Launch detached breakaway session on a copy (survives shell exit, avoids user editor lock)
 eco run -- mirai session start --copy <project>
 # Forward the remote API port locally for direct mirai rpc / MCP calls
-eco tunnel <remote_port>
+eco forward 127.0.0.1:<local_port> 127.0.0.1:<remote_port>
 ```
 
 ## Workflow
