@@ -22,6 +22,7 @@ COMMANDS :: [?]Command{
     {"edit",EDIT_USAGE,"Generates, builds and opens the editor of a project",cmd_edit},
     {"play",PLAY_USAGE,"Generates, builds and plays a project without cooking its assets",cmd_play},
     {"play",PLAY_TEST_USAGE,"Plays the scenarios of a project (gameplay tests in tests/scenarios) in a headless editor and says which pass",cmd_play},
+    {"play",PLAY_AUDIT_USAGE,"Plays a project in a headless editor and audits it (problems, materials, animations, a cursor hidden over a menu, frame time): one line per red flag with its fix, PASS or FAIL",cmd_play},
     {"new",NEW_USAGE,"Creates a project from a template of templates/",cmd_new},
     {"plugin",PLUGIN_USAGE,"Adds, updates or removes the plugins from Git of a project, by address or from the catalog",cmd_plugin},
     {"package",PACKAGE_USAGE,"Packages this checkout as an installed engine, built --release with its tool, compiler, shader tools and plugin libraries, for building projects without building the engine",cmd_package},
