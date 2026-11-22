@@ -62,8 +62,7 @@ and `kai/refs_ddc.odin`.
   the index. A peer fetches the pages it lacks and merges by union of verified entries: an entry
   that does not verify is skipped and the rest are taken.
 - Every kind of entry has a body whose fixed part is a packed struct and whose tail holds strings;
-  whether a body is well formed is checked before the fold sees it. `GET /api/entries` on a node
-  lays the bytes out for clients that sign in a browser.
+  whether a body is well formed is checked before the fold sees it.
 - `Sig_Kind` is Ed25519 or WebAuthn. A WebAuthn entry carries the passkey's assertion; its author is
   the web key id (the BLAKE3 of the COSE key and the relying party), which the user's log records
   with `Web_Key_Add`. An entry therefore verifies alone and the fold says whose it is.

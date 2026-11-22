@@ -335,7 +335,6 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         {fmt.tprintf("/api/projects/%s/diff?from=%s&to=%s&path=src/a.txt",P,r1,r3),200,"\"op\":\"add\""},
         {fmt.tprintf("/api/projects/%s/diff?from=%s&to=%s&path=bin.dat",P,r1,r3),200,"\"binary\":true"},
         {fmt.tprintf("/api/projects/%s/evolution/%s",P,change),200,"\"interdiffs\""},
-        {"/api/entries",200,"\"author_ctx\""},
         {fmt.tprintf("/api/projects/%s/tree?path=secrets",P),404,""},
         {fmt.tprintf("/api/projects/%s/file?path=secrets/key.txt",P),404,""},
         {fmt.tprintf("/api/projects/%s/diff?from=%s&to=%s&path=secrets/key.txt",P,r1,r3),404,""},

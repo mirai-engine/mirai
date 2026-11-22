@@ -386,7 +386,7 @@ route_user_create :: proc(c:^Call) {
     body:=len(unsigned)>=size_of(kai.Entry_Head)?unsigned[size_of(kai.Entry_Head):]:nil
     id,cose,rp,_,parts:=kai.passkey_parts(body)
     if head.kind!=.Passkey_Genesis || !parts || string(id)!=string(credential) {
-        fail(c,400,"the entry is a Passkey_Genesis of the passkey that signs it: GET /api/entries lays it out")
+        fail(c,400,"the entry is a Passkey_Genesis of the passkey that signs it, as kai/log.odin lays it out")
         return
     }
     if rp!=c.h.desc.rp_id {
@@ -400,7 +400,7 @@ route_user_create :: proc(c:^Call) {
             challenge:=store.address_of_bytes(unsigned)
             fail(c,401,kai.webauthn_failure_text(kai.webauthn_verify(&key,rp,challenge[:],&a,true)))
         } else {
-            fail(c,400,"the genesis does not read: build it as GET /api/entries lays it out")
+            fail(c,400,"the genesis does not read: build it as Passkey_Genesis_Body of kai/log.odin lays it out")
         }
         return
     }

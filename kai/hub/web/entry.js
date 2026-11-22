@@ -224,19 +224,6 @@ export function draftCheck(bytes, action, author, now) {
     return ''
 }
 
-// Why the layout GET /api/entries describes is not the one this page builds;
-// '' when it is.
-export function layoutCheck(d) {
-    const differs = 'the node lays entries out otherwise than this page: reload it'
-    if (d?.entry?.size !== HEAD || d.constants?.magic !== MAGIC || d.constants?.version !== VERSION) return differs
-    if (d.constants.ENTRY_PARENTS_MAX !== PARENTS_MAX || d.constants.ENTRY_BODY_MAX !== BODY_MAX || d.bodies?.device_add?.size !== 64 + KEM_PUBLIC + 64) return differs
-    const tables = [[TYPES, d.types], [ROLES, d.enums?.role], [VERDICTS, d.enums?.verdict], [ANCHORS, d.enums?.anchor]]
-    for (const [ours, theirs] of tables) {
-        for (const name in ours) if (theirs?.[name] !== ours[name]) return differs
-    }
-    return ''
-}
-
 // The web key id of a passkey: what the entries it signs name as their author.
 export function webKeyId(cose, rpId) {
     return blake3(concat(u16(cose.length), cose, utf8(rpId)))

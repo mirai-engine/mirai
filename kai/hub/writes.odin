@@ -159,7 +159,7 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
         }
     }
     if e!=.None || !kai.body_valid(d.type,d.body) {
-        fail(c,400,"the fields do not make a valid body: GET /api/entries says what each holds")
+        fail(c,400,"the fields do not make a valid body: the body of each type is in kai/log.odin")
         return
     }
     return d,true

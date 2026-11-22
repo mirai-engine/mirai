@@ -49,8 +49,10 @@ const unsigned = E.entryUnsigned({
 expect(E.hex(unsigned) === u.unsigned, 'the Passkey_Genesis')
 for (const d of v.codes) expect(E.deviceLinkCode(bytes(d.device)) === d.code, `the link code of ${d.device}`)
 
-expect(E.layoutCheck(v.layout) === '', 'the layout GET /api/entries describes')
-expect(E.layoutCheck({...v.layout, types: {...v.layout.types, proposal_verdict: 99}}) !== '', 'another layout is refused')
+for (const [name, value] of Object.entries(v.constants)) {
+    if (typeof value === 'number') expect(E[name] === value, `${name} is the node's`)
+    else for (const k in E[name]) expect(E[name][k] === value[k], `${name}.${k} is the node's`)
+}
 
 const author = E.unhex(v.author, 32)
 const now = BigInt(v.now)

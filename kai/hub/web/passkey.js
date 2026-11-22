@@ -6,7 +6,7 @@
 import {api, refreshSession, state} from './api.js'
 import {blake3} from './blake3.js'
 import {
-    attestedCredential, b64, deviceLinkCode, draftCheck, entryUnsigned, equal, layoutCheck,
+    attestedCredential, b64, deviceLinkCode, draftCheck, entryUnsigned, equal,
     passkeyGenesisBody, SIG_WEBAUTHN, TYPES, unb64, unhex, webKeyId,
 } from './entry.js'
 
@@ -184,8 +184,6 @@ export async function signInByDevice() {
     await refreshSession()
 }
 
-let layout = ''
-
 // The author this session's passkey signs as: its web key id, from the COSE
 // key this browser made when it has it, else as the session names it.
 function author() {
@@ -204,10 +202,6 @@ export async function write(action) {
         const a = await api('/api/approvals', {kind: 'entry', draft: action})
         return approvalWait(a)
     }
-    if (!layout) {
-        layout = layoutCheck(await api('/api/entries')) || 'checked'
-    }
-    if (layout !== 'checked') throw new Error(layout)
     const expected = author()
     const draft = await api('/api/drafts', action)
     const bytes = unb64(draft.unsigned)
