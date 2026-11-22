@@ -814,4 +814,58 @@ a_project_of_10000_landed_moves_folds_without_reading_its_proposals :: proc(t:^t
     _,kept_other:=fold(t,&s,&o,{})
     testing.expect_value(t,kept_other,0)
     fmt.printfln("kai: a project of %d landed moves: built in %v, folded reading every proposal in %v, with the kept verdicts in %v, again from the proposals in %v",N,built,cold,warm,rebuilt)
+
+    // A verdict kept while the org's log lacked a removal is judged again once it comes: the
+    // removal is valid and voids nothing in the org, but the snapshot's witness of it now leaves
+    // out the removed member's approval, so the move no longer holds.
+    p:Test_Org
+    test_org_make(t,&p);defer test_org_destroy(&p)
+    carol:=&p.carol.devices[0]
+    bob=&p.bob.devices[0]
+    expect_ok(t,log_append(&p.org,.Policy_Set,body_make(Policy_Set_Body{project=p.project.id,approvals=1},strings_tail("main")),&p.alice.devices[0],14))
+    expect_ok(t,log_append(&p.org,.Role_Set,body_make(Member_Body{user=p.carol.log.id,role=.Writer}),&p.alice.devices[0],15))
+    before:=at(&p)
+    removal,re:=log_append(&p.org,.Member_Remove,body_make(Subject_Body{subject=p.carol.log.id}),&p.alice.devices[0],16)
+    testing.expect_value(t,re,Error.None)
+    org_refold(t,&p)
+    lacking:Log
+    log_init(&lacking);defer log_destroy(&lacking)
+    for &item in p.org.items {
+        if item.address!=removal {_,_=log_add(&lacking,item.bytes,false)}
+    }
+    behind:Org_Fold
+    testing.expect_value(t,org_fold(&behind,&lacking,p.users[:]),Error.None)
+    defer org_fold_destroy(&behind)
+    id:=random_id(Change_Id)
+    r:=revision_of(t,&s,bob,id,{},{{"b.txt","landed\n"}})
+    l:Log
+    log_init(&l);defer log_destroy(&l)
+    expect_ok(t,proposal_open(&l,p.project.id,"main","Late","",bob,20,{},before))
+    revised,ve:=proposal_revise(&l,{{id,r}},bob,21,{},before)
+    testing.expect_value(t,ve,Error.None)
+    approve,_:=proposal_verdict_body(.Approve,r)
+    expect_ok(t,log_append(&l,.Proposal_Verdict,approve,carol,22,{},before,{revised}))
+    expect_ok(t,log_append(&l,.Witness,witness_body(p.org.id,removal),bob,23,{},removal,{revised}))
+    _,le:=machine_log_put(&s,&l)
+    testing.expect_value(t,le,Error.None)
+    expect_ok(t,log_append(&p.project,.Bookmark_Move,move_body("main",{},r,l.id,test_heads(&l)),bob,30,{},before))
+    landed :: proc(t:^testing.T,s:^store.Store,project:^Log,org:^Org_Fold) -> (holds:bool,kept:int) {
+        snaps:=make([dynamic]^Proposal_Fold)
+        defer {project_snapshots_destroy(&snaps);delete(snaps)}
+        testing.expect_value(t,project_snapshots(s,project,org,&snaps),Error.None)
+        f:Project_Fold
+        testing.expect_value(t,project_fold(&f,project,org,snaps[:]),Error.None)
+        defer project_fold_destroy(&f)
+        targets:=make([dynamic]Revision,context.temp_allocator)
+        project_bookmark(&f,"main",&targets)
+        for pf in snaps {kept+=int(pf.kept)}
+        testing.expect_value(t,landings_keep(s,&f),Error.None)
+        return len(targets)==1,kept
+    }
+    holds,kept_behind:=landed(t,&s,&p.project,&behind)
+    testing.expect(t,holds && kept_behind==0,"without the removal the approval counts and the move holds")
+    holds,kept_behind=landed(t,&s,&p.project,&behind)
+    testing.expect(t,holds && kept_behind==1,"its verdict is kept")
+    holds,kept_behind=landed(t,&s,&p.project,&p.fold)
+    testing.expect(t,!holds && kept_behind==0,"once the removal comes the kept verdict is not read and the move does not hold")
 }
