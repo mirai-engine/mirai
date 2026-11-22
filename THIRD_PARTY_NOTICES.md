@@ -7,7 +7,8 @@ license. Each entry says where it ends up:
 - **game**: in the binary of a game built with Mirai;
 - **editor**: in the editor and the `mirai` tool, not in a game;
 - **package**: shipped as a separate program or file in the engine package
-  (`mirai package engine`).
+  (`mirai package engine`);
+- **node**: in the headless Kai node `mirai-kai` (`mirai build kai`).
 
 A game shipped with Mirai must carry the notices of the entries marked **game** that it uses. The
 texts of the licenses are at the [end](#license-texts).
@@ -23,6 +24,9 @@ texts of the licenses are at the [end](#license-texts).
 - **ufbx 0.23.1** (MIT or public domain; © 2020 Samuli Raivio), <https://github.com/ufbx/ufbx>.
   Editor.
 - **SQLite 3.54.1** (public domain), <https://www.sqlite.org>. Editor.
+- **musl 1.2.5** (MIT; © 2005-2020 Rich Felker, et al.), <https://musl.libc.org>, as Alpine's
+  `musl-dev` package builds it, fetched into `.deps/linux-arm64-musl`. Node: linked statically
+  into `bin/mirai-kai-linux-arm64` by `mirai build kai --target linux_arm64`.
 - **Odin** `base`, `core` and `vendor` (BSD-3-Clause; © 2016-2025 Ginger Bill),
   <https://odin-lang.org>. Game; the compiler, in the package.
 - **Slang** (Apache-2.0 with LLVM exception; © Slang contributors), <https://shader-slang.org>.
@@ -176,6 +180,10 @@ The files derived from Apache-2.0 work state their changes in their header.
 - **Poly Haven** HDRIs `kloofendal_48d_partly_cloudy`, `belfast_sunset` and `kloofendal_overcast`
   (CC0 1.0; Greg Zaal and Dimitrios Savva), <https://polyhaven.com/hdris>. The skies of the demo,
   in `demo/source/textures`.
+- **ISRG Root X1 and ISRG Root X2**, the root certificates of the Internet Security Research
+  Group (Let's Encrypt), published as trust anchors, <https://letsencrypt.org/certificates/>.
+  `kai/hub/roots`: what the Kai node and `mirai kai web approve` check HTTPS against. Editor and
+  node.
 - **Terrain3D 1.1** brush alphas (MIT; © 2023-2026 Cory Petkovsek, Roope Palmroos, and
   Contributors), <https://github.com/TokisanGames/Terrain3D>. Editor, with
   `plugins/terrain/editor/alphas/LICENSE`.

@@ -141,6 +141,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
     verb:=args[0]
     store_root,rest,store_ok:=store_take(args[1:])
     if !store_ok {fmt.eprintln("mirai kai: --store needs the folder of a store");return 2}
+    if verb=="serve" || verb=="web" {return kai_node(verb,store_root,rest)}
     a:Kai_Args
     if code:=kai_args(verb,rest,&a);code!=0 {return code}
     if code:=kai_refuse(verb,&a);code!=0 {return code}

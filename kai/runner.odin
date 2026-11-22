@@ -99,6 +99,7 @@ Runner_Desc :: struct {
     blocked:[]net.Address,       // tests: addresses the socket neither sends to nor hears from
     control:bool,                // let local processes reach it (control.odin): one runner per store
     host_seed:u64,               // tests: salts of the hosts; 0 from the system
+    ddc_quota:i64,               // a ddc node: bytes of derived data outputs it keeps; 0: no bound (node.odin)
     event:Runner_Event,          // what it did, as a line of text
     allocator:runtime.Allocator, // nil: context.allocator
 }
@@ -204,6 +205,9 @@ Runner :: struct {
     ddc:[dynamic]DDC_Lookup,
     control:Control_Server,
     active:f64,                 // when it last had something to do
+    ddc_use:[dynamic]DDC_Use,   // a ddc node: when each key was last asked through it
+    ddc_found,ddc_missing:int,  // lookups through this runner that ended
+    ddc_swept:f64,
 }
 
 @(private)
@@ -295,6 +299,7 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
     r.wants=make([dynamic]Relay_Want,allocator)
     r.observe_ports=make([dynamic]Node_Observe,allocator)
     r.ddc=make([dynamic]DDC_Lookup,allocator)
+    r.ddc_use=make([dynamic]DDC_Use,allocator)
     relay_init(&r.relay,RELAY_RATE,RELAY_BURST,allocator)
     r.start=time.tick_now()
     m:=r.machine
@@ -359,6 +364,7 @@ runner_free :: proc(r:^Runner) {
     delete(r.wants)
     delete(r.observe_ports)
     delete(r.ddc)
+    delete(r.ddc_use)
     r^={}
 }
 
@@ -490,6 +496,7 @@ runner_update :: proc(r:^Runner,wait:f64=0) {
     runner_hellos(r)
     runner_pair_step(r)
     runner_ddc_step(r)
+    runner_ddc_quota(r)
     if r.offer.active || r.join.active || len(r.ddc)>0 {r.active=r.now}
     for o in r.orgs {
         n,_:=agent_peers(&o.agent)
@@ -1416,6 +1423,11 @@ runner_pair_offer :: proc(r:^Runner,mode:Pair_Mode,org:Log_Id,role:Role,modes:No
     t.expires=time.now()._nsec+i64(PAIR_TICKET_SECONDS)*1_000_000_000
     list:=make([dynamic]net.Address,context.temp_allocator)
     runner_addresses(r,&list)
+    // A node or a device on this same machine reaches it by loopback, which
+    // a host firewall lets through where it drops the LAN address.
+    if loopback:=net.address_ip4(127,0,0,1,int(r.port));!slice.contains(list[:],loopback) {
+        inject_at(&list,min(len(list),TICKET_ADDRESSES-1),loopback)
+    }
     t.address_count=copy(t.addresses[:],list[:])
     return ticket_encode(t^,buffer),.None
 }
@@ -1727,11 +1739,13 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
         if o.id==org {served=o}
     }
     if served==nil {return .Missing,{}}
+    if .DDC in r.desc.modes {runner_ddc_touch(r,org,key)}
     records:=make([dynamic]DDC_Record,context.temp_allocator)
     ddc_lookup(&r.machine.store,org,key,&records)
     for d in records {
         if object_whole(&r.machine.store,d.output) {
             runner_ddc_end(r,org,key)
+            r.ddc_found+=1
             return .Found,d.output
         }
     }
@@ -1739,6 +1753,7 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
         if l.org!=org || l.key!=key || l.object {continue}
         if r.now-l.started>DDC_SECONDS {
             runner_ddc_end(r,org,key)
+            r.ddc_missing+=1
             return .Missing,{}
         }
         if len(records)>0 && l.output!=records[0].output {
@@ -1751,6 +1766,7 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
             for used in l.query_used {asking||=used}
             if !asking {
                 runner_ddc_end(r,org,key)
+                r.ddc_missing+=1
                 return .Missing,{}
             }
         }
