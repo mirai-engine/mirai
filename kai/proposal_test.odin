@@ -149,7 +149,7 @@ proposal_comments_reanchor_across_rewrites :: proc(t:^testing.T) {
     testing.expect_value(t,f.approvals,0)
 
     calls:=0
-    drivers:=[]Driver{{id=7,version=1,data=&calls,anchor=scene_anchor}}
+    drivers:=[]Driver{{data=&calls,anchor=scene_anchor}}
     places:=make([dynamic]Comment_Place,context.temp_allocator)
     testing.expect_value(t,proposal_reanchor(&s,&f,drivers,&places),Error.None)
     testing.expect_value(t,len(places),7)

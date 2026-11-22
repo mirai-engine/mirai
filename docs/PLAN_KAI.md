@@ -146,7 +146,7 @@ Turn_Ref :: struct #packed {
   ```odin
   Term :: struct #packed {address: store.Hash, size: u64, kind: Entry_Kind, reserved: [7]u8}
   Conflict_Head :: struct #packed {
-      magic: u32, version: u16, sides: u8, reserved: u8, driver: u32,
+      magic: u32, sides: u8, reserved: u8,
   } // + alternating terms: side0, base0, side1, base1, ..., side_n (sides <= 16)
   ```
   Equal `(side, base)` pairs cancel on write; a single remaining side collapses to a plain entry;

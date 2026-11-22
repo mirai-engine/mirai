@@ -73,14 +73,13 @@ IDLE_SECONDS :: 120            // an agent with nothing to do for this long may 
 @(private) BATCH :: 32
 @(private) Z_MAC :: 16
 
-Rung :: enum u8 {None,LAN,IPv6,Mapped,Punched,Relayed,Tcp}
+Rung :: enum u8 {None,LAN,IPv6,Punched,Relayed,Tcp}
 
 rung_text :: proc(r:Rung) -> string {
     switch r {
     case .None: return "connecting"
     case .LAN: return "lan"
     case .IPv6: return "ipv6"
-    case .Mapped: return "mapped"
     case .Punched: return "punched"
     case .Relayed: return "relayed"
     case .Tcp: return "relayed over tcp"
@@ -546,10 +545,6 @@ runner_run :: proc(r:^Runner,stop:^bool,idle_exit:bool) {
     }
 }
 
-// Seconds since the runner last had something to do: a peer, a pairing, a
-// request.
-runner_idle :: proc(r:^Runner) -> f64 {return r.now-r.active}
-
 // What changed in the agent of org o, as events: peers that came and went,
 // and what it took from them.
 @(private)
@@ -848,7 +843,6 @@ runner_ladder_peer :: proc(r:^Runner,o:^Runner_Org,p:^Runner_Peer) {
                 }
             }
             if p.announced_count>0 {dialed=runner_dial(r,o,p,rung_of(p.announced[0]),..p.announced[:min(p.announced_count,2)])}
-        case .Mapped:
         case .Punched:
             if !p.node && !p.hard && p.target.kind!=.None && planned {dialed=runner_dial(r,o,p,.Punched,p.target)}
         case .Relayed:
@@ -1390,7 +1384,7 @@ runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int)
 // Tells a and b how to meet; false while either was not seen.
 @(private)
 runner_plan :: proc(r:^Runner,a,b:Dh_Key) -> bool {
-    plan,ok:=relay_rendezvous(&r.relay,a,b,r.now)
+    plan,ok:=relay_rendezvous(&r.relay,a,b)
     if !ok {return false}
     {
         for side in 0..<2 {

@@ -21,7 +21,6 @@ Conflict_Head :: struct #packed {
     magic:u32,
     sides:u8,
     reserved:u8,
-    driver:u32, // the driver that judged the sides, 0 for none
 }
 
 // A merge of values: adds are the sides, removes the bases between them;
@@ -63,10 +62,10 @@ terms_resolved :: proc(t:^Terms($T)) -> (value:T,resolved:bool) {
     return t.adds[0],true
 }
 
-conflict_encode :: proc(adds,removes:[]Term,driver:u32,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
+conflict_encode :: proc(adds,removes:[]Term,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
     if len(adds)<2 || len(adds)>CONFLICT_SIDES_MAX || len(removes)!=len(adds)-1 {return nil,.Invalid_Argument}
     w:=writer_make(allocator)
-    write_value(&w,Conflict_Head{magic=KAI_MAGIC,sides=u8(len(adds)),driver=driver})
+    write_value(&w,Conflict_Head{magic=KAI_MAGIC,sides=u8(len(adds))})
     for a,i in adds {
         write_value(&w,a)
         if i<len(removes) {write_value(&w,removes[i])}
@@ -77,27 +76,27 @@ conflict_encode :: proc(adds,removes:[]Term,driver:u32,allocator:=context.alloca
 
 // The terms of the bytes of a conflict, checked: its sides, every term, and
 // that it is simplified, so the same conflict always has one address.
-conflict_decode :: proc(bytes:[]u8,t:^Terms(Term)) -> (driver:u32,error:Error) {
+conflict_decode :: proc(bytes:[]u8,t:^Terms(Term)) -> Error {
     clear(&t.adds)
     clear(&t.removes)
     r:=Reader{data=bytes}
     head:=read_value(&r,Conflict_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 {return 0,.Corrupt}
-    if head.sides<2 || head.sides>CONFLICT_SIDES_MAX {return 0,.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 {return .Corrupt}
+    if head.sides<2 || head.sides>CONFLICT_SIDES_MAX {return .Corrupt}
     count:=2*int(head.sides)-1
-    if len(bytes)-r.at!=count*size_of(Term) {return 0,.Corrupt}
+    if len(bytes)-r.at!=count*size_of(Term) {return .Corrupt}
     empty:=empty_address()
     for k in 0..<count {
         term:=read_value(&r,Term)
-        if !term_valid(term,empty) {return 0,.Corrupt}
+        if !term_valid(term,empty) {return .Corrupt}
         _,e:=append(k%2==0?&t.adds:&t.removes,term)
-        if e!=nil {return 0,.Out_Of_Memory}
+        if e!=nil {return .Out_Of_Memory}
     }
     before:=len(t.adds)
     terms_simplify(t)
-    if len(t.adds)!=before {return 0,.Corrupt}
-    if _,resolved:=terms_resolved(t);resolved {return 0,.Corrupt}
-    return head.driver,.None
+    if len(t.adds)!=before {return .Corrupt}
+    if _,resolved:=terms_resolved(t);resolved {return .Corrupt}
+    return .None
 }
 
 @(private)
@@ -112,14 +111,14 @@ term_valid :: proc "contextless" (term:Term,empty:store.Hash) -> bool {
     return false
 }
 
-conflict_put :: proc(s:^store.Store,t:^Terms(Term),driver:u32) -> (entry:Tree_Entry,error:Error) {
-    bytes:=conflict_encode(t.adds[:],t.removes[:],driver,context.temp_allocator) or_return
+conflict_put :: proc(s:^store.Store,t:^Terms(Term)) -> (entry:Tree_Entry,error:Error) {
+    bytes:=conflict_encode(t.adds[:],t.removes[:],context.temp_allocator) or_return
     entry.kind,entry.files,entry.conflicts=.Conflict,1,1
     entry.address=object_put(s,.Conflict,bytes) or_return
     return
 }
 
-conflict_get :: proc(s:^store.Store,address:store.Hash,t:^Terms(Term)) -> (driver:u32,error:Error) {
+conflict_get :: proc(s:^store.Store,address:store.Hash,t:^Terms(Term)) -> Error {
     bytes:=object_get(s,address,.Conflict,context.temp_allocator) or_return
     return conflict_decode(bytes,t)
 }
@@ -181,20 +180,17 @@ merge_terms :: proc(m:^Merger,t:^Terms(Term),path:string,depth:int) -> (entry:Tr
         }
     }
     if folders>0 && files==0 {return merge_folders(m,t,path,depth)}
-    driver:u32
     if folders==0 && len(t.adds)==2 && t.adds[0].address!={} && t.adds[1].address!={} {
         // Two sides of a file, the base absent when both added it: a driver may merge them.
         merged:=make([dynamic]u8,context.temp_allocator)
-        result:Driver_Result
-        kind:Entry_Kind
-        result,kind,driver=merge_file(m,t,path,&merged)
+        result,kind:=merge_file(m,t,path,&merged)
         if result==.Resolved {
             address,e:=store.put(m.s,merged[:])
             if e!=.None {return {},false,store_error(e)}
             return {kind=kind,address=address,size=u64(len(merged)),files=1},true,.None
         }
     }
-    entry=conflict_put(m.s,t,driver) or_return
+    entry=conflict_put(m.s,t) or_return
     return entry,true,.None
 }
 
@@ -300,27 +296,27 @@ join_path :: proc(a,b:string) -> string {
     return string(bytes)
 }
 
-// Asks the drivers to merge a file of two sides and one base: the result,
-// its kind, and the driver that judged it.
+// Asks the drivers to merge a file of two sides and one base: the result and
+// its kind.
 @(private)
-merge_file :: proc(m:^Merger,t:^Terms(Term),path:string,out:^[dynamic]u8) -> (result:Driver_Result,kind:Entry_Kind,driver:u32) {
+merge_file :: proc(m:^Merger,t:^Terms(Term),path:string,out:^[dynamic]u8) -> (result:Driver_Result,kind:Entry_Kind) {
     base,ours,theirs:=t.removes[0],t.adds[0],t.adds[1]
-    if ours.address=={} || theirs.address=={} {return .Unsupported,.File,0}
+    if ours.address=={} || theirs.address=={} {return .Unsupported,.File}
     // The executable bit merges as a value of its own.
     kind=ours.kind
     if ours.kind!=theirs.kind {
-        if base.address!={} && base.kind==ours.kind {kind=theirs.kind} else if base.address=={} || base.kind!=theirs.kind {return .Conflicted,.File,0}
+        if base.address!={} && base.kind==ours.kind {kind=theirs.kind} else if base.address=={} || base.kind!=theirs.kind {return .Conflicted,.File}
     }
     limit:=m.bytes_max>0 ? m.bytes_max : DRIVER_BYTES_MAX
-    if ours.size>u64(limit) || theirs.size>u64(limit) || base.size>u64(limit) {return .Unsupported,kind,0}
+    if ours.size>u64(limit) || theirs.size>u64(limit) || base.size>u64(limit) {return .Unsupported,kind}
     input:=Driver_Input{path=path,has_base=base.address!={}}
     e:Error
     if input.has_base {
-        if input.base,e=file_bytes(m.s,base.address,context.temp_allocator);e!=.None {return .Error,kind,0}
+        if input.base,e=file_bytes(m.s,base.address,context.temp_allocator);e!=.None {return .Error,kind}
     }
-    if input.ours,e=file_bytes(m.s,ours.address,context.temp_allocator);e!=.None {return .Error,kind,0}
-    if input.theirs,e=file_bytes(m.s,theirs.address,context.temp_allocator);e!=.None {return .Error,kind,0}
-    result,driver=drivers_merge(m.drivers,&input,out)
+    if input.ours,e=file_bytes(m.s,ours.address,context.temp_allocator);e!=.None {return .Error,kind}
+    if input.theirs,e=file_bytes(m.s,theirs.address,context.temp_allocator);e!=.None {return .Error,kind}
+    result=drivers_merge(m.drivers,&input,out)
     return
 }
 
@@ -354,7 +350,7 @@ conflict_materialize :: proc(m:^Merger,address:store.Hash,path:string,out:^[dyna
             for term in list {if term.address!={} && term.kind==.Folder {all_files=false}}
         }
         if all_files && t.adds[0].address!={} && t.adds[1].address!={} {
-            result,k,_:=merge_file(m,&t,path,out)
+            result,k:=merge_file(m,&t,path,out)
             if result==.Resolved || result==.Conflicted {return k,true,.None}
             clear(out)
         }

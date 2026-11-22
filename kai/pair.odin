@@ -638,22 +638,6 @@ pair_approve_device :: proc(p:^Pair,user:^Log,approver:^Identity,time:i64) -> (a
     return log_append(user,.Device_Add,body,approver,time)
 }
 
-// The entry that makes the user the pairing p met a member of the org.
-pair_approve_member :: proc(p:^Pair,org:^Log,approver:^Identity,role:Role,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
-    info,_,ok:=pair_info_decode(pair_info(p))
-    if !ok || info.mode!=.Member || p.step!=.P3 || org.kind!=.Org || info.log_id=={} || !role_valid(role) {return {},.Invalid_Argument}
-    return log_append(org,.Member_Add,body_make(Member_Body{user=info.log_id,role=role}),approver,time,author_ctx)
-}
-
-// The entry that adds the node the pairing p met to the org.
-pair_approve_node :: proc(p:^Pair,org:^Log,approver:^Identity,modes:Node_Modes,addresses:[]Node_Address,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
-    info,_,ok:=pair_info_decode(pair_info(p))
-    if !ok || info.mode!=.Node || p.step!=.P3 || org.kind!=.Org || len(addresses)>NODE_ADDRESSES_MAX {return {},.Invalid_Argument}
-    body:=body_make(Node_Add_Body{node=info.device,dh=pair_remote(p),modes=modes,addresses=u8(len(addresses))},mem.slice_to_bytes(addresses))
-    return log_append(org,.Node_Add,body,approver,time,author_ctx)
-}
-
-
 @(private)
 bytes_equal :: proc "contextless" (a,b:[]u8) -> bool {
     if len(a)!=len(b) {return false}

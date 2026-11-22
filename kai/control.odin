@@ -32,7 +32,7 @@ CONTROL_WAIT :: 0.2
 @(private) PEER_BYTES :: 32+32+3
 @(private) ORG_INFO_BYTES :: 32+2+2
 
-Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Addresses,Object_Ask}
+Control_Op :: enum u8 {None,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Addresses,Object_Ask}
 
 Control_Server :: struct {
     lock:Lock,
@@ -141,8 +141,6 @@ control_do :: proc(r:^Runner,op:u8,body:[]u8,w:^Answer_Writer) -> Error {
     if op>u8(max(Control_Op)) {return .Invalid_Argument}
     switch Control_Op(op) {
     case .None: return .Invalid_Argument
-    case .Ping:
-        if len(body)!=0 {return .Invalid_Argument}
     case .Changed:
         namespace,rest,ok:=take_text(body)
         name,tail,named:=take_text(rest)
@@ -332,12 +330,6 @@ control_changed :: proc(c:^Control,namespace,name:string) -> Error {
 // What Machine.changed calls in a process the runner is not in.
 control_machine_changed :: proc(c:^Control) -> Machine_Changed {
     return {data=c,procedure=proc(data:rawptr,namespace,name:string) {control_changed((^Control)(data),namespace,name)}}
-}
-
-control_ping :: proc(c:^Control) -> Error {
-    out:[FRAME_MAX]u8
-    _,e:=control_call(c,.Ping,nil,&out)
-    return e
 }
 
 // The runner's peers, and of each org it serves how far behind it is.

@@ -252,23 +252,6 @@ workspace_create :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identi
     return .None
 }
 
-// Another workspace of the repository of from at root, an empty folder: a new
-// change on the parent of from's working copy, written there.
-workspace_add :: proc(w:^Workspace,root:string,from:^Workspace,identity:Identity,options:=Workspace_Options{},allocator:=context.allocator) -> (error:Error) {
-    workspace_init(w,root,options,allocator) or_return
-    defer if error!=.None {workspace_close(w)}
-    s:=from.repo.s
-    repo_open(&w.repo,s,from.repo.id,random_id(Workspace_Id),identity,options.drivers,allocator) or_return
-    working:=change_get(s,view_workspace(&w.repo.view,from.repo.workspace),context.temp_allocator) or_return
-    parent:=len(working.parents)>0 ? working.parents[0] : view_workspace(&w.repo.view,from.repo.workspace)
-    revision:=workspace_add_to_view(&w.repo,w.repo.workspace,parent) or_return
-    empty:=tree_empty(s) or_return
-    w.state.repo,w.state.id,w.state.op,w.state.tree=w.repo.id,w.repo.workspace,w.repo.op,empty
-    state_save(w,&w.state) or_return
-    c:=change_get(s,revision,context.temp_allocator) or_return
-    return checkout(w,c.tree)
-}
-
 // Opens the workspace at root, taking its lock: Locked while another process
 // holds it.
 workspace_open :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity,options:=Workspace_Options{},allocator:=context.allocator) -> (error:Error) {
@@ -880,17 +863,6 @@ index_merge :: proc(index:^Stat_Index,updates:[]Index_Update) -> Error {
     clear(&index.rows)
     append(&index.rows,..merged[:])
     return .None
-}
-
-// Makes revision this workspace's working copy and writes its files, after a
-// snapshot keeps what was on disk.
-workspace_switch :: proc(w:^Workspace,revision:Revision) -> Error {
-    workspace_snapshot(w) or_return
-    c:=change_get(w.repo.s,revision,context.temp_allocator) or_return
-    tx:=tx_begin(&w.repo) or_return
-    workspace_point(&tx,w.repo.workspace,revision) or_return
-    tx_commit(&tx,.Workspace,"switch workspace") or_return
-    return checkout(w,c.tree)
 }
 
 // A new empty change on parents as this workspace's working copy, written.

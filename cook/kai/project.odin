@@ -331,7 +331,7 @@ conflict_sides :: proc(w:^vcs.Workspace,path:string,allocator:=context.temp_allo
     for m in w.state.conflicts {
         if m.path!=path {continue}
         t:=vcs.terms_make(vcs.Term,context.temp_allocator)
-        if _,e:=vcs.conflict_get(w.repo.s,m.conflict,&t);e!=.None || len(t.adds)!=2 {return}
+        if e:=vcs.conflict_get(w.repo.s,m.conflict,&t);e!=.None || len(t.adds)!=2 {return}
         read :: proc(s:^store.Store,term:vcs.Term,allocator:runtime.Allocator) -> (bytes:[]u8,ok:bool) {
             if term.address=={} || term.kind==.Folder {return nil,term.address=={}}
             b,e:=vcs.file_bytes(s,term.address,allocator)

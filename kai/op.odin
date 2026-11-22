@@ -23,7 +23,7 @@ import "mirai:store"
 // is what the store's sweep reclaims (store_prune). Undo does not cross a
 // prune.
 
-Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Abandon,Restore,Bookmark,Workspace,Import,Undo,Proposal,Prune}
+Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Restore,Bookmark,Workspace,Undo,Prune}
 
 OP_RETENTION :: i64(30*24*time.Hour) // ns of operations a prune keeps behind it
 LOCAL_PREFIX :: "kai-local-" // + repository id: the refs of its workspaces, which no peer is served
@@ -736,58 +736,6 @@ change_snapshot :: proc(r:^Repo,tree:store.Hash,plan:^Overlay_Plan=nil) -> (revi
     overlay_publish(r.overlay,r.s,plan,revision,&tx.refs) or_return
     tx_commit(&tx,.Snapshot,"snapshot working copy") or_return
     return
-}
-
-// Moves revision onto other parents.
-change_rebase :: proc(r:^Repo,revision:Revision,onto:[]Revision) -> (rewritten:Revision,error:Error) {
-    if len(onto)==0 || len(onto)>PARENTS_MAX {return {},.Invalid_Argument}
-    c:=change_get(r.s,revision,context.temp_allocator) or_return
-    from_tree:=parents_tree(r,c.parents) or_return
-    onto_tree:=parents_tree(r,onto) or_return
-    tree:=tree_rebase(&r.merger,c.tree,from_tree,onto_tree) or_return
-    tx:=tx_begin(r) or_return
-    c.parents=onto
-    c.tree=tree
-    c.written=time.now()._nsec
-    change_sign_as(&c,&r.identity) or_return
-    rewritten=change_put(r.s,&c,&r.identity) or_return
-    tx_rewrite(&tx,revision,rewritten) or_return
-    if _,e:=append(&tx.view.heads,rewritten);e!=nil {return {},.Out_Of_Memory}
-    tx_commit(&tx,.Rewrite,"rebase change") or_return
-    return
-}
-
-// Abandons revision: its children move onto its parents, a bookmark on it
-// moves to its first parent, and a workspace on it gets a new empty change on
-// its parents.
-change_abandon :: proc(r:^Repo,revision:Revision) -> Error {
-    c:=change_get(r.s,revision,context.temp_allocator) or_return
-    tx:=tx_begin(r) or_return
-    if _,e:=append(&tx.rewrites,Rewrite{revision,{}});e!=nil {return .Out_Of_Memory}
-    parents,e:=slice.clone(c.parents,context.temp_allocator)
-    if e!=nil {return .Out_Of_Memory}
-    tx.mapping[revision]=parents
-    for &h,k in tx.view.heads {
-        if h!=revision {continue}
-        ordered_remove(&tx.view.heads,k)
-        break
-    }
-    for p in c.parents {
-        if _,f:=append(&tx.view.heads,p);f!=nil {return .Out_Of_Memory}
-    }
-    for &b in tx.view.bookmarks {
-        parent:=len(c.parents)>0 ? c.parents[0] : Revision{}
-        for &a in b.terms.adds {if a==revision {a=parent}}
-        for &x in b.terms.removes {if x==revision {x=parent}}
-        terms_simplify(&b.terms)
-    }
-    bookmarks_prune(&tx.view)
-    for &w in tx.view.workspaces {
-        if w.revision!=revision {continue}
-        tree:=parents_tree(r,c.parents) or_return
-        w.revision=change_create(&tx,c.parents,tree,"") or_return
-    }
-    return tx_commit(&tx,.Abandon,"abandon change")
 }
 
 // Drops bookmarks that came down to nothing.

@@ -34,40 +34,27 @@ Anchor :: struct {
 }
 
 Driver :: struct {
-    id:u32,      // recorded in the conflicts it judges; not 0
-    version:u32, // raised when its results change
     data:rawptr,
     merge:proc(data:rawptr,input:^Driver_Input,out:^[dynamic]u8) -> Driver_Result,
     // known false: not a file this driver knows; moved false: what the anchor named is gone
     anchor:proc(data:rawptr,from,to:[]u8,anchor:^Anchor) -> (moved,known:bool),
 }
 
-DRIVER_TEXT :: 1
-DRIVER_BINARY :: 2
-
-driver_text :: proc() -> Driver {
-    return {id=DRIVER_TEXT,version=1,merge=text_merge}
-}
-
-driver_binary :: proc() -> Driver {
-    return {id=DRIVER_BINARY,version=1,merge=binary_merge}
-}
-
 // Asks the drivers, then text and binary, until one knows the file.
-drivers_merge :: proc(drivers:[]Driver,input:^Driver_Input,out:^[dynamic]u8) -> (result:Driver_Result,driver:u32) {
+drivers_merge :: proc(drivers:[]Driver,input:^Driver_Input,out:^[dynamic]u8) -> (result:Driver_Result) {
     for d in drivers {
         if d.merge==nil {continue}
         clear(out)
         result=d.merge(d.data,input,out)
-        if result!=.Unsupported {return result,d.id}
+        if result!=.Unsupported {return}
     }
-    builtin:=[2]Driver{driver_text(),driver_binary()}
+    builtin:=[2]Driver{{merge=text_merge},{merge=binary_merge}}
     for d in builtin {
         clear(out)
         result=d.merge(d.data,input,out)
-        if result!=.Unsupported {return result,d.id}
+        if result!=.Unsupported {return}
     }
-    return .Unsupported,0
+    return .Unsupported
 }
 
 // Moves an anchor with the first driver that knows the file, else as text

@@ -69,8 +69,6 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   every machine. The drivers given are asked in order, then the built-in text and binary ones; a
   driver that does not know the file says `Unsupported`, and no driver reads a file past
   `DRIVER_BYTES_MAX`.
-- A driver has an `id`, recorded in the conflicts it judges, and a `version`, raised when its
-  results change.
 - Text merges by lines with `std/diff`: a histogram diff over lines interned to ids in one table
   sized to the inputs, whose memory is linear in the lines. A range whose lines repeat too often
   to anchor becomes one replace hunk, so a hostile file costs a bounded search. The three-way
@@ -86,7 +84,7 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   Lines follow the file's diff; a structural anchor follows the first driver that knows the file
   and stays while its entity does.
 - A new driver is a `Driver` registered in `cook/kai` (or the project that owns the format). It
-  needs hostile-input tests and, when its result changes, a raised `version`.
+  needs hostile-input tests.
 
 ## Operations and undo
 

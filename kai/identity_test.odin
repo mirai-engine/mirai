@@ -611,16 +611,9 @@ pairing_links_a_device_and_adds_a_member :: proc(t:^testing.T) {
         r_info:=pair_info_encode({mode=.Member,log_id=org.id,device=alice.devices[0].key},"studio",&info[0])
         i_info:=pair_info_encode({mode=.Member,log_id=bob.log.id,device=bob.devices[0].key},"bob",&info[1])
         run(t,&i,&r,r_info,i_info,&buffer)
-        _,e:=pair_approve_member(&r,&org,&alice.devices[0],.Writer,6)
-        testing.expect_value(t,e,Error.None)
-        folds:[2]User_Fold
-        users:[2]^User_Fold
-        test_users_fold(t,{&alice,&bob},folds[:],users[:])
-        defer test_users_destroy(folds[:])
-        f:Org_Fold
-        testing.expect_value(t,org_fold(&f,&org,users[:]),Error.None)
-        defer org_fold_destroy(&f)
-        testing.expect_value(t,org_role(&f,bob.log.id),Role.Writer)
+        // What the runner adds as a member (runner_pair_answer) is the user the joining end named.
+        got,_,ok:=pair_info_decode(pair_info(&r))
+        testing.expect(t,ok && got.mode==.Member && got.log_id==bob.log.id && r.step==.P3)
     }
 }
 
@@ -971,15 +964,15 @@ relay_quota_and_forwarding :: proc(t:^testing.T) {
     relay_observe(&r,c,0,net.address_ip4(192,0,2,9,1000))
     relay_observe(&r,c,1,net.address_ip4(192,0,2,9,1001))
     testing.expect(t,relay_nat(&r,a)==.Cone && relay_nat(&r,c)==.Symmetric && relay_nat(&r,Dh_Key{0=9})==.Unknown)
-    plan,ok:=relay_rendezvous(&r,b,a,1)
-    testing.expect(t,ok && !plan.relay && plan.initiator==a && plan.responder==b && plan.initiator_target==cone && plan.at>1)
-    plan,ok=relay_rendezvous(&r,a,c,1)
+    plan,ok:=relay_rendezvous(&r,b,a)
+    testing.expect(t,ok && !plan.relay && plan.initiator==a && plan.responder==b && plan.initiator_target==cone)
+    plan,ok=relay_rendezvous(&r,a,c)
     testing.expect(t,ok && plan.relay,"a symmetric NAT is relayed, not punched")
 
     datagram:[1000]u8
     for &x,i in datagram {x=u8(i*7)}
     envelope:[RELAY_ENVELOPE+1000]u8
-    wrapped:=relay_wrap(b,datagram[:],envelope[:])
+    wrapped:=envelope_of(b,datagram[:],envelope[:])
     to,out,forwarded:=relay_forward(&r,a,wrapped,0)
     testing.expect(t,forwarded && to==b && slice.equal(out,datagram[:]))
     _,_,forwarded=relay_forward(&r,a,wrapped,0)
@@ -990,11 +983,11 @@ relay_quota_and_forwarding :: proc(t:^testing.T) {
     testing.expect(t,forwarded,"the quota refills")
     _,_,forwarded=relay_forward(&r,Dh_Key{0=9},wrapped,1)
     testing.expect(t,!forwarded,"a device not admitted sends nothing")
-    stranger:=relay_wrap(Dh_Key{0=9},datagram[:],envelope[:])
+    stranger:=envelope_of(Dh_Key{0=9},datagram[:],envelope[:])
     _,_,forwarded=relay_forward(&r,b,stranger,5)
     testing.expect(t,!forwarded)
     relay_remove(&r,b)
-    wrapped=relay_wrap(b,datagram[:],envelope[:])
+    wrapped=envelope_of(b,datagram[:],envelope[:])
     _,_,forwarded=relay_forward(&r,a,wrapped,10)
     testing.expect(t,!forwarded,"a removed device is not reached")
     h:=base.Hostile{state=5}
@@ -1056,4 +1049,15 @@ a_log_of_100000_entries_folds_and_appends_in_bounds :: proc(t:^testing.T) {
     testing.expect_value(t,e,Error.None)
     fmt.printfln("kai: a project's log of %d entries: built in %v, folded in %v, saved whole in %v (%d bytes); one append then writes %d bytes",N,built,folded,saved,whole,o.project.written)
     testing.expect(t,o.project.written<(LOG_PAGE_ENTRIES+2)*1024,"an append writes one leaf, its branches and the index")
+}
+
+// The envelope the runner sends to a relay (virtual_send): the frame's kind,
+// who it is for, then the datagram.
+@(private="file")
+envelope_of :: proc(to:Dh_Key,datagram,out:[]u8) -> []u8 {
+    out[0]=FRAME_RELAY
+    t:=to
+    copy(out[1:],t[:])
+    copy(out[RELAY_ENVELOPE:],datagram)
+    return out[:RELAY_ENVELOPE+len(datagram)]
 }

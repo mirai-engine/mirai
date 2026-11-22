@@ -319,21 +319,6 @@ keyring_envelopes :: proc(k:^Keyring_Fold,body:Epoch_Add_Body,allocator:=context
     return envelopes,.None
 }
 
-// Whether the epoch's key is wrapped for the device dh.
-keyring_wraps :: proc(k:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> bool {
-    for x in k.envelopes {
-        if x.epoch==epoch && x.envelope.dh==dh {return true}
-    }
-    body,ok:=keyring_epoch(k,epoch)
-    if !ok {return false}
-    envelopes,e:=keyring_envelopes(k,body)
-    if e!=.None {return false}
-    _,found:=slice.binary_search_by(envelopes,dh,proc(e:Envelope,dh:Dh_Key) -> slice.Ordering {
-        return e.dh==dh?.Equal:(dh_less(e.dh,dh)?.Less:.Greater)
-    })
-    return found
-}
-
 // Whether a write must wait for a rotation: no epoch yet, or the newest one
 // still wraps its key for a device that may no longer read the scope. An
 // epoch whose envelopes are not here yet is judged once they are.
@@ -963,13 +948,6 @@ overlay_record_get :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:R
     return r,a,.None
 }
 
-// Why the record of scope at commit does not read: None when it does, Missing
-// when there is none.
-overlay_record_error :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:Revision) -> Error {
-    _,_,e:=overlay_record_get(s,project,scope,commit,context.temp_allocator)
-    return e
-}
-
 // Signs and stores the record of scope at commit and points its ref at it: it
 // follows base, or the record the ref holds when that one is newer. With refs,
 // the ref is added to them for the caller to set with others in one commit.
@@ -1046,60 +1024,6 @@ overlay_rebase :: proc(s:^store.Store,identity:^Identity,project:Log_Id,scope:Sc
     r:=old
     r.commit,r.time=to,time
     return overlay_record_write(s,identity,&r,old_address,old.seq,refs)
-}
-
-// --- Reading an overlay ---
-
-// One opened overlay: its record, key and entries.
-Overlay :: struct {
-    record:Overlay_Record, // its objects in the temp allocator
-    address:store.Hash,
-    key:Epoch_Key,
-    entries:[dynamic]Overlay_Entry,
-    tree:[]u8, // what the paths point into
-    allocator:runtime.Allocator,
-}
-
-// Opens the overlay of the keyring's scope at commit with device's key.
-overlay_open :: proc(o:^Overlay,s:^store.Store,k:^Keyring_Fold,device:^Overlay_Device,commit:Revision,allocator:=context.allocator) -> (error:Error) {
-    o^={allocator=allocator}
-    o.entries=make([dynamic]Overlay_Entry,allocator)
-    defer if error!=.None {overlay_close(o)}
-    // One store per value until odin-lang/Odin#7937.
-    record,address:=overlay_record_get(s,k.project,k.scope,commit,context.temp_allocator) or_return
-    o.record=record
-    o.address=address
-    o.key=keyring_epoch_key(k,device,o.record.epoch) or_return
-    sealed:=overlay_get(s,o.record.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
-    o.tree=tree_open(sealed,k.project,k.scope,o.record.epoch,&o.key,&o.entries,allocator) or_return
-    // The record names exactly the tree's file objects.
-    objects:=make([dynamic]store.Hash,context.temp_allocator)
-    for e in o.entries {
-        if e.object!={} && !slice.contains(objects[:],e.object) {append(&objects,e.object)}
-    }
-    slice.sort_by(objects[:],hash_less)
-    if !slice.equal(objects[:],o.record.objects) {return .Corrupt}
-    return .None
-}
-
-overlay_close :: proc(o:^Overlay) {
-    crypto.zero_explicit(&o.key,size_of(o.key))
-    if o.tree!=nil {crypto.zero_explicit(raw_data(o.tree),len(o.tree))}
-    delete(o.tree,o.allocator)
-    delete(o.entries)
-    o^={}
-}
-
-// The plaintext of the overlay's file at path, in allocator.
-overlay_file :: proc(o:^Overlay,s:^store.Store,path:string,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
-    for &e in o.entries {
-        if e.path!=path {continue}
-        z:Sealer
-        sealer_init(&z,context.temp_allocator) or_return
-        defer sealer_destroy(&z)
-        return open_file(&z,s,o.record.scope,o.record.epoch,&o.key,&e,allocator)
-    }
-    return nil,.Missing
 }
 
 // --- Routing a snapshot ---

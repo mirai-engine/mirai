@@ -9,9 +9,6 @@ import "mirai:project"
 import "mirai:std/base"
 import vcs "mirai:kai"
 
-DRIVER_ASSET :: 3
-DRIVER_ASSET_VERSION :: 1
-
 // What the asset driver reads documents with. It must outlive the drivers
 // made from it.
 Asset_Driver :: struct {
@@ -23,7 +20,7 @@ Asset_Driver :: struct {
 // changed apart is a conflict whose partial result keeps ours there. A file
 // that is not an asset is left to the next driver.
 driver :: proc(d:^Asset_Driver) -> vcs.Driver {
-    return {id=DRIVER_ASSET,version=DRIVER_ASSET_VERSION,data=d,merge=asset_merge,anchor=asset_anchor}
+    return {data=d,merge=asset_merge,anchor=asset_anchor}
 }
 
 // Tracks what a project owns: not its generated folder nor version control

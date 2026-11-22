@@ -170,17 +170,3 @@ conflict_settle :: proc(w:^vcs.Workspace,path:string) -> vcs.Error {
     }
     return .Invalid_Argument
 }
-
-// Resolves the conflict at path with no editor: the file written as
-// conflict_resolved says and settled.
-conflict_resolve :: proc(w:^vcs.Workspace,types:^asset.Types,path:string,whole:Resolve_Whole,theirs:[]string) -> vcs.Error {
-    bytes,removed,e:=conflict_resolved(w,types,path,whole,theirs)
-    if e!=.None {return e}
-    file:=project.path(w.root,path,allocator=context.temp_allocator)
-    if removed {
-        if os.exists(file) && os.remove(file)!=nil {return .Io}
-    } else if serial.file_write_atomic(file,bytes)!=.None {
-        return .Io
-    }
-    return conflict_settle(w,path)
-}

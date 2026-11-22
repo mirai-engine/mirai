@@ -176,7 +176,6 @@ Agent :: struct {
     peers:[AGENT_PEERS]Agent_Peer,
     tags:u64,
     logs:[dynamic]^Log,
-    user_folds:[dynamic]^User_Fold,
     user_list:[dynamic]^User_Fold,
     org:Org_Fold,
     folded:bool,                // org holds a fold
@@ -227,7 +226,6 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     if a.desc.allocator.procedure==nil {a.desc.allocator=context.allocator}
     allocator:=a.desc.allocator
     a.logs=make([dynamic]^Log,allocator)
-    a.user_folds=make([dynamic]^User_Fold,allocator)
     a.user_list=make([dynamic]^User_Fold,allocator)
     a.allowed=make([dynamic]Allowed,allocator)
     a.closure.identity=make([dynamic]store.Hash,allocator)
@@ -302,7 +300,6 @@ agent_destroy :: proc(a:^Agent) {
         free(l,a.desc.allocator)
     }
     delete(a.logs)
-    delete(a.user_folds)
     delete(a.user_list)
     delete(a.allowed)
     delete(a.behind)
@@ -323,11 +320,10 @@ agent_destroy :: proc(a:^Agent) {
 agent_folds_drop :: proc(a:^Agent) {
     if a.folded {org_fold_destroy(&a.org)}
     a.folded=false
-    for f in a.user_folds {
+    for f in a.user_list {
         user_fold_destroy(f)
         free(f,a.desc.allocator)
     }
-    clear(&a.user_folds)
     clear(&a.user_list)
 }
 
@@ -476,7 +472,6 @@ agent_refold :: proc(a:^Agent) {
             free(f,a.desc.allocator)
             continue
         }
-        append(&a.user_folds,f)
         append(&a.user_list,f)
     }
     if l:=agent_log(a,a.desc.org);l!=nil && len(l.items)>0 {
@@ -992,23 +987,6 @@ agent_tell :: proc(a:^Agent,namespace,name:string) {
     }
 }
 
-// Appends an entry this device signs to the log of id, saves it, tells the
-// peers and folds again: the entry's address.
-agent_append :: proc(a:^Agent,id:Log_Id,type:Entry_Type,body:[]u8,time:i64) -> (address:store.Hash,error:Error) {
-    l:=agent_log(a,id)
-    if l==nil {return {},.Missing}
-    identity:=a.desc.identity
-    ctx,org_ctx:store.Hash
-    if u:=agent_log(a,a.desc.user);u!=nil {
-        heads:=make([dynamic]store.Hash,context.temp_allocator)
-        if log_heads(u,&heads)==.None && len(heads)>0 {ctx=heads[0]}
-    }
-    if org_bound(l.kind) && a.folded {org_ctx=org_context(&a.org,a.desc.user)}
-    address=log_append(l,type,body,&identity,time,ctx,org_ctx) or_return
-    agent_saved(a,l) or_return
-    return
-}
-
 // Takes a log changed outside the agent (made, or given by a pairing): saves
 // it, tells the peers and folds again.
 agent_log_add :: proc(a:^Agent,l:^Log) -> Error {
@@ -1027,31 +1005,6 @@ agent_saved :: proc(a:^Agent,l:^Log) -> Error {
     exchange.ref_changed(&a.x,l.kind==.User?USER_NAMESPACE:LOG_NAMESPACE,log_name(l.id,&name),address)
     agent_refold(a)
     return .None
-}
-
-// Publishes this device's refs of a project and tells the peers.
-agent_publish_refs :: proc(a:^Agent,project:Log_Id,refs:[]Bookmark_Ref,time:i64) -> (address:store.Hash,error:Error) {
-    identity:=a.desc.identity
-    address=device_refs_publish(a.desc.store,project,&identity,refs,time) or_return
-    ns:[len(REFS_PREFIX)+64]u8
-    name:[32]u8
-    namespace:=refs_namespace(project,&ns)
-    exchange.ref_changed(&a.x,namespace,refs_name(identity.key,&name),address)
-    agent_closure(a)
-    members_ref(a,.Refs,namespace,address)
-    return
-}
-
-// Publishes what this device built for key and tells the peers.
-agent_publish_ddc :: proc(a:^Agent,key:store.Hash,objects:[]store.Hash,tainted:[]Scope_Id,time:i64) -> (nondeterministic:bool,error:Error) {
-    identity:=a.desc.identity
-    nondeterministic=ddc_publish(a.desc.store,a.desc.org,&identity,key,objects,tainted,time) or_return
-    ns:[len(DDC_PREFIX)+64]u8
-    name:[64]u8
-    namespace,hex:=ddc_namespace(a.desc.org,&ns),store.hex(key,&name)
-    agent_tell(a,namespace,hex)
-    if address,e:=store.ref_get(a.desc.store,namespace,hex);e==.None {members_ref(a,.DDC,namespace,address)}
-    return
 }
 
 // Merges what arrived.
@@ -1744,7 +1697,7 @@ walk_children :: proc(s:^store.Store,item:Walk_Item,b:^Walk_Buffers,stack:^[dyna
     case .Conflict:
         clear(&b.terms.adds)
         clear(&b.terms.removes)
-        if _,e:=conflict_get(s,item.address,&b.terms);e!=.None {return}
+        if e:=conflict_get(s,item.address,&b.terms);e!=.None {return}
         for list in ([2][]Term{b.terms.adds[:],b.terms.removes[:]}) {
             for t in list {append(stack,Walk_Item{t.address,t.kind==.Folder?.Folder:.File,false})}
         }
@@ -1832,7 +1785,7 @@ scoped_folder :: proc(s:^store.Store,address:store.Hash,prefix,scope:string,dept
             if !grant_covers(scope,path) {continue}
             clear(&terms.adds)
             clear(&terms.removes)
-            if _,ce:=conflict_get(s,entry.address,&terms);ce!=.None {continue}
+            if ce:=conflict_get(s,entry.address,&terms);ce!=.None {continue}
             append(present,entry.address)
             covered=true
             for list in ([2][]Term{terms.adds[:],terms.removes[:]}) {

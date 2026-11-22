@@ -474,8 +474,8 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     testing.expect_value(t,vcs.machine_keyrings(&bob.m.store,&pb.org,&rings,context.temp_allocator),vcs.Error.None)
     if testing.expect_value(t,len(rings),1) {
         device:=vcs.machine_overlay_device(&bob.m)
-        ov:vcs.Overlay
-        testing.expect(t,vcs.overlay_open(&ov,&bob.m.store,rings[0],&device,resealed,context.temp_allocator)!=.None,"nor does it open for him")
+        _,ke:=vcs.keyring_epoch_key(rings[0],&device,rings[0].epoch)
+        testing.expect(t,ke!=.None,"nor does the scope's epoch open for him")
     }
 
     // An anonymous peer reads what the shared bookmarks reach: none of the overlay's chunks are in it.

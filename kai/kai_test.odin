@@ -183,17 +183,17 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
 
     adds:=[]Term{{address={0=1},size=1,kind=.File},{address={0=2},size=2,kind=.File}}
     removes:=[]Term{{address={0=3},size=3,kind=.File}}
-    conflict_bytes,_:=conflict_encode(adds,removes,DRIVER_TEXT,context.temp_allocator)
+    conflict_bytes,_:=conflict_encode(adds,removes,context.temp_allocator)
     expect_refused(t,conflict_bytes,proc(b:[]u8) -> Error {
         terms:=terms_make(Term,context.temp_allocator)
-        _,e:=conflict_decode(b,&terms)
+        e:=conflict_decode(b,&terms)
         return e
     },"a conflict")
-    unsimplified,_:=conflict_encode(adds,[]Term{adds[1]},0,context.temp_allocator)
+    unsimplified,_:=conflict_encode(adds,[]Term{adds[1]},context.temp_allocator)
     terms:=terms_make(Term,context.temp_allocator)
-    _,e=conflict_decode(unsimplified,&terms)
+    e=conflict_decode(unsimplified,&terms)
     testing.expect_value(t,e,Error.Corrupt)
-    _,e=conflict_encode(adds[:1],nil,0,context.temp_allocator)
+    _,e=conflict_encode(adds[:1],nil,context.temp_allocator)
     testing.expect_value(t,e,Error.Invalid_Argument)
 
     v:View
@@ -542,7 +542,7 @@ a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: pr
     for op in old {testing.expectf(t,object_present(&f.s,op)==(op==before),"%v: only the operation the workspace's ref names stays",op)}
     testing.expect(t,!object_present(&f.s,first),"a revision only old operations reached is reclaimed")
     testing.expect(t,object_present(&f.s,attached) && object_present(&f.s,attached_kept),"what a kept change attaches survives the sweep")
-    testing.expect_value(t,overlay_record_error(&f.s,{0=7},{0=7},first),Error.Missing)
+    testing.expect_value(t,record_error(&f.s,{0=7},{0=7},first),Error.Missing)
     testing.expect(t,!object_present(&f.s,gone_tree),"the overlay of a revision the prune let go goes with it")
     held,_,he:=overlay_record_get(&f.s,{0=7},{0=7},kept,context.temp_allocator)
     testing.expect(t,he==.None && held.tree_root==newer_tree && object_present(&f.s,newer_tree),"the record a kept revision's ref names stays whole")
@@ -814,7 +814,7 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     cut_first,cut_second,ce:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&why)
     testing.expect_value(t,ce,Error.Io)
     testing.expect(t,b.repo.view_address==before,"the view is the one before the cut split")
-    testing.expect(t,cut_first!={} && overlay_record_error(&f.s,o.project.id,scope,cut_first)==.Missing && overlay_record_error(&f.s,o.project.id,scope,cut_second)==.Missing,"no overlay record of the cut split was set")
+    testing.expect(t,cut_first!={} && record_error(&f.s,o.project.id,scope,cut_first)==.Missing && record_error(&f.s,o.project.id,scope,cut_second)==.Missing,"no overlay record of the cut split was set")
     first,second,se:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&why)
     if !testing.expectf(t,se==.None,"%v %s",se,why) {return}
     after:=b.repo.view_address
@@ -944,4 +944,90 @@ kai_imports_stay_engine_agnostic :: proc(t:^testing.T) {
         }
     }
     testing.expect(t,sources>5)
+}
+
+// Moves revision onto other parents.
+change_rebase :: proc(r:^Repo,revision:Revision,onto:[]Revision) -> (rewritten:Revision,error:Error) {
+    if len(onto)==0 || len(onto)>PARENTS_MAX {return {},.Invalid_Argument}
+    c:=change_get(r.s,revision,context.temp_allocator) or_return
+    from_tree:=parents_tree(r,c.parents) or_return
+    onto_tree:=parents_tree(r,onto) or_return
+    tree:=tree_rebase(&r.merger,c.tree,from_tree,onto_tree) or_return
+    tx:=tx_begin(r) or_return
+    c.parents=onto
+    c.tree=tree
+    c.written=time.now()._nsec
+    change_sign_as(&c,&r.identity) or_return
+    rewritten=change_put(r.s,&c,&r.identity) or_return
+    tx_rewrite(&tx,revision,rewritten) or_return
+    if _,e:=append(&tx.view.heads,rewritten);e!=nil {return {},.Out_Of_Memory}
+    tx_commit(&tx,.Rewrite,"rebase change") or_return
+    return
+}
+
+// Abandons revision: its children move onto its parents, a bookmark on it
+// moves to its first parent, and a workspace on it gets a new empty change on
+// its parents.
+change_abandon :: proc(r:^Repo,revision:Revision) -> Error {
+    c:=change_get(r.s,revision,context.temp_allocator) or_return
+    tx:=tx_begin(r) or_return
+    if _,e:=append(&tx.rewrites,Rewrite{revision,{}});e!=nil {return .Out_Of_Memory}
+    parents,e:=slice.clone(c.parents,context.temp_allocator)
+    if e!=nil {return .Out_Of_Memory}
+    tx.mapping[revision]=parents
+    for &h,k in tx.view.heads {
+        if h!=revision {continue}
+        ordered_remove(&tx.view.heads,k)
+        break
+    }
+    for p in c.parents {
+        if _,f:=append(&tx.view.heads,p);f!=nil {return .Out_Of_Memory}
+    }
+    for &b in tx.view.bookmarks {
+        parent:=len(c.parents)>0 ? c.parents[0] : Revision{}
+        for &a in b.terms.adds {if a==revision {a=parent}}
+        for &x in b.terms.removes {if x==revision {x=parent}}
+        terms_simplify(&b.terms)
+    }
+    bookmarks_prune(&tx.view)
+    for &w in tx.view.workspaces {
+        if w.revision!=revision {continue}
+        tree:=parents_tree(r,c.parents) or_return
+        w.revision=change_create(&tx,c.parents,tree,"") or_return
+    }
+    return tx_commit(&tx,.Rewrite,"abandon change")
+}
+
+// Another workspace of the repository of from at root, an empty folder: a new
+// change on the parent of from's working copy, written there.
+workspace_add :: proc(w:^Workspace,root:string,from:^Workspace,identity:Identity,options:=Workspace_Options{},allocator:=context.allocator) -> (error:Error) {
+    workspace_init(w,root,options,allocator) or_return
+    defer if error!=.None {workspace_close(w)}
+    s:=from.repo.s
+    repo_open(&w.repo,s,from.repo.id,random_id(Workspace_Id),identity,options.drivers,allocator) or_return
+    working:=change_get(s,view_workspace(&w.repo.view,from.repo.workspace),context.temp_allocator) or_return
+    parent:=len(working.parents)>0 ? working.parents[0] : view_workspace(&w.repo.view,from.repo.workspace)
+    revision:=workspace_add_to_view(&w.repo,w.repo.workspace,parent) or_return
+    empty:=tree_empty(s) or_return
+    w.state.repo,w.state.id,w.state.op,w.state.tree=w.repo.id,w.repo.workspace,w.repo.op,empty
+    state_save(w,&w.state) or_return
+    c:=change_get(s,revision,context.temp_allocator) or_return
+    return checkout(w,c.tree)
+}
+
+// Makes revision this workspace's working copy and writes its files, after a
+// snapshot keeps what was on disk.
+workspace_switch :: proc(w:^Workspace,revision:Revision) -> Error {
+    workspace_snapshot(w) or_return
+    c:=change_get(w.repo.s,revision,context.temp_allocator) or_return
+    tx:=tx_begin(&w.repo) or_return
+    workspace_point(&tx,w.repo.workspace,revision) or_return
+    tx_commit(&tx,.Workspace,"switch workspace") or_return
+    return checkout(w,c.tree)
+}
+
+@(private="file")
+record_error :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:Revision) -> Error {
+    _,_,e:=overlay_record_get(s,project,scope,commit,context.temp_allocator)
+    return e
 }

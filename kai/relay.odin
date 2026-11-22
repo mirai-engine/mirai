@@ -12,7 +12,6 @@ import net "mirai:net"
 // own token bucket of bytes.
 
 RELAY_DEVICES_MAX :: 1024
-RELAY_PUNCH_DELAY :: 0.25 // s from the plan to the punch, so both ends hear of it first
 RELAY_ENVELOPE :: 1+32    // RELAY_MAGIC, then the key of who it is for
 RELAY_MAGIC :: u8('R')
 RELAY_DATAGRAM_MAX :: 1+RUNNER_ROUTE+net.PACKET_BYTES // what it forwards: a net datagram with the runner's route
@@ -43,7 +42,6 @@ Relay :: struct {
 Punch_Plan :: struct {
     initiator,responder:Dh_Key,
     initiator_target,responder_target:net.Address, // where each one sends
-    at:f64,
     relay:bool,
 }
 
@@ -106,24 +104,14 @@ dh_less :: proc "contextless" (a,b:Dh_Key) -> bool {
 
 // How a and b should meet. Not ok when either is not admitted or was not
 // seen yet.
-relay_rendezvous :: proc(r:^Relay,a,b:Dh_Key,now:f64) -> (plan:Punch_Plan,ok:bool) {
+relay_rendezvous :: proc(r:^Relay,a,b:Dh_Key) -> (plan:Punch_Plan,ok:bool) {
     ka,kb:=relay_find(r,a),relay_find(r,b)
     if ka<0 || kb<0 || a==b || !r.devices[ka].seen[0] || !r.devices[kb].seen[0] {return}
     if dh_less(b,a) {ka,kb=kb,ka}
     first,second:=&r.devices[ka],&r.devices[kb]
-    plan={initiator=first.dh,responder=second.dh,initiator_target=second.observed[0],responder_target=first.observed[0],at=now+RELAY_PUNCH_DELAY}
+    plan={initiator=first.dh,responder=second.dh,initiator_target=second.observed[0],responder_target=first.observed[0]}
     plan.relay=relay_nat(r,first.dh)==.Symmetric || relay_nat(r,second.dh)==.Symmetric
     return plan,true
-}
-
-// An envelope of datagram for the device to, in out: its bytes.
-relay_wrap :: proc(to:Dh_Key,datagram,out:[]u8) -> []u8 {
-    if len(out)<RELAY_ENVELOPE+len(datagram) {return nil}
-    out[0]=RELAY_MAGIC
-    t:=to
-    copy(out[1:],t[:])
-    copy(out[RELAY_ENVELOPE:],datagram)
-    return out[:RELAY_ENVELOPE+len(datagram)]
 }
 
 // Forwards an envelope from a device: who it is for and the datagram, as it

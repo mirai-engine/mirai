@@ -891,7 +891,7 @@ join_merge :: proc(plan:^Plan,s:^store.Store,e:^vcs.File,w:^Write,target,temp:st
     if theirs_error!=nil {return false}
     input:=vcs.Driver_Input{path=e.path,base=origin,ours=ours,theirs=theirs,has_base=true}
     out:=make([dynamic]u8,context.temp_allocator)
-    if result,_:=vcs.drivers_merge(plan.drivers,&input,&out);result!=.Resolved {return false}
+    if vcs.drivers_merge(plan.drivers,&input,&out)!=.Resolved {return false}
     return os.write_entire_file(temp,out[:])==nil
 }
 
