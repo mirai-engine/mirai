@@ -552,3 +552,13 @@ kai_dialog_close :: proc(s:^Session) {
     }
     if s.gui!=nil && s.gui.modal==.Kai {s.gui.modal=.None}
 }
+
+// The org of the open project while the mesh runs; zero otherwise.
+kai_mesh_org :: proc(s:^Session) -> vcs.Log_Id {
+    if s.kai==nil || s.kai.state==nil {return {}}
+    t:=&s.kai.state.team
+    if !t.opened || !t.connected {return {}}
+    _,org,linked:=vcs.machine_project_of(&t.machine,s.kai.state.project.workspace.repo.id)
+    if !linked {return {}}
+    return org
+}

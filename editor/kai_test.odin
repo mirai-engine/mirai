@@ -394,13 +394,13 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     // first one's import keeps, the second one's takes without building it.
     org:=kai_mesh_org(a)
     testing.expect(t,org!={} && kai_mesh_org(b)==org,"both share the org's derived data")
-    built,taken:=new(Kai_Mesh_Import),new(Kai_Mesh_Import)
-    defer {free(built);free(taken)}
-    put_source,put_shared:=kai_mesh_import_open(built,a.store.root,org)
-    defer kai_mesh_import_close(built)
-    take_source,take_shared:=kai_mesh_import_open(taken,b.store.root,org)
-    defer kai_mesh_import_close(taken)
-    if !testing.expect(t,put_shared && take_shared,"an import opens the mesh's cache") {return}
+    put_source,put_close:=ka.peers_open(a.store.root,ka_.root)
+    take_source,take_close:=ka.peers_open(b.store.root,kb.root)
+    defer {
+        if put_close!=nil {put_close(put_source)}
+        if take_close!=nil {take_close(take_source)}
+    }
+    if !testing.expect(t,put_close!=nil && take_close!=nil,"an import opens the mesh's cache") {return}
     KEY,VERSION :: 0x5eed,3
     pixels:=make([]u8,4*4*4,context.temp_allocator)
     for &p,i in pixels {p=u8(i)}
