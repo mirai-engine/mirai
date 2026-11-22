@@ -26,7 +26,14 @@ Test_Node :: struct {
     held_at:f64,           // when they are sent
     held_host:^wire.Host,
     held_connection:wire.Connection,
+    added:u64,             // peers added: each is tagged with its count
+    restricted:u64,        // tags of the peers added restricted, a bit each
+    heard:[8]Test_Heard,   // ref changes peers told, in order; past 8 left out
+    heard_count:int,
 }
+
+@(private)
+Test_Heard :: struct {tag:u64,namespace,name:string,address:store.Hash}
 
 // What a scripted peer does with the asks it gets.
 @(private)
@@ -171,7 +178,9 @@ test_command :: proc(w:^Test_World,n:^Test_Node,h:^wire.Host,command:wire.Comman
     }
     if !n.open {return}
     #partial switch command.kind {
-    case .Connected: peer_add(&n.x,h,command.connection)
+    case .Connected:
+        n.added+=1
+        peer_add(&n.x,h,command.connection,n.added,n.restricted&(1<<n.added)!=0)
     case .Disconnected: peer_remove(&n.x,h,command.connection)
     case .Message:
         if receive(&n.x,h,command) {return}
