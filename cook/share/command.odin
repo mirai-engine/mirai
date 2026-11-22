@@ -302,16 +302,18 @@ offer_refresh :: proc(n:^Node) -> store.Error {
 library_served :: proc(s:^store.Store,root:string,served:^[dynamic]store.Hash,cancel:^bool) {
     list,_,error:=asset.packages_load(root,context.temp_allocator)
     if error!=.None {return}
+    index:=store.read_index(s)
     digits:[64]u8
     for &entry in list.packages {
         if offer_cancelled(cancel) {return}
         append(served,entry.manifest)
-        p,package_error:=asset.package_load(s,root,&entry,context.temp_allocator)
+        p,package_error:=asset.package_load(&index,root,&entry,context.temp_allocator)
         if package_error!=.None {continue}
-        hash,ref_error:=store.ref_get(s,asset.REF_BUILDS,store.hex(asset.build_select(entry.manifest,&p),&digits))
+        hash,ref_error:=store.ref_get(&index,asset.REF_BUILDS,
+            store.hex(asset.build_select(entry.manifest,&p),&digits))
         if ref_error!=.None {continue}
         append(served,hash)
-        b,build_error:=asset.build_get(s,hash,context.temp_allocator)
+        b,build_error:=asset.build_get(&index,hash,context.temp_allocator)
         if build_error!=.None {continue}
         objects:=asset.Build_Objects{build=&b,with_thumbnails=true}
         for address in asset.build_object_next(&objects) {append(served,address)}
