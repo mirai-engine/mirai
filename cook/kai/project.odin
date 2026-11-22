@@ -247,13 +247,16 @@ undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_a
     return undone,files_changed(w,before,changed,allocator)
 }
 
-// Gives the working copy the files of another change and writes them.
+// Gives the working copy the files of another change and writes them, with
+// the private files of that change this device reads: what public files
+// changed.
 restore :: proc(w:^vcs.Workspace,from:vcs.Revision,changed:^[dynamic]string,allocator:=context.temp_allocator) -> vcs.Error {
     r:=&w.repo
     vcs.workspace_snapshot(w) or_return
-    before:=w.state.tree
-    vcs.change_restore(r,vcs.repo_working(r),from) or_return
+    before,working:=w.state.tree,vcs.repo_working(r)
+    vcs.change_restore(r,working,from) or_return
     vcs.workspace_update(w) or_return
+    vcs.overlay_checkout(w.options.overlay,r.s,w.root,working,from) or_return
     return files_changed(w,before,changed,allocator)
 }
 

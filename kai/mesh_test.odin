@@ -2,6 +2,7 @@ package kai
 
 import "core:fmt"
 import "core:testing"
+import "core:time"
 import "mirai:exchange"
 import net "mirai:net"
 import "mirai:std/base"
@@ -256,4 +257,129 @@ anonymous_peer_gets_only_the_public_closure :: proc(t:^testing.T) {
     wanted:=[2]Revision{public,private}
     testing.expect(t,mesh_until(m,5,&wanted,settled),"the public change arrives, the other is missing")
     testing.expect(t,!object_present(&m.stores[1],private))
+}
+
+@(private="file")
+grant_issue :: proc(t:^testing.T,a:^Agent,o:^Test_Org,holder:Key,dh:Dh_Key,rights:Rights,path:string,not_after:i64) {
+    g:=Grant{head={org=o.org.id,org_head=test_heads(agent_log(a,o.org.id))[0],issuer=o.alice.devices[0].key,subject_dh=dh,subject_key=holder,rights=rights,project=o.project.id,not_before=time.now()._nsec-i64(time.Second),not_after=not_after},path=path}
+    bytes,e:=grant_encode(&g,&o.alice.devices[0],context.temp_allocator)
+    testing.expect_value(t,e,Error.None)
+    _,e=agent_append(a,o.org.id,.Grant,bytes,40)
+    testing.expect_value(t,e,Error.None)
+}
+
+@(private="file")
+peer_class :: proc(a:^Agent,dh:Dh_Key) -> Agent_Class {
+    for p in a.peers {
+        if p.used && p.dh==dh {return p.class}
+    }
+    return .None
+}
+
+// A change of the files of paths, each with its text, over parent.
+@(private="file")
+grant_change :: proc(t:^testing.T,s:^store.Store,author:^Identity,parent:Revision,paths:[]string,texts:[]string) -> Revision {
+    files:=make([dynamic]File,context.temp_allocator)
+    for p,i in paths {
+        address,e:=store.put(s,transmute([]u8)texts[i])
+        testing.expect_value(t,e,store.Error.None)
+        append(&files,File{path=p,kind=.File,address=address,size=u64(len(texts[i]))})
+    }
+    root,te:=tree_build(s,files[:])
+    testing.expect_value(t,te,Error.None)
+    parents:=[]Revision{parent}
+    c:=Change{id=random_id(Change_Id),tree=root,author=author.key,created=1,written=1,parents=parent=={}?nil:parents,description="work"}
+    revision,ce:=change_put(s,&c,author)
+    testing.expect_value(t,ce,Error.None)
+    testing.expect_value(t,store.commit(s),store.Error.None)
+    return revision
+}
+
+// A holder outside the org, admitted under a grant of read and write on the
+// project's docs/ folder, gets the project's changes and the files under
+// docs/, never one outside it; alice takes its refs while its changes stay
+// under docs/ and refuses them once one does not. A second holder, whose
+// grant ends two seconds after it is issued, is cut off at that moment.
+@(test)
+a_grant_holder_reads_and_writes_only_its_scope_until_it_ends :: proc(t:^testing.T) {
+    m:=new(Mesh)
+    defer free(m)
+    if !mesh_init(t,m,"kai-mesh-grant") {return}
+    defer mesh_destroy(m)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[0],l)}
+    alice:=&o.alice.devices[0]
+    base:=grant_change(t,&m.stores[0],alice,{},{"docs/guide.txt","secret/plan.txt"},{"the guide","the plan"})
+    files:=make([dynamic]File,context.temp_allocator)
+    c,ce:=change_get(&m.stores[0],base,context.temp_allocator)
+    testing.expect_value(t,ce,Error.None)
+    testing.expect_value(t,tree_files(&m.stores[0],c.tree,&files,context.temp_allocator),Error.None)
+    guide,plan:=files[0].address,files[1].address
+    holder,late:=identity_make(),identity_make()
+    holder_dh,_:=net.dh_key()
+    late_dh,_:=net.dh_key()
+    if !mesh_start(t,m,0,alice^,o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
+    if !mesh_start(t,m,1,holder,holder_dh,{},o.org.id) {return}
+    if !mesh_start(t,m,2,late,late_dh,{},o.org.id) {return}
+    a,h:=&m.agents[0],&m.agents[1]
+    _,e:=agent_publish_refs(a,o.project.id,{{"main",base}},1)
+    testing.expect_value(t,e,Error.None)
+    grant_issue(t,a,&o,holder.key,Dh_Key(holder_dh.public),{.Read,.Write},"docs/",time.now()._nsec+i64(time.Hour))
+
+    testing.expect_value(t,agent_connect(h,Dh_Key(o.alice.dhs[0].public),false,net.address_memory(mesh_endpoint(0))),Error.None)
+    admitted :: proc(m:^Mesh,data:rawptr) -> bool {
+        return m.agents[1].folded && peer_class(&m.agents[0],(^Dh_Key)(data)^)==.Grant
+    }
+    holder_key:=Dh_Key(holder_dh.public)
+    if !testing.expect(t,mesh_until(m,10,&holder_key,admitted),"the holder is admitted as Grant and reads the logs") {return}
+
+    for address in ([3]store.Hash{base,guide,plan}) {testing.expect_value(t,exchange.want(&h.x,address),exchange.Error.None)}
+    read :: proc(m:^Mesh,data:rawptr) -> bool {
+        w:=(^[3]store.Hash)(data)
+        base,_:=exchange.progress(&m.agents[1].x,w[0])
+        guide,_:=exchange.progress(&m.agents[1].x,w[1])
+        plan,_:=exchange.progress(&m.agents[1].x,w[2])
+        return base.state==.Complete && guide.state==.Complete && plan.state==.Missing
+    }
+    wanted:=[3]store.Hash{base,guide,plan}
+    testing.expect(t,mesh_until(m,5,&wanted,read),"the change and docs/guide.txt arrive; secret/plan.txt does not")
+    testing.expect(t,!object_present(&m.stores[1],plan))
+    for address in wanted {exchange.forget(&h.x,address)}
+
+    // Its edit under docs/ is taken; one that changes secret/ is not.
+    inside:=grant_change(t,&m.stores[1],&holder,base,{"docs/guide.txt","secret/plan.txt"},{"a better guide","the plan"})
+    outside:=grant_change(t,&m.stores[1],&holder,inside,{"docs/guide.txt","secret/plan.txt"},{"a better guide","another plan"})
+    first,pe:=agent_publish_refs(h,o.project.id,{{"main",inside}},1)
+    testing.expect_value(t,pe,Error.None)
+    Taken :: struct {project:Log_Id,holder:Key,refs:store.Hash}
+    taken:=Taken{o.project.id,holder.key,first}
+    accepted :: proc(m:^Mesh,data:rawptr) -> bool {
+        w:=(^Taken)(data)
+        ns:[len(REFS_PREFIX)+64]u8
+        name:[32]u8
+        return ref_is(&m.stores[0],refs_namespace(w.project,&ns),refs_name(w.holder,&name),w.refs)
+    }
+    testing.expect(t,mesh_until(m,5,&taken,accepted),"alice takes refs whose changes stay under docs/")
+    refused:=a.stats.refused
+    _,pe=agent_publish_refs(h,o.project.id,{{"main",outside}},2)
+    testing.expect_value(t,pe,Error.None)
+    more :: proc(m:^Mesh,data:rawptr) -> bool {return m.agents[0].stats.refused>(^int)(data)^}
+    testing.expect(t,mesh_until(m,5,&refused,more),"alice refuses refs with a change outside docs/")
+    ns:[len(REFS_PREFIX)+64]u8
+    name:[32]u8
+    testing.expect(t,ref_is(&m.stores[0],refs_namespace(o.project.id,&ns),refs_name(holder.key,&name),first),"the refs stay at the last taken")
+
+    // The late holder's grant ends two seconds from now: it is admitted, then
+    // cut off when the grant ends, not at the next change of the logs.
+    end:=time.now()._nsec+2*i64(time.Second)
+    grant_issue(t,a,&o,late.key,Dh_Key(late_dh.public),{.Read},"",end)
+    testing.expect_value(t,agent_connect(&m.agents[2],Dh_Key(o.alice.dhs[0].public),false,net.address_memory(mesh_endpoint(0))),Error.None)
+    late_key:=Dh_Key(late_dh.public)
+    granted :: proc(m:^Mesh,data:rawptr) -> bool {return peer_class(&m.agents[0],(^Dh_Key)(data)^)==.Grant}
+    if !testing.expect(t,mesh_until(m,10,&late_key,granted),"the late holder is admitted") {return}
+    testing.expect(t,time.now()._nsec<end,"admitted before its grant ends")
+    for time.now()._nsec<end+i64(time.Second) && peer_class(a,late_key)!=.None {mesh_step(m)}
+    testing.expect(t,time.now()._nsec>=end,"not cut off before its grant ends")
+    testing.expect_value(t,peer_class(a,late_key),Agent_Class.None)
 }

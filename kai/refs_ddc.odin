@@ -145,34 +145,115 @@ device_refs_publish :: proc(s:^store.Store,project:Log_Id,identity:^Identity,ref
     return address,.None
 }
 
-// Whether device may write the project: a device of a writer of the org.
-device_may_write :: proc(org:^Org_Fold,project:Log_Id,device:Key) -> bool {
-    if org_project_index(org,project)<0 {return false}
-    _,role:=org_device_role(org,device)
-    return role>=.Writer
+// Whether device may write the project at time: a device of a writer of the
+// org, or the signing key of a grant of the write right; scope is that
+// grant's path scope, empty for a writer.
+device_may_write :: proc(org:^Org_Fold,project:Log_Id,device:Key,time:i64) -> (scope:string,ok:bool) {
+    if org_project_index(org,project)<0 {return}
+    if _,role:=org_device_role(org,device);role>=.Writer {return "",true}
+    g,granted:=org_grant_right(org,device,.Write,project,time)
+    return g.path,granted
 }
 
 // Takes the Device_Refs record a peer gave at address, already in the store,
 // for the ref name it came under: signed, by a device that may write the
-// project, under its own name, and newer than the one held. The ref then
-// names it; changed is false when it was the one held.
-device_refs_accept :: proc(s:^store.Store,org:^Org_Fold,project:Log_Id,name:string,address:store.Hash) -> (changed:bool,error:Error) {
+// project now, under its own name, and newer than the one held. A grant
+// holder's record is taken only when the changes it signed under the
+// record's targets change only what its path scope covers; Missing, with what
+// to fetch appended to missing, while they are not all in the store. The ref
+// then names it; changed is false when it was the one held.
+device_refs_accept :: proc(s:^store.Store,org:^Org_Fold,project:Log_Id,name:string,address:store.Hash,now:i64,missing:^[dynamic]store.Hash=nil) -> (changed:bool,error:Error) {
     bytes:=object_get(s,address,.Device_Refs,context.temp_allocator) or_return
     r:=device_refs_decode(bytes,context.temp_allocator) or_return
     own:[32]u8
     if r.project!=project || refs_name(r.device,&own)!=name {return false,.Invalid_Argument}
-    if !signed_valid(bytes,r.device) || !device_may_write(org,project,r.device) {return false,.Unauthorized}
+    scope,writer:=device_may_write(org,project,r.device,now)
+    if !signed_valid(bytes,r.device) || !writer {return false,.Unauthorized}
     ns:[len(REFS_PREFIX)+64]u8
     namespace:=refs_namespace(project,&ns)
+    known:[]Bookmark_Ref
     if held,e:=store.ref_get(s,namespace,name);e==.None {
         if held==address {return false,.None}
         old,_,old_error:=device_refs_get(s,project,r.device,context.temp_allocator)
         if old_error==.None && r.seq<=old.seq {return false,.Rollback}
+        known=old.refs
     } else if e!=.Missing {
         return false,store_error(e)
     }
+    if scope!="" {
+        targets:=make([dynamic]Revision,context.temp_allocator)
+        stops:=make([dynamic]Revision,context.temp_allocator)
+        for b in r.refs {append(&targets,b.target)}
+        for b in known {append(&stops,b.target)}
+        grant_writes_within(s,scope,r.device,targets[:],stops[:],missing) or_return
+    }
     if e:=store.ref_set(s,namespace,name,address);e!=.None {return false,store_error(e)}
     return true,.None
+}
+
+// Whether the changes author signed under targets, down to known ones,
+// change only paths scope covers (grant_covers). A path counts as changed by
+// a change when it differs from every parent, so a merge does not answer for
+// what its parents brought. Unauthorized for one that changes another path;
+// Missing, with the changes and folders to fetch appended to missing, while
+// not all are in the store.
+grant_writes_within :: proc(s:^store.Store,scope:string,author:Key,targets,known:[]Revision,missing:^[dynamic]store.Hash) -> Error {
+    stack:=make([dynamic]Revision,context.temp_allocator)
+    seen:=make(map[Revision]bool,context.temp_allocator)
+    for k in known {seen[k]=true}
+    append(&stack,..targets)
+    lacking:=make([dynamic]store.Hash,context.temp_allocator)
+    diffs:=make([dynamic]Diff,context.temp_allocator)
+    outside:=make(map[string]int,context.temp_allocator)
+    for len(stack)>0 {
+        r:=pop(&stack)
+        if r=={} || seen[r] {continue}
+        seen[r]=true
+        bytes,e:=object_get(s,r,.Change,context.temp_allocator)
+        if e==.Missing {
+            append(&lacking,r)
+            continue
+        }
+        // Who signed it decides who answers for it: a forged author does not pass.
+        if e!=.None || !change_verify(bytes) {return .Unauthorized}
+        c,ce:=change_decode(bytes,context.temp_allocator)
+        if ce!=.None {return .Unauthorized}
+        if c.author!=author {continue}
+        clear(&outside)
+        parents:=len(c.parents)
+        before:=len(lacking)
+        for p in c.parents {
+            append(&stack,p)
+            pc,pe:=change_get(s,p,context.temp_allocator)
+            if pe==.Missing {
+                append(&lacking,p)
+                continue
+            }
+            if pe!=.None {return .Unauthorized}
+            clear(&diffs)
+            tree_diff(s,pc.tree,c.tree,&diffs,context.temp_allocator,&lacking) or_return
+            for d in diffs {
+                if !grant_covers(scope,d.path) {outside[d.path]+=1}
+            }
+        }
+        if parents==0 {
+            parents=1
+            clear(&diffs)
+            tree_diff(s,{},c.tree,&diffs,context.temp_allocator,&lacking) or_return
+            for d in diffs {
+                if !grant_covers(scope,d.path) {outside[d.path]+=1}
+            }
+        }
+        if len(lacking)>before {continue}
+        for _,n in outside {
+            if n==parents {return .Unauthorized}
+        }
+    }
+    if len(lacking)>0 {
+        if missing!=nil {append(missing,..lacking[:])}
+        return .Missing
+    }
+    return .None
 }
 
 // --- DDC ---

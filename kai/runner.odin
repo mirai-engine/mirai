@@ -93,7 +93,7 @@ Runner_Desc :: struct {
     observe_port:int,            // a relay node's second port, which tells a hard NAT; 0 lets the system choose
     beacon:bool,                 // send LAN beacons and listen for them on beacon_port
     beacon_port:int,             // 0: BEACON_PORT; -1: no socket of its own, beacons go through the main one
-    beacon_targets:[]net.Address, // where beacons go; empty: the IPv4 broadcast at beacon_port
+    beacon_targets:[]net.Address, // where beacons go; empty: the IPv4 broadcast and BEACON_GROUP6 on every interface, at beacon_port
     portmap:bool,                // ask the router for a mapping of the port
     addresses:[]net.Address,     // what tickets and nodes advertise; empty: found from the interfaces
     blocked:[]net.Address,       // tests: addresses the socket neither sends to nor hears from
@@ -180,8 +180,10 @@ Runner :: struct {
     udp:net.Udp,
     transport:net.Transport,
     observe:net.Udp,            // a relay node's second port
-    beacon_socket:net.Udp,
+    beacon_socket:net.Udp,  // IPv4
+    beacon_socket6:net.Udp, // IPv6
     has_beacon_socket:bool,
+    has_beacon_socket6:bool,
     port:u16,
     start:time.Tick,
     now:f64,
@@ -323,7 +325,8 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
     }
     if desc.beacon && desc.beacon_port>=0 {
         port:=desc.beacon_port==0?BEACON_PORT:desc.beacon_port
-        r.has_beacon_socket=beacon_socket_open(&r.beacon_socket,port)
+        r.has_beacon_socket=beacon_socket_open(&r.beacon_socket,port,false)
+        r.has_beacon_socket6=beacon_socket_open(&r.beacon_socket6,port,true)
     }
     if m.changed.procedure==nil {m.changed=runner_machine_changed(r)}
     if desc.portmap && desc.modes=={} {r.mapping_on=net.mapping_start(&r.mapping,r.port,allocator)}
@@ -345,6 +348,7 @@ runner_free :: proc(r:^Runner) {
     net.udp_close(&r.udp)
     net.udp_close(&r.observe)
     net.udp_close(&r.beacon_socket)
+    net.udp_close(&r.beacon_socket6)
     control_end(&r.control)
     pair_end(&r.offer.pair)
     pair_end(&r.join.pair)
@@ -476,6 +480,7 @@ runner_update :: proc(r:^Runner,wait:f64=0) {
     runner_receive(r,&r.udp,0)
     if .Relay in r.desc.modes {runner_receive(r,&r.observe,1)}
     if r.has_beacon_socket {runner_receive(r,&r.beacon_socket,2)}
+    if r.has_beacon_socket6 {runner_receive(r,&r.beacon_socket6,2)}
     for o in r.orgs {
         agent_update(&o.agent,r.now)
         runner_org_watch(r,o)
@@ -815,8 +820,17 @@ runner_beacons :: proc(r:^Runner) {
     r.beacon_at=r.now
     unix:=time.now()._nsec/1_000_000_000
     targets:=r.desc.beacon_targets
-    broadcast:=[1]net.Address{net.address_ip4(255,255,255,255,r.desc.beacon_port<=0?BEACON_PORT:r.desc.beacon_port)}
-    if len(targets)==0 {targets=broadcast[:]}
+    if len(targets)==0 {
+        // The IPv4 broadcast, and the link-local multicast of every interface
+        // with IPv6, which reaches a LAN without IPv4 or that drops broadcasts.
+        port:=r.desc.beacon_port<=0?BEACON_PORT:r.desc.beacon_port
+        all:=make([dynamic]net.Address,context.temp_allocator)
+        append(&all,net.address_ip4(255,255,255,255,port))
+        indexes:=make([dynamic]u32,context.temp_allocator)
+        interfaces6(&indexes)
+        for index in indexes {append(&all,net.Address{kind=.IP6,port=u16(port),ip=BEACON_GROUP6,zone=index})}
+        targets=all[:]
+    }
     for o in r.orgs {
         if !o.has_secret {continue}
         o.beacon_secret=o.secret
@@ -825,10 +839,10 @@ runner_beacons :: proc(r:^Runner) {
         frame[0]=FRAME_BEACON
         copy(frame[1:],b[:])
         for t in targets {
-            if r.has_beacon_socket {
-                runner_send_on(r,&r.beacon_socket,t,frame[:])
-            } else {
-                runner_send(r,t,frame[:])
+            switch {
+            case t.kind==.IP4 && r.has_beacon_socket: runner_send_on(r,&r.beacon_socket,t,frame[:])
+            case t.kind==.IP6 && r.has_beacon_socket6: runner_send_on(r,&r.beacon_socket6,t,frame[:])
+            case: runner_send(r,t,frame[:])
             }
         }
     }
@@ -846,6 +860,9 @@ runner_beacon_read :: proc(r:^Runner,from:net.Address,bytes:[]u8) {
         p:=&o.peers[i]
         lan:=from
         lan.port=port
+        // A device heard over IPv4 and IPv6 keeps the address it was heard
+        // at first while that one is fresh.
+        if p.lan.kind!=.None && p.lan.kind!=lan.kind && r.now-p.lan_seen<2*BEACON_SECONDS {lan=p.lan}
         if p.lan!=lan {
             hex:[64]u8
             d:=p.dh
@@ -1852,24 +1869,44 @@ runner_ddc_step :: proc(r:^Runner) {
     }
 }
 
-// Lets two processes of one user share the beacon port, as broadcasts reach every one.
+// The beacon socket of IPv4, which takes the broadcast, or of IPv6, which
+// takes BEACON_GROUP6 on every interface. Two processes of one user share the
+// port, as a broadcast or a multicast reaches every one. Both feed one path,
+// runner_frame.
 @(private)
-beacon_socket_open :: proc(u:^net.Udp,port:int) -> bool {
+beacon_socket_open :: proc(u:^net.Udp,port:int,ip6:bool) -> bool {
     u^={}
-    socket,e:=cnet.make_unbound_udp_socket(.IP4)
+    socket,e:=cnet.make_unbound_udp_socket(ip6?.IP6:.IP4)
     if e!=nil {return false}
     cnet.set_option(socket,.Reuse_Address,true)
     socket_share_port(socket)
-    cnet.set_option(socket,.Broadcast,true)
-    if cnet.bind(socket,cnet.Endpoint{cnet.IP4_Any,port})!=nil || cnet.set_blocking(socket,false)!=nil {
+    bound:net.Address
+    if ip6 {
+        bound=net.address_any6(port)
+        if !socket_ip6_only(socket) {
+            cnet.close(socket)
+            return false
+        }
+    } else {
+        bound=net.address_ip4(0,0,0,0,port)
+        cnet.set_option(socket,.Broadcast,true)
+    }
+    endpoint,_:=net.address_to_endpoint(bound)
+    if cnet.bind(socket,endpoint)!=nil || cnet.set_blocking(socket,false)!=nil {
         cnet.close(socket)
         return false
+    }
+    if ip6 {
+        // An interface that refuses the group still sends there.
+        indexes:=make([dynamic]u32,context.temp_allocator)
+        interfaces6(&indexes)
+        for index in indexes {socket_join6(socket,BEACON_GROUP6,index)}
     }
     waker,waker_error:=cnet.make_unbound_udp_socket(.IP4)
     if waker_error!=nil {
         cnet.close(socket)
         return false
     }
-    u.socket,u.waker,u.open,u.address=socket,waker,true,net.address_ip4(0,0,0,0,port)
+    u.socket,u.waker,u.open,u.address=socket,waker,true,bound
     return true
 }

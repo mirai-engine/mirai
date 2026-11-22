@@ -42,13 +42,14 @@ box_close :: proc(b:^Box) {
 }
 
 @(private="file")
-box_start :: proc(t:^testing.T,b:^Box,k:int,modes:=Node_Modes{}) -> bool {
+box_start :: proc(t:^testing.T,b:^Box,k:int,modes:=Node_Modes{},bind:=net.Address{kind=.IP4,ip={0=127,3=1}},beacon_port:=-1) -> bool {
     b.machines[k].changed={}
-    e:=runner_start(&b.runners[k],{machine=&b.machines[k],bind=net.address_loopback(0),modes=modes,beacon=true,beacon_port=-1,observe_port=0,host_seed=u64(1000+k*100)})
+    e:=runner_start(&b.runners[k],{machine=&b.machines[k],bind=bind,modes=modes,beacon=true,beacon_port=beacon_port,observe_port=0,host_seed=u64(1000+k*100)})
     if !testing.expect_value(t,e,Error.None) {return false}
     b.running[k]=true
     r:=&b.runners[k]
-    b.addresses[k][0]=net.address_loopback(runner_port(r))
+    b.addresses[k][0]=bind
+    b.addresses[k][0].port=u16(runner_port(r))
     r.desc.addresses=b.addresses[k][:]
     return true
 }
@@ -401,6 +402,44 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     forwarded:=u64(0)
     for d in stats {forwarded+=d.forwarded}
     testing.expect(t,forwarded>0,"the node forwarded datagrams")
+}
+
+// Two members on ::1 alone. Bob's beacon reaches Alice's IPv6 beacon socket,
+// which reads it as the IPv4 one does; Alice's reaches Bob's socket the same
+// way, and they connect on the LAN rung over IPv6.
+@(test)
+an_ipv6_beacon_joins_two_members_over_loopback :: proc(t:^testing.T) {
+    b:=new(Box)
+    defer free(b)
+    if !box_open(t,b,"kai-runner-beacon6",2) {return}
+    defer box_close(b)
+    alice,bob:=&b.machines[0],&b.machines[1]
+    user_make(t,alice,"alice")
+    user_make(t,bob,"bob")
+    org,e:=machine_org_create(alice,"studio")
+    testing.expect_value(t,e,Error.None)
+    log_copy(t,&bob.store,&alice.store,bob.user,.User)
+    testing.expect_value(t,machine_member_add(alice,org,bob.user,.Writer),Error.None)
+    for id in ([]Log_Id{org,alice.user}) {log_copy(t,&alice.store,&bob.store,id,id==org?.Org:.User)}
+    testing.expect_value(t,machine_org_join(bob,org),Error.None)
+
+    probe:net.Udp
+    if !testing.expect(t,net.udp_open(&probe,net.address_loopback6(0)),"::1 opens") {return}
+    port:=int(probe.address.port)
+    net.udp_close(&probe)
+    if !box_start(t,b,0,bind=net.address_loopback6(0),beacon_port=port) || !box_start(t,b,1,bind=net.address_loopback6(0)) {return}
+    testing.expect(t,b.runners[0].has_beacon_socket6,"alice listens for IPv6 beacons")
+    b.targets[0][0]=b.addresses[1][0]
+    b.targets[1][0]=net.address_loopback6(port)
+    b.runners[0].desc.beacon_targets=b.targets[0][:1]
+    b.runners[1].desc.beacon_targets=b.targets[1][:1]
+    for k in 0..<2 {
+        g:=Goal{k=k,dh=Dh_Key(b.machines[1-k].dh.public),rung=.LAN}
+        if !testing.expectf(t,box_until(b,10,&g,connected_by),"%d connects on the LAN rung",k) {return}
+    }
+    o:=b.runners[0].orgs[0]
+    k:=runner_peer_index(o,Dh_Key(bob.dh.public))
+    testing.expect(t,k>=0 && o.peers[k].lan==b.addresses[1][0],"alice took bob's [::1] from his beacon")
 }
 
 // Every message a runner reads from its socket or a local process: random

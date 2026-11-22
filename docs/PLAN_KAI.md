@@ -285,7 +285,12 @@ Entry_Head :: struct #packed {
   path_scope, not_after <= 30d, sig}` verified against `Org_Log` and `Grant_Revoke`. The issuer
   hands it over as text with its agent's X25519 key and addresses; the holder's agent reaches the
   issuer first and is admitted as `Grant`: it reads the user and org logs, and the refs of its
-  project when it holds read, write or check.
+  project when it holds read, write or check. `path_scope` is a pattern as `Scope_Add` takes,
+  empty for the whole project. Chunks are content-addressed, so what a holder is served is a set
+  of addresses made as the public closure is: its project's changes, of each tree only the files
+  the scope covers with the folders on the way to them, and with ddc the untainted DDC outputs. It
+  writes refs under the write right only, and only changes it signed that touch paths inside the
+  scope. A grant revoked or expired cuts its holder off at that moment.
 
 ### 6.2 `mirai:net` Contract Extensions
 - Extend [net/secure.odin](../net/secure.odin) with Noise `IK` (`Noise_IK_25519_ChaChaPoly_SHA256`)
@@ -310,7 +315,8 @@ Entry_Head :: struct #packed {
 - **Connection ladder (parallel race, seamless upgrade on better path):**
   `Encrypted LAN beacon -> global IPv6 -> portmap (existing PCP/NAT-PMP/UPnP) -> rendezvous UDP
   hole punch -> E2E encrypted relay -> seed`.
-- **LAN Beacon (no mDNS):** IPv4 broadcast every 30 s, and at once when an org's `D` changes,
+- **LAN Beacon (no mDNS):** IPv4 broadcast and IPv6 link-local multicast to `ff02::1` on every
+  interface every 30 s, and at once when an org's `D` changes,
   with rotating keyed tags `org_tag = BLAKE3(D || "org" || bucket)[:12]` and `dev_tag`
   (`bucket = unix/600`). Unlinkable noise to non-members; `D` rotates on member removal. The
   device that does not dial (the higher `dh`) answers a beacon with its own.

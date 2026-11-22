@@ -414,6 +414,11 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     testing.expect(t,has && secret=="first secret\n","a reader finds the private file in his working copy")
     public,_:=read(b_root,"readme.txt")
     testing.expect_value(t,public,"public words\n")
+    // Restoring alice's change brings its private file back to a reader.
+    testing.expect(t,os.remove(fmt.tprintf("%s/secrets/key.txt",b_root))==nil)
+    testing.expect_value(t,restore(&pb.workspace,sealed,nil),vcs.Error.None)
+    secret,has=read(b_root,"secrets/key.txt")
+    testing.expect(t,has && secret=="first secret\n","a reader's restore writes the private file")
 
     // Bob now only reads the project: Alice's write waits for a rotation.
     testing.expect_value(t,vcs.machine_role_set(&alice.m,org,bob.m.user,.Reader),vcs.Error.None)
@@ -439,6 +444,9 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     testing.expect_value(t,e,vcs.Error.None)
     _,has=read(b_root,"secrets/key.txt")
     testing.expect(t,!has,"a non-reader's working copy loses the private file")
+    testing.expect_value(t,restore(&pb.workspace,sealed,nil),vcs.Error.None)
+    _,has=read(b_root,"secrets/key.txt")
+    testing.expect(t,!has,"nor does a restore of a change he read before give it back")
     rings:=make([dynamic]^vcs.Keyring_Fold,context.temp_allocator)
     testing.expect_value(t,vcs.machine_keyrings(&bob.m.store,&pb.org,&rings,context.temp_allocator),vcs.Error.None)
     if testing.expect_value(t,len(rings),1) {

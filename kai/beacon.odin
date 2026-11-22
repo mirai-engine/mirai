@@ -4,13 +4,14 @@ import "core:encoding/endian"
 import "core:mem"
 import "mirai:std/blake3"
 
-// The LAN beacon: a datagram broadcast every BEACON_SECONDS that only members
-// of an org can read. Its tags are keyed by the org's discovery secret D and
+// The LAN beacon: a datagram broadcast every BEACON_SECONDS, on IPv4 and to
+// the link-local multicast of IPv6, that only members of an org can read. Its tags are keyed by the org's discovery secret D and
 // change every BEACON_BUCKET_SECONDS, so to anyone without D the beacons of
 // one device in two buckets, or of two orgs in one, are unrelated noise. A
 // member matches the org tag, then which device by its dev tag. No mDNS.
 
 BEACON_SECONDS :: 30
+BEACON_GROUP6 :: [16]u8{0=0xff,1=0x02,15=1} // ff02::1, every node of the link: the IPv6 broadcast
 BEACON_BUCKET_SECONDS :: 600
 BEACON_TAG :: 12
 LABEL_BEACON_ORG :: "kai-1/beacon-org"

@@ -13,8 +13,9 @@ PACKET_BYTES :: 1200
 Address_Kind :: enum u8 {None,IP4,IP6,Memory,Relay}
 // Memory addresses name an endpoint of a Sim_Network by its index in port. A Relay address is a
 // peer that a relay node forwards to: ip and port are the node's (an IPv4 node as ::ffff:a.b.c.d)
-// and peer is the static key of the peer behind it; peer is zero in every other kind.
-Address :: struct {kind:Address_Kind,port:u16,ip:[16]u8,peer:Key}
+// and peer is the static key of the peer behind it; peer is zero in every other kind. zone is the
+// interface a link-local or multicast IPv6 address is on (its scope id), zero for any other.
+Address :: struct {kind:Address_Kind,port:u16,ip:[16]u8,peer:Key,zone:u32}
 
 address_ip4 :: proc "contextless" (a,b,c,d:u8,port:int) -> Address {
     return {kind=.IP4,port=u16(port),ip={0=a,1=b,2=c,3=d}}

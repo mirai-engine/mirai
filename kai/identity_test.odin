@@ -624,11 +624,11 @@ device_refs_reject_rollback :: proc(t:^testing.T) {
     bob_name:=refs_name(bob.key,&name)
     copied_first:=test_copy(t,&b,&a,first,.Device_Refs)
     copied_second:=test_copy(t,&b,&a,second,.Device_Refs)
-    changed,e:=device_refs_accept(&a,&o.fold,o.project.id,bob_name,copied_second)
+    changed,e:=device_refs_accept(&a,&o.fold,o.project.id,bob_name,copied_second,0)
     testing.expect(t,e==.None && changed)
-    changed,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,copied_first)
+    changed,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,copied_first,0)
     testing.expect_value(t,e,Error.Rollback)
-    changed,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,copied_second)
+    changed,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,copied_second,0)
     testing.expect(t,e==.None && !changed)
     now,_,ne:=device_refs_get(&a,o.project.id,bob.key,context.temp_allocator)
     testing.expect(t,ne==.None && now.seq==2)
@@ -639,7 +639,7 @@ device_refs_reject_rollback :: proc(t:^testing.T) {
     (^Device_Refs_Head)(raw_data(forged)).seq=9
     forged_address,_:=object_put(&a,.Device_Refs,forged)
     store.commit(&a)
-    _,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,forged_address)
+    _,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,forged_address,0)
     testing.expect_value(t,e,Error.Unauthorized)
 
     // A reader cannot write refs; a record under another device's name is refused.
@@ -647,9 +647,9 @@ device_refs_reject_rollback :: proc(t:^testing.T) {
     carol_refs,_:=device_refs_publish(&b,o.project.id,carol,{{"main",test_change(t,&b,carol,"carol")}},3)
     carol_copy:=test_copy(t,&b,&a,carol_refs,.Device_Refs)
     carol_name:[32]u8
-    _,e=device_refs_accept(&a,&o.fold,o.project.id,refs_name(carol.key,&carol_name),carol_copy)
+    _,e=device_refs_accept(&a,&o.fold,o.project.id,refs_name(carol.key,&carol_name),carol_copy,0)
     testing.expect_value(t,e,Error.Unauthorized)
-    _,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,carol_copy)
+    _,e=device_refs_accept(&a,&o.fold,o.project.id,bob_name,carol_copy,0)
     testing.expect_value(t,e,Error.Invalid_Argument)
     now,_,_=device_refs_get(&a,o.project.id,bob.key,context.temp_allocator)
     testing.expect_value(t,now.seq,u64(2))

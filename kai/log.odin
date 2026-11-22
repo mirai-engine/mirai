@@ -1396,17 +1396,21 @@ grant_verify :: proc(f:^Org_Fold,bytes:[]u8,now:i64) -> (g:Grant,error:Error) {
     return g,.None
 }
 
-// Whether key signs with right on project at time, under a grant the org's
-// log carries.
-org_grant_right :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,time:i64) -> bool {
-    if key=={} {return false}
+// The grant the org's log carries under which key signs with right on
+// project at time; ok is false when none holds.
+org_grant_right :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,time:i64) -> (g:Grant,ok:bool) {
+    if key=={} {return}
     for &item,i in f.log.items {
         if !f.valid[i] || item.entry.type!=.Grant {continue}
-        g,e:=grant_verify(f,item.entry.body,time)
-        if e==.None && g.subject_key==key && right in g.rights && (g.project=={} || g.project==project) {return true}
+        held,e:=grant_verify(f,item.entry.body,time)
+        if e==.None && held.subject_key==key && right in held.rights && (held.project=={} || held.project==project) {return held,true}
     }
-    return false
+    return
 }
+
+// Whether a grant's path scope covers path: an empty scope covers the whole
+// project; otherwise the scope is a pattern as Scope_Add takes (glob_match).
+grant_covers :: proc(scope,path:string) -> bool {return scope=="" || glob_match(scope,path)}
 
 // --- Project_Log ---
 
@@ -1589,7 +1593,8 @@ proposal_rules :: proc(f:^Proposal_Fold) -> Rules {
             u:=author_user(f.org.users,f.log,e)
             if u==nil {
                 // A runner outside the org checks under a grant of the Check right.
-                return entry.type==.Proposal_Check && f.status==.Open && org_grant_right(f.org,entry.author,.Check,f.project,entry.time)
+                _,granted:=org_grant_right(f.org,entry.author,.Check,f.project,entry.time)
+                return entry.type==.Proposal_Check && f.status==.Open && granted
             }
             role:=org_role(f.org,u.log.id)
             if role==.None {return false}

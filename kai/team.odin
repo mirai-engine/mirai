@@ -1008,11 +1008,18 @@ machine_project_verify :: proc(m:^Machine,project:Log_Id,report:^Verify_Report) 
             de:=ge
             if ge==.None {d,de=device_refs_decode(bytes,context.temp_allocator)}
             name:[32]u8
-            if de!=.None || !signed_valid(bytes,d.device) || refs_name(d.device,&name)!=r.name || !device_may_write(&ps.org.fold,project,d.device) {
+            scope,writer:=device_may_write(&ps.org.fold,project,d.device,d.time)
+            if de!=.None || !signed_valid(bytes,d.device) || refs_name(d.device,&name)!=r.name || !writer {
                 report.failed=fmt.tprintf("the refs of device %s do not read, are not signed by it, or it may not write the project",r.name)
                 return .None
             }
+            from:=len(targets)
             for b in d.refs {append(&targets,b.target)}
+            if scope=="" {continue}
+            if we:=grant_writes_within(s,scope,d.device,targets[from:],nil,nil);we!=.None {
+                report.failed=fmt.tprintf("the refs of device %s bring changes outside its grant's path %s (%s)",r.name,scope,error_text(we))
+                return .None
+            }
         }
     }
     seen:=make(map[Revision]struct{},context.temp_allocator)

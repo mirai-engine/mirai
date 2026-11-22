@@ -23,8 +23,17 @@ import "mirai:store"
 //   kai-ddc-<org>         derived data: Member, Node; Grant of ddc
 //   kai-ovl-<project>-<scope>  overlay records, ciphertext only: Member, Node
 //
-// Pending and Anonymous peers are restricted: they get only the chunks of the
-// user logs, or of the public closure. On connect each end asks the other's
+// Pending, Anonymous and Grant peers are restricted: they get only the chunks
+// of the user logs, of the public closure, or of what the grant covers. A
+// grant covers the user logs, the org's log and those of its project and the
+// project's proposals; with read, write or check, the project's device refs
+// and every change under them, but of each tree only the files its path scope
+// covers (grant_covers), the conflicts at such paths and the folders on the
+// way to them; with ddc, the DDC records and their untainted outputs. Chunks
+// are content-addressed, so this is a set of addresses, made as the public
+// closure is. A holder writes its refs only under the write right, and only
+// changes inside its path scope (device_refs_accept); it is cut off with
+// Revoked once its grant is revoked or expires, at that moment. On connect each end asks the other's
 // names; a ref that differs is fetched and merged (logs by union of verified
 // entries, refs and DDC by their rules), and every change is told to the
 // peers that read it, so nothing polls. When the logs change, authorize runs
@@ -89,14 +98,21 @@ Agent_Query :: struct {
 }
 
 @(private)
-Allowed :: struct {dh:Dh_Key,class:Agent_Class,project:Log_Id,rights:Rights} // project and rights: a Grant's
+Allowed :: struct {dh:Dh_Key,class:Agent_Class,project:Log_Id,rights:Rights,entry:int} // project, rights and the entry in the org's log: a Grant's
 
 // The chunks restricted peers may get: those of the user logs for Pending
-// ones, those of the public projects' closures for Anonymous ones. Read by
-// the serve jobs, so it is swapped under the agent's lock.
+// ones, those of the public projects' closures for Anonymous ones, what its
+// grant covers for a Grant one. Read by the serve jobs, so it is swapped under
+// the agent's lock.
 Public_Closure :: struct {
     identity:[dynamic]store.Hash, // sorted
     public:[dynamic]store.Hash,   // sorted
+    grants:[dynamic]Grant_Closure,
+}
+
+Grant_Closure :: struct {
+    dh:Dh_Key,
+    chunks:[dynamic]store.Hash, // sorted
 }
 
 Agent :: struct {
@@ -121,7 +137,8 @@ Agent :: struct {
     fetches:[dynamic]Agent_Fetch,
     queries:[AGENT_QUERIES]Agent_Query,
     hints:[dynamic]Agent_Fetch, // what peers told, taken in agent_update
-    deferred:[dynamic]Agent_Fetch, // logs that came before this end could place them, merged again after each refold
+    deferred:[dynamic]Agent_Fetch, // logs that came before this end could place them, and a grant holder's refs whose changes are still coming
+    grants_turn:i64, // ns: the next time a grant of the log starts or ends, 0 for none
     now:f64,
     dirty:bool, // a seed walks its closure again
     stats:Agent_Stats,
@@ -152,6 +169,7 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     a.allowed=make([dynamic]Allowed,allocator)
     a.closure.identity=make([dynamic]store.Hash,allocator)
     a.closure.public=make([dynamic]store.Hash,allocator)
+    a.closure.grants=make([dynamic]Grant_Closure,allocator)
     a.fetches=make([dynamic]Agent_Fetch,allocator)
     a.hints=make([dynamic]Agent_Fetch,allocator)
     a.deferred=make([dynamic]Agent_Fetch,allocator)
@@ -212,6 +230,8 @@ agent_destroy :: proc(a:^Agent) {
     delete(a.allowed)
     delete(a.closure.identity)
     delete(a.closure.public)
+    for g in a.closure.grants {delete(g.chunks)}
+    delete(a.closure.grants)
     delete(a.fetches)
     delete(a.hints)
     delete(a.deferred)
@@ -272,6 +292,7 @@ agent_load :: proc(a:^Agent) {
 agent_refold :: proc(a:^Agent) {
     a.stats.refolds+=1
     a.dirty=true
+    a.grants_turn=0
     agent_folds_drop(a)
     for l in a.logs {
         if l.kind!=.User || len(l.items)==0 {continue}
@@ -310,16 +331,19 @@ agent_refold :: proc(a:^Agent) {
             }
         }
         for n in a.org.nodes {append(&a.allowed,Allowed{dh=n.dh,class=.Node})}
-        // A grant in force admits its holder; one revoked or expired refuses it.
+        // A grant in force admits its holder; one revoked or expired refuses
+        // it. When the next one starts or ends, agent_update folds again.
         now:=time.now()._nsec
         for item,i in a.org.log.items {
             if !a.org.valid[i] || item.entry.type!=.Grant {continue}
             g,e:=grant_verify(&a.org,item.entry.body,now)
             if e==.Corrupt {continue}
+            turn:=e==.None?g.not_after:(e==.Expired && now<g.not_before?g.not_before:0)
+            if turn!=0 && (a.grants_turn==0 || turn<a.grants_turn) {a.grants_turn=turn}
             held:=false
             for x in a.allowed {held||=x.dh==g.subject_dh}
             if held {continue}
-            append(&a.allowed,e==.None?Allowed{g.subject_dh,.Grant,g.project,g.rights}:Allowed{dh=g.subject_dh,class=.None})
+            append(&a.allowed,e==.None?Allowed{dh=g.subject_dh,class=.Grant,project=g.project,rights=g.rights,entry=i}:Allowed{dh=g.subject_dh,class=.None})
         }
     }
     sync.mutex_unlock(&a.lock)
@@ -339,11 +363,30 @@ agent_refold :: proc(a:^Agent) {
     for i in 0..<AGENT_PEERS {
         if a.peers[i].used {agent_ask(a,i)}
     }
-    if len(a.deferred)>0 {
-        retry:=slice.clone(a.deferred[:],context.temp_allocator)
-        clear(&a.deferred)
-        for &f in retry {agent_merge(a,&f)}
+    agent_retry(a,.None)
+}
+
+// Merges again what was deferred, of kind or of every kind for None.
+@(private)
+agent_retry :: proc(a:^Agent,kind:Fetch_Kind) {
+    retry:=make([dynamic]Agent_Fetch,context.temp_allocator)
+    for k:=0;k<len(a.deferred); {
+        if kind!=.None && a.deferred[k].kind!=kind {
+            k+=1
+            continue
+        }
+        append(&retry,a.deferred[k])
+        unordered_remove(&a.deferred,k)
     }
+    for &f in retry {agent_merge(a,&f)}
+}
+
+@(private)
+agent_defer :: proc(a:^Agent,f:^Agent_Fetch) {
+    for d in a.deferred {
+        if d.kind==f.kind && d.address==f.address {return}
+    }
+    if len(a.deferred)<AGENT_FETCHES {append(&a.deferred,f^)}
 }
 
 @(private)
@@ -607,13 +650,18 @@ agent_serve :: proc(user:rawptr,peer:exchange.Peer_Id,address:store.Hash) -> boo
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
     class:=Agent_Class.None
+    dh:Dh_Key
     for p in a.peers {
-        if p.used && p.tag==peer.tag {class=p.class}
+        if p.used && p.tag==peer.tag {class,dh=p.class,p.dh}
     }
     #partial switch class {
     case .Pending: return closure_has(a.closure.identity[:],address)
     case .Anonymous: return closure_has(a.closure.public[:],address)
-    case .Member,.Node,.Grant: return true
+    case .Grant:
+        for g in a.closure.grants {
+            if g.dh==dh {return closure_has(g.chunks[:],address)}
+        }
+    case .Member,.Node: return true
     }
     return false
 }
@@ -753,10 +801,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         id,ok:=store.parse_hex(name)
         if !ok {return}
         if f.kind==.Log && id!=a.desc.org && !(a.folded && (org_project_index(&a.org,id)>=0 || keyring_of_org(a.desc.store,&a.org,id,f.address) || proposal_of_org(a.desc.store,&a.org,id,f.address))) {
-            for d in a.deferred {
-                if d.address==f.address {return}
-            }
-            if len(a.deferred)<AGENT_FETCHES {append(&a.deferred,f^)}
+            agent_defer(a,f)
             return
         }
         l:=agent_log_take(a,id)
@@ -774,7 +819,14 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .Refs:
         project,ok:=store.parse_hex(namespace[len(REFS_PREFIX):])
         if !ok || !a.folded {return}
-        changed,e:=device_refs_accept(a.desc.store,&a.org,project,name,f.address)
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        changed,e:=device_refs_accept(a.desc.store,&a.org,project,name,f.address,time.now()._nsec,&missing)
+        if e==.Missing && len(missing)>0 {
+            // A grant holder's changes are checked against its path scope once they are here.
+            for m in missing {agent_want_object(a,m)}
+            agent_defer(a,f)
+            return
+        }
         if e!=.None {
             a.stats.refused+=1
             return
@@ -788,7 +840,11 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .DDC:
         key,ok:=store.parse_hex(name)
         if !ok || !a.folded {return}
-        changed,_,e:=ddc_accept(a.desc.store,&a.org,key,f.address,nil,time.now()._nsec)
+        grants:=make([dynamic][]u8,context.temp_allocator)
+        for item,i in a.org.log.items {
+            if a.org.valid[i] && item.entry.type==.Grant {append(&grants,item.entry.body)}
+        }
+        changed,_,e:=ddc_accept(a.desc.store,&a.org,key,f.address,grants[:],time.now()._nsec)
         if e!=.None {
             a.stats.refused+=1
             return
@@ -814,12 +870,14 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         a.stats.objects_fetched+=1
         a.dirty=true
         agent_closure(a)
+        agent_retry(a,.Refs)
     }
 }
 
 // Runs the agent: the hosts, the exchange, and what peers told or gave.
 agent_update :: proc(a:^Agent,now:f64) {
     a.now=now
+    if a.grants_turn!=0 && time.now()._nsec>a.grants_turn {agent_refold(a)}
     agent_poll(a,&a.server,-1)
     for k in 0..<a.client_count {agent_poll(a,&a.clients[k],k)}
     for &q in a.queries {
@@ -905,12 +963,13 @@ agent_class_from :: proc "contextless" (z:net.Authorization) -> Agent_Class {
 }
 
 // The revisions every device's refs of the projects name and the moves of
-// their shared bookmarks a writer signed, public projects only when public.
+// their shared bookmarks a writer signed, public projects only when public,
+// only project unless it is zero.
 @(private)
-agent_targets :: proc(a:^Agent,public:bool,out:^[dynamic]Revision,refs_objects:^[dynamic]store.Hash) {
+agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision,refs_objects:^[dynamic]store.Hash) {
     if !a.folded {return}
     for p in a.org.projects {
-        if public && !p.public {continue}
+        if (public && !p.public) || (project!={} && p.id!=project) {continue}
         if l:=agent_log(a,p.id);l!=nil {
             for item in l.items {
                 if item.entry.type!=.Bookmark_Move {continue}
@@ -937,7 +996,7 @@ agent_targets :: proc(a:^Agent,public:bool,out:^[dynamic]Revision,refs_objects:^
         if l.kind!=.Proposal {continue}
         k:=log_find(l,l.id)
         if k<0 || l.items[k].entry.type!=.Proposal_Open {continue}
-        if b,_,_:=body_head(l.items[k].entry.body,Proposal_Open_Body);org_project_index(&a.org,b.project)<0 {continue}
+        if b,_,_:=body_head(l.items[k].entry.body,Proposal_Open_Body);org_project_index(&a.org,b.project)<0 || (project!={} && b.project!=project) {continue}
         for item in l.items {
             if item.entry.type!=.Proposal_Revise {continue}
             _,tail,_:=body_head(item.entry.body,Proposal_Revise_Body)
@@ -956,7 +1015,7 @@ agent_closure :: proc(a:^Agent) {
     public:=make([dynamic]store.Hash,context.temp_allocator)
     targets:=make([dynamic]Revision,context.temp_allocator)
     roots:=make([dynamic]store.Hash,context.temp_allocator)
-    agent_targets(a,true,&targets,&roots)
+    agent_targets(a,{},true,&targets,&roots)
     present:=make([dynamic]store.Hash,context.temp_allocator)
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(a.desc.store,targets[:],&present,&missing)
@@ -964,12 +1023,81 @@ agent_closure :: proc(a:^Agent) {
     for r in roots {object_chunks(a.desc.store,r,&public)}
     slice.sort_by(identity[:],hash_less)
     slice.sort_by(public[:],hash_less)
+    grants:=make([dynamic]Grant_Closure,context.temp_allocator)
+    for x in a.allowed {
+        if x.class!=.Grant {continue}
+        g:=Grant_Closure{dh=x.dh,chunks=make([dynamic]store.Hash,context.temp_allocator)}
+        append(&g.chunks,..identity[:])
+        agent_grant_chunks(a,x,&g.chunks)
+        slice.sort_by(g.chunks[:],hash_less)
+        append(&grants,g)
+    }
     sync.mutex_lock(&a.lock)
     defer sync.mutex_unlock(&a.lock)
     clear(&a.closure.identity)
     clear(&a.closure.public)
     append(&a.closure.identity,..identity[:])
     append(&a.closure.public,..public[:])
+    for g in a.closure.grants {delete(g.chunks)}
+    clear(&a.closure.grants)
+    for g in grants {
+        own:=Grant_Closure{dh=g.dh,chunks=make([dynamic]store.Hash,a.desc.allocator)}
+        if _,e:=append(&own.chunks,..g.chunks[:]);e!=nil {
+            delete(own.chunks)
+            continue
+        }
+        append(&a.closure.grants,own)
+    }
+}
+
+// The chunks the grant of x covers besides the user logs (see the head of
+// this file).
+@(private)
+agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
+    if !a.folded || x.entry<0 || x.entry>=len(a.org.log.items) {return}
+    g,e:=grant_decode(a.org.log.items[x.entry].entry.body)
+    if e!=.None {return}
+    ours :: proc(a:^Agent,g:^Grant,project:Log_Id) -> bool {
+        return org_project_index(&a.org,project)>=0 && (g.project=={} || g.project==project)
+    }
+    name:[64]u8
+    for l in a.logs {
+        keep:=false
+        #partial switch l.kind {
+        case .Org: keep=l.id==a.desc.org
+        case .Project: keep=ours(a,&g,l.id)
+        case .Proposal:
+            if k:=log_find(l,l.id);k>=0 && l.items[k].entry.type==.Proposal_Open {
+                b,_,_:=body_head(l.items[k].entry.body,Proposal_Open_Body)
+                keep=ours(a,&g,b.project)
+            }
+        }
+        if !keep {continue}
+        if address,ref_error:=store.ref_get(a.desc.store,LOG_NAMESPACE,log_name(l.id,&name));ref_error==.None {
+            object_chunks(a.desc.store,address,out)
+        }
+    }
+    if g.rights&{.Read,.Write,.Check}!={} {
+        targets:=make([dynamic]Revision,context.temp_allocator)
+        roots:=make([dynamic]store.Hash,context.temp_allocator)
+        agent_targets(a,g.project,false,&targets,&roots)
+        closure_walk_scoped(a.desc.store,targets[:],g.path,&roots)
+        for r in roots {object_chunks(a.desc.store,r,out)}
+    }
+    if .DDC in g.rights {
+        ns:[len(DDC_PREFIX)+64]u8
+        refs,ref_error:=store.ref_list(a.desc.store,ddc_namespace(a.desc.org,&ns),context.temp_allocator)
+        if ref_error!=.None {return}
+        records:=make([dynamic][]u8,context.temp_allocator)
+        for r in refs {
+            object_chunks(a.desc.store,r.hash,out)
+            clear(&records)
+            if ddc_set_read(a.desc.store,r.hash,&records)!=.None {continue}
+            for bytes in records {
+                if d,de:=ddc_record_decode(bytes);de==.None && d.tainted==0 {object_chunks(a.desc.store,d.output,out)}
+            }
+        }
+    }
 }
 
 // A seed fetches what the closure of every bookmark lacks.
@@ -977,7 +1105,7 @@ agent_closure :: proc(a:^Agent) {
 agent_seed :: proc(a:^Agent) {
     targets:=make([dynamic]Revision,context.temp_allocator)
     roots:=make([dynamic]store.Hash,context.temp_allocator)
-    agent_targets(a,false,&targets,&roots)
+    agent_targets(a,{},false,&targets,&roots)
     present:=make([dynamic]store.Hash,context.temp_allocator)
     missing:=make([dynamic]store.Hash,context.temp_allocator)
     closure_walk(a.desc.store,targets[:],&present,&missing)
@@ -1051,6 +1179,78 @@ closure_walk :: proc(s:^store.Store,revisions:[]Revision,present,missing:^[dynam
         case .File:
         }
     }
+}
+
+// The Kai objects under revisions that a grant of path scope reads: every
+// change and its parents, the files scope covers with the conflicts at such
+// paths and what they name, and the folders on the way to them. A folder
+// that holds nothing scope covers is left out, as is every file it does not
+// cover. An empty scope covers all of it (closure_walk).
+closure_walk_scoped :: proc(s:^store.Store,revisions:[]Revision,scope:string,present:^[dynamic]store.Hash) {
+    if scope=="" {
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        closure_walk(s,revisions,present,&missing)
+        return
+    }
+    stack:=make([dynamic]Revision,context.temp_allocator)
+    seen:=make(map[Revision]bool,context.temp_allocator)
+    folders:=make(map[[2]store.Hash]bool,context.temp_allocator)
+    append(&stack,..revisions)
+    for len(stack)>0 {
+        r:=pop(&stack)
+        if r=={} || seen[r] {continue}
+        seen[r]=true
+        c,e:=change_get(s,r,context.temp_allocator)
+        if e!=.None {continue}
+        append(present,r)
+        append(&stack,..c.parents)
+        scoped_folder(s,c.tree,"",scope,0,present,&folders)
+    }
+}
+
+// Whether the folder at address, at path prefix, holds something scope
+// covers; what it does goes to present. folders keeps the answer for each
+// folder and path.
+@(private)
+scoped_folder :: proc(s:^store.Store,address:store.Hash,prefix,scope:string,depth:int,present:^[dynamic]store.Hash,folders:^map[[2]store.Hash]bool) -> bool {
+    if depth>DEPTH_MAX {return false}
+    key:=[2]store.Hash{address,store.address_of_bytes(transmute([]u8)prefix)}
+    if held,ok:=folders[key];ok {return held}
+    folders[key]=false
+    entries:=make([dynamic]Tree_Entry,context.temp_allocator)
+    if _,e:=folder_get(s,address,&entries,nil,context.temp_allocator);e!=.None {return false}
+    terms:=terms_make(Term,context.temp_allocator)
+    covered:=false
+    for entry in entries {
+        path,pe:=path_join(prefix,entry.name,context.temp_allocator)
+        if pe!=.None {continue}
+        switch entry.kind {
+        case .Folder: covered|=scoped_folder(s,entry.address,path,scope,depth+1,present,folders)
+        case .File,.Executable:
+            if !grant_covers(scope,path) {continue}
+            append(present,entry.address)
+            covered=true
+        case .Conflict:
+            if !grant_covers(scope,path) {continue}
+            clear(&terms.adds)
+            clear(&terms.removes)
+            if _,ce:=conflict_get(s,entry.address,&terms);ce!=.None {continue}
+            append(present,entry.address)
+            covered=true
+            for list in ([2][]Term{terms.adds[:],terms.removes[:]}) {
+                for t in list {
+                    if t.kind==.Folder {
+                        scoped_folder(s,t.address,path,scope,depth+1,present,folders)
+                    } else {
+                        append(present,t.address)
+                    }
+                }
+            }
+        }
+    }
+    if covered {append(present,address)}
+    folders[key]=covered
+    return covered
 }
 
 // The addresses of every chunk of the object at address: its nodes and data.

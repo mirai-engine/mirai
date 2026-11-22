@@ -236,19 +236,30 @@ Diff :: struct {
 }
 
 // The files that differ from tree a to tree b, sorted by path, in allocator.
-// Folders of equal address are not read.
-tree_diff :: proc(s:^store.Store,a,b:store.Hash,out:^[dynamic]Diff,allocator:=context.allocator) -> Error {
+// Folders of equal address are not read. With missing, a folder the store
+// lacks is appended to it and what lies under it is left out of out.
+tree_diff :: proc(s:^store.Store,a,b:store.Hash,out:^[dynamic]Diff,allocator:=context.allocator,missing:^[dynamic]store.Hash=nil) -> Error {
     if a==b {return .None}
-    return diff_folders(s,a,b,"",0,out,allocator)
+    return diff_folders(s,a,b,"",0,out,allocator,missing)
 }
 
 @(private)
-diff_folders :: proc(s:^store.Store,a,b:store.Hash,prefix:string,depth:int,out:^[dynamic]Diff,allocator:runtime.Allocator) -> Error {
+diff_folders :: proc(s:^store.Store,a,b:store.Hash,prefix:string,depth:int,out:^[dynamic]Diff,allocator:runtime.Allocator,missing:^[dynamic]store.Hash) -> Error {
     if depth>DEPTH_MAX {return .Corrupt}
     left:=make([dynamic]Tree_Entry,context.temp_allocator)
     right:=make([dynamic]Tree_Entry,context.temp_allocator)
-    if a!={} {folder_get(s,a,&left,nil,context.temp_allocator) or_return}
-    if b!={} {folder_get(s,b,&right,nil,context.temp_allocator) or_return}
+    lacking:=false
+    for side in ([2]struct{address:store.Hash,entries:^[dynamic]Tree_Entry}{{a,&left},{b,&right}}) {
+        if side.address=={} {continue}
+        _,e:=folder_get(s,side.address,side.entries,nil,context.temp_allocator)
+        if e==.Missing && missing!=nil {
+            append(missing,side.address)
+            lacking=true
+        } else if e!=.None {
+            return e
+        }
+    }
+    if lacking {return .None}
     i,j:=0,0
     for i<len(left) || j<len(right) {
         l,r:Tree_Entry
@@ -269,7 +280,7 @@ diff_folders :: proc(s:^store.Store,a,b:store.Hash,prefix:string,depth:int,out:^
             append(out,d)
         }
         if lf || rf {
-            diff_folders(s,lf?l.address:{},rf?r.address:{},path,depth+1,out,allocator) or_return
+            diff_folders(s,lf?l.address:{},rf?r.address:{},path,depth+1,out,allocator,missing) or_return
         }
     }
     return .None
