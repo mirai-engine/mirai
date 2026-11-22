@@ -769,6 +769,42 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     testing.expect_value(t,read(sibling_root,"c/d.txt"),"d1")
     workspace_close(&v)
 
+    // A switch between trees whose names sort apart by folder and by whole path (a folder's
+    // walk gives a/x before a-b, the bytes after it) keeps the stat index in order, both ways:
+    // the workspace opens again and snapshots.
+    order_root:=folder_of(&f,"order")
+    names:=[]string{"a-b","a/x","a.b","a0","Z/x","a/y/z","Z-"}
+    for p in names {write(t,order_root,p,"1")}
+    u:Workspace
+    testing.expect_value(t,workspace_create(&u,order_root,&f.s,identity),Error.None)
+    first:=repo_working(&u.repo)
+    _,ne:=workspace_new(&u,{first})
+    testing.expect_value(t,ne,Error.None)
+    for p in names {write(t,order_root,p,"2",50*time.Minute)}
+    write(t,order_root,"a/w","2",50*time.Minute)
+    write(t,order_root,"a-c","2",50*time.Minute)
+    later_report,le:=workspace_snapshot(&u)
+    testing.expect_value(t,le,Error.None)
+    for target in ([]Revision{first,later_report.revision}) {
+        testing.expect_value(t,workspace_switch(&u,target),Error.None)
+        saved:Stat_Index
+        saved.rows.allocator,saved.pool.allocator=context.temp_allocator,context.temp_allocator
+        testing.expect(t,index_read(&f.s,u.repo.namespace,u.repo.workspace,&saved) && len(saved.rows)==len(u.index.rows),"the index a switch saved reads again")
+        kept:=0
+        for row in u.index.rows {kept+=int(row.path_len)}
+        testing.expect(t,len(u.index.pool)<=2*kept,"the paths of removed rows leave the pool")
+        workspace_close(&u)
+        testing.expect_value(t,workspace_open(&u,order_root,&f.s,identity),Error.None)
+        report,se:=workspace_snapshot(&u)
+        testing.expect_value(t,se,Error.None)
+        testing.expect(t,report.revision==target,"the switched files snapshot as the target's")
+        for row,k in u.index.rows {
+            if k>0 {testing.expect(t,stat_path(&u.index,u.index.rows[k-1])<stat_path(&u.index,row),"the index is in the order of its paths")}
+        }
+    }
+    testing.expect_value(t,read(order_root,"a-c"),"2")
+    workspace_close(&u)
+
     // The folder opened with a store that never held its repository says so.
     workspace_close(&w)
     other,oe:=store.open(strings.concatenate({f.folder,"/other"},context.temp_allocator))

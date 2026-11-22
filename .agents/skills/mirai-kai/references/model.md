@@ -42,6 +42,10 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   is shared with.
 - Tree diff and merge compare folder addresses first and read only folders that differ, so their
   cost follows what changed and not the size of the project.
+- Wherever Kai assumes an order of paths (a diff, the stat index and its merge, a list a binary
+  search reads, the files `tree_build` takes) it is the order of their bytes. A folder's walk
+  gives `a/x` before `a-b`, so `tree_diff` sorts what it found; a path still comes before every
+  path under it, which a checkout needs to remove a file before writing the folder of its name.
 
 ## Conflicts
 
