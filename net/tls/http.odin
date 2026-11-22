@@ -17,47 +17,69 @@ Transport :: struct {
     close:proc(data:rawptr,stream:uintptr),
 }
 
-// The largest response an HTTPS request takes.
-@(private) RESPONSE_MAX :: 1<<20
+// The largest response a request takes.
+RESPONSE_MAX :: 4<<20
 
-@(private)
 Http_Error :: enum u8 {None,Out_Of_Memory,Transport,Tls,Malformed}
 
-@(private)
+Http_Request :: struct {
+    method,url:string, // https://host[:port]/path, or http:// without TLS
+    body:[]u8,         // nil: none
+    content_type:string,
+    headers:string,    // more header lines, each ending in \r\n
+    roots:[]^x509.Certificate, // what an https:// server's chain is checked against
+    time:time.Time,    // when that chain must be valid; zero is now
+}
+
 Response :: struct {
     status:int,
     headers:string, // the header lines, after the status line
     body:[]u8,
 }
 
-// An HTTPS request of HTTP/1.1 on a connection of its own, which the response ends. The
-// response is in allocator; the connection takes its memory from scratch.
-@(private)
-https_request :: proc(transport:Transport,roots:[]^x509.Certificate,now:time.Time,method,url:string,body:[]u8,content_type:string,allocator,scratch:runtime.Allocator) -> (response:Response,err:Http_Error) {
-    host,port,path,ok:=url_split(url)
+// A request of HTTP/1.1 on a connection of its own, which the response ends: what ACME and
+// `mirai kai web approve` send. The response is in allocator; TLS takes its memory from
+// scratch.
+http_request :: proc(transport:Transport,request:Http_Request,allocator,scratch:runtime.Allocator) -> (response:Response,err:Http_Error) {
+    host,port,path,ok:=url_split(request.url)
     if !ok {return {},.Malformed}
-    memory,merr:=make([]u8,len(method)+len(path)+len(host)+len(content_type)+len(body)+256,allocator)
+    secure:=strings.has_prefix(request.url,"https://")
+    method:=request.method
+    memory,merr:=make([]u8,len(method)+len(path)+len(host)+len(request.content_type)+len(request.headers)+len(request.body)+256,allocator)
     if merr!=nil {return {},.Out_Of_Memory}
-    head:string
-    if body==nil {
-        head=fmt.bprintf(memory,"%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: mirai-acme\r\nAccept: */*\r\nConnection: close\r\n\r\n",method,path,host)
-    } else {
-        head=fmt.bprintf(memory,"%s %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: mirai-acme\r\nAccept: */*\r\nConnection: close\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n",method,path,host,content_type,len(body))
-    }
-    copy(memory[len(head):],body)
-    out:=memory[:len(head)+len(body)]
+    b:=strings.builder_from_bytes(memory)
+    fmt.sbprintf(&b,"%s %s HTTP/1.1\r\nHost: ",method,path)
+    if strings.index_byte(host,':')>=0 {fmt.sbprintf(&b,"[%s]",host)} else {strings.write_string(&b,host)}
+    if port!=(secure?443:80) {fmt.sbprintf(&b,":%d",port)}
+    fmt.sbprintf(&b,"\r\nUser-Agent: mirai\r\nAccept: */*\r\nConnection: close\r\n%s",request.headers)
+    if request.body!=nil {fmt.sbprintf(&b,"Content-Type: %s\r\nContent-Length: %d\r\n",request.content_type,len(request.body))}
+    strings.write_string(&b,"\r\n")
+    head:=len(b.buf)
+    copy(memory[head:],request.body)
+    out:=memory[:head+len(request.body)]
 
     stream,dialed:=transport.dial(transport.data,host,port)
     if !dialed {return {},.Transport}
     defer transport.close(transport.data,stream)
-    conn,cerr:=create({host=host,roots=roots,alpn={"http/1.1"},time=now},.Client,scratch)
+    received:[dynamic]u8
+    if received,err=make_received(allocator);err!=nil {return}
+    buffer:[16<<10]u8
+    if !secure {
+        if !transport.write(transport.data,stream,out) {return {},.Transport}
+        for !response_complete(received[:],method=="HEAD") {
+            n,read_ok:=transport.read(transport.data,stream,buffer[:])
+            if !read_ok {return {},.Transport}
+            if n==0 {break}
+            if len(received)+n>RESPONSE_MAX {return {},.Malformed}
+            if _,aerr:=append(&received,..buffer[:n]);aerr!=nil {return {},.Out_Of_Memory}
+        }
+        return response_parse(received[:],method=="HEAD",allocator)
+    }
+    conn,cerr:=create({host=host,roots=request.roots,alpn={"http/1.1"},time=request.time},.Client,scratch)
     if cerr==.Out_Of_Memory {return {},.Out_Of_Memory}
     if cerr!=nil {return {},.Tls}
     defer destroy(conn)
-    received:[dynamic]u8
-    if received,err=make_received(allocator);err!=nil {return}
     written:=0
-    buffer:[16<<10]u8
     loop: for {
         if connected(conn) && written<len(out) {
             n,_:=write(conn,out[written:])
@@ -109,15 +131,18 @@ make_received :: proc(allocator:runtime.Allocator) -> ([dynamic]u8,Http_Error) {
     return received,nil if err==nil else .Out_Of_Memory
 }
 
-// "https://host[:port]/path": its parts, the port 443 when it says none.
+// "https://host[:port]/path" or "http://...": its parts, the port 443 or 80 when it says none.
 @(private)
 url_split :: proc(url:string) -> (host:string,port:int,path:string,ok:bool) {
-    if !strings.has_prefix(url,"https://") {return}
-    rest:=url[len("https://"):]
+    rest:string
+    switch {
+    case strings.has_prefix(url,"https://"): rest,port=url[len("https://"):],443
+    case strings.has_prefix(url,"http://"): rest,port=url[len("http://"):],80
+    case: return
+    }
     slash:=strings.index_byte(rest,'/')
     authority:=rest if slash<0 else rest[:slash]
     path="/" if slash<0 else rest[slash:]
-    port=443
     host=authority
     if strings.has_prefix(authority,"[") {
         end:=strings.index_byte(authority,']')
@@ -206,7 +231,6 @@ chunked_decode :: proc(data:[]u8,allocator:runtime.Allocator) -> (body:[]u8,err:
 }
 
 // The value of a header, by its name in any case.
-@(private)
 header_value :: proc(headers,name:string) -> (value:string,found:bool) {
     rest:=headers
     for rest!="" {
