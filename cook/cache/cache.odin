@@ -22,8 +22,10 @@ import "mirai:store"
 // together are asked together, so a source that asks peers waits for them once.
 Fetch :: #type proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool)
 
-// Told after put kept a result: a source that shares results publishes it.
-Kept :: #type proc(user:rawptr,namespace,name:string,object:store.Hash)
+// Told after a result was kept under the ref (namespace, name): a source that
+// shares results publishes it. from: the files it was made from, absolute,
+// which decide who may read it; none known: empty.
+Kept :: #type proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string)
 
 Source :: struct {
     fetch:Fetch, // nil: none
@@ -34,6 +36,7 @@ Source :: struct {
 Cache :: struct {
     store:^store.Store, // nil: nothing is kept
     source:Source,
+    from:[]string, // the files what put keeps is made from, absolute, told to the source's kept
 }
 
 // The layout of what a result is: raised when results are kept otherwise, so a
@@ -104,8 +107,47 @@ put :: proc(c:Cache,name:string,key,version:u64,bytes:[]u8) -> bool {
     if !ok {return false}
     object,error:=asset.object_put(c.store,bytes)
     if error!=.None || store.ref_set(c.store,namespace,ref,object)!=.None {return false}
-    if c.source.kept!=nil {c.source.kept(c.source.user,namespace,ref,object)}
+    if c.source.kept!=nil {c.source.kept(c.source.user,namespace,ref,object,c.from)}
     return true
+}
+
+// What gives the imports and cooks of the project at root what the peers of
+// its org built and takes what they build, through the runner of the store at
+// store_root (cook/kai.peers_open, which the programs that import and cook pass
+// down). close says how many results went each way; nil when the project
+// shares with no peers.
+Peers_Open :: #type proc(store_root,root:string) -> (source:Source,close:Peers_Close)
+Peers_Close :: #type proc(source:Source) -> (taken,published:int)
+
+// Two sources as one: a miss asks first, then second for what first did not
+// give; what is kept is told to both. Lives while it is asked.
+Chain :: struct {first,second:Source}
+
+chain_source :: proc(c:^Chain) -> Source {
+    if c.first.fetch==nil && c.first.kept==nil {return c.second}
+    if c.second.fetch==nil && c.second.kept==nil {return c.first}
+    fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+        c:=(^Chain)(user)
+        if c.first.fetch!=nil {c.first.fetch(c.first.user,into,namespace,names,given)}
+        if c.second.fetch==nil {return}
+        lacking:=make([dynamic]string,context.temp_allocator)
+        at:=make([dynamic]int,context.temp_allocator)
+        for name,k in names {
+            if given[k] {continue}
+            append(&lacking,name)
+            append(&at,k)
+        }
+        if len(lacking)==0 {return}
+        second:=make([]bool,len(lacking),context.temp_allocator)
+        c.second.fetch(c.second.user,into,namespace,lacking[:],second)
+        for k,i in at {given[k]=second[i]}
+    }
+    kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]string) {
+        c:=(^Chain)(user)
+        if c.first.kept!=nil {c.first.kept(c.first.user,namespace,name,object,from)}
+        if c.second.kept!=nil {c.second.kept(c.second.user,namespace,name,object,from)}
+    }
+    return {fetch=fetch,kept=kept,user=c}
 }
 
 @(private)

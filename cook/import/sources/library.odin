@@ -712,6 +712,18 @@ build_found :: proc(l:^Library_State,p:^asset.Package,manifest,key:store.Hash,ke
     return {build=b,hash=hash,final=b.final},true
 }
 
+// The files the build of p is made from, absolute, where the project at top
+// names its source: what the source is told of a build it keeps.
+@(private="file")
+made_from :: proc(p:^asset.Package,top:string) -> []string {
+    source:=importer.origin_path(p.origin.path,top)
+    if source=="" {return nil}
+    from:=make([]string,len(p.inputs)+1,context.temp_allocator)
+    from[0]=source
+    for input,at in p.inputs {from[at+1],_=filepath.join({filepath.dir(source),input},context.temp_allocator)}
+    return from
+}
+
 // Asks the source of the library for the ref (namespace, name), once per call
 // of the library.
 @(private="file")
@@ -964,6 +976,7 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     if !found && keyed && f.fast_here {
         if hash,upgrade_error:=importer.finalize_build(s,&f.build,l.options.worker,l.options.gpu);upgrade_error==.None {
             f.hash,f.final,found,finalized=hash,true,true,true
+            if kept:=l.options.source.kept;kept!=nil {kept(l.options.source.user,asset.REF_IMPORTS,key_name,hash,made_from(&p,top))}
         }
     }
     if !found {

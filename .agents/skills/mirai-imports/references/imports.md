@@ -431,6 +431,13 @@ machine that shares the store's objects with another finds what that one built.
   object whole in the store and sets the ref, or says it has none. What a pass needs is looked up
   at once (`cache.lookup`): the cook asks the source in one fetch for the textures of its pass and
   its jobs then read the cache without asking.
+- In a project of a Kai org whose runner runs, the editor's imports, the import program (`mirai
+  import`, the refresh of a build) and the cook of a game take their source from
+  `cook/kai.peers_open` (`cache.Peers_Open`): a miss asks the org's peers, and every result kept,
+  with the build an import writes, is published under its ref (`kai_assets.ddc_key`). A result is
+  told the files it is made from (`cache.Cache.from`, `Import_Options.cache_from`): one made from a
+  file of a scope of the project goes out sealed for the scope's readers. Elsewhere there is no
+  source. A share session's source is asked before the mesh (`cache.Chain`), as `--from` is.
 - A texture that is not kept looks for its `textures.cache_key_build` (the bytes of the image, or
   the texels the format made with their size, layers and format, and the `settings_hash`): if it is
   there, its levels are written with the id and the `Import_Info` of this import; if not, it is

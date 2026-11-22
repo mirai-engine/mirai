@@ -65,7 +65,7 @@ IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lam
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
 // engine, editor.import_library).
-command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> int {
+command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil,peers:cache.Peers_Open=nil) -> int {
     file:string
     options:=importer.Import_Options{fast_textures=true}
     roots:=make([dynamic]string,context.temp_allocator) // of --refresh
@@ -221,7 +221,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
             }
             library_options.source=cache.store_source(&from)
         }
-        return refresh_command(roots[:],library_options,output,errors)
+        return refresh_command(roots[:],library_options,peers,output,errors)
     }
     if from_root!="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
     if file=="" {fmt.wprintln(errors,IMPORT_USAGE);return 2}
@@ -300,6 +300,9 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         ingest_print(&report,output)
         return 0
     }
+    shared,close:=peers_of(peers,options.store.root,root)
+    if close!=nil {library_options.source=shared}
+    defer peers_said(output,root,shared,close)
     report,added,error:=project_ingest(root,origin,folder,library_options,settings)
     defer library_report_destroy(&added)
     if error.code!=.None {
@@ -323,7 +326,7 @@ ingest_print :: proc(report:^importer.Import_Report,output:io.Writer) {
 
 // --refresh: every root in turn, one line each with what its refresh did.
 @(private="file")
-refresh_command :: proc(roots:[]string,options:Library_Options,output,errors:io.Writer) -> int {
+refresh_command :: proc(roots:[]string,options:Library_Options,peers:cache.Peers_Open,output,errors:io.Writer) -> int {
     code:=0
     seen:=make([dynamic]string,0,len(roots),context.temp_allocator)
     each: for root in roots {
@@ -334,6 +337,14 @@ refresh_command :: proc(roots:[]string,options:Library_Options,output,errors:io.
         options:=options
         options.root=top
         options.progress=output
+        // The store of --from first: it is on this machine, and the peers' answers wait on the network.
+        chain:=cache.Chain{first=options.source}
+        shared,close:=peers_of(peers,options.store.root,top)
+        if close!=nil {
+            chain.second=shared
+            options.source=cache.chain_source(&chain)
+        }
+        defer peers_said(output,root,shared,close)
         report:=project_refresh(root,options)
         defer library_report_destroy(&report)
         if library_print(&report,root,output,errors)!=0 {code=1}
@@ -342,6 +353,20 @@ refresh_command :: proc(roots:[]string,options:Library_Options,output,errors:io.
         }
     }
     return code
+}
+
+@(private="file")
+peers_of :: proc(peers:cache.Peers_Open,store_root,root:string) -> (source:cache.Source,close:cache.Peers_Close) {
+    if peers==nil {return}
+    return peers(store_root,root)
+}
+
+// Ends what peers_of opened and says what went each way.
+@(private="file")
+peers_said :: proc(output:io.Writer,root:string,source:cache.Source,close:cache.Peers_Close) {
+    if close==nil {return}
+    taken,published:=close(source)
+    fmt.wprintfln(output,"%s: kai: %d results taken from peers, %d published to them.",root,taken,published)
 }
 
 // The warnings, failures and missing packages of a report; 1 with any failure or package missing.

@@ -5,6 +5,7 @@ import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "mirai:cook/cache"
 import "mirai:project"
 import "mirai:std/base"
 
@@ -61,7 +62,16 @@ job_ship :: proc(job:^Job) -> Failure {
     if !copies_run(job.copies) {return .Copy_Failed}
     if os.write_entire_file(project.path(folder,project.SETTINGS_FILE,allocator=context.temp_allocator),job.settings)!=nil {return .Copy_Failed}
     if job.cook.assets=="" {return .None}
+    shared:cache.Source
+    close:cache.Peers_Close
+    if job.peers!=nil {shared,close=job.peers(job.store_root,job.root)}
+    if close!=nil {job.cook.cache_source=shared}
     job.result.cook=cook_assets(job.cook)
+    if close!=nil {
+        job.result.cook.peers=true
+        job.result.cook.peers_taken,job.result.cook.peers_published=close(shared)
+        job.cook.cache_source={}
+    }
     return job.result.cook.error==.None?.None:.Cook_Failed
 }
 

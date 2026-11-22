@@ -10,6 +10,7 @@ import "core:sync"
 import "core:thread"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import "mirai:cook/cache"
 import kai_assets "mirai:cook/kai"
 import "mirai:cook/textures"
 import "mirai:exchange"
@@ -1040,7 +1041,12 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
         done:bool,
     }
     work:=Work{folder=folder,allocator=allocator}
-    work.options={store=n.s,source=node_source(n),fast_textures=true,root=folder,plugins=d.library,worker=d.worker,gpu=d.gpu,progress=d.output}
+    // The session's peers first: they hold what this session offers and answer at once, while the
+    // mesh of the project's org waits for its peers on a miss.
+    shared,close:=kai_assets.peers_open(n.s.root,folder)
+    defer if close!=nil {close(shared)}
+    chain:=cache.Chain{first=node_source(n),second=shared}
+    work.options={store=n.s,source=cache.chain_source(&chain),fast_textures=true,root=folder,plugins=d.library,worker=d.worker,gpu=d.gpu,progress=d.output}
     t:=thread.create_and_start_with_data(&work,proc(data:rawptr) {
         w:=(^Work)(data)
         w.report=sources.project_refresh(w.folder,w.options,w.allocator)

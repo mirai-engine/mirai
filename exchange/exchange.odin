@@ -70,6 +70,10 @@ Expose :: #type proc(user:rawptr,peer:Peer_Id,namespace:string) -> bool
 // exchange runs, or guards it itself.
 Serve_Filter :: #type proc(user:rawptr,peer:Peer_Id,address:store.Hash) -> bool
 
+// A peer asked for the chunk at address, as an entry of an ask. Runs inside
+// receive, under the lock of the Exchange, so it does not call the exchange.
+Ask_Hint :: #type proc(user:rawptr,peer:Peer_Id,address:store.Hash)
+
 // A peer said its ref namespace and name now names address, {} once removed.
 // Runs inside receive, under the lock of the Exchange, so it does not call the
 // exchange; the strings live during the call.
@@ -87,7 +91,8 @@ Desc :: struct {
     expose:Expose,      // nil exposes no namespace
     serve:Serve_Filter, // nil serves a restricted peer nothing
     hint:Ref_Hint,      // nil ignores the ref changes peers tell
-    user:rawptr,        // of expose, serve and hint
+    asked:Ask_Hint,     // nil: what peers ask is not told
+    user:rawptr,        // of expose, serve, hint and asked
     allocator:runtime.Allocator,
 }
 

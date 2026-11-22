@@ -527,41 +527,6 @@ kai_refusal_set :: proc(t:^Kai_Team,refusal:ka.Refusal) {
     t.refusal.path=refusal.path!=""?strings.clone(refusal.path):""
 }
 
-// The org the project's cook shares derived data with, while the mesh runs;
-// zero otherwise.
-kai_mesh_org :: proc(s:^Session) -> vcs.Log_Id {
-    if s.kai==nil || s.kai.state==nil {return {}}
-    t:=&s.kai.state.team
-    if !t.opened || !t.connected {return {}}
-    _,org,linked:=vcs.machine_project_of(&t.machine,s.kai.state.project.workspace.repo.id)
-    if !linked {return {}}
-    return org
-}
-
-// What an import shares through the mesh, in its own thread: a machine of the
-// store and the cache of the org's project.
-Kai_Mesh_Import :: struct {
-    machine:vcs.Machine,
-    cache:ka.Mesh_Cache,
-    open,shared:bool,
-}
-
-// The source of a cook in the thread of an import: what peers built, asked on
-// a miss; what it builds is published. false while no runner runs.
-kai_mesh_import_open :: proc(k:^Kai_Mesh_Import,root:string,org:vcs.Log_Id) -> (source:cache.Source,ok:bool) {
-    if org=={} || vcs.machine_open(&k.machine,root)!=.None {return}
-    k.open=true
-    if ka.mesh_cache_open(&k.cache,&k.machine,org)!=.None {return}
-    k.shared=true
-    return ka.mesh_source(&k.cache),true
-}
-
-kai_mesh_import_close :: proc(k:^Kai_Mesh_Import) {
-    if k.shared {ka.mesh_cache_close(&k.cache)}
-    if k.open {vcs.machine_close(&k.machine)}
-    k^={}
-}
-
 // Shows the dialog of the tab.
 kai_dialog_open :: proc(s:^Session,dialog:Kai_Dialog) {
     t:=&s.kai.state.team

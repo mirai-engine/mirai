@@ -20,6 +20,7 @@ on_ask :: proc(x:^Exchange,i:int,data:[]u8) {
         address:=read_hash(&r)
         budget:=read_u32(&r)
         p.serve[(tail+k)%len(p.serve)]={kind=.Ask,address=address,budget=budget}
+        if x.desc.asked!=nil {x.desc.asked(x.desc.user,peer_id(p),address)}
     }
     p.serve[(tail+count)%len(p.serve)]={kind=.Done}
     sync.atomic_store(&p.serve_tail,tail+count+1)

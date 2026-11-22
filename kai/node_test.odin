@@ -10,7 +10,8 @@ import "mirai:store"
 // A ddc node over its quota drops the derived data used least recently and
 // the store's sweep reclaims it at once: the store comes back under the
 // quota, every closure the node serves and the results used most recently
-// stay and are still served, and a key a lookup still fetches is not dropped.
+// stay and are still served, and neither a key a lookup still fetches nor one
+// a remote peer is fetching from the node is dropped.
 @(test)
 a_ddc_node_drops_least_used_outputs_past_its_quota :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"kai-ddc-quota")
@@ -79,6 +80,8 @@ a_ddc_node_drops_least_used_outputs_past_its_quota :: proc(t:^testing.T) {
     testing.expect(t,used==.Found,"the oldest result is asked for: it is used now")
     waiting,_:=runner_ddc_ask(&r,org,busy)
     testing.expect(t,waiting==.Waiting,"a lookup fetches what the output lacks")
+    // A peer asks the node's exchange for an object of the second oldest result.
+    agent_asked(&r.orgs[0].agent,{},outputs[1][1])
     before,_:=store.usage(s)
     testing.expect(t,before.bytes>QUOTA,"the store is past the quota")
 
@@ -89,13 +92,13 @@ a_ddc_node_drops_least_used_outputs_past_its_quota :: proc(t:^testing.T) {
     name:[64]u8
     for key,k in ([]store.Hash{busy,keys[0],keys[1],keys[2],keys[3]}) {
         _,re:=store.ref_get(s,ddc_namespace(org,&ns),store.hex(key,&name))
-        kept:=k==0 || k==1 || k==4
+        kept:=k<=2
         testing.expectf(t,(re==.None)==kept,"key %d is kept %v",k,kept)
     }
-    for k in 1..<3 {
+    for k in 2..<4 {
         for o in outputs[k] {testing.expectf(t,!object_whole(s,o),"what key %d dropped leaves the store",k)}
     }
-    for k in ([]int{0,3}) {
+    for k in ([]int{0,1}) {
         found,output_root:=runner_ddc_ask(&r,org,keys[k])
         objects,ge:=ddc_output_get(s,output_root,context.temp_allocator)
         testing.expectf(t,found==.Found && ge==.None && len(objects)==2 && objects[0]==outputs[k][0],"key %d is still served",k)

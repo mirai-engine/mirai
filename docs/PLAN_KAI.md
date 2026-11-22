@@ -333,7 +333,8 @@ Entry_Head :: struct #packed {
   the output consists of, the one the key's cache ref names first, so nodes mirror and serve it
   whole without reading assets. Accepted only from writers or `ddc`-grant holders; differing
   outputs for the same key are both kept and flagged as nondeterminism; lookups batch LAN peers
-  before seed.
+  before seed. A tainted output is one blob sealed for its scopes (`overlay_blob_seal`), so nodes
+  and non-readers hold ciphertext only; a ddc node keeps a key a peer is fetching from it.
 
 ---
 

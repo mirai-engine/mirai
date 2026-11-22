@@ -8,9 +8,11 @@ import "mirai:store"
 // What a ddc node keeps of derived data: every key of an org's DDC namespace
 // with every object its outputs list here, dropped least recently used first
 // once their bytes pass the node's quota; a key a lookup through this node
-// still fetches, or whose objects the node is fetching, is not dropped. A key
-// is used when its newest record arrives and when a lookup through this node
-// asks for it. The store's own sweep reclaims what was dropped (store.sweep
+// still fetches, whose objects the node is fetching, or whose objects a peer
+// asked this node for within DDC_SECONDS (its fetch from here, as long as a
+// lookup lasts), is not dropped. A key is used when its newest record
+// arrives, when a lookup through this node asks for it and when a peer asks
+// this node for its objects. The store's own sweep reclaims what was dropped (store.sweep
 // with reclaim), so the quota holds on disk once it returns. The sweep follows
 // refs only, not the links inside Kai records, so the node names as live what
 // it serves besides: the closures of every project's bookmarks and proposals,
@@ -108,8 +110,20 @@ runner_ddc_quota :: proc(r:^Runner) {
     total:i64
     records:=make([dynamic][]u8,context.temp_allocator)
     fetching:=make(map[store.Hash]bool,context.temp_allocator)
+    asked:=make(map[store.Hash]i64,context.temp_allocator)
+    now:=time.now()._nsec
     for o in r.orgs {
         for f in o.agent.fetches {fetching[f.address]=true}
+        for x in o.agent.asked {
+            if x.at>0 && x.at>asked[x.address] {asked[x.address]=x.at}
+        }
+    }
+    // Whether a peer asked for the object at address lately: it is fetching it.
+    asked_lately :: proc(item:^Held,asked:map[store.Hash]i64,address:store.Hash,now:i64) {
+        at,known:=asked[address]
+        if !known {return}
+        item.used=max(item.used,at)
+        item.busy||=f64(now-at)<DDC_SECONDS*1e9
     }
     for o in r.orgs {
         ns:[len(DDC_PREFIX)+64]u8
@@ -128,8 +142,12 @@ runner_ddc_quota :: proc(r:^Runner) {
                 item.used=max(item.used,d.time)
                 if size,whole:=ddc_output_bytes(s,d.output_root);whole {item.bytes+=size}
                 item.busy||=fetching[d.output_root]
+                asked_lately(&item,asked,d.output_root,now)
                 objects,_:=ddc_output_get(s,d.output_root,context.temp_allocator)
-                for x in objects {item.busy||=fetching[x]}
+                for x in objects {
+                    item.busy||=fetching[x]
+                    asked_lately(&item,asked,x,now)
+                }
             }
             for u in r.ddc_use {
                 if u.org==o.id && u.key==key {item.used=max(item.used,u.at)}

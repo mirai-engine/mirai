@@ -12,6 +12,7 @@ import "core:thread"
 import "core:time"
 import "mirai:cook/build"
 import "mirai:cook/install"
+import ka "mirai:cook/kai"
 import "mirai:cook/shaders"
 import "mirai:project"
 import "mirai:std/base"
@@ -217,7 +218,7 @@ build_run :: proc(r:^Build_Run) {
     defer project.close(&p)
     r.opened=true
     if stopped(r) {return}
-    r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs,store_root=r.store_root})
+    r.job=build.job_start({project=&p,target=r.target,action=r.action,output=r.folder,test_package=r.test_package,test={names=r.names,quiet=true},dev=r.target==.Editor && build.ENGINE_MODE_HERE==.Dev,engine=build.ENGINE_MODE_HERE,runs=r.runs,store_root=r.store_root,peers=ka.peers_open})
     for {
         intrinsics.atomic_store(&r.stage,Build_Stage.Importing if build.job_importing(r.job) else .Building)
         if stopped(r) {
