@@ -546,8 +546,19 @@ overlay_rebase_keeps_ciphertext_and_ddc_outputs_inherit_scopes :: proc(t:^testin
     scope,other:=random_id(Scope_Id),random_id(Scope_Id)
     scope_add(t,&o,scope,.Reader,true,20,"secrets/**")
     scope_add(t,&o,other,.Writer,true,21,"licensed/**")
+    // A scope only the owner reads.
+    owned:=random_id(Scope_Id)
+    scope_add(t,&o,owned,.Owner,false,21,"vault/**")
     refold(t,&o)
     alice,carol:=device_of(&o.alice,0),device_of(&o.carol,0)
+    held:=false
+    for sc in o.fold.scopes {
+        if sc.scope!=owned {continue}
+        held=true
+        bob:=device_of(&o.bob,0)
+        testing.expect(t,device_reads(&o.fold,sc,&alice) && !device_reads(&o.fold,sc,&bob),"only the owner reads a scope of owner readers")
+    }
+    testing.expect(t,held,"a scope only its owner reads is taken")
     kl,ol:Log
     log_init(&kl);defer log_destroy(&kl)
     log_init(&ol);defer log_destroy(&ol)

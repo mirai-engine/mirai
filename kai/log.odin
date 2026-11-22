@@ -317,6 +317,11 @@ name_valid :: proc(name:string,empty:=false) -> bool {
 @(private)
 role_valid :: proc "contextless" (role:Role) -> bool {return role>=.Reader && role<=.Admin}
 
+// Whether role is the lowest that reads a scope: any role, the owner's too, for a
+// scope only the owner reads (licensed assets, the org's own secrets).
+@(private)
+readers_valid :: proc "contextless" (role:Role) -> bool {return role>=.Reader && role<=.Owner}
+
 // Whether body is a well-formed body of type t.
 body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
     switch t {
@@ -360,7 +365,7 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
         return ok && len(tail)==0 && role_valid(head.role)
     case .Scope_Add:
         head,tail,ok:=body_head(body,Scope_Add_Body)
-        if !ok || head.patterns==0 || head.patterns>PATTERNS_MAX || !role_valid(head.readers) {return false}
+        if !ok || head.patterns==0 || head.patterns>PATTERNS_MAX || !readers_valid(head.readers) {return false}
         r:=Reader{data=tail}
         for _ in 0..<head.patterns {
             if p:=tail_string(&r);len(p)==0 || !utf8.valid_string(p) {return false}

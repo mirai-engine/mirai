@@ -644,7 +644,7 @@ machine_policy_set :: proc(m:^Machine,org,project:Log_Id,bookmark:string,approva
 // the first epoch key wrapped for every device that may read it.
 machine_scope_add :: proc(m:^Machine,org,project:Log_Id,patterns:[]string,readers:Role,history:bool) -> (scope:Scope_Id,error:Error) {
     if len(patterns)==0 || len(patterns)>PATTERNS_MAX {return {},machine_fail(m,.Invalid_Argument,"a scope has 1 to 64 patterns")}
-    if !role_valid(readers) && readers!=.Owner {return {},machine_fail(m,.Invalid_Argument,"a scope's readers are a role: reader, writer, admin or owner")}
+    if !readers_valid(readers) {return {},machine_fail(m,.Invalid_Argument,"a scope's readers are a role: reader, writer, admin or owner")}
     scope=random_id(Scope_Id)
     tail:=make([dynamic]u8,context.temp_allocator)
     for p in patterns {
