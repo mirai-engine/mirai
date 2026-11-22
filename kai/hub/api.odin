@@ -5,6 +5,7 @@ import "core:encoding/base64"
 import "core:encoding/json"
 import "core:strconv"
 import "core:strings"
+import "mirai:kai"
 import "mirai:store"
 
 // The routes of the API, in one table that both dispatches and describes:
@@ -72,6 +73,9 @@ ROUTES :: [?]Route{
     {.GET,"/api/projects/{project}/changes/{revision}",.Public,"One change: its head, description, co-authors and the files it changes from its first parent.",{PROJECT,{"revision",.Path,"revision","64 hex"}},"{revision, change, author, author_name, created, written, parents, description, coauthors:[{key, name}], turns, files:[{path, status: added|removed|modified|conflict, before:{address, size}, after:{address, size}}]}",.Read,route_change},
     {.GET,"/api/projects/{project}/diff",.Public,"The line diff of one file between two revisions (std/diff); a binary or an oversized file says so instead.",{PROJECT,{"from",.Query,"revision","the old revision (64 hex)"},{"to",.Query,"revision","the new revision (64 hex)"},{"path",.Query,"path","the file"}},"{path, binary, too_large, before:{size}|null, after:{size}|null, added, removed, lines:[{op: same|add|remove, old, new, text}]}",.Read,route_diff},
     {.GET,"/api/projects/{project}/evolution/{change}",.Public,"The revisions of one Change_Id over time, oldest first, with the interdiff between each and the next: the files whose content differs between their trees among those either edits.",{PROJECT,{"change",.Path,"change id","32 hex"}},"{change, revisions:[{revision, written, author, summary, files:[path]}], interdiffs:[{from, to, files:[{path, before, after}]}]}",.Read,route_evolution},
+    {.GET,"/api/projects/{project}/summary",.Public,"What a file is, when it is an asset a peer summarized: kai/preview.odin lays out the summary (a head line, the kind, then label<TAB>value per fact), and whether a thumbnail is here. none when no peer published one; fetching while the node takes it from its peers. A file a scope takes has none.",{PROJECT,REV,{"path",.Query,"path","the file"}},"{path, address, state: none|fetching|found, summary: text|null, thumbnail: none|fetching|found}",.Read,route_summary},
+    {.GET,"/api/projects/{project}/thumbnail",.Public,"The thumbnail of an asset a peer published: a PNG of at most PREVIEW_SIDE_MAX pixels a side; 404 when there is none here.",{PROJECT,REV,{"path",.Query,"path","the file"}},"image/png",.Read,route_thumbnail},
+    {.GET,"/api/projects/{project}/asset-diff",.Public,"What a change did to an asset, row by row and field by field, as a peer that read both sides recorded it: kai/preview.odin lays out the detail (a head line, added, removed, changed and cut rows, then mark<TAB>entity<TAB>text per row).",{PROJECT,{"from",.Query,"revision","the old revision (64 hex); absent when the file is new"},{"to",.Query,"revision","the new revision (64 hex)"},{"path",.Query,"path","the file"}},"{path, state: none|fetching|found, detail: text|null}",.Read,route_asset_diff},
     {.GET,"/api/projects/{project}/stacks",.Member,"The stacks of every device: <handle>/<device>:<bookmark>, each with the changes it holds above what landed.",{PROJECT},"{stacks:[{label, user, handle, device, device_name, bookmark, revision, time, changes:[{revision, change, summary}]}]}",.Read,route_stacks},
     {.GET,"/api/projects/{project}/proposals",.Member,"The proposals of a project.",{PROJECT},"{proposals:[{id, title, target, status, opener, opener_name, revision, approvals, comments}]}",.Read,route_proposals},
     {.GET,"/api/proposals/{proposal}",.Member,"One proposal: its stack, its comments placed on the current stack, its verdicts and checks, and what blocks landing.",{{"proposal",.Path,"log id","the Proposal_Log (64 hex)"}},"{id, project, title, text, target, status, opener, opener_name, revision, stack:[{change, revision, summary}], comments:[{id, author, author_name, time, text, reply_to, change, path, anchor:{kind, line, lines}, outdated}], verdicts:[{user, name, verdict, revision, current}], checks:[{name, state}], approvals, blocked:{reason, text}|null, heads:[entry address]}",.Read,route_proposal},
@@ -326,6 +330,7 @@ route_describe :: proc(c:^Call) {
     json_member_int(&j,"DIFF_FILE_MAX",DIFF_FILE_MAX)
     json_member_int(&j,"DIFF_LINES_MAX",DIFF_LINES_MAX)
     json_member_int(&j,"CHANGES_PAGE_MAX",CHANGES_PAGE_MAX)
+    json_member_int(&j,"PREVIEW_SIDE_MAX",kai.PREVIEW_SIDE_MAX)
     json_member_int(&j,"BODY_MAX",BODY_MAX)
     json_member_int(&j,"CHALLENGE_SECONDS",i64(CHALLENGE_SECONDS))
     json_member_int(&j,"SESSION_SECONDS",i64(SESSION_SECONDS))

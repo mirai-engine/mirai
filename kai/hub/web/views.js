@@ -3,6 +3,7 @@
 import {h} from './vue.js'
 import {api, apiRaw, roleIn, state} from './api.js'
 import {DiffView, errorBox, fileDiff, frame, href, link, navigate, short, size, useLoad, when} from './ui.js'
+import {detailDecode, summaryDecode} from './preview.js'
 
 // A project's title and tabs above one of its views.
 export function projectHead(p, active) {
@@ -118,18 +119,44 @@ function dataUrl(type, bytes) {
     return `data:${type};base64,${btoa(text)}`
 }
 
+// What peers published of an asset: its summary and whether a thumbnail is
+// here; null when the node has none.
+async function previewLoad(p, rev, path) {
+    try {
+        const d = await api(href(`/api/projects/${p.id}/summary`, {rev, path}))
+        return {state: d.state, summary: d.state === 'found' ? summaryDecode(d.summary) : null, thumbnail: d.thumbnail === 'found'}
+    } catch {
+        return null
+    }
+}
+
 async function fileLoad(p, rev, path) {
+    const preview = previewLoad(p, rev, path)
     let r
     try {
         r = await apiRaw(href(`/api/projects/${p.id}/file`, {rev, path}))
     } catch (error) {
-        if (error.status === 413) return {large: error.message}
+        if (error.status === 413) return {large: error.message, preview: await preview}
         throw error
     }
-    if (r.headers.get('content-type')?.startsWith('text/plain')) return {text: await r.text()}
+    if (r.headers.get('content-type')?.startsWith('text/plain')) return {text: await r.text(), preview: await preview}
     const bytes = new Uint8Array(await r.arrayBuffer())
     const type = imageType(bytes)
-    return type ? {image: dataUrl(type, bytes), size: bytes.length} : {binary: bytes.length, head: bytes.slice(0, 64)}
+    return type ? {image: dataUrl(type, bytes), size: bytes.length} : {binary: bytes.length, head: bytes.slice(0, 64), preview: await preview}
+}
+
+// The summary of an asset beside its thumbnail, as peers published them.
+function previewBox(p, rev, path, preview) {
+    if (!preview) return null
+    if (preview.state === 'fetching') return h('p', {class: 'quiet'}, 'The node is fetching the summary of this asset from its peers: reload in a moment.')
+    if (!preview.summary) return null
+    return h('div', {class: 'preview'}, [
+        preview.thumbnail ? h('img', {class: 'thumb', src: href(`/api/projects/${p.id}/thumbnail`, {rev, path}), alt: path}) : null,
+        h('dl', {class: 'facts'}, [
+            h('dt', 'Kind'), h('dd', preview.summary.kind),
+            preview.summary.facts.map(f => [h('dt', f.label), h('dd', f.value)]),
+        ]),
+    ])
 }
 
 export const FileView = {
@@ -139,10 +166,11 @@ export const FileView = {
         const raw = href(`/api/projects/${props.params.project}/file`, {rev, path})
         return projectView(props, 'tree', p => fileLoad(p, rev, path), (p, f) => {
             let body
-            if (f.large) body = h('p', {class: 'quiet'}, f.large)
+            const shown = previewBox(p, rev, path, f.preview)
+            if (f.large) body = [shown, h('p', {class: 'quiet'}, f.large)]
             else if (f.image) body = [h('p', {class: 'quiet'}, `Image, ${size(f.size)}`), h('img', {class: 'shown', src: f.image, alt: path})]
             else if (f.binary !== undefined) {
-                body = [
+                body = shown ? [shown, h('p', h('a', {href: raw}, 'Download'))] : [
                     h('p', {class: 'quiet'}, `Binary file, ${size(f.binary)}. Its first bytes:`),
                     h('pre', {class: 'bytes'}, Array.from(f.head, b => b.toString(16).padStart(2, '0')).join(' ')),
                     h('p', h('a', {href: raw}, 'Download')),
@@ -207,17 +235,46 @@ export const Change = {
     },
 }
 
+// The line diff of a file, and of a binary one what peers recorded of the
+// change of the asset it is.
+async function diffLoad(p, from, to, path) {
+    const d = await fileDiff(p.id, from, to, path)
+    if (!d.binary) return d
+    try {
+        const a = await api(href(`/api/projects/${p.id}/asset-diff`, {from, to, path}))
+        return {...d, asset: a.state === 'found' ? detailDecode(a.detail) : null, assetState: a.state}
+    } catch {
+        return d
+    }
+}
+
+const MARKS = {'+': 'add', '-': 'remove', '~': 'change'}
+
+// What a change did to an asset: its rows and fields, by entity.
+function assetDetail(d) {
+    return [
+        h('p', {class: 'quiet'}, `Asset: +${d.added} −${d.removed} ~${d.changed}`),
+        h('div', {class: 'scroll'}, h('table', {class: 'diff'}, h('tbody', d.rows.map(r => h('tr', {class: MARKS[r.mark]}, [
+            h('td', {class: 'num'}, r.name),
+            h('td', {class: 'text'}, `${r.mark} ${r.text}`),
+        ]))))),
+        d.cut ? h('p', {class: 'quiet'}, `${d.cut} more row${d.cut === 1 ? '' : 's'} not shown.`) : null,
+    ]
+}
+
 export const Diff = {
     props: ['params', 'query'],
     setup(props) {
         const {from, to, path} = props.query
-        return projectView(props, 'changes', p => fileDiff(p.id, from, to, path), (p, d) => [
+        return projectView(props, 'changes', p => diffLoad(p, from, to, path), (p, d) => [
             h('h2', path),
             h('p', {class: 'quiet'}, [
                 from ? link(`/p/${p.id}/change/${from}`, h('code', short(from))) : 'nothing', ' → ', link(`/p/${p.id}/change/${to}`, h('code', short(to))),
                 d.lines.length ? ` · +${d.added} −${d.removed}` : '',
                 ' · ', link(href(`/p/${p.id}/file`, {rev: to, path}), 'file'),
             ]),
+            d.asset ? assetDetail(d.asset) : null,
+            d.assetState === 'fetching' ? h('p', {class: 'quiet'}, 'The node is fetching what peers recorded of this change: reload in a moment.') : null,
             h(DiffView, {diff: d}),
         ])
     },

@@ -233,6 +233,51 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
         st.conflicts=make([dynamic]Materialized,context.temp_allocator)
         return state_decode(b,&st,context.temp_allocator)
     },"a workspace state")
+
+    // Previews a peer publishes for the web view: what the encoders make is
+    // taken, and texts past their bounds or with control bytes, another head,
+    // a count that is no number and anything a PNG header does not say are not.
+    summary,_:=preview_summary_encode("mesh",{{"Vertices","788"},{"Names","a\tb\nc"}},context.temp_allocator)
+    testing.expect_value(t,preview_check(.Summary,summary),Error.None)
+    rows:=[]Preview_Row{{'~',"Lamp","Transform.position: 0 -> 5"},{'+',"","Light"}}
+    detail,_:=preview_detail_encode(&Preview_Detail{changed=1,added=1,rows=rows},context.temp_allocator)
+    testing.expect_value(t,preview_check(.Detail,detail),Error.None)
+    many:=make([]Preview_Fact,PREVIEW_FACTS_MAX+1,context.temp_allocator)
+    for &f in many {f={"label","value"}}
+    _,e=preview_summary_encode("mesh",many,context.temp_allocator)
+    testing.expect_value(t,e,Error.Too_Large)
+    long:=strings.repeat("x",PREVIEW_VALUE_MAX+1,context.temp_allocator)
+    hostile:=[]struct {kind:Preview_Kind,text:string}{
+        {.Summary,""},
+        {.Summary,"kai-summary 2\nmesh\n"},
+        {.Summary,"kai-summary 1\nmesh"},
+        {.Summary,"kai-summary 1\n\n"},
+        {.Summary,"kai-summary 1\nmesh\nno tab\n"},
+        {.Summary,"kai-summary 1\nmesh\na\tb\tc\n"},
+        {.Summary,"kai-summary 1\nmesh\n\tvalue\n"},
+        {.Summary,"kai-summary 1\nmesh\na\tb\r\n"},
+        {.Summary,"kai-summary 1\nmesh\na\t\xff\n"},
+        {.Summary,strings.concatenate({"kai-summary 1\nmesh\na\t",long,"\n"},context.temp_allocator)},
+        {.Summary,strings.concatenate({"kai-summary 1\nmesh\n",strings.repeat("a\tb\n",PREVIEW_FACTS_MAX+1,context.temp_allocator)},context.temp_allocator)},
+        {.Detail,"kai-detail 1\n1\t2\t3\n"},
+        {.Detail,"kai-detail 1\n1\t2\t3\t-4\n"},
+        {.Detail,"kai-detail 1\n1\t2\t3\t4\t5\n"},
+        {.Detail,"kai-detail 1\n0\t0\t0\t0\n*\tname\ttext\n"},
+        {.Detail,"kai-detail 1\n0\t0\t0\t0\n+\tname\n"},
+        {.Detail,"kai-detail 1\n0\t0\t0\t9999999999\n"},
+        {.Thumbnail,"\x89PNG\r\n\x1a\nnot a png"},
+        {.Thumbnail,"kai-summary 1\nmesh\n"},
+    }
+    for x in hostile {
+        testing.expectf(t,preview_check(x.kind,transmute([]u8)x.text)!=.None,"a %v preview %q is refused",x.kind,x.text)
+    }
+    // A PNG of 2x2 pixels, and one whose header says more than PREVIEW_SIDE_MAX.
+    png:=[]u8{0x89,'P','N','G','\r','\n',0x1a,'\n',0,0,0,13,'I','H','D','R',0,0,0,2,0,0,0,2,8,6,0,0,0,0,0,0,0, 0,0,0,0,'I','E','N','D',0xae,0x42,0x60,0x82}
+    testing.expect_value(t,preview_check(.Thumbnail,png),Error.None)
+    wide:=slice.clone(png,context.temp_allocator)
+    wide[18]=0x10
+    testing.expect_value(t,preview_check(.Thumbnail,wide),Error.Corrupt)
+    testing.expect(t,preview_key(.Summary,{},{0=1})!=preview_key(.Thumbnail,{},{0=1}) && preview_key(.Detail,{0=1},{0=2})!=preview_key(.Detail,{0=2},{0=1}),"a key names the kind and the sides")
 }
 
 @(test)

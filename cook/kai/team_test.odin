@@ -345,6 +345,10 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     testing.expect_value(t,se,vcs.Error.None)
     testing.expect_value(t,project_route(pa),vcs.Error.None)
     write(t,a_root,"secrets/key.txt","first secret\n")
+    public_scene:=#load("../../demo/assets/raft/Swimmer.scene")
+    scoped_mesh:=#load("../../demo/assets/blockout/column.mesh")
+    write(t,a_root,"assets/swimmer.scene",string(public_scene))
+    write(t,a_root,"secrets/column.mesh",string(scoped_mesh))
     publish :: proc(t:^testing.T,p:^Project,m:^vcs.Machine) -> vcs.Revision {
         r,e:=new_change(&p.workspace,nil,"",nil)
         testing.expectf(t,e==.None,"%v %s",e,p.routing.refused)
@@ -358,6 +362,25 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     c,_:=vcs.change_get(&alice.m.store,sealed,context.temp_allocator)
     _,in_public,_:=vcs.tree_file(&alice.m.store,c.tree,"secrets/key.txt")
     testing.expect(t,!in_public,"the private file is not in the public change")
+    // The publish made the previews of the public scene it added, and none of the scoped mesh.
+    {
+        s:=&alice.m.store
+        scene,in_tree,_:=vcs.tree_file(s,c.tree,"assets/swimmer.scene")
+        testing.expect(t,in_tree,"the scene is in the public change")
+        lacking:=make([dynamic]store.Hash,context.temp_allocator)
+        record,state:=vcs.preview_get(s,org,.Summary,vcs.preview_key(.Summary,{},scene.address),&lacking,context.temp_allocator)
+        facts:=make([dynamic]vcs.Preview_Fact,context.temp_allocator)
+        kind,_:=vcs.preview_summary_decode(record,&facts)
+        testing.expectf(t,state==.Found && kind=="prefab","the summary of the scene is published: %v %q",state,kind)
+        _,state=vcs.preview_get(s,org,.Detail,vcs.preview_key(.Detail,{},scene.address),&lacking,context.temp_allocator)
+        testing.expect_value(t,state,vcs.Preview_State.Found)
+        mesh_address,_:=store.put(s,scoped_mesh)
+        _,state=vcs.preview_get(s,org,.Summary,vcs.preview_key(.Summary,{},mesh_address),&lacking,context.temp_allocator)
+        testing.expect_value(t,state,vcs.Preview_State.None)
+        ns:[len(vcs.DDC_PREFIX)+64]u8
+        keys,_:=store.ref_list(s,vcs.ddc_namespace(org,&ns),context.temp_allocator)
+        testing.expectf(t,len(keys)==2,"the summary and the detail of the scene alone: %d keys",len(keys))
+    }
 
     for &x in team {
         if !team_start(t,&x,true) {return}

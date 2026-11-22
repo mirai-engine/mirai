@@ -4,6 +4,7 @@
 import {readFileSync} from 'node:fs'
 import {blake3} from './web/blake3.js'
 import * as E from './web/entry.js'
+import * as Preview from './web/preview.js'
 
 const text = readFileSync(process.argv[2], 'utf8')
 let v
@@ -73,6 +74,18 @@ for (const d of v.drafts) {
     expect(E.draftCheck(E.unb64(d.unsigned), d.action, other, now) !== '', `the draft of ${d.action.type} is refused for another author`)
 }
 for (const d of v.refused) expect(E.draftCheck(E.unb64(d.unsigned), d.action, author, now) !== '', `${d.name} is refused`)
+
+for (const x of v.previews.summaries) {
+    const got = Preview.summaryDecode(x.text)
+    expect(got && got.kind === x.kind && JSON.stringify(got.facts.map(f => [f.label, f.value])) === JSON.stringify(x.facts), `the summary ${JSON.stringify(x.text)}`)
+}
+const detail = Preview.detailDecode(v.previews.detail)
+expect(detail && detail.added === 1 && detail.removed === 1 && detail.changed === 1 && detail.cut === 7 && detail.rows.length === 3 &&
+    detail.rows[0].name === 'Lamp' && detail.rows[2].name === 'Sun ü' && detail.rows[2].text === '', `the detail ${JSON.stringify(v.previews.detail)}`)
+for (const x of v.previews.refused) {
+    const decode = x.kind === 'detail' ? Preview.detailDecode : Preview.summaryDecode
+    expect(decode(x.text) === null, `the ${x.kind} ${JSON.stringify(x.text)} is refused`)
+}
 
 if (fails.length) {
     console.log(fails.join('\n'))

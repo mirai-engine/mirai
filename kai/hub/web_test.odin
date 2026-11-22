@@ -190,7 +190,58 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     }
     for m,k in mismatches {refuse(&b,&first,fmt.tprintf("draft %d against mismatch %d",m.draft,k),m.action,drafts[m.draft])}
     web_key:=kai.web_key_id(coses[0],RP)
-    fmt.sbprintf(&b,`],"author":"%s","now":"%d"}}`,hex(web_key[:]),time.now()._nsec)
+    fmt.sbprintf(&b,`],"author":"%s","now":"%d",`,hex(web_key[:]),time.now()._nsec)
+
+    // The previews of assets as peers publish them, and records the node refuses.
+    previews:=json_make()
+    json_object(&previews)
+    json_key(&previews,"summaries")
+    json_array(&previews)
+    Summary :: struct {kind:string,facts:[]kai.Preview_Fact}
+    for x in ([?]Summary{
+        {"scene",{{"Entities","2"},{"Top entities","Swimmer, Sun ü"}}},
+        {"mesh",{{"Vertices","788"},{"Extent","0.986 × 1 × 0.986 m"},{"Cut","a\tb\nc"}}},
+        {"records",{}},
+    }) {
+        record,_:=kai.preview_summary_encode(x.kind,x.facts,context.temp_allocator)
+        facts:=make([dynamic]kai.Preview_Fact,context.temp_allocator)
+        kind,_:=kai.preview_summary_decode(record,&facts)
+        json_object(&previews)
+        json_member_string(&previews,"text",string(record))
+        json_member_string(&previews,"kind",kind)
+        json_key(&previews,"facts")
+        json_array(&previews)
+        for f in facts {
+            json_array(&previews)
+            json_string(&previews,f.label)
+            json_string(&previews,f.value)
+            json_end_array(&previews)
+        }
+        json_end_array(&previews)
+        json_end_object(&previews)
+    }
+    json_end_array(&previews)
+    rows:=[]kai.Preview_Row{{'~',"Lamp","Transform[@0x20].value.position[0]: 0 -> 5"},{'+',"","Light"},{'-',"Sun ü",""}}
+    detail,_:=kai.preview_detail_encode(&kai.Preview_Detail{added=1,removed=1,changed=1,cut=7,rows=rows},context.temp_allocator)
+    json_member_string(&previews,"detail",string(detail))
+    json_key(&previews,"refused")
+    json_array(&previews)
+    for text in ([?]string{
+        "", "kai-summary 2\nmesh\n", "kai-summary 1\nmesh", "kai-summary 1\nmesh\nno tab\n", "kai-summary 1\nmesh\na\tb\tc\n",
+        "kai-summary 1\nmesh\na\tb\x01\n", "kai-detail 1\n1\t2\t3\n", "kai-detail 1\n0\t0\t0\t0\n*\tname\ttext\n",
+        strings.concatenate({"kai-summary 1\nmesh\n",strings.repeat("a\tb\n",kai.PREVIEW_FACTS_MAX+1,context.temp_allocator)},context.temp_allocator),
+        strings.concatenate({"kai-summary 1\nmesh\na\t",strings.repeat("ü",kai.PREVIEW_VALUE_MAX/2+1,context.temp_allocator),"\n"},context.temp_allocator),
+    }) {
+        kind:=strings.has_prefix(text,"kai-detail")?kai.Preview_Kind.Detail:.Summary
+        testing.expectf(t,kai.preview_check(kind,transmute([]u8)text)!=.None,"the node refuses %q",text)
+        json_object(&previews)
+        json_member_string(&previews,"kind",kind==.Detail?"detail":"summary")
+        json_member_string(&previews,"text",text)
+        json_end_object(&previews)
+    }
+    json_end_array(&previews)
+    json_end_object(&previews)
+    fmt.sbprintf(&b,`"previews":%s}}`,json_text(&previews))
 
     vectors:=fmt.tprintf("%s/vectors.json",f.folder)
     if !testing.expect(t,os.write_entire_file(vectors,transmute([]u8)strings.to_string(b))==nil) {return}

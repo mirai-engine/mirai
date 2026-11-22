@@ -54,7 +54,8 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
 - The runner, who reads what, how peers find each other, relay, beacon and nodes:
   [runner](references/mesh.md#the-runner), [access](references/mesh.md#who-reads-what),
   [ladder](references/mesh.md#the-connection-ladder) and [nodes](references/mesh.md#nodes).
-- Derived data a cook takes from a peer: [derived data](references/mesh.md#derived-data).
+- Derived data a cook takes from a peer: [derived data](references/mesh.md#derived-data); the
+  summaries, thumbnails and asset diffs of the web view: [previews](references/node.md#previews).
 - Private files, scopes, keys, deny set and the publish scanner:
   [scopes](references/private.md#scopes-and-routing),
   [keys](references/private.md#keyrings-and-epochs), [sealing](references/private.md#sealing) and
@@ -184,7 +185,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `two_agents_pair_and_sync_a_change_over_loopback_udp`,
   `a_relay_node_joins_two_agents_that_cannot_reach_each_other`,
   `runner_refuses_hostile_datagrams` and `a_ddc_node_drops_least_used_outputs_past_its_quota` in
-  `kai`; `a_cook_takes_derived_data_a_peer_built` in `cook/kai`.
+  `kai`; `a_cook_takes_derived_data_a_peer_built` and
+  `asset_summaries_are_stable_and_follow_their_bytes` in `cook/kai`.
 - Private files: `scoped_plaintext_never_enters_public_store`,
   `removed_member_cannot_decrypt_post_rotation_epoch`,
   `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.

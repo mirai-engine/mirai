@@ -1,5 +1,7 @@
 package editor
 
+import "base:runtime"
+import "core:c"
 import "core:fmt"
 import "core:hash"
 import "core:math"
@@ -18,6 +20,7 @@ import mm "mirai:std/math"
 import "mirai:std/serial"
 import "mirai:store"
 import "mirai:ui"
+import stbi "vendor:stb/image"
 
 // Thumbnails of geometry: images with premultiplied alpha that the renderer
 // draws with the materials of the subject, kept as the cells of one atlas the
@@ -786,29 +789,86 @@ preview_render :: proc(s:^Session,subject:^Thumbnail_Subject,level:Thumbnail_Lev
 // came with, for points of the window.
 @(private)
 preview_geometry :: proc(s:^Session,shape:host.Shape,mesh:base.Asset_Id,points:f32=0) -> ui.Quad {
-    subject:=Thumbnail_Subject{mesh={mesh=mesh,shape=mesh=={}?shape:.None},tint={color=mesh=={}?THUMBNAIL_SHAPE_TINT:{1,1,1,1}}}
+    subject:=geometry_subject(shape,mesh)
     named:=[3]u64{mesh[0],mesh[1],u64(subject.mesh.shape)}
     return preview_request(s,thumbnail_key(mem.ptr_to_bytes(&named)),&subject,points,mesh)
+}
+
+@(private)
+geometry_subject :: proc(shape:host.Shape,mesh:base.Asset_Id) -> Thumbnail_Subject {
+    return {mesh={mesh=mesh,shape=mesh=={}?shape:.None},tint={color=mesh=={}?THUMBNAIL_SHAPE_TINT:{1,1,1,1}}}
 }
 
 // The stored preview of a material: the sphere of the studio wearing it.
 @(private)
 preview_material :: proc(s:^Session,material:base.Asset_Id,points:f32=0) -> ui.Quad {
-    subject:=Thumbnail_Subject{mesh={shape=.Sphere},tint={color={1,1,1,1}}}
-    subject.mesh.materials[0]=material
+    subject:=material_subject(material)
     named:=[3]u64{material[0],material[1],0x6d6174}
     return preview_request(s,thumbnail_key(mem.ptr_to_bytes(&named)),&subject,points,material)
+}
+
+@(private)
+material_subject :: proc(material:base.Asset_Id) -> Thumbnail_Subject {
+    subject:=Thumbnail_Subject{mesh={shape=.Sphere},tint={color={1,1,1,1}}}
+    subject.mesh.materials[0]=material
+    return subject
 }
 
 // The stored preview of a texture: its smallest levels that cover the cell,
 // read on the processor (thumbnail_texture_image), never the whole texture.
 @(private)
 preview_texture :: proc(s:^Session,texture:base.Asset_Id,points:f32=0) -> ui.Quad {
+    subject:=texture_subject(texture)
+    named:=[3]u64{texture[0],texture[1],0x746578}
+    return preview_request(s,thumbnail_key(mem.ptr_to_bytes(&named)),&subject,points,texture)
+}
+
+@(private)
+texture_subject :: proc(texture:base.Asset_Id) -> Thumbnail_Subject {
     subject:=Thumbnail_Subject{provider=asset.KIND_TEXTURE}
     id:=texture
     copy(subject.data[:],mem.ptr_to_bytes(&id))
-    named:=[3]u64{texture[0],texture[1],0x746578}
-    return preview_request(s,thumbnail_key(mem.ptr_to_bytes(&named)),&subject,points,texture)
+    return subject
+}
+
+// The large preview the store keeps of the asset whose file is bytes, as a
+// PNG in out, for Kai to publish beside its summary (ka.Thumbnail_Source):
+// only of a mesh, a material or a texture whose file the registry holds with
+// that same content, so the preview is of those bytes. Nothing is drawn for it.
+thumbnail_png :: proc(data:rawptr,bytes:[]u8,out:^[dynamic]u8) -> bool {
+    s:=(^Session)(data)
+    if s.app==nil || s.app.assets==nil || s.store.root=="" {return false}
+    header,he:=asset.header_read(bytes)
+    if he!=.None {return false}
+    file,found:=asset.registry_find(&s.app.assets.registry,header.id)
+    if !found || file.content_hash!=header.content_hash {return false}
+    subject:Thumbnail_Subject
+    switch header.kind {
+    case asset.KIND_MESH: subject=geometry_subject(.None,header.id)
+    case asset.KIND_MATERIAL: subject=material_subject(header.id)
+    case asset.KIND_TEXTURE: subject=texture_subject(header.id)
+    case: return false
+    }
+    th:Thumbnail_File
+    defer thumbnail_file_destroy(&th)
+    image:=make([dynamic]u8,context.temp_allocator)
+    if !thumbnail_store_load(&s.store,THUMBNAIL_LARGE,thumbnail_key_of(s,header.id,subject,.Large),&th,&image) {return false}
+    // PNG holds straight alpha; the preview is premultiplied.
+    for i:=0;i+3<len(image);i+=4 {
+        a:=int(image[i+3])
+        if a==0 || a==255 {continue}
+        for c in 0..<3 {image[i+c]=u8(min(255,(int(image[i+c])*255+a/2)/a))}
+    }
+    Png_Out :: struct {out:^[dynamic]u8,failed:bool}
+    sink:=Png_Out{out=out}
+    write :: proc "c" (user:rawptr,data:rawptr,size:c.int) {
+        context=runtime.default_context()
+        o:=(^Png_Out)(user)
+        if _,e:=append(o.out,..([^]u8)(data)[:size]);e!=nil {o.failed=true}
+    }
+    clear(out)
+    ok:=stbi.write_png_to_func(write,&sink,THUMBNAIL_LARGE,THUMBNAIL_LARGE,4,raw_data(image),THUMBNAIL_LARGE*4)!=0
+    return ok && !sink.failed
 }
 
 // The image of a texture at side*side, premultiplied display colors, from the

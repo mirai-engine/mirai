@@ -113,6 +113,8 @@ or anonymous (an empty claim). The namespace decides who reads it:
 - An output built from private inputs inherits their scopes: it is sealed under the newest epoch of
   every one at once, so only a device that reads them all opens it ([private
   files](private.md#what-a-peer-sees)).
+- The previews of assets the web view shows are derived data too, published with a bookmark
+  ([previews](node.md#previews)).
 - The cook is `cook/kai/mesh.odin`: a miss of `cook/cache` asks the machine's runner through its
   control for a record of the project's org and a build publishes its own, with the key the hash of
   the cache ref. With no runner the cook builds alone, which is the same result slower

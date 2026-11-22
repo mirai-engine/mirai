@@ -249,6 +249,37 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
             testing.expectf(t,!strings.contains(a.body,leak),"no %q in %s",leak,a.body[:min(len(a.body),120)],loc=loc)
         }
     }
+    // Previews peers published: of bin.dat, of what the change did to a.txt,
+    // of the private project's file and of the scoped one; of README.md a
+    // record no node takes.
+    {
+        a:=&f.alice
+        s:=&a.store
+        address_in :: proc(s:^store.Store,r:kai.Revision,path:string) -> store.Hash {
+            c,_:=kai.change_get(s,r,context.temp_allocator)
+            e,_,_:=kai.tree_file(s,c.tree,path)
+            return e.address
+        }
+        summary,_:=kai.preview_summary_encode("mesh",{{"Vertices","788"},{"Triangles","768"}},context.temp_allocator)
+        png:=[]u8{0x89,'P','N','G','\r','\n',0x1a,'\n',0,0,0,13,'I','H','D','R',0,0,0,2,0,0,0,2,8,6,0,0,0,0,0,0,0, 0,0,0,0,'I','E','N','D',0xae,0x42,0x60,0x82}
+        detail,_:=kai.preview_detail_encode(&kai.Preview_Detail{changed=1,rows={{'~',"Lamp","Transform.position: 0 -> 5"}}},context.temp_allocator)
+        bin:=address_in(s,f.r3,"bin.dat")
+        Publish :: struct {kind:kai.Preview_Kind,from,to:store.Hash,bytes:[]u8}
+        for x in ([?]Publish{
+            {.Summary,{},bin,summary},{.Thumbnail,{},bin,png},
+            {.Detail,address_in(s,f.r1,"src/a.txt"),address_in(s,f.r3,"src/a.txt"),detail},
+            {.Summary,{},address_in(s,f.rq,"secret.txt"),summary},
+            {.Summary,{},address_in(s,f.r3,"secrets/key.txt"),summary},
+        }) {
+            testing.expect_value(t,kai.machine_publish_preview(a,f.org,x.kind,kai.preview_key(x.kind,x.from,x.to),x.bytes),kai.Error.None)
+        }
+        hostile:=transmute([]u8)string("kai-summary 1\nmesh\nVertices\t1\x00\n")
+        testing.expect(t,kai.machine_publish_preview(a,f.org,.Summary,{},hostile)!=.None,"a record no node takes is not published")
+        object,_:=store.put(s,hostile)
+        _,e:=kai.machine_publish_ddc(a,f.org,kai.preview_key(.Summary,{},address_in(s,f.r3,"README.md")),{object},nil)
+        testing.expect_value(t,e,kai.Error.None)
+    }
+
     // Public, anonymous: every GET route with the public project.
     Visit :: struct {path:string,status:int,has:string}
     public_visits:=[]Visit{
@@ -270,6 +301,17 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         {fmt.tprintf("/api/projects/%s/file?path=secrets/key.txt",P),404,""},
         {fmt.tprintf("/api/projects/%s/diff?from=%s&to=%s&path=secrets/key.txt",P,r1,r3),404,""},
         {fmt.tprintf("/api/projects/%s/changes/%s",P,hex(f.rq[:])),404,""},
+        {fmt.tprintf("/api/projects/%s/summary?path=bin.dat",P),200,`"thumbnail":"found"`},
+        {fmt.tprintf("/api/projects/%s/summary?path=bin.dat&rev=%s",P,r1),200,`Vertices\t788`},
+        {fmt.tprintf("/api/projects/%s/summary?path=src/a.txt",P),200,`"state":"none","summary":null,"thumbnail":"none"`},
+        {fmt.tprintf("/api/projects/%s/summary?path=README.md",P),200,`"state":"none"`},
+        {fmt.tprintf("/api/projects/%s/thumbnail?path=bin.dat",P),200,"IHDR"},
+        {fmt.tprintf("/api/projects/%s/thumbnail?path=src/a.txt",P),404,"no peer published"},
+        {fmt.tprintf("/api/projects/%s/asset-diff?from=%s&to=%s&path=src/a.txt",P,r1,r3),200,`Lamp\tTransform`},
+        {fmt.tprintf("/api/projects/%s/asset-diff?to=%s&path=README.md",P,r3),200,`"state":"none","detail":null`},
+        {fmt.tprintf("/api/projects/%s/summary?path=secrets/key.txt",P),404,""},
+        {fmt.tprintf("/api/projects/%s/thumbnail?path=secrets/key.txt",P),404,""},
+        {fmt.tprintf("/api/projects/%s/summary?path=bin.dat&rev=%s",P,hex(f.rq[:])),404,""},
     }
     for v in public_visits {
         a:=call(f,"GET",v.path)
@@ -329,6 +371,7 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     private_visits:=[]string{
         fmt.tprintf("/api/projects/%s",Q),fmt.tprintf("/api/projects/%s/tree",Q),fmt.tprintf("/api/projects/%s/file?path=secret.txt",Q),
         fmt.tprintf("/api/projects/%s/changes",Q),fmt.tprintf("/api/projects/%s/changes/%s",Q,hex(f.rq[:])),
+        fmt.tprintf("/api/projects/%s/summary?path=secret.txt",Q),
     }
     for path in private_visits {
         a:=call(f,"GET",path)

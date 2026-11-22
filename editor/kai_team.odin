@@ -517,7 +517,7 @@ kai_publish :: proc(s:^Session) {
     }
     sum:=store.Hash(blake3.final(&h))
     if sum==t.published {return}
-    if ka.bookmarks_publish(&st.project,&t.machine)!=.None {
+    if ka.bookmarks_publish(&st.project,&t.machine,{s,thumbnail_png})!=.None {
         if refusal:=ka.publish_refusal(&t.machine);refusal.path!="" {kai_refusal_set(t,refusal)} else {notify(s,fmt.tprintf("Kai: %s",t.machine.why))}
         return
     }

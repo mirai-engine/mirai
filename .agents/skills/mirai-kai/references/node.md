@@ -127,13 +127,30 @@ WantedBy=multi-user.target
   are not served and a path with no dot that names no file gets `index.html`, so the page routes
   itself. It is ES modules over the vendored Vue runtime, written with render functions: no template
   compiler, no bundler, no `node_modules`, so building needs no Node.
-- The pure modules (`blake3.js`, `entry.js`) must agree with the node bit for bit: BLAKE3 across
-  chunk boundaries, recovery texts, web key ids, the layout of an entry and the check of a draft,
-  which tampered or mismatched drafts fail. `hub_web_modules_agree_with_the_node` runs them under
-  the system's `node` and is skipped, with a warning, where it is not installed.
-- Views: a project's overview, tree, file, changes, diff and the evolution of a change, and for
-  members the stacks, a proposal and its review, the org and the node. The page makes no third party
+- The pure modules (`blake3.js`, `entry.js`, `preview.js`) must agree with the node bit for bit:
+  BLAKE3 across chunk boundaries, recovery texts, web key ids, the layout of an entry and the
+  check of a draft, which tampered or mismatched drafts fail, and the previews the node takes.
+  `hub_web_modules_agree_with_the_node` runs them under the system's `node` and is skipped, with
+  a warning, where it is not installed.
+- Views: a project's overview, tree, file (with the [previews](#previews) of an asset), changes,
+  diff and the evolution of a change, and for members the stacks, a proposal and its review, the
+  org and the node. The page makes no third party
   request and takes no passkey over plain HTTP.
+
+## Previews
+
+- The node never reads an asset. What the web view shows of one, its summary, its thumbnail and
+  the detail of what a change did to it, is derived data a peer that reads the file published
+  (`kai/preview.odin`, made in `cook/kai/preview.odin`), keyed by the file's content address, or
+  the two of a change, and `PREVIEW_VERSION`. The node serves what `preview_check` takes, bounded,
+  and nothing else; the frontend decodes the records in `web/preview.js`.
+- The machine that publishes a bookmark of an org's project publishes them for the assets the
+  changes it newly reaches touched, a bounded walk: summaries and details always, thumbnails only
+  those the editor stores of exactly those bytes. Nothing renders for the web; a missing one is
+  absent in the view.
+- A preview route reaches its file as the file route does. A file a scope takes gets none: it is
+  never published, and a record that names tainted scopes is not shown. A seed without ddc fetches
+  a record's output when a browser asks for it; a ddc node mirrors it.
 
 ## Confinement
 

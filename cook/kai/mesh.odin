@@ -347,18 +347,28 @@ ROOT_LEVEL :: 1<<20 // the root of an object: a node of any level
 
 // Publishes the bookmarks of a workspace as this device's signed refs of its
 // project, when the repository is a project of an org: the mesh sends them
-// to the org's peers at once. Nothing when it is not.
-bookmarks_publish :: proc(p:^Project,m:^vcs.Machine) -> vcs.Error {
+// to the org's peers at once, then the previews of the assets the changes
+// they newly reach touched (previews_publish), with the thumbnails the
+// editor keeps. Nothing when it is not.
+bookmarks_publish :: proc(p:^Project,m:^vcs.Machine,thumbnails:=Thumbnail_Source{}) -> vcs.Error {
     r:=&p.workspace.repo
-    project,_,ok:=vcs.machine_project_of(m,r.id)
+    project,org,ok:=vcs.machine_project_of(m,r.id)
     if !ok {return .None}
     refs:=make([dynamic]vcs.Bookmark_Ref,context.temp_allocator)
+    targets:=make([dynamic]vcs.Revision,context.temp_allocator)
     for &b in r.view.bookmarks {
         if target,resolved:=vcs.terms_resolved(&b.terms);resolved && target!={} {
             append(&refs,vcs.Bookmark_Ref{name=b.name,target=target})
+            append(&targets,target)
         }
     }
-    return vcs.machine_publish_refs(m,project,refs[:])
+    known:=make([dynamic]vcs.Revision,context.temp_allocator)
+    if held,_,e:=vcs.device_refs_get(&m.store,project,m.identity.key,context.temp_allocator);e==.None {
+        for b in held.refs {append(&known,b.target)}
+    }
+    vcs.machine_publish_refs(m,project,refs[:]) or_return
+    previews_publish(m,r.s,org,project,targets[:],known[:],thumbnails)
+    return .None
 }
 
 // The identity of this machine: the seed kept in the root of the store, made

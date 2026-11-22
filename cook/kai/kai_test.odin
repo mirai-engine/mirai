@@ -4,6 +4,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:asset"
 import "mirai:std/base"
+import "mirai:std/serial"
 import "mirai:store"
 import vcs "mirai:kai"
 
@@ -94,4 +95,71 @@ a_scene_merges_by_field_through_the_driver :: proc(t:^testing.T) {
     totals,_=vcs.tree_totals(&s,conflicted)
     testing.expect_value(t,totals.conflicts,1)
     testing.expect(t,!filter().procedure(nil,".mirai/cache") && filter().procedure(nil,"assets/level.scene"))
+}
+
+// The summary of an asset of each kind: what a reviewer reads of it, the same
+// record for the same bytes and another when what it summarizes changes; a
+// file that is not an asset has none, one past SUMMARY_FILE_MAX says only its
+// kind and size, and the detail of a change of a scene names the entity.
+@(test)
+asset_summaries_are_stable_and_follow_their_bytes :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    Case :: struct {name:string,bytes:[]u8,kind:string,fact:string,edit:string,value:string}
+    cases:=[]Case{
+        {"scene",scene_file(t,&types),"scene","Top entities","entities[0].name",`"Base"`},
+        {"mesh",#load("../../demo/assets/blockout/column.mesh"),"mesh","Triangles","mesh.triangle_count","9"},
+        {"texture",#load("../../demo/assets/interface/item_coin.tex"),"texture","Pixels","texture.mip_count","3"},
+        {"animation",#load("../../demo/assets/showcase/lift.anim"),"animation","Names","keys[2].time","6"},
+        {"material",#load("../../demo/assets/ocean/Ocean.mat"),"material","Roughness","material.roughness","0.25"},
+        {"skeleton",#load("../../demo/assets/physics_gallery/ragdoll/rig.skeleton"),"skeleton","Bones","",""},
+    }
+    facts:=make([dynamic]vcs.Preview_Fact,context.temp_allocator)
+    for c in cases {
+        record,ok:=asset_summary(c.bytes,context.temp_allocator)
+        if !testing.expectf(t,ok,"%s: a summary",c.name) {continue}
+        testing.expectf(t,vcs.preview_check(.Summary,record)==.None,"%s: a node takes it",c.name)
+        kind,e:=vcs.preview_summary_decode(record,&facts)
+        testing.expectf(t,e==.None && kind==c.kind,"%s: of kind %q: %v %q",c.name,c.kind,e,kind)
+        named:=false
+        for f in facts {named||=f.label==c.fact && f.value!=""}
+        testing.expectf(t,named,"%s: says %s: %s",c.name,c.fact,string(record))
+        again,_:=asset_summary(c.bytes,context.temp_allocator)
+        testing.expectf(t,string(again)==string(record),"%s: the same bytes, the same summary",c.name)
+        if c.edit=="" {continue}
+        doc:asset.Document
+        if !testing.expectf(t,asset.document_read(&doc,c.bytes,context.temp_allocator)==.None,"%s reads",c.name) {continue}
+        location,le:=asset.document_locate(&doc,c.edit)
+        if !testing.expectf(t,le==.None,"%s: %s locates: %v",c.name,c.edit,le) {continue}
+        reader:serial.Text_Reader
+        serial.text_reader_init(&reader,c.value)
+        testing.expectf(t,serial.text_read(&reader,&doc.schema,location.type,location.bytes,location.is_text),"%s: %s takes %s",c.name,c.edit,c.value)
+        edited,be:=asset.document_bytes(&doc,context.temp_allocator)
+        testing.expect_value(t,be,asset.Error.None)
+        other,_:=asset_summary(edited,context.temp_allocator)
+        testing.expectf(t,len(other)>0 && string(other)!=string(record),"%s: another summary once %s changes:\n%s",c.name,c.edit,string(other))
+    }
+
+    _,ok:=asset_summary(transmute([]u8)string("not an asset at all, only text\n"))
+    testing.expect(t,!ok,"text has no summary")
+    mesh:=#load("../../demo/assets/blockout/column.mesh")
+    _,ok=asset_summary(mesh[:len(mesh)/2])
+    testing.expect(t,!ok,"a truncated asset has no summary")
+    large:=make([]u8,SUMMARY_FILE_MAX+1)
+    defer delete(large)
+    copy(large,mesh)
+    record,large_ok:=asset_summary(large,context.temp_allocator)
+    kind,_:=vcs.preview_summary_decode(record,&facts)
+    testing.expectf(t,large_ok && kind=="mesh" && len(facts)==1 && facts[0].label=="File","an asset past SUMMARY_FILE_MAX is its kind and size: %s",string(record))
+
+    // The detail of moving the lamp names it.
+    moved:=scene_file(t,&types,proc(scene:^asset.Scene) {
+        value:=Test_Transform{position={5,0,0},rotation=1,scale={1,1,1}}
+        asset.scene_set(scene,LAMP,"Transform",&value)
+    })
+    detail,dok:=asset_detail(scene_file(t,&types),moved,context.temp_allocator)
+    rows:=make([dynamic]vcs.Preview_Row,context.temp_allocator)
+    d,de:=vcs.preview_detail_decode(detail,&rows)
+    testing.expectf(t,dok && de==.None && d.changed>0 && len(d.rows)>0 && d.rows[0].name=="Lamp","the detail of a move names the lamp: %s",string(detail))
+    _,dok=asset_detail(transmute([]u8)string("a"),transmute([]u8)string("b"),context.temp_allocator)
+    testing.expect(t,!dok,"text has no asset detail")
 }
