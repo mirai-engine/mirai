@@ -183,7 +183,7 @@ a_driver_result_is_kept_by_its_terms_and_version :: proc(t:^testing.T) {
         append(out,..input.theirs)
         return .Conflicted
     }}
-    c:=Cached_Driver{driver=inner,cache={store=&s},types=&types}
+    c:=Cached_Driver{driver=inner,store=&s,types=&types}
     term :: proc(text:string) -> store.Hash {return store.address_of_bytes(transmute([]u8)text)}
     input:=vcs.Driver_Input{base=transmute([]u8)string("base"),ours=transmute([]u8)string("ours"),theirs=transmute([]u8)string("theirs"),has_base=true,terms={term("base"),term("ours"),term("theirs")}}
     Step :: struct {change:proc(c:^Cached_Driver,input:^vcs.Driver_Input),calls:int}

@@ -8,6 +8,7 @@ import "mirai:asset"
 import "mirai:cook/cache"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:store"
 import vcs "mirai:kai"
 
 DRIVER_ASSET :: 3
@@ -28,13 +29,13 @@ driver :: proc(d:^Asset_Driver) -> vcs.Driver {
 }
 
 // A driver whose Resolved and Conflicted results are kept in the cache
-// MERGE_CACHE (cook/cache) by its id, its version and the addresses of the
-// three terms: a driver is pure, so the same terms merge once here, and on
-// another machine when the cache's source shares results. It must outlive the
-// drivers made from it.
+// MERGE_CACHE (cook/cache) of the machine's store by its id, its version and
+// the addresses of the three terms: a driver is pure, so the same terms merge
+// once. Results are not asked of peers: a miss waits for the mesh longer than
+// a merge takes. It must outlive the drivers made from it.
 Cached_Driver :: struct {
     driver:vcs.Driver,
-    cache:cache.Cache, // no store: nothing is kept
+    store:^store.Store, // nil: nothing is kept
     types:^asset.Types,
 }
 
@@ -52,11 +53,11 @@ cached :: proc(c:^Cached_Driver) -> vcs.Driver {
 cached_merge :: proc(data:rawptr,input:^vcs.Driver_Input,out:^[dynamic]u8) -> vcs.Driver_Result {
     c:=(^Cached_Driver)(data)
     inner:=c.driver
-    if c.cache.store==nil || c.types==nil || input.terms[1]=={} || input.terms[2]=={} {return inner.merge(inner.data,input,out)}
+    if c.store==nil || c.types==nil || input.terms[1]=={} || input.terms[2]=={} {return inner.merge(inner.data,input,out)}
     key:=base.hash_combine(base.hash64(slice.to_bytes(input.terms[:])),u64(u8(input.has_base)))|1
     version:=u64(inner.id)<<32|u64(inner.version)
     file:asset.Asset
-    if cache.load(c.cache,MERGE_CACHE,key,version,&file,context.temp_allocator) {
+    if cache.load({store=c.store},MERGE_CACHE,key,version,&file,context.temp_allocator) {
         defer asset.asset_close(&file)
         result,re:=asset.asset_row(&file,c.types,"result",vcs.Driver_Result,whole=true)
         bytes,be:=asset.asset_rows(&file,c.types,"bytes","",u8,whole=true)
@@ -72,7 +73,7 @@ cached_merge :: proc(data:rawptr,input:^vcs.Driver_Input,out:^[dynamic]u8) -> vc
     defer asset.document_destroy(&doc)
     if _,e:=asset.document_put_row(&doc,c.types,"result",&result);e!=.None {return result}
     if _,e:=asset.document_put(&doc,c.types,"bytes",out[:],{.Bulk});e!=.None {return result}
-    if bytes,e:=asset.document_bytes(&doc,context.temp_allocator);e==.None {_=cache.put(c.cache,MERGE_CACHE,key,version,bytes)}
+    if bytes,e:=asset.document_bytes(&doc,context.temp_allocator);e==.None {_=cache.put({store=c.store},MERGE_CACHE,key,version,bytes)}
     return result
 }
 

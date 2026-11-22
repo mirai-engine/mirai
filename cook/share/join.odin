@@ -213,7 +213,7 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     asset.types_init(&types)
     defer asset.types_destroy(&types)
     asset_driver:=kai_assets.Asset_Driver{types=&types}
-    merges:=kai_assets.Cached_Driver{driver=kai_assets.driver(&asset_driver),cache={store=n.s},types=&types}
+    merges:=kai_assets.Cached_Driver{driver=kai_assets.driver(&asset_driver),store=n.s,types=&types}
     drivers:=[1]vcs.Driver{kai_assets.cached(&merges)}
     plan.drivers=drivers[:]
     if error=join_room(&d,&snap,&plan,folder,allocator);error!="" {return}

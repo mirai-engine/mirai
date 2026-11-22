@@ -20,8 +20,7 @@ CHANGE_TEXT :: 12               // hex digits a change id is shown with
 CHANGE_TEXT_MIN :: 4            // the fewest digits a change is named by
 
 // It must not move once opened: the workspace keeps its drivers, which point
-// into it. Its merges are kept in the store's cache; whoever has a source of
-// shared results sets merges.cache.source.
+// into it. Its merges are kept in the store's cache.
 Project :: struct {
     types:asset.Types,
     driver:Asset_Driver,
@@ -59,7 +58,7 @@ project_prepare :: proc(p:^Project,s:^store.Store,types:^asset.Types) -> vcs.Wor
     } else {
         p.driver.types=types
     }
-    p.merges={driver=driver(&p.driver),cache={store=s},types=p.driver.types}
+    p.merges={driver=driver(&p.driver),store=s,types=p.driver.types}
     p.drivers[0]=cached(&p.merges)
     return workspace_options(p.drivers[:])
 }
