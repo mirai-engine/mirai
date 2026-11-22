@@ -3,6 +3,7 @@ package playtest_editor
 import "base:runtime"
 import "core:fmt"
 import "core:math/linalg"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
@@ -376,9 +377,20 @@ audit_frame :: proc(a:^Audit,frame_ms,budget:f32,status:^Audit_Status) {
 
 @(private)
 audit_finish :: proc(a:^Audit) -> (result:Api_Audit) {
-    slice.stable_sort_by(a.flags[:],proc(x,y:Audit_Flag) -> bool {return x.severity<y.severity})
-    result={passed=true,flags=a.flags[:],flags_more=a.more,summary=a.summary}
-    for f in a.flags {
+    // Stable sort by severity through indices so Audit_Flag (>64 B) is never stored as one aggregate (Odin#7937).
+    order:=make([]int,len(a.flags),context.temp_allocator)
+    for i in 0..<len(order) {order[i]=i}
+    for i:=1;i<len(order);i+=1 {
+        key:=order[i]
+        sev:=a.flags[key].severity
+        j:=i-1
+        for ;j>=0 && a.flags[order[j]].severity>sev;j-=1 {order[j+1]=order[j]}
+        order[j+1]=key
+    }
+    sorted:=make([]Audit_Flag,len(a.flags),a.allocator)
+    for idx,i in order {mem.copy(&sorted[i],&a.flags[idx],size_of(Audit_Flag))}
+    result={passed=true,flags=sorted,flags_more=a.more,summary=a.summary}
+    for &f in sorted {
         if f.severity==.Error {result.passed=false}
     }
     return
