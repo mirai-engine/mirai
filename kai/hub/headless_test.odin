@@ -78,6 +78,7 @@ headless_arm64_server_builds_and_serves_public_and_member_views :: proc(t:^testi
     scalar:[32]u8
     ecdsa.private_key_bytes(&leaf_key,scalar[:])
     chain,_:=pem.encode("CERTIFICATE",leaf_der,false,context.temp_allocator)
+    os.make_directory(strings.concatenate({f.alice.store.root,"/",WEB_FOLDER},context.temp_allocator))
     testing.expect(t,secret_write(strings.concatenate({f.alice.store.root,"/",WEB_KEY_FILE},context.temp_allocator),scalar[:]))
     testing.expect(t,secret_write(strings.concatenate({f.alice.store.root,"/",WEB_CHAIN_FILE},context.temp_allocator),chain))
     crypto.zero_explicit(&scalar,32)

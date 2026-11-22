@@ -143,7 +143,7 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
     if !no_sandbox {applied,why=sandbox_apply(root,{bind[:],connect[:]})}
     switch {
     case applied:
-        fmt.println("Sandbox: the store's folder is all it may write; its TCP ports and system calls are the ones it uses.")
+        fmt.println("Sandbox: it writes only in the folders of its store, its device and ACME account keys are read-only, and its TCP ports and system calls are the ones it uses.")
     case ODIN_OS==.Linux && !no_sandbox:
         fmt.eprintfln("%s kai serve: the sandbox does not apply (%s): run it on a kernel with Landlock and seccomp, or start it with --no-sandbox to serve unconfined",program,why)
         return 1

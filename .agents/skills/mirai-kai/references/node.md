@@ -22,7 +22,7 @@ optional: an org with no node works on a LAN and between machines that can reach
   digits are compared ([pairing](identity.md#pairing)).
 - A node signs nothing for a user, holds no org key and no scope key. Everything it keeps is what
   members and the mesh already hold, plus the keys of its own device and its web certificates, in
-  its store's folder, owner-only.
+  its store's folder, owner-only ([confinement](#confinement)).
 
 ## Deployment
 
@@ -159,11 +159,19 @@ WantedBy=multi-user.target
 
 ## Confinement
 
-- On Linux, after its sockets are open, the node applies Landlock and a seccomp filter: it may touch
-  only its store's folder, the files its DNS resolver reads, bind and connect TCP only on the ports
-  it uses, and make only the system calls it makes; `mmap` and `mprotect` map nothing executable,
-  signals go to its own threads, and any other call (or another architecture's) fails with `EPERM`.
-  A kernel without them makes `serve` refuse and say why.
+- On Linux, after its sockets are open and its secrets read, the node applies Landlock and a
+  seccomp filter. It reads its store's root, where the device's keys and the ACME account key are
+  files, and writes only in the folders directly in it as they are when the sandbox applies: the
+  store's own and `kai-web`. It reads the files its DNS resolver reads, binds and connects TCP only
+  on the ports it uses and makes only the system calls it makes.
+- No key is reachable for writing once the node is confined but the certificate's key and chain in
+  `kai-web`, which a renewal must keep. The control file the agent leaves at the root when it stops
+  is harmless: a client takes the agent's lock before it reads the file.
+- `mmap` and `mprotect` map nothing executable, signals go to the node's own threads, `clone` makes
+  only a thread of the process (the flags musl's `pthread_create` gives), `clone3` fails with
+  `ENOSYS` so a C library falls back to `clone`, the node makes no `ioctl`, and any other call (or
+  another architecture's) fails with `EPERM`. A kernel without Landlock or seccomp makes `serve`
+  refuse and say why.
 - The filter is tested to refuse what the node does not do
   (`hub_seccomp_program_refuses_what_the_node_does_not_do`). Elsewhere a node runs as it is: only
   Linux confines.
