@@ -12,13 +12,9 @@ import "mirai:store"
 // asked this node for within DDC_SECONDS (its fetch from here, as long as a
 // lookup lasts), is not dropped. A key is used when its newest record
 // arrives, when a lookup through this node asks for it and when a peer asks
-// this node for its objects. The store's own sweep reclaims what was dropped (store.sweep
-// with reclaim), so the quota holds on disk once it returns. The sweep follows
-// refs only, not the links inside Kai records, so the node names as live what
-// it serves besides: the closures of every project's bookmarks and proposals,
-// every overlay record with its sealed tree and files, every object of the
-// outputs of the keys it keeps, and what its agents fetch and hold back. A
-// store that holds a workspace is not swept.
+// this node for its objects. The store's own sweep reclaims what was dropped
+// (store_prune with reclaim), so the quota holds on disk once it returns; the
+// node names as live besides what its agents fetch and hold back.
 
 DDC_SWEEP_SECONDS :: 60.0 // between two looks at the quota
 
@@ -175,64 +171,112 @@ runner_ddc_quota :: proc(r:^Runner) {
         }
     }
     if dropped==0 {return}
-    if refs,e:=store.ref_list(s,MACHINE_NAMESPACE,context.temp_allocator);e==.None {
-        for ref in refs {
-            if strings.has_prefix(ref.name,MACHINE_REPO_PREFIX) {
-                runner_event(r,"dropped %d derived data keys over the quota; the store holds a workspace, so it is not swept",dropped)
-                return
-            }
-        }
-    }
     live:=make([dynamic]store.Hash,context.temp_allocator)
-    runner_live(r,&live)
-    result,e:=store.sweep(s,live[:],reclaim=true)
+    for l in r.ddc {
+        if l.output!={} {append(&live,l.output)}
+    }
+    for o in r.orgs {
+        for f in o.agent.fetches {append(&live,f.address)}
+        for f in o.agent.deferred {append(&live,f.address)}
+    }
+    e:=store_prune(s,time.now()._nsec)
+    if e==.None {e=store_live(s,&live)}
+    result:store.Sweep_Result
+    if e==.None {
+        se:store.Error
+        result,se=store.sweep(s,live[:],reclaim=true)
+        e=store_error(se)
+    }
     if e!=.None {
-        runner_event(r,"the store sweep after dropping %d derived data keys failed: %s",dropped,store.error_text(e))
+        runner_event(r,"the store sweep after dropping %d derived data keys failed: %s",dropped,error_text(e))
         return
     }
     runner_event(r,"dropped %d least recently used derived data keys over the quota; the sweep freed %d bytes",dropped,result.bytes)
 }
 
-// What the node serves that no ref names directly: the closures of the
-// projects' bookmarks, landed moves and proposal stacks, the overlay records
-// with their chains, sealed trees and files, every object of the outputs of
-// the derived data it keeps, and what its agents and lookups fetch or hold
-// back.
-@(private)
-runner_live :: proc(r:^Runner,live:^[dynamic]store.Hash) {
-    s:=&r.machine.store
-    targets:=make([dynamic]Revision,context.temp_allocator)
-    roots:=make([dynamic]store.Hash,context.temp_allocator)
-    for l in r.ddc {
-        if l.output!={} {append(live,l.output)}
-    }
-    for o in r.orgs {
-        for f in o.agent.fetches {append(live,f.address)}
-        for f in o.agent.deferred {append(live,f.address)}
-        agent_targets(&o.agent,{},false,&targets,&roots)
-        for l in o.agent.logs {
-            for &item in l.items {
-                #partial switch item.entry.type {
-                case .Bookmark_Move:
-                    b,_,ok:=body_head(item.entry.body,Bookmark_Move_Body)
-                    if ok {append(&targets,b.to)}
-                case .Proposal_Revise:
-                    _,tail,ok:=body_head(item.entry.body,Proposal_Revise_Body)
-                    if !ok || len(tail)%size_of(Stack_Item)!=0 {continue}
-                    for stack in slice.reinterpret([]Stack_Item,tail) {append(&targets,stack.revision)}
-                }
-            }
-        }
-    }
-    missing:=make([dynamic]store.Hash,context.temp_allocator)
-    closure_walk(s,targets[:],live,&missing)
+// Writes a prune (repo_prune) at now (ns) into the operation log of every
+// repository of s: a sweep that names what store_live names then reclaims
+// what only the operations past the retention reached.
+store_prune :: proc(s:^store.Store,now:i64) -> Error {
     namespaces,e:=store.ref_namespaces(s,context.temp_allocator)
-    if e!=.None {return}
+    if e!=.None {return store_error(e)}
+    for namespace in namespaces {
+        if !strings.has_prefix(namespace,LOCAL_PREFIX) || len(namespace)!=len(LOCAL_PREFIX)+2*size_of(Repo_Id) {continue}
+        id:Repo_Id
+        if !hex_parse(namespace[len(LOCAL_PREFIX):],id[:]) {continue}
+        r:Repo
+        if oe:=repo_open(&r,s,id,{},{},allocator=context.temp_allocator);oe!=.None {
+            if oe==.Missing {continue}
+            return oe
+        }
+        pe:=repo_prune(&r,now)
+        repo_close(&r)
+        if pe!=.None {return pe}
+    }
+    return store_error(store.commit(s))
+}
+
+// What a sweep of s keeps that no ref names directly, since the sweep follows
+// refs and the chunks of objects, not the links inside Kai records: the
+// operations each repository's log reaches (op_retained) and their views, the
+// closures of what those views, the shared bookmarks, the proposals' stacks
+// and the devices' refs name, the overlay records with their chains, sealed
+// trees and files, and every object of the outputs of the derived data kept.
+store_live :: proc(s:^store.Store,live:^[dynamic]store.Hash) -> Error {
+    namespaces,e:=store.ref_namespaces(s,context.temp_allocator)
+    if e!=.None {return store_error(e)}
+    targets:=make([dynamic]Revision,context.temp_allocator)
     records:=make([dynamic][]u8,context.temp_allocator)
     for namespace in namespaces {
         refs,le:=store.ref_list(s,namespace,context.temp_allocator)
         if le!=.None {continue}
         switch {
+        case strings.has_prefix(namespace,LOCAL_PREFIX):
+            heads:=make([dynamic]store.Hash,context.temp_allocator)
+            for ref in refs {
+                if strings.has_prefix(ref.name,"ws-") {append(&heads,ref.hash)}
+            }
+            ops:=make([dynamic]store.Hash,context.temp_allocator)
+            op_retained(s,heads[:],&ops) or_return
+            for address in ops {
+                append(live,address)
+                o:=op_get_kept(s,address) or_continue
+                append(live,o.view)
+                v:View
+                view_init(&v,context.temp_allocator)
+                if view_get(s,o.view,&v)!=.None {continue}
+                append(&targets,..v.heads[:])
+                for w in v.workspaces {append(&targets,w.revision)}
+                for b in v.bookmarks {
+                    append(&targets,..b.terms.adds[:])
+                    append(&targets,..b.terms.removes[:])
+                }
+            }
+        case namespace==LOG_NAMESPACE:
+            for ref in refs {
+                l:Log
+                log_init(&l,{},context.temp_allocator)
+                if _,le:=log_load(s,&l,ref.hash,false);le!=.None {continue}
+                for &item in l.items {
+                    #partial switch item.entry.type {
+                    case .Bookmark_Move:
+                        b,_,ok:=body_head(item.entry.body,Bookmark_Move_Body)
+                        if ok {append(&targets,b.to)}
+                    case .Proposal_Revise:
+                        _,tail,ok:=body_head(item.entry.body,Proposal_Revise_Body)
+                        if !ok || len(tail)%size_of(Stack_Item)!=0 {continue}
+                        for stack in slice.reinterpret([]Stack_Item,tail) {append(&targets,stack.revision)}
+                    }
+                }
+            }
+        case strings.has_prefix(namespace,REFS_PREFIX):
+            for ref in refs {
+                bytes,ge:=object_get(s,ref.hash,.Device_Refs,context.temp_allocator)
+                if ge!=.None {continue}
+                d,de:=device_refs_decode(bytes,context.temp_allocator)
+                if de!=.None {continue}
+                for b in d.refs {append(&targets,b.target)}
+            }
         case strings.has_prefix(namespace,OVERLAY_PREFIX):
             for ref in refs {
                 address:=ref.hash
@@ -262,4 +306,7 @@ runner_live :: proc(r:^Runner,live:^[dynamic]store.Hash) {
             }
         }
     }
+    missing:=make([dynamic]store.Hash,context.temp_allocator)
+    closure_walk(s,targets[:],live,&missing)
+    return .None
 }

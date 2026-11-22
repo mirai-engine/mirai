@@ -20,6 +20,7 @@ RP :: "kai.test"
 ORIGIN :: "https://kai.test"
 PRIVATE_MARKER :: "PRIVATE-MARKER-7f3a"
 SCOPED_MARKER :: "SCOPED-MARKER-91c2"
+WIP_MARKER :: "WIP-MARKER-5d0e"
 
 Fixture :: struct {
     folder:string,
@@ -34,6 +35,7 @@ Fixture :: struct {
     now:f64,
     org,public,private:kai.Log_Id,
     r1,r2,r3,rq:kai.Revision,  // r2 and r3 are two revisions of change
+    rw:kai.Revision,           // work in progress over r3 that only a device ref names
     change:kai.Change_Id,
     proposal:kai.Log_Id,
 }
@@ -122,7 +124,9 @@ fixture_store :: proc(t:^testing.T,f:^Fixture,folder:string) -> bool {
         {"docs/b.md","notes\n"},{"src/a.txt","one\ntwo\nthree\n"},
     },30,"Change a, rewritten")
     f.rq=revision_make(t,a,kai.random_id(kai.Change_Id),{},{{"secret.txt",PRIVATE_MARKER}},40,"Vault")
-    testing.expect_value(t,kai.machine_publish_refs(a,f.public,{{"main",f.r3}}),kai.Error.None)
+    f.rw=revision_make(t,a,kai.random_id(kai.Change_Id),f.r3,{{"README.md","# Site\nWelcome to the site.\n"},{"wip.txt",WIP_MARKER}},45,"Half done")
+    testing.expect_value(t,kai.machine_bookmark_move(a,f.public,"main",f.r3),kai.Error.None)
+    testing.expect_value(t,kai.machine_publish_refs(a,f.public,{{"main",f.r3},{"wip",f.rw}}),kai.Error.None)
     testing.expect_value(t,kai.machine_publish_refs(a,f.private,{{"main",f.rq}}),kai.Error.None)
 
     ctx:=user_head(a)

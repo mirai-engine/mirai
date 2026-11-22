@@ -15,8 +15,19 @@ import "mirai:store"
 // operations two workspaces wrote apart are merged by the next one that reads
 // both. Undo is an operation too: the view it writes takes back what the
 // undone one did and keeps what came after it, so an undo can be undone.
+//
+// A prune is an operation whose parents are the one it follows and every
+// operation a workspace's ref named when it was written. The log keeps the
+// operations the workspaces' refs name and, through parents, those not older
+// than the newest prune's time less OP_RETENTION: what only the others reach
+// is what the store's sweep reclaims (store_prune). Undo does not cross a
+// prune.
 
-Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Abandon,Restore,Bookmark,Workspace,Import,Undo,Proposal}
+Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Abandon,Restore,Bookmark,Workspace,Import,Undo,Proposal,Prune}
+
+OP_RETENTION :: i64(30*24*time.Hour) // ns of operations a prune keeps behind it
+OP_VERSION :: 2 // of the head of an operation
+LOCAL_PREFIX :: "kai-local-" // + repository id: the refs of its workspaces, which no peer is served
 
 Op_Head :: struct #packed {
     magic:u32,
@@ -51,7 +62,7 @@ op_encode :: proc(op:^Operation,allocator:=context.allocator) -> (bytes:[]u8,err
     if len(op.parents)>OP_PARENTS_MAX || len(op.rewrites)>REWRITES_MAX || len(op.description)>DESCRIPTION_MAX {return nil,.Too_Large}
     if op.view=={} || (op.undone!={})!=(op.kind==.Undo) || !utf8.valid_string(op.description) {return nil,.Invalid_Argument}
     w:=writer_make(allocator)
-    write_value(&w,Op_Head{magic=KAI_MAGIC,version=VERSION,kind=op.kind,parents=u8(len(op.parents)),view=op.view,undone=op.undone,
+    write_value(&w,Op_Head{magic=KAI_MAGIC,version=OP_VERSION,kind=op.kind,parents=u8(len(op.parents)),view=op.view,undone=op.undone,
         workspace=op.workspace,time=op.time,rewrites=u32(len(op.rewrites)),description=u32(len(op.description))})
     for p in op.parents {write_value(&w,p)}
     for rw in op.rewrites {write_value(&w,rw)}
@@ -65,7 +76,7 @@ op_encode :: proc(op:^Operation,allocator:=context.allocator) -> (bytes:[]u8,err
 op_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (op:Operation,error:Error) {
     r:=Reader{data=bytes}
     head:=read_value(&r,Op_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.kind>max(Op_Kind) {return {},.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.version!=OP_VERSION || head.kind>max(Op_Kind) {return {},.Corrupt}
     if head.view=={} || (head.undone!={})!=(head.kind==.Undo) || head.rewrites>REWRITES_MAX || head.description>DESCRIPTION_MAX {return {},.Corrupt}
     size:=u64(size_of(Op_Head))+u64(head.parents)*size_of(store.Hash)+u64(head.rewrites)*size_of(Rewrite)+u64(head.description)
     if size!=u64(len(bytes)) {return {},.Corrupt}
@@ -120,7 +131,7 @@ Repo :: struct {
 
 @(private)
 repo_names :: proc(r:^Repo) {
-    prefix:="kai-local-"
+    prefix:=LOCAL_PREFIX
     copy(r.namespace_bytes[:],prefix)
     id:=r.id
     r.namespace=string(r.namespace_bytes[:len(prefix)+len(hex_text(id[:],r.namespace_bytes[len(prefix):]))])
@@ -222,7 +233,7 @@ op_descends :: proc(s:^store.Store,a,b:store.Hash) -> (descends:bool,error:Error
     if _,e:=append(&stack,a);e!=nil {return false,.Out_Of_Memory}
     for len(stack)>0 {
         n:=pop(&stack)
-        op:=op_get(s,n,context.temp_allocator) or_return
+        op:=op_get_kept(s,n) or_continue
         for p in op.parents {
             if p==b {return true,.None}
             if p in seen {continue}
@@ -241,7 +252,7 @@ op_ancestors :: proc(s:^store.Store,op:store.Hash,out:^map[store.Hash]struct{}) 
     out[op]={}
     for len(stack)>0 {
         n:=pop(&stack)
-        o:=op_get(s,n,context.temp_allocator) or_return
+        o:=op_get_kept(s,n) or_continue
         for p in o.parents {
             if p in out {continue}
             out[p]={}
@@ -261,7 +272,7 @@ op_base :: proc(s:^store.Store,set:^map[store.Hash]struct{},a:store.Hash) -> (ba
     for at:=0;at<len(queue);at+=1 {
         n:=queue[at]
         if n in set {return n,.None}
-        o:=op_get(s,n,context.temp_allocator) or_return
+        o:=op_get_kept(s,n) or_continue
         for p in o.parents {
             if p in seen {continue}
             seen[p]={}
@@ -301,6 +312,14 @@ op_heads_merge :: proc(r:^Repo,heads:[]store.Hash) -> Error {
     return tx_commit(&tx,.Merge,"merge operations written apart",parents=heads)
 }
 
+// An operation, or none when a prune dropped it and the store reclaimed it:
+// the history below a prune ends there.
+@(private)
+op_get_kept :: proc(s:^store.Store,address:store.Hash) -> (op:Operation,ok:bool) {
+    o,e:=op_get(s,address,context.temp_allocator)
+    return o,e==.None
+}
+
 // Stands r on op.
 @(private)
 repo_load :: proc(r:^Repo,op:store.Hash) -> Error {
@@ -336,13 +355,13 @@ tx_begin :: proc(r:^Repo) -> (tx:Tx,error:Error) {
 
 // Writes the view and the operation and points this workspace's ref at it:
 // one commit of the store.
-tx_commit :: proc(tx:^Tx,kind:Op_Kind,description:string,undone:=store.Hash{},parents:[]store.Hash=nil,genesis:=false) -> Error {
+tx_commit :: proc(tx:^Tx,kind:Op_Kind,description:string,undone:=store.Hash{},parents:[]store.Hash=nil,genesis:=false,at:=i64(0)) -> Error {
     r:=tx.r
     tx_rebase_descendants(tx) or_return
     heads_enforce(tx) or_return
     view_address:=view_put(r.s,&tx.view) or_return
     own:=[1]store.Hash{r.op}
-    op:=Operation{kind=kind,view=view_address,undone=undone,workspace=r.workspace,time=time.now()._nsec,rewrites=tx.rewrites[:],description=description}
+    op:=Operation{kind=kind,view=view_address,undone=undone,workspace=r.workspace,time=at!=0?at:time.now()._nsec,rewrites=tx.rewrites[:],description=description}
     op.parents=parents!=nil ? parents : genesis ? nil : own[:]
     bytes:=op_encode(&op,context.temp_allocator) or_return
     address:=object_put(r.s,.Operation,bytes) or_return
@@ -796,9 +815,11 @@ workspace_add_to_view :: proc(r:^Repo,id:Workspace_Id,parent:Revision) -> (revis
 
 // Takes back what op did, keeping what came after it: the view of the
 // undone operation's parent merged with the current one against op's.
+// Pruned when op is a prune or came before one the repository stands after.
 op_undo :: proc(r:^Repo,op:store.Hash) -> Error {
     undone:=op_get(r.s,op,context.temp_allocator) or_return
     if len(undone.parents)==0 {return .Invalid_Argument}
+    if undone.kind==.Prune || (op_pruned(r.s,r.op,op) or_return) {return .Pruned}
     parent:=op_get(r.s,undone.parents[0],context.temp_allocator) or_return
     base,theirs:View
     view_init(&base,context.temp_allocator)
@@ -809,4 +830,75 @@ op_undo :: proc(r:^Repo,op:store.Hash) -> Error {
     ours:=view_clone(&r.view,context.temp_allocator) or_return
     view_merge(&base,&ours,&theirs,&tx.view) or_return
     return tx_commit(&tx,.Undo,"undo operation",undone=op)
+}
+
+// Writes a prune of the repository's operation log at now (ns), after the
+// operations of every workspace: none when the newest operation is a prune.
+repo_prune :: proc(r:^Repo,now:i64) -> Error {
+    repo_refresh(r) or_return
+    if newest,e:=op_get(r.s,r.op,context.temp_allocator);e==.None && newest.kind==.Prune {return .None}
+    refs,e:=store.ref_list(r.s,r.namespace,context.temp_allocator)
+    if e!=.None {return store_error(e)}
+    parents:=make([dynamic]store.Hash,context.temp_allocator)
+    append(&parents,r.op)
+    for ref in refs {
+        if len(ref.name)<3 || ref.name[:3]!="ws-" || slice.contains(parents[:],ref.hash) {continue}
+        if len(parents)>=OP_PARENTS_MAX {return .Too_Large}
+        append(&parents,ref.hash)
+    }
+    tx:=tx_begin(r) or_return
+    return tx_commit(&tx,.Prune,"prune operations older than 30 days",parents=parents[:],at=now)
+}
+
+// The operations the log keeps from heads, the operations of the refs of its
+// workspaces (see the head of this file).
+op_retained :: proc(s:^store.Store,heads:[]store.Hash,out:^[dynamic]store.Hash) -> Error {
+    ops:=make(map[store.Hash]Operation,context.temp_allocator)
+    stack:=make([dynamic]store.Hash,context.temp_allocator)
+    horizon:=min(i64)
+    for pass in 0..<2 {
+        if _,f:=append(&stack,..heads);f!=nil {return .Out_Of_Memory}
+        kept:=make(map[store.Hash]struct{},context.temp_allocator)
+        for len(stack)>0 {
+            address:=pop(&stack)
+            if address in kept {continue}
+            o,read:=ops[address]
+            if !read {
+                e:Error
+                if o,e=op_get(s,address,context.temp_allocator);e==.Missing && !slice.contains(heads,address) {continue}
+                if e!=.None {return e}
+                ops[address]=o
+            }
+            if pass==1 && o.time<horizon && !slice.contains(heads,address) {continue}
+            kept[address]={}
+            if o.kind==.Prune {horizon=max(horizon,o.time-OP_RETENTION)}
+            if pass==1 {
+                if _,f:=append(out,address);f!=nil {return .Out_Of_Memory}
+            }
+            if _,f:=append(&stack,..o.parents);f!=nil {return .Out_Of_Memory}
+        }
+    }
+    return .None
+}
+
+// Whether op is behind a prune from: one from descends from that op descends from.
+@(private)
+op_pruned :: proc(s:^store.Store,from,op:store.Hash) -> (pruned:bool,error:Error) {
+    Item :: struct {op:store.Hash,past:bool}
+    stack:=make([dynamic]Item,context.temp_allocator)
+    seen:=make(map[Item]struct{},context.temp_allocator)
+    if _,f:=append(&stack,Item{from,false});f!=nil {return false,.Out_Of_Memory}
+    for len(stack)>0 {
+        it:=pop(&stack)
+        if it in seen {continue}
+        seen[it]={}
+        if it.op==op && it.past {return true,.None}
+        if it.op==op {continue}
+        o:=op_get_kept(s,it.op) or_continue
+        past:=it.past || o.kind==.Prune
+        for p in o.parents {
+            if _,f:=append(&stack,Item{p,past});f!=nil {return false,.Out_Of_Memory}
+        }
+    }
+    return false,.None
 }

@@ -18,13 +18,16 @@ import "mirai:store"
 //
 //   kai-user              User_Logs: Pending, Member, Node, Grant (they prove who is a member)
 //   kai-log               Org, Project, Proposal and Keyring logs: Member, Node, Grant
-//   kai-refs-<project>    device refs: Member, Node; Grant of read, write or check on it;
-//                         Anonymous for a public project
+//   kai-refs-<project>    device refs: Member, Node; Grant of read, write or check on it
 //   kai-ddc-<org>         derived data: Member, Node; Grant of ddc
 //   kai-ovl-<project>-<scope>  overlay records, ciphertext only: Member, Node
 //
 // Pending, Anonymous and Grant peers are restricted: they get only the chunks
-// of the user logs, of the public closure, or of what the grant covers. A
+// of the user logs, of the public closure, or of what the grant covers. The
+// public closure is what the shared bookmarks of the public projects reach,
+// the moves of their logs a writer signed and the policy allowed: never a
+// device's refs or a proposal's stack, and an Anonymous peer is listed no
+// ref, so it asks by address what a node's public view shows it. A
 // grant covers the user logs, the org's log and those of its project and the
 // project's proposals; with read, write or check, the project's device refs
 // and every change under them, but of each tree only the files its path scope
@@ -589,17 +592,10 @@ agent_namespaces :: proc(a:^Agent,out:^[dynamic]string) {
 @(private)
 agent_ask :: proc(a:^Agent,i:int) {
     p:=&a.peers[i]
+    // An anonymous end is listed nothing: it asks by address.
+    if p.client>=0 && a.client_anonymous[p.client] {return}
     namespaces:=make([dynamic]string,context.temp_allocator)
-    if p.client>=0 && a.client_anonymous[p.client] {
-        if a.folded {
-            for project in a.org.projects {
-                buffer:=new([len(REFS_PREFIX)+64]u8,context.temp_allocator)
-                append(&namespaces,refs_namespace(project.id,buffer))
-            }
-        }
-    } else {
-        agent_namespaces(a,&namespaces)
-    }
+    agent_namespaces(a,&namespaces)
     for ns in namespaces {agent_query(a,i,ns,"")}
 }
 
@@ -636,7 +632,7 @@ agent_expose :: proc(user:rawptr,peer:exchange.Peer_Id,namespace:string) -> bool
         k:=org_project_index(&a.org,id)
         if k<0 {return false}
         granted:=class==.Grant && (grant.project=={} || grant.project==id) && grant.rights&{.Read,.Write,.Check}!={}
-        return admitted || granted || (class==.Anonymous && a.org.projects[k].public)
+        return admitted || granted
     case strings.has_prefix(namespace,DDC_PREFIX):
         buffer:[len(DDC_PREFIX)+64]u8
         return (admitted || (class==.Grant && .DDC in grant.rights)) && namespace==ddc_namespace(a.desc.org,&buffer)
@@ -977,13 +973,19 @@ agent_class_from :: proc "contextless" (z:net.Authorization) -> Agent_Class {
 }
 
 // The revisions every device's refs of the projects name and the moves of
-// their shared bookmarks a writer signed, public projects only when public,
-// only project unless it is zero.
+// their shared bookmarks a writer signed, only project unless it is zero.
+// When public, only what the shared bookmarks of the public projects name.
 @(private)
 agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision,refs_objects:^[dynamic]store.Hash) {
     if !a.folded {return}
     for p in a.org.projects {
         if (public && !p.public) || (project!={} && p.id!=project) {continue}
+        if public {
+            shared:=make([dynamic]Bookmark_Target,context.temp_allocator)
+            agent_shared_bookmarks(a,p.id,&shared)
+            for b in shared {append(out,b.target)}
+            continue
+        }
         if l:=agent_log(a,p.id);l!=nil {
             for item in l.items {
                 if item.entry.type!=.Bookmark_Move {continue}
@@ -1017,6 +1019,28 @@ agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision
             for st in slice.reinterpret([]Stack_Item,tail) {append(out,st.revision)}
         }
     }
+}
+
+// The shared bookmarks of a project the agent holds the log of: the moves a
+// writer signed and its policy allowed, folded with the project's proposals.
+// Their names live in the temp allocator.
+agent_shared_bookmarks :: proc(a:^Agent,project:Log_Id,out:^[dynamic]Bookmark_Target) {
+    l:=agent_log(a,project)
+    if !a.folded || l==nil || len(l.items)==0 {return}
+    proposals:=make([dynamic]^Proposal_Fold,context.temp_allocator)
+    for pl in a.logs {
+        if pl.kind!=.Proposal {continue}
+        k:=log_find(pl,pl.id)
+        if k<0 || pl.items[k].entry.type!=.Proposal_Open {continue}
+        if b,_,_:=body_head(pl.items[k].entry.body,Proposal_Open_Body);b.project!=project {continue}
+        f:=new(Proposal_Fold,context.temp_allocator)
+        if proposal_fold(f,pl,&a.org,context.temp_allocator)!=.None {continue}
+        _=proposal_settle(a.desc.store,f)
+        append(&proposals,f)
+    }
+    f:Project_Fold
+    if project_fold(&f,l,&a.org,proposals[:],context.temp_allocator)!=.None {return}
+    append(out,..f.bookmarks[:])
 }
 
 // Rebuilds the chunks restricted peers may get.

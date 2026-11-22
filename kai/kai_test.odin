@@ -399,6 +399,74 @@ every_operation_undoes :: proc(t:^testing.T) {
     }
 }
 
+// A prune keeps what the workspaces' refs name and the operations of the
+// last OP_RETENTION: the sweep after it reclaims the operations past it and
+// the revisions only they reached, keeps what a view or a device's ref
+// reaches, and undo works after the prune and refuses to cross it.
+@(test)
+a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached :: proc(t:^testing.T) {
+    f,ok:=fixture(t,"kai-prune");if !ok {return}
+    defer store.close(&f.s)
+    identity:=identity_make()
+    r:Repo
+    testing.expect_value(t,repo_create(&r,&f.s,identity,random_id(Workspace_Id)),Error.None)
+    defer repo_close(&r)
+    tree :: proc(s:^store.Store,text:string) -> store.Hash {
+        file,_:=store.put(s,transmute([]u8)text)
+        root,_:=tree_build(s,{File{path="a.txt",kind=.File,address=file,size=u64(len(text))}})
+        return root
+    }
+    // The working copy written twice: old operations alone reach its first revision.
+    first,_:=change_snapshot(&r,tree(&f.s,"first\n"))
+    kept,_:=change_snapshot(&r,tree(&f.s,"kept\n"))
+    testing.expect_value(t,bookmark_set(&r,"main",kept),Error.None)
+    published_change:=Change{id=random_id(Change_Id),tree=tree(&f.s,"published\n"),author=identity.key,created=1,written=1,description="only a device names it"}
+    published,_:=change_put(&f.s,&published_change,&identity)
+    _,pe:=device_refs_publish(&f.s,{0=1},&identity,{{"work",published}},1)
+    testing.expect_value(t,pe,Error.None)
+    before:=r.op
+    old:=make([dynamic]store.Hash,context.temp_allocator)
+    testing.expect_value(t,op_retained(&f.s,{r.op},&old),Error.None)
+    testing.expect_value(t,store.commit(&f.s),store.Error.None)
+
+    // A day past the retention, every operation so far is old.
+    later:=time.now()._nsec+OP_RETENTION+i64(24*time.Hour)
+    prune :: proc(t:^testing.T,s:^store.Store,now:i64) {
+        testing.expect_value(t,store_prune(s,now),Error.None)
+        live:=make([dynamic]store.Hash,context.temp_allocator)
+        testing.expect_value(t,store_live(s,&live),Error.None)
+        _,e:=store.sweep(s,live[:],time.Time{_nsec=now},reclaim=true)
+        testing.expect_value(t,e,store.Error.None)
+    }
+    prune(t,&f.s,later)
+    testing.expect_value(t,repo_refresh(&r),Error.None)
+    newest,_:=op_get(&f.s,r.op,context.temp_allocator)
+    testing.expect_value(t,newest.kind,Op_Kind.Prune)
+    for op in old {testing.expectf(t,object_present(&f.s,op)==(op==before),"%v: only the operation the workspace's ref names stays",op)}
+    testing.expect(t,!object_present(&f.s,first),"a revision only old operations reached is reclaimed")
+    for revision in ([]Revision{kept,published,repo_working(&r)}) {
+        files:=make([dynamic]File,context.temp_allocator)
+        c,ce:=change_get(&f.s,revision,context.temp_allocator)
+        testing.expect(t,ce==.None && tree_files(&f.s,c.tree,&files,context.temp_allocator)==.None,"what a view or a device's ref reaches stays whole")
+    }
+
+    // After the prune every operation undoes; the prune and what came before it do not.
+    testing.expect_value(t,op_undo(&r,r.op),Error.Pruned)
+    testing.expect_value(t,op_undo(&r,before),Error.Pruned)
+    view:=r.view_address
+    _,e:=change_describe(&r,repo_working(&r),"after the prune")
+    testing.expect_value(t,e,Error.None)
+    after:=r.view_address
+    testing.expect_value(t,op_undo(&r,r.op),Error.None)
+    testing.expect(t,r.view_address==view,"the operation after the prune undoes")
+    testing.expect_value(t,op_undo(&r,r.op),Error.None)
+    testing.expect(t,r.view_address==after,"and its undo too")
+    // A second prune within the retention keeps what the first kept since.
+    prune(t,&f.s,later+1)
+    testing.expect_value(t,repo_refresh(&r),Error.None)
+    testing.expect(t,object_present(&f.s,newest.view),"the operations of the last 30 days stay")
+}
+
 @(test)
 op_heads_of_two_workspaces_merge :: proc(t:^testing.T) {
     f,ok:=fixture(t,"kai-op-heads");if !ok {return}

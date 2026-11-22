@@ -154,14 +154,8 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     // The root first: it names the project, whose folder keeps the base.
     say(&d,"asking for the snapshot")
     address:store.Hash
-    if address,error=join_offer(&d,allocator);error!="" {return}
-    roots:=[1]store.Hash{address}
-    if error=join_fetch(&d,roots[:],"the snapshot",allocator);error!="" {return}
-    name,name_error:=snapshot_name(n.s,address,allocator)
-    if name_error!=.None {
-        error=refused(name_error,allocator)
-        return
-    }
+    name:string
+    if address,name,error=join_offer(&d,allocator);error!="" {return}
     folder:=d.folder
     if folder=="" {folder=project.path(d.parent==""?".":d.parent,name,allocator=context.temp_allocator)}
     folder=project.path_absolute(folder,allocator)
@@ -180,7 +174,7 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     }
     node_serve(n,address)
     if d.own_offer!="" {
-        if put_error:=offer_set(n.s,folder,d.own_offer,address);put_error!=.None {
+        if put_error:=offer_set(n.s,folder,d.own_offer,address,name);put_error!=.None {
             return report,fmt.aprintf("the project offer could not be kept in the store (%v)",put_error,allocator=allocator)
         }
     }
@@ -199,11 +193,12 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     if previous,read_error:=os.read_entire_file(share_path(folder,"snapshot",context.temp_allocator),context.temp_allocator);read_error==nil {
         last,_=snapshot_decode(previous,context.temp_allocator)
     }
-    if len(last.entries)>0 {snapshot_put(n.s,&last)}
+    // A base whose files are out of order or fold to one is no base.
+    if _,base_error:=snapshot_put(n.s,&last);base_error!=.None {last={}}
     fetching:=Tree_Fetching{d=&d,allocator=allocator}
     folders:=make([dynamic]store.Hash,context.temp_allocator)
-    snap,tree_error:=snapshot_read(n.s,address,{procedure=join_tree_fetch,data=&fetching},&folders,allocator)
-    if tree_error==.Unavailable && fetching.error!="" {
+    snap,tree_error:=snapshot_read(n.s,address,name,{procedure=join_tree_fetch,data=&fetching},&folders,allocator)
+    if tree_error==.Missing && fetching.error!="" {
         error=fetching.error
         return
     }
@@ -218,7 +213,8 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     asset.types_init(&types)
     defer asset.types_destroy(&types)
     asset_driver:=kai_assets.Asset_Driver{types=&types}
-    drivers:=[1]vcs.Driver{kai_assets.driver(&asset_driver)}
+    merges:=kai_assets.Cached_Driver{driver=kai_assets.driver(&asset_driver),cache={store=n.s},types=&types}
+    drivers:=[1]vcs.Driver{kai_assets.cached(&merges)}
     plan.drivers=drivers[:]
     if error=join_room(&d,&snap,&plan,folder,allocator);error!="" {return}
 
@@ -280,31 +276,34 @@ refusal :: proc(reason:wire.Disconnect_Reason,allocator:=context.allocator) -> s
     return strings.clone("the host did not answer. Either its share has ended (an invitation lasts while the share that printed it runs: ask for a new one), or it cannot be reached from here: on another network one side needs a router that maps a port (UPnP, NAT-PMP or PCP) and the host must give the code it prints once its router answered; a firewall must let UDP through",allocator)
 }
 
-// The snapshot and kind of offer, asked of the host's authenticated connection.
+// The snapshot, the project's name and the kind of offer, asked of the host's
+// authenticated connection.
 @(private)
-join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.Hash,error:string) {
+join_offer :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> (address:store.Hash,name:string,error:string) {
     n:=d.node
     host,connection,connected:=node_host_peer(n)
-    if !connected {return {},refusal(.Timeout,allocator)}
+    if !connected {return {},"",refusal(.Timeout,allocator)}
     q,ask_error:=exchange.ref_ask(&n.x,NAMESPACE,d.offer,host,connection)
-    if ask_error!=.None {return {},fmt.aprintf("the snapshot could not be asked for (%v)",ask_error,allocator=allocator)}
+    if ask_error!=.None {return {},"",fmt.aprintf("the snapshot could not be asked for (%v)",ask_error,allocator=allocator)}
     defer exchange.query_end(&n.x,q)
     for {
         result,ok:=exchange.query_result(&n.x,q)
-        if !ok {return {},strings.clone("the question for the snapshot was lost",allocator)}
+        if !ok {return {},"",strings.clone("the question for the snapshot was lost",allocator)}
         switch result.state {
         case .Found:
             roots:=[1]store.Hash{result.address}
-            if error=join_fetch(d,roots[:],"the project offer",allocator,OFFER_BYTES);error!="" {return}
-            address,kind,read_error:=offer_read(n.s,result.address)
+            if error=join_fetch(d,roots[:],"the project offer",allocator,OFFER_BYTES_MAX);error!="" {return}
+            kind:Offer_Kind
+            read_error:store.Error
+            address,kind,name,read_error=offer_read(n.s,result.address,allocator)
             if read_error!=.None {
-                return {},fmt.aprintf("the project offer is invalid (%v)",read_error,allocator=allocator)
+                return {},"",fmt.aprintf("the project offer is invalid (%v): the host runs another version of Mirai, or is not honest",read_error,allocator=allocator)
             }
             if d.require_live && kind!=.Live {
-                return {},strings.clone("this invitation shares files. Use mirai join.",allocator)
+                return {},"",strings.clone("this invitation shares files. Use mirai join.",allocator)
             }
-            return address,""
-        case .Not_Found: return {},strings.clone("the host offers no project under this invitation, or did not answer: its share ended and another runs; ask for its new invitation",allocator)
+            return
+        case .Not_Found: return {},"",strings.clone("the host offers no project under this invitation, or did not answer: its share ended and another runs; ask for its new invitation",allocator)
         case .Waiting:
         }
         if error=join_alive(d,allocator);error!="" {return}
@@ -325,7 +324,7 @@ join_alive :: proc(d:^Join_Desc,allocator:runtime.Allocator) -> string {
 
 // Why a snapshot the host sent is refused.
 @(private)
-refused :: proc(error:Snapshot_Error,allocator:runtime.Allocator) -> string {
+refused :: proc(error:vcs.Error,allocator:runtime.Allocator) -> string {
     return fmt.aprintf("the host sent a snapshot this engine refuses (%v): it was not written; the host runs another version of Mirai, or is not honest",error,allocator=allocator)
 }
 
@@ -342,7 +341,7 @@ join_tree_fetch :: proc(data:rawptr,addresses:[]store.Hash) -> bool {
 // Fetches the folders of a snapshot at addresses from the peers, WINDOW at a
 // time; one whose object is larger than a folder's is refused.
 @(private)
-join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:runtime.Allocator,limit:=i64(LISTING_MAX)) -> string {
+join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:runtime.Allocator,limit:=i64(vcs.FOLDER_BYTES_MAX)) -> string {
     n:=d.node
     Active :: struct {address:store.Hash,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
@@ -496,7 +495,7 @@ link_refused :: proc(report:^Join_Report,folder,relative:string) -> bool {
 
 // The entry of path in the last snapshot, under any case where the system folds it.
 @(private)
-base_find :: proc(plan:^Plan,last:^Snapshot,path:string) -> (^Entry,bool) {
+base_find :: proc(plan:^Plan,last:^Snapshot,path:string) -> (^vcs.File,bool) {
     if e,found:=snapshot_find(last,path);found {return e,true}
     if !plan.folds {return nil,false}
     at,found:=plan.last_folded[strings.to_lower(path,context.temp_allocator)]
@@ -584,10 +583,10 @@ join_room :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,folder:string,allocator
     for w in plan.write {
         if w.refused {continue}
         e:=&snap.entries[w.at]
-        write+=e.size
+        write+=i64(e.size)
         if e.address in seen || store.chunk_here(s,e.address) {continue}
         seen[e.address]=true
-        fetch+=e.size
+        fetch+=i64(e.size)
     }
     existing:=folder
     for !os.exists(existing) {
@@ -633,7 +632,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
             paths[e.address]=make([dynamic]int,context.temp_allocator)
             list=&paths[e.address]
             append(&order,k)
-            if !store.chunk_here(s,e.address) {total+=e.size}
+            if !store.chunk_here(s,e.address) {total+=i64(e.size)}
         }
         append(list,k)
     }
@@ -643,7 +642,7 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
     sized:=make([]Sized,len(order),context.temp_allocator)
     for k,at in order {
         e:=&snap.entries[plan.write[k].at]
-        sized[at]={e.path==project.PROJECT_FILE || e.path==scene,e.size,k}
+        sized[at]={e.path==project.PROJECT_FILE || e.path==scene,i64(e.size),k}
     }
     slice.sort_by(sized,proc(a,b:Sized) -> bool {
         if a.first!=b.first {return a.first}
@@ -685,8 +684,8 @@ join_files :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,index:^Index,folder:st
                 join_write(d,snap,plan,list,index,folder,report)
                 append(&complete,e.address)
                 complete_count+=1
-                report.fetched+=e.size
-                done+=e.size
+                report.fetched+=i64(e.size)
+                done+=i64(e.size)
             case .Failed:
                 for w in list {failed(report,"%s could not be kept in the store at %s (%v, %v): free space there, and run the join again",snap.entries[plan.write[w].at].path,s.root,p.error,p.store_error)}
             case:
@@ -815,8 +814,8 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
         }
         temp:=fmt.tprintf("%s/share-%d-%d",temp_folder,os.get_pid(),w.at)
         mode:=os.Permissions_Default_File
-        if e.executable {mode+=os.Permissions_Execute_All}
-        #partial switch saved,store_error,os_error:=object_save(s,e.address,e.size,temp);saved {
+        if e.kind==.Executable {mode+=os.Permissions_Execute_All}
+        #partial switch saved,store_error,os_error:=object_save(s,e.address,i64(e.size),temp);saved {
         case .None:
         case .Size:
             os.remove(temp)
@@ -883,7 +882,7 @@ join_write :: proc(d:^Join_Desc,snap:^Snapshot,plan:^Plan,list:[]int,index:^Inde
 // their base, the entry of the last snapshot: false when the base is gone
 // from the store, a side does not read or the drivers do not resolve it.
 @(private)
-join_merge :: proc(plan:^Plan,s:^store.Store,e:^Entry,w:^Write,target,temp:string) -> bool {
+join_merge :: proc(plan:^Plan,s:^store.Store,e:^vcs.File,w:^Write,target,temp:string) -> bool {
     if e.size>vcs.DRIVER_BYTES_MAX {return false}
     origin,origin_error:=vcs.file_bytes(s,w.origin,context.temp_allocator)
     if origin_error!=.None {return false}
@@ -999,7 +998,7 @@ base_save :: proc(folder:string,snap,last:^Snapshot,plan:^Plan) {
     for w in plan.write {
         if !w.done {undone[w.at]=true}
     }
-    entries:=make([dynamic]Entry,0,len(snap.entries)+len(plan.remove),context.temp_allocator)
+    entries:=make([dynamic]vcs.File,0,len(snap.entries)+len(plan.remove),context.temp_allocator)
     for e,at in snap.entries {
         if at not_in undone {
             append(&entries,e)
@@ -1010,8 +1009,8 @@ base_save :: proc(folder:string,snap,last:^Snapshot,plan:^Plan) {
     for r in plan.remove {
         if !r.done {append(&entries,last.entries[r.at])}
     }
-    slice.sort_by(entries[:],proc(a,b:Entry) -> bool {return a.path<b.path})
-    if bytes,error:=snapshot_encode({name=snap.name,entries=entries[:]},context.temp_allocator);error==.None {
+    slice.sort_by(entries[:],proc(a,b:vcs.File) -> bool {return a.path<b.path})
+    if bytes:=snapshot_encode({name=snap.name,entries=entries[:]},context.temp_allocator);bytes!=nil {
         file_save(share_path(folder,"snapshot",context.temp_allocator),bytes)
     }
 }
@@ -1080,27 +1079,37 @@ join_packages :: proc(d:^Join_Desc,folder:string,allocator:runtime.Allocator) ->
 }
 
 Offer_Kind :: enum u8 {Project,Live}
-@(private) OFFER_BYTES :: len(store.Hash{})+1
+
+// An offer is one object: {version: u8, kind: u8, root: [32]u8, name_len: u8,
+// name}, the root of the snapshot's tree and the name of its project.
+@(private) OFFER_VERSION :: 3
+@(private) OFFER_BYTES_MAX :: 2+32+1+NAME_MAX
 
 @(private)
-offer_read :: proc(s:^store.Store,object:store.Hash) -> (address:store.Hash,kind:Offer_Kind,error:store.Error) {
+offer_read :: proc(s:^store.Store,object:store.Hash,allocator:=context.allocator) -> (address:store.Hash,kind:Offer_Kind,name:string,error:store.Error) {
     o:=store.object_open(s,object) or_return
     defer store.object_close(&o)
-    if store.object_size(&o)!=OFFER_BYTES {return {},{},.Corrupt}
-    bytes:[OFFER_BYTES]u8
-    store.object_read(&o,0,bytes[:]) or_return
-    copy(address[:],bytes[1:])
-    if bytes[0]>u8(Offer_Kind.Live) || address=={} {return {},{},.Corrupt}
-    return address,Offer_Kind(bytes[0]),.None
+    size:=int(min(store.object_size(&o),OFFER_BYTES_MAX+1))
+    if size<2+32+1 || size>OFFER_BYTES_MAX {return {},{},"",.Corrupt}
+    bytes:[OFFER_BYTES_MAX]u8
+    store.object_read(&o,0,bytes[:size]) or_return
+    copy(address[:],bytes[2:])
+    name=string(bytes[2+32+1:size])
+    if bytes[0]!=OFFER_VERSION || bytes[1]>u8(Offer_Kind.Live) || address=={} || int(bytes[2+32])!=len(name) || !name_valid(name) {return {},{},"",.Corrupt}
+    return address,Offer_Kind(bytes[1]),strings.clone(name,allocator),.None
 }
 
-// The offer of this kind replaces the previous one of the folder.
-offer_set :: proc(s:^store.Store,folder,name:string,address:store.Hash,kind:=Offer_Kind.Project) -> store.Error {
+// The offer of this kind of the snapshot at address of the project named
+// project replaces the previous one of the folder.
+offer_set :: proc(s:^store.Store,folder,name:string,address:store.Hash,project_name:string,kind:=Offer_Kind.Project) -> store.Error {
+    if !name_valid(project_name) {return .Invalid_Argument}
     address:=address
-    bytes:[OFFER_BYTES]u8
-    bytes[0]=u8(kind)
-    copy(bytes[1:],address[:])
-    object:=store.put(s,bytes[:]) or_return
+    bytes:[OFFER_BYTES_MAX]u8
+    bytes[0],bytes[1]=OFFER_VERSION,u8(kind)
+    copy(bytes[2:],address[:])
+    bytes[2+32]=u8(len(project_name))
+    size:=2+32+1+copy(bytes[2+32+1:],project_name)
+    object:=store.put(s,bytes[:size]) or_return
     store.ref_set(s,NAMESPACE,name,object) or_return
     file:=share_path(folder,"live-offer" if kind==.Live else "offer",context.temp_allocator)
     if previous,error:=os.read_entire_file(file,context.temp_allocator);error==nil && string(previous)!=name && store.name_valid(string(previous)) {

@@ -163,3 +163,43 @@ asset_summaries_are_stable_and_follow_their_bytes :: proc(t:^testing.T) {
     _,dok=asset_detail(transmute([]u8)string("a"),transmute([]u8)string("b"),context.temp_allocator)
     testing.expect(t,!dok,"text has no asset detail")
 }
+
+// A driver's result is kept by its id, its version and the three terms: the
+// second identical merge does not call it, another term or version does.
+@(test)
+a_driver_result_is_kept_by_its_terms_and_version :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-merge-cache")
+    if folder=="" {return}
+    s,se:=store.open(strings.concatenate({folder,"/store"},context.temp_allocator))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&s)
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    calls:=0
+    inner:=vcs.Driver{id=9,version=1,data=&calls,merge=proc(data:rawptr,input:^vcs.Driver_Input,out:^[dynamic]u8) -> vcs.Driver_Result {
+        (^int)(data)^+=1
+        append(out,..input.ours)
+        append(out,..input.theirs)
+        return .Conflicted
+    }}
+    c:=Cached_Driver{driver=inner,cache={store=&s},types=&types}
+    term :: proc(text:string) -> store.Hash {return store.address_of_bytes(transmute([]u8)text)}
+    input:=vcs.Driver_Input{base=transmute([]u8)string("base"),ours=transmute([]u8)string("ours"),theirs=transmute([]u8)string("theirs"),has_base=true,terms={term("base"),term("ours"),term("theirs")}}
+    Step :: struct {change:proc(c:^Cached_Driver,input:^vcs.Driver_Input),calls:int}
+    steps:=[?]Step{
+        {nil,1},
+        {nil,1}, // the same terms: kept
+        {proc(c:^Cached_Driver,input:^vcs.Driver_Input) {input.terms[2]=store.Hash{0=1}},2},
+        {proc(c:^Cached_Driver,input:^vcs.Driver_Input) {c.driver.version=2},3},
+        {nil,3},
+    }
+    for step,k in steps {
+        if step.change!=nil {step.change(&c,&input)}
+        out:=make([dynamic]u8,context.temp_allocator)
+        d:=cached(&c)
+        result:=d.merge(d.data,&input,&out)
+        testing.expectf(t,result==.Conflicted && string(out[:])=="ourstheirs","step %d: %v %q",k,result,string(out[:]))
+        testing.expectf(t,calls==step.calls,"step %d: the driver was called %d times, not %d",k,calls,step.calls)
+    }
+}

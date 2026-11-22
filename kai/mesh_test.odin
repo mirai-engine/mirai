@@ -191,9 +191,10 @@ org_members_sync_refs_and_ddc_over_sim_network :: proc(t:^testing.T) {
     testing.expect(t,ref_is(&m.stores[0],refs_namespace(o.project.id,&ns),refs_name(o.bob.devices[0].key,&name),g.bob_refs))
 }
 
-// An anonymous reader of a public project gets the chunks of its closure and
-// nothing else: a change no ref names is missing to it, though the store
-// holds it; and it never reads the org's logs.
+// An anonymous reader of a public project gets the chunks of what its shared
+// bookmarks reach and nothing else: a change only a device's ref names is
+// neither listed nor served, though the store holds it, until a move of the
+// project's log reaches it; and it never reads the org's logs.
 @(test)
 anonymous_peer_gets_only_the_public_closure :: proc(t:^testing.T) {
     m:=new(Mesh)
@@ -203,16 +204,16 @@ anonymous_peer_gets_only_the_public_closure :: proc(t:^testing.T) {
     o:Test_Org
     test_org_make(t,&o);defer test_org_destroy(&o)
     for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {log_save(&m.stores[0],l)}
-    public:=test_change(t,&m.stores[0],&o.alice.devices[0],"public work")
+    work:=test_change(t,&m.stores[0],&o.alice.devices[0],"work in progress")
     private:=test_change(t,&m.stores[0],&o.alice.devices[0],"not published")
     if !mesh_start(t,m,0,o.alice.devices[0],o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
     stranger:=identity_make()
     stranger_dh,_:=net.dh_key()
     if !mesh_start(t,m,1,stranger,stranger_dh,{},o.org.id) {return}
     a,c:=&m.agents[0],&m.agents[1]
-    refs,e:=agent_publish_refs(a,o.project.id,{{"main",public}},1)
+    _,e:=agent_publish_refs(a,o.project.id,{{"main",work}},1)
     testing.expect_value(t,e,Error.None)
-    testing.expect(t,closure_has(a.closure.public[:],public) && !closure_has(a.closure.public[:],private))
+    testing.expect(t,!closure_has(a.closure.public[:],work) && !closure_has(a.closure.public[:],private),"a device's ref publishes nothing")
 
     testing.expect_value(t,agent_connect(c,Dh_Key(o.alice.dhs[0].public),true,net.address_memory(mesh_endpoint(0))),Error.None)
     connected :: proc(m:^Mesh,data:rawptr) -> bool {
@@ -240,22 +241,32 @@ anonymous_peer_gets_only_the_public_closure :: proc(t:^testing.T) {
         return r.state!=.Waiting && l.state!=.Waiting
     }
     testing.expect(t,mesh_until(m,5,&answers,answered))
-    testing.expect(t,answers.ref.state==.Found && answers.ref.address==refs)
+    testing.expect_value(t,answers.ref.state,exchange.Query_State.Not_Found)
     testing.expect_value(t,answers.log.state,exchange.Query_State.Not_Found)
     exchange.query_end(&c.x,q)
     exchange.query_end(&c.x,ql)
 
-    testing.expect_value(t,exchange.want(&c.x,public),exchange.Error.None)
-    testing.expect_value(t,exchange.want(&c.x,private),exchange.Error.None)
+    Wanted :: struct {addresses:[2]Revision,states:[2]exchange.State}
     settled :: proc(m:^Mesh,data:rawptr) -> bool {
-        x:=&m.agents[1].x
-        addresses:=(^[2]Revision)(data)
-        p,_:=exchange.progress(x,addresses[0])
-        q,_:=exchange.progress(x,addresses[1])
-        return p.state==.Complete && q.state==.Missing
+        w:=(^Wanted)(data)
+        for address,k in w.addresses {
+            p,_:=exchange.progress(&m.agents[1].x,address)
+            if p.state!=w.states[k] {return false}
+        }
+        return true
     }
-    wanted:=[2]Revision{public,private}
-    testing.expect(t,mesh_until(m,5,&wanted,settled),"the public change arrives, the other is missing")
+    for address in ([]Revision{work,private}) {testing.expect_value(t,exchange.want(&c.x,address),exchange.Error.None)}
+    w:=Wanted{{work,private},{.Missing,.Missing}}
+    testing.expect(t,mesh_until(m,5,&w,settled),"work in progress is missing by its address too")
+    for address in ([]Revision{work,private}) {exchange.forget(&c.x,address)}
+
+    // A shared bookmark reaches the work: now it is served, the other change still is not.
+    _,e=agent_append(a,o.project.id,.Bookmark_Move,body_make(Bookmark_Move_Body{to=work},transmute([]u8)string("main")),2)
+    testing.expect_value(t,e,Error.None)
+    testing.expect(t,closure_has(a.closure.public[:],work) && !closure_has(a.closure.public[:],private))
+    for address in ([]Revision{work,private}) {testing.expect_value(t,exchange.want(&c.x,address),exchange.Error.None)}
+    w.states={.Complete,.Missing}
+    testing.expect(t,mesh_until(m,5,&w,settled),"the shared change arrives, the other is missing")
     testing.expect(t,!object_present(&m.stores[1],private))
 }
 

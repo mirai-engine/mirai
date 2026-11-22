@@ -20,10 +20,12 @@ CHANGE_TEXT :: 12               // hex digits a change id is shown with
 CHANGE_TEXT_MIN :: 4            // the fewest digits a change is named by
 
 // It must not move once opened: the workspace keeps its drivers, which point
-// into it.
+// into it. Its merges are kept in the store's cache; whoever has a source of
+// shared results sets merges.cache.source.
 Project :: struct {
     types:asset.Types,
     driver:Asset_Driver,
+    merges:Cached_Driver,
     drivers:[1]vcs.Driver,
     workspace:vcs.Workspace,
     owns_types:bool,
@@ -49,7 +51,7 @@ project_exists :: proc(root:string) -> bool {
 }
 
 @(private)
-project_prepare :: proc(p:^Project,types:^asset.Types) -> vcs.Workspace_Options {
+project_prepare :: proc(p:^Project,s:^store.Store,types:^asset.Types) -> vcs.Workspace_Options {
     if types==nil {
         asset.types_init(&p.types)
         p.owns_types=true
@@ -57,7 +59,8 @@ project_prepare :: proc(p:^Project,types:^asset.Types) -> vcs.Workspace_Options 
     } else {
         p.driver.types=types
     }
-    p.drivers[0]=driver(&p.driver)
+    p.merges={driver=driver(&p.driver),cache={store=s},types=p.driver.types}
+    p.drivers[0]=cached(&p.merges)
     return workspace_options(p.drivers[:])
 }
 
@@ -66,7 +69,7 @@ project_prepare :: proc(p:^Project,types:^asset.Types) -> vcs.Workspace_Options 
 // the engine's.
 project_create :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
     identity:=identity_load(s) or_return
-    options:=project_prepare(p,types)
+    options:=project_prepare(p,s,types)
     if e:=vcs.workspace_create(&p.workspace,root,s,identity,options,allocator);e!=.None {
         project_close(p)
         return e
@@ -78,7 +81,7 @@ project_create :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=
 project_open :: proc(p:^Project,root:string,s:^store.Store,types:^asset.Types=nil,allocator:=context.allocator) -> vcs.Error {
     if !project_exists(root) {return .Missing}
     identity:=identity_load(s) or_return
-    options:=project_prepare(p,types)
+    options:=project_prepare(p,s,types)
     if e:=vcs.workspace_open(&p.workspace,root,s,identity,options,allocator);e!=.None {
         project_close(p)
         return e
@@ -245,6 +248,17 @@ undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_a
     vcs.workspace_update(w) or_return
     vcs.overlay_checkout(w.options.overlay,r.s,w.root,working,vcs.repo_working(r)) or_return
     return undone,files_changed(w,before,changed,allocator)
+}
+
+// Prunes the operation log of every repository of s at now (ns), then sweeps
+// the store with what Kai and the asset library hold live (asset.store_sweep):
+// what only the operations past the retention reached is reclaimed.
+prune :: proc(s:^store.Store,now:i64) -> (result:store.Sweep_Result,error:vcs.Error) {
+    vcs.store_prune(s,now) or_return
+    live:=make([dynamic]store.Hash,context.temp_allocator)
+    vcs.store_live(s,&live) or_return
+    swept,e:=asset.store_sweep(s,live[:])
+    return swept,vcs.store_error(e)
 }
 
 // Gives the working copy the files of another change and writes them, with

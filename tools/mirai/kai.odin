@@ -12,7 +12,7 @@ import net "mirai:net"
 import "mirai:project"
 import "mirai:store"
 
-KAI_USAGE :: "kai init [project]|status|snapshot|log [-n N]|diff [change]|undo|conflicts|verify | kai new [change...] [-m text] | kai describe [change] -m text | kai split [-r change] [-m text] <path...> | kai restore <change> | kai bookmarks [set|move <name> <change> | delete <name> | policy <name> [--approvals N] [--checks a,b]] [--project P] [--store S]"
+KAI_USAGE :: "kai init [project]|status|snapshot|log [-n N]|diff [change]|undo|conflicts|verify | kai prune | kai new [change...] [-m text] | kai describe [change] -m text | kai split [-r change] [-m text] <path...> | kai restore <change> | kai bookmarks [set|move <name> <change> | delete <name> | policy <name> [--approvals N] [--checks a,b]] [--project P] [--store S]"
 KAI_MESH_USAGE :: "kai identity [--name N] | kai identity revoke <device> | kai identity recovery | kai agent [--stay] [--port N] | kai pair offer device|member|node [--org O] [--role R] [--modes relay,seed,ddc] | kai pair join <ticket> [--name N] | kai pair approve [--code dddd-dddd] [--deny] | kai peers [--store S]"
 KAI_TEAM_USAGE :: "kai org list|leave | kai org new <name> | kai org add public|org | kai org remove|transfer <member> | kai org role <member> reader|writer|admin | kai grant issue <subject> --rights read,write,ddc,check,relay [--days N] [--path P] | kai grant list|load <text>|revoke <grant> | kai scope add <pattern...> [--readers R] [--history] | kai scope list|remove|rotate <scope> | kai public add <path>[:line] [--org O] [--project P] [--store S]"
 KAI_REVIEW_USAGE :: "kai proposal open <target> [change...] [-m title] [--text T] | kai proposal list|show|approve|changes|withdraw|close|reopen|land <proposal> | kai proposal revise <proposal> [change...] | kai proposal comment <proposal> -m text [--file P | --lines P:A-B | --entity P#id] [--reply C] | kai check <name> [--proposal P] -- <command...> [--project P] [--store S]"
@@ -34,7 +34,7 @@ KAI_OPTIONS :: [?][2]string{
     {"init","--project"},{"status","--project"},{"snapshot","--project"},{"log","--project -n"},{"diff","--project"},
     {"undo","--project"},{"conflicts","--project"},{"verify","--project"},{"new","--project -m"},{"describe","--project -m"},
     {"split","--project -r -m"},{"restore","--project"},{"bookmarks","--project --approvals --checks"},
-    {"identity","--name"},{"agent","--port --stay"},{"pair","--org --role --modes --code --deny --name"},{"peers",""},
+    {"prune",""},{"identity","--name"},{"agent","--port --stay"},{"pair","--org --role --modes --code --deny --name"},{"peers",""},
     {"org","--project --org"},{"grant","--project --org --rights --days --path"},{"scope","--project --readers --history"},
     {"public","--project"},{"proposal","--project -m --text --file --lines --entity --reply"},{"check","--project --proposal"},
 }
@@ -148,6 +148,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
     switch verb {
     case "identity","agent","pair","peers": return kai_mesh(verb,store_root,&a)
     case "org","grant": return kai_team(verb,store_root,&a)
+    case "prune": return kai_prune(store_root)
     }
     root:=project.path_absolute(a.folder,context.temp_allocator)
     if !project_folder(root) {fmt.eprintfln("mirai kai: %s has no %s: give the folder of a project with --project",root,project.PROJECT_FILE);return 2}
@@ -291,7 +292,7 @@ kai_refuse :: proc(verb:string,a:^Kai_Args) -> int {
     sub:=n>0?a.positionals[0]:""
     fits:=true
     switch verb {
-    case "status","snapshot","log","undo","conflicts","verify","agent","peers": fits=n==0
+    case "status","snapshot","log","undo","conflicts","verify","agent","peers","prune": fits=n==0
     case "init","diff","describe": fits=n<=1
     case "restore": fits=n==1
     case "identity": fits=n==0 || (sub=="revoke" && n==2) || (sub=="recovery" && n==1)
@@ -436,6 +437,19 @@ kai_split :: proc(w:^vcs.Workspace,change,message:string,paths:[]string) -> int 
     a,_:=vcs.change_get(w.repo.s,first,context.temp_allocator)
     b,_:=vcs.change_get(w.repo.s,second,context.temp_allocator)
     fmt.printfln("%s %s keeps %d paths; %s holds the rest.",ka.change_text(a.id),description_line(a.description),len(paths),ka.change_text(b.id))
+    return 0
+}
+
+// Prunes the operation log of every repository of the store and sweeps it.
+@(private="file")
+kai_prune :: proc(store_root:string) -> int {
+    root:=store_root!="" ? store_root : store.default_root(context.temp_allocator)
+    s,e:=store.open(root)
+    if e!=.None {fmt.eprintfln("mirai kai prune: the store at %s does not open (%v): give another with --store",root,e);return 1}
+    defer store.close(&s)
+    result,pe:=ka.prune(&s,time.now()._nsec)
+    if pe!=.None {return kai_failed("prune",pe)}
+    fmt.printfln("Operations older than %d days pruned from every repository of %s; the sweep freed %d bytes. Undo does not go past this prune.",vcs.OP_RETENTION/i64(24*time.Hour),root,result.bytes)
     return 0
 }
 

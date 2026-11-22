@@ -77,9 +77,10 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
   by its fingerprint, which does not contain the secret (`mirai kai public add <path>:<line>`).
 - The scanner and the deny set are guardrails against mistakes, not a security boundary: what must
   not be public goes into a scope.
-- In a public project whatever a device publishes is public: its refs and the closure under them are
-  served to anonymous peers, so the scanner runs on every publish and a work in progress that must
-  stay private goes in a scope or a private project.
+- In a public project what a shared bookmark reaches is public: anonymous peers read it and
+  nothing a device's refs or a proposal alone name ([access](mesh.md#who-reads-what)). The scanner
+  still runs on every publish, since a work in progress becomes public when a bookmark moves to
+  it; what must stay private goes in a scope or a private project.
 - `deny_set_and_publish_scanner_block_leaks` is the test of both.
 
 ## What a peer sees

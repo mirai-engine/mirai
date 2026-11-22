@@ -42,6 +42,7 @@ File :: struct {
 }
 
 @(private) ENTRY_FIXED :: 1+1+32+8+4+4
+FOLDER_BYTES_MAX :: FOLDER_ENTRIES_MAX*(ENTRY_FIXED+NAME_BYTES_MAX) // of the object of one folder
 
 // The address of the object of no bytes: an empty file's.
 empty_address :: proc "contextless" () -> store.Hash {
@@ -158,19 +159,19 @@ tree_empty :: proc(s:^store.Store) -> (root:store.Hash,error:Error) {
 }
 
 // Puts the folders of files, sorted by path, their objects being in the store
-// already: the address of the root.
-tree_build :: proc(s:^store.Store,files:[]File) -> (root:store.Hash,error:Error) {
+// already: the address of the root. Each folder put is added to folders.
+tree_build :: proc(s:^store.Store,files:[]File,folders:^[dynamic]store.Hash=nil) -> (root:store.Hash,error:Error) {
     if len(files)>FILES_MAX {return {},.Too_Large}
     for f,k in files {
         if !path_valid(f.path) || f.kind==.Folder {return {},.Invalid_Argument}
         if k>0 && files[k-1].path>=f.path {return {},.Invalid_Argument}
     }
-    folder:=build_folder(s,files,0,0) or_return
+    folder:=build_folder(s,files,0,0,folders) or_return
     return folder.address,.None
 }
 
 @(private)
-build_folder :: proc(s:^store.Store,files:[]File,prefix,depth:int) -> (folder:Tree_Entry,error:Error) {
+build_folder :: proc(s:^store.Store,files:[]File,prefix,depth:int,folders:^[dynamic]store.Hash) -> (folder:Tree_Entry,error:Error) {
     if depth>DEPTH_MAX {return {},.Too_Large}
     items:=make([dynamic]Tree_Entry,context.temp_allocator)
     for i:=0;i<len(files); {
@@ -187,7 +188,7 @@ build_folder :: proc(s:^store.Store,files:[]File,prefix,depth:int) -> (folder:Tr
         under:=f.path[:prefix+slash+1]
         j:=i+1
         for j<len(files) && strings.has_prefix(files[j].path,under) {j+=1}
-        child:=build_folder(s,files[i:j],prefix+slash+1,depth+1) or_return
+        child:=build_folder(s,files[i:j],prefix+slash+1,depth+1,folders) or_return
         child.name=rest[:slash]
         append(&items,child)
         i=j
@@ -200,30 +201,46 @@ build_folder :: proc(s:^store.Store,files:[]File,prefix,depth:int) -> (folder:Tr
         if lower in folded {return {},.Invalid_Argument}
         folded[lower]={}
     }
-    return folder_put(s,items[:])
+    folder=folder_put(s,items[:]) or_return
+    if folders!=nil {append(folders,folder.address)}
+    return
 }
 
 // Appends the files of the tree at root to out, sorted by path, paths in
-// allocator. Every folder is checked against what its parent declares.
-tree_files :: proc(s:^store.Store,root:store.Hash,out:^[dynamic]File,allocator:=context.allocator) -> Error {
-    return files_walk(s,root,nil,"",0,out,allocator)
+// allocator; with out nil, only the folders are read. Every folder is checked
+// against what its parent declares. Each folder read is added to folders;
+// with missing, a folder the store lacks is added to it and what lies under
+// it is left out.
+tree_files :: proc(s:^store.Store,root:store.Hash,out:^[dynamic]File,allocator:=context.allocator,folders:^[dynamic]store.Hash=nil,missing:^[dynamic]store.Hash=nil) -> Error {
+    w:=Files_Walk{s,out,folders,missing,allocator}
+    return files_walk(&w,root,nil,"",0)
 }
 
 @(private)
-files_walk :: proc(s:^store.Store,address:store.Hash,expected:^Totals,prefix:string,depth:int,out:^[dynamic]File,allocator:runtime.Allocator) -> Error {
+Files_Walk :: struct {s:^store.Store,out:^[dynamic]File,folders,missing:^[dynamic]store.Hash,allocator:runtime.Allocator}
+
+@(private)
+files_walk :: proc(w:^Files_Walk,address:store.Hash,expected:^Totals,prefix:string,depth:int) -> Error {
     if depth>DEPTH_MAX {return .Corrupt}
     entries:=make([dynamic]Tree_Entry,context.temp_allocator)
-    folder_get(s,address,&entries,expected,context.temp_allocator) or_return
+    if _,e:=folder_get(w.s,address,&entries,expected,context.temp_allocator);e==.Missing && w.missing!=nil {
+        append(w.missing,address)
+        return .None
+    } else if e!=.None {
+        return e
+    }
+    if w.folders!=nil {append(w.folders,address)}
     for e in entries {
-        path:=path_join(prefix,e.name,allocator) or_return
+        if e.kind!=.Folder && w.out==nil {continue}
+        path:=path_join(prefix,e.name,w.allocator) or_return
         if len(path)>PATH_MAX {return .Corrupt}
         if e.kind==.Folder {
             t:=Totals{e.files,e.conflicts,e.size}
-            files_walk(s,e.address,&t,path,depth+1,out,allocator) or_return
+            files_walk(w,e.address,&t,path,depth+1) or_return
             continue
         }
-        if len(out)>=FILES_MAX {return .Corrupt}
-        append(out,File{path=path,kind=e.kind,address=e.address,size=e.size})
+        if len(w.out)>=FILES_MAX {return .Corrupt}
+        append(w.out,File{path=path,kind=e.kind,address=e.address,size=e.size})
     }
     return .None
 }

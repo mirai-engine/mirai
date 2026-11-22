@@ -66,6 +66,10 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   `DRIVER_BYTES_MAX`.
 - A driver has an `id`, recorded in the conflicts it judges, and a `version`, raised when its
   results change.
+- Being pure, a driver's `Resolved` and `Conflicted` results are kept in `cook/cache` by its id,
+  its version and the addresses of the three terms (`Cached_Driver` in `cook/kai`): the same
+  merge runs once, and on other machines too when the cache has a source that shares results. A
+  raised version misses every earlier result.
 - Text merges by lines with `std/diff`: a histogram diff over lines interned to ids in one table
   sized to the inputs, whose memory is linear in the lines. A range whose lines repeat too often
   to anchor becomes one replace hunk, so a hostile file costs a bounded search. The three-way
@@ -106,6 +110,14 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   by construction, generations to stop a walk, and merge bases found from both sides.
 - A shared bookmark is not an operation of a repository: it is an entry of the project's log
   ([identity](identity.md#the-signed-logs)), moved for the whole org.
+- Retention: a prune is an operation whose parents are the one it follows and every operation a
+  workspace's ref names. The log keeps what the workspaces' refs name and the operations not older
+  than the newest prune's time less `OP_RETENTION`; undo does not cross a prune. The store's sweep
+  follows refs and not the links inside Kai records, so whoever sweeps names as live what
+  `store_live` names: the operations kept and their views, and the closures of what they, the
+  shared bookmarks, the proposals' stacks and the devices' refs name, the overlays and the derived
+  data kept. A node prunes when it sweeps for its quota; on a machine `mirai kai prune` and
+  `kai.prune` run `cook/kai`'s `prune`, which also names what the asset library holds.
 
 ## Workspaces
 

@@ -150,7 +150,7 @@ Turn_Ref :: struct #packed {
   all-folder terms recurse; rebasing composes terms without losing information.
 - **Operation Log and Views:**
   - `Op_Kind :: enum u8 {Snapshot, New, Describe, Rewrite, Merge, Abandon, Restore, Bookmark,
-    Workspace, Import, Undo, Proposal}`.
+    Workspace, Import, Undo, Proposal, Prune}`.
   - Each `Operation` points to parent ops, a `View` (sorted `heads`, `workspaces`, and `bookmarks`
     where diverged bookmarks use the same conflict algebra) and `rewrites: []{from, to: Revision}`.
   - One op = one `store` batch commit (single flush, atomic).
