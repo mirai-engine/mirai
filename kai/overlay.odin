@@ -906,6 +906,13 @@ overlay_record_get :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:R
     return r,a,.None
 }
 
+// Why the record of scope at commit does not read: None when it does, Missing
+// when there is none.
+overlay_record_error :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:Revision) -> Error {
+    _,_,e:=overlay_record_get(s,project,scope,commit,context.temp_allocator)
+    return e
+}
+
 // Signs and stores the record of scope at commit and points its ref at it: it
 // follows base, or the record the ref holds when that one is newer.
 @(private)
@@ -996,7 +1003,10 @@ overlay_open :: proc(o:^Overlay,s:^store.Store,k:^Keyring_Fold,device:^Overlay_D
     o^={allocator=allocator}
     o.entries=make([dynamic]Overlay_Entry,allocator)
     defer if error!=.None {overlay_close(o)}
-    o.record,o.address=overlay_record_get(s,k.project,k.scope,commit,context.temp_allocator) or_return
+    // One store per value until odin-lang/Odin#7937.
+    record,address:=overlay_record_get(s,k.project,k.scope,commit,context.temp_allocator) or_return
+    o.record=record
+    o.address=address
     o.key=keyring_epoch_key(k,device,o.record.epoch) or_return
     sealed:=overlay_get(s,o.record.tree_root,.Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
     o.tree=tree_open(sealed,k.project,k.scope,o.record.epoch,&o.key,&o.entries,allocator) or_return

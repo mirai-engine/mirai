@@ -626,13 +626,13 @@ change_split :: proc(r:^Repo,revision:Revision,paths:[]string,description:Maybe(
     for sc in overlay.org.scopes {
         if sc.project!=overlay.project {continue}
         for p in c.parents {
-            if _,_,e:=overlay_record_get(r.s,overlay.project,sc.scope,p,context.temp_allocator);e==.Missing {continue}
+            if overlay_record_error(r.s,overlay.project,sc.scope,p)==.Missing {continue}
             overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,p,first,now) or_return
             break
         }
         for rw in tx.rewrites {
             if rw.to==first || rw.to=={} {continue}
-            if _,_,e:=overlay_record_get(r.s,overlay.project,sc.scope,rw.from,context.temp_allocator);e==.Missing {continue}
+            if overlay_record_error(r.s,overlay.project,sc.scope,rw.from)==.Missing {continue}
             overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,rw.from,rw.to,now) or_return
         }
     }

@@ -648,9 +648,14 @@ runner_org_peers :: proc(r:^Runner,o:^Runner_Org) {
     for &w in wanted {
         for old in o.peers {
             if old.dh!=w.dh {continue}
-            addresses,count,node,modes,first:=w.addresses,w.address_count,w.node,w.modes,w.first||old.first
+            // One store per value until odin-lang/Odin#7937.
+            fresh:=w
             w=old
-            w.addresses,w.address_count,w.node,w.modes,w.first=addresses,count,node,modes,first
+            w.addresses=fresh.addresses
+            w.address_count=fresh.address_count
+            w.node=fresh.node
+            w.modes=fresh.modes
+            w.first=fresh.first || old.first
         }
     }
     clear(&o.peers)
@@ -1253,7 +1258,9 @@ runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int)
         found:=false
         for &s in r.relay_seen {
             if s.dh==head.from {
-                s,found=seen,true
+                // One store per value until odin-lang/Odin#7937.
+                s=seen
+                found=true
             }
         }
         if !found && len(r.relay_seen)<RELAY_DEVICES_MAX {append(&r.relay_seen,seen)}
