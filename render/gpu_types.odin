@@ -509,6 +509,7 @@ Gpu_Cull_Stats :: struct {
 	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
 	raster_need: [2]u32, // the most vertices and triangles the view would hold in a round of the raster (Gpu_Cull_State.raster_need)
 	shadow: Shadow_Stats,
+	probe:  [2]u32, // how the cull treated the instance it probes (abi.CULL_PROBE_*), and the finest level of its cut + 1 (0: none)
 	// Of dropped and raster_need, the most any view of the frame counted
 	// (cull_stats_fold.comp), which the lists grow from, and of shadow the sum
 	// of its views. The rest counts a view: the next clears it.

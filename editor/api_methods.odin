@@ -452,6 +452,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     api_play_history_register(s,st)
     api_register(s,st,{name="batch",flags={.Core},params=type_info_of(api.Batch_Params),summary=api.BATCH_SUMMARY,result=type_info_of(api.Batch_Result),writes_result=true,run=proc(s:^Session,call:^api.Call) {api.batch(call)}})
     api_scene_register(s,st)
+    api_render_inspect_register(s,st)
     api_names_register(s,st)
     api_simulation_register(s,st)
     api_assets_register(s,st)
@@ -1080,9 +1081,9 @@ api_capture_size :: proc "contextless" (window:[2]i32,width,height:int) -> [2]i3
 // viewport. The pixels are of the allocator of the application. wait: as
 // app_capture_world, for the world alone.
 @(private)
-api_capture_image :: proc(s:^Session,ui:bool,size:[2]i32,generated:=false,wait:=time.Duration(0)) -> (pixels:[]u8,width,height:int,ok:bool) {
+api_capture_image :: proc(s:^Session,ui:bool,size:[2]i32,generated:=false,wait:=time.Duration(0),debug:[]gpu.Debug_Lines=nil) -> (pixels:[]u8,width,height:int,ok:bool) {
     if ui {return host.app_capture_pixels(s.app,s.app.allocator,generated)}
-    return host.app_capture_world(s.app,shown_world(s).data,API_CAPTURE_SETTLE,size,s.editor_world,s.app.allocator,wait)
+    return host.app_capture_world(s.app,shown_world(s).data,API_CAPTURE_SETTLE,size,s.editor_world,s.app.allocator,wait,debug)
 }
 
 // ---------------------------------------------------------------- play
