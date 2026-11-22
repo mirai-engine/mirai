@@ -23,11 +23,13 @@ import "mirai:store"
 
 PROVENANCE_NAMESPACE :: "kai-local-provenance" // + /<org hex>
 PROVENANCE_MAX :: 1<<21                        // roots an org keeps as received; past it a root waits as one not here
+PROVENANCE_SAVE_SECONDS :: 10.0                // between two writes of the received roots while they change, and when the agent closes
 
 Provenance :: struct {
     received:map[store.Hash]struct{}, // changes and outputs the org's agent fetched
     proven:map[store.Hash]struct{},   // the changes and outputs that came from the org, and every change before them
     dirty:bool,                       // received holds roots not written yet
+    saved:f64,                        // s: when they were last written
 }
 
 provenance_init :: proc(p:^Provenance,allocator:runtime.Allocator) {

@@ -252,6 +252,7 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
 // Stops the hosts and the exchange and frees the agent. Its peers are told it
 // leaves, so they ask others at once instead of waiting for its silence.
 agent_close :: proc(a:^Agent) {
+    _=provenance_save(&a.members.provenance,a.desc.store,a.desc.org)
     net.host_disconnect(&a.server)
     net.host_update(&a.server,a.now)
     for &c in a.clients[:a.client_count] {
@@ -1073,7 +1074,10 @@ agent_update :: proc(a:^Agent,now:f64) {
         a.dirty=false
         agent_seed(a)
     }
-    if a.members.provenance.dirty {_=provenance_save(&a.members.provenance,a.desc.store,a.desc.org)}
+    if p:=&a.members.provenance;p.dirty && now-p.saved>=PROVENANCE_SAVE_SECONDS {
+        p.saved=now
+        _=provenance_save(p,a.desc.store,a.desc.org)
+    }
     exchange.update(&a.x,now)
     net.host_update(&a.server,now)
     for k in 0..<a.client_count {net.host_update(&a.clients[k],now)}
