@@ -100,10 +100,13 @@ or `editor`.
 ## 4. Data-Oriented Model in `store`
 
 Every Kai object is one `store` object with `KAI_MAGIC`, kind and version in its root meta, a
-`#packed` little-endian head, count-prefixed flat arrays and a trailing string pool. Zero pointers
-in stored structs; reserved bytes are zero; hostile inputs return `Corrupt`; older/other versions
-are refused without migration. Signatures cover all preceding bytes and are verified on peer import
-and `kai verify`, never on local reads.
+`#packed` little-endian head, count-prefixed flat arrays and a trailing string pool. The versions
+are one table indexed by object kind (`VERSIONS`), which the meta check reads: a kind's format
+change is one line there, and an object of another version is refused in that one place; bodies
+carry no version of their own. A log's entries carry the version of `Log_Page` in their head,
+since they travel outside pages. Zero pointers in stored structs; reserved bytes are zero; hostile
+inputs return `Corrupt`; older/other versions are refused without migration. Signatures cover all
+preceding bytes and are verified on peer import and `kai verify`, never on local reads.
 
 ### 4.1 Core VCS objects
 
@@ -115,7 +118,7 @@ Dh_Key      :: distinct [32]u8   // X25519 static public key
 Signature   :: distinct [64]u8
 
 Change_Head :: struct #packed {
-    magic: u32, version: u16, reserved: u16,
+    magic: u32, reserved: u16,
     id:          Change_Id,
     tree:        store.Hash,     // root Folder (public tree only; never references overlays)
     author:      Key,            // accountable device/user signing key
@@ -274,7 +277,8 @@ Entry_Head :: struct #packed {
 
 ### 6.1 Keys and Pairing (Fixing ECO's Pairing Vulnerability)
 - **Keys:** Offline Ed25519 Recovery key `R` (printed Base32 with checksum); per-device Ed25519
-  `ds` + X25519 `dh` stored in an owner-only file; node keys (`ds`, `dh`); scope epoch keys `K`;
+  `ds`, X25519 `dh` and an ML-KEM-768 seed in owner-only files, whose public halves the user's log
+  records with a proof that binds all three; node keys (`ds`, `dh`); scope epoch keys `K`;
   org discovery secret `D`, derived from the org's genesis and its valid `Member_Remove`s, which
   only members and nodes read. No org private key, no email, no passwords.
 - **Security audit finding in external ECO's pairing:** ECO derived its 8-digit verification code
@@ -287,14 +291,16 @@ Entry_Head :: struct #packed {
   P2 R->I: ticket_id | e_R | enc(s_R) | enc(N_R || R_info)
   P3 I->R: ticket_id | enc(s_I) | enc(N_I || I_info)   (R verifies commit before showing code)
   code   = BLAKE3("kai-1/pair-code" || e_I || e_R || s_I || s_R || N_I || N_R) mod 10^8 -> dddd-dddd
+  K  I->R: ticket_id | part | sealed(part of I's ML-KEM key)   (a device; I_info holds its BLAKE3)
   P4 R->I: sealed Pending|Approved|Denied (+ the ids of the user and orgs joined)
   ```
   The ticket also carries the addresses R listens at. The logs, envelopes and keyrings the new
   device, member or node needs come through the mesh once it connects to R.
   Every input to `code` is fixed before seeing the other side's nonce; mutable labels stay out of
   `code`. One request at a time, 5-minute timeout, No default, 5 denials pause 10 minutes.
-  - Same flow links a user's second device (`Device_Add` + `Envelope_Add`), pairs a new org member
-    (`Member_Add`), or pairs an ARM64 node (`Node_Add`).
+  - Same flow links a user's second device (`Device_Add`), pairs a new org member
+    (`Member_Add`), pairs an ARM64 node (`Node_Add`), or lets a machine with no user reach the org
+    to fetch the user log it recovers (`recover`, nothing signed).
 - **Scoped Grants (non-members / CI / contractors):**
   `Grant{org_id, org_head, issuer, subject_dh, rights(read|write|ddc|check|relay), project_id,
   path_scope, not_after <= 30d, sig}` verified against `Org_Log` and `Grant_Revoke`. The issuer
@@ -360,9 +366,10 @@ Entry_Head :: struct #packed {
   time into a separate encrypted overlay (`kai-ovl-<project>-<scope>/<commit hex>`); plaintext
   never touches `store.put`, and public `Change` objects never reference overlays.
 - **Keyring epochs (`Keyring_Log`):** Each scope epoch holds a random 32-byte key `K` wrapped per
-  authorized device (`X25519(e, dh)` -> `HKDF` -> `AEGIS-256`, ~80 B/device) plus optional
-  `wrap_prev` for history. A write after any member/device removal is refused until a reader
-  rotates to a new epoch (lazy rotation).
+  authorized device under X25519 and ML-KEM-768 at once (both shared secrets through HKDF-SHA256,
+  then `AEGIS-256`, 1200 B/device) in an `Envelopes` object the `Epoch_Add` names, and in the entry
+  the previous key under the new one (`previous`) for history. A write after any member/device
+  removal is refused until a reader rotates to a new epoch (lazy rotation).
 - **Chunk sealing (no convergent encryption):** Each private file gets a random `file_id[16]` kept
   across edits. `(k_enc, k_nonce) = HKDF(K_epoch, "kai-1/file" || file_id)`. Each FastCDC chunk is
   compressed with MDC2, padded with Padme (~1.5% avg overhead), and sealed with `AEGIS-256` using

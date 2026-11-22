@@ -8,6 +8,7 @@ import "core:testing"
 import "core:time"
 import net "mirai:net"
 import "mirai:std/base"
+import "mirai:std/blake3"
 import "mirai:store"
 
 // A user of the tests: a recovery key, devices with their X25519 keys, and
@@ -17,6 +18,7 @@ Test_User :: struct {
     recovery:Identity,
     devices:[4]Identity,
     dhs:[4]net.Dh_Key,
+    kems:[4][KEM_SEED]u8,
     count:int,
     log:Log,
 }
@@ -27,8 +29,10 @@ test_user :: proc(t:^testing.T,u:^Test_User,name:string,loc:=#caller_location) {
     log_init(&u.log,{},context.allocator)
     u.devices[0]=identity_make()
     u.dhs[0],_=net.dh_key()
+    u.kems[0]=random_id([KEM_SEED]u8)
     u.count=1
-    body:=body_make(User_Genesis_Body{recovery=u.recovery.key,device=u.devices[0].key,dh=Dh_Key(u.dhs[0].public),proof=device_proof(&u.devices[0],transmute([32]u8)u.recovery.key)},transmute([]u8)name)
+    kem,_:=kem_public(&u.kems[0])
+    body:=body_make(User_Genesis_Body{recovery=u.recovery.key,device=u.devices[0].key,dh=Dh_Key(u.dhs[0].public),kem=kem,proof=device_proof(&u.devices[0],transmute([32]u8)u.recovery.key,Dh_Key(u.dhs[0].public),blake3.hash(kem[:]))},transmute([]u8)name)
     _,e:=log_append(&u.log,.User_Genesis,body,&u.recovery,1)
     testing.expect_value(t,e,Error.None,loc=loc)
 }
@@ -39,11 +43,19 @@ test_device :: proc(t:^testing.T,u:^Test_User,loc:=#caller_location) -> int {
     k:=u.count
     u.devices[k]=identity_make()
     u.dhs[k],_=net.dh_key()
+    u.kems[k]=random_id([KEM_SEED]u8)
     u.count+=1
-    body:=body_make(Device_Add_Body{device=u.devices[k].key,dh=Dh_Key(u.dhs[k].public),proof=device_proof(&u.devices[k],transmute([32]u8)u.log.id)},transmute([]u8)string("laptop"))
+    body:=test_device_body(&u.devices[k],Dh_Key(u.dhs[k].public),&u.kems[k],u.log.id,"laptop")
     _,e:=log_append(&u.log,.Device_Add,body,&u.devices[0],2)
     testing.expect_value(t,e,Error.None,loc=loc)
     return k
+}
+
+// The body of the Device_Add of a device with these keys, joining the user log.
+@(private)
+test_device_body :: proc(device:^Identity,dh:Dh_Key,seed:^[KEM_SEED]u8,joins:Log_Id,name:string) -> []u8 {
+    kem,_:=kem_public(seed)
+    return body_make(Device_Add_Body{device=device.key,dh=dh,kem=kem,proof=device_proof(device,transmute([32]u8)joins,dh,blake3.hash(kem[:]))},transmute([]u8)name)
 }
 
 // An entry with the parents given, added to l: its address.
@@ -147,7 +159,8 @@ revocation_witness_rejects_backdated_entries :: proc(t:^testing.T) {
     late_move:=test_move(t,&project,"main",{0=2},&alice.devices[stolen],ctx,24,{move})
     rogue:=identity_make()
     rogue_dh,_:=net.dh_key()
-    rogue_add:=test_entry(t,&alice.log,.Device_Add,body_make(Device_Add_Body{device=rogue.key,dh=Dh_Key(rogue_dh.public),proof=device_proof(&rogue,transmute([32]u8)alice.log.id)},transmute([]u8)string("rogue")),&alice.devices[stolen],user_before_revoke,25)
+    rogue_seed:=random_id([KEM_SEED]u8)
+    rogue_add:=test_entry(t,&alice.log,.Device_Add,test_device_body(&rogue,Dh_Key(rogue_dh.public),&rogue_seed,alice.log.id,"rogue"),&alice.devices[stolen],user_before_revoke,25)
 
     test_users_fold(t,{&alice,&bob,&carol},folds[:],users[:])
     defer test_users_destroy(folds[:])
@@ -286,6 +299,32 @@ hostile_log_entries_are_refused :: proc(t:^testing.T) {
         _,e:=log_add(&l,bytes,true)
         testing.expect(t,e!=.None,"a flipped byte is refused")
         log_destroy(&l)
+    }
+    // A device's ML-KEM key that is no encapsulation key (a coefficient not
+    // reduced) is refused, well signed or not: in a genesis and in a Device_Add.
+    for k in 0..<2 {
+        bytes:=slice.clone(alice.log.items[k].bytes,context.temp_allocator)
+        e,_:=entry_decode(bytes)
+        at:=len(bytes)-size_of(Signature)-len(e.body)+int(e.type==.User_Genesis?offset_of(User_Genesis_Body,kem):offset_of(Device_Add_Body,kem))
+        for c in 0..<3 {
+            hostile:=slice.clone(bytes,context.temp_allocator)
+            switch c {
+            case 0: hostile[at],hostile[at+1]=0x01,0x0d // the first coefficient is q
+            case 1: for &b in hostile[at:][:KEM_PUBLIC-32] {b=0xff}
+            case 2: hostile[at+KEM_PUBLIC-33]=0xff // the last coefficient's high bits
+            }
+            signer:=e.type==.User_Genesis?&alice.recovery:&alice.devices[0]
+            signature:=sign(signer,hostile[:len(hostile)-size_of(Signature)])
+            copy(hostile[len(hostile)-size_of(Signature):],signature[:])
+            _,de:=entry_decode(hostile)
+            testing.expectf(t,de==.Corrupt,"a hostile ML-KEM key %d in %v is read",c,e.type)
+            l:Log
+            log_init(&l,k==0?{}:alice.log.id)
+            if k==1 {log_add(&l,alice.log.items[0].bytes,true)}
+            _,ae:=log_add(&l,hostile,true)
+            testing.expect(t,ae!=.None,"a log does not take it")
+            log_destroy(&l)
+        }
     }
     // An entry of another log is refused.
     other:Test_User
@@ -480,7 +519,11 @@ pair_tickets_and_gate :: proc(t:^testing.T) {
     testing.expect_value(t,g.denials,0)
 }
 
-// Pairing a second device and a member makes the entries that link them.
+// Pairing a second device and a member makes the entries that link them. A
+// device's ML-KEM key comes in K frames after P3 and lands in its Device_Add;
+// a frame changed on the way does not open, a key other than the one P3
+// named is refused, and a middle that names its own key in P3 runs two
+// sessions whose codes differ, and cannot sign the device's proof over it.
 @(test)
 pairing_links_a_device_and_adds_a_member :: proc(t:^testing.T) {
     alice,bob:Test_User
@@ -501,20 +544,65 @@ pairing_links_a_device_and_adds_a_member :: proc(t:^testing.T) {
         p3,_:=pair_write_p3(i,i_info,buffer[2][:])
         testing.expect_value(t,pair_read_p3(r,p3),Pair_Error.None)
     }
+    laptop_seed:=random_id([KEM_SEED]u8)
+    laptop_kem,_:=kem_public(&laptop_seed)
+    laptop_hash:=blake3.hash(laptop_kem[:])
+    keys:[PAIR_KEM_PARTS][PAIR_K_SIZE]u8
     {
         i,r:Pair
         pair_init(&i,true,laptop_dh,ticket,Dh_Key(alice.dhs[0].public))
         pair_init(&r,false,alice.dhs[0],ticket)
         r_info:=pair_info_encode({mode=.Device,log_id=alice.log.id,device=alice.devices[0].key},"phone",&info[0])
-        // I learns the user log from R's info, and proves its key over it.
-        i_info:=pair_info_encode({mode=.Device,device=laptop.key,proof=device_proof(&laptop,transmute([32]u8)alice.log.id)},"laptop",&info[1])
+        // I learns the user log from R's info, and proves its keys over it.
+        i_info:=pair_info_encode({mode=.Device,device=laptop.key,kem=laptop_hash,proof=device_proof(&laptop,transmute([32]u8)alice.log.id,Dh_Key(laptop_dh.public),laptop_hash)},"laptop",&info[1])
         run(t,&i,&r,r_info,i_info,&buffer)
         _,e:=pair_approve_device(&r,&alice.log,&alice.devices[0],5)
+        testing.expect_value(t,e,Error.Invalid_Argument)
+        for k in 0..<PAIR_KEM_PARTS {
+            frame,fe:=pair_write_key(&i,&laptop_kem,k,keys[k][:])
+            testing.expect(t,fe==.None && len(frame)==PAIR_K_SIZE && PAIR_K_SIZE+1<=FRAME_MAX)
+        }
+        tampered:=keys[0]
+        tampered[PAIR_HEAD+9]~=1
+        complete,ke:=pair_read_key(&r,tampered[:],laptop_hash)
+        testing.expect(t,!complete && ke==.Corrupt,"a K frame changed on the way does not open")
+        for k in 0..<PAIR_KEM_PARTS {
+            complete,ke=pair_read_key(&r,keys[k][:],laptop_hash)
+            testing.expect_value(t,ke,Pair_Error.None)
+        }
+        testing.expect(t,complete,"the key is whole once every part came")
+        _,e=pair_approve_device(&r,&alice.log,&alice.devices[0],5)
         testing.expect_value(t,e,Error.None)
         f:User_Fold
         testing.expect_value(t,user_fold(&f,&alice.log),Error.None)
         testing.expect(t,user_device_active(&f,laptop.key) && user_dh_active(&f,Dh_Key(laptop_dh.public)))
+        k:=user_device_index(&f,laptop.key)
+        testing.expect(t,k>=0 && bytes_equal(user_device_kem(&f,f.devices[k]),laptop_kem[:]),"the device's ML-KEM key is in its Device_Add")
         user_fold_destroy(&f)
+    }
+    // A middle M sits between the laptop and R, with a ticket read on the way.
+    {
+        m_seed:=random_id([KEM_SEED]u8)
+        m_kem,_:=kem_public(&m_seed)
+        m_dh,_:=net.dh_key()
+        lm,ml,mr,rm:Pair
+        pair_init(&lm,true,laptop_dh,ticket)
+        pair_init(&ml,false,m_dh,ticket)
+        pair_init(&mr,true,m_dh,ticket,Dh_Key(alice.dhs[0].public))
+        pair_init(&rm,false,alice.dhs[0],ticket)
+        r_info:=pair_info_encode({mode=.Device,log_id=alice.log.id,device=alice.devices[0].key},"phone",&info[0])
+        laptop_info:=pair_info_encode({mode=.Device,device=laptop.key,kem=laptop_hash,proof=device_proof(&laptop,transmute([32]u8)alice.log.id,Dh_Key(laptop_dh.public),laptop_hash)},"laptop",&info[1])
+        run(t,&lm,&ml,r_info,laptop_info,&buffer)
+        // M relays the laptop's info to R and sends its own key: refused.
+        run(t,&mr,&rm,r_info,pair_info(&ml),&buffer)
+        for k in 0..<PAIR_KEM_PARTS {pair_write_key(&mr,&m_kem,k,keys[k][:])}
+        ke:Pair_Error
+        for k in 0..<PAIR_KEM_PARTS {_,ke=pair_read_key(&rm,keys[k][:],laptop_hash)}
+        testing.expect_value(t,ke,Pair_Error.Key)
+        _,e:=pair_approve_device(&rm,&alice.log,&alice.devices[0],6)
+        testing.expect_value(t,e,Error.Invalid_Argument)
+        // Naming its own key, its two sessions show two codes for the people to compare.
+        testing.expect(t,pair_code(&lm)!=pair_code(&rm),"the laptop and R show different codes with a middle between them")
     }
     {
         i,r:Pair
@@ -749,19 +837,18 @@ ddc_records_keep_differing_outputs :: proc(t:^testing.T) {
     _,e=ddc_output_put(&a,many)
     testing.expect_value(t,e,Error.Too_Large)
     Case :: struct {head:DDC_Output_Head,listed:[]store.Hash,cut:int}
-    good:=DDC_Output_Head{magic=KAI_MAGIC,version=DDC_VERSION,count=3}
+    good:=DDC_Output_Head{magic=KAI_MAGIC,count=3}
     cases:=[]Case{
         {head=good,listed={z,x,y}},
-        {head={magic=KAI_MAGIC,version=DDC_VERSION,count=0}},
-        {head={magic=KAI_MAGIC,version=DDC_VERSION,count=DDC_OUTPUT_MAX+1},listed={z,x,y}},
+        {head={magic=KAI_MAGIC,count=0}},
+        {head={magic=KAI_MAGIC,count=DDC_OUTPUT_MAX+1},listed={z,x,y}},
         {head=good,listed={z,x}},
         {head=good,listed={z,x,y,y}},
         {head=good,listed={z,y,x}},
         {head=good,listed={z,x,x}},
         {head=good,listed={z,x,z}},
         {head=good,listed={z,{},y}},
-        {head={magic=KAI_MAGIC,version=DDC_VERSION-1,count=3},listed={z,x,y}},
-        {head={magic=KAI_MAGIC,version=DDC_VERSION,reserved=1,count=3},listed={z,x,y}},
+        {head={magic=KAI_MAGIC,reserved=1,count=3},listed={z,x,y}},
         {head=good,listed={z,x,y},cut=1},
     }
     for c,i in cases {

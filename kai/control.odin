@@ -30,6 +30,7 @@ CONTROL_WAIT :: 0.2
 @(private) CONTROL_HEAD :: 1+CONTROL_TOKEN+4+1
 @(private) ANSWER_HEAD :: 1+4+1
 @(private) PEER_BYTES :: 32+32+3
+@(private) ORG_INFO_BYTES :: 32+2+2
 
 Control_Op :: enum u8 {None,Ping,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Addresses,Object_Ask}
 
@@ -151,12 +152,21 @@ control_do :: proc(r:^Runner,op:u8,body:[]u8,w:^Answer_Writer) -> Error {
         if len(body)!=0 {return .Invalid_Argument}
         list:=make([dynamic]Runner_Peer_Info,context.temp_allocator)
         runner_peers(r,&list)
-        n:=min(len(list),(len(w.data)-1)/PEER_BYTES)
+        orgs:=make([dynamic]Runner_Org_Info,context.temp_allocator)
+        runner_orgs_info(r,&orgs)
+        o:=min(len(orgs),255)
+        n:=min(len(list),255,(len(w.data)-w.at-2-o*ORG_INFO_BYTES)/PEER_BYTES)
         answer_put(w,{u8(n)})
         for &p in list[:n] {
             answer_put(w,p.org[:])
             answer_put(w,p.dh[:])
             answer_put(w,{u8(p.class),u8(p.rung),u8(p.node)})
+        }
+        answer_put(w,{u8(o)})
+        for &x in orgs[:o] {
+            behind,unfound:=u16(min(x.behind,0xffff)),u16(min(x.unfound,0xffff))
+            answer_put(w,x.org[:])
+            answer_put(w,{u8(behind),u8(behind>>8),u8(unfound),u8(unfound>>8)})
         }
     case .Pair_Offer:
         if len(body)!=3+32 || body[0]>u8(max(Pair_Mode)) || body[1]>u8(max(Role)) {return .Invalid_Argument}
@@ -330,16 +340,20 @@ control_ping :: proc(c:^Control) -> Error {
     return e
 }
 
-control_peers :: proc(c:^Control,list:^[dynamic]Runner_Peer_Info) -> Error {
+// The runner's peers, and of each org it serves how far behind it is.
+control_peers :: proc(c:^Control,list:^[dynamic]Runner_Peer_Info,orgs:^[dynamic]Runner_Org_Info=nil) -> Error {
     out:[FRAME_MAX]u8
     answer:=control_call(c,.Peers,nil,&out) or_return
-    return peers_parse(answer,list)
+    return peers_parse(answer,list,orgs)
 }
 
 @(private)
-peers_parse :: proc(answer:[]u8,list:^[dynamic]Runner_Peer_Info) -> Error {
-    if len(answer)<1 || len(answer)!=1+int(answer[0])*PEER_BYTES {return .Corrupt}
-    for k in 0..<int(answer[0]) {
+peers_parse :: proc(answer:[]u8,list:^[dynamic]Runner_Peer_Info,orgs:^[dynamic]Runner_Org_Info) -> Error {
+    if len(answer)<2 || len(answer)<2+int(answer[0])*PEER_BYTES {return .Corrupt}
+    n:=int(answer[0])
+    o:=int(answer[1+n*PEER_BYTES])
+    if len(answer)!=2+n*PEER_BYTES+o*ORG_INFO_BYTES {return .Corrupt}
+    for k in 0..<n {
         e:=answer[1+k*PEER_BYTES:][:PEER_BYTES]
         p:Runner_Peer_Info
         copy(p.org[:],e[:32])
@@ -347,6 +361,14 @@ peers_parse :: proc(answer:[]u8,list:^[dynamic]Runner_Peer_Info) -> Error {
         if e[64]>u8(max(Agent_Class)) || e[65]>u8(max(Rung)) {return .Corrupt}
         p.class,p.rung,p.node=Agent_Class(e[64]),Rung(e[65]),e[66]!=0
         append(list,p)
+    }
+    if orgs==nil {return .None}
+    for k in 0..<o {
+        e:=answer[2+n*PEER_BYTES+k*ORG_INFO_BYTES:][:ORG_INFO_BYTES]
+        x:Runner_Org_Info
+        copy(x.org[:],e[:32])
+        x.behind,x.unfound=int(e[32])|int(e[33])<<8,int(e[34])|int(e[35])<<8
+        append(orgs,x)
     }
     return .None
 }

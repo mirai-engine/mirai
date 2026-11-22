@@ -13,7 +13,6 @@ import "core:mem"
 import "mirai:store"
 
 KAI_MAGIC :: u32('K')|u32('A')<<8|u32('I')<<16|u32('1')<<24
-VERSION :: 1 // of every kind of record
 
 Change_Id :: distinct [16]u8 // random at creation, kept across rewrites
 Revision :: store.Hash        // the address of one Change object
@@ -37,7 +36,20 @@ Identity :: struct {
     seed:[32]u8,
 }
 
-Object_Kind :: enum u8 {None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output,Log_Page}
+Object_Kind :: enum u8 {
+    None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output,Log_Page,
+    Overlay_Record,Overlay_Tree,Overlay_File,Overlay_Blob,Envelopes,
+}
+
+// The format of each kind of object, which the meta of its root carries:
+// meta_check refuses any other, so changing a kind's format is one line here.
+// A log's entries travel outside their pages too, and carry the version of
+// Log_Page in their own head.
+VERSIONS :: [Object_Kind]u16{
+    .None=0,.Folder=1,.Conflict=1,.Change=1,.View=1,.Operation=2,.Stat_Index=1,.Log=2,.Device_Refs=2,
+    .DDC_Set=2,.DDC_Output=2,.Log_Page=3,.Overlay_Record=1,.Overlay_Tree=1,.Overlay_File=1,.Overlay_Blob=1,
+    .Envelopes=1,
+}
 
 Error :: enum u8 {
     None,
@@ -135,11 +147,17 @@ object_put :: proc(s:^store.Store,kind:Object_Kind,bytes:[]u8,extra:[]u8={}) -> 
         store.put_abandon(&p)
         return {},.Invalid_Argument
     }
-    head:=Meta{magic=KAI_MAGIC,kind=kind,version=VERSION}
-    copy(meta[:],mem.ptr_to_bytes(&head))
+    head:=object_meta(kind)
+    copy(meta[:],head[:])
     copy(meta[size_of(Meta):],extra)
     a,_,e:=store.put_finish(&p,meta[:size_of(Meta)+len(extra)])
     return a,store_error(e)
+}
+
+// The meta of the root of an object of kind.
+object_meta :: proc "contextless" (kind:Object_Kind) -> [size_of(Meta)]u8 {
+    versions:=VERSIONS
+    return transmute([size_of(Meta)]u8)Meta{magic=KAI_MAGIC,kind=kind,version=versions[kind]}
 }
 
 // The bytes of the object at address, which must be a record of kind; extra
@@ -166,7 +184,8 @@ object_get :: proc(s:^store.Store,address:store.Hash,kind:Object_Kind,allocator:
 meta_check :: proc "contextless" (meta:[]u8,kind:Object_Kind,extra:int) -> Error {
     if len(meta)!=size_of(Meta)+extra {return .Corrupt}
     head:=(^Meta)(raw_data(meta))^
-    if head.magic!=KAI_MAGIC || head.kind!=kind || head.reserved!=0 || head.version!=VERSION {return .Corrupt}
+    versions:=VERSIONS
+    if head.magic!=KAI_MAGIC || head.kind!=kind || head.reserved!=0 || head.version!=versions[kind] {return .Corrupt}
     return .None
 }
 

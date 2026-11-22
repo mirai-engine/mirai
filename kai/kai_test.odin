@@ -115,7 +115,7 @@ a_snapshot_rehashes_only_changed_files :: proc(t:^testing.T) {
 }
 
 @(private="file")
-expect_refused :: proc(t:^testing.T,bytes:[]u8,decode:proc(bytes:[]u8) -> Error,name:string,versioned:=true,loc:=#caller_location) {
+expect_refused :: proc(t:^testing.T,bytes:[]u8,decode:proc(bytes:[]u8) -> Error,name:string,versioned:=false,loc:=#caller_location) {
     testing.expect_value(t,decode(bytes),Error.None,loc=loc)
     for n in 0..<len(bytes) {
         if decode(bytes[:n])!=.Corrupt {
@@ -133,7 +133,7 @@ expect_refused :: proc(t:^testing.T,bytes:[]u8,decode:proc(bytes:[]u8) -> Error,
         }
         copy_bytes[k]=before
     }
-    // Another version, a reserved byte or a count past the bytes.
+    // Another version (of what is no object: its version is in its bytes), a reserved byte or a count past the bytes.
     if versioned {
         version:=slice.clone(bytes,context.temp_allocator)
         version[4]+=1
@@ -212,6 +212,22 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
     f,opened:=fixture(t,"kai-hostile-fold")
     if !opened {return}
     defer store.close(&f.s)
+    // A kind's version is in the meta of its object's root, from VERSIONS: one of another is refused there.
+    for kind in ([]Object_Kind{.Change,.Operation,.Log_Page,.Device_Refs,.Overlay_Record,.Envelopes}) {
+        p,_:=store.put_begin(&f.s)
+        store.put_write(&p,change_bytes)
+        meta:=object_meta(kind)
+        meta[offset_of(Meta,version)]+=1
+        address,_,_:=store.put_finish(&p,meta[:])
+        _,ge:=object_get(&f.s,address,kind,context.temp_allocator)
+        testing.expectf(t,ge==.Corrupt,"an object of kind %v of another version is read",kind)
+        meta[offset_of(Meta,version)]-=1
+        p,_=store.put_begin(&f.s)
+        store.put_write(&p,change_bytes)
+        address,_,_=store.put_finish(&p,meta[:])
+        _,ge=object_get(&f.s,address,kind,context.temp_allocator)
+        testing.expectf(t,ge==.None,"an object of kind %v of its version is not read",kind)
+    }
     for names in ([?][3]string{{"A","a","b"},{"Ab","B","aB"},{"\u00c9t\u00e9","b","\u00e9t\u00e9"}}) {
         folded:=[3]Tree_Entry{}
         for name,k in names {folded[k]={name=name,kind=.File,address={0=u8(k+1)},size=1,files=1}}
@@ -245,7 +261,7 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
         st:Workspace_State
         st.conflicts=make([dynamic]Materialized,context.temp_allocator)
         return state_decode(b,&st,context.temp_allocator)
-    },"a workspace state")
+    },"a workspace state",versioned=true)
 
     // Previews a peer publishes for the web view: what the encoders make is
     // taken, and texts past their bounds or with control bytes, another head,
@@ -632,7 +648,7 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     kl:Log
     log_init(&kl);defer log_destroy(&kl)
     kf:Keyring_Fold
-    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&alice,21),Error.None)
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&f.s,o.project.id,scope,&alice,21),Error.None)
     defer keyring_fold_destroy(&kf)
     routing:=Overlay_Routing{org=&o.fold,project=o.project.id,keyrings={&kf},device=alice}
     root,other:=folder_of(&f,"a"),folder_of(&f,"b")

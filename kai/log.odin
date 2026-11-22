@@ -1,9 +1,11 @@
 package kai
 
 import "base:runtime"
+import "core:crypto/mlkem"
 import "core:mem"
 import "core:slice"
 import "core:unicode/utf8"
+import "mirai:std/blake3"
 import "mirai:store"
 
 // The signed logs of governance and review: User_Log, Org_Log, Project_Log,
@@ -50,11 +52,10 @@ Entry_Type :: enum u8 {
 
 Sig_Kind :: enum u8 {Ed25519,WebAuthn} // WebAuthn: the assertion of a browser's passkey (webauthn.odin)
 
-LOG_VERSION :: 2 // of log entries and Log objects
 
 Entry_Head :: struct #packed {
     magic:u32,
-    version:u16,           // LOG_VERSION
+    version:u16,           // VERSIONS[.Log_Page]
     kind:Entry_Type,
     parents:u8,            // <= ENTRY_PARENTS_MAX; a genesis has none
     log_id:Log_Id,         // zero in a genesis
@@ -76,10 +77,13 @@ NAME_MAX :: 64           // bytes of the name of a user, device, org or project
 PATTERNS_MAX :: 64
 CHECKS_MAX :: 32
 NODE_ADDRESSES_MAX :: 8
-ENVELOPES_MAX :: 1024
+ENVELOPES_MAX :: 1024   // devices an epoch's key is wrapped for
 STACK_MAX :: 256
-WRAPPED_BYTES :: 80     // a scope key wrapped for one device: e, the key and its tag
-LABEL_DEVICE :: "kai-1/device" // what a device signs, with the log it joins, to prove it holds its key
+KEM :: mlkem.Parameters.ML_KEM_768
+KEM_PUBLIC :: 1184      // a device's ML-KEM-768 encapsulation key
+KEM_CIPHERTEXT :: 1088
+KEM_SEED :: mlkem.DECAPSULATION_KEY_SEED_SIZE // (d, z): what a device keeps of its decapsulation key
+LABEL_DEVICE :: "kai-1/device" // what a device signs, with the log it joins and its other keys, to prove it holds its key
 
 Entry :: struct {
     type:Entry_Type,
@@ -104,9 +108,9 @@ Verdict_Kind :: enum u8 {Approve,Changes,Withdraw}
 Check_State :: enum u8 {Pending,Passed,Failed}
 
 // The fixed part of each body; what follows it is said beside it.
-User_Genesis_Body :: struct #packed {recovery:Key,device:Key,dh:Dh_Key,proof:Signature,device_name:[NAME_MAX]u8} // + name. proof: the device signs LABEL_DEVICE || recovery; device_name: the first device's, zero-padded
+User_Genesis_Body :: struct #packed {recovery:Key,device:Key,dh:Dh_Key,kem:[KEM_PUBLIC]u8,proof:Signature,device_name:[NAME_MAX]u8} // + name. proof: device_proof over the recovery key; device_name: the first device's, zero-padded
 Passkey_Genesis_Body :: struct #packed {credential:u8,cose:u16,rp:u8}                  // + credential id, COSE key, relying party id, name; signed by that passkey
-Device_Add_Body :: struct #packed {device:Key,dh:Dh_Key,proof:Signature}               // + name. proof: the device signs LABEL_DEVICE || log id
+Device_Add_Body :: struct #packed {device:Key,dh:Dh_Key,kem:[KEM_PUBLIC]u8,proof:Signature} // + name. proof: device_proof over the log id
 Device_Revoke_Body :: struct #packed {device:Key}                                      // a device or a web key
 Recovery_Rotate_Body :: struct #packed {recovery:Key}
 Web_Key_Add_Body :: struct #packed {credential:u8,cose:u16,rp:u8}                      // + credential id, COSE key, relying party id
@@ -132,8 +136,9 @@ Proposal_Verdict_Body :: struct #packed {verdict:Verdict_Kind,revision:Revision}
 Proposal_Check_Body :: struct #packed {revision:Revision,state:Check_State,log_root:store.Hash} // + name
 Proposal_Land_Body :: struct #packed {revision:Revision,bookmark_move:store.Hash}
 Keyring_Genesis_Body :: struct #packed {org:Log_Id,project:Log_Id,scope:Scope_Id}
-Envelope :: struct #packed {dh:Dh_Key,wrapped:[WRAPPED_BYTES]u8}
-Epoch_Add_Body :: struct #packed {epoch:u32,envelopes:u16}                              // + [envelopes]Envelope
+Envelope :: struct #packed {dh:Dh_Key,share:[32]u8,kem:[KEM_CIPHERTEXT]u8,sealed:[32]u8,tag:[16]u8} // an epoch's key for the device dh: overlay.odin
+Prev_Wrap :: struct #packed {nonce:[32]u8,sealed:[32]u8,tag:[16]u8}                      // the previous epoch's key under this one's
+Epoch_Add_Body :: struct #packed {epoch:u32,devices:u16,history:b8,envelopes:store.Hash,previous:Prev_Wrap} // envelopes: an Envelopes object of [devices]Envelope sorted by dh; previous, when history
 Envelope_Add_Body :: struct #packed {epoch:u32,envelope:Envelope}
 // That a removal of the log named reached this log: the address of the
 // Device_Revoke of a User_Log, or of the Member_Remove, Role_Set or
@@ -200,7 +205,7 @@ entry_unsigned :: proc(d:^Draft,author:Key,sig_kind:Sig_Kind,allocator:runtime.A
     }
     w=writer_make(allocator)
     write_value(&w,Entry_Head{
-        magic=KAI_MAGIC,version=LOG_VERSION,kind=d.type,parents=u8(len(parents)),log_id=d.log_id,author=author,
+        magic=KAI_MAGIC,version=VERSIONS[.Log_Page],kind=d.type,parents=u8(len(parents)),log_id=d.log_id,author=author,
         author_ctx=d.author_ctx,org_ctx=d.org_ctx,time=d.time,body_len=u32(len(d.body)),sig_kind=sig_kind,
     })
     for &p in parents {write_bytes(&w,p[:])}
@@ -229,7 +234,7 @@ entry_sign :: proc(d:^Draft,identity:^Identity,allocator:=context.allocator) -> 
 entry_decode :: proc(bytes:[]u8) -> (e:Entry,error:Error) {
     r:=Reader{data=bytes}
     head:=read_value(&r,Entry_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=LOG_VERSION || !zero(head.reserved[:]) {return {},.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSIONS[.Log_Page] || !zero(head.reserved[:]) {return {},.Corrupt}
     kind,known:=entry_log_kind(head.kind)
     if !known || head.parents>ENTRY_PARENTS_MAX || head.body_len>ENTRY_BODY_MAX || head.sig_kind>max(Sig_Kind) {return {},.Corrupt}
     if genesis(head.kind)!=(head.parents==0) || genesis(head.kind)!=(head.log_id=={}) || (head.kind!=.Witness && org_bound(kind)!=(head.org_ctx!={})) {return {},.Corrupt}
@@ -318,13 +323,13 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
     case .None: return false
     case .User_Genesis:
         head,tail,ok:=body_head(body,User_Genesis_Body)
-        return ok && name_valid(string(tail)) && name_valid(genesis_device_name(&head),true)
+        return ok && name_valid(string(tail)) && name_valid(genesis_device_name(&head),true) && kem_valid(head.kem[:])
     case .Passkey_Genesis:
         _,_,rp_id,name,ok:=passkey_parts(body)
         return ok && utf8.valid_string(rp_id) && name_valid(string(name))
     case .Device_Add:
-        _,tail,ok:=body_head(body,Device_Add_Body)
-        return ok && name_valid(string(tail))
+        head,tail,ok:=body_head(body,Device_Add_Body)
+        return ok && name_valid(string(tail)) && kem_valid(head.kem[:])
     case .Device_Revoke,.Recovery_Rotate,.Member_Remove,.Owner_Transfer,.Grant_Revoke,.Project_Add,.Scope_Remove,.Node_Remove,.Proposal_Verdict,.Proposal_Land,.Keyring_Genesis,.Envelope_Add,.Witness:
         size:=0
         #partial switch t {
@@ -407,7 +412,8 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
         return ok && path_valid(string(tail))
     case .Epoch_Add:
         head,tail,ok:=body_head(body,Epoch_Add_Body)
-        return ok && head.envelopes>0 && head.envelopes<=ENVELOPES_MAX && len(tail)==int(head.envelopes)*size_of(Envelope)
+        return ok && len(tail)==0 && head.epoch>0 && head.devices>0 && head.devices<=ENVELOPES_MAX && head.envelopes!={} &&
+            (head.history?head.epoch>1:head.previous==Prev_Wrap{})
     }
     return false
 }
@@ -441,22 +447,35 @@ strings_tail :: proc(texts:..string) -> []u8 {
     return bytes
 }
 
-// What a device signs to prove it holds its key, for the log it joins: the
-// recovery key of a genesis, the log id of a Device_Add.
-device_proof :: proc(device:^Identity,joins:[32]u8) -> Signature {
-    message:[len(LABEL_DEVICE)+32]u8
-    copy(message[:],LABEL_DEVICE)
-    j:=joins
-    copy(message[len(LABEL_DEVICE):],j[:])
+// Whether kem is an ML-KEM-768 encapsulation key: its coefficients reduced.
+kem_valid :: proc(kem:[]u8) -> bool {
+    ek:mlkem.Encapsulation_Key
+    defer mlkem.encapsulation_key_clear(&ek)
+    return len(kem)==KEM_PUBLIC && mlkem.encapsulation_key_set_bytes(&ek,KEM,kem)
+}
+
+// What a device signs to prove it holds its key, for the log it joins (the
+// recovery key of a genesis, the log id of a Device_Add), binding its X25519
+// key and the BLAKE3 of its ML-KEM key to it: LABEL_DEVICE || joins || dh ||
+// BLAKE3(kem). A pairing carries the hash before the key itself.
+device_proof :: proc(device:^Identity,joins:[32]u8,dh:Dh_Key,kem_hash:[32]u8) -> Signature {
+    message:=device_proof_message(joins,dh,kem_hash)
     return sign(device,message[:])
 }
 
-device_proof_valid :: proc(device:Key,joins:[32]u8,proof:Signature) -> bool {
-    message:[len(LABEL_DEVICE)+32]u8
-    copy(message[:],LABEL_DEVICE)
-    j:=joins
-    copy(message[len(LABEL_DEVICE):],j[:])
+device_proof_valid :: proc(device:Key,joins:[32]u8,dh:Dh_Key,kem:[]u8,proof:Signature) -> bool {
+    message:=device_proof_message(joins,dh,blake3.hash(kem))
     return signature_valid(device,message[:],proof)
+}
+
+@(private)
+device_proof_message :: proc(joins:[32]u8,dh:Dh_Key,kem_hash:[32]u8) -> (message:[len(LABEL_DEVICE)+96]u8) {
+    j,d,k:=joins,dh,kem_hash
+    copy(message[:],LABEL_DEVICE)
+    copy(message[len(LABEL_DEVICE):],j[:])
+    copy(message[len(LABEL_DEVICE)+32:],d[:])
+    copy(message[len(LABEL_DEVICE)+64:],k[:])
+    return
 }
 
 
@@ -951,7 +970,6 @@ LOG_NAMESPACE :: "kai-log"
 // its root page and its heads.
 Log_Index_Head :: struct #packed {
     magic:u32,
-    version:u16, // LOG_VERSION
     kind:Log_Kind,
     reserved:u8,
     count:u32,
@@ -963,7 +981,6 @@ Log_Index_Head :: struct #packed {
 
 Log_Page_Head :: struct #packed {
     magic:u32,
-    version:u16, // LOG_VERSION
     depth:u8,    // the bytes of address every entry below shares with the page's path
     leaf:b8,
     count:u32,   // entries below
@@ -1026,7 +1043,7 @@ page_save :: proc(s:^store.Store,l:^Log,k:int) -> (address:store.Hash,error:Erro
     if l.pages[k].address!={} && store.chunk_has(s,l.pages[k].address) {return l.pages[k].address,.None}
     w:=writer_make(context.temp_allocator)
     p:=&l.pages[k]
-    write_value(&w,Log_Page_Head{magic=KAI_MAGIC,version=LOG_VERSION,depth=p.depth,leaf=b8(p.leaf),count=p.count})
+    write_value(&w,Log_Page_Head{magic=KAI_MAGIC,depth=p.depth,leaf=b8(p.leaf),count=p.count})
     if p.leaf {
         context.user_ptr=l
         slice.sort_by(p.items[:],proc(a,b:u32) -> bool {
@@ -1065,7 +1082,7 @@ log_save_in :: proc(s:^store.Store,l:^Log,namespace:string) -> (address:store.Ha
     log_index(l) or_return
     heads:=l.heads[:min(len(l.heads),LOG_HEADS_MAX)]
     w:=writer_make(context.temp_allocator)
-    write_value(&w,Log_Index_Head{magic=KAI_MAGIC,version=LOG_VERSION,kind=l.kind,count=u32(len(l.items)),id=l.id,root=root,heads=u16(len(heads))})
+    write_value(&w,Log_Index_Head{magic=KAI_MAGIC,kind=l.kind,count=u32(len(l.items)),id=l.id,root=root,heads=u16(len(heads))})
     for h in heads {write_bytes(&w,l.items[h].address[:])}
     if w.failed {return {},.Out_Of_Memory}
     address=object_put(s,.Log,w.data[:]) or_return
@@ -1080,7 +1097,7 @@ log_index_read :: proc(s:^store.Store,address:store.Hash) -> (head:Log_Index_Hea
     bytes:=object_get(s,address,.Log,context.temp_allocator) or_return
     r:=Reader{data=bytes}
     head=read_value(&r,Log_Index_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=LOG_VERSION || head.reserved!=0 || !zero(head.reserved2[:]) || head.kind>max(Log_Kind) || head.count>LOG_ENTRIES_MAX || head.id=={} || head.root=={} {return {},nil,.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 || !zero(head.reserved2[:]) || head.kind>max(Log_Kind) || head.count>LOG_ENTRIES_MAX || head.id=={} || head.root=={} {return {},nil,.Corrupt}
     heads=slice.reinterpret([]store.Hash,read_bytes(&r,int(head.heads)*size_of(store.Hash)))
     if r.short || r.at!=len(bytes) {return {},nil,.Corrupt}
     return head,heads,.None
@@ -1135,7 +1152,7 @@ page_load :: proc(s:^store.Store,l:^Log,address:store.Hash,depth:u8,path:store.H
     if e!=.None {return e}
     r:=Reader{data=bytes}
     head:=read_value(&r,Log_Page_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=LOG_VERSION || head.depth!=depth || head.depth>31 || head.count>LOG_ENTRIES_MAX {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.depth!=depth || head.depth>31 || head.count>LOG_ENTRIES_MAX {return .Corrupt}
     if _,ae:=append(read,Page_Read{address,path,depth,bool(head.leaf),head.count});ae!=nil {return .Out_Of_Memory}
     if head.leaf {
         if head.count>LOG_PAGE_ENTRIES {return .Corrupt}
@@ -1172,7 +1189,7 @@ log_entry_get :: proc(s:^store.Store,address,entry:store.Hash,allocator:=context
         data:=object_get(s,page,.Log_Page,context.temp_allocator) or_return
         r:=Reader{data=data}
         h:=read_value(&r,Log_Page_Head)
-        if r.short || h.magic!=KAI_MAGIC || h.version!=LOG_VERSION || int(h.depth)!=depth {return nil,false,.Corrupt}
+        if r.short || h.magic!=KAI_MAGIC || int(h.depth)!=depth {return nil,false,.Corrupt}
         if !h.leaf {
             children:=slice.reinterpret([]store.Hash,read_bytes(&r,256*size_of(store.Hash)))
             if r.short {return nil,false,.Corrupt}

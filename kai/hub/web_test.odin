@@ -8,6 +8,7 @@ import "core:strings"
 import "core:testing"
 import "core:time"
 import "mirai:kai"
+import "mirai:std/blake3"
 import "mirai:std/subprocess"
 import "mirai:store"
 
@@ -95,7 +96,9 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     // The server's draft of every write a browser makes.
     device_identity:=kai.identity_make()
     device_key,device_dh:=device_identity.key,kai.Dh_Key(kai.random_id(store.Hash))
-    device_proof:=kai.device_proof(&device_identity,transmute([32]u8)user)
+    device_seed:=kai.random_id([kai.KEM_SEED]u8)
+    device_kem,_:=kai.kem_public(&device_seed)
+    device_proof:=kai.device_proof(&device_identity,transmute([32]u8)user,device_dh,blake3.hash(device_kem[:]))
     P,O:=hex_of(f.proposal),hex_of(f.org)
     change,r1,r3,me:=hex(f.change[:]),hex_of(f.r1),hex_of(f.r3),hex_of(user)
     actions:=[?]string{
@@ -111,7 +114,7 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         fmt.tprintf(`{{"type":"member_add","log":"%s","user":"%s","role":"reader"}}`,O,me),
         fmt.tprintf(`{{"type":"role_set","log":"%s","user":"%s","role":"admin"}}`,O,me),
         fmt.tprintf(`{{"type":"member_remove","log":"%s","user":"%s"}}`,O,me),
-        fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","proof":"%s","name":"laptop"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_proof[:])),
+        fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","kem":"%s","proof":"%s","name":"laptop"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_kem[:]),b64(device_proof[:])),
     }
     // What the user asked otherwise than each draft says, by the draft it is checked against.
     Mismatch :: struct {draft:int,action:string}
@@ -124,7 +127,7 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         {9,fmt.tprintf(`{{"type":"member_add","log":"%s","user":"%s","role":"writer"}}`,O,me)},
         {11,fmt.tprintf(`{{"type":"member_remove","log":"%s","user":"%s"}}`,O,P)},
         {1,fmt.tprintf(`{{"type":"proposal_comment","log":"%s","text":"On a file","change":"%s","path":"src/a.txt","anchor":{{"kind":"file"}}}}`,O,change)},
-        {12,fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","proof":"%s","name":"phone"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_proof[:]))},
+        {12,fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","kem":"%s","proof":"%s","name":"phone"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_kem[:]),b64(device_proof[:]))},
     }
     Draft_Answer :: struct {unsigned:string}
     drafts:[len(actions)][]u8
@@ -144,7 +147,7 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     for action,i in actions {
         u:=drafts[i]
         Tamper :: struct {name:string,at,value:int}
-        for x in ([?]Tamper{{"the magic",0,'X'},{"the version",4,3},{"the type",6,int(kai.Entry_Type.Proposal_Land)},{"the log",8,-1},{"the author",40,-1},{"the author's context",72,0},{"the org's context",104,0},{"the signature kind",148,0},{"a reserved byte",150,1}}) {
+        for x in ([?]Tamper{{"the magic",0,'X'},{"the version",4,9},{"the type",6,int(kai.Entry_Type.Proposal_Land)},{"the log",8,-1},{"the author",40,-1},{"the author's context",72,0},{"the org's context",104,0},{"the signature kind",148,0},{"a reserved byte",150,1}}) {
             bad:=make([]u8,len(u),context.temp_allocator)
             copy(bad,u)
             if x.name=="the author's context" {

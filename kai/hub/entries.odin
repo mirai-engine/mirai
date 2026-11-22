@@ -51,7 +51,7 @@ route_entries :: proc(c:^Call) {
     json_key(&j,"constants")
     json_object(&j)
     json_member_int(&j,"magic",i64(kai.KAI_MAGIC))
-    json_member_int(&j,"version",kai.LOG_VERSION)
+    json_member_int(&j,"version",i64(kai.VERSIONS[.Log_Page]))
     json_member_int(&j,"ENTRY_PARENTS_MAX",kai.ENTRY_PARENTS_MAX)
     json_member_int(&j,"ENTRY_BODY_MAX",kai.ENTRY_BODY_MAX)
     json_member_string(&j,"LABEL_DEVICE",kai.LABEL_DEVICE)
@@ -97,7 +97,8 @@ route_entries :: proc(c:^Call) {
         layout_write(&j,"device_add",size_of(B),{
             {"device",offset_of(B,device),32,"the device's Ed25519 key"},
             {"dh",offset_of(B,dh),32,"the device's X25519 key"},
-            {"proof",offset_of(B,proof),64,"the device's Ed25519 signature over LABEL_DEVICE || the user's log id"},
+            {"kem",offset_of(B,kem),kai.KEM_PUBLIC,"the device's ML-KEM-768 encapsulation key"},
+            {"proof",offset_of(B,proof),64,"the device's Ed25519 signature over LABEL_DEVICE || the user's log id || dh || BLAKE3(kem)"},
         },"the device's name, 1 to NAME_MAX bytes of UTF-8")
     }
     {

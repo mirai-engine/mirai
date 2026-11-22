@@ -2,6 +2,7 @@ package kai
 
 import "base:runtime"
 import "core:crypto"
+import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -10,8 +11,9 @@ import net "mirai:net"
 import "mirai:std/blake3"
 import "mirai:store"
 
-// The Kai state of one machine, in its store: the device's Ed25519 seed and
-// X25519 key in owner-only files at the root of the store, and under the
+// The Kai state of one machine, in its store: the device's Ed25519 seed, its
+// X25519 key and the seed of its ML-KEM-768 key in owner-only files at the
+// root of the store, made together the first time it opens, and under the
 // MACHINE_NAMESPACE refs (never exposed to peers) the user the device belongs
 // to, the orgs it serves and the projects its workspaces are. The logs
 // themselves are the store's (kai-user, kai-log). Every operation that writes
@@ -23,6 +25,7 @@ import "mirai:store"
 
 IDENTITY_FILE :: "kai-identity" // the seed of this device's signing key
 DH_FILE :: "kai-dh"             // the private half of this device's X25519 key
+KEM_FILE :: "kai-kem"           // the seed of this device's ML-KEM-768 decapsulation key
 MACHINE_NAMESPACE :: "kai-machine"
 MACHINE_USER :: "user"
 MACHINE_ORG_PREFIX :: "org-"
@@ -37,6 +40,7 @@ Machine :: struct {
     store:store.Store,
     identity:Identity,
     dh:net.Dh_Key,
+    kem:[KEM_SEED]u8,
     user:Log_Id,              // zero until a user is made or this device is linked
     orgs:[dynamic]Log_Id,     // the orgs it serves, as member or node
     changed:Machine_Changed,
@@ -76,6 +80,11 @@ machine_open :: proc(m:^Machine,root:string,allocator:=context.allocator) -> Err
         m.why="the X25519 key of the store does not read: it is not 32 bytes, or this user may not write the store"
         return e
     }
+    if e=machine_secret(&m.store,KEM_FILE,m.kem[:]);e!=.None {
+        machine_close(m)
+        m.why="the ML-KEM key of the store does not read: it is not 64 bytes, or this user may not write the store"
+        return e
+    }
     machine_reload(m)
     return .None
 }
@@ -85,6 +94,7 @@ machine_close :: proc(m:^Machine) {
     delete(m.orgs)
     crypto.zero_explicit(&m.identity,size_of(Identity))
     crypto.zero_explicit(&m.dh,size_of(net.Dh_Key))
+    crypto.zero_explicit(&m.kem,size_of(m.kem))
     m^={}
 }
 
@@ -107,7 +117,7 @@ machine_reload :: proc(m:^Machine) {
 machine_identity :: proc(s:^store.Store) -> (identity:Identity,error:Error) {
     seed:[32]u8
     defer crypto.zero_explicit(&seed,32)
-    machine_secret(s,IDENTITY_FILE,&seed) or_return
+    machine_secret(s,IDENTITY_FILE,seed[:]) or_return
     identity.seed=seed
     if !identity_derive(&identity) {return {},.Corrupt}
     return identity,.None
@@ -117,39 +127,51 @@ machine_identity :: proc(s:^store.Store) -> (identity:Identity,error:Error) {
 machine_dh :: proc(s:^store.Store) -> (key:net.Dh_Key,error:Error) {
     private:net.Key
     defer crypto.zero_explicit(&private,32)
-    machine_secret(s,DH_FILE,&private) or_return
+    machine_secret(s,DH_FILE,private[:]) or_return
     return net.dh_key_from(&private),.None
 }
 
-// The 32 secret bytes of the file name at the root of the store, random and
-// owner-only the first time.
+// The secret bytes of the file name at the root of the store, as many as out
+// holds, random and owner-only the first time.
 @(private)
-machine_secret :: proc(s:^store.Store,name:string,out:^[32]u8) -> Error {
+machine_secret :: proc(s:^store.Store,name:string,out:[]u8) -> Error {
     file:=strings.concatenate({s.root,"/",name},context.temp_allocator)
     if bytes,read_error:=os.read_entire_file(file,context.temp_allocator);read_error==nil {
         defer crypto.zero_explicit(raw_data(bytes),len(bytes))
-        if len(bytes)!=32 {return .Corrupt}
-        copy(out[:],bytes)
+        if len(bytes)!=len(out) {return .Corrupt}
+        copy(out,bytes)
         return .None
     }
-    crypto.rand_bytes(out[:])
+    crypto.rand_bytes(out)
     temp:=strings.concatenate({file,".tmp"},context.temp_allocator)
-    if os.write_entire_file(temp,out[:],{.Read_User,.Write_User})!=nil {return .Io}
+    if os.write_entire_file(temp,out,{.Read_User,.Write_User})!=nil {return .Io}
     if os.rename(temp,file)!=nil {
         os.remove(temp)
         return .Io
     }
     // Two processes made one each at once: the one that won the rename counts.
     bytes,read_error:=os.read_entire_file(file,context.temp_allocator)
-    if read_error!=nil || len(bytes)!=32 {return .Io}
-    copy(out[:],bytes)
+    if read_error!=nil || len(bytes)!=len(out) {return .Io}
+    copy(out,bytes)
     crypto.zero_explicit(raw_data(bytes),len(bytes))
     return .None
 }
 
 // What a device proves of itself to the logs and the overlays.
 machine_overlay_device :: proc(m:^Machine) -> Overlay_Device {
-    return {identity=m.identity,dh=Dh_Key(m.dh.public),dh_secret=transmute([32]u8)m.dh.private}
+    return {identity=m.identity,dh=Dh_Key(m.dh.public),dh_secret=transmute([32]u8)m.dh.private,kem_seed=m.kem}
+}
+
+// This device's ML-KEM encapsulation key, as its user's log records it.
+machine_kem_public :: proc(m:^Machine) -> (kem:[KEM_PUBLIC]u8) {
+    kem,_=kem_public(&m.kem)
+    return
+}
+
+// What this device's proof binds of its ML-KEM key.
+machine_kem_hash :: proc(m:^Machine) -> [32]u8 {
+    kem:=machine_kem_public(m)
+    return blake3.hash(kem[:])
 }
 
 @(private)
@@ -198,11 +220,13 @@ recovery_encode :: proc(seed:[32]u8,buffer:^[RECOVERY_TEXT]u8) -> string {
 }
 
 // The seed of a recovery key as recovery_encode printed it; dashes, spaces and
-// case do not matter, and I, L and O read as 1, 1 and 0.
-recovery_decode :: proc(text:string) -> (seed:[32]u8,ok:bool) {
+// case do not matter, and I, L and O read as 1, 1 and 0. why says what is
+// wrong with a mistyped one, "" when it reads; the text is never in it.
+recovery_decode :: proc(text:string) -> (seed:[32]u8,why:string) {
     bytes:[RECOVERY_BYTES]u8
     defer crypto.zero_explicit(&bytes,size_of(bytes))
-    n,bits,acc:=0,uint(0),u32(0)
+    DIGITS :: RECOVERY_BYTES*8/5
+    n,digits,bits,acc:=0,0,uint(0),u32(0)
     for c in transmute([]u8)text {
         v:=-1
         switch c {
@@ -213,22 +237,26 @@ recovery_decode :: proc(text:string) -> (seed:[32]u8,ok:bool) {
             upper:=c>='a' && c<='z'?c-32:c
             v=strings.index_byte(CROCKFORD,upper)
         }
-        if v<0 {return}
+        digits+=1
+        if v<0 {
+            if c=='u' || c=='U' {return {},fmt.tprintf("digit %d of the recovery key is a U, which no recovery key has: it may be a V",digits)}
+            return {},fmt.tprintf("digit %d of the recovery key is no digit of one: a key has 0-9 and the letters A-Z but I, L, O and U, in groups of four",digits)
+        }
+        if digits>DIGITS {continue}
         acc=acc<<5|u32(v)
         bits+=5
         if bits>=8 {
             bits-=8
-            if n>=RECOVERY_BYTES {return}
             bytes[n]=u8(acc>>bits)
             n+=1
             acc&=(1<<bits)-1
         }
     }
-    if n!=RECOVERY_BYTES || acc!=0 {return}
+    if digits!=DIGITS {return {},fmt.tprintf("the recovery key has %d digits and a key has %d, in groups of four: a group is missing or written twice",digits,DIGITS)}
     copy(seed[:],bytes[:32])
     sum:=recovery_sum(seed)
-    if !bytes_equal(sum[:3],bytes[32:]) {return {},false}
-    return seed,true
+    if acc!=0 || !bytes_equal(sum[:3],bytes[32:]) {return {},"the recovery key's checksum does not match: a digit is mistyped, compare each group of four with the one printed"}
+    return seed,""
 }
 
 @(private)
@@ -247,11 +275,11 @@ recovery_sum :: proc(seed:[32]u8) -> [32]u8 {
 machine_user_create :: proc(m:^Machine,name:string,buffer:^[RECOVERY_TEXT]u8,device:="") -> (recovery:string,error:Error) {
     if m.user!={} {return "",machine_fail(m,.Invalid_Argument,"this device belongs to a user already: one user per device")}
     if !name_valid(name) {return "",machine_fail(m,.Invalid_Argument,"a user's name is 1 to 64 bytes of text: give another")}
-    head:=User_Genesis_Body{device=m.identity.key,dh=Dh_Key(m.dh.public)}
+    head:=User_Genesis_Body{device=m.identity.key,dh=Dh_Key(m.dh.public),kem=machine_kem_public(m)}
     if !name_valid(device_name_of(device,&head.device_name)) {return "",machine_fail(m,.Invalid_Argument,"a device's name is 1 to 64 bytes of text, as laptop: give another")}
     r:=identity_make()
     defer crypto.zero_explicit(&r,size_of(Identity))
-    head.recovery,head.proof=r.key,device_proof(&m.identity,transmute([32]u8)r.key)
+    head.recovery,head.proof=r.key,device_proof(&m.identity,transmute([32]u8)r.key,head.dh,machine_kem_hash(m))
     l:Log
     log_init(&l,{},context.temp_allocator)
     body:=body_make(head,transmute([]u8)name)
@@ -643,7 +671,7 @@ machine_scope_add :: proc(m:^Machine,org,project:Log_Id,patterns:[]string,reader
     k:Keyring_Fold
     device:=machine_overlay_device(m)
     defer crypto.zero_explicit(&device,size_of(device))
-    if e:=keyring_create(&k,&l,&o.fold,project,scope,&device,machine_now(),context.temp_allocator);e!=.None {
+    if e:=keyring_create(&k,&l,&o.fold,&m.store,project,scope,&device,machine_now(),context.temp_allocator);e!=.None {
         return scope,machine_fail(m,e,"the scope's keyring does not start: a writer of the project makes it")
     }
     machine_log_save(m,&l) or_return
@@ -668,7 +696,7 @@ machine_keyrings :: proc(s:^store.Store,o:^Org_State,out:^[dynamic]^Keyring_Fold
         if _,load:=log_load(s,l,r.hash,false);load!=.None {continue}
         k,ke:=new(Keyring_Fold,allocator)
         if ke!=nil {return .Out_Of_Memory}
-        if keyring_fold(k,l,&o.fold,allocator)!=.None {continue}
+        if keyring_fold(k,l,&o.fold,s,allocator)!=.None {continue}
         append(out,k)
     }
     return .None
@@ -686,7 +714,7 @@ machine_grant :: proc(m:^Machine,org:Log_Id,subject_dh:Dh_Key,subject_key:Key,ri
     log_heads(&l,&heads)
     if len(heads)==0 {return nil,machine_fail(m,.Corrupt,"the org's log has no head")}
     now:=machine_now()
-    g:=Grant{head={magic=KAI_MAGIC,version=VERSION,rights=rights,org=org,org_head=heads[0],issuer=m.identity.key,subject_dh=subject_dh,subject_key=subject_key,project=project,not_before=now,not_after=now+i64(days)*24*3600*1_000_000_000,path_len=u16(len(path))},path=path}
+    g:=Grant{head={magic=KAI_MAGIC,version=VERSIONS[.Log_Page],rights=rights,org=org,org_head=heads[0],issuer=m.identity.key,subject_dh=subject_dh,subject_key=subject_key,project=project,not_before=now,not_after=now+i64(days)*24*3600*1_000_000_000,path_len=u16(len(path))},path=path}
     bytes=grant_encode(&g,&m.identity,allocator) or_return
     if _,e:=machine_org_append(m,org,.Grant,bytes);e!=.None {
         delete(bytes,allocator)
@@ -732,6 +760,24 @@ machine_publish_refs :: proc(m:^Machine,project:Log_Id,refs:[]Bookmark_Ref) -> E
     ns:[len(REFS_PREFIX)+64]u8
     name:[32]u8
     machine_tell(m,refs_namespace(project,&ns),refs_name(m.identity.key,&name))
+    // The overlays a snapshot wrote for the targets, which may keep their
+    // public tree and so their revision, reach the peers with them.
+    if org,_:=project_org(&l);org!={} {
+        o:Org_State
+        if org_state_load(&m.store,org,&o,context.temp_allocator)==.None {
+            defer org_state_destroy(&o)
+            for sc in o.fold.scopes {
+                if sc.project!=project {continue}
+                ons:[len(OVERLAY_PREFIX)+64+1+32]u8
+                namespace:=overlay_namespace(project,sc.scope,&ons)
+                for r in refs {
+                    hex:[64]u8
+                    commit:=store.hex(r.target,&hex)
+                    if _,e:=store.ref_get(&m.store,namespace,commit);e==.None {machine_tell(m,namespace,commit)}
+                }
+            }
+        }
+    }
     return .None
 }
 

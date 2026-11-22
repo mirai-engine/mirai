@@ -1,6 +1,7 @@
 package kai
 
 import "core:bytes"
+import "core:crypto/mlkem"
 import "core:fmt"
 import "core:math/rand"
 import "core:mem"
@@ -19,7 +20,7 @@ SECRET :: "kai-secret-7Qx2Vb9LmZ4pR8sT1wYc6NdF3hJ0aE5u"
 
 @(private)
 device_of :: proc(u:^Test_User,k:int) -> Overlay_Device {
-    return {identity=u.devices[k],dh=Dh_Key(u.dhs[k].public),dh_secret=u.dhs[k].private}
+    return {identity=u.devices[k],dh=Dh_Key(u.dhs[k].public),dh_secret=u.dhs[k].private,kem_seed=u.kems[k]}
 }
 
 @(private)
@@ -114,7 +115,7 @@ scoped_plaintext_never_enters_public_store :: proc(t:^testing.T) {
     kl:Log
     log_init(&kl);defer log_destroy(&kl)
     kf:Keyring_Fold
-    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&alice,21),Error.None)
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&s,o.project.id,scope,&alice,21),Error.None)
     defer keyring_fold_destroy(&kf)
     testing.expect_value(t,kf.epoch,u32(1))
 
@@ -231,9 +232,9 @@ removed_member_cannot_decrypt_post_rotation_epoch :: proc(t:^testing.T) {
     log_init(&kl);defer log_destroy(&kl)
     log_init(&fl);defer log_destroy(&fl)
     kf,ff:Keyring_Fold
-    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&alice,22),Error.None)
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&s,o.project.id,scope,&alice,22),Error.None)
     defer keyring_fold_destroy(&kf)
-    testing.expect_value(t,keyring_create(&ff,&fl,&o.fold,o.project.id,flat,&alice,22),Error.None)
+    testing.expect_value(t,keyring_create(&ff,&fl,&o.fold,&s,o.project.id,flat,&alice,22),Error.None)
     defer keyring_fold_destroy(&ff)
     k1,e:=keyring_epoch_key(&kf,&carol,1)
     testing.expect_value(t,e,Error.None)
@@ -263,7 +264,7 @@ removed_member_cannot_decrypt_post_rotation_epoch :: proc(t:^testing.T) {
     testing.expect(t,!keyring_needs_rotation(&kf))
     _,e=keyring_epoch_key(&kf,&carol,2)
     testing.expect_value(t,e,Error.Unauthorized)
-    _,found:=keyring_envelope(&kf,2,carol.dh)
+    found:=keyring_wraps(&kf,2,carol.dh)
     testing.expect(t,!found,"the new epoch wraps nothing for a removed member")
     _,e=workspace_snapshot(&w)
     testing.expect_value(t,e,Error.None)
@@ -287,7 +288,8 @@ removed_member_cannot_decrypt_post_rotation_epoch :: proc(t:^testing.T) {
     testing.expect(t,k1_late==k1,"history chains back to epoch 1")
     _,e=rotate_scope_epoch(&ff,&alice,41)
     testing.expect_value(t,e,Error.None)
-    _,has_prev:=keyring_envelope(&ff,2,prev_marker(2))
+    flat_epoch,_:=keyring_epoch(&ff,2)
+    has_prev:=bool(flat_epoch.history)
     testing.expect(t,!has_prev,"a scope without history wraps no previous key")
     _,e=keyring_epoch_key(&ff,&late,1)
     testing.expect_value(t,e,Error.Unauthorized)
@@ -308,6 +310,11 @@ removed_member_cannot_decrypt_post_rotation_epoch :: proc(t:^testing.T) {
 // after, since the writer's entries are judged as of when they were signed.
 @(test)
 removing_a_keyring_signer_keeps_its_epochs :: proc(t:^testing.T) {
+    folder_root:=base.test_folder(t,"kai-overlay-signer")
+    if folder_root=="" {return}
+    s,se:=store.open(folder(folder_root,"store"))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&s)
     o:Test_Org
     test_org_make(t,&o);defer test_org_destroy(&o)
     scope:=random_id(Scope_Id)
@@ -317,7 +324,7 @@ removing_a_keyring_signer_keeps_its_epochs :: proc(t:^testing.T) {
     kl:Log
     log_init(&kl);defer log_destroy(&kl)
     kf:Keyring_Fold
-    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&bob,22),Error.None)
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&s,o.project.id,scope,&bob,22),Error.None)
     defer keyring_fold_destroy(&kf)
     k1,e:=keyring_epoch_key(&kf,&carol,1)
     testing.expect_value(t,e,Error.None)
@@ -545,9 +552,9 @@ overlay_rebase_keeps_ciphertext_and_ddc_outputs_inherit_scopes :: proc(t:^testin
     log_init(&kl);defer log_destroy(&kl)
     log_init(&ol);defer log_destroy(&ol)
     kf,of:Keyring_Fold
-    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&alice,22),Error.None)
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&s,o.project.id,scope,&alice,22),Error.None)
     defer keyring_fold_destroy(&kf)
-    testing.expect_value(t,keyring_create(&of,&ol,&o.fold,o.project.id,other,&alice,22),Error.None)
+    testing.expect_value(t,keyring_create(&of,&ol,&o.fold,&s,o.project.id,other,&alice,22),Error.None)
     defer keyring_fold_destroy(&of)
     root:=folder(folder_root,"ws")
     put_file(t,root,"readme.txt",transmute([]u8)string("public"))
@@ -751,7 +758,7 @@ public_peer_sees_zero_overlay_metadata_or_chunks :: proc(t:^testing.T) {
     kl:Log
     log_init(&kl);defer log_destroy(&kl)
     kf:Keyring_Fold
-    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,o.project.id,scope,&alice,21),Error.None)
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&m.stores[0],o.project.id,scope,&alice,21),Error.None)
     defer keyring_fold_destroy(&kf)
     for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project,&kl}) {
         _,e:=log_save(&m.stores[0],l)
@@ -807,7 +814,7 @@ public_peer_sees_zero_overlay_metadata_or_chunks :: proc(t:^testing.T) {
     log_init(&sl);defer log_destroy(&sl)
     testing.expect_value(t,log_open(&m.stores[1],&sl,kl.id,.Keyring),Error.None)
     skf:Keyring_Fold
-    testing.expect_value(t,keyring_fold(&skf,&sl,&sd.org),Error.None)
+    testing.expect_value(t,keyring_fold(&skf,&sl,&sd.org,&m.stores[1]),Error.None)
     defer keyring_fold_destroy(&skf)
     testing.expect_value(t,skf.epoch,u32(1))
     _,ke:=keyring_epoch_key(&skf,&seed_device,1)
@@ -855,4 +862,109 @@ public_peer_sees_zero_overlay_metadata_or_chunks :: proc(t:^testing.T) {
     namespaces,_:=store.ref_namespaces(&m.stores[2],context.temp_allocator)
     for n in namespaces {testing.expectf(t,!strings.has_prefix(n,OVERLAY_PREFIX),"the anonymous peer holds %s",n)}
     testing.expect(t,!bytes_under(fmt.tprintf("%s/node-2",m.folder),transmute([]u8)string(SECRET)))
+}
+
+// An epoch's key is wrapped for each device under X25519 and ML-KEM-768 at
+// once: a device that holds only one of its two secrets opens nothing, and a
+// changed KEM ciphertext, share, or any input of the salt (the device's keys)
+// is refused. The envelopes of an epoch are an object of the store the entry
+// names, so an epoch for 200 devices is written and each of them reads it.
+@(test)
+an_epoch_key_opens_only_with_both_device_secrets :: proc(t:^testing.T) {
+    folder_root:=base.test_folder(t,"kai-overlay-hybrid")
+    if folder_root=="" {return}
+    s,se:=store.open(folder(folder_root,"store"))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&s)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    scope:=random_id(Scope_Id)
+    scope_add(t,&o,scope,.Reader,true,20,"secrets/**")
+    refold(t,&o)
+    alice,bob:=device_of(&o.alice,0),device_of(&o.bob,0)
+    org,epoch:=o.org.id,u32(7)
+    key:=random_id(Epoch_Key)
+    bob_kem,_:=kem_public(&bob.kem_seed)
+    envelope,wrapped:=envelope_wrap(org,scope,epoch,bob.dh,bob_kem[:],&key)
+    testing.expect(t,wrapped)
+    opened,ok:=envelope_unwrap(org,scope,epoch,&bob,envelope)
+    testing.expect(t,ok && opened==key,"the device opens its envelope")
+
+    // One secret of two opens nothing.
+    x_only,kem_only:=bob,bob
+    x_only.kem_seed=alice.kem_seed
+    kem_only.dh_secret=alice.dh_secret
+    for d in ([]^Overlay_Device{&x_only,&kem_only}) {
+        _,ok=envelope_unwrap(org,scope,epoch,d,envelope)
+        testing.expect(t,!ok,"a device with one of its two secrets opens nothing")
+    }
+    // A changed ciphertext, share, sealed key or tag, or another salt input, is refused.
+    for k in 0..<4 {
+        e:=envelope
+        switch k {
+        case 0: e.kem[100]~=1
+        case 1: e.share[3]~=1
+        case 2: e.sealed[0]~=1
+        case 3: e.tag[15]~=1
+        }
+        _,ok=envelope_unwrap(org,scope,epoch,&bob,e)
+        testing.expectf(t,!ok,"a changed part %d is refused",k)
+    }
+    dk:mlkem.Decapsulation_Key
+    testing.expect(t,mlkem.decapsulation_key_set_bytes(&dk,KEM,bob.kem_seed[:]))
+    alice_kem,_:=kem_public(&alice.kem_seed)
+    e:=envelope
+    _,ok=envelope_open(org,scope,epoch,&e,&bob.dh_secret,&dk,alice_kem[:])
+    testing.expect(t,!ok,"the salt binds the device's ML-KEM key")
+    _,ok=envelope_open(org,scope,epoch,&e,&bob.dh_secret,&dk,bob_kem[:])
+    testing.expect(t,ok)
+    for c in 0..<3 {
+        _,ok=envelope_unwrap(c==0?Log_Id{0=1}:org,c==1?Scope_Id{0=1}:scope,c==2?epoch+1:epoch,&bob,envelope)
+        testing.expect(t,!ok,"the org, the scope and the epoch are bound")
+    }
+    mlkem.decapsulation_key_clear(&dk)
+    small:=[32]u8{0=1}
+    _,wrapped=envelope_wrap(org,scope,epoch,Dh_Key(small),bob_kem[:],&key)
+    testing.expect(t,!wrapped,"a point of small order leaves nothing secret and is refused")
+
+    // 200 devices of bob's read the scope: one epoch, one object of envelopes.
+    devices:=make([]Overlay_Device,199,context.temp_allocator)
+    for &d,k in devices {
+        d.identity=identity_make()
+        dh,_:=net.dh_key()
+        d.dh,d.dh_secret=Dh_Key(dh.public),dh.private
+        d.kem_seed=random_id([KEM_SEED]u8)
+        _,ae:=log_append(&o.bob.log,.Device_Add,test_device_body(&d.identity,d.dh,&d.kem_seed,o.bob.log.id,fmt.tprintf("d%d",k)),&o.bob.devices[0],30)
+        testing.expect_value(t,ae,Error.None)
+    }
+    refold(t,&o)
+    kl:Log
+    log_init(&kl);defer log_destroy(&kl)
+    kf:Keyring_Fold
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&s,o.project.id,scope,&alice,31),Error.None)
+    defer keyring_fold_destroy(&kf)
+    body,_:=keyring_epoch(&kf,1)
+    testing.expect_value(t,int(body.devices),200+2) // bob's 200, alice's and carol's
+    for &d in devices {
+        _,ke:=keyring_epoch_key(&kf,&d,1)
+        testing.expect_value(t,ke,Error.None)
+    }
+    // A store without the object reads nothing of the epoch yet.
+    other,oe:=store.open(folder(folder_root,"other"))
+    if !testing.expect_value(t,oe,store.Error.None) {return}
+    defer store.close(&other)
+    kf.store=&other
+    _,ke:=keyring_epoch_key(&kf,&devices[0],1)
+    testing.expect_value(t,ke,Error.Missing)
+    kf.store=&s
+
+    // What the hybrid costs: a device's entry, an envelope, an epoch of 10 devices.
+    sizes:[2]int
+    for &item in o.bob.log.items {
+        if item.entry.type==.Device_Add {sizes[0]=len(item.bytes)}
+    }
+    for &item in kl.items {
+        if item.entry.type==.Epoch_Add {sizes[1]=len(item.bytes)}
+    }
+    fmt.printfln("kai: a Device_Add with its ML-KEM-768 key is %d bytes; an envelope %d; an epoch of 10 devices %d bytes of entry and %d of envelopes",sizes[0],size_of(Envelope),sizes[1],10*size_of(Envelope))
 }

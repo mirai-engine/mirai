@@ -3,10 +3,12 @@ package kai
 import "core:fmt"
 import cnet "core:net"
 import "core:os"
+import "core:strings"
 import "core:testing"
 import "core:time"
 import net "mirai:net"
 import "mirai:std/base"
+import "mirai:std/blake3"
 import "mirai:store"
 
 // Machines of one test, each with its store and its runner on 127.0.0.1,
@@ -125,8 +127,8 @@ user_make :: proc(t:^testing.T,m:^Machine,name:string) {
     buffer:[RECOVERY_TEXT]u8
     text,e:=machine_user_create(m,name,&buffer)
     testing.expect_value(t,e,Error.None)
-    seed,ok:=recovery_decode(text)
-    testing.expect(t,ok && len(text)==RECOVERY_TEXT,"the recovery key reads back")
+    seed,why:=recovery_decode(text)
+    testing.expect(t,why=="" && len(text)==RECOVERY_TEXT,"the recovery key reads back")
     r:=Identity{seed=seed}
     identity_derive(&r)
     l:Log
@@ -659,7 +661,8 @@ runner_refuses_hostile_datagrams :: proc(t:^testing.T) {
         recovery_decode(string(text[:n]))
         answer:=transmute([]u8)string(text[:n])
         list:=make([dynamic]Runner_Peer_Info,context.temp_allocator)
-        peers_parse(answer,&list)
+        orgs:=make([dynamic]Runner_Org_Info,context.temp_allocator)
+        peers_parse(answer,&list,&orgs)
         pair_request_parse(answer)
         pair_progress_parse(answer)
         ddc_answer_parse(answer)
@@ -685,4 +688,85 @@ ladder_of :: proc(r:^Runner,dh:Dh_Key) -> [5]f64 {
         if p.dh==dh {return {f64(p.stage),p.planned,p.asked,f64(p.attempt),f64(p.relay.kind)}}
     }
     return {-1,-1,-1,-1,-1}
+}
+
+// A user whose every device is lost recovers onto a fresh store with its
+// recovery key and id: the key signs the new device in and revokes the lost
+// ones. A mistyped key says what is wrong with it, another user's is refused,
+// and once the key is rotated, what the old one signs on parents that skip
+// the rotation counts for nothing.
+@(test)
+a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
+    b:=new(Box)
+    defer free(b)
+    if !box_open(t,b,"kai-runner-recover",3) {return}
+    defer box_close(b)
+    lost,fresh,other:=&b.machines[0],&b.machines[1],&b.machines[2]
+    buffer:[RECOVERY_TEXT]u8
+    text,e:=machine_user_create(lost,"alice",&buffer)
+    testing.expect_value(t,e,Error.None)
+    key:=strings.clone(text,context.temp_allocator)
+    other_text,_:=machine_user_create(other,"bob",&buffer)
+    other_key:=strings.clone(other_text,context.temp_allocator)
+    user:=lost.user
+
+    _,e=machine_user_find(fresh,store.hex(user,&[64]u8{})[:12])
+    testing.expect_value(t,e,Error.Missing)
+    log_copy(t,&lost.store,&fresh.store,user,.User)
+    found,fe:=machine_user_find(fresh,store.hex(user,&[64]u8{})[:12])
+    testing.expect(t,fe==.None && found==user,"a user is found by the start of its id")
+
+    // Mistyped keys, each with what is wrong.
+    swapped:=transmute([]u8)strings.clone(key,context.temp_allocator)
+    swapped[0]=swapped[0]=='0'?'2':'0'
+    Mistyped :: struct {text,why:string}
+    for c in ([]Mistyped{
+        {string(swapped),"checksum"},
+        {key[5:],"digits"},
+        {strings.concatenate({key,"-ABCD"},context.temp_allocator),"digits"},
+        {strings.concatenate({"U",key[1:]},context.temp_allocator),"U"},
+        {strings.concatenate({"*",key[1:]},context.temp_allocator),"digit 1"},
+    }) {
+        testing.expect_value(t,machine_recover(fresh,user,c.text),Error.Invalid_Argument)
+        testing.expectf(t,strings.contains(fresh.why,c.why),"%q says %q",c.text,fresh.why)
+        testing.expect(t,!strings.contains(fresh.why,c.text),"the why never holds the key")
+    }
+    testing.expect_value(t,machine_recover(fresh,user,other_key),Error.Unauthorized)
+    testing.expect(t,fresh.user=={})
+
+    // The right key, typed in lower case with spaces.
+    typed:=strings.to_lower(strings.join(strings.split(key,"-",context.temp_allocator)," ",context.temp_allocator),context.temp_allocator)
+    testing.expect_value(t,machine_recover(fresh,user,typed,"spare"),Error.None)
+    testing.expect(t,fresh.user==user)
+    l:Log
+    f:User_Fold
+    testing.expect_value(t,machine_user_open(fresh,&l,&f),Error.None)
+    testing.expect(t,user_device_active(&f,fresh.identity.key) && !user_device_active(&f,lost.identity.key),"the new device is in and the lost one is revoked")
+    k:=user_device_index(&f,fresh.identity.key)
+    fresh_kem:=machine_kem_public(fresh)
+    testing.expect(t,k>=0 && bytes_equal(user_device_kem(&f,f.devices[k]),fresh_kem[:]))
+    user_fold_destroy(&f)
+    testing.expect_value(t,machine_recover(fresh,user,key),Error.Invalid_Argument)
+
+    // Rotated, the old key signs nothing beside the rotation: a device it adds
+    // on the genesis alone, concurrent with the rotation, is no device.
+    rotated,re:=machine_recovery_rotate(fresh,key,&buffer)
+    testing.expect(t,re==.None && rotated!="")
+    seed,why:=recovery_decode(key)
+    testing.expect_value(t,why,"")
+    old:=Identity{seed=seed}
+    identity_derive(&old)
+    log_init(&l,user,context.temp_allocator)
+    testing.expect_value(t,log_open(&fresh.store,&l,user,.User),Error.None)
+    rogue:=identity_make()
+    rogue_dh,_:=net.dh_key()
+    rogue_seed:=random_id([KEM_SEED]u8)
+    rogue_kem,_:=kem_public(&rogue_seed)
+    body:=body_make(Device_Add_Body{device=rogue.key,dh=Dh_Key(rogue_dh.public),kem=rogue_kem,proof=device_proof(&rogue,transmute([32]u8)user,Dh_Key(rogue_dh.public),blake3.hash(rogue_kem[:]))},transmute([]u8)string("rogue"))
+    _,e=log_append(&l,.Device_Add,body,&old,machine_now(),{},{},{user})
+    testing.expect_value(t,e,Error.None)
+    testing.expect_value(t,user_fold(&f,&l,context.temp_allocator),Error.None)
+    testing.expect(t,user_device_index(&f,rogue.key)<0,"what the rotated key signs beside its rotation is void")
+    testing.expect(t,user_device_active(&f,fresh.identity.key))
+    user_fold_destroy(&f)
 }

@@ -66,17 +66,19 @@ the tab reads the detail again on the team's poll, a method waits for them.
   snapshots again (`ka.project_route`); a frame that changes nothing reads and allocates nothing.
 - A machine with no user is offered one by its handle. The recovery key is shown once in a dialog
   that only its button closes (not Escape nor a press outside), and is zeroed when it closes;
-  rotating it asks for the key the user has now. No result of a method carries a recovery key: an
-  editor with no window refuses to make a user or rotate its key before making anything, and
-  `mirai kai identity` does it in a terminal.
+  rotating it asks for the key the user has now, and a user born of a passkey sets its first one
+  from there. Recover asks for a user's id and its recovery key, which bring the user onto this
+  machine once its log is here ([recovering](../../mirai-kai/references/identity.md#keys)). No
+  result of a method carries a recovery key: an editor with no window refuses to make a user, set or
+  rotate its key before making anything, and `mirai kai identity` does it in a terminal.
 - A device is named where it is made: by the name given, or by the machine's host name
   (`vcs.device_name_of`).
 - Pairing ([how it works](../../mirai-kai/references/identity.md#pairing)): a ticket is offered as a
-  member, a second device or a node, and copied; another machine joins with it. The approving side
-  gets one request at a time in a dialog: who asks as `<handle>/<device>` (the joining machine names
-  itself from its user's log, `vcs.machine_pair_name`; a device with no user yet gives the name its
-  user will know it by), the code, and Deny and Approve alike, neither the default: Enter and
-  Escape answer nothing.
+  member, a second device, a node or for a recovery, and copied; another machine joins with it. The
+  approving side gets one request at a time in a dialog: who asks as `<handle>/<device>` (the
+  joining machine names itself from its user's log, `vcs.machine_pair_name`; a device with no user
+  yet gives the name its user will know it by), the code, and Deny and Approve alike, neither the
+  default: Enter and Escape answer nothing.
 - The org of the project: making one, putting the open project in it (public or the org's alone),
   or working on one of its projects from this workspace (`link`); members with their roles and
   devices, nodes and projects with their policies; a role, a removal, a transfer and leaving.

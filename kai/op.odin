@@ -26,12 +26,10 @@ import "mirai:store"
 Op_Kind :: enum u8 {Snapshot,New,Describe,Rewrite,Merge,Abandon,Restore,Bookmark,Workspace,Import,Undo,Proposal,Prune}
 
 OP_RETENTION :: i64(30*24*time.Hour) // ns of operations a prune keeps behind it
-OP_VERSION :: 2 // of the head of an operation
 LOCAL_PREFIX :: "kai-local-" // + repository id: the refs of its workspaces, which no peer is served
 
 Op_Head :: struct #packed {
     magic:u32,
-    version:u16,
     kind:Op_Kind,
     parents:u8,
     view:store.Hash,
@@ -62,7 +60,7 @@ op_encode :: proc(op:^Operation,allocator:=context.allocator) -> (bytes:[]u8,err
     if len(op.parents)>OP_PARENTS_MAX || len(op.rewrites)>REWRITES_MAX || len(op.description)>DESCRIPTION_MAX {return nil,.Too_Large}
     if op.view=={} || (op.undone!={})!=(op.kind==.Undo) || !utf8.valid_string(op.description) {return nil,.Invalid_Argument}
     w:=writer_make(allocator)
-    write_value(&w,Op_Head{magic=KAI_MAGIC,version=OP_VERSION,kind=op.kind,parents=u8(len(op.parents)),view=op.view,undone=op.undone,
+    write_value(&w,Op_Head{magic=KAI_MAGIC,kind=op.kind,parents=u8(len(op.parents)),view=op.view,undone=op.undone,
         workspace=op.workspace,time=op.time,rewrites=u32(len(op.rewrites)),description=u32(len(op.description))})
     for p in op.parents {write_value(&w,p)}
     for rw in op.rewrites {write_value(&w,rw)}
@@ -76,7 +74,7 @@ op_encode :: proc(op:^Operation,allocator:=context.allocator) -> (bytes:[]u8,err
 op_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (op:Operation,error:Error) {
     r:=Reader{data=bytes}
     head:=read_value(&r,Op_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=OP_VERSION || head.kind>max(Op_Kind) {return {},.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.kind>max(Op_Kind) {return {},.Corrupt}
     if head.view=={} || (head.undone!={})!=(head.kind==.Undo) || head.rewrites>REWRITES_MAX || head.description>DESCRIPTION_MAX {return {},.Corrupt}
     size:=u64(size_of(Op_Head))+u64(head.parents)*size_of(store.Hash)+u64(head.rewrites)*size_of(Rewrite)+u64(head.description)
     if size!=u64(len(bytes)) {return {},.Corrupt}

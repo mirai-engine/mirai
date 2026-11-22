@@ -51,12 +51,20 @@ Kai_Tab :: enum u8 {Changes,Proposals,Team}
 
 // A dialog of the tab: the recovery key shown once, rotating it, or a pairing
 // request to answer.
-Kai_Dialog :: enum u8 {None,Recovery,Rotate,Pair}
+Kai_Dialog :: enum u8 {None,Recovery,Rotate,Pair,Recover}
 
 Kai_Peer :: struct {
     who:string,  // <handle>/<device>, or a node
     org:string,
     rung:string, // how it is reached
+}
+
+// An org whose logs peers named entries of that are not here yet: its writes
+// wait until one gives them.
+Kai_Behind :: struct {
+    org:string,
+    behind:int,
+    unfound:int, // named, never came, let go
 }
 
 // What the team views show, in the team's arena.
@@ -67,6 +75,7 @@ Kai_Team_View :: struct {
     project:vcs.Log_Id, // of the org
     patterns:[]string,  // of each scope of orgs[org], apart by spaces
     peers:[]Kai_Peer,
+    behind:[]Kai_Behind,
     shared:[]ka.Shared_Bookmark,
     proposals:[]ka.Proposal_Row,
     proposal:ka.Proposal_View, // the one open in the Proposals view
@@ -92,6 +101,8 @@ Kai_Fields :: struct {
     ticket_length:int,
     recovery:[vcs.RECOVERY_TEXT+8]u8,
     recovery_length:int,
+    recover_user:[64]u8, // the id of the user a recovery brings onto this device
+    recover_user_length:int,
     bookmark:[64]u8,
     bookmark_length:int,
     approvals:[4]u8,
@@ -129,6 +140,8 @@ Kai_Team :: struct {
     signature:store.Hash, // of the machine's refs and logs when the view was read
     peers:[vcs.RUNNER_PEERS]vcs.Runner_Peer_Info,
     peer_count:int,
+    org_infos:[vcs.MACHINE_ORGS_MAX]vcs.Runner_Org_Info,
+    org_info_count:int,
     published:store.Hash, // of the bookmarks published last
     arena:vmem.Arena,
     view:Kai_Team_View,
@@ -334,7 +347,8 @@ kai_team_poll :: proc(s:^Session) {
             }
         }
         list:=make([dynamic]vcs.Runner_Peer_Info,context.temp_allocator)
-        if vcs.control_peers(&t.control,&list)==.None {
+        infos:=make([dynamic]vcs.Runner_Org_Info,context.temp_allocator)
+        if vcs.control_peers(&t.control,&list,&infos)==.None {
             count:=min(len(list),len(t.peers))
             if count!=t.peer_count {changed=true}
             for p,i in list[:count] {
@@ -342,6 +356,13 @@ kai_team_poll :: proc(s:^Session) {
                 t.peers[i]=p
             }
             t.peer_count=count
+            n:=min(len(infos),len(t.org_infos))
+            if n!=t.org_info_count {changed=true}
+            for x,i in infos[:n] {
+                if t.org_infos[i]!=x {changed=true}
+                t.org_infos[i]=x
+            }
+            t.org_info_count=n
         }
     }
     vcs.machine_reload(&t.machine)
@@ -443,6 +464,14 @@ kai_team_read :: proc(s:^Session) {
         peers[i]={who=ka.peer_who(m,p.org,p.dh,a),org=name,rung=vcs.rung_text(p.rung)}
     }
     v.peers=peers
+    behind:=make([dynamic]Kai_Behind,a)
+    for x in t.org_infos[:t.org_info_count] {
+        if x.behind==0 && x.unfound==0 {continue}
+        name:=""
+        for o in orgs {if o.id==x.org {name=o.name}}
+        append(&behind,Kai_Behind{org=name,behind=x.behind,unfound=x.unfound})
+    }
+    v.behind=behind[:]
     project,org,e:=ka.project_of(&st.project,m)
     if e!=.None {return}
     v.project=project

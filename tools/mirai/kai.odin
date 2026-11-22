@@ -13,7 +13,7 @@ import "mirai:project"
 import "mirai:store"
 
 KAI_USAGE :: "kai init [project]|status|snapshot|log [-n N]|diff [change]|undo|conflicts|verify | kai prune | kai new [change...] [-m text] | kai describe [change] -m text | kai split [-r change] [-m text] <path...> | kai restore <change> | kai bookmarks [set|move <name> <change> | delete <name> | policy <name> [--approvals N] [--checks a,b]] [--project P] [--store S]"
-KAI_MESH_USAGE :: "kai identity [--name N] | kai identity revoke <device> | kai identity recovery | kai agent [--stay] [--port N] | kai pair offer device|member|node [--org O] [--role R] [--modes relay,seed,ddc] | kai pair join <ticket> [--name N] | kai pair approve [--code dddd-dddd] [--deny] | kai peers [--store S]"
+KAI_MESH_USAGE :: "kai identity [--name N] | kai identity revoke <device> | kai identity recovery | kai identity recover <user> [--name N] | kai agent [--stay] [--port N] | kai pair offer device|member|node|recover [--org O] [--role R] [--modes relay,seed,ddc] | kai pair join <ticket> [--name N] | kai pair approve [--code dddd-dddd] [--deny] | kai peers [--store S]"
 KAI_TEAM_USAGE :: "kai org list|leave | kai org new <name> | kai org add public|org | kai org remove|transfer <member> | kai org role <member> reader|writer|admin | kai grant issue <subject> --rights read,write,ddc,check,relay [--days N] [--path P] | kai grant list|load <text>|revoke <grant> | kai scope add <pattern...> [--readers R] [--history] | kai scope list|remove|rotate <scope> | kai public add <path>[:line] [--org O] [--project P] [--store S]"
 KAI_REVIEW_USAGE :: "kai proposal open <target> [change...] [-m title] [--text T] | kai proposal list|show|approve|changes|withdraw|close|reopen|land <proposal> | kai proposal revise <proposal> [change...] | kai proposal comment <proposal> -m text [--file P | --lines P:A-B | --entity P#id] [--reply C] | kai check <name> [--proposal P] -- <command...> [--project P] [--store S]"
 
@@ -295,7 +295,7 @@ kai_refuse :: proc(verb:string,a:^Kai_Args) -> int {
     case "status","snapshot","log","undo","conflicts","verify","agent","peers","prune": fits=n==0
     case "init","diff","describe": fits=n<=1
     case "restore": fits=n==1
-    case "identity": fits=n==0 || (sub=="revoke" && n==2) || (sub=="recovery" && n==1)
+    case "identity": fits=n==0 || (sub=="revoke" && n==2) || (sub=="recovery" && n==1) || (sub=="recover" && n==2)
     case "bookmarks":
         switch sub {
         case "": fits=n==0
@@ -630,7 +630,7 @@ kai_mesh :: proc(verb,store_root:string,a:^Kai_Args) -> int {
     positionals:=a.positionals[:]
     switch verb {
     case "identity":
-        if len(positionals)>0 {return kai_identity_change(&k,positionals)}
+        if len(positionals)>0 {return kai_identity_change(&k,positionals,a.name)}
         if m.user=={} {
             name:=a.name
             if name=="" {name=os.get_env("USER",context.temp_allocator)}
@@ -676,19 +676,25 @@ kai_mesh :: proc(verb,store_root:string,a:^Kai_Args) -> int {
     case "peers":
         if !k.agent {fmt.eprintln("mirai kai peers: no Kai agent runs for this store: mirai kai agent starts one");return 1}
         list:=make([dynamic]vcs.Runner_Peer_Info,context.temp_allocator)
-        if e:=vcs.control_peers(&k.control,&list);e!=.None {fmt.eprintfln("mirai kai peers: %s",k.control.why);return 1}
+        orgs:=make([dynamic]vcs.Runner_Org_Info,context.temp_allocator)
+        if e:=vcs.control_peers(&k.control,&list,&orgs);e!=.None {fmt.eprintfln("mirai kai peers: %s",k.control.why);return 1}
         for p in list {
             org,dh:=p.org,p.dh
             fmt.printfln("org %s peer %s %v%s by %s",short(org[:]),short(dh[:]),p.class,p.node?" node":"",vcs.rung_text(p.rung))
         }
         if len(list)==0 {fmt.println("no peers connected")}
+        for x in orgs {
+            org:=x.org
+            if x.behind>0 {fmt.printfln("org %s is behind: %d entries of its logs peers named are not here yet, and their writes wait; reach another member or node to get them",short(org[:]),x.behind)}
+            if x.unfound>0 {fmt.printfln("org %s let go of %d entries peers named that never came",short(org[:]),x.unfound)}
+        }
     }
     return 0
 }
 
 // mirai kai identity revoke and recovery.
 @(private="file")
-kai_identity_change :: proc(k:^Kai_Machine,positionals:[]string) -> int {
+kai_identity_change :: proc(k:^Kai_Machine,positionals:[]string,name:string) -> int {
     m:=&k.machine
     switch positionals[0] {
     case "revoke":
@@ -709,9 +715,30 @@ kai_identity_change :: proc(k:^Kai_Machine,positionals:[]string) -> int {
         recovery,e:=vcs.machine_recovery_rotate(m,strings.trim_space(line),&buffer)
         if e!=.None {return kai_why("identity recovery",k)}
         fmt.printfln("The old recovery key counts no more. The new one, shown once: write it down and keep it offline.\n  %s",recovery)
+    case "recover":
+        if m.user!={} {fmt.eprintln("mirai kai identity recover: this device belongs to a user already: recover onto a new store");return 1}
+        // The user's log comes from a peer of a recovery pairing: wait for it a while.
+        user:vcs.Log_Id
+        for tries:=0;;tries+=1 {
+            e:vcs.Error
+            if user,e=vcs.machine_user_find(m,positionals[1]);e==.None {break}
+            if e!=.Missing || !k.agent || tries>=RECOVER_WAIT*5 {return kai_why("identity recover",k)}
+            if tries==0 {fmt.println("Waiting for the agent to fetch the user's log...")}
+            time.sleep(200*time.Millisecond)
+        }
+        fmt.print("The user's recovery key, as it was printed: ")
+        reader:bufio.Reader
+        bufio.reader_init(&reader,os.to_stream(os.stdin),allocator=context.temp_allocator)
+        line,_:=bufio.reader_read_string(&reader,'\n',context.temp_allocator)
+        defer crypto_zero_text(line)
+        if vcs.machine_recover(m,user,line,name)!=.None {return kai_why("identity recover",k)}
+        id:=user
+        fmt.printfln("User %s recovered onto this device: its other devices are revoked, its passkeys stay. Rotate the recovery key with mirai kai identity recovery if it may have been seen.",short(id[:]))
     }
     return 0
 }
+
+RECOVER_WAIT :: 60 // seconds identity recover waits for the user's log to arrive
 
 // mirai kai pair offer, join and approve.
 @(private="file")
@@ -725,7 +752,8 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
         case "device": mode=.Device
         case "member": mode=.Member
         case "node": mode=.Node
-        case: fmt.eprintln("mirai kai pair offer: device, member or node");return 2
+        case "recover": mode=.Recover
+        case: fmt.eprintln("mirai kai pair offer: device, member, node or recover");return 2
         }
         org:vcs.Log_Id
         if mode!=.Device {
@@ -746,6 +774,7 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
         name,ne:=vcs.machine_pair_name(m,a.name)
         if ne!=.None {return kai_why("pair",k)}
         if e:=vcs.control_pair_join(c,positionals[1],name);e!=.None {fmt.eprintfln("mirai kai pair: %s",c.why);return 1}
+        ticket,_:=vcs.ticket_decode(strings.trim_space(positionals[1]))
         shown:=false
         for {
             progress,e:=vcs.control_pair_progress(c)
@@ -755,7 +784,13 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
                 shown=true
             }
             #partial switch progress.phase {
-            case .Approved: fmt.println("Paired: the agent syncs with the other machine now.");return 0
+            case .Approved:
+                if ticket.mode==.Recover {
+                    fmt.println("Paired: the agent fetches the org's user logs now; mirai kai identity recover <user> recovers yours.")
+                } else {
+                    fmt.println("Paired: the agent syncs with the other machine now.")
+                }
+                return 0
             case .Denied,.Failed: fmt.eprintfln("mirai kai pair: %s",progress.why);return 1
             }
             free_all(context.temp_allocator)
@@ -1120,4 +1155,10 @@ kai_proposal :: proc(p:^ka.Project,k:^Kai_Machine,project_id:vcs.Log_Id,a:^Kai_A
 @(private="file")
 crypto_zero :: proc(buffer:^[vcs.RECOVERY_TEXT]u8) {
     for &b in buffer {b=0}
+}
+
+// Wipes a recovery key typed in, which lives in the temp allocator.
+@(private="file")
+crypto_zero_text :: proc(text:string) {
+    for &b in transmute([]u8)text {b=0}
 }

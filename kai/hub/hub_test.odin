@@ -622,11 +622,11 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         b:=call(f,"POST",fmt.tprintf("/api/approvals/%s",ln.id),string(offer_body))
         code:[9]u8
         testing.expectf(t,b.status==200 && strings.contains(b.body,kai.device_link_code(linked.identity.key,&code)),"both ends show the code: %d %s",b.status,b.body)
-        State :: struct {state:string,offer:struct {device,dh,proof,name,code:string}}
+        State :: struct {state:string,offer:struct {device,dh,kem,proof,name,code:string}}
         st:State
         json_read(t,call(f,"POST",fmt.tprintf("/api/approvals/%s/state",ln.id),fmt.tprintf(`{{"secret":"%s"}}`,ln.secret)),&st)
         testing.expect(t,st.offer.code==kai.device_link_code(linked.identity.key,&code),"the browser reads the machine's offer")
-        action:=fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","proof":"%s","name":"%s"}}`,hex(bob[:]),st.offer.device,st.offer.dh,st.offer.proof,st.offer.name)
+        action:=fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","kem":"%s","proof":"%s","name":"%s"}}`,hex(bob[:]),st.offer.device,st.offer.dh,st.offer.kem,st.offer.proof,st.offer.name)
         dd:Draft_Answer
         if !json_read(t,call(f,"POST","/api/drafts",action,cookie),&dd) {return}
         challenge:=store.address_of_bytes(unb64(dd.unsigned))

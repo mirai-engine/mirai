@@ -1,6 +1,7 @@
 package kai
 
 import "core:fmt"
+import "core:slice"
 import "core:testing"
 import "core:time"
 import "mirai:exchange"
@@ -519,4 +520,136 @@ a_settled_proposal_stays_in_the_store_until_asked_for :: proc(t:^testing.T) {
     testing.expect(t,l!=nil && len(l.items)==2,"it loads when asked for")
     agent_refold(a)
     testing.expect(t,agent_log(a,closed.id)==nil,"and goes at the next fold")
+}
+
+// What a withholding node gives carol: the logs before alice removed bob,
+// alice's device refs signed after it, naming the org's heads she had (the
+// removal among them, or a head that exists nowhere when forged), and bob's
+// refs. Agent 0 is the node, agent 1 carol, who reaches the org only through
+// it.
+@(private="file")
+Behind_Setup :: struct {
+    o:Test_Org,
+    node:Identity,
+    node_dh:net.Dh_Key,
+    alice_refs,bob_refs:store.Hash,
+    refs:[len(REFS_PREFIX)+64]u8,
+}
+
+@(private="file")
+behind_setup :: proc(t:^testing.T,m:^Mesh,s:^Behind_Setup,forged:bool) -> bool {
+    o:=&s.o
+    test_org_make(t,o)
+    s.node=identity_make()
+    s.node_dh,_=net.dh_key()
+    log_append(&o.org,.Node_Add,body_make(Node_Add_Body{node=s.node.key,dh=Dh_Key(s.node_dh.public),modes={.Seed}}),&o.alice.devices[0],20)
+    for k in 0..<2 {
+        for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project}) {
+            _,e:=log_save(&m.stores[k],l)
+            testing.expect_value(t,e,Error.None)
+        }
+    }
+    heads:=make([dynamic]store.Hash,context.temp_allocator)
+    if forged {
+        append(&heads,..test_heads(&o.org))
+        append(&heads,random_id(store.Hash))
+    } else {
+        _,e:=log_append(&o.org,.Member_Remove,body_make(Subject_Body{subject=o.bob.log.id}),&o.alice.devices[0],30)
+        testing.expect_value(t,e,Error.None)
+        append(&heads,..test_heads(&o.org))
+    }
+    slice.sort_by(heads[:],hash_less)
+    namespace:=refs_namespace(o.project.id,&s.refs)
+    r:=Device_Refs{project=o.project.id,device=o.alice.devices[0].key,seq=1,time=40,refs={{"main",test_change(t,&m.stores[0],&o.alice.devices[0],"alice's work")}},org_heads=heads[:]}
+    bytes,e:=device_refs_encode(&r,&o.alice.devices[0],context.temp_allocator)
+    testing.expect_value(t,e,Error.None)
+    s.alice_refs,e=object_put(&m.stores[0],.Device_Refs,bytes)
+    name:[32]u8
+    testing.expect_value(t,store.ref_set(&m.stores[0],namespace,refs_name(o.alice.devices[0].key,&name),s.alice_refs),store.Error.None)
+    if !mesh_start(t,m,0,s.node,s.node_dh,{},o.org.id,seed=true) {return false}
+    if !mesh_start(t,m,1,o.carol.devices[0],o.carol.dhs[0],o.carol.log.id,o.org.id) {return false}
+    return testing.expect_value(t,agent_connect(&m.agents[1],Dh_Key(s.node_dh.public),false,net.address_memory(mesh_endpoint(0))),Error.None)
+}
+
+@(private="file")
+carol_behind :: proc(m:^Mesh,data:rawptr) -> bool {
+    return agent_is_behind(&m.agents[1]) && len(m.agents[1].deferred)>=1
+}
+
+// Bob's refs, which the node relays once carol has heard alice's.
+@(private="file")
+behind_bob_writes :: proc(t:^testing.T,m:^Mesh,s:^Behind_Setup) {
+    e:Error
+    s.bob_refs,e=device_refs_publish(&m.stores[0],s.o.project.id,&s.o.bob.devices[0],{{"main",test_change(t,&m.stores[0],&s.o.bob.devices[0],"bob's work")}},41)
+    testing.expect_value(t,e,Error.None)
+    name:[32]u8
+    agent_changed(&m.agents[0],string(s.refs[:]),refs_name(s.o.bob.devices[0].key,&name))
+    mesh_until(m,3,nil,proc(m:^Mesh,data:rawptr) -> bool {return len(m.agents[1].deferred)>=2})
+}
+
+// Carol reaches the org only through a node that withholds alice's removal
+// of bob. Alice's device refs name the removal among the org's heads: carol
+// learns she is behind, and while she is she takes no write, so bob's refs,
+// signed after his removal and relayed by the node, are not taken; nor are
+// alice's, until the removal comes.
+@(test)
+a_peer_fed_a_stale_org_log_learns_it_is_behind :: proc(t:^testing.T) {
+    m:=new(Mesh)
+    defer free(m)
+    if !mesh_init(t,m,"kai-mesh-behind") {return}
+    defer mesh_destroy(m)
+    s:=new(Behind_Setup)
+    defer free(s)
+    defer test_org_destroy(&s.o)
+    if !behind_setup(t,m,s,false) {return}
+    c:=&m.agents[1]
+    if !testing.expectf(t,mesh_until(m,10,nil,carol_behind),"carol is not behind: %v, %d deferred",c.stats,len(c.deferred)) {return}
+    behind_bob_writes(t,m,s)
+    testing.expect(t,agent_is_behind(c) && c.stats.behind>=1 && len(c.deferred)>=2,"carol says she is behind, and bob's write waits")
+    name:[32]u8
+    namespace:=string(s.refs[:])
+    _,e:=store.ref_get(&m.stores[1],namespace,refs_name(s.o.bob.devices[0].key,&name))
+    testing.expect_value(t,e,store.Error.Missing)
+    _,e=store.ref_get(&m.stores[1],namespace,refs_name(s.o.alice.devices[0].key,&name))
+    testing.expect_value(t,e,store.Error.Missing)
+    testing.expect_value(t,c.stats.refs_accepted,0)
+    // The removal reaches her: she is not behind, takes alice's refs and refuses bob's.
+    testing.expect_value(t,agent_log_add(c,&s.o.org),Error.None)
+    testing.expect(t,!agent_is_behind(c),"the removal came")
+    held,ae:=store.ref_get(&m.stores[1],namespace,refs_name(s.o.alice.devices[0].key,&name))
+    testing.expect(t,ae==.None && held==s.alice_refs,"alice's refs are taken once the removal is here")
+    _,e=store.ref_get(&m.stores[1],namespace,refs_name(s.o.bob.devices[0].key,&name))
+    testing.expect_value(t,e,store.Error.Missing)
+    testing.expect(t,c.stats.refused>=1,"bob's refs are refused")
+}
+
+// A head that exists nowhere, named by alice's refs, holds carol behind
+// for BEHIND_SECONDS and no longer: then she lets it go, takes the writes
+// that waited, and alice's devices make her behind no more.
+@(test)
+a_forged_org_head_stalls_a_peer_no_longer_than_its_bound :: proc(t:^testing.T) {
+    m:=new(Mesh)
+    defer free(m)
+    if !mesh_init(t,m,"kai-mesh-forged-head") {return}
+    defer mesh_destroy(m)
+    s:=new(Behind_Setup)
+    defer free(s)
+    defer test_org_destroy(&s.o)
+    if !behind_setup(t,m,s,true) {return}
+    c:=&m.agents[1]
+    if !testing.expectf(t,mesh_until(m,10,nil,carol_behind),"carol is not behind: %v, %d deferred",c.stats,len(c.deferred)) {return}
+    behind_bob_writes(t,m,s)
+    m.now+=BEHIND_SECONDS/2
+    mesh_step(m)
+    testing.expect(t,agent_is_behind(c),"within the bound she waits")
+    m.now+=BEHIND_SECONDS/2
+    mesh_step(m)
+    testing.expect(t,!agent_is_behind(c) && c.stats.unfound>=1,"past the bound the head is let go")
+    name:[32]u8
+    namespace:=string(s.refs[:])
+    for device,i in ([]Key{s.o.alice.devices[0].key,s.o.bob.devices[0].key}) {
+        held,e:=store.ref_get(&m.stores[1],namespace,refs_name(device,&name))
+        testing.expect(t,e==.None && held==([]store.Hash{s.alice_refs,s.bob_refs})[i],"the writes that waited are taken")
+    }
+    testing.expect(t,slice.contains(c.unfound[:],s.o.alice.log.id),"alice's devices make carol behind no more")
 }

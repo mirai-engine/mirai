@@ -327,8 +327,10 @@ machine_device_revoke :: proc(m:^Machine,device:Key) -> Error {
 }
 
 // Writes a Witness of the removal at removal, of the log removal_log, in each
-// log of the org this store holds where one of keys signed: the org's own
-// for a device's revocation, its projects', proposals' and keyrings' for any.
+// log of the org this store holds where one of keys signed, its projects',
+// proposals' and keyrings', and always in the org's own for a device's
+// revocation: the org's heads then carry it, so a peer that lacks it learns it
+// is behind (mesh.odin).
 // Its parents are the heads this device knows, so what the removed keys
 // signed before stands there; a log where this device holds no right takes
 // none of it, and is left to a device that does.
@@ -342,7 +344,7 @@ machine_witness :: proc(m:^Machine,o:^Org_State,removal_log:Log_Id,removal:store
         }
         return false
     }
-    if removal_log!=org && signed(&o.log,keys) {
+    if removal_log!=org {
         if _,e:=log_append(&o.log,.Witness,body,&m.identity,machine_now(),user);e!=.None {return machine_fail(m,e,"the witness does not sign")}
         machine_log_save(m,&o.log) or_return
     }
@@ -389,8 +391,8 @@ machine_recovery_rotate :: proc(m:^Machine,recovery:string,buffer:^[RECOVERY_TEX
         if recovery!="" {return "",machine_fail(m,.Invalid_Argument,"the user has no recovery key yet: run it without one, and this device sets the first")}
         signer=&m.identity
     } else {
-        seed,ok:=recovery_decode(recovery)
-        if !ok {return "",machine_fail(m,.Invalid_Argument,"the recovery key does not read: type its 56 digits as they were printed")}
+        seed,why:=recovery_decode(recovery)
+        if why!="" {return "",machine_fail(m,.Invalid_Argument,why)}
         old.seed=seed
         crypto.zero_explicit(&seed,size_of(seed))
         identity_derive(&old)
@@ -405,6 +407,85 @@ machine_recovery_rotate :: proc(m:^Machine,recovery:string,buffer:^[RECOVERY_TEX
     if k:=log_find(&l,address);k<0 || !f.valid[k] {return "",machine_fail(m,.Unauthorized,"this device may not set the user's recovery key: a device of the user that is not revoked sets the first one")}
     machine_log_save(m,&l) or_return
     return recovery_encode(r.seed,buffer),.None
+}
+
+// The user whose id text gives, whole or by its first hex digits (eight at
+// least), among the users' logs the store holds; Missing while none matches.
+machine_user_find :: proc(m:^Machine,text:string) -> (user:Log_Id,error:Error) {
+    lower:=strings.to_lower(strings.trim_space(text),context.temp_allocator)
+    if len(lower)<8 {return {},machine_fail(m,.Invalid_Argument,"a user's id is 64 hex digits, or its first eight at least")}
+    refs,e:=store.ref_list(&m.store,USER_NAMESPACE,context.temp_allocator)
+    if e!=.None && e!=.Missing {return {},machine_fail(m,store_error(e),"the store's users do not list")}
+    found:=0
+    for r in refs {
+        if !strings.has_prefix(r.name,lower) {continue}
+        id,ok:=store.parse_hex(r.name)
+        if !ok {continue}
+        user=id
+        found+=1
+    }
+    if found==1 {return user,.None}
+    if found>1 {return {},machine_fail(m,.Invalid_Argument,"several users' ids start so: give more of the id")}
+    return {},machine_fail(m,.Missing,"no user of that id is in this store yet: join a recovery pairing a machine of one of the user's orgs offers (mirai kai pair offer recover --org <org>) and let the agent fetch it")
+}
+
+// Recovers the user of id onto this device, which has none, after its devices
+// were lost: recovery is the user's recovery key as it was printed, and the
+// user's log must be in the store (a recovery pairing brings it: mirai kai
+// pair offer recover on a machine of one of the user's orgs). The recovery
+// key signs this device into the log and revokes every device still active;
+// passkeys stay. The revocations are witnessed in the logs of the orgs this
+// store holds, and the agents of the others witness them when they fold them.
+machine_recover :: proc(m:^Machine,user:Log_Id,recovery:string,device:="") -> Error {
+    if m.user!={} {return machine_fail(m,.Invalid_Argument,"this device belongs to a user already: a user is recovered onto a device that has none")}
+    seed,why:=recovery_decode(strings.trim_space(recovery))
+    defer crypto.zero_explicit(&seed,size_of(seed))
+    if why!="" {return machine_fail(m,.Invalid_Argument,why)}
+    r:=Identity{seed=seed}
+    defer crypto.zero_explicit(&r,size_of(r))
+    if !identity_derive(&r) {return machine_fail(m,.Invalid_Argument,"the recovery key does not make a signing key: type it again")}
+    l:Log
+    log_init(&l,user,context.temp_allocator)
+    if e:=log_open(&m.store,&l,user,.User);e!=.None {
+        return machine_fail(m,e,"the user's log is not in this store yet: on a machine of one of the user's orgs run mirai kai pair offer recover --org <org>, join it here and let the agent fetch it")
+    }
+    f:User_Fold
+    if e:=user_fold(&f,&l,context.temp_allocator);e!=.None {return machine_fail(m,e,"the user's log does not fold: let the agent fetch it again")}
+    defer user_fold_destroy(&f)
+    if f.recovery=={} {return machine_fail(m,.Unauthorized,"the user has no recovery key: a user born of a passkey links a device from the browser instead")}
+    if f.recovery!=r.key {return machine_fail(m,.Unauthorized,"that recovery key reads but is not this user's now: give the newest one printed for this user, and check the user's id")}
+    if user_device_index(&f,m.identity.key)>=0 {return machine_fail(m,.Invalid_Argument,"this device was a device of the user and is revoked: recover onto a new store")}
+    name:[NAME_MAX]u8
+    named:=device_name_of(device,&name)
+    if !name_valid(named) {return machine_fail(m,.Invalid_Argument,"a device's name is 1 to 64 bytes of text, as laptop: give another")}
+    body:=body_make(Device_Add_Body{device=m.identity.key,dh=Dh_Key(m.dh.public),kem=machine_kem_public(m),proof=device_proof(&m.identity,transmute([32]u8)user,Dh_Key(m.dh.public),machine_kem_hash(m))},transmute([]u8)named)
+    written:=make([dynamic]store.Hash,context.temp_allocator)
+    lost:=make([dynamic]Key,context.temp_allocator)
+    add,e:=log_append(&l,.Device_Add,body,&r,machine_now())
+    if e!=.None {return machine_fail(m,e,"the device's entry does not sign")}
+    append(&written,add)
+    for d in f.devices {
+        if d.revoked {continue}
+        address,re:=log_append(&l,.Device_Revoke,revoke_body(d.key),&r,machine_now())
+        if re!=.None {return machine_fail(m,re,"a revocation does not sign")}
+        append(&written,address)
+        append(&lost,d.key)
+    }
+    user_fold_destroy(&f)
+    user_fold(&f,&l,context.temp_allocator)
+    for address in written {
+        if k:=log_find(&l,address);k<0 || !f.valid[k] {return machine_fail(m,.Unauthorized,"the user's log refuses the recovery: let the agent fetch the user's log again, a newer recovery key may be in it")}
+    }
+    machine_log_save(m,&l) or_return
+    machine_user_set(m,user) or_return
+    machine_tell(m,MACHINE_NAMESPACE,MACHINE_USER)
+    for org in m.orgs {
+        o:Org_State
+        if org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {continue}
+        defer org_state_destroy(&o)
+        for key,k in lost {machine_witness(m,&o,l.id,written[1+k],{key}) or_return}
+    }
+    return .None
 }
 
 // The contexts this device signs an entry of l under: the head of its user's
@@ -707,7 +788,9 @@ machine_device_of :: proc(s:^store.Store) -> (device:Overlay_Device,error:Error)
     identity:=machine_identity(s) or_return
     dh:=machine_dh(s) or_return
     defer crypto.zero_explicit(&dh,size_of(dh))
-    return {identity=identity,dh=Dh_Key(dh.public),dh_secret=transmute([32]u8)dh.private},.None
+    device=Overlay_Device{identity=identity,dh=Dh_Key(dh.public),dh_secret=transmute([32]u8)dh.private}
+    machine_secret(s,KEM_FILE,device.kem_seed[:]) or_return
+    return device,.None
 }
 
 // --- Projects ---

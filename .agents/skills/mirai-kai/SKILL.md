@@ -49,12 +49,14 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
   [keys](references/identity.md#keys), [the logs](references/identity.md#the-signed-logs),
   [folding, removals and witnesses](references/identity.md#folding-and-revocation) and
   [roles](references/identity.md#roles-and-rights).
-- Pairing a device, a member or a node: [pairing](references/identity.md#pairing).
+- Pairing a device, a member or a node: [pairing](references/identity.md#pairing); recovering a
+  user whose devices were lost: [keys](references/identity.md#keys).
 - Access for someone outside the org: [grants](references/identity.md#grants); what a device
   publishes: [device refs](references/identity.md#device-refs).
 - The runner, who reads what, how peers find each other, relay, beacon and nodes:
   [runner](references/mesh.md#the-runner), [access](references/mesh.md#who-reads-what),
-  [ladder](references/mesh.md#the-connection-ladder) and [nodes](references/mesh.md#nodes).
+  [ladder](references/mesh.md#the-connection-ladder) and [nodes](references/mesh.md#nodes); a peer
+  fed a stale org log: [behind](references/mesh.md#behind).
 - Derived data a cook takes from a peer: [derived data](references/mesh.md#derived-data); the
   summaries, thumbnails and asset diffs of the web view: [previews](references/node.md#previews).
 - Private files, scopes, keys, deny set and the publish scanner:
@@ -96,6 +98,15 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
    compares them and runs `mirai kai pair approve --code <digits>`, or `--deny`.
 3. A node is paired the same way from its own machine (`mirai-kai pair join`).
 
+### Recover an identity
+
+1. On a machine of one of the user's orgs (a teammate's, a node), `mirai kai pair offer recover
+   --org O`; on the fresh machine, with a Kai agent running, `mirai kai pair join <ticket>`, and
+   the other approves the code. The agent fetches the org's user logs.
+2. `mirai kai identity recover <user>` takes the recovery key as printed (the editor: Recover in
+   the Team view). The new device is in, the lost ones are revoked, and the agents admit it.
+3. If the key may have been seen, rotate it: `mirai kai identity recovery`.
+
 ### Review and land
 
 1. Publish a stack: `mirai kai proposal open <target> -m title` on the working change's parent.
@@ -126,8 +137,9 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
 
 ### Change Kai
 
-1. A new kind of record or log entry changes the stored layout: bump `VERSION`, add its bounds to
-   `kai/types.odin` and its hostile-input test; there is no migration.
+1. A new kind of record or log entry changes the stored layout: raise the kind's line in
+   `VERSIONS` (`kai/types.odin`), the one place an object of another version is refused (a log
+   entry follows `Log_Page`), add its bounds and its hostile-input test; there is no migration.
 2. An operation the CLI and the editor both need goes into `kai` (no workspace) or `cook/kai`
    (workspace), never into `editor` or `tools/mirai`; it reports through `m.why` what failed and
    how to fix it.
@@ -159,6 +171,10 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   user born in a browser is its passkey alone: the page makes no recovery or device key.
 - A recovery key is shown once and never crosses an API or a result; a method of an editor with no
   window refuses to make or rotate one.
+- An epoch key is wrapped for each device under X25519 and ML-KEM-768 at once; nothing else of Kai
+  is post-quantum, on purpose ([why](references/private.md#keyrings-and-epochs)).
+- An agent that lacks an org entry a writer's record or a member's witness names takes no write
+  until it comes or `BEHIND_SECONDS` let it go; each user's devices stall it once.
 - A run of the editor that ends by itself (a check of a build, a capture) and a guest of a session
   open no workspace: only an editor someone drives records history.
 - The plaintext of a scoped file never enters the public store, a public change never names an
@@ -189,8 +205,10 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
 - Identity: `revocation_witness_rejects_backdated_entries`, `a_removed_writer_keeps_its_past`,
   `concurrent_admin_removals_fold_deterministically`, `pairing_rejects_mitm_label_grinding`,
   `grants_verify_against_the_org`, `a_grant_signs_checks_only_while_it_holds`,
-  `a_log_of_100000_entries_folds_and_appends_in_bounds` (prints the fold's time) and
-  `device_refs_reject_rollback` in `kai`.
+  `a_log_of_100000_entries_folds_and_appends_in_bounds` (prints the fold's time),
+  `pairing_links_a_device_and_adds_a_member`, `hostile_log_entries_are_refused`,
+  `a_user_recovers_onto_a_new_device_with_its_recovery_key` and `device_refs_reject_rollback` in
+  `kai`.
 - Mesh: `org_members_sync_refs_and_ddc_over_sim_network`,
   `a_member_gets_only_what_its_org_reaches`,
   `a_settled_proposal_stays_in_the_store_until_asked_for`,
@@ -198,11 +216,15 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `a_grant_holder_reads_and_writes_only_its_scope_until_it_ends`,
   `two_agents_pair_and_sync_a_change_over_loopback_udp`,
   `a_relay_node_joins_two_agents_that_cannot_reach_each_other`,
-  `runner_refuses_hostile_datagrams` and `a_ddc_node_drops_least_used_outputs_past_its_quota` in
-  `kai`; `a_cook_takes_derived_data_a_peer_built` and
+  `runner_refuses_hostile_datagrams`, `a_ddc_node_drops_least_used_outputs_past_its_quota`,
+  `a_peer_fed_a_stale_org_log_learns_it_is_behind` and
+  `a_forged_org_head_stalls_a_peer_no_longer_than_its_bound` in `kai`;
+  `a_cook_takes_derived_data_a_peer_built` and
   `asset_summaries_are_stable_and_follow_their_bytes` in `cook/kai`.
 - Private files: `scoped_plaintext_never_enters_public_store`,
   `removed_member_cannot_decrypt_post_rotation_epoch`, `removing_a_keyring_signer_keeps_its_epochs`,
+  `an_epoch_key_opens_only_with_both_device_secrets` (prints a device's entry, an envelope and an
+  epoch of 10 devices),
   `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.
 - Proposals: `proposal_comments_reanchor_across_rewrites`,
   `landing_enforces_policy_and_zero_conflicts` and

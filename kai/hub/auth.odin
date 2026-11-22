@@ -683,9 +683,11 @@ route_approval_get :: proc(c:^Call) {
 offer_write :: proc(j:^Json,a:^Approval) {
     json_key(j,"offer")
     json_object(j)
-    device,dh,proof:=a.offer.device,a.offer.dh,a.offer.proof
+    device,dh,kem,proof:=a.offer.device,a.offer.dh,a.offer.kem,a.offer.proof
     json_member_hex(j,"device",device[:])
     json_member_hex(j,"dh",dh[:])
+    json_key(j,"kem")
+    json_base64(j,kem[:])
     json_key(j,"proof")
     json_base64(j,proof[:])
     json_member_string(j,"name",string(a.offer_name[:a.offer_name_len]))
@@ -708,7 +710,7 @@ route_approval_answer :: proc(c:^Call) {
         fail(c,409,"the approval is answered or expired already")
         return
     }
-    Body :: struct {device,signature,entry,dh,proof,name:string}
+    Body :: struct {device,signature,entry,dh,kem,proof,name:string}
     b:Body
     if !body_parse(c,&b) {return}
     switch a.kind {
@@ -716,12 +718,14 @@ route_approval_answer :: proc(c:^Call) {
     case .Device:
         offer:kai.Device_Add_Body
         proof,pok:=base64_parse(b.proof,64)
-        if !hex_parse(b.device,offer.device[:]) || !hex_parse(b.dh,offer.dh[:]) || !pok || len(proof)!=64 || len(b.name)==0 || len(b.name)>kai.NAME_MAX {
-            fail(c,400,"device and dh are the machine's keys (64 hex each), proof base64url of its signature over LABEL_DEVICE || the user's log id, name 1 to 64 bytes")
+        kem,kok:=base64_parse(b.kem,kai.KEM_PUBLIC)
+        if !hex_parse(b.device,offer.device[:]) || !hex_parse(b.dh,offer.dh[:]) || !pok || len(proof)!=64 || !kok || !kai.kem_valid(kem) || len(b.name)==0 || len(b.name)>kai.NAME_MAX {
+            fail(c,400,"device and dh are the machine's keys (64 hex each), kem base64url of its ML-KEM-768 key, proof base64url of its signature over LABEL_DEVICE || the user's log id || dh || BLAKE3(kem), name 1 to 64 bytes")
             return
         }
         copy(offer.proof[:],proof)
-        if !kai.device_proof_valid(offer.device,transmute([32]u8)a.user,offer.proof) {
+        copy(offer.kem[:],kem)
+        if !kai.device_proof_valid(offer.device,transmute([32]u8)a.user,offer.dh,offer.kem[:],offer.proof) {
             fail(c,401,"the proof is not the device's over this user")
             return
         }

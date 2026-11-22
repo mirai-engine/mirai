@@ -304,11 +304,13 @@ approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string,sign:=true
         code:[9]u8
         summary=fmt.tprintf("link this device to the user %s on %s; the browser must show %s",ask.user[:12],origin,kai.device_link_code(m.identity.key,&code))
         if !sign {return nil,summary,""}
-        proof:=kai.device_proof(&m.identity,transmute([32]u8)user)
+        proof:=kai.device_proof(&m.identity,transmute([32]u8)user,kai.Dh_Key(m.dh.public),kai.machine_kem_hash(m))
         name_buffer:[kai.NAME_MAX]u8
-        key,dh:=m.identity.key,m.dh.public
+        key,dh,kem:=m.identity.key,m.dh.public,kai.machine_kem_public(m)
         json_member_hex(&j,"device",key[:])
         json_member_hex(&j,"dh",dh[:])
+        json_key(&j,"kem")
+        json_base64(&j,kem[:])
         json_key(&j,"proof")
         json_base64(&j,proof[:])
         json_member_string(&j,"name",kai.device_name_of("",&name_buffer))

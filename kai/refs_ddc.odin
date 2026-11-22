@@ -9,6 +9,8 @@ import "mirai:store"
 // record it signed with a sequence number. A peer takes a newer record only
 // when it is signed, its device may write the project, and its seq is higher
 // than the one held: a peer or a seed cannot roll a device's bookmarks back.
+// A record names the heads of the org's log its device had when it signed, so
+// a peer fed a stale org log by whoever it reaches learns it is behind.
 // Display names come from the logs; store names stay in [a-z0-9._-].
 //
 // Signed derived data (DDC): what a writer or a holder of a ddc grant built,
@@ -24,19 +26,18 @@ DDC_PREFIX :: "kai-ddc-"
 DEVICE_REFS_MAX :: 1024
 DDC_RECORDS_MAX :: 64
 DDC_OUTPUT_MAX :: 1<<16 // objects one output lists
-DDC_VERSION :: 2        // of DDC records, sets and outputs
 TAINTED_MAX :: 64
 
 Device_Refs_Head :: struct #packed {
     magic:u32,
-    version:u16,
     count:u16,
+    org_heads:u8,     // <= ENTRY_PARENTS_MAX
     project:Log_Id,
     device:Key,
     seq:u64,          // strictly higher in each record of the device
     prev:store.Hash,  // the record before, zero for the first
     time:i64,         // ns
-} // + count × (Revision target, u8 length, bookmark), sorted by bookmark, then Signature
+} // + count × (Revision target, u8 length, bookmark), sorted by bookmark, [org_heads]store.Hash sorted, then Signature
 
 Bookmark_Ref :: struct {name:string,target:Revision}
 
@@ -47,6 +48,7 @@ Device_Refs :: struct {
     prev:store.Hash,
     time:i64,
     refs:[]Bookmark_Ref,
+    org_heads:[]store.Hash, // of the org's log, as its device had them
     signature:Signature,
 }
 
@@ -65,18 +67,22 @@ refs_name :: proc(device:Key,buffer:^[32]u8) -> string {
 }
 
 device_refs_encode :: proc(r:^Device_Refs,identity:^Identity,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
-    if len(r.refs)>DEVICE_REFS_MAX {return nil,.Too_Large}
+    if len(r.refs)>DEVICE_REFS_MAX || len(r.org_heads)>ENTRY_PARENTS_MAX {return nil,.Too_Large}
     if identity.key!=r.device || r.project=={} || r.seq==0 {return nil,.Invalid_Argument}
     for ref,i in r.refs {
         if len(ref.name)==0 || len(ref.name)>BOOKMARK_NAME_MAX || !utf8.valid_string(ref.name) || ref.target=={} {return nil,.Invalid_Argument}
         if i>0 && r.refs[i-1].name>=ref.name {return nil,.Invalid_Argument}
     }
     w:=writer_make(allocator)
-    write_value(&w,Device_Refs_Head{magic=KAI_MAGIC,version=VERSION,count=u16(len(r.refs)),project=r.project,device=r.device,seq=r.seq,prev=r.prev,time=r.time})
+    write_value(&w,Device_Refs_Head{magic=KAI_MAGIC,count=u16(len(r.refs)),org_heads=u8(len(r.org_heads)),project=r.project,device=r.device,seq=r.seq,prev=r.prev,time=r.time})
     for ref in r.refs {
         write_value(&w,ref.target)
         write_value(&w,u8(len(ref.name)))
         write_string(&w,ref.name)
+    }
+    for h,i in r.org_heads {
+        if h=={} || (i>0 && !hash_less(r.org_heads[i-1],h)) {return nil,.Invalid_Argument}
+        write_value(&w,h)
     }
     if w.failed {return nil,.Out_Of_Memory}
     r.signature=sign(identity,w.data[:])
@@ -89,7 +95,7 @@ device_refs_encode :: proc(r:^Device_Refs,identity:^Identity,allocator:=context.
 device_refs_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (r:Device_Refs,error:Error) {
     reader:=Reader{data=bytes}
     head:=read_value(&reader,Device_Refs_Head)
-    if reader.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.count>DEVICE_REFS_MAX || head.project=={} || head.seq==0 {return {},.Corrupt}
+    if reader.short || head.magic!=KAI_MAGIC || head.count>DEVICE_REFS_MAX || head.org_heads>ENTRY_PARENTS_MAX || head.project=={} || head.seq==0 {return {},.Corrupt}
     r.project,r.device,r.seq,r.prev,r.time=head.project,head.device,head.seq,head.prev,head.time
     refs,e:=make([]Bookmark_Ref,head.count,allocator)
     if e!=nil {return {},.Out_Of_Memory}
@@ -98,6 +104,20 @@ device_refs_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (r:Device
         ref.target=read_value(&reader,Revision)
         ref.name=tail_string(&reader)
         if reader.short || ref.target=={} || len(ref.name)==0 || !utf8.valid_string(ref.name) || (i>0 && r.refs[i-1].name>=ref.name) {
+            delete(refs,allocator)
+            return {},.Corrupt
+        }
+    }
+    heads:=reader.data[min(reader.at,len(reader.data)):]
+    size:=int(head.org_heads)*size_of(store.Hash)
+    if len(heads)<size {
+        delete(refs,allocator)
+        return {},.Corrupt
+    }
+    r.org_heads=slice.reinterpret([]store.Hash,heads[:size])
+    reader.at+=size
+    for h,i in r.org_heads {
+        if h=={} || (i>0 && !hash_less(r.org_heads[i-1],h)) {
             delete(refs,allocator)
             return {},.Corrupt
         }
@@ -131,9 +151,21 @@ device_refs_get :: proc(s:^store.Store,project:Log_Id,device:Key,allocator:=cont
 }
 
 // Signs and writes this device's refs of the project: the next seq after the
-// one it holds.
+// one it holds, with the heads of the org's log the store holds.
 device_refs_publish :: proc(s:^store.Store,project:Log_Id,identity:^Identity,refs:[]Bookmark_Ref,time:i64) -> (address:store.Hash,error:Error) {
     r:=Device_Refs{project=project,device=identity.key,seq=1,time=time}
+    heads:=make([dynamic]store.Hash,context.temp_allocator)
+    p:Log
+    log_init(&p,project,context.temp_allocator)
+    if log_open(s,&p,project,.Project)==.None {
+        if org,_:=project_org(&p);org!={} {
+            o:Log
+            log_init(&o,org,context.temp_allocator)
+            if log_open(s,&o,org,.Org)==.None {log_heads(&o,&heads)}
+        }
+    }
+    slice.sort_by(heads[:],hash_less)
+    r.org_heads=heads[:min(len(heads),ENTRY_PARENTS_MAX)]
     if old,old_address,e:=device_refs_get(s,project,identity.key,context.temp_allocator);e==.None {
         r.seq,r.prev=old.seq+1,old_address
     } else if e!=.Missing {
@@ -266,7 +298,6 @@ grant_writes_within :: proc(s:^store.Store,scope:string,author:Key,targets,known
 
 DDC_Record_Head :: struct #packed {
     magic:u32,
-    version:u16,
     tainted:u8,
     reserved:u8,
     org:Log_Id,
@@ -284,13 +315,11 @@ DDC_Record :: struct {
 
 DDC_Set_Head :: struct #packed {
     magic:u32,
-    version:u16,
     count:u16,
 } // + count × (u16 length, record), sorted by output_root, one per output_root
 
 DDC_Output_Head :: struct #packed {
     magic:u32,
-    version:u16,
     reserved:u16,
     count:u32,
 } // + [count]store.Hash: the result, then the others sorted, each once
@@ -306,7 +335,7 @@ ddc_record_encode :: proc(d:^DDC_Record,identity:^Identity,allocator:=context.al
     if len(d.tainted_scopes)>TAINTED_MAX {return nil,.Too_Large}
     if identity.key!=d.producer || d.org=={} || d.key=={} || d.output_root=={} {return nil,.Invalid_Argument}
     head:=d.head
-    head.magic,head.version,head.tainted,head.reserved=KAI_MAGIC,DDC_VERSION,u8(len(d.tainted_scopes)),0
+    head.magic,head.tainted,head.reserved=KAI_MAGIC,u8(len(d.tainted_scopes)),0
     w:=writer_make(allocator)
     write_value(&w,head)
     for t in d.tainted_scopes {write_value(&w,t)}
@@ -320,7 +349,7 @@ ddc_record_encode :: proc(d:^DDC_Record,identity:^Identity,allocator:=context.al
 ddc_record_decode :: proc(bytes:[]u8) -> (d:DDC_Record,error:Error) {
     r:=Reader{data=bytes}
     d.head=read_value(&r,DDC_Record_Head)
-    if r.short || d.magic!=KAI_MAGIC || d.version!=DDC_VERSION || d.reserved!=0 || d.tainted>TAINTED_MAX || d.org=={} || d.key=={} || d.output_root=={} {return {},.Corrupt}
+    if r.short || d.magic!=KAI_MAGIC || d.reserved!=0 || d.tainted>TAINTED_MAX || d.org=={} || d.key=={} || d.output_root=={} {return {},.Corrupt}
     d.tainted_scopes=slice.reinterpret([]Scope_Id,read_bytes(&r,int(d.tainted)*size_of(Scope_Id)))
     d.signature=read_value(&r,Signature)
     if r.short || r.at!=len(bytes) {return {},.Corrupt}
@@ -346,7 +375,7 @@ ddc_set_read :: proc(s:^store.Store,address:store.Hash,out:^[dynamic][]u8) -> Er
     bytes:=object_get(s,address,.DDC_Set,context.temp_allocator) or_return
     r:=Reader{data=bytes}
     head:=read_value(&r,DDC_Set_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=DDC_VERSION || head.count==0 || head.count>DDC_RECORDS_MAX {return .Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.count==0 || head.count>DDC_RECORDS_MAX {return .Corrupt}
     for _ in 0..<head.count {
         size:=read_value(&r,u16)
         record:=read_bytes(&r,int(size))
@@ -360,7 +389,7 @@ ddc_set_read :: proc(s:^store.Store,address:store.Hash,out:^[dynamic][]u8) -> Er
 @(private)
 ddc_set_write :: proc(s:^store.Store,org:Log_Id,key:store.Hash,records:[][]u8) -> (address:store.Hash,error:Error) {
     w:=writer_make(context.temp_allocator)
-    write_value(&w,DDC_Set_Head{magic=KAI_MAGIC,version=DDC_VERSION,count=u16(len(records))})
+    write_value(&w,DDC_Set_Head{magic=KAI_MAGIC,count=u16(len(records))})
     for r in records {
         write_value(&w,u16(len(r)))
         write_bytes(&w,r)
@@ -463,7 +492,7 @@ ddc_output_put :: proc(s:^store.Store,objects:[]store.Hash) -> (address:store.Ha
     }
     slice.sort_by(rest[:],hash_less)
     w:=writer_make(context.temp_allocator)
-    write_value(&w,DDC_Output_Head{magic=KAI_MAGIC,version=DDC_VERSION})
+    write_value(&w,DDC_Output_Head{magic=KAI_MAGIC})
     write_value(&w,objects[0])
     count:=1
     for o,i in rest {
@@ -486,7 +515,7 @@ ddc_output_get :: proc(s:^store.Store,address:store.Hash,allocator:=context.allo
 ddc_output_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (objects:[]store.Hash,error:Error) {
     r:=Reader{data=bytes}
     head:=read_value(&r,DDC_Output_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=DDC_VERSION || head.reserved!=0 || head.count==0 || head.count>DDC_OUTPUT_MAX {return nil,.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 || head.count==0 || head.count>DDC_OUTPUT_MAX {return nil,.Corrupt}
     if len(bytes)-r.at!=int(head.count)*size_of(store.Hash) {return nil,.Corrupt}
     listed:=slice.reinterpret([]store.Hash,bytes[r.at:])
     for o,i in listed {

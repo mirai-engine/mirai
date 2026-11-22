@@ -730,6 +730,8 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
         {{name=long},"1 to 64 bytes"},
         {{revoke="b",device="pc"},"goes with name"},
         {{name="a",device=long},"1 to 64 bytes"},
+        {{recover="ab12cd34"},"recover takes recovery"},
+        {{recover="ab12cd34",recovery="x",name="a"},"give one of"},
     }
     for c in identities {
         p:=c.p
@@ -739,7 +741,7 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
     // With no window to show a recovery key to, neither making a user nor
     // rotating its key makes anything.
     s.headless=true
-    for &p in ([]Api_Kai_Identity_Params{{name="ana"},{recovery="ABCD"}}) {
+    for &p in ([]Api_Kai_Identity_Params{{name="ana"},{recovery="ABCD"},{first_recovery=true}}) {
         call,_:=kai_call(s,api_kai_identity,&p,Api_Kai_Identity)
         testing.expectf(t,call.failed && strings.contains(call.error.message,"mirai kai identity"),"%v %s",p,call.error.message)
     }
@@ -757,7 +759,7 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
         refused(t,call,c.want)
     }
     pairs:=[?]struct{p:Api_Kai_Pair_Params,want:string}{
-        {{offer="cat"},"member, device or node"},
+        {{offer="cat"},"member, device, node or recover"},
         {{offer="member",role="god"},"reader, writer or admin"},
         {{offer="node",modes="teleport"},"relay, seed and ddc"},
         {{join="not a ticket"},"does not read"},

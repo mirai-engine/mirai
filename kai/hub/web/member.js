@@ -285,6 +285,9 @@ export const NodeStats = {
                 h('thead', h('tr', ['Org', 'Peer', 'Class', 'Path', 'Node'].map(t => h('th', t)))),
                 h('tbody', s.peers.map(p => h('tr', [h('td', h('code', short(p.org))), h('td', h('code', short(p.dh))), h('td', p.class), h('td', p.rung), h('td', p.node ? 'yes' : '')]))),
             ])),
+            ...s.orgs.filter(o => o.behind > 0 || o.unfound > 0).map(o => h('p', {class: o.behind > 0 ? 'error' : 'quiet'}, o.behind > 0
+                ? `Org ${short(o.org)} is behind: ${o.behind} entries of its logs that peers named are not here yet, and their writes wait until a peer gives them.`
+                : `Org ${short(o.org)} let go of ${o.unfound} entries peers named that never came.`)),
             h('h2', 'Relay'),
             h('dl', {class: 'facts'}, [['Devices', s.relay.devices], ['Forwarded', s.relay.forwarded], ['Dropped', s.relay.dropped]].map(([k, v]) => [h('dt', k), h('dd', String(v))])),
             h('h2', 'Store'),

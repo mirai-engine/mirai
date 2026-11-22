@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:crypto"
 import "core:crypto/aegis"
 import "core:crypto/hkdf"
+import "core:crypto/mlkem"
 import "core:crypto/x25519"
 import "core:math"
 import "core:math/bits"
@@ -35,9 +36,11 @@ import "mirai:store"
 //                   edit dedups within its file and epoch while nothing
 //                   confirms a guessed plaintext.
 //
-// A scope's epoch key is wrapped in an Epoch_Add for every device that may
-// read the scope; when the scope keeps history the new key wraps the previous
-// one too. A write is refused while the newest epoch still wraps for a device
+// A scope's epoch key is wrapped for every device that may read the scope,
+// in an Envelopes object an Epoch_Add names; when the scope keeps history the
+// Epoch_Add wraps the previous key under the new one too. A device's
+// envelope is a hybrid of X25519 and ML-KEM-768, so a key sealed today stays
+// sealed for whoever keeps the store until both are broken. A write is refused while the newest epoch still wraps for a device
 // that may no longer read the scope: any reader rotates first.
 //
 // The nonce of a chunk is BLAKE3 over k_nonce || q: std/blake3 has no keyed
@@ -54,7 +57,7 @@ OVERLAY_BLOB_MAX :: 256<<20
 OVERLAY_TAG :: u32('K')|u32('O')<<8|u32('V')<<16|u32('C')<<24 // the native group of a sealed chunk
 SCAN_LINE_MAX :: 4096 // bytes of a line the scanner reads; the rest of a longer line is skipped
 
-LABEL_WRAP :: "kai-1/wrap"
+LABEL_WRAP :: "kai-1/wrap-hybrid"
 LABEL_PREV :: "kai-1/prev"
 LABEL_FILE :: "kai-1/file"
 LABEL_CHUNK :: "kai-1/chunk"
@@ -73,21 +76,13 @@ DENY_PATTERNS :: [?]string{".env*","*.pem","*.key","id_*","*.p12"}
 File_Id :: distinct [16]u8 // random for a new private file, kept across its edits and renames
 Epoch_Key :: [32]u8
 
-// A device as the overlays see it: what it signs with and its X25519 pair.
+// A device as the overlays see it: what it signs with, its X25519 pair and
+// the seed of its ML-KEM-768 decapsulation key.
 Overlay_Device :: struct {
     identity:Identity,
     dh:Dh_Key,
     dh_secret:[32]u8,
-}
-
-Overlay_Kind :: enum u8 {None,Record,Tree,File,Blob}
-
-// What the root of every overlay object carries as meta.
-Overlay_Meta :: struct #packed {
-    magic:u32,
-    kind:Overlay_Kind,
-    reserved:u8,
-    version:u16,
+    kem_seed:[KEM_SEED]u8,
 }
 
 // --- Primitives ---
@@ -139,7 +134,8 @@ get_u32 :: proc "contextless" (bytes:[]u8) -> u32 {
     return u32(v)
 }
 
-// The additional data of a wrapped key: org_id || scope_id || epoch || dh.
+// The additional data of a wrapped key: org_id || scope_id || epoch || dh,
+// dh zero for the previous epoch's key.
 @(private)
 wrap_aad :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,dh:Dh_Key) -> (aad:[32+16+4+32]u8) {
     o,s,d:=org,scope,dh
@@ -150,58 +146,86 @@ wrap_aad :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,dh:Dh_Key) -> (aad:[32+16+4
     return
 }
 
-// The key and nonce of a wrap: HKDF-SHA256("kai-1/wrap") over X25519(e, dh),
-// salted with both public keys.
+// The ML-KEM encapsulation key of the decapsulation key of seed.
+kem_public :: proc(seed:^[KEM_SEED]u8) -> (kem:[KEM_PUBLIC]u8,ok:bool) {
+    dk:mlkem.Decapsulation_Key
+    defer mlkem.decapsulation_key_clear(&dk)
+    if !mlkem.decapsulation_key_set_bytes(&dk,KEM,seed[:]) {return}
+    mlkem.decapsulation_key_encaps_bytes(&dk,kem[:])
+    return kem,true
+}
+
+// The key and nonce of a wrap: HKDF-SHA256 with the info LABEL_WRAP over the
+// X25519 and the ML-KEM shared secrets, salted with the BLAKE3 of the KEM
+// ciphertext, the ephemeral share and the device's two public keys: opening
+// takes both secrets, and no part of the envelope or of the device's keys can
+// be swapped.
 @(private)
-wrap_keys :: proc(shared:[]u8,e_public:[]u8,dh:Dh_Key) -> (okm:[64]u8) {
-    salt:[64]u8
-    d:=dh
-    copy(salt[:],e_public)
-    copy(salt[32:],d[:])
-    hkdf.extract_and_expand(.SHA256,salt[:],shared,transmute([]u8)string(LABEL_WRAP),okm[:])
+wrap_keys :: proc(x_shared,k_shared:^[32]u8,e:^Envelope,kem:[]u8) -> (okm:[64]u8) {
+    h:blake3.Hasher
+    blake3.init(&h)
+    blake3.update(&h,e.kem[:])
+    blake3.update(&h,e.share[:])
+    blake3.update(&h,e.dh[:])
+    blake3.update(&h,kem)
+    salt:=blake3.final(&h)
+    ikm:[64]u8
+    defer crypto.zero_explicit(&ikm,64)
+    copy(ikm[:32],x_shared[:])
+    copy(ikm[32:],k_shared[:])
+    hkdf.extract_and_expand(.SHA256,salt[:],ikm[:],transmute([]u8)string(LABEL_WRAP),okm[:])
     return
 }
 
-// key wrapped for the device dh: an ephemeral X25519 public key, the
-// ciphertext and its tag.
-envelope_wrap :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,dh:Dh_Key,key:^Epoch_Key) -> (envelope:Envelope,ok:bool) {
-    secret,public,shared:[32]u8
+// key wrapped for the device of X25519 key dh and ML-KEM key kem: a fresh
+// X25519 share and an ML-KEM encapsulation to it, both needed to open it.
+envelope_wrap :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,dh:Dh_Key,kem:[]u8,key:^Epoch_Key) -> (envelope:Envelope,ok:bool) {
+    secret,x_shared,k_shared:[32]u8
     defer crypto.zero_explicit(&secret,32)
-    defer crypto.zero_explicit(&shared,32)
+    defer crypto.zero_explicit(&x_shared,32)
+    defer crypto.zero_explicit(&k_shared,32)
+    if len(kem)!=KEM_PUBLIC {return}
     crypto.rand_bytes(secret[:])
-    x25519.scalarmult_basepoint(public[:],secret[:])
+    x25519.scalarmult_basepoint(envelope.share[:],secret[:])
     point:=dh
-    x25519.scalarmult(shared[:],secret[:],point[:])
-    if crypto.is_zero_constant_time(shared[:])==1 {return}
-    okm:=wrap_keys(shared[:],public[:],dh)
+    x25519.scalarmult(x_shared[:],secret[:],point[:])
+    if crypto.is_zero_constant_time(x_shared[:])==1 {return {},false}
+    if !mlkem.encaps_ek_raw_bytes(KEM,kem,k_shared[:],envelope.kem[:]) {return {},false}
+    envelope.dh=dh
+    okm:=wrap_keys(&x_shared,&k_shared,&envelope,kem)
     defer crypto.zero_explicit(&okm,64)
     aad:=wrap_aad(org,scope,epoch,dh)
-    envelope.dh=dh
-    copy(envelope.wrapped[:32],public[:])
-    aead_seal(okm[:32],okm[32:],aad[:],key[:],envelope.wrapped[32:64],envelope.wrapped[64:])
+    aead_seal(okm[:32],okm[32:],aad[:],key[:],envelope.sealed[:],envelope.tag[:])
     return envelope,true
+}
+
+// The key an envelope wraps, opened with the device's X25519 secret and
+// ML-KEM decapsulation key, kem being the encapsulation key the salt binds.
+envelope_open :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,envelope:^Envelope,dh_secret:^[32]u8,dk:^mlkem.Decapsulation_Key,kem:[]u8) -> (key:Epoch_Key,ok:bool) {
+    x_shared,k_shared:[32]u8
+    defer crypto.zero_explicit(&x_shared,32)
+    defer crypto.zero_explicit(&k_shared,32)
+    if len(kem)!=KEM_PUBLIC {return}
+    x25519.scalarmult(x_shared[:],dh_secret[:],envelope.share[:])
+    if crypto.is_zero_constant_time(x_shared[:])==1 {return}
+    if !mlkem.decaps(dk,envelope.kem[:],k_shared[:]) {return}
+    okm:=wrap_keys(&x_shared,&k_shared,envelope,kem)
+    defer crypto.zero_explicit(&okm,64)
+    aad:=wrap_aad(org,scope,epoch,envelope.dh)
+    if !aead_open(okm[:32],okm[32:],aad[:],envelope.sealed[:],envelope.tag[:],key[:]) {return {},false}
+    return key,true
 }
 
 // The key an envelope wraps for device.
 envelope_unwrap :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,device:^Overlay_Device,envelope:Envelope) -> (key:Epoch_Key,ok:bool) {
     if envelope.dh!=device.dh {return}
-    shared:[32]u8
-    defer crypto.zero_explicit(&shared,32)
+    dk:mlkem.Decapsulation_Key
+    defer mlkem.decapsulation_key_clear(&dk)
+    if !mlkem.decapsulation_key_set_bytes(&dk,KEM,device.kem_seed[:]) {return}
+    kem:[KEM_PUBLIC]u8
+    mlkem.decapsulation_key_encaps_bytes(&dk,kem[:])
     e:=envelope
-    x25519.scalarmult(shared[:],device.dh_secret[:],e.wrapped[:32])
-    if crypto.is_zero_constant_time(shared[:])==1 {return}
-    okm:=wrap_keys(shared[:],e.wrapped[:32],envelope.dh)
-    defer crypto.zero_explicit(&okm,64)
-    aad:=wrap_aad(org,scope,epoch,envelope.dh)
-    if !aead_open(okm[:32],okm[32:],aad[:],e.wrapped[32:64],e.wrapped[64:],key[:]) {return {},false}
-    return key,true
-}
-
-// The dh an epoch's envelope of the previous key carries: no device's key.
-prev_marker :: proc(epoch:u32) -> Dh_Key {
-    e:[4]u8
-    put_u32(e[:],epoch)
-    return Dh_Key(keyed_hash(transmute([]u8)string(LABEL_PREV),e[:]))
+    return envelope_open(org,scope,epoch,&e,&device.dh_secret,&dk,kem[:])
 }
 
 @(private)
@@ -210,25 +234,25 @@ prev_key :: proc(key:^Epoch_Key) -> (k:[32]u8) {
     return
 }
 
-// The previous epoch's key wrapped under the key of epoch.
+// The previous epoch's key wrapped under the key of epoch: symmetric, which
+// a quantum computer does not break.
 @(private)
-prev_wrap :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,key,previous:^Epoch_Key) -> (envelope:Envelope) {
+prev_wrap :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,key,previous:^Epoch_Key) -> (w:Prev_Wrap) {
     k:=prev_key(key)
     defer crypto.zero_explicit(&k,32)
-    envelope.dh=prev_marker(epoch)
-    crypto.rand_bytes(envelope.wrapped[:32])
-    aad:=wrap_aad(org,scope,epoch,envelope.dh)
-    aead_seal(k[:],envelope.wrapped[:32],aad[:],previous[:],envelope.wrapped[32:64],envelope.wrapped[64:])
+    crypto.rand_bytes(w.nonce[:])
+    aad:=wrap_aad(org,scope,epoch,{})
+    aead_seal(k[:],w.nonce[:],aad[:],previous[:],w.sealed[:],w.tag[:])
     return
 }
 
 @(private)
-prev_unwrap :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,key:^Epoch_Key,envelope:Envelope) -> (previous:Epoch_Key,ok:bool) {
+prev_unwrap :: proc(org:Log_Id,scope:Scope_Id,epoch:u32,key:^Epoch_Key,w:Prev_Wrap) -> (previous:Epoch_Key,ok:bool) {
     k:=prev_key(key)
     defer crypto.zero_explicit(&k,32)
-    e:=envelope
-    aad:=wrap_aad(org,scope,epoch,envelope.dh)
-    if !aead_open(k[:],e.wrapped[:32],aad[:],e.wrapped[32:64],e.wrapped[64:],previous[:]) {return {},false}
+    x:=w
+    aad:=wrap_aad(org,scope,epoch,{})
+    if !aead_open(k[:],x.nonce[:],aad[:],x.sealed[:],x.tag[:],previous[:]) {return {},false}
     return previous,true
 }
 
@@ -257,56 +281,123 @@ device_reads :: proc(org:^Org_Fold,scope:Org_Scope,device:^Overlay_Device) -> bo
     return role>=scope.readers && dh_reads(org,scope,device.dh)
 }
 
-// The X25519 keys of every active device of the members who may read scope.
+// A device an epoch's key is wrapped for: its X25519 key and its ML-KEM key,
+// in its user's log.
 @(private)
-scope_readers :: proc(org:^Org_Fold,scope:Org_Scope,out:^[dynamic]Dh_Key) -> Error {
+Scope_Reader :: struct {dh:Dh_Key,kem:[]u8}
+
+// Every active device of the members who may read scope, sorted by dh.
+@(private)
+scope_readers :: proc(org:^Org_Fold,scope:Org_Scope,out:^[dynamic]Scope_Reader) -> Error {
     for m in org.members {
         if m.role<scope.readers {continue}
         for u in org.users {
             if u.log.id!=m.user {continue}
             for d in u.devices {
-                if d.revoked || slice.contains(out[:],d.dh) {continue}
-                if _,e:=append(out,d.dh);e!=nil {return .Out_Of_Memory}
+                if d.revoked {continue}
+                held:=false
+                for r in out {held||=r.dh==d.dh}
+                if held {continue}
+                if _,e:=append(out,Scope_Reader{d.dh,user_device_kem(u,d)});e!=nil {return .Out_Of_Memory}
             }
         }
     }
+    slice.sort_by(out[:],proc(a,b:Scope_Reader) -> bool {return dh_less(a.dh,b.dh)})
     return .None
 }
 
+// The envelopes of an epoch's object, sorted by dh and each device once:
+// Missing while the object is not here.
+keyring_envelopes :: proc(k:^Keyring_Fold,body:Epoch_Add_Body,allocator:=context.temp_allocator) -> (envelopes:[]Envelope,error:Error) {
+    if k.store==nil {return nil,.Missing}
+    bytes:=overlay_get(k.store,body.envelopes,.Envelopes,ENVELOPES_MAX*size_of(Envelope),allocator) or_return
+    if len(bytes)!=int(body.devices)*size_of(Envelope) {return nil,.Corrupt}
+    envelopes=slice.reinterpret([]Envelope,bytes)
+    for i in 1..<len(envelopes) {
+        if !dh_less(envelopes[i-1].dh,envelopes[i].dh) {return nil,.Corrupt}
+    }
+    return envelopes,.None
+}
+
+// Whether the epoch's key is wrapped for the device dh.
+keyring_wraps :: proc(k:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> bool {
+    for x in k.envelopes {
+        if x.epoch==epoch && x.envelope.dh==dh {return true}
+    }
+    body,ok:=keyring_epoch(k,epoch)
+    if !ok {return false}
+    envelopes,e:=keyring_envelopes(k,body)
+    if e!=.None {return false}
+    _,found:=slice.binary_search_by(envelopes,dh,proc(e:Envelope,dh:Dh_Key) -> slice.Ordering {
+        return e.dh==dh?.Equal:(dh_less(e.dh,dh)?.Less:.Greater)
+    })
+    return found
+}
+
 // Whether a write must wait for a rotation: no epoch yet, or the newest one
-// still wraps its key for a device that may no longer read the scope.
+// still wraps its key for a device that may no longer read the scope. An
+// epoch whose envelopes are not here yet is judged once they are.
 keyring_needs_rotation :: proc(k:^Keyring_Fold) -> bool {
     scope,ok:=keyring_scope(k)
     if !ok || k.epoch==0 {return true}
-    marker:=prev_marker(k.epoch)
-    for e in k.envelopes {
-        if e.epoch==k.epoch && e.envelope.dh!=marker && !dh_reads(k.org,scope,e.envelope.dh) {return true}
+    for x in k.envelopes {
+        if x.epoch==k.epoch && !dh_reads(k.org,scope,x.envelope.dh) {return true}
+    }
+    body,_:=keyring_epoch(k,k.epoch)
+    envelopes,e:=keyring_envelopes(k,body)
+    if e!=.None {return false}
+    for x in envelopes {
+        if !dh_reads(k.org,scope,x.dh) {return true}
     }
     return false
 }
 
+// The key of epoch e as device holds it, from its envelope in the epoch's
+// object or one an Envelope_Add gave: found when one names the device.
+@(private)
+keyring_own_key :: proc(k:^Keyring_Fold,device:^Overlay_Device,e:u32) -> (key:Epoch_Key,found:bool,error:Error) {
+    org:=k.org.log.id
+    body,ok:=keyring_epoch(k,e)
+    if !ok {return {},false,.Corrupt}
+    envelopes,ee:=keyring_envelopes(k,body)
+    if ee!=.None && ee!=.Missing {return {},false,ee}
+    for x in envelopes {
+        if x.dh!=device.dh {continue}
+        found=true
+        if key,ok=envelope_unwrap(org,k.scope,e,device,x);ok {return key,true,.None}
+    }
+    for x in k.envelopes {
+        if x.epoch!=e || x.envelope.dh!=device.dh {continue}
+        found=true
+        if key,ok=envelope_unwrap(org,k.scope,e,device,x.envelope);ok {return key,true,.None}
+    }
+    if found {return {},true,.Corrupt}
+    return {},false,ee
+}
+
 // The key of epoch as device holds it: its own envelope of that epoch, or of a
-// later one and then the previous keys down to epoch.
+// later one and then the previous keys down to epoch. Missing while an
+// epoch's envelopes are not in the store.
 keyring_epoch_key :: proc(k:^Keyring_Fold,device:^Overlay_Device,epoch:u32) -> (key:Epoch_Key,error:Error) {
     if epoch==0 || epoch>k.epoch {return {},.Invalid_Argument}
     org:=k.org.log.id
     at:=u32(0)
     for e:=epoch;e<=k.epoch;e+=1 {
-        envelope,found:=keyring_envelope(k,e,device.dh)
-        if !found {continue}
-        ok:bool
-        if key,ok=envelope_unwrap(org,k.scope,e,device,envelope);!ok {return {},.Corrupt}
-        at=e
-        break
+        found:bool
+        key,found=keyring_own_key(k,device,e) or_return
+        if found {
+            at=e
+            break
+        }
     }
     if at==0 {return {},.Unauthorized}
     for e:=at;e>epoch;e-=1 {
-        envelope,found:=keyring_envelope(k,e,prev_marker(e))
-        if !found {
+        body,_:=keyring_epoch(k,e)
+        if !body.history {
             crypto.zero_explicit(&key,size_of(key))
             return {},.Unauthorized
         }
-        previous,ok:=prev_unwrap(org,k.scope,e,&key,envelope)
+        previous,ok:=prev_unwrap(org,k.scope,e,&key,body.previous)
         crypto.zero_explicit(&key,size_of(key))
         if !ok {return {},.Corrupt}
         key=previous
@@ -316,30 +407,31 @@ keyring_epoch_key :: proc(k:^Keyring_Fold,device:^Overlay_Device,epoch:u32) -> (
 
 @(private)
 keyring_refold :: proc(k:^Keyring_Fold) -> Error {
-    l,org,allocator:=k.log,k.org,k.envelopes.allocator
+    l,org,s,allocator:=k.log,k.org,k.store,k.envelopes.allocator
     keyring_fold_destroy(k)
-    return keyring_fold(k,l,org,allocator)
+    return keyring_fold(k,l,org,s,allocator)
 }
 
 // Starts the Keyring_Log of a scope at l, empty, with its first epoch: k is
-// its fold. The caller saves the log.
-keyring_create :: proc(k:^Keyring_Fold,l:^Log,org:^Org_Fold,project:Log_Id,scope:Scope_Id,device:^Overlay_Device,time:i64,allocator:=context.allocator) -> Error {
+// its fold, s where its envelopes go. The caller saves the log.
+keyring_create :: proc(k:^Keyring_Fold,l:^Log,org:^Org_Fold,s:^store.Store,project:Log_Id,scope:Scope_Id,device:^Overlay_Device,time:i64,allocator:=context.allocator) -> Error {
     user,_:=org_device_role(org,device.identity.key)
     _,e:=log_append(l,.Keyring_Genesis,body_make(Keyring_Genesis_Body{org=org.log.id,project=project,scope=scope}),&device.identity,time,{},org_context(org,user))
     if e!=.None {return e}
-    keyring_fold(k,l,org,allocator) or_return
+    keyring_fold(k,l,org,s,allocator) or_return
     if k.project!=project {return .Unauthorized}
     _,error:=rotate_scope_epoch(k,device,time)
     return error
 }
 
 // Adds the next epoch of the scope: a new random key wrapped for every device
-// that may read it now, and the previous key under the new one when the scope
-// keeps history. Any device that reads the scope may call it; the log's fold
-// takes it from a writer. The caller saves the log.
+// that may read it now, in an Envelopes object of the store, and the previous
+// key under the new one when the scope keeps history. Any device that reads
+// the scope may call it; the log's fold takes it from a writer. The caller
+// saves the log.
 rotate_scope_epoch :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64) -> (epoch:u32,error:Error) {
     scope,ok:=keyring_scope(k)
-    if !ok {return 0,.Invalid_Argument}
+    if !ok || k.store==nil {return 0,.Invalid_Argument}
     if !device_reads(k.org,scope,device) {return 0,.Unauthorized}
     previous,key:Epoch_Key
     defer crypto.zero_explicit(&previous,size_of(previous))
@@ -348,24 +440,23 @@ rotate_scope_epoch :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64) -> (
     if history {previous=keyring_epoch_key(k,device,k.epoch) or_return}
     crypto.rand_bytes(key[:])
     epoch=k.epoch+1
-    readers:=make([dynamic]Dh_Key,context.temp_allocator)
+    readers:=make([dynamic]Scope_Reader,context.temp_allocator)
     scope_readers(k.org,scope,&readers) or_return
-    count:=len(readers)+(history?1:0)
-    if count==0 {return 0,.Invalid_Argument}
-    if count>ENVELOPES_MAX || size_of(Epoch_Add_Body)+count*size_of(Envelope)>ENTRY_BODY_MAX {return 0,.Too_Large}
-    envelopes,made:=make([]Envelope,count,context.temp_allocator)
+    if len(readers)==0 {return 0,.Invalid_Argument}
+    if len(readers)>ENVELOPES_MAX {return 0,.Too_Large}
+    envelopes,made:=make([]Envelope,len(readers),context.temp_allocator)
     if made!=nil {return 0,.Out_Of_Memory}
     org:=k.org.log.id
-    for dh,i in readers {
-        envelope,wrapped:=envelope_wrap(org,k.scope,epoch,dh,&key)
+    for r,i in readers {
+        envelope,wrapped:=envelope_wrap(org,k.scope,epoch,r.dh,r.kem,&key)
         if !wrapped {return 0,.Invalid_Argument}
         envelopes[i]=envelope
     }
-    if history {envelopes[len(readers)]=prev_wrap(org,k.scope,epoch,&key,&previous)}
-    body:=body_make(Epoch_Add_Body{epoch=epoch,envelopes=u16(count)},slice.to_bytes(envelopes))
-    if body==nil {return 0,.Out_Of_Memory}
+    body:=Epoch_Add_Body{epoch=epoch,devices=u16(len(readers)),history=b8(history)}
+    body.envelopes=object_put(k.store,.Envelopes,slice.to_bytes(envelopes)) or_return
+    if history {body.previous=prev_wrap(org,k.scope,epoch,&key,&previous)}
     user,_:=org_device_role(k.org,device.identity.key)
-    log_append(k.log,.Epoch_Add,body,&device.identity,time,{},org_context(k.org,user)) or_return
+    log_append(k.log,.Epoch_Add,body_make(body),&device.identity,time,{},org_context(k.org,user)) or_return
     keyring_refold(k) or_return
     if k.epoch!=epoch {return 0,.Unauthorized}
     return epoch,.None
@@ -558,39 +649,11 @@ open_chunk :: proc(z:^Sealer,keys:^File_Keys,aad:[]u8,sealed:[]u8) -> (plain:[]u
 // --- Overlay objects ---
 
 @(private)
-overlay_meta :: proc(kind:Overlay_Kind) -> [size_of(Overlay_Meta)]u8 {
-    m:=Overlay_Meta{magic=OVERLAY_MAGIC,kind=kind,version=VERSION}
-    return transmute([size_of(Overlay_Meta)]u8)m
-}
-
-@(private)
-overlay_put :: proc(s:^store.Store,kind:Overlay_Kind,bytes:[]u8) -> (address:store.Hash,error:Error) {
-    p,begin:=store.put_begin(s)
-    if begin!=.None {return {},store_error(begin)}
-    if e:=store.put_write(&p,bytes);e!=.None {
-        store.put_abandon(&p)
-        return {},store_error(e)
-    }
-    meta:=overlay_meta(kind)
-    a,_,e:=store.put_finish(&p,meta[:])
-    return a,store_error(e)
-}
-
-@(private)
-overlay_kind_check :: proc(o:^store.Object,kind:Overlay_Kind) -> Error {
-    meta:=store.object_meta(o)
-    if len(meta)!=size_of(Overlay_Meta) {return .Corrupt}
-    m:=(^Overlay_Meta)(raw_data(meta))^
-    if m.magic!=OVERLAY_MAGIC || m.kind!=kind || m.reserved!=0 || m.version!=VERSION {return .Corrupt}
-    return .None
-}
-
-@(private)
-overlay_get :: proc(s:^store.Store,address:store.Hash,kind:Overlay_Kind,limit:int,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
+overlay_get :: proc(s:^store.Store,address:store.Hash,kind:Object_Kind,limit:int,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
     o,open:=store.object_open(s,address)
     if open!=.None {return nil,store_error(open)}
     defer store.object_close(&o)
-    overlay_kind_check(&o,kind) or_return
+    meta_check(store.object_meta(&o),kind,0) or_return
     size:=store.object_size(&o)
     if size>u64(limit) {return nil,.Too_Large}
     made,made_error:=make([]u8,int(size),allocator)
@@ -654,7 +717,7 @@ seal_file :: proc(z:^Sealer,s:^store.Store,path:string,scope:Scope_Id,epoch:u32,
         store.put_abandon(&p)
         return {},content,0,.None
     }
-    meta:=overlay_meta(.File)
+    meta:=object_meta(.Overlay_File)
     a,_,e:=store.put_finish(&p,meta[:])
     if e!=.None {return {},{},0,store_error(e)}
     return a,content,size,.None
@@ -674,7 +737,7 @@ open_file :: proc(z:^Sealer,s:^store.Store,scope:Scope_Id,epoch:u32,key:^Epoch_K
     o,open:=store.object_open(s,entry.object)
     if open!=.None {return nil,store_error(open)}
     defer store.object_close(&o)
-    overlay_kind_check(&o,.File) or_return
+    meta_check(store.object_meta(&o),.Overlay_File,0) or_return
     groups:=store.object_groups(&o)
     total:=store.object_size(&o)
     if len(groups)==0 || len(groups)>OVERLAY_FILE_CHUNKS_MAX {return nil,.Corrupt}
@@ -715,7 +778,6 @@ Overlay_Entry :: struct {
 
 Overlay_Tree_Head :: struct #packed {
     magic:u32,
-    version:u16,
     reserved:u16,
     count:u32,
 } // + [count]Overlay_Entry_Head sorted by path, then the paths
@@ -741,7 +803,7 @@ tree_key :: proc(key:^Epoch_Key) -> (k:[32]u8) {
 tree_seal :: proc(entries:[]Overlay_Entry,project:Log_Id,scope:Scope_Id,epoch:u32,key:^Epoch_Key,allocator:=context.allocator) -> (sealed:[]u8,error:Error) {
     if len(entries)>OVERLAY_FILES_MAX {return nil,.Too_Large}
     w:=writer_make(context.temp_allocator)
-    write_value(&w,Overlay_Tree_Head{magic=OVERLAY_MAGIC,version=VERSION,count=u32(len(entries))})
+    write_value(&w,Overlay_Tree_Head{magic=OVERLAY_MAGIC,count=u32(len(entries))})
     for e in entries {
         head:=e.head
         head.reserved,head.path_len=0,u16(len(e.path))
@@ -788,7 +850,7 @@ tree_open :: proc(sealed:[]u8,project:Log_Id,scope:Scope_Id,epoch:u32,key:^Epoch
 tree_decode :: proc(plain:[]u8,out:^[dynamic]Overlay_Entry) -> Error {
     r:=Reader{data=plain}
     head:=read_value(&r,Overlay_Tree_Head)
-    if r.short || head.magic!=OVERLAY_MAGIC || head.version!=VERSION || head.reserved!=0 || head.count>OVERLAY_FILES_MAX {return .Corrupt}
+    if r.short || head.magic!=OVERLAY_MAGIC || head.reserved!=0 || head.count>OVERLAY_FILES_MAX {return .Corrupt}
     if !count_fits(&r,u64(head.count),size_of(Overlay_Entry_Head)) {return .Corrupt}
     heads:=read_bytes(&r,int(head.count)*size_of(Overlay_Entry_Head))
     for k in 0..<int(head.count) {
@@ -807,7 +869,6 @@ tree_decode :: proc(plain:[]u8,out:^[dynamic]Overlay_Entry) -> Error {
 
 Overlay_Record_Head :: struct #packed {
     magic:u32,
-    version:u16,
     reserved:u16,
     seq:u64,            // 1 for the first record of a chain, one more than prev's after
     prev:store.Hash,    // the record this one follows; zero for the first
@@ -834,7 +895,7 @@ overlay_record_encode :: proc(r:^Overlay_Record,identity:^Identity,allocator:=co
     }
     if r.seq==0 || (r.seq==1)!=(r.prev=={}) || r.commit=={} || r.tree_root=={} || r.epoch==0 || r.author!=identity.key {return nil,.Invalid_Argument}
     head:=r.head
-    head.magic,head.version,head.reserved,head.files=OVERLAY_MAGIC,VERSION,0,u32(len(r.objects))
+    head.magic,head.reserved,head.files=OVERLAY_MAGIC,0,u32(len(r.objects))
     w:=writer_make(allocator)
     write_value(&w,head)
     write_bytes(&w,slice.to_bytes(r.objects))
@@ -849,7 +910,7 @@ overlay_record_encode :: proc(r:^Overlay_Record,identity:^Identity,allocator:=co
 overlay_record_decode :: proc(bytes:[]u8) -> (r:Overlay_Record,error:Error) {
     rd:=Reader{data=bytes}
     r.head=read_value(&rd,Overlay_Record_Head)
-    if rd.short || r.magic!=OVERLAY_MAGIC || r.version!=VERSION || r.reserved!=0 || r.files>OVERLAY_FILES_MAX {return {},.Corrupt}
+    if rd.short || r.magic!=OVERLAY_MAGIC || r.reserved!=0 || r.files>OVERLAY_FILES_MAX {return {},.Corrupt}
     if r.seq==0 || (r.seq==1)!=(r.prev=={}) || r.commit=={} || r.tree_root=={} || r.epoch==0 {return {},.Corrupt}
     if !count_fits(&rd,u64(r.files),size_of(store.Hash)) {return {},.Corrupt}
     r.objects=slice.reinterpret([]store.Hash,read_bytes(&rd,int(r.files)*size_of(store.Hash)))
@@ -896,7 +957,7 @@ overlay_record_get :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit:R
     name:[64]u8
     a,e:=store.ref_get(s,overlay_namespace(project,scope,&ns),store.hex(commit,&name))
     if e!=.None {return {},{},store_error(e)}
-    bytes:=overlay_get(s,a,.Record,OVERLAY_RECORD_MAX,allocator) or_return
+    bytes:=overlay_get(s,a,.Overlay_Record,OVERLAY_RECORD_MAX,allocator) or_return
     r=overlay_record_decode(bytes) or_return
     if r.project!=project || r.scope!=scope || r.commit!=commit {return {},{},.Corrupt}
     return r,a,.None
@@ -920,7 +981,7 @@ overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record
     }
     r.author=identity.key
     bytes:=overlay_record_encode(r,identity,context.temp_allocator) or_return
-    address=overlay_put(s,.Record,bytes) or_return
+    address=object_put(s,.Overlay_Record,bytes) or_return
     ns:[len(OVERLAY_PREFIX)+64+1+32]u8
     name:[64]u8
     set:=store.Ref_Set{overlay_namespace(r.project,r.scope,&ns),store.hex(r.commit,&name),address}
@@ -945,7 +1006,7 @@ overlay_accept :: proc(s:^store.Store,org:^Org_Fold,namespace,name:string,addres
         if sc.project==project && sc.scope==scope {known=true}
     }
     if !known {return {},false,.Unauthorized}
-    bytes:=overlay_get(s,address,.Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
+    bytes:=overlay_get(s,address,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
     r=overlay_record_decode(bytes) or_return
     if r.project!=project || r.scope!=scope || r.commit!=commit {return {},false,.Corrupt}
     if !signed_valid(bytes,r.author) {return {},false,.Unauthorized}
@@ -1009,7 +1070,7 @@ overlay_open :: proc(o:^Overlay,s:^store.Store,k:^Keyring_Fold,device:^Overlay_D
     o.record=record
     o.address=address
     o.key=keyring_epoch_key(k,device,o.record.epoch) or_return
-    sealed:=overlay_get(s,o.record.tree_root,.Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
+    sealed:=overlay_get(s,o.record.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
     o.tree=tree_open(sealed,k.project,k.scope,o.record.epoch,&o.key,&o.entries,allocator) or_return
     // The record names exactly the tree's file objects.
     objects:=make([dynamic]store.Hash,context.temp_allocator)
@@ -1141,7 +1202,7 @@ overlay_route :: proc(r:^Overlay_Routing,s:^store.Store,root:string,previous:[]R
                 key,key_error:=keyring_epoch_key(p.keyring,&r.device,rec.epoch)
                 if key_error!=.None {break}
                 defer crypto.zero_explicit(&key,size_of(key))
-                sealed:=overlay_get(s,rec.tree_root,.Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
+                sealed:=overlay_get(s,rec.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
                 tree_open(sealed,r.project,sc.scope,rec.epoch,&key,&p.previous,context.temp_allocator) or_return
                 break
             }
@@ -1281,7 +1342,7 @@ overlay_seal :: proc(r:^Overlay_Routing,s:^store.Store,root:string,plan:^Overlay
             continue
         }
         sealed:=tree_seal(p.files[:],r.project,p.scope.scope,epoch,&p.key,context.temp_allocator) or_return
-        p.tree=overlay_put(s,.Tree,sealed) or_return
+        p.tree=object_put(s,.Overlay_Tree,sealed) or_return
     }
     return .None
 }
@@ -1322,7 +1383,7 @@ overlay_publish :: proc(r:^Overlay_Routing,s:^store.Store,plan:^Overlay_Plan,com
             rec:=Overlay_Record{head={commit=commit,project=r.project,scope=p.scope.scope,epoch=p.keyring.epoch,tree_root=p.tree,time=t},objects=p.objects[:]}
             overlay_record_write(s,&r.device.identity,&rec,p.base,p.base_seq,refs) or_return
         } else if p.base!={} {
-            base:=overlay_get(s,p.base,.Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
+            base:=overlay_get(s,p.base,.Overlay_Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
             rec:=overlay_record_decode(base) or_return
             if rec.commit==commit {continue}
             rec.commit,rec.time=commit,t
@@ -1406,7 +1467,7 @@ overlay_entries_at :: proc(r:^Overlay_Routing,s:^store.Store,k:^Keyring_Fold,rev
         if e!=.None {return e}
         x:=keyring_epoch_key(k,&r.device,rec.epoch) or_return
         defer crypto.zero_explicit(&x,size_of(x))
-        sealed:=overlay_get(s,rec.tree_root,.Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
+        sealed:=overlay_get(s,rec.tree_root,.Overlay_Tree,OVERLAY_TREE_MAX,context.temp_allocator) or_return
         tree_open(sealed,r.project,k.scope,rec.epoch,&x,out,context.temp_allocator) or_return
         if epoch!=nil {epoch^,key^=rec.epoch,x}
         return .None
@@ -1431,7 +1492,6 @@ overlay_taint :: proc(org:^Org_Fold,project:Log_Id,inputs:[]string,out:^[dynamic
 
 Blob_Head :: struct #packed {
     magic:u32,
-    version:u16,
     scopes:u8,
     reserved:u8,
     project:Log_Id,
@@ -1468,7 +1528,7 @@ blob_aad :: proc(head:[]u8,index:int,last:bool,out:^[len(LABEL_BLOB)+BLOB_HEAD_M
 @(private)
 blob_keys :: proc(keyrings:[]^Keyring_Fold,device:^Overlay_Device,project:Log_Id,scopes:[]Scope_Id,epochs:[]u32,head:^[BLOB_HEAD_MAX]u8) -> (size:int,keys:File_Keys,error:Error) {
     if len(scopes)==0 || len(scopes)>TAINTED_MAX {return 0,{},.Invalid_Argument}
-    h:=Blob_Head{magic=OVERLAY_MAGIC,version=VERSION,scopes=u8(len(scopes)),project=project}
+    h:=Blob_Head{magic=OVERLAY_MAGIC,scopes=u8(len(scopes)),project=project}
     size=copy(head[:],mem.ptr_to_bytes(&h))
     epoch_keys:[TAINTED_MAX]Epoch_Key
     defer crypto.zero_explicit(&epoch_keys,size_of(epoch_keys))
@@ -1569,7 +1629,7 @@ overlay_blob_finish :: proc(b:^Blob_Sealer) -> (address:store.Hash,error:Error) 
         store.put_abandon(&b.p)
         return {},b.error
     }
-    meta:=overlay_meta(.Blob)
+    meta:=object_meta(.Overlay_Blob)
     a,_,e:=store.put_finish(&b.p,meta[:])
     return a,store_error(e)
 }
@@ -1607,14 +1667,14 @@ overlay_blob_open :: proc(b:^Blob_Reader,s:^store.Store,keyrings:[]^Keyring_Fold
     b.o=o
     b.open=true
     defer if error!=.None {overlay_blob_close(b)}
-    overlay_kind_check(&b.o,.Blob) or_return
+    meta_check(store.object_meta(&b.o),.Overlay_Blob,0) or_return
     groups:=store.object_groups(&b.o)
     if len(groups)<2 || len(groups)>BLOB_CHUNKS_MAX+1 || groups[0].tag!=BLOB_HEAD_TAG || groups[0].index!=0 || groups[1].offset>BLOB_HEAD_MAX || groups[1].offset<size_of(Blob_Head) {return .Corrupt}
     size:=int(groups[1].offset)
     if e:=store.group_read(&b.o,0,0,b.head[:size]);e!=.None {return store_error(e)}
     r:=Reader{data=b.head[:size]}
     head:=read_value(&r,Blob_Head)
-    if r.short || head.magic!=OVERLAY_MAGIC || head.version!=VERSION || head.reserved!=0 || head.scopes==0 || int(head.scopes)>TAINTED_MAX || size!=size_of(Blob_Head)+int(head.scopes)*(size_of(Scope_Id)+4) {return .Corrupt}
+    if r.short || head.magic!=OVERLAY_MAGIC || head.reserved!=0 || head.scopes==0 || int(head.scopes)>TAINTED_MAX || size!=size_of(Blob_Head)+int(head.scopes)*(size_of(Scope_Id)+4) {return .Corrupt}
     scopes:[TAINTED_MAX]Scope_Id
     epochs:[TAINTED_MAX]u32
     for i in 0..<int(head.scopes) {

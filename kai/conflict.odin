@@ -19,7 +19,6 @@ Term :: struct #packed {
 
 Conflict_Head :: struct #packed {
     magic:u32,
-    version:u16,
     sides:u8,
     reserved:u8,
     driver:u32, // the driver that judged the sides, 0 for none
@@ -67,7 +66,7 @@ terms_resolved :: proc(t:^Terms($T)) -> (value:T,resolved:bool) {
 conflict_encode :: proc(adds,removes:[]Term,driver:u32,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
     if len(adds)<2 || len(adds)>CONFLICT_SIDES_MAX || len(removes)!=len(adds)-1 {return nil,.Invalid_Argument}
     w:=writer_make(allocator)
-    write_value(&w,Conflict_Head{magic=KAI_MAGIC,version=VERSION,sides=u8(len(adds)),driver=driver})
+    write_value(&w,Conflict_Head{magic=KAI_MAGIC,sides=u8(len(adds)),driver=driver})
     for a,i in adds {
         write_value(&w,a)
         if i<len(removes) {write_value(&w,removes[i])}
@@ -83,7 +82,7 @@ conflict_decode :: proc(bytes:[]u8,t:^Terms(Term)) -> (driver:u32,error:Error) {
     clear(&t.removes)
     r:=Reader{data=bytes}
     head:=read_value(&r,Conflict_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.reserved!=0 {return 0,.Corrupt}
+    if r.short || head.magic!=KAI_MAGIC || head.reserved!=0 {return 0,.Corrupt}
     if head.sides<2 || head.sides>CONFLICT_SIDES_MAX {return 0,.Corrupt}
     count:=2*int(head.sides)-1
     if len(bytes)-r.at!=count*size_of(Term) {return 0,.Corrupt}

@@ -44,6 +44,34 @@ How the machines of an org find each other and what each may read from the other
   affected key signed there, it writes the witness ([folding](identity.md#folding-and-revocation)).
 - A seed fetches what the closure of every bookmark lacks. A machine whose peers have not delivered
   a file yet asks the mesh for it: the editor reads again on its poll, a method waits for the bytes.
+- A keyring's envelopes are an object of their own: the agent fetches them with the log, a member's
+  set serves them and `store_live` keeps them.
+- A snapshot writes its overlays' refs without telling the mesh, and may keep the revision when only
+  private files changed: publishing a device's refs tells the overlays of their targets, and an
+  agent that walks a change tells its overlays to the peers that read them.
+- When an agent learns who a connected peer is, it gives the peer's exchange another tag in place:
+  removing and adding it again would read the answers already on their way as unasked.
+
+## Behind
+
+A peer that reaches the org only through a node or peer that withholds a `Member_Remove`, a
+`Device_Revoke` or a `Grant_Revoke` would take what the removed key signs. So:
+
+- A device's refs name the heads of the org's log its store had when it signed, and the org's log
+  witnesses every revocation of a member's device. A signed record of a device that may write, or
+  a witness by a member, that names an entry this agent lacks makes it **behind**: it asks every
+  peer for the logs again, says so (`mirai kai peers`, the editor's PEERS, the node's stats), and
+  takes no write until the entry comes: no log of a project, a proposal or a keyring, no device
+  refs, derived data or overlay record. They wait deferred, reads go on, and once it is not behind
+  they merge and every peer is asked again
+  (`a_peer_fed_a_stale_org_log_learns_it_is_behind`).
+- Every write waits, not only those signed after the point: a signer's time and heads are its own
+  claims, so what came after cannot be told from what came before.
+- The bound: an entry named that does not come within `BEHIND_SECONDS` is let go, and the user
+  whose device named it makes the agent behind no more. A member who names heads that exist
+  nowhere stalls a peer's writes once, for that long; a peer cut off longer than that by a
+  withholding node takes writes again and still says what it let go
+  (`a_forged_org_head_stalls_a_peer_no_longer_than_its_bound`).
 
 ## Who reads what
 
