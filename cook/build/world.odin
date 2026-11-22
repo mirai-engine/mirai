@@ -2744,7 +2744,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
     for r,ri in g.records {
         tag:=fmt.tprintf("%s_%s",snake(r.pkg.name),snake(r.name))
         _,has_default:=record_default(r)
-        game:=strings.has_prefix(r.pkg.path,"project:") && !strings.has_prefix(r.pkg.path,"project:plugins/")
+        game:=game_package(r.pkg)
         fmt.sbprintf(w,"    records[%d]={{\"%s\",\"%s\",typeid_of(%s.%s),type_info_of(%s.%s),typeid_of(%s.Record(%s.%s)),%s,%v}}\n",ri,r.name,r.pkg.name,r.pkg.alias,r.name,r.pkg.alias,r.name,core_alias,r.pkg.alias,r.name,has_default?fmt.tprintf("record_default_%s",tag):"nil",game)
     }
     fmt.sbprintf(w,"    record_codes:=make([]%s.Record_Code,%d)\n",core_alias,len(codes))
@@ -2758,7 +2758,7 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
         loop_set:=strings.builder_make(context.temp_allocator)
         if s.loops[0] {strings.write_string(&loop_set,".Game,")}
         if s.loops[1] {strings.write_string(&loop_set,".Editor,")}
-        fmt.sbprintf(w,"    steps[%d]={{\"%s\",\"%s\",{{%s}},{{%s}},call_%s}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name)
+        fmt.sbprintf(w,"    steps[%d]={{name=%q,library=%q,phases={{%s}},loops={{%s}},call=call_%s,plugin=%q,game=%v}}\n",si,s.name,s.pkg.name,strings.to_string(phase_set),strings.to_string(loop_set),s.name,project.import_plugin(s.pkg.path),game_package(s.pkg))
     }
     fmt.sbprintf(w,"    draws:=make([]%s.Draw_Info,%d)\n",core_alias,len(g.draws))
     for d,di in g.draws {fmt.sbprintf(w,"    draws[%d]={{%q,rawptr(%s.%s)}}\n",di,d.name,d.pkg.alias,d.ident)}
@@ -2841,11 +2841,15 @@ type_procs_write :: proc(w:^strings.Builder,t:^Type,c:string) {
     t.procs=strings.to_string(list)
 }
 
-// Whether the game of a project declares a type, not the engine or a plugin.
+// Whether a package is of the game of a project, not of the engine or a plugin.
 @(private="file")
-of_game :: proc(t:^Type) -> bool {
-    return t.pkg!=nil && strings.has_prefix(t.pkg.path,"project:") && !strings.has_prefix(t.pkg.path,"project:plugins/")
+game_package :: proc(pkg:^Package) -> bool {
+    return pkg!=nil && strings.has_prefix(pkg.path,"project:") && !strings.has_prefix(pkg.path,"project:plugins/")
 }
+
+// Whether the game of a project declares a type.
+@(private="file")
+of_game :: proc(t:^Type) -> bool {return game_package(t.pkg)}
 
 // The row of info.tables of a table of a type, after type_procs_write: name,
 // what the scene file and the API call it; offset, where it is in the struct
