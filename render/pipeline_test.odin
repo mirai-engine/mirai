@@ -30,7 +30,7 @@ pipelines_keep_their_order_leave_out_what_nothing_reads_and_say_what_is_wrong ::
 	}
 	light: Render_Plan
 	plan_compile(&light, {passes = standard_pipeline_passes(.Light)}, buffer[:])
-	testing.expect(t, .Reflections not_in light.stages && .Indirect not_in light.stages)
+	testing.expect(t, .Indirect not_in light.stages)
 	// The Indirect stage declares what its passes read: the contact occlusion and the probe volume.
 	{
 		full: Render_Plan

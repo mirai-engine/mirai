@@ -125,7 +125,7 @@ displaced_swap :: proc(r: ^Renderer, index: u32, mesh: Mesh_Handle) {
 	if !pose_instance_box(s, index) {
 		instance_touch(s, index)
 	}
-	s.tlas_moved, s.tlas_dirty = true, true
+	s.tlas_moved, s.tlas_dirty, s.bounds_stale = true, true, true
 }
 
 // Gives each instance whose programs move its vertices a pose, takes it from

@@ -1,7 +1,7 @@
 # Frame graph
 
 Passes run on GPU; CPU uploads dirty data through the frame ring. Texture views record before
-window views. Passes 2–16 form standard `Full`; custom [pipelines](views.md#render-pipelines) may
+window views. Passes 2–15 form standard `Full`; custom [pipelines](views.md#render-pipelines) may
 omit or interleave stages.
 
 ## Passes
@@ -34,37 +34,35 @@ omit or interleave stages.
    `direct_spread`, `direct_filter`, shadowless `light_lists`
    ([direct light](lights.md#direct-light-of-a-view)). Glass/overlays/back-side use
    `direct_lighting`.
-6. **reflect.** Traces + filters roughness < `reflection_roughness`; skipped if no material goes
-   below it ([reflections](materials.md#traced-reflections)).
-7. **ddgi.** First window view updates [probe volume](gi.md#probe-volume) by priority; still scenes
+6. **ddgi.** First window view updates [probe volume](gi.md#probe-volume) by priority; still scenes
    update only time-reading Surface programs in turns.
-8. **contact.** [Contact occlusion](gi.md#contact-occlusion) short rays + probe light to pixels.
-9. **composite.** `direct + indirect_compose + emission`
+7. **contact.** [Contact occlusion](gi.md#contact-occlusion) short rays + probe light to pixels.
+8. **composite.** `direct + indirect_compose + emission`
    ([composition](materials.md#indirect-composition)) or [inspection](settings.md#inspection-modes)
-   + aerial + background [grid](#reference-grid). Blends traced/probe specular. Runs
-   [`Lit`](views.md#extension-stages) (with glass visible, step 11 layer raster runs earlier so
+   + aerial + background [grid](#reference-grid). Specular reads probe volume and sky. Runs
+   [`Lit`](views.md#extension-stages) (with glass visible, step 10 layer raster runs earlier so
    `Lit` runs behind and in front of nearest layer).
-10. **overlay.** <= 4 Surface materials/instance over opaque/masked (depth-equal, no write,
-    excluded from BVH/TLAS, [overlays](../../mirai-core/references/host.md#loaded-assets)).
-11. **translucent.** Peels nearest glass layers; draws forward blends + overflow glass
+9. **overlay.** <= 4 Surface materials/instance over opaque/masked (depth-equal, no write,
+   excluded from BVH/TLAS, [overlays](../../mirai-core/references/host.md#loaded-assets)).
+10. **translucent.** Peels nearest glass layers; draws forward blends + overflow glass
     back-to-front against opaque depth (pyramid-culled; nearer-than-glass draws only in front).
-12. **glass.** Shades layers back-to-front ([glass](materials.md#glass); culled when absent;
-    projected bounds for reflections). Runs `Blend` (behind after peels, front after glass; once
-    after composite without glass), front `Lit` and `glass_inside`.
-13. **taa.** Upscales to window: 10% moving, <= 64-frame still average (4x16 jitter,
+11. **glass.** Shades layers back-to-front ([glass](materials.md#glass); culled when absent). Runs
+    `Blend` (behind after peels, front after glass; once after composite without glass), front
+    `Lit` and `glass_inside`.
+12. **taa.** Upscales to window: 10% moving, <= 64-frame still average (4x16 jitter,
     `Targets.taa_frames`), 3x3 YCoCg variance clamp (`TAA_STILL_GAMMA` widens when still),
     exposed-compressed weights (render-unit history), `Targets.reactive` (`Blend` coverage) and
     shadow-change marks (not passed to upscalers), depth in alpha, disocclusion reset (preserves
     still edges/thin wires).
-14. **exposure & HDR post.** Pre-TAA [exposure](display.md#exposure) meter, `Post` stage, ordered
+13. **exposure & HDR post.** Pre-TAA [exposure](display.md#exposure) meter, `Post` stage, ordered
     HDR PostProcess stack per `Camera.slot` (`renderer_set_view_postprocesses`) or frame
     (`renderer_set_postprocesses`): mid-gray 0.18, lazy targets, `fade` 0 skips, reads only
     `Output` `stage_contract` (linear depth, normal, outline mask), timed `postprocess hdr 1`,
     capped by `View_Inspection.postprocess`.
-15. **tonemap, LDR post & UI.** Exposure + [display LUT](display.md#display-transform) + fixed
+14. **tonemap, LDR post & UI.** Exposure + [display LUT](display.md#display-transform) + fixed
     1-LSB triangular dither (null at 0/1) -> [outlines](#outlines) -> LDR PostProcess -> world
     panels -> debug lines -> [UI layers](ui.md#ui-world-panels-and-debug-lines).
-16. **present.** Copy to swapchain; retains LDR for `renderer_capture`.
+15. **present.** Copy to swapchain; retains LDR for `renderer_capture`.
 
 ```slang
 #define GBUFFER_ALBEDO SLOT_PASS0

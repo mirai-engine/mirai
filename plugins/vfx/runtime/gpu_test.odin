@@ -1928,24 +1928,22 @@ particle_grids_start_from_their_state :: proc(t: ^testing.T) {
 }
 
 // A Surface program sees the color of the vertices of its mesh as data and
-// the object of its point, the same drawn and met by the rays of a mirror
-// (testdata/surface_probe.slang).
+// the object of its point (testdata/surface_probe.slang).
 @(test)
-programs_see_the_vertex_colors_and_the_object_of_their_point_drawn_and_reflected :: proc(t: ^testing.T) {
+programs_see_the_vertex_colors_and_the_object_of_their_point :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
 	settings := test_settings()
-	settings.taa, settings.reflections = false, .Detailed
+	settings.taa = false
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
 	program := gpu.program_find(r, "Surface_Probe", .Surface)
 	if !testing.expect(t, program != nil, "testdata has the Surface program Surface_Probe") {return}
-	probe, mirror := gpu.DEFAULT_MATERIAL, gpu.DEFAULT_MATERIAL
+	probe := gpu.DEFAULT_MATERIAL
 	probe.program_id = program.id
 	probe.custom_params[0] = {1, 0, 0, 0}
-	mirror.base_color, mirror.metallic, mirror.roughness = {0.9, 0.9, 0.9}, 1, 0.05
-	gpu.materials_set(r, {probe, mirror})
+	gpu.materials_set(r, {probe})
 	red := [3]f32{1, 0, 0}
 	quad := []gpu.Mesh_Vertex {
 		{position = {-0.5, 0, -0.5}, normal = {0, 1, 0}, color = red, tangent = {1, 0, 0, 1}},
@@ -1955,10 +1953,8 @@ programs_see_the_vertex_colors_and_the_object_of_their_point_drawn_and_reflected
 	}
 	mesh, made := gpu.mesh_add(r, quad, []u32{0, 2, 1, 0, 3, 2})
 	if !testing.expect(t, made, r.error) {return}
-	// The probe is 3 by 3 m over the mirror, its object twice as tall as its mesh.
 	gpu.scene_set_environment(r,{},{sky = {0, 0, 0}})
 	gpu.scene_update(r,0,{
-		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), material = 2, tint = {1, 1, 1}},
 		{object_id = 2, mesh = mesh, transform = trs({0, 2, -2}, {3, 2, 3}), material = 1, tint = {1, 1, 1}},
 	},true)
 	seen :: proc(t: ^testing.T, f: ^Gpu_Fixture, camera: gpu.Camera, points: [2][3]f32) -> (out: [2][3]f32) {
@@ -1973,16 +1969,10 @@ programs_see_the_vertex_colors_and_the_object_of_their_point_drawn_and_reflected
 	}
 	above := gpu.Camera{position = {0, 6, -1.99}, forward = {0, -4, -0.01}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	drawn := seen(t, f, above, {{-0.8, 2, -2}, {0.8, 2, -2}})
-	// The floor at x mirrors the probe at 2x: the camera is as high over it as the probe.
-	floor := gpu.Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	reflected := seen(t, f, floor, {{-0.4, 0, 0}, {0.4, 0, 0}})
-	for side, i in ([2][2][3]f32{drawn, reflected}) {
-		what := i == 0 ? "drawn" : "reflected"
-		left, right := side[0], side[1]
-		testing.expectf(t, left.r > left.b + 40 && right.r > 40, "%s, the probe glows with the red of its vertices: %v %v", what, left, right)
-		testing.expectf(t, left.g > 20 && left.g < left.r, "%s, the scale of its object along y: %v", what, left)
-		testing.expectf(t, right.b > left.b + 40, "%s, its +x side of the object: %v against %v", what, right, left)
-	}
+	left, right := drawn[0], drawn[1]
+	testing.expectf(t, left.r > left.b + 40 && right.r > 40, "drawn, the probe glows with the red of its vertices: %v %v", left, right)
+	testing.expectf(t, left.g > 20 && left.g < left.r, "drawn, the scale of its object along y: %v", left)
+	testing.expectf(t, right.b > left.b + 40, "drawn, its +x side of the object: %v against %v", right, left)
 	expect_clean(t, f.device)
 }
 

@@ -16,7 +16,7 @@ import "mirai:render/abi"
 
 POINTS_START :: 1 << 16 // points the buffer holds at first; it grows to what a frame asked for
 POINTS_MAX :: 1 << 21 // the most points it holds: past them a pass does without the programs
-POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BINS_MAX of bins.slang), and draws of the resolve of programs
+POINTS_PROGRAM_CAPACITY :: abi.POINTS_PROGRAM_CAPACITY
 @(private) POINTS_HEADER :: abi.POINTS_HEADER
 @(private) POINT_WORDS :: abi.POINT_WORDS
 @(private) RECORD_WORDS :: abi.RECORD_WORDS
@@ -28,6 +28,7 @@ POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BIN
 
 Material_Points :: struct {
 	buffer:    rhi.Buffer,
+	args:      rhi.Buffer, // indirect dispatch arguments, separate from buffer to avoid Draw_Indirect <-> Shader_Write stalls
 	capacity:  u32, // points a batch holds at once
 	programs:  u32, // bins: the largest Surface program id of the catalog, plus one
 	wanted:    u32, // the most points a batch asked for since the marks were set (renderer_capacity_marks_set), read back: the buffer grows to it
@@ -51,22 +52,24 @@ points_prepare :: proc(r: ^Renderer) -> bool {
 	m := &r.points
 	programs: u32
 	for program in renderer_programs(r) {
-		if program.domain == .Surface && program.id < POINTS_PROGRAM_CAPACITY {programs = max(programs, program.id + 1)}
+		if program.domain == .Surface {programs = max(programs, program.id + 1)}
 	}
 	capacity: u32
 	if programs > 0 {
 		wanted := min(max(u32(POINTS_START), m.wanted), POINTS_MAX)
 		capacity = m.capacity if wanted <= m.capacity else min(wanted + wanted / 2, POINTS_MAX)
 	}
-	if m.buffer != 0 && capacity == m.capacity && programs == m.programs {return true}
+	if m.buffer != 0 && m.args != 0 && capacity == m.capacity && programs == m.programs {return true}
 	if m.buffer != 0 {rhi.buffer_destroy(r.device, m.buffer)}
-	words := u64(POINTS_HEADER) + 6 * u64(programs) + u64(capacity) * (POINT_WORDS + RECORD_WORDS + 1 + HEAD_WORDS)
-	m.buffer = rhi.buffer_create(r.device, {size = words * size_of(u32), usage = {.Storage, .Indirect}, name = "material points"})
+	if m.args != 0 {rhi.buffer_destroy(r.device, m.args)}
+	words := u64(POINTS_HEADER) + 3 * u64(programs) + u64(capacity) * (POINT_WORDS + RECORD_WORDS + 1 + HEAD_WORDS)
+	m.buffer = rhi.buffer_create(r.device, {size = words * size_of(u32), usage = {.Storage}, name = "material points"})
+	m.args = rhi.buffer_create(r.device, {size = u64(6 + 3 * max(programs, 1)) * size_of(u32), usage = {.Storage, .Indirect}, name = "material points args"})
 	for &b in m.readback {
 		if b == 0 {b = rhi.buffer_create(r.device, {size = size_of(u32), memory = .Readback, name = "material points readback"})}
 	}
 	m.capacity, m.programs = capacity, programs
-	made := m.buffer != 0
+	made := m.buffer != 0 && m.args != 0
 	for b in m.readback {made &&= b != 0}
 	if !made {
 		set_error(r, "material points: %s", rhi.device_error(r.device))
@@ -86,6 +89,7 @@ points_destroy :: proc(r: ^Renderer) {
 	m := &r.points
 	points_pipelines_destroy(r)
 	if m.buffer != 0 {rhi.buffer_destroy(r.device, m.buffer)}
+	if m.args != 0 {rhi.buffer_destroy(r.device, m.args)}
 	for b in m.readback {if b != 0 {rhi.buffer_destroy(r.device, b)}}
 	m^ = {}
 }
@@ -124,7 +128,6 @@ program_computes_publish :: proc(r: ^Renderer, table: ^Program_Computes, next: [
 // program_graphics.
 @(private)
 program_compute :: proc(r: ^Renderer, table: ^Program_Computes, program: Program, stem: string, early := false) -> rhi.Pipeline {
-	if program.id >= POINTS_PROGRAM_CAPACITY {return 0}
 	if !table.asked[program.id] {
 		table.asked[program.id] = true
 		name: [192]u8
@@ -168,8 +171,9 @@ points_dispatch :: proc(p: ^Pass, mode: u32, x: u32 = 1, indirect: bool = false)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Points])
 	set_params(cmd, &params)
 	points_bind(p)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, m.args)
 	if indirect {
-		rhi.cmd_dispatch_indirect(cmd, m.buffer, POINTS_ARGS * size_of(u32))
+		rhi.cmd_dispatch_indirect(cmd, m.args, 0)
 	} else {
 		rhi.cmd_dispatch(cmd, x, 1)
 	}
@@ -200,19 +204,20 @@ points_resolve :: proc(p: ^Pass) {
 		points_dispatch(p, 3)
 		points_dispatch(p, 4, indirect = true)
 	}
-	// The stages of the programs write the records of disjoint points: no barrier between them.
+	// Indirect args live in m.args so dispatching each program does not stall Draw_Indirect on m.buffer.
+	points_bind(p)
+	textures_feedback_bind(r, cmd)
 	Params :: struct {program, whole, pad0, pad1: u32}
 	for program in renderer_programs(r) {
 		if program.domain != .Surface || program.id >= m.programs || r.scene.program_rows[program.id] == 0 {continue}
+		if r.scene.program_opaque_rows[program.id] == 0 && !r.scene.program_shown_opaque[program.id] {continue}
 		pipeline := points_pipeline(r, program)
 		if pipeline == 0 {continue}
 		rhi.cmd_bind_pipeline(cmd, pipeline)
 		params := Params{program = program.id, whole = u32(whole)}
 		set_params(cmd, &params)
-		points_bind(p)
-		textures_feedback_bind(r, cmd)
-		args := POINTS_ARGS if whole else POINTS_HEADER + 3 * m.programs + 3 * program.id
-		rhi.cmd_dispatch_indirect(cmd, m.buffer, u64(args) * size_of(u32))
+		args := u64(0) if whole else u64(6 + 3 * program.id)
+		rhi.cmd_dispatch_indirect(cmd, m.args, args * size_of(u32))
 	}
 }
 
@@ -221,7 +226,7 @@ points_resolve :: proc(p: ^Pass) {
 @(private)
 points_resume :: proc(p: ^Pass) {
 	points_bind(p)
-	rhi.cmd_dispatch_indirect(p.cmd, p.r.points.buffer, POINTS_HEAD_ARGS * size_of(u32))
+	rhi.cmd_dispatch_indirect(p.cmd, p.r.points.args, 3 * size_of(u32))
 }
 
 // The rounds of a pass that started a batch (batch, from points_begin) and

@@ -1,9 +1,9 @@
 #include "native.slang"
 // The modes of inspection that show what other passes left (render/debug_views.odin),
 // over the display target composite wrote: the share of light the shadows of
-// the sun and the blocks of shadows of the other lights let through, the traced reflections after and before their filter
-// and how many local lights reach each pixel. A mode the frame cannot show
-// leaves the view black.
+// the sun and the blocks of shadows of the other lights let through, and how
+// many local lights reach each pixel. A mode the frame cannot show leaves the
+// view black.
 #include "lighting.slang"
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
@@ -78,7 +78,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         color = float3(part >= 1.5 ? part - 2.0 : part);
         break;
     }
-    case DEBUG_REFLECTIONS: case DEBUG_REFLECTIONS_RAW: color = source.Load(int3(p, 0)).rgb; break;
     case DEBUG_LIGHTS: {
         Pixel pixel = pixel_at(p, uv, depth);
         float3 normal = gbuffer_normal(p);

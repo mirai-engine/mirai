@@ -73,8 +73,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - OpenPBR layers (coat, fuzz, anisotropy, diffuse transmission, unlit), tangents and normal maps →
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)
-- Traced reflections and glass → [reflections](references/materials.md#traced-reflections),
-  [glass](references/materials.md#glass); which rays see glass and which go through it →
+- Glass → [glass](references/materials.md#glass); which rays see glass and which go through it →
   [glass in rays](references/materials.md#glass-in-rays)
 - Local lights, shadows → [lights](references/lights.md#local-lights);
   direct light of a view (grid, samples, shadow maps) →

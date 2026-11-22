@@ -40,7 +40,7 @@ Gpu_Frame :: struct {
 	shadowless_lights: u32, // the root of the tree of the local lights that cast no shadows, which ends at light_nodes; 0: none (light_tree_shadowless)
 	pad0:            [3]u32,
 	jitter:          Vec4, // xy current jitter (render pixels), zw previous
-	texturing:       Vec4, // x mip bias of rasterized material textures, y traced reflection roughness, zw where the boxes of the glass instances are listed after the TLAS nodes and how many
+	texturing:       Vec4, // x mip bias of rasterized material textures
 	time: Vec4, // current seconds, previous seconds, frame dt, reserved
 	// The ray of the pixel at uv: a point at linear depth d along it is
 	// (eye_origin + eye_du * u + eye_dv * v) + d * (ray_origin + ray_du * u + ray_dv * v).
@@ -94,7 +94,6 @@ FRAME_FLAG_GI_GIVEN     :: abi.FRAME_FLAG_GI_GIVEN
 FRAME_FLAG_HW_RT        :: abi.FRAME_FLAG_HW_RT
 FRAME_FLAG_STUDIO       :: abi.FRAME_FLAG_STUDIO
 FRAME_FLAG_GRID         :: abi.FRAME_FLAG_GRID
-FRAME_FLAG_GLASS        :: abi.FRAME_FLAG_GLASS
 FRAME_FLAG_REFLECTANCE  :: abi.FRAME_FLAG_REFLECTANCE
 FRAME_FLAG_NEUTRAL      :: abi.FRAME_FLAG_NEUTRAL
 FRAME_FLAG_SWAY         :: abi.FRAME_FLAG_SWAY

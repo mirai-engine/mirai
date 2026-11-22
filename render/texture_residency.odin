@@ -9,9 +9,8 @@ import "mirai:rhi"
 // Residency of the levels of a texture by what the GPU samples. A texture
 // whose levels its loader can read again (Texture_Data.source) is streamed: it
 // holds the levels of its source from the one the frames sample. The passes
-// that shade surfaces (the G-buffer, the glass layers, traced reflections,
-// the probe rays, the material points of programs) write, for each texture
-// they sample, the finest level they read into a buffer with an atomic
+// that shade surfaces (the G-buffer, the glass layers, the probe rays, the
+// material points of programs) write, for each texture they sample, the finest
 // minimum (texture_feedback in scene.slang), which comes back to the CPU as
 // the page requests do. A raster sample reports the level its footprint and
 // bias read; a ray the level its cone at the hit reads; a program, every

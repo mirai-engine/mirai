@@ -40,14 +40,13 @@
 
 - No screen-space tracing, radiance cache, screen probes or ReSTIR. Fixed sampling + deterministic
   light-tree NEE ([lights](lights.md#local-lights)), GPU two-phase cull/LOD
-  ([frame graph](frame-graph.md#passes)). Reflections/glass trace to `gi_max_distance`, then read
-  probes ([settings](settings.md#settings), [resolution](settings.md#scene-resolution)).
+  ([frame graph](frame-graph.md#passes)). Glass traces to `gi_max_distance`, then reads probes
+  ([settings](settings.md#settings), [resolution](settings.md#scene-resolution)).
 
 ### Temporal and denoising
 
-- Indirect keeps no screen-space history (only TAA and
-  [reflections](materials.md#traced-reflections) do). `Scene_State.changes` wakes reached probes
-  for `PROBE_AWAKE`.
+- Indirect keeps no screen-space history (only TAA does). `Scene_State.changes` wakes reached
+  probes for `PROBE_AWAKE`.
 - **Blackout** (`render/blackout.odin`): > 50% volume flux change warms over `GI_BLACKOUT_UPDATES`.
 
 ## Contact occlusion
@@ -59,7 +58,7 @@
   reach). Fixed 4x4 rotation averaged by `contact_pixels.comp`; `contact_light.comp` evaluates
   diffuse/specular probe light. Nested views trace in world space without filtering across portals.
 - **Beyond volume.** Rays trace full range for sky visibility (caves stay dark; no bounce gather).
-- **Small instances** (< `SMALL_INSTANCE_REACH`): `RAY_SMALL`—seen by contact, reflections and
+- **Small instances** (< `SMALL_INSTANCE_REACH`): `RAY_SMALL`—seen by contact and
   direct light, skipped by `MIRAI_TRACE_PROBES` (moves never wake volume; emissives need
   `light_stands_for`). Resizing/posing updates class.
 

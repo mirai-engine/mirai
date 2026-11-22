@@ -74,7 +74,7 @@ Pass :: struct {
 	view_matrix, unjittered: Mat4,
 	jitter:    Vec2,
 	jitter_phases: u32, // of the sequence the jitter of the view follows; 0: none
-	use_gi, use_probes, use_reflections: bool,
+	use_gi, use_probes: bool,
 	pyramid_previous: bool, // the depth pyramid of the frame before holds what the view drew then (pass_depth_pyramid)
 	pyramid:          bool, // that of this frame holds what the view drew of the opaque scene
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
@@ -86,13 +86,12 @@ Pass :: struct {
 	translucent: []Translucent, // visible prefix of the scene list for this view, sorted back to front
 	translucent_drawn: bool,    // their indirect draws are written (translucent_draws_record)
 	glass_material_layers: bool,
-	glass_reflect_bounds: [4]u32, // pixel rectangle, upper bound exclusive
+	glass_rough: bool,          // some visible glass layer may sample blurred mips of glass_scene
 	blend:   bool,       // the view runs the Blend stage of extensions
 	blended: bool,       // a pass of it began: TAA reads the coverage it drew
 	glass:   Glass_Side, // of the Lit or Blend stage being recorded
 	glass_layered: bool, // the layers of glass were drawn before the Lit stage, which runs on each side of them
 	glass_medium: u32, // instance plus one of the solid of glass the camera may be in (glass_layers), 0 none
-	reflections: rhi.Texture, // the filtered traced reflections, when the view traced any
 	gi:    rhi.Texture, // the light of the probe volume at each pixel, or what a custom pass writes as Gi
 	gathered: bool, // gi holds the light of the probe volume (contact_pixels.comp)
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
@@ -401,81 +400,6 @@ projected_box :: proc(box: mm.Aabb, projection: Mat4, eye: Vec3) -> Vec4 {
 		lo, hi = linalg.min(lo, uv), linalg.max(hi, uv)
 	}
 	return {lo.x, lo.y, hi.x, hi.y}
-}
-
-@(private)
-reflect_pass :: proc(p: ^Pass, glass := false) -> bool {
-	Params :: struct {
-		light_budget: u32,
-		max_distance, firefly_clamp, pixel_spread: f32,
-		block: u32,
-		roughness_from, roughness_to, cached_below, detail_below: f32,
-		stored_reflectance, glass, pad, resume, medium: u32,
-		origin: [2]u32,
-	}
-	r, cmd, t := p.r, p.cmd, p.t
-	s, settings := &r.scene, &r.settings
-	layer := t.glass[0]
-	normal, depth, albedo, filtered := t.normal, t.linear_depth, t.albedo, t.reflections
-	bounds := [4]u32{0, 0, t.width, t.height}
-	if glass {
-		normal, depth, albedo, filtered = layer.normal, layer.depth, layer.albedo, t.glass_reflections
-		bounds = p.glass_reflect_bounds
-	}
-	params := Params{
-		light_budget = settings.reflection_light_budget, max_distance = settings.gi_max_distance,
-		firefly_clamp = settings.firefly_clamp, pixel_spread = p.frame.footprint.y,
-		stored_reflectance = 1 if glass || p.reflectance else 0, glass = 1 if glass else 0,
-		medium = p.glass_medium if glass else 0,
-	}
-	split := max(f32)
-	if settings.reflections == .Detailed {
-		params.detail_below = REFLECTION_SHARED_ROUGHNESS
-		if glass {params.cached_below = GLASS_CACHED_REFLECTANCE}
-	} else {split = 0 if glass else REFLECTION_SHARED_ROUGHNESS}
-	constants: rhi.Shader_Constants
-	if !scene_layered(s) && !(glass && p.glass_material_layers) {constants += {REFLECT_COMP_UNLAYERED}}
-	pipeline := pipeline_of(r, .Reflect, constants, {REFLECT_COMP_UNLAYERED})^
-	resolve_pipeline := pipeline_of(r, .Reflect_Resolve, {REFLECT_RESOLVE_COMP_GLASS} if glass else {})^
-	if pipeline == 0 || resolve_pipeline == 0 {return false}
-	rhi.cmd_bind_texture(cmd, SLOT_PASS0, normal)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS1, depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS3, albedo)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS4, r.dummy_texture if glass else t.motion)
-	bind_light_maps(p, p.frame.sun_maps.z != 0)
-	for block in 1 ..= 2 {
-		scale := u32(block)
-		shared := block == 2
-		if shared && split == max(f32) {continue}
-		if !shared && (split == 0 || !glass && s.smoothest >= split) {continue}
-		params.block, params.origin = scale, {bounds[0] / scale, bounds[1] / scale}
-		params.roughness_from, params.roughness_to = split if shared else 0, max(f32) if shared else split
-		if shared {params.cached_below = 2}
-		batch := points_begin(p)
-		rhi.cmd_bind_pipeline(cmd, pipeline)
-		set_params(cmd, &params)
-		points_bind(p)
-		textures_feedback_bind(r, cmd)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.reflect_shared if shared else t.reflect_raw)
-		x := groups(bounds[2], scale) - params.origin[0]
-		y := groups(bounds[3], scale) - params.origin[1]
-		rhi.cmd_dispatch(cmd, groups(x, 8), groups(y, 8))
-		points_rounds(p, batch, pipeline, &params, 1)
-	}
-
-	Resolve :: struct {shared_from: f32, pad: u32, origin: [2]u32}
-	resolve := Resolve{shared_from = split, origin = {bounds[0], bounds[1]}}
-	rhi.cmd_timestamp(cmd, "glass reflect resolve" if glass else "reflect resolve")
-	rhi.cmd_bind_pipeline(cmd, resolve_pipeline)
-	set_params(cmd, &resolve)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.reflect_raw)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS1, normal)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS2, depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.motion)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS8, filtered)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS9, t.reflect_shared)
-	rhi.cmd_dispatch(cmd, groups(bounds[2] - bounds[0], 8), groups(bounds[3] - bounds[1], 8))
-	return true
 }
 
 // The maps of the view for a pass that lights hits with MIRAI_LIGHT_MAPS of
@@ -884,7 +808,6 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         case .Nested:      ok=pass_nested(&p)
         case .Surface:     if r.pass_count>0 {stage_run(&p,.Surface)}
         case .Direct:      ok=pass_direct(&p)
-        case .Reflections: ok=pass_reflections(&p)
         case .World:       ok=pass_world_lighting(&p)
         case .Indirect:    ok=pass_indirect(&p)
         case .Composite:   pass_composite(&p)
@@ -950,8 +873,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	settings := &r.settings
 	p.use_gi = settings.gi_enabled
 	p.use_probes = p.use_gi && g.valid
-	// Skipped while no material is smooth enough to have a pixel traced.
-	p.use_reflections = settings.reflections != .Off && len(s.materials) > 0 && s.smoothest < settings.reflection_roughness && .Reflections in p.plan.stages
 
 	// The matrices of the view take a point from its eye (frame.camera_position,
 	// view_clip of scene.slang): far from the origin a point near the eye keeps
@@ -995,7 +916,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 		indirect = s.indirect,
 		exposure = view_exposure(p),
 		// Rendering below the output resolution samples the mips the output would use.
-		texturing = {clamp(math.log2(f32(t.width) / f32(t.output_width)), -2, 0), settings.reflection_roughness if p.use_reflections else 0, f32(s.tlas_node_count), f32(s.glass_node_count)},
+		texturing = {clamp(math.log2(f32(t.width) / f32(t.output_width)), -2, 0), 0, 0, 0},
 	}
 	frame_view_constants(&f, camera, view, shift * proj, proj, forward, f32(t.height))
 	// The detail is that of the views of the window, also those of a frame that captures it.
@@ -1022,10 +943,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	transparency := .Transparency in p.plan.stages && !view_inspected(p.inspection)
 	if p.draw && transparency {
 		translucency_in_frustum(p, &f)
-		if .Reflections in p.plan.stages && p.glass_reflect_bounds != {} {
-			p.use_reflections = true
-			f.texturing.y = settings.reflection_roughness
-		} else {p.glass_reflect_bounds = {}}
 	}
 	p.draw_overlays = p.draw && transparency && s.overlay_count > 0
 	p.blend = transparency && stage_asked(r, .Blend)
@@ -1056,7 +973,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if p.use_gi && p.plan.gi_given {f.flags |= FRAME_FLAG_GI_GIVEN}
 	if r.hardware_rt {f.flags |= FRAME_FLAG_HW_RT}
 	if s.environment.ground_grid && !p.texture {f.flags |= FRAME_FLAG_GRID}
-	if len(s.translucent) > 0 {f.flags |= FRAME_FLAG_GLASS}
 	p.reflectance, p.layered = reflectance_in_frustum(r, f.frustum)
 	// What the surfaces of the Gbuffer stage of extensions need, wherever they are.
 	if stage_asked(r, .Gbuffer) {
@@ -1089,7 +1005,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if !air_aerial(p) {return false}
 
 	// What the stages a pipeline may leave out give the ones after them.
-	p.reflections, p.gi, p.gathered = 0, r.dummy_texture, false
+	p.gi, p.gathered = r.dummy_texture, false
 	if p.plan.gi_given {
 		if !target(r, cmd, &t.gi_given, t.width, t.height, .RGBA32_Float, HISTORY_USAGE, "given gi", true) {return false}
 		p.gi = t.gi_given
@@ -1674,16 +1590,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	return true
 }
 
-@(private)
-pass_reflections :: proc(p: ^Pass) -> bool {
-	r, cmd, t := p.r, p.cmd, p.t
-	if !p.use_reflections {return true}
-	if !ensure_reflect_targets(r, cmd, t) {return false}
-	rhi.cmd_timestamp(cmd, "reflect")
-	if reflect_pass(p) {p.reflections = t.reflections}
-	return true
-}
-
 // Updates over PROBE_WARM_BUDGET probes that gather the light of a world shown
 // anew (Renderer.gi_warm), each a bounce more, taken over the frames after
 // within the budget of each (ddgi_warm_frames).
@@ -1804,7 +1710,6 @@ pass_composite :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, p.gi)
 	// Without an atmosphere the composite reads no aerial perspective: any volume stands for it.
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.aerial if t.aerial != 0 else r.display_lut)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS7, texture_or_dummy(r, p.reflections))
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.display)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	p.shown = t.display
@@ -1834,7 +1739,6 @@ lit_run :: proc(p: ^Pass) {
 @(private)
 pass_transparent :: proc(p: ^Pass) -> bool {
 	if p.draw_overlays {overlay_pass(p)}
-	p.t.glass_valid = false
 	if p.draw_glass {
 		if !p.glass_layered {glass_layers(p)}
 		if p.blend {side_run(p, .Blend, .Behind)}
@@ -2071,11 +1975,6 @@ update_stats :: proc(r: ^Renderer) {
 		rays += u64(s.probe_rays_traced) + u64(s.probe_hits_lit) * u64(1 + min(s.lights, PROBE_LIGHT_BUDGET))
 		// The contact occlusion: CONTACT_RAYS short rays of each point.
 		rays += points(t, t.contact_scale) * CONTACT_RAYS
-	}
-	if r.settings.reflections != .Off && r.scene.smoothest < r.settings.reflection_roughness {
-		// A pixel traces its own ray or takes its turn for its block, never both.
-		blocks_only := r.settings.reflections == .Traced && r.scene.smoothest >= REFLECTION_SHARED_ROUGHNESS
-		rays += u64(t.half_width) * u64(t.half_height) if blocks_only else pixels
 	}
 	s.rays_per_frame = rays
 }

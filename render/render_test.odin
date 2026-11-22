@@ -3768,11 +3768,11 @@ camera_cuts_reset_screen_history_and_preserve_world_lighting_and_pipelines :: pr
     rhi.device_wait_idle(f.device)
     pipelines,probes,irradiance:=r.pipelines,r.ddgi.probes,r.ddgi.irradiance
     testing.expect(t,r.has_previous && r.targets.taa_valid)
-    r.targets.glass_valid,r.targets.hiz_valid=true,true
+    r.targets.hiz_valid=true
     renderer_camera_cut(r)
     testing.expect(t,!r.has_previous && r.prev_jitter=={})
     testing.expect(t,!r.targets.taa_valid)
-    testing.expect(t,!r.targets.glass_valid && !r.targets.hiz_valid)
+    testing.expect(t,!r.targets.hiz_valid)
     testing.expect_value(t,r.pipelines,pipelines)
     testing.expect_value(t,r.ddgi.probes,probes)
     testing.expect_value(t,r.ddgi.irradiance,irradiance)

@@ -38,22 +38,9 @@ Stage_Output gbuffer_output(Raster_Input input, Fragment f) {
     float2 previous = input.in_prev_clip.xy / input.in_prev_clip.w;
     Material_Layers layers = f.values.layers;
     uint bits = (layers.bits & MATERIAL_LAYER_UNLIT) | (f.values.emission_relative ? GBUFFER_EMISSION_RELATIVE : 0u);
-    // The roughness of the lobe traced reflections follow, before specular antialiasing widens it.
-    float decided = f.material_roughness;
 #ifdef MIRAI_GBUFFER_LAYERS
     bits |= layers.bits;
     output.g_layers = gbuffer_layers_pack(layers);
-    if (layers.coat > 0.0) {
-        // Reflections trace the lobe that reflects more of what is around:
-        // the coat, or the base under it.
-        Shading s = shading_surface(input.in_world, f.normal, f.to_camera, f.values.base_color, f.values.metallic, f.values.roughness, f.values.f0, f.values.f90);
-        shading_layers(s, layers, f.values.metallic);
-        float3 base = environment_reflectance(s) * ((1.0 - s.coat) + s.below_coat * s.coat_through);
-        if (coat_reflectance(s).r >= max(base.r, max(base.g, base.b))) {
-            bits |= GBUFFER_TRACE_COAT;
-            decided = f.coat_roughness;
-        }
-    }
 #endif
     output.g_albedo = float4(clamp(f.values.base_color, 0.0, 1.0), f.values.metallic);
     output.g_normal = gbuffer_normal_pack(f.normal, f.values.roughness, bits);
@@ -61,11 +48,8 @@ Stage_Output gbuffer_output(Raster_Input input, Fragment f) {
 #ifndef MIRAI_GBUFFER_PLAIN
     output.g_specular = specular_pack(f.values.f0, f.values.f90);
 #endif
-    // Screen-space offset to the previous frame in UV units (y down), and the
-    // roughness by which traced reflections decide how to trace: the spread of
-    // the normal across a pixel grows with distance, and a reflection would
-    // change its kind as the camera moves away.
-    output.g_motion = float4((previous - current) * float2(0.5, -0.5), decided, 1.0);
+    // Screen-space offset to the previous frame in UV units (y down).
+    output.g_motion = float4((previous - current) * float2(0.5, -0.5), 0.0, 1.0);
     output.g_depth = dot(input.in_world - frame.camera_position.xyz, frame.camera_forward.xyz);
 #ifdef MIRAI_INSTANCE_IDS
     output.g_instance = input.in_instance == INVALID ? 0u : input.in_instance + 1u;

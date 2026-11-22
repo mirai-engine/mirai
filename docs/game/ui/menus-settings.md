@@ -72,7 +72,7 @@ graphics.frame_limit,graphics.vsync=60,true // 0: no limit
 display.mode=.Fullscreen        // ^render.Display_Settings; .Project as authored
 ```
 
-`resolution`, `frame_limit`, `vsync`, `antialiasing`, `show_fps` and `reflections` do not count
+`resolution`, `frame_limit`, `vsync`, `antialiasing` and `show_fps` do not count
 for a preset.
 No setting stores the preset: `render.graphics_preset_apply` writes its fields, the fields written
 after it stay on top, and `render.graphics_quality_of(graphics^)` gives the preset the fields are

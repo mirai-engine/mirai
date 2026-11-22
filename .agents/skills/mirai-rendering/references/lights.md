@@ -13,7 +13,7 @@
 - **Projected textures (`Spot_Light.texture`, `Rect_Light.texture`, `Light_Desc.texture`):**
   Multiplies light color across the cone (`Light_Desc.texture_axis`, +X) or rectangle face
   (overrides `Light_Emission`); point lights ignore textures. Evaluated once in
-  `light_contribution` for direct, fog/media, glass, overlays, reflection hits, probes,
+  `light_contribution` for direct, fog/media, glass, overlays, probes,
   particles, and portals (spots blur by `shading_footprint` on view surfaces; sharp elsewhere;
   grouped tree nodes treat textures as white). Stored in `Gpu_Light.size.w` with
   `GPU_LIGHT_TEXTURE` (or rectangle material row); no residency feedback
@@ -95,16 +95,17 @@ rect := render.Light_Desc{
   (omitting sun/shadowed light). Overflow falls back to per-pixel walk
   (`Stats.light_lists.walked`). Lists assume `LIGHT_SHARE_ALL` (probes/media require
   share-specific estimates).
-- **Blended cells (`translucent_draws.comp`, `light_cells.slang`):** Per-blended-instance (or
-  subdivided from `TRANSLUCENT_CELLS`) cells hold both the shadowless list and shadowed
-  `light_cut` nodes; forward blends sum all reaching lights without tracing rays.
+- **Blended cells (`translucent_draws.comp`, `light_cells.slang`):** When the scene has shadowless
+  lights, per-blended-instance (or subdivided from `TRANSLUCENT_CELLS`) cells hold the shadowless
+  list. For shadowed lights, forward blends read the world [light grid](#direct-light-of-a-view)
+  up to `light_budget` brightest reaching lights (falling back to `light_cut` past `DIRECT_FEW`),
+  shadowed by a single-tap map lookup without tracing rays.
 
 ### Cutoff of a point that traces its own rays
 
-- Isolated points (glass, overlays, diffuse-transmission back faces, reflection hits, probes)
+- Isolated points (glass, overlays, diffuse-transmission back faces, probes)
   use `light_cut` instead of the view grid: opens highest-need nodes (widest/brightest, spots
-  first) up to budget (`light_budget`, `reflection_light_budget`, `PROBE_LIGHT_BUDGET`, max
-  `LIGHT_CUT_MAX`).
+  first) up to budget (`light_budget`, `PROBE_LIGHT_BUDGET`, max `LIGHT_CUT_MAX`).
 - Each cut group traces one ray to a child picked proportionally to reflected BRDF luminance
   (unbiased `light / probability`).
 - **Lit particles ([`vfx`](../../mirai-world/references/vfx.md#passes)):** Sum omnidirectional

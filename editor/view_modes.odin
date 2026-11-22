@@ -49,8 +49,6 @@ VIEW_MODES :: [?]Core_View_Mode{
 	{"direct", "Direct light", "Lighting", "Direct", .Spot, .Render, .Direct},
 	{"shadows", "Shadows", "Lighting", "", .Eye_Off, .Render, .Shadows},
 	{"lights", "Lights per pixel", "Lighting", "", .Target, .Render, .Lights},
-	{"reflections", "Traced, filtered", "Lighting", "Reflections", .Sparkle, .Render, .Reflections},
-	{"reflections_raw", "Traced, unfiltered", "Lighting", "Reflections", .Dot, .Render, .Reflections_Raw},
 	{"indirect", "Indirect light", "Lighting", "Indirect", .Refresh, .Render, .Indirect},
 	{"probes", "Probe volume", "Lighting", "Indirect", .Grid, .Render, .Probes},
 	{"depth", "Depth", "Advanced", "", .Focus, .Render, .Depth},

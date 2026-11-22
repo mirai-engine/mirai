@@ -89,15 +89,12 @@ erender.material_texture(&values, base.name_hash("maps.mask"), 0, mask_tex_id)
 | Coat | GGX lobe with own normal, roughness, IOR; darkens base, relative IOR below (`material_specular`). |
 | Fuzz | Zeltner-Burley-Chiang (2022) LTC + MaterialX adjustments; counted in diffuse filter lobe. |
 | Diffuse transmission | Thin-sheet OpenPBR / `KHR_materials_diffuse_transmission`: back lit via inverted Lambert (`shading_back`, `back_irradiance`, `direct_lighting` rays). `LIGHTS_THROUGH` / `trace_through` crosses masked transmitting sheets only; GI reflects diffuse part only. |
-| Anisotropy | Anisotropic GGX on MikkTSpace tangent rotated by `rotation`/map; bent normal for environment (Revie 2011), anisotropic VNDF for traced reflections. |
+| Anisotropy | Anisotropic GGX on MikkTSpace tangent rotated by `rotation`/map; bent normal for environment (Revie 2011). |
 | Unlit | BSDF = 0 everywhere; outputs emission (nits or [relative](display.md#exposure-relative-emission)). Base color/opacity still govern coverage. |
 
-- **Traced reflection:** `GBUFFER_TRACE_COAT` traces coat if it reflects at least what base lets
-  through; the other lobe reads probes.
 - **Zero-cost when unused:** `direct` and `composite` run `unlayered` (`MIRAI_GBUFFER_NO_LAYERS`)
-  when no layered instance is visible; `reflect` runs `MIRAI_MATERIAL_NO_LAYERS` when none exist
-  in the scene. Glass uses its `layers` variant of `glass_layer` only when layered glass is in
-  view.
+  when no layered instance is visible. Glass uses its `layers` variant of `glass_layer` only when
+  layered glass is in view.
 
 ## Derived graph
 
@@ -115,11 +112,10 @@ graph is never stored or edited.
 ## Indirect composition
 
 `indirect_compose(Shading, Indirect)` (`brdf.slang`) is the single indirect-light formula across
-composite, overlays, glass, glossy reflection hits, and studio previews.
+composite, overlays, glass, and studio previews.
 
 - `indirect_lobes` (`scene.slang`) reads the probe volume once per requested lobe; specular uses
-  the DFG table with multiple scattering and Lagarde-de Rousiers specular occlusion (also on
-  traced reflections).
+  the DFG table with multiple scattering and Lagarde-de Rousiers specular occlusion.
 - Material ambient occlusion applies `occlusion_bounced` (Jimenez et al. 2016) to diffuse.
 
 ## Textures
@@ -154,7 +150,7 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
 
 - **Source:** `Texture_Data.source` and `level` link streamed mips back to `.tex`.
 - **Feedback (`MIRAI_TEXTURE_FEEDBACK`):** G-buffer resolve (including nested views/programs),
-  extension `Gbuffer`, glass layers, reflections, probes, and material points record per-texture
+  extension `Gbuffer`, glass layers, probes, and material points record per-texture
   atomic-min finest mip (one atomic per wave, helper lanes ignored; raster uses anisotropic
   derivatives + bias, rays use ray cones). `mirai_sample_texture_level` and `mirai_texture_size`
   pin all mips; `mirai_load_texture` skips feedback.
@@ -185,8 +181,7 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
   frame; facing uses interpolated normal, not winding, via `fragment_turned`). Runtime meshes
   can supply `Mesh_Generate_Options.tangents`. Normal map UV transform rotates/mirrors RG
   without scale (`material_map_normal`); away-facing normals clamp to the silhouette.
-- **Specular AA:** Widens roughness by normal variance (Tokuyoshi-Kaplanyan). Un-widened
-  roughness is saved in Motion.B for [traced reflections](#traced-reflections); 2x2 direct-light
+- **Specular AA:** Widens roughness by normal variance (Tokuyoshi-Kaplanyan). 2x2 direct-light
   points widen by block spread to prevent jitter flicker.
 
 ## Alpha
@@ -198,16 +193,15 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
   tested slots and fading instances pay for mask reads (`Gpu_Instance.tested`); native BLAS
   keeps tested mesh slots in separate geometry. Masked mips preserve alpha-test coverage ratio.
 - **Blend (`blend`):** Drawn forward premultiplied over the lit scene; all contributions weight
-  by `alpha`, with `1 - alpha` background passing through. Casts no shadows, skips G-buffer and
-  bounces; sharp reflections see it only as a color filter ([glass in rays](#glass-in-rays)).
+  by `alpha`, with `1 - alpha` background passing through. Casts no shadows and skips G-buffer and
+  bounces.
 
 ## Ray hits
 
-- Probes, reflections, and glass read base color, metallic-roughness, and emission at ray-cone
-  LOD; light-gathering rays skip lamp emission ([local lights](lights.md#local-lights)).
+- Probes and glass read base color, metallic-roughness, and emission at ray-cone LOD;
+  light-gathering rays skip lamp emission ([local lights](lights.md#local-lights)).
 - Hits interpolate normals/tangents for normal maps and evaluate Surface programs with explicit
-  LOD. Past the first bounce surfaces are diffuse (specular added to albedo); sharp reflections
-  keep specular highlights except grazing direct-light sparks.
+  LOD. Past the first bounce surfaces are diffuse (specular added to albedo).
 
 ## Surface programs in rays and raster
 
@@ -223,11 +217,9 @@ Each Surface program compiles its own stages once ([programs](shaders.md#program
   `points_take` and exit; `points_resolve` (`points.comp`) buckets points per program (skipped
   for 1 program), `surface_points__<Program>.comp` writes packed results, and `points_resume`
   continues (`points_rounds`). Buffer caps at `POINTS_MAX` (overflow falls back to material
-  row). Used by reflections, probes, indirect reference, and glass.
+  row). Used by probes, indirect reference, and glass.
 - **Traversal coverage:** Masked rays test `hit_covers` / `material_mask` inline; no program
   runs in ray traversal.
-- **Deferred filters:** Sharp reflection rays crossing program glass chain filter points
-  (`point_filter_at`) and apply corrections on resume (`filters_weigh`, `filters_correction`).
 
 ```slang
 //! mirai surface Rust_Reveal
@@ -281,7 +273,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 
 - Particle collisions (`mirai_vfx_trace`) read vertex normal + row normal map, not program ones.
 - **Focal tests (`mirai test render ...`):**
-  - GPU: `material_program_shows_in_what_a_reflection_finds`,
+  - GPU: `material_program_shows_in_what_the_probes_find`,
     `material_program_shows_on_what_the_camera_sees`,
     `material_program_draws_as_its_rows_until_its_pipelines_are_made`,
     `material_program_pipelines_are_made_before_a_frame_draws_with_them`,
@@ -313,28 +305,14 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
   mips (`texture_build`, `texture_add_built`). Shaders mirror `impostor_direction` /
   `impostor_axes` ([foliage](../../mirai-world/references/foliage.md#far-impostor-and-crown)).
 
-## Traced reflections
-
-- **Selection:** Un-widened roughness (Motion.B) picks traced pixels, shared blocks, detail, and
-  probe blend (`[0.5, 1.0] * reflection_roughness`). Specular AA widens ray cones; glass uses
-  widened roughness.
-- **Sampling:** Fixed-pattern stratified GGX VNDF (mirror below `MIRROR_ROUGHNESS`). Hits light
-  directly up to `reflection_light_budget` (then [light tree](lights.md#local-lights)), reading
-  view shadow maps where covered without tracing rays.
-- **Modes (`Settings.reflections`):** `Off` (default, probes + sharp sky), `Traced` (2x2 shared
-  ray from `REFLECTION_SHARED_ROUGHNESS`, probe-lit hits), `Detailed` (every pixel, direct-lit
-  hits, glass color filters and specular hits below `REFLECTION_SHARED_ROUGHNESS`).
-- **Filter:** Single-frame sliding tile average over strata (no temporal trail), weighted by
-  surface similarity (edges stronger than wave relief).
-
 ## Glass
 
 `transmission` enables glass (`KHR_materials_transmission`/`ior`/`volume`, `render/glass.odin`):
 
 - **Shading & layers:** Transmissive materials draw as blend even when `opaque`; `mask` ignores
   transmission. Uses `shading_layers` (`glass_shading`, `glass_light`) and `shading_through`
-  (coat tints transmitted light without double darkening). Closest layer traces base reflection;
-  coat reads probes.
+  (coat tints transmitted light without double darkening). Specular reflections read probes and
+  sky.
 - **Sheet vs solid:** `thickness == 0` is a two-sided non-refracting sheet. `thickness > 0`
   refracts at entry/exit (closed mesh ray exit, 20% pane shortcut, open-mesh `sheet_through`
   relief refraction, Beer-Lambert `attenuation_color`/`attenuation_distance`, `scatter_color`).
@@ -362,12 +340,9 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 
 ### Glass in rays
 
-- Only `Detailed` sharp reflections (`< REFLECTION_SHARED_ROUGHNESS`) filter through blended
-  faces (`trace_glass_filter`, `BLEND_FILTERS`, deferred filters for programs), unbent, counting
-  solid absorption once on entry.
-- All other rays (`trace_visible` skips `RAY_GLASS`, probes, rough reflections, glass-behind
-  rays, fog) ignore glass completely: glass never casts shadows or tints light. Use a textured
-  light for colored projection.
+- Every ray (`trace_visible` skips `RAY_GLASS`, probes, glass-behind rays, fog) ignores glass
+  completely: glass never casts shadows or tints light. Use a textured light for colored
+  projection.
 - **Focal tests:** `material_glass_casts_no_shadow_in_rays`,
   `glass_lets_the_indirect_light_through_uncolored`.
 
@@ -375,5 +350,5 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 
 - No node-based material editor, virtual textures, subsurface scattering, iridescence,
   dispersion, or OpenPBR transmission outside glass.
-- [Residency by sampling](#residency-by-sampling) does not track glass refraction rays or
-  extension stages; glass layers omit sharp-reflection filtering and `glass_inside.comp`.
+- [Residency by sampling](#residency-by-sampling) does not track glass refraction rays,
+  `glass_inside.comp`, or extension stages.

@@ -21,9 +21,8 @@
   - the probe volume with its shape or `sun_shadows`; its probes gather again
     everywhere, keeping the volume, with `light_budget` or `sun_radius`. With
     either, the worlds not shown lose the light they kept;
-  - the histories that hold what the change alters: glass and TAA with `sun_shadows`,
-    `reflection_light_budget` and `reflections`. The direct light and the
-    reflections keep none;
+  - the histories that hold what the change alters: TAA with `sun_shadows`. The direct light keeps
+    none;
   - the texture levels with `texture_max_size` and `texture_pool_megabytes`.
 - `page_pool_bytes` recreates nothing: it is the most the
   [pages](scene.md#scene-and-instances) region grows to, read when it grows; a region already
@@ -56,7 +55,7 @@ Each view chooses what it shows instead of its lit image with `Frame_View.inspec
 (`render/debug_views.odin`).
 
 - `mode` is a `Debug_View`: the G-buffer and light channel ones are resolved in composite; the
-  shadow, reflection and local light ones, in the `debug view` pass after composite.
+  shadow and local light ones, in the `debug view` pass after composite.
 - An inspected view is shown without display transform, glass, overlays or sprites. The modes of
   light take the exposure of the view, so they show under any light scale; a buffer is shown as it
   is. Changing mode does not recreate targets or cut histories.

@@ -93,8 +93,6 @@ decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
         testing.expectf(t,n.x>0.29 && n.y>0.9,"decal tilts the normal toward its U axis: %v",n)
         testing.expectf(t,abs(roughness-0.5)<0.01,
                         "roughness blends through half opacity: %f",roughness)
-        testing.expectf(t,abs(f32(motion[center].z)-0.5)<0.01,
-                        "reflections trace at the decal roughness: %v",motion[center])
         testing.expectf(t,abs(f32(albedo[center].a)/255-0.25)<0.01,
                         "the upper decal lowers metallic in order: %v",albedo[center])
         testing.expectf(t,albedo[center].b>albedo[center].r && albedo[center].b>albedo[center].g,

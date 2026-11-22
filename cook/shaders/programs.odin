@@ -1419,6 +1419,10 @@ programs_generate :: proc(
             parameters[index]=parameter
         }
         id:=len(programs)+1
+        if of==.Surface && id>=abi.POINTS_PROGRAM_CAPACITY {
+            append(&refused,fmt.aprintf("%s: it would be program %d and a Surface program has an id below %d; share one program among materials and vary its Parameters in each .mat, or remove programs",name,id,abi.POINTS_PROGRAM_CAPACITY,allocator=allocator))
+            continue
+        }
         layers:asset.Material_Layers
         if of==.Surface {
             for field,layer in PROGRAM_LAYERS {

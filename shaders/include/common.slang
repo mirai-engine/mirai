@@ -82,7 +82,7 @@ struct Frame_Data {
     uint shadowless_lights;  // the root of the tree of the local lights that cast no shadows (render/light_tree.odin), which ends at light_nodes; 0: none
     uint3 pad0;
     float4 jitter;            // xy current TAA jitter in render pixels, zw previous
-    float4 texturing;         // x = mip bias of rasterized material textures, y = roughness below which reflections are traced (0: none are), z = first box of a glass instance listed after the TLAS nodes, w = how many
+    float4 texturing;         // x = mip bias of rasterized material textures
     float4 time; // current, previous simulation time in seconds
     // The ray of the pixel at uv: a point at linear depth d along it is
     // (eye_origin + eye_du * uv.x + eye_dv * uv.y) + d * (ray_origin + ray_du * uv.x + ray_dv * uv.y),

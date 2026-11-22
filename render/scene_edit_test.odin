@@ -221,7 +221,6 @@ material_rows_go_to_the_gpu_alone_and_only_when_their_values_change :: proc(t:^t
     materials_update(r,materials[:],{2})
     testing.expect(t,!s.materials_dirty && len(s.material_ranges)==1 && s.material_ranges[0]==Pool_Range{2,1},"the row that changed goes alone")
     testing.expect_value(t,s.materials[2].roughness,f32(0.2))
-    testing.expect_value(t,s.smoothest,f32(0.2))
     testing.expect(t,!s.changes.all && s.changes.count==1,"the light of the world sees the roughness, around what shows it")
     center:=s.changes.spheres[0].xyz
     testing.expect(t,abs(center.x)<1e-4 && abs(center.z)<1e-4 && s.changes.spheres[0].w>LIGHT_CHANGE_REACH)
@@ -232,7 +231,6 @@ material_rows_go_to_the_gpu_alone_and_only_when_their_values_change :: proc(t:^t
     uploaded(s)
     materials[1].roughness=0.9
     materials_update(r,materials[:],{2})
-    testing.expect_value(t,s.smoothest,f32(0.9))
     uploaded(s)
     materials[2].base_color={0,0,1}
     materials_update(r,materials[:],{3})
@@ -396,6 +394,14 @@ program_catalog_names_the_programs_and_packs_their_parameters :: proc(t: ^testin
 	broken := `[{"id":1,"name":"Wide","domain":"Surface","size":8,"parameters":[{"name":"far","kind":"Float","components":4,"offset":248}]}]`
 	_, wide := program_catalog_parse(catalog_text(broken))
 	testing.expect(t, !wide, "a parameter past the 256 bytes of a row makes the catalog invalid")
+	at_limit, at_limit_ok := program_catalog_parse(catalog_text(`[{"id":1023,"name":"Last","domain":"Surface","size":0,"parameters":[]}]`))
+	testing.expect(t, at_limit_ok, "Surface program id 1023 fits within POINTS_PROGRAM_CAPACITY")
+	if at_limit_ok {program_catalog_destroy(&at_limit)}
+	_, over_limit := program_catalog_parse(catalog_text(`[{"id":1024,"name":"TooFar","domain":"Surface","size":0,"parameters":[]}]`))
+	testing.expect(t, !over_limit, "Surface program id 1024 exceeds POINTS_PROGRAM_CAPACITY")
+	vfx_over, vfx_over_ok := program_catalog_parse(catalog_text(`[{"id":1024,"name":"Particle","domain":"Vfx","size":0,"parameters":[]}]`))
+	testing.expect(t, vfx_over_ok, "the Surface program ceiling applies to Surface programs alone")
+	if vfx_over_ok {program_catalog_destroy(&vfx_over)}
 }
 
 @(test)
@@ -665,23 +671,6 @@ a_light_keeps_the_texture_it_projects_in_its_record :: proc(t: ^testing.T) {
 	}
 }
 
-@(test)
-material_program_roughness_keeps_reflections_active :: proc(t:^testing.T) {
-    r:=new(Renderer);defer free(r)
-    r.allocator=context.allocator
-    defer {delete(r.scene.materials);delete(r.scene.material_versions)}
-    defer program_catalog_destroy(&r.programs)
-    material:=DEFAULT_MATERIAL
-    materials_set(r,{material})
-    testing.expect_value(t,r.scene.smoothest,f32(1))
-    material.program_id=2
-    materials_set(r,{material})
-    testing.expect_value(t,r.scene.smoothest,f32(0))
-    material.program_id=0;material.roughness=.3
-    materials_set(r,{material})
-    testing.expect_value(t,r.scene.smoothest,f32(.3))
-}
-
 @(private)
 instance_touched :: proc(s:^Scene_State,index:u32) -> bool {return s.touched[index>>6]&(u64(1)<<(index&63))!=0}
 
@@ -907,4 +896,35 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     only:=Instance_Desc{object_id=1,mesh=handle,transform=Mat4(1),tint={1,1,1},material_values=full}
     testing.expect(t,scene_given(r,{only},nil,{},{}))
     testing.expect_value(t,len(s.indices)-words,INSTANCE_VALUES_HEADER+INSTANCE_ROW_WORDS)
+}
+
+// With hardware ray tracing (tlas_off), tlas_settle updates scene bounds once
+// when instances change and never rebuilds or dirties the software TLAS on
+// steady frames.
+@(test)
+hardware_rt_skips_software_tlas_and_settles_bounds_once :: proc(t: ^testing.T) {
+    r := new(Renderer); defer free(r)
+    r.allocator, r.settings, r.hardware_rt = context.allocator, DEFAULT_SETTINGS, true
+    r.scene.tlas_off = true
+    testing.expect(t, scene_init(r))
+    defer scene_destroy(r)
+    vertices, indices := edit_grid(2, 1)
+    defer delete(vertices); defer delete(indices)
+    mesh, ok := edit_add(r, vertices[:], indices[:], []u32{0, 0})
+    testing.expect(t, ok)
+    s := &r.scene
+    testing.expect(t, scene_given(r, {{object_id = 1, mesh = mesh, transform = Mat4(1), tint = {1, 1, 1}}}, nil, {}, {}))
+    tlas_settle(s)
+    testing.expect(t, s.has_bounds && !s.bounds_stale, "bounds settle once after scene_given")
+    testing.expect(t, !s.tlas_nodes_dirty && !s.tlas_refs_dirty, "software TLAS stays clean when tlas_off")
+    // On a steady frame, tlas_settle must not mark software TLAS dirty or re-scan bounds.
+    s.has_bounds = false
+    tlas_settle(s)
+    testing.expect(t, !s.has_bounds && !s.bounds_stale && !s.tlas_nodes_dirty && !s.tlas_refs_dirty, "steady frame does not re-scan bounds or dirty software TLAS")
+    // Moving an instance updates bounds once without refitting the software TLAS.
+    moved := Mat4(1)
+    moved[3] = {10, 0, 0, 1}
+    testing.expect(t, scene_move(r, {0}, {moved}))
+    testing.expect(t, s.has_bounds && !s.bounds_stale && s.bounds_min.x > 9, "scene_move updates bounds")
+    testing.expect(t, !s.tlas_nodes_dirty && !s.tlas_refs_dirty, "scene_move skips software TLAS refit when tlas_off")
 }

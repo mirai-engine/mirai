@@ -41,8 +41,7 @@
     {"name": "Ultra reached the engine", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Ultra"},
       {"storage": "Graphics_Settings", "field": "light_samples", "compare": "Equal", "number": 31},
-      {"storage": "Graphics_Settings", "field": "sun_shadows", "compare": "Equal", "number": 1},
-      {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Off"}]}},
+      {"storage": "Graphics_Settings", "field": "sun_shadows", "compare": "Equal", "number": 1}]}},
     {"name": "resolution changed by hand", "method": "play.step",
      "params": {"segments": [{"for": 2, "keys": ["Down"]}, {"for": 4}, {"for": 2, "keys": ["Right"]}, {"for": 6}]}},
     {"name": "a resolution is of no preset", "method": "play.check", "params": {"conditions": [
@@ -51,8 +50,7 @@
      "params": {"segments": [{"for": 2, "keys": ["Up"]}, {"for": 4}, {"for": 2, "keys": ["Left"]}, {"for": 6}, {"for": 2, "keys": ["Left"]}, {"for": 6}]}},
     {"name": "Medium reached the engine", "method": "play.check", "params": {"conditions": [
       {"storage": "Shell", "field": "quality", "compare": "Equal", "text": "Medium"},
-      {"storage": "Graphics_Settings", "field": "textures", "compare": "Equal", "text": "Medium"},
-      {"storage": "Graphics_Settings", "field": "reflections", "compare": "Equal", "text": "Off"}]}},
+      {"storage": "Graphics_Settings", "field": "textures", "compare": "Equal", "text": "Medium"}]}},
     {"name": "and High again", "method": "play.step",
      "params": {"segments": [{"for": 2, "keys": ["Right"]}, {"for": 6}]}},
 
