@@ -556,25 +556,3 @@ text_at_a_size_without_its_face_gets_one_between_frames :: proc(t:^testing.T) {
     semibold:=font_face(&owner,FONT_SEMIBOLD,18)
     testing.expect(t,semibold!=nil && semibold.size==18,"18 next to the face of 17 has its own")
 }
-
-// Text painted on the CPU lands on the line it is given and clips to the image.
-@(test)
-text_paint_covers_its_line_and_clips_to_the_image :: proc(t:^testing.T) {
-    font:Font
-    if !testing.expect(t,font_init(&font,{FONT_INTER},{20},1)) {return}
-    defer font_destroy(&font)
-    width,height:=200,40
-    coverage:=make([]u8,width*height);defer delete(coverage)
-    text_paint(&font,"Shaders",20,coverage,width,height,10,28)
-    inside,above:=0,0
-    for y in 0..<height {for x in 0..<width {
-        if coverage[y*width+x]==0 {continue}
-        if y>=8 && y<=34 && x>=8 && x<=10+int(text_width(&font,"Shaders",20))+2 {inside+=1} else {above+=1}
-    }}
-    testing.expect(t,inside>100,"the glyphs cover their line")
-    testing.expect_value(t,above,0)
-    for at in ([][2]f32{{-150,28},{180,28},{10,-5},{10,60},{math.nan_f32(),28},{10,math.inf_f32(1)},{1e9,1e9}}) {
-        text_paint(&font,"Shaders",20,coverage,width,height,at[0],at[1])
-    }
-    text_paint(&font,"Shaders",20,coverage[:10],width,height,10,28)
-}

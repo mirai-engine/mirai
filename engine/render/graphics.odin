@@ -23,9 +23,6 @@ Textures :: enum u8 {Low,Medium,High,Ultra}
 // How far meshes keep their detail (GRAPHICS_DETAIL_PIXELS), and how far and dense a
 // plugin draws the scattered detail of a scene (foliage).
 Detail :: enum u8 {Low,Medium,High,Ultra}
-// When the driver compiles the pipelines of what is drawn: while the frames
-// draw without them, or before, the frames waiting for every one.
-Shader_Compilation :: enum u8 {While_Playing,Before_Playing}
 
 @(storage,shared,setting="machine")
 Graphics_Settings :: struct {
@@ -43,7 +40,6 @@ Graphics_Settings :: struct {
     frame_limit:u32 `mirai:"section=Frames,graphics=Frame limit,choices=30|60|120|144|240|Off:0"`, // frames per second; 0: none
     vsync:bool `mirai:"graphics=VSync"`,
     frame_generation:bool `mirai:"graphics=Frame generation"`, // a technique that generates frames (FSR 3.1) shows one between each two, with the memory of its passes and half a frame more of latency; frame_limit and vsync count the frames shown
-    shaders:Shader_Compilation `mirai:"graphics=Shaders"`,
     show_fps:bool `mirai:"graphics=Show FPS"`, // the frames per second in the editor and the game
     texture_memory:u32 `mirai:"min=0,max=65536,unit=MB,section=Memory,advanced"`, // GPU memory of textures, past which they load without their largest levels; 0: a share of the device's (GRAPHICS_TEXTURE_POOL_SHARE)
     geometry_memory:u32 `mirai:"min=0,max=4096,unit=MB,advanced"`, // GPU memory of the pages of streamed meshes, taken when the first one loads: a later change waits until the renderer starts again; 0: that of gpu.DEFAULT_SETTINGS
@@ -149,7 +145,6 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     s.direct_half_resolution=quality.light_half_resolution
     s.reflection_light_budget=min(s.light_budget,GRAPHICS_REFLECTION_LIGHTS)
     s.glass_layers=clamp(quality.glass_layers,1,gpu.GLASS_LAYERS_MAX)
-    s.pipelines_first=quality.shaders==.Before_Playing
     s.texture_max_size=sizes[quality.textures]
     s.lod_error_pixels=pixels[quality.detail]
     switch {

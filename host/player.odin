@@ -290,9 +290,8 @@ player_run_summary :: proc(app:^App,frames:int,seconds:f64) -> string {
     pipelines:=""
     if app.renderer!=nil {
         s:=rhi.device_stats(app.renderer.device)
-        late,waited:=render.renderer_pipelines_report(app.renderer)
-        pipelines=fmt.tprintf("\n  pipelines: %d made (%d kept), %.0f ms in the driver, longest %.1f ms, store %v; %d frames late, %.0f ms waited",
-            s.pipelines_made,s.pipelines_kept,f64(s.pipeline_ns)/1e6,f64(s.pipeline_longest_ns)/1e6,s.pipeline_store,late,time.duration_milliseconds(waited))
+        pipelines=fmt.tprintf("\n  pipelines: %d made (%d kept), %.0f ms in the driver, longest %.1f ms, store %v; %d frames late",
+            s.pipelines_made,s.pipelines_kept,f64(s.pipeline_ns)/1e6,f64(s.pipeline_longest_ns)/1e6,s.pipeline_store,render.renderer_pipelines_late(app.renderer))
     }
     return fmt.tprintf("mirai: %d frames, mean frame time %.2f ms, drawn at %vx%v%s%s",frames,mean,int(size.x),int(size.y),applied,pipelines)
 }

@@ -129,7 +129,6 @@ Load_Pipelines :: struct {
     made,kept:int, // kept: read from the pipelines kept across runs, not compiled
     ns:i64,        // what the driver took for them, summed over the threads
     late:u64,      // submitted frames that still had a requested pipeline pending
-    waited_ns:i64, // time frames waited with Before_Playing
 }
 
 Load_Function :: struct {
@@ -534,14 +533,13 @@ Load_Wait_Summary :: struct {busy:Load_Busy,until_ms:f64,frames:int}
 load_pipelines_now :: proc(app:^App) -> Load_Pipelines {
     if app.device==nil {return {}}
     s:=rhi.device_stats(app.device)
-    late,waited:=render.renderer_pipelines_report(app.renderer)
-    return {s.pipelines_made,s.pipelines_kept,s.pipeline_ns,late,time.duration_nanoseconds(waited)}
+    return {s.pipelines_made,s.pipelines_kept,s.pipeline_ns,render.renderer_pipelines_late(app.renderer)}
 }
 
 @(private)
 load_pipelines_since :: proc(app:^App,from:Load_Pipelines) -> Load_Pipelines {
     now:=load_pipelines_now(app)
-    return {now.made-from.made,now.kept-from.kept,now.ns-from.ns,now.late-from.late,now.waited_ns-from.waited_ns}
+    return {now.made-from.made,now.kept-from.kept,now.ns-from.ns,now.late-from.late}
 }
 
 // What a load says of its pipelines, in the temporary allocator.

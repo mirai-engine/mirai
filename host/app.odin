@@ -69,6 +69,11 @@ App_Desc :: struct {
     collision_cache:string,      // folder where the convex pieces of meshes are kept (asset.mesh_collision_pieces); "": none
     shaders_root:string,         // folder whose shader generation is loaded; "": the one that holds assets_root
     pipeline_cache:string,       // file where Vulkan keeps compiled pipelines across runs; "": MIRAI_PIPELINES_PATH else user_folder/pipelines.bin
+    // Called when the person cancels the pipelines the renderer starts with
+    // (Cancel or Escape on the screen that shows them), after what is made is
+    // written and before the application ends; not when the window closes.
+    on_pipelines_cancel:proc(user:rawptr),
+    on_pipelines_cancel_user:rawptr,
     asset_mounts:[]asset.Registry_Mount, // besides those of the plugins of the project root, which the application mounts
 }
 

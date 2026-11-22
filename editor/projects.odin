@@ -519,6 +519,7 @@ projects_start :: proc(s:^Session) -> bool {
     }
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,exe,"--project",base.text_get(p.opening[:]))
+    if p.launcher {append(&command,"--from-launcher")}
     if p.git_init {
         append(&command,"--git-init")
         if p.lfs {append(&command,"--git-lfs")}
@@ -541,6 +542,25 @@ projects_start :: proc(s:^Session) -> bool {
     p.starts=true
     log.infof("opening %s",base.text_get(p.opening[:]))
     return true
+}
+
+// The launcher an editor came from (--from-launcher), which a Cancel of the
+// shaders it starts with opens again before it ends (host.App_Desc.on_pipelines_cancel).
+@(private)
+Launcher_Return :: struct {
+    program,template:string,
+    args:[]string, // the options it passes on (options_passed)
+}
+
+@(private)
+launcher_return :: proc(user:rawptr) {
+    back:=(^Launcher_Return)(user)
+    command:=make([dynamic]string,context.temp_allocator)
+    append(&command,back.program,"--project",back.template,"--launcher")
+    append(&command,..back.args)
+    if _,error:=subprocess.detached({command=command[:],stdin=os.stdin,stdout=os.stdout,stderr=os.stderr});error!=nil {
+        log.errorf("the launcher could not be started again with %s: %v",back.program,error)
+    }
 }
 
 // As the editor ends after asking: the project built waits to be started.
