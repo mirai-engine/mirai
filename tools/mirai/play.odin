@@ -120,7 +120,7 @@ play_audit_run :: proc(port:int,options:Play_Audit_Options,folder:string) -> int
     text,ok:=session_call("play audit",port,"play.audit",struct {ticks:int}{options.ticks},600000)
     if !ok {return 2}
     Flag :: struct {severity,area,code,entity,message,fix:string}
-    Summary :: struct {entities,mesh_entities,blend_entities,textures_pending,problems,ui_buttons_visible:int,mouse_captured,keyboard_consumed:bool}
+    Summary :: struct {entities,mesh_entities,blend_entities,textures_pending,problems,ui_buttons_visible,rigs:int,mouse_captured,keyboard_consumed:bool,frame_luma:f32}
     audit:struct {passed:bool,flags:[]Flag,flags_more:int,summary:Summary}
     if json.unmarshal_string(text,&audit,allocator=context.temp_allocator)!=nil {fmt.eprintfln("mirai play audit: play.audit answered %s",text);return 2}
     for f in audit.flags {
@@ -138,7 +138,7 @@ play_audit_run :: proc(port:int,options:Play_Audit_Options,folder:string) -> int
         }
     }
     s:=audit.summary
-    fmt.printfln("%s %s: %d errors, %d warnings; %d entities, %d meshes (%d blended), %d problems, %d textures pending, %d buttons on screen, mouse %s",
-        errors>0?"FAIL":"PASS",folder,errors,warnings,s.entities,s.mesh_entities,s.blend_entities,s.problems,s.textures_pending,s.ui_buttons_visible,s.mouse_captured?"held":"free")
+    fmt.printfln("%s %s: %d errors, %d warnings; %d entities, %d meshes (%d blended), %d rigs watched, %d problems, %d textures pending, %d buttons on screen, mouse %s, frame luminance %.3f",
+        errors>0?"FAIL":"PASS",folder,errors,warnings,s.entities,s.mesh_entities,s.blend_entities,s.rigs,s.problems,s.textures_pending,s.ui_buttons_visible,s.mouse_captured?"held":"free",s.frame_luma)
     return errors>0?1:0
 }

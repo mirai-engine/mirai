@@ -262,7 +262,7 @@ plugin_library_hashes :: proc(p:^project.Project,libraries:[]Plugin_Library,inde
 	hashed:=make([dynamic]string,context.temp_allocator)
 	append(&hashed,..flags)
 	append(&hashed,fmt.tprintf("<declare %d>",DECLARE_VERSION),fmt.tprintf("<declarations %v %x>",engine.mode,declared_key(declared,names)))
-	compile,_=fingerprint(p.engine_root,compiler,hashed[:],sources[:])
+	compile,_=fingerprint(p.engine_root,compiler,hashed[:],sources[:],project_folder=p.root)
 	hash=compile
 	for &other in libraries[:index] {
 		needs:=lib.project_needs if other.project else lib.needs

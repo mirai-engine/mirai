@@ -16,8 +16,11 @@ mirai rpc --project . play.audit '{"ticks":60,"frame_ms_budget":16.7}'
 ```
 
 Both RPC calls return `{passed, flags: [{severity, area, code, entity, message, fix}], summary}`.
-`play.audit` adds live UI cursor-capture and keyboard-focus checks, NaN/stuck checks, and GPU/CPU
-frame budget checks.
+`play.audit` adds live UI cursor-capture and keyboard-focus checks, NaN/stuck checks, GPU/CPU
+frame budget checks and, with a GPU, a frame nearly all black or clipped white
+(`render.frame_dark`, `render.frame_blown`). Along its `ticks` it watches the rigs in their own
+space: one that plays and never moves a bone (`animation.rig_frozen`) and a bone that jumps in one
+tick (`animation.bone_snap`).
 
 ## Explore
 

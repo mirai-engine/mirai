@@ -2,9 +2,11 @@ package playtest_editor
 
 import "base:runtime"
 import "core:fmt"
+import "core:math/linalg"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import img "mirai:cook/image"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -12,6 +14,7 @@ import egui "mirai:engine/gui"
 import input "mirai:engine/input"
 import erender "mirai:engine/render"
 import "mirai:host"
+import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -19,7 +22,9 @@ import "mirai:std/serial"
 // its assets: the red flags a person sees in the first minute (problems,
 // materials that draw black or nearly all blended, animations without their
 // asset, a menu whose cursor the game holds, a transform that is not finite,
-// a frame over budget), each with its entity, what is wrong and the fix.
+// a frame over budget, a frame all black or all white, a rig that plays and
+// does not move or a bone that jumps), each with its entity, what is wrong and
+// the fix.
 
 AUDIT_FLAGS :: 64
 @(private) AUDIT_BLEND_MESHES :: 20      // mesh entities from which the share of blended ones counts
@@ -27,6 +32,15 @@ AUDIT_FLAGS :: 64
 @(private) AUDIT_DIELECTRIC :: f32(0.05)  // metallic under which a material is not a metal
 @(private) AUDIT_COSTS :: 3               // costliest parts a frame over budget names
 @(private) AUDIT_STATUS_ANSWER :: 256*1024
+@(private) AUDIT_DARK_PERCENT :: f32(98)  // of the frame near black from which it is dark
+@(private) AUDIT_BLOWN_PERCENT :: f32(98) // of the frame clipped from which it is blown out
+@(private) AUDIT_BLOWN_LUMA :: f32(0.8)   // linear luminance the darkest 5% of a blown-out frame reach
+@(private) AUDIT_FRAME_SIZE :: 256        // pixels of the width of the frame the audit measures
+@(private) AUDIT_FRAME_FILE :: ".mirai/captures/audit-frame.png"
+@(private) AUDIT_STILL :: f32(1e-5)       // m a bone moves in a tick under which it stays
+@(private) AUDIT_FROZEN_TICKS :: 3        // ticks a rig plays with no bone moving before it is frozen
+@(private) AUDIT_SNAP_SHARE :: f32(0.5)   // of the size of a rig, a bone moving more in one tick jumps
+@(private) AUDIT_SNAP_LEAST :: f32(0.25)  // m, the least move in one tick that is a jump
 
 Audit_Severity :: enum u8 {Error,Warn}
 Audit_Area :: enum u8 {Input,Ui,Render,Material,Animation,Physics,Performance,Problems}
@@ -50,6 +64,8 @@ Audit_Summary :: struct {
     mouse_captured:bool `mirai:"label=The game holds the mouse (hidden cursor, relative motion) as it does in its own window"`,
     ui_buttons_visible:int `mirai:"label=Buttons of the top screen of the focused player that show and can be pressed"`,
     keyboard_consumed:bool `mirai:"label=An interface of the game has the keyboard"`,
+    frame_luma:f32 `mirai:"optional,label=Mean linear luminance of the frame of the game, 0 to 1; absent without a GPU"`,
+    rigs:int `mirai:"optional,label=Rigs whose bones the ticks watched"`,
 }
 
 Api_Scene_Audit_Params :: struct {
@@ -76,7 +92,7 @@ audit_api_register :: proc(s:^editor.Session) {
     scene:=Api_Scene_Audit_Params{blend_ratio_warn=0.25}
     play:=Api_Play_Audit_Params{frame_ms_budget=33.3,blend_ratio_warn=0.25}
     editor.api_method_register(s,{params=type_info_of(Api_Scene_Audit_Params),result=type_info_of(Api_Audit),name="scene.audit",summary="Red flags of the document or of the game that plays, read from its world and assets, each with its entity and fix: core.report problems, transforms that are not finite, materials that draw black or a scene nearly all blended, and animations whose asset is missing or of another kind.",defaults=&scene,flags={.Read_Only},run=api_scene_audit})
-    editor.api_method_register(s,{params=type_info_of(Api_Play_Audit_Params),result=type_info_of(Api_Audit),name="play.audit",summary="The checks of scene.audit on the game of the caller and those of a game that plays: buttons on screen while the game holds the mouse, a screen that is not modal holding the keyboard, textures still streaming, a stuck player and a frame over budget with its costliest parts; with ticks it first runs those ticks.",defaults=&play,run=api_play_audit})
+    editor.api_method_register(s,{params=type_info_of(Api_Play_Audit_Params),result=type_info_of(Api_Audit),name="play.audit",summary="The checks of scene.audit on the game of the caller and those of a game that plays: buttons on screen while the game holds the mouse, a screen that is not modal holding the keyboard, textures still streaming, a frame over budget with its costliest parts and, with a GPU, a frame nearly all black or all white; with ticks it first runs those ticks, watching for a stuck player, a rig that plays and does not move and a bone that jumps in one tick.",defaults=&play,run=api_play_audit})
 }
 
 @(private)
@@ -388,15 +404,18 @@ api_play_audit :: proc(s:^editor.Session,call:^api.Call) {
     r,_:=editor.api_play_run(s,call,p.player)
     if r==nil {editor.api_no_game(call);return}
     stuck:f64
+    rigs:=make([dynamic]Audit_Rig,call.allocator)
     if p.ticks>0 {
         stepped:bool
-        if stuck,stepped=audit_step(s,call,r,p.ticks,p.player);!stepped {return}
+        if stuck,stepped=audit_step(s,call,r,p.ticks,p.player,&rigs);!stepped {return}
         if r,_=editor.api_play_run(s,call,p.player);r==nil {api.call_failf(call,api.SERVER_ERROR,"The game ended during the %d ticks of the audit",p.ticks);return}
     }
     status:=audit_status(call)
+    luma,dark,blown,measured:=audit_frame_measure(s,call,p.player)
     a:=Audit{s=s,w=editor.run_ref(s,r),allocator=call.allocator}
     a.flags=make([dynamic]Audit_Flag,call.allocator)
     a.summary.textures_pending=status.textures.pending
+    a.summary.rigs=len(rigs)
     audit_world(&a,p.blend_ratio_warn)
     audit_ui(&a,r)
     if status.textures.pending>0 {
@@ -410,14 +429,139 @@ api_play_audit :: proc(s:^editor.Session,call:^api.Call) {
             message=fmt.aprintf("The player asked to move for %.1f s of the ticks and did not move",stuck,allocator=call.allocator),
             fix="play.observe and capture show what holds it: a collider in the way or the ground it stands on"})
     }
+    audit_rigs(&a,rigs[:])
     audit_frame(&a,s.app.stats.frame_ms,p.frame_ms_budget,&status)
+    if measured {
+        a.summary.frame_luma=luma
+        if dark {
+            audit_add(&a,{severity=.Error,area=.Render,code="render.frame_dark",
+                message=fmt.aprintf("The frame of the game is nearly all black (mean luminance %.4f; %s shows it): the player sees nothing",luma,AUDIT_FRAME_FILE,allocator=call.allocator),
+                fix="world exposure in the docs: a camera inside a mesh or with no View, no light or sky, or an exposure far too low; render.inspect_entity tells what draws"})
+        }
+        if blown {
+            audit_add(&a,{severity=.Error,area=.Render,code="render.frame_blown",
+                message=fmt.aprintf("The frame of the game is nearly all clipped white (mean luminance %.2f; %s shows it): the player sees nothing",luma,AUDIT_FRAME_FILE,allocator=call.allocator),
+                fix="world exposure in the docs: a light or emission thousands of times too strong, or an exposure far too high"})
+        }
+    }
     api.call_result(call,Api_Audit)^=audit_finish(&a)
 }
 
-// Runs ticks of the run by play.step, watching the focused body: the seconds
-// it asked to move without moving, or false after failing the call.
+// Whether a frame is nearly all black or nearly all clipped white: what the
+// player sees is nothing, whatever the scene holds.
 @(private)
-audit_step :: proc(s:^editor.Session,call:^api.Call,r:^editor.Run,ticks,player:int) -> (stuck:f64,ok:bool) {
+audit_exposure :: proc "contextless" (stats:img.Image_Stats) -> (dark,blown:bool) {
+    return stats.black_percent>=AUDIT_DARK_PERCENT,stats.saturated_percent>=AUDIT_BLOWN_PERCENT && stats.p5>=AUDIT_BLOWN_LUMA
+}
+
+// The frame of the game as capture draws it, measured; false without a GPU
+// or when it could not be drawn or read.
+@(private)
+audit_frame_measure :: proc(s:^editor.Session,call:^api.Call,player:int) -> (luma:f32,dark,blown,measured:bool) {
+    if s.app==nil || s.app.renderer==nil || s.project_root=="" {return}
+    buffer:=make([]u8,AUDIT_STATUS_ANSWER,call.allocator)
+    params:=fmt.tprintf(`{{"of":"Game","player":%d,"width":%d,"path":"%s"}}`,player,AUDIT_FRAME_SIZE,AUDIT_FRAME_FILE)
+    if _,_,called:=editor.api_scenario_call(call.server,"capture",params,buffer);!called {return}
+    file:=project.path(s.project_root,AUDIT_FRAME_FILE,allocator=context.temp_allocator)
+    image,error:=img.image_load(file,context.temp_allocator)
+    if error!=.None {return}
+    stats,stats_error:=img.image_stats(image,{},context.temp_allocator)
+    if stats_error!=.None {return}
+    dark,blown=audit_exposure(stats)
+    return stats.mean_luma,dark,blown,true
+}
+
+// A rig as the ticks of the audit saw it.
+@(private)
+Audit_Rig :: struct {
+    entity:core.Entity,
+    bones:[][3]f32,    // m, of the last tick watched, in the space of the entity
+    names:[]string,
+    playing:bool,      // in the last tick watched
+    extent:f32,        // m, the farthest a bone was from the entity
+    played:int,        // ticks it played from one to the next with the same bones
+    moved:f32,         // m, the most a bone moved in one of those
+    jump:f32,          // m, the most a bone moved in one tick
+    jump_bone,jump_tick:int,
+}
+
+// The most a bone moved between two poses of the same bones, and which;
+// bone -1 when they are not of the same bones.
+@(private)
+audit_bones_moved :: proc(before,after:[][3]f32) -> (most:f32,bone:int) {
+    if len(before)!=len(after) || len(before)==0 {return 0,-1}
+    bone=0
+    for at,i in before {
+        if moved:=linalg.length(after[i]-at);moved>most {most,bone=moved,i}
+    }
+    return
+}
+
+// Whether a rig that played that many ticks with none of its bones moving
+// more than moved shows one pose while it should move.
+@(private)
+audit_rig_frozen :: proc "contextless" (played:int,moved:f32) -> bool {return played>=AUDIT_FROZEN_TICKS && moved<=AUDIT_STILL}
+
+// Whether a bone that moved jump in one tick, in a rig that reaches extent
+// from its entity, jumped: a head that leaves its neck, a pop of the skin.
+@(private)
+audit_bone_snap :: proc "contextless" (jump,extent:f32) -> bool {return jump>max(AUDIT_SNAP_SHARE*extent,AUDIT_SNAP_LEAST)}
+
+// Takes the poses of the rigs of a run after a tick into rigs, through the plugins that pose them.
+@(private)
+audit_rigs_watch :: proc(s:^editor.Session,r:^editor.Run,tick:int,rigs:^[dynamic]Audit_Rig,allocator:runtime.Allocator) {
+    found:[editor.PROVIDER_CAPACITY]editor.Rig_Provider
+    poses:=make([dynamic]editor.Rig_Pose,context.temp_allocator)
+    w:=editor.run_ref(s,r)
+    for provider in found[:editor.provided_all(s,found[:])] {
+        if provider.poses!=nil {provider.poses(s,w,&poses,context.temp_allocator)}
+    }
+    for &pose in poses {
+        rig:^Audit_Rig
+        for &known in rigs {
+            if known.entity==pose.entity {rig=&known;break}
+        }
+        if rig==nil {
+            append(rigs,Audit_Rig{entity=pose.entity,jump_bone=-1})
+            rig=&rigs[len(rigs)-1]
+        }
+        most,bone:=audit_bones_moved(rig.bones,pose.bones)
+        if bone<0 {
+            rig.bones=slice.clone(pose.bones,allocator)
+            rig.names=make([]string,len(pose.names),allocator)
+            for name,i in pose.names {rig.names[i]=strings.clone(name,allocator)}
+        } else {
+            if rig.playing && pose.playing {rig.played+=1;rig.moved=max(rig.moved,most)}
+            if most>rig.jump {rig.jump,rig.jump_bone,rig.jump_tick=most,bone,tick}
+            copy(rig.bones,pose.bones)
+        }
+        rig.playing=pose.playing
+        for at in pose.bones {rig.extent=max(rig.extent,linalg.length(at))}
+    }
+}
+
+@(private)
+audit_rigs :: proc(a:^Audit,rigs:[]Audit_Rig) {
+    for &rig in rigs {
+        if audit_bone_snap(rig.jump,rig.extent) {
+            name:=rig.jump_bone<len(rig.names) && rig.names[rig.jump_bone]!=""?rig.names[rig.jump_bone]:fmt.tprintf("%d",rig.jump_bone)
+            audit_add(a,{severity=.Error,area=.Animation,code="animation.bone_snap",entity=audit_entity(a,rig.entity),
+                message=fmt.aprintf("Its bone %s jumped %.2f m in tick %d of the audit, in a rig %.2f m across from its entity: it pops off where it was",name,rig.jump,rig.jump_tick,rig.extent,allocator=a.allocator),
+                fix="animation.history over that tick says what changed it: a clip that loops with its root motion not taken out, a cut between actions with no blend, or a pose request far from the rig"})
+        }
+        if audit_rig_frozen(rig.played,rig.moved) {
+            audit_add(a,{severity=.Warn,area=.Animation,code="animation.rig_frozen",entity=audit_entity(a,rig.entity),
+                message=fmt.aprintf("It played an animation for %d ticks and none of its %d bones moved: it shows one pose",rig.played,max(len(rig.bones)-1,0),allocator=a.allocator),
+                fix="animation.inspect says what it plays and animation.analyze whether its tracks reach the bones of its skeleton: a clip of one key, a time that does not advance, or tracks bound to no bone"})
+        }
+    }
+}
+
+// Runs ticks of the run by play.step one at a time, watching the focused body
+// and the rigs: the seconds it asked to move without moving, or false after
+// failing the call.
+@(private)
+audit_step :: proc(s:^editor.Session,call:^api.Call,r:^editor.Run,ticks,player:int,rigs:^[dynamic]Audit_Rig) -> (stuck:f64,ok:bool) {
     slot:=playtest_run(s,r)
     watch :: proc(s:^editor.Session,r:^editor.Run,slot:^Playtest_Run) -> f64 {
         if slot==nil {return 0}
@@ -430,10 +574,15 @@ audit_step :: proc(s:^editor.Session,call:^api.Call,r:^editor.Run,ticks,player:i
         return stuck_watch(&slot.stuck,w,body,at,seconds)
     }
     watch(s,r,slot)
+    audit_rigs_watch(s,r,0,rigs,call.allocator)
     buffer:=make([]u8,OBSERVE_STEP_ANSWER,call.allocator)
-    _,error,called:=editor.api_scenario_call(call.server,"play.step",fmt.tprintf(`{{"for":%d}}`,ticks),buffer)
-    if !called {api.call_fail(call,error.code,error.message);return}
-    after,_:=editor.api_play_run(s,call,player)
-    if after==nil || after.id!=r.id {return 0,true}
+    after:=r
+    for tick in 1..=ticks {
+        _,error,called:=editor.api_scenario_call(call.server,"play.step",`{"for":1}`,buffer)
+        if !called {api.call_fail(call,error.code,error.message);return}
+        after,_=editor.api_play_run(s,call,player)
+        if after==nil || after.id!=r.id {return 0,true}
+        audit_rigs_watch(s,after,tick,rigs,call.allocator)
+    }
     return watch(s,after,playtest_run(s,after)),true
 }
