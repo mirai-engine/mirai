@@ -27,7 +27,8 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
 - `kai` (layer 4): records, trees, conflicts, operations, workspaces, the logs, pairing, the mesh,
   overlays and proposals. It imports `std/*`, `store`, `exchange`, `net` and `core:` alone.
 - `kai/hub` (layer 5): the node's commands, HTTPS server, JSON API and web frontend. It imports
-  `kai`, `net/tls`, `store` and `std/*`. `tools/kai` is `mirai-kai`, which imports `kai/hub` alone.
+  `kai`, `net`, `net/tls`, `store` and `std/*`. `tools/kai` is `mirai-kai`, which imports
+  `kai/hub` alone.
 - `net/tls` (layer 2): TLS 1.3 and an ACME client, without I/O.
 - `cook/kai` (layer 7): what Kai knows of Mirai, the asset driver and the project filter, and the
   operations that need a workspace. `editor` and `tools/mirai` call it and `kai` alike.
@@ -203,7 +204,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `headless_arm64_server_builds_and_serves_public_and_member_views` (builds the static
   executable and runs it where a linux/arm64 runtime exists).
 - TLS: `tls13_known_answer_vectors`, `tls13_refuses_hostile_and_downgraded_input`,
-  `tls13_interoperates_with_system_tools` and
-  `acme_orders_a_certificate_by_tls_alpn_from_a_fake_directory`.
+  `tls13_interoperates_with_system_tools`,
+  `acme_orders_a_certificate_by_tls_alpn_from_a_fake_directory` and
+  `hub_serves_while_an_acme_order_dials` (skipped where no route makes a connect wait).
 - Editor: [its focal tests](../mirai-editor/references/kai.md#verification).
 - Documentation: `uv run scripts/check_docs.py`.

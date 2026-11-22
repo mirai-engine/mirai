@@ -27,6 +27,10 @@ texts of the licenses are at the [end](#license-texts).
 - **musl 1.2.5** (MIT; © 2005-2020 Rich Felker, et al.), <https://musl.libc.org>, as Alpine's
   `musl-dev` package builds it, fetched into `.deps/linux-arm64-musl`. Node: linked statically
   into `bin/mirai-kai-linux-arm64` by `mirai build kai --target linux_arm64`.
+- **compiler-rt 17.0.6** (Apache-2.0 WITH LLVM-exception; © LLVM Project contributors),
+  <https://compiler-rt.llvm.org>, its `libclang_rt.builtins-aarch64.a` as Alpine's `compiler-rt`
+  package builds it, fetched into `.deps/linux-arm64-compiler-rt`. Node: linked statically into
+  `bin/mirai-kai-linux-arm64` by `mirai build kai --target linux_arm64`.
 - **Vue 3.5.13** (MIT; © 2018-present Yuxi (Evan) You), <https://vuejs.org>, its runtime-only
   build `dist/vue.runtime.esm-browser.prod.js` unchanged as `kai/hub/web/vue.js`. Node and editor:
   embedded in `mirai-kai` and `mirai`, which serve it to browsers as part of KaiHub.

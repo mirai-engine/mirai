@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:crypto/ecdsa"
 import "core:crypto/x509"
 import "core:fmt"
+import "core:log"
 import "core:math/rand"
 import "core:mem"
 import "core:net"
@@ -769,6 +770,45 @@ hub_hands_the_relay_over_tcp_to_the_runner :: proc(t:^testing.T) {
         time.sleep(time.Millisecond)
     }
     testing.expectf(t,adopted==1 && held==1,"the runner takes the relay's connection and the hub keeps the TLS one: %d %d",adopted,held)
+}
+
+// An ACME order's dial does not stall serving: while its connect waits on an
+// address that does not answer, a request that came is answered, and the dial
+// gives up at its deadline of the hub's clock.
+@(test)
+hub_serves_while_an_acme_order_dials :: proc(t:^testing.T) {
+    // TEST-NET-1 (RFC 5737) is routed nowhere: a connect to it waits.
+    probe,pe:=net.create_socket(.IP4,.TCP)
+    if !testing.expect(t,pe==nil) {return}
+    socket:=probe.(net.TCP_Socket)
+    waits:=net.set_blocking(socket,false)==nil && mnet.socket_connect(net.Socket(socket),mnet.address_ip4(192,0,2,1,443))
+    answered,_:=mnet.socket_connected(net.Socket(socket))
+    net.close(socket)
+    if !waits || answered {
+        log.warn("SKIPPED: this machine has no route on which a connect to 192.0.2.1 waits")
+        return
+    }
+    f:=new(Fixture)
+    defer free(f)
+    defer fixture_close(f)
+    if !fixture_open(t,f,"kai-hub-dial") {return}
+    // Each reading of the clock is half a second later, so the deadline comes within steps.
+    f.hub.desc.clock={&f.now,proc(data:rawptr) -> f64 {
+        now:=(^f64)(data)
+        now^+=0.5
+        return now^
+    }}
+    client,ce:=net.dial_tcp(net.Endpoint{net.IP4_Loopback,f.hub.http_port})
+    if !testing.expect(t,ce==nil,"a browser connects") {return}
+    defer net.close(client)
+    net.send_tcp(client,transmute([]u8)string("GET /api/node HTTP/1.1\r\nHost: a\r\n\r\n"))
+    _,dialed:=order_dial(&f.hub,"192.0.2.1",443)
+    testing.expect(t,!dialed,"the dial gives up at its deadline")
+    net.set_blocking(client,false)
+    buffer:[512]u8
+    n,_:=net.recv_tcp(client,buffer[:])
+    answer:=string(buffer[:max(n,0)])
+    testing.expectf(t,strings.has_prefix(answer,"HTTP/1.1 200"),"the request is answered while the dial waits: %q",answer)
 }
 
 // The hub presents only credentials alive at each ClientHello: a connection

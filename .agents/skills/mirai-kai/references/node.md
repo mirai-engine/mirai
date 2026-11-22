@@ -31,7 +31,8 @@ optional: an org with no node works on a LAN and between machines that can reach
   `bin/mirai-kai-linux-arm64` from any system that has `ld.lld` (`brew install lld`, `apt install
   lld`). Odin's `core:os` needs a C library on Linux and Odin does not link a Linux target from
   another system, so the build compiles to objects and links them statically against a pinned,
-  prebuilt musl that `mirai` downloads and checks by hash. The result has no dynamic loader and
+  prebuilt musl and the compiler's builtins (compiler-rt, which musl's long-double formatting
+  calls), both of which `mirai` downloads and checks by hash. The result has no dynamic loader and
   needs nothing installed on the machine.
 - Why a VM and a real filesystem: rendezvous needs a stable public address and the real source
   address of UDP datagrams (a container bridge's NAT breaks hole punching), and the
