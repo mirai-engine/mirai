@@ -497,7 +497,7 @@ Frame_Desc :: struct {
 	ui_textures:    []Ui_Texture_Draw, // world panels drawn into textures, before the views
 	effect_views:   []Effect_View,     // what extensions draw into textures (the Effect stage), before the UI that shows them
 	probes:         []Depth_Probe,     // pixels whose depth goes back to the CPU (renderer_depth_probes)
-	debug:  []Debug_Lines, // line and triangle batches, over the panels and under the screen UI
+	debug:  []Debug_Lines, // line and triangle batches, over the panels and under the screen UI; of a frame alone, over its first view
 	// Drawn only into the image renderer_capture reads, for a world that is
 	// not shown: nothing reaches the window, and the probe volume keeps the
 	// light of the world that is.
@@ -598,6 +598,7 @@ Renderer :: struct {
 	settings:        Settings,
 	highlight:       Highlight_Style, // the editor's outline levels
 	outlines:        Highlight_Style, // the game's outline styles: none drawn until it sets them
+	probe:           Instance_Probe,  // the instance whose cull the frames read back (renderer_probe_set)
 	pipelines:       [Pipeline_Id]rhi.Pipeline, // of each stage that traces no rays, without constants
 	variants:        [PIPELINE_VARIANTS]Pipeline_Variant, // the others (pipeline_of)
 	variant_count:   int,

@@ -15,7 +15,7 @@ struct Params_Block {
     uint chunk_capacity;
     uint visible_capacity;   // of the visible list, both phases together
     uint candidate_capacity; // of the clusters phase 0 found hidden
-    uint pad;
+    uint probe;              // the instance whose cull the stats keep (Stats_Block.probe), plus one; 0: none
     // The slots of the pages of streamed meshes (render.Pages_State): x their
     // first word in the vertex pool, y how many (0: none), z the stamp of the
     // frame, w the capacity of the list of requests (0: none).

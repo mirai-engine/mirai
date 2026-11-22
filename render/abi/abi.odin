@@ -570,6 +570,15 @@ CULL_INSTANCE_DISPATCH  :: 139 // three words: the groups of the cull by instanc
 // The phase of cull.comp that tests each batch by its box before phase 0.
 CULL_PHASE_BATCHES      :: 2
 
+// How cull.comp treated the instance it probes (Gpu_Cull_Stats.probe): phase 0
+// tested it, the view draws its box (not hidden, in its layers, in front of its
+// clip plane, in its frustum), its box is in the frustum, and a phase found it
+// not hidden by the depth pyramid.
+CULL_PROBE_TESTED  :: 1
+CULL_PROBE_DRAWS   :: 2
+CULL_PROBE_FRUSTUM :: 4
+CULL_PROBE_VISIBLE :: 8
+
 // What the raster of the visibility target draws of the visible clusters
 // (raster_lists.slang): a vertex is RASTER_VERTEX_WORDS, where it is in the
 // world and, in its last word, its entry of the visible list << 8 | which of

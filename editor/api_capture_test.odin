@@ -4,10 +4,13 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:testing"
+import "mirai:core"
 import "mirai:editor/api"
 import "mirai:host"
+import gpu "mirai:render"
 import "mirai:std/jobs"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 @(test)
 capture_paths_take_git_bash_drives_and_are_relative_to_the_project :: proc(t:^testing.T) {
@@ -107,4 +110,34 @@ a_capture_makes_its_folder_and_says_why_it_cannot_write :: proc(t:^testing.T) {
     written:=fmt.tprintf("%s/new/a.png",folder)
     testing.expect_value(t,api_png_write(&session,written,make([]u8,4),1,1),"")
     testing.expect(t,os.is_file(written),"and it writes the file")
+}
+
+// The lines of debug: the world box of each mesh drawn, those of the entity
+// followed in their own color, and the path; a flag no plugin draws fails.
+@(test)
+capture_debug_draws_boxes_and_the_path_and_refuses_what_no_plugin_draws :: proc(t:^testing.T) {
+    f:=new(Spatial_Fixture);defer free(f)
+    if !spatial_open(t,f) {return}
+    defer spatial_close(f)
+    core.add(&f.w.hidden,f.boulder,{})
+    core.settle(&f.info,&f.w,nil)
+    storage:[1024]gpu.Debug_Vertex
+    lines:=gpu.debug_lines_make(storage[:],depth_test=false)
+    call:=api.Call{allocator=context.temp_allocator}
+    w:=edited_world(&f.s)
+    trail:=[][3]f32{{0,0,0},{1,0,0},{2,0,1}}
+    testing.expect(t,api_capture_debug_draw(&f.s,&call,w,{.Bounds,.Trajectory},f.crate,trail,&lines),call.error.message)
+    followed,boxed,path:=0,0,0
+    for vertex in storage[:lines.count] {
+        switch vertex.color {
+        case mm.rgba8_pack(API_CAPTURE_FOLLOWED): followed+=1
+        case mm.rgba8_pack(API_CAPTURE_BOUNDS):   boxed+=1
+        case mm.rgba8_pack(API_CAPTURE_TRAIL):    path+=1
+        }
+    }
+    // Floor and ramp, and crate with its lid; the hidden boulder draws none.
+    testing.expectf(t,boxed==2*24 && followed==2*24,"boxes: %d of others, %d followed",boxed,followed)
+    testing.expectf(t,path>2*2,"the path and its end: %d",path)
+    testing.expect(t,!api_capture_debug_draw(&f.s,&call,w,{.Skeleton},core.NONE,nil,&lines))
+    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,"Skeleton"),call.error.message)
 }
