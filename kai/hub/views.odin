@@ -58,8 +58,7 @@ Project_Graph :: struct {
 }
 
 // What the read routes take of an org, made when its agent changes and not on
-// each request: its proposals folded and settled, and the bookmarks of each
-// project for anyone and for a member. A fold of the logs makes it again at
+// each request: the bookmarks of each project for anyone and for a member. A fold of the logs makes it again at
 // the next request that reads it; refs or objects that came make it again at
 // most once per step of the hub. So a flood of requests folds nothing.
 Org_Views :: struct {
@@ -67,11 +66,8 @@ Org_Views :: struct {
     stamps:[2]int, // the agent's refolds, and the refs it took and objects it fetched
     made:f64,      // the hub's time it was made at
     arena:virtual.Arena,
-    proposals:[dynamic]Org_Proposal,
     projects:[dynamic]Project_Bookmarks,
 }
-
-Org_Proposal :: struct {project:kai.Log_Id,fold:^kai.Proposal_Fold}
 
 // The bookmarks of a project: the moves its log keeps, and for a member also
 // each name a device publishes that no move keeps.
@@ -175,18 +171,7 @@ org_views :: proc(h:^Hub,o:^kai.Runner_Org) -> ^Org_Views {
     virtual.arena_free_all(&w.arena)
     w.stamps,w.made=stamps,h.now
     context.allocator=virtual.arena_allocator(&w.arena)
-    w.proposals=make([dynamic]Org_Proposal)
     w.projects=make([dynamic]Project_Bookmarks)
-    for l in o.agent.logs {
-        if l.kind!=.Proposal || len(l.items)==0 {continue}
-        project:=proposal_project(l)
-        ours:=false
-        for p in o.agent.org.projects {ours||=p.id==project}
-        f:=new(kai.Proposal_Fold)
-        if !ours || kai.proposal_fold(f,l,&o.agent.org)!=.None {continue}
-        _=kai.proposal_settle(store_of(h),f)
-        append(&w.proposals,Org_Proposal{project,f})
-    }
     for p in o.agent.org.projects {
         b:=Project_Bookmarks{project=p.id}
         b.shared,b.shared_main=project_bookmarks(h,o,w,p.id,false)
@@ -205,12 +190,10 @@ project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,w:^Org_Views,project:kai.Log_
     s:=store_of(h)
     out:=make([dynamic]Bookmark_View)
     if l:=kai.agent_log(&o.agent,project);l!=nil && len(l.items)>0 {
-        proposals:=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
-        for x in w.proposals {
-            if x.project==project {append(&proposals,x.fold)}
-        }
+        landed:=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
+        kai.project_snapshots(s,l,&o.agent.org,&landed,context.temp_allocator)
         f:kai.Project_Fold
-        if kai.project_fold(&f,l,&o.agent.org,proposals[:],context.temp_allocator)==.None {
+        if kai.project_fold(&f,l,&o.agent.org,landed[:],context.temp_allocator)==.None {
             for b in f.bookmarks {append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,landed=true})}
         }
     }
@@ -245,10 +228,13 @@ project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,w:^Org_Views,project:kai.Log_
 // The proposals of a project, folded and settled, from the org's views.
 @(private)
 project_proposals :: proc(h:^Hub,o:^kai.Runner_Org,project:kai.Log_Id,out:^[dynamic]^kai.Proposal_Fold) {
-    w:=org_views(h,o)
-    if w==nil {return}
-    for x in w.proposals {
-        if x.project==project {append(out,x.fold)}
+    kai.agent_proposals_open(&o.agent,project)
+    for l in o.agent.logs {
+        if l.kind!=.Proposal || len(l.items)==0 || proposal_project(l)!=project {continue}
+        f:=new(kai.Proposal_Fold,context.temp_allocator)
+        if kai.proposal_fold(f,l,&o.agent.org,context.temp_allocator)!=.None {continue}
+        _=kai.proposal_settle(store_of(h),f)
+        append(out,f)
     }
 }
 
@@ -357,30 +343,14 @@ hash_less :: proc(a,b:store.Hash) -> bool {
 }
 
 @(private)
-user_name :: proc(u:^kai.User_Fold) -> string {
-    for &item in u.log.items {
-        if item.entry.type!=.User_Genesis {continue}
-        _,tail,ok:=kai.body_head(item.entry.body,kai.User_Genesis_Body)
-        if ok {return string(tail)}
-    }
-    return ""
-}
+user_name :: proc(u:^kai.User_Fold) -> string {return kai.user_name(u)}
 
 // The user a device or passkey key belongs to in the org's agent, and its
 // name and the device's.
 key_owner :: proc(o:^kai.Runner_Org,key:kai.Key) -> (user:^kai.User_Fold,device_name:string) {
     for u in o.agent.user_list {
-        for d in u.devices {
-            if d.key!=key {continue}
-            l:=u.log
-            item:=&l.items[d.added]
-            #partial switch item.entry.type {
-            case .Device_Add:
-                _,tail,_:=kai.body_head(item.entry.body,kai.Device_Add_Body)
-                return u,string(tail)
-            }
-            k:=key
-            return u,short_hex(k[:])
+        for d,k in u.devices {
+            if d.key==key {return u,kai.device_name(u,k)}
         }
         for w in u.web_keys {
             if w.key==key {return u,"passkey"}

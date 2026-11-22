@@ -486,3 +486,37 @@ a_grant_holder_reads_and_writes_only_its_scope_until_it_ends :: proc(t:^testing.
     testing.expect(t,time.now()._nsec>=end,"not cut off before its grant ends")
     testing.expect_value(t,peer_class(a,late_key),Agent_Class.None)
 }
+
+// An agent holds the logs of an org loaded, but not its settled proposals: a
+// closed one stays in the store until a view asks for it, and the next fold
+// lets it go again.
+@(test)
+a_settled_proposal_stays_in_the_store_until_asked_for :: proc(t:^testing.T) {
+    m:=new(Mesh)
+    defer free(m)
+    if !mesh_init(t,m,"kai-mesh-settled") {return}
+    defer mesh_destroy(m)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    bob:=&o.bob.devices[0]
+    ctx:=test_heads(&o.org)[0]
+    open,closed:Log
+    log_init(&open);defer log_destroy(&open)
+    log_init(&closed);defer log_destroy(&closed)
+    proposal_open(&open,o.project.id,"main","Open","",bob,20,{},ctx)
+    proposal_open(&closed,o.project.id,"main","Closed","",bob,20,{},ctx)
+    proposal_close(&closed,bob,21,{},ctx)
+    for l in ([]^Log{&o.alice.log,&o.bob.log,&o.carol.log,&o.org,&o.project,&open,&closed}) {
+        _,e:=log_save(&m.stores[0],l)
+        testing.expect_value(t,e,Error.None)
+    }
+    testing.expect_value(t,store.commit(&m.stores[0]),store.Error.None)
+    if !mesh_start(t,m,0,o.alice.devices[0],o.alice.dhs[0],o.alice.log.id,o.org.id) {return}
+    a:=&m.agents[0]
+    testing.expect(t,agent_log(a,open.id)!=nil,"an open proposal is held")
+    testing.expect(t,agent_log(a,closed.id)==nil,"a closed one is not in memory")
+    l:=agent_log_open(a,closed.id)
+    testing.expect(t,l!=nil && len(l.items)==2,"it loads when asked for")
+    agent_refold(a)
+    testing.expect(t,agent_log(a,closed.id)==nil,"and goes at the next fold")
+}

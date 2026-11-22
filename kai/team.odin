@@ -7,6 +7,7 @@ import "core:fmt"
 import "core:slice"
 import "core:strings"
 import net "mirai:net"
+import "mirai:std/blake3"
 import "mirai:store"
 
 // What a team does through the logs of one machine: an org seen whole, a
@@ -32,8 +33,34 @@ GRANT_TEXT_MAX :: (GRANT_TEXT_BYTES_MAX*4+2)/3 // the longest a grant's text is
 user_name :: proc(f:^User_Fold) -> string {
     k:=log_find(f.log,f.log.id)
     if k<0 {return ""}
-    _,tail,_:=body_head(f.log.items[k].entry.body,User_Genesis_Body)
+    entry:=&f.log.items[k].entry
+    if entry.type==.Passkey_Genesis {
+        _,_,_,name,_:=passkey_parts(entry.body)
+        return string(name)
+    }
+    _,tail,_:=body_head(entry.body,User_Genesis_Body)
     return string(tail)
+}
+
+LABEL_DEVICE_LINK :: "kai-1/device-link"
+
+// The eight digits a device being linked to a user and the browser that
+// links it both show, from the device's key, for the person to compare.
+device_link_code :: proc(device:Key,buffer:^[9]u8) -> string {
+    h:blake3.Hasher
+    blake3.init(&h)
+    blake3.update(&h,transmute([]u8)string(LABEL_DEVICE_LINK))
+    d:=device
+    blake3.update(&h,d[:])
+    sum:=blake3.final(&h)
+    n:=(u32(sum[0])|u32(sum[1])<<8|u32(sum[2])<<16|u32(sum[3])<<24)%100_000_000
+    for k:=8;k>0;k-=1 {
+        at:=k>4?k:k-1
+        buffer[at]=u8('0'+n%10)
+        n/=10
+    }
+    buffer[4]='-'
+    return string(buffer[:])
 }
 
 // The name of device k of a user: what its Device_Add or the genesis calls
@@ -284,49 +311,167 @@ machine_device_revoke :: proc(m:^Machine,device:Key) -> Error {
     k:=user_device_index(&f,device)
     if k<0 {return machine_fail(m,.Invalid_Argument,"the user has no such device: mirai kai org list names its devices")}
     if f.devices[k].revoked {return machine_fail(m,.Invalid_Argument,"that device is revoked already")}
-    horizons:=make([dynamic]Log_Horizon,context.temp_allocator)
-    if refs,e:=store.ref_list(&m.store,LOG_NAMESPACE,context.temp_allocator);e==.None {
-        for r in refs {
-            if len(horizons)>=HORIZONS_MAX {break}
-            id,ok:=store.parse_hex(r.name)
-            if !ok {continue}
-            x:=new(Log,context.temp_allocator)
-            log_init(x,id,context.temp_allocator)
-            if _,le:=log_load(&m.store,x,r.hash,false);le!=.None {continue}
-            signed:=false
-            for item in x.items {signed||=item.entry.author==device}
-            heads:=make([dynamic]store.Hash,context.temp_allocator)
-            if !signed || log_heads(x,&heads)!=.None || len(heads)==0 {continue}
-            append(&horizons,Log_Horizon{id,heads[:]})
-        }
-    }
-    address,e:=log_append(&l,.Device_Revoke,revoke_body(device,horizons[:]),&m.identity,machine_now())
+    address,e:=log_append(&l,.Device_Revoke,revoke_body(device),&m.identity,machine_now())
     if e!=.None {return machine_fail(m,e,"the revocation does not sign")}
     user_fold_destroy(&f)
     user_fold(&f,&l,context.temp_allocator)
     if at:=log_find(&l,address);at<0 || !f.valid[at] {return machine_fail(m,.Unauthorized,"this device is revoked itself: a device of the user that is not, or the recovery key, revokes")}
-    return machine_log_save(m,&l)
+    machine_log_save(m,&l) or_return
+    for org in m.orgs {
+        o:Org_State
+        if org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {continue}
+        defer org_state_destroy(&o)
+        machine_witness(m,&o,l.id,address,{device}) or_return
+    }
+    return .None
+}
+
+// Writes a Witness of the removal at removal, of the log removal_log, in each
+// log of the org this store holds where one of keys signed: the org's own
+// for a device's revocation, its projects', proposals' and keyrings' for any.
+// Its parents are the heads this device knows, so what the removed keys
+// signed before stands there; a log where this device holds no right takes
+// none of it, and is left to a device that does.
+machine_witness :: proc(m:^Machine,o:^Org_State,removal_log:Log_Id,removal:store.Hash,keys:[]Key) -> Error {
+    org:=o.log.id
+    body:=witness_body(removal_log,removal)
+    user,ctx:=machine_user_head(m),org_context(&o.fold,m.user)
+    signed :: proc(l:^Log,keys:[]Key) -> bool {
+        for &item in l.items {
+            if slice.contains(keys,item.entry.author) {return true}
+        }
+        return false
+    }
+    if removal_log!=org && signed(&o.log,keys) {
+        if _,e:=log_append(&o.log,.Witness,body,&m.identity,machine_now(),user);e!=.None {return machine_fail(m,e,"the witness does not sign")}
+        machine_log_save(m,&o.log) or_return
+    }
+    refs,e:=store.ref_list(&m.store,LOG_NAMESPACE,context.temp_allocator)
+    if e!=.None {return .None}
+    for r in refs {
+        id,ok:=store.parse_hex(r.name)
+        if !ok || id==org || !log_of_org(&m.store,&o.fold,id,r.hash) {continue}
+        l:=new(Log,context.temp_allocator)
+        log_init(l,id,context.temp_allocator)
+        if _,le:=log_load(&m.store,l,r.hash,false);le!=.None || !signed(l,keys) {continue}
+        if _,ae:=log_append(l,.Witness,body,&m.identity,machine_now(),user,ctx);ae!=.None {return machine_fail(m,ae,"the witness does not sign")}
+        machine_log_save(m,l) or_return
+    }
+    return .None
+}
+
+// Whether the log whose index is at address is a Project, Proposal or
+// Keyring log of the org: its genesis, read alone, says.
+log_of_org :: proc(s:^store.Store,org:^Org_Fold,id:Log_Id,address:store.Hash) -> bool {
+    head,_,e:=log_index_read(s,address)
+    if e!=.None || head.id!=id {return false}
+    #partial switch head.kind {
+    case .Project: return org_project_index(org,id)>=0
+    case .Proposal: return proposal_of_org(s,org,id,address)
+    case .Keyring: return keyring_of_org(s,org,id,address)
+    }
+    return false
 }
 
 // Replaces the recovery key of this device's user: recovery is the one it
-// has now, as it was printed; the new one is in the text returned, once.
+// has now, as it was printed; the new one is in the text returned, once. A
+// user born of a passkey has none until a device of it sets the first:
+// recovery is then empty and this device signs it.
 machine_recovery_rotate :: proc(m:^Machine,recovery:string,buffer:^[RECOVERY_TEXT]u8) -> (text:string,error:Error) {
-    seed,ok:=recovery_decode(recovery)
-    if !ok {return "",machine_fail(m,.Invalid_Argument,"the recovery key does not read: type its 56 digits as they were printed")}
-    old:=Identity{seed=seed}
-    defer crypto.zero_explicit(&old,size_of(old))
-    crypto.zero_explicit(&seed,size_of(seed))
-    identity_derive(&old)
     l:Log
     f:User_Fold
     machine_user_open(m,&l,&f) or_return
     defer user_fold_destroy(&f)
-    if f.recovery!=old.key {return "",machine_fail(m,.Unauthorized,"that is not the user's recovery key now: give the newest one printed")}
+    old:Identity
+    defer crypto.zero_explicit(&old,size_of(old))
+    signer:=&old
+    if f.recovery=={} {
+        if recovery!="" {return "",machine_fail(m,.Invalid_Argument,"the user has no recovery key yet: run it without one, and this device sets the first")}
+        signer=&m.identity
+    } else {
+        seed,ok:=recovery_decode(recovery)
+        if !ok {return "",machine_fail(m,.Invalid_Argument,"the recovery key does not read: type its 56 digits as they were printed")}
+        old.seed=seed
+        crypto.zero_explicit(&seed,size_of(seed))
+        identity_derive(&old)
+        if f.recovery!=old.key {return "",machine_fail(m,.Unauthorized,"that is not the user's recovery key now: give the newest one printed")}
+    }
     r:=identity_make()
     defer crypto.zero_explicit(&r,size_of(r))
-    if _,e:=log_append(&l,.Recovery_Rotate,body_make(Recovery_Rotate_Body{recovery=r.key}),&old,machine_now());e!=.None {return "",machine_fail(m,e,"the rotation does not sign")}
+    address,e:=log_append(&l,.Recovery_Rotate,body_make(Recovery_Rotate_Body{recovery=r.key}),signer,machine_now())
+    if e!=.None {return "",machine_fail(m,e,"the rotation does not sign")}
+    user_fold_destroy(&f)
+    user_fold(&f,&l,context.temp_allocator)
+    if k:=log_find(&l,address);k<0 || !f.valid[k] {return "",machine_fail(m,.Unauthorized,"this device may not set the user's recovery key: a device of the user that is not revoked sets the first one")}
     machine_log_save(m,&l) or_return
     return recovery_encode(r.seed,buffer),.None
+}
+
+// The contexts this device signs an entry of l under: the head of its user's
+// log, and for a Project, Proposal or Keyring log the org's entry its rights
+// are judged at.
+machine_entry_ctx :: proc(m:^Machine,l:^Log) -> (author_ctx,org_ctx:store.Hash) {
+    author_ctx=machine_user_head(m)
+    if !org_bound(l.kind) {return}
+    org:Log_Id
+    if g:=log_find(l,l.id);g>=0 {
+        entry:=&l.items[g].entry
+        #partial switch entry.type {
+        case .Project_Genesis: org,_=project_org(l)
+        case .Keyring_Genesis:
+            b,_,_:=body_head(entry.body,Keyring_Genesis_Body)
+            org=b.org
+        case .Proposal_Open:
+            b,_,_:=body_head(entry.body,Proposal_Open_Body)
+            p:Log
+            log_init(&p,b.project,context.temp_allocator)
+            if log_open(&m.store,&p,b.project,.Project)==.None {
+                org,_=project_org(&p)
+            } else {
+                // Without the project's log, the org that lists the project.
+                for id in m.orgs {
+                    o:Org_State
+                    if org_state_load(&m.store,id,&o,context.temp_allocator)!=.None {continue}
+                    if org_project_index(&o.fold,b.project)>=0 {org=id}
+                    org_state_destroy(&o)
+                }
+            }
+        }
+    }
+    if org=={} {return}
+    o:Org_State
+    if org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {return}
+    defer org_state_destroy(&o)
+    org_ctx=org_context(&o.fold,m.user)
+    return
+}
+
+// Whether this device's user has a recovery key: a user born of a passkey
+// has none until a device sets one.
+machine_user_recovered :: proc(m:^Machine) -> bool {
+    l:Log
+    f:User_Fold
+    if machine_user_open(m,&l,&f)!=.None {return false}
+    defer user_fold_destroy(&f)
+    return f.recovery!={}
+}
+
+// Takes the User_Log a browser's passkey linked this device to, its entries
+// verified: this device must be an active device of it. The machine then
+// belongs to that user.
+machine_user_linked :: proc(m:^Machine,user:Log_Id,entries:[][]u8) -> Error {
+    if m.user!={} {return machine_fail(m,.Invalid_Argument,"this device belongs to a user already")}
+    l:Log
+    log_init(&l,user,context.temp_allocator)
+    for bytes in entries {
+        if _,e:=log_add(&l,bytes,true);e!=.None {return machine_fail(m,e,"an entry of the user's log does not hold: link the device again")}
+    }
+    f:User_Fold
+    e:=user_fold(&f,&l,context.temp_allocator)
+    defer user_fold_destroy(&f)
+    if e!=.None || l.id!=user || !user_device_active(&f,m.identity.key) {return machine_fail(m,.Unauthorized,"the user's log does not name this device: link it again from the browser")}
+    machine_log_save(m,&l) or_return
+    return machine_user_set(m,user)
 }
 
 // --- Grants ---
@@ -601,16 +746,19 @@ Project_State :: struct {
     log:Log,
     proposal_logs:[dynamic]^Log,
     proposals:[dynamic]^Proposal_Fold,
+    snapshots:[dynamic]^Proposal_Fold, // the proposals the moves land, as they were (project_snapshots)
+    store:^store.Store,
     fold:Project_Fold,
     folded:bool,
     allocator:runtime.Allocator,
 }
 
 project_state_load :: proc(s:^store.Store,project:Log_Id,ps:^Project_State,allocator:=context.allocator) -> Error {
-    ps^={id=project,allocator=allocator}
+    ps^={id=project,allocator=allocator,store=s}
     log_init(&ps.log,project,allocator)
     ps.proposal_logs=make([dynamic]^Log,allocator)
     ps.proposals=make([dynamic]^Proposal_Fold,allocator)
+    ps.snapshots=make([dynamic]^Proposal_Fold,allocator)
     log_open(s,&ps.log,project,.Project) or_return
     org:Log_Id
     org,ps.public=project_org(&ps.log)
@@ -620,6 +768,14 @@ project_state_load :: proc(s:^store.Store,project:Log_Id,ps:^Project_State,alloc
         for r in refs {
             id,ok:=store.parse_hex(r.name)
             if !ok || id==project || id==org {continue}
+            if head,_,he:=log_index_read(s,r.hash);he!=.None || head.kind!=.Proposal {continue}
+            if genesis,found,_:=log_entry_get(s,r.hash,id);!found {
+                continue
+            } else if e,de:=entry_decode(genesis);de!=.None || e.type!=.Proposal_Open {
+                continue
+            } else if b,_,_:=body_head(e.body,Proposal_Open_Body);b.project!=project {
+                continue
+            }
             l,le:=new(Log,allocator)
             if le!=nil {return .Out_Of_Memory}
             log_init(l,id,allocator)
@@ -649,7 +805,9 @@ project_state_load :: proc(s:^store.Store,project:Log_Id,ps:^Project_State,alloc
 project_state_refold :: proc(ps:^Project_State) -> Error {
     if ps.folded {project_fold_destroy(&ps.fold)}
     ps.folded=false
-    if e:=project_fold(&ps.fold,&ps.log,&ps.org.fold,ps.proposals[:],ps.allocator);e!=.None {
+    project_snapshots_destroy(&ps.snapshots,ps.allocator)
+    project_snapshots(ps.store,&ps.log,&ps.org.fold,&ps.snapshots,ps.allocator) or_return
+    if e:=project_fold(&ps.fold,&ps.log,&ps.org.fold,ps.snapshots[:],ps.allocator);e!=.None {
         project_fold_destroy(&ps.fold)
         return e
     }
@@ -659,6 +817,8 @@ project_state_refold :: proc(ps:^Project_State) -> Error {
 
 project_state_destroy :: proc(ps:^Project_State) {
     if ps.folded {project_fold_destroy(&ps.fold)}
+    project_snapshots_destroy(&ps.snapshots,ps.allocator)
+    delete(ps.snapshots)
     for f in ps.proposals {
         proposal_fold_destroy(f)
         free(f,ps.allocator)
@@ -695,15 +855,14 @@ project_state_proposal_find :: proc(ps:^Project_State,text:string) -> (f:^Propos
     return
 }
 
-// Whether the Log object at address is the Proposal_Log id of a project of
-// org, its entries verified.
+// Whether the log whose index is at address is the Proposal_Log id of a
+// project of org: its genesis, read alone and verified, says.
 proposal_of_org :: proc(s:^store.Store,org:^Org_Fold,id:Log_Id,address:store.Hash) -> bool {
-    l:Log
-    log_init(&l,id,context.temp_allocator)
-    if _,e:=log_load(s,&l,address,true);e!=.None || l.kind!=.Proposal {return false}
-    k:=log_find(&l,id)
-    if k<0 || l.items[k].entry.type!=.Proposal_Open {return false}
-    b,_,_:=body_head(l.items[k].entry.body,Proposal_Open_Body)
+    bytes,found,_:=log_entry_get(s,address,id)
+    if !found {return false}
+    e,de:=entry_decode(bytes)
+    if de!=.None || e.type!=.Proposal_Open || !entry_verify(bytes,&e) {return false}
+    b,_,_:=body_head(e.body,Proposal_Open_Body)
     return org_project_index(org,b.project)>=0
 }
 
@@ -769,8 +928,7 @@ machine_bookmark_move :: proc(m:^Machine,project:Log_Id,name:string,to:Revision)
     old:Revision
     if len(from)>0 {old=from[0]}
     machine_publish_check(m,&ps.org.fold,project,ps.public,old,to) or_return
-    body:=body_make(Bookmark_Move_Body{to=to,from=u8(len(from))},slice.to_bytes(from[:]),transmute([]u8)name)
-    address,e:=log_append(&ps.log,.Bookmark_Move,body,&m.identity,machine_now(),machine_user_head(m))
+    address,e:=log_append(&ps.log,.Bookmark_Move,move_body(name,from[:],to),&m.identity,machine_now(),machine_user_head(m),org_context(&ps.org.fold,m.user))
     if e!=.None {return machine_fail(m,e,"the move does not sign")}
     project_state_refold(&ps)
     if k:=log_find(&ps.log,address);k<0 || !ps.folded || !ps.fold.valid[k] {return machine_fail(m,.Unauthorized,role_refusal(m,&ps.org.fold,.Writer,"moving a shared bookmark"))}
@@ -818,11 +976,11 @@ machine_proposal_open :: proc(m:^Machine,project:Log_Id,target,title,text:string
     defer project_state_destroy(&ps)
     l:Log
     log_init(&l,{},context.temp_allocator)
-    now,ctx:=machine_now(),machine_user_head(m)
-    if _,e:=proposal_open(&l,project,target,title,text,&m.identity,now,ctx);e!=.None {
+    now,ctx,org_ctx:=machine_now(),machine_user_head(m),org_context(&ps.org.fold,m.user)
+    if _,e:=proposal_open(&l,project,target,title,text,&m.identity,now,ctx,org_ctx);e!=.None {
         return {},machine_fail(m,e,"a proposal has a target bookmark, a title of at most 65535 bytes and a text, all UTF-8")
     }
-    if _,e:=proposal_revise(&l,stack,&m.identity,now+1,ctx);e!=.None {return {},machine_fail(m,e,"a stack holds 1 to 256 changes, each once")}
+    if _,e:=proposal_revise(&l,stack,&m.identity,now+1,ctx,org_ctx);e!=.None {return {},machine_fail(m,e,"a stack holds 1 to 256 changes, each once")}
     f:Proposal_Fold
     e:=proposal_fold(&f,&l,&ps.org.fold,context.temp_allocator)
     defer proposal_fold_destroy(&f)
@@ -893,7 +1051,7 @@ proposal_refusal :: proc(m:^Machine,org:^Org_Fold,f:^Proposal_Fold,type:Entry_Ty
 @(private)
 proposal_write :: proc(m:^Machine,ps:^Project_State,f:^Proposal_Fold,type:Entry_Type,body:[]u8) -> (address:store.Hash,error:Error) {
     l:=f.log
-    address,error=log_append(l,type,body,&m.identity,machine_now(),machine_user_head(m))
+    address,error=log_append(l,type,body,&m.identity,machine_now(),machine_user_head(m),org_context(&ps.org.fold,m.user))
     if error!=.None {return {},machine_fail(m,error,"the entry does not sign")}
     proposal_fold_destroy(f)
     proposal_fold(f,l,&ps.org.fold,ps.allocator)
@@ -988,7 +1146,7 @@ machine_proposal_land :: proc(m:^Machine,project,proposal:Log_Id) -> Error {
     old:Revision
     if len(from)>0 {old=from[0]}
     machine_publish_check(m,&ps.org.fold,project,ps.public,old,f.revision) or_return
-    move,_,le:=proposal_land(&m.store,f,&ps.fold,&m.identity,machine_now(),machine_user_head(m))
+    move,_,le:=proposal_land(&m.store,f,&ps.fold,&m.identity,machine_now(),machine_user_head(m),org_context(&ps.org.fold,m.user))
     if le!=.None {return machine_fail(m,le,"the landing does not sign")}
     land:=f.log
     proposal_fold_destroy(f)

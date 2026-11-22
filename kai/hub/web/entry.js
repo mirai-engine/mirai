@@ -5,8 +5,8 @@
 import {blake3} from './blake3.js'
 
 export const MAGIC = 0x3149414b // the bytes K A I 1
-export const VERSION = 1
-export const HEAD = 120
+export const VERSION = 2
+export const HEAD = 152
 export const PARENTS_MAX = 8
 export const BODY_MAX = 64 << 10
 export const NAME_MAX = 64
@@ -15,17 +15,18 @@ export const SIG_WEBAUTHN = 1
 export const TIME_SKEW_NS = 600n * 1000000000n
 
 export const TYPES = {
-    user_genesis: 1, web_key_add: 5,
+    device_add: 2, web_key_add: 5,
     member_add: 7, member_remove: 8, role_set: 9,
     proposal_comment: 23, proposal_verdict: 24, proposal_close: 27, proposal_reopen: 28,
+    passkey_genesis: 33,
 }
+// The entries whose log is a proposal's, which name the org's entry their author signs under.
+const ORG_BOUND = new Set(['proposal_comment', 'proposal_verdict', 'proposal_close', 'proposal_reopen'])
 export const ROLES = {reader: 1, writer: 2, admin: 3}
 export const VERDICTS = {approve: 0, changes: 1, withdraw: 2}
 export const ANCHORS = {file: 0, lines: 1}
 
-const LABEL_DEVICE = 'kai-1/device'
-const LABEL_RECOVERY = 'kai-1/recovery'
-const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+const LABEL_DEVICE_LINK = 'kai-1/device-link'
 const ZERO = new Uint8Array(32)
 
 const encoder = new TextEncoder()
@@ -100,7 +101,7 @@ function less(a, b) {
 
 // The bytes an entry's signature covers: its head, its parents in ascending
 // order, then its body.
-export function entryUnsigned({type, log = ZERO, parents = [], author, authorCtx = ZERO, time, body, sig}) {
+export function entryUnsigned({type, log = ZERO, parents = [], author, authorCtx = ZERO, orgCtx = ZERO, time, body, sig}) {
     const sorted = [...parents].sort((a, b) => less(a, b) ? -1 : less(b, a) ? 1 : 0)
     const out = new Uint8Array(HEAD + 32 * sorted.length + body.length)
     const v = new DataView(out.buffer)
@@ -111,9 +112,10 @@ export function entryUnsigned({type, log = ZERO, parents = [], author, authorCtx
     out.set(log, 8)
     out.set(author, 40)
     out.set(authorCtx, 72)
-    v.setBigInt64(104, BigInt(time), true)
-    v.setUint32(112, body.length, true)
-    out[116] = sig
+    out.set(orgCtx, 104)
+    v.setBigInt64(136, BigInt(time), true)
+    v.setUint32(144, body.length, true)
+    out[148] = sig
     sorted.forEach((p, i) => out.set(p, HEAD + 32 * i))
     out.set(body, HEAD + 32 * sorted.length)
     return out
@@ -125,8 +127,8 @@ export function entryParse(bytes) {
     const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
     const e = {
         magic: v.getUint32(0, true), version: v.getUint16(4, true), type: bytes[6], count: bytes[7],
-        log: bytes.slice(8, 40), author: bytes.slice(40, 72), authorCtx: bytes.slice(72, 104),
-        time: v.getBigInt64(104, true), bodyLength: v.getUint32(112, true), sig: bytes[116], reserved: bytes.slice(117, 120),
+        log: bytes.slice(8, 40), author: bytes.slice(40, 72), authorCtx: bytes.slice(72, 104), orgCtx: bytes.slice(104, 136),
+        time: v.getBigInt64(136, true), bodyLength: v.getUint32(144, true), sig: bytes[148], reserved: bytes.slice(149, 152),
     }
     if (e.magic !== MAGIC || e.version !== VERSION) return 'the bytes are not a Kai entry of this version'
     if (e.count > PARENTS_MAX || e.bodyLength > BODY_MAX) return 'the entry is past its bounds'
@@ -184,6 +186,11 @@ export function actionBody(a) {
     }
     case 'member_remove':
         return need(unhex(a.user, 32), 'user is 64 hex')
+    case 'device_add': {
+        const name = utf8(a.name || '')
+        if (name.length < 1 || name.length > NAME_MAX) throw new Error(`a device's name is 1 to ${NAME_MAX} bytes`)
+        return concat(need(unhex(a.device, 32), 'device is 64 hex'), need(unhex(a.dh, 32), 'dh is 64 hex'), need(unb64Sized(a.proof, 64), 'proof is base64url of 64 bytes'), name)
+    }
     }
     throw new Error(`a browser does not write entries of type ${a.type}`)
 }
@@ -209,6 +216,7 @@ export function draftCheck(bytes, action, author, now) {
         if (equal(e.parents[i], ZERO) || (i > 0 && !less(e.parents[i - 1], e.parents[i]))) return 'the parents are not distinct addresses in ascending order'
     }
     if (equal(e.authorCtx, ZERO)) return "the entry names no entry of the author's log"
+    if (ORG_BOUND.has(action.type) === equal(e.orgCtx, ZERO)) return ORG_BOUND.has(action.type) ? "the entry names no entry of the org's log to judge its author at" : "the entry names an org entry where none belongs"
     const skew = e.time - BigInt(now)
     if (skew > TIME_SKEW_NS || skew < -TIME_SKEW_NS) return "the entry's time is more than ten minutes from this computer's clock"
     if (!equal(e.body, body)) return 'the body is not what was asked'
@@ -238,38 +246,30 @@ export function webKeyAddBody(credential, cose, rpId) {
     return concat(Uint8Array.of(credential.length), u16(cose.length), Uint8Array.of(rp.length), credential, cose, rp)
 }
 
-// What a new user's device signs to prove it holds its key.
-export function deviceMessage(recovery) {
-    return concat(utf8(LABEL_DEVICE), recovery)
-}
-
-export function userGenesisBody({recovery, device, dh, proof, deviceName, name}) {
-    const n = utf8(name), d = utf8(deviceName)
+// The genesis of a user born of a passkey: the credential id, the COSE key,
+// the relying party, then the user's name.
+export function passkeyGenesisBody(credential, cose, rpId, name) {
+    const n = utf8(name)
     if (n.length < 1 || n.length > NAME_MAX) throw new Error(`a name is 1 to ${NAME_MAX} bytes`)
-    if (d.length > NAME_MAX) throw new Error(`a device's name is at most ${NAME_MAX} bytes`)
-    const padded = new Uint8Array(NAME_MAX)
-    padded.set(d)
-    return concat(recovery, device, dh, proof, padded, n)
+    return concat(webKeyAddBody(credential, cose, rpId), n)
 }
 
-// The recovery key as the CLI prints it once: Crockford Base32 of the seed and
-// three bytes of its checksum, in groups of four digits.
-export function recoveryText(seed) {
-    const sum = blake3(concat(utf8(LABEL_RECOVERY), seed))
-    const bytes = concat(seed, sum.subarray(0, 3))
-    let out = '', digits = 0, bits = 0, acc = 0
-    for (const b of bytes) {
-        acc = acc << 8 | b
-        bits += 8
-        while (bits >= 5) {
-            bits -= 5
-            if (digits > 0 && digits % 4 === 0) out += '-'
-            out += CROCKFORD[acc >> bits & 31]
-            digits++
-            acc &= (1 << bits) - 1
-        }
+// The eight digits a device being linked shows, from its key: the page shows
+// them too, for the person to compare.
+export function deviceLinkCode(device) {
+    const sum = blake3(concat(utf8(LABEL_DEVICE_LINK), device))
+    const n = (sum[0] | sum[1] << 8 | sum[2] << 16 | sum[3] << 24) >>> 0
+    const digits = String(n % 100000000).padStart(8, '0')
+    return `${digits.slice(0, 4)}-${digits.slice(4)}`
+}
+
+function unb64Sized(text, size) {
+    try {
+        const bytes = unb64(text || '')
+        return bytes.length === size ? bytes : null
+    } catch {
+        return null
     }
-    return out
 }
 
 // The end of the CBOR item at at, without reading what it means.

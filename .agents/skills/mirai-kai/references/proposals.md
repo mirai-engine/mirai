@@ -11,10 +11,11 @@ server that decides a merge. The code is `kai/proposal.odin`, the proposal part 
   `Revise` to a stack (change ids with the revision each has now, bottom first), `Comment`,
   `Verdict`, `Check`, `Land`, `Close` and `Reopen`. The default stack is the changes from the target
   to the working copy's parent, after a snapshot.
-- Who may write what is the fold's, as for every log: a writer opens one, the opener or a writer
-  revises, any member comments, a writer gives a verdict and signs a check, the opener or an
-  admin closes and reopens. A runner outside the org may sign a `Check` alone, under a grant of the
-  check right.
+- Who may write what is the fold's, as for every log, with each author's role at the org entry it
+  signed under: a writer opens one, the opener or a writer revises, any member comments, a writer
+  gives a verdict and signs a check, the opener or an admin closes and reopens. A runner outside
+  the org may sign a `Check` alone, under a grant of the check right. A member removed later keeps
+  what it signed before ([folding](identity.md#folding-and-revocation)).
 - A proposal is for a change that may be rewritten: a stack is revised as often as needed and
   rewrites keep every `Change_Id`, so comments and history survive a rebase or an amend, and the
   web view shows the *evolution* of a change: its revisions in order with the interdiff between
@@ -35,7 +36,8 @@ server that decides a merge. The code is `kai/proposal.odin`, the proposal part 
   as a rebase that touched none of their files does. Approval is for the edits the reviewer saw,
   never for a name (`proposal_comments_reanchor_across_rewrites`).
 - Only the latest verdict of a user counts, and only an approval counts toward the policy's number.
-- A `Revise` clears the checks: a check counts while its revision is the proposal's final one.
+- A check counts for the revision of the last `Revise` in its causal past, and only when it names
+  that revision and that is the proposal's final one.
 
 ## Policy and landing
 
@@ -44,9 +46,12 @@ server that decides a merge. The code is `kai/proposal.odin`, the proposal part 
   policy moves only by landing a proposal; an unguarded shared bookmark moves with
   `mirai kai bookmarks move` or the editor, by a writer.
 - Landing is two entries: a `Bookmark_Move` in the project's log from the target's current targets
-  to the stack's final revision, naming the proposal, and the proposal's `Land` naming that move.
-  A peer that folds a move of a guarded bookmark looks for the proposal it names and checks the
-  policy itself, so a move that names none that meets it does not count.
+  to the stack's final revision, naming the proposal and the heads of its log it was checked at,
+  and the proposal's `Land` naming that move. A peer that folds a move of a guarded bookmark folds
+  and settles the proposal as it was at those heads and checks the policy against that, so a move
+  that names none that meets it does not count, and what happens to the proposal later (a
+  revise, other verdicts, a reopen) never changes a landed move. A peer that lacks those entries
+  or their changes holds the move as not counting until they arrive; it does not guess.
 - A proposal lands only when it is open with a stack, every entry is signed by its author, no
   change of the stack has a conflict (`root.conflicts == 0` of each tree), the approvals of the
   final revision reach the policy and every check the policy names has passed on it. The refusal

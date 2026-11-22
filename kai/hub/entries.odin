@@ -41,7 +41,8 @@ route_entries :: proc(c:^Call) {
         {"parents",offset_of(H,parents),1,"u8: how many parent addresses follow the head, at most ENTRY_PARENTS_MAX"},
         {"log_id",offset_of(H,log_id),32,"the log: zero in a genesis"},
         {"author",offset_of(H,author),32,"a device's Ed25519 key, the recovery key, or a passkey's web key id: BLAKE3 of u16 length of the COSE key || COSE key || rp_id"},
-        {"author_ctx",offset_of(H,author_ctx),32,"an entry of the author's User_Log; for a passkey, its Web_Key_Add or a later one"},
+        {"author_ctx",offset_of(H,author_ctx),32,"an entry of the author's User_Log; for a passkey, the entry that added it or a later one"},
+        {"org_ctx",offset_of(H,org_ctx),32,"in a project's, proposal's or keyring's log, the entry of the org's log the author's rights are judged at; zero in a user's or the org's log"},
         {"time",offset_of(H,time),8,"i64 nanoseconds since 1970"},
         {"body_len",offset_of(H,body_len),4,"u32"},
         {"sig_kind",offset_of(H,sig_kind),1,"u8: 0 Ed25519, 1 WebAuthn"},
@@ -50,7 +51,7 @@ route_entries :: proc(c:^Call) {
     json_key(&j,"constants")
     json_object(&j)
     json_member_int(&j,"magic",i64(kai.KAI_MAGIC))
-    json_member_int(&j,"version",kai.VERSION)
+    json_member_int(&j,"version",kai.LOG_VERSION)
     json_member_int(&j,"ENTRY_PARENTS_MAX",kai.ENTRY_PARENTS_MAX)
     json_member_int(&j,"ENTRY_BODY_MAX",kai.ENTRY_BODY_MAX)
     json_member_string(&j,"LABEL_DEVICE",kai.LABEL_DEVICE)
@@ -84,13 +85,20 @@ route_entries :: proc(c:^Call) {
     json_key(&j,"bodies")
     json_object(&j)
     {
-        B :: kai.User_Genesis_Body
-        layout_write(&j,"user_genesis",size_of(B),{
-            {"recovery",offset_of(B,recovery),32,"the recovery key, Ed25519: the genesis's author"},
-            {"device",offset_of(B,device),32,"the first device's Ed25519 key"},
-            {"dh",offset_of(B,dh),32,"the first device's X25519 key"},
-            {"proof",offset_of(B,proof),64,"the device's Ed25519 signature over LABEL_DEVICE || recovery"},
-        },"the user's name, 1 to NAME_MAX bytes of UTF-8. The genesis has no parents, a zero log_id and a zero author_ctx; the log's id is its address. The recovery key is shown once as recovery_encode does: Crockford Base32 (0123456789ABCDEFGHJKMNPQRSTVWXYZ) of the 32-byte seed followed by the first 3 bytes of BLAKE3('kai-1/recovery' || seed), most significant bits first, in groups of four digits joined by '-'.")
+        B :: kai.Passkey_Genesis_Body
+        layout_write(&j,"passkey_genesis",size_of(B),{
+            {"credential",offset_of(B,credential),1,"u8: bytes of the credential id"},
+            {"cose",offset_of(B,cose),2,"u16: bytes of the COSE key (Ed25519 alg -8 or P-256 alg -7)"},
+            {"rp",offset_of(B,rp),1,"u8: bytes of the relying party id"},
+        },"the credential id, the COSE key, the rp_id, then the user's name, 1 to NAME_MAX bytes of UTF-8. The genesis of a user born of a passkey: no parents, a zero log_id, author_ctx and org_ctx, its author the passkey's web key id, signed by WebAuthn; the log's id is its address. Such a user has no recovery key and no device until its passkey links a device, which may then set the first recovery key.")
+    }
+    {
+        B :: kai.Device_Add_Body
+        layout_write(&j,"device_add",size_of(B),{
+            {"device",offset_of(B,device),32,"the device's Ed25519 key"},
+            {"dh",offset_of(B,dh),32,"the device's X25519 key"},
+            {"proof",offset_of(B,proof),64,"the device's Ed25519 signature over LABEL_DEVICE || the user's log id"},
+        },"the device's name, 1 to NAME_MAX bytes of UTF-8")
     }
     {
         B :: kai.Web_Key_Add_Body
@@ -98,7 +106,7 @@ route_entries :: proc(c:^Call) {
             {"credential",offset_of(B,credential),1,"u8: bytes of the credential id"},
             {"cose",offset_of(B,cose),2,"u16: bytes of the COSE key (Ed25519 alg -8 or P-256 alg -7)"},
             {"rp",offset_of(B,rp),1,"u8: bytes of the relying party id"},
-        },"the credential id, the COSE key, the rp_id; signed by the recovery key or a device of the user")
+        },"the credential id, the COSE key, the rp_id; signed by the recovery key or a device of the user, or by a passkey of a user that has no recovery key")
     }
     {
         B :: kai.Proposal_Comment_Body

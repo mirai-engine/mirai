@@ -79,6 +79,9 @@ Hub :: struct {
     challenges:[CHALLENGES_MAX]Challenge,
     approvals:[APPROVALS_MAX]Approval,
     approvals_made:u64,
+    waiting:[WAITING_MAX]Waiting,
+    waiting_loaded:bool,
+    waiting_checked:f64,
     rates:[]Rate,
     graphs:[dynamic]Project_Graph,
     views:[dynamic]^Org_Views,
@@ -239,6 +242,8 @@ hub_step :: proc(h:^Hub) -> (busy:bool) {
         }
         _=i
     }
+    waiting_load(h)
+    waiting_step(h)
     certs_step(h)
     return
 }

@@ -156,7 +156,7 @@ route_proposal :: proc(c:^Call) {
     l:^kai.Log
     for x in runner_of(c.h).orgs {
         if !x.agent.folded || session_role(c,x)==.None {continue}
-        if found:=kai.agent_log(&x.agent,id);found!=nil && found.kind==.Proposal && len(found.items)>0 {o,l=x,found}
+        if found:=kai.agent_log_open(&x.agent,id);found!=nil && found.kind==.Proposal && len(found.items)>0 {o,l=x,found}
     }
     if l==nil {
         fail(c,404,"no such proposal in an org the session's user is a member of")

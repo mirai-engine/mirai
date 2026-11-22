@@ -182,30 +182,45 @@ Entry_Head :: struct #packed {
     log_id:     store.Hash,
     author:     Key,          // device ds, recovery R, or web key id
     author_ctx: store.Hash,   // head of author's User_Log when signing
-    time:       i64,
+    org_ctx:    store.Hash,   // project, proposal, keyring logs: the org entry rights are judged at
+    time:       i64,          // never read before the entry's causal past
     body_len:   u32,
     sig_kind:   u8,           // 0: Ed25519, 1: WebAuthn (for browser reviews)
     reserved:   [3]u8,
 } // + [parents]store.Hash, body, signature
 ```
 
-- **Deterministic fold:** Topological walk breaking ties by entry address. Each entry applies only
-  if `author` held the required right at that point. Concurrent remove vs any write on the same
-  subject: remove wins. Two admins removing each other concurrently: both removed.
-- **Revocation horizon (stops backdating without a server):** `Device_Revoke{device,
-  horizon: [](log_id, heads)}` invalidates any entry by that device outside the causal past of the
-  named heads. `Member_Remove` lives in the org DAG itself, so its causal past is its horizon.
+- **Deterministic fold:** One walk of a topological order breaking ties by entry address, with
+  ancestry from chain clocks (near-linear; a removal that voids entries already walked walks again
+  from them). Each entry applies only if `author` held the required right at that point: in the
+  user and org logs its causal past, in the others the org entry its `org_ctx` names. Concurrent
+  remove vs any write on the same subject: remove wins. Two admins removing each other
+  concurrently: both removed.
+- **Witnesses (stop backdating without a server):** a removal names no other log. A
+  `Device_Revoke`, `Member_Remove`, lowering `Role_Set` or `Grant_Revoke` reaches each log it
+  concerns as a `Witness{log, removal}` entry written by a key with a right there when it first
+  sees it; there, an entry by the affected key holds only in the causal past of a valid witness,
+  and with no witness yet the log is as it was. In the user's own log a revoked device's entries
+  hold only in the causal past of the revocation; `Member_Remove` lives in the org DAG itself.
+- **Storage:** a log is pages of a trie by entry address under an index object (kind, count, root
+  page, heads); the pages are a function of the entries, so peers converge on one index and an
+  append rewrites one leaf, its branches and the index. Closed and landed proposals load on
+  demand.
 - **Log kinds:**
-  - `User_Log`: `Genesis{R_pub, first_device, its name}`, `Device_Add{ds, dh, name}`,
-    `Device_Revoke`, `Recovery_Rotate{R'}`, `Web_Key_Add{credential_id, cose_pub, rp_id}`.
+  - `User_Log`: `Genesis{R_pub, first_device, its name}` or `Passkey_Genesis{credential_id,
+    cose_pub, rp_id, name}` (a browser's user, signed by the passkey, no recovery key or device
+    until a device it links sets one), `Device_Add{ds, dh, name}`, `Device_Revoke{device}`,
+    `Recovery_Rotate{R'}`, `Web_Key_Add{credential_id, cose_pub, rp_id}`.
   - `Org_Log` (readable only by org members/nodes): `Genesis`, `Member_Add`, `Member_Remove`,
     `Role_Set` (`owner > admin > writer > reader`), `Owner_Transfer`, `Project_Add{public|org}`,
     `Scope_Add{project_id, scope_id, patterns[], readers, history}`, `Scope_Remove`,
     `Policy_Set{project_id, bookmark, approvals, required_checks[], project_heads[]}`, `Grant`,
     `Grant_Revoke`, `Node_Add{ds, dh, addrs[], modes}`, `Node_Remove`,
     `Public_Add{project_id, path, leak_fingerprint?}`.
-  - `Project_Log`: `Bookmark_Move{bookmark, from[], to, proposal_head?}` (shared bookmarks like
-    `main`; conflicts use the same algebra; every peer verifies `Policy_Set` locally). A policy
+  - `Project_Log`: `Bookmark_Move{bookmark, from[], to, proposal?, proposal_heads[]}` (shared
+    bookmarks like `main`; conflicts use the same algebra; every peer verifies `Policy_Set` locally
+    against the proposal as it was at `proposal_heads`, so what happens to it later never changes a
+    landed move). A policy
     guards the moves outside the causal past of the project heads its `Policy_Set` names; those
     inside keep the rules they were made under.
   - `Proposal_Log` (replaces GitHub PRs): `Open{project, target, title, text}`,
@@ -429,11 +444,13 @@ Entry_Head :: struct #packed {
     shows a `kai://approve?...` link and `mirai kai web approve <link>`, which a device of the user
     runs to sign the login, the write, or the `Web_Key_Add` of a new passkey; registering the
     `kai://` handler with the operating system, for one click, is not done yet.
-  - First-time web users create a passkey directly in the browser: the browser makes an Ed25519
-    recovery key (shown once) and a device key, signs the new `User_Log`'s genesis and its
-    `Web_Key_Add` itself, and the server only verifies and keeps them; linking a passkey to an
-    existing user is the device's approval above; linking an editor/CLI device uses QR or the
-    commitment-hardened 8-digit code.
+  - First-time web users are born of a passkey: the passkey signs the `Passkey_Genesis` the page
+    built, the page generates no key, and the node keeps the user apart, unsynced, until a member
+    adds it. Its first device is linked from the browser (the machine offers itself through a
+    `kai://approve` link, both show eight digits, the passkey signs its `Device_Add`), and that
+    device sets the recovery key; until then the user acts as a writer at most. Linking a passkey
+    to an existing user is the device's approval above; linking an editor/CLI device uses QR or
+    the commitment-hardened 8-digit code.
   - Read sessions are authenticated by a signed WebAuthn challenge (`__Host-` HttpOnly cookie);
     writes (comments, approvals, verdicts, org actions) are WebAuthn signatures over the BLAKE3
     of the entry's signed bytes (head, parents and body, so a relay cannot change its author,
@@ -465,11 +482,11 @@ Entry_Head :: struct #packed {
   - Focal tests: `editor_kai_snapshot_diff_conflict_and_undo`,
     `a_large_file_travels_in_a_session_by_address`,
     `collab_coauthorship_and_agent_turns_record_in_change`.
-- **M3 — Identity, Orgs and P2P Mesh:** unified `Entry` DAG + fold + revocation horizon;
+- **M3 — Identity, Orgs and P2P Mesh:** unified `Entry` DAG + fold + witnesses of removals;
   commitment-hardened `Noise_XX` pairing; signed `Device_Refs` and `Grant`; local agent, rotating
   LAN beacon, rendezvous/hole-punch/relay, seed, signed DDC.
   - Focal tests: `pairing_rejects_mitm_label_grinding`,
-    `revocation_horizon_rejects_backdated_entries`,
+    `revocation_witness_rejects_backdated_entries`,
     `concurrent_admin_removals_fold_deterministically`,
     `org_members_sync_refs_and_ddc_over_sim_network`, `device_refs_reject_rollback`.
 - **M4 — Private Overlays:** `Scope_Add` routing, `Keyring_Log` epochs and lazy rotation,

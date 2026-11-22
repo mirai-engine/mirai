@@ -1,9 +1,11 @@
 package kai
 
+import "core:fmt"
 import "core:math/rand"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import net "mirai:net"
 import "mirai:std/base"
 import "mirai:store"
@@ -82,12 +84,14 @@ test_users_destroy :: proc(folds:[]User_Fold) {
     for &f in folds {user_fold_destroy(&f)}
 }
 
-// A device revoked with a horizon at the org's head H keeps what it signed
-// before H; whatever it signs after the revocation counts nowhere, though it
-// names old parents and an old time: in the org's log (outside H), in its own
-// User_Log (outside the revocation's causal past), and after H.
+// A device revoked from a machine that holds none of the org's logs: its
+// User_Log names no org, project or proposal. Until a witness of the
+// revocation reaches a log, what the device signed there stands; once one
+// does, what it signed before the witness stands and whatever it signs
+// after, with old parents and an old time, counts nowhere: in the org's log,
+// in a project's, and in its own User_Log after the revocation.
 @(test)
-revocation_horizon_rejects_backdated_entries :: proc(t:^testing.T) {
+revocation_witness_rejects_backdated_entries :: proc(t:^testing.T) {
     alice,bob,carol:Test_User
     test_user(t,&alice,"alice");defer log_destroy(&alice.log)
     test_user(t,&bob,"bob");defer log_destroy(&bob.log)
@@ -98,21 +102,53 @@ revocation_horizon_rejects_backdated_entries :: proc(t:^testing.T) {
     genesis:=org.items[0].address
     _,e:=log_append(&org,.Member_Add,body_make(Member_Body{user=bob.log.id,role=.Writer}),&alice.devices[stolen],20)
     testing.expect_value(t,e,Error.None)
-    horizon:=slice.clone(test_heads(&org),context.temp_allocator)
+    before:=test_heads(&org)[0]
+    project:Log
+    log_init(&project);defer log_destroy(&project)
+    _,e=log_append(&project,.Project_Genesis,body_make(Project_Genesis_Body{org=org.id,public=true},transmute([]u8)string("game")),&alice.devices[0],21,{},before)
+    testing.expect_value(t,e,Error.None)
+    log_append(&org,.Project_Add,body_make(Project_Add_Body{project=project.id,public=true}),&alice.devices[0],22)
+    ctx:=test_heads(&org)[0]
+    move:=test_move(t,&project,"main",{0=1},&alice.devices[stolen],ctx,23)
     user_before_revoke:=slice.clone(test_heads(&alice.log),context.temp_allocator)
 
-    _,e=log_append(&alice.log,.Device_Revoke,revoke_body(alice.devices[stolen].key,{{log_id=org.id,heads=horizon}}),&alice.devices[0],30)
-    testing.expect_value(t,e,Error.None)
+    // A fresh machine of alice's revokes the stolen device: the user log names nothing of the org.
+    revoke,re:=log_append(&alice.log,.Device_Revoke,revoke_body(alice.devices[stolen].key),&alice.recovery,30)
+    testing.expect_value(t,re,Error.None)
+    for &item in alice.log.items {
+        testing.expect(t,!strings.contains(string(item.bytes),string(org.id[:])) && !strings.contains(string(item.bytes),string(project.id[:])),"a user's log names no org or project")
+    }
 
-    // The thief backdates: an old parent and an old time, in the org's log and in alice's.
+    // Not witnessed yet: the backdated entry stands, as the revocation has not reached the org's log.
+    early:=test_entry(t,&org,.Member_Add,body_make(Member_Body{user=carol.log.id,role=.Reader}),&alice.devices[stolen],{genesis},15)
+    folds:[3]User_Fold
+    users:[3]^User_Fold
+    test_users_fold(t,{&alice,&bob,&carol},folds[:],users[:])
+    f:Org_Fold
+    testing.expect_value(t,org_fold(&f,&org,users[:]),Error.None)
+    testing.expect(t,f.valid[log_find(&org,early)],"a revocation no witness carried here leaves the log as it was")
+    org_fold_destroy(&f)
+    test_users_destroy(folds[:])
+    // Back to before it, as a member first saw it: the witnesses come in each log.
+    wipe:Log
+    log_init(&wipe,org.id);defer log_destroy(&wipe)
+    for &item in org.items {
+        if item.address!=early {log_add(&wipe,item.bytes,false)}
+    }
+    log_destroy(&org)
+    org=wipe
+    wipe={}
+    witness:=test_witness(t,&org,alice.log.id,revoke,&alice.devices[0],{},40)
+    test_witness(t,&project,alice.log.id,revoke,&alice.devices[0],test_heads(&org)[0],41)
+
+    // The thief backdates: old parents and an old time, in the org's log, the project's and alice's.
     backdated:=test_entry(t,&org,.Member_Add,body_make(Member_Body{user=carol.log.id,role=.Admin}),&alice.devices[stolen],{genesis},15)
-    after:=test_entry(t,&org,.Project_Add,body_make(Project_Add_Body{project=store.Hash{0=1},public=true}),&alice.devices[stolen],horizon,40)
+    after:=test_entry(t,&org,.Project_Add,body_make(Project_Add_Body{project=store.Hash{0=1},public=true}),&alice.devices[stolen],{witness},45)
+    late_move:=test_move(t,&project,"main",{0=2},&alice.devices[stolen],ctx,24,{move})
     rogue:=identity_make()
     rogue_dh,_:=net.dh_key()
     rogue_add:=test_entry(t,&alice.log,.Device_Add,body_make(Device_Add_Body{device=rogue.key,dh=Dh_Key(rogue_dh.public),proof=device_proof(&rogue,transmute([32]u8)alice.log.id)},transmute([]u8)string("rogue")),&alice.devices[stolen],user_before_revoke,25)
 
-    folds:[3]User_Fold
-    users:[3]^User_Fold
     test_users_fold(t,{&alice,&bob,&carol},folds[:],users[:])
     defer test_users_destroy(folds[:])
     a:=users[0]
@@ -120,32 +156,37 @@ revocation_horizon_rejects_backdated_entries :: proc(t:^testing.T) {
     testing.expect(t,!a.valid[log_find(&alice.log,rogue_add)])
     testing.expect(t,!user_device_active(a,alice.devices[stolen].key) && user_device_active(a,alice.devices[0].key))
 
-    f:Org_Fold
     testing.expect_value(t,org_fold(&f,&org,users[:]),Error.None)
     defer org_fold_destroy(&f)
-    testing.expect(t,f.valid[log_find(&org,horizon[0])],"what the device signed inside its horizon stays")
-    testing.expect(t,!f.valid[log_find(&org,backdated)],"a backdated entry is outside the horizon")
+    testing.expect(t,f.valid[log_find(&org,before)],"what the device signed before the witness stands")
+    testing.expect(t,f.valid[log_find(&org,witness)])
+    testing.expect(t,!f.valid[log_find(&org,backdated)],"a backdated entry is outside the witness's past")
     testing.expect(t,!f.valid[log_find(&org,after)])
     testing.expect_value(t,org_role(&f,bob.log.id),Role.Writer)
     testing.expect_value(t,org_role(&f,carol.log.id),Role.None)
-    testing.expect_value(t,len(f.projects),0)
+    testing.expect_value(t,len(f.projects),1)
+    p:Project_Fold
+    testing.expect_value(t,project_fold(&p,&project,&f),Error.None)
+    defer project_fold_destroy(&p)
+    testing.expect(t,p.valid[log_find(&project,move)] && !p.valid[log_find(&project,late_move)],"in the project's log too")
+}
 
-    // A revocation that names no horizon for the org leaves none of the device's entries there.
-    alice2:Test_User
-    test_user(t,&alice2,"alice2");defer log_destroy(&alice2.log)
-    second:=test_device(t,&alice2)
-    org2:Log
-    test_org(t,&org2,&alice2);defer log_destroy(&org2)
-    log_append(&org2,.Member_Add,body_make(Member_Body{user=bob.log.id,role=.Reader}),&alice2.devices[second],20)
-    log_append(&alice2.log,.Device_Revoke,revoke_body(alice2.devices[second].key,{}),&alice2.recovery,30)
-    folds2:[2]User_Fold
-    users2:[2]^User_Fold
-    test_users_fold(t,{&alice2,&bob},folds2[:],users2[:])
-    defer test_users_destroy(folds2[:])
-    f2:Org_Fold
-    testing.expect_value(t,org_fold(&f2,&org2,users2[:]),Error.None)
-    defer org_fold_destroy(&f2)
-    testing.expect_value(t,org_role(&f2,bob.log.id),Role.None)
+// A move of bookmark of l to the revision to, signed by identity under the
+// org's entry ctx, from the targets from, on parents (the heads when nil).
+@(private)
+test_move :: proc(t:^testing.T,l:^Log,bookmark:string,to:Revision,identity:^Identity,ctx:store.Hash,time:i64,parents:[]store.Hash=nil,from:[]Revision={},loc:=#caller_location) -> store.Hash {
+    address,e:=log_append(l,.Bookmark_Move,move_body(bookmark,from,to),identity,time,{},ctx,parents)
+    testing.expect_value(t,e,Error.None,loc=loc)
+    return address
+}
+
+// A Witness in l of the removal at removal of the log of id, by identity,
+// on the heads of l.
+@(private)
+test_witness :: proc(t:^testing.T,l:^Log,log:Log_Id,removal:store.Hash,identity:^Identity,ctx:store.Hash,time:i64,loc:=#caller_location) -> store.Hash {
+    address,e:=log_append(l,.Witness,witness_body(log,removal),identity,time,{},ctx)
+    testing.expect_value(t,e,Error.None,loc=loc)
+    return address
 }
 
 // Two admins removing each other at once are both removed; what a removed
@@ -554,7 +595,7 @@ test_org_make :: proc(t:^testing.T,o:^Test_Org,public:=true) {
     test_user(t,&o.carol,"carol")
     test_org(t,&o.org,&o.alice)
     log_init(&o.project)
-    _,e:=log_append(&o.project,.Project_Genesis,body_make(Project_Genesis_Body{org=o.org.id,public=b8(public)},transmute([]u8)string("game")),&o.alice.devices[0],10)
+    _,e:=log_append(&o.project,.Project_Genesis,body_make(Project_Genesis_Body{org=o.org.id,public=b8(public)},transmute([]u8)string("game")),&o.alice.devices[0],10,{},o.org.items[0].address)
     testing.expect_value(t,e,Error.None)
     log_append(&o.org,.Project_Add,body_make(Project_Add_Body{project=o.project.id,public=b8(public)}),&o.alice.devices[0],11)
     log_append(&o.org,.Member_Add,body_make(Member_Body{user=o.bob.log.id,role=.Writer}),&o.alice.devices[0],12)
@@ -792,7 +833,7 @@ the_discovery_secret_rotates_when_a_member_device_or_node_goes :: proc(t:^testin
     before:=refold(t,&o)
     Case :: struct {name:string,log:^Log,type:Entry_Type,body:[]u8,author:^Identity}
     cases:=[]Case{
-        {"a device of a member revoked",&o.bob.log,.Device_Revoke,revoke_body(o.bob.devices[laptop].key,{}),&o.bob.devices[0]},
+        {"a device of a member revoked",&o.bob.log,.Device_Revoke,revoke_body(o.bob.devices[laptop].key),&o.bob.devices[0]},
         {"a node removed",&o.org,.Node_Remove,body_make(Node_Remove_Body{node=node.key}),&o.alice.devices[0]},
         {"a member removed",&o.org,.Member_Remove,body_make(Subject_Body{subject=o.carol.log.id}),&o.alice.devices[0]},
     }
@@ -855,4 +896,57 @@ relay_quota_and_forwarding :: proc(t:^testing.T) {
         for &x in envelope[:size] {x=u8(base.hostile_next(&h))}
         relay_forward(&r,a,envelope[:size],20)
     }
+}
+
+// A project's log of 100,000 moves folds in one walk and appends in place:
+// its time is printed, not held to a budget, and the append after it writes
+// one leaf of the pages, the branches above it and the index.
+@(test)
+a_log_of_100000_entries_folds_and_appends_in_bounds :: proc(t:^testing.T) {
+    N :: 100_000
+    folder:=base.test_folder(t,"kai-log-scale")
+    if folder=="" {return}
+    s,se:=store.open(strings.concatenate({folder,"/store"},context.temp_allocator))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&s)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    ctx:=test_heads(&o.org)[0]
+    // Signatures are not what the fold reads: the entries carry zero ones, as a local read takes them.
+    started:=time.tick_now()
+    parent:=o.project.items[0].address
+    zero_signature:Signature
+    from:Revision
+    for i in 0..<N {
+        to:Revision
+        to[0],to[1],to[2],to[3]=u8(i),u8(i>>8),u8(i>>16),1
+        d:=Draft{type=.Bookmark_Move,log_id=o.project.id,parents={parent},org_ctx=ctx,time=i64(100+i),body=move_body("main",i==0?{}:{from},to)}
+        from=to
+        w,e:=entry_unsigned(&d,o.bob.devices[0].key,.Ed25519,context.temp_allocator)
+        if !testing.expect_value(t,e,Error.None) {return}
+        write_bytes(&w,zero_signature[:])
+        _,ae:=log_add(&o.project,w.data[:],false)
+        if !testing.expect_value(t,ae,Error.None) {return}
+        parent=store.address_of_bytes(w.data[:])
+        free_all(context.temp_allocator)
+    }
+    built:=time.tick_since(started)
+    started=time.tick_now()
+    f:Project_Fold
+    testing.expect_value(t,project_fold(&f,&o.project,&o.fold),Error.None)
+    folded:=time.tick_since(started)
+    defer project_fold_destroy(&f)
+    valid:=0
+    for v in f.valid {valid+=int(v)}
+    testing.expect_value(t,valid,N+1)
+    testing.expect_value(t,len(f.bookmarks),1)
+    started=time.tick_now()
+    _,e:=log_save(&s,&o.project)
+    testing.expect_value(t,e,Error.None)
+    saved,whole:=time.tick_since(started),o.project.written
+    test_move(t,&o.project,"main",{0=0xff},&o.bob.devices[0],ctx,200_000,nil,{from})
+    _,e=log_save(&s,&o.project)
+    testing.expect_value(t,e,Error.None)
+    fmt.printfln("kai: a project's log of %d entries: built in %v, folded in %v, saved whole in %v (%d bytes); one append then writes %d bytes",N,built,folded,saved,whole,o.project.written)
+    testing.expect(t,o.project.written<(LOG_PAGE_ENTRIES+2)*1024,"an append writes one leaf, its branches and the index")
 }

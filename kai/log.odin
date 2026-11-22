@@ -11,17 +11,26 @@ import "mirai:store"
 // An entry names up to ENTRY_PARENTS_MAX parents by address (the BLAKE3 of its
 // bytes); a log's id is the address of its genesis, the one entry without
 // parents and with a zero log_id. Every peer folds the same entries to the same
-// state: a topological walk whose ties go by address, where an entry counts
-// only if its author held the right in the state of its causal past. A removal
-// voids what its subject wrote concurrently, and the removal itself is never
-// voided, so two admins removing each other remove both. A device revocation
-// names, per log, the heads whose causal past its device's entries must be in:
-// whatever the device signs later, backdated or not, is outside it.
+// state: one walk of a topological order whose ties go by address. In a User
+// or Org log an entry counts only if its author held the right in the state of
+// its causal past there; a removal voids what its subject wrote concurrently,
+// and the removal itself is never voided, so two admins removing each other
+// remove both. An entry of a Project, Proposal or Keyring log names the entry
+// of the org's log it was signed under (org_ctx), and its author's rights are
+// those it held there. What removes or lowers a right in another log (a
+// Device_Revoke in a User_Log; a Member_Remove, a lowering Role_Set or a
+// Grant_Revoke in the Org_Log) reaches each log it concerns as a Witness entry
+// of that log, written by a key that holds a right there when it first sees
+// the removal: there, an entry by the key the removal affects holds only in
+// the causal past of a valid witness of it; with no witness yet, the removal
+// has not reached the log and its entries stand. So a removal stops what comes
+// after it, backdated or not, and keeps what came before, with no clock and no
+// server. An entry's time is never before its causal past (Log.time).
 //
-// The entries of one log are kept together as one Log object, sorted by
-// address, under the ref kai-log/<log id hex>, or kai-user/<log id hex> for a
-// User_Log. Signatures are checked when
-// entries come from a peer (log_merge), never on a local read.
+// A log is kept as its entries in pages of a trie by address, under an index
+// object with its heads; the ref kai-log/<log id hex>, or kai-user/<log id
+// hex> for a User_Log, names the index. Signatures are checked when entries
+// come from a peer (log_merge), never on a local read.
 
 Log_Id :: store.Hash
 Scope_Id :: distinct [16]u8
@@ -36,19 +45,23 @@ Entry_Type :: enum u8 {
     Proposal_Open,Proposal_Revise,Proposal_Comment,Proposal_Verdict,Proposal_Check,Proposal_Land,Proposal_Close,Proposal_Reopen,
     Keyring_Genesis,Epoch_Add,Envelope_Add,
     Public_Add,
+    Passkey_Genesis,Witness,
 }
 
 Sig_Kind :: enum u8 {Ed25519,WebAuthn} // WebAuthn: the assertion of a browser's passkey (webauthn.odin)
 
+LOG_VERSION :: 2 // of log entries and Log objects
+
 Entry_Head :: struct #packed {
     magic:u32,
-    version:u16,
+    version:u16,           // LOG_VERSION
     kind:Entry_Type,
     parents:u8,            // <= ENTRY_PARENTS_MAX; a genesis has none
     log_id:Log_Id,         // zero in a genesis
     author:Key,            // a device, the recovery key or a web key (web_key_id)
     author_ctx:store.Hash, // the head of the author's User_Log when it signed; a web key's entry counts only if its key was added in its causal past
-    time:i64,              // ns
+    org_ctx:store.Hash,    // in a Project, Proposal or Keyring log, the entry of the org's log its author's rights are judged at; zero in a User or Org log
+    time:i64,              // ns, as the signer's clock says
     body_len:u32,
     sig_kind:Sig_Kind,
     reserved:[3]u8,
@@ -57,11 +70,11 @@ Entry_Head :: struct #packed {
 ENTRY_PARENTS_MAX :: 8
 ENTRY_BODY_MAX :: 64<<10
 ASSERTION_MAX :: 2048
-LOG_ENTRIES_MAX :: 4096 // entries of one log: the fold is quadratic in them
-NAME_MAX :: 64          // bytes of the name of a user, device, org or project
+LOG_ENTRIES_MAX :: 1<<20 // entries of one log; far above what a team writes in years
+LOG_BLOCK_MAX :: 1<<20   // bytes of a block of a log's entries: the first is small, each next one twice the last
+NAME_MAX :: 64           // bytes of the name of a user, device, org or project
 PATTERNS_MAX :: 64
 CHECKS_MAX :: 32
-HORIZONS_MAX :: 64
 NODE_ADDRESSES_MAX :: 8
 ENVELOPES_MAX :: 1024
 STACK_MAX :: 256
@@ -74,6 +87,7 @@ Entry :: struct {
     parents:[]store.Hash,
     author:Key,
     author_ctx:store.Hash,
+    org_ctx:store.Hash,
     time:i64,
     body:[]u8,
     sig_kind:Sig_Kind,
@@ -91,9 +105,9 @@ Check_State :: enum u8 {Pending,Passed,Failed}
 
 // The fixed part of each body; what follows it is said beside it.
 User_Genesis_Body :: struct #packed {recovery:Key,device:Key,dh:Dh_Key,proof:Signature,device_name:[NAME_MAX]u8} // + name. proof: the device signs LABEL_DEVICE || recovery; device_name: the first device's, zero-padded
+Passkey_Genesis_Body :: struct #packed {credential:u8,cose:u16,rp:u8}                  // + credential id, COSE key, relying party id, name; signed by that passkey
 Device_Add_Body :: struct #packed {device:Key,dh:Dh_Key,proof:Signature}               // + name. proof: the device signs LABEL_DEVICE || log id
-Device_Revoke_Body :: struct #packed {device:Key,horizons:u8}                          // + horizons × (Horizon, [heads]store.Hash)
-Horizon :: struct #packed {log_id:Log_Id,heads:u8}
+Device_Revoke_Body :: struct #packed {device:Key}                                      // a device or a web key
 Recovery_Rotate_Body :: struct #packed {recovery:Key}
 Web_Key_Add_Body :: struct #packed {credential:u8,cose:u16,rp:u8}                      // + credential id, COSE key, relying party id
 Org_Genesis_Body :: struct #packed {owner:Log_Id}                                       // + name
@@ -107,7 +121,7 @@ Node_Add_Body :: struct #packed {node:Key,dh:Dh_Key,modes:Node_Modes,addresses:u
 Node_Address :: struct #packed {kind:u8,port:u16,ip:[16]u8}                             // kind: 1 IPv4, 2 IPv6
 Node_Remove_Body :: struct #packed {node:Key}
 Project_Genesis_Body :: struct #packed {org:Log_Id,public:b8}                           // + name
-Bookmark_Move_Body :: struct #packed {to:Revision,proposal:store.Hash,from:u8}         // + [from]Revision, bookmark
+Bookmark_Move_Body :: struct #packed {to:Revision,proposal:store.Hash,heads:u8,from:u8} // + [heads]store.Hash of the proposal's log it lands, [from]Revision, bookmark
 Proposal_Open_Body :: struct #packed {project:Log_Id,target:u8,title:u16}              // + target bookmark, title, text
 Proposal_Revise_Body :: struct #packed {count:u16}                                      // + [count]Stack_Item
 Stack_Item :: struct #packed {change:Change_Id,revision:Revision}
@@ -121,6 +135,10 @@ Keyring_Genesis_Body :: struct #packed {org:Log_Id,project:Log_Id,scope:Scope_Id
 Envelope :: struct #packed {dh:Dh_Key,wrapped:[WRAPPED_BYTES]u8}
 Epoch_Add_Body :: struct #packed {epoch:u32,envelopes:u16}                              // + [envelopes]Envelope
 Envelope_Add_Body :: struct #packed {epoch:u32,envelope:Envelope}
+// That a removal of the log named reached this log: the address of the
+// Device_Revoke of a User_Log, or of the Member_Remove, Role_Set or
+// Grant_Revoke of the Org_Log.
+Witness_Body :: struct #packed {log:Log_Id,removal:store.Hash}
 // A path of the project kept public though the deny set holds it, or, with a
 // fingerprint, one leak the publish scanner found there waived.
 Public_Add_Body :: struct #packed {project:Log_Id,fingerprint:store.Hash}                  // + path
@@ -128,23 +146,34 @@ Public_Add_Body :: struct #packed {project:Log_Id,fingerprint:store.Hash}       
 entry_log_kind :: proc "contextless" (t:Entry_Type) -> (kind:Log_Kind,ok:bool) {
     switch t {
     case .None: return {},false
-    case .User_Genesis,.Device_Add,.Device_Revoke,.Recovery_Rotate,.Web_Key_Add: return .User,true
-    case .Org_Genesis,.Member_Add,.Member_Remove,.Role_Set,.Owner_Transfer,.Project_Add,.Scope_Add,.Scope_Remove,.Policy_Set,.Grant,.Grant_Revoke,.Node_Add,.Node_Remove: return .Org,true
+    case .User_Genesis,.Passkey_Genesis,.Device_Add,.Device_Revoke,.Recovery_Rotate,.Web_Key_Add: return .User,true
+    case .Org_Genesis,.Member_Add,.Member_Remove,.Role_Set,.Owner_Transfer,.Project_Add,.Scope_Add,.Scope_Remove,.Policy_Set,.Grant,.Grant_Revoke,.Node_Add,.Node_Remove,.Public_Add: return .Org,true
     case .Project_Genesis,.Bookmark_Move: return .Project,true
     case .Proposal_Open,.Proposal_Revise,.Proposal_Comment,.Proposal_Verdict,.Proposal_Check,.Proposal_Land,.Proposal_Close,.Proposal_Reopen: return .Proposal,true
     case .Keyring_Genesis,.Epoch_Add,.Envelope_Add: return .Keyring,true
-    case .Public_Add: return .Org,true
+    case .Witness: return .Org,true // or a Project, Proposal or Keyring log: entry_fits
     }
     return {},false
+}
+
+// Whether an entry of type t belongs in a log of kind: a Witness in any but a
+// User_Log, every other type in the one entry_log_kind says.
+entry_fits :: proc "contextless" (t:Entry_Type,kind:Log_Kind) -> bool {
+    if t==.Witness {return kind!=.User}
+    k,ok:=entry_log_kind(t)
+    return ok && k==kind
 }
 
 @(private)
 genesis :: proc "contextless" (t:Entry_Type) -> bool {
     #partial switch t {
-    case .User_Genesis,.Org_Genesis,.Project_Genesis,.Proposal_Open,.Keyring_Genesis: return true
+    case .User_Genesis,.Passkey_Genesis,.Org_Genesis,.Project_Genesis,.Proposal_Open,.Keyring_Genesis: return true
     }
     return false
 }
+
+// Whether entries of logs of kind name the org's entry they were signed under.
+org_bound :: proc "contextless" (kind:Log_Kind) -> bool {return kind==.Project || kind==.Proposal || kind==.Keyring}
 
 // What an entry says, before it is signed.
 Draft :: struct {
@@ -152,6 +181,7 @@ Draft :: struct {
     log_id:Log_Id, // zero for a genesis
     parents:[]store.Hash,
     author_ctx:store.Hash,
+    org_ctx:store.Hash, // in a Project, Proposal or Keyring log: an entry of the org's log (org_context)
     time:i64,
     body:[]u8,
 }
@@ -160,7 +190,8 @@ Draft :: struct {
 @(private)
 entry_unsigned :: proc(d:^Draft,author:Key,sig_kind:Sig_Kind,allocator:runtime.Allocator) -> (w:Writer,error:Error) {
     if len(d.parents)>ENTRY_PARENTS_MAX || len(d.body)>ENTRY_BODY_MAX {return {},.Too_Large}
-    if genesis(d.type)!=(len(d.parents)==0) || genesis(d.type)!=(d.log_id=={}) || !body_valid(d.type,d.body) {return {},.Invalid_Argument}
+    kind,known:=entry_log_kind(d.type)
+    if !known || genesis(d.type)!=(len(d.parents)==0) || genesis(d.type)!=(d.log_id=={}) || (d.type!=.Witness && org_bound(kind)!=(d.org_ctx!={})) || !body_valid(d.type,d.body) {return {},.Invalid_Argument}
     parents,parents_error:=slice.clone(d.parents,context.temp_allocator)
     if parents_error!=nil {return {},.Out_Of_Memory}
     slice.sort_by(parents,hash_less)
@@ -169,8 +200,8 @@ entry_unsigned :: proc(d:^Draft,author:Key,sig_kind:Sig_Kind,allocator:runtime.A
     }
     w=writer_make(allocator)
     write_value(&w,Entry_Head{
-        magic=KAI_MAGIC,version=VERSION,kind=d.type,parents=u8(len(parents)),log_id=d.log_id,author=author,
-        author_ctx=d.author_ctx,time=d.time,body_len=u32(len(d.body)),sig_kind=sig_kind,
+        magic=KAI_MAGIC,version=LOG_VERSION,kind=d.type,parents=u8(len(parents)),log_id=d.log_id,author=author,
+        author_ctx=d.author_ctx,org_ctx=d.org_ctx,time=d.time,body_len=u32(len(d.body)),sig_kind=sig_kind,
     })
     for &p in parents {write_bytes(&w,p[:])}
     write_bytes(&w,d.body)
@@ -198,10 +229,11 @@ entry_sign :: proc(d:^Draft,identity:^Identity,allocator:=context.allocator) -> 
 entry_decode :: proc(bytes:[]u8) -> (e:Entry,error:Error) {
     r:=Reader{data=bytes}
     head:=read_value(&r,Entry_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || !zero(head.reserved[:]) {return {},.Corrupt}
-    if _,known:=entry_log_kind(head.kind);!known || head.parents>ENTRY_PARENTS_MAX || head.body_len>ENTRY_BODY_MAX || head.sig_kind>max(Sig_Kind) {return {},.Corrupt}
-    if genesis(head.kind)!=(head.parents==0) || genesis(head.kind)!=(head.log_id=={}) {return {},.Corrupt}
-    e.type,e.log_id,e.author,e.author_ctx,e.time,e.sig_kind=head.kind,head.log_id,head.author,head.author_ctx,head.time,head.sig_kind
+    if r.short || head.magic!=KAI_MAGIC || head.version!=LOG_VERSION || !zero(head.reserved[:]) {return {},.Corrupt}
+    kind,known:=entry_log_kind(head.kind)
+    if !known || head.parents>ENTRY_PARENTS_MAX || head.body_len>ENTRY_BODY_MAX || head.sig_kind>max(Sig_Kind) {return {},.Corrupt}
+    if genesis(head.kind)!=(head.parents==0) || genesis(head.kind)!=(head.log_id=={}) || (head.kind!=.Witness && org_bound(kind)!=(head.org_ctx!={})) {return {},.Corrupt}
+    e.type,e.log_id,e.author,e.author_ctx,e.org_ctx,e.time,e.sig_kind=head.kind,head.log_id,head.author,head.author_ctx,head.org_ctx,head.time,head.sig_kind
     e.parents=slice.reinterpret([]store.Hash,read_bytes(&r,int(head.parents)*size_of(store.Hash)))
     for p,i in e.parents {
         if p=={} || (i>0 && !hash_less(e.parents[i-1],p)) {return {},.Corrupt}
@@ -253,11 +285,23 @@ tail_string :: proc "contextless" (r:^Reader) -> string {
     return string(read_bytes(r,int(n)))
 }
 
-// The name of the device a user was made on, as its genesis gives it.
+// The name of device a user was made on, as its genesis gives it.
 genesis_device_name :: proc(head:^User_Genesis_Body) -> string {
     n:=0
     for n<len(head.device_name) && head.device_name[n]!=0 {n+=1}
     return string(head.device_name[:n])
+}
+
+// The credential id, COSE key and relying party of a Web_Key_Add or a
+// Passkey_Genesis, and what follows them: the name of a Passkey_Genesis.
+passkey_parts :: proc(body:[]u8) -> (credential,cose:[]u8,rp_id:string,rest:[]u8,ok:bool) {
+    head,tail,read:=body_head(body,Web_Key_Add_Body)
+    size:=int(head.credential)+int(head.cose)+int(head.rp)
+    if !read || head.credential==0 || head.cose==0 || head.rp==0 || len(tail)<size {return}
+    credential=tail[:head.credential]
+    cose=tail[head.credential:][:head.cose]
+    rp_id=string(tail[int(head.credential)+int(head.cose):size])
+    return credential,cose,rp_id,tail[size:],true
 }
 
 @(private)
@@ -275,24 +319,19 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
     case .User_Genesis:
         head,tail,ok:=body_head(body,User_Genesis_Body)
         return ok && name_valid(string(tail)) && name_valid(genesis_device_name(&head),true)
+    case .Passkey_Genesis:
+        _,_,rp_id,name,ok:=passkey_parts(body)
+        return ok && utf8.valid_string(rp_id) && name_valid(string(name))
     case .Device_Add:
         _,tail,ok:=body_head(body,Device_Add_Body)
         return ok && name_valid(string(tail))
-    case .Device_Revoke:
-        head,tail,ok:=body_head(body,Device_Revoke_Body)
-        if !ok || head.horizons>HORIZONS_MAX {return false}
-        r:=Reader{data=tail}
-        for _ in 0..<head.horizons {
-            h:=read_value(&r,Horizon)
-            if h.heads==0 || h.heads>ENTRY_PARENTS_MAX || h.log_id=={} {return false}
-            read_bytes(&r,int(h.heads)*size_of(store.Hash))
-        }
-        return !r.short && r.at==len(tail)
-    case .Recovery_Rotate,.Member_Remove,.Owner_Transfer,.Grant_Revoke,.Project_Add,.Scope_Remove,.Node_Remove,.Proposal_Verdict,.Proposal_Land,.Keyring_Genesis,.Envelope_Add:
+    case .Device_Revoke,.Recovery_Rotate,.Member_Remove,.Owner_Transfer,.Grant_Revoke,.Project_Add,.Scope_Remove,.Node_Remove,.Proposal_Verdict,.Proposal_Land,.Keyring_Genesis,.Envelope_Add,.Witness:
         size:=0
         #partial switch t {
+        case .Device_Revoke: size=size_of(Device_Revoke_Body)
         case .Recovery_Rotate: size=size_of(Recovery_Rotate_Body)
         case .Member_Remove,.Owner_Transfer,.Grant_Revoke: size=size_of(Subject_Body)
+        case .Witness: size=size_of(Witness_Body)
         case .Project_Add: size=size_of(Project_Add_Body)
         case .Scope_Remove: size=size_of(Scope_Remove_Body)
         case .Node_Remove: size=size_of(Node_Remove_Body)
@@ -306,8 +345,8 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
         }
         return len(body)==size
     case .Web_Key_Add:
-        head,tail,ok:=body_head(body,Web_Key_Add_Body)
-        return ok && head.credential>0 && head.cose>0 && head.rp>0 && len(tail)==int(head.credential)+int(head.cose)+int(head.rp)
+        _,_,_,rest,ok:=passkey_parts(body)
+        return ok && len(rest)==0
     case .Org_Genesis:
         _,tail,ok:=body_head(body,Org_Genesis_Body)
         return ok && name_valid(string(tail))
@@ -345,8 +384,9 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
         return ok && name_valid(string(tail))
     case .Bookmark_Move:
         head,tail,ok:=body_head(body,Bookmark_Move_Body)
-        if !ok || head.to=={} || int(head.from)>CONFLICT_SIDES_MAX || len(tail)<=int(head.from)*size_of(Revision) {return false}
-        name:=string(tail[int(head.from)*size_of(Revision):])
+        pinned:=int(head.heads)*size_of(store.Hash)
+        if !ok || head.to=={} || head.heads>ENTRY_PARENTS_MAX || (head.heads==0)!=(head.proposal=={}) || int(head.from)>CONFLICT_SIDES_MAX || len(tail)<=pinned+int(head.from)*size_of(Revision) {return false}
+        name:=string(tail[pinned+int(head.from)*size_of(Revision):])
         return len(name)<=BOOKMARK_NAME_MAX && utf8.valid_string(name)
     case .Proposal_Open:
         head,tail,ok:=body_head(body,Proposal_Open_Body)
@@ -411,7 +451,6 @@ device_proof :: proc(device:^Identity,joins:[32]u8) -> Signature {
     return sign(device,message[:])
 }
 
-@(private)
 device_proof_valid :: proc(device:Key,joins:[32]u8,proof:Signature) -> bool {
     message:[len(LABEL_DEVICE)+32]u8
     copy(message[:],LABEL_DEVICE)
@@ -420,102 +459,257 @@ device_proof_valid :: proc(device:Key,joins:[32]u8,proof:Signature) -> bool {
     return signature_valid(device,message[:],proof)
 }
 
-// One log's entries in memory: sorted by address, with their DAG indexed by
-// log_index.
+
+// A move's parts: the heads of the proposal's log it lands, the targets it
+// moves from, and the bookmark.
+move_parts :: proc "contextless" (body:[]u8) -> (head:Bookmark_Move_Body,heads:[]store.Hash,from:[]Revision,name:string) {
+    tail:[]u8
+    head,tail,_=body_head(body,Bookmark_Move_Body)
+    pinned:=int(head.heads)*size_of(store.Hash)
+    heads=slice.reinterpret([]store.Hash,tail[:pinned])
+    from=slice.reinterpret([]Revision,tail[pinned:][:int(head.from)*size_of(Revision)])
+    name=string(tail[pinned+len(from)*size_of(Revision):])
+    return
+}
+
+// A body of Bookmark_Move of bookmark from the targets from to to: by a
+// landing, naming the proposal and the heads of its log it lands.
+move_body :: proc(bookmark:string,from:[]Revision,to:Revision,proposal:store.Hash={},heads:[]store.Hash={}) -> []u8 {
+    pinned,f:=heads,from
+    return body_make(Bookmark_Move_Body{to=to,proposal=proposal,heads=u8(len(heads)),from=u8(len(from))},slice.to_bytes(pinned),slice.to_bytes(f),transmute([]u8)bookmark)
+}
+
+// One log's entries in memory, in the order they were added, their bytes in
+// blocks that never move, with the DAG the index keeps and the pages of the
+// trie the store keeps them in.
 Log :: struct {
     id:Log_Id,
     kind:Log_Kind,
+    known:bool,               // kind is the log's: from its entries or its index
     items:[dynamic]Log_Item,
-    order:[dynamic]u32,  // topological, ties by address
-    rank:[dynamic]u32,   // the place of each item in order
+    found:map[store.Hash]u32, // an item's index by its address
+    blocks:[dynamic][]u8,
+    block_used:int,           // bytes of the last block taken
+    indexed:bool,
+    order:[dynamic]u32,       // topological, ties by address
+    rank:[dynamic]u32,        // the place of each item in order
     parent_first:[dynamic]u32,
     parent_list:[dynamic]u32,
-    complete:[dynamic]bool, // every ancestor is here
-    past:[dynamic]u64,   // bit a of the words of e: a is a strict ancestor of e
-    words:int,
-    indexed:bool,
+    complete:[dynamic]bool,   // every ancestor is here
+    time:[dynamic]i64,        // the latest time of the item and its causal past: an entry is never before what it builds on
+    heads:[dynamic]u32,       // the complete items no complete item descends from, by address
+    // Ancestry: the items are cut into chains, each a path of the DAG, and a
+    // row gives, per chain, the last position of that chain in the causal
+    // past of an item. An item that only extends its parent's chain shares
+    // its parent's row; a merge or a fork makes one. So a linear log keeps one
+    // row, and memory grows with merges times the log's width.
+    chain:[dynamic]u32,
+    pos:[dynamic]u32,         // from 1 in its chain
+    row:[dynamic]u32,
+    row_first:[dynamic]u32,
+    rows:[dynamic]u32,
+    chain_len:[dynamic]u32,
+    pages:[dynamic]Log_Page,  // pages[0] is the root once there is an entry
+    written:int,              // bytes the last log_save put
+    // The valid Witness entries of the log, by the removal they name, as its
+    // fold found them in a first walk; witnessing while that walk runs.
+    witness_last:map[store.Hash]u32,
+    witness_prev:[dynamic]u32,
+    witnessing:bool,
     allocator:runtime.Allocator,
 }
 
 Log_Item :: struct {
     address:store.Hash,
-    bytes:[]u8, // the log's own copy
+    bytes:[]u8,  // in the log's blocks
     entry:Entry, // into bytes
 }
+
+// A page of the trie that keeps a log in the store. A page at depth d holds
+// the entries whose addresses share its first d bytes: a leaf the entries
+// themselves, a branch one page per next byte. A leaf of more than
+// LOG_PAGE_ENTRIES entries is a branch, so the pages are a function of the
+// set of entries alone: peers that hold the same entries make the same pages,
+// and an append rewrites one leaf, the branches above it and the index.
+Log_Page :: struct {
+    address:store.Hash, // in the store, zero while dirty
+    depth:u8,
+    leaf:bool,
+    count:u32,          // entries below
+    items:[dynamic]u32, // a leaf's
+    children:[]u32,     // a branch's 256 pages, +1
+}
+
+LOG_PAGE_ENTRIES :: 256
 
 log_init :: proc(l:^Log,id:Log_Id={},allocator:=context.allocator) {
     l^={id=id,allocator=allocator}
     l.items=make([dynamic]Log_Item,allocator)
+    l.found=make(map[store.Hash]u32,allocator)
+    l.blocks=make([dynamic][]u8,allocator)
     l.order=make([dynamic]u32,allocator)
     l.rank=make([dynamic]u32,allocator)
     l.parent_first=make([dynamic]u32,allocator)
     l.parent_list=make([dynamic]u32,allocator)
     l.complete=make([dynamic]bool,allocator)
-    l.past=make([dynamic]u64,allocator)
+    l.time=make([dynamic]i64,allocator)
+    l.heads=make([dynamic]u32,allocator)
+    l.chain=make([dynamic]u32,allocator)
+    l.pos=make([dynamic]u32,allocator)
+    l.row=make([dynamic]u32,allocator)
+    l.row_first=make([dynamic]u32,allocator)
+    l.rows=make([dynamic]u32,allocator)
+    l.chain_len=make([dynamic]u32,allocator)
+    l.pages=make([dynamic]Log_Page,allocator)
+    l.witness_last=make(map[store.Hash]u32,allocator)
+    l.witness_prev=make([dynamic]u32,allocator)
 }
 
 log_destroy :: proc(l:^Log) {
-    for item in l.items {delete(item.bytes,l.allocator)}
+    for b in l.blocks {delete(b,l.allocator)}
+    for &p in l.pages {
+        delete(p.items)
+        delete(p.children,l.allocator)
+    }
+    delete(l.pages)
+    delete(l.blocks)
     delete(l.items)
+    delete(l.found)
     delete(l.order)
     delete(l.rank)
     delete(l.parent_first)
     delete(l.parent_list)
     delete(l.complete)
-    delete(l.past)
+    delete(l.time)
+    delete(l.heads)
+    delete(l.chain)
+    delete(l.pos)
+    delete(l.row)
+    delete(l.row_first)
+    delete(l.rows)
+    delete(l.chain_len)
+    delete(l.witness_last)
+    delete(l.witness_prev)
     l^={}
 }
 
 // The index of the entry at address, -1 when it is not here.
 log_find :: proc(l:^Log,address:store.Hash) -> int {
-    i,found:=slice.binary_search_by(l.items[:],address,proc(item:Log_Item,a:store.Hash) -> slice.Ordering {
-        if item.address==a {return .Equal}
-        return hash_less(item.address,a)?.Less:.Greater
-    })
-    return found?i:-1
+    k,found:=l.found[address]
+    return found?int(k):-1
+}
+
+// size bytes in the log's blocks, nil when memory ran out.
+@(private)
+log_bytes :: proc(l:^Log,size:int) -> []u8 {
+    if len(l.blocks)==0 || l.block_used+size>len(l.blocks[len(l.blocks)-1]) {
+        next:=len(l.blocks)==0?4096:min(2*len(l.blocks[len(l.blocks)-1]),LOG_BLOCK_MAX)
+        block,e:=make([]u8,max(next,size),l.allocator)
+        if e!=nil {return nil}
+        if _,ae:=append(&l.blocks,block);ae!=nil {
+            delete(block,l.allocator)
+            return nil
+        }
+        l.block_used=0
+    }
+    out:=l.blocks[len(l.blocks)-1][l.block_used:][:size]
+    l.block_used+=size
+    return out
 }
 
 // Adds the entry of bytes, checking its signature when verify; added is false
-// when it was here. An entry of another log is refused.
+// when it was here. An entry of another log is refused, and one past
+// LOG_ENTRIES_MAX is Too_Large.
 log_add :: proc(l:^Log,bytes:[]u8,verify:bool) -> (added:bool,error:Error) {
     e:=entry_decode(bytes) or_return
     address:=store.address_of_bytes(bytes)
-    kind,_:=entry_log_kind(e.type)
     if genesis(e.type) {
         if l.id!={} && l.id!=address {return false,.Invalid_Argument}
     } else if l.id=={} || e.log_id!=l.id {
         return false,.Invalid_Argument
     }
-    if len(l.items)>0 && kind!=l.kind {return false,.Invalid_Argument}
-    if log_find(l,address)>=0 {return false,.None}
+    kind,_:=entry_log_kind(e.type)
+    if e.type==.Witness {
+        if !l.known || !entry_fits(e.type,l.kind) || org_bound(l.kind)!=(e.org_ctx!={}) {return false,.Invalid_Argument}
+        kind=l.kind
+    }
+    if l.known && kind!=l.kind {return false,.Invalid_Argument}
+    if address in l.found {return false,.None}
     if len(l.items)>=LOG_ENTRIES_MAX {return false,.Too_Large}
     if verify && !entry_verify(bytes,&e) {return false,.Unauthorized}
-    own,clone_error:=slice.clone(bytes,l.allocator)
-    if clone_error!=nil {return false,.Out_Of_Memory}
+    own:=log_bytes(l,len(bytes))
+    if own==nil {return false,.Out_Of_Memory}
+    copy(own,bytes)
     e,_=entry_decode(own)
-    at,_:=slice.binary_search_by(l.items[:],address,proc(item:Log_Item,a:store.Hash) -> slice.Ordering {
-        return hash_less(item.address,a)?.Less:.Greater
-    })
-    if _,insert_error:=inject_at(&l.items,at,Log_Item{address=address,bytes=own,entry=e});insert_error!=nil {
-        delete(own,l.allocator)
+    if _,ae:=append(&l.items,Log_Item{address=address,bytes=own,entry=e});ae!=nil {return false,.Out_Of_Memory}
+    i:=len(l.items)-1
+    if _,me:=map_insert(&l.found,address,u32(i));me!=nil {
+        pop(&l.items)
         return false,.Out_Of_Memory
     }
     if genesis(e.type) {l.id=address}
-    l.kind=kind
-    l.indexed=false
+    l.kind,l.known=kind,true
+    if page_insert(l,i)!=.None {
+        delete_key(&l.found,address)
+        pop(&l.items)
+        return false,.Out_Of_Memory
+    }
+    log_extend(l,i)
     return true,.None
 }
 
-// Builds the parents, the topological order and the ancestry of the log.
+// Keeps the index of l when the new item i descends from every head, as an
+// append does: it is then the last in any topological order. Anything else
+// leaves the log to be indexed again.
+@(private)
+log_extend :: proc(l:^Log,i:int) {
+    if !l.indexed {return}
+    l.indexed=false
+    entry:=&l.items[i].entry
+    if len(l.items)!=len(l.order)+1 || len(entry.parents)==0 {return}
+    parents:=make([dynamic]u32,0,len(entry.parents),context.temp_allocator)
+    for p in entry.parents {
+        k:=log_find(l,p)
+        if k<0 {return}
+        append(&parents,u32(k))
+    }
+    for h in l.heads {
+        if !slice.contains(parents[:],h) {return}
+    }
+    grown:=0
+    _,e1:=append(&l.parent_list,..parents[:])
+    _,e2:=append(&l.parent_first,u32(len(l.parent_list)))
+    if e1!=nil || e2!=nil {return}
+    for x in ([?]^[dynamic]u32{&l.rank,&l.chain,&l.pos,&l.row}) {
+        if _,e:=append(x,0);e==nil {grown+=1}
+    }
+    _,e3:=append(&l.complete,false)
+    _,e4:=append(&l.time,0)
+    if grown!=4 || e3!=nil || e4!=nil {return}
+    clock:=make([dynamic]u32,context.temp_allocator)
+    if log_place(l,i,false,&clock)!=.None {return}
+    if l.complete[i] {
+        clear(&l.heads)
+        append(&l.heads,u32(i))
+    }
+    l.indexed=true
+}
+
+// Builds the parents, the topological order, the causal times, the heads
+// and the ancestry of the log: O(n log n) for a log of n entries, and a row
+// per merge or fork.
 log_index :: proc(l:^Log) -> Error {
     if l.indexed {return .None}
     n:=len(l.items)
-    l.words=(n+63)/64
-    if resize(&l.order,0)!=nil || resize(&l.rank,n)!=nil || resize(&l.parent_first,n+1)!=nil || resize(&l.complete,n)!=nil || resize(&l.past,n*l.words)!=nil {return .Out_Of_Memory}
+    if resize(&l.order,0)!=nil || resize(&l.rank,n)!=nil || resize(&l.parent_first,n+1)!=nil || resize(&l.complete,n)!=nil || resize(&l.time,n)!=nil {return .Out_Of_Memory}
+    if resize(&l.chain,n)!=nil || resize(&l.pos,n)!=nil || resize(&l.row,n)!=nil || resize(&l.row_first,1)!=nil || resize(&l.rows,0)!=nil || resize(&l.chain_len,0)!=nil {return .Out_Of_Memory}
+    l.row_first[0]=0
     clear(&l.parent_list)
-    if reserve(&l.parent_list,n*ENTRY_PARENTS_MAX)!=nil || reserve(&l.order,n)!=nil {return .Out_Of_Memory}
-    mem.zero_slice(l.past[:])
-    missing:=make([]bool,n,context.temp_allocator)
+    clear(&l.heads)
+    if reserve(&l.parent_list,n)!=nil || reserve(&l.order,n)!=nil {return .Out_Of_Memory}
+    missing,me:=make([]bool,n,context.temp_allocator)
+    child_first,ce:=make([]u32,n+1,context.temp_allocator)
+    if me!=nil || ce!=nil {return .Out_Of_Memory}
     for &item,i in l.items {
         l.parent_first[i]=u32(len(l.parent_list))
         for p in item.entry.parents {
@@ -524,72 +718,174 @@ log_index :: proc(l:^Log) -> Error {
                 missing[i]=true
                 continue
             }
-            append(&l.parent_list,u32(k))
+            if _,e:=append(&l.parent_list,u32(k));e!=nil {return .Out_Of_Memory}
+            child_first[k+1]+=1
         }
     }
     l.parent_first[n]=u32(len(l.parent_list))
-    // Kahn's walk taking the ready entry of the lowest address first; an entry
-    // with an absent ancestor is not complete and comes after.
-    waiting:=make([]u32,n,context.temp_allocator)
-    child_first:=make([]u32,n+1,context.temp_allocator)
-    child_list:=make([]u32,len(l.parent_list),context.temp_allocator)
-    for p in l.parent_list {child_first[p+1]+=1}
     for i in 0..<n {child_first[i+1]+=child_first[i]}
-    child_at:=make([]u32,n,context.temp_allocator)
+    child_list,le:=make([]u32,len(l.parent_list),context.temp_allocator)
+    at,ae:=make([]u32,n,context.temp_allocator)
+    waiting,we:=make([]u32,n,context.temp_allocator)
+    if le!=nil || ae!=nil || we!=nil {return .Out_Of_Memory}
     for i in 0..<n {
         for p in log_parents(l,i) {
+            child_list[child_first[p]+at[p]]=u32(i)
+            at[p]+=1
             waiting[i]+=1
-            child_list[child_first[p]+child_at[p]]=u32(i)
-            child_at[p]+=1
         }
     }
-    ready:=make([dynamic]u32,context.temp_allocator)
+    // Kahn's walk taking the ready entry of the lowest address first, from a heap.
+    heap:=make([dynamic]u32,0,n,context.temp_allocator)
     for i in 0..<n {
-        if waiting[i]==0 {append(&ready,u32(i))}
+        if waiting[i]==0 {heap_push(&heap,l,u32(i))}
     }
-    placed:=make([]bool,n,context.temp_allocator)
-    for len(ready)>0 {
-        best:=0
-        for k in 1..<len(ready) {
-            if ready[k]<ready[best] {best=k}
-        }
-        i:=ready[best]
-        unordered_remove(&ready,best)
-        placed[i]=true
-        l.rank[i]=u32(len(l.order))
-        append(&l.order,i)
-        complete:=!missing[i] && (genesis(l.items[i].entry.type) || len(l.items[i].entry.parents)>0)
-        past:=l.past[int(i)*l.words:][:l.words]
-        for p in log_parents(l,int(i)) {
-            complete&=l.complete[p]
-            past[p/64]|=1<<(p%64)
-            for w,k in l.past[int(p)*l.words:][:l.words] {past[k]|=w}
-        }
-        l.complete[i]=complete
+    clock:=make([dynamic]u32,context.temp_allocator)
+    for len(heap)>0 {
+        i:=heap_pop(&heap,l)
+        log_place(l,int(i),missing[i],&clock) or_return
         for c in child_list[child_first[i]:child_first[i+1]] {
             waiting[c]-=1
-            if waiting[c]==0 {append(&ready,c)}
+            if waiting[c]==0 {heap_push(&heap,l,c)}
         }
     }
     // What a cycle of hashes would leave: nothing a peer can make, refused all the same.
-    for i in 0..<n {
-        if !placed[i] {
+    if len(l.order)<n {
+        placed,pe:=make([]bool,n,context.temp_allocator)
+        if pe!=nil {return .Out_Of_Memory}
+        for i in l.order {placed[i]=true}
+        for i in 0..<n {
+            if placed[i] {continue}
             l.rank[i]=u32(len(l.order))
             append(&l.order,u32(i))
-            l.complete[i]=false
+            l.complete[i],l.time[i]=false,l.items[i].entry.time
+            l.chain[i],l.pos[i],l.row[i]=u32(len(l.chain_len)),1,u32(len(l.row_first)-1)
+            append(&l.chain_len,1)
+            if _,e:=append(&l.row_first,u32(len(l.rows)));e!=nil {return .Out_Of_Memory}
         }
     }
+    for i in 0..<n {
+        if !l.complete[i] {continue}
+        head:=true
+        for c in child_list[child_first[i]:child_first[i+1]] {
+            if l.complete[c] {
+                head=false
+                break
+            }
+        }
+        if head {append(&l.heads,u32(i))}
+    }
+    context.user_ptr=l
+    slice.sort_by(l.heads[:],proc(a,b:u32) -> bool {
+        l:=(^Log)(context.user_ptr)
+        return hash_less(l.items[a].address,l.items[b].address)
+    })
     l.indexed=true
     return .None
+}
+
+// Places item i next in the order, with its completeness, causal time, chain
+// and row.
+@(private)
+log_place :: proc(l:^Log,i:int,missing:bool,clock:^[dynamic]u32) -> Error {
+    entry:=&l.items[i].entry
+    parents:=log_parents(l,i)
+    l.rank[i]=u32(len(l.order))
+    if _,e:=append(&l.order,u32(i));e!=nil {return .Out_Of_Memory}
+    complete:=!missing && (genesis(entry.type) || len(entry.parents)>0)
+    time:=entry.time
+    extend:=-1
+    for p in parents {
+        complete&=l.complete[p]
+        time=max(time,l.time[p])
+        if extend<0 && l.pos[p]==l.chain_len[l.chain[p]] {extend=int(p)}
+    }
+    l.complete[i],l.time[i]=complete,time
+    if extend>=0 && len(parents)==1 {
+        c:=l.chain[extend]
+        l.chain_len[c]+=1
+        l.chain[i],l.pos[i],l.row[i]=c,l.chain_len[c],l.row[extend]
+        return .None
+    }
+    chains:=len(l.chain_len)
+    if resize(clock,chains)!=nil {return .Out_Of_Memory}
+    mem.zero_slice(clock[:])
+    for p in parents {
+        for c in 0..<chains {clock[c]=max(clock[c],log_reach(l,int(p),c))}
+    }
+    c:=-1
+    if extend>=0 {
+        c=int(l.chain[extend])
+    } else {
+        // A fork takes a chain whose last entry it descends from, else a new one.
+        for k in 0..<chains {
+            if l.chain_len[k]>0 && clock[k]==l.chain_len[k] {
+                c=k
+                break
+            }
+        }
+    }
+    if c<0 {
+        c=chains
+        if _,e:=append(&l.chain_len,0);e!=nil {return .Out_Of_Memory}
+        if _,e:=append(clock,0);e!=nil {return .Out_Of_Memory}
+    }
+    l.chain_len[c]+=1
+    clock[c]=l.chain_len[c]
+    l.chain[i],l.pos[i],l.row[i]=u32(c),l.chain_len[c],u32(len(l.row_first)-1)
+    if _,e:=append(&l.rows,..clock[:]);e!=nil {return .Out_Of_Memory}
+    if _,e:=append(&l.row_first,u32(len(l.rows)));e!=nil {return .Out_Of_Memory}
+    return .None
+}
+
+@(private)
+heap_less :: #force_inline proc(l:^Log,a,b:u32) -> bool {return hash_less(l.items[a].address,l.items[b].address)}
+
+@(private)
+heap_push :: proc(heap:^[dynamic]u32,l:^Log,i:u32) {
+    append(heap,i)
+    k:=len(heap)-1
+    for k>0 {
+        up:=(k-1)/2
+        if !heap_less(l,heap[k],heap[up]) {break}
+        heap[k],heap[up]=heap[up],heap[k]
+        k=up
+    }
+}
+
+@(private)
+heap_pop :: proc(heap:^[dynamic]u32,l:^Log) -> u32 {
+    top:=heap[0]
+    last:=pop(heap)
+    if len(heap)==0 {return top}
+    heap[0]=last
+    k:=0
+    for {
+        a,b,least:=2*k+1,2*k+2,k
+        if a<len(heap) && heap_less(l,heap[a],heap[least]) {least=a}
+        if b<len(heap) && heap_less(l,heap[b],heap[least]) {least=b}
+        if least==k {break}
+        heap[k],heap[least]=heap[least],heap[k]
+        k=least
+    }
+    return top
 }
 
 log_parents :: proc(l:^Log,i:int) -> []u32 {
     return l.parent_list[l.parent_first[i]:l.parent_first[i+1]]
 }
 
+// The last position of chain c in e and its causal past, 0 when none.
+@(private)
+log_reach :: #force_inline proc(l:^Log,e,c:int) -> u32 {
+    if u32(c)==l.chain[e] {return l.pos[e]}
+    first,last:=l.row_first[l.row[e]],l.row_first[l.row[e]+1]
+    return first+u32(c)<last?l.rows[first+u32(c)]:0
+}
+
 // Whether a is a strict ancestor of e.
 log_before :: #force_inline proc(l:^Log,a,e:int) -> bool {
-    return l.past[e*l.words+a/64]&(1<<uint(a%64))!=0
+    return a!=e && log_reach(l,e,int(l.chain[a]))>=l.pos[a]
 }
 
 // Whether a is e or one of its ancestors.
@@ -603,32 +899,26 @@ log_concurrent :: #force_inline proc(l:^Log,a,b:int) -> bool {
 log_heads :: proc(l:^Log,out:^[dynamic]store.Hash) -> Error {
     log_index(l) or_return
     clear(out)
-    for i in 0..<len(l.items) {
-        if !l.complete[i] {continue}
-        head:=true
-        for k in 0..<len(l.items) {
-            if l.complete[k] && log_before(l,i,k) {
-                head=false
-                break
-            }
-        }
-        if head {
-            if _,e:=append(out,l.items[i].address);e!=nil {return .Out_Of_Memory}
-        }
+    for h in l.heads {
+        if _,e:=append(out,l.items[h].address);e!=nil {return .Out_Of_Memory}
     }
     return .None
 }
 
-// Appends an entry signed by identity to the log, its parents the heads: the
-// entry's address.
-log_append :: proc(l:^Log,type:Entry_Type,body:[]u8,identity:^Identity,time:i64,author_ctx:=store.Hash{}) -> (address:store.Hash,error:Error) {
+// Appends an entry signed by identity to the log, its parents the heads, or
+// parents when given: the entry's address. org_ctx is the org's entry it is
+// signed under, for the entries of a Project, Proposal or Keyring log
+// (org_context).
+log_append :: proc(l:^Log,type:Entry_Type,body:[]u8,identity:^Identity,time:i64,author_ctx:=store.Hash{},org_ctx:=store.Hash{},parents:[]store.Hash=nil) -> (address:store.Hash,error:Error) {
     heads:=make([dynamic]store.Hash,context.temp_allocator)
-    if !genesis(type) {
+    if parents!=nil {
+        append(&heads,..parents)
+    } else if !genesis(type) {
         log_heads(l,&heads) or_return
         if len(heads)==0 {return {},.Invalid_Argument}
         if len(heads)>ENTRY_PARENTS_MAX {resize(&heads,ENTRY_PARENTS_MAX)}
     }
-    d:=Draft{type=type,log_id=genesis(type)?{}:l.id,parents=heads[:],author_ctx=author_ctx,time=time,body=body}
+    d:=Draft{type=type,log_id=genesis(type)?{}:l.id,parents=heads[:],author_ctx=author_ctx,org_ctx=org_ctx,time=time,body=body}
     bytes:[]u8
     bytes,address,error=entry_sign(&d,identity,context.temp_allocator)
     if error!=.None {return}
@@ -636,55 +926,326 @@ log_append :: proc(l:^Log,type:Entry_Type,body:[]u8,identity:^Identity,time:i64,
     return
 }
 
+// The valid witnesses of removal in l, then each before it: -1 at the end.
+log_witness_first :: proc(l:^Log,removal:store.Hash) -> int {return int(l.witness_last[removal])-1}
+log_witness_next :: proc(l:^Log,w:int) -> int {return int(l.witness_prev[w])-1}
+
+// Whether entry e of l stands against the removal at address removal of
+// another log: no valid witness of it is in l yet, or e is in the causal past
+// of one.
+log_witnessed :: proc(l:^Log,removal:store.Hash,e:int) -> bool {
+    if l.witnessing {return true}
+    w:=log_witness_first(l,removal)
+    if w<0 {return true}
+    for ;w>=0;w=log_witness_next(l,w) {
+        if log_before(l,e,w) {return true}
+    }
+    return false
+}
+
+// --- Pages and the index in the store ---
+
 LOG_NAMESPACE :: "kai-log"
 
-Log_Bundle_Head :: struct #packed {
+// The object a log's ref names: its kind and id, how many entries it holds,
+// its root page and its heads.
+Log_Index_Head :: struct #packed {
     magic:u32,
-    version:u16,
+    version:u16, // LOG_VERSION
     kind:Log_Kind,
     reserved:u8,
     count:u32,
     id:Log_Id,
-} // + count × (u32 length, entry bytes), sorted by address
+    root:store.Hash,
+    heads:u16,
+    reserved2:[6]u8,
+} // + [heads]store.Hash
+
+Log_Page_Head :: struct #packed {
+    magic:u32,
+    version:u16, // LOG_VERSION
+    depth:u8,    // the bytes of address every entry below shares with the page's path
+    leaf:b8,
+    count:u32,   // entries below
+} // leaf: count × (u32 length, entry bytes) sorted by address; branch: [256]store.Hash, zero where none
+
+LOG_HEADS_MAX :: 1<<12 // heads an index names; a log with more is folded from its pages alone
 
 // The ref name of a log: the hex of its id.
 log_name :: proc(id:Log_Id,buffer:^[64]u8) -> string {return store.hex(id,buffer)}
 
-// Puts the log's entries as one Log object and points its ref at it.
-log_save :: proc(s:^store.Store,l:^Log) -> (address:store.Hash,error:Error) {
-    if l.id=={} {return {},.Invalid_Argument}
+// Puts item i in the pages, from the root, which it makes for the first entry.
+@(private)
+page_insert :: proc(l:^Log,i:int) -> Error {
+    if len(l.pages)==0 {
+        if _,e:=append(&l.pages,Log_Page{leaf=true,items=make([dynamic]u32,l.allocator)});e!=nil {return .Out_Of_Memory}
+    }
+    return page_insert_at(l,0,i)
+}
+
+// Puts item i in the pages from page k down, splitting a leaf that grows past
+// LOG_PAGE_ENTRIES.
+@(private)
+page_insert_at :: proc(l:^Log,k:int,i:int) -> Error {
+    address:=l.items[i].address
+    k:=k
+    for {
+        l.pages[k].address={}
+        l.pages[k].count+=1
+        if l.pages[k].leaf {
+            if _,e:=append(&l.pages[k].items,u32(i));e!=nil {return .Out_Of_Memory}
+            if len(l.pages[k].items)>LOG_PAGE_ENTRIES && l.pages[k].depth<31 {return page_split(l,k)}
+            return .None
+        }
+        b:=address[l.pages[k].depth]
+        if l.pages[k].children[b]==0 {
+            child:=Log_Page{depth=l.pages[k].depth+1,leaf=true,items=make([dynamic]u32,l.allocator)}
+            if _,e:=append(&l.pages,child);e!=nil {return .Out_Of_Memory}
+            l.pages[k].children[b]=u32(len(l.pages))
+        }
+        k=int(l.pages[k].children[b])-1
+    }
+}
+
+// Makes the leaf k a branch and puts its entries below it again.
+@(private)
+page_split :: proc(l:^Log,k:int) -> Error {
+    children,e:=make([]u32,256,l.allocator)
+    if e!=nil {return .Out_Of_Memory}
+    items:=l.pages[k].items
+    defer delete(items)
+    l.pages[k].leaf,l.pages[k].items,l.pages[k].children,l.pages[k].count=false,{},children,0
+    for i in items {page_insert_at(l,k,int(i)) or_return}
+    return .None
+}
+
+// Puts the pages below k this store lacks, then k: its address. A page this
+// store holds holds what is below it.
+@(private)
+page_save :: proc(s:^store.Store,l:^Log,k:int) -> (address:store.Hash,error:Error) {
+    if l.pages[k].address!={} && store.chunk_has(s,l.pages[k].address) {return l.pages[k].address,.None}
     w:=writer_make(context.temp_allocator)
-    write_value(&w,Log_Bundle_Head{magic=KAI_MAGIC,version=VERSION,kind=l.kind,count=u32(len(l.items)),id=l.id})
-    for item in l.items {
-        write_value(&w,u32(len(item.bytes)))
-        write_bytes(&w,item.bytes)
+    p:=&l.pages[k]
+    write_value(&w,Log_Page_Head{magic=KAI_MAGIC,version=LOG_VERSION,depth=p.depth,leaf=b8(p.leaf),count=p.count})
+    if p.leaf {
+        context.user_ptr=l
+        slice.sort_by(p.items[:],proc(a,b:u32) -> bool {
+            l:=(^Log)(context.user_ptr)
+            return hash_less(l.items[a].address,l.items[b].address)
+        })
+        for i in p.items {
+            write_value(&w,u32(len(l.items[i].bytes)))
+            write_bytes(&w,l.items[i].bytes)
+        }
+    } else {
+        for c in 0..<256 {
+            child:store.Hash
+            if l.pages[k].children[c]!=0 {child=page_save(s,l,int(l.pages[k].children[c])-1) or_return}
+            write_bytes(&w,child[:])
+        }
     }
     if w.failed {return {},.Out_Of_Memory}
-    address=object_put(s,.Log,w.data[:]) or_return
-    name:[64]u8
-    if e:=store.ref_set(s,log_namespace(l.kind),log_name(l.id,&name),address);e!=.None {return {},store_error(e)}
+    address=object_put(s,.Log_Page,w.data[:]) or_return
+    l.pages[k].address=address
+    l.written+=len(w.data)
     return address,.None
 }
 
-// Adds to l the entries of the Log object at address, checking each signature
-// when verify; changed when one was new.
-log_load :: proc(s:^store.Store,l:^Log,address:store.Hash,verify:bool) -> (changed:bool,error:Error) {
+// Puts what changed of the log since it was read or saved, its pages and its
+// index, and points its ref at the index.
+log_save :: proc(s:^store.Store,l:^Log) -> (address:store.Hash,error:Error) {
+    return log_save_in(s,l,log_namespace(l.kind))
+}
+
+// log_save under namespace: a node keeps a user no org admitted yet apart.
+log_save_in :: proc(s:^store.Store,l:^Log,namespace:string) -> (address:store.Hash,error:Error) {
+    if l.id=={} || len(l.pages)==0 {return {},.Invalid_Argument}
+    l.written=0
+    root:=page_save(s,l,0) or_return
+    log_index(l) or_return
+    heads:=l.heads[:min(len(l.heads),LOG_HEADS_MAX)]
+    w:=writer_make(context.temp_allocator)
+    write_value(&w,Log_Index_Head{magic=KAI_MAGIC,version=LOG_VERSION,kind=l.kind,count=u32(len(l.items)),id=l.id,root=root,heads=u16(len(heads))})
+    for h in heads {write_bytes(&w,l.items[h].address[:])}
+    if w.failed {return {},.Out_Of_Memory}
+    address=object_put(s,.Log,w.data[:]) or_return
+    l.written+=len(w.data)
+    name:[64]u8
+    if e:=store.ref_set(s,namespace,log_name(l.id,&name),address);e!=.None {return {},store_error(e)}
+    return address,.None
+}
+
+// The index of a log at address, read.
+log_index_read :: proc(s:^store.Store,address:store.Hash) -> (head:Log_Index_Head,heads:[]store.Hash,error:Error) {
     bytes:=object_get(s,address,.Log,context.temp_allocator) or_return
     r:=Reader{data=bytes}
-    head:=read_value(&r,Log_Bundle_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.reserved!=0 || head.kind>max(Log_Kind) || head.count>LOG_ENTRIES_MAX || head.id=={} {return false,.Corrupt}
+    head=read_value(&r,Log_Index_Head)
+    if r.short || head.magic!=KAI_MAGIC || head.version!=LOG_VERSION || head.reserved!=0 || !zero(head.reserved2[:]) || head.kind>max(Log_Kind) || head.count>LOG_ENTRIES_MAX || head.id=={} || head.root=={} {return {},nil,.Corrupt}
+    heads=slice.reinterpret([]store.Hash,read_bytes(&r,int(head.heads)*size_of(store.Hash)))
+    if r.short || r.at!=len(bytes) {return {},nil,.Corrupt}
+    return head,heads,.None
+}
+
+// Adds to l the entries of the log whose index is at address, checking each
+// signature when verify; changed when one was new. The pages l holds already
+// are not read again. Pages the store lacks are appended to missing, when it
+// is given, and the error is Missing: what was read is taken all the same.
+log_load :: proc(s:^store.Store,l:^Log,address:store.Hash,verify:bool,missing:^[dynamic]store.Hash=nil) -> (changed:bool,error:Error) {
+    head,_:=log_index_read(s,address) or_return
     if l.id!={} && l.id!=head.id {return false,.Invalid_Argument}
-    l.id=head.id
-    for _ in 0..<head.count {
-        size:=read_value(&r,u32)
-        entry:=read_bytes(&r,int(size))
-        if r.short {return changed,.Corrupt}
-        added,add_error:=log_add(l,entry,verify)
-        if add_error==.Corrupt || add_error==.Out_Of_Memory || add_error==.Too_Large {return changed,add_error}
-        changed|=added
+    if l.known && l.kind!=head.kind {return false,.Invalid_Argument}
+    l.id,l.kind,l.known=head.id,head.kind,true
+    if reserve(&l.items,int(head.count))!=nil || reserve(&l.found,int(head.count))!=nil {return false,.Out_Of_Memory}
+    read:=make([dynamic]Page_Read,context.temp_allocator)
+    lacking:=false
+    page_load(s,l,head.root,0,{},verify,&changed,&read,&lacking,missing) or_return
+    // The pages read stand for the pages l now holds where they cover the same entries.
+    for x in read {
+        if k:=page_at(l,x.path,x.depth);k>=0 && l.pages[k].count==x.count && bool(l.pages[k].leaf)==x.leaf {l.pages[k].address=x.address}
     }
-    if r.at!=len(bytes) {return changed,.Corrupt}
-    return changed,.None
+    return changed,lacking?.Missing:.None
+}
+
+@(private)
+Page_Read :: struct {address:store.Hash,path:store.Hash,depth:u8,leaf:bool,count:u32}
+
+// The page of l at the depth bytes of path, -1 when there is none.
+@(private)
+page_at :: proc(l:^Log,path:store.Hash,depth:u8) -> int {
+    if len(l.pages)==0 {return -1}
+    k:=0
+    for l.pages[k].depth<depth {
+        if l.pages[k].leaf {return -1}
+        c:=l.pages[k].children[path[l.pages[k].depth]]
+        if c==0 {return -1}
+        k=int(c)-1
+    }
+    return k
+}
+
+@(private)
+page_load :: proc(s:^store.Store,l:^Log,address:store.Hash,depth:u8,path:store.Hash,verify:bool,changed:^bool,read:^[dynamic]Page_Read,lacking:^bool,missing:^[dynamic]store.Hash) -> Error {
+    if k:=page_at(l,path,depth);k>=0 && l.pages[k].address==address {return .None}
+    bytes,e:=object_get(s,address,.Log_Page,context.temp_allocator)
+    if e==.Missing {
+        lacking^=true
+        if missing!=nil {append(missing,address)}
+        return .None
+    }
+    if e!=.None {return e}
+    r:=Reader{data=bytes}
+    head:=read_value(&r,Log_Page_Head)
+    if r.short || head.magic!=KAI_MAGIC || head.version!=LOG_VERSION || head.depth!=depth || head.depth>31 || head.count>LOG_ENTRIES_MAX {return .Corrupt}
+    if _,ae:=append(read,Page_Read{address,path,depth,bool(head.leaf),head.count});ae!=nil {return .Out_Of_Memory}
+    if head.leaf {
+        if head.count>LOG_PAGE_ENTRIES {return .Corrupt}
+        for _ in 0..<head.count {
+            size:=read_value(&r,u32)
+            entry:=read_bytes(&r,int(size))
+            if r.short {return .Corrupt}
+            at,want:=store.address_of_bytes(entry),path
+            if string(at[:depth])!=string(want[:depth]) {return .Corrupt}
+            added,add_error:=log_add(l,entry,verify)
+            if add_error==.Corrupt || add_error==.Out_Of_Memory || add_error==.Too_Large {return add_error}
+            changed^|=added
+        }
+    } else {
+        children:=slice.reinterpret([]store.Hash,read_bytes(&r,256*size_of(store.Hash)))
+        if r.short {return .Corrupt}
+        for child,b in children {
+            if child=={} {continue}
+            next:=path
+            next[depth]=u8(b)
+            page_load(s,l,child,depth+1,next,verify,changed,read,lacking,missing) or_return
+        }
+    }
+    if r.at!=len(bytes) {return .Corrupt}
+    return .None
+}
+
+// The bytes of the entry at entry of the log whose index is at address,
+// reading only the pages on its way: found is false when it has none.
+log_entry_get :: proc(s:^store.Store,address,entry:store.Hash,allocator:=context.temp_allocator) -> (bytes:[]u8,found:bool,error:Error) {
+    head,_:=log_index_read(s,address) or_return
+    page:=head.root
+    for depth in 0..<32 {
+        data:=object_get(s,page,.Log_Page,context.temp_allocator) or_return
+        r:=Reader{data=data}
+        h:=read_value(&r,Log_Page_Head)
+        if r.short || h.magic!=KAI_MAGIC || h.version!=LOG_VERSION || int(h.depth)!=depth {return nil,false,.Corrupt}
+        if !h.leaf {
+            children:=slice.reinterpret([]store.Hash,read_bytes(&r,256*size_of(store.Hash)))
+            if r.short {return nil,false,.Corrupt}
+            page=children[entry[depth]]
+            if page=={} {return nil,false,.None}
+            continue
+        }
+        for _ in 0..<h.count {
+            size:=read_value(&r,u32)
+            b:=read_bytes(&r,int(size))
+            if r.short {return nil,false,.Corrupt}
+            if store.address_of_bytes(b)==entry {
+                out,me:=make([]u8,len(b),allocator)
+                if me!=nil {return nil,false,.Out_Of_Memory}
+                copy(out,b)
+                return out,true,.None
+            }
+        }
+        return nil,false,.None
+    }
+    return nil,false,.Corrupt
+}
+
+// The chunks of the index at address and of every page below it, as far as
+// the store holds them: what a peer reads of a log.
+log_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) {
+    head,_,e:=log_index_read(s,address)
+    if e!=.None {return}
+    object_chunks(s,address,out)
+    page_objects(s,head.root,out,0)
+}
+
+@(private)
+page_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,depth:int) {
+    if depth>31 {return}
+    bytes,e:=object_get(s,address,.Log_Page,context.temp_allocator)
+    if e!=.None {return}
+    object_chunks(s,address,out)
+    r:=Reader{data=bytes}
+    h:=read_value(&r,Log_Page_Head)
+    if r.short || h.leaf {return}
+    children:=slice.reinterpret([]store.Hash,read_bytes(&r,256*size_of(store.Hash)))
+    if r.short {return}
+    for c in children {
+        if c!={} {page_objects(s,c,out,depth+1)}
+    }
+}
+
+// The pages of the log whose index is at address that the store lacks,
+// appended to out: what to fetch before the log reads whole.
+log_pages_missing :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash) -> Error {
+    head,_:=log_index_read(s,address) or_return
+    return pages_missing(s,head.root,out,0)
+}
+
+@(private)
+pages_missing :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,depth:int) -> Error {
+    if depth>31 {return .Corrupt}
+    bytes,e:=object_get(s,address,.Log_Page,context.temp_allocator)
+    if e==.Missing {
+        if _,ae:=append(out,address);ae!=nil {return .Out_Of_Memory}
+        return .None
+    }
+    if e!=.None {return e}
+    r:=Reader{data=bytes}
+    h:=read_value(&r,Log_Page_Head)
+    if r.short || h.leaf {return .None}
+    children:=slice.reinterpret([]store.Hash,read_bytes(&r,256*size_of(store.Hash)))
+    if r.short {return .Corrupt}
+    for c in children {
+        if c!={} {pages_missing(s,c,out,depth+1) or_return}
+    }
+    return .None
 }
 
 // The namespace of the refs of logs of kind: User_Logs apart, since peers
@@ -700,1054 +1261,14 @@ log_open :: proc(s:^store.Store,l:^Log,id:Log_Id,kind:Log_Kind) -> Error {
     return error
 }
 
-// Merges the Log object a peer gave at address into l, verified, and saves l
-// when it grew. A bad entry of the peer is skipped, the rest are taken.
-log_merge :: proc(s:^store.Store,l:^Log,address:store.Hash) -> (changed:bool,error:Error) {
-    changed,error=log_load(s,l,address,true)
+// Merges the log a peer gave, its index at address, into l, verified, and
+// saves l when it grew. A bad entry of the peer is skipped, the rest are
+// taken. Missing, with the pages to fetch appended to missing, while some
+// are not in the store yet.
+log_merge :: proc(s:^store.Store,l:^Log,address:store.Hash,missing:^[dynamic]store.Hash=nil) -> (changed:bool,error:Error) {
+    changed,error=log_load(s,l,address,true,missing)
     if changed {
-        _,save:=log_save(s,l)
-        if save!=.None {return changed,save}
+        if _,save:=log_save(s,l);save!=.None {return changed,save}
     }
     return
-}
-
-// The rules of one kind of log for the fold: data is its fold.
-@(private)
-Rules :: struct {
-    data:rawptr,
-    reset:proc(data:rawptr),
-    authorized:proc(data:rawptr,e:int) -> bool, // in the state of e's causal past
-    apply:proc(data:rawptr,e:int),
-    removal:proc(data:rawptr,r:int) -> bool,    // r is never voided
-    voids:proc(data:rawptr,r,e:int) -> bool,    // valid removal r voids valid e
-}
-
-// The validity of every entry of l, as all peers find it, and then the state
-// of the valid entries applied in order. Voiding entries can change who holds
-// a right after them, so the walk runs again until nothing more is voided:
-// the voided set only grows, so it ends.
-@(private)
-fold_run :: proc(l:^Log,rules:Rules,valid:[]bool) -> Error {
-    log_index(l) or_return
-    n:=len(l.items)
-    forced:=make([]bool,n,context.temp_allocator)
-    for {
-        for e in l.order {
-            valid[e]=false
-            if forced[e] || !l.complete[e] {continue}
-            rules.reset(rules.data)
-            for a in l.order[:l.rank[e]] {
-                if valid[a] && log_before(l,int(a),int(e)) {rules.apply(rules.data,int(a))}
-            }
-            valid[e]=rules.authorized(rules.data,int(e))
-        }
-        changed:=false
-        for r in l.order {
-            if !valid[r] || !rules.removal(rules.data,int(r)) {continue}
-            for e in l.order {
-                if valid[e] && !forced[e] && !rules.removal(rules.data,int(e)) && rules.voids(rules.data,int(r),int(e)) {
-                    forced[e]=true
-                    changed=true
-                }
-            }
-        }
-        if !changed {break}
-    }
-    rules.reset(rules.data)
-    for e in l.order {
-        if valid[e] {rules.apply(rules.data,int(e))}
-    }
-    return .None
-}
-
-// Applies the valid entries of the causal past of head, and head, alone.
-@(private)
-fold_at :: proc(l:^Log,rules:Rules,valid:[]bool,head:int) {
-    rules.reset(rules.data)
-    for e in l.order {
-        if valid[e] && log_within(l,int(e),head) {rules.apply(rules.data,int(e))}
-    }
-}
-
-@(private)
-fold_all :: proc(l:^Log,rules:Rules,valid:[]bool) {
-    rules.reset(rules.data)
-    for e in l.order {
-        if valid[e] {rules.apply(rules.data,int(e))}
-    }
-}
-
-// --- User_Log ---
-
-Device :: struct {
-    key:Key,
-    dh:Dh_Key,
-    added:u32,   // its Device_Add or genesis
-    revoked:bool,
-    revoke:u32,  // its Device_Revoke
-}
-
-// A passkey of the user, by its web key id.
-User_Web_Key :: struct {
-    key:Key,
-    added:u32,  // its Web_Key_Add
-    revoked:bool,
-    revoke:u32, // its Device_Revoke
-}
-
-User_Fold :: struct {
-    log:^Log,
-    valid:[]bool,
-    recovery:Key,
-    devices:[dynamic]Device,
-    web_keys:[dynamic]User_Web_Key,
-}
-
-user_fold :: proc(f:^User_Fold,l:^Log,allocator:=context.allocator) -> Error {
-    f^={log=l}
-    f.devices=make([dynamic]Device,allocator)
-    f.web_keys=make([dynamic]User_Web_Key,allocator)
-    if l.kind!=.User || len(l.items)==0 {return .Invalid_Argument}
-    valid,e:=make([]bool,len(l.items),allocator)
-    if e!=nil {return .Out_Of_Memory}
-    f.valid=valid
-    return fold_run(l,user_rules(f),f.valid)
-}
-
-user_fold_destroy :: proc(f:^User_Fold) {
-    delete(f.devices)
-    delete(f.web_keys)
-    delete(f.valid,f.devices.allocator)
-    f^={}
-}
-
-@(private)
-user_rules :: proc(f:^User_Fold) -> Rules {
-    return {
-        data=f,
-        reset=proc(data:rawptr) {
-            f:=(^User_Fold)(data)
-            f.recovery={}
-            clear(&f.devices)
-            clear(&f.web_keys)
-        },
-        authorized=proc(data:rawptr,e:int) -> bool {
-            f:=(^User_Fold)(data)
-            entry:=&f.log.items[e].entry
-            if entry.sig_kind!=.Ed25519 {return false}
-            if entry.type==.User_Genesis {
-                b,_,_:=body_head(entry.body,User_Genesis_Body)
-                return entry.author==b.recovery && device_proof_valid(b.device,transmute([32]u8)b.recovery,b.proof)
-            }
-            if f.recovery=={} {return false}
-            by_recovery:=entry.author==f.recovery
-            by_device:=user_device_active(f,entry.author)
-            #partial switch entry.type {
-            case .Device_Add:
-                b,_,_:=body_head(entry.body,Device_Add_Body)
-                return (by_recovery || by_device) && user_device_index(f,b.device)<0 && device_proof_valid(b.device,transmute([32]u8)f.log.id,b.proof)
-            case .Device_Revoke:
-                b,_,_:=body_head(entry.body,Device_Revoke_Body)
-                return (by_recovery || by_device) && (user_device_index(f,b.device)>=0 || user_web_key_index(f,b.device)>=0)
-            case .Recovery_Rotate: return by_recovery
-            case .Web_Key_Add:
-                key,ok:=web_key_of(entry.body)
-                return (by_recovery || by_device) && ok && user_web_key_index(f,key)<0
-            }
-            return false
-        },
-        apply=proc(data:rawptr,e:int) {
-            f:=(^User_Fold)(data)
-            entry:=&f.log.items[e].entry
-            #partial switch entry.type {
-            case .User_Genesis:
-                b,_,_:=body_head(entry.body,User_Genesis_Body)
-                f.recovery=b.recovery
-                append(&f.devices,Device{key=b.device,dh=b.dh,added=u32(e)})
-            case .Device_Add:
-                b,_,_:=body_head(entry.body,Device_Add_Body)
-                if user_device_index(f,b.device)<0 {append(&f.devices,Device{key=b.device,dh=b.dh,added=u32(e)})}
-            case .Device_Revoke:
-                b,_,_:=body_head(entry.body,Device_Revoke_Body)
-                for &d in f.devices {
-                    if d.key==b.device && !d.revoked {d.revoked,d.revoke=true,u32(e)}
-                }
-                for &w in f.web_keys {
-                    if w.key==b.device && !w.revoked {w.revoked,w.revoke=true,u32(e)}
-                }
-            case .Recovery_Rotate:
-                b,_,_:=body_head(entry.body,Recovery_Rotate_Body)
-                f.recovery=b.recovery
-            case .Web_Key_Add:
-                if key,ok:=web_key_of(entry.body);ok && user_web_key_index(f,key)<0 {append(&f.web_keys,User_Web_Key{key=key,added=u32(e)})}
-            }
-        },
-        removal=proc(data:rawptr,r:int) -> bool {
-            return (^User_Fold)(data).log.items[r].entry.type==.Device_Revoke
-        },
-        // A revoked device's entries in its own log count only inside the horizon the revocation names for it.
-        voids=proc(data:rawptr,r,e:int) -> bool {
-            f:=(^User_Fold)(data)
-            b,_,_:=body_head(f.log.items[r].entry.body,Device_Revoke_Body)
-            return f.log.items[e].entry.author==b.device && !horizon_holds(f.log,r,f.log,e)
-        },
-    }
-}
-
-// Where key is a device of the state, -1 when it is not one. A revoked
-// device stays, so it cannot be added again.
-@(private)
-user_device_index :: proc(f:^User_Fold,key:Key) -> int {
-    for d,i in f.devices {
-        if d.key==key {return i}
-    }
-    return -1
-}
-
-// Whether entry e of log l lies inside the horizon the Device_Revoke r of
-// user_log names for l: in the causal past of one of its heads for l, or, when
-// it names none for l and l is user_log, in the causal past of r.
-@(private)
-horizon_holds :: proc(user_log:^Log,r:int,l:^Log,e:int) -> bool {
-    b,tail,_:=body_head(user_log.items[r].entry.body,Device_Revoke_Body)
-    reader:=Reader{data=tail}
-    named:=false
-    for _ in 0..<b.horizons {
-        h:=read_value(&reader,Horizon)
-        heads:=slice.reinterpret([]store.Hash,read_bytes(&reader,int(h.heads)*size_of(store.Hash)))
-        if h.log_id!=l.id {continue}
-        named=true
-        for head in heads {
-            if k:=log_find(l,head);k>=0 && log_within(l,e,k) {return true}
-        }
-    }
-    if !named && user_log==l {return log_before(l,e,r)}
-    return false
-}
-
-// Whether device of the user may have signed entry e of log l: it is one of
-// the user's devices and, once revoked, e lies inside the horizon its
-// revocation names for l. A revocation that names no horizon for l leaves
-// none of the device's entries there.
-user_device_allows :: proc(f:^User_Fold,device:Key,l:^Log,e:int) -> bool {
-    k:=user_device_index(f,device)
-    if k<0 {return false}
-    d:=f.devices[k]
-    return !d.revoked || horizon_holds(f.log,int(d.revoke),l,e)
-}
-
-// Where key is a web key of the state, -1 when it is not one.
-@(private)
-user_web_key_index :: proc(f:^User_Fold,key:Key) -> int {
-    for w,i in f.web_keys {
-        if w.key==key {return i}
-    }
-    return -1
-}
-
-// Whether the passkey of web key id key may have signed entry e of l: the
-// entry's author_ctx is a valid entry of the user's log whose causal past
-// added the key, and, once revoked, e lies inside its revocation's horizon.
-user_web_key_allows :: proc(f:^User_Fold,key:Key,l:^Log,e:int) -> bool {
-    k:=user_web_key_index(f,key)
-    if k<0 {return false}
-    w:=f.web_keys[k]
-    at:=log_find(f.log,l.items[e].entry.author_ctx)
-    if at<0 || !f.valid[at] || !log_within(f.log,int(w.added),at) {return false}
-    return !w.revoked || horizon_holds(f.log,int(w.revoke),l,e)
-}
-
-// Whether entry e of l is the user's: by one of its devices, or by one of its
-// passkeys for a WebAuthn entry.
-user_signed :: proc(f:^User_Fold,l:^Log,e:int) -> bool {
-    entry:=&l.items[e].entry
-    if entry.sig_kind==.WebAuthn {return user_web_key_allows(f,entry.author,l,e)}
-    return user_device_allows(f,entry.author,l,e)
-}
-
-// Whether device is a device of the user not revoked.
-user_device_active :: proc(f:^User_Fold,device:Key) -> bool {
-    k:=user_device_index(f,device)
-    return k>=0 && !f.devices[k].revoked
-}
-
-// The user whose active device has the X25519 key dh.
-user_dh_active :: proc(f:^User_Fold,dh:Dh_Key) -> bool {
-    for d in f.devices {
-        if d.dh==dh && !d.revoked {return true}
-    }
-    return false
-}
-
-// A body of Device_Revoke for device, with the heads of each log it leaves
-// the device's entries in.
-revoke_body :: proc(device:Key,horizons:[]Log_Horizon) -> []u8 {
-    tail:=make([dynamic]u8,context.temp_allocator)
-    for h in horizons {
-        head:=Horizon{log_id=h.log_id,heads=u8(min(len(h.heads),ENTRY_PARENTS_MAX))}
-        append(&tail,..mem.ptr_to_bytes(&head))
-        for &x in h.heads[:head.heads] {append(&tail,..x[:])}
-    }
-    return body_make(Device_Revoke_Body{device=device,horizons=u8(len(horizons))},tail[:])
-}
-
-Log_Horizon :: struct {log_id:Log_Id,heads:[]store.Hash}
-
-// --- Org_Log ---
-
-Member :: struct {user:Log_Id,role:Role}
-Org_Project :: struct {id:Log_Id,public:bool}
-Org_Scope :: struct {project:Log_Id,scope:Scope_Id,readers:Role,history:bool,entry:u32}
-Org_Policy :: struct {project:Log_Id,bookmark:string,approvals:int,entry:u32}
-Org_Node :: struct {key:Key,dh:Dh_Key,modes:Node_Modes,entry:u32}
-Org_Public :: struct {project:Log_Id,fingerprint:store.Hash,path:string} // path into the log's bytes
-
-Org_Fold :: struct {
-    log:^Log,
-    users:[]^User_Fold, // the folds of the members' User_Logs this end has
-    valid:[]bool,
-    owner:Log_Id,
-    members:[dynamic]Member,
-    removed:[dynamic]Log_Id, // users a valid Member_Remove named
-    projects:[dynamic]Org_Project,
-    scopes:[dynamic]Org_Scope,
-    policies:[dynamic]Org_Policy,
-    grants:[dynamic]store.Hash,  // recorded in the log
-    revoked:[dynamic]store.Hash, // grants revoked
-    nodes:[dynamic]Org_Node,
-    publics:[dynamic]Org_Public,
-}
-
-org_fold :: proc(f:^Org_Fold,l:^Log,users:[]^User_Fold,allocator:=context.allocator) -> Error {
-    f^={log=l,users=users}
-    f.members=make([dynamic]Member,allocator)
-    f.removed=make([dynamic]Log_Id,allocator)
-    f.projects=make([dynamic]Org_Project,allocator)
-    f.scopes=make([dynamic]Org_Scope,allocator)
-    f.policies=make([dynamic]Org_Policy,allocator)
-    f.grants=make([dynamic]store.Hash,allocator)
-    f.revoked=make([dynamic]store.Hash,allocator)
-    f.nodes=make([dynamic]Org_Node,allocator)
-    f.publics=make([dynamic]Org_Public,allocator)
-    if l.kind!=.Org || len(l.items)==0 {return .Invalid_Argument}
-    valid,e:=make([]bool,len(l.items),allocator)
-    if e!=nil {return .Out_Of_Memory}
-    f.valid=valid
-    return fold_run(l,org_rules(f),f.valid)
-}
-
-org_fold_destroy :: proc(f:^Org_Fold) {
-    allocator:=f.members.allocator
-    delete(f.members)
-    delete(f.removed)
-    delete(f.projects)
-    delete(f.scopes)
-    delete(f.policies)
-    delete(f.grants)
-    delete(f.revoked)
-    delete(f.nodes)
-    delete(f.publics)
-    delete(f.valid,allocator)
-    f^={}
-}
-
-// The role of user in the state; None when not a member.
-org_role :: proc(f:^Org_Fold,user:Log_Id) -> Role {
-    for m in f.members {
-        if m.user==user {return m.role}
-    }
-    return .None
-}
-
-// The user of the folds whose device or passkey may have signed entry e of l.
-@(private)
-author_user :: proc(users:[]^User_Fold,l:^Log,e:int) -> ^User_Fold {
-    for u in users {
-        if user_signed(u,l,e) {return u}
-    }
-    return nil
-}
-
-// The member an active device belongs to, and its role.
-org_device_role :: proc(f:^Org_Fold,device:Key) -> (user:Log_Id,role:Role) {
-    for u in f.users {
-        if user_device_active(u,device) {
-            if r:=org_role(f,u.log.id);r!=.None {return u.log.id,r}
-        }
-    }
-    return {},.None
-}
-
-// The node of the org with the Ed25519 key, -1 when there is none.
-org_node :: proc(f:^Org_Fold,key:Key) -> int {
-    for n,i in f.nodes {
-        if n.key==key {return i}
-    }
-    return -1
-}
-
-@(private)
-org_project_index :: proc(f:^Org_Fold,id:Log_Id) -> int {
-    for p,i in f.projects {
-        if p.id==id {return i}
-    }
-    return -1
-}
-
-@(private)
-org_subject :: proc(f:^Org_Fold,e:int) -> (subject:store.Hash,has:bool) {
-    entry:=&f.log.items[e].entry
-    #partial switch entry.type {
-    case .Member_Add,.Role_Set:
-        b,_,_:=body_head(entry.body,Member_Body)
-        return b.user,true
-    case .Member_Remove,.Owner_Transfer,.Grant_Revoke:
-        b,_,_:=body_head(entry.body,Subject_Body)
-        return b.subject,true
-    case .Scope_Add:
-        b,_,_:=body_head(entry.body,Scope_Add_Body)
-        return scope_subject(b.project,b.scope),true
-    case .Scope_Remove:
-        b,_,_:=body_head(entry.body,Scope_Remove_Body)
-        return scope_subject(b.project,b.scope),true
-    case .Node_Add:
-        b,_,_:=body_head(entry.body,Node_Add_Body)
-        return store.Hash(b.node),true
-    case .Node_Remove:
-        b,_,_:=body_head(entry.body,Node_Remove_Body)
-        return store.Hash(b.node),true
-    case .Grant:
-        return store.address_of_bytes(entry.body),true
-    }
-    return {},false
-}
-
-@(private)
-scope_subject :: proc(project:Log_Id,scope:Scope_Id) -> store.Hash {
-    bytes:[48]u8
-    p,s:=project,scope
-    copy(bytes[:],p[:])
-    copy(bytes[32:],s[:])
-    return store.address_of_bytes(bytes[:])
-}
-
-@(private)
-org_rules :: proc(f:^Org_Fold) -> Rules {
-    return {
-        data=f,
-        reset=proc(data:rawptr) {
-            f:=(^Org_Fold)(data)
-            f.owner={}
-            clear(&f.members)
-            clear(&f.removed)
-            clear(&f.projects)
-            clear(&f.scopes)
-            clear(&f.policies)
-            clear(&f.grants)
-            clear(&f.revoked)
-            clear(&f.nodes)
-            clear(&f.publics)
-        },
-        authorized=proc(data:rawptr,e:int) -> bool {
-            f:=(^Org_Fold)(data)
-            entry:=&f.log.items[e].entry
-            u:=author_user(f.users,f.log,e)
-            if u==nil {return false}
-            if entry.type==.Org_Genesis {
-                b,_,_:=body_head(entry.body,Org_Genesis_Body)
-                return u.log.id==b.owner
-            }
-            role:=org_role(f,u.log.id)
-            if role==.None {return false}
-            #partial switch entry.type {
-            case .Member_Add:
-                b,_,_:=body_head(entry.body,Member_Body)
-                return role>=.Admin && b.role<=role && org_role(f,b.user)==.None
-            case .Member_Remove:
-                b,_,_:=body_head(entry.body,Subject_Body)
-                target:=org_role(f,b.subject)
-                return target!=.None && target!=.Owner && (role>=.Admin || b.subject==u.log.id)
-            case .Role_Set:
-                b,_,_:=body_head(entry.body,Member_Body)
-                target:=org_role(f,b.user)
-                return role>=.Admin && target!=.None && target!=.Owner && b.role<=role
-            case .Owner_Transfer:
-                b,_,_:=body_head(entry.body,Subject_Body)
-                return role==.Owner && org_role(f,b.subject)!=.None && b.subject!=u.log.id
-            case .Project_Add:
-                b,_,_:=body_head(entry.body,Project_Add_Body)
-                return role>=.Admin && org_project_index(f,b.project)<0
-            case .Scope_Add:
-                b,_,_:=body_head(entry.body,Scope_Add_Body)
-                if role<.Admin || org_project_index(f,b.project)<0 {return false}
-                for s in f.scopes {
-                    if s.project==b.project && s.scope==b.scope {return false}
-                }
-                return true
-            case .Scope_Remove:
-                b,_,_:=body_head(entry.body,Scope_Remove_Body)
-                if role<.Admin {return false}
-                for s in f.scopes {
-                    if s.project==b.project && s.scope==b.scope {return true}
-                }
-                return false
-            case .Policy_Set:
-                b,_,_:=body_head(entry.body,Policy_Set_Body)
-                return role>=.Admin && org_project_index(f,b.project)>=0
-            case .Grant:
-                g,_:=grant_decode(entry.body)
-                return role>=.Admin && g.issuer==entry.author && g.org==f.log.id
-            case .Grant_Revoke: return role>=.Admin
-            case .Node_Add:
-                b,_,_:=body_head(entry.body,Node_Add_Body)
-                return role>=.Admin && org_node(f,b.node)<0
-            case .Node_Remove:
-                b,_,_:=body_head(entry.body,Node_Remove_Body)
-                return role>=.Admin && org_node(f,b.node)>=0
-            case .Public_Add:
-                b,_,_:=body_head(entry.body,Public_Add_Body)
-                return role>=.Admin && org_project_index(f,b.project)>=0
-            }
-            return false
-        },
-        apply=proc(data:rawptr,e:int) {
-            f:=(^Org_Fold)(data)
-            entry:=&f.log.items[e].entry
-            #partial switch entry.type {
-            case .Org_Genesis:
-                b,_,_:=body_head(entry.body,Org_Genesis_Body)
-                f.owner=b.owner
-                append(&f.members,Member{b.owner,.Owner})
-            case .Member_Add:
-                b,_,_:=body_head(entry.body,Member_Body)
-                if org_role(f,b.user)==.None {append(&f.members,Member{b.user,b.role})}
-            case .Member_Remove:
-                b,_,_:=body_head(entry.body,Subject_Body)
-                if !slice.contains(f.removed[:],b.subject) {append(&f.removed,b.subject)}
-                for m,i in f.members {
-                    if m.user==b.subject && m.role!=.Owner {
-                        ordered_remove(&f.members,i)
-                        break
-                    }
-                }
-            case .Role_Set:
-                b,_,_:=body_head(entry.body,Member_Body)
-                for &m in f.members {
-                    if m.user==b.user && m.role!=.Owner {m.role=b.role}
-                }
-            case .Owner_Transfer:
-                b,_,_:=body_head(entry.body,Subject_Body)
-                if org_role(f,b.subject)==.None {break}
-                for &m in f.members {
-                    if m.role==.Owner {m.role=.Admin}
-                    if m.user==b.subject {m.role=.Owner}
-                }
-                f.owner=b.subject
-            case .Project_Add:
-                b,_,_:=body_head(entry.body,Project_Add_Body)
-                if org_project_index(f,b.project)<0 {append(&f.projects,Org_Project{b.project,bool(b.public)})}
-            case .Scope_Add:
-                b,_,_:=body_head(entry.body,Scope_Add_Body)
-                append(&f.scopes,Org_Scope{b.project,b.scope,b.readers,bool(b.history),u32(e)})
-            case .Scope_Remove:
-                b,_,_:=body_head(entry.body,Scope_Remove_Body)
-                for s,i in f.scopes {
-                    if s.project==b.project && s.scope==b.scope {
-                        ordered_remove(&f.scopes,i)
-                        break
-                    }
-                }
-            case .Policy_Set:
-                b,_,r,_:=policy_parts(entry.body)
-                bookmark:=tail_string(&r)
-                for p,i in f.policies {
-                    if p.project==b.project && p.bookmark==bookmark {
-                        ordered_remove(&f.policies,i)
-                        break
-                    }
-                }
-                append(&f.policies,Org_Policy{b.project,bookmark,int(b.approvals),u32(e)})
-            case .Grant: append(&f.grants,store.address_of_bytes(entry.body))
-            case .Grant_Revoke:
-                b,_,_:=body_head(entry.body,Subject_Body)
-                append(&f.revoked,b.subject)
-            case .Node_Add:
-                b,_,_:=body_head(entry.body,Node_Add_Body)
-                if org_node(f,b.node)<0 {append(&f.nodes,Org_Node{b.node,b.dh,b.modes,u32(e)})}
-            case .Node_Remove:
-                b,_,_:=body_head(entry.body,Node_Remove_Body)
-                if k:=org_node(f,b.node);k>=0 {ordered_remove(&f.nodes,k)}
-            case .Public_Add:
-                b,tail,_:=body_head(entry.body,Public_Add_Body)
-                append(&f.publics,Org_Public{b.project,b.fingerprint,string(tail)})
-            }
-        },
-        removal=proc(data:rawptr,r:int) -> bool {
-            #partial switch (^Org_Fold)(data).log.items[r].entry.type {
-            case .Member_Remove,.Scope_Remove,.Grant_Revoke,.Node_Remove: return true
-            }
-            return false
-        },
-        // A removal wins over whatever was written concurrently about its
-        // subject, and over what a removed member signed concurrently.
-        voids=proc(data:rawptr,r,e:int) -> bool {
-            f:=(^Org_Fold)(data)
-            if !log_concurrent(f.log,r,e) {return false}
-            subject,_:=org_subject(f,r)
-            if s,has:=org_subject(f,e);has && s==subject {return true}
-            if f.log.items[r].entry.type==.Member_Remove {
-                for u in f.users {
-                    if u.log.id==subject {return user_signed(u,f.log,e)}
-                }
-            }
-            return false
-        },
-    }
-}
-
-// The role of user in the state of the causal past of the org's entry head,
-// and head itself; the fold is left as it was.
-org_role_at :: proc(f:^Org_Fold,user:Log_Id,head:int) -> Role {
-    rules:=org_rules(f)
-    fold_at(f.log,rules,f.valid,head)
-    role:=org_role(f,user)
-    fold_all(f.log,rules,f.valid)
-    return role
-}
-
-// The rights of a role.
-role_rights :: proc "contextless" (role:Role) -> Rights {
-    switch role {
-    case .None: return {}
-    case .Reader: return {.Read}
-    case .Writer: return {.Read,.Write,.DDC,.Check}
-    case .Admin,.Owner: return {.Read,.Write,.DDC,.Check,.Relay}
-    }
-    return {}
-}
-
-// --- Grants: rights an admin gives a key outside the org, for a while ---
-
-RIGHTS_ALL :: Rights{.Read,.Write,.DDC,.Check,.Relay}
-GRANT_NANOSECONDS_MAX :: i64(30*24*3600)*1_000_000_000
-GRANT_PATH_MAX :: 1024
-
-Grant_Head :: struct #packed {
-    magic:u32,
-    version:u16,
-    rights:Rights,
-    reserved:u8,
-    org:Log_Id,
-    org_head:store.Hash, // an entry of the org's log the issuer was an admin at
-    issuer:Key,          // a device of an admin
-    subject_dh:Dh_Key,   // what the holder connects with
-    subject_key:Key,     // what the holder signs with: zero when it signs nothing
-    project:Log_Id,
-    not_before:i64,      // ns
-    not_after:i64,       // ns, at most GRANT_NANOSECONDS_MAX after not_before
-    path_len:u16,
-    reserved2:[6]u8,
-} // + path scope, Signature
-
-Grant :: struct {
-    using head:Grant_Head,
-    path:string,
-    signature:Signature,
-}
-
-grant_encode :: proc(g:^Grant,identity:^Identity,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
-    if len(g.path)>GRANT_PATH_MAX {return nil,.Too_Large}
-    if g.issuer!=identity.key || g.org=={} || g.org_head=={} || g.not_after<=g.not_before || !utf8.valid_string(g.path) {return nil,.Invalid_Argument}
-    head:=g.head
-    head.magic,head.version,head.reserved,head.reserved2,head.path_len=KAI_MAGIC,VERSION,0,{},u16(len(g.path))
-    w:=writer_make(allocator)
-    write_value(&w,head)
-    write_string(&w,g.path)
-    if w.failed {return nil,.Out_Of_Memory}
-    g.signature=sign(identity,w.data[:])
-    write_bytes(&w,g.signature[:])
-    if w.failed {return nil,.Out_Of_Memory}
-    return w.data[:],.None
-}
-
-grant_decode :: proc(bytes:[]u8) -> (g:Grant,error:Error) {
-    r:=Reader{data=bytes}
-    g.head=read_value(&r,Grant_Head)
-    if r.short || g.magic!=KAI_MAGIC || g.version!=VERSION || g.reserved!=0 || !zero(g.reserved2[:]) || g.path_len>GRANT_PATH_MAX {return {},.Corrupt}
-    if transmute(u8)g.rights&~transmute(u8)RIGHTS_ALL!=0 || g.org=={} || g.org_head=={} || g.not_after<=g.not_before {return {},.Corrupt}
-    g.path=string(read_bytes(&r,int(g.path_len)))
-    g.signature=read_value(&r,Signature)
-    if r.short || r.at!=len(bytes) || !utf8.valid_string(g.path) {return {},.Corrupt}
-    return g,.None
-}
-
-// Checks the grant of bytes against the org: signed by its issuer, an admin
-// at org_head and still one, its rights within the issuer's, at most 30 days
-// long, now inside it, and not revoked.
-grant_verify :: proc(f:^Org_Fold,bytes:[]u8,now:i64) -> (g:Grant,error:Error) {
-    g=grant_decode(bytes) or_return
-    if !signature_valid(g.issuer,bytes[:len(bytes)-size_of(Signature)],g.signature) {return g,.Unauthorized}
-    if g.org!=f.log.id {return g,.Unauthorized}
-    if g.not_after-g.not_before>GRANT_NANOSECONDS_MAX {return g,.Unauthorized}
-    if now<g.not_before || now>g.not_after {return g,.Expired}
-    address:=store.address_of_bytes(bytes)
-    for r in f.revoked {
-        if r==address {return g,.Unauthorized}
-    }
-    head:=log_find(f.log,g.org_head)
-    if head<0 || !f.valid[head] {return g,.Unauthorized}
-    user,role:=org_device_role(f,g.issuer)
-    if role<.Admin {return g,.Unauthorized}
-    at:=org_role_at(f,user,head)
-    if at<.Admin || g.rights&~role_rights(at<role?at:role)!={} {return g,.Unauthorized}
-    return g,.None
-}
-
-// The grant the org's log carries under which key signs with right on
-// project at time; ok is false when none holds.
-org_grant_right :: proc(f:^Org_Fold,key:Key,right:Right,project:Log_Id,time:i64) -> (g:Grant,ok:bool) {
-    if key=={} {return}
-    for &item,i in f.log.items {
-        if !f.valid[i] || item.entry.type!=.Grant {continue}
-        held,e:=grant_verify(f,item.entry.body,time)
-        if e==.None && held.subject_key==key && right in held.rights && (held.project=={} || held.project==project) {return held,true}
-    }
-    return
-}
-
-// Whether a grant's path scope covers path: an empty scope covers the whole
-// project; otherwise the scope is a pattern as Scope_Add takes (glob_match).
-grant_covers :: proc(scope,path:string) -> bool {return scope=="" || glob_match(scope,path)}
-
-// --- Project_Log ---
-
-Bookmark_Target :: struct {name:string,target:Revision}
-
-Project_Fold :: struct {
-    log:^Log,
-    org:^Org_Fold,
-    proposals:[]^Proposal_Fold, // what a move a policy guards names
-    valid:[]bool,
-    org_id:Log_Id,
-    public:bool,
-    bookmarks:[dynamic]Bookmark_Target, // sorted by name then target: a name with several targets is diverged
-}
-
-project_fold :: proc(f:^Project_Fold,l:^Log,org:^Org_Fold,proposals:[]^Proposal_Fold={},allocator:=context.allocator) -> Error {
-    f^={log=l,org=org,proposals=proposals}
-    f.bookmarks=make([dynamic]Bookmark_Target,allocator)
-    if l.kind!=.Project || len(l.items)==0 {return .Invalid_Argument}
-    valid,e:=make([]bool,len(l.items),allocator)
-    if e!=nil {return .Out_Of_Memory}
-    f.valid=valid
-    return fold_run(l,project_rules(f),f.valid)
-}
-
-project_fold_destroy :: proc(f:^Project_Fold) {
-    allocator:=f.bookmarks.allocator
-    delete(f.bookmarks)
-    delete(f.valid,allocator)
-    f^={}
-}
-
-// The targets of bookmark: more than one when moves diverged.
-project_bookmark :: proc(f:^Project_Fold,name:string,out:^[dynamic]Revision) {
-    clear(out)
-    for b in f.bookmarks {
-        if b.name==name {append(out,b.target)}
-    }
-}
-
-@(private)
-project_rules :: proc(f:^Project_Fold) -> Rules {
-    return {
-        data=f,
-        reset=proc(data:rawptr) {
-            f:=(^Project_Fold)(data)
-            clear(&f.bookmarks)
-            f.org_id,f.public={},false
-        },
-        authorized=proc(data:rawptr,e:int) -> bool {
-            f:=(^Project_Fold)(data)
-            entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,f.log,e)
-            if u==nil {return false}
-            role:=org_role(f.org,u.log.id)
-            if entry.type==.Project_Genesis {
-                b,_,_:=body_head(entry.body,Project_Genesis_Body)
-                return b.org==f.org.log.id && role>=.Admin
-            }
-            if entry.type!=.Bookmark_Move || f.org_id=={} || role<.Writer {return false}
-            b,tail,_:=body_head(entry.body,Bookmark_Move_Body)
-            name:=string(tail[int(b.from)*size_of(Revision):])
-            pf:=move_proposal(f,b.to,b.proposal)
-            if pf!=nil && pf.conflicted {return false}
-            for &p in f.org.policies {
-                if p.project!=f.log.id || p.bookmark!=name {continue}
-                pb,heads,_,_:=policy_parts(f.org.log.items[p.entry].entry.body)
-                if pb.approvals==0 && pb.checks==0 {return true}
-                // A move the policy's heads hold came before it.
-                for h in heads {
-                    if k:=log_find(f.log,h);k>=0 && log_within(f.log,e,k) {return true}
-                }
-                return pf!=nil && proposal_policy(f.org,&p,pf)==.None
-            }
-            return true
-        },
-        apply=proc(data:rawptr,e:int) {
-            f:=(^Project_Fold)(data)
-            entry:=&f.log.items[e].entry
-            if entry.type==.Project_Genesis {
-                b,_,_:=body_head(entry.body,Project_Genesis_Body)
-                f.org_id,f.public=b.org,bool(b.public)
-                return
-            }
-            b,tail,_:=body_head(entry.body,Bookmark_Move_Body)
-            from:=slice.reinterpret([]Revision,tail[:int(b.from)*size_of(Revision)])
-            name:=string(tail[len(from)*size_of(Revision):])
-            for k:=len(f.bookmarks)-1;k>=0;k-=1 {
-                if f.bookmarks[k].name==name && slice.contains(from,f.bookmarks[k].target) {ordered_remove(&f.bookmarks,k)}
-            }
-            for t in f.bookmarks {
-                if t.name==name && t.target==b.to {return}
-            }
-            append(&f.bookmarks,Bookmark_Target{name,b.to})
-            slice.sort_by(f.bookmarks[:],proc(a,b:Bookmark_Target) -> bool {
-                if a.name!=b.name {return a.name<b.name}
-                return hash_less(a.target,b.target)
-            })
-        },
-        removal=proc(data:rawptr,r:int) -> bool {return false},
-        voids=proc(data:rawptr,r,e:int) -> bool {return false},
-    }
-}
-
-// The proposal a move to revision names: one this end folded and settled
-// (proposal_settle), not closed, on this project, at revision. nil when the
-// move names none or this end folded no such one.
-@(private)
-move_proposal :: proc(f:^Project_Fold,revision:Revision,proposal:store.Hash) -> ^Proposal_Fold {
-    if proposal=={} {return nil}
-    for pf in f.proposals {
-        if pf.log.id==proposal && pf.project==f.log.id && pf.status!=.Closed && pf.revision==revision {return pf}
-    }
-    return nil
-}
-
-// --- Proposal_Log (its writing, re-anchoring and landing: proposal.odin) ---
-
-Proposal_Status :: enum u8 {Open,Closed,Landed}
-Proposal_Check :: struct {name:string,state:Check_State}
-Proposal_Approval :: struct {user:Log_Id,revision:Revision,verdict:Verdict_Kind}
-
-Proposal_Fold :: struct {
-    log:^Log,
-    org:^Org_Fold,
-    valid:[]bool,
-    project:Log_Id,
-    opener:Log_Id,
-    status:Proposal_Status,
-    revision:Revision, // the head of the stack last revised
-    verdicts:[dynamic]Proposal_Approval, // the last of each user
-    approvals:int,                       // of revision
-    conflicted:bool,                     // a change of the stack has a conflict, as proposal_settle found
-    checks:[dynamic]Proposal_Check,      // of revision, the last of each name
-    comments:int,
-}
-
-proposal_fold :: proc(f:^Proposal_Fold,l:^Log,org:^Org_Fold,allocator:=context.allocator) -> Error {
-    f^={log=l,org=org}
-    f.verdicts=make([dynamic]Proposal_Approval,allocator)
-    f.checks=make([dynamic]Proposal_Check,allocator)
-    if l.kind!=.Proposal || len(l.items)==0 {return .Invalid_Argument}
-    valid,e:=make([]bool,len(l.items),allocator)
-    if e!=nil {return .Out_Of_Memory}
-    f.valid=valid
-    fold_run(l,proposal_rules(f),f.valid) or_return
-    proposal_count(f)
-    return .None
-}
-
-proposal_fold_destroy :: proc(f:^Proposal_Fold) {
-    allocator:=f.verdicts.allocator
-    delete(f.verdicts)
-    delete(f.checks)
-    delete(f.valid,allocator)
-    f^={}
-}
-
-@(private)
-proposal_count :: proc(f:^Proposal_Fold) {
-    f.approvals=0
-    for v in f.verdicts {
-        if v.verdict==.Approve && v.revision==f.revision {f.approvals+=1}
-    }
-}
-
-@(private)
-proposal_rules :: proc(f:^Proposal_Fold) -> Rules {
-    return {
-        data=f,
-        reset=proc(data:rawptr) {
-            f:=(^Proposal_Fold)(data)
-            f.project,f.opener,f.status,f.revision,f.approvals,f.comments={},{},.Open,{},0,0
-            clear(&f.verdicts)
-            clear(&f.checks)
-        },
-        authorized=proc(data:rawptr,e:int) -> bool {
-            f:=(^Proposal_Fold)(data)
-            entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,f.log,e)
-            if u==nil {
-                // A runner outside the org checks under a grant of the Check right.
-                _,granted:=org_grant_right(f.org,entry.author,.Check,f.project,entry.time)
-                return entry.type==.Proposal_Check && f.status==.Open && granted
-            }
-            role:=org_role(f.org,u.log.id)
-            if role==.None {return false}
-            #partial switch entry.type {
-            case .Proposal_Open:
-                b,_,_:=body_head(entry.body,Proposal_Open_Body)
-                return role>=.Writer && org_project_index(f.org,b.project)>=0
-            case .Proposal_Revise: return f.status==.Open && (u.log.id==f.opener || role>=.Writer)
-            case .Proposal_Comment: return true
-            case .Proposal_Verdict,.Proposal_Check: return f.status==.Open && role>=.Writer
-            case .Proposal_Land: return f.status==.Open && role>=.Writer && f.revision!={}
-            case .Proposal_Close: return f.status==.Open && (u.log.id==f.opener || role>=.Admin)
-            case .Proposal_Reopen: return f.status==.Closed && (u.log.id==f.opener || role>=.Admin)
-            }
-            return false
-        },
-        apply=proc(data:rawptr,e:int) {
-            f:=(^Proposal_Fold)(data)
-            entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,f.log,e)
-            user:=u!=nil?u.log.id:{}
-            #partial switch entry.type {
-            case .Proposal_Open:
-                b,_,_:=body_head(entry.body,Proposal_Open_Body)
-                f.project,f.opener,f.status=b.project,user,.Open
-            case .Proposal_Revise:
-                b,tail,_:=body_head(entry.body,Proposal_Revise_Body)
-                stack:=slice.reinterpret([]Stack_Item,tail)
-                f.revision=stack[b.count-1].revision
-                clear(&f.checks)
-            case .Proposal_Comment: f.comments+=1
-            case .Proposal_Verdict:
-                b,_,_:=body_head(entry.body,Proposal_Verdict_Body)
-                for v,i in f.verdicts {
-                    if v.user==user {
-                        ordered_remove(&f.verdicts,i)
-                        break
-                    }
-                }
-                append(&f.verdicts,Proposal_Approval{user,b.revision,b.verdict})
-            case .Proposal_Check:
-                b,tail,_:=body_head(entry.body,Proposal_Check_Body)
-                if b.revision!=f.revision {break}
-                for &c in f.checks {
-                    if c.name==string(tail) {
-                        c.state=b.state
-                        return
-                    }
-                }
-                append(&f.checks,Proposal_Check{string(tail),b.state})
-            case .Proposal_Land: f.status=.Landed
-            case .Proposal_Close: f.status=.Closed
-            case .Proposal_Reopen: f.status=.Open
-            }
-            proposal_count(f)
-        },
-        removal=proc(data:rawptr,r:int) -> bool {return false},
-        voids=proc(data:rawptr,r,e:int) -> bool {return false},
-    }
-}
-
-// --- Keyring_Log (the epochs of a scope's key; sealing comes in M4) ---
-
-Keyring_Envelope :: struct {epoch:u32,envelope:Envelope}
-
-Keyring_Fold :: struct {
-    log:^Log,
-    org:^Org_Fold,
-    valid:[]bool,
-    project:Log_Id,
-    scope:Scope_Id,
-    epoch:u32, // the newest; 0 before the first
-    envelopes:[dynamic]Keyring_Envelope,
-}
-
-keyring_fold :: proc(f:^Keyring_Fold,l:^Log,org:^Org_Fold,allocator:=context.allocator) -> Error {
-    f^={log=l,org=org}
-    f.envelopes=make([dynamic]Keyring_Envelope,allocator)
-    if l.kind!=.Keyring || len(l.items)==0 {return .Invalid_Argument}
-    valid,e:=make([]bool,len(l.items),allocator)
-    if e!=nil {return .Out_Of_Memory}
-    f.valid=valid
-    return fold_run(l,keyring_rules(f),f.valid)
-}
-
-keyring_fold_destroy :: proc(f:^Keyring_Fold) {
-    allocator:=f.envelopes.allocator
-    delete(f.envelopes)
-    delete(f.valid,allocator)
-    f^={}
-}
-
-// The key of epoch wrapped for the device dh.
-keyring_envelope :: proc(f:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> (envelope:Envelope,found:bool) {
-    for k in f.envelopes {
-        if k.epoch==epoch && k.envelope.dh==dh {return k.envelope,true}
-    }
-    return
-}
-
-@(private)
-keyring_rules :: proc(f:^Keyring_Fold) -> Rules {
-    return {
-        data=f,
-        reset=proc(data:rawptr) {
-            f:=(^Keyring_Fold)(data)
-            f.project,f.scope,f.epoch={},{},0
-            clear(&f.envelopes)
-        },
-        authorized=proc(data:rawptr,e:int) -> bool {
-            f:=(^Keyring_Fold)(data)
-            entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,f.log,e)
-            if u==nil || org_role(f.org,u.log.id)<.Writer {return false}
-            #partial switch entry.type {
-            case .Keyring_Genesis:
-                b,_,_:=body_head(entry.body,Keyring_Genesis_Body)
-                return b.org==f.org.log.id && org_project_index(f.org,b.project)>=0
-            case .Epoch_Add:
-                b,_,_:=body_head(entry.body,Epoch_Add_Body)
-                return b.epoch==f.epoch+1
-            case .Envelope_Add:
-                b,_,_:=body_head(entry.body,Envelope_Add_Body)
-                _,found:=keyring_envelope(f,b.epoch,b.envelope.dh)
-                return b.epoch>=1 && b.epoch<=f.epoch && !found
-            }
-            return false
-        },
-        apply=proc(data:rawptr,e:int) {
-            f:=(^Keyring_Fold)(data)
-            entry:=&f.log.items[e].entry
-            #partial switch entry.type {
-            case .Keyring_Genesis:
-                b,_,_:=body_head(entry.body,Keyring_Genesis_Body)
-                f.project,f.scope=b.project,b.scope
-            case .Epoch_Add:
-                b,tail,_:=body_head(entry.body,Epoch_Add_Body)
-                f.epoch=max(f.epoch,b.epoch)
-                for envelope in slice.reinterpret([]Envelope,tail) {append(&f.envelopes,Keyring_Envelope{b.epoch,envelope})}
-            case .Envelope_Add:
-                b,_,_:=body_head(entry.body,Envelope_Add_Body)
-                append(&f.envelopes,Keyring_Envelope{b.epoch,b.envelope})
-            }
-        },
-        // Concurrent epochs of the same number: the first in order wins, the other is not authorized.
-        removal=proc(data:rawptr,r:int) -> bool {return false},
-        voids=proc(data:rawptr,r,e:int) -> bool {return false},
-    }
 }

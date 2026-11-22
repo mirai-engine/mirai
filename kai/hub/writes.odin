@@ -22,6 +22,10 @@ Draft_Body :: struct {
     anchor:struct {kind:string,line,lines:u32},
     user:string,
     role:string,
+    device:string, // device_add: the device's Ed25519 key, its X25519 key, its proof and name
+    dh:string,
+    proof:string,
+    name:string,
 }
 
 TYPE_TEXT :: [kai.Entry_Type]string{
@@ -34,10 +38,11 @@ TYPE_TEXT :: [kai.Entry_Type]string{
     .Proposal_Open="proposal_open",.Proposal_Revise="proposal_revise",.Proposal_Comment="proposal_comment",.Proposal_Verdict="proposal_verdict",
     .Proposal_Check="proposal_check",.Proposal_Land="proposal_land",.Proposal_Close="proposal_close",.Proposal_Reopen="proposal_reopen",
     .Keyring_Genesis="keyring_genesis",.Epoch_Add="epoch_add",.Envelope_Add="envelope_add",.Public_Add="public_add",
+    .Passkey_Genesis="passkey_genesis",.Witness="witness",
 }
 
 // The entries a browser writes through drafts.
-WRITABLE :: bit_set[kai.Entry_Type]{.Proposal_Comment,.Proposal_Verdict,.Proposal_Close,.Proposal_Reopen,.Member_Add,.Member_Remove,.Role_Set}
+WRITABLE :: bit_set[kai.Entry_Type]{.Proposal_Comment,.Proposal_Verdict,.Proposal_Close,.Proposal_Reopen,.Member_Add,.Member_Remove,.Role_Set,.Device_Add}
 
 Draft :: struct {
     type:kai.Entry_Type,
@@ -55,7 +60,7 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
         if name!="" && name==b.type && t in WRITABLE {d.type=t}
     }
     if d.type==.None {
-        fail(c,400,"type is one of proposal_comment, proposal_verdict, proposal_close, proposal_reopen, member_add, member_remove, role_set")
+        fail(c,400,"type is one of proposal_comment, proposal_verdict, proposal_close, proposal_reopen, member_add, member_remove, role_set, device_add")
         return
     }
     log,lok:=hash_parse(b.log)
@@ -64,9 +69,13 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
         return
     }
     d.log=log
+    if d.type==.Device_Add && log!=c.session.user {
+        fail(c,403,"a browser links devices to its own user alone")
+        return
+    }
     for o in runner_of(c.h).orgs {
         if session_role(c,o)==.None {continue}
-        if l:=kai.agent_log(&o.agent,log);l!=nil && len(l.items)>0 {d.org,d.l=o,l}
+        if l:=kai.agent_log_open(&o.agent,log);l!=nil && len(l.items)>0 {d.org,d.l=o,l}
     }
     kind,_:=kai.entry_log_kind(d.type)
     if d.l==nil || d.l.kind!=kind {
@@ -116,6 +125,15 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
         d.body,e=kai.proposal_verdict_body(verdict,revision)
     case .Proposal_Close,.Proposal_Reopen:
         d.body=nil
+    case .Device_Add:
+        head:kai.Device_Add_Body
+        proof,pok:=base64_parse(b.proof,64)
+        if !hex_parse(b.device,head.device[:]) || !hex_parse(b.dh,head.dh[:]) || !pok || len(proof)!=64 {
+            fail(c,400,"device and dh are 64 hex, proof base64url of the device's signature: take them from the device's offer")
+            return
+        }
+        copy(head.proof[:],proof)
+        d.body=kai.body_make(head,transmute([]u8)b.name)
     case .Member_Add,.Role_Set,.Member_Remove:
         user,uok:=hash_parse(b.user)
         if !uok {
@@ -168,7 +186,9 @@ route_draft :: proc(c:^Call) {
     heads:=make([dynamic]store.Hash,context.temp_allocator)
     kai.log_heads(d.l,&heads)
     if len(heads)>kai.ENTRY_PARENTS_MAX {resize(&heads,kai.ENTRY_PARENTS_MAX)}
-    draft:=kai.Draft{type=d.type,log_id=d.log,parents=heads[:],author_ctx=p.added,time=time.now()._nsec,body=d.body}
+    org_ctx:store.Hash
+    if kai.org_bound(d.l.kind) {org_ctx=kai.org_context(&d.org.agent.org,s.user)}
+    draft:=kai.Draft{type=d.type,log_id=d.log,parents=heads[:],author_ctx=p.added,org_ctx=org_ctx,time=time.now()._nsec,body=d.body}
     unsigned,_,e:=kai.entry_webauthn_begin(&draft,s.web_key,context.temp_allocator)
     if e!=.None {
         fail(c,400,"the entry does not make: its body or parents are out of bounds")
@@ -188,6 +208,7 @@ route_draft :: proc(c:^Call) {
     key:=s.web_key
     json_member_hex(&j,"author",key[:])
     json_member_hash(&j,"author_ctx",p.added)
+    json_member_hash(&j,"org_ctx",org_ctx)
     json_member_int(&j,"time",draft.time)
     json_key(&j,"body")
     json_base64(&j,d.body)
@@ -256,7 +277,7 @@ entry_keep :: proc(c:^Call,bytes:[]u8,user:kai.Log_Id) -> (address:store.Hash,st
         if !o.agent.folded {continue}
         if kind==.User {
             if kai.agent_log(&o.agent,e.log_id)!=nil {var_org=o}
-        } else if kai.agent_log(&o.agent,e.log_id)!=nil && kai.org_role(&o.agent.org,user)!=.None {
+        } else if kai.agent_log_open(&o.agent,e.log_id)!=nil && kai.org_role(&o.agent.org,user)!=.None {
             var_org=o
         }
     }
