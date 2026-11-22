@@ -20,6 +20,7 @@ Spatial_World :: struct {
     using world:Test_World,
     using scene_tables:Test_Scene,
     meshes:core.Table(erender.Mesh_Renderer),
+    hidden:core.Table(erender.Hidden),
 }
 
 @(private)

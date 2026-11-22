@@ -187,6 +187,7 @@ read_stats :: proc(r: ^Renderer, slot: int) {
 		r.stats.resolved_pixels, r.stats.resolve_helpers, r.stats.resolve_quads_again = stats.resolved[0], stats.resolved[1], stats.resolved[2]
 		r.stats.light_lists = stats.lists
 		r.stats.shadow = stats.views_shadow
+		r.probe.found = stats.probe
 	}
 	r.stats.timings, _, _ = rhi.frame_timings(r.device)
 	total: f32
@@ -708,7 +709,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         if view.texture==0 || view.disabled || !recorded_ok || frame.ui_only {continue}
         state:=texture_view_find(r,view.texture)
         if state==nil {continue}
-        recorded_ok=record_view(r,cmd,state,view,{offscreen=frame.offscreen},slot,&ui_written,first)
+        recorded_ok=record_view(r,cmd,state,view,{debug=frame.debug if first else nil,offscreen=frame.offscreen},slot,&ui_written,first)
         first=false
         if recorded_ok {texture_view_show(r,cmd,state,slot,view.readback)}
     }
@@ -1129,7 +1130,8 @@ frame_constants :: proc(r: ^Renderer, frame: Gpu_Frame) -> rhi.Transient {
 Cull_Params :: struct {
 	phase, occlusion, hiz_levels, programs: u32,
 	glass_groups: [4]u32,
-	chunk_capacity, visible_capacity, candidate_capacity, pad: u32,
+	chunk_capacity, visible_capacity, candidate_capacity: u32,
+	probe: u32, // the instance whose cull the stats keep, plus one (Instance_Probe); 0: none
 	pages: [4]u32, // pages_cull_params
 }
 
@@ -1262,6 +1264,7 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats: rhi.Bu
 	params.chunk_capacity, params.visible_capacity, params.candidate_capacity = s.cull_capacity[.Chunks], s.cull_capacity[.Visible], s.cull_capacity[.Candidates]
 	params.programs = r.points.programs
 	params.pages = pages_cull_params(r)
+	params.probe = r.probe.instance
 	set_params(cmd, &params)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.cull_state_buffer)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, stats)
@@ -1321,6 +1324,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	clip := p.camera.clip_plane != {}
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), 0, 0} if p.draw_glass else {}
 	p.pyramid_previous = t.hiz_valid
+	if r.probe.instance > 0 {r.probe.eye = p.camera.position}
 	rhi.cmd_timestamp(cmd, "cull")
 	// What the view before counted, before this one counts its own.
 	cull_stats_fold(r, cmd)
@@ -1947,7 +1951,7 @@ pass_output :: proc(p: ^Pass, frame: Frame_Desc, ui_written: ^int, overlays := t
 			rhi.cmd_draw(cmd, 3)
 			rhi.cmd_end_render_pass(cmd)
 		}
-		open = overlays && !p.texture
+		open = overlays && (!p.texture || len(frame.debug) > 0)
 		if open {
 			rhi.cmd_timestamp(cmd, "ui")
 			ldr_pass.colors[0].load = .Load
@@ -1956,6 +1960,7 @@ pass_output :: proc(p: ^Pass, frame: Frame_Desc, ui_written: ^int, overlays := t
 		}
 	}
 	if !p.texture && overlays {overlays_draw(p, frame, ui_written, points, thumbnails)}
+	if p.texture && overlays {debug_lines_pass(r, cmd, t, p.slot, frame.debug)}
 	if open {rhi.cmd_end_render_pass(cmd)}
 	if p.wide != .None && p.view.wide != 0 {
 		// The same tonemap again into the wide image, as the view asked for it.

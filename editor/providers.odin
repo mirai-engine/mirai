@@ -7,6 +7,7 @@ import "core:reflect"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
+import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
 import "mirai:std/base"
@@ -67,6 +68,13 @@ Run_Provider :: struct {
     call:proc(s:^Session,r:^Run,method,params:string),         // a method changed the run between two ticks; params is its JSON
     focus:proc(s:^Session,r:^Run,slot:int),                    // the keys and the mouse go to that local seat from the next tick
     ended:proc(s:^Session,r:^Run),                             // the run goes away, or stays only as the past of the last Play
+}
+
+// What a plugin draws of a world over an image capture takes with debug (the
+// colliders of its bodies, the bones of its rigs), as lines added to those of
+// the image: the flags of shown it drew, whether the world held any or not.
+Capture_Overlay_Provider :: struct {
+    draw:proc(s:^Session,w:core.World_Ref,shown:Api_Capture_Debug,lines:^erender.Debug_Lines) -> Api_Capture_Debug,
 }
 
 // What a plugin derives from a gesture of the edited World before the history
