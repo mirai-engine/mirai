@@ -19,7 +19,7 @@ import "mirai:std/subprocess"
 import "mirai:store"
 
 NEW_USAGE :: "new <folder> [--name N] [--template T] [--store S] | new --list"
-BUILD_USAGE :: "build tools [--debug]"
+BUILD_USAGE :: "build tools|kai [--target linux_arm64] [--debug]"
 BUILD_ENGINE_USAGE :: "build engine [--release] [--force]"
 BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--release] [--out folder] [--store folder]"
 GENERATE_USAGE :: "generate [project] [--store folder]"

@@ -176,6 +176,7 @@ odin_command :: proc(root:string,verb,target:string,attributes:=true) -> [dynami
 Build_Target :: struct {name,package_path,output:string}
 BUILD_TARGETS :: [?]Build_Target{
     {"tools","tools/mirai","mirai"},
+    {"kai","tools/kai","mirai-kai"}, // the headless node: mirai kai serve with what the node needs only
 }
 
 cmd_build :: proc(root:string,args:[]string) -> int {
@@ -184,13 +185,23 @@ cmd_build :: proc(root:string,args:[]string) -> int {
     if args[0]=="engine" {return cmd_build_engine(root,args[1:])}
     if !positional(args[0]) {return argument_unknown("build",args[0])}
     debug:=false
-    for arg in args[1:] {
-        if arg!="--debug" {return argument_unknown("build",arg)}
+    cross:=""
+    for i:=1;i<len(args);i+=1 {
+        if value,matched,ok:=option_value(args,&i,"--target");matched {
+            if !ok || value!="linux_arm64" {fmt.eprintln("mirai build: --target is linux_arm64, a static executable of the headless node");return 2}
+            cross=value
+            continue
+        }
+        if args[i]!="--debug" {return argument_unknown("build",args[i])}
         debug=true
+    }
+    if cross!="" {
+        if args[0]!="kai" {fmt.eprintln("mirai build: --target builds the kai target only");return 2}
+        return build_static_linux_arm64(root,"tools/kai","mirai-kai",debug)
     }
     for target in BUILD_TARGETS {
         if target.name!=args[0] {continue}
-        if target.name!="tools" {
+        if target.name!="tools" && target.name!="kai" {
             if !ensure_runtime_dependencies(root) {return 1}
             ensure_sdl(root,join(root,"bin"))
         }

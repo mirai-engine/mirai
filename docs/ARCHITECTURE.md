@@ -345,6 +345,11 @@ Numbered layers; a package only imports lower layers.
   `View`, world reflection, the authority of this end (`Network`, `Remote`, `owned`), the motion
   and pose that another owner requests (`Motion`, `Pose_Target`), the requested places (`Places`,
   `place`, the only way to teleport) and world queries (`World_Queries`).
+- **5** `kai/hub`: KaiHub, the web view of a Kai node: a bounded HTTP/1.1 server whose parser
+  has no I/O, over `net/tls` with ACME certificates (plain HTTP on loopback only), the JSON API
+  that describes itself at `GET /api`, sessions and passkey or device-signed writes the server
+  only verifies, the Linux sandbox, and the commands a node runs (`serve`, `pair join`,
+  `web approve`). It imports `kai`, `net/tls`, `store` and `std/*`, nothing of the engine.
 - **5** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).
@@ -383,6 +388,8 @@ Numbered layers; a package only imports lower layers.
   [first-party plugins](../.agents/skills/mirai-plugins/references/plugins.md#first-party-plugins)
   says what each one does.
 - **no layer** `tools/mirai`: the `mirai` CLI; `mirai --help` lists its commands.
+- **no layer** `tools/kai`: `mirai-kai`, the headless Kai node, which imports `kai/hub` alone so
+  that it links statically for Linux (`mirai build kai --target linux_arm64`, with musl).
 - **no layer** `demo`, `templates`, `tools/demo_content`: the demo project, the `mirai new`
   templates and the generator of the demo's assets.
 - **no layer** `shaders/`: the single Slang source.

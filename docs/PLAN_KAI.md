@@ -386,9 +386,13 @@ Entry_Head :: struct #packed {
 ## 10. `mirai kai serve`: ARM64 Linux Server and Web Repo View
 
 ### Deployment: ARM64 Linux VM (not Kubernetes/Docker bridge)
-- **Primary target:** Single static headless `linux_arm64` Odin binary (`mirai kai serve`, no SDL,
-  GPU, editor, Postgres, Redis or Node) running directly under `systemd` on a small ARM64 Linux VM
-  (e.g. Hetzner CAX / Graviton / Raspberry Pi) confined with Linux Landlock + seccomp.
+- **Primary target:** Single static headless `linux_arm64` Odin binary (`mirai-kai serve`, the
+  `tools/kai` target that imports `kai/hub` alone: no SDL, GPU, editor, Postgres, Redis or Node;
+  `mirai kai serve` runs the same procedure) running directly under `systemd` on a small ARM64
+  Linux VM (e.g. Hetzner CAX / Graviton / Raspberry Pi) confined with Linux Landlock + seccomp.
+  `mirai build kai --target linux_arm64` links Odin's objects with `ld.lld -static` against a
+  pinned, prebuilt musl: Odin's `core:os` needs a C library on Linux, and Odin does not link a
+  Linux target from another system.
 - **Why VM over container bridge:** Rendezvous needs a stable public IP:port and real UDP source
   addresses (Docker bridge NAT breaks hole punching); `store` uses mmap, `fsync` and PID leases
   requiring local ext4/xfs (not overlayfs/NFS); ARM64 provides native AES/PMULL for AEGIS and NEON
@@ -417,16 +421,21 @@ Entry_Head :: struct #packed {
   - Users open KaiHub directly in the browser and sign in with a **WebAuthn passkey** (Touch ID,
     Face ID, Windows Hello, hardware key, or phone QR via hybrid transport) — no terminal command,
     no `kai web login`, no email and no password.
-  - Fallback for any PC without passkeys or a phone handy (e.g. bare Linux desktop): an **Approve
-    in Mirai** button (`kai://...` deep link to the local editor/agent holding the device Ed25519
-    key) that prompts one click to approve, still with zero terminal commands.
-  - First-time web users create a passkey directly in the browser (creating or linking a
-    `User_Log` via `Web_Key_Add`); linking an editor/CLI device uses QR or the commitment-hardened
-    8-digit code.
+  - Fallback for any PC without passkeys or a phone handy (e.g. bare Linux desktop): the browser
+    shows a `kai://approve?...` link and `mirai kai web approve <link>`, which a device of the user
+    runs to sign the login, the write, or the `Web_Key_Add` of a new passkey; registering the
+    `kai://` handler with the operating system, for one click, is not done yet.
+  - First-time web users create a passkey directly in the browser: the browser makes an Ed25519
+    recovery key (shown once) and a device key, signs the new `User_Log`'s genesis and its
+    `Web_Key_Add` itself, and the server only verifies and keeps them; linking a passkey to an
+    existing user is the device's approval above; linking an editor/CLI device uses QR or the
+    commitment-hardened 8-digit code.
   - Read sessions are authenticated by a signed WebAuthn challenge (`__Host-` HttpOnly cookie);
     writes (comments, approvals, verdicts, org actions) are WebAuthn signatures over the BLAKE3
     of the entry's signed bytes (head, parents and body, so a relay cannot change its author,
-    log or kind), verified offline by every peer.
+    log or kind), verified offline by every peer. The server drafts the unsigned bytes (heads,
+    author context, time) but gives no challenge: the browser checks every field and hashes the
+    bytes itself.
   - Optional client-side viewing of private overlays (`.env`) in the browser uses the WebAuthn
     **PRF** extension when supported to derive a local decryption key inside the browser while
     keeping the server 100% zero-knowledge.
@@ -501,5 +510,5 @@ Entry_Head :: struct #packed {
    `core:crypto`: no C library to cross-compile) inside `mirai kai serve` for single-binary
    deploys, with certificates by ACME TLS-ALPN-01 on the same port; optional HTTP/3 (QUIC) via a
    thin Caddy front when HTTP/3 is desired. *Decided: built-in TLS 1.3, HTTP/3 optional.*
-5. **Pre-implementation checks:** Verify the static `linux_arm64` link of `mirai kai serve` and
-   WebAuthn PRF browser support for optional client-side `.env` viewing in KaiHub.
+5. **Pre-implementation checks:** WebAuthn PRF browser support for optional client-side `.env`
+   viewing in KaiHub. *The static `linux_arm64` link is checked: musl, prebuilt, with ld.lld.*

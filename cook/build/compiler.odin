@@ -3,7 +3,6 @@ package build
 import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
-import "core:hash/xxhash"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -311,7 +310,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
             if b!='\r' {data[kept]=b;kept+=1}
         }
         if masked!="" && len(path)>len(masked) && path[len(masked)]=='/' && project.path_same(path[:len(masked)],masked) {link_names_mask(data[:kept])}
-        return base.hash_combine(hash,xxhash.XXH3_64_default(data[:kept]))
+        return base.hash_combine(hash,base.hash64(data[:kept]))
     }
     // The compiler counts by its file, wherever it is reached from.
     if info,error:=os.stat(compiler,context.temp_allocator);error==nil {
@@ -355,7 +354,7 @@ fingerprint :: proc(root,compiler:string,flags:[]string,sources:[]string,masked:
 compiler_date :: proc(root,compiler:string,modified:time.Time) -> u64 {
     if len(compiler)>len(root) && compiler[len(root)]=='/' && project.path_same(compiler[:len(root)],root) && project.engine_installed(root) {
         if manifest,error:=os.read_entire_file(project.path(root,project.ENGINE_FILE,allocator=context.temp_allocator),context.temp_allocator);error==nil {
-            return xxhash.XXH3_64_default(manifest)
+            return base.hash64(manifest)
         }
     }
     return u64(time.to_unix_nanoseconds(modified))
