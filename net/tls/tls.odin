@@ -52,7 +52,9 @@ Config :: struct {
     // Application protocols: a client offers them, a server picks the first of its own that
     // the client offers.
     alpn:[]string,
-    // Server: picked by the name the client asks for (SNI) and the protocol.
+    // Server: picked at each ClientHello by the name the client asks for (SNI) and the
+    // protocol, and used only while that hello is answered. An entry without a chain is
+    // skipped: the owner of the slice may clear or fill entries while connections use it.
     credentials:[]Credential,
     // Client: the name the server's leaf must hold, sent as SNI unless it is an IP address.
     host:string,
@@ -79,6 +81,7 @@ Error :: enum u8 {
     Unknown_CA,
     Decrypt_Error,
     Missing_Extension,
+    Unsupported_Extension,
     Unrecognized_Name,
     No_Application_Protocol,
     Internal,
@@ -136,6 +139,7 @@ ALERT_OF :: [Error]Alert{
     .Unknown_CA = .Unknown_CA,
     .Decrypt_Error = .Decrypt_Error,
     .Missing_Extension = .Missing_Extension,
+    .Unsupported_Extension = .Unsupported_Extension,
     .Unrecognized_Name = .Unrecognized_Name,
     .No_Application_Protocol = .No_Application_Protocol,
     .Internal = .Internal_Error,
@@ -222,12 +226,15 @@ Conn :: struct {
     retried:bool, // HelloRetryRequest sent or received
     early_skip:int, // server: bytes of early data it may still skip
     owe_key_update:bool,
+    change_cipher_spec:bool, // the compatibility record was received
+    // Records in a row that carried no application data after the handshake: KeyUpdates,
+    // tickets, empty records and user_canceled alerts.
+    idle_records:int,
     session_id:[32]u8,
     session_id_len:int,
     selected_alpn:string,
     server_name:[255]u8,
     server_name_len:int,
-    credential:^Credential,
     // Client
     random:[32]u8, // of both its hellos
     certificate_requested:bool,

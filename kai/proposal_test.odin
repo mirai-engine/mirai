@@ -386,31 +386,39 @@ webauthn_login_and_signed_verdict_verify_offline :: proc(t:^testing.T) {
         _=rand.read(challenge[:])
         other:=challenge
         other[0]~=1
-        Case :: struct {name:string,a:Web_Assertion,failure:Webauthn_Failure}
+        Case :: struct {name:string,a:Web_Assertion,failure:Webauthn_Failure,write:bool}
         good:=passkey_assert(&p,RP,ORIGIN,challenge[:])
         tampered:=passkey_assert(&p,RP,ORIGIN,challenge[:])
         tampered.signature=slice.clone(tampered.signature,context.temp_allocator)
         tampered.signature[len(tampered.signature)-1]~=1
         short:=good
+        write:=good // as a write keeps it: with the low S
+        if alg==.ES256 {_,write.signature,_=es256_low_s(good.signature,context.temp_allocator)}
         short.authenticator_data=good.authenticator_data[:36]
         cases:=[]Case{
-            {"login",good,.None},
-            {"another challenge",passkey_assert(&p,RP,ORIGIN,other[:]),.Challenge},
-            {"another origin",passkey_assert(&p,RP,"https://evil.example",challenge[:]),.Origin},
-            {"plain http",passkey_assert(&p,RP,"http://kai.example",challenge[:]),.Origin},
-            {"another relying party",passkey_assert(&p,"evil.example",ORIGIN,challenge[:]),.Rp_Id},
-            {"no user present",passkey_assert(&p,RP,ORIGIN,challenge[:],0x04),.Presence},
-            {"a registration",passkey_assert(&p,RP,ORIGIN,challenge[:],kind="webauthn.create"),.Type},
-            {"a tampered signature",tampered,.Signature},
-            {"short authenticator data",short,.Malformed},
-            {"client data not JSON",{good.authenticator_data,transmute([]u8)string("{\"type\":"),good.signature},.Malformed},
+            {"login",good,.None,false},
+            {"a write",write,.None,true},
+            {"an origin with a port",passkey_assert(&p,RP,ORIGIN+":8443",challenge[:]),.None,false},
+            {"an origin with a port that is no number",passkey_assert(&p,RP,ORIGIN+":84x3",challenge[:]),.Origin,false},
+            {"an origin of a longer name",passkey_assert(&p,RP,ORIGIN+".evil.example",challenge[:]),.Origin,false},
+            {"a login with the user present, not verified",passkey_assert(&p,RP,ORIGIN,challenge[:],0x01),.None,false},
+            {"a write with the user present, not verified",passkey_assert(&p,RP,ORIGIN,challenge[:],0x01),.Verification,true},
+            {"another challenge",passkey_assert(&p,RP,ORIGIN,other[:]),.Challenge,false},
+            {"another origin",passkey_assert(&p,RP,"https://evil.example",challenge[:]),.Origin,false},
+            {"plain http",passkey_assert(&p,RP,"http://kai.example",challenge[:]),.Origin,false},
+            {"another relying party",passkey_assert(&p,"evil.example",ORIGIN,challenge[:]),.Rp_Id,false},
+            {"no user present",passkey_assert(&p,RP,ORIGIN,challenge[:],0x04),.Presence,false},
+            {"a registration",passkey_assert(&p,RP,ORIGIN,challenge[:],kind="webauthn.create"),.Type,false},
+            {"a tampered signature",tampered,.Signature,false},
+            {"short authenticator data",short,.Malformed,false},
+            {"client data not JSON",{good.authenticator_data,transmute([]u8)string("{\"type\":"),good.signature},.Malformed,false},
         }
         for &c in cases {
-            testing.expectf(t,webauthn_verify(&key,RP,challenge[:],&c.a)==c.failure,"%v %s: %v",alg,c.name,c.failure)
+            testing.expectf(t,webauthn_verify(&key,RP,challenge[:],&c.a,c.write)==c.failure,"%v %s: %v",alg,c.name,c.failure)
         }
         q:=passkey_make(alg)
         other_key,_:=cose_key_parse(passkey_cose(&q))
-        testing.expect_value(t,webauthn_verify(&other_key,RP,challenge[:],&good),Webauthn_Failure.Signature)
+        testing.expect_value(t,webauthn_verify(&other_key,RP,challenge[:],&good,false),Webauthn_Failure.Signature)
     }
 
     // Hostile COSE keys: random bytes, every truncation, a wrong algorithm.
@@ -477,6 +485,35 @@ webauthn_login_and_signed_verdict_verify_offline :: proc(t:^testing.T) {
         testing.expect_value(t,e,Error.Unauthorized)
         _,_,e=entry_webauthn_finish(unsigned,stranger_key,RP,&replayed,context.temp_allocator)
         testing.expect_value(t,e,Error.Unauthorized)
+    }
+
+    // An ES256 signature verifies with s and with n-s: a write keeps only the low one, so
+    // the two give one entry and one address.
+    {
+        d:=Draft{type=.Proposal_Comment,log_id=l.id,parents=test_heads(&l),author_ctx=ctx,time=32,body=comment_body}
+        unsigned,challenge,_:=entry_webauthn_begin(&d,web_key,context.temp_allocator)
+        high:Web_Assertion
+        for _ in 0..<64 {
+            a:=passkey_assert(&passkey,RP,ORIGIN,challenge[:])
+            if is_high,_,_:=es256_low_s(a.signature,context.temp_allocator);is_high {
+                high=a
+                break
+            }
+        }
+        if testing.expect(t,high.signature!=nil,"a high S in 64 signatures") {
+            low:=high
+            _,low.signature,_=es256_low_s(high.signature,context.temp_allocator)
+            key,_:=cose_key_parse(passkey_key)
+            testing.expect_value(t,webauthn_verify(&key,RP,challenge[:],&high,false),Webauthn_Failure.None)
+            testing.expect_value(t,webauthn_verify(&key,RP,challenge[:],&high,true),Webauthn_Failure.Signature)
+            testing.expect_value(t,webauthn_verify(&key,RP,challenge[:],&low,true),Webauthn_Failure.None)
+            _,from_high,he:=entry_webauthn_finish(unsigned,passkey_key,RP,&high,context.temp_allocator)
+            _,from_low,le:=entry_webauthn_finish(unsigned,passkey_key,RP,&low,context.temp_allocator)
+            testing.expect(t,he==.None && le==.None && from_high==from_low,"the two encodings of a signature make two entries")
+        }
+        unverified:=passkey_assert(&passkey,RP,ORIGIN,challenge[:],0x01)
+        _,_,ue:=entry_webauthn_finish(unsigned,passkey_key,RP,&unverified,context.temp_allocator)
+        testing.expect_value(t,ue,Error.Unauthorized)
     }
 
     peer:Log

@@ -12,6 +12,12 @@ Content :: enum u8 {Change_Cipher_Spec=20,Alert=21,Handshake=22,Application_Data
 // Records one key seals before the writer moves to the next (KeyUpdate): far below the limit
 // of AES-GCM (RFC 8446, 5.5).
 @(private) KEY_UPDATE_RECORDS :: 1<<24
+// Records a key may protect, in either direction: 2^24.5 for AES-GCM (RFC 8446, 5.5), and
+// short of the wrap of the sequence number for ChaCha20-Poly1305.
+@(private) RECORDS_PER_KEY :: [Suite]u64{.AES_128_GCM_SHA256=23_726_566,.AES_256_GCM_SHA384=23_726_566,.CHACHA20_POLY1305_SHA256=max(u64)-1}
+@(private) records_per_key :: proc(s:Suite) -> u64 {t:=RECORDS_PER_KEY;return t[s]}
+// Records in a row without application data a connection takes from its peer.
+@(private) IDLE_RECORDS_MAX :: 32
 
 @(private) SUITE_CODE :: [Suite]u16{.AES_128_GCM_SHA256=0x1301,.AES_256_GCM_SHA384=0x1302,.CHACHA20_POLY1305_SHA256=0x1303}
 @(private) SUITE_HASH :: [Suite]hash.Algorithm{.AES_128_GCM_SHA256=.SHA256,.AES_256_GCM_SHA384=.SHA384,.CHACHA20_POLY1305_SHA256=.SHA256}
@@ -43,9 +49,11 @@ record_receive :: proc(c:^Conn) -> Error {
     body:=c.input[HEADER_BYTES:][:n]
     #partial switch Content(c.input[0]) {
     case .Change_Cipher_Spec:
-        // The compatibility record of RFC 8446, D.4: once, unprotected, during the handshake.
+        // The compatibility record of RFC 8446, D.4 and 5: once, unprotected, after the first
+        // ClientHello and before the peer's Finished.
         first_hello:=c.role==.Server && c.state==.Wait_Client_Hello && !c.retried
-        if c.state>=.Connected || first_hello || n!=1 || body[0]!=1 {return .Unexpected_Message}
+        if c.state>=.Connected || first_hello || c.change_cipher_spec || n!=1 || body[0]!=1 {return .Unexpected_Message}
+        c.change_cipher_spec=true
         return nil
     case .Application_Data:
         if !c.read.active {
@@ -54,6 +62,7 @@ record_receive :: proc(c:^Conn) -> Error {
             c.early_skip-=n
             return nil
         }
+        if c.read.seq>=records_per_key(c.suite) {return .Unexpected_Message}
         inner,ok:=record_open(&c.read,c.input[:HEADER_BYTES],body)
         if !ok {
             if c.early_skip<n {return .Bad_Record_Mac}
@@ -80,7 +89,7 @@ record_content :: proc(c:^Conn,content:Content,at,n:int) -> Error {
         if n!=2 {return .Decode}
         if c.handshake_len>0 {return .Unexpected_Message}
         alert:=Alert(data[1])
-        if alert==.User_Canceled {return nil}
+        if alert==.User_Canceled {return idle_record(c)}
         if alert==.Close_Notify {
             c.peer_closed=true
             return nil if c.state==.Connected else .Closed
@@ -95,10 +104,20 @@ record_content :: proc(c:^Conn,content:Content,at,n:int) -> Error {
         return handshake_process(c)
     case .Application_Data:
         if c.state!=.Connected || c.handshake_len>0 {return .Unexpected_Message}
+        if n==0 {return idle_record(c)}
+        c.idle_records=0
         c.plain_at,c.plain_len=at,n
         return nil
     }
     return .Unexpected_Message
+}
+
+// Counts a record that carried no application data: past IDLE_RECORDS_MAX in a row the peer
+// only spends this side's time.
+@(private)
+idle_record :: proc(c:^Conn) -> Error {
+    c.idle_records+=1
+    return .Unexpected_Message if c.idle_records>IDLE_RECORDS_MAX else nil
 }
 
 // Takes the whole handshake messages of the handshake buffer, in order.
@@ -142,6 +161,7 @@ record_seal :: proc(c:^Conn,content:Content,payload:[]u8) -> Error {
     out[1],out[2]=3,1 if c.state==.Wait_Server_Hello && !c.retried && !sealed else 3
     endian.unchecked_put_u16be(out[3:],u16(size))
     copy(out[HEADER_BYTES:],payload)
+    if sealed && c.write.seq>=records_per_key(c.suite) {return .Internal}
     if sealed {
         out[HEADER_BYTES+len(payload)]=u8(content)
         inner:=out[HEADER_BYTES:][:len(payload)+1]
@@ -208,6 +228,7 @@ key_update_flush :: proc(c:^Conn) -> bool {
 key_update_receive :: proc(c:^Conn,body:[]u8) -> Error {
     if len(body)!=1 {return .Decode}
     if body[0]>1 {return .Illegal_Parameter}
+    idle_record(c) or_return
     direction_advance(&c.read,c.suite)
     if body[0]==1 && !c.close_sent {
         c.owe_key_update=true

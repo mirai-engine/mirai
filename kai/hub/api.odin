@@ -375,6 +375,7 @@ NOTES :: [?]string{
     "Errors answer {error} with what failed and how to fix it.",
     "Never sign a challenge the server gives for a write: a draft has none. Parse the unsigned bytes (GET /api/entries), check every field, compute BLAKE3-256 of the bytes and pass that as the challenge of navigator.credentials.get.",
     "Passkeys work over HTTPS only, for the relying party rp_id; the plain HTTP of loopback serves reads.",
+    "A sign-in's assertion needs the user present; a write's also needs the user verified (userVerification: required), and a write signed with a P-256 passkey keeps the low S of its signature.",
     "Static files of the frontend are served from the folder kai/hub/web embedded at build time, flat; a path without a dot that is no file gets index.html when there is one.",
     "POST bodies are application/json and must come from this origin; at most BODY_MAX bytes.",
 }

@@ -15,16 +15,24 @@ import "mirai:store"
 // executable run alike: serve, pair join for the node itself, and web approve
 // for a member's device.
 
-SERVE_USAGE :: "kai serve --mode relay|seed|seed+ddc --store <folder> [--port N] [--ddc-quota BYTES] [--domain NAME ...] [--https PORT] [--http PORT]"
+SERVE_USAGE :: "kai serve --mode relay|seed|seed+ddc --store <folder> [--port N] [--ddc-quota BYTES] [--domain NAME ...] [--https PORT] [--http PORT] [--no-sandbox]"
 NODE_PORT :: 47914 // the UDP port of a node unless --port says otherwise
+
+// The TCP ports a confined node may bind and connect to.
+Sandbox_Ports :: struct {bind,connect:[]int}
 
 // Runs the node until the process ends. program names the executable in
 // what it prints.
 serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
     root,mode,port_text,quota_text,http_text,https_text:=store_root,"","","","",""
     domains:=make([dynamic]string,context.temp_allocator)
+    no_sandbox:=false
     for i:=0;i<len(args);i+=1 {
         a:=args[i]
+        if a=="--no-sandbox" {
+            no_sandbox=true
+            continue
+        }
         value:string
         if i+1<len(args) {value=args[i+1]}
         switch a {
@@ -125,9 +133,18 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
         if h.has_secure {fmt.printfln("Web view on %s.",h.origin)}
     }
     defer if web {hub_stop(h)}
-    if applied,why:=sandbox_apply(root);applied {
-        fmt.println("Sandbox: the store's folder is all it may write; its system calls are the ones it uses.")
-    } else {
+    // ACME's directory is reached on 443, and the resolver may ask over TCP.
+    bind:=[2]int{h.http_port,h.https_port}
+    connect:=[2]int{h.certs.acme?443:0,h.certs.acme?53:0}
+    applied,why:=false,"--no-sandbox"
+    if !no_sandbox {applied,why=sandbox_apply(root,{bind[:],connect[:]})}
+    switch {
+    case applied:
+        fmt.println("Sandbox: the store's folder is all it may write; its TCP ports and system calls are the ones it uses.")
+    case ODIN_OS==.Linux && !no_sandbox:
+        fmt.eprintfln("%s kai serve: the sandbox does not apply (%s): run it on a kernel with Landlock and seccomp, or start it with --no-sandbox to serve unconfined",program,why)
+        return 1
+    case:
         fmt.printfln("Sandbox: none (%s).",why)
     }
     stop:=false
@@ -257,7 +274,8 @@ link_parse :: proc(link:string) -> (origin,id:string,ok:bool) {
 
 // What a device answers to an approval: the JSON body of its POST, signed
 // with the device's key; summary says what it signs, for the person to see.
-approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string) -> (body:[]u8,summary,why:string) {
+// Without sign it only checks the approval and says what it would sign.
+approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string,sign:=true) -> (body:[]u8,summary,why:string) {
     o,_:=origin_parse(origin)
     if ask.origin!=origin || (o.secure && ask.rp_id!=o.host) {return nil,"","the hub answers for another origin than the link's: do not approve"}
     j:=json_make()
@@ -266,6 +284,8 @@ approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string) -> (body:
     case "login":
         challenge,ok:=base64_parse(ask.challenge,32)
         if !ok || len(challenge)!=32 {return nil,"","the hub's challenge does not read"}
+        summary=fmt.tprintf("let a browser on %s sign in as this device's user",origin)
+        if !sign {return nil,summary,""}
         c:[32]u8
         copy(c[:],challenge)
         signature:=login_signature(&m.identity,ask.rp_id,c)
@@ -273,7 +293,6 @@ approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string) -> (body:
         json_member_hex(&j,"device",key[:])
         json_key(&j,"signature")
         json_base64(&j,signature[:])
-        summary=fmt.tprintf("sign in to %s as this device's user",origin)
     case "entry","passkey":
         user,uok:=hash_parse(ask.user)
         if !uok || user!=m.user {return nil,"","the approval is for another user than this device's"}
@@ -304,6 +323,7 @@ approve_answer :: proc(m:^kai.Machine,ask:^Approval_Ask,origin:string) -> (body:
         l:kai.Log
         kai.log_init(&l,log,context.temp_allocator)
         if kai.log_open(&m.store,&l,log,kind)!=.None {return nil,"","this device's store does not hold that log: let its agent sync first"}
+        if !sign {return nil,summary,""}
         ctx:store.Hash
         if kind!=.User {
             u:kai.Log
@@ -385,8 +405,13 @@ web_command :: proc(program:string,args:[]string,store_root:="") -> int {
         fmt.eprintfln("%s kai web approve: this device has no user: mirai kai identity makes one, or pair it",program)
         return 1
     }
+    _,asked,ask_why:=approve_answer(m,&ask,origin,false)
+    if ask_why!="" {
+        fmt.eprintfln("%s kai web approve: %s",program,ask_why)
+        return 1
+    }
     if !yes {
-        fmt.printf("%s asks this device to %s. Approve? yes/no: ",origin,ask.kind=="login"?"let a browser sign in":ask.kind=="passkey"?"add a passkey":"sign a write")
+        fmt.printf("%s asks this device to %s. Approve? yes/no: ",origin,asked)
         reader:bufio.Reader
         bufio.reader_init(&reader,os.to_stream(os.stdin),allocator=context.temp_allocator)
         line,_:=bufio.reader_read_string(&reader,'\n',context.temp_allocator)

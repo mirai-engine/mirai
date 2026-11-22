@@ -167,6 +167,22 @@ extensions_parse :: proc(data:[]u8,out:^Extensions) -> Error {
     return nil
 }
 
+// Refuses an extension a message may not carry: one this side did not offer is unsupported,
+// one it offered but not for this message illegal (RFC 8446, 4.2).
+@(private)
+extensions_allowed :: proc(e:^Extensions,allowed,offered:[]int) -> Error {
+    outer: for x in e.list[:e.count] {
+        for kind in allowed {
+            if kind==x.kind {continue outer}
+        }
+        for kind in offered {
+            if kind==x.kind {return .Illegal_Parameter}
+        }
+        return .Unsupported_Extension
+    }
+    return nil
+}
+
 @(private)
 extension_find :: proc(e:^Extensions,kind:int) -> (data:[]u8,found:bool) {
     for x in e.list[:e.count] {
@@ -209,7 +225,9 @@ key_exchange :: proc(c:^Conn,peer:[]u8,dst:^[HASH_MAX]u8) -> (shared:[]u8,err:Er
     if !ecdh.public_key_set_bytes(&public,curve,peer) {return nil,.Illegal_Parameter}
     defer ecdh.public_key_clear(&public)
     size:=ecdh.SHARED_SECRET_SIZES[curve]
-    if !ecdh.ecdh(&c.key_share,&public,dst[:size]) {return nil,.Illegal_Parameter}
+    agreed:=ecdh.ecdh(&c.key_share,&public,dst[:size])
+    ecdh.private_key_clear(&c.key_share)
+    if !agreed {return nil,.Illegal_Parameter}
     return dst[:size],nil
 }
 

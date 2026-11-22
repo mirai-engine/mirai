@@ -12,6 +12,7 @@ import "mirai:net/tls"
 
 INPUT_MAX :: HEAD_MAX+BODY_MAX
 @(private) RAW_MAX :: 16<<10
+@(private) OUTPUT_KEEP :: 64<<10 // an answer buffer larger than this is freed once sent
 
 Conn :: struct {
     socket:net.TCP_Socket,
@@ -27,7 +28,9 @@ Conn :: struct {
     plain_end:bool,       // the peer ended its side
     closing:bool,         // close once the output is sent
     closed:bool,
-    opened,request_at,active:f64,
+    opened,request_at,answer_at:f64,
+    active:f64,           // when a request or its answer last moved
+    progress:bool,        // a request or its answer moved in this step
     requests:int,
     continued:bool,       // 100 Continue sent for the request in progress
 }
@@ -105,13 +108,16 @@ conn_step :: proc(h:^Hub,c:^Conn) -> (busy:bool) {
     busy|=conn_serve(h,c)
     busy|=conn_send(h,c)
     if c.closed {return}
-    if busy {c.active=h.now}
-    // Deadlines: the handshake, a request's head and body, idle keep-alive and a stalled answer.
+    if c.progress {c.active=h.now}
+    c.progress=false
+    // Deadlines: the handshake, a request's head and body, idle keep-alive, a stalled answer
+    // and one taken too slowly.
     switch {
     case c.tls!=nil && !tls.connected(c.tls) && h.now-c.opened>HANDSHAKE_SECONDS: c.closed=true
     case c.input_len>0 && h.now-c.request_at>BODY_SECONDS: c.closed=true
     case c.input_len>0 && !head_whole(c) && h.now-c.request_at>HEAD_SECONDS: c.closed=true
     case len(c.output)>c.output_at && h.now-c.active>WRITE_SECONDS: c.closed=true
+    case len(c.output)>c.output_at && h.now-c.answer_at>RESPONSE_SECONDS: c.closed=true
     case c.input_len==0 && len(c.output)==c.output_at && h.now-c.active>IDLE_SECONDS: c.closed=true
     }
     if c.closing && len(c.output)==c.output_at && (c.tls==nil || len(tls.pending(c.tls))==0) {c.closed=true}
@@ -146,6 +152,7 @@ conn_receive :: proc(h:^Hub,c:^Conn) -> (busy:bool) {
         } else {
             if c.input_len==0 {c.request_at=h.now}
             c.input_len+=n
+            c.progress=true
         }
     }
     if c.secure && !c.closed {busy|=conn_tls_in(h,c)}
@@ -171,10 +178,16 @@ conn_tls_in :: proc(h:^Hub,c:^Conn) -> (busy:bool) {
             if e==.Closed {c.plain_end=true}
         }
         for c.input_len<INPUT_MAX {
-            n,_:=tls.read(c.tls,c.input[c.input_len:])
+            n,e:=tls.read(c.tls,c.input[c.input_len:])
+            if e==.Closed {c.plain_end=true}
+            if e!=nil && e!=.Closed {
+                c.closed=true
+                return true
+            }
             if n==0 {break}
             if c.input_len==0 {c.request_at=h.now}
             c.input_len+=n
+            c.progress=true
             moved=true
         }
         busy|=moved
@@ -198,6 +211,7 @@ conn_serve :: proc(h:^Hub,c:^Conn) -> (busy:bool) {
             return
         }
         busy=true
+        c.progress=true
         h.stats.requests+=1
         if p.status!=200 {
             conn_refuse(h,c,p.status)
@@ -231,11 +245,20 @@ conn_refuse :: proc(h:^Hub,c:^Conn,status:int) {
 
 @(private)
 conn_queue :: proc(c:^Conn,bytes:[]u8) {
-    if c.output_at==len(c.output) {
-        clear(&c.output)
-        c.output_at=0
-    }
+    if c.output_at==len(c.output) {output_sent(c)}
     if _,e:=append(&c.output,..bytes);e!=nil {c.closed=true}
+}
+
+// Empties the answer buffer once all of it was sent, and frees a large one.
+@(private)
+output_sent :: proc(c:^Conn) {
+    if cap(c.output)>OUTPUT_KEEP {
+        allocator:=c.output.allocator
+        delete(c.output)
+        c.output=make([dynamic]u8,allocator)
+    }
+    clear(&c.output)
+    c.output_at=0
 }
 
 // Sends what the answer holds, through TLS when the connection is secure.
@@ -250,8 +273,10 @@ conn_send :: proc(h:^Hub,c:^Conn) -> (busy:bool) {
             }
             if n==0 {break}
             c.output_at+=n
+            c.progress=true
             busy=true
         }
+        if c.output_at==len(c.output) && c.output_at>0 {output_sent(c)}
         if c.closing && c.output_at==len(c.output) && tls.connected(c.tls) {tls.close(c.tls)}
         busy|=conn_flush_tls(c)
         if c.output_at<len(c.output) && !busy {
@@ -263,16 +288,16 @@ conn_send :: proc(h:^Hub,c:^Conn) -> (busy:bool) {
     for c.output_at<len(c.output) {
         n,e:=net.send_tcp(c.socket,c.output[c.output_at:])
         c.output_at+=n
-        if n>0 {busy=true}
+        if n>0 {
+            busy=true
+            c.progress=true
+        }
         if e!=nil {
             if e!=.Would_Block && e!=.Interrupted {c.closed=true}
             break
         }
     }
-    if c.output_at==len(c.output) && c.output_at>0 {
-        clear(&c.output)
-        c.output_at=0
-    }
+    if c.output_at==len(c.output) && c.output_at>0 {output_sent(c)}
     return
 }
 
@@ -321,4 +346,5 @@ conn_answer :: proc(h:^Hub,c:^Conn,method:Method,response:^Response) {
     strings.write_string(&b,"\r\n")
     conn_queue(c,b.buf[:])
     if method!=.HEAD {conn_queue(c,response.body)}
+    c.answer_at=h.now
 }

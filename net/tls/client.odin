@@ -33,7 +33,10 @@ client_message :: proc(c:^Conn,message:[]u8) -> Error {
         if kind==.Finished {return client_finished(c,message)}
     case .Connected:
         if kind==.Key_Update {return key_update_receive(c,message[4:])}
-        if kind==.New_Session_Ticket {return client_ticket(message[4:])}
+        if kind==.New_Session_Ticket {
+            idle_record(c) or_return
+            return client_ticket(message[4:])
+        }
     }
     return .Unexpected_Message
 }
@@ -108,6 +111,20 @@ client_hello_send :: proc(c:^Conn) -> Error {
     return handshake_send(c,w.data[:w.at])
 }
 
+// The extensions this client's hellos carry.
+@(private)
+client_offered :: proc(c:^Conn,dst:^[8]int) -> []int {
+    n:=0
+    for kind in ([?]int{EXT_SUPPORTED_GROUPS,EXT_SIGNATURE_ALGORITHMS,EXT_SUPPORTED_VERSIONS,EXT_KEY_SHARE}) {
+        dst[n]=kind
+        n+=1
+    }
+    if net.parse_address(c.config.host)==nil {dst[n]=EXT_SERVER_NAME;n+=1}
+    if len(c.config.alpn)>0 {dst[n]=EXT_ALPN;n+=1}
+    if c.cookie_len>0 {dst[n]=EXT_COOKIE;n+=1}
+    return dst[:n]
+}
+
 @(private)
 client_server_hello :: proc(c:^Conn,message:[]u8) -> Error {
     r:=Reader{data=message[4:]}
@@ -130,6 +147,12 @@ client_server_hello :: proc(c:^Conn,message:[]u8) -> Error {
     }
     if legacy!=VERSION_TLS12 {return .Protocol_Version}
     if len(versions)!=2 || int(versions[0])<<8|int(versions[1])!=VERSION_TLS13 {return .Illegal_Parameter}
+    retry_random:=RETRY_RANDOM
+    retry:=crypto_equal(random,retry_random[:])
+    // Only a HelloRetryRequest may carry a cookie this client did not send.
+    allowed:=[3]int{EXT_SUPPORTED_VERSIONS,EXT_KEY_SHARE,EXT_COOKIE}
+    offered:[8]int
+    extensions_allowed(&extensions,allowed[:3 if retry else 2],client_offered(c,&offered)) or_return
     if len(session_id)!=0 || compression!=0 {return .Illegal_Parameter}
     suite,known:=suite_of(code)
     if !known || suite not_in c.config.suites || c.retried && suite!=c.suite {return .Illegal_Parameter}
@@ -137,8 +160,7 @@ client_server_hello :: proc(c:^Conn,message:[]u8) -> Error {
     share,has_share:=extension_find(&extensions,EXT_KEY_SHARE)
     if !has_share {return .Missing_Extension}
 
-    retry_random:=RETRY_RANDOM
-    if crypto_equal(random,retry_random[:]) {
+    if retry {
         if c.retried {return .Unexpected_Message}
         if len(share)!=2 {return .Decode}
         group,ok:=group_of(int(share[0])<<8|int(share[1]))
@@ -180,7 +202,14 @@ client_encrypted_extensions :: proc(c:^Conn,message:[]u8) -> Error {
     if !read_done(&r) {return .Decode}
     extensions:Extensions
     extensions_parse(data,&extensions) or_return
+    offered:[8]int
+    extensions_allowed(&extensions,{EXT_SERVER_NAME,EXT_SUPPORTED_GROUPS,EXT_ALPN},client_offered(c,&offered)) or_return
+    if name,found:=extension_find(&extensions,EXT_SERVER_NAME);found {
+        if net.parse_address(c.config.host)!=nil {return .Unsupported_Extension}
+        if len(name)!=0 {return .Decode}
+    }
     if alpn,found:=extension_find(&extensions,EXT_ALPN);found {
+        if len(c.config.alpn)==0 {return .Unsupported_Extension}
         ar:=Reader{data=alpn}
         lr:=Reader{data=read_vector(&ar,2,2,0xffff)}
         name:=read_vector(&lr,1,1,0xff)
@@ -220,8 +249,10 @@ client_certificate :: proc(c:^Conn,message:[]u8) -> Error {
     count:=0
     for list.at<len(list.data) {
         der:=read_vector(&list,3,1,0xffffff)
-        _=read_vector(&list,2,0,0xffff)
+        entry_extensions:=read_vector(&list,2,0,0xffff)
         if list.bad {return .Decode}
+        // This client asks for no OCSP status nor timestamps: an entry carries none.
+        if len(entry_extensions)>0 {return .Unsupported_Extension}
         if count==CERTIFICATES_MAX {return .Bad_Certificate}
         ders[count]=der
         count+=1

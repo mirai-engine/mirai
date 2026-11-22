@@ -75,12 +75,12 @@ server_client_hello :: proc(c:^Conn,message:[]u8) -> Error {
     if err!=nil {return err}
     server_name_take(c,&extensions) or_return
     server_alpn_take(c,&extensions) or_return
-    c.credential=credential_select(c)
-    if c.credential==nil {return .Unrecognized_Name}
+    credential:=credential_select(c)
+    if credential==nil {return .Unrecognized_Name}
 
     transcript_add(c,message)
     if retry {return server_retry(c)}
-    return server_flight(c,share)
+    return server_flight(c,share,credential)
 }
 
 // The client's key share the server takes; retry when it has to ask for another group.
@@ -230,9 +230,9 @@ server_hello_head :: proc(c:^Conn,w:^Writer,random:[32]u8) {
     put_u8(w,0)
 }
 
-// ServerHello to Finished, after the client's hello.
+// ServerHello to Finished, after the client's hello, with the credential it picked.
 @(private)
-server_flight :: proc(c:^Conn,share:[]u8) -> Error {
+server_flight :: proc(c:^Conn,share:[]u8,credential:^Credential) -> Error {
     public_buffer:[65]u8
     public:=key_share_make(c,&public_buffer) or_return
     shared_buffer:[HASH_MAX]u8
@@ -281,7 +281,7 @@ server_flight :: proc(c:^Conn,share:[]u8) -> Error {
     body=message_open(&w,.Certificate)
     put_u8(&w,0)
     list:=vector_open(&w,3)
-    for der in c.credential.chain {
+    for der in credential.chain {
         put_vector(&w,3,der)
         put_u16(&w,0)
     }
@@ -296,7 +296,7 @@ server_flight :: proc(c:^Conn,share:[]u8) -> Error {
     signature_memory:[256]u8
     arena:mem.Arena
     mem.arena_init(&arena,signature_memory[:])
-    signature,signed:=ecdsa.sign_asn1(&c.credential.key,.SHA256,content,mem.arena_allocator(&arena))
+    signature,signed:=ecdsa.sign_asn1(&credential.key,.SHA256,content,mem.arena_allocator(&arena))
     if !signed {return .Internal}
     w=Writer{data=c.scratch}
     body=message_open(&w,.Certificate_Verify)
