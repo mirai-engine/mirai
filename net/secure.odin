@@ -168,8 +168,8 @@ Peer_Secure :: struct {
     early_size:int,
 }
 
-// The symmetric state of a handshake (Noise, section 5.2).
-@(private)
+// The symmetric state of a handshake (Noise, section 5.2): its primitives are those of every
+// pattern of the engine, the NK and IK of a connection here and the XX of a pairing in kai.
 Noise :: struct {ck,h,k:Key,n:u64}
 
 @(private)
@@ -310,16 +310,15 @@ seen_turn :: proc(s:^Host_Secure,now:f64) {
 }
 
 // False when the other end sent a point that leaves nothing secret.
-@(private)
 secure_exchange :: proc(out,scalar,point:^Key) -> bool {
     x25519.scalarmult(out[:],scalar[:],point[:])
     zero:Key
     return crypto.compare_constant_time(out[:],zero[:])==0
 }
 
-// h starts as the name of the protocol, padded with zeros, or as its hash when it is longer than one.
-@(private)
-noise_init :: proc(n:^Noise,name:string,prologue:[]u8,responder:^Key) {
+// h starts as the name of the protocol, padded with zeros, or as its hash when it is longer than
+// one; then the prologue and, when the pattern has it before its messages, the responder's key.
+noise_init :: proc(n:^Noise,name:string,prologue:[]u8,responder:^Key=nil) {
     n^={}
     if len(name)<=KEY_BYTES {
         copy(n.h[:],name)
@@ -331,9 +330,8 @@ noise_init :: proc(n:^Noise,name:string,prologue:[]u8,responder:^Key) {
     }
     n.ck=n.h
     noise_mix_hash(n,prologue)
-    noise_mix_hash(n,responder[:])
+    if responder!=nil {noise_mix_hash(n,responder[:])}
 }
-@(private)
 noise_mix_hash :: proc(n:^Noise,data:[]u8,more:[]u8=nil) {
     ctx:sha2.Context_256
     sha2.init_256(&ctx)
@@ -342,7 +340,6 @@ noise_mix_hash :: proc(n:^Noise,data:[]u8,more:[]u8=nil) {
     sha2.update(&ctx,more)
     sha2.final(&ctx,n.h[:])
 }
-@(private)
 noise_mix_key :: proc(n:^Noise,material:[]u8) {
     out:[KEY_BYTES*2]u8
     hkdf.extract_and_expand(.SHA256,n.ck[:],material,nil,out[:])
@@ -351,7 +348,6 @@ noise_mix_key :: proc(n:^Noise,material:[]u8) {
     n.n=0
     crypto.zero_explicit(&out,size_of(out))
 }
-@(private)
 noise_mix_key_and_hash :: proc(n:^Noise,material:[]u8) {
     out:[KEY_BYTES*3]u8
     hkdf.extract_and_expand(.SHA256,n.ck[:],material,nil,out[:])
@@ -361,13 +357,11 @@ noise_mix_key_and_hash :: proc(n:^Noise,material:[]u8) {
     n.n=0
     crypto.zero_explicit(&out,size_of(out))
 }
-@(private)
 noise_iv :: proc "contextless" (n:u64) -> (iv:[chacha20poly1305.IV_SIZE]u8) {
     endian.unchecked_put_u64le(iv[4:],n)
     return
 }
 // Seals body in place, with the hash as associated data.
-@(private)
 noise_encrypt :: proc(n:^Noise,body,tag:[]u8) {
     ctx:chacha20poly1305.Context
     iv:=noise_iv(n.n)
@@ -378,7 +372,6 @@ noise_encrypt :: proc(n:^Noise,body,tag:[]u8) {
     noise_mix_hash(n,body,tag)
 }
 // Opens body in place. A body that is not authentic comes back zeroed.
-@(private)
 noise_decrypt :: proc(n:^Noise,body,tag:[]u8) -> bool {
     h:=n.h
     noise_mix_hash(n,body,tag)
@@ -390,7 +383,7 @@ noise_decrypt :: proc(n:^Noise,body,tag:[]u8) -> bool {
     n.n+=1
     return ok
 }
-@(private)
+// The keys of the initiator's and the responder's messages; the state is wiped.
 noise_split :: proc(n:^Noise,initiator,responder:^Key) {
     out:[KEY_BYTES*2]u8
     hkdf.extract_and_expand(.SHA256,n.ck[:],nil,nil,out[:])
