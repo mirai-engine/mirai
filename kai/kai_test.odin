@@ -733,7 +733,7 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     _,_,on=workspace_working_of(&f.s,folder_of(&f,"none"))
     testing.expect(t,!on,"a folder that is no workspace shows nothing")
 
-    // A snapshot that fails to save leaves the index in memory as it was.
+    // A snapshot whose commit is cut leaves the index in memory as it was.
     write(t,root,"a.txt","a1")
     write(t,root,"b.txt","b1")
     write(t,root,"c/d.txt","d1")
@@ -741,11 +741,9 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     testing.expect_value(t,e,Error.None)
     rows:=slice.clone(w.index.rows[:],context.temp_allocator)
     write(t,root,"b.txt","b3",40*time.Minute)
-    state_folder:=strings.concatenate({root,"/",STATE_FOLDER},context.temp_allocator)
-    testing.expect(t,os.chmod(state_folder,{.Read_User,.Execute_User})==nil)
+    w.repo.cut_commit=true
     _,e=workspace_snapshot(&w)
-    os.chmod(state_folder,os.Permissions_Read_All+os.Permissions_Execute_All+{.Write_User})
-    testing.expect(t,e!=.None,"the state does not save into a folder it may not write")
+    testing.expect(t,e!=.None,"a snapshot whose commit is cut fails")
     testing.expect(t,slice.equal(rows,w.index.rows[:]),"the index is the one before the failed snapshot")
     write(t,root,"b.txt","b1")
     _,e=workspace_snapshot(&w)
