@@ -328,12 +328,19 @@ join_fetch :: proc(d:^Join_Desc,addresses:[]store.Hash,what:string,allocator:run
     Active :: struct {address:store.Hash,missing:f64}
     active:=make([dynamic]Active,context.temp_allocator)
     defer for a in active {exchange.forget(&n.x,a.address)}
+    // Identical folders share an address. The exchange keeps one want per address.
+    seen:=make(map[store.Hash]bool,len(addresses),context.temp_allocator)
+    defer delete(seen)
     next,complete:=0,0
     stall:Stall
     for next<len(addresses) || len(active)>0 {
         for len(active)<WINDOW && next<len(addresses) {
-            if exchange.want(&n.x,addresses[next],1<<20)!=.None {break}
-            append(&active,Active{addresses[next],-1})
+            address:=addresses[next]
+            if address not_in seen {
+                if exchange.want(&n.x,address,1<<20)!=.None {break}
+                seen[address]=true
+                append(&active,Active{address,-1})
+            }
             next+=1
         }
         for k:=0;k<len(active); {
