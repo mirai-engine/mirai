@@ -467,7 +467,7 @@ publish_and_stamp :: proc(staged,published,retired:string,sources:[]string,stamp
     if !publish(staged,published,retired) {return false,false}
     hash,latest:=fingerprint(stamp.root,stamp.compiler,stamp.flags,sources,tests=stamp.tests,project_folder=stamp.project)
     if stamp.sources_staged!="" {_=os.remove(stamp.sources_file)}
-    stamped=len(sources)>0 && time.diff(latest,stamp.started)>0 && (stamp.sources_staged=="" || os.rename(stamp.sources_staged,stamp.sources_file)==nil)
+    stamped=len(sources)>0 && time.diff(latest,stamp.started)>=0 && (stamp.sources_staged=="" || os.rename(stamp.sources_staged,stamp.sources_file)==nil)
     if stamped {stamped=os.write_entire_file(stamp.file,fmt.tprintf("%x %s",hash,published))==nil}
     if !stamped {
         _=os.remove(stamp.file)

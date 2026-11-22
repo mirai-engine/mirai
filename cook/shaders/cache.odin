@@ -3,6 +3,7 @@ package shaders
 import "base:runtime"
 import "core:encoding/json"
 import "core:fmt"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strconv"
@@ -10,6 +11,7 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 import "core:unicode/utf8"
+import "mirai:cook/workspace"
 import "mirai:render/abi"
 import "mirai:std/serial"
 
@@ -520,16 +522,21 @@ CACHE_PEAKS :: "peaks"
 @(private)
 CACHE_LEDGER :: "compiling"
 
+@(private)
+Cache_Entry_Info :: struct {
+    name:              string,
+    modification_time: time.Time,
+}
+
 // The peaks the shared cache keeps, by key.
 @(private)
 peaks_read :: proc(shared:string,allocator:runtime.Allocator) -> map[string]i64 {
     peaks:=make(map[string]i64,allocator)
     folder:=path_join(shared,CACHE_PEAKS,allocator=context.temp_allocator)
-    files,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
-    if error!=nil {return peaks}
+    files:=cache_dir_entries(folder,context.temp_allocator)
     for file in files {
         if strings.has_suffix(file.name,".tmp") {continue}
-        data,read_error:=os.read_entire_file(file.fullpath,context.temp_allocator)
+        data,read_error:=os.read_entire_file(path_join(folder,file.name,allocator=context.temp_allocator),context.temp_allocator)
         if read_error!=nil {continue}
         if bytes,parsed:=strconv.parse_i64(strings.trim_space(string(data)));parsed && bytes>0 {peaks[strings.clone(file.name,allocator)]=bytes}
     }
@@ -604,31 +611,55 @@ cache_touch :: proc(path:string) {
     _=os.change_times(path,now,now)
 }
 
-// Removes the entries of the shared cache that no generation used in
-// CACHE_UNUSED_DAYS, at most once a day: the file `pruned` says when it last
-// ran. An entry is the files named by its digest; its last use is that of the
-// newest one.
+// Time budget for one automatic prune pass so a large cache drains across builds
+// instead of stalling a build for minutes. Zero means unbounded.
 @(private)
-cache_prune :: proc(shared:string,now:time.Time) {
+CACHE_PRUNE_BUDGET :: 2*time.Second
+
+// Removes the entries of the shared cache that no generation used in
+// CACHE_UNUSED_DAYS, at most once a day: the file `pruned` says when a full
+// pass last finished. An entry is the files named by its digest; its last use
+// is that of the newest one. When budget elapses mid-pass, `pruned` is not
+// updated so the next generation finishes the rest.
+@(private)
+cache_prune :: proc(shared:string,now:time.Time,budget:=CACHE_PRUNE_BUDGET) -> (completed:bool) {
     DAY :: 24*time.Hour
     marker:=path_join(shared,"pruned",allocator=context.temp_allocator)
-    if info,err:=os.stat(marker,context.temp_allocator);err==nil && time.diff(info.modification_time,now)<DAY {return}
-    if os.make_directory_all(shared)!=nil && !os.is_directory(shared) {return}
-    if os.write_entire_file(marker,[]u8{})!=nil {return}
+    if info,err:=os.stat(marker,context.temp_allocator);err==nil && time.diff(info.modification_time,now)<DAY {return true}
+    if os.make_directory_all(shared)!=nil && !os.is_directory(shared) {return false}
+    lock,taken,_,_:=workspace.lock_take(path_join(shared,"pruned.lock",allocator=context.temp_allocator),fmt.tprintf("pid %d",os.get_pid()))
+    if !taken {return false}
+    defer workspace.lock_release(&lock)
+    if info,err:=os.stat(marker,context.temp_allocator);err==nil && time.diff(info.modification_time,now)<DAY {return true}
+    started:=time.tick_now()
     oldest:=time.time_add(now,-CACHE_UNUSED_DAYS*DAY)
     digest :: proc(name:string) -> string {
         end:=strings.index_byte(name,'.')
         return name[:end] if end>=0 else name
     }
-    for folder in ([]string{CACHE_STAGES,CACHE_REFLECTION,CACHE_EMBEDDED,CACHE_PEAKS}) {
-        files,err:=os.read_all_directory_by_path(path_join(shared,folder,allocator=context.temp_allocator),context.temp_allocator)
-        if err!=nil {continue}
-        newest:=make(map[string]time.Time,context.temp_allocator)
+    completed=true
+    folders: for folder in ([]string{CACHE_STAGES,CACHE_REFLECTION,CACHE_EMBEDDED,CACHE_PEAKS}) {
+        if budget>0 && time.tick_since(started)>=budget {completed=false;break}
+        arena:virtual.Arena
+        if virtual.arena_init_growing(&arena)!=nil {return false}
+        defer virtual.arena_destroy(&arena)
+        a:=virtual.arena_allocator(&arena)
+        dir:=path_join(shared,folder,allocator=a)
+        files:=cache_dir_entries(dir,a)
+        if len(files)==0 {continue}
+        newest:=make(map[string]time.Time,len(files),a)
         for file in files {
-            if last,seen:=newest[digest(file.name)];!seen || time.diff(last,file.modification_time)>0 {newest[digest(file.name)]=file.modification_time}
+            key:=digest(file.name)
+            if last,seen:=newest[key];!seen || time.diff(last,file.modification_time)>0 {newest[key]=file.modification_time}
         }
+        removed:=0
         for file in files {
-            if time.diff(newest[digest(file.name)],oldest)>0 {_=os.remove(file.fullpath)}
+            if time.diff(newest[digest(file.name)],oldest)<=0 {continue}
+            if budget>0 && removed>0 && removed%64==0 && time.tick_since(started)>=budget {completed=false;break folders}
+            _=os.remove(path_join(dir,file.name,allocator=a))
+            removed+=1
         }
     }
+    if completed {_=os.write_entire_file(marker,[]u8{})}
+    return completed
 }

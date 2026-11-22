@@ -62,6 +62,18 @@ a_test_executable_is_current_by_the_content_of_what_its_build_read :: proc(t:^te
     testing.expect(t,current(root,compiler,executable,flags),"the text put back")
     testing.expect(t,os.remove(executable)==nil)
     testing.expect(t,!current(root,compiler,executable,flags),"the executable is gone")
+    // Equal-tick mtime (e.g. Windows NTFS 15.6 ms granularity) still stamps; newer mtime does not.
+    same_tick:=time.unix(500,0)
+    testing.expect(t,os.change_times(imported_tests,same_tick,same_tick)==nil)
+    if !testing.expect(t,os.write_entire_file(planned.compile.staged,"executable")==nil) {return}
+    if !testing.expect(t,os.write_entire_file(planned.sources_staged,data)==nil) {return}
+    published,stamped=publish_and_stamp(planned.compile.staged,executable,strings.concatenate({executable,".old"}),listed,{file=test_stamp_file(executable),sources_file=test_sources_file(executable),sources_staged=planned.sources_staged,root=root,compiler=compiler,flags=planned.flags,tests=true,started=same_tick})
+    testing.expect(t,published && stamped,"same-tick mtime stamps cleanly")
+    if !testing.expect(t,os.write_entire_file(planned.compile.staged,"executable")==nil) {return}
+    if !testing.expect(t,os.write_entire_file(planned.sources_staged,data)==nil) {return}
+    before_edit:=time.unix(499,0)
+    published,stamped=publish_and_stamp(planned.compile.staged,executable,strings.concatenate({executable,".old"}),listed,{file=test_stamp_file(executable),sources_file=test_sources_file(executable),sources_staged=planned.sources_staged,root=root,compiler=compiler,flags=planned.flags,tests=true,started=before_edit})
+    testing.expect(t,published && !stamped,"source modified after compile start does not stamp")
 }
 
 // A test executable builds, runs in the root it was planned with whatever
