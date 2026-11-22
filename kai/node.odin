@@ -18,6 +18,8 @@ import "mirai:store"
 
 DDC_SWEEP_SECONDS :: 60.0 // between two looks at the quota
 
+DDC_USES_MAX :: 1<<14 // keys a ddc node remembers when they were used; past it the oldest is forgotten
+
 @(private)
 DDC_Use :: struct {org:Log_Id,key:store.Hash,at:i64} // ns
 
@@ -85,13 +87,19 @@ object_bytes :: proc(s:^store.Store,address:store.Hash) -> i64 {
 @(private)
 runner_ddc_touch :: proc(r:^Runner,org:Log_Id,key:store.Hash) {
     now:=time.now()._nsec
-    for &u in r.ddc_use {
+    oldest:=-1
+    for &u,k in r.ddc_use {
         if u.org==org && u.key==key {
             u.at=now
             return
         }
+        if oldest<0 || u.at<r.ddc_use[oldest].at {oldest=k}
     }
-    append(&r.ddc_use,DDC_Use{org,key,now})
+    if len(r.ddc_use)<DDC_USES_MAX {
+        append(&r.ddc_use,DDC_Use{org,key,now})
+    } else {
+        r.ddc_use[oldest]=DDC_Use{org,key,now}
+    }
 }
 
 // Drops the least recently used keys of every org until the outputs fit the

@@ -128,7 +128,7 @@ headless_arm64_server_builds_and_serves_public_and_member_views :: proc(t:^testi
             subprocess.exec({command={"docker","stop","-t","2",name}},context.temp_allocator)
         }
     }
-    get :: proc(origin,path:string,roots:[]^x509.Certificate,port:int,cookie:="",method:="GET",body:="") -> (r:Client_Response,why:string) {
+    get :: proc(origin,path:string,roots:[]^x509.Certificate,port:int,cookie:="",method:="GET",body:="") -> (r:tls.Response,why:string) {
         return client_call(origin,method,path,transmute([]u8)body,roots,cookie,"127.0.0.1",port)
     }
     answered:=false

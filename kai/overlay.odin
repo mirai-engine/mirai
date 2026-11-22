@@ -908,9 +908,10 @@ overlay_record_error :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit
 }
 
 // Signs and stores the record of scope at commit and points its ref at it: it
-// follows base, or the record the ref holds when that one is newer.
+// follows base, or the record the ref holds when that one is newer. With refs,
+// the ref is added to them for the caller to set with others in one commit.
 @(private)
-overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record,base:store.Hash,base_seq:u64) -> (address:store.Hash,error:Error) {
+overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record,base:store.Hash,base_seq:u64,refs:^[dynamic]store.Ref_Set=nil) -> (address:store.Hash,error:Error) {
     r.prev,r.seq=base,base_seq+1
     if held,held_address,e:=overlay_record_get(s,r.project,r.scope,r.commit,context.temp_allocator);e==.None && held.seq>=base_seq {
         r.prev,r.seq=held_address,held.seq+1
@@ -920,7 +921,12 @@ overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record
     address=overlay_put(s,.Record,bytes) or_return
     ns:[len(OVERLAY_PREFIX)+64+1+32]u8
     name:[64]u8
-    if e:=store.ref_set(s,overlay_namespace(r.project,r.scope,&ns),store.hex(r.commit,&name),address);e!=.None {return {},store_error(e)}
+    set:=store.Ref_Set{overlay_namespace(r.project,r.scope,&ns),store.hex(r.commit,&name),address}
+    if refs==nil {return address,store_error(store.ref_set(s,set.namespace,set.name,set.hash))}
+    namespace,e1:=strings.clone(set.namespace,context.temp_allocator)
+    text,e2:=strings.clone(set.name,context.temp_allocator)
+    if e1!=nil || e2!=nil {return {},.Out_Of_Memory}
+    if _,e:=append(refs,store.Ref_Set{namespace,text,address});e!=nil {return {},.Out_Of_Memory}
     return address,.None
 }
 
@@ -972,12 +978,12 @@ keyring_of_org :: proc(s:^store.Store,org:^Org_Fold,id:Log_Id,address:store.Hash
 
 // Carries the overlay of scope at from to the commit to: a new record of the
 // same sealed tree and objects, signed again, without any key.
-overlay_rebase :: proc(s:^store.Store,identity:^Identity,project:Log_Id,scope:Scope_Id,from,to:Revision,time:i64) -> (address:store.Hash,error:Error) {
+overlay_rebase :: proc(s:^store.Store,identity:^Identity,project:Log_Id,scope:Scope_Id,from,to:Revision,time:i64,refs:^[dynamic]store.Ref_Set=nil) -> (address:store.Hash,error:Error) {
     if from==to {return {},.Invalid_Argument}
     old,old_address:=overlay_record_get(s,project,scope,from,context.temp_allocator) or_return
     r:=old
     r.commit,r.time=to,time
-    return overlay_record_write(s,identity,&r,old_address,old.seq)
+    return overlay_record_write(s,identity,&r,old_address,old.seq,refs)
 }
 
 // --- Reading an overlay ---
@@ -1304,21 +1310,22 @@ plain_hash :: proc(path:string) -> (hash:store.Hash,size:u64,error:Error) {
 // Writes the records of plan for the public change commit: each readable
 // scope's sealed tree, and for a scope this device cannot read, the overlay it
 // followed, carried unchanged. A readable scope with no files and none before
-// writes nothing.
-overlay_publish :: proc(r:^Overlay_Routing,s:^store.Store,plan:^Overlay_Plan,commit:Revision) -> Error {
+// writes nothing. Their refs are added to refs, which the operation that makes
+// commit sets in its one commit.
+overlay_publish :: proc(r:^Overlay_Routing,s:^store.Store,plan:^Overlay_Plan,commit:Revision,refs:^[dynamic]store.Ref_Set) -> Error {
     if r==nil {return .None}
     t:=time.now()._nsec
     for &p in plan.scopes {
         if p.readable {
             if (len(p.files)==0 && p.base=={}) || (p.unchanged && p.base_commit==commit) {continue}
             rec:=Overlay_Record{head={commit=commit,project=r.project,scope=p.scope.scope,epoch=p.keyring.epoch,tree_root=p.tree,time=t},objects=p.objects[:]}
-            overlay_record_write(s,&r.device.identity,&rec,p.base,p.base_seq) or_return
+            overlay_record_write(s,&r.device.identity,&rec,p.base,p.base_seq,refs) or_return
         } else if p.base!={} {
             base:=overlay_get(s,p.base,.Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
             rec:=overlay_record_decode(base) or_return
             if rec.commit==commit {continue}
             rec.commit,rec.time=commit,t
-            overlay_record_write(s,&r.device.identity,&rec,p.base,rec.seq) or_return
+            overlay_record_write(s,&r.device.identity,&rec,p.base,rec.seq,refs) or_return
         }
     }
     return .None
@@ -1427,7 +1434,11 @@ Blob_Head :: struct #packed {
     scopes:u8,
     reserved:u8,
     project:Log_Id,
-} // + scopes × (Scope_Id, u32 epoch), then nonce || AEGIS-256 || tag
+} // + scopes × (Scope_Id, u32 epoch)
+
+@(private) BLOB_HEAD_TAG :: u32('K')|u32('O')<<8|u32('V')<<16|u32('H')<<24 // the group of a blob's head
+@(private) BLOB_HEAD_MAX :: size_of(Blob_Head)+TAINTED_MAX*(size_of(Scope_Id)+4)
+@(private) BLOB_CHUNKS_MAX :: OVERLAY_BLOB_MAX/OVERLAY_CHUNK_MAX+1
 
 @(private)
 blob_key :: proc(keys:[]Epoch_Key,head:[]u8) -> (k:[32]u8) {
@@ -1440,68 +1451,202 @@ blob_key :: proc(keys:[]Epoch_Key,head:[]u8) -> (k:[32]u8) {
     return
 }
 
-// Seals an output built from inputs of scopes under the newest epoch of every
-// one of them at once: only a device that reads them all opens it. Its
-// address is what ddc_publish records, with scopes as its tainted scopes.
-overlay_blob_seal :: proc(s:^store.Store,keyrings:[]^Keyring_Fold,device:^Overlay_Device,project:Log_Id,scopes:[]Scope_Id,bytes:[]u8) -> (address:store.Hash,error:Error) {
-    if len(scopes)==0 || len(scopes)>TAINTED_MAX {return {},.Invalid_Argument}
-    if len(bytes)>OVERLAY_BLOB_MAX {return {},.Too_Large}
-    w:=writer_make(context.temp_allocator)
-    write_value(&w,Blob_Head{magic=OVERLAY_MAGIC,version=VERSION,scopes=u8(len(scopes)),project=project})
-    keys:=make([]Epoch_Key,len(scopes),context.temp_allocator)
-    defer crypto.zero_explicit(raw_data(keys),len(keys)*size_of(Epoch_Key))
+// The additional data of the chunk of group index of a blob: "kai-1/blob" || head || index ||
+// last, so that no chunk moves, and none is cut off the end.
+@(private)
+blob_aad :: proc(head:[]u8,index:int,last:bool,out:^[len(LABEL_BLOB)+BLOB_HEAD_MAX+5]u8) -> []u8 {
+    copy(out[:],LABEL_BLOB)
+    at:=len(LABEL_BLOB)+copy(out[len(LABEL_BLOB):],head)
+    put_u32(out[at:],u32(index))
+    out[at+4]=u8(last)
+    return out[:at+5]
+}
+
+// The head of a blob of scopes and the file keys of its chunks: the key of the newest epoch
+// of every scope at once, so only a device that reads them all opens it.
+@(private)
+blob_keys :: proc(keyrings:[]^Keyring_Fold,device:^Overlay_Device,project:Log_Id,scopes:[]Scope_Id,epochs:[]u32,head:^[BLOB_HEAD_MAX]u8) -> (size:int,keys:File_Keys,error:Error) {
+    if len(scopes)==0 || len(scopes)>TAINTED_MAX {return 0,{},.Invalid_Argument}
+    h:=Blob_Head{magic=OVERLAY_MAGIC,version=VERSION,scopes=u8(len(scopes)),project=project}
+    size=copy(head[:],mem.ptr_to_bytes(&h))
+    epoch_keys:[TAINTED_MAX]Epoch_Key
+    defer crypto.zero_explicit(&epoch_keys,size_of(epoch_keys))
     for sc,i in scopes {
         k:^Keyring_Fold
         for kr in keyrings {
             if kr.project==project && kr.scope==sc {k=kr}
         }
-        if k==nil || keyring_needs_rotation(k) {return {},.Unauthorized}
-        keys[i]=keyring_epoch_key(k,device,k.epoch) or_return
+        if k==nil {return 0,{},.Unauthorized}
+        epoch:=epochs[i] if epochs!=nil else k.epoch
+        if epochs==nil && keyring_needs_rotation(k) {return 0,{},.Unauthorized}
+        epoch_keys[i]=keyring_epoch_key(k,device,epoch) or_return
         id:=sc
-        write_bytes(&w,id[:])
-        write_value(&w,u32le(k.epoch))
+        size+=copy(head[size:],id[:])
+        put_u32(head[size:],epoch)
+        size+=4
     }
-    if w.failed {return {},.Out_Of_Memory}
-    head:=len(w.data)
-    if resize(&w.data,head+SEAL_NONCE+len(bytes)+SEAL_TAG)!=nil {return {},.Out_Of_Memory}
-    crypto.rand_bytes(w.data[head:][:SEAL_NONCE])
-    k:=blob_key(keys,w.data[:head])
-    defer crypto.zero_explicit(&k,32)
-    aead_seal(k[:],w.data[head:][:SEAL_NONCE],w.data[:head],bytes,w.data[head+SEAL_NONCE:][:len(bytes)],w.data[head+SEAL_NONCE+len(bytes):])
-    return overlay_put(s,.Blob,w.data[:])
+    blob:=blob_key(epoch_keys[:len(scopes)],head[:size])
+    defer crypto.zero_explicit(&blob,size_of(blob))
+    return size,file_keys(&blob,{}),.None
 }
 
-// The bytes of a sealed output, in allocator, and the scopes it is sealed under.
-overlay_blob_open :: proc(s:^store.Store,keyrings:[]^Keyring_Fold,device:^Overlay_Device,address:store.Hash,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
-    sealed:=overlay_get(s,address,.Blob,OVERLAY_BLOB_MAX+(1<<16),context.temp_allocator) or_return
-    r:=Reader{data=sealed}
-    head:=read_value(&r,Blob_Head)
-    if r.short || head.magic!=OVERLAY_MAGIC || head.version!=VERSION || head.reserved!=0 || head.scopes==0 || int(head.scopes)>TAINTED_MAX {return nil,.Corrupt}
-    keys:=make([]Epoch_Key,int(head.scopes),context.temp_allocator)
-    defer crypto.zero_explicit(raw_data(keys),len(keys)*size_of(Epoch_Key))
-    for i in 0..<int(head.scopes) {
-        sc:=read_value(&r,Scope_Id)
-        epoch:=u32(read_value(&r,u32le))
-        if r.short {return nil,.Corrupt}
-        k:^Keyring_Fold
-        for kr in keyrings {
-            if kr.project==head.project && kr.scope==sc {k=kr}
+// Seals an output built from inputs of scopes as it is written: one native group of its
+// head, then chunks of OVERLAY_CHUNK_MAX bytes sealed one at a time as a private file's
+// are, so its memory does not grow with the output. Its address is what ddc_publish
+// records, with scopes as its tainted scopes. finish or abandon ends it.
+Blob_Sealer :: struct {
+    z:Sealer,
+    p:store.Put,
+    keys:File_Keys,
+    head:[BLOB_HEAD_MAX]u8,
+    head_size:int,
+    buffer:[]u8, // what is not sealed yet
+    have:int,
+    size:int,
+    groups:int, // sealed chunks
+    error:Error,
+    allocator:runtime.Allocator,
+}
+
+overlay_blob_begin :: proc(b:^Blob_Sealer,s:^store.Store,keyrings:[]^Keyring_Fold,device:^Overlay_Device,project:Log_Id,scopes:[]Scope_Id,allocator:=context.allocator) -> (error:Error) {
+    b^={allocator=allocator}
+    b.head_size,b.keys=blob_keys(keyrings,device,project,scopes,nil,&b.head) or_return
+    defer if error!=.None {blob_sealer_destroy(b)}
+    sealer_init(&b.z,allocator) or_return
+    made:runtime.Allocator_Error
+    b.buffer,made=make([]u8,OVERLAY_CHUNK_MAX,allocator)
+    if made!=nil {return .Out_Of_Memory}
+    p,e:=store.put_begin(s)
+    if e!=.None {return store_error(e)}
+    // One store per value until odin-lang/Odin#7937.
+    b.p=p
+    if e=store.put_native(&b.p,BLOB_HEAD_TAG,0,0,b.head[:b.head_size],nil);e!=.None {
+        store.put_abandon(&b.p)
+        return store_error(e)
+    }
+    return .None
+}
+
+overlay_blob_write :: proc(b:^Blob_Sealer,bytes:[]u8) {
+    rest:=bytes
+    for len(rest)>0 && b.error==.None {
+        if len(rest)>OVERLAY_BLOB_MAX-b.size {
+            b.error=.Too_Large
+            return
         }
-        if k==nil {return nil,.Unauthorized}
-        keys[i]=keyring_epoch_key(k,device,epoch) or_return
+        // A full buffer is sealed once more follows it: the last chunk is told apart.
+        if b.have==len(b.buffer) {blob_seal(b,false)}
+        n:=copy(b.buffer[b.have:],rest)
+        b.have+=n
+        b.size+=n
+        rest=rest[n:]
     }
-    at:=r.at
-    if len(sealed)-at<SEAL_NONCE+SEAL_TAG {return nil,.Corrupt}
-    length:=len(sealed)-at-SEAL_NONCE-SEAL_TAG
-    out,made:=make([]u8,length,allocator)
-    if made!=nil {return nil,.Out_Of_Memory}
-    k:=blob_key(keys,sealed[:at])
-    defer crypto.zero_explicit(&k,32)
-    if !aead_open(k[:],sealed[at:][:SEAL_NONCE],sealed[:at],sealed[at+SEAL_NONCE:][:length],sealed[at+SEAL_NONCE+length:],out) {
-        delete(out,allocator)
-        return nil,.Corrupt
+}
+
+@(private)
+blob_seal :: proc(b:^Blob_Sealer,last:bool) {
+    aad:[len(LABEL_BLOB)+BLOB_HEAD_MAX+5]u8
+    sealed,e:=seal_chunk(&b.z,&b.keys,blob_aad(b.head[:b.head_size],b.groups+1,last,&aad),b.buffer[:b.have])
+    if e!=.None {
+        b.error=e
+        return
     }
-    return out,.None
+    if f:=store.put_native(&b.p,OVERLAY_TAG,u32(b.groups+1),0,sealed,nil);f!=.None {
+        b.error=store_error(f)
+        return
+    }
+    b.groups+=1
+    b.have=0
+}
+
+// The address of the sealed output; nothing written is Invalid_Argument.
+overlay_blob_finish :: proc(b:^Blob_Sealer) -> (address:store.Hash,error:Error) {
+    defer blob_sealer_destroy(b)
+    if b.error==.None && b.size==0 {b.error=.Invalid_Argument}
+    if b.error==.None {blob_seal(b,true)}
+    if b.error!=.None {
+        store.put_abandon(&b.p)
+        return {},b.error
+    }
+    meta:=overlay_meta(.Blob)
+    a,_,e:=store.put_finish(&b.p,meta[:])
+    return a,store_error(e)
+}
+
+overlay_blob_abandon :: proc(b:^Blob_Sealer) {
+    store.put_abandon(&b.p)
+    blob_sealer_destroy(b)
+}
+
+@(private)
+blob_sealer_destroy :: proc(b:^Blob_Sealer) {
+    sealer_destroy(&b.z)
+    if b.buffer!=nil {crypto.zero_explicit(raw_data(b.buffer),len(b.buffer))}
+    delete(b.buffer,b.allocator)
+    file_keys_clear(&b.keys)
+    b.buffer=nil
+}
+
+// Opens a sealed output chunk by chunk: overlay_blob_next gives each one's bytes.
+Blob_Reader :: struct {
+    o:store.Object,
+    z:Sealer,
+    keys:File_Keys,
+    head:[BLOB_HEAD_MAX]u8,
+    head_size:int,
+    group:int, // the next to open
+    open:bool,
+}
+
+overlay_blob_open :: proc(b:^Blob_Reader,s:^store.Store,keyrings:[]^Keyring_Fold,device:^Overlay_Device,address:store.Hash,allocator:=context.allocator) -> (error:Error) {
+    b^={group=1}
+    o,open:=store.object_open(s,address)
+    if open!=.None {return store_error(open)}
+    // One store per value until odin-lang/Odin#7937.
+    b.o=o
+    b.open=true
+    defer if error!=.None {overlay_blob_close(b)}
+    overlay_kind_check(&b.o,.Blob) or_return
+    groups:=store.object_groups(&b.o)
+    if len(groups)<2 || len(groups)>BLOB_CHUNKS_MAX+1 || groups[0].tag!=BLOB_HEAD_TAG || groups[0].index!=0 || groups[1].offset>BLOB_HEAD_MAX || groups[1].offset<size_of(Blob_Head) {return .Corrupt}
+    size:=int(groups[1].offset)
+    if e:=store.group_read(&b.o,0,0,b.head[:size]);e!=.None {return store_error(e)}
+    r:=Reader{data=b.head[:size]}
+    head:=read_value(&r,Blob_Head)
+    if r.short || head.magic!=OVERLAY_MAGIC || head.version!=VERSION || head.reserved!=0 || head.scopes==0 || int(head.scopes)>TAINTED_MAX || size!=size_of(Blob_Head)+int(head.scopes)*(size_of(Scope_Id)+4) {return .Corrupt}
+    scopes:[TAINTED_MAX]Scope_Id
+    epochs:[TAINTED_MAX]u32
+    for i in 0..<int(head.scopes) {
+        scopes[i]=read_value(&r,Scope_Id)
+        epochs[i]=u32(read_value(&r,u32le))
+    }
+    again:[BLOB_HEAD_MAX]u8
+    b.head_size,b.keys=blob_keys(keyrings,device,head.project,scopes[:head.scopes],epochs[:head.scopes],&again) or_return
+    copy(b.head[:],again[:b.head_size])
+    return sealer_init(&b.z,allocator)
+}
+
+// The bytes of the next chunk, in the reader's buffer until the next call; none after the
+// last. A chunk that does not open, or an output cut short, is Corrupt.
+overlay_blob_next :: proc(b:^Blob_Reader) -> (plain:[]u8,error:Error) {
+    groups:=store.object_groups(&b.o)
+    if b.group>=len(groups) {return nil,.None}
+    g:=groups[b.group]
+    end:=b.group+1<len(groups)?groups[b.group+1].offset:store.object_size(&b.o)
+    if g.tag!=OVERLAY_TAG || g.index!=u32(b.group) || end<g.offset || end-g.offset>u64(len(b.z.sealed)) {return nil,.Corrupt}
+    sealed:=b.z.sealed[:end-g.offset]
+    if e:=store.group_read(&b.o,b.group,0,sealed);e!=.None {return nil,store_error(e)}
+    aad:[len(LABEL_BLOB)+BLOB_HEAD_MAX+5]u8
+    plain=open_chunk(&b.z,&b.keys,blob_aad(b.head[:b.head_size],b.group,b.group==len(groups)-1,&aad),sealed) or_return
+    b.group+=1
+    return plain,.None
+}
+
+overlay_blob_close :: proc(b:^Blob_Reader) {
+    if b.open {store.object_close(&b.o)}
+    sealer_destroy(&b.z)
+    file_keys_clear(&b.keys)
+    b^={}
 }
 
 // --- Publish scanner ---

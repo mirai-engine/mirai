@@ -208,9 +208,22 @@ hostile_kai_records_are_refused :: proc(t:^testing.T) {
         return folder_decode(b,folder_totals,&out)
     },"a folder",versioned=false)
     out:=make([dynamic]Tree_Entry,context.temp_allocator)
-    folded:=[]Tree_Entry{{name="A",kind=.File,address={0=1},size=1,files=1},{name="a",kind=.File,address={0=2},size=1,files=1}}
-    folded_bytes,folded_totals,_:=folder_encode(folded,context.temp_allocator)
-    testing.expect_value(t,folder_decode(folded_bytes,folded_totals,&out),Error.Corrupt)
+    // Names that differ only in case, side by side in byte order or apart ("Ab" < "B" < "aB").
+    f,opened:=fixture(t,"kai-hostile-fold")
+    if !opened {return}
+    defer store.close(&f.s)
+    for names in ([?][3]string{{"A","a","b"},{"Ab","B","aB"},{"\u00c9t\u00e9","b","\u00e9t\u00e9"}}) {
+        folded:=[3]Tree_Entry{}
+        for name,k in names {folded[k]={name=name,kind=.File,address={0=u8(k+1)},size=1,files=1}}
+        folded_bytes,folded_totals,_:=folder_encode(folded[:],context.temp_allocator)
+        testing.expectf(t,folder_decode(folded_bytes,folded_totals,&out)==.Corrupt,"%v decodes",names)
+        files:=[3]File{}
+        for name,k in names {files[k]={path=name,kind=.File,address=empty_address()}}
+        slice.sort_by(files[:],proc(a,b:File) -> bool {return a.path<b.path})
+        clash:[2]string
+        _,e:=tree_build(&f.s,files[:],clash=&clash)
+        testing.expectf(t,e==.Invalid_Argument && clash[0]!="" && strings.equal_fold(clash[0],clash[1]),"%v builds: %v %v",names,e,clash)
+    }
 
     index:Stat_Index
     index.rows=make([dynamic]Stat_Row,context.temp_allocator)
@@ -362,15 +375,16 @@ every_operation_undoes :: proc(t:^testing.T) {
     defer repo_close(&r)
     first:=repo_working(&r)
     file,_:=store.put(&f.s,transmute([]u8)string("hello\n"))
-    tree,_:=tree_build(&f.s,{File{path="hello.txt",kind=.File,address=file,size=6}})
+    tree,_:=tree_build(&f.s,{File{path="hello.txt",kind=.File,address=file,size=6},File{path="world.txt",kind=.File,address=file,size=6}})
     other:Revision
 
-    Step :: enum {Snapshot,New,Describe,Restore,Bookmark,Rebase,Merge,Workspace,Abandon,Move_Bookmark}
+    Step :: enum {Snapshot,Split,New,Describe,Restore,Bookmark,Rebase,Merge,Workspace,Abandon,Move_Bookmark}
     for step in Step {
         before:=r.view_address
         e:Error
         switch step {
         case .Snapshot: _,e=change_snapshot(&r,tree)
+        case .Split: _,_,e=change_split(&r,repo_working(&r),{"hello.txt"})
         case .New: other,e=change_new(&r,{repo_working(&r)},"second")
         case .Describe: _,e=change_describe(&r,repo_working(&r),"described")
         case .Restore:
@@ -544,6 +558,53 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     testing.expect(t,w.state.target=={},"no switch is left under way")
     _=two
 
+    // What a list of projects shows of the workspace, read without opening it: its working
+    // change, and a bookmark on it once one points there.
+    change,bookmark,on:=workspace_working_of(&f.s,root)
+    one_change,_:=change_get(&f.s,one,context.temp_allocator)
+    testing.expect(t,on && change==one_change.id && bookmark=="","the working change, read without opening the workspace")
+    testing.expect_value(t,bookmark_set(&w.repo,"main",one),Error.None)
+    _,bookmark,on=workspace_working_of(&f.s,root)
+    testing.expect_value(t,bookmark,"main")
+    _,_,on=workspace_working_of(&f.s,folder_of(&f,"none"))
+    testing.expect(t,!on,"a folder that is no workspace shows nothing")
+
+    // A snapshot that fails to save leaves the index in memory as it was.
+    write(t,root,"a.txt","a1")
+    write(t,root,"b.txt","b1")
+    write(t,root,"c/d.txt","d1")
+    _,e=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+    rows:=slice.clone(w.index.rows[:],context.temp_allocator)
+    write(t,root,"b.txt","b3",40*time.Minute)
+    state_folder:=strings.concatenate({root,"/",STATE_FOLDER},context.temp_allocator)
+    testing.expect(t,os.chmod(state_folder,{.Read_User,.Execute_User})==nil)
+    _,e=workspace_snapshot(&w)
+    os.chmod(state_folder,os.Permissions_Read_All+os.Permissions_Execute_All+{.Write_User})
+    testing.expect(t,e!=.None,"the state does not save into a folder it may not write")
+    testing.expect(t,slice.equal(rows,w.index.rows[:]),"the index is the one before the failed snapshot")
+    write(t,root,"b.txt","b1")
+    _,e=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+
+    // A workspace whose sibling is this one clones a file the sibling's index row says it
+    // holds without reading it (a.txt, rewritten in place with the row's size, time and
+    // inode, comes as the sibling has it), and takes from the store one edited since (b.txt).
+    row,_:=stat_find(&w.index,"a.txt")
+    a_path:=strings.concatenate({root,"/a.txt"},context.temp_allocator)
+    testing.expect(t,os.write_entire_file(a_path,transmute([]u8)string("A1"))==nil)
+    settled:=time.unix(0,row.mtime_ns)
+    testing.expect(t,os.change_times(a_path,settled,settled)==nil)
+    write(t,root,"b.txt","bX",20*time.Minute)
+    sibling_root:=folder_of(&f,"sibling")
+    v:Workspace
+    testing.expect_value(t,workspace_add(&v,sibling_root,&w,identity,{sibling=root}),Error.None)
+    testing.expect_value(t,workspace_switch(&v,one),Error.None)
+    testing.expect_value(t,read(sibling_root,"a.txt"),"A1")
+    testing.expect_value(t,read(sibling_root,"b.txt"),"b1")
+    testing.expect_value(t,read(sibling_root,"c/d.txt"),"d1")
+    workspace_close(&v)
+
     // The folder opened with a store that never held its repository says so.
     workspace_close(&w)
     other,oe:=store.open(strings.concatenate({f.folder,"/other"},context.temp_allocator))
@@ -638,6 +699,13 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     write(t,root,"edit.txt","v3, on disk",30*time.Minute)
     before:=b.repo.view_address
     why:string
+    // A split cut after its objects and before its commit moved nothing: neither its operation
+    // nor the records of its overlays.
+    b.repo.cut_commit=true
+    cut_first,cut_second,ce:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&routing_bob,&why)
+    testing.expect_value(t,ce,Error.Io)
+    testing.expect(t,b.repo.view_address==before,"the view is the one before the cut split")
+    testing.expect(t,cut_first!={} && overlay_record_error(&f.s,o.project.id,scope,cut_first)==.Missing && overlay_record_error(&f.s,o.project.id,scope,cut_second)==.Missing,"no overlay record of the cut split was set")
     first,second,se:=change_split(&b.repo,split,{"new.txt","gone.txt","art","d","d/x.txt"},nil,&routing_bob,&why)
     if !testing.expectf(t,se==.None,"%v %s",se,why) {return}
     after:=b.repo.view_address
@@ -678,8 +746,14 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
 
     testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
     testing.expect(t,b.repo.view_address==before,"one undo gives the view before the split")
+    // Records are kept by revision and an operation writes only those of revisions it made: the
+    // view an undo gives back reads its private files as they were, and so does a redo.
+    opened,oe=open_files(t,&f.s,&kf,&alice,split)
+    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the change split and undone has its private files")
     testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
     testing.expect(t,b.repo.view_address==after,"undoing the undo splits again")
+    opened,oe=open_files(t,&f.s,&kf,&alice,second)
+    testing.expect(t,oe==.None && opened["secrets/key.txt"]=="new secret","the split done again has the second's private files")
 
     // The working copy kept its files, and the edit on disk reaches the second.
     testing.expect_value(t,read(root,"edit.txt"),"v3, on disk")

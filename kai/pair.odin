@@ -2,9 +2,6 @@ package kai
 
 import "core:crypto"
 import "core:crypto/chacha20poly1305"
-import "core:crypto/hkdf"
-import "core:crypto/sha2"
-import "core:crypto/x25519"
 import "core:encoding/endian"
 import "core:mem"
 import net "mirai:net"
@@ -211,8 +208,7 @@ Pair :: struct {
     step:Pair_Message, // the last message written or read
     ticket:[16]u8,
     expect:Dh_Key,     // initiator: the responder key of the ticket
-    ck,h,k:[PAIR_KEY]u8,
-    n:u64,
+    noise:net.Noise,
     s:net.Dh_Key,      // this end's static key
     e:net.Dh_Key,      // its ephemeral
     re,rs:[PAIR_KEY]u8,
@@ -240,12 +236,10 @@ pair_init :: proc(p:^Pair,initiator:bool,s:net.Dh_Key,ticket_id:[16]u8,expect:Dh
     }
     p.e=net.dh_key_from(&private)
     crypto.zero_explicit(&private,size_of(private))
-    copy(p.h[:],PAIR_PROTOCOL)
-    p.ck=p.h
     prologue:[len(LABEL_PAIR_PROLOGUE)+16]u8
     copy(prologue[:],LABEL_PAIR_PROLOGUE)
     copy(prologue[len(LABEL_PAIR_PROLOGUE):],ticket[:])
-    pair_mix_hash(p,prologue[:])
+    net.noise_init(&p.noise,PAIR_PROTOCOL,prologue[:])
 }
 
 // Wipes the keys of p.
@@ -295,76 +289,39 @@ pair_code_of :: proc(e_i,e_r,s_i,s_r:[32]u8,n_i,n_r:[PAIR_NONCE]u8) -> (code:[PA
 }
 
 @(private)
-pair_mix_hash :: proc(p:^Pair,data:[]u8) {
-    ctx:sha2.Context_256
-    sha2.init_256(&ctx)
-    sha2.update(&ctx,p.h[:])
-    sha2.update(&ctx,data)
-    sha2.final(&ctx,p.h[:])
-}
+pair_mix_hash :: proc(p:^Pair,data:[]u8) {net.noise_mix_hash(&p.noise,data)}
 
 @(private)
-pair_mix_key :: proc(p:^Pair,scalar:^net.Key,point:[]u8) -> bool {
-    shared:[PAIR_KEY]u8
-    defer crypto.zero_explicit(&shared,PAIR_KEY)
-    x25519.scalarmult(shared[:],scalar[:],point)
-    zero:[PAIR_KEY]u8
-    if crypto.compare_constant_time(shared[:],zero[:])==1 {return false}
-    out:[2*PAIR_KEY]u8
-    hkdf.extract_and_expand(.SHA256,p.ck[:],shared[:],nil,out[:])
-    copy(p.ck[:],out[:PAIR_KEY])
-    copy(p.k[:],out[PAIR_KEY:])
-    p.n=0
-    crypto.zero_explicit(&out,size_of(out))
+pair_mix_key :: proc(p:^Pair,scalar,point:^net.Key) -> bool {
+    shared:net.Key
+    defer crypto.zero_explicit(&shared,size_of(shared))
+    if !net.secure_exchange(&shared,scalar,point) {return false}
+    net.noise_mix_key(&p.noise,shared[:])
     return true
-}
-
-@(private)
-pair_iv :: proc "contextless" (n:u64) -> (iv:[chacha20poly1305.IV_SIZE]u8) {
-    endian.unchecked_put_u64le(iv[4:],n)
-    return
 }
 
 // Seals plain into out, which takes PAIR_TAG more bytes.
 @(private)
 pair_encrypt :: proc(p:^Pair,plain,out:[]u8) {
-    ctx:chacha20poly1305.Context
-    iv:=pair_iv(p.n)
-    chacha20poly1305.init(&ctx,p.k[:])
-    chacha20poly1305.seal(&ctx,out[:len(plain)],out[len(plain):][:PAIR_TAG],iv[:],p.h[:],plain)
-    chacha20poly1305.reset(&ctx)
-    p.n+=1
-    pair_mix_hash(p,out[:len(plain)+PAIR_TAG])
+    copy(out,plain)
+    net.noise_encrypt(&p.noise,out[:len(plain)],out[len(plain):][:PAIR_TAG])
 }
 
 @(private)
 pair_decrypt :: proc(p:^Pair,sealed,out:[]u8) -> bool {
     if len(sealed)<PAIR_TAG || len(out)<len(sealed)-PAIR_TAG {return false}
     size:=len(sealed)-PAIR_TAG
-    ctx:chacha20poly1305.Context
-    iv:=pair_iv(p.n)
-    chacha20poly1305.init(&ctx,p.k[:])
-    ok:=chacha20poly1305.open(&ctx,out[:size],iv[:],p.h[:],sealed[:size],sealed[size:])
-    chacha20poly1305.reset(&ctx)
-    p.n+=1
-    pair_mix_hash(p,sealed)
-    return ok
+    copy(out[:size],sealed[:size])
+    return net.noise_decrypt(&p.noise,out[:size],sealed[size:])
 }
 
 @(private)
 pair_split :: proc(p:^Pair) {
-    out:[2*PAIR_KEY]u8
-    hkdf.extract_and_expand(.SHA256,p.ck[:],nil,nil,out[:])
     if p.initiator {
-        copy(p.send[:],out[:PAIR_KEY])
-        copy(p.receive[:],out[PAIR_KEY:])
+        net.noise_split(&p.noise,&p.send,&p.receive)
     } else {
-        copy(p.receive[:],out[:PAIR_KEY])
-        copy(p.send[:],out[PAIR_KEY:])
+        net.noise_split(&p.noise,&p.receive,&p.send)
     }
-    crypto.zero_explicit(&out,size_of(out))
-    crypto.zero_explicit(&p.k,PAIR_KEY)
-    crypto.zero_explicit(&p.ck,PAIR_KEY)
 }
 
 @(private)
@@ -424,10 +381,10 @@ pair_write_p2 :: proc(p:^Pair,info:[]u8,out:[]u8) -> (message:[]u8,error:Pair_Er
     copy(out[at:],p.e.public[:])
     pair_mix_hash(p,p.e.public[:])
     at+=PAIR_KEY
-    if !pair_mix_key(p,&p.e.private,p.re[:]) {return nil,.Weak_Key}
+    if !pair_mix_key(p,&p.e.private,&p.re) {return nil,.Weak_Key}
     pair_encrypt(p,p.s.public[:],out[at:])
     at+=PAIR_KEY+PAIR_TAG
-    if !pair_mix_key(p,&p.s.private,p.re[:]) {return nil,.Weak_Key}
+    if !pair_mix_key(p,&p.s.private,&p.re) {return nil,.Weak_Key}
     plain:[PAIR_NONCE+PAIR_INFO_MAX]u8
     copy(plain[:],p.nonce[:])
     copy(plain[PAIR_NONCE:],info)
@@ -445,11 +402,11 @@ pair_read_p2 :: proc(p:^Pair,message:[]u8) -> Pair_Error {
     copy(p.re[:],message[at:][:PAIR_KEY])
     pair_mix_hash(p,p.re[:])
     at+=PAIR_KEY
-    if !pair_mix_key(p,&p.e.private,p.re[:]) {return .Weak_Key}
+    if !pair_mix_key(p,&p.e.private,&p.re) {return .Weak_Key}
     if !pair_decrypt(p,message[at:][:PAIR_KEY+PAIR_TAG],p.rs[:]) {return .Corrupt}
     at+=PAIR_KEY+PAIR_TAG
     if p.expect!={} && Dh_Key(p.rs)!=p.expect {return .Ticket}
-    if !pair_mix_key(p,&p.e.private,p.rs[:]) {return .Weak_Key}
+    if !pair_mix_key(p,&p.e.private,&p.rs) {return .Weak_Key}
     plain:[PAIR_NONCE+PAIR_INFO_MAX]u8
     sealed:=message[at:]
     if !pair_decrypt(p,sealed,plain[:]) {return .Corrupt}
@@ -469,7 +426,7 @@ pair_write_p3 :: proc(p:^Pair,info:[]u8,out:[]u8) -> (message:[]u8,error:Pair_Er
     at:=PAIR_HEAD
     pair_encrypt(p,p.s.public[:],out[at:])
     at+=PAIR_KEY+PAIR_TAG
-    if !pair_mix_key(p,&p.s.private,p.re[:]) {return nil,.Weak_Key}
+    if !pair_mix_key(p,&p.s.private,&p.re) {return nil,.Weak_Key}
     plain:[PAIR_NONCE+PAIR_INFO_MAX]u8
     copy(plain[:],p.nonce[:])
     copy(plain[PAIR_NONCE:],info)
@@ -488,7 +445,7 @@ pair_read_p3 :: proc(p:^Pair,message:[]u8) -> Pair_Error {
     at:=PAIR_HEAD
     if !pair_decrypt(p,message[at:][:PAIR_KEY+PAIR_TAG],p.rs[:]) {return .Corrupt}
     at+=PAIR_KEY+PAIR_TAG
-    if !pair_mix_key(p,&p.e.private,p.rs[:]) {return .Weak_Key}
+    if !pair_mix_key(p,&p.e.private,&p.rs) {return .Weak_Key}
     plain:[PAIR_NONCE+PAIR_INFO_MAX]u8
     sealed:=message[at:]
     if !pair_decrypt(p,sealed,plain[:]) {return .Corrupt}
@@ -517,7 +474,7 @@ pair_write_p4 :: proc(p:^Pair,status:Pair_Status,payload:[]u8,out:[]u8) -> (mess
     copy(out[PAIR_HEAD+9:],payload)
     body:=out[PAIR_HEAD+8:][:1+len(payload)]
     ctx:chacha20poly1305.Context
-    iv:=pair_iv(p.sent)
+    iv:=net.noise_iv(p.sent)
     chacha20poly1305.init(&ctx,p.send[:])
     chacha20poly1305.seal(&ctx,body,out[PAIR_HEAD+9+len(payload):][:PAIR_TAG],iv[:],out[:PAIR_HEAD+8],body)
     chacha20poly1305.reset(&ctx)
@@ -536,7 +493,7 @@ pair_read_p4 :: proc(p:^Pair,message:[]u8) -> (status:Pair_Status,payload:[]u8,e
     size:=len(message)-PAIR_HEAD-8-PAIR_TAG
     body:=message[PAIR_HEAD+8:][:size]
     ctx:chacha20poly1305.Context
-    iv:=pair_iv(counter)
+    iv:=net.noise_iv(counter)
     chacha20poly1305.init(&ctx,p.receive[:])
     ok:=chacha20poly1305.open(&ctx,body,iv[:],message[:PAIR_HEAD+8],body,message[len(message)-PAIR_TAG:])
     chacha20poly1305.reset(&ctx)

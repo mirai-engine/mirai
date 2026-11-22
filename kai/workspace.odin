@@ -246,7 +246,7 @@ workspace_create :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identi
     repo_create(&w.repo,s,identity,random_id(Workspace_Id),options.drivers,allocator) or_return
     working:=change_get(s,repo_working(&w.repo),context.temp_allocator) or_return
     w.state.repo,w.state.id,w.state.op,w.state.tree=w.repo.id,w.repo.workspace,w.repo.op,working.tree
-    state_save(w) or_return
+    state_save(w,&w.state) or_return
     _=workspace_snapshot(w) or_return
     return .None
 }
@@ -263,7 +263,7 @@ workspace_add :: proc(w:^Workspace,root:string,from:^Workspace,identity:Identity
     revision:=workspace_add_to_view(&w.repo,w.repo.workspace,parent) or_return
     empty:=tree_empty(s) or_return
     w.state.repo,w.state.id,w.state.op,w.state.tree=w.repo.id,w.repo.workspace,w.repo.op,empty
-    state_save(w) or_return
+    state_save(w,&w.state) or_return
     c:=change_get(s,revision,context.temp_allocator) or_return
     return checkout(w,c.tree)
 }
@@ -284,12 +284,46 @@ workspace_open :: proc(w:^Workspace,root:string,s:^store.Store,identity:Identity
 // The repository of the workspace at root, read without taking its lock: what
 // another process asks of a workspace an editor holds. False when root holds none.
 workspace_repo_of :: proc(root:string) -> (repo:Repo_Id,ok:bool) {
+    head:=state_head_of(root) or_return
+    return head.repo,true
+}
+
+// What the workspace at root is on, read without its lock, a snapshot or a
+// hash: the working change of the last operation it wrote, and a bookmark that
+// points at it. False when root holds no workspace of a repository of s.
+workspace_working_of :: proc(s:^store.Store,root:string) -> (change:Change_Id,bookmark:string,ok:bool) {
+    head:=state_head_of(root) or_return
+    names:=Repo{id=head.repo,workspace=head.id}
+    repo_names(&names)
+    op,missing:=store.ref_get(s,names.namespace,names.ref)
+    if missing!=.None {return}
+    o,e:=op_get(s,op,context.temp_allocator)
+    if e!=.None {return}
+    v:View
+    view_init(&v,context.temp_allocator)
+    if view_get(s,o.view,&v)!=.None {return}
+    working:=view_workspace(&v,head.id)
+    if working=={} {return}
+    c,f:=change_get(s,working,context.temp_allocator)
+    if f!=.None {return}
+    for &b in v.bookmarks {
+        if target,resolved:=terms_resolved(&b.terms);resolved && target==working {
+            bookmark=b.name
+            break
+        }
+    }
+    return c.id,bookmark,true
+}
+
+// The head of the state of the workspace at root, read without its lock.
+@(private)
+state_head_of :: proc(root:string) -> (head:State_Head,ok:bool) {
     bytes,e:=os.read_entire_file(strings.concatenate({root,"/",STATE_FOLDER,"/workspace"},context.temp_allocator),context.temp_allocator)
     if e!=nil {return}
     r:=Reader{data=bytes}
-    head:=read_value(&r,State_Head)
-    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.repo=={} {return}
-    return head.repo,true
+    head=read_value(&r,State_Head)
+    if r.short || head.magic!=KAI_MAGIC || head.version!=VERSION || head.repo=={} || head.id=={} {return {},false}
+    return head,true
 }
 
 workspace_close :: proc(w:^Workspace) {
@@ -326,37 +360,43 @@ workspace_path :: proc(w:^Workspace,relative:string) -> string {
 }
 
 @(private)
-state_save :: proc(w:^Workspace) -> Error {
-    bytes:=state_encode(&w.state,context.temp_allocator) or_return
+state_save :: proc(w:^Workspace,st:^Workspace_State) -> Error {
+    bytes:=state_encode(st,context.temp_allocator) or_return
     return file_replace(workspace_path(w,STATE_FOLDER+"/workspace"),bytes,false)
 }
 
+// The ref of the stat index of the workspace id.
 @(private)
-index_ref :: proc(w:^Workspace,buffer:^[64]u8) -> string {
+index_ref :: proc(id:Workspace_Id,buffer:^[64]u8) -> string {
     copy(buffer[:],"index-")
-    id:=w.repo.workspace
+    id:=id
     return string(buffer[:6+len(hex_text(id[:],buffer[6:]))])
 }
 
 // The stat index this workspace last saved; empty when it does not read.
 @(private)
 index_load :: proc(w:^Workspace) {
-    buffer:[64]u8
-    address,e:=store.ref_get(w.repo.s,w.repo.namespace,index_ref(w,&buffer))
-    if e!=.None {return}
-    bytes,f:=object_get(w.repo.s,address,.Stat_Index,context.temp_allocator)
-    if f!=.None || stat_decode(bytes,&w.index)!=.None {
+    if !index_read(w.repo.s,w.repo.namespace,w.repo.workspace,&w.index) {
         clear(&w.index.rows)
         clear(&w.index.pool)
     }
 }
 
 @(private)
-index_save :: proc(w:^Workspace) -> Error {
-    bytes:=stat_encode(&w.index,context.temp_allocator) or_return
+index_read :: proc(s:^store.Store,namespace:string,id:Workspace_Id,index:^Stat_Index) -> bool {
+    buffer:[64]u8
+    address,e:=store.ref_get(s,namespace,index_ref(id,&buffer))
+    if e!=.None {return false}
+    bytes,f:=object_get(s,address,.Stat_Index,context.temp_allocator)
+    return f==.None && stat_decode(bytes,index)==.None
+}
+
+@(private)
+index_save :: proc(w:^Workspace,index:^Stat_Index) -> Error {
+    bytes:=stat_encode(index,context.temp_allocator) or_return
     address:=object_put(w.repo.s,.Stat_Index,bytes) or_return
     buffer:[64]u8
-    return store_error(store.ref_set(w.repo.s,w.repo.namespace,index_ref(w,&buffer),address))
+    return store_error(store.ref_set(w.repo.s,w.repo.namespace,index_ref(w.repo.workspace,&buffer),address))
 }
 
 // A file found on disk.
@@ -410,35 +450,58 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     }
     report.hashed=len(changed)
     report.files=len(found)
-    // The new index; a file modified too close to now is hashed again next time.
-    clear(&w.index.rows)
-    clear(&w.index.pool)
-    files:=make([dynamic]File,context.temp_allocator)
+    // The new index, which replaces the one in memory only once the snapshot is saved; a file
+    // modified too close to now is hashed again next time.
+    next:Stat_Index
+    next.rows=make([dynamic]Stat_Row,0,len(found),context.temp_allocator)
+    next.pool=make([dynamic]u8,context.temp_allocator)
+    files:=make([dynamic]File,0,len(found),context.temp_allocator)
     for f in found {
         flags:=f.executable ? STAT_EXECUTABLE : 0
         if f.racy || now-f.mtime_ns<=SETTLED_NANOSECONDS {flags|=STAT_RACY}
-        at:=len(w.index.pool)
-        if _,e:=append(&w.index.pool,f.path);e!=nil {return report,.Out_Of_Memory}
+        at:=len(next.pool)
+        if _,e:=append(&next.pool,f.path);e!=nil {return report,.Out_Of_Memory}
         row:=Stat_Row{size=f.size,mtime_ns=f.mtime_ns,inode=f.inode,address=f.address,path_at=u32(at),path_len=u16(len(f.path)),flags=flags}
-        if _,e:=append(&w.index.rows,row);e!=nil {return report,.Out_Of_Memory}
+        if _,e:=append(&next.rows,row);e!=nil {return report,.Out_Of_Memory}
         if _,e:=append(&files,File{path=f.path,kind=f.executable?.Executable:.File,address=f.address,size=f.size});e!=nil {return report,.Out_Of_Memory}
     }
-    conflicts_apply(w,&files) or_return
+    st:=w.state
+    st.conflicts=make([dynamic]Materialized,0,len(w.state.conflicts),context.temp_allocator)
+    append(&st.conflicts,..w.state.conflicts[:])
+    conflicts_apply(&st,&files) or_return
     root:=tree_build(w.repo.s,files[:]) or_return
-    report.revision=change_snapshot(&w.repo,root) or_return
-    overlay_publish(w.options.overlay,w.repo.s,&plan,report.revision) or_return
-    index_save(w) or_return
-    w.state.op,w.state.tree=w.repo.op,root
-    state_save(w) or_return
+    report.revision=change_snapshot(&w.repo,root,w.options.overlay,&plan) or_return
+    index_save(w,&next) or_return
+    st.op,st.tree=w.repo.op,root
+    state_save(w,&st) or_return
+    if reserve(&w.index.rows,len(next.rows))!=nil || reserve(&w.index.pool,len(next.pool))!=nil {
+        index_load(w)
+    } else {
+        clear(&w.index.rows)
+        clear(&w.index.pool)
+        append(&w.index.rows,..next.rows[:])
+        append(&w.index.pool,..next.pool[:])
+    }
+    // The conflicts kept are some of the state's: the others' paths are freed.
+    for m in w.state.conflicts {
+        kept:=false
+        for x in st.conflicts {kept||=raw_data(x.path)==raw_data(m.path)}
+        if !kept {delete(m.path,w.allocator)}
+    }
+    conflicts:=w.state.conflicts
+    clear(&conflicts)
+    append(&conflicts,..st.conflicts[:])
+    st.conflicts=conflicts
+    w.state=st
     return report,.None
 }
 
-// Keeps each conflict whose path still holds what the checkout wrote; drops
-// the ones an edit resolved.
+// Keeps each conflict of st whose path still holds what the checkout wrote;
+// drops the ones an edit resolved, without freeing their paths.
 @(private)
-conflicts_apply :: proc(w:^Workspace,files:^[dynamic]File) -> Error {
-    for k:=0;k<len(w.state.conflicts); {
-        m:=w.state.conflicts[k]
+conflicts_apply :: proc(st:^Workspace_State,files:^[dynamic]File) -> Error {
+    for k:=0;k<len(st.conflicts); {
+        m:=st.conflicts[k]
         at,found:=slice.binary_search_by(files[:],m.path,proc(f:File,path:string) -> slice.Ordering {return slice.cmp(f.path,path)})
         under:=false
         prefix:=strings.concatenate({m.path,"/"},context.temp_allocator)
@@ -449,8 +512,7 @@ conflicts_apply :: proc(w:^Workspace,files:^[dynamic]File) -> Error {
         }
         kept:=!under && (found ? files[at].address==m.written && m.written!={} : m.written=={})
         if !kept {
-            delete(m.path,w.allocator)
-            ordered_remove(&w.state.conflicts,k)
+            ordered_remove(&st.conflicts,k)
             continue
         }
         entry:=File{path=m.path,kind=.Conflict,address=m.conflict}
@@ -624,14 +686,14 @@ temp_path :: proc(path:string) -> string {
 }
 
 // Writes the object at address to path through a temporary file and a rename,
-// cloning the file of a sibling workspace when it holds the same bytes.
+// cloning the file of a sibling workspace when its index says it holds the same bytes.
 @(private)
-file_write_object :: proc(w:^Workspace,address:store.Hash,path:string,relative:string,executable:bool) -> Error {
+file_write_object :: proc(w:^Workspace,sibling:^Stat_Index,address:store.Hash,path:string,relative:string,executable:bool) -> Error {
     if dir,_:=os.split_path(path);dir!="" {
         if os.make_directory_all(dir)!=nil && !os.is_dir(dir) {return .Io}
     }
     temp:=temp_path(path)
-    if sibling_clone(w,relative,address,temp) {
+    if sibling_clone(w,sibling,relative,address,executable,temp) {
         if os.rename(temp,path)==nil {return .None}
         os.remove(temp)
     }
@@ -662,41 +724,28 @@ file_write_object :: proc(w:^Workspace,address:store.Hash,path:string,relative:s
     return failed
 }
 
-// Clones the file at relative of the sibling workspace into temp when the
-// sibling's index says it holds address and is settled.
+// The stat index the sibling workspace last saved, when it is one of this repository.
 @(private)
-sibling_clone :: proc(w:^Workspace,relative:string,address:store.Hash,temp:string) -> bool {
+sibling_index :: proc(w:^Workspace,index:^Stat_Index) -> bool {
     if w.options.sibling=="" {return false}
-    path:=strings.concatenate({w.options.sibling,"/",relative},context.temp_allocator)
-    info,e:=os.lstat(path,context.temp_allocator)
-    if e!=nil || info.type!=.Regular {return false}
-    // The sibling's own file must still be what it was hashed as: check its bytes' address.
-    a,_,f:=file_address(path)
-    if f!=.None || a!=address {return false}
-    return file_clone(path,temp)==.None
+    head,ok:=state_head_of(w.options.sibling)
+    if !ok || head.repo!=w.repo.id || head.id==w.repo.workspace || head.target!={} {return false}
+    index.rows=make([dynamic]Stat_Row,context.temp_allocator)
+    index.pool=make([dynamic]u8,context.temp_allocator)
+    return index_read(w.repo.s,w.repo.namespace,head.id,index)
 }
 
-// The address of the file at path as a put would name it, without putting it.
-file_address :: proc(path:string) -> (address:store.Hash,size:u64,error:Error) {
-    wr:store.Object_Writer
-    if store.object_writer_init(&wr,{procedure=proc(data:rawptr,kind:store.Chunk_Kind,address:store.Hash,bytes:[]u8) -> store.Error {return .None}})!=.None {return {},0,.Out_Of_Memory}
-    defer store.object_writer_destroy(&wr)
-    file,open_error:=os.open(path)
-    if open_error!=nil {return {},0,.Io}
-    defer os.close(file)
-    buffer,made:=make([]u8,READ_BYTES,context.temp_allocator)
-    if made!=nil {return {},0,.Out_Of_Memory}
-    for {
-        n,read_error:=os.read(file,buffer)
-        if n>0 {
-            if store.object_write(&wr,buffer[:n])!=.None {return {},0,.Out_Of_Memory}
-            size+=u64(n)
-        }
-        if read_error==.EOF || (n==0 && read_error==nil) {break}
-        if read_error!=nil {return {},0,.Io}
-    }
-    root,_,e:=store.object_finish(&wr)
-    return root,size,store_error(e)
+// Clones the file at relative of the sibling workspace into temp when the
+// sibling's index row says it holds address, settled, and the file still has
+// the row's size, time and inode: its bytes are not read.
+@(private)
+sibling_clone :: proc(w:^Workspace,sibling:^Stat_Index,relative:string,address:store.Hash,executable:bool,temp:string) -> bool {
+    row,known:=stat_find(sibling,relative)
+    if !known || row.address!=address || row.flags&STAT_RACY!=0 || (row.flags&STAT_EXECUTABLE!=0)!=executable {return false}
+    path:=strings.concatenate({w.options.sibling,"/",relative},context.temp_allocator)
+    info,e:=os.lstat(path,context.temp_allocator)
+    if e!=nil || info.type!=.Regular || u64(max(info.size,0))!=row.size || time.to_unix_nanoseconds(info.modification_time)!=row.mtime_ns || u64(info.inode)!=row.inode {return false}
+    return file_clone(path,temp)==.None
 }
 
 // Finishes a switch a cut stopped midway: true when there was one.
@@ -712,12 +761,14 @@ recover :: proc(w:^Workspace) -> (recovered:bool,error:Error) {
 @(private)
 checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
     w.state.target=target
-    state_save(w) or_return
+    state_save(w,&w.state) or_return
     changes:=make([dynamic]Diff,context.temp_allocator)
     tree_diff(w.repo.s,w.state.tree,target,&changes,context.temp_allocator) or_return
     content:=make([dynamic]u8,context.temp_allocator)
+    updates:=make([dynamic]Index_Update,context.temp_allocator)
+    sibling:Stat_Index
+    sibling_index(w,&sibling)
     written:=0
-    now:=time.now()._nsec
     for d in changes {
         if w.cut_after>=0 && written>=w.cut_after {return .Io}
         path:=workspace_path(w,d.path)
@@ -760,14 +811,23 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
             if os.is_dir(path) {
                 if os.remove_all(path)!=nil {return .Io}
             }
-            file_write_object(w,address,path,d.path,executable) or_return
+            file_write_object(w,&sibling,address,path,d.path,executable) or_return
         }
         written+=1
-        index_update(w,d.path,address,d.after.kind,now) or_return
+        u:=Index_Update{path=d.path,remove=address=={} || d.after.kind==.Conflict}
+        if !u.remove {
+            info,e:=os.lstat(path,context.temp_allocator)
+            if e!=nil {return .Io}
+            // Racy: it was written now.
+            u.row=Stat_Row{size=u64(max(info.size,0)),mtime_ns=time.to_unix_nanoseconds(info.modification_time),inode=u64(info.inode),address=address,flags=STAT_RACY}
+            if executable {u.row.flags|=STAT_EXECUTABLE}
+        }
+        if _,e:=append(&updates,u);e!=nil {return .Out_Of_Memory}
     }
+    index_merge(&w.index,updates[:]) or_return
     w.state.tree,w.state.target,w.state.op=target,{},w.repo.op
-    index_save(w) or_return
-    return state_save(w)
+    index_save(w,&w.index) or_return
+    return state_save(w,&w.state)
 }
 
 // Removes the folders a deleted file leaves empty.
@@ -784,32 +844,40 @@ folders_prune :: proc(w:^Workspace,relative:string) {
     }
 }
 
-// Updates the row of a file a checkout wrote: racy, since it was written now.
+// What a checkout wrote at path: its row, or none for a file it removed or a conflict.
 @(private)
-index_update :: proc(w:^Workspace,relative:string,address:store.Hash,kind:Entry_Kind,now:i64) -> Error {
-    row,known:=stat_find(&w.index,relative)
-    if address=={} || kind==.Conflict {
-        if known {
-            at:=(uintptr(row)-uintptr(raw_data(w.index.rows)))/size_of(Stat_Row)
-            ordered_remove(&w.index.rows,int(at))
+Index_Update :: struct {
+    path:string,
+    row:Stat_Row,
+    remove:bool,
+}
+
+// Puts updates, sorted by path, into the index in one pass.
+@(private)
+index_merge :: proc(index:^Stat_Index,updates:[]Index_Update) -> Error {
+    if len(updates)==0 {return .None}
+    merged,made:=make([dynamic]Stat_Row,0,len(index.rows)+len(updates),context.temp_allocator)
+    if made!=nil {return .Out_Of_Memory}
+    k:=0
+    for u in updates {
+        for k<len(index.rows) && stat_path(index,index.rows[k])<u.path {
+            append(&merged,index.rows[k])
+            k+=1
         }
-        return .None
+        row:=u.row
+        if k<len(index.rows) && stat_path(index,index.rows[k])==u.path {
+            row.path_at,row.path_len=index.rows[k].path_at,index.rows[k].path_len
+            k+=1
+        } else if !u.remove {
+            row.path_at,row.path_len=u32(len(index.pool)),u16(len(u.path))
+            if _,e:=append(&index.pool,u.path);e!=nil {return .Out_Of_Memory}
+        }
+        if !u.remove {append(&merged,row)}
     }
-    info,e:=os.lstat(workspace_path(w,relative),context.temp_allocator)
-    if e!=nil {return .Io}
-    updated:=Stat_Row{size=u64(info.size),mtime_ns=time.to_unix_nanoseconds(info.modification_time),inode=u64(info.inode),address=address,flags=STAT_RACY}
-    if kind==.Executable {updated.flags|=STAT_EXECUTABLE}
-    if known {
-        updated.path_at,updated.path_len=row.path_at,row.path_len
-        row^=updated
-        return .None
-    }
-    updated.path_at,updated.path_len=u32(len(w.index.pool)),u16(len(relative))
-    if _,f:=append(&w.index.pool,relative);f!=nil {return .Out_Of_Memory}
-    at:=0
-    for at<len(w.index.rows) && stat_path(&w.index,w.index.rows[at])<relative {at+=1}
-    if _,f:=inject_at(&w.index.rows,at,updated);f!=nil {return .Out_Of_Memory}
-    _=now
+    append(&merged,..index.rows[k:])
+    if reserve(&index.rows,len(merged))!=nil {return .Out_Of_Memory}
+    clear(&index.rows)
+    append(&index.rows,..merged[:])
     return .None
 }
 

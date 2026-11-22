@@ -14,6 +14,7 @@ import "core:unicode/utf8"
 import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/install"
+import ka "mirai:cook/kai"
 import "mirai:cook/textures"
 import wire "mirai:net"
 import "mirai:platform"
@@ -72,6 +73,7 @@ Projects_Row :: struct {
     path:[project.RECENT_PATH]u8,
     name:[64]u8,
     missing:bool,   // the folder or its project.mirai is gone
+    kai:[64]u8,     // what its workspace is on: a bookmark or the working change
     opened:[32]u8,  // when an editor last opened it, as the list says it
     recent_index:int, // index in p.recent.projects, or -1 when discovered on disk
     thumbnail:u64,  // the key of the image its tile shows in the atlas of previews; 0: its letter
@@ -236,6 +238,7 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
         }
     }
     base.text_set(row.name[:],name)
+    if !row.missing {base.text_set(row.kai[:],ka.working_text(&s.store,folder))}
     base.text_set(row.opened[:],projects_when(opened,now,region))
     return
 }
@@ -904,6 +907,11 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
             if row.missing {
                 if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"danger_soft"),radius=11}) {
                     ui.label(ctx,"Folder not found",ui.metric(ctx,"font_small"),ui.tone(ctx,"danger"))
+                }
+            } else if on:=base.text_get(row.kai[:]);on!="" {
+                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=11}) {
+                    ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),ui.tone(ctx,"text_muted"),12)
+                    ui.label(ctx,on,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
                 }
             }
             if row.missing && ui.button(ctx,ui.id(ctx,"project_remove",index),{label="Remove",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {remove=true}

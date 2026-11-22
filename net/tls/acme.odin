@@ -20,6 +20,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:std/base"
+import "mirai:std/serial"
 
 Acme :: struct {
     directory:string, // the URL of the directory, https
@@ -123,17 +124,17 @@ acme_start :: proc(s:^Acme_Session) -> Acme_Error {
     hash.hash_string_to_buffer(.SHA256,s.jwk,digest[:])
     s.thumbprint=base64url(s,digest[:]) or_return
 
-    j:=json_begin(s) or_return
-    json_raw(&j,`{"termsOfServiceAgreed":true`)
+    j:=json_begin(s)
+    serial.text_write_raw(&j,`{"termsOfServiceAgreed":true`)
     if len(s.acme.contact)>0 {
-        json_raw(&j,`,"contact":[`)
+        serial.text_write_raw(&j,`,"contact":[`)
         for c,i in s.acme.contact {
-            if i>0 {json_raw(&j,",")}
-            json_text(&j,c)
+            if i>0 {serial.text_write_raw(&j,",")}
+            serial.text_write_string(&j,c)
         }
-        json_raw(&j,"]")
+        serial.text_write_raw(&j,"]")
     }
-    json_raw(&j,"}")
+    serial.text_write_raw(&j,"}")
     payload:=json_end(&j) or_return
     account:=acme_post(s,s.new_account,payload,true) or_return
     if account.status!=200 && account.status!=201 {return .Malformed}
@@ -144,15 +145,15 @@ acme_start :: proc(s:^Acme_Session) -> Acme_Error {
 
 @(private)
 acme_new_order :: proc(s:^Acme_Session,domains:[]string) -> (url:string,order:Acme_Order,err:Acme_Error) {
-    j:=json_begin(s) or_return
-    json_raw(&j,`{"identifiers":[`)
+    j:=json_begin(s)
+    serial.text_write_raw(&j,`{"identifiers":[`)
     for d,i in domains {
-        if i>0 {json_raw(&j,",")}
-        json_raw(&j,`{"type":"dns","value":`)
-        json_text(&j,d)
-        json_raw(&j,"}")
+        if i>0 {serial.text_write_raw(&j,",")}
+        serial.text_write_raw(&j,`{"type":"dns","value":`)
+        serial.text_write_string(&j,d)
+        serial.text_write_raw(&j,"}")
     }
-    json_raw(&j,"]}")
+    serial.text_write_raw(&j,"]}")
     payload:=json_end(&j) or_return
     r:=acme_post(s,s.new_order,payload,false) or_return
     if r.status!=201 {return "",{},.Malformed}
@@ -238,10 +239,10 @@ acme_finalize :: proc(s:^Acme_Session,url:string,order:Acme_Order,domains:[]stri
     csr,e=x509.marshal_csr(info,.ECDSA_SHA256,signature,s.allocator)
     if e!=.None {return nil,.Out_Of_Memory}
     csr_text:=base64url(s,csr) or_return
-    j:=json_begin(s) or_return
-    json_raw(&j,`{"csr":"`)
-    json_raw(&j,csr_text)
-    json_raw(&j,`"}`)
+    j:=json_begin(s)
+    serial.text_write_raw(&j,`{"csr":"`)
+    serial.text_write_raw(&j,csr_text)
+    serial.text_write_raw(&j,`"}`)
     payload:=json_end(&j) or_return
 
     current:=order
@@ -318,8 +319,9 @@ acme_wait :: proc(s:^Acme_Session,r:Response) {
 @(private)
 acme_http :: proc(s:^Acme_Session,method,url:string,body:[]u8) -> (r:Response,err:Acme_Error) {
     a:=s.acme
+    if !strings.has_prefix(url,"https://") {return {},.Malformed}
     e:Http_Error
-    r,e=https_request(a.transport,a.roots,a.time,method,url,body,"application/jose+json",s.allocator,s.scratch)
+    r,e=http_request(a.transport,{method=method,url=url,body=body,content_type="application/jose+json",roots=a.roots,time=a.time},s.allocator,s.scratch)
     switch e {
     case .None: return r,nil
     case .Out_Of_Memory: return r,.Out_Of_Memory
@@ -361,20 +363,20 @@ acme_problem_set :: proc(a:^Acme,problem:Acme_Problem) {
 
 @(private)
 jws_make :: proc(s:^Acme_Session,url:string,payload:[]u8,jwk:bool) -> (body:[]u8,err:Acme_Error) {
-    j:=json_begin(s) or_return
-    json_raw(&j,`{"alg":"ES256",`)
+    j:=json_begin(s)
+    serial.text_write_raw(&j,`{"alg":"ES256",`)
     if jwk {
-        json_raw(&j,`"jwk":`)
-        json_raw(&j,s.jwk)
+        serial.text_write_raw(&j,`"jwk":`)
+        serial.text_write_raw(&j,s.jwk)
     } else {
-        json_raw(&j,`"kid":`)
-        json_text(&j,s.kid)
+        serial.text_write_raw(&j,`"kid":`)
+        serial.text_write_string(&j,s.kid)
     }
-    json_raw(&j,`,"nonce":`)
-    json_text(&j,s.nonce)
-    json_raw(&j,`,"url":`)
-    json_text(&j,url)
-    json_raw(&j,"}")
+    serial.text_write_raw(&j,`,"nonce":`)
+    serial.text_write_string(&j,s.nonce)
+    serial.text_write_raw(&j,`,"url":`)
+    serial.text_write_string(&j,url)
+    serial.text_write_raw(&j,"}")
     protected:=base64url(s,json_end(&j) or_return) or_return
     encoded:=base64url(s,payload) or_return
     signing_input:=strings.concatenate({protected,".",encoded},s.allocator) or_else ""
@@ -382,14 +384,14 @@ jws_make :: proc(s:^Acme_Session,url:string,payload:[]u8,jwk:bool) -> (body:[]u8
     signature:[64]u8
     if !ecdsa.sign_raw(s.acme.account_key,.SHA256,transmute([]u8)signing_input,signature[:]) {return nil,.Out_Of_Memory}
     signature_text:=base64url(s,signature[:]) or_return
-    j=json_begin(s) or_return
-    json_raw(&j,`{"protected":"`)
-    json_raw(&j,protected)
-    json_raw(&j,`","payload":"`)
-    json_raw(&j,encoded)
-    json_raw(&j,`","signature":"`)
-    json_raw(&j,signature_text)
-    json_raw(&j,`"}`)
+    j=json_begin(s)
+    serial.text_write_raw(&j,`{"protected":"`)
+    serial.text_write_raw(&j,protected)
+    serial.text_write_raw(&j,`","payload":"`)
+    serial.text_write_raw(&j,encoded)
+    serial.text_write_raw(&j,`","signature":"`)
+    serial.text_write_raw(&j,signature_text)
+    serial.text_write_raw(&j,`"}`)
     return json_end(&j)
 }
 
@@ -411,42 +413,13 @@ base64url :: proc(s:^Acme_Session,data:[]u8) -> (text:string,err:Acme_Error) {
 
 // JSON text written in the arena of the order.
 @(private)
-Json :: struct {out:[dynamic]u8,failed:bool}
-
-@(private)
-json_begin :: proc(s:^Acme_Session) -> (j:Json,err:Acme_Error) {
-    e:runtime.Allocator_Error
-    j.out,e=make([dynamic]u8,0,512,s.allocator)
-    return j,nil if e==nil else .Out_Of_Memory
+json_begin :: proc(s:^Acme_Session) -> (w:serial.Writer) {
+    serial.writer_init(&w,512,s.allocator)
+    return
 }
 
 @(private)
-json_raw :: proc(j:^Json,text:string) {
-    if _,e:=append(&j.out,text);e!=nil {j.failed=true}
-}
-
-// A JSON string of text, quoted and escaped.
-@(private)
-json_text :: proc(j:^Json,text:string) {
-    hex:="0123456789abcdef"
-    json_raw(j,`"`)
-    for b in transmute([]u8)text {
-        switch {
-        case b=='"' || b=='\\':
-            json_raw(j,`\`)
-            if _,e:=append(&j.out,b);e!=nil {j.failed=true}
-        case b<0x20:
-            escape:=[6]u8{'\\','u','0','0',hex[b>>4],hex[b&15]}
-            json_raw(j,string(escape[:]))
-        case:
-            if _,e:=append(&j.out,b);e!=nil {j.failed=true}
-        }
-    }
-    json_raw(j,`"`)
-}
-
-@(private)
-json_end :: proc(j:^Json) -> (text:[]u8,err:Acme_Error) {
-    if j.failed {return nil,.Out_Of_Memory}
-    return j.out[:],nil
+json_end :: proc(w:^serial.Writer) -> (text:[]u8,err:Acme_Error) {
+    if w.overflow>0 {return nil,.Out_Of_Memory}
+    return serial.writer_bytes(w),nil
 }

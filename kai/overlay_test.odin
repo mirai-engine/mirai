@@ -3,6 +3,7 @@ package kai
 import "core:bytes"
 import "core:fmt"
 import "core:math/rand"
+import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -550,12 +551,53 @@ overlay_rebase_keeps_ciphertext_and_ddc_outputs_inherit_scopes :: proc(t:^testin
     testing.expect_value(t,overlay_taint(&o.fold,o.project.id,{"src/main.odin","secrets/a.txt","licensed/x.bin","secrets/b.txt"},&tainted),Error.None)
     testing.expect(t,len(tainted)==2 && tainted[0]==scope && tainted[1]==other)
     keyrings:=[]^Keyring_Fold{&kf,&of}
-    blob,be:=overlay_blob_seal(&s,keyrings,&alice,o.project.id,tainted[:],transmute([]u8)string("cooked "+SECRET))
-    testing.expect_value(t,be,Error.None)
-    out,bo:=overlay_blob_open(&s,keyrings,&alice,blob,context.temp_allocator)
-    testing.expect(t,bo==.None && string(out)=="cooked "+SECRET)
-    _,bo=overlay_blob_open(&s,keyrings,&carol,blob,context.temp_allocator)
-    testing.expect_value(t,bo,Error.Unauthorized)
+    // An output is sealed and opened a chunk at a time: the memory either takes is the same for
+    // an output of one chunk as for one of many, and what it opens is what was written.
+    Sealed :: struct {address:store.Hash,peak:i64,opened:bool}
+    seal_and_open :: proc(t:^testing.T,s:^store.Store,keyrings:[]^Keyring_Fold,device:^Overlay_Device,project:Log_Id,scopes:[]Scope_Id,size:int) -> (out:Sealed) {
+        track:mem.Tracking_Allocator
+        mem.tracking_allocator_init(&track,context.allocator)
+        defer mem.tracking_allocator_destroy(&track)
+        b:Blob_Sealer
+        if !testing.expect_value(t,overlay_blob_begin(&b,s,keyrings,device,project,scopes,mem.tracking_allocator(&track)),Error.None) {return}
+        piece:[4096]u8
+        overlay_blob_write(&b,transmute([]u8)string("cooked "+SECRET))
+        for at:=len("cooked "+SECRET);at<size;at+=len(piece) {
+            for &c,k in piece {c=u8(at+k)}
+            overlay_blob_write(&b,piece[:min(len(piece),size-at)])
+        }
+        e:Error
+        out.address,e=overlay_blob_finish(&b)
+        if !testing.expect_value(t,e,Error.None) {return}
+        r:Blob_Reader
+        if !testing.expect_value(t,overlay_blob_open(&r,s,keyrings,device,out.address,mem.tracking_allocator(&track)),Error.None) {return}
+        defer overlay_blob_close(&r)
+        at:=0
+        out.opened=true
+        cooked:=string("cooked "+SECRET)
+        for {
+            plain,ne:=overlay_blob_next(&r)
+            if ne!=.None || len(plain)==0 {
+                out.opened&&=ne==.None
+                break
+            }
+            for c,k in plain {
+                want:=u8(at+k)
+                if at+k<len(cooked) {want=cooked[at+k]}
+                out.opened&&=c==want
+            }
+            at+=len(plain)
+        }
+        out.opened&&=at==size
+        out.peak=track.peak_memory_allocated
+        return
+    }
+    small:=seal_and_open(t,&s,keyrings,&alice,o.project.id,tainted[:],len("cooked "+SECRET))
+    large:=seal_and_open(t,&s,keyrings,&alice,o.project.id,tainted[:],5*OVERLAY_CHUNK_MAX+123)
+    testing.expect(t,small.opened && large.opened,"a sealed output opens as it was written")
+    testing.expectf(t,large.peak==small.peak,"sealing and opening take %d bytes for one chunk and %d for many",small.peak,large.peak)
+    r:Blob_Reader
+    testing.expect_value(t,overlay_blob_open(&r,&s,keyrings,&carol,small.address),Error.Unauthorized)
     testing.expect(t,!bytes_under(folder(folder_root,"store"),transmute([]u8)string(SECRET)))
 }
 

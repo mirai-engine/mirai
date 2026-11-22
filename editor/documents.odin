@@ -101,7 +101,7 @@ document_activate :: proc(s:^Session,index:int) -> bool {
 }
 
 // The file of the document in front is not the one it read or wrote: it
-// changed outside the editor (git, a tool, another tab that wrote the prefab),
+// changed outside the editor (a switch of Kai, a tool, another tab that wrote the prefab),
 // and the document reads it again, with a new history.
 document_file_follow :: proc(s:^Session) {
     d:=s.document

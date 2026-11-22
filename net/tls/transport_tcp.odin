@@ -4,13 +4,20 @@ import "core:net"
 import "core:time"
 
 // The Transport of the system's TCP: a stream is a socket, and a read or a write that waits
-// longer than TCP_TIMEOUT fails.
-TCP_TRANSPORT :: Transport{dial=tcp_dial,read=tcp_read,write=tcp_write,close=tcp_close}
+// longer than TCP_TIMEOUT fails. With to, every stream goes to its host and port in place of
+// the URL's (a test's server); to must outlive the requests.
+tcp_transport :: proc(to:^Tcp_Target=nil) -> Transport {
+    return {data=to,dial=tcp_dial,read=tcp_read,write=tcp_write,close=tcp_close}
+}
+
+Tcp_Target :: struct {host:string,port:int}
 
 @(private) TCP_TIMEOUT :: 30*time.Second
 
 @(private)
 tcp_dial :: proc(data:rawptr,host:string,port:int) -> (stream:uintptr,ok:bool) {
+    host,port:=host,port
+    if to:=(^Tcp_Target)(data);to!=nil {host,port=to.host,to.port}
     socket,err:=net.dial_tcp_from_hostname_with_port_override(host,port)
     if err!=nil {return 0,false}
     if net.set_option(socket,.Receive_Timeout,TCP_TIMEOUT)!=nil || net.set_option(socket,.Send_Timeout,TCP_TIMEOUT)!=nil {

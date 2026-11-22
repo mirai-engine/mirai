@@ -1,5 +1,6 @@
 package hub
 
+import "core:mem"
 import "core:net"
 import "core:strings"
 import "mirai:kai"
@@ -15,7 +16,8 @@ import "mirai:net/tls"
 
 INPUT_MAX :: HEAD_MAX+BODY_MAX
 @(private) RAW_MAX :: 16<<10
-@(private) OUTPUT_KEEP :: 64<<10 // an answer buffer larger than this is freed once sent
+@(private) OUTPUT_KEEP :: 64<<10 // an answer buffer larger than this is made OUTPUT_START again once sent
+@(private) OUTPUT_START :: 16<<10
 
 Conn :: struct {
     socket:net.TCP_Socket,
@@ -62,20 +64,14 @@ accept_all :: proc(h:^Hub,listener:net.TCP_Socket,secure:bool) -> (busy:bool) {
             net.close(socket)
             continue
         }
-        c,ne:=new(Conn,h.allocator)
-        if ne!=nil {
-            net.close(socket)
-            continue
-        }
-        c.socket,c.address,c.source,c.secure=socket,address,source,secure
-        c.opened,c.active=h.now,h.now
-        c.output=make([dynamic]u8,h.allocator)
+        c:=&h.pool[slot]
+        output:=c.output
+        clear(&output)
+        c^={socket=socket,address=address,source=source,secure=secure,opened=h.now,active=h.now,output=output}
         if secure {
-            conn,te:=tls.create(certs_config(h),.Server,h.allocator)
+            conn,te:=tls.create_at(h.tls_memory[slot*tls.CONN_BYTES:][:tls.CONN_BYTES],certs_config(h),.Server)
             if te!=nil {
                 net.close(socket)
-                delete(c.output)
-                free(c,h.allocator)
                 continue
             }
             c.tls=conn
@@ -99,11 +95,30 @@ address_bytes :: proc(a:net.Address) -> (out:[16]u8) {
     return
 }
 
+// The connections and their buffers, made once: a connection that comes takes a free slot and
+// allocates nothing.
+@(private)
+pool_make :: proc(h:^Hub) -> bool {
+    pool,e:=make([]Conn,CONNECTIONS_MAX,h.allocator)
+    if e!=nil {return false}
+    h.pool=pool
+    memory,f:=mem.make_aligned([]u8,CONNECTIONS_MAX*tls.CONN_BYTES,tls.CONN_ALIGN,h.allocator)
+    if f!=nil {return false}
+    h.tls_memory=memory
+    for &c in h.pool {
+        output,g:=make([dynamic]u8,0,OUTPUT_START,h.allocator)
+        if g!=nil {return false}
+        c.output=output
+    }
+    return true
+}
+
+// Ends a connection; its slot keeps its buffers for the next one.
 conn_free :: proc(h:^Hub,c:^Conn) {
     if !c.given {net.close(c.socket)}
     if c.tls!=nil {tls.destroy(c.tls)}
-    delete(c.output)
-    free(c,h.allocator)
+    c.tls=nil
+    output_sent(c)
 }
 
 // What the connection does in one step; busy when anything moved.
@@ -263,16 +278,12 @@ conn_queue :: proc(c:^Conn,bytes:[]u8) {
     if _,e:=append(&c.output,..bytes);e!=nil {c.closed=true}
 }
 
-// Empties the answer buffer once all of it was sent, and frees a large one.
+// Empties the answer buffer once all of it was sent, and makes a large one small again.
 @(private)
 output_sent :: proc(c:^Conn) {
-    if cap(c.output)>OUTPUT_KEEP {
-        allocator:=c.output.allocator
-        delete(c.output)
-        c.output=make([dynamic]u8,allocator)
-    }
     clear(&c.output)
     c.output_at=0
+    if cap(c.output)>OUTPUT_KEEP {shrink(&c.output,OUTPUT_START)}
 }
 
 // Sends what the answer holds, through TLS when the connection is secure.

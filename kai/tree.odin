@@ -4,6 +4,8 @@ import "base:runtime"
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import "core:unicode"
+import "core:unicode/utf8"
 import "mirai:store"
 
 // A tree: the files of a change as folders of the store. A file is an object
@@ -85,7 +87,6 @@ folder_decode :: proc(bytes:[]u8,totals:Totals,out:^[dynamic]Tree_Entry) -> Erro
     r:=Reader{data=bytes}
     sum:Totals
     empty:=empty_address()
-    folded:=make(map[string]struct{},context.temp_allocator)
     previous:string
     for r.at<len(r.data) {
         e:Tree_Entry
@@ -100,9 +101,6 @@ folder_decode :: proc(bytes:[]u8,totals:Totals,out:^[dynamic]Tree_Entry) -> Erro
         e.kind=Entry_Kind(kind)
         if len(out)>=FOLDER_ENTRIES_MAX {return .Corrupt}
         if !part_valid(e.name) || (len(out)>0 && e.name<=previous) {return .Corrupt}
-        lower:=strings.to_lower(e.name,context.temp_allocator)
-        if lower in folded {return .Corrupt}
-        folded[lower]={}
         previous=e.name
         switch e.kind {
         case .File,.Executable:
@@ -119,7 +117,50 @@ folder_decode :: proc(bytes:[]u8,totals:Totals,out:^[dynamic]Tree_Entry) -> Erro
         if _,f:=append(out,e);f!=nil {return .Out_Of_Memory}
     }
     if sum!=totals {return .Corrupt}
+    if _,_,clash:=names_fold_clash(out[:]) or_return;clash {return .Corrupt}
     return .None
+}
+
+// Two names of entries, sorted by name and unique, that differ only in case: a volume that
+// ignores case takes them for one. Names with no capital and no byte past ASCII fold to
+// themselves, so those are compared as they are sorted, without a copy.
+@(private)
+names_fold_clash :: proc(entries:[]Tree_Entry) -> (a,b:string,clash:bool,error:Error) {
+    plain:=true
+    scan: for e in entries {
+        for c in transmute([]u8)e.name {
+            if c>='A' && c<='Z' || c>=0x80 {
+                plain=false
+                break scan
+            }
+        }
+    }
+    if plain {return}
+    names,made:=make([]string,len(entries),context.temp_allocator)
+    if made!=nil {return "","",false,.Out_Of_Memory}
+    for e,k in entries {names[k]=e.name}
+    slice.sort_by(names,proc(x,y:string) -> bool {return fold_compare(x,y)<0})
+    for k in 1..<len(names) {
+        if fold_compare(names[k-1],names[k])==0 {return names[k-1],names[k],true,.None}
+    }
+    return
+}
+
+// The order of x and y with every rune lowered, as strings.to_lower would make them.
+@(private)
+fold_compare :: proc(x,y:string) -> int {
+    i,j:=0,0
+    for i<len(x) && j<len(y) {
+        a,b:=rune(x[i]),rune(y[j])
+        wa,wb:=1,1
+        if a>=0x80 {a,wa=utf8.decode_rune_in_string(x[i:])}
+        if b>=0x80 {b,wb=utf8.decode_rune_in_string(y[j:])}
+        a,b=unicode.to_lower(a),unicode.to_lower(b)
+        if a!=b {return a<b?-1:1}
+        i+=wa
+        j+=wb
+    }
+    return int(i<len(x))-int(j<len(y))
 }
 
 // Puts a folder of entries sorted by name: its entry, without a name.
@@ -159,19 +200,22 @@ tree_empty :: proc(s:^store.Store) -> (root:store.Hash,error:Error) {
 }
 
 // Puts the folders of files, sorted by path, their objects being in the store
-// already: the address of the root. Each folder put is added to folders.
-tree_build :: proc(s:^store.Store,files:[]File,folders:^[dynamic]store.Hash=nil) -> (root:store.Hash,error:Error) {
+// already: the address of the root. Each folder put is added to folders. Two
+// paths no tree holds together (a file and a folder of one name, or names
+// that differ only in case) are Invalid_Argument, with them in clash, in the
+// temp allocator, when given.
+tree_build :: proc(s:^store.Store,files:[]File,folders:^[dynamic]store.Hash=nil,clash:^[2]string=nil) -> (root:store.Hash,error:Error) {
     if len(files)>FILES_MAX {return {},.Too_Large}
     for f,k in files {
         if !path_valid(f.path) || f.kind==.Folder {return {},.Invalid_Argument}
         if k>0 && files[k-1].path>=f.path {return {},.Invalid_Argument}
     }
-    folder:=build_folder(s,files,0,0,folders) or_return
+    folder:=build_folder(s,files,0,0,folders,clash) or_return
     return folder.address,.None
 }
 
 @(private)
-build_folder :: proc(s:^store.Store,files:[]File,prefix,depth:int,folders:^[dynamic]store.Hash) -> (folder:Tree_Entry,error:Error) {
+build_folder :: proc(s:^store.Store,files:[]File,prefix,depth:int,folders:^[dynamic]store.Hash,clash:^[2]string) -> (folder:Tree_Entry,error:Error) {
     if depth>DEPTH_MAX {return {},.Too_Large}
     items:=make([dynamic]Tree_Entry,context.temp_allocator)
     for i:=0;i<len(files); {
@@ -188,22 +232,35 @@ build_folder :: proc(s:^store.Store,files:[]File,prefix,depth:int,folders:^[dyna
         under:=f.path[:prefix+slash+1]
         j:=i+1
         for j<len(files) && strings.has_prefix(files[j].path,under) {j+=1}
-        child:=build_folder(s,files[i:j],prefix+slash+1,depth+1,folders) or_return
+        child:=build_folder(s,files[i:j],prefix+slash+1,depth+1,folders,clash) or_return
         child.name=rest[:slash]
         append(&items,child)
         i=j
     }
     slice.sort_by(items[:],proc(a,b:Tree_Entry) -> bool {return a.name<b.name})
-    folded:=make(map[string]struct{},context.temp_allocator)
-    for e,k in items {
-        if k>0 && items[k-1].name==e.name {return {},.Invalid_Argument}
-        lower:=strings.to_lower(e.name,context.temp_allocator)
-        if lower in folded {return {},.Invalid_Argument}
-        folded[lower]={}
+    a,b:string
+    same,one_name:=false,false
+    for k in 1..<len(items) {
+        if items[k-1].name==items[k].name {a,b,same,one_name=items[k].name,items[k].name,true,true}
     }
-    folder=folder_put(s,items[:]) or_return
-    if folders!=nil {append(folders,folder.address)}
-    return
+    if !same {a,b,same=names_fold_clash(items[:]) or_return}
+    if !same {
+        folder=folder_put(s,items[:]) or_return
+        if folders!=nil {append(folders,folder.address)}
+        return
+    }
+    if clash!=nil {
+        under:=files[0].path[:prefix]
+        clash^={strings.concatenate({under,a},context.temp_allocator),strings.concatenate({under,b},context.temp_allocator)}
+        // A file and a folder of one name: the folder by a file under it.
+        for f in files {
+            if one_name && strings.has_prefix(f.path,clash[1]) && len(f.path)>len(clash[1]) && f.path[len(clash[1])]=='/' {
+                clash[1]=f.path
+                break
+            }
+        }
+    }
+    return {},.Invalid_Argument
 }
 
 // Appends the files of the tree at root to out, sorted by path, paths in
