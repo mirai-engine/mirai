@@ -444,6 +444,42 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
     testing.expect(t,w.state.target=={},"no switch is left under way")
     _=two
 
+    // A snapshot that fails to save leaves the index in memory as it was.
+    write(t,root,"a.txt","a1")
+    write(t,root,"b.txt","b1")
+    write(t,root,"c/d.txt","d1")
+    _,e=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+    rows:=slice.clone(w.index.rows[:],context.temp_allocator)
+    write(t,root,"b.txt","b3",40*time.Minute)
+    state_folder:=strings.concatenate({root,"/",STATE_FOLDER},context.temp_allocator)
+    testing.expect(t,os.chmod(state_folder,{.Read_User,.Execute_User})==nil)
+    _,e=workspace_snapshot(&w)
+    os.chmod(state_folder,os.Permissions_Read_All+os.Permissions_Execute_All+{.Write_User})
+    testing.expect(t,e!=.None,"the state does not save into a folder it may not write")
+    testing.expect(t,slice.equal(rows,w.index.rows[:]),"the index is the one before the failed snapshot")
+    write(t,root,"b.txt","b1")
+    _,e=workspace_snapshot(&w)
+    testing.expect_value(t,e,Error.None)
+
+    // A workspace whose sibling is this one clones a file the sibling's index row says it
+    // holds without reading it (a.txt, rewritten in place with the row's size, time and
+    // inode, comes as the sibling has it), and takes from the store one edited since (b.txt).
+    row,_:=stat_find(&w.index,"a.txt")
+    a_path:=strings.concatenate({root,"/a.txt"},context.temp_allocator)
+    testing.expect(t,os.write_entire_file(a_path,transmute([]u8)string("A1"))==nil)
+    settled:=time.unix(0,row.mtime_ns)
+    testing.expect(t,os.change_times(a_path,settled,settled)==nil)
+    write(t,root,"b.txt","bX",20*time.Minute)
+    sibling_root:=folder_of(&f,"sibling")
+    v:Workspace
+    testing.expect_value(t,workspace_add(&v,sibling_root,&w,identity,{sibling=root}),Error.None)
+    testing.expect_value(t,workspace_switch(&v,one),Error.None)
+    testing.expect_value(t,read(sibling_root,"a.txt"),"A1")
+    testing.expect_value(t,read(sibling_root,"b.txt"),"b1")
+    testing.expect_value(t,read(sibling_root,"c/d.txt"),"d1")
+    workspace_close(&v)
+
     // The folder opened with a store that never held its repository says so.
     workspace_close(&w)
     other,oe:=store.open(strings.concatenate({f.folder,"/other"},context.temp_allocator))
