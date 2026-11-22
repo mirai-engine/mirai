@@ -616,11 +616,17 @@ change_describe :: proc(r:^Repo,revision:Revision,description:string) -> (rewrit
     return
 }
 
-// Gives revision the tree of another change.
+// Gives revision the tree of another change, and its private files: those of
+// from's overlays, or of its parents'.
 change_restore :: proc(r:^Repo,revision:Revision,from:Revision) -> (rewritten:Revision,error:Error) {
     source:=change_get(r.s,from,context.temp_allocator) or_return
     tx:=tx_begin(r) or_return
     rewritten=change_rewrite(&tx,revision,nil,source.tree) or_return
+    clear(&tx.carries)
+    if _,e:=append(&tx.carries,Rewrite{from,rewritten});e!=nil {return {},.Out_Of_Memory}
+    for p in source.parents {
+        if _,e:=append(&tx.carries,Rewrite{p,rewritten});e!=nil {return {},.Out_Of_Memory}
+    }
     tx_commit(&tx,.Restore,"restore change") or_return
     return
 }

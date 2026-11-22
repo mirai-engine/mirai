@@ -100,7 +100,8 @@ bounds of every record are constants of `kai/types.odin`; past one is `Too_Large
   cut midway leaves the repository and its overlays as they were, and one undo takes the whole
   operation back. Every rewrite carries its overlay records in the operation's commit: `tx_commit`
   gives each revision a transaction wrote the records of the one it replaced (the first half of a
-  split, its parents'), unless the operation sealed its own, so no operation can drop them.
+  split, its parents'; a restore, the change it restores from), unless the operation sealed its
+  own, so no operation can drop them.
 - A view is the visible heads (no visible change descends from another), each workspace's working
   copy and the bookmarks; a bookmark two operations moved apart holds the terms of a conflict,
   with the same algebra as files.

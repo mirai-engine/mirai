@@ -719,9 +719,10 @@ a_switch_cut_midway_recovers_on_status :: proc(t:^testing.T) {
 // whole tree and its private files, and what pointed at the change follows it.
 // What is not a file the change touched is refused with why. One undo gives the
 // view before; an edit on disk after the last snapshot reaches the next one.
-// Every other rewrite (describe, restore, abandon of a parent, rebase) carries
-// the change's private files onto what it writes in its one operation, those
-// of a scope the device that rewrites does not read too.
+// Every other rewrite (describe, abandon of a parent, rebase) carries the
+// change's private files onto what it writes in its one operation, those of
+// a scope the device that rewrites does not read too; a restore gives it
+// those of the change it restores from.
 @(test)
 a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
     f,ok:=fixture(t,"kai-split");if !ok {return}
@@ -907,10 +908,12 @@ a_change_splits_by_paths_and_undoes_in_one_operation :: proc(t:^testing.T) {
             if rw.from==held {rewritten=rw.to}
         }
         if !testing.expectf(t,rewritten!={},"%v rewrites the change",kind) {return}
+        before_want:=want
+        if kind==.Restore {want.secret="old secret"}
         testing.expectf(t,private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten)==want,"%v carries the private files: %v",kind,private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten))
         after_view:=b.repo.view_address
         testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
-        testing.expectf(t,b.repo.view_address==before_view && private_at(t,&f.s,&kf,&kv,&alice,&bob,held)==want,"undoing %v gives the change back with its private files",kind)
+        testing.expectf(t,b.repo.view_address==before_view && private_at(t,&f.s,&kf,&kv,&alice,&bob,held)==before_want,"undoing %v gives the change back with its private files",kind)
         testing.expect_value(t,op_undo(&b.repo,b.repo.op),Error.None)
         testing.expectf(t,b.repo.view_address==after_view && private_at(t,&f.s,&kf,&kv,&alice,&bob,rewritten)==want,"doing %v again keeps them",kind)
         held=rewritten

@@ -335,8 +335,8 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
 
     }
 
-    // What each rewrite of alice's writes holds the change's private file, and bob, told of its
-    // record, opens the same bytes there. Each round folds again what box_until let go.
+    // What each rewrite of alice's writes holds the change's private file (a restore, the one of
+    // the change it restores from), and bob, told of its record, opens the same bytes there. Each round folds again what box_until let go.
     Rewrite_Kind :: enum {Describe,Restore,Rebase}
     held:=commit
     for kind in Rewrite_Kind {
@@ -349,7 +349,7 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
         re:Error
         switch kind {
         case .Describe: rewritten,re=change_describe(&w.repo,held,"described")
-        case .Restore: rewritten,re=change_restore(&w.repo,held,g.revision)
+        case .Restore: rewritten,re=change_restore(&w.repo,held,commit)
         case .Rebase: rewritten,re=change_rebase(&w.repo,held,{g.revision})
         }
         if !testing.expectf(t,re==.None,"%v: %v",kind,re) {break}
