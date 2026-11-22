@@ -11,6 +11,12 @@ project has no repository of git, no index and no merge mode, and `git.*` method
 
 - The working copy is a change (`@`): there is nothing to stage or keep. What the files hold is
   recorded by a snapshot, which reads only the files that changed.
+- Leaving files out of a change is a split by whole files (`ka.split`, `kai.split`, `mirai kai
+  split`): the first half keeps the change's id with the files picked, the second holds the rest
+  and takes the working copy, whose files stay as they are. Each file of CHANGES has a check, all
+  on by default; New change with some off splits instead, the description going to the closed
+  half. Checks are kept by path, and the files are read again after the snapshot: a file that
+  appeared since is checked. A conflict of the parents the change did not touch has no check.
 - What the editor writes (history files, the registry's flush, a scene) and what the watch of
   the project folder sees are pushed as touched paths (`kai_touched`): a snapshot then stats only
   those. The working copy snapshots once the files are quiet (`KAI_QUIET`) and nothing is held in
@@ -49,7 +55,10 @@ project has no repository of git, no index and no merge mode, and `git.*` method
 
 - `editor_kai_snapshot_diff_conflict_and_undo` (`editor/kai_test.odin`): snapshot, what a change
   shows, a merge with a conflict resolved by field, undo and redo.
+- `editor_kai_new_change_takes_only_the_checked_files` (`editor/kai_test.odin`): `kai.split` and
+  New change with files unchecked while the list changes; the split itself is
+  `a_change_splits_by_paths_and_undoes_in_one_operation` in `kai`.
 - `collab_coauthorship_and_agent_turns_record_in_change` (`editor/collab_share_test.odin`): the
   key of a guest and the turn of an agent recorded in the host's change.
-- In a session: `kai.status`, `kai.new`, `kai.conflicts`, `kai.resolve` and `kai.undo` once each,
-  and `capture` with `ui` of the Kai tab.
+- In a session: `kai.status`, `kai.new`, `kai.split`, `kai.conflicts`, `kai.resolve` and
+  `kai.undo` once each, and `capture` with `ui` of the Kai tab.

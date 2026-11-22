@@ -1,6 +1,7 @@
 package kai_assets
 
 import "base:runtime"
+import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -126,7 +127,8 @@ snapshot_authored :: proc(w:^vcs.Workspace,coauthors:[]vcs.Key,turns:[]vcs.Turn_
     }
     if len(keys)==len(c.coauthors) && len(refs)==len(c.turns) {return}
     tx:=vcs.tx_begin(r) or_return
-    c.coauthors,c.turns,c.author=keys[:],refs[:],r.identity.key
+    c.coauthors,c.turns=keys[:],refs[:]
+    vcs.change_sign_as(&c,&r.identity) or_return
     rewritten:=vcs.change_put(r.s,&c,&r.identity) or_return
     vcs.tx_rewrite(&tx,report.revision,rewritten) or_return
     vcs.tx_commit(&tx,.Snapshot,"record authors") or_return
@@ -274,6 +276,20 @@ new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,ch
     if len(on)==0 {on=working[:]}
     revision=vcs.workspace_new(w,on,description) or_return
     return revision,files_changed(w,before,changed,allocator)
+}
+
+// Splits the change text names by paths after a snapshot, so they are checked
+// against what the files hold now: the first keeps the change with the picked
+// files, the second the rest; the working copy's files stay as they are. An
+// Invalid_Argument says why in refused, in the temp allocator.
+split :: proc(w:^vcs.Workspace,change:string,paths:[]string,description:Maybe(string),refused:^string) -> (first,second:vcs.Revision,error:vcs.Error) {
+    vcs.workspace_snapshot(w) or_return
+    revision,e:=revision_find(w,change)
+    if e!=.None {
+        refused^=fmt.tprintf("%q names no single visible change: @, @-, a bookmark or a prefix of at least %d digits of a change id",change,CHANGE_TEXT_MIN)
+        return {},{},.Invalid_Argument
+    }
+    return vcs.change_split(&w.repo,revision,paths,description,w.options.overlay,refused)
 }
 
 @(private)

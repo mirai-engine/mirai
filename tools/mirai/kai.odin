@@ -10,7 +10,7 @@ import vcs "mirai:kai"
 import "mirai:project"
 import "mirai:store"
 
-KAI_USAGE :: "kai init|status|snapshot|log [-n N]|diff [change]|undo|conflicts|bookmarks [project] | kai new [change...] [-m text] | kai describe [change] -m text | kai restore <change> | kai bookmarks set <name> <change> | kai bookmarks delete <name> [--project P] [--store S]"
+KAI_USAGE :: "kai init|status|snapshot|log [-n N]|diff [change]|undo|conflicts|bookmarks [project] | kai new [change...] [-m text] | kai describe [change] -m text | kai split [-r change] [-m text] <path...> | kai restore <change> | kai bookmarks set <name> <change> | kai bookmarks delete <name> [--project P] [--store S]"
 
 // mirai kai: the version control of a project with no editor, through
 // cook/kai as the editor does. A change is named by @ (the working copy), @-
@@ -20,7 +20,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
     verb:=args[0]
     store_root,rest,store_ok:=store_take(args[1:])
     if !store_ok {fmt.eprintln("mirai kai: --store needs the folder of a store");return 2}
-    folder,message,limit:=".","",20
+    folder,message,limit,change:=".","",20,""
     positionals:=make([dynamic]string,context.temp_allocator)
     for i:=0;i<len(rest);i+=1 {
         if value,matched,ok:=option_value(rest,&i,"--project");matched {
@@ -29,6 +29,9 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         } else if value,matched,ok=option_value(rest,&i,"-m");matched {
             if !ok {fmt.eprintln("mirai kai: -m needs a text");return 2}
             message=value
+        } else if value,matched,ok=option_value(rest,&i,"-r");matched {
+            if !ok || value=="" {fmt.eprintln("mirai kai: -r needs a change");return 2}
+            change=value
         } else if value,matched,ok=option_value(rest,&i,"-n");matched {
             n,parsed:=strconv.parse_int(value)
             if !ok || !parsed || n<=0 {fmt.eprintln("mirai kai: -n needs a count");return 2}
@@ -94,6 +97,9 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         if e!=.None {return kai_failed(verb,e)}
         c,_:=vcs.change_get(w.repo.s,revision,context.temp_allocator)
         fmt.printfln("Working copy %s, a new change.",ka.change_text(c.id))
+    case "split":
+        if len(positionals)==0 {fmt.eprintln("mirai kai split: name the files or folders the first change takes");return 2}
+        if code:=kai_split(w,change,message,positionals[:]);code!=0 {return code}
     case "describe":
         if len(positionals)>1 {return argument_unknown("kai describe",positionals[1])}
         if message=="" {fmt.eprintln("mirai kai describe: -m gives the description");return 2}
@@ -171,6 +177,21 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         fmt.eprintfln("Usage: mirai %s",KAI_USAGE)
         return 2
     }
+    return 0
+}
+
+// Splits change (the working copy when empty) by paths: the first keeps them.
+@(private="file")
+kai_split :: proc(w:^vcs.Workspace,change,message:string,paths:[]string) -> int {
+    description:Maybe(string)
+    if message!="" {description=message}
+    refused:string
+    first,second,e:=ka.split(w,change!="" ? change : "@",paths,description,&refused)
+    if e==.Invalid_Argument && refused!="" {fmt.eprintfln("mirai kai split: %s",refused);return 1}
+    if e!=.None {return kai_failed("split",e)}
+    a,_:=vcs.change_get(w.repo.s,first,context.temp_allocator)
+    b,_:=vcs.change_get(w.repo.s,second,context.temp_allocator)
+    fmt.printfln("%s %s keeps %d paths; %s holds the rest.",ka.change_text(a.id),description_line(a.description),len(paths),ka.change_text(b.id))
     return 0
 }
 

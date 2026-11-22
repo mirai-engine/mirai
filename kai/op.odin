@@ -2,6 +2,7 @@ package kai
 
 import "base:runtime"
 import "core:slice"
+import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
 import "mirai:store"
@@ -362,6 +363,21 @@ change_create :: proc(tx:^Tx,parents:[]Revision,tree:store.Hash,description:stri
     return change_put(tx.r.s,&c,&tx.r.identity)
 }
 
+// Makes identity the author of c, which another key may have signed: that
+// one stays among its coauthors, in the temp allocator.
+change_sign_as :: proc(c:^Change,identity:^Identity) -> Error {
+    if c.author==identity.key {return .None}
+    if !slice.contains(c.coauthors,c.author) && len(c.coauthors)<COAUTHORS_MAX {
+        coauthors,e:=make([]Key,len(c.coauthors)+1,context.temp_allocator)
+        if e!=nil {return .Out_Of_Memory}
+        copy(coauthors,c.coauthors)
+        coauthors[len(c.coauthors)]=c.author
+        c.coauthors=coauthors
+    }
+    c.author=identity.key
+    return .None
+}
+
 // The tree of parents merged: one parent's tree, or the merge of all of them
 // against their merge bases.
 parents_tree :: proc(r:^Repo,parents:[]Revision) -> (tree:store.Hash,error:Error) {
@@ -451,6 +467,7 @@ tx_rebase_descendants :: proc(tx:^Tx) -> Error {
         c.parents=new_parents[:]
         c.tree=tree
         c.written=time.now()._nsec
+        change_sign_as(&c,&r.identity) or_return
         rewritten:=change_put(r.s,&c,&r.identity) or_return
         graph_extend(g,r.s,{rewritten}) or_return
         tx_rewrite(tx,revision,rewritten) or_return
@@ -518,7 +535,7 @@ change_rewrite :: proc(tx:^Tx,revision:Revision,description:Maybe(string),tree:s
     if d,given:=description.?;given {c.description=d}
     if tree!={} {c.tree=tree}
     c.written=time.now()._nsec
-    if c.author!=tx.r.identity.key {c.author=tx.r.identity.key}
+    change_sign_as(&c,&tx.r.identity) or_return
     rewritten=change_put(tx.r.s,&c,&tx.r.identity) or_return
     tx_rewrite(tx,revision,rewritten) or_return
     return
@@ -537,6 +554,112 @@ change_restore :: proc(r:^Repo,revision:Revision,from:Revision) -> (rewritten:Re
     tx:=tx_begin(r) or_return
     rewritten=change_rewrite(&tx,revision,nil,source.tree) or_return
     tx_commit(&tx,.Restore,"restore change") or_return
+    return
+}
+
+// Splits revision in two by paths, each a file it added, changed or removed,
+// or a folder whose files under it go too. The first keeps its id, created
+// time, parents and description (description, when given, replaces it) and
+// takes from it only the picked files over its parents' tree; the second, a
+// new change on the first with no description, keeps its whole tree, and what
+// pointed at revision (children, heads, bookmarks, workspaces) moves onto it.
+// Both keep its coauthors and turns, with its author among the coauthors when
+// another key signs them. A working copy split this way keeps its files.
+// overlay: the private overlays move with what they were written for (the
+// first takes its parents', since no private path is picked). An
+// Invalid_Argument says why in refused, in the temp allocator.
+change_split :: proc(r:^Repo,revision:Revision,paths:[]string,description:Maybe(string)=nil,overlay:^Overlay_Routing=nil,refused:^string=nil) -> (first,second:Revision,error:Error) {
+    refuse :: proc(refused:^string,parts:..string) -> Error {
+        if refused!=nil {refused^=strings.concatenate(parts,context.temp_allocator)}
+        return .Invalid_Argument
+    }
+    if len(paths)==0 {return {},{},refuse(refused,"no path picked: name the files or folders the first change takes")}
+    for p in paths {
+        if !path_valid(p) {return {},{},refuse(refused,p,": not a path of the project: relative, with forward slashes, no empty, . or .. part")}
+    }
+    c:=change_get(r.s,revision,context.temp_allocator) or_return
+    base:=parents_tree(r,c.parents) or_return
+    diffs:=make([dynamic]Diff,context.temp_allocator)
+    tree_diff(r.s,base,c.tree,&diffs,context.temp_allocator) or_return
+    picked:=make([]bool,len(diffs),context.temp_allocator)
+    for p in paths {
+        hit:=false
+        for d,k in diffs {
+            if d.path==p || (len(d.path)>len(p) && d.path[len(p)]=='/' && strings.has_prefix(d.path,p)) {picked[k],hit=true,true}
+        }
+        if !hit {return {},{},refuse(refused,p,": the change did not add, change or remove it: pick what its diff lists")}
+    }
+    if !slice.contains(picked,false) {return {},{},refuse(refused,"every file the change touched is picked: start a new change with new instead")}
+
+    files:=make([dynamic]File,context.temp_allocator)
+    tree_files(r.s,base,&files,context.temp_allocator) or_return
+    slice.sort_by(files[:],proc(a,b:File) -> bool {return a.path<b.path})
+    for d,k in diffs {
+        if !picked[k] {continue}
+        at,found:=slice.binary_search_by(files[:],d.path,proc(f:File,path:string) -> slice.Ordering {return slice.cmp(f.path,path)})
+        switch {
+        case d.after.address=={}: if found {ordered_remove(&files,at)}
+        case found: files[at]={path=d.path,kind=d.after.kind,address=d.after.address,size=d.after.size}
+        case:
+            if _,e:=inject_at(&files,at,File{path=d.path,kind=d.after.kind,address=d.after.address,size=d.after.size});e!=nil {return {},{},.Out_Of_Memory}
+        }
+    }
+    if a,b,clash:=names_clash(files[:]);clash {
+        return {},{},refuse(refused,a," and ",b,": the first change would hold a file and a folder of one name, or two names that differ only in case: pick both or neither")
+    }
+    tree:=tree_build(r.s,files[:]) or_return
+
+    now:=time.now()._nsec
+    tx:=tx_begin(r) or_return
+    head:=c
+    change_sign_as(&head,&r.identity) or_return
+    head.tree,head.written=tree,now
+    if d,given:=description.?;given {head.description=d}
+    first=change_put(r.s,&head,&r.identity) or_return
+    parents:=[1]Revision{first}
+    rest:=Change{id=random_id(Change_Id),tree=c.tree,author=r.identity.key,created=now,written=now,parents=parents[:],coauthors=head.coauthors,turns=c.turns}
+    second=change_put(r.s,&rest,&r.identity) or_return
+    if _,e:=append(&tx.rewrites,Rewrite{revision,first});e!=nil {return {},{},.Out_Of_Memory}
+    tx_rewrite(&tx,revision,second) or_return
+    tx_commit(&tx,.Rewrite,"split change") or_return
+    if overlay==nil || overlay.org==nil {return}
+    for sc in overlay.org.scopes {
+        if sc.project!=overlay.project {continue}
+        for p in c.parents {
+            if _,_,e:=overlay_record_get(r.s,overlay.project,sc.scope,p,context.temp_allocator);e==.Missing {continue}
+            overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,p,first,now) or_return
+            break
+        }
+        for rw in tx.rewrites {
+            if rw.to==first || rw.to=={} {continue}
+            if _,_,e:=overlay_record_get(r.s,overlay.project,sc.scope,rw.from,context.temp_allocator);e==.Missing {continue}
+            overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,rw.from,rw.to,now) or_return
+        }
+    }
+    return
+}
+
+// Two paths of files, sorted, that no tree holds together: a file and a
+// folder of one name, or names that differ only in case.
+@(private)
+names_clash :: proc(files:[]File) -> (a,b:string,clash:bool) {
+    held:=make(map[string]string,context.temp_allocator)    // a file's path folded: its path
+    folders:=make(map[string]string,context.temp_allocator) // a folder's path folded: its path
+    for f in files {
+        lower:=strings.to_lower(f.path,context.temp_allocator)
+        if other,found:=held[lower];found {return other,f.path,true}
+        if other,found:=folders[lower];found {return other,f.path,true}
+        for i in 0..<len(lower) {
+            if lower[i]!='/' {continue}
+            if other,found:=held[lower[:i]];found {return other,f.path,true}
+            if other,found:=folders[lower[:i]];found {
+                if other!=f.path[:i] {return other,f.path,true}
+                continue
+            }
+            folders[lower[:i]]=f.path[:i]
+        }
+        held[lower]=f.path
+    }
     return
 }
 
@@ -564,6 +687,7 @@ change_rebase :: proc(r:^Repo,revision:Revision,onto:[]Revision) -> (rewritten:R
     c.parents=onto
     c.tree=tree
     c.written=time.now()._nsec
+    change_sign_as(&c,&r.identity) or_return
     rewritten=change_put(r.s,&c,&r.identity) or_return
     tx_rewrite(&tx,revision,rewritten) or_return
     if _,e:=append(&tx.view.heads,rewritten);e!=nil {return {},.Out_Of_Memory}
