@@ -223,7 +223,9 @@ agent_channels :: proc(a:^Agent) {
 // one each, at most AGENT_CLIENTS. The agent stays where it was started.
 agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     if desc.store==nil || desc.org=={} || len(clients)>AGENT_CLIENTS {return .Invalid_Argument}
-    a^={desc=desc}
+    // In place: the agent is over a megabyte, more than a thread's stack holds as a temporary.
+    runtime.mem_zero(a,size_of(Agent))
+    a.desc=desc
     if a.desc.allocator.procedure==nil {a.desc.allocator=context.allocator}
     allocator:=a.desc.allocator
     a.logs=make([dynamic]^Log,allocator)
