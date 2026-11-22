@@ -1,322 +1,202 @@
 # `std/geom`: geometry processing
 
-A layer 1 package that imports only `core:` and `base:`. It operates on flat slices and writes into
-caller buffers. It feeds `physics` (hulls, mass), destruction (slicing and fracture, at cook time
-and at run time), `asset` (primitives) and the cooking of colliders and meshes (simplification and
-convex decomposition). Each file explains its algorithm in its comments; this holds the contracts
-they share.
+Layer 1 package importing only `core:` and `base:`; operates on flat slices and caller buffers for
+`physics`, destruction, `asset` primitives, and mesh/collider cooking.
 
 ## Data and memory
 
-- `Plane{normal,d}`: a point is on the plane if `dot(normal,p)==d` and in front if it is greater
-  (the sign of `d` is the opposite of that of `math.Plane`).
-- `Mesh` is a view with counterclockwise triangles seen from outside and optional per-vertex
-  attributes and per-triangle materials. `Mesh_Buffer` is the storage that grows: the operations
-  that write a mesh clear it and reuse its memory; the primitives and `hull_append_mesh` append at
-  the end. An output slice of another length is not written.
-- The single-call operations use `context.temp_allocator` and release it on return with
-  `DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD`, which inside a job also releases
-  ([jobs](jobs.md#temporary-memory)). `Slicer`, `Fracture` and `Mesh_Surface_Workspace` keep their
-  memory between calls: after the first ones, an operation of the same size does not allocate.
-- An operation takes the memory of its caller's allocator before it writes. The tables of the
-  package (`Key_Map`, `Point_Set`) grow only when they are reset for the entries they will hold,
-  and the slicer, the fracture and the triangulation reserve for a bound computed from their input
-  (vertices, split triangles, border edges, sites) and then fill without growing: a write without
-  bounds check is inside what was reserved. A new array filled in such a loop gets its bound first.
-- Without that memory the operation returns the `Out_Of_Memory` of its error (`polygon_triangulate`
-  and `delaunay_triangulate` give no triangles and `polygon_convex_partition` no pieces;
-  `mesh_tangents`, `mesh_weld`, `hull_append_mesh`, the built-in shapes and those of `shapes.odin`
-  give false and append nothing), leaves its outputs empty and keeps nothing; its
-  workspace gives, with memory again, what a new one gives. The temporary allocator is not covered:
-  `positions_weld` gives 0 and `mesh_topology` an open mesh without it, and the rest assume it.
+- `Plane{normal, d}`: on plane when `dot(normal, p) == d`, front when `>` (opposite sign of `d` to
+  `math.Plane`).
+- `Mesh` is a CCW-outward view with optional normals/UVs/colors/materials; `Mesh_Buffer` grows and
+  reuses capacity (most ops clear it; primitives and `hull_append_mesh` append; mismatched
+  attribute lengths are rejected).
+- Single-call ops guard `context.temp_allocator` with `DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD`
+  ([jobs](jobs.md#temporary-memory)). `Slicer`, `Fracture`, and `Mesh_Surface_Workspace` reuse
+  memory across calls (zero allocs once warmed).
+- Tables (`Key_Map`, `Point_Set`) and hot workspaces reserve exact upper bounds before filling so
+  `#no_bounds_check` stays in bounds.
+- On OOM: returns `Out_Of_Memory` (or empty/`false` for `polygon_triangulate`,
+  `delaunay_triangulate`, `polygon_convex_partition`, `mesh_tangents`, `mesh_weld`,
+  `hull_append_mesh`, `primitives.odin`/`shapes.odin`), clears outputs, and leaves workspaces
+  reusable once memory returns (`positions_weld` returns 0 and `mesh_topology` open on temp OOM).
 
 ## Determinism, precision and tolerance
 
-- **Determinism.** The same input gives byte-for-byte identical output.
-  - It uses only IEEE-754 addition, subtraction, multiplication, division, square root and `floor`,
-    without the platform libm (the angles of the primitives come from `turn_sincos`, a polynomial
-    with exact quadrants; the icosphere uses `math.atan2`, implemented in Odin).
-  - Walks have a fixed order, ties are resolved by index and no hash table is iterated. The
-    fracture sites come from a `base.Rng` that depends only on the seed.
-  - Equality across architectures depends on the compiler not contracting `a*b+c` (Odin does not by
-    default).
-- **Precision.** Coordinates enter and leave as `f32`. The predicates (side of a plane,
-  orientation, visibility) and the accumulations (areas, volumes) are evaluated in `f64`, where the
-  product of two `f32` is exact. The meshoptimizer ports (simplifier, clusters, partitioning)
-  compute in `f32` like the original, to give its same results.
-- **Invalid inputs.** Out-of-range indices, streams of another length, NaN, infinities, empty or
-  coincident inputs and out-of-range parameters give a named error (`Invalid_Mesh`, `Invalid_Plane`,
-  `No_Sites`…) or a defined result; a triangle with an out-of-range index counts as degenerate.
-- **Tolerance.** Every tolerance is an absolute distance in the units of the input.
-  `tolerance_noise(max_abs)` is the minimum reliable one for coordinates of that magnitude, and each
-  operation uses the larger of that floor and the one requested. A point within the tolerance of a
-  plane is on it.
-- **Topology by position.** Welding, topology and components identify vertices by position:
-  attribute seams do not open a surface (`mesh_topology_is_closed` requires a closed 2-manifold;
-  `mesh_topology_is_watertight`, only one opposite per half-edge).
+- **Deterministic:** identical inputs yield byte-identical outputs (IEEE-754 `+ - * / sqrt floor`,
+  `turn_sincos`, Odin `math.atan2`, index tie-breaks, no hash iteration, `base.Rng` seeds; assumes
+  no FMA contraction).
+- **Precision:** `f32` I/O; predicates and area/volume sums run in `f64` (meshoptimizer ports use
+  `f32` to match upstream byte-for-byte).
+- **Validation & tolerance:** NaN/Inf, out-of-range indices, length mismatches, or bad params
+  return typed errors (`Invalid_Mesh`, `Invalid_Plane`, `No_Sites`...). Tolerances are absolute
+  distances floored at `tolerance_noise(max_abs)`.
+- **Position topology:** welding/topology match vertices by position, ignoring attribute seams
+  (`mesh_topology_is_closed`: closed 2-manifold; `mesh_topology_is_watertight`: 1 opposite per
+  half-edge).
 
 ## Surface editing (`surface_edit.odin`)
 
-- `mesh_surface_edit` applies a brush (`Sculpt`, `Smooth`, `Flatten`, `Drag`) over the region and
-  the complete halo that the caller delivers: it does not look for the rest of the terrain. `Drag`
-  applies an explicit rotation around the center; the surface normal induces no turns.
-  `lock_boundary` keeps borders and non-manifold edges.
-- It keeps indices, UVs, colors and materials. It recomputes the normals of the affected ring
-  grouping by position and original normal: it keeps hard seams and two regions with the same halo
-  give equal normals. It does not prevent self-intersections or inversions from a large
-  displacement.
-- `mesh_surface_refine` is **one step of conforming subdivision**: it splits the long edges that
-  cross the sphere in all the triangles that share them, also on both sides of a seam, with
-  midpoints at the same exact position. It is not isotropic remeshing: it neither collapses nor
-  flips, and an edge may still be long after a step.
-- An output that shares memory with the input gives `Aliased_Output` without modifying it; the other
-  errors leave the output empty.
+- `mesh_surface_edit` applies `Sculpt`, `Smooth`, `Flatten`, or `Drag` (explicit `rotation` around
+  `center`) over the caller-supplied region + halo (`lock_boundary` freezes borders/non-manifold
+  edges). Preserves indices/UVs/colors/materials; recomputes affected normals by `(position,
+  original_normal)` to preserve hard seams; does not prevent self-intersections.
+- `mesh_surface_refine` performs one conforming subdivision pass across seams (no flips/collapses).
+- Errors (`Invalid_Mesh`, `Invalid_Brush`, `Budget_Exceeded`, `Out_Of_Memory`) clear output;
+  overlapping input/output returns `Aliased_Output` untouched.
 
 ## Solid booleans (`boolean.odin`)
 
-`mesh_boolean` does union, subtraction or intersection of closed, outward-oriented triangulated
-surfaces (an interior cavity has opposite orientation).
+`mesh_boolean(a, b, op, out, settings={})` computes `Union`, `Subtract`, or `Intersect` on closed,
+outward-oriented solids (cavities inverted), keeping seams and materials (subtraction caps invert
+B).
 
-- It keeps the attribute seams and the material of each fragment; the new faces of a subtraction
-  come from operand B, inverted.
-- It is an authoring transaction over the whole solid: it uses temporary memory released on return,
-  also with its own temporary allocator, and does not keep a tree between calls. Every error leaves
-  the output empty.
-- Kernel: an iterative BSP of convex polygons, with intersections, classification and attributes in
-  `f64`. The tree of A only classifies what B keeps: the polygons of A that come out are its own,
-  cut only by the planes of B, so the planes of a surface that is not flat (a sculpted terrain) do
-  not splinter it far from B. Before triangulating it welds positions with fixed representatives,
-  closes T-junctions and cancels opposite coincident faces. It checks the topology by positions on
-  the inputs and on the output: an output that does not comply gives `Topology` instead of being
-  published.
-- A zeroed `Boolean_Settings` takes the automatic tolerance and the budgets of `boolean.odin`;
-  exceeding them gives `Capacity`. An empty operand is valid; a union that touches only at a point
-  or an edge is not manifold and is rejected.
-- Limits: validation does not detect all self-intersections, so the inputs must be solids without
-  them; the predicates are floating-point with tolerance, not exact arithmetic, and an ambiguous
-  contact or a detail smaller than the tolerance may fail explicitly. It does not go through voxels
-  or SDF; the BSP may grow quadratically and the budgets bound it.
+- Iterative `f64` BSP (A's tree classifies B only, preventing non-planar A from splintering
+  itself), position-welding, T-junction closing, opposite-face cancellation, and closed-manifold
+  output check (fails with `Topology` rather than publishing bad geometry; errors `Invalid_Mesh`,
+  `Invalid_Settings`, `Not_Closed`, `No_Volume`, `Capacity`, `Out_Of_Memory` clear `out`).
+- Zero `Boolean_Settings` uses default tolerance and budgets. Point/edge-only unions are rejected;
+  inputs must be self-intersection-free.
+
+```odin
+out: geom.Mesh_Buffer
+geom.mesh_buffer_init(&out); defer geom.mesh_buffer_destroy(&out)
+if err := geom.mesh_boolean(mesh_a, mesh_b, .Subtract, &out); err != .None { return }
+```
 
 ## Scalar field surfaces (`isosurface.odin`)
 
-- `isosurface` extracts the surface of a region `[low,high)` of a `Scalar_Grid` (values below the
-  level are interior) with six tetrahedra per cell in the Kuhn partition: shared faces are split the
-  same way, edges are interpolated with ends ordered by index and gradients read the whole grid,
-  including the halo of a chunk. Neighboring cells give the same position and normal.
-- The values may be a window of the grid (`first`, `extent`): positions are still those of the whole
-  grid, so two regions extracted from different windows give the same vertices where they touch. The
-  window covers the region and what its gradients read, one step of its level beyond; otherwise,
-  `.Invalid_Region`.
-- `lod` (up to `ISO_LEVELS_MAX`) extracts one sample out of every 2^k with the level of each face
-  and edge that the region shares. Two regions triangulate what they share the same way, so the
-  tetrahedra mesh is conforming and the surface closes with any difference of levels, with the same
-  normal on each side. Level 0 is the six tetrahedra of each cell.
-- The output has three vertices per triangle: `mesh_weld(...,0,...)` when shared indices are needed,
-  as in collision (the terrain cooker does it).
+- `isosurface(g, low, high, out, isolevel=0, lod={})` extracts `[low, high)` (values `< isolevel`
+  are interior) via 6-tetrahedron Kuhn cells so neighbor chunks share identical vertices and
+  normals. Supports windowed grids (`first`, `extent` must cover region + 1 LOD step for gradients,
+  else `Invalid_Region`; bad grid gives `Invalid_Grid`).
+- `Iso_Lod` (`level <= ISO_LEVELS_MAX`, plus per-face/edge levels) produces crack-free conforming
+  meshes across mixed LODs. Emits unshared triangle soups; call `mesh_weld(..., 0, ...)` for shared
+  indices.
 
 ## Convex hull (`hull.odin`)
 
-- `hull_build` is a Quickhull from the extreme points; `max_vertices` makes it always grow by the
-  farthest point, so a bounded hull stays inside the full one.
-- Points within the tolerance of a plane give a flat hull (`hull_is_flat`): two faces back to back,
-  without volume. Whoever needs volume discards it (the pieces of a destructible, the parts of
-  `mesh_decompose`); the `Hull` collider registers it in `physics` as a mesh, without mass.
-- Coplanar triangles are fused into convex polygons; the half-edges (the twin of `e` is `e~1`) are
-  the representation of a SAT narrowphase.
+`hull_build` runs Quickhull (`max_vertices` selects farthest points so bounded hulls stay inside
+the full hull). Coplanar points produce a zero-volume flat hull (`hull_is_flat`, discarded by
+destruction/`mesh_decompose`, registered as mesh in physics). Coplanar faces merge into convex
+polygons with SAT half-edges (twin of `e` is `e ~ 1`).
 
 ## Plane slicing (`slice.odin`)
 
-- `mesh_slice` separates what is in front and behind (either of the two buffers may be `nil`) and
-  caps each side. The crossing of an edge depends only on the positions of its ordered ends, so the
-  triangles on both sides of a seam get the same point.
-- `open_edges` counts cut edges that do not close (the input was open there); `Slicer.sources` gives
-  the source triangle of each triangle written, or `SLICE_CAP`.
-- Invariant: a closed mesh produces closed parts whose volumes add up to the original except for the
-  tolerance times the area of the cut.
+`mesh_slice(s, mesh, plane, front, back, options={})` splits and caps closed meshes (`front` or
+`back` may be `nil`). Ordered-endpoint intersection keeps seams identical; `open_edges` counts
+uncapped open cuts; `Slicer.sources` maps triangles to source index or `SLICE_CAP`. Closed inputs
+conserve volume within `tolerance * cap_area`.
+
+```odin
+s: geom.Slicer; geom.slicer_init(&s); defer geom.slicer_destroy(&s)
+front, back: geom.Mesh_Buffer
+geom.mesh_buffer_init(&front); defer geom.mesh_buffer_destroy(&front)
+geom.mesh_buffer_init(&back); defer geom.mesh_buffer_destroy(&back)
+res, err := geom.mesh_slice(&s, mesh, {normal = {0, 1, 0}, d = 0}, &front, &back)
+_ = res; _ = err
+```
 
 ## Voronoi fracture (`fracture.odin`)
 
-- Each connected component of a clipped cell is a piece; the pair `(site, chunk)` is its stable
-  identity and the pieces are ordered by it. Fewer sites of `sites_generate` are a prefix of more.
-- `Fracture.connections` lists the pairs of pieces that touch through their bisector plane; between
-  chunks of concave cells the area is an upper bound.
-- Each cell clips the whole mesh: the cost grows with sites × triangles. A spatial index of
-  triangles does not serve for the first clips: clipping only the nearby ones leaves an open mesh
-  whose cuts do not form loops that can be capped.
-- To replicate a cut it is enough to transmit the identity of the object, the plane or the
-  description of sites and the seed: each machine rebuilds the same pieces.
+`mesh_fracture` clips each cell into connected pieces ordered by stable `(site, chunk)` identity
+(fewer sites from `sites_generate` are a prefix of more). `Fracture.connections` lists touching
+pairs and shared area (upper bound on concave chunks). Cost scales with `sites * triangles` (full
+mesh per cell to keep cuts closed). Replicate deterministically by sending entity + plane or
+`Site_Desc` + seed.
+
+```odin
+sites: [12]geom.Vec3
+geom.sites_generate(sites[:], {pattern = .Radial, seed = 42, lo = lo, hi = hi, center = hit})
+f: geom.Fracture; geom.fracture_init(&f); defer geom.fracture_destroy(&f)
+if geom.mesh_fracture(&f, mesh, sites[:], {interior_material = 1}) == .None {
+    for i in 0..<len(f.pieces) { _ = geom.fracture_piece_mesh(&f, i) }
+}
+```
 
 ## Primitives and triangulation
 
-- The `*_build` of `primitives.odin` fit, with their default arguments, in the centered unit cube
-  with +Y up, and are closed by position except the plane.
-- The shapes of `shapes.odin` (`tube_build`, `lathe_build`, `extrude_build`, `blade_build`,
-  `fan_build`, `blob_build`) append to the same `Mesh_Buffer`, closed except the blade, whose
-  triangles face their normals; `mesh_buffer_paint` colors what has none yet, `mesh_buffer_place`
-  moves a part and `mesh_buffer_flatten` gives every triangle its own vertices.
-- `polygon_triangulate` leaves each loop edge in exactly one triangle and always terminates;
-  `delaunay_triangulate` omits repeated points and gives no triangles with collinear or non-finite
-  points.
-- `polygon_convex_partition` merges the triangles of `polygon_triangulate` into convex pieces
-  (Hertel-Mehlhorn) without new points: their union is the polygon, and it is fast enough to rebuild
-  the colliders of an extruded outline while it is dragged, where `mesh_decompose` is not.
-- `polygon_boolean` unites, cuts or intersects two polygons with holes and gives every resulting
-  polygon apart (a cut that splits gives two). It snaps to a power-of-two grid exact in `f32`, so a
-  result fed back in snaps to the same points and repeated stamping does not degrade; its point
-  count is the true outline, which a caller with a capacity reduces itself.
+- `primitives.odin` (`*_build`): centered unit cube, `+Y` up, closed by position except plane.
+- `shapes.odin` (`tube_build`, `lathe_build`, `extrude_build`, `blade_build`, `fan_build`,
+  `blob_build`): append to `Mesh_Buffer` (closed except `blade_build`), plus `mesh_buffer_paint`,
+  `mesh_buffer_place`, `mesh_buffer_flatten`.
+- `polygon_triangulate` (always terminates), `delaunay_triangulate` (deduplicates, rejects
+  collinear/non-finite), `polygon_convex_partition` (Hertel-Mehlhorn, real-time fast), and
+  `polygon_boolean` (power-of-two `f32`-exact grid snapping so repeated stamps never drift).
 
 ## Simplification (`simplify.odin`)
 
-`simplify` is the only simplifier of the engine: a port of meshoptimizer 1.3's with its same `f32`
-arithmetic and its same order, which gives its indices byte for byte. The importer levels, the
-`Mesh` collision, the levels that the renderer gives to a
-published mesh without levels and the cluster DAG use it.
+Exact `f32` port of meshoptimizer 1.3 (never invents/moves vertices; indices name input vertices;
+temp memory freed on return; invalid input returns `Invalid_Mesh` / `Invalid_Attributes`).
 
-- **Shape.** That of meshoptimizer: it writes into `destination` (may be `indices`) the indices of
-  the mesh with at most `target_index_count`, or those that the topology and `target_error` allow.
-  **No vertex is moved or invented**: the indices name vertices of the input.
-- **Places and wedges.** Vertices of equal position are wedges of one place; an attribute seam
-  separates them and is kept as an outline (a seam place moves only along it). `Permissive` lets
-  seams be crossed except at the vertices marked `Protect` in `vertex_lock`; `Lock` on any wedge
-  fixes the place; `Priority` makes moving it costlier.
-- **Options.** `Lock_Border` (the open border does not move), `Sparse` (the indices are a small part
-  of the vertices: the work is that of the part), `Error_Absolute`, `Prune` (loose pieces go away
-  whole within the error), `Regularize`, `Regularize_Light`, `Error_Clamped`.
-- **Errors.** `result_error` adds position and weighted attributes; `position_error` is only how
-  much the surface moved, and is what the levels and the DAG store. Relative to `simplify_scale`
-  except with `Error_Absolute`.
-- **Memory.** It uses `context.temp_allocator` and releases it on return; it keeps nothing between
-  calls.
-- A non-finite position or attribute, an out-of-range index or a short `destination` give
-  `Invalid_Mesh` or `Invalid_Attributes` without writing.
+- Equal positions form wedges of one place; seams preserve outlines unless `Permissive` (except
+  `Protect` in `vertex_lock`; `Lock` freezes place; `Priority` penalizes collapse).
+- `Simplify_Options`: `Lock_Border`, `Sparse`, `Error_Absolute`, `Prune`, `Regularize`,
+  `Regularize_Light`, `Permissive`, `Error_Clamped`. `position_error` excludes attribute error
+  (used by LODs/DAG); relative to `simplify_scale` unless `Error_Absolute`.
+
+```odin
+dst := make([]u32, len(indices)); defer delete(dst)
+res, err := geom.simplify(dst, indices, positions, len(indices)/2, 0.01, {.Lock_Border})
+_ = res; _ = err
+```
 
 ## Clusters and DAG (`cluster.odin`, `partition.odin`, `cluster_dag.odin`)
 
-- `meshlets_build` is the port of `meshopt_buildMeshletsFlex` and `cluster_bounds` that of
-  `meshopt_computeClusterBounds`: they give meshoptimizer's clusters and spheres and cones.
-  `spheres_bound` is the sphere around spheres; `meshlet_local_indices`, the local indices.
-- `clusters_partition` is that of `meshopt_partitionClusters` with two more ideas: the weight
-  between sibling clusters (of the same group of the previous level) is lower than between
-  neighbors, so that group borders change from level to level, and small loose pieces are linked
-  with the nearest ones in Morton order.
-- `cluster_dag_build` follows `clusterlod.h`: clusters of up to `CLUSTER_MAX_TRIANGLES` (128) with
-  8-bit local indices and up to `CLUSTER_MAX_VERTICES` (256: with seams, 128 triangles need more
-  than 128 vertices, and the renderer draws the same corners per cluster whether full or not);
-  groups of `CLUSTER_GROUP_SIZE` simplified to half with their border locked, and `Permissive` where
-  seams lock them. A group still above `CLUSTER_SIMPLIFY_STUCK` (faceted pieces, a seam on every
-  edge) runs once more without the `Protect` of `vertex_lock`, only the outlines between submeshes
-  kept, with `Error_Clamped` and the error of its attributes in its own: what crossing the seams
-  loses reaches the cut, though never more than `CLUSTER_ERROR_EDGE_LIMIT` times the longest
-  edge of its triangles (where they are within the threshold, so is what their attributes lose;
-  its position error is never capped). A group stuck after that is a root; its places stay locked
-  in all the levels above, because its clusters are drawn next to any of them.
-- The triangles of each cluster the DAG simplifies come in the order of `meshlet_optimize` (the
-  port of `meshopt_optimizeMeshletLevel`), which names fewer vertices from far back: what the
-  coding of a page and the fetches of a pixel gain. Clusters of islands keep the order of their
-  islands, which share no vertex, and whole levels (`cluster_levels_build`) the order they are
-  given in, which decoding a level gives back.
-- **Cut contract.** Each `Cluster` carries its cull sphere and cone, `own` (sphere and error with
-  which it appears: 0 at level 0) and `parent` (those of its group, shared by all its clusters;
-  error `max(f32)` on a root), its group, its level and its submesh. It is drawn where `own`
-  projects within the threshold and `parent` does not. The errors are of position and do not go down
-  toward the roots (a group that crossed seams adds that of its attributes), and the sphere of the
-  parent contains its own: every cut is a surface without cracks.
-- **Submeshes.** A cluster never crosses submeshes: each range of `Cluster_Source.ranges` is
-  clustered separately, a vertex of two submeshes is `Invalid_Mesh`, and the outlines between
-  submeshes protect themselves.
-- `cluster_levels_build` puts discrete levels (skinned meshes) in the same format: level k is
-  group k, its clusters share the sphere of level 0 with the error of level k as `own` (0 for
-  level 0, which a view however near draws) and that of k+1 as `parent`, and the same cut chooses
-  a whole level.
-- Without the *sloppy* fallback of `clusterlod`: crossing the seams keeps the topology, and only
-  locked places stop a group, which joining cells cannot move either.
+- Ports of `meshopt_buildMeshletsFlex` (`meshlets_build`), `meshopt_computeClusterBounds`
+  (`cluster_bounds`), `meshopt_partitionClusters` (`clusters_partition`, down-weighting sibling
+  clusters and Morton-linking small loose pieces), and `meshopt_optimizeMeshletLevel`
+  (`meshlet_optimize`).
+- `cluster_dag_build`: up to `CLUSTER_MAX_TRIANGLES` (128) / `CLUSTER_MAX_VERTICES` (256), groups
+  of `CLUSTER_GROUP_SIZE` simplified to half with locked group borders -> `Permissive` -> relaxed
+  `Protect` if still above `CLUSTER_SIMPLIFY_STUCK` (attribute error capped by
+  `CLUSTER_ERROR_EDGE_LIMIT` × longest edge, position error uncapped); still stuck becomes a root
+  whose places stay locked above. No sloppy fallback.
+- **Cut contract:** draw cluster where `own` projects within threshold and `parent` does not (`own`
+  error 0 at level 0, `parent` error `max(f32)` at root; monotonic errors and nested spheres give
+  crack-free cuts). Clusters never span submeshes (`Cluster_Source.ranges`; shared submesh vertex
+  is `Invalid_Mesh`). `cluster_levels_build` encodes discrete LODs in the same format.
+- **Islands (`cluster_islands.odin`):** Aggregate foliage/cards (`Cluster_Source.islands`,
+  `island_indices`) prune instead of simplifying (`islands_reduce`: coarsen rungs, halve survivors,
+  grow area up to `islands_clouds` bound, error over `ISLAND_PIXELS`, keep last island per class;
+  emits transition scale/drop rank in `Cluster_Dag.made`).
 
-## Islands (`cluster_islands.odin`)
-
-- Aggregate detail (leaves, cards) is pruned instead of simplified (Cook et al. 2007):
-  `Cluster_Source.islands`, each with its outlines (rungs, the finest first, each with its error)
-  in `island_indices`, a class and a fixed order. They make their own levels in the DAG beside the
-  rest of the mesh, which shares no place with them, and their vertices past level 0 are
-  `Cluster_Dag.made` (copies of a source vertex, moved).
-- `islands_reduce` is the one rule, for a group of the DAG and for a whole level of a skinned mesh:
-  each class first steps its islands to coarser outlines, then is halved keeping the first of its
-  order and growing the survivors about their centers to the area of level 0 they stand for; it
-  goes as far as the error given allows, then by the least more that brings it to its target of
-  triangles. The error of an island is that of its outline times its growth and, once pruned, at
-  least the farther of the largest radius of its class grown and of how far the area of a dropped
-  island moved (the sphere a survivor stands for), over `ISLAND_PIXELS`.
-- **What bounds the pruning** is that error, down to one island a class, and the cloud of the class
-  (`islands_clouds`): a survivor never grows past it, since an island larger than its plant draws
-  the plant larger and grows the box of the mesh. Sparse leaves prune to one island, overlapping
-  ones to the few that fill their cloud; the last island of a class is never dropped.
-- **Invariants.** An island is never split between clusters (clusters and groups are cut by
-  halving the box of their centers); a group keeps the rules of the cut contract (error the largest
-  of its clusters' and its own, sphere around theirs, a root where it cannot drop to
-  `CLUSTER_SIMPLIFY_STUCK`); every group draws in what it was reduced into the area it drew, and
-  adds error to its clusters' (else the cut would never draw it and the islands would grow
-  towards a level it skips); a group of one cluster is reduced too, so a far plant keeps shedding
-  leaves.
-- **Transition** (Cook et al. 2007, section 3.5). Every vertex of an island in a cluster is made
-  with where its island goes in the group: the scale to the area it draws in the next level, or 0
-  and its rank among the islands of its class the group drops (the last go first), so the renderer
-  can move it continuously from the cluster to its group.
+```odin
+dag: geom.Cluster_Dag; defer geom.cluster_dag_destroy(&dag)
+err := geom.cluster_dag_build(&dag, {positions = positions, indices = indices})
+_ = err
+```
 
 ## Approximate convex decomposition (`decompose.odin`)
 
-- `mesh_decompose` gives a few convex hulls that represent a non-convex mesh: the collider of a body
-  at cook time. It separates islands and cuts the part of highest concavity with the axis-aligned
-  plane that leaves the least concavity, up to `concavity` or `max_hulls` (zeros take
-  `DECOMPOSE_DEFAULT_*`).
-- The cuts are those of `mesh_slice` with caps: the parts of a closed mesh are closed. A bounded
-  hull stays inside that of its part and may leave some vertex out. An open mesh is covered all the
-  same, with a measure that means less.
+`mesh_decompose` splits islands and recursively cuts the highest-concavity part with axis-aligned
+`mesh_slice` planes until `concavity` or `max_hulls` (`DECOMPOSE_DEFAULT_*`). Closed inputs yield
+closed parts; bounded hulls stay inside their part.
 
 ## Tangents (`tangents.odin`)
 
-- `corner_tangents` gives one tangent per index with the MikkTSpace convention used by the normal
-  map bakers: `w` is the sign of the bitangent, so that `w * cross(normal, tangent)` points up the
-  image.
-- Mirai counts v downward and MikkTSpace upward: `1 - v` is passed. Without uv or without area, the
-  tangent is a perpendicular to the normal and the sign 1.
-- It is a port in Odin of `mikktspace.c`, triangles only. `mesh_tangents` repeats a vertex where its
-  corners take different tangents (uv seams, mirrored halves), with its skin.
+Odin port of `mikktspace.c` (triangles only; flips V as `1 - v` for Mirai's downward V).
+`corner_tangents` outputs tangent + bitangent sign `w`; `mesh_tangents` splits vertices at
+UV/mirror seams (preserving skin).
 
-## Outside the package
-
-Not implemented: grid-based *sloppy* simplification, the optimal vertex placement of a collapse
-(`meshopt_simplifyWithUpdate`) and oblique cut planes in the decomposition.
+Not implemented: sloppy grid simplification, `meshopt_simplifyWithUpdate`, oblique decomposition
+planes.
 
 ## Verification
 
-- `shapes_test.odin`: the shapes of props are closed and face outwards; blades, fans and parts.
-- `hostile_test.odin` calls each public function with random inputs
-  (`-define:GEOM_HOSTILE_ROUNDS=n`; 20,000 with `--release` when changing validation).
-- `calls_without_memory_fail_whole_and_their_workspaces_work_again` ends the memory at each request
-  of each operation. When changing what an operation reserves, run the package once over a copy
-  without `#no_bounds_check` whose `push` and tables assert their room.
-- When changing an algorithm, keep the walk order and the tie-breaks: they are part of the
-  replication contract.
-- `isosurface_regions_of_mixed_levels_join_closed_without_cracks`: regions of random levels close,
-  with their volume and one normal per shared vertex; level 0 keeps the triangles and the cost
-  (`bench_isosurface`).
-  `isosurface_of_a_window_matches_the_whole_grid_and_rejects_regions_that_reach_past_it`: a window
-  gives the vertices of the whole grid.
-- `simplify_with_a_locked_border_keeps_the_edges_parts_share_at_any_level`,
-  `simplify_keeps_the_outline_of_a_seam_of_uvs` and
-  `simplify_of_a_sparse_part_is_that_of_the_part_alone`. When touching a port, repeat the
-  byte-for-byte comparison with meshoptimizer.
-- `cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic` (random cuts without odd
-  edges and intact group borders, also with locked groups; the edge limit on faceted ones),
-  `meshlet_optimize_keeps_each_triangle_and_reuses_vertices_sooner`,
-  `cluster_levels_cut_one_whole_level` and, on demo meshes,
-  `the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow` (`cook/import`).
-- `surface_edit_test.odin` and `boolean_test.odin`: run their cases in minimal and in speed when
-  changing the kernel (the boolean one covers the failure of each allocation with its own temporary
-  allocator).
-- `tangents_of_a_curved_grid_match_the_reference` compares a curved grid with the tangents of
-  `mikktspace.c`.
-- Benchmarks, optional with `-define:GEOM_BENCH=true`, `-define:ODIN_TEST_THREADS=1` and without
-  other builds or tests on the CPU: `bench_hull`, `bench_fracture`, `bench_simplify`,
-  `bench_decompose`, `bench_surface_edit`, `bench_boolean`, `bench_isosurface`, `bench_tangents`,
-  `bench_polygon_convex_partition`.
-  They are not equivalent to an editor measurement.
+- `mirai test std/geom`: `shapes_test.odin`, `surface_edit_test.odin`, `boolean_test.odin`,
+  `hostile_test.odin` (`-define:GEOM_HOSTILE_ROUNDS=n`, 20,000 `--release` on validation changes).
+- Key invariants:
+  - `calls_without_memory_fail_whole_and_their_workspaces_work_again`
+  - `isosurface_regions_of_mixed_levels_join_closed_without_cracks`
+  - `isosurface_of_a_window_matches_the_whole_grid_and_rejects_regions_that_reach_past_it`
+  - `simplify_with_a_locked_border_keeps_the_edges_parts_share_at_any_level`
+  - `simplify_keeps_the_outline_of_a_seam_of_uvs`
+  - `simplify_of_a_sparse_part_is_that_of_the_part_alone`
+  - `cluster_dag_of_a_closed_mesh_cuts_without_cracks_and_is_deterministic`
+  - `meshlet_optimize_keeps_each_triangle_and_reuses_vertices_sooner`
+  - `cluster_levels_cut_one_whole_level`
+  - `tangents_of_a_curved_grid_match_the_reference`
+  - `cook/import`: `the_cluster_dag_of_demo_meshes_cuts_without_cracks_with_errors_that_grow`
+- Benchmarks (`-define:GEOM_BENCH=true -define:ODIN_TEST_THREADS=1`): `bench_hull`,
+  `bench_fracture`, `bench_simplify`, `bench_decompose`, `bench_surface_edit`, `bench_boolean`,
+  `bench_isosurface`, `bench_tangents`, `bench_polygon_convex_partition`.

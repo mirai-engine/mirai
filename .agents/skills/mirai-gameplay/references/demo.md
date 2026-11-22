@@ -2,351 +2,154 @@
 
 ## Templates
 
-`mirai new <folder> [--template T]` copies `templates/<T>`; `mirai new --list` describes them with
-the first line of their README.
+```sh
+mirai new --list
+mirai new my_game --template game
+mirai content my_game
+```
 
-- **`empty`**: `game/` with one component, one function and one action, a `sample` plugin with its
-  `runtime/` and a Surface program in `shaders/`.
-- **`game`**: playable game with the public API (character with physics, destructible wall,
-  animated interface, sound, save and networking). Its
-  [README](../../../../templates/game/README.md) explains the files and how to play it with
-  `--server` and `--connect`.
+- **`empty`**: minimal `game/` (1 component, step, action), `sample` plugin (`runtime/`), and a
+  Surface shader.
+- **`game`**: playable sample (physics character, destructible wall, animated UI, audio, save,
+  networking); see [README](../../../../templates/game/README.md).
+- Both ship `.mcp.json`, `.claude/settings.json` (`Stop` hook for
+  [external agents](../../mirai-editor/references/ai-tasks.md#agents-outside-the-editor)),
+  `AGENTS.md`, and `CLAUDE.md`. Authored scenes/prefabs/`.ui` are tracked; `tools/content` runs
+  via `mirai content <project>` and is excluded from game builds.
 
-Both bring `.mcp.json`, which gives an agent outside the editor the `mirai` MCP server,
-`.claude/settings.json`, whose `Stop` hook ends the turn of Claude Code in the editor
-([outside the editor](../../mirai-editor/references/ai-tasks.md#agents-outside-the-editor)), and
-the `AGENTS.md` the agents of the project keep, which `CLAUDE.md` brings to Claude Code.
-
-The scene, the prefab and the `.ui` of `templates/game` are its source: files kept in the
-repository and written through the API. Its `tools/content` writes only what code generates (the
-badge and the hum); `mirai content <project>` runs it. It does not go into the game: only `game/`,
-`editor/` and the plugins are compiled.
 ## Demo
 
-[`demo/`](../../../../demo) is a complete project:
+[`demo/`](../../../../demo) holds `project.mirai` (start scene `control/control.scene`, plugins
+including `spawn`, `cinematics`, `physics`, `destruct`, `multiplayer`, `paint`, `terrain`,
+`animation`, `previews`, `navigation`, `behavior`; `destruct_multiplayer` auto-activates),
+`settings.mirai` (en/es, `prompts_kenney`, no player prefab), `cook.mirai`, `render_check.mirai`
+([render check](../../mirai-rendering/references/verification.md#render-check)),
+`captures.mirai`, `tests/flights/`
+([profiling](../../mirai-agent-api/references/methods.md#profiling)), `game/`, and `assets/`.
 
-- `project.mirai`: start scene `control/control.scene`; plugins `spawn`, `cinematics`,
-  `physics`, `destruct`, `multiplayer`, `paint`, `terrain`, `animation`, `previews`,
-  `navigation`, `behavior` and others. The `destruct_multiplayer` bridge
-  activates on its own.
-- `settings.mirai`: `UI_Settings` in English and Spanish (no player prefab: the spawn points of
-  each gallery name its body), with the prompt pack of `prompts_kenney`.
-- `cook.mirai`: the prefabs and materials that only code picks by path.
-- `render_check.mirai`: the fixed views that `mirai render check` measures
-  ([render check](../../mirai-rendering/references/verification.md#render-check)).
-- `captures.mirai`: the named cameras, and `tests/flights/`: the flights of
-  `mirai bench flight` ([profiling](../../mirai-agent-api/references/methods.md#profiling)).
-- `game/` and `assets/`, with the art sources beside what they make.
+| Scene | Coverage |
+| --- | --- |
+| `ai` | [AI arenas](#ai-arenas) around a plaza; navmesh visible in Edit, paths in Play/Simulate |
+| `control` | Person + AI dog, possession, cameras, 100-tick intro cinematic ([Control](#control)) |
+| `main` | GI bounce, metals/paints, glass, masked materials, imports, door, material swatch |
+| `showcase` | `UI_Screen` HUD + `World_Widget` (`Showcase`), `.anim` elevator, spatial speaker |
+| `interface` | `Interface_Demo` (`H` HUD variant, `M` options, `I` inventory, `T` dialogue; en/es) |
+| `destruction` | Destructible walls/blocks broken by thrown cubes |
+| `dig` | Grass/earth/rock `Volume` + ore, `Terrain_Dust`, `terrain_debris`, `Use` digs |
+| `physics` / `vfx` | 23 physics stations; 5 `vfx` exhibits (`shaders/smoke_plume.slang`; `fluids` is external `tomaszbk/mirai-fluids`) |
+| `raft` / `ocean` | Buoyant raft/boxes, `Swimmer` (`Walk`/`Swim`/`Diver`), [`water`](../../mirai-world/references/water.md); water shader |
+| `animation` | Mirai [animation gallery](animation-gallery.md) (clips, motion matching, IK, [rigs](../../mirai-animation/references/animation-rigs.md), [morphs](../../mirai-animation/references/animation-morphs.md), budget) |
+| `lights`, `night` | Many point lights without sun; no spawn points (viewed from scene camera) |
+| `church`, `church_fog` | Volumetric `fog` + stained [glass in rays](../../mirai-rendering/references/materials.md#glass-in-rays) (static vs moving wisps) |
+| `portal_chamber` | [Portal game](#portal-game) |
+| `horror` | Fixed-exposure dark room with `use` switches and `flashlight` |
+| `decals`, `deform`, `monitors`, `portals`, `portal_lab` | [Render plugin scenes](../../mirai-plugins/references/render-plugins.md#verification) |
 
-Scenes:
-
-- **`ai`**: the AI level, the [arenas](#ai-arenas) around a plaza with the player and a sign per
-  exhibit. It has the arenas' places, so in Edit the Navigation mode shows tiles, areas and links;
-  in Play and Simulate, also the paths of the chosen agents.
-- **`control`**: person and dog with physics, human/AI possession, camera per body, shared aerial
-  view and a 100-tick intro with a cinematic ([Control](#control)).
-- **`main`**: gallery of bounced light, metals and paints of increasing roughness, glass that
-  refracts, masked materials, imported models, a door and a sample that changes material.
-- **`showcase`**: HUD (`UI_Screen`) and sign over the elevator (`World_Widget`) that show the
-  `Showcase` component; elevator moved by an `.anim` and a speaker with spatial sound.
-- **HUDs of the other scenes**: each is a component a `frame` step writes only when what it shows
-  changed, and a `.ui` with the styles of `assets/interface/hud_kit.ui`, on the body it is of
-  (`Player_Hud` on `Player.scene`, `Person.scene` and `Dog.scene`, `Portal_Hud`, `Raft_Hud`) or
-  on an entity of its scene (`Dig_Hud`, `Vfx_Gallery_Hud`, `Physics_Gallery_Hud`, `Gallery_Hud`).
-- **`interface`**: the interfaces of `assets/interface/` over the `Interface_Demo` component
-  (`game/interface_demo.odin`). H changes the HUD variant (`minimal`, `neon`), M opens the options
-  menu (controls, tooltip, two buttons from another `.ui` with overrides, language), I the
-  inventory (a grid of objects that are dragged between slots or to the hand) and T a conversation
-  with a merchant. The buttons of each screen respond to the action that opens it, and the texts
-  are in English and Spanish. The objects and the conversation are [game data](#game-data).
-- **`destruction`**: destructible walls and blocks that the cubes the player throws break.
-- **`dig`**: a grass Volume over earth over rock with ore pockets, which digs a pit by itself when a
-  Play starts; Use digs where the player looks. It raises dust of each layer's color, drops pieces
-  of earth and rock and ore drops that are picked up on passing (`Terrain_Dust` and
-  `terrain_debris`).
-- **`physics`**: gallery of 23 stations.
-- **`vfx`**: gallery of the `vfx` plugin (`game/vfx_gallery.odin`), five exhibits that the camera
-  tours in Play (left and right, Home the overview) with their title and explanation in the HUD:
-  embers that glow, particles from the skin and bones of Mirai walking, impacts that the
-  game gives to a channel (E fires a burst), a smoke column in a 3D grid with `Particle_Volume`
-  (`shaders/smoke_plume.slang`) and sprite materials. The effects translated from Unreal are in
-  the imported-maps project, not in the demo. The `fluids` plugin lives in its own repository,
-  tomaszbk/mirai-fluids.
-- **`raft`**: a raft and boxes that float in the sea, a beach that rises to an island and the
-  first-person swimmer (prefab `Swimmer`, with `Walk`, `Swim` and `Diver`): it jumps into the water,
-  swims on the surface and under it, climbs back and drowns if it runs out of air. The sea is drawn
-  by the [`water`](../../mirai-world/references/water.md) plugin, with waves, shore foam and
-  splashes.
-- **`ocean`**: a water material program.
-- **`animation`**: the only animation scene, a hall that the player walks with Mirai, with a
-  numbered station per feature: clips, events, root motion, a prop moved by a clip, layers,
-  additives, actions, motion matching, physical locomotion with foot IK, warping,
-  constraints, retargeting, rigs ([rigs](../../mirai-animation/references/animation-rigs.md)),
-  procedural gait, morphs
-  ([morphs](../../mirai-animation/references/animation-morphs.md)) and budget. Each plays in a
-  loop; E adjusts the ones with a 3D panel ([Animation gallery](animation-gallery.md)).
-- **`lights`** and **`night`**: many point lights without a sun, for the cost and noise of direct
-  light; without spawn points, in Play they are seen from their camera.
-- **`church`**: nave with volumetric fog (`fog` plugin) and stained glass windows that a sun crosses
-  uncolored and draws in the haze and on the floor
-  ([glass in rays](../../mirai-rendering/references/materials.md#glass-in-rays)). Its haze is
-  even because the render check takes as boiling what changes in a still view; **`church_fog`** is
-  the same nave with the haze in wisps that move on their own through the beams.
-- **`portal_chamber`**: the [portal game](#portal-game).
-- **`horror`**: a dark room with lamps on a switch (`use`) and a flashlight (`flashlight`), with
-  fixed exposure: the dark stays dark when turned off.
-- **`decals`, `deform`, `monitors`, `portals`, `portal_lab`**: scenes of the render plugins
-  ([what each one shows](../../mirai-plugins/references/render-plugins.md#verification)).
+Scene HUDs share `assets/interface/hud_kit.ui` and write their HUD component in a `frame` step
+only on change (`Player_Hud`, `Portal_Hud`, `Raft_Hud`, `Dig_Hud`, `Vfx_Gallery_Hud`,
+`Physics_Gallery_Hud`, `Gallery_Hud`).
 
 ## Code (`demo/game`)
 
-- **`game.odin`**: the demo's actions (`Action`, `@(actions)`) with their default bindings
-  (`Demo_Actions`), and the components of the scenes.
-  - `game_use` reads the actions of the body's seat: opens doors, changes the material sample and
-    throws a cube with `scene.spawn`.
-  - `game_projectiles` (`stage="react"`) damages with `destruct.damage` what the cube touches, and
-    destruction applies it in the same tick.
-  - `game_glow` is the game's only writer of `Material_Values`: it also serves the portals' buttons,
-    the lamps of `horror` and the fade of the physics gallery.
-  - The cameras of the prefabs are `Camera_Follow` children of the body: `Eyes` the player's,
-    `Orbit` those of the person and the dog, which walk where their camera says.
-- **`control.odin`**: `Follow` is an AI that takes the body behind its leader while no seat drives
-  it.
-  - `game_dogs` (`server`) gives each person a dog with `Follow`; `game_follow` writes the
-    `Move_Input` of the body that follows.
-  - `game_seats`: the dog leaves with its leader; `switch_body` makes the seat drive the dog and the
-    person follow it; `overhead_view` uses `cam.camera_override` with a transition and
-    `camera_mode` passes the body's camera to the next mode (`cam.camera_mode`).
-  - `game_follow`: the AI writes the `Move_Input` of the body that follows its leader.
-  - Person and dog are `Character`s relative to what their camera asks: the seat that drives one
-    walks it; that of one without a seat is left to its AI, and on a client that of the others, to
-    the network.
-  - `gallery_move_inputs` (`animation_gallery.odin`, `after="gallery_player_move"`): the
-    `Move_Input` of the animation gallery's bodies. The look of a body that crosses a portal is
-    turned by the `portals` plugin.
-  - `game_barker`: counts a bark when its seat presses `bark` or the intro asks for it with the
-    marker `intro.bark`.
-- **`raft.odin`**: a swimmer's air is a rule of the demo over `head_depth`: `Diver` spends oxygen
-  with the head under the surface and recovers it outside; without air, `raft_breath` puts it back
-  on the raft of `Raft_Game` with full air. `raft_hud` shows how it moves, its air and the notice
-  that it drowned.
-- **`portal_game.odin`**: [portal game](#portal-game). Components `Portal_Gun`, `Portal_Mouth`,
-  `Portal_Surface`, `Portal_Cube`, `Grill`, `Floor_Button`, `Grill_Passes`; functions
-  `portal_gun`, `portal_links` (only writer of `Portal` and `Hidden`), `portal_chamber`
-  (`stage="react"`), `portal_hud`. `game_doors` and `game_glow` also serve the buttons
-  (`door_opened`).
-- **`dig_site.odin`**: `Dig_Site` (on the terrain: how many balls it digs by itself and every how
-  many ticks) and `dig_site` (`stage="react"`, nothing on a client), which requests the balls with
-  `terrain.dig`, adds to `Dig_Inventory` the cubic meters per material of
-  `terrain.Terrain_Digs` and picks up the `Dig_Pickup`s that a `Player` touches; `dig_hud` shows
-  the inventory. It is the game's rule: the engine has no inventory.
-- **`horror.odin`**: `Light_Switch`, `House_Lamp` (its `Point_Light` gives its intensity while its
-  switch is on and its flicker leaves it) and `Flashlight` (follows the first player's look);
-  functions `horror_switches` and `horror_lights` (`stage="react"`); `game_glow` turns on each
-  lamp's globe with `horror_glow`.
-- **`ai_arena.odin`**: the [AI arenas](#ai-arenas).
-- **`showcase.odin`**: `Showcase` and `game_showcase`; the sign's button (`UI_Events`) stops and
-  resumes the elevator, and each `top` marker (`Animation_Events`) counts an arrival.
-- **`animation_gallery*.odin`** and **`animation_motor.odin`**: the
-  [animation gallery](animation-gallery.md#code-demogame).
-- **`physics_gallery.odin`**: `Physics_Gallery`, its camera selection and requests reproducible by
-  trigger, input E and reset by R.
-  - Removal and the Size debris keep fragments for 6 s and fade them over the next 2 s, reading the
-    physical timer from `game_glow` (the game's only writer of `Material_Values`).
-  - Particles come from the public destruction event, omitting Remove events. Counts and prefabs
-    stay in the `World`: a rollback brings them with the copy and repeats them the same.
-  - Internal Strain keeps a collection suspended until the second E; the recorded geometry station
-    starts paused.
+| File | Key components & steps |
+| --- | --- |
+| `game.odin` | `@(actions) Action`, `game_use` (doors/swatches/cube throw), `game_projectiles` (`react`, `destruct.damage`), `game_glow` (sole writer of `Material_Values`) |
+| `control.odin` | `Follow`, `game_dogs` (`server`), `game_seats`, `game_follow` (`Locomotion_Drive`), `game_barker` (`bark` / `intro.bark`) |
+| `raft.odin` | `Diver` oxygen over `head_depth`, `raft_breath` respawn on `Raft_Game`, `raft_hud` |
+| `portal_game.odin` | `Portal_Gun`/`Portal_Mouth`/`Portal_Surface`/`Portal_Cube`/`Grill`/`Floor_Button`/`Grill_Passes`; `portal_links` sole writer of `Portal` and `Hidden` |
+| `dig_site.odin` | `Dig_Site`, `dig_site` (`react`, server-only: `terrain.dig`, `Dig_Inventory` from `Terrain_Digs`, `Dig_Pickup`), `dig_hud` |
+| `horror.odin` | `Light_Switch`, `House_Lamp`, `Flashlight`, `horror_switches`, `horror_lights` (`react`), `horror_glow` |
+| `ai_arena.odin` | [AI arenas](#ai-arenas): `arena_think`, `arena_targets`, `arena_carts` |
+| `showcase.odin` | `Showcase`, `game_showcase` (`UI_Events`, `Animation_Events` `top` marker) |
+| `animation_gallery*.odin`, `animation_motor.odin` | [Animation gallery](animation-gallery.md#code-demogame); `gallery_move_inputs` (`after="gallery_player_move"`) |
+| `physics_gallery.odin` | `Physics_Gallery` (E trigger, R reset, 6s+2s debris fade via `game_glow`, rollback-safe counts) |
 
-Each component assigned to objects in the editor carries its `NAME_DEFAULT`; scenes store the
-values.
+Editor-placed components declare `NAME_DEFAULT`; scenes store authored values.
 
 ## AI arenas
 
-An entity with `AI_Arena` builds in Play, where it is, agents that decide with
-[minds](../../mirai-world/references/behavior.md#enemies-with-minds), walk or fly through
-navigation and perceive through behavior, and its place (`arena_place`, in pieces), unless `place`
-is false because the scene has it, as the `ai` scene does, so that the navmesh exists in the
-editor. The runner of `Horde` and `Swarm` and the guards of `Paths` patrol the `Spline` of the
-arena entity, which the scene holds.
+`AI_Arena` builds [mind](../../mirai-world/references/behavior.md#enemies-with-minds)-driven agents
+in Play (and `arena_place` unless `place=false` as in `ai`, where navmesh is pre-built). Agents
+carry `core.Id` for `behavior.inspect` and `nav.agent`.
 
-- `Horde` (`agents` zombies): a block of 3 by 3 buildings of 3.5 and 4.5 m with streets of 2.5 m.
-  Zombies wander, chase the runner they see (`nav_follow`) jumping from roof to roof and falling to
-  the street through the generated links, and bite it three at a time (attack tokens); the rest
-  surround it until a spot is freed. A cart (`Arena_Cart`, kinematic with `Nav_Obstacle`) parks on a
-  street: the tiles under it are redone. With `Horde_Waves` more arrive in [waves](#game-data) at
-  the `Spawn_Point`s of an edge street, which have `players` off.
-- `Firefight` (`agents` per squad): two squads of tactical bots in a walled yard. Each soldier
-  shoots with one of two tokens per enemy, takes cover on the side of a wall chosen by a place
-  query over the cover offers (that its enemy does not see, close and with little enemy
-  influence), reloads, goes for ammo and health to the crates on its side, operates the turret on
-  its side and sounds the alarm, which its squad hears: smart objects that it reserves while using
-  them.
-- `Boss`: a boss in phase one picks a strike, charge or summon by score and finishes each attack;
-  under half its health it moves to combos (steps it chooses according to where the hero is); the
-  hero stuns it with a field of its `Boss` that wins over everything else and, dead, it gets up
-  after 3 s.
-- `Swarm` (`agents` drones): a yard split by a wall that hangs from 3.5 m to 14 m and leaves the air
-  on both sides, with pillars and an air `Nav_Bounds`. Drones with `Fly` and the zombies' mind fly
-  after the runner and go down under the wall to cross; when wandering they also go up and down.
-- `Paths` (`agents` guards): they patrol; climb a platform by a ladder (a manual
-  `Nav_Link` of type `Ladder`, which asks for `ABILITY_LADDER`), go down by the drops the build
-  generates, go around a blocked `Nav_Area` and the cart that parks in their lane, and vault one at
-  a time a fence that crosses the yard (a `LINK_VAULT` link that the game crosses, with its smart
-  object).
-- `Senses` (`agents` listeners): bells (`Arena_Bell`) ring in turns behind walls; the listeners,
-  who barely see, go to the one they hear with the zombies' mind and forget it.
-- `arena_think` runs the minds of each kind (`zombie`, `soldier`, `boss`, `guard`) and carries the
-  boss's health; `arena_targets` moves the hero, and `arena_carts` moves the carts
-  and rings the bells. The agents receive a `core.Id` so that `behavior.inspect` and `nav.agent` can
-  name them.
+- **`Horde`**: 3×3 buildings, roof-jump/drop `nav_follow`, 3 attack tokens, kinematic `Arena_Cart`
+  (`Nav_Obstacle`), `Horde_Waves` on non-player `Spawn_Point`s.
+- **`Firefight`**: 2 squads, 2 shoot tokens/enemy, cover place queries, ammo/health crates,
+  turrets, and alarms as reserved smart objects.
+- **`Boss`**: phase 1 scored attacks (strike/charge/summon), phase 2 (<50% HP) combos, stun
+  override, 3 s revive.
+- **`Swarm`**: air `Nav_Bounds`, `Fly` drones ducking under a hanging wall.
+- **`Paths`**: patrol guards using `Ladder` `Nav_Link` (`ABILITY_LADDER`), drops, blocked
+  `Nav_Area`, cart detour, `LINK_VAULT` smart-object fence.
+- **`Senses`**: blind listeners investigating alternating `Arena_Bell` sounds.
 
 ## Game data
 
-The demo shows how a game builds its rules over `.records` tables
-([game data](../../mirai-core/references/core.md#game-data)): the engine brings no
-inventories, dialogues or waves, and these are demo code that can be copied and changed.
+Demo `.records` examples ([game data](../../mirai-core/references/core.md#game-data)); views
+refresh only when `records_generation` or language changes:
 
-- **Inventory** (`interface_demo.odin`): a slot of `Interface_Demo` stores the `Item` row
-  (`assets/interface/items.records`) and how many units it has; name, icon and rarity are read from
-  the
-  row in the chosen language. Dropping an object on another equal one completes its stack up to the
-  row's `stack`.
-- **Conversation** (`interface_demo.odin`): `Dialogue_Line` says who speaks, what, and which line
-  follows; `Dialogue_Choice` is an answer to a line, with a flag by name that it requires, another
-  that hides it and another that it sets. The answers of a line are the rows that name it, in their
-  order, so in the grid they are added without touching the line. `Interface_Demo.talk` is the line
-  it starts with.
-- **Waves** (`ai_arena.odin`): `Horde_Waves` in the `Horde` arena sends zombies after those the
-  arena builds. Each `Horde_Wave` says when, how many and how often, and names the next wave; one
-  that names an earlier one repeats it. Each zombie appears at the next spawn point without
-  players (`spawn.spawn` with no seat), and the prefab of that point (`ai/Walker zombie.scene`,
-  `Runner zombie`, `Brute zombie`) is its kind.
-- What is shown of a row (names, texts) is redone only when `records_generation` of its table or
-  the language changes, so editing a row during Play is seen in the next tick at no cost to the
-  others.
+- **Inventory** (`interface_demo.odin`): `Item` rows (`assets/interface/items.records`), stack
+  merge on drop.
+- **Conversation** (`interface_demo.odin`): `Dialogue_Line` + `Dialogue_Choice` (flag
+  require/hide/set), starting at `Interface_Demo.talk`.
+- **Waves** (`ai_arena.odin`): `Horde_Waves` / `Horde_Wave` spawning point prefabs (`Walker`,
+  `Runner`, `Brute`) via `spawn.spawn` with no seat.
 
 ## Local multiplayer
 
-`mirai play --players 2` (or the editor's Play selector) gives the run two local players: `input`
-creates one seat per player, each receives its person at a spawn point of `control.scene` (the
-points name the person) and `engine/camera` splits the screen; each orbit turns with its own pad. In
-Play, F1 releases the mouse and the click that returns it chooses who receives keyboard and mouse.
+`mirai play --players 2` (or Play selector) creates two local seats, spawns two persons in
+`control.scene`, and splits the screen (pad per orbit; F1 releases mouse, click refocuses slot).
 
 ## Generated content
 
-The scenes, prefabs, materials, particles, tables of game data and clips of a few keys of the
-demo are authored assets, changed through the API (`scene.write`, `material.set`, `particle.set`,
-`records.set`), `mirai scene write` or the editor; no code writes them. The imports of
-`demo/source` are the build's. `tools/demo_content` writes what code computes and gives the same
-bytes on every run:
+Authored assets (scenes, prefabs, materials, particles, `.records`, `.ui`) are edited via API/CLI
+or editor. Code-generated assets are deterministic via `tools/demo_content/main.odin`:
 
 ```sh
 mirai content demo
+# Single part: --physics-only | --features-only | --interface-only | --dig-only | --animation-only
+mirai content demo -- --physics-only
 ```
 
-A `--<part>-only` flag after `--` regenerates only one part
-(`tools/demo_content/main.odin`).
-
-- `--physics-only`: the fractures, their meshes, the baked cuts and the ragdoll rig of `physics`.
-- `--features-only`: the meshes of the render plugins' scenes and the decal images.
-- `--interface-only`: the icons of the items.
-- `--dig-only`: the dig terrain.
-- `--animation-only`: reads the import of Mirai and writes what the
-  [animation gallery](animation-gallery.md) uses: the locomotion and gallery clips of Mirai and
-  their programs, the taller Mirai and its baked clips, the spider, the rig chains and the source
-  of the morph jelly. Contracts:
-  [animation plugin](../../mirai-animation/references/animation.md).
-
-Content:
-
-- **Skies**: whole-sky images of 4096×2048 in `assets/sky` (`sky_day`, `sky_sunset`,
-  `sky_overcast`, `sky_night`). A scene's `Sky` entity is turned around the vertical so that the
-  image's sun has the heading of the scene's `Sun`, at the height it has in the image. Overcast
-  and night have `disc` off.
-- **Scene light**: the lights of a scene compare as in a unit where a white surface that faces a
-  light of 1 shows 1, times one factor of nits per unit for the whole scene, so sun, lamps, sky,
-  background and emission compare alike.
-  - Scenes with lamps, by day or by night: the lamps stay at plausible candelas (50 cd per unit)
-    and the sun and sky as dim beside them as the demo has them: by day they are the light of dusk
-    (50 to 200 lux), which the light meter exposes like a noon; a manual exposure has to be that
-    of that light, not that of a sunny day.
-  - Scenes lit only by the sun (`animation`, `physics`): the sun gives 100000 lux.
-  - Panels and screens emit their brightness and give the light of one π times brighter.
-- **Scene brightness**: the one their art direction gives them, as compensation over the light
-  meter (the `Exposure` entity, a scene-wide `View_Volume`): `physics` +2,
-  `portals` +1, the template +0.75, `main` +0.6, `animation_features` −0.75, `showcase` −1,
-  `monitors` −1.5 and `portal_lab` −2.5. `night` has fixed exposure, Manual at EV100 3.5:
-  its lamps are wells of light in the dark and no compensation works from all its views. The
-  others, the light meter alone: `lights` used to be clipped and `skeletal`, without light. No demo
-  camera carries `Exposure`: the viewport and the game expose the same.
-- **Imports**: each image is a source beside the materials that show it (`assets/surfaces/bricks`,
-  `assets/sky`, `assets/gallery`), and each model a source beside a folder with its materials and
-  the prefab of its nodes (`assets/gallery/plant.gltf` and `assets/gallery/plant/`), each a
-  package `demo/packages.mirai` pins. The textures and the meshes are not versioned: they are
-  blobs of the store, which `mirai build` refreshes from the sources or from a peer.
-  Re-importing keeps the ids, which the manifests of the packages list
-  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport)), and what the
-  demo generates over what was imported reads them from there (`imported.odin`); what it generates
-  on its own uses `asset.content_id`. What did not change is kept
-  ([cache](../../mirai-imports/references/imports.md#import-cache)).
-- **Blockout**: floors, walls and edges are `shapes` Solids of one box brush scaled to their size,
-  with `uv_scale` the repeats per metre of their material and a box `Collider` of their own
-  ([shapes](../../mirai-world/references/shapes.md)). The image of the `church`
-  stained glass is generated by `scripts/demo_church_glass.py`, with colors that survive the
-  averaging of the haze and the bounce.
-- **Authored assets** (with `scene.write`, the editor or `mirai asset set`): every scene and
-  prefab, the `.ui`, the model prefabs and the materials of `assets/surfaces`.
+- **Skies**: 4096×2048 (`assets/sky`: `sky_day`, `sky_sunset`, `sky_overcast`, `sky_night`),
+  rotated so image sun matches `Sun` heading (`disc` off on overcast/night).
+- **Lighting & exposure**: lamp scenes keep 50 cd/unit lamps with dim 50–200 lux dusk sun/sky;
+  sun-only scenes (`animation`, `physics`) use 100000 lux. Scene-wide `Exposure` `View_Volume`
+  compensations: `physics` +2, `portals` +1, template +0.75, `main` +0.6, `animation_features`
+  −0.75, `showcase` −1, `monitors` −1.5, `portal_lab` −2.5; `night` uses Manual EV100 3.5. No demo
+  camera carries `Exposure`.
+- **Imports**: source beside assets, pinned in `demo/packages.mirai`
+  ([identity](../../mirai-imports/references/imports.md#identity-and-reimport),
+  [cache](../../mirai-imports/references/imports.md#import-cache)). Unversioned textures/meshes
+  live in the store (`imported.odin` reads manifest ids; generated assets use `asset.content_id`).
+- **Blockout**: `shapes` box Solids with `uv_scale` and box `Collider`
+  ([shapes](../../mirai-world/references/shapes.md)); church glass via
+  `scripts/demo_church_glass.py`.
 
 ## Portal game
 
-`portals/portal_chamber.scene` uses the
-[`portals`](../../mirai-plugins/references/render-plugins.md#portals) plugin. The player
-(`Portal player.scene`) carries `Portal_Gun`; its capsule has `dominance` 1: it pushes the cubes
-and they do not push it.
+`portals/portal_chamber.scene`
+([`portals`](../../mirai-plugins/references/render-plugins.md#portals)): `Portal player.scene`
+(`Portal_Gun`, capsule `dominance` 1).
 
-- **Shooting.** `portal_blue` and `portal_orange` fire a ray from the eyes that crosses an open
-  portal once. If it hits a panel with `Portal_Surface` whose collider is a `Box` (or the frame of
-  a portal's hole in it), `portal_fit` puts the opening on that face, with its up according to the
-  wall or the look, shifted so that it fits and does not step on the other portal; if it does not
-  fit, it opens nothing. `portal_links` joins the two openings and gives them their wall, which the
-  plugin cuts.
-- **The cube.** `grab` lifts the `Portal_Cube` in the crosshair and carries it in front of the eyes;
-  if the look enters a portal and the cube is on the other side, it carries it where the portal
-  takes that point. It is released on its own if it ends up far from its place or if the player
-  stands on it. The cubes are bullets: the sweep of a thrown cube finds thin walls and grills.
-- **The room.** A pit with a portal at the bottom launches the player through the other exit; a
-  belt carries a cube to a button (trigger) that opens its door; the glass is `one_way`; the grill
-  at the exit threshold is a thin trigger: whoever crosses it loses the portals and a cube returns
-  to where it started, like one that falls out of the level.
+- **Shooting**: `portal_blue`/`portal_orange` trace through 1 open portal onto `Portal_Surface`
+  box colliders; `portal_fit` aligns/clamps without overlapping the pair; `portal_links` pairs and
+  cuts walls.
+- **Cube & room**: `grab` carries `Portal_Cube` (bullet sweep) across portals, drops if distant or
+  stood on. Pit launch, belt + trigger `Floor_Button` -> door, `one_way` glass, exit `Grill`
+  clears portals and resets cubes.
 
 ## Control
 
-The `control` scene walks through the contract of [control](control.md) and of
-[cinematics](cinematics.md).
-
-- Each player receives a person at a `Spawn_Point` and an AI dog that follows it.
-- `switch_body` makes the player drive the dog and the AI take over carrying the person behind.
-- `overhead_view` toggles, with a transition, a camera shared through a seat override.
-- `camera_mode` passes the body's camera through the presets, each time with a transition.
-- `aim` brings the prefab's `Person aim camera`, a camera with the `Aim` preset and a
-  `Camera_Activation`; the person walks sideways looking toward it.
-- The intro is a `Cinematic`: a clip with two cameras as actors, a marker and two shots (a cut and
-  a blend, markers on the cameras); it blocks the input of the focused player.
+`control.scene` exercises [control](control.md) and [cinematics](cinematics.md): player person +
+AI dog, `switch_body` (Tab), `overhead_view` (V, seat override blend), `camera_mode` (C, preset
+cycle), `aim` (`Camera_Activation` `Aim`), and a 2-camera `Cinematic` intro blocking focused input.
 
 ## Networking
 
-The demo is a networked game with a dedicated server and no network code of its own
-([multiplayer](../../mirai-networking/references/multiplayer.md)): `--server` and `--connect`, or
-Play > Network in the editor.
-
-- What is replicated of each body is its `@(component, replicated)` components.
-- `multiplayer` seats each connection, `spawn` gives it its person, whose owner is the connection,
-  and the server gives it its dog. When the connection leaves, `spawn` destroys the person and its
-  dog leaves with its leader.
-- A client does not make bodies or dogs appear: its seat drives the person it predicts; those of the
-  others arrive interpolated. The server has no local players.
-- Doors, samples and thrown cubes are not replicated: each end simulates them on its own.
+Zero game net code ([multiplayer](../../mirai-networking/references/multiplayer.md)): `@(component,
+replicated)` syncs bodies; `multiplayer` seats peers, `spawn` gives persons (server adds dogs),
+cleanup follows disconnect. Clients predict only their own person; doors/swatches/cubes are local.
 
 ## Verification
 
@@ -361,16 +164,9 @@ mirai play demo --connect 127.0.0.1:27500 --headless --players 1 --frames 600 \
   --capture bin/play-client.png
 ```
 
-- Look at the captures. The server stays running; the client is launched in another terminal when
-  the server reports the port.
-- Control: `--input` script without a window (walk with `W` after the intro and `Tab` to switch to
-  the dog). The capture shows the AI dog behind the person and, afterwards, the camera behind the
-  dog. Over the network, the server's `--status` reports two objects per connection.
-- Tests of `demo/game`: `animation_gallery_controls_test.odin`,
-  `animation_gallery_matching_test.odin` (the matching station with the Mirai assets),
-  `animation_motor_test.odin`, `portal_game_test.odin` (`portal_fit`) and
-  `grounding_physics_test.odin` (grounding with real bodies, which needs the `animation` and
-  `physics` plugins). Real clips are checked with the demo integration.
-- Mouse, keyboard and gamepad (shooting, jumping, throwing the cube) are tested by the user.
-- That a change did not alter what is generated: run `tools/demo_content` and check that
-  `git status demo/assets` shows no differences.
+- Control: headless `--input` script (`W` after intro, `Tab` to dog); server `--status` reports 2
+  objects/connection.
+- `demo/game` tests: `animation_gallery_controls_test.odin`,
+  `animation_gallery_matching_test.odin`, `animation_motor_test.odin`, `portal_game_test.odin`,
+  `grounding_physics_test.odin` (needs `animation` + `physics`).
+- Determinism: run `tools/demo_content` and verify `git status demo/assets` is clean.
