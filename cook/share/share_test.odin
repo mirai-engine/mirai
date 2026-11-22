@@ -1469,6 +1469,57 @@ a_peer_that_leaves_mid_take_leaves_nothing_taken :: proc(t:^testing.T) {
     testing.expect(t,!os.exists(fmt.tprintf("%s/%s",r.root,asset.PACKAGES_FILE)),"no project changed")
 }
 
+// A take cancelled while its build arrives ends at once, without waiting for
+// the rest, and leaves nothing taken; what it wanted is no longer asked.
+@(test)
+a_cancelled_take_ends_at_once_and_takes_nothing :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-library-cancel",2) {return}
+    defer test_net_destroy(&w)
+    manifest,made:=library_sound(t,&w,4<<20)
+    if !made {return}
+    test_connect(&w,1,0)
+    Take :: struct {w:^Test_Net,manifest:store.Hash,root,error:string,cancel:bool,done:bool}
+    r:=Take{w=&w,manifest=manifest,root=fmt.tprintf("%s/guest",w.folder)}
+    os.make_directory_all(r.root)
+    th:=thread.create_and_start_with_data(&r,proc(data:rawptr) {
+        r:=(^Take)(data)
+        n:=&r.w.peers[1].n
+        for tries:=0;tries<1000 && node_totals(n).connected==0 && node_wait(n,0.01);tries+=1 {}
+        r.error=strings.clone(package_take(n,r.manifest,r.root,cancel=&r.cancel))
+        free_all(context.temp_allocator)
+        sync.atomic_store(&r.done,true)
+    },init_context=context)
+    n:=&w.peers[1].n
+    cancelled_at:=-1.0
+    for steps,yields:=0,0;!sync.atomic_load(&r.done) && steps<600_000; {
+        if !node_waiting(n) && yields<200 {
+            yields+=1
+            thread.yield()
+            continue
+        }
+        yields=0
+        test_step(&w)
+        steps+=1
+        if cancelled_at<0 && node_totals(n).received>=256<<10 {
+            package_take_cancel(n,&r.cancel)
+            cancelled_at=w.now
+        }
+    }
+    thread.join(th)
+    thread.destroy(th)
+    defer delete(r.error)
+    testing.expect(t,cancelled_at>=0,"the take was cancelled mid-transfer")
+    testing.expectf(t,w.now-cancelled_at<1,"it ended %.3f s after its cancel",w.now-cancelled_at)
+    testing.expect_value(t,r.error,TAKE_CANCELLED)
+    wanted:=exchange.want_addresses(&n.x,make([]store.Hash,WANTS,context.temp_allocator))
+    testing.expectf(t,len(wanted)==0,"nothing is wanted any more: %d",len(wanted))
+    p,_:=asset.package_get(&w.peers[0].s,manifest,context.temp_allocator)
+    buffer:[base.ASSET_ID_TEXT]u8
+    _,ref_error:=store.ref_get(&w.peers[1].s,asset.REF_PACKAGES,base.asset_id_format(p.id,buffer[:]))
+    testing.expect(t,ref_error!=.None,"nothing taken into the library")
+}
+
 // Derived data a peer has (a thumbnail, by its key) is fetched from it and
 // kept here under the same ref; one it lacks is Absent, and nothing is made
 // for it on either side.

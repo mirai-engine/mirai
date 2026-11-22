@@ -78,6 +78,7 @@ Error :: enum u8 {
     Missing,       // no connected peer has it
     Store,         // the store refused it: Progress.store_error
     Closed,        // the exchange was destroyed while waiting
+    Cancelled,     // the caller's cancel flag was set while waiting (fetch_cancel)
     Out_Of_Memory, // only from init
 }
 
@@ -623,33 +624,47 @@ progress :: proc(x:^Exchange,address:store.Hash) -> (Progress,bool) {
 
 // Returns once the object is complete in the store, or once no
 // connected peer has it (Missing). For job threads: the owner keeps calling update meanwhile.
-fetch :: proc(x:^Exchange,address:store.Hash,priority:=0) -> Error {
+// cancel: a flag fetch_cancel sets, which makes the blocking forms let go of
+// what they wait for and return Cancelled at once.
+fetch :: proc(x:^Exchange,address:store.Hash,priority:=0,cancel:^bool=nil) -> Error {
     sync.mutex_guard(&x.lock)
     address:=address
-    return fetch_set(x,{address},priority)
+    return fetch_set(x,{address},priority,cancel)
 }
+
+// Sets the flag cancel and wakes the blocking fetches waiting with it: they
+// return Cancelled, and what only they wanted is no longer asked.
+fetch_cancel :: proc(x:^Exchange,cancel:^bool) {
+    if cancel==nil {return}
+    sync.atomic_store(cancel,true)
+    sync.mutex_guard(&x.lock)
+    sync.cond_broadcast(&x.changed)
+}
+
+@(private)
+cancelled :: proc(cancel:^bool) -> bool {return cancel!=nil && sync.atomic_load(cancel)}
 
 // fetch of many objects: wants them together, so they arrive in few round
 // trips, and returns once all are complete, at the first that no connected
 // peer has (Missing) or at the first error.
-fetch_all :: proc(x:^Exchange,addresses:[]store.Hash,priority:=0) -> Error {
+fetch_all :: proc(x:^Exchange,addresses:[]store.Hash,priority:=0,cancel:^bool=nil) -> Error {
     sync.mutex_guard(&x.lock)
-    return fetch_set(x,addresses,priority)
+    return fetch_set(x,addresses,priority,cancel)
 }
 
 // Returns the address peers name with namespace and name once what it names
 // is complete in the store, or Missing once no connected peer names it or has it.
-fetch_ref :: proc(x:^Exchange,namespace,name:string,priority:=0) -> (store.Hash,Error) {
+fetch_ref :: proc(x:^Exchange,namespace,name:string,priority:=0,cancel:^bool=nil) -> (store.Hash,Error) {
     names:=[1]string{name}
     addresses:[1]store.Hash
-    error:=fetch_refs(x,namespace,names[:],addresses[:],priority)
+    error:=fetch_refs(x,namespace,names[:],addresses[:],priority,cancel)
     return addresses[0],error
 }
 
 // fetch_ref of many names, asked together: addresses (as long as names) gets
 // the address of each name peers name, {} for one none names, and what they
 // name is fetched as with fetch_all. Missing when a name or an object is missing.
-fetch_refs :: proc(x:^Exchange,namespace:string,names:[]string,addresses:[]store.Hash,priority:=0) -> Error {
+fetch_refs :: proc(x:^Exchange,namespace:string,names:[]string,addresses:[]store.Hash,priority:=0,cancel:^bool=nil) -> Error {
     sync.mutex_guard(&x.lock)
     if len(addresses)!=len(names) {return .Invalid}
     slice.zero(addresses)
@@ -679,6 +694,7 @@ fetch_refs :: proc(x:^Exchange,namespace:string,names:[]string,addresses:[]store
             count-=1
             held[k]=held[count]
         }
+        if result==.None && cancelled(cancel) {result=.Cancelled}
         if x.closing || result!=.None || count==0 && next==len(names) {break}
         sync.cond_wait(&x.changed,&x.lock)
     }
@@ -692,12 +708,12 @@ fetch_refs :: proc(x:^Exchange,namespace:string,names:[]string,addresses:[]store
         return .Closed
     }
     if result!=.None {return result}
-    return fetch_set(x,addresses,priority)
+    return fetch_set(x,addresses,priority,cancel)
 }
 
 // Waits on a window of the addresses at once, wanting the next as each completes.
 @(private)
-fetch_set :: proc(x:^Exchange,addresses:[]store.Hash,priority:int) -> Error {
+fetch_set :: proc(x:^Exchange,addresses:[]store.Hash,priority:int,cancel:^bool) -> Error {
     if x.closing {return .Closed}
     Held :: struct {want:int,misses:u32}
     held:[FETCH_WINDOW]Held
@@ -727,6 +743,7 @@ fetch_set :: proc(x:^Exchange,addresses:[]store.Hash,priority:int) -> Error {
             }
             k+=1
         }
+        if result==.None && cancelled(cancel) {result=.Cancelled}
         if x.closing || result!=.None || count==0 && next==len(addresses) {break}
         sync.cond_wait(&x.changed,&x.lock)
     }

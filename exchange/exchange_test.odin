@@ -342,19 +342,20 @@ Test_Job :: struct {
     names:[]string,
     error:Error,
     found:store.Hash,
+    cancel:bool,
     done:bool,
 }
 
 @(private)
 test_job :: proc(j:^Test_Job) {
     if j.names!=nil {
-        j.error=fetch_refs(j.x,j.namespace,j.names,j.addresses)
+        j.error=fetch_refs(j.x,j.namespace,j.names,j.addresses,cancel=&j.cancel)
     } else if j.addresses!=nil {
-        j.error=fetch_all(j.x,j.addresses)
+        j.error=fetch_all(j.x,j.addresses,cancel=&j.cancel)
     } else if j.namespace!="" {
-        j.found,j.error=fetch_ref(j.x,j.namespace,j.name)
+        j.found,j.error=fetch_ref(j.x,j.namespace,j.name,cancel=&j.cancel)
     } else {
-        j.error=fetch(j.x,j.address)
+        j.error=fetch(j.x,j.address,cancel=&j.cancel)
     }
     sync.atomic_store(&j.done,true)
 }
@@ -633,6 +634,39 @@ destroy_wakes_a_waiting_fetch :: proc(t:^testing.T) {
     thread.join(th)
     thread.destroy(th)
     testing.expect_value(t,j.error,Error.Closed)
+}
+
+// A cancel wakes a fetch that waits on a peer that never answers, of an
+// object or of a ref: it returns Cancelled and leaves no want or question.
+@(test)
+a_cancel_wakes_a_waiting_fetch :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_world(t,&w,"exchange-cancel",2) {return}
+    test_host(&w,0,.Server)
+    silent:=test_scripted(t,&w,1,.Hold)
+    if !testing.expect(t,test_connect(&w,silent,w.nodes[0].endpoints[0])) {return}
+    n:=&w.nodes[0]
+    for by_ref in ([2]bool{false,true}) {
+        j:=Test_Job{x=&n.x,address=store.address_of_bytes(test_bytes(10,5))}
+        if by_ref {j.namespace,j.name="lib","held"}
+        th:=thread.create_and_start_with_poly_data(&j,test_job)
+        for _ in 0..<10000 {
+            test_step(&w)
+            sync.mutex_lock(&n.x.lock)
+            waiting:=n.x.waiting
+            sync.mutex_unlock(&n.x.lock)
+            if waiting>0 {break}
+        }
+        test_step(&w,200)
+        testing.expect(t,!sync.atomic_load(&j.done),"the fetch waits on the silent peer")
+        fetch_cancel(&n.x,&j.cancel)
+        thread.join(th)
+        thread.destroy(th)
+        testing.expect_value(t,j.error,Error.Cancelled)
+        _,still:=progress(&n.x,j.address)
+        testing.expect(t,!still,"no want is left behind")
+    }
 }
 
 // A connection that carried a transfer, past the start of its congestion

@@ -148,7 +148,7 @@ peer_library :: proc(n:^Node,peer:Peer,allocator:=context.allocator) -> (list:[]
 
 // The manifests of packages this store lacks, from the peers, as a refresh asks them.
 @(private)
-manifests_fetch :: proc(n:^Node,packages:[]exchange.Name) {
+manifests_fetch :: proc(n:^Node,packages:[]exchange.Name,cancel:^bool=nil) {
     names:=make([dynamic]string,context.temp_allocator)
     for p in packages {
         digits:=new([64]u8,context.temp_allocator)
@@ -156,7 +156,7 @@ manifests_fetch :: proc(n:^Node,packages:[]exchange.Name) {
         if _,error:=store.ref_get(n.s,asset.REF_MANIFESTS,name);error!=.None {append(&names,name)}
     }
     given:=make([]bool,len(names),context.temp_allocator)
-    node_fetch(n,n.s,asset.REF_MANIFESTS,names[:],given)
+    node_fetch(n,cancel,n.s,asset.REF_MANIFESTS,names[:],given)
 }
 
 // The names of namespace peer exposes, page by page.
@@ -237,14 +237,16 @@ objects_sizes :: proc(n:^Node,addresses:[]store.Hash) -> map[store.Hash]i64 {
 // asset.REF_PACKAGES, so it stays in the library once the peers leave. root:
 // the project it is for, whose plugins read a source should one be here.
 // Nothing is pinned: on failure no project changed. For a thread other than
-// the pump's.
+// the pump's. cancel: a flag package_take_cancel sets from any thread, which
+// ends the waits for the peers at once and the take with TAKE_CANCELLED.
 package_take :: proc(
     n:^Node,manifest:store.Hash,root:string,library:sources.Library=nil,
-    worker:=jobs.Worker_Ref{},gpu:^textures.Gpu_Context=nil,
+    worker:=jobs.Worker_Ref{},gpu:^textures.Gpu_Context=nil,cancel:^bool=nil,
 ) -> (error:string) {
     s:=n.s
     named:=[1]exchange.Name{{address=manifest}}
-    manifests_fetch(n,named[:])
+    manifests_fetch(n,named[:],cancel)
+    if take_cancelled(cancel) {return TAKE_CANCELLED}
     p,package_error:=asset.package_get(s,manifest,context.temp_allocator)
     if package_error!=.None {
         digits:[64]u8
@@ -258,8 +260,10 @@ package_take :: proc(
     base.remove_all(scratch)
     if os.make_directory_all(scratch)!=nil {return fmt.tprintf("%s could not be made: give this user access to %s",scratch,root)}
     defer base.remove_all(scratch)
-    options:=sources.Library_Options{store=s,source=node_source(n),fast_textures=true,root=root,plugins=library,worker=worker,gpu=gpu}
+    fetching:=Node_Fetching{node=n,cancel=cancel}
+    options:=sources.Library_Options{store=s,source=node_source_cancellable(&fetching),fast_textures=true,root=root,plugins=library,worker=worker,gpu=gpu}
     report:=sources.project_add(scratch,manifest,"",nil,options,context.temp_allocator)
+    if take_cancelled(cancel) {return TAKE_CANCELLED}
     if len(report.failures)>0 {return report.failures[0]}
     if len(report.missing)>0 || report.fetched+report.ingested==0 && !package_built(s,manifest,&p) {
         return fmt.tprintf("%s: no connected peer gave its build any more, and its source is not on this machine: the peer that offered it left; add it again once it is back",p.name)
@@ -270,6 +274,14 @@ package_take :: proc(
     }
     return ""
 }
+
+TAKE_CANCELLED :: "the take was cancelled: nothing was added"
+
+// Cancels the package_take of n that waits with the flag cancel, from any thread.
+package_take_cancel :: proc(n:^Node,cancel:^bool) {exchange.fetch_cancel(&n.x,cancel)}
+
+@(private)
+take_cancelled :: proc(cancel:^bool) -> bool {return cancel!=nil && sync.atomic_load(cancel)}
 
 // Whether this machine has a build of p it chose and has whole.
 @(private)
