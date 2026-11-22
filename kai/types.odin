@@ -105,7 +105,7 @@ Meta :: struct #packed {
     version:u16,
 }
 
-@(private)
+// The Kai error of a store error.
 store_error :: proc "contextless" (e:store.Error) -> Error {
     #partial switch e {
     case .None: return .None

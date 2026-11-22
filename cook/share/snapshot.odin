@@ -9,162 +9,30 @@ import "core:sync"
 import "core:time"
 import importer "mirai:cook/import"
 import "mirai:project"
+import vcs "mirai:kai"
 import "mirai:std/jobs"
 import "mirai:store"
 
-// A snapshot: the files of a project as a tree of objects of the store. A
-// file is an object of its bytes, cut on content, so a changed file shares
-// the chunks the change did not touch. A folder is an object whose bytes list
-// its entries sorted by name, each a file (with its executable bit) or a
-// folder, by the address and size of its object; a folder entry also carries
-// the files and bytes under it. The meta of every folder is SNAPSHOT_MAGIC and
-// the length of a name, the project's in the root and none below it. Two
-// snapshots that differ in one file share every folder off its path. What
-// each machine makes (project.own_path) is left out, and so are the sources a
-// caller names (Built_Sources); a folder holds at least one file. The same
-// files give the same tree.
+// A snapshot: the files of a project as a tree of Kai (kai.tree_build), the
+// one format of versioning and sharing. What each machine makes
+// (project.own_path) is left out, and so are the sources a caller names
+// (Built_Sources). The name of the project travels in the offer.
 //
 // In memory, and as the base a joined folder keeps, a snapshot is its files
 // by path, sorted bytewise.
 
-SNAPSHOT_MAGIC :: "mirai snapshot 2\n"
-FILES_MAX :: 1<<22          // files of a snapshot
-FOLDER_ENTRIES_MAX :: 1<<16 // entries of one folder
-DEPTH_MAX :: 64             // folders on the path of a file
-PATH_MAX :: 1024            // bytes of a path of a snapshot
-NAME_MAX :: 64              // bytes of the name of the project it carries
-@(private) RECORD_MAX :: 1+1+255+32+8+4 // kind, name, address, size, files
-LISTING_MAX :: FOLDER_ENTRIES_MAX*RECORD_MAX // bytes of the object of one folder
-
-@(private) KIND_FILE :: 0
-@(private) KIND_EXECUTABLE :: 1
-@(private) KIND_FOLDER :: 2
-
-Entry :: struct {
-    path:string,
-    address:store.Hash, // of the file's object
-    size:i64,
-    executable:bool,
-}
+NAME_MAX :: 64 // bytes of the name of the project an offer carries
 
 Snapshot :: struct {
-    name:string,     // of the project, the folder a join makes by default
-    entries:[]Entry, // sorted by path
+    name:string,         // of the project, the folder a join makes by default
+    entries:[]vcs.File,  // sorted by path, each a File or an Executable
 }
 
-Snapshot_Error :: enum u8 {
-    None,
-    Truncated,     // the bytes end before what they say
-    Not_Snapshot,  // another magic or meta, bytes after the last entry, an unknown kind
-    Too_Large,     // more files, entries of a folder or bytes than the bounds above
-    Path,          // a name or path that would leave the folder, is absolute, names a device or the generated folder
-    Duplicate,     // two names that name one file where case is folded, or out of order
-    Size,          // a size or count out of range or unlike what is under it, or an empty file whose address is not that of no bytes
-    Name,          // a name of the project that is not a folder name
-    Depth,         // folders nested deeper than DEPTH_MAX
-    Cycle,         // a folder inside itself
-    Unavailable,   // an object of the tree is not in the store, or could not be fetched
-    Out_Of_Memory,
-}
-
-// The address of the object of no bytes: an empty file's.
-empty_address :: proc() -> store.Hash {
-    groups:=[1]store.Group{{}}
-    buffer:[size_of(store.Node)+size_of(store.Group)]u8
-    bytes,_:=store.node_encode(buffer[:],0,nil,groups[:])
-    return store.address_of_bytes(bytes)
-}
-
-// An entry of a folder.
-@(private)
-Item :: struct {
-    name:string,
-    kind:u8,
-    address:store.Hash,
-    size:i64,  // a file's bytes; the bytes of the files under a folder
-    files:i64, // under a folder
-}
-
-// Puts the folders of snap in s, the files' objects being there already:
-// the address of its root. Each folder put is added to folders.
-snapshot_put :: proc(
-    s:^store.Store,snap:^Snapshot,folders:^[dynamic]store.Hash=nil,cancel:^bool=nil,
-) -> (root:store.Hash,error:Snapshot_Error,store_error:store.Error) {
-    if !name_valid(snap.name) {return {},.Name,.None}
-    if len(snap.entries)>FILES_MAX {return {},.Too_Large,.None}
-    built:Item
-    built,error,store_error=folder_put(s,snap.entries,0,snap.name,folders,0,cancel)
-    if error==.None && store_error==.None {store_error=store.commit(s)}
-    return built.address,error,store_error
-}
-
-// The folder of entries, all under the same path of prefix bytes (and a
-// slash), with its subfolders put first.
-@(private)
-folder_put :: proc(
-    s:^store.Store,entries:[]Entry,prefix:int,name:string,folders:^[dynamic]store.Hash,
-    depth:int,cancel:^bool,
-) -> (folder:Item,error:Snapshot_Error,store_error:store.Error) {
-    if offer_cancelled(cancel) {return {},.None,.Io}
-    if depth>DEPTH_MAX {return {},.Depth,.None}
-    items:=make([dynamic]Item,context.temp_allocator)
-    for i:=0;i<len(entries); {
-        e:=&entries[i]
-        rest:=e.path[prefix:]
-        slash:=strings.index_byte(rest,'/')
-        if slash<0 {
-            append(&items,Item{name=rest,kind=e.executable?KIND_EXECUTABLE:KIND_FILE,address=e.address,size=e.size})
-            i+=1
-            continue
-        }
-        under:=e.path[:prefix+slash+1]
-        j:=i+1
-        for j<len(entries) && strings.has_prefix(entries[j].path,under) {j+=1}
-        child:Item
-        child,error,store_error=folder_put(s,entries[i:j],prefix+slash+1,"",folders,depth+1,cancel)
-        if error!=.None || store_error!=.None {return}
-        child.name=rest[:slash]
-        append(&items,child)
-        i=j
-    }
-    if len(items)>FOLDER_ENTRIES_MAX {return {},.Too_Large,.None}
-    slice.sort_by(items[:],proc(a,b:Item) -> bool {return a.name<b.name})
-    for item in items {
-        folder.files+=item.kind==KIND_FOLDER?item.files:1
-        folder.size+=item.size
-    }
-    folder.kind=KIND_FOLDER
-    p,begin_error:=store.put_begin(s)
-    if begin_error!=.None {return {},.None,begin_error}
-    buffer:[64<<10]u8
-    w:=Writer{data=buffer[:]}
-    for item in items {
-        if len(buffer)-w.at<RECORD_MAX {
-            if store_error=store.put_write(&p,buffer[:w.at]);store_error!=.None {
-                store.put_abandon(&p)
-                return
-            }
-            w.at=0
-        }
-        address:=item.address
-        write_uint(&w,u64(item.kind),1)
-        write_uint(&w,u64(len(item.name)),1)
-        write_bytes(&w,transmute([]u8)item.name)
-        write_bytes(&w,address[:])
-        write_uint(&w,u64(item.size),8)
-        if item.kind==KIND_FOLDER {write_uint(&w,u64(item.files),4)}
-    }
-    if store_error=store.put_write(&p,buffer[:w.at]);store_error!=.None {
-        store.put_abandon(&p)
-        return
-    }
-    meta:[len(SNAPSHOT_MAGIC)+1+NAME_MAX]u8
-    copy(meta[:],SNAPSHOT_MAGIC)
-    meta[len(SNAPSHOT_MAGIC)]=u8(len(name))
-    copy(meta[len(SNAPSHOT_MAGIC)+1:],name)
-    folder.address,_,store_error=store.put_finish(&p,meta[:len(SNAPSHOT_MAGIC)+1+len(name)])
-    if store_error==.None && folders!=nil {append(folders,folder.address)}
-    return
+// Puts the folders of snap in s, the files' objects being there already, and
+// commits: the address of its root. Each folder put is added to folders.
+snapshot_put :: proc(s:^store.Store,snap:^Snapshot,folders:^[dynamic]store.Hash=nil) -> (root:store.Hash,error:vcs.Error) {
+    root=vcs.tree_build(s,snap.entries,folders) or_return
+    return root,vcs.store_error(store.commit(s))
 }
 
 // What reading a tree asks before it reads a set of folders, which it reads
@@ -174,242 +42,54 @@ Tree_Fetch :: struct {
     data:rawptr,
 }
 
-// The name of the project the snapshot at root carries, from the meta of its
-// root folder.
-snapshot_name :: proc(s:^store.Store,root:store.Hash,allocator:=context.allocator) -> (name:string,error:Snapshot_Error) {
-    o,open_error:=store.object_open(s,root)
-    if open_error!=.None {return "",open_error==.Missing?.Unavailable:.Not_Snapshot}
-    defer store.object_close(&o)
-    name=meta_name(store.object_meta(&o),true) or_return
-    return strings.clone(name,allocator),.None
-}
-
-@(private)
-meta_name :: proc(meta:[]u8,root:bool) -> (name:string,error:Snapshot_Error) {
-    if len(meta)<len(SNAPSHOT_MAGIC)+1 || string(meta[:len(SNAPSHOT_MAGIC)])!=SNAPSHOT_MAGIC {return "",.Not_Snapshot}
-    if int(meta[len(SNAPSHOT_MAGIC)])!=len(meta)-len(SNAPSHOT_MAGIC)-1 {return "",.Not_Snapshot}
-    name=string(meta[len(SNAPSHOT_MAGIC)+1:])
-    if root && !name_valid(name) {return "",.Name}
-    if !root && name!="" {return "",.Not_Snapshot}
-    return name,.None
-}
-
-// The snapshot whose tree has its root at root, read folder by folder, from
-// the root down a depth at a time: fetch, when given, is asked for the folders
-// of each depth before they are read. The tree may come from anyone: every
-// name, path, kind, size and count is checked, and the files of every folder
-// must be those its parent declares, so the files read never exceed
-// FILES_MAX. Each folder read is added to folders. In allocator.
-snapshot_read :: proc(s:^store.Store,root:store.Hash,fetch:=Tree_Fetch{},folders:^[dynamic]store.Hash=nil,allocator:=context.allocator) -> (snap:Snapshot,error:Snapshot_Error) {
-    t:=Tree_Read{
-        s=s,
-        visits=make([dynamic]Visit,context.temp_allocator),
-        entries=make([dynamic]Entry,allocator),
-        allocator=allocator,
+// The snapshot of the project name whose tree has its root at root, read
+// from the root down: fetch, when given, is asked for the folders the store
+// lacks, a depth at a time. The tree may come from anyone: kai.tree_files
+// checks every name, size and count against what each parent declares, and
+// every file must be the project's own. Each folder read is added to folders.
+// In allocator.
+snapshot_read :: proc(s:^store.Store,root:store.Hash,name:string,fetch:=Tree_Fetch{},folders:^[dynamic]store.Hash=nil,allocator:=context.allocator) -> (snap:Snapshot,error:vcs.Error) {
+    for fetch.procedure!=nil {
+        missing:=make([dynamic]store.Hash,context.temp_allocator)
+        vcs.tree_files(s,root,nil,context.temp_allocator,missing=&missing) or_return
+        if len(missing)==0 {break}
+        if !fetch.procedure(fetch.data,missing[:]) {return {},.Missing}
     }
-    append(&t.visits,Visit{address=root,files=-1,parent=-1})
-    addresses:=make([dynamic]store.Hash,context.temp_allocator)
-    for start:=0;start<len(t.visits); {
-        end:=len(t.visits)
-        if fetch.procedure!=nil {
-            clear(&addresses)
-            for v in t.visits[start:end] {append(&addresses,v.address)}
-            if !fetch.procedure(fetch.data,addresses[:]) {return {},.Unavailable}
-        }
-        for k in start..<end {
-            folder_read(&t,k) or_return
-            if folders!=nil {append(folders,t.visits[k].address)}
-        }
-        start=end
+    files:=make([dynamic]vcs.File,allocator)
+    vcs.tree_files(s,root,&files,allocator,folders) or_return
+    for f in files {
+        if f.kind==.Conflict || f.size>u64(max(i64)) || !path_valid(f.path) {return {},.Corrupt}
     }
-    slice.sort_by(t.entries[:],proc(a,b:Entry) -> bool {return a.path<b.path})
-    snap.name=strings.clone(t.name,allocator)
-    snap.entries=t.entries[:]
-    return snap,.None
+    return {name=name,entries=files[:]},.None
 }
 
-@(private)
-Visit :: struct {
-    path:string,
-    address:store.Hash,
-    files,size:i64, // declared by its parent; -1: the root
-    depth:int,
-    parent:int,
-}
-
-@(private)
-Tree_Read :: struct {
-    s:^store.Store,
-    visits:[dynamic]Visit,
-    entries:[dynamic]Entry,
-    name:string,
-    allocator:runtime.Allocator,
-}
-
-// Reads the folder of visit k: its files join the entries and its folders the
-// visits of the next depth.
-@(private)
-folder_read :: proc(t:^Tree_Read,k:int) -> Snapshot_Error {
-    v:=t.visits[k]
-    o,open_error:=store.object_open(t.s,v.address)
-    #partial switch open_error {
-    case .None:
-    case .Missing: return .Unavailable
-    case .Out_Of_Memory: return .Out_Of_Memory
-    case: return .Not_Snapshot
-    }
-    defer store.object_close(&o)
-    name:=meta_name(store.object_meta(&o),v.parent<0) or_return
-    if v.parent<0 {t.name=strings.clone(name,context.temp_allocator)}
-    total:=store.object_size(&o)
-    if total>LISTING_MAX {return .Too_Large}
-    if total==0 && v.parent>=0 {return .Size}
-    buffer:[64<<10+RECORD_MAX]u8
-    r:=Reader{data=buffer[:0]}
-    at:u64
-    // The name before, kept apart from the buffer, which is refilled.
-    previous_bytes:[255]u8
-    previous:string
-    folded:=make(map[string]bool,context.temp_allocator)
-    files,size,count:i64
-    empty:=empty_address()
-    for {
-        // Room for one whole record of any size before it is read.
-        if len(r.data)-r.at<RECORD_MAX && at<total {
-            left:=len(r.data)-r.at
-            copy(buffer[:],r.data[r.at:])
-            more:=min(u64(len(buffer)-left),total-at)
-            if read_error:=store.object_read(&o,at,buffer[left:][:more]);read_error!=.None {
-                return read_error==.Missing?.Unavailable:.Not_Snapshot
-            }
-            at+=more
-            r=Reader{data=buffer[:left+int(more)]}
-        }
-        if r.at==len(r.data) {break}
-        kind:=u8(read_uint(&r,1))
-        item_name:=string(read_bytes(&r,int(read_uint(&r,1))))
-        address:store.Hash
-        copy(address[:],read_bytes(&r,32))
-        item_size:=read_uint(&r,8)
-        item_files:u64
-        if kind==KIND_FOLDER {item_files=read_uint(&r,4)}
-        if r.short {return .Truncated}
-        if kind>KIND_FOLDER {return .Not_Snapshot}
-        count+=1
-        if count>FOLDER_ENTRIES_MAX {return .Too_Large}
-        if !part_valid(item_name) {return .Path}
-        if item_name<=previous && count>1 {return .Duplicate}
-        lower:=strings.to_lower(item_name,context.temp_allocator)
-        if lower in folded {return .Duplicate}
-        folded[lower]=true
-        previous=string(previous_bytes[:copy(previous_bytes[:],item_name)])
-        path:=v.path==""?strings.clone(item_name,context.temp_allocator):fmt.tprintf("%s/%s",v.path,item_name)
-        if !path_valid(path) {return .Path}
-        if item_size>u64(max(i64)) || i64(item_size)>max(i64)-size {return .Size}
-        size+=i64(item_size)
-        if kind!=KIND_FOLDER {
-            if item_size==0 && address!=empty {return .Size}
-            files+=1
-            if v.parent<0 && files>FILES_MAX {return .Too_Large}
-            append(&t.entries,Entry{path=strings.clone(path,t.allocator),address=address,size=i64(item_size),executable=kind==KIND_EXECUTABLE})
-            continue
-        }
-        if item_files==0 {return .Size}
-        if v.depth+1>DEPTH_MAX {return .Depth}
-        for a:=k;a>=0;a=t.visits[a].parent {
-            if t.visits[a].address==address {return .Cycle}
-        }
-        files+=i64(item_files)
-        if v.parent<0 && files>FILES_MAX {return .Too_Large}
-        append(&t.visits,Visit{path=path,address=address,files=i64(item_files),size=i64(item_size),depth=v.depth+1,parent=k})
-    }
-    if v.parent>=0 && (files!=v.files || size!=v.size) {return .Size}
-    return .None
-}
-
-// Whether a path of a snapshot can be written under any folder of any
-// system: relative, with forward slashes, no empty, . or .. part, no part
-// a system reserves (a device of Windows, a name that ends in a dot or a
-// space, a colon, a control character), and not under what is not the
-// project's own.
+// Whether a path of a snapshot can be written under any folder of any system
+// (kai.path_valid) and is the project's own.
 path_valid :: proc(path:string) -> bool {
-    if path=="" || len(path)>PATH_MAX || !project.own_path(path) {return false}
-    start:=0
-    for i in 0..=len(path) {
-        if i<len(path) && path[i]!='/' {continue}
-        if !part_valid(path[start:i]) {return false}
-        start=i+1
-    }
-    return true
-}
-
-@(private)
-part_valid :: proc(part:string) -> bool {
-    if part=="" || part=="." || part==".." || len(part)>255 {return false}
-    for c in transmute([]u8)part {
-        switch c {
-        case 0..<0x20,0x7f,'/','\\',':','*','?','"','<','>','|': return false
-        }
-    }
-    last:=part[len(part)-1]
-    if last=='.' || last==' ' {return false}
-    // A device of Windows, also with an extension: CON, PRN, AUX, NUL, COM1-9, LPT1-9.
-    stem:=part
-    if dot:=strings.index_byte(part,'.');dot>=0 {stem=part[:dot]}
-    stem=strings.trim_right(stem," ")
-    upper:[4]u8
-    if len(stem)==3 || len(stem)==4 {
-        for c,i in transmute([]u8)stem {upper[i]=c>='a' && c<='z'?c-'a'+'A':c}
-        word:=string(upper[:len(stem)])
-        switch word[:3] {
-        case "CON","PRN","AUX","NUL": if len(word)==3 {return false}
-        case "COM","LPT": if len(word)==4 && word[3]>='1' && word[3]<='9' {return false}
-        }
-    }
-    return true
+    return vcs.path_valid(path) && project.own_path(path)
 }
 
 // Whether the project name can be a folder: one valid part, not empty.
 name_valid :: proc(name:string) -> bool {
-    return name!="" && len(name)<=NAME_MAX && part_valid(name) && name!=".mirai"
-}
-
-// No two paths name one file on a system that folds case, and no file is a
-// folder of another.
-@(private)
-distinct_files :: proc(entries:[]Entry,allocator:=context.allocator) -> bool {
-    folded:=make(map[string]bool,len(entries),context.temp_allocator)
-    for e in entries {
-        lower:=strings.to_lower(e.path,context.temp_allocator)
-        if lower in folded {return false}
-        folded[lower]=false
-    }
-    for e in entries {
-        lower:=strings.to_lower(e.path,context.temp_allocator)
-        for at:=strings.last_index_byte(lower,'/');at>0;at=strings.last_index_byte(lower[:at],'/') {
-            if lower[:at] in folded {return false}
-        }
-    }
-    return true
+    return len(name)<=NAME_MAX && vcs.part_valid(name) && name!=".mirai"
 }
 
 // The entry of path in a sorted snapshot.
-snapshot_find :: proc(snap:^Snapshot,path:string) -> (^Entry,bool) {
-    at,found:=slice.binary_search_by(snap.entries,path,proc(e:Entry,path:string) -> slice.Ordering {return slice.cmp(e.path,path)})
+snapshot_find :: proc(snap:^Snapshot,path:string) -> (^vcs.File,bool) {
+    at,found:=slice.binary_search_by(snap.entries,path,proc(e:vcs.File,path:string) -> slice.Ordering {return slice.cmp(e.path,path)})
     if !found {return nil,false}
     return &snap.entries[at],true
 }
 
 // The base a joined folder keeps (<folder>/.mirai/share/snapshot): the
 // snapshot its last join took, by path.
-@(private) BASE_MAGIC :: "mirai share base 2\n"
+@(private) BASE_MAGIC :: "mirai share base 3\n"
 
-snapshot_encode :: proc(snap:Snapshot,allocator:=context.allocator) -> (bytes:[]u8,error:Snapshot_Error) {
-    if len(snap.entries)>FILES_MAX {return nil,.Too_Large}
+snapshot_encode :: proc(snap:Snapshot,allocator:=context.allocator) -> []u8 {
     size:=len(BASE_MAGIC)+2+len(snap.name)+4
     for e in snap.entries {size+=2+len(e.path)+32+8+1}
     made,make_error:=make([]u8,size,allocator)
-    if make_error!=nil {return nil,.Out_Of_Memory}
+    if make_error!=nil {return nil}
     w:=Writer{data=made}
     write_bytes(&w,transmute([]u8)string(BASE_MAGIC))
     write_uint(&w,u64(len(snap.name)),2)
@@ -420,46 +100,34 @@ snapshot_encode :: proc(snap:Snapshot,allocator:=context.allocator) -> (bytes:[]
         write_uint(&w,u64(len(e.path)),2)
         write_bytes(&w,transmute([]u8)e.path)
         write_bytes(&w,address[:])
-        write_uint(&w,u64(e.size),8)
-        write_uint(&w,e.executable?1:0,1)
+        write_uint(&w,e.size,8)
+        write_uint(&w,u64(e.kind),1)
     }
-    return made,.None
+    return made
 }
 
-// The base of bytes: every path, size and name is checked, and the paths
-// must be sorted and name distinct files. The strings point into bytes.
-snapshot_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (snap:Snapshot,error:Snapshot_Error) {
+// The base of bytes, every path, size and name checked; their order and case
+// are checked when it is put (snapshot_put). The strings point into bytes.
+snapshot_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (snap:Snapshot,ok:bool) {
     r:=Reader{data=bytes}
-    magic:=read_bytes(&r,len(BASE_MAGIC))
-    if r.short {return {},.Truncated}
-    if string(magic)!=BASE_MAGIC {return {},.Not_Snapshot}
-    snap.name=string(read_bytes(&r,int(read_uint(&r,2))))
+    if string(read_bytes(&r,len(BASE_MAGIC)))!=BASE_MAGIC {return}
+    name:=string(read_bytes(&r,int(read_uint(&r,2))))
     count:=int(read_uint(&r,4))
-    if r.short {return {},.Truncated}
-    if !name_valid(snap.name) {return {},.Name}
-    if count>FILES_MAX {return {},.Too_Large}
     // Each entry takes at least 44 bytes: a count that the bytes cannot hold is a lie.
-    if count>(len(bytes)-r.at)/44 {return {},.Truncated}
-    entries,make_error:=make([]Entry,count,allocator)
-    if make_error!=nil {return {},.Out_Of_Memory}
-    empty:=empty_address()
+    if r.short || !name_valid(name) || count>vcs.FILES_MAX || count>(len(bytes)-r.at)/44 {return}
+    entries,make_error:=make([]vcs.File,count,allocator)
+    if make_error!=nil {return}
+    empty:=vcs.empty_address()
     for &e in entries {
         e.path=string(read_bytes(&r,int(read_uint(&r,2))))
         copy(e.address[:],read_bytes(&r,32))
-        size:=read_uint(&r,8)
-        flags:=read_uint(&r,1)
-        if r.short {return {},.Truncated}
-        if !path_valid(e.path) {return {},.Path}
-        if size>u64(max(i64)) || flags>1 || size==0 && e.address!=empty {return {},.Size}
-        e.size,e.executable=i64(size),flags==1
+        e.size=read_uint(&r,8)
+        kind:=read_uint(&r,1)
+        if r.short || !path_valid(e.path) || kind>u64(vcs.Entry_Kind.Executable) || e.size==0 && e.address!=empty {return}
+        e.kind=vcs.Entry_Kind(kind)
     }
-    if r.at!=len(bytes) {return {},.Not_Snapshot}
-    for k in 1..<len(entries) {
-        if entries[k-1].path>=entries[k].path {return {},.Duplicate}
-    }
-    if !distinct_files(entries,allocator) {return {},.Duplicate}
-    snap.entries=entries
-    return snap,.None
+    if r.at!=len(bytes) {return}
+    return {name=name,entries=entries},true
 }
 
 // What a machine knows of the files of a folder (<folder>/.mirai/share/index):
@@ -628,7 +296,7 @@ snapshot_take :: proc(
     index:=index_load(root,allocator)
     // The root read once: each file then asks only what this value knows.
     store.chunk_has(s,{})
-    entries:=make([dynamic]Entry,allocator)
+    entries:=make([dynamic]vcs.File,allocator)
     skipped:=make([dynamic]string,allocator)
     todo:=make([dynamic]string,context.temp_allocator)
     append(&todo,"")
@@ -669,29 +337,24 @@ snapshot_take :: proc(
             }
             if put {report.put+=1}
             append(&entries,e)
-            report.bytes+=e.size
+            report.bytes+=i64(e.size)
         }
     }
     if offer_cancelled(cancel) {return {},{},{},OFFER_CANCELLED}
-    slice.sort_by(entries[:],proc(a,b:Entry) -> bool {return a.path<b.path})
+    slice.sort_by(entries[:],proc(a,b:vcs.File) -> bool {return a.path<b.path})
     snap={name=name,entries=entries[:]}
     report.files,report.skipped=len(entries),skipped[:]
-    if !distinct_files(snap.entries) {
-        return snap,{},report,fmt.aprintf("%s has two files whose names differ only in case, which a system that folds case cannot hold: rename one",root,allocator=allocator)
-    }
-    tree_error:Snapshot_Error
-    put_error:store.Error
-    address,tree_error,put_error=snapshot_put(s,&snap,folders,cancel)
+    tree_error:vcs.Error
+    address,tree_error=snapshot_put(s,&snap,folders)
     if offer_cancelled(cancel) {return {},{},{},OFFER_CANCELLED}
-    switch {
-    case tree_error==.Too_Large:
-        return snap,{},report,fmt.aprintf("%s has more files than a snapshot holds: at most %d, at most %d in one folder, folders at most %d deep",root,FILES_MAX,FOLDER_ENTRIES_MAX,DEPTH_MAX,allocator=allocator)
-    case tree_error==.Depth:
-        return snap,{},report,fmt.aprintf("%s has folders more than %d deep, which a snapshot does not hold",root,DEPTH_MAX,allocator=allocator)
-    case tree_error!=.None:
-        return snap,{},report,fmt.aprintf("the snapshot of %s could not be made (%v)",root,tree_error,allocator=allocator)
-    case put_error!=.None:
-        return snap,{},report,fmt.aprintf("the snapshot could not be put in the store at %s (%v): free space there",s.root,put_error,allocator=allocator)
+    #partial switch tree_error {
+    case .None:
+    case .Invalid_Argument:
+        return snap,{},report,fmt.aprintf("%s has two files whose names differ only in case, which a system that folds case cannot hold: rename one",root,allocator=allocator)
+    case .Too_Large:
+        return snap,{},report,fmt.aprintf("%s has more files than a snapshot holds: at most %d, at most %d in one folder, folders at most %d deep",root,vcs.FILES_MAX,vcs.FOLDER_ENTRIES_MAX,vcs.DEPTH_MAX,allocator=allocator)
+    case:
+        return snap,{},report,fmt.aprintf("the snapshot could not be put in the store at %s (%v): free space there",s.root,tree_error,allocator=allocator)
     }
     index_save(root,&index)
     return snap,address,report,""
@@ -706,16 +369,18 @@ snapshot_take :: proc(
 entry_take :: proc(
     s:^store.Store,index:^Index,root,relative:string,info:os.File_Info,
     worker:=jobs.Worker_Ref{},allocator:=context.allocator,cancel:^bool=nil,
-) -> (e:Entry,put:bool,error:store.Error) {
+) -> (e:vcs.File,put:bool,error:store.Error) {
     path:=project.path(root,relative,allocator=context.temp_allocator)
     modified:=time.to_unix_nanoseconds(info.modification_time)
-    e=Entry{path=strings.clone(relative,allocator),size=info.size,executable=info.mode&os.Permissions_Execute_All!={}}
+    e=vcs.File{path=strings.clone(relative,allocator),size=u64(info.size),kind=info.mode&os.Permissions_Execute_All!={}?.Executable:.File}
     if k,known:=index[relative];known && k.size==info.size && k.modified==modified && store.chunk_here(s,k.address) {
         e.address=k.address
         return
     }
-    e.address,e.size=file_put_object(s,path,worker,cancel) or_return
-    if after,stat_error:=os.stat(path,context.temp_allocator);stat_error==nil && after.size==e.size && after.size==info.size && time.to_unix_nanoseconds(after.modification_time)==modified {
+    size:i64
+    e.address,size=file_put_object(s,path,worker,cancel) or_return
+    e.size=u64(size)
+    if after,stat_error:=os.stat(path,context.temp_allocator);stat_error==nil && after.size==size && after.size==info.size && time.to_unix_nanoseconds(after.modification_time)==modified {
         index_learn(index,relative,after,e.address)
     }
     return e,true,.None

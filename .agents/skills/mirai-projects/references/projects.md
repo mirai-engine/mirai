@@ -596,12 +596,8 @@ uses [Kai](../../mirai-kai/SKILL.md).
   folder and the folders of version control, and but the sources of the packages the project pins
   whose chosen build the host has whole (the origin and every input its import read), which a
   joiner takes as builds and never imports; a source the host has no build of travels. It is a
-  tree of objects of the store: each file an
-  object of its bytes, cut on content, so a changed file shares the chunks the change did not
-  touch; each folder an object whose bytes list its entries sorted by name (a file with its
-  executable bit, or a folder, by the address and size of its object, a folder with the files and
-  bytes under it), whose meta carries the name of the project in the root only; a folder holds at
-  least one file. The same files give the same tree, so two snapshots that differ in one file
+  [Kai tree](../../mirai-kai/references/model.md#trees), the one format of versioning and
+  sharing; the name of the project travels in the offer. Two snapshots that differ in one file
   share every folder off its path, and a join after a change asks for those folders, the file's
   new chunks and the nodes above them, a bound of the depth whatever the size of the project. No
   limit is set on the size of a file. The size of an entry is that of what was put, so a file
@@ -627,11 +623,10 @@ uses [Kai](../../mirai-kai/SKILL.md).
 - **Join.** `mirai join` accepts invitations from a command-line share or a live editor. It asks
   for the offer of the invitation only from the host it connects to,
   so a peer that joined from the joiner cannot name another; folders and files come from any
-  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one whose
-  names could leave the folder, are absolute, name a device, repeat or collide where case is folded,
-  whose folders nest beyond the bound, hold more entries or bytes than a folder can or declare
-  files and sizes they do not hold (so the files read never exceed the bound, also from a folder
-  repeated under many names); checks that the disks have room; fetches the files, the project's
+  peer, verified by address. It fetches the tree a depth of folders at a time, refusing one Kai
+  refuses (names that could leave the folder or collide where case is folded, bounds, totals a
+  folder does not hold) and a file that is not the project's own or is a conflict; checks that
+  the disks have room; fetches the files, the project's
   manifest and its start scene first and then the smallest first, many at once, and writes each
   chunk by chunk at its offset into a temporary file renamed into place, so memory does not grow
   with a file; then builds the project's editor from the files that arrived, without its refresh,

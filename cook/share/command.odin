@@ -283,7 +283,7 @@ offer :: proc(
     defer if lease.store!=nil {store.lease_release(&lease)}
     if offer_cancelled(cancel) {return {},OFFER_CANCELLED}
     digits:[64]u8
-    if put_error:=offer_set(s,root,offer_name(secret,&digits),o.address,kind);put_error!=.None {
+    if put_error:=offer_set(s,root,offer_name(secret,&digits),o.address,o.name,kind);put_error!=.None {
         return {},fmt.aprintf("the project offer could not be kept in the store (%v)",put_error,allocator=allocator)
     }
     if n.offer_lease.store!=nil {store.lease_release(&n.offer_lease)}
