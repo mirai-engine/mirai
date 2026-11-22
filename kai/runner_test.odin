@@ -733,10 +733,12 @@ ladder_of :: proc(r:^Runner,dh:Dh_Key) -> [5]f64 {
 }
 
 // A user whose every device is lost recovers onto a fresh store with its
-// recovery key and id: the key signs the new device in and revokes the lost
-// ones. A mistyped key says what is wrong with it, another user's is refused,
-// and once the key is rotated, what the old one signs on parents that skip
-// the rotation counts for nothing.
+// recovery key and id. A recovery pairing a teammate's machine of the user's
+// org offers brings the user logs over loopback UDP, after a wrong code is
+// denied; the key signs the new device in and revokes the lost ones, whose
+// removals the org's log comes to witness. A mistyped key says what is wrong with it, another
+// user's is refused, and once the key is rotated, what the old one signs on
+// parents that skip the rotation counts for nothing.
 @(test)
 a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     b:=new(Box)
@@ -747,14 +749,61 @@ a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     buffer:[RECOVERY_TEXT]u8
     text,e:=machine_user_create(lost,"alice",&buffer)
     testing.expect_value(t,e,Error.None)
-    key:=strings.clone(text,context.temp_allocator)
+    key:=strings.clone(text)
+    defer delete(key)
     other_text,_:=machine_user_create(other,"bob",&buffer)
-    other_key:=strings.clone(other_text,context.temp_allocator)
+    other_key:=strings.clone(other_text)
+    defer delete(other_key)
     user:=lost.user
+    // Alice's org, where bob is an admin who added a project: the org's log has an entry no lost
+    // device signed, which a witness follows.
+    org,oe:=machine_org_create(lost,"studio")
+    testing.expect_value(t,oe,Error.None)
+    log_copy(t,&other.store,&lost.store,other.user,.User)
+    testing.expect_value(t,machine_member_add(lost,org,other.user,.Admin),Error.None)
+    log_copy(t,&lost.store,&other.store,user,.User)
+    log_copy(t,&lost.store,&other.store,org,.Org)
+    testing.expect_value(t,machine_org_join(other,org),Error.None)
+    _,pe:=machine_project_add(other,org,random_id(Repo_Id),"game",false)
+    testing.expect_value(t,pe,Error.None)
 
     _,e=machine_user_find(fresh,store.hex(user,&[64]u8{})[:12])
     testing.expect_value(t,e,Error.Missing)
-    log_copy(t,&lost.store,&fresh.store,user,.User)
+    // Alice's machine is gone: bob's offers the recovery.
+    if !box_start(t,b,1) || !box_start(t,b,2) {return}
+    FRESH,TEAM:=1,2
+    ticket_buffer:[TICKET_TEXT]u8
+    testing.expect_value(t,runner_pair_join(&b.runners[FRESH],"not a ticket","spare"),Error.Corrupt)
+    _,offered:=runner_pair_offer(&b.runners[FRESH],.Recover,org,.None,{},&ticket_buffer)
+    testing.expect_value(t,offered,Error.Invalid_Argument)
+    for wrong in ([]bool{true,false}) {
+        ticket,te:=runner_pair_offer(&b.runners[TEAM],.Recover,org,.None,{},&ticket_buffer)
+        testing.expect_value(t,te,Error.None)
+        testing.expect_value(t,runner_pair_join(&b.runners[FRESH],ticket,"spare"),Error.None)
+        if !testing.expect(t,box_until(b,10,&TEAM,request_shown),"the recovery request reaches the teammate's machine") {return}
+        request,_:=runner_pair_request(&b.runners[TEAM])
+        testing.expect(t,request.mode==.Recover && request.name=="spare" && request.user=={},"a recovery names no user")
+        testing.expect(t,runner_pair_progress(&b.runners[FRESH]).code==request.code,"both ends show one code")
+        if wrong {
+            testing.expect_value(t,runner_pair_answer(&b.runners[TEAM],true,"0000-0000"),Error.Unauthorized)
+        } else {
+            testing.expect_value(t,runner_pair_answer(&b.runners[TEAM],true,request.code),Error.None)
+        }
+        testing.expect(t,box_until(b,5,&FRESH,join_ended))
+        testing.expect_value(t,runner_pair_progress(&b.runners[FRESH]).phase,wrong?Pair_Phase.Denied:Pair_Phase.Approved)
+        testing.expect_value(t,len(fresh.orgs),wrong?0:1)
+    }
+    if !testing.expect(t,fresh.user=={} && len(fresh.orgs)==1 && fresh.orgs[0]==org,"the recovering device reaches the org with no user") {return}
+    // A peer not admitted reads the user logs alone: the user's arrives, the org's does not.
+    user_here :: proc(b:^Box,data:rawptr) -> bool {
+        name:[64]u8
+        _,e:=store.ref_get(&b.machines[1].store,USER_NAMESPACE,log_name((^Log_Id)(data)^,&name))
+        return e==.None
+    }
+    if !testing.expect(t,box_until(b,10,&user,user_here),"the user's log reaches the recovering device") {return}
+    org_name:[64]u8
+    _,held:=store.ref_get(&fresh.store,LOG_NAMESPACE,log_name(org,&org_name))
+    testing.expect_value(t,held,store.Error.Missing)
     found,fe:=machine_user_find(fresh,store.hex(user,&[64]u8{})[:12])
     testing.expect(t,fe==.None && found==user,"a user is found by the start of its id")
 
@@ -789,6 +838,36 @@ a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     testing.expect(t,k>=0 && bytes_equal(user_device_kem(&f,f.devices[k]),fresh_kem[:]))
     user_fold_destroy(&f)
     testing.expect_value(t,machine_recover(fresh,user,key),Error.Invalid_Argument)
+
+    // Admitted as the user's device, the recovered one takes the org's log, which comes to
+    // witness every removal of a lost device on both machines.
+    Witnessed :: struct {user,org:Log_Id}
+    witnessed :: proc(b:^Box,data:rawptr) -> bool {
+        w:=(^Witnessed)(data)
+        for k in 1..<3 {
+            if !witnessed_on(&b.machines[k].store,w) {return false}
+        }
+        return true
+    }
+    witnessed_on :: proc(s:^store.Store,w:^Witnessed) -> bool {
+        u,o:Log
+        log_init(&u,w.user,context.temp_allocator)
+        log_init(&o,w.org,context.temp_allocator)
+        if log_open(s,&u,w.user,.User)!=.None || log_open(s,&o,w.org,.Org)!=.None {return false}
+        revokes:=0
+        for &item in u.items {
+            if item.entry.type!=.Device_Revoke {continue}
+            revokes+=1
+            found:=false
+            for &x in o.items {found||=x.entry.type==.Witness && bytes_equal(x.entry.body,witness_body(w.user,item.address))}
+            if !found {return false}
+        }
+        return revokes>0
+    }
+    wanted:=Witnessed{user,org}
+    testing.expect(t,box_until(b,10,&wanted,witnessed),"the org's log witnesses the lost devices' removal")
+    box_stop(b,FRESH)
+    box_stop(b,TEAM)
 
     // Rotated, the old key signs nothing beside the rotation: a device it adds
     // on the genesis alone, concurrent with the rotation, is no device.
