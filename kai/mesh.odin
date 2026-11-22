@@ -1157,24 +1157,17 @@ agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision
 }
 
 // The shared bookmarks of a project the agent holds the log of: the moves a
-// writer signed and its policy allowed, folded with the project's proposals.
-// Their names live in the temp allocator.
+// writer signed and its policy allowed, each landing checked against its
+// proposal as the move names it (project_snapshots). Their names live in the
+// temp allocator.
 agent_shared_bookmarks :: proc(a:^Agent,project:Log_Id,out:^[dynamic]Bookmark_Target) {
     l:=agent_log(a,project)
     if !a.folded || l==nil || len(l.items)==0 {return}
     proposals:=make([dynamic]^Proposal_Fold,context.temp_allocator)
-    for pl in a.logs {
-        if pl.kind!=.Proposal {continue}
-        k:=log_find(pl,pl.id)
-        if k<0 || pl.items[k].entry.type!=.Proposal_Open {continue}
-        if b,_,_:=body_head(pl.items[k].entry.body,Proposal_Open_Body);b.project!=project {continue}
-        f:=new(Proposal_Fold,context.temp_allocator)
-        if proposal_fold(f,pl,&a.org,context.temp_allocator)!=.None {continue}
-        _=proposal_settle(a.desc.store,f)
-        append(&proposals,f)
-    }
+    if project_snapshots(a.desc.store,l,&a.org,&proposals,context.temp_allocator)!=.None {return}
     f:Project_Fold
     if project_fold(&f,l,&a.org,proposals[:],context.temp_allocator)!=.None {return}
+    _=landings_keep(a.desc.store,&f)
     append(out,..f.bookmarks[:])
 }
 

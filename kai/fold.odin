@@ -1309,7 +1309,7 @@ Bookmark_Target :: struct {name:string,target:Revision}
 Project_Fold :: struct {
     log:^Log,
     org:^Org_Fold,
-    proposals:[]^Proposal_Fold, // the proposals moves land, each as it was at the heads its move names (project_snapshots)
+    proposals:[]^Proposal_Fold, // the proposals moves land, each as it was at the heads its move names, by move (project_snapshots)
     valid:[]bool,
     org_id:Log_Id,
     public:bool,
@@ -1360,6 +1360,7 @@ project_authorized :: proc(f:^Project_Fold,e:int) -> bool {
     if entry.type!=.Bookmark_Move || role<.Writer {return false}
     b,_,_,name:=move_parts(entry.body)
     pf:=move_proposal(f,e,b)
+    if pf!=nil && pf.kept {return true}
     if pf!=nil && pf.conflicted {return false}
     for &p in f.org.policies {
         if p.project!=f.log.id || p.bookmark!=name {continue}
@@ -1412,9 +1413,14 @@ project_apply :: proc(f:^Project_Fold) {
 @(private)
 move_proposal :: proc(f:^Project_Fold,e:int,b:Bookmark_Move_Body) -> ^Proposal_Fold {
     if b.proposal=={} {return nil}
-    for pf in f.proposals {
-        if pf.move==f.log.items[e].address && pf.log.id==b.proposal && pf.project==f.log.id && pf.status==.Open && pf.revision==b.to {return pf}
-    }
+    move:=f.log.items[e].address
+    k,found:=slice.binary_search_by(f.proposals,move,proc(pf:^Proposal_Fold,move:store.Hash) -> slice.Ordering {
+        if pf.move==move {return .Equal}
+        return hash_less(pf.move,move)?.Less:.Greater
+    })
+    if !found {return nil}
+    pf:=f.proposals[k]
+    if pf.kept || (pf.log.id==b.proposal && pf.project==f.log.id && pf.status==.Open && pf.revision==b.to) {return pf}
     return nil
 }
 
@@ -1438,6 +1444,7 @@ Proposal_Fold :: struct {
     checks:[dynamic]Proposal_Check,      // of revision, the last of each name
     comments:int,
     move:store.Hash,                     // the move this fold is the snapshot of, as project_snapshots made it
+    kept:bool,                           // the move's verdict was kept (landings_read): no log was folded
     statuses:[dynamic]u32,               // the walk: valid Open, Close, Reopen and Land
     revises:[dynamic]u32,                // valid Revise
     allocator:runtime.Allocator,

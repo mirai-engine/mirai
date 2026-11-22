@@ -370,13 +370,23 @@ proposal_land :: proc(s:^store.Store,f:^Proposal_Fold,project:^Project_Fold,iden
 // and settled as it was at the heads of its log the move names, appended to
 // out: what project_fold checks those moves against. A move whose proposal's
 // entries this store lacks gets none and does not hold until they come; one
-// whose changes it lacks, the same. Each fold owns its log
-// (project_snapshots_destroy).
+// whose changes it lacks, the same. A move whose verdict this store kept
+// (landings_keep) gets a fold that says so, and its proposal is not read.
+// out ends sorted by move; each fold owns its log (project_snapshots_destroy).
 project_snapshots :: proc(s:^store.Store,l:^Log,org:^Org_Fold,out:^[dynamic]^Proposal_Fold,allocator:=context.allocator) -> Error {
+    held:=landings_read(s,l.id)
+    validity:=org_validity(org)
     for &item in l.items {
         if item.entry.type!=.Bookmark_Move {continue}
-        b,heads,_,_:=move_parts(item.entry.body)
+        b,heads,_,name:=move_parts(item.entry.body)
         if b.proposal=={} {continue}
+        if closure_has(held,landing_key(org,l.id,name,item.address,validity)) {
+            pf,pe:=new(Proposal_Fold,allocator)
+            if pe!=nil {return .Out_Of_Memory}
+            pf^={org=org,project=l.id,status=.Open,revision=b.to,move=item.address,kept=true,allocator=allocator}
+            if _,ae:=append(out,pf);ae!=nil {return .Out_Of_Memory}
+            continue
+        }
         full:Log
         log_init(&full,b.proposal,context.temp_allocator)
         if log_open(s,&full,b.proposal,.Proposal)!=.None {continue}
@@ -410,6 +420,7 @@ project_snapshots :: proc(s:^store.Store,l:^Log,org:^Org_Fold,out:^[dynamic]^Pro
         pf.move=item.address
         if _,ae:=append(out,pf);ae!=nil {return .Out_Of_Memory}
     }
+    slice.sort_by(out[:],proc(a,b:^Proposal_Fold) -> bool {return hash_less(a.move,b.move)})
     return .None
 }
 
@@ -418,8 +429,109 @@ project_snapshots_destroy :: proc(list:^[dynamic]^Proposal_Fold,allocator:=conte
         l:=pf.log
         proposal_fold_destroy(pf)
         free(pf,allocator)
-        log_destroy(l)
-        free(l,allocator)
+        if l!=nil {
+            log_destroy(l)
+            free(l,allocator)
+        }
     }
     clear(list)
+}
+
+// --- Kept verdicts of landed moves ---
+//
+// A move that lands a proposal is checked against the proposal as it was at
+// the heads the move names, which never change, so a machine keeps each
+// verdict that held and folds the project again without reading those
+// proposals. A verdict is kept by a key that names all it was judged on: the
+// move (which names the proposal and its heads), the policy entry it was
+// held to and the validity of the org's and users' entries, which a removal
+// that arrives late may still change (org_validity). The keys of a project
+// are one sorted object under LANDINGS_NAMESPACE, which no peer is served and
+// a prune does not touch; a key no move has any more is let go when the set
+// is written again, so it holds at most one key per move.
+
+LANDINGS_NAMESPACE :: "kai-local-landed" // + /<project hex>: its kept verdicts
+LANDINGS_MAX :: 1<<20 // keys of one project's kept verdicts
+
+// The keys of the kept verdicts of project, sorted, in the temp allocator:
+// none when this store holds no valid set.
+landings_read :: proc(s:^store.Store,project:Log_Id) -> []store.Hash {
+    name:[64]u8
+    address,e:=store.ref_get(s,LANDINGS_NAMESPACE,log_name(project,&name))
+    if e!=.None {return nil}
+    bytes,ge:=object_get(s,address,.Landings,context.temp_allocator)
+    if ge!=.None || len(bytes)%size_of(store.Hash)!=0 || len(bytes)/size_of(store.Hash)>LANDINGS_MAX {return nil}
+    keys:=slice.reinterpret([]store.Hash,bytes)
+    for k,i in keys {
+        if i>0 && !hash_less(keys[i-1],k) {return nil}
+    }
+    return keys
+}
+
+// The digest of which entries of the org's and its users' logs are void:
+// it changes when a late removal voids one that a verdict may have counted.
+org_validity :: proc(org:^Org_Fold) -> store.Hash {
+    void:=make([dynamic]store.Hash,context.temp_allocator)
+    for valid,i in org.valid {
+        if !valid {append(&void,org.log.items[i].address)}
+    }
+    for u in org.users {
+        for valid,i in u.valid {
+            if !valid {append(&void,u.log.items[i].address)}
+        }
+    }
+    slice.sort_by(void[:],hash_less)
+    return store.address_of_bytes(slice.to_bytes(void[:]))
+}
+
+// The key of the verdict of the move at move of bookmark name in project.
+landing_key :: proc(org:^Org_Fold,project:Log_Id,name:string,move,validity:store.Hash) -> store.Hash {
+    policy:store.Hash
+    for &p in org.policies {
+        if p.project==project && p.bookmark==name {
+            policy=org.log.items[p.entry].address
+            break
+        }
+    }
+    parts:=[3]store.Hash{move,policy,validity}
+    return store.address_of_bytes(slice.to_bytes(parts[:]))
+}
+
+// Writes the keys of the moves of f whose verdict holds, its snapshots' and
+// those kept before, when they differ from the set held.
+landings_keep :: proc(s:^store.Store,f:^Project_Fold) -> Error {
+    held:=landings_read(s,f.log.id)
+    validity:=org_validity(f.org)
+    keys:=make([dynamic]store.Hash,context.temp_allocator)
+    for pf in f.proposals {
+        e:=log_find(f.log,pf.move)
+        if e<0 || f.log.items[e].entry.type!=.Bookmark_Move {continue}
+        _,_,_,name:=move_parts(f.log.items[e].entry.body)
+        key:=landing_key(f.org,f.log.id,name,pf.move,validity)
+        if pf.kept || landing_holds(f,pf,name) {append(&keys,key)}
+    }
+    if len(keys)>LANDINGS_MAX {return .Too_Large}
+    slice.sort_by(keys[:],hash_less)
+    keys_unique:=slice.unique(keys[:])
+    if slice.equal(keys_unique,held) {return .None}
+    address:=object_put(s,.Landings,slice.to_bytes(keys_unique)) or_return
+    name:[64]u8
+    return store_error(store.ref_set(s,LANDINGS_NAMESPACE,log_name(f.log.id,&name),address))
+}
+
+// Whether the proposal pf, as the move of bookmark name it lands names it,
+// meets what project_authorized asks of it: no conflict, and the policy.
+@(private)
+landing_holds :: proc(f:^Project_Fold,pf:^Proposal_Fold,name:string) -> bool {
+    if pf.conflicted || pf.status!=.Open || pf.project!=f.log.id {return false}
+    e:=log_find(f.log,pf.move)
+    if e<0 {return false}
+    b,_,_,_:=move_parts(f.log.items[e].entry.body)
+    if pf.revision!=b.to {return false}
+    for &p in f.org.policies {
+        if p.project!=f.log.id || p.bookmark!=name {continue}
+        pb,_,_,_:=policy_parts(f.org.log.items[p.entry].entry.body)
+        return (pb.approvals==0 && pb.checks==0) || proposal_policy(f.org,&p,pf)==.None
+    }
+    return true
 }

@@ -9,6 +9,7 @@ import "core:math/rand"
 import "core:slice"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "mirai:std/base"
 import "mirai:store"
 
@@ -693,4 +694,77 @@ a_removed_writer_keeps_its_past :: proc(t:^testing.T) {
     testing.expect_value(t,proposal_fold(&f,&l,&o.fold),Error.None)
     testing.expect(t,f.valid[log_find(&l,approval)] && !f.valid[log_find(&l,late)],"the approval stands, the later verdict does not")
     testing.expect_value(t,f.approvals,1)
+}
+
+// A landed move's verdict against its proposal at the heads the move names
+// is kept: the project folds again without reading any proposal, the same
+// after a restart, and the verdicts are found again when the kept set is gone.
+@(test)
+a_project_of_10000_landed_moves_folds_without_reading_its_proposals :: proc(t:^testing.T) {
+    N :: 10_000
+    s,ok:=review_store(t,"kai-landings");if !ok {return}
+    defer store.close(&s)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    alice,bob:=&o.alice.devices[0],&o.bob.devices[0]
+    expect_ok(t,log_append(&o.org,.Policy_Set,body_make(Policy_Set_Body{project=o.project.id,approvals=1},strings_tail("main")),alice,14))
+    org_refold(t,&o)
+    started:=time.tick_now()
+    logs:=make([]store.Hash,N,context.temp_allocator)
+    ids:=make([]Log_Id,N,context.temp_allocator)
+    from:Revision
+    for i in 0..<N {
+        id:=random_id(Change_Id)
+        text:=fmt.tprintf("version %d\n",i)
+        r:=revision_of(t,&s,bob,id,from,{{"a.txt",text}})
+        l:Log
+        log_init(&l)
+        expect_ok(t,proposal_open(&l,o.project.id,"main",fmt.tprintf("Version %d",i),"",bob,20,{},at(&o)))
+        expect_ok(t,proposal_revise(&l,{{id,r}},bob,21,{},at(&o)))
+        expect_ok(t,proposal_verdict(&l,.Approve,r,alice,22,{},at(&o)))
+        address,e:=machine_log_put(&s,&l)
+        testing.expect_value(t,e,Error.None)
+        logs[i],ids[i]=address,l.id
+        expect_ok(t,log_append(&o.project,.Bookmark_Move,move_body("main",i==0?{}:{from},r,l.id,test_heads(&l)),bob,30,{},at(&o)))
+        log_destroy(&l)
+        from=r
+    }
+    built:=time.tick_since(started)
+    fold :: proc(t:^testing.T,s:^store.Store,o:^Test_Org,want:Revision) -> (took:time.Duration,kept:int) {
+        started:=time.tick_now()
+        snaps:=make([dynamic]^Proposal_Fold)
+        defer {project_snapshots_destroy(&snaps);delete(snaps)}
+        testing.expect_value(t,project_snapshots(s,&o.project,&o.fold,&snaps),Error.None)
+        f:Project_Fold
+        testing.expect_value(t,project_fold(&f,&o.project,&o.fold,snaps[:]),Error.None)
+        defer project_fold_destroy(&f)
+        took=time.tick_since(started)
+        targets:=make([dynamic]Revision,context.temp_allocator)
+        project_bookmark(&f,"main",&targets)
+        if want=={} {
+            testing.expect(t,len(targets)==0,"no move holds")
+        } else {
+            testing.expect(t,len(targets)==1 && targets[0]==want,"main is at the last landed revision")
+        }
+        for pf in snaps {kept+=int(pf.kept)}
+        testing.expect_value(t,landings_keep(s,&f),Error.None)
+        return
+    }
+    cold,kept:=fold(t,&s,&o,from)
+    testing.expect_value(t,kept,0)
+    // Without any proposal's log in the store, every move still holds by its kept verdict.
+    name:[64]u8
+    for id in ids {testing.expect_value(t,store.ref_remove(&s,LOG_NAMESPACE,log_name(id,&name)),store.Error.None)}
+    warm,kept_warm:=fold(t,&s,&o,from)
+    testing.expect_value(t,kept_warm,N)
+    // A kept verdict is for the policy it was judged on: another policy reads the proposals again.
+    for id,i in ids {testing.expect_value(t,store.ref_set(&s,LOG_NAMESPACE,log_name(id,&name),logs[i]),store.Error.None)}
+    testing.expect_value(t,store.ref_remove(&s,LANDINGS_NAMESPACE,log_name(o.project.id,&name)),store.Error.None)
+    rebuilt,kept_rebuilt:=fold(t,&s,&o,from)
+    testing.expect_value(t,kept_rebuilt,0)
+    expect_ok(t,log_append(&o.org,.Policy_Set,body_make(Policy_Set_Body{project=o.project.id,approvals=2},strings_tail("main")),alice,15))
+    org_refold(t,&o)
+    _,kept_other:=fold(t,&s,&o,{})
+    testing.expect_value(t,kept_other,0)
+    fmt.printfln("kai: a project of %d landed moves: built in %v, folded reading every proposal in %v, with the kept verdicts in %v, again from the proposals in %v",N,built,cold,warm,rebuilt)
 }

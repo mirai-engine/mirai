@@ -205,7 +205,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `removed_member_cannot_decrypt_post_rotation_epoch`, `removing_a_keyring_signer_keeps_its_epochs`,
   `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.
 - Proposals: `proposal_comments_reanchor_across_rewrites`,
-  `landing_enforces_policy_and_zero_conflicts` and
+  `landing_enforces_policy_and_zero_conflicts`,
+  `a_project_of_10000_landed_moves_folds_without_reading_its_proposals` (prints the folds' times) and
   `a_team_reviews_and_lands_a_proposal_through_the_shared_operations` (`cook/kai`).
 - Node: `hub_serves_public_and_member_views`, `hub_api_describes_every_route`,
   `hub_http_refuses_hostile_requests`, `webauthn_login_and_signed_verdict_verify_offline`,

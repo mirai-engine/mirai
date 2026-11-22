@@ -39,7 +39,7 @@ Identity :: struct {
     seed:[32]u8,
 }
 
-Object_Kind :: enum u8 {None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output,Log_Page}
+Object_Kind :: enum u8 {None,Folder,Conflict,Change,View,Operation,Stat_Index,Log,Device_Refs,DDC_Set,DDC_Output,Log_Page,Landings}
 
 Error :: enum u8 {
     None,

@@ -812,6 +812,8 @@ project_state_refold :: proc(ps:^Project_State) -> Error {
         return e
     }
     ps.folded=true
+    // A store another process holds open for writing keeps them the next time.
+    _=landings_keep(ps.store,&ps.fold)
     return .None
 }
 

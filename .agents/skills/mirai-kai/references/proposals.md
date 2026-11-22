@@ -52,6 +52,11 @@ server that decides a merge. The code is `kai/proposal.odin`, the proposal part 
   that names none that meets it does not count, and what happens to the proposal later (a
   revise, other verdicts, a reopen) never changes a landed move. A peer that lacks those entries
   or their changes holds the move as not counting until they arrive; it does not guess.
+- Those heads never change, so a machine keeps each verdict that held, by a key of the move, the
+  policy entry it met and which org and user entries are void (a late removal may still void
+  one), as one local object per project that no peer is served. A fold reads no proposal whose
+  move it kept; a key that no longer matches is judged again from the proposal's log
+  (`a_project_of_10000_landed_moves_folds_without_reading_its_proposals` prints both times).
 - A proposal lands only when it is open with a stack, every entry is signed by its author, no
   change of the stack has a conflict (`root.conflicts == 0` of each tree), the approvals of the
   final revision reach the policy and every check the policy names has passed on it. The refusal
