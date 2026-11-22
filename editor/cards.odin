@@ -1,5 +1,6 @@
 package editor
 
+import "core:math/linalg"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/author"
@@ -29,6 +30,7 @@ Card :: struct {
     component:typeid,        // an entity that has it is shown with the icon of the card
     chosen:bool,             // an empty Asset_Id field of what it places takes the asset of its kind chosen in the content browser
     facing:bool,             // what it places turns to whoever places it
+    surface:bool,            // what it places, and what has its component when the center of the gizmo moves it, sits on the surface under the pointer with its +Y along the normal
     label:string,            // cards() gives it: the name of the entity of its recipe
 }
 
@@ -128,6 +130,21 @@ card_of_entity :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> (card:^Card
         if table!=nil && core.raw_find(core.world_table_at(w,table),table.info,e)!=nil {return &candidate,true}
     }
     return
+}
+
+// Whether an entity sits on surfaces when it is placed or moved (Card.surface).
+@(private)
+surface_entity :: proc(s:^Session,w:core.World_Ref,e:core.Entity) -> bool {
+    card,found:=card_of_entity(s,w,e)
+    return found && card.surface
+}
+
+// A rotation turned the least that brings its +Y along a normal.
+@(private)
+surface_rotation :: proc(rotation:mm.Quat,normal:[3]f32) -> mm.Quat {
+    if !(linalg.length(normal)>0.5) {return rotation}
+    up:=mm.quat_rotate(rotation,[3]f32{0,1,0})
+    return linalg.normalize(mm.quat_between(up,linalg.normalize(normal))*rotation)
 }
 
 // The card of a plugin whose component a table holds.

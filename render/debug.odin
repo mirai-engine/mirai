@@ -6,9 +6,10 @@ import "core:mem"
 import "mirai:rhi"
 import mm "mirai:std/math"
 
-// Immediate lines for debug views, gizmos and tools: a batch is filled every
-// frame with lines and wire shapes and handed to renderer_frame, which draws
-// it over the finished image, one pixel wide and in display colors.
+// Immediate lines and solids for debug views, gizmos and tools: a batch is
+// filled every frame with lines and wire shapes, or with triangles, and handed
+// to renderer_frame, which draws it over the finished image in display colors:
+// lines one pixel wide, triangles shaded by how much they face the view.
 
 Debug_Vertex :: struct {
     position:Vec3,
@@ -16,17 +17,19 @@ Debug_Vertex :: struct {
 }
 #assert(size_of(Debug_Vertex)==16)
 
-// Lines in the storage of the caller, two vertices each. A line that does not
-// fit is dropped and counted.
+// Lines in the storage of the caller, two vertices each, or triangles, three
+// each, wound counterclockwise seen from their front. A shape that does not fit,
+// or is not of the kind of the batch, is dropped and counted.
 Debug_Lines :: struct {
     vertices:  []Debug_Vertex,
     count:     int, // vertices written
-    dropped:   int, // lines that did not fit since the last clear
+    dropped:   int, // shapes that did not fit since the last clear
     depth_test:bool, // hidden where an opaque surface of the scene is in front
+    triangles: bool,
 }
 
-debug_lines_make :: proc(storage:[]Debug_Vertex,depth_test:=true) -> Debug_Lines {
-    return {vertices=storage,depth_test=depth_test}
+debug_lines_make :: proc(storage:[]Debug_Vertex,depth_test:=true,triangles:=false) -> Debug_Lines {
+    return {vertices=storage,depth_test=depth_test,triangles=triangles}
 }
 
 debug_lines_clear :: proc(lines:^Debug_Lines) {
@@ -34,11 +37,50 @@ debug_lines_clear :: proc(lines:^Debug_Lines) {
 }
 
 debug_line :: proc(lines:^Debug_Lines,from,to:Vec3,color:Vec4) {
-    if lines.count+2>len(lines.vertices) {lines.dropped+=1;return}
+    if lines.triangles || lines.count+2>len(lines.vertices) {lines.dropped+=1;return}
     packed:=mm.rgba8_pack(color)
     lines.vertices[lines.count]={from,packed}
     lines.vertices[lines.count+1]={to,packed}
     lines.count+=2
+}
+
+debug_triangle :: proc(lines:^Debug_Lines,a,b,c:Vec3,color:Vec4) {
+    if !lines.triangles || lines.count+3>len(lines.vertices) {lines.dropped+=1;return}
+    packed:=mm.rgba8_pack(color)
+    lines.vertices[lines.count]={a,packed}
+    lines.vertices[lines.count+1]={b,packed}
+    lines.vertices[lines.count+2]={c,packed}
+    lines.count+=3
+}
+
+DEBUG_ARROW_SIDES :: 12
+DEBUG_ARROW_VERTICES :: DEBUG_ARROW_SIDES*15 // of a solid arrow
+DEBUG_ARROW_HEAD :: f32(0.25)                // of the length, the cone
+DEBUG_ARROW_HEAD_WIDTH :: f32(2.5)           // times the radius of the shaft
+
+// A solid arrow from `from` to `to`: a shaft `radius` thick, closed at its
+// start, and a cone that points at `to`.
+debug_arrow_solid :: proc(lines:^Debug_Lines,from,to:Vec3,color:Vec4,radius:f32) {
+    span:=to-from
+    length:=linalg.length(span)
+    if !(length>1e-6) || !(radius>0) || math.is_inf(length) || math.is_inf(radius) {return}
+    axis:=span/length
+    u:=linalg.normalize(linalg.cross(axis,Vec3{1,0,0} if abs(axis.x)<0.9 else Vec3{0,1,0}))
+    v:=linalg.cross(axis,u)
+    neck:=to-axis*length*DEBUG_ARROW_HEAD
+    shaft:=min(radius,length*DEBUG_ARROW_HEAD/DEBUG_ARROW_HEAD_WIDTH)
+    wide:=shaft*DEBUG_ARROW_HEAD_WIDTH
+    for i in 0..<DEBUG_ARROW_SIDES {
+        a0:=f32(i)/DEBUG_ARROW_SIDES*2*math.PI
+        a1:=f32(i+1)/DEBUG_ARROW_SIDES*2*math.PI
+        r0:=u*math.cos(a0)+v*math.sin(a0)
+        r1:=u*math.cos(a1)+v*math.sin(a1)
+        debug_triangle(lines,from+r0*shaft,from+r1*shaft,neck+r1*shaft,color)
+        debug_triangle(lines,from+r0*shaft,neck+r1*shaft,neck+r0*shaft,color)
+        debug_triangle(lines,from,from+r1*shaft,from+r0*shaft,color)
+        debug_triangle(lines,neck+r0*wide,neck+r1*wide,to,color)
+        debug_triangle(lines,neck,neck+r1*wide,neck+r0*wide,color)
+    }
 }
 
 // The twelve edges of a box given by two opposite corners.
@@ -104,7 +146,7 @@ debug_axes :: proc(lines:^Debug_Lines,transform:Mat4,size:f32=1) {
     }
 }
 
-// Records the batches into the pass of the LDR target. The lines are
+// Records the batches into the pass of the LDR target. The shapes are
 // projected without the jitter of the scene and tested against its depth in
 // the shader (overlay.slang).
 @(private)
@@ -112,20 +154,23 @@ debug_lines_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,t:^Targets,slot:int,b
     target:=cast([^]Debug_Vertex)rhi.buffer_mapped(r.device,r.debug_buffers[slot])
     written:=0
     bound:=false
+    pipeline:=Pipeline_Id.Debug_Lines
     for batch in batches {
-        count:=min(batch.count,len(batch.vertices),r.debug_capacity-written)/2*2
+        shape:=3 if batch.triangles else 2
+        count:=min(batch.count,len(batch.vertices),r.debug_capacity-written)/shape*shape
         r.stats.debug_vertices_dropped+=u32(max(min(batch.count,len(batch.vertices))-count,0))
-        if count<2 {continue}
+        if count<shape {continue}
         mem.copy(&target[written],raw_data(batch.vertices),count*size_of(Debug_Vertex))
-        if !bound {
-            rhi.cmd_bind_pipeline(cmd,r.pipelines[.Debug_Lines])
+        kind:=Pipeline_Id.Debug_Triangles if batch.triangles else .Debug_Lines
+        if !bound || kind!=pipeline {
+            rhi.cmd_bind_pipeline(cmd,r.pipelines[kind])
             rhi.cmd_bind_buffer(cmd,SLOT_PASS0,r.debug_buffers[slot])
             rhi.cmd_bind_texture(cmd,SLOT_PASS1,t.linear_depth)
             rhi.cmd_bind_texture(cmd,SLOT_VIEWS,t.motion)
-            bound=true
+            bound,pipeline=true,kind
         }
-        Params :: struct {viewport:Vec2,depth_test,pad:u32}
-        params:=Params{viewport={f32(t.output_width),f32(t.output_height)},depth_test=1 if batch.depth_test else 0}
+        Params :: struct {viewport:Vec2,depth_test,triangles:u32}
+        params:=Params{viewport={f32(t.output_width),f32(t.output_height)},depth_test=1 if batch.depth_test else 0,triangles=1 if batch.triangles else 0}
         set_params(cmd,&params)
         rhi.cmd_draw(cmd,u32(count),1,u32(written))
         written+=count

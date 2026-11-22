@@ -17,7 +17,7 @@ Decals_Cards :: struct {provider:editor.Card_Provider}
 decals_cards_default :: proc() -> (cards:Decals_Cards) {
     cards.provider.count=1
     cards.provider.cards[0]={
-        recipe="decal",group="Logic",color={245,170,120,255},component=decals.Decal,
+        recipe="decal",group="Logic",color={245,170,120,255},component=decals.Decal,surface=true,
         // A surface, and what comes down onto it.
         drawing=ui.icon_drawing(
             ui.icon_part(.Loop,{{-6.5,2.5},{0,-1},{6.5,2.5},{0,6}}),
@@ -32,13 +32,12 @@ decals_cards_default :: proc() -> (cards:Decals_Cards) {
 @(storage)
 Decals_Gizmo :: struct {vertices:[GIZMO_VERTICES]erender.Debug_Vertex}
 
-// The box of each selected decal, and the way its image goes onto what is inside.
+// The box of each selected decal; its Arrow shows the way its image goes onto what is inside.
 @(step="frame")
 decals_gizmo :: proc(s:^editor.Session,gizmo:^Decals_Gizmo,app:^host.App) {
     draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,e:core.Entity,_:decals.Decal) {
         placed:=editor.entity_world(w,e)
         erender.debug_box_transformed(lines,mm.transform_matrix(placed),{-0.5,-0.5,-0.5},{0.5,0.5,0.5},GIZMO_COLOR)
-        erender.debug_arrow(lines,mm.transform_point(placed,{0,0.5,0}),mm.transform_point(placed,{0,-0.5,0}),GIZMO_COLOR)
     }
     editor.selection_gizmo(s,app,gizmo.vertices[:],decals.Decal,draw)
 }

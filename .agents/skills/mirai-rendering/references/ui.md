@@ -82,10 +82,14 @@ a `Begin_Layer`/`End_Layer` that delimits an isolated group.
 ## Debug lines
 
 - `Frame_Desc.debug`: a `Debug_Lines` is an immediate batch over caller memory
-  (`debug_lines_make(storage, depth_test)`) that is filled every frame with the `debug_*`
-  primitives.
-- One-pixel lines, without antialiasing. One that does not fit is discarded and counted in
-  `dropped`.
+  (`debug_lines_make(storage, depth_test, triangles)`) that is filled every frame with the
+  `debug_*` primitives: lines, or triangles in a batch made for them, never both.
+- One-pixel lines, without antialiasing. Triangles are solids (`debug_arrow_solid`), culled by
+  their back and shaded by how much they face the view, with nothing to light them. A shape that
+  does not fit, or is not of the kind of its batch, is discarded and counted in `dropped`.
+- `engine/render.Arrow` is the one solid a scene holds: the editor draws every one in its
+  indicators (those with `selected`, while their entity is), the game only those with `in_game`,
+  both through `arrow_draw`.
 
 ## Depth and composition
 

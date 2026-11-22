@@ -3,8 +3,8 @@ package render
 import gpu "mirai:render"
 
 // Lines for gizmos, tools and debug views, one pixel wide over the finished
-// image: a batch in the storage of the caller is filled in each frame and
-// given to it with host.extras_debug_lines_add.
+// image, or solids (arrow_draw): a batch in the storage of the caller is filled
+// in each frame and given to it with host.extras_debug_lines_add.
 Debug_Vertex :: gpu.Debug_Vertex
 Debug_Lines :: gpu.Debug_Lines
 debug_lines_make :: gpu.debug_lines_make

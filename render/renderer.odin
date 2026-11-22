@@ -336,7 +336,7 @@ Pipeline_Id :: enum {
 	Resolve, Resolve_Plain, Resolve_Layers, // the G-buffer from the visibility target: with the reflectance target, without it, with the layers target
 	Resolve_Nested, Resolve_Nested_Plain, Resolve_Nested_Layers, // the same of the nested views of a view
 	Rest, // where the vertex hook moved each pixel from where it rests (rest.comp)
-	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines,
+	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines, Debug_Triangles,
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
 	Debug_Views,
@@ -497,7 +497,7 @@ Frame_Desc :: struct {
 	ui_textures:    []Ui_Texture_Draw, // world panels drawn into textures, before the views
 	effect_views:   []Effect_View,     // what extensions draw into textures (the Effect stage), before the UI that shows them
 	probes:         []Depth_Probe,     // pixels whose depth goes back to the CPU (renderer_depth_probes)
-	debug:  []Debug_Lines, // line batches, over the panels and under the screen UI
+	debug:  []Debug_Lines, // line and triangle batches, over the panels and under the screen UI
 	// Drawn only into the image renderer_capture reads, for a world that is
 	// not shown: nothing reaches the window, and the probe volume keeps the
 	// light of the world that is.
@@ -1188,6 +1188,10 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Debug_Lines, {
 		vertex = &r.shader_codes[.Debug_Vert], fragment = &r.shader_codes[.Debug_Frag],
 		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, blend = {0 = .Alpha}, topology = .Lines, name = "debug lines",
+	})
+	graphics(list, r, .Debug_Triangles, {
+		vertex = &r.shader_codes[.Debug_Vert], fragment = &r.shader_codes[.Debug_Frag],
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, blend = {0 = .Alpha}, cull = .Back, name = "debug triangles",
 	})
 	overlay_pipelines_list(r, list)
 }
