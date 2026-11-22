@@ -639,10 +639,10 @@ package_collections :: proc(root,folder:string,files:[]^ast.File,flags:[]string)
 
 // The project a folder belongs to: the nearest folder at or above it with a
 // project.mirai; "" when there is none.
-project_of :: proc(folder:string) -> string {
+project_of :: proc(folder:string,allocator:=context.allocator) -> string {
     at:=project.path_absolute(folder,context.temp_allocator)
     for {
-        if os.is_file(project.path(at,project.PROJECT_FILE,allocator=context.temp_allocator)) {return strings.clone(at)}
+        if os.is_file(project.path(at,project.PROJECT_FILE,allocator=context.temp_allocator)) {return strings.clone(at,allocator)}
         parent:=os.dir(at)
         if parent==at || parent=="" {return ""}
         at=parent

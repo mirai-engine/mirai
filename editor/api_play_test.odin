@@ -571,6 +571,18 @@ play_input_holds_actions_of_a_seat_by_name_for_the_ticks_that_run :: proc(t:^tes
     testing.expect_value(t,error.code,0)
     step(f)
     testing.expect(t,input.seat_action(core.ref(&running.seat_runtime),f.seat,PROBE_MOVE).released)
+    // A fresh run with an unbuilt Input_Map compiles it at tick 0 instead of
+    // rejecting declared actions, and at tick 0 before seats exist asks to step first.
+    play_stop(&f.s,true)
+    (cast(^Probe_World)f.data).bindings={}
+    testing.expect(t,play_start(&f.s))
+    running=cast(^Probe_World)run_find(&f.s,0).world
+    testing.expect(t,running.bindings.built,"run_create builds an unbuilt Input_Map before tick 1")
+    error,_=probe_call(f,"play.input",`{"actions":[{"name":"jump","for":1}]}`)
+    testing.expect_value(t,error.code,0)
+    running.players.local_count=0
+    error,_=probe_call(f,"play.input",`{"actions":[{"name":"jump","for":1}]}`)
+    testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,"play.step one tick first"),"%v",error)
 }
 
 // Keys named by consecutive calls are one hold, as a person keeps a key down:
