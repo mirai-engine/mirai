@@ -1,5 +1,5 @@
 #+build darwin
-package platform
+package base
 
 import "core:sys/darwin"
 

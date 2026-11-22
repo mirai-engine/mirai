@@ -7,7 +7,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
-import "mirai:platform"
+import "mirai:std/base"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -843,21 +843,21 @@ a_ten_gigabyte_object_moves_within_bounded_memory :: proc(t:^testing.T) {
     testing.expect(t,error==.None && total==SIZE,"the object is built")
     testing.expect_value(t,store.commit(s),store.Error.None)
     free_all(context.temp_allocator)
-    base:=platform.process_memory().private
-    peak:=base
+    base_mem:=base.process_memory().private
+    peak:=base_mem
     x:=&w.nodes[1].x
     want(x,root)
     for step:=0;w.now<600 && test_state(x,root)!=.Complete;step+=1 {
         test_step(&w)
         if step%100==0 {
-            peak=max(peak,platform.process_memory().private)
+            peak=max(peak,base.process_memory().private)
             free_all(context.temp_allocator)
         }
     }
     p,_:=progress(x,root)
     testing.expectf(t,p.state==.Complete && p.total==i64(SIZE),"the object arrives: %v",p)
     got:=test_peer(&w.nodes[1])
-    fmt.printfln("10 GB object: %d bytes received, peak growth %d bytes on both sides together",got.received,peak-base)
+    fmt.printfln("10 GB object: %d bytes received, peak growth %d bytes on both sides together",got.received,peak-base_mem)
     // The footprint is the process's, where other tests running beside this one count:
     // the bound is checked with -define:ODIN_TEST_THREADS=1.
     when #config(ODIN_TEST_THREADS,0)==1 {

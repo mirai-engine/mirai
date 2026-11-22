@@ -1,4 +1,4 @@
-package platform
+package base
 
 import "core:testing"
 

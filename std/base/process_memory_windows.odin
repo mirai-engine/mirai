@@ -1,5 +1,5 @@
 #+build windows
-package platform
+package base
 
 import win32 "core:sys/windows"
 

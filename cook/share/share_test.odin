@@ -13,7 +13,6 @@ import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
 import "mirai:exchange"
-import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
@@ -1077,12 +1076,12 @@ a_large_file_joins_within_bounded_memory :: proc(t:^testing.T) {
         sample :: proc(data:rawptr) {
             s:=(^Sampler)(data)
             for !sync.atomic_load(&s.stop) {
-                sync.atomic_store(&s.peak,max(sync.atomic_load(&s.peak),i64(platform.process_memory().private)))
+                sync.atomic_store(&s.peak,max(sync.atomic_load(&s.peak),i64(base.process_memory().private)))
                 time.sleep(5*time.Millisecond)
             }
         }
         measured :: proc(t:^testing.T,what:string,run:proc(data:rawptr),data:rawptr) -> i64 {
-            s:=Sampler{base=i64(platform.process_memory().private)}
+            s:=Sampler{base=i64(base.process_memory().private)}
             s.peak=s.base
             th:=thread.create_and_start_with_data(&s,sample)
             started:=time.tick_now()

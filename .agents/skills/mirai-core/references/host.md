@@ -207,7 +207,7 @@ request, the device writes no per-pass timestamps. A recording that asks for mem
 (`profile_start(app, frames, memory)`, off by default) samples it at the end of each frame, inside
 the frame as its part `memory`: what the tables and storages of the World that ran last hold
 (`core.world_memory`, the game loop's World, else the editor's), the private and resident memory of
-the process (`platform.process_memory`) and the device memory. `core.world_memory` adds up the
+the process (`base.process_memory`) and the device memory. `core.world_memory` adds up the
 capacity of the arrays, maps and slices of the tables and storages and of what their elements and
 map values hold, reading the containers that `world_info_index` found once in their types, so a
 sample costs one read per container header, those of every slot of a pool included; the bytes of

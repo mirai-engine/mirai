@@ -1,4 +1,4 @@
-package platform
+package base
 
 // The memory this process holds, in bytes, as its system counts it: resident,
 // the pages in physical memory (the working set, with what is shared with

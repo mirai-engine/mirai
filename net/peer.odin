@@ -384,11 +384,13 @@ peer_connect :: proc(h:^Host,request:^Connect_Request) {
     repl_peer_connected(h,p)
     a:=&h.back.attempt
     a^={}
-    a.candidates,a.candidate_count=request.candidates,clamp(request.count,1,CANDIDATES)
+    a.candidate_count=clamp(request.count,1,CANDIDATES)
+    for i in 0..<a.candidate_count {a.candidates[i]=request.candidates[i]}
     a.server,a.mac=h.back.secure.public,h.back.secure.mac
     if request.identity {
         a.identity,a.server,a.mac=true,request.peer,identity_mac_key(&request.peer)
-        a.claim,a.claim_size=request.claim,clamp(request.claim_size,0,CLAIM_BYTES)
+        a.claim_size=clamp(request.claim_size,0,CLAIM_BYTES)
+        copy(a.claim[:a.claim_size],request.claim[:a.claim_size])
     }
 }
 // The candidate of the attempt at address, -1 if none.

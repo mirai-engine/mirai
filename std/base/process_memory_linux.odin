@@ -1,5 +1,5 @@
 #+build linux
-package platform
+package base
 
 import "core:sys/posix"
 
