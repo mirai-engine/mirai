@@ -2,7 +2,7 @@
 
 `exchange` (layer 3) moves the chunks of a `store`'s objects and its refs between peers over the
 connections of `net` hosts its owner already runs. It imports `store` and `net` and nothing
-engine-time, so a headless peer and the editor link the same code. Its messages (protocol 5) are
+engine-time, so a headless peer and the editor link the same code. Its messages (protocol 7) are
 in `exchange/wire.odin`.
 
 ## What the owner calls
@@ -15,6 +15,10 @@ in `exchange/wire.odin`.
   they run on the pump. `destroy` waits for them, so it is called from that thread.
 - Per host poll: `peer_add` on `Connected`, `peer_remove` on `Disconnected`, `receive` on every
   `Message` (it says whether the message was its own). Then `update(now)` before `host_update`.
+- `peer_add` takes the owner's tag of the peer, given back in the `Peer_Id` every callback of the
+  `Desc` receives, and whether the peer is restricted (an anonymous reader).
+- `ref_changed` tells the peers that may read a namespace that one of its refs moved; a peer hears
+  it through `Desc.hint` inside `receive`, and acts after `receive` returns.
 - A connection is given from its start: a message that began before `peer_add` is not read from
   its middle, so a restarted exchange takes new connections.
 - `want` takes an object's root; asking again raises the priority. `forget`, `progress`,
@@ -60,10 +64,14 @@ in `exchange/wire.odin`.
 - A chunk travels as stored in its frame (`store.chunk_read_frame`), either plain or MDC2.
   The receiver verifies the decoded bytes against the address and keeps the received frame
   (`store.chunk_put_frame`). A compressed chunk asked for decodes once.
-- Nothing is checked on serve. Nothing unverified reaches the store: a chunk is taken only as the
-  answer to an entry asked of that peer or as a descendant of the entry it is answering within its
-  budget, and only once it hashes to the address the ask or its parent named. A node is parsed and
-  checked against its parent's level and entry before its entries are asked. A chunk that fails
+- Nothing is verified on serve. A restricted peer gets only the chunks `Desc.serve` allows, asked
+  or as descendants, and nothing without it: the filter runs before the store is read, and a chunk
+  it refuses is answered as missing, so the answer never says whether the store holds it. The
+  filter runs on the serve jobs, without the lock. Nothing unverified reaches the store: a chunk
+  is taken only as the answer to an entry asked of that peer or as a descendant of the entry it is
+  answering within its budget, and only once it hashes to the address the ask or its parent
+  named. A node is parsed and checked against its parent's level and entry before its entries are
+  asked. A chunk that fails
   its address is reported with `Bad` and marks that peer wrong for that want, never the want; the
   peer checks its copy and tombstones it if damaged, so it lacks it from then on and fetches it
   again when it wants it. A tree whose chunks make their addresses but do not hold together fails
@@ -75,10 +83,16 @@ in `exchange/wire.odin`.
   walks again from what it committed without asking for it.
 - A want names an object by its root, which is always a node: a root that hashes right but is no
   node fails the want, since every peer would send the same.
-- What a peer exposes is the owner's `Desc.expose`; without one no namespace is read. Names come
+- What a peer may read is the owner's `Desc.expose`, asked per peer; without one no namespace is
+  read. Names come
   sorted, a page at a time after the last one seen. A ref is asked of every connected peer, or of
   one when only that peer may say it (the snapshot of an invitation, from the host it names):
   refs name content, and only content is verified by address.
+- Ref changes are pushed, never polled: a peer asks for refs and names once on connect and then
+  follows the hints. A hint goes only to the peers whose `expose` allows its namespace when it is
+  told; one not yet sent is replaced by a later change of the same ref, and hints join a peer's
+  control queue only while it is short, so they never take the room of asks and answers. A hint
+  is a claim of the peer, verified like any ref by the content its address names.
 - Hostile input: a malformed message, an ask beyond the limits, descendants past a budget or an
   answer nobody could have asked for in that form marks the peer bad, and it is neither asked nor
   served again; a well formed message about something not asked for is ignored. An ask that does
@@ -129,5 +143,6 @@ in `exchange/wire.odin`.
   `a_peer_in_a_freed_slot_is_not_blamed_for_its_predecessor`,
   `late_ref_answers_return_their_credits`,
   `a_late_done_does_not_release_what_another_peer_was_asked`,
-  `peers_exchange_compressed_objects_both_ways` and
-  `destroy_wakes_a_waiting_fetch`.
+  `peers_exchange_compressed_objects_both_ways`,
+  `anonymous_peer_cannot_fetch_unexposed_chunks`, `peer_aware_expose_gates_namespaces_by_peer`,
+  `ref_changed_hint_wakes_peer` and `destroy_wakes_a_waiting_fetch`.

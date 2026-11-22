@@ -91,7 +91,15 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_DATA,test_chunk(root,store.CODEC_MDC2,9,big[:10]),true},
         {LANE_DATA,test_chunk(root,store.CODEC_MDC2,store.CHUNK_MAX+1,big[:10]),true},
         {LANE_DATA,test_chunk(root,store.CODEC_MDC2,int(max(u32)),big[:10]),true},
-        {LANE_CONTROL,{7,0xff,0xff},true},
+        {LANE_CONTROL,{MSG_REF_CHANGED,0xff,0xff},true},
+        {LANE_CONTROL,{MSG_REF_CHANGED},true},
+        {LANE_CONTROL,test_message({MSG_REF_CHANGED},test_name("Lib"),test_name("a"),zero[:]),true},
+        {LANE_CONTROL,test_message({MSG_REF_CHANGED},test_name("lib"),test_name(""),zero[:]),true},
+        {LANE_CONTROL,test_message({MSG_REF_CHANGED},test_name("lib"),test_name("a."),zero[:]),true},
+        {LANE_CONTROL,test_message({MSG_REF_CHANGED},test_name("lib"),{200},big[:10]),true},
+        {LANE_CONTROL,test_message({MSG_REF_CHANGED},test_name("lib"),test_name("a"),zero[:31]),true},
+        {LANE_CONTROL,test_message({MSG_REF_CHANGED},test_name("lib"),test_name("a"),zero[:],{0}),true},
+        {LANE_CONTROL,{8,0},true}, // an unknown kind
         {LANE_DATA,test_message({MSG_LACK},root[:4]),true},
         {LANE_DATA,test_message({MSG_LACK},root[:],{0}),true},
         {LANE_DATA,test_message({4},root[:],root[:]),true}, // an unknown kind
@@ -108,6 +116,7 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
         {LANE_CONTROL,test_message({MSG_NAMES_GET},test_name("lib"),{0}),false},
         {LANE_CONTROL,test_message({MSG_BAD},other[:]),false},
         {LANE_CONTROL,test_ask(root,zero),false},
+        {LANE_CONTROL,test_message({MSG_REF_CHANGED},test_name("lib"),test_name("a"),root[:]),false},
     }
     for c_,k in cases {
         receive(x,server,{kind=.Message,channel=u8(w.channel+c_.lane),connection=c,data=c_.data})
@@ -142,7 +151,7 @@ hostile_messages_are_refused_without_a_crash :: proc(t:^testing.T) {
     for _ in 0..<4000 {
         n:=base.hostile_int(&h,len(noise))
         for &b in noise[:n] {b=u8(base.hostile_next(&h))}
-        if n>0 && base.hostile_int(&h,2)==0 {noise[0]=u8(1+base.hostile_int(&h,6))}
+        if n>0 && base.hostile_int(&h,2)==0 {noise[0]=u8(1+base.hostile_int(&h,MSG_REF_CHANGED))}
         receive(x,server,{kind=.Message,channel=u8(w.channel+base.hostile_int(&h,CHANNELS)),connection=c,data=noise[:n],more=base.hostile_int(&h,8)==0})
         if p,_=peer_progress(x,server,c);p.bad {
             peer_remove(x,server,c)
