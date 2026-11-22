@@ -76,6 +76,7 @@ Pass :: struct {
 	jitter_phases: u32, // of the sequence the jitter of the view follows; 0: none
 	use_gi, use_probes, use_reflections: bool,
 	pyramid_previous: bool, // the depth pyramid of the frame before holds what the view drew then (pass_depth_pyramid)
+	pyramid:          bool, // that of this frame holds what the view drew of the opaque scene
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
 	layered:        bool, // and the layers of its material (gbuffer.slang)
 	instance_count: u32,
@@ -83,6 +84,7 @@ Pass :: struct {
 
 	draw, draw_forward, draw_glass, draw_overlays: bool,
 	translucent: []Translucent, // visible prefix of the scene list for this view, sorted back to front
+	translucent_drawn: bool,    // their indirect draws are written (translucent_draws_record)
 	glass_material_layers: bool,
 	glass_reflect_bounds: [4]u32, // pixel rectangle, upper bound exclusive
 	blend:   bool,       // the view runs the Blend stage of extensions
@@ -1365,7 +1367,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		// what phase 1 rescued hides what is behind it from the next phase 0.
 		rhi.cmd_timestamp(cmd, "depth pyramid")
 		build_depth_pyramid(p, t.hiz[p.current])
-		t.hiz_valid = true
+		t.hiz_valid, p.pyramid = true, true
 	} else {
 		t.hiz_valid = false
 	}

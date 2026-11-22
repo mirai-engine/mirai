@@ -594,10 +594,18 @@ glass_behind_a_wall_shows_the_frame_the_wall_goes :: proc(t: ^testing.T) {
 	scene_given(r, {floor, pane, wall}, nil, SUN, {})
 	hidden := shown(t, &f, above, {0, 1, 0}, 4)
 	testing.expectf(t, abs(hidden.r - hidden.g) < 0.01 && hidden.r > 0.5, "the wall hides the glass: %v", hidden)
+	// The draw of the pane, the one blended instance of the view (translucent_draws.comp).
+	pane_indices :: proc(f: ^Fixture) -> u32 {
+		draw: [1]rhi.Draw_Indexed_Indirect
+		if !rhi.buffer_read_slice(f.device, f.renderer.scene.translucent_draws, 0, draw[:]) {return max(u32)}
+		return draw[0].index_count
+	}
+	testing.expect_value(t, pane_indices(&f), 0)
 	scene_given(r, {floor, pane}, nil, SUN, {})
 	first := shown(t, &f, above, {0, 1, 0}, 1)
 	settled := shown(t, &f, above, {0, 1, 0}, 3)
 	testing.expectf(t, first.g < 0.6 * first.r && abs(first.r - settled.r) < 0.02 && abs(first.g - settled.g) < 0.02, "the glass is there in the first frame without the wall: %v, then %v", first, settled)
+	testing.expectf(t, pane_indices(&f) > 0, "without the wall the pane is drawn")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
