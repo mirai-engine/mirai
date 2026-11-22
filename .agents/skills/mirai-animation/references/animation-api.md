@@ -1,42 +1,42 @@
 # Animation API methods
 
-The `animation.*` and `skeleton.*` methods belong to `plugins/animation/editor`
-(and `animation.capture`, to the `previews` plugin) and exist with the plugin active. Fields,
-defaults and results: `mirai rpc describe animation.` (or `skeleton.`); common conventions
-(concurrency, errors, `engine.describe`): [method
-catalog](../../mirai-agent-api/references/methods.md); flows and contracts:
-[authoring](animation-authoring.md).
+`animation.*` and `skeleton.*` live in `plugins/animation/editor` (`animation.capture` in
+`previews`). Schemas: `mirai rpc describe animation.` / `skeleton.`. Flows:
+[animation-authoring.md](animation-authoring.md); general API rules:
+[methods.md](../../mirai-agent-api/references/methods.md).
 
-- **Intent**, first: `skeleton.body.detect/set`, `animation.character.setup`, `animation.request`,
-  `animation.clip.edit` and `animation.analyze`. It is looked at with `animation.preview` and
-  `animation.capture`, inspected with `animation.inspect` and `animation.asset.inspect`, and read
-  across the ticks of a Play with `animation.history`.
-- **Expert layer**, for fine work: clips, tracks, keys, markers and spans, skeletons and sockets,
-  the tables of a `.character` (`animation.action.set`, `animation.space.set`,
-  `animation.motion.set`, `animation.modifier.set`), bakes, morphs and
-  [timelines](animation-timeline.md).
+- **Intent layer:** `skeleton.body.detect/set`, `animation.character.setup`, `animation.request`,
+  `animation.clip.edit`, `animation.analyze`.
+- **Verification layer:** `animation.inspect` (`Match`/`Pose`/`Actions`), `animation.history`,
+  `animation.asset.inspect`, isolated `animation.preview`/`animation.capture`, and real-Play
+  `capture` filmstrips (`debug: ["Skeleton","Bounds","Collision","Trajectory"]`).
+- **Expert layer:** `animation.clip.*`, `track.set`, `key.set`, `key.capture`, `marker.set`,
+  `skeleton.*`, `animation.action.set`, `space.set`, `motion.set`, `modifier.set`, `pose.bake`,
+  `retarget.bake`, morphs and [timelines](animation-timeline.md).
+
+```bash
+# Analyze clip issues + get fix verbs, preview isolated, then inspect real Play pose & matching
+mirai rpc --project . animation.analyze '{"asset":"anims/hero.anim","clip":"walk"}'
+mirai rpc --project . animation.capture '{"entity":"Player","seconds":1.0,"frames":6}'
+mirai rpc --project . animation.inspect '{"entity":"Player","parts":["Match","Pose"]}'
+mirai rpc --project . animation.history '{"entity":"Player","from":0,"to":60,"every":5}'
+```
 
 ## Common errors
 
-- Asking for parameters, targets, actions or intents in Edit: they require Play/Simulate, and
-  the `fix` proposes `animation.preview` with the same fields
-  ([control](animation-authoring.md#per-instance-control-and-preview)).
-- Expecting the change on disk at once: the file is written when the step ends
-  ([files](animation-authoring.md#files-and-history)).
-- Sending indices, slots or quantities: the API names parameters, operations, effectors, clips,
-  modes, gestures and body parts, and derives the quantities from the lists.
-- Expecting `locomote` to move the body: its controller moves it.
-- Looking for a graph, states, transitions or triggers: they do not exist; locomotion is a
-  the match of a `.character` and the rest, its layers and actions ([what replaces
-  them](animation.md#what-replaces-the-state-machine)).
-- Playing a match clip by its name: `actions` plays an action of the set; add one for the clip
-  with `animation.action.set` (no layer: the whole body).
-- Writing the seconds of a section or a window into the set: they are spans of the clip
-  (`animation.marker.set` with a `duration`), and the set names them.
-- Editing a track longer than the capacity of `animation.track.set`: `animation.key.set` edits one
-  key at a time.
-- Testing blindly: `dry_run` validates every `create`, `set`, bake and edit without writing.
-- `animation.character.setup` over a large library: past the clips a `.character` takes it fails
-  with `Capacity`; `clips` names the ones to classify.
-- Importing a source again to get a library of chosen clips: `animation.clip.edit` with the `path`
-  of an existing `.anim` of the same skeleton and no `edits` copies a clip there.
+- Requesting parameters, targets, actions or intents in Edit -> requires Play/Simulate (`fix`
+  suggests `animation.preview`).
+- Using `animation.capture` to debug physics/grounding -> it is an isolated preview without physics
+  or world collision; use `capture` filmstrips (`debug`) in Play instead.
+- Expecting disk writes mid-call -> assets flush at step end.
+- Passing numeric indices/slots/counts -> API uses names and derives counts from lists.
+- Expecting `locomote` to move the body -> the physics/game controller moves it.
+- Looking for FSMs, graphs or transitions -> use `.character` motion matching, layers and actions
+  ([what replaces the FSM](animation.md#what-replaces-the-state-machine)).
+- Playing a match clip via `actions` -> add an action entry via `animation.action.set` first.
+- Putting section/window seconds in `.character` -> author timed markers (`animation.marker.set`
+  with `duration`) on the clip and reference by name.
+- Exceeding `animation.track.set` capacity -> use `animation.key.set` per key.
+- `Capacity` in `animation.character.setup` -> pass `clips` subset; test edits with `dry_run:true`.
+- Copying clips between same-skeleton `.anim` libraries -> call `animation.clip.edit` with empty
+  `edits` and target `path` instead of reimporting.

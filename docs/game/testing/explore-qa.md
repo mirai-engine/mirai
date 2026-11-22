@@ -5,6 +5,20 @@ plays the same ticks. The QA monitors watch every tick the API runs (`play.step`
 `play.explore`, a filmstrip) and turn what goes wrong into a violation you can replay. Both come
 with the `playtest` plugin, which the game template enables.
 
+## Audit gate
+
+Run a one-command preflight before handing a build to a player:
+
+```bash
+mirai play audit . --ticks 60 --copy                 # headless Play + play.audit (+ --explore)
+mirai rpc --project . scene.audit '{"world":"Auto"}' # static scene flags & fixes
+mirai rpc --project . play.audit '{"ticks":60,"frame_ms_budget":16.7}'
+```
+
+Both RPC calls return `{passed, flags: [{severity, area, code, entity, message, fix}], summary}`.
+`play.audit` adds live UI cursor-capture and keyboard-focus checks, NaN/stuck checks, and GPU/CPU
+frame budget checks.
+
 ## Explore
 
 ```bash

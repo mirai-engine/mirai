@@ -84,6 +84,7 @@ no closer (`describe play.step` gives the defaults):
 
 ```bash
 mirai play test . shell            # one scenario by name; no name: all of tests/scenarios
+mirai play audit . --ticks 60      # headless Play + play.audit gate (+ --explore, --copy)
 ```
 
 One line per file, `PASS` or `FAIL` with the step and what its method answered; the exit code is 0
