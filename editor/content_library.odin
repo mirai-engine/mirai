@@ -413,7 +413,7 @@ content_package_state :: proc(s:^Session,p:^Content_Package) -> (text:string,fai
         if p.bytes>0 {return content_bytes_progress(received,u64(p.bytes)),false,""}
         return "Fetching",false,""
     }
-    if st:=collab_state(s);st!=nil && st.take!=nil && st.take.id==p.id && !st.take.cancelled && st.take.error!="" {
+    if st:=collab_state(s);st!=nil && st.take!=nil && st.take.id==p.id && !sync.atomic_load(&st.take.cancelled) && st.take.error!="" {
         return "Not added",true,st.take.error
     }
     // A package of a peer's root is not in this machine's library yet: adding takes it, even when its build is here.
@@ -430,10 +430,20 @@ content_package_state :: proc(s:^Session,p:^Content_Package) -> (text:string,fai
 @(private)
 content_package_fetch :: proc(s:^Session,p:^Content_Package) -> (received:u64,fetching:bool) {
     st:=collab_state(s)
-    if st==nil || st.take==nil || st.take.id!=p.id || st.take.cancelled {return}
+    if st==nil || st.take==nil || st.take.id!=p.id || sync.atomic_load(&st.take.cancelled) {return}
     t:=st.take
     if sync.atomic_load(&t.done) && t.thread==nil {return}
     return share.node_totals(st.node).received-t.received,true
+}
+
+// The fetch of a whole folder of a peer's library while it runs and was not cancelled.
+@(private)
+content_folder_fetch :: proc(s:^Session,key:u64) -> (received,total:u64,fetching:bool) {
+    st:=collab_state(s)
+    if st==nil || st.take==nil || st.take.id!={} || st.take.folder_key!=key || sync.atomic_load(&st.take.cancelled) {return}
+    t:=st.take
+    if sync.atomic_load(&t.done) && t.thread==nil {return}
+    return share.node_totals(st.node).received-t.received,t.total_bytes,true
 }
 
 // done bytes of total as "done / total" in the unit of total: 1.2 / 3.4 GB,
@@ -556,9 +566,18 @@ content_fetch_ring :: proc(s:^Session,id:ui.Id,fraction:f32) {
 }
 
 @(private)
-content_library_folder_button :: proc(s:^Session,folder_id:ui.Id,library:i32,folder:string) {
+content_library_folder_button :: proc(s:^Session,folder_id:ui.Id,library:i32,folder:string,show_progress:=false) {
     ctx:=s.gui.ctx
     key:=content_library_folder_group(int(library),folder)
+    if received,total,fetching:=content_folder_fetch(s,key);fetching {
+        if show_progress {
+            text:=content_bytes_progress(received,total) if total>0 else "Fetching"
+            ui.label(ctx,text,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+        }
+        fraction:=f32(f64(received)/f64(total)) if total>0 else 0
+        content_fetch_ring(s,ui.id_derive(ctx,folder_id,"content_library_folder_fetch",int(key)),fraction)
+        return
+    }
     id:=ui.id_derive(ctx,folder_id,"content_library_folder_add",int(key))
     if !content_add_button(s,id,"Add folder to project") {return}
     c:=s.content

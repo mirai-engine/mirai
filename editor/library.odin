@@ -280,12 +280,14 @@ content_packages_add :: proc(s:^Session,library:i32,ids:[]base.Asset_Id,folder:s
         if p.root==library_root {by_id[p.id]=&p}
     }
     requests:=make([]sources.Package_Add,len(ids),context.temp_allocator)
+    total_bytes:u64
     for id,i in ids {
         p:=by_id[id]
         if p==nil || p.manifest=={} {
             notify(s,"The library changed. Open the folder again.")
             return
         }
+        if p.bytes>0 {total_bytes+=u64(p.bytes)}
         path:=p.folder
         if rest!="" {path=fmt.tprintf("%s/%s",rest,p.folder)}
         requests[i]={manifest=p.manifest,folder=path}
@@ -293,7 +295,7 @@ content_packages_add :: proc(s:^Session,library:i32,ids:[]base.Asset_Id,folder:s
     if library==0 {
         problem=library_add_start(s,root,name,requests,nil,group=true)
     } else {
-        problem=collab_take_start(s,name,folder,requests,nil)
+        problem=collab_take_start(s,name,folder,requests,nil,folder_key=content_library_folder_group(int(library),name),total_bytes=total_bytes)
     }
     if problem!="" {notify(s,problem)}
 }

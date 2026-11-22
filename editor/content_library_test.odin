@@ -298,4 +298,19 @@ library_rows_end_in_one_column_and_a_fetch_cancels_from_its_ring :: proc(t:^test
     take.done=true
     collab_take_update(&f.s,st)
     testing.expect(t,take.thread==nil && take.error=="")
+
+    // A whole folder fetch puts its ring in the folder row's slot and cancels the same way.
+    folder_key:=content_library_folder_group(2,folder)
+    folder_ring:=ui.id_derive(&ctx,row,"content_library_folder_fetch",int(folder_key))
+    take^={folder_key=folder_key,total_bytes=1<<30,thread=thread.create_and_start(proc() {})}
+    content_test_still(&f.s)
+    fring_rect,fring_found:=ui.widget_rect(&ctx,folder_ring)
+    _,fadd_found:=ui.widget_rect(&ctx,folder_add)
+    testing.expect(t,fring_found && !fadd_found,"a folder fetch puts the ring in place of its add")
+    testing.expect_value(t,fring_rect,folder_rect)
+    content_test_click(t,&f.s,folder_ring)
+    testing.expect(t,take.cancelled,"the click on the folder ring cancels the fetch")
+    take.done=true
+    collab_take_update(&f.s,st)
+    testing.expect(t,take.thread==nil && take.error=="")
 }

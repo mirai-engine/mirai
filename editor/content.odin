@@ -2110,7 +2110,7 @@ content_folder_cell :: proc(s:^Session,card:Content_Card,id:ui.Id,cell:f32,names
         if ui.box(ctx,asset_row_box(ctx,id,CONTENT_INSET,marked,it.hot,keyboard)) {
             content_row_icon(ctx,icon,ui.tone(ctx,"text_muted"))
             ui.label(ctx,card.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0)
-            if library_folder {content_library_folder_button(s,id,card.library,card.folder)}
+            if library_folder {content_library_folder_button(s,id,card.library,card.folder,show_progress=true)}
         }
         return
     }
@@ -2162,7 +2162,7 @@ content_header :: proc(s:^Session,line:Content_Line,id:ui.Id,width:f32,marked:bo
         if line.cover>0 {cover=texture_quad(s,s.app.assets.registry.files[line.cover-1].id)}
         content_row_icon(ctx,icon,color,cover)
         ui.label(ctx,line.name,ui.metric(ctx,"font"),ui.tone(ctx,"text"),0,font=ui.FONT_MEDIUM)
-        if line.virtual==.Library && line.path!="" {content_library_folder_button(s,id,line.library,line.path)}
+        if line.virtual==.Library && line.path!="" {content_library_folder_button(s,id,line.library,line.path,show_progress=true)}
     }
     if it.hot {ui.tooltip(ctx,line.path if line.virtual==.None else line.name)}
     return it

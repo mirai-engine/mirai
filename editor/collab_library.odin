@@ -55,13 +55,15 @@ Collab_Take :: struct {
     node:^share.Node,
     additions:[]sources.Package_Add,
     id:base.Asset_Id,
+    folder_key:u64, // content_library_folder_group for a folder take (id == {})
+    total_bytes:u64,
     name:[64]u8,
     root:string,
     folder:string,
     assets:[]base.Asset_Id,
     error:string,
     received:u64, // of the node when it began
-    cancelled:bool, // on the editor's thread: nothing is added once it ends
+    cancelled:bool, // atomic: set by collab_take_cancel, stops share.package_take and skips add
     arena:mem.Dynamic_Arena,
     allocator:runtime.Allocator,
 }
@@ -130,6 +132,7 @@ collab_libraries_free :: proc(l:^Collab_Libraries) {
 @(private)
 collab_take_free :: proc(t:^Collab_Take) {
     if t.thread!=nil {
+        if t.node!=nil {share.package_take_cancel(t.node,&t.cancelled)} else {sync.atomic_store(&t.cancelled,true)}
         thread.join(t.thread)
         thread.destroy(t.thread)
     }
@@ -193,14 +196,14 @@ collab_take_problem :: proc(s:^Session,st:^Collab_State) -> string {
 }
 
 @(private)
-collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Package_Add,ids:[]base.Asset_Id,id:=base.Asset_Id{}) -> string {
+collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Package_Add,ids:[]base.Asset_Id,id:=base.Asset_Id{},folder_key:=u64(0),total_bytes:=u64(0)) -> string {
     st:=collab_state(s)
     if problem:=collab_take_problem(s,st);problem!="" {return problem}
     if st.take!=nil {collab_take_free(st.take)}
     t:=new(Collab_Take)
     mem.dynamic_arena_init(&t.arena,runtime.heap_allocator(),runtime.heap_allocator())
     t.allocator=base.dynamic_arena_allocator(&t.arena)
-    t.node,t.id,t.gpu=st.node,id,&s.import_gpu
+    t.node,t.id,t.folder_key,t.total_bytes,t.gpu=st.node,id,folder_key,total_bytes,&s.import_gpu
     t.additions=library_add_clone(requests,t.allocator)
     base.text_set(t.name[:],name)
     t.root=strings.clone(s.project_root,t.allocator)
@@ -215,7 +218,7 @@ collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Packa
         worker:=jobs.Worker_Ref{}
         if threaded {worker={system=&js,worker=jobs.OWNER}}
         for entry in t.additions {
-            if problem:=share.package_take(t.node,entry.manifest,t.root,import_library,worker,t.gpu);problem!="" {
+            if problem:=share.package_take(t.node,entry.manifest,t.root,import_library,worker,t.gpu,cancel=&t.cancelled);problem!="" {
                 t.error=strings.clone(problem,t.allocator)
                 break
             }
@@ -232,11 +235,11 @@ collab_take_start :: proc(s:^Session,name,folder:string,requests:[]sources.Packa
     return ""
 }
 
-// Cancels the take that runs: the project does not change when it ends.
+// Cancels the take that runs: its network fetches end at once and the project does not change.
 @(private)
 collab_take_cancel :: proc(st:^Collab_State) {
     if st==nil || st.take==nil || st.take.thread==nil {return}
-    st.take.cancelled=true
+    if st.node!=nil {share.package_take_cancel(st.node,&st.take.cancelled)} else {sync.atomic_store(&st.take.cancelled,true)}
 }
 
 // The end of a take, on the editor's thread: added as a package of this machine.
@@ -248,7 +251,7 @@ collab_take_update :: proc(s:^Session,st:^Collab_State) {
     thread.destroy(t.thread)
     t.thread=nil
     if st.libraries!=nil {st.libraries.at=-COLLAB_LIBRARY_SECONDS}
-    if t.cancelled {return}
+    if sync.atomic_load(&t.cancelled) {return}
     name:=base.text_get(t.name[:])
     if t.error!="" {
         notify(s,fmt.tprintf("%s was not added: %s",name,t.error))
@@ -424,7 +427,7 @@ api_packages_peers_answer :: proc(s:^Session,call:^api.Call) {
         done:=sync.atomic_load(&t.done)
         r.adding={name=strings.clone(base.text_get(t.name[:]),a),adding=!done,received=share.node_totals(st.node).received-t.received}
         if done {r.adding.error=strings.clone(t.error,a)}
-        if t.cancelled {r.adding.error="cancelled in the editor; the project did not change"}
+        if sync.atomic_load(&t.cancelled) {r.adding.error="cancelled in the editor; the project did not change"}
     }
 }
 
