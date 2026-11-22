@@ -224,3 +224,52 @@ the_rows_of_what_moved_are_those_a_walk_of_every_link_brings_back :: proc(t:^tes
     testing.expect_value(t,moved.problems.count,0)
     testing.expect(t,core.has(&moved.bodies,scene.ghost),"the proxy got the Motion of its body")
 }
+
+// A body and a character the simulation has no room for are not tried again while nothing is let go: the
+// ticks that move another body go only through it. An owned body ended frees room, and the body is made in
+// the next tick even with nothing written; a Character taken out frees room for the other.
+@(test)
+what_has_no_room_waits_until_something_is_let_go :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.settings={bodies=3,shapes=8,contacts=16,characters=1}
+    character :: proc(f:^Physics_Test,position:[3]f32) -> core.Entity {
+        e:=core.create(&f.entities)
+        core.add(&f.transforms,e,core.Transform{position,1,{1,1,1}})
+        core.add(&f.colliders,e,collider_character())
+        core.add(&f.characters,e,character_default())
+        return e
+    }
+    made :: proc(f:^Physics_Test,e:core.Entity,kind:Link_Kind) -> bool {
+        l:=link_find(&f.state,e)
+        return l!=nil && l.kind==kind
+    }
+    moved:=physics_test_box(&f,{0,0,0},{0.5,0.5,0.5})
+    walker:=character(&f,{4,1,0})
+    physics_test_step(&f,0)
+    ground:=core.create(&f.entities)
+    owned,error:=owned_body_create(&f.state,{7,ground,1},{0,-2,0},1)
+    if !testing.expect(t,owned!={} && error==.None) {return}
+    box:=physics_test_box(&f,{3,0,0},{0.5,0.5,0.5})
+    other:=character(&f,{-4,1,0})
+    physics_test_step(&f,0)
+    if !testing.expect(t,!made(&f,box,.Body) && !made(&f,other,.Character)) {return}
+    before:=sim.world_stats(&f.state.world)
+    for tick in 0..<10 {
+        core.edit(&f.transforms,moved).position.x=f32(tick+1)*0.1
+        physics_test_step(&f,0)
+    }
+    after:=sim.world_stats(&f.state.world)
+    testing.expect_value(t,after.body_capacity_exhausted,before.body_capacity_exhausted)
+    testing.expect_value(t,after.character_capacity_exhausted,before.character_capacity_exhausted)
+    testing.expect_value(t,len(f.state.sealed),1)
+    testing.expect(t,owned_body_destroy(&f.state,owned))
+    physics_test_step(&f,0)
+    testing.expect(t,made(&f,box,.Body),"the box takes the room of the owned body")
+    testing.expect(t,!made(&f,other,.Character))
+    core.remove(&f.characters,walker)
+    core.remove(&f.colliders,walker)
+    physics_test_step(&f,0)
+    testing.expect(t,made(&f,other,.Character),"the character takes the room of the one taken out")
+}

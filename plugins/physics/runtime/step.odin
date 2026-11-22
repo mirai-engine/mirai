@@ -161,7 +161,7 @@ physics_step :: proc(
     s.written=core.changes(s.transforms,&transforms_seen)
     // Nothing the bodies are made from was written: they are as they were.
     structure:=sync_structure(&s)
-    synced:=sync_seen(&s,structure)==state.synced
+    synced:=sync_seen(&s,structure)==state.synced && !unmade_room(state)
     ran:=!synced
     // Only Transform values were written: what hangs from the rows sealed since is all that moved.
     if !synced {synced=sealed_sync(&s,structure)}
@@ -201,6 +201,7 @@ physics_step :: proc(
             for row in 0..<core.count(colliders) {entity_sync(&s,core.entity_at(colliders,row))}
             for row in 0..<core.count(characters) {entity_sync(&s,core.entity_at(characters,row))}
             synced=!s.waiting
+            state.unmade=s.unmade?{w.body_count,w.character_count}:{}
             // Without them sealed_sync and poses_write have no room and every tick looks at all the bodies.
             if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters)+(volumes!=nil?core.count(volumes):0))!=nil || reserve(&state.touched,2*len(state.links.values))!=nil {
                 memory_problem(problems,core.NONE,"the bodies whose Transform changes, so every tick looks at all of them")
@@ -212,7 +213,7 @@ physics_step :: proc(
     defer if synced {
         structure=sync_structure(&s)
         state.synced=sync_seen(&s,structure)
-        if ran {state.sealed_key,state.unmade=sealed_key(&s,structure),s.unmade}
+        if ran {state.sealed_key=sealed_key(&s,structure)}
         state.rows_seen=seen
         _=core.changes(s.transforms,&state.transforms_seen)
     }
@@ -351,12 +352,12 @@ sealed_key :: proc(s:^Sync,structure:u64) -> u64 {
 // the order a whole sync reaches them. A whole sync leaves every other body as
 // it is, so both give the same simulation. False when the sync has to be
 // whole: something besides the Transform values changed, the hierarchy has a
-// cycle, a body waits to be made, or the rows were not seen.
+// cycle, an unmade body may have room now (unmade_room), or the rows were not seen.
 @(private)
 sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
     state:=s.state
     h:=s.hierarchy
-    if h.ptr==nil || len(h.cut)>0 || state.unmade || s.collision_changed || sealed_key(s,structure)!=state.sealed_key {return false}
+    if h.ptr==nil || len(h.cut)>0 || unmade_room(state) || s.collision_changed || sealed_key(s,structure)!=state.sealed_key {return false}
     seen:=state.transforms_seen
     c:=core.changes(s.transforms,&seen)
     if c.all {return false}
@@ -376,6 +377,13 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
     slice.sort_by(state.sealed[:],proc(a,b:Sealed_Body) -> bool {return a.order<b.order})
     for body in state.sealed {entity_sync(s,body.entity)}
     return !s.waiting
+}
+
+// Whether a body or a character was let go since a whole sync left one unmade: the next sync is whole and
+// tries it again. Until then a sync goes only through what changed.
+@(private)
+unmade_room :: proc "contextless" (state:^Physics_State) -> bool {
+    return state.world.body_count<state.unmade[0] || state.world.character_count<state.unmade[1]
 }
 
 // Whether something e hangs from has its Transform sealed since: its walk takes e.

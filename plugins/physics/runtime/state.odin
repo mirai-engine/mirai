@@ -55,7 +55,9 @@ Physics_State :: struct {
     rows_seen:[5]core.Seen, // of Rigid_Body, Collider, Character, Volume and Spline, at the end of the last sync that reached every body
     sealed_key:u64, // what a sync reads besides the Transform values, at the last one; 0 makes the next whole
     transforms_seen:core.Seen, // of Transform, at the end of the last tick that left the bodies as their rows
-    unmade:bool, // the last sync left a body or character unmade, which a whole sync tries again
+    // The bodies and characters in use after the last whole sync if it left one of them unmade, else zero: with
+    // fewer in use there may be room for it, and the next sync is whole.
+    unmade:[2]i32,
     sealed:[dynamic]Sealed_Body, // scratch of sealed_sync, as long as the rows of the bodies
     visited:[dynamic]u32, // scratch of a sync, by link: the pass that synced it
     proxies:[dynamic]core.Entity, // the entities of the Proxy links
@@ -894,7 +896,7 @@ state_make :: proc(state:^Physics_State,settings:^Physics_Settings,job_system:^j
     }
     state.ready=true
     state.synced,state.fluids_synced,state.pushes_set,state.own_gravity=0,0,false,false
-    state.sealed_key=0
+    state.sealed_key,state.unmade=0,{}
     state.touched_all=true
     return true
 }
