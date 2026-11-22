@@ -152,10 +152,11 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
     case "prune": return kai_prune(store_root)
     }
     root:=project.path_absolute(a.folder,context.temp_allocator)
-    // A project of an org comes into a folder that holds none of it yet.
+    // A project of an org comes into a folder that holds none of it yet, and
+    // is a workspace before its files are there.
     if verb=="init" && len(a.positionals)==1 {
         os.make_directory_all(root)
-    } else if !project_folder(root) {
+    } else if !project_folder(root) && !ka.project_exists(root) {
         fmt.eprintfln("mirai kai: %s has no %s: give the folder of a project with --project",root,project.PROJECT_FILE)
         return 2
     }
