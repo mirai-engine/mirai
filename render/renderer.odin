@@ -192,8 +192,8 @@ Exposure :: struct {
 	tint:            [3]f32, // multiplies the image before the display; zero: none
 }
 
-// From starlight to snow under the sun.
-AUTO_EXPOSURE_RANGE :: [2]f32{-6, 18}
+// From dim interiors to snow under the sun.
+AUTO_EXPOSURE_RANGE :: [2]f32{2, 16}
 // The calibration of a reflected-light meter, cd/m^2 at ISO 100 and EV 0 times 100.
 LIGHT_METER_K :: f32(12.5)
 MIDDLE_GRAY :: abi.MIDDLE_GRAY

@@ -221,8 +221,8 @@ Exposure :: struct {
     adaptation:f32 `mirai:"min=0,unit=s"`, // Auto: Time: to adapt 95 % of the way to less light, half that to more; Speed: for each EV of less light, a third of that for each EV of more, and exponentially within 1.5 EV
 }
 
-// Sunny 16 for Manual; for Auto, starlight to snow under the sun.
-EXPOSURE_DEFAULT :: Exposure{mode=.Auto,aperture=16,shutter=1.0/125,iso=100,min_ev100=-6,max_ev100=18,adaptation=1}
+// Sunny 16 for Manual; for Auto, dim interiors to snow under the sun.
+EXPOSURE_DEFAULT :: Exposure{mode=.Auto,aperture=16,shutter=1.0/125,iso=100,min_ev100=gpu.AUTO_EXPOSURE_RANGE[0],max_ev100=gpu.AUTO_EXPOSURE_RANGE[1],adaptation=1}
 
 // The EV100 at which a luminance, in nits, becomes one scene-linear unit
 // before the bias of the display transform: the exposure that shows it white.
