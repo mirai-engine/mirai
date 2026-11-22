@@ -112,18 +112,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
             float3 through = scene_distorted(g.position + out_direction * bias, out_direction, depth, g.roughness, uv);
             face += covered * through * surface_through(m, g.base_color, reflectance);
         }
-        // Back in, its reflection, traced with the layer (reflect.comp), which takes what the solid
-        // absorbs and scatters on the way; without it, what so much of the solid scatters.
+        // Back in, its reflection from the probe volume and what the solid absorbs and scatters.
         float3 back = reflect(-g.view, g.normal);
-        float4 traced = params.traced != 0u && reflection_weight(g.roughness + ROUGHNESS_ROUNDING) > 0.0
-            ? reflection.Load(int3(p, 0)) : float4(0.0);
-        float3 inside = traced.rgb;
-        if (traced.a == 0.0) {
-            Shading s = glass_shading(m, g);
-            float3 around = indirect_lobes(g.position, g.normal, g.view, s, INDIRECT_SPECULAR, g.occlusion).radiance;
-            inside = around * material_absorption(m, params.max_distance)
-                + solid_scatter(m, ids.y, g.position + back * bias, back, params.max_distance, medium_top);
-        }
+        Shading s = glass_shading(m, g);
+        float3 around = indirect_lobes(g.position, g.normal, g.view, s, INDIRECT_SPECULAR, g.occlusion).radiance;
+        float3 inside = around * material_absorption(m, params.max_distance)
+            + solid_scatter(m, ids.y, g.position + back * bias, back, params.max_distance, medium_top);
         face += covered * inside * reflectance;
         float3 seen = face * near_absorbed + solid_scatter(m, ids.y, frame.camera_position.xyz, view_direction(uv), near, medium_top);
         out_color[p] = float4(finite_or_zero(seen), 1.0);

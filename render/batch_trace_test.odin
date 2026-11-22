@@ -62,53 +62,47 @@ trace_at :: proc(image: Trace_Image, p: [2]f32) -> Vec3 {
 	return {f32(image.pixels[i]), f32(image.pixels[i + 1]), f32(image.pixels[i + 2])}
 }
 
-// Posts on a floor in the sun, before a mirror, as instances of the scene and as a
-// batch whose instances cast shadows and are seen by rays: by software rays,
-// which walk the tree of the batch, and by hardware ones where there are.
+// Posts on a floor in the sun, as instances of the scene and as a batch whose
+// instances cast shadows and are seen by rays: by software rays, which walk
+// the tree of the batch, and by hardware ones where there are.
 @(test)
-a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(t: ^testing.T) {
+a_batch_casts_the_shadows_of_its_instances :: proc(t: ^testing.T) {
 	settings := DEFAULT_SETTINGS
-	settings.reflections = .Detailed
 	f: Fixture
 	if !fixture_init(t, &f, 160, 96, settings) {return}
 	defer fixture_destroy(&f)
 	r, device := f.renderer, f.device
-	mirror := DEFAULT_MATERIAL
-	mirror.base_color, mirror.metallic, mirror.roughness = {0.9, 0.9, 0.9}, 1, 0.05
-	materials_set(r, {mirror})
 	box := trace_box(r)
-	// A white floor takes the shadows, and a strip of mirror in front of the posts their reflections.
 	floor := Instance_Desc{object_id = 1, mesh = box, transform = trace_placed({0, -0.1, 0}, {14, 0.2, 14}), tint = {0.8, 0.8, 0.8}}
-	strip := Instance_Desc{object_id = 2, mesh = box, material = 1, transform = trace_placed({0, -0.09, 2}, {14, 0.2, 3}), tint = 1}
 	// The posts deeper than wide, each in the color the batch gives it of its own (a byte a channel).
 	color := Vec3{204, 77, 51} / 255
 	places := [3]Vec3{{-2, 1, 0}, {0, 1, 0}, {2, 1, 0}}
-	posts: [5]Instance_Desc
-	posts[0], posts[1] = floor, strip
+	posts: [4]Instance_Desc
+	posts[0] = floor
 	batched: [3]Batch_Instance
 	colors: [3]u32
 	for p, i in places {
-		posts[i + 2] = {object_id = u64(i + 3), mesh = box, transform = trace_placed(p, {0.4, 2, 0.6}), tint = color}
+		posts[i + 1] = {object_id = u64(i + 3), mesh = box, transform = trace_placed(p, {0.4, 2, 0.6}), tint = color}
 		batched[i] = batch_instance(p, 1, {0.4, 2, 0.6})
 		colors[i] = batch_color(color, 0)
 	}
 	sun := Sun_Desc{direction = {0.70710678, 0.70710678, 0}, color = {1, 1, 1}, illuminance = 1.5 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	sky := Environment{sky = {0.3, 0.4, 0.6}}
 	camera := Camera{position = {0, 7, 4}, forward = {0, -7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	// The shadow of the middle post falls away from the sun; the mirror 0.75 m in front of it reflects it.
-	shadow, reflection := trace_pixel(r, camera, {-1, 0, 0}), trace_pixel(r, camera, {0, 0.01, 0.75})
+	// The shadow of the middle post falls away from the sun.
+	shadow := trace_pixel(r, camera, {-1, 0, 0})
 	for provider in ([]Trace_Mode{.Software, .Hardware}) {
 		if !fixture_traces(r, provider) {continue}
 		applied := r.settings
 		applied.trace_mode = provider
 		testing.expect(t, renderer_apply_settings(r, applied))
-		scene_given(r, posts[:2], nil, sun, sky)
+		scene_given(r, posts[:1], nil, sun, sky)
 		empty := trace_frame(t, r, camera)
 		defer delete(empty.pixels)
 		scene_given(r, posts[:], nil, sun, sky)
 		instanced := trace_frame(t, r, camera)
 		defer delete(instanced.pixels)
-		scene_given(r, posts[:2], nil, sun, sky)
+		scene_given(r, posts[:1], nil, sun, sky)
 		handle, error := batch_set(r, 0, r.world_key, {mesh = box, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}}, batched[:], colors[:])
 		testing.expect_value(t, error, "")
 		batch := trace_frame(t, r, camera)
@@ -116,9 +110,7 @@ a_batch_casts_the_shadows_and_shows_in_the_reflections_of_its_instances :: proc(
 		testing.expect(t, batch_remove(r, handle))
 		if len(empty.pixels) == 0 || len(instanced.pixels) == 0 || len(batch.pixels) != len(instanced.pixels) {continue}
 		testing.expectf(t, trace_at(instanced, shadow).x + 30 < trace_at(empty, shadow).x, "%v: the posts cast a shadow: %v under them, %v without them", provider, trace_at(instanced, shadow), trace_at(empty, shadow))
-		reflected, sky_reflected := trace_at(instanced, reflection), trace_at(empty, reflection)
-		testing.expectf(t, abs(reflected.x - sky_reflected.x) + abs(reflected.z - sky_reflected.z) > 30, "%v: the floor reflects the posts: %v, %v without them", provider, reflected, sky_reflected)
-		// The batch gives what its instances give: shadows, reflections and what is drawn.
+		// The batch gives what its instances give: shadows and what is drawn.
 		total, worst := f64(0), f32(0)
 		for i in 0 ..< len(batch.pixels) / 4 {
 			for c in 0 ..< 3 {

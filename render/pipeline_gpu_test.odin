@@ -207,10 +207,9 @@ variants_that_spare_work_come_later_and_a_refused_one_once :: proc(t: ^testing.T
 	if !fixture_init(t, &f, 64, 48, DEFAULT_SETTINGS) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
-	tracer := Pipeline_Rays.Hardware if r.hardware_rt else .Software
-	testing.expect(t, pipeline_slot(r, .Reflect_Resolve, .Any, {REFLECT_RESOLVE_COMP_GLASS})^ != 0 && pipeline_slot(r, .Cull_Clusters, .Any, {CULL_CLUSTERS_COMP_CANDIDATES})^ != 0, "the renderer starts with the variants a pass cannot go without")
+	testing.expect(t, pipeline_slot(r, .Translucent_Draws, .Any, {TRANSLUCENT_DRAWS_COMP_CELLS})^ != 0 && pipeline_slot(r, .Cull_Clusters, .Any, {CULL_CLUSTERS_COMP_CANDIDATES})^ != 0, "the renderer starts with the variants a pass cannot go without")
 	unlayered := pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})
-	testing.expect(t, unlayered^ == 0 && pipeline_slot(r, .Reflect, tracer, {REFLECT_COMP_UNLAYERED})^ == 0, "and without those that spare work")
+	testing.expect(t, unlayered^ == 0, "and without those that spare work")
 
 	// As a change of the shaders that the driver fails to compile.
 	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Composite_Comp].name, {COMPOSITE_COMP_UNLAYERED})

@@ -65,7 +65,7 @@ int2 light_list_of_pixel(int2 p) { return (p / int(LIGHT_LIST_TILE)) * LIGHT_LIS
 // may open over it. A second pass takes the others, where there are any.
 float3 light_list_lighting(Shading s, float known, int2 block, uint share = LIGHT_SHARE_ALL) {
     if (frame.shadowless_lights == 0u) return float3(0.0);
-    uint count = light_lists.Load(int3(block, 0));
+    uint count = block.x < 0 ? LIGHT_LIST_WALK : light_lists.Load(int3(block, 0));
     if (count == LIGHT_LIST_WALK) return shadowless_lighting(s, known, share);
     count = min(count, LIGHT_LIST_WORDS - 1u);
     // What each group that may open, of those over the entry at hand, leaves to what lies under it.
@@ -74,6 +74,7 @@ float3 light_list_lighting(Shading s, float known, int2 block, uint share = LIGH
     float3 result = float3(0.0);
     uint waiting = 0u;
     const uint SETTLED = LIGHT_ENTRY_IN | LIGHT_ENTRY_STANDS;
+    [loop]
     for (uint i = 0u; i < count; i++) {
         uint entry = light_lists.Load(int3(light_list_texel(block, 1u + i), 0));
         uint rough = entry >> LIGHT_ENTRY_ROUGH;

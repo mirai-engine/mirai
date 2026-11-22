@@ -290,49 +290,6 @@ float3 sky_reflected(float3 dir, float spread) {
     return frame.background_map.y > 0.5 ? lerp(background_look(dir, spread), light, saturate(spread)) : light;
 }
 
-// How much of a pixel's specular reflection is traced instead of read from
-// the probe volume: all of it on smooth surfaces, fading to none at the limit.
-// The G-buffer keeps roughness in half floats, and a material set exactly at a
-// limit (the 0.15 of a polished metal) may come back a hair below it: the
-// reflections decide by its roughness plus this, so that it stays on its side.
-#define ROUGHNESS_ROUNDING 0.001
-
-float reflection_weight(float roughness) {
-    float limit = frame.texturing.y;
-    return limit > 0.0 ? 1.0 - smoothstep(limit * 0.5, limit, roughness) : 0.0;
-}
-
-// The pattern of the traced reflections: each cell of a tile of
-// REFLECT_PATTERN x REFLECT_PATTERN traces its own stratum of the lobe,
-// neighbours far apart in it, so that a filter over a tile takes every stratum
-// once (reflect_resolve.comp), and the same one every frame.
-#define REFLECT_PATTERN 4
-static const uint REFLECT_PATTERN_RANKS[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
-float2 reflect_pattern_stratum(int2 cell) {
-    uint rank = REFLECT_PATTERN_RANKS[(cell.y & 3) * 4 + (cell.x & 3)];
-    return (float2(float(rank & 3u), float(rank >> 2u)) + 0.5) / 4.0;
-}
-
-// The pixel of a block of `block` x `block` (a power of two) that traces the
-// block's ray this frame. Every pixel takes its turn, and turns that follow
-// each other fall in different quarters of the block.
-int2 block_pixel(uint frame_index, uint block) {
-    int2 p = int2(0);
-    uint i = frame_index;
-    for (uint size = block >> 1u; size > 0u; size >>= 1u) {
-        uint q = i & 3u;
-        p += int2(int(q & 1u), int((q >> 1u) ^ (q & 1u))) * int(size);
-        i >>= 2u;
-    }
-    return p;
-}
-
-// The pixel of a block of 2x2 that traces the reflection of a cell: always the
-// same one, scattered over the cells.
-int2 reflect_block_pixel(int2 cell) {
-    return block_pixel(hash_u32(uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u), 2u);
-}
-
 // ---------------------------------------------------------------- instances of batches
 // Below frame.instance_count an instance index names an instance of the
 // scene; from it on, an instance of a batch (render/batch.odin): its slot
@@ -1338,34 +1295,6 @@ float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direc
     float3 face = triangle_face(instance_index, primitive, material);
     blended = material_row(material, material_values_of(instance_index)).alpha_mode == ALPHA_BLEND;
     return hit_normal_turned(face, surface_from_triangle(instance_index, primitive, bary, 1e-4).normal, direction);
-}
-
-// The filter of a blended surface from the values of its material at a
-// point, for light that crosses it: the color it filters with (its tint) and
-// what each of its faces lets through of what it does not reflect (through,
-// white without transmission). Both hold where it covers (alpha): zero passes
-// white, one the linear base color (black blocks) less what it reflects.
-float3 blend_filter_of(Material m, Material_Sample values, out float3 through) {
-    float covered = saturate(values.alpha);
-    through = 1.0 - values.f0 * (m.transmission * covered);
-    return lerp(float3(1.0), saturate(values.base_color), covered);
-}
-// The same at the point of a triangle with barycentric weights w, as a ray
-// that stands for `footprint` meters of it sees it, for a material without a
-// program. UVs, vertex colors and object tint follow the same material
-// evaluation as the visible surface.
-float3 blend_filter(Instance inst, Material m, Mesh_Triangle t, float3 w, float footprint, out float3 through) {
-    float4 vertex_color = t.a.color * w.x + t.b.color * w.y + t.c.color * w.z;
-    float3 color = instance_color(inst, m, vertex_color.rgb);
-    float3 edge1 = transform_vector(inst.world, t.b.position - t.a.position);
-    float3 edge2 = transform_vector(inst.world, t.c.position - t.a.position);
-    float2 lod = float2(hit_lod(edge1, edge2, t.b.uv - t.a.uv, t.c.uv - t.a.uv, footprint), hit_lod(edge1, edge2, t.b.uv1 - t.a.uv1, t.c.uv1 - t.a.uv1, footprint));
-    float2 uv = t.a.uv * w.x + t.b.uv * w.y + t.c.uv * w.z;
-    float2 uv1 = t.a.uv1 * w.x + t.b.uv1 * w.y + t.c.uv1 * w.z;
-    float3 position = transform_point(inst.world, t.a.position * w.x + t.b.position * w.y + t.c.position * w.z);
-    float3 normal = transform_normal(inst.world_inv, t.a.normal * w.x + t.b.normal * w.y + t.c.normal * w.z);
-    Material_Sample values = material_sample(m, material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), footprint), color, inst.emission.rgb, normal);
-    return blend_filter_of(m, values, through);
 }
 
 // footprint: width in world units of what the ray gathers at the hit. Wide

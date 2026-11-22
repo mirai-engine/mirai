@@ -135,7 +135,7 @@ view_mode_menu_groups_its_modes_under_headers_and_families_in_submenus :: proc(t
         return found
     }
     for name in ([]string{"lit","lighting","shadows"}) {testing.expectf(t,shown(&ctx,popup,name),"%s is a row of its group",name)}
-    for family in ([]string{"Material","Direct","Reflections","Indirect"}) {testing.expectf(t,shown(&ctx,popup,family,1),"%s is a submenu",family)}
+    for family in ([]string{"Material","Direct","Indirect"}) {testing.expectf(t,shown(&ctx,popup,family,1),"%s is a submenu",family)}
     testing.expect(t,shown(&ctx,popup,"Advanced",2),"Advanced is folded into a submenu")
     for name in ([]string{"base_color","depth","nested","indirect_history"}) {testing.expectf(t,!shown(&ctx,popup,name),"%s is in a submenu",name)}
     // Pointing at a folded group opens it, with its rows and families.

@@ -19,7 +19,6 @@ STAGE_ZONES :: [Render_Stage]string {
 	.Nested       = "nested views",
 	.Surface      = "surface",
 	.Direct       = "direct",
-	.Reflections  = "reflections",
 	.World        = "probe volume",
 	.Indirect     = "indirect",
 	.Composite    = "composite",

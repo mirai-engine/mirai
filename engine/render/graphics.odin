@@ -30,7 +30,6 @@ Graphics_Settings :: struct {
     antialiasing:[gpu.ANTIALIASING_NAME_BYTES]u8 `mirai:"text,graphics=Antialiasing"`, // the technique that resolves the image and upscales it: "off", "taa" or one a plugin offers (antialiasing_offer); one no plugin resolves is the TAA
     indirect_light:Indirect_Light `mirai:"section=Lighting,graphics=Indirect light"`,
     light_probes:Light_Probes `mirai:"graphics=Light probes"`,
-    reflections:gpu.Reflections `mirai:"graphics=Reflections"`, // off unless chosen: no preset changes it
     sun_shadows:bool,                          // the sun casts shadows; off, it lights everything it faces
     light_samples:u32 `mirai:"min=1,max=31,graphics=Light samples,choices=7|15|31"`, // samples of the direct light of a pixel, spread over its lights by what each gives it (GRAPHICS_LIGHT_SAMPLES_MAX)
     light_half_resolution:bool `mirai:"graphics=Light resolution,choices=Full|Half"`, // the samples of the direct light are taken at one pixel of each 2x2, and the others take theirs by their surfaces
@@ -116,7 +115,6 @@ graphics_settings_for_device :: proc(device:rhi.Device_Info) -> Graphics_Setting
 }
 
 GRAPHICS_PROBES :: [Light_Probes][2]u32{.Low={128,64},.Medium={256,96},.High={512,256}} // probes traced per frame, rays of each
-GRAPHICS_REFLECTION_LIGHTS :: u32(8)
 // The most samples of the direct light of a pixel: past it the image of a thousand lights does not change.
 GRAPHICS_LIGHT_SAMPLES_MAX :: 31
 GRAPHICS_TEXTURE_SIZES :: [Textures]u32{.Low=1024,.Medium=2048,.High=4096,.Ultra=8192}
@@ -139,11 +137,9 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     s.probe_budget,s.probe_rays=probes[quality.light_probes][0],probes[quality.light_probes][1]
     // The finest cascade reaches 15 m from the eye: what changes where it hands over to the next is far.
     if quality.light_probes==.High {s.probe_grid=32}
-    s.reflections=quality.reflections
     s.sun_shadows=quality.sun_shadows
     s.direct_samples=clamp(quality.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX)
     s.direct_half_resolution=quality.light_half_resolution
-    s.reflection_light_budget=min(s.light_budget,GRAPHICS_REFLECTION_LIGHTS)
     s.glass_layers=clamp(quality.glass_layers,1,gpu.GLASS_LAYERS_MAX)
     s.texture_max_size=sizes[quality.textures]
     s.lod_error_pixels=pixels[quality.detail]

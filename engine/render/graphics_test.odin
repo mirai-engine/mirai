@@ -89,16 +89,6 @@ a_preset_named_moves_the_fields_and_what_they_are_at_is_computed :: proc(t:^test
     // Naming the preset again reaches it.
     graphics_preset_apply(&g,.Low)
     testing.expect(t,g.light_samples==presets[.Low].light_samples)
-    // Traced reflections are off unless chosen, and no preset changes them.
-    // expect_value, not ==: constant_field_compare of docs/ODIN_WORKAROUNDS.md.
-    testing.expect_value(t,GRAPHICS_SETTINGS_DEFAULT.reflections,gpu.Reflections.Off)
-    testing.expect_value(t,gpu.DEFAULT_SETTINGS.reflections,gpu.Reflections.Off)
-    g.reflections=.Detailed
-    for preset in Graphics_Quality {
-        at:=g
-        graphics_preset_apply(&at,preset)
-        testing.expectf(t,at.reflections==.Detailed,"%v changed the reflections",preset)
-    }
     // What is not of the quality counts for none.
     g.frame_limit,g.vsync,g.show_fps,g.antialiasing=0,false,false,{}
     testing.expect_value(t,graphics_quality_of(g),Graphics_Quality.Low)

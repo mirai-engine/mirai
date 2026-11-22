@@ -105,8 +105,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID,
             }
             if (d.roughness >= 0.0) {
                 normal_texel.z = lerp(normal_texel.z, d.roughness, color.a);
-                if ((bits & GBUFFER_TRACE_COAT) == 0u)
-                    motion.z = lerp(motion.z, d.roughness, color.a);
             }
         }
     }

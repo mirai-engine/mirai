@@ -1,9 +1,9 @@
 #include "native.slang"
 //! variant hw MIRAI_HW_RT=1
-// The light of each pixel of a layer of glass itself, with its traced
-// reflection, before glass.comp adds over it what the layer lets through. Its
-// lights take their shadows from the maps of the view where these hold the
-// point (MIRAI_LIGHT_MAPS of lighting.slang), and trace them where they do not.
+// The light of each pixel of a layer of glass itself, before glass.comp adds
+// over it what the layer lets through. Its lights take their shadows from the
+// maps of the view where these hold the point (MIRAI_LIGHT_MAPS of
+// lighting.slang), and trace them where they do not.
 #define GLASS_LIGHT
 #define MIRAI_LIGHT_MAPS
 #define SUN_SHADOW_SLOT SLOT_PASS5
@@ -27,8 +27,5 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint2 ids = layer_ids.Load(int3(p, 0));
     Material m = material_row(ids.x, material_values_of(ids.y));
     Glass g = glass_of(p, uv, depth, layer_albedo.Load(int3(p, 0)), normal, layer_emission.Load(int3(p, 0)));
-    float traced = params.traced != 0u ? reflection_weight(g.roughness + ROUGHNESS_ROUNDING) : 0.0;
-    float4 reflected = traced > 0.0 ? reflection.Load(int3(p, 0)) : float4(0.0);
-    if (reflected.a == 0.0) traced = 0.0;
-    out_color[p] = float4(finite_or_zero(glass_light(g, glass_shading(m, g), reflected.rgb, traced, 0.0, params.light_budget)), 1.0);
+    out_color[p] = float4(finite_or_zero(glass_light(g, glass_shading(m, g), 0.0, params.light_budget)), 1.0);
 }

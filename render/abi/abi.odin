@@ -94,7 +94,6 @@ FRAME_FLAG_GI_GIVEN     :: 2   // a custom pass of the pipeline wrote Gi: the co
 FRAME_FLAG_HW_RT        :: 4
 FRAME_FLAG_STUDIO       :: 8   // a preview lit by the analytic studio
 FRAME_FLAG_GRID         :: 16
-FRAME_FLAG_GLASS        :: 32  // some instance has blended triangles
 FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (surface_specular)
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)
@@ -198,7 +197,6 @@ LIGHT_LIST_WORDS           :: 128
 // than a list holds is split into cells, at most TRANSLUCENT_CELL_SPLIT along
 // its longest side, with lists of the TRANSLUCENT_CELLS a view keeps for them.
 TRANSLUCENT_LIST_COLUMNS   :: 128
-TRANSLUCENT_CUT_WORDS      :: LIGHT_CUT_MAX + 1
 TRANSLUCENT_CELL_SPLIT     :: 4
 TRANSLUCENT_CELLS          :: 4096
 
@@ -450,7 +448,6 @@ SHADOW_MASKED_COST         :: 4
 SHADOW_ARGS_DISPATCH       :: 0
 SHADOW_ARGS_DRAW           :: 9
 SHADOW_ARGS_HIZ            :: 17
-REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The levels of the depth pyramid a dispatch of hiz.comp makes.
 DEPTH_PYRAMID_BATCH :: 4
@@ -501,7 +498,7 @@ WIND_VOLUMES :: 8
 // What a view shows instead of its lit image (DEBUG_* in the shaders).
 Debug_View :: enum u32 {
 	None, Albedo, Normal, Direct, Indirect, Probes, Motion, Depth, Roughness, Metallic, Emission, Unlit, Lighting,
-	Shadows, Reflections, Reflections_Raw, Lights,
+	Shadows, Lights,
 }
 
 // The header of the material points, in words. Points and heads go round the
@@ -522,6 +519,7 @@ POINTS_HEADS_FROM  :: 11 // and the heads of the round it ended, which the resum
 POINTS_HEADS_TO    :: 12
 POINTS_ARGS        :: 13 // three words: a thread per point of the window
 POINTS_HEAD_ARGS   :: 16 // three words: a thread per head of the round, in groups of POINTS_HEAD_GROUP
+POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BINS_MAX of bins.slang), and draws of the resolve of programs
 POINTS_HEADER      :: 20
 POINT_WORDS        :: 9
 RECORD_WORDS       :: 18

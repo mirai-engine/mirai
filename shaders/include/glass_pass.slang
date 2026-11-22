@@ -9,19 +9,18 @@
 #include <extension_hooks.slang>
 #include "depth.slang"
 
-// light_budget: lights of a point of the layer (glass_light.comp); traced: its
-// reflection was traced; max_distance: the farthest the view goes; snapshot:
-// the dispatch copies the scene (glass.comp); medium: the instance plus one of
-// the solid the camera may be in, 0 none; near_top: m over and under its top
-// within which each pixel decides whether it starts in it (glass_inside.comp).
-struct Params_Block { uint light_budget; uint traced; float max_distance; uint snapshot; uint medium; float near_top; uint pad0; uint pad1; };
+// light_budget: lights of a point of the layer (glass_light.comp);
+// max_distance: the farthest the view goes; snapshot: the dispatch copies the
+// scene (glass.comp); medium: the instance plus one of the solid the camera
+// may be in, 0 none; near_top: m over and under its top within which each
+// pixel decides whether it starts in it (glass_inside.comp).
+struct Params_Block { uint light_budget; uint pad; float max_distance; uint snapshot; uint medium; float near_top; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> layer_albedo : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);   // rgb base color, a metallic
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> layer_normal : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);   // encoded as the normal target of the G-buffer
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> layer_emission : register(MIRAI_REGISTER(t, SLOT_PASS2), space0); // rgb emission, a alpha
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<uint2> layer_ids : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);     // material row, instance
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> layer_depth : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
-[[vk::binding(SLOT_PASS6, 0)]] Texture2D<float4> reflection : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);     // filtered radiance of the layer's reflection rays
 [[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_color : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PASS9, 0)]] Texture2D<float4> layer_specular : register(MIRAI_REGISTER(t, SLOT_PASS9), space0); // rgb F0, a F90
 

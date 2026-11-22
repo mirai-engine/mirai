@@ -20,7 +20,6 @@ Render_Stage :: enum u8 {
 	Nested,       // the Mask passes of extensions and the G-buffers of the nested views they add
 	Surface,      // the Surface passes of extensions
 	Direct,       // the sun and the local lights
-	Reflections,  // traced reflections of the smoothest surfaces
 	World,        // the probe volume, with the first view of the window
 	Indirect,     // the light of the probe volume at each pixel, with its contact occlusion
 	Composite,    // direct and indirect light, emission
@@ -45,7 +44,6 @@ Render_Resource :: enum u8 {
 	Reactive,     // the share of each pixel the Blend stage drew over; zero without a Blend pass
 	Highlight,    // the selection mask
 	Direct,       // reflected direct light
-	Reflections,  // the filtered traced reflections, for the share of each lobe they stand for
 	Gi,           // the light of the probe volume at each pixel: around the normal by its contact occlusion and around the specular lobe, packed (light_pack); written by a custom pass in place of the Indirect stage, the diffuse indirect light itself (rgb, RGBA32_Float), which the composite takes in place of the probe volume's and which keeps what the pass left in the frame before
 	Probes,       // the irradiance of the probe volume, shared by every view
 	Display,      // the image before temporal resolve
@@ -203,11 +201,6 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 		reads(pass, .Normal, .Linear_Depth, .Albedo, .Motion)
 		use(pass, .Reflectance, .Read, optional = true)
 		writes(pass, .Direct)
-	case .Reflections:
-		reads(pass, .Normal, .Linear_Depth, .Albedo, .Motion)
-		use(pass, .Reflectance, .Read, optional = true)
-		use(pass, .Probes, .Read, optional = true)
-		writes(pass, .Reflections)
 	case .World:
 		writes(pass, .Probes)
 	case .Indirect:
@@ -216,7 +209,7 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 		writes(pass, .Gi)
 	case .Composite:
 		reads(pass, .Albedo, .Normal, .Emission, .Linear_Depth, .Motion, .Direct)
-		for resource in ([]Render_Resource{.Reflectance, .Reflections, .Gi, .Probes}) {use(pass, resource, .Read, optional = true)}
+		for resource in ([]Render_Resource{.Reflectance, .Gi, .Probes}) {use(pass, resource, .Read, optional = true)}
 		writes(pass, .Display)
 	case .Lit:
 		reads(pass, .Linear_Depth, .Display)
@@ -243,7 +236,7 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 @(private)
 custom_writable :: proc "contextless" (id: Render_Resource) -> bool {
 	#partial switch id {
-	case .Direct, .Reflections, .Gi, .Display, .Taa, .Generated: return true
+	case .Direct, .Gi, .Display, .Taa, .Generated: return true
 	}
 	return id >= .Custom0
 }
@@ -330,7 +323,7 @@ plan_compile :: proc(plan: ^Render_Plan, desc: Render_Pipeline_Desc, buffer: []u
 			if use.resource == .Depth && use.access == .Write {return fail(buffer, "render pipeline: custom pass %s writes Depth, which only stages write; read it, or write Linear_Depth in a resource of its own", pass.name)}
 			if use.resource == .Exposure && use.access == .Write {return fail(buffer, "render pipeline: custom pass %s writes Exposure, which the Output stage measures; read it", pass.name)}
 			if use.access == .Write && !custom_writable(use.resource) {
-				return fail(buffer, "render pipeline: custom pass %s writes %v, which a custom pass can only read; it may write Direct, Reflections, Gi, Display, Taa, Generated or a resource of its own", pass.name, use.resource)
+				return fail(buffer, "render pipeline: custom pass %s writes %v, which a custom pass can only read; it may write Direct, Gi, Display, Taa, Generated or a resource of its own", pass.name, use.resource)
 			}
 			after := output_at >= 0
 			if use.access == .Write && after && use.resource < .Custom0 && use.resource != .Generated {
@@ -501,7 +494,7 @@ renderer_pipeline :: proc(r: ^Renderer, desc: Render_Pipeline_Desc) -> (Render_P
 // The passes of a standard pipeline.
 standard_pipeline_passes :: proc(kind: Standard_Pipeline) -> []Render_Pass_Desc {
 	@(static, rodata) full := [?]Render_Pass_Desc{
-		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .Reflections}, {stage = .World},
+		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .World},
 		{stage = .Indirect}, {stage = .Composite}, {stage = .Lit}, {stage = .Transparency}, {stage = .Resolve}, {stage = .Output},
 	}
 	@(static, rodata) light := [?]Render_Pass_Desc{
@@ -672,7 +665,6 @@ pass_resource_of :: proc(p: ^Pass, resource: Render_Resource, previous: bool) ->
 	case .Reactive:     return t.reactive, 0
 	case .Highlight:    return texture_or_dummy(p.r, t.highlight), 0
 	case .Direct:       return t.direct, 0
-	case .Reflections:  return texture_or_dummy(p.r, p.reflections), 0
 	case .Gi:           return p.gi, 0
 	case .Probes:       return texture_or_dummy(p.r, p.r.ddgi.irradiance if p.r.ddgi.valid else 0), 0
 	case .Display:      return t.display, 0
