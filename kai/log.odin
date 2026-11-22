@@ -37,7 +37,7 @@ Entry_Type :: enum u8 {
     Keyring_Genesis,Epoch_Add,Envelope_Add,
 }
 
-Sig_Kind :: enum u8 {Ed25519,WebAuthn} // WebAuthn: the assertion of a browser review, verified from M5 on
+Sig_Kind :: enum u8 {Ed25519,WebAuthn} // WebAuthn: the assertion of a browser's passkey (webauthn.odin)
 
 Entry_Head :: struct #packed {
     magic:u32,
@@ -45,8 +45,8 @@ Entry_Head :: struct #packed {
     kind:Entry_Type,
     parents:u8,            // <= ENTRY_PARENTS_MAX; a genesis has none
     log_id:Log_Id,         // zero in a genesis
-    author:Key,            // a device, the recovery key or a web key
-    author_ctx:store.Hash, // the head of the author's User_Log when it signed
+    author:Key,            // a device, the recovery key or a web key (web_key_id)
+    author_ctx:store.Hash, // the head of the author's User_Log when it signed; a web key's entry counts only if its key was added in its causal past
     time:i64,              // ns
     body_len:u32,
     sig_kind:Sig_Kind,
@@ -151,27 +151,35 @@ Draft :: struct {
     body:[]u8,
 }
 
-// The bytes of d signed by identity, and their address.
-entry_sign :: proc(d:^Draft,identity:^Identity,allocator:=context.allocator) -> (bytes:[]u8,address:store.Hash,error:Error) {
-    if len(d.parents)>ENTRY_PARENTS_MAX || len(d.body)>ENTRY_BODY_MAX {return nil,{},.Too_Large}
-    if genesis(d.type)!=(len(d.parents)==0) || genesis(d.type)!=(d.log_id=={}) || !body_valid(d.type,d.body) {return nil,{},.Invalid_Argument}
+// The bytes of d by author, what its signature covers.
+@(private)
+entry_unsigned :: proc(d:^Draft,author:Key,sig_kind:Sig_Kind,allocator:runtime.Allocator) -> (w:Writer,error:Error) {
+    if len(d.parents)>ENTRY_PARENTS_MAX || len(d.body)>ENTRY_BODY_MAX {return {},.Too_Large}
+    if genesis(d.type)!=(len(d.parents)==0) || genesis(d.type)!=(d.log_id=={}) || !body_valid(d.type,d.body) {return {},.Invalid_Argument}
     parents,parents_error:=slice.clone(d.parents,context.temp_allocator)
-    if parents_error!=nil {return nil,{},.Out_Of_Memory}
+    if parents_error!=nil {return {},.Out_Of_Memory}
     slice.sort_by(parents,hash_less)
     for p,i in parents {
-        if p=={} || (i>0 && parents[i-1]==p) {return nil,{},.Invalid_Argument}
+        if p=={} || (i>0 && parents[i-1]==p) {return {},.Invalid_Argument}
     }
-    w:=writer_make(allocator)
+    w=writer_make(allocator)
     write_value(&w,Entry_Head{
-        magic=KAI_MAGIC,version=VERSION,kind=d.type,parents=u8(len(parents)),log_id=d.log_id,author=identity.key,
-        author_ctx=d.author_ctx,time=d.time,body_len=u32(len(d.body)),sig_kind=.Ed25519,
+        magic=KAI_MAGIC,version=VERSION,kind=d.type,parents=u8(len(parents)),log_id=d.log_id,author=author,
+        author_ctx=d.author_ctx,time=d.time,body_len=u32(len(d.body)),sig_kind=sig_kind,
     })
     for &p in parents {write_bytes(&w,p[:])}
     write_bytes(&w,d.body)
     if w.failed {
         delete(w.data)
-        return nil,{},.Out_Of_Memory
+        return {},.Out_Of_Memory
     }
+    return w,.None
+}
+
+// The bytes of d signed by identity, and their address.
+entry_sign :: proc(d:^Draft,identity:^Identity,allocator:=context.allocator) -> (bytes:[]u8,address:store.Hash,error:Error) {
+    w,unsigned:=entry_unsigned(d,identity.key,.Ed25519,allocator)
+    if unsigned!=.None {return nil,{},unsigned}
     signature:=sign(identity,w.data[:])
     write_bytes(&w,signature[:])
     if w.failed {
@@ -205,11 +213,14 @@ entry_decode :: proc(bytes:[]u8) -> (e:Entry,error:Error) {
     return e,.None
 }
 
-// Whether the entry of bytes is signed by its author. A WebAuthn assertion is
-// not verified before M5, so it never counts.
+// Whether the entry of bytes is signed by its author: by its Ed25519 key, or
+// by the passkey its web key id names. Whose web key it is, the fold says.
 entry_verify :: proc(bytes:[]u8,e:^Entry) -> bool {
-    if e.sig_kind!=.Ed25519 {return false}
-    return signature_valid(e.author,bytes[:len(bytes)-size_of(Signature)],e.signature)
+    switch e.sig_kind {
+    case .Ed25519: return signature_valid(e.author,bytes[:len(bytes)-size_of(Signature)],e.signature)
+    case .WebAuthn: return entry_assertion_valid(bytes[:len(bytes)-size_of(u16)-len(e.assertion)],e)
+    }
+    return false
 }
 
 // The fixed part of a body and what follows it.
@@ -751,17 +762,26 @@ Device :: struct {
     revoke:u32,  // its Device_Revoke
 }
 
+// A passkey of the user, by its web key id.
+User_Web_Key :: struct {
+    key:Key,
+    added:u32,  // its Web_Key_Add
+    revoked:bool,
+    revoke:u32, // its Device_Revoke
+}
+
 User_Fold :: struct {
     log:^Log,
     valid:[]bool,
     recovery:Key,
     devices:[dynamic]Device,
-    web_keys:int,
+    web_keys:[dynamic]User_Web_Key,
 }
 
 user_fold :: proc(f:^User_Fold,l:^Log,allocator:=context.allocator) -> Error {
     f^={log=l}
     f.devices=make([dynamic]Device,allocator)
+    f.web_keys=make([dynamic]User_Web_Key,allocator)
     if l.kind!=.User || len(l.items)==0 {return .Invalid_Argument}
     valid,e:=make([]bool,len(l.items),allocator)
     if e!=nil {return .Out_Of_Memory}
@@ -771,6 +791,7 @@ user_fold :: proc(f:^User_Fold,l:^Log,allocator:=context.allocator) -> Error {
 
 user_fold_destroy :: proc(f:^User_Fold) {
     delete(f.devices)
+    delete(f.web_keys)
     delete(f.valid,f.devices.allocator)
     f^={}
 }
@@ -783,11 +804,12 @@ user_rules :: proc(f:^User_Fold) -> Rules {
             f:=(^User_Fold)(data)
             f.recovery={}
             clear(&f.devices)
-            f.web_keys=0
+            clear(&f.web_keys)
         },
         authorized=proc(data:rawptr,e:int) -> bool {
             f:=(^User_Fold)(data)
             entry:=&f.log.items[e].entry
+            if entry.sig_kind!=.Ed25519 {return false}
             if entry.type==.User_Genesis {
                 b,_,_:=body_head(entry.body,User_Genesis_Body)
                 return entry.author==b.recovery && device_proof_valid(b.device,transmute([32]u8)b.recovery,b.proof)
@@ -801,9 +823,11 @@ user_rules :: proc(f:^User_Fold) -> Rules {
                 return (by_recovery || by_device) && user_device_index(f,b.device)<0 && device_proof_valid(b.device,transmute([32]u8)f.log.id,b.proof)
             case .Device_Revoke:
                 b,_,_:=body_head(entry.body,Device_Revoke_Body)
-                return (by_recovery || by_device) && user_device_index(f,b.device)>=0
+                return (by_recovery || by_device) && (user_device_index(f,b.device)>=0 || user_web_key_index(f,b.device)>=0)
             case .Recovery_Rotate: return by_recovery
-            case .Web_Key_Add: return by_recovery || by_device
+            case .Web_Key_Add:
+                key,ok:=web_key_of(entry.body)
+                return (by_recovery || by_device) && ok && user_web_key_index(f,key)<0
             }
             return false
         },
@@ -823,10 +847,14 @@ user_rules :: proc(f:^User_Fold) -> Rules {
                 for &d in f.devices {
                     if d.key==b.device && !d.revoked {d.revoked,d.revoke=true,u32(e)}
                 }
+                for &w in f.web_keys {
+                    if w.key==b.device && !w.revoked {w.revoked,w.revoke=true,u32(e)}
+                }
             case .Recovery_Rotate:
                 b,_,_:=body_head(entry.body,Recovery_Rotate_Body)
                 f.recovery=b.recovery
-            case .Web_Key_Add: f.web_keys+=1
+            case .Web_Key_Add:
+                if key,ok:=web_key_of(entry.body);ok && user_web_key_index(f,key)<0 {append(&f.web_keys,User_Web_Key{key=key,added=u32(e)})}
             }
         },
         removal=proc(data:rawptr,r:int) -> bool {
@@ -881,6 +909,35 @@ user_device_allows :: proc(f:^User_Fold,device:Key,l:^Log,e:int) -> bool {
     if k<0 {return false}
     d:=f.devices[k]
     return !d.revoked || horizon_holds(f.log,int(d.revoke),l,e)
+}
+
+// Where key is a web key of the state, -1 when it is not one.
+@(private)
+user_web_key_index :: proc(f:^User_Fold,key:Key) -> int {
+    for w,i in f.web_keys {
+        if w.key==key {return i}
+    }
+    return -1
+}
+
+// Whether the passkey of web key id key may have signed entry e of l: the
+// entry's author_ctx is a valid entry of the user's log whose causal past
+// added the key, and, once revoked, e lies inside its revocation's horizon.
+user_web_key_allows :: proc(f:^User_Fold,key:Key,l:^Log,e:int) -> bool {
+    k:=user_web_key_index(f,key)
+    if k<0 {return false}
+    w:=f.web_keys[k]
+    at:=log_find(f.log,l.items[e].entry.author_ctx)
+    if at<0 || !f.valid[at] || !log_within(f.log,int(w.added),at) {return false}
+    return !w.revoked || horizon_holds(f.log,int(w.revoke),l,e)
+}
+
+// Whether entry e of l is the user's: by one of its devices, or by one of its
+// passkeys for a WebAuthn entry.
+user_signed :: proc(f:^User_Fold,l:^Log,e:int) -> bool {
+    entry:=&l.items[e].entry
+    if entry.sig_kind==.WebAuthn {return user_web_key_allows(f,entry.author,l,e)}
+    return user_device_allows(f,entry.author,l,e)
 }
 
 // Whether device is a device of the user not revoked.
@@ -973,11 +1030,11 @@ org_role :: proc(f:^Org_Fold,user:Log_Id) -> Role {
     return .None
 }
 
-// The user of the folds whose device may have signed entry e of l.
+// The user of the folds whose device or passkey may have signed entry e of l.
 @(private)
-author_user :: proc(users:[]^User_Fold,device:Key,l:^Log,e:int) -> ^User_Fold {
+author_user :: proc(users:[]^User_Fold,l:^Log,e:int) -> ^User_Fold {
     for u in users {
-        if user_device_allows(u,device,l,e) {return u}
+        if user_signed(u,l,e) {return u}
     }
     return nil
 }
@@ -1064,7 +1121,7 @@ org_rules :: proc(f:^Org_Fold) -> Rules {
         authorized=proc(data:rawptr,e:int) -> bool {
             f:=(^Org_Fold)(data)
             entry:=&f.log.items[e].entry
-            u:=author_user(f.users,entry.author,f.log,e)
+            u:=author_user(f.users,f.log,e)
             if u==nil {return false}
             if entry.type==.Org_Genesis {
                 b,_,_:=body_head(entry.body,Org_Genesis_Body)
@@ -1205,7 +1262,7 @@ org_rules :: proc(f:^Org_Fold) -> Rules {
             if s,has:=org_subject(f,e);has && s==subject {return true}
             if f.log.items[r].entry.type==.Member_Remove {
                 for u in f.users {
-                    if u.log.id==subject {return user_device_allows(u,f.log.items[e].entry.author,f.log,e)}
+                    if u.log.id==subject {return user_signed(u,f.log,e)}
                 }
             }
             return false
@@ -1362,7 +1419,7 @@ project_rules :: proc(f:^Project_Fold) -> Rules {
         authorized=proc(data:rawptr,e:int) -> bool {
             f:=(^Project_Fold)(data)
             entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,entry.author,f.log,e)
+            u:=author_user(f.org.users,f.log,e)
             if u==nil {return false}
             role:=org_role(f.org,u.log.id)
             if entry.type==.Project_Genesis {
@@ -1373,7 +1430,7 @@ project_rules :: proc(f:^Project_Fold) -> Rules {
             b,tail,_:=body_head(entry.body,Bookmark_Move_Body)
             name:=string(tail[int(b.from)*size_of(Revision):])
             for &p in f.org.policies {
-                if p.project!=f.log.id || p.bookmark!=name || p.approvals==0 {continue}
+                if p.project!=f.log.id || p.bookmark!=name {continue}
                 return policy_holds(f,&p,b.to,b.proposal)
             }
             return true
@@ -1407,32 +1464,21 @@ project_rules :: proc(f:^Project_Fold) -> Rules {
 }
 
 // Whether a move to revision under proposal meets the policy: the proposal is
-// one this end folded, open on this project, at revision, with the approvals
-// and passing checks the policy asks.
+// one this end folded and settled (proposal_settle), not closed, on this
+// project, at revision, with the approvals and passing checks the policy asks.
 @(private)
 policy_holds :: proc(f:^Project_Fold,p:^Org_Policy,revision:Revision,proposal:store.Hash) -> bool {
+    b,_,_:=body_head(f.org.log.items[p.entry].entry.body,Policy_Set_Body)
+    if b.approvals==0 && b.checks==0 {return true}
     if proposal=={} {return false}
     for pf in f.proposals {
-        if pf.log.id!=proposal || pf.project!=f.log.id || pf.status!=.Open || pf.revision!=revision {continue}
-        if pf.approvals<p.approvals {return false}
-        _,tail,_:=body_head(f.org.log.items[p.entry].entry.body,Policy_Set_Body)
-        r:=Reader{data=tail}
-        tail_string(&r)
-        b,_,_:=body_head(f.org.log.items[p.entry].entry.body,Policy_Set_Body)
-        for _ in 0..<b.checks {
-            name:=tail_string(&r)
-            passed:=false
-            for c in pf.checks {
-                if c.name==name && c.state==.Passed {passed=true}
-            }
-            if !passed {return false}
-        }
-        return true
+        if pf.log.id!=proposal || pf.project!=f.log.id || pf.status==.Closed || pf.revision!=revision {continue}
+        return proposal_policy(f.org,p,pf)==.None
     }
     return false
 }
 
-// --- Proposal_Log (reviews; their web signatures and re-anchoring come in M5) ---
+// --- Proposal_Log (its writing, re-anchoring and landing: proposal.odin) ---
 
 Proposal_Status :: enum u8 {Open,Closed,Landed}
 Proposal_Check :: struct {name:string,state:Check_State}
@@ -1494,7 +1540,7 @@ proposal_rules :: proc(f:^Proposal_Fold) -> Rules {
         authorized=proc(data:rawptr,e:int) -> bool {
             f:=(^Proposal_Fold)(data)
             entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,entry.author,f.log,e)
+            u:=author_user(f.org.users,f.log,e)
             if u==nil {return false}
             role:=org_role(f.org,u.log.id)
             if role==.None {return false}
@@ -1514,7 +1560,7 @@ proposal_rules :: proc(f:^Proposal_Fold) -> Rules {
         apply=proc(data:rawptr,e:int) {
             f:=(^Proposal_Fold)(data)
             entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,entry.author,f.log,e)
+            u:=author_user(f.org.users,f.log,e)
             user:=u!=nil?u.log.id:{}
             #partial switch entry.type {
             case .Proposal_Open:
@@ -1607,7 +1653,7 @@ keyring_rules :: proc(f:^Keyring_Fold) -> Rules {
         authorized=proc(data:rawptr,e:int) -> bool {
             f:=(^Keyring_Fold)(data)
             entry:=&f.log.items[e].entry
-            u:=author_user(f.org.users,entry.author,f.log,e)
+            u:=author_user(f.org.users,f.log,e)
             if u==nil || org_role(f.org,u.log.id)<.Writer {return false}
             #partial switch entry.type {
             case .Keyring_Genesis:
