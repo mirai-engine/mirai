@@ -111,7 +111,11 @@ route_session :: proc(c:^Call) {
         }
     }
     json_member_string(&j,"name",name)
-    json_member_bool(&j,"passkey",s.web_key!={})
+    json_key(&j,"passkey")
+    if s.web_key=={} {json_null(&j)} else {
+        key:=s.web_key
+        json_hex(&j,key[:])
+    }
     json_key(&j,"orgs")
     json_array(&j)
     for o in runner_of(c.h).orgs {
@@ -571,8 +575,11 @@ route_approval_answer :: proc(c:^Call) {
             fail(c,403,"the entry is not signed by an active device of the user")
             return
         }
+        // The device tells its peers of the entry as it signs it: the node may hold it already.
         address,status,why:=entry_keep(c,bytes,a.user)
-        if status!=0 {
+        if status==409 {
+            address=store.address_of_bytes(bytes)
+        } else if status!=0 {
             fail(c,status,why)
             return
         }

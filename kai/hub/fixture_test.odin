@@ -180,7 +180,7 @@ fixture_close :: proc(f:^Fixture) {
     if f.open[2] {kai.machine_close(&f.peer)}
 }
 
-Answer :: struct {status:int,body:string,headers:string,cookie:string}
+Answer :: struct {status:int,body:string,content_type:string,headers:string,cookie:string}
 
 // One request as a browser sends it, answered by the hub's routes.
 call :: proc(f:^Fixture,method,path:string,body:="",cookie:="") -> Answer {
@@ -193,7 +193,7 @@ call :: proc(f:^Fixture,method,path:string,body:="",cookie:="") -> Answer {
     if p.status!=200 {return {status=p.status}}
     f.hub.now=f.now
     r:=dispatch(&f.hub,nil,&p.request)
-    a:=Answer{status=r.status,body=string(r.body),headers=r.headers}
+    a:=Answer{status=r.status,body=string(r.body),content_type=r.content_type,headers=r.headers}
     if at:=strings.index(r.headers,COOKIE+"=");at>=0 {
         rest:=r.headers[at:]
         a.cookie=rest[:strings.index_byte(rest,';')]
@@ -260,12 +260,13 @@ passkey_assert :: proc(p:^Test_Passkey,challenge:[]u8,origin:=ORIGIN,rp:=RP) -> 
     return fmt.tprintf(`{{"credential":"%s","authenticator_data":"%s","client_data_json":"%s","signature":"%s"}}`,b64(p.credential[:]),b64(data),b64(transmute([]u8)client),b64(signature))
 }
 
-// The same assertion with its signature's last byte changed.
+// The same assertion with a byte in the middle of its signature changed: a
+// digit whose bits all count, unlike the last one's.
 passkey_forge :: proc(assertion:string) -> string {
     at:=strings.index(assertion,`"signature":"`)+len(`"signature":"`)
     out:=transmute([]u8)strings.clone(assertion,context.temp_allocator)
-    end:=strings.index_byte(string(out[at:]),'"')+at-1
-    out[end]=out[end]=='A'?'B':'A'
+    middle:=at+strings.index_byte(string(out[at:]),'"')/2
+    out[middle]=out[middle]=='A'?'B':'A'
     return string(out)
 }
 

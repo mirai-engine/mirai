@@ -187,6 +187,9 @@ route_proposal :: proc(c:^Call) {
     json_member_string(&j,"target",kai.proposal_target(&f))
     json_member_string(&j,"status",status[f.status])
     json_member_hash(&j,"opener",f.opener)
+    for u in o.agent.user_list {
+        if u.log.id==f.opener {json_member_string(&j,"opener_name",user_name(u))}
+    }
     json_member_hash(&j,"revision",f.revision)
     json_key(&j,"stack")
     json_array(&j)

@@ -349,7 +349,10 @@ Numbered layers; a package only imports lower layers.
   has no I/O, over `net/tls` with ACME certificates (plain HTTP on loopback only), the JSON API
   that describes itself at `GET /api`, sessions and passkey or device-signed writes the server
   only verifies, the Linux sandbox, and the commands a node runs (`serve`, `pair join`,
-  `web approve`). It imports `kai`, `net/tls`, `store` and `std/*`, nothing of the engine.
+  `web approve`). It imports `kai`, `net/tls`, `store` and `std/*`, nothing of the engine. Its
+  frontend, `kai/hub/web`, is embedded as it is: ES modules over a vendored Vue runtime with
+  render functions, no build step, so building needs no Node; the page parses and checks every
+  draft against what the user asked and signs its BLAKE3 itself.
 - **5** `host`: the application (window, device, renderer, mixer, assets, content, shaders), the
   game and editor loops and the player, which does not know the network: it leaves the arguments
   it does not read to the libraries (`Launch`).

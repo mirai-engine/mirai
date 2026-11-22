@@ -482,7 +482,8 @@ Entry_Head :: struct #packed {
   - Focal tests: `proposal_comments_reanchor_across_rewrites`,
     `landing_enforces_policy_and_zero_conflicts`,
     `webauthn_login_and_signed_verdict_verify_offline`,
-    `headless_arm64_server_builds_and_serves_public_and_member_views`.
+    `headless_arm64_server_builds_and_serves_public_and_member_views`,
+    `hub_web_modules_agree_with_the_node`.
 
 - **M6 — Running Mesh and Product Surface:** M3 to M5 give the logs, pairing, mesh, relay and
   proposals as state logic proved over a simulated network; M6 runs them. The agent over real
