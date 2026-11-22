@@ -153,6 +153,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   where it rests, never by skipping what lies near.
 - Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
   light through glass comes from the light, one that projects a texture.
+- Forward blends trace no shadow rays: the maps of the view shadow them, they mark the pages they
+  read, and a light that no map holds at a point reaches it whole.
 - What is decided per instance (its class, the row of its material with its own values) is built
   on the CPU when the instance is given: no stage builds it again per pixel or per hit.
 - A graphics option keeps a choice, and a preset a step above another, only where the image

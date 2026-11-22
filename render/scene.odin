@@ -448,7 +448,12 @@ Scene_State :: struct {
 	cull_wanted:          [Cull_List]u32, // what a frame that dropped asked for since the marks were set (renderer_capacity_marks_set): they grow to it
 	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test; then the groups of slots the cull lists
 	translucent_draws:    rhi.Buffer, // rhi.Draw_Indexed_Indirect of each entry of translucent a view draws (translucent_draws.comp)
+	translucent_lists:    rhi.Texture, // the lists of the lights without shadows of each, then of the cells they are split into, a block as a tile's (light_lists.slang)
+	translucent_cuts:     rhi.Buffer, // and the cuts of the lights with shadows, abi.TRANSLUCENT_CUT_WORDS a block
+	translucent_cell_jobs: rhi.Buffer, // the cells listed by the second pass, the first counting them
 	translucent_draws_capacity: int,
+	translucent_entries:  rhi.Buffer, // of each instance, the cells a view drew it with last (translucent_cells_word)
+	translucent_entries_capacity: int,
 	batch:                Batch_State,
 	tlas:                 rhi.Accel,
 	tlas_capacity:        u32,
@@ -2616,10 +2621,29 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.candidate_capacity = capacity
 	}
 	if len(s.translucent) > s.translucent_draws_capacity || s.translucent_draws == 0 {
-		capacity := max(len(s.translucent) + len(s.translucent) / 2, 64)
+		capacity := max(len(s.translucent) + len(s.translucent) / 2, abi.TRANSLUCENT_LIST_COLUMNS)
+		capacity = (capacity + abi.TRANSLUCENT_LIST_COLUMNS - 1) / abi.TRANSLUCENT_LIST_COLUMNS * abi.TRANSLUCENT_LIST_COLUMNS
 		if s.translucent_draws != 0 {rhi.buffer_destroy(d, s.translucent_draws)}
+		if s.translucent_cuts != 0 {rhi.buffer_destroy(d, s.translucent_cuts)}
+		if s.translucent_lists != 0 {rhi.texture_destroy(d, s.translucent_lists)}
+		blocks := capacity + abi.TRANSLUCENT_CELLS
 		s.translucent_draws = rhi.buffer_create(d, {size = u64(capacity * size_of(rhi.Draw_Indexed_Indirect)), usage = {.Storage, .Indirect}, name = "draws of the blended instances"})
-		s.translucent_draws_capacity = capacity if s.translucent_draws != 0 else 0
+		s.translucent_cuts = rhi.buffer_create(d, {size = u64(blocks * abi.TRANSLUCENT_CUT_WORDS * size_of(u32)), usage = {.Storage}, name = "light cuts of the blended instances"})
+		s.translucent_lists = rhi.texture_create(d, {
+			width = abi.TRANSLUCENT_LIST_COLUMNS * LIGHT_LIST_TILE, height = u32(blocks / abi.TRANSLUCENT_LIST_COLUMNS) * LIGHT_LIST_ROWS,
+			format = .R32_Uint, usage = {.Sampled, .Storage}, name = "light lists of the blended instances",
+		})
+		if s.translucent_cell_jobs == 0 {
+			s.translucent_cell_jobs = rhi.buffer_create(d, {size = (1 + abi.TRANSLUCENT_CELLS) * size_of([2]u32), usage = {.Storage}, name = "light cells of the blended instances"})
+		}
+		made := s.translucent_draws != 0 && s.translucent_cuts != 0 && s.translucent_lists != 0 && s.translucent_cell_jobs != 0
+		s.translucent_draws_capacity = capacity if made else 0
+	}
+	if len(s.instances) > s.translucent_entries_capacity || s.translucent_entries == 0 {
+		capacity := max(len(s.instances) + len(s.instances) / 2, 64)
+		if s.translucent_entries != 0 {rhi.buffer_destroy(d, s.translucent_entries)}
+		s.translucent_entries = rhi.buffer_create(d, {size = u64(capacity * size_of([2]u32)), usage = {.Storage}, name = "cells of the blended instances"})
+		s.translucent_entries_capacity = capacity if s.translucent_entries != 0 else 0
 	}
 	// The native TLAS holds the instances and those of the batches rays meet.
 	if tlas_count := max(len(s.instances) + s.batch.hw_count, 1); r.hardware_rt && (u32(tlas_count) > s.tlas_capacity || s.tlas == 0) {
@@ -2665,7 +2689,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		s.light_tree_capacity = capacity
 		s.lights_dirty = true
 	}
-	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.visible_moved != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.mesh_draws != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && s.translucent_draws != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
+	ok := s.instance_buffer != 0 && s.material_buffer != 0 && s.cull_state_buffer != 0 && s.chunk_buffer != 0 && s.visible_buffer != 0 && s.listed_buffer != 0 && s.raster_entries != 0 && s.visible_moved != 0 && s.raster_vertices != 0 && s.raster_indices != 0 && s.raster_ids != 0 && s.mesh_draws != 0 && s.depth_buckets != 0 && s.program_draws != 0 && s.cluster_candidate_buffer != 0 && s.candidate_buffer != 0 && s.translucent_draws_capacity > 0 && s.translucent_entries != 0 && (r.hardware_rt || s.tlas_node_buffer != 0 && s.tlas_ref_buffer != 0) && s.light_buffer != 0 && s.light_tree_buffer != 0
 	if !ok {set_error(r, "scene buffers: %s", rhi.device_error(d))}
 	return ok
 }
@@ -2870,10 +2894,11 @@ scene_destroy :: proc(r: ^Renderer) {
 	batches_destroy(r)
 	for &m in s.meshes {skin_free(r,m.skin);skin_binding_release(r,m.skin_binding);mesh_stream_free(m.stream);for ray in m.rays[:m.ray_count] {if ray.blas != 0 {rhi.accel_destroy(d, ray.blas)}}}
 	pages_destroy(r)
+	if s.translucent_lists != 0 {rhi.texture_destroy(d, s.translucent_lists)}
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.translucent_cuts, s.translucent_cell_jobs, s.translucent_entries, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

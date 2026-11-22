@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:slice"
 import "mirai:asset"
+import "mirai:render/abi"
 import "mirai:rhi"
 import mm "mirai:std/math"
 
@@ -209,14 +210,28 @@ translucent_draws_record :: proc(p: ^Pass) -> bool {
 	instances := rhi.frame_alloc(r.device, u64(count) * size_of(u32), 16)
 	if instances.ptr == nil {return false}
 	for entry, k in p.translucent {([^]u32)(instances.ptr)[k] = entry.instance}
-	Params :: struct {count, hiz_levels, occlusion, pad: u32}
-	params := Params{count = u32(count), hiz_levels = t.hiz_levels, occlusion = 1 if p.pyramid else 0}
+	// The cells of those split, a thread each, in a pass after; while it is made, none is split.
+	cells := pipeline_of(r, .Translucent_Draws, {TRANSLUCENT_DRAWS_COMP_CELLS})^
+	Params :: struct {count, hiz_levels, occlusion, cells, split, pad0, pad1, pad2: u32}
+	params := Params{
+		count = u32(count), hiz_levels = t.hiz_levels, occlusion = 1 if p.pyramid else 0,
+		cells = u32(s.translucent_draws_capacity), split = 1 if cells != 0 else 0,
+	}
+	rhi.cmd_fill_buffer(cmd, s.translucent_cell_jobs, 0, size_of([2]u32), 0)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Translucent_Draws])
 	set_params(cmd, &params)
 	rhi.cmd_bind_transient(cmd, SLOT_PASS0, instances)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.hiz[p.current] if p.pyramid else r.dummy_texture)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.translucent_draws)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS3, s.translucent_lists)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.translucent_cuts)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.translucent_entries)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.translucent_cell_jobs)
 	rhi.cmd_dispatch(cmd, groups(u32(count), 64))
+	if cells != 0 {
+		rhi.cmd_bind_pipeline(cmd, cells)
+		rhi.cmd_dispatch(cmd, groups(abi.TRANSLUCENT_CELLS, 64))
+	}
 	p.translucent_drawn = true
 	return true
 }
@@ -343,6 +358,10 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, texture_or_dummy(r, near_layer))
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, texture_or_dummy(r, far_layer))
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.translucent_cuts)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.translucent_entries)
+	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, s.translucent_lists)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, t.shadow_raster.pages if p.frame.sun_maps.z != 0 else r.scratch_buffer)
 	set_params(cmd, &params)
 	targets := translucent_forward_pipelines(p, overflow)
 	behind := near_layer != 0

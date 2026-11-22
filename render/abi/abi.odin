@@ -191,6 +191,16 @@ LIGHT_WEIGHT_ROWS          :: 2
 // list, and the words of a list, its count and its entries, a texel each.
 LIGHT_LIST_TILE            :: 8
 LIGHT_LIST_WORDS           :: 128
+// The lights of the blended instances a view draws (translucent_draws.comp):
+// the blocks of their lists across the texture of those lists, a block as a
+// list of a tile takes, and the words of the nodes of the lights with shadows
+// each keeps for its points, their count first. One whose box reaches more
+// than a list holds is split into cells, at most TRANSLUCENT_CELL_SPLIT along
+// its longest side, with lists of the TRANSLUCENT_CELLS a view keeps for them.
+TRANSLUCENT_LIST_COLUMNS   :: 128
+TRANSLUCENT_CUT_WORDS      :: LIGHT_CUT_MAX + 1
+TRANSLUCENT_CELL_SPLIT     :: 4
+TRANSLUCENT_CELLS          :: 4096
 
 // The maps of the shadows of a view. The buffer of the maps (uint4 rows): a
 // word for each light, four to a row, 0 for a light without maps, else its
