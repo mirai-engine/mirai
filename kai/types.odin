@@ -55,6 +55,7 @@ Error :: enum u8 {
     Rollback,         // a signed record not newer than the one held
     Expired,          // past the time a signed record allows
     Other_Store,      // the repository of a workspace is not in the store it is opened with
+    Pruned,           // an operation behind a prune of the operation log, which undo does not cross
 }
 
 error_text :: proc(error:Error) -> string {
@@ -74,6 +75,7 @@ error_text :: proc(error:Error) -> string {
     case .Unauthorized: return "a signature or the right of its author does not hold: fetch the logs of the org again, or ask an admin for the right"
     case .Rollback: return "a record older than the one held: a peer offered stale refs, fetch from another"
     case .Expired: return "the signed record is past its time: ask its issuer for a new one"
+    case .Pruned: return "that operation is behind a prune of the operation log, which undo does not cross: restore an older change with mirai kai restore instead"
     }
     return ""
 }
@@ -289,6 +291,19 @@ hex_text :: proc(bytes:[]u8,buffer:[]u8) -> string {
         buffer[2*k+1]=DIGITS[bytes[k]&15]
     }
     return string(buffer[:2*n])
+}
+
+// The bytes of hex text into out, which it must fill exactly.
+@(private)
+hex_parse :: proc(text:string,out:[]u8) -> bool {
+    if len(text)!=2*len(out) {return false}
+    for &b,k in out {
+        high,high_ok:=hex_value(text[2*k])
+        low,low_ok:=hex_value(text[2*k+1])
+        if !high_ok || !low_ok {return false}
+        b=high<<4|low
+    }
+    return true
 }
 
 @(private)

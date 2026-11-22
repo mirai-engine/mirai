@@ -94,10 +94,9 @@ or anonymous (an empty claim). The namespace decides who reads it:
   derived data). It serves only the orgs whose log names it with `Node_Add`, paired like a member.
 - A seed and a relay hold no scope key and never could read a private file: overlays reach them as
   ciphertext and keyrings as wrapped keys. Their disks hold what the mesh already holds.
-- The store's sweep follows refs only and not the links inside Kai records, so a node names as live
-  everything it serves besides: the closures of every project's bookmarks and landed moves and
-  proposal stacks, every overlay record with its sealed tree and files, and every object of the
-  derived data it keeps. A store that holds a workspace is not swept.
+- The store's sweep follows refs only and not the links inside Kai records, so a node prunes the
+  operation logs and names as live what `store_live` names
+  ([retention](model.md#operations-and-undo)) and what its agents fetch and hold back.
 - A ddc node keeps every key of an org's namespace with every object its outputs list, and drops the
   least recently used keys past its quota (`a_ddc_node_drops_least_used_outputs_past_its_quota`),
   then has the sweep reclaim the bytes. A key a lookup through the node is still fetching is not

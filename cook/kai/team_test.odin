@@ -455,7 +455,8 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
         testing.expect(t,vcs.overlay_open(&ov,&bob.m.store,rings[0],&device,resealed,context.temp_allocator)!=.None,"nor does it open for him")
     }
 
-    // An anonymous peer reads the public closure: none of the overlay's chunks are in it.
+    // An anonymous peer reads what the shared bookmarks reach: none of the overlay's chunks are in it.
+    testing.expectf(t,vcs.machine_bookmark_move(&alice.m,project,"main",resealed)==.None,"alice shares her work: %s",alice.m.why)
     team_halt(alice)
     a:=&alice.runner.orgs[0].agent
     rec,_,re:=vcs.overlay_record_get(&alice.m.store,project,o.fold.scopes[0].scope,resealed,context.temp_allocator)

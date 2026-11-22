@@ -1,6 +1,7 @@
 package editor
 
 import "core:strings"
+import "core:time"
 import "mirai:asset"
 import ka "mirai:cook/kai"
 import "mirai:editor/api"
@@ -94,6 +95,7 @@ Api_Kai_Detail :: struct {
 }
 
 Api_Kai_Undone :: struct {undone:string `mirai:"label=The operation taken back"`}
+Api_Kai_Pruned :: struct {freed:i64 `mirai:"label=Bytes the store's sweep freed"`}
 
 Api_Kai_Restore_Params :: struct {
     from:string `mirai:"label=The change whose files the working copy takes"`,
@@ -149,6 +151,7 @@ kai_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="kai.describe",summary="Gives a change its description.",params=type_info_of(Api_Kai_Describe_Params),result=type_info_of(Api_Kai_Change),run=api_kai_describe})
     api_register(s,st,{name="kai.log",summary="The visible changes, newest first, with their bookmarks, conflicts, coauthors and agent turns; with file, what a change did to that file: its lines, or an asset's rows and fields.",params=type_info_of(Api_Kai_Log_Params),result=type_info_of(Api_Kai_Log),flags={.Read_Only},run=api_kai_log})
     api_register(s,st,{name="kai.undo",summary="Takes back the newest operation of the repository and writes the files as it leaves them; undoing an undo redoes it.",result=type_info_of(Api_Kai_Undone),flags={.Destructive},run=api_kai_undo})
+    api_register(s,st,{name="kai.prune",summary="Prunes the operation log of every repository of the machine's store to its last 30 days and what the workspaces stand on, then has the store reclaim what nothing reaches any more. Undo does not go past a prune.",result=type_info_of(Api_Kai_Pruned),flags={.Destructive},run=api_kai_prune})
     api_register(s,st,{name="kai.restore",summary="Gives the working copy the files of another change and writes them.",params=type_info_of(Api_Kai_Restore_Params),result=type_info_of(Api_Kai_Done),flags={.Destructive},run=api_kai_restore})
     api_register(s,st,{name="kai.conflicts",summary="The files of the working copy in conflict; an asset with its fields both sides changed apart, ours and theirs.",result=type_info_of(Api_Kai_Conflicts),flags={.Read_Only},run=api_kai_conflicts})
     api_register(s,st,{name="kai.resolve",summary="Resolves a file in conflict: field by field with the conflicts that take theirs, or one side whole. The file is written and recorded.",params=type_info_of(Api_Kai_Resolve_Params),result=type_info_of(Api_Kai_Done),run=api_kai_resolve})
@@ -326,6 +329,20 @@ api_kai_undo :: proc(s:^Session,call:^api.Call) {
     undone,message:=kai_undo(s)
     if !api_kai_ended(call,message) {return}
     api.call_result(call,Api_Kai_Undone).undone=strings.clone(undone,call.allocator)
+}
+
+@(private)
+api_kai_prune :: proc(s:^Session,call:^api.Call) {
+    w:=api_kai_workspace(s,call)
+    if w==nil {return}
+    result,e:=ka.prune(w.repo.s,time.now()._nsec)
+    if e!=.None {
+        api.call_fail(call,api.SERVER_ERROR,vcs.error_text(e))
+        return
+    }
+    vcs.repo_refresh(&w.repo)
+    kai_read(s)
+    api.call_result(call,Api_Kai_Pruned).freed=result.bytes
 }
 
 @(private)

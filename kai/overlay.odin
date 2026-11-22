@@ -875,13 +875,7 @@ overlay_namespace_parse :: proc(namespace:string) -> (project:Log_Id,scope:Scope
     if len(namespace)!=len(OVERLAY_PREFIX)+64+1+32 || !strings.has_prefix(namespace,OVERLAY_PREFIX) || namespace[len(OVERLAY_PREFIX)+64]!='-' {return}
     project,ok=store.parse_hex(namespace[len(OVERLAY_PREFIX):][:64])
     if !ok {return}
-    text:=namespace[len(OVERLAY_PREFIX)+65:]
-    for k in 0..<16 {
-        high,high_ok:=hex_value(text[2*k])
-        low,low_ok:=hex_value(text[2*k+1])
-        if !high_ok || !low_ok {return {},{},false}
-        scope[k]=high<<4|low
-    }
+    if !hex_parse(namespace[len(OVERLAY_PREFIX)+65:],scope[:]) {return {},{},false}
     return project,scope,true
 }
 

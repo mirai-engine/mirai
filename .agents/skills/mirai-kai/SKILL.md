@@ -39,7 +39,7 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
 - Conflicts, merging, the drivers and `std/diff`:
   [conflicts](references/model.md#conflicts) and
   [drivers](references/model.md#drivers-and-diff).
-- Operations, undo, split, bookmarks and the graph:
+- Operations, undo, split, bookmarks, the graph, retention and `mirai kai prune`:
   [operations](references/model.md#operations-and-undo).
 - Working copy, snapshots, checkout and what the editor pushes:
   [workspaces](references/model.md#workspaces); who calls what:
@@ -172,6 +172,7 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   node also needs `mirai build kai --target linux_arm64` once.
 - Model: `a_snapshot_rehashes_only_changed_files`, `hostile_kai_records_are_refused`,
   `conflicts_simplify_and_resolve_by_edit`, `every_operation_undoes`,
+  `a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached`,
   `op_heads_of_two_workspaces_merge`, `a_switch_cut_midway_recovers_on_status`,
   `a_change_splits_by_paths_and_undoes_in_one_operation` and `kai_imports_stay_engine_agnostic`
   in `kai`; `histogram_diff_and_merge3_cases` in `std/diff`;

@@ -247,6 +247,17 @@ undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_a
     return undone,files_changed(w,before,changed,allocator)
 }
 
+// Prunes the operation log of every repository of s at now (ns), then sweeps
+// the store with what Kai and the asset library hold live (asset.store_sweep):
+// what only the operations past the retention reached is reclaimed.
+prune :: proc(s:^store.Store,now:i64) -> (result:store.Sweep_Result,error:vcs.Error) {
+    vcs.store_prune(s,now) or_return
+    live:=make([dynamic]store.Hash,context.temp_allocator)
+    vcs.store_live(s,&live) or_return
+    swept,e:=asset.store_sweep(s,live[:])
+    return swept,vcs.store_error(e)
+}
+
 // Gives the working copy the files of another change and writes them, with
 // the private files of that change this device reads: what public files
 // changed.
