@@ -29,8 +29,9 @@ re-reads it on code reload (`provided_all`, `provided`) and keeps no stale libra
    `ctx.popup.count == 0`.
 3. **Pointer & picking:** check `s.viewport.hovered`, `!s.viewport.pick.active`, or call
    `editor.tool_pointer`. Raycast via `editor.pick_point`, `pick_ray`, `viewport_ray`
-   (`batches=true` hits [instance batches](../../mirai-rendering/references/scene.md#instance-batches)
-   via `render.batch_ray`, authoring entity via `object_id`).
+   (`batches=true` hits
+   [instance batches](../../mirai-rendering/references/scene.md#instance-batches) via
+   `render.batch_ray`, authoring entity via `object_id`).
 4. **Transactions:** bracket strokes with `edits_begin` / `edits_end` / `edits_cancel`
    ([document](document.md#edits-and-undo)).
 5. **Gizmo & keys:** `editor.tool_gizmo` (`Began`/`Moved`/`Ended`/`Cancelled`) + `tool_gizmo_draw`
