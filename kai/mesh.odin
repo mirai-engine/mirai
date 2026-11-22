@@ -20,6 +20,7 @@ import "mirai:store"
 //   kai-log               Org, Project, Proposal and Keyring logs: Member, Node
 //   kai-refs-<project>    device refs: Member, Node; Anonymous for a public project
 //   kai-ddc-<org>         derived data: Member, Node
+//   kai-ovl-<project>-<scope>  overlay records, ciphertext only: Member, Node
 //
 // Pending and Anonymous peers are restricted: they get only the chunks of the
 // user logs, or of the public closure. On connect each end asks the other's
@@ -64,7 +65,7 @@ Agent_Peer :: struct {
 }
 
 @(private)
-Fetch_Kind :: enum u8 {None,User,Log,Refs,DDC,Object}
+Fetch_Kind :: enum u8 {None,User,Log,Refs,DDC,Overlay,Object}
 
 @(private)
 Agent_Fetch :: struct {
@@ -118,13 +119,14 @@ Agent :: struct {
     fetches:[dynamic]Agent_Fetch,
     queries:[AGENT_QUERIES]Agent_Query,
     hints:[dynamic]Agent_Fetch, // what peers told, taken in agent_update
+    deferred:[dynamic]Agent_Fetch, // logs that came before this end could place them, merged again after each refold
     now:f64,
     dirty:bool, // a seed walks its closure again
     stats:Agent_Stats,
 }
 
 Agent_Stats :: struct {
-    logs_merged,refs_accepted,ddc_accepted,objects_fetched:int,
+    logs_merged,refs_accepted,ddc_accepted,overlays_accepted,objects_fetched:int,
     refused:int, // records a peer gave that did not hold: bad signature, no right, rollback
     refolds:int,
 }
@@ -150,7 +152,8 @@ agent_init :: proc(a:^Agent,desc:Agent_Desc,clients:[]net.Transport) -> Error {
     a.closure.public=make([dynamic]store.Hash,allocator)
     a.fetches=make([dynamic]Agent_Fetch,allocator)
     a.hints=make([dynamic]Agent_Fetch,allocator)
-    if reserve(&a.fetches,AGENT_FETCHES)!=nil || reserve(&a.hints,AGENT_HINTS)!=nil {
+    a.deferred=make([dynamic]Agent_Fetch,allocator)
+    if reserve(&a.fetches,AGENT_FETCHES)!=nil || reserve(&a.hints,AGENT_HINTS)!=nil || reserve(&a.deferred,AGENT_FETCHES)!=nil {
         agent_destroy(a)
         return .Out_Of_Memory
     }
@@ -209,6 +212,7 @@ agent_destroy :: proc(a:^Agent) {
     delete(a.closure.public)
     delete(a.fetches)
     delete(a.hints)
+    delete(a.deferred)
 }
 
 @(private)
@@ -321,6 +325,11 @@ agent_refold :: proc(a:^Agent) {
     }
     for i in 0..<AGENT_PEERS {
         if a.peers[i].used {agent_ask(a,i)}
+    }
+    if len(a.deferred)>0 {
+        retry:=slice.clone(a.deferred[:],context.temp_allocator)
+        clear(&a.deferred)
+        for &f in retry {agent_merge(a,&f)}
     }
 }
 
@@ -454,6 +463,10 @@ agent_namespaces :: proc(a:^Agent,out:^[dynamic]string) {
     }
     buffer:=new([len(DDC_PREFIX)+64]u8,context.temp_allocator)
     append(out,ddc_namespace(a.desc.org,buffer))
+    for sc in a.org.scopes {
+        ns:=new([len(OVERLAY_PREFIX)+64+1+32]u8,context.temp_allocator)
+        append(out,overlay_namespace(sc.project,sc.scope,ns))
+    }
 }
 
 // Asks peer i for the names of every namespace it may let this end read.
@@ -508,6 +521,12 @@ agent_expose :: proc(user:rawptr,peer:exchange.Peer_Id,namespace:string) -> bool
     case strings.has_prefix(namespace,DDC_PREFIX):
         buffer:[len(DDC_PREFIX)+64]u8
         return admitted && namespace==ddc_namespace(a.desc.org,&buffer)
+    case strings.has_prefix(namespace,OVERLAY_PREFIX):
+        project,scope,ok:=overlay_namespace_parse(namespace)
+        if !ok || !admitted || !a.folded {return false}
+        for sc in a.org.scopes {
+            if sc.project==project && sc.scope==scope {return true}
+        }
     }
     return false
 }
@@ -547,6 +566,7 @@ fetch_kind :: proc(a:^Agent,namespace:string) -> Fetch_Kind {
     case namespace==LOG_NAMESPACE: return .Log
     case strings.has_prefix(namespace,REFS_PREFIX): return .Refs
     case strings.has_prefix(namespace,DDC_PREFIX): return .DDC
+    case strings.has_prefix(namespace,OVERLAY_PREFIX): return .Overlay
     }
     return .None
 }
@@ -662,7 +682,13 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
     case .User,.Log:
         id,ok:=store.parse_hex(name)
         if !ok {return}
-        if f.kind==.Log && id!=a.desc.org && !(a.folded && org_project_index(&a.org,id)>=0) {return}
+        if f.kind==.Log && id!=a.desc.org && !(a.folded && (org_project_index(&a.org,id)>=0 || keyring_of_org(a.desc.store,&a.org,id,f.address))) {
+            for d in a.deferred {
+                if d.address==f.address {return}
+            }
+            if len(a.deferred)<AGENT_FETCHES {append(&a.deferred,f^)}
+            return
+        }
         l:=agent_log_take(a,id)
         if l==nil {return}
         changed,e:=log_merge(a.desc.store,l,f.address)
@@ -700,6 +726,19 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         if changed {
             a.stats.ddc_accepted+=1
             agent_tell(a,namespace,name)
+        }
+    case .Overlay:
+        if !a.folded {return}
+        r,changed,e:=overlay_accept(a.desc.store,&a.org,namespace,name,f.address)
+        if e!=.None {
+            a.stats.refused+=1
+            return
+        }
+        if changed {
+            a.stats.overlays_accepted+=1
+            agent_want_object(a,r.tree_root)
+            for o in r.objects {agent_want_object(a,o)}
+            exchange.ref_changed(&a.x,namespace,name,f.address)
         }
     case .Object:
         a.stats.objects_fetched+=1

@@ -197,6 +197,7 @@ Workspace_Options :: struct {
     drivers:[]Driver,
     worker:jobs.Worker_Ref, // hashes changed files in parallel when given
     sibling:string,         // a workspace of the same repository whose clean files a switch clones
+    overlay:^Overlay_Routing, // routes private paths into encrypted overlays; nil applies only the deny set
 }
 
 Workspace :: struct {
@@ -378,6 +379,9 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     clear(&w.touched)
     w.touched_all=false
     slice.sort_by(found[:],proc(a,b:Found) -> bool {return a.path<b.path})
+    plan:Overlay_Plan
+    defer overlay_plan_end(&plan)
+    overlay_route(w.options.overlay,w.repo.s,w.root,overlay_previous(&w.repo),&found,&plan) or_return
     // Reuse what the index knows; hash the rest, in parallel when a worker is given.
     changed:=make([dynamic]^Found,context.temp_allocator)
     for &f in found {
@@ -411,6 +415,7 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     conflicts_apply(w,&files) or_return
     root:=tree_build(w.repo.s,files[:]) or_return
     report.revision=change_snapshot(&w.repo,root) or_return
+    overlay_publish(w.options.overlay,w.repo.s,&plan,report.revision) or_return
     index_save(w) or_return
     w.state.op,w.state.tree=w.repo.op,root
     state_save(w) or_return
