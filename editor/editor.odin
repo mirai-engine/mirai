@@ -440,6 +440,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
         animation_cache=project.cache_path(root,project.ANIMATION_CACHE,allocator=context.temp_allocator),
         collision_cache=project.content_cache_path(root,project.COLLISION_CACHE,allocator=context.temp_allocator),
         asset_mounts=mounts[:],shaders_root=root,store_root=store_root,
+        pipeline_cache=project.path(project.machine_folder(engine,context.temp_allocator),project.PIPELINES_FILE,allocator=context.temp_allocator) if engine!="" else "",
         gpu_late_record=project.path(root,".mirai",GPU_LATE_RECORD,allocator=context.temp_allocator) if has_project else "",
     })
     if app==nil {

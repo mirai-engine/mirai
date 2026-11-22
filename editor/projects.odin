@@ -249,25 +249,46 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
 
 // The image of side pixels the tile of the project at folder shows, into
 // image: the PNG its manifest names as its thumbnail, else the view an editor
-// of it kept of its start scene in its thumbs folder. False for neither.
+// of it kept of its start scene in its thumbs folder, else the PNG its
+// manifest names as its window/desktop icon. False for none.
 @(private)
 projects_thumbnail_read :: proc(folder:string,m:^project.Manifest,side:int,file:^Thumbnail_File,image:^[dynamic]u8) -> bool {
     if thumbnail:=base.text_get(m.thumbnail[:]);thumbnail!="" {
-        if bytes,read_error:=os.read_entire_file(project.path(folder,thumbnail,allocator=context.temp_allocator),context.temp_allocator);read_error==nil {
-            if picture,error:=textures.image_decode(bytes,context.temp_allocator);error==.None && picture.width>0 && picture.height>0 {
-                projects_cover(picture,side,image)
-                return true
-            }
-        }
+        if projects_image_read(folder,thumbnail,side,image) {return true}
     }
-    scene:=base.text_get(m.start_scene[:])
+    if projects_scene_thumbnail_read(folder,base.text_get(m.start_scene[:]),side,file,image) {return true}
+    if icon:=base.text_get(m.icon[:]);icon!="" {
+        if projects_image_read(folder,icon,side,image) {return true}
+    }
+    return false
+}
+
+@(private="file")
+projects_image_read :: proc(folder,rel:string,side:int,image:^[dynamic]u8) -> bool {
+    bytes,read_error:=os.read_entire_file(project.path(folder,rel,allocator=context.temp_allocator),context.temp_allocator)
+    if read_error!=nil {return false}
+    picture,error:=textures.image_decode(bytes,context.temp_allocator)
+    if error!=.None || picture.width<=0 || picture.height<=0 {return false}
+    projects_cover(picture,side,image)
+    return true
+}
+
+@(private="file")
+projects_scene_thumbnail_read :: proc(folder,scene:string,side:int,file:^Thumbnail_File,image:^[dynamic]u8) -> bool {
     if scene=="" {return false}
     head:[asset.HEADER_SIZE]u8
     bytes,_,error:=serial.file_read_head(project.path(folder,ASSETS_FOLDER,scene,allocator=context.temp_allocator),head[:])
     if error!=.None {return false}
     header,header_error:=asset.header_read(bytes)
     if header_error!=.None || header.kind!=asset.KIND_SCENE {return false}
-    return thumbnail_load(thumbnail_folder_of(folder),header.id,side,THUMBNAIL_CAPTURED,file,image)
+    thumbs:=thumbnail_folder_of(folder)
+    if thumbnail_load(thumbs,header.id,side,THUMBNAIL_CAPTURED,file,image) {return true}
+    other:=THUMBNAIL_LARGE if side!=THUMBNAIL_LARGE else THUMBNAIL_SIZE
+    if !thumbnail_load(thumbs,header.id,other,THUMBNAIL_CAPTURED,file,image) {return false}
+    src:=make([]u8,len(image^),context.temp_allocator)
+    copy(src,image[:])
+    projects_cover({pixels=src,width=other,height=other},side,image)
+    return true
 }
 
 // The middle square of a picture, averaged to side pixels with its alpha premultiplied.
