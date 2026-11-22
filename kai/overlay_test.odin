@@ -13,6 +13,7 @@ import "core:time"
 import "mirai:exchange"
 import net "mirai:net"
 import "mirai:std/base"
+import "mirai:std/blake3"
 import "mirai:store"
 
 @(private="file")
@@ -432,7 +433,7 @@ envelope_adds_give_the_newest_key_to_readers_alone :: proc(t:^testing.T) {
     testing.expect_value(t,e,Error.None)
     four(t,&o,&dave,folds[:],users[:],&fold,&kf)
     added,ae=keyring_share(&kf,&phone,42)
-    testing.expect(t,ae==.None && added==2,"one envelope each for carol and dave")
+    testing.expect(t,ae==.None && added==4,"one envelope each for carol, dave and their recovery keys")
     david:=device_of(&dave,0)
     for reader in ([]^Overlay_Device{&carol,&david}) {
         key,ke=keyring_epoch_key(&kf,reader,1)
@@ -448,6 +449,78 @@ envelope_adds_give_the_newest_key_to_readers_alone :: proc(t:^testing.T) {
     _,e=rotate_scope_epoch(&kf,&bob,51)
     testing.expect_value(t,e,Error.None)
     _,e=keyring_epoch_key(&kf,&phone,2)
+    testing.expect_value(t,e,Error.Unauthorized)
+}
+
+// Every epoch is wrapped for the recovery key of each reader too. Alice loses
+// her device and recovers onto a spare: her recovery key's envelope gives the
+// spare the scope's key, and a new epoch shuts the lost device out. She rotates
+// the recovery key while no device shares the newest epoch with the new one,
+// then loses the spare: no key left opens that epoch, the recovery says so,
+// and the epoch it starts keeps no history.
+@(test)
+a_recovered_device_takes_the_scope_keys_its_recovery_key_opens :: proc(t:^testing.T) {
+    folder_root:=base.test_folder(t,"kai-overlay-recover")
+    if folder_root=="" {return}
+    s,se:=store.open(folder(folder_root,"store"))
+    if !testing.expect_value(t,se,store.Error.None) {return}
+    defer store.close(&s)
+    o:Test_Org
+    test_org_make(t,&o);defer test_org_destroy(&o)
+    scope:=random_id(Scope_Id)
+    scope_add(t,&o,scope,.Reader,true,20,"secrets/**")
+    refold(t,&o)
+    lost:=device_of(&o.alice,0)
+    kl:Log
+    log_init(&kl);defer log_destroy(&kl)
+    kf:Keyring_Fold
+    testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&s,o.project.id,scope,&lost,22),Error.None)
+    defer keyring_fold_destroy(&kf)
+    k1,_:=keyring_epoch_key(&kf,&lost,1)
+    recovery:=recovery_device(&o.alice.recovery)
+    key,e:=keyring_epoch_key(&kf,&recovery,1)
+    testing.expect(t,e==.None && key==k1,"the recovery key opens the epoch")
+
+    // The recovery key signs a device in and revokes the lost one.
+    swap :: proc(t:^testing.T,o:^Test_User,by:^Identity,old:Key,name:string) -> (d:Overlay_Device) {
+        d.identity=identity_make()
+        dh,_:=net.dh_key()
+        d.dh,d.dh_secret=Dh_Key(dh.public),dh.private
+        d.kem_seed=random_id([KEM_SEED]u8)
+        _,e:=log_append(&o.log,.Device_Add,test_device_body(&d.identity,d.dh,&d.kem_seed,o.log.id,name),by,60)
+        testing.expect_value(t,e,Error.None)
+        _,e=log_append(&o.log,.Device_Revoke,revoke_body(old),by,61)
+        testing.expect_value(t,e,Error.None)
+        return
+    }
+    spare:=swap(t,&o.alice,&o.alice.recovery,lost.identity.key,"spare")
+    refold(t,&o,&kf)
+    outcome,re:=keyring_recover(&kf,&spare,&recovery,62)
+    testing.expect(t,re==.None && outcome==.Opened && kf.epoch==2,"the spare opens the scope and a new epoch starts")
+    for epoch in ([]u32{1,2}) {
+        _,ke:=keyring_epoch_key(&kf,&spare,epoch)
+        testing.expect_value(t,ke,Error.None)
+    }
+    _,e=keyring_epoch_key(&kf,&lost,2)
+    testing.expect_value(t,e,Error.Unauthorized)
+
+    // A rotated recovery key the newest epoch does not wrap for: the spare lost too, nothing opens it.
+    next:=identity_make()
+    next_recovery:=recovery_device(&next)
+    next_kem,_:=kem_public(&next_recovery.kem_seed)
+    body:=Recovery_Rotate_Body{recovery=next.key,dh=next_recovery.dh,kem=next_kem,proof=device_proof(&next,transmute([32]u8)o.alice.log.id,next_recovery.dh,blake3.hash(next_kem[:]))}
+    _,e=log_append(&o.alice.log,.Recovery_Rotate,body_make(body),&o.alice.recovery,70)
+    testing.expect_value(t,e,Error.None)
+    third:=swap(t,&o.alice,&next,spare.identity.key,"third")
+    refold(t,&o,&kf)
+    testing.expect(t,keyring_needs_rotation(&kf),"the old recovery key and the spare hold the newest key")
+    outcome,re=keyring_recover(&kf,&third,&next_recovery,72)
+    testing.expect(t,re==.None && outcome==.Lost && kf.epoch==3,"no key left opens the newest epoch: a new one starts")
+    newest,_:=keyring_epoch(&kf,3)
+    testing.expect(t,!bool(newest.history),"the new epoch keeps no history")
+    _,e=keyring_epoch_key(&kf,&third,3)
+    testing.expect_value(t,e,Error.None)
+    _,e=keyring_epoch_key(&kf,&third,2)
     testing.expect_value(t,e,Error.Unauthorized)
 }
 
@@ -1047,7 +1120,7 @@ an_epoch_key_opens_only_with_both_device_secrets :: proc(t:^testing.T) {
     testing.expect_value(t,keyring_create(&kf,&kl,&o.fold,&s,o.project.id,scope,&alice,31),Error.None)
     defer keyring_fold_destroy(&kf)
     body,_:=keyring_epoch(&kf,1)
-    testing.expect_value(t,int(body.devices),200+2) // bob's 200, alice's and carol's
+    testing.expect_value(t,int(body.devices),200+2+3) // bob's 200, alice's and carol's, and the three recovery keys
     for &d in devices {
         _,ke:=keyring_epoch_key(&kf,&d,1)
         testing.expect_value(t,ke,Error.None)

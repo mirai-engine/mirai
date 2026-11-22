@@ -48,7 +48,7 @@ Object_Kind :: enum u8 {
 // Log_Page in their own head.
 VERSIONS :: [Object_Kind]u16{
     .None=0,.Folder=1,.Conflict=1,.Change=2,.View=1,.Operation=2,.Stat_Index=1,.Log=2,.Device_Refs=2,
-    .DDC_Set=2,.DDC_Output=2,.Log_Page=3,.Overlay_Record=1,.Overlay_Tree=1,.Overlay_File=1,.Overlay_Blob=1,
+    .DDC_Set=2,.DDC_Output=2,.Log_Page=4,.Overlay_Record=1,.Overlay_Tree=1,.Overlay_File=1,.Overlay_Blob=1,
     .Envelopes=1,.Landings=1,.Provenance=1,
 }
 

@@ -5,7 +5,7 @@
 import {blake3} from './blake3.js'
 
 export const MAGIC = 0x3149414b // the bytes K A I 1
-export const VERSION = 3
+export const VERSION = 4
 export const HEAD = 152
 export const PARENTS_MAX = 8
 export const BODY_MAX = 64 << 10

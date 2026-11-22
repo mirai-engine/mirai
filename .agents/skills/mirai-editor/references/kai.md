@@ -68,7 +68,8 @@ the tab reads the detail again on the team's poll, a method waits for them.
   that only its button closes (not Escape nor a press outside), and is zeroed when it closes;
   rotating it asks for the key the user has now, and a user born of a passkey sets its first one
   from there. Recover asks for a user's id and its recovery key, which bring the user onto this
-  machine once its log is here ([recovering](../../mirai-kai/references/identity.md#keys)). No
+  machine once its log is here, and again, on that machine, open the private scopes the agent
+  fetched since ([recovering](../../mirai-kai/references/identity.md#keys)). No
   result of a method carries a recovery key: an editor with no window refuses to make a user, set or
   rotate its key before making anything, and `mirai kai identity` does it in a terminal.
 - A device is named where it is made: by the name given, or by the machine's host name

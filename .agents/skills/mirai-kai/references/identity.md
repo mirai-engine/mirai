@@ -31,10 +31,15 @@ and `kai/refs_ddc.odin`.
   beside its rotation: what it signs on parents that skip the rotation is void.
 - **Recovering** a user after every device is lost: on a fresh store, its user's log comes from a
   machine of one of its orgs through a `recover` pairing (nothing is signed: the new machine
-  reaches the org as a peer not admitted, which reads the user logs alone), and `mirai kai
-  identity recover <user>` (or the editor's Team view) takes the recovery key as printed: it signs
-  this device into the log and revokes every device still active; passkeys stay. A mistyped key
-  says what is wrong with it (a character, the count of digits, the checksum) and never echoes it
+  reaches the org as a peer not admitted, which reads the user logs alone; a user alone in its org
+  needs a node of it), and `mirai kai identity recover <user>` (or the editor's Team view) takes
+  the recovery key as printed: it signs this device into the log and revokes every device still
+  active; passkeys stay. A mistyped key says what is wrong with it (a character, the count of
+  digits, the checksum) and never echoes it. What the lost devices signed stands (they are
+  witnessed on every head, below), so the user still owns its orgs, projects, proposals and
+  keyrings; once the agent fetched the orgs' logs, the recovery key gives the new device the keys
+  of the scopes the user reads ([the recovery key reads](private.md#keyrings-and-epochs)), and
+  running the command again does that for what came since
   (`a_user_recovers_onto_a_new_device_with_its_recovery_key`).
 - There is no org key. An org is a log folded from its members' signatures, and its **discovery
   secret** `D` is derived from the org's genesis, each valid removal of a member or a node in it
@@ -90,7 +95,10 @@ and `kai/refs_ddc.odin`.
   proposal. What it affects in another log (a `Device_Revoke` there, a `Member_Remove`, a lowering
   `Role_Set` or a `Grant_Revoke` in the org's other logs) reaches that log as a `Witness` entry,
   written by a key that holds a right there when it first sees the removal: the machine that
-  removes, with every head it knows, and any member's agent that finds a removal a log lacks. In
+  removes, with every head it knows, and any member's agent that finds a removal a log lacks,
+  on what other keys signed; a device of the user whose device was revoked builds on every head
+  it knows, as the machine that revoked: the user vouches for what its devices signed until then,
+  and where they signed the whole log, as a lone owner's did, nothing else is there to build on. In
   that log an entry by the affected key stands if and only if it is in the causal past of a valid
   witness; with none yet, the removal has not reached the log and its entries stand
   (`revocation_witness_rejects_backdated_entries`, `a_removed_writer_keeps_its_past`,

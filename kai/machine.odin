@@ -279,7 +279,12 @@ machine_user_create :: proc(m:^Machine,name:string,buffer:^[RECOVERY_TEXT]u8,dev
     if !name_valid(device_name_of(device,&head.device_name)) {return "",machine_fail(m,.Invalid_Argument,"a device's name is 1 to 64 bytes of text, as laptop: give another")}
     r:=identity_make()
     defer crypto.zero_explicit(&r,size_of(Identity))
-    head.recovery,head.proof=r.key,device_proof(&m.identity,transmute([32]u8)r.key,head.dh,machine_kem_hash(m))
+    rd:=recovery_device(&r)
+    defer crypto.zero_explicit(&rd,size_of(rd))
+    kem,ok:=kem_public(&rd.kem_seed)
+    if !ok {return "",machine_fail(m,.Invalid_Argument,"the recovery key makes no ML-KEM key: make the user again")}
+    copy(head.recovery_kem[:],kem[:])
+    head.recovery,head.recovery_dh,head.proof=r.key,rd.dh,device_proof(&m.identity,transmute([32]u8)r.key,head.dh,machine_kem_hash(m))
     l:Log
     log_init(&l,{},context.temp_allocator)
     body:=body_make(head,transmute([]u8)name)

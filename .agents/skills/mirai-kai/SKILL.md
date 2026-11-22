@@ -100,11 +100,14 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
 
 ### Recover an identity
 
-1. On a machine of one of the user's orgs (a teammate's, a node), `mirai kai pair offer recover
-   --org O`; on the fresh machine, with a Kai agent running, `mirai kai pair join <ticket>`, and
-   the other approves the code. The agent fetches the org's user logs.
+1. On a machine of one of the user's orgs (a teammate's, a node: a user alone in its org keeps a
+   seed node for this), `mirai kai pair offer recover --org O`; on the fresh machine, with a Kai
+   agent running, `mirai kai pair join <ticket>`, and the other approves the code. The agent
+   fetches the org's user logs.
 2. `mirai kai identity recover <user>` takes the recovery key as printed (the editor: Recover in
-   the Team view). The new device is in, the lost ones are revoked, and the agents admit it.
+   the Team view). The new device is in, the lost ones are revoked, and the agents admit it; it
+   waits for the orgs' logs and opens the private scopes with the recovery key, or says which ones
+   no key left opens. Run again with the key, it opens what the agent fetched since.
 3. If the key may have been seen, rotate it: `mirai kai identity recovery`.
 
 ### Review and land
@@ -171,8 +174,10 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   user born in a browser is its passkey alone: the page makes no recovery or device key.
 - A recovery key is shown once and never crosses an API or a result; a method of an editor with no
   window refuses to make or rotate one.
-- An epoch key is wrapped for each device under X25519 and ML-KEM-768 at once; nothing else of Kai
-  is post-quantum, on purpose ([why](references/private.md#keyrings-and-epochs)).
+- An epoch key is wrapped for each device and each reader's recovery key under X25519 and
+  ML-KEM-768 at once; nothing else of Kai is post-quantum, on purpose
+  ([why](references/private.md#keyrings-and-epochs)).
+- A rotation is for whoever loses access: a reader that comes is given the newest key.
 - An agent that lacks an org entry a writer's record or a member's witness names takes no write
   until it comes or `BEHIND_SECONDS` let it go; each user's devices stall it once.
 - A run of the editor that ends by itself (a check of a build, a capture) and a guest of a session
@@ -225,6 +230,7 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
 - Private files: `scoped_plaintext_never_enters_public_store`,
   `removed_member_cannot_decrypt_post_rotation_epoch`, `removing_a_keyring_signer_keeps_its_epochs`,
   `envelope_adds_give_the_newest_key_to_readers_alone`,
+  `a_recovered_device_takes_the_scope_keys_its_recovery_key_opens`,
   `an_epoch_key_opens_only_with_both_device_secrets` (prints a device's entry, an envelope and an
   epoch of 10 devices),
   `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.

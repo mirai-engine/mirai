@@ -768,20 +768,83 @@ ladder_of :: proc(r:^Runner,dh:Dh_Key) -> [5]f64 {
     return {-1,-1,-1,-1,-1}
 }
 
-// A user whose every device is lost recovers onto a fresh store with its
-// recovery key and id. A recovery pairing a teammate's machine of the user's
-// org offers brings the user logs over loopback UDP, after a wrong code is
-// denied; the key signs the new device in and revokes the lost ones, whose
-// removals the org's log comes to witness. A mistyped key says what is wrong with it, another
-// user's is refused, and once the key is rotated, what the old one signs on
+// What a store must hold of a lone owner's org for a recovery to find all of
+// it: the org's, project's, keyring's and proposal's logs, the keyring's
+// envelopes, the closure of commit, which main names, and its overlay.
+@(private="file")
+Org_Goal :: struct {k:int,org,project,proposal:Log_Id,scope:Scope_Id,commit:Revision,user:Log_Id}
+
+@(private="file")
+org_held :: proc(b:^Box,data:rawptr) -> bool {
+    g:=(^Org_Goal)(data)
+    s:=&b.machines[g.k].store
+    o:Org_State
+    if org_state_load(s,g.org,&o,context.temp_allocator)!=.None || org_project_index(&o.fold,g.project)<0 {return false}
+    name:[64]u8
+    for id in ([]Log_Id{g.project,g.proposal}) {
+        if _,e:=store.ref_get(s,LOG_NAMESPACE,log_name(id,&name));e!=.None {return false}
+    }
+    rings:=make([dynamic]^Keyring_Fold,context.temp_allocator)
+    machine_keyrings(s,&o,&rings,context.temp_allocator)
+    if len(rings)!=1 || rings[0].epoch==0 {return false}
+    for e in 1..=rings[0].epoch {
+        body,ok:=keyring_epoch(rings[0],e)
+        if !ok || !object_whole(s,body.envelopes) {return false}
+    }
+    present:=make([dynamic]store.Hash,context.temp_allocator)
+    missing:=make([dynamic]store.Hash,context.temp_allocator)
+    closure_walk(s,{g.commit},&present,&missing)
+    if len(missing)>0 || len(present)==0 {return false}
+    r,_,re:=overlay_record_get(s,g.project,g.scope,g.commit,context.temp_allocator)
+    if re!=.None || !object_whole(s,r.tree_root) {return false}
+    for x in r.objects {
+        if !object_whole(s,x) {return false}
+    }
+    return true
+}
+
+// Whether the org's log of the store of g.k witnesses every revocation of
+// g.user's log.
+@(private="file")
+lost_witnessed :: proc(b:^Box,data:rawptr) -> bool {
+    g:=(^Org_Goal)(data)
+    s:=&b.machines[g.k].store
+    u,o:Log
+    log_init(&u,g.user,context.temp_allocator)
+    log_init(&o,g.org,context.temp_allocator)
+    if log_open(s,&u,g.user,.User)!=.None || log_open(s,&o,g.org,.Org)!=.None {return false}
+    revokes:=0
+    for &item in u.items {
+        if item.entry.type!=.Device_Revoke {continue}
+        revokes+=1
+        found:=false
+        for &x in o.items {found||=x.entry.type==.Witness && bytes_equal(x.entry.body,witness_body(g.user,item.address))}
+        if !found {return false}
+    }
+    return revokes>0
+}
+
+// A user alone in its org loses its only device. The org has a seed node,
+// which mirrored the org's logs, a project with a shared bookmark, an open
+// proposal and a private scope with a file. A recovery pairing the node offers
+// brings the user's log over loopback UDP to a fresh store, after a wrong code
+// is denied; the recovery key signs the new device in and revokes the lost
+// one; mistyped keys say what is wrong with them and another user's is
+// refused. Admitted, the new device fetches the org and witnesses the
+// revocation on the org's heads, though the lost device signed every entry
+// there; the user still owns the org, the project, the proposal and the
+// keyring, and the recovery key's envelope gives the new device the scope's
+// key: it reads the private file, a new epoch shuts the lost device out, and
+// it moves the bookmark. Once the key is rotated, what the old one signs on
 // parents that skip the rotation counts for nothing.
 @(test)
 a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     b:=new(Box)
     defer free(b)
-    if !box_open(t,b,"kai-runner-recover",3) {return}
+    if !box_open(t,b,"kai-runner-recover",4) {return}
     defer box_close(b)
-    lost,fresh,other:=&b.machines[0],&b.machines[1],&b.machines[2]
+    lost,fresh,node,other:=&b.machines[0],&b.machines[1],&b.machines[2],&b.machines[3]
+    LOST,FRESH,NODE:=0,1,2
     buffer:[RECOVERY_TEXT]u8
     text,e:=machine_user_create(lost,"alice",&buffer)
     testing.expect_value(t,e,Error.None)
@@ -791,39 +854,72 @@ a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     other_key:=strings.clone(other_text)
     defer delete(other_key)
     user:=lost.user
-    // Alice's org, where bob is an admin who added a project: the org's log has an entry no lost
-    // device signed, which a witness follows.
+
+    // Alice's org, with no other member: a seed node, a project, a private scope with a file,
+    // the shared bookmark main and an open proposal, every entry signed by her one device.
     org,oe:=machine_org_create(lost,"studio")
     testing.expect_value(t,oe,Error.None)
-    log_copy(t,&other.store,&lost.store,other.user,.User)
-    testing.expect_value(t,machine_member_add(lost,org,other.user,.Admin),Error.None)
-    log_copy(t,&lost.store,&other.store,user,.User)
-    log_copy(t,&lost.store,&other.store,org,.Org)
-    testing.expect_value(t,machine_org_join(other,org),Error.None)
-    _,pe:=machine_project_add(other,org,random_id(Repo_Id),"game",false)
+    if !box_start(t,b,LOST) || !box_start(t,b,NODE,{.Seed}) {return}
+    box_beacons(b,LOST,NODE)
+    box_beacons(b,NODE,LOST)
+    testing.expect_value(t,machine_node_add(lost,org,node.identity.key,Dh_Key(node.dh.public),{.Seed},b.addresses[NODE][:]),Error.None)
+    testing.expect_value(t,machine_org_join(node,org),Error.None)
+    project,pe:=machine_project_add(lost,org,random_id(Repo_Id),"game",false)
     testing.expect_value(t,pe,Error.None)
+    scope,se:=machine_scope_add(lost,org,project,{"secrets/**"},.Reader,true)
+    testing.expect_value(t,se,Error.None)
+    commit:Revision
+    {
+        o:Org_State
+        testing.expect_value(t,org_state_load(&lost.store,org,&o,context.temp_allocator),Error.None)
+        rings:=make([dynamic]^Keyring_Fold,context.temp_allocator)
+        machine_keyrings(&lost.store,&o,&rings,context.temp_allocator)
+        if !testing.expect_value(t,len(rings),1) {return}
+        root:=fmt.tprintf("%s/ws",b.folder)
+        os.make_directory_all(fmt.tprintf("%s/secrets",root))
+        _=os.write_entire_file(fmt.tprintf("%s/readme.txt",root),transmute([]u8)string("public"))
+        _=os.write_entire_file(fmt.tprintf("%s/secrets/key.txt",root),transmute([]u8)string("the private words"))
+        routing:=Overlay_Routing{org=&o.fold,project=project,keyrings=rings[:],device=machine_overlay_device(lost)}
+        w:Workspace
+        if !testing.expect_value(t,workspace_create(&w,root,&lost.store,lost.identity,overlay=&routing),Error.None) {return}
+        commit=repo_working(&w.repo)
+        w.repo.overlay=nil
+        workspace_close(&w)
+    }
+    proposed:=test_change(t,&lost.store,&lost.identity,"proposed")
+    test_written(t,&lost.store,project,commit,proposed)
+    testing.expect_value(t,machine_bookmark_move(lost,project,"main",commit),Error.None)
+    change,ce:=change_get(&lost.store,proposed,context.temp_allocator)
+    testing.expect_value(t,ce,Error.None)
+    proposal,ppe:=machine_proposal_open(lost,project,"main","Keep the key","why",{{change.id,proposed}})
+    testing.expect_value(t,ppe,Error.None)
+    ovl_ns:[len(OVERLAY_PREFIX)+64+1+32]u8
+    hex:[64]u8
+    runner_changed(&b.runners[LOST],overlay_namespace(project,scope,&ovl_ns),store.hex(commit,&hex))
+    goal:=Org_Goal{NODE,org,project,proposal,scope,commit,user}
+    if !testing.expect(t,box_until(b,15,&goal,org_held),"the seed node mirrors the org") {return}
 
-    _,e=machine_user_find(fresh,store.hex(user,&[64]u8{})[:12])
-    testing.expect_value(t,e,Error.Missing)
-    // Alice's machine is gone: bob's offers the recovery.
-    if !box_start(t,b,1) || !box_start(t,b,2) {return}
-    FRESH,TEAM:=1,2
+    // Alice's machine is gone: the node offers the recovery.
+    box_stop(b,LOST)
+    if !box_start(t,b,FRESH) {return}
+    box_beacons(b,FRESH,NODE)
+    box_beacons(b,NODE,FRESH)
     ticket_buffer:[TICKET_TEXT]u8
     testing.expect_value(t,runner_pair_join(&b.runners[FRESH],"not a ticket","spare"),Error.Corrupt)
     _,offered:=runner_pair_offer(&b.runners[FRESH],.Recover,org,.None,{},&ticket_buffer)
     testing.expect_value(t,offered,Error.Invalid_Argument)
     for wrong in ([]bool{true,false}) {
-        ticket,te:=runner_pair_offer(&b.runners[TEAM],.Recover,org,.None,{},&ticket_buffer)
+        ticket,te:=runner_pair_offer(&b.runners[NODE],.Recover,org,.None,{},&ticket_buffer)
         testing.expect_value(t,te,Error.None)
         testing.expect_value(t,runner_pair_join(&b.runners[FRESH],ticket,"spare"),Error.None)
-        if !testing.expect(t,box_until(b,10,&TEAM,request_shown),"the recovery request reaches the teammate's machine") {return}
-        request,_:=runner_pair_request(&b.runners[TEAM])
+        if !testing.expect(t,box_until(b,10,&NODE,request_shown),"the recovery request reaches the node") {return}
+        request,_:=runner_pair_request(&b.runners[NODE])
         testing.expect(t,request.mode==.Recover && request.name=="spare" && request.user=={},"a recovery names no user")
         testing.expect(t,runner_pair_progress(&b.runners[FRESH]).code==request.code,"both ends show one code")
         if wrong {
-            testing.expect_value(t,runner_pair_answer(&b.runners[TEAM],true,"0000-0000"),Error.Unauthorized)
+            testing.expect_value(t,runner_pair_answer(&b.runners[NODE],true,"0000-0000"),Error.Unauthorized)
         } else {
-            testing.expect_value(t,runner_pair_answer(&b.runners[TEAM],true,request.code),Error.None)
+            testing.expect_value(t,runner_pair_answer(&b.runners[NODE],true,request.code),Error.None)
         }
         testing.expect(t,box_until(b,5,&FRESH,join_ended))
         testing.expect_value(t,runner_pair_progress(&b.runners[FRESH]).phase,wrong?Pair_Phase.Denied:Pair_Phase.Approved)
@@ -861,10 +957,11 @@ a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     testing.expect_value(t,machine_recover(fresh,user,other_key),Error.Unauthorized)
     testing.expect(t,fresh.user=={})
 
-    // The right key, typed in lower case with spaces.
+    // The right key, typed in lower case with spaces: the org's logs are not here yet.
     typed:=strings.to_lower(strings.join(strings.split(key,"-",context.temp_allocator)," ",context.temp_allocator),context.temp_allocator)
-    testing.expect_value(t,machine_recover(fresh,user,typed,"spare"),Error.None)
-    testing.expect(t,fresh.user==user)
+    report:Recover_Report
+    testing.expect_value(t,machine_recover(fresh,user,typed,"spare",&report),Error.None)
+    testing.expect(t,fresh.user==user && report.waiting==1 && report.opened==0,"the org waits for the agent")
     l:Log
     f:User_Fold
     testing.expect_value(t,machine_user_open(fresh,&l,&f),Error.None)
@@ -873,42 +970,55 @@ a_user_recovers_onto_a_new_device_with_its_recovery_key :: proc(t:^testing.T) {
     fresh_kem:=machine_kem_public(fresh)
     testing.expect(t,k>=0 && bytes_equal(user_device_kem(&f,f.devices[k]),fresh_kem[:]))
     user_fold_destroy(&f)
-    testing.expect_value(t,machine_recover(fresh,user,key),Error.Invalid_Argument)
 
-    // Admitted as the user's device, the recovered one takes the org's log, which comes to
-    // witness every removal of a lost device on both machines.
-    Witnessed :: struct {user,org:Log_Id}
-    witnessed :: proc(b:^Box,data:rawptr) -> bool {
-        w:=(^Witnessed)(data)
-        for k in 1..<3 {
-            if !witnessed_on(&b.machines[k].store,w) {return false}
-        }
-        return true
+    // Admitted as the user's device, the recovered one takes the org from the node and witnesses
+    // the lost device's revocation on the org's heads, though that device signed all of them.
+    goal.k=FRESH
+    if !testing.expect(t,box_until(b,15,&goal,org_held),"the org reaches the recovered device") {return}
+    if !testing.expect(t,box_until(b,10,&goal,lost_witnessed),"the org's log witnesses the lost device's revocation") {return}
+    goal.k=NODE
+    testing.expect(t,box_until(b,10,&goal,lost_witnessed),"the witness reaches the node")
+
+    // Run again with the key, the recovery opens the private scope: the recovery key's envelope
+    // gives the device the key, and a new epoch shuts the lost device out.
+    testing.expect_value(t,machine_recover(fresh,user,key,"",&report),Error.None)
+    testing.expectf(t,report.opened==1 && report.waiting==0 && len(report.lost)==0,"%v",report)
+    o:Org_State
+    testing.expect_value(t,org_state_load(&fresh.store,org,&o,context.temp_allocator),Error.None)
+    testing.expect(t,o.fold.owner==user && org_role(&o.fold,user)==.Owner && org_project_index(&o.fold,project)>=0,"the user still owns the org and its project")
+    rings:=make([dynamic]^Keyring_Fold,context.temp_allocator)
+    machine_keyrings(&fresh.store,&o,&rings,context.temp_allocator)
+    if testing.expect_value(t,len(rings),1) {
+        device:=machine_overlay_device(fresh)
+        ov:Overlay
+        testing.expect_value(t,overlay_open(&ov,&fresh.store,rings[0],&device,commit,context.temp_allocator),Error.None)
+        bytes,re:=overlay_file(&ov,&fresh.store,"secrets/key.txt",context.temp_allocator)
+        testing.expect(t,re==.None && string(bytes)=="the private words","the recovered device reads the private file")
+        overlay_close(&ov)
+        testing.expect(t,rings[0].epoch==2 && rings[0].valid[0],"the keyring stands, with a new epoch")
+        old:=machine_overlay_device(lost)
+        _,le:=keyring_epoch_key(rings[0],&old,2)
+        testing.expect_value(t,le,Error.Unauthorized)
     }
-    witnessed_on :: proc(s:^store.Store,w:^Witnessed) -> bool {
-        u,o:Log
-        log_init(&u,w.user,context.temp_allocator)
-        log_init(&o,w.org,context.temp_allocator)
-        if log_open(s,&u,w.user,.User)!=.None || log_open(s,&o,w.org,.Org)!=.None {return false}
-        revokes:=0
-        for &item in u.items {
-            if item.entry.type!=.Device_Revoke {continue}
-            revokes+=1
-            found:=false
-            for &x in o.items {found||=x.entry.type==.Witness && bytes_equal(x.entry.body,witness_body(w.user,item.address))}
-            if !found {return false}
-        }
-        return revokes>0
-    }
-    wanted:=Witnessed{user,org}
-    testing.expect(t,box_until(b,10,&wanted,witnessed),"the org's log witnesses the lost devices' removal")
+    ps:Project_State
+    testing.expect_value(t,machine_project_open(fresh,project,&ps),Error.None)
+    p:=project_state_proposal(&ps,proposal)
+    testing.expect(t,p!=nil && p.status==.Open && p.revision==proposed,"the proposal stands")
+    next:=test_change(t,&fresh.store,&fresh.identity,"after the recovery")
+    project_state_destroy(&ps)
+    testing.expect_value(t,machine_bookmark_move(fresh,project,"main",next),Error.None)
+    testing.expect_value(t,machine_project_open(fresh,project,&ps),Error.None)
+    targets:=make([dynamic]Revision,context.temp_allocator)
+    project_bookmark(&ps.fold,"main",&targets)
+    testing.expect(t,len(targets)==1 && targets[0]==next,"the recovered device moves the bookmark")
+    project_state_destroy(&ps)
     box_stop(b,FRESH)
-    box_stop(b,TEAM)
+    box_stop(b,NODE)
 
     // Rotated, the old key signs nothing beside the rotation: a device it adds
     // on the genesis alone, concurrent with the rotation, is no device.
-    rotated,re:=machine_recovery_rotate(fresh,key,&buffer)
-    testing.expect(t,re==.None && rotated!="")
+    rotated,rre:=machine_recovery_rotate(fresh,key,&buffer)
+    testing.expect(t,rre==.None && rotated!="")
     seed,why:=recovery_decode(key)
     testing.expect_value(t,why,"")
     old:=Identity{seed=seed}

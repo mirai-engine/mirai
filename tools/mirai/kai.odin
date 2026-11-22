@@ -721,7 +721,6 @@ kai_identity_change :: proc(k:^Kai_Machine,positionals:[]string,name:string) -> 
         if e!=.None {return kai_why("identity recovery",k)}
         fmt.printfln("The old recovery key counts no more. The new one, shown once: write it down and keep it offline.\n  %s",recovery)
     case "recover":
-        if m.user!={} {fmt.eprintln("mirai kai identity recover: this device belongs to a user already: recover onto a new store");return 1}
         // The user's log comes from a peer of a recovery pairing: wait for it a while.
         user:vcs.Log_Id
         for tries:=0;;tries+=1 {
@@ -731,14 +730,28 @@ kai_identity_change :: proc(k:^Kai_Machine,positionals:[]string,name:string) -> 
             if tries==0 {fmt.println("Waiting for the agent to fetch the user's log...")}
             time.sleep(200*time.Millisecond)
         }
+        if m.user!={} && m.user!=user {fmt.eprintln("mirai kai identity recover: this device belongs to another user already: recover onto a new store");return 1}
+        again:=m.user==user
         fmt.print("The user's recovery key, as it was printed: ")
         reader:bufio.Reader
         bufio.reader_init(&reader,os.to_stream(os.stdin),allocator=context.temp_allocator)
         line,_:=bufio.reader_read_string(&reader,'\n',context.temp_allocator)
         defer crypto_zero_text(line)
-        if vcs.machine_recover(m,user,line,name)!=.None {return kai_why("identity recover",k)}
+        report:vcs.Recover_Report
+        if vcs.machine_recover(m,user,line,name,&report)!=.None {return kai_why("identity recover",k)}
         id:=user
-        fmt.printfln("User %s recovered onto this device: its other devices are revoked, its passkeys stay. Rotate the recovery key with mirai kai identity recovery if it may have been seen.",short(id[:]))
+        if !again {fmt.printfln("User %s recovered onto this device: its other devices are revoked, its passkeys stay. Rotate the recovery key with mirai kai identity recovery if it may have been seen.",short(id[:]))}
+        // The org's logs come once the peers admit this device: wait for them a while.
+        for tries:=0;report.waiting>0 && k.agent && tries<RECOVER_WAIT*5;tries+=1 {
+            if tries==0 {fmt.println("Waiting for the agent to fetch the orgs' logs and the scopes' keys...")}
+            time.sleep(200*time.Millisecond)
+            if vcs.machine_recover(m,user,line,name,&report)!=.None {return kai_why("identity recover",k)}
+        }
+        if report.opened>0 {fmt.printfln("Private scopes this device reads again through the recovery key: %d. Each starts a new epoch, since the lost devices hold the last key.",report.opened)}
+        for x in report.lost {
+            fmt.printfln("Scope %s: no key left opens its files up to epoch %d, which were wrapped only for keys that are lost; they stay unreadable. Epoch %d starts now for this device.",x.text,x.epoch,x.epoch+1)
+        }
+        if report.waiting>0 {fmt.printfln("%d of the user's orgs or scopes are not in this store yet: once mirai kai org list shows them, run mirai kai identity recover %s again.",report.waiting,positionals[1])}
     }
     return 0
 }

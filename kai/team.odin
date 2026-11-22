@@ -407,7 +407,12 @@ machine_recovery_rotate :: proc(m:^Machine,recovery:string,buffer:^[RECOVERY_TEX
     }
     r:=identity_make()
     defer crypto.zero_explicit(&r,size_of(r))
-    address,e:=log_append(&l,.Recovery_Rotate,body_make(Recovery_Rotate_Body{recovery=r.key}),signer,machine_now())
+    rd:=recovery_device(&r)
+    defer crypto.zero_explicit(&rd,size_of(rd))
+    kem,made:=kem_public(&rd.kem_seed)
+    if !made {return "",machine_fail(m,.Invalid_Argument,"the new recovery key makes no ML-KEM key: rotate again")}
+    body:=Recovery_Rotate_Body{recovery=r.key,dh=rd.dh,kem=kem,proof=device_proof(&r,transmute([32]u8)l.id,rd.dh,blake3.hash(kem[:]))}
+    address,e:=log_append(&l,.Recovery_Rotate,body_make(body),signer,machine_now())
     if e!=.None {return "",machine_fail(m,e,"the rotation does not sign")}
     user_fold_destroy(&f)
     user_fold(&f,&l,context.temp_allocator)
@@ -436,6 +441,17 @@ machine_user_find :: proc(m:^Machine,text:string) -> (user:Log_Id,error:Error) {
     return {},machine_fail(m,.Missing,"no user of that id is in this store yet: join a recovery pairing a machine of one of the user's orgs offers (mirai kai pair offer recover --org <org>) and let the agent fetch it")
 }
 
+// What a recovery did to the private scopes its user reads.
+Recover_Report :: struct {
+    opened:int,  // scopes this device reads again through the recovery key's envelopes
+    waiting:int, // orgs and scopes whose logs or envelopes are not in the store yet: recover again once the agent fetched them
+    lost:[dynamic]Scope_Lost, // in the temp allocator
+}
+
+// A scope whose newest key no key left opened: its files up to epoch are out
+// of anyone's reach, and the epoch after is wrapped for this device.
+Scope_Lost :: struct {org,project:Log_Id,scope:Scope_Id,epoch:u32,text:string} // text: its patterns and project, in the temp allocator
+
 // Recovers the user of id onto this device, which has none, after its devices
 // were lost: recovery is the user's recovery key as it was printed, and the
 // user's log must be in the store (a recovery pairing brings it: mirai kai
@@ -443,8 +459,17 @@ machine_user_find :: proc(m:^Machine,text:string) -> (user:Log_Id,error:Error) {
 // key signs this device into the log and revokes every device still active;
 // passkeys stay. The revocations are witnessed in the logs of the orgs this
 // store holds, and the agents of the others witness them when they fold them.
-machine_recover :: proc(m:^Machine,user:Log_Id,recovery:string,device:="") -> Error {
-    if m.user!={} {return machine_fail(m,.Invalid_Argument,"this device belongs to a user already: a user is recovered onto a device that has none")}
+// Then, in each org whose logs are here, the recovery key's envelopes give
+// this device the keys of the scopes the user reads, and each starts a new
+// epoch (keyring_recover). Run again on the device it recovered onto, with the
+// same key, it does that last part alone, for what the agent fetched since;
+// report says what it did.
+machine_recover :: proc(m:^Machine,user:Log_Id,recovery:string,device:="",report:^Recover_Report=nil) -> Error {
+    if m.user!={} && m.user!=user {return machine_fail(m,.Invalid_Argument,"this device belongs to another user already: a user is recovered onto a device that has none")}
+    own:Recover_Report
+    report:=report
+    if report==nil {report=&own}
+    report^={lost=make([dynamic]Scope_Lost,context.temp_allocator)}
     seed,why:=recovery_decode(strings.trim_space(recovery))
     defer crypto.zero_explicit(&seed,size_of(seed))
     if why!="" {return machine_fail(m,.Invalid_Argument,why)}
@@ -461,36 +486,86 @@ machine_recover :: proc(m:^Machine,user:Log_Id,recovery:string,device:="") -> Er
     defer user_fold_destroy(&f)
     if f.recovery=={} {return machine_fail(m,.Unauthorized,"the user has no recovery key: a user born of a passkey links a device from the browser instead")}
     if f.recovery!=r.key {return machine_fail(m,.Unauthorized,"that recovery key reads but is not this user's now: give the newest one printed for this user, and check the user's id")}
-    if user_device_index(&f,m.identity.key)>=0 {return machine_fail(m,.Invalid_Argument,"this device was a device of the user and is revoked: recover onto a new store")}
-    name:[NAME_MAX]u8
-    named:=device_name_of(device,&name)
-    if !name_valid(named) {return machine_fail(m,.Invalid_Argument,"a device's name is 1 to 64 bytes of text, as laptop: give another")}
-    body:=body_make(Device_Add_Body{device=m.identity.key,dh=Dh_Key(m.dh.public),kem=machine_kem_public(m),proof=device_proof(&m.identity,transmute([32]u8)user,Dh_Key(m.dh.public),machine_kem_hash(m))},transmute([]u8)named)
     written:=make([dynamic]store.Hash,context.temp_allocator)
-    lost:=make([dynamic]Key,context.temp_allocator)
-    add,e:=log_append(&l,.Device_Add,body,&r,machine_now())
-    if e!=.None {return machine_fail(m,e,"the device's entry does not sign")}
-    append(&written,add)
-    for d in f.devices {
-        if d.revoked {continue}
-        address,re:=log_append(&l,.Device_Revoke,revoke_body(d.key),&r,machine_now())
-        if re!=.None {return machine_fail(m,re,"a revocation does not sign")}
-        append(&written,address)
-        append(&lost,d.key)
+    if m.user=={} {
+        if user_device_index(&f,m.identity.key)>=0 {return machine_fail(m,.Invalid_Argument,"this device was a device of the user and is revoked: recover onto a new store")}
+        name:[NAME_MAX]u8
+        named:=device_name_of(device,&name)
+        if !name_valid(named) {return machine_fail(m,.Invalid_Argument,"a device's name is 1 to 64 bytes of text, as laptop: give another")}
+        body:=body_make(Device_Add_Body{device=m.identity.key,dh=Dh_Key(m.dh.public),kem=machine_kem_public(m),proof=device_proof(&m.identity,transmute([32]u8)user,Dh_Key(m.dh.public),machine_kem_hash(m))},transmute([]u8)named)
+        add,e:=log_append(&l,.Device_Add,body,&r,machine_now())
+        if e!=.None {return machine_fail(m,e,"the device's entry does not sign")}
+        append(&written,add)
+        for d in f.devices {
+            if d.revoked {continue}
+            address,re:=log_append(&l,.Device_Revoke,revoke_body(d.key),&r,machine_now())
+            if re!=.None {return machine_fail(m,re,"a revocation does not sign")}
+            append(&written,address)
+        }
+        user_fold_destroy(&f)
+        user_fold(&f,&l,context.temp_allocator)
+        for address in written {
+            if k:=log_find(&l,address);k<0 || !f.valid[k] {return machine_fail(m,.Unauthorized,"the user's log refuses the recovery: let the agent fetch the user's log again, a newer recovery key may be in it")}
+        }
+        machine_log_save(m,&l) or_return
+        machine_user_set(m,user) or_return
+        machine_tell(m,MACHINE_NAMESPACE,MACHINE_USER)
+    } else if !user_device_active(&f,m.identity.key) {
+        return machine_fail(m,.Unauthorized,"this device is revoked: recover onto a new store")
     }
-    user_fold_destroy(&f)
-    user_fold(&f,&l,context.temp_allocator)
-    for address in written {
-        if k:=log_find(&l,address);k<0 || !f.valid[k] {return machine_fail(m,.Unauthorized,"the user's log refuses the recovery: let the agent fetch the user's log again, a newer recovery key may be in it")}
-    }
-    machine_log_save(m,&l) or_return
-    machine_user_set(m,user) or_return
-    machine_tell(m,MACHINE_NAMESPACE,MACHINE_USER)
+    rd:=recovery_device(&r)
+    defer crypto.zero_explicit(&rd,size_of(rd))
     for org in m.orgs {
         o:Org_State
-        if org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {continue}
+        if org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {
+            report.waiting+=1
+            continue
+        }
         defer org_state_destroy(&o)
-        for k in 0..<len(lost) {machine_witness(m,&o,l.id,written[1+k]) or_return}
+        if len(written)>1 {
+            for address in written[1:] {machine_witness(m,&o,l.id,address) or_return}
+        }
+        machine_recover_scopes(m,&o,&rd,report) or_return
+    }
+    return .None
+}
+
+// The scopes of the org o the user reads, after its devices were lost: what
+// keyring_recover makes of each, with report counting them.
+@(private)
+machine_recover_scopes :: proc(m:^Machine,o:^Org_State,recovery:^Overlay_Device,report:^Recover_Report) -> Error {
+    device:=machine_overlay_device(m)
+    defer crypto.zero_explicit(&device,size_of(device))
+    rings:=make([dynamic]^Keyring_Fold,context.temp_allocator)
+    machine_keyrings(&m.store,o,&rings,context.temp_allocator) or_return
+    scopes: for sc in o.fold.scopes {
+        if !device_reads(&o.fold,sc,&device) {continue}
+        for k in rings {
+            if k.project!=sc.project || k.scope!=sc.scope {continue}
+            count,epoch:=len(k.log.items),k.epoch
+            outcome,e:=keyring_recover(k,&device,recovery,machine_now())
+            if e==.Missing {
+                report.waiting+=1
+                continue scopes
+            }
+            if e!=.None {return machine_fail(m,e,"a scope's keys do not wrap for this device: recover again once the agent fetched the org's logs")}
+            if len(k.log.items)!=count {machine_log_save(m,k.log) or_return}
+            switch outcome {
+            case .Read:
+            case .Opened: report.opened+=1
+            case .Lost:
+                patterns:=make([dynamic]string,context.temp_allocator)
+                org_scope_patterns(&o.fold,sc,&patterns)
+                project:="its project"
+                p:Log
+                log_init(&p,sc.project,context.temp_allocator)
+                if log_open(&m.store,&p,sc.project,.Project)==.None {project=log_title(&p)}
+                text:=fmt.tprintf("%s of %s",strings.join(patterns[:]," ",context.temp_allocator),project)
+                append(&report.lost,Scope_Lost{o.log.id,sc.project,sc.scope,epoch,text})
+            }
+            continue scopes
+        }
+        report.waiting+=1
     }
     return .None
 }

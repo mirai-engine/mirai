@@ -555,6 +555,8 @@ User_Fold :: struct {
     log:^Log,
     valid:[]bool,
     recovery:Key, // zero for a user born of a passkey until a device sets one
+    recovery_dh:Dh_Key, // the X25519 key of the recovery key, which epochs are wrapped for
+    recovery_at:u32,    // the entry that set the recovery key: its ML-KEM key is there
     devices:[dynamic]Device,
     web_keys:[dynamic]User_Web_Key,
     keys:Subject_Lists,     // the walk: valid entries about each device or web key
@@ -667,6 +669,12 @@ user_authorized :: proc(f:^User_Fold,e:int) -> bool {
     by_recovery:=entry.sig_kind==.Ed25519 && recovery!={} && entry.author==recovery
     by_device:=entry.sig_kind==.Ed25519 && active && !web
     by_passkey:=entry.sig_kind==.WebAuthn && active && web && recovery=={}
+    // What a rotated key signs beside its rotation is void, whichever the walk meets first (fold_voids).
+    if by_recovery && entry.type!=.Recovery_Rotate {
+        for x in f.recoveries {
+            if f.log.items[x].entry.type==.Recovery_Rotate && log_concurrent(f.log,int(x),e) && user_recovery_before(f,int(x))==entry.author {return false}
+        }
+    }
     #partial switch entry.type {
     case .Device_Add:
         b,_,_:=body_head(entry.body,Device_Add_Body)
@@ -676,7 +684,9 @@ user_authorized :: proc(f:^User_Fold,e:int) -> bool {
         b,_,_:=body_head(entry.body,Device_Revoke_Body)
         known,_,_:=user_key_before(f,b.device,e)
         return (by_recovery || by_device) && known
-    case .Recovery_Rotate: return by_recovery || (recovery=={} && by_device)
+    case .Recovery_Rotate:
+        b,_,_:=body_head(entry.body,Recovery_Rotate_Body)
+        return (by_recovery || (recovery=={} && by_device)) && device_proof_valid(b.recovery,transmute([32]u8)f.log.id,b.dh,b.kem[:],b.proof)
     case .Web_Key_Add:
         key,ok:=web_key_of(entry.body)
         known,_,_:=user_key_before(f,key,e)
@@ -694,7 +704,7 @@ user_apply :: proc(f:^User_Fold) {
         #partial switch entry.type {
         case .User_Genesis:
             b,_,_:=body_head(entry.body,User_Genesis_Body)
-            f.recovery=b.recovery
+            f.recovery,f.recovery_dh,f.recovery_at=b.recovery,b.recovery_dh,u32(e)
             append(&f.devices,Device{key=b.device,dh=b.dh,added=u32(e)})
         case .Passkey_Genesis:
             if key,ok:=web_key_of(entry.body);ok {append(&f.web_keys,User_Web_Key{key=key,added=u32(e)})}
@@ -711,7 +721,7 @@ user_apply :: proc(f:^User_Fold) {
             }
         case .Recovery_Rotate:
             b,_,_:=body_head(entry.body,Recovery_Rotate_Body)
-            f.recovery=b.recovery
+            f.recovery,f.recovery_dh,f.recovery_at=b.recovery,b.dh,u32(e)
         case .Web_Key_Add:
             if key,ok:=web_key_of(entry.body);ok && user_web_key_index(f,key)<0 {append(&f.web_keys,User_Web_Key{key=key,added=u32(e)})}
         }
@@ -725,6 +735,17 @@ user_device_kem :: proc(f:^User_Fold,d:Device) -> []u8 {
     #partial switch entry.type {
     case .User_Genesis: return entry.body[offset_of(User_Genesis_Body,kem):][:KEM_PUBLIC]
     case .Device_Add: return entry.body[offset_of(Device_Add_Body,kem):][:KEM_PUBLIC]
+    }
+    return nil
+}
+
+// The ML-KEM encapsulation key of the user's recovery key now; nil when it has none.
+user_recovery_kem :: proc(f:^User_Fold) -> []u8 {
+    if f.recovery=={} {return nil}
+    entry:=&f.log.items[f.recovery_at].entry
+    #partial switch entry.type {
+    case .User_Genesis: return entry.body[offset_of(User_Genesis_Body,recovery_kem):][:KEM_PUBLIC]
+    case .Recovery_Rotate: return entry.body[offset_of(Recovery_Rotate_Body,kem):][:KEM_PUBLIC]
     }
     return nil
 }
@@ -788,10 +809,17 @@ user_device_active :: proc(f:^User_Fold,device:Key) -> bool {
     return k>=0 && !f.devices[k].revoked
 }
 
-// Whether the user has or had a device of X25519 key dh.
+// Whether the user has or had a device or a recovery key of X25519 key dh.
 user_dh_known :: proc(f:^User_Fold,dh:Dh_Key) -> bool {
     for d in f.devices {
         if d.dh==dh {return true}
+    }
+    for x in f.recoveries {
+        entry:=&f.log.items[x].entry
+        #partial switch entry.type {
+        case .User_Genesis: if (^User_Genesis_Body)(raw_data(entry.body)).recovery_dh==dh {return true}
+        case .Recovery_Rotate: if (^Recovery_Rotate_Body)(raw_data(entry.body)).dh==dh {return true}
+        }
     }
     return false
 }
@@ -1798,8 +1826,8 @@ keyring_authorized :: proc(f:^Keyring_Fold,e:int) -> bool {
     return false
 }
 
-// Whether dh is the key of a device, revoked or not, or of a recovery key of
-// a user who read scope at the org's entry at: one an epoch may be wrapped
+// Whether dh is the key of a device, revoked or not, or of a recovery key,
+// rotated or not, of a user who read scope at the org's entry at: one an epoch may be wrapped
 // for. It holds for good once it does.
 @(private)
 envelope_target :: proc(org:^Org_Fold,scope:Org_Scope,at:int,dh:Dh_Key) -> bool {

@@ -108,11 +108,11 @@ Verdict_Kind :: enum u8 {Approve,Changes,Withdraw}
 Check_State :: enum u8 {Pending,Passed,Failed}
 
 // The fixed part of each body; what follows it is said beside it.
-User_Genesis_Body :: struct #packed {recovery:Key,device:Key,dh:Dh_Key,kem:[KEM_PUBLIC]u8,proof:Signature,device_name:[NAME_MAX]u8} // + name. proof: device_proof over the recovery key; device_name: the first device's, zero-padded
+User_Genesis_Body :: struct #packed {recovery:Key,recovery_dh:Dh_Key,recovery_kem:[KEM_PUBLIC]u8,device:Key,dh:Dh_Key,kem:[KEM_PUBLIC]u8,proof:Signature,device_name:[NAME_MAX]u8} // + name. recovery_dh, recovery_kem: what epochs wrap for the recovery key (recovery_device); proof: device_proof over the recovery key; device_name: the first device's, zero-padded
 Passkey_Genesis_Body :: struct #packed {credential:u8,cose:u16,rp:u8}                  // + credential id, COSE key, relying party id, name; signed by that passkey
 Device_Add_Body :: struct #packed {device:Key,dh:Dh_Key,kem:[KEM_PUBLIC]u8,proof:Signature} // + name. proof: device_proof over the log id
 Device_Revoke_Body :: struct #packed {device:Key}                                      // a device or a web key
-Recovery_Rotate_Body :: struct #packed {recovery:Key}
+Recovery_Rotate_Body :: struct #packed {recovery:Key,dh:Dh_Key,kem:[KEM_PUBLIC]u8,proof:Signature} // dh, kem: the new key's, as recovery_device makes them; proof: device_proof by the new key over the log id
 Web_Key_Add_Body :: struct #packed {credential:u8,cose:u16,rp:u8}                      // + credential id, COSE key, relying party id
 Org_Genesis_Body :: struct #packed {owner:Log_Id}                                       // + name
 Member_Body :: struct #packed {user:Log_Id,role:Role}                                   // Member_Add, Role_Set
@@ -323,18 +323,20 @@ body_valid :: proc(t:Entry_Type,body:[]u8) -> bool {
     case .None: return false
     case .User_Genesis:
         head,tail,ok:=body_head(body,User_Genesis_Body)
-        return ok && name_valid(string(tail)) && name_valid(genesis_device_name(&head),true) && kem_valid(head.kem[:])
+        return ok && name_valid(string(tail)) && name_valid(genesis_device_name(&head),true) && kem_valid(head.kem[:]) && kem_valid(head.recovery_kem[:])
     case .Passkey_Genesis:
         _,_,rp_id,name,ok:=passkey_parts(body)
         return ok && utf8.valid_string(rp_id) && name_valid(string(name))
     case .Device_Add:
         head,tail,ok:=body_head(body,Device_Add_Body)
         return ok && name_valid(string(tail)) && kem_valid(head.kem[:])
-    case .Device_Revoke,.Recovery_Rotate,.Member_Remove,.Owner_Transfer,.Grant_Revoke,.Project_Add,.Scope_Remove,.Node_Remove,.Proposal_Verdict,.Proposal_Land,.Keyring_Genesis,.Envelope_Add,.Witness:
+    case .Recovery_Rotate:
+        head,tail,ok:=body_head(body,Recovery_Rotate_Body)
+        return ok && len(tail)==0 && kem_valid(head.kem[:])
+    case .Device_Revoke,.Member_Remove,.Owner_Transfer,.Grant_Revoke,.Project_Add,.Scope_Remove,.Node_Remove,.Proposal_Verdict,.Proposal_Land,.Keyring_Genesis,.Envelope_Add,.Witness:
         size:=0
         #partial switch t {
         case .Device_Revoke: size=size_of(Device_Revoke_Body)
-        case .Recovery_Rotate: size=size_of(Recovery_Rotate_Body)
         case .Member_Remove,.Owner_Transfer,.Grant_Revoke: size=size_of(Subject_Body)
         case .Witness: size=size_of(Witness_Body)
         case .Project_Add: size=size_of(Project_Add_Body)

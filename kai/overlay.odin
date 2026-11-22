@@ -36,8 +36,9 @@ import "mirai:store"
 //                   edit dedups within its file and epoch while nothing
 //                   confirms a guessed plaintext.
 //
-// A scope's epoch key is wrapped for every device that may read the scope,
-// in an Envelopes object an Epoch_Add names, and for one that may read it
+// A scope's epoch key is wrapped for every device that may read the scope and
+// its user's recovery key, in an Envelopes object an Epoch_Add names, and for
+// one that may read it
 // later in an Envelope_Add of its own; when the scope keeps history the
 // Epoch_Add wraps the previous key under the new one too. A device's
 // envelope is a hybrid of X25519 and ML-KEM-768, so a key sealed today stays
@@ -65,6 +66,8 @@ LABEL_CHUNK :: "kai-1/chunk"
 LABEL_TREE :: "kai-1/tree"
 LABEL_BLOB :: "kai-1/blob"
 LABEL_LEAK :: "kai-1/leak"
+LABEL_RECOVERY_DH :: "kai-1/recovery-dh"
+LABEL_RECOVERY_KEM :: "kai-1/recovery-kem"
 
 // Paths refused at snapshot unless a scope or public_allow takes them.
 DENY_PATTERNS :: [?]string{".env*","*.pem","*.key","id_*","*.p12"}
@@ -267,11 +270,11 @@ keyring_scope :: proc(k:^Keyring_Fold) -> (scope:Org_Scope,ok:bool) {
     return
 }
 
-// Whether the device dh belongs to a member who may read scope.
+// Whether dh is an active device or the recovery key now of a member who may read scope.
 @(private)
 dh_reads :: proc(org:^Org_Fold,scope:Org_Scope,dh:Dh_Key) -> bool {
     for u in org.users {
-        if user_dh_active(u,dh) && org_role(org,u.log.id)>=scope.readers {return true}
+        if (user_dh_active(u,dh) || (u.recovery!={} && u.recovery_dh==dh)) && org_role(org,u.log.id)>=scope.readers {return true}
     }
     return false
 }
@@ -282,12 +285,14 @@ device_reads :: proc(org:^Org_Fold,scope:Org_Scope,device:^Overlay_Device) -> bo
     return role>=scope.readers && dh_reads(org,scope,device.dh)
 }
 
-// A device an epoch's key is wrapped for: its X25519 key and its ML-KEM key,
-// in its user's log.
+// A device or a recovery key an epoch's key is wrapped for: its X25519 key
+// and its ML-KEM key, in its user's log.
 @(private)
 Scope_Reader :: struct {dh:Dh_Key,kem:[]u8}
 
-// Every active device of the members who may read scope, sorted by dh.
+// Every active device and the recovery key of the members who may read
+// scope, sorted by dh: a user whose devices are all lost opens with its
+// recovery key what they could.
 @(private)
 scope_readers :: proc(org:^Org_Fold,scope:Org_Scope,out:^[dynamic]Scope_Reader) -> Error {
     for m in org.members {
@@ -300,6 +305,13 @@ scope_readers :: proc(org:^Org_Fold,scope:Org_Scope,out:^[dynamic]Scope_Reader) 
                 for r in out {held||=r.dh==d.dh}
                 if held {continue}
                 if _,e:=append(out,Scope_Reader{d.dh,user_device_kem(u,d)});e!=nil {return .Out_Of_Memory}
+            }
+            if u.recovery!={} {
+                held:=false
+                for r in out {held||=r.dh==u.recovery_dh}
+                if !held {
+                    if _,e:=append(out,Scope_Reader{u.recovery_dh,user_recovery_kem(u)});e!=nil {return .Out_Of_Memory}
+                }
             }
         }
     }
@@ -426,18 +438,18 @@ keyring_create :: proc(k:^Keyring_Fold,l:^Log,org:^Org_Fold,s:^store.Store,proje
 }
 
 // Adds the next epoch of the scope: a new random key wrapped for every device
-// that may read it now, in an Envelopes object of the store, and the previous
-// key under the new one when the scope keeps history. Any device that reads
-// the scope may call it; the log's fold takes it from a writer. The caller
-// saves the log.
-rotate_scope_epoch :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64) -> (epoch:u32,error:Error) {
+// and recovery key that may read it now, in an Envelopes object of the store,
+// and the previous key under the new one when the scope keeps history, unless
+// lost says no key left opens it. Any device that reads the scope may call it;
+// the log's fold takes it from a writer. The caller saves the log.
+rotate_scope_epoch :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64,lost:=false) -> (epoch:u32,error:Error) {
     scope,ok:=keyring_scope(k)
     if !ok || k.store==nil {return 0,.Invalid_Argument}
     if !device_reads(k.org,scope,device) {return 0,.Unauthorized}
     previous,key:Epoch_Key
     defer crypto.zero_explicit(&previous,size_of(previous))
     defer crypto.zero_explicit(&key,size_of(key))
-    history:=scope.history && k.epoch>0
+    history:=scope.history && k.epoch>0 && !lost
     if history {previous=keyring_epoch_key(k,device,k.epoch) or_return}
     crypto.rand_bytes(key[:])
     epoch=k.epoch+1
@@ -494,6 +506,68 @@ keyring_share :: proc(k:^Keyring_Fold,device:^Overlay_Device,time:i64) -> (added
     }
     if added>0 {keyring_refold(k) or_return}
     return added,.None
+}
+
+// What a recovery made of a scope for the device it recovered onto.
+Scope_Recovery :: enum u8 {
+    Read,   // the device held the newest key already
+    Opened, // the recovery key's envelopes gave it the keys
+    Lost,   // no key left opens the newest epoch: its files and those before are out of reach
+}
+
+// The keys a recovery key opens epochs with, derived from its seed with HKDF
+// so they are never stored either: an X25519 pair and an ML-KEM-768 seed.
+recovery_device :: proc(r:^Identity) -> (device:Overlay_Device) {
+    device.identity=r^
+    hkdf.extract_and_expand(.SHA256,nil,r.seed[:],transmute([]u8)string(LABEL_RECOVERY_DH),device.dh_secret[:])
+    x25519.scalarmult_basepoint(device.dh[:],device.dh_secret[:])
+    hkdf.extract_and_expand(.SHA256,nil,r.seed[:],transmute([]u8)string(LABEL_RECOVERY_KEM),device.kem_seed[:])
+    return
+}
+
+// Gives device, onto which its user was recovered, the scope's keys the
+// recovery key opens: an Envelope_Add for each epoch it lacks (the newest
+// alone when the scope keeps history), then a new epoch, since the lost
+// devices hold the newest key. When neither opens the newest epoch, what was
+// sealed under it and before is out of anyone's reach: the new epoch keeps no
+// history. Missing while an epoch's envelopes are not in the store. The
+// caller saves the log.
+keyring_recover :: proc(k:^Keyring_Fold,device,recovery:^Overlay_Device,time:i64) -> (outcome:Scope_Recovery,error:Error) {
+    scope,ok:=keyring_scope(k)
+    if !ok || k.epoch==0 || !device_reads(k.org,scope,device) {return .Read,.None}
+    user,_:=org_device_role(k.org,device.identity.key)
+    ctx:=org_context(k.org,user)
+    kem,_:=kem_public(&device.kem_seed)
+    added:=0
+    for e:=k.epoch;e>=1;e-=1 {
+        key,ke:=keyring_epoch_key(k,device,e)
+        crypto.zero_explicit(&key,size_of(key))
+        if ke==.None {
+            if e==k.epoch {outcome=.Read}
+            if scope.history {break}
+            continue
+        }
+        if ke!=.Unauthorized {return .Read,ke}
+        key,ke=keyring_epoch_key(k,recovery,e)
+        defer crypto.zero_explicit(&key,size_of(key))
+        if ke==.Unauthorized {
+            if e==k.epoch {outcome=.Lost}
+            if scope.history {break}
+            continue
+        }
+        if ke!=.None {return .Read,ke}
+        envelope,wrapped:=envelope_wrap(k.org.log.id,k.scope,e,device.dh,kem[:],&key)
+        if !wrapped {return .Read,.Invalid_Argument}
+        log_append(k.log,.Envelope_Add,body_make(Envelope_Add_Body{epoch=e,envelope=envelope}),&device.identity,time,{},ctx) or_return
+        if e==k.epoch {outcome=.Opened}
+        added+=1
+        if scope.history {break}
+    }
+    if added>0 {keyring_refold(k) or_return}
+    if outcome==.Lost || keyring_needs_rotation(k) {
+        rotate_scope_epoch(k,device,time,outcome==.Lost) or_return
+    }
+    return outcome,.None
 }
 
 // --- Patterns ---
@@ -1029,7 +1103,11 @@ overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record
 
 // Takes the record a peer gave at address for the ref namespace/name: signed
 // by a device of a writer, of a scope of the org, and newer than the one held.
-// The record's objects point into the temp allocator.
+// One signed by a device its user revoked, of a user who still writes, is
+// taken only where none is held: it replaces nothing, so a revoked key rolls
+// no private file over, and what the device wrote before its revocation still
+// reaches its user's new devices and the members who lacked it. The record's
+// objects point into the temp allocator.
 overlay_accept :: proc(s:^store.Store,org:^Org_Fold,namespace,name:string,address:store.Hash) -> (r:Overlay_Record,changed:bool,error:Error) {
     project,scope,ok:=overlay_namespace_parse(namespace)
     if !ok {return {},false,.Invalid_Argument}
@@ -1044,8 +1122,15 @@ overlay_accept :: proc(s:^store.Store,org:^Org_Fold,namespace,name:string,addres
     r=overlay_record_decode(bytes) or_return
     if r.project!=project || r.scope!=scope || r.commit!=commit {return {},false,.Corrupt}
     if !signed_valid(bytes,r.author) {return {},false,.Unauthorized}
-    if _,role:=org_device_role(org,r.author);role<.Writer {return {},false,.Unauthorized}
+    revoked:=false
+    if _,role:=org_device_role(org,r.author);role<.Writer {
+        for u in org.users {
+            if k:=user_device_index(u,r.author);k>=0 && u.devices[k].revoked && org_role(org,u.log.id)>=.Writer {revoked=true}
+        }
+        if !revoked {return {},false,.Unauthorized}
+    }
     held_address,e:=store.ref_get(s,namespace,name)
+    if e==.None && revoked && held_address!=address {return {},false,.Rollback}
     if e==.None {
         if held_address==address {return r,false,.None}
         // Two writers of one seq: the lower address wins, so every peer keeps the same.

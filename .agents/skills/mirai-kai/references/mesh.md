@@ -91,8 +91,11 @@ or anonymous (an empty claim). The namespace decides who reads it:
   addresses. A member or a node gets what its org reaches, as far as it is here: the user logs and
   the org's logs, the closures of what its projects' shared bookmarks, device refs and proposals'
   stacks name, the device refs, its overlays' records and ciphertext, and its derived data with
-  every object an output lists. Nothing else of the store is served to it: not another org's, a
-  repository in no org nor what a cook kept (`a_member_gets_only_what_its_org_reaches`). The set
+  every object an output lists. A move of a shared bookmark counts as its author signed it, by a
+  user who writes now: what a revoked device moved before the witness of its revocation stays
+  served and fetched, so a recovered user's new device gets it. Nothing else of the store is
+  served to it: not another org's, a repository in no org nor what a cook kept
+  (`a_member_gets_only_what_its_org_reaches`). The set
   is built whole when the agent starts or the org's projects or scopes change, a walk of the
   whole history that reads every node of every object once; a ref that moves adds what it reaches
   down to what the set holds, and an object not here yet joins once it arrives.

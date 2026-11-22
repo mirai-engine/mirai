@@ -32,7 +32,9 @@ test_user :: proc(t:^testing.T,u:^Test_User,name:string,loc:=#caller_location) {
     u.kems[0]=random_id([KEM_SEED]u8)
     u.count=1
     kem,_:=kem_public(&u.kems[0])
-    body:=body_make(User_Genesis_Body{recovery=u.recovery.key,device=u.devices[0].key,dh=Dh_Key(u.dhs[0].public),kem=kem,proof=device_proof(&u.devices[0],transmute([32]u8)u.recovery.key,Dh_Key(u.dhs[0].public),blake3.hash(kem[:]))},transmute([]u8)name)
+    rd:=recovery_device(&u.recovery)
+    recovery_kem,_:=kem_public(&rd.kem_seed)
+    body:=body_make(User_Genesis_Body{recovery=u.recovery.key,recovery_dh=rd.dh,recovery_kem=recovery_kem,device=u.devices[0].key,dh=Dh_Key(u.dhs[0].public),kem=kem,proof=device_proof(&u.devices[0],transmute([32]u8)u.recovery.key,Dh_Key(u.dhs[0].public),blake3.hash(kem[:]))},transmute([]u8)name)
     _,e:=log_append(&u.log,.User_Genesis,body,&u.recovery,1)
     testing.expect_value(t,e,Error.None,loc=loc)
 }

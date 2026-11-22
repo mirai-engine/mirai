@@ -39,7 +39,8 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
 ## Keyrings and epochs
 
 - Each scope has a `Keyring_Log`. An epoch is a random 32-byte key wrapped for every active device
-  of the members who may read the scope, under X25519 and ML-KEM-768 at once: a fresh X25519 share
+  of the members who may read the scope, and for each one's recovery key (below), under X25519 and
+  ML-KEM-768 at once: a fresh X25519 share
   and an ML-KEM encapsulation to the device's key, both shared secrets through HKDF-SHA256 salted
   with the BLAKE3 of the KEM ciphertext, the share and the device's two public keys, then
   AEGIS-256 (`an_epoch_key_opens_only_with_both_device_secrets`). Both must be broken to open it,
@@ -62,6 +63,21 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
   of a user who read it there, to an epoch in its causal past, once per epoch and key; it does
   not ask whether that key still reads, so an envelope a revoked device or a removed member got
   asks for the rotation as one in the `Envelopes` object does.
+- **The recovery key reads.** Its X25519 and ML-KEM keys come from its seed with HKDF, so they
+  are never stored either, and the user's log records their public halves where it sets the key
+  (the genesis, `Recovery_Rotate`, which the new key signs a proof in). A user who loses every
+  device, as a studio of one that loses its laptop, gets its private files back with it: a node
+  holds no key, so nothing else could. `mirai kai identity recover` opens with it the newest key
+  of each scope the user reads (each epoch's own without history), wraps that key for the new
+  device in an `Envelope_Add`, and starts a new epoch, since the lost devices hold the last key
+  (`a_recovered_device_takes_the_scope_keys_its_recovery_key_opens`). An epoch no key left opens
+  (one made before a rotation of the recovery key that no device shared the newest epoch with, or
+  a user born of a passkey that never set one) leaves what was sealed under it and before it
+  unreadable by anyone: recovery names those scopes and starts their next epoch without history.
+  The cost: one more envelope per reading user and epoch, a rotation of each scope the user reads
+  after the recovery key rotates (the old key's envelope asks for it), and a recovery key, read
+  off its paper with a copy of any seed's ciphertext, opens every private file the user could,
+  offline and without signing anything: it is kept as the user's most secret key.
 - Not hybrid, on purpose, one reason each:
   - the mesh's handshakes: a datagram cannot carry ML-KEM, and nothing stored depends on them;
   - pairing's key agreement: it lives seconds, and the ML-KEM key it carries is bound by the
@@ -91,8 +107,10 @@ assets) readable only by some members. The code is `kai/overlay.odin`, `kai/team
   that mirrors the overlay learns no names. Every address in a record names ciphertext, which is
   what lets a seed mirror all of it without any key.
 - An overlay record is signed by a device of a writer and is accepted only when it is newer than the
-  one held (`seq`), so a peer cannot roll private content back. Whatever does not open, or opens to
-  a shape no sealer writes, is `Corrupt`.
+  one held (`seq`), so a peer cannot roll private content back. One signed by a device its user
+  revoked, of a user who still writes, is taken only where no record of its commit is held: a
+  revoked key replaces nothing, and what its device wrote before still reaches its user's new
+  devices. Whatever does not open, or opens to a shape no sealer writes, is `Corrupt`.
 
 ## Leak guardrails
 

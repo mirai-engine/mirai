@@ -411,7 +411,12 @@ agent_unload_settled :: proc(a:^Agent) {
 
 // Writes, in each log of the org this agent holds and its user has a right
 // in, a Witness of each removal that reached this end and not that log yet
-// (witnesses_due): what stops a removed key there.
+// (witnesses_due): what stops a removed key there. It builds on what other
+// keys signed (witness_parents), except for a revocation of a device of its
+// own user, which it witnesses on every head it knows, as the machine that
+// revoked does: the user vouches for what its devices signed until then, and
+// where they signed all of the log, as a lone owner's did, there is nothing
+// else to build on.
 @(private)
 agent_witnesses :: proc(a:^Agent) {
     if !a.folded || a.desc.user=={} {return}
@@ -428,7 +433,11 @@ agent_witnesses :: proc(a:^Agent) {
         clear(&due)
         if witnesses_due(&a.org,l,&due)!=.None {continue}
         for d in due {
-            if witness_parents(l,d.keys,&parents)!=.None || len(parents)==0 {continue}
+            if d.log==a.desc.user {
+                clear(&parents)
+                if log_heads(l,&parents)!=.None || len(parents)==0 {continue}
+                if len(parents)>ENTRY_PARENTS_MAX {resize(&parents,ENTRY_PARENTS_MAX)}
+            } else if witness_parents(l,d.keys,&parents)!=.None || len(parents)==0 {continue}
             user:store.Hash
             if u:=agent_log(a,a.desc.user);u!=nil && len(u.heads)>0 {user=u.items[u.heads[0]].address}
             org_ctx:=org_bound(l.kind)?org_context(&a.org,a.desc.user):{}
@@ -1331,14 +1340,7 @@ agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision
             for b in shared {append(out,b.target)}
             continue
         }
-        if l:=agent_log(a,p.id);l!=nil {
-            for item in l.items {
-                if item.entry.type!=.Bookmark_Move {continue}
-                if _,role:=org_device_role(&a.org,item.entry.author);role<.Writer {continue}
-                b,_,_:=body_head(item.entry.body,Bookmark_Move_Body)
-                append(out,b.to)
-            }
-        }
+        if l:=agent_log(a,p.id);l!=nil {agent_moves(a,l,out)}
         ns:[len(REFS_PREFIX)+64]u8
         refs,e:=store.ref_list(a.desc.store,refs_namespace(p.id,&ns),context.temp_allocator)
         if e!=.None {continue}
@@ -1363,6 +1365,22 @@ agent_targets :: proc(a:^Agent,project:Log_Id,public:bool,out:^[dynamic]Revision
             _,tail,_:=body_head(item.entry.body,Proposal_Revise_Body)
             for st in slice.reinterpret([]Stack_Item,tail) {append(out,st.revision)}
         }
+    }
+}
+
+// The changes the moves of the project's log l name, each as its author
+// signed it: by a device of a user who writes now, standing against the
+// device's revocation once the log witnesses it (the fold finds witnesses),
+// so what a revoked device moved before still reaches the org.
+@(private)
+agent_moves :: proc(a:^Agent,l:^Log,out:^[dynamic]Revision) {
+    f:Project_Fold
+    if project_fold(&f,l,&a.org,{},context.temp_allocator)!=.None {return}
+    for item,i in l.items {
+        if item.entry.type!=.Bookmark_Move {continue}
+        if u:=author_user(a.org.users,l,i);u==nil || org_role(&a.org,u.log.id)<.Writer {continue}
+        b,_,_:=body_head(item.entry.body,Bookmark_Move_Body)
+        append(out,b.to)
     }
 }
 
@@ -1518,12 +1536,9 @@ members_log :: proc(a:^Agent,l:^Log,out:^[dynamic]Walk_Item) {
     case .Org: if l.id!=a.desc.org {return}
     case .Project:
         if !a.folded || org_project_index(&a.org,l.id)<0 {return}
-        for item in l.items {
-            if item.entry.type!=.Bookmark_Move {continue}
-            if _,role:=org_device_role(&a.org,item.entry.author);role<.Writer {continue}
-            b,_,_:=body_head(item.entry.body,Bookmark_Move_Body)
-            append(out,Walk_Item{b.to,.Change,true})
-        }
+        targets:=make([dynamic]Revision,context.temp_allocator)
+        agent_moves(a,l,&targets)
+        for r in targets {append(out,Walk_Item{r,.Change,true})}
     case .Proposal:
         k:=log_find(l,l.id)
         if !a.folded || k<0 || l.items[k].entry.type!=.Proposal_Open {return}
