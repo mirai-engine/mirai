@@ -321,7 +321,7 @@ machine_device_revoke :: proc(m:^Machine,device:Key) -> Error {
         o:Org_State
         if org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {continue}
         defer org_state_destroy(&o)
-        machine_witness(m,&o,l.id,address,{device}) or_return
+        machine_witness(m,&o,l.id,address) or_return
     }
     return .None
 }
@@ -333,7 +333,7 @@ machine_device_revoke :: proc(m:^Machine,device:Key) -> Error {
 // heads this device knows, so what the removed keys signed before stands
 // there; a log where this device holds no right takes none of it, and is
 // left to a device that does.
-machine_witness :: proc(m:^Machine,o:^Org_State,removal_log:Log_Id,removal:store.Hash,_:[]Key) -> Error {
+machine_witness :: proc(m:^Machine,o:^Org_State,removal_log:Log_Id,removal:store.Hash) -> Error {
     org:=o.log.id
     body:=witness_body(removal_log,removal)
     user,ctx:=machine_user_head(m),org_context(&o.fold,m.user)
@@ -490,7 +490,7 @@ machine_recover :: proc(m:^Machine,user:Log_Id,recovery:string,device:="") -> Er
         o:Org_State
         if org_state_load(&m.store,org,&o,context.temp_allocator)!=.None {continue}
         defer org_state_destroy(&o)
-        for key,k in lost {machine_witness(m,&o,l.id,written[1+k],{key}) or_return}
+        for k in 0..<len(lost) {machine_witness(m,&o,l.id,written[1+k]) or_return}
     }
     return .None
 }
