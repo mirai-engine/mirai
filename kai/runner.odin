@@ -163,6 +163,7 @@ Runner_Org :: struct {
     refolds:int,         // agent.stats.refolds when the peers were last read
     peers:[dynamic]Runner_Peer,
     beacon_devices:[dynamic]Dh_Key,
+    whole_refs:map[store.Hash]struct{}, // device refs whose bookmarks were told whole
     stats:Agent_Stats,   // as last told
     connected:[AGENT_PEERS]bool,
 }
@@ -209,10 +210,12 @@ Runner :: struct {
     ddc:[dynamic]DDC_Lookup,    // lookups under way, at most DDC_LOOKUPS_MAX
     control:Control_Server,
     active:f64,                 // when it last had something to do
+    told:int,                   // changes local processes told (runner_changed)
     ddc_use:[dynamic]DDC_Use,   // a ddc node: when each key was last asked through it, at most DDC_USES_MAX
     ddc_found,ddc_missing:int,  // lookups through this runner that ended
     ddc_swept:f64,
     tcp:[dynamic]^Tcp_Stream,   // the relay over TCP: a node's connections from devices, a device's to its nodes
+    tcp_spare:[dynamic]^Tcp_Stream, // closed streams the next connections take
     tcp_listener:cnet.TCP_Socket,
     has_tcp:bool,
     tcp_port:int,
@@ -313,6 +316,7 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
     r.ddc,ddc_error=make([dynamic]DDC_Lookup,0,DDC_LOOKUPS_MAX,allocator)
     r.ddc_use,use_error=make([dynamic]DDC_Use,0,DDC_USES_MAX,allocator)
     r.tcp=make([dynamic]^Tcp_Stream,allocator)
+    r.tcp_spare=make([dynamic]^Tcp_Stream,allocator)
     if ddc_error!=nil || use_error!=nil {
         runner_free(r)
         return .Out_Of_Memory
@@ -453,6 +457,7 @@ runner_org_open :: proc(r:^Runner,id:Log_Id) -> ^Runner_Org {
     o.id,o.route=id,route_of(id)
     o.peers=make([dynamic]Runner_Peer,allocator)
     o.beacon_devices=make([dynamic]Dh_Key,allocator)
+    o.whole_refs=make(map[store.Hash]struct{},allocator)
     clients:[AGENT_CLIENTS]net.Transport
     for &v,k in o.virtuals {
         v={runner=r,org=o,client=k>0}
@@ -490,12 +495,14 @@ runner_org_free :: proc(r:^Runner,o:^Runner_Org) {
     for &v in o.virtuals {delete(v.data,r.allocator)}
     delete(o.peers)
     delete(o.beacon_devices)
+    delete(o.whole_refs)
     free(o,r.allocator)
 }
 
 // A ref this machine wrote: the agents read it again and tell their peers.
 runner_changed :: proc(r:^Runner,namespace,name:string) {
     r.active=r.now
+    r.told+=1
     if namespace==MACHINE_NAMESPACE {
         machine_reload(r.machine)
         runner_reload(r)
@@ -607,20 +614,26 @@ runner_ddc_mirror :: proc(r:^Runner,o:^Runner_Org) {
 }
 
 // The bookmarks of other devices the store holds, and whether each change is
-// whole here.
+// whole here: a device's refs told whole are not walked again.
 @(private)
 runner_bookmarks_event :: proc(r:^Runner,o:^Runner_Org) {
     a:=&o.agent
     if !a.folded || r.desc.event.procedure==nil {return}
+    told:=make([dynamic]store.Hash,context.temp_allocator)
     for p in a.org.projects {
         ns:[len(REFS_PREFIX)+64]u8
         refs,e:=store.ref_list(a.desc.store,refs_namespace(p.id,&ns),context.temp_allocator)
         if e!=.None {continue}
         for ref in refs {
+            if ref.hash in o.whole_refs {
+                append(&told,ref.hash)
+                continue
+            }
             bytes,ge:=object_get(a.desc.store,ref.hash,.Device_Refs,context.temp_allocator)
             if ge!=.None {continue}
             d,de:=device_refs_decode(bytes,context.temp_allocator)
             if de!=.None || d.device==r.machine.identity.key {continue}
+            whole:=true
             for b in d.refs {
                 present:=make([dynamic]store.Hash,context.temp_allocator)
                 missing:=make([dynamic]store.Hash,context.temp_allocator)
@@ -630,9 +643,13 @@ runner_bookmarks_event :: proc(r:^Runner,o:^Runner_Org) {
                 hex,project,device:[64]u8
                 pid,dk:=p.id,d.device
                 runner_event(r,"project %s device %s: %s -> change %s %s",store.hex(pid,&project)[:12],store.hex(transmute(store.Hash)dk,&device)[:12],b.name,ce==.None?hex_text(id[:6],hex[:]):"(not here)",len(missing)==0?"whole":fmt.tprintf("fetching, %d objects missing",len(missing)))
+                whole&&=len(missing)==0 && ce==.None
             }
+            if whole {append(&told,ref.hash)}
         }
     }
+    clear(&o.whole_refs)
+    for h in told {o.whole_refs[h]={}}
 }
 
 // Who the org's log says this runner reaches for: every active device of a
@@ -1480,10 +1497,18 @@ Runner_Peer_Info :: struct {
 // How current an org's agent is: the entries of the org's logs peers named
 // that are not here yet (writes wait while there are any), and those let go
 // after BEHIND_SECONDS.
-Runner_Org_Info :: struct {org:Log_Id,behind,unfound:int}
+Runner_Org_Info :: struct {
+    org:Log_Id,
+    behind,unfound:int,
+    changes:u32, // grows with what peers or local writes changed of the org: a reader looks again only then
+}
 
 runner_orgs_info :: proc(r:^Runner,out:^[dynamic]Runner_Org_Info) {
-    for o in r.orgs {append(out,Runner_Org_Info{o.id,o.agent.stats.behind,o.agent.stats.unfound})}
+    for o in r.orgs {
+        s:=o.agent.stats
+        changes:=u32(r.told+s.refolds+s.refs_accepted+s.overlays_accepted+s.ddc_accepted+s.logs_merged)
+        append(out,Runner_Org_Info{o.id,s.behind,s.unfound,changes})
+    }
 }
 
 runner_peers :: proc(r:^Runner,out:^[dynamic]Runner_Peer_Info) {

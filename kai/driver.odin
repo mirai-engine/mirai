@@ -67,7 +67,7 @@ drivers_anchor :: proc(drivers:[]Driver,from,to:[]u8,anchor:^Anchor) -> bool {
     return text_anchor(from,to,anchor)
 }
 
-// A file is binary when a NUL appears in its first bytes, as git judges it.
+// A file is binary when a NUL appears in its first 8000 bytes.
 binary :: proc "contextless" (bytes:[]u8) -> bool {
     for b in bytes[:min(len(bytes),8000)] {
         if b==0 {return true}

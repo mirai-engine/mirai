@@ -365,8 +365,10 @@ kai_team_poll :: proc(s:^Session) {
             t.org_info_count=n
         }
     }
-    vcs.machine_reload(&t.machine)
     kai_detail_retry(s)
+    // A running agent says when the org changed; without one, the refs are read.
+    if t.connected && !changed {return}
+    vcs.machine_reload(&t.machine)
     signature:=kai_team_signature(s)
     if signature!=t.signature {
         t.signature=signature

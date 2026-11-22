@@ -676,8 +676,8 @@ split_tree :: proc(r:^Repo,c:^Change,paths:[]string,refused:^string) -> (tree:st
 // takes from it only the picked files over its parents' tree; the second, a
 // new change on the first with no description, keeps its whole tree, and what
 // pointed at revision (children, heads, bookmarks, workspaces) moves onto it.
-// Both keep its coauthors and turns, with its author among the coauthors when
-// another key signs them. A working copy split this way keeps its files.
+// Both keep its coauthors and attachments, with its author among the
+// coauthors when another key signs them. A working copy split this way keeps its files.
 // The second takes the change's private files and the first its parents',
 // since no private path is picked. An Invalid_Argument says why in refused,
 // in the temp allocator.
