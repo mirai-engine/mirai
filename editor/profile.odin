@@ -495,10 +495,10 @@ profile_gpu_ms :: proc(c:^Profile_Capture,allocator:=context.temp_allocator) -> 
     return values[:]
 }
 
-// Who declares what a zone measures: a loop function of the game of the
-// project or of a plugin; any other zone (a part of the frame, a job, an
-// engine function) is the engine's.
-Profile_Owner :: enum u8 {Engine,Game,Plugin}
+// Who declares the loop function a zone measures: the game of the project,
+// a plugin or the engine. A zone that measures no loop function (a part of
+// the frame, a job) has none: zero.
+Profile_Owner :: enum u8 {Game=1,Plugin,Engine}
 Profile_Zone_Owner :: struct {owner:Profile_Owner,plugin:string}
 
 profile_zone_owner :: proc(steps:[]core.Step_Info,name:string) -> Profile_Zone_Owner {
@@ -506,7 +506,7 @@ profile_zone_owner :: proc(steps:[]core.Step_Info,name:string) -> Profile_Zone_O
         if step.name!=name {continue}
         if step.game {return {owner=.Game}}
         if step.plugin!="" {return {.Plugin,step.plugin}}
-        break
+        return {owner=.Engine}
     }
     return {}
 }

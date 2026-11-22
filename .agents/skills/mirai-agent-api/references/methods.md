@@ -303,11 +303,13 @@ the GPU passes and the conditions of the measurement. The editor keeps the last 
 - `profile.compare` gives `comparable:false` with a blocking difference in conditions or if either
   of the two is not `comparable`. `profile.save` keeps what it reads of a capture as a baseline of
   the project, by name, in `.mirai/profiles/baselines` outside git, and `profile.compare` takes it
-  with `baseline` in a later session. A baseline file has a format version: one of another
-  version, or that is not one, is refused and is saved again.
+  with `baseline` in a later session, instead of `base`: both at once is refused. A baseline file
+  has a format version, read first: one of another version, or that is not one, is refused and is
+  saved again.
 - The `owner` of a zone is whoever declares the loop function it measures (`Step_Info.game` and
-  `plugin`, which the generator writes): `Game`, `Plugin` with its name, or `Engine` for any other
-  zone. GPU passes have none: a pass does not know who added it.
+  `plugin`, which the generator writes): `Game`, `Plugin` with its name, or `Engine`. A zone that
+  measures no loop function (a part of the frame, a job) has none, nor does a GPU pass: a pass
+  does not know who added it.
 - `profile.load` answers about the last load of the document (`scene.open`, a scene a game asks
   for), of Play (`play.start`) and of a section, without recording anything first
   ([loads](../../mirai-core/references/host.md#the-frame)): `ready_ms` until it was the document

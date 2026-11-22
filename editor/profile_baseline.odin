@@ -90,10 +90,18 @@ profile_baseline_load :: proc(project_root,name:string,allocator:=context.alloca
     path:=profile_baseline_path(project_root,name)
     bytes,read:=os.read_entire_file(path,context.temp_allocator)
     if read!=nil {return {},fmt.tprintf("No baseline %q (%s): profile.save writes one; profile.list names the saved ones",name,path)}
-    if json.unmarshal(bytes,&d,allocator=allocator)!=nil || !digest_valid(d) {return {},fmt.tprintf("%s is not a baseline: save it again with profile.save",path)}
-    if d.version!=PROFILE_BASELINE_VERSION {return {},fmt.tprintf("%s is a baseline of format %d and this editor reads %d: save it again with profile.save",path,d.version,PROFILE_BASELINE_VERSION)}
+    // The version first: a baseline of another format may name its fields otherwise.
+    format:struct {version:int}
+    if json.unmarshal(bytes,&format,allocator=context.temp_allocator)!=nil || format.version<=0 {return {},not_a_baseline(path)}
+    if format.version!=PROFILE_BASELINE_VERSION {return {},fmt.tprintf("%s is a baseline of format %d and this editor reads %d: save it again with profile.save",path,format.version,PROFILE_BASELINE_VERSION)}
+    if json.unmarshal(bytes,&d,allocator=allocator)!=nil || !digest_valid(d) {return {},not_a_baseline(path)}
     d.id,d.baseline=0,strings.clone(name,allocator)
     return d,""
+}
+
+@(private="file")
+not_a_baseline :: proc(path:string) -> string {
+    return fmt.tprintf("%s is not a baseline: save it again with profile.save",path)
 }
 
 // What a file must say to be a digest: frames, and times that are numbers
@@ -101,7 +109,7 @@ profile_baseline_load :: proc(project_root,name:string,allocator:=context.alloca
 @(private="file")
 digest_valid :: proc(d:Profile_Digest) -> bool {
     ms :: proc(v:f64) -> bool {return v>=0 && v<1e9}
-    if d.version<=0 || d.frames<=0 || !ms(d.mean_ms) || !ms(d.p95_ms) || !ms(d.cpu_ms) || !ms(d.gpu_ms) {return false}
+    if d.frames<=0 || !ms(d.mean_ms) || !ms(d.p95_ms) || !ms(d.cpu_ms) || !ms(d.gpu_ms) {return false}
     for z in d.zones {if z.name=="" || !ms(z.self_ms) {return false}}
     for p in d.passes {if p.name=="" || !ms(p.ms) {return false}}
     return true
