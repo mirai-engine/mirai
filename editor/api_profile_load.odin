@@ -52,7 +52,6 @@ Api_Profile_Load_Pipelines :: struct {
     compiled:int `mirai:"label=Pipelines without a confirmed application cache hit"`,
     driver_ms:f32 `mirai:"label=What the driver took for them, summed over the threads"`,
     late_frames:int `mirai:"label=Frames that drew materials without their pipelines (as their rows) while they compiled"`,
-    waited_ms:f32 `mirai:"label=Time frames spent waiting for pipelines"`,
     store:rhi.Pipeline_Store_State `mirai:"label=What the device found of the kept pipelines: Missing on a first start, Other_Device after an update of the driver"`,
 }
 Api_Profile_Load :: struct {
@@ -129,8 +128,7 @@ profile_load_out :: proc(s:^Session,l:host.Load_Summary,manual:bool) -> (out:Api
     for w,i in l.waits {out.waits[i]={w.busy,f32(w.until_ms),w.frames}}
     out.pipelines={
         made=l.pipelines.made,compiled=l.pipelines.made-l.pipelines.kept,
-        driver_ms=f32(host.load_ms(l.pipelines.ns)),late_frames=int(l.pipelines.late),
-        waited_ms=f32(host.load_ms(l.pipelines.waited_ns)),store=l.store,
+        driver_ms=f32(host.load_ms(l.pipelines.ns)),late_frames=int(l.pipelines.late),store=l.store,
     }
     out.notes=profile_load_notes(l,manual)
     return

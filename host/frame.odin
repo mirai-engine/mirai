@@ -122,7 +122,7 @@ app_gpu_create :: proc(app:^App,desc:App_Desc) -> App_Error {
         free(renderer,app.allocator)
         return .Out_Of_Memory
     }
-    wait:=Pipelines_Wait{app=app,started=platform.clock_ns()}
+    wait:=Pipelines_Wait{app=app,started=platform.clock_ns(),chrome=desc.window_desc.chrome,cancel=desc.on_pipelines_cancel,cancel_user=desc.on_pipelines_cancel_user}
     initialized:=render.renderer_init(renderer,{
         device=device,width=u32(app.drawable.x),height=u32(app.drawable.y),
         settings=desc.render_settings,allocator=app.allocator,shaders=shaders,
@@ -177,8 +177,7 @@ app_window_open :: proc(app:^App,window:platform.Window_Desc) -> App_Error {
             return .Device_Failed
         }
     }
-    // A window shows each frame to someone, who would see one wait for the driver.
-    if app.renderer!=nil {app.renderer.pipelines_async=true}
+    if app.renderer!=nil {render.renderer_pipelines_async(app.renderer)}
     app.window=window
     app.paced=true
     p.fixed_dt=0
@@ -623,7 +622,6 @@ app_draw :: proc(app:^App,window:platform.Window_Frame) -> bool {
         probes=extras.probes[:extras.probe_count],
         output=app.output,ui_only=app.ui_only,
         refresh_hz=app.platform.window.refresh_hz if app.platform!=nil else 0,
-        pipeline_wait=app_pipeline_wait if !app.platform.headless else nil,pipeline_wait_user=app,
     })
     app.stats.render_ms=f32(time.duration_milliseconds(time.tick_since(started)))
     if !drawn {

@@ -10,7 +10,7 @@ mirai: load Scene control/control.scene: ready at 653 ms, resident at 932 ms, 18
   phases: Startup 288424 ms Prepare 71 ms (summed) Nav_Tiles 32 ms (summed)
   pipelines: 3 pipelines compiled in 723 ms of the driver, although the kept pipelines were read: their shaders changed
 mirai: 299 frames, mean frame time 18.09 ms, drawn at 1920x1017, no player options
-  pipelines: 102 made (0 kept), 535205 ms in the driver, longest 184201.5 ms, store Missing; 3 frames late, 675 ms waited`
+  pipelines: 102 made (0 kept), 535205 ms in the driver, longest 184201.5 ms, store Missing; 3 frames late`
 
 @(test)
 bench_pipelines_reads_what_the_player_says :: proc(t:^testing.T) {
@@ -24,7 +24,6 @@ bench_pipelines_reads_what_the_player_says :: proc(t:^testing.T) {
     testing.expect_value(t,run.longest_ms,184201.5)
     testing.expect_value(t,run.store,"Missing")
     testing.expect_value(t,run.late,3)
-    testing.expect_value(t,run.waited_ms,675)
     testing.expect(t,!bench_pipelines_parse("mirai: 299 frames, mean frame time 18 ms").found,"no summary, nothing found")
     later:=bench_pipelines_parse("  phases: Nav_Tiles 1074 ms (summed) Startup 1027 ms Prepare 53 ms (summed)")
     testing.expect_value(t,later.startup_ms,1027)
