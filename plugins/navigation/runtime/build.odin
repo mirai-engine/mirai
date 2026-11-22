@@ -776,7 +776,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
         carved=start.carved
         ns=start.carve_ns
     }
-    marks_wanted(n,paths,worlds)
+    marks_wanted(n,b,paths,worlds)
     // The marks nearest the sources, nearest first: no tick gathers more than NAV_CHECKS_PER_TICK.
     nearest:[NAV_CHECKS_PER_TICK]Build_Near
     count:=0
@@ -854,7 +854,11 @@ near_before :: #force_inline proc "contextless" (a,b:Build_Near) -> bool {
 // for a path, from where it stands straight to its goal: it finds no way, or
 // one cut short, until they are built.
 @(private)
-marks_wanted :: proc(n:^Navigation,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read)) {
+marks_wanted :: proc(n:^Navigation,b:^Navigation_Builds,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read)) {
+    ready:=0
+    for &c in n.classes[:n.count] {ready+=c.ready}
+    if ready==0 {return}
+    b.looked+=u64(core.count(paths))
     for row in 0..<core.count(paths) {
         p:=core.at(paths,row)
         if p.state!=.Waiting || p.class<0 || int(p.class)>=n.count {continue}

@@ -1091,6 +1091,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	translucent := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Gbuffer_Vert], fragment = &r.shader_codes[.Glass_Filter_Frag],
 		color_formats = {0 = .RGBA16_Float}, color_count = 1, blend = {0 = .Multiply},
+		depth_format = .D32_Float, depth_test = true, depth_compare = .Greater_Equal,
 		cull = .None, name = "translucent",
 	}
 	graphics(list, r, .Glass_Filter, translucent)

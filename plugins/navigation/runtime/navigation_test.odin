@@ -1306,6 +1306,17 @@ nothing_changes_while_nothing_does :: proc(t:^testing.T) {
     if !nav_test_init(t,&f) {return}
     defer nav_test_destroy(&f)
     s:=nav_test_sections(&f,3)
+    // An obstacle, a link and an agent's path, each a row the build reads.
+    obstacle:=core.create(&f.entities)
+    core.add(&f.transforms,obstacle,core.Transform{{-20,0.5,0},1,{1,1,1}})
+    core.add(&f.obstacles,obstacle,Nav_Obstacle{})
+    core.add(&f.volumes,obstacle,volume.box({0.5,0.5,0.5}))
+    ladder:=core.create(&f.entities)
+    core.add(&f.transforms,ladder,core.Transform{{-25,0,2},1,{1,1,1}})
+    core.add(&f.links,ladder,Nav_Link{enabled=true,end={3,0,0},kind=LINK_LADDER,area=AREA_WALKABLE})
+    walker:=core.create(&f.entities)
+    core.add(&f.worlds,walker,core.World_Transform{transform={position={-15,0,0},rotation=1,scale=1}})
+    core.add(&f.paths,walker,Nav_Path{goal={-25,0,0},state=.Waiting})
     nav_test_settled(t,&f)
     nav_test_drop(&f,&s,1)
     nav_test_settled(t,&f)

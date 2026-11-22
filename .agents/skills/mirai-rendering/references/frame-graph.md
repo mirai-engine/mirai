@@ -139,9 +139,9 @@ or interleave its own passes.
     and collapses the others, so they cover what the G-buffer drew; they test depth equal without
     writing it and do not enter the BVH/TLAS
     ([overlays](../../mirai-core/references/host.md#loaded-assets)).
-11. **translucent**: the nearest transmissive surfaces form the glass layers. Non-transmissive
-    blends draw forward back to front between them, and overflow glass filters in the same order;
-    each raster splits passes to stay within the command bound.
+11. **translucent**: the nearest transmissive surfaces form the glass layers. Blends draw forward
+    back to front between them and overflow glass filters in that order, against the opaque depth;
+    a blend nearer than every glass in its screen tiles draws only in front of the nearest layer.
 12. **glass**: lights each layer once per pixel, from the farthest to the nearest
     ([glass](materials.md#glass)). The cull can suppress shading dispatches when no blended
     instance passes. Glass reflections use the projected bounds of glass that can trace.

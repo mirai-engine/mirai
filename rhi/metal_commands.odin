@@ -348,12 +348,20 @@ cmd_bind_pipeline :: proc(c: ^Command_List, pipeline: Pipeline) {
 	c.dirty = ~Mtl_Slots{}
 }
 
+// A binding of the slot changed: the next draw applies it. Within a pass the
+// same binding again applies nothing, as on Vulkan.
+@(private)
+mtl_slot_set :: proc(c: ^Command_List, slot: u32, binding: Slot_Binding) {
+	if c.in_render_pass && c.slots[slot] == binding {return}
+	c.slots[slot] = binding
+	c.dirty += {int(slot)}
+}
+
 cmd_bind_buffer :: proc(c: ^Command_List, slot: u32, buffer: Buffer, offset: u64 = 0, size: u64 = 0) {
 	b := pool_get(&c.device.buffers, base.Handle(buffer))
 	if b == nil || !binding_slot_valid(slot, .Storage_Buffer) {set_error(c.device, "invalid buffer binding at slot %d", slot); return}
 	range := size if size > 0 else b.size - offset
-	c.slots[slot] = {set = true, buffer = buffer, offset = offset, range = range}
-	c.dirty += {int(slot)}
+	mtl_slot_set(c, slot, {set = true, buffer = buffer, offset = offset, range = range})
 }
 
 cmd_bind_transient :: proc(c: ^Command_List, slot: u32, t: Transient) {
@@ -380,20 +388,17 @@ cmd_set_constants :: proc(c: ^Command_List, slot: u32, data: rawptr, size: int) 
 
 cmd_bind_texture :: proc(c: ^Command_List, slot: u32, texture: Texture, mip: i32 = -1) {
 	if pool_get(&c.device.textures, base.Handle(texture)) == nil || slot >= MAX_BINDING_SLOTS {set_error(c.device, "invalid texture binding at slot %d", slot); return}
-	c.slots[slot] = {set = true, texture = texture, mip = mip}
-	c.dirty += {int(slot)}
+	mtl_slot_set(c, slot, {set = true, texture = texture, mip = mip})
 }
 
 cmd_bind_sampler :: proc(c: ^Command_List, slot: u32, sampler: Sampler) {
 	if pool_get(&c.device.samplers, base.Handle(sampler)) == nil || !binding_slot_valid(slot, .Sampler) {set_error(c.device, "invalid sampler binding at slot %d", slot); return}
-	c.slots[slot] = {set = true, sampler = sampler}
-	c.dirty += {int(slot)}
+	mtl_slot_set(c, slot, {set = true, sampler = sampler})
 }
 
 cmd_bind_accel :: proc(c: ^Command_List, slot: u32, accel: Accel) {
 	if pool_get(&c.device.accels, base.Handle(accel)) == nil || !binding_slot_valid(slot, .Accel) {set_error(c.device, "invalid acceleration structure binding at slot %d", slot); return}
-	c.slots[slot] = {set = true, accel = accel}
-	c.dirty += {int(slot)}
+	mtl_slot_set(c, slot, {set = true, accel = accel})
 }
 
 @(private)
