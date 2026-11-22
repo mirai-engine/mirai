@@ -1,5 +1,6 @@
 package hub
 
+import "core:mem/virtual"
 import "core:slice"
 import "core:strings"
 import "core:unicode/utf8"
@@ -42,7 +43,7 @@ Project_View :: struct {
     member:bool, // the session's user is a member of the org
     name:string,
     log:^kai.Log,
-    bookmarks:[dynamic]Bookmark_View,
+    bookmarks:[]Bookmark_View, // of the org's views: read only
     main:int, // index of the main bookmark, -1 without bookmarks
     graph:^kai.Graph_Index,
 }
@@ -53,6 +54,31 @@ Project_Graph :: struct {
     sum:store.Hash, // of the targets it was extended with last
     graph:kai.Graph_Index,
     used:f64,
+    seen:[2]int,    // the views' stamps it was extended at
+}
+
+// What the read routes take of an org, made when its agent changes and not on
+// each request: its proposals folded and settled, and the bookmarks of each
+// project for anyone and for a member. A fold of the logs makes it again at
+// the next request that reads it; refs or objects that came make it again at
+// most once per step of the hub. So a flood of requests folds nothing.
+Org_Views :: struct {
+    org:kai.Log_Id,
+    stamps:[2]int, // the agent's refolds, and the refs it took and objects it fetched
+    made:f64,      // the hub's time it was made at
+    arena:virtual.Arena,
+    proposals:[dynamic]Org_Proposal,
+    projects:[dynamic]Project_Bookmarks,
+}
+
+Org_Proposal :: struct {project:kai.Log_Id,fold:^kai.Proposal_Fold}
+
+// The bookmarks of a project: the moves its log keeps, and for a member also
+// each name a device publishes that no move keeps.
+Project_Bookmarks :: struct {
+    project:kai.Log_Id,
+    shared,member:[]Bookmark_View,
+    shared_main,member_main:int,
 }
 
 @(private)
@@ -91,8 +117,12 @@ project_open :: proc(c:^Call,id_text:string) -> (v:Project_View,ok:bool) {
             v={org=o,id=id,public=p.public,member=member,main=-1}
             v.log=kai.agent_log(&o.agent,id)
             v.name=project_name(v.log)
-            v.bookmarks=make([dynamic]Bookmark_View,context.temp_allocator)
-            project_bookmarks(c.h,&v)
+            if w:=org_views(c.h,o);w!=nil {
+                for &b in w.projects {
+                    if b.project!=id {continue}
+                    v.bookmarks,v.main=member?b.member:b.shared,member?b.member_main:b.shared_main
+                }
+            }
             v.graph=project_graph(c.h,&v)
             return v,true
         }
@@ -112,49 +142,113 @@ project_name :: proc(l:^kai.Log) -> string {
     return ""
 }
 
-// The bookmarks of a project: the moves its log keeps, then for a member each
-// name a device publishes that no move keeps, at its newest record.
 @(private)
-project_bookmarks :: proc(h:^Hub,v:^Project_View) {
+views_stamps :: proc(o:^kai.Runner_Org) -> [2]int {
+    s:=o.agent.stats
+    return {s.refolds,s.refs_accepted+s.objects_fetched}
+}
+
+// The views of org o, made again when its agent changed; nil without memory.
+org_views :: proc(h:^Hub,o:^kai.Runner_Org) -> ^Org_Views {
+    stamps:=views_stamps(o)
+    w:^Org_Views
+    for x in h.views {
+        if x.org==o.id {w=x}
+    }
+    if w==nil {
+        w=new(Org_Views,h.allocator)
+        if w==nil {return nil}
+        if virtual.arena_init_growing(&w.arena)!=nil {
+            free(w,h.allocator)
+            return nil
+        }
+        if _,e:=append(&h.views,w);e!=nil {
+            virtual.arena_destroy(&w.arena)
+            free(w,h.allocator)
+            return nil
+        }
+        w.org=o.id
+    } else if stamps[0]==w.stamps[0] && (stamps[1]==w.stamps[1] || w.made==h.now) {
+        return w
+    }
+    h.stats.folds+=1
+    virtual.arena_free_all(&w.arena)
+    w.stamps,w.made=stamps,h.now
+    context.allocator=virtual.arena_allocator(&w.arena)
+    w.proposals=make([dynamic]Org_Proposal)
+    w.projects=make([dynamic]Project_Bookmarks)
+    for l in o.agent.logs {
+        if l.kind!=.Proposal || len(l.items)==0 {continue}
+        project:=proposal_project(l)
+        ours:=false
+        for p in o.agent.org.projects {ours||=p.id==project}
+        f:=new(kai.Proposal_Fold)
+        if !ours || kai.proposal_fold(f,l,&o.agent.org)!=.None {continue}
+        _=kai.proposal_settle(store_of(h),f)
+        append(&w.proposals,Org_Proposal{project,f})
+    }
+    for p in o.agent.org.projects {
+        b:=Project_Bookmarks{project=p.id}
+        b.shared,b.shared_main=project_bookmarks(h,o,w,p.id,false)
+        b.member,b.member_main=project_bookmarks(h,o,w,p.id,true)
+        append(&w.projects,b)
+    }
+    return w
+}
+
+// The bookmarks of a project, in the views' arena: the moves its log keeps,
+// the policy allowed and a writer signed, then for a member each name a
+// device publishes that no move keeps, at its newest record; and the index of
+// main, -1 without bookmarks.
+@(private)
+project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,w:^Org_Views,project:kai.Log_Id,member:bool) -> (bookmarks:[]Bookmark_View,main:int) {
     s:=store_of(h)
-    shared:=make([dynamic]kai.Bookmark_Target,context.temp_allocator)
-    kai.agent_shared_bookmarks(&v.org.agent,v.id,&shared)
-    for b in shared {append(&v.bookmarks,Bookmark_View{name=b.name,revision=b.target,landed=true})}
+    out:=make([dynamic]Bookmark_View)
+    if l:=kai.agent_log(&o.agent,project);l!=nil && len(l.items)>0 {
+        proposals:=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
+        for x in w.proposals {
+            if x.project==project {append(&proposals,x.fold)}
+        }
+        f:kai.Project_Fold
+        if kai.project_fold(&f,l,&o.agent.org,proposals[:],context.temp_allocator)==.None {
+            for b in f.bookmarks {append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,landed=true})}
+        }
+    }
     ns:[len(kai.REFS_PREFIX)+64]u8
-    refs,e:=store.ref_list(s,kai.refs_namespace(v.id,&ns),context.temp_allocator)
-    if e==.None && v.member {
+    refs,e:=store.ref_list(s,kai.refs_namespace(project,&ns),context.temp_allocator)
+    if e==.None && member {
         for ref in refs {
             bytes,ge:=kai.object_get(s,ref.hash,.Device_Refs,context.temp_allocator)
             if ge!=.None {continue}
             d,de:=kai.device_refs_decode(bytes,context.temp_allocator)
-            if de!=.None || d.project!=v.id {continue}
+            if de!=.None || d.project!=project {continue}
             names: for b in d.refs {
-                for &held in v.bookmarks {
+                for &held in out {
                     if held.name!=b.name {continue}
                     if held.landed {continue names}
                     if held.time<d.time {held.revision,held.device,held.time=b.target,d.device,d.time}
                     continue names
                 }
-                append(&v.bookmarks,Bookmark_View{name=b.name,revision=b.target,device=d.device,time=d.time})
+                append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,device=d.device,time=d.time})
             }
         }
     }
-    slice.sort_by(v.bookmarks[:],proc(a,b:Bookmark_View) -> bool {return a.name<b.name})
-    for b,i in v.bookmarks {
-        if b.name=="main" {v.main=i}
+    slice.sort_by(out[:],proc(a,b:Bookmark_View) -> bool {return a.name<b.name})
+    main=-1
+    for b,i in out {
+        if b.name=="main" {main=i}
     }
-    if v.main<0 && len(v.bookmarks)>0 {v.main=0}
+    if main<0 && len(out)>0 {main=0}
+    return out[:],main
 }
 
-// The proposal logs of a project the agent holds, folded and settled.
+// The proposals of a project, folded and settled, from the org's views.
 @(private)
 project_proposals :: proc(h:^Hub,o:^kai.Runner_Org,project:kai.Log_Id,out:^[dynamic]^kai.Proposal_Fold) {
-    for l in o.agent.logs {
-        if l.kind!=.Proposal || len(l.items)==0 || proposal_project(l)!=project {continue}
-        f:=new(kai.Proposal_Fold,context.temp_allocator)
-        if kai.proposal_fold(f,l,&o.agent.org,context.temp_allocator)!=.None {continue}
-        _=kai.proposal_settle(store_of(h),f)
-        append(out,f)
+    w:=org_views(h,o)
+    if w==nil {return}
+    for x in w.proposals {
+        if x.project==project {append(out,x.fold)}
     }
 }
 
@@ -171,6 +265,13 @@ proposal_project :: proc(l:^kai.Log) -> kai.Log_Id {
 // here yet is left out until they are.
 @(private)
 project_graph :: proc(h:^Hub,v:^Project_View) -> ^kai.Graph_Index {
+    stamps:=views_stamps(v.org)
+    for &x in h.graphs {
+        if x.project==v.id && x.member==v.member && x.seen==stamps {
+            x.used=h.now
+            return &x.graph
+        }
+    }
     targets:=make([dynamic]kai.Revision,context.temp_allocator)
     for b in v.bookmarks {append(&targets,b.revision)}
     for l in v.org.agent.logs {
@@ -201,7 +302,7 @@ project_graph :: proc(h:^Hub,v:^Project_View) -> ^kai.Graph_Index {
         g=&h.graphs[len(h.graphs)-1]
         kai.graph_init(&g.graph,h.allocator)
     }
-    g.used=h.now
+    g.used,g.seen=h.now,stamps
     if g.sum!=sum {
         g.sum=sum
         for t in targets {_=kai.graph_extend(&g.graph,store_of(h),{t})}

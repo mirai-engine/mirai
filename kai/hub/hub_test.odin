@@ -322,6 +322,10 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         testing.expectf(t,a.status==v.status && strings.contains(a.body,v.has),"GET %s: %d %s",v.path,a.status,a.body[:min(len(a.body),160)])
         expect_clean(t,a,P,Q)
     }
+    // The views of the org are folded once per change of its logs, never per request.
+    folds:=f.hub.stats.folds
+    for _ in 0..<20 {testing.expect_value(t,call(f,"GET",fmt.tprintf("/api/projects/%s/changes",P)).status,200)}
+    testing.expectf(t,f.hub.stats.folds==folds,"a flood of anonymous reads folds nothing: %d folds",f.hub.stats.folds-folds)
     // The frontend: every file with its type and nothing that would replace the policy every
     // answer carries, nothing the policy blocks (inline script or style, eval, modules from
     // elsewhere), and the page for a path of its router.
@@ -494,9 +498,12 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     testing.expectf(t,strings.contains(project.body,"\"wip\"") && strings.contains(project.body,rw),"a member reads the devices' bookmarks: %s",project.body[:min(len(project.body),200)])
     testing.expect(t,call(f,"GET",fmt.tprintf("/api/projects/%s/changes/%s",P,rw),cookie=cookie).status==200,"a member reads work in progress")
     // Once a shared bookmark reaches the work, anyone reads it.
+    folds=f.hub.stats.folds
     testing.expect_value(t,kai.machine_bookmark_move(&f.alice,f.public,"main",f.rw),kai.Error.None)
     kai.runner_update(&f.runner)
     shared:=call(f,"GET",fmt.tprintf("/api/projects/%s",P))
+    call(f,"GET",fmt.tprintf("/api/projects/%s",P))
+    testing.expect_value(t,f.hub.stats.folds,folds+1)
     testing.expectf(t,strings.contains(shared.body,rw) && !strings.contains(shared.body,"\"wip\""),"main is listed at the work, the device's name is not: %s",shared.body[:min(len(shared.body),200)])
     testing.expect(t,strings.contains(call(f,"GET",fmt.tprintf("/api/projects/%s/file?path=wip.txt&rev=%s",P,rw)).body,WIP_MARKER),"the work reads anonymously once shared")
     stacks:=call(f,"GET",fmt.tprintf("/api/projects/%s/stacks",P),cookie=cookie)

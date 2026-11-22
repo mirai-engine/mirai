@@ -96,6 +96,9 @@ WantedBy=multi-user.target
   headers); connections, per-address connections, sessions, challenges, approvals and request rates
   per address have fixed tables; deadlines end a slow or idle connection. An error is `{error}` with
   what failed and how to fix it (`hub_http_refuses_hostile_requests`).
+- A read takes prepared state: the hub keeps the folds of each org's proposals and the bookmarks
+  of its projects, made again when the agent folds its logs (and, for refs and objects that came,
+  at most once per step of the hub), so a flood of anonymous requests costs parsing and lookups.
 - `hub_api_describes_every_route` checks that what `GET /api` describes is what the table
   dispatches.
 
