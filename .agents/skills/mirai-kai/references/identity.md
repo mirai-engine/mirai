@@ -18,9 +18,9 @@ and `kai/refs_ddc.odin`.
   identity` does it in a terminal. It may sign the entry that links a device when no device is
   active, and rotating it (`Recovery_Rotate`) needs the one in force.
 - There is no org key. An org is a log folded from its members' signatures, and its **discovery
-  secret** `D` is derived from the org's genesis and each valid removal in it, so only members and
-  nodes know it and it changes when a member goes: the one removed cannot follow the LAN beacons any
-  more.
+  secret** `D` is derived from the org's genesis, each valid removal of a member or a node in it
+  and each revocation of a member's device, so only members and nodes know it and it changes when
+  any of them goes: the one that went cannot follow the LAN beacons any more.
 - A device proves it holds its key when it joins a log: the genesis and each `Device_Add` carry the
   device's signature over the recovery key or the log it joins, so a key cannot be added without its
   holder. A name is given where a device is made (the host's name when none is).
