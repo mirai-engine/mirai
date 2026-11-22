@@ -313,7 +313,7 @@ merge_file :: proc(m:^Merger,t:^Terms(Term),path:string,out:^[dynamic]u8) -> (re
     }
     limit:=m.bytes_max>0 ? m.bytes_max : DRIVER_BYTES_MAX
     if ours.size>u64(limit) || theirs.size>u64(limit) || base.size>u64(limit) {return .Unsupported,kind,0}
-    input:=Driver_Input{path=path,has_base=base.address!={},terms={base.address,ours.address,theirs.address}}
+    input:=Driver_Input{path=path,has_base=base.address!={}}
     e:Error
     if input.has_base {
         if input.base,e=file_bytes(m.s,base.address,context.temp_allocator);e!=.None {return .Error,kind,0}

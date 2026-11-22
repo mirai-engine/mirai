@@ -5,9 +5,9 @@ import "mirai:store"
 
 // A driver merges the sides of one file and moves an anchor from one version
 // of a file to another. It is a pure, deterministic procedure of its inputs:
-// the same terms give the same bytes, so its result may be kept by its terms.
-// Drivers are asked in the order given, then the built-in text and binary
-// ones; one that does not know the file says Unsupported.
+// the same inputs give the same bytes. Drivers are asked in the order given,
+// then the built-in text and binary ones; one that does not know the file
+// says Unsupported.
 
 Driver_Result :: enum u8 {
     Resolved,    // out holds the merged file
@@ -19,8 +19,7 @@ Driver_Result :: enum u8 {
 Driver_Input :: struct {
     path:string,
     base,ours,theirs:[]u8,
-    has_base:bool,            // false: both sides added the file
-    terms:[3]store.Hash,      // the addresses of base, ours and theirs
+    has_base:bool, // false: both sides added the file
 }
 
 Anchor_Kind :: enum u8 {File,Lines,Structural}

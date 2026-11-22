@@ -213,8 +213,7 @@ join :: proc(d:Join_Desc,allocator:=context.allocator) -> (report:Join_Report,er
     asset.types_init(&types)
     defer asset.types_destroy(&types)
     asset_driver:=kai_assets.Asset_Driver{types=&types}
-    merges:=kai_assets.Cached_Driver{driver=kai_assets.driver(&asset_driver),store=n.s,types=&types}
-    drivers:=[1]vcs.Driver{kai_assets.cached(&merges)}
+    drivers:=[1]vcs.Driver{kai_assets.driver(&asset_driver)}
     plan.drivers=drivers[:]
     if error=join_room(&d,&snap,&plan,folder,allocator);error!="" {return}
 
@@ -890,7 +889,7 @@ join_merge :: proc(plan:^Plan,s:^store.Store,e:^vcs.File,w:^Write,target,temp:st
     if ours_error!=nil || len(ours)>vcs.DRIVER_BYTES_MAX {return false}
     theirs,theirs_error:=os.read_entire_file(temp,context.temp_allocator)
     if theirs_error!=nil {return false}
-    input:=vcs.Driver_Input{path=e.path,base=origin,ours=ours,theirs=theirs,has_base=true,terms={w.origin,w.base,e.address}}
+    input:=vcs.Driver_Input{path=e.path,base=origin,ours=ours,theirs=theirs,has_base=true}
     out:=make([dynamic]u8,context.temp_allocator)
     if result,_:=vcs.drivers_merge(plan.drivers,&input,&out);result!=.Resolved {return false}
     return os.write_entire_file(temp,out[:])==nil

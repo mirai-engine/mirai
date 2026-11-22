@@ -257,7 +257,7 @@ Entry_Head :: struct #packed {
   - Pure, deterministic procedures run on `std/jobs`: `merge(terms, reader, put) ->
     Resolved|Conflicted|Unsupported|Error` and `anchor(from, to, ^Anchor) -> bool`.
   - `cook/kai` registers the Mirai asset driver over `asset.document_merge` / `scene_merge`
-    (row-by-id, field-by-field) and caches results in `cook/cache` by `(driver, version, terms)`.
+    (row-by-id, field-by-field).
   - **Non-blocking conflict resolution:** Checkout writes the driver's partial result (document
     with conflicts defaulted or text diff3 markers) and records `{path, conflict, written_hash}`.
     On snapshot, if the file still hashes to `written_hash`, it remains a `Conflict`; any edit by a
