@@ -305,10 +305,11 @@ edit_unnamed :: proc(root:string) -> (folder:string,extra:[]string) {
     return build.template_folder(root,allocator=context.temp_allocator),slice.clone(launcher,context.temp_allocator)
 }
 
-// mirai play [project] [--release] [arguments] (mirai play test: play_test.odin): builds the library of
+// mirai play [project] [--release] [arguments] (mirai play test: play_test.odin; audit: play.odin): builds the library of
 // the project and plays its game from the project, without cooking.
 cmd_play :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="test" {return cmd_play_test(root,args[1:])}
+    if len(args)>0 && args[0]=="audit" {return cmd_play_audit(root,args[1:])}
     mode,args:=build_mode_take(args)
     store_root,ok:=store_root_take(&args,"play")
     if !ok {return 2}
