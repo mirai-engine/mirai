@@ -127,6 +127,17 @@ snapshot_authored :: proc(w:^vcs.Workspace,coauthors:[]vcs.Key,turns:[]vcs.Turn_
     return
 }
 
+// What the project at root is on, as a list of projects shows it: the bookmark
+// on its working change, else that change's id; "" when it is no workspace of
+// a repository of s.
+working_text :: proc(s:^store.Store,root:string,allocator:=context.temp_allocator) -> string {
+    if s==nil || s.root=="" {return ""}
+    change,bookmark,ok:=vcs.workspace_working_of(s,root)
+    if !ok {return ""}
+    if bookmark!="" {return strings.clone(bookmark,allocator)}
+    return change_text(change,allocator)
+}
+
 // A change id as it is shown: its first CHANGE_TEXT hex digits.
 change_text :: proc(id:vcs.Change_Id,allocator:=context.temp_allocator) -> string {
     id:=id

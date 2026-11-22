@@ -914,9 +914,10 @@ overlay_record_error :: proc(s:^store.Store,project:Log_Id,scope:Scope_Id,commit
 }
 
 // Signs and stores the record of scope at commit and points its ref at it: it
-// follows base, or the record the ref holds when that one is newer.
+// follows base, or the record the ref holds when that one is newer. With refs,
+// the ref is added to them for the caller to set with others in one commit.
 @(private)
-overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record,base:store.Hash,base_seq:u64) -> (address:store.Hash,error:Error) {
+overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record,base:store.Hash,base_seq:u64,refs:^[dynamic]store.Ref_Set=nil) -> (address:store.Hash,error:Error) {
     r.prev,r.seq=base,base_seq+1
     if held,held_address,e:=overlay_record_get(s,r.project,r.scope,r.commit,context.temp_allocator);e==.None && held.seq>=base_seq {
         r.prev,r.seq=held_address,held.seq+1
@@ -926,7 +927,12 @@ overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record
     address=overlay_put(s,.Record,bytes) or_return
     ns:[len(OVERLAY_PREFIX)+64+1+32]u8
     name:[64]u8
-    if e:=store.ref_set(s,overlay_namespace(r.project,r.scope,&ns),store.hex(r.commit,&name),address);e!=.None {return {},store_error(e)}
+    set:=store.Ref_Set{overlay_namespace(r.project,r.scope,&ns),store.hex(r.commit,&name),address}
+    if refs==nil {return address,store_error(store.ref_set(s,set.namespace,set.name,set.hash))}
+    namespace,e1:=strings.clone(set.namespace,context.temp_allocator)
+    text,e2:=strings.clone(set.name,context.temp_allocator)
+    if e1!=nil || e2!=nil {return {},.Out_Of_Memory}
+    if _,e:=append(refs,store.Ref_Set{namespace,text,address});e!=nil {return {},.Out_Of_Memory}
     return address,.None
 }
 
@@ -978,12 +984,12 @@ keyring_of_org :: proc(s:^store.Store,org:^Org_Fold,id:Log_Id,address:store.Hash
 
 // Carries the overlay of scope at from to the commit to: a new record of the
 // same sealed tree and objects, signed again, without any key.
-overlay_rebase :: proc(s:^store.Store,identity:^Identity,project:Log_Id,scope:Scope_Id,from,to:Revision,time:i64) -> (address:store.Hash,error:Error) {
+overlay_rebase :: proc(s:^store.Store,identity:^Identity,project:Log_Id,scope:Scope_Id,from,to:Revision,time:i64,refs:^[dynamic]store.Ref_Set=nil) -> (address:store.Hash,error:Error) {
     if from==to {return {},.Invalid_Argument}
     old,old_address:=overlay_record_get(s,project,scope,from,context.temp_allocator) or_return
     r:=old
     r.commit,r.time=to,time
-    return overlay_record_write(s,identity,&r,old_address,old.seq)
+    return overlay_record_write(s,identity,&r,old_address,old.seq,refs)
 }
 
 // --- Reading an overlay ---
@@ -1310,21 +1316,22 @@ plain_hash :: proc(path:string) -> (hash:store.Hash,size:u64,error:Error) {
 // Writes the records of plan for the public change commit: each readable
 // scope's sealed tree, and for a scope this device cannot read, the overlay it
 // followed, carried unchanged. A readable scope with no files and none before
-// writes nothing.
-overlay_publish :: proc(r:^Overlay_Routing,s:^store.Store,plan:^Overlay_Plan,commit:Revision) -> Error {
+// writes nothing. Their refs are added to refs, which the operation that makes
+// commit sets in its one commit.
+overlay_publish :: proc(r:^Overlay_Routing,s:^store.Store,plan:^Overlay_Plan,commit:Revision,refs:^[dynamic]store.Ref_Set) -> Error {
     if r==nil {return .None}
     t:=time.now()._nsec
     for &p in plan.scopes {
         if p.readable {
             if (len(p.files)==0 && p.base=={}) || (p.unchanged && p.base_commit==commit) {continue}
             rec:=Overlay_Record{head={commit=commit,project=r.project,scope=p.scope.scope,epoch=p.keyring.epoch,tree_root=p.tree,time=t},objects=p.objects[:]}
-            overlay_record_write(s,&r.device.identity,&rec,p.base,p.base_seq) or_return
+            overlay_record_write(s,&r.device.identity,&rec,p.base,p.base_seq,refs) or_return
         } else if p.base!={} {
             base:=overlay_get(s,p.base,.Record,OVERLAY_RECORD_MAX,context.temp_allocator) or_return
             rec:=overlay_record_decode(base) or_return
             if rec.commit==commit {continue}
             rec.commit,rec.time=commit,t
-            overlay_record_write(s,&r.device.identity,&rec,p.base,rec.seq) or_return
+            overlay_record_write(s,&r.device.identity,&rec,p.base,rec.seq,refs) or_return
         }
     }
     return .None

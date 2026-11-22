@@ -35,7 +35,7 @@ session_sync_plan :: proc(folder,copy:string,paths:[]string) -> (plan:Session_Sy
         case relative==".." || strings.has_prefix(relative,"../") || strings.contains(relative,"/../") || strings.has_suffix(relative,"/.."):
             return {},fmt.tprintf("%s: the path leaves the project",given)
         case session_copy_skips(relative):
-            return {},fmt.tprintf("%s: a copy does not take it (git history, locks and what the editor generates)",given)
+            return {},fmt.tprintf("%s: a copy does not take it (what is not the project's, locks and what the editor generates)",given)
         }
         source:=project.path(folder,relative,allocator=context.temp_allocator)
         if os.is_dir(source) {return {},fmt.tprintf("%s is a folder: name its files",given)}

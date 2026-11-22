@@ -288,6 +288,33 @@ workspace_repo_of :: proc(root:string) -> (repo:Repo_Id,ok:bool) {
     return head.repo,true
 }
 
+// What the workspace at root is on, read without its lock, a snapshot or a
+// hash: the working change of the last operation it wrote, and a bookmark that
+// points at it. False when root holds no workspace of a repository of s.
+workspace_working_of :: proc(s:^store.Store,root:string) -> (change:Change_Id,bookmark:string,ok:bool) {
+    head:=state_head_of(root) or_return
+    names:=Repo{id=head.repo,workspace=head.id}
+    repo_names(&names)
+    op,missing:=store.ref_get(s,names.namespace,names.ref)
+    if missing!=.None {return}
+    o,e:=op_get(s,op,context.temp_allocator)
+    if e!=.None {return}
+    v:View
+    view_init(&v,context.temp_allocator)
+    if view_get(s,o.view,&v)!=.None {return}
+    working:=view_workspace(&v,head.id)
+    if working=={} {return}
+    c,f:=change_get(s,working,context.temp_allocator)
+    if f!=.None {return}
+    for &b in v.bookmarks {
+        if target,resolved:=terms_resolved(&b.terms);resolved && target==working {
+            bookmark=b.name
+            break
+        }
+    }
+    return c.id,bookmark,true
+}
+
 // The head of the state of the workspace at root, read without its lock.
 @(private)
 state_head_of :: proc(root:string) -> (head:State_Head,ok:bool) {
@@ -443,8 +470,7 @@ workspace_snapshot :: proc(w:^Workspace) -> (report:Snapshot_Report,error:Error)
     append(&st.conflicts,..w.state.conflicts[:])
     conflicts_apply(&st,&files) or_return
     root:=tree_build(w.repo.s,files[:]) or_return
-    report.revision=change_snapshot(&w.repo,root) or_return
-    overlay_publish(w.options.overlay,w.repo.s,&plan,report.revision) or_return
+    report.revision=change_snapshot(&w.repo,root,w.options.overlay,&plan) or_return
     index_save(w,&next) or_return
     st.op,st.tree=w.repo.op,root
     state_save(w,&st) or_return

@@ -116,6 +116,7 @@ Repo :: struct {
     namespace:string,
     ref_bytes:[64]u8,
     ref:string,
+    cut_commit:bool, // a test cuts the next commit after its objects, before its refs
 }
 
 @(private)
@@ -297,6 +298,7 @@ op_heads_merge :: proc(r:^Repo,heads:[]store.Hash) -> Error {
     }
     tx:=Tx{r=r,view=merged}
     tx.rewrites=make([dynamic]Rewrite,context.temp_allocator)
+    tx.refs=make([dynamic]store.Ref_Set,context.temp_allocator)
     tx.mapping=make(map[Revision][]Revision,context.temp_allocator)
     return tx_commit(&tx,.Merge,"merge operations written apart",parents=heads)
 }
@@ -318,12 +320,14 @@ repo_load :: proc(r:^Repo,op:store.Hash) -> Error {
 }
 
 // A transaction: the view one operation writes, in the temporary allocator,
-// and what it rewrote.
+// what it rewrote and the refs it moves besides its own (the records of
+// private overlays that follow what it wrote).
 Tx :: struct {
     r:^Repo,
     view:View,
     rewrites:[dynamic]Rewrite,
     mapping:map[Revision][]Revision, // what a rewritten or abandoned change's children move onto
+    refs:[dynamic]store.Ref_Set,
 }
 
 tx_begin :: proc(r:^Repo) -> (tx:Tx,error:Error) {
@@ -331,11 +335,12 @@ tx_begin :: proc(r:^Repo) -> (tx:Tx,error:Error) {
     tx.view=view_clone(&r.view,context.temp_allocator) or_return
     tx.rewrites=make([dynamic]Rewrite,context.temp_allocator)
     tx.mapping=make(map[Revision][]Revision,context.temp_allocator)
+    tx.refs=make([dynamic]store.Ref_Set,context.temp_allocator)
     return tx,.None
 }
 
-// Writes the view and the operation and points this workspace's ref at it:
-// one commit of the store.
+// Writes the view and the operation and points this workspace's ref at it,
+// with the transaction's other refs: one commit of the store.
 tx_commit :: proc(tx:^Tx,kind:Op_Kind,description:string,undone:=store.Hash{},parents:[]store.Hash=nil,genesis:=false) -> Error {
     r:=tx.r
     tx_rebase_descendants(tx) or_return
@@ -346,7 +351,12 @@ tx_commit :: proc(tx:^Tx,kind:Op_Kind,description:string,undone:=store.Hash{},pa
     op.parents=parents!=nil ? parents : genesis ? nil : own[:]
     bytes:=op_encode(&op,context.temp_allocator) or_return
     address:=object_put(r.s,.Operation,bytes) or_return
-    if e:=store.ref_set(r.s,r.namespace,r.ref,address);e!=.None {return store_error(e)}
+    if _,e:=append(&tx.refs,store.Ref_Set{r.namespace,r.ref,address});e!=nil {return .Out_Of_Memory}
+    if r.cut_commit {
+        r.cut_commit=false
+        return .Io
+    }
+    if e:=store.refs_set(r.s,tx.refs[:]);e!=.None {return store_error(e)}
     v:=view_clone(&tx.view,r.allocator) or_return
     view_destroy(&r.view)
     r.view=v
@@ -632,33 +642,43 @@ change_split :: proc(r:^Repo,revision:Revision,paths:[]string,description:Maybe(
     second=change_put(r.s,&rest,&r.identity) or_return
     if _,e:=append(&tx.rewrites,Rewrite{revision,first});e!=nil {return {},{},.Out_Of_Memory}
     tx_rewrite(&tx,revision,second) or_return
-    tx_commit(&tx,.Rewrite,"split change") or_return
-    if overlay==nil || overlay.org==nil {return}
-    for sc in overlay.org.scopes {
-        if sc.project!=overlay.project {continue}
-        for p in c.parents {
-            if overlay_record_error(r.s,overlay.project,sc.scope,p)==.Missing {continue}
-            overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,p,first,now) or_return
-            break
-        }
-        for rw in tx.rewrites {
-            if rw.to==first || rw.to=={} {continue}
-            if overlay_record_error(r.s,overlay.project,sc.scope,rw.from)==.Missing {continue}
-            overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,rw.from,rw.to,now) or_return
+    if overlay!=nil && overlay.org!=nil {
+        // The records of the overlays follow in the operation's commit, descendants included.
+        tx_rebase_descendants(&tx) or_return
+        for sc in overlay.org.scopes {
+            if sc.project!=overlay.project {continue}
+            for p in c.parents {
+                if overlay_record_error(r.s,overlay.project,sc.scope,p)==.Missing {continue}
+                overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,p,first,now,&tx.refs) or_return
+                break
+            }
+            for rw in tx.rewrites {
+                if rw.to==first || rw.to=={} {continue}
+                if overlay_record_error(r.s,overlay.project,sc.scope,rw.from)==.Missing {continue}
+                overlay_rebase(r.s,&overlay.device.identity,overlay.project,sc.scope,rw.from,rw.to,now,&tx.refs) or_return
+            }
         }
     }
+    tx_commit(&tx,.Rewrite,"split change") or_return
     return
 }
 
-// Records tree as this workspace's working copy: what a snapshot writes.
-// The same revision when the tree did not change.
-change_snapshot :: proc(r:^Repo,tree:store.Hash) -> (revision:Revision,error:Error) {
+// Records tree as this workspace's working copy: what a snapshot writes, with
+// the records of plan's private overlays in the same commit. The same
+// revision when the tree did not change.
+change_snapshot :: proc(r:^Repo,tree:store.Hash,overlay:^Overlay_Routing=nil,plan:^Overlay_Plan=nil) -> (revision:Revision,error:Error) {
     working:=repo_working(r)
     if working=={} {return {},.Stale}
     c:=change_get(r.s,working,context.temp_allocator) or_return
-    if c.tree==tree {return working,.None}
+    if c.tree==tree {
+        refs:=make([dynamic]store.Ref_Set,context.temp_allocator)
+        overlay_publish(overlay,r.s,plan,working,&refs) or_return
+        if len(refs)>0 {store_error(store.refs_set(r.s,refs[:])) or_return}
+        return working,.None
+    }
     tx:=tx_begin(r) or_return
     revision=change_rewrite(&tx,working,nil,tree) or_return
+    overlay_publish(overlay,r.s,plan,revision,&tx.refs) or_return
     tx_commit(&tx,.Snapshot,"snapshot working copy") or_return
     return
 }
