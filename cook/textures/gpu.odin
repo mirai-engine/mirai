@@ -15,6 +15,8 @@ import "mirai:rhi"
 import "mirai:std/serial"
 
 GPU_SHADER_FOLDER :: "cook"
+@(private="file")
+GPU_USER_FOLDER :: "Texture cook"
 GPU_GROUP :: 8
 GPU_TILE :: 16
 
@@ -90,8 +92,18 @@ gpu_open :: proc(gpu:^Gpu_Context) -> Error {
     if gpu.device!=nil {return .None}
     allocator:=runtime.heap_allocator()
     folder:=gpu_shader_folder(gpu.engine_root,allocator) or_return
+    runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+    // The pipelines compiled are kept across cooks: a compile of the BC7 encoder takes seconds.
+    pipelines:=os.get_env(project.PIPELINES_PATH_ENV,context.temp_allocator)
+    if pipelines=="" {
+        if user,ok:=project.user_data_folder(project.USER_ORGANIZATION,GPU_USER_FOLDER,
+            context.temp_allocator);ok {
+            pipelines=project.path(user,project.PIPELINES_FILE,allocator=context.temp_allocator)
+        }
+    }
     device,problem:=rhi.device_create({
         app_name="Mirai texture cook",allocator=allocator,on_message=rhi.message_print,
+        pipeline_cache_path=pipelines,
     })
     if device==nil {
         delete(folder,allocator)
@@ -183,19 +195,7 @@ gpu_chain :: proc(
     gpu:^Gpu_Context,levels:[]Source,mips:[][]u8,format:asset.Texture_Format,
     options:Build_Options,allocator:mem.Allocator,
 ) -> Error {
-    own:Gpu_Context
-    defer gpu_context_destroy(&own)
-    gpu:=gpu if gpu!=nil else &own
-    sync.guard(&gpu.lock)
-    gpu_open(gpu) or_return
-    encode:=gpu_pipeline(gpu,format,.Encode)
-    if encode==0 {return .Gpu}
     lambda:=rdo_lambda(options)
-    rdo:rhi.Pipeline
-    if lambda>0 {
-        rdo=gpu_pipeline(gpu,format,.Rdo)
-        if rdo==0 {return .Gpu}
-    }
     batches:=make([dynamic]Gpu_Batch,0,0,runtime.heap_allocator())
     defer delete(batches)
     pixel_bytes:=SOURCE_TEXEL_BYTES
@@ -224,11 +224,24 @@ gpu_chain :: proc(
                 if _,err:=append(&batches,batch);err!=nil {return .Out_Of_Memory}
                 input_size=mem.align_forward_int(input_size+len(batch.texels),GPU_BUFFER_ALIGNMENT)
                 output_size=mem.align_forward_int(output_size+bytes,GPU_BUFFER_ALIGNMENT)
-                if rdo!=0 {
+                if lambda>0 {
                     fit_size=max(fit_size,size_of(Gpu_Fit)*((w+3)/4)*((height+3)/4))
                 }
             }
         }
+    }
+
+    own:Gpu_Context
+    defer gpu_context_destroy(&own)
+    gpu:=gpu if gpu!=nil else &own
+    sync.guard(&gpu.lock)
+    gpu_open(gpu) or_return
+    encode:=gpu_pipeline(gpu,format,.Encode)
+    if encode==0 {return .Gpu}
+    rdo:rhi.Pipeline
+    if lambda>0 {
+        rdo=gpu_pipeline(gpu,format,.Rdo)
+        if rdo==0 {return .Gpu}
     }
     d:=gpu.device
     if !gpu_buffer(gpu,&gpu.params,len(batches)*GPU_BUFFER_ALIGNMENT,.Upload,
