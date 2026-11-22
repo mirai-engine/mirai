@@ -28,3 +28,5 @@ file_clone :: proc(from,to:string) -> Error {
     if clonefile(a,b,0)!=0 {return .Unsupported}
     return .None
 }
+
+@(private) SO_REUSEPORT :: 0x0200

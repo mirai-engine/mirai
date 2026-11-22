@@ -22,8 +22,12 @@ import "mirai:store"
 // together are asked together, so a source that asks peers waits for them once.
 Fetch :: #type proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool)
 
+// Told after put kept a result: a source that shares results publishes it.
+Kept :: #type proc(user:rawptr,namespace,name:string,object:store.Hash)
+
 Source :: struct {
     fetch:Fetch, // nil: none
+    kept:Kept,   // nil: none
     user:rawptr,
 }
 
@@ -99,7 +103,9 @@ put :: proc(c:Cache,name:string,key,version:u64,bytes:[]u8) -> bool {
     namespace,ref,ok:=names(c,name,key,version,&namespace_buffer,&ref_buffer)
     if !ok {return false}
     object,error:=asset.object_put(c.store,bytes)
-    return error==.None && store.ref_set(c.store,namespace,ref,object)==.None
+    if error!=.None || store.ref_set(c.store,namespace,ref,object)!=.None {return false}
+    if c.source.kept!=nil {c.source.kept(c.source.user,namespace,ref,object)}
+    return true
 }
 
 @(private)

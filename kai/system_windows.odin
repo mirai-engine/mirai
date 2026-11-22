@@ -2,6 +2,7 @@ package kai
 
 import "core:os"
 import win "core:sys/windows"
+import cnet "core:net"
 
 // The lock of a workspace: a file held open with an exclusive LockFileEx,
 // which the system lets go when the process ends.
@@ -32,4 +33,12 @@ lock_release :: proc(lock:^Lock) {
 // switch writes the file from the store instead.
 file_clone :: proc(from,to:string) -> Error {
     return .Unsupported
+}
+
+// Lets other sockets of this user bind the port too: SO_REUSEADDR does it on
+// Windows, and every one of them gets a broadcast to it.
+@(private)
+socket_share_port :: proc(socket:cnet.UDP_Socket) -> bool {
+    on:win.BOOL=true
+    return win.setsockopt(win.SOCKET(uintptr(socket)),win.SOL_SOCKET,win.SO_REUSEADDR,&on,size_of(on))==0
 }

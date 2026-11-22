@@ -26,3 +26,5 @@ file_clone :: proc(from,to:string) -> Error {
     }
     return .None
 }
+
+@(private) SO_REUSEPORT :: 15

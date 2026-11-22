@@ -76,41 +76,72 @@ pair_error_text :: proc(error:Pair_Error) -> string {
 }
 
 // What a ticket hands the initiator out of band: which pairing, against which
-// responder key, until when.
+// responder key, until when, and where the responder listens.
 Ticket :: struct {
     id:[16]u8,
     responder:Dh_Key,
     mode:Pair_Mode,
     expires:i64, // ns
+    addresses:[TICKET_ADDRESSES]net.Address, // IPv4 or IPv6 with a port
+    address_count:int,
 }
 
-@(private) TICKET_VERSION :: 1
-@(private) TICKET_BYTES :: 1+1+16+32+8+4
-TICKET_TEXT :: (TICKET_BYTES*4+2)/3
+TICKET_ADDRESSES :: 4
+@(private) TICKET_VERSION :: 2
+@(private) TICKET_HEAD :: 1+1+16+32+8+1
+@(private) TICKET_ADDRESS :: 1+2+16
+@(private) TICKET_BYTES_MAX :: TICKET_HEAD+TICKET_ADDRESSES*TICKET_ADDRESS+4
+TICKET_TEXT :: (TICKET_BYTES_MAX*4+2)/3 // the longest a ticket's text is
 
 // The ticket as base64url without padding, its last four bytes a checksum.
 ticket_encode :: proc(t:Ticket,buffer:^[TICKET_TEXT]u8) -> string {
-    bytes:[TICKET_BYTES]u8
+    bytes:[TICKET_BYTES_MAX]u8
     bytes[0],bytes[1]=TICKET_VERSION,u8(t.mode)
     id,responder:=t.id,t.responder
     copy(bytes[2:],id[:])
     copy(bytes[18:],responder[:])
     endian.unchecked_put_u64le(bytes[50:],u64(t.expires))
-    sum:=ticket_sum(bytes[:TICKET_BYTES-4])
-    copy(bytes[TICKET_BYTES-4:],sum[:4])
-    n:=base64url_encode(bytes[:],buffer[:])
+    at:=TICKET_HEAD
+    count:=0
+    addresses:=t.addresses
+    for a in addresses[:clamp(t.address_count,0,TICKET_ADDRESSES)] {
+        if a.kind!=.IP4 && a.kind!=.IP6 {continue}
+        bytes[at]=u8(a.kind)
+        endian.unchecked_put_u16le(bytes[at+1:],a.port)
+        ip:=a.ip
+        copy(bytes[at+3:],ip[:])
+        at+=TICKET_ADDRESS
+        count+=1
+    }
+    bytes[TICKET_HEAD-1]=u8(count)
+    sum:=ticket_sum(bytes[:at])
+    copy(bytes[at:],sum[:4])
+    n:=base64url_encode(bytes[:at+4],buffer[:])
     return string(buffer[:n])
 }
 
 ticket_decode :: proc(text:string) -> (t:Ticket,ok:bool) {
-    bytes:[TICKET_BYTES]u8
-    if len(text)!=TICKET_TEXT || base64url_decode(text,bytes[:])!=TICKET_BYTES {return}
-    sum:=ticket_sum(bytes[:TICKET_BYTES-4])
-    if bytes[0]!=TICKET_VERSION || bytes[1]>u8(max(Pair_Mode)) || !bytes_equal(sum[:4],bytes[TICKET_BYTES-4:]) {return}
+    bytes:[TICKET_BYTES_MAX]u8
+    if len(text)>TICKET_TEXT {return}
+    size:=base64url_decode(text,bytes[:])
+    if size<TICKET_HEAD+4 {return}
+    count:=int(bytes[TICKET_HEAD-1])
+    if count>TICKET_ADDRESSES || size!=TICKET_HEAD+count*TICKET_ADDRESS+4 {return}
+    sum:=ticket_sum(bytes[:size-4])
+    if bytes[0]!=TICKET_VERSION || bytes[1]>u8(max(Pair_Mode)) || !bytes_equal(sum[:4],bytes[size-4:size]) {return}
     t.mode=Pair_Mode(bytes[1])
     copy(t.id[:],bytes[2:18])
     copy(t.responder[:],bytes[18:50])
     t.expires=i64(endian.unchecked_get_u64le(bytes[50:]))
+    for k in 0..<count {
+        at:=TICKET_HEAD+k*TICKET_ADDRESS
+        kind:=net.Address_Kind(bytes[at])
+        if kind!=.IP4 && kind!=.IP6 {return {},false}
+        a:=net.Address{kind=kind,port=endian.unchecked_get_u16le(bytes[at+1:])}
+        copy(a.ip[:],bytes[at+3:at+TICKET_ADDRESS])
+        t.addresses[k]=a
+    }
+    t.address_count=count
     return t,true
 }
 
@@ -499,8 +530,9 @@ pair_read_p4 :: proc(p:^Pair,message:[]u8) -> (status:Pair_Status,payload:[]u8,e
     if !p.initiator || p.step!=.P3 {return {},nil,.Corrupt}
     if len(message)<PAIR_HEAD+8+1+PAIR_TAG || message[0]!=u8(Pair_Message.P4) {return {},nil,.Corrupt}
     if !bytes_equal(message[1:PAIR_HEAD],p.ticket[:]) {return {},nil,.Ticket}
+    // A P4 lost on the way is skipped: only one older than the last taken is a replay.
     counter:=endian.unchecked_get_u64le(message[PAIR_HEAD:])
-    if counter!=p.received {return {},nil,.Corrupt}
+    if counter<p.received {return {},nil,.Corrupt}
     size:=len(message)-PAIR_HEAD-8-PAIR_TAG
     body:=message[PAIR_HEAD+8:][:size]
     ctx:chacha20poly1305.Context
@@ -509,7 +541,7 @@ pair_read_p4 :: proc(p:^Pair,message:[]u8) -> (status:Pair_Status,payload:[]u8,e
     ok:=chacha20poly1305.open(&ctx,body,iv[:],message[:PAIR_HEAD+8],body,message[len(message)-PAIR_TAG:])
     chacha20poly1305.reset(&ctx)
     if !ok || body[0]>u8(max(Pair_Status)) {return {},nil,.Corrupt}
-    p.received+=1
+    p.received=counter+1
     return Pair_Status(body[0]),body[1:],.None
 }
 

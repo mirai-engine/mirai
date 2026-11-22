@@ -15,6 +15,7 @@ RELAY_DEVICES_MAX :: 1024
 RELAY_PUNCH_DELAY :: 0.25 // s from the plan to the punch, so both ends hear of it first
 RELAY_ENVELOPE :: 1+32    // RELAY_MAGIC, then the key of who it is for
 RELAY_MAGIC :: u8('R')
+RELAY_DATAGRAM_MAX :: 1+RUNNER_ROUTE+net.PACKET_BYTES // what it forwards: a net datagram with the runner's route
 
 Nat_Kind :: enum u8 {
     Unknown,   // seen on fewer than two ports
@@ -132,7 +133,7 @@ relay_forward :: proc(r:^Relay,from:Dh_Key,envelope:[]u8,now:f64) -> (to:Dh_Key,
     k:=relay_find(r,from)
     if k<0 {return}
     d:=&r.devices[k]
-    if len(envelope)<=RELAY_ENVELOPE || len(envelope)>RELAY_ENVELOPE+net.PACKET_BYTES || envelope[0]!=RELAY_MAGIC {
+    if len(envelope)<=RELAY_ENVELOPE || len(envelope)>RELAY_ENVELOPE+RELAY_DATAGRAM_MAX || envelope[0]!=RELAY_MAGIC {
         d.dropped+=1
         return
     }
