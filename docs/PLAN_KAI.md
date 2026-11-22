@@ -53,8 +53,8 @@ proposed design; facts about current code are cited by file.
   `{path, address, size}` fetched over `exchange`.
 - **Duplicate 3-way merge and `map[string]Known` stat cache** (`cook/share/join.odin`,
   `.mirai/share/index`): replaced by `kai.merge` and chunked `Stat_Row` workspace index in `store`.
-- **Capped Myers diff** (`editor/diff/diff.odin`, `max_edits=2048`, O(D^2) trace): replaced by
-  `std/diff` Histogram diff + 3-way merge in O(n+m) memory.
+- **Capped Myers diff** (the old `editor/diff` package, `max_edits=2048`, O(D^2) trace): replaced
+  by `std/diff` Histogram diff + 3-way merge in O(n+m) memory.
 
 ### Legacy patterns explicitly refused
 - **Accounts and central auth:** email/password, OAuth/OIDC/Google, SAML, magic links, TOTP/SMS,
@@ -257,7 +257,7 @@ Entry_Head :: struct #packed {
 - **Keys:** Offline Ed25519 Recovery key `R` (printed Base32 with checksum); per-device Ed25519
   `ds` + X25519 `dh` stored in an owner-only file; node keys (`ds`, `dh`); scope epoch keys `K`;
   org discovery secret `D`. No org private key, no email, no passwords.
-- **Security audit finding in `eco/odin/pair.odin`:** ECO derives its 8-digit verification code
+- **Security audit finding in external ECO's pairing:** ECO derived its 8-digit verification code
   from the `Noise_XX` transcript hash after message 3, letting a MITM grind the 64-byte label in
   message 3 (~10^8 tries, feasible in seconds on multi-core/GPU) to force matching codes on both
   screens.
