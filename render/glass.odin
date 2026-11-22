@@ -145,6 +145,55 @@ translucency_in_frustum :: proc(p: ^Pass, f: ^Gpu_Frame) {
 			u32(min(math.ceil(hi.x * size.x) + 1, size.x)), u32(min(math.ceil(hi.y * size.y) + 1, size.y)),
 		}
 	}
+	translucent_before_glass(p, f)
+}
+
+// Tiles per side of the screen over which a view keeps the nearest glass.
+GLASS_TILES :: 32
+
+// Marks the blended instances of the view nearer than every glass in the tiles
+// they cover: no layer is in front of them, so only the raster in front of the
+// nearest layer has fragments of them to draw.
+@(private = "file")
+translucent_before_glass :: proc(p: ^Pass, f: ^Gpu_Frame) {
+	s := &p.r.scene
+	eye, forward := f.camera_position.xyz, f.camera_forward.xyz
+	margin := 2 / linalg.max(f.resolution, Vec2{1, 1})
+	// The nearest and farthest view depth (fragment_depth) of a box and the tiles it covers.
+	span :: proc(inst: ^Gpu_Instance, f: ^Gpu_Frame, eye, forward: Vec3, margin: Vec2) -> (near, far: f32, lo, hi: [2]int) {
+		box := mm.Aabb{inst.bounds_min.xyz, inst.bounds_max.xyz}
+		along := linalg.dot((box.min + box.max) * 0.5 - eye, forward)
+		reach := linalg.dot((box.max - box.min) * 0.5, linalg.abs(forward))
+		rect := projected_box(box, f.view_proj, eye)
+		if !(rect.x <= rect.z && rect.y <= rect.w) {rect = {0, 0, 1, 1}}
+		for axis in 0 ..< 2 {
+			lo[axis] = clamp(int(math.floor((rect[axis] - margin[axis]) * GLASS_TILES)), 0, GLASS_TILES - 1)
+			hi[axis] = clamp(int(math.floor((rect[axis + 2] + margin[axis]) * GLASS_TILES)), lo[axis], GLASS_TILES - 1)
+		}
+		return along - reach, along + reach, lo, hi
+	}
+	nearest: [GLASS_TILES * GLASS_TILES]f32
+	if p.draw_glass && p.draw_forward {
+		slice.fill(nearest[:], max(f32))
+		for entry in p.translucent {
+			if !entry.glass {continue}
+			near, _, lo, hi := span(&s.instances[entry.instance], f, eye, forward, margin)
+			for y in lo.y ..= hi.y {
+				for &tile in nearest[y * GLASS_TILES:][lo.x:hi.x + 1] {tile = min(tile, near)}
+			}
+		}
+	}
+	for &entry in p.translucent {
+		entry.before = false
+		if !p.draw_glass || !entry.forward {continue}
+		_, far, lo, hi := span(&s.instances[entry.instance], f, eye, forward, margin)
+		entry.before = true
+		rows: for y in lo.y ..= hi.y {
+			for tile in nearest[y * GLASS_TILES:][lo.x:hi.x + 1] {
+				if !(far < tile) {entry.before = false; break rows}
+			}
+		}
+	}
 }
 
 // A draw of one program binds its pipeline and draw constants, then draws.
@@ -181,7 +230,7 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 glass_layers :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	p.glass_medium = glass_medium(r, p.camera.position)
-	rhi.cmd_timestamp(cmd, "translucent")
+	rhi.cmd_timestamp(cmd, "glass layers")
 	for k in 0 ..< glass_layer_count(r) {
 		layer := t.glass[k]
 		nearer := t.glass[k - 1].depth if k > 0 else r.dummy_texture
@@ -190,7 +239,9 @@ glass_layers :: proc(p: ^Pass) {
 		for target, i in ([7]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}) {
 			if i < int(pass.color_count) {pass.colors[i] = {texture = target, load = .Clear, store = .Store}}
 		}
-		pass.depth = {texture = t.glass_zbuffer, load = .Clear, store = .Store, clear = 0}
+		// From the depth of the opaque scene: what it hides fails the test before its fragment runs.
+		rhi.cmd_copy_texture(cmd, t.depth, t.glass_zbuffer)
+		pass.depth = {texture = t.glass_zbuffer, load = .Load, store = .Store}
 		Params :: struct {peeled, medium, pad1, pad2: u32}
 		params := Params{peeled = u32(k), medium = p.glass_medium}
 		target := &r.pipelines[.Glass_Layer_Layers if layered else .Glass_Layer]
@@ -202,6 +253,9 @@ glass_layers :: proc(p: ^Pass) {
 	}
 }
 
+// The blended surfaces between two glass layers (0: none), back to front,
+// tested against the depth of the opaque scene; overflow: also the glass
+// beyond the layers. Those before the glass are drawn only in front of it.
 @(private)
 translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overflow := false) {
 	if !p.draw_forward && !overflow {return}
@@ -214,6 +268,7 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	(^[4]u32)(plain.ptr)^ = {}
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = "translucent forward"}
 	pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
+	pass.depth = {texture = t.depth, load = .Load, store = .Store}
 	Params :: struct {light_budget, near_layer, far_layer, overflow: u32}
 	params := Params{
 		light_budget = r.settings.light_budget,
@@ -224,14 +279,17 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, texture_or_dummy(r, near_layer))
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, texture_or_dummy(r, far_layer))
+	set_params(cmd, &params)
 	targets := translucent_forward_pipelines(p, overflow)
+	behind := near_layer != 0
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	commands := 0
 	for entry in p.translucent {
+		forward := entry.forward && !(behind && entry.before)
 		draws := 0
 		for target, i in targets {
-			if target != nil && (i < 2 ? entry.glass : entry.forward) {draws += 1}
+			if target != nil && (i < 2 ? entry.glass : forward) {draws += 1}
 		}
 		if draws == 0 {continue}
 		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
@@ -242,9 +300,11 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 			commands = 0
 		}
 		for target, i in targets {
-			if target == nil || (i < 2 ? !entry.glass : !entry.forward) {continue}
-			params.overflow = 1 if i < 2 else 0
-			set_params(cmd, &params)
+			if target == nil || (i < 2 ? !entry.glass : !forward) {continue}
+			if filter := u32(1 if i < 2 else 0); filter != params.overflow {
+				params.overflow = filter
+				set_params(cmd, &params)
+			}
 			instance_programs_draw(r, cmd, target, entry.instance, false, plain_constants = plain)
 		}
 		commands += needed

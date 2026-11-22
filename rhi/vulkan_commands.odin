@@ -524,9 +524,11 @@ vk_pipeline_bind :: proc(c: ^Command_List, p: ^Vk_Pipeline) {
 	if p.uses_table {c.device.dvk.CmdBindDescriptorSets(c.cmd, p.bind_point, p.layout, 1, 1, &c.device.table_sets[table_copy(c.immediate, c.device.slot)], 0, nil)}
 }
 
-// A binding of the slot changed: a pass being recorded replays it.
+// A binding of the slot changed: a pass being recorded replays it. Within a
+// pass no layout changes between draws, so the same binding again pushes nothing.
 @(private)
 vk_slot_set :: proc(c: ^Command_List, slot: u32, binding: Slot_Binding) {
+	if c.in_render_pass && c.slots[slot] == binding {return}
 	c.slots[slot] = binding
 	c.dirty = true
 	if c.in_render_pass {vk_pass_record(c, {kind = .Slot, slot = slot, binding = binding})}

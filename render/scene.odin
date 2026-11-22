@@ -148,6 +148,7 @@ Translucent :: struct {
 	distance: f32,
 	glass_roughness: f32, // a lower bound before textures, programs and antialiasing
 	forward, glass: bool,
+	before:   bool, // of the view drawing it: nearer than every glass where it covers, so in front of the nearest layer
 	solid:    bool, // a blended material of it has a medium (material_solid): the camera can be in it
 	layered:  bool, // a blended material of it has layers: the glass layers keep them in a target
 }
