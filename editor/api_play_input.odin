@@ -56,6 +56,13 @@ play_seat :: proc(s:^Session,call:^api.Call,w:core.World_Ref,slot:int,on_client:
         return
     }
     if state.local_count==0 {
+        time:=core.world_storage_of(w,core.Time)
+        network:=core.world_storage_of(w,core.Network)
+        run:=core.world_storage_of(w,input.Run_Players)
+        if time!=nil && time.tick==0 && (network==nil || network.role!=.Server || (run!=nil && run.count>0)) {
+            api.call_failf(call,api.INVALID_PARAMS,"The local seat of slot %d is made on the first tick: play.step one tick first",slot<0?0:slot)
+            return
+        }
         api.call_fail(call,api.INVALID_PARAMS,"The game has no local seat (a server without players): play.start with players")
         return
     }

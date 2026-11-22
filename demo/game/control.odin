@@ -46,7 +46,9 @@ BARK_FLASH_SECONDS :: 0.3
 
 // Marks the root of the scene of the person and the dog.
 @(component)
-Control_Demo :: struct {}
+Control_Demo :: struct {
+    dog:base.Asset_Id,
+}
 
 // What the players ask of their seats; a dog whose person left goes with it.
 @(step="fixed")
@@ -98,13 +100,15 @@ game_dogs :: proc(
     seats:^core.Table(inp.Seat,.Read),demos:^core.Table(Control_Demo,.Read),worlds:^core.Table(core.World_Transform,.Read),
 ) {
     if core.count(demos)==0 {return}
+    dog_prefab:=core.at(demos,0).dog
     for row in 0..<core.count(seats) {
         body:=core.at(seats,row).body
         if !core.has(players,body) || companion_of(follows,body)!=core.NONE {continue}
         placed,found:=core.get(worlds,body)
         if !found {continue}
         at:=core.Transform{placed.position+mm.quat_rotate(placed.rotation,DOG_BEHIND),placed.rotation,{1,1,1}}
-        if dog:=scene.spawn(spawner,DOG_PREFAB,at);dog!=core.NONE {
+        dog:=dog_prefab!={}?scene.spawn(spawner,dog_prefab,at):scene.spawn(spawner,DOG_PREFAB,at)
+        if dog!=core.NONE {
             follow:=FOLLOW_DEFAULT
             follow.leader=body
             core.commands_add(spawner.commands,dog,follow)

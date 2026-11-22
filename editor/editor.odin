@@ -1001,6 +1001,11 @@ run_create :: proc(s:^Session,owner,player:int) -> ^Run {
     files_flush(s,true)
     world:=document_copy(s)
     if world==nil {return nil}
+    ref:=core.world_ref(world,s.info)
+    if bindings:=core.world_storage_of(ref,input.Input_Map);bindings!=nil && !bindings.built && bindings.declared==0 {
+        settings:=core.world_storage_of(ref,input.Input_Settings)
+        input.input_map_make(bindings,s.info,settings,host.app_world_storage(s.app,world,core.Problems))
+    }
     s.run_serial+=1
     r^={world=world,id=s.run_serial,owner=owner,player=player,document=history.edits_scene_state(s.edits)}
     return r

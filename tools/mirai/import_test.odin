@@ -19,8 +19,8 @@ an_import_builds_the_editor_library_of_its_project_first_unless_it_is_current ::
     root,_:=filepath.abs(#directory+"../..",context.temp_allocator)
     folder:=base.test_folder(t,"import-library")
     if folder=="" {return}
-    testing.expect(t,os.write_entire_file(project.path(folder,project.PROJECT_FILE),`{"name":"Stale","plugins":[]}`)==nil)
-    testing.expect(t,base.make_directory_all(project.path(folder,"assets","props"))==nil)
+    testing.expect(t,os.write_entire_file(project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator),`{"name":"Stale","plugins":[]}`)==nil)
+    testing.expect(t,base.make_directory_all(project.path(folder,"assets","props",allocator=context.temp_allocator))==nil)
     model:=project.path(folder,"assets","props","crate.glb",allocator=context.temp_allocator)
     testing.expect(t,os.write_entire_file(model,"glTF")==nil)
     outside:=project.path(root,"assets",allocator=context.temp_allocator)
@@ -41,9 +41,9 @@ an_import_builds_the_editor_library_of_its_project_first_unless_it_is_current ::
         work:=project.path(project.folder_path(folder,.Generated,context.temp_allocator),"build",allocator=context.temp_allocator)
         testing.expect(t,base.make_directory_all(work)==nil)
         game:=project.path(folder,"game","game.odin",allocator=context.temp_allocator)
-        testing.expect(t,base.make_directory_all(project.path(folder,"game"))==nil && os.write_entire_file(game,"package game\n")==nil)
-        testing.expect(t,os.write_entire_file(project.path(work,"editor.sources.json"),fmt.tprintf(`{{"source_files":["%s"],"load_files":[]}}`,base_slashes(game)))==nil)
-        testing.expect(t,os.write_entire_file(project.path(work,"editor.stamp"),"0123456789abcdef")==nil)
+        testing.expect(t,base.make_directory_all(project.path(folder,"game",allocator=context.temp_allocator))==nil && os.write_entire_file(game,"package game\n")==nil)
+        testing.expect(t,os.write_entire_file(project.path(work,"editor.sources.json",allocator=context.temp_allocator),fmt.tprintf(`{{"source_files":["%s"],"load_files":[]}}`,base_slashes(game)))==nil)
+        testing.expect(t,os.write_entire_file(project.path(work,"editor.stamp",allocator=context.temp_allocator),"0123456789abcdef")==nil)
         testing.expect(t,os.write_entire_file(project.project_library(folder,"editor",context.temp_allocator),"library")==nil)
     }
     Case :: struct {name:string,library:Library,args:[]string,stale:bool}

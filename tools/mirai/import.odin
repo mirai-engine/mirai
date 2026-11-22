@@ -50,7 +50,7 @@ import_libraries_stale :: proc(root:string,args:[]string,mode:Build_Mode) -> []s
     for i:=0;i<len(args);i+=1 {
         if args[i]=="--store" || args[i]=="--from" || args[i]=="--folder" {i+=1;continue}
         if !os.exists(args[i]) {continue}
-        folder:=project_of(os.is_dir(args[i])?args[i]:os.dir(args[i]))
+        folder:=project_of(os.is_dir(args[i])?args[i]:os.dir(args[i]),context.temp_allocator)
         if folder=="" || slice.contains(stale[:],folder) {continue}
         p,error:=project.open(folder,root,context.temp_allocator)
         if error.code!=.None {continue}

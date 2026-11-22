@@ -139,17 +139,22 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     if ok,_:=api_view_wait(s,call,p.dt,started,window_frames=!game && strip==nil);!ok {return}
     if strip!=nil {api_filmstrip_run(s,call,strip,path,given=="");return}
     debug:[]gpu.Debug_Lines
-    if p.debug!={} {
+    build_debug :: proc(s:^Session,call:^api.Call,w:core.World_Ref,flags:Api_Capture_Debug) -> ([]gpu.Debug_Lines,bool) {
+        if flags=={} {return nil,true}
         lines,made:=api_capture_debug_make(call)
-        if !made {return}
-        if !api_capture_debug_draw(s,call,game?run_ref(s,r):shown_world(s),p.debug,core.NONE,nil,&lines) {return}
-        debug=make([]gpu.Debug_Lines,1,call.allocator)
-        debug[0]=lines
+        if !made {return nil,false}
+        if !api_capture_debug_draw(s,call,w,flags,core.NONE,nil,&lines) {return nil,false}
+        out:=make([]gpu.Debug_Lines,1,call.allocator)
+        out[0]=lines
+        return out,true
     }
     pixels:[]u8
     width,height:int
     wait:=p.frames==0?API_CAPTURE_TEXTURES_WAIT:time.Duration(0)
     if game {
+        debug_ok:bool
+        debug,debug_ok=build_debug(s,call,run_ref(s,r),p.debug)
+        if !debug_ok {return}
         frames:=p.frames>0?p.frames:API_CAPTURE_SETTLE
         for {
             drawn:bool
@@ -186,6 +191,10 @@ api_capture :: proc(s:^Session,call:^api.Call) {
             api.call_fail(call,api.SERVER_ERROR,"The last frame showed no generated image: frame generation needs FSR 3.1 as the antialiasing, frame_generation on in Graphics_Settings and a frame with history")
             return
         }
+        // Build debug overlays after the scene frames have evaluated animations and transforms.
+        debug_ok:bool
+        debug,debug_ok=build_debug(s,call,shown_world(s),p.debug)
+        if !debug_ok {return}
         size:=api_capture_size(api_capture_viewport(s.app),p.width,p.height)
         read:bool
         pixels,width,height,read=api_capture_image(s,p.ui,size,p.generated,wait,debug)
