@@ -26,8 +26,10 @@ Spawn_Test_World :: struct {
     instances:core.Table(Prefab_Instance),
     members:core.Table(Prefab_Member),
     pendings:core.Table(Prefab_Pending),
+    preloads:core.Table(Prefab_Preload),
     disabled:core.Table(core.Disabled),
     forms:Prefab_Forms,
+    root:Scene_Root,
 }
 
 @(private="file") SPAWN_BULB :: base.Asset_Id{0x5b,1}
@@ -62,9 +64,12 @@ spawn_test_open :: proc(t:^testing.T,p:^Spawn_Test,name:string) -> bool {
 
 @(private="file")
 spawn_test_close :: proc(p:^Spawn_Test) {
+    host.app_content_destroy(&p.app)
     host.app_world_free(&p.app,p.kept)
     host.app_world_free(&p.app,p.read)
+    host.app_assets_releases_stop(&p.app)
     delete(p.app.worlds)
+    host.assets_marks_free(&p.app.asset_marks)
     host.assets_destroy(&p.assets)
     asset.types_destroy(&p.types)
     test_info_destroy(&p.info)
@@ -294,4 +299,130 @@ the_forms_a_world_keeps_are_bounded_and_the_one_spawned_longest_ago_goes :: proc
     testing.expect(t,error==.None && forms.prepared==PREFAB_FORMS+1)
     _,error=spawn_prefab(c,&p.assets,{prefab={0x5c,1},transient=true})
     testing.expect(t,error==.None && forms.prepared==PREFAB_FORMS+2 && len(forms.items)==PREFAB_FORMS)
+}
+
+// A scene with an entity named Spawner and, with preload, a Prefab_Preload of the prefabs given.
+@(private="file")
+spawn_test_scene :: proc(t:^testing.T,p:^Spawn_Test,id:base.Asset_Id,preload:[]base.Asset_Id) {
+    document:asset.Scene
+    asset.scene_init(&document,&p.types,id)
+    defer asset.scene_destroy(&document)
+    asset.scene_entity_add(&document,1,0,"Spawner")
+    if len(preload)>0 {
+        named:Prefab_Preload
+        copy(named.prefabs[:],preload)
+        asset.scene_set(&document,1,"Prefab_Preload",&named)
+    }
+    testing.expect_value(t,asset.scene_save(&document,fmt.tprintf("%s/%x-%x.scene",p.folder,id[0],id[1])),asset.Error.None)
+}
+
+// The scene a World is asked to load, loaded as the player loads it before its first tick.
+@(private="file")
+spawn_test_load :: proc(t:^testing.T,p:^Spawn_Test,w:core.World_Ref,id:base.Asset_Id,warms:^Prefab_Warms,problems:^core.Problems) {
+    requests:Scene_Requests
+    results:Scene_Results
+    launch:Scene_Launch
+    defer delete(requests.queue.items)
+    defer delete(results.queue.items)
+    request(&requests,id)
+    scene_requests(w,&p.app,&requests,&results,&launch,nil,nil,{},problems,warms)
+    result,found:=result_of(&results,id)
+    testing.expect(t,found && result.error==.None)
+}
+
+// A scene that names prefabs in a Prefab_Preload reads them, the prefabs they
+// place and what those take while it loads: what the game spawns on its first
+// tick is whole at once, and no spawn waits. Without it the same spawns wait.
+@(test)
+a_scene_that_preloads_a_prefab_reads_it_and_the_prefabs_it_places_before_its_first_tick :: proc(t:^testing.T) {
+    SCENE_PRELOADS :: base.Asset_Id{0x5d,1}
+    SCENE_PLAIN :: base.Asset_Id{0x5d,2}
+    for preload in ([2]bool{true,false}) {
+        p:Spawn_Test
+        if !spawn_test_open(t,&p,preload?"preload":"plain") {return}
+        defer spawn_test_close(&p)
+        bulb,lamp:asset.Scene
+        spawn_test_bulb(&bulb,&p.types,1)
+        testing.expect_value(t,asset.scene_save(&bulb,fmt.tprintf("%s/bulb.scene",p.folder)),asset.Error.None)
+        spawn_test_lamp(t,&lamp,&p.types,&bulb)
+        testing.expect_value(t,asset.scene_save(&lamp,fmt.tprintf("%s/lamp.scene",p.folder)),asset.Error.None)
+        asset.scene_destroy(&bulb)
+        asset.scene_destroy(&lamp)
+        id:=preload?SCENE_PRELOADS:SCENE_PLAIN
+        spawn_test_scene(t,&p,id,preload?{SPAWN_LAMP}:nil)
+        testing.expect(t,host.assets_scan(&p.assets))
+        warms:Prefab_Warms
+        defer prefab_warms_free(&warms)
+        problems:core.Problems
+        w:=host.app_world_ref(&p.app,p.kept)
+        spawn_test_load(t,&p,w,id,&warms,&problems)
+        testing.expect_value(t,host.assets_loaded(&p.assets,SPAWN_LAMP),preload)
+        testing.expect_value(t,host.assets_loaded(&p.assets,SPAWN_BULB),preload)
+
+        // The first tick: a burst of spawns of the lamp.
+        spawner:=Spawner{core.commands_of(w),&p.assets,&problems}
+        for at in 0..<60 {
+            root:=spawn(spawner,SPAWN_LAMP,{position={f32(at),0,0}},transient=true)
+            testing.expect(t,root!=core.NONE)
+        }
+        core.world_settle(w)
+        testing.expect_value(t,core.count(&p.kept.pendings),preload?0:60)
+        testing.expect_value(t,core.count(&p.kept.instances),60)
+        testing.expect_value(t,core.count(&p.kept.lights),preload?60:0)
+        pending:=0
+        for &problem in core.problems_list(&problems) {
+            if core.problem_code(&problem)=="scene.spawn_pending" {pending+=1}
+        }
+        testing.expect_value(t,pending,preload?0:1)
+    }
+}
+
+// The spawns that wait for a prefab are one problem, on the first root, until
+// one of them is placed; then the next spawn that waits is reported again.
+// Loading another scene stops the reads the spawns of the one before began.
+@(test)
+spawns_that_wait_for_a_prefab_report_it_once_and_another_scene_stops_their_reads :: proc(t:^testing.T) {
+    SCENE :: base.Asset_Id{0x5d,3}
+    p:Spawn_Test
+    if !spawn_test_open(t,&p,"pending-once") {return}
+    defer spawn_test_close(&p)
+    bulb:asset.Scene
+    spawn_test_bulb(&bulb,&p.types,2)
+    testing.expect_value(t,asset.scene_save(&bulb,fmt.tprintf("%s/bulb.scene",p.folder)),asset.Error.None)
+    asset.scene_destroy(&bulb)
+    spawn_test_scene(t,&p,SCENE,nil)
+    testing.expect(t,host.assets_scan(&p.assets))
+    w:=host.app_world_ref(&p.app,p.kept)
+    warms:Prefab_Warms
+    defer prefab_warms_free(&warms)
+    problems:core.Problems
+    spawner:=Spawner{core.commands_of(w),&p.assets,&problems}
+    roots:[60]core.Entity
+    for &root in roots {root=spawn(spawner,SPAWN_BULB,transient=true)}
+    core.world_settle(w)
+    testing.expect_value(t,core.count(&p.kept.pendings),60)
+    testing.expect_value(t,problems.count,1)
+    testing.expect(t,core.problem_find(&problems,roots[0],"scene.spawn_pending")!=nil)
+    testing.expect_value(t,core.problem_find(&problems,roots[0],"scene.spawn_pending").count,1)
+
+    // The frame begins the read of the bulb; another scene stops it, and its spawns that waited are gone.
+    spawns_fill(w,&p.app,&warms,&problems)
+    testing.expect_value(t,len(warms.items),1)
+    ended:=warms.ended
+    spawn_test_load(t,&p,w,SCENE,&warms,&problems)
+    testing.expect_value(t,len(warms.items),0)
+    testing.expect(t,warms.ended>ended)
+    testing.expect_value(t,core.count(&p.kept.pendings),0)
+
+    // The bulb waits again in the new scene: a spawn is reported again, once, and placed once it is read.
+    core.problems_clear(&problems)
+    spawner=Spawner{core.commands_of(w),&p.assets,&problems}
+    for &root in roots {root=spawn(spawner,SPAWN_BULB,transient=true)}
+    core.world_settle(w)
+    testing.expect_value(t,problems.count,1)
+    spawns_fill(w,&p.app,&warms,&problems,all=true)
+    core.world_settle(w)
+    testing.expect_value(t,core.count(&p.kept.pendings),0)
+    testing.expect_value(t,core.count(&p.kept.lights),60)
+    testing.expect_value(t,len(p.kept.forms.reported),0)
 }

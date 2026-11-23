@@ -71,7 +71,7 @@ result_of :: proc(results:^Scene_Results,scene:base.Asset_Id,path:string="") -> 
 // at a time and in phases (loading.odin): a request waits while another loads.
 // Its result comes in the frame the scene replaces the world.
 @(step="input",loops="game editor")
-scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Requests,results:^Scene_Results,launch:^Scene_Launch,loads:^Scene_Loads,loading:^Scene_Loading,root:core.Ref(Scene_Root),problems:^core.Problems) {
+scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Requests,results:^Scene_Results,launch:^Scene_Launch,loads:^Scene_Loads,loading:^Scene_Loading,root:core.Ref(Scene_Root),problems:^core.Problems,warms:^Prefab_Warms) {
     launched:=!launch.taken && app.launch.scene!=""
     if launched {
         launch.taken=true
@@ -88,6 +88,7 @@ scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Reques
         loads.job=nil
         _,error:=load_end(job,world)
         if loading!=nil {loading^={}}
+        if error==.None {spawns_forget(world,warms)}
         // The swap traded the contents of the World: the storages are where they were.
         load_report(app,r,error,launch.first,results,problems)
         launch.first=false
@@ -117,6 +118,7 @@ scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Reques
             if file,found:=asset.registry_find_path(&app.assets.registry,path);found {id=file.id} else {
                 // A scene file outside the assets (the copy a network game of the editor runs) loads at once.
                 _,error=load_path(world,app,path)
+                if error==.None {spawns_forget(world,warms)}
                 load_report(app,r,error,launched,results,problems)
                 launch.first=false
                 return
@@ -129,6 +131,7 @@ scene_requests :: proc(world:core.World_Ref,app:^host.App,requests:^Scene_Reques
         if job!=nil {
             load_step(job,all=true)
             _,error=load_end(job,world)
+            if error==.None {spawns_forget(world,warms)}
         }
         load_report(app,r,error,launched,results,problems)
         launch.first=false

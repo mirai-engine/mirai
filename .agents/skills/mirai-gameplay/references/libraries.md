@@ -17,8 +17,10 @@ Bridges `asset.Scene` documents (`Entity_Id`, named components) and live `World`
   `serial.value_check`, internal entity refs, registry assets and shipped-only `Scene_Reference`.
 - `spawn(spawner, path_or_id, at)`: instantiates a `Prefab` (`Not_A_Prefab` -> problem
   `scene.spawn`, returns `NONE`). Never blocks on disk: unloaded prefabs return a root with
-  `Prefab_Pending` (`scene.spawn_pending`) filled by `scene_spawns` once background
-  `assets_warm_begin` completes (`spawns_fill(all=true)` blocks for editor API). Roots carry
+  `Prefab_Pending` (`scene.spawn_pending`, once per prefab until one is placed) filled by
+  `scene_spawns` once background `assets_warm_begin` completes (`spawns_fill(all=true)` blocks
+  for editor API). `Prefab_Preload` names prefabs only code spawns: the load reads them and the
+  prefabs they place before tick 0; a scene change stops stale warms (`spawns_forget`). Roots carry
   `Prefab_Instance`; worlds cache `Prefab_Forms`. Project loads resolve stale prefab overrides;
   cooked builds load resolved files directly.
 - `capture` / `save`: serializes IDed entities (depth order; `sections:true` includes section

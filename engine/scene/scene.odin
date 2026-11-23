@@ -126,9 +126,10 @@ spawn_report :: proc(s:Spawner,order:Spawn,name:string,found:Error) -> core.Enti
     report,error:=Report{},found
     if error==.None {report,error=spawn_prefab(s.commands,s.assets,order)}
     if error==.None {
-        if report.pending {
+        // Once per prefab while its spawns wait: a burst of them is one problem, on the first root.
+        if report.pending && pending_first(core.world_storage_of(core.world_ref(s.commands.data,s.commands.info),Prefab_Forms),order.prefab) {
             core.report(s.problems,report.root,"scene.spawn_pending",
-                "prefab %s is still loading; wait for Prefab_Pending to go before using its components, or reference the prefab in the scene to warm it before spawning",name)
+                "prefab %s is still loading; wait for Prefab_Pending to go before using its components, or name it in a Prefab_Preload of the scene to read it before the first tick",name)
         }
         return report.root
     }

@@ -351,6 +351,7 @@ Prefab_Forms :: struct {
     prepared:int, // prefabs read into a form since the World was made
     pending:core.Shape, // of the rows of Prefab_Pending, and Prefab_Warms.ended, when spawns_fill last looked at them
     ended:u64,
+    reported:[dynamic]base.Asset_Id, // prefabs whose spawns wait, reported once (scene.spawn_pending) until one is placed
     allocator:runtime.Allocator,
 }
 
@@ -358,6 +359,7 @@ prefab_forms_free :: proc(forms:^Prefab_Forms) {
     for len(forms.items)>0 {forms_drop(forms,len(forms.items)-1)}
     delete(forms.items)
     delete(forms.entities)
+    delete(forms.reported)
     forms^={}
 }
 
@@ -368,6 +370,24 @@ forms_drop :: proc(forms:^Prefab_Forms,at:int) {
     mem.free_bytes(kept.form.block,forms.allocator)
     delete(kept.sources,forms.allocator)
     unordered_remove(&forms.items,at)
+}
+
+// Whether a spawn that waits for prefab is the first one since it was last
+// placed, and is to be reported. Without memory to remember it, every one is.
+@(private)
+pending_first :: proc(forms:^Prefab_Forms,prefab:base.Asset_Id) -> bool {
+    if forms==nil {return true}
+    if slice.contains(forms.reported[:],prefab) {return false}
+    if forms.allocator.procedure==nil {forms.allocator=context.allocator}
+    if forms.reported==nil {forms.reported=make([dynamic]base.Asset_Id,forms.allocator)}
+    _,_=append(&forms.reported,prefab)
+    return true
+}
+
+// A spawn of prefab was placed: the next one that waits for it is reported.
+@(private)
+pending_forget :: proc(forms:^Prefab_Forms,prefab:base.Asset_Id) {
+    if at,found:=slice.linear_search(forms.reported[:],prefab);found {unordered_remove(&forms.reported,at)}
 }
 
 // Whether the files a form was read from are what they were, by the registry.

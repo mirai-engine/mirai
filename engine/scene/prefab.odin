@@ -52,6 +52,17 @@ Prefab_Pending :: struct {
 
 PREFAB_WARMS :: 4 // prefabs read for spawns at once, by application
 
+PREFAB_PRELOADS :: 8 // prefabs a Prefab_Preload names
+
+// Prefabs the game spawns while it runs, named by the scene so that it reads
+// them, the prefabs they place and what those take while it loads, before its
+// first tick: their spawns are whole at once. More than PREFAB_PRELOADS go on
+// several entities.
+@(component,description="Prefabs the game spawns while it runs, read with the scene, with the prefabs they place, before its first tick: their spawns are whole at once.")
+Prefab_Preload :: struct {
+    prefabs:[PREFAB_PRELOADS]base.Asset_Id `mirai:"kind=.scene"`,
+}
+
 Prefab_Warm :: struct {
     prefab:base.Asset_Id,
     job:^Load_Job,
@@ -69,6 +80,18 @@ prefab_warms_free :: proc(warms:^Prefab_Warms) {
     for w in warms.items {load_free(w.job)}
     delete(warms.items)
     warms^={}
+}
+
+// What the spawns that waited in a World leave once a load replaced its scene
+// and they went with it: the reads under way stop, and the next spawn that
+// waits is reported again. A World of the application whose spawns still
+// wait begins its reads again.
+spawns_forget :: proc(w:core.World_Ref,warms:^Prefab_Warms) {
+    if forms:=core.world_storage_of(w,Prefab_Forms);forms!=nil {clear(&forms.reported)}
+    if warms==nil || len(warms.items)==0 {return}
+    for x in warms.items {load_free(x.job)}
+    clear(&warms.items)
+    warms.ended+=1
 }
 
 @(step="frame",loops="game editor")
@@ -133,8 +156,10 @@ spawns_fill :: proc(w:core.World_Ref,app:^host.App,warms:^Prefab_Warms,problems:
             name:[base.ASSET_ID_TEXT]u8
             core.report(problems,core.NONE,"scene.spawn","scene %s did not spawn: %s; open it in the editor and save it again, or spawn another",host.assets_name(a,prefab,&name),error_text(error))
             core.destroy(core.world_entities(w),root)
+            if forms!=nil {pending_forget(forms,prefab)}
             continue
         }
         core.remove(pendings,root)
+        if forms!=nil {pending_forget(forms,prefab)}
     }
 }
