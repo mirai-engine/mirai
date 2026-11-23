@@ -178,7 +178,7 @@ animation_match :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (valu
     state:=constraint_playing(playback,entity)
     if state==nil || !state.program.matched || !state.program.ready {return}
     m:=state.program.match
-    return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=state.stack>0 && state.layers[0].weight>0,searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
+    return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=stack_slots(state)>0 && state.stack.layers[0].weight>0,searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
 }
 
 // What the clip of a rig plays for: matching; one toward its landing marker, at the rate that
@@ -207,12 +207,12 @@ Match_Playing :: struct {
     body:mm.Vec3,            // horizontal velocity of the body in the last tick
     lag,lag_velocity:mm.Vec3, // of the root of the pose from the body, world axes
     told:bool,               // body holds a velocity
-    searched:Match_Searched,
 }
 // The last search of matching, as it made it: its request, the row that played, whether its clip
 // was left whole, the reselect span and the rows the rig had left, and which of searches it was.
 // It searched mode m for the bit m of request.modes. match_searched_candidates searches it again
-// to note its candidates; the tick does not.
+// to note its candidates; the tick does not. It is diagnostics, kept in Playback.searches and not
+// carried by copies of the world.
 Match_Searched :: struct {request:lib.Match_Request,row:i32,whole:bool,span:f32,recent:lib.Match_Recent,search:u32}
 
 // The candidates of the last search of matching, searched again as it was made in db.
@@ -352,7 +352,7 @@ match_lag_apply :: proc(state:^Playing,placed:mm.Transform) {
 // Chooses the clip and time the rig plays in this tick and writes them as a program of one clip.
 // facing is the -Z of the rig in the world.
 @(private)
-match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems) -> bool {
+match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Content,library:^host.Content_Animation,source:base.Asset_Id,dt:f32,goals:[]Match_Goal,facing:mm.Vec3,assets:^host.Assets,allocator:runtime.Allocator,problems:^core.Problems,noted:^Match_Searched=nil) -> bool {
     runtime:=&state.program;m:=&runtime.match;info:=content.set.match.info
     goal:Match_Goal;has_goal:=len(goals)>0
     if has_goal {goal=goals[len(goals)-1]}
@@ -483,9 +483,9 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 // Nothing of the database plays (the first search, a swapped library, a mode its
                 // clip does not serve): the feet the rig has and how they move with the body.
                 request.rate=1
-                if state.inertia.kept>1 && state.inertia.dt>0 {
-                    shown,previous,_,_:=inertia_poses(&state.inertia)
-                    request.query,_=lib.match_query_pose(db,playing_topology(state).parents[:],state.body[.Foot_L],state.body[.Foot_R],state.body[.Pelvis],shown,previous,state.inertia.dt,mm.quat_rotate(mm.quat_inverse(lib.match_yaw(facing)),velocity))
+                if stack:=state.stack;stack!=nil && stack.inertia.kept>1 && stack.inertia.dt>0 {
+                    shown,previous,_,_:=inertia_poses(&stack.inertia)
+                    request.query,_=lib.match_query_pose(db,playing_topology(state).parents[:],state.body[.Foot_L],state.body[.Foot_R],state.body[.Pelvis],shown,previous,stack.inertia.dt,mm.quat_rotate(mm.quat_inverse(lib.match_yaw(facing)),velocity))
                 }
             }
             request.filter_stationary,request.moving=filter_stationary,moving
@@ -527,7 +527,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
                 best,cost,_=lib.match_search(db,request,row,whole,info.reselect,&m.recent)
             }
             m.searches+=1;m.cost=min(cost,playing_on)
-            m.searched={request=searched,row=i32(row),whole=whole,span=info.reselect,recent=m.recent,search=m.searches}
+            if noted!=nil {noted^={request=searched,row=i32(row),whole=whole,span=info.reselect,recent=m.recent,search=m.searches}}
             if best>=0 && (forced && !passed || playing_on==max(f32) || cost<playing_on-info.bias) {
                 m.phase=.Landing if landing else .Matching
                 range:=lib.match_range_of(db,best)

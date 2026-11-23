@@ -5,6 +5,7 @@ import cmath "core:math"
 import "core:fmt"
 import "core:log"
 import "core:math/linalg"
+import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -387,6 +388,12 @@ match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,velocity:=mm.Vec3{},desired:
     actions_finish(&f.actions,&f.playback,dt)
     return true
 }
+// The last search of the matching of the rig, as Playback noted it for inspection.
+@(private="file")
+match_test_searched :: proc(f:^Match_Fixture) -> Match_Searched {
+    searched,_:=match_searched(core.ref(&f.playback),f.rig)
+    return searched
+}
 // The events of the actions of the rig in the last tick, without the markers of its locomotion.
 @(private="file")
 match_action_events :: proc(f:^Match_Fixture) -> (count:int) {
@@ -536,7 +543,7 @@ a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate :: 
         testing.expect(t,match_step(&f,dt,GROUND))
         jumps[i]=linalg.length(playing_pose(f.state,.Local)[foot].position-last)
         if i==0 {continue}
-        testing.expect(t,f.state.layers[0].weight==1 && f.state.inertia.state.active && f.state.inertia.state.duration==.15,"it shows at its weight at once and blends over its fade_in")
+        testing.expect(t,f.state.stack.layers[0].weight==1 && f.state.stack.inertia.state.active && f.state.stack.inertia.state.duration==.15,"it shows at its weight at once and blends over its fade_in")
         saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=context.allocator;f.app.allocator=context.allocator
         stable:=true
         for tick in 0..<120 {
@@ -555,7 +562,7 @@ a_whole_body_action_blends_in_from_the_pose_and_stable_ticks_do_not_allocate :: 
 @(private="file")
 match_test_clips :: proc(state:^Playing) -> (count:int) {
     count=int(state.program.output.count)
-    for &layer in state.layers[:state.stack] {
+    for &layer in state.stack.layers[:state.stack.slots] {
         if layer.weight<=0 {continue}
         players:[LAYER_PLAYERS]lib.Player
         count+=layer_players(&layer,&players)
@@ -613,7 +620,7 @@ an_action_shows_its_pose_at_once_and_blends_from_the_pose_shown :: proc(t:^testi
             }
             if !testing.expect(t,match_step(&f,dt,GROUND) && match_step(&twin,dt,GROUND)) {break}
             append(&moved,linalg.length(f.state.body_motion.translation-twin.state.body_motion.translation))
-            testing.expectf(t,match_test_clips(f.state)==match_test_clips(twin.state) && f.state.layers[0].weight==twin.state.layers[0].weight,"%s: tick %d blends the clips of one source at its weight",c.name,tick)
+            testing.expectf(t,match_test_clips(f.state)==match_test_clips(twin.state) && f.state.stack.layers[0].weight==twin.state.stack.layers[0].weight,"%s: tick %d blends the clips of one source at its weight",c.name,tick)
             pose,offset:[5]mm.Vec3
             for b in 0..<min(len(playing_pose(f.state,.Local)),5) {pose[b]=playing_pose(f.state,.Local)[b].position;offset[b]=pose[b]-playing_pose(twin.state,.Local)[b].position}
             append(&shown,pose);append(&offsets,offset)
@@ -741,7 +748,7 @@ a_new_mode_of_the_match_goal_enters_by_its_entry_clip :: proc(t:^testing.T) {
     // one it jumped to first, the costs in order and each the sum of its kinds of feature.
     testing.expect(t,match_step(&f,dt,GROUND))
     first,_:=animation_match(core.ref(&f.playback),f.rig)
-    searched:=f.state.program.match.searched
+    searched:=match_test_searched(&f)
     for _ in 1..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
     value,_:=animation_match(core.ref(&f.playback),f.rig)
     testing.expect(t,value.mode==GROUND && (value.clip==base.name_hash("idle") || value.clip==base.name_hash("walk")))
@@ -770,7 +777,7 @@ a_new_mode_of_the_match_goal_enters_by_its_entry_clip :: proc(t:^testing.T) {
     testing.expect(t,match_step(&f,dt,AIR))
     value,_=animation_match(core.ref(&f.playback),f.rig)
     testing.expectf(t,value.mode==AIR && value.clip==base.name_hash("jump") && value.time<=lib.MATCH_ENTRY_SPAN+dt+1e-4 && !value.forced,"entering the air starts its entry clip near its start, not %v",value)
-    searched=f.state.program.match.searched
+    searched=match_test_searched(&f)
     reasons:=match_test_reasons(db,match_searched_candidates(db,searched))
     testing.expectf(t,searched.request.entry && searched.request.modes==1<<AIR && reasons=={.Mode,.Mode,.Entry,.None,max(lib.Match_Reject)} && searched.search==value.searches,"entering the air notes its entry search, not %v",searched)
     testing.expectf(t,value.rate==1,"an entry clip plays at its own rate whatever the body moves, not %.2f",value.rate)
@@ -842,7 +849,7 @@ a_body_in_the_air_lands_on_the_landing_marker_of_its_clip_when_physics_says :: p
         testing.expect(t,match_step(&f,dt,AIR,time_to_land=.25))
         value,_:=animation_match(core.ref(&f.playback),f.rig)
         db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
-        searched:=f.state.program.match.searched
+        searched:=match_test_searched(&f)
         if !testing.expect(t,db!=nil) {return}
         reasons:=match_test_reasons(db,match_searched_candidates(db,searched))
         testing.expectf(t,value.clip==base.name_hash("jump") && value.time>=.3 && searched.request.event==.25 && reasons[2]==.Event && reasons[3]==.None,"off a ledge the jump plays from %.3f s; the fall has no marker: %v",value.time,reasons)
@@ -1157,7 +1164,7 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     swapped,_:=animation_match(core.ref(&f.playback),f.rig)
     jump:=max(linalg.length(after[0]-before[0]),linalg.length(after[1]-before[1]))
     testing.expect(t,f.state.program.library==MATCH_TEST_LIBRARY && swapped.clip==base.name_hash("walk"),"the rig plays the walk of the new library")
-    testing.expect(t,f.state.inertia.state.active,"the swap enters the new clip through an inertial transition")
+    testing.expect(t,f.state.stack.inertia.state.active,"the swap enters the new clip through an inertial transition")
     testing.expectf(t,jump<.1,"a foot jumps %.3f m in the tick of the swap",jump)
     // Nothing of the new library plays yet: the search asks for the feet the rig has, not for the
     // mean of the database, and enters the new walk where its left foot is where the rig has it.
@@ -1166,7 +1173,7 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
     testing.expectf(t,linalg.length(entered.xyz-planted)<.03,"the new walk starts with the left foot at %v, the rig had it at %v",entered.xyz,planted)
     // Past the blend, the feet are those of the new walk.
     for _ in 0..<15 {testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking))}
-    testing.expect(t,!f.state.inertia.state.active,"the transition ends within its blend")
+    testing.expect(t,!f.state.stack.inertia.state.active,"the transition ends within its blend")
 }
 
 @(private="file")
@@ -1237,7 +1244,7 @@ spans_of_a_set_keep_rows_out_of_the_search_and_leave_or_play_into_them :: proc(t
             testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_span")!=nil,"a walk excluded whole is reported")
             db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
             if testing.expect(t,db!=nil) {
-                noted:=match_searched_candidates(db,f.state.program.match.searched)
+                noted:=match_searched_candidates(db,match_test_searched(&f))
                 reason:=lib.Match_Reject.None
                 for item in noted.items[:noted.count] {if lib.match_range_of(db,int(item.row))==1 {reason=item.reason}}
                 testing.expectf(t,reason==.Span,"the walk is left out by its span, not %v",reason)
@@ -1265,4 +1272,67 @@ spans_of_a_set_keep_rows_out_of_the_search_and_leave_or_play_into_them :: proc(t
             testing.expectf(t,!match_check(changed),"%v is refused",wrong)
         }
     }
+}
+
+// A copy of the world rolled back to and replayed with the same inputs gives the same poses,
+// actions, layers and matching, bit for bit: the copy carries every state the simulation reads.
+// It leaves out what is only diagnostics (the last search) and what a tick only works in, and
+// a copy back into a world that already played allocates nothing.
+@(test)
+a_rig_rolled_back_to_a_copy_of_its_world_replays_its_poses_exactly :: proc(t:^testing.T) {
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    dt:=f32(.05)
+    for _ in 0..<6 {set(&f.requests,f.rig,"aim_yaw",.5);testing.expect(t,match_step(&f,dt,GROUND,desired={0,0,-1}))}
+    play(&f.requests,f.rig,"Kick")
+    set(&f.requests,f.rig,"aim_yaw",.5);testing.expect(t,match_step(&f,dt,GROUND,desired={0,0,-1}))
+    if !testing.expect(t,f.state.stack!=nil && f.state.stack.slots==3) {return}
+    // The snapshot a rollback goes back to, measured as it is taken.
+    tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
+    snapshot:Playback;defer playback_free(&snapshot)
+    actions:Action_Runtime;defer actions_runtime_free(&actions)
+    {
+        context.allocator=mem.tracking_allocator(&tracking)
+        testing.expect(t,playback_copy(&snapshot,&f.playback))
+    }
+    taken,taken_bytes:=tracking.total_allocation_count,tracking.total_memory_allocated
+    testing.expect(t,len(snapshot.searches)==0 && len(snapshot.work.rows)==0 && len(snapshot.work.jobs)==0,"a copy carries no diagnostics nor work")
+    copied:=&snapshot.states[0]
+    testing.expect(t,copied.stack!=nil && copied.stack!=f.state.stack && copied.stack.scratch.curves==nil && copied.stack.scratch.values==nil,"its stack is its own, without the scratch of a tick")
+    testing.expect(t,core.value_copy(&actions,&f.actions,type_info_of(Action_Runtime)))
+    TICKS :: 12
+    Tick :: struct {pose:[4]mm.Transform,curves,events:int,motion:Root_Delta,clip:u64,time:f32,weights:[STACK_SLOTS]f32}
+    run :: proc(t:^testing.T,f:^Match_Fixture,dt:f32,out:^[TICKS]Tick) {
+        for &tick,i in out {
+            if i==2 {play(&f.requests,f.rig,"Vault")}
+            if i==8 {play(&f.requests,f.rig,"Kick")}
+            set(&f.requests,f.rig,"aim_yaw",f32(i)/TICKS)
+            desired:=mm.Vec3{0,0,-1} if i<5 else {1,0,0}
+            testing.expect(t,match_step(f,dt,GROUND,desired=desired,velocity=desired*f32(i)*.1))
+            copy(tick.pose[:],playing_pose(f.state,.Local))
+            tick.curves,tick.events,tick.motion=len(f.state.curves),len(f.events.items),f.state.motion
+            tick.clip,tick.time=f.state.program.match.clip,f.state.time
+            for &layer,k in f.state.stack.layers {tick.weights[k]=layer.weight}
+        }
+    }
+    played,replayed:[TICKS]Tick
+    run(t,&f,dt,&played)
+    // Back to the snapshot: the world keeps its own work, so the copy back allocates nothing.
+    tracking_back:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking_back,context.allocator)
+    {
+        context.allocator=mem.tracking_allocator(&tracking_back)
+        testing.expect(t,playback_copy(&f.playback,&snapshot))
+    }
+    back:=tracking_back.total_allocation_count;mem.tracking_allocator_destroy(&tracking_back)
+    actions_runtime_free(&f.actions);testing.expect(t,core.value_copy(&f.actions,&actions,type_info_of(Action_Runtime)))
+    f.state=state_get(&f.playback,f.rig)
+    _,noted:=match_searched(core.ref(&f.playback),f.rig)
+    testing.expect(t,!noted,"the last search, diagnostics only, is not rolled back")
+    run(t,&f,dt,&replayed)
+    for tick,i in played {
+        testing.expectf(t,tick==replayed[i],"tick %d replays as it played: %v, then %v",i,tick,replayed[i])
+    }
+    testing.expect(t,played[TICKS-1].weights!=played[0].weights,"the replay covers actions and layers that changed")
+    testing.expectf(t,back==0,"a rollback into a world that played allocates nothing (%d allocations)",back)
+    log.infof("rollback copy of a character: %d allocations, %d B (before the split of the stack and its scratch: 17 allocations, 11008 B); back into the world: %d allocations",taken,taken_bytes,back)
 }

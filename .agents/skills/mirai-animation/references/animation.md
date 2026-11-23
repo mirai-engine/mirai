@@ -151,6 +151,17 @@ rebuilding only on asset change. Inspect via `animation_playing_content`, `sourc
 
 - `Playback` (derived world storage): clocks, fades, dense poses, curves, root deltas, shared
   `Track_Map` (blends by bone, never target name). Materializes `Animation_Progress` on save.
+- **Stack only when layered.** `Playing.stack` (`Stack_Playing`: layers, actions' slots, inertia,
+  parameters, masks) is made the first time an entity plays more than its base clip (a `.character`
+  with layers, actions or locomotion, a `play_clip` overlay, `set`) and kept; a prop or timeline
+  playing one clip has none.
+- **Copies carry simulation only.** `playback_copy` (Play, rollback snapshots) copies states,
+  stacks, rigs and track maps; each copy keeps its own `Playback.work`, `Stack_Playing.scratch` and
+  `Playing.scratch` (sized by the next tick, so copying back into a world that played allocates
+  nothing) and drops `Playback.searches`, the last search of matching kept only for inspection.
+- Names a tick compares are hashed when bound, never per tick: action, clip, exit marker and
+  section names in `Action_Plan`, warp windows in `Motion_Instance`, `Morph_Weights.path` per row
+  stamp; `@field` tracks remember the row of their curve (`curve_find`).
 - Modifier, field-track, action, motion, and budget storages copy for Play/rollback.
 - Shared caches live on host (`Character_Assets`, `Skeleton_Assets`, `Skin_Runtime`); per-world GPU
   deformed meshes live in `Skin_Instances` (`animation_skin_release` on world free).

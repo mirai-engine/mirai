@@ -81,9 +81,10 @@ reference_pose :: proc(state:^Playing,library:^lib.Library,animation:Animation,o
         if c:=channels[1];c.weight>0 {out[b].rotation=mm.quat_slerp(rest.rotation,linalg.normalize0(lib.vec4_quat(c.sum)),mm.saturate(c.weight)*weight)}
         if c:=channels[2];c.weight>0 {out[b].scale=rest.scale+(c.sum.xyz/c.weight-rest.scale)*(mm.saturate(c.weight)*weight)}
     }
-    for &layer,i in state.layers[:state.stack] {
+    if state.stack==nil {return}
+    for &layer,i in state.stack.layers[:state.stack.slots] {
         if layer.clip==0 || layer.weight<=0 {continue}
-        asked:=state.asked[i]
+        asked:=state.stack.asked[i]
         over:=bone_named(state,asked.over[0].bone) if asked.over!={} else -1
         count=layer_players(&layer,&players)
         from:=lib.clip_find(library,asked.reference_clip) if asked.reference_clip!=0 else 0
@@ -165,7 +166,7 @@ poses_by_track_match_the_pose_each_track_gives_by_name :: proc(t:^testing.T) {
             got:=playing_pose(&state,.Local)[b]
             testing.expectf(t,linalg.length(got.position-value.position)<1e-5 && linalg.length(got.scale-value.scale)<1e-5 && mm.quat_angle(got.rotation,value.rotation)<1e-4,"step %d, bone %d: %v, by name %v",step,b,got,value)
         }
-        layered||=state.fader.outgoing_count>0 && state.layers[1].weight>0 && state.layers[2].weight>0 && state.layers[3].weight>0
+        layered||=state.fader.outgoing_count>0 && state.stack!=nil && state.stack.layers[1].weight>0 && state.stack.layers[2].weight>0 && state.stack.layers[3].weight>0
     }
     testing.expect_value(t,faults,Pose_Faults{})
     testing.expect(t,layered,"the component cross-fades under its three layers")

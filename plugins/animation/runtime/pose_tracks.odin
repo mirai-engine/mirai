@@ -76,7 +76,7 @@ tracks_release :: proc(playback:^Playback,state:^Playing) {
 tracks_bind :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation) -> bool {
     tracks_release(playback,state)
     count:=len(state.bindings)
-    if !pose_scratch_prepare(playback,max(len(playback.scratch),1),count) {return false}
+    if !pose_scratch_prepare(playback,max(len(playback.work.jobs),1),count) {return false}
     if content==nil {return true}
     library:=&content.lib
     track_count:=clamp(library.track_count,0,len(library.tracks))
@@ -120,14 +120,20 @@ tracks_bind :: proc(playback:^Playback,state:^Playing,content:^host.Content_Anim
     return true
 }
 
+@(private)
+pose_scratch_free :: proc(scratch:^Pose_Scratch) {
+    delete(scratch.bones);delete(scratch.references);delete(scratch.rig_rotations);delete(scratch.pose)
+    scratch^={}
+}
+
 // Room in the scratch of each of `workers` jobs for a rig of `bones` bindings and for every rig
 // bound before. It allocates only when a rig with more bindings is bound or the jobs become more.
 @(private)
 pose_scratch_prepare :: proc(playback:^Playback,workers,bones:int) -> bool {
     playback.bones_peak=max(playback.bones_peak,bones)
-    if len(playback.scratch)<workers && resize(&playback.scratch,workers)!=nil {return false}
+    if len(playback.work.jobs)<workers && resize(&playback.work.jobs,workers)!=nil {return false}
     n:=playback.bones_peak
-    for &scratch in playback.scratch {
+    for &scratch in playback.work.jobs {
         if len(scratch.bones)>=n {continue}
         if resize(&scratch.pose,3*n)!=nil || resize(&scratch.references,3*n)!=nil || resize(&scratch.rig_rotations,3*n)!=nil || resize(&scratch.bones,n)!=nil {return false}
     }
@@ -140,8 +146,8 @@ pose_scratch_prepare :: proc(playback:^Playback,workers,bones:int) -> bool {
 pose_room :: proc "contextless" (playback:^Playback,state:^Playing,worker:int) -> (scratch:^Pose_Scratch,bones:[]lib.Bone_Blend,shared:^Track_Map,ok:bool) {
     n:=len(state.bindings)
     at:=int(state.tracks)-1
-    if worker<0 || worker>=len(playback.scratch) || at<0 || at>=len(playback.track_maps) {return}
-    scratch=&playback.scratch[worker]
+    if worker<0 || worker>=len(playback.work.jobs) || at<0 || at>=len(playback.track_maps) {return}
+    scratch=&playback.work.jobs[worker]
     shared=&playback.track_maps[at]
     if len(scratch.bones)<n || len(scratch.references)<3*n || len(scratch.rig_rotations)<3*n || len(shared.targets)!=n {return nil,nil,nil,false}
     bones=scratch.bones[:n]
@@ -171,11 +177,11 @@ pose_job_allocator_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,ali
 pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Transform,$A),worker:int) {
     if row.content==0 {return}
     state:=&playback.states[row.state]
-    content:=&playback.work_contents[row.content-1]
+    content:=&playback.work.contents[row.content-1]
     row.faults=pose_compose(playback,state,content,row.animation,row.programmed,row.dt,core.read(transforms),worker)
     if row.animation.mirror {
-        if worker<0 || worker>=len(playback.scratch) ||
-            !playing_mirror(state,playing_pose(state,.Local),playback.scratch[worker].pose[:]) {
+        if worker<0 || worker>=len(playback.work.jobs) ||
+            !playing_mirror(state,playing_pose(state,.Local),playback.work.jobs[worker].pose[:]) {
             row.faults.mirror=true
         }
     }
@@ -186,14 +192,19 @@ pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Tr
 @(private)
 pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,programmed:bool,dt:f32,transforms:^core.Table(core.Transform,.Read),worker:int) -> (faults:Pose_Faults) {
     dt:=dt if animation.playing else 0
+    stack:=state.stack
     // What it showed in a tick that is not the one before (it was not posed since) is not blended
     // from, nor a blend kept from then.
-    inertia:=&state.inertia
-    if inertia.frame+1!=playback.frame {inertia.kept,inertia.state=0,{}}
-    // A blend measures how the pose its slots changed to moves: that pose a tick before is the base
-    // then under the layers where their clips were.
-    _,_,before,_:=inertia_poses(inertia)
-    capture:=state.stack>0 && stack_blending(state.blend) && inertia.kept>0 && dt>0 && len(before)==len(playing_pose(state,.Local))
+    before:[]mm.Transform
+    capture:=false
+    if stack!=nil {
+        inertia:=&stack.inertia
+        if inertia.frame+1!=playback.frame {inertia.kept,inertia.state=0,{}}
+        // A blend measures how the pose its slots changed to moves: that pose a tick before is the
+        // base then under the layers where their clips were.
+        _,_,before,_=inertia_poses(inertia)
+        capture=stack.slots>0 && stack_blending(stack.blend) && inertia.kept>0 && dt>0 && len(before)==len(playing_pose(state,.Local))
+    }
     if programmed {
         runtime:=&state.program
         if !program_pose(playback,state,content,animation,&runtime.output,worker) {faults.program=true;return}
@@ -212,8 +223,10 @@ pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
         faults=pose_sample(playback,state,content,animation,transforms,worker)
         sample_curves(state,content,animation.weight,animation)
     }
-    stack_inertia_apply(state,dt,capture)
-    inertia.frame=playback.frame
+    if stack!=nil {
+        stack_inertia_apply(state,dt,capture)
+        stack.inertia.frame=playback.frame
+    }
     return
 }
 
@@ -230,18 +243,19 @@ stack_blending :: proc "contextless" (blend:Stack_Blend) -> bool {
 // acceleration, which is noisy; a slot that cuts ends it. dt: 0 when it does not play.
 @(private)
 stack_root_inertia :: proc(state:^Playing,frame:u64,dt:f32) {
-    root:=&state.inertia.root
-    if state.stack==0 && !state.program.ready || !(dt>0) {return}
+    stack:=state.stack
+    if stack==nil || stack.slots==0 && !state.program.ready || !(dt>0) {return}
+    root:=&stack.inertia.root
     velocity :: proc(delta:Root_Delta,dt:f32) -> [2]mm.Vec3 {
         turn:=delta.rotation;if real(turn)<0 {turn=-turn}
         return {delta.translation/dt,lib.quat_log(turn)/dt}
     }
     shortest:=max(0,state.program.transition)
     cut:=state.program.transition<0
-    for i in 0..<int(state.stack) {
-        if state.asked[i].over!={} {continue}
-        if state.blend.cuts&(u16(1)<<u16(i))!=0 {cut=true}
-        if duration:=state.blend.durations[i];duration>0 && (shortest==0 || duration<shortest) {shortest=duration}
+    for i in 0..<int(stack.slots) {
+        if stack.asked[i].over!={} {continue}
+        if stack.blend.cuts&(u16(1)<<u16(i))!=0 {cut=true}
+        if duration:=stack.blend.durations[i];duration>0 && (shortest==0 || duration<shortest) {shortest=duration}
     }
     if cut || !state.root_enabled {root.duration=0} else if shortest>0 && root.shown && root.frame+1==frame {
         now:=velocity(state.motion,dt)
@@ -274,11 +288,17 @@ inertia_curves :: proc "contextless" (inertia:^Stack_Inertia) -> (shown,shown_be
 }
 
 // Room for the inertia of the stack of state, made on the owner thread before its pose: what it
-// showed is forgotten when its bones or its curves change. False when memory ran out.
+// showed is forgotten when its bones or its curves change. A program (locomotion) blends its jumps
+// by it too, so it makes the stack of a state that plays one. False when memory ran out.
 @(private)
 stack_inertia_prepare :: proc(state:^Playing) -> bool {
-    inertia:=&state.inertia
-    if state.stack==0 && !state.program.ready {inertia.kept,inertia.state=0,{};return true}
+    stack:=state.stack
+    if stack==nil {
+        if !state.program.ready {return true}
+        if stack=stack_make(state);stack==nil {return false}
+    }
+    inertia:=&stack.inertia
+    if stack.slots==0 && !state.program.ready {inertia.kept,inertia.state=0,{};return true}
     n:=len(state.bindings);c:=len(state.curves)
     shown,_:=inertia_curves(inertia)
     same:=len(inertia.poses)==n*4 && len(shown)==c && inertia.bound==state.bound
@@ -286,8 +306,18 @@ stack_inertia_prepare :: proc(state:^Playing) -> bool {
     if !same {inertia.kept,inertia.state=0,{}}
     inertia.bound=state.bound
     return program_array_resize(&inertia.poses,n*4) && program_array_resize(&inertia.history,c*2) &&
-        program_array_resize(&inertia.bones,n) && program_array_resize(&inertia.durations,n) &&
-        program_array_resize(&inertia.curves,c*5) && program_array_resize(&inertia.values,c*15)
+        program_array_resize(&inertia.bones,n) && program_array_resize(&inertia.curves,c*5) &&
+        stack_scratch_prepare(state)
+}
+
+// The scratch of the stack of state sized for its bindings and curves: a copy of the world keeps
+// its own, made for another state, so the owner thread sizes it before each pose.
+@(private)
+stack_scratch_prepare :: proc(state:^Playing) -> bool {
+    scratch:=&state.stack.scratch
+    n:=len(state.bindings);c:=len(state.curves)
+    return program_array_resize(&scratch.curves,c*3) && program_array_resize(&scratch.values,c*15) &&
+        program_array_resize(&scratch.durations,n)
 }
 
 // The pose and curves of the stack of state through its inertia, dt seconds after the tick it
@@ -298,24 +328,26 @@ stack_inertia_prepare :: proc(state:^Playing) -> bool {
 // kept for the next tick. A pose or curve that is not finite ends the blend.
 @(private)
 stack_inertia_apply :: proc(state:^Playing,dt:f32,previous_target:bool) {
-    inertia:=&state.inertia;n:=len(playing_pose(state,.Local));c:=len(state.curves)
-    if !state.program.ready && state.stack==0 || len(inertia.poses)!=n*4 || len(inertia.bones)!=n || len(inertia.durations)!=n || len(inertia.history)!=c*2 || len(inertia.values)!=c*15 {return}
+    stack:=state.stack
+    if stack==nil {return}
+    inertia,scratch:=&stack.inertia,&stack.scratch;n:=len(playing_pose(state,.Local));c:=len(state.curves)
+    if !state.program.ready && stack.slots==0 || len(inertia.poses)!=n*4 || len(inertia.bones)!=n || len(scratch.durations)!=n || len(inertia.history)!=c*2 || len(scratch.values)!=c*15 {return}
     shown,shown_before,before,older:=inertia_poses(inertia)
     curves,curves_before:=inertia_curves(inertia)
-    blend:=state.blend
-    values:=inertia.values[:];old,now,target:=values[:c*5],values[c*5:c*10],values[c*10:]
+    blend:=stack.blend
+    values:=scratch.values[:];old,now,target:=values[:c*5],values[c*5:c*10],values[c*10:]
     transition:=state.program.transition
     if transition<0 {inertia.state={};inertia.kept=0;mem.zero_slice(inertia.bones[:]);mem.zero_slice(inertia.curves[:])}
     if (transition>0 || blend.slots!=0) && inertia.kept>0 {
         if transition>0 || stack_blending(blend) {
-            durations:=inertia.durations[:]
+            durations:=scratch.durations[:]
             for &duration in durations {duration=transition if transition>0 else -1}
             shortest:=transition if transition>0 else max(f32)
-            for asked,i in blend.durations[:state.stack] {
+            for asked,i in blend.durations[:stack.slots] {
                 if asked<=0 {continue}
                 shortest=min(shortest,asked)
-                if state.asked[i].over=={} {for &duration in durations {duration=asked if duration<0 else min(duration,asked)}} else if len(state.masks)>=(i+1)*n {
-                    for share,b in state.masks[i*n:][:n] {if share>0 {durations[b]=asked if durations[b]<0 else min(durations[b],asked)}}
+                if stack.asked[i].over=={} {for &duration in durations {duration=asked if duration<0 else min(duration,asked)}} else if len(stack.masks)>=(i+1)*n {
+                    for share,b in stack.masks[i*n:][:n] {if share>0 {durations[b]=asked if durations[b]<0 else min(durations[b],asked)}}
                 }
             }
             history:=inertia.kept>1
@@ -335,11 +367,11 @@ stack_inertia_apply :: proc(state:^Playing,dt:f32,previous_target:bool) {
                 if .Scale not_in binding.driven {bone.scale,bone.speed.z={},0}
             }
         }
-        for i in 0..<int(state.stack) {
+        for i in 0..<int(stack.slots) {
             if blend.cuts&(u16(1)<<u16(i))==0 {continue}
-            if state.asked[i].over=={} {mem.zero_slice(inertia.bones[:]);mem.zero_slice(inertia.curves[:]);break}
-            if len(state.masks)<(i+1)*n {continue}
-            for share,b in state.masks[i*n:][:n] {if share>0 {inertia.bones[b]={}}}
+            if stack.asked[i].over=={} {mem.zero_slice(inertia.bones[:]);mem.zero_slice(inertia.curves[:]);break}
+            if len(stack.masks)<(i+1)*n {continue}
+            for share,b in stack.masks[i*n:][:n] {if share>0 {inertia.bones[b]={}}}
         }
     }
     if inertia.state.active {
@@ -378,16 +410,19 @@ pose_extrapolate_back :: proc "contextless" (before,now,out:[]mm.Transform,ratio
 @(private)
 pose_rows :: proc(batch:^Pose_Batch,first,last:int,worker:int) {
     context.allocator={pose_job_allocator_proc,nil}
-    for &row in batch.playback.work[first:last] {pose_row(batch.playback,&row,batch.transforms,worker)}
+    for &row in batch.playback.work.rows[first:last] {pose_row(batch.playback,&row,batch.transforms,worker)}
 }
 
 // The poses of the rows of a tick, in jobs when they are more than a range holds: each row is
 // independent, so the result does not depend on how they are split.
 @(private)
 pose_rows_run :: proc(playback:^Playback,transforms:^core.Table(core.Transform,$A),system:^jobs.Job_System,grain:int) {
-    count:=len(playback.work)
+    count:=len(playback.work.rows)
     if count==0 {return}
     batch:=Pose_Batch{playback,core.read(transforms)}
+    // A copy of the world brings its states bound and leaves its work to it: the scratch of the
+    // owner is sized here for them, once; a job without room reports it as a fault of memory.
+    pose_scratch_prepare(playback,1,0)
     if system!=nil && grain>0 && count>grain && jobs.worker_count(system)>1 && pose_scratch_prepare(playback,jobs.worker_count(system),0) {
         jobs.parallel_for(system,jobs.OWNER,count,grain,pose_rows,&batch)
     } else {pose_rows(&batch,0,count,jobs.OWNER)}

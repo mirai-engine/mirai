@@ -132,7 +132,7 @@ ordering_requests_keeps_each_entities_sequence_without_stable_allocations :: pro
         {entity=core.Entity(3),command=.Stop},
         {entity=core.Entity(1),command=.Pause},
     }
-    if !testing.expect(t,program_array_reserve(&playback.request_order,len(commands))) {return}
+    if !testing.expect(t,program_array_reserve(&playback.work.request_order,len(commands))) {return}
     saved:=context
     failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=0}
     context.allocator={runtime_failure_allocator,&failure}

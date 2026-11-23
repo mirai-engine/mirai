@@ -62,6 +62,7 @@ Morph_Playing :: struct {
     revision:u64,  // of that rig when it was bound
     stamp:u64,     // of the row of Morph_Weights it was bound to; 0: none
     path:u64,      // base.name_hash of the path of its curves
+    named,named_stamp:u64, // base.name_hash of Morph_Weights.path, and the stamp of the row it was hashed from plus 1
     by_name:bool,  // without a path: each target takes the curve of its name
     seen:u64,
     error:Morph_Error,
@@ -275,7 +276,8 @@ animation_morph :: proc(
         config:Morph_Weights
         stamp:u64
         if row:=core.row_of(configs,playing.entity);row>=0 {config=core.at(configs,row);stamp=core.stamp(configs,row)+1}
-        path:=base.name_hash(base.text_get(config.path[:]))
+        if playing.named_stamp!=stamp+1 {playing.named,playing.named_stamp=base.name_hash(base.text_get(config.path[:])),stamp+1}
+        path:=playing.named
         if path==base.HASH_SEED {if target,has:=core.get(targets,playing.entity);has {path=animation_target_hash(target)}}
         if playing.stamp!=stamp || playing.mesh!=rig.id || playing.revision!=rig.revision || playing.path!=path {
             if !morph_bind(&playing,rig,config,path,stamp) {playing.stamp=0;morph_problem(problems,playing.entity,playing.error,playing.unknown);continue}

@@ -70,11 +70,11 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     action_profile:=Action_Profile{actions=make([]Action_Definition,1)}
     action_profile.actions[0]=ACTION_DEFINITION_DEFAULT;definition:=&action_profile.actions[0]
     base.text_set(definition.name[:],"external");base.text_set(definition.clip[:],"Walk");definition.animation=sources[1].id;definition.fade_in=0
-    append(&actions.plans,Action_Plan{profile=action_profile,animation=sources[0].id});action_test_add_state(&actions,{entity=state.entity,plan=0,slots={0={active=true,starting=true,section=-1}}})
+    append(&actions.plans,Action_Plan{profile=action_profile});action_plan_bind(&actions.plans[0],{info={animation=sources[0].id},actions=action_profile});action_test_add_state(&actions,{entity=state.entity,plan=0,slots={0={active=true,starting=true,section=-1}}})
     animation.root_motion=.None
     stack_asks(&actions,&state,animation,combined)
     actions_sample(&actions,&state,animation,.1,&problems,combined,&playback,&events,nil,1)
-    testing.expect(t,state.layers[0].clip==alias && actions.states[0].slots[0].active && problems.count==0)
+    testing.expect(t,state.stack.layers[0].clip==alias && actions.states[0].slots[0].active && problems.count==0)
     // A layer whose space names a clip of each source keeps them apart.
     samples:=[2]Blend_Sample{{position={0,0},speed=1},{position={1,0},speed=1,animation=sources[1].id}}
     for &sample in samples {base.text_set(sample.clip[:],"Walk")}
@@ -86,10 +86,10 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     characters:Character_Assets;defer character_assets_free(&characters)
     animation.asset={101,3}
     append(&characters.contents,Character_Content{id=animation.asset,checked=assets_stamp(app.assets),revision=1,valid=true,set={info={animation=sources[0].id},spaces=spaces[:],space_samples=samples[:]},spaces=ready})
-    state.asked[1]={space=1,weight=1,speed=1,mode=.Additive};state.stack=2
+    state.stack.asked[1]={space=1,weight=1,speed=1,mode=.Additive};state.stack.slots=2
     testing.expect(t,stack_parameter_set(&state,base.name_hash("speed"),.5))
     layers_advance(&playback,&state,combined,animation,&events,.1,&problems,&characters,&app)
-    spaced:=state.layers[1]
+    spaced:=state.stack.layers[1]
     testing.expect(t,spaced.leaf_count==2 && spaced.leaves[0].clip!=spaced.leaves[1].clip && abs(spaced.leaves[0].weight-.5)<1e-5 && problems.count==0,"a space keeps the clips of each source apart")
 }
 

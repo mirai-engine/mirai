@@ -28,8 +28,9 @@ preview_trace_matches_its_typed_schema_names_curves_events_and_enforces_paging :
     content:=host.content_animation(&f.app,id);if !testing.expect(t,content!=nil) {return}
     player:=lib.player_make(1);player.time=.5
     append(&w.playback.states,anim.Playing{entity=entity,asset=id,clip=0,time=.5,duration=1,fader={current=player},motion={translation={1,0,0},rotation=1},root_enabled=true})
-    w.playback.states[0].layers[1]={clip=base.name_hash("walk"),weight=.5,player=player}
-    w.playback.states[0].asked[1]={clip=base.name_hash("walk"),weight=.5,sync=true};w.playback.states[0].stack=2
+    if !testing.expect(t,anim.stack_make(&w.playback.states[0])!=nil) {return}
+    w.playback.states[0].stack.layers[1]={clip=base.name_hash("walk"),weight=.5,player=player}
+    w.playback.states[0].stack.asked[1]={clip=base.name_hash("walk"),weight=.5,sync=true};w.playback.states[0].stack.slots=2
     append(&w.playback.states[0].curves,anim.Curve_Output{target=base.name_hash("pulse"),property=.Float,value={3,0,0,0},weight=.4});append(&w.playback.states[0].curves,anim.Curve_Output{target=base.name_hash("look"),property=.Vector,value={1,2,3,4},weight=.7})
     core.push(&w.events.queue,anim.Animation_Event{entity=entity,kind=.Marker,clip=base.name_hash("walk"),name=base.name_hash("step"),time=.5,weight=.4})
     trace:=Preview_Trace{view=view,frames=make([dynamic]Preview_Trace_Result,context.temp_allocator)}

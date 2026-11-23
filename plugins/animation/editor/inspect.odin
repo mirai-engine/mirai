@@ -338,7 +338,7 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
 // The matching of a rig in a world: what it plays, its state, the library of its clips and the
 // database it searches (nil before its first tick or when it could not be built).
 @(private)
-Match_Open :: struct {result:Preview_Match_Result,state:^anim.Playing,library:^host.Content_Animation,db:^lib.Match_Database}
+Match_Open :: struct {result:Preview_Match_Result,state:^anim.Playing,searched:anim.Match_Searched,library:^host.Content_Animation,db:^lib.Match_Database}
 
 // The matching of a rig; false after failing the call with why it has none.
 @(private)
@@ -351,6 +351,7 @@ match_open :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:
     if !matching {authoring_failure(call,"entity","Not_Running","locomotion the world plays","not sampled or without locomotion clips","Matching runs in Play, Simulation, the preview of the editor or animation.preview, for a .character with locomotion clips");return}
     playback:=core.world_storage_of(world,anim.Playback)
     for &playing in playback.states {if playing.entity==entity {m.state=&playing;break}}
+    m.searched,_=anim.match_searched(core.ref(playback),entity)
     shared:=core.world_ref(s.app.shared,world.info,.Shared)
     m.library=anim.animation_playing_content(core.ref(core.world_storage_of(shared,anim.Source_Assets)),s.app,m.state)
     m.db=anim.animation_match_database(core.ref(core.world_storage_of(shared,anim.Character_Assets)),m.library,m.state)
@@ -362,7 +363,7 @@ match_open :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:
 match_candidates :: proc(call:^api.Call,m:^Match_Open,limit:int) -> []Instance_Match_Candidate {
     if m.db==nil || m.state==nil {return nil}
     candidates:=make([dynamic]Instance_Match_Candidate,call.allocator)
-    noted:=anim.match_searched_candidates(m.db,m.state.program.match.searched)
+    noted:=anim.match_searched_candidates(m.db,m.searched)
     for &candidate in noted.items[:clamp(int(noted.count),0,min(limit,lib.MATCH_CANDIDATES))] {
         index:=lib.match_range_of(m.db,int(candidate.row));if index<0 {continue}
         range:=m.db.ranges[index];c:=candidate.costs
@@ -391,7 +392,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
         for clip,k in range.clips {if range.weights[k]>0 {append(&members,Instance_Match_Member{clip=anim.source_clip_label(library,clip),weight=range.weights[k]})}}
         row.clips=members[:]
     }
-    searched:=&m.state.program.match.searched
+    searched:=&m.searched
     if searched.search==0 {return}
     mode:=u16(intrinsics.count_trailing_zeros(searched.request.modes))
     name,named:=locomotion_mode_name(modes,mode)

@@ -784,7 +784,7 @@ rig_poses_do_not_depend_on_how_their_jobs_are_split :: proc(t:^testing.T) {
         }
     }
     testing.expect(t,same && moved,"a rig posed in a job takes the pose it takes on the owner thread")
-    testing.expect(t,len(worlds[0].playback.scratch)==1 && len(worlds[1].playback.scratch)==jobs.worker_count(&app.jobs) && len(worlds[0].playback.track_maps)==1,"the rigs of one skeleton and content share one map, and only jobs take scratch of their own")
+    testing.expect(t,len(worlds[0].playback.work.jobs)==1 && len(worlds[1].playback.work.jobs)==jobs.worker_count(&app.jobs) && len(worlds[0].playback.track_maps)==1,"the rigs of one skeleton and content share one map, and only jobs take scratch of their own")
     for &w in worlds {testing.expect_value(t,w.problems.count,0)}
 }
 

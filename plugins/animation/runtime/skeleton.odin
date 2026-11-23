@@ -502,8 +502,8 @@ animation_pose_final_binding :: proc(requests:^Animation_Requests,binding:Bone_H
 final_pose_apply :: proc(state:^Playing,playback:^Playback,parent_world:mm.Transform,requests:[]Pose_Request,problems:^core.Problems) {
     if len(requests)==0 {return}
     count:=len(playing_pose(state,.Local))
-    if len(playback.final_rows)<count && resize(&playback.final_rows,count)!=nil {memory_problem(problems,state.entity,"the final poses asked for this rig");return}
-    for &row in playback.final_rows[:count] {row=-1}
+    if len(playback.work.final_rows)<count && resize(&playback.work.final_rows,count)!=nil {memory_problem(problems,state.entity,"the final poses asked for this rig");return}
+    for &row in playback.work.final_rows[:count] {row=-1}
     for request,i in requests {
         if request.rig!=state.entity {continue}
         bone:=int(request.binding.index)
@@ -518,12 +518,12 @@ final_pose_apply :: proc(state:^Playing,playback:^Playback,parent_world:mm.Trans
             }
             continue
         }
-        playback.final_rows[bone]=i32(i)
+        playback.work.final_rows[bone]=i32(i)
     }
     for &local,bone in playing_pose(state,.Local) {
         parent:=playing_topology(state).parents[bone]
         world_parent:=playing_pose(state,.World)[parent] if parent>=0 else parent_world
-        if row:=playback.final_rows[bone];row>=0 {
+        if row:=playback.work.final_rows[bone];row>=0 {
             request:=requests[row]
             if request.weight>0 {
                 world:=mm.transform_interpolate(playing_pose(state,.World)[bone],request.transform,request.weight)

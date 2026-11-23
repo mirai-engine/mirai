@@ -49,8 +49,9 @@ additive_layer_curves_subtract_their_reference_clip :: proc(t:^testing.T) {
     playback:Playback;defer playback_free(&playback)
     state:=state_get(&playback,core.Entity(1));state.seen=1;playback.frame=1
     lib.fader_play(&state.fader,stand,1,0)
-    state.layers[1].player=lib.player_make(happy);state.layers[1].player.time=1
-    state.layers[1].clip,state.layers[1].weight=base.name_hash("happy"),1
+    if !testing.expect(t,stack_make(state)!=nil) {return}
+    state.stack.layers[1].player=lib.player_make(happy);state.stack.layers[1].player.time=1
+    state.stack.layers[1].clip,state.stack.layers[1].weight=base.name_hash("happy"),1
     cases:=[?]struct {reference:string,want:f32}{{"stand",0.2+0.8-0.2},{"",0.2+0.8-1}}
     for c in cases {
         animation:=ANIMATION_DEFAULT
@@ -196,13 +197,13 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     testing.expect(t,abs(playing_pose(&state,.Local)[3].position.y-2.5)<0.0001 && abs(playing_pose(&state,.Local)[3].position.z-0.5)<0.0001)
     testing.expect(t,test_layer_stop(&state,1,0.5))
     layer_step(&playback,&state,&content,animation,&events,0.1)
-    testing.expect(t,abs(state.layers[1].weight-0.3)<0.0001 && abs(playing_pose(&state,.Local)[3].position.y-1.5)<0.0001)
+    testing.expect(t,abs(state.stack.layers[1].weight-0.3)<0.0001 && abs(playing_pose(&state,.Local)[3].position.y-1.5)<0.0001)
     layer_step(&playback,&state,&content,animation,&events,1)
-    testing.expect(t,state.layers[1]==Layer_Playing{} && playing_pose(&state,.Local)[3].position.y==0)
+    testing.expect(t,state.stack.layers[1]==Layer_Playing{} && playing_pose(&state,.Local)[3].position.y==0)
     // A synchronized layer is where the clip below it is in its cycle: walk lasts 2 s and run 1 s.
     testing.expect(t,test_layer(&state,2,"run",sync=true))
     layer_step(&playback,&state,&content,animation,&events,0.5)
-    run_time:=lib.player_time(&content.lib,state.layers[2].player)
+    run_time:=lib.player_time(&content.lib,state.stack.layers[2].player)
     testing.expect(t,abs(run_time-state.time/2)<0.0001 && abs(playing_pose(&state,.Local)[1].position.x-run_time*4)<0.0001)
     problems:core.Problems
     testing.expect(t,test_layer(&state,2,"missing"))
@@ -211,7 +212,7 @@ layers_play_over_the_clip_inside_their_branch_by_weight_and_fade_out :: proc(t:^
     // An additive layer over a reference clip adds what its clip changes from the pose of that
     // clip at reference: wave over walk at 1 s lifts the leg 5 and takes it back the 1 walk has
     // there; the arm, which walk does not move, changes from wave's own pose, by nothing.
-    state.asked,state.layers={},{}
+    state.stack.asked,state.stack.layers={},{}
     layer_step(&playback,&state,&content,animation,&events,0)
     leg,arm:=playing_pose(&state,.Local)[3].position,playing_pose(&state,.Local)[2].position
     testing.expect(t,test_layer(&state,1,"wave",mode=.Additive,reference=1,reference_clip="walk"))

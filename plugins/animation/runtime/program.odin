@@ -72,7 +72,7 @@ program_resolve :: proc(state:^Playing,animation:Animation,app:^host.App,charact
     reset:=runtime.asset!=animation.asset || runtime.revision!=revision || runtime.library!=source || !runtime.ready
     swapped:=reset && runtime.ready && runtime.asset==animation.asset && runtime.revision==revision
     if reset {runtime.match=match_swapped(runtime.match) if swapped else MATCH_PLAYING_DEFAULT}
-    ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,facing,app.assets,app.allocator,problems)
+    ok=match_output(state,output,content,prepared if prepared!=nil else host.content_animation(app,source),source,dt,goals,facing,app.assets,app.allocator,problems,playback_searched(playback,state))
     if reset {
         mem.zero_slice(runtime.players[:])
         runtime.epoch=0

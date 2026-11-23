@@ -8,8 +8,8 @@ sends requests and consumes one event queue; the component keeps its configurati
 ## The layer stack
 
 `Action_Profile.layers` are the layers of the stack, in order; each goes over the base and the
-layers before it. `Playing.asked` holds what each slot plays in a tick (`stack_asks`, then the
-actions over it), and `layers_advance`, `pose_layers` and the curves read only that.
+layers before it. `Stack_Playing.asked` holds what each slot plays in a tick (`stack_asks`, then
+the actions over it), and `layers_advance`, `pose_layers` and the curves read only that.
 
 - A layer plays by itself a clip (`clip`, of another `.anim` with `animation`, [multiple
   sources](animation.md#multiple-sources)) or a [space](animation.md#additive-spaces) of the

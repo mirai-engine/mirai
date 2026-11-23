@@ -117,18 +117,22 @@ curve_order :: proc(a,b:Curve_Output) -> bool {
 @(private)
 curve_compare :: proc(a,b:Curve_Output) -> slice.Ordering {return .Less if curve_order(a,b) else .Greater if curve_order(b,a) else .Equal}
 
-// The Float curve of slot 0 with this name hash among curves; slot keeps where
-// it was, so a rig whose curves stay in place finds it at once, and curves in
-// curve_order are searched by halves.
+// The Float curve of slot 0 with this name hash among curves (curve_find).
 @(private)
 curve_slot :: proc(curves:[]Curve_Output,target:u64,slot:^i32) -> ^Curve_Output {
-    if at:=int(slot^);at>=0 && at<len(curves) && curves[at].target==target && curves[at].property==.Float && curves[at].slot==0 {return &curves[at]}
-    key:=Curve_Output{target=target,property=.Float}
-    if at,found:=slice.binary_search_by(curves,key,curve_compare);found {slot^=i32(at);return &curves[at]}
-    for &curve,at in curves {
-        if curve.target==target && curve.property==.Float && curve.slot==0 {slot^=i32(at);return &curve}
+    return curve_find(curves,{target=target,property=.Float},slot)
+}
+
+// The curve of the target, property and slot of key among curves; at keeps where it was, so a rig
+// whose curves stay in place finds it at once, and curves in curve_order are searched by halves.
+@(private)
+curve_find :: proc(curves:[]Curve_Output,key:Curve_Output,at:^i32) -> ^Curve_Output {
+    if row:=int(at^);row>=0 && row<len(curves) && curve_same(curves[row],key) {return &curves[row]}
+    if row,found:=slice.binary_search_by(curves,key,curve_compare);found {at^=i32(row);return &curves[row]}
+    for &curve,row in curves {
+        if curve_same(curve,key) {at^=i32(row);return &curve}
     }
-    slot^=-1
+    at^=-1
     return nil
 }
 
