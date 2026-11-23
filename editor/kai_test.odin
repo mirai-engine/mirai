@@ -443,6 +443,7 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     }
 
     on_main:=Api_Kai_New_Params{parents={"main"}}
+    started=time.tick_now()
     for {
         call,_=kai_call(b,api_kai_new,&on_main,Api_Kai_Change)
         if !call.failed {break}

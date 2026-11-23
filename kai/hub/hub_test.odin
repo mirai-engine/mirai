@@ -1116,8 +1116,10 @@ hub_certificates_live_only_while_served_and_load_back :: proc(t:^testing.T) {
     testing.expect(t,certs_save(h,&keys[2],chain),"the chain is kept")
     testing.expect(t,certs_load(h),"the kept chain loads")
     testing.expect(t,h.certs.has && len(h.certs.chain)==3 && string(h.certs.chain[1])==string(middle_der) && string(h.certs.chain[2])==string(root_der),"the chain loads whole")
-    if info,se:=os.stat(store_file(h,WEB_KEY_FILE),context.temp_allocator);testing.expect(t,se==nil) {
-        testing.expect(t,info.mode&{.Read_Group,.Write_Group,.Read_Other,.Write_Other}=={},"the key is the owner's only")
+    when ODIN_OS!=.Windows {
+        if info,se:=os.stat(store_file(h,WEB_KEY_FILE),context.temp_allocator);testing.expect(t,se==nil) {
+            testing.expect(t,info.mode&{.Read_Group,.Write_Group,.Read_Other,.Write_Other}=={},"the key is the owner's only")
+        }
     }
     // Whatever the files hold, the loader takes it or refuses it.
     pem_text,_:=os.read_entire_file(store_file(h,WEB_CHAIN_FILE),context.temp_allocator)

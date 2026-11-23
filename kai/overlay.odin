@@ -1468,8 +1468,8 @@ overlay_checkout :: proc(r:^Overlay_Routing,s:^store.Store,root:string,before,af
         epoch:u32
         key:Epoch_Key
         defer crypto.zero_explicit(&key,size_of(key))
-        // An epoch this device holds no key of is no file of its.
-        if e:=overlay_entries_at(r,s,k,before,&old,nil,nil);e!=.None && e!=.Unauthorized {return e}
+        // An epoch this device holds no key (or ciphertext) of is no file of its.
+        if e:=overlay_entries_at(r,s,k,before,&old,nil,nil);e!=.None && e!=.Unauthorized && e!=.Missing {return e}
         if device_reads(r.org,sc,&r.device) {overlay_entries_at(r,s,k,after,&new,&epoch,&key) or_return}
         for &e in new {
             path:=path_join(root,e.path)

@@ -24,7 +24,12 @@ import "mirai:std/subprocess"
 @(test)
 headless_arm64_server_builds_and_serves_public_and_member_views :: proc(t:^testing.T) {
     root,_:=filepath.clean(strings.concatenate({#directory,"/../.."},context.temp_allocator),context.temp_allocator)
-    state,out,errs,e:=subprocess.exec({working_dir=root,command={strings.concatenate({root,"/mirai"},context.temp_allocator),"build","kai","--target","linux_arm64"}},context.temp_allocator)
+    program:=strings.concatenate({root,"/bin/mirai.exe"},context.temp_allocator) when ODIN_OS==.Windows else strings.concatenate({root,"/mirai"},context.temp_allocator)
+    state,out,errs,e:=subprocess.exec({working_dir=root,command={program,"build","kai","--target","linux_arm64"}},context.temp_allocator)
+    if e==nil && state.exit_code!=0 && strings.contains(string(errs),"ld.lld is not in PATH") {
+        log.warnf("SKIPPED linux_arm64 headless build: ld.lld is not in PATH")
+        return
+    }
     if !testing.expectf(t,e==nil && state.exit_code==0,"mirai build kai --target linux_arm64: %v %s%s",e,out,errs) {return}
     executable:=strings.concatenate({root,"/bin/mirai-kai-linux-arm64"},context.temp_allocator)
     elf,re:=os.read_entire_file(executable,context.temp_allocator)

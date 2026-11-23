@@ -254,13 +254,13 @@ mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
 provenance :: proc(root:string,from:[]string,out:^[dynamic]string) -> (known:bool) {
     if root=="" || len(from)==0 {return false}
     for file in from {
-        real,e:=os.stat(file,context.temp_allocator)
-        if e!=nil {return false}
+        real,ok:=path_real(file,context.temp_allocator)
+        if !ok {return false}
         dir,name:=os.split_path(file)
-        folder,fe:=os.stat(dir,context.temp_allocator)
-        if fe!=nil {return false}
-        named:=strings.concatenate({folder.fullpath,"/",name},context.temp_allocator)
-        for full in ([2]string{real.fullpath,named}) {
+        folder,fok:=path_real(dir,context.temp_allocator)
+        if !fok {return false}
+        named:=strings.concatenate({folder,"/",name},context.temp_allocator)
+        for full in ([2]string{real,named}) {
             if path,under:=project_path(root,full);under {append(out,path)}
         }
     }

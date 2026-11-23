@@ -397,7 +397,7 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     for &x in team {team_go(&x)}
 
     // Bob, a writer, reads the scope: his working copy has the file.
-    Goal :: struct {p:^Project,m:^vcs.Machine,text:string,want:vcs.Revision}
+    Goal :: struct {p:^Project,m:^vcs.Machine,text:string,want:vcs.Revision,want_epoch:u32,want_role:vcs.Role}
     pb:=new(Project)
     defer free(pb)
     b_root:=fmt.tprintf("%s/ws",bob.folder)
@@ -411,9 +411,11 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
         project,_,_:=vcs.machine_project_of(g.m,g.p.workspace.repo.id)
         ps:vcs.Project_State
         if vcs.project_state_load(&g.m.store,project,&ps,context.temp_allocator)!=.None {return false}
+        if g.want_role!=.None && vcs.org_role(&ps.org.fold,g.m.user)!=g.want_role {return false}
         keyrings:=make([dynamic]^vcs.Keyring_Fold,context.temp_allocator)
         vcs.machine_keyrings(&g.m.store,&ps.org,&keyrings,context.temp_allocator)
         for k in keyrings {
+            if g.want_epoch>0 && k.epoch<g.want_epoch {return false}
             if r2,_,re:=vcs.overlay_record_get(&g.m.store,k.project,k.scope,r,context.temp_allocator);re==.None {
                 for o in r2.objects {
                     if !vcs.object_whole(&g.m.store,o,vcs.scratch_make()) {return false}
@@ -464,7 +466,7 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     resealed:=publish(t,pa,&alice.m)
 
     // The new version does not reach Bob, and his old copy goes.
-    g.want=resealed
+    g.want,g.want_epoch,g.want_role=resealed,2,.Reader
     if !testing.expect(t,until(10,&g,found),"alice's new work reaches bob") {return}
     testing.expect_value(t,project_route(pb),vcs.Error.None)
     on,_=revision_resolve(pb,&bob.m,g.text)

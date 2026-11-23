@@ -18,3 +18,14 @@ writable :: proc(path:string) -> bool {
     if attributes==win.INVALID_FILE_ATTRIBUTES {return false}
     return attributes&win.FILE_ATTRIBUTE_READONLY==0 || attributes&win.FILE_ATTRIBUTE_DIRECTORY!=0
 }
+
+// Toggles the read-only attribute on a file (Odin's os.change_mode opens with
+// {.Write}, which fails on a file that is already read-only).
+@(private)
+writable_set :: proc(path:string,allow:bool) {
+    wide:=win.utf8_to_wstring(path,context.temp_allocator)
+    attributes:=win.GetFileAttributesW(wide)
+    if attributes==win.INVALID_FILE_ATTRIBUTES {return}
+    next:=attributes&~win.FILE_ATTRIBUTE_READONLY if allow else attributes|win.FILE_ATTRIBUTE_READONLY
+    win.SetFileAttributesW(wide,next)
+}

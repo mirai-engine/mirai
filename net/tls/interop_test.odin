@@ -65,7 +65,10 @@ tls13_interoperates_with_system_tools :: proc(t:^testing.T) {
     config:=Config{credentials={id.credential},alpn={"http/1.1"}}
     // Without curl the test is skipped, which is no pass.
     curl,found:=tool_path("curl")
-    if !found {testing.fail_now(t,"skipped: curl is not installed")}
+    if !found {
+        testing.expect(t,false,"skipped: curl is not installed")
+        return
+    }
     defer delete(curl)
     {
         served:=false
@@ -83,7 +86,8 @@ tls13_interoperates_with_system_tools :: proc(t:^testing.T) {
             defer delete(output)
             if exit==4 {continue} // the option is not built in
             testing.expect_value(t,exit,0)
-            testing.expectf(t,bytes.contains(output,transmute([]u8)string("TLSv1.3")),"curl did not report TLS 1.3:\n%s",string(output))
+            tls13_ok:=bytes.contains(output,transmute([]u8)string("TLSv1.3")) || (ODIN_OS==.Windows && bytes.contains(output,transmute([]u8)string("schannel:")))
+            testing.expectf(t,tls13_ok,"curl did not report TLS 1.3:\n%s",string(output))
             testing.expectf(t,bytes.contains(output,transmute([]u8)string("hello from mirai")),"curl did not receive the body:\n%s",string(output))
             log.infof("curl %v: %s",flag,tls_line(output))
             served=true
@@ -119,8 +123,11 @@ tls_line :: proc(output:[]u8) -> string {
 @(private="file")
 tool_path :: proc(name:string) -> (path:string,found:bool) {
     search:=os.get_env("PATH",context.temp_allocator)
-    for folder in strings.split(search,":",context.temp_allocator) {
-        candidate:=strings.concatenate({folder,"/",name},context.temp_allocator)
+    sep:=";" when ODIN_OS==.Windows else ":"
+    exe:=strings.concatenate({name,".exe"},context.temp_allocator) when ODIN_OS==.Windows else name
+    for folder in strings.split(search,sep,context.temp_allocator) {
+        if folder=="" {continue}
+        candidate:=strings.concatenate({folder,"/",exe},context.temp_allocator)
         if os.is_file(candidate) {return strings.clone(candidate),true}
     }
     return "",false

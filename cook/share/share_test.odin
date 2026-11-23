@@ -336,7 +336,8 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     run,_:=snapshot_find(&snap,"tools/run.sh")
     b,_:=snapshot_find(&snap,"assets/b.txt")
     empty,_:=snapshot_find(&snap,"assets/empty.txt")
-    testing.expect(t,run.kind==.Executable && b.kind==.File && b.size==1 && store.chunk_has(&s,b.address) && b.address==bytes_address(transmute([]u8)string("b")))
+    run_kind:=vcs.Entry_Kind.File when ODIN_OS==.Windows else vcs.Entry_Kind.Executable
+    testing.expect(t,run.kind==run_kind && b.kind==.File && b.size==1 && store.chunk_has(&s,b.address) && b.address==bytes_address(transmute([]u8)string("b")))
     testing.expect(t,empty.address==vcs.empty_address() && empty.address==bytes_address(nil))
     testing.expect_value(t,report.put,5)
 
@@ -637,7 +638,11 @@ a_join_never_follows_a_link_inside_its_folder :: proc(t:^testing.T) {
     file_put(outside,"old.txt",bytes("old"))
     file_put(outside,"target.txt",bytes("target"))
     file_put(joined,"plain.txt",bytes("plain 1"))
-    if !testing.expect(t,os.symlink(outside,fmt.tprintf("%s/linked",joined))==nil,"a link can be made here") {return}
+    if os.symlink(outside,fmt.tprintf("%s/linked",joined))!=nil {
+        when ODIN_OS==.Windows {return}
+        testing.expect(t,false,"a link can be made here")
+        return
+    }
     os.symlink(fmt.tprintf("%s/target.txt",outside),fmt.tprintf("%s/file.txt",joined))
     entry :: proc(s:^store.Store,path,text:string) -> vcs.File {
         address,_:=store.put(s,transmute([]u8)text)
@@ -686,14 +691,13 @@ a_join_writes_what_it_can_and_running_it_again_completes_it :: proc(t:^testing.T
     os.remove(fmt.tprintf("%s/files/gone.txt",root))
     file_put(root,"shut/new.txt",transmute([]u8)string("new"))
     if !host_offer(t,&w,root) {return}
-    read_only:=os.Permissions_Read_All
-    os.change_mode(fmt.tprintf("%s/files/locked.txt",joined),read_only)
-    os.change_mode(fmt.tprintf("%s/files/gone.txt",joined),read_only)
-    os.change_mode(fmt.tprintf("%s/shut",joined),read_only+os.Permissions_Execute_All)
+    writable_set(fmt.tprintf("%s/files/locked.txt",joined),false)
+    writable_set(fmt.tprintf("%s/files/gone.txt",joined),false)
+    when ODIN_OS!=.Windows {writable_set(fmt.tprintf("%s/shut",joined),false)}
     fix :: proc(joined:string) {
-        os.change_mode(fmt.tprintf("%s/files/locked.txt",joined),os.Permissions_Default_File)
-        os.change_mode(fmt.tprintf("%s/files/gone.txt",joined),os.Permissions_Default_File)
-        os.change_mode(fmt.tprintf("%s/shut",joined),os.Permissions_Default_Directory)
+        writable_set(fmt.tprintf("%s/files/locked.txt",joined),true)
+        writable_set(fmt.tprintf("%s/files/gone.txt",joined),true)
+        when ODIN_OS!=.Windows {writable_set(fmt.tprintf("%s/shut",joined),true)}
     }
     defer fix(joined)
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
@@ -701,15 +705,21 @@ a_join_writes_what_it_can_and_running_it_again_completes_it :: proc(t:^testing.T
     testing.expect_value(t,read_text(joined,"files/a.txt"),"a 2")
     testing.expect_value(t,read_text(joined,"files/locked.txt"),"files/locked.txt 1")
     testing.expect_value(t,read_text(joined,"files/gone.txt"),"files/gone.txt 1")
-    testing.expect_value(t,read_text(joined,"shut/new.txt"),"(none)")
     listed:=strings.join(report.failed[:],"\n",context.temp_allocator)
-    testing.expectf(t,len(report.failed)==3 && strings.contains(listed,"locked.txt is read-only") && strings.contains(listed,"gone.txt is read-only") && strings.contains(listed,"shut is read-only"),"each failure by path, with how to fix it: %s",listed)
-    testing.expect(t,report.written==1 && report.removed==0)
+    when ODIN_OS==.Windows {
+        testing.expectf(t,len(report.failed)==2 && strings.contains(listed,"locked.txt is read-only") && strings.contains(listed,"gone.txt is read-only"),"each failure by path, with how to fix it: %s",listed)
+        testing.expect(t,report.written==2 && report.removed==0)
+    } else {
+        testing.expect_value(t,read_text(joined,"shut/new.txt"),"(none)")
+        testing.expectf(t,len(report.failed)==3 && strings.contains(listed,"locked.txt is read-only") && strings.contains(listed,"gone.txt is read-only") && strings.contains(listed,"shut is read-only"),"each failure by path, with how to fix it: %s",listed)
+        testing.expect(t,report.written==1 && report.removed==0)
+    }
 
     fix(joined)
     again,again_error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,again_error=="","%s",again_error) {return}
-    testing.expectf(t,len(again.failed)==0 && len(again.kept)==0 && again.written==2 && again.removed==1,"%v",again)
+    want_written:=1 when ODIN_OS==.Windows else 2
+    testing.expectf(t,len(again.failed)==0 && len(again.kept)==0 && again.written==want_written && again.removed==1,"%v",again)
     same_files(t,root,joined)
 }
 
@@ -729,12 +739,12 @@ a_join_with_files_not_written_refreshes_no_package :: proc(t:^testing.T) {
     file_put(root,"assets/deep/a/b/c.txt",transmute([]u8)string("changed"))
     if !host_offer(t,&w,root) {return}
     locked:=fmt.tprintf("%s/assets/deep/a/b/c.txt",joined)
-    os.change_mode(locked,os.Permissions_Read_All)
-    defer os.change_mode(locked,os.Permissions_Default_File)
+    writable_set(locked,false)
+    defer writable_set(locked,true)
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,error=="","%s",error) {return}
     testing.expectf(t,len(report.failed)==1 && report.packages.packages==0,"no package is refreshed: %v",report)
-    os.change_mode(locked,os.Permissions_Default_File)
+    writable_set(locked,true)
     again,again_error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,again_error=="","%s",again_error) {return}
     testing.expectf(t,len(again.failed)==0 && again.packages.packages==1 && len(again.packages.missing)==0 && len(again.packages.failures)==0,"%v",again)
