@@ -78,7 +78,7 @@ rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it :: proc(t:^testing
     if !testing.expect(t,host.assets_init(&assets,{root=directory,renderer=renderer})) {return}
     defer host.assets_destroy(&assets)
     app:=host.App{allocator=context.allocator,renderer=renderer,assets=&assets}
-    defer host.extras_free(&app.extras)
+    defer {host.app_content_destroy(&app);host.extras_free(&app.extras)}
     cache:Skin_Runtime;defer skin_runtime_free(&cache)
     state:Skin_Instances;defer skin_instances_free(&state)
     posed:erender.Posed_Meshes;defer core.value_free(&posed,type_info_of(erender.Posed_Meshes))
