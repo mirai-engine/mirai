@@ -71,7 +71,8 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
 - **Re-arming & blocks**: switching body/focus or releasing a block re-arms held buttons (context
   change re-arms newly pressed buttons; losing keyboard fires `released`; axes keep moving).
   `inp.input_block(r, owner, seat, mask)` / `input_unblock(r, owner)` (`seat=NONE` = all local;
-  1 block/owner; applied in `input_drive` to `Seat_State.blocked`).
+  1 block/owner; applied in `input_drive` to `Seat_State.blocked`). A blocked look frees the mouse
+  (`gui.mouse_wanted`), so a menu need not release the body.
 
 ### Contexts
 
@@ -162,7 +163,7 @@ inp.hold(hold_req, seat, inp.action_of(actions, .Use), {1, 0}, ticks=2)
 ## Cameras
 
 - `camera_selected` picks latest valid override else `body_camera` (first `render.Camera` on/under
-  body). `cam.aim(sight, body)` returns the seen camera's ray.
+  body). `cam.aim(sight, body)` returns the seen camera's origin, direction and rotation.
 - **Free camera**: in editor Play (`Play_Origin`), if player 1 has no body and scene has no active
   `Camera`, `camera_free` spawns a flying camera; gone permanently once player 1 drives a body
   (never in shipped builds).

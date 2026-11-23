@@ -51,14 +51,14 @@ Dig_Inventory :: struct {
     count:int,
 }
 
-@(step="fixed",stage="react")
+@(step="fixed",stage="react",server)
 dig_site :: proc(
     commands:core.Commands,sites:^core.Table(Dig_Site,.Read),states:^core.Table(Dig_Site_State),pickups:^core.Table(Dig_Pickup,.Read),players:^core.Table(Player,.Read),
     controls:Demo_Controls,
-    requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),network:core.Network,time:core.Time,problems:^core.Problems,
+    requests:^terrain.Terrain_Requests,digs:core.Ref(terrain.Terrain_Digs),inventories:^core.Table(Dig_Inventory),time:core.Time,problems:^core.Problems,
 ) {
     site_entity,found:=core.sole(sites)
-    if !found || network.role==.Client {return}
+    if !found {return}
     if core.count(inventories)==0 {
         run:=core.commands_create(commands)
         core.commands_add(commands,run,core.Keep{})
@@ -80,7 +80,7 @@ dig_site :: proc(
     }
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        origin,ahead,aimed:=cam.aim(controls.sight,e)
+        origin,ahead,_,aimed:=cam.aim(controls.sight,e)
         if !aimed || !inp.pressed(controls.actions,e,.Use) {continue}
         terrain.dig(requests,{kind=.Carve,center=origin+ahead*DIG_REACH,radius=site.radius*0.8,amount=1,blend=0.2})
     }

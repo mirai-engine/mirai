@@ -78,7 +78,7 @@ horror_switches :: proc(
 horror_lights :: proc(
     lamps:^core.Table(House_Lamp,.Read),states:^core.Table(House_Lamp_State),switches:^core.Table(Light_Switch,.Read),points:^core.Table(render.Point_Light),
     flashlights:^core.Table(Flashlight,.Read),spots:^core.Table(render.Spot_Light),transforms:^core.Table(core.Transform),
-    players:^core.Table(Player,.Read),moves:^core.Table(inp.Move_Input,.Read),sight:cam.Sight,time:core.Time,problems:^core.Problems,
+    players:^core.Table(Player,.Read),sight:cam.Sight,time:core.Time,problems:^core.Problems,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(lamps) {
@@ -102,10 +102,8 @@ horror_lights :: proc(
     }
     player,found:=core.first(players)
     if !found {return}
-    origin,_,aimed:=cam.aim(sight,player)
-    move,has_move:=core.get(moves,player)
-    if !aimed || !has_move {return}
-    turn:=mm.quat_from_euler({move.look_pitch,move.look_yaw,0})
+    origin,_,turn,aimed:=cam.aim(sight,player)
+    if !aimed {return}
     eye:=origin+mm.quat_rotate(turn,FLASHLIGHT_OFFSET)
     for row in 0..<core.count(flashlights) {
         e:=core.entity_at(flashlights,row)

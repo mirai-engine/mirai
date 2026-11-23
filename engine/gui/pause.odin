@@ -9,7 +9,7 @@ import "mirai:platform"
 // and the mouse. A game writes none of it: a screen says Modal and pause, and
 // the mouse is the game's while the seat with it drives a body the mouse
 // turns and no Modal is up. A cursor that stays free needs a seat that drives
-// nothing, a look not bound to the mouse, or a Modal screen.
+// nothing, a look not bound to the mouse or blocked, or a Modal screen.
 
 // The menu of the game: what opens and closes it (menu_pressed).
 @(actions)
@@ -46,16 +46,18 @@ clock_apply :: proc(gui:^Gui,paused:bool,requests:^core.Clock_Requests,role:core
 }
 
 // Whether the game should hold the mouse.
-mouse_wanted :: proc(seats:^core.Table(inp.Seat,.Read),state:^inp.Seats,bindings:^inp.Input_Map,look:inp.Action,modal:bool) -> bool {
+mouse_wanted :: proc(seats:^core.Table(inp.Seat,.Read),state:^inp.Seats,runtime:core.Ref(inp.Seat_States),bindings:^inp.Input_Map,look:inp.Action,modal:bool) -> bool {
     if modal || !inp.action_reads_mouse(bindings,look) {return false}
-    return inp.body_of(seats,inp.focused(core.ref(state),seats))!=core.NONE
+    seat:=inp.focused(core.ref(state),seats)
+    if source:=inp.seat_runtime(runtime,seat);source!=nil && source.blocked&inp.action_bit(look)!=0 {return false}
+    return inp.body_of(seats,seat)!=core.NONE
 }
 
 // After the screens have ended: what they ask of the game and the window.
 // The mouse waits while the editor has it, or for a world the window does not see.
 @(step="ui",stage="end",after="gui_frame_end")
 gui_window_apply :: proc(
-    gui:^Gui,app:^host.App,menu:inp.Frame_Input_Of(Menu_Action),look:inp.Frame_Input_Of(inp.Look_Action),seats:^core.Table(inp.Seat,.Read),state:core.Ref(inp.Seats),bindings:core.Ref(inp.Input_Map),
+    gui:^Gui,app:^host.App,menu:inp.Frame_Input_Of(Menu_Action),look:inp.Frame_Input_Of(inp.Look_Action),seats:^core.Table(inp.Seat,.Read),state:core.Ref(inp.Seats),runtime:core.Ref(inp.Seat_States),bindings:core.Ref(inp.Input_Map),
     clock:core.Ref(core.Clock),clock_requests:^core.Clock_Requests,network:core.Ref(core.Network),
 ) {
     if gui==nil {return}
@@ -63,7 +65,7 @@ gui_window_apply :: proc(
     menu_report(gui,inp.action(&menu.actions.ptr.slots[clamp(state.focus,0,inp.LOCAL_CAPACITY-1)],inp.action_of(menu,.Menu)).pressed)
     clock_apply(gui,clock.paused,clock_requests,network.role)
     if app.platform==nil || app.renderer==nil || app.game_input_blocked || app.game_mouse_off {return}
-    if wanted:=mouse_wanted(seats,state.ptr,bindings.ptr,inp.action_of(look,.Look),gui.modal_up);wanted!=platform.window_relative_mouse(app.platform) {
+    if wanted:=mouse_wanted(seats,state.ptr,runtime,bindings.ptr,inp.action_of(look,.Look),gui.modal_up);wanted!=platform.window_relative_mouse(app.platform) {
         platform.window_set_relative_mouse(app.platform,wanted)
     }
 }

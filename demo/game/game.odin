@@ -129,11 +129,6 @@ Pulse :: struct {
 @(component,derived)
 Pulse_State :: struct {base:[3]f32}
 
-@(storage)
-Game :: struct {
-    left:core.Entity, // the body the Menu action let go of
-}
-
 SPIN_DEFAULT :: Spin{degrees_per_second={0,90,0}}
 BOB_DEFAULT :: Bob{height=0.25,speed=1.5}
 DOOR_DEFAULT :: Door{travel=2.9,speed=3,reach=3.5}
@@ -190,20 +185,14 @@ action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     }
 }
 
-// The Menu action lets the focused seat go of its body, and that frees the mouse; again, it takes
-// the body back. The animation gallery lets go too while its player adjusts a panel.
+// The Menu action blocks the actions of the focused seat, and a blocked look frees the mouse; again,
+// it gives them back. The seat keeps driving its body.
 @(step="frame")
-game_menu :: proc(game:^Game,events:core.Ref(gui.UI_Events),state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),requests:^inp.Seat_Requests) {
+game_menu :: proc(events:core.Ref(gui.UI_Events),state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),requests:^inp.Seat_Requests) {
     if !gui.menu_pressed(events) {return}
     seat:=inp.focused(state,seats)
     if seat==core.NONE {return}
-    if body:=inp.body_of(seats,seat);body!=core.NONE {
-        game.left=body
-        inp.release(requests,seat)
-    } else if game.left!=core.NONE {
-        inp.drive(requests,seat,game.left)
-        game.left=core.NONE
-    }
+    if inp.blocking(state,seat) {inp.input_unblock(requests,seat)} else {inp.input_block(requests,seat,seat)}
 }
 
 in_reach :: proc(worlds:^core.Table(core.World_Transform,$A),from:[3]f32,e:core.Entity,reach:f32) -> bool {
@@ -222,14 +211,13 @@ Demo_Controls :: struct {
 // What the seat of a body pressed this tick: open a door, change a sample, throw a cube.
 @(step="fixed")
 game_use :: proc(
-    players:^core.Table(Player,.Read),player_states:^core.Table(Player_State),doors:^core.Table(Door,.Read),door_states:^core.Table(Door_State),swatches:^core.Table(Swatch),inputs:^core.Table(inp.Move_Input,.Read),
+    players:^core.Table(Player,.Read),player_states:^core.Table(Player_State),doors:^core.Table(Door,.Read),door_states:^core.Table(Door_State),swatches:^core.Table(Swatch),
     controls:Demo_Controls,names:^core.Table(core.Name,.Read),spawner:scene.Spawner,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        input,has_input:=core.get(inputs,e)
         placed,has_world:=core.get(controls.sight.worlds,e)
-        if !has_input || !has_world {continue}
+        if !has_world {continue}
         feet:=placed.position
         if inp.pressed(controls.actions,e,.Use) {
             for at in 0..<core.count(doors) {
@@ -247,9 +235,8 @@ game_use :: proc(
                 }
             }
         }
-        if origin,aim,aimed:=cam.aim(controls.sight,e);aimed && inp.pressed(controls.actions,e,.Throw) {
+        if origin,aim,turn,aimed:=cam.aim(controls.sight,e);aimed && inp.pressed(controls.actions,e,.Throw) {
             from:=origin+aim*0.8
-            turn:=mm.quat_from_euler({input.look_pitch,input.look_yaw,0})
             scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
             if state:=demo_state(player_states,e,Player_State{},spawner.problems);state!=nil {state.thrown+=1}
         }

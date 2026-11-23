@@ -53,11 +53,12 @@ game_fire :: proc(players:^core.Table(Player,.Read),actions:inp.Input_Of(Action)
 - In `frame`, `late` and `ui` take `inp.Frame_Input_Of(Action)`; the same `inp.pressed` reads
   it, so a press is not missed between ticks.
 - To hit, dig or throw from where the player looks, `cam.aim(sight,body)` (`sight:cam.Sight`) gives
-  the ray of the camera that player sees through, in any camera mode; no eye height or look angles
-  in game code.
+  the origin, direction and rotation of the camera that player sees through, in any camera mode;
+  no eye height or look angles in game code.
 - Contexts (a menu with its own bindings): `inp.action_default_in` and, in `^inp.Context_Requests`,
   `inp.input_context_enter` and `inp.input_context_leave`; chords: `inp.binding_chord`. Block
-  actions while a menu is open with `inp.input_block(seats,owner,seat)` and `inp.input_unblock`.
+  actions while a menu is open with `inp.input_block(seats,owner,seat)` and `inp.input_unblock`;
+  a seat whose look is blocked leaves the mouse free and keeps driving its body.
 
 ## Seats and bodies
 

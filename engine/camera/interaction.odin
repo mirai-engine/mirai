@@ -119,7 +119,7 @@ interaction_target :: proc(
         if !(distance<=item.reach*item.reach) {continue}
         if item.mode==.Look {
             if !viewed {
-                if origin,direction,found:=aim(sight,actor);found {eye,forward=origin,direction}
+                if origin,direction,_,found:=aim(sight,actor);found {eye,forward=origin,direction}
                 viewed=true
             }
             ray:=pose.position-eye

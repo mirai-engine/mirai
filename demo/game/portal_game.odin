@@ -91,8 +91,8 @@ portal_ray :: proc(physics:core.Ref(phys.Physics_State),openings:^core.Table(por
 // goes into a portal and the cube is on its other side, the place is the one the portal carries it to,
 // and so are its turn and the way it is thrown; a place short of the opening is then behind the exit,
 // and the cube comes back through it.
-hold_place :: proc(openings:^core.Table(portals.Portal,$A),worlds:^core.Table(core.World_Transform,$B),eye,aim:[3]f32,yaw:f32,cube:[3]f32) -> (place:[3]f32,turn:mm.Quat,carry:mm.Quat) {
-    place,turn,carry=eye+aim*HOLD_DISTANCE,mm.quat_axis_angle({0,1,0},yaw),1
+hold_place :: proc(openings:^core.Table(portals.Portal,$A),worlds:^core.Table(core.World_Transform,$B),eye,aim:[3]f32,cube:[3]f32) -> (place:[3]f32,turn:mm.Quat,carry:mm.Quat) {
+    place,turn,carry=eye+aim*HOLD_DISTANCE,mm.quat_axis_angle({0,1,0},mm.yaw_of_direction(aim)),1
     if _,_,through,_,crossed:=portals.portal_way(openings,worlds,eye,eye+aim*(HOLD_DISTANCE+1));crossed {
         beyond:=mm.transform_point(through,place)
         if linalg.length2(cube-beyond)<linalg.length2(cube-place) {place,turn,carry=beyond,through.rotation*turn,through.rotation}
@@ -183,7 +183,7 @@ portal_fit :: proc(wall:mm.Transform,box:Surface_Box,point,normal,up:[3]f32,othe
 portal_gun :: proc(
     guns:^core.Table(Portal_Gun,.Read),states:^core.Table(Portal_Gun_State),mouths:^core.Table(Portal_Mouth),surfaces:^core.Table(Portal_Surface,.Read),cubes:^core.Table(Portal_Cube,.Read),
     rims:^core.Table(portals.Portal_Rim,.Read),openings:^core.Table(portals.Portal,.Read),
-    colliders:^core.Table(phys.Collider,.Read),inputs:^core.Table(inp.Move_Input,.Read),controls:Demo_Controls,
+    colliders:^core.Table(phys.Collider,.Read),controls:Demo_Controls,
     transforms:^core.Table(core.Transform),physics:core.Ref(phys.Physics_State),bodies:^phys.Body_Requests,
     characters:^core.Table(core.Motion,.Read),passes:core.Ref(Grill_Passes),problems:^core.Problems,
 ) {
@@ -203,7 +203,7 @@ portal_gun :: proc(
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
         gun,_:=core.get(states,player)
-        eye,aim,ok:=cam.aim(controls.sight,player)
+        eye,aim,_,ok:=cam.aim(controls.sight,player)
         if !ok {continue}
         blue:=inp.pressed(controls.actions,player,.Portal_Blue)
         orange:=inp.pressed(controls.actions,player,.Portal_Orange)
@@ -211,8 +211,7 @@ portal_gun :: proc(
         held:=gun.held
         if held!=core.NONE {
             cube,placed:=core.get(controls.sight.worlds,held)
-            input,_:=core.get(inputs,player)
-            target,facing,carry:=hold_place(openings,controls.sight.worlds,eye,aim,input.look_yaw,cube.position)
+            target,facing,carry:=hold_place(openings,controls.sight.worlds,eye,aim,cube.position)
             dropped:=!placed || linalg.distance(cube.position,target)>HOLD_REACH || grab
             // Standing on what it carries would lift the player with it.
             feet,_:=core.get(controls.sight.worlds,player)

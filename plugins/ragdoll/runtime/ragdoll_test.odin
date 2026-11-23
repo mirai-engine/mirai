@@ -109,7 +109,7 @@ ragdoll_fixture_free :: proc(f:^Ragdoll_Fixture) {
 ragdoll_fixture_step :: proc(f:^Ragdoll_Fixture) {
     settings:=RAGDOLL_SETTINGS_DEFAULT
     time:=core.Time{dt=1.0/60,playing=true}
-    ragdoll_prepare(core.read(&f.configs),core.read(&f.bones),&f.states,core.read(&f.rigids),core.read(&f.joints),core.read(&f.transforms),core.read(&f.parents),core.ref(&f.playback),&f.ragdoll,core.ref(&settings),&f.requests,&f.joint_requests,time,&f.poses,&f.problems)
+    ragdoll_prepare(core.read(&f.configs),core.read(&f.bones),&f.states,core.read(&f.rigids),core.read(&f.joints),core.read(&f.transforms),core.read(&f.parents),core.ref(&f.hierarchy),core.ref(&f.playback),&f.ragdoll,core.ref(&settings),&f.requests,&f.joint_requests,time,&f.poses,&f.problems)
     ragdoll_fixture_settle(f)
     phys.test_step(&f.physics,&f.host,time.dt)
     ragdoll_fixture_settle(f)
@@ -157,6 +157,32 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
     driven,_=core.get(&f.joints,f.joint)
     testing.expect(t,.Disabled in driven.angular[2].drive)
     testing.expect_value(t,f.problems.count,0)
+}
+
+// The joint a Driven body moves is the one on a child of it now, read from the tree, never kept.
+@(test)
+a_driven_body_drives_the_joint_its_children_hold_now :: proc(t:^testing.T) {
+    f:Ragdoll_Fixture
+    if !ragdoll_fixture_init(t,&f) {return}
+    defer ragdoll_fixture_free(&f)
+    core.edit(&f.configs,f.rig).mode=.Driven
+    ragdoll_fixture_step(&f)
+    first,_:=core.get(&f.joints,f.joint)
+    testing.expect(t,.Position in first.angular[2].drive)
+    moved,_:=core.get(&f.joints,f.joint)
+    moved.angular[2].drive={}
+    core.edit(&f.joints,f.joint)^=moved
+    core.edit(&f.parents,f.joint).entity=f.rig
+    second:=core.create(&f.entities)
+    core.add(&f.transforms,second,{{0,.5,0},1,{1,1,1}})
+    core.add(&f.parents,second,core.Parent{entity=f.lower})
+    core.add(&f.joints,second,moved)
+    ragdoll_fixture_settle(&f)
+    ragdoll_fixture_step(&f)
+    now,_:=core.get(&f.joints,second)
+    old,_:=core.get(&f.joints,f.joint)
+    testing.expect(t,.Position in now.angular[2].drive,"the joint under the body now is driven")
+    testing.expect(t,.Position not_in old.angular[2].drive,"the joint moved off the body is not")
 }
 
 @(test)

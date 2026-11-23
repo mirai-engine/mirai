@@ -91,7 +91,7 @@ the_menu_action_is_reported_unless_an_interface_used_escape :: proc(t:^testing.T
 }
 
 // The mouse is captured while the seat with it drives a body whose look the
-// mouse turns and no Modal is up.
+// mouse turns, its look is not blocked and no Modal is up.
 @(test)
 the_mouse_is_captured_while_the_seat_with_it_drives_a_body_with_look :: proc(t:^testing.T) {
     w:Seats_Test_World
@@ -105,15 +105,19 @@ the_mouse_is_captured_while_the_seat_with_it_drives_a_body_with_look :: proc(t:^
     core.add(&w.seats,seat,inp.Seat{})
     test_world_settle(&w)
 
-    wants:=proc(seats:^core.Table(inp.Seat),state:^inp.Seats,bindings:^inp.Input_Map,modal:bool) -> bool {
-        return mouse_wanted(core.read(seats),state,bindings,LOOK,modal)
+    wants:=proc(w:^Seats_Test_World,state:^inp.Seats,bindings:^inp.Input_Map,modal:bool) -> bool {
+        return mouse_wanted(core.read(&w.seats),state,core.ref(&w.seat_runtime),bindings,LOOK,modal)
     }
-    testing.expect(t,!wants(&w.seats,&state,&bindings,false),"the mouse does not turn its look")
+    testing.expect(t,!wants(&w,&state,&bindings,false),"the mouse does not turn its look")
     inp.input_map_bind(&bindings,LOOK,inp.binding_gamepad_stick(.Right))
-    testing.expect(t,!wants(&w.seats,&state,&bindings,false),"a stick does not need the mouse")
+    testing.expect(t,!wants(&w,&state,&bindings,false),"a stick does not need the mouse")
     inp.input_map_bind(&bindings,LOOK,inp.binding_mouse_delta())
-    testing.expect(t,!wants(&w.seats,&state,&bindings,false),"no body driven")
+    testing.expect(t,!wants(&w,&state,&bindings,false),"no body driven")
     core.edit(&w.seats,seat).body=body
-    testing.expect(t,wants(&w.seats,&state,&bindings,false))
-    testing.expect(t,!wants(&w.seats,&state,&bindings,true),"a Modal frees it")
+    testing.expect(t,wants(&w,&state,&bindings,false))
+    testing.expect(t,!wants(&w,&state,&bindings,true),"a Modal frees it")
+    inp.seat_runtime_edit(&w.seat_runtime,seat).blocked=inp.action_bit(LOOK+1)
+    testing.expect(t,wants(&w,&state,&bindings,false),"another action blocked keeps it")
+    inp.seat_runtime_edit(&w.seat_runtime,seat).blocked=inp.action_bit(LOOK)
+    testing.expect(t,!wants(&w,&state,&bindings,false),"a blocked look frees it")
 }

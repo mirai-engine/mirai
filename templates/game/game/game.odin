@@ -72,7 +72,7 @@ game_hit :: proc(
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        eye,ahead,aimed:=cam.aim(sight,e)
+        eye,ahead,_,aimed:=cam.aim(sight,e)
         if !aimed || !inp.pressed(actions,e,.Hit) {continue}
         if hit,found:=phys.raycast(physics,eye,ahead,HIT_REACH,e);found {destruct.damage(damage,hit.entity,hit.point,HIT_RADIUS,ahead*HIT_IMPULSE)}
     }

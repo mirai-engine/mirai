@@ -327,10 +327,11 @@ audit_input_traps :: proc "contextless" (buttons:int,captured,modal,keyboard,dri
 audit_mouse_held :: proc(s:^editor.Session,w:core.World_Ref,modal:bool) -> bool {
     seats:=core.world_table_of(w,input.Seat)
     state:=core.world_storage_of(w,input.Seats)
+    runtime:=core.world_storage_of(w,input.Seat_States)
     bindings:=core.world_storage_of(w,input.Input_Map)
     actions:=core.actions_of(s.info,input.Look_Action)
     if seats==nil || state==nil || bindings==nil || actions==nil {return false}
-    return egui.mouse_wanted(core.read(seats),state,bindings,input.Action(actions.base)+input.Action(input.Look_Action.Look),modal)
+    return egui.mouse_wanted(core.read(seats),state,core.ref(runtime),bindings,input.Action(actions.base)+input.Action(input.Look_Action.Look),modal)
 }
 
 @(private)
