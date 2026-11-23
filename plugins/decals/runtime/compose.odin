@@ -57,7 +57,7 @@ decals_compose :: proc(
     if resolve==0 || !render.pass_params(pass,&region,size_of(region)) {return}
     scratch:=render.Pass_Texture_Desc{
         name="decal surface",format=.RGBA16_Float,width=pass.width,height=pass.height,
-        layers=5,
+        layers=4,
     }
     if ok,_:=render.pass_texture(pass,5,scratch);!ok {return}
     render.pass_timestamp(pass,"compose decals")

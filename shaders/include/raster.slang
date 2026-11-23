@@ -196,29 +196,6 @@ Fragment fragment_evaluate(Raster_Input input, Material material, float opaque) 
     return fragment_evaluate(input, material, to_camera, ctx, n);
 }
 Fragment fragment_evaluate(Raster_Input input, float opaque) { return fragment_evaluate(input, fragment_material(input), opaque); }
-    f.values = material_sample(f.material, ctx, input.in_color, input.in_emission, n);
-    material_surface_apply(f.values, f.material, input.in_surface);
-    if (f.material.program_id != 0u) n = fragment_facing(n, f.to_camera);
-    f.normal = n;
-    f.values.emission = emission_render_units(sample_emission(f.values, dot(f.values.layers.coat_normal, f.to_camera)), f.values.emission_relative);
-    f.material_roughness = f.values.roughness;
-    f.values.roughness = specular_antialiasing(n, f.values.roughness);
-    if (f.values.layers.coat > 0.0) f.values.layers.coat_roughness = specular_antialiasing(f.values.layers.coat_normal, f.values.layers.coat_roughness);
-    return f;
-}
-<<<<<<< HEAD
-Fragment fragment_evaluate(Raster_Input input, float opaque) { return fragment_evaluate(input, fragment_material(input), opaque); }
-=======
-// opaque: what the linear depth target of the opaque scene holds at the
-// pixel of a fragment drawn over it; 0 for one that is not.
-Fragment fragment_evaluate(Raster_Input input, float opaque) {
-    float3 to_camera = to_eye(input.in_world);
-    Material material = fragment_material(input);
-    float3 n;
-    Mirai_Surface_Context ctx = material_context_over(fragment_context(input, material, to_camera, n), opaque);
-    return fragment_evaluate(input, material, to_camera, ctx, n);
-}
->>>>>>> perf/resolve-alu
 Fragment fragment_evaluate(Raster_Input input) { return fragment_evaluate(input, 0.0); }
 
 #endif

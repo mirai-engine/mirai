@@ -138,7 +138,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group_id : SV_GroupID, 
         InterlockedOr(stats[0].probe[0], CULL_PROBE_VISIBLE);
         stats[0].probe[1] = instance_levels(view_detail(), inst, mesh).x + 1u;
     }
-    if (visible && !batched && params.glass_groups.x != 0u && (inst.meta.w & INSTANCE_FLAG_TRANSLUCENT) != 0u) {
+    if (visible && !batched && params.glass_groups.x != 0u && (inst.meta.x & INSTANCE_FLAG_GLASS) != 0u) {
         InterlockedMax(glass_dispatch[0], params.glass_groups.x);
         InterlockedMax(glass_dispatch[1], params.glass_groups.y);
         InterlockedMax(glass_dispatch[2], 1u);

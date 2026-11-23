@@ -328,7 +328,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
   first layer or opaque depth.
 - **Layers & culling:** Closest layers read a scene copy (rough glass blurs over a disc); deeper
   surfaces filter forward. Blend-only instances sit in `RAY_GLASS`. All glass passes skip when
-  no transmissive instance is in frustum.
+  no transmissive instance is in frustum, and their full-screen dispatches when none passes the
+  depth pyramid (`INSTANCE_FLAG_GLASS`): a blend without transmission never arms them.
 - **Limits:** No refraction behind layers, no caustics/dispersion, TAA uses background motion, 1
   immersed solid per view (no absorption between interior layers or on shadows/GI/particles).
 

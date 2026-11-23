@@ -458,7 +458,7 @@ a_view_that_leaves_out_the_layers_of_a_skinned_part_draws_it_collapsed :: proc(t
         camera:=Camera{position={0,2,0},forward={0,-2,0},up={0,0,-1},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE,own=c.own,own_hidden=c.own_hidden,layers=c.layers}
         for _ in 0..<2 {testing.expect(t,fixture_frame(&f, {camera=camera}),r.error)}
         rhi.device_wait_idle(device)
-        testing.expect(t,golden_read_texture(device,r.targets.albedo,pixels),rhi.device_error(device))
+        albedo_drawn(t,device,r,pixels)
         left,right:=0,0
         for y in 0..<height {for x in 0..<width {if pixels[(y*width+x)*4]>200 {if x<width/2 {left+=1} else {right+=1}}}}
         half:=width*height/2

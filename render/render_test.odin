@@ -4841,10 +4841,11 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			seen.width, seen.height, seen.eye = s.width, s.height, s.eye
 			seen.nested = pass_nested_add(s, {to_world = 1, previous = 1})
 			seen.data = len(pass_extension_data(s, "absent"))
-			pass_mask_begin(s, "test mask")
-			pass_scissor(s, {1, 1, 4, 4})
-			pass_scissor(s, {})
-			pass_end(s)
+			if pass_mask_begin(s, "test mask") {
+				pass_scissor(s, {1, 1, 4, 4})
+				pass_scissor(s, {})
+				pass_end(s)
+			}
 		case .Surface:
 			pass_surface_begin(s, {.Albedo, .Emission}, "test surfaces")
 			pass_end(s)

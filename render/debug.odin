@@ -166,7 +166,7 @@ debug_lines_pass :: proc(r:^Renderer,cmd:^rhi.Command_List,t:^Targets,slot:int,b
             rhi.cmd_bind_pipeline(cmd,r.pipelines[kind])
             rhi.cmd_bind_buffer(cmd,SLOT_PASS0,r.debug_buffers[slot])
             rhi.cmd_bind_texture(cmd,SLOT_PASS1,t.linear_depth)
-            rhi.cmd_bind_texture(cmd,SLOT_VIEWS,t.motion)
+            rhi.cmd_bind_texture(cmd,SLOT_VIEWS,t.views if t.views!=0 else r.dummy_uint)
             bound,pipeline=true,kind
         }
         Params :: struct {viewport:Vec2,depth_test,triangles:u32}
