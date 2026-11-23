@@ -116,6 +116,8 @@ In `plugins/multiplayer/runtime`:
   prediction with the world copy, correction, smoothing, predicted spawns, rewind and SyncTest.
   `history.odin`: authoritative history of predicted replicas and their
   component records.
+- `diagnostics.odin`: links, recent corrections and rollbacks of a session
+  (`play.network.status`).
 - `rewind.odin`: lag compensation; the server remembers the poses of what has `Rewind` and gives
   the tick each client saw (`rewind_tick`, `rewind_pose`).
 - `journal.odin`: the replicated operation journal (`Journal`, `Net_Journal_*`).

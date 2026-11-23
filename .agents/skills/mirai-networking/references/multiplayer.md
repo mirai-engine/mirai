@@ -181,7 +181,11 @@ Replicas in `scene.Scene_Reference` sections replicate only to clients that load
 - **Online players** (`play.start` with `online`, `ping_ms`) or shared hosting write
   `.mirai/play/play.scene`, open a server on the first free port from `Net_Settings.port` with an
   invite key, and launch `mirai-player` per online client over `127.0.0.1` (`--latency` = ping/2)
-  using the editor library. `play.network.status` exposes `Net_Play` and `invite`.
+  using the editor library. `play.network.status` exposes `Net_Play` and `invite`, and the
+  session of the run of the call (or of `player` N of a turn): links, rollbacks and the recent
+  corrections of `Net_Session.diagnostics` (`diagnostics.odin`). Those rings are fixed, live in
+  the session outside the `World` (no copy carries them, a rollback keeps them) and note without
+  allocating: each state that differs (`replica_differs`) and each rollback (`client_rollback`).
 - **Agents & guests:** Agent `play.start` runs in-process client worlds
   (`NET_PLAY_STEPPED_TIMEOUT` for stepped ticks). Collaborators join via `play.join` over
   `.mirai/play/host.scene`
@@ -360,6 +364,10 @@ failures exit `PLAYER_NET`. `scripts/bench_compare.py` (`netpublish`) benchmarks
   `a_rollback_places_interpolated_replicas_as_far_behind_as_each_tick_did`,
   `an_error_too_deep_for_the_frame_puts_the_replica_where_the_server_carries_it`,
   `corrections_on_a_damaged_link_fit_the_frame_and_go_back_instead_of_placing`,
+  `a_correction_notes_its_tick_entity_field_and_magnitude_outside_the_world`,
+  `the_diagnostic_rings_keep_the_newest_notes_newest_first`,
+  `predicted_transforms_compare_rotation_scale_and_quantized_components` (`integration_test.odin`),
+  `play_network_status_says_how_the_run_predicts_and_corrects` (`plugins/multiplayer/editor`),
   `sync_test_names_what_a_fixed_function_reading_outside_the_world_changes`,
   `sync_test_leaves_out_the_ticks_that_states_arriving_late_change`,
   `sync_test_after_a_correction_compares_with_what_the_correction_left`.

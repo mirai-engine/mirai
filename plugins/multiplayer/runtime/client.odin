@@ -1221,19 +1221,33 @@ record_of :: proc(c:^Client,d:^Net_Settings,x:^Replica,tick:u32) -> (record:^Rec
     return record.object==x.object?record:nil,true
 }
 
-// Positions are compared where the mass of the body is: the frame of a group of pieces is far from them.
+// Positions are compared where the mass of the body is: the frame of a group of pieces is far from
+// them. The first field off its tolerance, in the order of Correction_Field, and by how much.
 @(private)
-record_differs :: proc(d:^Net_Settings,body:bool,record:^Record,pose:^Pose,motion:^Motion_State) -> bool {
+record_differs :: proc(d:^Net_Settings,body:bool,record:^Record,pose:^Pose,motion:^Motion_State) -> (field:Correction_Field,magnitude:f32,differs:bool) {
     apart:=record.position-pose.position
     if body {apart+=mm.quat_rotate(record.rotation,record.center)-mm.quat_rotate(pose.rotation,record.center)}
-    if linalg.length2(apart)>d.position_tolerance*d.position_tolerance {return true}
-    if linalg.length2(record.scale-pose.scale)>d.scale_tolerance*d.scale_tolerance {return true}
+    if linalg.length2(apart)>d.position_tolerance*d.position_tolerance {return .Position,linalg.length(apart),true}
     p,q:=record.rotation,pose.rotation
-    if abs(p.x*q.x+p.y*q.y+p.z*q.z+p.w*q.w)<math.cos(d.rotation_tolerance*0.5) {return true}
-    if !body {return false}
-    if linalg.length2(record.linear-motion.linear)>d.velocity_tolerance*d.velocity_tolerance {return true}
-    if linalg.length2(record.angular-motion.angular)>d.velocity_tolerance*d.velocity_tolerance {return true}
-    return false
+    if dot:=abs(p.x*q.x+p.y*q.y+p.z*q.z+p.w*q.w);dot<math.cos(d.rotation_tolerance*0.5) {return .Rotation,2*math.acos(min(dot,1)),true}
+    if linalg.length2(record.scale-pose.scale)>d.scale_tolerance*d.scale_tolerance {return .Scale,linalg.length(record.scale-pose.scale),true}
+    if !body {return}
+    if linalg.length2(record.linear-motion.linear)>d.velocity_tolerance*d.velocity_tolerance {return .Linear,linalg.length(record.linear-motion.linear),true}
+    if linalg.length2(record.angular-motion.angular)>d.velocity_tolerance*d.velocity_tolerance {return .Angular,linalg.length(record.angular-motion.angular),true}
+    return
+}
+
+// Whether the state of the server for a tick differs from what was predicted of a replica, and
+// how: the pose and the motion first, then its replicated components.
+@(private)
+replica_differs :: proc(s:^Net_Session,x:^Replica,tick:u32,record:^Record,pose:^Pose,motion:^Motion_State,command:^wire.Command) -> (correction:Correction,differs:bool) {
+    correction={tick=tick,entity=x.entity,object=x.object,table=-1}
+    if correction.field,correction.magnitude,differs=record_differs(&s.desc,net_type(s,x.type).motion>=0,record,pose,motion);differs {return}
+    table,words:int
+    if table,words,differs=record_components_differ(s,x,tick,command);differs {
+        correction.field,correction.table,correction.magnitude=.Component,i32(table),f32(words)
+    }
+    return
 }
 
 @(private)
@@ -1341,6 +1355,7 @@ client_reconcile :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,dt:f32) {
     newest:=c.newest
     target:u32
     compared,differing:=0,0
+    noted:=s.diagnostics.correction_count
     // A replica that differs, or turns predicted, asks the world to go back to tick at.
     back :: proc(x:^Replica,at:u32,target:^u32,differing:^int) {
         if !x.differs || i32(at-x.check)>0 {x.check=at}
@@ -1381,7 +1396,10 @@ client_reconcile :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,dt:f32) {
             t:=net_type(s,x.type)
             if t.motion>=0 {wire.object_read(&s.host,&command,t.motion,&motion,max(u64))}
             compared+=1
-            if record_differs(d,t.motion>=0,record,&pose,&motion) || record_components_differ(s,&x,authority.tick,&command) {back(&x,authority.tick,&target,&differing)}
+            if correction,differs:=replica_differs(s,&x,authority.tick,record,&pose,&motion,&command);differs {
+                correction_note(&s.diagnostics,correction)
+                back(&x,authority.tick,&target,&differing)
+            }
         }
         // A state older than the history is still the newest news of the replica: it goes where that state has it.
         if stale.words!=nil && !inside {replica_place_now(s,w,&x,&stale,app.tick_dt)}
@@ -1394,12 +1412,16 @@ client_reconcile :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,dt:f32) {
         x.verified,x.verified_set=tick,true
         compared+=1
         command:=replica_command(s,&x)
-        if record_differs(d,net_type(s,x.type).motion>=0,record,&x.pose,&x.motion) || record_components_differ(s,&x,tick,&command) {back(&x,tick,&target,&differing)}
+        if correction,differs:=replica_differs(s,&x,tick,record,&x.pose,&x.motion,&command);differs {
+            correction_note(&s.diagnostics,correction)
+            back(&x,tick,&target,&differing)
+        }
     }
     if compared>0 && differing==0 {s.stats.confirmed+=1}
     if differing==0 {return}
     started:=time.tick_now()
     if !client_rewind(s,w,app,target) {
+        corrections_placed(&s.diagnostics,noted)
         s.stats.deferred+=1
         for &x in c.replicas[:c.replica_high] {
             if x.object==0 || !x.differs || x.mode!=.Predicted {continue}
@@ -1516,6 +1538,7 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
     behind:=int(i32(c.newest-target))
     s.stats.corrected+=1
     s.stats.largest_resimulation=max(s.stats.largest_resimulation,behind)
+    resimulation_note(&s.diagnostics,{from=start,to=c.newest,ticks=behind})
     after_tables:=net_tables(w)
     for &x in c.replicas[:c.replica_high] {
         if !x.corrected || x.object==0 || x.mode!=.Predicted {continue}

@@ -161,6 +161,7 @@ Net_Session :: struct {
     connections:int,
     joined,left,lost:u64,
     stats:Net_Stats,
+    diagnostics:Net_Diagnostics, // client: its recent corrections and resimulations
     ended:bool,
     server:Server,
     client:Client,

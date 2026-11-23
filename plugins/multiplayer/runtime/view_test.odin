@@ -76,7 +76,8 @@ view_net_fixed :: proc(world,shared,editor,application:rawptr) {
 // turn to the right and holds forward: where the server and a tick the client
 // runs again move its body is where the camera of that player looked, the view
 // its client sent with its actions, whatever the cameras of each end did. Its
-// body goes along +X on both ends and they agree, without a correction.
+// body goes along +X on both ends and they agree, without a correction: the
+// client notes none and ran nothing again, and both ends measure their link.
 @(test)
 a_free_orbit_turned_by_its_player_moves_the_body_alike_on_both_ends :: proc(t:^testing.T) {
     info,described:=test_info(t,View_Net_World)
@@ -181,6 +182,18 @@ a_free_orbit_turned_by_its_player_moves_the_body_alike_on_both_ends :: proc(t:^t
     testing.expectf(t,server_pose.position.x>0.8*VIEW_SPEED && abs(server_pose.position.z)<0.01,"the server moved the body along where its player looked: %v",server_pose.position)
     testing.expectf(t,linalg.length(server_pose.position-client_pose.position)<0.01,"server %v client %v",server_pose.position,client_pose.position)
     testing.expect_value(t,sessions[1].stats.corrected,u64(0))
+    testing.expect(t,sessions[1].stats.confirmed>0,"the client compared its prediction")
+    testing.expect_value(t,sessions[1].diagnostics.correction_count,u64(0))
+    testing.expect_value(t,sessions[1].diagnostics.resimulation_count,u64(0))
+    for &session,index in sessions {
+        out:[4]Link_Stats
+        seen:=links(&session,out[:])
+        if !testing.expectf(t,len(seen)==1,"end %d has %d links",index,len(seen)) {continue}
+        link:=seen[0]
+        // 30 ms each way, measured on frames of 1/60 s.
+        testing.expectf(t,link.rtt>0.05 && link.rtt<0.1 && link.jitter>=0 && link.jitter<0.05,"end %d: rtt %v jitter %v",index,link.rtt,link.jitter)
+        testing.expectf(t,link.loss>=0 && link.loss<=0.01,"end %d: loss %v on a link that loses nothing",index,link.loss)
+    }
     testing.expect_value(t,problems[0].count,0)
     testing.expect_value(t,problems[1].count,0)
 }

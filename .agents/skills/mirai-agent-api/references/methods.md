@@ -290,7 +290,14 @@ Play and Simulate run in-process on world copies
   ([explore-qa](../../../../docs/game/testing/explore-qa.md)).
 - `play.player`, `play.ui` (window-point `rect`s; omits `World_Widget`), `play.audio` (shared
   editor mixer), `play.scenario.run` ([scenarios](../../../../docs/game/testing/scenario.md)).
-- `multiplayer` plugin: `play.join` and `play.network.status` (outside turns only).
+- `multiplayer` plugin: `play.join` (outside turns) and `play.network.status`, also inside a
+  turn. Besides the editor's network game (`phase`, `invite`), `run` reads the run of the call
+  (the turn's, or the user's Play), or `player` N, an online client of the turn's game: `role`
+  (`Local` without a network), `links` (`rtt_ms`, `jitter_ms`, `loss`), `rollbacks`,
+  `resimulated` ticks, `recent_resimulations` and the newest 32 `recent_corrections` (`tick`,
+  `entity`, `field`: `Position`/`Rotation`/`Scale`/`Linear`/`Angular` or the component,
+  `magnitude`, `placed`). A client diagnoses prediction; a server shows links only:
+  `mirai rpc --project . play.network.status '{"player":1}' --select run`.
 
 ## Simulation
 

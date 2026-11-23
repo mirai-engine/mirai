@@ -102,20 +102,28 @@ record_components :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,tick:u32) {
     }
 }
 
+// Whether the replicated components a state of the server carries differ from those recorded for
+// its tick: the table of the first that differs and how many quantized words differ in all.
 @(private)
-record_components_differ :: proc(s:^Net_Session,r:^Replica,tick:u32,command:^wire.Command) -> bool {
+record_components_differ :: proc(s:^Net_Session,r:^Replica,tick:u32,command:^wire.Command) -> (table,words:int,differs:bool) {
     t:=net_type(s,r.type)
     mask:=components_mask(s,t)&command.mask
-    if mask==0 {return false}
+    if mask==0 {return}
     at:=(int(tick)%s.client.history)*s.desc.predicted_capacity+int(r.slot)
-    words:=s.client.record_words[at*s.client.words_per:][:s.client.words_per]
+    recorded:=s.client.record_words[at*s.client.words_per:][:s.client.words_per]
     for leaf in s.protocol.types[t.type].leaves {
         if mask&u64(1<<uint(leaf.bit))==0 {continue}
         for index in int(leaf.word)..<int(leaf.word)+int(leaf.words) {
-            if words[index]!=command.words[index] {return true}
+            if recorded[index]==command.words[index] {continue}
+            if !differs {
+                component:=int(leaf.fragment)-t.first
+                table=component>=0 && component<t.count?t.tables[component]:-1
+            }
+            words+=1
+            differs=true
         }
     }
-    return false
+    return
 }
 
 @(private)

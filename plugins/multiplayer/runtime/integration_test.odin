@@ -412,18 +412,27 @@ authoritative_components_replay_at_their_ticks_with_real_physics :: proc(t:^test
     testing.expect_value(t,got.position,before)
 }
 
+// The first field off its tolerance names the correction, with how far off it is in its unit.
 @(test)
 predicted_transforms_compare_rotation_scale_and_quantized_components :: proc(t:^testing.T) {
     settings:=settings_resolve({},1.0/60)
-    record:=Record{rotation=1,scale={1,1,1}}
-    pose:=Pose{rotation=1,scale={1,1,1}}
-    motion:Motion_State
-    testing.expect(t,!record_differs(&settings,false,&record,&pose,&motion))
-    pose.rotation=quaternion(w=0,x=1,y=0,z=0)
-    testing.expect(t,record_differs(&settings,false,&record,&pose,&motion))
-    pose.rotation=1
-    pose.scale={2,1,1}
-    testing.expect(t,record_differs(&settings,false,&record,&pose,&motion))
+    Case :: struct {pose:Pose,motion:Motion_State,body,differs:bool,field:Correction_Field,magnitude:f32}
+    cases:=[]Case{
+        {pose={rotation=1,scale={1,1,1}}},
+        {pose={position={0,0.3,0},rotation=1,scale={1,1,1}},differs=true,field=.Position,magnitude=0.3},
+        {pose={rotation=quaternion(w=0,x=1,y=0,z=0),scale={1,1,1}},differs=true,field=.Rotation,magnitude=3.1415927},
+        {pose={rotation=1,scale={2,1,1}},differs=true,field=.Scale,magnitude=1},
+        {pose={rotation=1,scale={1,1,1}},motion={linear={0,0,2}},differs=false},
+        {pose={rotation=1,scale={1,1,1}},motion={linear={0,0,2}},body=true,differs=true,field=.Linear,magnitude=2},
+        {pose={rotation=1,scale={1,1,1}},motion={angular={1,0,0}},body=true,differs=true,field=.Angular,magnitude=1},
+    }
+    for &c,index in cases {
+        record:=Record{rotation=1,scale={1,1,1}}
+        field,magnitude,differs:=record_differs(&settings,c.body,&record,&c.pose,&c.motion)
+        testing.expectf(t,differs==c.differs,"case %d: differs %v",index,differs)
+        if !c.differs {continue}
+        testing.expectf(t,field==c.field && abs(magnitude-c.magnitude)<1e-4,"case %d: %v by %v, not %v by %v",index,field,magnitude,c.field,c.magnitude)
+    }
 }
 
 // A component that names an entity this end has no object for is off the

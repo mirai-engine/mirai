@@ -2,6 +2,7 @@ package multiplayer
 
 import "core:fmt"
 import "core:math/linalg"
+import "core:mem"
 import "core:slice"
 import "core:testing"
 import "mirai:core"
@@ -497,4 +498,87 @@ authoritative_states_are_found_by_their_tick_and_the_newest_before_it :: proc(t:
     other:=Replica{object=3,mode=.Predicted,slot=1}
     authority_clear(&s,&other)
     check(t,&s,&other,{{60,false,0}},proc(tick:u32) -> u32 {return 0})
+}
+
+// A state of the server off what the client predicted for its tick notes a correction of that tick,
+// with the entity, the field and how far off, and the time the world ran again; one the world
+// cannot go back for is noted as placed. The notes live in the session: the rollback that
+// restores the World keeps them, and a warm correction notes without allocating.
+@(test)
+a_correction_notes_its_tick_entity_field_and_magnitude_outside_the_world :: proc(t:^testing.T) {
+    f:Correction_Fixture
+    defer correction_fixture_destroy(&f)
+    if !correction_fixture_init(t,&f,.Predicted,{max_objects=8,predicted_capacity=8,max_resimulate=6}) {return}
+    s:=&f.session
+    d:=&s.diagnostics
+    ref:=core.world_ref(&f.world,&f.info)
+    values:=i32(f.info.tables_by_type[Net_Test_Value])
+    Case :: struct {back:u32,offset:[3]f32,force:f32,field:Correction_Field,table:i32,magnitude:f32,placed:bool}
+    cases:=[]Case{
+        {back=3,offset={0,0.1,0},force=1,field=.Position,table=-1,magnitude=0.1},
+        {back=2,force=4,field=.Component,table=values,magnitude=1},
+        {back=9,offset={0.2,0,0},force=1,field=.Position,table=-1,magnitude=0.2,placed=true},
+    }
+    owner:=f.app.allocator
+    defer f.app.allocator=owner
+    tick:=u32(10)
+    for c,index in cases {
+        // A tick ahead each time, so that every state is newer than what was compared before.
+        for _ in 0..<c.back {
+            tick+=1
+            correction_fixture_tick(&f,tick)
+        }
+        at:=s.client.newest-c.back
+        record,_:=record_of(&s.client,&s.desc,&s.client.replicas[1],at)
+        pose:=Pose{id=1,position=record.position+c.offset,rotation=record.rotation,scale=record.scale}
+        command:=net_test_pack(s,&f.world,&s.client.replicas[1],at,pose,{record.linear,record.angular},c.force,f.words)
+        replica_update(s,ref,f.app.assets,&command)
+        noted,resimulations,resimulated:=d.correction_count,d.resimulation_count,s.stats.resimulated
+        // The first correction warmed what a rollback keeps: the next ones allocate nothing.
+        counted:=Rollback_Allocation{owner=owner,remaining=index==0?max(int):0}
+        f.app.allocator={rollback_allocator,&counted}
+        saved:=context
+        if index>0 {context.allocator,context.temp_allocator=mem.nil_allocator(),mem.nil_allocator()}
+        client_reconcile(s,ref,&f.app,1.0/60)
+        context=saved
+        f.app.allocator=owner
+        if index>0 {testing.expectf(t,counted.requests==0,"case %d: %d allocations",index,counted.requests)}
+        if !testing.expectf(t,d.correction_count==noted+1,"case %d: %d corrections noted",index,d.correction_count-noted) {continue}
+        out:[CORRECTIONS_KEPT]Correction
+        newest:=corrections_recent(d,out[:])[0]
+        testing.expectf(t,newest.tick==at && newest.entity==f.e && newest.object==s.client.replicas[1].object,"case %d: tick %d entity %v",index,newest.tick,newest.entity)
+        testing.expectf(t,newest.field==c.field && newest.table==c.table && abs(newest.magnitude-c.magnitude)<0.01,"case %d: %v of table %d by %v",index,newest.field,newest.table,newest.magnitude)
+        testing.expectf(t,newest.placed==c.placed,"case %d: placed %v",index,newest.placed)
+        if c.placed {
+            testing.expect_value(t,d.resimulation_count,resimulations)
+            continue
+        }
+        if !testing.expectf(t,d.resimulation_count==resimulations+1,"case %d: %d resimulations",index,d.resimulation_count-resimulations) {continue}
+        ran:[RESIMULATIONS_KEPT]Resimulation
+        last:=resimulations_recent(d,ran[:])[0]
+        testing.expectf(t,last.from==at+1 && last.to==s.client.newest && last.ticks==int(c.back) && s.stats.resimulated==resimulated+u64(c.back),"case %d: ran %v",index,last)
+    }
+    testing.expect_value(t,s.stats.corrected,u64(2))
+    testing.expect_value(t,s.stats.deferred,u64(1))
+}
+
+// The rings keep the newest notes, newest first, and give no more than they hold or were asked.
+@(test)
+the_diagnostic_rings_keep_the_newest_notes_newest_first :: proc(t:^testing.T) {
+    d:Net_Diagnostics
+    out:[CORRECTIONS_KEPT+4]Correction
+    testing.expect_value(t,len(corrections_recent(&d,out[:])),0)
+    for tick in 1..=CORRECTIONS_KEPT+5 {correction_note(&d,{tick=u32(tick)})}
+    recent:=corrections_recent(&d,out[:])
+    testing.expect_value(t,len(recent),CORRECTIONS_KEPT)
+    testing.expect(t,recent[0].tick==CORRECTIONS_KEPT+5 && recent[CORRECTIONS_KEPT-1].tick==6)
+    testing.expect_value(t,len(corrections_recent(&d,out[:3])),3)
+    // Those of a frame whose world could not go back are placed, and only those.
+    corrections_placed(&d,d.correction_count-2)
+    recent=corrections_recent(&d,out[:])
+    testing.expect(t,recent[0].placed && recent[1].placed && !recent[2].placed)
+    ran:[2]Resimulation
+    for tick in 1..=RESIMULATIONS_KEPT+1 {resimulation_note(&d,{from=u32(tick),to=u32(tick)+2,ticks=3})}
+    kept:=resimulations_recent(&d,ran[:])
+    testing.expect(t,len(kept)==2 && kept[0].from==RESIMULATIONS_KEPT+1 && kept[1].from==RESIMULATIONS_KEPT)
 }
