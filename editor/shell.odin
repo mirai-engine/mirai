@@ -860,6 +860,7 @@ shell_after :: proc(s:^Session) {
         case .Default:
         case .Text: g.cursor=.Text
         case .Resize_Horizontal: g.cursor=.Resize_Horizontal
+        case .Hidden: g.cursor=.Hidden
         }
     }
     if g.cursor!=g.cursor_set {

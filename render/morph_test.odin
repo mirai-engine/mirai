@@ -213,6 +213,60 @@ gpu_skins_with_influences_of_every_level_pose_each_level_and_keep_its_history_an
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
 
+// A posed mesh whose bones move its vertices away from its rest box widens
+// lod_reach so instance_levels still includes the level cluster_cut selects.
+@(test)
+gpu_posed_mesh_keeps_visible_cut_when_pose_leaves_rest_bounds :: proc(t:^testing.T) {
+    f:Fixture
+    if !skin_fixture(t,&f,true) {return}
+    defer fixture_destroy(&f)
+    r,device:=f.renderer,f.device
+    // Rest mesh lies along -Z (z in [-2, 0]); animation stands it up along +Y (y in [0, 2]).
+    low:=[4]Mesh_Vertex{
+        {position={-0.4,0,0},normal={0,-1,0},color={1,1,1},tangent={1,0,0,1}},
+        {position={0.4,0,0},normal={0,-1,0},color={1,1,1},tangent={1,0,0,1}},
+        {position={0.4,0,-2},normal={0,-1,0},color={1,1,1},tangent={1,0,0,1}},
+        {position={-0.4,0,-2},normal={0,-1,0},color={1,1,1},tangent={1,0,0,1}},
+    }
+    coarse_verts:=[3]Mesh_Vertex{
+        {position={-0.4,0,0},normal={0,-1,0},color={1,1,1},tangent={1,0,0,1}},
+        {position={0.4,0,0},normal={0,-1,0},color={1,1,1},tangent={1,0,0,1}},
+        {position={0,0,-2},normal={0,-1,0},color={1,1,1},tangent={1,0,0,1}},
+    }
+    vertices:[7]Mesh_Vertex
+    copy(vertices[:4],low[:]);copy(vertices[4:],coarse_verts[:])
+    indices:=[9]u32{0,2,1,0,3,2,4,6,5}
+    // Error right at the cut boundary so omitting level 0 leaves 0 clusters drawn.
+    levels:=[2]asset.Level_Source{{0,6,0},{6,3,0.032}}
+    source,origins,added:=test_mesh_add(r,vertices[:],indices[:],levels[:])
+    if !testing.expect(t,added) {return}
+    given:[7]Skin_Influence
+    for &inf in given {inf.joints[0]=0;inf.weights[0]=255}
+    skin,created:=skin_create(r,source,test_by_cluster(origins,given[:]),1)
+    if !testing.expect(t,created,r.error) {return}
+    testing.expect(t,mesh_remove(r,source))
+    // Rotate -90 deg around X so rest (-Z) stands upright along +Y while rotated 180 deg around Y in world.
+    stand:=linalg.matrix4_rotate_f32(math.PI*0.5,{1,0,0})
+    testing.expect(t,skin_update(r,skin,{stand},true))
+    testing.expect(t,r.scene.meshes[skin].lod_reach>r.scene.meshes[skin].skin.rest_lod_reach,"posed bounds widen lod_reach")
+    turn:=linalg.matrix4_rotate_f32(math.PI,{0,1,0})
+    scene_given(r,{{object_id=1,mesh=skin,transform=turn,tint={1,1,1}}},nil,{},{})
+    camera:=Camera{position={0,1,10},forward={0,0,-10},up={0,1,0},fov_y=45,near=0.1,far=100,exposure=UNIT_EXPOSURE}
+    // Sweep lod_error_pixels right across the level-0/level-1 transition: every frame must draw 1 cluster.
+    for step in 0..<8 {
+        settings:=r.settings
+        settings.lod_error_pixels=0.8+f32(step)*0.2
+        testing.expect(t,renderer_apply_settings(r,settings))
+        if !testing.expect(t,renderer_frame(r,{camera=camera}),r.error) {return}
+        state:[1]Gpu_Cull_State
+        testing.expect(t,rhi.buffer_read_slice(device,r.scene.cull_state_buffer,0,state[:]))
+        drawn:=u32(0)
+        for phase in state[0].bin_counts {for count in phase {drawn+=count}}
+        testing.expectf(t,drawn==1,"step %d (cut=%.2f): expected 1 cluster, got %d",step,settings.lod_error_pixels,drawn)
+    }
+    testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
+}
+
 // The cost of the compute of the poses: of level 0 alone, of every level, and
 // of every level with four targets that move every vertex.
 @(test)

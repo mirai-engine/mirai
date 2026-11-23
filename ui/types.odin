@@ -17,7 +17,7 @@ Id :: distinct u32
 
 // Layout of the renderer's UI vertex. position is in the units of its surface.
 // The shape the pointer asks for over what it is on, for the host to show.
-Cursor :: enum u8 {Default,Text,Resize_Horizontal}
+Cursor :: enum u8 {Default,Text,Resize_Horizontal,Hidden}
 
 Vertex :: struct {
     position:[3]f32,

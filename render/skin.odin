@@ -89,6 +89,8 @@ POSED_BOUNDS_WORDS :: abi.POSED_BOUNDS_WORDS
     fresh:bool,     // displaced and not written yet: its previous vertices take the first ones too
     source:Mesh_Handle, // of a displaced one
     reach:f32,      // how far those programs move a vertex, in its own space: the boxes of its instances grow by it
+    rest_min,rest_max:Vec3,
+    rest_lod_reach:f32,
     // Of an external one, as the maps of the shadows follow an instance (Shadow_Track): the frame its
     // vertices last changed in while they follow it, whether they changed again within
     // SHADOW_MOVER_FRAMES, and whether it started or stopped moving this frame
@@ -387,6 +389,7 @@ pose_store :: proc(r:^Renderer,original:Mesh_Record,posed:u32,streams:int,skin:^
     for &ranges in s.pool_dirty {if reserve(&ranges,len(ranges)+4)!=nil {return 0,false}}
     record:=original
     record.skin,record.skin_binding,record.stream=skin,nil,nil
+    skin.rest_min,skin.rest_max,skin.rest_lod_reach=original.bounds_min,original.bounds_max,original.lod_reach
     record.flags&~=MESH_FLAG_STREAMED
     record.rays={}
     record.ray_count=1
@@ -502,6 +505,7 @@ deformable_update :: proc(r:^Renderer,handle:Mesh_Handle,bounds_min,bounds_max:V
     for i in 0..<3 {if !(bounds_min[i]<=bounds_max[i]) || math.is_inf(bounds_min[i]) || math.is_inf(bounds_max[i]) {return false}}
     if m.bounds_min!=bounds_min || m.bounds_max!=bounds_max {
         m.bounds_min,m.bounds_max=bounds_min,bounds_max
+        m.lod_reach=pose_lod_reach(m.skin,bounds_min,bounds_max)
         m.skin.bounds_dirty=true
     }
     m.skin.dirty=true
@@ -651,8 +655,17 @@ skin_update :: proc(r:^Renderer,handle:Mesh_Handle,palette:[]Mat4,reset_motion:b
         lo=linalg.min(lo,a);hi=linalg.max(hi,b)
     }
     m.bounds_min,m.bounds_max=lo,hi
+    m.lod_reach=pose_lod_reach(skin,lo,hi)
     skin.dirty,skin.bounds_dirty=true,true
     return true
+}
+
+// How far any rest-pose LOD sphere reaches past a pose's current box: the rest
+// reach plus the greatest distance from the rest box to the posed box.
+@(private)
+pose_lod_reach :: proc "contextless" (skin:^Skin_State,lo,hi:Vec3) -> f32 {
+    shift:=linalg.max(linalg.max(lo-skin.rest_min,skin.rest_max-hi),0)
+    return skin.rest_lod_reach+linalg.length(shift)
 }
 
 // The boxes of the instances of the poses that changed their own, and the

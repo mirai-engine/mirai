@@ -131,7 +131,7 @@ uint2 instance_levels(Detail d, Instance inst, Mesh mesh) {
     float2 span = detail_span(d, inst.bounds_min.xyz, inst.bounds_max.xyz);
     float threshold = frame.cut.x;
     float least = threshold * detail_width(d, span.x - mesh.lod_reach * scale) / scale * 0.999;
-    float most = threshold * detail_width(d, span.y) / scale * 1.001;
+    float most = threshold * detail_width(d, span.y + mesh.lod_reach * scale) / scale * 1.001;
     uint first = mesh.level_count, last = 0u;
     for (uint level = 0u; level < mesh.level_count; level++) {
         float2 errors = mesh_level_errors(mesh, level);

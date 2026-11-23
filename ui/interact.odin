@@ -106,6 +106,13 @@ input_frame_end :: proc(ctx:^Context) {
     if ctx.edit.id!=0 && ctx.edit.frame!=ctx.stats.frame {ctx.edit={}}
     if ctx.scrub.id!=0 && ctx.active!=ctx.scrub.id {ctx.scrub={}}
     if ctx.edit_request!=0 && ctx.stats.frame>ctx.edit_request_frame {ctx.edit_request=0}
+    if ctx.focus!=0 && ctx.focus==ctx.focus_seen && !ctx.focus_pending && ctx.reveal_next==0 {
+        alive:=false
+        for &w in ctx.widgets[:ctx.widget_count] {
+            if w.id==ctx.focus && .Focusable in w.flags && .Disabled not_in w.flags {alive=true;break}
+        }
+        if !alive {ctx.focus=0;ctx.focus_ring=false}
+    }
     ctx.navigation_layer=min(i16)
     if ctx.popup.count>0 {ctx.navigation_layer=ctx.popup.stack[ctx.popup.count-1].layer} else if ctx.modal_open {ctx.navigation_layer=ctx.modal_layer}
 }

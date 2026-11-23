@@ -817,6 +817,7 @@ assets_mesh :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
         assets_fail(a,id,.Mesh,.Wrong_Kind)
         return assets_missing_mesh(a)
     }
+    arrived:=assets_arriving(a,id)
     entry:=assets_mesh_entry(a,id)
     if entry==nil {return assets_missing_mesh(a)}
     scope:=load_asset_begin(a.load_profile)
@@ -824,12 +825,14 @@ assets_mesh :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Mesh {
     if !ok && problem==.Not_Here {
         load_asset_end(a.load_profile,scope,id,.Mesh,0,true)
         assets_not_here(a,id)
+        if arrived {assets_structure_changed(a,id)}
         return assets_missing_mesh(a)
     }
     if !ok {
         assets_fail(a,id,.Mesh,problem,detail)
         entry^=assets_missing_mesh(a)^
     }
+    if arrived {assets_structure_changed(a,id)}
     load_asset_end(a.load_profile,scope,id,.Mesh,assets_file_bytes(a,id),!ok)
     return entry
 }
@@ -1451,6 +1454,7 @@ assets_texture :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Texture {
     if a.renderer==nil {
         if _,found:=asset.registry_find(&a.registry,id);!found {return nil}
     }
+    arrived:=assets_arriving(a,id)
     entry:=assets_texture_entry(a,id)
     if entry==nil {return nil}
     scope:=load_asset_begin(a.load_profile)
@@ -1458,12 +1462,14 @@ assets_texture :: proc(a:^Assets,id:base.Asset_Id) -> ^Assets_Texture {
     if !ok && problem==.Not_Here {
         load_asset_end(a.load_profile,scope,id,.Texture,0,true)
         assets_not_here(a,id)
+        if arrived {a.arrived=true}
         return assets_missing_texture(a)
     }
     if !ok {
         assets_fail(a,id,.Texture,problem,detail)
         entry^=assets_missing_texture(a)^
     }
+    if arrived {a.arrived=true}
     load_asset_end(a.load_profile,scope,id,.Texture,assets_file_bytes(a,id),!ok)
     return entry
 }

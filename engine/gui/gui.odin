@@ -788,7 +788,7 @@ frame_end :: proc(
     if app.platform!=nil {
         // The player's: in the editor, the cursor is that of the editor.
         if app.world!=nil && (cursor!=gui.cursor || gui.modal_up) {
-            CURSORS :: [ui.Cursor]platform.Cursor{.Default=.Default,.Text=.Text,.Resize_Horizontal=.Resize_Horizontal}
+            CURSORS :: [ui.Cursor]platform.Cursor{.Default=.Default,.Text=.Text,.Resize_Horizontal=.Resize_Horizontal,.Hidden=.Hidden}
             cursors:=CURSORS
             platform.window_set_cursor(app.platform,cursors[cursor])
             gui.cursor=cursor

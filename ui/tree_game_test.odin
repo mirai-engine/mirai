@@ -825,3 +825,28 @@ a_value_changes_the_interface_only_when_what_it_shows_changes :: proc(t:^testing
     s.values.stats.seconds=0h7fc00000 // NaN shows anew
     testing.expect(t,refresh(&s))
 }
+
+@(test)
+collapsing_a_focused_control_clears_focus_and_releases_keyboard :: proc(t:^testing.T) {
+    s:Test_Game
+    test_game_init(t,&s)
+    defer test_game_destroy(&s)
+    style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}}})
+    panel:=tree_node(&s.tree,-1,{kind=.Box,name="panel",bind_visible="Test.level",flags={.Collapsed},layout={direction=.Column}})
+    tree_node(&s.tree,panel,{kind=.Button,name="pick",style=style,text="Pick",layout={width=fixed(80),height=fixed(24)}})
+    testing.expect(t,test_game_instance(&s))
+    s.values.level=1
+    ctx:Context
+    test_game_context(t,&ctx,&s)
+    defer context_destroy(&ctx)
+    input:=test_input()
+    test_frame(&ctx,&input,test_game_build,&s)
+    ctx.focus=tree_element_id(&ctx,"pick")
+    frame:=test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,ctx.focus!=0 && frame.keyboard_consumed,"focused visible button consumes keyboard")
+    s.values.level=0
+    test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,ctx.focus==0,"collapsing the panel clears stale focus")
+    frame=test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,!frame.keyboard_consumed,"keyboard returns to the game once the panel closes")
+}
