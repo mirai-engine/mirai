@@ -128,8 +128,13 @@ Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
   mixer drops listener velocity from Doppler.
   `pitch` changes speed and tone; paused `core.Clock` pauses world voices (not one-shots).
 - **One-shots:** `audio.play` pushes `Sound_Requests` (`audio_requests` drains at end of `fixed`/
-  `late`; dropped during `time.resimulating`; skipped past `max_distance` of every listener; heard
-  from the nearest).
+  `late`; skipped past `max_distance` of every listener; heard from the nearest). A `fixed` tick of
+  the game loop plays a key once: `(tick, by, sound)`, or `(tick, sound, place)` within
+  `SOUND_SAME_DISTANCE` when `by` is `NONE`. `Sounds_Played` (`host,by_world`, a ring of
+  `SOUNDS_PLAYED_CAPACITY`, never rolled back) keeps the keys, so a resimulated tick skips what it
+  played and plays what only the correction asks; a clock that goes back clears it. A set with
+  `all` starts every layer as a `Cue` between `mixer_hold`/`mixer_release`, each at its sample
+  delay; an `Audio_Source` holds one voice and reports `audio.layered` for one.
 - **Reverb & medium:** `Audio_Reverb` zone volume blends at each listener, averaged, onto
   `reverb_bus`; `Audio_Medium` (per listener slot, written by `water`) overlays underwater reverb.
   The master low-pass applies only while every listener is under a medium (`medium_lowpass`, the
@@ -141,6 +146,9 @@ Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
   project `Audio_Settings` (dB gain, LPF, ducking, reverb, acyclic sends else `audio.send`),
   machine `Audio_Volumes` & `Audio_Output` (fallback + `audio.output` on unplug). `Voices`
   (`host,by_world`) isolates worlds; failures report `audio.{sound,bus,voices,memory}`.
+  `Audio_Settings.stream_capacity` (0: `STREAM_CAPACITY_DEFAULT`, clamped to
+  `STREAM_CAPACITY_MAX` with `audio.stream_capacity`) is applied by `audio_buses`, which reports
+  refused streams once per frame that had them (`audio.streams`, from `streams_busy`).
 
 ## `anim`
 

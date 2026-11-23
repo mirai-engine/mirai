@@ -12,7 +12,7 @@ its `base.Asset_Id` (import: [assets](assets.md)).
 
 ## Map
 - Entity sound (speaker, engine, music): [source](#a-source-on-an-entity); from code (hit,
-  pickup): [one-shots](#one-shots-from-code); variations: [sets](#sets).
+  pickup): [one-shots](#one-shots-from-code); variations and layered cues: [sets](#sets).
 - Levels, ducking, options, headphones: [buses](#buses). Caves, walls:
   [rooms](#rooms-and-occlusion). Nothing is heard: [pitfalls](#pitfalls).
 
@@ -33,7 +33,7 @@ source.volume, source.max_distance = 0.7, 25
   play; the rest keep their time and come back where they would be.
 
 ## One-shots from code
-Push to `Sound_Requests`, from any step:
+Push to `Sound_Requests`, from any step (what stops, loops or follows is an `Audio_Source`):
 
 ```odin
 @(step="fixed")
@@ -42,23 +42,23 @@ crash_sound :: proc(sounds:^audio.Sound_Requests, broken:core.Ref(destruct.Destr
 }
 ```
 
-- A path or an id; `at` places it, else it is not placed. `bus` (default `BUS_EFFECTS`), `volume`,
-  `pitch`; heard as its set's `hearing` (range, reverb, priority), not started beyond its range.
-  Once, even if a rollback reruns the tick; what stops, loops or follows is an `Audio_Source`.
+- A path or an id; `at` places it. `bus` (default `BUS_EFFECTS`), `volume`, `pitch`; heard as its
+  set's `hearing`, not started beyond its range. A tick plays it once per `by` (what makes it) or
+  place: a rollback never plays it twice, yet plays what only the correction asks.
 
 ## Sets
-A `.sound_set` picks one sound (weights, volume, pitch) each time it starts; it goes where a sound
-goes. `hearing` is how a one-shot hears it. `sound_set.set` makes one, `sound_set.inspect` reads it.
+A `.sound_set` picks one sound (weights, volume, pitch, each entry's `gain` and `pitch` on top) each
+time it starts; with `all`, `audio.play` starts all as a layered cue, each after its `delay` (s) to
+the sample (not an `Audio_Source`). `hearing` is how a one-shot hears it; `sound_set.set`/`inspect`.
 
 ## Buses
 `BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI` (interface sounds). Add
 your own as constants below `AUDIO_BUS_CAPACITY`: `BUS_AMBIENCE :: audio.Audio_Bus(5)`.
-
 `Audio_Settings` (project setting) mixes a bus: `gain` in dB (0 as it comes; `volume` fields are
 linear), `lowpass`, `reverb`, ducking (`duck_by`, `duck_amount`, `duck_threshold`) and `send`, the
-bus it plays into (the master, or one of a lower number: ambience into effects). A limiter on the
-master keeps a loud moment under full scale. Edit it in Project Settings, with `settings.set`
-(`settings.get` shows the shape) or `audio.audio_bus_setting_set`.
+bus it plays into (the master, or one of a lower number: ambience into effects); `stream_capacity`
+is the streamed sounds at once (0: 16, up to 64). A limiter on the master keeps a loud moment under
+full scale. Edit it in Project Settings, `settings.set` or `audio.audio_bus_setting_set`.
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
 options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing. So is
@@ -76,5 +76,5 @@ options: a slider bound to `Audio_Volumes.music` writes it itself; the game writ
 - An ended one-shot stays `ended`; `plays += 1` plays it again (also while it sounds). `sound`,
   `bus` or the curve restart the voice; the other fields tune it live. Zero `pitch` means 1.
 - A source that cannot sound is a problem of its entity, a request one of no entity: see
-  `engine.diagnostics` (`audio.*`). Headless, nothing plays and nothing is said.
-- Hear it in an open editor session: `audio.play`; `audio.status` shows the buses.
+  `engine.diagnostics` (`audio.*`). Headless, nothing plays and nothing is said. In an open editor:
+  `audio.play`, and `audio.status` shows the buses.

@@ -42,7 +42,7 @@ fixture_init :: proc(t:^testing.T,f:^Fixture,set:asset.Sound_Set_Info=asset.SOUN
         if !testing.expect_value(t,asset.sound_save(fmt.tprintf("%s/%s.sound",root,sound.name),&types,desc),asset.Error.None) {return false}
     }
     info:=set
-    info.sounds[0],info.sounds[1]={sound=STEP_A},{sound=STEP_B}
+    info.sounds[0].sound,info.sounds[1].sound=STEP_A,STEP_B
     if !testing.expect_value(t,asset.sound_set_save(fmt.tprintf("%s/steps.sound_set",root),&types,{id=STEPS,info=info}),asset.Error.None) {return false}
     if !testing.expect(t,host.assets_init(&f.assets,{root=root,capacity=8})) {return false}
     m,error:=mixer.mixer_create({})
@@ -169,6 +169,8 @@ a_sound_request_plays_once_and_not_again_when_its_tick_runs_again :: proc(t:^tes
     tick:=core.Time{dt=1.0/60,playing=true}
     replay:=tick
     replay.resimulating=true
+    fixed:=core.Frame_Time{phase=.Fixed}
+    played:Sounds_Played
     sounds:Sound_Requests
     defer core.value_free(&sounds,type_info_of(Sound_Requests))
     play(&sounds,STEPS,at=[3]f32{1,0,0})
@@ -176,25 +178,25 @@ a_sound_request_plays_once_and_not_again_when_its_tick_runs_again :: proc(t:^tes
     defer core.value_free(&copied,type_info_of(Sound_Requests))
     testing.expect(t,core.value_copy(&copied,&sounds,type_info_of(Sound_Requests)))
     testing.expect(t,len(copied.items)==1 && copied.items[0].sound==STEPS && copied.items[0].placed,"a copy of the world carries what waits")
-    audio_requests(&sounds,tick,nil,&f.app,&problems)
+    audio_requests(&sounds,tick,fixed,&played,nil,&f.app,&problems)
     testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(1))
     testing.expect_value(t,len(sounds.items),0)
-    audio_requests(&sounds,tick,nil,&f.app,&problems)
+    audio_requests(&sounds,tick,fixed,&played,nil,&f.app,&problems)
     testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(1))
     // A rollback brings back the copy, and the tick asks again as it runs again.
     play(&copied,STEPS,at=[3]f32{1,0,0})
-    audio_requests(&copied,replay,nil,&f.app,&problems)
+    audio_requests(&copied,replay,fixed,&played,nil,&f.app,&problems)
     testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(1))
     testing.expect_value(t,len(copied.items),0)
     testing.expect_value(t,problems.count,0)
     play(&sounds,HUM,bus=Audio_Bus(AUDIO_BUS_CAPACITY))
-    audio_requests(&sounds,tick,nil,&f.app,&problems)
+    audio_requests(&sounds,tick,fixed,&played,nil,&f.app,&problems)
     testing.expect(t,mixer.mixer_stats(m).voices_played==1 && core.problem_find(&problems,core.NONE,"audio.bus")!=nil,"a bus over the capacity plays nothing and says so")
     nan,inf:=math.nan_f32(),math.inf_f32(1)
     play(&sounds,HUM,volume=nan)
     play(&sounds,HUM,pitch=-1)
     play(&sounds,HUM,at=[3]f32{0,inf,0})
-    audio_requests(&sounds,tick,nil,&f.app,&problems)
+    audio_requests(&sounds,tick,fixed,&played,nil,&f.app,&problems)
     refused:=core.problem_find(&problems,core.NONE,"audio.request")
     testing.expect(t,mixer.mixer_stats(m).voices_played==1 && refused!=nil && refused.count==3,"what is not a number plays nothing and says so")
 }
@@ -218,31 +220,151 @@ a_sound_plays_by_its_path_in_the_assets :: proc(t:^testing.T) {
         played:=mixer.mixer_stats(f.app.mixer).voices_played
         play(&sounds,c.path)
         play(&sounds,c.path,at=[3]f32{1,0,0})
-        audio_requests(&sounds,tick,nil,&f.app,&problems)
+        audio_requests(&sounds,tick,{},nil,nil,&f.app,&problems)
         testing.expectf(t,(mixer.mixer_stats(f.app.mixer).voices_played==played+2)==c.plays,"%q plays: %v",c.path,!c.plays)
         testing.expectf(t,(core.problem_find(&problems,core.NONE,"audio.sound")==nil)==c.plays,"%q says why it does not play",c.path)
     }
 }
 
+// One sound of a set that does not play all is chosen; the gain and pitch of
+// its entry go over the volume and pitch drawn from the ranges.
 @(test)
 a_sound_set_plays_its_sounds_by_weight_in_its_ranges_and_not_the_same_twice :: proc(t:^testing.T) {
     set:=asset.SOUND_SET_DEFAULTS
     set.volume_min,set.volume_max,set.pitch_min,set.pitch_max=0.5,0.75,0.9,1.2
+    set.sounds[0]={gain=2,pitch=1.5,delay=0.5}
     f:Fixture
     if !fixture_init(t,&f,set) {return}
     defer fixture_destroy(&f)
     a,b:=host.content_sound(&f.app,STEP_A),host.content_sound(&f.app,STEP_B)
     last:mixer.Sound
     for _ in 0..<32 {
-        pick:=host.content_sound_pick(&f.app,STEPS)
+        picks:[asset.SOUND_SET_CAPACITY]host.Sound_Pick
+        testing.expect_value(t,host.content_sound_picks(&f.app,STEPS,&picks),1)
+        pick:=picks[0]
         testing.expect(t,pick.sound==a || pick.sound==b)
         testing.expect(t,pick.sound!=last,"no_repeat never chooses the same sound twice in a row")
-        testing.expect(t,pick.volume>=0.5 && pick.volume<=0.75 && pick.pitch>=0.9 && pick.pitch<=1.2)
+        scale:=[2]f32{2,1.5} if pick.sound==a else 1
+        testing.expectf(t,pick.volume>=0.5*scale[0] && pick.volume<=0.75*scale[0] && pick.pitch>=0.9*scale[1] && pick.pitch<=1.2*scale[1] && pick.delay==0,"%v",pick)
         last=pick.sound
     }
     single:=host.content_sound_pick(&f.app,HUM)
     testing.expect(t,single.sound==host.content_sound(&f.app,HUM) && single.volume==1 && single.pitch==1)
     testing.expect(t,host.content_sound_generation(&f.app,STEPS)!=0 && host.content_sound_generation(&f.app,{9,9})==0)
+}
+
+// A set that plays all starts every sound of it as one cue: each with the
+// gain and pitch of its entry, and each after its delay, exact to the sample
+// in what the mixer renders. A source, which holds one voice, does not play
+// it and says why.
+@(test)
+a_set_that_plays_all_starts_every_layer_after_its_delay_to_the_sample :: proc(t:^testing.T) {
+    DELAY :: 300
+    set:=asset.SOUND_SET_DEFAULTS
+    set.all=true
+    set.sounds[0]={gain=0.5}
+    set.sounds[1]={pitch=1.5,delay=f32(DELAY)/mixer.MIXER_RATE}
+    f:Fixture
+    if !fixture_init(t,&f,set) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    problems:core.Problems
+    sounds:Sound_Requests
+    defer core.value_free(&sounds,type_info_of(Sound_Requests))
+    out:=make([]f32,1100*2,context.temp_allocator)
+    mixer.mixer_render(m,out[:200])
+    play(&sounds,STEPS)
+    audio_requests(&sounds,core.Time{},{},nil,nil,&f.app,&problems)
+    testing.expect_value(t,problems.count,0)
+    testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(2))
+    for done:=0;done<1100;done+=125 {mixer.mixer_render(m,out[done*2:][:min(125,1100-done)*2])}
+    testing.expect(t,m.voices[0].volume==0.5 && m.voices[0].pitch==1 && m.voices[1].volume==1 && m.voices[1].pitch==1.5)
+    body:=out[0]
+    testing.expect(t,body>0)
+    for i in 1..<1100 {
+        want:=body if i<DELAY else 3*body
+        if !testing.expectf(t,abs(out[i*2]-want)<1e-5,"frame %d: %v, wants %v",i,out[i*2],want) {break}
+    }
+    e:=core.entity_make(4,1)
+    source:=AUDIO_SOURCE_DEFAULT
+    source.sound=STEPS
+    _,picked:=sound_pick(m,&f.app,source,e,&problems)
+    testing.expect(t,!picked && core.problem_find(&problems,e,"audio.layered")!=nil,"a source says that a set that plays all is a cue of audio.play")
+}
+
+// A fixed tick plays a sound of an entity, or of none near a place, once: a
+// tick a rollback runs again plays only what it did not play the first
+// time, as a hit the correction found; the editor loop, whose ticks do not
+// advance, keys nothing; a clock that goes back forgets what it kept.
+@(test)
+a_rollback_plays_each_sound_of_a_tick_once_and_what_only_the_correction_asks :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    E,OTHER:=core.entity_make(5,1),core.entity_make(6,1)
+    Ask :: struct {sound:base.Asset_Id,by:core.Entity,at:Maybe([3]f32)}
+    Step :: struct {tick:u64,again:bool,editor:bool,asks:[]Ask,played:u64,what:string}
+    steps:=[]Step{
+        {10,false,false,{{HUM,E,nil}},1,"the first time plays"},
+        {11,false,false,{},1,"the next tick asks nothing"},
+        {10,true,false,{{HUM,E,nil}},1,"the same sound of the same entity in the tick again does not play again"},
+        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"what only the correction asks plays"},
+        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"and does not play again in a second rollback"},
+        {10,true,false,{{HUM,OTHER,nil}},3,"the same sound of another entity plays"},
+        {12,false,false,{{HUM,core.NONE,[3]f32{0,0,0}},{HUM,core.NONE,[3]f32{0.5,0,0}},{HUM,core.NONE,[3]f32{5,0,0}}},5,"of none, one near a place"},
+        {12,true,false,{{HUM,core.NONE,[3]f32{0.2,0,0}},{HUM,core.NONE,nil}},6,"near where it played is that one; not placed is another"},
+        {3,false,false,{{HUM,E,nil}},7,"the clock went back"},
+        {3,false,true,{{HUM,E,nil},{HUM,E,nil}},9,"the editor loop plays each"},
+    }
+    played:Sounds_Played
+    sounds:Sound_Requests
+    defer core.value_free(&sounds,type_info_of(Sound_Requests))
+    for step in steps {
+        for ask in step.asks {play(&sounds,ask.sound,at=ask.at,by=ask.by)}
+        time:=core.Time{tick=step.tick,dt=1.0/60,playing=!step.editor,resimulating=step.again}
+        audio_requests(&sounds,time,core.Frame_Time{phase=.Fixed},&played,nil,&f.app,nil)
+        testing.expectf(t,mixer.mixer_stats(m).voices_played==step.played,"%s: %d played, wants %d",step.what,mixer.mixer_stats(m).voices_played,step.played)
+        mixer.mixer_update(m)
+    }
+}
+
+// The settings give the mixer its streams, within its range; a play refused
+// because every stream plays is said once per frame that had one.
+@(test)
+the_stream_capacity_follows_the_settings_and_a_refused_stream_is_said :: proc(t:^testing.T) {
+    m,error:=mixer.mixer_create({})
+    if !testing.expect_value(t,error,mixer.Error.None) {return}
+    defer mixer.mixer_destroy(m)
+    frames:=4800
+    wav:=make([]u8,44+frames*2,context.temp_allocator)
+    header:=[]u32le{0x46464952,u32le(36+frames*2),0x45564157,0x20746d66,16,0x00010001,48000,96000,0x00100002,0x61746164,u32le(frames*2)}
+    copy(wav,([^]u8)(raw_data(header))[:44])
+    for i in 0..<frames {wav[44+i*2+1]=0x10}
+    stream,streamed:=mixer.sound_stream(m,wav)
+    testing.expect_value(t,streamed,mixer.Error.None)
+    problems:core.Problems
+    applied:Mixer_Buses
+    settings:=Audio_Settings{stream_capacity=1}
+    streams_apply(m,&settings,&applied,&problems)
+    testing.expect_value(t,mixer.mixer_stats(m).stream_capacity,1)
+    testing.expect(t,mixer.voice_play(m,stream)!=0)
+    for refused in 1..=3 {
+        testing.expect_value(t,mixer.voice_play(m,stream),Voice(0))
+        if refused==2 {testing.expect_value(t,mixer.voice_play(m,stream),Voice(0))}
+        streams_apply(m,&settings,&applied,&problems)
+        streams_apply(m,&settings,&applied,&problems)
+        said:=core.problem_find(&problems,core.NONE,"audio.streams")
+        testing.expectf(t,said!=nil && said.count==u64(refused),"said once per frame that refused: %v",said)
+    }
+    Case :: struct {asked,has:int,says:bool}
+    for c in ([?]Case{{0,mixer.STREAM_CAPACITY_DEFAULT,false},{3,3,false},{mixer.STREAM_CAPACITY_MAX+5,mixer.STREAM_CAPACITY_MAX,true},{-2,1,true}}) {
+        cleared:core.Problems
+        settings.stream_capacity=c.asked
+        streams_apply(m,&settings,&applied,&cleared)
+        testing.expectf(t,mixer.mixer_stats(m).stream_capacity==c.has,"%d asked, %d streams",c.asked,mixer.mixer_stats(m).stream_capacity)
+        testing.expect_value(t,core.problem_find(&cleared,core.NONE,"audio.stream_capacity")!=nil,c.says)
+    }
 }
 
 @(test)
@@ -708,7 +830,7 @@ a_placed_request_plays_as_a_source_at_its_place :: proc(t:^testing.T) {
     sounds:Sound_Requests
     defer core.value_free(&sounds,type_info_of(Sound_Requests))
     play(&sounds,HUM,at=at)
-    audio_requests(&sounds,core.Time{},nil,&f.app,nil)
+    audio_requests(&sounds,core.Time{},{},nil,nil,&f.app,nil)
     requested:=heard(m)
     listener:Mixer_Listeners
     source:=AUDIO_SOURCE_DEFAULT;source.sound,source.spatial=HUM,true
@@ -848,7 +970,7 @@ a_request_is_heard_as_its_set_says :: proc(t:^testing.T) {
         sounds:Sound_Requests
         play(&sounds,STEPS,at=[3]f32{0,0,-50})
         play(&sounds,STEPS,at=[3]f32{0,0,-200})
-        audio_requests(&sounds,core.Time{},&listener,&f.app,&problems)
+        audio_requests(&sounds,core.Time{},{},nil,&listener,&f.app,&problems)
         stats:=mixer.mixer_stats(m)
         testing.expectf(t,stats.voices_played==(2 if c.plays else 0),"within %v m: %d played",c.max_distance,stats.voices_played)
         testing.expect_value(t,problems.count,0)
@@ -984,7 +1106,7 @@ a_request_near_any_listener_plays_from_the_nearest :: proc(t:^testing.T) {
     defer core.value_free(&sounds,type_info_of(Sound_Requests))
     play(&sounds,STEPS,at=[3]f32{295,0,0})
     play(&sounds,STEPS,at=[3]f32{150,0,0})
-    audio_requests(&sounds,core.Time{},&listeners,&f.app,&problems)
+    audio_requests(&sounds,core.Time{},{},nil,&listeners,&f.app,&problems)
     testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(1))
     out:[mixer.CHUNK_FRAMES*2]f32
     mixer.mixer_render(m,out[:])

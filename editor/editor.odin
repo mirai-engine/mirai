@@ -243,7 +243,7 @@ Session :: struct {
     inspector:^Inspector,
     content:^Content,
     dropped:Asset_Drop, // what a plugin takes (asset_drop_take)
-    heard:eaudio.Voice, // what Play sound of the content browser or of Details, or audio.play, plays
+    heard:eaudio.Cue, // what Play sound of the content browser or of Details, or audio.play, plays
     heard_sound:eaudio.Audio_Source, // as it was set when it started, or last changed
     materials:^Materials,
     thumbnails:^Thumbnails,

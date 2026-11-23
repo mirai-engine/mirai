@@ -85,6 +85,10 @@ creation and reserves decoder workspace when a streamed sound loads.
 - The pitch of a voice that plays from a feed has a cap of source frames per output frame.
 - No free feed: `voice_play` returns 0 and counts `feeds_busy` for an encoded sound or
   `streams_busy` for a stream. A fading voice keeps its feed until it ends.
+- **Stream capacity.** `feeds` reserves `STREAM_CAPACITY_MAX` stream slots after the pool; only
+  `stream_capacity` of them have a ring and a workspace. `mixer_set_stream_capacity` (game thread,
+  a transaction) allocates the added ones (all or none) and, lowering, frees the free ones at
+  once and the playing ones when `mixer_update` sees them end.
 
 ## Voices
 
@@ -106,7 +110,10 @@ invalid one return false.
   rises with another; a paused voice keeps its position, and one that is paused or has not started
   yet is stopped at once.
 - **Aligned start.** With `start_frame` (mixer clock) the first sample comes out exactly on that
-  frame, even if it falls in the middle of a render.
+  frame, even if it falls in the middle of a render. `delay` (seconds) counts from the chunk the
+  play reaches (or `start_frame`), resolved on the audio thread. Commands sent between
+  `mixer_hold` and `mixer_release` are published together and reach one chunk, so the layers of
+  one cue keep their delays to the sample.
 - **Send.** A spatial voice, or one with a reverb send, is mixed apart: a spatial one goes through
   its [direct effect and its output](#positional-audio), then any voice through its send, ramped
   without clicks; a binaural voice is sent as one source, before its HRTF. Any other goes straight

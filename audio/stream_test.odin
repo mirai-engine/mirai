@@ -216,6 +216,45 @@ cached_streams_take_feeds_only_while_playing :: proc(t:^testing.T) {
     for sound in sounds[1:] {testing.expect(t,sound_valid(m,sound))}
 }
 
+// More streams take their rings at once; fewer let what plays end first and
+// then free its memory; a capacity out of range changes nothing.
+@(test)
+the_stream_capacity_changes_without_cutting_what_plays :: proc(t:^testing.T) {
+    m:=test_mixer(t,{stream_capacity=2,stream_frames=1024})
+    defer mixer_destroy(m)
+    file:=ramp_wav(4000)
+    sounds:[5]Sound
+    for &sound in sounds {
+        error:Error
+        sound,error=sound_stream(m,file)
+        if !testing.expect_value(t,error,Error.None) {return}
+    }
+    desc:=VOICE_DEFAULT
+    desc.volume=0.2
+    voices:[4]Voice
+    for i in 0..<2 {voices[i]=voice_play(m,sounds[i],desc)}
+    testing.expect_value(t,voice_play(m,sounds[2],desc),Voice(0))
+    testing.expect_value(t,mixer_stats(m).streams_busy,u64(1))
+    testing.expect_value(t,mixer_set_stream_capacity(m,4),Error.None)
+    testing.expect_value(t,mixer_stats(m).stream_capacity,4)
+    for i in 2..<4 {voices[i]=voice_play(m,sounds[i],desc)}
+    for voice in voices {testing.expect(t,voice!=0)}
+    for bad in ([?]int{0,-1,STREAM_CAPACITY_MAX+1}) {testing.expect_value(t,mixer_set_stream_capacity(m,bad),Error.Invalid_Desc)}
+    testing.expect_value(t,mixer_set_stream_capacity(m,1),Error.None)
+    testing.expect_value(t,voice_play(m,sounds[4],desc),Voice(0))
+    testing.expect_value(t,mixer_stats(m).streams_busy,u64(2))
+    out:=play_along(m,1600)
+    for voice in voices {testing.expect(t,voice_valid(m,voice),"a stream over the new capacity plays on")}
+    test_near(t,out[len(out)-2],4*0.2*test_ramp(1599))
+    testing.expect_value(t,mixer_stats(m).underruns,u64(0))
+    play_along(m,4000)
+    testing.expect_value(t,m.free_stream_count,1)
+    for &f,i in m.feeds[m.pool_feeds:] {
+        testing.expectf(t,(f.ring32!=nil)==(i<1) && (i<1 || f.workspace==nil),"stream %d keeps its memory only within the capacity",i)
+    }
+    testing.expect(t,voice_play(m,sounds[4],desc)!=0)
+}
+
 @(test)
 a_streaming_voice_is_protected_from_stealing :: proc(t:^testing.T) {
     m:=test_mixer(t,{stream_capacity=1,voice_capacity=1,stream_frames=1024})
@@ -321,7 +360,7 @@ audio_thread_and_game_thread_share_a_mixer_without_locks :: proc(t:^testing.T) {
         for sync.atomic_load(&state.chunks)<before+3 {thread.yield()}
         mixer_update(m)
         if m.free_count==len(m.shadows) && m.free_feed_count==m.pool_feeds &&
-           m.free_stream_count==len(m.feeds)-m.pool_feeds {break}
+           m.free_stream_count==m.stream_capacity {break}
     }
     sync.atomic_store(&state.stop,true)
     thread.join(worker)
@@ -332,6 +371,6 @@ audio_thread_and_game_thread_share_a_mixer_without_locks :: proc(t:^testing.T) {
     testing.expect(t,state.peak<4,"The mix went far above what the voices could add up to")
     testing.expect(t,!math.is_nan(state.peak))
     // No voice plays the stream any more, and every sound slot but the live ones is free.
-    testing.expect_value(t,m.free_stream_count,len(m.feeds)-m.pool_feeds)
+    testing.expect_value(t,m.free_stream_count,m.stream_capacity)
     testing.expect_value(t,mixer_stats(m).sounds,5)
 }

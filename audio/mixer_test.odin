@@ -67,7 +67,7 @@ mixer_rejects_a_desc_it_cannot_serve :: proc(t:^testing.T) {
     testing.expect(t,m==nil && error==.Invalid_Desc)
     m,error=mixer_create({output=Output_Kind(9)})
     testing.expect(t,m==nil && error==.Invalid_Desc)
-    for desc in ([?]Mixer_Desc{{feed_capacity=max(int)},{feed_frames=max(int)},{stream_frames=max(int)},{voice_capacity=max(int)},{command_capacity=max(int)},{feed_frames=-1}}) {
+    for desc in ([?]Mixer_Desc{{stream_capacity=STREAM_CAPACITY_MAX+1},{feed_capacity=max(int)},{feed_frames=max(int)},{stream_frames=max(int)},{voice_capacity=max(int)},{command_capacity=max(int)},{feed_frames=-1}}) {
         m,error=mixer_create(desc)
         testing.expect(t,m==nil && error==.Invalid_Desc)
     }
@@ -498,6 +498,35 @@ voice_starts_on_the_frame_it_was_scheduled_for :: proc(t:^testing.T) {
     test_render(m,10)
     mixer_update(m)
     testing.expect(t,!voice_valid(m,later))
+}
+
+// The layers of one cue, sent held, start in the same chunk and keep their
+// delays between them to the sample, wherever the renders cut; until the
+// hold is released the audio thread sees none of them.
+@(test)
+held_voices_keep_their_delays_apart_to_the_sample :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    test_render(m,100)
+    body,tail:=test_stereo(t,m,4000,test_one),test_stereo(t,m,4000,test_one)
+    mixer_hold(m)
+    desc:=VOICE_DEFAULT
+    desc.volume=0.25
+    testing.expect(t,voice_play(m,body,desc)!=0)
+    desc.volume,desc.delay=0.5,300.0/RATE
+    testing.expect(t,voice_play(m,tail,desc)!=0)
+    for sample in test_render(m,64) {testing.expect_value(t,sample,f32(0))}
+    mixer_release(m)
+    out:=make([]f32,1000*2,context.temp_allocator)
+    for done:=0;done<1000;done+=125 {mixer_render(m,out[done*2:][:250])}
+    for i in 0..<1000 {
+        want:=f32(0.25) if i<300 else 0.75
+        if !test_near(t,out[i*2],want,0) {break}
+    }
+    desc.delay=math.nan_f32()
+    testing.expect_value(t,voice_play(m,body,desc),Voice(0))
+    desc.delay=-1
+    testing.expect_value(t,voice_play(m,body,desc),Voice(0))
 }
 
 @(test)

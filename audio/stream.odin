@@ -121,13 +121,14 @@ sound_stream :: proc(m:^Mixer,file:[]u8) -> (sound:Sound,error:Error) {
     index:=sound_slot_take(m) or_return
     source,bytes:=stream_source(file,m.allocator) or_return
     for &f in m.feeds[m.pool_feeds:] {
-        if len(f.workspace)>=bytes {continue}
+        if f.ring32==nil || len(f.workspace)>=bytes {continue}
         workspace,failed:=mem.alloc_bytes_non_zeroed(bytes,align_of(u64),m.allocator)
         if failed!=nil {return 0,.Out_Of_Memory}
         // An active decoder keeps its old workspace until it is done.
         if raw_data(f.workspace)!=raw_data(f.decoder.memory) {delete(f.workspace,m.allocator)}
         f.workspace=workspace
     }
+    m.stream_workspace=max(m.stream_workspace,bytes)
     frames:=u32(min(source.frames,int(max(u32))))
     return sound_slot_fill(m,index,{
         source=source,frames=frames,channels=u32(source.channels),rate=u32(source.sample_rate),

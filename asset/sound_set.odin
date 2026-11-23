@@ -4,19 +4,25 @@ import "core:math"
 import "mirai:std/base"
 
 // .sound_set: sounds that play as one. Each time it plays, one of them is
-// chosen by its weight, with a volume and a pitch drawn from their ranges,
-// heard as its hearing says when audio.play places it in the world. The
-// sounds are .sound assets.
+// chosen by its weight or, when it plays all, every one of them together as
+// the layers of one cue (the shot, its mechanics and its tail), each after its
+// delay. A volume and a pitch drawn from their ranges go over the gain and
+// pitch of each entry, heard as its hearing says when audio.play places it
+// in the world. The sounds are .sound assets.
 //
 //   sound_set   Sound_Set_Info, one row
 
-SOUND_SET_VERSION :: 3
+SOUND_SET_VERSION :: 4
 SOUND_SET_CAPACITY :: 16
 SOUND_SET_PITCH_MAX :: 64
+SOUND_SET_DELAY_MAX :: f32(10) // s
 
 Sound_Variation :: struct {
     sound:base.Asset_Id, // a .sound; none: an empty entry
     weight:f32 `mirai:"min=0"`, // how often it is chosen against the others; 0 is taken as 1
+    gain:f32 `mirai:"min=0"`, // linear, over the volume drawn for the set; 0 is taken as 1
+    pitch:f32 `mirai:"min=0,max=64"`, // rate, over the pitch drawn for the set; 0 is taken as 1
+    delay:f32 `mirai:"min=0,max=10,unit=s"`, // of a set that plays all: after the start of the cue, exact to the sample
 }
 
 // How a sound falls with distance, as audio.Attenuation_Model.
@@ -39,6 +45,7 @@ Sound_Set_Info :: struct {
     volume_min,volume_max:f32 `mirai:"min=0"`, // linear gain over the volume it is played at
     pitch_min,pitch_max:f32 `mirai:"min=0,max=64"`, // rate over the pitch it is played at
     no_repeat:bool, // not the same sound twice in a row while it has others
+    all:bool, // every sound plays together, each after its delay, in place of one chosen by weight
     hearing:Sound_Hearing,
 }
 
@@ -58,6 +65,9 @@ sound_set_problem :: proc(info:Sound_Set_Info) -> (field,message:string) {
     finite :: proc(v:f32) -> bool {return !math.is_nan(v) && !math.is_inf(v)}
     for variation in info.sounds {
         if !finite(variation.weight) || variation.weight<0 {return "sounds.weight","a weight is 0 or more; 0 is taken as 1"}
+        if !finite(variation.gain) || variation.gain<0 {return "sounds.gain","a gain is 0 or more; 0 is taken as 1"}
+        if !(variation.pitch>=0 && variation.pitch<=SOUND_SET_PITCH_MAX) {return "sounds.pitch","a pitch is 0 to 64; 0 is taken as 1"}
+        if !(variation.delay>=0 && variation.delay<=SOUND_SET_DELAY_MAX) {return "sounds.delay","a delay is 0 to 10 seconds"}
     }
     if !finite(info.volume_min) || !finite(info.volume_max) || info.volume_min<0 || info.volume_min>info.volume_max {
         return "volume_min","the volumes are 0 or more, and volume_min is not above volume_max"

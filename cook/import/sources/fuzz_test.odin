@@ -78,7 +78,8 @@ sound_survives :: proc(t:^testing.T,name:string,bytes:[]u8) {
     built,refused:=0,0
     attempt :: proc(data:[]u8,built,refused:^int) {
         for storage in ([]importer.Sound_Storage{.Decoded,.Stream}) {
-            desc,error:=importer.sound_build(data,{storage=storage})
+            // The file kept is the one decoded: what it accepts is the same.
+            desc,error:=importer.sound_build(data,{storage=storage},.File if storage==.Stream else .Lossless)
             if error!=.None {
                 refused^+=1
                 continue

@@ -35,7 +35,8 @@ import "mirai:store"
 // project that changed since it last wrote it stops the import, which names
 // it, unless --discard-changes; a refresh leaves it as it is and warns. An
 // image ingested for the first time without --srgb, --data or --normal holds
-// what its name says (image_use). Only models and images have settings.
+// what its name says (image_use). Only models, images and sounds have
+// settings.
 // --refresh <root>, once per project or plugin, instead brings every package
 // its packages.mirai pins to a build this engine reads (project_refresh): what
 // a checkout needs before it runs. It keeps the package when its source is
@@ -60,7 +61,7 @@ import "mirai:store"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--sound lossless|file] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -75,7 +76,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     store_root:string // of the store whose caches keep what imports build; "": that of the machine
     from_root:string  // of --from
     // What the options change of the settings the source has.
-    Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton}
+    Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton,Sound}
     given:importer.Import_Settings
     changed:bit_set[Change]
     at:=0
@@ -137,6 +138,15 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
             case: given.image=.Data
             }
             changed+={.Image}
+        case "--sound":
+            text:string
+            text,ok=value(args,&at)
+            switch text {
+            case "lossless": given.sound=.Lossless
+            case "file": given.sound=.File
+            case: ok=false
+            }
+            changed+={.Sound}
         case "--lods":
             text:string
             text,ok=value(args,&at)
@@ -251,10 +261,11 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     }
     if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
     if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
+    if .Sound in changed && kind!=.Sound {fmt.wprintln(errors,"mirai import: --sound applies only to sounds (WAV, Ogg Vorbis)");return 2}
 
     // The settings the package keeps, changed by the options: given only when they change it.
     settings:^importer.Import_Settings
-    if kind==.Model || kind==.Image {
+    if kind==.Model || kind==.Image || kind==.Sound {
         stored,found,settings_error:=importer.settings_load(options,origin)
         if settings_error.code!=.None {
             fmt.wprintfln(errors,"mirai import: %s: %s",file,settings_error.message)
@@ -274,6 +285,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         if .Rig_Crotch in changed {chosen.rig_crotch=given.rig_crotch}
         if .Rig_Neck in changed {chosen.rig_neck=given.rig_neck}
         if .Skeleton in changed {chosen.skeleton=given.skeleton}
+        if .Sound in changed {chosen.sound=given.sound}
         // The heights tell the fit of a person where the body is.
         if chosen.rig!=.Humanoid {
             if changed&{.Rig_Crotch,.Rig_Neck}!={} {fmt.wprintln(errors,"mirai import: --rig-crotch and --rig-neck go with --rig humanoid");return 2}

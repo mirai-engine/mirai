@@ -9,9 +9,10 @@ import "mirai:std/base"
 sound_sets_keep_their_sounds_and_ranges_and_depend_on_their_sounds :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     info:=SOUND_SET_DEFAULTS
-    info.sounds[0]={sound=base.Asset_Id{1,2},weight=2}
-    info.sounds[1]={sound=base.Asset_Id{3,4}}
+    info.sounds[0]={sound=base.Asset_Id{1,2},weight=2,gain=0.5,pitch=1.5}
+    info.sounds[1]={sound=base.Asset_Id{3,4},delay=0.25}
     info.volume_min,info.pitch_min,info.pitch_max=0.5,0.9,1.1
+    info.all=true
     info.hearing={attenuation=.Linear,min_distance=2,max_distance=300,rolloff=0.5,reverb=0.4,priority=3}
     path:=fmt.tprintf("%s/steps.sound_set",base.test_folder(t,"asset"))
     testing.expect_value(t,sound_set_save(path,&types,{id={7,8},info=info}),Error.None)
@@ -34,6 +35,13 @@ sound_sets_keep_their_sounds_and_ranges_and_depend_on_their_sounds :: proc(t:^te
         {"pitch_min",proc(i:^Sound_Set_Info) {i.pitch_min=0}},
         {"pitch_min",proc(i:^Sound_Set_Info) {i.pitch_max=65}},
         {"sounds.weight",proc(i:^Sound_Set_Info) {i.sounds[0].weight=math.nan_f32()}},
+        {"sounds.gain",proc(i:^Sound_Set_Info) {i.sounds[1].gain=-1}},
+        {"sounds.gain",proc(i:^Sound_Set_Info) {i.sounds[1].gain=math.inf_f32(1)}},
+        {"sounds.pitch",proc(i:^Sound_Set_Info) {i.sounds[2].pitch=65}},
+        {"sounds.pitch",proc(i:^Sound_Set_Info) {i.sounds[2].pitch=math.nan_f32()}},
+        {"sounds.delay",proc(i:^Sound_Set_Info) {i.sounds[3].delay=-0.01}},
+        {"sounds.delay",proc(i:^Sound_Set_Info) {i.sounds[3].delay=SOUND_SET_DELAY_MAX+1}},
+        {"sounds.delay",proc(i:^Sound_Set_Info) {i.sounds[3].delay=math.nan_f32()}},
         {"hearing.min_distance",proc(i:^Sound_Set_Info) {i.hearing.max_distance=i.hearing.min_distance}},
         {"hearing.min_distance",proc(i:^Sound_Set_Info) {i.hearing.min_distance=0}},
         {"hearing.min_distance",proc(i:^Sound_Set_Info) {i.hearing.max_distance=math.inf_f32(1)}},

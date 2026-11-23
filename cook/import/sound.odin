@@ -14,8 +14,10 @@ import "mirai:std/serial"
 // loads; one of SOUND_STREAM_SECONDS or more is streamed instead, so that it
 // never sits decoded in memory. A long Ogg Vorbis keeps its file, which is
 // smaller than its samples coded, and so does a long WAV with samples that
-// 16 bits would round: kept as it is, at its own rate, a voice resamples it
-// as it plays, which costs nothing that shows for the one or two that stream.
+// 16 bits would round; with Sound_Coding.File (Import_Settings.sound) every
+// sound keeps its file, so a short Ogg Vorbis stays as compact as it came.
+// Kept as it is, at its own rate, a voice resamples it as it plays, which
+// costs nothing that shows for what plays at once.
 // Every sound the importer codes is brought to audio.MIXER_RATE (resample), so
 // a voice at its own pitch copies it. Where a loop of it goes back to is what
 // its file says, the first loop of the smpl chunk of a WAV or the LOOPSTART
@@ -33,9 +35,9 @@ Sound_Options :: struct {
     stream_seconds:f32, // 0: SOUND_STREAM_SECONDS
 }
 
-// What a .sound of the bytes of a WAV or Ogg Vorbis file holds. lossless
-// belongs to allocator; file is the bytes given.
-sound_build :: proc(bytes:[]u8,options:Sound_Options={},allocator:=context.allocator) -> (desc:asset.Sound_Desc,error:audio.Error) {
+// What a .sound of the bytes of a WAV or Ogg Vorbis file holds, coded as
+// coding says. lossless belongs to allocator; file is the bytes given.
+sound_build :: proc(bytes:[]u8,options:Sound_Options={},coding:=Sound_Coding.Lossless,allocator:=context.allocator) -> (desc:asset.Sound_Desc,error:audio.Error) {
     bytes:=bytes
     ogg:=len(bytes)>=4 && string(bytes[:4])=="OggS"
     if ogg {
@@ -51,8 +53,10 @@ sound_build :: proc(bytes:[]u8,options:Sound_Options={},allocator:=context.alloc
     exact:=true
     for sample in pcm.samples {exact&&=f32(i16_of(sample))*(1.0/32768)==sample}
     // A stream plays its file as it is: coded, it has to be the same samples.
-    if stream && (ogg || !exact) {
-        return {channels=pcm.channels,sample_rate=pcm.sample_rate,frames=len(pcm.samples)/pcm.channels,loop_start=pcm.loop_start,flags={.Stream},file=bytes},.None
+    if coding==.File || stream && (ogg || !exact) {
+        desc={channels=pcm.channels,sample_rate=pcm.sample_rate,frames=len(pcm.samples)/pcm.channels,loop_start=pcm.loop_start,file=bytes}
+        if stream {desc.flags={.Stream}}
+        return desc,.None
     }
     values,loop_start:=pcm.samples,pcm.loop_start
     resampled:=pcm.sample_rate!=audio.MIXER_RATE
@@ -73,10 +77,18 @@ i16_of :: proc(sample:f32) -> i16 {
     return i16(clamp(scaled+(scaled<0?-0.5:0.5),-32768,32767))
 }
 
-// Imports a sound file as <name>.sound. The sound is the root of the import:
-// importing the file again gives the asset its package lists (identity.odin).
+// Imports a sound file as <name>.sound, coded as options.sound says unless
+// the settings its package keeps say otherwise. The sound is the root of the
+// import: importing the file again gives the asset its package lists
+// (identity.odin).
 import_sound :: proc(path:string,sound:Sound_Options={},options:Import_Options={},allocator:=context.allocator) -> (report:Import_Report,error:Error) {
     caller:=context.temp_allocator
+    options:=options
+    if !options.ignore_stored {
+        stored,found,settings_error:=settings_load(options,path)
+        if settings_error.code!=.None {return {},settings_error}
+        if found {options.settings=stored}
+    }
     scratch:mem.Dynamic_Arena
     mem.dynamic_arena_init(&scratch,allocator,allocator,block_size=1<<20,out_band_size=1<<20)
     defer mem.dynamic_arena_destroy(&scratch)
@@ -87,7 +99,7 @@ import_sound :: proc(path:string,sound:Sound_Options={},options:Import_Options={
     if read_error!=.None {
         return {},error_make(read_error==.Not_Found?Error_Code.Not_Found:Error_Code.Read,"%s could not be read: %v",path,read_error,allocator=caller)
     }
-    desc,build_error:=sound_build(bytes,sound,context.temp_allocator)
+    desc,build_error:=sound_build(bytes,sound,options.sound,context.temp_allocator)
     #partial switch build_error {
     case .None:
     case .Unsupported_Format:
@@ -98,13 +110,14 @@ import_sound :: proc(path:string,sound:Sound_Options={},options:Import_Options={
         return {},error_make(.Malformed,"%s is not a WAV or an Ogg Vorbis file that can be decoded",path,allocator=caller)
     }
     report_init(&report,allocator)
+    report.settings=options.settings
     w:Writer
     ok:=writer_init(&w,path,"",options,&report,allocator)
     defer writer_close(&w)
     if ok {
         source:=w.source
         name:=filepath.stem(path)
-        info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),u64(.Stream in desc.flags),import_version(0))
+        info:=import_info(source,name,0,u64(len(bytes)),base.hash64(bytes),u64(.Stream in desc.flags)|u64(options.sound)<<1,import_version(0))
         target:string
         output:int
         desc.id,target,output=root_take(&w,asset.KIND_SOUND,name,".sound")

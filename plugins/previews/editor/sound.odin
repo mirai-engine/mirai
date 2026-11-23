@@ -225,7 +225,8 @@ sound_facts :: proc(s:^editor.Session,p:^Sound) {
     }
 }
 
-// How often each sound of the set plays, by the weights the rows hold.
+// How often each sound of the set plays, by the weights the rows hold, or
+// when each starts, of a set that plays all.
 @(private)
 sound_set_chances :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
     ctx:=s.gui.ctx
@@ -240,14 +241,16 @@ sound_set_chances :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
                 ui.icon(ctx,.Sound,editor.asset_color(asset.KIND_SOUND),13)
                 ui.label(ctx,editor.asset_name_of(assets,variation.sound),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
                 ui.spacer(ctx)
-                ui.label(ctx,fmt.tprintf("%.0f %%",100*(variation.weight>0?variation.weight:1)/total),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
+                chance:=fmt.tprintf("+%.0f ms",1000*variation.delay) if p.held.all else fmt.tprintf("%.0f %%",100*(variation.weight>0?variation.weight:1)/total)
+                ui.label(ctx,chance,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             }
         }
     }
 }
 
 // The sounds of the set up to the last one it has and a free entry after it,
-// each with its weight and the x that takes it out; then its ranges.
+// each with its weight (its delay, when the set plays all), gain and pitch
+// and the x that takes it out; then its ranges.
 @(private)
 sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
     ctx:=s.gui.ctx
@@ -261,7 +264,11 @@ sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
                 editor.held_field_row(s,variation,"sound",fmt.tprintf("Sound %d",i+1))
-                if p.held.sounds[i].sound!={} {editor.held_field_row(s,variation,"weight")}
+                if p.held.sounds[i].sound!={} {
+                    editor.held_field_row(s,variation,"delay" if p.held.all else "weight")
+                    editor.held_field_row(s,variation,"gain")
+                    editor.held_field_row(s,variation,"pitch")
+                }
             }
             if i<used && ui.button(ctx,ui.id(ctx,"remove",i+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
         }
@@ -272,7 +279,7 @@ sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
     }
     ui.spacer(ctx,1,6)
     values:=editor.Held_Values{key=KEY_SOUND_SET,info=type_info_of(asset.Sound_Set_Info),value=&p.held,defaults=&p.base}
-    for field in ([5]string{"volume_min","volume_max","pitch_min","pitch_max","no_repeat"}) {editor.held_field_row(s,values,field)}
+    for field in ([6]string{"all","volume_min","volume_max","pitch_min","pitch_max","no_repeat"}) {editor.held_field_row(s,values,field)}
     hearing:=editor.Held_Values{key=KEY_SOUND_SET+asset.SOUND_SET_CAPACITY+1,info=type_info_of(asset.Sound_Hearing),value=&p.held.hearing,defaults=&p.base.hearing}
     for field in ([6]string{"attenuation","min_distance","max_distance","rolloff","reverb","priority"}) {editor.held_field_row(s,hearing,field)}
 }

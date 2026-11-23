@@ -25,6 +25,7 @@ Voice_Start :: struct {
     fade_in:u32,     // frames
     offset:u32,      // frames into the sound; the ring of a feed begins a frame before, which interpolates the first
     start_frame:u64, // mixer clock
+    delay:u32,       // frames after the chunk the play reaches: start_frame once it does
     position,velocity:[3]f32,
     rotation:quaternion128,
     attenuation:Attenuation,

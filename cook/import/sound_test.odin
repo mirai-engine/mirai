@@ -244,6 +244,54 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
 }
 
 // What loading a sound costs by how it is stored, and what it holds in memory.
+// A short Ogg Vorbis whose settings say File keeps its file, as compact as it
+// came, and plays as its samples decoded; importing it again without
+// options keeps what its package keeps, and Lossless codes it again.
+@(test)
+a_short_ogg_keeps_its_file_when_its_settings_say_so :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    _,folder,s:=test_assets(t,"sound_file")
+    if folder=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    ogg:=fmt.tprintf("%s/sine.ogg",folder)
+    _=os.write_entire_file(ogg,SINE_OGG)
+    Case :: struct {given:Maybe(Sound_Coding),keeps:bool,what:string}
+    coded:=0
+    for c in ([?]Case{{.File,true,"told File"},{nil,true,"again, by what its package keeps"},{.Lossless,false,"told Lossless"}}) {
+        options:=Import_Options{store=s}
+        if given,told:=c.given.?;told {options.sound,options.ignore_stored=given,true}
+        report,error:=import_sound(ogg,{},options)
+        testing.expectf(t,error.code==.None && len(report.assets)==1,"%s: %v",c.what,error)
+        if len(report.assets)!=1 {
+            report_destroy(&report)
+            continue
+        }
+        a:asset.Asset
+        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
+            if c.keeps {
+                testing.expectf(t,view.info.encoding==.File && .Stream not_in view.info.flags && view.info.sample_rate==44100 && view.info.frames==22050 && mem.compare(view.file,SINE_OGG)==0,"%s: %v",c.what,view.info^)
+                mixer,_:=audio.mixer_create({})
+                sound,loaded:=audio.sound_load(mixer,view.file)
+                testing.expect_value(t,loaded,audio.Error.None)
+                audio.voice_play(mixer,sound)
+                out:=make([]f32,4800*2,context.temp_allocator)
+                audio.mixer_render(mixer,out)
+                peak:f32
+                for sample in out {peak=max(peak,abs(sample))}
+                // A mono voice in the middle: constant power on each side.
+                testing.expectf(t,abs(peak-0.5*math.SQRT_TWO/2)<0.02,"%s: it plays at its level: %v",c.what,peak)
+                audio.mixer_destroy(mixer)
+            } else {
+                testing.expectf(t,view.info.encoding==.Lossless && len(view.file)==0,"%s: %v",c.what,view.info^)
+                coded=len(view.lossless)
+            }
+        }
+        asset.asset_close(&a)
+        report_destroy(&report)
+    }
+    testing.expectf(t,coded>len(SINE_OGG),"the file kept (%d bytes) is smaller than its samples coded (%d)",len(SINE_OGG),coded)
+}
+
 @(test)
 bench_loading_a_lossless_sound_against_decoding_its_file :: proc(t:^testing.T) {
     if !BENCH {return}

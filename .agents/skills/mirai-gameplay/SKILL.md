@@ -104,9 +104,9 @@ the same attributes and no private paths. Declaration and parameter binding:
      `core.Network` ([attributes](../mirai-core/references/generator.md#attributes)).
 6. `time.dt` (`core.Time`) in `fixed`; `frame.dt` and `frame.alpha` (`core.Frame_Time`) in
    `frame`/`late`/`render`; in the editor loop `time.dt` is 0. An effect that is not simulation is
-   a request its library serves once: a sound is pushed with `audio.play(sounds, ...)`, which does
-   not play again while a rollback replays the tick (`time.resimulating`), like
-   `multiplayer.send`; the game does not ask.
+   a request its library serves once: a sound is pushed with `audio.play(sounds, ...,
+   by=entity)`, which a rollback that replays the tick (`time.resimulating`) does not play twice
+   but plays when only the corrected tick asks it, like `multiplayer.send`; the game does not ask.
 7. Runtime prefab: `scene.spawn(spawner, path_or_id, ...)` with `core.Commands`; its rows wait
    until the end of the function and are finished with
    `core.commands_added`; a prefab not loaded yet reports that its root is pending

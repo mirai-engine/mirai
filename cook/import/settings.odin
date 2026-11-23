@@ -69,6 +69,12 @@ rig_from_name :: proc(name:string) -> (rig:Rig,ok:bool) {
     return
 }
 
+// Of a sound: what its .sound keeps.
+Sound_Coding :: enum u8 {
+    Lossless, // its 16 bit samples coded without loss at audio.MIXER_RATE, but the file of an Ogg Vorbis or of a WAV of other than 16 bits that streams
+    File,     // its file as it is: an Ogg Vorbis 5 to 8 times smaller than its samples coded, decoded whole when it loads unless it streams
+}
+
 Import_Settings :: struct {
     textures:textures.Encoding, // .Blocks by use; .Uncompressed by source precision
     rdo_lambda:int,             // of textures in blocks, up to textures.RDO_LAMBDA_MAX: how much error their rate-distortion optimization trades for files that compress smaller. 0: textures.RDO_LAMBDA_DEFAULT; below 0: none
@@ -80,6 +86,7 @@ Import_Settings :: struct {
     rig:Rig,
     rig_crotch,rig_neck:f32,    // of a Humanoid rig, above 0: the heights in meters in the model of the crotch and the neck, in place of where the fit finds them
     skeleton:base.Asset_Id,     // of a model, not zero: its clips play on this skeleton the project has (with the same bones), and the import writes only its .anim, bound to it: no textures, materials, skeletons, meshes or prefab
+    sound:Sound_Coding,         // of a sound
 }
 
 // What an asset records in Import_Info.settings_hash is the identity of the

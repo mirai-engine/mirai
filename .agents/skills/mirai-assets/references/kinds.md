@@ -141,14 +141,17 @@ if view, err := asset.material_view(&a, &types); err == .None {
 ## Sound
 
 `asset/sound.odin`: `Lossless` (16-bit `audio.lossless_encode` in raw `lossless` bulk, zero-copy)
-or `File` (WAV/OGG in `file` bulk). `Stream` decodes while playing; without it, mixer keeps it in
-memory ([audio](../../mirai-platform/references/audio.md#sounds),
+or `File` (WAV/OGG in `file` bulk; an Ogg without `Stream` is decoded whole when it loads).
+`Stream` decodes while playing; without it, mixer keeps it in memory
+([audio](../../mirai-platform/references/audio.md#sounds),
 [imports](../../mirai-imports/references/imports.md#sounds)).
 
 ## Sound set
 
-`asset/sound_set.odin`: weighted `.sound` refs (dependencies; weight 0 = 1, empty ignored),
-volume/pitch ranges, `hearing` for `audio.play`
+`asset/sound_set.odin`: weighted `.sound` refs (dependencies; weight 0 = 1, empty ignored), each
+with `gain` and `pitch` over the drawn volume/pitch (0 = 1) and a `delay` (s, up to
+`SOUND_SET_DELAY_MAX`) used when `all` plays every entry as one layered cue; volume/pitch ranges,
+`hearing` for `audio.play`
 ([audio](../../mirai-gameplay/references/libraries.md#audio)). Validated by `sound_set_problem`;
 edited via `sound_set.set` or
 [previews](../../mirai-plugins/references/previews.md#sound-documents).

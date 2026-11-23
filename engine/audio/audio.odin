@@ -192,11 +192,13 @@ Audio_Bus_Setting :: struct {
 }
 
 // One entry per bus that does not play as it comes, the first one of a bus
-// being the one that counts, and the bus the reverb returns in.
+// being the one that counts, the bus the reverb returns in and how many
+// streamed sounds (music, long ambiences) play at once.
 @(storage,setting)
 Audio_Settings :: struct {
     buses:[AUDIO_BUS_CAPACITY]Audio_Bus_Setting `mirai:"trim"`,
     reverb_bus:Audio_Bus,
+    stream_capacity:int `mirai:"min=0,max=64"`, // 0: mixer.STREAM_CAPACITY_DEFAULT; one more stream refused is a problem "audio.streams"
 }
 
 // The volume of each bus as the player chose it, 0 to 1, over the gain the
@@ -323,6 +325,8 @@ Mixer_Buses :: struct {
     count:int,
     lowpass:f32,
     set:bool,
+    streams:int,       // the stream capacity applied; 0: none yet
+    streams_busy:u64,  // mixer.Mixer_Stats.streams_busy as last seen
 }
 
 @(params)
@@ -546,12 +550,36 @@ audio_buses :: proc(
     applied:^Mixer_Buses,m:^Mixer,id:core.World_Id,problems:^core.Problems,
 ) {
     if m==nil || applied==nil {return}
+    streams_apply(m,settings.ptr,applied,problems)
     changed:=core.touched(settings_stamp,&applied.settings) | core.touched(volume_stamp,&applied.volumes)
     _,count:=listener_positions(worlds,listeners,view)
     lowpass:=medium_lowpass(medium.ptr,count)
     if applied.set && applied.world==id && !changed && applied.count==mixer.bus_count(m) && applied.lowpass==lowpass {return}
     applied.set=buses_apply(m,settings.ptr,volumes.ptr,lowpass,problems)
     applied.world,applied.count,applied.lowpass=id,mixer.bus_count(m),lowpass
+}
+
+// Gives the mixer the stream capacity of the settings, and says once per
+// frame that had them how many plays of streamed sounds were refused because
+// every stream played: the voices of sources and audio.play alike.
+@(private)
+streams_apply :: proc(m:^Mixer,settings:^Audio_Settings,applied:^Mixer_Buses,problems:^core.Problems) {
+    asked:=settings.stream_capacity if settings!=nil else 0
+    want:=mixer.STREAM_CAPACITY_DEFAULT if asked==0 else clamp(asked,1,mixer.STREAM_CAPACITY_MAX)
+    if asked<0 || asked>mixer.STREAM_CAPACITY_MAX {
+        core.report(problems,core.NONE,"audio.stream_capacity","Audio_Settings.stream_capacity %d is out of its range, so the mixer has %d streams; give it 1 to %d, or 0 for %d",asked,want,mixer.STREAM_CAPACITY_MAX,mixer.STREAM_CAPACITY_DEFAULT)
+    }
+    if want!=applied.streams {
+        if mixer.mixer_set_stream_capacity(m,want)!=.None {
+            core.report(problems,core.NONE,"audio.memory","the mixer keeps %d streams in place of the %d of Audio_Settings.stream_capacity: out of memory for their rings; free memory or ask for fewer",mixer.mixer_stats(m).stream_capacity,want)
+        }
+        applied.streams=want
+    }
+    stats:=mixer.mixer_stats(m)
+    if stats.streams_busy>applied.streams_busy {
+        core.report(problems,core.NONE,"audio.streams","%d plays of streamed sounds were refused: all %d streams of the mixer played; raise Audio_Settings.stream_capacity (at most %d) or stream fewer sounds at once",stats.streams_busy-applied.streams_busy,stats.stream_capacity,mixer.STREAM_CAPACITY_MAX)
+    }
+    applied.streams_busy=stats.streams_busy
 }
 
 // The cutoff of the master by the medium of count listeners: while every one
@@ -1043,19 +1071,47 @@ voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:
 @(private)
 sound_pick :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems) -> (pick:host.Sound_Pick,ok:bool) {
     who:=e==core.NONE?"audio.play":"its Audio_Source"
-    if !bus_ready(m,source.bus) {
-        core.report(problems,e,"audio.bus","%s plays nothing: bus %d is not a bus of the mixer, which has %d; give it a bus below that",who,int(source.bus),AUDIO_BUS_CAPACITY)
-        return
-    }
+    if !bus_heard(m,source.bus,e,problems) {return}
     pick=host.content_sound_pick(app,source.sound)
     if mixer.sound_valid(m,pick.sound) {return pick,true}
     name:[base.ASSET_ID_TEXT]u8
+    if host.content_sound_layered(app,source.sound) {
+        core.report(problems,e,"audio.layered","%s plays nothing: sound set %s plays all its sounds together, a cue that audio.play plays once; play it with audio.play, or give the source a set without all",who,host.assets_name(app.assets,source.sound,&name))
+        return
+    }
     if source.sound=={} {
         core.report(problems,e,"audio.sound","%s plays nothing: it has no sound; give it a .sound or a .sound_set of the assets",who)
     } else {
         core.report(problems,e,"audio.sound","%s plays nothing: sound %s does not load as a sound (it is missing, damaged, not a .sound or a .sound_set, or a set none of whose sounds load); give it a .sound or a .sound_set of the assets",who,host.assets_name(app.assets,source.sound,&name))
     }
     return
+}
+
+// Whether the mixer has the bus of a source; else the problem of e (NONE: of a request).
+@(private)
+bus_heard :: proc(m:^Mixer,bus:Audio_Bus,e:core.Entity,problems:^core.Problems) -> bool {
+    if bus_ready(m,bus) {return true}
+    core.report(problems,e,"audio.bus","%s plays nothing: bus %d is not a bus of the mixer, which has %d; give it a bus below that",e==core.NONE?"audio.play":"its Audio_Source",int(bus),AUDIO_BUS_CAPACITY)
+    return false
+}
+
+// What plays for the sound of a request, or of what the editor plays to be
+// heard, into picks: one sound, or every layer of a set that plays all. 0,
+// with the problem of e (NONE: of a request), when nothing of it can play.
+@(private)
+sound_picks :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,picks:^[asset.SOUND_SET_CAPACITY]host.Sound_Pick) -> int {
+    if !host.content_sound_layered(app,source.sound) {
+        pick,ok:=sound_pick(m,app,source,e,problems)
+        picks[0]=pick
+        return int(ok)
+    }
+    if !bus_heard(m,source.bus,e,problems) {return 0}
+    count:=host.content_sound_picks(app,source.sound,picks)
+    if count==0 {
+        name:[base.ASSET_ID_TEXT]u8
+        core.report(problems,e,"audio.sound","%s plays nothing: none of the sounds of set %s loads; give it .sound assets of the assets",e==core.NONE?"audio.play":"its Audio_Source",host.assets_name(app.assets,source.sound,&name))
+    }
+    return count
 }
 
 // The voice of a source as it is set, with the volume and pitch its set drew:
@@ -1076,21 +1132,64 @@ voice_desc :: proc "contextless" (source:Audio_Source,pick:[2]f32,position:[3]f3
     return desc
 }
 
-// Starts a voice of a source as it is set, at position when spatial and heard
-// from the listener of slot: what a request of Sound_Requests and what the
-// editor plays to be heard start. Zero, with the problem of e (NONE: of a
-// request), when it does not start.
-voice_start :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,position:[3]f32={},listener:u8=0) -> Voice {
-    pick,ok:=sound_pick(m,app,source,e,problems)
-    if !ok {return 0}
-    return voice_picked(m,source,pick,e,problems,position,listener)
+// The voices of a sound played once: one, or the layers of a set that plays
+// all, each with the volume and pitch it took over the source.
+Cue :: struct {
+    voices:[asset.SOUND_SET_CAPACITY]Voice,
+    picks:[asset.SOUND_SET_CAPACITY][2]f32,
+    count:int,
+}
+
+// Starts the voices of a source as it is set, at position when spatial and
+// heard from the listener of slot: what a request of Sound_Requests and what
+// the editor plays to be heard start. The layers of a set that plays all
+// reach the mixer together, so their delays are exact to the sample. No
+// voice, with the problem of e (NONE: of a request), when it does not start.
+cue_start :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,position:[3]f32={},listener:u8=0) -> Cue {
+    picks:[asset.SOUND_SET_CAPACITY]host.Sound_Pick
+    count:=sound_picks(m,app,source,e,problems,&picks)
+    return cue_picked(m,source,picks[:count],e,problems,position,listener)
+}
+
+// Whether a voice of the cue still sounds.
+cue_playing :: proc(m:^Mixer,cue:^Cue) -> bool {
+    for voice in cue.voices[:cue.count] {
+        if mixer.voice_valid(m,voice) {return true}
+    }
+    return false
+}
+
+// The voices of the cue take the volume, pitch, pan, loop and send of the source.
+cue_tune :: proc(m:^Mixer,cue:^Cue,source:Audio_Source) {
+    for voice,i in cue.voices[:cue.count] {
+        mixer.voice_set_volume(m,voice,source.volume*cue.picks[i][0])
+        mixer.voice_set_pitch(m,voice,(source.pitch>0?source.pitch:1)*cue.picks[i][1])
+        mixer.voice_set_loop(m,voice,source.loop)
+        mixer.voice_set_reverb(m,voice,source.reverb)
+        if !source.spatial {mixer.voice_set_pan(m,voice,source.pan)}
+    }
+}
+
+cue_stop :: proc(m:^Mixer,cue:^Cue) {
+    for voice in cue.voices[:cue.count] {mixer.voice_stop(m,voice)}
+    cue^={}
 }
 
 @(private)
-voice_picked :: proc(m:^Mixer,source:Audio_Source,pick:host.Sound_Pick,e:core.Entity,problems:^core.Problems,position:[3]f32,listener:u8) -> (voice:Voice) {
-    if voice=mixer.voice_play(m,pick.sound,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener));voice=={} {
-        core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, raise its priority, or raise the voices of the mixer",e==core.NONE?"audio.play":"its Audio_Source")
+cue_picked :: proc(m:^Mixer,source:Audio_Source,picks:[]host.Sound_Pick,e:core.Entity,problems:^core.Problems,position:[3]f32,listener:u8) -> (cue:Cue) {
+    if len(picks)>1 {mixer.mixer_hold(m)}
+    defer if len(picks)>1 {mixer.mixer_release(m)}
+    busy:=mixer.mixer_stats(m).streams_busy
+    for pick,i in picks {
+        desc:=voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener)
+        desc.delay=pick.delay
+        cue.voices[i],cue.picks[i]=mixer.voice_play(m,pick.sound,desc),{pick.volume,pick.pitch}
+        // A refused stream is said by audio_buses, with the capacity that refused it.
+        if cue.voices[i]=={} && mixer.mixer_stats(m).streams_busy==busy {
+            core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, raise its priority, or raise the voices of the mixer",e==core.NONE?"audio.play":"its Audio_Source")
+        }
     }
+    cue.count=len(picks)
     return
 }
 
@@ -1106,6 +1205,7 @@ Sound_Request :: struct {
     placed:bool, // spatial at `at`; else not placed
     bus:Audio_Bus,
     volume,pitch:f32,
+    by:core.Entity, // what plays it: one sound of it per tick; NONE: one per tick within SOUND_SAME_DISTANCE
 }
 
 // Requests: any step pushes with play; audio_requests starts them at the end
@@ -1113,32 +1213,74 @@ Sound_Request :: struct {
 @(storage,queue)
 Sound_Requests :: struct {using queue:core.Queue(Sound_Request)}
 
-// Plays a .sound, or one of a .sound_set, once: by its path in the assets
-// ("arena/crash.sound") or its id; at a point of the world, or not placed.
-// What must stop, loop or follow a thing is an Audio_Source.
+// Plays a .sound, one of a .sound_set or all its layers, once: by its path in
+// the assets ("arena/crash.sound") or its id; at a point of the world, or not
+// placed; by the entity that makes it (its hit, its shot), which tells it
+// apart from the same sound of another in the same tick. What must stop, loop
+// or follow a thing is an Audio_Source.
 play :: proc{play_path,play_id}
 
-play_id :: proc(sounds:^Sound_Requests,sound:base.Asset_Id,at:Maybe([3]f32)=nil,bus:=BUS_EFFECTS,volume:f32=1,pitch:f32=1) {
+play_id :: proc(sounds:^Sound_Requests,sound:base.Asset_Id,at:Maybe([3]f32)=nil,bus:=BUS_EFFECTS,volume:f32=1,pitch:f32=1,by:=core.NONE) {
     position,placed:=at.?
-    core.push(&sounds.queue,Sound_Request{sound=sound,at=position,placed=placed,bus=bus,volume=volume,pitch=pitch})
+    core.push(&sounds.queue,Sound_Request{sound=sound,at=position,placed=placed,bus=bus,volume=volume,pitch=pitch,by=by})
 }
 
 // A path that does not fit SOUND_PATH_CAPACITY plays as one the assets do not have.
-play_path :: proc(sounds:^Sound_Requests,path:string,at:Maybe([3]f32)=nil,bus:=BUS_EFFECTS,volume:f32=1,pitch:f32=1) {
+play_path :: proc(sounds:^Sound_Requests,path:string,at:Maybe([3]f32)=nil,bus:=BUS_EFFECTS,volume:f32=1,pitch:f32=1,by:=core.NONE) {
     position,placed:=at.?
-    r:=Sound_Request{at=position,placed=placed,bus=bus,volume=volume,pitch=pitch}
+    r:=Sound_Request{at=position,placed=placed,bus=bus,volume=volume,pitch=pitch,by=by}
     if len(path)<SOUND_PATH_CAPACITY {base.text_set(r.path[:],path)}
     core.push(&sounds.queue,r)
 }
 
-// Starts what was asked since the last time, once. A tick that runs again
-// (time.resimulating) asked for it the first time, when this step played it
-// at its end: what it asks again is dropped, and no copy of the world holds a
+SOUNDS_PLAYED_CAPACITY :: 512
+SOUND_SAME_DISTANCE :: f32(1) // m: a request of no entity this near one of the same tick and sound is that one
+
+// A sound a fixed tick played: what tells it apart from another.
+Sound_Played :: struct {
+    tick:u64,
+    sound:base.Asset_Id,
+    by:core.Entity,
+    at:[3]f32,
+    placed:bool,
+}
+
+// The sounds the fixed ticks of a world played lately, newest last, over a
+// ring: a tick that runs again (a rollback corrects it) does not play one of
+// them twice, and plays what only the corrected tick asks. One per world,
+// never copied with it, so a rollback does not take it back.
+@(storage,host,by_world)
+Sounds_Played :: struct {
+    keys:[SOUNDS_PLAYED_CAPACITY]Sound_Played,
+    count:u64,
+}
+
+// Whether a fixed tick played this sound already, and else records it.
+@(private)
+played_once :: proc(played:^Sounds_Played,key:Sound_Played) -> bool {
+    for k in played.keys[:min(played.count,SOUNDS_PLAYED_CAPACITY)] {
+        if k.tick!=key.tick || k.sound!=key.sound || k.by!=key.by || k.placed!=key.placed {continue}
+        if key.by!=core.NONE || linalg.length2(k.at-key.at)<=SOUND_SAME_DISTANCE*SOUND_SAME_DISTANCE {return true}
+    }
+    played.keys[played.count%SOUNDS_PLAYED_CAPACITY]=key
+    played.count+=1
+    return false
+}
+
+// Starts what was asked since the last time, once. A fixed tick plays a
+// sound of an entity (Sound_Request.by), or of none near a place, once: a
+// tick that runs again (time.resimulating) asks again what it asked the first
+// time, which is not played twice, and what only the corrected tick asks
+// (the server says a shot hit) plays then. No copy of the world holds a
 // request it played, since copies are made between ticks.
 @(step="fixed late",stage="end",loops="game editor")
-audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,listeners:^Mixer_Listeners,app:^host.App,problems:^core.Problems) {
+audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,frame:core.Frame_Time,played:^Sounds_Played,listeners:^Mixer_Listeners,app:^host.App,problems:^core.Problems) {
     requests:=core.take(&sounds.queue)
-    if app.mixer==nil || time.resimulating {return}
+    if app.mixer==nil {return}
+    // The ticks of the game; those of the editor loop do not advance.
+    keyed:=played!=nil && frame.phase==.Fixed && time.playing
+    // The clock went back, as a save loads: the ticks kept are of another run.
+    if keyed && !time.resimulating && played.count>0 && played.keys[(played.count-1)%SOUNDS_PLAYED_CAPACITY].tick>time.tick {played.count=0}
     for &r in requests {
         if !(r.volume>=0 && r.volume<=max(f32) && r.pitch>=0 && r.pitch<=max(f32) && abs(r.at.x)<=max(f32) && abs(r.at.y)<=max(f32) && abs(r.at.z)<=max(f32)) {
             core.report(problems,core.NONE,"audio.request","audio.play was refused: volume %v, pitch %v, at %v; give it a volume and a pitch of 0 or more and a place of finite numbers",r.volume,r.pitch,r.at)
@@ -1153,9 +1295,11 @@ audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,listeners:^Mixer_Li
                 continue
             }
         }
-        pick,picked:=sound_pick(app.mixer,app,source,core.NONE,problems)
-        if !picked {continue}
-        hearing:=pick.hearing
+        if keyed && played_once(played,{time.tick,source.sound,r.by,r.at,r.placed}) {continue}
+        picks:[asset.SOUND_SET_CAPACITY]host.Sound_Pick
+        count:=sound_picks(app.mixer,app,source,core.NONE,problems,&picks)
+        if count==0 {continue}
+        hearing:=picks[0].hearing
         source.attenuation,source.min_distance,source.max_distance=Attenuation_Model(hearing.attenuation),hearing.min_distance,hearing.max_distance
         source.rolloff,source.reverb,source.priority=hearing.rolloff,hearing.reverb,hearing.priority
         // Placed beyond where every listener hears it, it does not start; it is heard from the nearest.
@@ -1164,6 +1308,6 @@ audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,listeners:^Mixer_Li
             if !(listeners_distance(listeners,r.at)<hearing.max_distance) {continue}
             slot=listener_pick(listeners,r.at,AUDIO_LISTENERS_MAX)
         }
-        voice_picked(app.mixer,source,pick,core.NONE,problems,r.at,slot)
+        cue_picked(app.mixer,source,picks[:count],core.NONE,problems,r.at,slot)
     }
 }

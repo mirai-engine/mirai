@@ -23,6 +23,10 @@ Voice_Desc :: struct {
     // Mixer clock (mixer_clock) of the frame in which the first sample
     // plays. 0, or a frame already rendered, starts as soon as possible.
     start_frame:u64,
+    // Seconds it starts after the start of the chunk its play reaches (or
+    // after start_frame), exact to the sample: the layers of one cue sent
+    // between mixer_hold and mixer_release keep their delays between them.
+    delay:f32,
     // Placed in the world and heard from the listener: attenuated, dulled by
     // the air over distance, and through the HRTF on headphones or panned on
     // speakers.
@@ -74,7 +78,7 @@ voice_shadow_free :: proc(m:^Mixer,index:u32) {
 // the world is invalid, no voice or feed is available, or the command queue is full.
 voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice {
     slot:=sound_slot(m,sound)
-    if slot==nil || !bus_valid(m,desc.bus) || desc.spatial && !voice_desc_finite(desc) || desc.listener>=LISTENERS_MAX {return 0}
+    if slot==nil || !bus_valid(m,desc.bus) || desc.spatial && !voice_desc_finite(desc) || desc.listener>=LISTENERS_MAX || !(desc.delay>=0 && desc.delay<=max(f32)) {return 0}
     feed:=i32(-1)
     if slot.stream {
         if m.free_stream_count==0 {m.counters.streams_busy+=1;return 0}
@@ -111,6 +115,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
         loop=desc.loop,paused=desc.paused,spatial=desc.spatial,
         fade_in=u32(max(f64(desc.fade_in),0)*f64(m.sample_rate)+0.5),
         start_frame=desc.start_frame,
+        delay=u32(min(max(f64(desc.delay),0)*f64(m.sample_rate)+0.5,f64(max(u32)))),
         position=desc.position,velocity=desc.velocity,rotation=quat_unit(desc.rotation),
         attenuation=desc.attenuation,directivity={clamp(desc.directivity.weight,0,1),max(desc.directivity.power,0)},doppler=max(desc.doppler,0),
         occlusion=clamp(desc.occlusion,0,1),transmission=transmission_clamp(desc.transmission),
