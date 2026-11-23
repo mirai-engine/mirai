@@ -62,11 +62,13 @@ anim.play_clip(requests,e,"stride",.2,loop=false)
   the hand as it moves; `anim.attach(requests,sword,"",0.1)` puts it back where it rests. Asking
   for where it is does nothing, so a game may ask every tick from its own state. An ability holds
   it in the hand while a window with `attach` is open through `abilities.Ability_Held`.
-- `Pose_Source{rig}` on another mesh is the one way another rig drives a pose: at stage
-  `Finished` (armor, a head) it shares or follows that rig's finished pose; at stage `Sampled` a
-  character of other proportions plays its sampled animation by bone names, or by the
-  `retarget_chains` of its set where the topology differs. Bones without a correspondence keep
-  their own pose.
+- `Pose_Source{rig}` on another mesh is the one way another rig drives a pose: armor of the same
+  skeleton shares that rig's finished pose, and a head of its own skeleton follows it on the bones
+  they share by name, keeping its own animation on the others.
+- A character of other proportions plays the clips itself: clips made on another skeleton are
+  retargeted onto its own the first time it plays them, by bone name, else by the parts of the
+  body both `.skeleton`s mark, and shared by every character of that skeleton. Clips whose moved
+  bones have the same names and rests on both skeletons play as they are.
 - A hand or foot on a contact is an IK row with a spatial target; feet on the ground are
   grounding.
 - `animation_bone_transform(playback.ptr,rig,anim.bone_ref("head"))` reads a bone in the world;
@@ -77,8 +79,8 @@ anim.play_clip(requests,e,"stride",.2,loop=false)
 ## Retarget and mirror
 
 - Clips for another skeleton: `animation.retarget.bake` writes an `.anim` for the destination by
-  the same mapping as a live `Pose_Source` of stage `Sampled`, with the feet that stand locked to
-  the ground; the result is a plain `.anim`. `crotch_floor` keeps the hips of a body of other
+  the same mapping a character uses when it plays them, with the feet that stand locked to the
+  ground; the result is a plain `.anim` to edit. `crotch_floor` keeps the hips of a body of other
   proportions off the floor while the source crouches (both skeletons need a saved body).
 - `Animation.mirror=true` swaps left and right (bone names must say the side) and reflects root
   motion; without sided names the entity plays unmirrored with the problem `animation.mirror`.

@@ -329,6 +329,18 @@ compress_exact :: proc "contextless" (lib:^Library,track:Track,time:f32) -> math
     return value
 }
 
+// The rate a clip was sampled or keyed at: that of its stream, else the interval most of its keys
+// share, else COMPRESS_RATE.
+clip_rate :: proc(lib:^Library,clip:Clip,allocator:=context.temp_allocator) -> f32 {
+    if !clip_valid(lib,clip) {return COMPRESS_RATE}
+    if stream:=clip_stream(lib,lib.clips[clip-1]);stream!=nil {
+        rate:=stream_load(Stream_Header,stream,0).rate
+        if rate>0 && rate<=FRAMES_MAX_RATE {return rate}
+    }
+    rate,ok:=compress_rate(lib,clip_tracks(lib,clip),allocator)
+    return rate if ok && rate>0 else COMPRESS_RATE
+}
+
 // The rate the keys of a clip were made at: the interval most of them share, else COMPRESS_RATE.
 @(private)
 compress_rate :: proc(lib:^Library,tracks:[]Track,allocator:runtime.Allocator) -> (rate:f32,ok:bool) {

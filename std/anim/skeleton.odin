@@ -55,6 +55,19 @@ skeleton_validate :: proc "contextless" (s:Skeleton) -> bool {
     return anim_pose_valid(s.rest)
 }
 
+// The bones from root down to end, root first: false when end is not below root or out passes.
+skeleton_chain :: proc "contextless" (skeleton:Skeleton,root,end:i32,out:[]i32) -> (count:int,ok:bool) {
+    if !skeleton_validate(skeleton) || root<0 || end<0 || int(root)>=len(skeleton.rest) || int(end)>=len(skeleton.rest) {return}
+    bone:=end
+    for bone>=0 && count<len(out) {
+        out[count]=bone;count+=1
+        if bone==root {break};bone=skeleton.parents[bone]
+    }
+    if count<2 || out[count-1]!=root {return count,false}
+    for i in 0..<count/2 {out[i],out[count-1-i]=out[count-1-i],out[i]}
+    return count,true
+}
+
 skeleton_bind :: proc "contextless" (lib:^Library,clip:Clip,s:Skeleton,out:[]Bone_Tracks) -> bool {
     if !skeleton_validate(s) || len(out)!=len(s.rest) || !clip_valid(lib,clip) {return false}
     for &binding in out {binding=BONE_TRACKS_NONE}

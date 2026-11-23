@@ -54,7 +54,7 @@ description: Mirai standard library for games, with the packages `std/base`, `st
     [inertialization](references/anim-motion.md#inertialization) and
     [warping](references/anim-motion.md#orientation-and-stride-warping).
   - Chains, Multi IK with poles, springs, twist, reach with stretch, spline and aiming with an up
-    axis: [retarget](references/anim-rigs.md#retarget-between-chains),
+    axis: [chains](references/anim-rigs.md#chains),
     [IK](references/anim-rigs.md#ik-with-several-targets),
     [springs](references/anim-rigs.md#springs), [twist](references/anim-rigs.md#twist-distribution)
     and [reach](references/anim-rigs.md#reach-spline-and-aiming-rig_shapesodin).

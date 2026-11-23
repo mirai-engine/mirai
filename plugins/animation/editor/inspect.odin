@@ -93,7 +93,6 @@ Asset_Inspect_Result :: struct {
     twist:[]Authoring_Page(Profile_Twist_Params) `mirai:"optional"`,
     springs:[]Authoring_Page(Profile_Spring_Params) `mirai:"optional"`,
     multi_ik:[]Authoring_Page(Profile_Multi_Params) `mirai:"optional"`,
-    retarget_chains:[]Authoring_Page(anim.Chain_Retarget_Constraint) `mirai:"optional"`,
     spline_ik:[]Authoring_Page(Profile_Spline_Params) `mirai:"optional"`,
     follow:[]Authoring_Page(Profile_Follow_Params) `mirai:"optional"`,
     curve_poses:[]Authoring_Page(anim.Curve_Pose) `mirai:"optional"`,

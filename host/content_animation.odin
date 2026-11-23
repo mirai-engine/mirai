@@ -180,6 +180,7 @@ content_animation_finish :: proc(app:^App,entry:^Content_Animation,job:bool) {
     entry.lib=built.lib
     entry.clip_count,entry.markers=built.clip_count,built.markers
     entry.names,entry.roots,entry.morphs,entry.fields=built.names,built.roots,built.morphs,built.fields
+    entry.skeletons=built.skeletons
     built^={}
     if first {content_loaded(c,entry,true)} else {content_reloaded(c,entry)}
 }
@@ -311,15 +312,16 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
     desc.allocator=load.allocator
     if !anim.library_init(&built.lib,desc) {return}
     count:=len(view.clips)
-    e1,e2,e3:runtime.Allocator_Error
+    e1,e2,e3,e4:runtime.Allocator_Error
     built.markers,e1=make([]Content_Marker,len(view.markers),load.allocator)
     built.names,e2=make([][asset.ANIMATION_NAME_CAPACITY]u8,count,load.allocator)
     built.roots,e3=make([]asset.Animation_Root,count,load.allocator)
+    built.skeletons,e4=make([]base.Asset_Id,count,load.allocator)
     morphing:bool
     built.morphs,morphing=content_animation_morphs(view,load.allocator)
     fielded:bool
     built.fields,fielded=content_animation_fields(view,load.allocator)
-    if e1!=nil || e2!=nil || e3!=nil || !morphing || !fielded {return}
+    if e1!=nil || e2!=nil || e3!=nil || e4!=nil || !morphing || !fielded {return}
     if count>0 && asset.animation_clips_add(view,&built.lib,.Once)==0 {return}
     content_animation_loops(&built.lib,count)
     built.clip_count=count
@@ -328,7 +330,7 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
         built.markers[i]={name=base.name_hash(base.text_get(marker.name[:]))}
         if target!="" {built.markers[i].target,built.markers[i].text=base.name_hash(target),marker.name}
     }
-    for clip,i in view.clips {built.names[i]=clip.name;built.roots[i]=clip.root}
+    for clip,i in view.clips {built.names[i]=clip.name;built.roots[i]=clip.root;built.skeletons[i]=clip.skeleton}
     if !load.compress {
         built.lib.prepared=true
         load.ok=true

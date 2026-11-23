@@ -45,6 +45,36 @@ a_follower_takes_the_bones_it_shares_by_name_wherever_their_parents_differ_and_k
     testing.expect(t,ok && shared==3 && bones[1].leader==3 && bones[2].leader==4 && bones[3].leader==-1)
 }
 
+// A retarget pairs a bone of the target by its name, else by the part of the body both mark, else
+// the spine by its share of the chain; a source bone pairs once, and bodies or buffers that do not
+// fit are refused.
+@(test)
+retarget_map_pairs_by_name_then_by_body_then_along_the_spine :: proc(t:^testing.T) {
+    // Source: hips, spine, neck, thigh; target: root, pelvis, three spines, neck, thigh, weapon.
+    source_parents:=[4]i32{-1,0,1,0};source_aliases:=[4]u64{101,102,103,104}
+    target_parents:=[8]i32{-1,0,1,2,3,4,1,1};target_aliases:=[8]u64{201,202,203,204,205,206,104,207}
+    source_rest:[4]math.Transform;target_rest:[8]math.Transform
+    for &value in source_rest {value=math.TRANSFORM_IDENTITY};for &value in target_rest {value=math.TRANSFORM_IDENTITY}
+    source:=Skeleton{source_parents[:],source_aliases[:],source_rest[:]};target:=Skeleton{target_parents[:],target_aliases[:],target_rest[:]}
+    source_body,target_body:=body_map_empty(),body_map_empty()
+    source_body.bones[.Pelvis],source_body.bones[.Neck],source_body.up=0,2,{0,1,0}
+    target_body.bones[.Pelvis],target_body.bones[.Neck],target_body.up=1,5,{0,1,0}
+    mapping:[8]i32
+    paired,ok:=retarget_map(source,target,source_aliases[:],target_aliases[:],source_body,target_body,mapping[:])
+    testing.expect(t,ok && paired==4)
+    // The thigh by its name, pelvis and neck by the body, the first spine by the chain, the rest none.
+    testing.expect_value(t,mapping,[8]i32{-1,0,1,-1,-1,2,3,-1})
+    // Without bodies only the name pairs.
+    paired,ok=retarget_map(source,target,source_aliases[:],target_aliases[:],body_map_empty(),body_map_empty(),mapping[:])
+    testing.expect(t,ok && paired==1 && mapping[6]==3)
+    Case :: struct {name:string,mapping:int,body:bool}
+    for c in ([2]Case{{"a mapping of another length",7,false},{"a body outside the skeleton",8,true}}) {
+        body:=target_body;if c.body {body.bones[.Head]=99}
+        _,refused:=retarget_map(source,target,source_aliases[:],target_aliases[:],source_body,body,mapping[:c.mapping])
+        testing.expectf(t,!refused,"%s is refused",c.name)
+    }
+}
+
 @(test)
 follow_and_pose_deltas_refuse_hostile_inputs_without_touching_what_they_refuse :: proc(t:^testing.T) {
     parents:=[3]i32{-1,0,1}

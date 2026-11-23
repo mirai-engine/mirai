@@ -44,7 +44,7 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 - Components and shared data, the one `.character` set:
   [components](references/animation.md#components-and-shared-data);
   playback, outputs and order: [playback](references/animation.md#playback-outputs-and-order);
-  [retarget](references/animation.md#offline-and-live-retarget) and
+  [retarget](references/animation.md#retarget) and
   [mirroring](references/animation.md#mirroring); why an entity does not animate (asset, clip,
   bone, set, request or memory): [problems](references/animation.md#problems).
 - Authoring by intent (body, character, requests, clip verbs, analysis, capture):
@@ -112,7 +112,7 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [adaptation](../mirai-std/references/anim.md#adaptation-ikodin-retargetodin-followodin),
   [body](../mirai-std/references/anim-body.md#body-map-bodyodin),
   [inertialization](../mirai-std/references/anim-motion.md#inertialization),
-  [rigs](../mirai-std/references/anim-rigs.md#retarget-between-chains) and
+  [rigs](../mirai-std/references/anim-rigs.md#chains) and
   [storage](../mirai-std/references/anim-storage.md#sampling).
 - The physics that writes the mode and the velocity (`Character`, `Walk`, `Swim`, `Fly`):
   [mirai-physics](../mirai-physics/SKILL.md).
@@ -257,11 +257,12 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   by a view; clocks, events and root motion run in every tick, and what gameplay reads is posed
   in full ([level of detail](references/animation-budget.md#level-of-detail-by-distance)).
 - Skinning runs on the GPU; morphs are deformed in the same pass.
-- Another rig drives a pose through one link, `Pose_Source`: at stage Finished a rig of the same
-  skeleton shares the pose and a part of another follows it by bone name, keeping its own
-  animation on the bones only it has; at stage Sampled a character of other proportions plays the
-  sampled pose by bone names, or by the chains of its set where the topology differs. The offline
-  bake prepares the same mapping. A contact is an IK row with a spatial target, or grounding. A
+- Another rig drives a pose through one link, `Pose_Source`: a rig of the same skeleton shares
+  its finished pose and a part of another (a modular head) follows it by bone name, keeping its
+  own animation on the bones only it has. A character of other proportions plays the clips
+  itself: they are retargeted onto its skeleton once, when a rig of it first plays them, shared
+  by library and skeleton ([retarget](references/animation.md#retarget)); the offline bake writes
+  the same mapping. A contact is an IK row with a spatial target, or grounding. A
   face is curves over poses and morphs, with no rig evaluator in the plugin.
 - What the runtime cannot do is a problem of the entity (`core.report` with an `animation.*` code
   and how to fix it), never a counter ([problems](references/animation.md#problems)). The functions

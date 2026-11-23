@@ -47,7 +47,6 @@ modifier_count :: proc(pose:Pose_Profile,kind:Modifier_Kind) -> int {
     case .Twist: return len(pose.twist)
     case .Spring: return len(pose.springs)
     case .Multi_IK: return len(pose.multi_ik)
-    case .Chain_Retarget: return len(pose.retarget_chains)
     case .Spline_IK: return len(pose.spline_ik)
     case .Follow: return len(pose.follow)
     }
@@ -67,7 +66,6 @@ modifier_definition :: proc(pose:^Pose_Profile,kind:Modifier_Kind,slot:int) -> (
     case .Twist: return info(&pose.twist[slot])
     case .Spring: return info(&pose.springs[slot])
     case .Multi_IK: return info(&pose.multi_ik[slot])
-    case .Chain_Retarget: return info(&pose.retarget_chains[slot])
     case .Spline_IK: return info(&pose.spline_ik[slot])
     case .Follow: return info(&pose.follow[slot])
     }
@@ -256,7 +254,6 @@ animation_rig_diagnostic :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.
     case .Twist: return read(&rig.twist_states[index])
     case .Spring: return read(&rig.spring_states[index])
     case .Multi_IK: return read(&rig.multi_states[index])
-    case .Chain_Retarget: return read(&rig.retarget_chain_states[index])
     case .Spline_IK: return read(&rig.spline_states[index])
     case .Follow: return read(&rig.follow_states[index])
     }

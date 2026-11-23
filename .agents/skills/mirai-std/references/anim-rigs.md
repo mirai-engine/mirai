@@ -6,20 +6,11 @@ partial outputs are discarded. The operations validate the definition on entry; 
 recompositions use `pose_world`, which validates parents and current transforms without walking
 names or the reference again.
 
-## Retarget between chains
+## Chains
 
-- `skeleton_chain` resolves a `root`→`end` chain of parent-child indices into a caller buffer,
-  shared by the runtime bind and the editor bake. A nonexistent path, a one-bone chain or
-  insufficient capacity fail.
-- `chain_retarget_prepare` receives both skeletons, their chains and their global reference poses,
-  and prepares each destination bone by the normalized accumulated rest distance: it interpolates
-  the orientation between two source bones and keeps the offset of the destination reference. The
-  chains may have a different number of bones, all of positive length.
-- `chain_retarget_pose` applies those correspondences over the destination local pose: it keeps
-  translations and scales, converts each orientation with respect to the current parent and blends
-  by weight; bones outside the chain stay as they were. The caller removes the external placement of
-  the actor when preparing and when sampling the source. Contact targets are applied afterwards with
-  IK.
+- `skeleton_chain` (`skeleton.odin`) resolves a `root`→`end` chain of parent-child indices into a
+  caller buffer, for the twists, springs and Spline IK of a rig. A nonexistent path, a one-bone
+  chain or insufficient capacity fail.
 
 ## IK with several targets
 

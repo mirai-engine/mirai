@@ -1,10 +1,9 @@
 # Rigs and chain modifiers
 
-The tables `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`, `follow` and
-`curve_poses` extend the [modifiers of the
-`.character`](animation.md#components-and-shared-data): they are rows of a shared definition,
-without components per operation. A `.character` of another `CHARACTER_VERSION` is rejected and
-written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
+The tables `twist`, `springs`, `multi_ik`, `spline_ik`, `follow` and `curve_poses` extend the
+[modifiers of the `.character`](animation.md#components-and-shared-data): they are rows of a shared
+definition, without components per operation. A `.character` of another `CHARACTER_VERSION` is
+rejected and written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
 
 Each row has a name, a weight and an activation; the name is unique in its table and is what an
 instance controls and inspects. The defaults are the `*_DEFAULT` constants of each type; bones are
@@ -56,10 +55,6 @@ other way to name it.
   - A goal that names no effector is for the one effector of an operation that has one.
   - Near full extension a long chain takes more iterations than the default to settle (the
     playground's reach of nine bones uses 64).
-- **Chain Retarget**: pairs of semantic chains of the destination's set, applied to the sampled
-  pose its `Pose_Source` of stage `Sampled` takes, where the bone names do not pair. It admits
-  different topologies, keeps translations and scale of the destination and separates the
-  placement of both actors.
 
 ## Curve poses
 
@@ -94,9 +89,8 @@ chain, a topology that is too long or an incompatible target is a bind failure o
 
 ## Order and state
 
-- Order: retarget of bones and chains (from `Playing.sampled`, before their constraints), removal of
-  root motion, the follow of a leader, curve poses, grounding, IK/look-at, Multi IK, twist,
-  springs, Spline IK, Follow and, at the end, limits and attachments.
+- Order: removal of root motion, the follow of a leader, curve poses, grounding, IK/look-at, Multi
+  IK, twist, springs, Spline IK, Follow and, at the end, limits and attachments.
 - Each world owns its `Modifier_Runtime`, indexed by generational entity. A row keeps bindings,
   influence, overrides and solver state for one rig. It reads definitions from the shared character
   content by asset identity and revision. A rig without modifiers or attachments takes no row.
@@ -121,18 +115,18 @@ chain, a topology that is too long or an incompatible target is a bind failure o
   effectors and the last request error; `diagnostics` adds fade and solver. API contract:
   [control](animation-authoring.md#per-instance-control-and-preview).
 - `animation_rig_diagnostic` gives validity, residual (in springs, length error), angular error,
-  iterations and `reached`; twist and retarget give only validity. Look reports the angular error
+  iterations and `reached`; twist gives only validity. Look reports the angular error
   of the aim and how far it passes from the target at its distance. An unreachable effector can
   still give a valid evaluation.
 
 ## Bake
 
-`animation.retarget.bake` maps as a live `Pose_Source` of stage `Sampled` does: each bone by the
-bone of its name (or path), or by the `retarget_chains` of the destination's `.character` where the
-topology differs.
+`animation.retarget.bake` maps as the [retarget on load](animation.md#retarget) does
+(`lib.retarget_map`): each bone by the bone of its name (or path), else by the part of the body both
+`.skeleton`s mark, the spine by its share of the chain; unpaired bones keep their rest.
 
-- It prepares the correspondences of `std/anim` once and resamples the destination poses. Chains
-  keep translations and scales of the destination.
+- It prepares the correspondences of `std/anim` once and resamples the destination poses, keeping
+  translations and scales of the destination.
 - Where both bodies have both legs, the feet of the destination are locked to the ground with the
   clip edit `Lock_Feet` over the frames the feet of the source stand, if any: a mapping cannot keep
   them by itself when the limbs have other proportions. Whether the bake loops is decided on the
@@ -142,9 +136,8 @@ topology differs.
   feet that the hips of the source keep, and turns the legs so the feet stay
   (`retarget_crotch_pose`). It only raises: a body of longer legs keeps what the mapping gave.
 - Float/Vector curves, slots and markers keep their keys.
-- The root motion bone is remapped by name or by exact chain correspondence; if it corresponds
-  exactly to no destination, the bake turns off the root flags instead of choosing an intermediate
-  root by proximity.
+- The root motion bone is remapped by its pair; without one, the bake turns off the root flags
+  instead of choosing a root by proximity.
 - The new `.anim` has its own identity and is published with the editor's asset transaction; it does
   not modify the sources.
 
@@ -159,7 +152,6 @@ topology differs.
   in any order of the rows and curves renamed in place: `follow_test.odin`
 - `multi_ik_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls` (a Multi
   IK without joints, its pole, and its goal without an effector name)
-- `semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations`
 - `multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solver_scratch`
 - `modifier_controls_preserve_targets_and_fade_independently_through_world_copies` and
   `discovery_test.odin` for live rig state across unrelated despawns and spawns.
@@ -172,10 +164,11 @@ topology differs.
 
 `plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):
 
-- `baking_without_chains_pairs_bones_by_name_once_and_preserves_curves_markers_and_root_metadata`,
-  the two `baking_semantic_chains_*` and
+- `baking_pairs_bones_by_name_once_and_preserves_curves_markers_and_root_metadata`,
+  `baking_pairs_differently_named_skeletons_by_their_bodies_and_preserves_curves_markers_and_root`,
+  `baking_rejects_skeletons_that_pair_no_bone_and_allocation_failure_without_publishing` and
   `baking_a_walk_onto_a_shorter_body_keeps_its_feet_from_sliding_more_than_the_source`.
-- `rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the_character`.
+- `rig_modifier_api_discovers_named_operations_and_effectors_of_the_character`.
 - `curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves`.
 
 The CPU cases verify neither the GPU nor the visual quality of a model: that requires a build and a

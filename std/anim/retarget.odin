@@ -50,3 +50,39 @@ retarget_pose :: proc "contextless" (source,target:Skeleton,profile:[]Retarget_B
     }
     return true
 }
+
+// Pairs each bone of target with a bone of source, as a rig retargets the clips of another
+// skeleton: by name, or by path where a name repeats (follow_prepare), else by the part of the
+// body both maps mark, and the spine between pelvis and neck by its share of the chain; a source
+// bone pairs once. mapping receives the source bone of each bone of target, -1 for none; the
+// aliases are the hashes of the names of the bones, Skeleton.names those of their paths. Gives how
+// many pair; ok is false for skeletons or bodies that are not valid, or without memory.
+retarget_map :: proc(source,target:Skeleton,source_aliases,target_aliases:[]u64,source_body,target_body:Body_Map,mapping:[]i32,allocator:=context.temp_allocator) -> (paired:int,ok:bool) {
+    n,m:=len(target.parents),len(source.parents)
+    if len(mapping)!=n || len(target_aliases)!=n || len(source_aliases)!=m {return}
+    if !body_map_valid(source_body,m) || !body_map_valid(target_body,n) {return}
+    follow,e1:=make([]Follow_Bone,n,allocator);defer delete(follow,allocator)
+    used,e2:=make([]bool,m,allocator);defer delete(used,allocator)
+    target_spine,e3:=make([]i32,n,allocator);defer delete(target_spine,allocator)
+    source_spine,e4:=make([]i32,m,allocator);defer delete(source_spine,allocator)
+    if e1!=nil || e2!=nil || e3!=nil || e4!=nil {return}
+    if _,followed:=follow_prepare(target,source,target_aliases,source_aliases,follow);!followed {return}
+    for bone,i in follow {
+        mapping[i]=bone.leader
+        if bone.leader>=0 {used[bone.leader]=true;paired+=1}
+    }
+    take :: proc "contextless" (mapping:[]i32,used:[]bool,to,from:i32) -> bool {
+        if to<0 || from<0 || mapping[to]>=0 || used[from] {return false}
+        mapping[to]=from;used[from]=true
+        return true
+    }
+    for part in Body_Part {if take(mapping,used,target_body.bones[part],source_body.bones[part]) {paired+=1}}
+    to_count,to_spine:=body_spine(target.parents,target_body,target_spine)
+    from_count,from_spine:=body_spine(source.parents,source_body,source_spine)
+    if to_spine && from_spine && to_count>0 && from_count>0 {
+        for bone,i in target_spine[:to_count] {
+            if take(mapping,used,bone,source_spine[(i*from_count)/to_count]) {paired+=1}
+        }
+    }
+    return paired,true
+}

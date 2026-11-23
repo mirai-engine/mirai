@@ -6,30 +6,6 @@ import "core:math/linalg"
 import math "mirai:std/math"
 
 @(test)
-semantic_chain_retarget_interpolates_different_topologies_without_changing_target_lengths :: proc(t:^testing.T) {
-    source_parents:=[3]i32{-1,0,1};source_names:=[3]u64{1,2,3}
-    source_rest:=[3]math.Transform{math.TRANSFORM_IDENTITY,{{0,1,0},1,{1,1,1}},{{0,1,0},1,{1,1,1}}}
-    target_parents:=[5]i32{-1,0,1,2,3};target_names:=[5]u64{4,5,6,7,8}
-    target_rest:=[5]math.Transform{math.TRANSFORM_IDENTITY,{{0,.5,0},1,{1,1,1}},{{0,.5,0},1,{1,1,1}},{{0,.5,0},1,{1,1,1}},{{0,.5,0},1,{1,1,1}}}
-    source:=Skeleton{source_parents[:],source_names[:],source_rest[:]};target:=Skeleton{target_parents[:],target_names[:],target_rest[:]}
-    source_chain:=[3]i32{0,1,2};target_chain:=[5]i32{0,1,2,3,4}
-    source_world:[3]math.Transform;target_world:[5]math.Transform;bindings:[5]Chain_Retarget_Bone
-    testing.expect(t,chain_retarget_prepare(source,target,source_chain[:],target_chain[:],source_world[:],target_world[:],bindings[:]))
-    testing.expect_value(t,bindings[1].fraction,f32(.5));testing.expect_value(t,bindings[3].fraction,f32(.5))
-    source_pose:=source_rest;target_pose:=target_rest
-    source_pose[1].rotation=math.quat_axis_angle({0,0,1},.8)
-    source_pose[2].rotation=math.quat_axis_angle({0,0,1},.6)
-    testing.expect(t,skeleton_world(source,source_pose[:],source_world[:]))
-    testing.expect(t,chain_retarget_pose(target,bindings[:],source_world[:],target_pose[:],target_world[:]))
-    for value,i in target_pose {testing.expect_value(t,value.position,target_rest[i].position)}
-    testing.expect(t,abs(linalg.dot(target_world[4].rotation,source_world[2].rotation))>.9999)
-    testing.expect(t,abs(linalg.dot(target_world[1].rotation,math.quat_slerp(source_world[0].rotation,source_world[1].rotation,.5)))>.9999)
-    target_pose=target_rest
-    testing.expect(t,chain_retarget_pose(target,bindings[:],source_world[:],target_pose[:],target_world[:],0) && target_pose==target_rest)
-    bindings[2].source_b=999;testing.expect(t,!chain_retarget_pose(target,bindings[:],source_world[:],target_pose[:],target_world[:]))
-}
-
-@(test)
 multi_effector_ik_converges_on_branches_respects_fixed_roots_and_joint_limits :: proc(t:^testing.T) {
     parents:=[7]i32{-1,0,1,2,0,4,5};names:=[7]u64{1,2,3,4,5,6,7}
     links:[7]Pose_Link;hierarchy,_:=pose_hierarchy_prepare(parents[:],links[:])
@@ -142,8 +118,8 @@ rig_solvers_reject_hostile_indices_nonfinite_values_and_short_buffers :: proc(t:
     _,ok:=multi_ik(skeleton,hierarchy,local[:],world[:],nil,effector[:],settings,nil);testing.expect(t,!ok)
     bones:=[2]i32{0,1};original:[2]math.Quat;amounts:=[2]f32{1,1}
     testing.expect(t,!skeleton_twist(skeleton,local[:],world[:],999,bones[:],amounts[:],{0,1,0},1,original[:]))
-    bindings:[2]Chain_Retarget_Bone;bones[1]=999
-    testing.expect(t,!chain_retarget_prepare(skeleton,skeleton,bones[:],bones[:],world[:],world[:],bindings[:]))
+    chain:[2]i32;bones[1]=999
+    _,chained:=skeleton_chain(skeleton,bones[0],bones[1],chain[:]);testing.expect(t,!chained)
 }
 
 @(test)

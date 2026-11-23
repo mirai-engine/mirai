@@ -271,19 +271,10 @@ Playing :: struct {
     skipped:u32,               // ticks since its pose was last evaluated
     waited:f32,                // seconds of those ticks
     bare:bool,                 // its cosmetic modifiers were left out in its last pose
-    leader:core.Entity,        // the rig whose pose it takes (Pose_Source); NONE: none
-    stage:Pose_Stage,          // of the pose of its leader it takes
+    leader:core.Entity,        // the rig whose finished pose it takes (Pose_Source); NONE: none
     follow:[dynamic]lib.Follow_Bone,       // by bone: the bone of the leader it takes
-    retarget:[dynamic]lib.Retarget_Bone,   // sampled: by bone, how it takes the pose of its bone of the leader
-    retarget_rest:[dynamic]mm.Transform,   // sampled: the rests of the leader and its own
     world_final:u64,                       // Playback.frame whose finished pose world holds, in the world, for its followers
     follow_bound:[2]u64,                   // the bound of the leader and its own the follow was paired for
-    scratch:Playing_Scratch,               // a copy of the world keeps its own (playing_copy)
-}
-// What a state works in during a tick and keeps nothing of: sized where it is used, on the owner
-// thread.
-Playing_Scratch :: struct {
-    retarget_world:[dynamic]mm.Transform, // sampled: room for the poses of the leader and its own in the world
 }
 
 // An entity whose Mesh_Renderer shows a mesh with a skeleton and that does
@@ -291,7 +282,7 @@ Playing_Scratch :: struct {
 // it poses that skeleton. One whose Pose_Source names another rig takes its
 // pose: leader is that rig.
 // skeleton none: its mesh still arrives, and the rig waits for it, without a pose.
-Rig :: struct {entity:core.Entity,skeleton:base.Asset_Id,leader,attachment:core.Entity,stage:Pose_Stage}
+Rig :: struct {entity:core.Entity,skeleton:base.Asset_Id,leader,attachment:core.Entity}
 // A rig that follows another, and how many leaders are above it (max: it is in a loop).
 Rig_Follow :: struct {entity:core.Entity,depth:u32}
 
@@ -470,6 +461,8 @@ animation_tick :: proc(
             if kept {content,animation.asset,animation.library,source_error=previous,played,library,.None} else {animation.asset,animation.library,source_error={},{},.None}
         }
         if source_error!=.None {state.program.error=source_error;program_problem(problems,e,app.assets,animation,source_error);continue}
+        // A rig plays clips made on another skeleton retargeted onto its own.
+        if skeletal {content=source_retarget(sources,app,skeleton_assets,content,playback.rigs[row].skeleton,problems,e)}
         if content==nil && animation.asset!={} && animation_character(app.assets,animation)=={} {
             name:[base.ASSET_ID_TEXT]u8
             core.report(problems,e,"animation.asset","Animation.asset names %s, which cannot be played: it is missing, is not an .anim or a .character, or is damaged; asset_errors of engine.diagnostics says which, and importing it again fixes a damaged one",host.assets_name(app.assets,animation.asset,&name))
@@ -479,7 +472,7 @@ animation_tick :: proc(
         rig_goals:=entity_requests(match_goals,e)
         program,programmed,program_valid:=program_resolve(state,animation,app,characters,dt,events,playback,content,problems,rig_goals,facing)
         if !program_valid {program_problem(problems,e,app.assets,animation,state.program.error);continue}
-        if programmed {match_prebuild(state,animation,app,characters,sources,extras)}
+        if programmed {match_prebuild(state,animation,app,characters,sources,extras,skeleton_assets,playback.rigs[row].skeleton if skeletal else {})}
         if programmed && state.clip_event.clip!=0 {
             clip_lifecycle(playback,events,&state.clip_event,.Interrupted,state.time,problems)
         }
@@ -519,7 +512,7 @@ animation_tick :: proc(
             if !skeletal {state.hierarchy_stamp=0}
         }
         if skeletal {
-            state.leader,state.stage=playback.rigs[row].leader,playback.rigs[row].stage
+            state.leader=playback.rigs[row].leader
             skeleton:=playback.rigs[row].skeleton
             definition:=skeleton_content(skeleton_assets,app.assets,app.allocator,skeleton)
             if definition==nil {
@@ -698,7 +691,7 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 }
 
 // The rigs of the world, found again when its meshes or skins change. A mesh
-// with a Pose_Source of stage Finished shares the pose of its rig when both
+// with a Pose_Source shares the finished pose of its rig when both
 // have one skeleton; otherwise it is a rig that takes the pose of that one. A
 // mesh that still arrives is a rig that waits: whether it is skinned is not
 // known yet, and animating it as entities without bones would pose it wrong.
@@ -728,8 +721,8 @@ rigs_update :: proc(playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer,
         if skins!=nil {
             if source,has:=core.get(skins,e);has {
                 leader,_:=skeleton_of(meshes,assets,source.rig)
-                if leader=={} || leader==skeleton && source.stage==.Finished || source.rig==e {return}
-                rig.leader,rig.stage=source.rig,source.stage
+                if leader=={} || leader==skeleton || source.rig==e {return}
+                rig.leader=source.rig
             }
         }
         return rig,true
@@ -1502,12 +1495,12 @@ playback_copy :: proc(dst,src:^Playback) -> bool {
 }
 
 // Copies src into dst as core.value_copy does, but for its stack, which it copies into the one dst
-// had, and its scratch, which dst keeps.
+// had.
 playing_copy :: proc(dst,src:^Playing) -> bool {
     if dst==src {return true}
     stack:=dst.stack;dst.stack=nil
     skeleton_topology_release(dst.shared_topology);dst.shared_topology=nil
-    copied:=value_copy_except(dst,src,type_info_of(Playing),offset_of(Playing,stack),offset_of(Playing,scratch))
+    copied:=value_copy_except(dst,src,type_info_of(Playing),offset_of(Playing,stack))
     if copied {skeleton_topology_retain(dst.shared_topology)} else {dst.shared_topology=nil}
     if src.stack==nil {
         if stack!=nil {stack_free(stack)}
@@ -1540,8 +1533,7 @@ playing_free :: proc(state:^Playing) {
     if state.stack!=nil {stack_free(state.stack)}
     playing_topology_free(state)
     delete(state.curves);delete(state.bindings);delete(state.pose_slab)
-    delete(state.follow);delete(state.retarget);delete(state.retarget_rest)
-    delete(state.scratch.retarget_world)
+    delete(state.follow)
     state^={}
 }
 

@@ -33,7 +33,7 @@ sets of the stations show one feature each.
   game asks it for the velocity with `match_goal` over `mirai_gallery.character`.
 - The tall Mirai is stretched upward with its skeleton, so each bone retargets by the bone of its
   name, keeping the lengths of the tall skeleton; its clips are baked when generating the content
-  ([plugin retarget](../../mirai-animation/references/animation.md#offline-and-live-retarget)).
+  ([plugin retarget](../../mirai-animation/references/animation.md#retarget)).
 - The warp station walks between goals on either side of its origin and is never put back: it
   turns in place toward the next goal with its motor off, then strides by root motion warped to
   end there. Each goal is a share of what its stride covers unwarped (`stride` of its

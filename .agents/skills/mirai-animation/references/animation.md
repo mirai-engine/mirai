@@ -13,7 +13,7 @@ or animation graph ([what replaces them](#what-replaces-the-state-machine)).
 | --- | --- |
 | `Animation` | Plays `.anim` (clip) or `.character` set; `library` override, `mirror`, `root_motion` |
 | `Animation_Progress` | Saved clip clock/selection materialized by `Playback` on slot capture |
-| `Pose_Source` | `Finished`: share pose or [follow another skeleton](#following-a-rig-of-another-skeleton); `Sampled`: [live retarget](#offline-and-live-retarget) |
+| `Pose_Source` | Shares the finished pose of a rig of its skeleton or [follows one of another](#following-a-rig-of-another-skeleton); other proportions [retarget their clips](#retarget) |
 | `Bone_Attachment` | Attaches entity to bone or `Skeleton_Socket` (local offset after socket TRS): where it rests; `attach` switches it to another socket in Play |
 | `Animation_Budget` | Update cadence/LOD ([budget](animation-budget.md)) |
 | `Morph_Weights` | Blendshape weights ([morphs](animation-morphs.md)) |
@@ -185,7 +185,7 @@ rebuilding only on asset change. Inspect via `animation_playing_content`, `sourc
   deformed meshes live in `Skin_Instances` (`animation_skin_release` on world free).
 
 **Fixed-step order:** `animation_prepare` (`apply`) -> physics `simulate` -> `animation_sample` +
-`animation_fields` (`simulate`) -> `animation_advance` (`react`: retarget, root removal, warping,
+`animation_fields` (`simulate`) -> `animation_advance` (`react`: root removal, warping,
 grounding, IK/Look, rigs, limits, final poses, attachments).
 
 - **Root motion:** `None`, `Extract`, or `In_Place` (`Pose_Lock` per fading clip). Blended clips
@@ -203,13 +203,35 @@ grounding, IK/Look, rigs, limits, final poses, attachments).
   `Skin_Part` collapse and the `@field/Material_Live` values of the clips. GPU contract:
   [GPU skinning](../../mirai-rendering/references/scene.md#gpu-skinning).
 
-## Offline and live retarget
+## Retarget
 
-Unified mapping: match bones by name (then path on duplicates via `follow_prepare`), plus
-`retarget_chains` for differing topologies (unmatched bones stay at rest; external root excluded).
-Offline: `animation_editor.retarget_bake` writes editable `.anim` ([bake](animation-rigs.md#bake),
-compressed on load per [storage](../../mirai-std/references/anim-storage.md)). Live: `Pose_Source`
-at stage `Sampled` reads source pose before constraints.
+A rig plays clips made on another skeleton (the `.skeleton` each clip of an `.anim` names) as clips
+of its own, retargeted once when a rig of its skeleton first plays the library, never per tick
+(`source_retarget`, `source_retarget.odin`):
+
+- A clip binds by name as it is when every bone it moves has, on the rig, a bone of its path with
+  the same parent and rest: a skeleton variant with an extra bone or one imported twice costs no
+  copy and no resampling.
+- Otherwise the library is retargeted into a `Source_Retarget` of `Source_Assets`, keyed by library
+  and skeleton and shared by every rig and world of that skeleton. Bones pair by name or path, else
+  by the parts of the body both `.skeleton`s mark, the spine by its share of the chain
+  (`lib.retarget_map`); the crotch keeps off the floor when both bodies have pelvis, hips and feet.
+  Each clip is sampled at its own rate into raw keys the player reads as they are (no compression on
+  the simulation thread), skipping channels that stay at rest; curves, markers (with their `.anim`)
+  and names stay, the root bone follows its pair or its root flags turn off.
+- It is made before the [matching database](#locomotion-by-motion-matching) of a set's library is
+  built ahead (`match_prebuild`), so equipping a weapon of clips made on another skeleton builds
+  nothing in that tick.
+- A rig keeps only the generation it bound (`Playing.generation`, of `RETARGET_GENERATION`), never
+  a place in the cache: a snapshot restored after the entry was made again finds nothing of the old
+  one and binds the new one. An entry is made again when the library, the skeleton or a source
+  skeleton changes, and freed with the cache.
+- A source `.skeleton` that cannot be read, or that pairs no bone, leaves its clips at the rest pose
+  with their curves and markers, and reports `animation.retarget_skeleton` until it arrives.
+
+`animation.retarget.bake` writes the same mapping into an editable `.anim`
+([bake](animation-rigs.md#bake), compressed on load per
+[storage](../../mirai-std/references/anim-storage.md)).
 
 ## Mirroring
 
@@ -256,8 +278,13 @@ Run `mirai test plugins/animation/runtime` (CPU; GPU skinning needs validation +
   `layers_play_over_a_region_of_the_body_without_stable_allocations`,
   `body_labels_of_a_skeleton_without_body_say_how_to_give_it_one`,
   `skeleton_bone_find_takes_a_path_a_unique_name_or_a_part_of_the_body`.
-- Retarget/follow/GPU (`constraints_test.odin`, `follow_test.odin`, `skin_bind_test.odin`):
-  `taking_a_sampled_pose_*`, `followers_finish_after_their_leaders_in_the_order_found_once`,
+- Retarget (`source_retarget_test.odin`, `matching_test.odin`): one entry shared by library and
+  skeleton without stable allocations, freed on reload and with the cache; clips whose moved bones
+  match bind by name; an unreadable source holds the rest pose until it arrives; a restored
+  snapshot binds the new entry; and
+  `a_library_made_on_another_skeleton_is_retargeted_before_its_database_is_built_ahead`.
+- Follow/GPU (`follow_test.odin`, `skin_bind_test.odin`):
+  `followers_finish_after_their_leaders_in_the_order_found_once`,
   `rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it`.
 
 [body]: ../../mirai-std/references/anim-body.md#body-map-bodyodin

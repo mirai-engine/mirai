@@ -234,31 +234,29 @@ a_rig_gameplay_reads_runs_in_full_at_any_distance :: proc(t:^testing.T) {
     }
 }
 
-// A rig that takes the pose of a far one (Pose_Source, finished or sampled) is posed on the
-// ticks of that one, whatever its own distance: it never misses its pose.
+// A rig that takes the pose of a far one (Pose_Source) is posed on the ticks of that one, whatever
+// its own distance: it never misses its pose.
 @(test)
 a_follower_is_posed_on_the_ticks_of_its_leader :: proc(t:^testing.T) {
     a:Lod_Assets;if !lod_assets(t,&a,"lod-follow") {return};defer lod_assets_destroy(&a)
-    for stage in Pose_Stage {
-        f:Lod_Test
-        if !lod_init(t,&f) {return}
-        defer lod_destroy(&f)
-        leader:=lod_rig(&f,&a,100)
-        // A finished pose of the same skeleton is shared without a rig: this one is of another.
-        follower:=lod_rig(&f,&a,5,mesh=a.other_mesh if stage==.Finished else a.mesh,animated=false)
-        core.add(&f.skins,follower,{rig=leader,stage=stage})
-        lod_source(&f,{})
-        posed:=0
-        for tick in 0..<u64(30) {
-            lod_step(&f,&a.app,tick)
-            body,head:=constraint_playing(core.ref(&f.playback),leader),constraint_playing(core.ref(&f.playback),follower)
-            if !testing.expect(t,body!=nil && head!=nil && head.leader==leader) {return}
-            testing.expectf(t,head.lod==body.lod && head.finished==body.finished,"%v, tick %d: %v and %v",stage,tick,head.lod,body.lod)
-            if !body.lod.skip {posed+=1}
-        }
-        testing.expectf(t,posed>0 && posed<30,"%v: the leader skips some ticks (%d posed)",stage,posed)
-        testing.expectf(t,core.problem_find(&f.problems,follower,"animation.follow_rig")==nil && f.problems.count==0,"%v: %d problems",stage,f.problems.count)
+    f:Lod_Test
+    if !lod_init(t,&f) {return}
+    defer lod_destroy(&f)
+    leader:=lod_rig(&f,&a,100)
+    // A finished pose of the same skeleton is shared without a rig: this one is of another.
+    follower:=lod_rig(&f,&a,5,mesh=a.other_mesh,animated=false)
+    core.add(&f.skins,follower,{rig=leader})
+    lod_source(&f,{})
+    posed:=0
+    for tick in 0..<u64(30) {
+        lod_step(&f,&a.app,tick)
+        body,head:=constraint_playing(core.ref(&f.playback),leader),constraint_playing(core.ref(&f.playback),follower)
+        if !testing.expect(t,body!=nil && head!=nil && head.leader==leader) {return}
+        testing.expectf(t,head.lod==body.lod && head.finished==body.finished,"tick %d: %v and %v",tick,head.lod,body.lod)
+        if !body.lod.skip {posed+=1}
     }
+    testing.expectf(t,posed>0 && posed<30,"the leader skips some ticks (%d posed)",posed)
+    testing.expectf(t,core.problem_find(&f.problems,follower,"animation.follow_rig")==nil && f.problems.count==0,"%d problems",f.problems.count)
 }
 
 // Between two of its poses a rig shows the last one, carried with its entity: Previous is Local

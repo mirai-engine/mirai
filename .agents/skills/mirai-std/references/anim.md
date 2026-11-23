@@ -160,7 +160,11 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
   the rest of the destination bones and adds the translation each source bone moved from its rest,
   scaled by the ratio of the rest lengths of both bones (1 for a source bone of zero length), and a
   source index `-1` keeps the reference. The work buffers and the references do not overlap the
-  output. It does not infer names or solve full-body IK.
+  output. It does not solve full-body IK.
+- `retarget_map` gives those correspondences: by name, or path where a name repeats
+  (`follow_prepare`), else by the part of the body both `Body_Map`s mark, and the spine between
+  pelvis and neck by its share of the chain; a source bone pairs once. The runtime's retarget on
+  load and the editor's bake share it.
 - `retarget_crotch_prepare` and `retarget_crotch_pose` (`retarget_crotch.odin`) keep the crotch of
   a retargeted body off its floor as the source's: while the pelvis of the source is nearer its
   feet than at rest, the pelvis of the target rises until its hips keep the share of their rest
@@ -179,7 +183,7 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
   scale a factor, as a face's poses are stored: translations summed, rotations by their
   logarithms, scales multiplied). `pose_accumulated_apply` blends the bone to the average of the
   full poses by their total, normalized past 1, and adds the additive ones over it.
-- [Chains and modifiers](anim-rigs.md): retarget between chains of different topology, Multi IK,
+- [Chains and modifiers](anim-rigs.md): chains of a skeleton, Multi IK,
   twist and springs. The definition is shared among characters; each parallel evaluation receives
   its state and its scratch.
 

@@ -354,7 +354,7 @@ props_play_without_a_stack_and_copy_only_what_they_simulate :: proc(t:^testing.T
     sought,_:=core.get(&w.progress,doors[0])
     testing.expectf(t,problems.count==0 && len(w.playback.states)==PROPS && progress.time==5 && sought.time==4,"the props play, pause their clips and write their fields: %d problems, %v and %v",problems.count,progress.time,sought.time)
     for &state in w.playback.states {
-        testing.expect(t,state.stack==nil && state.program.players==nil && state.follow==nil && state.retarget==nil && state.scratch.retarget_world==nil,"a prop has no stack, matching, follow or retarget")
+        testing.expect(t,state.stack==nil && state.program.players==nil && state.follow==nil,"a prop has no stack, matching or follow")
     }
     // Taken into a world that never played, and back into this one.
     tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)

@@ -130,7 +130,7 @@ gallery_retarget :: proc(o:^Out,model:^importer.Imported_Model,source:string) {
     source_info:=asset.Skeleton_Info{u32(len(model.skeletons[0].bones))};target_info:=asset.Skeleton_Info{u32(len(bones))}
     baked:asset.Document
     baked_id:=asset.content_id(PROJECT,"animation","tall_mirai")
-    error:=animation_editor.retarget_bake(&baked,&o.content.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},nil,skeleton=skeleton_id)
+    error:=animation_editor.retarget_bake(&baked,&o.content.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},skeleton=skeleton_id)
     if error!=.None {asset.content_check(&o.content,"mirai retarget bake",error);return}
     defer asset.document_destroy(&baked)
     asset.content_check(&o.content,"tall_mirai.anim",asset.document_save(&baked,path(o,"assets/characters/tall_mirai/tall_mirai.anim")))

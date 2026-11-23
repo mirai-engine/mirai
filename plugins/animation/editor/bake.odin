@@ -7,16 +7,14 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
-@(private) Bake_Chain :: struct {source,target:[]i32,mapping:[]lib.Chain_Retarget_Bone,weight:f32}
-
-// Bakes clips of source onto target as a rig takes the pose of another (Pose_Source, stage
-// Sampled): by the chains of the target's .character where the topology differs, otherwise each
-// bone by the bone of its name, or of its path when a name repeats. With legs in both bodies, the
-// feet of the target stay locked to the ground (lib.Lock_Feet) over the frames the feet of the
+// Bakes clips of source onto target as a rig retargets the clips of another skeleton when they load
+// (anim.source_retarget): each bone takes the bone of its name, or of its path when a name repeats,
+// else of the part of the body both .skeletons mark (lib.retarget_map). With legs in both bodies,
+// the feet of the target stay locked to the ground (lib.Lock_Feet) over the frames the feet of the
 // source stand; with crotch_floor, its crotch keeps off the floor as the source's does
 // (lib.retarget_crotch_pose).
-retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,clips:asset.Animation_View,source,target:asset.Skeleton_View,retarget_chains:[]anim.Chain_Retarget_Constraint,rate:f32=60,allocator:=context.allocator,skeleton:=base.Asset_Id{},crotch_floor:=false) -> asset.Error {
-    if !asset.animation_check(clips) || !asset.skeleton_check(source) || !asset.skeleton_check(target) || len(retarget_chains)>anim.POSE_CONSTRAINTS || rate<1 || rate>240 || rate-rate!=0 {return .Invalid}
+retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,clips:asset.Animation_View,source,target:asset.Skeleton_View,rate:f32=60,allocator:=context.allocator,skeleton:=base.Asset_Id{},crotch_floor:=false) -> asset.Error {
+    if !asset.animation_check(clips) || !asset.skeleton_check(source) || !asset.skeleton_check(target) || rate<1 || rate>240 || rate-rate!=0 {return .Invalid}
     scratch:=context.temp_allocator
     rig :: proc(bones:[]asset.Skeleton_Bone,allocator:runtime.Allocator) -> (result:lib.Skeleton,aliases:[]u64,error:asset.Error) {
         result.parents=bake_array(i32,len(bones),allocator) or_return
@@ -31,34 +29,14 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
     }
     source_rig,source_aliases:=rig(source.bones,scratch) or_return
     target_rig,target_aliases:=rig(target.bones,scratch) or_return
+    source_body:=asset.skeleton_body_map(source.bones,source.body,source.body_parts)
+    target_body:=asset.skeleton_body_map(target.bones,target.body,target.body_parts)
     mapping:=bake_array(i32,len(target.bones),scratch) or_return
-    for &index in mapping {index=-1}
-    bound:=false
-    if len(retarget_chains)==0 {
-        follow:=bake_array(lib.Follow_Bone,len(target.bones),scratch) or_return
-        shared,paired:=lib.follow_prepare(target_rig,source_rig,target_aliases,source_aliases,follow)
-        if !paired {return .Invalid}
-        for bone,i in follow {mapping[i]=bone.leader}
-        bound=shared>0
-    }
+    paired,mapped:=lib.retarget_map(source_rig,target_rig,source_aliases,target_aliases,source_body,target_body,mapping,scratch)
+    if !mapped || paired==0 {return .Invalid}
     source_world:=bake_array(mm.Transform,len(source.bones),scratch) or_return;target_world:=bake_array(mm.Transform,len(target.bones),scratch) or_return
     prepared:=bake_array(lib.Retarget_Bone,len(target.bones),scratch) or_return
     if !lib.retarget_prepare(source_rig,target_rig,mapping,source_world,target_world,prepared) {return .Invalid}
-    chains:=bake_array(Bake_Chain,len(retarget_chains),scratch) or_return;chain_count:=0
-    for value in retarget_chains {
-        if !value.enabled || value.weight<=0 {continue}
-        source_bones:=bake_array(i32,anim.RIG_CHAIN_BONES,scratch) or_return
-        target_bones:=bake_array(i32,anim.RIG_CHAIN_BONES,scratch) or_return
-        source_count,a:=lib.skeleton_chain(source_rig,i32(find(source,value.source_root)),i32(find(source,value.source_end)),source_bones)
-        target_count,b:=lib.skeleton_chain(target_rig,i32(find(target,value.target_root)),i32(find(target,value.target_end)),target_bones)
-        if !a || !b {return .Invalid}
-        chain_mapping:=bake_array(lib.Chain_Retarget_Bone,target_count,scratch) or_return
-        if !lib.chain_retarget_prepare(source_rig,target_rig,source_bones[:source_count],target_bones[:target_count],source_world,target_world,chain_mapping) {return .Invalid}
-        chains[chain_count]={source_bones[:source_count],target_bones[:target_count],chain_mapping,value.weight};chain_count+=1
-    }
-    if !bound && chain_count==0 {return .Invalid}
-    source_body:=asset.skeleton_body_map(source.bones,source.body,source.body_parts)
-    target_body:=asset.skeleton_body_map(target.bones,target.body,target.body_parts)
     crotch:=lib.RETARGET_CROTCH_NONE
     if crotch_floor {
         error:lib.Retarget_Error
@@ -97,14 +75,6 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
         if root.translation || root.rotation {
             source_bone=find(source,{root.bone})
             for index,b in mapping {if index==i32(source_bone) && source_bone>=0 {root_bone=b;break}}
-            if root_bone<0 && source_bone>=0 {
-                for chain in chains[:chain_count] {
-                    for binding in chain.mapping {
-                        if binding.source_a==i32(source_bone) && binding.fraction==0 || binding.source_b==i32(source_bone) && binding.fraction==1 {root_bone=int(binding.target);break}
-                    }
-                    if root_bone>=0 {break}
-                }
-            }
             root.bone={}
             if root_bone>=0 {root.bone=target.bones[root_bone].path} else {root.translation,root.rotation=false,false}
         }
@@ -116,9 +86,6 @@ retarget_bake :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,cl
             target_local,source_local:=lib.frames_pose(baked,frame),lib.frames_pose(sampled,frame)
             if !lib.skeleton_sample(&library,bindings,source_rig.rest,time,source_local) {return .Invalid}
             if !lib.retarget_pose(source_rig,target_rig,prepared,source_local,source_world,target_world,target_local) {return .Invalid}
-            for chain in chains[:chain_count] {
-                if !lib.chain_retarget_pose(target_rig,chain.mapping,source_world,target_local,target_world,chain.weight) {return .Invalid}
-            }
             if !lib.retarget_crotch_pose(target_rig,crotch,source_world,target_local,target_world) {return .Invalid}
         }
         if legs(source_body) && legs(target_body) && frames>=3 {

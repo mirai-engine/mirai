@@ -8,8 +8,8 @@ import "mirai:std/base"
 import anim "plugins:animation/runtime"
 
 // The tables of the modifiers of a .character.
-Profile_Table :: enum u8 {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Follow,Curve_Pose}
-Profile_Counts :: struct {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Follow,Curve_Pose:u32}
+Profile_Table :: enum u8 {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Spline_IK,Follow,Curve_Pose}
+Profile_Counts :: struct {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Spline_IK,Follow,Curve_Pose:u32}
 Profile_Set_Params :: struct {
     path:[1024]u8 `mirai:"text,label=Ending in .character: its other tables are kept"`,
     animation:base.Asset_Id `mirai:"optional,label=The .anim of the clips of a new .character; none for one of only modifiers"`,
@@ -21,7 +21,6 @@ Profile_Set_Params :: struct {
     twist:Profile_Twist_Params `mirai:"optional"`,
     spring:Profile_Spring_Params `mirai:"optional"`,
     multi_ik:Profile_Multi_Params `mirai:"optional"`,
-    retarget_chain:anim.Chain_Retarget_Constraint `mirai:"optional"`,
     spline_ik:Profile_Spline_Params `mirai:"optional"`,
     follow:Profile_Follow_Params `mirai:"optional"`,
     curve_pose:anim.Curve_Pose `mirai:"optional,label=A bone that a Float curve moves by delta at its value; a pose of a face is a row per bone"`,
@@ -33,7 +32,7 @@ Profile_Set_Params :: struct {
 authoring_profile_register :: proc(s:^editor.Session) {
     set:=new(Profile_Set_Params,context.temp_allocator);if set==nil {return}
     set.ik,set.look,set.limit=anim.IK_CONSTRAINT_DEFAULT,anim.LOOK_CONSTRAINT_DEFAULT,anim.ROTATION_CONSTRAINT_DEFAULT
-    set.retarget_chain=anim.CHAIN_RETARGET_CONSTRAINT_DEFAULT;profile_constraints_defaults(set)
+    profile_constraints_defaults(set)
     set.curve_pose=anim.CURVE_POSE_DEFAULT
     poses:=new(Profile_Poses_Params,context.temp_allocator);if poses==nil {return}
     poses.tolerance=PROFILE_POSES_TOLERANCE
@@ -45,7 +44,7 @@ authoring_profile_register :: proc(s:^editor.Session) {
 @(private)
 // The modifiers of a .character: the rows of each table and a page of the rows of one.
 character_modifiers :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profile_Table,offset,limit:u32,r:^Asset_Inspect_Result) {
-    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(1 if len(profile.grounding.legs)>0 else 0),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.retarget_chains)),u32(len(profile.spline_ik)),u32(len(profile.follow)),u32(len(profile.curve_poses))}
+    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(1 if len(profile.grounding.legs)>0 else 0),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.spline_ik)),u32(len(profile.follow)),u32(len(profile.curve_poses))}
     r.table=table
     o,l:=offset,limit
     grounding:=[1]anim.Foot_Grounding{profile.grounding}
@@ -57,7 +56,6 @@ character_modifiers :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profi
     case .Twist: r.twist=authoring_pages(call,profile.twist,o,l,Profile_Twist_Params)
     case .Spring: r.springs=authoring_pages(call,profile.springs,o,l,Profile_Spring_Params)
     case .Multi_IK: r.multi_ik=authoring_pages(call,profile.multi_ik,o,l,Profile_Multi_Params)
-    case .Chain_Retarget: r.retarget_chains=authoring_pages(call,profile.retarget_chains,o,l,anim.Chain_Retarget_Constraint)
     case .Spline_IK: r.spline_ik=authoring_pages(call,profile.spline_ik,o,l,Profile_Spline_Params)
     case .Follow: r.follow=authoring_pages(call,profile.follow,o,l,Profile_Follow_Params)
     case .Curve_Pose: r.curve_poses=authoring_pages(call,profile.curve_poses,o,l,anim.Curve_Pose)
@@ -77,7 +75,7 @@ profile_row :: proc(rows:[]$T,value:T,same:proc(a,b:T) -> bool,remove:bool,capac
 authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Profile_Set_Params)
     if !authoring_editable(s,call) {return}
-    fields:=[Profile_Table]string{.IK="ik",.Look="look",.Limit="limit",.Grounding="grounding",.Twist="twist",.Spring="spring",.Multi_IK="multi_ik",.Chain_Retarget="retarget_chain",.Spline_IK="spline_ik",.Follow="follow",.Curve_Pose="curve_pose"}
+    fields:=[Profile_Table]string{.IK="ik",.Look="look",.Limit="limit",.Grounding="grounding",.Twist="twist",.Spring="spring",.Multi_IK="multi_ik",.Spline_IK="spline_ik",.Follow="follow",.Curve_Pose="curve_pose"}
     if p.table>max(Profile_Table) || !(p.remove && p.table==.Grounding) && !authoring_field_present(call,fields[p.table]) {authoring_failure(call,"table","Required","the constraint field selected by table","missing or invalid table","Supply the constraint field selected by table");return}
     file:Authoring_File;defer asset.asset_close(&file.file)
     set,id,ok:=character_target(s,call,base.text_get(p.path[:]),p.animation,&file,clips=false);if !ok {return}
@@ -94,7 +92,6 @@ authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     case .Twist: profile.twist,replaced=profile_row(profile.twist,profile_twist_value(call,p.twist),proc(a,b:anim.Twist_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Spring: profile.springs,replaced=profile_row(profile.springs,profile_spring_value(call,p.spring),proc(a,b:anim.Spring_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Multi_IK: profile.multi_ik,replaced=profile_row(profile.multi_ik,profile_multi_value(call,&p.multi_ik),proc(a,b:anim.Multi_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
-    case .Chain_Retarget: profile.retarget_chains,replaced=profile_row(profile.retarget_chains,p.retarget_chain,proc(a,b:anim.Chain_Retarget_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Spline_IK: profile.spline_ik,replaced=profile_row(profile.spline_ik,profile_spline_value(p.spline_ik),proc(a,b:anim.Spline_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Follow: profile.follow,replaced=profile_row(profile.follow,profile_follow_value(p.follow),proc(a,b:anim.Follow_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Curve_Pose: profile.curve_poses,replaced=profile_row(profile.curve_poses,p.curve_pose,proc(a,b:anim.Curve_Pose) -> bool {return a.curve==b.curve && a.bone==b.bone},p.remove,anim.POSE_CURVE_ROWS,call.allocator)

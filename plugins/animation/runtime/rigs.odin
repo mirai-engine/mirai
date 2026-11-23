@@ -71,14 +71,6 @@ Multi_IK_Definition :: struct {
 }
 MULTI_IK_CONSTRAINT_DEFAULT :: Multi_IK_Constraint{definition={settings=lib.MULTI_IK_DEFAULT,weight=1,enabled=true}}
 
-Chain_Retarget_Constraint :: struct {
-    name:[64]u8 `mirai:"text"`,
-    source_root,source_end,target_root,target_end:Bone_Ref,
-    weight:f32,
-    enabled:bool,
-}
-CHAIN_RETARGET_CONSTRAINT_DEFAULT :: Chain_Retarget_Constraint{weight=1,enabled=true}
-
 Rig_Diagnostic :: struct {rig:core.Entity,kind:Modifier_Kind,residual,angular_error:f32,iterations:int,reached,valid:bool}
 Rig_Binding :: struct {
     rig:core.Entity,
@@ -114,18 +106,6 @@ Multi_IK_Binding :: struct {
     backup:[dynamic]mm.Transform,
     links:[dynamic]lib.Pose_Link,
 }
-Chain_Retarget_Binding :: struct {
-    using binding:Rig_Binding,
-    source:core.Entity,
-    source_bound:u64,
-    source_generation:u32,
-    bones,source_bones:[RIG_CHAIN_BONES]i32,
-    count,source_count:u8,
-    mappings:[RIG_CHAIN_BONES]lib.Chain_Retarget_Bone,
-    source_rest,source_pose,target_rest:[dynamic]mm.Transform,
-    source_world,target_world:[dynamic]mm.Transform,
-    source_wrapper,target_wrapper:bool,
-}
 
 @(private)
 rig_binding_free :: proc(binding:^$T) {
@@ -133,10 +113,6 @@ rig_binding_free :: proc(binding:^$T) {
     when T==Look_Binding {delete(binding.previous.path)}
     when T==Spline_IK_Binding {for target in binding.targets {delete(target.path)}}
     when T==Multi_IK_Binding {for target in binding.targets {delete(target.path)};delete(binding.backup);delete(binding.links)}
-    when T==Chain_Retarget_Binding {
-        delete(binding.source_rest);delete(binding.source_pose);delete(binding.target_rest)
-        delete(binding.source_world);delete(binding.target_world)
-    }
     binding^={}
 }
 @(private)
@@ -175,7 +151,7 @@ rig_limits_valid :: proc(limits:[]lib.Chain_Limit) -> bool {
 }
 
 rig_profiles_check :: proc(profile:Pose_Profile) -> bool {
-    if len(profile.twist)>POSE_CONSTRAINTS || len(profile.springs)>POSE_CONSTRAINTS || len(profile.multi_ik)>POSE_CONSTRAINTS || len(profile.retarget_chains)>POSE_CONSTRAINTS {return false}
+    if len(profile.twist)>POSE_CONSTRAINTS || len(profile.springs)>POSE_CONSTRAINTS || len(profile.multi_ik)>POSE_CONSTRAINTS {return false}
     for &value,i in profile.twist {
         if !rig_named_valid(value.name[:]) || !profile_bone(value.source) || !profile_bone(value.root) || !profile_bone(value.end) || !profile_vector(value.axis) || linalg.length(value.axis)<1e-6 || !profile_rotation(value.reference) || !profile_weight(value.weight) || int(value.amount_count)>RIG_CHAIN_BONES {return false}
         total:f32;for amount in value.amounts[:value.amount_count] {if !finite(amount) || amount<0 {return false};total+=amount}
@@ -205,10 +181,6 @@ rig_profiles_check :: proc(profile:Pose_Profile) -> bool {
         }
         for &other in profile.multi_ik[:i] {if value.name==other.name {return false}}
     }
-    for &value,i in profile.retarget_chains {
-        if !rig_named_valid(value.name[:]) || !profile_bone(value.source_root) || !profile_bone(value.source_end) || !profile_bone(value.target_root) || !profile_bone(value.target_end) || !profile_weight(value.weight) {return false}
-        for &other in profile.retarget_chains[:i] {if value.name==other.name {return false}}
-    }
     return rig_shapes_check(profile)
 }
 
@@ -230,10 +202,10 @@ rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier_Rig,po
 
 // Why an operation of the .character of a rig did nothing in a tick.
 @(private)
-Rig_Failure :: enum u8 {Bind,Target,Solve,Source}
+Rig_Failure :: enum u8 {Bind,Target,Solve}
 
 @(private)
-rig_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,value:^$T,failure:Rig_Failure,source:=core.NONE) {
+rig_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,value:^$T,failure:Rig_Failure) {
     name:=modifier_operation_name(value)
     switch failure {
     case .Bind:
@@ -242,8 +214,6 @@ rig_problem :: proc(problems:^core.Problems,rig:core.Entity,kind:Modifier_Kind,v
         core.report(problems,rig,"animation.rig_target","%v '%s' of this rig has no target: its entity is gone or has no Transform, its rig is not animated in this tick, or its bone or socket is not in that skeleton; give it a target that exists",kind,name)
     case .Solve:
         core.report(problems,rig,"animation.rig_solve","%v '%s' of this rig could not be solved: a value of it, of its targets or of the pose is not finite or is out of range; check them (animation.inspect shows its diagnostic)",kind,name)
-    case .Source:
-        core.report(problems,rig,"animation.rig_source","%v '%s' of this rig maps the sampled pose of another rig, and its Pose_Source names entity 0x%016x, which is not another rig animated in this tick, or not with stage Sampled; give it a Pose_Source of stage Sampled that names one",kind,name,u64(source))
     }
 }
 
@@ -337,46 +307,6 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier
         valid &&=solved
     }
     return valid
-}
-
-// Gives a rig that takes the sampled pose of another (Pose_Source of stage Sampled) that pose
-// through the Chain Retarget rows of its .character: true when it has any.
-rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtime,rig:^Modifier_Rig,pose:Pose_Profile,problems:^core.Problems) -> bool {
-    if state==nil || playback==nil || runtime==nil {return false}
-    if len(pose.retarget_chains)==0 {return false}
-    for &config,slot in pose.retarget_chains {
-        weight,enabled:=modifier_weight(&modifier_states(rig,.Chain_Retarget)[slot],runtime.time)
-        binding:=&rig.retarget_chain_states[slot]
-        binding.diagnostic.valid=false
-        if !enabled || weight<=0 {continue}
-        source:=constraint_playing(core.ref(playback),state.leader) if state.stage==.Sampled else nil
-        if source==nil || source==state || len(playing_pose(source,.Sampled))!=len(playing_topology(source).rest) {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Source,state.leader);continue}
-        if !rig_binding_current(binding,state) || binding.source!=source.entity || binding.source_bound!=source.bound || binding.source_generation!=source.generation {
-            binding.ready=false
-            count,ok:=rig_chain_bind(state,config.target_root,config.target_end,binding.bones[:]);source_count,source_ok:=rig_chain_bind(source,config.source_root,config.source_end,binding.source_bones[:])
-            if !ok || !source_ok {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Bind);continue}
-            if resize(&binding.source_rest,len(playing_topology(source).rest))!=nil || resize(&binding.source_pose,len(playing_topology(source).rest))!=nil || resize(&binding.source_world,len(playing_topology(source).rest))!=nil || resize(&binding.target_rest,len(playing_topology(state).rest))!=nil || resize(&binding.target_world,len(playing_topology(state).rest))!=nil {memory_problem(problems,state.entity,"a Chain Retarget of its .character");continue}
-            copy(binding.source_rest[:],playing_topology(source).rest[:]);copy(binding.target_rest[:],playing_topology(state).rest[:])
-            binding.source_wrapper=source.bindings[0].target==0 && playing_topology(source).parents[0]<0 && binding.source_bones[0]!=0
-            binding.target_wrapper=state.bindings[0].target==0 && playing_topology(state).parents[0]<0 && binding.bones[0]!=0
-            if binding.source_wrapper {binding.source_rest[0]=mm.TRANSFORM_IDENTITY}
-            if binding.target_wrapper {binding.target_rest[0]=mm.TRANSFORM_IDENTITY}
-            source_skeleton,target_skeleton:=playing_skeleton(source),playing_skeleton(state)
-            source_skeleton.rest,target_skeleton.rest=binding.source_rest[:],binding.target_rest[:]
-            if !lib.chain_retarget_prepare(source_skeleton,target_skeleton,binding.source_bones[:source_count],binding.bones[:count],binding.source_world[:],binding.target_world[:],binding.mappings[:count]) {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Solve);continue}
-            binding.count,binding.source_count=u8(count),u8(source_count);binding.source,binding.source_bound,binding.source_generation=source.entity,source.bound,source.generation
-            rig_binding_publish(binding,state,.Chain_Retarget)
-        }
-        copy(binding.source_pose[:],playing_pose(source,.Sampled));if binding.source_wrapper {binding.source_pose[0]=mm.TRANSFORM_IDENTITY}
-        source_skeleton:=playing_skeleton(source);source_skeleton.rest=binding.source_rest[:]
-        if !lib.skeleton_world(source_skeleton,binding.source_pose[:],binding.source_world[:]) {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Solve);continue}
-        actor:=playing_pose(state,.Local)[0];if binding.target_wrapper {playing_pose(state,.Local)[0]=mm.TRANSFORM_IDENTITY}
-        solved:=lib.chain_retarget_pose(playing_skeleton(state),binding.mappings[:binding.count],binding.source_world[:],playing_pose(state,.Local),playing_pose(state,.World),weight)
-        if binding.target_wrapper {playing_pose(state,.Local)[0]=actor}
-        if !solved {rig_problem(problems,state.entity,.Chain_Retarget,&config,.Solve)}
-        binding.diagnostic.valid=solved
-    }
-    return true
 }
 
 modifier_operation_name :: proc(value:^$T) -> string {

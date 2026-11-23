@@ -74,6 +74,17 @@ character_roundtrips_every_part_and_rejects_invalid_references_and_ranges :: pro
     }
     // A set that names no clip needs no animation: the modifiers of a rope.
     testing.expect(t,character_check({match={info=MATCH_INFO_DEFAULT},motion={warp=POSE_WARP_PROFILE_DEFAULT},pose={grounding=set.pose.grounding}}))
+    // A set written by an earlier version is refused, not read as this one.
+    doc.kind_version=CHARACTER_VERSION-1
+    older:serial.Writer;serial.writer_init(&older);defer serial.writer_destroy(&older)
+    if testing.expect_value(t,asset.document_write(&doc,&older),asset.Error.None) {
+        old_file:asset.Asset
+        if testing.expect_value(t,asset.asset_open(&old_file,serial.writer_bytes(&older)),asset.Error.None) {
+            _,old_read:=character_view(&old_file,&types)
+            testing.expect(t,old_read!=.None,"a .character of the version before is refused")
+            asset.asset_close(&old_file)
+        }
+    }
     for length in 0..<len(bytes) {
         damaged:asset.Asset
         if asset.asset_open(&damaged,bytes[:length])==.None {character_view(&damaged,&types);asset.asset_close(&damaged)}

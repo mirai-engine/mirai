@@ -53,6 +53,7 @@ Content_Animation :: struct {
     roots:[]asset.Animation_Root,
     markers:[]Content_Marker, // of each marker: anim.Marker.id is its index
     names:[][asset.ANIMATION_NAME_CAPACITY]u8, // of each clip
+    skeletons:[]base.Asset_Id, // of each clip: the .skeleton it was made on; none: unknown
     morphs:[]Content_Morph, // its curves of morph weights, each once
     fields:[]Content_Field, // its curves that drive a field of a component, each once
     load:^Content_Animation_Load, // a load of its file under way (content_animation.odin)
@@ -269,7 +270,8 @@ content_ui_free :: proc(c:^Content,entry:^Content_Ui) {
 content_animation_free :: proc(c:^Content,entry:^Content_Animation) {
     anim.library_destroy(&entry.lib)
     delete(entry.markers,c.allocator);delete(entry.names,c.allocator);delete(entry.roots,c.allocator);delete(entry.morphs,c.allocator);delete(entry.fields,c.allocator)
-    entry.markers,entry.names,entry.roots,entry.morphs,entry.fields,entry.clip_count=nil,nil,nil,nil,nil,0
+    delete(entry.skeletons,c.allocator)
+    entry.markers,entry.names,entry.roots,entry.morphs,entry.fields,entry.skeletons,entry.clip_count=nil,nil,nil,nil,nil,nil,0
 }
 // The mixer reads the file of a stream until its audio thread lets go of the
 // sound, which nothing reports: the file of a stream that is replaced stays

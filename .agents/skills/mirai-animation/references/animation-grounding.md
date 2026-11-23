@@ -169,7 +169,7 @@ Body:
 
 ## Execution and state
 
-- It runs after physics; within animation, after the retarget and the removal of root motion from
+- It runs after physics; within animation, after the removal of root motion from
   the pose and before the manual constraints and the sockets. Chain: supports, foot height, body,
   support corrections, two-segment IK and foot orientation.
 - Each leg queries its support with a ray; the other rays are only for a contact other than the

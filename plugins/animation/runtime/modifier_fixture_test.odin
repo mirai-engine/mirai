@@ -38,12 +38,3 @@ test_rigs_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,characters:^Cha
     return rigs_apply(state,runtime,rig,pose^,inputs,transforms,parents,root,dt,playback)
 }
 
-@(private)
-test_rigs_retarget :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtime,
-    characters:^Character_Assets,problems:^core.Problems) -> bool {
-    rig:=modifier_rig(core.ref(runtime),state.entity)
-    empty:Pose_Profile
-    pose:=modifier_pose(rig,characters)
-    if pose==nil {pose=&empty}
-    return rigs_retarget(state,playback,runtime,rig,pose^,problems)
-}
