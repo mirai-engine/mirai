@@ -973,6 +973,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if p.use_gi && p.plan.gi_given {f.flags |= FRAME_FLAG_GI_GIVEN}
 	if r.hardware_rt {f.flags |= FRAME_FLAG_HW_RT}
 	if s.environment.ground_grid && !p.texture {f.flags |= FRAME_FLAG_GRID}
+	if r.resolve_counted {f.flags |= FRAME_FLAG_RESOLVE_COUNTED}
 	p.reflectance, p.layered = reflectance_in_frustum(r, f.frustum)
 	// What the surfaces of the Gbuffer stage of extensions need, wherever they are.
 	if stage_asked(r, .Gbuffer) {

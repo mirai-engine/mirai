@@ -75,8 +75,7 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 [[vk::binding(SLOT_IRRADIANCE, 0)]] Texture2D<float4> irradiance_atlas : register(MIRAI_REGISTER(t, SLOT_IRRADIANCE), space0);
 [[vk::binding(SLOT_DISTANCE, 0)]] Texture2D<float4> distance_atlas : register(MIRAI_REGISTER(t, SLOT_DISTANCE), space0);
 [[vk::binding(SLOT_SURFACE, 0)]] Texture2D<float4> surface_specular : register(MIRAI_REGISTER(t, SLOT_SURFACE), space0);
-// The motion target of the view: rg the motion of each pixel, b the roughness
-// of its material before specular antialiasing, a 1 + its nested view.
+// The motion target of the view: rg the motion of each pixel, a 1 + its nested view.
 [[vk::binding(SLOT_VIEWS, 0)]] Texture2D<float4> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
 #include "brdf.slang"
 #include "air.slang"
@@ -607,23 +606,19 @@ float4 material_texel(uint texture_index, float2 uv, float lod) {
 #endif
 }
 
-float2 material_map_uv(Material m, uint map, float2 uv0, float2 uv1) {
-    Material_Map_Transform transform = materials[m.row].map_transforms[map];
+float2 material_map_uv(Material_Map_Transform transform, float2 uv0, float2 uv1) {
     float2 uv = transform.uv_set == 1u ? uv1 : uv0;
     return float2(dot(transform.linear.xy, uv), dot(transform.linear.zw, uv)) + transform.offset;
 }
-float material_map_lod(Material m, uint map, float2 lod, bool ray) {
-    Material_Map_Transform transform = materials[m.row].map_transforms[map];
-    float value = transform.uv_set == 1u ? lod.y : lod.x;
-    return ray ? value + transform.ray_lod : value;
-}
+float2 material_map_uv(Material m, uint map, float2 uv0, float2 uv1) { return material_map_uv(materials[m.row].map_transforms[map], uv0, uv1); }
 float4 material_map_texel(Material m, uint map, uint texture_index, float2 uv0, float2 uv1, float2 lod, bool ray) {
-    float2 uv = material_map_uv(m, map, uv0, uv1);
-    float level = material_map_lod(m, map, lod, ray);
+    Material_Map_Transform transform = materials[m.row].map_transforms[map];
+    float2 uv = material_map_uv(transform, uv0, uv1);
+    float level = transform.uv_set == 1u ? lod.y : lod.x;
+    if (ray) level += transform.ray_lod;
 #ifdef MATERIAL_GRADIENTS
     if (!ray) {
         // The gradients of its uv set, through the linear part of its transform, `level` a bias.
-        Material_Map_Transform transform = materials[m.row].map_transforms[map];
         float4 g = material_uv_gradients[transform.uv_set == 1u ? 1 : 0];
         float2 dx = float2(dot(transform.linear.xy, g.xy), dot(transform.linear.zw, g.xy));
         float2 dy = float2(dot(transform.linear.xy, g.zw), dot(transform.linear.zw, g.zw));
@@ -665,13 +660,14 @@ bool instance_mirrored(Instance inst) { return dot(inst.world[0].xyz, cross(inst
 // A tangent of an instance in the world: a unit direction along its surface,
 // as long as the normal it is interpolated with (MikkTSpace), and the side
 // its bitangent is on, which a reflection turns around.
-float4 instance_tangent(Instance inst, float4 tangent) {
-    return float4(normalize(transform_vector(inst.world, tangent.xyz)), instance_mirrored(inst) ? -tangent.w : tangent.w);
+// mirrored: instance_mirrored of the instance.
+float4 instance_tangent(Instance inst, bool mirrored, float4 tangent) {
+    return float4(normalize(transform_vector(inst.world, tangent.xyz)), mirrored ? -tangent.w : tangent.w);
 }
 // The tangent of a point of a triangle a ray hit: those of its corners interpolated at w, in the world.
 float4 hit_tangent(Instance inst, float3 w, Mesh_Triangle t) {
     float3 along = t.a.tangent.xyz * w.x + t.b.tangent.xyz * w.y + t.c.tangent.xyz * w.z;
-    return instance_tangent(inst, float4(along, t.a.tangent.w));
+    return instance_tangent(inst, instance_mirrored(inst), float4(along, t.a.tangent.w));
 }
 // The normal the normal map of a material gives where a ray hit a triangle.
 float3 material_ray_normal(Material m, Instance inst, float3 normal, float3 w, Mesh_Triangle t, float2 uv, float2 uv1, float2 lod) {
@@ -814,6 +810,13 @@ uint material_layers_allowed(uint layers) {
     if (MIRAI_MATERIAL_NO_LAYERS) return layers & MATERIAL_LAYER_UNLIT;
 #endif
     return layers;
+}
+// Whether a material reads the tangent of its surface: by its normal map, the
+// normal map of its coat, an anisotropic lobe or a program.
+bool material_tangents(Material m) {
+    uint layers = material_layers_allowed(m.layers);
+    return m.program_id != 0u || material_has(m.textures[MATERIAL_MAP_NORMAL]) || (layers & MATERIAL_LAYER_ANISOTROPY) != 0u
+        || ((layers & MATERIAL_LAYER_COAT) != 0u && material_has(m.textures[MATERIAL_MAP_COAT_NORMAL]));
 }
 // The layers a material holds at a point (MATERIAL_LAYER_* of its row): the
 // blocks of the row, under the values of the instance, by their maps. The coat follows the surface under the
@@ -1087,8 +1090,12 @@ void material_wet_apply(inout Material_Sample s, Material m, float wet) {
 // the shared maps; the normal supplied by the caller remains its input.
 Material_Sample material_sample_finish(Material_Sample values, Material m, Mirai_Surface_Context ctx) {
     material_wet_apply(values, m, ctx.wet);
-    // A masked material covers by its mask map, whatever its program or standard model give.
+    // A masked material covers by its mask map, whatever its program or standard model give. A
+    // surface resolved from the visibility target (MATERIAL_GRADIENTS) was cut by it there
+    // (vis_raster.frag), and nothing reads its alpha.
+#ifndef MATERIAL_GRADIENTS
     if (m.alpha_mode == ALPHA_MASK) values.alpha = material_mask(m, ctx.uv0, ctx.uv1, float2(ctx.lod, ctx.lod1), ctx.ray);
+#endif
     // The emission of the instance takes the mode of the material's.
     values.emission_relative = m.emission_mode == EMISSION_RELATIVE;
     return values;

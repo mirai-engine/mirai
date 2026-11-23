@@ -209,7 +209,8 @@ float vis = sun_shadow_seen(world_pos, float3(0), cell_width, true); // -1 -> ra
   and composite into the atlas (exact cache where coverage < 50%, tile plane inside, farthest
   depth on silhouettes; `SHADOW_SWAY_*`).
 - **Rest-space coherence:** Rays and probes see batches at rest. `rest.comp` writes sway offset
-  (`pixel_rest` in `gbuffer.slang`, `FRAME_FLAG_SWAY`; impostors use `pass_rest_write`) so
+  of the pixels of batches only; the others keep a stale texel that the depth stored with it
+  rejects (`pixel_rest` in `gbuffer.slang`, `FRAME_FLAG_SWAY`; impostors use `pass_rest_write`) so
   shadow rays, contact occlusion, reflections, probes, and distant rest-cached maps query from
   the rest position while near swaying maps query the swayed position (`shadow_place`).
 

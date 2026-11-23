@@ -960,6 +960,7 @@ material_program_resolve_shades_each_pixel_once :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	r.resolve_counted = true
 	grid, sampled := program_find(r, "Grid", .Surface), program_find(r, "Sampled", .Surface)
 	if !testing.expect(t, grid != nil && sampled != nil, "the tests have the Grid and Sampled programs") {return}
 	lined, imaged := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -995,6 +996,7 @@ material_program_with_derivatives_of_its_own_evaluates_no_quad_again :: proc(t: 
 	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	r.resolve_counted = true
 	for name in ([]string{"Sampled", "Tiled"}) {
 		program := program_find(r, name, .Surface)
 		if !testing.expectf(t, program != nil, "the tests have the %s program", name) {return}

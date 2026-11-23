@@ -238,10 +238,10 @@ Stats :: struct {
 	raster_vertices:   u32, // the vertices the raster of the visibility target drew, of abi.RASTER_VERTEX_WORDS each
 	raster_triangles:  u32, // and its triangles, of those the cull found visible (visible_triangles): three indices and a word each
 	raster_deferred:   u32, // the clusters a round of it left to the next, their lists full; 0 once the lists hold a frame in a round
-	// What the resolve of the G-buffer of the last view culled shaded: each
-	// pixel of a triangle once, the lanes of their quads that ran only for
-	// derivatives, and the quads whose triangles do not continue one another
-	// that a program evaluated again, once per triangle.
+	// While resolve_counted, what the resolve of the G-buffer of the last
+	// view culled shaded: each pixel of a triangle once, the lanes of their
+	// quads that ran only for derivatives, and the quads whose triangles do
+	// not continue one another that a program evaluated again, once per triangle.
 	resolved_pixels:   u32,
 	resolve_helpers:   u32,
 	resolve_quads_again: u32,
@@ -699,6 +699,7 @@ Renderer :: struct {
 	pixel_density:   f32, // device pixels per native window coordinate
 	frame:           u64,
 	stats:           Stats,
+	resolve_counted: bool, // the resolve counts what it shades (Stats.resolved_pixels), an atomic per wave
 	submissions:     Gpu_Submissions,
 	error_buffer:    [512]u8,
 	error:           string,
