@@ -122,7 +122,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_buffer(cmd, SLOT_INDICES, or_dummy(r, s.index_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_MATERIALS, or_dummy(r, s.material_buffer))
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
-	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.motion)
+	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.views if p.t.views != 0 else r.dummy_uint)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
 	rhi.cmd_bind_texture(cmd, SLOT_REST, p.t.rest if p.t.rest != 0 else r.dummy_rest)
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_uint)
@@ -258,7 +258,9 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 	rhi.cmd_end_render_pass(cmd)
 	targets, count := gbuffer_targets(p)
 	pass := rhi.Render_Pass_Desc{color_count = count, name = "nested view resolve" if nested else "resolve"}
-	for target, i in targets[:count] {pass.colors[i] = {texture = target, load = .Load if nested else .Clear, store = .Store}}
+	for target, i in targets[:count] {
+		pass.colors[i] = {texture = target, load = .Load if nested else .Clear, store = .Store}
+	}
 	pass.depth = {texture = t.program_depth, load = .Load, store = .Dont_Care}
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	if p.draw {
@@ -1406,7 +1408,6 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		f.layers = nested.layers & LAYERS_ALL if nested.layers & LAYERS_ALL != 0 else LAYERS_ALL
 		// A mirror or a portal shows the body its view hides.
 		f.own = 0
-		f.view_index = index
 		constants := rhi.frame_alloc(d, u64(r.frame_layout.size), 256)
 		if constants.ptr == nil {set_error(r, "nested view constants: %s", rhi.device_error(d)); return false}
 		mem.copy(constants.ptr, p.constants.ptr, r.frame_layout.size)
@@ -1428,7 +1429,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 		prime_params := Prime_Params{index = index}
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[.Nested_Prime])
 		set_params(cmd, &prime_params)
-		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.motion)
+		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.views)
 		if nested.rect.z > 0 && nested.rect.w > 0 {
 			x, y := clamp(nested.rect.x, 0, i32(t.width)), clamp(nested.rect.y, 0, i32(t.height))
 			rhi.cmd_set_scissor(cmd, x, y, u32(clamp(nested.rect.z, 0, i32(t.width) - x)), u32(clamp(nested.rect.w, 0, i32(t.height) - y)))
@@ -1712,6 +1713,7 @@ pass_composite :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, p.gi)
 	// Without an atmosphere the composite reads no aerial perspective: any volume stands for it.
 	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.aerial if t.aerial != 0 else r.display_lut)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.display)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	p.shown = t.display

@@ -6,13 +6,14 @@
 //                    roughness widened by specular antialiasing, w its
 //                    MATERIAL_LAYER_* bits and GBUFFER_EMISSION_RELATIVE
 //   GBUFFER_EMISSION RGBA16F: emission in render units, a ambient occlusion
-// The other targets of the G-buffer are bound for every pass: the motion
-// target is pixel_views (rg the motion of the pixel, a 1 + its nested view)
-// and the reflectance target surface_specular (pixel_reflectance), and while
-// an instance with layers is in sight, the layers target gbuffer_layers_target, and while a batch gives
-// the vertex hook values (FRAME_FLAG_SWAY), the rest target pixel_rests,
-// which rest.comp writes after the resolve (pixel_rest). The linear depth keeps
-// its own decoders (depth_* of common.slang).
+// The other targets of the G-buffer are bound for every pass: the views
+// target pixel_views (pixel_view), the reflectance target surface_specular
+// (pixel_reflectance), and while an instance with layers is in sight, the
+// layers target gbuffer_layers_target, and while a batch gives the vertex
+// hook values (FRAME_FLAG_SWAY), the rest target pixel_rests, which rest.comp
+// writes after the resolve (pixel_rest). The motion target (RG16F, the offset
+// of each pixel to the previous frame in UV) is bound by the passes that read
+// it. The linear depth keeps its own decoders (depth_* of common.slang).
 #ifndef MIRAI_GBUFFER_SLANG
 #define MIRAI_GBUFFER_SLANG
 #include "scene.slang"

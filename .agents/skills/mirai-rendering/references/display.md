@@ -29,7 +29,7 @@ Render units:
   and a night equally well.
 - A new scale is a change of units: the next frame carries the histories and the probe volume to
   it, without starting over ([light of each world](gi.md#light-of-each-world)).
-- `firefly_clamp` and the absolute thresholds of the shaders are in render units: they hold the
+- The absolute thresholds of the shaders are in render units: they hold the
   same by day and by night. The light that is not worth its shadow ray (`light_cutoff`) is
   measured exposed like the view: in render units, a distant light thousands of times stronger
   lowered the scale and cut the lamp of the room.

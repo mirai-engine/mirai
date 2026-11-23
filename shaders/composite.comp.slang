@@ -30,6 +30,7 @@ struct Params_Block { uint gathered; uint pad0; uint pad1; uint pad2; };
 // rgb with FRAME_FLAG_GI_GIVEN: the diffuse indirect light a custom pass of the pipeline gives.
 [[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> indirect_input : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 [[vk::binding(SLOT_PASS6, 0)]] Texture3D<float4> aerial : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
+[[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> g_motion : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PASS8, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_display : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
 
 // What lies at distance along the ray of uv seen through the air: its light
@@ -69,7 +70,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     Pixel pixel = pixel_at(p, uv, depth);
     Gbuffer_Pixel g = gbuffer_read(p);
-    float4 motion = pixel_views.Load(int3(p, 0));
     Shading s = gbuffer_shading(g, pixel);
     float3 direct = direct_light.Load(int3(p, 0)).rgb;
     bool given = (frame.flags & (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN)) == (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN);
@@ -91,7 +91,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     case DEBUG_DIRECT: color = direct; break;
     case DEBUG_INDIRECT: color = indirect; break;
     case DEBUG_PROBES: color = sample_probes(s.position, s.normal, s.view); break;
-    case DEBUG_MOTION: color = float3(abs(motion.rg) * 50.0, 0.0); break;
+    case DEBUG_MOTION: color = float3(abs(g_motion.Load(int3(p, 0)).rg) * 50.0, 0.0); break;
     case DEBUG_DEPTH: color = float3(1.0 / (1.0 + depth_distance(depth) * 0.1)); break;
     case DEBUG_ROUGHNESS: color = float3(g.roughness); break;
     case DEBUG_METALLIC: color = float3(g.metallic); break;

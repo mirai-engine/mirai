@@ -98,11 +98,13 @@ FRAME_FLAG_RESOLVE_COUNTED :: 32 // the resolve counts what it shades (Stats.res
 FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (surface_specular)
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)
+FRAME_FLAG_NESTED       :: 512 // the view added nested views: the views target names the view of each pixel (pixel_view)
 
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
 INSTANCE_RAY_SHIFT          :: 24
 INSTANCE_UNSHADOWED         :: u32(1) << 26
+INSTANCE_FLAG_GLASS         :: u32(1) << 27
 INSTANCE_FLAG_HIDDEN        :: 1
 INSTANCE_FLAG_COLLAPSED     :: 2
 INSTANCE_FLAG_SMALL         :: 4
@@ -632,6 +634,9 @@ INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PA
 MATERIAL_WORDS           :: 29 + len(asset.Material_Map_Kind)
 MATERIAL_BLOCK_WORDS     :: 19
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
+// The bits of what the program of a row does (render.Gpu_Material_Volume.program).
+MATERIAL_PROGRAM_CHANGING    :: 1 // what it gives a point changes with nothing that says so: it reads the time
+MATERIAL_PROGRAM_REFLECTANCE :: 2 // it may give a reflectance its base color and metallic do not (Program.reflectance)
 
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256
@@ -675,7 +680,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 5
+SHADER_CATALOG_VERSION :: 6
 
 Shader_Catalog :: struct {
     version:int,
@@ -735,6 +740,7 @@ Program :: struct {
     layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model its source writes
     coverage:bool,                // of a Surface program: it sets alpha, which a masked material may not (its mask map cuts it)
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
+    reflectance:bool,             // of a Surface program: its source names the specular color, factor or IOR of Mirai_Surface, so what it reflects may depart from what its base color and metallic give
     reads:Program_Reads,          // of a Surface program: what its evaluation reads of its context
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
     attribute_fields:[]Program_Attribute, // of a Vfx program: the fields of those bytes, in the order it declares them

@@ -10,7 +10,7 @@ struct Stage_Output {
     [[vk::location(0)]] float4 g_albedo : SV_Target0;
     [[vk::location(1)]] float4 g_normal : SV_Target1;
     [[vk::location(2)]] float4 g_emission : SV_Target2;
-    [[vk::location(3)]] float4 g_motion : SV_Target3;
+    [[vk::location(3)]] float2 g_motion : SV_Target3;
     [[vk::location(4)]] float g_depth : SV_Target4;
 #ifndef MIRAI_GBUFFER_PLAIN
     [[vk::location(5)]] float4 g_specular : SV_Target5;
@@ -49,7 +49,7 @@ Stage_Output gbuffer_output(Raster_Input input, Fragment f) {
     output.g_specular = specular_pack(f.values.f0, f.values.f90);
 #endif
     // Screen-space offset to the previous frame in UV units (y down).
-    output.g_motion = float4((previous - current) * float2(0.5, -0.5), 0.0, 1.0);
+    output.g_motion = (previous - current) * float2(0.5, -0.5);
     output.g_depth = dot(input.in_world - frame.camera_position.xyz, frame.camera_forward.xyz);
 #ifdef MIRAI_INSTANCE_IDS
     output.g_instance = input.in_instance == INVALID ? 0u : input.in_instance + 1u;
@@ -57,10 +57,9 @@ Stage_Output gbuffer_output(Raster_Input input, Fragment f) {
     return output;
 }
 
-// The pixels of a nested view keep their linear depth negative and the index
-// of the view in the alpha of the motion target.
+// The pixels of a nested view keep their linear depth negative; its mask
+// named them in the views target (pixel_view).
 Stage_Output gbuffer_output_nested(Stage_Output output) {
-    output.g_motion.a = 1.0 + float(frame.view_index);
     output.g_depth = -output.g_depth;
     return output;
 }

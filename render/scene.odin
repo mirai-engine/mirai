@@ -662,7 +662,8 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 		for program in renderer_programs(r) {
 			if program.id != m.program_id || program.domain != .Surface {continue}
 			layers += program.layers
-			result.volume.changing = u32(.Time in program.reads)
+			if .Time in program.reads {result.volume.program |= abi.MATERIAL_PROGRAM_CHANGING}
+			if program.reflectance {result.volume.program |= abi.MATERIAL_PROGRAM_REFLECTANCE}
 		}
 	}
 	result.layers = transmute(u32)layers
@@ -894,6 +895,7 @@ Material_Class :: struct {
 	specular_factor, ior:           f32,
 	transmissive, solid:            bool,
 	specular, specular_colored:     u32,
+	program_reflectance:            bool,
 }
 
 @(private = "file")
@@ -903,6 +905,7 @@ material_class :: proc "contextless" (row: Gpu_Material_Row) -> Material_Class {
 		specular_color = row.specular_color, specular_factor = row.specular_factor, ior = row.ior,
 		transmissive = row.transmission > 0, solid = row.transmission > 0 && row.thickness > 0,
 		specular = row.textures[.Specular], specular_colored = row.textures[.Specular_Color],
+		program_reflectance = row.volume.program & abi.MATERIAL_PROGRAM_REFLECTANCE != 0,
 	}
 }
 
@@ -974,11 +977,12 @@ instances_classify :: proc(s: ^Scene_State) {
 			}
 		}
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
+		word := inst.meta.x &~ INSTANCE_FLAG_GLASS | glass_flag(a)
 		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
-		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
-		if flags != inst.meta.w || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
+		mask_flags := tlas_mask_flags(ray_class(word, flags), a.tested, mesh.tested)
+		if flags != inst.meta.w || word != inst.meta.x || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
 			before := inst
-			inst.meta.w, inst.tested = flags, a.tested
+			inst.meta.x, inst.meta.w, inst.tested = word, flags, a.tested
 			// What its values made glass, or fade, the maps draw again where it is.
 			if !instance_shades_same(before, inst) {occluder_moved(s, u32(i), before, inst)}
 			s.hw_instances[i].mask_flags = mask_flags
@@ -1036,7 +1040,10 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
             if given!=0 && m!=.Blend && values.program_id!=0 && s.materials[row].alpha_mode==u32(asset.Alpha_Mode.Blend) {a.shown_opaque|=1<<u32(k)}
-            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
+            // A program departs where its source may give a reflectance of its own (abi.Program.reflectance).
+            held:=&s.materials[row]
+            programmed:=values.program_id!=0 && (values.program_id!=held.program_id || held.volume.program&abi.MATERIAL_PROGRAM_REFLECTANCE!=0)
+            departs:=programmed || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
             if m == .Blend {
@@ -1080,6 +1087,10 @@ mesh_tested :: proc "contextless" (s: ^Scene_State, m: Mesh_Record) -> (tested: 
 alpha_flags :: proc "contextless" (a: Instance_Alpha) -> u32 {
 	return (INSTANCE_FLAG_ALPHA_TESTED if a.tested != 0 else 0) | (INSTANCE_FLAG_TRANSLUCENT if a.blended else 0) | (INSTANCE_FLAG_BLENDED if a.glass else 0)
 }
+
+// The flag of Gpu_Instance.meta.x of an instance a blended material of which lets light through.
+@(private)
+glass_flag :: proc "contextless" (a: Instance_Alpha) -> u32 {return INSTANCE_FLAG_GLASS if a.translucent.glass else 0}
 
 @(private = "file")
 instance_small :: proc "contextless" (low, high: Vec3) -> u32 {
@@ -2047,6 +2058,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		a := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
 		a.translucent.instance = index
 		flags |= alpha_flags(a)
+		s.instances[index].meta.x |= glass_flag(a)
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
 		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered})}
 		if a.blended && !hidden {append(&s.translucent, a.translucent)}

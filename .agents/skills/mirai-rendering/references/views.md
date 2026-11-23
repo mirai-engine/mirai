@@ -92,7 +92,9 @@ erender.view_texture_remove(renderer, tex)
 - `Nested_View` renders up to `NESTED_VIEW_CAPACITY` non-recursive distance-preserving views
   (rigid or mirror via `to_world`/`previous`, `clip_plane`, `layers`) inside masked pixels of a
   view (`Features.clip_distance` required), sharing G-buffer, histories, and lighting.
-- **Encoding:** Nested pixels store **negative** linear depth and `1 + index` in Motion.a.
+- **Encoding:** Nested pixels store **negative** linear depth and `1 + index` in the R8 views
+  target, which the first `pass_nested_add` of a frame makes and clears and shaders read through
+  `pixel_view` only while `FRAME_FLAG_NESTED` is set: a view without nested views pays nothing.
   Always decode via `depth_empty`, `depth_distance`, `depth_nested`, `depth_same_side`
   (`depth.slang`) and `pixel_at` (`pixel.slang`). Spatial filters isolate sides
   (`depth_same_side`); temporal filters compare magnitudes.

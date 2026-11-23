@@ -61,7 +61,6 @@ Settings :: struct {
 	light_budget:         u32,    // shadow rays of a point that traces its own (glass, overlays, the other side of a surface that lets light through; probes take theirs from it), each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
 	direct_samples:       u32,    // samples of the direct light of a pixel, spread over the lights by what each gives it, one of them traced through the whole scene (1 to DIRECT_SAMPLES_MAX)
 	direct_half_resolution: bool, // the samples of the direct light are taken at one pixel of each 2x2 and the filter takes them to the others by their surfaces
-	firefly_clamp:        f32,    // the brightest a ray of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
 	page_pool_bytes:      u64,    // the most the slots of the vertex pool for the pages of streamed meshes out of their root take as they grow to what the views ask for (pages.odin); 0: they keep their root alone
@@ -95,7 +94,7 @@ DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, trace_mode = .Auto, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 6, probe_rays = 128, probe_budget = 640,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
-	firefly_clamp = 20, texture_max_size = 2048,
+	texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
 	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
@@ -111,7 +110,7 @@ CPU_DEVICE_SETTINGS :: Settings{
 	gi_enabled = true, trace_mode = .Auto, resolution = 360, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4, direct_samples = 7,
-	firefly_clamp = 20, texture_max_size = 1024,
+	texture_max_size = 1024,
 	texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
 	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
@@ -373,6 +372,7 @@ Frame_Targets :: struct {
 	direct:                  rhi.Texture,
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
 	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
+	views:                   rhi.Texture, // R8 uint: 1 + the nested view of each pixel, 0 the view itself (pass_nested_add)
 	using contact_targets: struct {
 		contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
 		contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
@@ -1028,7 +1028,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	// The G-buffer each program resolves where the program depth is its own.
 	gbuffer := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Vis_Resolve_Vert], fragment = &r.shader_codes[.Vis_Resolve_Frag],
-		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
+		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
 		depth_format = .D16_Unorm, depth_test = true, depth_write = false, depth_compare = .Equal,
 		name = "resolve",
 	}
@@ -1994,7 +1994,7 @@ scene_targets :: proc(r: ^Renderer, v: ^View_State) -> bool {
 	ok &&= full(r, t, &t.albedo, .RGBA8_Srgb, attachment, "gbuffer albedo")
 	ok &&= full(r, t, &t.normal, .RGBA16_Float, attachment, "gbuffer normal")
 	ok &&= full(r, t, &t.emission, .RGBA16_Float, attachment, "gbuffer emission")
-	ok &&= full(r, t, &t.motion, .RGBA16_Float, attachment, "gbuffer motion")
+	ok &&= full(r, t, &t.motion, .RG16_Float, attachment, "gbuffer motion")
 	ok &&= full(r, t, &t.linear_depth, .R32_Float, attachment, "gbuffer depth")
 	ok &&= full(r, t, &t.direct, .RGBA16_Float, {.Sampled, .Storage}, "direct light")
 	ok &&= full(r, t, &t.display, .RGBA16_Float, HISTORY_USAGE, "display")

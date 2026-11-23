@@ -78,13 +78,11 @@ decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
         w,h:=int(r.targets.width),int(r.targets.height)
         albedo:=make([][4]u8,w*h,context.temp_allocator)
         normal:=make([][4]f16,w*h,context.temp_allocator)
-        motion:=make([][4]f16,w*h,context.temp_allocator)
         read :: proc(t:^testing.T,device:^rhi.Device,texture:rhi.Texture,bytes:[]u8) -> bool {
             return testing.expect(t,rhi.texture_read(device,texture,bytes),rhi.device_error(device))
         }
         if !read(t,device,r.targets.albedo,mem.slice_data_cast([]u8,albedo)) ||
-           !read(t,device,r.targets.normal,mem.slice_data_cast([]u8,normal)) ||
-           !read(t,device,r.targets.motion,mem.slice_data_cast([]u8,motion)) {return}
+           !read(t,device,r.targets.normal,mem.slice_data_cast([]u8,normal)) {return}
         center,outside:=h/2*w+w/2,h/2*w+w*7/8
         packed:=normal[center]
         n,roughness,_:=gpu.gbuffer_normal_decode({

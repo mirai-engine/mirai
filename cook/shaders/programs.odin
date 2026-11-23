@@ -56,6 +56,17 @@ PARAMETER_GROUP_BYTES :: 32
 @(private)
 PROGRAM_LAYERS :: [asset.Material_Layer]string{.Coat="coat_weight",.Fuzz="fuzz_weight",.Anisotropy="specular_anisotropy",.Unlit="unlit",.Diffuse_Transmission="diffuse_transmission_weight"}
 
+// Whether a Surface program may give a reflectance that its base color and
+// metallic do not, by the fields of Mirai_Surface its source names: the G-buffer
+// keeps what its pixels reflect only then (abi.Program.reflectance).
+@(private)
+program_reflectance :: proc(text:string) -> bool {
+    for field in ([]string{"specular_color","specular_factor","specular_ior"}) {
+        if word_in(text,field) {return true}
+    }
+    return false
+}
+
 Catalog :: struct {
     fingerprint:string, // of the compiler, the shared includes and every program source
     compiler:   string,
@@ -1504,7 +1515,7 @@ programs_generate :: proc(
             dispatchers_add(&dispatchers,of,id,name,relative,layout)
         }
         moves,births,prepare:=of==.Vfx && e.said.moves,of==.Vfx && e.said.births,of==.Vfx && e.said.prepare
-        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reads=e.reads,vertex=vertex,uses=drawn})
+        append(&programs,abi.Program{id=u32(id),name=strings.clone(name,allocator),domain=of,source=relative,size=layout.size,parameters=parameters,layers=layers,attributes=attributes,attribute_fields=attribute_fields,resources=resources,stages=stages,moves=moves,births=births,prepare=prepare,coverage=e.coverage,standard=of==.Surface && word_in(e.text,"mirai_surface_standard"),reflectance=of==.Surface && program_reflectance(e.text),reads=e.reads,vertex=vertex,uses=drawn})
     }
     // A project does without a program of its own that fails; nothing does without one of the engine.
     if len(broken)>0 {
