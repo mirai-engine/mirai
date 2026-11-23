@@ -14,9 +14,9 @@
 // The corner the resolve takes for corner `corner` of a triangle: an instance
 // that mirrors its mesh would turn its winding around, so its triangles go
 // the other way round and their front faces stay front.
-uint gbuffer_corner(Instance inst, uint corner) {
+uint gbuffer_corner(bool mirrored, uint corner) {
     uint k = corner % 3u;
-    if (!instance_mirrored(inst) || k == 0u) return corner;
+    if (!mirrored || k == 0u) return corner;
     return k == 1u ? corner + 1u : corner - 1u;
 }
 
@@ -24,11 +24,13 @@ uint gbuffer_corner(Instance inst, uint corner) {
 // for the three corners of a triangle: its material, whether the color of
 // its vertices tints its row, the poses its vertices are read from, how far
 // its islands are on their way to the next level (cluster_along), its flags,
-// whether it is where it was in the frame before and, of an instance of a
-// batch, what the vertex hook moves it by.
+// whether it is where it was in the frame before, whether its instance
+// mirrors its mesh (instance_mirrored) and, of an instance of a batch, what
+// the vertex hook moves it by.
 struct Gbuffer_Cluster {
     uint material;
     bool tinted;
+    bool mirrored;
     uint posed, previous; // INVALID: at rest
     float along;
     uint flags;
@@ -46,6 +48,7 @@ Gbuffer_Cluster gbuffer_cluster_of(uint index, Instance inst, Mesh mesh, uint ma
     k.material = material;
     // As instance_color: a program reads the color in its context.
     k.tinted = (inst.meta.w & INSTANCE_FLAG_UNIFORM_COLOR) == 0u && materials[k.material].shared.program_id == 0u;
+    k.mirrored = instance_mirrored(inst);
     k.posed = mesh.posed_word;
     k.previous = mesh.previous_word;
     // The part of a skinned mesh the view does not draw is drawn collapsed.
@@ -122,7 +125,7 @@ Gbuffer_Corner gbuffer_local_place(Instance inst, Mesh mesh, Cluster c, Cluster_
     return p;
 }
 Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
-    return gbuffer_local_place(inst, mesh, c, b, k, block_corner(b, gbuffer_corner(inst, corner)));
+    return gbuffer_local_place(inst, mesh, c, b, k, block_corner(b, gbuffer_corner(k.mirrored, corner)));
 }
 
 // Where the vertex hook puts a corner of an instance in the frame before, in
@@ -140,7 +143,7 @@ Gbuffer_Vertex gbuffer_local_build(uint index, Instance inst, Mesh mesh, Cluster
     float3 world = p.world;
     float3 prev_world = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
-    output.out_tangent = instance_tangent(inst, v.tangent);
+    output.out_tangent = instance_tangent(inst, k.mirrored, v.tangent);
     output.out_material = k.material;
     output.out_color = (k.tinted ? v.color.rgb : float3(1.0)) * inst.tint.rgb;
     output.out_vertex_color = v.color;

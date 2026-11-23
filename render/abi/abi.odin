@@ -94,6 +94,7 @@ FRAME_FLAG_GI_GIVEN     :: 2   // a custom pass of the pipeline wrote Gi: the co
 FRAME_FLAG_HW_RT        :: 4
 FRAME_FLAG_STUDIO       :: 8   // a preview lit by the analytic studio
 FRAME_FLAG_GRID         :: 16
+FRAME_FLAG_RESOLVE_COUNTED :: 32 // the resolve counts what it shades (Stats.resolved_pixels)
 FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (surface_specular)
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)

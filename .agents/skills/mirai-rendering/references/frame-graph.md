@@ -25,7 +25,8 @@ omit or interleave stages.
    nested views after `Mask` backfill reflectance + `FRAME_FLAG_REFLECTANCE`).
 4. **occlusion & extension geometry.** Max depth pyramid (4x4 footprint, +1 step) -> phase 1
    retest/raster -> rebuild pyramid (`pass_depth_pyramid_build` for `Gbuffer` extensions).
-   `Stats.resolved_pixels`, `resolve_helpers`, `resolve_quads_again`; `Stats.cull_dropped` grows
+   `Stats.resolved_pixels`, `resolve_helpers`, `resolve_quads_again` (counted only while
+   `Renderer.resolve_counted`: atomics per wave); `Stats.cull_dropped` grows
    lists and caches peaks in `Capacity_Marks` (`host/capacities.odin`). Runs `Simulate` (first
    window view, or texture view if textures-only; [particles](../../mirai-world/references/vfx.md)),
    `Gbuffer`, `Mask`, [nested](views.md#nested-views) G-buffers and `Surface`.

@@ -171,6 +171,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"FRAME_FLAG_HW_RT",abi.FRAME_FLAG_HW_RT)
     u(&b,"FRAME_FLAG_STUDIO",abi.FRAME_FLAG_STUDIO)
     u(&b,"FRAME_FLAG_GRID",abi.FRAME_FLAG_GRID)
+    u(&b,"FRAME_FLAG_RESOLVE_COUNTED",abi.FRAME_FLAG_RESOLVE_COUNTED)
     u(&b,"FRAME_FLAG_REFLECTANCE",abi.FRAME_FLAG_REFLECTANCE)
     u(&b,"FRAME_FLAG_NEUTRAL",abi.FRAME_FLAG_NEUTRAL)
     u(&b,"FRAME_FLAG_SWAY",abi.FRAME_FLAG_SWAY)
