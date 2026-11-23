@@ -16,6 +16,7 @@
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 #define GBUFFER_NORMAL SLOT_PASS8
 #include "gbuffer.slang"
+#include "depth.slang"
 #endif
 float4 mirai_vfx_texture(uint index, float2 uv, float level) {
     if (index == INVALID) return float4(1.0);
@@ -470,9 +471,10 @@ float mirai_vfx_scene_depth(float2 uv) {
 #endif
 }
 
+// Where nothing is drawn, the G-buffer holds no surface: no normal, rough.
 float3 mirai_vfx_scene_normal(float2 uv) {
 #ifdef PARTICLE_SCENE_READ
-    if (any(uv < float2(0.0)) || any(uv >= float2(1.0))) return float3(0.0);
+    if (depth_empty(mirai_vfx_scene_depth(uv))) return float3(0.0);
     return normalize(gbuffer_normal(int2(uv * frame.resolution)));
 #else
     return float3(0.0);
@@ -481,7 +483,7 @@ float3 mirai_vfx_scene_normal(float2 uv) {
 
 float mirai_vfx_scene_roughness(float2 uv) {
 #ifdef PARTICLE_SCENE_READ
-    if (any(uv < float2(0.0)) || any(uv >= float2(1.0))) return 1.0;
+    if (depth_empty(mirai_vfx_scene_depth(uv))) return 1.0;
     return gbuffer_normal_roughness(int2(uv * frame.resolution)).w;
 #else
     return 1.0;

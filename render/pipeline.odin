@@ -30,14 +30,16 @@ Render_Stage :: enum u8 {
 }
 
 // What the passes of a pipeline read and write. Custom0 to Custom47 are made
-// by the pipeline that declares them, for each view drawn with it.
+// by the pipeline that declares them, for each view drawn with it. Where the
+// linear depth is empty (nothing drawn), Albedo, Normal, Emission and
+// Reflectance hold nothing defined; the motion there is 0.
 Render_Resource :: enum u8 {
 	Depth,        // the depth buffer, reversed (1 nearest): stages write it, a custom pass reads it
 	Exposure,     // the buffer of the exposure of the view (Gpu_Exposure), as the Output stage of the frame before left it
 	Albedo,       // base color, metallic in alpha
 	Normal,       // world normal, roughness in alpha
 	Emission,     // emission, occlusion in alpha
-	Motion,       // motion vectors; alpha: 1 + the index of the nested view of the pixel
+	Motion,       // motion vectors: the offset of each pixel to the previous frame in UV
 	Linear_Depth, // distance along the view; negative in a nested view
 	Reflectance,  // F0 and F90 of surfaces that reflect unlike the default
 	Hiz,          // the depth pyramid

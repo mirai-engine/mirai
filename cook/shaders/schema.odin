@@ -155,6 +155,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     f(&b,"TEXTURE_FEEDBACK_STEPS",abi.TEXTURE_FEEDBACK_STEPS)
     u(&b,"TEXTURE_FEEDBACK_CODES",abi.TEXTURE_FEEDBACK_CODES)
     f(&b,"MATERIAL_ANISOTROPY",abi.MATERIAL_ANISOTROPY)
+    u(&b,"MATERIAL_PROGRAM_CHANGING",abi.MATERIAL_PROGRAM_CHANGING)
 
     i(&b,"NESTED_VIEW_CAPACITY",abi.NESTED_VIEW_CAPACITY)
     i(&b,"VOLUME_CASCADES_MAX",abi.VOLUME_CASCADES_MAX)
@@ -171,6 +172,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"FRAME_FLAG_HW_RT",abi.FRAME_FLAG_HW_RT)
     u(&b,"FRAME_FLAG_STUDIO",abi.FRAME_FLAG_STUDIO)
     u(&b,"FRAME_FLAG_GRID",abi.FRAME_FLAG_GRID)
+    u(&b,"FRAME_FLAG_NESTED",abi.FRAME_FLAG_NESTED)
     u(&b,"FRAME_FLAG_REFLECTANCE",abi.FRAME_FLAG_REFLECTANCE)
     u(&b,"FRAME_FLAG_NEUTRAL",abi.FRAME_FLAG_NEUTRAL)
     u(&b,"FRAME_FLAG_SWAY",abi.FRAME_FLAG_SWAY)

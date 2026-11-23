@@ -662,7 +662,8 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 		for program in renderer_programs(r) {
 			if program.id != m.program_id || program.domain != .Surface {continue}
 			layers += program.layers
-			result.volume.changing = u32(.Time in program.reads)
+			if .Time in program.reads {result.volume.program |= abi.MATERIAL_PROGRAM_CHANGING}
+			if program.reflectance {result.volume.program |= abi.MATERIAL_PROGRAM_REFLECTANCE}
 		}
 	}
 	result.layers = transmute(u32)layers
@@ -894,6 +895,7 @@ Material_Class :: struct {
 	specular_factor, ior:           f32,
 	transmissive, solid:            bool,
 	specular, specular_colored:     u32,
+	program_reflectance:            bool,
 }
 
 @(private = "file")
@@ -903,6 +905,7 @@ material_class :: proc "contextless" (row: Gpu_Material_Row) -> Material_Class {
 		specular_color = row.specular_color, specular_factor = row.specular_factor, ior = row.ior,
 		transmissive = row.transmission > 0, solid = row.transmission > 0 && row.thickness > 0,
 		specular = row.textures[.Specular], specular_colored = row.textures[.Specular_Color],
+		program_reflectance = row.volume.program & abi.MATERIAL_PROGRAM_REFLECTANCE != 0,
 	}
 }
 
@@ -1036,7 +1039,10 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
             if given!=0 && m!=.Blend && values.program_id!=0 && s.materials[row].alpha_mode==u32(asset.Alpha_Mode.Blend) {a.shown_opaque|=1<<u32(k)}
-            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
+            // A program departs where its source may give a reflectance of its own (abi.Program.reflectance).
+            held:=&s.materials[row]
+            programmed:=values.program_id!=0 && (values.program_id!=held.program_id || held.volume.program&abi.MATERIAL_PROGRAM_REFLECTANCE!=0)
+            departs:=programmed || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
             if m == .Blend {

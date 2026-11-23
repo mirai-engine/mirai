@@ -100,7 +100,7 @@ struct Frame_Data {
     float4 clip_plane;       // world plane nothing is drawn behind; zero for none
     float2 footprint;        // x width of a pixel at depth 0, y what it grows by per unit of depth
     uint layers;             // the instances the view draws: those whose layers share a bit with these
-    uint view_index;         // of the nested view these constants draw; 0 for the view itself
+    uint pad1;
     float4 sky_map;          // x = the image of the sky in the texture table, y = 1 for an atmosphere lit by the sun, z = its last level, w = 1 with an image
     float4 sky_orientation;  // the turn of the sky, a quaternion (xyz, w): a direction of the world is one of the sky by its inverse
     float4 sky_from;         // a change of the sky on its way: rgb the luminance it changes from (render units), a how much of it still shows
@@ -276,7 +276,7 @@ struct Material_Coat { float3 color; float weight; float roughness; float ior; f
 struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
-struct Material_Volume { float3 scatter; uint changing; }; // what a solid scatters of what it stops; 1: what its program gives a point changes with nothing that says so (it reads the time)
+struct Material_Volume { float3 scatter; uint program; }; // what a solid scatters of what it stops; MATERIAL_PROGRAM_* bits of what its program does
 struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;

@@ -11,7 +11,7 @@ struct Stage_Output {
     [[vk::location(0)]] float4 g_albedo : SV_Target0;
     [[vk::location(1)]] float4 g_normal : SV_Target1;
     [[vk::location(2)]] float4 g_emission : SV_Target2;
-    [[vk::location(3)]] float4 g_motion : SV_Target3;
+    [[vk::location(3)]] float2 g_motion : SV_Target3;
     [[vk::location(4)]] float g_depth : SV_Target4;
 #ifndef MIRAI_GBUFFER_PLAIN
     [[vk::location(5)]] float4 g_specular : SV_Target5;
@@ -116,7 +116,7 @@ Stage_Output main(Impostor_Varyings input, float4 pixel_position : SV_Position) 
     output.g_emission = float4(0.0, 0.0, 0.0, terms.z);
     float4 current = view_clip_unjittered(place);
     float4 previous = view_clip_previous(place);
-    output.g_motion = float4((previous.xy / previous.w - current.xy / current.w) * float2(0.5, -0.5), roughness, 1.0);
+    output.g_motion = (previous.xy / previous.w - current.xy / current.w) * float2(0.5, -0.5);
     output.g_depth = dot(place - frame.camera_position.xyz, frame.camera_forward.xyz);
 #ifndef MIRAI_GBUFFER_PLAIN
     output.g_specular = specular_pack(lerp(float3(0.04, 0.04, 0.04), saturate(color), metallic), 1.0);

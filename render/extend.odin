@@ -361,7 +361,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		if fragment == nil {break}
 		made := rhi.Graphics_Pipeline_Desc{vertex = vertex, fragment = fragment, cull = .None, name = desc.name}
 		if desc.stage == .Mask {
-			made.color_formats, made.color_count = {0 = .RGBA16_Float, 1 = .R32_Float}, 2
+			made.color_formats, made.color_count = {0 = .RG16_Float, 1 = .R32_Float, 2 = .R8_Uint}, 3
 			made.depth_format, made.depth_test, made.depth_write, made.depth_compare = .D32_Float, true, true, .Greater
 		} else if desc.stage == .Blend || desc.stage == .Effect {
 			made.color_formats, made.color_count, made.blend = {0 = .RGBA16_Float, 1 = .R8_Unorm}, 2, {0 = desc.blend, 1 = .Additive}
@@ -369,7 +369,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 		} else {
 			formats := [Surface_Target]rhi.Format{
 				.Albedo = .RGBA8_Srgb, .Normal = .RGBA16_Float, .Emission = .RGBA16_Float,
-				.Motion = .RGBA16_Float, .Reflectance = .RGBA8_Srgb,
+				.Reflectance = .RGBA8_Srgb,
 			}
 			for format, target in formats {
 				if target not_in desc.targets {continue}
@@ -401,13 +401,21 @@ stage_pipelines_destroy :: proc(r: ^Renderer) {
 	r.stage_pipelines = {}
 }
 
-// Adds a nested view to the view being recorded, in its Mask stage. Returns
-// the index its mask writes for its pixels, in the alpha of the motion target
-// as 1 + index; 0 when the view has no room for another, or the shaders in use
-// do not know nested views.
+// Adds a nested view to the view being recorded, in its Mask stage and
+// outside a pass. Returns the index its mask writes for its pixels into the
+// views target; 0 when the view has no room for another, or the shaders in use
+// do not know nested views. The first one of a frame clears the views target,
+// which the view reads from then on (FRAME_FLAG_NESTED).
 pass_nested_add :: proc(s: ^Stage_Pass, nested: Nested_View) -> u32 {
 	p := s.pass
+	t := p.t
 	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Resolve_Nested] == 0 {return 0}
+	if p.nested_count == 0 {
+		if !target(p.r, nil, &t.views, t.width, t.height, .R8_Uint, {.Color_Target, .Sampled}, "nested views", shared = true) {return 0}
+		clear_textures(p.cmd, t.views)
+		p.frame.flags |= FRAME_FLAG_NESTED
+		if p.constants.ptr != nil {(^Gpu_Frame)(p.constants.ptr).flags = p.frame.flags}
+	}
 	nested := nested
 	nested.to_world = origin_transform(nested.to_world, p.r.origin)
 	nested.previous = origin_transform(nested.previous, p.r.origin)
@@ -440,29 +448,33 @@ pass_extension_data :: proc(s: ^Stage_Pass, name: string) -> []u8 {
 }
 
 // Begins the pass in which an extension draws the mask of its nested views:
-// over the motion target (rg 0, b 0, a 1 + the index of the nested view) and
-// the linear depth (0: nothing drawn there yet), with the depth buffer of the
-// view, which the mask also writes: what is in front of it stays, and what is
-// behind it is not of this view any longer. Ends with pass_end.
-pass_mask_begin :: proc(s: ^Stage_Pass, name := "nested view mask") {
+// over the motion target (0), the linear depth (0: nothing drawn there yet)
+// and the views target (the index pass_nested_add gave), with the depth
+// buffer of the view, which the mask also writes: what is in front of it
+// stays, and what is behind it is not of this view any longer. Ends with
+// pass_end. False, with no pass begun, while the view has no nested view.
+pass_mask_begin :: proc(s: ^Stage_Pass, name := "nested view mask") -> bool {
 	p := s.pass
 	t := p.t
+	if p.nested_count == 0 {return false}
 	rhi.cmd_timestamp(p.cmd, name)
-	pass := rhi.Render_Pass_Desc{color_count = 2, name = name}
+	pass := rhi.Render_Pass_Desc{color_count = 3, name = name}
 	pass.colors[0] = {texture = t.motion, load = .Load, store = .Store}
 	pass.colors[1] = {texture = t.linear_depth, load = .Load, store = .Store}
+	pass.colors[2] = {texture = t.views, load = .Load, store = .Store}
 	pass.depth = {texture = t.depth, load = .Load, store = .Store}
 	rhi.cmd_begin_render_pass(p.cmd, &pass)
+	return true
 }
 
 // The targets of the G-buffer that say what a surface is: base color with
 // metallic in alpha, normal with roughness, emission with occlusion.
-Surface_Target :: enum u8 {Albedo, Normal, Emission, Motion, Reflectance}
+Surface_Target :: enum u8 {Albedo, Normal, Emission, Reflectance}
 Surface_Targets :: bit_set[Surface_Target;u8]
 
 pass_surface_targets :: proc(s: ^Stage_Pass) -> Surface_Targets {
 	if s.stage != .Surface {return {}}
-	targets := Surface_Targets{.Albedo, .Normal, .Emission, .Motion}
+	targets := Surface_Targets{.Albedo, .Normal, .Emission}
 	if s.pass.frame.flags & FRAME_FLAG_REFLECTANCE != 0 {targets += {.Reflectance}}
 	return targets
 }
@@ -477,7 +489,8 @@ pass_surface_targets :: proc(s: ^Stage_Pass) -> Surface_Targets {
 // nothing without glass. Direct: in
 // Lit, the direct light the surfaces reflect, in the lit image already. Post
 // reads what the Output stage does (stage_contract): Linear_Depth, Motion,
-// Albedo, Normal and Emission, at the size of the targets of the view.
+// Albedo, Normal and Emission, at the size of the targets of the view. Where
+// the linear depth is empty, Albedo, Normal and Emission hold nothing defined.
 // Shadow_Atlas: the depth of the maps of the view.
 Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Instance, Glass_Depth, Direct, Shadow_Atlas}
 
@@ -566,7 +579,7 @@ pass_gbuffer_pipeline :: proc(s: ^Stage_Pass, shader: string, name := "", fragme
 	if vertex == nil {return 0}
 	desc := rhi.Graphics_Pipeline_Desc{
 		vertex = vertex, fragment = &r.shader_codes[.Gbuffer_Frag],
-		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
+		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater, cull = .None,
 		name = name if name != "" else shader,
 	}
@@ -618,7 +631,7 @@ pass_surface_begin :: proc(s: ^Stage_Pass, targets: Surface_Targets, name := "su
 	t := p.t
 	textures := [Surface_Target]rhi.Texture{
 		.Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission,
-		.Motion = t.motion, .Reflectance = t.surface,
+		.Reflectance = t.surface,
 	}
 	rhi.cmd_timestamp(p.cmd, name)
 	pass := rhi.Render_Pass_Desc{name = name}

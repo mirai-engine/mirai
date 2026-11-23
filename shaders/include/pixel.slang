@@ -8,7 +8,8 @@
 // The view a pixel of the G-buffer was drawn by: 0 for the view itself.
 uint pixel_view(int2 p) {
 #ifdef MIRAI_NESTED_VIEWS
-    return uint(clamp(pixel_views.Load(int3(p, 0)).a - 0.5, 0.0, float(NESTED_VIEW_CAPACITY)));
+    if ((frame.flags & FRAME_FLAG_NESTED) == 0u) return 0u;
+    return min(pixel_views.Load(int3(p, 0)), uint(NESTED_VIEW_CAPACITY));
 #else
     return 0u;
 #endif
