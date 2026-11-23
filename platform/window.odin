@@ -1,6 +1,7 @@
 package platform
 
 import "core:c"
+import "core:mem"
 import "core:strings"
 import sdl "vendor:sdl3"
 import vk "vendor:vulkan"
@@ -506,7 +507,7 @@ window_set_cursor :: proc(p:^Platform,cursor:Cursor,custom:bool) {
 
 // Gives a shape an image, in place of the one it had: levels[0] at 1x and the
 // larger ones for displays of more pixels per point, the hotspot in pixels of
-// levels[0]. The window system copies the pixels. A transaction: it is not for
+// levels[0]. The caller keeps its pixels. A transaction: it is not for
 // every frame.
 window_cursor_image_set :: proc(p:^Platform,cursor:Cursor,levels:[]Cursor_Level,hotspot:[2]f32) -> Cursor_Error {
     if cursor==.Hidden {return .Hidden}
@@ -527,9 +528,16 @@ window_cursor_image_set :: proc(p:^Platform,cursor:Cursor,levels:[]Cursor_Level,
     defer for surface in surfaces {
         if surface!=nil {sdl.DestroySurface(surface)}
     }
+    // Surfaces that own their pixels: SDL may keep them past this call to make
+    // the cursor of another display scale (Windows does), after the caller's
+    // pixels are gone.
     for level,i in levels {
-        surfaces[i]=sdl.CreateSurfaceFrom(level.width,level.height,.RGBA32,raw_data(level.pixels),level.width*4)
+        surfaces[i]=sdl.CreateSurface(level.width,level.height,.RGBA32)
         if surfaces[i]==nil {return .Unavailable}
+        row:=int(level.width)*4
+        for y in 0..<int(level.height) {
+            mem.copy(rawptr(uintptr(surfaces[i].pixels)+uintptr(y*int(surfaces[i].pitch))),raw_data(level.pixels[y*row:]),row)
+        }
         if i>0 && !sdl.AddSurfaceAlternateImage(surfaces[0],surfaces[i]) {return .Unavailable}
     }
     made:=sdl.CreateColorCursor(surfaces[0],c.int(hotspot.x),c.int(hotspot.y))
