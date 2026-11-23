@@ -26,8 +26,7 @@ claim it, walk to `enter` and then to `at`, face `yaw`, wait) with `offer_act` a
 effect. It walks after an object that moves, and fails if the offer is gone or closed before it is
 used. `Smart_User.priority` is the priority of its claims (the game declares its levels as
 constants): a higher one takes an offer from a user still walking to it, whose `offer_act` then
-fails; once a user is using it (`offer_act` facing it, `cross_act` crossing, or `ai.claim_use`)
-nobody takes it:
+fails; once a user is using it (`offer_act` facing it, or `ai.claim_use`) nobody takes it:
 
 ```odin
 user := behavior.Smart_User{entity=behavior.agent(t), team=TEAM_ENEMY}
@@ -51,8 +50,9 @@ get_ammo :: proc(a:^ai.Act(Act), uses:^behavior.Smart_Uses) -> ai.Status {
 
 A `nav.Nav_Link` whose kind the game declares (`LINK_VAULT :: nav.Nav_Link_Kind(7)`; the agent
 lists it in `Nav_Agent.manual`) plus a `Smart_Object` offer on the same entity. When the agent
-reaches it, its `Nav_Path` is `Crossing` with `manual` and names the link entity. Set the
-link's capacity to one for an exclusive crossing. `cross_act` waits its turn, takes the time it
+reaches it, its `Nav_Path` is `Crossing` with `manual` and names the link entity. Only the link's
+`capacity` says how many cross at once (one: exclusive); the offer's `users` does not count.
+`cross_act` waits while the offer is closed to the agent (spent, cooling down), takes the time it
 says and calls `nav.nav_crossing_skip`, which puts the agent at the end of the link. For a custom
 animated crossing, enable passthrough, move the character with the animation or a pose target
 (the `Crossing` `nav.Nav_Event` gives the ends), and call `nav.nav_crossing_done` when it reaches

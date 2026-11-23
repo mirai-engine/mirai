@@ -160,11 +160,13 @@ ignored; ties keep first); highest wins. Each action is a `proc(^Act(Enum)) -> S
   both). Higher scores abort it same tick (`Aborted`); unproposed + uncommitted aborts. Exiting
   actions re-run `think` immediately (failed action excluded from immediate re-entry). `decide =
   false` ticks the running action without re-thinking until it exits.
-- **State & cadence:** `Mind` is layout-identical POD for any enum in `0..<MIRAI_MIND_ACTIONS`
-  (`a.memory` has `MIRAI_MIND_WORDS` zeroed on `Enter`; `stage`, `next_stage`, `elapsed`,
-  `stage_elapsed`, `after`, `mind_since`, `mind_ready` count in ticks). `steps(a, x, y, z)` runs
-  sub-actions sequentially (no nested steps). Distance throttling uses stateless `cadence_period` /
-  `cadence_due` (`cadence.odin`).
+- **State & cadence:** `Mind` is layout-identical POD for any enum in `0..<MIRAI_MIND_ACTIONS` (32
+  by default, at most the 32 bits of `exited`; each value costs 8 bytes of `ended`; `a.memory` has
+  `MIRAI_MIND_WORDS` zeroed on `Enter`; `stage`, `next_stage`, `elapsed`, `stage_elapsed`, `after`,
+  `mind_since`, `mind_ready` count in ticks). `steps(a, x, y, z)` runs sub-actions sequentially (no
+  nested steps). Distance throttling uses stateless `cadence_period` / `cadence_due`
+  (`cadence.odin`). `mind_clear` forgets a state without calling its procedures, releasing its
+  frames' reservations (a state of an enum that cannot run its `Exit`).
 - **Reservations:** `Reservations` tracks attack tokens (`what = 0`) and smart-object claims via
   `token_take` / `claim(a, target, which, limit, priority)`. One reservation per frame, renewed
   every tick (`lease` expiry), auto-released on `Exit`. Higher priority displaces lowest unused

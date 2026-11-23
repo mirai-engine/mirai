@@ -70,6 +70,12 @@ zombie_bite :: proc(a:^ai.Act(Zombie_Act), w:Senses) -> ai.Status {
 - `behavior.agent(a)` is the agent; the helpers of `behavior` (`move_act`, `chase_act`,
   `patrol_act`, `path_status`, `agent_path`) read their mind through `a` or `t`. An action shows
   what it does with `anim.play` and `anim.look` ([animation](../animation.md)).
+- An enum holds up to 32 actions and a game declares as many minds as it needs.
+- A far agent thinks every few ticks (its action runs every tick). Noticing someone and the
+  events of its path wake it to think at its next tick; so does `behavior.wake(wakes, agent)`
+  from a step that binds `^behavior.Mind_Wakes` (damage, an order).
+- Setting `Mind_Agent.mind` to another mind (a boss's next phase) exits the running action
+  (`Aborted`) with the old mind's procedures before the new mind decides.
 
 ## Patrol
 

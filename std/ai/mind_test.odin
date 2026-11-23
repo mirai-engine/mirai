@@ -726,3 +726,48 @@ a_mind_that_does_not_decide_runs_its_action :: proc(t:^testing.T) {
     testing.expect_value(t,c.thinks,2) // when the wait ended, in its tick, and it entered again
     testing.expect(t,m.main.entered==3)
 }
+
+// A mind of as many actions as MIND_ACTIONS runs, exits and times its last
+// one like its first, and mind_clear forgets it all, releasing its claim.
+@(test)
+a_mind_of_many_actions_runs_its_last_one :: proc(t:^testing.T) {
+    Wide :: enum u8 {
+        A0,A1,A2,A3,A4,A5,A6,A7,A8,A9,A10,A11,A12,A13,A14,A15,
+        A16,A17,A18,A19,A20,A21,A22,A23,A24,A25,A26,A27,A28,A29,A30,Last,
+    }
+    #assert(int(max(Wide))==MIND_ACTIONS-1)
+    World :: struct {reservations:Reservations,last:bool}
+    think :: proc(t:^Think(Wide)) {
+        propose(t,.A0,1)
+        if (^World)(t.user).last {propose(t,.Last,2)}
+    }
+    act :: proc(a:^Act(Wide)) -> Status {
+        if a.phase==.Enter && a.action==.Last {
+            commit(a,3)
+            if !claim(a,9,1,1) {return .Failure}
+        }
+        return after(a,2) if a.action==.Last else .Running
+    }
+    acts:[Wide]proc(a:^Act(Wide)) -> Status
+    for &p in acts {p=act}
+    w:=new(World)
+    defer free(w)
+    m:Mind
+    ctx:=Mind_Context{user=w,dt=1,holder=7,reservations=&w.reservations}
+    w.last=true
+    doing,_:=mind_tick(&m,&acts,think,&ctx)
+    testing.expect_value(t,doing,Wide.Last)
+    w.last=false
+    for tick in u64(1)..=2 {
+        ctx.tick=tick
+        doing,_=mind_tick(&m,&acts,think,&ctx)
+    }
+    testing.expect_value(t,doing,Wide.A0)
+    testing.expect(t,!mind_ready(&m,Wide.Last,3,1,2) && mind_ready(&m,Wide.Last,4,1,2) && mind_since(&m,Wide.Last,4,1)==2)
+    w.last=true
+    ctx.tick=3
+    mind_tick(&m,&acts,think,&ctx)
+    testing.expect(t,reserve_count(&w.reservations,{9,1},3)==1)
+    mind_clear(&m,&w.reservations,7)
+    testing.expect(t,m==Mind{} && reserve_count(&w.reservations,{9,1},3)==0)
+}

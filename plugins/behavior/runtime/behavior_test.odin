@@ -1,6 +1,7 @@
 package behavior
 
 import "base:runtime"
+import "core:fmt"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
@@ -123,7 +124,7 @@ COUNTING_ACTS := [Count_Act]proc(a:^ai.Act(Count_Act)) -> ai.Status{.Count=count
 @(test)
 minds_register_by_name_and_tick_their_agents :: proc(t:^testing.T) {
     minds:=new(Minds)
-    defer free(minds)
+    defer {minds_free(minds);free(minds)}
     world:Behavior_World
     if !test_world_init(t,&world) {return}
     defer test_world_destroy(&world)
@@ -136,18 +137,19 @@ minds_register_by_name_and_tick_their_agents :: proc(t:^testing.T) {
     minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
     testing.expect_value(t,c.entered,2)
     for name in ([]string{"counter","","a name far too long for a mind"}) {mind_register(minds,name,Count_Act)}
-    testing.expect(t,minds.count==1 && mind_of(minds,mind_name("counter")).actions==Count_Act && mind_of(minds,mind_name("other"))==nil)
+    testing.expect(t,len(minds.entries)==1 && mind_of(minds,mind_name("counter")).actions==Count_Act && mind_of(minds,mind_name("other"))==nil)
     problems:core.Problems
     minds_unknown(core.ref(minds),core.read(&world.mind_agents),c.world.time,&problems)
     testing.expect(t,core.problem_find(&problems,lost,"behavior.mind")!=nil && core.problem_find(&problems,a,"behavior.mind")==nil)
 }
 
 // With Mind_Rows a mind registers the first time it ticks in a world and
-// visits only its rows, grouped again when an agent changes its mind.
+// visits only its own rows, grouped again when an agent changes its mind: the
+// row stays with its old mind until that exits what it ran.
 @(test)
 a_mind_visits_its_own_rows_and_follows_a_change_of_mind :: proc(t:^testing.T) {
     minds:=new(Minds)
-    defer free(minds)
+    defer {minds_free(minds);free(minds)}
     rows:Mind_Rows
     defer mind_rows_free(&rows)
     world:Behavior_World
@@ -162,17 +164,23 @@ a_mind_visits_its_own_rows_and_follows_a_change_of_mind :: proc(t:^testing.T) {
     c:=Counting{world={minds=minds,agents=&world.mind_agents,rows=&rows,time={tick=1,dt=1.0/60,playing=true}}}
     minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
     testing.expect_value(t,c.entered,2)
-    testing.expect(t,minds.count==1 && rows.count==1 && !rows.stale)
+    testing.expect(t,len(minds.entries)==1 && len(rows.names)==1 && !rows.stale)
     testing.expect(t,slice.equal(rows.rows[0][:],[]i32{row(&world,a),row(&world,b)}))
     testing.expect(t,slice.equal(rows.loose[:],[]i32{row(&world,other)}))
     // Registered in this world: a tick does not register it again.
-    minds^={}
+    minds_free(minds)
     core.edit(&world.mind_agents,other).mind=mind_name("counter")
     core.edit(&world.mind_agents,a).mind=mind_name("other")
     test_world_settle(&world)
     c.world.time.tick=2
     minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
-    testing.expect_value(t,minds.count,0)
+    testing.expect_value(t,len(minds.entries),0)
+    testing.expect(t,slice.equal(rows.rows[0][:],[]i32{row(&world,a),row(&world,other),row(&world,b)}))
+    none:Mind_Name
+    testing.expect(t,world.mind_agents.values[row(&world,a)].owner==none && rows.stale,"its old mind exited what it ran")
+    test_world_settle(&world)
+    c.world.time.tick=3
+    minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
     testing.expect(t,slice.equal(rows.rows[0][:],[]i32{row(&world,other),row(&world,b)}))
     testing.expect(t,slice.equal(rows.loose[:],[]i32{row(&world,a)}) && !rows.stale)
 }
@@ -182,7 +190,7 @@ a_mind_visits_its_own_rows_and_follows_a_change_of_mind :: proc(t:^testing.T) {
 @(test)
 the_mind_of_an_agent_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T) {
     minds:=new(Minds)
-    defer free(minds)
+    defer {minds_free(minds);free(minds)}
     world:Behavior_World
     if !test_world_init(t,&world) {return}
     defer test_world_destroy(&world)
@@ -211,7 +219,7 @@ the_mind_of_an_agent_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T)
 @(test)
 the_mind_of_an_agent_far_ticks_at_the_steps_of_what_is_far :: proc(t:^testing.T) {
     minds:=new(Minds)
-    defer free(minds)
+    defer {minds_free(minds);free(minds)}
     world:Behavior_World
     if !test_world_init(t,&world) {return}
     defer test_world_destroy(&world)
@@ -289,7 +297,7 @@ HOLDING_ACTS := [Hold_Act]proc(a:^ai.Act(Hold_Act)) -> ai.Status{.Hold=holding_a
 @(test)
 a_mind_decides_less_often_far_from_the_sources :: proc(t:^testing.T) {
     minds:=new(Minds)
-    defer free(minds)
+    defer {minds_free(minds);free(minds)}
     world,copied:Behavior_World
     if !test_world_init(t,&world) || !test_world_init(t,&copied) {return}
     defer test_world_destroy(&world)
@@ -341,6 +349,270 @@ a_mind_decides_less_often_far_from_the_sources :: proc(t:^testing.T) {
         c,_=run(&world,minds,40,44)
         for e in ([]core.Entity{near,far,lost,nowhere}) {testing.expectf(t,c.thinks[core.entity_index(e)]==4,"%d: %v",edit,e)}
     }
+}
+
+@(private="file")
+Alarm_Act :: enum u8 {Idle,React}
+
+// Counts the decisions of one agent and the tick it reacted at.
+@(private="file")
+Alarmed :: struct {
+    world:Mind_World,
+    alarm:bool,
+    thinks:int,
+    reacted:u64,
+}
+
+@(private="file")
+alarmed_think :: proc(t:^ai.Think(Alarm_Act)) {
+    c:=(^Alarmed)(t.user)
+    c.thinks+=1
+    ai.propose(t,.Idle,1)
+    if c.alarm {ai.propose(t,.React,5)}
+}
+
+// Idles committed to 2, which only something scored above it interrupts.
+@(private="file")
+alarmed_act :: proc(a:^ai.Act(Alarm_Act)) -> ai.Status {
+    if a.phase==.Enter && a.action==.Idle {ai.commit(a,2)}
+    if a.phase==.Enter && a.action==.React {(^Alarmed)(a.user).reacted=a.tick}
+    return .Running
+}
+
+@(private="file")
+ALARMED_ACTS := [Alarm_Act]proc(a:^ai.Act(Alarm_Act)) -> ai.Status{.Idle=alarmed_act,.React=alarmed_act}
+
+// A far agent that thinks once every 4 ticks thinks at the very tick it is
+// woken (it noticed someone, navigation told it about its path, or the game
+// woke it), interrupting its committed action for what scores higher, and at
+// its own cadence again from the next tick. The ticks after the first do not
+// allocate.
+@(test)
+a_woken_mind_thinks_at_once_whatever_its_cadence :: proc(t:^testing.T) {
+    Wake_By :: enum u8 {Noticed,Navigation,Game,Nobody}
+    for by in Wake_By {
+        minds:=new(Minds)
+        defer {minds_free(minds);free(minds)}
+        world:Behavior_World
+        if !test_world_init(t,&world) {return}
+        defer test_world_destroy(&world)
+        world.settings.think_near,world.settings.think_slowest=10,6.0/60
+        world.sources.items[0]={position={0,0,0}}
+        world.sources.count=1
+        e:=placed(&world,{0,0,45})
+        core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("alarmed")})
+        test_world_settle(&world)
+        woken:Mind_Woken
+        defer delete(woken.bits)
+        wakes:Mind_Wakes
+        defer delete(wakes.queue.items)
+        if !testing.expect(t,reserve(&wakes.queue.items,4)==nil) {return}
+        c:=Alarmed{world={minds=minds,agents=&world.mind_agents,worlds=core.read(&world.worlds),sources=core.ref(&world.sources),settings=core.ref(&world.settings),woken=core.ref(&woken)}}
+        // Its phase: its index; its period 4. The tick it is woken is not one of its own.
+        due :: proc(e:core.Entity,tick:u64) -> bool {return ai.cadence_due(tick,u64(core.entity_index(e)),4)}
+        at:=u64(9)
+        for due(e,at-1) || due(e,at) || due(e,at+1) {at+=1}
+        calls:=0
+        thinks:[3]int // before, at and after the tick it is woken
+        later:=0      // in the 4 ticks after those: its own cadence
+        for tick in u64(1)..<at+6 {
+            noticed:Perception_Events
+            paths:nav.Nav_Events
+            defer delete(noticed.items)
+            defer delete(paths.items)
+            if tick==at {
+                c.alarm=true
+                switch by {
+                case .Noticed: core.push(&noticed.queue,Perception_Event{kind=.Noticed,perceiver=e,subject=e})
+                case .Navigation: core.push(&paths.queue,nav.Nav_Event{kind=.Arrived,entity=e})
+                case .Game: wake(&wakes,e)
+                case .Nobody:
+                }
+            }
+            saved:=context.allocator
+            if tick>1 {context.allocator=refusing_allocator(&calls)}
+            minds_wake(&woken,&wakes,core.ref(&noticed),core.ref(&paths),core.ref(&world.entities),nil)
+            c.world.time={tick=tick,dt=1.0/60,playing=true}
+            before:=c.thinks
+            minds_tick(&c.world,"alarmed",&ALARMED_ACTS,alarmed_think)
+            context.allocator=saved
+            if tick>=at-1 && tick<=at+1 {thinks[tick-(at-1)]=c.thinks-before}
+            if tick>at+1 {later+=c.thinks-before}
+        }
+        testing.expectf(t,calls==0,"%v: %d allocations",by,calls)
+        testing.expectf(t,later==1,"%v: %d thinks in 4 ticks after",by,later)
+        if by==.Nobody {
+            testing.expectf(t,thinks=={0,0,0} && c.reacted>at+1,"%v: %v, reacted at %d",by,thinks,c.reacted)
+            continue
+        }
+        testing.expectf(t,thinks=={0,1,0} && c.reacted==at,"%v: thinks %v, reacted at %d, woken at %d",by,thinks,c.reacted,at)
+        testing.expectf(t,!mind_woken(&woken,e),"%v: the wake lasts its tick",by)
+    }
+}
+
+@(private="file")
+Hand_Act :: enum u8 {Hold,Other}
+
+// What the agent's two minds did, in order: the mind (0 or 1), the action,
+// the phase and the tick.
+@(private="file")
+Handing :: struct {
+    world:Mind_World,
+    log:[dynamic]Hand_Call,
+}
+
+@(private="file")
+Hand_Call :: struct {mind:int,action:Hand_Act,phase:ai.Phase,cause:ai.Exit_Cause,tick:u64}
+
+@(private="file")
+hand_think :: proc(t:^ai.Think(Hand_Act)) {ai.propose(t,.Hold,1)}
+
+@(private="file")
+hand_log :: proc(a:^ai.Act(Hand_Act),mind:int) -> ai.Status {
+    c:=(^Handing)(a.user)
+    append(&c.log,Hand_Call{mind,a.action,a.phase,a.cause,a.tick})
+    if a.phase==.Enter && !ai.claim(a,500+u64(mind),1,1) {return .Failure}
+    return .Running
+}
+
+@(private="file")
+FIRST_ACTS := [Hand_Act]proc(a:^ai.Act(Hand_Act)) -> ai.Status{.Hold=proc(a:^ai.Act(Hand_Act)) -> ai.Status {return hand_log(a,0)},.Other=nil}
+@(private="file")
+SECOND_ACTS := [Hand_Act]proc(a:^ai.Act(Hand_Act)) -> ai.Status{.Hold=proc(a:^ai.Act(Hand_Act)) -> ai.Status {return hand_log(a,1)},.Other=nil}
+
+// An agent whose Mind_Agent.mind changes while its old mind runs an action
+// (a boss that turns to its next phase): the old mind exits it (Aborted),
+// releasing its claim and forgetting its state, before the new one enters
+// its own action, in the same tick when the new mind ticks after the old one
+// and at the next otherwise; the new one never runs the old one's action. A
+// state of a mind that no longer ticks in the world is forgotten.
+@(test)
+a_mind_change_exits_the_old_action_before_the_new_mind_runs :: proc(t:^testing.T) {
+    Case :: struct {rows,second_first:bool,enters:u64}
+    cases:=[]Case{
+        {rows=true,second_first=false,enters=3},
+        {rows=true,second_first=true,enters=4},
+        {rows=false,second_first=false,enters=3},
+        {rows=false,second_first=true,enters=4},
+    }
+    for k in cases {
+        minds:=new(Minds)
+        defer {minds_free(minds);free(minds)}
+        rows:Mind_Rows
+        defer mind_rows_free(&rows)
+        world:Behavior_World
+        if !test_world_init(t,&world) {return}
+        defer test_world_destroy(&world)
+        e:=core.create(&world.entities)
+        core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("first")})
+        test_world_settle(&world)
+        c:=Handing{world={minds=minds,agents=&world.mind_agents,claims=&world.claims}}
+        defer delete(c.log)
+        if k.rows {c.world.rows=&rows}
+        for tick in u64(1)..=4 {
+            if tick==3 {
+                core.edit(&world.mind_agents,e).mind=mind_name("second")
+                test_world_settle(&world)
+            }
+            c.world.time={tick=tick,dt=1.0/60,playing=true}
+            if k.second_first {minds_tick(&c.world,"second",&SECOND_ACTS,hand_think)}
+            minds_tick(&c.world,"first",&FIRST_ACTS,hand_think)
+            if !k.second_first {minds_tick(&c.world,"second",&SECOND_ACTS,hand_think)}
+        }
+        want:=[]Hand_Call{
+            {0,.Hold,.Enter,.Success,1},{0,.Hold,.Update,.Success,2},
+            {0,.Hold,.Exit,.Aborted,3},{1,.Hold,.Enter,.Success,k.enters},
+        }
+        logged:=c.log[:]
+        if k.enters==3 {want=want[:4]}
+        got:=make([dynamic]Hand_Call,context.temp_allocator)
+        for call in logged {if call.phase!=.Update || call.mind==0 {append(&got,call)}}
+        testing.expectf(t,slice.equal(got[:],want),"%v: %v",k,got[:])
+        agent:=world.mind_agents.values[0]
+        testing.expectf(t,agent.owner==mind_name("second") && agent.state.main.reserved.target==501,"%v: %v",k,agent.owner)
+        testing.expectf(t,agent.state.exited==0 && agent.state.exits_seen==0,"%v: it forgot the exits of the first mind",k)
+        testing.expectf(t,ai.reserve_count(&world.claims.reservations,{500,1},4)==0,"%v: the claim of the first mind is released",k)
+    }
+    // An owner that does not tick in the world: forgotten without its procedures, its claim released.
+    minds:=new(Minds)
+    defer {minds_free(minds);free(minds)}
+    rows:Mind_Rows
+    defer mind_rows_free(&rows)
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    e:=core.create(&world.entities)
+    core.add(&world.mind_agents,e,Mind_Agent{mind=mind_name("second"),owner=mind_name("gone")})
+    test_world_settle(&world)
+    if !testing.expect(t,ai.reserve_take(&world.claims.reservations,{900,1},u64(e),1,1,10)) {return}
+    m:=&core.edit(&world.mind_agents,e).state
+    m.main={action=2,reserved={900,1}}
+    test_world_settle(&world)
+    c:=Handing{world={minds=minds,agents=&world.mind_agents,claims=&world.claims,rows=&rows}}
+    defer delete(c.log)
+    for tick in u64(1)..=2 {
+        c.world.time={tick=tick,dt=1.0/60,playing=true}
+        minds_tick(&c.world,"second",&SECOND_ACTS,hand_think)
+    }
+    testing.expect(t,len(c.log)==1 && c.log[0]=={1,.Hold,.Enter,.Success,2},"it waits a tick for every mind to tick, then forgets")
+    testing.expect(t,ai.reserve_count(&world.claims.reservations,{900,1},2)==0)
+}
+
+// A game declares as many minds as it needs: each registers and groups its
+// own rows, past the 16 a fixed table held.
+@(test)
+twenty_minds_register_and_tick_their_own_agents :: proc(t:^testing.T) {
+    MINDS :: 20
+    minds:=new(Minds)
+    defer {minds_free(minds);free(minds)}
+    rows:Mind_Rows
+    defer mind_rows_free(&rows)
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    names:[MINDS]string
+    agents:[MINDS]core.Entity
+    for i in 0..<MINDS {
+        names[i]=fmt.tprintf("mind%d",i)
+        agents[i]=core.create(&world.entities)
+        core.add(&world.mind_agents,agents[i],Mind_Agent{mind=mind_name(names[i])})
+    }
+    test_world_settle(&world)
+    c:=Counting{world={minds=minds,agents=&world.mind_agents,rows=&rows}}
+    calls:=0
+    for tick in u64(1)..=3 {
+        saved:=context.allocator
+        if tick>1 {context.allocator=refusing_allocator(&calls)}
+        c.world.time={tick=tick,dt=1.0/60,playing=true}
+        for name in names {minds_tick(&c.world,name,&COUNTING_ACTS,counting_think)}
+        context.allocator=saved
+    }
+    testing.expect_value(t,calls,0)
+    testing.expect_value(t,c.entered,3*MINDS) // it enters, and ends at each Update and enters again
+    testing.expect(t,len(minds.entries)==MINDS && len(rows.names)==MINDS && len(rows.loose)==0)
+    for name,i in names {
+        slot:=mind_rows_index(&rows,mind_name(name))
+        testing.expectf(t,slot==i && slice.equal(rows.rows[slot][:],[]i32{i32(core.row_of(&world.mind_agents,agents[i]))}),"%s",name)
+        testing.expectf(t,mind_of(minds,mind_name(name))!=nil && world.mind_agents.values[i].owner==mind_name(name),"%s",name)
+    }
+}
+
+@(private="file")
+Wide_Act :: enum u8 {
+    A0,A1,A2,A3,A4,A5,A6,A7,A8,A9,A10,A11,A12,A13,A14,A15,
+    A16,A17,A18,A19,A20,A21,A22,A23,A24,A25,A26,A27,A28,A29,A30,Last,
+}
+
+// A mind of as many actions as ai.MIND_ACTIONS registers each by name for the editor.
+@(test)
+a_mind_of_many_actions_names_each :: proc(t:^testing.T) {
+    minds:Minds
+    defer minds_free(&minds)
+    testing.expect(t,mind_register(&minds,"wide",Wide_Act))
+    entry:=mind_of(&minds,mind_name("wide"))
+    if !testing.expect(t,entry!=nil) {return}
+    testing.expect_value(t,mind_action_name(entry,u16(Wide_Act.Last)),"Last")
+    testing.expect_value(t,mind_action_name(entry,u16(Wide_Act.A16)),"A16")
 }
 
 @(private="file")
@@ -1664,25 +1936,26 @@ steady_sight_reuses_its_grid_and_candidate_scratch :: proc(t:^testing.T) {
     testing.expect_value(t,tracker.total_allocation_count,allocations)
 }
 
+// The agents navigation let onto a link cross it by its offer together, as
+// many as Nav_Link.capacity lets start: cross_act claims nothing, so neither
+// the offer's users nor claims held by others make one of them wait.
 @(test)
-a_crossing_claims_the_open_offer_on_its_link_entity :: proc(t:^testing.T) {
+a_crossing_counts_its_crossers_only_by_the_link :: proc(t:^testing.T) {
     f:Behavior_World
     if !test_world_init(t,&f) {return}
     defer test_world_destroy(&f)
     use :: Smart_Use(1)
     now:=clock_at(60,1)
-    walker:=placed(&f,{})
+    walkers:=[2]core.Entity{placed(&f,{}),placed(&f,{})}
     nearby:=placed(&f,{})
     link:=placed(&f,{4,0,0})
-    core.add(&f.paths,walker,nav.Nav_Path{state=.Crossing,manual=true,link_entity=link})
+    for walker in walkers {core.add(&f.paths,walker,nav.Nav_Path{state=.Crossing,manual=true,link_entity=link})}
     offers:Smart_Object
     for i in 0..<6 {
-        offers.offers[i]={use=use,at={f32(i),0,0}}
-        if i<5 {
-            by:=core.create(&f.entities)
-            key:=smart_key({object=link,offer=i})
-            if !testing.expect(t,claim_take(&f.claims,key,by,1,now)) {return}
-        }
+        offers.offers[i]={use=use,at={f32(i),0,0},users=1}
+        by:=core.create(&f.entities)
+        key:=smart_key({object=link,offer=i})
+        if !testing.expect(t,claim_take(&f.claims,key,by,1,now)) {return}
     }
     core.add(&f.objects,link,offers)
     core.add(&f.objects,nearby,Smart_Object{offers={0={use=use}}})
@@ -1690,27 +1963,36 @@ a_crossing_claims_the_open_offer_on_its_link_entity :: proc(t:^testing.T) {
 
     w:=Mind_World{
         objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds),
-        paths=core.read(&f.paths),claims=&f.claims,time=now,
+        paths=core.read(&f.paths),requests=&f.moves,claims=&f.claims,time=now,
     }
-    m:ai.Mind
-    ctx:=ai.Mind_Context{user=&w,holder=u64(walker),tick=now.tick,dt=now.dt,reservations=&f.claims.reservations}
-    a:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main,phase=.Enter}
-    testing.expect_value(t,cross_act(&a,use,{entity=walker},1),ai.Status.Running)
-    testing.expect(t,claim_held(&f.claims,smart_key({object=link,offer=5}),walker,now))
-    testing.expect(t,!claim_held(&f.claims,smart_key({object=nearby,offer=0}),walker,now))
+    minds:[2]ai.Mind
+    contexts:[2]ai.Mind_Context
+    acts:[2]ai.Act(Smart_Act)
+    for walker,i in walkers {
+        contexts[i]={user=&w,holder=u64(walker),tick=now.tick,dt=now.dt,reservations=&f.claims.reservations}
+        acts[i]={ctx=&contexts[i],mind=&minds[i],frame=&minds[i].main,phase=.Enter}
+        testing.expect_value(t,cross_act(&acts[i],use,{entity=walker},0),ai.Status.Running)
+        testing.expectf(t,ai.stage(&acts[i])==2,"walker %d crosses at once: stage %d",i,ai.stage(&acts[i]))
+        testing.expect(t,minds[i].main.reserved=={},"it holds no claim")
+    }
+    skips:=0
+    for asked in f.moves.queue.items {if asked.kind==.Crossing_Skip {skips+=1}}
+    testing.expect_value(t,skips,2)
+    // An offer closed to it (spent) makes it wait at the start.
+    core.add(&f.states,link,Smart_State{used={0=1,1=1,2=1,3=1,4=1,5=1}})
+    for &offer in core.edit(&f.objects,link).offers {offer.uses=1}
+    test_world_settle(&f)
+    minds[0]={}
+    testing.expect_value(t,cross_act(&acts[0],use,{entity=walkers[0]},0),ai.Status.Running)
+    testing.expect_value(t,ai.stage(&acts[0]),0)
 
     index:Smart_Index
     defer smart_index_free(&index)
-    view:=mind_smart_view(&a)
+    view:=mind_smart_view(&acts[0])
     view.index=core.ref(&index)
     if !testing.expect(t,smart_index_update(&index,view.objects)) {return}
-    nearest,ok:=smart_nearest(view,use,{},20,{entity=walker})
+    nearest,ok:=smart_nearest(view,use,{},20,{entity=walkers[0]})
     testing.expect(t,ok && nearest.object==nearby)
-    core.edit(&f.objects,nearby).offers[0].use=USE_NONE
-    test_world_settle(&f)
-    if !testing.expect(t,smart_index_update(&index,view.objects)) {return}
-    nearest,ok=smart_nearest(view,use,{},20,{entity=walker})
-    testing.expect(t,ok && nearest.object==link && nearest.offer==5)
 }
 
 @(private="file")

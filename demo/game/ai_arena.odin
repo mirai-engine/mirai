@@ -578,6 +578,7 @@ Arena_Piece :: struct {
     color:[4]f32,
     end:mm.Vec3,
     link:nav.Nav_Link_Kind,
+    capacity:u8, // of a Link: who cross it at once; 0: anybody
     area:nav.Nav_Area_Kind,
     to:mm.Vec3,
     offers:[2]behavior.Smart_Offer, // of an Offer, or of a Link the game crosses
@@ -642,7 +643,7 @@ arena_place :: proc(kind:Arena_Kind,origin:mm.Vec3,out:^[dynamic]Arena_Piece) {
         // across the lane on the far side.
         solid(out,"Paths ground",origin+{0,-0.5,0},{20,0.5,15},ARENA_GROUND)
         solid(out,"Fence",origin+{11,0.9,0},{0.15,0.9,16},{0.55,0.4,0.25,1})
-        append(out,Arena_Piece{kind=.Link,name="Vault",position=origin+{10.2,0,0},end={1.6,0,0},link=LINK_VAULT,color={0.55,0.4,0.25,1},offers={0={use=USE_VAULT,at={-0.3,0,0},users=1}}})
+        append(out,Arena_Piece{kind=.Link,name="Vault",position=origin+{10.2,0,0},end={1.6,0,0},link=LINK_VAULT,capacity=1,color={0.55,0.4,0.25,1},offers={0={use=USE_VAULT,at={-0.3,0,0}}}})
         solid(out,"Platform",origin+{-8,1.75,0},{3,1.75,3})
         append(out,Arena_Piece{kind=.Link,name="Ladder",position=origin+{-11.8,0,0},end={1.4,3.5,0},link=nav.LINK_LADDER,color={0.9,0.75,0.3,1}})
         append(out,Arena_Piece{kind=.Area,name="Blocked area",position=origin+{4,0,0},half={3,0.02,6},area=nav.AREA_BLOCKED,color={0.8,0.2,0.2,1}})
@@ -684,7 +685,7 @@ arena_piece_add :: proc(c:core.Commands,piece:Arena_Piece) {
         core.commands_add(c,slab,render.Material_Values{color=piece.color})
     case .Link:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})
-        core.commands_add(c,e,nav.Nav_Link{enabled=true,end=piece.end,kind=piece.link,two_way=true,area=nav.AREA_WALKABLE,abilities=arena_link_abilities(piece.link)})
+        core.commands_add(c,e,nav.Nav_Link{enabled=true,end=piece.end,kind=piece.link,two_way=true,capacity=piece.capacity,area=nav.AREA_WALKABLE,abilities=arena_link_abilities(piece.link)})
         if piece.offers[0].use!=behavior.USE_NONE {core.commands_add(c,e,behavior.Smart_Object{offers={0=piece.offers[0],1=piece.offers[1]}})}
     case .Offer:
         core.commands_add(c,e,core.Transform{piece.position,1,{1,1,1}})

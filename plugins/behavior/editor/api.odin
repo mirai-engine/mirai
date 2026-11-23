@@ -229,7 +229,7 @@ minds :: proc(s:^editor.Session,call:^api.Call) {
     shown:=make([dynamic]Mind_Result,call.allocator)
     if registry!=nil {
         agents:=core.world_table_of(editor.shown_world(s),behavior.Mind_Agent)
-        for &entry in registry.entries[:clamp(registry.count,0,behavior.MINDS_CAPACITY)] {
+        for &entry in registry.entries {
             running:=0
             if agents!=nil {for agent in agents.values[:core.count(agents)] {if agent.mind==entry.name {running+=1}}}
             actions:=make([dynamic]string,call.allocator)
@@ -248,7 +248,9 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     world,agent_entity,agents,ok:=entity_of(s,call,p.entity[:],behavior.Mind_Agent,"Mind_Agent")
     if !ok {return}
     agent:=&agents.values[core.row_of(agents,agent_entity)]
-    entry:=behavior.mind_of(minds_of(s),agent.mind)
+    // Its state is of the mind that owns it, the old one until that exits what it ran.
+    none:behavior.Mind_Name
+    entry:=behavior.mind_of(minds_of(s),agent.owner if agent.owner!=none else agent.mind)
     r:=api.call_result(call,Inspect_Result)
     r.mind=name_text(agent.mind)
     if entry==nil {

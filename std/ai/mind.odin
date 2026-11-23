@@ -17,11 +17,12 @@ import math "mirai:std/math"
 // enum: it is copied with the world, and behavior inspects and presents it.
 
 MIND_WORDS :: #config(MIRAI_MIND_WORDS,4)      // memory of an action, zero on Enter
-MIND_ACTIONS :: #config(MIRAI_MIND_ACTIONS,16) // values of the enum of actions: from 0 to below this
+MIND_ACTIONS :: #config(MIRAI_MIND_ACTIONS,32) // values of the enum of actions: from 0 to below this
 MIND_TRACE :: 4                                // exits a mind remembers
 MIND_PROPOSALS :: 4                            // best proposals of its last decision it remembers
 MIND_NONE :: u16(0xFFFF)
 
+// At most the bits of `exited`; each value costs a Mind 8 bytes (`ended`).
 #assert(MIND_ACTIONS>0 && MIND_ACTIONS<=32)
 
 Status :: enum u8 {Running,Success,Failure}
@@ -173,6 +174,18 @@ mind_tick :: proc(m:^Mind,acts:^[$A]$P,think:proc(t:^Think(A)),ctx:^Mind_Context
 mind_stop :: proc(m:^Mind,acts:^[$A]$P,ctx:^Mind_Context) {
     if m==nil || acts==nil || ctx==nil || m.main.action==0 {return}
     mind_exit(m,acts,ctx,.Aborted,MIND_NONE)
+}
+
+// Forgets what runs and what the mind remembers without calling a procedure,
+// releasing what its frames hold: for a mind whose state is of another enum,
+// whose procedures cannot run its Exit.
+mind_clear :: proc "contextless" (m:^Mind,reservations:^Reservations,holder:u64) {
+    if m==nil {return}
+    if reservations!=nil {
+        if m.main.reserved.target!=0 {reserve_release(reservations,m.main.reserved,holder)}
+        if m.step.reserved.target!=0 {reserve_release(reservations,m.step.reserved,holder)}
+    }
+    m^={}
 }
 
 // What runs: the action and the step it runs, MIND_NONE for none. The same

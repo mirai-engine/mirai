@@ -23,7 +23,6 @@ import nav "plugins:navigation/runtime"
 // again decides nothing. What an action plays (anim.play, anim.look) reaches
 // the clients through the replicated state of the animation.
 
-MINDS_CAPACITY :: 16
 MIND_NAME :: 16
 MIND_ACTION_NAME :: 24
 
@@ -35,11 +34,17 @@ Mind_Entry :: struct {
     names:[ai.MIND_ACTIONS][MIND_ACTION_NAME]u8, // of each value of the enum, for whoever cannot read the enum (the editor)
 }
 
-// The minds registered, by name. Shared: every library that runs minds registers its own.
-@(storage,host,shared)
+// The minds registered, by name, as many as the game declares: each one is
+// added the first time it ticks. Shared: every library that runs minds
+// registers its own.
+@(storage,host,shared,free="minds_free")
 Minds :: struct {
-    entries:[MINDS_CAPACITY]Mind_Entry,
-    count:int,
+    entries:[dynamic]Mind_Entry,
+}
+
+minds_free :: proc(minds:^Minds) {
+    delete(minds.entries)
+    minds^={}
 }
 
 // An agent that decides with a mind: the name the game registered it by and
@@ -49,48 +54,117 @@ Minds :: struct {
 Mind_Agent :: struct {
     mind:Mind_Name `mirai:"text"`,
     state:ai.Mind `mirai:"hidden"`,
+    // The mind whose actions `state` is of: when `mind` names another, this
+    // one exits what runs before the new one ticks the agent.
+    owner:Mind_Name `mirai:"hidden"`,
 }
 
 MIND_KEEP :: f32(0.05) // the margin of the running action of an agent over the others
 
 // The rows of the Mind_Agents of each mind that ticked in a world, on then
-// off, in the order of the table. They are grouped again when the rows move,
-// when a mind ticks there the first time, and when an agent changed its mind:
-// its old mind finds another name in its row, or a row of no mind found the
-// name of one, at the first tick after. Shared: every library that runs minds
-// keeps those of its own.
+// off, in the order of the table: a row is of its owner while the owner
+// still has to exit its action, else of its mind. They are grouped again when
+// the rows move, when a mind ticks there the first time, and when an agent
+// changed its mind: its old mind finds another name in its row, or a row of
+// no mind found the name of one, at the first tick after. Shared: every
+// library that runs minds keeps those of its own.
 @(storage,host,by_world,shared,free="mind_rows_free")
 Mind_Rows :: struct {
-    names:[MINDS_CAPACITY]Mind_Name,
-    actions:[MINDS_CAPACITY]typeid,    // each was registered with
-    rows:[MINDS_CAPACITY][dynamic]i32, // of each
-    loose:[dynamic]i32,                // of no mind that ticked in the world
-    count:int,
+    names:[dynamic]Mind_Name,
+    actions:[dynamic]typeid,    // each was registered with
+    rows:[dynamic][dynamic]i32, // of each
+    loose:[dynamic]i32,         // of no mind that ticked in the world
     shape:core.Shape,
-    tick:u64,                          // the loose rows were last looked at
-    stale:bool,
+    tick:u64,                   // the loose rows were last looked at
+    first:u64,                  // the first tick a mind ticked in the world: every mind did by the next
+    begun,stale:bool,
 }
 
 mind_rows_free :: proc(g:^Mind_Rows) {
     for &rows in g.rows {delete(rows)}
+    delete(g.names)
+    delete(g.actions)
+    delete(g.rows)
     delete(g.loose)
     g^={}
 }
 
+// Agents to think at their next tick whatever their cadence: an event of the
+// game for them (damage, an order). minds_wake also wakes those that noticed
+// something (Perception_Events) and those navigation told about their path
+// (Nav_Events).
+@(storage,queue)
+Mind_Wakes :: struct {
+    using queue:core.Queue(core.Entity),
+}
+
+wake :: proc(wakes:^Mind_Wakes,e:core.Entity) {
+    if wakes!=nil && e!=core.NONE {core.push(&wakes.queue,e)}
+}
+
+// The agents that think in this tick whatever their cadence, a bit by the
+// index of their entity: minds_wake, its only writer, sets them before the
+// minds tick and clears them at the next tick.
+@(storage)
+Mind_Woken :: struct {
+    bits:[dynamic]u64,
+    any:bool,
+}
+
+// Gathers the wakes of the tick: those asked, what the perceivers noticed in
+// this tick and what navigation told the agents in the tick before. It grows
+// only with the entities.
+@(step="fixed",stage="input",after="perception_update",server)
+minds_wake :: proc(
+    woken:^Mind_Woken,wakes:^Mind_Wakes,noticed:core.Ref(Perception_Events),paths:core.Ref(nav.Nav_Events),
+    entities:core.Ref(core.Entities),problems:^core.Problems,
+) {
+    if woken.any {
+        for &word in woken.bits {word=0}
+        woken.any=false
+    }
+    if entities.ptr!=nil {
+        if words:=(len(entities.generation)+63)/64;len(woken.bits)<words && resize(&woken.bits,words)!=nil {
+            core.report(problems,core.NONE,"behavior.memory","No memory to wake the minds; free memory")
+        }
+    }
+    for e in core.take(&wakes.queue) {mind_wake(woken,e)}
+    if noticed.ptr!=nil {
+        for event in noticed.items {if event.kind==.Noticed {mind_wake(woken,event.perceiver)}}
+    }
+    if paths.ptr!=nil {
+        for event in paths.items {mind_wake(woken,event.entity)}
+    }
+}
+
+@(private)
+mind_wake :: proc "contextless" (woken:^Mind_Woken,e:core.Entity) {
+    i:=core.entity_index(e)
+    if e==core.NONE || i>>6>=len(woken.bits) {return}
+    woken.bits[i>>6]|=1<<uint(i&63)
+    woken.any=true
+}
+
+// Whether the agent thinks in this tick whatever its cadence.
+mind_woken :: #force_inline proc "contextless" (woken:^Mind_Woken,e:core.Entity) -> bool {
+    if woken==nil {return false}
+    i:=core.entity_index(e)
+    return i>>6<len(woken.bits) && woken.bits[i>>6]&(1<<uint(i&63))!=0
+}
+
 // Registers a mind under a name, or replaces the one there (a game that
-// changed its code). The generated world checks the name and how many minds
-// there are when it builds.
-mind_register :: proc(minds:^Minds,name:string,$A:typeid) {
+// changed its code). False without memory.
+mind_register :: proc(minds:^Minds,name:string,$A:typeid) -> bool {
     key,ok:=name_make(name)
-    if !ok || minds==nil {return}
-    for &entry in minds.entries[:clamp(minds.count,0,MINDS_CAPACITY)] {
+    if !ok || minds==nil {return false}
+    for &entry in minds.entries {
         if entry.name!=key {continue}
         if entry.actions!=A {entry_set(&entry,key,A,type_info_of(A))}
-        return
+        return true
     }
-    if minds.count>=MINDS_CAPACITY {return}
-    entry_set(&minds.entries[minds.count],key,A,type_info_of(A))
-    minds.count+=1
+    if _,err:=append(&minds.entries,Mind_Entry{});err!=nil {return false}
+    entry_set(&minds.entries[len(minds.entries)-1],key,A,type_info_of(A))
+    return true
 }
 
 // The names come from the type info of the binary that registers: the editor
@@ -121,7 +195,7 @@ mind_action_name :: proc(entry:^Mind_Entry,action:u16) -> string {
 // The mind registered under a name, or nil.
 mind_of :: proc "contextless" (minds:^Minds,name:Mind_Name) -> ^Mind_Entry {
     if minds==nil {return nil}
-    for &entry in minds.entries[:clamp(minds.count,0,MINDS_CAPACITY)] {
+    for &entry in minds.entries {
         if entry.name==name {return &entry}
     }
     return nil
@@ -152,6 +226,7 @@ Mind_World :: struct {
     patrols:^core.Table(Patrol),
     splines:^core.Table(volume.Spline,.Read),
     claims:^Claims,
+    woken:core.Ref(Mind_Woken),
     sources:core.Ref(scene.Simulation_Sources),
     settings:core.Ref(Behavior_Settings),
     problems:^core.Problems,
@@ -164,16 +239,22 @@ Mind_World :: struct {
 // often the farther it is from the simulation sources (the bodies the seats
 // drive, each Streaming_Source): once every ai.cadence_period ticks of
 // Behavior_Settings.think_near, each on the ticks of its own phase; its
-// running action runs every tick, and it thinks too when that action ends. An
-// agent far from the players (nav.Nav_Far) is off and decides on: its mind
-// ticks once every step of what is far (nav.nav_far_decide), and what it
-// claims lasts until its next tick. Only a world that plays decides, and a
-// tick that runs again (time.resimulating) does not: its actions would repeat
-// what they did. Without Mind_Rows it looks at every row.
+// running action runs every tick, and it thinks too when that action ends or
+// when it is woken (Mind_Woken). An agent far from the players (nav.Nav_Far)
+// is off and decides on: its mind ticks once every step of what is far
+// (nav.nav_far_decide), and what it claims lasts until its next tick. An
+// agent whose Mind_Agent.mind changed is ticked by its new mind once the old
+// one exited what it ran (Aborted) and forgot its state. Only a world that
+// plays decides, and a tick that runs again (time.resimulating) does not: its
+// actions would repeat what they did. Without Mind_Rows it looks at every row.
 minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think(A))) {
     key:=mind_name(name)
-    slot:=mind_slot(w,name,key,A)
     time:=w.time
+    slot,registered:=mind_slot(w,name,key,A,time.tick)
+    if !registered {
+        core.report(w.problems,core.NONE,"behavior.memory","No memory to register the mind %q; free memory",name)
+        return
+    }
     if !time.playing || time.resimulating || time.dt<=0 {return}
     agents:=w.agents
     on:=core.count(agents)
@@ -197,13 +278,23 @@ minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think
         row:=i
         if slot>=0 {row=int(rows[i])}
         if row>=on {off=i;break}
-        if !mind_row_is(w,row,key) {continue}
+        turn:=mind_turn(w,&agents.values[row],key,time.tick)
+        if turn==.Skip {continue}
         e:=core.entity_at(agents,row)
-        period:=u64(1)
-        if near>0 && w.worlds!=nil {
-            if at,ok:=core.get(w.worlds,e);ok {period=ai.cadence_period(scene.sources_distance(w.sources.ptr,at.position,at.position),near,slowest)}
+        agent:=core.edit_at(agents,row)
+        if turn==.Stop {
+            mind_halt(w,e,agent,acts,&ctx)
+            continue
         }
-        mind_run(e,&core.edit_at(agents,row).state,acts,think,&ctx,ai.cadence_due(time.tick,u64(core.entity_index(e)),period))
+        decide:=mind_woken(w.woken.ptr,e)
+        if !decide {
+            period:=u64(1)
+            if near>0 && w.worlds!=nil {
+                if at,ok:=core.get(w.worlds,e);ok {period=ai.cadence_period(scene.sources_distance(w.sources.ptr,at.position,at.position),near,slowest)}
+            }
+            decide=ai.cadence_due(time.tick,u64(core.entity_index(e)),period)
+        }
+        mind_run(e,agent,key,acts,think,&ctx,decide)
     }
     if w.fars==nil || !nav.nav_far_decide(time) {return}
     // Until its next tick, once every step of what is far.
@@ -211,47 +302,86 @@ minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think
     for i in off..<total {
         row:=i
         if slot>=0 {row=int(rows[i])}
-        if !mind_row_is(w,row,key) {continue}
         e:=agents.entities[row]
         if !far_of(w.fars,e) {continue}
         // edit_at reaches only the rows on: an off row is written in place.
         far:=cast(^Mind_Agent)core.raw_edit(core.raw(agents),type_info_of(Mind_Agent),e)
-        mind_run(e,&far.state,acts,think,&ctx)
+        switch mind_turn(w,far,key,time.tick) {
+        case .Skip:
+        case .Stop: mind_halt(w,e,far,acts,&ctx)
+        case .Run: mind_run(e,far,key,acts,think,&ctx)
+        }
     }
 }
 
 // The index of a mind in the Mind_Rows of the world, which registers it
 // the first time it ticks there and again when its actions are of another
-// binary; -1 without Mind_Rows, registering it every tick.
+// binary; -1 without Mind_Rows, registering it every tick. False without
+// memory.
 @(private)
-mind_slot :: proc(w:^Mind_World,name:string,key:Mind_Name,$A:typeid) -> int {
+mind_slot :: proc(w:^Mind_World,name:string,key:Mind_Name,$A:typeid,tick:u64) -> (int,bool) {
     g:=w.rows
-    if g==nil {
-        mind_register(w.minds,name,A)
-        return -1
-    }
-    for i in 0..<g.count {
+    if g==nil {return -1,mind_register(w.minds,name,A)}
+    if !g.begun {g.begun,g.first=true,tick}
+    for i in 0..<len(g.names) {
         if g.names[i]!=key {continue}
         if g.actions[i]!=A {
-            mind_register(w.minds,name,A)
+            if !mind_register(w.minds,name,A) {return -1,false}
             g.actions[i]=A
         }
-        return i
+        return i,true
     }
-    mind_register(w.minds,name,A)
-    if g.count>=MINDS_CAPACITY {return -1}
-    g.names[g.count],g.actions[g.count]=key,A
-    g.count+=1
+    if !mind_register(w.minds,name,A) {return -1,false}
+    if _,err:=append(&g.names,key);err!=nil {return -1,false}
+    if _,err:=append(&g.actions,A);err!=nil {
+        pop(&g.names)
+        return -1,false
+    }
+    if _,err:=append(&g.rows,[dynamic]i32{});err!=nil {
+        pop(&g.names)
+        pop(&g.actions)
+        return -1,false
+    }
     g.stale=true
-    return g.count-1
+    return len(g.names)-1,true
 }
 
-// Whether the row is of the mind; when it is no longer, its rows are grouped again.
 @(private)
-mind_row_is :: #force_inline proc "contextless" (w:^Mind_World,row:int,key:Mind_Name) -> bool {
-    if w.agents.values[row].mind==key {return true}
+Mind_Turn :: enum u8 {
+    Skip, // not of this mind, or of a new one that waits for its old one to exit
+    Run,
+    Stop, // the agent changed its mind: this one, its owner, exits what it runs
+}
+
+// What the mind `key` does with an agent in this tick. A state owned by a
+// mind that does not tick in the world (once every mind ticked there) is
+// forgotten by the new one, which cannot run its Exit. Without Mind_Rows a
+// mind waits for any registered owner. A row in the group of another mind
+// groups them again.
+@(private)
+mind_turn :: proc "contextless" (w:^Mind_World,agent:^Mind_Agent,key:Mind_Name,tick:u64) -> Mind_Turn {
+    none:Mind_Name
+    if agent.mind==key && (agent.owner==key || agent.owner==none) {return .Run}
+    if agent.owner==key {return .Stop}
+    if agent.mind==key {
+        waits:=mind_of(w.minds,agent.owner)!=nil
+        if g:=w.rows;g!=nil {waits=mind_rows_index(g,agent.owner)>=0 || g.first==tick}
+        if !waits {return .Run}
+    }
     if w.rows!=nil {w.rows.stale=true}
-    return false
+    return .Skip
+}
+
+// Exits what the agent runs with Aborted, with the procedures of the mind
+// that owns its state, and forgets that state: its exits and cooldowns are
+// of values of this mind's enum.
+@(private)
+mind_halt :: proc(w:^Mind_World,e:core.Entity,agent:^Mind_Agent,acts:^[$A]$P,ctx:^ai.Mind_Context) {
+    ctx.holder=u64(e)
+    ai.mind_stop(&agent.state,acts,ctx)
+    ai.mind_clear(&agent.state,ctx.reservations,ctx.holder)
+    agent.owner={}
+    if w.rows!=nil {w.rows.stale=true}
 }
 
 // Groups the rows by mind again when they moved or went stale. False without memory.
@@ -261,24 +391,33 @@ mind_rows_group :: proc(g:^Mind_Rows,agents:^core.Table(Mind_Agent),tick:u64) ->
     if g.tick!=tick {
         g.tick=tick
         for row in g.loose {
-            if int(row)<len(agents.entities) && mind_rows_index(g,agents.values[row].mind)>=0 {g.stale=true;break}
+            if int(row)<len(agents.entities) && mind_rows_index(g,mind_row_name(g,&agents.values[row]))>=0 {g.stale=true;break}
         }
     }
     if !moved && !g.stale {return true}
     g.stale=true
-    for &rows in g.rows[:g.count] {clear(&rows)}
+    for &rows in g.rows {clear(&rows)}
     clear(&g.loose)
     for row in 0..<len(agents.entities) {
-        i:=mind_rows_index(g,agents.values[row].mind)
+        i:=mind_rows_index(g,mind_row_name(g,&agents.values[row]))
         if _,err:=append(&g.loose if i<0 else &g.rows[i],i32(row));err!=nil {return false}
     }
     g.stale=false
     return true
 }
 
+// The mind a row is grouped with: its owner while that ticks in the world and
+// has to exit its action, else its mind.
+@(private)
+mind_row_name :: proc "contextless" (g:^Mind_Rows,agent:^Mind_Agent) -> Mind_Name {
+    none:Mind_Name
+    if agent.owner!=none && agent.owner!=agent.mind && mind_rows_index(g,agent.owner)>=0 {return agent.owner}
+    return agent.mind
+}
+
 @(private)
 mind_rows_index :: proc "contextless" (g:^Mind_Rows,name:Mind_Name) -> int {
-    for i in 0..<g.count {
+    for i in 0..<len(g.names) {
         if g.names[i]==name {return i}
     }
     return -1
@@ -296,10 +435,17 @@ minds_unknown :: proc(minds:core.Ref(Minds),agents:^core.Table(Mind_Agent,.Read)
     }
 }
 
+// Ticks the agent with the mind `key`, which owns its state from now on: a
+// state of a mind that cannot exit it is forgotten first.
 @(private)
-mind_run :: proc(e:core.Entity,m:^ai.Mind,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context,decide:=true) {
+mind_run :: proc(e:core.Entity,agent:^Mind_Agent,key:Mind_Name,acts:^[$A]$P,think:proc(t:^ai.Think(A)),ctx:^ai.Mind_Context,decide:=true) {
     ctx.holder=u64(e)
-    ai.mind_tick(m,acts,think,ctx,decide)
+    if agent.owner!=key {
+        none:Mind_Name
+        if agent.owner!=none {ai.mind_clear(&agent.state,ctx.reservations,ctx.holder)}
+        agent.owner=key
+    }
+    ai.mind_tick(&agent.state,acts,think,ctx,decide)
 }
 
 // The agent a procedure of a mind runs for: of its ai.Act or its ai.Think.

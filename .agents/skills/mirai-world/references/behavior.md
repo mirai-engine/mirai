@@ -15,12 +15,17 @@ reservations) belongs to
   What a procedure receives after its `ai.Think` or `ai.Act` is bound as for a step; the step
   holds each datum once, after `Mind_World`. A world that does not play and a repeated tick
   (`Time.resimulating`) do not decide.
-- The generator checks a mind when it builds (every value has one action, the shapes, the name
-  and how many minds fit in `Minds`); `minds_tick` registers it by name in `Minds` (application
-  storage, shared) the first time it ticks in a world, which keeps the action names as bytes for
+- The generator checks a mind when it builds (every value has one action, the shapes and the
+  name); `minds_tick` registers it by name in `Minds` (application storage, shared, as many as the
+  game declares) the first time it ticks in a world, which keeps the action names as bytes for
   the editor, which does not know the game's enum. `Mind_Rows` (by world, shared) keeps the rows
   of each mind, so a mind visits only its own agents; it groups them again when the rows move, a
   mind ticks there first, or an agent changed its mind (seen at the first tick after).
+- `Mind_Agent.owner` is the mind whose actions its `state` is of. When the game changes
+  `Mind_Agent.mind` (a boss's next phase), the row stays with the owner, which exits what runs
+  (`Aborted`, releasing its claims) and forgets the state, whose exits and cooldowns are of its
+  enum; the new mind ticks the agent in that tick if it ticks after the old one, else at the
+  next. A state of a mind that does not tick in the world is forgotten without its `Exit`.
   `minds_unknown` (`fixed`, `apply`, `server`) reports the agents of a name no mind declares with
   the `behavior.mind` problem.
 - `Mind_Agent` carries the name and the `ai.Mind` of the agent, which is copied with the world. It
@@ -38,6 +43,12 @@ reservations) belongs to
   of its own phase (`ai.cadence_due`). Only `think` is spaced: its running action runs every tick,
   and it thinks too when that action ends, so a wait or an attack lasts what it says. Without
   sources, or with `think_near` 0, every agent decides every tick.
+- A woken agent thinks at that tick whatever its cadence, and a commit does not stop what it
+  then scores higher. `minds_wake` (`fixed`, `input`, after `perception_update`, sole writer of
+  `Mind_Woken`, a bit per entity index kept for one tick) wakes the perceivers that noticed
+  something in the tick (`Perception_Events`), the agents of the `nav.Nav_Events` of the tick
+  before and those the game asks for with `wake` (`^Mind_Wakes`, a queue): damage, an order. A far
+  agent decides at the steps of what is far, woken or not.
 - What those actions request goes on when the agent's section unloads
   ([the far field](navigation.md#the-far-field)): `minds_tick` also runs the agents with
   `Nav_Far`, on the tick after each far step (`nav.nav_far_decide`), and what they reserve lasts
@@ -75,7 +86,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
   sounding an alarm (a noise that its side hears). Going for something does `commit` so as not to
   leave it half done.
 - **Use of the scenery:** each use is an offer of a [smart object](#smart-objects); a door or a
-  fence is an offer on its `Nav_Link`, which the agent crosses with `cross_act`, one at a time.
+  fence is an offer on its `Nav_Link`, which the agent crosses with `cross_act`, as many at once
+  as the link's `capacity`.
 - No state machines, trees or planners are written
   ([equivalences](../../mirai-std/references/ai.md#instead-of-fsm-trees-htn-and-goap)).
 
@@ -103,10 +115,12 @@ what it perceives; `think` only reads and proposes, and the actions write.
   `smart_update` (`fixed`, `react`, `server`), sole writer of `Smart_State`, counts the use and
   starts the cooldown.
 - A link that the game crosses (a kind of its own or one of `Nav_Agent.manual`) with an offer on
-  its entity: the agent waits at its start in `Crossing`; `cross_act` reserves an offer directly
-  on `Nav_Path.link_entity`, waits
-  its turn, asks navigation to put it on the other side (`nav.nav_crossing_skip`), and finishes
-  when navigation takes it from there.
+  its entity: navigation starts a crossing only within `Nav_Link.capacity` and the agent waits
+  at its start in `Crossing`; `cross_act` reads the offer on `Nav_Path.link_entity`, waits while
+  it is closed to the agent (spent, cooling down), asks navigation to put it on the other side
+  (`nav.nav_crossing_skip`), and finishes when navigation takes it from there. The link's
+  capacity is the one count of who crosses at once: `cross_act` claims nothing, and the offer's
+  `users` does not count there.
 
 ## Influence maps
 
@@ -227,19 +241,23 @@ what it perceives; `think` only reads and proposes, and the actions write.
 
 ## Verification
 
-- `mirai test plugins/behavior/runtime`: registration by name and unknown names, agent tick without
-  allocating, that it does not decide when resimulating or stopped, far agents and their lease, the
-  cadence of a mind by its distance to the sources, movement, chase and patrol actions, sight by
-  cone and team, noise, forgetting, a remembered subject that is destroyed, ray turns, random crowds
-  that remember by the grid whom they would among every perceivable, why a subject is seen or not
-  (`sight_why_names_what_hides_a_subject`), a tick with nothing to do that goes through no row,
-  places by budget, from the navmesh, from entities, from memory and from offers, rays only where
-  they change the answer, the explanation of each candidate
-  (`a_query_explains_each_candidate_and_the_test_that_vetoed_it`), a place
-  target that is destroyed, the offers by team, ability, capacity, uses and cooldown, the way in
-  and the facing of `offer_act` and the claim of a higher priority before use, and the
-  opt-in influence, custom visibility layers, allocation-free steady sight, link-owned
-  offers and services driven by a plain step.
+- `mirai test plugins/behavior/runtime`: registration by name and unknown names, twenty minds
+  (`twenty_minds_register_and_tick_their_own_agents`), agent tick without allocating, the wake of a
+  far agent by perception, navigation and the game
+  (`a_woken_mind_thinks_at_once_whatever_its_cadence`), the old mind's `Exit` on a change of mind
+  (`a_mind_change_exits_the_old_action_before_the_new_mind_runs`), crossers counted only by the link
+  (`a_crossing_counts_its_crossers_only_by_the_link`), that it does not decide when resimulating or
+  stopped, far agents and their lease, the cadence of a mind by its distance to the sources,
+  movement, chase and patrol actions, sight by cone and team, noise, forgetting, a remembered
+  subject that is destroyed, ray turns, random crowds that remember by the grid whom they would
+  among every perceivable, why a subject is seen or not (`sight_why_names_what_hides_a_subject`), a
+  tick with nothing to do that goes through no row, places by budget, from the navmesh, from
+  entities, from memory and from offers, rays only where they change the answer, the explanation of
+  each candidate (`a_query_explains_each_candidate_and_the_test_that_vetoed_it`), a place target
+  that is destroyed, the offers by team, ability, capacity, uses and cooldown, the way in and the
+  facing of `offer_act` and the claim of a higher priority before use, and the opt-in influence,
+  custom visibility layers, allocation-free steady sight, link-owned offers and services driven by a
+  plain step.
   `mirai test plugins/multiplayer/runtime
   a_mind_decides_on_the_server_and_the_client_plays_what_it_plays`: a mind in a session, the
   action it plays played on the client within the delay it shows the server by, and the snapshot

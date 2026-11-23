@@ -112,7 +112,8 @@ a_mind_decides_on_the_server_and_the_client_plays_what_it_plays :: proc(t:^testi
     characters.allocator=context.allocator
     append(&characters.contents,anim.Character_Content{id=MIND_NET_CHARACTER,checked=1,revision=1,valid=true,set={info={animation={1,2}},match={info=anim.MATCH_INFO_DEFAULT},actions={actions=wave[:]}}})
     server,client:=&worlds[0],&worlds[1]
-    minds:=new(behavior.Minds);defer free(minds)
+    minds:=new(behavior.Minds)
+    defer {behavior.minds_free(minds);free(minds)}
     for w in ([]^Mind_Net_World{server,client}) {
         e:=core.create(&w.entities)
         core.add(&w.identities,e,core.Id{5})

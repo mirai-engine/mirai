@@ -2296,18 +2296,13 @@ world_write :: proc(g:^Generator,editor:bool) -> string {
             break
         }
     }
-    minds:=0
     for s in g.steps {
-        if s.mind==nil {continue}
-        if minds==0 {fmt.sbprint(w,"import gen_ai \"mirai:std/ai\"\n")}
-        minds+=1
+        if s.mind!=nil {
+            fmt.sbprint(w,"import gen_ai \"mirai:std/ai\"\n")
+            break
+        }
     }
     fmt.sbprint(w,"\n")
-    for s in g.steps {
-        if s.mind==nil {continue}
-        fmt.sbprintf(w,"#assert(%d<=%s.MINDS_CAPACITY,%q)\n\n",minds,s.mind.runner.pkg.alias,fmt.tprintf("the world declares %d minds, more than behavior.MINDS_CAPACITY: join those that share their actions in one mind",minds))
-        break
-    }
 
     // The functions as info.steps lists them: where each one adds its time.
     kept:=make([dynamic]^Step,context.temp_allocator)

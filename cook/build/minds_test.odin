@@ -61,9 +61,10 @@ Zombie_Act :: enum u8 {Wander,Chase,Circle}
             ".Circle=proc(a:^gen_ai.Act(p_game.Zombie_Act)) -> gen_ai.Status {c:=cast(^Mind_zombie_think)a.user;return p_game.zombie_chase(a,c.a1,c.a2,c.a3)}",
             `p_core.minds_tick(&ctx.world,"zombie",&acts,think)`,
             `#assert(len("zombie")<p_core.MIND_NAME`,
-            "#assert(1<=p_core.MINDS_CAPACITY",
         }
         for e in expected {testing.expectf(t,strings.contains(text,e),"missing %s",e)}
+        // Minds are registered as the game declares them, with no cap to build against.
+        testing.expect(t,!strings.contains(text,"MINDS_CAPACITY"),"the world asserts a cap of minds")
         at:=strings.index(text,"call_zombie_think :: proc")
         if !testing.expect(t,at>=0) {continue}
         call:=text[at:]

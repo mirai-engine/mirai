@@ -19,8 +19,8 @@ import nav "plugins:navigation/runtime"
 // Claims) and the mind releases it at its Exit; a claim of a higher priority
 // takes it from one that does not use it yet. One that uses it up says so
 // (smart_used), and behavior, the only writer of Smart_State, counts the use
-// and starts its cooldown. An offer on a Nav_Link (a door, a fence) is what an
-// agent claims to cross it, one at a time (cross_act).
+// and starts its cooldown. An offer on a Nav_Link (a door, a fence) says who
+// may cross it (cross_act); how many at once is the capacity of the link.
 
 SMART_OFFERS :: 8
 SMART_MOVED :: f32(0.5) // m the place of an offer moves before its user, walking to it, heads for the new one
@@ -207,21 +207,22 @@ smart_offer_read :: proc(v:Smart_View,object:core.Entity,i:int,user:Smart_User) 
 }
 
 // Crosses the link the agent waits at (Nav_Path.state Crossing, of a kind the
-// game crosses), claiming the offer of `use` on the entity of the link: it
-// waits while others hold it (stage 0), takes `seconds` (1), and navigation
+// game crosses) by the offer of `use` on the entity of the link: it waits while
+// that offer is closed to it (stage 0), takes `seconds` (1), and navigation
 // puts it at the other end (nav.nav_crossing_skip) and takes it from there
-// (2). Success once across; Failure when it is not at such a link.
+// (2). How many cross at once is Nav_Link.capacity alone: navigation starts a
+// crossing only within it, so the offer is not claimed and its `users` does
+// not count. Success once across; Failure when it is not at such a link.
 cross_act :: proc(a:^ai.Act($A),use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
     if a.phase==.Exit {return .Success}
     w,e,v:=world_of(a),agent(a),mind_smart_view(a)
+    v.claims={}
     p,ok:=agent_path(a)
     crossing:=ok && p.state==.Crossing && p.manual
     if ai.stage(a)==2 {return .Running if crossing else .Success}
     if !crossing {return .Failure}
     if ai.stage(a)==0 {
-        found,open:=smart_offer(v,p.link_entity,use,user)
-        if !open || !smart_claim(a,found,user) {return .Running}
-        ai.claim_use(a)
+        if _,open:=smart_offer(v,p.link_entity,use,user);!open {return .Running}
         ai.next_stage(a)
     }
     if ai.stage_elapsed(a)<seconds {return .Running}
