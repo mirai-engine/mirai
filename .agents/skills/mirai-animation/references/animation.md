@@ -57,12 +57,16 @@ Locomotion is the `Match_Profile` of `Animation.asset` (`.character`):
 
 - **Sources & blends.** Each `Match_Source` lists `modes` bitmask (physics `Locomotion_Mode`),
   optional `entry` (non-looping mode-entry clip like jump/land), explicit `speed`, and `mirror`
-  (`Off`/`Both`/`Only`; missing side names report `animation.match_mirror`). A source with `blend`
-  samples phase-locked looping clips at `Match_Sample` weights; missing blend clips report
-  `animation.match_blend`.
+  (`Off`/`Both`/`Only`; missing side names report `animation.match_mirror`), and `bias` (cost
+  added to its rows and to playing on: negative favors it). A source with `blend` samples
+  phase-locked looping clips at `Match_Sample` weights; missing blend clips report
+  `animation.match_blend`. Up to `MATCH_CLIPS` (256) sources and `MATCH_SAMPLES` samples.
 - **Database.** `std/anim/matching.odin` features (feet, hips, body velocity, past/future
-  trajectory) build on first rig load into `Character_Assets`, capped by `memory`
-  (`animation.match_memory`). Linear SIMD below `MATCH_LINEAR_ROWS`, bounded runs above.
+  trajectory, and the `extras` of `Match_Info`: up to two bone tips, `offset` in the bone's frame,
+  such as a blade's tip) build on first rig load into `Character_Assets`, capped by `memory`
+  (`animation.match_memory`; a missing extra bone reports `animation.match_extra`). 8 lanes a row,
+  12 with extras. Linear SIMD below `MATCH_LINEAR_ROWS`, bounded runs above. A database of an
+  older library generation or skeleton revision is released when its successor builds.
 - **Per tick.** `match_goal` feeds mode, velocity, desired velocity, accel/braking, facing, wall
   normal, and `time_to_land`. With physics, `animation_physics` feeds it automatically (model faces
   `-Z`, [facing](../../mirai-physics/SKILL.md#library-invariants)) and drives `mantle` warp/root
@@ -71,12 +75,19 @@ Locomotion is the `Match_Profile` of `Animation.asset` (`.character`):
 - **Search & transitions.** Every `interval`, picks lowest-cost row scaled within
   `min_rate`..`max_rate` if saving `bias` past `hold`, skipping `reselect` window (or whole loop
   with `keep_loop_phase`). `spans`: `Exclude` forbids search and forces immediate re-search;
-  `Block` forbids search while allowing continuation (unknown/full-clip spans report
-  `animation.match_span`). `stationary_speed` separates idle vs travel clips. Entering a mode with
-  entry clips searches their starts first. Jumps enter via inertialization (`blend` s).
+  `Block` forbids search while allowing continuation; `Keep` allows search and holds the clip
+  against searches nothing forces (mode change, entry, end, `Exclude`) until it plays out of the
+  span (unknown/full-clip spans report `animation.match_span`). `stationary_speed` separates idle
+  vs travel clips. Entering a mode with entry clips searches their starts first. Jumps enter via
+  inertialization (`blend` s).
 - **Library swap & whole-body actions.** Swapping `Animation.library` keeps lag/mode and blends
-  into new clips once loaded (while compressing, previous library keeps playing). Whole-body `play`
-  (no layer) takes over and returns via inertial blends ([actions][actions-life]). Query state with
+  into new clips once loaded (while compressing, previous library keeps playing); its first search
+  asks for the pose the rig has without the extra points (`skip_extras`), which are of the old set.
+  `libraries` of the `.character` lists the `.anim` a swap brings (a weapon's set): their databases
+  are built with the first one of a skeleton (`match_prebuild`), not on the swap tick, and
+  `no_mirror` plays their mirrored sources as authored (the sword stays in its hand). Whole-body
+  `play` (no layer) takes over and returns via inertial blends ([actions][actions-life]); the
+  search after it ends asks for the pose it left, extra points included. Query state with
   `animation_match`.
 
 ### Landing
@@ -210,8 +221,8 @@ Runtime failures report `animation.*` codes in
 - **Assets:** `animation.asset`, `program_asset`, `skeleton`, `skin_mesh`.
 - **Binding/data:** `animation.clip`, `layer_clip`, `layer_bone`, `pose_bone`, `attachment_socket`,
   `parameter`, `match_clip`, `layer_space`, `match_database`, `match_memory`, `match_blend`,
-  `match_mirror`, `match_span`, `rig_*`, `constraint_*`, `grounding_*`, `retarget_*`, `motion_*`,
-  `morph_*`, `action_*`, `modifier_*`, `distance`, `match_goal`.
+  `match_mirror`, `match_span`, `match_extra`, `rig_*`, `constraint_*`, `grounding_*`,
+  `retarget_*`, `motion_*`, `morph_*`, `action_*`, `modifier_*`, `distance`, `match_goal`.
 - **Follow/curves/limits:** `follow_rig`, `follow_bones`, `follow_pose`, `curve_pose_bone`,
   `curve_pose_value`, `curve_material`, `final_pose_binding`, `final_pose_bone`, `mirror`,
   `markers_lost`, `events_lost`, `animation.memory` (keeps last pose and retries).

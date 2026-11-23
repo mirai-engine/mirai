@@ -484,6 +484,7 @@ animation_tick :: proc(
         rig_goals:=entity_requests(match_goals,e)
         program,programmed,program_valid:=program_resolve(state,animation,app,characters,dt,events,playback,content,problems,rig_goals,facing)
         if !program_valid {program_problem(problems,e,app.assets,animation,state.program.error);continue}
+        if programmed {match_prebuild(state,animation,app,characters,sources,extras)}
         if programmed && state.clip_event.clip!=0 {
             clip_lifecycle(playback,events,&state.clip_event,.Interrupted,state.time,problems)
         }

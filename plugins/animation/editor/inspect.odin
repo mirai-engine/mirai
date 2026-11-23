@@ -73,6 +73,7 @@ Asset_Inspect_Result :: struct {
     match_clips_total:u32 `mirai:"optional,label=.character"`,
     match_clips:[]Asset_Match_Clip `mirai:"optional,label=.character: a page of its locomotion clips with the Locomotion_Mode each serves"`,
     match_spans:[]anim.Match_Span `mirai:"optional,label=.character: the rules over the rows of its locomotion clips inside the spans of each name"`,
+    match_libraries:[]anim.Match_Library `mirai:"optional,label=.character: the .anim Animation.library swaps in, built ahead, and whether each mirrors"`,
     databases:[]Asset_Match_Database `mirai:"optional,label=.character: the database built for each skeleton a rig played it on"`,
     layers_total,actions_total,sections_total:u32 `mirai:"optional,label=.character"`,
     layers:[]Authoring_Page(anim.Stack_Layer) `mirai:"optional,label=.character: its stack over the base, in order"`,
@@ -109,11 +110,12 @@ Asset_Clip_Name :: struct {name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`}
 Asset_Match_Clip :: struct {
     clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id `mirai:"optional,label=Empty is that of the .character"`,modes:[][32]u8 `mirai:"text"`,loop,entry:bool,
     speed:f32 `mirai:"optional,unit=m/s,label=The speed it travels at, set by hand; omitted is measured"`,
+    bias:f32 `mirai:"optional,label=What its rows cost more in a search: negative favors it"`,
     blend:[][64]u8 `mirai:"text,optional,label=The clips it blends with in phase, at the weights of each sample"`,
     samples:[]Asset_Match_Sample `mirai:"optional,label=A blend: its points the search picks"`,
 }
 Asset_Match_Sample :: struct {weights:[anim.MATCH_BLEND]f32 `mirai:"label=Of clip, then of each of blend"`,speed:f32 `mirai:"optional,unit=m/s,label=Set by hand; omitted is measured from the blended feet"`}
-Asset_Match_Database :: struct {rows:u32,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`}
+Asset_Match_Database :: struct {rows:u32,lanes:u32 `mirai:"optional,label=f32x4 a row: 8, or 12 with extra points"`,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`}
 Asset_Clip_Track :: struct {target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
 // What a part the entity lacks holds instead of its fields.
 Instance_Missing :: struct {
@@ -162,7 +164,8 @@ Instance_Match_Search :: struct {
     time_to_land:f32 `mirai:"optional,unit=s,label=It searched the rows that reach their landing marker this many seconds ahead"`,
     candidates:[]Instance_Match_Candidate `mirai:"label=The best row of each clip it could pick, least cost first (the first is the one it chose), then that of each clip it left out with its reason"`,
 }
-// costs: of each kind of feature by its weight; they sum cost.
+// costs: of each kind of feature by its weight; with those of the extra points and the bias of its
+// clip they sum cost.
 Instance_Match_Candidate :: struct {
     range:u32 `mirai:"label=Its index in ranges"`,
     clip:[64]u8 `mirai:"text"`,
@@ -172,7 +175,7 @@ Instance_Match_Candidate :: struct {
     costs:Instance_Match_Costs,
     reason:lib.Match_Reject `mirai:"label=None: the one it chose; Cost: it cost more; Mode, Entry, Stationary, Reselect, Event (no landing marker ahead), Window (its marker is not reached at a landing rate, or its rows go back in the arc in the air) and Span (spans of the set exclude or block its rows): why it was left out"`,
 }
-Instance_Match_Costs :: struct {foot_position,foot_velocity,hip_velocity,body_velocity,trajectory_position,trajectory_direction:f32}
+Instance_Match_Costs :: struct {foot_position,foot_velocity,hip_velocity,body_velocity,trajectory_position,trajectory_direction,extra,bias:f32}
 Instance_Pose :: struct {
     using missing:Instance_Missing `mirai:"inline"`,
     skeleton:base.Asset_Id `mirai:"optional"`,
@@ -369,7 +372,7 @@ match_candidates :: proc(call:^api.Call,m:^Match_Open,limit:int) -> []Instance_M
         range:=m.db.ranges[index];c:=candidate.costs
         append(&candidates,Instance_Match_Candidate{
             range=u32(index),clip=anim.source_clip_label(m.library,range.clips[0]),time=f32(int(candidate.row)-int(range.first))/range.rate,rate=candidate.rate,cost=candidate.cost,reason=candidate.reason,
-            costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction]},
+            costs={c[.Foot_Position],c[.Foot_Velocity],c[.Hip_Velocity],c[.Body_Velocity],c[.Trajectory_Position],c[.Trajectory_Direction],candidate.extra,candidate.bias},
         })
     }
     return candidates[:]

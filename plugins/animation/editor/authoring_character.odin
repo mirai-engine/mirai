@@ -94,11 +94,12 @@ character_match :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,profil
     r.match=profile.info
     r.match_clips_total=u32(len(profile.clips))
     r.match_spans=profile.spans
+    r.match_libraries=profile.libraries
     start:=min(int(offset),len(profile.clips));end:=min(start+int(limit),len(profile.clips))
     r.match_clips=make([]Asset_Match_Clip,end-start,call.allocator)
     for &row,i in r.match_clips {
         clip:=&profile.clips[start+i]
-        row={clip=clip.clip,animation=clip.animation,modes=match_modes(call,modes,clip.modes),loop=clip.loop,entry=clip.entry,speed=clip.speed}
+        row={clip=clip.clip,animation=clip.animation,modes=match_modes(call,modes,clip.modes),loop=clip.loop,entry=clip.entry,speed=clip.speed,bias=clip.bias}
         names,count:=anim.match_source_clips(clip)
         if count<=1 {continue}
         row.blend=make([][64]u8,count-1,call.allocator)
@@ -112,7 +113,7 @@ character_match :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,profil
         for &content in cache.contents {
             if content.id!=id {continue}
             for &built in content.databases {
-                row:=Asset_Match_Database{rows=u32(built.database.rows),error=built.error}
+                row:=Asset_Match_Database{rows=u32(built.database.rows),lanes=u32(built.database.lanes),error=built.error}
                 if built.error==.None {row.bytes=u64(lib.match_database_size(built.database))}
                 append(&databases,row)
             }

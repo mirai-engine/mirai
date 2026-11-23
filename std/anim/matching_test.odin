@@ -252,7 +252,7 @@ a_mirrored_clip_adds_the_rows_of_its_reflected_pose :: proc(t:^testing.T) {
     best,_,_:=match_search(&db,request)
     feet:=[2]int{MATCH_FEATURES[.Foot_Position][0]+2,MATCH_FEATURES[.Foot_Position][0]+5}
     raw:[2]f32
-    for at,k in feet {raw[k]=simd.to_array(db.features[best*MATCH_LANES+at/4])[at%4]*db.scale[at]+db.mean[at]}
+    for at,k in feet {raw[k]=simd.to_array(db.features[best*db.lanes+at/4])[at%4]*db.scale[at]+db.mean[at]}
     testing.expectf(t,match_range_of(&db,best)==3 && raw[1]<raw[0]-.5,"a turn to the right plays row %d of range %d with the right foot ahead: %v",best,match_range_of(&db,best),raw)
     rig.pairs=nil
     testing.expect_value(t,match_database_build(&db,&library,rig,set[:],30),Match_Build_Error.Invalid)
@@ -627,4 +627,148 @@ rows_of_a_clip_of_no_whole_number_of_rows_keep_the_spans_and_events_of_their_tim
     match_search(&db,request,candidates=&noted)
     reasons:=match_test_reasons(&db,noted)
     testing.expectf(t,reasons[2]==.Event,"the stride lacks the marker: %v",reasons)
+}
+
+// Two stances whose feet stand alike and whose head turns half a turn apart about its own bone, so
+// that the bone stays where it is: only a point offset along it (a blade's tip) tells them apart.
+@(private="file")
+match_test_stances :: proc(library:^Library,rig:Match_Rig) -> (stances:[2]Match_Clip,ok:bool) {
+    still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
+    other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
+    for &stance,i in stances {
+        turn:=math.quat_axis_angle({0,0,1},cmath.PI/2*(1 if i==0 else -1))
+        held:=[2]Keyframe{{time=0,value={imag(turn),jmag(turn),kmag(turn),real(turn)}},{time=1,value={imag(turn),jmag(turn),kmag(turn),real(turn)}}}
+        clip,error:=clip_add(library,{name=base.name_hash("guard high" if i==0 else "guard low"),loop=.Loop,tracks={{target=rig.skeleton.names[2],property=.Position,keys=still[:]},{target=rig.skeleton.names[3],property=.Position,keys=other[:]},{target=rig.skeleton.names[4],property=.Rotation,keys=held[:]}}})
+        if error!=.None {return}
+        stance={clips={0=clip},modes=1<<1}
+    }
+    return stances,true
+}
+
+// The extra points of a rig are features of each row: lanes of 8 without them, of 12 with them,
+// and the tip of a bone tells apart what the feet and the trajectory do not. A row of the second
+// stance asks for that stance only where a point offset along the head sees its turn.
+@(test)
+extra_points_tell_apart_clips_whose_feet_and_trajectory_agree :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,_,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    stances,made:=match_test_stances(&library,rig)
+    if !testing.expect(t,made) {return}
+    Case :: struct {extras:[]Match_Extra,error:Match_Build_Error,lanes:int,tells:bool}
+    tip:=[1]Match_Extra{{bone=4,offset={0,.8,0},weight=1}}
+    root:=[1]Match_Extra{{bone=4,weight=1}}
+    three:=[3]Match_Extra{tip[0],tip[0],tip[0]}
+    outside:=[1]Match_Extra{{bone=5,offset={0,.8,0},weight=1}}
+    wrong:=[1]Match_Extra{{bone=4,offset={cmath.nan_f32(),0,0},weight=1}}
+    for c,i in ([?]Case{{nil,.None,MATCH_LANES_BASE,false},{root[:],.None,MATCH_LANES_EXTRA,false},{tip[:],.None,MATCH_LANES_EXTRA,true},{three[:],.Invalid,0,false},{outside[:],.Invalid,0,false},{wrong[:],.Invalid,0,false}}) {
+        db:Match_Database;defer match_database_free(&db)
+        with:=rig;with.extras=c.extras
+        error:=match_database_build(&db,&library,with,stances[:],30)
+        if !testing.expectf(t,error==c.error,"case %d builds %v",i,error) || error!=.None {continue}
+        testing.expectf(t,db.lanes==c.lanes && len(db.features)==db.rows*c.lanes && db.extra_count==len(c.extras) && match_database_size(db)==match_database_bytes(db.rows,2,extras=len(c.extras)>0),"case %d keeps %d lanes a row",i,db.lanes)
+        low:=int(db.ranges[1].first)+5
+        best,_,_:=match_search(&db,{query=match_features(&db,low),trajectory=match_row_trajectory(&db,low),modes=1<<1})
+        testing.expectf(t,(match_range_of(&db,best)==1)==c.tells,"case %d: a row of the low guard asks for range %d",i,match_range_of(&db,best))
+    }
+}
+
+// The velocities of the extra points follow the rate a clip plays at as those of the feet do, and
+// weigh its square; their positions stay as they are. A search that skips them weighs none.
+@(test)
+the_rate_of_a_clip_scales_the_velocities_of_extra_points_and_not_their_positions :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    // A point ahead of the left foot, which swings with the walk.
+    extras:=[1]Match_Extra{{bone=2,offset={0,0,-.2},weight=1}}
+    rig.extras=extras[:]
+    db:Match_Database;defer match_database_free(&db)
+    if !testing.expect(t,match_database_build(&db,&library,rig,clips[:],30)==.None) {return}
+    row:=int(db.ranges[1].first)+22 // the left foot swings forward
+    raw :: proc(db:^Match_Database,query:Match_Query,at:int) -> f32 {return simd.to_array(query[at/4])[at%4]*db.scale[at]+db.mean[at]}
+    request:=Match_Request{query=match_features(&db,row),trajectory=match_row_trajectory(&db,row),rate=1}
+    one,_:=match_query_at(&db,request,1)
+    if !testing.expect(t,abs(raw(&db,one,MATCH_AT_EXTRAS+5))>.1,"the point moves in the walk") {return}
+    Case :: struct {rate,played:f32,skip:bool}
+    for c in ([?]Case{{1,1,false},{.5,1,false},{2,1,false},{1,1.5,false},{2,1,true}}) {
+        request.rate,request.skip_extras=c.played,c.skip
+        query,weights:=match_query_at(&db,request,c.rate)
+        for axis in 0..<3 {
+            position,velocity:=MATCH_AT_EXTRAS+axis,MATCH_AT_EXTRAS+3+axis
+            testing.expectf(t,abs(raw(&db,query,position)-raw(&db,one,position))<1e-4,"at rate %v the position %d stays",c.rate,axis)
+            testing.expectf(t,abs(raw(&db,query,velocity)-raw(&db,one,velocity)*c.played/c.rate)<1e-3,"at rate %v the velocity %d scales by %v",c.rate,axis,c.played/c.rate)
+            weight:=[2]f32{simd.to_array(weights[position/4])[position%4],simd.to_array(weights[velocity/4])[velocity%4]}
+            expected:=[2]f32{0,0} if c.skip else {1,c.rate*c.rate}
+            testing.expectf(t,weight==expected,"at rate %v skipping %v the point weighs %v",c.rate,c.skip,weight)
+        }
+        foot:=MATCH_FEATURES[.Foot_Velocity][0]
+        testing.expectf(t,simd.to_array(weights[foot/4])[foot%4]==c.rate*c.rate,"skipping the points leaves the feet at rate %v",c.rate)
+    }
+    // The points of another set (a swapped library) cost nothing when skipped.
+    request.rate,request.skip_extras,request.modes=1,false,1<<1
+    for lane in MATCH_AT_EXTRAS/4..<db.lanes {request.query[lane]={100,100,100,100}}
+    _,far,_:=match_search(&db,request)
+    request.skip_extras=true
+    best,near,_:=match_search(&db,request)
+    testing.expectf(t,far>100 && near<1e-6 && best==row,"other points cost %v, skipped %v at row %d",far,near,best)
+}
+
+// The bias of a clip is added to the cost of its rows: a negative one wins over a copy of the
+// clip, a positive one loses to it. The database shifts every bias by bias_shift so that none is
+// negative, and with bounds and negative biases the search gives the row the whole scan gives.
+@(test)
+the_bias_of_a_clip_weighs_on_its_rows_and_the_bounds_stay_exact :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    many:[9]Match_Clip
+    biases:=[9]f32{0,0,0,0,-3,0,1.5,-.75,0}
+    for &clip,i in many {clip=clips[i%3];clip.bias=biases[i]}
+    db:Match_Database;defer match_database_free(&db)
+    if !testing.expect(t,match_database_build(&db,&library,rig,many[:],120)==.None) || !testing.expect(t,db.rows>MATCH_LINEAR_ROWS && len(db.small)>0) {return}
+    testing.expectf(t,db.bias_shift==3,"the shift is %v",db.bias_shift)
+    for r,i in db.ranges {testing.expectf(t,r.bias>=0 && r.bias==biases[i]+3,"range %d keeps bias %v",i,r.bias)}
+    for row in 0..<db.rows {
+        request:=Match_Request{query=match_features(&db,(row*7919)%db.rows),trajectory=match_row_trajectory(&db,row),modes=~u32(0),min_rate=.5,max_rate=1}
+        best,cost,_:=match_search(&db,request)
+        least:=max(f32)
+        for r,range in db.ranges {
+            query,weights,_:=match_query(&db,request,range)
+            for frame in 0..<int(r.count)-match_tail(&db,range) {least=min(least,match_cost(&db,int(r.first)+frame,query,weights))}
+        }
+        testing.expectf(t,best>=0 && cost==least,"row %d: the bounded search gives %v, the whole scan %v",row,cost,least)
+    }
+    // A row of the walk asks for a copy of it: the one of negative bias, never the one it penalizes.
+    Case :: struct {from,range:int}
+    for c in ([?]Case{{1,4},{4,4},{7,4}}) {
+        row:=int(db.ranges[c.from].first)+11
+        noted:Match_Candidates
+        best,cost,_:=match_search(&db,{query=match_features(&db,row),trajectory=match_row_trajectory(&db,row),modes=1<<1},candidates=&noted)
+        testing.expectf(t,match_range_of(&db,best)==c.range && abs(cost-db.ranges[c.range].bias)<1e-5,"a row of range %d gives range %d at %v",c.from,match_range_of(&db,best),cost)
+        first:=noted.items[0]
+        sum:=first.extra+first.bias;for part in first.costs {sum+=part}
+        testing.expectf(t,noted.count>0 && first.bias==db.ranges[c.range].bias && abs(sum-first.cost)<1e-4,"the candidate splits its cost %v into %v",first.cost,first)
+    }
+    many[4].bias=cmath.nan_f32()
+    testing.expect_value(t,match_database_build(&db,&library,rig,many[:],120),Match_Build_Error.Invalid)
+}
+
+// A Keep span marks its rows and lets the search give them, unlike Exclude and Block.
+@(test)
+a_keep_span_marks_its_rows_and_leaves_them_to_the_search :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    marked,marked_ok:=match_test_marked(&library,rig)
+    if !testing.expect(t,marked_ok) {return}
+    all:=[2]Match_Clip{clips[0],{clips={0=marked},modes=1<<1}}
+    for kind in Match_Span_Kind {
+        spans:=[1]Match_Span{{marker=1,kind=kind}}
+        db:Match_Database;defer match_database_free(&db)
+        if !testing.expect(t,match_database_build(&db,&library,rig,all[:],30,spans=spans[:])==.None) {return}
+        row:=int(db.ranges[1].first)+13 // at .43 s, inside the span of marker 1
+        best,_,_:=match_search(&db,{query=match_features(&db,row),trajectory=match_row_trajectory(&db,row),modes=1<<1})
+        testing.expectf(t,match_row_flags(&db,row)=={kind} && (best==row)==(kind==.Keep),"a %v span: its row %d gives %d",kind,row,best)
+    }
 }

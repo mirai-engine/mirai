@@ -131,8 +131,10 @@ mirai rpc --project . capture '{
 
 ## Motion matching and additive spaces
 
-- `animation.character.setup` writes the match table; `animation.asset.inspect` shows clips, modes,
-  blends and loaded-skeleton database stats/errors.
+- `animation.character.setup` writes the match table, with `biases` per clip, `extras` (bone tips
+  the search matches) and `libraries` (the `.anim` a weapon's set swaps in, built ahead,
+  `no_mirror`); `animation.asset.inspect` shows clips, modes, blends, libraries and loaded-skeleton
+  database stats/errors; candidates split their cost into features, `extra` and `bias`.
 - `animation.space.set` edits `.character` aim-offset/additive spaces (rejects duplicate axes,
   duplicate points or degenerate triangles); `animation.space.sample` evaluates weights without
   advancing the world. Attach to a layer via `animation.action.set`.

@@ -31,6 +31,7 @@ Setup_Rate :: struct {
     min_rate:f32 `mirai:"min=0,label=Above 0"`,
     max_rate:f32 `mirai:"min=0,label=At least min_rate"`,
 }
+Setup_Bias :: struct {clip:[64]u8 `mirai:"text"`,bias:f32 `mirai:"label=Negative favors the clip, positive keeps it for when nothing else fits"`}
 SETUP_BLENDS :: 8
 SETUP_BLEND_SAMPLES :: 64
 Setup_Blend_Sample :: struct {
@@ -58,7 +59,10 @@ Setup_Params :: struct {
     trajectory_direction:f32 `mirai:"optional,min=0,label=Weight of where the body faces along its trajectory; 0 for a body that never turns, as one that walks sideways"`,
     landing_marker:[64]u8 `mirai:"text,optional,label=The marker of first contact on the clips that land (a jump), played to reach it when the body lands; omitted is the default of a .character, empty plays no landing"`,
     landing_rates:[2]f32 `mirai:"optional,min=0,label=The least and most rate a clip plays at to reach its landing marker when the body lands; omitted is the default of a .character"`,
-    spans:[anim.MATCH_SPANS]anim.Match_Span `mirai:"optional,label=Rules over the rows of the locomotion clips inside their spans of each name: Exclude (never searched, left at once) or Block (never searched, played on into)"`,
+    spans:[anim.MATCH_SPANS]anim.Match_Span `mirai:"optional,label=Rules over the rows of the locomotion clips inside their spans of each name: Exclude (never searched, left at once), Block (never searched, played on into) or Keep (searched, and played through without a search leaving it)"`,
+    biases:[anim.MATCH_CLIPS]Setup_Bias `mirai:"optional,label=What the rows of a locomotion clip, or of a blend by its first clip, cost more in a search"`,
+    extras:[lib.MATCH_EXTRAS]anim.Match_Extra `mirai:"optional,label=Points the search matches besides the feet: the tip of a bone, offset in its frame (a sword's tip along the hand), by weight"`,
+    libraries:[anim.MATCH_LIBRARIES]anim.Match_Library `mirai:"optional,label=The .anim Animation.library swaps in (a weapon's set), whose databases are built ahead; no_mirror plays its mirrored clips as they were made"`,
     want:Setup_Wants `mirai:"optional,label=Locomotion (the clips told apart by name: idle and walk to sprint walk, a fall or air loop falls, jump and land enter falling and walking, swim and fly; the physics plugin moves it); Look (head); Foot_Ik (grounding); Hand_Ik (reach); Gestures (actions that play each clip that is not locomotion over the upper body or one arm). Omitted is all of them"`,
     folder:[1024]u8 `mirai:"text,optional,label=Folder of the .character; empty puts it by the clips"`,
     name:[64]u8 `mirai:"text,optional,label=Name of the .character; empty takes the skeleton's"`,
@@ -540,10 +544,31 @@ setup :: proc(s:^editor.Session,call:^api.Call) {
             for sample in blend.samples[:blend_samples[b]] {append(&samples,anim.Match_Sample{source=u32(len(sources)),weights=sample.weights,speed=sample.speed})}
             append(&sources,source)
         }
+        biased,_:=api.params_array_count(call,"biases")
+        for &value,i in p.biases[:min(biased,len(p.biases))] {
+            name:=base.text_get(value.clip[:]);found:=false
+            for &source in sources {if base.text_get(source.clip[:])==name {source.bias,found=value.bias,true}}
+            if !found {authoring_failure(call,fmt.tprintf("biases[%d].clip",i),"Not_Locomotion","a locomotion clip, or the first clip of a blend",name,"Only the locomotion clips have a bias",fix="Name a locomotion clip, or leave it out of biases");return}
+            if !finite(value.bias) {authoring_failure(call,fmt.tprintf("biases[%d].bias",i),"Invalid_Bias","a finite bias",fmt.tprintf("%v",value.bias),"A bias is a finite cost",fix="Pass a negative bias to favor the clip, a positive one to keep it for when nothing else fits");return}
+        }
         set.match.clips,set.match.samples=sources[:],samples[:]
         span_count,_:=api.params_array_count(call,"spans")
         set.match.spans=p.spans[:min(span_count,anim.MATCH_SPANS)]
-        if !anim.match_spans_check(set.match.spans) {authoring_failure(call,"spans","Invalid_Span","spans each named, of a kind, and one rule per name","an invalid span","A span rule is invalid",fix="Name each span, give it the kind Exclude or Block, and give a name one rule");return}
+        if !anim.match_spans_check(set.match.spans) {authoring_failure(call,"spans","Invalid_Span","spans each named, of a kind, and one rule per name","an invalid span","A span rule is invalid",fix="Name each span, give it the kind Exclude, Block or Keep, and give a name one rule");return}
+        extra_count,_:=api.params_array_count(call,"extras")
+        for &extra,i in p.extras[:min(extra_count,len(p.extras))] {
+            name:=base.text_get(extra.bone[:]);found:=false
+            for &bone in skeleton.bones {if base.text_get(bone.name[:])==name {found=true}}
+            if !found {authoring_failure(call,fmt.tprintf("extras[%d].bone",i),"Missing_Bone","a bone of the skeleton",name,"The point is on a bone the skeleton does not have",fix="Name a bone of the skeleton (animation.asset.inspect lists them)");return}
+            if !finite(extra.offset.x) || !finite(extra.offset.y) || !finite(extra.offset.z) || !(extra.weight>=0) || !finite(extra.weight) {authoring_failure(call,fmt.tprintf("extras[%d]",i),"Invalid_Extra","a finite offset and a weight of at least 0",fmt.tprintf("offset %v, weight %v",extra.offset,extra.weight),"The point is not measurable",fix="Pass the offset in m in the frame of the bone and a weight of at least 0");return}
+            info.extras[i]=extra
+        }
+        library_count,_:=api.params_array_count(call,"libraries")
+        set.match.libraries=p.libraries[:min(library_count,anim.MATCH_LIBRARIES)]
+        for library,i in set.match.libraries {
+            if library.animation=={} {authoring_failure(call,fmt.tprintf("libraries[%d].animation",i),"Required","an .anim","none","A library names its .anim",fix="Pass the .anim a weapon's set swaps into Animation.library");return}
+            for other in set.match.libraries[:i] {if other.animation==library.animation {authoring_failure(call,fmt.tprintf("libraries[%d].animation",i),"Duplicate","each .anim once","twice","The library is listed twice",fix="List each .anim once");return}}
+        }
         // The warping turns and stretches the legs of the body toward the velocity of the Character.
         if mapped(body,.Pelvis,.Hip_L,.Knee_L,.Foot_L) || mapped(body,.Pelvis,.Hip_R,.Knee_R,.Foot_R) {
             warp:=&set.motion.warp

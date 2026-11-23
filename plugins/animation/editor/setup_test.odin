@@ -186,8 +186,9 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     // A blend of Idle and Walk takes their place in the locomotion, with its samples, and the rates
     // and the weight of the direction of the trajectory are written as given.
     blends:=`"blends":[{"clips":["Idle","Walk"],"samples":[{"weights":[1,0,0,0,0,0,0,0]},{"weights":[0.5,0.5,0,0,0,0,0,0],"speed":0.6},{"weights":[0,1,0,0,0,0,0,0]}],"min_rate":0.5,"max_rate":2}]`
-    spans:=`"spans":[{"name":"stumble","kind":"Block"},{"name":"swing_end","kind":"Exclude"}]`
-    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s,"min_rate":0.3,"max_rate":1.5,"trajectory_direction":0,%s}}`,ids,blends,spans))
+    spans:=`"spans":[{"name":"stumble","kind":"Block"},{"name":"swing_end","kind":"Exclude"},{"name":"turn","kind":"Keep"}]`
+    sword:=fmt.tprintf(`"biases":[{{"clip":"Idle","bias":-0.5}}],"extras":[{{"bone":"upperarm_r","offset":[0,0.8,0],"weight":2}}],"libraries":[{{"animation":"%s","no_mirror":true}}]`,authoring_test_id_text(library))
+    result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s,"min_rate":0.3,"max_rate":1.5,"trajectory_direction":0,%s,%s}}`,ids,blends,spans,sword))
     if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
     text=api.json_compact(string(serial_bytes(a)))
     testing.expectf(t,strings.contains(text,`"locomotion":[],"blends":[{"clips":["Idle","Walk"],"mode":"WALKING","samples":3,"rates":[0.5,2]}]`),"blends in %s",text)
@@ -199,7 +200,10 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
             testing.expect(t,base.text_get(source.clip[:])=="Idle" && base.text_get(source.blend[0][:])=="Walk" && source.blend[1][0]==0 && source.loop && source.modes==1<<1 && source.min_rate==.5 && source.max_rate==2)
             testing.expect(t,profile.samples[1]==anim.Match_Sample{source=0,weights={0=.5,1=.5},speed=.6} && profile.samples[2].weights=={1=1})
             testing.expect(t,profile.info.min_rate==.3 && profile.info.max_rate==1.5 && profile.info.trajectory_direction==0)
-            testing.expect(t,len(profile.spans)==2 && profile.spans[1].kind==.Exclude && base.text_get(profile.spans[0].name[:])=="stumble","the spans are written as given")
+            testing.expect(t,len(profile.spans)==3 && profile.spans[1].kind==.Exclude && profile.spans[2].kind==.Keep && base.text_get(profile.spans[0].name[:])=="stumble","the spans are written as given")
+            extra:=profile.info.extras[0]
+            testing.expect(t,source.bias==-.5 && base.text_get(extra.bone[:])=="upperarm_r" && extra.offset==mm.Vec3{0,.8,0} && extra.weight==2 && profile.info.extras[1]=={},"the bias and the extra point are written as given")
+            testing.expect(t,len(profile.libraries)==1 && profile.libraries[0]==anim.Match_Library{animation=library,no_mirror=true},"the libraries are written as given")
         }
         asset.asset_close(&match)
     }
@@ -217,6 +221,9 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
         {`"rates":[{"clip":"Walk","min_rate":2,"max_rate":1}]`,"rates[0].min_rate","Invalid_Rate"},
         {`"rates":[{"clip":"Walk","min_rate":0.5,"max_rate":1},{"clip":"Walk","min_rate":0.5,"max_rate":1}]`,"rates[1].clip","Duplicate"},
         {`"spans":[{"name":"stumble","kind":"Block"},{"name":"stumble","kind":"Block"}]`,"spans","Invalid_Span"},
+        {`"biases":[{"clip":"Wave","bias":1}]`,"biases[0].clip","Not_Locomotion"},
+        {`"extras":[{"bone":"sword","offset":[0,0.8,0],"weight":1}]`,"extras[0].bone","Missing_Bone"},
+        {`"extras":[{"bone":"upperarm_r","offset":[0,0.8,0],"weight":-1}]`,"extras[0]","Invalid_Extra"},
         {`"blends":[{"clips":["Idle","Walk"],"samples":[{"weights":[1,0,0,0,0,0,0,0]}]}],"rates":[{"clip":"Walk","min_rate":0.5,"max_rate":1}]`,"rates[0].clip","Blended"},
     }) {
         result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"],"replace":true,%s}}`,ids,refused.params))
@@ -234,7 +241,7 @@ character_setup_classifies_the_clips_it_is_given_at_their_speeds_and_fails_past_
     testing.expect(t,host.assets_scan(&a.assets))
     crowded:=fmt.tprintf(`"entity":"0000000000000011","library":"%s","folder":"crowded"`,authoring_test_id_text(large))
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion"]}}`,crowded))
-    testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Capacity"`) && strings.contains(result.data,"65: walking") && strings.contains(result.data,"Pass clips"),"%s",result.data)
+    testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Capacity"`) && strings.contains(result.data,fmt.tprintf("%d: walking",anim.MATCH_CLIPS+1)) && strings.contains(result.data,"Pass clips"),"%s",result.data)
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Gestures"]}}`,crowded))
     testing.expectf(t,result.code==api.INVALID_PARAMS && strings.contains(result.data,`"code":"Capacity"`) && strings.contains(result.data,"Wave_0"),"%s",result.data)
     result=authoring_test_execute(a,"setup",fmt.tprintf(`{{%s,"want":["Locomotion","Gestures"],"clips":["Idle_0","Wave_3"],"dry_run":true}}`,crowded))

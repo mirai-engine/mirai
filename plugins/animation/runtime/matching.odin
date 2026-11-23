@@ -18,10 +18,11 @@ import "base:runtime"
 // from the Character); the locomotion mode of the goal picks the clips that serve it, and entering
 // a mode searches the starts of its entry clips (a jump, a landing). An action without a layer
 // (play) takes the whole body from the search through the same inertial blend (a vault, a hit, a
-// death), and matching goes on when it ends.
+// death), and matching goes on when it ends, from the pose the action left.
 
-MATCH_CLIPS :: 64
+MATCH_CLIPS :: 256
 MATCH_SPANS :: 64
+MATCH_LIBRARIES :: 16
 // Share of the speed the pose walks at that its root closes on the body by, with a lag.
 MATCH_LAG_CLOSE :: .5
 
@@ -41,7 +42,12 @@ Match_Info :: struct {
     lag_half_life:f32 `mirai:"unit=s"`,
     landing_marker:[64]u8 `mirai:"text"`, // marks first contact on the clips that land (a jump): played to reach it when the body lands; empty: none
     landing_rates:[2]f32,              // least and most rate a clip plays at to reach its landing marker when the body lands
+    extras:[lib.MATCH_EXTRAS]Match_Extra, // points matched besides the feet (a blade's tip); the first with no bone ends them
 }
+// A point the search matches besides the feet: the tip of bone, offset in the frame of the bone (a
+// blade along the hand), where it is and how it moves, by weight. Where the tip is says how the bone
+// turns too.
+Match_Extra :: struct {bone:[64]u8 `mirai:"text"`,offset:mm.Vec3 `mirai:"unit=m"`,weight:f32}
 MATCH_INFO_DEFAULT :: Match_Info{
     rate=30,interval=0,blend=.2,bias=.5,min_rate=.5,max_rate=1,memory=16384,
     foot_position=.75,foot_velocity=1,hip_velocity=1,body_velocity=1,trajectory_position=2,trajectory_direction=1.5,
@@ -50,7 +56,7 @@ MATCH_INFO_DEFAULT :: Match_Info{
 }
 // Clips a blended source mixes, and samples of blends the locomotion of a .character keeps.
 MATCH_BLEND :: lib.MATCH_BLEND
-MATCH_SAMPLES :: 128
+MATCH_SAMPLES :: 512
 
 // A clip the search can pick. modes: bit m for each locomotion mode m it serves; entry: it starts
 // one of them, searched from its start when the body enters the mode.
@@ -64,8 +70,10 @@ MATCH_SAMPLES :: 128
 // min_rate and max_rate, when positive, replace those of the .character for it and its samples: a set
 // authored slower than the body moves in it (a crouch), or a jog kept from beating a sprint.
 // mirror: Both also searches it with left and right swapped (a left turn makes the right one), Only
-// searches only that; the skeleton names its sides (thigh_l, LeftArm).
-Match_Source :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,modes:u32,loop,entry:bool,speed:f32 `mirai:"unit=m/s"`,blend:[MATCH_BLEND-1][64]u8 `mirai:"text"`,min_rate,max_rate:f32,mirror:Match_Mirror}
+// searches only that; the skeleton names its sides (thigh_l, LeftArm). bias: what its rows cost
+// more in a search, and in the cost of playing on: negative favors it, positive keeps it for when
+// nothing else fits.
+Match_Source :: struct {clip:[64]u8 `mirai:"text"`,animation:base.Asset_Id,modes:u32,loop,entry:bool,speed:f32 `mirai:"unit=m/s"`,blend:[MATCH_BLEND-1][64]u8 `mirai:"text"`,min_rate,max_rate:f32,mirror:Match_Mirror,bias:f32}
 Match_Mirror :: enum u8 {Off,Both,Only}
 // A point of a blended source (its index in clips): the weight of its clip, then of each clip of
 // its blend, each in 0..1 with a positive sum, played as shares of that sum; speed, when positive,
@@ -74,9 +82,14 @@ Match_Sample :: struct {source:u32,weights:[MATCH_BLEND]f32,speed:f32 `mirai:"un
 // A rule over the rows of the clips inside the spans of name (markers with a duration on the
 // clips): Exclude keeps them out of every search and a clip that plays into them searches at once;
 // Block keeps them out of every search while a clip that plays on may play into them (the end of a
-// swing). A blended sample has no spans.
+// swing); Keep lets a search pick them and holds a clip that plays in them against every search
+// nothing forces until it plays out (a turn played through). A blended sample has no spans.
 Match_Span :: struct {name:[32]u8 `mirai:"text"`,kind:lib.Match_Span_Kind}
-Match_Profile :: struct {info:Match_Info,clips:[]Match_Source,samples:[]Match_Sample,spans:[]Match_Span}
+// An .anim Animation.library swaps in (a weapon's set): its database is built with the first one
+// of a skeleton, before the swap; no_mirror plays the sources that mirror only as they were made
+// (a sword stays in the hand that holds it).
+Match_Library :: struct {animation:base.Asset_Id `mirai:"kind=.anim"`,no_mirror:bool}
+Match_Profile :: struct {info:Match_Info,clips:[]Match_Source,samples:[]Match_Sample,spans:[]Match_Span,libraries:[]Match_Library}
 
 // The clips a source plays: its clip, then those of its blend.
 match_source_clips :: proc(source:^Match_Source) -> (names:[MATCH_BLEND]string,count:int) {
@@ -99,12 +112,24 @@ match_spans_check :: proc(spans:[]Match_Span) -> bool {
 }
 match_check :: proc(profile:Match_Profile) -> bool {
     info:=profile.info
-    if len(profile.clips)>MATCH_CLIPS || len(profile.samples)>MATCH_SAMPLES || !match_spans_check(profile.spans) || info.memory==0 {return false}
+    if len(profile.clips)>MATCH_CLIPS || len(profile.samples)>MATCH_SAMPLES || !match_spans_check(profile.spans) || info.memory==0 || len(profile.libraries)>MATCH_LIBRARIES {return false}
+    for &extra,i in info.extras {
+        if extra.bone[0]==0 {
+            if extra!={} {return false}
+            for &after in info.extras[i:] {if after!={} {return false}}
+            break
+        }
+        if !blend_text_valid(extra.bone[:],false) || !finite(extra.offset.x) || !finite(extra.offset.y) || !finite(extra.offset.z) || !finite(extra.weight) || extra.weight<0 {return false}
+    }
+    for library,i in profile.libraries {
+        if library.animation=={} {return false}
+        for other in profile.libraries[:i] {if other.animation==library.animation {return false}}
+    }
     for value in ([19]f32{info.rate,info.interval,info.blend,info.bias,info.min_rate,info.max_rate,info.foot_position,info.foot_velocity,info.hip_velocity,info.body_velocity,info.trajectory_position,info.trajectory_direction,info.stationary_speed,info.reselect,info.hold,info.lag,info.lag_half_life,info.landing_rates[0],info.landing_rates[1]}) {if !finite(value) || value<0 {return false}}
     if info.rate<=0 || info.rate>lib.FRAMES_MAX_RATE || info.min_rate<=0 || info.min_rate>info.max_rate || info.lag>0 && info.lag_half_life<=0 {return false}
     if !blend_text_valid(info.landing_marker[:],true) || info.landing_rates[0]<=0 || info.landing_rates[0]>info.landing_rates[1] {return false}
     for &clip,i in profile.clips {
-        if !blend_text_valid(clip.clip[:],false) || clip.modes==0 || clip.entry && clip.loop || !finite(clip.speed) || clip.speed<0 || !lib.match_rates_valid({clip.min_rate,clip.max_rate}) || clip.mirror>.Only {return false}
+        if !blend_text_valid(clip.clip[:],false) || clip.modes==0 || clip.entry && clip.loop || !finite(clip.speed) || clip.speed<0 || !lib.match_rates_valid({clip.min_rate,clip.max_rate}) || clip.mirror>.Only || !finite(clip.bias) {return false}
         for other in profile.clips[:i] {if other.clip==clip.clip && other.animation==clip.animation {return false}}
         ended:=false
         for &other,k in clip.blend {
@@ -130,9 +155,10 @@ match_check :: proc(profile:Match_Profile) -> bool {
     return true
 }
 // What makes a source unplayable: a clip of its blend (its member) the library does not have, or a
-// mirror on a skeleton whose bones do not name their sides.
+// mirror on a skeleton whose bones do not name their sides; or makes the set unplayable: an extra
+// point (its index in source) on a bone the skeleton does not have.
 @(private)
-Match_Fault :: struct {kind:enum u8 {None,Missing,Mirror},source,member:i32}
+Match_Fault :: struct {kind:enum u8 {None,Missing,Mirror,Extra},source,member:i32}
 // What a span of a set leaves undone (its index in spans): no clip of the library has a span of
 // its name; or the Exclude spans leave out every row of a clip (its range in the database).
 @(private)
@@ -163,6 +189,9 @@ match_goal :: proc(requests:^Animation_Requests,goal:Match_Goal) {
 // match_goal.time_to_land times.
 // travel: the direction its clip moves in, rig axes (unit; zero for one that stands or that an action plays).
 Animation_Match :: struct {clip:u64,time,rate,speed,cost:f32,mode:u16,forced:bool,searches,jumps:u32,velocity,lag,travel:mm.Vec3,landing_modes:u32}
+// Whether a whole-body action covers the pose of a rig.
+@(private)
+match_covered :: proc "contextless" (state:^Playing) -> bool {return stack_slots(state)>0 && state.stack.layers[0].weight>0}
 
 // The direction remaining of the way from to back toward from, turning about the vertical: a clip
 // that backs off after one that went forward turns through the side and never through zero.
@@ -178,7 +207,7 @@ animation_match :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (valu
     state:=constraint_playing(playback,entity)
     if state==nil || !state.program.matched || !state.program.ready {return}
     m:=state.program.match
-    return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=stack_slots(state)>0 && state.stack.layers[0].weight>0,searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
+    return {clip=m.clip,time=state.time,rate=m.rate,speed=m.speed*m.rate,cost=m.cost,mode=m.mode,forced=match_covered(state),searches=m.searches,jumps=m.jumps,velocity=m.body+m.lag_velocity,lag=m.lag,travel=m.travel,landing_modes=m.landing_modes},true
 }
 
 // What the clip of a rig plays for: matching; one toward its landing marker, at the rate that
@@ -207,6 +236,11 @@ Match_Playing :: struct {
     body:mm.Vec3,            // horizontal velocity of the body in the last tick
     lag,lag_velocity:mm.Vec3, // of the root of the pose from the body, world axes
     told:bool,               // body holds a velocity
+    swapped:bool,            // its library was swapped since its last search: its pose is of another set
+    covered:bool,            // a whole-body action covered its pose in the last tick
+    // The skeleton and its revision (plus one) the databases of the libraries of its set were
+    // built ahead for; zero: none yet.
+    prebuilt:[3]u64,
 }
 // The last search of matching, as it made it: its request, the row that played, whether its clip
 // was left whole, the reselect span and the rows the rig had left, and which of searches it was.
@@ -233,7 +267,8 @@ match_swapped :: proc "contextless" (kept:Match_Playing) -> Match_Playing {
     m:=MATCH_PLAYING_DEFAULT
     m.clip,m.mode,m.loop=kept.clip,kept.mode,kept.loop
     m.trail,m.body,m.lag,m.lag_velocity,m.told=kept.trail,kept.body,kept.lag,kept.lag_velocity,kept.told
-    m.searches,m.jumps=kept.searches,kept.jumps
+    m.searches,m.jumps,m.covered,m.prebuilt=kept.searches,kept.jumps,kept.covered,kept.prebuilt
+    m.swapped=true
     return m
 }
 
@@ -257,22 +292,33 @@ animation_match_database :: proc(matches:core.Ref(Character_Assets),library:^hos
 }
 
 // The database of a library for the skeleton of a rig, built the first time a rig of that
-// skeleton loads it.
+// skeleton loads it, or ahead for a library of the set (match_prebuild). One built for an earlier
+// generation of the library or revision of the skeleton is released then.
 @(private)
 match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault,Match_Span_Fault) {
     if library==nil || len(playing_topology(state).parents)<2 || len(playing_topology(state).rest)!=len(playing_topology(state).parents) {return nil,.Invalid,{},{}}
     key:=match_database_key(library,state,source)
     for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault,built.span}}
+    // Of the same library, skeleton and source: the key without generation and revision.
+    #reverse for &built,i in content.databases {
+        if built.key[0]==key[0] && built.key[1]==key[1] && built.key[3]==key[3] && built.key[4]==key[4] && built.key[6]==key[6] {
+            lib.match_database_free(&built.database);unordered_remove(&content.databases,i)
+        }
+    }
     context.allocator=allocator
     info:=content.set.match.info;animation:=content.set.info.animation
     bones:=[3]int{int(state.body[.Foot_L]),int(state.body[.Foot_R]),int(state.body[.Pelvis])}
+    // A library that does not mirror plays each source as it was made.
+    no_mirror:=false
+    for entry in content.set.match.libraries {if entry.animation==source {no_mirror=entry.no_mirror}}
+    mirroring :: proc(clip:^Match_Source,no_mirror:bool) -> Match_Mirror {return .Off if no_mirror else clip.mirror}
     // A source without blend is one clip of the database, a blend one per sample of it, twice when
     // it mirrors Both.
     count:=0
     for &clip,i in content.set.match.clips {
         rows:=1
         if clip.blend[0][0]!=0 {rows=0;for sample in content.set.match.samples {if int(sample.source)==i {rows+=1}}}
-        count+=rows*(2 if clip.mirror==.Both else 1)
+        count+=rows*(2 if mirroring(&clip,no_mirror)==.Both else 1)
     }
     clips,clips_error:=make([]lib.Match_Clip,count);defer delete(clips)
     found:=bones[0]>0 && bones[1]>0 && bones[2]>0 && clips_error==nil
@@ -292,15 +338,24 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
             handles[k]=handle+lib.Clip(library.clip_count if clip.loop else 0)
         }
         if !found {break}
-        if clip.mirror!=.Off && len(playing_topology(state).mirror_pairs)!=len(playing_topology(state).parents) {found=false;built.fault={kind=.Mirror,source=i32(i)};break}
+        mirrored:=mirroring(&clip,no_mirror)
+        if mirrored!=.Off && len(playing_topology(state).mirror_pairs)!=len(playing_topology(state).parents) {found=false;built.fault={kind=.Mirror,source=i32(i)};break}
         rates:=[2]f32{clip.min_rate,clip.max_rate}
         for mirror in ([2]bool{false,true}) {
-            if mirror && clip.mirror==.Off || !mirror && clip.mirror==.Only {continue}
-            if members==1 {clips[at]={clips={0=handles[0]},modes=clip.modes,entry=clip.entry,mirror=mirror,speed=clip.speed,rates=rates};at+=1;continue}
+            if mirror && mirrored==.Off || !mirror && mirrored==.Only {continue}
+            if members==1 {clips[at]={clips={0=handles[0]},modes=clip.modes,entry=clip.entry,mirror=mirror,speed=clip.speed,rates=rates,bias=clip.bias};at+=1;continue}
             for sample in content.set.match.samples {
-                if int(sample.source)==i {clips[at]={clips=handles,weights=sample.weights,modes=clip.modes,mirror=mirror,speed=sample.speed,rates=rates};at+=1}
+                if int(sample.source)==i {clips[at]={clips=handles,weights=sample.weights,modes=clip.modes,mirror=mirror,speed=sample.speed,rates=rates,bias=clip.bias};at+=1}
             }
         }
+    }
+    // The extra points of the set, on the bones of this skeleton.
+    extras:[lib.MATCH_EXTRAS]lib.Match_Extra;extra_count:=0
+    for &extra,k in info.extras {
+        if !found || extra.bone[0]==0 {break}
+        bone:=bone_resolve(state,bone_ref(base.text_get(extra.bone[:])))
+        if bone<=0 {found=false;built.fault={kind=.Extra,source=i32(k)};break}
+        extras[k]={bone=i32(bone),offset=extra.offset,weight=extra.weight};extra_count+=1
     }
     if found {
         rest,rest_error:=make([]mm.Transform,len(playing_topology(state).rest));defer delete(rest)
@@ -308,7 +363,7 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
             copy(rest,playing_topology(state).rest[:]);rest[0]=mm.TRANSFORM_IDENTITY
             body:=lib.body_map_empty();body.up={0,1,0}
             for bone,part in state.body {if bone>0 {body.bones[part]=bone}}
-            rig:=lib.Match_Rig{skeleton={parents=playing_topology(state).parents[:],names=playing_topology(state).targets[:],rest=rest},body=body,left_foot=i32(bones[0]),right_foot=i32(bones[1]),hips=i32(bones[2]),pairs=playing_topology(state).mirror_pairs[:],corrections=playing_topology(state).mirror_corrections[:],plane=state.mirror_plane}
+            rig:=lib.Match_Rig{skeleton={parents=playing_topology(state).parents[:],names=playing_topology(state).targets[:],rest=rest},body=body,left_foot=i32(bones[0]),right_foot=i32(bones[1]),hips=i32(bones[2]),pairs=playing_topology(state).mirror_pairs[:],corrections=playing_topology(state).mirror_corrections[:],plane=state.mirror_plane,extras=extras[:extra_count]}
             weights:=lib.Match_Weights{.Foot_Position=info.foot_position,.Foot_Velocity=info.foot_velocity,.Hip_Velocity=info.hip_velocity,.Body_Velocity=info.body_velocity,.Trajectory_Position=info.trajectory_position,.Trajectory_Direction=info.trajectory_direction}
             // Each clip names its landing with a marker of its own: every one of that name.
             event:=make([dynamic]u32,context.temp_allocator)
@@ -383,6 +438,9 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
             switch fault.kind {
             case .Missing: core.report(problems,state.entity,"animation.match_blend","%s blends %s with %s, a clip its library does not have; name in blend clips of its library (animation.inspect lists them)",path,names[0],names[fault.member])
             case .Mirror: core.report(problems,state.entity,"animation.match_mirror","%s mirrors %s, and the bones of this skeleton do not name their sides (Left, Right, _l, _r) to swap; set its mirror Off, or name the bones of the skeleton by side",path,names[0])
+            case .Extra:
+                bone:=base.text_get(info.extras[fault.source].bone[:]) if int(fault.source)<len(info.extras) else ""
+                core.report(problems,state.entity,"animation.match_extra","%s matches a point on the bone %s, which this skeleton does not have; name a bone of the skeleton in its extras (animation.asset.inspect lists them), or clear that extra",path,bone)
             case .None: core.report(problems,state.entity,"animation.match_database","%s cannot match on this rig: its left_foot, right_foot or hips is not a bone of this skeleton, or a clip of it is missing, lasts a single pose or does not move the skeleton; name bones of the skeleton (animation.asset.inspect lists them), and give it clips of the library that move",path)
             }
         }
@@ -439,6 +497,11 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         // The body lands with a clip at or past its landing marker: it plays on in the mode it
         // landed in.
         if has_goal && mode!=m.mode && playing>=0 && db.ranges[playing].modes&bit==0 && lib.match_event_ahead(db,playing,0)>=0 && ahead<=dt*m.rate+.5/db.rate {m.phase,m.mode=.Landed,mode}
+        // A whole-body action that ended left the pose where it took it: the search goes on from
+        // the pose shown, its extra points too, not from the row matching played under it.
+        covered:=match_covered(state)
+        returned:=m.covered && !covered
+        m.covered=covered
         entering:=has_goal && mode!=m.mode && m.clip!=0 && lib.match_serves(db,bit,true)
         current:=playing if playing>=0 && (db.ranges[playing].modes&bit!=0 || m.phase==.Landed) else -1
         // A blended sample is at the share of its clips its leaves are at.
@@ -472,22 +535,27 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         incompatible:=filter_stationary && current>=0 && db.ranges[current].loop && (db.ranges[current].speed>lib.MATCH_STILL)!=moving
         // A clip that plays into rows its spans exclude leaves them at once; one in rows they block
         // plays on, which no search would have jumped to.
-        excluded:=.Exclude in lib.match_row_flags(db,row)
+        // One in rows a Keep span holds plays on through them unless something forces a search.
+        flags:=lib.match_row_flags(db,row)
+        excluded,kept:=.Exclude in flags,.Keep in flags
         forced:=current<0 || entering || ending || incompatible || left || excluded
-        if forced || m.timer<=0 && m.since>=info.hold {
+        if forced || !kept && (returned || m.timer<=0 && m.since>=info.hold) {
             m.timer=info.interval
             request:=lib.Match_Request{modes=bit,min_rate=info.min_rate,max_rate=info.max_rate,rate=m.rate,entry=entering}
-            if row>=0 {
+            if row>=0 && !returned {
                 request.query=lib.match_features(db,row)
             } else {
                 // Nothing of the database plays (the first search, a swapped library, a mode its
-                // clip does not serve): the feet the rig has and how they move with the body.
-                request.rate=1
+                // clip does not serve), or an action left the pose: the feet and points the rig
+                // has and how they move with the body. The points of a swapped library are of the
+                // set it played, which the new clips do not know: they weigh nothing.
+                request.rate,request.skip_extras=1,m.swapped
                 if stack:=state.stack;stack!=nil && stack.inertia.kept>1 && stack.inertia.dt>0 {
                     shown,previous,_,_:=inertia_poses(&stack.inertia)
                     request.query,_=lib.match_query_pose(db,playing_topology(state).parents[:],state.body[.Foot_L],state.body[.Foot_R],state.body[.Pelvis],shown,previous,stack.inertia.dt,mm.quat_rotate(mm.quat_inverse(lib.match_yaw(facing)),velocity))
-                }
+                } else if row>=0 {request.query,request.rate=lib.match_features(db,row),m.rate}
             }
+            m.swapped=false
             request.filter_stationary,request.moving=filter_stationary,moving
             request.trajectory=trajectory if traced else lib.match_trajectory(velocity,goal.desired,goal.acceleration,goal.braking,facing,goal.facing,goal.turn_rate,goal.wall,&m.trail)
             // A clip that ends is left whole: a row of it a little earlier would play its tail
@@ -588,4 +656,27 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         runtime.transition=fade if previous!=0 && fade>0 else -1
     }
     return true
+}
+
+// Builds ahead, for the skeleton of a rig that plays a set, the databases of the libraries the set
+// lists, so that swapping one into Animation.library does not build it in that tick. A library
+// still loading is built in a later tick; once all are, the rig does not look again until its set
+// or skeleton changes. extras: those of the sources of what it plays (animation_content).
+match_prebuild :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,sources:^Source_Assets,extras:[3]base.Asset_Id) {
+    m:=&state.program.match
+    shape:=[3]u64{state.skeleton[0],state.skeleton[1],state.skeleton_revision+1}
+    if m.prebuilt==shape || !state.program.matched || !state.program.ready || app.assets==nil {return}
+    content:=character_content(characters,app.assets,app.allocator,animation.asset)
+    if content==nil {return}
+    plan:=state.source_plan;defer state.source_plan=plan
+    done:=true
+    for entry in content.set.match.libraries {
+        if entry.animation==state.program.library {continue}
+        description:=animation;description.library=entry.animation if entry.animation!=content.set.info.animation else {}
+        library,error:=animation_content(sources,app,state,description,characters,extras)
+        if error==.Pending {done=false;continue}
+        if error!=.None || library==nil {continue}
+        match_database(content,library,state,entry.animation,app.allocator)
+    }
+    if done {m.prebuilt=shape}
 }

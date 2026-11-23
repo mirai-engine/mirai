@@ -1122,10 +1122,10 @@ match_step_with :: proc(f:^Match_Fixture,content:^host.Content_Animation,dt:f32,
 // another .anim, here a walk with the feet in the other phase. The rig goes on with the clip of
 // the new library that the search picks, entered through an inertial transition from the pose it
 // had, as a jump of matching does: the feet do not jump to the rest pose or the new walk at once.
-@(test)
-match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t:^testing.T) {
-    f:Match_Fixture;defer match_fixture_free(&f)
-    if !testing.expect(t,match_fixture(t,&f)) {return}
+// The library of a weapon's set: the clips of the fixture of the same names, the walk with the feet
+// in the other phase, registered as an .anim.
+@(private="file")
+match_test_weapon :: proc(t:^testing.T,f:^Match_Fixture) -> (weapon:host.Content_Animation,ok:bool) {
     left,right:=f.bones[1].target,f.bones[2].target
     still:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
@@ -1139,16 +1139,28 @@ match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t
         {name=base.name_hash("fall"),tracks={{target=left,property=.Position,keys=tucked[:]},{target=right,property=.Position,keys=other[:]}}},
         {name=base.name_hash("jump"),tracks={{target=left,property=.Position,keys=tucked[:]},{target=right,property=.Position,keys=other[:]}},markers=land[:]},
     }
-    weapon:host.Content_Animation
     weapon.id,weapon.generation=MATCH_TEST_LIBRARY,1
     if !testing.expect(t,lib.library_init(&weapon.lib,{max_keys=64,max_tracks=16,max_clips=2*len(descs),max_markers=2})) {return}
-    defer {lib.library_destroy(&weapon.lib);delete(weapon.markers)}
     for desc in descs {_,error:=lib.clip_add(&weapon.lib,desc);testing.expect(t,error==.None)}
     _,compressed:=lib.library_compress(&weapon.lib);testing.expect(t,compressed==.None)
     host.content_animation_loops(&weapon.lib,len(descs));weapon.clip_count=len(descs)
     weapon.markers=make([]host.Content_Marker,1);weapon.markers[0].name=base.name_hash("land")
     append(&f.assets.registry.files,asset.Registry_File{id=MATCH_TEST_LIBRARY,kind=asset.KIND_ANIMATION,state=.Asset})
     f.assets.registry.by_id[MATCH_TEST_LIBRARY]=u32(len(f.assets.registry.files)-1)
+    return weapon,compressed==.None
+}
+
+// A weapon's set: Animation.library swaps the clips of the .character for those of the same names in
+// another .anim, here a walk with the feet in the other phase. The rig goes on with the clip of
+// the new library that the search picks, entered through an inertial transition from the pose it
+// had, as a jump of matching does: the feet do not jump to the rest pose or the new walk at once.
+@(test)
+match_library_swap_enters_the_new_clips_through_an_inertial_transition :: proc(t:^testing.T) {
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    weapon,made:=match_test_weapon(t,&f)
+    defer {lib.library_destroy(&weapon.lib);delete(weapon.markers)}
+    if !made {return}
 
     dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
     for _ in 0..<20 {testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))}
@@ -1335,4 +1347,262 @@ a_rig_rolled_back_to_a_copy_of_its_world_replays_its_poses_exactly :: proc(t:^te
     testing.expect(t,played[TICKS-1].weights!=played[0].weights,"the replay covers actions and layers that changed")
     testing.expectf(t,back==0,"a rollback into a world that played allocates nothing (%d allocations)",back)
     log.infof("rollback copy of a character: %d allocations, %d B (before the split of the stack and its scratch: 17 allocations, 11008 B); back into the world: %d allocations",taken,taken_bytes,back)
+}
+
+// The raw value of feature at of a query of db.
+@(private="file")
+match_test_raw :: proc(db:^lib.Match_Database,query:lib.Match_Query,at:int) -> f32 {
+    lanes:=simd_lanes(query[at/4])
+    return lanes[at%4]*db.scale[at]+db.mean[at]
+}
+@(private="file")
+simd_lanes :: proc(lane:#simd[4]f32) -> [4]f32 {return transmute([4]f32)lane}
+
+// The extra points of a set are features of its database, on the bones of the skeleton it plays
+// on: 12 lanes a row with them, 8 without; a point on a bone the skeleton does not have is a
+// problem of the rig, and the set refuses one out of order or of a weight that is not finite.
+@(test)
+extra_points_of_a_set_are_features_of_its_database_on_bones_of_the_skeleton :: proc(t:^testing.T) {
+    Case :: struct {bone:string,lanes:int,problem:bool}
+    for c in ([?]Case{{"",lib.MATCH_LANES_BASE,false},{"head",lib.MATCH_LANES_EXTRA,false},{"sword",0,true}}) {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {continue}
+        info:=&f.graphs.contents[0].set.match.info
+        if c.bone!="" {base.text_set(info.extras[0].bone[:],c.bone);info.extras[0].offset,info.extras[0].weight={0,.3,0},1}
+        if !testing.expect(t,match_check(f.graphs.contents[0].set.match)) {continue}
+        for _ in 0..<3 {testing.expect(t,match_step(&f,1.0/30,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))}
+        db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
+        reported:=core.problem_find(&f.problems,f.rig,"animation.match_extra")!=nil
+        testing.expectf(t,reported==c.problem && (db==nil)==c.problem,"a point on '%s': reported %v, database %v",c.bone,reported,db!=nil)
+        if db!=nil {testing.expectf(t,db.lanes==c.lanes && db.extra_count==(1 if c.bone!="" else 0),"a point on '%s' keeps %d lanes",c.bone,db.lanes)}
+    }
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    profile:=f.graphs.contents[0].set.match
+    for wrong,i in ([3][lib.MATCH_EXTRAS]Match_Extra{{1={weight=1}},{0={weight=cmath.nan_f32()}},{0={weight=-1}}}) {
+        changed:=profile;changed.info.extras=wrong
+        if i>0 {base.text_set(changed.info.extras[0].bone[:],"head")}
+        testing.expectf(t,!match_check(changed),"extras %d are refused",i)
+    }
+}
+
+// After a swap of library the first search weighs none of the extra points, which are of the set
+// the rig played; the next ones weigh them again. When a whole-body action ends the search asks
+// for the points of the pose it left (the head of an aim), not those of the row under it.
+@(test)
+a_swapped_library_skips_the_extra_points_and_an_ended_action_searches_from_its_pose :: proc(t:^testing.T) {
+    dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
+    {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {return}
+        info:=&f.graphs.contents[0].set.match.info
+        base.text_set(info.extras[0].bone[:],"head");info.extras[0].offset,info.extras[0].weight={0,.3,0},1
+        weapon,made:=match_test_weapon(t,&f)
+        defer {lib.library_destroy(&weapon.lib);delete(weapon.markers)}
+        if !made {return}
+        for _ in 0..<20 {testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))}
+        testing.expect(t,!match_test_searched(&f).request.skip_extras,"a search in the same library weighs the points")
+        f.animation.library=MATCH_TEST_LIBRARY
+        if !testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking)) {return}
+        searched:=match_test_searched(&f)
+        db:=animation_match_database(core.ref(&f.graphs),&weapon,f.state)
+        if !testing.expect(t,db!=nil && db.lanes==lib.MATCH_LANES_EXTRA) {return}
+        _,weights,_:=lib.match_query(db,searched.request,1)
+        zero:=true;for lane in weights[lib.MATCH_LANES_BASE:] {zero&&=simd_lanes(lane)=={}}
+        testing.expectf(t,searched.row<0 && searched.request.skip_extras && zero,"the swap searches from row %d skipping the points: %v",searched.row,searched.request.skip_extras)
+        first:=searched.search
+        for _ in 0..<10 {testing.expect(t,match_step_with(&f,&weapon,dt,GROUND,walking))}
+        later:=match_test_searched(&f)
+        testing.expect(t,later.search>first && !later.request.skip_extras,"the searches after it weigh the points again")
+    }
+    {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {return}
+        set:=&f.graphs.contents[0].set
+        base.text_set(set.match.info.extras[0].bone[:],"head");set.match.info.extras[0].offset,set.match.info.extras[0].weight={0,.3,0},1
+        // Stomp plays the aim to the left over the whole body, the head .2 m aside, and fades out.
+        base.text_set(set.actions.actions[9].clip[:],"aim_left")
+        for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
+        play(&f.requests,f.rig,"Stomp")
+        covered:=false;aside:=f32(0);searched_then:=false
+        for _ in 0..<90 {
+            if !testing.expect(t,match_step(&f,dt,GROUND)) {return}
+            value,_:=animation_match(core.ref(&f.playback),f.rig)
+            if value.forced {covered=true;continue}
+            if !covered {continue}
+            // The action ended in this tick; the next one searches from the pose it showed.
+            before:=match_test_searched(&f).search
+            if !testing.expect(t,match_step(&f,dt,GROUND)) {return}
+            searched:=match_test_searched(&f)
+            db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
+            if db==nil {break}
+            searched_then=searched.search>before
+            aside=match_test_raw(db,searched.request.query,lib.MATCH_AT_EXTRAS)
+            break
+        }
+        testing.expectf(t,covered && searched_then && aside< -.1,"the tick the action ends searches (%v) for the head tip it left at x %.3f",searched_then,aside)
+    }
+}
+
+// A library that does not mirror plays the sources that mirror as they were made: no mirrored rows
+// in its database, while the same set over a library that mirrors has them.
+@(test)
+a_library_that_does_not_mirror_leaves_out_the_mirrored_rows_of_its_sources :: proc(t:^testing.T) {
+    Case :: struct {mirror:Match_Mirror,listed,no_mirror:bool,mirrored,plain:int}
+    for c in ([?]Case{{.Both,false,false,1,4},{.Both,true,false,1,4},{.Both,true,true,0,4},{.Only,true,false,1,3},{.Only,true,true,0,4}}) {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {continue}
+        content:=&f.graphs.contents[0]
+        content.set.match.clips[1].mirror=c.mirror
+        libraries:=[1]Match_Library{{animation=f.content.id,no_mirror=c.no_mirror}}
+        if c.listed {content.set.match.libraries=libraries[:]}
+        if !testing.expect(t,match_check(content.set.match)) {continue}
+        testing.expect(t,match_step(&f,1.0/30,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5}))
+        db:=animation_match_database(core.ref(&f.graphs),&f.content,f.state)
+        if !testing.expect(t,db!=nil) {continue}
+        mirrored,plain:=0,0
+        for r in db.ranges {if r.mirror {mirrored+=1} else {plain+=1}}
+        testing.expectf(t,mirrored==c.mirrored && plain==c.plain,"%v: %d mirrored and %d plain ranges",c,mirrored,plain)
+        content.set.match.libraries=nil
+    }
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    twice:=[2]Match_Library{{animation=f.content.id},{animation=f.content.id,no_mirror=true}}
+    empty:=[1]Match_Library{{no_mirror=true}}
+    for wrong in ([2][]Match_Library{twice[:],empty[:]}) {
+        changed:=f.graphs.contents[0].set.match;changed.libraries=wrong
+        testing.expect(t,!match_check(changed),"a library listed twice or without its .anim is refused")
+    }
+}
+
+// The libraries a set lists have their databases built with the first one of a skeleton, so the
+// tick that swaps one in builds nothing; one the set does not list is built in that tick.
+@(test)
+the_libraries_of_a_set_are_built_before_the_tick_that_swaps_them_in :: proc(t:^testing.T) {
+    dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
+    for listed in ([2]bool{true,false}) {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {continue}
+        weapon,made:=match_test_weapon(t,&f)
+        native:=host.app_content(&f.app)
+        append(&native.animations,weapon);native.index[MATCH_TEST_LIBRARY]={kind=.Animation,index=0}
+        defer host.app_content_destroy(&f.app)
+        if !made {continue}
+        content:=&f.graphs.contents[0]
+        libraries:=[1]Match_Library{{animation=MATCH_TEST_LIBRARY}}
+        if listed {content.set.match.libraries=libraries[:]}
+        defer content.set.match.libraries=nil
+        sources:=Source_Assets{allocator=context.allocator};defer source_assets_free(&sources)
+        for _ in 0..<5 {
+            testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))
+            match_prebuild(f.state,f.animation,&f.app,&f.graphs,&sources,{})
+        }
+        built:=len(content.databases)
+        testing.expectf(t,built==(2 if listed else 1),"listed %v: %d databases before the swap",listed,built)
+        f.animation.library=MATCH_TEST_LIBRARY
+        if !testing.expect(t,match_step_with(&f,&native.animations[0],dt,GROUND,walking)) {continue}
+        swapped,_:=animation_match(core.ref(&f.playback),f.rig)
+        testing.expectf(t,len(content.databases)==2 && swapped.clip==base.name_hash("walk") && animation_match_database(core.ref(&f.graphs),&native.animations[0],f.state)!=nil,"listed %v: %d databases after the swap",listed,len(content.databases))
+        // A new generation of the library replaces its database instead of adding one.
+        native.animations[0].generation=2
+        testing.expect(t,match_step_with(&f,&native.animations[0],dt,GROUND,walking))
+        testing.expectf(t,len(content.databases)==2,"a reloaded library keeps %d databases",len(content.databases))
+    }
+}
+
+// A set of more than 64 clips builds and searches: of 65 idles and 65 walks alike, the one of
+// negative bias, past the 64th, plays, and the first walk, of positive bias, never does.
+@(test)
+a_set_of_more_than_64_clips_plays_the_one_its_bias_favors :: proc(t:^testing.T) {
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    left,right:=f.bones[1].target,f.bones[2].target
+    still:=[2]lib.Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
+    other:=[2]lib.Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
+    stride_l:=[4]lib.Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,-.375,0}}}
+    stride_r:=[4]lib.Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,-.375,0}},{time=1,value={-.1,-.95,.375,0}}}
+    EACH :: 65
+    many:host.Content_Animation
+    many.id,many.generation=MATCH_TEST_LIBRARY,1
+    if !testing.expect(t,lib.library_init(&many.lib,{max_keys=EACH*12,max_tracks=EACH*4,max_clips=4*EACH,max_markers=1})) {return}
+    defer lib.library_destroy(&many.lib)
+    clips:=make([]Match_Source,2*EACH);defer delete(clips)
+    for i in 0..<2*EACH {
+        walk:=i>=EACH
+        name:=fmt.tprintf("%s_%d","walk" if walk else "idle",i%EACH)
+        desc:=lib.Clip_Desc{name=base.name_hash(name),tracks={{target=left,property=.Position,keys=stride_l[:] if walk else still[:]},{target=right,property=.Position,keys=stride_r[:] if walk else other[:]}}}
+        if _,error:=lib.clip_add(&many.lib,desc);!testing.expect(t,error==.None) {return}
+        base.text_set(clips[i].clip[:],name);clips[i].modes,clips[i].loop=1<<GROUND,true
+    }
+    _,compressed:=lib.library_compress(&many.lib)
+    if !testing.expect(t,compressed==.None) {return}
+    host.content_animation_loops(&many.lib,2*EACH);many.clip_count=2*EACH
+    append(&f.assets.registry.files,asset.Registry_File{id=MATCH_TEST_LIBRARY,kind=asset.KIND_ANIMATION,state=.Asset})
+    f.assets.registry.by_id[MATCH_TEST_LIBRARY]=u32(len(f.assets.registry.files)-1)
+    favored:=EACH+50
+    clips[EACH].bias,clips[favored].bias=3,-1
+    set:=&f.graphs.contents[0].set
+    kept:=set.match.clips;defer set.match.clips=kept
+    set.match.clips=clips
+    if !testing.expect(t,match_check(set.match)) {return}
+    f.animation.library=MATCH_TEST_LIBRARY
+    played:map[u64]int;defer delete(played)
+    for _ in 0..<60 {
+        if !testing.expect(t,match_step(&f,1.0/30,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5},content=&many)) {return}
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
+        played[value.clip]+=1
+    }
+    db:=animation_match_database(core.ref(&f.graphs),&many,f.state)
+    if !testing.expect(t,db!=nil) {return}
+    testing.expectf(t,len(db.ranges)==2*EACH && db.rows>lib.MATCH_LINEAR_ROWS && len(db.small)>0 && db.bias_shift==1,"%d ranges, %d rows",len(db.ranges),db.rows)
+    value,_:=animation_match(core.ref(&f.playback),f.rig)
+    testing.expectf(t,value.clip==base.name_hash("walk_50") && played[base.name_hash("walk_0")]==0,"it walks %v, not walk_50",value.clip)
+    tooMany:=make([]Match_Source,MATCH_CLIPS+1);defer delete(tooMany)
+    for &source,i in tooMany {base.text_set(source.clip[:],fmt.tprintf("idle_%d",i));source.modes=1}
+    changed:=set.match;changed.clips=tooMany
+    testing.expect(t,!match_check(changed),"a set of more than MATCH_CLIPS clips is refused")
+}
+
+// The bias of the clip that plays weighs on the cost of playing on as on its rows in the search,
+// so the two compare fairly: a walk of bias 1.5 never costs less than that.
+@(test)
+the_cost_of_playing_on_carries_the_bias_of_its_clip :: proc(t:^testing.T) {
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    f.graphs.contents[0].set.match.clips[1].bias=1.5
+    if !testing.expect(t,match_check(f.graphs.contents[0].set.match)) {return}
+    least:=max(f32);walked:=0
+    for tick in 0..<90 {
+        if !testing.expect(t,match_step(&f,1.0/30,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5})) {return}
+        value,_:=animation_match(core.ref(&f.playback),f.rig)
+        if tick<30 || value.clip!=base.name_hash("walk") {continue}
+        walked+=1;least=min(least,value.cost)
+    }
+    testing.expectf(t,walked>30 && least>=1.5-1e-4,"walking %d ticks, the least cost is %.4f",walked,least)
+}
+
+// Inside a Keep span the clip plays on: no search nothing forces leaves it until it plays out,
+// while the same walk without the span searches there at each interval.
+@(test)
+a_keep_span_holds_the_clip_against_the_searches_nothing_forces :: proc(t:^testing.T) {
+    dt:=f32(1.0/60)
+    hold:=[1]lib.Marker{{time=.2,id=4,duration=.5}}
+    for ruled in ([2]bool{false,true}) {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        spans:=[1]Match_Span{match_test_span("hold",.Keep)}
+        if !testing.expect(t,match_fixture(t,&f,walk_spans=hold[:],spans=spans[:] if ruled else nil)) {continue}
+        f.graphs.contents[0].set.match.info.lag=0
+        walk:=base.name_hash("walk")
+        inside,searched:=0,u32(0)
+        previous:Animation_Match
+        for tick in 0..<240 {
+            if !testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-1.5},desired={0,0,-1.5})) {break}
+            value,_:=animation_match(core.ref(&f.playback),f.rig)
+            within :: proc(m:Animation_Match,walk:u64) -> bool {return m.clip==walk && m.time>.2+1e-3 && m.time<.7-1e-3}
+            if tick>0 && within(value,walk) && within(previous,walk) && value.jumps==previous.jumps {inside+=1;searched+=value.searches-previous.searches}
+            previous=value
+        }
+        testing.expectf(t,inside>=20 && (searched==0)==ruled,"ruled %v: %d ticks inside, %d searches there",ruled,inside,searched)
+        testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_span")==nil)
+    }
 }

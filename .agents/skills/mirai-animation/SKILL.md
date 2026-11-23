@@ -218,7 +218,7 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   queue owns those settings in Play and retains requests while their sources load.
 - The runtime does not allocate in a stable frame; the buffers of the program are reserved at load
   and released when it is retired. The database of a set is built at load, per library and
-  skeleton, within its memory cap.
+  skeleton (those of the libraries it lists too), within its memory cap.
 - Physics is the only writer of the mode and the velocity of a character; animation reads them
   through `match_goal` on each tick and keeps no copy.
 - The jumps of the matching and every change of what a slot of the stack plays (an action that

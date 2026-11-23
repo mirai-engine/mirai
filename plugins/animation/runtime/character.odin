@@ -78,6 +78,7 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put(doc,types,"clips",set.match.clips) or_return
     asset.document_put(doc,types,"samples",set.match.samples) or_return
     asset.document_put(doc,types,"spans",set.match.spans) or_return
+    asset.document_put(doc,types,"libraries",set.match.libraries) or_return
     asset.document_put(doc,types,"layers",set.actions.layers) or_return
     asset.document_put(doc,types,"actions",set.actions.actions) or_return
     asset.document_put(doc,types,"sections",set.actions.sections) or_return
@@ -158,6 +159,7 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     set.match.clips=asset.asset_rows(file,types,"clips","",Match_Source) or_return
     set.match.samples=asset.asset_rows(file,types,"samples","",Match_Sample) or_return
     set.match.spans=asset.asset_rows(file,types,"spans","",Match_Span) or_return
+    set.match.libraries=asset.asset_rows(file,types,"libraries","",Match_Library) or_return
     set.actions.layers=asset.asset_rows(file,types,"layers","",Stack_Layer) or_return
     set.actions.actions=asset.asset_rows(file,types,"actions","",Action_Definition) or_return
     set.actions.sections=asset.asset_rows(file,types,"sections","",Action_Section) or_return

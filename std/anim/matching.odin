@@ -14,9 +14,12 @@ import math "mirai:std/math"
 // finds the row closest to what the body does and is asked to do. The features
 // are in the frame of the character: its position on the ground and its facing,
 // -Z forward and Y up, so a row does not depend on where or toward where the clip
-// was made.
+// was made. A rig may declare up to MATCH_EXTRAS points more (the tip of a blade in its hand):
+// where each is and how it moves, in the same frame.
 
-MATCH_LANES :: 8 // f32x4 per row: 31 features and one of padding
+MATCH_LANES_BASE :: 8   // f32x4 per row: 31 features and one of padding
+MATCH_LANES_EXTRA :: 12 // f32x4 per row of a database with extra points: those, 6 per point, padding
+MATCH_EXTRAS :: 2
 MATCH_TRAJECTORY :: 3
 MATCH_HORIZON :: [MATCH_TRAJECTORY]f32{1.0/3,2.0/3,1} // seconds ahead of each trajectory point
 MATCH_PAST :: f32(1.0/3)                               // seconds behind of the past point
@@ -31,7 +34,10 @@ MATCH_FEATURES :: [Match_Feature][2]int{.Foot_Position={0,6},.Foot_Velocity={6,1
 @(private) MATCH_AT_PAST :: 17
 @(private) MATCH_AT_POINTS :: 19
 @(private) MATCH_AT_DIRECTIONS :: 25
-#assert(MATCH_AT_DIRECTIONS+2*MATCH_TRAJECTORY<=MATCH_LANES*4)
+#assert(MATCH_AT_DIRECTIONS+2*MATCH_TRAJECTORY<=MATCH_LANES_BASE*4)
+// First feature of the extra points: of each, its position x, y, z and then its velocity.
+MATCH_AT_EXTRAS :: MATCH_LANES_BASE*4
+#assert(MATCH_AT_EXTRAS+6*MATCH_EXTRAS<=MATCH_LANES_EXTRA*4)
 // Smallest spread of a kind of feature: a kind every row shares (the facing of clips in place)
 // does not turn a small difference of the query into a huge cost.
 MATCH_SPREAD_MIN :: .1
@@ -56,12 +62,16 @@ MATCH_CANDIDATES :: 16
 
 // A rule over the rows of a clip inside a span of its own (a marker with a duration; both ends
 // in): Exclude keeps them out of every search, and a clip that plays into them searches at once;
-// Block keeps them out of every search, while a clip that plays on may play into them. marker: the
-// Marker.id of its spans, as each clip names its own. A blended sample has no spans.
-Match_Span_Kind :: enum u8 {Exclude,Block}
+// Block keeps them out of every search, while a clip that plays on may play into them; Keep lets
+// the search pick them, and a clip that plays in them is not left by a search nothing forces until
+// it plays out of them. marker: the Marker.id of its spans, as each clip names its own. A blended
+// sample has no spans.
+Match_Span_Kind :: enum u8 {Exclude,Block,Keep}
 Match_Span :: struct {marker:u32,kind:Match_Span_Kind}
 // The kinds of span a row is in.
 Match_Row_Flags :: bit_set[Match_Span_Kind;u8]
+// The kinds of span whose rows no search gives.
+MATCH_SPANS_OUT :: Match_Row_Flags{.Exclude,.Block}
 
 // Why a search did not give the best row of a clip. None: it gave it; Cost: another cost less;
 // Mode: the clip serves none of the modes; Entry: an entry clip while not entering, or one that is
@@ -71,15 +81,17 @@ Match_Row_Flags :: bit_set[Match_Span_Kind;u8]
 // of the event, or within the arc the playing row is in; Span: spans keep out the rows it could
 // give (match_search).
 Match_Reject :: enum u8 {None,Cost,Mode,Entry,Stationary,Reselect,Event,Window,Span}
-// The best row of a clip in a search, the rate it plays at, its cost split by kind of feature
-// (cost is their sum) and why the search did not give it.
-Match_Candidate :: struct {row:i32,cost,rate:f32,costs:[Match_Feature]f32,reason:Match_Reject}
+// The best row of a clip in a search, the rate it plays at, its cost split by kind of feature, by
+// the extra points and by the bias of its clip (cost is their sum), and why the search did not give
+// it.
+Match_Candidate :: struct {row:i32,cost,rate:f32,costs:[Match_Feature]f32,extra,bias:f32,reason:Match_Reject}
 // The clips a search weighed, one per range by its best row: those it could give, least cost first
 // (the first is the row the search gives), then those of its modes it left out, then those of other
 // modes, each least cost first.
 Match_Candidates :: struct {items:[MATCH_CANDIDATES]Match_Candidate,count:i32}
 
-Match_Query :: [MATCH_LANES]simd.f32x4
+// A query or its weights: the lanes of a row of the database, MATCH_LANES_BASE or all.
+Match_Query :: [MATCH_LANES_EXTRA]simd.f32x4
 
 // Clips a blended sample of the database mixes.
 MATCH_BLEND :: 8
@@ -95,32 +107,47 @@ MATCH_BLEND :: 8
 // the least and most rate it plays at to follow the body in place of those of a search: a set
 // authored slower than it is played (a crouch), or one kept from playing faster than it was made.
 // mirror: its rows are of its pose reflected across the plane of the rig (pose_mirror), left and
-// right swapped, as the program plays it.
-Match_Clip :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,modes:u32,entry,mirror:bool,speed:f32,rates:[2]f32}
+// right swapped, as the program plays it. bias: what its rows cost more than their features (a
+// negative one favors it).
+Match_Clip :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,modes:u32,entry,mirror:bool,speed:f32,rates:[2]f32,bias:f32}
 // The rows of a clip or of a blended sample, with its clips and their weights as shares of 1.
 // speed is how fast the body goes over the ground in it, m/s: that of its root, or for a clip in
 // place the one its feet push at. rates and mirror: those of its Match_Clip. rate: its rows per
-// second of its clip, the one that lays them over its whole duration (row k is at k/rate).
-Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry,mirror:bool,speed:f32,travel:math.Vec3,rates:[2]f32,rate:f32}
+// second of its clip, the one that lays them over its whole duration (row k is at k/rate). bias:
+// what the search adds to the cost of its rows, the bias of its Match_Clip plus bias_shift of the
+// database, never negative.
+Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry,mirror:bool,speed:f32,travel:math.Vec3,rates:[2]f32,rate,bias:f32}
+// A point a rig declares besides its feet: the tip of bone, offset in the frame of the bone (m: a
+// blade's tip along it), so that where it is says how the bone turns too. Its position and velocity
+// are features of each row, which weigh weight.
+Match_Extra :: struct {bone:i32,offset:math.Vec3,weight:f32}
 Match_Database :: struct {
-    rate:f32,                      // rows per second of each clip
-    features:[]simd.f32x4,         // MATCH_LANES per row, normalized
-    mean,scale:[MATCH_LANES*4]f32, // raw = normalized*scale+mean
+    rate:f32,                            // rows per second of each clip
+    lanes:int,                           // per row: MATCH_LANES_BASE, or MATCH_LANES_EXTRA with extras
+    features:[]simd.f32x4,               // lanes per row, normalized
+    mean,scale:[MATCH_LANES_EXTRA*4]f32, // raw = normalized*scale+mean
     ranges:[]Match_Range,
     rows:int,
-    small,large:[]simd.f32x4,      // per run of MATCH_BOUND_SMALL or _LARGE rows: MATCH_LANES of its least, then of its greatest features; empty up to MATCH_LINEAR_ROWS rows
-    events:[]f32,                  // per row, seconds of its clip to the next marker of the event (a landing); negative: none ahead. Empty: no clip has one
-    flags:[]Match_Row_Flags,       // per row; empty: no span covers a row
+    small,large:[]simd.f32x4,            // per run of MATCH_BOUND_SMALL or _LARGE rows: lanes of its least, then of its greatest features; empty up to MATCH_LINEAR_ROWS rows
+    events:[]f32,                        // per row, seconds of its clip to the next marker of the event (a landing); negative: none ahead. Empty: no clip has one
+    flags:[]Match_Row_Flags,             // per row; empty: no span covers a row
     // Bit m for each mode m with an entry clip, a clip with a marker of the event, a clip that is no
     // entry and stands (MATCH_STILL), and one that is no entry and travels.
     entry_modes,event_modes,still_modes,moving_modes:u32,
+    // The points of the rig its rows measure, the first extra_count of them.
+    extras:[MATCH_EXTRAS]Match_Extra,
+    extra_count:int,
+    // What every range adds to its bias, so that none is negative: the least cost a run of rows can
+    // have (match_bound) plus the bias of its range bounds every row of it.
+    bias_shift:f32,
     allocator:mem.Allocator,
 }
 Match_Build_Error :: enum u8 {None,Invalid,Memory_Limit,Out_Of_Memory}
 // What the features read of a skeleton: bones of the feet and the hips, and
 // the body its clips are measured with. A rig faces -Z. pairs, corrections and plane mirror it
-// (mirror_prepare); without pairs it has no mirrored clips.
-Match_Rig :: struct {skeleton:Skeleton,body:Body_Map,left_foot,right_foot,hips:i32,pairs:[]i32,corrections:[]math.Quat,plane:Mirror_Plane}
+// (mirror_prepare); without pairs it has no mirrored clips. extras: at most MATCH_EXTRAS points it
+// declares besides its feet.
+Match_Rig :: struct {skeleton:Skeleton,body:Body_Map,left_foot,right_foot,hips:i32,pairs:[]i32,corrections:[]math.Quat,plane:Mirror_Plane,extras:[]Match_Extra}
 
 // Where the body goes and went, raw, in the frame of its facing: its velocity now (m/s), where it
 // was MATCH_PAST seconds before, and where it is and faces at each MATCH_HORIZON.
@@ -141,11 +168,12 @@ match_database_free :: proc(db:^Match_Database) {
 
 // Bytes the database keeps.
 match_database_size :: proc "contextless" (db:Match_Database) -> int {return (len(db.features)+len(db.small)+len(db.large))*size_of(simd.f32x4)+len(db.ranges)*size_of(Match_Range)+len(db.events)*size_of(f32)+len(db.flags)*size_of(Match_Row_Flags)+size_of(Match_Database)}
-// Bytes a database of rows over ranges clips keeps, with the event of each row or without, and
-// the spans of each row or without.
-match_database_bytes :: proc "contextless" (rows,ranges:int,events:=false,spans:=false) -> int {
-    lanes:=rows*MATCH_LANES
-    if rows>MATCH_LINEAR_ROWS {lanes+=2*MATCH_LANES*((rows+MATCH_BOUND_SMALL-1)/MATCH_BOUND_SMALL+(rows+MATCH_BOUND_LARGE-1)/MATCH_BOUND_LARGE)}
+// Bytes a database of rows over ranges clips keeps, with the event of each row or without, the
+// spans of each row or without, and with extra points or without.
+match_database_bytes :: proc "contextless" (rows,ranges:int,events:=false,spans:=false,extras:=false) -> int {
+    per:=MATCH_LANES_EXTRA if extras else MATCH_LANES_BASE
+    lanes:=rows*per
+    if rows>MATCH_LINEAR_ROWS {lanes+=2*per*((rows+MATCH_BOUND_SMALL-1)/MATCH_BOUND_SMALL+(rows+MATCH_BOUND_LARGE-1)/MATCH_BOUND_LARGE)}
     return lanes*size_of(simd.f32x4)+ranges*size_of(Match_Range)+(rows*size_of(f32) if events else 0)+(rows*size_of(Match_Row_Flags) if spans else 0)+size_of(Match_Database)
 }
 
@@ -156,8 +184,8 @@ match_database_bytes :: proc "contextless" (rows,ranges:int,events:=false,spans:
 // seconds to the next one of its clip. spans are the rules over the rows inside the spans of a
 // clip that is not a blend (Match_Span). A clip that does not move the skeleton or lasts a single
 // pose, a blend whose clips do not loop, a rig without feet and hips, a mirrored clip of a rig
-// that does not mirror, or a span of no kind gives Invalid; db is
-// empty after an error.
+// that does not mirror, a span of no kind, more than MATCH_EXTRAS extra points or one out of the
+// skeleton, or a bias that is not finite gives Invalid; db is empty after an error.
 match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips:[]Match_Clip,rate:f32,weights:=MATCH_WEIGHTS_DEFAULT,limit:=0,event:[]u32={},spans:[]Match_Span={},allocator:=context.allocator) -> (error:Match_Build_Error) {
     match_database_free(db)
     error=.Invalid
@@ -165,12 +193,17 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
     if n==0 || len(clips)==0 || !anim_finite(rate) || rate<=0 || rate>FRAMES_MAX_RATE || !skeleton_validate(rig.skeleton) {return}
     for bone in ([3]i32{rig.left_foot,rig.right_foot,rig.hips}) {if bone<0 || int(bone)>=n {return}}
     for weight in weights {if !anim_finite(weight) || weight<0 {return}}
+    if len(rig.extras)>MATCH_EXTRAS {return}
+    for extra in rig.extras {if extra.bone<0 || int(extra.bone)>=n || !anim_vec3_valid(extra.offset) || !anim_finite(extra.weight) || extra.weight<0 {return}}
+    lanes:=MATCH_LANES_EXTRA if len(rig.extras)>0 else MATCH_LANES_BASE
     for span in spans {if span.kind>max(Match_Span_Kind) {return}}
     MAX_FRAMES :: 1<<20
     total,longest:=0,0
     events,blended_any,ruled:=false,false,false
+    least_bias:f32
     for c in clips {
-        if !anim_finite(c.speed) || c.speed<0 || !match_rates_valid(c.rates) || c.mirror && len(rig.pairs)!=n {return}
+        if !anim_finite(c.speed) || c.speed<0 || !match_rates_valid(c.rates) || c.mirror && len(rig.pairs)!=n || !anim_finite(c.bias) {return}
+        least_bias=min(least_bias,c.bias)
         duration,blended,valid:=match_clip_duration(lib,c)
         if !valid {return}
         count,_:=frames_layout(duration,rate,MAX_FRAMES)
@@ -185,10 +218,10 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             }
         }
     }
-    if limit>0 && match_database_bytes(total,len(clips),events,ruled)>limit {return .Memory_Limit}
+    if limit>0 && match_database_bytes(total,len(clips),events,ruled,lanes==MATCH_LANES_EXTRA)>limit {return .Memory_Limit}
     context.allocator=allocator
     ok:bool
-    raw,e0:=make([][MATCH_LANES*4]f32,total);defer delete(raw)
+    raw,e0:=make([][MATCH_LANES_EXTRA*4]f32,total);defer delete(raw)
     tracks,e1:=make([]Bone_Tracks,n);defer delete(tracks)
     local,e2:=make([]math.Transform,longest*n);defer delete(local)
     world,e3:=make([]math.Transform,(longest+1)*n);defer delete(world)
@@ -241,7 +274,7 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             speed=c.speed
         }
         motion:=Match_Motion{frames=frames,world=world[:count*n],rest=rest_world,root=root,in_place=ground.in_place,travel=travel}
-        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,mirror=c.mirror,speed=speed,travel=travel,rates=c.rates,rate=exact}
+        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,mirror=c.mirror,speed=speed,travel=travel,rates=c.rates,rate=exact,bias=c.bias-least_bias}
         for frame in 0..<count {
             values:=&raw[row+frame]
             at:=f32(frame)
@@ -265,16 +298,21 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
                 values[MATCH_AT_POINTS+k*2],values[MATCH_AT_POINTS+k*2+1]=position.x,position.z
                 values[MATCH_AT_DIRECTIONS+k*2],values[MATCH_AT_DIRECTIONS+k*2+1]=direction.x,direction.z
             }
+            for extra,k in rig.extras {
+                position:=math.quat_rotate(inverse,match_motion_point(motion,int(extra.bone),at,extra.offset)-here)
+                velocity:=math.quat_rotate(inverse,match_motion_velocity(motion,int(extra.bone),frame,extra.offset))
+                for axis in 0..<3 {values[MATCH_AT_EXTRAS+k*6+axis]=position[axis];values[MATCH_AT_EXTRAS+k*6+3+axis]=velocity[axis]}
+            }
         }
         row+=count
     }
-    features,e6:=make([]simd.f32x4,total*MATCH_LANES)
+    features,e6:=make([]simd.f32x4,total*lanes)
     if e6!=nil {return .Out_Of_Memory}
     small,large:[]simd.f32x4
     if total>MATCH_LINEAR_ROWS {
         e7,e8:mem.Allocator_Error
-        small,e7=make([]simd.f32x4,2*MATCH_LANES*((total+MATCH_BOUND_SMALL-1)/MATCH_BOUND_SMALL))
-        large,e8=make([]simd.f32x4,2*MATCH_LANES*((total+MATCH_BOUND_LARGE-1)/MATCH_BOUND_LARGE))
+        small,e7=make([]simd.f32x4,2*lanes*((total+MATCH_BOUND_SMALL-1)/MATCH_BOUND_SMALL))
+        large,e8=make([]simd.f32x4,2*lanes*((total+MATCH_BOUND_LARGE-1)/MATCH_BOUND_LARGE))
         if e7!=nil || e8!=nil {delete(features);delete(small);delete(large);return .Out_Of_Memory}
     }
     times:[]f32
@@ -317,35 +355,43 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             }
         }
     }
-    db^={rate=rate,features=features,ranges=ranges,rows=total,small=small,large=large,events=times,flags=flags,allocator=allocator}
-    for i in 0..<MATCH_LANES*4 {db.scale[i]=1}
+    db^={rate=rate,lanes=lanes,features=features,ranges=ranges,rows=total,small=small,large=large,events=times,flags=flags,extra_count=len(rig.extras),bias_shift=-least_bias,allocator=allocator}
+    copy(db.extras[:],rig.extras)
+    for i in 0..<MATCH_LANES_EXTRA*4 {db.scale[i]=1}
     for r in ranges {
         if r.entry {db.entry_modes|=r.modes} else if r.speed>MATCH_STILL {db.moving_modes|=r.modes} else {db.still_modes|=r.modes}
         if events && times[r.first]>=0 {db.event_modes|=r.modes}
     }
-    for span,kind in MATCH_FEATURES {
+    // Each kind of feature, and the position and the velocity of each extra point, is spread by
+    // its mean deviation over its weight.
+    normalize :: proc(db:^Match_Database,raw:[][MATCH_LANES_EXTRA*4]f32,first,end:int,weight:f32) {
         spread:f64
-        for i in span[0]..<span[1] {
+        for i in first..<end {
             sum:f64;for values in raw {sum+=f64(values[i])}
-            mean:=sum/f64(total);db.mean[i]=f32(mean)
+            mean:=sum/f64(len(raw));db.mean[i]=f32(mean)
             variance:f64;for values in raw {d:=f64(values[i])-mean;variance+=d*d}
-            spread+=cmath.sqrt(variance/f64(total))
+            spread+=cmath.sqrt(variance/f64(len(raw)))
         }
-        spread=max(spread/f64(span[1]-span[0]),MATCH_SPREAD_MIN)
-        for i in span[0]..<span[1] {db.scale[i]=f32(spread)/weights[kind] if weights[kind]>0 else max(f32)}
+        spread=max(spread/f64(end-first),MATCH_SPREAD_MIN)
+        for i in first..<end {db.scale[i]=f32(spread)/weight if weight>0 else max(f32)}
+    }
+    for span,kind in MATCH_FEATURES {normalize(db,raw,span[0],span[1],weights[kind])}
+    for extra,k in rig.extras {
+        at:=MATCH_AT_EXTRAS+k*6
+        normalize(db,raw,at,at+3,extra.weight);normalize(db,raw,at+3,at+6,extra.weight)
     }
     for values,r in raw {
-        normalized:[MATCH_LANES*4]f32
+        normalized:[MATCH_LANES_EXTRA*4]f32
         for value,i in values {normalized[i]=(value-db.mean[i])/db.scale[i]}
-        for lane in 0..<MATCH_LANES {features[r*MATCH_LANES+lane]=match_lane(normalized[lane*4:][:4])}
+        for lane in 0..<lanes {features[r*lanes+lane]=match_lane(normalized[lane*4:][:4])}
     }
     for bounds,b in ([2][]simd.f32x4{small,large}) {
         size:=MATCH_BOUND_SMALL if b==0 else MATCH_BOUND_LARGE
-        for box in 0..<len(bounds)/(2*MATCH_LANES) {
-            least,greatest:=bounds[box*2*MATCH_LANES:][:MATCH_LANES],bounds[box*2*MATCH_LANES+MATCH_LANES:][:MATCH_LANES]
-            for lane in 0..<MATCH_LANES {least[lane],greatest[lane]=max(f32),min(f32)}
+        for box in 0..<len(bounds)/(2*lanes) {
+            least,greatest:=bounds[box*2*lanes:][:lanes],bounds[box*2*lanes+lanes:][:lanes]
+            for lane in 0..<lanes {least[lane],greatest[lane]=max(f32),min(f32)}
             for r in box*size..<min((box+1)*size,total) {
-                for lane in 0..<MATCH_LANES {v:=features[r*MATCH_LANES+lane];least[lane]=simd.min(least[lane],v);greatest[lane]=simd.max(greatest[lane],v)}
+                for lane in 0..<lanes {v:=features[r*lanes+lane];least[lane]=simd.min(least[lane],v);greatest[lane]=simd.max(greatest[lane],v)}
             }
         }
     }
@@ -362,26 +408,28 @@ match_row :: proc "contextless" (db:^Match_Database,range:int,time:f32) -> int {
 }
 match_features :: #force_inline proc "contextless" (db:^Match_Database,row:int) -> Match_Query {
     query:Match_Query
-    copy(query[:],db.features[row*MATCH_LANES:][:MATCH_LANES])
+    copy(query[:db.lanes],db.features[row*db.lanes:][:db.lanes])
     return query
 }
 // The pose part of a query from the pose a rig has, for a search with nothing of the database
-// playing: where its feet are and how they and its hips move. current and previous are its local
-// poses dt seconds apart, in which the roots are the frame of the character and stay out; velocity
-// is that of the body in that frame, which the feet move with. The trajectory lanes are left at
-// the mean, and its velocities are those of rate 1. False, with the mean pose, for poses of other
-// sizes, a bone out of them, a parent after its child, or values that are not finite.
+// playing: where its feet and the extra points of the database are and how they and its hips
+// move. current and previous are its local poses dt seconds apart, in which the roots are the frame
+// of the character and stay out; velocity is that of the body in that frame, which the feet move
+// with. The trajectory lanes are left at the mean, and its velocities are those of rate 1. False,
+// with the mean pose, for poses of other sizes, a bone out of them, a parent after its child, or
+// values that are not finite.
 match_query_pose :: proc "contextless" (db:^Match_Database,parents:[]i32,left_foot,right_foot,hips:i32,current,previous:[]math.Transform,dt:f32,velocity:math.Vec3) -> (query:Match_Query,ok:bool) {
     n:=len(parents)
     if len(current)!=n || len(previous)!=n || !anim_finite(dt) || dt<=0 || !anim_vec3_valid(velocity) {return}
-    point :: proc "contextless" (parents:[]i32,local:[]math.Transform,bone:int) -> (p:math.Vec3,ok:bool) {
+    point :: proc "contextless" (parents:[]i32,local:[]math.Transform,bone:int,offset:=math.Vec3{}) -> (p:math.Vec3,ok:bool) {
+        p=offset
         for b:=bone;parents[b]>=0;b=int(parents[b]) {
             if int(parents[b])>=b {return}
             p=math.transform_point(local[b],p)
         }
         return p,anim_vec3_valid(p)
     }
-    values:[MATCH_LANES*4]f32
+    values:[MATCH_LANES_EXTRA*4]f32
     for bone,k in ([3]i32{left_foot,right_foot,hips}) {
         if bone<0 || int(bone)>=n {return}
         now:=point(parents,current,int(bone)) or_return
@@ -393,24 +441,45 @@ match_query_pose :: proc "contextless" (db:^Match_Database,parents:[]i32,left_fo
         }
     }
     for i in 0..<MATCH_FEATURES[.Hip_Velocity][1] {values[i]=(values[i]-db.mean[i])/db.scale[i]}
-    for lane in 0..<MATCH_LANES {query[lane]=match_lane(values[lane*4:][:4])}
+    for extra,k in db.extras[:clamp(db.extra_count,0,MATCH_EXTRAS)] {
+        if extra.bone<0 || int(extra.bone)>=n {return}
+        now:=point(parents,current,int(extra.bone),extra.offset) or_return
+        before:=point(parents,previous,int(extra.bone),extra.offset) or_return
+        moving:=(now-before)/dt+velocity
+        if !anim_vec3_valid(moving) {return}
+        at:=MATCH_AT_EXTRAS+k*6
+        for axis in 0..<3 {values[at+axis],values[at+3+axis]=now[axis],moving[axis]}
+        for i in at..<at+6 {values[i]=(values[i]-db.mean[i])/db.scale[i]}
+    }
+    for lane in 0..<db.lanes {query[lane]=match_lane(values[lane*4:][:4])}
     return query,true
 }
-// The cost of a row against a query, each feature by its weight (match_query gives them).
-match_cost :: #force_inline proc "contextless" (db:^Match_Database,row:int,query,weights:Match_Query) -> f32 {
-    features:=db.features[row*MATCH_LANES:][:MATCH_LANES]
+// The cost of a row against a query, each feature by its weight (match_query gives them), with the
+// bias of its range: what a search weighs it at.
+match_cost :: proc "contextless" (db:^Match_Database,row:int,query,weights:Match_Query) -> f32 {
+    bias:f32
+    if range:=match_range_of(db,row);range>=0 {bias=db.ranges[range].bias}
+    if db.lanes==MATCH_LANES_EXTRA {return match_cost_lanes(db,row,query,weights,MATCH_LANES_EXTRA)+bias}
+    return match_cost_lanes(db,row,query,weights,MATCH_LANES_BASE)+bias
+}
+// The cost of the features of a row of a database of LANES lanes.
+@(private)
+match_cost_lanes :: #force_inline proc "contextless" (db:^Match_Database,row:int,query,weights:Match_Query,$LANES:int) -> f32 {
+    features:=db.features[row*LANES:][:LANES]
     sum:simd.f32x4
-    #unroll for lane in 0..<MATCH_LANES {d:=features[lane]-query[lane];sum+=d*d*weights[lane]}
+    #unroll for lane in 0..<LANES {d:=features[lane]-query[lane];sum+=d*d*weights[lane]}
     return simd.reduce_add_pairs(sum)
 }
-// The cost of a row against a query split by kind of feature.
-match_cost_split :: proc "contextless" (db:^Match_Database,row:int,query,weights:Match_Query) -> (costs:[Match_Feature]f32) {
-    terms:[MATCH_LANES*4]f32
-    for lane in 0..<MATCH_LANES {
-        d:=db.features[row*MATCH_LANES+lane]-query[lane]
+// The cost of the features of a row against a query split by kind of feature, and that of its
+// extra points.
+match_cost_split :: proc "contextless" (db:^Match_Database,row:int,query,weights:Match_Query) -> (costs:[Match_Feature]f32,extra:f32) {
+    terms:[MATCH_LANES_EXTRA*4]f32
+    for lane in 0..<db.lanes {
+        d:=db.features[row*db.lanes+lane]-query[lane]
         values:=simd.to_array(d*d*weights[lane]);copy(terms[lane*4:][:4],values[:])
     }
     for span,kind in MATCH_FEATURES {for i in span[0]..<span[1] {costs[kind]+=terms[i]}}
+    for term in terms[MATCH_AT_EXTRAS:] {extra+=term}
     return
 }
 
@@ -428,8 +497,8 @@ match_rows_flagged :: proc "contextless" (db:^Match_Database,first,end:int,kind:
 
 // The raw trajectory of a row.
 match_row_trajectory :: proc "contextless" (db:^Match_Database,row:int) -> (trajectory:Match_Trajectory) {
-    values:[MATCH_LANES*4]f32
-    for lane in 0..<MATCH_LANES {lanes:=simd.to_array(db.features[row*MATCH_LANES+lane]);copy(values[lane*4:][:4],lanes[:])}
+    values:[MATCH_LANES_BASE*4]f32
+    for lane in 0..<MATCH_LANES_BASE {lanes:=simd.to_array(db.features[row*db.lanes+lane]);copy(values[lane*4:][:4],lanes[:])}
     raw :: proc "contextless" (db:^Match_Database,values:[]f32,at:int) -> math.Vec2 {
         return {values[at]*db.scale[at]+db.mean[at],values[at+1]*db.scale[at+1]+db.mean[at+1]}
     }
@@ -443,8 +512,8 @@ match_row_trajectory :: proc "contextless" (db:^Match_Database,row:int) -> (traj
 
 // Writes a trajectory, raw values in the frame of the character, into a query, normalized.
 match_query_trajectory :: proc "contextless" (db:^Match_Database,query:^Match_Query,trajectory:Match_Trajectory) {
-    values:[MATCH_LANES*4]f32
-    for lane in 0..<MATCH_LANES {lanes:=simd.to_array(query[lane]);copy(values[lane*4:][:4],lanes[:])}
+    values:[MATCH_LANES_BASE*4]f32
+    for lane in 0..<MATCH_LANES_BASE {lanes:=simd.to_array(query[lane]);copy(values[lane*4:][:4],lanes[:])}
     put :: proc "contextless" (db:^Match_Database,values:[]f32,at:int,value:math.Vec2) {
         values[at]=(value.x-db.mean[at])/db.scale[at];values[at+1]=(value.y-db.mean[at+1])/db.scale[at+1]
     }
@@ -453,7 +522,7 @@ match_query_trajectory :: proc "contextless" (db:^Match_Database,query:^Match_Qu
         put(db,values[:],MATCH_AT_POINTS+k*2,trajectory.positions[k])
         put(db,values[:],MATCH_AT_DIRECTIONS+k*2,trajectory.directions[k])
     }
-    for lane in 0..<MATCH_LANES {query[lane]=match_lane(values[lane*4:][:4])}
+    for lane in 0..<MATCH_LANES_BASE {query[lane]=match_lane(values[lane*4:][:4])}
 }
 
 // What a search looks for: the pose part of query (the trajectory lanes are written per clip),
@@ -468,7 +537,9 @@ match_query_trajectory :: proc "contextless" (db:^Match_Database,query:^Match_Qu
 // of the entry clips alone, and otherwise every row of the clips of the modes, with no tail or
 // stationary filter. event_from, when positive, is the seconds to its marker of the row that
 // plays: rows further from theirs are out of the window, as an arc in the air only goes on.
-Match_Request :: struct {query:Match_Query,trajectory:Match_Trajectory,modes:u32,min_rate,max_rate,rate:f32,entry:bool,filter_stationary,moving:bool,event:f32,event_rates:[2]f32,event_from:f32}
+// skip_extras weighs none of the extra points: the pose of query is of another set (a library
+// swapped for that of another weapon), whose points mean nothing to these clips.
+Match_Request :: struct {query:Match_Query,trajectory:Match_Trajectory,modes:u32,min_rate,max_rate,rate:f32,entry:bool,filter_stationary,moving:bool,event:f32,event_rates:[2]f32,event_from:f32,skip_extras:bool}
 
 // Whether rates are none (zero) or a least and a most rate a clip may play at.
 match_rates_valid :: proc "contextless" (rates:[2]f32) -> bool {
@@ -483,41 +554,60 @@ match_range_rates :: proc "contextless" (r:Match_Range,least,most:f32) -> (f32,f
 // The query against the rows of a range, its weights and the rate the range plays at to go where
 // the trajectory goes: a few clips cover the speeds between theirs by their rate, whose trajectory
 // and velocities are theirs scaled by it. The query is taken to the rate of the range (its
-// trajectory over it, the velocities of its pose by the rate it plays at over it), and the
-// velocities and trajectory positions weigh the square of the rate: costs are of what the body
-// does, so a clip slowed down is not dearer than one at its own rate.
+// trajectory over it, the velocities of its pose and of its extra points by the rate it plays at
+// over it; their positions stay), and the velocities and trajectory positions weigh the square of
+// the rate: costs are of what the body does, so a clip slowed down is not dearer than one at its
+// own rate.
 match_query :: proc "contextless" (db:^Match_Database,request:Match_Request,range:int) -> (query,weights:Match_Query,rate:f32) {
-    query,rate=request.query,1
-    for &lane in weights {lane={1,1,1,1}}
+    rate=match_range_rate(db,request,range)
+    query,weights=match_query_at(db,request,rate)
+    return
+}
+// The rate a range plays at to go where the trajectory of request goes (match_query).
+match_range_rate :: proc "contextless" (db:^Match_Database,request:Match_Request,range:int) -> (rate:f32) {
+    rate=1
     r:=db.ranges[range]
     if r.speed>1e-3 && request.min_rate>0 && request.min_rate<=request.max_rate {
         least,most:=match_range_rates(r,request.min_rate,request.max_rate)
         rate=clamp(linalg.length(request.trajectory.positions[MATCH_TRAJECTORY-1])/(MATCH_HORIZON[MATCH_TRAJECTORY-1]*r.speed),least,most)
     }
+    return
+}
+// The query and the weights against the rows of every range that plays at rate (match_query).
+match_query_at :: proc "contextless" (db:^Match_Database,request:Match_Request,rate:f32) -> (query,weights:Match_Query) {
+    query=request.query
+    // A feature of the pose that is a velocity: the feet, the hips and those of the extra points.
+    velocity :: proc "contextless" (i:int) -> bool {
+        return i>=MATCH_FEATURES[.Foot_Velocity][0] && i<MATCH_FEATURES[.Hip_Velocity][1] || i>=MATCH_AT_EXTRAS && (i-MATCH_AT_EXTRAS)%6>=3
+    }
     trajectory:=request.trajectory
     trajectory.velocity/=rate;trajectory.past/=rate
     for &p in trajectory.positions {p/=rate}
     match_query_trajectory(db,&query,trajectory)
+    end:=MATCH_AT_EXTRAS+6*clamp(db.extra_count,0,MATCH_EXTRAS)
     if scale:=(request.rate if request.rate>0 else 1)/rate;scale!=1 {
-        values:[MATCH_LANES*4]f32
-        for lane in 0..<MATCH_LANES {lanes:=simd.to_array(query[lane]);copy(values[lane*4:][:4],lanes[:])}
-        for i in MATCH_FEATURES[.Foot_Velocity][0]..<MATCH_FEATURES[.Hip_Velocity][1] {values[i]=((values[i]*db.scale[i]+db.mean[i])*scale-db.mean[i])/db.scale[i]}
-        for lane in 0..<MATCH_LANES {query[lane]=match_lane(values[lane*4:][:4])}
+        values:[MATCH_LANES_EXTRA*4]f32
+        for lane in 0..<db.lanes {lanes:=simd.to_array(query[lane]);copy(values[lane*4:][:4],lanes[:])}
+        for i in MATCH_FEATURES[.Foot_Velocity][0]..<end {if velocity(i) {values[i]=((values[i]*db.scale[i]+db.mean[i])*scale-db.mean[i])/db.scale[i]}}
+        for lane in 0..<db.lanes {query[lane]=match_lane(values[lane*4:][:4])}
     }
-    if rate!=1 {
-        scales:[MATCH_LANES*4]f32
-        for &value,i in scales {value=rate*rate if i>=MATCH_FEATURES[.Foot_Velocity][0] && i<MATCH_FEATURES[.Trajectory_Position][1] else 1}
-        for lane in 0..<MATCH_LANES {weights[lane]=match_lane(scales[lane*4:][:4])}
+    scales:[MATCH_LANES_EXTRA*4]f32
+    for &value,i in scales {
+        value=1
+        if i>=MATCH_FEATURES[.Foot_Velocity][0] && i<MATCH_FEATURES[.Trajectory_Position][1] || velocity(i) {value=rate*rate}
+        if i>=MATCH_AT_EXTRAS && request.skip_extras {value=0}
     }
+    for lane in 0..<len(weights) {weights[lane]=match_lane(scales[lane*4:][:4])}
     return
 }
 
-// The least cost a row inside the bounds of a run can have against query.
+// The least cost a row inside the bounds of a run of a database of LANES lanes can have against
+// query, without the bias of its range.
 @(private)
-match_bound :: #force_inline proc "contextless" (bounds:[]simd.f32x4,box:int,query,weights:Match_Query) -> f32 {
-    least,greatest:=bounds[box*2*MATCH_LANES:][:MATCH_LANES],bounds[box*2*MATCH_LANES+MATCH_LANES:][:MATCH_LANES]
+match_bound :: #force_inline proc "contextless" (bounds:[]simd.f32x4,box:int,query,weights:Match_Query,$LANES:int) -> f32 {
+    least,greatest:=bounds[box*2*LANES:][:LANES],bounds[box*2*LANES+LANES:][:LANES]
     sum:simd.f32x4
-    #unroll for lane in 0..<MATCH_LANES {d:=simd.max(simd.max(least[lane]-query[lane],query[lane]-greatest[lane]),0);sum+=d*d*weights[lane]}
+    #unroll for lane in 0..<LANES {d:=simd.max(simd.max(least[lane]-query[lane],query[lane]-greatest[lane]),0);sum+=d*d*weights[lane]}
     return simd.reduce_add_pairs(sum)
 }
 
@@ -581,10 +671,17 @@ match_behind :: #force_inline proc "contextless" (r:Match_Range,row,from,reach:i
 // clip plays at. A clip that does not loop keeps out its tail (match_tail). current is the row that
 // plays (-1: none): rows of its clip within span seconds of it are left out, a jump that short is
 // a stutter, and all of them with whole. recent are rows the rig left: those it played in the span
-// seconds before it left them are left out too. With bounds, runs that cannot hold a better row
-// are skipped whole. Rows that spans exclude or block are left out. With candidates, it notes the best row of each clip, which bounds each clip
-// by its own best row instead of the best of all, and that of each clip it leaves out, with why.
+// seconds before it left them are left out too. The cost of a row is that of its features and the
+// bias of its range. With bounds, runs that cannot hold a better row are skipped whole. Rows that
+// spans exclude or block are left out. With candidates, it notes the best row of each clip, which
+// bounds each clip by its own best row instead of the best of all, and that of each clip it leaves
+// out, with why.
 match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,current:=-1,whole:=false,span:f32=0,recent:^Match_Recent=nil,candidates:^Match_Candidates=nil) -> (best:int,cost,rate:f32) {
+    if db.lanes==MATCH_LANES_EXTRA {return match_search_lanes(db,request,current,whole,span,recent,candidates,MATCH_LANES_EXTRA)}
+    return match_search_lanes(db,request,current,whole,span,recent,candidates,MATCH_LANES_BASE)
+}
+@(private)
+match_search_lanes :: proc "contextless" (db:^Match_Database,request:Match_Request,current:int,whole:bool,span:f32,recent:^Match_Recent,candidates:^Match_Candidates,$LANES:int) -> (best:int,cost,rate:f32) {
     best,cost,rate=-1,max(f32),1
     if candidates!=nil {candidates^={}}
     rates:=request.event_rates
@@ -605,6 +702,10 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
             left[left_count]={match_range_of(db,at),at,rows_in(db,seconds-max(age,0))};left_count+=1
         }
     }
+    // The query of a range depends on its rate alone: that of rate 1, of most clips, is made once,
+    // and that of the last other rate is kept for the clips of its speed.
+    one_query,one_weights:=match_query_at(db,request,1)
+    other_rate:=f32(-1);other_query,other_weights:Match_Query
     for r,range in db.ranges {
         reason:=Match_Reject.None
         if r.modes&request.modes==0 {
@@ -613,11 +714,14 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
             reason=.Entry
         } else if !event && request.filter_stationary && !r.entry && (r.speed>MATCH_STILL)!=request.moving {reason=.Stationary}
         if reason!=.None && candidates==nil {continue}
-        query,weights,scaled:=match_query(db,request,range)
+        scaled:=match_range_rate(db,request,range)
+        if scaled!=1 && scaled!=other_rate {other_query,other_weights=match_query_at(db,request,scaled);other_rate=scaled}
+        query,weights:=&one_query,&one_weights
+        if scaled!=1 {query,weights=&other_query,&other_weights}
         last:=int(r.count)-match_tail(db,range)
         if request.entry {last=min(int(r.count),int(cmath.ceil(MATCH_ENTRY_SPAN*r.rate))+1)} else if event {last=int(r.count)}
         if reason!=.None {
-            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,reason)
+            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query^,weights^,scaled,reason)
             continue
         }
         playing:=range==near_range
@@ -626,13 +730,13 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
         row,end:=int(r.first),int(r.first)+last
         for row<end {
             large_end:=min((row/MATCH_BOUND_LARGE+1)*MATCH_BOUND_LARGE,end)
-            if bounded && match_bound(db.large,row/MATCH_BOUND_LARGE,query,weights)>=(least if candidates!=nil else cost) {row=large_end;continue}
+            if bounded && match_bound(db.large,row/MATCH_BOUND_LARGE,query^,weights^,LANES)+r.bias>=(least if candidates!=nil else cost) {row=large_end;continue}
             for row<large_end {
                 small_end:=min((row/MATCH_BOUND_SMALL+1)*MATCH_BOUND_SMALL,large_end)
-                if bounded && match_bound(db.small,row/MATCH_BOUND_SMALL,query,weights)>=(least if candidates!=nil else cost) {row=small_end;continue}
+                if bounded && match_bound(db.small,row/MATCH_BOUND_SMALL,query^,weights^,LANES)+r.bias>=(least if candidates!=nil else cost) {row=small_end;continue}
                 for ;row<small_end;row+=1 {
-                    if spanned && db.flags[row]!={} {continue}
-                    value:=match_cost(db,row,query,weights)
+                    if spanned && db.flags[row]&MATCH_SPANS_OUT!={} {continue}
+                    value:=match_cost_lanes(db,row,query^,weights^,LANES)+r.bias
                     if value>=(least if candidates!=nil else cost) {continue}
                     at_rate:=scaled
                     if event {
@@ -652,15 +756,17 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
         }
         if candidates==nil {continue}
         if found>=0 {
-            match_candidates_add(candidates,{row=i32(found),cost=least,rate=found_rate,costs=match_cost_split(db,found,query,weights),reason=.Cost})
+            costs,extra:=match_cost_split(db,found,query^,weights^)
+            match_candidates_add(candidates,{row=i32(found),cost=least,rate=found_rate,costs=costs,extra=extra,bias=r.bias,reason=.Cost})
         } else if skipped>=0 {
-            match_candidates_add(candidates,{row=i32(skipped),cost=skipped_cost,rate=found_rate,costs=match_cost_split(db,skipped,query,weights),reason=.Reselect})
+            costs,extra:=match_cost_split(db,skipped,query^,weights^)
+            match_candidates_add(candidates,{row=i32(skipped),cost=skipped_cost,rate=found_rate,costs=costs,extra=extra,bias=r.bias,reason=.Reselect})
         } else if event {
             reached:=false
             for ahead in db.events[r.first:][:last] {if ahead>=0 {reached=true;break}}
-            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,.Window if reached else .Event)
+            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query^,weights^,scaled,.Window if reached else .Event)
         } else if match_rows_flagged(db,int(r.first),int(r.first)+last,.Exclude) || match_rows_flagged(db,int(r.first),int(r.first)+last,.Block) {
-            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query,weights,scaled,.Span)
+            match_candidates_reject(db,candidates,int(r.first),int(r.first)+last,query^,weights^,scaled,.Span)
         }
     }
     if candidates!=nil {
@@ -688,7 +794,9 @@ match_event_window :: proc "contextless" (db:^Match_Database,row:int,request:Mat
 match_candidates_reject :: proc "contextless" (db:^Match_Database,candidates:^Match_Candidates,first,end:int,query,weights:Match_Query,rate:f32,reason:Match_Reject) {
     found,least:=-1,max(f32)
     for row in first..<end {if value:=match_cost(db,row,query,weights);value<least {found,least=row,value}}
-    if found>=0 {match_candidates_add(candidates,{row=i32(found),cost=least,rate=rate,costs=match_cost_split(db,found,query,weights),reason=reason})}
+    if found<0 {return}
+    costs,extra:=match_cost_split(db,found,query,weights)
+    match_candidates_add(candidates,{row=i32(found),cost=least,rate=rate,costs=costs,extra=extra,bias=db.ranges[match_range_of(db,found)].bias,reason=reason})
 }
 
 // Places a candidate by its cost after those that cost the same, those the search could give
@@ -867,25 +975,26 @@ match_motion_loop :: proc "contextless" (m:Match_Motion) -> math.Vec3 {
     a,b:=m.world[m.root].position,m.world[(count-1)*m.frames.bones+m.root].position
     return {b.x-a.x,0,b.z-a.z}
 }
-// Where a bone is in the world of the clip at a frame, with the travel of a clip in place.
+// Where a bone, or a point offset in its frame, is in the world of the clip at a frame, with the
+// travel of a clip in place.
 @(private)
-match_motion_point_at :: proc "contextless" (m:Match_Motion,bone,frame:int) -> math.Vec3 {
+match_motion_point_at :: proc "contextless" (m:Match_Motion,bone,frame:int,offset:=math.Vec3{}) -> math.Vec3 {
     index,passes:=match_motion_frame(m,frame)
-    position:=m.world[index*m.frames.bones+bone].position+match_motion_loop(m)*passes
+    position:=math.transform_point(m.world[index*m.frames.bones+bone],offset)+match_motion_loop(m)*passes
     if m.in_place {position+=m.travel*(f32(index)/m.frames.rate)}
     return position
 }
 @(private)
-match_motion_point :: proc "contextless" (m:Match_Motion,bone:int,frame:f32) -> math.Vec3 {
+match_motion_point :: proc "contextless" (m:Match_Motion,bone:int,frame:f32,offset:=math.Vec3{}) -> math.Vec3 {
     whole:=int(cmath.floor(frame))
-    return linalg.lerp(match_motion_point_at(m,bone,whole),match_motion_point_at(m,bone,whole+1),frame-f32(whole))
+    return linalg.lerp(match_motion_point_at(m,bone,whole,offset),match_motion_point_at(m,bone,whole+1,offset),frame-f32(whole))
 }
 @(private)
-match_motion_velocity :: proc "contextless" (m:Match_Motion,bone,frame:int) -> math.Vec3 {
+match_motion_velocity :: proc "contextless" (m:Match_Motion,bone,frame:int,offset:=math.Vec3{}) -> math.Vec3 {
     a,b:=frame-1,frame+1
     if !m.frames.loop {a,b=max(a,0),min(b,frames_count(m.frames)-1)}
     if b<=a {return {}}
-    return (match_motion_point_at(m,bone,b)-match_motion_point_at(m,bone,a))*(m.frames.rate/f32(b-a))
+    return (match_motion_point_at(m,bone,b,offset)-match_motion_point_at(m,bone,a,offset))*(m.frames.rate/f32(b-a))
 }
 // The body on the ground: its root, or for a clip in place the origin carried by the travel.
 @(private)
