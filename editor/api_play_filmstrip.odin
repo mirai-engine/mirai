@@ -38,9 +38,9 @@ Api_Filmstrip :: struct {
     cells:[]Api_Filmstrip_Cell,
     taken:int,
     counted:Api_Capture_Seen, // of the last cell, with the most textures any cell found pending
-    debug:Api_Capture_Debug,
+    debug:Api_Capture_Overlays,
     lines:gpu.Debug_Lines,    // of debug over the cell taken
-    trail:[dynamic][3]f32,    // where the entity Trajectory follows was after each tick, room made for all
+    trail:[dynamic][3]f32,    // where the entity trajectory follows was after each tick, room made for all
 }
 
 @(private) FILMSTRIP_PAST_AROUND :: u64(60) // ticks a filmstrip of the past shows on each side of its tick
@@ -134,7 +134,7 @@ api_filmstrip_ticks :: proc(given,every,count,limit:int,allocator:mem.Allocator)
 
 // The filmstrip capture asks for, checked; nil when it asks for one image.
 @(private)
-api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capture_Params) -> (strip:^Api_Filmstrip,ok:bool) {
+api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capture_Params,overlays:=Api_Capture_Overlays{}) -> (strip:^Api_Filmstrip,ok:bool) {
     keys:=[?]string{"every","count","columns","segments","follow","size","region"}
     values:[len(keys)]string
     api.object_values(call.allocator,call.raw,keys[:],values[:])
@@ -191,18 +191,18 @@ api_filmstrip_read :: proc(s:^Session,call:^api.Call,r:^Run,own:bool,p:^Api_Capt
     strip.run={owner=r.owner,player=p.player,timeline=timeline,sampler=strip,every=1}
     strip.count=len(strip.ticks)
     strip.cells=make([]Api_Filmstrip_Cell,strip.count,call.allocator)
-    if p.debug!={} {
-        strip.debug=p.debug
+    if api_capture_overlays_any(overlays) {
+        strip.debug=overlays
         strip.lines=api_capture_debug_make(call) or_return
-        if .Trajectory in p.debug {
+        if overlays.trajectory {
             if strip.follow==core.NONE && core.world_storage_of(w,input.Seats)==nil {
-                api.call_fail(call,api.INVALID_PARAMS,"Trajectory follows follow, or else the body of the focused seat, and this game has no seats: give follow")
+                api.call_fail(call,api.INVALID_PARAMS,"trajectory follows follow, or else the body of the focused seat, and this game has no seats: give follow")
                 return
             }
             error:runtime.Allocator_Error
-            if strip.trail,error=make([dynamic][3]f32,0,api_timeline_ticks(timeline)+1,call.allocator);error!=nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the path of Trajectory");return}
+            if strip.trail,error=make([dynamic][3]f32,0,api_timeline_ticks(timeline)+1,call.allocator);error!=nil {api.call_fail(call,api.SERVER_ERROR,"No memory for the path of trajectory");return}
         }
-        api_capture_debug_draw(s,call,w,strip.debug,strip.follow,nil,&strip.lines) or_return
+        api_capture_debug_draw(s,w,&strip.debug,strip.follow,nil,&strip.lines)
     }
     return strip,true
 }
@@ -244,7 +244,7 @@ api_filmstrip_result :: proc(path:string,sheet:img.Sheet,cells:[]Api_Filmstrip_C
 // in the grid with the tick in its corner.
 @(private)
 api_filmstrip_take :: proc(s:^Session,strip:^Api_Filmstrip,ran:int) -> string {
-    if .Trajectory in strip.debug && ran>=len(strip.trail) && len(strip.trail)<cap(strip.trail) {
+    if strip.debug.trajectory && ran>=len(strip.trail) && len(strip.trail)<cap(strip.trail) {
         if r:=run_player(s,strip.run.owner,strip.run.player);r!=nil {
             w:=run_ref(s,r)
             if body:=api_filmstrip_traced(w,strip.follow);body!=core.NONE {append(&strip.trail,api_entity_middle(w,body))}
@@ -254,9 +254,8 @@ api_filmstrip_take :: proc(s:^Session,strip:^Api_Filmstrip,ran:int) -> string {
     r:=run_player(s,strip.run.owner,strip.run.player)
     if r==nil {return "The game ended"}
     debug:[]gpu.Debug_Lines
-    if strip.debug!={} {
-        call:=api.Call{allocator=context.temp_allocator}
-        if !api_capture_debug_draw(s,&call,run_ref(s,r),strip.debug,strip.follow,strip.trail[:],&strip.lines) {return call.error.message}
+    if api_capture_overlays_any(strip.debug) {
+        api_capture_debug_draw(s,run_ref(s,r),&strip.debug,strip.follow,strip.trail[:],&strip.lines)
         debug=([^]gpu.Debug_Lines)(&strip.lines)[:1]
     }
     pixels,width,height,drawn:=api_play_pixels(s,r,strip.frames,strip.window,debug=debug)
@@ -299,7 +298,7 @@ api_filmstrip_take :: proc(s:^Session,strip:^Api_Filmstrip,ran:int) -> string {
     return ""
 }
 
-// What Trajectory follows: the entity followed, or else the body the focused
+// What trajectory follows: the entity followed, or else the body the focused
 // seat of the game drives; none while it drives none.
 @(private)
 api_filmstrip_traced :: proc(w:core.World_Ref,follow:core.Entity) -> core.Entity {

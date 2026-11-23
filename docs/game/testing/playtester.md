@@ -49,12 +49,13 @@ mirai rpc --project . render.inspect_entity '{"entity":"Player","world":"Game"}'
 mirai rpc --project . capture '{"path":"C:/work/now.png"}' --select path,width,height
 mirai rpc --project . capture \
   '{"path":"C:/work/walk.png","every":10,"count":9,"follow":"Player",
-    "debug":["Skeleton","Bounds","Collision","Trajectory"],
+    "debug":["skeleton","bounds","collision","trajectory"],
     "segments":[{"for":80,"keys":["W"]}]}'
 ```
 
-- `debug` draws optional overlays (`Bounds`, `Skeleton`, `Collision`, `Trajectory`) in offscreen
-  single captures and filmstrips without `ui:true`.
+- `debug` draws overlays by name (`bounds`, `skeleton`, `collision`, `trajectory`, and those of
+  the plugins such as `match`, `contacts`, `joints`, `hitboxes`, `navigation`) in offscreen single
+  captures and filmstrips without `ui:true`; an unknown name fails listing those there are.
 
 - With `path` the answer is only where the file is: open it when the numbers do not decide.
   Without it MCP also returns the image, which costs tokens.

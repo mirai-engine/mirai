@@ -1,11 +1,13 @@
 package abilities_editor
 
 import "core:fmt"
+import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
+import mm "mirai:std/math"
 import ab "plugins:abilities/runtime"
 import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
@@ -44,8 +46,15 @@ Window_Result :: struct {
     from,to:f32 `mirai:"unit=s"`,
     clock:string `mirai:"optional,label=own: on the clock of the ability"`,
     cancel_into:[]string `mirai:"optional"`,
-    hitbox:string `mirai:"optional"`,
+    hitbox:Hitbox_Result `mirai:"optional,label=Its hitbox where it is now; left out without one"`,
     cue:string `mirai:"optional"`,
+}
+Hitbox_Result :: struct {
+    shape:ab.Hitbox_Shape,
+    center:mm.Vec3 `mirai:"unit=m,label=In the world"`,
+    rotation:mm.Quat `mirai:"label=Its axes in the world, those of the user"`,
+    size:mm.Vec3 `mirai:"unit=m,label=Box half extents, sphere radius, or capsule radius and half height"`,
+    targets:[]string `mirai:"optional,label=What it already hit in this run of the ability, each once: by name or path, or the handle of an entity the game made"`,
 }
 Attribute_Result :: struct {
     attribute:string,
@@ -131,7 +140,7 @@ value_name :: proc(s:^editor.Session,type:typeid,value:i64) -> string {
 
 @(private)
 bits_names :: proc(s:^editor.Session,call:^api.Call,type:typeid,bits:u64) -> []string {
-    names:=make([dynamic]string,call.allocator)
+    names:=make([dynamic]string,call.allocator if call!=nil else context.temp_allocator)
     for i in 0..<64 {
         if bits&(u64(1)<<u64(i))!=0 {append(&names,value_name(s,type,i64(i)))}
     }
@@ -164,27 +173,20 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     if rows:=core.world_table_of(world,ab.Ability_Tracking);rows!=nil {track,_=core.get(rows,e)}
     data:=sets(s)
     abilities,kits:=data.abilities,data.kits
-    time:core.Time
-    if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
-    dt:=time.dt
-    if !(dt>0) {
-        dt=1.0/60
-        if settings:=core.world_storage_of(world,core.Simulation_Settings);settings!=nil && settings.tick_rate>0 {dt=1/f32(settings.tick_rate)}
-    }
+    time,dt:=world_clock(world)
     r:=api.call_result(call,Inspect_Result)
     if u.kit!={} {r.kit=core.record_name(kits,u.kit) if core.record_name(kits,u.kit)!="" else "missing row"}
     r.ability=row_name(abilities,state.ability)
     active:=ab.record_sheet(abilities,state.ability)
-    at:ab.Ability_Time
+    at:=running_at(time,&state)
     if active!=nil {
-        at={local=i64(time.tick-state.start) if time.tick>=state.start else 0,own=state.own}
         r.seconds,r.own_seconds,r.duration=f32(at.local)*dt,at.own*dt,active.duration
         windows:=make([dynamic]Window_Result,call.allocator)
         for &win,i in active.windows {
             if !ab.ability_window_open(win,dt,at) {continue}
             shown:=Window_Result{index=i,from=win.from,to=win.to,cancel_into=bits_names(s,call,ab.Ability_Tag,u64(win.cancel_into))}
             if win.clock==.Own {shown.clock="own"}
-            if hitbox:=ab.record_sheet(data.hitboxes,win.hitbox);hitbox!=nil {shown.hitbox=fmt.tprintf("%v",hitbox.shape)}
+            if hitbox:=ab.record_sheet(data.hitboxes,win.hitbox);hitbox!=nil {shown.hitbox=window_hitbox(world,e,&track,hitbox,i,call.allocator)}
             if win.cue!=ab.CUE_NONE {shown.cue=value_name(s,ab.Ability_Cue,i64(win.cue))}
             append(&windows,shown)
         }
@@ -239,7 +241,8 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
                 if problem:=base.text_get(sheets.abilities[row][:]);problem!="" {
                     blocked=fmt.tprintf("its sheet is not valid: %s",problem)
                 } else {
-                    blocked=block_text(ab.start_block(&params,time.tick,dt,e,&u,&state,&track,state.statuses,kit,active,at,a,ref))
+                    block,index:=ab.start_block(&params,time.tick,dt,e,&u,&state,&track,state.statuses,kit,active,at,a,ref)
+                    blocked=block_text(s,block,index,a,&u,&state,&track,time.tick,dt)
                 }
             }
             append(&candidates,Candidate_Result{row_name(abilities,ref),blocked})
@@ -248,19 +251,104 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     r.candidates=candidates[:]
 }
 
+// What blocks a, as start_block found it with what fails at index: the status, the mode, the
+// condition or the cost with its value now against what it needs, or the cooldown left.
 @(private)
-block_text :: proc(block:ab.Ability_Block) -> string {
+block_text :: proc(s:^editor.Session,block:ab.Ability_Block,index:int,a:^ab.Ability,user:^ab.Ability_User,state:^ab.Ability_State,track:^ab.Ability_Tracking,tick:u64,dt:f32) -> string {
+    attribute :: proc(s:^editor.Session,user:^ab.Ability_User,state:^ab.Ability_State,attribute:ab.Ability_Attribute) -> (name,value:string) {
+        name=value_name(s,ab.Ability_Attribute,i64(attribute))
+        current,found:=ab.ability_value(user,state,attribute)
+        return name,fmt.tprintf("%g",current) if found else "missing from the Ability_User"
+    }
     switch block {
     case .None: return "none: it starts when its input fires"
-    case .Status_Missing: return "the user is not in a status it requires"
-    case .Status_Blocked: return "the user is in a status that blocks it"
-    case .Mode: return "the user's Character is not in one of its modes"
-    case .Condition: return "one of its conditions does not hold: an attribute or the speed of its Character out of its bounds, or no ledge ahead"
-    case .Cost: return "an attribute has less than one of its costs"
-    case .Cooldown: return "its cooldown runs"
+    case .Status_Missing: return fmt.tprintf("it requires the status %s, which the user is not in",value_name(s,ab.Ability_Status,i64(index)))
+    case .Status_Blocked: return fmt.tprintf("the user is in the status %s, which blocks it",value_name(s,ab.Ability_Status,i64(index)))
+    case .Mode:
+        modes:=strings.join(bits_names(s,nil,locomotion.Locomotion_Mode,u64(a.modes)),", ",context.temp_allocator)
+        if index<0 {return fmt.tprintf("it starts only in the modes %s and the user has no locomotion mode",modes)}
+        return fmt.tprintf("the user's Character is in the mode %s, and it starts only in %s",value_name(s,locomotion.Locomotion_Mode,i64(index)),modes)
+    case .Condition:
+        if index<0 || index>=len(a.conditions) {break}
+        c:=a.conditions[index]
+        bounds:=fmt.tprintf("at least %g",c.at_least) if c.at_most<=0 else fmt.tprintf("from %g to %g",c.at_least,c.at_most)
+        switch c.kind {
+        case .Attribute:
+            name,value:=attribute(s,user,state,c.attribute)
+            return fmt.tprintf("condition %d: %s is %s and has to be %s",index,name,value,bounds)
+        case .Speed: return fmt.tprintf("condition %d: the speed of its Character over the ground has to be %s m/s",index,bounds)
+        case .Ledge_Ahead: return fmt.tprintf("condition %d: its Character stands with no ledge at least %g m deep within %g m ahead",index,c.at_least,c.reach)
+        }
+    case .Cost:
+        if index<0 || index>=len(a.costs) {break}
+        c:=a.costs[index]
+        name,value:=attribute(s,user,state,c.attribute)
+        return fmt.tprintf("cost %d: %s is %s, less than the %g it costs",index,name,value,c.amount)
+    case .Cooldown:
+        if index<0 || index>=len(track.cooldowns) {break}
+        left:=track.cooldowns[index].until-tick if track.cooldowns[index].until>tick else 0
+        return fmt.tprintf("its cooldown runs for %g s more",f32(left)*dt)
     case .No_Cancel: return "the running ability has no open window whose cancel_into has one of its tags, and the kit's interrupts do not either"
     }
-    return ""
+    return fmt.tprintf("%v",block)
+}
+
+// The tick of a world and the seconds of a tick.
+@(private)
+world_clock :: proc(world:core.World_Ref) -> (time:core.Time,dt:f32) {
+    if t:=core.world_storage_of(world,core.Time);t!=nil {time=t^}
+    dt=time.dt
+    if !(dt>0) {
+        dt=1.0/60
+        if settings:=core.world_storage_of(world,core.Simulation_Settings);settings!=nil && settings.tick_rate>0 {dt=1/f32(settings.tick_rate)}
+    }
+    return
+}
+
+// Where the running ability of a user is on its clocks.
+@(private)
+running_at :: proc(time:core.Time,state:^ab.Ability_State) -> ab.Ability_Time {
+    if state.ability=={} {return {}}
+    return {local=i64(time.tick-state.start) if time.tick>=state.start else 0,own=state.own}
+}
+
+// Where the user e is in world: its World_Transform, or the identity without one.
+@(private)
+user_pose :: proc(world:core.World_Ref,e:core.Entity) -> mm.Transform {
+    if worlds:=core.world_table_of(world,core.World_Transform);worlds!=nil {
+        if placed,found:=core.get(worlds,e);found {return placed.transform}
+    }
+    return mm.TRANSFORM_IDENTITY
+}
+
+// The hitbox h of the window at index of the ability user e runs, where it is now in world, with
+// what it hit.
+@(private)
+window_hitbox :: proc(world:core.World_Ref,e:core.Entity,track:^ab.Ability_Tracking,h:^ab.Ability_Hitbox,window:int,allocator:=context.temp_allocator) -> (r:Hitbox_Result) {
+    center,rotation:=ab.hitbox_world(h,user_pose(world,e))
+    r={shape=h.shape,center=center,rotation=rotation,size=h.size}
+    hit:=window_targets(track,window)
+    if len(hit)==0 {return}
+    r.targets=make([]string,len(hit),allocator)
+    for target,i in hit {r.targets[i]=entity_text(world,target,allocator)}
+    return
+}
+
+// What the window at index of the running ability hit since it started.
+@(private)
+window_targets :: proc(track:^ab.Ability_Tracking,window:int) -> []core.Entity {
+    targets:=make([dynamic]core.Entity,context.temp_allocator)
+    for j in 0..<min(int(track.hit_count),len(track.targets)) {
+        if int(track.windows[j])==window {append(&targets,track.targets[j])}
+    }
+    return targets[:]
+}
+
+// An entity by its path, or its handle when it has no name.
+@(private)
+entity_text :: proc(world:core.World_Ref,e:core.Entity,allocator:=context.temp_allocator) -> string {
+    if path:=editor.api_entity_path(world,e,allocator);path!="" {return path}
+    return fmt.aprintf("0x%016x",u64(e),allocator=allocator)
 }
 
 @(private)

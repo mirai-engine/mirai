@@ -103,7 +103,7 @@ with `debug` plus `animation.inspect` / `animation.history`:
 # Real Play filmstrip with offscreen debug overlays (no ui:true needed)
 mirai rpc --project . capture '{
   "path": ".mirai/tmp/loco_strip.png", "every": 6, "count": 8,
-  "follow": "Player", "debug": ["Skeleton", "Bounds", "Collision", "Trajectory"],
+  "follow": "Player", "debug": ["skeleton", "bounds", "collision", "trajectory"],
   "segments": [{"for": 48, "keys": ["W"]}]
 }' --select path,ticks
 

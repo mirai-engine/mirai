@@ -5,6 +5,7 @@ import "core:strings"
 import "core:testing"
 import "mirai:core"
 import "mirai:editor/api"
+import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
@@ -116,4 +117,33 @@ inspecting_a_rig_the_game_made_names_it_by_its_handle_and_reads_the_last_search_
         testing.expectf(t,strings.contains(text,needle),"inspect lacks %s in %s",needle,text)
     }
     testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,text),"")
+    // What moves the body: its velocity and travel; no trajectory unless asked, and a rig that
+    // runs everything has no lod.
+    for needle in ([]string{`"searches":1,"jumps":1,"velocity":[`,`"lod":{"period":1}`}) {testing.expectf(t,strings.contains(text,needle),"match lacks %s",needle)}
+    for needle in ([]string{`"trajectory":{`,`"candidate_trajectory":{`}) {testing.expectf(t,!strings.contains(text,needle),"%s unasked",needle)}
+    // A far rig: the lod of its last tick says why it stopped posing.
+    playback:=&f.world.playback
+    for &state in playback.states {if state.entity==f.rig {state.lod={period=4,wait=true,skip=true};state.skipped=3}}
+    result=authoring_test_execute(a,"instance",fmt.tprintf(`{{"entity":"%s","parts":["Rig","Match"],"trajectory":true}}`,handle))
+    if !testing.expectf(t,result.code==0,"%s %s",result.message,result.data) {return}
+    text=api.json_compact(string(serial_bytes(a)))
+    for needle in ([]string{`"lod":{"period":4,"wait":true,"skip":true,"skipped":3}`,`"trajectory":{"velocity":[`,`"candidate_trajectory":{"velocity":[`,`"positions":[[`,`"directions":[[`}) {
+        testing.expectf(t,strings.contains(text,needle),"inspect lacks %s",needle)
+    }
+    testing.expect_value(t,result_shape_mismatch(Instance_Inspect_Result,text),"")
+    // The overlay match of capture draws both trajectories over the image.
+    testing.expect_value(t,MATCH_CAPTURE_DEFAULT.provider.name,"match")
+    storage:[512]erender.Debug_Vertex
+    lines:=erender.debug_lines_make(storage[:],depth_test=false)
+    match_capture_draw(&a.session,world,&lines)
+    query,candidate:=0,0
+    for vertex in storage[:lines.count] {
+        switch vertex.color {
+        case mm.rgba8_pack(MATCH_CAPTURE_QUERY):     query+=1
+        case mm.rgba8_pack(MATCH_CAPTURE_CANDIDATE): candidate+=1
+        }
+    }
+    // The past, three points ahead and where it faces at each: seven lines of two vertices.
+    testing.expect_value(t,query,14)
+    testing.expect_value(t,candidate,14)
 }

@@ -205,6 +205,10 @@ history_reads_the_jump_of_matching_at_its_tick_with_its_candidates_and_says_what
         if tick!=jumped_at {continue}
         found=true
         testing.expectf(t,jumped && searched && clip=="Walk","the jump is at tick %d: %v",tick,row)
+        // What moves the body, and no trajectory unless asked.
+        _,moving:=row["velocity"].(json.Array)
+        _,traced:=row["trajectory"]
+        testing.expectf(t,moving && !traced,"the jump row has a velocity and no trajectory: %v",row)
         candidates,_:=row["candidates"].(json.Array)
         if !testing.expectf(t,len(candidates)>0 && len(candidates)<=4,"candidates at the jump: %v",row) {continue}
         best:=candidates[0].(json.Object)
@@ -218,6 +222,16 @@ history_reads_the_jump_of_matching_at_its_tick_with_its_candidates_and_says_what
     }
     testing.expectf(t,found,"no row at tick %d in %s",jumped_at,text)
     testing.expectf(t,played_on>0,"a search that played on lists its candidates: %s",text)
+    // Asked, each row after a search has what it asked of the trajectory and what the row it chose has.
+    text,error=history_test_call(f,"animation.history",fmt.tprintf(`{{"entity":"Figure","from":%d,"to":%d,"trajectory":true}}`,jumped_at,jumped_at+2))
+    if !testing.expectf(t,error.code==0,"%s %s",error.message,error.data) {return}
+    for value in history_test_rows(t,text) {
+        row:=value.(json.Object)
+        query,asked:=row["trajectory"].(json.Object)
+        _,chosen:=row["candidate_trajectory"].(json.Object)
+        _,positions:=query["positions"].(json.Array)
+        testing.expectf(t,asked && chosen && positions,"a row with both trajectories: %v",row)
+    }
     // Every five ticks, searched and jumped tell what happened since the row before.
     text,error=history_test_call(f,"animation.history",`{"entity":"Figure","from":2,"every":5}`)
     if !testing.expectf(t,error.code==0,"%s %s",error.message,error.data) {return}

@@ -28,6 +28,7 @@ api_register :: proc(s:^editor.Session) {
     api_collision_register(s)
     api_settle_register(s)
     api_drop_register(s)
+    api_inspect_register(s)
 }
 
 @(storage)

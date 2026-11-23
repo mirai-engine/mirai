@@ -103,7 +103,7 @@ mirai rpc --project . animation.history '{"entity":"Player","from":0,"to":60,"ev
 # 3. Real Play filmstrip with skeleton + collision + trajectory overlays (no ui:true needed)
 mirai rpc --project . capture '{
   "path": ".mirai/tmp/play_loco.png", "every": 6, "count": 8, "follow": "Player",
-  "debug": ["Skeleton", "Bounds", "Collision", "Trajectory"],
+  "debug": ["skeleton", "match", "bounds", "collision", "trajectory"],
   "segments": [{"for": 48, "keys": ["W"]}]
 }' --select path,ticks
 ```

@@ -1,6 +1,7 @@
 package navigation_editor
 
 import "core:fmt"
+import "core:strings"
 import "mirai:core"
 import "mirai:host"
 import "mirai:editor"
@@ -127,7 +128,7 @@ Nav_Corner_Result :: struct {
 Nav_Agent_Result :: struct {
     state:string,
     far:bool,
-    note:string `mirai:"optional"`,
+    note:string `mirai:"optional,label=Why it has no path yet; Failed or with a partial path, why it stops short, then the problems navigation reported on it (code: text)"`,
     speed:f32 `mirai:"optional,label=Of an agent far"`,
     complete,arrived:bool `mirai:"optional"`,
     class:string `mirai:"optional"`,
@@ -472,6 +473,11 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
     r.goal,r.partial,r.looking=value.goal,value.partial,value.looking
     run:^nav.Navigation_Agents
     if s.app!=nil {run=host.app_world_storage(s.app,world.data,nav.Navigation_Agents)}
+    if value.state==.Failed || value.partial {
+        problems:^core.Problems
+        if s.app!=nil {problems=host.app_world_storage(s.app,world.data,core.Problems)}
+        r.note=agent_note(value,problems,e,call.allocator)
+    }
     route:=nav.agent_route(run,e)
     if route!=nil {
         r.replans=int(route.replans)
@@ -506,6 +512,26 @@ agent :: proc(s:^editor.Session,call:^api.Call) {
         r.corridor=int(max(corridor.count,0))
     }
     r.corners=corners[:]
+}
+
+// Why an agent that failed or has a partial path stops short, then the problems navigation
+// reported on it as code: text, joined by "; ".
+@(private)
+agent_note :: proc(path:nav.Nav_Path,problems:^core.Problems,e:core.Entity,allocator:=context.allocator) -> string {
+    b:=strings.builder_make(allocator)
+    if path.state==.Failed {
+        strings.write_string(&b,"no path toward the goal from where it stands: nav.path between the two tells what is in the way")
+    } else if path.partial {
+        strings.write_string(&b,"its path ends short of the goal, which is cut off from where it stands (another island, or a gap no Nav_Link it can cross spans): it goes as near as it gets")
+    }
+    if problems==nil {return strings.to_string(b)}
+    for &problem in core.problems_list(problems) {
+        code:=core.problem_code(&problem)
+        if problem.entity!=e || !strings.has_prefix(code,"navigation.") {continue}
+        if strings.builder_len(b)>0 {strings.write_string(&b,"; ")}
+        fmt.sbprintf(&b,"%s: %s",code,core.problem_text(&problem))
+    }
+    return strings.to_string(b)
 }
 
 // The Nav_Far of an agent far from the players, whose rows are off; nil when it is not far.

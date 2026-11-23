@@ -98,7 +98,7 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,extras:^host.Fram
         if view.collision {
             draw_collision(&lines,view,core.world_storage_of(w,phys.Physics_State),&n.classes[view.shown],center)
             view.center=center
-        } else if nav.class_in_volume(n,view.shown) {draw_volume(&lines,&n.classes[view.shown].volume)} else {draw_mesh(&lines,&n.classes[view.shown].mesh)}
+        } else {draw_class(&lines,n,view.shown)}
         view.world,view.revision,view.class,view.lines_collision=w.data,n.revision,view.shown,view.collision
         view.count,view.dropped,view.ready=lines.count,lines.dropped,true
     }
@@ -111,15 +111,52 @@ navigation_view_lines :: proc(s:^editor.Session,view:^Nav_View,extras:^host.Fram
     if len(view.agents)==0 {resize(&view.agents,2*NAV_VIEW_AGENT_LINES)}
     agent_lines:=erender.debug_lines_make(view.agents[:],depth_test=false)
     for e in s.selection.entities {
-        p,found:=core.get(paths,e)
-        if !found || p.class<0 || int(p.class)>=n.count {continue}
-        route:=nav.agent_route(run,e)
-        if route==nil {continue}
-        if nav.class_in_volume(n,int(p.class)) {
-            draw_flier(&agent_lines,&n.classes[p.class].volume,p,&route.corridor)
-        } else {draw_agent(&agent_lines,&n.classes[p.class].mesh,p,route)}
+        if p,found:=core.get(paths,e);found {draw_path(&agent_lines,n,run,e,p)}
     }
     if agent_lines.count>0 {host.extras_debug_lines_add(extras,agent_lines)}
+}
+
+// The navigation of a world over the image capture takes with debug navigation, with no
+// selection: the meshes of the classes its agents walk (the first class without agents), their
+// links, and the corridor and path of every agent.
+@(storage)
+Navigation_Capture :: struct {provider:editor.Capture_Overlay_Provider}
+
+NAVIGATION_CAPTURE_DEFAULT :: Navigation_Capture{provider={name="navigation",draw=navigation_capture_draw}}
+
+@(private)
+navigation_capture_draw :: proc(s:^editor.Session,w:core.World_Ref,lines:^erender.Debug_Lines) {
+    n:=core.world_storage_of(w,nav.Navigation)
+    if n==nil || !n.ready || n.count==0 {return}
+    paths:=core.world_table_of(w,nav.Nav_Path)
+    run:^nav.Navigation_Agents
+    if s.app!=nil {run=host.app_world_storage(s.app,w.data,nav.Navigation_Agents)}
+    walked:[nav.NAV_CLASS_CAPACITY]bool
+    any:=false
+    if paths!=nil {
+        for p in paths.values {
+            if p.class>=0 && int(p.class)<n.count {walked[p.class],any=true,true}
+        }
+    }
+    if !any {walked[0]=true}
+    for i in 0..<n.count {if walked[i] {draw_class(lines,n,i)}}
+    if paths==nil || run==nil {return}
+    for p,i in paths.values {draw_path(lines,n,run,paths.entities[i],p)}
+}
+
+// The mesh of a class, or the zones of its volume for a class of the air.
+draw_class :: proc(lines:^erender.Debug_Lines,n:^nav.Navigation,class:int) {
+    if nav.class_in_volume(n,class) {draw_volume(lines,&n.classes[class].volume)} else {draw_mesh(lines,&n.classes[class].mesh)}
+}
+
+// The corridor and path of agent e, walking or flying; nothing without a route.
+draw_path :: proc(lines:^erender.Debug_Lines,n:^nav.Navigation,run:^nav.Navigation_Agents,e:core.Entity,p:nav.Nav_Path) {
+    if p.class<0 || int(p.class)>=n.count {return}
+    route:=nav.agent_route(run,e)
+    if route==nil {return}
+    if nav.class_in_volume(n,int(p.class)) {
+        draw_flier(lines,&n.classes[p.class].volume,p,&route.corridor)
+    } else {draw_agent(lines,&n.classes[p.class].mesh,p,route)}
 }
 
 NAV_VIEW_AGENT_LINES :: 4096

@@ -113,9 +113,10 @@ a_capture_makes_its_folder_and_says_why_it_cannot_write :: proc(t:^testing.T) {
 }
 
 // The lines of debug: the world box of each mesh drawn, those of the entity
-// followed in their own color, and the path; a flag no plugin draws fails.
+// followed in their own color, the path and the overlays plugins register by
+// name; a name no overlay has fails listing those there are.
 @(test)
-capture_debug_draws_boxes_and_the_path_and_refuses_what_no_plugin_draws :: proc(t:^testing.T) {
+capture_debug_draws_the_overlays_it_names_and_refuses_a_name_none_has :: proc(t:^testing.T) {
     f:=new(Spatial_Fixture);defer free(f)
     if !spatial_open(t,f) {return}
     defer spatial_close(f)
@@ -125,19 +126,34 @@ capture_debug_draws_boxes_and_the_path_and_refuses_what_no_plugin_draws :: proc(
     lines:=gpu.debug_lines_make(storage[:],depth_test=false)
     call:=api.Call{allocator=context.temp_allocator}
     w:=edited_world(&f.s)
+    names:[3][API_CAPTURE_OVERLAY_NAME]u8
+    base.text_set(names[0][:],"bounds");base.text_set(names[1][:],"marks");base.text_set(names[2][:],"trajectory")
+    overlays,known:=api_capture_overlays(&f.s,&call,names[:])
+    if !testing.expect(t,known,call.error.message) {return}
+    testing.expect(t,overlays.bounds && overlays.trajectory && overlays.count==1,"bounds, trajectory and the overlay of the plugin")
     trail:=[][3]f32{{0,0,0},{1,0,0},{2,0,1}}
-    testing.expect(t,api_capture_debug_draw(&f.s,&call,w,{.Bounds,.Trajectory},f.crate,trail,&lines),call.error.message)
-    followed,boxed,path:=0,0,0
+    api_capture_debug_draw(&f.s,w,&overlays,f.crate,trail,&lines)
+    followed,boxed,path,marks:=0,0,0,0
     for vertex in storage[:lines.count] {
         switch vertex.color {
-        case mm.rgba8_pack(API_CAPTURE_FOLLOWED): followed+=1
-        case mm.rgba8_pack(API_CAPTURE_BOUNDS):   boxed+=1
-        case mm.rgba8_pack(API_CAPTURE_TRAIL):    path+=1
+        case mm.rgba8_pack(API_CAPTURE_FOLLOWED):  followed+=1
+        case mm.rgba8_pack(API_CAPTURE_BOUNDS):    boxed+=1
+        case mm.rgba8_pack(API_CAPTURE_TRAIL):     path+=1
+        case mm.rgba8_pack(SPATIAL_OVERLAY_COLOR): marks+=1
         }
     }
     // Floor and ramp, and crate with its lid; the hidden boulder draws none.
     testing.expectf(t,boxed==2*24 && followed==2*24,"boxes: %d of others, %d followed",boxed,followed)
     testing.expectf(t,path>2*2,"the path and its end: %d",path)
-    testing.expect(t,!api_capture_debug_draw(&f.s,&call,w,{.Skeleton},core.NONE,nil,&lines))
-    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,"Skeleton"),call.error.message)
+    testing.expect_value(t,marks,2)
+    // Only what it names: the overlay of the plugin alone.
+    only:[1][API_CAPTURE_OVERLAY_NAME]u8
+    base.text_set(only[0][:],"marks")
+    overlays,known=api_capture_overlays(&f.s,&call,only[:])
+    testing.expect(t,known && !overlays.bounds && !overlays.trajectory && overlays.count==1)
+    unknown:[2][API_CAPTURE_OVERLAY_NAME]u8
+    base.text_set(unknown[0][:],"bounds");base.text_set(unknown[1][:],"skeleton")
+    _,known=api_capture_overlays(&f.s,&call,unknown[:])
+    testing.expect(t,!known && call.failed && call.error.code==api.INVALID_PARAMS,call.error.message)
+    testing.expectf(t,strings.contains(call.error.message,`"skeleton"`) && strings.contains(call.error.message,"bounds, trajectory, marks"),"%s",call.error.message)
 }

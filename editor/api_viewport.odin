@@ -24,15 +24,26 @@ Api_Viewport_Result :: struct {
 
 Api_Capture_Of :: enum u8 {Auto,Scene,Game}
 
-// What capture draws over the image alone to show what the frames do not.
-Api_Capture_Debug_Flag :: enum u8 {Bounds,Skeleton,Collision,Trajectory}
-Api_Capture_Debug :: bit_set[Api_Capture_Debug_Flag;u8]
+// What capture draws over the image alone to show what the frames do not:
+// overlays by name, those of the editor and those plugins register
+// (Capture_Overlay_Provider).
+API_CAPTURE_OVERLAYS :: 16
+API_CAPTURE_OVERLAY_NAME :: 32
+API_CAPTURE_OVERLAY_BOUNDS :: "bounds"
+API_CAPTURE_OVERLAY_TRAJECTORY :: "trajectory"
+
+// The overlays debug names, as capture draws them.
+Api_Capture_Overlays :: struct {
+    bounds,trajectory:bool,
+    draws:[API_CAPTURE_OVERLAYS]proc(s:^Session,w:core.World_Ref,lines:^gpu.Debug_Lines),
+    count:int, // of draws
+}
 
 Api_Capture_Params :: struct {
     path:[API_PATH_BYTES]u8 `mirai:"optional,text,label=PNG to write: absolute (C:/shots/a.png or /c/shots/a.png as Git Bash writes it) or relative to the folder of the project; its folder is made; the answer is only where it is and its size. Without it one under .mirai/captures and MCP also returns the image"`,
     ui:bool `mirai:"optional,label=The whole window with the editor around what it shows, as the user sees it; false: the image alone"`,
     of:Api_Capture_Of `mirai:"optional,label=What the image alone shows. Game: the game of the caller through its camera with its own interfaces. Scene: what the viewport shows through its camera without panels or gizmos or grid or selection. Auto: Game while the caller has one playing, otherwise Scene"`,
-    debug:Api_Capture_Debug `mirai:"optional,label=Lines over the image alone and over every cell of a filmstrip, seen through what is in front: Bounds the box in the world of each mesh drawn (follow in another color), Skeleton the bones, joints and sockets of the rigs as they posed, Collision the colliders of the bodies, Trajectory the path of follow (or else of the body of the focused seat) along the ticks of a filmstrip. Neither the document nor the viewport changes"`,
+    debug:[API_CAPTURE_OVERLAYS][API_CAPTURE_OVERLAY_NAME]u8 `mirai:"optional,text,label=Overlays by name drawn as lines over the image alone and over every cell of a filmstrip, seen through what is in front: bounds the box in the world of each mesh drawn (follow in another color), trajectory the path of follow (or else of the body of the focused seat) along the ticks of a filmstrip, and those of the plugins of the project (skeleton, match, collision, contacts, joints, hitboxes, navigation); an unknown name fails listing those there are. Neither the document nor the viewport changes"`,
     frames:int `mirai:"optional,min=0,max=3600,label=Frames drawn first so that what builds up over time settles; 0: as many as the image needs and its textures streamed in. At most 120 of a game"`,
     dt:f32 `mirai:"optional,min=0.0001,max=0.25,unit=s,label=Not of a game: the step of each frame of a manual editor"`,
     seconds:f64 `mirai:"optional,min=-1,max=1e9,unit=s,label=Not of a game: the clock of the window when the frames start, which the renderer draws by; below 0 it goes on: a scene loaded again and captured at the same seconds draws the same frames"`,
@@ -102,7 +113,9 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     if p.ui && p.of!=.Auto {api.call_fail(call,api.INVALID_PARAMS,"of chooses what the image alone shows: leave it out with ui");return}
     if p.ui && (p.width>0 || p.height>0) {api.call_fail(call,api.INVALID_PARAMS,"width and height size the image alone: leave ui out with them, or leave them out for the window");return}
     if p.generated && !p.ui {api.call_fail(call,api.INVALID_PARAMS,"generated reads the image the window showed: pass ui true with it");return}
-    if p.debug!={} && p.ui {api.call_fail(call,api.INVALID_PARAMS,"debug draws over the image alone: leave ui out with it");return}
+    overlays,named:=api_capture_overlays(s,call,p.debug[:])
+    if !named {return}
+    if api_capture_overlays_any(overlays) && p.ui {api.call_fail(call,api.INVALID_PARAMS,"debug draws over the image alone: leave ui out with it");return}
     filmstrip:=(p.every[0]!=0 && base.text_get(p.every[:])!="0") || api_filmstrip_spread(call,p)
     if filmstrip && p.of==.Scene {api.call_fail(call,api.INVALID_PARAMS,"a filmstrip steps the game: leave of out, or give Game");return}
     game:=!p.ui && p.of!=.Scene && (r!=nil || p.of==.Game)
@@ -111,9 +124,9 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         if p.seconds>=0 || p.dt!=HEADLESS_DT {api.call_fail(call,api.INVALID_PARAMS,"dt and seconds are the clock of the window: a game runs by its ticks, so leave them out");return}
         if p.frames>API_CAPTURE_GAME_FRAMES {api.call_failf(call,api.INVALID_PARAMS,"frames: a game draws at most %d for an image",API_CAPTURE_GAME_FRAMES);return}
     }
-    strip,ok:=api_filmstrip_read(s,call,r,own,p)
+    strip,ok:=api_filmstrip_read(s,call,r,own,p,overlays)
     if !ok {return}
-    if .Trajectory in p.debug && strip==nil {api.call_fail(call,api.INVALID_PARAMS,"Trajectory is the path along the ticks of a filmstrip: give every with count, or segments");return}
+    if overlays.trajectory && strip==nil {api.call_fail(call,api.INVALID_PARAMS,"trajectory is the path along the ticks of a filmstrip: give every with count, or segments");return}
     region:img.Region
     if strip!=nil {
         if p.width>0 || p.height>0 {api.call_fail(call,api.INVALID_PARAMS,"width and height size one image: a filmstrip takes the size of its cell or a region");return}
@@ -139,11 +152,11 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     if ok,_:=api_view_wait(s,call,p.dt,started,window_frames=!game && strip==nil);!ok {return}
     if strip!=nil {api_filmstrip_run(s,call,strip,path,given=="");return}
     debug:[]gpu.Debug_Lines
-    build_debug :: proc(s:^Session,call:^api.Call,w:core.World_Ref,flags:Api_Capture_Debug) -> ([]gpu.Debug_Lines,bool) {
-        if flags=={} {return nil,true}
+    build_debug :: proc(s:^Session,call:^api.Call,w:core.World_Ref,overlays:^Api_Capture_Overlays) -> ([]gpu.Debug_Lines,bool) {
+        if !api_capture_overlays_any(overlays^) {return nil,true}
         lines,made:=api_capture_debug_make(call)
         if !made {return nil,false}
-        if !api_capture_debug_draw(s,call,w,flags,core.NONE,nil,&lines) {return nil,false}
+        api_capture_debug_draw(s,w,overlays,core.NONE,nil,&lines)
         out:=make([]gpu.Debug_Lines,1,call.allocator)
         out[0]=lines
         return out,true
@@ -153,7 +166,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     wait:=p.frames==0?API_CAPTURE_TEXTURES_WAIT:time.Duration(0)
     if game {
         debug_ok:bool
-        debug,debug_ok=build_debug(s,call,run_ref(s,r),p.debug)
+        debug,debug_ok=build_debug(s,call,run_ref(s,r),&overlays)
         if !debug_ok {return}
         frames:=p.frames>0?p.frames:API_CAPTURE_SETTLE
         for {
@@ -193,7 +206,7 @@ api_capture :: proc(s:^Session,call:^api.Call) {
         }
         // Build debug overlays after the scene frames have evaluated animations and transforms.
         debug_ok:bool
-        debug,debug_ok=build_debug(s,call,shown_world(s),p.debug)
+        debug,debug_ok=build_debug(s,call,shown_world(s),&overlays)
         if !debug_ok {return}
         size:=api_capture_size(api_capture_viewport(s.app),p.width,p.height)
         read:bool
@@ -227,15 +240,55 @@ API_CAPTURE_BOUNDS :: [4]f32{0.2,1,0.4,1}
 API_CAPTURE_FOLLOWED :: [4]f32{1,0.85,0.1,1}
 API_CAPTURE_TRAIL :: [4]f32{1,0.25,0.9,1}
 
+// The overlays names asks for, the plugins' by the name each registers.
+// False after failing the call for a name no overlay of the project has,
+// listing those it has.
+@(private)
+api_capture_overlays :: proc(s:^Session,call:^api.Call,names:[][API_CAPTURE_OVERLAY_NAME]u8) -> (overlays:Api_Capture_Overlays,ok:bool) {
+    found:[PROVIDER_CAPACITY]Capture_Overlay_Provider
+    providers:=found[:provided_all(s,found[:])]
+    taken:[PROVIDER_CAPACITY]bool
+    for &text in names {
+        name:=base.text_get(text[:])
+        switch name {
+        case "": continue
+        case API_CAPTURE_OVERLAY_BOUNDS: overlays.bounds=true;continue
+        case API_CAPTURE_OVERLAY_TRAJECTORY: overlays.trajectory=true;continue
+        }
+        known:=false
+        for provider,i in providers {
+            if provider.name!=name || provider.draw==nil {continue}
+            known=true
+            if !taken[i] {
+                overlays.draws[overlays.count]=provider.draw
+                overlays.count+=1
+                taken[i]=true
+            }
+            break
+        }
+        if known {continue}
+        available:=make([dynamic]string,0,len(providers)+2,context.temp_allocator)
+        append(&available,API_CAPTURE_OVERLAY_BOUNDS,API_CAPTURE_OVERLAY_TRAJECTORY)
+        for provider in providers {if provider.draw!=nil {append(&available,provider.name)}}
+        api.call_failf(call,api.INVALID_PARAMS,"debug %q: no overlay of the project has that name; it has %s (a plugin that is not in the project draws none)",name,strings.join(available[:],", ",context.temp_allocator))
+        return {},false
+    }
+    return overlays,true
+}
+
+@(private)
+api_capture_overlays_any :: proc(overlays:Api_Capture_Overlays) -> bool {
+    return overlays.bounds || overlays.trajectory || overlays.count>0
+}
+
 // The lines of debug over an image of w as it is now, in place of those
 // lines held: the world boxes of the meshes it draws (those of follow and
 // what hangs from it in their own color) and trail, the path taken; the
-// plugins draw the rest. False after failing the call for a flag no plugin
-// of the project draws.
+// overlays of the plugins draw the rest.
 @(private)
-api_capture_debug_draw :: proc(s:^Session,call:^api.Call,w:core.World_Ref,debug:Api_Capture_Debug,follow:core.Entity,trail:[][3]f32,lines:^gpu.Debug_Lines) -> bool {
+api_capture_debug_draw :: proc(s:^Session,w:core.World_Ref,overlays:^Api_Capture_Overlays,follow:core.Entity,trail:[][3]f32,lines:^gpu.Debug_Lines) {
     gpu.debug_lines_clear(lines)
-    if .Bounds in debug && s.app.assets!=nil {
+    if overlays.bounds && s.app.assets!=nil {
         items:=scene_items(s,w)
         for item in scene_item_next(&items) {
             if !item.body {continue}
@@ -246,21 +299,11 @@ api_capture_debug_draw :: proc(s:^Session,call:^api.Call,w:core.World_Ref,debug:
             gpu.debug_box(lines,box.min,box.max,API_CAPTURE_FOLLOWED if followed else API_CAPTURE_BOUNDS)
         }
     }
-    if .Trajectory in debug && len(trail)>0 {
+    if overlays.trajectory && len(trail)>0 {
         for i in 1..<len(trail) {gpu.debug_line(lines,trail[i-1],trail[i],API_CAPTURE_TRAIL)}
         gpu.debug_sphere(lines,trail[len(trail)-1],0.1,API_CAPTURE_TRAIL,12)
     }
-    missing:=debug-{.Bounds,.Trajectory}
-    if missing=={} {return true}
-    found:[PROVIDER_CAPACITY]Capture_Overlay_Provider
-    for provider in found[:provided_all(s,found[:])] {
-        if provider.draw!=nil {missing-=provider.draw(s,w,missing,lines)}
-    }
-    if missing!={} {
-        api.call_failf(call,api.INVALID_PARAMS,"debug %v: no plugin of the project draws it (Collision is of physics, Skeleton of animation); leave it out or add the plugin",missing)
-        return false
-    }
-    return true
+    for draw in overlays.draws[:overlays.count] {draw(s,w,lines)}
 }
 
 // Window frames until no texture of what the window shows is pending or the

@@ -9,7 +9,7 @@
   `animation.clip.edit`, `animation.analyze`.
 - **Verification layer:** `animation.inspect` (`Match`/`Pose`/`Actions`), `animation.history`,
   `animation.asset.inspect`, isolated `animation.preview`/`animation.capture`, and real-Play
-  `capture` filmstrips (`debug: ["Skeleton","Bounds","Collision","Trajectory"]`).
+  `capture` filmstrips (`debug: ["skeleton","match","bounds","collision","trajectory"]`).
 - **Expert layer:** `animation.clip.*`, `track.set`, `key.set`, `key.capture`, `marker.set`,
   `skeleton.*`, `animation.action.set`, `space.set`, `motion.set`, `modifier.set`, `pose.bake`,
   `retarget.bake`, morphs and [timelines](animation-timeline.md).

@@ -192,7 +192,7 @@ fixture_destroy :: proc(f:^Fixture) {
 // sphere or capsule by its radius.
 @(private="file")
 test_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transform,results:[]core.Entity) -> int {
-    center:=pose.position+mm.quat_rotate(pose.rotation,hitbox.center)
+    center,_:=hitbox_world(hitbox,pose)
     count:=0
     for row in 0..<core.count(w.worlds) {
         p:=core.at(w.worlds,row).position+{0,1,0}
@@ -356,7 +356,22 @@ a_charged_dash_spends_charges_and_is_blocked_without_them :: proc(t:^testing.T) 
     u:=user(f,f.player)
     kit:=record_sheet(data_of(f).kits,u.kit)
     w:=world_of(f)
-    testing.expect_value(t,start_block(&w,f.time.tick,f.time.dt,f.player,&u.setup,&u.state,&u.track,u.statuses,kit,nil,{},&f.sheets[CHARGE],ref(CHARGE)),Ability_Block.Condition)
+    // What blocks it names exactly what fails: the status, the condition or the cost by its index.
+    Block_Case :: struct {name:string,statuses:Ability_Statuses,edit:proc(a:^Ability),block:Ability_Block,index:int}
+    cases:=[]Block_Case{
+        {"no charge left",0,nil,.Condition,0},
+        {"stunned",status_bit(STUNNED),nil,.Status_Blocked,int(STUNNED)},
+        {"not charging",0,proc(a:^Ability) {a.requires=status_bit(CHARGING)},.Status_Missing,int(CHARGING)},
+        {"the second condition",0,proc(a:^Ability) {a.conditions[1]=a.conditions[0];a.conditions[0]={attribute=DURABILITY,at_least=0}},.Condition,1},
+        {"the second cost",0,proc(a:^Ability) {a.conditions={};a.costs[0]={attribute=DURABILITY,amount=0.5};a.costs[1]={attribute=CHARGES,amount=1}},.Cost,1},
+        {"nothing",0,proc(a:^Ability) {a.conditions={}},.None,-1},
+    }
+    for c in cases {
+        sheet:=f.sheets[CHARGE]
+        if c.edit!=nil {c.edit(&sheet)}
+        block,index:=start_block(&w,f.time.tick,f.time.dt,f.player,&u.setup,&u.state,&u.track,u.statuses|c.statuses,kit,nil,{},&sheet,ref(CHARGE))
+        testing.expectf(t,block==c.block && index==c.index,"%s: %v at %d, not %v at %d",c.name,block,index,c.block,c.index)
+    }
     f.down[1]=false
     step(f,seconds(10))
     f.down[1]=true

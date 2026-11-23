@@ -88,24 +88,71 @@ collision_view_draw :: proc(c:^Collision_View,w:core.World_Ref,layers:sim.Collis
     if lines.count>0 {host.extras_debug_lines_add(extras,lines)}
 }
 
-// The colliders of a world over the image capture takes with debug Collision,
+// The colliders of a world over the image capture takes with debug collision,
 // colored as the modes color them.
 @(storage)
 Collision_Capture :: struct {provider:editor.Capture_Overlay_Provider}
 
-COLLISION_CAPTURE_DEFAULT :: Collision_Capture{provider={draw=collision_capture_draw}}
+COLLISION_CAPTURE_DEFAULT :: Collision_Capture{provider={name="collision",draw=collision_capture_draw}}
 
 @(private)
-collision_capture_draw :: proc(s:^editor.Session,w:core.World_Ref,shown:editor.Api_Capture_Debug,lines:^erender.Debug_Lines) -> editor.Api_Capture_Debug {
-    if .Collision not_in shown {return {}}
+collision_capture_draw :: proc(s:^editor.Session,w:core.World_Ref,lines:^erender.Debug_Lines) {
     state:=core.world_storage_of(w,phys.Physics_State)
-    if state==nil || !state.ready {return {.Collision}}
+    if state==nil || !state.ready {return}
     scratch,error:=make([]sim.Debug_Line,COLLISION_VIEW_LINES,context.temp_allocator)
-    if error!=nil {return {.Collision}}
+    if error!=nil {return}
     out:=sim.Debug_Draw{lines=scratch}
     sim.world_debug_draw(&state.world,&out,{.Shapes})
     for line in out.lines[:out.line_count] {erender.debug_line(lines,line.a,line.b,COLLISION_COLORS[line.kind])}
-    return {.Collision}
+}
+
+// The points where bodies touch after the last step over the image capture
+// takes with debug contacts: a cross at each, with a line along the normal
+// of its manifold, from shape A toward shape B.
+@(storage)
+Contacts_Capture :: struct {provider:editor.Capture_Overlay_Provider}
+
+CONTACTS_CAPTURE_DEFAULT :: Contacts_Capture{provider={name="contacts",draw=contacts_capture_draw}}
+
+CONTACTS_CAPTURE_POINTS :: 4096          // the most points drawn; the rest are left out
+CONTACTS_CAPTURE_COLOR :: [4]f32{1,0.25,0.25,1}
+CONTACTS_CAPTURE_CROSS :: f32(0.04)      // m, half the cross at a point
+CONTACTS_CAPTURE_NORMAL :: f32(0.25)     // m, of the line along the normal
+
+@(private)
+contacts_capture_draw :: proc(s:^editor.Session,w:core.World_Ref,lines:^erender.Debug_Lines) {
+    state:=core.world_storage_of(w,phys.Physics_State)
+    if state==nil || !state.ready {return}
+    points,error:=make([]sim.Debug_Point,CONTACTS_CAPTURE_POINTS,context.temp_allocator)
+    if error!=nil {return}
+    out:=sim.Debug_Draw{points=points}
+    sim.world_debug_draw(&state.world,&out,{.Contacts})
+    for point in out.points[:out.point_count] {
+        for axis in 0..<3 {
+            step:[3]f32
+            step[axis]=CONTACTS_CAPTURE_CROSS
+            erender.debug_line(lines,point.position-step,point.position+step,CONTACTS_CAPTURE_COLOR)
+        }
+        erender.debug_line(lines,point.position,point.position+point.normal*CONTACTS_CAPTURE_NORMAL,CONTACTS_CAPTURE_COLOR)
+    }
+}
+
+// The joints over the image capture takes with debug joints: a line from the
+// center of each body to its anchor and between the two anchors.
+@(storage)
+Joints_Capture :: struct {provider:editor.Capture_Overlay_Provider}
+
+JOINTS_CAPTURE_DEFAULT :: Joints_Capture{provider={name="joints",draw=joints_capture_draw}}
+
+@(private)
+joints_capture_draw :: proc(s:^editor.Session,w:core.World_Ref,lines:^erender.Debug_Lines) {
+    state:=core.world_storage_of(w,phys.Physics_State)
+    if state==nil || !state.ready {return}
+    scratch,error:=make([]sim.Debug_Line,COLLISION_VIEW_LINES,context.temp_allocator)
+    if error!=nil {return}
+    out:=sim.Debug_Draw{lines=scratch}
+    sim.world_debug_draw(&state.world,&out,{.Joints})
+    for line in out.lines[:out.line_count] {erender.debug_line(lines,line.a,line.b,COLLISION_COLORS[line.kind])}
 }
 
 // By what the body of a shape is: what does not move in blue, what moves in

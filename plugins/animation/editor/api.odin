@@ -266,6 +266,13 @@ instance_rig :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.En
         node:=skeleton.bones[first+i]
         row={index=u32(first+i),name=node.name,path=node.path,parent=i32(node.parent),mirror=i32(pairs[first+i]),position=node.translation,scale=node.scale,rotation={node.rotation.x,node.rotation.y,node.rotation.z,node.rotation.w}}
     }
+    if playback:=core.world_storage_of(w,anim.Playback);playback!=nil {
+        for &state in playback.states {
+            if state.entity!=e {continue}
+            r.lod={period=state.lod.period,wait=state.lod.wait,skip=state.lod.skip,plain=state.lod.plain,skipped=state.skipped,waited=state.waited}
+            break
+        }
+    }
     return
 }
 

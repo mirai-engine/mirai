@@ -1,5 +1,6 @@
 package abilities
 
+import "base:intrinsics"
 import "core:math"
 import "core:math/linalg"
 import "mirai:host"
@@ -108,7 +109,7 @@ edit_room :: proc(rows:^core.Table($T),room:int) -> bool {
 }
 
 physics_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transform,results:[]core.Entity) -> int {
-    center:=pose.position+mm.quat_rotate(pose.rotation,hitbox.center)
+    center,_:=hitbox_world(hitbox,pose)
     count:int
     switch hitbox.shape {
     case .None:
@@ -445,7 +446,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     if best_sheet!=nil {
         // The next of a completed ability is its last branch: it starts in the statuses the
         // ability had then (a dash that requires the charging status of its charge).
-        if start_block(t.w,t.tick,t.dt,e,u.user,u.state,u.track,u.state.statuses|handoff,kit,active,at,best_sheet,next)!=.None {
+        if block,_:=start_block(t.w,t.tick,t.dt,e,u.user,u.state,u.track,u.state.statuses|handoff,kit,active,at,best_sheet,next);block!=.None {
             best_sheet=nil
         }
     }
@@ -591,37 +592,42 @@ Ability_Block :: enum u8 {
 
 @(private)
 can_start :: proc(t:^Tick,e:core.Entity,u:^Actor,kit:^Ability_Kit,active:^Ability,at:Ability_Time,a:^Ability,ref:core.Record(Ability)) -> bool {
-    return start_block(t.w,t.tick,t.dt,e,u.user,u.state,u.track,u.state.statuses,kit,active,at,a,ref)==.None
+    block,_:=start_block(t.w,t.tick,t.dt,e,u.user,u.state,u.track,u.state.statuses,kit,active,at,a,ref)
+    return block==.None
 }
 
-// Why ability a cannot start for user u at tick, with active running at at.
-start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,user:^Ability_User,state:^Ability_State,track:^Ability_Tracking,statuses:Ability_Statuses,kit:^Ability_Kit,active:^Ability,at:Ability_Time,a:^Ability,ref:core.Record(Ability)) -> Ability_Block {
-    if statuses&a.requires!=a.requires {return .Status_Missing}
-    if statuses&a.blocked_by!=0 {return .Status_Blocked}
+// Why ability a cannot start for user u at tick, with active running at at, and what fails: of
+// Status_Missing the first status it requires that the user is not in, of Status_Blocked the first
+// it is in that blocks it, of Mode the mode of the user's Character (-1 without one), of Condition
+// and Cost the index in a.conditions or a.costs, of Cooldown that in track.cooldowns; else -1.
+start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,user:^Ability_User,state:^Ability_State,track:^Ability_Tracking,statuses:Ability_Statuses,kit:^Ability_Kit,active:^Ability,at:Ability_Time,a:^Ability,ref:core.Record(Ability)) -> (block:Ability_Block,index:int) {
+    if missing:=a.requires&~statuses;missing!=0 {return .Status_Missing,int(intrinsics.count_trailing_zeros(u64(missing)))}
+    if blocking:=statuses&a.blocked_by;blocking!=0 {return .Status_Blocked,int(intrinsics.count_trailing_zeros(u64(blocking)))}
     if a.modes!=0 {
-        if w.locomotions==nil {return .Mode}
+        if w.locomotions==nil {return .Mode,-1}
         c,found:=core.get(w.locomotions,e)
-        if !found || u32(c.mode)>=32 || a.modes&Ability_Modes(u32(1)<<u32(c.mode))==0 {return .Mode}
+        if !found {return .Mode,-1}
+        if u32(c.mode)>=32 || a.modes&Ability_Modes(u32(1)<<u32(c.mode))==0 {return .Mode,int(c.mode)}
     }
-    for c in a.conditions {
-        if !condition_holds(w,e,user,state,c) {return .Condition}
+    for c,i in a.conditions {
+        if !condition_holds(w,e,user,state,c) {return .Condition,i}
     }
-    for c in a.costs {
+    for c,i in a.costs {
         if c.attribute==ATTRIBUTE_NONE || c.amount==0 {continue}
         value,found:=ability_value(user,state,c.attribute)
-        if !found || value<c.amount {return .Cost}
+        if !found || value<c.amount {return .Cost,i}
     }
-    for &c in track.cooldowns {
-        if c.ability==ref && c.until>tick {return .Cooldown}
+    for &c,i in track.cooldowns {
+        if c.ability==ref && c.until>tick {return .Cooldown,i}
     }
     if active!=nil {
         accepted:=kit.interrupts if kit!=nil else 0
         for &w in active.windows {
             if ability_window_open(w,dt,at) {accepted|=w.cancel_into}
         }
-        if accepted&a.tags==0 {return .No_Cancel}
+        if accepted&a.tags==0 {return .No_Cancel,-1}
     }
-    return .None
+    return .None,-1
 }
 
 // Whether a condition of an ability holds for user e now.
@@ -781,6 +787,12 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
             }
         }
     }
+}
+
+// Where a hitbox of a user placed at pose is in the world: its center and its axes, those of the
+// user. Its extents are its size.
+hitbox_world :: proc "contextless" (hitbox:^Ability_Hitbox,pose:mm.Transform) -> (center:mm.Vec3,rotation:mm.Quat) {
+    return pose.position+mm.quat_rotate(pose.rotation,hitbox.center),pose.rotation
 }
 
 // How many poses between from and to test a hitbox so that two in a row are at most its smallest

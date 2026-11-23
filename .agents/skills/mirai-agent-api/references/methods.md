@@ -55,8 +55,12 @@ Protocol and errors: [api.md](api.md).
     camera + game UI), or `Scene` (viewport camera + inspection mode, no chrome/gizmos/game UI).
     `width`/`height` in `0..4096`; `region` `[x,y,w,h]` in pixels (`-32602` if out of bounds);
     `seconds` sets window clock (Edit/Scene only, not Game).
-  - `debug`: optional flags `["Bounds","Skeleton","Collision","Trajectory"]` rendered in offscreen
-    single captures and filmstrips without needing `ui:true`.
+  - `debug`: overlay names drawn over offscreen single captures and filmstrips (not with `ui`).
+    The editor draws `bounds` and `trajectory` (filmstrips only); plugins register the rest with
+    a `Capture_Overlay_Provider` (`name` + `draw`): `skeleton`, `match` (query vs chosen
+    trajectory and root lag of motion matching), `collision`, `contacts`, `joints`, `hitboxes`
+    (open ability windows; red once they hit) and `navigation` (navmesh, links, agent paths). An
+    unknown name fails `-32602` listing those the project has.
   - Filmstrip (`every`, `count`): steps caller's Play with `segments` (nothing held after) and
     packs ticked cells into one PNG (`follow` centers each cell on an entity).
   - `path`: absolute or project-relative (pre-opened before drawing; bad/folder path -> `-32602`);
@@ -64,7 +68,7 @@ Protocol and errors: [api.md](api.md).
 
 ```json
 {"path": ".mirai/tmp/walk.png", "every": 6, "count": 8, "follow": "Player",
- "debug": ["Skeleton", "Bounds", "Collision", "Trajectory"],
+ "debug": ["skeleton", "bounds", "collision", "trajectory", "match"],
  "segments": [{"for": 48, "keys": ["W"]}]}
 ```
 
@@ -103,6 +107,12 @@ Plugin methods live in [animation-api.md](../../mirai-animation/references/anima
 intent (`animation.character.setup`, `animation.request`, `animation.clip.edit`), check metrics with
 `animation.analyze`, preview clips with `animation.capture`, and verify real Play with `capture`
 filmstrips (`debug`) + `animation.inspect` (`Match`/`Pose`) + `animation.history`.
+
+- `animation.inspect` part `Rig` adds `lod` (`period`, `wait`, `skip`, `plain`, `skipped`,
+  `waited`; omitted when everything ran) to tell why a far rig stopped posing. Part `Match` and
+  each `animation.history` row add `velocity`, `lag`, `travel`, `phase`, `fade_remaining` and
+  `root_delta`. `trajectory:true` (default false: token budget) adds the `trajectory` the last
+  search asked for and the `candidate_trajectory` of the row it chose.
 
 ## Cinematics
 
@@ -310,6 +320,18 @@ Runs the scene with editor camera and no player input
   document.
 - `physics.settle` (Edit only): drops specified `Collider` entities in one undo step (`-32602` on
   un-droppable entity; `rested:false` + `reason` on tick limit).
+- `physics.inspect {entity}` (Play/Simulate, read-only): only what `scene.inspect` cannot read:
+  `awake`, `mass`, `inv_mass`; `contacts` per manifold (`other`, `sensor`, `normal` toward
+  `other`, `points` with `separation` below 0 when overlapping and `impulse`); `joints` (`a`,
+  `b`, world anchors, `separation`, `force`/`torque` of the last step vs
+  `break_force`/`break_torque`, `broken`). `-32602` without a body or a running simulation.
+- `abilities.inspect`: each candidate's `blocked` names exactly what fails (the status, the mode,
+  `condition N`/`cost N` with the attribute's value against what it needs, the cooldown left);
+  each open window's `hitbox` gives its world `center`, `rotation`, `size` and the `targets` it
+  already hit.
+- `nav.agent`: the `note` of a `Failed` agent or one with a partial path says why it stops short
+  (no path, or a goal cut off from where it stands), then the `navigation.*` problems reported on
+  it (`code: text`), such as `navigation.off_mesh` or `navigation.blocked`.
 
 ## Saves
 

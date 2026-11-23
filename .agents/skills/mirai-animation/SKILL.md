@@ -279,7 +279,7 @@ Adapt the source's data to these features instead of rebuilding its runtime:
 - API methods: generate and compile the demo editor and check them with `mirai rpc describe` and a
   real call.
 - What is visual (skinning, morphs, rigs, locomotion) is checked with a real Play `capture`
-  filmstrip (`debug: ["Skeleton","Bounds","Collision","Trajectory"]`) and graphics validation, plus
-  `render.inspect_entity` (`skinned`, `skin_updated`) and `animation.inspect` (`Match`/`Pose`).
-  `animation.capture` is an isolated preview without physics/world; CPU tests never vouch for GPU
-  skinning or live locomotion.
+  filmstrip (`debug: ["skeleton","match","bounds","collision","trajectory"]`) and graphics
+  validation, plus `render.inspect_entity` (`skinned`, `skin_updated`) and `animation.inspect`
+  (`Match`/`Pose`). `animation.capture` is an isolated preview without physics/world; CPU tests
+  never vouch for GPU skinning or live locomotion.

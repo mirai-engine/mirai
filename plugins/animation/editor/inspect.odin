@@ -41,6 +41,7 @@ Instance_Inspect_Params :: struct {
     offset:u32 `mirai:"optional,label=First bone; rig operation or morph target"`,
     limit:u32 `mirai:"optional,min=1,max=256,clamp"`,
     diagnostics:bool `mirai:"optional,label=Solver and fade details of rig operations and morphs"`,
+    trajectory:bool `mirai:"optional,label=Match: the trajectory its last search asked for and that of the row it chose"`,
 }
 
 Asset_Inspect_Result :: struct {
@@ -134,14 +135,10 @@ Instance_Inspect_Result :: struct {
     morphs:Instance_Morphs `mirai:"optional,label=Morph targets of the mesh instance"`,
     pose:Instance_Pose `mirai:"optional,label=Where the bones and sockets asked are in the pose of stage of the last tick of its rig"`,
 }
-// The fields of Preview_Match_Result, then the clips of the database of its skeleton and its last
-// search.
+// What it plays, then the clips of the database of its skeleton and its last search.
 Instance_Match :: struct {
     using missing:Instance_Missing `mirai:"inline"`,
-    available:bool `mirai:"optional,label=false when the entity plays no locomotion"`,
-    clip:[64]u8 `mirai:"text,optional"`,mode:[32]u8 `mirai:"text,optional"`,forced:bool `mirai:"optional"`,
-    time:f32 `mirai:"optional,unit=s"`,rate:f32 `mirai:"optional"`,speed:f32 `mirai:"optional,unit=m/s"`,cost:f32 `mirai:"optional"`,
-    searches,jumps:u32 `mirai:"optional"`,
+    using playing:Preview_Match_Result `mirai:"inline"`,
     ranges:[]Instance_Match_Range `mirai:"optional,label=Each clip or blended sample of the database, by its index"`,
     search:Instance_Match_Search `mirai:"optional,label=Its last search"`,
 }
@@ -163,6 +160,8 @@ Instance_Match_Search :: struct {
     entry:bool `mirai:"label=It searched the starts of the entry clips of mode"`,
     time_to_land:f32 `mirai:"optional,unit=s,label=It searched the rows that reach their landing marker this many seconds ahead"`,
     candidates:[]Instance_Match_Candidate `mirai:"label=The best row of each clip it could pick, least cost first (the first is the one it chose), then that of each clip it left out with its reason"`,
+    trajectory:lib.Match_Trajectory `mirai:"optional,label=With trajectory: what it searched for, raw, x and z in metres of the rig axes (-Z forward) turned to where the body faced: velocity now (m/s), where it was MATCH_PAST seconds before, and where it is and faces at each horizon ahead"`,
+    candidate_trajectory:lib.Match_Trajectory `mirai:"optional,label=With trajectory: the same of the row it chose"`,
 }
 // costs: of each kind of feature by its weight; with those of the extra points and the bias of its
 // clip they sum cost.
@@ -195,6 +194,16 @@ Instance_Rig :: struct {
     bones_total:u32 `mirai:"optional"`,
     joints:u32 `mirai:"optional,label=Joints of the skinned mesh"`,
     bones:[]Instance_Bone `mirai:"optional,label=A page of the bones"`,
+    lod:Instance_Lod `mirai:"optional,label=How much of it ran in its last tick, by its distance to the simulation sources; omitted: everything"`,
+}
+// Rig_Lod of a rig in its last tick, with how long its pose has been kept.
+Instance_Lod :: struct {
+    period:u32 `mirai:"optional,label=Ticks between two of its poses; 0 or 1: every tick"`,
+    wait:bool `mirai:"optional,label=Not a tick of its cadence: its matching searches only when it must"`,
+    skip:bool `mirai:"optional,label=Its pose was not evaluated: it keeps the last one"`,
+    plain:bool `mirai:"optional,label=Its grounding, springs, twists and correctives did not run"`,
+    skipped:u32 `mirai:"optional,label=Ticks since its pose was last evaluated"`,
+    waited:f32 `mirai:"optional,unit=s,label=Seconds of those ticks"`,
 }
 Instance_Clip :: struct {name:[aa.ANIMATION_NAME_CAPACITY]u8 `mirai:"text"`,duration:f32 `mirai:"unit=s"`,tracks,markers:u32}
 Instance_Bone :: struct {
@@ -328,7 +337,7 @@ instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     for part in parts {
         switch part {
         case .Rig: r.rig=instance_rig(s,call,w,e,p);if call.failed {r.rig={missing=missing(call)}}
-        case .Match: r.match=instance_match(s,call,w,e);if call.failed {r.match={missing=missing(call)}}
+        case .Match: r.match=instance_match(s,call,w,e,p.trajectory);if call.failed {r.match={missing=missing(call)}}
         case .Modifiers: r.modifiers=program_modifier_inspect(s,call,w,e,p);if call.failed {r.modifiers={missing=missing(call)}}
         case .Actions: r.actions=authoring_action_inspect(s,call,w,e);if call.failed {r.actions={missing=missing(call)}}
         case .Motion: r.motion=authoring_motion_inspect(s,call,w,e);if call.failed {r.motion={missing=missing(call)}}
@@ -355,10 +364,29 @@ match_open :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:
     playback:=core.world_storage_of(world,anim.Playback)
     for &playing in playback.states {if playing.entity==entity {m.state=&playing;break}}
     m.searched,_=anim.match_searched(core.ref(playback),entity)
-    shared:=core.world_ref(s.app.shared,world.info,.Shared)
-    m.library=anim.animation_playing_content(core.ref(core.world_storage_of(shared,anim.Source_Assets)),s.app,m.state)
-    m.db=anim.animation_match_database(core.ref(core.world_storage_of(shared,anim.Character_Assets)),m.library,m.state)
+    m.library,m.db=match_database(s,world,m.state)
     return m,true
+}
+
+// The library a rig plays and the database its matching searches; nil before its first tick or
+// when it could not be built.
+@(private)
+match_database :: proc(s:^editor.Session,world:core.World_Ref,state:^anim.Playing) -> (library:^host.Content_Animation,db:^lib.Match_Database) {
+    shared:=core.world_ref(s.app.shared,world.info,.Shared)
+    library=anim.animation_playing_content(core.ref(core.world_storage_of(shared,anim.Source_Assets)),s.app,state)
+    db=anim.animation_match_database(core.ref(core.world_storage_of(shared,anim.Character_Assets)),library,state)
+    return
+}
+
+// The trajectory the last search of a rig asked for and that of the row it chose; chosen false
+// when it chose none.
+@(private)
+match_trajectories :: proc(db:^lib.Match_Database,searched:anim.Match_Searched) -> (query,candidate:lib.Match_Trajectory,chosen:bool) {
+    if searched.search==0 {return}
+    query=searched.request.trajectory
+    noted:=anim.match_searched_candidates(db,searched)
+    if noted.count<=0 || noted.items[0].reason!=.None || noted.items[0].row<0 {return}
+    return query,lib.match_row_trajectory(db,int(noted.items[0].row)),true
 }
 
 // The candidates of the last search of a rig, searched again as it made it: at most limit.
@@ -380,9 +408,9 @@ match_candidates :: proc(call:^api.Call,m:^Match_Open,limit:int) -> []Instance_M
 
 // What the motion matching of an entity plays, the clips of its database and its last search.
 @(private)
-instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity) -> (r:Instance_Match) {
+instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,entity:core.Entity,trajectory:bool) -> (r:Instance_Match) {
     m,ok:=match_open(s,call,world,entity);if !ok {return}
-    authoring_struct_fields(&r,m.result)
+    r.playing=m.result
     db,library:=m.db,m.library
     if db==nil {return}
     modes:=locomotion_modes(world.info)
@@ -403,6 +431,7 @@ instance_match :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,ent
     base.text_set(r.search.mode[:],name if named else fmt.tprintf("%d",mode))
     if searched.request.event>0 {r.search.time_to_land=searched.request.event}
     r.search.candidates=match_candidates(call,&m,lib.MATCH_CANDIDATES)
+    if trajectory {r.search.trajectory,r.search.candidate_trajectory,_=match_trajectories(db,m.searched)}
     return
 }
 

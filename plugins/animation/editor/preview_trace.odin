@@ -28,6 +28,12 @@ Preview_Match_Result :: struct {
     clip:[64]u8 `mirai:"text,optional"`,mode:[32]u8 `mirai:"text,optional"`,forced:bool `mirai:"optional"`,
     time:f32 `mirai:"optional,unit=s"`,rate:f32 `mirai:"optional"`,speed:f32 `mirai:"optional,unit=m/s"`,cost:f32 `mirai:"optional"`,
     searches,jumps:u32 `mirai:"optional"`,
+    velocity:mm.Vec3 `mirai:"optional,unit=m/s,label=Of the body it follows, with that of the lag of its root; world axes"`,
+    lag:mm.Vec3 `mirai:"optional,unit=m,label=Of the root of the pose from the body; world axes"`,
+    travel:mm.Vec3 `mirai:"optional,label=Direction its clip moves in, rig axes (-Z forward); zero when it stands"`,
+    phase:anim.Match_Phase `mirai:"optional,label=Omitted: Matching; Landing: its clip plays toward its landing marker; Landed: it reached it as the body landed and plays on"`,
+    fade_remaining:f32 `mirai:"optional,unit=s,label=Of the inertial blend into its clip"`,
+    root_delta:Preview_Root_Result `mirai:"optional,label=The root motion of its last tick"`,
 }
 Preview_Pose_Result :: struct {id:base.Entity_Id,path:[asset.NODE_PATH_CAPACITY]u8 `mirai:"text"`,name:[64]u8 `mirai:"text"`,position,scale:mm.Vec3,rotation:[4]f32}
 Preview_Leaf_Source :: enum u8 {Base,Program,Layer}
@@ -110,9 +116,12 @@ preview_curve_name :: proc(trace:^Preview_Trace,hash:u64) -> string {
 preview_match :: proc(world:core.World_Ref,app:^host.App,entity:core.Entity) -> (result:Preview_Match_Result,ok:bool) {
     playback:=core.world_storage_of(world,anim.Playback)
     value,matching:=anim.animation_match(core.ref(playback),entity);if !matching {return}
-    result={available=true,forced=value.forced,time=value.time,rate=value.rate,speed=value.speed,cost=value.cost,searches=value.searches,jumps=value.jumps}
+    result={available=true,forced=value.forced,time=value.time,rate=value.rate,speed=value.speed,cost=value.cost,searches=value.searches,jumps=value.jumps,velocity=value.velocity,lag=value.lag,travel=value.travel}
+    if delta,moved:=anim.animation_root_delta(core.ref(playback),entity);moved {result.root_delta={delta.translation,delta.rotation}}
     for &state in playback.states {
         if state.entity!=entity {continue}
+        result.phase=state.program.match.phase
+        if stack:=state.stack;stack!=nil {result.fade_remaining=max(0,stack.inertia.state.duration-stack.inertia.state.elapsed)}
         content:=anim.animation_playing_content(core.ref(core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Source_Assets)),app,&state)
         if content!=nil {if clip:=lib.clip_find(&content.lib,value.clip);clip!=0 {result.clip=anim.source_clip_label(content,clip)}}
         break

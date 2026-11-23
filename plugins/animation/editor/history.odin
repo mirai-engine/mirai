@@ -6,6 +6,7 @@ import aa "mirai:asset"
 import "mirai:core"
 import "mirai:editor"
 import "mirai:editor/api"
+import lib "mirai:std/anim"
 import "mirai:std/base"
 import anim "plugins:animation/runtime"
 
@@ -20,6 +21,7 @@ History_Params :: struct {
     candidates:int `mirai:"optional,min=0,max=16,clamp,label=At a row where it searched, that many of the first candidates of its last search"`,
     names:[POSE_NAMES][aa.NODE_PATH_CAPACITY]u8 `mirai:"text,optional,label=The bones and sockets each row places, as animation.inspect part Pose takes them"`,
     stage:anim.Tick_Pose `mirai:"optional,label=With names: the pose each row reads, as animation.inspect part Pose takes it"`,
+    trajectory:bool `mirai:"optional,label=Each row: the trajectory the last search asked for and that of the row it chose, as animation.inspect gives them"`,
 }
 
 History_Result :: struct {
@@ -36,6 +38,8 @@ History_Row :: struct {
     jumped:bool `mirai:"optional,label=It jumped to another row of the database since the row before, read as searched"`,
     candidates:[]Instance_Match_Candidate `mirai:"optional,label=Where it searched: those of its last search since the row before, least cost first; the first is the row the search gave"`,
     pose:Instance_Pose `mirai:"optional,label=With names: where they are at stage"`,
+    trajectory:lib.Match_Trajectory `mirai:"optional,label=With trajectory: what its last search asked for"`,
+    candidate_trajectory:lib.Match_Trajectory `mirai:"optional,label=With trajectory: that of the row its last search chose"`,
 }
 
 @(private)
@@ -119,6 +123,7 @@ history_look :: proc(s:^editor.Session,w:core.World_Ref,row:bool,data:rawptr) ->
         if out.searched && p.candidates>0 && m.state!=nil && m.searched.search==m.result.searches {
             out.candidates=match_candidates(call,&m,p.candidates)
         }
+        if p.trajectory && m.db!=nil {out.trajectory,out.candidate_trajectory,_=match_trajectories(m.db,m.searched)}
     }
     if !l.posed {return ""}
     if !l.queried {

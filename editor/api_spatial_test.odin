@@ -24,7 +24,15 @@ Spatial_World :: struct {
 }
 
 @(private)
-Spatial_Editor :: struct {api:Api}
+Spatial_Editor :: struct {api:Api,overlay:Spatial_Overlay}
+
+// An overlay of a plugin capture draws when debug names it: a line up from the origin.
+@(private) Spatial_Overlay :: struct {provider:Capture_Overlay_Provider}
+@(private) SPATIAL_OVERLAY_COLOR :: [4]f32{1,0,1,1}
+@(private)
+spatial_overlay_default :: proc() -> Spatial_Overlay {
+    return {provider={name="marks",draw=proc(s:^Session,w:core.World_Ref,lines:^erender.Debug_Lines) {erender.debug_line(lines,{0,0,0},{0,1,0},SPATIAL_OVERLAY_COLOR)}}}
+}
 
 // A floor whose top is at 0, a crate over it with a lid, a lamp without a
 // mesh and a ramp turned 30 degrees about Z far to the side.
