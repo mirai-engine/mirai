@@ -184,6 +184,29 @@ skeleton_discovery_preserves_logical_rigs_on_unrelated_changes_and_retries_alloc
     testing.expect(t,rig_find(&w.playback,core.entity_make(core.entity_index(first),core.entity_generation(first)+1))<0)
 }
 
+// A mesh that still arrives is a rig that waits, without a skeleton or a pose: until it arrives,
+// what it shows is not known, and animating it as entities without bones poses it wrong.
+@(test)
+a_rig_whose_mesh_arrives_waits_for_its_skeleton :: proc(t:^testing.T) {
+    directory:=base.test_folder(t,"rig-arriving")
+    skeleton_id,mesh_id,_,saved:=rig_assets(t,directory);if !saved {return}
+    assets:host.Assets;if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return};defer host.assets_destroy(&assets)
+    w:Rig_Test;if !rig_test_init(t,&w) {return};defer rig_test_destroy(&w)
+    e:=core.create(&w.entities)
+    core.add(&w.meshes,e,{mesh=mesh_id});rig_test_settle(&w)
+    if !testing.expect(t,host.assets_mesh(&assets,mesh_id)!=nil) {return}
+    entry:=&assets.meshes[assets.index[mesh_id].index]
+    entry.arriving=true;assets.structure+=1
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&assets))
+    testing.expect(t,rig_find(&w.playback,e)>=0 && animation_rig_waits(core.ref(&w.playback),e),"an arriving mesh is a rig that waits")
+    entry.arriving=false;assets.structure+=1
+    testing.expect(t,rigs_update(&w.playback,core.read(&w.meshes),core.read(&w.skins),&assets))
+    row:=rig_find(&w.playback,e)
+    testing.expect(t,row>=0 && w.playback.rigs[row].skeleton==skeleton_id,"once it arrives the rig has its skeleton")
+    testing.expect(t,animation_rig_waits(core.ref(&w.playback),e),"a rig waits until it poses")
+    testing.expect(t,!animation_rig_waits(core.ref(&w.playback),core.create(&w.entities)),"an entity that is no rig does not wait")
+}
+
 @(test)
 skeleton_without_clips_evaluates_named_ik_and_pose_requests_without_bone_entities_or_stable_allocations :: proc(t:^testing.T) {
     directory:=base.test_folder(t,"procedural-skeleton")
@@ -817,7 +840,7 @@ attached_rigs_finish_after_their_host_even_when_sampled_first :: proc(t:^testing
     if !testing.expect(t,mesh!=nil && !mesh.failed) {return}
     mesh.arriving=true
     prepare(&w,&app)
-    testing.expect(t,len(w.playback.rigs)==0 &&
+    testing.expect(t,len(w.playback.rigs)==2 && animation_rig_waits(core.ref(&w.playback),host_rig) &&
         core.problem_find(&w.problems,child,"animation.attachment_rig")==nil)
     mesh.arriving=false
     assets.structure+=1

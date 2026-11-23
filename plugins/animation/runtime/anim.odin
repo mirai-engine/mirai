@@ -291,6 +291,7 @@ Playing_Scratch :: struct {
 // not share the finished pose of another of that skeleton through Pose_Source:
 // it poses that skeleton. One whose Pose_Source names another rig takes its
 // pose: leader is that rig.
+// skeleton none: its mesh still arrives, and the rig waits for it, without a pose.
 Rig :: struct {entity:core.Entity,skeleton:base.Asset_Id,leader,attachment:core.Entity,stage:Pose_Stage}
 // A rig that follows another, and how many leaders are above it (max: it is in a loop).
 Rig_Follow :: struct {entity:core.Entity,depth:u32}
@@ -426,6 +427,11 @@ animation_tick :: proc(
         skeletal:=row<rig_count
         e:=playback.rigs[row].entity if skeletal else core.entity_at(animations,row-rig_count)
         if !skeletal && rig_find(playback,e)>=0 {continue}
+        if skeletal && playback.rigs[row].skeleton=={} {
+            // What is asked of a rig that waits for its mesh waits with it.
+            for &asked in entity_requests(commands,e) {asked.pending=true}
+            continue
+        }
         // An entity with a pace of its own advances by its own time.
         pace:=core.pace_of(clock,paces,e) if time.playing else 1
         dt:=tick_dt*pace
@@ -719,7 +725,9 @@ animation_valid :: proc "contextless" (animation:Animation) -> bool {
 
 // The rigs of the world, found again when its meshes or skins change. A mesh
 // with a Pose_Source of stage Finished shares the pose of its rig when both
-// have one skeleton; otherwise it is a rig that takes the pose of that one.
+// have one skeleton; otherwise it is a rig that takes the pose of that one. A
+// mesh that still arrives is a rig that waits: whether it is skinned is not
+// known yet, and animating it as entities without bones would pose it wrong.
 @(private)
 rigs_update :: proc(playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer,$A),skins:^core.Table(Pose_Source,$B),assets:^host.Assets,attachments:^core.Table(Bone_Attachment,.Read)=nil) -> bool {
     if meshes==nil {if len(playback.rigs)>0 {clear(&playback.rigs);clear(&playback.follow_order);playback.rigs_stamp+=1};playback.rigs_seen,playback.rigs_assets={},0;return true}
@@ -729,21 +737,23 @@ rigs_update :: proc(playback:^Playback,meshes:^core.Table(erender.Mesh_Renderer,
     if skins!=nil {moved|=core.touched(skins,&seen[1])} else {moved|=seen[1]!={};seen[1]={}}
     if attachments!=nil {moved|=core.touched(attachments,&seen[2])} else {moved|=seen[2]!={};seen[2]={}}
     if !moved && loaded==playback.rigs_assets {return true}
-    skeleton_of :: proc(meshes:^core.Table(erender.Mesh_Renderer,$A),assets:^host.Assets,e:core.Entity) -> base.Asset_Id {
+    skeleton_of :: proc(meshes:^core.Table(erender.Mesh_Renderer,$A),assets:^host.Assets,e:core.Entity) -> (skeleton:base.Asset_Id,arriving:bool) {
         static,has:=core.get(meshes,e)
-        if !has || static.mesh=={} {return {}}
+        if !has || static.mesh=={} {return}
         mesh:=host.assets_mesh_shown(assets,static.mesh)
-        return mesh.skeleton if mesh!=nil && !mesh.failed else {}
+        if mesh==nil || mesh.arriving {return {},true}
+        return mesh.skeleton if !mesh.failed else {},false
     }
     rig_of :: proc(meshes:^core.Table(erender.Mesh_Renderer,$A),skins:^core.Table(Pose_Source,$B),assets:^host.Assets,attachments:^core.Table(Bone_Attachment,.Read),row:int) -> (rig:Rig,ok:bool) {
         e:=core.entity_at(meshes,row)
-        skeleton:=skeleton_of(meshes,assets,e)
+        skeleton,arriving:=skeleton_of(meshes,assets,e)
+        if arriving {return {entity=e},true}
         if skeleton=={} {return}
         rig={entity=e,skeleton=skeleton}
         if attachments!=nil {if attachment,has:=core.get(attachments,e);has && attachment.enabled {rig.attachment=attachment.rig}}
         if skins!=nil {
             if source,has:=core.get(skins,e);has {
-                leader:=skeleton_of(meshes,assets,source.rig)
+                leader,_:=skeleton_of(meshes,assets,source.rig)
                 if leader=={} || leader==skeleton && source.stage==.Finished || source.rig==e {return}
                 rig.leader,rig.stage=source.rig,source.stage
             }

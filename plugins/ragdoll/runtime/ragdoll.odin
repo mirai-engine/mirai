@@ -125,6 +125,8 @@ ragdoll_prepare :: proc(configs:^core.Table(Ragdoll,.Read),bones:^core.Table(Rag
         parent_world:=mm.TRANSFORM_IDENTITY
         if parent,ok:=core.get(parents,rig);ok && parent.entity!=core.NONE {parent_world,_=core.world_of(transforms,parents,parent.entity)}
         count,revision,sampled:=anim.animation_sample_pose(playback,rig,runtime.pose[:capacity],parent_world)
+        // Its bodies wait, as they are, for the first pose of the rig.
+        if !sampled && anim.animation_rig_waits(playback,rig) {continue}
         for row in 0..<core.count(bones) {
             entity:=core.entity_at(bones,row)
             bone:=core.at(bones,row)

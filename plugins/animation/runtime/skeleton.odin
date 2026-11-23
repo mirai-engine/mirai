@@ -477,6 +477,14 @@ animation_sample_pose :: proc(playback:core.Ref(Playback),rig:core.Entity,out:[]
     return
 }
 
+// Whether rig is a rig that has not posed yet: the mesh it shows still arrives, or it became a
+// rig in this tick. What reads its pose waits for it; an entity that is no rig does not wait.
+animation_rig_waits :: proc(playback:core.Ref(Playback),rig:core.Entity) -> bool {
+    if playback.ptr==nil || rig_find(playback.ptr,rig)<0 {return false}
+    state:=constraint_playing(playback,rig)
+    return state==nil || !state.pose_ready
+}
+
 // Room for final_poses in a tick, past the room of Animation_Settings: what a library that sends one per bone keeps.
 animation_requests_reserve :: proc(requests:^Animation_Requests,final_poses:int) -> bool {
     if requests==nil || final_poses<0 || final_poses>65536 {return false}

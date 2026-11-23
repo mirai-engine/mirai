@@ -232,3 +232,20 @@ physical_animation_uses_current_auto_frames_and_reuses_world_buffers :: proc(t:^
     testing.expect_value(t,track.total_allocation_count,allocations)
     testing.expect_value(t,f.problems.count,0)
 }
+
+// The bodies of a rig that has not posed yet (its mesh still arrives, or it became a rig in this
+// tick) wait for its first pose; those of an entity that is no rig are a problem.
+@(test)
+bodies_wait_for_the_first_pose_of_their_rig :: proc(t:^testing.T) {
+    f:Ragdoll_Fixture
+    if !ragdoll_fixture_init(t,&f) {return}
+    defer ragdoll_fixture_free(&f)
+    f.playback.states[0].pose_ready=false
+    f.playback.frame=2 // the pose it has is of no tick: none is sampled
+    append(&f.playback.rigs,anim.Rig{entity=f.rig})
+    ragdoll_fixture_step(&f)
+    testing.expect(t,core.problem_find(&f.problems,f.upper,"ragdoll.rig")==nil && core.count(&f.states)==0,"the bodies wait for the rig")
+    clear(&f.playback.rigs)
+    ragdoll_fixture_step(&f)
+    testing.expect(t,core.problem_find(&f.problems,f.upper,"ragdoll.rig")!=nil,"the bodies of an entity that is no rig are a problem")
+}
