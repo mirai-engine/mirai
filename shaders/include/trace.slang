@@ -8,11 +8,10 @@
 #include "scene.slang"
 #include "points.slang"
 
-// What a ray does with the blended surfaces it meets. Shadow rays never meet
-// glass: they pass it as if it were not there, as the maps of the shadows do.
-#define BLEND_PASSES  0u // it goes through them
-#define BLEND_STOPS   1u // they are surfaces like any other
-// With either: each thin surface that lets light through (diffuse
+// What a ray does with the blended surfaces it meets: rays never meet glass,
+// they pass it as if it were not there, as the maps of the shadows do.
+#define BLEND_PASSES  0u
+// With it: each thin surface that lets light through (diffuse
 // transmission) multiplies ray_through by ray_through_each and lets the ray
 // on, until nothing is left of it (trace_through).
 #define BLEND_THIN 4u
@@ -46,13 +45,10 @@ bool ray_fade_left(uint instance_index, float3 direction, float fade) {
 // the triangles of the slots an instance tests ask (Instance.tested).
 bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float3 direction, uint blend) {
     bool thin = (blend & BLEND_THIN) != 0u;
-    blend &= ~BLEND_THIN;
     Instance inst = scene_instance(instance_index);
     Mesh mesh = meshes[instance_mesh(inst)];
     Material m = material_row(material_of(instance_row(instance_index), inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
-    if (m.alpha_mode == ALPHA_BLEND) {
-        return blend == BLEND_STOPS;
-    }
+    if (m.alpha_mode == ALPHA_BLEND) return false;
     float fade = material_values_fade(inst.material_values);
     if (fade > 0.0 && ray_fade_left(instance_index, direction, fade)) return false;
     if (m.alpha_mode != ALPHA_OPAQUE) {
@@ -375,30 +371,6 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     return hit;
 }
 #endif
-
-// The nearest surface along a ray that travels inside an instance, whatever
-// its material: where the ray leaves a solid, or what stands in its way. The
-// ray visits nothing beyond the box of the instance's mesh.
-Hit trace_instance(uint instance_index, float3 origin, float3 direction) {
-    Instance inst = scene_instance(instance_index);
-    float3 o = transform_point(inst.world_inv, origin);
-    float3 d = transform_vector(inst.world_inv, direction);
-#ifdef MIRAI_HW_RT
-    Mesh mesh = meshes[instance_mesh(inst)];
-    float3 inv = 1.0 / select(abs(d) < float3(1e-12), float3(1e-12), d);
-    float3 far = max((mesh.bounds_min.xyz - o) * inv, (mesh.bounds_max.xyz - o) * inv);
-    return trace_ray_impl(origin, direction, 0.0, max(min(far.x, min(far.y, far.z)), 0.0) + 1e-3, false, BLEND_STOPS, RAY_SEEN | RAY_GLASS);
-#else
-    Hit hit;
-    hit.t = FLT_MAX;
-    hit.instance = INVALID;
-    hit.primitive = INVALID;
-    hit.bary = float2(0.0);
-    trace_blas(inst.meta.x, o, d, 0.0, hit, instance_index, false, 0u, BLEND_STOPS);
-    if (hit.instance == INVALID) hit.t = -1.0;
-    return hit;
-#endif
-}
 
 #ifdef MIRAI_HOOK_RAY
 // The ray hook of the generation (extension_hooks.slang): whether a ray leaves

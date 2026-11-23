@@ -314,12 +314,18 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
   (coat tints transmitted light without double darkening). Specular reflections read probes and
   sky.
 - **Sheet vs solid:** `thickness == 0` is a two-sided non-refracting sheet. `thickness > 0`
-  refracts at entry/exit (closed mesh ray exit, 20% pane shortcut, open-mesh `sheet_through`
-  relief refraction, Beer-Lambert `attenuation_color`/`attenuation_distance`, `scatter_color`).
+  refracts at entry/exit. Glass traces no rays: a closed mesh is crossed as a slab (its own
+  thickness when it is a 20% pane, else `thickness`, clamped by the instance box) and leaves
+  parallel to the view; an open mesh uses `sheet_through` relief refraction. Both apply
+  Beer-Lambert `attenuation_color`/`attenuation_distance` and `scatter_color`.
+- **Refraction on screen:** the exit point is projected once, as far beyond it as the pixel
+  holds the opaque scene; where that point holds something in front of the layer, the pixel
+  shows its own.
 - **From inside (`glass_inside.comp`):** Selects smallest `material_solid` box containing or
   within `GLASS_MEDIUM_NEAR` of the camera; back faces mark `GBUFFER_GLASS_EXIT` (Snell window +
-  internal reflection), per-group upward ray confirms immersion, medium absorbs/scatters from
-  eye to first layer or opaque depth.
+  internal reflection). A pixel is immersed while the camera is under the top of the box and
+  its nearest layer is not a front face of the solid; the medium absorbs/scatters from eye to
+  first layer or opaque depth.
 - **Layers & culling:** Closest layers read a scene copy (rough glass blurs over a disc); deeper
   surfaces filter forward. Blend-only instances sit in `RAY_GLASS`. All glass passes skip when
   no transmissive instance is in frustum.
@@ -350,5 +356,5 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 
 - No node-based material editor, virtual textures, subsurface scattering, iridescence,
   dispersion, or OpenPBR transmission outside glass.
-- [Residency by sampling](#residency-by-sampling) does not track glass refraction rays,
-  `glass_inside.comp`, or extension stages.
+- [Residency by sampling](#residency-by-sampling) does not track `glass_inside.comp` or
+  extension stages.

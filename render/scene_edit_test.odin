@@ -882,7 +882,7 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     testing.expect(t,scene_tint(r,{7},{{1,1,1}},{{}},{held(r,other)}))
     want:=gpu_material(r,other)
     testing.expect_value(t,instance_material(s,s.instances[7].material_values,1),want.shared)
-    testing.expect(t,len(s.translucent)==1 && s.translucent[0].solid,"its transmission makes it a solid of glass")
+    testing.expect(t,len(s.translucent)==1 && s.translucent[0].medium != 0,"its transmission makes it a solid of glass")
 
     // What goes gives its words back.
     testing.expect(t,scene_given(r,descs[:COUNT/2],nil,{},{}))
