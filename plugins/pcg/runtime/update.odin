@@ -52,6 +52,8 @@ Generated_Cell :: struct {
     revision:u32,   // raised each time it places otherwise
     near:f32,
     placed:[dynamic]Placed,
+    occupied:Occupancy, // with Micro layers in its source: where its Macro and Meso points stand, suppressed ones too
+    occupied_hash:u64,  // of occupied; 0 when nothing is covered
 }
 
 pcg_generated_free :: proc(g:^Pcg_Generated) {
@@ -92,15 +94,12 @@ pcg_cell :: proc "contextless" (g:^Pcg_Generated,e:core.Entity,coord:[2]i32) -> 
 
 // The zones that give masks in the world, in the order they apply, and the
 // spans of the Splines of all the zones, by graph frame later.
-@(private)
 Zone_Inputs :: struct {
     zones:[dynamic]Pcg_Zone_Placed,
     splines:[dynamic]Zone_Spline,
 }
-@(private)
 Zone_Spline :: struct {entity:u64,channel:u32,pose:mm.Transform,points:[]mm.Path_Point}
 
-@(private)
 zone_inputs :: proc(zones:^core.Table(Pcg_Zone,$A),at:volume.Where,ids:^core.Table(core.Id,$B),problems:^core.Problems) -> (z:Zone_Inputs) {
     z.zones=make([dynamic]Pcg_Zone_Placed,context.temp_allocator)
     z.splines=make([dynamic]Zone_Spline,context.temp_allocator)
@@ -276,7 +275,8 @@ pcg_update :: proc(
             if cell.built && cell.key==key && cell.ground==revision && cell.suppressed==hash {continue}
             if tile.absent {
                 // No ground known yet: it waits for its tile, and places nothing.
-                if cell.built && len(cell.placed)>0 {clear(&cell.placed);cell.revision+=1;graph.revision+=1}
+                if cell.built && (len(cell.placed)>0 || cell.occupied_hash!=0) {clear(&cell.placed);cell.revision+=1;graph.revision+=1}
+                cell.occupied,cell.occupied_hash={},0
                 cell.built,cell.key,cell.ground,cell.suppressed=true,key,revision,hash
                 continue
             }
@@ -320,6 +320,7 @@ pcg_update :: proc(
             cell:=&x.g.graphs[b.graph].cells[b.cell]
             clear(&cell.placed)
             b.ok=cell_generate(&b.input,scratch,&cell.placed)
+            cell.occupied,cell.occupied_hash=scratch.occupied,scratch.occupied_hash
         }
     }
     building:=Building{g,builds_now}

@@ -141,6 +141,8 @@ Pcg_Scratch :: struct {
     tile:^Field_Tile,
     frames:[pcg_lib.GRAMMAR_MAX_DEPTH]pcg_lib.Grammar_Frame,
     modules:[]pcg_lib.Grammar_Placed,
+    occupied:Occupancy, // of the last cell generated, for its Micro layers
+    occupied_hash:u64,
     allocator:runtime.Allocator,
 }
 
@@ -620,11 +622,13 @@ grammar_place :: proc(cin:^Pcg_Cell_Input,scratch:^Pcg_Scratch,layer:int,out:^[d
 }
 
 // What a cell places, appended to out: Macro then Meso units and cascades,
-// then grammars, without what is suppressed. False without memory or when a
+// then grammars, without what is suppressed; with Micro layers, the
+// occupancy of what stood before that in scratch.occupied. False without memory or when a
 // program does not run, with nothing appended.
 cell_generate :: proc(cin:^Pcg_Cell_Input,scratch:^Pcg_Scratch,out:^[dynamic]Placed) -> bool {
     s:=cin.source
     first:=len(out)
+    scratch.occupied,scratch.occupied_hash={},0
     if s==nil || len(s.compiled)!=len(s.layers) || cin.ground.absent || cin.ground.samples<2 {return true}
     context.allocator=scratch.allocator
     clear(&scratch.stood);clear(&scratch.stood_spacing);clear(&scratch.fresh)
@@ -637,6 +641,8 @@ cell_generate :: proc(cin:^Pcg_Cell_Input,scratch:^Pcg_Scratch,out:^[dynamic]Pla
         for u in s.units {if ok && u.tier==tier {ok=unit_place(cin,scratch,u,margin)}}
         for l,i in s.layers {if ok && l.kind==.Cascade && l.tier==tier {ok=cascade_place(cin,scratch,i)}}
     }
+    // Before anything is suppressed: what is taken out keeps its ground.
+    if ok && source_micro(s) {scratch.occupied_hash=occupancy_raster(&scratch.occupied,s.info.cell_size,scratch.stood[:])}
     if ok && room(out,len(scratch.stood)) {
         for st in scratch.stood {if st.middle {append(out,placed_of(cin,st))}}
     } else {ok=false}

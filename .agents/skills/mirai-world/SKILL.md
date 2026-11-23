@@ -79,10 +79,11 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 - `foliage` (sink of the cells a `Pcg_Graph` places: looks of mesh and prefab layers, per-cell
   batches, filler budgets and density-modulated impostor distances, octahedral impostors and
   canopy in rays, wind in the vertex hook, bending by `Foliage_Bender`, collision of every
-  generated cell, picks and queries of instances, marks, promotion):
-  [entity and looks](references/foliage.md#entity-and-looks),
+  generated cell, picks and queries of instances, marks, promotion, GPU micro-scatter of
+  `Micro` layers): [entity and looks](references/foliage.md#entity-and-looks),
   [drawing](references/foliage.md#drawing),
   [impostor and crown](references/foliage.md#far-impostor-and-crown),
+  [micro scatter](references/foliage.md#micro-scatter-on-the-gpu),
   [wind](references/foliage.md#wind), [collision](references/foliage.md#collision),
   [take out, promote, mark](references/foliage.md#play-take-out-promote-mark) and
   [editor](references/foliage.md#editor)

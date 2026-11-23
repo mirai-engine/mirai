@@ -63,13 +63,11 @@ Exclusion :: struct {
 }
 
 // How far from the sources a source places: its farthest cull distance,
-// REACH_MAX for a layer never culled; 0 without layers placed on the CPU.
+// REACH_MAX for a layer never culled; 0 without layers. The Micro layers
+// count: what scatters them on the GPU reads the same ground tiles.
 source_reach :: proc "contextless" (s:^Pcg_Source) -> f32 {
     reach:=f32(0)
-    for l in s.layers {
-        if l.tier==.Micro {continue}
-        reach=max(reach,l.cull_distance>0?min(l.cull_distance,REACH_MAX):REACH_MAX)
-    }
+    for l in s.layers {reach=max(reach,l.cull_distance>0?min(l.cull_distance,REACH_MAX):REACH_MAX)}
     return reach
 }
 
@@ -203,7 +201,6 @@ tile_kept :: proc(exclusions:[]Exclusion,frame_world:mm.Mat4,coord:[2]i32,ground
 
 // Where the Volume of a graph bounds its cells, in their frame; unbounded:
 // it does not. hash: of where it is.
-@(private)
 graph_domain :: proc(at:volume.Where,e:core.Entity,frame_local:mm.Mat4) -> (box:mm.Aabb,bounded:bool,region:Pcg_Region,hash:u64) {
     v,pose,outline,ok:=volume.placed(at,e)
     // It rules nowhere: no cell, and no point.

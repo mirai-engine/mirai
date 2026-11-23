@@ -59,6 +59,35 @@ per `(asset, frame_size, world)` (`Kind_Key`) once `render.mesh_renderer_settled
   `CELL_CROWN_REACH` × mesh reach, `cell_crown_build` merges a cell into one `Shared_Crown`.
 - Unloaded sections (`scene.Far_Kept`) draw only far shapes with no physics.
 
+## Micro scatter on the GPU
+
+`Micro` layers (grass, pebbles, flowers) are never placed on the CPU nor collide: `micro.odin`
+scatters them on the GPU through `engine/render` alone (`Foliage_Micro`, `host, by_world`, freed in
+`foliage_micro_release`). Without a renderer `foliage_micro` returns before any work or memory.
+
+- **Tiles**: a tile is a cell of the graph and a `Scatter` layer of tier `Micro` placing a `.mesh`
+  (a prefab, Cascade or Grammar reports `foliage.micro`), resident while a streaming source is
+  within its `cull_distance` × detail (`MICRO_REACH_MAX` when 0), its `Pcg_Ground` tile is read
+  whole and its cell is generated; at most `MICRO_SLOTS`, nearest first. `pcg.source_reach` counts
+  `Micro` layers so the ground tiles under them exist: no second ground cache.
+- **Generate once**: a tile's key (`micro_tile_key`) is the graph key, its ground tile revision,
+  the cell's `occupied_hash` and its candidates; only a changed key regenerates it, the nearest
+  `MICRO_TILES_A_FRAME` a frame, keeping its old instances meanwhile. The CPU packet is the ground
+  tile heights plus `pcg.micro_samples` (field × paint × ground rule × excluding zones × graph
+  `Volume`, 0 where occupied) on `MICRO_SAMPLES`² points; `foliage_micro_gen.comp` (`Simulate`)
+  writes only survivors into the slot's block with an atomic count: no readback, no dead points.
+  Inputs unchanged since the last frame (`micro_inputs`) skip residency entirely.
+- **Occupancy** is pre-suppression: `pcg.cell_generate` rasterizes the radii of every Macro/Meso
+  point that stood (`Generated_Cell.occupied`, sources with Micro layers only), so taking a tree
+  out never lets grass sprout at its stump.
+- **Draw**: per view, `foliage_micro_cull.comp` (`Gbuffer`) keeps instances within distance, in
+  the frustum and not hidden by this frame's depth pyramid (one phase), into one list per look;
+  `foliage_micro.vert` draws a fixed count of indirect draws (a look × Surface program) with the
+  engine G-buffer fragment, shrinking between fade and cull, bent by `foliage_lean`/`foliage_sway`.
+  Micro meshes are not in the ray structure and cast no shadow maps.
+- **Detail**: filler layers keep `FOLIAGE_DETAIL[0]` of their candidates by hash; distances scale
+  by `FOLIAGE_DETAIL[1]`.
+
 ## Wind
 
 - `volume.Wind` bends plants about instance origin in the [vertex hook][hook]
@@ -121,7 +150,8 @@ mirai rpc foliage.query '{"entity":"Woods","min":[-10,-5,-10],"max":[30,20,10]}'
 - `mirai test plugins/foliage/runtime --no-gpu`: looks, filler and bands, grouping, physics diffing
   and budget, hull rocks, prefab parts and sway, picks, queries, marks, impostor rows and crowns.
 - `mirai test plugins/foliage/runtime` (GPU with validation): the wind, sway and bender tests of
-  `gpu_test.odin` and `bend_test.odin`.
+  `gpu_test.odin` and `bend_test.odin`; micro generation once, cull and draw in
+  `micro_gpu_test.odin` (`micro_test.odin`: occupancy, tile gating, headless no-op, no GPU).
 - `mirai test plugins/foliage/editor -collection:plugins=<root>/plugins`.
 - Live: `mirai session start demo --copy`, `scene.open forest/forest.scene`, `foliage.query
   entity=Woods`, and `mirai capture` of `forest` and `foliage_extreme` at 200+ frames.
