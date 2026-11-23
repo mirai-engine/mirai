@@ -169,6 +169,9 @@ or anonymous (an empty claim). The namespace decides who reads it:
 - The store's sweep follows refs only and not the links inside Kai records, so a node prunes the
   operation logs and names as live what `store_live` names
   ([retention](model.md#operations-and-undo)) and what its agents fetch and hold back.
+- An org a user made on a node's web view is hosted there: no derived data and a bounded store,
+  which the node's Welcome tells a member's device once it is full
+  ([hosted orgs](node.md#hosted-orgs)).
 - A ddc node keeps every key of an org's namespace with every object its outputs list, and drops the
   least recently used keys past its quota (`a_ddc_node_drops_least_used_outputs_past_its_quota`),
   then has the sweep reclaim the bytes. A key a lookup through the node is still fetching is not

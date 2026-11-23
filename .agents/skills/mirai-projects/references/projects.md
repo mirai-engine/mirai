@@ -524,7 +524,7 @@ by its absolute path, which hands it to Git Bash ([launcher](#tool-and-machine))
 | Version control of a project, no editor | `mirai kai init\|status\|snapshot\|new\|describe\|split\|log\|diff\|undo\|restore\|conflicts\|verify\|bookmarks ... [--project P] [--store S]` |
 | The machine's Kai identity and mesh | `mirai kai identity [recover <user>]\|agent [--stay]\|pair offer\|join\|approve\|peers ... [--store S]` |
 | Orgs, grants, private scopes, proposals and checks | `mirai kai org\|grant\|scope\|public\|proposal\|check ... [--project P] [--store S]` |
-| The Kai node and its web sign-in | `mirai kai serve --mode relay\|seed\|seed+ddc --store S [--domain N]`, `mirai kai web approve <link>` |
+| The Kai node and its web sign-in | `mirai kai serve --mode relay\|seed\|seed+ddc --store S [--domain N]`, `mirai kai web approve <link>`, `mirai kai web join <origin>` |
 | Check types | `mirai check [<package> [-flag...]]`: a package relative to the working folder or to the engine, or absolute; none inside a project: its game, editor and plugins. In a runtime package it also fails on an allocation whose error nothing receives (`tools/mirai/alloc_lint.odin` says which calls and which packages), and in the runtime or editor part of a plugin on an import of `render` or `rhi` outside its tests or of the physics solver (`tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<package>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]`: the package as for `check`; none inside a project: its game |
 | Headless background editor | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store folder]` |

@@ -12,9 +12,13 @@ and `kai/refs_ddc.odin`.
 - A user born of a passkey has no recovery key and no device: the page that makes it generates
   no key. Its passkey may link devices and passkeys (`Device_Add`, `Web_Key_Add`) while it has no
   recovery key, and nothing else of the user's log; its first device sets the recovery key
-  (`Recovery_Rotate` signed by a device when the user has none). Until then the user acts with at
-  most a writer's rights in any org: it reads, comments, approves and signs checks, and holds no
-  admin or owner right, whatever role an admin gives it.
+  (`Recovery_Rotate` signed by a device when the user has none), which `mirai kai web approve`
+  does as it links the device. Until then the user acts with at most a writer's rights in any org:
+  it reads, comments, approves and signs checks, and owns or administers no org, whatever role an
+  admin gives it: an `Org_Genesis` holds only when its author has a recovery key at its
+  `author_ctx` (`user_recovered_at`), so a node's web view offers making an org only after that
+  ([making an org](node.md#sign-in-and-writes)). An entry a passkey signs names as its
+  `author_ctx` a head of its user's log that holds the passkey's add and the recovery key.
 - A **device** (a machine, a node or a browser's passkey) has an Ed25519 signing key and an X25519
   key, and a machine also an ML-KEM-768 key the [epoch keys](private.md#keyrings-and-epochs) are
   wrapped to. A machine makes them together the first time it opens its store and keeps the seeds in

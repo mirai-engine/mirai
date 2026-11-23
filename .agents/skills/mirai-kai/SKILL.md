@@ -67,7 +67,8 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
   [proposals](references/proposals.md#proposals) and
   [landing](references/proposals.md#policy-and-landing).
 - The node `mirai kai serve`, its deployment and its web view:
-  [node](references/node.md#the-node), [deployment](references/node.md#deployment),
+  [node](references/node.md#the-node), [hosted orgs](references/node.md#hosted-orgs),
+  [deployment](references/node.md#deployment),
   [API](references/node.md#the-api), [sign in](references/node.md#sign-in-and-writes) and
   [frontend](references/node.md#the-frontend).
 - TLS 1.3, certificates and ACME: [TLS](references/tls.md#tls-13) and
@@ -137,6 +138,10 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
    follow [deployment](references/node.md#deployment).
 2. Pair it as a node (`pair offer node --org O --modes relay,seed,ddc`, then `pair join` there).
 3. `mirai kai web approve <link>` signs a browser in or links a passkey from a device.
+4. A user born on the web view links a machine (`mirai kai web approve`, which sets its recovery
+   key), makes an org and its projects there, and `mirai kai web join <origin>` on the machine
+   takes them. The node hosts those orgs: no derived data, `--hosted-quota` each, `--hosted-orgs`
+   per user.
 
 ### Add a check
 
@@ -198,6 +203,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
 - A stable frame or tick allocates nothing; what peers, browsers and sockets send is bounded and
   refused with a reason, never trusted.
 - A node on Linux runs confined, or refuses to start unless it is told `--no-sandbox`.
+- A node keeps no derived data of an org a user made on its web view and stores at most its bound
+  of it; an org its operator paired it into is bound by neither.
 - Kai is the only version control of a project: its snapshots track what `project.own_path`
   accepts and nothing else decides which files are the project's.
 
@@ -244,7 +251,9 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `a_project_of_10000_landed_moves_folds_without_reading_its_proposals` (prints the folds' times)
   and
   `a_team_reviews_and_lands_a_proposal_through_the_shared_operations` (`cook/kai`).
-- Node: `hub_serves_public_and_member_views`, `hub_api_describes_every_route`,
+- Node: `hub_serves_public_and_member_views`, `hub_hosts_the_orgs_its_users_make`,
+  `a_hosted_org_keeps_no_derived_data_and_stops_at_its_bound` (`kai`),
+  `hub_api_describes_every_route`,
   `hub_http_refuses_hostile_requests`, `webauthn_login_and_signed_verdict_verify_offline`,
   `hub_web_modules_agree_with_the_node` (runs under the system's `node`, skipped without it),
   `hub_seccomp_program_refuses_what_the_node_does_not_do` and

@@ -25,6 +25,27 @@ optional: an org with no node works on a LAN and between machines that can reach
   members and the mesh already hold, plus the keys of its own device and its web certificates, in
   its store's folder, owner-only ([confinement](#confinement)).
 
+## Hosted orgs
+
+- A node with a web view is open: a user born there makes orgs of its own and the node serves them
+  ([making an org](#sign-in-and-writes)). Such an org is **hosted**; one the node's operator paired
+  it into (`pair join` run on the node's machine) is the operator's. The node marks a hosted org in
+  its machine's namespace, with the user who made it, when it keeps the org's genesis; nothing in
+  the org's logs tells the two apart, so no member can turn one into the other.
+- The node keeps and serves no derived data of a hosted org, whatever its `Node_Add` says: no DDC
+  record is fetched or exposed, and the web view shows no previews of its assets. An operator's org
+  gets derived data when the node's mode has it.
+- What the node holds of a hosted org (its logs, the closures its refs reach and its overlays'
+  ciphertext: the org's members' set) is bounded by `HOSTED_QUOTA`, or `serve --hosted-quota`.
+  Once reached the node takes no new object of the org, only its own log and the users' logs, and
+  every Welcome it answers a member's device with says so; that machine says the node's storage for
+  the org is full and to move the org to a node of its own (`hosted_full_text`). The org's machines
+  keep syncing among themselves and the relay goes on
+  (`a_hosted_org_keeps_no_derived_data_and_stops_at_its_bound`). An operator's org has no bound.
+- A user makes at most `HOSTED_ORGS` orgs on a node, or `serve --hosted-orgs`; `--hosted-orgs 0`
+  makes none and the web view does not offer it. Private projects and scopes are allowed in a hosted
+  org and count toward its bound.
+
 ## Deployment
 
 - The target is a small `linux_arm64` machine: a VM at a cloud provider or a Raspberry Pi, running
@@ -121,14 +142,26 @@ WantedBy=multi-user.target
   passkey makes one user on a node.
 - A user nobody admitted waits on the node that made it, under `kai-local-waiting`, which no peer
   is served: it is not among the user logs peers sync and counts against no org's logs. When a
-  member adds it (`Member_Add`) its log joins the synced ones; past `WAITING_MAX` waiting users the
-  oldest goes, and the create route is rate-limited per address. A waiting user that signs in is
-  told to wait for an admin.
+  member adds it (`Member_Add`), or it makes an org here, its log joins the synced ones; past
+  `WAITING_MAX` waiting users the oldest goes, and the create route is rate-limited per address. A
+  waiting user signs in: it links its first machine, and makes an org or waits for an admin.
 - A passkey-born user links its first device from the browser: the page asks a link
   (`POST /api/approvals`, kind device), `mirai kai web approve <link>` on the machine offers its
   keys and proof and waits, both show the same eight digits, and the passkey signs the
   `Device_Add` the page built from the offer. The machine then takes the user's log and becomes its
-  device; `mirai kai identity recovery` there sets the user's first recovery key.
+  device, sets the user's first recovery key at once, shows it there once and sends the node the
+  signed entry alone (`POST /api/users/{user}/entries`); the page waits for it.
+- **Making an org.** Until the user has a recovery key the page says what is missing and how to
+  get it, and the node refuses an org's genesis with the same text ([keys](identity.md#keys)).
+  Then the passkey signs the org's genesis and the `Node_Add` of this node (relay and seed, its
+  keys and addresses as `GET /api/node` gives them: the domain's at the UDP port, or the
+  interfaces'), and the node hosts the org at once ([hosted orgs](#hosted-orgs)). A project is a
+  `Project_Genesis` and the org's `Project_Add`, born empty: its files always come from a machine.
+- **A machine on such an org.** `mirai kai web join <origin>` on a device of the user signs it in
+  to the node by its device key (`POST /api/session/device`, the signature of an approved login),
+  reads the user's orgs there and takes the log of each this machine lacks; the org's `Node_Add`
+  tells its agent where the node listens, with no LAN between them. Then `mirai kai init`
+  makes a workspace of a project.
 - A browser with no passkey, or a second passkey for an existing user, asks a device of the user to
   approve: it shows a link and `mirai kai web approve <link>` on that device shows what it would
   sign and signs it only after a yes.
