@@ -78,17 +78,17 @@ GLASS_MEDIUM_NEAR :: f32(0.25)
 // The solid blended instance under the top of whose box the camera is, within its sides, plus one: the smallest
 // of them, the one further in, by its box down to the camera when the camera is below it. Under, not only
 // inside: under a sheet open below, as the surface of water, is inside it. The glass passes find whether
-// the camera is in its solid; 0 when it is under none.
+// the camera is in its solid; 0 when it is under none. row: that of the material of its medium.
 @(private)
-glass_medium :: proc(r: ^Renderer, camera: Vec3) -> (medium: u32) {
+glass_medium :: proc(r: ^Renderer, camera: Vec3) -> (medium, row: u32) {
 	smallest := max(f32)
 	for entry in r.scene.translucent {
-		if !entry.solid {continue}
+		if entry.medium == 0 {continue}
 		inst := &r.scene.instances[entry.instance]
 		lo, hi := inst.bounds_min.xyz, inst.bounds_max.xyz
 		if camera.x < lo.x || camera.z < lo.z || camera.x > hi.x || camera.y > hi.y + GLASS_MEDIUM_NEAR || camera.z > hi.z {continue}
 		size := hi - lo
-		if volume := size.x * size.z * (hi.y - min(lo.y, camera.y)); volume < smallest {smallest, medium = volume, entry.instance + 1}
+		if volume := size.x * size.z * (hi.y - min(lo.y, camera.y)); volume < smallest {smallest, medium, row = volume, entry.instance + 1, entry.medium - 1}
 	}
 	return
 }
@@ -301,7 +301,7 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 @(private)
 glass_layers :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
-	p.glass_medium = glass_medium(r, p.camera.position)
+	p.glass_medium, p.glass_medium_row = glass_medium(r, p.camera.position)
 	rhi.cmd_timestamp(cmd, "glass layers")
 	if !translucent_draws_record(p) {return}
 	for k in 0 ..< glass_layer_count(r) {
@@ -473,12 +473,12 @@ glass_scene_levels_record :: proc(p: ^Pass) {
 
 // glass_pass.slang Params_Block.
 @(private)
-Glass_Params :: struct {light_budget, pad: u32, max_distance: f32, snapshot, medium: u32, near_top: f32, pad0, pad1: u32}
+Glass_Params :: struct {light_budget, pad: u32, max_distance: f32, snapshot, medium: u32, near_top: f32, medium_row, pad1: u32}
 
 @(private)
 glass_params :: proc(p: ^Pass) -> Glass_Params {
 	settings := &p.r.settings
-	return {light_budget = settings.light_budget, max_distance = settings.gi_max_distance, medium = p.glass_medium, near_top = GLASS_MEDIUM_NEAR}
+	return {light_budget = settings.light_budget, max_distance = settings.gi_max_distance, medium = p.glass_medium, near_top = GLASS_MEDIUM_NEAR, medium_row = p.glass_medium_row}
 }
 
 @(private = "file")
