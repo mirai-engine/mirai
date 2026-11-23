@@ -1,10 +1,10 @@
 package foliage
 
-import "base:intrinsics"
 import "core:math/linalg"
 import "core:slice"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import pcg_lib "mirai:std/pcg"
 
 // The instances of a cell: its manual ones, and those the generator makes
 // with the overrides applied. The generator is the first producer: the points
@@ -28,12 +28,6 @@ Generated :: struct {
     scale:[2]f32,    // across and along y
     offset:f32,      // metres along its y, over the ground
     chance:f32,      // 0 to 1: it stands where the density there is above it
-}
-
-// How many points of a type a cell gets, and the stream of each one.
-@(private)
-scatter_key :: proc "contextless" (seed:u32,coord:[2]i32,type:u32) -> u64 {
-    return base.hash_u64(u64(seed)<<32 ~ u64(type)) ~ base.hash_u64(u64(u32(coord.x)) | u64(u32(coord.y))<<32)
 }
 
 // Room for more elements past the end, grown by doubling. False without memory.
@@ -67,30 +61,6 @@ scatter_max :: proc "contextless" (t:Foliage_Type,share:f32) -> int {
     return int(f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)*f64(share))+1
 }
 
-// The second dimension of the Sobol sequence at index i, as a fraction of 2^32.
-@(private)
-sobol_second :: proc "contextless" (i:u32) -> u32 {
-    r,v,i:=u32(0),u32(1)<<31,i
-    for i!=0 {
-        if i&1!=0 {r~=v}
-        i>>=1
-        v~=v>>1
-    }
-    return r
-}
-
-// A nested uniform (Owen) scramble of a fraction of 2^32: each bit flips by a
-// hash of the bits above it, so a set stratified in base 2 stays so.
-@(private)
-owen_scramble :: proc "contextless" (x,seed:u32) -> u32 {
-    v:=intrinsics.reverse_bits(x)+seed
-    v~=v*0x6c50b47c
-    v~=v*0xb82f1e52
-    v~=v*0xc7afe638
-    v~=v*0x8d22f6e6
-    return intrinsics.reverse_bits(v)
-}
-
 // The points of one type in a cell, appended to out. Their places are the
 // first points of a (0,2) sequence of base 2, scrambled by the cell and the
 // type: however many there are, they cover the cell as a jittered grid does,
@@ -98,19 +68,14 @@ owen_scramble :: proc "contextless" (x,seed:u32) -> u32 {
 // points, which a lower share leaves where they were. False, with none
 // appended, without memory for them.
 scatter :: proc(seed:u32,coord:[2]i32,t:Foliage_Type,out:^[dynamic]Generated,share:=f32(1)) -> bool {
-    key:=scatter_key(seed,coord,t.id)
-    counter:=mm.rng_make(key)
-    expected:=f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)*f64(share)
-    count:=u32(expected)
-    if f64(mm.random_f32(&counter))<expected-f64(count) {count+=1}
+    key:=pcg_lib.scatter_key(seed,coord,t.id)
+    count:=pcg_lib.scatter_count(key,f64(t.density)*f64(CELL_SIZE)*f64(CELL_SIZE)*f64(share))
     if !room(out,int(count)) {return false}
-    scramble:=base.hash_u64(key)
+    scramble:=pcg_lib.scatter_scramble(key)
     for point in 0..<count {
-        r:=mm.rng_make(key,u64(point)+1)
+        r:=pcg_lib.point_stream(key,point)
         g:=Generated{type=t.id,point=point}
-        across:=owen_scramble(intrinsics.reverse_bits(point),u32(scramble))
-        along:=owen_scramble(sobol_second(point),u32(scramble>>32))
-        g.position=[2]f32{f32(across>>8),f32(along>>8)}*(CELL_SIZE/16777216.0)
+        g.position=pcg_lib.scatter_point_unit(scramble,point)*CELL_SIZE
         g.yaw=mm.random_f32(&r)*t.yaw
         g.tilt=mm.random_f32(&r)*t.tilt
         g.tilt_turn=mm.random_f32(&r)*6.2831855
@@ -279,7 +244,7 @@ Placed :: struct {
 }
 MANUAL :: u64(1) << 63
 
-generated_id :: proc "contextless" (type,point:u32) -> u64 {return u64(type)<<32 | u64(point)}
+generated_id :: pcg_lib.stable_id
 
 @(private)
 placed_of :: proc "contextless" (coord:[2]i32,b:Foliage_Instance,type:u32,id:u64) -> Placed {
@@ -290,107 +255,23 @@ placed_of :: proc "contextless" (coord:[2]i32,b:Foliage_Instance,type:u32,id:u64
 Expand_Scratch :: struct {
     points:[dynamic]Generated,
     matched:[dynamic]bool,  // of each override of the cell
-    spaced:[dynamic]Spaced, // the points of one type with a radius, in the cells around
-    stood:[dynamic]Spaced,  // those that stand of the types with a radius placed before
-    fresh:[dynamic]Spaced,  // those that stand of the type being placed
+    spaced:[dynamic]pcg_lib.Spacing_Point, // the points of one type with a radius, in the cells around
+    stood:[dynamic]pcg_lib.Spacing_Point,  // those that stand of the types with a radius placed before
+    fresh:[dynamic]pcg_lib.Spacing_Point,  // those that stand of the type being placed
     standing:[dynamic]u32,  // the points of the cell that stand, of each type with a radius in turn
     ranges:[dynamic][2]int, // of standing, by the index of the type in its source
     order:[dynamic]Spaced_Type,
-    grid,stood_grid:Grid,
+    grid,stood_grid:pcg_lib.Spacing_Grid,
 }
 
 expand_scratch_destroy :: proc(e:^Expand_Scratch) {
     delete(e.points);delete(e.matched);delete(e.spaced);delete(e.stood);delete(e.fresh)
     delete(e.standing);delete(e.ranges);delete(e.order)
-    delete(e.grid.heads);delete(e.grid.next);delete(e.stood_grid.heads);delete(e.stood_grid.next)
-}
-
-// A point of a type with a radius, from the corner of the cell expanded,
-// which is in the middle of the 3 by 3 cells its points come from.
-@(private)
-Spaced :: struct {
-    at:[2]f32,
-    reach:f32, // its radius times its scale across
-    chance:f32,
-    point:u32,
-    cell:u8,   // of the 3 by 3, x first: 4 is the cell expanded
+    pcg_lib.spacing_grid_destroy(&e.grid);pcg_lib.spacing_grid_destroy(&e.stood_grid)
 }
 
 @(private)
 Spaced_Type :: struct {radius:f32,id:u32,index:int}
-
-// Which of two points of a type keeps its place when they are too near: the
-// one of the lower index, or of the cell first in z and then x.
-@(private)
-spaced_before :: proc "contextless" (a,b:Spaced) -> bool {return a.point<b.point || a.point==b.point && a.cell<b.cell}
-
-// Buckets over the 3 by 3 cells around the one expanded, at least as wide as
-// the reaches of two points together: a point meets only those of the 9
-// buckets around its own.
-@(private)
-Grid :: struct {
-    heads:[dynamic]i32,
-    next:[dynamic]i32, // of each point added, the one added before it to its bucket
-    side:int,
-    size:f32,
-}
-@(private) GRID_SIDE_MAX :: 192
-
-@(private)
-grid_reset :: proc(g:^Grid,reach:f32) -> bool {
-    g.side=clamp(int(3*CELL_SIZE/max(reach,1e-3)),1,GRID_SIDE_MAX)
-    g.size=3*CELL_SIZE/f32(g.side)
-    clear(&g.next)
-    if resize(&g.heads,g.side*g.side)!=nil {return false}
-    for &h in g.heads {h=-1}
-    return true
-}
-
-@(private)
-grid_bucket :: proc "contextless" (g:^Grid,at:[2]f32) -> [2]int {
-    b:=(at+CELL_SIZE)/g.size
-    return {clamp(int(b.x),0,g.side-1),clamp(int(b.y),0,g.side-1)}
-}
-
-// Adds the next point to the grid, the one of index len(g.next).
-@(private)
-grid_add :: proc(g:^Grid,at:[2]f32) -> bool {
-    b:=grid_bucket(g,at)
-    k:=b.y*g.side+b.x
-    if _,error:=append(&g.next,g.heads[k]);error!=nil {return false}
-    g.heads[k]=i32(len(g.next)-1)
-    return true
-}
-
-@(private)
-Block :: enum u8 {
-    Same_Cell,   // by those of the cell of the point
-    Other_Cells, // by those of the other cells that keep their place before it
-    Any,
-}
-
-// Whether one of points, those the grid holds, is nearer to p than their
-// two reaches.
-@(private)
-grid_blocks :: proc "contextless" (g:^Grid,points:[]Spaced,p:Spaced,by:Block) -> bool {
-    b:=grid_bucket(g,p.at)
-    for z in max(b.y-1,0)..=min(b.y+1,g.side-1) {
-        for x in max(b.x-1,0)..=min(b.x+1,g.side-1) {
-            for i:=g.heads[z*g.side+x];i>=0;i=g.next[i] {
-                q:=points[i]
-                switch by {
-                case .Same_Cell: if q.cell!=p.cell {continue}
-                case .Other_Cells: if q.cell==p.cell || !spaced_before(q,p) {continue}
-                case .Any:
-                }
-                d:=q.at-p.at
-                r:=q.reach+p.reach
-                if d.x*d.x+d.y*d.y<r*r {return true}
-            }
-        }
-    }
-    return false
-}
 
 // The layers of the ground of a cell that the rule of a type names.
 @(private)
@@ -444,34 +325,34 @@ spaced_stand :: proc(s:^Source,cell:^Cell,ground:Ground_Cell,e:^Expand_Scratch,s
     slice.sort_by(e.order[:],proc(a,b:Spaced_Type) -> bool {return a.radius>b.radius || a.radius==b.radius && a.id<b.id})
     // How far from the cell a point can keep one of it away.
     margin:=2*widest
-    if !grid_reset(&e.stood_grid,margin) {return false}
+    if !pcg_lib.spacing_grid_reset(&e.stood_grid,CELL_SIZE,margin) {return false}
     for o in e.order {
         t:=s.types[o.index]
         mask:=type_mask(t,ground)
         clear(&e.spaced);clear(&e.fresh)
-        if !grid_reset(&e.grid,margin) {return false}
+        if !pcg_lib.spacing_grid_reset(&e.grid,CELL_SIZE,margin) {return false}
         for k in 0..<9 {
             d:=[2]i32{i32(k%3)-1,i32(k/3)-1}
             clear(&e.points)
             if !scatter(s.info.seed,cell.coord+d,t,&e.points,share) {return false}
             for g in e.points {
-                p:=Spaced{at=g.position+[2]f32{f32(d.x),f32(d.y)}*CELL_SIZE,reach=t.radius*g.scale[0],chance=g.chance,point=g.point,cell=u8(k)}
-                if grid_blocks(&e.grid,e.spaced[:],p,.Same_Cell) {continue}
-                if _,error:=append(&e.spaced,p);error!=nil || !grid_add(&e.grid,p.at) {return false}
+                p:=pcg_lib.Spacing_Point{at=g.position+[2]f32{f32(d.x),f32(d.y)}*CELL_SIZE,reach=t.radius*g.scale[0],chance=g.chance,point=g.point,cell=u8(k)}
+                if pcg_lib.spacing_grid_blocks(&e.grid,e.spaced[:],p,.Same_Cell) {continue}
+                if _,error:=append(&e.spaced,p);error!=nil || !pcg_lib.spacing_grid_add(&e.grid,p.at) {return false}
             }
         }
         first:=len(e.standing)
         for p in e.spaced {
             if p.at.x< -margin || p.at.y< -margin || p.at.x>CELL_SIZE+margin || p.at.y>CELL_SIZE+margin {continue}
-            if grid_blocks(&e.grid,e.spaced[:],p,.Other_Cells) {continue}
+            if pcg_lib.spacing_grid_blocks(&e.grid,e.spaced[:],p,.Other_Cells) {continue}
             if _,_,stands:=point_stands(cell,t,&mask,p.chance,ground,p.at);!stands {continue}
-            if grid_blocks(&e.stood_grid,e.stood[:],p,.Any) {continue}
+            if pcg_lib.spacing_grid_blocks(&e.stood_grid,e.stood[:],p,.Any) {continue}
             if _,error:=append(&e.fresh,p);error!=nil {return false}
-            if p.cell==4 {if _,error:=append(&e.standing,p.point);error!=nil {return false}}
+            if p.cell==pcg_lib.SPACING_MIDDLE {if _,error:=append(&e.standing,p.point);error!=nil {return false}}
         }
         e.ranges[o.index]={first,len(e.standing)}
         for p in e.fresh {
-            if _,error:=append(&e.stood,p);error!=nil || !grid_add(&e.stood_grid,p.at) {return false}
+            if _,error:=append(&e.stood,p);error!=nil || !pcg_lib.spacing_grid_add(&e.stood_grid,p.at) {return false}
         }
     }
     return true
