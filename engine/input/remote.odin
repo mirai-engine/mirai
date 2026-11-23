@@ -6,8 +6,9 @@ import si "mirai:std/input"
 import "mirai:std/math"
 
 // The actions of a seat as the end that has its devices took them for a tick,
-// for another end to take as its own: a client sends those of the seat that
-// drives its body, and the server gives them to the seat of that connection.
+// and where it looked (Seat_View), for another end to take as its own: a
+// client sends those of the seat that drives its body, and the server gives
+// them to the seat of that connection.
 // They are the actions as seat_action sees them there, in the contexts, with
 // the blocks and the re-arming of that end. What travels is what is down and
 // the values of the axes; the end that takes them derives the edges, the taps
@@ -22,6 +23,7 @@ Remote_Actions :: struct {
     motion:Action_Mask, // down by the movement of the mouse of the tick, which a repeated tick does not repeat
     axis_count:u8 `mirai:"bits=3"`,
     axes:[REMOTE_AXES]Remote_Axis,
+    view:Seat_View,
 }
 
 Remote_Axis :: struct {
@@ -35,6 +37,7 @@ seat_remote :: proc(states:core.Ref(Seat_States),seat:core.Entity,bindings:core.
     ok=true
     source:=seat_runtime(states,seat)
     if source==nil || bindings.ptr==nil {return}
+    sent.view=source.view
     moved:=bindings.compiled.motion
     off:=source.blocked|source.rearm
     for state,i in source.actions.states[:min(int(source.actions.count),ACTION_CAPACITY)] {
@@ -64,16 +67,19 @@ seat_remote :: proc(states:core.Ref(Seat_States),seat:core.Entity,bindings:core.
 seat_receive :: proc(seat:^Seat_State,bindings:^Input_Map,sent:Remote_Actions,dt:f32) {
     if seat==nil {return}
     actions_receive(&seat.actions,bindings,sent,dt)
+    seat.view=sent.view
     seat.held=bindings==nil?0:held_buttons(&seat.actions,bindings)
     seat.rearm&=seat.held
     seat.fed=seat.contexts
 }
 
 // What a tick whose actions did not arrive takes from the last that did:
-// what is held stays held, so it is neither let go nor pressed again; a tap
-// and the movement of the mouse were of the tick they were sent for.
+// what is held stays held, so it is neither let go nor pressed again, and it
+// looks where it looked; a tap and the movement of the mouse were of the tick
+// they were sent for.
 remote_repeated :: proc "contextless" (sent:Remote_Actions) -> (out:Remote_Actions) {
     sent:=sent
+    out.view=sent.view
     out.down=sent.down&~sent.motion
     for axis in sent.axes[:min(int(sent.axis_count),REMOTE_AXES)] {
         if sent.motion&action_bit(axis.action)!=0 {continue}

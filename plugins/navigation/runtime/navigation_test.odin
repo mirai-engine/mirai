@@ -39,9 +39,9 @@ Nav_World :: struct {
     agents:core.Table(Nav_Agent),
     paths:core.Table(Nav_Path),
     inputs:core.Table(input.Move_Input),
-    drives:core.Table(locomotion.Locomotion_Drive),
     parkours:core.Table(locomotion.Parkour_State),
     seats:core.Table(input.Seat),
+    seat_state:input.Seats,
     loco_states:core.Table(locomotion.Locomotion_State),
     walks:core.Table(locomotion.Walk),
     flights:core.Table(locomotion.Fly),
@@ -955,6 +955,7 @@ agents_test_step :: proc(f:^Nav_Test,late:Maybe(core.Place_Request)=nil) {
     time:=core.Time{tick=f.tick,seconds=f64(f.tick)/60,dt=1.0/60,playing=true}
     f.tick+=1
     nav_test_settle(f)
+    input.input_seat_index(core.ref(&f.entities),core.read(&f.seats),&f.seat_state,nil)
     phys.physics_pose_targets(&f.state,core.read(&f.replicas),&f.transforms,
         core.read(&f.parents),core.read(&f.rigids),core.read(&f.characters))
     for row in 0..<core.count(&f.transforms) {
@@ -964,18 +965,18 @@ agents_test_step :: proc(f:^Nav_Test,late:Maybe(core.Place_Request)=nil) {
     }
     nav_test_settle(f)
     navigation_build(&f.nav,&f.builds,core.ref(&f.nav_settings),core.read(&f.bakes),core.ref(&f.state),&f.build_requests,core.read(&f.bounds),core.read(&f.areas),core.read(&f.links),core.read(&f.obstacles),core.read(&f.colliders),core.read(&f.volumes),core.read(&f.splines),time,core.read(&f.transforms),core.read(&f.parents),core.ref(&f.ground),core.ref(&f.sources),core.read(&f.paths),{data=f},core.read(&f.references),core.read(&f.worlds),core.read(&f.ids),&f.app,&f.problems)
-    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.drives,core.read(&f.links),core.read(&f.seats),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
+    navigation_agents(core.ref(&f.nav),&f.run,core.read(&f.agents),&f.paths,&f.nav_requests,&f.nav_events,&f.inputs,core.read(&f.links),core.read(&f.seats),core.ref(&f.seat_state),core.read(&f.characters),core.read(&f.loco_states),core.read(&f.colliders),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.worlds),core.read(&f.obstacles),core.read(&f.volumes),core.read(&f.splines),&f.loco,core.ref(&f.state),core.ref(&f.builds),&f.fars,
         &f.roamings,&f.disabled,{&f.transforms,core.read(&f.parents),&f.places,&f.jumps},&f.requests,&f.nav_crossings,core.ref(&f.sources),time,&f.app.jobs,&f.problems)
     nav_test_settle(f)
     if asked,ok:=late.(core.Place_Request);ok {
         core.place({&f.transforms,core.read(&f.parents),&f.places,&f.jumps},
                    asked.entity,asked.position,asked.rotation,at_rest=asked.at_rest)
     }
-    navigation_crossing(&f.run,&f.paths,&f.drives,core.ref(&f.places),&f.loco,&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
-    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.parkours,&f.moves,&f.inputs,&f.drives,
+    navigation_crossing(&f.run,&f.paths,&f.inputs,core.ref(&f.seat_state),core.ref(&f.places),&f.loco,&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
+    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.parkours,&f.moves,&f.inputs,
         core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),&f.loco,time,&f.problems)
     nav_test_settle(f)
-    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.parkours,&f.moves,&f.inputs,core.read(&f.drives),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},time,core.CLOCK_DEFAULT,&f.problems)
+    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.parkours,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_places(&f.places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
     phys.physics_step(
@@ -1496,7 +1497,7 @@ an_agent_that_arrives_far_appears_when_its_section_loads :: proc(t:^testing.T) {
         if !core.entity_off(&f.entities,walker) {break}
     }
     testing.expect(t,!core.entity_off(&f.entities,walker) && told)
-    testing.expect(t,!core.has(&f.drives,walker),"a returning agent has no drive from its old path")
+    testing.expect(t,!core.has(&f.inputs,walker),"a returning agent has no move from its old path")
     p,ok:=core.get(&f.paths,walker)
     testing.expect(t,ok && p.state==.Arrived && core.raw_row(core.raw(&f.fars),walker)<0)
     // On the mesh, and it stands there.
@@ -1758,8 +1759,7 @@ a_seated_agent_walks_where_it_is_asked_while_its_seat_drives_it :: proc(t:^testi
     for _ in 0..<30 {agents_test_step(&f)}
     seated,_:=core.get(&f.inputs,walkers[0])
     left,_:=core.get(&f.inputs,walkers[1])
-    steering,_:=core.get(&f.drives,walkers[0])
-    testing.expect(t,steering.velocity!={} && seated.buttons==held,"it steers and the seat keeps its buttons")
+    testing.expect(t,seated.world_velocity && seated.move!={} && seated.buttons==held,"it steers and the seat keeps its buttons")
     testing.expect_value(t,left.move,[3]f32{})
     arrived,_,_,failed:=agents_test_travel(&f,walkers[0],10)
     testing.expect(t,arrived && !failed,"the seated agent arrives")
@@ -1813,7 +1813,7 @@ an_agent_that_stands_turns_to_what_it_looks_at :: proc(t:^testing.T) {
     // Stopped again, it looks no more: where the game turns it, it stays turned.
     nav_stop(&f.nav_requests,e)
     agents_test_step(&f)
-    locomotion.drive(&f.drives,e,{look_yaw=mm.yaw_of_direction({1,0,0})})
+    testing.expect(t,input.move_set(&f.inputs,core.ref(&f.seat_state),e,{look_yaw=mm.yaw_of_direction({1,0,0})}))
     for _ in 0..<90 {agents_test_step(&f)}
     pose,_=core.get(&f.worlds,e)
     forward=mm.quat_forward(pose.rotation)
@@ -2032,10 +2032,10 @@ followers_of_one_target_share_one_search_toward_it :: proc(t:^testing.T) {
         agents_test_step(&f)
         at,_:=core.get(&f.worlds,runner)
         for e,i in walkers {
-            mi,_:=core.get(&f.drives,e)
+            mi,_:=core.get(&f.inputs,e)
             pose,_:=core.get(&f.worlds,e)
-            moved[i]||=mi.velocity!={}
-            if moved[i] && mi.velocity=={} && linalg.distance(pose.position,at.position)>3 {halts+=1}
+            moved[i]||=mi.move!={}
+            if moved[i] && mi.move=={} && linalg.distance(pose.position,at.position)>3 {halts+=1}
         }
     }
     testing.expectf(t,halts==0,"followers stood still for %d ticks while they planned again",halts)
@@ -2203,7 +2203,7 @@ the_crossing_of_links_looks_at_no_path_while_none_crosses :: proc(t:^testing.T) 
     nav_test_settle(&f)
     time:=core.Time{tick=1,seconds=1,dt=1.0/60,playing=true}
     cross :: proc(f:^Nav_Test,time:core.Time) {
-        navigation_crossing(&f.run,&f.paths,&f.drives,core.ref(&f.places),&f.loco,&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
+        navigation_crossing(&f.run,&f.paths,&f.inputs,core.ref(&f.seat_state),core.ref(&f.places),&f.loco,&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
     }
     cross(&f,time)
     testing.expect(t,core.edit(&f.moves,e)^=={},"With no crossing counted, the path was looked at")

@@ -25,7 +25,7 @@ hold_test_init :: proc(t:^testing.T,f:^Hold_Test,jump:..Input_Binding) -> bool {
     test_world_init(t,&f.w) or_return
     f.local,f.remote=core.create(&f.entities),core.create(&f.entities)
     core.add(&f.seats,f.local,Seat{})
-    core.add(&f.seats,f.remote,Seat{peer=7})
+    core.add(&f.seats,f.remote,Seat{remote=true})
     test_world_settle(&f.w)
     input_map_action(&f.bindings,HOLD_MOVE,.Axis2)
     input_map_bind(&f.bindings,HOLD_MOVE,binding_keys(.A,.D,.S,.W))

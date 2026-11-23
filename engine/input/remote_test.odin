@@ -33,7 +33,7 @@ same_state :: proc(a,b:Action_State) -> bool {
 
 // The seat of another end that takes what a seat sent has its actions as
 // they were where its devices are, in the contexts of that end, edges and
-// taps included.
+// taps included, and looks where it looked.
 @(test)
 a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.T) {
     w:Test_Seats
@@ -61,9 +61,11 @@ a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.
         seat.contexts=tick.menu?menu:{}
         device:=tick.device
         seat_feed(seat,&device,&m,false,1.0/60)
+        seat.view={yaw=0.1*f32(index),pitch=-0.2,kind=index%2==0?.Apart:.Body}
         sent,ok:=seat_remote(core.ref(&w.runtime),local,core.ref(&m))
         testing.expect(t,ok)
         seat_receive(&there,&m,sent,1.0/60)
+        testing.expect_value(t,there.view,seat.view)
         for a in ([]Action{TEST_MOVE,TEST_LOOK,TEST_JUMP,TEST_CONFIRM}) {
             here:=seat_action(core.ref(&w.runtime),local,a)
             testing.expectf(t,same_state(here,action(&there.actions,a)),"tick %d, action %d: %v here, %v there",index,a,here,action(&there.actions,a))
@@ -73,7 +75,7 @@ a_seat_takes_the_actions_another_end_sent_as_they_were_there :: proc(t:^testing.
 }
 
 // A tick that did not arrive keeps what was held without pressing it again,
-// and repeats neither a tap nor the movement of the mouse.
+// and where it looked, and repeats neither a tap nor the movement of the mouse.
 @(test)
 a_repeated_tick_holds_what_was_held_and_not_the_mouse :: proc(t:^testing.T) {
     m:=remote_bindings()
@@ -84,6 +86,7 @@ a_repeated_tick_holds_what_was_held_and_not_the_mouse :: proc(t:^testing.T) {
     sent.axis_count=2
     sent.axes[0]={TEST_MOVE,{0,1}}
     sent.axes[1]={TEST_LOOK,{4,1}}
+    sent.view={yaw=-1.5,pitch=0.25,kind=.Apart}
     there:Seat_State
     seat_receive(&there,&m,sent,1.0/60)
     testing.expect(t,action(&there.actions,TEST_JUMP).pressed && action(&there.actions,TEST_CONFIRM).pressed && action(&there.actions,TEST_CONFIRM).released)
@@ -93,6 +96,7 @@ a_repeated_tick_holds_what_was_held_and_not_the_mouse :: proc(t:^testing.T) {
     testing.expect(t,move.down && move.vector==[2]f32{0,1})
     testing.expect(t,!look.down && look.vector==[2]f32{})
     testing.expect(t,!action(&there.actions,TEST_CONFIRM).pressed)
+    testing.expect_value(t,there.view,sent.view)
 }
 
 // What another end sends is hostile: counts, actions and values out of range

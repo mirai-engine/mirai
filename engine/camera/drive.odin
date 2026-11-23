@@ -15,8 +15,11 @@ import mm "mirai:std/math"
 // pitch limits of that camera; another gives where it looks, and the body
 // faces where it goes; without a camera, -Z of the world. Forward is in the
 // frame of the vertical of the body. One that changes to a camera that looks
-// with the body starts looking where the camera it left looked. Where another
-// end decides the body, its Move_Input is that end's.
+// with the body starts looking where the camera it left looked. Where the
+// camera looks is the view of the seat for the tick (input.Seat_View), an
+// input as its actions are, never the cameras of this end: the server and a
+// tick run again move a body as the end of its player did. Where another end
+// decides the body, its Move_Input is that end's.
 //
 // With no body for player 1 when the Play of the editor starts and no active
 // camera, the player flies a camera of its own from where the editor looked:
@@ -35,7 +38,6 @@ Free_Camera :: struct {
 Drive_View :: struct {
     sight:Sight,
     follows:^core.Table(Camera_Follow,.Read),
-    views:core.Ref(Camera_Views),
     parents:^core.Table(core.Parent,.Read),
     locals:^core.Table(core.Transform,.Read),
     verticals:^core.Table(core.Vertical,.Read),
@@ -69,16 +71,16 @@ camera_drive :: proc(
         }
         if turned,ok:=core.get(view.verticals,body);ok {move.look_yaw=mm.angle_wrap(move.look_yaw+turned.turn)}
         move.buttons=input.seat_buttons(move_actions.runtime,seat,bindings)
+        move.world_velocity=false
         wish:=input.seat_vector(move_actions,seat,.Move)
+        seen:=input.seat_view(move_actions.runtime,seat)
         camera,_:=camera_selected(view.sight.shown,view.sight.seats,view.sight.cameras,view.sight.hierarchy,seat)
         follow,follows_it:=core.get(view.follows,camera)
-        if camera!=core.NONE && (follows_it && (follow.mode==.Eyes || follow.mode==.Orbit && follow.aim) || !follows_it && core.is_under(view.parents,camera,body)) {
-            // Changing to it, the body starts looking where the camera it left looked.
-            left:=int(source.slot)<len(view.views.slots) && input.seat_local(source)?view.views.slots[source.slot].camera:camera
-            if placed,ok:=core.get(view.sight.worlds,left);ok && left!=camera {
-                forward:=mm.quat_rotate(conj(vertical),mm.quat_forward(placed.rotation))
-                move.look_yaw=mm.yaw_of_direction(forward)
-                move.look_pitch=math.asin(clamp(forward.y,-1,1))+(follows_it && follow.mode==.Orbit?follow.pitch:0)
+        if looks_with(view.follows,view.parents,camera,body) {
+            // Changing to it from one that turned apart, the body starts looking where that one looked.
+            if seen.kind==.Apart {
+                move.look_yaw=seen.yaw
+                move.look_pitch=seen.pitch+(follows_it && follow.mode==.Orbit?follow.pitch:0)
             }
             look:=input.seat_vector(look_actions,seat,.Look)*input.LOOK_SPEED
             low,high:f32=-PITCH_LIMIT,PITCH_LIMIT
@@ -92,16 +94,22 @@ camera_drive :: proc(
             move.move=mm.quat_rotate(vertical*mm.quat_axis_angle({0,1,0},move.look_yaw),[3]f32{wish.x,0,-wish.y})
             continue
         }
-        // Along where the camera looks, or -Z of the world without one; it faces where it goes.
-        yaw:f32
-        if placed,ok:=core.get(view.sight.worlds,camera);ok {yaw=yaw_in(vertical,placed.rotation)}
-        toward:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},yaw),[3]f32{wish.x,0,-wish.y})
+        // Along where its view looks, -Z of the world without a camera; it faces where it goes.
+        toward:=mm.quat_rotate(mm.quat_axis_angle({0,1,0},seen.yaw),[3]f32{wish.x,0,-wish.y})
         move.look_pitch,move.move=0,{}
         if amount:=linalg.length(toward);amount>0.001 {
             move.look_yaw=mm.yaw_of_direction(toward)
             move.move=mm.quat_rotate(vertical,toward/max(amount,1))
         }
     }
+}
+
+// Whether a camera looks with a body: Eyes, an Orbit that aims, or one on the
+// body without a Camera_Follow.
+looks_with :: proc(follows:^core.Table(Camera_Follow,$A),parents:^core.Table(core.Parent,$B),camera,body:core.Entity) -> bool {
+    if camera==core.NONE {return false}
+    follow,follows_it:=core.get(follows,camera)
+    return follows_it?follow.mode==.Eyes || follow.mode==.Orbit && follow.aim:core.is_under(parents,camera,body)
 }
 
 // The yaw of where a rotation looks about the up of a vertical frame.

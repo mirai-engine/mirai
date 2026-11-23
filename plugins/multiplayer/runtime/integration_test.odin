@@ -44,6 +44,7 @@ Net_Test_Tables :: struct {
     instances:core.Table(scene.Prefab_Instance),
     pendings:core.Table(scene.Prefab_Pending),
     seats:core.Table(inp.Seat),
+    nets:core.Table(Net_Seat),
     seat_state:inp.Seats,
     seat_runtime:inp.Seat_States,
     absents:core.Table(Seat_Absent),
@@ -241,9 +242,11 @@ net_test_replicate :: proc(audience:=Audience.Near,simulation:=Simulation.Server
 
 // The seat of a connection drives e: the connection owns it. Settled by the caller.
 @(private)
-net_test_own :: proc(w:^Net_Test_World,e:core.Entity,connection:Connection) {
+net_test_own :: proc(w:^Net_Test_World,e:core.Entity,connection:Connection) -> core.Entity {
     seat:=core.create(&w.entities)
-    core.add(&w.seats,seat,inp.Seat{peer=u64(connection),body=e})
+    core.add(&w.seats,seat,inp.Seat{remote=true,body=e})
+    core.add(&w.nets,seat,Net_Seat{connection=connection})
+    return seat
 }
 
 @(private)
@@ -298,7 +301,7 @@ net_test_replica :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,role:Role
     local,_:=core.get(core.world_table_of(w,core.Transform),e)
     r^={object=1,entity=e,type=net_test_type(s,w,e),role=role,simulation=simulation,slot=-1,samples=-1}
     r.pose={id=core.id_of(core.world_table_of(w,core.Id),e),position=local.position,rotation=local.rotation,scale=local.scale}
-    r.motion,_=motion_read(w,e)
+    r.motion,_=motion_read(net_tables(w),e)
     wire.smoothing_init(&r.smoothing)
     s.client.replica_high=max(s.client.replica_high,2)
     core.add(core.world_table_of(w,Net_Link),e,Net_Link{object=1})
@@ -340,7 +343,7 @@ net_test_pack :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,pose:
 net_test_command :: proc(s:^Net_Session,w:^Net_Test_World,r:^Replica,tick:u32,force:f32,words:[]u32) -> wire.Command {
     local,_:=core.get(&w.transforms,r.entity)
     pose:=Pose{id=core.id_of(&w.identities,r.entity),position=local.position,rotation=local.rotation,scale=local.scale}
-    motion,_:=motion_read(core.world_ref(w,s.info),r.entity)
+    motion,_:=motion_read(net_tables(core.world_ref(w,s.info)),r.entity)
     return net_test_pack(s,w,r,tick,pose,motion,force,words)
 }
 
@@ -869,7 +872,8 @@ object_scope_controls_relevance_radius_and_follows_the_replicated_ancestor :: pr
         if tick==20 {
             core.add(&world.objects,parent,net_test_replicate(audience=.Always))
             core.add(&world.visibility,parent,Visibility{mask=1})
-            core.add(&world.seats,seat,inp.Seat{peer=u64(connected)})
+            core.add(&world.seats,seat,inp.Seat{remote=true})
+            core.add(&world.nets,seat,Net_Seat{connection=connected})
         }
         if tick==40 {core.add(&world.visibility,seat,Visibility{sees=1})}
         if tick==70 {core.add(&world.visibility,seat,Visibility{})}
@@ -1013,7 +1017,7 @@ replicated_joint_waits_for_its_target_and_preserves_authoritative_frames_on_reta
     net_test_physics(&world,&shared,&app)
     testing.expect_value(t,world.state.world.joints[0].generation,generation)
     target_pose,_:=core.get(&world.transforms,initial)
-    pose_apply(&session,ref,initial,net_type(&session,net_test_type(&session,ref,initial)),Pose{position=target_pose.position,rotation=target_pose.rotation,scale={2,1,1}},Motion_State{},false)
+    pose_apply(&session,ref,net_tables(ref),initial,net_type(&session,net_test_type(&session,ref,initial)),Pose{position=target_pose.position,rotation=target_pose.rotation,scale={2,1,1}},Motion_State{},false)
     core.settle(&info,&world,nil)
     net_test_physics(&world,&shared,&app)
     scaled,_:=core.get(&world.transforms,initial)

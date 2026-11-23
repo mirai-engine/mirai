@@ -111,7 +111,7 @@ Input_Status :: enum u8 {
 
 Type_Stats :: struct {creates,updates,destroys,bits:u64}
 
-@(private) INPUT_MAX_BYTES :: 96
+@(private) INPUT_MAX_BYTES :: 128 // the actions of a seat, with where it looks, at their largest encoding
 @(private) INPUT_RING :: 16 // client: inputs kept until acknowledged, more than input_redundancy
 
 HISTORY_SECONDS :: f32(0.5)

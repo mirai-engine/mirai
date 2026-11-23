@@ -45,11 +45,13 @@ Camera_Views :: struct {
 }
 
 // The view of every local slot; the focused one's is the view of the game.
+// Where the camera of each looks is the view its seat takes for the next tick
+// (input.Slot_Views).
 @(step="late",stage="end")
 camera_blend :: proc(
     views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:^core.Table(input.Seat,.Read),
     parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),states:^core.Table(Camera_Follow_State,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
-    bodies:^render.View_Bodies,frame:core.Frame_Time,
+    bodies:^render.View_Bodies,slot_views:^input.Slot_Views,verticals:^core.Table(core.Vertical,.Read),frame:core.Frame_Time,
 ) {
     player:=input.focused(seat_state,seats)
     n:=clamp(seat_state.local_count,1,input.LOCAL_CAPACITY)
@@ -59,12 +61,14 @@ camera_blend :: proc(
         if slot>=n {
             if v.camera!=core.NONE {v^={}}
             if slot<len(bodies.bodies) && bodies.bodies[slot]!=core.NONE {bodies.bodies[slot]=core.NONE}
+            slot_views.views[slot]={}
             continue
         }
         seat:=seat_state.local_count>0?input.local_seat(seats,slot):core.NONE
         camera,through:=camera_selected(shown,seats,cameras,hierarchy,seat)
         body:=input.body_of(seats,seat)
         view_update(v,camera,through,body,cameras,follows,states,worlds,frame)
+        slot_views.views[slot]=view_seen(v.camera,body,follows,parents,worlds,verticals)
         // The own body of the view is the body of its player, or else the one its
         // camera follows. Nearer to it than twice what it allows, the view fades it out.
         v.fade=0
@@ -85,6 +89,18 @@ camera_blend :: proc(
     chosen.own=u8(focus_slot+1)
     chosen.fade,chosen.focus=focus.fade,focus.pose.focus
     if focus.blending {chosen.pose=focus.pose}
+}
+
+// Where a camera looks in the frame of the vertical of the body of its seat.
+@(private)
+view_seen :: proc(camera,body:core.Entity,follows:^core.Table(Camera_Follow,$A),parents:^core.Table(core.Parent,$B),worlds:^core.Table(core.World_Transform,$C),verticals:^core.Table(core.Vertical,$D)) -> (seen:input.Seat_View) {
+    placed,ok:=core.get(worlds,camera)
+    if !ok {return}
+    forward:=mm.quat_rotate(conj(core.vertical_of(verticals,body)),mm.quat_forward(placed.rotation))
+    seen.yaw=mm.yaw_of_direction(forward)
+    seen.pitch=math.asin(clamp(forward.y,-1,1))
+    seen.kind=looks_with(follows,parents,camera,body)?.Body:.Apart
+    return
 }
 
 @(private)

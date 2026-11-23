@@ -138,28 +138,6 @@ Parkour_State :: struct {
     ledge_jumping:bool `mirai:"transient,readonly"`,                // in the air by a ledge jump, until it lands
 }
 
-// Scripted or AI steering in world metres per second, bounded by the current mode.
-@(component,derived,shared,replicated,description="The world velocity and facing requested by an AI or script.")
-Locomotion_Drive :: struct {
-    velocity:[3]f32 `mirai:"transient,readonly,unit=m/s"`,
-    look_yaw,look_pitch:f32 `mirai:"transient,readonly,angle"`,
-    buttons:input.Action_Mask `mirai:"transient,readonly"`,
-}
-
-drive :: proc(drives:^core.Table(Locomotion_Drive),e:core.Entity,value:Locomotion_Drive) {
-    if row:=core.staged(drives,e);row!=nil {row^=value} else {core.add(drives,e,value)}
-}
-
-Locomotion_Input :: struct {
-    using seat:input.Move_Input,
-    world_velocity:bool,
-}
-
-resolve_input :: proc "contextless" (seat:input.Move_Input,drive:Locomotion_Drive,driven:bool) -> Locomotion_Input {
-    if !driven {return {seat=seat}}
-    return {seat={move=drive.velocity,look_yaw=drive.look_yaw,look_pitch=drive.look_pitch,buttons=seat.buttons|drive.buttons},world_velocity=true}
-}
-
 Locomotion_Request_Kind :: enum u8 {
     Add_Move,
     Remove_Moves, // those of the id of the move
@@ -213,7 +191,7 @@ set_suspended :: proc(requests:^Locomotion_Requests,e:core.Entity,suspended:bool
 @(step="fixed",stage="simulate",before="locomotion_step")
 locomotion_prepare :: proc(
     characters:^core.Table(phys.Character,.Read),colliders:^core.Table(phys.Collider,.Read),states:^core.Table(Locomotion_State),parkours:^core.Table(Parkour_State),
-    moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),drives:^core.Table(Locomotion_Drive),
+    moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),
     walks:^core.Table(Walk,.Read),flights:^core.Table(Fly,.Read),swims:^core.Table(Swim,.Read),slides:^core.Table(Slide,.Read),mantles:^core.Table(Mantle,.Read),
     requests:^Locomotion_Requests,time:core.Time,problems:^core.Problems,
 ) {
@@ -284,14 +262,13 @@ locomotion_prepare :: proc(
         core.remove(parkours,e)
         core.remove(moves,e)
         core.remove(inputs,e)
-        core.remove(drives,e)
     }
 }
 
 @(step="fixed",stage="simulate",before="physics_prepare")
 locomotion_step :: proc(
     characters:^core.Table(phys.Character,.Read),states:^core.Table(Locomotion_State),parkours:^core.Table(Parkour_State),
-    moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),drives:^core.Table(Locomotion_Drive,.Read),
+    moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),
     walks:^core.Table(Walk,.Read),flights:^core.Table(Fly,.Read),swims:^core.Table(Swim,.Read),slides:^core.Table(Slide,.Read),mantles:^core.Table(Mantle,.Read),tacticals:^core.Table(Tactical_Sprint,.Read),ledges:^core.Table(Ledge_Jump,.Read),
     found:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),
     locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),remotes:^core.Table(core.Remote,.Read),physics:core.Ref(phys.Physics_State),places:core.Ref(core.Places),
@@ -332,10 +309,8 @@ locomotion_step :: proc(
         motion,_:=core.get(motions,e)
         if c.placed {ground={}}
         if c.placed_at_rest {motion={}}
-        seat,seated:=core.get(inputs,e)
-        steering,driven:=core.get(drives,e)
-        asked:=resolve_input(seat,steering,driven)
-        if c.placed || !seated && !driven {asked.look_yaw=c.yaw}
+        asked,asked_any:=core.get(inputs,e)
+        if c.placed || !asked_any {asked.look_yaw=c.yaw}
         c.placed,c.placed_at_rest=false,false
         next:phys.Character_Move
         pace:=core.pace_of(clock,paces,e)
@@ -443,7 +418,7 @@ locomotion_gravity :: proc "contextless" (loco:Locomotion_State) -> f32 {return 
 
 // A Move_Input in the axes of the yaw a character faces, in the frame of its
 // vertical: what its modes read.
-move_facing :: proc "contextless" (asked:Locomotion_Input,yaw:f32,frame:mm.Quat) -> Locomotion_Input {
+move_facing :: proc "contextless" (asked:input.Move_Input,yaw:f32,frame:mm.Quat) -> input.Move_Input {
     facing:=asked
     facing.look_yaw=yaw
     facing.move=mm.quat_rotate(conj(frame*mm.quat_axis_angle({0,1,0},yaw)),asked.move)
@@ -453,7 +428,7 @@ move_facing :: proc "contextless" (asked:Locomotion_Input,yaw:f32,frame:mm.Quat)
 // The move of an input in the axes of its yaw (move_facing) in the world,
 // across the up of the frame of the vertical, as a share of the top speed of
 // a mode, at most 1 long: a velocity input asks for top speed at most.
-move_wish :: proc "contextless" (move_input:Locomotion_Input,frame:mm.Quat,top:f32) -> [3]f32 {
+move_wish :: proc "contextless" (move_input:input.Move_Input,frame:mm.Quat,top:f32) -> [3]f32 {
     s,c:=cmath.sincos(move_input.look_yaw)
     m:=move_share(move_input,top)
     wish:=[3]f32{c*m.x+s*m.z,0,c*m.z-s*m.x}
@@ -462,7 +437,7 @@ move_wish :: proc "contextless" (move_input:Locomotion_Input,frame:mm.Quat,top:f
 }
 
 // The move of an input as a share of the top speed of a mode, at most 1 long.
-move_share :: proc "contextless" (move_input:Locomotion_Input,top:f32) -> [3]f32 {
+move_share :: proc "contextless" (move_input:input.Move_Input,top:f32) -> [3]f32 {
     m:=move_input.move
     if move_input.world_velocity {m=m/top if top>0 else {}}
     if l:=linalg.length(m);!(l<=1) {m=m/l if l<=max(f32) else {}}
@@ -477,7 +452,7 @@ SPRINT_FORWARD :: f32(0.5)
 // sprint action or sprint_default) when it is faster, less backward_slowdown by how straight back from the look the
 // move points (-Z of the move is forward); crouched, crouch_speed, which
 // sprint does not change.
-walk_speed :: proc "contextless" (walk:Walk,move_input:Locomotion_Input,sprinting:bool,crouched:=false,boost:f32=1) -> f32 {
+walk_speed :: proc "contextless" (walk:Walk,move_input:input.Move_Input,sprinting:bool,crouched:=false,boost:f32=1) -> f32 {
     speed:=crouch_speed(walk) if crouched else walk.max_speed
     if !crouched && sprint_forward(move_input,sprinting || walk.sprint_default) && walk.sprint_speed*boost>speed {speed=walk.sprint_speed*boost}
     l:=linalg.length(move_input.move.xz)
@@ -489,7 +464,7 @@ walk_speed :: proc "contextless" (walk:Walk,move_input:Locomotion_Input,sprintin
 
 // Whether an input sprints: the sprint action held with a move within 60° of
 // where it looks.
-sprint_forward :: proc "contextless" (move_input:Locomotion_Input,sprinting:bool) -> bool {
+sprint_forward :: proc "contextless" (move_input:input.Move_Input,sprinting:bool) -> bool {
     l:=linalg.length(move_input.move.xz)
     return sprinting && l>0 && -move_input.move.z/l>=SPRINT_FORWARD
 }
@@ -509,7 +484,7 @@ Walk_Moves :: struct {
 // time of the world (dt is that of its own time). walking and swim are nil
 // for a character that cannot walk or swim: one that only swims stays in the
 // mode out of the water; extra holds what else changes its walk.
-locomotion_move :: proc(loco:^Locomotion_State,p:^Parkour_State,body:phys.Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:phys.Character_State,frame:mm.Quat,move_input:Locomotion_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt:f32,pace:f32=1,scale:f32=1) -> (move:phys.Character_Drive) {
+locomotion_move :: proc(loco:^Locomotion_State,p:^Parkour_State,body:phys.Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:phys.Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt:f32,pace:f32=1,scale:f32=1) -> (move:phys.Character_Drive) {
     up:=mm.quat_rotate(frame,{0,1,0})
     across :: proc "contextless" (v,up:[3]f32) -> [3]f32 {return v-up*linalg.dot(v,up)}
     look:=frame*mm.quat_axis_angle({0,1,0},move_input.look_yaw)
@@ -793,7 +768,7 @@ move_paced :: proc "contextless" (move:^phys.Character_Drive,loco:^Locomotion_St
 // The Character_Move of one tick of the world for a character whose time runs
 // pace times it (core.pace_of): locomotion_move in its own time, from the
 // ground, the velocity and the dt of the world.
-locomotion_move_paced :: proc(loco:^Locomotion_State,p:^Parkour_State,body:phys.Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:phys.Character_State,frame:mm.Quat,move_input:Locomotion_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt,pace:f32) -> (move:phys.Character_Drive) {
+locomotion_move_paced :: proc(loco:^Locomotion_State,p:^Parkour_State,body:phys.Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),extra:Walk_Moves,ground:phys.Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt,pace:f32) -> (move:phys.Character_Drive) {
     own:=ground
     own.ground_velocity/=pace
     own.fluid_velocity/=pace

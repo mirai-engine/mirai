@@ -12,8 +12,10 @@ import net_phys "plugins:physics_multiplayer/runtime"   // joins physics and mul
 @(step="fixed",server)
 shoot :: proc(inputs:core.Ref(multiplayer.Remote_Inputs),history:^multiplayer.Rewind_History,
     physics:core.Ref(phys.Physics_State),marked:^core.Table(multiplayer.Rewind,.Read),
+    nets:^core.Table(multiplayer.Net_Seat,.Read),
     time:core.Time /* , the shooter's seat and body, the aim */) {
-    connection:=multiplayer.Connection(seat.peer)         // the shooter's seat
+    net,_:=core.get(nets,seat)                            // of the shooter's seat
+    connection:=net.connection
     tick,ok:=multiplayer.rewind_tick(inputs,connection,time)
     if !ok {return}                                       // no input yet: judge in the present
     hit,found:=net_phys.rewind_raycast(history,physics,marked,tick,origin,direction,100,shooter)

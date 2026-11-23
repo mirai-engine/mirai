@@ -201,7 +201,7 @@ slide_start :: proc "contextless" (loco:^Parkour_State,current,up:[3]f32) {
 
 // Whether a character asks to mantle this tick, before its locomotion takes the jump: jump pressed
 // while it stands (from_ground), or jump held once it has been delay in the air.
-mantle_wanted :: proc "contextless" (loco:^Locomotion_State,p:^Parkour_State,mantle:Mantle,ground:phys.Character_State,move_input:Locomotion_Input,jump:input.Action) -> (wanted,from_ground:bool) {
+mantle_wanted :: proc "contextless" (loco:^Locomotion_State,p:^Parkour_State,mantle:Mantle,ground:phys.Character_State,move_input:input.Move_Input,jump:input.Action) -> (wanted,from_ground:bool) {
     held:=move_input.buttons&input.action_bit(jump)!=0
     switch loco.mode {
     case MODE_WALKING,MODE_CROUCHING:
@@ -286,7 +286,7 @@ mantle_point :: proc "contextless" (from,to,up:[3]f32,u:f32) -> [3]f32 {
 // or when something holds it off the way, it falls (and stands on what it climbed). driven: an
 // Override layered move takes the climb this tick (the root motion of the animation of the climb,
 // warped onto the ledge), so it goes where that move takes it and only its time runs.
-mantle_move :: proc(loco:^Locomotion_State,p:^Parkour_State,body:phys.Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,move_input:Locomotion_Input,jump:input.Action,dt:f32,driven:=false) -> (move:phys.Character_Drive) {
+mantle_move :: proc(loco:^Locomotion_State,p:^Parkour_State,body:phys.Character,mantle:Mantle,frame:mm.Quat,position:[3]f32,move_input:input.Move_Input,jump:input.Action,dt:f32,driven:=false) -> (move:phys.Character_Drive) {
     up:=mm.quat_rotate(frame,{0,1,0})
     move.yaw=move_input.look_yaw
     loco.jump_held=move_input.buttons&input.action_bit(jump)!=0

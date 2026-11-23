@@ -19,7 +19,7 @@ import phys "plugins:physics/runtime"
 // speed of the root of its pose. A game writes no code for locomotion; the clips and their modes
 // are in the .character.
 @(step="fixed",stage="simulate",after="physics_step",before="animation_sample")
-animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states:^core.Table(locomotion.Locomotion_State,.Read),found:^core.Table(phys.Character_State,.Read),animations:^core.Table(anim.Animation,.Read),motions:^core.Table(core.Motion,.Read),inputs:^core.Table(inp.Move_Input,.Read),drives:^core.Table(locomotion.Locomotion_Drive,.Read),parkours:^core.Table(locomotion.Parkour_State,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),walks:^core.Table(locomotion.Walk,.Read),tacticals:^core.Table(locomotion.Tactical_Sprint,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),worlds:^core.Table(core.World_Transform,.Read),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,sets:core.Ref(anim.Character_Assets),app:^host.App) {
+animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states:^core.Table(locomotion.Locomotion_State,.Read),found:^core.Table(phys.Character_State,.Read),animations:^core.Table(anim.Animation,.Read),motions:^core.Table(core.Motion,.Read),inputs:^core.Table(inp.Move_Input,.Read),parkours:^core.Table(locomotion.Parkour_State,.Read),walk_actions:inp.Input_Of(locomotion.Walk_Action),walks:^core.Table(locomotion.Walk,.Read),tacticals:^core.Table(locomotion.Tactical_Sprint,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),worlds:^core.Table(core.World_Transform,.Read),playback:core.Ref(anim.Playback),physics:core.Ref(phys.Physics_State),requests:^anim.Animation_Requests,sets:core.Ref(anim.Character_Assets),app:^host.App) {
     if app==nil || app.assets==nil {return}
     for row in 0..<core.count(states) {
         entity:=core.entity_at(states,row)
@@ -31,10 +31,8 @@ animation_locomotion :: proc(characters:^core.Table(phys.Character,.Read),states
         character:=core.at(states,row)
         body,_:=core.get(characters,entity)
         going,_:=core.get(motions,entity)
-        seat,seated:=core.get(inputs,entity)
-        drive,driven:=core.get(drives,entity)
-        asked:=locomotion.resolve_input(seat,drive,driven)
-        if !seated && !driven {asked.look_yaw=character.yaw}
+        asked,asked_any:=core.get(inputs,entity)
+        if !asked_any {asked.look_yaw=character.yaw}
         parkour,_:=core.get(parkours,entity)
         input:=locomotion.move_facing(asked,character.yaw,mm.QUAT_IDENTITY)
         placed,_:=core.get(worlds,entity)

@@ -54,7 +54,7 @@ only on change (`Player_Hud`, `Portal_Hud`, `Raft_Hud`, `Dig_Hud`, `Vfx_Gallery_
 | File | Key components & steps |
 | --- | --- |
 | `game.odin` | `@(actions) Action`, `game_use` (doors/swatches/cube throw), `game_projectiles` (`react`, `destruct.damage`), `game_glow` (sole writer of `Material_Values`) |
-| `control.odin` | `Follow`, `game_dogs` (`server`), `game_seats`, `game_follow` (`Locomotion_Drive`), `game_barker` (`bark` / `intro.bark`) |
+| `control.odin` | `Follow`, `game_dogs` (`server`), `game_seats`, `game_follow` (`input.move_set`), `game_barker` (`bark` / `intro.bark`) |
 | `raft.odin` | `Diver` oxygen over `head_depth`, `raft_breath` respawn on `Raft_Game`, `raft_hud` |
 | `portal_game.odin` | `Portal_Gun`/`Portal_Mouth`/`Portal_Surface`/`Portal_Cube`/`Grill`/`Floor_Button`/`Grill_Passes`; `portal_links` sole writer of `Portal` and `Hidden` |
 | `dig_site.odin` | `Dig_Site`, `dig_site` (`react`, server-only: `terrain.dig`, `Dig_Inventory` from `Terrain_Digs`, `Dig_Pickup`), `dig_hud` |

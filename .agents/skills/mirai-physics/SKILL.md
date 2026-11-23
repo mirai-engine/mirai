@@ -158,8 +158,9 @@ tables and is the only package that imports it. The game and the other plugins, 
   the step of that mode writes it first, to which locomotion only adds the layered movements.
 - Locomotion is a plugin on top of physics: it drives characters only through the facade, and
   `physics` imports nothing of it. A walker is `Character` + `Walk`; the mode it starts in follows
-  from its mode components. Seats write `input.Move_Input` and scripted drivers write
-  `Locomotion_Drive`. Locomotion turns the body.
+  from its mode components. Its one input is `input.Move_Input`: the seat that drives it writes
+  it, else its AI or a script (`input.move_set`, a velocity with `world_velocity`). Locomotion
+  turns the body.
 - `Character` and the mode components are authored and never written while playing; what changes
   is in `Locomotion_State`, all `transient`, so a scene saved after play holds no run-time field.
 - A joint is an entity of its own: `a` (by default its parent) and `b`, its frame its Transform, and

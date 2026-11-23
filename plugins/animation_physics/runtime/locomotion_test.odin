@@ -43,7 +43,6 @@ the_bridge_uses_current_motion_and_ignores_raw_clips_even_with_previous_matching
         animations:core.Table(anim.Animation),
         motions:core.Table(core.Motion),
         inputs:core.Table(inp.Move_Input),
-        drives:core.Table(locomotion.Locomotion_Drive),
         parkours:core.Table(locomotion.Parkour_State),
         walks:core.Table(locomotion.Walk),
         tacticals:core.Table(locomotion.Tactical_Sprint),
@@ -103,7 +102,7 @@ the_bridge_uses_current_motion_and_ignores_raw_clips_even_with_previous_matching
         core.edit(&tables.motions,actor).linear={3,0,2}
         animation_locomotion(core.read(&tables.bodies),core.read(&tables.states),
             core.read(&tables.found),core.read(&tables.animations),core.read(&tables.motions),
-            core.read(&tables.inputs),core.read(&tables.drives),core.read(&tables.parkours),
+            core.read(&tables.inputs),core.read(&tables.parkours),
             {},core.read(&tables.walks),core.read(&tables.tacticals),
             core.read(&tables.flights),core.read(&tables.swims),core.read(&tables.worlds),
             core.ref(&playback),{},&requests,core.ref(&sets),app)

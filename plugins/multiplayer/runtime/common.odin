@@ -55,10 +55,26 @@ entity_kinds :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,kinds:^[wire.
     return count,true
 }
 
+// The tables the network reads and writes for each replica, resolved once
+// for a pass over them: never kept in the session, for a copy of the world or
+// a scene that replaces it has its own.
+@(private)
+Net_Tables :: struct {
+    transforms:^core.Table(core.Transform),
+    motions:^core.Table(core.Motion),
+    moves:^core.Table(input.Move_Input),
+    replicas:^core.Table(core.Pose_Target),
+}
+
+@(private)
+net_tables :: proc(w:core.World_Ref) -> Net_Tables {
+    return {core.world_table_of(w,core.Transform),core.world_table_of(w,core.Motion),core.world_table_of(w,input.Move_Input),core.world_table_of(w,core.Pose_Target)}
+}
+
 // The velocities of what a simulation moves, as this end has them now.
 @(private)
-motion_read :: proc(w:core.World_Ref,e:core.Entity) -> (motion:Motion_State,awake:bool) {
-    held:=core.staged(core.world_table_of(w,core.Motion),e)
+motion_read :: proc(n:Net_Tables,e:core.Entity) -> (motion:Motion_State,awake:bool) {
+    held:=core.staged(n.motions,e)
     if held==nil {return}
     return {held.linear,held.angular},held.awake
 }
@@ -105,10 +121,10 @@ components_apply :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,t:^Net_Ty
 // whoever owns its Transform takes it at the start of the next tick
 // (core.Pose_Target). rest also puts a body to sleep there.
 @(private)
-pose_apply :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,t:^Net_Type,pose:Pose,motion:Motion_State,follow:bool,rest:=false) {
+pose_apply :: proc(s:^Net_Session,w:core.World_Ref,n:Net_Tables,e:core.Entity,t:^Net_Type,pose:Pose,motion:Motion_State,follow:bool,rest:=false) {
     components_turn(w,e,t,pose.off)
     s.placed+=1
-    replica_write(w,e,{
+    replica_write(n,e,{
         follow=follow,placed=s.placed,rest=rest,position=pose.position,rotation=pose.rotation,scale=pose.scale,
         linear=motion.linear,angular=motion.angular,
     })
@@ -119,28 +135,26 @@ pose_apply :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,t:^Net_Type,pos
 // A shown replica heads for a state of the network in the tick, pushing what
 // it touches; one farther than it goes in a tick is put there first.
 @(private)
-pose_follow :: proc(s:^Net_Session,w:core.World_Ref,e:core.Entity,t:^Net_Type,pose:Pose,motion:Motion_State) {
+pose_follow :: proc(s:^Net_Session,w:core.World_Ref,n:Net_Tables,e:core.Entity,t:^Net_Type,pose:Pose,motion:Motion_State) {
     components_turn(w,e,t,pose.off)
     value:=core.Pose_Target{
         follow=true,position=pose.position,rotation=pose.rotation,scale=pose.scale,
         linear=motion.linear,angular=motion.angular,
     }
-    replicas:=core.world_table_of(w,core.Pose_Target)
-    held:=core.staged(replicas,e)
-    local,has:=core.get(core.world_table_of(w,core.Transform),e)
+    held:=core.staged(n.replicas,e)
+    local,has:=core.get(n.transforms,e)
     if held!=nil && has && linalg.length2(local.position-pose.position)<=REPLICA_JUMP*REPLICA_JUMP {
         value.placed=held.placed
     } else {
         s.placed+=1
         value.placed=s.placed
     }
-    if held!=nil {held^=value} else {core.add(replicas,e,value)}
+    if held!=nil {held^=value} else {core.add(n.replicas,e,value)}
 }
 
 @(private)
-replica_write :: proc(w:core.World_Ref,e:core.Entity,value:core.Pose_Target) {
-    replicas:=core.world_table_of(w,core.Pose_Target)
-    if held:=core.staged(replicas,e);held!=nil {held^=value} else {core.add(replicas,e,value)}
+replica_write :: proc(n:Net_Tables,e:core.Entity,value:core.Pose_Target) {
+    if held:=core.staged(n.replicas,e);held!=nil {held^=value} else {core.add(n.replicas,e,value)}
 }
 
 // The components of a type that the entity turned off by themselves, and
@@ -174,9 +188,8 @@ components_turn :: proc(w:core.World_Ref,e:core.Entity,t:^Net_Type,mask:u16) {
 }
 
 @(private)
-driver_read :: proc(w:core.World_Ref,e:core.Entity) -> (value:Driver_State) {
-    moves:=core.world_table_of(w,input.Move_Input)
-    if moves!=nil {value.move,value.has_move=core.get(moves,e)}
+driver_read :: proc(n:Net_Tables,e:core.Entity) -> (value:Driver_State) {
+    if n.moves!=nil {value.move,value.has_move=core.get(n.moves,e)}
     return
 }
 

@@ -419,12 +419,12 @@ an_error_too_deep_for_the_frame_puts_the_replica_where_the_server_carries_it :: 
     r:=&s.client.replicas[1]
     ref:=core.world_ref(&f.world,&f.info)
     third,_:=record_of(&s.client,&s.desc,r,3)
-    before,_:=replica_now(s,ref,r)
+    before,_:=replica_now(s,net_tables(ref),r)
     wanted:=before.position+{0,0.1,0}
     correction_fixture_state(&f,3,{0,0.1,0})
     client_reconcile(s,ref,&f.app,1.0/60)
     testing.expect(t,s.stats.corrected==0 && s.stats.deferred==1 && s.stats.placed==1)
-    now,_:=replica_now(s,ref,r)
+    now,_:=replica_now(s,net_tables(ref),r)
     testing.expectf(t,linalg.length(now.position-wanted)<0.002,"the replica is at %v, and the server carries it to %v",now.position,wanted)
     testing.expectf(t,linalg.length(now.position+r.smoothing.offset-before.position)<1e-4,"it is drawn at %v, and was at %v",now.position+r.smoothing.offset,before.position)
     correction_fixture_send(&f,8,{id=1,position=wanted+{0,0.3,0},rotation=1,scale={1,1,1}},{})
@@ -456,7 +456,7 @@ a_state_older_than_the_history_puts_the_replica_where_the_server_had_it :: proc(
     testing.expect_value(t,f.session.stats.placed,u64(1))
     wanted:=there+velocity*(f32(c.newest-1)/60)
     // A body takes the place with the next tick: for the network it is there already.
-    now,_:=replica_now(&f.session,core.world_ref(&f.world,&f.info),&c.replicas[1])
+    now,_:=replica_now(&f.session,net_tables(core.world_ref(&f.world,&f.info)),&c.replicas[1])
     got:=now.position
     testing.expectf(t,linalg.length(got-wanted)<0.002,"the replica is at %v, and the server had it at %v nine ticks ago",got,wanted)
 }

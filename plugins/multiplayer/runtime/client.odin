@@ -552,7 +552,7 @@ replica_spawn :: proc(s:^Net_Session,w:core.World_Ref,assets:^host.Assets,r:^Rep
     command:=replica_command(s,r)
     components_apply(s,w,e,t,&command,r.available)
     // A body that is made with the next step takes its pose and its velocities from the replica.
-    pose_apply(s,w,e,t,r.pose,r.motion,false)
+    pose_apply(s,w,net_tables(w),e,t,r.pose,r.motion,false)
     replica_turn(w,r)
     s.stats.spawned+=1
 }
@@ -680,8 +680,9 @@ replica_classify :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica) {
 @(private)
 replica_components :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,mode:Mode) {
     e:=r.entity
+    n:=net_tables(w)
     remote_set(core.world_table_of(w,core.Remote),e,r.role!=.Predicted && r.role!=.Held)
-    replicas:=core.world_table_of(w,core.Pose_Target)
+    replicas:=n.replicas
     held:=core.staged(replicas,e)
     switch mode {
     case .Here:
@@ -689,7 +690,7 @@ replica_components :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,mode:Mode)
     case .Interpolated,.Predicted:
         follow:=mode!=.Predicted
         if held==nil {
-            pose_apply(s,w,e,net_type(s,r.type),r.pose,r.motion,follow)
+            pose_apply(s,w,n,e,net_type(s,r.type),r.pose,r.motion,follow)
         } else if held.follow!=follow {
             held.follow=follow
         }
@@ -944,6 +945,7 @@ snapshot_problem :: proc(s:^Net_Session,tick:u32) {
 client_place :: proc(s:^Net_Session,w:core.World_Ref,tick:f64,shown:[]Shown,resimulating:bool) {
     c:=&s.client
     es:=core.world_entities(w)
+    n:=net_tables(w)
     for &r,index in c.replicas[:c.replica_high] {
         if r.object==0 || r.mode!=.Interpolated || r.samples<0 || !core.alive(es,r.entity) {continue}
         delay:=r.delay
@@ -954,11 +956,11 @@ client_place :: proc(s:^Net_Session,w:core.World_Ref,tick:f64,shown:[]Shown,resi
             r.shown_set=false
         }
         at:=tick-f64(max(delay,0))
-        replica_show(s,w,&r,at)
+        replica_show(s,w,n,&r,at)
         if core.entity_off(es,r.entity) {continue}
         if sample,ok:=replica_blend(s,&r,at);ok {
             feed_state(c,r.object,sample.pose,sample.motion)
-            pose_follow(s,w,r.entity,net_type(s,r.type),sample.pose,sample.motion)
+            pose_follow(s,w,n,r.entity,net_type(s,r.type),sample.pose,sample.motion)
         }
     }
 }
@@ -968,7 +970,7 @@ client_place :: proc(s:^Net_Session,w:core.World_Ref,tick:f64,shown:[]Shown,resi
 // entity takes the fields that changed in the states since the one it has, or
 // every one it knows when that one is not kept any more.
 @(private)
-replica_show :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,tick:f64) {
+replica_show :: proc(s:^Net_Session,w:core.World_Ref,n:Net_Tables,r:^Replica,tick:f64) {
     c:=&s.client
     reached:[]u8
     at:u32
@@ -986,7 +988,7 @@ replica_show :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,tick:f64) {
     command:=wire.Command{kind=.Object_Updated,type=r.type,object=r.object,tick=at,mask=whole?(^Sample)(raw_data(reached)).available:mask,words=sample_words(c,reached)}
     feed(c,r.object);feed(c,at);feed(c,command.mask)
     components_apply(s,w,r.entity,net_type(s,r.type),&command,command.mask)
-    driver_apply(s,w,r,&command)
+    driver_apply(s,n,r,&command)
     r.shown,r.shown_set=at,true
 }
 
@@ -1110,7 +1112,8 @@ driven_list :: proc(c:^Client) {
 records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
     c:=&s.client
     d:=&s.desc
-    motions:=core.world_table_of(w,core.Motion)
+    n:=net_tables(w)
+    motions:=n.motions
     es:=core.world_entities(w)
     c.record_ticks[int(tick)%c.history]=tick+1
     row:=c.records[(int(tick)%c.history)*d.predicted_capacity:][:d.predicted_capacity]
@@ -1123,7 +1126,7 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
         c.islands[islands]=motion.island
         islands+=1
     }
-    configs,transforms:=core.world_table_of(w,Replicate),core.world_table_of(w,core.Transform)
+    configs,transforms:=core.world_table_of(w,Replicate),n.transforms
     radius :: proc(configs:^core.Table(Replicate),e:core.Entity) -> f32 {
         config,found:=core.get(configs,e)
         return found?config.radius:REPLICATE_DEFAULT.radius
@@ -1155,7 +1158,7 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
         if r.mode!=.Predicted || r.slot<0 {continue}
         record:=&row[r.slot]
         record^={}
-        now,has_pose:=replica_now(s,w,&r)
+        now,has_pose:=replica_now(s,n,&r)
         if !has_pose {continue}
         record^={object=r.object,position=now.position,rotation=now.rotation,scale=now.scale,linear=now.linear,angular=now.angular,center=motion.center}
         record_components(s,w,&r,tick)
@@ -1167,7 +1170,8 @@ records_capture :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
 client_upload :: proc(s:^Net_Session,w:core.World_Ref) {
     c:=&s.client
     es:=core.world_entities(w)
-    transforms:=core.world_table_of(w,core.Transform)
+    n:=net_tables(w)
+    transforms:=n.transforms
     for &r in c.replicas[:c.replica_high] {
         if r.object==0 || r.role!=.Held || !core.alive(es,r.entity) {continue}
         t:=net_type(s,r.type)
@@ -1175,7 +1179,7 @@ client_upload :: proc(s:^Net_Session,w:core.World_Ref) {
         if !has_pose {continue}
         pose:=Pose{id=r.pose.id,prefab=r.pose.prefab,sections=r.pose.sections,position=local.position,rotation=local.rotation,scale=local.scale}
         pose.off,pose.absent=components_off(w,r.entity,t)
-        motion,_:=motion_read(w,r.entity)
+        motion,_:=motion_read(n,r.entity)
         if pose!=r.pose {
             r.pose=pose
             wire.object_write(&s.host,r.object,0,&pose)
@@ -1233,25 +1237,25 @@ record_differs :: proc(d:^Net_Settings,body:bool,record:^Record,pose:^Pose,motio
 }
 
 @(private)
-replica_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica) -> (now:Present,ok:bool) {
-    local,has_pose:=core.get(core.world_table_of(w,core.Transform),x.entity)
+replica_now :: proc(s:^Net_Session,n:Net_Tables,x:^Replica) -> (now:Present,ok:bool) {
+    local,has_pose:=core.get(n.transforms,x.entity)
     if !has_pose {return}
     // A place the simulation takes with the next tick is where the replica is for the network already.
-    if asked:=core.staged(core.world_table_of(w,core.Pose_Target),x.entity);asked!=nil && i32(asked.placed-s.taken)>0 {
+    if asked:=core.staged(n.replicas,x.entity);asked!=nil && i32(asked.placed-s.taken)>0 {
         return {position=asked.position,rotation=asked.rotation,scale=asked.scale,linear=asked.linear,angular=asked.angular,asleep=asked.rest},true
     }
-    motion,awake:=motion_read(w,x.entity)
+    motion,awake:=motion_read(n,x.entity)
     return {position=local.position,rotation=local.rotation,scale=local.scale,linear=motion.linear,angular=motion.angular,asleep=!awake},true
 }
 
 @(private)
-replica_put :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,to:^Present) {
-    local,has_pose:=core.get(core.world_table_of(w,core.Transform),x.entity)
+replica_put :: proc(s:^Net_Session,w:core.World_Ref,n:Net_Tables,x:^Replica,to:^Present) {
+    local,has_pose:=core.get(n.transforms,x.entity)
     if !has_pose {return}
     pose:=Pose{position=to.position,rotation=to.rotation,scale=to.scale}
     motion:=x.motion
     motion.linear,motion.angular=to.linear,to.angular
-    pose_apply(s,w,x.entity,net_type(s,x.type),pose,motion,false,to.asleep)
+    pose_apply(s,w,n,x.entity,net_type(s,x.type),pose,motion,false,to.asleep)
 }
 
 // A predicted replica takes a state of the server in the present, when the
@@ -1261,7 +1265,8 @@ replica_put :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,to:^Present) {
 @(private)
 replica_place_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,command:^wire.Command,tick_dt:f32) {
     c:=&s.client
-    now,alive:=replica_now(s,w,x)
+    n:=net_tables(w)
+    now,alive:=replica_now(s,n,x)
     if !alive {return}
     t:=net_type(s,x.type)
     pose:Pose
@@ -1278,7 +1283,7 @@ replica_place_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,command:^wi
         wanted.rotation=linalg.normalize(pose.rotation*conj(record.rotation)*now.rotation)
         wanted.linear,wanted.angular=now.linear+off,now.angular+motion.angular-record.angular
     }
-    replica_put(s,w,x,&wanted)
+    replica_put(s,w,n,x,&wanted)
     core.world_settle(w)
     for index in 0..<c.history {c.records[index*s.desc.predicted_capacity+int(x.slot)].object=0}
     wire.smoothing_correct(&x.smoothing,now.position,wanted.position,now.rotation,wanted.rotation,x.switched?SWITCH_HALF_LIFE:0)
@@ -1294,7 +1299,8 @@ replica_place_now :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,command:^wi
 replica_switch :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,tick_dt:f32) -> (back:bool) {
     c:=&s.client
     was:=x.mode
-    before,alive:=replica_now(s,w,x)
+    n:=net_tables(w)
+    before,alive:=replica_now(s,n,x)
     replica_classify(s,w,x)
     if x.mode==was || !alive {return false}
     x.switched=true
@@ -1304,7 +1310,7 @@ replica_switch :: proc(s:^Net_Session,w:core.World_Ref,x:^Replica,tick_dt:f32) -
         command:=replica_command(s,x)
         replica_place_now(s,w,x,&command,tick_dt)
     } else if sample,ok:=replica_blend(s,x,wire.clock_interpolation_tick(&s.host,c.newest)-f64(max(x.delay,0)));ok {
-        pose_apply(s,w,x.entity,net_type(s,x.type),sample.pose,sample.motion,true)
+        pose_apply(s,w,n,x.entity,net_type(s,x.type),sample.pose,sample.motion,true)
         core.world_settle(w)
         wire.smoothing_correct(&x.smoothing,before.position,sample.pose.position,before.rotation,sample.pose.rotation,SWITCH_HALF_LIFE)
     }
@@ -1454,10 +1460,11 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
         if at:=&c.frames[int(tick)%len(c.frames)];!at.valid || at.tick!=tick {return false}
     }
 
+    tables:=net_tables(w)
     for &x in c.replicas[:c.replica_high] {
         x.corrected=false
         if x.object==0 || x.mode!=.Predicted {continue}
-        before,corrected:=replica_now(s,w,&x)
+        before,corrected:=replica_now(s,tables,&x)
         x.before=before
         x.corrected=corrected
     }
@@ -1509,9 +1516,10 @@ client_rollback :: proc(s:^Net_Session,w:core.World_Ref,app:^host.App,target:u32
     behind:=int(i32(c.newest-target))
     s.stats.corrected+=1
     s.stats.largest_resimulation=max(s.stats.largest_resimulation,behind)
+    after_tables:=net_tables(w)
     for &x in c.replicas[:c.replica_high] {
         if !x.corrected || x.object==0 || x.mode!=.Predicted {continue}
-        after:=replica_now(s,w,&x) or_continue
+        after:=replica_now(s,after_tables,&x) or_continue
         wire.smoothing_correct(&x.smoothing,x.before.position,after.position,x.before.rotation,after.rotation,x.switched?SWITCH_HALF_LIFE:0)
     }
     return true
@@ -1686,13 +1694,16 @@ replica_adopt :: proc(s:^Net_Session,w:core.World_Ref,id:base.Entity_Id,e:core.E
 spawns_take :: proc(s:^Net_Session,w:core.World_Ref,made:[]Spawn,tick:u64) {
     if len(made)==0 {return}
     kinds:=make([]u64,len(made),context.temp_allocator)
+    nets:=core.world_table_of(w,Net_Seat)
     for item,i in made {
         if !core.alive(core.world_entities(w),item.entity) {continue}
         if !item.kept {
             kinds[i]=spawn_kind(s,w,item.entity)
             sequence:u32
-            for before,k in made[:i] {sequence+=u32(!before.kept && before.peer==item.peer && kinds[k]==kinds[i])}
-            connection:=item.peer!=0?Connection(item.peer):own_connection(core.ref(s))
+            for before,k in made[:i] {sequence+=u32(!before.kept && before.seat==item.seat && kinds[k]==kinds[i])}
+            // A seat of another end makes it on a server; the seat of this end, the player of this end.
+            connection:=own_connection(core.ref(s))
+            if net,remote:=core.get(nets,item.seat);remote && net.connection!=0 {connection=net.connection}
             core.add(core.world_table_of(w,core.Id),item.entity,core.Id{spawn_id(connection,tick,kinds[i],sequence)})
         }
         if s.mode==.Client {core.add(core.world_table_of(w,Predicted_Spawn),item.entity,Predicted_Spawn{tick=tick,kept=item.kept})}

@@ -84,7 +84,7 @@ plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Read,screens:^core.
         screen:=core.at(screens,row)
         // A screen that names no player is of the one its entity is of: in
         // its part while the window is split, and not on this machine when
-        // that player is at another end or nobody drives the body.
+        // that player is at another end or away, or nobody plays the body.
         if screen.player==0 {
             if slot,owned,local:=screen_owner(seats,seat_state,moves,parents,e);owned {
                 if !local || slot>=players {continue}
@@ -134,17 +134,22 @@ plan_screens :: proc(gui:^Gui,app:^host.App,world:core.World_Read,screens:^core.
 
 OWNER_DEPTH :: 8 // entities over one that are asked whose it is
 
-// Whose an entity is: the seat it is, the seat that drives it, or that of
-// the nearest entity over it that is one of those. owned: it is of a player,
-// or a body nobody drives; local: of the player of this machine in slot.
+// Whose an entity is: the seat it is, the seat that drives it (the network
+// replicates which body each seat drives), or that of the nearest entity over
+// it that is one of those; the body of a seat that is off is of a player
+// away. owned: it is of a player, or a body its AI or a script asks to move
+// (Move_Input) and no player plays; local: of the player of this machine in
+// slot.
 screen_owner :: proc(seats:^core.Table(inp.Seat,.Read),seat_state:core.Ref(inp.Seats),moves:^core.Table(inp.Move_Input,.Read),parents:^core.Table(core.Parent,.Read),e:core.Entity) -> (slot:int,owned,local:bool) {
     at:=e
     for _ in 0..<OWNER_DEPTH {
         seat:=at
-        if driver:=inp.seat_of(seat_state,at);driver!=core.NONE {
-            seat=driver
-        } else if core.has(moves,at) {return 0,true,false}
+        if driver:=inp.seat_of(seat_state,at);driver!=core.NONE {seat=driver}
         if value,is_seat:=core.get(seats,seat);is_seat {return int(value.slot),true,inp.seat_local(value)}
+        for value in seats.values[core.count(seats):] {
+            if value.body==at {return int(value.slot),true,false}
+        }
+        if core.has(moves,at) {return 0,true,false}
         parent,has:=core.get(parents,at)
         if !has || parent.entity==core.NONE {return}
         at=parent.entity

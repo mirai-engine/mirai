@@ -145,16 +145,21 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
         core.add(&w.screens,bodies[slot],UI_Screen{asset=HUD_ID})
         core.add(&w.huds,bodies[slot],Player_Test_Hud{coins=i32(3+4*slot)})
     }
-    // A body nobody drives, one a player of another end drives, and the screen of the scene.
-    empty,away,remote,scene:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
-    core.add(&w.moves,empty,inp.Move_Input{})
+    // A body no player drives, which its AI asks to move, one a player of another end drives, the
+    // body of a player away (its seat is off) and the screen of the scene.
+    empty,other,remote,scene:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    away,left:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.moves,empty,inp.Move_Input{world_velocity=true})
     core.add(&w.screens,empty,UI_Screen{asset=HUD_ID})
     core.add(&w.huds,empty,Player_Test_Hud{coins=50})
-    core.add(&w.seats,away,inp.Seat{slot=1,peer=9,body=remote})
+    core.add(&w.seats,other,inp.Seat{slot=1,remote=true,body=remote})
+    core.add(&w.seats,away,inp.Seat{body=left})
     core.add(&w.screens,remote,UI_Screen{asset=HUD_ID})
     core.add(&w.huds,remote,Player_Test_Hud{coins=60})
     core.add(&w.screens,scene,UI_Screen{asset=HUD_ID})
     core.add(&w.huds,scene,Player_Test_Hud{coins=90})
+    test_world_settle(w)
+    core.raw_disable(core.raw(&w.seats),away)
     test_world_settle(w)
 
     inp.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&f.state,&f.problems)
@@ -163,7 +168,7 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
         return screen_owner(core.read(&w.seats),state,core.read(&w.moves),core.read(&w.parents),e)
     }
     Case :: struct {e:core.Entity,slot:int,owned,local:bool}
-    cases:=[]Case{{bodies[0],0,true,true},{bodies[1],1,true,true},{seats[1],1,true,true},{empty,0,true,false},{remote,1,true,false},{scene,0,false,false},{core.NONE,0,false,false},{core.entity_make(900,3),0,false,false}}
+    cases:=[]Case{{bodies[0],0,true,true},{bodies[1],1,true,true},{seats[1],1,true,true},{empty,0,true,false},{remote,1,true,false},{left,0,true,false},{scene,0,false,false},{core.NONE,0,false,false},{core.entity_make(900,3),0,false,false}}
     for c in cases {
         slot,owned,local:=owner(w,core.ref(&f.state),c.e)
         testing.expectf(t,slot==c.slot && owned==c.owned && local==c.local,"entity %v: slot %d owned %v local %v",c.e,slot,owned,local)
