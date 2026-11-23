@@ -1,0 +1,7 @@
+{
+  "name": "pcg",
+  "version": "0.1.0",
+  "dependencies": [],
+  "parts": ["Runtime", "Editor"],
+  "asset_kinds": [{"extension": ".pcg", "kind": "PCGG", "version": 1, "label": "PCG graph", "color": [96, 168, 72], "icon": "Sparkle", "scene_data": true, "program_uses": ["impostor"]}]
+}

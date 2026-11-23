@@ -132,6 +132,16 @@ borders; on macOS it is an AppKit window with hidden title, transparent bar and 
 - On Windows and Linux, SDL translates the result into native drag and resize; on macOS
   `window_darwin.odin` does it with the screen coordinates of the native event.
 
+### Cursor
+
+`window_set_cursor(p,shape,custom)` shows a shape, its image when `custom` and it has one; the
+window system hears only of a change. `window_cursor_image_set` gives a shape RGBA8 levels (the
+first at 1x, larger ones as SDL alternates for dense displays, `HINT_MOUSE_DPI_SCALE_CURSORS`),
+validated (`CURSOR_LEVELS`, `CURSOR_SIDE_MAX`, pixels, hotspot) into a `Cursor_Error`; a
+replaced image shows before the old one is destroyed. Headless keeps the same state without
+SDL. The custom-chrome hit test of macOS restores the shown image or hiding after a border.
+`host` is the only caller ([gui](../../mirai-gameplay/references/libraries.md#gui)).
+
 ### Live frame
 
 While a border or the bar is dragged, the system can hold the loop and `frame_begin` does not

@@ -175,7 +175,10 @@ panel when no screen widget captures pointer; `offscreen` panels render to textu
 ## Known limits
 
 - Virtualized `List` assumes uniform item height (`Wrap`/`Stack` build all items).
-- Clipboard and system cursor go through host callbacks (`ctx.cursor`).
+- Clipboard goes through host callbacks; the cursor is `ctx.cursor` of the frame (a `.ui` style
+  sets it with `cursor` while its node is hovered, held, or under the pointer disabled), which
+  `host` resolves against the editor's and shows
+  ([gui](../../mirai-gameplay/references/libraries.md#gui)).
 - Texts rebuild per frame; virtualize long lists with `text_height` / `rows_begin`.
 - `markdown` link text does not nest bold or inline code.
 - `.ui` Grid sets `columns` only (explicit tracks/`row_span` are code-only).

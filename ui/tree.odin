@@ -71,6 +71,7 @@ Node_Style :: struct {
     scale:f32,      // drawn this size around its center, as move; 0: 1
     rotate:f32,     // drawn turned this many radians clockwise around its center; the pointer follows
     skew:f32,       // drawn leaning this many units right per unit above its center, as rotate
+    cursor:Cursor,  // what the pointer shows while it is on the node or holds it; Default: what is under it
 }
 // How an image takes the rectangle of its node.
 Image_Fit :: enum u8 {
@@ -869,6 +870,8 @@ tree_build_node :: proc(ctx:^Context,b:^Tree_Build,index:int,values:rawptr,copy:
     if base_style.transition>0 && style_transition(&state.look,&resolved,base_style.transition,ctx.input.dt) {b.animating=true}
     if base_style.layout_transition>0 && !layout_transition_ask(&ctx.layout,node_id,base_style.layout_transition,ctx.stats.frame) {ctx.stats.dropped_transitions+=1}
     style:=&resolved
+    // A disabled node is never hot: the pointer on it is enough.
+    if style.cursor!=.Default && (hovered || ctx.active==node_id || disabled && widget_under(ctx,node_id)) {ctx.cursor=style.cursor}
     // A turn or a lean of a style is where the node is: the pointer follows it.
     turned:=false
     if style.rotate!=0 || style.skew!=0 {

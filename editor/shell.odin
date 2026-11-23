@@ -148,8 +148,7 @@ Editor_Ui :: struct {
     splitter:Splitter,
     splitter_start:f32,
     splitter_press:[2]f32,
-    cursor:platform.Cursor,
-    cursor_set:platform.Cursor,
+    cursor:ui.Cursor, // what the editor's own gestures ask of the pointer this frame, over what its widgets ask
     named:[NAMED_CAPACITY]Named,
     named_count:int,
     variant:Variant_Prompt,
@@ -855,18 +854,8 @@ shell_after :: proc(s:^Session) {
     ctx:=g.ctx
     p:=s.app.platform
     g.rects.bar={0,0,ctx.size.x,ui.metric(ctx,"bar_height")+toolbar_height(g)}
-    if g.cursor==.Default {
-        switch ctx.cursor {
-        case .Default:
-        case .Text: g.cursor=.Text
-        case .Resize_Horizontal: g.cursor=.Resize_Horizontal
-        case .Hidden: g.cursor=.Hidden
-        }
-    }
-    if g.cursor!=g.cursor_set {
-        platform.window_set_cursor(p,g.cursor)
-        g.cursor_set=g.cursor
-    }
+    if g.cursor==.Default {g.cursor=ctx.cursor}
+    host.app_cursor_editor(s.app,g.cursor,editor_holds_pointer(s))
     title:=fmt.tprintf("%s - Mirai",document_title(s.document))
     if s.projects!=nil && s.projects.launcher {title="Mirai"} else if d:=asset_document_active(s);d!=nil {title=fmt.tprintf("%s - Mirai",asset_document_title(s,d))}
     if title!=string(g.title[:g.title_length]) {

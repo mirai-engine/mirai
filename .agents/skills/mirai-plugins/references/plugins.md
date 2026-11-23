@@ -151,9 +151,9 @@ demo enables. How an `editor/` adds steps, panels and tools:
   resting on what is below it). `terrain_debris` is not automatic: a project asks for its pieces and
   drops. What two plugins share through a `core` contract needs no bridge: the ground of
   [grounding](../../mirai-animation/references/animation-grounding.md) and the arm of the cameras
-  use `core.World_Queries`, which `physics` provides; foliage and navigation read the ground of
+  use `core.World_Queries`, which `physics` provides; pcg and navigation read the ground of
   `core.Ground_Queries`, which `terrain` provides; births of effects go through `core.Births`,
-  which `vfx` takes; and a component declared `replicated="object"` (removed foliage) is
+  which `vfx` takes; and a component declared `replicated="object"` (suppressed pcg points) is
   replicated by `multiplayer` without a bridge ([core](../../mirai-core/references/core.md#ground)).
 - **`navigation`** (`Runtime`, `Editor`; depends on `physics` and `locomotion`): automatic
   navmesh from static collision, per agent class and by tiles that rebuild themselves, areas,
@@ -188,11 +188,10 @@ demo enables. How an `editor/` adds steps, panels and tools:
   - Editor: creation, sculpting, layer and hole painting with local preview, cancellation and
     undo. `terrain_slope.slang` paints by slope; `terrain_layers.slang` blends the layers through
     `assets/terrain_layers.mat`.
-- **`foliage`** (`Runtime`, `Editor`, `Shaders`; depends on `physics`; not enabled in the demo):
-  foliage of a scene in cells, with no entity per instance, drawn with instance batches, with one
-  static body per cell and over a ground that another library writes. Editor: brush to paint and
-  erase and selection of an instance with the gizmo. Contract in
-  [foliage](../../mirai-world/references/foliage.md).
+- **`foliage`** (`Runtime`, `Editor`, `Shaders`; depends on `pcg` and `physics`): draws and
+  collides what the `Pcg_Graph` on its entity places, in cells, with no entity per instance:
+  instance batches, impostors, one static body per cell. Editor: the view of its cells and
+  `foliage.query`. Contract in [foliage](../../mirai-world/references/foliage.md).
 - **`previews`** (`Editor`)
   - Animation [documents](previews.md), with their clips on rigid objects or compact skeletons.
   - GPU skinning isolated from the world and its histories; what they edit is a step of the

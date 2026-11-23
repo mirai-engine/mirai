@@ -114,6 +114,15 @@ UI_Settings :: struct {
 
 UI_PROMPT_IMAGES :: 32
 
+// What the pointer of the window shows over the game, which writes it: per
+// window, not per seat. The shape is the cursor of the style of the node
+// under it; the editor's bars and a game without the input show the editor's.
+@(storage,setting)
+UI_Cursor :: struct {
+    hidden:bool, // for a game that draws its own pointer in a .ui; the relative mouse hides it anyway
+    images:[ui.Cursor]ui.Cursor_Image, // in place of the system's; that of Hidden is never shown
+}
+
 // The image of an input of a family of devices.
 UI_Prompt_Image :: struct {
     family:ui.Prompt_Family,
@@ -336,7 +345,6 @@ Gui :: struct {
     clock_held:bool,           // it stopped the clock, and gives it back when none shows
     modal_up:bool,             // a Modal is on top this frame
     escape_used:bool,          // an interface used the Escape of this frame
-    cursor:ui.Cursor,          // the last one given to the window
     skipped:u64,               // frames of a context that showed its last one again
     kept:u64,                  // screens drawn again from what they drew, without being built
     dropped_widgets:u64,       // World_Widgets in sight left out for WIDGET_CAPACITY or MESH_CAPACITY
@@ -718,13 +726,15 @@ fps_overlay :: proc(graphics:render.Graphics_Settings,gui:^Gui,app:^host.App) {
 // Ends the frames, hands what each context shows to the renderer (the
 // players under the window, the panels of a player in its view alone, the
 // widgets on meshes into their textures), and does what the screen on top
-// asks of the window and the seats.
+// asks of the window and the seats. The pointer it asks for is the game's
+// while the game has the input.
 @(step="ui",stage="end")
 gui_frame_end :: proc(
-    gui:^Gui,app:^host.App,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),seat_requests:^inp.Seat_Requests,
+    gui:^Gui,app:^host.App,cursor:UI_Cursor,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,.Read),seat_requests:^inp.Seat_Requests,
     contexts:core.Ref(inp.Input_Contexts),context_requests:^inp.Context_Requests,problems:^core.Problems,
 ) {
-    frame_end(gui,app,seat_state,seats,seat_requests,contexts,context_requests,problems,false)
+    shape:=frame_end(gui,app,seat_state,seats,seat_requests,contexts,context_requests,problems,false)
+    if gui!=nil && !app.game_input_blocked && !app.game_mouse_off {host.app_cursor_game(app,shape,cursor.hidden,cursor.images,problems)}
 }
 
 // The preview's frame: its layers and panels, and nothing of the window's
@@ -742,12 +752,11 @@ gui_preview_end :: proc(
 frame_end :: proc(
     gui:^Gui,app:^host.App,seat_state:core.Ref(inp.Seats),seats:^core.Table(inp.Seat,$A),seat_requests:^inp.Seat_Requests,
     contexts:core.Ref(inp.Input_Contexts),context_requests:^inp.Context_Requests,problems:^core.Problems,preview:bool,
-) {
+) -> (cursor:ui.Cursor) {
     if gui==nil {return}
     gui.wanted,gui.asked=gui.asked,false
     gui.pointer_consumed,gui.keyboard_consumed=false,false
     gui.escape_used=false
-    cursor:=ui.Cursor.Default
     for i in 1..=CONTEXT_CAPACITY {
         p:=i%CONTEXT_CAPACITY
         s:=&gui.surfaces[p]
@@ -785,18 +794,10 @@ frame_end :: proc(
         return
     }
     gui.modal_up=modal_apply(gui,seat_state,seats,seat_requests,contexts,context_requests)
-    if app.platform!=nil {
-        // The player's: in the editor, the cursor is that of the editor.
-        if app.world!=nil && (cursor!=gui.cursor || gui.modal_up) {
-            CURSORS :: [ui.Cursor]platform.Cursor{.Default=.Default,.Text=.Text,.Resize_Horizontal=.Resize_Horizontal,.Hidden=.Hidden}
-            cursors:=CURSORS
-            platform.window_set_cursor(app.platform,cursors[cursor])
-            gui.cursor=cursor
-        }
-    }
     views_sweep(gui,app.renderer)
     particles_sweep(gui,app.renderer)
     meshes_sweep(gui,app.renderer)
+    return
 }
 
 // The interfaces of a World that is freed go with it, and the events it had

@@ -306,14 +306,14 @@ tree_fill :: proc(tree:^Widget_Tree,data:Tree_Data,resources:Tree_Resources) -> 
         return true
     }
     for &style,i in data.styles {
-        if !tree_style_finite(style) || len(serial.text_field(style.program[:]))>=len(style.program) {return false}
+        if !tree_style_valid(style) || len(serial.text_field(style.program[:]))>=len(style.program) {return false}
         added:=style
         if !font_of(&added.text.font,resources.fonts) {return false}
         _=tree_style(tree,added) or_return
         if len(resources.programs)>0 {tree.programs[i]=resources.programs[i]}
     }
     for &rule in data.variants {
-        if int(rule.style)>=max(len(data.styles),1) || !tree_style_finite(rule.patch.values) || len(serial.text_field(rule.variant[:]))>=len(rule.variant) || !tree_style_patch_valid(rule.patch) || (transmute(u8)rule.states)&~STYLE_STATES_NAMED!=0 {return false}
+        if int(rule.style)>=max(len(data.styles),1) || !tree_style_valid(rule.patch.values) || len(serial.text_field(rule.variant[:]))>=len(rule.variant) || !tree_style_patch_valid(rule.patch) || (transmute(u8)rule.states)&~STYLE_STATES_NAMED!=0 {return false}
         patch:=rule.patch
         if !font_of(&patch.values.text.font,resources.fonts) {return false}
         if !tree_rule_add(tree,{style=rule.style,variant=style_variant(serial.text_field(rule.variant[:])),states=rule.states,patch=patch}) {return false}
@@ -460,10 +460,11 @@ tree_text_fields :: proc(node:^Tree_Node) -> (fields:[TREE_TEXT_FIELDS]Node_Fiel
     return
 }
 
+// Its numbers finite and its cursor a shape.
 @(private)
-tree_style_finite :: proc "contextless" (s:Node_Style) -> bool {
-    return tree_finite(s.radius[0],s.radius[1],s.radius[2],s.radius[3],s.transition,s.layout_transition,s.stroke_width,s.shadow_blur,s.shadow_offset.x,s.shadow_offset.y,s.text.size,s.text.line_height,s.text.outline,s.text.shadow.x,s.text.shadow.y,s.move.x,s.move.y,s.scale,
+tree_style_valid :: proc "contextless" (s:Node_Style) -> bool {
+    return s.cursor<=max(Cursor) && tree_finite(s.radius[0],s.radius[1],s.radius[2],s.radius[3],s.transition,s.layout_transition,s.stroke_width,s.shadow_blur,s.shadow_offset.x,s.shadow_offset.y,s.text.size,s.text.line_height,s.text.outline,s.text.shadow.x,s.text.shadow.y,s.move.x,s.move.y,s.scale,
         s.program_values[0],s.program_values[1],s.program_values[2],s.program_values[3])
 }
 @(private)
-tree_style_patch_valid :: proc "contextless" (p:Style_Patch) -> bool {return (transmute(u16)p.fields)&~u16(1<<len(Style_Field)-1)==0}
+tree_style_patch_valid :: proc "contextless" (p:Style_Patch) -> bool {return (transmute(u32)p.fields)&~u32(1<<len(Style_Field)-1)==0}

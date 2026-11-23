@@ -1,5 +1,6 @@
 package author
 
+import "core:fmt"
 import "core:mem"
 import "core:slice"
 import "core:strings"
@@ -327,4 +328,39 @@ what_a_style_extends_reaches_its_values_rules_and_nodes_when_they_change :: proc
     panel:=document_row_of(&r,"panel")
     testing.expect_value(t,r.nodes[panel].layout.padding,[4]f32{4,4,4,4})
     testing.expect(t,records_load_as_tree(&r))
+}
+
+// A style names the cursor of its nodes, and a state another; the document
+// says them by name and reads back the same, and a name of no shape is refused.
+@(test)
+a_style_says_its_cursor_by_name_and_comes_back_the_same :: proc(t:^testing.T) {
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    r:Records
+    if !document_of(t,&types,&r,`{"styles":{"link":{"cursor":"pointer","disabled":{"cursor":"not_allowed"}}},"nodes":[{"name":"go","kind":"Button","style":"link"}]}`) {return}
+    link:=tree_style_row(&r,"link")
+    testing.expect_value(t,r.styles[link].cursor,ui.Cursor.Pointer)
+    disabled:^ui.Tree_Style_Variant
+    for &v in r.variants {if int(v.style)==link && v.states=={.Disabled} {disabled=&v}}
+    testing.expect(t,disabled!=nil && .Cursor in disabled.patch.fields && disabled.patch.values.cursor==.Not_Allowed)
+    first:=document_text(&types,&r,-1)
+    for expected in ([]string{`"cursor":"pointer"`,`"cursor":"not_allowed"`}) {
+        testing.expectf(t,strings.contains(first,expected),"the document says %s: %s",expected,first)
+    }
+    reading:Reading
+    args:=call_args(&reading,&types,"{}")
+    _,_,ok:=document_apply(&args,&r,-1,first)
+    if !testing.expectf(t,ok,"%s",reading.problem) {return}
+    ui.tree_settle(r.styles[:],r.style_infos[:],&r.variants,r.tokens[:],r.token_uses[:])
+    testing.expect_value(t,document_text(&types,&r,-1),first)
+    testing.expect(t,records_load_as_tree(&r))
+
+    for bad in ([]string{`"hand"`,`3`,`true`}) {
+        refused:Records
+        empty:=[1]ui.Node_Style{{}}
+        if !testing.expect(t,records_load(&refused,{styles=empty[:]},context.temp_allocator)) {return}
+        said:Reading
+        said_args:=call_args(&said,&types,"{}")
+        _,_,read:=document_apply(&said_args,&refused,-1,fmt.tprintf(`{{"styles":{{"link":{{"cursor":%s}}}}}}`,bad))
+        testing.expectf(t,!read && strings.contains(said.problem,"cursor"),"cursor %s: %s",bad,said.problem)
+    }
 }

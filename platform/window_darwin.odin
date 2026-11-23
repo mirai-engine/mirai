@@ -32,7 +32,8 @@ window_native_hit :: proc(p:^Platform,hit:sdl.HitTestResult) -> sdl.HitTestResul
     case .RESIZE_TOPRIGHT,.RESIZE_BOTTOMLEFT:shown=.Resize_Diagonal_Up
     }
     if shown!=.Hidden {
-        if cursor:=window_cursor_handle(p,shown);cursor!=nil && cursor!=sdl.GetCursor() {_=sdl.SetCursor(cursor)}
+        cursor:=window_cursor_shown(p) if shown==w.cursor else window_cursor_handle(p,shown)
+        if cursor!=nil && cursor!=sdl.GetCursor() {_=sdl.SetCursor(cursor)}
     }
     event:=NS.Application_currentEvent(NS.Application_sharedApplication())
     if event==nil {return hit}

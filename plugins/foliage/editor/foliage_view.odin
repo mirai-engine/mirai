@@ -4,17 +4,24 @@ import "core:strings"
 import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
-import foliage "plugins:foliage/runtime"
+import "mirai:host"
 import mm "mirai:std/math"
 import "mirai:ui"
+import foliage "plugins:foliage/runtime"
+import pcg "plugins:pcg/runtime"
 
-// The mode of inspection Foliage cells of the viewport, in Advanced →
-// Foliage: the outline of each cell of every Foliage near the view, at the
-// height of its ground, green where its generator places the types and yellow
-// where it holds manual instances only.
+// The editor of the foliage is what a Foliage draws of its graph, seen and
+// asked: what it places and where is the .pcg of the graph (plugins/pcg),
+// and an instance is taken out or promoted to an entity through the graph
+// (pcg.Pcg_Suppressed, foliage.foliage_promote), so the foliage has no tool
+// of its own. The mode of inspection Foliage cells of the viewport, in
+// Advanced -> Foliage: the outline of each cell the graph of a Foliage near
+// the view generated, at the mean height of its instances: green where it
+// places, grey where it places nothing.
 
 VIEW_CELLS :: "foliage_cells"
 VIEW_REACH :: f32(512) // metres from the view within which the cells are drawn
+CELL_EMPTY :: ui.Color{150,150,150,160}
 
 @(storage)
 Foliage_View :: struct {cells:bool}
@@ -30,28 +37,40 @@ foliage_view_modes :: proc(s:^editor.Session,view:^Foliage_View) {
 foliage_view_lit :: proc(pass:^erender.Pass,user:rawptr) {}
 
 @(step="frame")
-foliage_cells_view :: proc(s:^editor.Session,view:^Foliage_View,foliages:^core.Table(foliage.Foliage,.Read),worlds:^core.Table(core.World_Transform,.Read),grounds:core.Ref(foliage.Foliage_Ground),data:core.Ref(foliage.Foliage_Data),input:core.Input) {
+foliage_cells_view :: proc(s:^editor.Session,view:^Foliage_View,foliages:^core.Table(foliage.Foliage,.Read),graphs:^core.Table(pcg.Pcg_Graph,.Read),worlds:^core.Table(core.World_Transform,.Read),data:core.Ref(pcg.Pcg_Data),input:core.Input) {
     if !view.cells || !s.gui.begun || editor.playing(s) || data.ptr==nil {return}
+    generated:=host.app_world_storage(s.app,s.edit_world,pcg.Pcg_Generated)
     eye:=s.viewport.orbit.target
     for row in 0..<core.count(foliages) {
-        marker:=core.at(foliages,row)
         e:=core.entity_at(foliages,row)
+        graph,graphed:=core.get(graphs,e)
         placed,known:=core.get(worlds,e)
-        entry:=foliage.data_find(data.ptr,marker.source)
-        if !known || entry==nil {continue}
-        to_local,inverted:=mm.transform_inverse_matrix(placed.transform)
+        entry:=pcg.data_find(data.ptr,graph.source) if graphed else nil
+        gen:=pcg.generated_graph(generated,e)
+        if !known || entry==nil || gen==nil {continue}
+        frame:=pcg.graph_frame(graph,placed.transform)
+        to_local,inverted:=mm.transform_inverse_matrix(frame)
         if !inverted {continue}
         near:=mm.mat4_point(to_local,eye)
-        ground:=foliage.ground_owner(grounds.ptr,e)
-        for &cell in entry.source.cells {
-            corner:=foliage.cell_corner(cell.coord)
-            middle:=corner.xz+foliage.CELL_SIZE*0.5
-            d:=middle-near.xz
+        size:=entry.source.info.cell_size
+        for &cell in gen.cells {
+            if !cell.built {continue}
+            corner:=pcg.cell_corner(size,cell.coord)
+            d:=corner.xz+size*0.5-near.xz
             if d.x*d.x+d.y*d.y>VIEW_REACH*VIEW_REACH {continue}
-            if !cell.generate && len(cell.manual)==0 {continue}
             height:=f32(0)
-            if h,_,ok:=foliage.ground_at(ground_of(ground,cell.coord),foliage.CELL_SIZE*0.5,foliage.CELL_SIZE*0.5);ok {height=h}
-            cell_outline_draw(s,placed.transform,cell.coord,height,cell.generate?editor.BRUSH_GENERATED:editor.BRUSH_ADD)
+            for p in cell.placed {height+=p.position.y}
+            if len(cell.placed)>0 {height/=f32(len(cell.placed))}
+            cell_outline_draw(s,frame,corner,size,height,len(cell.placed)>0?editor.BRUSH_GENERATED:CELL_EMPTY)
         }
     }
+}
+
+@(private)
+cell_outline_draw :: proc(s:^editor.Session,frame:mm.Transform,corner:[3]f32,size,height:f32,color:ui.Color) {
+    inset:=f32(0.2)
+    side:=size-inset*2
+    points:=[4][3]f32{corner+{inset,height,inset},corner+{inset+side,height,inset},corner+{inset+side,height,inset+side},corner+{inset,height,inset+side}}
+    for &point in points {point=mm.transform_point(frame,point)}
+    editor.brush_ring_draw(s,points[:],color,1.5)
 }

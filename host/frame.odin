@@ -544,6 +544,7 @@ app_frame_end :: proc(app:^App) {
         app.stats.fps=f32(f64(app.stats.fps_frames)/app.stats.fps_seconds)
         app.stats.fps_frames,app.stats.fps_seconds=0,0
     }
+    app_cursor_apply(app)
     free_all(context.temp_allocator)
     zone=profile_part(app,"pacing")
     platform.frame_end(app.platform,drawn || app.renderer==nil,images)

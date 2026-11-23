@@ -1,5 +1,6 @@
 package editor
 
+import "mirai:host"
 import "mirai:platform"
 import "mirai:ui"
 
@@ -99,4 +100,18 @@ play_pause :: proc(s:^Session,paused:bool,here:=false,stepped:=false) {
         if r!=nil {history_resume(s,r,here)}
         s.mode=simulating(s)?.Simulate:.Play
     }
+}
+
+// The editor holds the pointer, and shows its own cursor, unless the game has
+// the input and the pointer is on the scene it draws: on the bars, off the
+// window, out of Play, paused or with the input released, the editor's.
+editor_holds_pointer :: proc(s:^Session) -> bool {
+    app:=s.app
+    if app.game_input_blocked || app.game_mouse_off {return true}
+    frame:=platform.input_frame(app.platform)
+    if !frame.mouse_inside {return true}
+    scene:=host.app_scene_points(app)
+    if scene.z<=0 || scene.w<=0 {return false}
+    point:=frame.mouse_position
+    return !(point.x>=scene.x && point.y>=scene.y && point.x<scene.x+scene.z && point.y<scene.y+scene.w)
 }

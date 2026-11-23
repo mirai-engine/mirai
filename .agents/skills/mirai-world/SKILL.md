@@ -2,7 +2,8 @@
 name: mirai-world
 description: Mirai world content plugins - `terrain` (heightfield and volume terrain, chunks,
   material layers, digging, dust, the ground contract, with the `terrain_debris` pieces), `foliage`
-  (cells, impostors, wind, collision, ground), `water` (waves, caustics, foam, wakes), `imprint`
+  (the drawing and collision sink of `pcg` graphs, with cells, impostors, wind, collision),
+  `water` (waves, caustics, foam, wakes), `imprint`
   (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle` effects, births by channel,
   grids and volumes, debugging particles), `navigation` (automatic navmesh, links, agents),
   `behavior` (AI minds, smart objects, perception, influence maps) and `shapes` (editable solids of
@@ -75,18 +76,17 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
     [ground](references/terrain.md#ground)
   - Quadtree of a Heightfield and octree of a Volume, far nodes, coarse grid and piece budget:
     [tree](references/terrain.md#tree-and-nodes)
-- `foliage` (`.foliage`, cells, generator with radius, density and keep-outs, overrides and
-  orphans, ground read from `core.Ground_Queries`, per-cell batches, types from prefabs,
-  octahedral impostors and canopy in rays, wind in the vertex hook, bending by
-  `Foliage_Bender`, collision of every loaded cell, queries of instances, brush and instance
-  selection):
-  [source](references/foliage.md#entity-and-source), [format](references/foliage.md#format),
-  [cells](references/foliage.md#layers-of-a-cell), [ground](references/foliage.md#ground),
+- `foliage` (sink of the cells a `Pcg_Graph` places: looks of mesh and prefab layers, per-cell
+  batches, filler budgets and density-modulated impostor distances, octahedral impostors and
+  canopy in rays, wind in the vertex hook, bending by `Foliage_Bender`, collision of every
+  generated cell, picks and queries of instances, marks, promotion, GPU micro-scatter of
+  `Micro` layers): [entity and looks](references/foliage.md#entity-and-looks),
   [drawing](references/foliage.md#drawing),
   [impostor and crown](references/foliage.md#far-impostor-and-crown),
+  [micro scatter](references/foliage.md#micro-scatter-on-the-gpu),
   [wind](references/foliage.md#wind), [collision](references/foliage.md#collision),
-  [removed in play](references/foliage.md#instances-removed-in-play) and
-  [tool](references/foliage.md#tool)
+  [take out, promote, mark](references/foliage.md#play-take-out-promote-mark) and
+  [editor](references/foliage.md#editor)
 - `navigation` (automatic navmesh per agent class, areas, obstacles, manual and generated links,
   agents, link crossing, crowd, air and water volumes, `.navmesh`, `nav.*`):
   [meshes](references/navigation.md#meshes),

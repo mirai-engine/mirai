@@ -6,11 +6,13 @@ import "mirai:core"
 import render "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import pcg "plugins:pcg/runtime"
 import physics "plugins:physics/runtime"
 
-// A type armed from a prefab draws each Mesh_Renderer of the prefab where
-// its instances are: a batch per cell, type and part, with the transform of
-// the part from the root of the prefab composed with each instance's.
+// A layer that places a prefab draws each Mesh_Renderer of the prefab where
+// its instances are: a batch per cell, layer and part, with the transform of
+// the part from the root of the prefab composed with each instance's; it
+// sways as the Foliage_Sway of its root says, and collides as its colliders.
 
 // A Mesh_Renderer of a prefab and where it is from the root.
 Prefab_Part :: struct {
@@ -18,7 +20,7 @@ Prefab_Part :: struct {
     placement:mm.Mat4,
 }
 
-// A Collider of a prefab, as a type of Prefab collision collides, and where
+// A Collider of a prefab, as an instance of it collides, and where
 // it is from the root; for a Hull, what its entity shows.
 Prefab_Collider :: struct {
     collider:physics.Collider,
@@ -29,9 +31,10 @@ Prefab_Collider :: struct {
 // The parts of an open prefab, appended to out: its entities with a
 // Mesh_Renderer that is on and not hidden, under its root; and with
 // colliders, its Colliders that are on, block and are of a kind an instance
-// has (Box, Sphere, Capsule, Cylinder, or Hull or Auto of an entity that shows
-// a mesh, which collide as its hulls), appended there: left_out counts the others. False when it is not a
-// prefab this reads (no single root, a parent that is not there).
+// has (Box, Sphere, Capsule, Cylinder, or Hull or Auto of an entity that
+// shows a mesh, which collide as its hulls), appended there: left_out counts
+// the others. False when it is not a prefab this reads (no single root, a
+// parent that is not there).
 prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_Part,colliders:^[dynamic]Prefab_Collider=nil) -> (ok:bool,left_out:int) {
     view,error:=asset.scene_view(file,types)
     if error!=.None {return}
@@ -105,7 +108,7 @@ prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_P
         #partial switch shape.kind {
         case .Box,.Sphere,.Capsule,.Cylinder: if !shape.sensor {append(colliders,Prefab_Collider{shape,placement,{}});continue}
         case .Hull,.Auto:
-            // An Auto one collides as the hulls of its mesh, as a type of Hull collision does.
+            // An Auto one collides as the hulls of its mesh.
             hull:=shape
             hull.kind=.Hull
             if !shape.sensor && (shown.mesh!={} || shown.shape!=.None) {append(colliders,Prefab_Collider{hull,placement,shown});continue}
@@ -115,12 +118,31 @@ prefab_parts :: proc(file:^asset.Asset,types:^asset.Types,out:^[dynamic]Prefab_P
     return true,left_out
 }
 
+// The Foliage_Sway of the root of an open prefab: how a layer that places it
+// sways. False when its root has none.
+prefab_sway :: proc(file:^asset.Asset,types:^asset.Types) -> (sway:Foliage_Sway,ok:bool) {
+    view,error:=asset.scene_view(file,types)
+    if error!=.None || !asset.asset_prefab(file) {return}
+    root:=-1
+    for parent,row in view.parents {if parent==0 {root=row}}
+    if root<0 {return}
+    for &component in view.components {
+        if component.name!="Foliage_Sway" {continue}
+        rows:=asset.asset_rows(file,types,component.name,asset.COLUMN_ENTITY,u32) or_else nil
+        values:=asset.asset_rows(file,types,component.name,asset.COLUMN_VALUE,Foliage_Sway) or_else nil
+        for value,k in values[:min(len(values),len(rows))] {
+            if int(rows[k])==root {return value,true}
+        }
+    }
+    return
+}
+
 // An instance as a batch draws it, for a part placed by `part` under the
 // instance, carried by the matrix of its entity. What Batch_Instance does
 // not hold (a shear, a mirror) is approximated: error is how much of the
 // transform is left out, as a part of it.
-part_instance :: proc "contextless" (p:Placed,owner:mm.Mat4,part:mm.Mat4) -> (instance:render.Batch_Instance,error:f32) {
-    placed:=mm.transform_matrix({position=p.position,rotation=p.rotation,scale={p.scale[0],p.scale[1],p.scale[0]}})
+part_instance :: proc "contextless" (p:pcg.Placed,owner:mm.Mat4,part:mm.Mat4) -> (instance:render.Batch_Instance,error:f32) {
+    placed:=mm.transform_matrix({position=p.position,rotation=p.rotation,scale=p.scale})
     position,rotation,scale,left:=matrix_pose(owner*placed*part)
     return render.batch_instance(position,rotation,scale),left
 }

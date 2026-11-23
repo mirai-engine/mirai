@@ -5,17 +5,18 @@ import "mirai:core"
 import "mirai:std/base"
 import render "mirai:engine/render"
 import "base:runtime"
+import pcg "plugins:pcg/runtime"
 
 // What play changes of how instances look (burnt, wet, frozen) is world
-// state beside the source, as what is taken out is (removal.odin): an entity
-// with Foliage_Marked for each cell of a Foliage that has marks, hanging from
-// it, holding the id and the color of up to MARKED_PAGE of them; a cell with
+// state beside the graph, as what is taken out is (pcg.Pcg_Suppressed): an
+// entity with Foliage_Marked for each cell of a Foliage that has marks,
+// hanging from it, holding the id and the color of up to MARKED_PAGE of them; a cell with
 // more has more. A saved game keeps them, Play and rollback copy them, a
 // Foliage kept for a section that is not loaded keeps them, and the network
 // takes each to every client as one object whose entries travel alone. The
 // game asks with foliage_mark; the end that decides writes them, and a later
-// mark of an instance changes its entry. A mark is over what the source
-// paints; an id the cell does not show colors nothing and is kept.
+// mark of an instance changes its entry. An id the cell does not show colors
+// nothing and is kept.
 
 MARKED_PAGE :: 64 // instances of a cell one entity holds
 
@@ -35,14 +36,29 @@ Marked_Instance :: struct {
 
 // What the game asks: an instance of a Foliage drawn with a tint and a wetness.
 Foliage_Mark :: struct {
-    plant:Foliage_Plant,
+    plant:pcg.Pcg_Instance,
     color:u32,
+}
+
+@(storage,queue)
+Foliage_Requests :: struct {marks:core.Queue(Foliage_Mark)}
+
+@(storage,setting)
+Foliage_Settings :: struct {
+    marks:u32 `mirai:"advanced"`, // instances a tick can ask to mark; past it they are dropped and reported
+}
+FOLIAGE_SETTINGS_DEFAULT :: Foliage_Settings{marks=1024}
+
+// The room of the requests of a tick, and what did not fit in it.
+@(step="input fixed",loops="game editor",stage="begin")
+foliage_requests_serve :: proc(requests:^Foliage_Requests,settings:Foliage_Settings,problems:^core.Problems) {
+    core.queue_serve(&requests.marks,int(settings.marks),problems,"foliage.requests","instances asked to be marked","Foliage_Settings.marks")
 }
 
 // Asks to draw an instance of a Foliage with a tint, which multiplies its
 // colors, and a wetness from 0 dry to 1 soaked; white and 0 give it back
-// the look of its source.
-foliage_mark :: proc(requests:^Foliage_Requests,plant:Foliage_Plant,tint:[3]f32,wet:f32) {
+// its own look.
+foliage_mark :: proc(requests:^Foliage_Requests,plant:pcg.Pcg_Instance,tint:[3]f32,wet:f32) {
     core.offer(&requests.marks,Foliage_Mark{plant,render.batch_color(tint,wet)})
 }
 
@@ -58,7 +74,7 @@ Marked_Owner :: struct {
     entity:core.Entity,
     hash:u64,                    // of all of them: what is drawn from them compares it
     items:[dynamic]Marked,       // in the order of their cell, z then x, and their id, each once
-    pages:[dynamic]Removed_Page, // the entities that hold them, in the order of their cell
+    pages:[dynamic]pcg.Suppressed_Page, // the entities that hold them, in the order of their cell
 }
 Marked :: struct {coord:[2]i32,instance:u64,color:u32}
 
@@ -80,15 +96,22 @@ marked_cell :: proc "contextless" (owner:^Marked_Owner,coord:[2]i32) -> (items:[
     return
 }
 
-// The instances of a cell shown with the marks of the game over their own look.
+// What an instance shows of its own, by the marks of its cell (render.batch_color).
+marked_color :: proc "contextless" (marks:[]Marked,id:u64) -> u32 {
+    low,high:=0,len(marks)
+    for low<high {mid:=(low+high)/2;if marks[mid].instance<id {low=mid+1} else {high=mid}}
+    return marks[low].color if low<len(marks) && marks[low].instance==id else render.BATCH_COLOR_PLAIN
+}
+
+// The entities that hold the marks of a cell.
 @(private)
-marks_apply :: proc "contextless" (placed:[]Placed,marks:[]Marked) {
-    if len(marks)==0 {return}
-    for &p in placed {
-        low,high:=0,len(marks)
-        for low<high {mid:=(low+high)/2;if marks[mid].instance<p.id {low=mid+1} else {high=mid}}
-        if low<len(marks) && marks[low].instance==p.id {p.color,p.colored=marks[low].color,true}
-    }
+marked_pages :: proc "contextless" (owner:^Marked_Owner,coord:[2]i32) -> []pcg.Suppressed_Page {
+    if owner==nil {return nil}
+    low,high:=0,len(owner.pages)
+    for low<high {mid:=(low+high)/2;if coord_before(owner.pages[mid].coord,coord) {low=mid+1} else {high=mid}}
+    end:=low
+    for end<len(owner.pages) && owner.pages[end].coord==coord {end+=1}
+    return owner.pages[low:end]
 }
 
 // Makes the marks of each Foliage again from the entities that hold them,
@@ -110,7 +133,7 @@ marks_index :: proc(m:^Foliage_Marks,marked:^core.Table(Foliage_Marked,$A),folia
         }
         // What came from the network is not trusted to fit.
         count:=min(int(page.count),MARKED_PAGE)
-        if _,error:=append(&owner.pages,Removed_Page{page.coord,core.entity_at(marked,row),count});error!=nil {enough=false;continue}
+        if _,error:=append(&owner.pages,pcg.Suppressed_Page{page.coord,core.entity_at(marked,row),count});error!=nil {enough=false;continue}
         for instance in page.instances[:count] {
             if _,error:=append(&owner.items,Marked{page.coord,instance.id,instance.color});error!=nil {enough=false;break}
         }
@@ -122,7 +145,7 @@ marks_index :: proc(m:^Foliage_Marks,marked:^core.Table(Foliage_Marked,$A),folia
             unordered_remove(&m.owners,i)
             continue
         }
-        slice.sort_by(owner.pages[:],proc(a,b:Removed_Page) -> bool {return coord_before(a.coord,b.coord)})
+        slice.sort_by(owner.pages[:],proc(a,b:pcg.Suppressed_Page) -> bool {return coord_before(a.coord,b.coord)})
         slice.stable_sort_by(owner.items[:],proc(a,b:Marked) -> bool {return coord_before(a.coord,b.coord) || a.coord==b.coord && a.instance<b.instance})
         // The last of an instance named twice wins.
         kept:=0
@@ -143,7 +166,7 @@ marks_index :: proc(m:^Foliage_Marks,marked:^core.Table(Foliage_Marked,$A),folia
 // marked before changes its entry; a new one goes to an entity of its cell
 // with room, and past them to a new one under the Foliage. A client asks
 // nothing; what the server marked arrives.
-@(step="fixed frame",loops="game editor",stage="simulate",before="physics_prepare")
+@(step="fixed frame",loops="game editor",stage="simulate")
 foliage_marks :: proc(
     m:^Foliage_Marks,requests:^Foliage_Requests,marked:^core.Table(Foliage_Marked),foliages:^core.Table(Foliage,.Read),ids:^core.Table(core.Id,.Read),
     authority:core.Ref(core.Network),commands:core.Commands,allocator:runtime.Allocator,problems:^core.Problems,
@@ -155,14 +178,14 @@ foliage_marks :: proc(
     }
     if len(asked)==0 || authority.ptr!=nil && authority.role==.Client {return}
     order:=slice.clone(asked,context.temp_allocator)
-    slice.stable_sort_by(order,proc(a,b:Foliage_Mark) -> bool {return a.plant.foliage<b.plant.foliage || a.plant.foliage==b.plant.foliage && coord_before(a.plant.coord,b.plant.coord)})
+    slice.stable_sort_by(order,proc(a,b:Foliage_Mark) -> bool {return a.plant.graph<b.plant.graph || a.plant.graph==b.plant.graph && coord_before(a.plant.coord,b.plant.coord)})
     fresh:=make([dynamic]Marked_Instance,context.temp_allocator)
     for start:=0;start<len(order); {
         end:=start+1
-        for end<len(order) && order[end].plant.foliage==order[start].plant.foliage && order[end].plant.coord==order[start].plant.coord {end+=1}
+        for end<len(order) && order[end].plant.graph==order[start].plant.graph && order[end].plant.coord==order[start].plant.coord {end+=1}
         group:=order[start:end]
         start=end
-        e,coord:=group[0].plant.foliage,group[0].plant.coord
+        e,coord:=group[0].plant.graph,group[0].plant.coord
         if !core.has(foliages,e) {continue}
         id:=core.id_of(ids,e)
         if id==0 {
@@ -170,22 +193,22 @@ foliage_marks :: proc(
             continue
         }
         owner:=marked_owner(m,e)
-        pages:=pages_of(owner.pages[:],coord) if owner!=nil else nil
+        pages:=marked_pages(owner,coord)
         clear(&fresh)
         asks: for request in group {
             // An instance marked before, in an entity or earlier in this group, takes the new color there.
             for page in pages {
                 row:=core.get(marked,page.entity) or_continue
                 for &held,k in row.instances[:min(int(row.count),MARKED_PAGE)] {
-                    if held.id!=request.plant.instance {continue}
+                    if held.id!=request.plant.id {continue}
                     if held.color!=request.color {
                         if edited:=core.edit(marked,page.entity);edited!=nil {edited.instances[k].color=request.color}
                     }
                     continue asks
                 }
             }
-            for &held in fresh {if held.id==request.plant.instance {held.color=request.color;continue asks}}
-            append(&fresh,Marked_Instance{request.plant.instance,request.color})
+            for &held in fresh {if held.id==request.plant.id {held.color=request.color;continue asks}}
+            append(&fresh,Marked_Instance{request.plant.id,request.color})
         }
         marked_write(marked,pages,id,e,coord,fresh[:],commands)
     }
@@ -194,7 +217,7 @@ foliage_marks :: proc(
 // Puts new marks of a cell in the entities of the cell with room, and what
 // does not fit in new ones under the Foliage.
 @(private)
-marked_write :: proc(marked:^core.Table(Foliage_Marked),pages:[]Removed_Page,foliage:base.Entity_Id,e:core.Entity,coord:[2]i32,fresh:[]Marked_Instance,commands:core.Commands) {
+marked_write :: proc(marked:^core.Table(Foliage_Marked),pages:[]pcg.Suppressed_Page,foliage:base.Entity_Id,e:core.Entity,coord:[2]i32,fresh:[]Marked_Instance,commands:core.Commands) {
     left:=fresh
     for &page in pages {
         if len(left)==0 {return}

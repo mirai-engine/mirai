@@ -85,7 +85,7 @@ _ = asset.document_save(&doc, out_path)
 ## Asset types
 
 `asset.KINDS` registers engine fourcc/version (`mirai asset info`). Details in [kinds.md](kinds.md)
-and [scenes.md](scenes.md). Plugin kinds (`.character`, `.foliage`, `.terrain`, `.physics_cache`)
+and [scenes.md](scenes.md). Plugin kinds (`.character`, `.pcg`, `.terrain`, `.physics_cache`)
 live in their plugins.
 
 | Kind | Fourcc | Tables |
@@ -99,7 +99,7 @@ live in their plugins.
 | `.sound` / `.sound_set` | `SND ` / `SSET` | `sound` + bulk `samples`/`file`; `sound_set` |
 | `.ui` / `.records` | `UI  ` / `RCDS` | `ui.Tree_Data` tables (`ui/tree_data.odin`); `records`, `rows` (`id`,`name`,`value`), `texts`, bulk `text` |
 | `.particle` / `.fracture` | `PART` / `FRAC` | [`vfx`](../../mirai-world/references/vfx.md#format); `fracture`, `pieces`, `connections`, `clusters`, `vertices`, `indices` |
-| `.foliage` / `.physics_cache` | `FOLI` / `PCAC` | [`foliage`](../../mirai-world/references/foliage.md#format); [`physics_cache`](../../mirai-plugins/references/physics-cache.md) |
+| `.pcg` / `.physics_cache` | `PCGG` / `PCAC` | `pcg`, `layers`, `cells` (`plugins/pcg/runtime/source.odin`); [`physics_cache`](../../mirai-plugins/references/physics-cache.md) |
 
 Optional `import` table (`Import_Info`, sets `Cooked` via `import_put`) is the
 [import cache](../../mirai-imports/references/imports.md#import-cache). `import_peek(path,&types)`
