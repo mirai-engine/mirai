@@ -154,6 +154,7 @@ Translucent :: struct {
 	before:          bool, // of the view drawing it: nearer than every glass where it covers, so in front of the nearest layer
 	medium:          u32,  // the row plus one of a blended material of it with a medium (material_solid), 0 none: the camera can be in it
 	layered:         bool, // a blended material of it has layers: the glass layers keep them in a target
+	forward_layered: bool, // a forward blended material of it has layers
 }
 
 // Where the light of the world changed since the GI last looked: spheres
@@ -1060,7 +1061,10 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
                     if values.thickness > 0 || values.program_id != 0 || values.textures[.Metallic_Roughness] != GPU_NONE || values.roughness > 0.06 {
                         a.translucent.glass_smooth = false
                     }
-                } else {a.translucent.forward = true}
+                } else {
+                    a.translucent.forward = true
+                    a.translucent.forward_layered ||= lit != {}
+                }
             } else {a.layered ||= lit != {}}
         }
         if m != .Opaque || faded {a.tested |= 1 << u32(k)}

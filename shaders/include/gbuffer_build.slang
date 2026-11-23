@@ -140,8 +140,6 @@ Gbuffer_Vertex gbuffer_local_build(uint index, Instance inst, Mesh mesh, Cluster
     Gbuffer_Vertex output = (Gbuffer_Vertex)0;
     Gbuffer_Corner p = gbuffer_local_place(inst, mesh, c, b, k, local);
     Mesh_Point v = p.v;
-    float3 world = p.world;
-    float3 prev_world = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, k.mirrored, v.tangent);
     output.out_material = k.material;
@@ -155,7 +153,11 @@ Gbuffer_Vertex gbuffer_local_build(uint index, Instance inst, Mesh mesh, Cluster
     output.out_instance = index;
     output.out_uv = v.uv;
     output.out_uv1 = v.uv1;
-    gbuffer_vertex_place(output, world, prev_world);
+#ifdef MIRAI_RASTER_STILL
+    gbuffer_vertex_place_now(output, p.world);
+#else
+    gbuffer_vertex_place(output, p.world, gbuffer_corner_world_previous(inst, mesh, c, b, k, p));
+#endif
     return output;
 }
 

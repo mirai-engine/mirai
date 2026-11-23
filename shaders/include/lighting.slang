@@ -844,9 +844,6 @@ float cut_need(uint index, float3 position, float3 normal, uint share) {
 // `share`: only lights that give some of that share of their light.
 // The nodes of the last cut of a thread (light_cut) and, while it is made,
 // how much each needs to open (cut_need): one cut at a time (light_walk).
-// High bit in light_cut_nodes when point_light_cut hands a direct light index
-// (from light_grid) instead of a tree node index.
-#define LIGHT_CUT_DIRECT 0x80000000u
 static uint light_cut_nodes[LIGHT_CUT_MAX];
 static float light_cut_needs[LIGHT_CUT_MAX];
 uint light_cut(float3 position, float3 normal, uint budget, uint share = LIGHT_SHARE_ALL) {
@@ -1203,9 +1200,13 @@ static const bool SHADOW_RAYS = true;
 // The cut of the lights with shadows and the light of those without that a
 // point of direct_lighting takes: by walking the tree, unless the stage gives
 // what was decided for a cell that holds the point (MIRAI_LIGHTS_GIVEN:
-// translucent.frag, from the lists of its instance).
+// translucent.frag, from the grid of the lights and the lists of its
+// instance). point_light_cut gives how many items the cut has, and
+// point_light_item each: a node of the tree, or a light with LIGHT_CUT_DIRECT.
+#define LIGHT_CUT_DIRECT 0x80000000u
 #ifndef MIRAI_LIGHTS_GIVEN
 uint point_light_cut(float3 position, float3 normal, uint budget, uint share) { return light_cut(position, normal, budget, share); }
+uint point_light_item(uint i) { return light_cut_nodes[i]; }
 float3 point_shadowless_lighting(Shading s, float known, uint share) { return shadowless_lighting(s, known, share); }
 #endif
 
@@ -1258,10 +1259,10 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             if (changes) changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #endif
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = sun_shadow_seen(s.position, s.normal, s.across, true, swayed);
+            mapped = sun_shadow_seen(s.position, s.normal, s.across, SHADOW_RAYS, swayed);
 #endif
         } else if (item <= local_items) {
-            uint entry = light_cut_nodes[item - 1u];
+            uint entry = point_light_item(item - 1u);
             uint aimed;
             float distance;
             bool direct_light = (entry & LIGHT_CUT_DIRECT) != 0u;
@@ -1349,7 +1350,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
 #ifdef MIRAI_HOOK_LIGHTS
         known += extension;
 #endif
-        local += point_shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
+        if (frame.shadowless_lights != 0u) local += point_shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
         if (changes) changed = changed || lights_moved_near(s.position);
     }
 #ifdef MIRAI_HOOK_LIGHTS

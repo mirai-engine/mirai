@@ -1,6 +1,7 @@
 #+build linux, windows
 package rhi
 
+import "core:mem"
 import "core:strings"
 import "mirai:std/base"
 import vk "vendor:vulkan"
@@ -567,9 +568,7 @@ cmd_set_constants :: proc(c: ^Command_List, slot: u32, data: rawptr, size: int) 
 
 @(private)
 copy_bytes :: proc "contextless" (dst, src: rawptr, size: int) {
-	d := cast([^]u8)dst
-	s := cast([^]u8)src
-	for i in 0 ..< size {d[i] = s[i]}
+	if size > 0 {mem.copy(dst, src, size)}
 }
 
 cmd_bind_texture :: proc(c: ^Command_List, slot: u32, texture: Texture, mip: i32 = -1) {

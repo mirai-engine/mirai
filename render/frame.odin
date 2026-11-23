@@ -86,6 +86,7 @@ Pass :: struct {
 	translucent: []Translucent, // visible prefix of the scene list for this view, sorted back to front
 	translucent_drawn: bool,    // their indirect draws are written (translucent_draws_record)
 	glass_material_layers: bool,
+	forward_material_layers: bool, // a forward blend in sight has material layers
 	glass_rough: bool,          // some visible glass layer may sample blurred mips of glass_scene
 	blend:   bool,       // the view runs the Blend stage of extensions
 	blended: bool,       // a pass of it began: TAA reads the coverage it drew
@@ -308,11 +309,7 @@ resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, id: Pipeline
 	target := &r.pipelines[id]
 	quiet := pipeline_of(r, id, {VIS_RESOLVE_FRAG_QUIET}, optional = {VIS_RESOLVE_FRAG_QUIET})
 	pipeline :: proc(r: ^Renderer, target, quiet: ^rhi.Pipeline, program: u32) -> rhi.Pipeline {
-		if quiet != target && !textures_feedback_turn(r, program) {
-			if program == 0 {return quiet^}
-			if made := program_graphics(r, quiet, program, early = true, speculative = true); made != quiet^ {return made}
-		}
-		return program_graphics(r, target, program)
+		return program_spared(r, target, target if textures_feedback_turn(r, program) else quiet, program)
 	}
 	rhi.cmd_bind_pipeline(cmd, pipeline(r, target, quiet, 0))
 	rhi.cmd_draw_indirect(cmd, s.program_draws, 0, 1, size_of(Gpu_Program_Draw))
