@@ -68,8 +68,9 @@ depends on `physics`). Core algorithms live in
   target excluded from ORCA; corridor end slides with target until blocked.
 - `navigation_agents` (`fixed`, `apply`, `server`): slices A* within `path_iterations`/tick;
   parallel ORCA within `NAV_AGENT_HORIZON` and `avoidance_reach` from sources with navmesh wall
-  half-planes (`NAV_AGENT_WALL_HORIZON`) prioritized over neighbors; writes `Locomotion_Drive`
-  (`Nav_Agent.seated` opts in while seated).
+  half-planes (`NAV_AGENT_WALL_HORIZON`) prioritized over neighbors; writes the velocity of the
+  `input.Move_Input` of its body (`world_velocity`), keeping its buttons, and drops it
+  (`input.move_release`) when it stops; a seated body only with `Nav_Agent.seated`.
 - **Replanning & errors**: replans on invalid corridor, `core.place` teleport, off-level
   (`> climb + 0.5m`), or stuck (retries before `navigation.blocked`; agents queued behind movers
   wait). Airborne off-mesh waits to land instead of `navigation.off_mesh`. Partial paths wait while

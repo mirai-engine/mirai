@@ -211,7 +211,7 @@ terrain_net_receive :: proc(
 // stands, and the replay it is. Without memory to count the asks of a
 // connection it is refused as Rate.
 @(private)
-ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,data:core.Ref(terrain.Terrain_Data),terrains:^core.Table(terrain.Terrain,.Read),seats:^core.Table(input.Seat,.Read),worlds:^core.Table(core.World_Transform,.Read),settings:Terrain_Net_Settings) -> (replay:terrain.Replay,refusal:Terrain_Refusal) {
+ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,data:core.Ref(terrain.Terrain_Data),terrains:^core.Table(terrain.Terrain,.Read),seats:^core.Table(input.Seat,.Read),nets:^core.Table(multiplayer.Net_Seat,.Read),worlds:^core.Table(core.World_Transform,.Read),settings:Terrain_Net_Settings) -> (replay:terrain.Replay,refusal:Terrain_Refusal) {
     if held.ahead {return {},.Tick}
     if refusal=rate_take(n,held.connection,time,settings);refusal!=.None {return}
     source:=base.Asset_Id(held.ask.key)
@@ -231,8 +231,8 @@ ask_check :: proc(n:^Terrain_Net,held:multiplayer.Journal_Held,time:core.Time,da
         if settings.radius>0 && brush_size(brush)>settings.radius {return {},.Radius}
     }
     seat:=core.NONE
-    if seats!=nil {
-        for value,row in seats.values[:core.count(seats)] {if multiplayer.Connection(value.peer)==held.connection {seat=core.entity_at(seats,row);break}}
+    if nets!=nil {
+        for value,row in nets.values[:core.count(nets)] {if value.connection==held.connection {seat=core.entity_at(nets,row);break}}
     }
     if seat==core.NONE {return {},.Player}
     if settings.reach>0 && replay.kind==.Edit {
@@ -280,7 +280,7 @@ rate_take :: proc(n:^Terrain_Net,connection:multiplayer.Connection,time:core.Tim
 terrain_net_follow :: proc(
     authority:core.Ref(core.Network),n:^Terrain_Net,time:core.Time,replays:^terrain.Terrain_Replays,outbox:^multiplayer.Net_Outbox,
     session:core.Ref(multiplayer.Net_Session),data:core.Ref(terrain.Terrain_Data),terrains:^core.Table(terrain.Terrain,.Read),
-    seats:^core.Table(input.Seat,.Read),worlds:^core.Table(core.World_Transform,.Read),
+    seats:^core.Table(input.Seat,.Read),nets:^core.Table(multiplayer.Net_Seat,.Read),worlds:^core.Table(core.World_Transform,.Read),
     settings:Terrain_Net_Settings,root:core.Ref(scene.Scene_Root),assets:^host.Assets,problems:^core.Problems,
 ) {
     if n==nil {return}
@@ -290,7 +290,7 @@ terrain_net_follow :: proc(
     j:=&n.journal
     if authority.role==.Server {
         for held in multiplayer.journal_asks(j,time) {
-            replay,refusal:=ask_check(n,held,time,data,terrains,seats,worlds,settings)
+            replay,refusal:=ask_check(n,held,time,data,terrains,seats,nets,worlds,settings)
             if refusal!=.None {multiplayer.journal_refuse(j,outbox,held,u8(refusal),0);continue}
             replay.tag=multiplayer.journal_ask_tag(j,held,time)
             core.push(&replays.items,replay)

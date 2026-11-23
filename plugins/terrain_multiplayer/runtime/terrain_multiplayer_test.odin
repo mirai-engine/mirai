@@ -24,6 +24,7 @@ End_World :: struct {
     using world:Test_World,
     using ground:terrain.Test_Terrain,
     seats:core.Table(input.Seat),
+    nets:core.Table(multiplayer.Net_Seat),
     replays:terrain.Terrain_Replays,
     replayed:terrain.Terrain_Replay_Events,
     net_settings:Terrain_Net_Settings,
@@ -157,7 +158,8 @@ parts_forget :: proc(e:^End) {
 @(private="file")
 end_seat :: proc(e:^End,connection:multiplayer.Connection) {
     seat:=core.create(&e.entities)
-    core.add(&e.seats,seat,input.Seat{peer=u64(connection)})
+    core.add(&e.seats,seat,input.Seat{remote=true})
+    core.add(&e.nets,seat,multiplayer.Net_Seat{connection=connection})
     test_world_settle(&e.w)
 }
 
@@ -178,7 +180,7 @@ end_tick :: proc(e:^End,_:^Fixture,resimulating:=false) {
     time:=core.Time{dt=1.0/60,playing=true,tick=e.tick,resimulating=resimulating}
     e.outbox.replaying=resimulating // as a correction of the network leaves it
     terrain_net_follow(core.ref(&e.authority),&e.net,time,&e.replays,&e.outbox,core.ref(&e.session),core.ref(&e.data),core.read(&e.terrains),
-        core.read(&e.seats),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
+        core.read(&e.seats),core.read(&e.nets),core.read(&e.worlds),e.net_settings,core.ref(&e.root),f.app.assets,&e.problems)
     clear(&e.replayed.results.items);clear(&e.digs.digs.items) // the logs of a tick, as their readers are handed them
     terrain.terrain_replay(&e.replays,&e.replayed,&e.digs,&e.terrain_requests,&e.data,core.read(&e.terrains),core.read(&e.worlds),f.app.assets,&e.problems)
     terrain_net_send(core.ref(&e.authority),&e.net,time,&e.outbox,core.ref(&e.connections),core.ref(&e.replayed),core.ref(&e.data),core.ref(&e.session),core.ref(&e.root))

@@ -115,15 +115,22 @@ terrain digs). Library supplies `Journal_Op.body` + region/checksum and applies 
   unpredicted client replicas. Gameplay gates authority with `core.owned`.
 - **Seats & identity:** On connect, client sends one `Net_Player` (128-bit secret from persisted
   `Net_Identity`, or per-world with `--new-player`/`Open_Request.new_player`); empty or duplicate
-  closes with `Denied_Player`. Server stores only SHA-256 hash in a replicated (`Always`,
-  `core.Keep`) `input.Seat` (`player` is `local`).
+  closes with `Denied_Player`. Server seats it in a replicated (`Always`, `core.Keep`)
+  `input.Seat` (`remote`) with a server-only `Net_Seat{connection, player}` holding only the
+  SHA-256 hash; `input` knows no connection or player.
 - **Absence & reconnect:** Disconnect disables the seat (`core.Disabled`, `Seat_Absent`) for
   `absent_seconds` (unlimited in loaded saves); same secret reclaims it (preserving game-disabled
   state); live duplicate kicks old connection with `Replaced`. `spawn` ties bodies via `Seat_Body`
   (`spawn_seat_bodies`).
-- **Ownership:** Body owner is its driving seat's connection (`owner_of`); connection view tracks
-  owned bodies, not seats. Client uses `own_connection(session)` and drives predicted bodies with
-  its first local seat (`net_driving`).
+- **Ownership:** Body owner is its driving seat's connection (`owner_of`, tables resolved once per
+  publish in `Owners`); connection view tracks owned bodies, not seats. `Seat.body` replicates:
+  every client knows each seat's body. A client makes no local seats (`input_seats`); it plays at
+  the replica it owns (local slot 0), `client_seats` marks the others `remote` and drops seats
+  made before its own arrived.
+- **View as input:** `input.Seat_View` (where the seat's camera looked as the tick began, from
+  `input.Slot_Views` that `camera_blend` writes) travels in `Remote_Actions` with the actions, is
+  kept in `Taken` and runs again in corrections: `camera_drive` moves bodies by it on every end,
+  never by this end's camera transforms.
 
 ## Opening and closing
 
@@ -251,7 +258,7 @@ fire_projectile :: proc(
         seat := core.at(seats, row)
         if !input.pressed(seat^, .Fire) {continue}
         proj := core.spawn(cmds)
-        multiplayer.predict_spawn(spawns, proj, seat^)
+        multiplayer.predict_spawn(spawns, proj, core.entity_at(seats, row))
     }
 }
 ```
@@ -332,7 +339,9 @@ failures exit `PLAYER_NET`. `scripts/bench_compare.py` (`netpublish`) benchmarks
   `a_client_composes_the_type_of_a_creation_from_its_fragments` (`net`),
   `a_server_owns_each_body_to_the_connection_of_its_seat`,
   `a_seat_waits_for_its_player_and_is_given_back_when_it_connects_again`,
-  `the_seats_of_a_saved_game_wait_for_their_players`, `a_client_keeps_the_seats_of_the_server`,
+  `the_seats_of_a_saved_game_wait_for_their_players`,
+  `a_client_plays_at_the_replica_of_the_seat_of_its_player`,
+  `a_free_orbit_turned_by_its_player_moves_the_body_alike_on_both_ends` (`view_test.odin`),
   `a_seat_the_game_turned_off_stays_off_when_its_player_comes_back`,
   `a_client_that_presents_the_id_of_another_player_does_not_take_its_seat`,
   `a_player_that_comes_back_with_its_secret_gets_its_seat_back`,

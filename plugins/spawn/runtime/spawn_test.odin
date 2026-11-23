@@ -109,7 +109,7 @@ the_place_the_editor_asks_comes_before_the_points_for_player_1_once :: proc(t:^t
     core.add(points,enemy,Spawn_Point{prefab={1,3}})
     core.add(seats,first,input.Seat{slot=0})
     core.add(seats,second,input.Seat{slot=1})
-    core.add(seats,remote,input.Seat{slot=0,peer=7})
+    core.add(seats,remote,input.Seat{slot=0,remote=true})
     test_world_settle(&w)
     spawning:Spawning
     problems:core.Problems

@@ -121,6 +121,7 @@ record_components_differ :: proc(s:^Net_Session,r:^Replica,tick:u32,command:^wir
 @(private)
 authoritative_apply :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,baseline:bool) {
     es:=core.world_entities(w)
+    n:=net_tables(w)
     for &r in s.client.replicas[:s.client.replica_high] {
         if r.object==0 || !core.alive(es,r.entity) || r.mode!=.Predicted {continue}
         command,found:=authoritative_command(s,&r,tick,!baseline)
@@ -132,7 +133,7 @@ authoritative_apply :: proc(s:^Net_Session,w:core.World_Ref,tick:u32,baseline:bo
             motion:Motion_State
             wire.object_read(&s.host,&command,0,&pose,max(u64))
             if t.motion>=0 {wire.object_read(&s.host,&command,t.motion,&motion,max(u64))}
-            pose_apply(s,w,r.entity,t,pose,motion,false)
+            pose_apply(s,w,n,r.entity,t,pose,motion,false)
         }
     }
     core.world_settle(w)
@@ -164,9 +165,9 @@ references_refresh :: proc(s:^Net_Session,w:core.World_Ref) {
 
 // The Move_Input of a replica another end drives, from a state of the server.
 @(private)
-driver_apply :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,command:^wire.Command) {
+driver_apply :: proc(s:^Net_Session,n:Net_Tables,r:^Replica,command:^wire.Command) {
     t:=net_type(s,r.type)
-    moves:=core.world_table_of(w,input.Move_Input)
+    moves:=n.moves
     driver:Driver_State
     if t.driver<0 || moves==nil || !wire.object_read(&s.host,command,t.driver,&driver,max(u64)) || !driver.has_move {return}
     if old,has:=core.get(moves,r.entity);!has || old!=driver.move {core.add(moves,r.entity,driver.move)}
@@ -178,6 +179,7 @@ driver_apply :: proc(s:^Net_Session,w:core.World_Ref,r:^Replica,command:^wire.Co
 @(private)
 client_inputs :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
     es:=core.world_entities(w)
+    n:=net_tables(w)
     for &r in s.client.replicas[:s.client.replica_high] {
         if r.object==0 || r.role==.Predicted || r.role==.Held || r.mode==.Interpolated || !core.alive(es,r.entity) {continue}
         t:=net_type(s,r.type)
@@ -190,7 +192,7 @@ client_inputs :: proc(s:^Net_Session,w:core.World_Ref,tick:u32) {
                 if int(leaf.fragment)==t.driver {feed_bytes(&s.client,mem.slice_to_bytes(command.words[leaf.word:][:leaf.words]))}
             }
         }
-        driver_apply(s,w,&r,&command)
+        driver_apply(s,n,&r,&command)
     }
     core.world_settle(w)
 }

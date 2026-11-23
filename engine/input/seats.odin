@@ -4,44 +4,90 @@ import "mirai:core"
 import "mirai:host"
 
 // Who drives what. A seat is someone who plays: at this machine (a slot), or
-// at another end of the network (a peer, which the network seats on a
-// server). Each seat carries the actions of the input map for the tick and
-// the body it drives (Seat.body), whose Move_Input those actions become
-// (engine/camera: forward is where its camera looks). This library owns
-// Seat.body. Other libraries request changes through Seat_Requests.
+// at another end of the network (core.Remote on a client; on a server, a seat
+// the network made for a connection). Each seat carries the actions of the
+// input map for the tick, where it looks (Seat_View) and the body it drives
+// (Seat.body), whose Move_Input those actions become (engine/camera: forward
+// is where its camera looks). A body no seat drives takes its Move_Input from
+// its AI or a script (move_set). This library owns Seat.body. Other libraries
+// request changes through Seat_Requests.
 //
 // A request is applied at the start of the next fixed tick. A seat drives
 // one body at most and a body has one seat. Held buttons wait for their
 // release when the body or the blocks of a seat change, so a jump held before
 // the change does not happen in the new body, and the body a seat lets go of
 // stops: its move and buttons are cleared. In a network session the server
-// decides who drives what: a client takes only the bodies it owns
-// (core.owned), and lets go of any.
+// decides who drives what: the network replicates Seat.body, a client takes
+// only the bodies it owns (core.owned), and lets go of any.
 
 LOCAL_CAPACITY :: 4
 BLOCK_CAPACITY :: 64
 
-// The movement and actions a player seat asks of its body.
-@(component,shared,description="What the body is asked this tick: where to go in the world and where to look, from the seat that drives it.")
+// The movement and actions asked of a body: by the seat that drives it, and
+// without one by its AI or a script (move_set).
+@(component,shared,description="What the body is asked this tick: where to go in the world and where to look, from the seat that drives it or else from its AI or a script.")
 Move_Input :: struct {
-    move:[3]f32 `mirai:"readonly"`,                // in the world: across the up of the body (core.Vertical) it walks; along it, modes that fly. A share of the top speed, up to 1 long
+    move:[3]f32 `mirai:"readonly"`,                // in the world: across the up of the body (core.Vertical) it walks; along it, modes that fly. A share of the top speed, up to 1 long; with world_velocity, m/s
     look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // where it looks and faces: yaw turns left about the up of the body, pitch looks up; at 0 it looks along -Z, as everything does. Ground that turns adds to it (core.Vertical.turn) through whoever writes it
+    world_velocity:bool `mirai:"readonly"`,        // move is a velocity in m/s, as AI and scripts ask, bounded by the top speed of the mode; a seat asks a share
     buttons:Action_Mask `mirai:"readonly"`,        // the button actions held
 }
 #assert(size_of(Move_Input)==32)
 
+// The Move_Input of a body no seat drives, as its AI or a script asks it:
+// false, and nothing written, while a seat drives it, whose actions are its
+// Move_Input then.
+move_set :: proc(moves:^core.Table(Move_Input),state:core.Ref(Seats),body:core.Entity,value:Move_Input) -> bool {
+    if seat_of(state,body)!=core.NONE {return false}
+    if row:=core.staged(moves,body);row!=nil {row^=value} else if !core.add(moves,body,value) {return false}
+    return true
+}
+
+// A body no seat drives is asked nothing more by its AI or a script: its
+// Move_Input goes, and it keeps facing where it faces. Nothing while a seat
+// drives it.
+move_release :: proc(moves:^core.Table(Move_Input),state:core.Ref(Seats),body:core.Entity) {
+    if seat_of(state,body)==core.NONE {core.remove(moves,body)}
+}
+
 // Someone who plays: at this machine, the seat of a slot, made at runtime for
-// every slot below the number of local players when the scene has none; at
+// every slot below the number of local players when the scene has none (a
+// network client makes none: it plays at the seat its server gives it); at
 // another end, the seat of a player that connected, which the network makes
-// on a server, replicates to every client with what the game hangs from it,
-// and keeps while that player is away. Its actions come from the devices of
-// its slot, or from the network for another end.
-@(component,shared,replicated,description="Someone who plays: at this machine (slot 0 is the first one; the keyboard and the mouse go to the focused slot, gamepad i to slot i), or at the other end of a connection.")
+// on a server, replicates to every client with the body it drives and what
+// the game hangs from it, and marks remote on each end but the one of its
+// player. Its actions come from the devices of its slot, or from the network
+// for another end.
+@(component,shared,replicated,description="Someone who plays: at this machine (slot 0 is the first one; the keyboard and the mouse go to the focused slot, gamepad i to slot i), or at another end of the network.")
 Seat :: struct {
     slot:u8 `mirai:"max=3"`,
-    peer:u64 `mirai:"transient,readonly,local"`,          // the connection of another end, on a server; on a client, any value but 0 for the seat of another player; 0: this machine, or a player away
-    player:u64 `mirai:"readonly,hidden,local"`,           // server: the hash of the secret the player of another end presents, which gets the seat back; 0: this machine
-    body:core.Entity `mirai:"local"`,                     // the body it drives: a seat of a scene drives it from the start; none: none
+    remote:bool `mirai:"transient,readonly,local"`, // its actions come from another end of the network (seat_receive), not from the devices of its slot: the network sets it
+    body:core.Entity,                               // the body it drives: a seat of a scene drives it from the start; none: none
+}
+
+// Where a seat looks in a tick: through the camera it saw the game through
+// when the tick began. It is of the tick as its actions are: this machine takes
+// it from the view it drew (Slot_Views), the network from the end of the
+// player, so every end moves the body toward the same forward (engine/camera)
+// whatever its own cameras did.
+Seat_View :: struct {
+    yaw:f32 `mirai:"min=-3.1416,max=3.1416,precision=0.0001"`, // radians in the frame of the vertical of its body (core.Vertical): left about its up, 0 along -Z
+    pitch:f32 `mirai:"min=-1.6,max=1.6,precision=0.0001"`,     // radians up from across its up
+    kind:View_Kind `mirai:"bits=2"`,
+}
+
+View_Kind :: enum u8 {
+    None,  // it saw through no camera
+    Apart, // a camera that turns apart from its body: it walks where the camera looks
+    Body,  // a camera that looks with its body (Eyes, an Orbit that aims, one on the body): the look of its Move_Input
+}
+
+// Where each local slot looked as the last frame was drawn, by slot: the
+// camera library writes it as it draws, and input_seats gives it to the seat
+// of the slot for the tick, as it gives the devices.
+@(storage)
+Slot_Views :: struct {
+    views:[LOCAL_CAPACITY]Seat_View,
 }
 
 Seat_Sample :: struct {
@@ -49,6 +95,7 @@ Seat_Sample :: struct {
     held:Action_Mask,
     rearm:Action_Mask, // held buttons that wait for their release
     fed:Context_Stack, // contexts where the actions were last computed
+    view:Seat_View,
 }
 
 Seat_State :: struct {
@@ -76,8 +123,8 @@ seat_runtime_edit :: proc(states:^Seat_States,seat:core.Entity) -> ^Seat_State {
     return value
 }
 
-// A seat of this machine: not one of another end, nor of a player away.
-seat_local :: #force_inline proc "contextless" (seat:Seat) -> bool {return seat.peer==0 && seat.player==0}
+// A seat of this machine: not one of another end.
+seat_local :: #force_inline proc "contextless" (seat:Seat) -> bool {return !seat.remote}
 
 // How many players share this machine, each with a part of the screen: of
 // the run, which the editor sets before the first tick of its runs and a
@@ -200,6 +247,12 @@ focused :: proc(state:core.Ref(Seats),seats:^core.Table(Seat,$A)) -> core.Entity
     return state.ptr!=nil && state.local_count>0?local_seat(seats,state.focus):core.NONE
 }
 
+// Where a seat looks this tick (Seat_View); none for what is not a seat.
+seat_view :: proc "contextless" (states:core.Ref(Seat_States),seat:core.Entity) -> Seat_View {
+    source:=seat_runtime(states,seat)
+    return source!=nil?source.view:{}
+}
+
 // The state of an action of a seat this tick: released while it is blocked
 // or waits for its release, and for what is not a seat. Code reads its own
 // actions with seat_state and Input_Of.
@@ -253,7 +306,7 @@ body_action :: proc(state:core.Ref(Seats),states:core.Ref(Seat_States),body:core
 @(step="fixed",stage="input")
 input_seats :: proc(
     es:core.Commands,app:^host.App,seats:^core.Table(Seat),state:^Seats,run:^Run_Players,
-    states:^Seat_States,device:core.Input,bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
+    states:^Seat_States,device:core.Input,views:core.Ref(Slot_Views),bindings:core.Ref(Input_Map),network:core.Ref(core.Network),keeps:^core.Table(core.Keep),time:core.Time,
 ) {
     if run.count==0 {run.count=app.launch.players}
     // A server has players of its own only when the run asks for them: one
@@ -262,7 +315,8 @@ input_seats :: proc(
     if run.count==0 && network.role==.Server {count=0}
     state.local_count=count
     state.focus=clamp(state.focus,0,max(count-1,0))
-    for slot in 0..<count {
+    // A client makes none: its server gives it the seat of its player.
+    for slot in 0..<(network.role==.Client?0:count) {
         if local_seat(seats,slot)==core.NONE {
             seat:=core.create(es)
             core.add(seats,seat,Seat{slot=u8(slot)})
@@ -274,7 +328,9 @@ input_seats :: proc(
         if !seat_local(seat) {continue}
         slot:=int(seat.slot)
         own:=slot<count?slot_input(device,slot,count,state.focus):core.Input{}
-        seat_feed(seat_runtime_edit(states,core.entity_at(seats,row)),&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1,time.dt)
+        fed:=seat_runtime_edit(states,core.entity_at(seats,row))
+        seat_feed(fed,&own,bindings.ptr,slot<count && slot==state.focus && state.keyboard!=0 && state.keyboard!=slot+1,time.dt)
+        if fed!=nil {fed.view=slot<count && views.ptr!=nil?views.views[slot]:{}}
     }
     state.keyboard=count>0?state.focus+1:0
 }

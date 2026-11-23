@@ -21,12 +21,12 @@ animation_motor_preserves_world_root_direction_facing_and_physical_speed_limits_
     delta:=anim.Root_Delta{translation={.1,.5,.2},rotation=mm.quat_axis_angle({0,1,0},.3)}
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     input:=animation_motor_input(delta,actor,.1)
-    world:=input.velocity*.1
+    world:=input.move*.1
     requested:=mm.quat_rotate(actor.rotation,delta.translation*actor.scale);requested.y=0
     stopped:=animation_motor_input(delta,actor,0)
     context=saved
     // A velocity the locomotion takes up to the top speed of the walk.
-    testing.expect(t,linalg.length(world-requested)<1e-5 && abs(mm.angle_wrap(input.look_yaw-.9))<1e-5 && input.velocity.y==0 && stopped.velocity=={})
+    testing.expect(t,linalg.length(world-requested)<1e-5 && abs(mm.angle_wrap(input.look_yaw-.9))<1e-5 && input.world_velocity && input.move.y==0 && stopped.move=={})
 }
 
 // The body of Mirai: the first mesh of the import of characters/mirai/mirai.glb, by the id its
@@ -50,7 +50,7 @@ Animation_Input_Fixture :: struct {
     entities:core.Entities,
     assets:host.Assets,app:host.App,
     transforms:core.Table(core.Transform),worlds:core.Table(core.World_Transform),parents:core.Table(core.Parent),names:core.Table(core.Name),hierarchy:core.Hierarchy,propagation:core.Propagation,jumps:core.Jumps,
-    inputs:core.Table(inp.Move_Input),drives:core.Table(locomotion.Locomotion_Drive),parkours:core.Table(locomotion.Parkour_State),motors:core.Table(Animation_Motor),
+    inputs:core.Table(inp.Move_Input),parkours:core.Table(locomotion.Parkour_State),motors:core.Table(Animation_Motor),
     motor_states:core.Table(Animation_Motor_State),
     walks:core.Table(locomotion.Walk),flights:core.Table(locomotion.Fly),swims:core.Table(locomotion.Swim),remotes:core.Table(core.Remote),character_moves:core.Table(phys.Character_Move),locomotion_requests:locomotion.Locomotion_Requests,
     characters:core.Table(phys.Character),locomotion_states:core.Table(locomotion.Locomotion_State),rigids:core.Table(phys.Rigid_Body),colliders:core.Table(phys.Collider),joints:core.Table(phys.Joint),meshes:core.Table(render.Mesh_Renderer),
@@ -73,10 +73,10 @@ animation_input_fixture_destroy :: proc(f:^Animation_Input_Fixture) {
 animation_input_physics :: proc(f:^Animation_Input_Fixture,time:core.Time) {
     no_slides:core.Table(locomotion.Slide);no_mantles:core.Table(locomotion.Mantle);no_tacticals:core.Table(locomotion.Tactical_Sprint);no_ledges:core.Table(locomotion.Ledge_Jump)
     places:core.Places
-    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.locomotion_states,&f.parkours,&f.character_moves,&f.inputs,&f.drives,
+    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.locomotion_states,&f.parkours,&f.character_moves,&f.inputs,
         core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&no_slides),core.read(&no_mantles),&f.locomotion_requests,time,&f.problems)
     core.table_settle(&f.locomotion_states,&f.entities)
-    locomotion.locomotion_step(core.read(&f.characters),&f.locomotion_states,&f.parkours,&f.character_moves,&f.inputs,core.read(&f.drives),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&no_slides),core.read(&no_mantles),core.read(&no_tacticals),core.read(&no_ledges),core.read(&f.character_states),core.read(&f.body_states),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),{&f.physics},{&places},{},{},time,core.CLOCK_DEFAULT,&f.problems)
+    locomotion.locomotion_step(core.read(&f.characters),&f.locomotion_states,&f.parkours,&f.character_moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&no_slides),core.read(&no_mantles),core.read(&no_tacticals),core.read(&no_ledges),core.read(&f.character_states),core.read(&f.body_states),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),{&f.physics},{&places},{},{},time,core.CLOCK_DEFAULT,&f.problems)
     core.table_settle(&f.locomotion_states,&f.entities);core.table_settle(&f.inputs,&f.entities);core.table_settle(&f.character_moves,&f.entities)
     phys.physics_step(&f.physics,{&f.settings},&f.body_requests,&f.body_events,&f.collider_meshes,&f.app,time,core.read(&f.rigids),core.read(&f.colliders),core.read(&f.characters),&f.character_moves,&f.joints,core.read(&f.meshes),core.read(&f.parents),core.read(&f.names),&f.transforms,&f.body_states,core.read(&f.replicas),&f.character_states,&f.joint_states,{},nil,{},{},nil,nil,&f.problems,{},{},{},{},{},core.ref(&f.hierarchy),{},{},{},{})
     core.table_settle(&f.body_states,&f.entities);core.table_settle(&f.character_states,&f.entities);core.table_settle(&f.joint_states,&f.entities)
@@ -115,11 +115,11 @@ animation_motor_drives_the_sampled_root_motion_and_leaves_other_bodies_as_they_w
     delta,present:=anim.animation_root_delta(core.ref(&f.playback),motor)
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5 && abs(anim.playing_pose(&f.playback.states[0],.Local)[1].position.x-time.dt)<1e-5)
     before_control,_:=core.get(&f.transforms,controlled);before_motor,_:=core.get(&f.transforms,motor)
-    animation_motor_drive(core.read(&f.motors),&f.motor_states,&f.drives,core.read(&f.worlds),core.ref(&f.playback),time,nil)
-    core.table_settle(&f.drives,&f.entities)
-    published_control,_:=core.get(&f.inputs,controlled);published_motor,_:=core.get(&f.drives,motor)
+    animation_motor_drive(core.read(&f.motors),&f.motor_states,&f.inputs,{},core.read(&f.worlds),core.ref(&f.playback),time,nil)
+    core.table_settle(&f.inputs,&f.entities)
+    published_control,_:=core.get(&f.inputs,controlled);published_motor,_:=core.get(&f.inputs,motor)
     // The clip advances 1 m/s: the motor asks for that velocity.
-    testing.expect(t,published_control.move.x==.2 && abs(published_motor.velocity.x-1)<1e-5)
+    testing.expect(t,published_control.move.x==.2 && published_motor.world_velocity && abs(published_motor.move.x-1)<1e-5)
     time.tick+=1;animation_input_physics(&f,time)
     after_control,_:=core.get(&f.transforms,controlled);after_motor,_:=core.get(&f.transforms,motor)
     testing.expect(t,after_control.position.x>before_control.position.x && after_motor.position.x>before_motor.position.x)

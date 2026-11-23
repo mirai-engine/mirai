@@ -333,7 +333,7 @@ Predicted_Spawn :: struct {
 // which has the Id both ends draw already.
 Spawn :: struct {
     entity:core.Entity,
-    peer:u64,
+    seat:core.Entity, // that makes it; none: the player of this end
     kept:bool,
 }
 
@@ -357,7 +357,7 @@ spawn_id :: proc(connection:Connection,tick:u64,kind:u64,sequence:u32) -> base.E
 // the shot of the player a client predicts, with seat the seat that makes it:
 // the replica of the server's takes the client's, also after a correction ran
 // the tick again.
-predict_spawn :: proc(spawns:^Net_Spawns,e:core.Entity,seat:input.Seat) {core.push(&spawns.queue,Spawn{entity=e,peer=seat.peer})}
+predict_spawn :: proc(spawns:^Net_Spawns,e:core.Entity,seat:core.Entity) {core.push(&spawns.queue,Spawn{entity=e,seat=seat})}
 
 // For a library that makes on a client, for what the server makes too, an
 // entity of its own with the Id both ends draw (the piece of a fracture): the

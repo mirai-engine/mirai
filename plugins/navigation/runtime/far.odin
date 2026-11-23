@@ -2,6 +2,7 @@ package navigation
 
 import "core:math/linalg"
 import "mirai:core"
+import input "mirai:engine/input"
 import scene "mirai:engine/scene"
 import "mirai:std/ai"
 import mm "mirai:std/math"
@@ -177,7 +178,7 @@ far_request :: proc(paths:^core.Table(Nav_Path),fars:^core.Table(Nav_Far),asked:
 // The part of navigation_agents for what is far, after the agents moved.
 @(private)
 agents_far :: proc(
-    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),drives:^core.Table(locomotion.Locomotion_Drive),
+    n:core.Ref(Navigation),builds:core.Ref(Navigation_Builds),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,$A),paths:^core.Table(Nav_Path),moves:^core.Table(input.Move_Input),seat_state:core.Ref(input.Seats),
     fars:^core.Table(Nav_Far),roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),
     walks:^core.Table(locomotion.Walk,$B),flights:^core.Table(locomotion.Fly,$C),swims:^core.Table(locomotion.Swim,$D),colliders:^core.Table(phys.Collider,$E),worlds:^core.Table(core.World_Transform,$F),
     placer:core.Placer,bodies:^phys.Body_Requests,events:^Nav_Events,time:core.Time,
@@ -220,7 +221,7 @@ agents_far :: proc(
         written:=core.edit(paths,e)
         r.through,written.velocity=false,{}
         if r.steering {
-            core.remove(drives,e)
+            input.move_release(moves,seat_state,e)
             r.steering=false
         }
     }

@@ -70,13 +70,14 @@ visibility_replicates_an_entity_only_to_the_connections_whose_seat_shares_a_bit 
                     if masks[k]!=0 {core.add(&world.visibility,e,Visibility{mask=masks[k]})}
                 }
                 seat=core.create(&world.entities)
-                core.add(&world.seats,seat,inp.Seat{peer=u64(connected)})
+                core.add(&world.seats,seat,inp.Seat{remote=true})
+                core.add(&world.nets,seat,Net_Seat{connection=connected})
             } else {
                 core.add(&world.visibility,seat,Visibility{sees=c.sees})
             }
         }
         // As input writes the seats every tick.
-        if seat!=core.NONE {_=core.edit(&world.seats,seat)}
+        if seat!=core.NONE {_=core.edit(&world.seats,seat);_=core.edit(&world.nets,seat)}
         core.settle(&info,world,nil)
         server_publish(&sessions[0],core.world_ref(world,&info),&outbox,u32(tick))
         wire.host_update(&sessions[0].host,now)

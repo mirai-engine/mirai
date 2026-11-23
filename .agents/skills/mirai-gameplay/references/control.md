@@ -8,8 +8,8 @@ Control splits across three packages:
   `Camera_Changes`, `Camera_Input`).
 - `spawn` plugin: [spawn points](#spawn-points) and player bodies.
 
-A **seat** (`Seat{slot, peer, player, body}`) is a player — local (`peer==0 && player==0`,
-`seat_local`) or remote — and exists even without a body. For AI steering, see
+A **seat** (`Seat{slot, remote, body}`) is a player — local (`seat_local`) or of another end
+(`remote`, set by the network) — and exists even without a body. For AI steering, see
 [locomotion](../../mirai-physics/references/engine.md#what-drives-it).
 
 ## Seats
@@ -98,11 +98,16 @@ or unchorded bindings.
   `input`). Released bodies zero move/buttons and keep look. Invalid requests make no partial
   changes and report problems (`input.body_taken`, `body_gone`, `server_decides`).
 - **Forward**: `camera_drive` (`fixed`, `input`, after `camera_select` + `input_drive`) writes
-  `Move_Input` from seat actions in the seen camera's forward and `core.Vertical` frame (+
-  `Vertical.turn`). Look-with-body cameras (`Eyes`, aiming `Orbit`, body camera without
-  `Camera_Follow`) turn body look; others face movement; no camera uses world `-Z`.
+  `Move_Input` from seat actions in the `core.Vertical` frame (+ `Vertical.turn`) toward the
+  seat's tick view (`input.Seat_View`: `camera_blend` writes `Slot_Views` as it draws,
+  `input_seats` gives it to the seat, the network to remote seats), never camera transforms.
+  Look-with-body cameras (`Eyes`, aiming `Orbit`, body camera without `Camera_Follow`) turn body
+  look, from the view when the seat comes from an `Apart` camera; others face movement along the
+  view; no camera uses world `-Z`.
 - **1:1 index**: `body_of` reads `Seat`; `seat_of` reads `core.Ref(inp.Seats)`. `Seats` is
-  derived (reset on load); dead owners/seats auto-clean. AI writes `Locomotion_Drive` directly.
+  derived (reset on load); dead owners/seats auto-clean. AI and scripts write the `Move_Input` of
+  bodies no seat drives with `move_set` (`world_velocity` for m/s) and drop it with
+  `move_release`; seated bodies are the seat's.
 
 ```odin
 @(step="fixed")
@@ -164,7 +169,8 @@ inp.hold(hold_req, seat, inp.action_of(actions, .Use), {1, 0}, ticks=2)
 - **Overrides & activation**: `camera_override`/`camera_override_remove` (`Camera_Requests`;
   failures report `camera.*`) settle in `camera_select` (`fixed`, `input`); `Cameras` is derived.
   `Camera_Activation{action, blend}` (`Aim` preset) overrides while holding `action`.
-- **Views & transitions**: `camera_blend` (`late`, `end`) writes `Camera_Views` and
+- **Views & transitions**: `camera_blend` (`late`, `end`) writes `Camera_Views`, `input.Slot_Views`
+  and
   `render.View_Camera` (`posed` preserves temporal history; no blend marks `cut`). Transitions
   track moving bodies, orbit around pivots, dolly-zoom between perspective and ortho, and set
   `core.View.focus` at orbit pivot for
@@ -197,13 +203,14 @@ to driven ancestor/root/focused player; writing its transform elsewhere triggers
 
 ## Networking
 
-- Server decides driving and spawning (`owner` derived from seat `peer`). Client promotes its own
-  replicated seat to slot 0 (`client_seats`) and marks other seats `peer=OTHER_END`
+- Server decides driving and spawning (`owner` from the `multiplayer.Net_Seat` of the seat);
+  `Seat.body` replicates. A client makes no seats: it plays at the replica it owns, slot 0, and
+  the others are `remote`
   ([authority](../../mirai-networking/references/multiplayer.md#authority-and-players)).
 - `input` has no net dependency: clients only drive `core.owned` bodies (`input.server_decides`),
   drop unowned ones; `spawn` rejects client spawns (`spawn.client_spawn`).
-- Clients send only slot 0 `inp.Remote_Actions` (`seat_remote` -> server `seat_receive`); bindings
-  stay client-local; other peers receive only `Move_Input`.
+- Clients send only slot 0 `inp.Remote_Actions` with its `Seat_View` (`seat_remote` -> server
+  `seat_receive`); bindings stay client-local; other peers receive only `Move_Input`.
 - Disconnected seats wait disabled; on timeout they are removed and `spawn` destroys `Seat_Body`.
   Rollback restores `Seats`, `Seat`, `Seat_States` with the world.
 

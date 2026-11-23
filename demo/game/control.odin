@@ -15,7 +15,7 @@ import mm "mirai:std/math"
 
 // The person and its dog. Each player has a seat and gets a person at a spawn
 // point (the spawn plugin); here each person gets a dog that Follows
-// it: its AI writes the Locomotion_Drive of the dog where this end decides. Every
+// it: its AI writes the Move_Input of the dog where this end decides. Every
 // body a seat drives moves from the actions of its seat. Tab drives the dog
 // instead, and the person follows; V blends into the shared overhead camera
 // and back; C blends the camera of the body into the next mode.
@@ -128,7 +128,7 @@ companion_of :: proc(follows:^core.Table(Follow,$A),leader:core.Entity) -> core.
 // until it is near, where this end decides what it does.
 @(step="fixed")
 game_follow :: proc(
-    follows:^core.Table(Follow,.Read),seat_state:core.Ref(inp.Seats),drives:^core.Table(locomotion.Locomotion_Drive),walks:^core.Table(locomotion.Walk,.Read),
+    follows:^core.Table(Follow,.Read),seat_state:core.Ref(inp.Seats),moves:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),
     worlds:^core.Table(core.World_Transform,.Read),remotes:^core.Table(core.Remote,.Read),
 ) {
     for row in 0..<core.count(follows) {
@@ -138,16 +138,16 @@ game_follow :: proc(
         goal,there:=core.get(worlds,follow.leader)
         if !core.owned(remotes,e) {continue}
         walk,walks_here:=core.get(walks,e)
-        if !here || !there || !walks_here || inp.seat_of(seat_state,e)!=core.NONE {core.remove(drives,e);continue}
+        if !here || !there || !walks_here {inp.move_release(moves,seat_state,e);continue}
         delta:=goal.position-placed.position
         delta.y=0
         distance:=linalg.length(delta)
-        next:=locomotion.Locomotion_Drive{look_yaw=mm.yaw_of_direction(mm.quat_forward(placed.rotation))}
+        next:=inp.Move_Input{look_yaw=mm.yaw_of_direction(mm.quat_forward(placed.rotation)),world_velocity=true}
         if distance>max(follow.distance,0.5) {
             next.look_yaw=mm.yaw_of_direction(delta)
-            next.velocity=delta/distance*min(distance-follow.distance,1)*walk.max_speed
+            next.move=delta/distance*min(distance-follow.distance,1)*walk.max_speed
         }
-        locomotion.drive(drives,e,next)
+        inp.move_set(moves,seat_state,e,next)
     }
 }
 

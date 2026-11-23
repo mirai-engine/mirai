@@ -161,7 +161,8 @@ placing_and_removing_an_agent_clear_its_route_and_drive :: proc(t:^testing.T) {
     nav_move_to(&f.nav_requests,e,{5,0,0})
     for _ in 0..<10 {agents_test_step(&f)}
     route:=agent_route(&f.run,e)
-    testing.expect(t,route!=nil && route.corridor.count>0 && core.has(&f.drives,e))
+    steered,_:=core.get(&f.inputs,e)
+    testing.expect(t,route!=nil && route.corridor.count>0 && steered.world_velocity)
 
     for late in ([2]bool{false,true}) {
         request:=core.Place_Request{
@@ -173,14 +174,14 @@ placing_and_removing_an_agent_clear_its_route_and_drive :: proc(t:^testing.T) {
             agents_test_step(&f)
         }
         p,_:=core.get(&f.paths,e)
-        testing.expect(t,route.corridor.count==0 && p.state==.Waiting && !core.has(&f.drives,e))
+        testing.expect(t,route.corridor.count==0 && p.state==.Waiting && !core.has(&f.inputs,e))
         for _ in 0..<4 {agents_test_step(&f)}
         testing.expect(t,route.corridor.count>0 && route.corridor.position.x>1)
     }
 
     core.remove(&f.agents,e)
     agents_test_step(&f)
-    testing.expect(t,agent_route(&f.run,e)==nil && !core.has(&f.drives,e) && !core.has(&f.paths,e))
+    testing.expect(t,agent_route(&f.run,e)==nil && !core.has(&f.inputs,e) && !core.has(&f.paths,e))
 }
 
 @(test)

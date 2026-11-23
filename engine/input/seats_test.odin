@@ -129,7 +129,7 @@ a_block_of_no_seat_takes_every_local_seat :: proc(t:^testing.T) {
     bindings:=test_bindings()
     core.add(&w.seats,first,Seat{})
     core.add(&w.seats,second,Seat{slot=1})
-    core.add(&w.seats,remote,Seat{peer=7})
+    core.add(&w.seats,remote,Seat{remote=true})
     test_world_settle(&w)
     state:=&w.seat_state
     problems:core.Problems
@@ -245,7 +245,7 @@ steady_input_keeps_the_authored_seats_clean_without_allocating :: proc(t:^testin
         core.create(&w.entities),core.create(&w.entities)
     core.add(&w.seats,first,Seat{body=body})
     core.add(&w.seats,second,Seat{slot=1})
-    core.add(&w.seats,remote,Seat{slot=1,peer=7})
+    core.add(&w.seats,remote,Seat{slot=1,remote=true})
     test_world_settle(&w)
 
     bindings:=test_bindings()
@@ -254,21 +254,23 @@ steady_input_keeps_the_authored_seats_clean_without_allocating :: proc(t:^testin
     contexts:Input_Contexts
     frame:Frame_Actions
     problems:core.Problems
+    // Where each local slot looked as the last frame was drawn.
+    views:=Slot_Views{views={0={yaw=0.5,pitch=0.1,kind=.Apart},1={yaw=-0.25,kind=.Body}}}
     tick :: proc(w:^Test_Seats,contexts:^Input_Contexts,run:^Run_Players,bindings:^Input_Map,
-        network:^core.Network,frame:^Frame_Actions,problems:^core.Problems,device:core.Input) {
+        network:^core.Network,frame:^Frame_Actions,problems:^core.Problems,device:core.Input,views:^Slot_Views) {
         es:=core.ref(&w.entities)
         seats:=core.read(&w.seats)
         time:=core.Time{dt=1.0/60}
         input_contexts(es,seats,&w.runtime,contexts,&w.context_requests,problems)
         input_holds(seats,&w.runtime,&w.hold_requests,time,problems)
-        input_seats({entities=&w.entities},nil,&w.seats,&w.seat_state,run,&w.runtime,device,
+        input_seats({entities=&w.entities},nil,&w.seats,&w.seat_state,run,&w.runtime,device,core.ref(views),
             core.ref(bindings),core.ref(network),nil,time)
         input_drive(es,&w.moves,&w.seats,&w.seat_state,&w.runtime,&w.seat_requests,
             core.ref(network),core.read(&w.remotes),problems)
         input_frame_actions_update(core.ref(bindings),frame,{input=device},core.ref(&w.seat_state),
             seats,core.ref(&w.runtime),{dt=time.dt})
     }
-    tick(&w,&contexts,&run,&bindings,&network,&frame,&problems,{})
+    tick(&w,&contexts,&run,&bindings,&network,&frame,&problems,{},&views)
     version:=core.version(&w.seats)
     allocated:=tracker.total_memory_allocated
     drive(&w.seat_requests,first,body)
@@ -276,7 +278,7 @@ steady_input_keeps_the_authored_seats_clean_without_allocating :: proc(t:^testin
     input_context_enter(&w.context_requests,body,first,Input_Context(1))
     input_context_leave(&w.context_requests,body)
     for _ in 0..<8 {
-        tick(&w,&contexts,&run,&bindings,&network,&frame,&problems,{keys_down={.W}})
+        tick(&w,&contexts,&run,&bindings,&network,&frame,&problems,{keys_down={.W}},&views)
     }
 
     testing.expect_value(t,tracker.total_memory_allocated,allocated)
@@ -287,10 +289,12 @@ steady_input_keeps_the_authored_seats_clean_without_allocating :: proc(t:^testin
     testing.expect(t,body_action(state,runtime,body,TEST_JUMP).down)
     testing.expect(t,!seat_action(runtime,remote,TEST_JUMP).down)
     testing.expect_value(t,action(&frame.slots[0],TEST_MOVE).vector,[2]f32{0,1})
+    testing.expect(t,seat_view(runtime,first)==views.views[0] && seat_view(runtime,second)==views.views[1],"each local seat looks where its slot was drawn from")
+    testing.expect_value(t,seat_view(runtime,remote),Seat_View{})
 
     core.destroy(&w.entities,body)
     test_world_settle(&w)
-    tick(&w,&contexts,&run,&bindings,&network,&frame,&problems,{})
+    tick(&w,&contexts,&run,&bindings,&network,&frame,&problems,{},&views)
     testing.expect_value(t,seat_of(state,body),core.NONE)
     testing.expect_value(t,body_of(core.read(&w.seats),first),core.NONE)
 }

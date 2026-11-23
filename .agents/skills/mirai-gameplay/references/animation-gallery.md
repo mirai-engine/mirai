@@ -91,9 +91,9 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
 
 `Animation_Motor` is a gameplay capability of the demo, shared by the characters with root motion.
 
-- `animation_motor_drive` publishes a `Locomotion_Drive` after animation sampling. The
-  horizontal root motion gives the velocity and its yaw gives the facing. The current
-  locomotion mode limits the speed, and the seat keeps its own input.
+- `animation_motor_drive` writes the `Move_Input` velocity (`world_velocity`) after animation
+  sampling, over what the seat asked. The horizontal root motion gives the velocity and its yaw
+  gives the facing. The current locomotion mode limits the speed, and the seat keeps its buttons.
 - Functions before the animation, like `game_use`, read the players' request.
 - The physical character keeps authority over the transform: contact, acceleration and saturation
   may prevent reaching a target.

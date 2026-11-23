@@ -16,8 +16,8 @@ import phys "plugins:physics/runtime"
 
 // Agents: characters that walk where they are asked. Each tick an agent
 // moves the start of its corridor to where it stands, heads for the next
-// corner, steps aside from the agents around it and writes the Locomotion_Drive
-// of its body, which its locomotion turns into steps. At the start of a link
+// corner, steps aside from the agents around it and writes the Move_Input of
+// its body, a velocity (world_velocity), which its locomotion turns into steps. At the start of a link
 // it crosses it: Jump and Drop by a ballistic launch that lands on its end,
 // Climb and Ladder along it; Door and the kinds of a game, and every kind an
 // agent leaves to the game, wait for nav_crossing_done. Paths are searched
@@ -328,8 +328,8 @@ agent_filter :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk
 @(step="fixed",stage="apply",server)
 navigation_agents :: proc(
     n:core.Ref(Navigation),a:^Navigation_Agents,agents:^core.Table(Nav_Agent,.Read),paths:^core.Table(Nav_Path),
-    requests:^Nav_Requests,events:^Nav_Events,drives:^core.Table(locomotion.Locomotion_Drive),
-    links:^core.Table(Nav_Link,.Read),seats:^core.Table(input.Seat,.Read),
+    requests:^Nav_Requests,events:^Nav_Events,moves:^core.Table(input.Move_Input),
+    links:^core.Table(Nav_Link,.Read),seats:^core.Table(input.Seat,.Read),seat_state:core.Ref(input.Seats),
     characters:^core.Table(phys.Character,.Read),loco_states:^core.Table(locomotion.Locomotion_State,.Read),colliders:^core.Table(phys.Collider,.Read),walks:^core.Table(locomotion.Walk,.Read),flights:^core.Table(locomotion.Fly,.Read),swims:^core.Table(locomotion.Swim,.Read),
     grounds:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     obstacles:^core.Table(Nav_Obstacle,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),loco:^locomotion.Locomotion_Requests,physics:core.Ref(phys.Physics_State),builds:core.Ref(Navigation_Builds),fars:^core.Table(Nav_Far),
@@ -337,7 +337,7 @@ navigation_agents :: proc(
     sources:core.Ref(scene.Simulation_Sources),time:core.Time,job_system:^jobs.Job_System,problems:^core.Problems,
 ) {
     a.places_read=0
-    if !agents_sync(a,agents,characters,paths,links,drives,fars,roamings,disabled,loco,problems) {return}
+    if !agents_sync(a,agents,characters,paths,links,moves,seat_state,fars,roamings,disabled,loco,problems) {return}
     if n.ptr!=nil && (a.uid!=n.uid || a.made!=n.made) {
         a.uid,a.made=n.uid,n.made
         a.searching,a.searching_tree=core.NONE,0
@@ -378,7 +378,7 @@ navigation_agents :: proc(
             p.state,p.looking,p.partial=.Idle,false,false
             p.velocity={}
             r.corridor.count=0
-            if r.steering {core.remove(drives,asked.entity);r.steering=false}
+            if r.steering {input.move_release(moves,seat_state,asked.entity);r.steering=false}
         case .Look_At:
             p.look,p.looking=asked.point,true
         case .Look_Along:
@@ -400,7 +400,7 @@ navigation_agents :: proc(
             r.seat=.Shared if agent.seated else .Player
         }
     }
-    agents_places(a,paths,drives,placer.places,loco)
+    agents_places(a,paths,moves,seat_state,placer.places,loco)
     if n.ptr==nil || !n.ready || n.count==0 || !time.playing || time.dt<=0 {return}
     if core.count(paths)==0 && len(fars.entities)==0 {return}
     budget:=int(n.settings.path_iterations) if n.settings.path_iterations>0 else 2048
@@ -589,8 +589,8 @@ navigation_agents :: proc(
     agents_search(n.ptr,a,builds.ptr,paths,agents,characters,grounds,colliders,walks,swims,worlds,physics,sections,budget,time.dt,events,problems)
     agents_avoid(n.ptr,a,paths,sources.ptr,time.dt,problems,job_system)
     agents_stuck(n.ptr,a,paths,time.dt,events,problems)
-    crossings.count=agents_steer(n.ptr,a,paths,drives,grounds,worlds)
-    agents_far(n,builds,a,agents,paths,drives,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
+    crossings.count=agents_steer(n.ptr,a,paths,moves,seat_state,grounds,worlds)
+    agents_far(n,builds,a,agents,paths,moves,seat_state,fars,roamings,disabled,walks,flights,swims,colliders,worlds,placer,bodies,events,time)
     // A far agent wakes with a fresh route before requesting its own place.
     if placer.places!=nil {a.places_read=len(placer.places.queue.items)}
 }
@@ -598,7 +598,7 @@ navigation_agents :: proc(
 @(private)
 agents_places :: proc(
     a:^Navigation_Agents,paths:^core.Table(Nav_Path),
-    drives:^core.Table(locomotion.Locomotion_Drive),places:^core.Places,
+    moves:^core.Table(input.Move_Input),seat_state:core.Ref(input.Seats),places:^core.Places,
     loco:^locomotion.Locomotion_Requests,
 ) {
     if places==nil {return}
@@ -608,7 +608,7 @@ agents_places :: proc(
         r:=agent_route(a,e)
         if p==nil || r==nil {continue}
         agent_reset(a,p,r,e,loco)
-        if r.steering {core.remove(drives,e);r.steering=false}
+        if r.steering {input.move_release(moves,seat_state,e);r.steering=false}
         r.placed=true
     }
     a.places_read=len(places.queue.items)
@@ -618,7 +618,7 @@ agents_places :: proc(
 agents_sync :: proc(
     a:^Navigation_Agents,agents:^core.Table(Nav_Agent,.Read),
     characters:^core.Table(phys.Character,.Read),paths:^core.Table(Nav_Path),
-    links:^core.Table(Nav_Link,.Read),drives:^core.Table(locomotion.Locomotion_Drive),
+    links:^core.Table(Nav_Link,.Read),moves:^core.Table(input.Move_Input),seat_state:core.Ref(input.Seats),
     fars:^core.Table(Nav_Far),roamings:^core.Table(scene.Roaming),disabled:^core.Table(core.Disabled),
     loco:^locomotion.Locomotion_Requests,problems:^core.Problems,
 ) -> bool {
@@ -645,7 +645,7 @@ agents_sync :: proc(
                 agent_reset(a,p,r,e,requests)
             } else {agent_release_link(a,r,e,requests)}
             r.queued=false
-            if r.steering {core.remove(drives,e);r.steering=false}
+            if r.steering {input.move_release(moves,seat_state,e);r.steering=false}
             if core.raw_row(core.raw(fars),e)>=0 {
                 core.remove(fars,e)
                 core.remove(disabled,e)
@@ -662,7 +662,7 @@ agents_sync :: proc(
                 if r:=agent_route(a,e);r!=nil {
                     agent_release_link(a,r,e,loco)
                     agent_cancel_search(a,e)
-                    if r.steering {core.remove(drives,e)}
+                    if r.steering {input.move_release(moves,seat_state,e)}
                     r^={partner=-1,queued=r.queued}
                 }
                 core.add(paths,e,NAV_PATH_DEFAULT)
@@ -1580,7 +1580,7 @@ ground_box :: #force_inline proc "contextless" (at:mm.Vec3,reach:f32) -> mm.Aabb
 @(private)
 agents_steer :: proc(
     n:^Navigation,a:^Navigation_Agents,paths:^core.Table(Nav_Path),
-    drives:^core.Table(locomotion.Locomotion_Drive),grounds:^core.Table(phys.Character_State,.Read),
+    moves:^core.Table(input.Move_Input),seat_state:core.Ref(input.Seats),grounds:^core.Table(phys.Character_State,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
 ) -> (crossing:u32) {
     for row in 0..<core.count(paths) {
@@ -1592,12 +1592,14 @@ agents_steer :: proc(
         goes:=agent_goes(p)
         if r.seat==.Player && p.velocity!={} {core.edit_at(paths,row).velocity={}}
         if r.placed || r.seat==.Player || !goes && (r.seat==.Shared || !p.looking) {
-            if r.steering {core.remove(drives,e);r.steering=false}
+            if r.steering {input.move_release(moves,seat_state,e);r.steering=false}
             continue
         }
         pose,_:=core.get(worlds,e)
-        next:=locomotion.Locomotion_Drive{look_yaw=mm.yaw_of_direction(mm.quat_forward(pose.rotation))}
-        if previous,has:=core.get(drives,e);r.steering && has {
+        // The buttons stay those of its seat, or of the game: navigation asks where it goes and looks.
+        previous,has:=core.get(moves,e)
+        next:=input.Move_Input{look_yaw=mm.yaw_of_direction(mm.quat_forward(pose.rotation)),buttons=previous.buttons,world_velocity=true}
+        if r.steering && has {
             ground,_:=core.get(grounds,e)
             next.look_yaw=mm.angle_wrap(previous.look_yaw+ground.ground_turn)
         }
@@ -1610,12 +1612,13 @@ agents_steer :: proc(
         } else if speed>0.05 {next.look_yaw=mm.yaw_of_direction(flat)}
         if goes {
             if p.class>=0 && int(p.class)<n.count && class_in_volume(n,int(p.class)) {
-                next.velocity=p.velocity
+                next.move=p.velocity
             } else if speed>1e-4 && !(p.state==.Crossing && !r.medium) {
-                next.velocity=flat
+                next.move=flat
             }
         }
-        locomotion.drive(drives,e,next)
+        // A seated agent (Nav_Agent.seated) is steered over what its seat asked this tick.
+        if row:=core.staged(moves,e);row!=nil {row^=next} else {core.add(moves,e,next)}
         r.steering=true
     }
     return
@@ -1627,13 +1630,13 @@ agents_steer :: proc(
 @(step="fixed",stage="simulate",before="locomotion_prepare",server)
 navigation_crossing :: proc(
     a:^Navigation_Agents,paths:^core.Table(Nav_Path),
-    drives:^core.Table(locomotion.Locomotion_Drive),places:core.Ref(core.Places),
+    inputs:^core.Table(input.Move_Input),seat_state:core.Ref(input.Seats),places:core.Ref(core.Places),
     loco:^locomotion.Locomotion_Requests,moves:^core.Table(phys.Character_Move),
     characters:^core.Table(phys.Character,.Read),
     walks:^core.Table(locomotion.Walk,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     physics:core.Ref(phys.Physics_State),crossings:core.Ref(Nav_Crossings),time:core.Time,
 ) {
-    agents_places(a,paths,drives,places.ptr,loco)
+    agents_places(a,paths,inputs,seat_state,places.ptr,loco)
     if !time.playing || time.dt<=0 || crossings.ptr==nil || crossings.count==0 {return}
     for row in 0..<core.count(paths) {
         p:=paths.values[row]

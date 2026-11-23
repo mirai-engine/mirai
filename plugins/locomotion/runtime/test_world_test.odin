@@ -14,7 +14,6 @@ Loco_World :: struct {
     using physics:phys.Test_Physics,
     loco_states:core.Table(Locomotion_State),
     inputs:core.Table(input.Move_Input),
-    drives:core.Table(Locomotion_Drive),
     parkours:core.Table(Parkour_State),
     walks:core.Table(Walk),
     flights:core.Table(Fly),
@@ -98,6 +97,8 @@ loco_test_tick :: proc(f:^Loco_Test,move:[3]f32,ticks:=1,buttons:=input.Action_M
     for _ in 0..<ticks {
         test_world_settle(&f.w)
         for row in 0..<core.count(&f.inputs) {
+            // What asks a velocity is an AI of the test, which wrote it.
+            if core.at(&f.inputs,row).world_velocity {continue}
             frame:=mm.QUAT_IDENTITY
             if capsule,made:=phys.character_capsule(core.ref(&f.state),core.entity_at(&f.inputs,row));made {frame=capsule.up_frame}
             core.edit_at(&f.inputs,row)^=input.Move_Input{move=mm.quat_rotate(frame*mm.quat_axis_angle({0,1,0},yaw),move),look_yaw=yaw,look_pitch=pitch,buttons=buttons}
@@ -148,11 +149,11 @@ parkour_state :: proc(f:^Loco_Test) -> Parkour_State {
 @(private)
 loco_test_move :: proc(f:^Loco_Test,dt:f32,clock:core.Clock) {
     time:=core.Time{playing=true,dt=dt}
-    locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.parkours,&f.moves,&f.inputs,&f.drives,
+    locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.parkours,&f.moves,&f.inputs,
         core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),&f.loco_requests,time,&f.problems)
     test_world_settle(&f.w)
     locomotion_step(
-        core.read(&f.characters),&f.loco_states,&f.parkours,&f.moves,&f.inputs,core.read(&f.drives),core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
+        core.read(&f.characters),&f.loco_states,&f.parkours,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
         core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
         core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),core.read(&f.paces),{base=TEST_WALK_BASE},time,clock,&f.problems,
     )

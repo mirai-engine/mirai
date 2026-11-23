@@ -81,7 +81,7 @@ party_frames :: proc(p:^Party,frames:int) {
             session.now=p.now
             client_commands(session,core.world_ref(&p.worlds[index],&p.info),p.apps[index].assets,p.apps[index].allocator,wire.host_poll(&session.host))
         }
-        net_seats({entities=&server.entities},&server.seats,&server.seat_runtime,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
+        net_seats({entities=&server.entities},&server.seats,&server.nets,&server.seat_runtime,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
             core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),{},server.time)
         core.settle(&p.info,server,nil)
         server.time.tick+=1
@@ -94,10 +94,10 @@ party_frames :: proc(p:^Party,frames:int) {
 
 // The seat of a player on the server, on or off.
 @(private="file")
-seat_of_player :: proc(p:^Party,player:u64) -> (seat:core.Entity,value:input.Seat) {
-    seats:=&p.worlds[0].seats
-    for e,row in seats.entities {
-        if seats.values[row].player==player {return e,seats.values[row]}
+seat_of_player :: proc(p:^Party,player:u64) -> (seat:core.Entity,value:Net_Seat) {
+    nets:=&p.worlds[0].nets
+    for e,row in nets.entities {
+        if nets.values[row].player==player {return e,nets.values[row]}
     }
     return core.NONE,{}
 }
@@ -125,7 +125,7 @@ a_client_that_presents_the_id_of_another_player_does_not_take_its_seat :: proc(t
     first,impostor:=player_id({0x1111,0x2222}),player_id(p.worlds[2].identity.secret)
     testing.expect(t,first!=impostor)
     seat,value:=seat_of_player(p,first)
-    testing.expect(t,seat!=core.NONE && value.peer==u64(connection_of(p,1)),"the first player keeps its seat")
+    testing.expect(t,seat!=core.NONE && value.connection==connection_of(p,1),"the first player keeps its seat")
     testing.expect(t,p.sessions[1].status==.Connected && !p.sessions[1].ended,"and its connection")
     other,_:=seat_of_player(p,impostor)
     testing.expect(t,other!=core.NONE && other!=seat)
@@ -199,7 +199,7 @@ a_player_that_comes_back_with_its_secret_gets_its_seat_back :: proc(t:^testing.T
     party_frames(p,30)
     again,value:=seat_of_player(p,player_id(secret))
     testing.expect_value(t,again,seat)
-    testing.expect_value(t,value.peer,u64(connection_of(p,2)))
+    testing.expect_value(t,value.connection,connection_of(p,2))
     testing.expect(t,!core.has(&p.worlds[0].disabled,seat) && core.raw_find(core.raw(&p.worlds[0].absents),type_info_of(Seat_Absent),seat)==nil,"on again")
 
     // The same player again while it is connected: the newer connection takes the seat.
@@ -207,7 +207,7 @@ a_player_that_comes_back_with_its_secret_gets_its_seat_back :: proc(t:^testing.T
     party_frames(p,30)
     testing.expect(t,p.sessions[2].ended && p.sessions[2].reason==.Replaced)
     _,value=seat_of_player(p,player_id(secret))
-    testing.expect_value(t,value.peer,u64(connection_of(p,1)))
+    testing.expect_value(t,value.connection,connection_of(p,1))
 
     // A player of its own run: the same profile, another player.
     if !party_rejoin(t,p,2,new_player=true) {return}
@@ -250,5 +250,5 @@ a_connection_that_presents_no_player_or_two_is_closed :: proc(t:^testing.T) {
     other,_:=seat_of_player(p,player_id({7,8}))
     testing.expect_value(t,other,core.NONE)
     _,value:=seat_of_player(p,player_id({5,6}))
-    testing.expect(t,value.peer==0 && value.player==player_id({5,6}),"the seat of the first waits for its player")
+    testing.expect(t,value.connection==0 && value.player==player_id({5,6}),"the seat of the first waits for its player")
 }

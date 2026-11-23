@@ -102,7 +102,7 @@ pair_frame :: proc(p:^Pair,ticks:=true) {
         if !p.sessions[1].ended {client_clock(&p.sessions[1],refs[1],&p.apps[1])}
         core.clock_requests(&client.clock_requests,&client.clock,core.ref(&client.network),&p.problems[1])
     }
-    net_seats({entities=&server.entities},&server.seats,&server.seat_runtime,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
+    net_seats({entities=&server.entities},&server.seats,&server.nets,&server.seat_runtime,&server.absents,&server.disabled,&server.objects,&server.transforms,nil,core.read(&server.links),core.read(&server.remotes),
         core.ref(&p.bindings),core.ref(&server.remote),core.ref(&server.network),{},server.time)
     core.settle(&p.info,server,nil)
     if ticks {
@@ -178,8 +178,8 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     testing.expect_value(t,own_connection(core.ref(&p.sessions[1])),connection)
     testing.expect(t,core.has(&client.links,adopted),"the replica takes the entity of the scene with its Id")
     if !testing.expect_value(t,core.count(&server.seats),1) {return}
-    testing.expect_value(t,core.at(&server.seats,0).player,player_id({42,0}))
-    // Seat.peer and Seat.player stay on each end: on the client its replica is its one seat of this
+    testing.expect_value(t,core.at(&server.nets,0).player,player_id({42,0}))
+    // Net_Seat stays on the server: on the client the replica of the seat is its one seat of this
     // machine, slot 0.
     mirrored,own:=false,0
     for row in 0..<core.count(&client.seats) {
@@ -196,7 +196,7 @@ a_scene_change_keeps_the_players_and_replicates_the_new_world_once_the_client_lo
     testing.expect_value(t,len(client.scene_requests.queue.items),1)
     testing.expect_value(t,linked(client),0)
     testing.expect_value(t,core.count(&server.seats),1)
-    testing.expect_value(t,core.at(&server.seats,0).peer,u64(connection))
+    testing.expect_value(t,core.at(&server.nets,0).connection,connection)
     testing.expect_value(t,len(server.remote.entries),1)
     for &slot in p.sessions[0].server.objects {
         if slot.object!=0 {testing.expect(t,slot.entity==core.NONE || core.has(&server.objects,slot.entity),"no object of the old world names an entity of the new one")}

@@ -102,7 +102,7 @@ a_move_asks_a_share_of_the_top_speed_or_a_velocity_up_to_it :: proc(t:^testing.T
         {move={inf,0,0},velocity=true,top=4,share={}},
     }
     for c in cases {
-        got:=move_share({seat={move=c.move},world_velocity=c.velocity},c.top)
+        got:=move_share({move=c.move,world_velocity=c.velocity},c.top)
         testing.expectf(t,abs(got.x-c.share.x)<1e-5 && abs(got.y-c.share.y)<1e-5 && abs(got.z-c.share.z)<1e-5,"%v gives %v",c,got)
     }
 }
@@ -470,7 +470,7 @@ without_gravity_a_swimmer_on_the_surface_does_not_climb :: proc(t:^testing.T) {
     loco:=Locomotion_State{mode=MODE_SWIMMING}
     found:phys.Character_State
     found.fluid,found.head_depth,found.depth={.In_Fluid},-0.25,1.55
-    given:=Locomotion_Input{seat={buttons=JUMP}}
+    given:=input.Move_Input{buttons=JUMP}
     parkour:Parkour_State
     move:=locomotion_move(&loco,&parkour,phys.character_default(),WALK_DEFAULT,{},SWIM_DEFAULT,{},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,{},{},1.0/60)
     testing.expect_value(t,loco.mode,MODE_SWIMMING)
@@ -678,9 +678,8 @@ world_velocity_steers_on_spawn_tick_without_seat_input :: proc(t:^testing.T) {
     if !loco_test_init(t,&f,{0,0,0}) {return}
     defer loco_test_destroy(&f)
     e:=loco_test_walker(&f,{3,0,0})
-    drive(&f.drives,e,{velocity={2,0,0},look_yaw=-cmath.PI/2})
+    testing.expect(t,input.move_set(&f.inputs,{},e,{move={2,0,0},look_yaw=-cmath.PI/2,world_velocity=true}))
     loco_test_tick(&f,{})
     move,_:=core.get(&f.moves,e)
     testing.expect(t,move.value.ground.velocity.x>0 && near(move.value.yaw,-cmath.PI/2,1e-4))
-    testing.expect(t,!core.has(&f.inputs,e))
 }
