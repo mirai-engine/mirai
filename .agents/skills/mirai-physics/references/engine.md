@@ -116,20 +116,34 @@ bounded/planetary `Center` fields update awake bodies in parallel via `sim.world
 ## Locomotion
 
 Optional `locomotion` plugin (`Character` + capsule `Collider` + `Walk`/`Swim`/`Fly` +
-`Locomotion_State`, optional `Parkour_State`):
+`Locomotion_State`), in three tiers by nature, not by genre:
+- **Tier 1 (`locomotion.odin`):** `Walk` (ground/air drive, sprint: `sprint_default` / 60 deg
+  forward cone / `backward_slowdown`, coyote-time jump + rise hold `jump_rise`, crouch), `Fly`,
+  `Swim`, each with its `turn_speed` toward the look; speed/gravity scales, layered moves and the
+  geometric queries `ledge_find` (a ledge to climb) and `ledge_ahead` (ground falling away ahead).
+  `Locomotion_State` publishes what the mode heads to (`desired`, `acceleration`, `braking`,
+  `facing`, `turn_speed`, world axes and time) for animation; nobody recomputes it.
 - **Modes (`Locomotion_Mode` named ids):** `MODE_FALLING`, `MODE_WALKING`, `MODE_FLYING`,
-  `MODE_SWIMMING` + custom game modes (`@(name_requires="...")`), switched via `set_mode` in
-  `Locomotion_Requests` (missing component -> `locomotion.mode_component`).
-- **Walk / Jump / Parkour (`moves.odin`):** ground/air drive, sprint (`sprint_default` / 60 deg
-  forward cone / `backward_slowdown`), coyote-time jump + variable rise hold (`jump_rise`),
-  `Tactical_Sprint` (energy/ramps/grace), `Ledge_Jump` (`ledge_drop_ahead` forward boost without
-  spending energy), and `Mantle` (`ledge_find` + `Override` layered move warped by
-  `animation_physics`).
+  `MODE_SWIMMING`, `MODE_CROUCHING` (up to `MODE_ENGINE_LAST`) + custom modes, switched via
+  `set_mode` in `Locomotion_Requests` (missing component -> `locomotion.mode_component`). A custom
+  mode is the extension point: its owner runs `before="locomotion_prepare"`, asks for the mode and
+  writes the whole `Character_Move` of every tick (yaw, flags with `Reach_Drive` if wanted,
+  `gravity_scale`, `height`); `locomotion_step` only composes layered moves and pace on top and
+  keeps the jump/crouch edges current. `set_mode(MODE_WALKING)` stands up (crouch held waits to be
+  let go: `crouch_lock`); `set_mode(MODE_CROUCHING)` crouches.
+- **Tier 2 (same plugin, own files, zero cost without rows):** `Slide` (`slide.odin`,
+  `Slide_State`) and `Mantle` (`mantle.odin`, `Mantle_State`: `ledge_find`, the climb as a custom
+  mode; root motion of the climb is an `Override` layered move from `animation_physics`, and
+  `Mantle_State.to` is its warp target). Both are written only on the custom-mode extension point.
+- **Tier 3 (game rules):** stamina, tactical sprints and ledge jumps are `abilities` data (speed
+  attribute -> `set_speed_scale`, `per_second` costs, `Speed`/`Ledge_Ahead` conditions, window
+  moves) ([abilities](../../mirai-abilities/SKILL.md)); locomotion holds no economy.
 - **Fly & Swim:** 3D flight without gravity; swimming enters/exits at `Swim.depth` (`Float` at
   surface, 3D underwater with buoyancy/current, surface jump-out `Override`).
 - **Layered moves (`Layered_Move`):** `add_move`/`remove_moves` (`Additive` velocity or `Override`
-  replacing gravity/ground; carries animation root motion; bad request -> `locomotion.request`).
-  Custom game modes write `Character_Move` before `locomotion_step`, which calls `layers_apply`.
+  replacing gravity/ground; carries animation root motion, and `turn` of the yaw, which faces the
+  body instead of its look while it lasts; bad request -> `locomotion.request`). The body's velocity
+  is `core.Motion.linear` (`Character_State` has no copy).
 
 ### Own pace
 

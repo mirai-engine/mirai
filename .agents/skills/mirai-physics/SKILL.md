@@ -222,9 +222,9 @@ tables and is the only package that imports it. The game and the other plugins, 
     of the facade: `character_capsule`, `character_landing`), `planet` (a character on a planet).
     Editor: `collision`, `api_collision`, `colliders`, `view_mode`, `bodies`, `settle`.
   - Locomotion, on the world through the facade (`test_world_test.odin`): `locomotion` (walk, jump,
-    coyote, layers, flight, swimming, start mode, locks), `moves` (crouch, slide, mantle, tactical
-    sprint, ledge jump), `planet` (own vertical: walking, jumping and a world copy on a planet,
-    crossing fields), `pace`; editor: `bodies`.
+    coyote, layers, flight, swimming, start mode, locks, custom-mode ownership), `crouch`,
+    `slide`, `mantle` (on the custom-mode extension point), `planet` (own vertical: walking,
+    jumping and a world copy on a planet, crossing fields), `pace`; editor: `bodies`.
   - `destruct`: `integration`. `geometry_test` does not need a GPU. Grounding with real bodies:
     `demo/game/grounding_physics_test.odin`.
 - Twins and cuts: the tests of `plugins/portals/runtime` (half crossed, walls of any collider, the

@@ -37,7 +37,7 @@ gallery_mirai_matching_plays_idle_walk_and_jog_by_the_speed_it_is_asked :: proc(
     time:=core.Time{dt=1.0/60,playing=true}
     tick :: proc(t:^testing.T,f:^Animation_Input_Fixture,gallery:^core.Table(Animation_Gallery),states:^core.Table(Animation_Gallery_State),graphs:^anim.Character_Assets,progress:^core.Table(anim.Animation_Progress),panel:^Gallery_UI,problems:^core.Problems,time:core.Time) -> (anim.Animation_Match,bool) {
         ui_events:gui.UI_Events
-        gallery_animate(core.read(gallery),core.read(states),core.read(&f.animations),core.read(&f.worlds),time,&f.requests,core.read(progress),{},nil,nil,{&ui_events},core.read(&f.names),{panel},{},nil,problems)
+        gallery_animate(core.read(gallery),core.read(states),core.read(&f.animations),core.read(&f.worlds),time,&f.requests,core.read(progress),{},{&ui_events},core.read(&f.names),{panel},{},nil)
         anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,problems)
         anim.animation_sample(core.read(&f.animations),core.read(progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,graphs,&f.skeletons,&f.app,time,{},problems,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
         return anim.animation_match(core.ref(&f.playback),core.entity_at(gallery,0))

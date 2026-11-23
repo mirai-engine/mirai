@@ -1,6 +1,7 @@
 package abilities
 
 import "core:math"
+import "core:math/linalg"
 import "mirai:host"
 import "mirai:std/base"
 import audio "mirai:engine/audio"
@@ -19,6 +20,8 @@ Ability_World :: struct {
     seat_states:core.Ref(inp.Seat_States),
     characters:^core.Table(phys.Character,.Read),
     locomotions:^core.Table(locomotion.Locomotion_State,.Read), // the modes the characters are in
+    grounds:^core.Table(phys.Character_State,.Read), // what Speed and Ledge_Ahead conditions measure from
+    motions:^core.Table(core.Motion,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
     remotes:^core.Table(core.Remote,.Read),
     paces:^core.Table(core.Own_Pace,.Read), // the windows on the Own clock count the user's own time
@@ -415,7 +418,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
             }
             ability_end(t,e,u,active,at,.Completed,nil)
             active=nil
-        } else if active.hold && active.input.on!=.None && !input_state(seat,active.input.action).down {
+        } else if active.hold && active.input.on!=.None && !input_state(seat,active.input.action).down || !costs_pay(t,e,u,active) {
             ability_end(t,e,u,active,at,.Completed,nil)
             active=nil
         }
@@ -432,7 +435,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
             }
         }
     }
-    derive(t,u,active,at)
+    derive(t,e,u,active,at)
     // The best valid candidate starts.
     best:=-1
     best_ref:=next
@@ -460,7 +463,26 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
         windows_advance(t,e,u,active,TIME_BEFORE_START,at)
     }
     if active!=nil {hitboxes(t,e,u,active,at)}
-    if best_sheet!=nil {derive(t,u,active,at)}
+    if best_sheet!=nil {derive(t,e,u,active,at)}
+}
+
+// Takes what the running ability costs every second for this tick; false when an attribute cannot
+// pay it, which completes the ability.
+@(private)
+costs_pay :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability) -> bool {
+    for c in a.costs {
+        if c.attribute==ATTRIBUTE_NONE || !(c.per_second>0) {continue}
+        amount:=c.per_second*t.dt
+        value,found:=ability_value(u.user,u.state,c.attribute)
+        if !found || value<amount {return false}
+    }
+    for c in a.costs {
+        if c.attribute==ATTRIBUTE_NONE || !(c.per_second>0) {continue}
+        for entry,i in u.user.attributes {
+            if entry.attribute==c.attribute {base_add(t,e,u,i,-c.per_second*t.dt)}
+        }
+    }
+    return true
 }
 
 // A replica follows the ability its owner runs: its statuses and the events of its windows.
@@ -475,7 +497,7 @@ replica_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
             windows_advance(t,e,u,active,before,at,replica=true)
         } else {active=nil}
     }
-    derive(t,u,active,at)
+    derive(t,e,u,active,at,replica=true)
 }
 
 @(private)
@@ -561,9 +583,7 @@ start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,user:^Ability
         if !found || u32(c.mode)>=32 || a.modes&Ability_Modes(u32(1)<<u32(c.mode))==0 {return .Mode}
     }
     for c in a.conditions {
-        if c.attribute==ATTRIBUTE_NONE {continue}
-        value,found:=ability_value(user,state,c.attribute)
-        if !found || value<c.at_least || c.at_most>0 && value>c.at_most {return .Condition}
+        if !condition_holds(w,e,user,state,c) {return .Condition}
     }
     for c in a.costs {
         if c.attribute==ATTRIBUTE_NONE || c.amount==0 {continue}
@@ -581,6 +601,34 @@ start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,user:^Ability
         if accepted&a.tags==0 {return .No_Cancel}
     }
     return .None
+}
+
+// Whether a condition of an ability holds for user e now.
+condition_holds :: proc(w:^Ability_World,e:core.Entity,user:^Ability_User,state:^Ability_State,c:Ability_Condition) -> bool {
+    within :: proc "contextless" (value:f32,c:Ability_Condition) -> bool {return value>=c.at_least && (c.at_most<=0 || value<=c.at_most)}
+    switch c.kind {
+    case .Attribute:
+        if c.attribute==ATTRIBUTE_NONE {return true}
+        value,found:=ability_value(user,state,c.attribute)
+        return found && within(value,c)
+    case .Speed,.Ledge_Ahead:
+        if w.grounds==nil || w.motions==nil {return false}
+        ground,_:=core.get(w.grounds,e)
+        motion,_:=core.get(w.motions,e)
+        capsule,made:=phys.character_capsule(w.physics,e)
+        if !made {return false}
+        up:=mm.quat_rotate(capsule.up_frame,mm.Vec3{0,1,0})
+        going:=motion.linear-ground.ground_velocity if ground.standing else motion.linear
+        going-=up*linalg.dot(going,up)
+        if c.kind==.Speed {return within(linalg.length(going),c)}
+        if !ground.standing {return false}
+        if linalg.length(going)<1e-3 {
+            pose,_:=core.get(w.worlds,e)
+            going=mm.quat_forward(pose.rotation)
+        }
+        return locomotion.ledge_ahead(w.physics,capsule,going,c.reach,c.at_least)
+    }
+    return false
 }
 
 @(private)
@@ -707,7 +755,7 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time) {
 
 // The statuses and current values of a user: those of its timers and of the windows open at at.
 @(private)
-derive :: proc(t:^Tick,u:^Actor,active:^Ability,at:Ability_Time) {
+derive :: proc(t:^Tick,e:core.Entity,u:^Actor,active:^Ability,at:Ability_Time,replica:=false) {
     statuses:Ability_Statuses
     add,more:[ATTRIBUTE_ENTRIES]f32
     modify :: proc(u:^Ability_User,m:Ability_Modifier,add,more:^[ATTRIBUTE_ENTRIES]f32) {
@@ -737,10 +785,17 @@ derive :: proc(t:^Tick,u:^Actor,active:^Ability,at:Ability_Time) {
             values[i]=max((entry.base+add[i])*max(1+more[i],0),0)
         }
     }
-    if u.state.statuses!=statuses || u.state.values!=values {
-        state:=core.edit_at(t.states,u.state_row)
-        state.statuses,state.values=statuses,values
+    if u.state.statuses==statuses && u.state.values==values {return}
+    // The speed of its locomotion follows its speed attribute when that changes.
+    if !replica && u.user.speed!=ATTRIBUTE_NONE && core.has(t.w.characters,e) {
+        for entry,i in u.user.attributes {
+            if entry.attribute!=u.user.speed {continue}
+            scale:=min(values[i],locomotion.SPEED_SCALE_MAX)
+            if scale!=u.state.values[i] {locomotion.set_speed_scale(t.w.moves,e,scale)}
+        }
     }
+    state:=core.edit_at(t.states,u.state_row)
+    state.statuses,state.values=statuses,values
 }
 
 @(private)

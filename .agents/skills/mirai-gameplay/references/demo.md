@@ -61,7 +61,7 @@ only on change (`Player_Hud`, `Portal_Hud`, `Raft_Hud`, `Dig_Hud`, `Vfx_Gallery_
 | `horror.odin` | `Light_Switch`, `House_Lamp`, `Flashlight`, `horror_switches`, `horror_lights` (`react`), `horror_glow` |
 | `ai_arena.odin` | [AI arenas](#ai-arenas): `arena_think`, `arena_targets`, `arena_carts` |
 | `showcase.odin` | `Showcase`, `game_showcase` (`UI_Events`, `Animation_Events` `top` marker) |
-| `animation_gallery*.odin`, `animation_motor.odin` | [Animation gallery](animation-gallery.md#code-demogame); `gallery_move_inputs` (`after="gallery_player_move"`) |
+| `animation_gallery*.odin` | [Animation gallery](animation-gallery.md#code-demogame); `gallery_move_inputs` (`after="gallery_player_move"`) |
 | `physics_gallery.odin` | `Physics_Gallery` (E trigger, R reset, 6s+2s debris fade via `game_glow`, rollback-safe counts) |
 
 Editor-placed components declare `NAME_DEFAULT`; scenes store authored values.
@@ -167,6 +167,6 @@ mirai play demo --connect 127.0.0.1:27500 --headless --players 1 --frames 600 \
 - Control: headless `--input` script (`W` after intro, `Tab` to dog); server `--status` reports 2
   objects/connection.
 - `demo/game` tests: `animation_gallery_controls_test.odin`,
-  `animation_gallery_matching_test.odin`, `animation_motor_test.odin`, `portal_game_test.odin`,
+  `animation_gallery_matching_test.odin`, `root_motion_test.odin`, `portal_game_test.odin`,
   `grounding_physics_test.odin` (needs `animation` + `physics`).
 - Determinism: run `tools/demo_content` and verify `git status demo/assets` is clean.

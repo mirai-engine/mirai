@@ -41,8 +41,8 @@ the eyes child needs no turn. For a first-person view:
 Forward for the seat is what its camera says: `Eyes` or an `Orbit` that aims turns with the look
 and the body looks where the player looks; another orbit or follow camera moves the body along
 the view, and the body faces where it goes; without a camera, -Z of the world. The body turns at
-the `turn_speed` of its `Character`. A game that drives a body itself writes its `inp.Move_Input`:
-`move` in the world and the `look_yaw` to face.
+the `turn_speed` of its `Walk` (or of its `Fly` or `Swim` while it flies or swims). A game that
+drives a body itself writes its `inp.Move_Input`: `move` in the world and the `look_yaw` to face.
 
 ## Walk
 
@@ -52,12 +52,16 @@ flying or swimming asks `locomotion.set_mode`. Start from `locomotion.WALK_DEFAU
 `max_speed`, `jump_height` and the rest (`component.list` on `Walk`: sprint, air control, coyote
 time, crouch). A held jump keeps rising for `jump_rise`.
 **`jump_cut`** is the share of its upward speed a jump keeps when the button is let go while
-rising: `0.4` lets a tap make a short hop, `1` or `0` keeps all of it, and a ledge jump is never
-cut. Locomotion does the rest from the seat's actions: the game sets how fast (`max_speed`), it
-does not steer by writing a velocity. A launch, such as a jump pad, works on a `Character`:
+rising: `0.4` lets a tap make a short hop, `1` or `0` keeps all of it. Locomotion does the rest
+from the seat's actions: the game sets how fast (`max_speed`), it does not steer by writing a
+velocity. A launch, such as a jump pad, works on a `Character`:
 `phys.set_velocity(requests,e,v)` replaces its velocity and `phys.apply_impulse(requests,e,impulse)`
 adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are components too
-(`locomotion.Fly`, `locomotion.Swim`).
+(`locomotion.Fly`, `locomotion.Swim`), and so are a slide and a climb onto ledges
+(`locomotion.Slide`, `locomotion.Mantle`). What costs stamina or energy (a tactical sprint, a jump
+off a ledge with a boost) is data of the `abilities` plugin, not of locomotion: a window that
+raises the speed attribute of its `Ability_User` (its `speed`, which scales the walk), a cost
+`per_second`, and conditions on the speed of the body or a ledge ahead.
 
 ## Pitfalls that fail silently
 

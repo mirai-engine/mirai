@@ -39,17 +39,12 @@ Nav_World :: struct {
     agents:core.Table(Nav_Agent),
     paths:core.Table(Nav_Path),
     inputs:core.Table(input.Move_Input),
-    parkours:core.Table(locomotion.Parkour_State),
     seats:core.Table(input.Seat),
     seat_state:input.Seats,
     loco_states:core.Table(locomotion.Locomotion_State),
     walks:core.Table(locomotion.Walk),
     flights:core.Table(locomotion.Fly),
     swims:core.Table(locomotion.Swim),
-    slides:core.Table(locomotion.Slide),
-    mantles:core.Table(locomotion.Mantle),
-    tacticals:core.Table(locomotion.Tactical_Sprint),
-    ledges:core.Table(locomotion.Ledge_Jump),
     remotes:core.Table(core.Remote),
     fars:core.Table(Nav_Far),
     roamings:core.Table(scene.Roaming),
@@ -973,10 +968,10 @@ agents_test_step :: proc(f:^Nav_Test,late:Maybe(core.Place_Request)=nil) {
                    asked.entity,asked.position,asked.rotation,at_rest=asked.at_rest)
     }
     navigation_crossing(&f.run,&f.paths,&f.inputs,core.ref(&f.seat_state),core.ref(&f.places),&f.loco,&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
-    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.parkours,&f.moves,&f.inputs,
-        core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),&f.loco,time,&f.problems)
+    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,&f.inputs,
+        core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco,time,&f.problems)
     nav_test_settle(f)
-    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.parkours,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},time,core.CLOCK_DEFAULT,&f.problems)
+    locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},time,core.CLOCK_DEFAULT,&f.problems)
     nav_test_settle(f)
     phys.physics_places(&f.places,&f.requests,core.ref(&f.state),core.read(&f.rigids),core.read(&f.characters))
     phys.physics_step(

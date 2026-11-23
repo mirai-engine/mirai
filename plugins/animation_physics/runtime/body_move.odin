@@ -13,7 +13,7 @@ import phys "plugins:physics/runtime"
 // (anim.animation_body_motion: by their share of the root, mirrored and warped with it) becomes a
 // one-tick layered move of its mix, across the up of the Character unless the action keeps the
 // vertical. A game writes no code for it, and names no locomotion mode: the Character keeps the
-// one it has. A climb is driven by its own (mantle.odin).
+// one it has. A climb is driven by its own (root_motion.odin).
 BODY_ROOT_MOVE :: u32(0x41435452) // the id of its layered moves
 
 @(step="fixed",stage="apply")

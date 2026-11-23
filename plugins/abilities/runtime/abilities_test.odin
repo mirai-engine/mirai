@@ -103,13 +103,13 @@ blade :: proc(f:^Fixture) {
     s:=&f.sheets
     s[SLASH_1]={input={action=PRIMARY,on=.Pressed},tags=Ability_Tags(tag_bit(OPENER)),blocked_by=status_bit(STUNNED),duration=0.7}
     base.text_set(s[SLASH_1].action[:],"slash_1")
-    s[SLASH_1].costs[0]={DURABILITY,2}
+    s[SLASH_1].costs[0]={attribute=DURABILITY,amount=2}
     s[SLASH_1].windows[0]={from=0.25,to=0.35,cue=SLASH,hitbox={HITBOX_TABLE,1}}
     f.hitboxes[0]={shape=.Box,center={0,1,-1.5},size={1,1,1},effect={attribute=HEALTH,amount=-35,knockback={0,4,-8},knockback_seconds=0.1}}
     s[SLASH_1].windows[1]={from=0.6,to=0.7,cancel_into=tag_bit(FOLLOW)|tag_bit(DASH)}
     s[SLASH_2]={input={action=PRIMARY,on=.Released},tags=tag_bit(FOLLOW),blocked_by=status_bit(STUNNED),duration=1}
     base.text_set(s[SLASH_2].action[:],"slash_2")
-    s[SLASH_2].costs[0]={DURABILITY,2}
+    s[SLASH_2].costs[0]={attribute=DURABILITY,amount=2}
     s[SLASH_2].windows[0]={from=0.1,to=0.16,hitbox={HITBOX_TABLE,2}}
     f.hitboxes[1]={shape=.Sphere,center={0,1,-1.2},size={1.5,0,0},effect={attribute=HEALTH,amount=-35,statuses=status_bit(STUNNED),seconds=1,use=ref(REACT)}}
     s[SLASH_2].windows[1]={from=0.9,to=1,cancel_into=tag_bit(OPENER)|tag_bit(DASH)}
@@ -118,8 +118,8 @@ blade :: proc(f:^Fixture) {
     s[CHARGE].windows[0]={from=0,to=1,statuses=status_bit(CHARGING),cancel_into=tag_bit(DASH_ATTACK)}
     s[DASH_STRIKE]={input={action=SECONDARY,on=.Released},tags=tag_bit(DASH_ATTACK),duration=0.4,cooldown=0.1}
     base.text_set(s[DASH_STRIKE].action[:],"dash")
-    s[DASH_STRIKE].costs[0]={CHARGES,1}
-    s[DASH_STRIKE].costs[1]={DURABILITY,10}
+    s[DASH_STRIKE].costs[0]={attribute=CHARGES,amount=1}
+    s[DASH_STRIKE].costs[1]={attribute=DURABILITY,amount=10}
     s[DASH_STRIKE].windows[0]={from=0,to=0.24,move={velocity={0,0,-40},mix=.Override},hitbox={HITBOX_TABLE,3}}
     f.hitboxes[2]={shape=.Box,center={0,1,-1},size={0.5,1,1},effect={attribute=HEALTH,amount=-60}}
     s[DASH_STRIKE].windows[1]={from=0.24,to=0.4,cancel_into=tag_bit(OPENER)|tag_bit(DASH)}
@@ -427,8 +427,8 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
         {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[1].modify={attribute=HEALTH,more=-2}},"more"},
         {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[1].move.velocity.z=nan},"move.velocity"},
         {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].windows[5].cue=SLASH},"to is 0"},
-        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].costs[1]={ATTRIBUTE_NONE,4}},"costs[1]"},
-        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].conditions[0]={HEALTH,10,5}},"conditions[0]"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].costs[1]={attribute=ATTRIBUTE_NONE,amount=4}},"costs[1]"},
+        {proc(f:^Fixture,nan:f32) {f.sheets[SLASH_1].conditions[0]={attribute=HEALTH,at_least=10,at_most=5}},"conditions[0]"},
         {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.period=nan},"period"},
         {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.max_stacks=3},"stacks but has no tags"},
         {proc(f:^Fixture,nan:f32) {f.hitboxes[0].effect.cue=SLASH},"lasts 0 seconds"},

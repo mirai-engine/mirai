@@ -1430,7 +1430,7 @@ link_write :: proc(s:^Sync,l:^Link,e:core.Entity) -> (again:bool) {
                 standing=.Standing in found.ground,walkable=.Walkable in found.ground,ground_distance=found.ground_distance,
                 ground_normal=found.ground_normal,ground_velocity=found.ground_velocity,ground_turn=found.ground_turn,wall_normal=found.wall_normal,
                 fluid=found.fluid,submersion=found.submersion,head_depth=found.head_depth,depth=found.depth,fluid_velocity=found.fluid_velocity,
-                height=sim.character_desc(w,l.character).height,velocity=sim.character_velocity(w,l.character),
+                height=sim.character_desc(w,l.character).height,
             }
             next.cramped=s.character_states.values[row].cramped
             core.edit_at(s.character_states,row)^=next

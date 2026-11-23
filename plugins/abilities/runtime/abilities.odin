@@ -84,15 +84,26 @@ Ability_Input :: struct {
     wait:Ability_Wait,
 }
 
+// What a condition measures.
+Ability_Condition_Kind :: enum u8 {
+    Attribute,   // the current value of attribute
+    Speed,       // m/s of the user's Character across its up, relative to the ground it stands on
+    Ledge_Ahead, // standing, the ground falls away ahead along where its Character goes: none within at_least m under its feet reach ahead (locomotion.ledge_ahead); at_most stays 0
+}
+
+// It holds while what kind measures is within at_least..at_most.
 Ability_Condition :: struct {
     attribute:Ability_Attribute,
     at_least:f32,
     at_most:f32, // 0: no limit
+    kind:Ability_Condition_Kind,
+    reach:f32 `mirai:"min=0,unit=m"`, // of Ledge_Ahead: how far ahead of the feet the ground has to fall away
 }
 
 Ability_Cost :: struct {
     attribute:Ability_Attribute,
     amount:f32 `mirai:"min=0"`, // taken from its base when the ability starts; it cannot start with less
+    per_second:f32 `mirai:"min=0,unit=1/s"`, // taken from its base every second it runs after its start; it completes when the attribute cannot pay the tick
 }
 
 // value = (base + add) * (1 + more), summed over the modifiers in force.
@@ -174,10 +185,11 @@ Ability_Timer :: struct {
     stacks:u8,
 }
 
-@(component,replicated,description="Uses the abilities of its kit and holds the attributes that costs and effects change.")
+@(component,replicated,description="Uses the abilities of its kit and holds the attributes that costs and effects change. The current value of its speed attribute scales the speed of the locomotion of its Character: a sprint is a window or an effect that modifies it.")
 Ability_User :: struct {
     kit:core.Record(Ability_Kit),
     attributes:[ATTRIBUTE_ENTRIES]Ability_Attribute_Entry,
+    speed:Ability_Attribute, // its current value is the speed scale of its locomotion (locomotion.set_speed_scale); none: abilities leave that scale
 }
 
 // Saved with the tracking row so a save can resume an ability in progress.

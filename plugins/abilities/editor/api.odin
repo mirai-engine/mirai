@@ -7,6 +7,7 @@ import "mirai:editor/api"
 import "mirai:host"
 import "mirai:std/base"
 import ab "plugins:abilities/runtime"
+import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 @(storage)
@@ -224,6 +225,11 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         params:ab.Ability_World
         params.time=time
         if t:=core.world_table_of(world,phys.Character);t!=nil {params.characters=core.read(t)}
+        if t:=core.world_table_of(world,locomotion.Locomotion_State);t!=nil {params.locomotions=core.read(t)}
+        if t:=core.world_table_of(world,phys.Character_State);t!=nil {params.grounds=core.read(t)}
+        if t:=core.world_table_of(world,core.Motion);t!=nil {params.motions=core.read(t)}
+        if t:=core.world_table_of(world,core.World_Transform);t!=nil {params.worlds=core.read(t)}
+        params.physics=core.ref(core.world_storage_of(world,phys.Physics_State))
         for ref in kit.abilities {
             if ref=={} {continue}
             row:=ab.record_row(abilities,ref)
@@ -249,7 +255,7 @@ block_text :: proc(block:ab.Ability_Block) -> string {
     case .Status_Missing: return "the user is not in a status it requires"
     case .Status_Blocked: return "the user is in a status that blocks it"
     case .Mode: return "the user's Character is not in one of its modes"
-    case .Condition: return "an attribute is out of one of its conditions"
+    case .Condition: return "one of its conditions does not hold: an attribute or the speed of its Character out of its bounds, or no ledge ahead"
     case .Cost: return "an attribute has less than one of its costs"
     case .Cooldown: return "its cooldown runs"
     case .No_Cancel: return "the running ability has no open window whose cancel_into has one of its tags, and the kit's interrupts do not either"
