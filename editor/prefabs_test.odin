@@ -1475,3 +1475,108 @@ the_editor_tells_a_prefab_from_a_scene_by_its_kind :: proc(t:^testing.T) {
     link,linked:=prefab_link_of(w,crate)
     testing.expect(t,linked && link.root && link.asset==id)
 }
+
+// Applied from an instance of a prefab that places another, what it changed of
+// the inner one's members and what it added under them go into the prefab it
+// places, as the overrides of its inner instance: the inner prefab and its
+// other instances stay as they were.
+@(test)
+prefab_apply_from_an_outer_instance_writes_what_it_changed_of_an_inner_one_into_the_outer_prefab :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"apply-nested")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    crate,_,lamp:=prefab_test_crate(f)
+    shelf:=entity_create(s,{name="Shelf",named=true})
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    crate_id,created:=prefab_create(s,crate,"crate")
+    if !testing.expect_value(t,created,Prefab_Error.None) {return}
+    _,placed:=prefab_instantiate(s,crate_id,{parent=shelf})
+    shelf_id,shelved:=prefab_create(s,shelf,"shelf")
+    if !testing.expect(t,placed==.None && shelved==.None) {return}
+    lamp_id:=api_entity_id(w,lamp)
+    other,_:=prefab_instantiate(s,shelf_id,{})
+    root:=api_entity(w,other)
+    inner_lamp,inner_lid:=prefab_test_named(f,root,"Lamp"),prefab_test_named(f,root,"Lid")
+    if !testing.expect(t,inner_lamp!=core.NONE && inner_lid!=core.NONE) {return}
+    lamp_set(f,inner_lamp,7)
+    sticker:=entity_create(s,{name="Sticker",named=true,parent=inner_lid})
+    core.world_settle(w)
+    prefab_fixture_step(f)
+    testing.expect(t,prefab_test_has(f,root,inner_lamp,"Prefab_Test_Lamp",.Field,"intensity") && prefab_test_has(f,root,sticker,"",.Child,""))
+    applied,apply_error:=prefab_apply(s,root,nil,true)
+    testing.expectf(t,apply_error==.None && applied==2,"apply: %v, %d applied",apply_error,applied)
+    left,known:=prefab_overrides_of(s,root)
+    testing.expectf(t,known && len(left)==0,"what was applied is the shelf's: %v",left)
+    // The crate keeps its lamp, and the instance of it in the document too.
+    loaded,found:=prefab_scene_load(s,crate_id)
+    if !testing.expect(t,found) {return}
+    defer prefab_scene_free(loaded)
+    in_crate,_:=asset.scene_get(loaded,lamp_id,"Prefab_Test_Lamp",Prefab_Test_Lamp)
+    testing.expect_value(t,in_crate.intensity,f32(2))
+    testing.expect_value(t,lamp_of(f,lamp).intensity,f32(2))
+    // The shelf holds the change as an override of its crate, and the sticker.
+    outer,outer_found:=prefab_scene_load(s,shelf_id)
+    if !testing.expect(t,outer_found) {return}
+    defer prefab_scene_free(outer)
+    intensity,sticker_kept:=f32(0),false
+    for id,row in asset.scene_ids(outer) {
+        if value,has:=asset.scene_get(outer,id,"Prefab_Test_Lamp",Prefab_Test_Lamp);has {intensity=max(intensity,value.intensity)}
+        sticker_kept||=base.text_get(asset.scene_names(outer)[row][:])=="Sticker"
+    }
+    testing.expect(t,intensity==7 && sticker_kept,"the shelf has the lamp at 7 and the sticker")
+    shelf_lamp:=prefab_test_named(f,shelf,"Lamp")
+    testing.expect(t,shelf_lamp!=core.NONE && lamp_of(f,shelf_lamp).intensity==7 && prefab_test_named(f,shelf,"Sticker")!=core.NONE,"the shelf of the document follows its file")
+}
+
+// A prefab whose file keeps a component in the layout it had before the
+// program changed it (fields reordered, one gone, one new) applies like any
+// other: by the names of the fields, as loading a scene reads them.
+@(test)
+prefab_apply_writes_into_a_file_whose_components_have_another_layout :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !testing.expect(t,prefab_fixture_init(t,f,"apply-layout")) {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    w:=edited_world(s)
+    Lamp_Before :: struct {range:f32,gone:i32,intensity:f32}
+    old:asset.Scene
+    if !testing.expect_value(t,asset.scene_init(&old,&f.assets.types,{1,3}),asset.Error.None) {return}
+    old.doc.flags+={.Prefab}
+    lamp_id,bulb_id:=base.Entity_Id(0x21),base.Entity_Id(0x22)
+    asset.scene_entity_add(&old,lamp_id,0,"Lamp")
+    asset.scene_entity_add(&old,bulb_id,lamp_id,"Bulb")
+    for id in ([]base.Entity_Id{lamp_id,bulb_id}) {
+        identity:=core.TRANSFORM_IDENTITY
+        before:=Lamp_Before{range=4,gone=9,intensity=3}
+        asset.scene_set(&old,id,"Transform",&identity)
+        asset.scene_set(&old,id,"Prefab_Test_Lamp",&before)
+    }
+    file:=fmt.tprintf("%s/lamp.scene",f.root)
+    saved:=asset.scene_save(&old,file)
+    asset.scene_destroy(&old)
+    if !testing.expect_value(t,saved,asset.Error.None) {return}
+    core.world_settle(w)
+    history.edits_reset(&f.edits,w)
+    id,problem:=asset_resolve(s,"lamp",".scene")
+    if !testing.expect_value(t,problem,"") {return}
+    placed,placed_error:=prefab_instantiate(s,id,{})
+    if !testing.expect_value(t,placed_error,Prefab_Error.None) {return}
+    root:=prefab_fixture_find(f,placed)
+    testing.expect_value(t,lamp_of(f,root),Prefab_Test_Lamp{intensity=3,range=4})
+    none,known:=prefab_overrides_of(s,root)
+    testing.expectf(t,known && len(none)==0,"a layout is no override: %v",none)
+    lamp_set(f,prefab_test_named(f,root,"Bulb"),6)
+    count,applied:=prefab_apply(s,root,nil,true)
+    testing.expectf(t,applied==.None && count==1,"apply: %v, %d applied",applied,count)
+    held,_:=file_read(s,file)
+    written:asset.Scene
+    if !testing.expect_value(t,asset.scene_read(&written,&f.assets.types,held),asset.Error.None) {return}
+    defer asset.scene_destroy(&written)
+    lamp,_:=asset.scene_get(&written,lamp_id,"Prefab_Test_Lamp",Prefab_Test_Lamp)
+    bulb,_:=asset.scene_get(&written,bulb_id,"Prefab_Test_Lamp",Prefab_Test_Lamp)
+    testing.expect_value(t,lamp,Prefab_Test_Lamp{intensity=3,range=4})
+    testing.expect_value(t,bulb,Prefab_Test_Lamp{intensity=6,range=4})
+}
