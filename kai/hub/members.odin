@@ -365,6 +365,22 @@ route_members :: proc(c:^Call) {
 }
 
 @(private)
+route_org_log :: proc(c:^Call) {
+    o,ok:=member_org(c)
+    if !ok {return}
+    l:=o.agent.org.log
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"org",o.id)
+    json_key(&j,"entries")
+    json_array(&j)
+    for i in l.order {json_base64(&j,l.items[i].bytes)}
+    json_end_array(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+@(private)
 route_ddc :: proc(c:^Call) {
     o,ok:=member_org(c)
     if !ok {return}

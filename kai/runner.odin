@@ -102,6 +102,7 @@ Runner_Desc :: struct {
     control:bool,                // let local processes reach it (control.odin): one runner per store
     host_seed:u64,               // tests: salts of the hosts; 0 from the system
     ddc_quota:i64,               // a ddc node: bytes of derived data outputs it keeps; 0: no bound (node.odin)
+    hosted_quota:i64,            // a node: bytes it keeps of each org it hosts (machine_org_host); 0: HOSTED_QUOTA
     tcp_port:int,                // a relay node: where its relay over TCP listens when no HTTPS listener shares the port (tcp.odin); 0: none, -1: the system picks
     relay_tcp_port:int,          // tests: the TCP port of relay nodes; 0: RELAY_TCP_PORT
     event:Runner_Event,          // what it did, as a line of text
@@ -166,6 +167,7 @@ Runner_Org :: struct {
     whole_refs:map[store.Hash]struct{}, // device refs whose bookmarks were told whole
     stats:Agent_Stats,   // as last told
     connected:[AGENT_PEERS]Dh_Key, // the peer each slot of the agent held when last looked at; zero for none
+    full:Dh_Key,         // a device: the node whose storage for the org is full, as its Welcome said; zero for none
 }
 
 @(private)
@@ -473,9 +475,13 @@ runner_org_open :: proc(r:^Runner,id:Log_Id) -> ^Runner_Org {
         if k>0 {clients[k-1]=virtual_transport(&v)}
     }
     m:=r.machine
+    hosted:=false
+    if r.desc.modes!={} {_,hosted=store_org_hosted(&m.store,id)}
+    quota:=r.desc.hosted_quota>0?r.desc.hosted_quota:HOSTED_QUOTA
     e:=agent_init(&o.agent,{
         store=&m.store,identity=m.identity,dh=m.dh,user=m.user,org=id,server=virtual_transport(&o.virtuals[0]),
-        seed=r.desc.modes=={} || .Seed in r.desc.modes,host_seed=r.desc.host_seed,connect_timeout=DIAL_SECONDS,allocator=allocator,
+        seed=r.desc.modes=={} || .Seed in r.desc.modes,hosted=hosted,quota=hosted?quota:0,
+        host_seed=r.desc.host_seed,connect_timeout=DIAL_SECONDS,allocator=allocator,
     },clients[:])
     if e!=.None {
         runner_org_free(r,o)
@@ -483,7 +489,7 @@ runner_org_open :: proc(r:^Runner,id:Log_Id) -> ^Runner_Org {
     }
     o.running=true
     hex:[64]u8
-    runner_event(r,"serving org %s",store.hex(id,&hex)[:12])
+    runner_event(r,"serving org %s%s",store.hex(id,&hex)[:12],hosted?" for others: no derived data, a bounded store":"")
     return o
 }
 
@@ -598,6 +604,7 @@ runner_org_watch :: proc(r:^Runner,o:^Runner_Org) {
 // so members take them when their producer is away.
 @(private)
 runner_ddc_mirror :: proc(r:^Runner,o:^Runner_Org) {
+    if o.agent.desc.hosted {return}
     ns:[len(DDC_PREFIX)+64]u8
     refs,e:=store.ref_list(&r.machine.store,ddc_namespace(o.id,&ns),context.temp_allocator)
     if e!=.None {return}
@@ -1278,7 +1285,11 @@ Z_Plan :: struct #packed {
 Z_Welcome :: struct #packed {
     observe_port:u16,
     observed:Node_Address,
-}
+    full:u8,
+} // + [full] routes of the orgs the node hosts whose storage is full, of those the device is a member of
+
+@(private)
+WELCOME_FULL_MAX :: 32
 
 // The key a device and a node authenticate rendezvous messages under.
 @(private)
@@ -1395,7 +1406,14 @@ runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int)
         if !found && len(r.relay_seen)<RELAY_DEVICES_MAX {append(&r.relay_seen,seen)}
         welcome:=Z_Welcome{observe_port=r.observe.address.port}
         welcome.observed,_=node_address_of(from)
-        runner_z_send(r,head.from,from,.Welcome,mem.ptr_to_bytes(&welcome))
+        out:[size_of(Z_Welcome)+WELCOME_FULL_MAX*RUNNER_ROUTE]u8
+        for o in r.orgs {
+            if int(welcome.full)>=WELCOME_FULL_MAX || !agent_full(&o.agent) || agent_class_of(&o.agent,head.from)!=.Member {continue}
+            copy(out[size_of(Z_Welcome)+int(welcome.full)*RUNNER_ROUTE:],o.route[:])
+            welcome.full+=1
+        }
+        copy(out[:],mem.ptr_to_bytes(&welcome))
+        runner_z_send(r,head.from,from,.Welcome,out[:size_of(Z_Welcome)+int(welcome.full)*RUNNER_ROUTE])
         // Who waited for this device meets it now.
         for k:=0;k<len(r.wants); {
             w:=r.wants[k]
@@ -1455,8 +1473,22 @@ runner_device_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8) {
         if len(body)!=0 || !r.over_udp {return}
         if l:=runner_tcp_link(r,from);l!=nil && !l.failed && l.node==head.from {runner_tcp_upgrade(r,l)}
     case .Welcome:
-        if len(body)!=size_of(Z_Welcome) {return}
+        if len(body)<size_of(Z_Welcome) {return}
         w:=(^Z_Welcome)(raw_data(body))^
+        if len(body)!=size_of(Z_Welcome)+int(w.full)*RUNNER_ROUTE {return}
+        // Whether the node's storage for each org of it is full: it says so on every Welcome.
+        routes:=body[size_of(Z_Welcome):]
+        for o in r.orgs {
+            if runner_peer_index(o,head.from)<0 {continue}
+            full:=false
+            for k in 0..<int(w.full) {full||=string(routes[k*RUNNER_ROUTE:][:RUNNER_ROUTE])==string(o.route[:])}
+            if full && o.full!=head.from {
+                o.full=head.from
+                runner_event(r,"%s",hosted_full_text(o.id))
+            } else if !full && o.full==head.from {
+                o.full={}
+            }
+        }
         if w.observe_port==0 {return}
         observe:=from
         observe.port=w.observe_port
@@ -1518,13 +1550,14 @@ Runner_Org_Info :: struct {
     org:Log_Id,
     behind,unfound:int,
     changes:u32, // grows with what peers or local writes changed of the org: a reader looks again only then
+    full:bool,   // a node of the org keeps no more of it: its storage for the org is full (hosted_full_text)
 }
 
 runner_orgs_info :: proc(r:^Runner,out:^[dynamic]Runner_Org_Info) {
     for o in r.orgs {
         s:=o.agent.stats
         changes:=u32(r.told+s.refolds+s.refs_accepted+s.overlays_accepted+s.ddc_accepted+s.logs_merged)
-        append(out,Runner_Org_Info{o.id,s.behind,s.unfound,changes})
+        append(out,Runner_Org_Info{o.id,s.behind,s.unfound,changes,o.full!={}})
     }
 }
 
@@ -1951,7 +1984,7 @@ runner_ddc_ask :: proc(r:^Runner,org:Log_Id,key:store.Hash) -> (state:DDC_State,
     for o in r.orgs {
         if o.id==org {served=o}
     }
-    if served==nil {return .Missing,{}}
+    if served==nil || served.agent.desc.hosted {return .Missing,{}}
     if .DDC in r.desc.modes {runner_ddc_touch(r,org,key)}
     records:=make([dynamic]DDC_Record,context.temp_allocator)
     ddc_lookup(&r.machine.store,org,key,&records)
@@ -2019,7 +2052,7 @@ runner_object_ask :: proc(r:^Runner,org:Log_Id,address:store.Hash) -> bool {
     if address=={} {return false}
     if object_whole(&r.machine.store,address,scratch_make()) {return true}
     for o in r.orgs {
-        if o.id==org {agent_want_object(&o.agent,address)}
+        if o.id==org && !agent_full(&o.agent) {agent_want_object(&o.agent,address)}
     }
     return false
 }

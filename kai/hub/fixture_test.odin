@@ -205,7 +205,7 @@ fixture_open :: proc(t:^testing.T,f:^Fixture,name:string) -> bool {
     if !testing.expect_value(t,e,kai.Error.None) {return false}
     f.running=true
     f.now=1
-    why:=hub_start(&f.hub,{runner=&f.runner,rp_id=RP,http_port=-1,clock={&f.now,fixture_clock}})
+    why:=hub_start(&f.hub,{runner=&f.runner,rp_id=RP,http_port=-1,hosted_orgs=HOSTED_ORGS,clock={&f.now,fixture_clock}})
     if !testing.expectf(t,why=="","the hub starts: %s",why) {return false}
     f.serving=true
     return true
@@ -324,4 +324,54 @@ sign_in :: proc(t:^testing.T,f:^Fixture,p:^Test_Passkey,loc:=#caller_location) -
     answer:=call(f,"POST","/api/session",fmt.tprintf(`{{"challenge":"%s","assertion":%s}}`,ch.challenge,passkey_assert(p,unb64(ch.challenge))))
     testing.expectf(t,answer.status==200 && answer.cookie!="","the passkey signs in: %d %s",answer.status,answer.body,loc=loc)
     return answer.cookie
+}
+
+// What a write of a passkey gave: the status of the draft or of the entry,
+// and the entry's address and log once kept.
+Written :: struct {status:int,address,log:kai.Log_Id,body:string}
+
+// A write of the session's passkey key as the page makes it: the node's
+// draft of action, signed over its BLAKE3.
+passkey_write :: proc(t:^testing.T,f:^Fixture,cookie:string,key:^Test_Passkey,action:string) -> (w:Written) {
+    a:=call(f,"POST","/api/drafts",action,cookie)
+    if a.status!=200 {return {status=a.status,body=a.body}}
+    Draft_Answer :: struct {unsigned:string}
+    d:Draft_Answer
+    if !json_read(t,a,&d) {return {status=a.status,body=a.body}}
+    challenge:=store.address_of_bytes(unb64(d.unsigned))
+    e:=call(f,"POST","/api/entries",fmt.tprintf(`{{"unsigned":"%s","assertion":%s}}`,d.unsigned,passkey_assert(key,challenge[:])),cookie)
+    w={status=e.status,body=e.body}
+    Kept :: struct {address,log:string}
+    k:Kept
+    if e.status==201 && json_read(t,e,&k) {
+        w.address,_=hash_parse(k.address)
+        w.log,_=hash_parse(k.log)
+    }
+    return
+}
+
+// Links machine m to user from the browser of session cookie, whose passkey
+// is key, as the page and `mirai kai web approve` do: m sets the user's first
+// recovery key and the node takes its entry. Whether all of it held.
+device_link :: proc(t:^testing.T,f:^Fixture,cookie:string,key:^Test_Passkey,user:kai.Log_Id,m:^kai.Machine,loc:=#caller_location) -> bool {
+    Link :: struct {id,secret,link:string}
+    ln:Link
+    if !json_read(t,call(f,"POST","/api/approvals",`{"kind":"device"}`,cookie),&ln,loc) {return false}
+    ask:Approval_Ask
+    if !json_read(t,call(f,"GET",fmt.tprintf("/api/approvals/%s",ln.id)),&ask,loc) {return false}
+    offer,_,why:=approve_answer(m,&ask,f.hub.origin)
+    if !testing.expectf(t,why=="","the machine offers itself: %s",why,loc=loc) {return false}
+    call(f,"POST",fmt.tprintf("/api/approvals/%s",ln.id),string(offer))
+    State :: struct {state:string,offer:struct {device,dh,kem,proof,name,code:string}}
+    st:State
+    if !json_read(t,call(f,"POST",fmt.tprintf("/api/approvals/%s/state",ln.id),fmt.tprintf(`{{"secret":"%s"}}`,ln.secret)),&st,loc) {return false}
+    u:=user
+    action:=fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","kem":"%s","proof":"%s","name":"%s"}}`,hex(u[:]),st.offer.device,st.offer.dh,st.offer.kem,st.offer.proof,st.offer.name)
+    if w:=passkey_write(t,f,cookie,key,action);!testing.expectf(t,w.status==201,"the passkey signs the Device_Add: %d %s",w.status,w.body,loc=loc) {return false}
+    if !json_read(t,call(f,"GET",fmt.tprintf("/api/approvals/%s",ln.id)),&ask,loc) {return false}
+    if !testing.expect_value(t,device_link_take(m,user,ask.entries),"",loc=loc) {return false}
+    buffer:[kai.RECOVERY_TEXT]u8
+    if _,e:=kai.machine_recovery_rotate(m,"",&buffer);!testing.expect_value(t,e,kai.Error.None,loc=loc) {return false}
+    a:=call(f,"POST",fmt.tprintf("/api/users/%s/entries",hex(u[:])),string(user_entries_body(m)))
+    return testing.expectf(t,a.status==200,"the node takes the recovery key's entry: %d %s",a.status,a.body,loc=loc)
 }

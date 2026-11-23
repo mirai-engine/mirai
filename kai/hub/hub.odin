@@ -9,6 +9,7 @@ import "core:net"
 import "core:strings"
 import "core:time"
 import "mirai:kai"
+import mnet "mirai:net"
 import "mirai:net/tls"
 
 // KaiHub: the web view of a Kai node, served by the node itself. Browsers
@@ -26,6 +27,9 @@ import "mirai:net/tls"
 // write is an entry of a log signed by the browser's passkey over the BLAKE3
 // of its bytes, or by the device that approves it; the server checks it as
 // every peer does, appends it and tells the peers. It signs nothing itself.
+// A user born here makes orgs of its own once a machine it linked set its
+// recovery key; the node hosts them (kai/node.odin), at most hosted_orgs
+// each.
 
 CONNECTIONS_MAX :: 128
 CONNECTIONS_PER_ADDRESS :: 16
@@ -45,6 +49,7 @@ APPROVALS_PER_ADDRESS :: 4 // waiting approvals one address asks without a sessi
 APPROVAL_SECONDS :: 600.0
 RATES_MAX :: 4096
 COOKIE :: "__Host-kai"
+HOSTED_ORGS :: 3 // orgs each user may make on a node's web view, unless serve --hosted-orgs says otherwise
 
 Hub_Desc :: struct {
     runner:^kai.Runner,            // whose machine and agents the hub reads; it must outlive the hub
@@ -58,6 +63,8 @@ Hub_Desc :: struct {
     acme_roots:[]^x509.Certificate, // trust anchors of the directory; nil: the ISRG roots
     clock:Clock,                   // tests: the hub's seconds; none: the monotonic clock
     event:kai.Runner_Event,        // what it did, as a line of text
+    hosted_orgs:int,               // orgs each user may make here, which the node then hosts (kai/node.odin); 0: none
+    addresses:[]mnet.Address,      // where members reach the node, which a hosted org's Node_Add names; empty: the runner's own
     allocator:runtime.Allocator,   // nil: context.allocator
 }
 
@@ -123,6 +130,8 @@ hub_start :: proc(h:^Hub,desc:Hub_Desc) -> (why:string) {
     h.desc.domains=make([]string,len(desc.domains),h.allocator)
     for d,i in desc.domains {h.desc.domains[i]=strings.clone(d,h.allocator)}
     h.desc.acme_directory=strings.clone(desc.acme_directory,h.allocator)
+    h.desc.addresses=make([]mnet.Address,len(desc.addresses),h.allocator)
+    copy(h.desc.addresses,desc.addresses)
     h.start=time.tick_now()
     h.graphs=make([dynamic]Project_Graph,h.allocator)
     h.views=make([dynamic]^Org_Views,h.allocator)
@@ -206,6 +215,7 @@ hub_stop :: proc(h:^Hub) {
     for d in h.desc.domains {delete(d,h.allocator)}
     delete(h.desc.domains,h.allocator)
     delete(h.desc.acme_directory,h.allocator)
+    delete(h.desc.addresses,h.allocator)
     crypto.zero_explicit(&h.sessions,size_of(h.sessions))
     h^={}
 }

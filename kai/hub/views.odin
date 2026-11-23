@@ -399,8 +399,20 @@ route_node :: proc(c:^Call) {
     r:=runner_of(h)
     j:=json_make()
     json_object(&j)
-    key:=r.machine.identity.key
+    key,dh:=r.machine.identity.key,r.machine.dh.public
     json_member_hex(&j,"device",key[:])
+    json_member_hex(&j,"dh",dh[:])
+    json_key(&j,"addresses")
+    json_array(&j)
+    for a in node_addresses(h) {
+        json_object(&j)
+        json_member_int(&j,"kind",i64(a.kind))
+        json_member_int(&j,"port",i64(a.port))
+        ip:=a.ip
+        json_member_hex(&j,"ip",ip[:])
+        json_end_object(&j)
+    }
+    json_end_array(&j)
     json_key(&j,"modes")
     json_array(&j)
     modes:=MODE_TEXT
@@ -412,6 +424,11 @@ route_node :: proc(c:^Call) {
     json_member_string(&j,"origin",h.origin)
     json_member_int(&j,"orgs",i64(len(r.orgs)))
     json_member_bool(&j,"passkeys_work",strings.has_prefix(h.origin,"https://"))
+    json_key(&j,"hosting")
+    json_object(&j)
+    json_member_int(&j,"orgs",i64(hosting_max(h)))
+    json_member_int(&j,"quota",r.desc.hosted_quota>0?r.desc.hosted_quota:kai.HOSTED_QUOTA)
+    json_end_object(&j)
     json_end_object(&j)
     json_response(c,&j)
 }

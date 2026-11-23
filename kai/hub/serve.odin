@@ -1,21 +1,25 @@
 package hub
 
 import "core:bufio"
+import "core:crypto"
 import "core:crypto/ed25519"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:kai"
+import mnet "mirai:net"
+import "mirai:net/tls"
 import "mirai:store"
 
 // The commands of a node, which `mirai kai` and the headless mirai-kai
 // executable run alike: serve, pair join for the node itself, and web approve
-// for a member's device.
+// and web join for a member's device.
 
-SERVE_USAGE :: "kai serve --mode relay|seed|seed+ddc --store <folder> [--port N] [--ddc-quota BYTES] [--domain NAME ...] [--https PORT] [--http PORT] [--no-sandbox]"
+SERVE_USAGE :: "kai serve --mode relay|seed|seed+ddc --store <folder> [--port N] [--ddc-quota BYTES] [--hosted-quota BYTES] [--hosted-orgs N] [--domain NAME ...] [--https PORT] [--http PORT] [--no-sandbox]"
 NODE_PORT :: 47914 // the UDP port of a node unless --port says otherwise
 
 // The TCP ports a confined node may bind and connect to.
@@ -24,7 +28,7 @@ Sandbox_Ports :: struct {bind,connect:[]int}
 // Runs the node until the process ends. program names the executable in
 // what it prints.
 serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
-    root,mode,port_text,quota_text,http_text,https_text:=store_root,"","","","",""
+    root,mode,port_text,quota_text,http_text,https_text,hosted_quota_text,hosted_orgs_text:=store_root,"","","","","","",""
     domains:=make([dynamic]string,context.temp_allocator)
     no_sandbox:=false
     for i:=0;i<len(args);i+=1 {
@@ -40,6 +44,8 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
         case "--store": root=value
         case "--port": port_text=value
         case "--ddc-quota": quota_text=value
+        case "--hosted-quota": hosted_quota_text=value
+        case "--hosted-orgs": hosted_orgs_text=value
         case "--domain": append(&domains,strings.to_lower(value,context.temp_allocator))
         case "--http": http_text=value
         case "--https": https_text=value
@@ -92,6 +98,19 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
         fmt.eprintfln("%s kai serve: a relay holds logs only; the web view needs --mode seed",program)
         return 2
     }
+    hosted_quota,hosted_orgs:=kai.HOSTED_QUOTA,HOSTED_ORGS
+    if (hosted_quota_text!="" || hosted_orgs_text!="") && !web {
+        fmt.eprintfln("%s kai serve: --hosted-quota and --hosted-orgs bound the orgs users make on the web view: give --domain or --http",program)
+        return 2
+    }
+    if hosted_quota_text!="" {
+        if hosted_quota,ok=bytes_parse(hosted_quota_text);!ok || hosted_quota<=0 {fmt.eprintfln("%s kai serve: --hosted-quota is a size in bytes, with K, M, G or T after it if you like",program);return 2}
+    }
+    if hosted_orgs_text!="" {
+        n,parsed:=strconv.parse_int(hosted_orgs_text,10)
+        if !parsed || n<0 || n>kai.RUNNER_ORGS {fmt.eprintfln("%s kai serve: --hosted-orgs is how many orgs each user may make on the web view, 0 to %d; 0 makes none",program,kai.RUNNER_ORGS);return 2}
+        hosted_orgs=n
+    }
 
     m:=new(kai.Machine)
     if e:=kai.machine_open(m,root);e!=.None {
@@ -111,7 +130,7 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
     defer free(r)
     // The hub's HTTPS listener on the relay's port hands the relay's connections over.
     tcp_port:=https_port==kai.RELAY_TCP_PORT?0:kai.RELAY_TCP_PORT
-    if e:=kai.runner_start(r,{machine=m,port=port,modes=modes,control=true,ddc_quota=quota,tcp_port=tcp_port,event={procedure=print}});e!=.None {
+    if e:=kai.runner_start(r,{machine=m,port=port,modes=modes,control=true,ddc_quota=quota,hosted_quota=hosted_quota,tcp_port=tcp_port,event={procedure=print}});e!=.None {
         fmt.eprintfln("%s kai serve: %s",program,m.why)
         return 1
     }
@@ -128,7 +147,10 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
     if web {
         rp:="localhost"
         if len(domains)>0 {rp=domains[0]}
-        why:=hub_start(h,{runner=r,rp_id=rp,http_port=http_port,https_port=https_port,domains=domains[:],event={procedure=print}})
+        // A hosted org's Node_Add names where the domain points, at the node's UDP port.
+        addresses:=make([dynamic]mnet.Address,context.temp_allocator)
+        if len(domains)>0 {domain_addresses(domains[0],kai.runner_port(r),&addresses)}
+        why:=hub_start(h,{runner=r,rp_id=rp,http_port=http_port,https_port=https_port,domains=domains[:],hosted_orgs=hosted_orgs,addresses=addresses[:],event={procedure=print}})
         if why!="" {
             fmt.eprintfln("%s kai serve: %s",program,why)
             return 1
@@ -158,6 +180,24 @@ serve_command :: proc(program:string,args:[]string,store_root:="") -> int {
         kai.runner_run(r,&stop,false)
     }
     return 0
+}
+
+DOMAIN_SECONDS :: 10 // a lookup of the node's own name may take at start
+
+// The addresses name resolves to, at port.
+@(private)
+domain_addresses :: proc(name:string,port:int,out:^[dynamic]mnet.Address) {
+    r:mnet.Resolve
+    if !mnet.resolve_start(&r,fmt.tprintf("%s:%d",name,port)) {return}
+    defer mnet.resolve_end(&r)
+    start:=time.tick_now()
+    for time.duration_seconds(time.tick_since(start))<DOMAIN_SECONDS {
+        if found,done:=mnet.resolve_poll(&r);done {
+            append(out,..found)
+            return
+        }
+        time.sleep(20*time.Millisecond)
+    }
 }
 
 @(private)
@@ -248,7 +288,7 @@ join_command :: proc(program:string,args:[]string,store_root:="") -> int {
 
 // --- mirai kai web approve ---
 
-WEB_USAGE :: "kai web approve <link> [--yes] [--store S]"
+WEB_USAGE :: "kai web approve <link> [--yes] [--store S] | kai web join <origin> [--store S]"
 
 // What an approval asks, as GET /api/approvals/{id} answers it.
 Approval_Ask :: struct {
@@ -373,6 +413,7 @@ login_signature :: proc(identity:^kai.Identity,rp_id:string,challenge:[32]u8) ->
 // mirai kai web approve: asks the hub what the link wants, shows it, and
 // answers it signed by this device once the person says yes.
 web_command :: proc(program:string,args:[]string,store_root:="") -> int {
+    if len(args)==2 && args[0]=="join" {return web_join(program,args[1],store_root)}
     if len(args)<2 || args[0]!="approve" {
         fmt.eprintfln("Usage: %s %s",program,WEB_USAGE)
         return 2
@@ -451,7 +492,31 @@ web_command :: proc(program:string,args:[]string,store_root:="") -> int {
             fmt.eprintfln("%s kai web approve: %s",program,why)
             return 1
         }
-        fmt.println("Linked: this device is the user's now. It has no recovery key yet: mirai kai identity recovery sets the first.")
+        // The user's first recovery key: set here, shown here once, and only its entry goes to the node.
+        if kai.machine_user_recovered(m) {
+            fmt.println("Linked: this device is the user's now.")
+            return 0
+        }
+        buffer:[kai.RECOVERY_TEXT]u8
+        defer crypto.zero_explicit(&buffer,size_of(buffer))
+        recovery,e:=kai.machine_recovery_rotate(m,"",&buffer)
+        if e!=.None {
+            fmt.eprintfln("%s kai web approve: linked, but the recovery key was not set: %s; run mirai kai identity recovery",program,m.why)
+            return 1
+        }
+        if store.commit(&m.store)!=.None {
+            fmt.eprintfln("%s kai web approve: linked, but this device's store does not keep the recovery key's entry: run mirai kai identity recovery",program)
+            return 1
+        }
+        fmt.printfln("Linked: this device is the user's now, and it set the user's first recovery key. Shown once: write it down and keep it offline.\n  %s",recovery)
+        body:=user_entries_body(m)
+        response,why=client_call(origin,"POST",fmt.tprintf("/api/users/%s/entries",ask.user),body)
+        if why!="" || response.status!=200 {
+            if why=="" {why=fmt.tprintf("the hub answered %d: %s",response.status,string(response.body))}
+            fmt.eprintfln("%s kai web approve: the node did not take the recovery key's entry (%s): run this again with a new link, or let a Kai agent here bring it",program,why)
+            return 1
+        }
+        fmt.println("The node has it: the browser offers making an org now.")
         return 0
     }
     fmt.printfln("Approved: %s.",summary)
@@ -476,6 +541,123 @@ device_link_wait :: proc(m:^kai.Machine,origin,path,user_text:string) -> string 
         return device_link_take(m,user,ask.entries)
     }
     return "the browser did not link the device in time: ask a new link"
+}
+
+// The JSON body that gives the node the newest entries of this device's
+// user's log, parents first.
+user_entries_body :: proc(m:^kai.Machine) -> []u8 {
+    l:kai.Log
+    kai.log_init(&l,m.user,context.temp_allocator)
+    j:=json_make()
+    json_object(&j)
+    json_key(&j,"entries")
+    json_array(&j)
+    if kai.log_open(&m.store,&l,m.user,.User)==.None && kai.log_index(&l)==.None {
+        for i in l.order[max(len(l.order)-USER_ENTRIES_MAX,0):] {json_base64(&j,l.items[i].bytes)}
+    }
+    json_end_array(&j)
+    json_end_object(&j)
+    return transmute([]u8)json_text(&j)
+}
+
+// The JSON body that signs this device in to the hub of rp_id with challenge.
+device_sign_in_body :: proc(m:^kai.Machine,rp_id:string,challenge:[32]u8) -> []u8 {
+    signature:=login_signature(&m.identity,rp_id,challenge)
+    key:=m.identity.key
+    j:=json_make()
+    json_object(&j)
+    json_member_hex(&j,"device",key[:])
+    ch:=challenge
+    json_key(&j,"challenge")
+    json_base64(&j,ch[:])
+    json_key(&j,"signature")
+    json_base64(&j,signature[:])
+    json_end_object(&j)
+    return transmute([]u8)json_text(&j)
+}
+
+// The orgs of a session's user, as GET /api/session lists them.
+Session_Orgs :: struct {orgs:[]struct {org,name,role:string}}
+
+// mirai kai web join: signs this device in to the node at origin, and serves
+// every org of its user the node serves that this machine does not: how a
+// device linked from a browser comes to the orgs its user makes there.
+web_join :: proc(program,origin,store_root:string) -> int {
+    if _,valid:=origin_parse(origin);!valid {
+        fmt.eprintfln("%s kai web join: the origin is the node's web address, as https://kai.example.com",program)
+        return 2
+    }
+    m:=new(kai.Machine,context.temp_allocator)
+    if kai.machine_open(m,store_root)!=.None {
+        fmt.eprintfln("%s kai web join: %s",program,m.why)
+        return 1
+    }
+    defer kai.machine_close(m)
+    if m.user=={} {
+        fmt.eprintfln("%s kai web join: this device has no user: link it from the browser first (mirai kai web approve)",program)
+        return 1
+    }
+    c:kai.Control
+    if kai.control_open(&c,m.store.root)==.None {m.changed=kai.control_machine_changed(&c)}
+    defer if m.changed.procedure!=nil {kai.control_close(&c)}
+    fail :: proc(program,why:string) -> int {
+        fmt.eprintfln("%s kai web join: %s",program,why)
+        return 1
+    }
+    call :: proc(origin,method,path:string,body:[]u8,cookie:="") -> (r:tls.Response,why:string) {
+        r,why=client_call(origin,method,path,body,cookie=cookie)
+        if why=="" && r.status!=200 {why=fmt.tprintf("the hub answered %d: %s",r.status,string(r.body))}
+        return
+    }
+    Given :: struct {challenge,rp_id:string}
+    given:Given
+    response,why:=call(origin,"POST","/api/session/challenge",nil)
+    if why!="" {return fail(program,why)}
+    challenge,cok:=[]u8{},false
+    if json.unmarshal(response.body,&given,.JSON,context.temp_allocator)==nil {challenge,cok=base64_parse(given.challenge,32)}
+    if !cok || len(challenge)!=32 {return fail(program,"the hub's challenge does not read")}
+    ch:[32]u8
+    copy(ch[:],challenge)
+    if response,why=call(origin,"POST","/api/session/device",device_sign_in_body(m,given.rp_id,ch));why!="" {return fail(program,why)}
+    cookie:=cookie_of(response.headers)
+    if cookie=="" {return fail(program,"the hub gave no session")}
+    if response,why=call(origin,"GET","/api/session",nil,cookie);why!="" {return fail(program,why)}
+    session:Session_Orgs
+    if json.unmarshal(response.body,&session,.JSON,context.temp_allocator)!=nil {return fail(program,"the hub's session does not read")}
+    joined:=0
+    for o in session.orgs {
+        org,ok:=hash_parse(o.org)
+        if !ok || slice.contains(m.orgs[:],org) {continue}
+        if response,why=call(origin,"GET",fmt.tprintf("/api/orgs/%s/log",o.org),nil,cookie);why!="" {return fail(program,why)}
+        Log_Answer :: struct {entries:[]string}
+        given_log:Log_Answer
+        if json.unmarshal(response.body,&given_log,.JSON,context.temp_allocator)!=nil {return fail(program,"the org's log does not read")}
+        entries:=make([dynamic][]u8,context.temp_allocator)
+        for text in given_log.entries {
+            bytes,bok:=base64_parse(text,kai.ENTRY_BODY_MAX+4096)
+            if !bok {return fail(program,"an entry of the org's log does not read")}
+            append(&entries,bytes)
+        }
+        if kai.machine_org_take(m,org,entries[:])!=.None {return fail(program,m.why)}
+        fmt.printfln("Joined org %s (%s) as %s.",o.name,o.org[:12],o.role)
+        joined+=1
+    }
+    if store.commit(&m.store)!=.None {return fail(program,"this device's store does not take the orgs: give this user access to the store")}
+    if joined==0 {
+        fmt.println("This machine serves every org of its user the node serves already.")
+    } else if m.changed.procedure==nil {
+        fmt.println("No Kai agent runs for this store: mirai kai agent starts one, which reaches the org's node.")
+    }
+    return 0
+}
+
+// The session cookie a hub's answer sets, as a Cookie header gives it back.
+cookie_of :: proc(headers:string) -> string {
+    at:=strings.index(headers,COOKIE+"=")
+    if at<0 {return ""}
+    rest:=headers[at:]
+    end:=strings.index_byte(rest,';')
+    return end<0?"":rest[:end]
 }
 
 // Takes the user's log the hub gave once it names this device.

@@ -762,6 +762,118 @@ an_ipv6_beacon_joins_two_members_over_loopback :: proc(t:^testing.T) {
     testing.expect(t,k>=0 && o.peers[k].lan==b.addresses[1][0],"alice took bob's [::1] from his beacon")
 }
 
+// A node keeps an org a user made on its web view for others: it takes no
+// derived data of it, whatever its Node_Add says, and once what it holds of
+// the org reaches its bound it takes nothing more the org publishes, and its
+// Welcome tells the publishing machine, which says how to fix it. The org its
+// operator paired it into is bound by neither, and the node serves both.
+@(test)
+a_hosted_org_keeps_no_derived_data_and_stops_at_its_bound :: proc(t:^testing.T) {
+    b:=new(Box)
+    defer free(b)
+    if !box_open(t,b,"kai-runner-hosted",2) {return}
+    defer box_close(b)
+    alice,node:=&b.machines[0],&b.machines[1]
+    user_make(t,alice,"alice")
+    hosted,e:=machine_org_create(alice,"hosted")
+    testing.expect_value(t,e,Error.None)
+    own,oe:=machine_org_create(alice,"own")
+    testing.expect_value(t,oe,Error.None)
+    if !box_start(t,b,1,{.Relay,.Seed,.DDC}) {return}
+    b.runners[1].desc.hosted_quota=64<<10
+    projects:[2]Log_Id
+    for org,i in ([2]Log_Id{hosted,own}) {
+        testing.expect_value(t,machine_node_add(alice,org,node.identity.key,Dh_Key(node.dh.public),{.Relay,.Seed,.DDC},b.addresses[1][:]),Error.None)
+        pe:Error
+        projects[i],pe=machine_project_add(alice,org,random_id(Repo_Id),"game",false)
+        testing.expect_value(t,pe,Error.None)
+        log_copy(t,&alice.store,&node.store,org,.Org)
+    }
+    log_copy(t,&alice.store,&node.store,alice.user,.User)
+    testing.expect_value(t,machine_org_host(node,hosted,alice.user),Error.None)
+    testing.expect_value(t,machine_org_join(node,own),Error.None)
+    _,is_hosted:=store_org_hosted(&node.store,hosted)
+    _,is_own:=store_org_hosted(&node.store,own)
+    testing.expect(t,is_hosted && !is_own && store_hosted_count(&node.store,alice.user)==1,"the node marks the hosted org alone, by who made it")
+    if !box_start(t,b,0) {return}
+    Said :: struct {text:[1024]u8,count:int}
+    said:Said
+    b.runners[0].desc.event={&said,proc(data:rawptr,text:string) {
+        s:=(^Said)(data)
+        if strings.contains(text,"full") {s.count=copy(s.text[:],text)}
+    }}
+
+    // Derived data of both orgs, and a change past the bound in each project.
+    key:=store.Hash{0=7}
+    output,pe:=store.put(&alice.store,transmute([]u8)string("built"))
+    testing.expect_value(t,pe,store.Error.None)
+    big:=strings.repeat("x",128<<10,context.temp_allocator)
+    goals:[2]Goal
+    for org,i in ([2]Log_Id{hosted,own}) {
+        _,de:=machine_publish_ddc(alice,org,key,{output},nil)
+        testing.expect_value(t,de,Error.None)
+        goals[i]=Goal{k=1,project=projects[i],device=alice.identity.key}
+        goals[i].revision=test_change(t,&alice.store,&alice.identity,big)
+        test_written(t,&alice.store,projects[i],goals[i].revision)
+        testing.expect_value(t,machine_publish_refs(alice,projects[i],{{"main",goals[i].revision}}),Error.None)
+        _,goals[i].refs,_=device_refs_get(&alice.store,projects[i],alice.identity.key,context.temp_allocator)
+    }
+    for &g,i in goals {
+        if !testing.expectf(t,box_until(b,15,&g,refs_arrived),"the node mirrors the first change of org %d",i) {return}
+    }
+    ddc_held :: proc(s:^store.Store,org:Log_Id,key:store.Hash) -> bool {
+        ns:[len(DDC_PREFIX)+64]u8
+        name:[64]u8
+        _,e:=store.ref_get(s,ddc_namespace(org,&ns),store.hex(key,&name))
+        return e==.None
+    }
+    Held :: struct {s:^store.Store,org:Log_Id,key:store.Hash}
+    held:=Held{&node.store,own,key}
+    testing.expect(t,box_until(b,10,&held,proc(b:^Box,data:rawptr) -> bool {
+        h:=(^Held)(data)
+        return ddc_held(h.s,h.org,h.key)
+    }),"the operator's org takes derived data")
+    testing.expect(t,!ddc_held(&node.store,hosted,key),"the hosted org takes none, whatever its Node_Add says")
+    var_hosted,var_own:^Runner_Org
+    for o in b.runners[1].orgs {
+        if o.id==hosted {var_hosted=o}
+        if o.id==own {var_own=o}
+    }
+    if !testing.expect(t,var_hosted!=nil && var_own!=nil,"the node serves both orgs") {return}
+    testing.expectf(t,agent_full(&var_hosted.agent) && var_hosted.agent.members.stored>=64<<10,"the hosted org is at its bound: %d bytes",var_hosted.agent.members.stored)
+    testing.expect(t,!agent_full(&var_own.agent),"the operator's org has none")
+
+    // A second change: the operator's org takes it, the hosted one refuses it and says so.
+    for org,i in ([2]Log_Id{hosted,own}) {
+        goals[i].revision=test_change(t,&alice.store,&alice.identity,"after the bound")
+        test_written(t,&alice.store,projects[i],goals[i].revision)
+        testing.expect_value(t,machine_publish_refs(alice,projects[i],{{"main",goals[i].revision}}),Error.None)
+        _,goals[i].refs,_=device_refs_get(&alice.store,projects[i],alice.identity.key,context.temp_allocator)
+        _=org
+    }
+    if !testing.expect(t,box_until(b,15,&goals[1],refs_arrived),"the operator's org takes what comes past the bound") {return}
+    box_steps(b,1)
+    testing.expect(t,!refs_arrived(b,&goals[0]),"the hosted org takes nothing past its bound")
+    b.runners[0].hello_at=-1
+    Full :: struct {org:Log_Id}
+    full:=Full{hosted}
+    testing.expect(t,box_until(b,10,&full,proc(b:^Box,data:rawptr) -> bool {
+        infos:=make([dynamic]Runner_Org_Info,context.temp_allocator)
+        runner_orgs_info(&b.runners[0],&infos)
+        for x in infos {
+            if x.org==(^Full)(data).org && x.full {return true}
+        }
+        return false
+    }),"the node's Welcome tells the publishing machine the hosted org is full")
+    infos:=make([dynamic]Runner_Org_Info,context.temp_allocator)
+    runner_orgs_info(&b.runners[0],&infos)
+    for x in infos {
+        if x.org==own {testing.expect(t,!x.full,"the operator's org is not")}
+    }
+    text:=string(said.text[:said.count])
+    testing.expectf(t,strings.contains(text,"is full") && strings.contains(text,"mirai kai pair offer node"),"the machine is told how to fix it: %s",text)
+}
+
 // Every message a runner reads from its socket or a local process: random
 // bytes, cuts and lengths past their bounds are dropped or refused, under the
 // memory tracker, and the runner goes on.

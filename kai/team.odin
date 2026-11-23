@@ -637,6 +637,40 @@ machine_user_linked :: proc(m:^Machine,user:Log_Id,entries:[][]u8) -> Error {
     return machine_user_set(m,user)
 }
 
+// Takes the log of an org this device's user is a member of, as the node it
+// signed in to gave it, and serves the org: how a device linked from a
+// browser comes to an org its user made on a node's web view afterwards. The
+// org's Node_Add names where its node listens, which the agent reaches.
+machine_org_take :: proc(m:^Machine,org:Log_Id,entries:[][]u8) -> Error {
+    ul:Log
+    uf:User_Fold
+    machine_user_open(m,&ul,&uf) or_return
+    defer user_fold_destroy(&uf)
+    l:Log
+    log_init(&l,{},context.temp_allocator)
+    for bytes in entries {
+        if _,e:=log_add(&l,bytes,true);e!=.None {return machine_fail(m,e,"an entry of the org's log does not hold: ask the node again")}
+    }
+    if l.id!=org || l.kind!=.Org {return machine_fail(m,.Invalid_Argument,"the node gave the log of another org than the one asked")}
+    f:Org_Fold
+    users:=[]^User_Fold{&uf}
+    if e:=org_fold(&f,&l,users,context.temp_allocator);e!=.None {return machine_fail(m,e,"the org's log does not fold: ask the node again")}
+    role:=org_role(&f,m.user)
+    org_fold_destroy(&f)
+    if role==.None {return machine_fail(m,.Unauthorized,"the org's log does not name this device's user as a member: an admin adds it first")}
+    stored:Log
+    log_init(&stored,org,context.temp_allocator)
+    if log_open(&m.store,&stored,org,.Org)==.None {
+        for item in l.items {
+            if _,e:=log_add(&stored,item.bytes,false);e!=.None {return machine_fail(m,e,"the org's log in this store does not take the node's entries")}
+        }
+        machine_log_save(m,&stored) or_return
+    } else {
+        machine_log_save(m,&l) or_return
+    }
+    return machine_org_join(m,org)
+}
+
 // --- Grants ---
 
 // The text a grant travels in to its holder: the grant, and the X25519 key

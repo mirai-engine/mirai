@@ -121,6 +121,12 @@ export function hash(text, target) {
     return target ? html`<a class="hash-link" href=${target}>${code}</a>` : code
 }
 
+// What the node keeps of an org it hosts, against its quota.
+export function usage(o) {
+    return html`<div class="usage"><progress max=${String(o.quota)} value=${String(Math.min(o.bytes, o.quota))} aria-label="Storage used"></progress>
+        <span class="quiet">${size(o.bytes)} of ${size(o.quota)}${o.full ? ' · full' : ''}</span></div>`
+}
+
 // A command or text to copy, in a field that selects itself.
 export function copyField(text) {
     const copy = async event => {

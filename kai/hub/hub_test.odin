@@ -452,12 +452,10 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     // Nobody admitted it: it waits on this node alone, apart from the user logs peers sync.
     name:[64]u8
     _,synced:=store.ref_get(&f.alice.store,kai.USER_NAMESPACE,kai.log_name(bob,&name))
-    testing.expect(t,synced==.Missing && user_fold_of(&f.hub,bob)==nil,"an uninvited user is no user log a peer gets")
+    testing.expect(t,synced==.Missing && user_synced(&f.hub,bob)==nil,"an uninvited user is no user log a peer gets")
     {
-        ch:struct {challenge:string}
-        json_read(t,call(f,"POST","/api/session/challenge"),&ch)
-        w:=call(f,"POST","/api/session",fmt.tprintf(`{{"challenge":"%s","assertion":%s}}`,ch.challenge,passkey_assert(&bob_key,unb64(ch.challenge))))
-        testing.expectf(t,w.status==403 && strings.contains(w.body,"waits"),"a waiting user is told to wait: %d %s",w.status,w.body)
+        who:=call(f,"GET","/api/session",cookie=sign_in(t,f,&bob_key))
+        testing.expectf(t,strings.contains(who.body,`"orgs":[]`),"a waiting user signs in, in no org: %s",who.body)
     }
     // A full waiting set lets the oldest go.
     {
@@ -483,7 +481,7 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
     waiting_step(&f.hub)
     _,synced=store.ref_get(&f.alice.store,kai.USER_NAMESPACE,kai.log_name(bob,&name))
     _,waits:=store.ref_get(&f.alice.store,WAITING_NAMESPACE,kai.log_name(bob,&name))
-    testing.expect(t,synced==.None && waits==.Missing && user_fold_of(&f.hub,bob)!=nil,"an admitted user's log joins the synced ones")
+    testing.expect(t,synced==.None && waits==.Missing && user_synced(&f.hub,bob)!=nil,"an admitted user's log joins the synced ones")
     // carol records bob's credential id with a passkey of her own: it blocks neither.
     carol_key:=passkey_make()
     carol_key.credential=bob_key.credential
@@ -808,6 +806,130 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         testing.expect(t,len(edits)==1 && edits[0].path=="a.txt","a root change adds its files")
         testing.expect(t,!store.chunk_has(&bare,empty),"reading a change puts nothing in the store")
     }
+}
+
+// A user born of a passkey alone makes an org the node then hosts: it is
+// told what is missing until a machine it links sets its recovery key, then
+// its passkey signs the org's genesis and the Node_Add of this node, and a
+// project born empty. The node takes no more orgs of a user past its bound,
+// and none when hosting is closed. The linked machine signs in to the node,
+// takes the org and reaches it through the node over the mesh.
+@(test)
+hub_hosts_the_orgs_its_users_make :: proc(t:^testing.T) {
+    f:=new(Fixture)
+    defer free(f)
+    defer fixture_close(f)
+    if !fixture_open(t,f,"kai-hub-hosted") {return}
+    dana_key:=passkey_make()
+    status,dana:=passkey_born(t,f,&dana_key,"dana")
+    if !testing.expect_value(t,status,201) {return}
+    cookie:=sign_in(t,f,&dana_key)
+    if cookie=="" {return}
+    Session :: struct {recovered:bool,hosting:struct {made,max:int},orgs:[]struct {org,role:string,hosted,full,served:bool,bytes,quota:i64}}
+    se:Session
+    json_read(t,call(f,"GET","/api/session",cookie=cookie),&se)
+    testing.expect(t,!se.recovered && se.hosting.max==HOSTED_ORGS && len(se.orgs)==0,"a waiting user signs in, with no recovery key and no org")
+    D:=hex(dana[:])
+    org_action:=fmt.tprintf(`{{"type":"org_genesis","owner":"%s","name":"dana's studio"}}`,D)
+    refused:=passkey_write(t,f,cookie,&dana_key,org_action)
+    testing.expectf(t,refused.status==403 && strings.contains(refused.body,"no recovery key") && strings.contains(refused.body,"Link a machine"),"an org waits for a recovery key, and the node says how to get one: %d %s",refused.status,refused.body)
+
+    // A machine linked from the browser sets the recovery key; the node has its entry, never the key.
+    linked:kai.Machine
+    if !testing.expect_value(t,kai.machine_open(&linked,fmt.tprintf("%s/linked",f.folder)),kai.Error.None) {return}
+    defer kai.machine_close(&linked)
+    if !device_link(t,f,cookie,&dana_key,dana,&linked) {return}
+    json_read(t,call(f,"GET","/api/session",cookie=cookie),&se)
+    testing.expect(t,se.recovered,"the session's user has a recovery key now")
+
+    made:=passkey_write(t,f,cookie,&dana_key,org_action)
+    if !testing.expectf(t,made.status==201,"the passkey makes the org: %d %s",made.status,made.body) {return}
+    org:=made.log
+    o:=org_find(&f.hub,org)
+    _,hosted:=kai.store_org_hosted(&f.alice.store,org)
+    if !testing.expect(t,o!=nil && o.agent.desc.hosted && hosted,"the node serves the org at once, as one it hosts") {return}
+    testing.expect(t,kai.org_role(&o.agent.org,dana)==.Owner,"its maker owns it")
+    Node :: struct {device,dh:string,addresses:[]struct {kind:int,port:int,ip:string},hosting:struct {orgs:int,quota:i64}}
+    node:Node
+    json_read(t,call(f,"GET","/api/node"),&node)
+    testing.expect(t,node.hosting.orgs==HOSTED_ORGS && node.hosting.quota==kai.HOSTED_QUOTA && len(node.addresses)>0,"the node says what it hosts and where it is reached")
+    addresses:=strings.builder_make(context.temp_allocator)
+    for a,i in node.addresses {fmt.sbprintf(&addresses,`%s{{"kind":%d,"port":%d,"ip":"%s"}}`,i>0?",":"",a.kind,a.port,a.ip)}
+    node_action :: proc(org,node,dh,modes,addresses:string) -> string {
+        return fmt.tprintf(`{{"type":"node_add","log":"%s","node":"%s","dh":"%s","modes":[%s],"addresses":[%s]}}`,org,node,dh,modes,addresses)
+    }
+    O:=hex(org[:])
+    ddc:=passkey_write(t,f,cookie,&dana_key,node_action(O,node.device,node.dh,`"relay","seed","ddc"`,strings.to_string(addresses)))
+    testing.expectf(t,ddc.status==400,"a hosted org's node keeps no derived data: %d %s",ddc.status,ddc.body)
+    json_read(t,call(f,"GET","/api/session",cookie=cookie),&se)
+    testing.expect(t,len(se.orgs)==1 && se.orgs[0].hosted && !se.orgs[0].served && se.orgs[0].quota==kai.HOSTED_QUOTA,"the org is hosted, its log names no node yet")
+    added:=passkey_write(t,f,cookie,&dana_key,node_action(O,node.device,node.dh,`"relay","seed"`,strings.to_string(addresses)))
+    testing.expectf(t,added.status==201,"the passkey adds this node to the org: %d %s",added.status,added.body)
+    json_read(t,call(f,"GET","/api/session",cookie=cookie),&se)
+    testing.expect(t,len(se.orgs)==1 && se.orgs[0].served && se.orgs[0].role=="owner" && se.orgs[0].bytes>0 && !se.orgs[0].full,"the org's log names the node; the session sees what the node keeps of it")
+
+    // A project born empty: its genesis, then the org's Project_Add.
+    project_made:=passkey_write(t,f,cookie,&dana_key,fmt.tprintf(`{{"type":"project_genesis","org":"%s","name":"game","public":false}}`,O))
+    if !testing.expectf(t,project_made.status==201,"the passkey makes a project: %d %s",project_made.status,project_made.body) {return}
+    project:=project_made.log
+    P:=hex(project[:])
+    project_added:=passkey_write(t,f,cookie,&dana_key,fmt.tprintf(`{{"type":"project_add","log":"%s","project":"%s","public":false}}`,O,P))
+    testing.expectf(t,project_added.status==201,"the org adds it: %d %s",project_added.status,project_added.body)
+    testing.expect(t,strings.contains(call(f,"GET","/api/projects",cookie=cookie).body,P),"the node serves the project to its members")
+    testing.expect(t,!strings.contains(call(f,"GET","/api/projects").body,P),"a private one to no one else")
+
+    // The bound of orgs per user, and a node that makes none.
+    f.hub.desc.hosted_orgs=1
+    bound:=passkey_write(t,f,cookie,&dana_key,org_action)
+    testing.expectf(t,bound.status==403 && strings.contains(bound.body,"as many orgs"),"a user makes no more orgs than the node hosts for one: %d %s",bound.status,bound.body)
+    f.hub.desc.hosted_orgs=0
+    closed:=passkey_write(t,f,cookie,&dana_key,org_action)
+    json_read(t,call(f,"GET","/api/node"),&node)
+    testing.expectf(t,closed.status==403 && strings.contains(closed.body,"makes no orgs") && node.hosting.orgs==0,"a node that hosts none says so: %d %s",closed.status,closed.body)
+    f.hub.desc.hosted_orgs=HOSTED_ORGS
+    json_read(t,call(f,"GET","/api/session",cookie=cookie),&se)
+    testing.expect(t,se.hosting.made==1,"the session counts the orgs its user made here")
+
+    // The linked machine signs in as a device, takes the org and reaches it through the node.
+    Given :: struct {challenge:string}
+    given:Given
+    json_read(t,call(f,"POST","/api/session/challenge"),&given)
+    ch:[32]u8
+    copy(ch[:],unb64(given.challenge))
+    forged:=device_sign_in_body(&f.peer,RP,ch)
+    testing.expect(t,call(f,"POST","/api/session/device",string(forged)).status==403,"a device of no user here is refused")
+    json_read(t,call(f,"POST","/api/session/challenge"),&given)
+    copy(ch[:],unb64(given.challenge))
+    device:=call(f,"POST","/api/session/device",string(device_sign_in_body(&linked,RP,ch)))
+    if !testing.expectf(t,device.status==200 && device.cookie!="","the linked machine signs in: %d %s",device.status,device.body) {return}
+    testing.expect(t,strings.contains(call(f,"GET","/api/session",cookie=device.cookie).body,O),"its session lists the org")
+    Log_Answer :: struct {entries:[]string}
+    given_log:Log_Answer
+    if !json_read(t,call(f,"GET",fmt.tprintf("/api/orgs/%s/log",O),cookie=device.cookie),&given_log) {return}
+    testing.expect(t,call(f,"GET",fmt.tprintf("/api/orgs/%s/log",hex(f.org[:])),cookie=device.cookie).status!=200,"no other org's log")
+    entries:=make([dynamic][]u8,context.temp_allocator)
+    for text in given_log.entries {append(&entries,unb64(text))}
+    if !testing.expect_value(t,kai.machine_org_take(&linked,org,entries[:]),kai.Error.None) {return}
+    lr:=new(kai.Runner)
+    defer free(lr)
+    if !testing.expect_value(t,kai.runner_start(lr,{machine=&linked,bind=mnet.address_loopback(0),beacon_port=-1,host_seed=11}),kai.Error.None) {return}
+    defer kai.runner_stop(lr)
+    reached:=false
+    start:=time.tick_now()
+    for !reached && time.duration_seconds(time.tick_since(start))<15 {
+        runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
+        kai.runner_update(&f.runner,0.001)
+        kai.runner_update(lr,0.001)
+        peers:=make([dynamic]kai.Runner_Peer_Info,context.temp_allocator)
+        kai.runner_peers(lr,&peers)
+        node_key:=kai.Dh_Key(f.alice.dh.public)
+        connected:=false
+        for p in peers {connected||=p.org==org && p.dh==node_key && p.class==.Node}
+        l:kai.Log
+        kai.log_init(&l,project,context.temp_allocator)
+        reached=connected && kai.log_open(&linked.store,&l,project,.Project)==.None
+    }
+    testing.expect(t,reached,"the linked machine reaches the org through its node and syncs the project's log")
 }
 
 LIMITS_CREATE_REFILL :: 700.0

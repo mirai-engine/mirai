@@ -17,12 +17,16 @@ export const TIME_SKEW_NS = 600n * 1000000000n
 
 export const TYPES = {
     device_add: 2, web_key_add: 5,
-    member_add: 7, member_remove: 8, role_set: 9,
+    org_genesis: 6, member_add: 7, member_remove: 8, role_set: 9, project_add: 11, node_add: 17,
+    project_genesis: 19,
     proposal_comment: 23, proposal_verdict: 24, proposal_close: 27, proposal_reopen: 28,
     passkey_genesis: 33,
 }
-// The entries whose log is a proposal's, which name the org's entry their author signs under.
-const ORG_BOUND = new Set(['proposal_comment', 'proposal_verdict', 'proposal_close', 'proposal_reopen'])
+// The entries whose log is a proposal's or a project's, which name the org's entry their author signs under.
+const ORG_BOUND = new Set(['proposal_comment', 'proposal_verdict', 'proposal_close', 'proposal_reopen', 'project_genesis'])
+// The entries that begin a log: no parents, no log of their own yet.
+const GENESIS = new Set(['org_genesis', 'project_genesis'])
+export const MODES = {relay: 1, seed: 2, ddc: 4}
 export const ROLES = {reader: 1, writer: 2, admin: 3}
 export const VERDICTS = {approve: 0, changes: 1, withdraw: 2}
 export const ANCHORS = {file: 0, lines: 1}
@@ -187,6 +191,26 @@ export function actionBody(a) {
     }
     case 'member_remove':
         return need(unhex(a.user, 32), 'user is 64 hex')
+    case 'org_genesis':
+        return concat(need(unhex(a.owner, 32), 'owner is your user id, 64 hex'), named(a.name))
+    case 'project_genesis':
+        return concat(need(unhex(a.org, 32), 'org is 64 hex'), Uint8Array.of(a.public ? 1 : 0), named(a.name))
+    case 'project_add':
+        return concat(need(unhex(a.project, 32), 'project is 64 hex'), Uint8Array.of(a.public ? 1 : 0))
+    case 'node_add': {
+        let modes = 0
+        for (const m of a.modes || []) {
+            if (!MODES[m]) throw new Error('modes are relay, seed and ddc')
+            modes |= MODES[m]
+        }
+        const addresses = a.addresses || []
+        if (addresses.length > 255) throw new Error('a node has at most 255 addresses')
+        return concat(need(unhex(a.node, 32), 'node is 64 hex'), need(unhex(a.dh, 32), 'dh is 64 hex'), Uint8Array.of(modes, addresses.length),
+            ...addresses.map(x => {
+                if (x.kind !== 1 && x.kind !== 2) throw new Error('an address is of kind 1 (IPv4) or 2 (IPv6)')
+                return concat(Uint8Array.of(x.kind), u16(x.port), need(unhex(x.ip, 16), 'an address\'s ip is 32 hex'))
+            }))
+    }
     case 'device_add': {
         const name = utf8(a.name || '')
         if (name.length < 1 || name.length > NAME_MAX) throw new Error(`a device's name is 1 to ${NAME_MAX} bytes`)
@@ -194,6 +218,12 @@ export function actionBody(a) {
     }
     }
     throw new Error(`a browser does not write entries of type ${a.type}`)
+}
+
+function named(name) {
+    const n = utf8(name || '')
+    if (n.length < 1 || n.length > NAME_MAX) throw new Error(`a name is 1 to ${NAME_MAX} bytes`)
+    return n
 }
 
 // Why the unsigned bytes of a draft are not the entry the action asks for by
@@ -208,11 +238,13 @@ export function draftCheck(bytes, action, author, now) {
         return error.message
     }
     if (e.type !== TYPES[action.type]) return 'the entry is of another type than the one asked'
-    const log = unhex(action.log, 32)
+    const genesis = GENESIS.has(action.type)
+    const log = genesis ? ZERO : unhex(action.log, 32)
     if (!log || !equal(e.log, log)) return 'the entry joins another log than the one asked'
     if (!equal(e.author, author)) return "the entry's author is not this passkey"
     if (e.sig !== SIG_WEBAUTHN) return 'the entry is not one a passkey signs'
-    if (e.count === 0) return 'the entry names no parent'
+    if (genesis && e.count !== 0) return 'the first entry of a log names no parent'
+    if (!genesis && e.count === 0) return 'the entry names no parent'
     for (let i = 0; i < e.count; i++) {
         if (equal(e.parents[i], ZERO) || (i > 0 && !less(e.parents[i - 1], e.parents[i]))) return 'the parents are not distinct addresses in ascending order'
     }

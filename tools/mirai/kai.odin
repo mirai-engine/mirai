@@ -545,6 +545,15 @@ kai_publish :: proc(p:^ka.Project,store_root:string) -> bool {
         fmt.eprintfln("mirai kai: %s",k.machine.why)
         return false
     }
+    // A node that hosts the org and keeps no more of it refuses what this publishes; its peers still take it.
+    _,org,linked:=vcs.machine_project_of(&k.machine,p.workspace.repo.id)
+    if !linked || !k.agent {return true}
+    peers:=make([dynamic]vcs.Runner_Peer_Info,context.temp_allocator)
+    orgs:=make([dynamic]vcs.Runner_Org_Info,context.temp_allocator)
+    if vcs.control_peers(&k.control,&peers,&orgs)!=.None {return true}
+    for x in orgs {
+        if x.org==org && x.full {fmt.eprintfln("mirai kai: %s",vcs.hosted_full_text(org))}
+    }
     return true
 }
 
@@ -690,6 +699,7 @@ kai_mesh :: proc(verb,store_root:string,a:^Kai_Args) -> int {
             org:=x.org
             if x.behind>0 {fmt.printfln("org %s is behind: %d entries of its logs peers named are not here yet, and their writes wait; reach another member or node to get them",short(org[:]),x.behind)}
             if x.unfound>0 {fmt.printfln("org %s let go of %d entries peers named that never came",short(org[:]),x.unfound)}
+            if x.full {fmt.println(vcs.hosted_full_text(org))}
         }
     }
     return 0

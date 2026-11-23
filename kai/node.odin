@@ -1,5 +1,6 @@
 package kai
 
+import "core:fmt"
 import "core:slice"
 import "core:strings"
 import "core:time"
@@ -17,6 +18,21 @@ import "mirai:store"
 // node names as live besides what its agents fetch and hold back.
 
 DDC_SWEEP_SECONDS :: 60.0 // between two looks at the quota
+
+// A node keeps an org for others when a user made it on the node's web view
+// (machine_org_host): it keeps and serves no derived data of it, whatever its
+// Node_Add says, and takes no new object of it once what its members' set
+// holds reaches the node's bound, except the org's own log and the users'.
+// Its relay and the org's machines among themselves go on. A machine of the
+// org learns it in the node's Welcome and is told how to fix it.
+HOSTED_QUOTA :: i64(1)<<30 // bytes a node keeps of each org it hosts, unless serve --hosted-quota says otherwise
+
+// What a machine of org is told when its node keeps no more of the org.
+hosted_full_text :: proc(org:Log_Id) -> string {
+    hex:[64]u8
+    text:=store.hex(org,&hex)
+    return fmt.tprintf("the node's storage for org %s is full: it takes nothing more the org publishes, and the org's machines still sync among themselves. Move the org to a node of its own: run mirai kai serve on a machine you keep and pair it with mirai kai pair offer node --org %s",text[:12],text)
+}
 
 DDC_USES_MAX :: 1<<14 // keys a ddc node remembers when they were used; past it the oldest is forgotten
 

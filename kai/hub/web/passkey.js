@@ -153,7 +153,8 @@ export async function link(user, name) {
 }
 
 // Links a machine as a device of this session's user: the machine runs the
-// command shown and offers itself; answers its offer, with the code it shows.
+// command shown and offers itself; answers its offer, with the code it
+// shows, and the approval, which says when the machine set the recovery key.
 export async function linkOffer() {
     const a = await api('/api/approvals', {kind: 'device'})
     const shown = {command: a.command, state: 'waiting'}
@@ -166,7 +167,7 @@ export async function linkOffer() {
             if (r.state !== 'waiting') throw new Error(`the link was ${r.state}: ask again`)
             if (!r.offer) continue
             if (r.offer.code !== deviceLinkCode(unhex(r.offer.device, 32))) throw new Error('the node gives another code than the device\'s key makes: do not link it')
-            return r.offer
+            return {...r.offer, approval: a}
         }
     } finally {
         if (app.approval === shown) app.set({approval: null})
@@ -176,6 +177,41 @@ export async function linkOffer() {
 // Signs the Device_Add of an offer the person compared the code of.
 export async function linkDevice(offer) {
     return write({type: 'device_add', log: app.session.user, device: offer.device, dh: offer.dh, kem: offer.kem, proof: offer.proof, name: offer.name})
+}
+
+// Waits for the machine just linked to set the user's first recovery key,
+// which it shows there once: only its entry reaches the node.
+export async function recoveryWait(offer) {
+    const a = offer.approval
+    for (;;) {
+        await new Promise(done => setTimeout(done, POLL_MS))
+        const r = await api(`/api/approvals/${a.id}/state`, {secret: a.secret})
+        if (r.recovered) break
+        if (r.state === 'denied' || r.state === 'expired') throw new Error(`the link was ${r.state}: on the machine, mirai kai identity recovery sets the recovery key`)
+    }
+    await refreshSession()
+}
+
+// Makes an org this node hosts: the passkey signs its genesis, then the
+// entry that adds this node to it. Answers the org's id.
+export async function makeOrg(name) {
+    const made = await write({type: 'org_genesis', owner: app.session.user, name})
+    await addThisNode(made.log)
+    return made.log
+}
+
+// The Node_Add of this node to an org, as GET /api/node describes the node.
+export async function addThisNode(org) {
+    const n = app.node
+    await write({type: 'node_add', log: org, node: n.device, dh: n.dh, modes: ['relay', 'seed'], addresses: n.addresses})
+    await refreshSession()
+}
+
+// Makes an empty project of an org: its genesis, then the org's Project_Add.
+export async function makeProject(org, name, isPublic) {
+    const made = await write({type: 'project_genesis', org, name, public: isPublic})
+    await write({type: 'project_add', log: org, project: made.log, public: isPublic})
+    return made.log
 }
 
 // Signs in without a passkey: a device of the user approves the login.

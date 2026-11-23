@@ -90,6 +90,12 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     f.hub.now=f.now
     waiting_step(&f.hub)
     cookie:=sign_in(t,f,&p256)
+    // A machine it links sets its recovery key, and an admin it is may write the org's entries.
+    linked:kai.Machine
+    if !testing.expect_value(t,kai.machine_open(&linked,fmt.tprintf("%s/linked",f.folder)),kai.Error.None) {return}
+    defer kai.machine_close(&linked)
+    if !device_link(t,f,cookie,&p256,user,&linked) {return}
+    testing.expect_value(t,kai.machine_role_set(&f.alice,f.org,user,.Admin),kai.Error.None)
     constants:=json_make()
     json_object(&constants)
     json_member_int(&constants,"MAGIC",i64(kai.KAI_MAGIC))
@@ -111,6 +117,11 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     names(&constants,"ROLES",ROLE_TEXT)
     names(&constants,"VERDICTS",VERDICT_TEXT)
     names(&constants,"ANCHORS",ANCHOR_TEXT)
+    json_key(&constants,"MODES")
+    json_object(&constants)
+    modes:=MODE_TEXT
+    for name,mode in modes {json_member_int(&constants,name,i64(transmute(u8)kai.Node_Modes{mode}))}
+    json_end_object(&constants)
     json_end_object(&constants)
     fmt.sbprintf(&b,`"constants":%s,`,json_text(&constants))
 
@@ -136,6 +147,10 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         fmt.tprintf(`{{"type":"role_set","log":"%s","user":"%s","role":"admin"}}`,O,me),
         fmt.tprintf(`{{"type":"member_remove","log":"%s","user":"%s"}}`,O,me),
         fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","kem":"%s","proof":"%s","name":"laptop"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_kem[:]),b64(device_proof[:])),
+        fmt.tprintf(`{{"type":"org_genesis","owner":"%s","name":"studio ü"}}`,me),
+        node_action(f,O,`"relay","seed"`),
+        fmt.tprintf(`{{"type":"project_genesis","org":"%s","name":"game","public":true}}`,O),
+        fmt.tprintf(`{{"type":"project_add","log":"%s","project":"%s","public":false}}`,O,r1),
     }
     // What the user asked otherwise than each draft says, by the draft it is checked against.
     Mismatch :: struct {draft:int,action:string}
@@ -149,6 +164,11 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         {11,fmt.tprintf(`{{"type":"member_remove","log":"%s","user":"%s"}}`,O,P)},
         {1,fmt.tprintf(`{{"type":"proposal_comment","log":"%s","text":"On a file","change":"%s","path":"src/a.txt","anchor":{{"kind":"file"}}}}`,O,change)},
         {12,fmt.tprintf(`{{"type":"device_add","log":"%s","device":"%s","dh":"%s","kem":"%s","proof":"%s","name":"phone"}}`,me,hex(device_key[:]),hex(device_dh[:]),b64(device_kem[:]),b64(device_proof[:]))},
+        {13,fmt.tprintf(`{{"type":"org_genesis","owner":"%s","name":"another"}}`,me)},
+        {13,fmt.tprintf(`{{"type":"org_genesis","owner":"%s","name":"studio ü"}}`,O)},
+        {14,node_action(f,O,`"relay"`)},
+        {15,fmt.tprintf(`{{"type":"project_genesis","org":"%s","name":"game","public":false}}`,O)},
+        {16,fmt.tprintf(`{{"type":"project_add","log":"%s","project":"%s","public":true}}`,O,r1)},
     }
     Draft_Answer :: struct {unsigned:string}
     drafts:[len(actions)][]u8
@@ -194,7 +214,7 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         append(&orphan,..u[:size_of(kai.Entry_Head)])
         orphan[7]=0
         append(&orphan,..u[size_of(kai.Entry_Head)+int(u[7])*size_of(store.Hash):])
-        refuse(&b,&first,fmt.tprintf("draft %d without parents",i),action,orphan[:])
+        if u[7]>0 {refuse(&b,&first,fmt.tprintf("draft %d without parents",i),action,orphan[:])}
         longer:=make([dynamic]u8,context.temp_allocator)
         append(&longer,..u)
         append(&longer,0)
@@ -269,6 +289,19 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     script:=fmt.tprintf("%s/web_test.mjs",#directory)
     state2,out,errs,e:=subprocess.exec({command={"node",script,vectors}},context.temp_allocator)
     testing.expectf(t,e==nil && state2.exit_code==0,"the frontend's modules under node %s: %v\n%s%s",strings.trim_space(string(version)),e,out,errs)
+}
+
+// The node_add of this node to org, with modes, as the page builds it from GET /api/node.
+@(private="file")
+node_action :: proc(f:^Fixture,org,modes:string) -> string {
+    r:=runner_of(&f.hub)
+    key,dh:=r.machine.identity.key,r.machine.dh.public
+    b:=strings.builder_make(context.temp_allocator)
+    for a,i in node_addresses(&f.hub) {
+        ip:=a.ip
+        fmt.sbprintf(&b,`%s{{"kind":%d,"port":%d,"ip":"%s"}}`,i>0?",":"",a.kind,a.port,hex(ip[:]))
+    }
+    return fmt.tprintf(`{{"type":"node_add","log":"%s","node":"%s","dh":"%s","modes":[%s],"addresses":[%s]}}`,org,hex(key[:]),hex(dh[:]),modes,strings.to_string(b))
 }
 
 @(private="file")

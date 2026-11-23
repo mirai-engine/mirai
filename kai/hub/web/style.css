@@ -511,3 +511,7 @@ table.grid { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
 @media (prefers-reduced-motion: reduce) {
     .spinner, button[aria-busy="true"]::after { animation: none; }
 }
+
+.usage { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-top: var(--s2); }
+.usage progress { flex: 1 1 120px; height: 6px; accent-color: var(--accent); }
+.checkbox { display: inline-flex; align-items: center; gap: var(--s1); font-size: var(--t-sm); }

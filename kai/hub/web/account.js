@@ -2,13 +2,14 @@
 // linking a passkey to an existing user, or by a device's approval.
 import {html, mount} from './dom.js'
 import {app} from './api.js'
-import {link as linkPasskey, linkDevice, linkOffer, register, signIn, signInByDevice} from './passkey.js'
-import {action, copyField, icon, navigate} from './ui.js'
+import {link as linkPasskey, linkDevice, linkOffer, makeOrg, recoveryWait, register, signIn, signInByDevice} from './passkey.js'
+import {action, copyField, icon, navigate, plural, size} from './ui.js'
 
 export function SignIn() {
     // Where the person is: the user just made, a passkey just linked, a
-    // device's offer to compare, a device just linked.
-    let made = null, linked = false, offer = null, device = false
+    // device's offer to compare, a device just linked and whether it set the
+    // recovery key yet.
+    let made = null, linked = false, offer = null, device = false, recovering = false
     const root = html`<div class="page narrow"></div>`
 
     const withPasskey = action(async () => {
@@ -36,10 +37,24 @@ export function SignIn() {
         draw()
     })
     const confirm = action(async () => {
-        await linkDevice(offer)
+        const linking = offer
+        await linkDevice(linking)
         offer = null
         device = true
+        recovering = !app.session.recovered
         draw()
+        if (!recovering) return
+        try {
+            await recoveryWait(linking)
+        } finally {
+            recovering = false
+            draw()
+        }
+    })
+    const makeAnOrg = action(async event => {
+        const name = event.target.elements.name.value.trim()
+        if (!name) throw new Error("give the org's name: 1 to 64 bytes")
+        navigate(`/org/${await makeOrg(name)}`)
     })
 
     const draw = mount(root, () => app.session ? signedIn() : made ? madeView() : choices())
@@ -48,21 +63,42 @@ export function SignIn() {
         const s = app.session
         return html`<header class="page-head"><h1>Signed in</h1><p class="quiet">You are ${s.name || s.user}.</p></header>
         ${s.passkey ? html`<section class="panel">
-            <h2>Link a device</h2>
-            <p class="quiet">Makes a machine a device of yours. A user made with a passkey has no recovery key until its first device sets one: run mirai kai identity recovery there.</p>
-            ${device ? html`<div class="notice ok">${icon('check')}<p>The device is yours now.</p></div>`
+            <h2>Link a machine</h2>
+            <p class="quiet">${s.recovered ? 'Makes a machine a device of yours.'
+                : 'Makes a machine a device of yours. Your user has no recovery key yet: the first machine you link sets it and shows it there once, and making an org needs it.'}</p>
+            ${recovering ? html`<div class="notice">${icon('dot')}<p>Linked. The command on the machine sets your recovery key now and shows it once: write it down and keep it offline.</p></div>`
+                : device ? html`<div class="notice ok">${icon('check')}<p>The machine is yours now${s.recovered ? ', and your user has its recovery key' : ''}.</p></div>`
                 : offer ? html`<div>
                     <p>${offer.name} offers itself with the code <code class="code-big">${offer.code}</code>. Link it only if the machine shows the same.</p>
                     <div class="actions"><button type="button" class="primary" @click=${confirm}>Link it</button></div>
                 </div>`
-                : html`<div class="actions"><button type="button" @click=${askOffer}>Link a device</button></div>`}
-        </section>` : null}`
+                : html`<div class="actions"><button type="button" @click=${askOffer}>Link a machine</button></div>`}
+        </section>
+        ${orgPanel(s)}` : null}`
+    }
+
+    // Making an org this node hosts, or what is missing for it; nothing when the node makes none.
+    function orgPanel(s) {
+        const most = s.hosting.max, quota = app.node.hosting.quota
+        if (most === 0) return null
+        return html`<section class="panel">
+            <h2>Make an org</h2>
+            ${!s.recovered ? html`<div class="notice">${icon('lock')}<p>An org needs its owner to have a recovery key: link a machine above, and it sets yours.</p></div>`
+                : s.hosting.made >= most ? html`<div class="notice">${icon('dot')}<p>You made ${plural(s.hosting.made, 'org')} here, as many as this node hosts for one user. For more, run a node of your own: mirai kai serve.</p></div>`
+                : html`<p class="quiet">This node hosts it: it keeps up to ${size(quota)} of the org and no derived data. Your passkey signs the org and the entry that adds this node to it. ${plural(most - s.hosting.made, 'org')} left for you here.</p>
+                <form class="inline-form" @submit=${makeAnOrg}>
+                    <input name="name" class="grow" placeholder="The org's name" aria-label="Org name" maxlength="64" autocomplete="off">
+                    <button type="submit" class="primary">Make the org</button>
+                </form>`}
+        </section>`
     }
 
     function madeView() {
         return html`<header class="page-head"><h1>Your user is made</h1></header>
         <section class="panel">
-            <p>Your user id: give it to an admin of an org this node serves. It waits on this node until they add you; then sign in with your passkey and link a device of yours, which sets your recovery key.</p>
+            <p>${app.node.hosting.orgs > 0
+                ? 'Sign in with your passkey and link a machine of yours, which sets your recovery key; then make an org here. Or give your user id to an admin of an org this node serves.'
+                : 'Your user id: give it to an admin of an org this node serves. Then sign in with your passkey and link a machine of yours, which sets your recovery key.'}</p>
             ${copyField(made.user)}
             <div class="actions"><button type="button" class="primary" @click=${withPasskey}>Sign in</button></div>
         </section>`

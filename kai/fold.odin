@@ -842,6 +842,23 @@ user_recovered_at :: proc(f:^User_Fold,ctx:store.Hash) -> bool {
     return false
 }
 
+// The entry of the user's log that an entry signed by a key the user added at
+// added names as its author_ctx: a head whose causal past holds the add and,
+// when the user has one, a recovery key; added itself when no head does.
+user_context :: proc(f:^User_Fold,added:store.Hash) -> store.Hash {
+    k:=log_find(f.log,added)
+    heads:=make([dynamic]store.Hash,context.temp_allocator)
+    if k<0 || log_heads(f.log,&heads)!=.None {return added}
+    best:=added
+    for h in heads {
+        at:=log_find(f.log,h)
+        if at<0 || !f.valid[at] || !log_within(f.log,k,at) {continue}
+        if user_recovered_at(f,h) {return h}
+        if best==added {best=h}
+    }
+    return best
+}
+
 // The role a user without a recovery key acts with: at most writer, so no
 // one holds the org's administration on a passkey alone.
 @(private)

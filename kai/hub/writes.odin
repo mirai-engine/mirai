@@ -1,14 +1,23 @@
 package hub
 
+import "core:slice"
 import "core:time"
 import "mirai:kai"
+import mnet "mirai:net"
 import "mirai:store"
 
-// Writes: entries of the org and proposal logs. The server drafts the bytes
-// of an entry (the log's heads, the author's context and the time) and keeps
-// what the browser's passkey, or a device, signed over them, once the log's
-// fold takes it as every peer's would. A draft carries no challenge: the
-// browser computes the BLAKE3 of the bytes it checked and signs that.
+// Writes: entries of the user, org, project and proposal logs. The server
+// drafts the bytes of an entry (the log's heads, the author's context and
+// the time) and keeps what the browser's passkey, or a device, signed over
+// them, once the log's fold takes it as every peer's would. A draft carries
+// no challenge: the browser computes the BLAKE3 of the bytes it checked and
+// signs that.
+//
+// A user makes an org here once its user has a recovery key, which the
+// first device it links sets: the passkey signs the org's genesis and the
+// Node_Add of this node, which then hosts the org (kai/node.odin), at most
+// hosted_orgs of them per user. A project is born empty, by its genesis and
+// the org's Project_Add: its files come from a machine.
 
 Draft_Body :: struct {
     type:string,
@@ -27,7 +36,16 @@ Draft_Body :: struct {
     kem:string,
     proof:string,
     name:string,
+    owner:string,    // org_genesis: the session's user, which owns the org
+    org:string,      // project_genesis: the org the project is of
+    project:string,  // project_add: the project's log id
+    public:bool,     // project_genesis and project_add
+    node:string,     // node_add: this node's key, dh, modes and addresses, as GET /api/node gives them
+    modes:[]string,
+    addresses:[]Address_Body,
 }
+
+Address_Body :: struct {kind:u8,port:u16,ip:string} // a Node_Address: kind 1 IPv4 or 2 IPv6, ip 32 hex
 
 TYPE_TEXT :: [kai.Entry_Type]string{
     .None="",
@@ -43,7 +61,12 @@ TYPE_TEXT :: [kai.Entry_Type]string{
 }
 
 // The entries a browser writes through drafts.
-WRITABLE :: bit_set[kai.Entry_Type]{.Proposal_Comment,.Proposal_Verdict,.Proposal_Close,.Proposal_Reopen,.Member_Add,.Member_Remove,.Role_Set,.Device_Add}
+WRITABLE :: bit_set[kai.Entry_Type]{.Proposal_Comment,.Proposal_Verdict,.Proposal_Close,.Proposal_Reopen,.Member_Add,.Member_Remove,.Role_Set,.Device_Add,.Org_Genesis,.Node_Add,.Project_Genesis,.Project_Add}
+
+// The node modes a hosted org's Node_Add names: never derived data.
+HOSTED_MODES :: kai.Node_Modes{.Relay,.Seed}
+
+NO_RECOVERY_TEXT :: "your user has no recovery key yet, and an org needs its owner to have one: link a machine (Link a machine on your account page) and run the command it shows there; the machine sets your recovery key and shows it once"
 
 Draft :: struct {
     type:kai.Entry_Type,
@@ -61,21 +84,25 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
         if name!="" && name==b.type && t in WRITABLE {d.type=t}
     }
     if d.type==.None {
-        fail(c,400,"type is one of proposal_comment, proposal_verdict, proposal_close, proposal_reopen, member_add, member_remove, role_set, device_add")
+        fail(c,400,"type is one of proposal_comment, proposal_verdict, proposal_close, proposal_reopen, member_add, member_remove, role_set, device_add, org_genesis, node_add, project_genesis, project_add")
         return
     }
+    if d.type==.Org_Genesis || d.type==.Project_Genesis {return genesis_draft(c,b,d)}
     log,lok:=hash_parse(b.log)
     if !lok {
-        fail(c,400,"log is the id of the proposal or org the entry joins, 64 hex")
+        fail(c,400,"log is the id of the proposal, org or user the entry joins, 64 hex")
         return
     }
     d.log=log
-    if d.type==.Device_Add && log!=c.session.user {
-        fail(c,403,"a browser links devices to its own user alone")
-        return
+    if d.type==.Device_Add {
+        if log!=c.session.user {
+            fail(c,403,"a browser links devices to its own user alone")
+            return
+        }
+        if u:=user_fold_of(c.h,log);u!=nil {d.l=u.log}
     }
     for o in runner_of(c.h).orgs {
-        if session_role(c,o)==.None {continue}
+        if d.l!=nil || session_role(c,o)==.None {continue}
         if l:=kai.agent_log_open(&o.agent,log);l!=nil && len(l.items)>0 {d.org,d.l=o,l}
     }
     kind,_:=kai.entry_log_kind(d.type)
@@ -157,6 +184,20 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
             }
             d.body=kai.body_make(kai.Member_Body{user=user,role=role})
         }
+    case .Node_Add:
+        body,why:=node_add_body(c,b)
+        if why!="" {
+            fail(c,400,why)
+            return
+        }
+        d.body=body
+    case .Project_Add:
+        project,pok:=hash_parse(b.project)
+        if !pok {
+            fail(c,400,"project is the id of the project's log, 64 hex: its genesis's address")
+            return
+        }
+        d.body=kai.body_make(kai.Project_Add_Body{project=project,public=b8(b.public)})
     }
     if e!=.None || !kai.body_valid(d.type,d.body) {
         fail(c,400,"the fields do not make a valid body: the body of each type is in kai/log.odin")
@@ -187,11 +228,17 @@ route_draft :: proc(c:^Call) {
         return
     }
     heads:=make([dynamic]store.Hash,context.temp_allocator)
-    kai.log_heads(d.l,&heads)
+    if d.l!=nil {kai.log_heads(d.l,&heads)}
     if len(heads)>kai.ENTRY_PARENTS_MAX {resize(&heads,kai.ENTRY_PARENTS_MAX)}
+    kind,_:=kai.entry_log_kind(d.type)
     org_ctx:store.Hash
-    if kai.org_bound(d.l.kind) {org_ctx=kai.org_context(&d.org.agent.org,s.user)}
-    draft:=kai.Draft{type=d.type,log_id=d.log,parents=heads[:],author_ctx=p.added,org_ctx=org_ctx,time=time.now()._nsec,body=d.body}
+    if kai.org_bound(kind) {org_ctx=kai.org_context(&d.org.agent.org,s.user)}
+    author_ctx:=kai.user_context(u,p.added)
+    if d.type==.Org_Genesis && !kai.user_recovered_at(u,author_ctx) {
+        fail(c,403,NO_RECOVERY_TEXT)
+        return
+    }
+    draft:=kai.Draft{type=d.type,log_id=d.log,parents=heads[:],author_ctx=author_ctx,org_ctx=org_ctx,time=time.now()._nsec,body=d.body}
     unsigned,_,e:=kai.entry_webauthn_begin(&draft,s.web_key,context.temp_allocator)
     if e!=.None {
         fail(c,400,"the entry does not make: its body or parents are out of bounds")
@@ -210,7 +257,7 @@ route_draft :: proc(c:^Call) {
     json_end_array(&j)
     key:=s.web_key
     json_member_hex(&j,"author",key[:])
-    json_member_hash(&j,"author_ctx",p.added)
+    json_member_hash(&j,"author_ctx",author_ctx)
     json_member_hash(&j,"org_ctx",org_ctx)
     json_member_int(&j,"time",draft.time)
     json_key(&j,"body")
@@ -255,7 +302,13 @@ route_entry_append :: proc(c:^Call) {
         fail(c,400,"the entry is not by this passkey, or not one a browser writes")
         return
     }
-    kept,status,why:=entry_keep(c,bytes,s.user)
+    kept,log,status,why:=address,entry.log_id,0,""
+    if entry.type==.Org_Genesis || entry.type==.Project_Genesis {
+        status,why=genesis_keep(c,bytes,&entry,s.user)
+        log=address
+    } else {
+        kept,status,why=entry_keep(c,bytes,s.user)
+    }
     if status!=0 {
         fail(c,status,why)
         return
@@ -263,10 +316,9 @@ route_entry_append :: proc(c:^Call) {
     j:=json_make()
     json_object(&j)
     json_member_hash(&j,"address",kept)
-    json_member_hash(&j,"log",entry.log_id)
+    json_member_hash(&j,"log",log)
     json_end_object(&j)
     json_response(c,&j,201)
-    _=address
 }
 
 // Keeps a signed entry of user in its log when the log's fold takes it, and
@@ -275,6 +327,7 @@ entry_keep :: proc(c:^Call,bytes:[]u8,user:kai.Log_Id) -> (address:store.Hash,st
     e,de:=kai.entry_decode(bytes)
     if de!=.None {return {},400,"the entry does not read"}
     kind,_:=kai.entry_log_kind(e.type)
+    if kind==.User && user_synced(c.h,e.log_id)==nil {return waiting_entry_keep(c.h,bytes,e.log_id)}
     var_org:^kai.Runner_Org
     for o in runner_of(c.h).orgs {
         if !o.agent.folded {continue}
@@ -307,7 +360,153 @@ entry_keep :: proc(c:^Call,bytes:[]u8,user:kai.Log_Id) -> (address:store.Hash,st
         valid=kai.proposal_fold(&f,&l,&o.agent.org,context.temp_allocator)==.None && f.valid[at]
     case .Project,.Keyring:
     }
-    if !valid {return {},403,"the log does not take the entry: its author lacks the right, or its parents are not in the log yet"}
+    if !valid {
+        if e.type==.Node_Add || e.type==.Project_Add {return {},403,"the org's log does not take the entry: an admin or the owner adds a node or a project, with a recovery key; the node and the project must not be in the org yet"}
+        return {},403,"the log does not take the entry: its author lacks the right, or its parents are not in the log yet"
+    }
     if why=log_keep(c.h,&l);why!="" {return {},500,why}
     return address,0,""
+}
+
+// How many orgs each user may make here; none on a node with no seed.
+hosting_max :: proc(h:^Hub) -> int {
+    if .Seed not_in runner_of(h).desc.modes {return 0}
+    return max(h.desc.hosted_orgs,0)
+}
+
+// Whether the org's log names this node: it serves the org to its members.
+node_added :: proc(r:^kai.Runner,o:^kai.Runner_Org) -> bool {
+    if !o.agent.folded {return false}
+    for n in o.agent.org.nodes {
+        if n.key==r.machine.identity.key {return true}
+    }
+    return false
+}
+
+// Where members reach this node: the hub's addresses, else the runner's own.
+node_addresses :: proc(h:^Hub) -> []kai.Node_Address {
+    list:=make([dynamic]mnet.Address,context.temp_allocator)
+    if len(h.desc.addresses)>0 {
+        append(&list,..h.desc.addresses)
+    } else {
+        kai.runner_addresses(runner_of(h),&list)
+    }
+    out:=make([dynamic]kai.Node_Address,context.temp_allocator)
+    for a in list {
+        if n,ok:=kai.node_address_of(a);ok && len(out)<kai.NODE_ADDRESSES_MAX {append(&out,n)}
+    }
+    return out[:]
+}
+
+// The body of the Node_Add of this node a hosted org names, from what the
+// browser read of GET /api/node: why it is not this node's, or "".
+@(private)
+node_add_body :: proc(c:^Call,b:^Draft_Body) -> (body:[]u8,why:string) {
+    r:=runner_of(c.h)
+    key:kai.Key
+    dh:kai.Dh_Key
+    if !hex_parse(b.node,key[:]) || !hex_parse(b.dh,dh[:]) {return nil,"node and dh are this node's keys, 64 hex each: take them from GET /api/node"}
+    if key!=r.machine.identity.key || dh!=kai.Dh_Key(r.machine.dh.public) {return nil,"a browser adds this node alone: take node and dh from GET /api/node"}
+    modes:kai.Node_Modes
+    texts:=MODE_TEXT
+    for m in b.modes {
+        found:=false
+        for text,mode in texts {
+            if text==m {
+                modes+={mode}
+                found=true
+            }
+        }
+        if !found {return nil,"modes are relay and seed"}
+    }
+    if modes!=HOSTED_MODES {return nil,"a node hosts an org as relay and seed: it keeps no derived data of it"}
+    own:=node_addresses(c.h)
+    if len(b.addresses)!=len(own) {return nil,"addresses are where members reach this node, as GET /api/node gives them"}
+    list:=make([dynamic]kai.Node_Address,context.temp_allocator)
+    for a,i in b.addresses {
+        n:=kai.Node_Address{kind=a.kind,port=a.port}
+        if !hex_parse(a.ip,n.ip[:]) || n!=own[i] {return nil,"addresses are where members reach this node, as GET /api/node gives them"}
+        append(&list,n)
+    }
+    return kai.body_make(kai.Node_Add_Body{node=key,dh=dh,modes=modes,addresses=u8(len(list))},slice.to_bytes(list[:])),""
+}
+
+// The draft of an org's genesis, which this node will host, or of a project's.
+@(private)
+genesis_draft :: proc(c:^Call,b:^Draft_Body,d:Draft) -> (out:Draft,ok:bool) {
+    d:=d
+    if len(b.name)==0 || len(b.name)>kai.NAME_MAX {
+        fail(c,400,"a name is 1 to 64 bytes of text")
+        return
+    }
+    if d.type==.Org_Genesis {
+        owner,ook:=hash_parse(b.owner)
+        if !ook || owner!=c.session.user {
+            fail(c,400,"owner is your user id, 64 hex: an org is made by its owner")
+            return
+        }
+        if why:=hosting_refused(c.h,c.session.user);why!="" {
+            fail(c,403,why)
+            return
+        }
+        d.body=kai.body_make(kai.Org_Genesis_Body{owner=c.session.user},transmute([]u8)b.name)
+        return d,true
+    }
+    org,gok:=hash_parse(b.org)
+    if !gok {
+        fail(c,400,"org is the id of the org the project is of, 64 hex")
+        return
+    }
+    o:=org_find(c.h,org)
+    if o==nil || session_role(c,o)<.Admin {
+        fail(c,403,"an admin or the owner of an org this node serves makes its projects, with a recovery key")
+        return
+    }
+    d.org=o
+    d.body=kai.body_make(kai.Project_Genesis_Body{org=org,public=b8(b.public)},transmute([]u8)b.name)
+    return d,true
+}
+
+// Why this node makes no new org of user: hosting is closed, or the user
+// made its bound already; "" when it does.
+@(private)
+hosting_refused :: proc(h:^Hub,user:kai.Log_Id) -> string {
+    most:=hosting_max(h)
+    if most==0 {return "this node makes no orgs on its web view: make the org on your machine (mirai kai org new) and pair a node of yours, or ask this node's operator"}
+    if kai.store_hosted_count(store_of(h),user)>=most {return "you made as many orgs on this node as it hosts for one user: run a node of your own (mirai kai serve) for more"}
+    if len(runner_of(h).orgs)>=kai.RUNNER_ORGS {return "this node serves as many orgs as it may: run a node of your own (mirai kai serve)"}
+    return ""
+}
+
+// Keeps the genesis of an org this node then hosts, or of a project of an
+// org it serves: status 0, or the answer's status and why.
+@(private)
+genesis_keep :: proc(c:^Call,bytes:[]u8,e:^kai.Entry,user:kai.Log_Id) -> (status:int,why:string) {
+    h:=c.h
+    l:kai.Log
+    kai.log_init(&l,{},context.temp_allocator)
+    if _,ae:=kai.log_add(&l,bytes,true);ae!=.None {return 400,"the genesis does not hold: its signature is wrong"}
+    name:[64]u8
+    if _,found:=store.ref_get(store_of(h),kai.LOG_NAMESPACE,kai.log_name(l.id,&name));found==.None {return 409,"the log exists already: a signed entry counts once"}
+    if e.type==.Project_Genesis {
+        b,_,_:=kai.body_head(e.body,kai.Project_Genesis_Body)
+        o:=org_find(h,b.org)
+        if o==nil || kai.org_role(&o.agent.org,user)==.None {return 404,"the project's org is not one this node serves with you as a member"}
+        f:kai.Project_Fold
+        if kai.project_fold(&f,&l,&o.agent.org,allocator=context.temp_allocator)!=.None || !f.valid[0] {return 403,"the project's genesis does not hold: an admin or the owner of the org makes its projects, with a recovery key"}
+        if why=log_keep(h,&l);why!="" {return 500,why}
+        return 0,""
+    }
+    if why=hosting_refused(h,user);why!="" {return 403,why}
+    u:=user_fold_of(h,user)
+    if u==nil {return 401,"the session's user is no longer on this node: sign in again"}
+    if !kai.user_recovered_at(u,e.author_ctx) {return 403,NO_RECOVERY_TEXT}
+    f:kai.Org_Fold
+    users:=[]^kai.User_Fold{u}
+    if kai.org_fold(&f,&l,users,context.temp_allocator)!=.None || !f.valid[0] || f.owner!=user {return 403,"the org's genesis does not hold: it names the session's user as its owner, signed by its passkey"}
+    if !waiting_admit(h,user) {return 500,"the store does not take the user: see the node's disk"}
+    if why=log_keep(h,&l);why!="" {return 500,why}
+    m:=runner_of(h).machine
+    if kai.machine_org_host(m,l.id,user)!=.None || store.commit(&m.store)!=.None {return 500,m.why!=""?m.why:"the store does not take the org: see the node's disk"}
+    return 0,""
 }

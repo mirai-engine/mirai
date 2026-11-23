@@ -30,7 +30,7 @@ CONTROL_WAIT :: 0.2
 @(private) CONTROL_HEAD :: 1+CONTROL_TOKEN+4+1
 @(private) ANSWER_HEAD :: 1+4+1
 @(private) PEER_BYTES :: 32+32+3
-@(private) ORG_INFO_BYTES :: 32+2+2+4
+@(private) ORG_INFO_BYTES :: 32+2+2+4+1
 
 Control_Op :: enum u8 {None,Changed,Peers,Pair_Offer,Pair_Request,Pair_Answer,Pair_Join,Pair_Progress,DDC_Ask,Addresses,Object_Ask}
 
@@ -164,7 +164,7 @@ control_do :: proc(r:^Runner,op:u8,body:[]u8,w:^Answer_Writer) -> Error {
         for &x in orgs[:o] {
             behind,unfound:=u16(min(x.behind,0xffff)),u16(min(x.unfound,0xffff))
             answer_put(w,x.org[:])
-            answer_put(w,{u8(behind),u8(behind>>8),u8(unfound),u8(unfound>>8),u8(x.changes),u8(x.changes>>8),u8(x.changes>>16),u8(x.changes>>24)})
+            answer_put(w,{u8(behind),u8(behind>>8),u8(unfound),u8(unfound>>8),u8(x.changes),u8(x.changes>>8),u8(x.changes>>16),u8(x.changes>>24),u8(x.full)})
         }
     case .Pair_Offer:
         if len(body)!=3+32+CARRIED_ADDRESS || body[0]>u8(max(Pair_Mode)) || body[1]>u8(max(Role)) || body[35]>u8(net.Address_Kind.IP6) {return .Invalid_Argument}
@@ -363,6 +363,8 @@ peers_parse :: proc(answer:[]u8,list:^[dynamic]Runner_Peer_Info,orgs:^[dynamic]R
         copy(x.org[:],e[:32])
         x.behind,x.unfound=int(e[32])|int(e[33])<<8,int(e[34])|int(e[35])<<8
         x.changes=u32(e[36])|u32(e[37])<<8|u32(e[38])<<16|u32(e[39])<<24
+        if e[40]>1 {return .Corrupt}
+        x.full=e[40]==1
         append(orgs,x)
     }
     return .None

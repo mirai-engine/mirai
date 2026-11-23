@@ -29,6 +29,7 @@ KEM_FILE :: "kai-kem"           // the seed of this device's ML-KEM-768 decapsul
 MACHINE_NAMESPACE :: "kai-machine"
 MACHINE_USER :: "user"
 MACHINE_ORG_PREFIX :: "org-"
+MACHINE_HOSTED_PREFIX :: "hosted-" // + an org's hex: the node keeps it for others; the ref names the user who made it
 MACHINE_REPO_PREFIX :: "repo-"
 MACHINE_ORGS_MAX :: 64
 LABEL_RECOVERY :: "kai-1/recovery"
@@ -317,12 +318,48 @@ machine_org_join :: proc(m:^Machine,id:Log_Id) -> Error {
     return .None
 }
 
+// Records that this node keeps the org of id for others, made on its web view
+// by creator, and serves it: a hosted org gets no derived data and a bound on
+// what the node stores for it (node.odin).
+machine_org_host :: proc(m:^Machine,id,creator:Log_Id) -> Error {
+    if id=={} || creator=={} {return machine_fail(m,.Invalid_Argument,"a hosted org names the org and the user who made it")}
+    if e:=store.ref_set(&m.store,MACHINE_NAMESPACE,machine_hosted_name(id),creator);e!=.None {return machine_fail(m,store_error(e),"the store refused the org's ref: give this user access to the store")}
+    return machine_org_join(m,id)
+}
+
+// Whether the node of store s keeps the org of id for others, and the user
+// who made it there.
+store_org_hosted :: proc(s:^store.Store,id:Log_Id) -> (creator:Log_Id,hosted:bool) {
+    c,e:=store.ref_get(s,MACHINE_NAMESPACE,machine_hosted_name(id))
+    return c,e==.None
+}
+
+// The orgs the node of store s keeps for others that creator made.
+store_hosted_count :: proc(s:^store.Store,creator:Log_Id) -> (count:int) {
+    refs,e:=store.ref_list(s,MACHINE_NAMESPACE,context.temp_allocator)
+    if e!=.None {return}
+    for r in refs {
+        if strings.has_prefix(r.name,MACHINE_HOSTED_PREFIX) && r.hash==creator {count+=1}
+    }
+    return
+}
+
+@(private)
+machine_hosted_name :: proc(id:Log_Id) -> string {
+    buffer:=new([len(MACHINE_HOSTED_PREFIX)+64]u8,context.temp_allocator)
+    copy(buffer[:],MACHINE_HOSTED_PREFIX)
+    hex:[64]u8
+    copy(buffer[len(MACHINE_HOSTED_PREFIX):],store.hex(id,&hex))
+    return string(buffer[:])
+}
+
 // Stops serving the org of id; its logs stay in the store.
 machine_org_leave :: proc(m:^Machine,id:Log_Id) -> Error {
     k,found:=slice.linear_search(m.orgs[:],id)
     if !found {return .None}
     name:=machine_org_name(id)
     if e:=store.ref_remove(&m.store,MACHINE_NAMESPACE,name);e!=.None && e!=.Missing {return machine_fail(m,store_error(e),"the store refused to remove the org's ref")}
+    if e:=store.ref_remove(&m.store,MACHINE_NAMESPACE,machine_hosted_name(id));e!=.None && e!=.Missing {return machine_fail(m,store_error(e),"the store refused to remove the org's ref")}
     ordered_remove(&m.orgs,k)
     machine_tell(m,MACHINE_NAMESPACE,name)
     return .None

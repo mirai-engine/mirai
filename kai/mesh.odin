@@ -83,6 +83,8 @@ Agent_Desc :: struct {
     org:Log_Id,
     server:net.Transport,       // what other agents connect to
     seed:bool,                  // fetch the whole closure of every bookmark of the org's projects
+    hosted:bool,                // a node keeps the org for others: no derived data, and at most quota bytes (node.odin)
+    quota:i64,                  // hosted: bytes of the members' set past which it takes no new object; 0: no bound
     host_seed:u64,              // of the hosts' salts; 0 takes it from the system
     connect_timeout:f64,        // seconds a connection the agent makes may take; 0: net's default
     allocator:runtime.Allocator, // nil: context.allocator
@@ -159,6 +161,7 @@ Members :: struct {
     chunks:map[store.Hash]struct{},
     frontier:map[store.Hash]Walk_Item, // what is not here yet, or not from the org yet
     shape:store.Hash, // of the projects and scopes it was built for
+    stored:i64,       // hosted: bytes of the objects it holds
     provenance:Provenance,
 }
 
@@ -591,6 +594,10 @@ agent_refold :: proc(a:^Agent) {
     agent_share(a)
 }
 
+// Whether a node keeps no more of the org it hosts: its members' set reached
+// the bound (node.odin).
+agent_full :: proc(a:^Agent) -> bool {return a.desc.hosted && a.desc.quota>0 && a.members.stored>=a.desc.quota}
+
 // Whether this end is behind: an entry a peer named is not here yet, so it
 // takes no write (see the head of this file).
 agent_is_behind :: proc(a:^Agent) -> bool {return len(a.behind)>0}
@@ -935,7 +942,7 @@ agent_expose :: proc(user:rawptr,peer:exchange.Peer_Id,namespace:string) -> bool
         return admitted || granted
     case strings.has_prefix(namespace,DDC_PREFIX):
         buffer:[len(DDC_PREFIX)+64]u8
-        return (admitted || (class==.Grant && .DDC in grant.rights)) && namespace==ddc_namespace(a.desc.org,&buffer)
+        return (admitted || (class==.Grant && .DDC in grant.rights)) && !a.desc.hosted && namespace==ddc_namespace(a.desc.org,&buffer)
     case strings.has_prefix(namespace,OVERLAY_PREFIX):
         project,scope,ok:=overlay_namespace_parse(namespace)
         if !ok || !admitted || !a.folded {return false}
@@ -996,11 +1003,18 @@ fetch_kind :: proc(a:^Agent,namespace:string) -> Fetch_Kind {
     return .None
 }
 
-// Fetches what a peer's ref names when it differs from the one held.
+// Fetches what a peer's ref names when it differs from the one held. A
+// hosted org takes no derived data, and past its bound only the org's log and
+// the users' logs.
 @(private)
 agent_want :: proc(a:^Agent,namespace,name:string,address:store.Hash) {
     kind:=fetch_kind(a,namespace)
     if kind==.None || address=={} {return}
+    if a.desc.hosted && kind==.DDC {return}
+    if agent_full(a) && kind!=.User {
+        id,ok:=store.parse_hex(name)
+        if kind!=.Log || !ok || id!=a.desc.org {return}
+    }
     if held,e:=store.ref_get(a.desc.store,namespace,name);e==.None && held==address {return}
     for &f in a.fetches {
         if f.address==address && string(f.name[:f.name_len])==name {return}
@@ -1428,6 +1442,7 @@ members_refold :: proc(a:^Agent) {
     roots:=make([dynamic]Walk_Item,context.temp_allocator)
     if shape:=members_shape(a);shape!=m.shape || len(m.chunks)==0 {
         m.shape=shape
+        m.stored=0
         clear(&m.chunks)
         clear(&m.frontier)
         if a.folded {provenance_rebuild(&m.provenance,a.desc.store,&a.org)}
@@ -1439,7 +1454,7 @@ members_refold :: proc(a:^Agent) {
                 members_namespace(a,.Refs,refs_namespace(p.id,&ns),&roots)
             }
             ns:[len(DDC_PREFIX)+64]u8
-            members_namespace(a,.DDC,ddc_namespace(a.desc.org,&ns),&roots)
+            if !a.desc.hosted {members_namespace(a,.DDC,ddc_namespace(a.desc.org,&ns),&roots)}
             for sc in a.org.scopes {
                 ns:[len(OVERLAY_PREFIX)+64+1+32]u8
                 members_namespace(a,.Overlay,overlay_namespace(sc.project,sc.scope,&ns),&roots)
@@ -1593,6 +1608,7 @@ members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
             continue
         }
         delete_key(&m.frontier,item.address)
+        if a.desc.hosted {m.stored+=object_bytes(a.desc.store,item.address)}
         walk_children(&w,item,&stack)
         // A change's overlays: a snapshot writes their refs without telling the
         // agent, which tells the peers that read them here.
@@ -1665,6 +1681,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
 // A seed fetches what the closure of every bookmark lacks.
 @(private)
 agent_seed :: proc(a:^Agent) {
+    if agent_full(a) {return}
     targets:=make([dynamic]Revision,context.temp_allocator)
     roots:=make([dynamic]store.Hash,context.temp_allocator)
     agent_targets(a,{},false,&targets,&roots)

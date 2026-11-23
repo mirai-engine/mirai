@@ -121,17 +121,20 @@ route_session :: proc(c:^Call) {
     json_object(&j)
     json_member_hash(&j,"user",s.user)
     name:=""
-    for o in runner_of(c.h).orgs {
-        for u in o.agent.user_list {
-            if u.log.id==s.user {name=user_name(u)}
-        }
-    }
+    recovered:=false
+    if u:=user_fold_of(c.h,s.user);u!=nil {name,recovered=user_name(u),u.recovery!={}}
     json_member_string(&j,"name",name)
     json_key(&j,"passkey")
     if s.web_key=={} {json_null(&j)} else {
         key:=s.web_key
         json_hex(&j,key[:])
     }
+    json_member_bool(&j,"recovered",recovered)
+    json_key(&j,"hosting")
+    json_object(&j)
+    json_member_int(&j,"made",i64(kai.store_hosted_count(store_of(c.h),s.user)))
+    json_member_int(&j,"max",i64(hosting_max(c.h)))
+    json_end_object(&j)
     json_key(&j,"orgs")
     json_array(&j)
     for o in runner_of(c.h).orgs {
@@ -141,6 +144,11 @@ route_session :: proc(c:^Call) {
         json_member_hash(&j,"org",o.id)
         json_member_string(&j,"name",org_name(o))
         json_member_string(&j,"role",roles[role])
+        json_member_bool(&j,"hosted",o.agent.desc.hosted)
+        json_member_int(&j,"bytes",o.agent.members.stored)
+        json_member_int(&j,"quota",o.agent.desc.quota)
+        json_member_bool(&j,"full",kai.agent_full(&o.agent))
+        json_member_bool(&j,"served",node_added(runner_of(c.h),o))
         json_end_object(&j)
     }
     json_end_array(&j)
@@ -252,11 +260,25 @@ route_sign_in :: proc(c:^Call) {
             }
         }
     }
+    // A user no org of the node admitted yet signs in too: it links its first device, or makes an org here.
     if !found {
-        if failure==.None && waiting_passkey(c.h,credential) {
-            fail(c,403,"your user waits for an admin of an org this node serves to add it: give them your user id")
-            return
+        waiting_load(c.h)
+        waiting: for w in c.h.waiting {
+            if !w.used || user_synced(c.h,w.user)!=nil {continue}
+            u:=waiting_fold(c.h,w.user)
+            if u==nil {continue}
+            candidate,has:=passkey_of(c.h,u,credential)
+            if !has {continue}
+            key,parsed:=kai.cose_key_parse(candidate.cose)
+            if !parsed {continue}
+            failure=kai.webauthn_verify(&key,c.h.desc.rp_id,challenge,&a,false)
+            if failure==.None {
+                p,found=candidate,true
+                break waiting
+            }
         }
+    }
+    if !found {
         fail(c,401,failure==.None?"no user of this node has that passkey: register it first":kai.webauthn_failure_text(failure))
         return
     }
@@ -268,6 +290,98 @@ route_sign_in :: proc(c:^Call) {
     json_end_object(&j)
     json_response(c,&j)
     c.response.headers=cookie
+}
+
+// A device of a user signs in, as it signs an approved login: what `mirai kai
+// web join` does to read the orgs of its user the node hosts.
+@(private)
+route_sign_in_device :: proc(c:^Call) {
+    Body :: struct {device,challenge,signature:string}
+    b:Body
+    if !body_parse(c,&b) {return}
+    device:kai.Key
+    challenge,cok:=base64_parse(b.challenge,32)
+    signature,sok:=base64_parse(b.signature,64)
+    if !hex_parse(b.device,device[:]) || !cok || len(challenge)!=32 || !sok || len(signature)!=64 {
+        fail(c,400,"device is the device key (64 hex), challenge the one given and signature base64url of its Ed25519 signature over 'kai-1/web-login' || rp_id || challenge")
+        return
+    }
+    if !challenge_take(c.h,challenge) {
+        fail(c,401,"the challenge is not one this server gave, it expired or it was used: ask for a new one")
+        return
+    }
+    given:[32]u8
+    copy(given[:],challenge)
+    public:ed25519.Public_Key
+    if !ed25519.public_key_set_bytes(&public,device[:]) || !ed25519.verify(&public,login_message(c.h.desc.rp_id,given),signature) {
+        fail(c,401,"the signature is not the device's over this challenge")
+        return
+    }
+    user:^kai.User_Fold
+    for o in runner_of(c.h).orgs {
+        for u in o.agent.user_list {
+            if kai.user_device_active(u,device) {user=u}
+        }
+    }
+    if user==nil {
+        fail(c,403,"the device is no active device of a user of an org this node serves: link it from the browser first (mirai kai web approve)")
+        return
+    }
+    _,cookie:=session_new(c.h,user.log.id,{},nil,device)
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"user",user.log.id)
+    json_member_string(&j,"name",user_name(user))
+    json_end_object(&j)
+    json_response(c,&j)
+    c.response.headers=cookie
+}
+
+USER_ENTRIES_MAX :: 256 // entries of a user's log one request gives
+
+// Entries of a user's log a device of it signed, as its own log holds them:
+// the node keeps those its fold takes. What `mirai kai web approve` sends
+// once it set the first recovery key of the user it linked.
+@(private)
+route_user_entries :: proc(c:^Call) {
+    user,uok:=hash_parse(path_param(c,"user"))
+    if !uok {
+        fail(c,400,"a user is named by its id, 64 hex")
+        return
+    }
+    Body :: struct {entries:[]string}
+    b:Body
+    if !body_parse(c,&b) {return}
+    if len(b.entries)==0 || len(b.entries)>USER_ENTRIES_MAX {
+        fail(c,400,"entries is 1 to 256 base64url entries of the user's log")
+        return
+    }
+    if user_fold_of(c.h,user)==nil {
+        fail(c,404,"no such user on this node: make it here, or have an org this node serves add it")
+        return
+    }
+    kept:=0
+    for text in b.entries {
+        bytes,ok:=base64_parse(text,kai.ENTRY_BODY_MAX+4096)
+        e,de:=kai.entry_decode(bytes)
+        if !ok || de!=.None || e.type==.User_Genesis || e.type==.Passkey_Genesis {continue}
+        if e.log_id!=user {
+            fail(c,400,"an entry is of another log than the user's")
+            return
+        }
+        _,status,why:=entry_keep(c,bytes,user)
+        if status==409 {continue}
+        if status!=0 {
+            fail(c,status,why)
+            return
+        }
+        kept+=1
+    }
+    j:=json_make()
+    json_object(&j)
+    json_member_int(&j,"kept",i64(kept))
+    json_end_object(&j)
+    json_response(c,&j)
 }
 
 @(private)
@@ -346,6 +460,50 @@ waiting_step :: proc(h:^Hub) {
         kai.runner_changed(runner_of(h),kai.USER_NAMESPACE,kai.log_name(w.user,&name))
         w={}
     }
+}
+
+// The fold of the waiting user of id, in the temp allocator; nil when none waits.
+@(private)
+waiting_fold :: proc(h:^Hub,id:kai.Log_Id) -> ^kai.User_Fold {
+    l:=new(kai.Log,context.temp_allocator)
+    if !waiting_open(h,id,l) {return nil}
+    f:=new(kai.User_Fold,context.temp_allocator)
+    if kai.user_fold(f,l,context.temp_allocator)!=.None {return nil}
+    return f
+}
+
+// Keeps an entry of a waiting user's log when its fold takes it.
+@(private)
+waiting_entry_keep :: proc(h:^Hub,bytes:[]u8,user:kai.Log_Id) -> (address:store.Hash,status:int,why:string) {
+    l:kai.Log
+    if !waiting_open(h,user,&l) {return {},404,"the entry's log is not one of a user of this node"}
+    added,ae:=kai.log_add(&l,bytes,true)
+    if ae!=.None {return {},400,"the entry does not hold: its signature or its log is wrong"}
+    if !added {return {},409,"the entry is in the log already: a signed entry counts once"}
+    address=store.address_of_bytes(bytes)
+    f:kai.User_Fold
+    if kai.user_fold(&f,&l,context.temp_allocator)!=.None || !f.valid[kai.log_find(&l,address)] {return {},403,"the user's log does not take the entry: its author lacks the right, or its parents are not in the log yet"}
+    s:=store_of(h)
+    if _,se:=kai.log_save_in(s,&l,WAITING_NAMESPACE);se!=.None || store.commit(s)!=.None {return {},500,"the store does not take the entry: see the node's disk"}
+    return address,0,""
+}
+
+// Moves a waiting user among the user logs the node syncs, at once: an org
+// it made here counts it.
+@(private)
+waiting_admit :: proc(h:^Hub,user:kai.Log_Id) -> bool {
+    l:kai.Log
+    if !waiting_open(h,user,&l) {return true}
+    s:=store_of(h)
+    name:[64]u8
+    if _,e:=kai.log_save(s,&l);e!=.None {return false}
+    store.ref_remove(s,WAITING_NAMESPACE,kai.log_name(user,&name))
+    if store.commit(s)!=.None {return false}
+    for &w in h.waiting {
+        if w.used && w.user==user {w={}}
+    }
+    kai.runner_changed(runner_of(h),kai.USER_NAMESPACE,kai.log_name(user,&name))
+    return true
 }
 
 // Whether a waiting user was born of the passkey with that credential id, or
@@ -582,7 +740,15 @@ route_passkey_link :: proc(c:^Call) {
     approval_answer(c,a)
 }
 
+// The fold of user as the node holds it: among the user logs its agents
+// sync, or waiting here, folded in the temp allocator.
 user_fold_of :: proc(h:^Hub,user:kai.Log_Id) -> ^kai.User_Fold {
+    if u:=user_synced(h,user);u!=nil {return u}
+    return waiting_fold(h,user)
+}
+
+// The fold of user among the user logs the node's agents sync.
+user_synced :: proc(h:^Hub,user:kai.Log_Id) -> ^kai.User_Fold {
     for o in runner_of(h).orgs {
         for u in o.agent.user_list {
             if u.log.id==user {return u}
@@ -826,7 +992,12 @@ route_approval_state :: proc(c:^Call) {
     json_object(&j)
     json_member_string(&j,"state",states[a.state])
     if a.state==.Approved && a.address!={} {json_member_hash(&j,"address",a.address)}
-    if a.kind==.Device && a.offered {offer_write(&j,a)}
+    if a.kind==.Device && a.offered {
+        offer_write(&j,a)
+        recovered:=false
+        if u:=user_fold_of(c.h,a.user);u!=nil {recovered=u.recovery!={}}
+        json_member_bool(&j,"recovered",recovered)
+    }
     json_end_object(&j)
     json_response(c,&j)
     if a.kind==.Login && a.state==.Approved && !a.taken {

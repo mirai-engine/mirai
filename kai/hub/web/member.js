@@ -1,10 +1,10 @@
 // The views for members: stacks, proposals and their review, the org and
 // the node. Every write is an entry signed by the user (passkey.js).
 import {html, mount} from './dom.js'
-import {api, app, roleIn} from './api.js'
-import {write} from './passkey.js'
+import {api, app, refreshSession, roleIn} from './api.js'
+import {addThisNode, makeProject, write} from './passkey.js'
 import {diffHead, fileRow, loadProject, person, projectHead, projectPage} from './views.js'
-import {action, ago, badge, diffView, empty, fileDiff, hash, href, icon, loaded, plural, short, size} from './ui.js'
+import {action, ago, badge, copyField, diffView, empty, fileDiff, hash, href, icon, loaded, navigate, plural, short, size, usage} from './ui.js'
 
 export function Stacks({params}) {
     return projectPage(params.project, 'stacks', p => api(`/api/projects/${p.id}/stacks`), (p, d) => d.stacks.length === 0
@@ -267,14 +267,25 @@ const ROLES = ['reader', 'writer', 'admin']
 export function Org({params}) {
     const id = params.org
     const page = loaded(async () => {
-        const [members, ddc] = await Promise.all([api(`/api/orgs/${id}/members`), api(`/api/orgs/${id}/ddc`)])
+        const [members, ddc] = await Promise.all([api(`/api/orgs/${id}/members`), api(`/api/orgs/${id}/ddc`), refreshSession()])
         return {members, ddc}
     }, ({members: m, ddc}) => {
         const role = roleIn(id)
         const admin = role === 'admin' || role === 'owner'
+        const mine = app.session?.orgs.find(o => o.org === id)
         return html`<div class="page">
             <header class="page-head"><h1>${m.name || short(m.org)}</h1>
                 <p class="meta"><span>Org ${hash(m.org)}</span><span>Your role: ${role || 'none'}</span></p></header>
+            ${mine?.hosted ? hosting(mine, admin) : null}
+            ${admin && app.session?.passkey ? html`<section>
+                <h2>New project</h2>
+                <p class="quiet">A project is born empty: its files come from a machine, with mirai kai init and mirai kai new there.</p>
+                <form class="inline-form" @submit=${newProject}>
+                    <input name="name" class="grow" placeholder="The project's name" aria-label="Project name" maxlength="64" autocomplete="off">
+                    <label class="checkbox"><input type="checkbox" name="public"> Public</label>
+                    <button type="submit" class="primary">Make the project</button>
+                </form>
+            </section>` : null}
             <section>
                 <h2>Members <span class="count">${m.members.length}</span></h2>
                 <div class="box scroll"><table class="grid">
@@ -292,14 +303,41 @@ export function Org({params}) {
                 ${m.nodes.length === 0 ? empty('No node is listed') : html`<ul class="box rows">${m.nodes.map(n =>
                     html`<li class="item"><div class="item-main">${hash(n.key)}</div><div class="meta">${n.modes.join(', ')}</div></li>`)}</ul>`}
             </section>
-            <section>
+            ${mine?.hosted ? null : html`<section>
                 <h2>Derived data</h2>
                 ${stats([['Keys', ddc.keys], ['Records', ddc.records], ['Outputs here', ddc.whole], ['Outputs missing', ddc.missing],
                     ['Nondeterministic keys', ddc.nondeterministic], ['Lookups found', ddc.lookups_found], ['Lookups missing', ddc.lookups_missing],
                     ['Bytes', size(ddc.bytes)], ['Quota', ddc.quota ? size(ddc.quota) : 'none']])}
-            </section>
+            </section>`}
         </div>`
     })
+    const newProject = action(async event => {
+        const name = event.target.elements.name.value.trim()
+        if (!name) throw new Error("give the project's name: 1 to 64 bytes")
+        navigate(`/p/${await makeProject(id, name, event.target.elements.public.checked)}`)
+    })
+    const serve = action(async () => {
+        await addThisNode(id)
+        await page.reload()
+    })
+
+    // What this node keeps of an org it hosts, and how a machine works on it.
+    function hosting(o, admin) {
+        return html`<section>
+            <h2>On this node</h2>
+            <div class="panel">
+                <p class="quiet">This node hosts the org: it keeps no derived data of it, and up to ${size(o.quota)} of the rest.</p>
+                ${usage(o)}
+                ${o.full ? html`<div class="notice warn">${icon('alert')}<p>The node's storage for the org is full: it takes nothing more the org publishes, and your machines still sync among themselves. Move the org to a node of its own: run mirai kai serve on a machine you keep and pair it with mirai kai pair offer node --org ${id}.</p></div>` : null}
+                ${o.served ? null : html`<div class="notice warn">${icon('alert')}<div><strong>The org's log does not name this node yet</strong>
+                    <p>Its machines find the node by that entry.</p>
+                    ${admin && app.session?.passkey ? html`<div class="actions"><button type="button" class="primary" @click=${serve}>Add this node</button></div>` : null}</div></div>`}
+                <h3>Work on it from a machine</h3>
+                <p class="quiet">On a machine you linked, this takes the org and reaches it through this node; then mirai kai init &lt;project&gt; --project &lt;folder&gt; makes a folder a workspace of one of its projects.</p>
+                ${copyField(`mirai kai web join ${app.node.origin}`)}
+            </div>
+        </section>`
+    }
     const act = async entry => {
         await write({log: id, ...entry})
         await page.reload()

@@ -2,7 +2,7 @@
 // changes, diffs and the evolution of a change.
 import {html} from './dom.js'
 import {api, apiRaw, app, roleIn} from './api.js'
-import {ago, badge, diffView, empty, fileDiff, hash, href, icon, loaded, navigate, plural, short, size, when} from './ui.js'
+import {ago, badge, diffView, empty, fileDiff, hash, href, icon, loaded, navigate, plural, short, size, usage, when} from './ui.js'
 import {detailDecode, summaryDecode} from './preview.js'
 
 // A project's name and tabs above one of its views.
@@ -65,7 +65,8 @@ export function Home() {
         ${orgs.length ? html`<section>
             <h2>Your orgs</h2>
             <ul class="cards">${orgs.map(o => html`<li><a class="card" href=${`/org/${o.org}`}>
-                <span class="card-title">${o.name || short(o.org)}</span><span class="quiet">${o.role}</span>
+                <span class="card-title">${o.name || short(o.org)}</span><span class="quiet">${o.role}${o.hosted ? ' · hosted here' : ''}</span>
+                ${o.hosted ? usage(o) : null}
             </a></li>`)}</ul>
         </section>` : null}
     </div>`
