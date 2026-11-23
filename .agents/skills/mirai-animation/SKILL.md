@@ -93,7 +93,10 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [clip adaptation](references/animation-grounding.md#clip-adaptation),
   [gait without clips](references/animation-grounding.md#gait-without-clips) and
   [execution and state](references/animation-grounding.md#execution-and-state).
-- `Animation_Budget` and parallel execution:
+- Level of detail by distance to the simulation sources (cadence, cosmetic modifiers,
+  gameplay-read rigs, dedicated server):
+  [level of detail](references/animation-budget.md#level-of-detail-by-distance);
+  `Animation_Budget` and parallel execution:
   [budget](references/animation-budget.md#animation_budget) and
   [parallel execution](references/animation-budget.md#parallel-execution).
 - A prop, a field of a component or an entity anywhere moved by a clip, and the one queue that
@@ -249,6 +252,9 @@ Adapt the source's data to these features instead of rebuilding its runtime:
   ([content](../mirai-core/references/host.md#content)). An entity whose sources change to one
   still compressing (a set only code swaps into `library`) plays on what it played, with its
   actions, until it loads.
+- How much of a rig runs in a fixed tick goes by its distance to the simulation sources, never
+  by a view; clocks, events and root motion run in every tick, and what gameplay reads is posed
+  in full ([level of detail](references/animation-budget.md#level-of-detail-by-distance)).
 - Skinning runs on the GPU; morphs are deformed in the same pass.
 - Another rig drives a pose through one link, `Pose_Source`: at stage Finished a rig of the same
   skeleton shares the pose and a part of another follows it by bone name, keeping its own

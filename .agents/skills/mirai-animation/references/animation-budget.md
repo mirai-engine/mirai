@@ -1,4 +1,31 @@
-# Presentation rate and numeric jobs
+# Level of detail, presentation rate and numeric jobs
+
+## Level of detail by distance
+
+`lod_decide` (`lod.odin`) decides in `animation_sample`, before the clocks, how much of each rig
+runs in the fixed tick (`Rig_Lod` in `Playing.lod`), from its distance to
+`scene.Simulation_Sources` and `Animation_Budget_Config`, never from a view: a world, its rollback
+copies, a server and its clients decide alike.
+
+- Past twice `cadence_near` a rig runs on the ticks of `ai.cadence_period` (up to
+  `cadence_slowest`) at the phase of its entity index, as the minds of `behavior` think:
+  `skip` leaves its pose (and the pose job) out, `wait` its searches of matching that nothing
+  forces. Past `cosmetic_distance`, `plain` leaves out grounding, springs, twists and correctives.
+- Clocks, markers, events, actions, root motion and warping run in every tick; a skipped rig keeps
+  `Local`, `Sampled` and `World` of its last pose, with `Local[0]` carried with its entity and
+  `Previous` equal to `Local`, so the palette does not interpolate backwards.
+- A chain (`Pose_Source`, an attached rig) takes the decision of its first rig; it is posed whole
+  when one of its rigs changes what it plays (a matching jump, an action that starts or ends) or
+  has no pose yet, so the blend of that change starts in its tick (`lod_settle`).
+- After skipped ticks the stack inertia goes on from the pose shown last, over the seconds since
+  (`Playing.skipped`, `waited`); springs and grounding start over from the pose after skipped ticks
+  or when they come back on (`lod_restart`).
+- Gameplay-read rigs run everything, with their chain: an enabled `Bone_Attachment`, a pose or a
+  final pose asked of them, a field their curves write (`Field_Playback`) or `animation_read`
+  (`Animation_Requests.reads`, which `ragdoll` sends for each of its rigs).
+- Where the game runs neither the phase Ui nor Render (`host.App.played`, a dedicated server),
+  only those are posed; out of Play, without sources or with both distances 0, every rig runs
+  in full.
 
 ## Animation_Budget
 
@@ -29,9 +56,8 @@ application's scheduler.
   the buffers that `budget_prepare` sizes.
 - The automatic period is presentation only, like the rest: the world after the same ticks does not
   depend on it, so replays and seeks match. It does not test visibility.
-- It only reduces the presentation rate: clocks, curves, events, actions, root motion, grounding,
-  constraints and sockets are evaluated on every fixed tick. The full palette is computed; bones are
-  not removed or LODs chosen.
+- It only reduces the presentation rate of what the fixed tick posed (the level of detail above
+  decides that). The full palette is computed; bones are not removed or LODs chosen.
 
 ## Parallel execution
 
@@ -68,6 +94,12 @@ last takes pose requests, root motion and warping.
   `parallel`.
 
 ## Verification
+
+- `lod_test.odin`: posing, springs, clocks, markers and root motion by distance; gameplay-read
+  rigs in full; followers on the ticks of their leader; `Previous` equal to `Local` between poses;
+  springs that start over back near; identical poses after a rollback; a dedicated server posing
+  only what gameplay reads. `matching_test.odin`: searches on the ticks of the cadence, and blends
+  from the pose shown after skipped ticks.
 
 - `rig_poses_do_not_depend_on_how_their_jobs_are_split` (`skeleton_test.odin`): the same poses on
   the owner thread and in jobs of two grains, without allocations in a stable tick;

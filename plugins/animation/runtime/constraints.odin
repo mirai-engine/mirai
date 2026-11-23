@@ -173,7 +173,11 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
         }
     }
     if rig==nil {final_pose_apply(state,playback,parent_world,final_poses,problems);return}
-    if len(pose.grounding.legs)>0 {
+    // What its springs and feet kept is of a pose it did not show since: after ticks it was not
+    // posed, or once they come back on, they start over from this pose rather than jump to it.
+    if !state.lod.plain && (state.bare || state.skipped>0) {lod_restart(rig)}
+    state.bare=state.lod.plain
+    if len(pose.grounding.legs)>0 && !state.lod.plain {
         config:=modifier_grounding(core.ref(runtime),rig,pose.grounding)
         grounding_apply(state,&rig.grounding[0],&config,ground_inputs,dt)
     }

@@ -13,6 +13,7 @@ import "core:time"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
+import "mirai:std/ai"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -1604,5 +1605,44 @@ a_keep_span_holds_the_clip_against_the_searches_nothing_forces :: proc(t:^testin
         }
         testing.expectf(t,inside>=20 && (searched==0)==ruled,"ruled %v: %d ticks inside, %d searches there",ruled,inside,searched)
         testing.expect(t,core.problem_find(&f.problems,f.rig,"animation.match_span")==nil)
+    }
+}
+
+// A rig far from the sources (Rig_Lod.wait) searches its matching on the ticks of its cadence,
+// and still at once when it must (its first search): searches it waits for are not lost.
+@(test)
+a_far_rig_searches_its_matching_on_the_ticks_of_its_cadence :: proc(t:^testing.T) {
+    dt:=f32(1.0/60)
+    counts:[2]u32
+    for period,k in ([2]u64{1,4}) {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {return}
+        for tick in 0..<u64(48) {
+            f.state.lod.wait=!ai.cadence_due(tick,0,period)
+            before:=f.state.program.match.searches
+            desired:=mm.Vec3{0,0,-1} if tick%16<8 else {1,0,0}
+            if !testing.expect(t,match_step(&f,dt,GROUND,desired=desired,velocity=desired*f32(tick%16)*.1)) {return}
+            searched:=f.state.program.match.searches>before
+            testing.expectf(t,!searched || !f.state.lod.wait || tick==0,"period %d, tick %d: a search waits for its cadence",period,tick)
+        }
+        counts[k]=f.state.program.match.searches
+    }
+    testing.expectf(t,counts[1]>0 && counts[1]<counts[0],"searches every tick and every 4: %v",counts)
+}
+
+// A rig posed again after ticks it skipped (Rig_Lod.skip) blends what changed from the pose it
+// showed last, as one posed in every tick does: an action it starts does not cut in.
+@(test)
+a_rig_posed_after_skipped_ticks_blends_from_the_pose_it_showed :: proc(t:^testing.T) {
+    dt:=f32(1.0/60)
+    for skipped in ([2]u32{0,3}) {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {return}
+        for _ in 0..<10 {testing.expect(t,match_step(&f,dt,GROUND))}
+        // The ticks it skipped: its clocks ran, its pose did not.
+        f.playback.frame+=u64(skipped);f.state.skipped=skipped
+        play(&f.requests,f.rig,"Vault")
+        if !testing.expect(t,match_step(&f,dt,GROUND) && f.state.stack!=nil) {return}
+        testing.expectf(t,f.state.stack.inertia.state.active,"after %d skipped ticks the action blends in from the pose shown",skipped)
     }
 }

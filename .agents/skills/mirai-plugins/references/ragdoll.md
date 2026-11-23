@@ -76,7 +76,9 @@ is detected in memory for the call and the `.skeleton` does not change.
 
 - `ragdoll_prepare` (`simulate` stage, after `animation_sample` and before `physics_prepare`) is
   the sole writer of the auxiliary rows: it creates them, takes the animated sample and queues
-  movements or drives.
+  movements or drives. It asks `animation_read` for each rig that is not `Disabled`, so the
+  animation poses it in full from the next tick at any distance ([level of
+  detail](../../mirai-animation/references/animation-budget.md#level-of-detail-by-distance)).
 - After physics, `ragdoll_pose` (`react` stage, before `animation_advance`) queues the world
   physical poses, which `animation_advance` applies before sockets and skinning in the same tick.
   The plugin never writes the `animation` buffers or the body transforms.

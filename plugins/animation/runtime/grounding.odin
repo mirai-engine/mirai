@@ -251,12 +251,19 @@ grounding_up :: proc(inputs:Grounding_Inputs,rig:core.Entity,basis:mm.Transform,
 // The most parents above a rig that grounding_up looks through for a character.
 GROUNDING_DEPTH :: 16
 
+// Forgets where the feet were planted: the grounding starts over from the pose.
+@(private)
+grounding_reset :: proc "contextless" (record:^Grounding_Record) {
+    record.blocked=0;record.initialized=false;record.legs={};record.placements={};record.alignment={}
+    record.previous={};record.targets={};record.rotations={}
+}
+
 grounding_apply :: proc(state:^Playing,binding:^Grounding_Binding,definition:^Foot_Grounding,inputs:Grounding_Inputs,dt:f32) -> bool {
     if state==nil || binding==nil || !finite(dt) || dt<0 {return false}
     problems:=inputs.problems
     record:=&binding.record
     config:=definition^
-    if !config.enabled {record.blocked=0;record.initialized=false;record.legs={};record.placements={};record.alignment={};record.previous={};record.targets={};record.rotations={};return true}
+    if !config.enabled {grounding_reset(record);return true}
     ground:=inputs.ground
     if ground.probe==nil {record.blocked=0;return true}
     if !grounding_bind(binding,state,config,problems) {return false}

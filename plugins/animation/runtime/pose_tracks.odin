@@ -41,6 +41,7 @@ Pose_Faults :: struct {
 @(private)
 Pose_Row :: struct {
     state:i32,   // in Playback.states
+    rig:i32,     // in Playback.rigs; -1: an entity without skeleton
     content:i32, // in Playback.work_contents + 1; 0: it plays nothing
     programmed:bool,
     animation:Animation,
@@ -177,8 +178,9 @@ pose_job_allocator_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,ali
 pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Transform,$A),worker:int) {
     if row.content==0 {return}
     state:=&playback.states[row.state]
+    if state.lod.skip {return}
     content:=&playback.work.contents[row.content-1]
-    row.faults=pose_compose(playback,state,content,row.animation,row.programmed,row.dt,core.read(transforms),worker)
+    row.faults=pose_compose(playback,state,content,row.animation,row.programmed,row.dt+state.waited,core.read(transforms),worker)
     if row.animation.mirror {
         if worker<0 || worker>=len(playback.work.jobs) ||
             !playing_mirror(state,playing_pose(state,.Local),playback.work.jobs[worker].pose[:]) {
@@ -188,7 +190,7 @@ pose_row :: proc(playback:^Playback,row:^Pose_Row,transforms:^core.Table(core.Tr
 }
 
 // The pose and curves of the base and the stack of state, through the inertia of what its slots
-// changed in the tick; dt: seconds since the tick before.
+// changed in the tick; dt: seconds since its last pose, the ticks it skipped (Rig_Lod) included.
 @(private)
 pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,programmed:bool,dt:f32,transforms:^core.Table(core.Transform,.Read),worker:int) -> (faults:Pose_Faults) {
     dt:=dt if animation.playing else 0
@@ -199,11 +201,11 @@ pose_compose :: proc(playback:^Playback,state:^Playing,content:^host.Content_Ani
     capture:=false
     if stack!=nil {
         inertia:=&stack.inertia
-        if inertia.frame+1!=playback.frame {inertia.kept,inertia.state=0,{}}
+        if inertia.frame+1+u64(state.skipped)!=playback.frame {inertia.kept,inertia.state=0,{}}
         // A blend measures how the pose its slots changed to moves: that pose a tick before is the
-        // base then under the layers where their clips were.
+        // base then under the layers where their clips were; after skipped ticks it is not known.
         _,_,before,_=inertia_poses(inertia)
-        capture=stack.slots>0 && stack_blending(stack.blend) && inertia.kept>0 && dt>0 && len(before)==len(playing_pose(state,.Local))
+        capture=stack.slots>0 && stack_blending(stack.blend) && inertia.kept>0 && dt>0 && state.skipped==0 && len(before)==len(playing_pose(state,.Local))
     }
     if programmed {
         runtime:=&state.program

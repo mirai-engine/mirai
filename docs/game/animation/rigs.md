@@ -78,9 +78,20 @@ anim.play_clip(requests,e,"stride",.2,loop=false)
 
 ## Many characters
 
-`Animation_Budget` (`period`, `significance`, `enabled`) on a rig presents its palette every
-`period` frames: simulation and events still run every tick. Use a larger period for distant
-or minor characters.
+Far from the players a rig costs less by itself, alike on the server and on every client: the
+project settings `Animation_Budget_Config` leave out its grounding, springs, twists and
+correctives past `cosmetic_distance` (25 m) from every simulation source (the bodies the seats
+drive and each `Streaming_Source`), and past twice `cadence_near` (20 m) pose it and search its
+matching once every `distance / cadence_near` ticks, at most every `cadence_slowest` (0.25 s).
+Its clock, markers, events and root motion run in every tick, and between two poses it holds the
+last one. A rig that follows another (`Pose_Source`, an attached rig) is posed on the ticks of
+that one. Gameplay that reads a pose gets it in full at any distance: a rig with a
+`Bone_Attachment`, a bone pose asked of it, a field its curves write, or a rig a library reads
+with `animation_read` in each tick (a `Ragdoll` does). A dedicated server poses only those.
+`cadence_near` and `cosmetic_distance` at 0 pose every rig in full.
+
+`Animation_Budget` (`period`, `significance`) on a rig presents its palette at most every
+`period` frames. Use a larger period for distant or minor characters.
 
 ## Pitfalls
 

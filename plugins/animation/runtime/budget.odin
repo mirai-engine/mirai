@@ -12,7 +12,7 @@ import mm "mirai:std/math"
 
 // period: the fewest render frames between palette updates; 0: automatic, as often as its size on
 // screen needs (budget_interval).
-@(component,description="Controls skeletal presentation frequency and priority: automatically, as often as the size of the mesh on screen needs, or every period frames. Simulation clocks, events, root motion and constraints still run every fixed tick.")
+@(component,description="Controls skeletal presentation frequency and priority: automatically, as often as the size of the mesh on screen needs, or every period frames. Clocks, events and root motion still run every fixed tick; how often the pose is evaluated in a tick goes by the distance to the simulation sources (Animation_Budget_Config).")
 Animation_Budget :: struct {period:u16 `mirai:"max=120"`,significance:f32 `mirai:"min=0,max=1000"`}
 ANIMATION_BUDGET_DEFAULT :: Animation_Budget{significance=1}
 // An automatic palette waits while its pose moves less on screen than the eye tells from a
@@ -21,9 +21,16 @@ ANIMATION_BUDGET_DEFAULT :: Animation_Budget{significance=1}
 BUDGET_STEP :: 1
 BUDGET_SPEED :: 2
 BUDGET_LONGEST :: .25
+// The level of detail of the rigs in the fixed tick goes by their distance to the simulation
+// sources (Rig_Lod); 0 in cadence_near and cosmetic_distance evaluates every rig in full.
 @(storage,setting)
-Animation_Budget_Config :: struct {max_palette_updates:u32 `mirai:"advanced"`,job_grain:u16 `mirai:"advanced"`,parallel:bool `mirai:"advanced"`}
-ANIMATION_BUDGET_CONFIG_DEFAULT :: Animation_Budget_Config{job_grain=4,parallel=true}
+Animation_Budget_Config :: struct {
+    max_palette_updates:u32 `mirai:"advanced"`,job_grain:u16 `mirai:"advanced"`,parallel:bool `mirai:"advanced"`,
+    cosmetic_distance:f32 `mirai:"min=0,unit=m"`, // past it from every source, a rig leaves out its grounding, springs, twists and correctives
+    cadence_near:f32 `mirai:"min=0,unit=m"`,      // per this from a source, a tick less often a rig is posed and searches its matching
+    cadence_slowest:f32 `mirai:"min=0,unit=s"`,   // between two poses of a rig at most
+}
+ANIMATION_BUDGET_CONFIG_DEFAULT :: Animation_Budget_Config{job_grain=4,parallel=true,cosmetic_distance=25,cadence_near=20,cadence_slowest=.25}
 Budget_State :: struct {entity:core.Entity,last_update:u64,last_clock:f64}
 // pixels: the height its bounds cover on screen (budget_pixels), which sets an automatic period.
 Budget_Candidate :: struct {entity:core.Entity,slot:u32,policy:Animation_Budget,pixels:f32,force:bool}

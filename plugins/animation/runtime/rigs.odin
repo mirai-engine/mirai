@@ -324,7 +324,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier
             for &amount,i in binding.amounts[:count] {amount=config.amounts[i] if config.amount_count>0 else 1}
             rig_binding_publish(binding,state,.Twist)
         }
-        if !enabled || weight<=0 {continue}
+        if !enabled || weight<=0 || state.lod.plain {continue}
         count:=int(binding.count)
         solved:=lib.skeleton_twist(skeleton,playing_pose(state,.Local),playing_pose(state,.World),binding.source_index,binding.bones[:count],binding.amounts[:count],config.axis,config.reference,binding.original[:count],weight,root_transform)
         if !solved {rig_problem(inputs.problems,state.entity,.Twist,&config,.Solve)}
@@ -341,6 +341,7 @@ rigs_chains_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier
             binding.count=u8(count);binding.springs={};rig_binding_publish(binding,state,.Spring)
         }
         if !enabled || weight<=0 {if binding.springs[0].ready {binding.springs={}};continue}
+        if state.lod.plain {continue}
         if !lib.skeleton_world(skeleton,playing_pose(state,.Local),playing_pose(state,.World),root_transform) {rig_problem(inputs.problems,state.entity,.Spring,&config,.Solve);valid=false;continue}
         count:=int(binding.count)
         for bone,i in binding.bones[:count] {binding.points[i]=playing_pose(state,.World)[bone].position;if i>0 {binding.lengths[i-1]=linalg.length(binding.points[i]-binding.points[i-1])}}

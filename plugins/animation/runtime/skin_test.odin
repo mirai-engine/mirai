@@ -380,7 +380,7 @@ the_automatic_period_leaves_the_simulation_as_it_is :: proc(t:^testing.T) {
         for _ in 0..<ticks {
             time:=core.Time{tick=w.playback.frame,dt=1.0/60,playing=true}
             animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.skins),&w.modifiers,&w.playback,characters,skeletons,app,problems)
-            animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT)
+            animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),{},core.read(&w.labels),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifiers,&w.playback,characters,skeletons,app,time,{},problems,&w.actions,&w.motion,sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT,{},{})
             animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifiers,&w.playback,{},{},time,{ptr=skeletons},problems,&w.motion,characters,{},{},core.CLOCK_DEFAULT,nil)
             animation_skin(core.read(&w.meshes),core.read(&w.skins),core.read(&w.parents),core.read(&w.worlds),&w.lives,core.read(&w.hidden),core.read(&w.elsewhere),cache,state,app.assets,app.renderer,posed,&app.jobs,app.allocator,time,{dt=1.0/60,alpha=1},{ptr=&w.playback},{},problems,{},&w.budget,ANIMATION_BUDGET_CONFIG_DEFAULT,core.read(&w.parts),{},{ptr=view},{})
         }

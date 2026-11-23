@@ -138,7 +138,7 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier_
             for sample,i in config.samples[:config.sample_count] {binding.rotations[i]=sample.rotation}
             rig_binding_publish(binding,state,.Corrective)
         }
-        if !enabled || weight<=0 {continue}
+        if !enabled || weight<=0 || state.lod.plain {continue}
         // The driver as the animation posed it, before other operations moved it.
         rotation:=playing_pose(state,.Sampled)[binding.driver].rotation if len(playing_pose(state,.Sampled))==len(playing_pose(state,.Local)) else playing_pose(state,.Local)[binding.driver].rotation
         solved:=lib.pose_sample_weights(rotation,binding.rotations[:config.sample_count],binding.weights[:config.sample_count])

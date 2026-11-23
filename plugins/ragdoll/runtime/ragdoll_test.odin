@@ -122,6 +122,9 @@ ragdolls_follow_current_animation_preserve_handoff_velocity_and_drive_real_joint
     if !ragdoll_fixture_init(t,&f) {return}
     defer ragdoll_fixture_free(&f)
     ragdoll_fixture_step(&f)
+    // The animation is told its pose is read, so a far rig is posed in full.
+    testing.expect(t,len(f.poses.reads.items)==1 && f.poses.reads.items[0]==f.rig)
+    clear(&f.poses.reads.items)
     anim.playing_pose(&f.playback.states[0],.Sampled)[1].position.x=.1
     ragdoll_fixture_step(&f)
     upper,_:=core.get(&f.transforms,f.upper)

@@ -44,7 +44,7 @@ pose_bake_failing_copy_allocator :: proc(data:rawptr,mode:runtime.Allocator_Mode
 pose_bake_test_sample :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
     anim.animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.sources),&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,host.app_world_storage(app,data,core.Problems))
-    anim.animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,w.time,w.frame,host.app_world_storage(app,data,core.Problems),&w.actions,&w.motion,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,w.time,w.frame,host.app_world_storage(app,data,core.Problems),&w.actions,&w.motion,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT,{},{})
     core.settle(app.info,data,editor)
 }
 @(private)

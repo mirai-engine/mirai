@@ -122,6 +122,8 @@ ragdoll_prepare :: proc(configs:^core.Table(Ragdoll,.Read),bones:^core.Table(Rag
     for root_row in 0..<core.count(configs) {
         rig:=core.entity_at(configs,root_row)
         config:=core.at(configs,root_row)
+        // Its bodies follow the pose: the rig is posed in full from the next tick, at any distance.
+        if config.mode!=.Disabled {anim.animation_read(poses,rig)}
         parent_world:=mm.TRANSFORM_IDENTITY
         if parent,ok:=core.get(parents,rig);ok && parent.entity!=core.NONE {parent_world,_=core.world_of(transforms,parents,parent.entity)}
         count,revision,sampled:=anim.animation_sample_pose(playback,rig,runtime.pose[:capacity],parent_world)

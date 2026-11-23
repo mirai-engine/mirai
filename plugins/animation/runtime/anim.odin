@@ -113,6 +113,7 @@ Animation_Requests :: struct {
     modifiers:core.Queue(Modifier_Request),
     warps:core.Queue(Motion_Target_Request),
     locomotion:core.Queue(Motion_Locomotion),
+    reads:core.Queue(core.Entity), // animation_read: the rigs gameplay reads the pose of in this tick
 }
 
 // What the animation of an entity tells in a tick. Marker: a playing Animation crossed a marker of
@@ -267,6 +268,10 @@ Playing :: struct {
     changed:u64,               // Playback.frame of the last tick whose pose differed from previous
     pose_ready:bool,
     finished:u64,              // Playback.frame of the last tick its modifiers ran
+    lod:Rig_Lod,               // how much of it runs in this tick
+    skipped:u32,               // ticks since its pose was last evaluated
+    waited:f32,                // seconds of those ticks
+    bare:bool,                 // its cosmetic modifiers were left out in its last pose
     leader:core.Entity,        // the rig whose pose it takes (Pose_Source); NONE: none
     stage:Pose_Stage,          // of the pose of its leader it takes
     follow:[dynamic]lib.Follow_Bone,       // by bone: the bone of the leader it takes
@@ -333,6 +338,8 @@ Playback_Work :: struct {
     contents:[dynamic]host.Content_Animation, // what they play, each once: its library outlives the tick, its place in the host may not
     final_rows:[dynamic]i32,
     request_order:[dynamic]Request_Index,
+    lods:[dynamic]Lod_Rig,         // by rig: how much of it runs (lod_decide)
+    presented:bool,                // what the world poses is drawn
 }
 
 @(private)
@@ -445,6 +452,7 @@ animation_tick :: proc(
         }
         state:=state_get(playback,e)
         if state==nil {memory_problem(problems,e,"its animation");continue}
+        state.lod=lod_of(playback,row if skeletal else -1)
         first_event:=len(events.items)
         defer source_markers_resolve(sources,state,events.items[first_event:])
         if !animated {
@@ -534,8 +542,6 @@ animation_tick :: proc(
             if changed || state.skeleton!=definition.id || state.skeleton_revision!=definition.revision || len(state.bindings)==0 || content!=nil && state.tracks==0 {
                 if !skeleton_bind(playback,state,definition,content,transforms) {memory_problem(problems,e,"the pose of its skeleton");continue}
             }
-            copy(playing_pose(state,.Local),playing_topology(state).rest[:])
-            if root,ok:=core.get(transforms,e);ok {playing_pose(state,.Local)[0]=core.to_math(root)}
         } else if state.skeleton!={} || state.hierarchy_stamp!=stamp || state.tracks==0 {
             state.leader=core.NONE
             if !bind(playback,state,content,hierarchy,transforms,names,targets,animations,problems) {
@@ -592,9 +598,17 @@ animation_tick :: proc(
         } else {clear(&state.curves);state.curves_ready=false}
         played:=work_content(playback,content)
         if played<0 {memory_problem(problems,e,"its animation");continue}
-        append(&playback.work.rows,Pose_Row{state=playback.rows[core.entity_index(e)]-1,content=played,programmed=programmed,animation=animation,dt=dt,current_dt=current_dt,sought=sought,distance=distance,action_distance=action_distance,distance_error=distance_error,placed=placed})
+        append(&playback.work.rows,Pose_Row{state=playback.rows[core.entity_index(e)]-1,rig=i32(row) if skeletal else -1,content=played,programmed=programmed,animation=animation,dt=dt,current_dt=current_dt,sought=sought,distance=distance,action_distance=action_distance,distance_error=distance_error,placed=placed})
     }
     clip_commands_finish(&requests.timeline,time.playing,problems)
+    lod_settle(playback)
+    // A rig keeps its last pose until it is posed again, carried with its entity.
+    for row in playback.work.rows {
+        state:=&playback.states[row.state]
+        if row.rig<0 {continue}
+        if !state.lod.skip {copy(playing_pose(state,.Local),playing_topology(state).rest[:])}
+        if root,ok:=core.get(transforms,state.entity);ok {playing_pose(state,.Local)[0]=core.to_math(root)}
+    }
     pose_rows_run(playback,transforms,&app.jobs if budget.parallel else nil,int(budget.job_grain))
     for &row in playback.work.rows {
         state:=&playback.states[row.state]
@@ -646,12 +660,16 @@ animation_tick :: proc(
             // The warp of the clock of an action that moves the body moves the body as much.
             if leading>=0 && state.stack.layers[leading].body!=.None {state.body_motion.translation+=state.motion.translation-unwarped}
         }
-        if programmed {match_lag_apply(state,row.placed)}
-        copy(playing_pose(state,.Sampled),playing_pose(state,.Local))
+        if state.lod.skip {
+            state.skipped=min(state.skipped,max(u32)-1)+1;state.waited+=dt
+        } else {
+            if programmed {match_lag_apply(state,row.placed)}
+            copy(playing_pose(state,.Sampled),playing_pose(state,.Local))
+        }
         if row.distance_error!=.None {state.program.error=.Invalid_Parameter;distance_problem(problems,e,row.distance_error)}
         state.seen=playback.frame
     }
-    clear(&playback.work.rows);clear(&playback.work.contents)
+    clear(&playback.work.rows);clear(&playback.work.contents);clear(&playback.work.lods)
     for &state in playback.states {
         if state.seen==playback.frame {continue}
         if state.clip_event.clip!=0 {
@@ -1498,6 +1516,7 @@ animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation
     core.queue_serve(&requests.modifiers,capacity,problems,code,"pose modifiers",setting,"it names a rig and an operation, with a valid spatial target, weight and fade")
     core.queue_serve(&requests.warps,capacity,problems,code,"motion warp targets",setting,"it names a rig, a target of under 32 bytes and a valid spatial target")
     core.queue_serve(&requests.locomotion,capacity,problems,code,"motion locomotion inputs",setting,"it names a rig, with finite velocities and a weight from 0 to 1")
+    core.queue_serve(&requests.reads,capacity,problems,code,"pose reads",setting,"it names a rig")
 }
 
 playback_free :: proc(playback:^Playback) {
@@ -1507,7 +1526,7 @@ playback_free :: proc(playback:^Playback) {
     delete(playback.track_maps);delete(playback.searches)
     work:=&playback.work
     for &scratch in work.jobs {pose_scratch_free(&scratch)}
-    delete(work.jobs);delete(work.rows);delete(work.contents);delete(work.final_rows);delete(work.request_order)
+    delete(work.jobs);delete(work.rows);delete(work.contents);delete(work.final_rows);delete(work.request_order);delete(work.lods)
     playback^={}
 }
 
@@ -1689,12 +1708,19 @@ animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,runtime:^Mo
     }
     finish :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,runtime:^Modifier_Runtime,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),dt:f32,ground_inputs:Grounding_Inputs,motion:^Motion_Runtime,characters:^Character_Assets,final_poses:[]Pose_Request,paces:^core.Table(core.Own_Pace,$B),clock:core.Clock,places:^core.Places) {
         if state.skeleton!={} {if root,ok:=core.get(transforms,state.entity);ok {playing_pose(state,.Local)[0]=core.to_math(root)}}
+        // A rig not posed in this tick keeps its last pose: it shows the same between the ticks.
+        if state.lod.skip {
+            if state.pose_ready && !slice.equal(playing_pose(state,.Local),playing_pose(state,.Previous)) {state.changed=playback.frame}
+            copy(playing_pose(state,.Previous),playing_pose(state,.Local))
+            return
+        }
         constraints_apply(state,playback,inputs,runtime,transforms,core.read(parents),dt*core.pace_of(clock,paces,state.entity),ground_inputs,motion,characters,entity_requests(final_poses,state.entity))
         pose_write(playback,state,transforms,core.read(parents),places)
         if !state.pose_ready || !slice.equal(playing_pose(state,.Local),playing_pose(state,.Previous)) {state.changed=playback.frame}
         copy(playing_pose(state,.Previous),playing_pose(state,.Local))
         state.pose_ready=true
         state.finished=playback.frame
+        state.skipped,state.waited=0,0
     }
     for &state in playback.states {
         if state.seen!=playback.frame || state.leader!=core.NONE {continue}

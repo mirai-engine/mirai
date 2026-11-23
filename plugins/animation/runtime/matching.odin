@@ -539,7 +539,8 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
         flags:=lib.match_row_flags(db,row)
         excluded,kept:=.Exclude in flags,.Keep in flags
         forced:=current<0 || entering || ending || incompatible || left || excluded
-        if forced || !kept && (returned || m.timer<=0 && m.since>=info.hold) {
+        // A rig far from the sources searches on the ticks of its cadence (Rig_Lod.wait).
+        if forced || !kept && (returned || !state.lod.wait && m.timer<=0 && m.since>=info.hold) {
             m.timer=info.interval
             request:=lib.Match_Request{modes=bit,min_rate=info.min_rate,max_rate=info.max_rate,rate=m.rate,entry=entering}
             if row>=0 && !returned {
