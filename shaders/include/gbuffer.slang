@@ -199,7 +199,7 @@ struct Gbuffer_Pixel {
     float f90;        // the grazing reflectance of its specular lobe
     float3 emission;  // render units
     float occlusion;
-    uint bits;        // MATERIAL_LAYER_*, GBUFFER_TRACE_COAT and GBUFFER_EMISSION_RELATIVE
+    uint bits;        // MATERIAL_LAYER_* and GBUFFER_EMISSION_RELATIVE
     Material_Layers layers;
 };
 

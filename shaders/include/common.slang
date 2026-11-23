@@ -452,7 +452,8 @@ float4 unpack_tangent_angle(uint normal_packed, uint angle) {
     }
     uint least = abs(y) < abs(x) ? 1u : 0u;
     if (abs(z) < abs(least == 0u ? x : y)) least = 2u;
-    float3 n = unpack_normal(normal_packed);
+    // The normal of those integers (unpack_normal), folded already.
+    float3 n = normalize(float3(x, y, z));
     float3 along = normalize(cross(float3(least == 0u ? 1.0 : 0.0, least == 1u ? 1.0 : 0.0, least == 2u ? 1.0 : 0.0), n));
     float3 across = cross(n, along);
     float turn = float(angle & 0x7fffu) * (2.0 * PI / 32768.0);

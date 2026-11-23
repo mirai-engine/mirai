@@ -134,12 +134,11 @@ struct Fragment {
     float3 normal;            // shading normal, facing the viewer
     float3 to_camera;
     float material_roughness; // before that widening
-    float coat_roughness;     // of the coat before that widening
 };
 
-// The context a material is evaluated with at a fragment; normal: the input
-// normal, under its normal map.
-Mirai_Surface_Context fragment_context(Raster_Input input, Material material, float3 to_camera, out float3 normal) {
+// The context a material is evaluated with at a fragment, but for what its
+// instance gives; normal: the input normal, under its normal map.
+Mirai_Surface_Context fragment_surface_context(Raster_Input input, Material material, float3 to_camera, out float3 normal) {
     float bias = frame.texturing.x;
     normal = fragment_surface_normal(input, material, to_camera, bias);
     // The surface as it faces the viewer: its far side turns its whole frame around.
@@ -154,7 +153,14 @@ Mirai_Surface_Context fragment_context(Raster_Input input, Material material, fl
         material_normal_gradients[1] = -material_normal_gradients[1];
 #endif
     }
-    return fragment_footprint(fragment_instance(material_context(input.in_world, normal, vertex_normal, tangent, input.in_uv, input.in_uv1, float2(bias), false), input), input);
+    return material_context(input.in_world, normal, vertex_normal, tangent, input.in_uv, input.in_uv1, float2(bias), false);
+}
+Mirai_Surface_Context fragment_context(Raster_Input input, Material material, float3 to_camera, out float3 normal) {
+    return fragment_footprint(fragment_instance(fragment_surface_context(input, material, to_camera, normal), input), input);
+}
+// The same of a fragment whose instance and material its stage decoded.
+Mirai_Surface_Context fragment_context(Raster_Input input, Instance inst, Material material, float3 to_camera, out float3 normal) {
+    return fragment_footprint(material_context_instance(fragment_surface_context(input, material, to_camera, normal), inst, input.in_vertex_color), input);
 }
 
 // The context of a point a pass draws over the opaque scene: the depth the
@@ -164,14 +170,12 @@ Mirai_Surface_Context material_context_over(Mirai_Surface_Context ctx, float opa
     return ctx;
 }
 
-// opaque: what the linear depth target of the opaque scene holds at the
-// pixel of a fragment drawn over it; 0 for one that is not.
-Fragment fragment_evaluate(Raster_Input input, float opaque) {
+// The material of a fragment in its context (fragment_context), where its
+// normal is n.
+Fragment fragment_evaluate(Raster_Input input, Material material, float3 to_camera, Mirai_Surface_Context ctx, float3 n) {
     Fragment f;
-    f.to_camera = to_eye(input.in_world);
-    f.material = fragment_material(input);
-    float3 n;
-    Mirai_Surface_Context ctx = material_context_over(fragment_context(input, f.material, f.to_camera, n), opaque);
+    f.to_camera = to_camera;
+    f.material = material;
     f.values = material_sample(f.material, ctx, input.in_color, input.in_emission, n);
     material_surface_apply(f.values, f.material, input.in_surface);
     if (f.material.program_id != 0u) n = fragment_facing(n, f.to_camera);
@@ -179,9 +183,17 @@ Fragment fragment_evaluate(Raster_Input input, float opaque) {
     f.values.emission = emission_render_units(sample_emission(f.values, dot(f.values.layers.coat_normal, f.to_camera)), f.values.emission_relative);
     f.material_roughness = f.values.roughness;
     f.values.roughness = specular_antialiasing(n, f.values.roughness);
-    f.coat_roughness = f.values.layers.coat_roughness;
     if (f.values.layers.coat > 0.0) f.values.layers.coat_roughness = specular_antialiasing(f.values.layers.coat_normal, f.values.layers.coat_roughness);
     return f;
+}
+// opaque: what the linear depth target of the opaque scene holds at the
+// pixel of a fragment drawn over it; 0 for one that is not.
+Fragment fragment_evaluate(Raster_Input input, float opaque) {
+    float3 to_camera = to_eye(input.in_world);
+    Material material = fragment_material(input);
+    float3 n;
+    Mirai_Surface_Context ctx = material_context_over(fragment_context(input, material, to_camera, n), opaque);
+    return fragment_evaluate(input, material, to_camera, ctx, n);
 }
 Fragment fragment_evaluate(Raster_Input input) { return fragment_evaluate(input, 0.0); }
 

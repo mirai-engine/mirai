@@ -252,6 +252,13 @@ float2 block_uv_at(Mesh mesh, Cluster c, Cluster_Block b, uint local, uint set) 
     return float2(c.uv + int2(int(vertex_words[at + 1u] >> 16u), int(vertex_words[at + 2u] & 0xffffu))) * mesh.uv_step;
 }
 
+// The tangent of a vertex of a cluster (Mesh_Point.tangent), alone: what a
+// stage that needs it only for some materials reads where it does.
+float4 block_tangent_at(Mesh mesh, Cluster c, Cluster_Block b, uint local, uint posed_word) {
+    if (posed_word != INVALID) return unpack_tangent(posed_load(posed_word, c.vertex_first + local).tangent);
+    uint at = b.vertices + local * VERTEX_WORDS;
+    return unpack_tangent_angle(vertex_words[at + 3u], vertex_words[at + 2u] >> 16u);
+}
 // A vertex of a cluster: posed at posed_word, or at rest with INVALID.
 Mesh_Point block_point_at(Mesh mesh, Cluster c, Cluster_Block b, uint local, uint posed_word) {
     uint at = b.vertices + local * VERTEX_WORDS;
@@ -273,12 +280,11 @@ Mesh_Point block_point_at(Mesh mesh, Cluster c, Cluster_Block b, uint local, uin
         Posed_Vertex posed = posed_load(posed_word, c.vertex_first + local);
         p.position = posed.position;
         p.normal = unpack_normal(posed.normal);
-        p.tangent = unpack_tangent(posed.tangent);
     } else {
         p.position = float3(c.position + int3(int(xy & 0xffffu), int(xy >> 16u), int(zu & 0xffffu))) * mesh.position_step;
         p.normal = unpack_normal(packed);
-        p.tangent = unpack_tangent_angle(packed, vt >> 16u);
     }
+    p.tangent = block_tangent_at(mesh, c, b, local, posed_word);
     return p;
 }
 Mesh_Point cluster_point_at(Mesh mesh, Cluster c, uint local, uint posed_word) { return block_point_at(mesh, c, cluster_block(mesh, c), local, posed_word); }
