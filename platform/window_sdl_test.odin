@@ -141,10 +141,27 @@ sdl_window_reports_its_state_and_translates_events :: proc(t:^testing.T) {
     testing.expect(t,ok)
     testing.expect_value(t,text_copy,"copied text")
 
-    window_set_cursor(p,.Text)
-    window_set_cursor(p,.Hidden)
-    window_set_cursor(p,.Default)
-    testing.expect_value(t,window_cursor(p),Cursor.Default)
+    window_set_cursor(p,.Text,false)
+    window_set_cursor(p,.Hidden,false)
+    window_set_cursor(p,.Default,false)
+    shown,_:=window_cursor(p)
+    testing.expect_value(t,shown,Cursor.Default)
+    // An image through SDL: made from its levels, shown, replaced while shown and taken away.
+    small:[8*8*4]u8
+    large:[16*16*4]u8
+    levels:=[]Cursor_Level{{pixels=small[:],width=8,height=8},{pixels=large[:],width=16,height=16}}
+    testing.expect_value(t,window_cursor_image_set(p,.Pointer,levels,{2,2}),Cursor_Error.None)
+    window_set_cursor(p,.Pointer,true)
+    made:=p.window.images[.Pointer]
+    testing.expect(t,made!=nil && sdl.GetCursor()==made)
+    testing.expect_value(t,window_cursor_image_set(p,.Pointer,levels[:1],{0,0}),Cursor_Error.None)
+    testing.expect(t,p.window.images[.Pointer]!=nil && sdl.GetCursor()==p.window.images[.Pointer])
+    window_cursor_image_clear(p,.Pointer)
+    // The dummy driver has no system cursors: SDL then falls back to its default.
+    testing.expect(t,p.window.images[.Pointer]==nil && (p.window.cursors[.Pointer]==nil || sdl.GetCursor()==p.window.cursors[.Pointer]))
+    _,image:=window_cursor(p)
+    testing.expect(t,!image)
+    window_set_cursor(p,.Default,false)
     window_set_relative_mouse(p,true)
     testing.expect(t,window_relative_mouse(p))
     window_set_relative_mouse(p,false)

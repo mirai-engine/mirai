@@ -154,6 +154,13 @@ Game `.ui` runtime over per-world `Gui` (`host,by_world,shared`; game loop only;
   frame events (`Clicked`, `Changed`, `Submitted`, `Dragged`, `Dropped`, `Finished`, `Back`, `Menu`)
   once via `gui_events_deliver` (or `gui_events_frame` when paused; rollback ring
   `DELIVERED_CAPACITY`). `UI_Requests` queues `gui.play_animation` and `gui.focus`.
+- **Cursor:** the game writes `UI_Cursor` (`hidden`, a `.tex` per `ui.Cursor` shape), one per
+  window; `gui_frame_end` declares it with the hovered shape to `host.app_cursor_game` only while
+  the game has the input (not `game_input_blocked`/`game_mouse_off`). `host/cursor.odin` is the
+  one writer of the OS cursor: relative mouse > editor while it holds the pointer (bars, input
+  released, pointer off `app.scene`; never a game image) > hidden > shape; it reads an image only
+  when it, its file (`content_hash`) or the density changes
+  ([cursor](../../../../docs/game/ui/cursor.md)).
 - **Settings & caching:** `UI_Settings` (`reference`, `source` lang, `prompts`, `prompt_images`)
   and `UI_Preferences` (`language`, `scale`). `Game_Source` tracks last input device family, prompt
   textures, camera views, `Particles` nodes and sounds. Unchanged static contexts skip rebuild

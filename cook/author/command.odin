@@ -213,11 +213,14 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
     } else {
         unknown:string
         if id,unknown=asset.registry_resolve(&p.registry,path,".ui");unknown!="" {return {},fmt.tprintf("asset: %s",unknown)}
-        if !records_read(p.assets,id,&r,context.temp_allocator) {
-            return {},fmt.tprintf("asset %s is not a .ui that loads; pass the path of a .ui of the project or its id",named)
+        if record,found=asset.registry_find(&p.registry,id);!found {
+            return {},fmt.tprintf("asset %s is not a .ui of the project; pass the path of a .ui of the project or its id",named)
         }
-        record,_=asset.registry_find(&p.registry,id)
         path=strings.clone(record.path,context.temp_allocator)
+        // A file that does not load (of another version of .ui) is made again from the document, with its id.
+        if !records_read(p.assets,id,&r,context.temp_allocator) && !records_load(&r,ui_empty_data(),context.temp_allocator) {
+            return {},"the .ui could not be made: memory ran out"
+        }
     }
     texts:=texts_read(p.assets,p.source)
     params:=widget_params(p.assets,id)

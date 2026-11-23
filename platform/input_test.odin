@@ -421,9 +421,11 @@ headless_platform_keeps_title_cursor_mouse_mode_and_clipboard :: proc(t:^testing
     defer destroy(p)
     window_set_title(p,"scene * - Mirai")
     testing.expect_value(t,window_title(p),"scene * - Mirai")
-    testing.expect_value(t,window_cursor(p),Cursor.Default)
-    window_set_cursor(p,.Resize_Horizontal)
-    testing.expect_value(t,window_cursor(p),Cursor.Resize_Horizontal)
+    shown,image:=window_cursor(p)
+    testing.expect(t,shown==.Default && !image)
+    window_set_cursor(p,.Resize_Horizontal,false)
+    shown,_=window_cursor(p)
+    testing.expect_value(t,shown,Cursor.Resize_Horizontal)
     testing.expect(t,!window_relative_mouse(p))
     window_set_relative_mouse(p,true)
     testing.expect(t,window_relative_mouse(p))
@@ -437,6 +439,60 @@ headless_platform_keeps_title_cursor_mouse_mode_and_clipboard :: proc(t:^testing
     text,_=clipboard_get(p)
     testing.expect_value(t,text,"copied")
     testing.expect_value(t,window_refresh_rate(p),f32(0))
+}
+
+// What a shape shows as images come and go, and the images it refuses.
+@(test)
+headless_cursor_shows_images_only_where_they_are_asked_for :: proc(t:^testing.T) {
+    p:=test_headless(t,{})
+    defer destroy(p)
+    small:[16*16*4]u8
+    large:[32*32*4]u8
+    huge:[(CURSOR_SIDE_MAX+1)*4]u8
+    one:=[]Cursor_Level{{pixels=small[:],width=16,height=16}}
+    two:=[]Cursor_Level{{pixels=small[:],width=16,height=16},{pixels=large[:],width=32,height=32}}
+    Image_Case :: struct {name:string,cursor:Cursor,levels:[]Cursor_Level,hotspot:[2]f32,want:Cursor_Error}
+    cases:=[]Image_Case{
+        {"one level",.Pointer,one,{0,0},.None},
+        {"a denser level",.Pointer,two,{15,15},.None},
+        {"hidden",.Hidden,one,{},.Hidden},
+        {"no level",.Pointer,nil,{},.Levels},
+        {"too many levels",.Pointer,[]Cursor_Level{one[0],two[1],two[1],two[1],two[1]},{},.Levels},
+        {"no width",.Pointer,[]Cursor_Level{{pixels=small[:],width=0,height=16}},{},.Size},
+        {"above the limit",.Pointer,[]Cursor_Level{{pixels=huge[:],width=CURSOR_SIDE_MAX+1,height=1}},{},.Size},
+        {"a later level not larger",.Pointer,[]Cursor_Level{two[1],one[0]},{},.Size},
+        {"short pixels",.Pointer,[]Cursor_Level{{pixels=small[:16],width=16,height=16}},{},.Pixels},
+        {"hotspot past the edge",.Pointer,one,{16,0},.Hotspot},
+        {"hotspot before the edge",.Pointer,one,{-1,0},.Hotspot},
+        {"hotspot not a number",.Pointer,one,{f32(0h7fc00000),0},.Hotspot},
+    }
+    for c in cases {
+        window_cursor_image_clear(p,c.cursor)
+        error:=window_cursor_image_set(p,c.cursor,c.levels,c.hotspot)
+        testing.expectf(t,error==c.want,"%s: %v, not %v",c.name,error,c.want)
+        testing.expectf(t,(c.cursor in p.window.imaged)==(c.want==.None),"%s: the shape keeps an image only when it was taken",c.name)
+    }
+
+    // set gives Pointer an image and clear takes it, after the shape is asked for.
+    Step :: struct {cursor:Cursor,custom,set,clear,want_image:bool}
+    window_cursor_image_clear(p,.Pointer)
+    steps:=[]Step{
+        {cursor=.Pointer,custom=true},                           // no image yet: the system's
+        {cursor=.Pointer,custom=true,set=true,want_image=true},
+        {cursor=.Hidden,custom=true},                            // hidden shows no image
+        {cursor=.Pointer},                                       // the editor's: never an image
+        {cursor=.Pointer,custom=true,want_image=true},           // back: the image it kept
+        {cursor=.Pointer,custom=true,set=true,want_image=true},  // replaced while shown
+        {cursor=.Pointer,custom=true,clear=true},                // cleared while shown
+        {cursor=.Text,custom=true},
+    }
+    for step,i in steps {
+        window_set_cursor(p,step.cursor,step.custom)
+        if step.set {testing.expect_value(t,window_cursor_image_set(p,.Pointer,two,{1,1}),Cursor_Error.None)}
+        if step.clear {window_cursor_image_clear(p,.Pointer)}
+        shown,image:=window_cursor(p)
+        testing.expectf(t,shown==step.cursor && image==step.want_image,"step %d: %v with image %v",i,shown,image)
+    }
 }
 
 @(test)

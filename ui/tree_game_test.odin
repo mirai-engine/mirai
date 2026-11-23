@@ -850,3 +850,45 @@ collapsing_a_focused_control_clears_focus_and_releases_keyboard :: proc(t:^testi
     frame=test_frame(&ctx,&input,test_game_build,&s)
     testing.expect(t,!frame.keyboard_consumed,"keyboard returns to the game once the panel closes")
 }
+
+// The shape a style asks for shows while the pointer is on its node or holds
+// it, a state of the style can change it, and a shape out of range is refused.
+@(test)
+a_style_gives_the_pointer_its_cursor_while_it_is_on_the_node :: proc(t:^testing.T) {
+    Cursor_Case :: struct {name:string,disabled,over,held_away:bool,want:Cursor}
+    cases:=[]Cursor_Case{
+        {name="away",want=.Default},
+        {name="over",over=true,want=.Pointer},
+        {name="held, then moved away",over=true,held_away=true,want=.Pointer},
+        {name="over, disabled",disabled=true,over=true,want=.Not_Allowed},
+    }
+    for c in cases {
+        s:Test_Game
+        test_game_init(t,&s)
+        defer test_game_destroy(&s)
+        style,_:=tree_style(&s.tree,{text={size=12,color={255,255,255,255}},cursor=.Pointer})
+        testing.expect(t,tree_style_variant(&s.tree,{style=style,states={.Disabled},patch={fields={.Cursor},values={cursor=.Not_Allowed}}}))
+        tree_node(&s.tree,-1,{kind=.Button,name="pick",style=style,text="Pick",disabled=c.disabled,layout={width=fixed(80),height=fixed(24)}})
+        testing.expect(t,test_game_instance(&s))
+        ctx:Context
+        test_game_context(t,&ctx,&s)
+        defer context_destroy(&ctx)
+        input:=test_input()
+        test_frame(&ctx,&input,test_game_build,&s)
+        if c.over {test_point(&input,test_rect(t,&ctx,tree_element_id(&ctx,"pick")))}
+        test_frame(&ctx,&input,test_game_build,&s)
+        if c.held_away {
+            test_press(&input)
+            test_frame(&ctx,&input,test_game_build,&s)
+            input.pointer={-100,-100}
+        }
+        test_frame(&ctx,&input,test_game_build,&s)
+        testing.expectf(t,ctx.cursor==c.want,"%s: %v, not %v",c.name,ctx.cursor,c.want)
+    }
+
+    styles:=[]Node_Style{{cursor=Cursor(200)}}
+    nodes:=[]Tree_Node{{kind=.Box}}
+    tree:Widget_Tree
+    testing.expect(t,!tree_load(&tree,{styles=styles,nodes=nodes},{}),"a cursor past the last shape is refused")
+    testing.expect(t,tree.nodes==nil)
+}

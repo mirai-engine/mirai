@@ -1,5 +1,7 @@
 package ui
 
+import "mirai:std/base"
+
 // One UI library for the editor and for games. A Context is one surface:
 // widgets are procedures over explicit state, the layout of the frame places
 // their elements and every frame ends in a draw list the renderer consumes as
@@ -16,8 +18,22 @@ Color :: [4]u8 // display (sRGB) values, straight alpha
 Id :: distinct u32
 
 // Layout of the renderer's UI vertex. position is in the units of its surface.
-// The shape the pointer asks for over what it is on, for the host to show.
-Cursor :: enum u8 {Default,Text,Resize_Horizontal,Hidden}
+// The shape the pointer asks for over what it is on, for the host to show;
+// the same members as platform.Cursor, which host maps it to.
+Cursor :: enum u8 {
+    Default,Text,Pointer,Crosshair,Move,
+    Resize_Horizontal,Resize_Vertical,Resize_Diagonal_Down,Resize_Diagonal_Up, // down: from the top left to the bottom right
+    Not_Allowed,Wait,Progress,
+    Hidden,
+}
+
+// An image a game gives a shape of the cursor in place of the system's.
+Cursor_Image :: struct {
+    texture:base.Asset_Id, // a .tex of sRGB color with a level size points wide; the larger levels are for denser displays
+    hotspot:[2]f32,        // points from its top left that the pointer is at
+    size:f32,              // points; 0: CURSOR_SIZE
+}
+CURSOR_SIZE :: 32
 
 Vertex :: struct {
     position:[3]f32,

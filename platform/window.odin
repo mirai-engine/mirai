@@ -60,6 +60,25 @@ Cursor :: enum u8 {
     Not_Allowed,Wait,Progress,
     Hidden,
 }
+Cursors :: bit_set[Cursor;u16]
+
+// One image of a cursor: width*height RGBA8 pixels, sRGB with straight alpha,
+// rows from the top.
+Cursor_Level :: struct {
+    pixels:[]u8,
+    width,height:i32,
+}
+Cursor_Error :: enum u8 {
+    None,
+    Hidden,          // Hidden shows nothing: it takes no image
+    Levels,          // none, or more than CURSOR_LEVELS
+    Size,            // a side of 0 or above CURSOR_SIDE_MAX, or a later level not larger than the first
+    Pixels,          // a level whose pixels are not width*height*4 bytes
+    Hotspot,         // outside the first level, or not finite
+    Unavailable,     // the window system made no cursor of it
+}
+CURSOR_LEVELS :: 4     // images of one cursor: the first at 1x, the others for denser displays
+CURSOR_SIDE_MAX :: 256 // pixels
 
 // What a GPU backend needs to present to the window, without knowing SDL:
 // Vulkan calls vulkan_create(instance,vulkan_user) for a VkSurfaceKHR; Metal
@@ -95,8 +114,11 @@ Window :: struct {
     fixed_size:bool,
     regions:[]Window_Region,region_count:int,
     resizable:bool, // as of the last window_set_regions
-    cursors:[Cursor]^sdl.Cursor,
+    cursors:[Cursor]^sdl.Cursor, // of the system, made the first time each shows
+    images:[Cursor]^sdl.Cursor,  // those window_cursor_image_set made; nil without a window
+    imaged:Cursors,              // the shapes that have an image, also headless
     cursor:Cursor,
+    cursor_custom:bool,          // the shape shows its image when it has one
     relative_mouse:bool,
     pen_pressure:f32, // the last one the pen in range reported; 1 until it reports one
     coordinate_scale:f32,
@@ -189,6 +211,8 @@ window_open :: proc(p:^Platform,desc:Platform_Desc) -> Error {
     w.pen_pressure=1
     // The application decides when the window closes: it may ask to save first.
     _=sdl.SetHint(sdl.HINT_QUIT_ON_LAST_WINDOW_CLOSE,"0")
+    // The images of a cursor after the first are taken at the scale of the display.
+    _=sdl.SetHint(sdl.HINT_MOUSE_DPI_SCALE_CURSORS,"1")
     if desc.video_driver!="" {
         driver:=strings.clone_to_cstring(desc.video_driver,context.temp_allocator)
         _=sdl.SetHint(sdl.HINT_VIDEO_DRIVER,driver)
@@ -345,6 +369,10 @@ window_close :: proc(p:^Platform) {
     for &cursor in w.cursors {
         if cursor!=nil {sdl.DestroyCursor(cursor);cursor=nil}
     }
+    for &cursor in w.images {
+        if cursor!=nil {sdl.DestroyCursor(cursor);cursor=nil}
+    }
+    w.imaged={}
     when ODIN_OS==.Darwin {
         if w.metal_view!=nil {sdl.Metal_DestroyView(w.metal_view);w.metal_view=nil}
     }
@@ -458,16 +486,82 @@ title_store :: proc(p:^Platform,title:string) {
     p.title[p.title_length]=0
 }
 
-window_cursor :: proc(p:^Platform) -> Cursor {return p.window.cursor}
-window_set_cursor :: proc(p:^Platform,cursor:Cursor) {
+// The shape the window shows, and whether it shows the image it was given for it.
+window_cursor :: proc(p:^Platform) -> (cursor:Cursor,image:bool) {
     w:=&p.window
-    if cursor==w.cursor {return}
+    return w.cursor,w.cursor_custom && w.cursor in w.imaged
+}
+// custom: the shape shows the image window_cursor_image_set gave it, when it
+// has one; otherwise that of the system. The window system is told only of a change.
+window_set_cursor :: proc(p:^Platform,cursor:Cursor,custom:bool) {
+    w:=&p.window
+    if cursor==w.cursor && custom==w.cursor_custom {return}
     previous:=w.cursor
-    w.cursor=cursor
+    w.cursor,w.cursor_custom=cursor,custom
     if w.handle==nil {return}
     if cursor==.Hidden {_=sdl.HideCursor();return}
-    if handle:=window_cursor_handle(p,cursor);handle!=nil {_=sdl.SetCursor(handle)}
+    if handle:=window_cursor_shown(p);handle!=nil {_=sdl.SetCursor(handle)}
     if previous==.Hidden {_=sdl.ShowCursor()}
+}
+
+// Gives a shape an image, in place of the one it had: levels[0] at 1x and the
+// larger ones for displays of more pixels per point, the hotspot in pixels of
+// levels[0]. The window system copies the pixels. A transaction: it is not for
+// every frame.
+window_cursor_image_set :: proc(p:^Platform,cursor:Cursor,levels:[]Cursor_Level,hotspot:[2]f32) -> Cursor_Error {
+    if cursor==.Hidden {return .Hidden}
+    if len(levels)==0 || len(levels)>CURSOR_LEVELS {return .Levels}
+    first:=levels[0]
+    for level,i in levels {
+        if level.width<=0 || level.height<=0 || level.width>CURSOR_SIDE_MAX || level.height>CURSOR_SIDE_MAX {return .Size}
+        if i>0 && (level.width<=first.width || level.height<=first.height) {return .Size}
+        if len(level.pixels)!=int(level.width)*int(level.height)*4 {return .Pixels}
+    }
+    if !(hotspot.x>=0 && hotspot.y>=0 && hotspot.x<f32(first.width) && hotspot.y<f32(first.height)) {return .Hotspot}
+    w:=&p.window
+    if w.handle==nil {
+        w.imaged+={cursor}
+        return .None
+    }
+    surfaces:[CURSOR_LEVELS]^sdl.Surface
+    defer for surface in surfaces {
+        if surface!=nil {sdl.DestroySurface(surface)}
+    }
+    for level,i in levels {
+        surfaces[i]=sdl.CreateSurfaceFrom(level.width,level.height,.RGBA32,raw_data(level.pixels),level.width*4)
+        if surfaces[i]==nil {return .Unavailable}
+        if i>0 && !sdl.AddSurfaceAlternateImage(surfaces[0],surfaces[i]) {return .Unavailable}
+    }
+    made:=sdl.CreateColorCursor(surfaces[0],c.int(hotspot.x),c.int(hotspot.y))
+    if made==nil {return .Unavailable}
+    old:=w.images[cursor]
+    w.images[cursor]=made
+    w.imaged+={cursor}
+    // The new one shows before the old one goes: SDL never holds a destroyed cursor.
+    if w.cursor==cursor && w.cursor_custom {_=sdl.SetCursor(made)}
+    if old!=nil {sdl.DestroyCursor(old)}
+    return .None
+}
+// The shape shows that of the system again.
+window_cursor_image_clear :: proc(p:^Platform,cursor:Cursor) {
+    w:=&p.window
+    if cursor not_in w.imaged {return}
+    w.imaged-={cursor}
+    old:=w.images[cursor]
+    w.images[cursor]=nil
+    if old==nil {return}
+    if w.cursor==cursor && w.cursor_custom {
+        if system:=window_cursor_handle(p,cursor);system!=nil {_=sdl.SetCursor(system)}
+    }
+    sdl.DestroyCursor(old)
+}
+
+// The cursor of the window system for the shape the window shows.
+@(private)
+window_cursor_shown :: proc(p:^Platform) -> ^sdl.Cursor {
+    w:=&p.window
+    if w.cursor_custom && w.images[w.cursor]!=nil {return w.images[w.cursor]}
+    return window_cursor_handle(p,w.cursor)
 }
 @(private)
 window_cursor_handle :: proc(p:^Platform,cursor:Cursor) -> ^sdl.Cursor {

@@ -23,8 +23,9 @@ Style_Field :: enum u8 {
     Text_Shadow,  // its offset and color
     Move,         // Node_Style.move: where it is drawn from where the layout put it
     Scale,        // Node_Style.scale, around its center
+    Cursor,       // Node_Style.cursor
 }
-Style_Fields :: bit_set[Style_Field; u16]
+Style_Fields :: bit_set[Style_Field; u32]
 Style_Patch :: struct {
     fields:Style_Fields,
     values:Node_Style,
@@ -55,6 +56,7 @@ style_patch :: proc "contextless" (style:^Node_Style,patch:^Style_Patch) {
     if .Shadow in patch.fields {style.shadow=v.shadow;style.shadow_color=v.shadow_color;style.shadow_blur=v.shadow_blur;style.shadow_offset=v.shadow_offset}
     if .Move in patch.fields {style.move=v.move}
     if .Scale in patch.fields {style.scale=v.scale}
+    if .Cursor in patch.fields {style.cursor=v.cursor}
 }
 
 // Where a rule goes among those that hold: by the latest state it names, and

@@ -245,6 +245,9 @@ Play and Simulate run in-process on world copies
 - `play.start`: flushes dirty edits, compiles changed project Odin first (build errors in
   `data.diagnostics`) and clones the world. Re-calling returns the same run unless the document
   changed. `from` (`Camera`/`Point`) fails in a turn or `simulate`. `online` needs `multiplayer`.
+- `play.status`: also when nothing plays, `cursor` is what the pointer of the window shows, which
+  no capture has: `shape` (`Hidden` while hidden), `image` (the `.tex` it shows; zero: the
+  system's) and `relative`.
 - `play.stop` / `play.pause`: `pause` is user Play only (`here:true` resumes from `play.seek` tick,
   discarding later history).
 - `play.step`: pauses user Play or steps turn's run through real device input (`keys`, `tap_keys`,

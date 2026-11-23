@@ -107,6 +107,7 @@ to try:
 - For good, a cursor game: leave the look without a mouse binding in `Input_Settings`, or let the
   seat drive nothing (`inp.release`, `inp.drive` to take the body back): no capture happens.
 - A `Menu` or `Passive` screen leaves the mouse where it is.
+- Its shape, an image of the game in place of the system's, or hiding it: [cursor](cursor.md).
 
 ## Pitfalls that fail silently
 
