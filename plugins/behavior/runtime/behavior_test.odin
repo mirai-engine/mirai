@@ -1239,6 +1239,9 @@ the_path_of_places_walks_only_what_the_querier_walks :: proc(t:^testing.T) {
     measures:[2]f32
     walking:=place_filter(core.ref(&world.navigation),walker,core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.physics))
     testing.expect(t,walking.excluded&(1<<u64(nav.AREA_WATER))!=0)
+    // Without a Character it falls by the gravity of its place, as navigation moves it: it jumps
+    // as high as its Walk does, and as far as that time in the air takes it.
+    testing.expectf(t,walking.can.up==1 && walking.can.across>0,"a walker without a Character jumps %v",walking.can)
     // The first Path measure asks for the memory of its search: with it ending at each request
     // in turn the measure says so and finds no path, and with memory enough it goes through.
     owner:=context.allocator

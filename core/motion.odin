@@ -3,9 +3,10 @@ package core
 import mm "mirai:std/math"
 
 // How an entity a simulation moves is moving: only the library that
-// simulates it writes it (physics, for its bodies and characters). What a
-// saved game holds is applied when the body is made again.
-@(component,description="The velocities the simulation gives this entity.")
+// simulates it writes its row (physics, for its bodies and characters;
+// navigation, for its agents without a Character). What a saved game holds is
+// applied when the body is made again.
+@(component,shared,description="The velocities the simulation gives this entity.")
 Motion :: struct {
     linear:[3]f32 `mirai:"readonly,unit=m/s"`,
     angular:[3]f32 `mirai:"readonly,unit=rad/s"`,

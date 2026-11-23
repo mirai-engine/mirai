@@ -296,7 +296,7 @@ far_wake :: proc(n:^Navigation,p:^Nav_Path,r:^Nav_Route,far:^Nav_Far,e:core.Enti
         if found {at=nearest} else if c.pending>0 {return}
     }
     core.place(placer,e,at-lift,rotation,true)
-    phys.set_velocity(bodies,e,{})
+    if r.bodyless {r.walked=at-lift} else {phys.set_velocity(bodies,e,{})}
     core.remove(fars,e)
     core.remove(disabled,e)
     r.corridor,p.velocity,r.through,p.partial,p.manual={},{},false,false,false

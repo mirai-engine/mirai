@@ -254,8 +254,7 @@ place_filter :: proc(navigation:core.Ref(nav.Navigation),querier:core.Entity,pat
     if p,found:=core.get(paths,querier);found && p.class>=0 && int(p.class)<navigation.count {class=int(p.class)}
     agent,_:=core.get(agents,querier)
     walk,_:=core.get(walks,querier)
-    character,_:=core.get(characters,querier)
-    return nav.agent_filter(navigation.ptr,class,agent,walk,core.has(swims,querier),nav.agent_gravity(physics,querier,character))
+    return nav.agent_filter(navigation.ptr,class,agent,walk,core.has(swims,querier),nav.agent_gravity(physics,querier,characters))
 }
 
 Place_Tests :: bit_set[0..<PLACE_TESTS;u8]

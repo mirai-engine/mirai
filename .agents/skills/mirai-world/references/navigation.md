@@ -55,10 +55,18 @@ depends on `physics`). Core algorithms live in
 
 ## Agents
 
-- `Nav_Agent` requires `Character` + capsule collider: picks smallest fitting class of its collider
-  preset (falling back to Default, or explicit `class`). Dual-space agents (Walk + Fly/Swim)
-  search mesh + volume across shores/`LINK_FLY`; deep water ground is `AREA_WATER` (blocked without
-  `Swim`).
+- `Nav_Agent` with a `Character` needs a capsule collider: picks smallest fitting class of its
+  collider preset (falling back to Default, or explicit `class`). Dual-space agents (Walk +
+  Fly/Swim) search mesh + volume across shores/`LINK_FLY`; deep water ground is `AREA_WATER`
+  (blocked without `Swim`).
+- **Bodyless** (`Nav_Agent` without `Character`, crowd walkers): one concept, same requests, paths,
+  avoidance and links. Takes the named surface class or the smallest Default one (its radius and
+  height); walks only. `agents_walk` moves it: avoided velocity at `Walk` acceleration/braking,
+  `nav_corridor_move` (`nav_move_along_surface`) clamps it to the mesh at detail height, yaw turns
+  at `Walk.turn_speed`; writes `Transform` (`core.world_set`, never `core.place`) and
+  `core.Motion`. Jump/drop links follow the analytic `jump_launch` arc, climb/ladder a line;
+  manual links wait as usual. Moved by anything else (game `core.place`), it replans from there.
+  Its height is the detail mesh's, which quantizes up to one `cell_height` above flat ground.
 - Requests via `Nav_Requests` (`nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`,
   `nav_look_along`, `nav_crossing_done`, `nav_crossing_skip` that puts it at the end of the link);
   derived `Nav_Path` (navigation sole writer) and
@@ -68,13 +76,16 @@ depends on `physics`). Core algorithms live in
   target excluded from ORCA; corridor end slides with target until blocked.
 - `navigation_agents` (`fixed`, `apply`, `server`): slices A* within `path_iterations`/tick;
   parallel ORCA within `NAV_AGENT_HORIZON` and `avoidance_reach` from sources with navmesh wall
-  half-planes (`NAV_AGENT_WALL_HORIZON`) prioritized over neighbors; writes the velocity of the
+  half-planes (`NAV_AGENT_WALL_HORIZON`) prioritized over neighbors, other `Character`s (players)
+  and obstacles; neighbor scratch is sized for all agents + characters + obstacles before
+  gathering (else `navigation.memory`); writes the velocity of the
   `input.Move_Input` of its body (`world_velocity`), keeping its buttons, and drops it
   (`input.move_release`) when it stops; a seated body only with `Nav_Agent.seated`.
 - **Replanning & errors**: replans on invalid corridor, `core.place` teleport, off-level
   (`> climb + 0.5m`), or stuck (retries before `navigation.blocked`; agents queued behind movers
-  wait). Airborne off-mesh waits to land instead of `navigation.off_mesh`. Partial paths wait while
-  tiles build, then emit `Arrived_Partial`.
+  wait). Held still by what never steps aside (a player) it replans every `2*NAV_BLOCKED` without
+  failing. Airborne off-mesh waits to land instead of `navigation.off_mesh`. Partial paths wait
+  while tiles build, then emit `Arrived_Partial`.
 - **Flight & swim**: 3D capsule center, straight-line fast path, 3D sphere ORCA; flight requests
   `MODE_FLYING`, swim lets physics own mode.
 - **Crossings** (`MODE_NAV_LINK`, `navigation_crossing` before `locomotion_step`, gated by
@@ -144,8 +155,10 @@ mirai rpc nav.agent '{"entity":"Guard_1"}'
   drive, crowd patrol + off-level + mid-jump replan, shared `Follow_Tree`, heightfield recarving,
   idle crossing gate, unloaded terrain/bounds residency + bake reload, stable link toggles, shared
   capacity, ghosted `passthrough`, collider-only gates, close following, partial arrival, teleport/
-  cleanup, crowd queuing, lazy scratch, deterministic parallel avoidance, nonblocking publish, and
-  sections (stitching, drop/reload, far travel/arrival/requests/flight, column overlap).
+  cleanup, crowd queuing, lazy scratch, deterministic parallel avoidance, nonblocking publish,
+  sections (stitching, drop/reload, far travel/arrival/requests/flight, column overlap), and
+  bodyless agents (stairs/ramp detail height + `Motion`, stepping around players, crowd scratch
+  without memory, jump arc and manual skip).
 - `mirai test std/ai`: coarse graph build and traversal.
 - `mirai test plugins/navigation/editor`: far `nav.agent` and `play.step` `drive`.
 - Demo session: `nav.status` settled, `nav.path`, Play `nav.agent`, and `Swarm` air arena.

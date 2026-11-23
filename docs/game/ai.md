@@ -28,6 +28,9 @@ team), `behavior.Mind_Agent{mind=behavior.mind_name("zombie")}` and an `anim.Ani
 The agent's navigation class is chosen from its capsule; with none that fits, the problem
 `navigation.agent_class` says what size is missing.
 
+- A crowd walker is a `nav.Nav_Agent` with a `Walk` and no `Character`: navigation moves it on the
+  navmesh around players and agents, across links, and writes its `core.Motion`, which motion
+  matching animates. It walks only, without collision: a `Character` makes it push and be pushed.
 - The navmesh builds itself from the world's static collision (a `Nav_Bounds` limits it). A mover
   that blocks ways is a `Nav_Obstacle`, a costlier or forbidden zone a `Nav_Area`: each a `Box` or
   `Sphere` `Volume` on its entity ([regions](world/regions.md)). Jumps, ladders, doors: `Nav_Link`s.
@@ -55,15 +58,12 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - **Hearing:** `noise(noises, {position, loudness, maker})` reaches a `Perceiver` within `loudness`
   times its `hearing` m that notices the maker's team (else `team`; none: all). `listener`: only
   it, anywhere (a hit). `age` (ticks) dates a report: never over a fresher one.
-- **Use the world:** a smart object offers a use; `think` proposes going if one is open and
-  the action does the trip ([smart-objects.md](ai/smart-objects.md)). A need the agent
-  satisfies with an object (ammo, health) is this.
+- **Use the world:** `think` proposes going to an open use a smart object offers; the action does
+  the trip ([smart-objects.md](ai/smart-objects.md)). A need an object meets (ammo, health) is it.
 - **Move requests:** `nav.nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`, `nav_look_along`
-  on `Nav_Requests`. `Arrived` means the agent reached its destination. `Arrived_Partial`
-  means it reached the end of an incomplete route. `Failed` includes `navigation.blocked`.
-- **Show it:** an action that takes `requests:^anim.Animation_Requests` calls
-  `anim.play(requests,behavior.agent(a),"Bite")` and `anim.look`. Minds run on the server, and every
-  client plays what the server played, as far into it as the server is.
+  on `Nav_Requests`; then `Arrived`, `Arrived_Partial` (end of an incomplete route) or `Failed`.
+- **Show it:** an action with `requests:^anim.Animation_Requests` calls `anim.look` and
+  `anim.play(requests,behavior.agent(a),"Bite")`; clients play what the server played, as far in.
 
 ## Pitfalls that fail silently
 

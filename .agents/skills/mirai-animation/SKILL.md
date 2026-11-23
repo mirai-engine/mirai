@@ -151,9 +151,11 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 2. **Locomotion:** the match clips of the set with the locomotion mode each one serves. With a
    `Character`, `animation_physics` tells it on each tick the mode, the velocity and what its
    locomotion heads to (published on `Locomotion_State`: `desired`, rates, `facing`, `turn_speed`,
-   across the up of its `core.Vertical`): the game writes nothing. Without physics, the game calls
-   `match_goal`. Its feet ground only while its `Character_State` stands (`animation_grounding`),
-   and a `Root_Motion_Body` makes the root motion of its whole animation walk and turn it.
+   across the up of its `core.Vertical`): the game writes nothing. Without a body but with a
+   `core.Motion` (a bodyless `Nav_Agent`), it walks by that Motion and its `Walk` rates
+   (`motion_goal`). Otherwise the game calls `match_goal`. Its feet ground only while its
+   `Character_State` stands (`animation_grounding`), and a `Root_Motion_Body` makes the root motion
+   of its whole animation walk and turn it.
 3. **Few clips:** idle and walk are enough; a run or jog widens the range. The rate of a clip
    (`min_rate`..`max_rate` of the set, or of its source: a crouch authored slower than it is
    played, a jog kept below the sprint) covers the velocities between those of its clips and the

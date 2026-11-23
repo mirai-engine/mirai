@@ -224,7 +224,7 @@ a_wide_agent_ahead_is_a_crowd :: proc(t:^testing.T) {
     })
     agents_avoid(&f.nav,&f.run,&f.paths,nil,1.0/60,&f.problems)
     testing.expect_value(t,f.run.widest_ground,f32(2))
-    testing.expect(t,crowd_ahead(&f.run,&f.run.near[0],core.NONE))
+    testing.expect(t,held_ahead(&f.run,&f.run.near[0],core.NONE,false))
 }
 
 @(test)

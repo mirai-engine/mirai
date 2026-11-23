@@ -68,10 +68,11 @@ Locomotion is the `Match_Profile` of `Animation.asset` (`.character`):
   12 with extras. Linear SIMD below `MATCH_LINEAR_ROWS`, bounded runs above. A database of an
   older library generation or skeleton revision is released when its successor builds.
 - **Per tick.** `match_goal` feeds mode, velocity, desired velocity, accel/braking, facing, wall
-  normal, and `time_to_land`. With physics, `animation_physics` feeds it automatically (model faces
-  `-Z`, [facing](../../mirai-physics/SKILL.md#library-invariants)) and drives `mantle` warp/root
-  motion. Optional spring `lag`/`lag_half_life` offsets root up to `lag` (never into wall; closes
-  only while moving at `<= MATCH_LAG_CLOSE * clip_speed`).
+  normal, and `time_to_land`. An animated entity with `core.Motion` and no `Character` or
+  `Rigid_Body` walks by its Motion (`motion_goal`). With physics, `animation_physics` feeds it
+  automatically (model faces `-Z`, [facing](../../mirai-physics/SKILL.md#library-invariants)) and
+  drives `mantle` warp/root motion. Optional spring `lag`/`lag_half_life` offsets root up to `lag`
+  (never into wall; closes only while moving at `<= MATCH_LAG_CLOSE * clip_speed`).
 - **Search & transitions.** Every `interval`, picks lowest-cost row scaled within
   `min_rate`..`max_rate` if saving `bias` past `hold`, skipping `reselect` window (or whole loop
   with `keep_loop_phase`). `spans`: `Exclude` forbids search and forces immediate re-search;

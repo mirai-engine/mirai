@@ -69,3 +69,29 @@ navigation_scratch_without_memory_reports_it_and_leaves_its_part :: proc(t:^test
         test_world_destroy(&w)
     }
 }
+
+// The scratch of the neighbors is made for every agent, with or without a
+// body, and every other character before they are gathered: without memory
+// for a crowd that came, the tick says so instead of leaving some out.
+@(test)
+a_crowd_without_memory_for_its_neighbors_reports_it :: proc(t:^testing.T) {
+    owner:=context.allocator
+    limit:=Memory_Limit{owner=owner,remaining=max(int)}
+    context.allocator={memory_limit_proc,&limit}
+    defer context.allocator=owner
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    nav_test_box(&f,{0,-0.5,0},{20,0.5,20})
+    nav_test_settled(t,&f)
+    bodyless_player(&f,{0,0,0})
+    bodyless_walker(&f,{-5,0,0})
+    for _ in 0..<3 {agents_test_step(&f)}
+    for i in 0..<100 {bodyless_walker(&f,{-15+f32(i%10),0,-5+f32(i/10)})}
+    agents_test_step(&f)
+    limit.remaining=0
+    agents_test_step(&f)
+    limit.remaining=max(int)
+    reported:=core.problem_find(&f.problems,core.NONE,"navigation.memory")!=nil
+    testing.expectf(t,len(f.run.near)==102 || reported,"%d of 102 are near each other and nothing is reported",len(f.run.near))
+}

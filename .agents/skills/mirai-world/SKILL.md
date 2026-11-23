@@ -5,7 +5,7 @@ description: Mirai world content plugins - `terrain` (heightfield and volume ter
   (the drawing and collision sink of `pcg` graphs, with cells, impostors, wind, collision),
   `water` (waves, caustics, foam, wakes), `imprint`
   (footprints in snow, mud and sand), `vfx` (GPU particles, `.particle` effects, births by channel,
-  grids and volumes, debugging particles), `navigation` (automatic navmesh, links, agents),
+  grids and volumes, debugging particles), `navigation` (automatic navmesh, links, agents, crowds),
   `behavior` (AI minds, smart objects, perception, influence maps) and `shapes` (editable solids of
   a polygon and brush entities, splines of roads, paths and rivers, and meshes bent along a curve
   for rails, chains, pipes and ropes). Use when sculpting or painting terrain, scattering
@@ -88,7 +88,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [take out, promote, mark](references/foliage.md#play-take-out-promote-mark) and
   [editor](references/foliage.md#editor)
 - `navigation` (automatic navmesh per agent class, areas, obstacles, manual and generated links,
-  agents, link crossing, crowd, air and water volumes, `.navmesh`, `nav.*`):
+  agents, bodyless crowd walkers, link crossing, crowd, air and water volumes, `.navmesh`, `nav.*`):
   [meshes](references/navigation.md#meshes),
   [air and water volumes](references/navigation.md#air-and-water-volumes),
   [links](references/navigation.md#links), [agents](references/navigation.md#agents),

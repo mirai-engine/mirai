@@ -22,6 +22,9 @@ Bridge_Tables :: struct {
     mantles:core.Table(locomotion.Mantle_State),
     worlds:core.Table(core.World_Transform),
     verticals:core.Table(core.Vertical),
+    characters:core.Table(phys.Character),
+    rigids:core.Table(phys.Rigid_Body),
+    walks:core.Table(locomotion.Walk),
 }
 
 // A matching rig of a .character played by actor, with what animation_locomotion reads of it.
@@ -78,7 +81,8 @@ bridge_init :: proc(b:^Bridge,state:locomotion.Locomotion_State,velocity:mm.Vec3
 bridge_tick :: proc(b:^Bridge) {
     clear(&b.requests.match_goals.items);clear(&b.requests.locomotion.items)
     animation_locomotion(core.read(&b.tables.states),core.read(&b.tables.found),core.read(&b.tables.animations),core.read(&b.tables.motions),
-        core.read(&b.tables.mantles),core.read(&b.tables.worlds),core.read(&b.tables.verticals),core.ref(&b.playback),{},&b.requests,core.ref(&b.sets),b.app)
+        core.read(&b.tables.mantles),core.read(&b.tables.worlds),core.read(&b.tables.verticals),core.read(&b.tables.characters),core.read(&b.tables.rigids),
+        core.read(&b.tables.walks),core.ref(&b.playback),{},&b.requests,core.ref(&b.sets),b.app)
 }
 
 @(private="file")
@@ -138,5 +142,42 @@ the_bridge_uses_current_motion_and_ignores_raw_clips_even_with_previous_matching
             testing.expect_value(t,b.requests.match_goals.items[0].velocity,mm.Vec3{3,0,2})
             testing.expect_value(t,b.requests.locomotion.items[0].velocity,mm.Vec3{3,0,2})
         }
+    }
+}
+
+// An agent of navigation without a Character, whose core.Motion navigation writes, walks in the
+// matching by it: its velocity, facing where it goes, at the rates of its Walk, and its warping
+// follows it; a body of the physics with the same Motion is no walker.
+@(test)
+a_bodyless_walker_feeds_the_matching_from_its_motion :: proc(t:^testing.T) {
+    b:Bridge
+    bridge_init(&b,{mode=locomotion.MODE_WALKING},{0,0.4,-3},mm.QUAT_IDENTITY)
+    defer bridge_destroy(&b)
+    core.remove(&b.tables.states,b.actor)
+    core.add(&b.tables.walks,b.actor,locomotion.WALK_DEFAULT)
+    core.table_settle(&b.tables.states,&b.entities)
+    core.table_settle(&b.tables.walks,&b.entities)
+    bridge_tick(&b)
+    if !testing.expect(t,len(b.requests.match_goals.items)==1 && len(b.requests.locomotion.items)==1) {return}
+    goal:=b.requests.match_goals.items[0]
+    walk:=locomotion.WALK_DEFAULT
+    testing.expectf(t,goal.rig==b.actor && goal.mode==u16(locomotion.MODE_WALKING) && goal.velocity==mm.Vec3{0,0.4,-3} && goal.desired==mm.Vec3{0,0,-3},"%v",goal)
+    testing.expectf(t,goal.facing==mm.Vec3{0,0,-1} && goal.acceleration==walk.acceleration && goal.braking==walk.braking && goal.turn_rate==walk.turn_speed,"%v",goal)
+    testing.expect_value(t,b.requests.locomotion.items[0].velocity,mm.Vec3{0,0,-3})
+    // Standing still, it faces where it faces, and the goal stays one matching takes.
+    core.edit(&b.tables.motions,b.actor).linear={}
+    bridge_tick(&b)
+    if testing.expect(t,len(b.requests.match_goals.items)==1) {
+        still:=b.requests.match_goals.items[0]
+        testing.expectf(t,still.velocity=={} && still.desired=={} && still.facing==mm.FORWARD,"%v",still)
+    }
+    for body in ([2]bool{false,true}) {
+        if body {core.add(&b.tables.rigids,b.actor,phys.RIGID_BODY_DEFAULT)} else {core.add(&b.tables.characters,b.actor,phys.character_default())}
+        core.table_settle(&b.tables.rigids,&b.entities)
+        core.table_settle(&b.tables.characters,&b.entities)
+        bridge_tick(&b)
+        testing.expectf(t,len(b.requests.match_goals.items)==0,"a %s gets no goal from its Motion","Rigid_Body" if body else "Character without locomotion")
+        core.remove(&b.tables.characters,b.actor)
+        core.table_settle(&b.tables.characters,&b.entities)
     }
 }
