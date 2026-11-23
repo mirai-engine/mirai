@@ -259,7 +259,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     float depth = fog_slice_depth(float(id.z) + along);
     float width = depth * length(view_ray(uv + 1.0 / float2(fog.grid.xy)) - view_ray(uv));
     float footprint = max(fog_slice_depth(float(id.z + 1u)) - fog_slice_depth(float(id.z)), width);
-    media_across = footprint;
+    media_across = width;
     float g;
     float4 mean;
     float3 mean_sun_only;
