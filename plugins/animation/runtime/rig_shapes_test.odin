@@ -39,11 +39,9 @@ rig_shape_profiles_roundtrip_refuse_other_versions_and_degenerate_splines :: pro
     testing.expect_value(t,read,asset.Error.None)
     testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.follow[0].target.kind==.Socket)
     testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose)
-    // A set of the current version without curve poses and materials is incomplete, and one of an
-    // older or newer version is refused.
-    for name in ([2]string{"curve_poses","curve_materials"}) {
-        if table,found:=asset.document_table(&doc,name);found {asset.document_table_remove(&doc,table)}
-    }
+    // A set of the current version without curve poses is incomplete, and one of an older or newer
+    // version is refused.
+    if table,found:=asset.document_table(&doc,"curve_poses");found {asset.document_table_remove(&doc,table)}
     for version,i in ([3]u16{CHARACTER_VERSION,CHARACTER_VERSION-1,CHARACTER_VERSION+1}) {
         doc.kind_version=version
         bytes,written:=asset.document_bytes(&doc,context.temp_allocator)

@@ -1,14 +1,12 @@
 package anim
 
-import "core:math"
 import "core:slice"
 import "mirai:core"
 import lib "mirai:std/anim"
 import "mirai:std/base"
-import erender "mirai:engine/render"
 import mm "mirai:std/math"
 
-POSE_CURVE_ROWS :: 4096 // rows of curve_poses, and of curve_materials, of a .character
+POSE_CURVE_ROWS :: 4096 // rows of curve_poses of a .character
 
 // A pose that a Float curve brings to a bone, as the poses of a face (a blink,
 // an open jaw, a phoneme): with the value of curve, from 0 to 1, the bone
@@ -27,42 +25,19 @@ Curve_Pose :: struct {
 }
 CURVE_POSE_DEFAULT :: Curve_Pose{delta=mm.TRANSFORM_IDENTITY,weight=1,enabled=true}
 
-// A value of the material of the meshes of a rig that a Float curve moves:
-// offset plus scale times the curve, which step rounds to its multiples (the
-// frames of a flipbook face, a switch) when it is positive. parameter names a
-// value of the material (emission, roughness...) or a parameter of its
-// program; slot is the material slot of the mesh, or every slot with every.
-// It is a value each mesh of the rig shows at run time (erender.Material_Live)
-// while the curve plays, over the one the entity authors under that name.
-Curve_Material :: struct {
-    curve:[64]u8 `mirai:"text"`,
-    parameter:[64]u8 `mirai:"text"`,
-    slot:u8 `mirai:"optional"`,
-    every:bool `mirai:"optional"`,
-    scale:[4]f32,
-    offset:[4]f32 `mirai:"optional"`,
-    step:f32 `mirai:"optional,min=0"`,
-    enabled:bool,
-}
-CURVE_MATERIAL_DEFAULT :: Curve_Material{scale={1,1,1,1},enabled=true}
-
 Curve_Binding :: struct {
     rig:core.Entity,
     bound:u64,
     generation:u32,
     ready:bool,
     bone:i32,     // of a pose
-    curve,to:u64, // name hashes: of its curve, and of the parameter of a material value
+    curve:u64,    // name hash of its curve
     at:[2]i32,    // where its curve was found last among those of the rig and of its leader
 }
 
 @(private)
 curve_poses_check :: proc(profile:Pose_Profile) -> bool {
-    if len(profile.curve_poses)>POSE_CURVE_ROWS || len(profile.curve_materials)>POSE_CURVE_ROWS {return false}
-    for &value in profile.curve_materials {
-        if !blend_text_valid(value.curve[:],false) || !blend_text_valid(value.parameter[:],false) || int(value.slot)>=erender.MATERIAL_SLOTS || !finite(value.step) || value.step<0 {return false}
-        for axis in 0..<4 {if !finite(value.scale[axis]) || !finite(value.offset[axis]) {return false}}
-    }
+    if len(profile.curve_poses)>POSE_CURVE_ROWS {return false}
     for &value in profile.curve_poses {
         if !blend_text_valid(value.curve[:],false) || !profile_bone(value.bone) || !spatial_transform_valid(value.delta) || !profile_weight(value.weight) {return false}
     }
@@ -112,7 +87,7 @@ curve_same :: proc "contextless" (a,b:Curve_Output) -> bool {return a.target==b.
 
 // The curve poses of the profile of a rig move its bones by the curves it reads (rig_curve): the
 // full ones first, then the additive ones, each summed by bone so that the order of the rows does
-// not matter. Its curve materials find their curves for animation_skin.
+// not matter.
 @(private)
 curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtime,rig:^Modifier_Rig,pose:Pose_Profile,followed:bool,problems:^core.Problems) -> bool {
     if len(pose.curve_poses)>0 && len(runtime.curve_full)<len(playing_pose(state,.Local)) &&
@@ -121,14 +96,6 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
         return false
     }
     leader:=rig_leader(core.ref(playback),state) if followed else nil
-    for &config,row in pose.curve_materials {
-        binding:=&rig.curve_material_states[row]
-        if !binding.ready {
-            binding^={rig=state.entity,ready=true,at=-1}
-            binding.curve,binding.to=base.name_hash(base.text_get(config.curve[:])),base.name_hash(base.text_get(config.parameter[:]))
-        }
-        rig_curve(state,leader,{target=binding.curve,property=.Float},&binding.at)
-    }
     valid:=true
     for &config,row in pose.curve_poses {
         binding:=&rig.curve_pose_states[row]
@@ -168,43 +135,3 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
     }
     return valid
 }
-
-// Gives the material values that the curves of rig move to the Material_Live
-// of entity, a mesh of it with slots material slots, and takes away those of
-// the curves that do not play, and the component with the last of them.
-// False when they do not fit in it (the others still apply).
-@(private)
-curve_materials_apply :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,playback:core.Ref(Playback),playing:^Playing,slots:int,lives:^core.Table(erender.Material_Live),entity:core.Entity) -> (fits:bool) {
-    fits=true
-    if playing==nil {return}
-    rig:=modifier_rig(core.ref(runtime),playing.entity)
-    pose:=modifier_pose(rig,characters)
-    if pose==nil || len(pose.curve_materials)==0 {return}
-    live:=core.staged(lives,entity)
-    leader:=rig_leader(playback,playing)
-    for &config,row in pose.curve_materials {
-        binding:=rig.curve_material_states[row]
-        name,parameter,at:=binding.curve,binding.to,binding.at
-        if !binding.ready {
-            name,parameter=base.name_hash(base.text_get(config.curve[:])),base.name_hash(base.text_get(config.parameter[:]))
-            at=-1
-        }
-        curve:=config.enabled?rig_curve(playing,leader,{target=name,property=.Float},&at):nil
-        amount:=curve!=nil?curve.value.x:0
-        if config.step>0 {amount=math.floor(amount/config.step+.5)*config.step}
-        value:=config.offset+config.scale*amount
-        plays:=curve!=nil && curve.weight>0 && finite(value.x) && finite(value.y) && finite(value.z) && finite(value.w)
-        for target in 0..<max(slots,1) {
-            if !config.every && target!=int(config.slot) {continue}
-            if !plays {
-                if live!=nil {erender.material_value_drop(live,parameter,target)}
-                continue
-            }
-            if live==nil {live=erender.material_live(lives,entity)}
-            if live!=nil {fits &&=erender.material_value(live,parameter,value,target)}
-        }
-    }
-    if live!=nil && live^=={} {core.remove(lives,entity)}
-    return
-}
-

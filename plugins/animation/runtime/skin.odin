@@ -55,6 +55,8 @@ Skin_Instance :: struct {
     part_layers:u32,
     in_part:[]bool,            // by joint of the rig: it hangs from the bone of the part
     part_palette:[]mm.Mat4,    // the palette with the part collapsed into its bone
+    shown:[erender.MATERIAL_VALUES_CAPACITY]Material_Shown, // the material values its rig's curves gave it
+    shown_count:u8,
 }
 
 Skin_Update :: struct {slot:int,drawn,basis:mm.Transform,exact:u64}
@@ -70,6 +72,8 @@ Skin_Runtime :: struct {
     allocator:mem.Allocator,
     rigs:[dynamic]Skin_Rig,
     rig_rows:map[base.Asset_Id]u32,
+    materials:[dynamic]Material_Curves, // of the libraries the rigs play, up to MATERIAL_LIBRARIES
+    uses:u64,                           // calls of animation_skin, which Material_Curves.used counts by
 }
 
 // The meshes a world deforms on the GPU, by entity: each world keeps its own.
@@ -93,7 +97,10 @@ skin_instance_free :: proc(renderer:^erender.Renderer,instance:^Skin_Instance) {
     if instance.copied {erender.mesh_remove(renderer,instance.mesh)}
     delete(instance.local);delete(instance.world);delete(instance.palette);delete(instance.morph_weights)
     delete(instance.in_part);delete(instance.part_palette)
+    // What its entity shows stays its own until the curves stop giving it.
+    shown,count:=instance.shown,instance.shown_count
     instance^={}
+    instance.shown,instance.shown_count=shown,count
 }
 
 // Makes the copy of the mesh of an instance that the renderer deforms.
@@ -141,7 +148,8 @@ animation_skin_release :: proc(state:^Skin_Instances,renderer:^erender.Renderer)
 skin_runtime_free :: proc(state:^Skin_Runtime) {
     if state.allocator.procedure!=nil {context.allocator=state.allocator}
     for &rig in state.rigs {skin_rig_free(&rig)}
-    delete(state.rigs);delete(state.rig_rows)
+    for &library in state.materials {delete(library.curves)}
+    delete(state.rigs);delete(state.rig_rows);delete(state.materials)
     state^={}
 }
 
@@ -237,7 +245,8 @@ skin_rig_read :: proc(assets:^host.Assets,allocator:runtime.Allocator,id:base.As
 // targets and no skin its weights alone, by one joint. The copy it poses is
 // the mesh the renderer draws its entity with (erender.Posed_Meshes): placed,
 // tinted, hidden and outlined as any mesh of an entity. The material values
-// the curves of a rig move are the Material_Live of its meshes.
+// the "@field/Material_Live" curves of a rig move are the Material_Live of its
+// meshes, which only this step of the render phase writes.
 @(step="render",loops="game editor",before="render_sync")
 animation_skin :: proc(
     meshes:^core.Table(erender.Mesh_Renderer,.Read),skins:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
@@ -246,12 +255,13 @@ animation_skin :: proc(
     cache:^Skin_Runtime,state:^Skin_Instances,assets:^host.Assets,renderer:^erender.Renderer,poses:^erender.Posed_Meshes,job_system:^jobs.Job_System,allocator:runtime.Allocator,time:core.Time,frame:core.Frame_Time,playback:core.Ref(Playback),
     morphs:core.Ref(Morph_Playback),problems:^core.Problems,
     policies:^core.Table(Animation_Budget,.Read),budget:^Budget_Runtime,config:Animation_Budget_Config,parts:^core.Table(Skin_Part,.Read),
-    modifiers:core.Ref(Modifier_Runtime),view:core.Ref(core.View),characters:core.Ref(Character_Assets),
+    sources:core.Ref(Source_Assets),view:core.Ref(core.View),app:^host.App,
 ) {
     if state==nil || renderer==nil || assets==nil {return}
     context.allocator=allocator
     state.allocator,cache.allocator=allocator,allocator
     state.frame+=1
+    cache.uses+=1
     rigs:=playback.ptr.rigs[:] if playback.ptr!=nil else nil
     morphing:=morphs.ptr.states[:] if morphs.ptr!=nil else nil
     posed:=len(rigs)+core.count(skins)
@@ -317,9 +327,7 @@ animation_skin :: proc(
         instance.seen=state.frame
         source:=host.assets_mesh(assets,static.mesh)
         if source==nil || source.handle==host.ASSETS_MESH_NONE {continue}
-        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,characters.ptr,playback,pose,int(source.slot_count),lives,entity) {
-            core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
-        }
+        if !rigid {material_curves_apply(cache,instance,lives,entity,int(source.slot_count),playback,pose,sources,app,problems)}
         bones:=len(playing_pose(pose,.Local)) if !rigid else 0
         // Not drawn in the last frame (new, or shown again): it shows the pose and the weights of the
         // tick, not an interpolation from those of a tick it was not drawn in, as the rest pose of a
@@ -488,5 +496,120 @@ animation_skin :: proc(
     #reverse for &group,at in state.rig_groups.values {
         if group.seen==state.frame {continue}
         core.entity_map_remove_at(&state.rig_groups,at)
+    }
+}
+
+MATERIAL_LIVE :: "Material_Live"
+MATERIAL_LIBRARIES :: 64 // libraries whose material curves Skin_Runtime keeps; past it the one used longest ago goes
+
+// A curve "@field/Material_Live.<field>" of an animation library: a value the meshes of the rig
+// that plays it show over their materials while it plays (erender.Material_Live).
+Material_Curve :: struct {
+    key:Curve_Output, // the curve: its target, property and slot
+    node:u64,         // base.name_hash of the path of the entity it names; 0: every mesh of the rig
+    parameter:u64,    // base.name_hash of the value of the material
+    slot:i8,          // material slot; -1: every one
+}
+// The material curves of a library, found once for each generation of it. invalid: those whose
+// field names no value of a material slot.
+Material_Curves :: struct {id:base.Asset_Id,generation:u32,used:u64,curves:[dynamic]Material_Curve,invalid:u32}
+// A material value a mesh shows for the curves of its rig.
+Material_Shown :: struct {parameter:u64,slot:u8}
+
+// The material slot and value a field of Material_Live names: "<value>" is of slot 0,
+// "<slot>.<value>" of that slot and "*.<value>" of every one (slot -1). False for a slot past
+// erender.MATERIAL_SLOTS, a value with a dot or an empty part.
+material_field :: proc "contextless" (field:string) -> (slot:int,parameter:string,ok:bool) {
+    dot:=-1
+    for i in 0..<len(field) {if field[i]=='.' {dot=i;break}}
+    parameter=field[dot+1:]
+    if parameter=="" || dot==0 {return}
+    for i in 0..<len(parameter) {if parameter[i]=='.' {return}}
+    if dot<0 {return 0,parameter,true}
+    if field[:dot]=="*" {return -1,parameter,true}
+    for i in 0..<dot {
+        if field[i]<'0' || field[i]>'9' {return}
+        slot=slot*10+int(field[i]-'0')
+        if slot>=erender.MATERIAL_SLOTS {return}
+    }
+    return slot,parameter,true
+}
+
+// The material curves of a library; nil for one without, or when memory ran out.
+@(private)
+material_curves_of :: proc(cache:^Skin_Runtime,content:^host.Content_Animation) -> ^Material_Curves {
+    if content==nil || len(content.fields)==0 {return nil}
+    found:^Material_Curves
+    for &known in cache.materials {
+        if known.id==content.id && known.generation==content.generation {known.used=cache.uses;return &known}
+        if found==nil || known.used<found.used {found=&known}
+    }
+    if len(cache.materials)<MATERIAL_LIBRARIES {
+        if append(&cache.materials,Material_Curves{})!=1 {return nil}
+        found=&cache.materials[len(cache.materials)-1]
+    }
+    curves:=found.curves;clear(&curves)
+    found^={id=content.id,generation=content.generation,used=cache.uses,curves=curves}
+    for &field in content.fields {
+        if base.text_get(field.component[:])!=MATERIAL_LIVE {continue}
+        slot,parameter,ok:=material_field(base.text_get(field.field[:]))
+        if !ok {found.invalid+=1;continue}
+        curve:=Material_Curve{key={target=field.curve,property=field.property,slot=field.slot},
+            node=field.node,parameter=base.name_hash(parameter),slot=i8(slot)}
+        if append(&found.curves,curve)!=1 {found.id={};return nil}
+    }
+    return found
+}
+
+// Gives the Material_Live of entity, a mesh of the rig of pose with slots material slots, the
+// values the "@field/Material_Live" curves of the rig (and of its leader) move while they play,
+// and takes away those it gave that no longer play, and the component with the last of them.
+@(private)
+material_curves_apply :: proc(cache:^Skin_Runtime,instance:^Skin_Instance,
+    lives:^core.Table(erender.Material_Live),entity:core.Entity,slots:int,playback:core.Ref(Playback),
+    pose:^Playing,sources:core.Ref(Source_Assets),app:^host.App,problems:^core.Problems) {
+    leader:=rig_leader(playback,pose)
+    if instance.shown_count==0 && len(pose.curves)==0 && (leader==nil || len(leader.curves)==0) {return}
+    shown:[erender.MATERIAL_VALUES_CAPACITY]Material_Shown
+    count:=0
+    live:=core.staged(lives,entity)
+    fits:=true
+    players:=[2]^Playing{pose,leader}
+    for player in players {
+        if player==nil || app==nil {continue}
+        library:=material_curves_of(cache,animation_playing_content(sources,app,player))
+        if library==nil {continue}
+        if library.invalid>0 {
+            core.report(problems,pose.entity,"animation.material_field","%d curves of the clips of this rig write a field of Material_Live that names no value of a material slot; name one as @field/Material_Live.<value>, .<slot>.<value> with a slot under %d, or .*.<value> for every slot",library.invalid,erender.MATERIAL_SLOTS)
+        }
+        for &material in library.curves {
+            if material.node!=0 && field_entity(player,material.node)!=entity {continue}
+            at:=[2]i32{-1,-1}
+            curve:=rig_curve(pose,leader,material.key,&at)
+            if curve==nil || !(curve.weight>0) {continue}
+            value:=curve.value/curve.weight
+            if !finite(value.x) || !finite(value.y) || !finite(value.z) || !finite(value.w) {continue}
+            for target in 0..<max(slots,1) {
+                if material.slot>=0 && target!=int(material.slot) {continue}
+                if live==nil {live=erender.material_live(lives,entity)}
+                if live==nil || !erender.material_value(live,material.parameter,value,target) {fits=false;continue}
+                given:=Material_Shown{material.parameter,u8(target)}
+                known:=false
+                for previous in shown[:count] {if previous==given {known=true;break}}
+                if !known && count<len(shown) {shown[count]=given;count+=1}
+            }
+        }
+    }
+    if live!=nil {
+        for given in instance.shown[:instance.shown_count] {
+            playing:=false
+            for now in shown[:count] {if now==given {playing=true;break}}
+            if !playing {erender.material_value_drop(live,given.parameter,int(given.slot))}
+        }
+        if live^=={} {core.remove(lives,entity)}
+    }
+    instance.shown,instance.shown_count=shown,u8(count)
+    if !fits {
+        core.report(problems,entity,"animation.material_values","the @field/Material_Live curves of the rig of this entity give it more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
     }
 }

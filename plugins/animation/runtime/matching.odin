@@ -690,7 +690,7 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
 // lists, so that swapping one into Animation.library does not build it in that tick. A library
 // still loading is built in a later tick; once all are, the rig does not look again until its set
 // or skeleton changes. extras: those of the sources of what it plays (animation_content).
-match_prebuild :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,sources:^Source_Assets,extras:[3]base.Asset_Id) {
+match_prebuild :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,sources:^Source_Assets,extras:Source_Extras) {
     m:=&state.program.match
     shape:=[3]u64{state.skeleton[0],state.skeleton[1],state.skeleton_revision+1}
     if m.prebuilt==shape || !state.program.matched || !state.program.ready || app.assets==nil {return}

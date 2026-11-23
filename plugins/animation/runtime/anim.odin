@@ -198,14 +198,15 @@ Stack_Inertia :: struct {
 // the rotation, per second), and the difference from it that decays over a blend.
 Root_Inertia :: struct {velocity,offset:[2]mm.Vec3,frame:u64,shown:bool,duration,elapsed:f32}
 
-// What an entity plays over its base clip: the layers and actions of its .character, a clip a
-// command plays over it, and the inertia that blends what they change or what its locomotion
-// jumps to. An entity that plays a clip alone, as a prop or a timeline, has none.
+// What an entity plays over its base clip: the layers and actions of its .character, the clips
+// commands play in its slots, and the inertia that blends what they change or what its
+// locomotion jumps to. An entity that plays a clip alone, as a prop or a timeline, has none.
 Stack_Playing :: struct {
     allocator:mem.Allocator,                // the one it was made with, which frees it
     layers:[STACK_SLOTS]Layer_Playing,
     asked:[STACK_SLOTS]Layer_Ask,           // what each slot plays in this tick
-    slots:u8,                               // slots its .character or its overlay give it
+    clips:[STACK_SLOTS]Slot_Clip,           // what commands play in each slot (layers_advance)
+    slots:u8,                               // slots its .character or its clips give it
     blend:Stack_Blend,                      // what its slots changed in this tick
     inertia:Stack_Inertia,
     parameters:[STACK_PARAMETERS]Stack_Parameter, // what set gave it; name 0: free
@@ -240,8 +241,6 @@ Playing :: struct {
     selection:Clip_Selection,
     fading_asset:base.Asset_Id,
     clip_event:Animation_Event,
-    overlay:Clip_Overlay,
-    overlay_next:Clip_Overlay,
     restore_time:Maybe(f32),
     was_playing:bool,
     previewed:bool,            // played in the editor in the last tick
@@ -450,23 +449,17 @@ animation_tick :: proc(
         first_event:=len(events.items)
         defer source_markers_resolve(sources,state,events.items[first_event:])
         if !animated {
-            if state.overlay.event.clip!=0 {
-                clip_lifecycle(playback,events,&state.overlay.event,.Interrupted,
-                    state.overlay.event.time,problems)
-            }
-            state.overlay={}
-            state.overlay_next={}
+            clips_interrupt(playback,events,state,problems,true)
             state.started=false
         }
         selection_was:=state.selection
-        overlay_was:=state.overlay.slot
         if state.fader.outgoing_count==0 {state.fading_asset={}}
         kept:Maybe(Animation_Progress)
         if time.playing && state.seen==0 && !state.started && progress!=nil {
             if value,ok:=core.get(progress,e);ok {kept=value}
         }
         edit:=clip_control(state,&animation,entity_requests(commands,e),time.playing,app,sources,characters,actions,problems,kept)
-        extras:=[3]base.Asset_Id{state.selection.asset,state.overlay.selection.asset,state.fading_asset}
+        extras:=playing_extras(state)
         content,source_error:=animation_content(sources,app,state,animation,characters,extras)
         source_pending:=source_error==.Pending
         // Until its sources load it plays on what it played (a weapon's set swapped into library
@@ -568,12 +561,6 @@ animation_tick :: proc(
             if !source_pending || content!=nil {
                 actions_sample(actions,state,animation,dt,problems,content,playback,events,pace)
             }
-            if overlay_was!=0 && overlay_was!=state.overlay.slot && state.stack!=nil {
-                i:=int(overlay_was)-1
-                state.stack.layers[i]={}
-                stack_blend(state.stack,i,state.overlay.selection.fade)
-            }
-            clip_overlay_sample(state,content,animation,edit,actions,playback,events,dt,problems)
             layers_advance(playback,state,content,animation,events,dt,problems,characters,app,actions)
             actions_layer_finish(actions,state)
             if stack:=state.stack;stack!=nil {
@@ -661,10 +648,7 @@ animation_tick :: proc(
         if state.clip_event.clip!=0 {
             clip_lifecycle(playback,events,&state.clip_event,.Interrupted,state.time,problems)
         }
-        if state.overlay.event.clip!=0 {
-            clip_lifecycle(playback,events,&state.overlay.event,.Interrupted,
-                state.overlay.event.time,problems)
-        }
+        clips_interrupt(playback,events,&state,problems,false)
     }
     actions_finish(actions,playback,tick_dt)
 }
@@ -1021,7 +1005,8 @@ layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,
 
 // The slots of the stack follow what they are asked: a slot that changes what it plays shows it at
 // once from its start, and so does the weight of one that changed in this tick (stack_blend); the
-// weight of another moves to the one asked over fade, and a slot without clip fades out.
+// weight of another moves to the one asked over fade, and a slot without clip fades out. A slot
+// with a clip of a command plays that instead (clip_slot_advance).
 @(private)
 layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,characters:^Character_Assets=nil,app:^host.App=nil,actions:^Action_Runtime=nil) {
     stack:=state.stack
@@ -1040,7 +1025,7 @@ layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
                 core.report(problems,state.entity,"animation.layer_bone","layer '%s' of the .character of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give each branch of its over one of its bones, a part or region of its body (@upper_body), or none",stack_slot_name(actions,state.entity,i))
             }
         }
-        if state.overlay.slot==u8(i+1) {continue}
+        if clip_slot_advance(playback,state,content,animation,events,dt,problems,i) {continue}
         if asked.space!=0 {
             if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt,stack.blend.slots&bit!=0) {
                 core.report(problems,state.entity,"animation.layer_space","layer '%s' of the .character of this entity samples a space that names a clip its animation does not have; check it with animation.asset.inspect, and fix it with animation.space.set",stack_slot_name(actions,state.entity,i))
@@ -1464,8 +1449,7 @@ animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation
         for &state in playback.states {
             state.asset={}
             state.clip_event={}
-            state.overlay={}
-            state.overlay_next={}
+            if state.stack!=nil {state.stack.clips={}}
             state.restore_time=nil
             state.started=false
         }

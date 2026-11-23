@@ -17,7 +17,7 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     rig:=Skin_Rig{id={5,7},revision=1,morphs={target}}
     config:Morph_Weights
     testing.expect(t,morph_weight_set(&config,"Smile",.2,.Default))
-    state:=Morph_Playing{entity=core.Entity(1),source=core.Entity(2),curve_count=-1}
+    state:=Morph_Playing{entity=core.Entity(1),source=core.Entity(2)}
     defer morph_playing_free(&state)
     testing.expect(t,morph_bind(&state,&rig,config,base.name_hash("Face"),1) && state.error==.None)
     testing.expect_value(t,state.current[0],f32(.4))
@@ -59,7 +59,7 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     morphs,listed:=host.content_animation_morphs({tracks=tracks[:]},context.allocator);defer delete(morphs)
     testing.expect(t,listed && len(morphs)==1 && morphs[0]==host.Content_Morph{base.name_hash("Armature/Body/@morph/Smile"),base.name_hash("Smile")})
     content:=host.Content_Animation{morphs=morphs}
-    named:=Morph_Playing{curve_count=-1};defer morph_playing_free(&named)
+    named:=Morph_Playing{};defer morph_playing_free(&named)
     imported:=Playing{seen=4,curves_ready=true};defer delete(imported.curves)
     append(&imported.curves,Curve_Output{target=base.name_hash("Armature/Body/@morph/Smile"),property=.Float,value={.6,0,0,0},weight=1})
     testing.expect(t,morph_bind(&named,&rig,{},base.HASH_SEED,1) && named.by_name && morph_compose(&named,&rig,{},&imported,&content) && abs(named.current[0]-.6)<1e-6)
@@ -69,11 +69,47 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     testing.expect(t,morph_compose(&named,&rig,{},&face) && abs(named.current[0]-.3)<1e-6)
     face.curves[0].value.x=.7
     testing.expect(t,morph_compose(&named,&rig,{},&face) && abs(named.current[0]-.7)<1e-6)
-    pathed:=Morph_Playing{curve_count=-1};defer morph_playing_free(&pathed)
+    pathed:=Morph_Playing{};defer morph_playing_free(&pathed)
     testing.expect(t,morph_bind(&pathed,&rig,{},base.name_hash("Face"),1) && !pathed.by_name && morph_compose(&pathed,&rig,{},&face) && abs(pathed.current[0]-.7)<1e-6,"a mesh bound by path takes the curve of the target's name too")
     full:Morph_Weights
     for i in 0..<asset.MORPH_WEIGHTS {testing.expect(t,morph_weight_set(&full,fmt.tprintf("Shape %d",i),1))}
     testing.expect(t,!morph_weight_set(&full,"One more",1) && morph_weight_set(&full,"Shape 3",2))
+}
+
+// A modular head that follows a body weighs its targets by its own curves, a clip of its face, and
+// where none of them plays by those of the body, a face capture: both move it.
+@(test)
+a_head_that_follows_a_body_reads_its_own_curves_and_else_those_of_the_body :: proc(t:^testing.T) {
+    names:=[3]string{"jawOpen","blink","smile"}
+    targets:[3]asset.Morph_Target
+    for &target,i in targets {target.weight=.1;base.text_set(target.name[:],names[i])}
+    rig:=Skin_Rig{id={5,9},revision=1,morphs=targets[:]}
+    state:Morph_Playing;defer morph_playing_free(&state)
+    testing.expect(t,morph_bind(&state,&rig,{},base.HASH_SEED,1) && state.by_name)
+    head:=Playing{asset={1,1},generation=1,seen=4,curves_ready=true};defer delete(head.curves)
+    body:=Playing{asset={2,2},generation=1,seen=4,curves_ready=true};defer delete(body.curves)
+    append(&head.curves,Curve_Output{target=base.name_hash("jawOpen"),property=.Float,value={},weight=0})
+    append(&head.curves,Curve_Output{target=base.name_hash("blink"),property=.Float,value={.8,0,0,0},weight=1})
+    append(&body.curves,Curve_Output{target=base.name_hash("jawOpen"),property=.Float,value={.6,0,0,0},weight=1})
+    append(&body.curves,Curve_Output{target=base.name_hash("blink"),property=.Float,value={.3,0,0,0},weight=1})
+    Case :: struct {head,body:bool,weights:[3]f32,why:string}
+    cases:=[]Case{
+        {true,true,{.6,.8,.1},"the body opens the jaw the head does not play, the head blinks its own"},
+        {true,false,{.1,.8,.1},"without a body the head reads its own"},
+        {false,true,{.6,.3,.1},"a head that plays nothing reads the body"},
+        {false,false,{.1,.1,.1},"with neither, the weights of the mesh"},
+    }
+    for c in cases {
+        source:=&head if c.head else nil
+        leader:=&body if c.body else nil
+        testing.expect(t,morph_compose(&state,&rig,{},source,nil,leader,nil))
+        for weight,i in c.weights {
+            testing.expectf(t,abs(state.current[i]-weight)<1e-6,"%s: %s %v",c.why,names[i],state.current[i])
+        }
+    }
+    // A face clip of the head that starts playing the jaw takes it over from the body.
+    head.curves[0].value.x,head.curves[0].weight=.2,1
+    testing.expect(t,morph_compose(&state,&rig,{},&head,nil,&body,nil) && abs(state.current[0]-.2)<1e-6)
 }
 
 @(test)
@@ -81,7 +117,7 @@ morph_weights_report_unknown_targets_and_refuse_invalid_entries_keeping_their_we
     target:=asset.Morph_Target{weight=.25}
     base.text_set(target.name[:],"Smile")
     rig:=Skin_Rig{id={5,7},revision=1,morphs={target}}
-    state:=Morph_Playing{curve_count=-1}
+    state:=Morph_Playing{}
     defer morph_playing_free(&state)
     config:Morph_Weights
     testing.expect(t,morph_weight_set(&config,"Smile",.5) && morph_weight_set(&config,"Future",2))
@@ -98,7 +134,7 @@ morph_weights_report_unknown_targets_and_refuse_invalid_entries_keeping_their_we
     failure:=Runtime_Allocation_Failure{owner=context.allocator,remaining=100}
     saved:=context
     context.allocator=runtime.Allocator{runtime_failure_allocator,&failure}
-    kept:=Morph_Playing{curve_count=-1}
+    kept:=Morph_Playing{}
     testing.expect(t,morph_bind(&kept,&rig,{},base.name_hash("Face"),1))
     failure.remaining=0
     bound:=morph_bind(&kept,&next,{},base.name_hash("Face"),2)
@@ -271,7 +307,7 @@ morph_bind_without_memory_is_refused_whole :: proc(t:^testing.T) {
     failure:=Runtime_Allocation_Failure{owner=saved}
     for count in 1..=len(targets) {
         rig:=Skin_Rig{id={5,7},revision=1,morphs=targets[:count]}
-        state:=Morph_Playing{entity=core.Entity(1),source=core.Entity(2),curve_count=-1}
+        state:=Morph_Playing{entity=core.Entity(1),source=core.Entity(2)}
         bound,refused:=false,false
         for budget in 0..<16 {
             failure.remaining=budget

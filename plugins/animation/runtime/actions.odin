@@ -592,12 +592,12 @@ stack_asks :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,co
     count:=len(plan.profile.layers)+1 if plan!=nil && content!=nil else 0
     stack:=state.stack
     if stack==nil {
-        if count==0 && state.overlay.slot==0 {return true}
+        if count==0 {return true}
         if stack=stack_make(state);stack==nil {return false}
     }
-    if state.overlay.slot>0 || stack.inertia.state.active {
-        count=max(count,int(state.overlay.slot),int(stack.slots))
-    }
+    clips:=0
+    for &c,i in stack.clips {if c.active {clips=i+1}}
+    if clips>0 || stack.inertia.state.active {count=max(count,clips,int(stack.slots))}
     if count<int(stack.slots) {for &layer in stack.layers[count:stack.slots] {layer={}}}
     stack.blend={}
     if count==0 && stack.slots==0 {return true}
@@ -650,6 +650,11 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         if slot.finishing {
             action_hand_back(stack,i,&slot,slot.fade_out)
             continue
+        }
+        // The action takes its slot from the clip a command played there.
+        if c:=&stack.clips[i];c.active {
+            if c.event.clip!=0 {clip_lifecycle(playback,events,&c.event,.Interrupted,c.event.time,problems)}
+            c^={}
         }
         definition:=&profile.actions[slot.action]
         speed:=definition.speed
@@ -743,13 +748,11 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             next:=profile.sections[slot.section].next if slot.section>=0 else -1
             if slot.cancel_pending || next<0 {
                 if !slot.cancel_pending && slot.next_clip!=0 && silent<0 {
-                    selection:=Clip_Selection{clip=slot.next_clip,asset=source,fade=definition.fade_out}
-                    if state.overlay_next.slot!=0 {
-                        core.report(problems,state.entity,"animation.clip_layer_busy",
-                            "another action already chained to a clip this tick; use separate end times")
-                    } else if clip_handle(content,selection)!=0 {
-                        state.overlay_next={selection=selection,slot=u8(i+1),speed=definition.speed,
-                            weight=definition.weight,playing=true}
+                    selection:=Clip_Selection{clip=slot.next_clip,asset=source,
+                        fade=definition.fade_out,weight=definition.weight}
+                    if clip_handle(content,selection)!=0 {
+                        stack.clips[i]={selection=selection,speed=definition.speed,playing=true,
+                            active=true,restart=true,waits=true}
                     } else {
                         core.report(problems,state.entity,"animation.action_clip",
                             "the action's next clip is missing from its animation; name a clip in the same source")

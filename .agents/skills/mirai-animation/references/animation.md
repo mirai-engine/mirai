@@ -46,8 +46,8 @@ e.g. face/head rig on body):
 - Shared bones copy the leader's finished pose (by name, or path on duplicates); follower-only
   bones keep its own `Animation` and set under moved parents. Pairs build on bind, never per tick.
 - A follower reads the curve of its leader where the leader animates it and its own otherwise
-  (`rig_curve`: lookups, curve poses, curve materials), so the face a body plays poses a modular
-  head; its morphs take the curves of the leader (`source_kind` `Pose_Source`).
+  (`rig_curve`: lookups, curve poses, `@field/Material_Live` values), so the face a body plays
+  poses a modular head; its morphs read its own curves and the leader's where its own do not play.
 - `rigs_update` topologically sorts `Playback.follow_order` for single-pass `animation_finish`;
   cycles run last and report `animation.follow_rig`, zero common names report
   `animation.follow_bones`. Leader `Playing.world_final` builds once per tick; follower entity
@@ -171,7 +171,7 @@ rebuilding only on asset change. Inspect via `animation_playing_content`, `sourc
   `Track_Map` (blends by bone, never target name). Materializes `Animation_Progress` on save.
 - **Stack only when layered.** `Playing.stack` (`Stack_Playing`: layers, actions' slots, inertia,
   parameters, masks) is made the first time an entity plays more than its base clip (a `.character`
-  with layers, actions or locomotion, a `play_clip` overlay, `set`) and kept; a prop or timeline
+  with layers, actions or locomotion, a `play_clip` in a slot, `set`) and kept; a prop or timeline
   playing one clip has none.
 - **Copies carry simulation only.** `playback_copy` (Play, rollback snapshots) copies states,
   stacks, rigs and track maps; each copy keeps its own `Playback.work`, `Stack_Playing.scratch` and
@@ -200,7 +200,7 @@ grounding, IK/Look, rigs, limits, final poses, attachments).
   `pose_bake_test.odin`). `animation_skin` interpolates last two poses (no interpolation when newly
   shown after `Hidden`), shares base mesh while `palette_at_bind` (allocates deformed copy + BLAS
   only once posed or morphed; large uploads stream [over several frames][geom-frames]), applies
-  `Skin_Part` collapse and transient curve `Material_Live`. GPU contract:
+  `Skin_Part` collapse and the `@field/Material_Live` values of the clips. GPU contract:
   [GPU skinning](../../mirai-rendering/references/scene.md#gpu-skinning).
 
 ## Offline and live retarget
@@ -232,7 +232,8 @@ Runtime failures report `animation.*` codes in
   `rig_*`, `constraint_*`, `grounding_*`,
   `retarget_*`, `motion_*`, `morph_*`, `action_*`, `modifier_*`, `match_goal`.
 - **Follow/curves/limits:** `follow_rig`, `follow_bones`, `follow_pose`, `curve_pose_bone`,
-  `curve_pose_value`, `curve_material`, `final_pose_binding`, `final_pose_bone`, `mirror`,
+  `curve_pose_value`, `material_field`, `material_values`, `final_pose_binding`,
+  `final_pose_bone`, `mirror`,
   `markers_lost`, `events_lost`, `animation.memory` (keeps last pose and retries).
 - `Playback.stats.skipped` counts skipped writes when another component owns `Transform` (not an
   error).

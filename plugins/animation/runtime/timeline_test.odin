@@ -5,6 +5,7 @@ import "core:log"
 import "core:mem"
 import "mirai:asset"
 import "mirai:core"
+import erender "mirai:engine/render"
 import "mirai:host"
 import lib "mirai:std/anim"
 import "mirai:std/base"
@@ -37,13 +38,14 @@ Timeline_World :: struct {
     events:Animation_Events,
     playback:Playback,
     fields:Field_Playback,
+    lives:core.Table(erender.Material_Live),
 }
 
-@(private="file")
+@(private)
 Timeline_Track :: struct {target:string,property:lib.Property,keys:[]lib.Keyframe}
 
 // A clip "open" of an .anim the application holds, with its "@field" curves as the load finds them.
-@(private="file")
+@(private)
 timeline_content :: proc(t:^testing.T,app:^host.App,id:base.Asset_Id,tracks:[]Timeline_Track,markers:[]asset.Animation_Marker_Desc={},name:string="open") -> bool {
     source:=host.Content_Animation{id=id,generation=1,clip_count=1}
     keys:=0
@@ -376,4 +378,227 @@ props_play_without_a_stack_and_copy_only_what_they_simulate :: proc(t:^testing.T
     timeline_tick(&w,&app,&problems)
     testing.expect(t,problems.count==0)
     log.infof("copy of %d props: %d allocations, %d B, Playing %d B (before the split of the stack and its scratch: 458 allocations, 450332 B, Playing 6416 B)",PROPS,taken,bytes,size_of(Playing))
+}
+
+// The "@field/Material_Live" curves of a clip are the look of the meshes of its rig: the render
+// phase gives it them (animation_skin), of slot 0, of a slot or of every one, as their keys step,
+// and takes it away when the curve stops or the clip changes. The fields the fixed phase writes
+// leave Material_Live alone, so a server or a rollback never writes it.
+@(test)
+material_live_curves_give_the_meshes_of_a_rig_their_look_in_the_render_phase :: proc(t:^testing.T) {
+    problems:core.Problems
+    assets:host.Assets;app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
+    face_id,plain_id:=base.Asset_Id{0x7a,1},base.Asset_Id{0x7a,2}
+    frames:=[]lib.Keyframe{{time=0},{time=.5,value={1,0,0,0},interpolation=.Step},
+        {time=1,value={2,0,0,0},interpolation=.Step}}
+    glow:=[]lib.Keyframe{{time=0},{time=1,value={4,2,0,0}}}
+    rough:=[]lib.Keyframe{{time=0,value={.5,0,0,0}},{time=1,value={.5,0,0,0}}}
+    if !timeline_content(t,&app,face_id,{
+        {"@field/Material_Live.1.frame",.Float,frames},
+        {"@field/Material_Live.*.emission",.Vector,glow},
+        {"@field/Material_Live.roughness",.Float,rough},
+        {"@field/Material_Live.9.frame",.Float,frames}, // past the slots: written nowhere
+    }) {return}
+    if !timeline_content(t,&app,plain_id,{{"",.Position,rough}}) {return}
+    w:Timeline_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    face:=timeline_named(&w,"face")
+    animation:=ANIMATION_DEFAULT;animation.asset,animation.loop,animation.fade=face_id,false,0
+    core.add(&w.animations,face,animation)
+    test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    for _ in 0..<3 {timeline_tick(&w,&app,&problems,.3)}
+    time,_,_,_:=animation_progress(core.ref(&w.playback),face)
+    testing.expectf(t,time>.5 && time<1,"between the keys of its frames: %v",time)
+    testing.expect(t,problems.count==0 && core.count(&w.lives)==0,"the fixed phase writes no look")
+    cache:Skin_Runtime;defer skin_runtime_free(&cache)
+    meshes:=[2]core.Entity{core.create(&w.entities),core.create(&w.entities)}
+    instances:[2]Skin_Instance
+    state:=constraint_playing(core.ref(&w.playback),face)
+    draw :: proc(w:^Timeline_World,cache:^Skin_Runtime,instances:^[2]Skin_Instance,meshes:[2]core.Entity,
+        state:^Playing,app:^host.App,problems:^core.Problems) {
+        for mesh,i in meshes {
+            material_curves_apply(cache,&instances[i],&w.lives,mesh,2,core.ref(&w.playback),state,{},app,problems)
+        }
+        test_world_settle(w)
+    }
+    value :: proc(w:^Timeline_World,mesh:core.Entity,slot:int,name:string) -> (found:[4]f32,ok:bool) {
+        live:=core.get(&w.lives,mesh) or_return
+        at:=erender.material_value_find(&live,slot,base.name_hash(name))
+        return live.values[at] if at>=0 else {},at>=0
+    }
+    draw(&w,&cache,&instances,meshes,state,&app,&problems)
+    for mesh in meshes {
+        live,_:=core.get(&w.lives,mesh)
+        frame,framed:=value(&w,mesh,1,"frame")
+        testing.expectf(t,framed && frame==[4]f32{1,0,0,0},"slot 1 shows the frame its keys step to: %v",frame)
+        _,unslotted:=value(&w,mesh,0,"frame")
+        lit,lit_ok:=value(&w,mesh,0,"emission");lit_too,lit_too_ok:=value(&w,mesh,1,"emission")
+        testing.expectf(t,!unslotted && lit_ok && lit_too_ok && lit==lit_too && abs(lit.x-4*time)<1e-4 &&
+            abs(lit.y-2*time)<1e-4,"every slot glows as its Vector curve: %v",lit)
+        surface,surface_ok:=value(&w,mesh,0,"roughness")
+        testing.expect(t,surface_ok && surface==[4]f32{.5,0,0,0},"an unslotted value is of slot 0")
+        testing.expect_value(t,live.count,4)
+    }
+    testing.expect(t,core.problem_find(&problems,face,"animation.material_field")!=nil,
+        "a field past the slots is a problem of the rig")
+    // A curve that stops takes its values away, and the component with the last of them.
+    for &curve in state.curves {curve.weight=0}
+    draw(&w,&cache,&instances,meshes,state,&app,&problems)
+    testing.expect(t,!core.has(&w.lives,meshes[0]) && !core.has(&w.lives,meshes[1]))
+    timeline_tick(&w,&app,&problems,.05)
+    draw(&w,&cache,&instances,meshes,state,&app,&problems)
+    testing.expect(t,core.has(&w.lives,meshes[0]) && core.has(&w.lives,meshes[1]),"they play again")
+    // A clip without them takes them away, and so does the change on the mesh of the rig alone.
+    core.edit(&w.animations,face).asset=plain_id
+    timeline_tick(&w,&app,&problems,.05)
+    draw(&w,&cache,&instances,meshes,state,&app,&problems)
+    testing.expect(t,!core.has(&w.lives,meshes[0]) && !core.has(&w.lives,meshes[1]),"the new clip has no look")
+    for code in ([3]string{"animation.field_component","animation.field_path","animation.field_type"}) {
+        testing.expectf(t,core.problem_find(&problems,face,code)==nil,"the fields leave Material_Live alone: %s",code)
+    }
+}
+
+@(test)
+a_material_live_field_names_a_slot_and_a_value :: proc(t:^testing.T) {
+    Case :: struct {field:string,slot:int,parameter:string,ok:bool}
+    cases:=[]Case{
+        {"emission",0,"emission",true},{"1.frame",1,"frame",true},{"*.emission",-1,"emission",true},
+        {"7.base_color",7,"base_color",true},
+        {field="8.frame"},{field="12.frame"},{field=""},{field=".frame"},{field="1."},{field="a.frame"},
+        {field="1.a.b"},{field="*."},{field="-1.frame"},
+    }
+    for c in cases {
+        slot,parameter,ok:=material_field(c.field)
+        testing.expectf(t,ok==c.ok && (!ok || slot==c.slot && parameter==c.parameter),"%q: %d %q %v",c.field,slot,parameter,ok)
+    }
+}
+
+// A prop plays its clip alone, without a stack; an additive clip a command plays over the clip of
+// an entity without a .character makes its stack and plays in its first slot.
+@(test)
+an_additive_clip_over_an_entity_without_a_character_plays_in_the_first_slot_of_its_stack :: proc(t:^testing.T) {
+    assets:host.Assets
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    defer host.app_content_destroy(&app)
+    w:Timeline_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    primary,gesture:=base.Asset_Id{8,11},base.Asset_Id{8,12}
+    if !timeline_content(t,&app,primary,{{"",.Position,{{time=1,value={2,0,0,0}}}}},name="idle") {return}
+    if !timeline_content(t,&app,gesture,{{"",.Position,{{time=0},{time=1,value={0,4,0,0}}}}},
+        name="rise") {return}
+    prop,actor:=timeline_named(&w,"prop"),timeline_named(&w,"actor")
+    for e in ([2]core.Entity{prop,actor}) {
+        animation:=ANIMATION_DEFAULT;animation.asset=primary
+        core.add(&w.animations,e,animation)
+    }
+    test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    play_clip(&w.requests,actor,"rise",asset=gesture,additive=true,weight=.5,fade=0,speed=2)
+    problems:core.Problems
+    timeline_tick(&w,&app,&problems)
+    plain,layered:=constraint_playing(core.ref(&w.playback),prop),constraint_playing(core.ref(&w.playback),actor)
+    if !testing.expect(t,plain!=nil && layered!=nil) {return}
+    testing.expect(t,plain.stack==nil,"a prop makes no stack")
+    if !testing.expect(t,layered.stack!=nil && layered.stack.slots==1) {return}
+    testing.expect(t,layered.stack.clips[0].active && layered.stack.clips[0].additive)
+    testing.expect_value(t,playing_pose(layered,.Local)[0].position,[3]f32{2,1,0})
+    started:=false
+    for event in w.events.items {
+        started ||= event.kind==.Started && event.clip==base.name_hash("rise") &&
+            event.animation==gesture && event.group==1
+    }
+    testing.expect(t,started && problems.count==0,"the clip tells it started, of its .anim, in slot 0")
+}
+
+// Each slot of the stack of a .character plays its own: a clip a command plays in a layer, of any
+// .anim, or an action, which takes the slot from the clip there and tells it interrupted it.
+// Actions that end in the same tick each chain their next clip in their own slot.
+@(test)
+each_slot_of_a_stack_plays_its_own_clip_or_action :: proc(t:^testing.T) {
+    assets:host.Assets
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    defer {host.app_content_destroy(&app);test_registry_free(&assets)}
+    w:Timeline_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    extra:Test_Storages
+    defer test_storages_free(&extra)
+    primary,swing,character:=base.Asset_Id{9,1},base.Asset_Id{9,2},base.Asset_Id{9,3}
+    waves:=[4]base.Asset_Id{{9,4},{9,5},{9,6},{9,7}}
+    if !timeline_content(t,&app,primary,{{"",.Position,{{time=1,value={2,0,0,0}}}}},name="idle") {return}
+    if !timeline_content(t,&app,swing,{{"",.Position,{{time=0},{time=.5,value={0,1,0,0}}}}},
+        name="swing") {return}
+    for id,i in waves {
+        if !timeline_content(t,&app,id,{{"",.Position,{{time=0},{time=1,value={0,0,f32(i+1),0}}}}},
+            name="wave") {return}
+    }
+    test_character_register(&assets,character)
+    names:=[4]string{"a","b","c","d"}
+    layers:[4]Stack_Layer
+    for &layer,i in layers {layer=STACK_LAYER_DEFAULT;base.text_set(layer.name[:],names[i])}
+    definitions:[2]Action_Definition
+    for &definition,i in definitions {
+        definition=ACTION_DEFINITION_DEFAULT;definition.animation=swing
+        base.text_set(definition.name[:],"swing_a" if i==0 else "swing_b")
+        base.text_set(definition.clip[:],"swing");base.text_set(definition.layer[:],names[i])
+    }
+    test_character_seed(&extra.characters,character,{info={animation=primary},
+        actions={layers=layers[:],actions=definitions[:]}})
+    e:=timeline_named(&w,"actor")
+    animation:=ANIMATION_DEFAULT;animation.asset=character
+    core.add(&w.animations,e,animation)
+    test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    problems:core.Problems
+    tick :: proc(w:^Timeline_World,app:^host.App,extra:^Test_Storages,problems:^core.Problems) {
+        clear(&w.events.items)
+        test_tick(core.read(&w.animations),&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),
+            core.read(&w.names),&w.requests,&w.events,core.read(&w.targets),&w.playback,app,
+            {dt=.1,playing=true},{},nil,problems,extra)
+    }
+    // A wave of another .anim in each layer: four sources besides those of the set play at once.
+    for id,i in waves {play_clip(&w.requests,e,"wave",asset=id,layer=names[i],fade=0)}
+    tick(&w,&app,&extra,&problems)
+    state:=constraint_playing(core.ref(&w.playback),e)
+    if !testing.expect(t,state!=nil && state.stack!=nil) {return}
+    started:[4]bool
+    for event in w.events.items {
+        slot:=int(event.group)-2
+        if event.kind==.Started && event.clip==base.name_hash("wave") && slot>=0 && slot<4 {
+            started[slot]=event.animation==waves[slot]
+        }
+    }
+    testing.expectf(t,problems.count==0 && started==[4]bool{true,true,true,true},
+        "each layer plays the wave of its .anim: %v, %d problems",started,problems.count)
+    testing.expect_value(t,len(source_ids(core.ref(&extra.sources),state)),6)
+    // The actions take their slots from the waves there, which they interrupt.
+    play(&w.requests,e,"swing_a",next_clip="swing")
+    play(&w.requests,e,"swing_b",next_clip="swing")
+    tick(&w,&app,&extra,&problems)
+    interrupted:=0
+    for event in w.events.items {
+        if event.kind==.Interrupted && event.clip==base.name_hash("wave") {interrupted+=1}
+    }
+    clips:=&state.stack.clips
+    testing.expect(t,interrupted==2 && !clips[1].active && !clips[2].active && clips[3].active &&
+        clips[4].active,"two actions interrupt the waves of their slots, the others play on")
+    // Both end in one tick and chain their next clip each in its slot, the tick after.
+    ended,chained:[2]int
+    for tick_index in 1..=12 {
+        tick(&w,&app,&extra,&problems)
+        for event in w.events.items {
+            for name,i in ([2]string{"swing_a","swing_b"}) {
+                if event.kind==.Ended && event.action==base.name_hash(name) {ended[i]=tick_index}
+            }
+            slot:=int(event.group)-2
+            if event.kind==.Started && event.action==0 && event.clip==base.name_hash("swing") &&
+                slot>=0 && slot<2 && event.animation==swing {chained[slot]=tick_index}
+        }
+    }
+    testing.expectf(t,ended[0]>0 && ended[0]==ended[1] && chained==[2]int{ended[0]+1,ended[0]+1},
+        "ended %v, chained %v",ended,chained)
+    testing.expect_value(t,problems.count,0)
 }

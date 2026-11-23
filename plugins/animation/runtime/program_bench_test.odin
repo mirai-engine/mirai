@@ -107,7 +107,7 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
             start:=time.tick_now()
             for _ in 0..<REPEATS {
                 stable &&=program_bench_step(&state,&playback,content,animation,&events,output)
-                sink+=playing_pose(state,.Local)[63].position.x+playing_pose(state,.Local)[63].rotation.y
+                sink+=playing_pose(&state,.Local)[63].position.x+playing_pose(&state,.Local)[63].rotation.y
             }
             best=min(best,time.tick_since(start))
         }
@@ -142,7 +142,7 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
                     for &state in states {
                         if workload==1 {test_layer_weight(&state,1,f32(frame%61)/60)}
                         valid &&=program_bench_step(&state,&playback,content,animation,&events,output)
-                        check+=playing_pose(state,.Local)[63].position.x+playing_pose(state,.Local)[63].rotation.y
+                        check+=playing_pose(&state,.Local)[63].position.x+playing_pose(&state,.Local)[63].rotation.y
                     }
                 }
                 best=min(best,time.tick_since(start))
@@ -150,7 +150,7 @@ bench_animation_programs_64_bones :: proc(t:^testing.T) {
             context=saved;allocation.remaining=100000
             labels:=[2]string{"program one clip","clip + layer whose weight changes"}
             pose_hash:=program_bench_pose_hash(playing_pose(&states[0],.Local))
-            for state in states {testing.expect_value(t,program_bench_pose_hash(playing_pose(state,.Local)),pose_hash)}
+            for &state in states {testing.expect_value(t,program_bench_pose_hash(playing_pose(&state,.Local)),pose_hash)}
             testing.expect(t,valid && finite(check) && allocation.calls==allocations)
             log.infof("animation pose multiactor, 64 bones, %s, actors %d: %.2f ns/actor/tick, Playing %d B, pose %x, check %.6f",labels[workload],actor_count,f64(time.duration_nanoseconds(best))/f64(256*actor_count),size_of(Playing),pose_hash,check)
             for &state in states {playing_free(&state)}

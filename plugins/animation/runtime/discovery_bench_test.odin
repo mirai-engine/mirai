@@ -7,13 +7,14 @@ import "core:time"
 import "mirai:core"
 import "mirai:host"
 
-when #config(MIRAI_BENCH,false) {
 @(private)
 @(test_world)
 Discovery_Bench_World :: struct {
     using world:Test_World,
     descriptions:core.Table(Animation),
 }
+
+when #config(MIRAI_BENCH,false) {
 
 @(test)
 bench_animation_optional_feature_discovery :: proc(t:^testing.T) {

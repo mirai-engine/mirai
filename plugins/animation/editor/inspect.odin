@@ -97,7 +97,6 @@ Asset_Inspect_Result :: struct {
     spline_ik:[]Authoring_Page(Profile_Spline_Params) `mirai:"optional"`,
     follow:[]Authoring_Page(Profile_Follow_Params) `mirai:"optional"`,
     curve_poses:[]Authoring_Page(anim.Curve_Pose) `mirai:"optional"`,
-    curve_materials:[]Authoring_Page(anim.Curve_Material) `mirai:"optional"`,
 }
 // A space of a .character with its samples.
 Asset_Space :: struct {info:anim.Blend_Info,samples:[]Authoring_Page(anim.Blend_Sample) `mirai:"label=Positions in the units of the axes"`}

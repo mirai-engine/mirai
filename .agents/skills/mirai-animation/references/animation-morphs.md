@@ -19,9 +19,10 @@ The weight of a target is, in order:
 `Morph_Weights` is the component of the entity; a mesh with targets without it is deformed all the
 same with the weights of its mesh and its animation.
 
-- `source` is the entity whose animation gives the curves (without it, the leader of a rig that
-  follows another, so a modular head takes the face its body plays, the rig of its `Pose_Source`
-  or the nearest animated ancestor, as `morph_source` resolves); `path`, that of
+- `source` is the entity whose animation gives the curves (without it, a rig that follows another
+  itself, the rig of its `Pose_Source` or the nearest animated ancestor, as `morph_source`
+  resolves). A modular head reads its own curves, a clip of its face, and where none of them plays
+  those of the body it follows, the face the body plays (`morph_compose`); `path`, that of
   its curves (empty,
   that of its `Animation_Target`). The prefab writes `path` only on an entity without
   `Animation_Target`, the mesh that a rig shows.

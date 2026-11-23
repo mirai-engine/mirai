@@ -16,7 +16,13 @@ import "base:runtime"
 ANIMATION_SOURCES :: 64
 SOURCE_CACHE_CAPACITY :: 256
 SOURCE_DEPENDENCIES :: ANIMATION_SOURCES+1
-Source_Key :: [5]base.Asset_Id
+// The .anim an entity plays besides its Animation (playing_extras): that of its base clip, one by
+// slot of its stack and the one its base fades from, last.
+SOURCE_EXTRAS :: STACK_SLOTS+2
+Source_Extras :: [SOURCE_EXTRAS]base.Asset_Id
+// first: the extra a set without animation plays first (source_extras_primary); extras: sorted,
+// each once, the empty ones last, so the slots they play in do not part plans.
+Source_Key :: struct {asset,library,first:base.Asset_Id,extras:Source_Extras}
 // Joined libraries count their generations from here, apart from those of host content.
 SOURCE_GENERATION :: u32(1)<<31
 
@@ -94,13 +100,11 @@ animation_playing_content :: proc(cache:core.Ref(Source_Assets),app:^host.App,st
 
 // The library an Animation plays, joining the sources of its .character when there are several. A
 // tick whose assets did not change reuses the plan without reading them.
-animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,characters:^Character_Assets=nil,extras:[3]base.Asset_Id={}) -> (content:^host.Content_Animation,error:Program_Error) {
+animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation,characters:^Character_Assets=nil,extras:Source_Extras={}) -> (content:^host.Content_Animation,error:Program_Error) {
     if app.assets==nil || state==nil {return nil,.Invalid_Asset}
     description:=description
     extras:=extras
-    if description.asset=={} {
-        description.asset=extras[0] if extras[0]!={} else extras[1]
-    }
+    if description.asset=={} {description.asset=source_extras_primary(extras)}
     if description.asset=={} {state.source_plan=0;return nil,.None}
     // A set without clips plays none: it only adapts the pose.
     if character:=animation_character(app.assets,description);character!={} {
@@ -125,7 +129,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     }
     if cache.allocator.procedure==nil {cache.allocator=app.allocator}
     context.allocator=cache.allocator
-    key:=Source_Key{description.asset,description.library,extras[0],extras[1],extras[2]}
+    key:=Source_Key{description.asset,description.library,source_extras_primary(extras),source_extras_key(extras)}
     at:=int(state.source_plan)-1
     if at<0 || at>=len(cache.plans) || cache.plans[at].key!=key {at=-1;for plan,i in cache.plans {if plan.key==key {at=i;break}}}
     if at<0 {
@@ -170,10 +174,10 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
 source_previous :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation) -> (content:^host.Content_Animation,played,library:base.Asset_Id,kept:bool) {
     if cache==nil || app==nil || state==nil || state.source_plan==0 || int(state.source_plan)>len(cache.plans) {return}
     plan:=&cache.plans[state.source_plan-1]
-    if !plan.valid || plan.key[0]!=description.asset || plan.key[1]==description.library {return}
+    if !plan.valid || plan.key.asset!=description.asset || plan.key.library==description.library {return}
     found,error:=source_plan_content(cache,app,plan)
     if error!=.None || found==nil {return}
-    return found,plan.key[0],plan.key[1],true
+    return found,plan.key.asset,plan.key.library,true
 }
 
 // An unqualified clip first resolves in the primary source, then in a unique joined source.
@@ -329,8 +333,29 @@ source_id_add :: proc(ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,id:base.A
     if count^>=len(ids) {return false}
     ids[count^]=id;count^+=1;return true
 }
+// The source an Animation without asset plays first: that of its base clip, else that of the
+// first clip of its stack.
 @(private)
-source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,characters:^Character_Assets,extras:[3]base.Asset_Id,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
+source_extras_primary :: proc "contextless" (extras:Source_Extras) -> base.Asset_Id {
+    for i in 0..<SOURCE_EXTRAS-1 {if extras[i]!={} {return extras[i]}}
+    return {}
+}
+// The extras as a plan is found by: sorted, each once, the empty ones last.
+@(private)
+source_extras_key :: proc "contextless" (extras:Source_Extras) -> (key:Source_Extras) {
+    count:=0
+    next: for id in extras {
+        if id=={} {continue}
+        for known in key[:count] {if known==id {continue next}}
+        j:=count
+        for j>0 && (id[0]<key[j-1][0] || id[0]==key[j-1][0] && id[1]<key[j-1][1]) {key[j]=key[j-1];j-=1}
+        key[j]=id;count+=1
+    }
+    return
+}
+
+@(private)
+source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,description:Animation,characters:^Character_Assets,extras:Source_Extras,ids:^[ANIMATION_SOURCES]base.Asset_Id,count:^int,dependencies:^[SOURCE_DEPENDENCIES]Source_Dependency,dependency_count:^int) -> (primary:base.Asset_Id,ok:bool) {
     if !source_dependency_add(assets,dependencies,dependency_count,description.asset) {return}
     record,present:=asset.registry_find(&assets.registry,description.asset)
     kind:=record.kind if present else asset.KIND_ANIMATION
@@ -340,7 +365,7 @@ source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,descripti
         content:=character_content(characters,assets,allocator,description.asset);if content==nil {return}
         set:=content.set;animation:=set.info.animation;library:=description.library
         primary=source_effective({},animation,library)
-        if primary=={} {primary=extras[0] if extras[0]!={} else extras[1]}
+        if primary=={} {primary=source_extras_primary(extras)}
         if !source_id_add(ids,count,primary) {return}
         for clip in set.match.clips {if !source_id_add(ids,count,source_effective(clip.animation,animation,library)) {return}}
         for action in set.actions.actions {if !source_id_add(ids,count,source_effective(action.animation,animation,library)) {return}}

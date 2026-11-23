@@ -36,7 +36,6 @@ Pose_Profile :: struct {
     spline_ik:[]Spline_IK_Constraint,
     follow:[]Follow_Constraint,
     curve_poses:[]Curve_Pose,
-    curve_materials:[]Curve_Material,
 }
 
 pose_profile_check :: proc(profile:Pose_Profile) -> bool {
@@ -99,7 +98,7 @@ Modifier_Rig :: struct {
     retarget_chain_states:[dynamic]Chain_Retarget_Binding,
     spline_states:[dynamic]Spline_IK_Binding,
     follow_states:[dynamic]Follow_Binding,
-    curve_pose_states,curve_material_states:[dynamic]Curve_Binding,
+    curve_pose_states:[dynamic]Curve_Binding,
 }
 
 modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
@@ -121,7 +120,7 @@ modifier_rig_free :: proc(rig:^Modifier_Rig) {
     free_states(rig.twist_states);free_states(rig.spring_states)
     free_states(rig.multi_states);free_states(rig.retarget_chain_states)
     free_states(rig.spline_states);free_states(rig.follow_states)
-    delete(rig.curve_pose_states);delete(rig.curve_material_states)
+    delete(rig.curve_pose_states)
     rig^={}
 }
 
@@ -179,8 +178,7 @@ modifier_rig_prepare :: proc(rig:^Modifier_Rig,pose:Pose_Profile,id:base.Asset_I
         resize(&next.retarget_chain_states,len(pose.retarget_chains))!=nil ||
         resize(&next.spline_states,len(pose.spline_ik))!=nil ||
         resize(&next.follow_states,len(pose.follow))!=nil ||
-        resize(&next.curve_pose_states,len(pose.curve_poses))!=nil ||
-        resize(&next.curve_material_states,len(pose.curve_materials))!=nil {return false}
+        resize(&next.curve_pose_states,len(pose.curve_poses))!=nil {return false}
     if !modifier_controls_prepare(&next,rig,pose) {return false}
     next.attachments=rig.attachments;rig.attachments=nil
     modifier_rig_free(rig)
@@ -273,7 +271,7 @@ modifier_profile :: proc(runtime:core.Ref(Modifier_Runtime),characters:core.Ref(
 has_modifiers :: proc(pose:Pose_Profile) -> bool {
     return len(pose.ik)+len(pose.look)+len(pose.limits)+len(pose.grounding.legs)+
         len(pose.twist)+len(pose.springs)+len(pose.multi_ik)+len(pose.retarget_chains)+
-        len(pose.spline_ik)+len(pose.follow)+len(pose.curve_poses)+len(pose.curve_materials)>0
+        len(pose.spline_ik)+len(pose.follow)+len(pose.curve_poses)>0
 }
 
 @(step="fixed",loops="game editor",stage="apply")

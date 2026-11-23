@@ -98,7 +98,6 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put(doc,types,"spline_ik",pose.spline_ik) or_return
     asset.document_put(doc,types,"follow",pose.follow) or_return
     asset.document_put(doc,types,"curve_poses",pose.curve_poses) or_return
-    asset.document_put(doc,types,"curve_materials",pose.curve_materials) or_return
     return .None
 }
 @(private)
@@ -175,7 +174,6 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     pose.spline_ik=asset.asset_rows(file,types,"spline_ik","",Spline_IK_Constraint) or_return
     pose.follow=asset.asset_rows(file,types,"follow","",Follow_Constraint) or_return
     pose.curve_poses=asset.asset_rows(file,types,"curve_poses","",Curve_Pose) or_return
-    pose.curve_materials=asset.asset_rows(file,types,"curve_materials","",Curve_Material) or_return
     if !character_check(set) {return {},.Corrupt}
     return set,.None
 }

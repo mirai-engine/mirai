@@ -8,12 +8,12 @@ import "mirai:std/base"
 import anim "plugins:animation/runtime"
 
 // The tables of the modifiers of a .character.
-Profile_Table :: enum u8 {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Follow,Curve_Pose,Curve_Material}
-Profile_Counts :: struct {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Follow,Curve_Pose,Curve_Material:u32}
+Profile_Table :: enum u8 {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Follow,Curve_Pose}
+Profile_Counts :: struct {IK,Look,Limit,Grounding,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Follow,Curve_Pose:u32}
 Profile_Set_Params :: struct {
     path:[1024]u8 `mirai:"text,label=Ending in .character: its other tables are kept"`,
     animation:base.Asset_Id `mirai:"optional,label=The .anim of the clips of a new .character; none for one of only modifiers"`,
-    table:Profile_Table `mirai:"label=The table; the field named after it holds the value and the lengths of its arrays are its counts. A row with the key of that value is replaced or removed and otherwise appended: end for IK; bone for Look and Limit; name for the tables that name rows; curve and bone for Curve_Pose; curve parameter and slot for Curve_Material; Grounding is the one rig. A table holds 256 rows; Curve_Pose and Curve_Material 4096; Grounding one rig of up to 16 legs"`,
+    table:Profile_Table `mirai:"label=The table; the field named after it holds the value and the lengths of its arrays are its counts. A row with the key of that value is replaced or removed and otherwise appended: end for IK; bone for Look and Limit; name for the tables that name rows; curve and bone for Curve_Pose; Grounding is the one rig. A table holds 256 rows; Curve_Pose 4096; Grounding one rig of up to 16 legs"`,
     ik:anim.IK_Constraint `mirai:"optional"`,
     look:anim.Look_Constraint `mirai:"optional"`,
     limit:anim.Rotation_Constraint `mirai:"optional"`,
@@ -25,7 +25,6 @@ Profile_Set_Params :: struct {
     spline_ik:Profile_Spline_Params `mirai:"optional"`,
     follow:Profile_Follow_Params `mirai:"optional"`,
     curve_pose:anim.Curve_Pose `mirai:"optional,label=A bone that a Float curve moves by delta at its value; a pose of a face is a row per bone"`,
-    curve_material:anim.Curve_Material `mirai:"optional,label=A material value of the meshes of the rig that a Float curve moves; step rounds it to frames"`,
     remove:bool `mirai:"optional"`,
     dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
 }
@@ -35,7 +34,7 @@ authoring_profile_register :: proc(s:^editor.Session) {
     set:=new(Profile_Set_Params,context.temp_allocator);if set==nil {return}
     set.ik,set.look,set.limit=anim.IK_CONSTRAINT_DEFAULT,anim.LOOK_CONSTRAINT_DEFAULT,anim.ROTATION_CONSTRAINT_DEFAULT
     set.retarget_chain=anim.CHAIN_RETARGET_CONSTRAINT_DEFAULT;profile_constraints_defaults(set)
-    set.curve_pose,set.curve_material=anim.CURVE_POSE_DEFAULT,anim.CURVE_MATERIAL_DEFAULT
+    set.curve_pose=anim.CURVE_POSE_DEFAULT
     poses:=new(Profile_Poses_Params,context.temp_allocator);if poses==nil {return}
     poses.tolerance=PROFILE_POSES_TOLERANCE
     editor.api_method_register(s,{params=type_info_of(Profile_Set_Params),result=type_info_of(Authoring_Write_Result),name="animation.modifier.set",summary="Replaces or appends the row of a table of the modifiers of a .character (IK, look, limits, grounding, rigs, curve poses) that has the key of the value, or removes it; a new .character at path is made of animation.",defaults=set,run=authoring_profile_set})
@@ -46,7 +45,7 @@ authoring_profile_register :: proc(s:^editor.Session) {
 @(private)
 // The modifiers of a .character: the rows of each table and a page of the rows of one.
 character_modifiers :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profile_Table,offset,limit:u32,r:^Asset_Inspect_Result) {
-    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(1 if len(profile.grounding.legs)>0 else 0),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.retarget_chains)),u32(len(profile.spline_ik)),u32(len(profile.follow)),u32(len(profile.curve_poses)),u32(len(profile.curve_materials))}
+    r.counts={u32(len(profile.ik)),u32(len(profile.look)),u32(len(profile.limits)),u32(1 if len(profile.grounding.legs)>0 else 0),u32(len(profile.twist)),u32(len(profile.springs)),u32(len(profile.multi_ik)),u32(len(profile.retarget_chains)),u32(len(profile.spline_ik)),u32(len(profile.follow)),u32(len(profile.curve_poses))}
     r.table=table
     o,l:=offset,limit
     grounding:=[1]anim.Foot_Grounding{profile.grounding}
@@ -62,7 +61,6 @@ character_modifiers :: proc(call:^api.Call,profile:anim.Pose_Profile,table:Profi
     case .Spline_IK: r.spline_ik=authoring_pages(call,profile.spline_ik,o,l,Profile_Spline_Params)
     case .Follow: r.follow=authoring_pages(call,profile.follow,o,l,Profile_Follow_Params)
     case .Curve_Pose: r.curve_poses=authoring_pages(call,profile.curve_poses,o,l,anim.Curve_Pose)
-    case .Curve_Material: r.curve_materials=authoring_pages(call,profile.curve_materials,o,l,anim.Curve_Material)
     }
 }
 
@@ -79,7 +77,7 @@ profile_row :: proc(rows:[]$T,value:T,same:proc(a,b:T) -> bool,remove:bool,capac
 authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     p:=api.call_params(call,Profile_Set_Params)
     if !authoring_editable(s,call) {return}
-    fields:=[Profile_Table]string{.IK="ik",.Look="look",.Limit="limit",.Grounding="grounding",.Twist="twist",.Spring="spring",.Multi_IK="multi_ik",.Chain_Retarget="retarget_chain",.Spline_IK="spline_ik",.Follow="follow",.Curve_Pose="curve_pose",.Curve_Material="curve_material"}
+    fields:=[Profile_Table]string{.IK="ik",.Look="look",.Limit="limit",.Grounding="grounding",.Twist="twist",.Spring="spring",.Multi_IK="multi_ik",.Chain_Retarget="retarget_chain",.Spline_IK="spline_ik",.Follow="follow",.Curve_Pose="curve_pose"}
     if p.table>max(Profile_Table) || !(p.remove && p.table==.Grounding) && !authoring_field_present(call,fields[p.table]) {authoring_failure(call,"table","Required","the constraint field selected by table","missing or invalid table","Supply the constraint field selected by table");return}
     file:Authoring_File;defer asset.asset_close(&file.file)
     set,id,ok:=character_target(s,call,base.text_get(p.path[:]),p.animation,&file,clips=false);if !ok {return}
@@ -100,7 +98,6 @@ authoring_profile_set :: proc(s:^editor.Session,call:^api.Call) {
     case .Spline_IK: profile.spline_ik,replaced=profile_row(profile.spline_ik,profile_spline_value(p.spline_ik),proc(a,b:anim.Spline_IK_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Follow: profile.follow,replaced=profile_row(profile.follow,profile_follow_value(p.follow),proc(a,b:anim.Follow_Constraint) -> bool {return a.name==b.name},p.remove,capacity,call.allocator)
     case .Curve_Pose: profile.curve_poses,replaced=profile_row(profile.curve_poses,p.curve_pose,proc(a,b:anim.Curve_Pose) -> bool {return a.curve==b.curve && a.bone==b.bone},p.remove,anim.POSE_CURVE_ROWS,call.allocator)
-    case .Curve_Material: profile.curve_materials,replaced=profile_row(profile.curve_materials,p.curve_material,proc(a,b:anim.Curve_Material) -> bool {return a.curve==b.curve && a.parameter==b.parameter && a.slot==b.slot && a.every==b.every},p.remove,anim.POSE_CURVE_ROWS,call.allocator)
     }
     if !replaced {authoring_failure(call,"table","Invalid_Edit","a row of that key to remove, or room for another row",fmt.tprintf("%v; remove=%t",p.table,p.remove),"The row is not in the table, or the table has no room for another",fix="animation.asset.inspect with the table lists its rows");return}
     _=character_publish(s,call,file,id,set)

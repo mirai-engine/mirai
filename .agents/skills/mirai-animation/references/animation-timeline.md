@@ -28,6 +28,20 @@ On an entity that poses no skeleton, each track of the clip is bound by the text
   (`timeline.odin`) binds each to its table once per binding and writes it after
   `animation_sample`.
 
+### Material values of a rig
+
+A track `@field/Material_Live.<value>` is no field the fixed phase writes: it is a value of the
+materials of the meshes of the rig that plays it (`skin.odin`), of slot 0, of a slot
+(`@field/Material_Live.<slot>.<value>`) or of every slot (`@field/Material_Live.*.<value>`).
+A Float track gives a number and a Vector track a color or a vector, as keyed: a flipbook face
+steps its frames with `Step` keys, a glow ramps. `animation_skin` (render phase) writes it to the
+`Material_Live` of each mesh of the rig, and of those that share its pose, over what the entity
+authors; with a path before `@field` it is the mesh of that name alone. A curve that stops (weight
+0) or a clip without it takes the value away, and the component with the last one; a server and a
+rollback never write it. A slot past the slots of a material is the problem
+`animation.material_field`, more values than the component holds `animation.material_values`.
+A modular head reads the curve of the body it follows first (`rig_curve`).
+
 Position, rotation and scale keys are local: in the space of the parent of the entity they move.
 A clip that many props share goes on a parent placed in the world and moves its children by name.
 The transform of an entity is driven by transform tracks, not by field tracks: the pose is written
@@ -57,15 +71,22 @@ a shot and one on another actor an action.
 The clip commands in `Animation_Requests` own playback in Play. Set the initial clip and clock
 on `Animation`. Use `play_clip` to select a clip and `animation_command` to control its clock.
 Play with `restart` starts over, Resume keeps the current time, and Seek skips the markers before
-the destination. Stop rewinds the base clip or releases the requested overlay.
+the destination. Stop rewinds the base clip or releases the clip of a slot.
 
-- Ad-hoc clips over matched locomotion, clips assigned to a named layer, and additive clips use
-  the stack. The entity has one ad-hoc overlay, which hands its slot back when it ends. Named
-  actions keep their priority rules.
-- A one-shot with `next_clip` starts that clip from the same source on the tick after it ends.
-- Raw clips report Started, Ended and Interrupted in the same queue as their markers. Events
-  name the original clip and .anim even in a joined library. The action hash is present for named
-  actions.
+- A clip over matched locomotion or an additive one plays in slot 0 of the stack, one in a named
+  layer in the slot of that layer (`Stack_Playing.clips`); an entity without a `.character` makes
+  its stack for it, and a prop that plays its clip alone has none. Each slot plays its own clip,
+  of any `.anim`, and `layers_advance` plays them all. A command without clip or layer controls
+  the clips the slots play, else the base.
+- An action takes its slot from the clip there, which reports Interrupted; a clip cannot take the
+  slot of an action that plays (`animation.clip_layer_busy`). Named actions keep their priority
+  rules.
+- A one-shot with `next_clip` starts that clip from the same source on the tick after it ends; an
+  action's `next_clip` plays in its slot, each slot its own, so actions that end in one tick
+  chain all of theirs.
+- Raw clips report Started, Ended and Interrupted in the same queue as their markers, each slot
+  its own (`group` is 1 + the slot). Events name the original clip and .anim even in a joined
+  library. The action hash is present for named actions.
 - `Animation_Progress` preserves the base clip, clock and time in a save. The editor takes Seek
   for its preview, and Play starts from the component or saved progress.
 
@@ -75,6 +96,10 @@ the destination. Stop rewinds the base clip or releases the requested overlay.
   keys).
 - `plugins/animation/runtime`:
   `a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves`,
-  `a_field_target_names_its_entity_component_and_field`.
+  `a_field_target_names_its_entity_component_and_field`,
+  `material_live_curves_give_the_meshes_of_a_rig_their_look_in_the_render_phase`,
+  `a_material_live_field_names_a_slot_and_a_value`,
+  `an_additive_clip_over_an_entity_without_a_character_plays_in_the_first_slot_of_its_stack` and
+  `each_slot_of_a_stack_plays_its_own_clip_or_action`.
 - `plugins/cinematics/runtime`:
   `the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays`.

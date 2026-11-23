@@ -1,7 +1,7 @@
 # Rigs and chain modifiers
 
-The tables `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`, `follow`, `curve_poses`
-and `curve_materials` extend the [modifiers of the
+The tables `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`, `follow` and
+`curve_poses` extend the [modifiers of the
 `.character`](animation.md#components-and-shared-data): they are rows of a shared definition,
 without components per operation. A `.character` of another `CHARACTER_VERSION` is rejected and
 written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
@@ -77,18 +77,13 @@ its body animation; no solver evaluates it.
 - The curves come from the animation of the rig (clips, layers, actions, programs). A rig that
   follows a [leader](animation.md#following-a-rig-of-another-skeleton) (a modular head) reads the
   curve of its leader while the leader animates it and its own otherwise (`rig_curve`), so the
-  face a body plays poses the head; its morphs read the leader's curves too. The poses move the
-  bones before the other operations of the profile.
+  face a body plays poses the head; its morphs read its own curves first and the leader's where
+  its own do not play ([morphs](animation-morphs.md#weights)). The poses move the bones before the
+  other operations of the profile.
 - Each row keeps where its curve was found among the curves of the rig and of its leader, so a
-  stable tick finds it at once and searches by halves only when the curves change place; curve
-  materials do the same, so the drawing searches nothing.
-- **Curve material**: a value of the material of the meshes of the rig (`parameter`: a value of the
-  material or of its program, in `slot` or in every slot) is `offset` plus `scale` times the
-  curve, rounded to multiples of `step` when it is positive: the frame of a flipbook face, a
-  switch, a blush. `animation_skin` gives it to the `Material_Live` of each mesh of the rig (the
-  rig and those that share its pose) while the curve plays, over the value the entity authors
-  under that name, and takes it away when it does not. Past the capacity of the component it is
-  the problem `animation.curve_material`.
+  stable tick finds it at once and searches by halves only when the curves change place.
+- A material value of a face (a flipbook frame, a blush) is a track of its clip, not a row:
+  [`@field/Material_Live`](animation-timeline.md#material-values-of-a-rig).
 - A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the
   plugin has
   no rig evaluator, no curve expressions and no pose-space correctives: a bend that needs a shape
@@ -161,7 +156,7 @@ topology differs.
   `rig_shapes_test.odin` (spline, spatial targets, Follow, aligned IK, Look with an up axis,
   targets by name after reordering the set, curve poses, versions other than this one refused)
 - Curve poses over a follower that reads its leader's curves and its own without them, full poses
-  in any order of the rows, curves renamed in place, and curve materials: `follow_test.odin`
+  in any order of the rows and curves renamed in place: `follow_test.odin`
 - `multi_ik_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls` (a Multi
   IK without joints, its pole, and its goal without an effector name)
 - `semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations`
