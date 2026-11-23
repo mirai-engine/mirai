@@ -357,8 +357,10 @@ glass_lets_the_indirect_light_through_uncolored :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// A solid that is not a pane is crossed as a slab as thick as its material:
+// a ball of glass moves the wall behind it aside, without turning it over.
 @(test)
-glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
+glass_ball_shows_the_scene_behind_it_across_a_slab :: proc(t: ^testing.T) {
 	f: Fixture
 	if !fixture_init(t, &f, 128, 96, glass_settings(), reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
@@ -372,22 +374,13 @@ glass_ball_turns_the_scene_behind_it_upside_down :: proc(t: ^testing.T) {
 	blue := Instance_Desc{object_id = 2, mesh = sheet, transform = standing({4, 1, -4}, 8, 12), tint = {0, 0, 0}, emission = {0, 0, 1}}
 	lens := Instance_Desc{object_id = 3, mesh = ball, transform = placed({0, 1, 0}, {2, 2, 2}), material = 1, tint = {1, 1, 1}}
 	camera := Camera{position = {0, 1, 6}, forward = {0, 0, -6}, up = {0, 1, 0}, fov_y = 40, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	for provider in ([]Trace_Mode{.Software, .Hardware}) {
-		if !fixture_traces(r, provider) {continue}
-		settings := r.settings
-		settings.trace_mode = provider
-		testing.expect(t, renderer_apply_settings(r, settings))
-		scene_given(r, {red, blue}, nil, {}, {})
-		left := shown(t, &f, camera, {-0.4, 1, 0})
-		testing.expectf(t, left.r > 0.9 && left.b < 0.05, "%v: the left of the wall is red: %v", provider, left)
-		scene_given(r, {red, blue, lens}, nil, {}, {})
-		through_left := shown(t, &f, camera, {-0.4, 1, 0})
-		through_right := shown(t, &f, camera, {0.4, 1, 0})
-		testing.expectf(t, through_left.b > 0.7 && through_left.r < 0.1 && through_right.r > 0.7 && through_right.b < 0.1,
-			"%v: a ball of glass shows the wall behind it mirrored: %v on its left, %v on its right", provider, through_left, through_right)
-		beside := shown(t, &f, camera, {-1.6, 1, 0})
-		testing.expectf(t, beside.r > 0.9 && beside.b < 0.05, "%v: beside the ball the wall is where it was: %v", provider, beside)
-	}
+	scene_given(r, {red, blue, lens}, nil, {}, {})
+	through_left := shown(t, &f, camera, {-0.4, 1, 0})
+	through_right := shown(t, &f, camera, {0.4, 1, 0})
+	testing.expectf(t, through_left.r > 0.7 && through_left.b < 0.1 && through_right.b > 0.7 && through_right.r < 0.1,
+		"a ball of glass shows the wall behind it as it stands: %v on its left, %v on its right", through_left, through_right)
+	beside := shown(t, &f, camera, {-1.6, 1, 0})
+	testing.expectf(t, beside.r > 0.9 && beside.b < 0.05, "beside the ball the wall is where it was: %v", beside)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -401,7 +394,8 @@ glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 	clear.thickness = 0.4
 	materials_set(r, {clear})
 	// The same box twice: the loose vertex of the second lies between its top
-	// and its bottom, so only the first is a pane.
+	// and its bottom, so only the first is a pane; the second is crossed as a
+	// slab as thick as its material, as thick as the box.
 	sheet, slab, solid := sheet_mesh(r), box_mesh(r), box_mesh(r, Vec3{0.5, 0.1, 0.2})
 	// A floor that glows red where x < 0 and blue where x > 0.
 	red := Instance_Desc{object_id = 1, mesh = sheet, transform = placed({-5, 0, 0}, {10, 1, 10}), tint = {0, 0, 0}, emission = {1, 0, 0}}
@@ -418,8 +412,8 @@ glass_pane_shows_what_a_ray_through_it_finds :: proc(t: ^testing.T) {
 	pane.mesh = solid
 	scene_given(r, {red, blue, pane}, nil, {}, {})
 	for c, i in seen {
-		traced := shown(t, &f, camera, {at[i], 0, 0})
-		testing.expectf(t, abs(c.r - traced.r) < 0.05 && abs(c.b - traced.b) < 0.05, "at %v m the pane shows %v and the ray inside the solid %v", at[i], c, traced)
+		solid := shown(t, &f, camera, {at[i], 0, 0})
+		testing.expectf(t, abs(c.r - solid.r) < 0.05 && abs(c.b - solid.b) < 0.05, "at %v m the pane shows %v and the solid %v", at[i], c, solid)
 	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

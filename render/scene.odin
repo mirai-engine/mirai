@@ -152,7 +152,7 @@ Translucent :: struct {
 	glass_smooth:    bool, // every glass slot is a thin smooth pane (no blurred mips of glass_scene needed)
 	forward, glass:  bool,
 	before:          bool, // of the view drawing it: nearer than every glass where it covers, so in front of the nearest layer
-	solid:           bool, // a blended material of it has a medium (material_solid): the camera can be in it
+	medium:          u32,  // the row plus one of a blended material of it with a medium (material_solid), 0 none: the camera can be in it
 	layered:         bool, // a blended material of it has layers: the glass layers keep them in a target
 }
 
@@ -1048,7 +1048,7 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
                 }
                 if values.transmission > 0 {
                     a.translucent.glass = true
-                    a.translucent.solid ||= values.thickness > 0
+                    if a.translucent.medium == 0 && values.thickness > 0 {a.translucent.medium = row + 1}
                     a.translucent.layered ||= lit != {}
                     if values.thickness > 0 || values.program_id != 0 || values.textures[.Metallic_Roughness] != GPU_NONE || values.roughness > 0.06 {
                         a.translucent.glass_smooth = false

@@ -57,7 +57,7 @@ Settings :: struct {
 	probe_cascades:       u32,    // cascades of probes around the camera, 1 to VOLUME_CASCADES_MAX
 	probe_rays:           u32,    // rays of a probe (multiple of 32, at most 256)
 	probe_budget:         u32,    // probes traced at most per frame
-	gi_max_distance:      f32,    // the farthest a glass ray goes, in meters
+	gi_max_distance:      f32,    // the farthest the view through glass goes, in meters
 	light_budget:         u32,    // shadow rays of a point that traces its own (glass, overlays, the other side of a surface that lets light through; probes take theirs from it), each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
 	direct_samples:       u32,    // samples of the direct light of a pixel, spread over the lights by what each gives it, one of them traced through the whole scene (1 to DIRECT_SAMPLES_MAX)
 	direct_half_resolution: bool, // the samples of the direct light are taken at one pixel of each 2x2 and the filter takes them to the others by their surfaces
@@ -1052,9 +1052,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Reflectance_Frag],
 		color_formats = {0 = .RGBA8_Srgb}, color_count = 1, name = "reflectance of a view before its nested views",
 	})
-	traced(list, r, .Glass, .Glass_Comp, .Glass_Hw_Comp)
+	compute(list, r, .Glass, .Glass_Comp)
 	traced(list, r, .Glass_Light, .Glass_Light_Comp, .Glass_Light_Hw_Comp)
-	traced(list, r, .Glass_Inside, .Glass_Inside_Comp, .Glass_Inside_Hw_Comp)
+	compute(list, r, .Glass_Inside, .Glass_Inside_Comp)
 	graphics(list, r, .Glass_Layer, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Layer_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG32_Uint, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,

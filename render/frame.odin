@@ -92,6 +92,7 @@ Pass :: struct {
 	glass:   Glass_Side, // of the Lit or Blend stage being recorded
 	glass_layered: bool, // the layers of glass were drawn before the Lit stage, which runs on each side of them
 	glass_medium: u32, // instance plus one of the solid of glass the camera may be in (glass_layers), 0 none
+	glass_medium_row: u32, // the row of the material of its medium
 	gi:    rhi.Texture, // the light of the probe volume at each pixel, or what a custom pass writes as Gi
 	gathered: bool, // gi holds the light of the probe volume (contact_pixels.comp)
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
