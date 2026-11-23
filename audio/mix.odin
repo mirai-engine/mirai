@@ -33,6 +33,7 @@ Voice_Start :: struct {
     occlusion:f32,
     transmission:[BANDS]f32,
     reverb:f32,
+    listener:u8,
 }
 Voice_Phase :: enum u8 {Free,Playing,Paused}
 Mix_Voice :: struct {
@@ -85,7 +86,8 @@ voice_begin :: proc "contextless" (m:^Mixer,v:^Mix_Voice,start:Voice_Start) {
     v.reverb_now=start.reverb
     if start.spatial && start.attenuation.delay {
         // DirectSimulator::calcDelay, applied once to where the voice starts.
-        _,distance:=listener_direction(m.listener.position,m.listener.rotation,start.position)
+        l:=listener_of(m,start.listener)
+        _,distance:=listener_direction(l.position,l.rotation,start.position)
         frames:=min(f64(distance)/f64(m.speed_of_sound)*f64(m.sample_rate)+0.5,f64(max(u32)))
         v.start_frame=max(v.start_frame,m.clock)+u64(frames)
     }
@@ -137,6 +139,7 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         case .Voice_Place:target.position=command.vectors[0];target.velocity=command.vectors[1];target.rotation=command.rotation
         case .Voice_Occlusion:target.occlusion=command.value;target.transmission=command.vectors[0]
         case .Voice_Reverb:target.reverb=command.value
+        case .Voice_Listener:target.listener=u8(command.frames)
         }
         return
     }
@@ -182,6 +185,9 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         v.occlusion=command.value;v.transmission=command.vectors[0]
         v.spatial_dirty=true
     case .Voice_Reverb:v.reverb=command.value
+    case .Voice_Listener:
+        v.listener=u8(command.frames)
+        v.spatial_dirty=true
     }
 }
 

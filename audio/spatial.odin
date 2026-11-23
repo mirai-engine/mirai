@@ -40,10 +40,15 @@ ATTENUATION_FADE :: f32(0.25)
 // behind and above from below. A mono output plays every voice centered.
 Output_Kind :: enum u8 {Speakers,Headphones}
 
+// Listeners a mixer hears from at once, as the players of a split screen: each
+// spatial voice is heard from one of them (Voice_Desc.listener).
+LISTENERS_MAX :: 4
+
 @(private)
 Listener :: struct {
     position,velocity:[3]f32,
     rotation:quaternion128,
+    medium:[BANDS]f32, // the part of each band what surrounds it lets through: 1 in the air
 }
 
 attenuation_gain :: proc "contextless" (a:Attenuation,distance:f32) -> f32 {
@@ -110,15 +115,17 @@ doppler_pitch :: proc "contextless" (listener_position,listener_velocity,source_
 @(private)
 spatial_gains :: proc "contextless" (m:^Mixer,v:^Mix_Voice) -> [4]f32 {
     if v.spatial_dirty || v.listener_serial!=m.listener_serial {
-        l:=m.listener
+        l:=listener_of(m,v.listener)
         direction,distance:=listener_direction(l.position,l.rotation,v.position)
         directivity:=directivity_gain(v.directivity,v.position,v.rotation,l.position)
-        v.direct_gain,v.eq_target=direct_gain_eq(attenuation_gain(v.attenuation,distance),directivity,air_absorption(distance),v.occlusion,v.transmission)
+        v.direct_gain,v.eq_target=direct_gain_eq(attenuation_gain(v.attenuation,distance),directivity,air_absorption(distance)*l.medium,v.occlusion,v.transmission)
         v.direction=direction
         v.blend=1
         if r:=v.attenuation.near_radius;distance<r {s:=distance/r;v.blend=s*s*s*(s*(6*s-15)+10)}
         v.spread=math.atan(0.5*max(v.attenuation.spread,0)/max(distance,1e-4))
-        v.spatial_pitch=doppler_pitch(l.position,l.velocity,v.position,v.velocity,v.doppler,m.speed_of_sound)
+        // A voice that goes from one listener to another, or two that move apart, would jump in
+        // pitch: with more than one, only the source moves.
+        v.spatial_pitch=doppler_pitch(l.position,l.velocity if m.listener_count==1 else {},v.position,v.velocity,v.doppler,m.speed_of_sound)
         v.spatial_dirty=false;v.listener_serial=m.listener_serial
     }
     stereo:=v.source.channels==2
@@ -226,11 +233,26 @@ spatial_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:int
     return
 }
 
-// Where the listener is, how it is turned and how fast it moves. False for a
-// position or velocity that is not a number.
-listener_set :: proc(m:^Mixer,position:[3]f32,rotation:quaternion128,velocity:[3]f32={}) -> bool {
-    if !finite3(position) || !finite3(velocity) {return false}
-    return command_push(m,{kind=.Listener,vectors={position,velocity},rotation=quat_unit(rotation)})
+// The listener a voice is heard from: the first for a slot past those that hear.
+@(private)
+listener_of :: proc "contextless" (m:^Mixer,slot:u8) -> Listener {
+    return m.listeners[slot if int(slot)<m.listener_count else 0]
+}
+
+// Where the listener of slot is, how it is turned and how fast it moves, and
+// the part of each band what surrounds it lets through (lowpass_bands under
+// water; 1 in the air). False for a slot of none of LISTENERS_MAX or a value
+// that is not a number.
+listener_set :: proc(m:^Mixer,position:[3]f32,rotation:quaternion128,velocity:[3]f32={},slot:=0,medium:=[BANDS]f32{1,1,1}) -> bool {
+    if slot<0 || slot>=LISTENERS_MAX || !finite3(position) || !finite3(velocity) || !finite3(medium) {return false}
+    return command_push(m,{kind=.Listener,index=u32(slot),vectors={position,velocity,transmission_clamp(medium)},rotation=quat_unit(rotation)})
+}
+
+// How many listeners hear, 1 to LISTENERS_MAX: those of the first slots. With
+// more than one, the motion of a listener moves no pitch. False for another count.
+listeners_set_count :: proc(m:^Mixer,count:int) -> bool {
+    if count<1 || count>LISTENERS_MAX {return false}
+    return command_push(m,{kind=.Listeners,index=u32(count)})
 }
 
 // What the output plays on: the HRTF for headphones or the pan for speakers.

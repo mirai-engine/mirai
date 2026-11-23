@@ -53,7 +53,7 @@ area_requests_reach_more_than_256_bodies_once_per_compound :: proc(t:^testing.T)
         velocity:=sim.body_linear_velocity(&f.state.world,body)
         testing.expectf(t,abs(linalg.length(velocity)-1)<0.001,"radial missed or doubled %v: %v",e,velocity)
     }
-    apply_area(&f.requests,volume.sphere(1000),{},1,impulse=true,velocity_change=true)
+    apply_area(&f.requests,volume.sphere(1000),{},1,impulse=true,per_mass=true)
     physics_test_step(&f)
     for e in objects {
         testing.expect(t,abs(linalg.length(sim.body_linear_velocity(&f.state.world,body_of(core.ref(&f.state),e)))-2)<0.01)
@@ -145,7 +145,6 @@ area_requests_push_by_the_weight_of_their_volume_its_range_and_its_noise :: proc
     apply_area(&f.requests,volume.sphere(5),{},10,{nan,0,0})
     apply_area(&f.requests,volume.sphere(5),{},10,blend=nan)
     apply_area(&f.requests,volume.Volume{shape=volume.Volume_Shape(9)},{},10)
-    apply_area(&f.requests,volume.sphere(5),{},10,velocity_change=true)
     physics_test_step(&f)
     testing.expect(t,core.problem_find(&f.problems,core.NONE,"physics.request_area")!=nil)
     testing.expect_value(t,speeds(w,bodies),[2]f32{})
@@ -193,6 +192,54 @@ a_force_field_pushes_in_the_volume_of_its_entity :: proc(t:^testing.T) {
     test_world_settle(&w)
     step(&w,{playing=true,dt=0.25})
     testing.expect_value(t,len(w.requests.queue.items),0)
+}
+
+// The force of a Force_Field moves a body by its mass and its acceleration
+// moves any body the same; both add up, and one that is not finite pushes
+// nothing and says so.
+@(test)
+a_force_field_accelerates_any_mass_the_same_and_forces_it_by_its_mass :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    light,heavy:=RIGID_BODY_DYNAMIC,RIGID_BODY_DYNAMIC
+    light.mass,heavy.mass,light.gravity_scale,heavy.gravity_scale=1,100,0,0
+    bodies:=[2]core.Entity{physics_test_box(&f,{},{0.5,0.5,0.5},light),physics_test_box(&f,{0,0,5},{0.5,0.5,0.5},heavy)}
+    physics_test_step(&f,0)
+    w:Field_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    field:=core.create(&w.entities)
+    core.add(&w.fields,field,FORCE_FIELD_DEFAULT)
+    test_world_settle(&w)
+    inf:=max(f32)*2
+    nan:=inf-inf
+    Case :: struct {name:string,force,acceleration:f32,gained:[2]f32,problem:bool} // m/s in a tick of 1/60 s, light and heavy
+    cases:=[?]Case{
+        {"a force",60,0,{1,0.01},false},
+        {"an acceleration",0,60,{1,1},false},
+        {"both",60,60,{2,1.01},false},
+        {"a pull",0,-60,{-1,-1},false},
+        {"an acceleration that is not a number",0,nan,{0,0},true},
+        {"an infinite acceleration beside a force",60,inf,{1,0.01},true},
+    }
+    for c in cases {
+        config:=FORCE_FIELD_DEFAULT
+        config.force,config.acceleration,config.along=c.force,c.acceleration,{1,0,0}
+        core.edit(&w.fields,field)^=config
+        test_world_settle(&w)
+        force_fields_step(core.read(&w.fields),core.read(&w.volumes),core.read(&w.worlds),{},{},&w.requests,{playing=true,dt=1.0/60})
+        for request in w.requests.queue.items {core.push(&f.requests.queue,request)}
+        core.queue_clear(&w.requests.queue)
+        physics_test_step(&f)
+        for e,i in bodies {
+            body:=body_of(core.ref(&f.state),e)
+            gained:=sim.body_linear_velocity(&f.state.world,body).x
+            testing.expectf(t,abs(gained-c.gained[i])<1e-4,"%s: body %d gained %v m/s, not %v",c.name,i,gained,c.gained[i])
+            sim.body_set_velocity(&f.state.world,body,{},{})
+        }
+        testing.expectf(t,(core.problem_find(&f.problems,core.NONE,"physics.request_area")!=nil)==c.problem,"%s: a problem %v",c.name,c.problem)
+    }
 }
 
 @(test)

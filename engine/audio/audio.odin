@@ -16,9 +16,9 @@ import "mirai:std/base"
 // Sound. The mixer belongs to the application, which hands it to the
 // function that asks for a ^Mixer (nil without audio); this library
 // keeps its voices equal to the Audio_Source components of the world, its
-// listener at the Audio_Listener entity or, without one, at the View, its
+// listeners at the Audio_Listener entities or, without one, at the View, its
 // buses as Audio_Settings says and its reverb as the Audio_Reverb volumes
-// where the listener is.
+// where the listeners are.
 // What collides in the world (core.World_Query) hides the sources that have
 // an Audio_Occlusion, letting through what the Audio_Material of each body
 // it crosses lets through. A step plays a sound once by pushing it to
@@ -33,6 +33,11 @@ OCCLUSION_SAMPLES :: 16           // points of the sphere of a source with a rad
 OCCLUSION_SAMPLES_PER_FRAME :: 4  // of them tested again each frame
 TRANSMISSION_SURFACES :: 4        // bodies crossed whose materials are added up between a source and the listener
 VOICE_KEEP :: f32(1.25) // a source that holds a voice ranks as this much louder, so two about as loud do not trade it each frame
+AUDIO_LISTENERS_MAX :: mixer.LISTENERS_MAX // the players of a split screen that hear at once
+// A spatial source goes to another listener once that one is nearer than this
+// share of the distance to its own: crossing the middle between two players
+// does not throw it from ear to ear.
+LISTENER_SWITCH :: f32(0.88)
 @(private) TRANSMISSION_RAY_OFFSET :: f32(1e-2) // m past a surface where the next ray starts
 
 Mixer :: mixer.Mixer
@@ -145,21 +150,30 @@ Audio_Source_State :: struct {
     ray_next:u8 `mirai:"transient,readonly,local,hidden"`,
 }
 
-// The entity that hears: the first one found with a world transform. Without
-// one, the View hears.
-@(component,single)
+// An entity that hears, as the camera of a player of a split screen: the
+// first AUDIO_LISTENERS_MAX with a world transform, in the order of their
+// rows, are the slots of the listeners. Each spatial source is heard from the
+// nearest (LISTENER_SWITCH). Without one, the View hears.
+@(component)
 Audio_Listener :: struct {}
 
-// What surrounds the listener besides the air, as the water it is under:
-// audio_buses filters the master bus by its lowpass too, the lower of both,
-// and audio_reverb mixes its reverb by weight over that of the room. One
-// plugin writes it (water), before audio_reverb and audio_buses; zero: the
-// air.
-@(storage)
-Audio_Medium :: struct {
-    lowpass:f32 `mirai:"min=0,unit=Hz"`, // cutoff of the low-pass filter of all the listener hears; 0: none
+// What surrounds a listener besides the air, as the water it is under.
+Medium :: struct {
+    lowpass:f32 `mirai:"min=0,unit=Hz"`, // cutoff of the low-pass filter of what the listener hears; 0: none
     reverb:Reverb,
     weight:f32 `mirai:"min=0,max=1"`,    // of its reverb over that of the room
+}
+
+// The medium of each listener, by its slot (listener_positions). While every
+// listener is under one, audio_buses filters the master bus by the highest of
+// their lowpasses too, the lower of that and its own; while only some are,
+// the voices heard from those lose their highs through their EQ
+// (mixer.lowpass_bands). audio_reverb mixes the reverb of each by weight over
+// that of its room. One plugin writes it (water), before audio_reverb,
+// audio_buses and audio_sources; zero: the air.
+@(storage)
+Audio_Medium :: struct {
+    listeners:[AUDIO_LISTENERS_MAX]Medium,
 }
 
 // How a bus sounds. A bus without an entry plays as its voices come into the
@@ -233,11 +247,13 @@ Voice_Entry :: struct {
     cursor:f64,
     clock:u64,
     speed:f32,
-    // Of a spatial voice: where it was placed last, how it faces and what hides it.
+    // Of a spatial voice: where it was placed last, how it faces, what hides it
+    // and the slot of the listener it is heard from.
     moving:bool,
     position:[3]f32,
     rotation:quaternion128,
     transmission:[mixer.BANDS]f32,
+    listener:u8,
 }
 
 // What a voice starts with and cannot change while it sounds: another starts it again.
@@ -270,14 +286,18 @@ Voice_Rank :: struct {
 }
 
 // Where the mixer hears from, as it was told last: one per application, as
-// the mixer. The world whose listener moved, or that runs after another,
-// places it.
+// the mixer. The world whose listeners moved, or that runs after another,
+// places them.
 @(storage,host)
+Mixer_Listeners :: struct {
+    slots:[AUDIO_LISTENERS_MAX]Mixer_Listener,
+    count:int, // 0: none was placed yet
+}
 Mixer_Listener :: struct {
     position:[3]f32,
     rotation:quaternion128,
     velocity:[3]f32,
-    set:bool,
+    medium:[mixer.BANDS]f32, // what the mixer dulls its voices by: lowpass_bands while not every listener is under a medium
 }
 
 // The reverb of the mixer as it was told last, on its way to that of the
@@ -290,9 +310,10 @@ Mixer_Reverb :: struct {
     world:core.World_Id,
     seen:[5]core.Seen,
     worlds:core.Seen,
-    position:[3]f32,
-    listening,measured:bool,
-    room:Reverb,
+    positions:[AUDIO_LISTENERS_MAX][3]f32,
+    count:int, // listeners at positions
+    measured:bool,
+    rooms:[AUDIO_LISTENERS_MAX]Reverb,
 }
 
 @(storage,host)
@@ -313,13 +334,14 @@ Audio_Scene :: struct {
     listeners:^core.Table(Audio_Listener,.Read),
     view:core.Ref(core.View),
     queries:core.Ref(core.World_Queries),
+    medium:core.Ref(Audio_Medium),
 }
 
 @(step="late",stage="end",after="camera_view")
 audio_sources :: proc(
     sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State),
     space:Audio_Scene,frame:core.Frame_Time,clock:core.Clock,voices:^Voices,
-    listener:^Mixer_Listener,app:^host.App,problems:^core.Problems,
+    listeners:^Mixer_Listeners,app:^host.App,problems:^core.Problems,
 ) {
     if voices!=nil && app.mixer!=nil && clock.paused!=voices.paused {
         voices.paused=clock.paused
@@ -331,7 +353,7 @@ audio_sources :: proc(
         }
     }
     if voices!=nil && voices.paused {return}
-    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,core.world_query_read(space.world,space.queries)},frame.dt,voices,listener,app,problems)
+    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,space.medium,core.world_query_read(space.world,space.queries)},frame.dt,voices,listeners,app,problems)
 }
 
 // What the voices of a frame look at besides their sources.
@@ -342,11 +364,12 @@ Hearing :: struct {
     materials:^core.Table(Audio_Material,.Read),
     listeners:^core.Table(Audio_Listener,.Read),
     view:core.Ref(core.View),
+    medium:core.Ref(Audio_Medium),
     query:core.World_Query, // what hides a source
 }
 
 @(private)
-sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(Audio_Source_State),hearing:Hearing,dt:f32,voices:^Voices,listener:^Mixer_Listener,app:^host.App,problems:^core.Problems) {
+sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(Audio_Source_State),hearing:Hearing,dt:f32,voices:^Voices,listeners:^Mixer_Listeners,app:^host.App,problems:^core.Problems) {
     m:=app.mixer
     if m==nil || voices==nil {return}
     if cap(voices.ranks)==0 && (!core.entity_map_reserve(&voices.entries,VOICE_RESERVE) || reserve(&voices.ranks,VOICE_RESERVE)!=nil) {
@@ -354,7 +377,7 @@ sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(A
         return
     }
     hearing:=hearing
-    listener_update(listener,m,&hearing,dt)
+    listener_update(listeners,m,&hearing,dt)
     // The voices of the sources that went stop.
     changes,at,left:=core.changes(sources,&voices.seen),0,Voice_Entry{}
     for _ in core.entity_map_left(&voices.entries,sources,changes,&at,&left) {mixer.voice_stop(m,left.voice)}
@@ -362,25 +385,26 @@ sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(A
     for row in core.each_changed(sources,&changes) {
         e:=core.entity_at(sources,row)
         state,_:=core.get(states,e)
-        source_set(voices,m,app,&hearing,core.at(sources,row),e,&state,problems)
+        source_set(voices,m,app,&hearing,listeners,core.at(sources,row),e,&state,problems)
         state_put(states,e,state)
     }
     for i:=len(voices.entries.entities)-1;i>=0;i-=1 {
         e:=voices.entries.entities[i]
         source,_:=core.get(sources,e)
         state,_:=core.get(states,e)
-        voice_follow(voices,m,app,&hearing,listener.position,source,e,dt,&state,problems)
+        voice_follow(voices,m,app,&hearing,listeners,source,e,dt,&state,problems)
         state_put(states,e,state)
     }
-    voices_assign(voices,m,&hearing,listener.position,sources,states)
+    voices_assign(voices,m,&hearing,listeners,sources,states)
 }
 
 // The voices of the mixer go to the entries heard most, by priority first: as
-// many as the mixer has free and the entries hold. One that falls out goes
-// virtual, and one that comes in plays where its time is, on a voice that is
-// free: none is stolen, so a steady scene starts and stops nothing.
+// many as the mixer has free and the entries hold. A spatial one is as loud as
+// at its nearest listener. One that falls out goes virtual, and one that comes
+// in plays where its time is, on a voice that is free: none is stolen, so a
+// steady scene starts and stops nothing.
 @(private)
-voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State)) {
+voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State)) {
     free:=mixer.voices_free(m)
     budget:=free
     clear(&voices.ranks)
@@ -388,7 +412,7 @@ voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources
         if entry.fading!={} && !mixer.voice_valid(m,entry.fading) {entry.fading={}}
         source,_:=core.get(sources,voices.entries.entities[at])
         gain:=source.volume*entry.pick[0]*mixer.bus_volume(m,mixer.Bus(entry.kind.bus))
-        if entry.kind.spatial {gain*=mixer.attenuation_gain(entry.kind.attenuation,linalg.distance(entry.position,listener))}
+        if entry.kind.spatial {gain*=mixer.attenuation_gain(entry.kind.attenuation,listeners_distance(listeners,entry.position))}
         if entry.voice!={} {gain*=VOICE_KEEP}
         if gain>0 && mixer.sound_valid(m,entry.sound) {
             if _,failed:=append(&voices.ranks,Voice_Rank{u32(at),source.priority,gain});failed!=nil {gain=0}
@@ -404,7 +428,7 @@ voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources
         if i>=budget {
             if entry.voice!={} {voice_virtual(voices,m,int(rank.at),states)}
         } else if entry.voice=={} && free>0 {
-            if voice_real(voices,m,h,listener,sources,states,int(rank.at)) {free-=1}
+            if voice_real(voices,m,h,listeners,sources,states,int(rank.at)) {free-=1}
         }
     }
 }
@@ -424,7 +448,7 @@ voice_virtual :: proc(voices:^Voices,m:^Mixer,at:int,states:^core.Table(Audio_So
 
 // The entry at plays again where its time is; false when the mixer refused it.
 @(private)
-voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State),at:int) -> bool {
+voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners,sources:^core.Table(Audio_Source,.Read),states:^core.Table(Audio_Source_State),at:int) -> bool {
     entry:=&voices.entries.values[at]
     e:=voices.entries.entities[at]
     source,_:=core.get(sources,e)
@@ -435,9 +459,9 @@ voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listener:[3]f32,sources:^c
     heard.spatial=entry.kind.spatial
     if heard.spatial {
         world,_:=core.get(h.worlds,e)
-        entry.transmission=hidden(h,listener,e,world,0,&state,true)
+        entry.transmission=hidden(h,listeners.slots[entry.listener].position,e,world,0,&state,true)
     }
-    desc:=voice_desc(heard,entry.pick,entry.position,entry.rotation,state.occlusion,entry.transmission)
+    desc:=voice_desc(heard,entry.pick,entry.position,entry.rotation,state.occlusion,entry.transmission,entry.listener)
     desc.offset=f32(offset)
     if entry.voice=mixer.voice_play(m,entry.sound,desc);entry.voice=={} {return false}
     state.voice=entry.voice
@@ -457,8 +481,8 @@ state_put :: proc(states:^core.Table(Audio_Source_State),e:core.Entity,state:Aud
     if held,has:=core.get(states,e);!has {core.add(states,e,state)} else if held!=state {core.edit(states,e)^=state}
 }
 
-// The reverb of the mixer goes to that of the volumes where the listener is
-// over about REVERB_FADE.
+// The reverb of the mixer goes to that of the volumes where the listeners are
+// over about REVERB_FADE: of several, their average, each with its medium.
 @(step="late",stage="end",after="camera_view")
 audio_reverb :: proc(
     reverbs:^core.Table(Audio_Reverb,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),listeners:^core.Table(Audio_Listener,.Read),
@@ -467,24 +491,30 @@ audio_reverb :: proc(
     if m==nil || reverb==nil {return}
     bus:=BUS_MASTER
     if settings.ptr!=nil {bus=settings.reverb_bus}
-    hearing:=Hearing{worlds=worlds,listeners=listeners,view=view}
-    position,_,_,found:=listener_pose(&hearing)
+    positions,count:=listener_positions(worlds,listeners,view)
     changed:=core.touched(reverbs,&reverb.seen[0]) | core.touched(volumes,&reverb.seen[1]) |
         core.touched(parents,&reverb.seen[2]) | core.touched(sections,&reverb.seen[3]) |
         core.touched(splines,&reverb.seen[4])
     changed=volume.poses_changed(worlds,reverbs,sections,&reverb.worlds) || changed
-    if !reverb.measured || id!=reverb.world || changed || found!=reverb.listening || position!=reverb.position {
-        room,silent:Audio_Reverb
-        if found {room=volume.at({volumes,worlds,parents,sections,splines},reverbs,position,silent,reverb_mix)}
-        reverb.room=(^Reverb)(&room)^
-        reverb.world,reverb.position,reverb.listening,reverb.measured=id,position,found,true
-    }
-    target:=reverb.room
-    if medium.ptr!=nil {
-        if weight:=clamp(medium.weight,0,1);weight>0 {
-            target=transmute(Reverb)((transmute([4]f32)target)*(1-weight)+(transmute([4]f32)reverb_clamp(medium.reverb))*weight)
+    if !reverb.measured || id!=reverb.world || changed || count!=reverb.count || positions!=reverb.positions {
+        for i in 0..<count {
+            silent:Audio_Reverb
+            room:=volume.at({volumes,worlds,parents,sections,splines},reverbs,positions[i],silent,reverb_mix)
+            reverb.rooms[i]=(^Reverb)(&room)^
         }
+        reverb.world,reverb.positions,reverb.count,reverb.measured=id,positions,count,true
     }
+    sum:[4]f32
+    for i in 0..<count {
+        heard:=transmute([4]f32)reverb.rooms[i]
+        if medium.ptr!=nil {
+            if weight:=clamp(medium.listeners[i].weight,0,1);weight>0 {
+                heard=heard*(1-weight)+(transmute([4]f32)reverb_clamp(medium.listeners[i].reverb))*weight
+            }
+        }
+        sum+=heard
+    }
+    target:=transmute(Reverb)(sum/f32(max(count,1)))
     if !bus_ready(m,bus) {bus=BUS_MASTER}
     if reverb.set && reverb.reverb==target && reverb.bus==bus {return}
     now:=target
@@ -506,28 +536,53 @@ reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
     volume.mix_linear((^[4]f32)(value),(^[4]f32)(&by)^,weight,add)
 }
 
-// The buses of the mixer as the settings and the medium of the listener say;
+// The buses of the mixer as the settings and the medium of the listeners say;
 // only what differs is sent.
 @(step="late",stage="end")
 audio_buses :: proc(
     settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),
+    worlds:^core.Table(core.World_Transform,.Read),listeners:^core.Table(Audio_Listener,.Read),view:core.Ref(core.View),
     settings_stamp:core.Stamp(Audio_Settings),volume_stamp:core.Stamp(Audio_Volumes),
     applied:^Mixer_Buses,m:^Mixer,id:core.World_Id,problems:^core.Problems,
 ) {
     if m==nil || applied==nil {return}
     changed:=core.touched(settings_stamp,&applied.settings) | core.touched(volume_stamp,&applied.volumes)
-    lowpass:=medium.ptr.lowpass if medium.ptr!=nil else 0
+    _,count:=listener_positions(worlds,listeners,view)
+    lowpass:=medium_lowpass(medium.ptr,count)
     if applied.set && applied.world==id && !changed && applied.count==mixer.bus_count(m) && applied.lowpass==lowpass {return}
-    applied.set=buses_apply(m,settings.ptr,volumes.ptr,medium.ptr,problems)
+    applied.set=buses_apply(m,settings.ptr,volumes.ptr,lowpass,problems)
     applied.world,applied.count,applied.lowpass=id,mixer.bus_count(m),lowpass
 }
 
+// The cutoff of the master by the medium of count listeners: while every one
+// is under a medium, the highest of their cutoffs, which none hears clearer
+// than; else 0, and the voices of those under one are dulled one by one
+// (medium_bands).
+medium_lowpass :: proc "contextless" (medium:^Audio_Medium,count:int) -> f32 {
+    if medium==nil || count<1 {return 0}
+    highest:=f32(0)
+    for i in 0..<min(count,AUDIO_LISTENERS_MAX) {
+        cutoff:=medium.listeners[i].lowpass
+        if !(cutoff>0) {return 0}
+        highest=max(highest,cutoff)
+    }
+    return highest
+}
+
+// What the mixer dulls the voices heard from the listener of slot by, of
+// count listeners: the lowpass of its medium as bands while not every
+// listener is under one (the master filters them all when they are).
+medium_bands :: proc "contextless" (medium:^Audio_Medium,count,slot:int) -> [mixer.BANDS]f32 {
+    if medium==nil || slot<0 || slot>=AUDIO_LISTENERS_MAX || medium_lowpass(medium,count)>0 {return {1,1,1}}
+    return mixer.lowpass_bands(medium.listeners[slot].lowpass)
+}
+
 // Gives the buses of the mixer what the settings say, and the master the
-// lowpass of the medium: what audio_buses applies in a game and the
-// editor before it plays a sound to be heard.
-buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium:^Audio_Medium=nil,problems:^core.Problems=nil) -> bool {
+// lowpass of the medium (medium_lowpass; 0: none): what audio_buses applies
+// in a game and the editor before it plays a sound to be heard.
+buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil,medium_lowpass:f32=0,problems:^core.Problems=nil) -> bool {
     if m==nil {return false}
-    if settings==nil && medium==nil {return true}
+    if settings==nil && !(medium_lowpass>0) {return true}
     if settings!=nil {
         for setting in settings.buses {
             if setting=={} {continue}
@@ -541,7 +596,7 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
         setting:=audio_bus_setting(core.ref(settings),bus)
         if volume:=db_volume(setting.gain)*audio_volume(core.ref(volumes),bus);mixer.bus_volume(m,mixer.Bus(bus))!=volume {ok=mixer.bus_set_volume(m,mixer.Bus(bus),volume) && ok}
         lowpass:=max(setting.lowpass,0)
-        if bus==BUS_MASTER && medium!=nil {lowpass=lowpass_lower(lowpass,medium.lowpass)}
+        if bus==BUS_MASTER {lowpass=lowpass_lower(lowpass,medium_lowpass)}
         if mixer.bus_lowpass(m,mixer.Bus(bus))!=lowpass {ok=mixer.bus_set_lowpass(m,mixer.Bus(bus),lowpass) && ok}
         if reverb:=reverb_clamp(setting.reverb);mixer.bus_reverb(m,mixer.Bus(bus))!=reverb {ok=mixer.bus_set_reverb(m,mixer.Bus(bus),reverb) && ok}
         if bus==BUS_MASTER {continue}
@@ -671,35 +726,68 @@ bus_ready :: proc(m:^Mixer,bus:Audio_Bus) -> bool {
     return true
 }
 
-// Where the listener hears from: the first Audio_Listener with a world
-// transform, or the View; false without either.
-listener_position :: proc(worlds:^core.Table(core.World_Transform,$A),listeners:^core.Table(Audio_Listener,$B),view:core.Ref(core.View)) -> (position:[3]f32,found:bool) {
+// Where the listeners hear from, by slot: the first AUDIO_LISTENERS_MAX
+// Audio_Listeners with a world transform, or the View; count 0 without either.
+listener_positions :: proc(worlds:^core.Table(core.World_Transform,$A),listeners:^core.Table(Audio_Listener,$B),view:core.Ref(core.View)) -> (positions:[AUDIO_LISTENERS_MAX][3]f32,count:int) {
     hearing:=Hearing{worlds=worlds,listeners=listeners,view=view}
-    position,_,_,found=listener_pose(&hearing)
-    return
+    poses,_:=listener_poses(&hearing)
+    for pose,i in poses.slots[:poses.count] {positions[i]=pose.position}
+    return positions,poses.count
 }
 
-// Where the listener is: the first Audio_Listener with a world transform, or
-// the View. cut: the View jumped.
+// Where the listeners are: the first AUDIO_LISTENERS_MAX Audio_Listeners with
+// a world transform, or the View. cut: the View jumped.
 @(private)
-listener_pose :: proc(h:^Hearing) -> (position:[3]f32,rotation:quaternion128,cut,found:bool) {
+listener_poses :: proc(h:^Hearing) -> (poses:Mixer_Listeners,cut:bool) {
     for row in 0..<core.count(h.listeners) {
         world,placed:=core.get(h.worlds,core.entity_at(h.listeners,row))
         if !placed {continue}
-        return world.position,world.rotation,false,true
+        poses.slots[poses.count]={position=world.position,rotation=world.rotation}
+        if poses.count+=1;poses.count==AUDIO_LISTENERS_MAX {break}
     }
-    if h.view.ptr==nil {return {},1,false,false}
-    return h.view.position,h.view.rotation,h.view.cut,true
+    if poses.count>0 || h.view.ptr==nil {return}
+    poses.slots[0]={position=h.view.position,rotation=h.view.rotation}
+    poses.count=1
+    return poses,h.view.cut
 }
 
+// The mixer hears from where the listeners are, each at the velocity it moved
+// at in the frame and dulled by its medium; only what differs is sent.
 @(private)
-listener_update :: proc(listener:^Mixer_Listener,m:^Mixer,h:^Hearing,dt:f32) {
-    position,rotation,cut,found:=listener_pose(h)
-    if !found {return}
-    velocity:[3]f32
-    if listener.set && dt>0 && !cut {velocity=(position-listener.position)/dt}
-    if listener.set && listener.position==position && listener.rotation==rotation && listener.velocity==velocity {return}
-    if mixer.listener_set(m,position,rotation,velocity) {listener^={position,rotation,velocity,true}}
+listener_update :: proc(listeners:^Mixer_Listeners,m:^Mixer,h:^Hearing,dt:f32) {
+    found,cut:=listener_poses(h)
+    if found.count==0 {return}
+    if found.count!=listeners.count && !mixer.listeners_set_count(m,found.count) {return}
+    for &l,i in found.slots[:found.count] {
+        l.medium=medium_bands(h.medium.ptr,found.count,i)
+        held:=listeners.slots[i]
+        if i<listeners.count && dt>0 && !cut {l.velocity=(l.position-held.position)/dt}
+        if i<listeners.count && held==l {continue}
+        if !mixer.listener_set(m,l.position,l.rotation,l.velocity,i,l.medium) {l=held}
+    }
+    listeners^=found
+}
+
+// The slot of the listener a spatial source at position is heard from, of
+// those of listeners: the nearest, but current while no other is nearer than
+// LISTENER_SWITCH of the distance to it. A current of none is the nearest.
+listener_pick :: proc "contextless" (listeners:^Mixer_Listeners,position:[3]f32,current:u8) -> u8 {
+    if listeners.count<=1 {return 0}
+    nearest,best:=0,f32(max(f32))
+    for l,i in listeners.slots[:listeners.count] {
+        if d:=linalg.length2(l.position-position);d<best {nearest,best=i,d}
+    }
+    if int(current)>=listeners.count {return u8(nearest)}
+    own:=linalg.length2(listeners.slots[current].position-position)
+    return u8(nearest) if best<own*LISTENER_SWITCH*LISTENER_SWITCH else current
+}
+
+// The distance from position to the nearest listener, or to the origin without one.
+listeners_distance :: proc "contextless" (listeners:^Mixer_Listeners,position:[3]f32) -> f32 {
+    if listeners.count==0 {return linalg.length(position)}
+    best:=f32(max(f32))
+    for l in listeners.slots[:listeners.count] {best=min(best,linalg.length2(l.position-position))}
+    return math.sqrt(best)
 }
 
 // Whether what collides stands between two points, short of clearance before
@@ -813,7 +901,7 @@ source_problem :: proc "contextless" (s:Audio_Source) -> string {
 // A source as it was written: its voice stops, starts again when its kind is
 // another, or takes its volume, pitch, loop, pan and send.
 @(private)
-source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,source:Audio_Source,e:core.Entity,state:^Audio_Source_State,problems:^core.Problems) {
+source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^Mixer_Listeners,source:Audio_Source,e:core.Entity,state:^Audio_Source_State,problems:^core.Problems) {
     entry:=core.entity_map_get(&voices.entries,e)
     if !source.playing {
         if entry!=nil {
@@ -842,7 +930,7 @@ source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,source:Audio
     }
     if state.ended && state.plays==source.plays {return}
     state.ended,state.plays,state.voice=false,source.plays,{}
-    source_start(voices,m,app,h,source,e,problems)
+    source_start(voices,m,app,h,listeners,source,e,problems)
 }
 
 // What the voice of a source is started as, placed or not.
@@ -858,7 +946,7 @@ kind_of :: proc "contextless" (source:Audio_Source,placed:bool) -> Voice_Kind {
 // voices_assign gives it a voice; one whose sound does not load yet waits in
 // it for a later frame.
 @(private)
-source_start :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,source:Audio_Source,e:core.Entity,problems:^core.Problems) {
+source_start :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^Mixer_Listeners,source:Audio_Source,e:core.Entity,problems:^core.Problems) {
     if problem:=source_problem(source);problem!="" {
         core.report(problems,e,"audio.source","its Audio_Source plays nothing: %s",problem)
         return
@@ -871,6 +959,7 @@ source_start :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,source:Aud
     entry.speed=(source.pitch>0?source.pitch:1)*pick.pitch
     if entry.kind.spatial {
         entry.position=world.position
+        entry.listener=listener_pick(listeners,world.position,AUDIO_LISTENERS_MAX)
         if entry.kind.directivity.weight>0 {entry.rotation=world.rotation}
     }
     // Without memory to keep it the source cannot be followed: it does not play.
@@ -906,16 +995,17 @@ hidden :: proc(h:^Hearing,listener:[3]f32,e:core.Entity,world:core.World_Transfo
 // An entry in the frame: one whose sound was loaded again, or is still to
 // load, starts again; one whose voice ended or was stolen goes virtual, and
 // ends when its time passes its sound without loop; a spatial one follows its
-// entity, and with a voice what hides it.
+// entity and its nearest listener, and with a voice what hides it from that
+// listener, all of it tested again at once when it goes to another.
 @(private)
-voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[3]f32,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
+voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^Mixer_Listeners,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
     entry:=core.entity_map_get(&voices.entries,e)
     world,placed:=core.get(h.worlds,e)
     if !mixer.sound_valid(m,entry.sound) || entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
         mixer.voice_stop(m,entry.voice)
         core.entity_map_remove(&voices.entries,e)
         state.voice={}
-        source_start(voices,m,app,h,source,e,problems)
+        source_start(voices,m,app,h,listeners,source,e,problems)
         return
     }
     if entry.voice!={} && !mixer.voice_valid(m,entry.voice) {entry.voice,state.voice={},{}}
@@ -927,12 +1017,16 @@ voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listener:[
     }
     if !entry.kind.spatial {return}
     rotation:=world.rotation if entry.kind.directivity.weight>0 else 1
+    slot:=listener_pick(listeners,world.position,entry.listener)
+    switched:=slot!=entry.listener
+    entry.listener=slot
     if entry.voice=={} {
         entry.position,entry.rotation,entry.moving=world.position,rotation,false
         return
     }
+    if switched {mixer.voice_set_listener(m,entry.voice,int(slot))}
     occlusion:=state.occlusion
-    if transmission:=hidden(h,listener,e,world,dt,state,false);state.occlusion!=occlusion || transmission!=entry.transmission {
+    if transmission:=hidden(h,listeners.slots[slot].position,e,world,dt,state,switched);state.occlusion!=occlusion || transmission!=entry.transmission {
         mixer.voice_set_occlusion(m,entry.voice,state.occlusion,transmission)
         entry.transmission=transmission
     }
@@ -968,32 +1062,33 @@ sound_pick :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,prob
 // at position, facing rotation and as hidden as occlusion says when spatial,
 // panned when not.
 @(private)
-voice_desc :: proc "contextless" (source:Audio_Source,pick:[2]f32,position:[3]f32,rotation:quaternion128,occlusion:f32,transmission:[mixer.BANDS]f32) -> mixer.Voice_Desc {
+voice_desc :: proc "contextless" (source:Audio_Source,pick:[2]f32,position:[3]f32,rotation:quaternion128,occlusion:f32,transmission:[mixer.BANDS]f32,listener:u8) -> mixer.Voice_Desc {
     desc:=mixer.VOICE_DEFAULT
     desc.bus,desc.volume,desc.pitch,desc.loop=mixer.Bus(source.bus),source.volume*pick[0],(source.pitch>0?source.pitch:1)*pick[1],source.loop
     desc.reverb,desc.priority=source.reverb,source.priority
     if source.spatial {
         desc.spatial,desc.position,desc.rotation,desc.attenuation,desc.doppler=true,position,rotation,attenuation_of(source),source.doppler
         desc.directivity={clamp(source.directivity,0,1),max(source.directivity_power,0)}
-        desc.occlusion,desc.transmission=occlusion,transmission
+        desc.occlusion,desc.transmission,desc.listener=occlusion,transmission,listener
     } else {
         desc.pan=source.pan
     }
     return desc
 }
 
-// Starts a voice of a source as it is set, at position when spatial: what a
-// request of Sound_Requests and what the editor plays to be heard start.
-// Zero, with the problem of e (NONE: of a request), when it does not start.
-voice_start :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,position:[3]f32={}) -> Voice {
+// Starts a voice of a source as it is set, at position when spatial and heard
+// from the listener of slot: what a request of Sound_Requests and what the
+// editor plays to be heard start. Zero, with the problem of e (NONE: of a
+// request), when it does not start.
+voice_start :: proc(m:^Mixer,app:^host.App,source:Audio_Source,e:core.Entity,problems:^core.Problems,position:[3]f32={},listener:u8=0) -> Voice {
     pick,ok:=sound_pick(m,app,source,e,problems)
     if !ok {return 0}
-    return voice_picked(m,source,pick,e,problems,position)
+    return voice_picked(m,source,pick,e,problems,position,listener)
 }
 
 @(private)
-voice_picked :: proc(m:^Mixer,source:Audio_Source,pick:host.Sound_Pick,e:core.Entity,problems:^core.Problems,position:[3]f32) -> (voice:Voice) {
-    if voice=mixer.voice_play(m,pick.sound,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT));voice=={} {
+voice_picked :: proc(m:^Mixer,source:Audio_Source,pick:host.Sound_Pick,e:core.Entity,problems:^core.Problems,position:[3]f32,listener:u8) -> (voice:Voice) {
+    if voice=mixer.voice_play(m,pick.sound,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener));voice=={} {
         core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, raise its priority, or raise the voices of the mixer",e==core.NONE?"audio.play":"its Audio_Source")
     }
     return
@@ -1041,7 +1136,7 @@ play_path :: proc(sounds:^Sound_Requests,path:string,at:Maybe([3]f32)=nil,bus:=B
 // at its end: what it asks again is dropped, and no copy of the world holds a
 // request it played, since copies are made between ticks.
 @(step="fixed late",stage="end",loops="game editor")
-audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,listener:^Mixer_Listener,app:^host.App,problems:^core.Problems) {
+audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,listeners:^Mixer_Listeners,app:^host.App,problems:^core.Problems) {
     requests:=core.take(&sounds.queue)
     if app.mixer==nil || time.resimulating {return}
     for &r in requests {
@@ -1063,8 +1158,12 @@ audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,listener:^Mixer_Lis
         hearing:=pick.hearing
         source.attenuation,source.min_distance,source.max_distance=Attenuation_Model(hearing.attenuation),hearing.min_distance,hearing.max_distance
         source.rolloff,source.reverb,source.priority=hearing.rolloff,hearing.reverb,hearing.priority
-        // Placed beyond where it is heard, it does not start.
-        if r.placed && listener!=nil && listener.set && !(linalg.distance(r.at,listener.position)<hearing.max_distance) {continue}
-        voice_picked(app.mixer,source,pick,core.NONE,problems,r.at)
+        // Placed beyond where every listener hears it, it does not start; it is heard from the nearest.
+        slot:=u8(0)
+        if r.placed && listeners!=nil && listeners.count>0 {
+            if !(listeners_distance(listeners,r.at)<hearing.max_distance) {continue}
+            slot=listener_pick(listeners,r.at,AUDIO_LISTENERS_MAX)
+        }
+        voice_picked(app.mixer,source,pick,core.NONE,problems,r.at,slot)
     }
 }

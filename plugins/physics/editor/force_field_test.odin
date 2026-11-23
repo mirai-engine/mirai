@@ -129,4 +129,11 @@ the_arrows_of_a_force_field_go_by_the_shape_of_its_volume :: proc(t:^testing.T) 
     testing.expect_value(t,lines.vertices[0].color,mm.rgba8_pack({.65,.65,.65,.8}))
     force_field_arrows(&lines,field,volume.sphere(2),pose)
     testing.expect(t,lines.count==60 && lines.dropped==30)
+    // An acceleration alone draws as a force does: lit, and reversed when it pulls.
+    pull:=phys.FORCE_FIELD_DEFAULT
+    pull.acceleration=-10
+    lines=gpu.debug_lines_make(storage[:],false)
+    force_field_arrows(&lines,pull,volume.plane(),pose)
+    testing.expect(t,lines.count==10 && lines.vertices[0].color==mm.rgba8_pack({1,.9,.3,1}))
+    testing.expect(t,linalg.length(lines.vertices[1].position-pose.position+normal*FORCE_ARROW_LENGTH)<1e-4)
 }

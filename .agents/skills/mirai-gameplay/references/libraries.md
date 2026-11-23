@@ -116,16 +116,25 @@ Action-based input (`Input_Map`, `Actions`, `keep` across loads): `Button`, `Axi
 
 ## `audio`
 
-Syncs mixer voices to `Audio_Source`s, listener to `Audio_Listener` or `View`, buses to
+Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
+`AUDIO_LISTENERS_MAX`, split screen) or `View`, buses to
 `Audio_Settings`, plus room reverb, medium and occlusion (game loop only):
 - **Sources (`audio_sources`, `late`):** plays `.sound`/`.sound_set` (spatial attenuation + `-Z`
   directivity or 2D `pan`; invalid range/NaN -> `audio.source`). `voices_assign` ranks by priority
-  and gain (`VOICE_KEEP` hysteresis); overflow voices run virtually on mixer clock without stealing.
+  and gain at the nearest listener (`VOICE_KEEP` hysteresis); overflow voices run virtually on
+  mixer clock without stealing. Each spatial voice is heard from one listener slot: the nearest,
+  switching only when another is nearer than `LISTENER_SWITCH` (0.88) of the distance to its own;
+  a switch re-tests its occlusion at once from the new one. With more than one listener the
+  mixer drops listener velocity from Doppler.
   `pitch` changes speed and tone; paused `core.Clock` pauses world voices (not one-shots).
 - **One-shots:** `audio.play` pushes `Sound_Requests` (`audio_requests` drains at end of `fixed`/
-  `late`; dropped during `time.resimulating`; skipped past `max_distance`).
-- **Reverb & medium:** `Audio_Reverb` zone volume blends at listener onto `reverb_bus`;
-  `Audio_Medium` (written by `water`) overlays underwater reverb + master low-pass.
+  `late`; dropped during `time.resimulating`; skipped past `max_distance` of every listener; heard
+  from the nearest).
+- **Reverb & medium:** `Audio_Reverb` zone volume blends at each listener, averaged, onto
+  `reverb_bus`; `Audio_Medium` (per listener slot, written by `water`) overlays underwater reverb.
+  The master low-pass applies only while every listener is under a medium (`medium_lowpass`, the
+  highest cutoff); else the voices of submerged listeners lose highs through their EQ
+  (`medium_bands` -> `mixer.lowpass_bands`).
 - **Occlusion (`Audio_Occlusion`):** raycasts via `core.World_Query` (`OCCLUSION_SAMPLES`,
   `TRANSMISSION_SURFACES`, `Audio_Material.transmission`) fading `Audio_Source_State.occlusion`.
 - **Buses & state:** named `Audio_Bus` (`master`, `music`, `effects`, `voice`, `ui` + game buses),

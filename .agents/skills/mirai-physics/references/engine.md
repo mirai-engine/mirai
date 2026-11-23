@@ -28,7 +28,9 @@ follow their entity's transform.
   components and `core.Motion`; re-enabling rebuilds at current `Transform`/velocity.
 - `Fluid` (`replicated`): `Plane`/`Box`/`Outline` `Volume` with density/current (zero density = dry
   box overriding lower `priority`).
-- `Force_Field`: applies `apply_area` each tick in `force_fields_step` across its `Volume`.
+- `Force_Field`: applies `apply_area` each tick in `force_fields_step` across its `Volume`, one
+  request for `force` (N) and one `per_mass` for `acceleration` (m/s^2), with the same direction,
+  falloff, range and noise; a value that is not finite is the problem `physics.request_area`.
 - `Joint` & `Joint_State` (`replicated`): entity joining `a` (default parent) and `b` (default
   world); presets `joint_{fixed,spherical,revolute,prismatic,distance}`.
 - `Body_Twin` & `Collider_Cuts`: portal twin colliders and box cutouts synced in `physics_twins`
@@ -98,12 +100,14 @@ last) are declared in code (`core/names.odin`) and configured in project `Collis
 Reads `engine/volume` `Gravity` (`gravity.odin`): unbounded downward fields form world gravity;
 bounded/planetary `Center` fields update awake bodies in parallel via `sim.world_set_body_gravity`
 (waking sleeping bodies when fields change). Query with `gravity` / `gravity_of_entity`. Use
-`Force_Field` or `apply_area` for mass-dependent forces.
+`Force_Field.force` or `apply_area` for mass-dependent forces, `Force_Field.acceleration` or
+`apply_area(per_mass=true)` for mass-independent ones.
 
 ## Requests
 
 - **`Body_Requests`:** `move_kinematic`, `set_velocity`, `apply_impulse`, `apply_force`/`torque`,
-  `apply_area` (volume force/impulse/velocity change, affects characters as `launch`; invalid ->
+  `apply_area` (volume force/impulse; `per_mass` makes it an acceleration or velocity change,
+  the same on any mass; affects characters as `launch`; invalid ->
   `physics.request_area`), `strain_area` (strains breakables post-step). Teleports go solely through
   `core.place` (`physics_places`, sets `core.jump`). Invalid requests emit `physics.request_*`.
 - **Manipulation:** `manipulation_target` pulls dynamic bodies via bounded soft spring

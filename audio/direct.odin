@@ -35,6 +35,21 @@ air_absorption :: proc "contextless" (distance:f32) -> (gains:[BANDS]f32) {
     return
 }
 
+// The part of each band a low-pass filter of cutoff Hz lets through, as a
+// bus's (two poles), at the middle of the band: what a listener under water
+// hears of a sound through its EQ. 1 for no cutoff.
+lowpass_bands :: proc "contextless" (cutoff:f32) -> (gains:[BANDS]f32) {
+    gains={1,1,1}
+    if !(cutoff>0) || !finite(cutoff) {return}
+    edges:=BAND_EDGES
+    middles:=[BANDS]f32{edges[0]/2,math.sqrt(edges[0]*edges[1]),edges[1]*2}
+    for f,i in middles {
+        r:=f/cutoff
+        gains[i]=1/math.sqrt(1+r*r*r*r)
+    }
+    return
+}
+
 // The gain of a source with a directivity, turned by rotation, toward a point.
 directivity_gain :: proc "contextless" (d:Directivity,source:[3]f32,rotation:quaternion128,point:[3]f32) -> f32 {
     if d.weight==0 {return 1}

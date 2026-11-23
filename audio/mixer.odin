@@ -73,10 +73,10 @@ Mixer_Stats :: struct {
 
 @(private)
 Command_Kind :: enum u8 {
-    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Reverb,
+    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Reverb,Voice_Listener,
     Bus_Volume,Bus_Mute,Bus_Lowpass,Bus_Duck,Bus_Reverb,Bus_Send,
     Reverb,
-    Listener,
+    Listener,Listeners,
     Output,
     Sound_Release,
 }
@@ -88,7 +88,7 @@ Command :: struct {
     generation:u32, // of the voice
     value:f32,
     frames:u32,
-    vectors:[2][3]f32,
+    vectors:[3][3]f32,
     rotation:quaternion128,
     duck:Duck,
     start:Voice_Start,
@@ -143,8 +143,9 @@ Mixer :: struct {
     bus_reverbs:[]Reverb_Unit,
     limiter:Limiter,
     scratch:[]f32,     // source frames of a voice that plays from a feed, laid out in a row
-    listener:Listener,
-    listener_serial:u32,
+    listeners:[LISTENERS_MAX]Listener,
+    listener_count:int, // those of the first slots hear
+    listener_serial:u32, // grows when a listener changes
     output_now:Output_Kind,
     binaural_ready:bool, // binaural_init was done before output_now was ever headphones
     spatial_mono,spatial_old:[]f32, // CHUNK_FRAMES per channel: a spatial voice before it is placed
@@ -267,7 +268,8 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     m.bus_count=1
     for &bus in m.bus_shadows {bus.volume=1}
     for &bus in m.buses {bus.volume=1;bus.gain=1;bus.duck_gain=1;bus.duck_gain_now=1}
-    m.listener.rotation=1
+    for &l in m.listeners {l.rotation,l.medium=1,{1,1,1}}
+    m.listener_count=1
     m.limiter.gain=1
     if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     if m.spatial_old,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
@@ -441,7 +443,7 @@ commands_apply :: proc "contextless" (m:^Mixer) {
                 if v.has_next {feed_release(m,&v.next)}
                 v.next=command.start;v.has_next=true
             }
-        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Occlusion,.Voice_Reverb:
+        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Occlusion,.Voice_Reverb,.Voice_Listener:
             voice_command(m,&command)
         case .Bus_Volume:m.buses[command.index].volume=command.value
         case .Bus_Mute:m.buses[command.index].muted=command.flag
@@ -455,7 +457,10 @@ commands_apply :: proc "contextless" (m:^Mixer) {
         case .Bus_Reverb:m.bus_reverbs[command.index].params=reverb_command(&command)
         case .Bus_Send:m.buses[command.index].send=Bus(command.frames)
         case .Listener:
-            m.listener={command.vectors[0],command.vectors[1],command.rotation}
+            m.listeners[command.index]={command.vectors[0],command.vectors[1],command.rotation,command.vectors[2]}
+            m.listener_serial+=1
+        case .Listeners:
+            m.listener_count=int(command.index)
             m.listener_serial+=1
         case .Output:
             m.output_now=Output_Kind(command.index)

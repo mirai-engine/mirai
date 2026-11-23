@@ -42,8 +42,8 @@ force_arrow :: proc(lines:^erender.Debug_Lines,from,to:mm.Vec3,color:mm.Vec4) {
 
 // The arrows of a field in a volume placed at pose: one along its direction,
 // or along the up of a plane, or six away from the center of a box or a
-// sphere; reversed by a negative force. on: the field is turned on; off, or
-// without force, they are gray. Arrows that do not fit are counted whole.
+// sphere; reversed by a negative force (or acceleration, without force). on:
+// the field is turned on; off, or without force or acceleration, they are gray. Arrows that do not fit are counted whole.
 @(private)
 force_field_arrows :: proc(lines:^erender.Debug_Lines,field:phys.Force_Field,area:volume.Volume,pose:mm.Transform,on:=true) {
     if !volume.valid(area,pose) {return}
@@ -57,8 +57,9 @@ force_field_arrows :: proc(lines:^erender.Debug_Lines,field:phys.Force_Field,are
     radial:=along=={} && (area.shape==.Sphere || area.shape==.Box)
     needed:=60 if radial else 10
     if len(lines.vertices)-lines.count<needed {lines.dropped+=needed/2;return}
-    color:=mm.Vec4{1,.9,.3,1} if on && field.force!=0 else mm.Vec4{.65,.65,.65,.8}
-    sign:=f32(-1) if field.force<0 else f32(1)
+    strength:=field.force if field.force!=0 else field.acceleration
+    color:=mm.Vec4{1,.9,.3,1} if on && strength!=0 else mm.Vec4{.65,.65,.65,.8}
+    sign:=f32(-1) if strength<0 else f32(1)
     if !radial {
         if along=={} {along={0,1,0}}
         length:=max(reach.x,reach.y,reach.z)*2

@@ -38,8 +38,9 @@ $P scene.write '{"entities":[
 - `phys.Fluid`: water, where bodies float and characters swim ([water](water-fog.md)); density 0
   is a dry box, and its `priority` decides where fluids meet. A `Plane`, a `Box` or an `Outline`;
   without one, the problem `physics.fluid`.
-- `phys.Force_Field`: pushes the bodies there each tick, rising over its `blend`, in any shape.
-  Without a `Volume` it pushes everywhere.
+- `phys.Force_Field`: pushes the bodies there each tick, rising over its `blend`, in any shape:
+  `force` (N) moves a light body more than a heavy one, `acceleration` (m/s^2) moves any the same;
+  both add up. Without a `Volume` it pushes everywhere.
 - `destruct.Strain_Field`: strains the destructibles there each tick. A `Box` or a `Sphere`;
   without one, the problem `destruct.strain_field`.
 - `nav.Nav_Bounds`, `nav.Nav_Area`, `nav.Nav_Obstacle`: where navmeshes are made, an area with a
@@ -81,14 +82,14 @@ import volume "mirai:engine/volume"
 import phys "plugins:physics/runtime"
 
 // bodies:^phys.Body_Requests. 35 m/s away from the point, fading to nothing 4 m from it.
-phys.apply_area(bodies,volume.sphere(4),{position=point},35,impulse=true,velocity_change=true,
+phys.apply_area(bodies,volume.sphere(4),{position=point},35,impulse=true,per_mass=true,
                blend=4)
 // 200 N along +X on what is in a box turned as `pose`.
 phys.apply_area(bodies,volume.box({2,1,2}),pose,200,along={1,0,0})
 ```
 
-- The strength is newtons; with `impulse` newton seconds, and with `velocity_change` metres per
-  second whatever the mass. Negative pulls toward the center.
+- The strength is newtons; with `impulse` newton seconds. `per_mass`: the same on any mass, in
+  metres per second squared, or per second with `impulse`. Negative pulls toward the center.
 - Without `along` it pushes away from the center of the volume, and along the up of a `Plane`.
 - A body gets the strength times the weight of the volume where its center of mass is: 1 inside,
   rising over `blend` from the border. `falloff` bends that rise, `range` and `noise` scale it;

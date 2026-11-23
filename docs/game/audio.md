@@ -26,9 +26,9 @@ source.volume, source.max_distance = 0.7, 25
 - Put it in the scene; the library starts, moves and stops it. `spatial` places it at the entity,
   quieter and duller far away, else `pan` does; `directivity` aims it at -Z; `near_radius` stops
   jumps between ears; `delay` starts it late by distance; `spread` (m) widens stereo, 0 a point.
-- The listener is the entity with `Audio_Listener`, else the view. Game code writes `playing`,
-  `plays`, `volume`, `pitch`, `pan`, `loop` (`core.writable`). A loop goes back to the loop start
-  its file names (a WAV sampler loop, an Ogg `LOOPSTART` comment), so an intro plays once.
+- The listener is the entity with `Audio_Listener` (split screen: one per camera, up to 4, each
+  sound heard from the nearest), else the view. Game code writes `playing`, `plays`, `volume`,
+  `pitch`, `pan`, `loop` (`core.writable`); a loop restarts at its file's loop start (WAV, Ogg).
 - Silent at `max_distance`. With more sources than voices, higher `priority` and then the loudest
   play; the rest keep their time and come back where they would be.
 
@@ -66,8 +66,8 @@ options: a slider bound to `Audio_Volumes.music` writes it itself; the game writ
 
 ## Rooms and occlusion
 - `Audio_Reverb` on an entity with a `Volume` (`engine/volume`) is the room where the listener
-  is; it blends over `blend`, higher `priority` on top. Without a `Volume` it is the level's.
-  One reverb sounds at a time. `Audio_Source.reverb` is how much of a source goes to it.
+  is (several: their average); it blends over `blend`, higher `priority` on top. Without a
+  `Volume` it is the level's. `Audio_Source.reverb` is how much of a source goes to it.
 - `Audio_Occlusion` beside a spatial `Audio_Source` muffles it behind solids (needs `physics`) as
   far as it is hidden (`radius`: its size). `Audio_Material` on a body says how much of its lows,
   mids and highs get through; without one, as a wall.

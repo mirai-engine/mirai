@@ -145,12 +145,13 @@ and a river that bends on open ground.
   between levels; one splash per body that enters fast and none from a still one; the bodies carry
   to the shaders the waves measured from the pass origin; bubbles from one that moves under water
   and none from a still one; wetness rises in the water and dries in `WET_SECONDS`; the medium
-  under the surface (`interaction_test.odin`); what the water takes of the light at a depth, per
-  color, along the bent sun and the view (`the_water_takes_the_light_on_its_way_down`).
+  under the surface (`interaction_test.odin`), one per listener of a split screen; what the water
+  takes of the light at a depth, per color, along the bent sun and the view
+  (`the_water_takes_the_light_on_its_way_down`).
 - The waves in physics: `mirai test plugins/physics/runtime/sim` (`fluid_waves_test.odin`) and
   `mirai test plugins/physics/runtime the_waves_of_a_plane_are_its_own_and_the_sea_of_the_wind`.
 - `mirai test render how_wet_an_instance_is_stays_with_its_identity_and_changes_no_light` and
-  `mirai test engine/audio the_medium_around_the_listener_dulls_the_master_and_mixes_its_reverb`.
+  `mirai test engine/audio the_medium_of_each_listener_dulls_the_master_or_its_voices`.
 - In the demo editor, `raft` scene, with validation: `capture` from above, at water level,
   from below and crossing the surface, and inside and outside the dry box that crosses the sea; in
   Play, a falling box splashes, what floats follows the waves, the swimmer bubbles and sees

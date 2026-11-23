@@ -116,7 +116,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
         destruct.destruct_step(&physics,&geometry,&requests,&events,core.ref(&alone),app.assets,&app.jobs,{playing=true,dt=1.0/30,tick=u64(frame)},core.commands(&world,&info),
             core.read(&world.configs),&world.meshes,&world.tints,core.read(&world.parents),&world.states,&world.groups,&world.elsewhere,&world.transforms,&world.ids,core.read(&world.colliders),core.read(&world.rigids),{},nil)
         physics_bake_settle(&world,nil,nil)
-        if frame==15 || frame==30 {phys.apply_area(&bodies,volume.sphere(4),{position={0,2.5,0}},.6,impulse=true,velocity_change=true)}
+        if frame==15 || frame==30 {phys.apply_area(&bodies,volume.sphere(4),{position={0,2.5,0}},.6,impulse=true,per_mass=true)}
         error:=capture.capture_destructible(&record,f32(frame)/30,source[:],destruct.Destruct_View{core.ref(&physics),core.read(&world.states),core.read(&world.groups)},core.ref(&geometry))
         if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.content.failed=true;return}
         if frame<150 && !phys.simulate(&physics,&bodies,&app.jobs,1.0/30,gravity,&problems) {o.content.failed=true;return}

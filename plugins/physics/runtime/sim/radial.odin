@@ -76,13 +76,14 @@ Area :: struct {
     user:rawptr,
 }
 
-// A force (N) or, with `impulse`, an impulse (N s; a velocity change, m/s, with `velocity_change`) on every
-// dynamic body the filter sees whose center of mass is in the area, once per body. `radial` pushes away from
+// A force (N) or, with `impulse`, an impulse (N s) on every dynamic body the filter sees whose center of
+// mass is in the area, once per body; with `per_mass`, per kilogram of each body, the same on any mass: an
+// acceleration (m/s^2) for a force, a change of velocity (m/s) for an impulse. `radial` pushes away from
 // the center of the area by force.x (negative pulls in); without it the force is the vector. The falloff
 // curve takes the weight of the area at the body to the share of the force it gets, in `range`, scaled by
 // the noise. count: the bodies pushed. ok is false, and nothing is pushed, for values that are not valid.
-world_apply_area :: proc(w:^World,area:Area,force:Vec3,radial:=false,impulse:=false,velocity_change:=false,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
-    if w==nil || len(w.bodies)==0 || area.weight==nil || falloff>.Logarithmic || !weight_range_valid(range) || !field_noise_valid(noise) || velocity_change && !impulse {return 0,false}
+world_apply_area :: proc(w:^World,area:Area,force:Vec3,radial:=false,impulse:=false,per_mass:=false,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={}) -> (count:int,ok:bool) {
+    if w==nil || len(w.bodies)==0 || area.weight==nil || falloff>.Logarithmic || !weight_range_valid(range) || !field_noise_valid(noise) {return 0,false}
     if !finite(area.center,force) || !finite(area.rotation) {return 0,false}
     box:=area.bounds
     for axis in 0..<3 {if !(box.min[axis]>=-max(f32) && box.max[axis]<=max(f32) && box.min[axis]<=box.max[axis]) {return 0,false}}
@@ -105,9 +106,9 @@ world_apply_area :: proc(w:^World,area:Area,force:Vec3,radial:=false,impulse:=fa
         vector*=weight_from_range(range,falloff_curve(min(at,1),falloff))
         if noise.scale!=0 {vector*=noise_weight(body.center,area.center,frame,noise)}
         if vector=={} {continue}
+        if per_mass {vector*=body.mass}
         handle:=body_handle(w,shape.body)
         if impulse {
-            if velocity_change {vector*=body.mass}
             if .Character in body.flags {
                 for &character,character_slot in w.characters[:w.character_high] {
                     if character.generation&1!=0 && character.body==handle {

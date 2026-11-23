@@ -37,6 +37,7 @@ Voice_Desc :: struct {
     occlusion:f32,
     transmission:[BANDS]f32,
     reverb:f32, // share of the voice sent to the reverb of the mixer, after its gains
+    listener:u8, // the slot of the listener it is heard from (listener_set); one that does not hear is the first
 }
 VOICE_DEFAULT :: Voice_Desc{volume=1,pitch=1,rotation=1,attenuation=ATTENUATION_DEFAULT,directivity={power=1},transmission=TRANSMISSION_DEFAULT}
 
@@ -73,7 +74,7 @@ voice_shadow_free :: proc(m:^Mixer,index:u32) {
 // the world is invalid, no voice or feed is available, or the command queue is full.
 voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice {
     slot:=sound_slot(m,sound)
-    if slot==nil || !bus_valid(m,desc.bus) || desc.spatial && !voice_desc_finite(desc) {return 0}
+    if slot==nil || !bus_valid(m,desc.bus) || desc.spatial && !voice_desc_finite(desc) || desc.listener>=LISTENERS_MAX {return 0}
     feed:=i32(-1)
     if slot.stream {
         if m.free_stream_count==0 {m.counters.streams_busy+=1;return 0}
@@ -114,6 +115,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
         attenuation=desc.attenuation,directivity={clamp(desc.directivity.weight,0,1),max(desc.directivity.power,0)},doppler=max(desc.doppler,0),
         occlusion=clamp(desc.occlusion,0,1),transmission=transmission_clamp(desc.transmission),
         reverb=max(desc.reverb,0),
+        listener=desc.listener,
     }
     frames:=slot.frames
     offset:=frames>0?u32(min(max(f64(desc.offset),0)*rate,f64(frames-1))):0
@@ -205,13 +207,21 @@ voice_set_reverb :: proc(m:^Mixer,voice:Voice,send:f32) -> bool {
 // faces. False for a value that is not a number.
 voice_set_position :: proc(m:^Mixer,voice:Voice,position:[3]f32,velocity:[3]f32={},rotation:quaternion128=1) -> bool {
     if !finite3(position) || !finite3(velocity) {return false}
-    return voice_send(m,voice,{kind=.Voice_Place,vectors={position,velocity},rotation=quat_unit(rotation)})
+    return voice_send(m,voice,{kind=.Voice_Place,vectors={0=position,1=velocity},rotation=quat_unit(rotation)})
 }
 // How hidden a spatial voice is, 0 in sight to 1 hidden, and the part of each
 // band what hides it lets through. False for a value that is not a number.
 voice_set_occlusion :: proc(m:^Mixer,voice:Voice,occlusion:f32,transmission:[BANDS]f32) -> bool {
     if !finite(occlusion) || !finite3(transmission) {return false}
-    return voice_send(m,voice,{kind=.Voice_Occlusion,value=clamp(occlusion,0,1),vectors={transmission_clamp(transmission),{}}})
+    return voice_send(m,voice,{kind=.Voice_Occlusion,value=clamp(occlusion,0,1),vectors={0=transmission_clamp(transmission)}})
+}
+
+// Which listener a spatial voice is heard from: its place, gains and pitch
+// follow that one from the next chunk, ramped across it. False for a slot of
+// none of LISTENERS_MAX.
+voice_set_listener :: proc(m:^Mixer,voice:Voice,slot:int) -> bool {
+    if slot<0 || slot>=LISTENERS_MAX {return false}
+    return voice_send(m,voice,{kind=.Voice_Listener,frames=u32(slot)})
 }
 
 @(private)

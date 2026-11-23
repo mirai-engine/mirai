@@ -48,7 +48,8 @@ if hit, ok := phys.ray_cast_closest(&w, {0, 5, 0}, {0, -10, 0}); ok {
 
 ### Area forces
 
-`world_apply_area` applies force/impulse/velocity change (radial—negative attracts—or
+`world_apply_area` applies force/impulse, or with `per_mass` acceleration/velocity change scaled
+by each body's mass (radial—negative attracts—or
 directional) to dynamics at CoM (no torque) using `Area` (AABB + `weight` callback in `[0,1]`,
 e.g. `volume.weight`), query filter, compound dedup, `Radial_Falloff`, `Weight_Range`, and
 stateless `Field_Noise` (`noise_perlin3`). Invalid curve/range or negative `scale` rejects.

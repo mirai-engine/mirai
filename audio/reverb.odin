@@ -82,7 +82,7 @@ reverb_clamp :: proc "contextless" (r:Reverb) -> Reverb {
 reverb_set :: proc(m:^Mixer,reverb:Reverb,bus:Bus=BUS_MASTER) -> bool {
     if !bus_valid(m,bus) {return false}
     r:=reverb_clamp(reverb)
-    if !command_push(m,{kind=.Reverb,index=u32(bus),vectors={{r.room_size,r.damping,r.wet},{}},value=r.width}) {return false}
+    if !command_push(m,{kind=.Reverb,index=u32(bus),vectors={0={r.room_size,r.damping,r.wet}},value=r.width}) {return false}
     m.reverb_shadow={r,bus}
     return true
 }
@@ -93,7 +93,7 @@ reverb_get :: proc(m:^Mixer) -> (reverb:Reverb,bus:Bus) {return m.reverb_shadow.
 bus_set_reverb :: proc(m:^Mixer,bus:Bus,reverb:Reverb) -> bool {
     if !bus_valid(m,bus) {return false}
     r:=reverb_clamp(reverb)
-    if !command_push(m,{kind=.Bus_Reverb,index=u32(bus),vectors={{r.room_size,r.damping,r.wet},{}},value=r.width}) {return false}
+    if !command_push(m,{kind=.Bus_Reverb,index=u32(bus),vectors={0={r.room_size,r.damping,r.wet}},value=r.width}) {return false}
     m.bus_shadows[bus].reverb=r
     return true
 }

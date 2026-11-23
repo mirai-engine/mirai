@@ -189,6 +189,13 @@ binaural and panning effects.
 - With `delay` a spatial voice starts later by its distance at start over the speed of sound; it
   is not a delay line, so a source that moves afterwards only shifts its pitch by Doppler.
 - Doppler takes the velocities along the source-listener line and multiplies the pitch.
+- **Listeners.** Up to `LISTENERS_MAX` (split screen): `listener_set` places a slot, with the
+  part of each band its medium lets through (`lowpass_bands` under water, multiplied into the air
+  absorption of its voices' EQ), and `listeners_set_count` says how many hear. A spatial voice is
+  heard from `Voice_Desc.listener` (`voice_set_listener` moves it, ramped like any change; a slot
+  past the count is the first). With more than one listener, Doppler ignores listener velocity,
+  so switching or diverging listeners never jumps in pitch. Choosing the slot (nearest with
+  hysteresis) belongs to the caller, `engine/audio`.
 - A stereo sound with a position keeps its width by its `spread`, meters across it: on speakers
   each channel pans from its own azimuth, half the angle the spread subtends to either side, so it
   is wide up close and a point far away; on headphones each ear hears the mid and that share of
@@ -197,7 +204,8 @@ binaural and panning effects.
   width of a pair of speakers, since a stereo recording placed in the world should keep its width
   up close; 0 is a point source, its channels averaged.
 - The direct path and the pitch of a positional voice are recomputed on the audio thread when its
-  place, its occlusion or the listener change; the HRTF only when its direction changed.
+  place, its occlusion, its listener slot or any listener change; the HRTF only when its
+  direction changed.
 
 ## What it does not do
 

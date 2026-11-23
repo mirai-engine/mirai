@@ -1364,7 +1364,7 @@ body_own :: proc(s:^Sync,e:core.Entity,l:^Link) -> ^Link {
 // A force or impulse over a volume that the simulation refused.
 @(private)
 area_problem :: proc(s:^Sync,request:Body_Request) {
-    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its volume has no size or a pose that is not finite, its blend, its strength or its direction is not finite, a velocity change is not an impulse, its falloff is not a Radial_Falloff, or its noise scale is negative; send apply_area a volume of volume.box, volume.sphere, volume.plane or volume.outline (with outline_of the entity of its Spline) with a positive size, finite values and a falloff and noise of physics",request.kind)
+    core.report(s.problems,core.NONE,"physics.request_area","a %v request of Body_Requests did nothing: its volume has no size or a pose that is not finite, its blend, its strength or its direction is not finite, its falloff is not a Radial_Falloff, or its noise scale is negative; send apply_area a volume of volume.box, volume.sphere, volume.plane or volume.outline (with outline_of the entity of its Spline) with a positive size, finite values and a falloff and noise of physics",request.kind)
 }
 
 // Brings back into the rows what the step left: the pose, the Motion and the state of the bodies it moved or

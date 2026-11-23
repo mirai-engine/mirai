@@ -154,7 +154,7 @@ the_weight_of_an_area_goes_through_the_curve_and_the_noise_and_hostile_areas_pus
     testing.expect(t,ok && count==0)
     nan:=f32(0)
     nan/=nan
-    Hostile :: struct {name:string,area:Area,force:Vec3,falloff:Radial_Falloff,noise:Field_Noise,velocity_change:bool}
+    Hostile :: struct {name:string,area:Area,force:Vec3,falloff:Radial_Falloff,noise:Field_Noise}
     good:=test_ball_area(&ball)
     cases:=[?]Hostile{
         {name="no weight",area={bounds=good.bounds,rotation=QUAT_IDENTITY},force={1,0,0}},
@@ -164,10 +164,9 @@ the_weight_of_an_area_goes_through_the_curve_and_the_noise_and_hostile_areas_pus
         {name="a force that is not finite",area=good,force={max(f32)*2,0,0}},
         {name="a falloff out of range",area=good,force={1,0,0},falloff=Radial_Falloff(9)},
         {name="a negative noise scale",area=good,force={1,0,0},noise={scale=-1}},
-        {name="a velocity change that is not an impulse",area=good,force={1,0,0},velocity_change=true},
     }
     for c in cases {
-        count,ok=world_apply_area(&w,c.area,c.force,velocity_change=c.velocity_change,falloff=c.falloff,noise=c.noise)
+        count,ok=world_apply_area(&w,c.area,c.force,falloff=c.falloff,noise=c.noise)
         testing.expectf(t,!ok && count==0,"%s was applied",c.name)
     }
     world_step(&w,1.0/60)

@@ -698,3 +698,95 @@ a_spatial_voice_runs_only_what_its_place_needs :: proc(t:^testing.T) {
         testing.expect(t,!m.voices[len(cases)].binaural_live,"a voice beyond its curve adds no transform")
     }
 }
+
+// Two listeners, as the players of a split screen: each voice is panned,
+// attenuated and dulled for its own, moves to another when told, and only
+// its own source moves its pitch.
+@(test)
+each_spatial_voice_is_heard_from_its_own_listener :: proc(t:^testing.T) {
+    m:=test_mixer(t,{output=.Speakers})
+    defer mixer_destroy(m)
+    one:=test_mono(t,m,64,test_one)
+    air:=proc(d:f32) -> f32 {return air_absorption(d)[0]}
+    testing.expect(t,listener_set(m,{10,0,0},1,slot=1) && listeners_set_count(m,2))
+    desc:=VOICE_DEFAULT
+    desc.loop,desc.spatial=true,true
+    desc.attenuation={model=.Inverse,min_distance=1,max_distance=100,rolloff=1}
+    Case :: struct {name:string,listener:u8,position:[3]f32,gains:[2]f32}
+    cases:=[?]Case{
+        {"the first, 14 m to its right",0,{14,0,0},{0,air(14)/14}},
+        {"the second, 4 m to its right",1,{14,0,0},{0,0.25*air(4)}},
+        {"the second, 4 m to its left",1,{6,0,0},{0.25*air(4),0}},
+        {"a slot that does not hear is the first",2,{14,0,0},{0,air(14)/14}},
+    }
+    for c in cases {
+        d:=desc
+        d.listener,d.position=c.listener,c.position
+        voice:=voice_play(m,one,d)
+        test_render(m,CHUNK_FRAMES*4)
+        out:=test_render(m,4)
+        testing.expectf(t,abs(out[0]-c.gains[0])<1e-4 && abs(out[1]-c.gains[1])<1e-4,"%s: %v, not %v",c.name,out[:2],c.gains)
+        voice_stop(m,voice)
+        test_render(m,CHUNK_FRAMES)
+        mixer_update(m)
+    }
+    // Told to hear it from the second, the voice of the first takes its place from there.
+    d:=desc
+    d.position={14,0,0}
+    voice:=voice_play(m,one,d)
+    test_render(m,CHUNK_FRAMES*4)
+    testing.expect(t,voice_set_listener(m,voice,1))
+    test_render(m,CHUNK_FRAMES*4)
+    out:=test_render(m,4)
+    test_near(t,out[1],0.25*air(4),1e-4)
+    voice_stop(m,voice)
+    test_render(m,CHUNK_FRAMES)
+    mixer_update(m)
+
+    // A listener under water dulls the highs of its voices through their EQ; the other's keep them.
+    testing.expect(t,listener_set(m,{10,0,0},1,slot=1,medium=lowpass_bands(800)))
+    noise:=test_mono(t,m,RATE,test_noise)
+    d=desc
+    d.position={5,0,0}
+    dry:=voice_play(m,noise,d)
+    d.listener=1
+    wet:=voice_play(m,noise,d)
+    test_render(m,CHUNK_FRAMES)
+    dry_eq,wet_eq:=m.voices[0].eq_target,m.voices[1].eq_target
+    testing.expectf(t,dry_eq[2]>0.9 && wet_eq[2]<0.1 && wet_eq[0]==1,"in the air %v, under water %v",dry_eq,wet_eq)
+    voice_stop(m,dry);voice_stop(m,wet)
+    test_render(m,CHUNK_FRAMES)
+    mixer_update(m)
+
+    // The listener runs from a voice: its pitch falls with one listener only.
+    step:=test_ramp(1)-test_ramp(0)
+    ramp:=test_mono(t,m,100000,test_ramp)
+    for count in 1..=2 {
+        listeners_set_count(m,count)
+        listener_set(m,{},1,{0,0,150})
+        d=desc
+        d.attenuation.model,d.position,d.doppler=.None,{0,0,-50},1
+        voice=voice_play(m,ramp,d)
+        test_render(m,CHUNK_FRAMES)
+        out=test_render(m,200)
+        // speed_of_sound 343: (343-150)/343 with one listener.
+        want:=f32(343-150)/343 if count==1 else 1
+        slope:=(out[199*2]-out[0])/199/(f32(math.SQRT_TWO/2)*air_absorption(50)[0]*step)
+        testing.expectf(t,abs(slope-want)<5e-3,"%d listeners: pitch %v, not %v",count,slope,want)
+        voice_stop(m,voice)
+        test_render(m,CHUNK_FRAMES)
+        mixer_update(m)
+    }
+
+    // What names no listener or is not a number is refused.
+    nan:=math.nan_f32()
+    testing.expect(t,!listener_set(m,{},1,slot=LISTENERS_MAX) && !listener_set(m,{},1,slot=-1) && !listener_set(m,{},1,medium={nan,1,1}))
+    testing.expect(t,!listeners_set_count(m,0) && !listeners_set_count(m,LISTENERS_MAX+1))
+    d=desc
+    d.listener=LISTENERS_MAX
+    testing.expect_value(t,voice_play(m,one,d),Voice(0))
+    voice=voice_play(m,one,desc)
+    testing.expect(t,!voice_set_listener(m,voice,LISTENERS_MAX) && !voice_set_listener(m,voice,-1))
+    bands:=lowpass_bands(nan)
+    testing.expect(t,bands==[BANDS]f32{1,1,1} && lowpass_bands(0)==bands && lowpass_bands(-5)==bands)
+}

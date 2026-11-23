@@ -234,15 +234,16 @@ Radial_Falloff :: sim.Radial_Falloff
 Weight_Range :: sim.Weight_Range
 Field_Noise :: sim.Field_Noise
 // A force (N) on every body whose center of mass is in a volume placed at pose, in this tick: a blast, a
-// gust, a magnet. With impulse, an impulse (N s), or a change of velocity (m/s) with velocity_change. It
+// gust, a magnet. With impulse, an impulse (N s). With per_mass the strength is per kilogram of each body,
+// the same on any mass: an acceleration (m/s^2), or a change of velocity (m/s) with impulse. It
 // pushes away from the center of the volume, or along the up of a Plane (a negative strength pulls the
 // other way); with `along`, that way of the world instead. The body gets the strength by the weight of the volume
 // where it is, 1 inside and rising over blend metres from the border, through the falloff curve; range
 // and noise scale it. A pose without rotation or scale is one that neither turns nor scales.
-apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,strength:f32,along:[3]f32={},impulse:=false,velocity_change:=false,blend:f32=0,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={},outline_of:=core.NONE) {
+apply_area :: proc(requests:^Body_Requests,area:volume.Volume,pose:mm.Transform,strength:f32,along:[3]f32={},impulse:=false,per_mass:=false,blend:f32=0,falloff:Radial_Falloff=.Linear,filter:=QUERY_FILTER_DEFAULT,range:Weight_Range={},noise:Field_Noise={},outline_of:=core.NONE) {
     core.push(&requests.queue,Body_Request{
         entity=outline_of,kind=impulse?.Area_Impulse:.Area_Force,area=area,position=pose.position,rotation=pose.rotation,scale=pose.scale,blend=blend,
-        strength=strength,linear=along,override=velocity_change,falloff=falloff,filter=filter,falloff_range=range,noise=noise,
+        strength=strength,linear=along,override=per_mass,falloff=falloff,filter=filter,falloff_range=range,noise=noise,
     })
 }
 // The kinematic body takes the velocity that reaches the pose in one tick, so it pushes what it touches.

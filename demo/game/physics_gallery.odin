@@ -92,9 +92,9 @@ physics_gallery_actions :: proc(
         point:=physics_gallery_piece_center(view,item.target,item.origin+mm.Vec3{0,.5,0}) if needs_destructible else item.origin
         switch item.station {
         case 0,8,19,21:
-            phys.apply_area(bodies,volume.sphere(4),{position=item.origin+mm.Vec3{0,-.6,0}},35,impulse=true,velocity_change=true,blend=4)
+            phys.apply_area(bodies,volume.sphere(4),{position=item.origin+mm.Vec3{0,-.6,0}},35,impulse=true,per_mass=true,blend=4)
         case 22:
-            phys.apply_area(bodies,volume.sphere(4),{position=item.origin+mm.Vec3{0,-1,0}},6,impulse=true,velocity_change=true,blend=4)
+            phys.apply_area(bodies,volume.sphere(4),{position=item.origin+mm.Vec3{0,-1,0}},6,impulse=true,per_mass=true,blend=4)
         case 2,4,5,7:
             normal:=mm.Vec3{1,0,0} if trigger%2==1 else mm.Vec3{0,1,0}
             destruct.slice(requests,item.target,point,normal)
@@ -153,7 +153,7 @@ physics_gallery_events :: proc(stations:^core.Table(Physics_Gallery,.Read),count
             if item.target!=event.entity {continue}
             if item.station!=11 && item.station!=13 {
                 center:=event.point-mm.Vec3{0,.5,.3} if event.kind==.Slice else item.origin-mm.Vec3{0,1,.3}
-                phys.apply_area(bodies,volume.sphere(4),{position=center},3,impulse=true,velocity_change=true)
+                phys.apply_area(bodies,volume.sphere(4),{position=center},3,impulse=true,per_mass=true)
             }
             if item.station<PHYSICS_GALLERY_STATIONS {counts.counts[item.station]+=1}
             if item.station==10 {
