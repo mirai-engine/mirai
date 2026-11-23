@@ -37,16 +37,8 @@ Multi_IK_Result :: struct {residual,angular_error:f32,iterations,recomposed:int,
 
 // Recomposes the branch of bone and counts its bones, whose links pose_world_branch checked.
 @(private)
-multi_ik_refresh :: proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]math.Transform,bone:int,root_transform:math.Transform,recomposed:^int) -> bool {
-    if !pose_world_branch(hierarchy,local,world,bone,root_transform) {return false}
-    at:=bone
-    for {
-        recomposed^+=1
-        if child:=hierarchy.links[at].first_child;child>=0 {at=int(child);continue}
-        for at!=bone && hierarchy.links[at].next_sibling<0 {at=int(hierarchy.parents[at])}
-        if at==bone {return true}
-        at=int(hierarchy.links[at].next_sibling)
-    }
+multi_ik_refresh :: #force_inline proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]math.Transform,bone:int,root_transform:math.Transform,recomposed:^int) -> bool {
+    return pose_world_branch(hierarchy,local,world,bone,root_transform,recomposed)
 }
 
 // The rotation of a bone in its parent's space that the limits allow, from `rotation`: each
@@ -190,13 +182,24 @@ multi_ik :: proc "contextless" (skeleton:Skeleton,hierarchy:Pose_Hierarchy,local
         }
         if !multi_ik_refresh(hierarchy,local,world,int(top),root_transform,&result.recomposed) {return}
     }
+    has_preferred:=false
+    for joint in joints {if joint.preferred_weight>0 {has_preferred=true;break}}
+    uniform_scale:=root_transform.scale.x>0 && abs(root_transform.scale.x-root_transform.scale.y)<=1e-5 && abs(root_transform.scale.y-root_transform.scale.z)<=1e-5
+    if uniform_scale {
+        for transform in local {
+            s:=transform.scale
+            if !(s.x>0 && abs(s.x-s.y)<=1e-5 && abs(s.y-s.z)<=1e-5) {uniform_scale=false;break}
+        }
+    }
     root_position:=world[settings.root].position
     for iteration in 0..<settings.iterations {
-        for joint in joints {
-            if joint.preferred_weight<=0 {continue}
-            local[joint.bone].rotation=math.quat_slerp(local[joint.bone].rotation,joint.preferred,joint.preferred_weight*settings.relaxation/f32(settings.iterations))
+        if has_preferred {
+            for joint in joints {
+                if joint.preferred_weight<=0 {continue}
+                local[joint.bone].rotation=math.quat_slerp(local[joint.bone].rotation,joint.preferred,joint.preferred_weight*settings.relaxation/f32(settings.iterations))
+            }
+            if !multi_ik_refresh(hierarchy,local,world,int(settings.root),root_transform,&result.recomposed) {return}
         }
-        if !multi_ik_refresh(hierarchy,local,world,int(settings.root),root_transform,&result.recomposed) {return}
         if settings.root_policy==.Translate {
             correction:math.Vec3;total:f32
             for effector,i in effectors {correction+=(goals[i]-world[effector.bone].position)*effector.position_weight;total+=effector.position_weight}
@@ -212,22 +215,53 @@ multi_ik :: proc "contextless" (skeleton:Skeleton,hierarchy:Pose_Hierarchy,local
         }
         for effector,e in effectors {
             bone:=skeleton.parents[effector.bone] if effector.bone!=settings.root else i32(-1)
-            for bone>=0 {
-                for joint in joints {
-                    if joint.bone!=bone {continue}
-                    from,from_ok:=anim_unit(world[effector.bone].position-world[bone].position)
-                    to,to_ok:=anim_unit(goals[e]-world[bone].position)
-                    if from_ok && to_ok {
-                        change:=math.quat_slerp(1,anim_between(from,to),settings.relaxation*effector.position_weight*(1-joint.stiffness))
-                        parent:=skeleton.parents[bone]
-                        desired:=linalg.normalize0(conj(world[parent].rotation if parent>=0 else root_transform.rotation)*change*world[bone].rotation)
-                        if multi_ik_limited(joint) {desired,ok=joint_limit_axes(desired,skeleton.rest[bone].rotation,joint.frame,joint.limits);if !ok {return result,false}}
-                        local[bone].rotation=desired
-                        if !multi_ik_refresh(hierarchy,local,world,int(bone),root_transform,&result.recomposed) {return result,false}
+            if uniform_scale {
+                // With uniform scale, turning a joint rotates the effector position rigidly around
+                // it; one branch refresh at the highest turned joint updates the chain for the rest.
+                eff_pos:=world[effector.bone].position
+                highest:=i32(-1)
+                for bone>=0 {
+                    for joint in joints {
+                        if joint.bone!=bone {continue}
+                        from,from_ok:=anim_unit(eff_pos-world[bone].position)
+                        to,to_ok:=anim_unit(goals[e]-world[bone].position)
+                        if from_ok && to_ok && linalg.dot(from,to)<1-1e-10 {
+                            change:=math.quat_slerp(1,anim_between(from,to),settings.relaxation*effector.position_weight*(1-joint.stiffness))
+                            parent:=skeleton.parents[bone]
+                            parent_rot:=world[parent].rotation if parent>=0 else root_transform.rotation
+                            old_world:=world[bone].rotation
+                            desired:=linalg.normalize0(conj(parent_rot)*change*old_world)
+                            if multi_ik_limited(joint) {desired,ok=joint_limit_axes(desired,skeleton.rest[bone].rotation,joint.frame,joint.limits);if !ok {return result,false}}
+                            local[bone].rotation=desired
+                            world_turn:=linalg.normalize0(parent_rot*desired)*conj(old_world)
+                            eff_pos=world[bone].position+math.quat_rotate(world_turn,eff_pos-world[bone].position)
+                            highest=bone
+                        }
+                        break
                     }
-                    break
+                    if bone==settings.root {break};bone=skeleton.parents[bone]
                 }
-                if bone==settings.root {break};bone=skeleton.parents[bone]
+                if highest>=0 {
+                    if !multi_ik_refresh(hierarchy,local,world,int(highest),root_transform,&result.recomposed) {return result,false}
+                }
+            } else {
+                for bone>=0 {
+                    for joint in joints {
+                        if joint.bone!=bone {continue}
+                        from,from_ok:=anim_unit(world[effector.bone].position-world[bone].position)
+                        to,to_ok:=anim_unit(goals[e]-world[bone].position)
+                        if from_ok && to_ok && linalg.dot(from,to)<1-1e-10 {
+                            change:=math.quat_slerp(1,anim_between(from,to),settings.relaxation*effector.position_weight*(1-joint.stiffness))
+                            parent:=skeleton.parents[bone]
+                            desired:=linalg.normalize0(conj(world[parent].rotation if parent>=0 else root_transform.rotation)*change*world[bone].rotation)
+                            if multi_ik_limited(joint) {desired,ok=joint_limit_axes(desired,skeleton.rest[bone].rotation,joint.frame,joint.limits);if !ok {return result,false}}
+                            local[bone].rotation=desired
+                            if !multi_ik_refresh(hierarchy,local,world,int(bone),root_transform,&result.recomposed) {return result,false}
+                        }
+                        break
+                    }
+                    if bone==settings.root {break};bone=skeleton.parents[bone]
+                }
             }
             // The chain turns about the line from its top to the effector, which keeps the
             // effector in place, until its bend faces the pole; a turn its limits clamp waits.
@@ -241,11 +275,13 @@ multi_ik :: proc "contextless" (skeleton:Skeleton,hierarchy:Pose_Hierarchy,local
                 joint,_:=multi_ik_joint(joints,top)
                 if axis_ok && a_ok && b_ok && joint.stiffness<1 {
                     angle:=cmath.atan2(linalg.dot(axis,linalg.cross(a,b)),linalg.dot(a,b))*settings.relaxation*(1-joint.stiffness)
-                    rotation,clamped,valid:=multi_ik_turned(skeleton,world,joint,math.quat_axis_angle(axis,angle),root_transform)
-                    if !valid {return result,false}
-                    if !clamped {
-                        local[top].rotation=rotation
-                        if !multi_ik_refresh(hierarchy,local,world,int(top),root_transform,&result.recomposed) {return result,false}
+                    if abs(angle)>1e-5 {
+                        rotation,clamped,valid:=multi_ik_turned(skeleton,world,joint,math.quat_axis_angle(axis,angle),root_transform)
+                        if !valid {return result,false}
+                        if !clamped {
+                            local[top].rotation=rotation
+                            if !multi_ik_refresh(hierarchy,local,world,int(top),root_transform,&result.recomposed) {return result,false}
+                        }
                     }
                 }
             }

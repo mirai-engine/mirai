@@ -420,6 +420,7 @@ Targets :: struct {
 	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
 	direct_scale:            u32, // the pixels across a point of the direct targets
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage and additive materials drew over: TAA keeps less of its history there
+	reactive_discard:        rhi.Texture, // discard attachment for translucent_forward when nothing writes reactive
 	reactive_drawn:          bool,        // reactive was drawn in since it was last cleared
 	aerial:                  rhi.Texture, // the aerial perspective of an atmosphere (air.odin), made when the sky first is one
 	aerial_key:              Air_Aerial_Key, // what it was computed for
@@ -1711,7 +1712,7 @@ TARGET_TEXTURES :: 32
 targets_textures :: proc(t: ^Targets) -> (all: [TARGET_TEXTURES]rhi.Texture) {
 	fixed := [?]rhi.Texture{
 		t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.ldr, t.generated,
-		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.aerial, t.ui_blur[0], t.ui_blur[1],
+		t.highlight, t.highlight_depth, t.highlight_filtered, t.gi_given, t.reactive, t.reactive_discard, t.aerial, t.ui_blur[0], t.ui_blur[1],
 		t.shadow_raster.cache, t.shadow_raster.atlas, t.shadow_raster.layer, t.shadow_raster.table, t.shadow_raster.hiz,
 	}
 	#assert(len(fixed) + UI_LAYER_DEPTH_CAPACITY <= TARGET_TEXTURES)
@@ -2011,9 +2012,10 @@ scene_targets :: proc(r: ^Renderer, v: ^View_State) -> bool {
 	for i in 0 ..< 2 {t.hiz[i] = rhi.texture_create(d, {width = side.x, height = side.y, mip_levels = levels, format = .R32_Float, usage = {.Sampled, .Storage}, name = "depth pyramid"})}
 	t.hiz_valid = false
 	t.reactive = rhi.texture_create(d, {width = t.width, height = t.height, format = .R8_Unorm, usage = attachment, name = "blended coverage"})
+	t.reactive_discard = rhi.texture_create(d, {width = t.width, height = t.height, format = .R8_Unorm, usage = {.Color_Target}, name = "blended coverage discard"})
 	t.needs_clear = true
 	v.has_previous = false
-	all := []rhi.Texture{t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.reactive}
+	all := []rhi.Texture{t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.hiz[0], t.hiz[1], t.reactive, t.reactive_discard}
 	for tex in all {if tex == 0 {set_error(r, "render targets: %s", rhi.device_error(d)); return false}}
 	return true
 }

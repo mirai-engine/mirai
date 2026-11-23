@@ -122,7 +122,7 @@ pose_world :: proc "contextless" (parents:[]i32,local:[]math.Transform,out:[]mat
     return true
 }
 
-pose_world_branch :: proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]math.Transform,bone:int,root_transform:math.Transform=math.TRANSFORM_IDENTITY) -> bool {
+pose_world_branch :: proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]math.Transform,bone:int,root_transform:math.Transform=math.TRANSFORM_IDENTITY,recomposed:^int=nil) -> bool {
     count:=len(hierarchy.parents)
     if count==0 || len(hierarchy.links)!=count || len(local)!=count || len(world)!=count || bone<0 || bone>=count || !anim_transform_valid(root_transform) {return false}
     if raw_data(local)!=raw_data(world) && inertial_buffers_overlap(local,world) {return false}
@@ -134,6 +134,7 @@ pose_world_branch :: proc "contextless" (hierarchy:Pose_Hierarchy,local,world:[]
         if parent>=0 {basis=world[parent];if !anim_transform_valid(basis) {return false}}
         world[at]=math.transform_compose(basis,local[at])
         if !anim_transform_valid(world[at]) {return false}
+        if recomposed!=nil {recomposed^+=1}
         child:=hierarchy.links[at].first_child
         if child>=0 {
             if int(child)<=at || int(child)>=count || hierarchy.parents[child]!=i32(at) {return false}

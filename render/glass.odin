@@ -129,6 +129,7 @@ translucency_in_frustum :: proc(p: ^Pass, f: ^Gpu_Frame) {
 		p.draw_glass ||= entry.glass
 		p.glass_material_layers ||= entry.layered
 		p.forward_material_layers ||= entry.forward_layered
+		p.forward_additive ||= entry.additive
 		p.glass_rough ||= entry.glass && !entry.glass_smooth
 	}
 	translucent_before_glass(p, f)
@@ -358,9 +359,14 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	plain := rhi.frame_alloc(r.device, 4 * size_of(u32))
 	if plain.ptr == nil {return}
 	(^[4]u32)(plain.ptr)^ = {}
+	write_reactive := p.forward_additive || p.blended || t.reactive_discard == 0
 	pass := rhi.Render_Pass_Desc{color_count = 2, name = "translucent forward"}
 	pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
-	pass.colors[1] = {texture = t.reactive, load = .Load if p.blended else .Clear, store = .Store}
+	if write_reactive {
+		pass.colors[1] = {texture = t.reactive, load = .Load if p.blended else .Clear, store = .Store}
+	} else {
+		pass.colors[1] = {texture = t.reactive_discard, load = .Dont_Care, store = .Dont_Care}
+	}
 	pass.depth = {texture = t.depth, load = .Load, store = .Store}
 	if s.light_grid_dirty {
 		light_grid_record(r, cmd)
@@ -403,8 +409,10 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	behind := near_layer != 0
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
-	pass.colors[1].load = .Load
-	p.blended = true
+	if write_reactive {
+		pass.colors[1].load = .Load
+		p.blended = true
+	}
 	commands := 0
 	run: Translucent_Run
 	for entry, k in p.translucent {
