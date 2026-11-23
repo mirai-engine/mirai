@@ -1593,7 +1593,10 @@ document_nodes_apply :: proc(args:^Tree_Args,r:^Records,root:int,text:string) ->
     for &d,i in decls {
         if d.name=="" {continue}
         for &other in decls[:i] {
-            if other.name==d.name {reading_failf(reading,"%s.name: '%s' is declared twice; names are unique in a file",d.path,d.name);return}
+            if other.name==d.name {
+                reading_failf(reading,"%s.name: '%s' is declared twice, first at %s; names are unique in a file: rename one of them (as '%s_2')",d.path,d.name,other.path,d.name)
+                return
+            }
         }
         if row:=document_row_of(r,d.name);row>=0 && !inside(row,first,last) {
             reading_failf(reading,"%s.name: the node '%s' is outside the part this write declares; names are unique in a file",d.path,d.name)

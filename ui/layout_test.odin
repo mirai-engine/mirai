@@ -644,3 +644,54 @@ what_floats_in_nested_boxes_that_cut_their_floats_is_cut_by_all_of_them :: proc(
     for command in frame.commands {if command.count>0 {leftmost=min(leftmost,command.scissor.x)}}
     testing.expect_value(t,leftmost,f32(40))
 }
+
+// What floats on the surface or its safe area and grows takes the size of
+// what it hangs from, whatever holds it in the flow: an empty Fit box, or
+// a node of a tree, whose float hangs in a holder of its own.
+@(test)
+what_floats_on_the_surface_and_grows_takes_its_size_whatever_holds_it :: proc(t:^testing.T) {
+    ctx:Context
+    testing.expect(t,test_context_init(&ctx,TEST_SMALL))
+    defer context_destroy(&ctx)
+    Case :: struct {to:Float_To,width,height:Size,tree:bool,rect:Rect}
+    Test :: struct {c:Case,tree:Widget_Tree,instance:Tree_Instance}
+    SURFACE :: Rect{0,0,800,600}
+    SAFE :: Rect{10,20,760,540}
+    cases:=[?]Case{
+        {.Surface,GROW,GROW,false,SURFACE},
+        {.Safe,GROW,GROW,false,SAFE},
+        {.Surface,percent(0.5),GROW,false,{0,0,400,600}},
+        {.Surface,GROW,GROW,true,SURFACE},
+        {.Safe,GROW,GROW,true,SAFE},
+        {.Surface,percent(0.25),fixed(10),true,{0,0,200,10}},
+    }
+    build :: proc(ctx:^Context,user:rawptr) {
+        s:=cast(^Test)user
+        if s.c.tree {
+            tree_build(ctx,&s.tree,&s.instance,{track=true})
+            return
+        }
+        if box(ctx,{id=id(ctx,"holder"),width=FIT,height=FIT}) {
+            if box(ctx,{id=id(ctx,"fill"),width=s.c.width,height=s.c.height,float={to=s.c.to,layer=2},track=true}) {}
+        }
+    }
+    for c in cases {
+        s:=Test{c=c}
+        host:Bind_Host
+        if c.tree {
+            testing.expect(t,tree_init(&s.tree,{max_nodes=8}))
+            holder:=tree_node(&s.tree,-1,{kind=.Box,name="holder",layout={width=FIT,height=FIT}})
+            tree_node(&s.tree,holder,{kind=.Text,name="fill",text="x",layout={width=c.width,height=c.height},float={to=c.to,layer=2}})
+            testing.expect(t,tree_instance_init(&s.instance,&s.tree,&host))
+        }
+        input:=test_input()
+        input.safe={10,20,30,40}
+        test_frame(&ctx,&input,build,&s)
+        rect:=test_rect(t,&ctx,tree_element_id(&ctx,"fill") if c.tree else id(&ctx,"fill"))
+        testing.expectf(t,rect==c.rect,"%v: %v, not %v",c,rect,c.rect)
+        if c.tree {
+            tree_instance_destroy(&s.instance)
+            tree_destroy(&s.tree)
+        }
+    }
+}

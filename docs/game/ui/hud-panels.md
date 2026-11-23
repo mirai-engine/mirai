@@ -38,7 +38,8 @@ Write it with [ui.write](writing-ui.md). In the scene, the screen and its data o
   type `Entity` leads to the component the next name gives: `Hero.target.Health.value`.
 - Hang a box from the window with `"float": {"to": "Safe", "anchor": "Top_Left", "pivot":
   "Top_Left", "offset": [16, 16]}`: `Safe` keeps it clear of notches. `Surface` is the whole
-  window.
+  window. A floating node of `"width": "grow"` (or a percent) takes the size of what it hangs
+  from, the window or its safe area, whatever box holds it: a full-screen fade or a bar.
 - Repeat a node per element of an array with a `List` and `bind_items`. When items come, go or
   change order (an inventory, a leaderboard, a kill feed), give it `bind_key`, a field of the
   element that tells its items apart (an id, an `Entity`, a name): the focus, the states and a

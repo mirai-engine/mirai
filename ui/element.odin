@@ -62,8 +62,8 @@ element_leaf :: proc(ctx:^Context,e:Element) {
 // What a floating container hangs from. A world panel is a surface of its
 // own: what floats on its surface hangs from the panel. Root is the root of
 // the layout, the one a world panel itself hangs from. The safe area is the
-// surface less its insets, so what hangs from it hangs from the same point of
-// the surface, moved by the inset of that side.
+// surface less its insets: what hangs from it is placed in it, and what grows
+// takes its size.
 @(private)
 element_float :: proc "contextless" (ctx:^Context,f:Float,contain:bool) -> Layout_Float {
     if f.to==.None {return {}}
@@ -76,23 +76,16 @@ element_float :: proc "contextless" (ctx:^Context,f:Float,contain:bool) -> Layou
     case ctx.surface!=0 && (f.to==.Surface || f.to==.Safe):
         out.to=.Parent
         out.parent=ctx.panels[ctx.surface-1].id
-    case ctx.area!=0 && (f.to==.Surface || f.to==.Safe):
+    case ctx.area!=0 && f.to==.Surface:
         out.to=.Parent
         out.parent=ctx.area
-        if f.to==.Safe {
-            // The safe area inside the area, from its corner.
-            a,s:=ctx.area_rect,ctx.safe
-            x0,y0:=max(s.x,a.x)-a.x,max(s.y,a.y)-a.y
-            w,h:=max(min(s.x+s.w,a.x+a.w)-a.x-x0,0),max(min(s.y+s.h,a.y+a.h)-a.y-y0,0)
-            column,row:=int(f.anchor)/3,int(f.anchor)%3
-            out.offset.x+=[3]f32{x0,x0+w*0.5-a.w*0.5,x0+w-a.w}[column]
-            out.offset.y+=[3]f32{y0,y0+h*0.5-a.h*0.5,y0+h-a.h}[row]
-        }
+    case ctx.area!=0 && f.to==.Safe:
+        // The safe area inside the area.
+        a,s:=ctx.area_rect,ctx.safe
+        x0,y0:=max(s.x,a.x),max(s.y,a.y)
+        out.hung,out.rect=true,{x0,y0,max(min(s.x+s.w,a.x+a.w)-x0,0),max(min(s.y+s.h,a.y+a.h)-y0,0)}
     case f.to==.Safe:
-        column,row:=int(f.anchor)/3,int(f.anchor)%3
-        s:=ctx.safe
-        out.offset.x+=[3]f32{s.x,s.x+s.w*0.5-ctx.size.x*0.5,s.x+s.w-ctx.size.x}[column]
-        out.offset.y+=[3]f32{s.y,s.y+s.h*0.5-ctx.size.y*0.5,s.y+s.h-ctx.size.y}[row]
+        out.hung,out.rect=true,ctx.safe
     }
     return out
 }
