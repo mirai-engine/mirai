@@ -118,6 +118,7 @@ button.small, .button.small { min-height: 26px; padding: 0 8px; font-size: 12px;
 button.link { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); font-weight: 500; }
 button.link:hover { background: none; text-decoration: underline; }
 button.wide, .button.wide { width: 100%; }
+button.lg, .button.lg { min-height: 38px; padding: 0 16px; font-size: 14px; }
 .icon-button { min-height: 28px; width: 28px; padding: 0; border-color: transparent; background: transparent; color: var(--muted); }
 .icon-button:hover { background: var(--sunken); color: var(--text-strong); }
 .icon-button.danger { background: transparent; border-color: transparent; color: var(--faint); }
@@ -252,6 +253,47 @@ a.tree-org:hover { text-decoration: none; }
 
 .backdrop { display: none; }
 .main-area { margin-left: var(--sidebar); min-width: 0; padding-bottom: 80px; }
+.shell[data-mode="public"] .sidebar,
+.shell[data-mode="auth"] .sidebar { display: none; }
+.shell[data-mode="public"] .main-area,
+.shell[data-mode="auth"] .main-area { margin-left: 0; }
+.shell[data-mode="auth"] .topbar { display: none; }
+.shell[data-mode="public"] .topbar-inner,
+.shell[data-mode="public"] .view { margin: 0 auto; max-width: 1120px; }
+.shell[data-mode="public"] .search-icon { display: inline-flex; }
+.shell[data-mode="auth"] .main-area { padding-bottom: 40px; }
+.shell[data-mode="auth"] .view { margin: 0 auto; max-width: 100%; padding-top: 0; }
+.shell[data-mode="auth"] .approval-slot { max-width: 440px; margin: 24px auto 0; padding: 0 20px; }
+.top-brand { padding-right: 12px; margin-right: 4px; border-right: 1px solid var(--border); }
+
+/* --- Auth screens --- */
+
+.auth-wrap { width: 100%; }
+.auth-screen {
+    min-height: calc(100vh - 48px);
+    display: flex; flex-direction: column; justify-content: center; align-items: stretch;
+    max-width: 400px; margin: 0 auto; padding: 32px 0 48px; gap: 18px;
+}
+.auth-head { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 8px; }
+.auth-head h1 { font-size: 22px; margin-top: 4px; }
+.auth-head p { max-width: 340px; font-size: 14px; }
+.auth-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 24px; display: flex; flex-direction: column; gap: 14px;
+    box-shadow: 0 1px 2px rgba(20, 20, 40, 0.04), 0 8px 24px rgba(20, 20, 40, 0.05);
+}
+.auth-form { display: flex; flex-direction: column; gap: 10px; }
+.auth-form input { width: 100%; min-height: 38px; padding: 8px 12px; }
+.field-label { font-size: 13px; font-weight: 500; color: var(--text-strong); }
+.auth-divider { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.auth-alt { display: flex; flex-direction: column; gap: 6px; }
+.auth-hint { text-align: center; }
+.auth-footer { text-align: center; font-size: 13.5px; color: var(--muted); }
+.auth-footer a { font-weight: 500; }
+.auth-browse { text-align: center; font-size: 13px; }
+.auth-browse a { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.auth-browse a:hover { color: var(--text-strong); }
 .topbar { position: sticky; top: 0; z-index: 20; height: var(--topbar); background: rgba(247, 247, 250, 0.88); backdrop-filter: saturate(1.4) blur(10px); border-bottom: 1px solid var(--border); }
 .topbar-inner { height: 100%; display: flex; align-items: center; gap: 10px; padding: 0 28px; max-width: 1400px; }
 .menu-button, .search-icon { display: none; }

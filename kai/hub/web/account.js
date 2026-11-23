@@ -4,7 +4,7 @@
 import {el, html, mount} from './dom.js'
 import {app} from './api.js'
 import {link as linkPasskey, linkDevice, linkOffer, makeOrg, recoveryWait, register, signIn, signInByDevice} from './passkey.js'
-import {action, avatar, badge, confirmDialog, copyField, icon, navigate, plural, setPage, short, size, toast} from './ui.js'
+import {action, avatar, badge, brandMark, confirmDialog, copyField, icon, navigate, plural, setPage, short, size, toast} from './ui.js'
 
 // The machine being linked, across draws of the page: its offer to compare,
 // whether it was linked and whether it set the recovery key yet.
@@ -136,7 +136,22 @@ function orgStep(s) {
 
 export function Account() {
     const root = html`<div class="page narrow"></div>`
-    const draw = mount(root, () => app.session ? signedIn(app.session) : signedOut())
+    const draw = mount(root, () => {
+        const s = app.session
+        root.className = s ? 'page narrow' : 'auth-wrap'
+        return s ? signedIn(s) : authView('signin')
+    })
+    const stops = ['session', 'approval', 'projects'].map(key => app.watch(key, () => root.isConnected ? draw() : stops.forEach(stop => stop())))
+    return root
+}
+
+export function SignUp() {
+    const root = html`<div class="auth-wrap"></div>`
+    const draw = mount(root, () => {
+        const s = app.session
+        root.className = s ? 'page narrow' : 'auth-wrap'
+        return s ? signedIn(s) : authView('signup')
+    })
     const stops = ['session', 'approval', 'projects'].map(key => app.watch(key, () => root.isConnected ? draw() : stops.forEach(stop => stop())))
     return root
 }
@@ -163,33 +178,40 @@ const create = action(async event => {
     navigate('/account', true)
 })
 
-function signedOut() {
-    setPage({title: 'Sign in', crumbs: [{label: 'Sign in'}]})
+export function authView(mode = 'signin') {
+    const signup = mode === 'signup'
+    setPage({title: signup ? 'Create account' : 'Sign in', crumbs: [{label: signup ? 'Create account' : 'Sign in'}]})
     const work = app.node?.passkeys_work
-    return html`<header class="page-head center">
-        ${el('span', 'hero-mark', icon('key'))}
-        <h1>Sign in to KaiHub</h1>
-        <p class="lead">No password: your device's passkey (Touch ID, Windows Hello, a security key) signs you in.</p>
-    </header>
-    ${work ? null : html`<div class="notice">${icon('lock')}<p>Passkeys work only when this server is opened over HTTPS on its domain. From this address, sign in from your computer instead.</p></div>`}
-    <section class="card-panel">
-        <h2>${icon('key')}Sign in with a passkey</h2>
-        <p class="quiet">Use the passkey you created for this server.</p>
-        <button type="button" class="primary wide" ?disabled=${!work} @click=${withPasskey}>Sign in with a passkey</button>
-    </section>
-    <section class="card-panel">
-        <h2>${icon('sparkle')}New here? Create an account</h2>
-        <p class="quiet">Your browser asks twice: once to create the passkey, once to confirm it. Then you are signed in.</p>
-        <form class="inline-form" @submit=${create}>
-            <input name="name" class="grow" placeholder="Your name" aria-label="Your name" maxlength="64" autocomplete="name">
-            <button type="submit" ?disabled=${!work}>Create account</button>
-        </form>
-    </section>
-    <section class="card-panel">
-        <h2>${icon('laptop')}Sign in from your computer</h2>
-        <p class="quiet">A computer already linked to your account approves this browser. You get a command to run there.</p>
-        <button type="button" class="wide" @click=${byDevice}>Approve from my computer</button>
-    </section>`
+    const hasPublic = (app.projects ?? []).length > 0
+    return html`<div class="auth-screen">
+        <header class="auth-head">
+            ${brandMark(true)}
+            <h1>${signup ? 'Create your account' : 'Sign in to KaiHub'}</h1>
+            <p class="quiet">${signup
+                ? "Your device's passkey secures your account — no password needed."
+                : 'No password: sign in with your passkey or from a linked computer.'}</p>
+        </header>
+        ${work ? null : html`<div class="notice">${icon('lock')}<p>Passkeys work only when this server is opened over HTTPS on its domain. From this address, sign in from your computer instead.</p></div>`}
+        ${signup ? html`<section class="auth-card">
+            <form class="auth-form" @submit=${create}>
+                <label class="field-label" for="signup-name">Your name</label>
+                <input id="signup-name" name="name" placeholder="e.g. Tomas" aria-label="Your name" maxlength="64" autocomplete="name" ?disabled=${!work}>
+                <button type="submit" class="primary wide lg" ?disabled=${!work}>${icon('key')}Create account</button>
+            </form>
+            <p class="quiet small-text auth-hint">Your browser asks twice: once to create the passkey, once to confirm it.</p>
+        </section>
+        <p class="auth-footer">Already have an account? <a href="/signin">Sign in</a></p>`
+        : html`<section class="auth-card">
+            <button type="button" class="primary wide lg" ?disabled=${!work} @click=${withPasskey}>${icon('key')}Sign in with a passkey</button>
+            <div class="auth-divider"><span>or</span></div>
+            <div class="auth-alt">
+                <button type="button" class="wide lg" @click=${byDevice}>${icon('laptop')}Approve from my computer</button>
+                <p class="quiet small-text auth-hint">Use a computer already linked to your account.</p>
+            </div>
+        </section>
+        <p class="auth-footer">New to KaiHub? <a href="/signup">Create an account</a></p>`}
+        ${hasPublic && location.pathname !== '/' ? html`<p class="auth-browse"><a href="/">Browse public projects${icon('arrow-right')}</a></p>` : null}
+    </div>`
 }
 
 // --- Signed in ---

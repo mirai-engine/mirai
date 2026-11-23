@@ -3,7 +3,7 @@
 // views.js (public), member.js (members) and account.js.
 import {el, html, mount, nodes} from './dom.js'
 import {api, app, orgsKnown, refreshSession} from './api.js'
-import {Account, approvalPanel} from './account.js'
+import {Account, approvalPanel, SignUp} from './account.js'
 import {NodeStats, Org, Proposal, Proposals, Stacks} from './member.js'
 import {signOut} from './passkey.js'
 import {action, avatar, brandMark, dismiss, empty, failed, href, icon, navigate, report, setPage, short, skeleton} from './ui.js'
@@ -12,6 +12,7 @@ import {Change, Changes, Diff, Evolution, FileView, Home, Overview, Tree} from '
 const ROUTES = [
     ['/', Home],
     ['/signin', Account],
+    ['/signup', SignUp],
     ['/account', Account],
     ['/node', NodeStats],
     ['/org/:org', Org],
@@ -103,15 +104,27 @@ function sidebar() {
 
 // --- Top bar ---
 
+function shellMode() {
+    if (app.session) return 'app'
+    const path = location.pathname.replace(/\/+$/, '') || '/'
+    if (path === '/signin' || path === '/signup') return 'auth'
+    if (path === '/' && app.projects !== null && app.projects.length === 0) return 'auth'
+    return 'public'
+}
+
 function topbar() {
     const {crumbs, action: primary} = app.page
+    const signedOut = !app.session
     return html`<div class="topbar-inner">
-        <button type="button" class="icon-button menu-button" aria-label="Open the menu" @click=${() => app.set({sidebar: true})}>${icon('menu')}</button>
+        ${signedOut
+            ? html`<a class="brand top-brand" href="/" aria-label="KaiHub home">${brandMark()}<span>KaiHub</span></a>`
+            : html`<button type="button" class="icon-button menu-button" aria-label="Open the menu" @click=${() => app.set({sidebar: true})}>${icon('menu')}</button>`}
         <nav class="crumbs" aria-label="Breadcrumbs"><ol>${crumbs.map((c, i) => html`<li>
             ${i ? icon('chevron-right') : null}${c.href && i < crumbs.length - 1 ? html`<a href=${c.href}>${c.label}</a>` : html`<span aria-current=${i === crumbs.length - 1 ? 'page' : null}>${c.label}</span>`}
         </li>`)}</ol></nav>
         <div class="topbar-end">${primary ?? null}
-            <button type="button" class="icon-button search-icon" aria-label="Search" @click=${openSearch}>${icon('search')}</button></div>
+            <button type="button" class="icon-button search-icon" aria-label="Search" @click=${openSearch}>${icon('search')}</button>
+            ${signedOut ? html`<a class="button primary small" href="/signin">Sign in</a>` : null}</div>
     </div>`
 }
 
@@ -280,6 +293,11 @@ const body = html`<div class="shell">
 document.getElementById('app').replaceChildren(body)
 body.querySelector('.backdrop').addEventListener('click', () => app.set({sidebar: false}))
 
+const syncShell = () => {
+    body.dataset.mode = shellMode()
+    drawTop()
+}
+
 const drawSidebar = mount(body.querySelector('.sidebar'), sidebar)
 const drawTop = mount(body.querySelector('.topbar'), topbar)
 const drawView = mount(body.querySelector('.view'), view)
@@ -287,14 +305,18 @@ app.watch('approval', mount(body.querySelector('.approval-slot'), approvalPanel)
 app.watch('signing', mount(body.querySelector('.signing-slot'), signingPanel))
 app.watch('toasts', mount(body.querySelector('.toast-slot'), toasts))
 app.watch('search', mount(body.querySelector('.search-slot'), searchPanel))
-app.watch('page', drawTop)
-app.watch('projects', drawSidebar)
+app.watch('page', syncShell)
+app.watch('projects', () => {
+    syncShell()
+    drawSidebar()
+})
 app.watch('sidebar', () => body.classList.toggle('drawer-open', app.sidebar))
 app.watch('diffMode', () => dispatchEvent(new Event('diff-mode')))
 
 // A view draws again when the route changes or someone else signs in.
 let user // undefined until the session is known
 app.watch('session', () => {
+    syncShell()
     drawSidebar()
     if ((app.session?.user ?? null) === user) return
     user = app.session?.user ?? null
@@ -302,9 +324,11 @@ app.watch('session', () => {
 })
 const routed = () => {
     app.set({sidebar: false})
+    syncShell()
     drawSidebar()
     drawView()
 }
+syncShell()
 addEventListener('route', routed)
 addEventListener('popstate', routed)
 

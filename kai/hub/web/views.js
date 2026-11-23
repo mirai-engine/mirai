@@ -7,7 +7,7 @@ import {
     loaded, markdown, meter, navigate, person, plural, setPage, short, size, skeleton, technical, when,
 } from './ui.js'
 import {detailDecode, summaryDecode} from './preview.js'
-import {onboarding} from './account.js'
+import {authView, onboarding} from './account.js'
 
 // --- Projects ---
 
@@ -92,44 +92,58 @@ function pathCrumbs(project, rev, path) {
 // --- Home ---
 
 export function Home() {
-    const s = app.session
-    setPage({title: s ? 'Home' : 'Projects', crumbs: [{label: 'Home'}]})
-    const list = () => {
+    const root = el('div')
+    const render = () => {
+        const s = app.session
         const all = app.projects
-        if (all === null) return skeleton('rows')
-        if (all.length === 0) return empty('No projects yet', s ? 'Make an organization and its first project, then publish files to it from your computer.' : 'This server shows no public project yet.',
-            s ? html`<a class="button primary" href="/account">${icon('plus')}Get started</a>` : html`<a class="button primary" href="/signin">${icon('key')}Sign in</a>`)
-        return html`<ul class="card-grid">${all.map(p => html`<li><a class="card project-card" href=${`/p/${p.id}`}>
-            <span class="card-head">${avatar(p.name || '?', p.id)}<span class="card-title">${p.name || short(p.id)}</span>
-                ${p.public ? null : html`<span class="badge private">${icon('lock')}Private</span>`}</span>
-            <span class="quiet">${p.org_name || 'Organization'}</span>
-        </a></li>`)}</ul>`
+        if (!s) {
+            if (all === null) {
+                setPage({title: 'KaiHub', crumbs: [{label: 'Home'}]})
+                return html`<div class="page">${skeleton('page')}</div>`
+            }
+            if (all.length === 0) return authView('signin')
+            setPage({title: 'Projects', crumbs: [{label: 'Projects'}]})
+            return html`<div class="page">
+                <header class="page-head">
+                    <h1>Public projects</h1>
+                    <p class="lead">Browse the public projects hosted on this server.</p>
+                </header>
+                <ul class="card-grid">${all.map(p => html`<li><a class="card project-card" href=${`/p/${p.id}`}>
+                    <span class="card-head">${avatar(p.name || '?', p.id)}<span class="card-title">${p.name || short(p.id)}</span></span>
+                    <span class="quiet">${p.org_name || 'Organization'}</span>
+                </a></li>`)}</ul>
+            </div>`
+        }
+        setPage({title: 'Home', crumbs: [{label: 'Home'}]})
+        return html`<div class="page">
+            <header class="page-head">
+                <h1>Welcome back${s.name ? `, ${s.name.split(' ')[0]}` : ''}</h1>
+                <p class="lead">Your projects, reviews and organizations in one place.</p>
+            </header>
+            ${onboarding(s)}
+            <section class="section">
+                <div class="section-head"><h2>Projects</h2></div>
+                ${all === null ? skeleton('rows') : all.length === 0
+                    ? empty('No projects yet', 'Make an organization and its first project, then publish files to it from your computer.',
+                        html`<a class="button primary" href="/account">${icon('plus')}Get started</a>`)
+                    : html`<ul class="card-grid">${all.map(p => html`<li><a class="card project-card" href=${`/p/${p.id}`}>
+                        <span class="card-head">${avatar(p.name || '?', p.id)}<span class="card-title">${p.name || short(p.id)}</span>
+                            ${p.public ? null : html`<span class="badge private">${icon('lock')}Private</span>`}</span>
+                        <span class="quiet">${p.org_name || 'Organization'}</span>
+                    </a></li>`)}</ul>`}
+            </section>
+            ${s.orgs.length ? html`<section class="section">
+                <div class="section-head"><h2>Your organizations</h2></div>
+                <ul class="card-grid">${s.orgs.map(o => html`<li><a class="card" href=${`/org/${o.org}`}>
+                    <span class="card-head">${avatar(o.name || '?', o.org)}<span class="card-title">${o.name || 'Organization'}</span>${badge(o.role, 'neutral')}</span>
+                    ${o.hosted ? meter(o.bytes, o.quota, 'Storage used') : html`<span class="quiet">Kept by your own server</span>`}
+                </a></li>`)}</ul>
+            </section>` : null}
+        </div>`
     }
-    const node = html`<div class="page">
-        <header class="page-head">
-            <h1>${s ? `Welcome back${s.name ? `, ${s.name.split(' ')[0]}` : ''}` : 'Projects on this server'}</h1>
-            <p class="lead">${s ? 'Your projects, reviews and organizations in one place.' : 'Browse the public projects here, or sign in to review and work with your team.'}</p>
-        </header>
-        ${s ? onboarding(s) : html`<section class="welcome-card">
-            <div>${icon('sparkle')}<div><strong>Review work with your team</strong>
-                <p>Sign in with a passkey: no password. Then link your computer, make an organization and open its projects here.</p></div></div>
-            <a class="button primary" href="/signin">${icon('key')}Sign in or create an account</a>
-        </section>`}
-        <section class="section">
-            <div class="section-head"><h2>Projects</h2></div>
-            <div class="project-list"></div>
-        </section>
-        ${s && s.orgs.length ? html`<section class="section">
-            <div class="section-head"><h2>Your organizations</h2></div>
-            <ul class="card-grid">${s.orgs.map(o => html`<li><a class="card" href=${`/org/${o.org}`}>
-                <span class="card-head">${avatar(o.name || '?', o.org)}<span class="card-title">${o.name || 'Organization'}</span>${badge(o.role, 'neutral')}</span>
-                ${o.hosted ? meter(o.bytes, o.quota, 'Storage used') : html`<span class="quiet">Kept by your own server</span>`}
-            </a></li>`)}</ul>
-        </section>` : null}
-    </div>`
-    const draw = mount(node.querySelector('.project-list'), list)
-    const stop = app.watch('projects', () => node.isConnected ? draw() : stop())
-    return node
+    const draw = mount(root, render)
+    const stop = app.watch('projects', () => root.isConnected ? draw() : stop())
+    return root
 }
 
 // --- Overview ---
