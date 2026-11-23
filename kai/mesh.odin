@@ -532,7 +532,6 @@ agent_refold :: proc(a:^Agent) {
             org_fold_destroy(&a.org)
         }
     }
-    agent_unload_settled(a)
     clear(&a.allowed)
     // A member's active device is admitted; a revoked one, or any device of
     // a user the log removed, is refused. A user this end cannot place yet
@@ -566,6 +565,9 @@ agent_refold :: proc(a:^Agent) {
         }
     }
     members_refold(a)
+    // After the members' set took them: the entry that settles a proposal is
+    // in objects its peers still ask this end for.
+    agent_unload_settled(a)
     agent_closure(a)
     net.host_authorize(&a.server)
     // What this end makes of the servers it connected to.

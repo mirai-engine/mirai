@@ -162,9 +162,35 @@ bookmarks_shared :: proc(p:^Project,m:^vcs.Machine,out:^[dynamic]Shared_Bookmark
     return .None
 }
 
+// The change of the current stack of a proposal of the project that text
+// names by a prefix of its id, as mirai kai proposal show prints it: what a
+// reviewer reads before it is in any view of its own.
+@(private)
+revision_proposed :: proc(p:^Project,m:^vcs.Machine,text:string) -> (revision:vcs.Revision,found:int) {
+    lower:=strings.to_lower(text,context.temp_allocator)
+    if len(lower)<CHANGE_TEXT_MIN {return}
+    project,_,e:=project_of(p,m)
+    if e!=.None {return}
+    ps:vcs.Project_State
+    if vcs.project_state_load(&m.store,project,&ps,context.temp_allocator)!=.None {return}
+    stacks:=make([dynamic]vcs.Proposal_Stack,context.temp_allocator)
+    for f in ps.proposals {
+        if vcs.proposal_stacks(f,&stacks)!=.None || len(stacks)==0 {continue}
+        for item in stacks[len(stacks)-1].items {
+            id:=item.change
+            if !strings.has_prefix(hex(id[:]),lower) || item.revision==revision {continue}
+            if _,ce:=vcs.change_get(&m.store,item.revision,context.temp_allocator);ce!=.None {continue}
+            revision=item.revision
+            found+=1
+        }
+    }
+    return
+}
+
 // The change text names as revision_find does, or else a bookmark of the
-// project's log, or a device's as <handle>/<device>:<bookmark>, whose change
-// must be in the store.
+// project's log, or a device's as <handle>/<device>:<bookmark>, or a change
+// of a proposal's stack by a prefix of its id, whose change must be in the
+// store.
 revision_resolve :: proc(p:^Project,m:^vcs.Machine,text:string) -> (revision:vcs.Revision,error:vcs.Error) {
     if r,e:=revision_find(&p.workspace,text);e==.None {return r,.None}
     list:=make([dynamic]Shared_Bookmark,context.temp_allocator)
@@ -182,6 +208,7 @@ revision_resolve :: proc(p:^Project,m:^vcs.Machine,text:string) -> (revision:vcs
         revision=b.target
         found+=1
     }
+    if found==0 {revision,found=revision_proposed(p,m,text)}
     switch found {
     case 1: return revision,.None
     case 0: m.why="it names no single change: @, @-, a bookmark, <handle>/<device>:<bookmark> as mirai kai bookmarks shows it, or a prefix of a change id"

@@ -302,6 +302,29 @@ two_agents_pair_and_sync_a_change_over_loopback_udp :: proc(t:^testing.T) {
     _,g.refs,_=device_refs_get(&alice.store,project,alice.identity.key,context.temp_allocator)
     if !testing.expectf(t,box_until(b,10,&g,refs_arrived),"the change reaches bob: %v",c.orgs[0].agent.stats) {return}
 
+    // A proposal alice opens reaches bob open, and landed once she lands it.
+    {
+        proposed:=test_change(t,&alice.store,&alice.identity,"alice's next")
+        test_written(t,&alice.store,project,proposed)
+        change,_:=change_get(&alice.store,proposed,context.temp_allocator)
+        proposal,oe:=machine_proposal_open(alice,project,"main","Next","why",{{change.id,proposed}})
+        testing.expect_value(t,oe,Error.None)
+        Proposal_Goal :: struct {project,proposal:Log_Id,status:Proposal_Status}
+        pg:=Proposal_Goal{project,proposal,.Open}
+        proposal_is :: proc(b:^Box,data:rawptr) -> bool {
+            g:=(^Proposal_Goal)(data)
+            ps:Project_State
+            f,e:=machine_proposal_load(&b.machines[1],g.project,g.proposal,&ps)
+            if e!=.None {return false}
+            defer project_state_destroy(&ps)
+            return f.status==g.status
+        }
+        if !testing.expect(t,box_until(b,10,&pg,proposal_is),"the proposal reaches bob") {return}
+        testing.expect_value(t,machine_proposal_land(alice,project,proposal),Error.None)
+        pg.status=.Landed
+        if !testing.expect(t,box_until(b,10,&pg,proposal_is),"bob's machine learns the proposal landed") {return}
+    }
+
     // An overlay of a scope bob reads arrives and opens for him alone.
     scope,se:=machine_scope_add(alice,org,project,{"secrets/**"},.Reader,false)
     testing.expect_value(t,se,Error.None)

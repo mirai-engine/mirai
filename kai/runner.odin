@@ -165,7 +165,7 @@ Runner_Org :: struct {
     beacon_devices:[dynamic]Dh_Key,
     whole_refs:map[store.Hash]struct{}, // device refs whose bookmarks were told whole
     stats:Agent_Stats,   // as last told
-    connected:[AGENT_PEERS]bool,
+    connected:[AGENT_PEERS]Dh_Key, // the peer each slot of the agent held when last looked at; zero for none
 }
 
 @(private)
@@ -562,15 +562,15 @@ runner_org_watch :: proc(r:^Runner,o:^Runner_Org) {
         runner_org_peers(r,o)
     }
     for p,i in a.peers {
-        if p.used==o.connected[i] {continue}
-        o.connected[i]=p.used
+        now:=p.used?p.dh:Dh_Key{}
+        was:=o.connected[i]
+        if now==was {continue}
+        o.connected[i]=now
         hex:[64]u8
-        d:=p.dh
-        if p.used {
+        if was!={} {runner_event(r,"peer %s left",store.hex(transmute(store.Hash)was,&hex)[:12])}
+        if now!={} {
             r.hello_at=-1
-            runner_event(r,"peer %s connected (%s, %v)",store.hex(transmute(store.Hash)d,&hex)[:12],rung_text(runner_peer_rung(r,o,i)),p.class)
-        } else {
-            runner_event(r,"peer %s left",store.hex(transmute(store.Hash)d,&hex)[:12])
+            runner_event(r,"peer %s connected (%s, %v)",store.hex(transmute(store.Hash)now,&hex)[:12],rung_text(runner_peer_rung(r,o,i)),p.class)
         }
     }
     s:=a.stats

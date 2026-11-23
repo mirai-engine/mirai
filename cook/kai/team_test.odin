@@ -244,6 +244,12 @@ a_team_reviews_and_lands_a_proposal_through_the_shared_operations :: proc(t:^tes
         return f!=nil && f.revision==g.revision && whole(&g.m.store,g.revision)
     }
     if !testing.expect(t,until(10,&g,arrived),"the proposal and its change reach alice") {return}
+    {
+        // Alice names the proposed change by its id, as the proposal shows it, to read it.
+        c,_:=vcs.change_get(&bob.m.store,working,context.temp_allocator)
+        named,ne:=revision_resolve(pa,&alice.m,change_text(c.id))
+        testing.expect(t,ne==.None && named==working,alice.m.why)
+    }
     testing.expect_value(t,proposal_comment(pa,&alice.m,id,"readme.txt",{kind=.Lines,line=2,lines=1},"","why b?"),vcs.Error.None)
     g.m=&bob.m
     commented :: proc(data:rawptr) -> bool {
