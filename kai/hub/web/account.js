@@ -26,9 +26,8 @@ export function SignIn() {
         made = await register(name)
         draw()
     })
-    const attach = action(async event => {
-        const name = root.querySelector('input[name=name]')?.value.trim()
-        await linkPasskey(event.target.elements.user.value.trim(), name || 'Kai user')
+    const addPasskey = action(async () => {
+        await linkPasskey(app.session.user, app.session.name || 'Kai user')
         linked = true
         draw()
     })
@@ -74,7 +73,12 @@ export function SignIn() {
                 </div>`
                 : html`<div class="actions"><button type="button" @click=${askOffer}>Link a machine</button></div>`}
         </section>
-        ${orgPanel(s)}` : null}`
+        ${orgPanel(s)}` : html`<section class="panel">
+            <h2>Add a passkey to this browser</h2>
+            <p class="quiet">A device of yours approved this session. A passkey of this browser signs you in with no device from now on: the device approves it once.</p>
+            ${linked ? html`<div class="notice ok">${icon('check')}<p>The passkey is yours now: this browser signs in with it.</p></div>`
+                : html`<div class="actions"><button type="button" class="primary" ?disabled=${!app.node?.passkeys_work} @click=${addPasskey}>Add a passkey</button></div>`}
+        </section>`}`
     }
 
     // Making an org this node hosts, or what is missing for it; nothing when the node makes none.
@@ -122,16 +126,8 @@ export function SignIn() {
             </form>
         </section>
         <section class="panel">
-            <h2>Add a passkey to your user</h2>
-            <p class="quiet">For a user you have on a device already: the device approves the new passkey. The device prints your user id with mirai kai identity.</p>
-            ${linked ? html`<div class="notice ok">${icon('check')}<p>The passkey is yours now: sign in with it above.</p></div>` : html`<form class="inline-form" @submit=${attach}>
-                <input name="user" class="grow" placeholder="Your user id, 64 hex" aria-label="User id" autocomplete="off" spellcheck="false">
-                <button type="submit" ?disabled=${!work}>Create and link</button>
-            </form>`}
-        </section>
-        <section class="panel">
-            <h2>Without a passkey</h2>
-            <p class="quiet">A device of yours approves this browser's sign-in; the writes of such a session are approved the same way.</p>
+            <h2>With a device of yours</h2>
+            <p class="quiet">A machine that is a device of your user approves this browser's sign-in. Signed in, this browser can add a passkey of its own.</p>
             <div class="actions"><button type="button" @click=${byDevice}>Approve from a device</button></div>
         </section>`
     }

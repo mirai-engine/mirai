@@ -143,9 +143,8 @@ async function approvalWait(a) {
     }
 }
 
-// Links a new passkey to an existing user: a device of the user approves it.
+// Links a new passkey of this browser to the session's user: a device of the user approves it.
 export async function link(user, name) {
-    if (!unhex(user, 32)) throw new Error('the user id is 64 hex: `mirai kai identity` prints it on a device of the user')
     const {credential, cose} = await passkeyCreate(name)
     const a = await api('/api/passkeys/link', {user, credential: b64(credential), cose: b64(cose)})
     remember(credential, cose)
