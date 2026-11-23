@@ -48,7 +48,7 @@ grade_desc :: proc(r:^Renderer,g:Grade) -> (desc:Postprocess_Desc) {
     return
 }
 
-// What ColorGrade gives c: Unreal's correction of the exposed image, with
+// What ColorGrade gives c: the grade of the exposed image, with
 // the luminance of the working space.
 @(private="file")
 grade_reference :: proc(c:[3]f32,g:Grade) -> [3]f32 {
@@ -139,7 +139,7 @@ postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
     testing.expect_value(t,rhi.device_validation_errors(d),0)
 }
 
-// ColorGrade holds Unreal's correction of the exposed image: each channel
+// ColorGrade grades the exposed image: each channel
 // pulled from the luminance by its saturation and raised to its contrast
 // around middle gray, for the whole image times its shadows, midtones and
 // highlights by luminance; its defaults leave the image as it is.

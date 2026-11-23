@@ -21,7 +21,7 @@ float lattice(int3 i) {
     return float(h >> 8) * (2.0 / 16777216.0) - 1.0;
 }
 
-// Value noise and its gradient (Quilez) at base + x, base a lattice point: x value, yzw
+// Value noise and its gradient at base + x, base a lattice point: x value, yzw
 // derivatives.
 float4 noise_gradient(int3 base, float3 x) {
     int3 i = base + int3(floor(x));

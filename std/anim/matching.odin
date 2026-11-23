@@ -669,7 +669,7 @@ match_search :: proc "contextless" (db:^Match_Database,request:Match_Request,cur
     return
 }
 
-// Whether a row lies in the window of the event of request, as PoseSearch's events: its marker is
+// Whether a row lies in the window of the event of request: its marker is
 // reached when the event comes at a rate of event_rates, within half a row, and is not further
 // than event_from (when positive) by more than a row; and the rate that reaches it then, within
 // event_rates. Request must hold an event the database has.
