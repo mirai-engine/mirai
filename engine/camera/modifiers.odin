@@ -96,7 +96,7 @@ modifiers_take :: proc(follows:^core.Table(Camera_Follow),states:^core.Table(Cam
     }
 }
 
-@(private)
+// Whether a slot plays a modifier: asked, or released while it still blends out.
 modifier_playing :: proc "contextless" (p:Modifier_Playing) -> bool {return p.asked || p.weight>0}
 
 // What the modifiers of a camera add this frame, by their weights, after advancing their blends dt

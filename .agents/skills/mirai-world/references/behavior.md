@@ -226,7 +226,9 @@ what it perceives; `think` only reads and proposes, and the actions write.
   with their scores, the latest exits with the seconds since each, the cause and what interrupted
   them, and what it has reserved), `behavior.perception`, `behavior.offers` (the offers of a
   smart object, their uses and who holds them), `behavior.influence` (the influence of each team
-  and the cover at a point) and `behavior.query` (runs a query at once).
+  and the cover at a point), `behavior.query` (runs a query at once) and `behavior.history`
+  (`running`, `proposals` and the `exits` since the row before at each tick of the Play history,
+  replayed without changing the run).
 - Why, on request and never recorded: `behavior.perception` with `subject` says why it sees that
   one or not at this tick (`sight_why`, over the same `sight_reach` its turns use: range, cone or
   `aware`, team, the entity a ray hits first, no rays); `behavior.query` with `explain` gives every

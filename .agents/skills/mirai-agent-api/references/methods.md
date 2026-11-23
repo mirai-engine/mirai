@@ -284,7 +284,15 @@ Play and Simulate run in-process on world copies
   [conditions](../../../../docs/game/testing/scenario-assertions.md#scenario-assertion-reference);
   unknown name/field -> `-32602`; unmet condition -> `passed:false` with `failure`.
 - `play.view` (`read_only`): active camera pose/lens/blend, `Camera_Follow`, and projected `points`
-  (entity middle, not feet).
+  (entity middle, not feet). `authority.kind` says who chose the camera (`Default` body camera,
+  `Override`, `Activation`) with its `owner`, `order` and the playing `Camera_Modifier`s; `arm` is
+  the Orbit spring arm (`desired`, `current`, `blocked` while short of desired, pulled in or
+  going back out, `body_hidden`). `trace.view` and `view` conditions read the same fields.
+- `play.events` (`read_only`): items of the `core.Events` fields of one storage (`Physics_Events`,
+  `Ability_Events`, `Nav_Events`, `Perception_Events`, game ones) by reflection, filtered by
+  `entity` (any `Entity` field). No `from`/`to`: what the log holds now (the last frame); with
+  them, each frame of the history replayed, `limit` bounded (`dropped`, `next`). An unknown or
+  event-less storage lists those that report events.
 - Live mutations: `scene.write` with `world:"Game"` (partial patch, hex handles, teleports via
   `core.place`, spawns prefabs, atomic rollback on error; no `replace`/`kind`) and `play.push`
   (queues requests into `core.Queue` storages for the next tick).
@@ -300,6 +308,13 @@ Play and Simulate run in-process on world copies
   ([explore-qa](../../../../docs/game/testing/explore-qa.md)).
 - `play.player`, `play.ui` (window-point `rect`s; omits `World_Widget`), `play.audio` (shared
   editor mixer), `play.scenario.run` ([scenarios](../../../../docs/game/testing/scenario.md)).
+- `play.audio`: per voice `state` (`Playing`, `Virtual_Budget`, `Virtual_Silent`, `Fading`,
+  `Unloaded`), `effective_gain` (the gain voices are ranked by), `distance`, `transmission`;
+  `listeners` (at most 4); `one_shots`, the newest of the `audio.play` ring (`Sounds_Played`, a
+  host storage no world copy holds) with `outcome` (`Played`, `Culled_Distance`,
+  `Rejected_Mixer`, `Missing_Asset`, `Deduped` by a rollback tick).
+- `play.audit` flags `ui.node_collapsed`: a shown content node (text with text, image, button,
+  field...) laid out with no width or height; containers, spacers and prompts are exempt.
 - `multiplayer` plugin: `play.join` (outside turns) and `play.network.status`, also inside a
   turn. Besides the editor's network game (`phase`, `invite`), `run` reads the run of the call
   (the turn's, or the user's Play), or `player` N, an online client of the turn's game: `role`

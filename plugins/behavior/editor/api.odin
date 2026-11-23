@@ -95,6 +95,7 @@ Exit_Result :: struct {
     interrupted_by:string `mirai:"optional"`,
     step:bool,
     seconds:f32 `mirai:"unit=s,label=Since it exited"`,
+    tick:u64 `mirai:"label=It exited at"`,
 }
 
 Perception_Result :: struct {
@@ -168,6 +169,7 @@ register :: proc(s:^editor.Session) {
     query_defaults:=Query_Params{inner=2,outer=8,rings=3,per_ring=12,spacing=1,keep=5}
     editor.api_method_register(s,{name="behavior.minds",summary="The minds the game declares (@(mind)): their names, their actions and how many Mind_Agents of the shown world run each.",flags={.Read_Only},result=type_info_of(Minds_Result),run=minds})
     editor.api_method_register(s,{name="behavior.inspect",summary="What the mind of a Mind_Agent does and why: the action and the step it runs by name, its stage and since when, its commit, the best proposals of its last decision with their scores, its last exits with their cause and what interrupted them, and what it holds of the claims. Use it in Play to see why an agent decides what it does.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Inspect_Result),run=inspect})
+    history_register(s)
     editor.api_method_register(s,{name="behavior.perception",summary="What a Perceiver remembers: each subject it saw or heard, where, by which senses this tick, how sure it still is, and the seconds since it first and last perceived it. With subject, also why it sees that one or not now: out of range, out of its cone or within aware, a team it does not notice, or the entity that hides it.",params=type_info_of(Perception_Params),flags={.Read_Only},result=type_info_of(Perception_Result),run=perception})
     editor.api_method_register(s,{name="behavior.offers",summary="The offers of a Smart_Object: each use, where its user stands, who may take it, how many at once, how many times and how often, how many times it was used, when it is offered again and who holds it now.",params=type_info_of(Entity_Params),flags={.Read_Only},result=type_info_of(Offers_Result),run=offers})
     editor.api_method_register(s,{name="behavior.influence",summary="The influence maps at a point of the shown world: the influence of each team there (threat or allies, as an agent reads it) and how covered the point is from 'from'.",params=type_info_of(Influence_Params),flags={.Read_Only},result=type_info_of(Influence_Result),run=influence})
@@ -261,27 +263,46 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     now:core.Time
     if t:=core.world_storage_of(world,core.Time);t!=nil {now=t^}
     r.ticks=u64(m.ticks)
-    action,step:=ai.mind_running(m)
+    r.running,r.step=mind_frames(world,entry,m,now)
+    r.score,r.commit=m.score,m.commit
+    r.proposals=mind_proposals(entry,m,call.allocator)
+    r.exits=mind_exits(entry,m,now,0,call.allocator)
+}
+
+// The action a mind runs and the step of it, each empty without one.
+@(private)
+mind_frames :: proc(world:core.World_Ref,entry:^behavior.Mind_Entry,m:^ai.Mind,now:core.Time) -> (running,step:Frame_Result) {
     frame_of :: proc(world:core.World_Ref,entry:^behavior.Mind_Entry,action:u16,frame:^ai.Act_Frame,now:core.Time) -> (shown:Frame_Result) {
         if action==ai.MIND_NONE {return}
         shown={action=action_name(entry,action),stage=int(frame.stage),seconds=core.elapsed(now,frame.entered),stage_seconds=core.elapsed(now,frame.staged)}
         if frame.reserved.target!=0 {shown.holds={id_of(world,core.Entity(frame.reserved.target)),int(frame.reserved.what)}}
         return
     }
-    r.running,r.step=frame_of(world,entry,action,&m.main,now),frame_of(world,entry,step,&m.step,now)
-    r.score,r.commit=m.score,m.commit
-    proposals:=make([dynamic]Proposal_Result,call.allocator)
+    action,stepping:=ai.mind_running(m)
+    return frame_of(world,entry,action,&m.main,now),frame_of(world,entry,stepping,&m.step,now)
+}
+
+// The best proposals of the last decision of a mind, best first.
+@(private)
+mind_proposals :: proc(entry:^behavior.Mind_Entry,m:^ai.Mind,allocator:=context.temp_allocator) -> []Proposal_Result {
+    proposals:=make([dynamic]Proposal_Result,allocator)
     for proposal in m.proposals {
         if !(proposal.score>0) {break}
         append(&proposals,Proposal_Result{action_name(entry,proposal.action),proposal.score})
     }
-    exits:=make([dynamic]Exit_Result,call.allocator)
+    return proposals[:]
+}
+
+// The exits a mind remembers from tick since on, the most recent first; since 0: all of them.
+@(private)
+mind_exits :: proc(entry:^behavior.Mind_Entry,m:^ai.Mind,now:core.Time,since:u64,allocator:=context.temp_allocator) -> []Exit_Result {
+    exits:=make([dynamic]Exit_Result,allocator)
     for back in 0..<ai.MIND_TRACE {
         exit,found:=ai.mind_exit_trace(m,back)
-        if !found {break}
-        append(&exits,Exit_Result{action_name(entry,exit.action),fmt.tprintf("%v",exit.cause),exit.by!=ai.MIND_NONE?action_name(entry,exit.by):"",exit.step,core.elapsed(now,exit.tick)})
+        if !found || exit.tick<since {break}
+        append(&exits,Exit_Result{action_name(entry,exit.action),fmt.tprintf("%v",exit.cause),exit.by!=ai.MIND_NONE?action_name(entry,exit.by):"",exit.step,core.elapsed(now,exit.tick),exit.tick})
     }
-    r.proposals,r.exits=proposals[:],exits[:]
+    return exits[:]
 }
 
 @(private)

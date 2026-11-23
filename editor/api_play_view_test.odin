@@ -24,6 +24,8 @@ View_World :: struct {
     view:core.View,
     views:ecamera.Camera_Views,
     time:core.Time,
+    cameras:ecamera.Cameras,
+    activations:core.Table(ecamera.Camera_Activation),
 }
 
 @(private="file")
@@ -124,4 +126,76 @@ play_view_says_what_the_player_sees_and_where_things_show_on_the_screen :: proc(
     table,_:=serial.text_encode(api_trace_table(&s,&trace),.Line,context.temp_allocator,sparse=true)
     written:=api.json_compact(string(table))
     testing.expect(t,strings.contains(written,`{"view":true,"field":"points[0].depth"}`) && strings.contains(written,`"values":[10,0.25]`),written)
+}
+
+// Who chose the camera of the focused player: the body of its seat, the
+// latest override that stands for it or an activation whose action it holds;
+// the modifiers that camera plays; and the spring arm of an Orbit, pulled in
+// by what is in the way, with the body it leaves out of the view.
+@(test)
+play_view_says_who_drives_the_camera_and_how_its_arm_stands :: proc(t:^testing.T) {
+    w:View_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    seat,body,camera,director,shot,aim:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.names,body,core.name_make("Hero"))
+    core.add(&w.names,director,core.name_make("Director"))
+    core.add(&w.names,aim,core.name_make("Aim camera"))
+    core.add(&w.seats,seat,input.Seat{body=body})
+    for lens in ([3]core.Entity{camera,shot,aim}) {core.add(&w.lenses,lens,erender.Camera{fov=60*math.RAD_PER_DEG})}
+    core.add(&w.follows,camera,ecamera.CAMERA_FOLLOW_DEFAULT)
+    core.add(&w.activations,aim,ecamera.CAMERA_ACTIVATION_DEFAULT)
+    state:=ecamera.Camera_Follow_State{ready=true}
+    state.arm=ecamera.spring_arm_make(4)
+    state.arm.current,state.arm.blocked=2.5,0.3
+    state.side=ecamera.spring_arm_make(0.5)
+    state.modifiers[1]={modifier={id=7,fov=10*math.RAD_PER_DEG,distance=1,offset={0,-0.5,0}},weight=0.5,asked=true}
+    state.modifiers[3]={modifier={id=9,roll=0.1},weight=0.2}
+    core.add(&w.following,camera,state)
+    test_world_settle(&w)
+    w.players.local_count=1
+    w.view={position={0,2,6},rotation=1,fov=60*math.RAD_PER_DEG,near=0.1,size={1600,900},camera=camera}
+    w.views.slots[0]={camera=camera,fade=1}
+    ref:=test_world_ref(&w)
+    Case :: struct {overrides:[]ecamera.Camera_Override,kind,owner:string,order:f64,standing:f64}
+    cases:=[]Case{
+        {nil,"Default","Hero",0,0},
+        {{{owner=director,seat=seat,camera=shot,order=5,active=true},{owner=director,seat=body,camera=shot,order=8,active=true}},"Override","Director",5,1},
+        {{{owner=director,seat=seat,camera=shot,order=5,active=true},{owner=aim,seat=seat,camera=aim,order=6,active=true}},"Activation","Aim camera",6,2},
+    }
+    for c in cases {
+        w.cameras={}
+        copy(w.cameras.overrides[:],c.overrides)
+        text,problem:=play_view_json(ref,nil)
+        testing.expect_value(t,problem,"")
+        api_result_shape_expect(t,text,Api_Play_View)
+        authority,_:=view_json(t,text)["authority"].(json.Object)
+        testing.expect_value(t,authority["kind"].(json.String) or_else "",c.kind)
+        testing.expect_value(t,authority["owner_name"].(json.String) or_else "",c.owner)
+        testing.expect_value(t,view_number(authority["order"] or_else json.Integer(0)),c.order)
+        testing.expect_value(t,view_number(authority["overrides"]),c.standing)
+    }
+    text,_:=play_view_json(ref,nil)
+    v:=view_json(t,text)
+    authority,_:=v["authority"].(json.Object)
+    modifiers,_:=authority["modifiers"].(json.Array)
+    if testing.expect_value(t,len(modifiers),2) {
+        asked,_:=modifiers[0].(json.Object)
+        released,_:=modifiers[1].(json.Object)
+        testing.expect(t,view_number(asked["id"])==7 && view_number(asked["weight"])==0.5 && abs(view_number(asked["fov_deg"])-10)<1e-3 && view_number(asked["distance"])==1)
+        testing.expect(t,!(asked["released"].(json.Boolean) or_else true) && (released["released"].(json.Boolean) or_else false) && view_number(released["id"])==9)
+    }
+    arm,_:=v["arm"].(json.Object)
+    testing.expect(t,view_number(arm["desired"])==4 && view_number(arm["current"])==2.5 && view_number(arm["side_current"])==0.5,text)
+    testing.expect(t,(arm["blocked"].(json.Boolean) or_else false) && abs(view_number(arm["blocked_seconds"])-0.3)<1e-6,text)
+    testing.expect(t,(arm["body_hidden"].(json.Boolean) or_else false) && view_number(arm["body_fade"])==1,text)
+    // What a condition reads with view.
+    s:=Session{info=test_world_info(&w)}
+    conditions:=[2]Api_Play_Condition{{view=true,compare=.Equal},{view=true,compare=.Below,number=3}}
+    copy(conditions[0].field[:],"authority.kind");copy(conditions[0].text[:],"Activation")
+    copy(conditions[1].field[:],"arm.current")
+    reads:[2]Api_Condition_Read
+    passed,wrong:=api_conditions_read(&s,ref,conditions[:],reads[:],"conditions")
+    testing.expect_value(t,wrong,"")
+    testing.expectf(t,passed,"%v",reads)
 }

@@ -218,7 +218,8 @@ camera_overriding :: proc "contextless" (cameras_state:core.Ref(Cameras),owner:c
     return false
 }
 
-@(private)
+// The override a seat sees through: the latest asked of its active ones whose camera is valid;
+// nil without one, when it sees through the camera of its body.
 override_chosen :: proc(cameras_state:core.Ref(Cameras),cameras:^core.Table(render.Camera,$A),seat:core.Entity) -> (chosen:^Camera_Override) {
     if seat==core.NONE {return}
     if cameras_state.ptr==nil {return nil}

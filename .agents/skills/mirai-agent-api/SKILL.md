@@ -184,7 +184,8 @@ one that a local editor uses. `--project` names a local project, so remote calls
    subtree under `root`). Group multi-method atomic edits in `batch` with `transaction:true`.
 4. Verify with `scene.inspect`, `scene.audit`, `render.inspect_entity`, or `capture`; undo with
    `history.undo`. Failed calls change nothing.
-5. Debug Play runs with `play.audit`, `play.history` (`trace`/`verify`) and `play.seek`.
+5. Debug Play runs with `play.audit`, `play.history` (`trace`/`verify`), `play.events` (what a
+   library reported, now or `from`/`to`) and `play.seek`.
 6. After project Odin changes, `build.start` (or `play.start`) compiles and hot-reloads in place
    without losing scene, Play or history. After engine/shader edits, `mirai build editor` updates or
    restarts the open session; `mirai session restart [project]` restarts manually.

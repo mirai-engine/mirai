@@ -93,7 +93,7 @@ audit_api_register :: proc(s:^editor.Session) {
     scene:=Api_Scene_Audit_Params{blend_ratio_warn=0.25}
     play:=Api_Play_Audit_Params{frame_ms_budget=33.3,blend_ratio_warn=0.25}
     editor.api_method_register(s,{params=type_info_of(Api_Scene_Audit_Params),result=type_info_of(Api_Audit),name="scene.audit",summary="Red flags of the document or of the game that plays, read from its world and assets, each with its entity and fix: core.report problems, transforms that are not finite, materials that draw black or a scene nearly all blended, and animations whose asset is missing or of another kind.",defaults=&scene,flags={.Read_Only},run=api_scene_audit})
-    editor.api_method_register(s,{params=type_info_of(Api_Play_Audit_Params),result=type_info_of(Api_Audit),name="play.audit",summary="The checks of scene.audit on the game of the caller and those of a game that plays: buttons on screen while the game holds the mouse, a screen that is not modal holding the keyboard, textures still streaming, a frame over budget with its costliest parts and, with a GPU, a frame nearly all black or all white; with ticks it first runs those ticks, watching for a stuck player, a rig that plays and does not move and a bone that jumps in one tick.",defaults=&play,run=api_play_audit})
+    editor.api_method_register(s,{params=type_info_of(Api_Play_Audit_Params),result=type_info_of(Api_Audit),name="play.audit",summary="The checks of scene.audit on the game of the caller and those of a game that plays: buttons on screen while the game holds the mouse, a screen that is not modal holding the keyboard, a node that shows laid out with no width or height, textures still streaming, a frame over budget with its costliest parts and, with a GPU, a frame nearly all black or all white; with ticks it first runs those ticks, watching for a stuck player, a rig that plays and does not move and a bone that jumps in one tick.",defaults=&play,run=api_play_audit})
 }
 
 @(private)
@@ -355,6 +355,12 @@ audit_ui :: proc(a:^Audit,r:^editor.Run) {
         audit_add(a,{severity=.Error,area=.Input,code="input.cursor_hidden_on_ui",entity=audit_entity(a,top.entity),
             message=fmt.aprintf("%s shows %d buttons while the game holds the mouse: the cursor is hidden and they cannot be clicked",top.screen,a.summary.ui_buttons_visible,allocator=a.allocator),
             fix="Make the screen Modal, which frees the mouse; or, while it shows, let its seat drive no body or bind look to no mouse motion"})
+    }
+    for node in editor.play_ui_collapsed(s,r,a.allocator) {
+        name:=node.name if node.name!="" else fmt.tprintf("row %d",node.row)
+        audit_add(a,{severity=.Warn,area=.Ui,code="ui.node_collapsed",entity=audit_entity(a,node.entity),
+            message=fmt.aprintf("%s: the %v node %s shows but was laid out %vx%v points: what it shows cannot be seen",node.screen,node.kind,name,node.rect[2],node.rect[3],allocator=a.allocator),
+            fix="Give it a width and a height, or content that sizes it, or a container that grows it; hide it (visible false) while it has nothing to show"})
     }
     if keys {
         audit_add(a,{severity=.Warn,area=.Ui,code="ui.keyboard_held",entity=shown?audit_entity(a,top.entity):"",

@@ -77,4 +77,4 @@ The agent's navigation class is chosen from its capsule; with none that fits, th
 - Agents that appear while playing: [at spawn points](core/prefabs.md#at-spawn-points).
 - The navmesh builds in the background: an early `Nav_Path` is `Waiting`. `Failed`: see
   `engine.diagnostics` (`navigation.off_mesh`: the agent must start on walkable ground).
-- To see why an agent chose, in Play: `behavior.inspect`, `behavior.perception`, `nav.agent`.
+- Why an agent chose in Play: `behavior.inspect`/`history`, `behavior.perception`, `nav.agent`.

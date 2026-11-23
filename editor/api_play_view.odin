@@ -19,6 +19,7 @@ import "mirai:std/serial"
 // view, so that a test asserts on what is seen.
 
 API_VIEW_POINTS :: 8
+API_ARM_SLACK :: 1e-3 // m an arm may be short of what it wants without being held: its smoothing closes in on it
 
 Api_Play_View_Point :: struct {
     entity:[API_ENTITY_TEXT]u8 `mirai:"optional,text,entity,label=An entity by its name or a path Parent/Child or its id or its handle"`,
@@ -46,7 +47,43 @@ Api_Play_View :: struct {
     preset:string `mirai:"label=The preset its setup is when it is one"`,
     blend:Api_Play_View_Blend `mirai:"label=How the view comes into its camera or mode from what it showed before"`,
     follow:Api_Play_View_Follow `mirai:"label=What its camera follows"`,
+    authority:Api_Play_View_Authority `mirai:"label=Who chose the camera of the focused player and what its modifiers add"`,
+    arm:Api_Play_View_Arm `mirai:"optional,label=Of an Orbit that started following: its spring arm and the body it fades out; absent otherwise"`,
     points:[]Api_Play_View_Shown `mirai:"label=One per point asked for in their order"`,
+}
+Api_Play_View_Authority_Kind :: enum u8 {
+    Default,    // the camera of the body of the seat
+    Override,   // a camera_override a library asks for
+    Activation, // a Camera_Activation whose action the player holds
+}
+Api_Play_View_Authority :: struct {
+    kind:Api_Play_View_Authority_Kind,
+    owner:string `mirai:"label=The handle of who chose it: the owner of the override, the camera of the activation or the body of the seat; empty without one"`,
+    owner_name:string,
+    order:u64 `mirai:"optional,label=Of an override or an activation: the latest asked wins"`,
+    overrides:int `mirai:"label=The overrides that stand for the seat, the chosen one among them"`,
+    modifiers:[]Api_Play_View_Modifier `mirai:"label=The Camera_Modifiers its camera plays, by slot"`,
+}
+Api_Play_View_Modifier :: struct {
+    id:u32,
+    weight:f32 `mirai:"label=0 to 1 of what it adds"`,
+    released:bool `mirai:"label=It blends out and leaves at weight 0"`,
+    fov_deg:f32 `mirai:"optional,label=Added to the vertical field of view at its whole weight"`,
+    distance:f32 `mirai:"optional,label=Meters added to the arm of an Orbit at its whole weight"`,
+    offset:[3]f32 `mirai:"optional,label=Meters added to the offset from the target to the pivot"`,
+    shoulder:[2]f32 `mirai:"optional,label=Meters added to the shoulder of an Orbit"`,
+    roll_deg:f32 `mirai:"optional"`,
+}
+Api_Play_View_Arm :: struct {
+    desired:f32 `mirai:"label=Meters it wants from the pivot to the camera: its distance with what modifiers add"`,
+    current:f32 `mirai:"label=Meters it is at now"`,
+    side_desired:f32 `mirai:"label=Meters from the pivot to the shoulder it wants"`,
+    side_current:f32 `mirai:"label=Meters from the pivot to the shoulder now"`,
+    blocked:bool `mirai:"label=It is short of desired: pulled in by what is in the way, or still going back out after the way cleared (clear_seconds)"`,
+    blocked_seconds:f32 `mirai:"label=How long it has been closing in on what stands between; 0 once it rests at it or the way is clear"`,
+    clear_seconds:f32 `mirai:"label=How long the way has been clear"`,
+    body_fade:f32 `mirai:"label=How much of the body it follows the view leaves out, the camera being near it: 1 all of it"`,
+    body_hidden:bool `mirai:"label=The view leaves that body out whole"`,
 }
 Api_Play_View_Blend :: struct {
     active:bool `mirai:"label=It is coming into the camera or the mode"`,
@@ -85,7 +122,7 @@ Play_View_Target :: struct {
 
 @(private)
 play_view_api_register :: proc(s:^Session,st:^Api_State) {
-    api_register(s,st,{name="play.view",summary="What the player of the game of the caller sees: the camera and its place, rotation and lens, its mode and the blend into it, what it follows and how far, and where entities or world points show on the screen. The traces of play.step and the conditions of play.check read the same with view.",params=type_info_of(Api_Play_View_Params),result=type_info_of(Api_Play_View),flags={.Read_Only},run=api_play_view})
+    api_register(s,st,{name="play.view",summary="What the player of the game of the caller sees: the camera and its place, rotation and lens, its mode and the blend into it, what it follows and how far, who chose that camera (the body, an override or an activation) with the modifiers it plays, the spring arm of an Orbit and where entities or world points show on the screen. The traces of play.step and the conditions of play.check read the same with view.",params=type_info_of(Api_Play_View_Params),result=type_info_of(Api_Play_View),flags={.Read_Only},run=api_play_view})
 }
 
 @(private)
@@ -135,21 +172,29 @@ play_view :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=context
                 v.follow.entity,v.follow.name=handle_text(target,allocator),entity_name(w,target)
                 v.follow.distance=linalg.length(entity_world(w,target).position-seen.position)
             }
-            following:=core.world_table_of(w,ecamera.Camera_Follow_State)
-            if live,ready:=core.get(following,camera);ready && live.ready {
+            if live:=play_view_follow_state(w,camera);live!=nil {
                 v.follow.pivot_distance=linalg.length(live.pivot.position-seen.position)
                 v.follow.yaw_deg,v.follow.pitch_deg=live.looking.x*mm.DEG_PER_RAD,live.looking.y*mm.DEG_PER_RAD
+                if follow.mode==.Orbit {
+                    v.arm={
+                        desired=live.arm.length,current=live.arm.current,side_desired=live.side.length,side_current=live.side.current,
+                        blocked=live.arm.current<live.arm.length-API_ARM_SLACK,blocked_seconds=max(live.arm.blocked,0),clear_seconds=live.arm.clear,
+                    }
+                }
             }
         }
     }
+    v.authority=play_view_authority(w,camera,allocator)
     if views:=core.world_storage_of(w,ecamera.Camera_Views);views!=nil {
         slot:=0
         if state:=core.world_storage_of(w,input.Seats);state!=nil {slot=clamp(state.focus,0,clamp(state.local_count,1,input.LOCAL_CAPACITY)-1)}
-        if slotted:=views.slots[slot];slotted.blending && slotted.blend.seconds>0 {
+        slotted:=views.slots[slot]
+        if slotted.blending && slotted.blend.seconds>0 {
             v.blend.active,v.blend.seconds=true,slotted.blend.seconds
             v.blend.progress=clamp(slotted.elapsed/slotted.blend.seconds,0,1)
             v.blend.weight=mm.ease_apply(slotted.blend.ease,v.blend.progress)
         }
+        v.arm.body_fade,v.arm.body_hidden=slotted.fade,slotted.fade>=1
     }
     v.points=make([]Api_Play_View_Shown,len(targets),allocator)
     size:=[2]f32{max(seen.size.x,1),max(seen.size.y,1)}
@@ -168,6 +213,54 @@ play_view :: proc(w:core.World_Ref,targets:[]Play_View_Target,allocator:=context
         shown.pixel,shown.normalized=pixel,pixel/size
         shown.on_screen=shown.normalized.x>=0 && shown.normalized.x<=1 && shown.normalized.y>=0 && shown.normalized.y<=1
     }
+    return
+}
+
+// The state of a Camera_Follow that started following; nil otherwise.
+@(private)
+play_view_follow_state :: proc(w:core.World_Ref,camera:core.Entity) -> ^ecamera.Camera_Follow_State {
+    following:=core.world_table_of(w,ecamera.Camera_Follow_State)
+    if following==nil {return nil}
+    row:=core.row_of(following,camera)
+    if row<0 || !following.values[row].ready {return nil}
+    return &following.values[row]
+}
+
+// Who chose the camera the focused player sees through (camera), and the modifiers it plays.
+@(private)
+play_view_authority :: proc(w:core.World_Ref,camera:core.Entity,allocator:=context.temp_allocator) -> (a:Api_Play_View_Authority) {
+    entities:=core.world_entities(w)
+    owner:=core.NONE
+    state,seats:=core.world_storage_of(w,input.Seats),core.world_table_of(w,input.Seat)
+    seat:=core.NONE
+    if state!=nil && seats!=nil {
+        seat=input.focused(core.ref(state),seats)
+        owner=input.body_of(seats,seat)
+    }
+    cameras,lenses:=core.world_storage_of(w,ecamera.Cameras),core.world_table_of(w,erender.Camera)
+    if cameras!=nil && lenses!=nil && seat!=core.NONE {
+        for item in cameras.overrides {
+            if item.active && item.seat==seat {a.overrides+=1}
+        }
+        if chosen:=ecamera.override_chosen(core.ref(cameras),lenses,seat);chosen!=nil {
+            a.kind,a.order,owner=.Override,chosen.order,chosen.owner
+            // An activation asks through its own camera, which owns it.
+            if activations:=core.world_table_of(w,ecamera.Camera_Activation);chosen.owner==chosen.camera && activations!=nil && core.has(activations,chosen.owner) {a.kind=.Activation}
+        }
+    }
+    if core.alive(entities,owner) {a.owner,a.owner_name=handle_text(owner,allocator),entity_name(w,owner)}
+    modifiers:=make([dynamic]Api_Play_View_Modifier,allocator)
+    if live:=play_view_follow_state(w,camera);live!=nil {
+        for p in live.modifiers {
+            if !ecamera.modifier_playing(p) {continue}
+            m:=p.modifier
+            append(&modifiers,Api_Play_View_Modifier{
+                id=m.id,weight=p.weight,released=!p.asked,fov_deg=m.fov*mm.DEG_PER_RAD,distance=m.distance,
+                offset=m.offset,shoulder=m.shoulder,roll_deg=m.roll*mm.DEG_PER_RAD,
+            })
+        }
+    }
+    a.modifiers=modifiers[:]
     return
 }
 

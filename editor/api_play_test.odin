@@ -1089,6 +1089,70 @@ the_history_reads_what_a_live_trace_read_and_a_rewound_run_steps_the_same_again 
     }
 }
 
+// What a storage of events reported: in the last frame, or in each frame of the history read by
+// playing it again, those that hold an entity when one is named, at most limit; a storage that
+// reports nothing, or none, says which ones do.
+@(test)
+play_events_reads_what_a_storage_reported_now_and_in_the_history :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    settings:=PLAY_HISTORY_DEFAULT
+    f.s.play_history=&settings
+    r:=run_find(&f.s,0)
+    running:=cast(^Probe_World)r.world
+    // Each tick pings the hero on even ticks and the foe on odd ones, by the tick it runs, which
+    // the time of the game counts past once it ran.
+    f.info.loops[.Game][.Fixed]=proc(data,shared,editor,app:rawptr) {
+        probe_tick(data,shared,editor,app)
+        w:=cast(^Probe_World)data
+        tick:=int(w.time.tick)
+        core.push(&w.ping_events.queue,Probe_Ping{entity=core.entity_at(&w.ids,tick%2),amount=tick})
+    }
+    testing.expect(t,probe_steps(f,1))
+    start:=running.time.tick+1
+    testing.expect(t,probe_steps(f,6))
+    newest:=running.time.tick
+    Event :: struct {tick:u64,log:string,event:struct {entity:string,amount:int}}
+    Result :: struct {storage:string,logs:[]string,events:[]Event,dropped:int,next:u64}
+    read :: proc(t:^testing.T,f:^Probe,params:string) -> (out:Result) {
+        error,text:=probe_call(f,"play.events",params)
+        if !testing.expectf(t,error.code==0,"%s: %v",params,error) {return}
+        api_result_shape_expect(t,text,Api_Play_Events)
+        problem:=serial.text_decode(text,&out,context.temp_allocator,skip_unknown=true)
+        testing.expect(t,problem=="",problem)
+        return
+    }
+    hero:=api_handle_text(f.hero)
+    now:=read(t,f,`{"storage":"Probe_Ping_Events"}`)
+    testing.expect(t,now.storage=="Probe_Ping_Events" && len(now.logs)==1 && now.logs[0]=="queue")
+    if testing.expect(t,len(now.events)>=1) {
+        last:=now.events[len(now.events)-1]
+        testing.expect(t,last.tick==newest && last.event.amount==int(newest)-1 && last.log=="queue",fmt.tprint(now))
+    }
+    for e in read(t,f,`{"storage":"Probe_Ping_Events","entity":"Hero"}`).events {testing.expect_value(t,e.event.entity,hero)}
+    // Each tick of the history, once, as it reported it.
+    past:=read(t,f,fmt.tprintf(`{{"storage":"Probe_Ping_Events","from":%d,"to":%d}}`,start,newest))
+    if testing.expect_value(t,len(past.events),int(newest-start)+1) {
+        for e,i in past.events {testing.expectf(t,e.tick==start+u64(i) && e.event.amount==int(e.tick)-1,"%d: %v",i,e)}
+    }
+    foe:=read(t,f,fmt.tprintf(`{{"storage":"Probe_Ping_Events","entity":"Foe","from":%d,"to":%d}}`,start,newest))
+    testing.expect(t,len(foe.events)>0)
+    for e in foe.events {testing.expectf(t,e.event.amount%2==1 && e.event.entity==api_handle_text(f.foe),"%v",e)}
+    limited:=read(t,f,fmt.tprintf(`{{"storage":"Probe_Ping_Events","from":%d,"limit":2}}`,start))
+    testing.expect(t,len(limited.events)==2 && limited.dropped==int(newest-start)-1,fmt.tprint(limited))
+    testing.expect(t,running.time.tick==newest,"the game stays where it was")
+    refused:=[?]struct{params,says:string}{
+        {`{"storage":"Probe_Score"}`,"reports no events"},
+        {`{"storage":"Nothing"}`,"Probe_Ping_Events"},
+        {`{"storage":"Probe_Ping_Events","entity":"Nobody"}`,"Nobody"},
+    }
+    for c in refused {
+        error,_:=probe_call(f,"play.events",c.params)
+        testing.expectf(t,error.code==api.INVALID_PARAMS && strings.contains(error.message,c.says),"%s: %v",c.params,error)
+    }
+}
+
 @(test)
 the_last_play_keeps_its_history_after_stop_until_the_next_play :: proc(t:^testing.T) {
     f:=new(Probe);defer free(f)
@@ -1327,6 +1391,7 @@ play_start_restarts_on_a_changed_document_and_without_a_game_calls_say_so :: pro
         {"play.view",`{}`},
         {"play.ui",`{}`},
         {"play.audio",`{}`},
+        {"play.events",`{"storage":"Probe_Ping_Events"}`},
         {"play.check",`{"conditions":[{"storage":"Probe_Score","field":"points","compare":"At_Least","number":7}]}`},
         {"play.step",`{"for":1}`},
         {"play.pause",`{}`},

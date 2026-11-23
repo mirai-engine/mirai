@@ -329,6 +329,139 @@ a_rollback_plays_each_sound_of_a_tick_once_and_what_only_the_correction_asks :: 
     }
 }
 
+// Each request keeps what became of it, newest last, by the id of its sound:
+// played, beyond every listener, refused by the mixer, of a sound the assets
+// lack, or asked again by a tick that runs again. Placed ones keep how far the
+// nearest listener was.
+@(test)
+each_sound_request_keeps_what_became_of_it :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    testing.expect(t,host.assets_scan(&f.assets))
+    E:=core.entity_make(5,1)
+    listeners:=Mixer_Listeners{count=1}
+    listeners.slots[0].position={0,0,3}
+    played:Sounds_Played
+    sounds:Sound_Requests
+    defer core.value_free(&sounds,type_info_of(Sound_Requests))
+    fixed:=core.Frame_Time{phase=.Fixed}
+    play(&sounds,HUM,by=E)
+    play(&sounds,HUM,at=[3]f32{0,0,1003})
+    play(&sounds,HUM,bus=Audio_Bus(AUDIO_BUS_CAPACITY))
+    play(&sounds,"missing.sound")
+    play(&sounds,base.Asset_Id{9,9},at=[3]f32{0,0,4})
+    audio_requests(&sounds,core.Time{tick=10,dt=1.0/60,playing=true},fixed,&played,&listeners,&f.app,nil)
+    play(&sounds,HUM,by=E)
+    audio_requests(&sounds,core.Time{tick=10,dt=1.0/60,playing=true,resimulating=true},fixed,&played,&listeners,&f.app,nil)
+    play(&sounds,"hum.sound")
+    audio_requests(&sounds,core.Time{tick=10},{},&played,&listeners,&f.app,nil)
+    Want :: struct {sound:base.Asset_Id,outcome:One_Shot_Outcome,keyed:bool,distance:f32}
+    wants:=[]Want{
+        {HUM,.Played,true,0},{HUM,.Culled_Distance,true,1000},{HUM,.Rejected_Mixer,true,0},
+        {{},.Missing_Asset,false,0},{{9,9},.Missing_Asset,true,1},{HUM,.Deduped,true,0},{HUM,.Played,false,0},
+    }
+    older,newer:=sounds_played(&played)
+    testing.expect_value(t,len(older),0)
+    if !testing.expect_value(t,len(newer),len(wants)) {return}
+    for want,i in wants {
+        got:=newer[i]
+        testing.expectf(t,got.tick==10 && got.sound==want.sound && got.outcome==want.outcome && got.keyed==want.keyed && abs(got.distance-want.distance)<1e-3,"%d: %v, wants %v",i,got,want)
+    }
+    testing.expect(t,newer[0].by==E && newer[1].placed && newer[1].at=={0,0,1003})
+    // Past the capacity, the ring keeps the newest, oldest first.
+    for _ in 0..<SOUNDS_PLAYED_CAPACITY {played_add(&played,{tick=11})}
+    played_add(&played,{tick=12})
+    older,newer=sounds_played(&played)
+    testing.expect_value(t,len(older)+len(newer),SOUNDS_PLAYED_CAPACITY)
+    testing.expect(t,older[0].tick==11 && newer[len(newer)-1].tick==12)
+}
+
+// The ring of a world is of the application, not of the World: a copy of the
+// World (a snapshot a rollback goes back to) neither holds nor takes it back,
+// so the tick that runs again on the restored copy still finds what it played.
+@(test)
+the_sounds_played_stay_out_of_the_copies_of_the_world :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    info,described:=test_info(t,Played_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    for storage in info.storages {
+        if storage.type!=Sounds_Played {continue}
+        testing.expect(t,storage.place==.Shared && storage.by_world,"one ring per world, in the Shared")
+    }
+    shared:Played_Shared
+    if !testing.expect(t,core.world_init(&info,.Shared,&shared,context.allocator)) {return}
+    defer core.world_destroy(&info,.Shared,&shared)
+    app:=&f.app
+    app.info,app.shared=&info,&shared
+    defer {
+        delete(app.worlds)
+        app.info,app.shared,app.worlds=nil,nil,nil
+    }
+    world:=cast(^Played_World)host.app_world_create(app)
+    if !testing.expect(t,world!=nil) {return}
+    defer host.app_world_free(app,world)
+    played:=host.app_world_storage(app,world,Sounds_Played)
+    if !testing.expect(t,played!=nil) {return}
+    snapshot:Played_World
+    if !testing.expect(t,core.world_init(&info,.World,&snapshot,context.allocator)) {return}
+    defer core.world_destroy(&info,.World,&snapshot)
+    testing.expect(t,core.world_copy(&info,&snapshot,world))
+    E:=core.entity_make(5,1)
+    fixed:=core.Frame_Time{phase=.Fixed}
+    play(&world.sounds,HUM,by=E)
+    audio_requests(&world.sounds,core.Time{tick=4,playing=true},fixed,played,nil,app,nil)
+    voices:=mixer.mixer_stats(app.mixer).voices_played
+    testing.expect_value(t,played.count,u64(1))
+    // The rollback restores the World and runs the tick again.
+    testing.expect(t,core.world_copy(&info,world,&snapshot))
+    testing.expect(t,host.app_world_storage(app,world,Sounds_Played)==played && played.count==1,"the copy brought back no ring")
+    play(&world.sounds,HUM,by=E)
+    audio_requests(&world.sounds,core.Time{tick=4,playing=true,resimulating=true},fixed,played,nil,app,nil)
+    testing.expect_value(t,mixer.mixer_stats(app.mixer).voices_played,voices)
+    _,kept:=sounds_played(played)
+    testing.expect(t,len(kept)==2 && kept[1].outcome==.Deduped)
+}
+
+@(test_world,host="Played_Shared") @(private) Played_World :: struct {using world:Test_World,sounds:Sound_Requests,id:core.World_Id}
+@(private) Played_Shared :: struct {played:core.By_World(Sounds_Played)}
+
+// A source that plays is heard as its voice says: mixed, fading out, out of
+// the budget of the mixer or silent; one whose sound does not load is not.
+// Its gain is that of its volume, its draw, its bus and its distance.
+@(test)
+a_voice_says_how_it_is_heard_and_at_what_gain :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    sound:=host.content_sound(&f.app,HUM)
+    playing:=mixer.voice_play(m,sound,mixer.VOICE_DEFAULT)
+    if !testing.expect(t,playing!={}) {return}
+    listeners:=Mixer_Listeners{count=1}
+    source:=AUDIO_SOURCE_DEFAULT
+    source.volume=0.5
+    if !testing.expect(t,bus_ready(m,source.bus)) {return}
+    Case :: struct {entry:Voice_Entry,gain:f32,state:Voice_State}
+    attenuation:=attenuation_of(AUDIO_SOURCE_DEFAULT)
+    cases:=[]Case{
+        {{sound=sound,voice=playing,pick={0.5,1}},0.25,.Playing},
+        {{sound=sound,fading=playing,pick={1,1}},0.5,.Fading},
+        {{sound=sound,pick={1,1},kind={spatial=true,attenuation=attenuation},position={0,0,1000}},0,.Virtual_Silent},
+        {{sound=sound,pick={1,1},kind={spatial=true,attenuation=attenuation},position={0,0,2}},0.25,.Virtual_Budget},
+        {{pick={1,1}},0.5,.Unloaded},
+    }
+    for &c,i in cases {
+        gain:=entry_gain(m,source,&c.entry,&listeners)
+        testing.expectf(t,abs(gain-c.gain)<1e-4,"%d: gain %v, wants %v",i,gain,c.gain)
+        testing.expectf(t,voice_state(m,&c.entry,gain)==c.state,"%d: %v, wants %v",i,voice_state(m,&c.entry,gain),c.state)
+    }
+    testing.expect(t,voice_state(nil,&cases[0].entry,1)==.Unloaded && entry_gain(nil,source,&cases[0].entry,&listeners)==0)
+}
+
 // The settings give the mixer its streams, within its range; a play refused
 // because every stream plays is said once per frame that had one.
 @(test)

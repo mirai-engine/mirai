@@ -472,6 +472,7 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
     spatial_api_register(s,st)
     play_observe_api_register(s,st)
     play_view_api_register(s,st)
+    play_events_api_register(s,st)
     save_api_register(s,st)
     api_diagnostics_register(s,st)
 }

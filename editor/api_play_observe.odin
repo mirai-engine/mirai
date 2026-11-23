@@ -68,14 +68,28 @@ Api_Play_Ui_Node :: struct {
     text:string `mirai:"optional,label=The text it showed; absent when it shows none"`,
 }
 
+API_ONE_SHOTS :: 32 // the newest one-shot sounds play.audio gives by default
+
 Api_Play_Audio_Params :: struct {
     player:int `mirai:"optional,min=0,max=3,label=The run of that player of a game a turn plays on the network"`,
+    one_shots:int `mirai:"optional,min=0,max=512,clamp,label=How many of the newest one-shot sounds the requests of the game asked for to give"`,
 }
 
 Api_Play_Audio :: struct {
     voices:[]Api_Play_Audio_Voice `mirai:"label=One per Audio_Source that plays"`,
+    listeners:[][3]f32 `mirai:"label=Where the game hears from in meters: its first Audio_Listeners with a place, at most 4, or else its View"`,
+    one_shots:[]Api_Play_Audio_One_Shot `mirai:"label=The newest sounds audio.play asked for, oldest first, with what became of each"`,
     stats:Api_Play_Audio_Stats `mirai:"label=Of the voices of this game"`,
     mixer:Api_Play_Audio_Mixer `mirai:"optional,label=The mixer of the editor that every game and the editor share; absent without one and then nothing plays"`,
+}
+Api_Play_Audio_One_Shot :: struct {
+    tick:u64,
+    sound:base.Asset_Id `mirai:"optional,label=A .sound or a .sound_set; absent for a path the assets do not have"`,
+    path:string `mirai:"optional,label=Of the sound under the assets folder"`,
+    entity:string `mirai:"optional,label=The handle of what played it; absent for none"`,
+    position:[3]f32 `mirai:"optional,label=Of a placed one, in meters"`,
+    distance:f32 `mirai:"optional,label=Meters from a placed one to the nearest listener"`,
+    outcome:eaudio.One_Shot_Outcome,
 }
 Api_Play_Audio_Stats :: struct {
     started:u64 `mirai:"label=Voices its sources started"`,
@@ -96,17 +110,22 @@ Api_Play_Audio_Voice :: struct {
     pitch:f32 `mirai:"label=Rate of playback the voice was given"`,
     pan:f32 `mirai:"optional,label=Of a voice that is not spatial"`,
     loop:bool,
-    playing:bool `mirai:"label=The mixer has not ended it as of its last update"`,
+    state:eaudio.Voice_State `mirai:"label=Playing on a voice of the mixer, virtual (out of the budget of voices or silent), fading out of the voice it lost, or its sound not loaded"`,
+    effective_gain:f32 `mirai:"label=Linear gain at its nearest listener: volume, bus and distance, before what hides it; what ranks it for a voice"`,
+    priority:u8 `mirai:"label=Of its Audio_Source: the higher keep their voices before the louder"`,
     spatial:bool,
     position:[3]f32 `mirai:"optional,label=Of a spatial voice: where it was placed last in meters"`,
+    distance:f32 `mirai:"optional,label=Of a spatial voice: meters to its nearest listener"`,
     occlusion:f32 `mirai:"optional,label=Of a spatial voice: how hidden it was told it is, 0 in sight to 1 hidden"`,
+    transmission:[3]f32 `mirai:"optional,label=Of a spatial voice: the part of its lows, mids and highs what hides it lets through"`,
     reverb:f32 `mirai:"label=Share of it sent to the reverb"`,
 }
 
 @(private)
 play_observe_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="play.ui",summary="The live tree of the UI of the game of the caller as its last frame built it: each interface with its nodes and where they are in the window, and what has the hover and the focus.",params=type_info_of(Api_Play_Ui_Params),result=type_info_of(Api_Play_Ui),flags={.Read_Only},run=api_play_ui})
-    api_register(s,st,{name="play.audio",summary="The voices the sources of the game of the caller play: sound, bus, gain, pitch and place of each, with the counters of its voices and of the mixer.",params=type_info_of(Api_Play_Audio_Params),result=type_info_of(Api_Play_Audio),flags={.Read_Only},run=api_play_audio})
+    audio_defaults:=Api_Play_Audio_Params{one_shots=API_ONE_SHOTS}
+    api_register(s,st,{name="play.audio",summary="The voices the sources of the game of the caller play: sound, bus, gain, pitch, place, distance and state of each (playing, virtual, fading or unloaded), where its listeners are, the newest one-shot sounds with what became of each (played, culled by distance, refused by the mixer, missing or deduplicated) and the counters of its voices and of the mixer.",params=type_info_of(Api_Play_Audio_Params),result=type_info_of(Api_Play_Audio),defaults=&audio_defaults,flags={.Read_Only},run=api_play_audio})
 }
 
 @(private)
@@ -124,9 +143,14 @@ api_play_ui :: proc(s:^Session,call:^api.Call) {
 
 @(private)
 api_play_audio :: proc(s:^Session,call:^api.Call) {
-    r,_:=api_play_run(s,call,api.call_params(call,Api_Play_Audio_Params).player)
+    p:=api.call_params(call,Api_Play_Audio_Params)
+    r,_:=api_play_run(s,call,p.player)
     if r==nil {api_no_game(call);return}
-    api.call_result(call,Api_Play_Audio)^=play_audio(s,host.app_world_storage(s.app,r.world,eaudio.Voices),core.world_ref(r.world,s.info),s.app.mixer,call.allocator)
+    heard:=Play_Audio_Heard{
+        voices=host.app_world_storage(s.app,r.world,eaudio.Voices),played=host.app_world_storage(s.app,r.world,eaudio.Sounds_Played),
+        world=core.world_ref(r.world,s.info),mixer=s.app.mixer,one_shots=p.one_shots,
+    }
+    api.call_result(call,Api_Play_Audio)^=play_audio(s,heard,call.allocator)
 }
 
 // The id of an entity of the game in the scene, when it has one.
@@ -293,6 +317,67 @@ play_ui_instance_of :: proc(g:^egui.Gui,e:core.Entity,world:bool,player:int) -> 
     return -1
 }
 
+// A node of a screen that shows and was laid out without an area.
+Play_Ui_Collapsed :: struct {
+    screen:string, // the .ui
+    entity:core.Entity, // of the UI_Screen
+    row:int,
+    name:string,
+    kind:ui.Node_Kind,
+    rect:[4]f32, // in window points: x y width height
+}
+
+// The kinds of node that show something of their own, which an area of 0 hides; a container,
+// a spacer or a prompt is empty by design when it holds nothing.
+PLAY_UI_CONTENT :: ui.Node_Kinds{.Text,.Rich_Text,.Image,.Progress,.Button,.Checkbox,.Radio,.Slider,.Field,.Selector,.Dropdown,.Number,.View,.Particles,.Draw}
+
+// Whether a node that shows was laid out with nothing to see of what it shows: its own content
+// (text for a text) in a rectangle of no width or no height.
+play_ui_node_collapsed :: proc "contextless" (kind:ui.Node_Kind,text:string,rect:[4]f32) -> bool {
+    if kind not_in PLAY_UI_CONTENT || (kind==.Text || kind==.Rich_Text) && text=="" {return false}
+    return !(rect[2]>0) || !(rect[3]>0)
+}
+
+// The nodes of the screens of a run that show and were laid out by its last frame without an
+// area, in allocator.
+play_ui_collapsed :: proc(s:^Session,r:^Run,allocator:runtime.Allocator) -> []Play_Ui_Collapsed {
+    v:=Play_Ui_View{session=s,gui=host.app_world_storage(s.app,r.world,egui.Gui),world=run_ref(s,r),allocator=allocator}
+    return play_ui_collapsed_of(&v)
+}
+
+@(private)
+play_ui_collapsed_of :: proc(v:^Play_Ui_View) -> []Play_Ui_Collapsed {
+    found:=make([dynamic]Play_Ui_Collapsed,v.allocator)
+    g:=v.gui
+    if g==nil {return found[:]}
+    for &entry in g.plan {
+        if entry.world || entry.player<0 || entry.player>=len(g.surfaces) || g.surfaces[entry.player].ctx==nil {continue}
+        at:=play_ui_instance_of(g,entry.entity,entry.world,entry.player)
+        if at<0 {continue}
+        instance:=&g.instances[at]
+        tree:=play_ui_tree(instance,entry.content)
+        if tree==nil || !instance.shown {continue}
+        ctx:=g.surfaces[entry.player].ctx
+        shown:=make([]bool,tree.node_count,context.temp_allocator)
+        names:[]string
+        for row in 0..<tree.node_count {
+            state,_:=ui.tree_node_state(tree,&instance.instance,row)
+            parent:=int(tree.nodes[row].parent)
+            shown[row]=state.shown && (parent<0 || shown[parent])
+            if !shown[row] {continue}
+            laid_out,laid:=egui.screen_node_rect(ctx,tree,&instance.instance,instance.entity,row)
+            rect:=[4]f32{laid_out.x,laid_out.y,laid_out.w,laid_out.h}
+            if !laid || !play_ui_node_collapsed(tree.nodes[row].kind,state.text,rect) {continue}
+            if names==nil {names=play_ui_names(v,instance.asset,tree)}
+            append(&found,Play_Ui_Collapsed{
+                screen=asset_path(v.session,instance.asset),entity=instance.entity,row=row,
+                name=names[row] if row<len(names) else "",kind=tree.nodes[row].kind,rect=rect,
+            })
+        }
+    }
+    return found[:]
+}
+
 // The tree an interface was built from, while the content planned for it is still that one.
 @(private)
 play_ui_tree :: proc(instance:^egui.Instance,content:^host.Content_Ui) -> ^ui.Widget_Tree {
@@ -405,17 +490,40 @@ play_ui_names_of :: proc(records:ui.Tree_Data,imports:[]ui.Tree_Data,tree:^ui.Wi
 
 // ---------------------------------------------------------------- audio
 
+// What play.audio reads of a game.
 @(private)
-play_audio :: proc(s:^Session,voices:^eaudio.Voices,w:core.World_Ref,m:^mixer.Mixer,allocator:=context.temp_allocator) -> (r:Api_Play_Audio) {
+Play_Audio_Heard :: struct {
+    voices:^eaudio.Voices,
+    played:^eaudio.Sounds_Played,
+    world:core.World_Ref,
+    mixer:^mixer.Mixer,
+    one_shots:int, // the newest one-shot sounds to give
+}
+
+@(private)
+play_audio :: proc(s:^Session,heard:Play_Audio_Heard,allocator:=context.temp_allocator) -> (r:Api_Play_Audio) {
+    w,m,voices:=heard.world,heard.mixer,heard.voices
     // What a voice was given is its source by what its set drew.
     sources:^core.Table(eaudio.Audio_Source)
     states:^core.Table(eaudio.Audio_Source_State)
-    if w.data!=nil {sources,states=core.world_table_of(w,eaudio.Audio_Source),core.world_table_of(w,eaudio.Audio_Source_State)}
+    listeners:eaudio.Mixer_Listeners
+    if w.data!=nil {
+        sources,states=core.world_table_of(w,eaudio.Audio_Source),core.world_table_of(w,eaudio.Audio_Source_State)
+        // A game without listeners or places hears from its View.
+        none:core.Table(eaudio.Audio_Listener)
+        placed,listening:=core.world_table_of(w,core.World_Transform),core.world_table_of(w,eaudio.Audio_Listener)
+        if placed==nil || listening==nil {listening=&none}
+        positions,count:=eaudio.listener_positions(core.read(placed),core.read(listening),core.ref(core.world_storage_of(w,core.View)))
+        for position,i in positions[:count] {listeners.slots[i].position=position}
+        listeners.count=count
+    }
+    r.listeners=make([][3]f32,listeners.count,allocator)
+    for &position,i in r.listeners {position=listeners.slots[i].position}
     if voices!=nil {
         r.stats={voices.stats.started,voices.stats.ended}
         r.voices=make([]Api_Play_Audio_Voice,len(voices.entries.values),allocator)
         for &row,at in r.voices {
-            entry:=voices.entries.values[at]
+            entry:=&voices.entries.values[at]
             e:=voices.entries.entities[at]
             source:eaudio.Audio_Source
             state:eaudio.Audio_Source_State
@@ -424,14 +532,39 @@ play_audio :: proc(s:^Session,voices:^eaudio.Voices,w:core.World_Ref,m:^mixer.Mi
             kind:=entry.kind
             bus:string
             if s.info!=nil {bus,_=core.name_of(s.info,eaudio.Audio_Bus,i64(kind.bus))}
+            gain:=eaudio.entry_gain(m,source,entry,&listeners)
             row={entity=e,id=play_entity_id(w,e),name=entity_name(w,e) if w.data!=nil && w.info!=nil else "",sound=kind.sound,path=asset_path(s,kind.sound),bus=bus if bus!="" else fmt.tprintf("%d",int(kind.bus)),
-                volume=source.volume*entry.pick[0],pitch=(source.pitch>0?source.pitch:1)*entry.pick[1],loop=source.loop,playing=m!=nil && mixer.voice_valid(m,entry.voice),spatial=kind.spatial,reverb=source.reverb}
-            if kind.spatial {row.position,row.occlusion=entry.position,state.occlusion} else {row.pan=source.pan}
+                volume=source.volume*entry.pick[0],pitch=(source.pitch>0?source.pitch:1)*entry.pick[1],loop=source.loop,state=eaudio.voice_state(m,entry,gain),effective_gain=gain,priority=source.priority,spatial=kind.spatial,reverb=source.reverb}
+            if kind.spatial {
+                row.position,row.occlusion,row.transmission=entry.position,state.occlusion,entry.transmission
+                if listeners.count>0 {row.distance=eaudio.listeners_distance(&listeners,entry.position)}
+            } else {
+                row.pan=source.pan
+            }
         }
     }
+    r.one_shots=play_audio_one_shots(s,heard.played,heard.one_shots,allocator)
     if m!=nil {
         c:=mixer.mixer_stats(m)
         r.mixer={c.voices_active,c.sounds,c.voices_played,c.voices_stolen,c.voices_rejected,c.commands_dropped,c.underruns,c.streams_busy,c.feeds_busy}
     }
     return
+}
+
+// The newest count sounds the requests of a game asked for, oldest first, their ids read as paths.
+@(private)
+play_audio_one_shots :: proc(s:^Session,played:^eaudio.Sounds_Played,count:int,allocator:=context.temp_allocator) -> []Api_Play_Audio_One_Shot {
+    if played==nil || count<=0 {return make([]Api_Play_Audio_One_Shot,0,allocator)}
+    older,newer:=eaudio.sounds_played(played)
+    total:=len(older)+len(newer)
+    out:=make([]Api_Play_Audio_One_Shot,min(count,total),allocator)
+    skip:=total-len(out)
+    for &row,i in out {
+        at:=skip+i
+        k:=older[at] if at<len(older) else newer[at-len(older)]
+        row={tick=k.tick,sound=k.sound,outcome=k.outcome,entity=handle_text(k.by,allocator)}
+        if k.sound!={} {row.path=asset_path(s,k.sound)}
+        if k.placed {row.position,row.distance=k.at,k.distance}
+    }
+    return out
 }

@@ -415,8 +415,7 @@ voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listen
     for &entry,at in voices.entries.values {
         if entry.fading!={} && !mixer.voice_valid(m,entry.fading) {entry.fading={}}
         source,_:=core.get(sources,voices.entries.entities[at])
-        gain:=source.volume*entry.pick[0]*mixer.bus_volume(m,mixer.Bus(entry.kind.bus))
-        if entry.kind.spatial {gain*=mixer.attenuation_gain(entry.kind.attenuation,listeners_distance(listeners,entry.position))}
+        gain:=entry_gain(m,source,&entry,listeners)
         if entry.voice!={} {gain*=VOICE_KEEP}
         if gain>0 && mixer.sound_valid(m,entry.sound) {
             if _,failed:=append(&voices.ranks,Voice_Rank{u32(at),source.priority,gain});failed!=nil {gain=0}
@@ -435,6 +434,35 @@ voices_assign :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listen
             if voice_real(voices,m,h,listeners,sources,states,int(rank.at)) {free-=1}
         }
     }
+}
+
+// How a source that plays is heard now, as voices_assign ranks it.
+Voice_State :: enum u8 {
+    Playing,        // mixed by a voice of the mixer
+    Virtual_Budget, // heard, but louder ones or ones of a higher priority hold the voices
+    Virtual_Silent, // not heard: silent, beyond its attenuation or on a silent bus
+    Fading,         // it lost its voice, which still fades out
+    Unloaded,       // its sound does not load yet
+}
+
+// The linear gain of an entry at its nearest listener: its volume by what its set drew, its bus
+// and, when spatial, its attenuation; before what hides it. 0 without a mixer.
+entry_gain :: proc(m:^Mixer,source:Audio_Source,entry:^Voice_Entry,listeners:^Mixer_Listeners) -> f32 {
+    if m==nil {return 0}
+    gain:=source.volume*entry.pick[0]*mixer.bus_volume(m,mixer.Bus(entry.kind.bus))
+    if entry.kind.spatial {gain*=mixer.attenuation_gain(entry.kind.attenuation,listeners_distance(listeners,entry.position))}
+    return gain
+}
+
+// How an entry with gain (entry_gain) is heard now; Unloaded without a mixer.
+voice_state :: proc(m:^Mixer,entry:^Voice_Entry,gain:f32) -> Voice_State {
+    switch {
+    case m==nil || !mixer.sound_valid(m,entry.sound): return .Unloaded
+    case mixer.voice_valid(m,entry.voice): return .Playing
+    case mixer.voice_valid(m,entry.fading): return .Fading
+    case !(gain>0): return .Virtual_Silent
+    }
+    return .Virtual_Budget
 }
 
 // The entry at goes on without its voice, which fades out.
@@ -1236,18 +1264,31 @@ play_path :: proc(sounds:^Sound_Requests,path:string,at:Maybe([3]f32)=nil,bus:=B
 SOUNDS_PLAYED_CAPACITY :: 512
 SOUND_SAME_DISTANCE :: f32(1) // m: a request of no entity this near one of the same tick and sound is that one
 
-// A sound a fixed tick played: what tells it apart from another.
+// What became of a sound a request asked for.
+One_Shot_Outcome :: enum u8 {
+    Played,
+    Culled_Distance, // placed beyond where every listener hears it
+    Rejected_Mixer,  // the mixer started no voice of it, or has not its bus
+    Missing_Asset,   // its path is not of the assets, or it does not load as a sound
+    Deduped,         // a tick that ran again asked for what that tick played already
+}
+
+// A sound a request asked for: what tells it apart from another and what became of it.
 Sound_Played :: struct {
     tick:u64,
-    sound:base.Asset_Id,
+    sound:base.Asset_Id, // zero for a path the assets do not have
     by:core.Entity,
     at:[3]f32,
     placed:bool,
+    keyed:bool,      // a fixed tick of the game asked for it: a tick that runs again finds it
+    outcome:One_Shot_Outcome,
+    distance:f32,    // m from a placed one to the nearest listener; 0 when not placed
 }
 
-// The sounds the fixed ticks of a world played lately, newest last, over a
-// ring: a tick that runs again (a rollback corrects it) does not play one of
-// them twice, and plays what only the corrected tick asks. One per world,
+// The sounds the requests of a world asked for lately, newest last, over a
+// ring: what a tool reads of the one-shot sounds of a game, and what keeps a
+// tick that runs again (a rollback corrects it) from playing one of them
+// twice, while it plays what only the corrected tick asks. One per world,
 // never copied with it, so a rollback does not take it back.
 @(storage,host,by_world)
 Sounds_Played :: struct {
@@ -1255,24 +1296,37 @@ Sounds_Played :: struct {
     count:u64,
 }
 
-// Whether a fixed tick played this sound already, and else records it.
+// The sounds kept, oldest first: at most SOUNDS_PLAYED_CAPACITY, in two runs of the ring.
+sounds_played :: proc "contextless" (played:^Sounds_Played) -> (older,newer:[]Sound_Played) {
+    if played.count<=SOUNDS_PLAYED_CAPACITY {return nil,played.keys[:played.count]}
+    at:=int(played.count%SOUNDS_PLAYED_CAPACITY)
+    return played.keys[at:],played.keys[:at]
+}
+
+// Whether a fixed tick asked for this sound already.
 @(private)
-played_once :: proc(played:^Sounds_Played,key:Sound_Played) -> bool {
+played_found :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) -> bool {
     for k in played.keys[:min(played.count,SOUNDS_PLAYED_CAPACITY)] {
-        if k.tick!=key.tick || k.sound!=key.sound || k.by!=key.by || k.placed!=key.placed {continue}
+        if !k.keyed || k.tick!=key.tick || k.sound!=key.sound || k.by!=key.by || k.placed!=key.placed {continue}
         if key.by!=core.NONE || linalg.length2(k.at-key.at)<=SOUND_SAME_DISTANCE*SOUND_SAME_DISTANCE {return true}
     }
-    played.keys[played.count%SOUNDS_PLAYED_CAPACITY]=key
-    played.count+=1
     return false
 }
 
-// Starts what was asked since the last time, once. A fixed tick plays a
-// sound of an entity (Sound_Request.by), or of none near a place, once: a
-// tick that runs again (time.resimulating) asks again what it asked the first
-// time, which is not played twice, and what only the corrected tick asks
-// (the server says a shot hit) plays then. No copy of the world holds a
-// request it played, since copies are made between ticks.
+@(private)
+played_add :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) {
+    if played==nil {return}
+    played.keys[played.count%SOUNDS_PLAYED_CAPACITY]=key
+    played.count+=1
+}
+
+// Starts what was asked since the last time, once, and keeps what became of
+// each in Sounds_Played. A fixed tick plays a sound of an entity
+// (Sound_Request.by), or of none near a place, once: a tick that runs again
+// (time.resimulating) asks again what it asked the first time, which is not
+// played twice, and what only the corrected tick asks (the server says a shot
+// hit) plays then. No copy of the world holds a request it played, since
+// copies are made between ticks.
 @(step="fixed late",stage="end",loops="game editor")
 audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,frame:core.Frame_Time,played:^Sounds_Played,listeners:^Mixer_Listeners,app:^host.App,problems:^core.Problems) {
     requests:=core.take(&sounds.queue)
@@ -1286,28 +1340,50 @@ audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,frame:core.Frame_Ti
             core.report(problems,core.NONE,"audio.request","audio.play was refused: volume %v, pitch %v, at %v; give it a volume and a pitch of 0 or more and a place of finite numbers",r.volume,r.pitch,r.at)
             continue
         }
+        key:=Sound_Played{tick=time.tick,sound=r.sound,by=r.by,at=r.at,placed=r.placed}
+        if r.placed && listeners!=nil && listeners.count>0 {key.distance=listeners_distance(listeners,r.at)}
         source:=AUDIO_SOURCE_DEFAULT
         source.sound,source.bus,source.volume,source.pitch,source.spatial=r.sound,r.bus,r.volume,r.pitch,r.placed
         if r.sound=={} {
             path:=base.text_get(r.path[:])
             if source.sound,_=host.assets_id(app.assets,path);source.sound=={} {
                 core.report(problems,core.NONE,"audio.sound","audio.play plays nothing: \"%s\" is not a path of the assets; give it the path of a .sound or a .sound_set under the assets folder, shorter than SOUND_PATH_CAPACITY",path)
+                key.outcome=.Missing_Asset
+                played_add(played,key)
                 continue
             }
+            key.sound=source.sound
         }
-        if keyed && played_once(played,{time.tick,source.sound,r.by,r.at,r.placed}) {continue}
-        picks:[asset.SOUND_SET_CAPACITY]host.Sound_Pick
-        count:=sound_picks(app.mixer,app,source,core.NONE,problems,&picks)
-        if count==0 {continue}
-        hearing:=picks[0].hearing
-        source.attenuation,source.min_distance,source.max_distance=Attenuation_Model(hearing.attenuation),hearing.min_distance,hearing.max_distance
-        source.rolloff,source.reverb,source.priority=hearing.rolloff,hearing.reverb,hearing.priority
-        // Placed beyond where every listener hears it, it does not start; it is heard from the nearest.
-        slot:=u8(0)
-        if r.placed && listeners!=nil && listeners.count>0 {
-            if !(listeners_distance(listeners,r.at)<hearing.max_distance) {continue}
-            slot=listener_pick(listeners,r.at,AUDIO_LISTENERS_MAX)
+        key.keyed=keyed
+        if keyed && played_found(played,key) {
+            key.outcome=.Deduped
+            played_add(played,key)
+            continue
         }
-        cue_picked(app.mixer,source,picks[:count],core.NONE,problems,r.at,slot)
+        key.outcome=request_play(app,source,r,listeners,problems)
+        played_add(played,key)
     }
+}
+
+// Plays a request with the sound of source; what became of it.
+@(private)
+request_play :: proc(app:^host.App,source:Audio_Source,r:Sound_Request,listeners:^Mixer_Listeners,problems:^core.Problems) -> One_Shot_Outcome {
+    source:=source
+    picks:[asset.SOUND_SET_CAPACITY]host.Sound_Pick
+    count:=sound_picks(app.mixer,app,source,core.NONE,problems,&picks)
+    if count==0 {return .Missing_Asset if bus_ready(app.mixer,source.bus) else .Rejected_Mixer}
+    hearing:=picks[0].hearing
+    source.attenuation,source.min_distance,source.max_distance=Attenuation_Model(hearing.attenuation),hearing.min_distance,hearing.max_distance
+    source.rolloff,source.reverb,source.priority=hearing.rolloff,hearing.reverb,hearing.priority
+    // Placed beyond where every listener hears it, it does not start; it is heard from the nearest.
+    slot:=u8(0)
+    if r.placed && listeners!=nil && listeners.count>0 {
+        if !(listeners_distance(listeners,r.at)<hearing.max_distance) {return .Culled_Distance}
+        slot=listener_pick(listeners,r.at,AUDIO_LISTENERS_MAX)
+    }
+    cue:=cue_picked(app.mixer,source,picks[:count],core.NONE,problems,r.at,slot)
+    for voice in cue.voices[:cue.count] {
+        if voice!={} {return .Played}
+    }
+    return .Rejected_Mixer
 }
