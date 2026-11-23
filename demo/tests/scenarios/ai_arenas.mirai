@@ -1,0 +1,18 @@
+{
+  "scene": "ai/ai.scene",
+  "steps": [
+    {"name": "the arenas run two seconds", "method": "play.step", "params": {"for": 120}},
+    {"name": "each of the six arenas is built once and every agent has its character",
+     "method": "play.check", "params": {"conditions": [
+      {"component": "AI_Arena_State", "count": true, "compare": "Equal", "value": 6},
+      {"component": "Zombie", "count": true, "compare": "Equal", "value": 52},
+      {"component": "Character", "count": true, "compare": "At_Most", "value": 80},
+      {"problem": "physics.characters", "compare": "Gone"}]}},
+    {"name": "the first wave of the horde sends its ten zombies", "method": "play.step",
+     "params": {"for": 1200, "until": [
+      {"component": "Horde_Waves_State", "match": "Any", "field": "Horde_Waves_State.total",
+       "compare": "At_Least", "value": 10}]}},
+    {"name": "the waves add no problems", "method": "play.check",
+     "params": {"conditions": [{"no_problems": true}]}}
+  ]
+}

@@ -2,9 +2,58 @@ package game
 
 import "core:testing"
 import "mirai:core"
+import render "mirai:engine/render"
 import "mirai:std/ai"
+import anim "plugins:animation/runtime"
 import behavior "plugins:behavior/runtime"
+import locomotion "plugins:locomotion/runtime"
 import nav "plugins:navigation/runtime"
+import phys "plugins:physics/runtime"
+
+@(private)
+@(test_world)
+Arena_World :: struct {
+    using world:Test_World,
+    arenas:core.Table(AI_Arena),
+    built:core.Table(AI_Arena_State),
+    worlds:core.Table(core.World_Transform),
+    ids:core.Table(core.Id),
+    names:core.Table(core.Name),
+    parents:core.Table(core.Parent),
+    transforms:core.Table(core.Transform),
+    characters:core.Table(phys.Character),
+    colliders:core.Table(phys.Collider),
+    walks:core.Table(locomotion.Walk),
+    nav_agents:core.Table(nav.Nav_Agent),
+    meshes:core.Table(render.Mesh_Renderer),
+    materials:core.Table(render.Material_Values),
+    patrols:core.Table(behavior.Patrol),
+    perceivers:core.Table(behavior.Perceiver),
+    perceivables:core.Table(behavior.Perceivable),
+    minds:core.Table(behavior.Mind_Agent),
+    animations:core.Table(anim.Animation),
+    zombies:core.Table(Zombie),
+}
+
+// An arena is built once: the ticks after the first add no agents, though nothing writes the
+// AI_Arena that the scene authored.
+@(test)
+an_arena_builds_its_agents_once :: proc(t:^testing.T) {
+    w:=new(Arena_World)
+    defer free(w)
+    if !test_world_init(t,w) {return}
+    defer test_world_destroy(w)
+    commands:=core.commands(w,test_world_info(w))
+    arena:=core.create(&w.entities)
+    core.add(&w.arenas,arena,AI_Arena{kind=.Horde,agents=4})
+    test_world_settle(w)
+    for tick in u64(1)..=3 {
+        arena_build(commands,core.read(&w.arenas),&w.built,core.read(&w.worlds),{tick=tick,dt=1.0/60,playing=true},nil)
+        test_world_settle(w)
+        testing.expectf(t,core.count(&w.zombies)==4 && core.count(&w.characters)==5,"after tick %d: %d zombies and %d characters, want 4 and 5 (the runner)",tick,core.count(&w.zombies),core.count(&w.characters))
+        testing.expect(t,core.has(&w.built,arena))
+    }
+}
 
 @(test)
 a_zombie_closes_in_to_bite_while_a_place_is_free_and_circles_when_none_is :: proc(t:^testing.T) {

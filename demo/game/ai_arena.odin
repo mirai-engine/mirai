@@ -55,6 +55,10 @@ AI_Arena :: struct {
 }
 AI_ARENA_DEFAULT :: AI_Arena{agents=60,place=true}
 
+// An arena that was built: its place and agents are in the world.
+@(component,derived)
+AI_Arena_State :: struct {}
+
 HORDE_MOST :: 2000 // zombies the waves of a horde send at most
 HORDE_SENDS :: 64  // zombies the waves of a horde send in a tick at most
 
@@ -533,17 +537,17 @@ guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena) -> ai.Status {
 }
 
 // Builds the arenas that have not been built, once the world runs: their
-// place, unless the scene holds it, and their agents. An arena is built when
-// its row is no longer new (core.added): the build sees the row when it arrives.
+// place, unless the scene holds it, and their agents.
 @(step="fixed",stage="apply",server)
 arena_build :: proc(
-    commands:core.Commands,arenas:^core.Table(AI_Arena,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,
+    commands:core.Commands,arenas:^core.Table(AI_Arena,.Read),states:^core.Table(AI_Arena_State),worlds:^core.Table(core.World_Transform,.Read),
+    time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing {return}
     for row in 0..<core.count(arenas) {
-        if !core.added(arenas,row) {continue}
-        a:=core.at(arenas,row)
         e:=core.entity_at(arenas,row)
+        if core.has(states,e) || demo_state(states,e,AI_Arena_State{},problems)==nil {continue}
+        a:=core.at(arenas,row)
         origin:mm.Vec3
         if pose,ok:=core.get(worlds,e);ok {origin=pose.position}
         if a.place {
@@ -761,14 +765,15 @@ arena_target :: proc(c:core.Commands,position:mm.Vec3,route:core.Entity) -> core
 // built: a horde waits for its next zombie as a request due at its tick.
 @(step="fixed",stage="apply",server)
 horde_waves :: proc(
-    hordes:^core.Table(Horde_Waves,.Read),states:^core.Table(Horde_Waves_State),sends:^Horde_Sends,arenas:^core.Table(AI_Arena,.Read),requests:^spawn.Spawn_Requests,
+    hordes:^core.Table(Horde_Waves,.Read),states:^core.Table(Horde_Waves_State),sends:^Horde_Sends,arenas:^core.Table(AI_Arena,.Read),
+    built:^core.Table(AI_Arena_State,.Read),requests:^spawn.Spawn_Requests,
     waves:core.Records(Horde_Wave),time:core.Time,problems:^core.Problems,
 ) {
     if !time.playing || time.dt<=0 {return}
     for row in 0..<core.count(hordes) {
         e:=core.entity_at(hordes,row)
         at:=core.row_of(arenas,e)
-        if core.has(states,e) || at<0 || core.added(arenas,at) || core.at(arenas,at).kind!=.Horde {continue}
+        if core.has(states,e) || at<0 || !core.has(built,e) || core.at(arenas,at).kind!=.Horde {continue}
         wave:=core.at(hordes,row).first
         if demo_state(states,e,Horde_Waves_State{wave=wave},problems)==nil {continue}
         first,_:=core.record(waves,wave,problems,e)
