@@ -34,10 +34,15 @@ MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
 
 Alpha_Mode :: enum u8 {
-    Opaque, // the alpha of the material is ignored
-    Mask,   // points whose mask (maps.mask) is below alpha_cutoff are holes, for the camera, the shadows and rays
-    Blend,  // drawn over the scene after it is lit
+    Opaque,   // the alpha of the material is ignored
+    Mask,     // points whose mask (maps.mask) is below alpha_cutoff are holes, for the camera, the shadows and rays
+    Blend,    // drawn over the scene after it is lit
+    Additive, // drawn over the scene after it is lit, adding its light by opacity and hiding nothing; no transmission
 }
+
+// Whether a mode draws the material over the lit scene: apart from the opaque
+// surfaces, casting no shadow and invisible to rays.
+alpha_blended :: proc "contextless" (mode:Alpha_Mode) -> bool {return mode==.Blend || mode==.Additive}
 
 // One map of a material: its texture and how it reads the UVs. The only
 // transform of the UVs a material has: one that tiles gives each of its maps

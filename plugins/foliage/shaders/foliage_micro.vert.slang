@@ -37,7 +37,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     Mesh_Point v = cluster_point(mesh, c, cluster_triangle(mesh, c, triangle)[corner % 3u]);
     uint material = cluster_material(mesh, c) & 0xffffffu;
     Material row = material_row(material);
-    if (row.alpha_mode == ALPHA_BLEND || (draw.program != INVALID && row.program_id != draw.program)) return output;
+    if (material_blended(row) || (draw.program != INVALID && row.program_id != draw.program)) return output;
     Micro_Look look = micro_looks[draw.look];
     Micro_Instance inst = micro_instances[micro_visible[look.mesh.z + instance_id]];
     Micro_Slot slot = micro_slots[inst.slot];

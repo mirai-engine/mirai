@@ -2,7 +2,8 @@
 //! per surface program blend
 // What a blended surface behind the per-pixel glass layers leaves of the
 // scene behind it, multiplied into the color target; translucent.frag then
-// adds the light of the surface.
+// adds the light of the surface. It adds nothing to the reactive target of
+// the pass.
 #include "raster.slang"
 #include "glass.slang"
 
@@ -11,6 +12,7 @@
 
 struct Stage_Output {
     [[vk::location(0)]] float4 out_filter : SV_Target0;
+    [[vk::location(1)]] float out_reactive : SV_Target1;
 };
 [shader("fragment")]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
@@ -22,5 +24,6 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
         || !fragment_forward(input, fragment_material(input), opaque, true)) discard;
     Fragment f = fragment_evaluate(input, opaque);
     output.out_filter = float4(glass_filter(f.material, fragment_glass(f, input.in_world)), 1.0);
+    output.out_reactive = 0.0;
     return output;
 }

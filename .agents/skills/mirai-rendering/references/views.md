@@ -132,7 +132,7 @@ A view executes a compiled `Render_Pipeline_Desc` (`render/pipeline.odin`, `eren
   reset `View_State.turn`. `Custom` passes bind via `pass_resource`, `pass_constants`,
   `pass_clear`, `pass_resource_write`, and `stage_pipeline({stage = .Custom, shader})` across
   `CUSTOM_PASS_SLOTS` (24: `SLOT_PASS0..9` + 14 scene-table slots via `CUSTOM_SLOT_n` in
-  `custom_slots.slang`). `Reactive` is zero without `Blend` passes.
+  `custom_slots.slang`). `Reactive` is zero without `Blend` passes or additive materials.
 
 ```odin
 // Build a custom pipeline replacing Resolve (e.g., upscaler plugin).

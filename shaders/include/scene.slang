@@ -500,7 +500,7 @@ Material material_row(uint row, uint block) {
     if (at == 0u) m = material_row(row);
     else m = material_words<Material, MATERIAL_WORDS>(at);
     m.row = row;
-    if (m.alpha_mode == ALPHA_BLEND) m.opacity *= 1.0 - material_values_fade(block);
+    if (material_blended(m)) m.opacity *= 1.0 - material_values_fade(block);
     return m;
 }
 // The parameters the program of a row reads at a point of an instance: those
@@ -1301,7 +1301,7 @@ float3 hit_normal_turned(float3 face, float3 n, float3 direction) {
 float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direction, out bool blended) {
     uint material;
     float3 face = triangle_face(instance_index, primitive, material);
-    blended = material_row(material, material_values_of(instance_index)).alpha_mode == ALPHA_BLEND;
+    blended = material_blended(material_row(material, material_values_of(instance_index)));
     return hit_normal_turned(face, surface_from_triangle(instance_index, primitive, bary, 1e-4).normal, direction);
 }
 

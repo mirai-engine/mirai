@@ -169,7 +169,7 @@ programs_ask :: proc(r: ^Renderer) {
 	for row in s.materials {
 		if row.program_id == 0 || row.program_id == GPU_NONE {continue}
 		ids := []Pipeline_Id{.Resolve, .Resolve_Plain, .Resolve_Layers}
-		if row.alpha_mode == u32(asset.Alpha_Mode.Blend) {
+		if alpha_blended(row.alpha_mode) {
 			ids = []Pipeline_Id{.Translucent} if row.transmission <= 0 else
 			      []Pipeline_Id{.Glass_Layer, .Glass_Filter, .Glass_Overflow}
 		}
@@ -390,7 +390,7 @@ instance_blended_programs :: proc(s: ^Scene_State, instance: u32) -> (programs: 
 	if m.slot_count == 0 {return {}, 1}
 	for packed in s.indices[m.slot_word:][:m.slot_count] {
 		row := instance_row(packed, inst.meta.y, &inst.slot_materials)
-		if int(row) >= len(s.materials) || s.materials[row].alpha_mode != u32(asset.Alpha_Mode.Blend) {continue}
+		if int(row) >= len(s.materials) || !alpha_blended(s.materials[row].alpha_mode) {continue}
 		program := s.materials[row].program_id
 		at := 0
 		for at < count && programs[at] < program {at += 1}
@@ -421,7 +421,7 @@ instance_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, target: ^rh
 		row := instance_row(packed, inst.meta.y, &inst.slot_materials)
 		if int(row) >= len(s.materials) {return 0}
 		material := &s.materials[row]
-		return 0 if blended && material.alpha_mode != u32(asset.Alpha_Mode.Blend) else material.program_id
+		return 0 if blended && !alpha_blended(material.alpha_mode) else material.program_id
 	}
 	slots := s.indices[m.slot_word:][:m.slot_count]
 	plain := len(slots) == 0

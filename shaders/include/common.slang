@@ -268,6 +268,9 @@ struct Material {
     uint two_sided;             // 1: seen from behind too (asset.Material_Info.two_sided); 0: its back faces are not drawn
     uint row;                   // of the material table, where the rest of it follows
 };
+// Whether a material is drawn over the lit scene by the passes of the blends
+// (asset.alpha_blended): out of the G-buffer, the maps of the shadows and rays.
+bool material_blended(Material m) { return m.alpha_mode == ALPHA_BLEND || m.alpha_mode == ALPHA_ADDITIVE; }
 // A row of the material table. Shading code holds its Material by value; where
 // a map is placed and what a program reads are fetched from the row at the
 // point that uses them, so a surface without maps or program reads neither.

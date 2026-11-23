@@ -120,7 +120,7 @@ bool fragment_mask_covers(Raster_Input input, float mip_bias) {
 bool behind_layer(float depth, float layer) { return layer > 0.0 && depth > layer * 1.0001 + 1e-4; }
 
 bool fragment_blended(Raster_Input input, Material m) {
-    return m.alpha_mode == ALPHA_BLEND && (!material_solid(m) || !raster_back(input));
+    return material_blended(m) && (!material_solid(m) || !raster_back(input));
 }
 
 bool fragment_forward(Raster_Input input, Material m, bool overflow) {

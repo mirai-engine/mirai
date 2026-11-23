@@ -89,7 +89,7 @@ Pass :: struct {
 	forward_material_layers: bool, // a forward blend in sight has material layers
 	glass_rough: bool,          // some visible glass layer may sample blurred mips of glass_scene
 	blend:   bool,       // the view runs the Blend stage of extensions
-	blended: bool,       // a pass of it began: TAA reads the coverage it drew
+	blended: bool,       // a pass of it drew in reactive (Blend stage, forward blends): TAA reads the coverage drawn
 	glass:   Glass_Side, // of the Lit or Blend stage being recorded
 	glass_layered: bool, // the layers of glass were drawn before the Lit stage, which runs on each side of them
 	glass_medium: u32, // instance plus one of the solid of glass the camera may be in (glass_layers), 0 none

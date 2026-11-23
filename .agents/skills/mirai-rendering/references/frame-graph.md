@@ -47,14 +47,15 @@ omit or interleave stages.
    excluded from BVH/TLAS, [overlays](../../mirai-core/references/host.md#loaded-assets)).
 10. **translucent.** Peels nearest glass layers; draws forward blends + overflow glass
     back-to-front against opaque depth (pyramid-culled; nearer-than-glass draws only in front).
+    Additive materials add their coverage to `Targets.reactive` in the same pass.
 11. **glass.** Shades layers back-to-front ([glass](materials.md#glass); culled when absent). Runs
     `Blend` (behind after peels, front after glass; once after composite without glass), front
     `Lit` and `glass_inside`.
 12. **taa.** Upscales to window: 10% moving, <= 64-frame still average (4x16 jitter,
     `Targets.taa_frames`), 3x3 YCoCg variance clamp (`TAA_STILL_GAMMA` widens when still),
-    exposed-compressed weights (render-unit history), `Targets.reactive` (`Blend` coverage) and
-    shadow-change marks (not passed to upscalers), depth in alpha, disocclusion reset (preserves
-    still edges/thin wires).
+    exposed-compressed weights (render-unit history), `Targets.reactive` (`Blend` and additive
+    coverage) and shadow-change marks (not passed to upscalers), depth in alpha, disocclusion reset
+    (preserves still edges/thin wires).
 13. **exposure & HDR post.** Pre-TAA [exposure](display.md#exposure) meter, `Post` stage, ordered
     HDR PostProcess stack per `Camera.slot` (`renderer_set_view_postprocesses`) or frame
     (`renderer_set_postprocesses`): mid-gray 0.18, lazy targets, `fade` 0 skips, reads only

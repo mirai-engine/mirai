@@ -327,7 +327,7 @@ Gpu_Material :: struct {
 	thickness:            f32,
 	attenuation_distance: f32,
 	attenuation_color:    Vec3,
-	alpha_mode:           u32, // asset.Alpha_Mode; a transmissive material is drawn blended unless masked
+	alpha_mode:           u32, // asset.Alpha_Mode; a transmissive material is drawn blended unless masked or additive
 	layers:               u32, // asset.Material_Layers: which blocks of the row it reads
 	emission_mode:        u32, // asset.Emission_Mode
 	program_id:           u32,

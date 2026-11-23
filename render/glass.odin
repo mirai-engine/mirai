@@ -346,6 +346,7 @@ glass_layers :: proc(p: ^Pass) {
 // The blended surfaces between two glass layers (0: none), back to front,
 // tested against the depth of the opaque scene; overflow: also the glass
 // beyond the layers. Those before the glass are drawn only in front of it.
+// The additive ones add their coverage to the reactive target of the view.
 @(private)
 translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overflow := false) {
 	if !p.draw_forward && !overflow {return}
@@ -357,8 +358,9 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	plain := rhi.frame_alloc(r.device, 4 * size_of(u32))
 	if plain.ptr == nil {return}
 	(^[4]u32)(plain.ptr)^ = {}
-	pass := rhi.Render_Pass_Desc{color_count = 1, name = "translucent forward"}
+	pass := rhi.Render_Pass_Desc{color_count = 2, name = "translucent forward"}
 	pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
+	pass.colors[1] = {texture = t.reactive, load = .Load if p.blended else .Clear, store = .Store}
 	pass.depth = {texture = t.depth, load = .Load, store = .Store}
 	if s.light_grid_dirty {
 		light_grid_record(r, cmd)
@@ -401,6 +403,8 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	behind := near_layer != 0
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
+	pass.colors[1].load = .Load
+	p.blended = true
 	commands := 0
 	run: Translucent_Run
 	for entry, k in p.translucent {

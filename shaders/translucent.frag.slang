@@ -9,6 +9,9 @@
 // whole), and the probe volume for diffuse and specular indirect light.
 // [earlydepthstencil] lets hardware reject fragments hidden behind the opaque
 // depth buffer before running lighting or storage-buffer atomics.
+// The target blends premultiplied: an additive surface gives its light with an
+// alpha of 0, which leaves all that is behind it, and its coverage to the
+// reactive target, where TAA keeps less of its history.
 //
 // unlayered: no blended instance in sight has material layers.
 // quiet: off the feedback turn of the program, texture feedback is skipped.
@@ -99,11 +102,20 @@ float3 point_shadowless_lighting(Shading s, float known, uint share) {
 
 struct Stage_Output {
     [[vk::location(0)]] float4 out_color : SV_Target0;
+    [[vk::location(1)]] float out_reactive : SV_Target1;
 };
+
+// The light a surface sends over what is behind it where it covers.
+Stage_Output translucent_output(Material material, float3 color, float covered) {
+    Stage_Output output;
+    bool additive = material.alpha_mode == ALPHA_ADDITIVE;
+    output.out_color = float4(finite_or_zero(color), additive ? 0.0 : covered);
+    output.out_reactive = additive ? covered : 0.0;
+    return output;
+}
 [shader("fragment")]
 [earlydepthstencil]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
-    Stage_Output output;
     input = raster_facing(input, front_facing);
     int2 p = int2(pixel_position.xy);
     float depth = fragment_depth(input);
@@ -128,9 +140,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
         if (material_has(material.textures[MATERIAL_MAP_EMISSION])) {
             emissive *= material_map_texel(material, MATERIAL_MAP_EMISSION, material.textures[MATERIAL_MAP_EMISSION], input.in_uv, input.in_uv1, bias, false).rgb;
         }
-        float3 color = emission_render_units(emissive + input.in_emission, material.emission_mode == EMISSION_RELATIVE) * covered;
-        output.out_color = float4(finite_or_zero(color), covered);
-        return output;
+        return translucent_output(material, emission_render_units(emissive + input.in_emission, material.emission_mode == EMISSION_RELATIVE) * covered, covered);
     }
     Fragment f = fragment_evaluate(input, material, inst, g_depth.Load(int3(p, 0)).r);
     Glass g = fragment_glass(f, input.in_world);
@@ -141,6 +151,5 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
         given_high = inst.bounds_max.xyz;
     }
     float3 color = glass_light(g, glass_shading(f.material, g), overflow ? 0.08 : 0.0, params.light_budget);
-    output.out_color = float4(finite_or_zero(color), overflow ? 0.0 : saturate(g.alpha));
-    return output;
+    return translucent_output(material, color, overflow ? 0.0 : saturate(g.alpha));
 }

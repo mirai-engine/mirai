@@ -26,8 +26,8 @@ Gbuffer_Vertex gbuffer_draw_vertex(uint vertex_id, uint index, bool highlight, b
     Cluster c = mesh_cluster(mesh, vertex_id >> DRAW_VERTEX_BITS);
     bool drawn = highlight ? cluster_finest_resident(mesh, c) : cluster_in_cut(view_detail(), inst, instance_scale(inst), mesh, c, frame.cut.x);
     Material m = materials[material_of(instance_row(index), inst, cluster_material(mesh, c))].shared;
-    uint program = highlight && m.alpha_mode != ALPHA_BLEND ? 0u : m.program_id;
-    drawn = drawn && (draw.program == INVALID || program == draw.program) && (!blended || m.alpha_mode == ALPHA_BLEND);
+    uint program = highlight && !material_blended(m) ? 0u : m.program_id;
+    drawn = drawn && (draw.program == INVALID || program == draw.program) && (!blended || material_blended(m));
     if (!drawn) {
         // Outside the volume of the view: the triangle has no area to raster.
         output.position = float4(2.0, 2.0, 2.0, 1.0);

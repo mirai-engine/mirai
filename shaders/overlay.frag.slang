@@ -14,7 +14,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
     Stage_Output output;
     input = raster_facing(input, front_facing);
     Material base = fragment_material(input);
-    if (base.alpha_mode == ALPHA_BLEND || !fragment_mask_covers(input, frame.texturing.x)) discard;
+    if (material_blended(base) || !fragment_mask_covers(input, frame.texturing.x)) discard;
     Material overlay = material_row(params.overlay_material);
     float3 view = to_eye(input.in_world);
     float3 normal = fragment_surface_normal(input, overlay, view, frame.texturing.x);

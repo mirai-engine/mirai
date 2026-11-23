@@ -195,6 +195,11 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
 - **Blend (`blend`):** Drawn forward premultiplied over the lit scene; all contributions weight
   by `alpha`, with `1 - alpha` background passing through. Casts no shadows and skips G-buffer and
   bounces.
+- **Additive (`additive`):** Routed as a blend everywhere (`asset.alpha_blended`,
+  `material_blended`): the same forward draw, its light weighted by `alpha`, written with an
+  alpha of 0 so the premultiplied target keeps the whole background (no sort dependency, one
+  pipeline for both). Its coverage goes to `Targets.reactive` for TAA. Never glass: its row keeps
+  no `transmission`. Previews and thumbnails show it as a blend.
 
 ## Ray hits
 
@@ -309,10 +314,10 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 
 `transmission` enables glass (`KHR_materials_transmission`/`ior`/`volume`, `render/glass.odin`):
 
-- **Shading & layers:** Transmissive materials draw as blend even when `opaque`; `mask` ignores
-  transmission. Uses `shading_layers` (`glass_shading`, `glass_light`) and `shading_through`
-  (coat tints transmitted light without double darkening). Specular reflections read probes and
-  sky.
+- **Shading & layers:** Transmissive materials draw as blend even when `opaque`; `mask` and
+  `additive` ignore transmission. Uses `shading_layers` (`glass_shading`, `glass_light`) and
+  `shading_through` (coat tints transmitted light without double darkening). Specular reflections
+  read probes and sky.
 - **Sheet vs solid:** `thickness == 0` is a two-sided non-refracting sheet. `thickness > 0`
   refracts at entry/exit. Glass traces no rays: a closed mesh is crossed as a slab (its own
   thickness when it is a 20% pane, else `thickness`, clamped by the instance box) and leaves

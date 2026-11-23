@@ -43,7 +43,7 @@ Render_Resource :: enum u8 {
 	Linear_Depth, // distance along the view; negative in a nested view
 	Reflectance,  // F0 and F90 of surfaces that reflect unlike the default
 	Hiz,          // the depth pyramid
-	Reactive,     // the share of each pixel the Blend stage drew over; zero without a Blend pass
+	Reactive,     // the share of each pixel the Blend stage and additive materials drew over; zero without them
 	Highlight,    // the selection mask
 	Direct,       // reflected direct light
 	Gi,           // the light of the probe volume at each pixel: around the normal by its contact occlusion and around the specular lobe, packed (light_pack); written by a custom pass in place of the Indirect stage, the diffuse indirect light itself (rgb, RGBA32_Float), which the composite takes in place of the probe volume's and which keeps what the pass left in the frame before

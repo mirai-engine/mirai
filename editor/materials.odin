@@ -34,7 +34,7 @@ MAP_LABELS :: [asset.Material_Map_Kind]string{
 }
 TEXTURE_PARAMETER :: 100 // the index of the row of a texture of a program starts here; below it, a map of MAP_LABELS plus one
 OVERLAY_BLEND_NAMES :: [asset.Overlay_Blend]string{.Alpha="Alpha",.Additive="Additive",.Multiply="Multiply"}
-ALPHA_MODE_NAMES :: [asset.Alpha_Mode]string{.Opaque="Opaque",.Mask="Mask",.Blend="Blend"}
+ALPHA_MODE_NAMES :: [asset.Alpha_Mode]string{.Opaque="Opaque",.Mask="Mask",.Blend="Blend",.Additive="Additive"}
 EMISSION_MODE_NAMES :: [asset.Emission_Mode]string{.Physical="Nits",.Relative="Exposure"}
 MATERIAL_LIST_ROWS :: 8
 
@@ -573,8 +573,10 @@ material_parameters :: proc(c:^Inspect,a:^Appearance) {
     override_number_row(s,a,"Metallic",.Metallic,values.metallic)
     override_number_row(s,a,"Roughness",.Roughness,values.roughness)
     override_number_row(s,a,"Specular",.Specular,values.specular_factor)
-    if values.alpha_mode!=.Mask {override_number_row(s,a,"Transmission",.Transmission,values.transmission)}
-    if values.alpha_mode!=.Mask && values.transmission>0 {override_number_row(s,a,"IOR",.Ior,values.ior,1,3)}
+    // Only an opaque or blended material lets light through.
+    glass:=values.alpha_mode==.Opaque || values.alpha_mode==.Blend
+    if glass {override_number_row(s,a,"Transmission",.Transmission,values.transmission)}
+    if glass && values.transmission>0 {override_number_row(s,a,"IOR",.Ior,values.ior,1,3)}
     alpha_row(s,a)
     for kind in ([?]asset.Material_Map_Kind{.Metallic_Roughness,.Normal,.Occlusion,.Specular,.Specular_Color}) {map_row(c,a,info,kind)}
     override_number_row(s,a,"Coat",.Coat,values.coat.weight)

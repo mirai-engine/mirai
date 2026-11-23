@@ -633,11 +633,19 @@ scene_init :: proc(r: ^Renderer) -> bool {
 
 MATERIAL_RANGES_MAX :: 64 // rows that go to the GPU in ranges; past them the whole table goes
 
+// Whether a row (its alpha_mode) is drawn over the lit scene by the passes of
+// the blends, out of the G-buffer, the maps of the shadows and rays.
+@(private)
+alpha_blended :: proc "contextless" (mode: u32) -> bool {
+	return mode <= u32(max(asset.Alpha_Mode)) && asset.alpha_blended(asset.Alpha_Mode(mode))
+}
+
 // A row of the table but for where its maps are placed.
 @(private = "file")
 gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
 	mode, opacity := m.alpha_mode, clamp(m.opacity, 0, 1)
-	transmission := clamp(m.transmission, 0, 1) if mode != .Mask else 0
+	// Only glass lets light through: a cut-out or an additive surface has none.
+	transmission := clamp(m.transmission, 0, 1) if mode == .Opaque || mode == .Blend else 0
 	// The opacity of an opaque material is not its coverage: its glass covers whole.
 	if transmission > 0 && mode == .Opaque {mode, opacity = .Blend, 1}
 	result := Gpu_Material_Row{
@@ -812,7 +820,7 @@ program_rows_count :: proc(s: ^Scene_State, row: Gpu_Material_Row, added: bool) 
 	if added {s.programmed_rows += 1} else {s.programmed_rows -= 1}
 	if program >= POINTS_PROGRAM_CAPACITY {return}
 	if added {s.program_rows[program] += 1} else {s.program_rows[program] -= 1}
-	if row.alpha_mode != u32(asset.Alpha_Mode.Blend) {
+	if !alpha_blended(row.alpha_mode) {
 		if added {s.program_opaque_rows[program] += 1} else {s.program_opaque_rows[program] -= 1}
 	}
 	if s.program_rows[program] == (1 if added else 0) {
@@ -1040,14 +1048,14 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         if int(row)<len(s.materials) {
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
-            if given!=0 && m!=.Blend && values.program_id!=0 && s.materials[row].alpha_mode==u32(asset.Alpha_Mode.Blend) {a.shown_opaque|=1<<u32(k)}
+            if given!=0 && !asset.alpha_blended(m) && values.program_id!=0 && alpha_blended(s.materials[row].alpha_mode) {a.shown_opaque|=1<<u32(k)}
             // A program departs where its source may give a reflectance of its own (abi.Program.reflectance).
             held:=&s.materials[row]
             programmed:=values.program_id!=0 && (values.program_id!=held.program_id || held.volume.program&abi.MATERIAL_PROGRAM_REFLECTANCE!=0)
             departs:=programmed || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
-            if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
+            if !asset.alpha_blended(m) && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
-            if m == .Blend {
+            if asset.alpha_blended(m) {
                 if !blended_seen {
                     a.translucent.program = values.program_id
                     blended_seen = true
@@ -1068,8 +1076,8 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
             } else {a.layered ||= lit != {}}
         }
         if m != .Opaque || faded {a.tested |= 1 << u32(k)}
-        a.blended ||= m == .Blend
-        a.glass &&= m == .Blend
+        a.blended ||= asset.alpha_blended(m)
+        a.glass &&= asset.alpha_blended(m)
     }
     // The layers of a material reach the G-buffer with its reflectance.
     a.reflectance ||= a.layered
@@ -1798,7 +1806,7 @@ instance_row_words :: proc "contextless" (s: ^Scene_State, values, row: u32) -> 
 instance_material :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (m: Gpu_Material) {
 	m = s.materials[row].shared
 	if shown := instance_row_words(s, values, row); shown != nil {m = (cast(^Gpu_Material)raw_data(shown))^}
-	if m.alpha_mode == u32(asset.Alpha_Mode.Blend) {m.opacity *= 1 - instance_values_fade(s, values)}
+	if alpha_blended(m.alpha_mode) {m.opacity *= 1 - instance_values_fade(s, values)}
 	return
 }
 

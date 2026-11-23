@@ -481,7 +481,7 @@ material_keeps_values_parameters_and_overlays :: proc(t:^testing.T) {
     bad=desc;bad.info.ior=0.5;refuse(t,&types,bad)
     bad=desc;bad.info.emission.g=transmute(f32)u32(0x7f800000);refuse(t,&types,bad)
     bad=desc;bad.info.maps.occlusion.uv_set=2;refuse(t,&types,bad)
-    bad=desc;bad.info.alpha_mode=Alpha_Mode(3);refuse(t,&types,bad)
+    bad=desc;bad.info.alpha_mode=Alpha_Mode(len(Alpha_Mode));refuse(t,&types,bad)
     bad=desc;bad.overlays={{id=0}};refuse(t,&types,bad)
     bad=desc;bad.overlays={{id=4},{id=4}};refuse(t,&types,bad)
     bad=desc;bad.overlays=nil;refuse(t,&types,bad) // a parameter of an overlay that is not there
@@ -493,6 +493,26 @@ material_keeps_values_parameters_and_overlays :: proc(t:^testing.T) {
     wide[0].components=5
     bad=desc;bad.parameters=wide[:];refuse(t,&types,bad)
     bad=desc;bad.info.ior=0;refuse(t,&types,bad)
+}
+
+@(test)
+material_keeps_an_additive_mode :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    info:=MATERIAL_DEFAULTS
+    info.alpha_mode,info.opacity,info.emission=.Additive,0.5,{4,1,0}
+    path:=fmt.tprintf("%s/slash.mat",base.test_folder(t,"asset"))
+    testing.expect_value(t,material_save(path,&types,{id={8,9},info=info}),Error.None)
+    a:Asset
+    testing.expect_value(t,asset_load(&a,path),Error.None)
+    defer asset_close(&a)
+    view,error:=material_view(&a,&types)
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,view.info^==info && view.info.alpha_mode==.Additive,"an additive material reads back as it was saved")
+    testing.expect(t,alpha_blended(.Additive) && alpha_blended(.Blend) && !alpha_blended(.Mask) && !alpha_blended(.Opaque))
+    // An entity gives the mode by name as the number of its member.
+    given:=MATERIAL_DEFAULTS
+    value:=[4]f32{f32(Alpha_Mode.Additive),0,0,0}
+    testing.expect(t,material_standard_value(&given,base.name_hash("alpha_mode"),&value,true) && given.alpha_mode==.Additive)
 }
 
 @(test)

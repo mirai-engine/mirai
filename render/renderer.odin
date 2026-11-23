@@ -419,8 +419,8 @@ Targets :: struct {
 	glass_zbuffer:           rhi.Texture,
 	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
 	direct_scale:            u32, // the pixels across a point of the direct targets
-	reactive:                rhi.Texture, // the share of each pixel the Blend stage drew over: TAA keeps less of its history there
-	reactive_drawn:          bool,        // the Blend stage drew in reactive since it was last cleared
+	reactive:                rhi.Texture, // the share of each pixel the Blend stage and additive materials drew over: TAA keeps less of its history there
+	reactive_drawn:          bool,        // reactive was drawn in since it was last cleared
 	aerial:                  rhi.Texture, // the aerial perspective of an atmosphere (air.odin), made when the sky first is one
 	aerial_key:              Air_Aerial_Key, // what it was computed for
 }
@@ -1070,7 +1070,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	})
 	translucent := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Filter_Frag],
-		color_formats = {0 = .RGBA16_Float}, color_count = 1, blend = {0 = .Multiply},
+		color_formats = {0 = .RGBA16_Float, 1 = .R8_Unorm}, color_count = 2, blend = {0 = .Multiply, 1 = .Additive},
 		depth_format = .D32_Float, depth_test = true, depth_compare = .Greater_Equal,
 		cull = .None, name = "translucent",
 	}
@@ -1078,9 +1078,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	translucent.vertex, translucent.vertex_constants = &r.shader_codes[.Translucent_Vert], {}
 	for counting in ([]bool{false, true}) {
 		translucent.fragment = &r.shader_codes[.Translucent_Cost_Frag if counting else .Translucent_Frag]
-		translucent.blend = {0 = .Additive}
+		translucent.blend = {0 = .Additive, 1 = .Additive}
 		graphics(list, r, .Glass_Overflow_Cost if counting else .Glass_Overflow, translucent, required = !counting)
-		translucent.blend = {0 = .Premultiplied}
+		translucent.blend = {0 = .Premultiplied, 1 = .Additive}
 		graphics(list, r, .Translucent_Cost if counting else .Translucent, translucent, required = !counting)
 	}
 	graphics(list, r, .Highlight, {

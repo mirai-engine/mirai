@@ -172,10 +172,10 @@ Uses_Values :: struct {
 }
 
 // What a material is drawn as by its values: a transmissive one is drawn
-// blended unless it is masked.
+// blended unless it is masked; an additive one is blended.
 @(private="file")
 drawn_as :: proc(info:asset.Material_Info) -> abi.Program_Uses {
-    return {.Blend} if info.alpha_mode==.Blend || info.transmission>0 && info.alpha_mode!=.Mask else {.Opaque}
+    return {.Blend} if asset.alpha_blended(info.alpha_mode) || info.transmission>0 && info.alpha_mode==.Opaque else {.Opaque}
 }
 
 // The values of a component of every entity row of a scene, read as T, and

@@ -1506,6 +1506,77 @@ material_blend_shows_the_scene_through_and_casts_no_shadow :: proc(t: ^testing.T
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+// An additive surface adds its light to the scene behind it by its opacity
+// and hides none of it, lit or unlit: it is out of the G-buffer and casts no
+// shadow, lets no light through as glass and marks its coverage for TAA.
+@(test)
+material_additive_adds_light_and_hides_nothing :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	glow := DEFAULT_MATERIAL
+	glow.base_color, glow.opacity, glow.unlit = {0, 0, 0}, 0.5, true
+	glow.emission, glow.emission_mode = {0, 0.4, 0}, .Relative
+	lit := DEFAULT_MATERIAL
+	lit.base_color, lit.opacity, lit.roughness = {0.6, 0, 0}, 1, 1
+	materials_set(r, {glow, lit})
+	quad := ground_quad(r)
+	sun := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 0.3 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(20), tint = {1, 1, 1}}
+	sheet := Instance_Desc{object_id = 2, mesh = quad, transform = placed(2, 1), material = 1, tint = {1, 1, 1}}
+	above := Camera{position = {0, 5, 0}, forward = {0, -5, 0}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	reactive := proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> int {
+		r := f.renderer
+		rhi.device_wait_idle(f.device)
+		pixels := make([]u8, int(r.targets.width * r.targets.height), context.temp_allocator)
+		testing.expect(t, golden_read_texture(f.device, r.targets.reactive, pixels), rhi.device_error(f.device))
+		p := target_pixel(r, camera, world)
+		return int(pixels[p.y * int(r.targets.width) + p.x])
+	}
+	scene_given(r, {floor}, nil, sun, {})
+	bare := screen_color(t, &f, above, {0, 1, 0})
+	testing.expectf(t, bare.r > 40 && bare.r < 200, "the floor is lit below white: %v", bare)
+
+	Case :: struct {mode: asset.Alpha_Mode, row: Material_Handle, adds: [3]bool}
+	cases := [?]Case{{.Additive, 1, {false, true, false}}, {.Additive, 2, {true, false, false}}, {.Blend, 1, {false, true, false}}}
+	for c in cases {
+		glow.alpha_mode, lit.alpha_mode = c.mode, c.mode
+		materials_set(r, {glow, lit})
+		sheet.material = c.row
+		scene_given(r, {floor, sheet}, nil, sun, {})
+		shown := screen_color(t, &f, above, {0, 1, 0})
+		testing.expect_value(t, len(r.scene.translucent), 1)
+		testing.expectf(t, near_bytes(read_albedo(t, &f, above, {0, 1, 0}), {255, 255, 255, 0}, 3), "%v %d: the sheet is not in the G-buffer", c.mode, c.row)
+		mark := reactive(t, &f, above, {0, 1, 0})
+		if c.mode == .Blend {
+			testing.expectf(t, shown.r < bare.r - 20 && shown.g > bare.g, "a blend covers the floor by its opacity: %v over %v", shown, bare)
+			testing.expectf(t, mark == 0, "a blend leaves the reactive target as it is: %d", mark)
+			continue
+		}
+		for added, i in c.adds {
+			if added {
+				testing.expectf(t, shown[i] > bare[i] + 10, "%v %d: channel %d adds its light: %v over %v", c.mode, c.row, i, shown, bare)
+			} else {
+				testing.expectf(t, abs(shown[i] - bare[i]) <= 2, "%v %d: channel %d of the floor stays as it was: %v over %v", c.mode, c.row, i, shown, bare)
+			}
+		}
+		testing.expectf(t, mark > 100, "%v %d: the sheet marks its coverage for TAA: %d", c.mode, c.row, mark)
+	}
+
+	// It casts no shadow, and a transmission does not make glass of it.
+	glow.alpha_mode, glow.opacity, glow.transmission = .Additive, 1, 1
+	materials_set(r, {glow, lit})
+	sheet.material = 1
+	scene_given(r, {floor, sheet}, nil, sun, {})
+	side := Camera{position = {0, 3, 6}, forward = {0, -3, -6}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	under := screen_color(t, &f, side, {0, 0, 0.8})
+	open := screen_color(t, &f, side, {3, 0, 0.8})
+	testing.expectf(t, abs(under.r - open.r) < 4 && abs(under.b - open.b) < 4, "the sheet casts no shadow: %v under it, %v beside it", under, open)
+	testing.expect(t, len(r.scene.translucent) == 1 && r.scene.translucent[0].forward && !r.scene.translucent[0].glass, "an additive surface is never glass")
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // Read linear light before translucency and tone mapping; the camera can look
 // through the filter without confusing its visible color with its shadow.
 @(private="file")
