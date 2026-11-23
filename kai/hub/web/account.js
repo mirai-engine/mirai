@@ -9,17 +9,29 @@ import {action, avatar, badge, brandMark, confirmDialog, copyField, icon, naviga
 // The machine being linked, across draws of the page: its offer to compare,
 // whether it was linked and whether it set the recovery key yet.
 const linking = {offer: null, linked: false, recovering: false, waiting: false}
+let linkAttempt = 0
 
 const startLink = action(async () => {
+    const attempt = ++linkAttempt
     Object.assign(linking, {offer: null, linked: false, waiting: true})
     app.set({approval: app.approval})
     try {
-        linking.offer = await linkOffer()
+        const offer = await linkOffer()
+        if (attempt === linkAttempt && offer) linking.offer = offer
     } finally {
-        linking.waiting = false
-        app.set({approval: app.approval})
+        if (attempt === linkAttempt) {
+            linking.waiting = false
+            app.set({approval: app.approval})
+        }
     }
 })
+
+const cancelLink = () => {
+    linkAttempt++
+    linking.waiting = false
+    linking.offer = null
+    app.set({approval: null})
+}
 
 const confirmLink = action(async () => {
     const offer = linking.offer
@@ -111,7 +123,10 @@ function linkFlow(s) {
     if (linking.waiting && a?.kind === 'device') return html`<div class="link-wait">
         <p>On your computer, open a terminal in any folder and run:</p>
         ${copyField(a.command, {label: 'Command to run on your computer'})}
-        <p class="waiting-line"><span class="spinner" aria-hidden="true"></span>Waiting for your computer…</p>
+        <div class="waiting-row">
+            <p class="waiting-line"><span class="spinner" aria-hidden="true"></span><span>Waiting for your computer… <span class="faint">Expires in 10 min</span></span></p>
+            <button type="button" class="ghost small" @click=${cancelLink}>Cancel</button>
+        </div>
     </div>`
     return html`<div class="link-start">
         <p class="quiet">Your computer becomes a device of your account: it works on your projects, approves sign-ins and keeps your recovery key. You need Mirai installed there.</p>
@@ -224,25 +239,21 @@ const addPasskey = action(async () => {
 function signedIn(s) {
     setPage({title: 'Account', crumbs: [{label: 'Account'}]})
     const devices = (s.devices ?? []).filter(d => !d.revoked)
+    const ready = setUp(s)
     return html`<header class="profile">
         ${avatar(s.name || '?', s.user, true)}
         <div><h1>${s.name || 'Your account'}</h1>
             <p class="quiet">${s.passkey ? 'Signed in with a passkey' : 'Signed in from your computer'} · ${plural(s.orgs.length, 'organization')}</p></div>
     </header>
-    <section class="card-panel">
-        <h2>${icon('users')}Your user ID</h2>
-        <p class="quiet">Share it with an admin who adds you to their organization.</p>
-        ${copyField(s.user, {label: 'Your user ID'})}
-    </section>
     ${onboarding(s, true)}
-    <section class="card-panel">
+    ${ready || devices.length > 0 ? html`<section class="card-panel">
         <div class="panel-head"><h2>${icon('laptop')}Your computers</h2>
-            ${s.passkey && setUp(s) && !linking.waiting && !linking.offer ? html`<button type="button" class="small" @click=${startLink}>${icon('plus')}Link another</button>` : null}</div>
+            ${s.passkey && ready && !linking.waiting && !linking.offer ? html`<button type="button" class="small" @click=${startLink}>${icon('plus')}Link another</button>` : null}</div>
         ${devices.length === 0 ? html`<p class="quiet">No computer is linked yet.</p>` : html`<ul class="device-list">${devices.map(d => html`<li>
             ${icon('laptop')}<div><strong>${d.name && d.name !== short(d.key) ? d.name : 'Computer'}</strong><code class="hash" title=${d.key}>${short(d.key)}</code></div></li>`)}</ul>`}
-        ${setUp(s) && (linking.waiting || linking.offer || linking.recovering) ? linkFlow(s) : null}
+        ${ready && (linking.waiting || linking.offer || linking.recovering) ? linkFlow(s) : null}
         ${linking.linked && !linking.recovering && !linking.offer ? html`<div class="notice ok">${icon('check-circle')}<p>Linked${s.recovered ? ', and your account has its recovery key' : ''}.</p></div>` : null}
-    </section>
+    </section>` : null}
     ${s.passkey ? null : html`<section class="card-panel">
         <h2>${icon('key')}Add a passkey to this browser</h2>
         <p class="quiet">Your computer approved this session. With a passkey, this browser signs in and signs your reviews by itself; your computer approves it once.</p>
@@ -251,8 +262,15 @@ function signedIn(s) {
     ${s.orgs.length ? html`<section class="card-panel">
         <h2>${icon('building')}Organizations</h2>
         <ul class="org-list">${s.orgs.map(o => html`<li><a href=${`/org/${o.org}`}>${avatar(o.name || '?', o.org)}<strong>${o.name || 'Organization'}</strong></a>${badge(o.role, 'neutral')}</li>`)}</ul>
-        ${s.hosting.max > s.hosting.made && s.recovered && setUp(s) ? html`<details class="more"><summary>${icon('plus')}Create another organization</summary>${orgForm()}</details>` : null}
-    </section>` : null}`
+        ${s.hosting.max > s.hosting.made && s.recovered && ready ? html`<details class="more"><summary>${icon('plus')}Create another organization</summary>${orgForm()}</details>` : null}
+    </section>` : null}
+    <section class="card-panel">
+        <h2>${icon('users')}${ready ? 'Your user ID' : "Joining someone else's organization?"}</h2>
+        <p class="quiet">${ready
+            ? 'Share it with an admin who adds you to their organization.'
+            : 'Optional: instead of creating your own above, share your user ID with an admin so they can add you.'}</p>
+        ${copyField(s.user, {label: 'Your user ID'})}
+    </section>`
 }
 
 function orgForm() {

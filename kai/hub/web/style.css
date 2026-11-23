@@ -86,6 +86,7 @@ a:hover { color: var(--accent-hover); text-decoration: underline; text-underline
 code, kbd, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .tabular, .count, .stat, .num { font-variant-numeric: tabular-nums; }
 .quiet { color: var(--muted); }
+.faint { color: var(--faint); }
 .small-text { font-size: 12px; }
 .lead { color: var(--muted); font-size: 15px; margin-top: 4px; }
 [hidden] { display: none !important; }
@@ -197,7 +198,9 @@ code.full { word-break: break-all; font-size: 11.5px; color: var(--text); }
 
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--accent-border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.waiting-line { display: flex; align-items: center; gap: 8px; color: var(--muted); margin-top: 10px; }
+.waiting-line { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.waiting-line .faint { margin-left: 4px; font-size: 12.5px; }
+.waiting-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; flex-wrap: wrap; }
 
 /* --- Shell --- */
 
@@ -372,7 +375,7 @@ a.tree-org:hover { text-decoration: none; }
 .welcome-card, .onboarding { background: var(--surface); border: 1px solid var(--accent-border); border-radius: var(--radius-panel); padding: 18px 20px; box-shadow: 0 0 0 4px var(--accent-soft); }
 .welcome-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .welcome-card > div { display: flex; gap: 12px; align-items: flex-start; }
-.welcome-card > div > .icon, .onboarding header .icon { color: var(--accent); width: 20px; height: 20px; margin-top: 2px; }
+.welcome-card > div > .icon, .onboarding header > div > .icon { color: var(--accent); width: 20px; height: 20px; margin-top: 2px; }
 .welcome-card p { color: var(--muted); margin-top: 2px; }
 .onboarding { display: flex; flex-direction: column; gap: 14px; }
 .onboarding header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

@@ -174,7 +174,7 @@ export async function linkOffer() {
     try {
         for (;;) {
             await new Promise(done => setTimeout(done, POLL_MS))
-            if (app.approval !== shown) throw new Error('the link was dismissed')
+            if (app.approval !== shown) return null
             const r = await api(`/api/approvals/${a.id}/state`, {secret: a.secret})
             if (r.state !== 'waiting') throw new Error(`the link was ${r.state}: ask again`)
             if (!r.offer) continue
