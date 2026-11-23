@@ -97,6 +97,10 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
    pair join <ticket>`. Both show the same eight digits: the person on the offering machine
    compares them and runs `mirai kai pair approve --code <digits>`, or `--deny`.
 3. A node is paired the same way from its own machine (`mirai-kai pair join`).
+4. Pairing a user who is a member already changes no role: it brings its machine to the other
+   again, which is how a machine that lost the org (it has its id and not its log) gets it back.
+5. On the paired machine, `mirai kai init <project> --project <folder>` makes a folder, empty or
+   not there yet, a workspace of the org's project; `mirai kai new <bookmark>` writes its files.
 
 ### Recover an identity
 

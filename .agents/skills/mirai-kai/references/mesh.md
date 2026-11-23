@@ -134,8 +134,10 @@ or anonymous (an empty claim). The namespace decides who reads it:
   the global IPv6 and mapped addresses a node passed on; the reflexive address a node saw, with both
   ends punching at once; the node's relay over UDP; the node's relay over TCP when UDP to the node
   is blocked. A connection on a worse rung is replaced when a better one appears.
-- The **LAN beacon** is a datagram sent periodically, and at once when `D` changes, on IPv4
-  broadcast and the IPv6 link-local multicast of every interface. Its tags are keyed by `D` and
+- The **LAN beacon** is a datagram sent periodically, and at once when `D` changes, to the
+  broadcast address of every IPv4 network the machine is on (the limited broadcast leaves through
+  one interface alone, often not the LAN's on a machine with virtual adapters) and the IPv6
+  link-local multicast of every interface. Its tags are keyed by `D` and
   rotate with time buckets, so to anyone without `D` the beacons of one device in two buckets, or of
   two orgs in one, are unrelated noise, and clocks a few minutes apart still meet. The end that does
   not dial (the higher X25519 key) answers a beacon with its own. There is no mDNS.
