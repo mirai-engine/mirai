@@ -79,7 +79,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID,
     float4 original = gbuffer_albedo_target.Load(pixel);
     float4 albedo = original;
     float4 emission = gbuffer_emission_target.Load(pixel);
-    float4 motion = pixel_views.Load(pixel);
     uint bits = gbuffer_bits_unpack(normal_texel);
     bool changed = false;
     for (uint word = 0u; word < MASK_WORDS; ++word) {
@@ -113,7 +112,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID,
     if (!changed) return;
     scratch[uint3(p, 0)] = albedo;
     scratch[uint3(p, 2)] = emission;
-    scratch[uint3(p, 3)] = motion;
     if ((frame.flags & FRAME_FLAG_REFLECTANCE) != 0u)
-        scratch[uint3(p, 4)] = decal_reflectance(p, original, albedo);
+        scratch[uint3(p, 3)] = decal_reflectance(p, original, albedo);
 }

@@ -480,6 +480,7 @@ the_probe_of_a_surface_program_says_whether_it_sets_alpha :: proc(t:^testing.T) 
         {"Constant","s.alpha=0.25;",true},
         {"Built","s=mirai_surface_standard(ctx);s.emission+=p.tint;",false}, // the alpha of its material
         {"Rebuilt","s=mirai_surface_standard(ctx);s.alpha*=p.tint.z;",true},
+        {"Specular","s.specular_factor=p.tint.x;",false},
     }
     for c in cases {
         fixture_write(t,f.project,fmt.tprintf("shaders/%s.slang",c.name),fmt.tprintf("//! mirai surface %s\nnamespace %s {{struct Parameters {{float3 tint;uint map;}}; Mirai_Surface evaluate(Mirai_Surface_Context ctx,Parameters p) {{Mirai_Surface s=mirai_surface_default(ctx);%sreturn s;}}}}\n",c.name,c.name,c.body))
@@ -490,6 +491,7 @@ the_probe_of_a_surface_program_says_whether_it_sets_alpha :: proc(t:^testing.T) 
         program,found:=program_named(catalog,c.name)
         testing.expectf(t,found && program.coverage==c.coverage,"%s: coverage %v",c.name,program.coverage)
         testing.expectf(t,program.standard==(c.name=="Built" || c.name=="Rebuilt"),"%s: only a program that names the standard model of its material builds on it",c.name)
+        testing.expectf(t,program.reflectance==(c.name=="Specular"),"%s: only a program that names a specular field may reflect other than its base color and metallic give",c.name)
         own,_:=os.read_entire_file(path_join(f.output,"include",SURFACE_FOLDER,c.name,SURFACE_INCLUDE,allocator=context.temp_allocator),context.temp_allocator)
         testing.expectf(t,strings.contains(string(own),fmt.tprintf("value=%s::evaluate(",c.name)),"%s: its include evaluates it",c.name)
     }

@@ -235,7 +235,7 @@ portals_record :: proc(pass:^erender.Pass,user:rawptr) {
     faces:[erender.NESTED_VIEW_CAPACITY]erender.Nested_Face
     drawn:=erender.pass_nested_faces(pass,state.gates[:state.count],of,&faces)
     if len(drawn)==0 {return}
-    erender.pass_mask_begin(pass,"portal masks")
+    if !erender.pass_mask_begin(pass,"portal masks") {return}
     erender.pass_pipeline(pass,state.pipeline)
     for item in drawn {
         Params :: struct {gate,index,pad0,pad1:u32}

@@ -156,6 +156,16 @@ read_depth :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> f
 	return depths[p.y * int(r.targets.width) + p.x]
 }
 
+// The base color of the G-buffer (sRGB bytes), zero where nothing was drawn:
+// there it holds nothing defined.
+@(private)
+albedo_drawn :: proc(t: ^testing.T, device: ^rhi.Device, r: ^Renderer, pixels: []u8, loc := #caller_location) -> bool {
+	depths := make([]f32, int(r.targets.width * r.targets.height), context.temp_allocator)
+	if !testing.expect(t, golden_read_texture(device, r.targets.albedo, pixels, loc) && golden_read_texture(device, r.targets.linear_depth, mem.slice_data_cast([]u8, depths), loc), rhi.device_error(device), loc = loc) {return false}
+	for depth, i in depths {if depth == 0 {mem.zero_slice(pixels[i * 4:][:4])}}
+	return true
+}
+
 @(private = "file")
 near_bytes :: proc(a, b: [4]int, tolerance: int) -> bool {
 	for i in 0 ..< 4 {if abs(a[i] - b[i]) > tolerance {return false}}
@@ -191,7 +201,7 @@ a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^tes
 		camera.own, camera.fade = c.own, c.fade
 		frames(t, &f, camera, 2)
 		rhi.device_wait_idle(f.device)
-		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
+		albedo_drawn(t, f.device, r, pixels)
 		drawn := 0
 		for i in 0 ..< ALL {if pixels[i * 4] > 200 {drawn += 1}}
 		testing.expectf(t, drawn == c.drawn, "own %d, fade %v: %d pixels of the body, not %d", c.own, c.fade, drawn, c.drawn)
@@ -231,7 +241,7 @@ a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
 		camera.own, camera.own_hidden, camera.layers = c.own, c.own_hidden, c.layers
 		frames(t, &f, camera, 2)
 		rhi.device_wait_idle(f.device)
-		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
+		albedo_drawn(t, f.device, r, pixels)
 		drawn := 0
 		for i in 0 ..< ALL {if pixels[i * 4] > 200 {drawn += 1}}
 		testing.expectf(t, drawn == c.drawn, "own %d, own_hidden %#x, layers %#x: %d pixels of the head, not %d", c.own, c.own_hidden, c.layers, drawn, c.drawn)
@@ -1429,7 +1439,7 @@ material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
 		frames(t, f, camera, 2)
 		rhi.device_wait_idle(f.device)
 		pixels := make([]u8, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
-		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
+		albedo_drawn(t, f.device, r, pixels)
 		red := 0
 		for i := 0; i < len(pixels); i += 4 {if pixels[i] > 200 && pixels[i + 1] < 60 {red += 1}}
 		return red
@@ -1781,11 +1791,16 @@ material_without_specular_keeps_the_whole_diffuse_lobe :: proc(t:^testing.T) {
 material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(t:^testing.T) {
     f:Fixture
     settings:=material_settings()
-    if !fixture_init(t,&f,32,32,settings) {return}
+    if !fixture_init(t,&f,32,32,settings,programs=true) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
+    // A program that names no specular field reflects what its base color and metallic give.
+    grid:=program_find(r,"Grid",.Surface)
+    if !testing.expect(t,grid!=nil,"the tests have the Grid program") {return}
     plain,reflective:=DEFAULT_MATERIAL,DEFAULT_MATERIAL
     plain.roughness=.2
+    plain.program_id=grid.id
+    plain.custom_params=program_defaults(grid)
     reflective.specular_color={.2,.8,.4}
     materials_set(r,{plain,reflective})
     mesh:=ground_quad(r)
@@ -1891,11 +1906,12 @@ OBLIQUE :: Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, f
 target_at :: proc(t:^testing.T,f:^Fixture,target:rhi.Texture,camera:Camera,world:Vec3) -> Vec3 {
     r:=f.renderer
     rhi.device_wait_idle(f.device)
-    values:=make([]f16,int(r.targets.width*r.targets.height)*4,context.temp_allocator)
+    channels:=rhi.format_size(rhi.texture_desc(f.device,target).format)/size_of(f16)
+    values:=make([]f16,int(r.targets.width*r.targets.height)*channels,context.temp_allocator)
     testing.expect(t,golden_read_texture(f.device,target,mem.slice_data_cast([]u8,values)),rhi.device_error(f.device))
     p:=target_pixel(r,camera,world)
-    at:=(p.y*int(r.targets.width)+p.x)*4
-    return {f32(values[at]),f32(values[at+1]),f32(values[at+2])}
+    at:=(p.y*int(r.targets.width)+p.x)*channels
+    return {f32(values[at]),f32(values[at+1]),f32(values[at+2]) if channels>2 else 0}
 }
 
 // The split-sum table the renderer built (dfg.comp), DFG_SIZE texels a side.

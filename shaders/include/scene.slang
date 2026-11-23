@@ -75,9 +75,9 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 [[vk::binding(SLOT_IRRADIANCE, 0)]] Texture2D<float4> irradiance_atlas : register(MIRAI_REGISTER(t, SLOT_IRRADIANCE), space0);
 [[vk::binding(SLOT_DISTANCE, 0)]] Texture2D<float4> distance_atlas : register(MIRAI_REGISTER(t, SLOT_DISTANCE), space0);
 [[vk::binding(SLOT_SURFACE, 0)]] Texture2D<float4> surface_specular : register(MIRAI_REGISTER(t, SLOT_SURFACE), space0);
-// The motion target of the view: rg the motion of each pixel, b the roughness
-// of its material before specular antialiasing, a 1 + its nested view.
-[[vk::binding(SLOT_VIEWS, 0)]] Texture2D<float4> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
+// The views target of the view while it has nested views (FRAME_FLAG_NESTED):
+// 1 + the nested view of each pixel, 0 for the view itself (pixel_view).
+[[vk::binding(SLOT_VIEWS, 0)]] Texture2D<uint> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
 #include "brdf.slang"
 #include "air.slang"
 
@@ -1379,7 +1379,7 @@ Surface surface_from_hit(Hit_Point h, bool given, Mirai_Surface program) {
 }
 // Whether what a material gives a point changes with nothing that says so:
 // its program reads the time. A pass that keeps what a ray found does not keep it.
-bool material_changing(Material m) { return m.program_id != 0u && materials[m.row].volume.changing != 0u; }
+bool material_changing(Material m) { return m.program_id != 0u && (materials[m.row].volume.program & MATERIAL_PROGRAM_CHANGING) != 0u; }
 Surface surface_from_triangle(uint instance_index, uint primitive, float2 bary, float footprint) {
     return surface_from_hit(hit_point(instance_index, primitive, bary, footprint), false, (Mirai_Surface)0);
 }

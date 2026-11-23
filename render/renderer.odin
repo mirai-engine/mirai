@@ -373,6 +373,7 @@ Frame_Targets :: struct {
 	direct:                  rhi.Texture,
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
 	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
+	views:                   rhi.Texture, // R8 uint: 1 + the nested view of each pixel, 0 the view itself (pass_nested_add)
 	using contact_targets: struct {
 		contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
 		contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
@@ -1027,7 +1028,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	// The G-buffer each program resolves where the program depth is its own.
 	gbuffer := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Vis_Resolve_Vert], fragment = &r.shader_codes[.Vis_Resolve_Frag],
-		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
+		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
 		depth_format = .D16_Unorm, depth_test = true, depth_write = false, depth_compare = .Equal,
 		name = "resolve",
 	}
@@ -1993,7 +1994,7 @@ scene_targets :: proc(r: ^Renderer, v: ^View_State) -> bool {
 	ok &&= full(r, t, &t.albedo, .RGBA8_Srgb, attachment, "gbuffer albedo")
 	ok &&= full(r, t, &t.normal, .RGBA16_Float, attachment, "gbuffer normal")
 	ok &&= full(r, t, &t.emission, .RGBA16_Float, attachment, "gbuffer emission")
-	ok &&= full(r, t, &t.motion, .RGBA16_Float, attachment, "gbuffer motion")
+	ok &&= full(r, t, &t.motion, .RG16_Float, attachment, "gbuffer motion")
 	ok &&= full(r, t, &t.linear_depth, .R32_Float, attachment, "gbuffer depth")
 	ok &&= full(r, t, &t.direct, .RGBA16_Float, {.Sampled, .Storage}, "direct light")
 	ok &&= full(r, t, &t.display, .RGBA16_Float, HISTORY_USAGE, "display")
