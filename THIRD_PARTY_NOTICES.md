@@ -132,24 +132,39 @@ are kept here and, where the license asks for it, in the header of the file.
 - **AMD FidelityFX Super Resolution 3.1.4** (MIT; © 2024 Advanced Micro Devices, Inc.),
   <https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK>. `plugins/fsr/shaders/fsr3` (the
   upscaler, optical flow, frame interpolation and SPD headers, altered: reduced to the one
-  configuration Mirai compiles, as their `UPSTREAM.md` says) and the pass sequence of
-  `plugins/fsr/runtime/framegen.odin`, translated from `ffx_opticalflow.cpp`,
-  `ffx_frameinterpolation.cpp` and `ffx_fsr3.cpp`. Game, with the `fsr` plugin.
+  configuration Mirai compiles, as their `UPSTREAM.md` says), their Slang entry-point translations
+  `plugins/fsr/shaders/fsr3_*.slang`, and the pass sequence of `plugins/fsr/runtime/framegen.odin`,
+  translated from `ffx_opticalflow.cpp`, `ffx_frameinterpolation.cpp` and `ffx_fsr3.cpp`. Game,
+  with the `fsr` plugin.
 - **Zstandard 1.5.7** (BSD-3-Clause; © Meta Platforms, Inc. and affiliates),
   <https://github.com/facebook/zstd>. MDC2's Huffman entropy coder and its supporting bitstreams,
   histogram and FSE weight coding in `std/compressor/data` derive from the upstream Huffman and
   entropy libraries. See `std/compressor/data/LICENSE-zstd.txt`. Game.
-
-The files derived from Apache-2.0 work state their changes in their header.
 - **Frogfood** (MIT; © 2023 Jake Ryan), <https://github.com/JuanDiegoMontoya/Frogfood>. The
   level of the sun a point takes by the width of its footprint, in `sun_pick` of
   `shaders/include/shadow_maps.slang`, altered. Game.
 - **Bevy** (MIT or Apache-2.0; © the Bevy contributors), <https://github.com/bevyengine/bevy>.
   The band over which a level of the sun or a mip of a light blends into the next, in
-  `shaders/include/shadow_maps.slang` and `shaders/direct_maps.comp.slang`, altered. Game.
+  `shaders/include/shadow_maps.slang` and `shaders/direct_maps.comp.slang`, and the auto-exposure
+  speed and transition defaults of `shaders/exposure_adapt.comp.slang`, altered. Game.
 - **The Forge** (Apache-2.0; © 2017 - 2025 The Forge Interactive Inc.),
   <https://github.com/ConfettiFX/The-Forge>. The order in which pages of the shadow pool are taken
   back, those unread the longest first, in `shaders/shadow_pages.comp.slang`, altered. Game.
+- **Filament** (Apache-2.0; © Google LLC), <https://github.com/google/filament>. Multi-scattering
+  energy compensation and anisotropic bent reflection references in `shaders/include/brdf.slang`,
+  altered. Game.
+- **OpenPBR Surface** (Apache-2.0; © Contributors to the OpenPBR Project),
+  <https://github.com/AcademySoftwareFoundation/OpenPBR>. The surface reflectance model implemented
+  in `shaders/include/brdf.slang` and `shaders/include/scene.slang`, altered. Game.
+- **Tracy 0.14.2** (BSD-3-Clause; © 2017-2026 Bartosz Taudul),
+  <https://github.com/wolfpld/tracy>. Wire protocol constants and records of
+  `plugins/tracy/runtime/tracy_protocol.odin`, altered. Editor and game, with the `tracy` plugin.
+- **LZ4** (BSD-2-Clause; © 2011-present Yann Collet), <https://github.com/lz4/lz4>. Block format
+  constants and compression of `plugins/tracy/runtime/lz4.odin`, altered. Editor and game, with
+  the `tracy` plugin.
+
+The files derived from Apache-2.0 work note their adaptation here and, where applicable, in their
+headers.
 
 ## Fonts and assets
 
@@ -167,12 +182,12 @@ The files derived from Apache-2.0 work state their changes in their header.
   Scott Petrovic), and the model `psx-05` (CC0 1.0; elbolilloduro), from
   <https://github.com/Mesh2Motion/mesh2motion-app>. The rig is the template of
   `cook/rig/template.odin`; editor. The files are test fixtures in
-  `assets/fixtures/mesh2motion-human`, not distributed.
+  `assets/fixtures/mesh2motion-human` (tracked in the repository, not shipped in games).
 - **Mesh2Motion** fox, horse, bird, dragon, kaiju, shark, snake and spider rigs and their models
   (CC0 1.0; Scott Petrovic), from the same repository: their bones and samples of their surfaces
   are the templates of `cook/rig/animals.odin` and `cook/rig/animals/`; editor. The fox's `walk`
-  clip and its `horse` variation are test fixtures in `assets/fixtures/mesh2motion-fox`, not
-  distributed.
+  clip and its `horse` variation are test fixtures in `assets/fixtures/mesh2motion-fox` (tracked
+  in the repository, not shipped in games).
 - **Poly Haven** HDRIs `kloofendal_48d_partly_cloudy`, `belfast_sunset` and `kloofendal_overcast`
   (CC0 1.0; Greg Zaal and Dimitrios Savva), <https://polyhaven.com/hdris>. The skies of the demo,
   in `demo/source/textures`.
