@@ -24,15 +24,13 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 ## Map
 
 - `vfx` (particles: layered `.particle` effects, presets, GPU pools and passes, surfaces and
-  bones of a shape, Vfx programs with surfaces, channels and grids, stages, volumes, events to the
-  game):
+  Vfx programs with surfaces, channels and grids, stages, volumes, distance culling):
   [format](references/vfx.md#format), [game](references/vfx.md#game),
-  [surfaces, bones and resources](references/vfx.md#surfaces-bones-and-resources),
+  [surfaces and resources](references/vfx.md#surfaces-and-resources),
   [grids and stages](references/vfx.md#grids-and-stages),
-  [world textures](references/vfx.md#world-textures), [grid states](references/vfx.md#grid-states),
+  [world textures](references/vfx.md#world-textures),
   [volumes](references/vfx.md#volumes), [channels](references/vfx.md#channels),
-  [data channels](references/vfx.md#data-channels), [UI effects](references/vfx.md#ui-effects),
-  [reports](references/vfx.md#reports),
+  [UI effects](references/vfx.md#ui-effects), [culling](references/vfx.md#culling),
   [GPU pools and emitters](references/vfx.md#pools-and-emitters),
   [births and steps](references/vfx.md#births-and-steps),
   [Vfx programs](references/vfx.md#vfx-programs), [passes](references/vfx.md#passes),

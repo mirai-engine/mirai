@@ -178,7 +178,7 @@ particle_apply :: proc(s:^editor.Session,e:core.Entity) -> bool {
     f:=effect_read(s,w,e) or_return
     file:=particle_file(s,f.particle)
     file.info=f.shown
-    instance_parameters(s,&f.override,&file)
+    instance_parameters(s,&f.override,&file,f.particle,f.preset)
     opened,edit_ready:=editor.edit_open(s,"Apply to particle")
     if !edit_ready {return false}
     defer editor.edit_close(s,opened)

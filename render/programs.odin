@@ -14,7 +14,6 @@ PARTICLE_ATTRIBUTE_BYTES :: abi.PARTICLE_ATTRIBUTE_BYTES // of the Attributes of
 PROGRAM_RESOURCES :: abi.PROGRAM_RESOURCES // that a Vfx program reads at most
 PROGRAM_STAGES :: abi.PROGRAM_STAGES       // that a Vfx program has at most
 PROGRAM_STAGE_PARTICLES :: abi.PROGRAM_STAGE_PARTICLES
-PROGRAM_DATA_WORDS :: abi.PROGRAM_DATA_WORDS // of an entry of a data channel
 
 Program :: abi.Program
 Program_Domain :: abi.Program_Domain
@@ -71,7 +70,6 @@ catalog_valid :: proc(catalog:abi.Shader_Catalog) -> bool {
         grids:u32
         for resource,index in program.resources {
             if resource.kind==.Grid {grids|=1<<u32(index)}
-            if resource.kind==.Data && (resource.words<1 || resource.words>PROGRAM_DATA_WORDS) {return false}
         }
         for stage in program.stages {
             if stage.iterations<1 || stage.over!=PROGRAM_STAGE_PARTICLES && grids&(1<<u32(stage.over))==0 || stage.writes&~grids!=0 {return false}

@@ -16,6 +16,7 @@ import vfx "plugins:vfx/runtime"
 WATCH_MAX :: 1024
 WATCH_FRAMES :: 600
 WATCH_POSES :: 4 // frames in flight whose poses wait for their rows
+WATCH_WAIT :: WATCH_POSES+2 // frames particle.instance.inspect lets go by for the rows of an emitter it asks for the first time
 
 Particle_Watch :: struct {
     world:rawptr,            // the world it reads: the edited one or that of a Play; nil: none

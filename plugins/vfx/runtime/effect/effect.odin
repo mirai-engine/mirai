@@ -32,7 +32,7 @@ PARTICLE_NAME_BYTES :: 64
 PARTICLE_MAX_PARAMETERS :: 32
 PARTICLE_MESHES :: 4
 
-Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface,Bones}
+Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface}
 Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh,Beam}
 Particle_Blend :: enum u32 {Additive,Alpha}
 Particle_Collision :: enum u32 {None,World}
@@ -69,15 +69,16 @@ Particle_Gradient :: struct {
 // The shape faces +Y of the entity, where a cone opens; the particles leave
 // it along its normal, or along +Y from a box and a line. A Surface starts
 // them on the triangles of a mesh, by their area, and they leave along its
-// normal with the velocity of the surface times inherit_velocity. Bones
-// starts them on the bones of a skinned mesh, by their length, away from the
-// bone by up to shape_size.x as shell says, with the velocity of the bone.
+// normal with the velocity of the surface times inherit_velocity; a skinned
+// mesh moves its triangles, and the particles start where they are drawn.
 // The editor shows a field in the group its tag names, or in that of the
 // field before it.
 Particle_Info :: struct {
     duration:f32 `mirai:"section=Spawn,min=0,unit=s"`, // of a cycle
     prewarm:bool,                             // a looping instance starts as if it had run a whole life
+    max_instances:u16,                        // of the primary layer: emitters of the effect that run at once, those nearest a simulation source (scene.Simulation_Sources); the others pause and are not drawn; 0: all
     max_particles:u32,                        // alive at once; 0: what the rate, the bursts and the lifetime need
+    cull_distance:f32 `mirai:"min=0,unit=m"`, // of the primary layer: its emitters farther than this from every simulation source pause and are not drawn; 0: at any distance
     rate:f32 `mirai:"min=0,unit=1/s"`,
     rate_over_distance:f32 `mirai:"min=0,unit=1/m"`, // per metre the entity travels
     bursts:[PARTICLE_BURSTS]Particle_Burst,
@@ -125,7 +126,6 @@ Particle_Info :: struct {
     trigger:Particle_Event `mirai:"section=Collision"`, // when sub_particle starts particles where one of these is
     sub_particle:base.Asset_Id,               // a .particle
     sub_count:u32,                            // its particles per event
-    report:Particle_Event,                    // what of its particles the game hears of (vfx.Particle_Reports), frames later: presentation alone
     beam_end:[3]f32 `mirai:"section=Look,unit=m"`, // endpoint offset in the emitter's axes
     beam_arc:f32 `mirai:"unit=m"`, // midpoint offset along the emitter's +Y
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"section=Program,text"`, // a Vfx program of the shaders; "" for none
@@ -247,7 +247,7 @@ particle_validate :: proc(desc:Particle_Desc) -> Particle_Problem {
 @(private="file")
 particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem {
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
-    if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line, Surface or Bones"}}
+    if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line or Surface"}}
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon, Mesh or Beam"}}
     if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
@@ -259,10 +259,10 @@ particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem
         if meshes>1 {return {"sort","A sorted effect draws one mesh back to front: keep one of meshes, or turn sort off"}}
     }
     if p.trigger>max(Particle_Event) {return {"trigger","Use None, Death, Collision or Trail"}}
-    if p.report>max(Particle_Event) || p.report==.Trail {return {"report","Use None, Death or Collision"}}
     if p.emission_mode>max(asset.Emission_Mode) {return {"emission_mode","Use Physical or Relative"}}
     if len(serial.text_field(p.program[:]))==len(p.program) {return {"program","Name the program in fewer than 64 bytes"}}
     if p.duration<0 {return {"duration","Use a duration of zero or more seconds"}}
+    if p.cull_distance<0 {return {"cull_distance","Use a distance of zero or more metres; 0 runs its emitters at any distance"}}
     if p.rate<0 || p.rate_over_distance<0 {return {"rate","Use rates of zero or more"}}
     for size in p.shape_size {if size<0 {return {"shape_size","Use sizes of zero or more"}}}
     if p.shape_angle<0 {return {"shape_angle","Use an angle of zero or more"}}

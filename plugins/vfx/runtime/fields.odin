@@ -93,3 +93,18 @@ fields_sync :: proc(sync:^Particle_Sync,gravities:^core.Table(volume.Gravity,.Re
         sync.fields_dirty=true
     }
 }
+
+// The strongest gravity (m/s2) and wind (m/s) anywhere in the fields: how far
+// they can take a particle (emitter_bounds).
+fields_reach :: proc "contextless" (f:^Gpu_Fields) -> (gravity,wind:f32) {
+    gravity=linalg.length(f.fallback.xyz)
+    g:=&f.gravity
+    for i in 0..<min(g.count.x,GRAVITY_VOLUMES) {
+        pull:=abs(g.centers[i].y) if g.centers[i].x!=0 else linalg.length(g.pulls[i].xyz)
+        gravity=max(gravity,pull)
+    }
+    for i in 0..<min(f.wind.count.x,volume.WIND_VOLUMES) {
+        wind=max(wind,linalg.length(f.wind.values[i].xyz))
+    }
+    return
+}

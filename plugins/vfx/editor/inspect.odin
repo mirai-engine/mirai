@@ -25,6 +25,8 @@ Emitter_Pose :: struct {
     frame:u64,
     id:u64,
     origin:[3]f32, // what the places of its particles are relative to; zero for those local to it or of an effect view
+    local_space:bool,          // its particles are in its own axes, those of transform
+    transform:matrix[4,4]f32,  // where it was in that frame
 }
 
 // The rows of an emitter in one frame, as plain blocks of its range: its
@@ -45,7 +47,17 @@ emitter_read :: proc(pass:^erender.Pass,sync:^vfx.Particle_Sync,id:u64,count:u32
     erender.pass_readback(pass,r.particles.buffer,r.particles.offset,{READ_PARTICLES,r.particles.size}) or_return
     erender.pass_readback(pass,r.state.buffer,r.state.offset,{READ_STATE,r.state.size}) or_return
     if r.attributes.size>0 {erender.pass_readback(pass,r.attributes.buffer,r.attributes.offset,{READ_ATTRIBUTES,r.attributes.size}) or_return}
-    return {frame=pass.frame+1,id=id,origin=sync.pool.origin if !r.local else {}},true
+    return {frame=pass.frame+1,id=id,origin=sync.pool.origin if !r.local else {},local_space=r.local_space,transform=r.transform},true
+}
+
+// A particle of rows in the world: its place and velocity, from those of its
+// emitter when its particles are local to it.
+pose_world :: proc "contextless" (pose:Emitter_Pose,p:vfx.Gpu_Particle) -> (position,velocity:[3]f32) {
+    if !pose.local_space {return p.position+pose.origin,p.velocity}
+    m:=pose.transform
+    position=(m*[4]f32{p.position.x,p.position.y,p.position.z,1}).xyz
+    velocity=(m*[4]f32{p.velocity.x,p.velocity.y,p.velocity.z,0}).xyz
+    return
 }
 
 // The rows emitter_read asked for that came back last, with the pose of

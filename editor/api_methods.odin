@@ -479,8 +479,8 @@ api_methods_register :: proc(s:^Session,st:^Api_State) {
 
 // ---------------------------------------------------------------- frames
 
-// Advances frames from inside a method. A manual editor gives each the same dt.
-@(private)
+// Advances frames from inside a method, as a plugin's method that waits for
+// what the GPU brings back does. A manual editor gives each the same dt.
 api_frames :: proc(s:^Session,count:int,dt:f32) -> int {
     st:=api_state(s)
     p:=s.app.platform

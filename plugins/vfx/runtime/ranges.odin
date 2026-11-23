@@ -11,11 +11,13 @@ Pool_Range :: struct {
 // Where the rows of an emitter are in the buffers of its pool: the first
 // count of its particles, their Attributes (stride bytes each; no size
 // without a program that keeps them) and its counters. local: their places
-// are its own or of an effect view, not relative to Pool.origin.
+// are its own or of an effect view, not relative to Pool.origin; local_space:
+// its own, in the axes of transform, where it is this frame.
 Emitter_Ranges :: struct {
     particles,attributes,state:Pool_Range,
     stride:u32,
-    local:bool,
+    local,local_space:bool,
+    transform:matrix[4,4]f32,
 }
 
 // The ranges of the emitter of an id; false for one the pool does not hold.
@@ -29,6 +31,8 @@ emitter_ranges :: proc(pool:^Pool,id:u64,count:u32) -> (r:Emitter_Ranges,ok:bool
     r.state={pool_buffer(pool,.State),u64(at)*size_of(Gpu_State),size_of(Gpu_State)}
     r.stride=s.stride
     r.local=s.desc.info.local_space || s.desc.view!=0
+    r.local_space=s.desc.info.local_space && s.desc.view==0
+    r.transform=s.desc.transform
     return r,true
 }
 
@@ -37,5 +41,5 @@ emitter_ranges :: proc(pool:^Pool,id:u64,count:u32) -> (r:Emitter_Ranges,ok:bool
 emitter_bytes :: proc(pool:^Pool,at:int) -> u64 {
     s:=&pool.slots[at]
     shared:=pool_buffer(pool,.Particles).size+pool_buffer(pool,.Lists).size
-    return u64(s.capacity)*(shared/u64(max(pool.capacity,1))+u64(s.stride)+4*u64(s.birth_entries!=max(u32)))+pool_buffer(pool,.State).size/EMITTER_CAPACITY+size_of(Gpu_Emitter)
+    return u64(s.capacity)*(shared/u64(max(pool.capacity,1))+u64(s.stride))+pool_buffer(pool,.State).size/EMITTER_CAPACITY+size_of(Gpu_Emitter)
 }

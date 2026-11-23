@@ -21,7 +21,6 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import fog "plugins:fog/runtime"
 import "plugins:vfx/runtime/effect"
-import "plugins:vfx/runtime/gridfile"
 
 // The passes of the plugin on the GPU, with the shaders of the engine, the
 // stages of the plugin and the programs of testdata: a generation into
@@ -326,31 +325,29 @@ particle_rows_go_to_the_gpu_only_when_their_emitter_changes :: proc(t: ^testing.
 		births_add(clock_of(&w.clocks, e), 0, 8, 8, 0)
 	}
 	test_world_settle(w)
-	reports: Particle_Reports
-	defer particle_reports_free(&reports)
 	problems: core.Problems
-	tell :: proc(f: ^Gpu_Fixture, w: ^Emitters_World, reports: ^Particle_Reports, problems: ^core.Problems) {
+	tell :: proc(f: ^Gpu_Fixture, w: ^Emitters_World, problems: ^core.Problems) {
 		drawn: erender.Render_Sync
-		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), nil, core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, reports, nil, nil, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {})
+		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), nil, core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {})
 	}
 	for _ in 0 ..< 3 {
-		tell(f, w, &reports, &problems)
+		tell(f, w, &problems)
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
 	}
 	pool := &f.sync.pool
-	tell(f, w, &reports, &problems)
+	tell(f, w, &problems)
 	testing.expect(t, pool.pending == {} && pool.dirty == {}, "a frame that changes nothing tells the GPU nothing")
 	testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
 	moved := core.edit(&w.worlds, emitters[1])
 	moved.transform.position.y, moved.previous.position.y = 1, 1
 	test_world_settle(w)
-	tell(f, w, &reports, &problems)
+	tell(f, w, &problems)
 	only: Slot_Bits
 	bits_add(&only, pool_slot_find(pool, u64(emitters[1])))
 	testing.expect(t, pool.pending == only && pool.dirty == only, "a frame that moves one emitter writes its row alone")
 	for _ in 0 ..< 3 {
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-		tell(f, w, &reports, &problems)
+		tell(f, w, &problems)
 	}
 	tracker: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&tracker, context.allocator)
@@ -359,7 +356,7 @@ particle_rows_go_to_the_gpu_only_when_their_emitter_changes :: proc(t: ^testing.
 		context.allocator = mem.tracking_allocator(&tracker)
 		for _ in 0 ..< 4 {
 			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-			tell(f, w, &reports, &problems)
+			tell(f, w, &problems)
 		}
 	}
 	testing.expect_value(t, tracker.total_allocation_count, i64(0))
@@ -1195,60 +1192,10 @@ particle_channel_births_start_where_the_game_says :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
-// An effect whose report names death or collision tells the game, through the
-// reports channel, of each particle that dies or hits the scene, once, frames
-// later, with the entity of its emitter and, of a hit, the normal of the floor.
+// The Surface shape of a skin starts its particles on its triangles as the
+// renderer poses them, not where its file places them.
 @(test)
-particle_reports_tell_the_game_of_deaths_and_hits :: proc(t: ^testing.T) {
-	for dt in ([]f32{1.0 / 30, 1.0 / 144}) {
-		f := new(Gpu_Fixture)
-		defer free(f)
-		if !gpu_fixture_init(t, f, 64, 48, test_settings()) {return}
-		defer gpu_fixture_destroy(f)
-		r := &f.renderer
-		gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.6, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}}, true)
-		camera := gpu.Camera{position = {0, 1, 4}, forward = {0, -0.7, -4}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-		brief := test_emitter(1, {0, 0, 0})
-		brief.info.lifetime, brief.info.report, brief.owner = {0.05, 0.05}, .Death, core.Entity(77)
-		// Thrown over the floor, each dies at its first hit: one report each.
-		falls := test_emitter(2, {-1.5, 0, 0})
-		falls.info.lifetime, falls.info.velocity, falls.info.acceleration = {5, 5}, {{2, 0, 0}, {2, 0, 0}}, {0, -9.8, 0}
-		falls.info.collision, falls.info.collision_life, falls.info.report, falls.owner = .World, 1, .Collision, core.Entity(78)
-		reports: Particle_Reports
-		defer particle_reports_free(&reports)
-		heard: [2]int
-		for i in 0 ..< int(0.75 / dt) {
-			brief.spawns = test_burst(9) if i == 0 else {}
-			falls.spawns = test_burst(4) if i == 0 else {}
-			testing.expect(t, frame_emitters(f, &f.sync, {brief, falls}, dt))
-			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-			data_read(nil, &reports, &f.sync, f.app.renderer, core.World_Id{index = 1}, nil)
-			for report in reports.reports {
-				switch report.entity {
-				case 77:
-					testing.expect(t, report.kind == .Death)
-					heard[0] += 1
-				case 78:
-					testing.expectf(t, report.kind == .Collision && report.normal.y > 0.9 && report.position.y > -0.5 && report.position.y < 0, "a hit over the floor %v", report)
-					heard[1] += 1
-				case:
-					testing.expectf(t, false, "a report of no emitter %v", report)
-				}
-			}
-		}
-		testing.expectf(t, heard == {9, 4}, "at steps of %v s: %v deaths and hits, not 9 and 4", dt, heard)
-		testing.expect_value(t, reports.lost, u32(0))
-		expect_clean(t, f.device)
-	}
-}
-
-// The Bones shape starts its particles on the bones of a skinned mesh: those
-// of its file in their bind pose, and those of its skin as the renderer poses
-// it, each from the joint of its parent bone, past the bones the skin does not
-// name, to its own. The Surface shape of the skin starts them on its
-// triangles as it is posed.
-@(test)
-particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^testing.T) {
+particle_surface_shape_starts_particles_on_the_posed_skin :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
 	settings := test_settings()
@@ -1256,45 +1203,7 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
-	// A root, an arm and a hand; the skin names the arm and the hand.
-	skeleton_id, mesh_id := base.Asset_Id{0x7669, 1}, base.Asset_Id{0x7669, 2}
-	bones: [3]asset.Skeleton_Bone
-	paths := [3]string{"root", "root/arm", "root/arm/hand"}
-	for &bone, i in bones {
-		path := paths[i]
-		base.text_set(bone.name[:], path)
-		base.text_set(bone.path[:], path)
-		bone.target = base.name_hash(path)
-		bone.parent = i32(i) - 1
-		bone.rotation = 1
-		bone.scale = {1, 1, 1}
-	}
-	arm, hand := [3]f32{1.2, 0, 0}, [3]f32{1.2, 1.5, 0}
-	joints := [2]asset.Rig_Joint{{node = 1, inverse_bind = moved(-arm)}, {node = 2, inverse_bind = moved(-hand)}}
-	vertices := [3]asset.Vertex{{position = arm}, {position = hand}, {position = arm + {0, 0, 0.1}}}
-	indices := [3]u32{0, 1, 2}
-	// The hand moves its vertex; the arm, the others.
-	skin: [3]asset.Skin_Vertex
-	for &v in skin {v.weights[0] = 255}
-	skin[1].joints[0] = 1
-	rig_geometry: asset.Mesh_Geometry
-	testing.expect(t, asset.mesh_build({vertices = vertices[:], skin = skin[:]}, indices[:], nil, &rig_geometry, context.temp_allocator))
-	types := &f.assets.types
-	testing.expect_value(t, asset.skeleton_save(fmt.tprintf("%s/rig.skeleton", f.folder), types, {id = skeleton_id, bones = bones[:]}), asset.Error.None)
-	testing.expect_value(t, asset.mesh_save(fmt.tprintf("%s/rig.mesh", f.folder), types, {id = mesh_id, geometry = rig_geometry, joints = joints[:], skeleton = skeleton_id}), asset.Error.None)
-	testing.expect(t, host.assets_scan(&f.assets))
-	rig := bone_rig(&f.sync.rigs, f.app.assets, mesh_id)
-	if !testing.expect(t, rig != nil && len(rig.joints) == 2) {return}
-	testing.expect(t, rig.joints[0].parent == -1 && rig.joints[1].parent == 0, "the arm starts no bone; the hand's goes from the arm")
-	testing.expect(t, linalg.length(rig.joints[1].bind - hand) < 1e-4)
-	// In the bind pose, from the file.
 	identity: matrix[4, 4]f32 = 1
-	bind := bones_of(&f.sync, f.app.renderer, rig, 0, identity, false)
-	testing.expect(t, bind.kind == .Bones && bind.count == 1)
-	if bind.count == 1 {
-		segment := f.sync.segments[bind.first]
-		testing.expect(t, linalg.length(segment.start - arm) < 1e-4 && linalg.length(segment.end - hand) < 1e-4 && abs(segment.length - 1.5) < 1e-4)
-	}
 	// Posed: the skin one metre up.
 	cube := host.assets_shape(&f.assets, .Cube)
 	influences := make([]erender.Skin_Influence, cube.vertex_count, context.temp_allocator)
@@ -1303,41 +1212,24 @@ particle_bones_and_surface_shapes_start_particles_on_the_posed_skin :: proc(t: ^
 	if !testing.expect(t, made, r.error) {return}
 	up := moved({0, 1, 0})
 	testing.expect(t, erender.skin_update(f.app.renderer, posed, {up, up}, reset_motion = true))
-	clear(&f.sync.segments)
-	bone := bones_of(&f.sync, f.app.renderer, rig, posed, identity, true)
-	testing.expect(t, bone.kind == .Bones && bone.count == 1)
-	if bone.count == 1 {
-		segment := f.sync.segments[bone.first]
-		testing.expect(t, linalg.length(segment.start - (arm + {0, 1, 0})) < 1e-4 && linalg.length(segment.end - (hand + {0, 1, 0})) < 1e-4)
-	}
-	bone.previous = bone.transform
 	gpu.scene_set_environment(r,{},{sky = {0.02, 0.02, 0.02}})
 	gpu.scene_update(r,0,{{object_id = 1, mesh = f.cube, transform = trs({0, -1, 0}, {12, 0.2, 12}), tint = {0.05, 0.05, 0.05}}},true)
 	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	along := test_emitter(1, {-2.5, 2, 0})
-	along.capacity, along.info.lifetime, along.info.size = 512, {5, 5}, {0.12, 0.12}
-	along.info.shape, along.info.shape_size = .Bones, {0, 0, 0}
-	along.resources = test_resources(&f.sync, bone)
 	onto := test_emitter(2, {2.5, 2, 0})
 	onto.capacity, onto.info.lifetime, onto.info.size = 512, {5, 5}, {0.12, 0.12}
 	onto.info.shape = .Surface
 	onto.resources = test_resources(&f.sync, {kind = .Surface, mesh = posed, triangles = f.cube_primitives, transform = identity, previous = identity})
 	DT :: f32(1.0 / 60)
 	for i in 0 ..< 8 {
-		along.spawns = test_burst(400) if i == 0 else {}
-		onto.spawns = along.spawns
-		testing.expect(t, frame_emitters(f, &f.sync, {along, onto}, DT))
+		onto.spawns = test_burst(400) if i == 0 else {}
+		testing.expect(t, frame_emitters(f, &f.sync, {onto}, DT))
 		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
 	}
 	rhi.device_wait_idle(f.device)
-	testing.expect_value(t, particles_alive(f), u32(800))
+	testing.expect_value(t, particles_alive(f), u32(400))
 	pixels, w, _, ok := gpu.renderer_capture(r)
 	testing.expect(t, ok, r.error)
 	if ok {
-		on := pixel(pixels, w, project(r, camera, {1.2, 1.75, 0}))
-		rest := pixel(pixels, w, project(r, camera, {1.2, 0.2, 0}))
-		emitter := pixel(pixels, w, project(r, camera, {-2.5, 2, 0}))
-		testing.expectf(t, on[0] > emitter[0] + 60 && on[0] > rest[0] + 60, "the posed bone %v glows with its particles, its bind pose %v and the emitter %v do not", on, rest, emitter)
 		skin := pixel(pixels, w, project(r, camera, {0, 1, 0.5}))
 		unposed := pixel(pixels, w, project(r, camera, {0, -0.2, 0.5}))
 		beside := pixel(pixels, w, project(r, camera, {2.5, 2, 0}))
@@ -1800,12 +1692,11 @@ particle_collisions_land_on_the_scene_and_slide_by_their_friction :: proc(t: ^te
 	expect_clean(t, f.device)
 }
 
-// Particles dropped on a floor hit it while they bounce and then rest on it:
-// slower than the rest speed a surface keeps them without a hit, an event or
-// lost life. The hits they report and the particles alive do not depend on
-// the steps the frames take.
+// Particles dropped on a floor bounce and then rest on it: slower than the
+// rest speed a surface keeps them without a hit or lost life, whatever steps
+// the frames take.
 @(test)
-particles_that_land_hit_once_per_bounce_and_rest_at_any_frame_rate :: proc(t: ^testing.T) {
+particles_that_land_rest_at_any_frame_rate :: proc(t: ^testing.T) {
 	for dt in ([]f32{1.0 / 30, 1.0 / 144}) {
 		f := new(Gpu_Fixture)
 		defer free(f)
@@ -1817,20 +1708,13 @@ particles_that_land_hit_once_per_bounce_and_rest_at_any_frame_rate :: proc(t: ^t
 		// From 0.45 m over the floor they land at 3 m/s, bounce once at 0.9 m/s and then rest.
 		drop := test_emitter(1, {0, 0, 0})
 		drop.capacity, drop.info.lifetime, drop.info.size, drop.info.acceleration = 128, {5, 5}, {0.1, 0.1}, {0, -9.8, 0}
-		drop.info.collision, drop.info.bounce, drop.info.collision_life, drop.info.report, drop.owner = .World, 0.3, 0.1, .Collision, core.Entity(77)
-		reports: Particle_Reports
-		defer particle_reports_free(&reports)
-		hits := 0
+		drop.info.collision, drop.info.bounce, drop.info.collision_life, drop.owner = .World, 0.3, 0.1, core.Entity(77)
 		for i in 0 ..< int(1.5 / dt) {
 			drop.spawns = test_burst(100) if i == 0 else {}
 			testing.expect(t, frame_emitters(f, &f.sync, {drop}, dt))
 			testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
-			data_read(nil, &reports, &f.sync, f.app.renderer, core.World_Id{index = 1}, nil)
-			for report in reports.reports {hits += 1 if report.kind == .Collision else 0}
 		}
-		testing.expectf(t, hits == 200, "at steps of %v s the 100 particles report a hit per bounce, 200, not %d", dt, hits)
 		testing.expectf(t, particles_alive(f) == 100, "at steps of %v s all 100 are alive, not %d", dt, particles_alive(f))
-		testing.expect_value(t, reports.lost, u32(0))
 		expect_clean(t, f.device)
 	}
 }
@@ -1879,50 +1763,6 @@ particle_sprites_hand_their_data_to_the_program_of_their_material :: proc(t: ^te
 		testing.expectf(t, blue[2] > blue[1] + 60 && blue[2] > blue[0] + 60, "the sprite whose particle gives blue, its random value and its size %v shows it", blue)
 		testing.expectf(t, green[1] > green[2] + 60 && green[1] > green[0] + 60, "the sprite whose particle gives nothing %v shows the green of its material", green)
 		delete(pixels)
-	}
-	expect_clean(t, f.device)
-}
-
-// A grid that names a .grid of its cells starts from it, wherever its region
-// wraps, and counts on from there.
-@(test)
-particle_grids_start_from_their_state :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 64, 48, settings) {return}
-	defer gpu_fixture_destroy(f)
-	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
-	DT :: f32(1.0 / 60)
-	baked :: f32(20)
-	info := gridfile.Grid_Info{cells = {4, 1, 3}, layers = 1, cell_size = 0.5}
-	cells: [12 * 4]f32
-	for c in 0 ..< 12 {cells[c * 4] = baked}
-	// The state as a file, and a grid that starts from it.
-	id := base.Asset_Id{0x6772696400000001, 1}
-	bytes, error := gridfile.grid_bytes(&f.assets.types, {id = id, info = info, cells = cells[:]}, context.temp_allocator)
-	if !testing.expect_value(t, error, asset.Error.None) {return}
-	testing.expect(t, os.write_entire_file(fmt.tprintf("%s/state.grid", f.folder), bytes) == nil)
-	testing.expect_value(t, asset.registry_scan(&f.assets.registry), asset.Error.None)
-	started := test_grid(f, "started", {4, 1, 3}, 0.5, 1, {1, 0, 2})
-	f.sync.grids.entries[started].cached = id
-	tally_started := test_emitter(2, {0, 0.5, 0})
-	if !test_program(t, f, &tally_started, "Tally", Resource_Desc{kind = .Grid, first = started}) {return}
-	FRAMES :: 3
-	world: []u8
-	for i in 0 ..< FRAMES {
-		if i + 1 < FRAMES {
-			testing.expect(t, frame_emitters(f, &f.sync, {tally_started}, DT))
-			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * DT}), f.renderer.error)
-			continue
-		}
-		world = test_frame_read(t, f, {tally_started}, DT, camera, f32(i) * DT, {world_buffer(&f.sync), {}})[0]
-	}
-	if world == nil {return}
-	testing.expect(t, f.sync.grids.entries[started].loaded == id, "the grid took the state")
-	for value, at in test_grid_values(f, world, started) {
-		testing.expectf(t, value > baked && value <= baked + 5 * FRAMES, "cell %d starts from the state and counts on: %v", at, value)
 	}
 	expect_clean(t, f.device)
 }

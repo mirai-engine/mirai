@@ -68,8 +68,7 @@ void shape_sample(uint slot, inout uint seed, out float3 position, out float3 di
         position = float3((random01(seed) * 2.0 - 1.0) * size.x, 0.0, 0.0);
         break;
     case PARTICLE_SHAPE_SURFACE:
-    case PARTICLE_SHAPE_BONES:
-        // An event of a surface or of bones starts its particles where it was, every way.
+        // An event of a surface starts its particles where it was, every way.
         direction = random_direction(seed);
         break;
     default:
@@ -110,9 +109,6 @@ bool particle_start(uint slot, uint seed, uint birth, float3 world_position, flo
         v.position += v.velocity * lived + 0.5 * acceleration * lived * lived;
         v.velocity += acceleration * lived;
         v.rotation += v.spin * lived;
-    }
-    if (birth != INVALID && particle_emitters[slot].birth_entries != INVALID) {
-        particle_data.Store(particle_birth_entry(slot, birth), index - particle_emitters[slot].range.x);
     }
     particle_program_initialize(slot, index, birth, time, values, v);
     Particle p;
@@ -186,20 +182,6 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
             float speed = lerp(particle_emitters[slot].lifetime_speed.z, particle_emitters[slot].lifetime_speed.w, random01(seed));
             float3 local_velocity = lerp(particle_emitters[slot].velocity_a.xyz, particle_emitters[slot].velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
             velocity = s.normal * speed + transform_vector(particle_emitters[slot].world, local_velocity) + s.velocity * particle_emitters[slot].spin.w;
-        } else if (particle_emitters[slot].kinds.x == PARTICLE_SHAPE_BONES) {
-            Particle_Bone b = particle_bone_sample(particle_resource(slot, 0u), seed, frame_dt);
-            if (!b.valid) return;
-            // Away from the bone, across it, by up to the radius of the shape.
-            float3 side = cross(b.axis, abs(b.axis.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0));
-            side = normalize(side);
-            float3 other = cross(b.axis, side);
-            float a = random01(seed) * 2.0 * PI;
-            float3 away = side * cos(a) + other * sin(a);
-            float reach = lerp(sqrt(random01(seed)), 1.0, particle_emitters[slot].spin.z);
-            position = b.position + away * particle_emitters[slot].shape.x * reach - b.velocity * since_birth;
-            float speed = lerp(particle_emitters[slot].lifetime_speed.z, particle_emitters[slot].lifetime_speed.w, random01(seed));
-            float3 local_velocity = lerp(particle_emitters[slot].velocity_a.xyz, particle_emitters[slot].velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
-            velocity = away * speed + transform_vector(particle_emitters[slot].world, local_velocity) + b.velocity * particle_emitters[slot].spin.w;
         } else {
             float3 local, direction;
             shape_sample(slot, seed, local, direction);

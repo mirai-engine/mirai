@@ -643,7 +643,6 @@ PROGRAM_PARAMETER_BYTES  :: 256
 PARTICLE_ATTRIBUTE_BYTES :: 1024
 PROGRAM_RESOURCES        :: 16
 PROGRAM_STAGES           :: 32
-PROGRAM_DATA_WORDS       :: 32
 
 // What a generation of shaders publishes in its folder (SHADER_MANIFEST): its
 // stages with their bindings and the files of their code, which the renderer
@@ -680,7 +679,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 6
+SHADER_CATALOG_VERSION :: 7
 
 Shader_Catalog :: struct {
     version:int,
@@ -726,8 +725,8 @@ Frame_Extension :: struct {name:string,offset,size:int}
 Program_Domain :: enum u8 {Surface,Postprocess,Vfx,Ui}
 Program_Kind :: enum u8 {Float,Int,Uint,Bool,Texture}
 // The surface of a mesh or of what an entity draws, the births a game gives,
-// a grid of the world, the particles of another emitter, or a data channel.
-Program_Resource_Kind :: enum u8 {Surface,Channel,Grid,Emitter,Data}
+// or a grid of the world.
+Program_Resource_Kind :: enum u8 {Surface,Channel,Grid}
 PROGRAM_STAGE_PARTICLES :: 255 // Program_Stage.over of a stage over the particles
 
 Program :: struct {
@@ -789,7 +788,6 @@ Program_Resource :: struct {
     name:string,
     kind:Program_Resource_Kind,
     cleared:bool,
-    words:u32, // of an entry of a data channel
 }
 
 // A stage of a Vfx program: a pass of its own each step before update, over

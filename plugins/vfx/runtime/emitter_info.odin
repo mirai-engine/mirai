@@ -5,11 +5,15 @@ import "core:mem"
 import "mirai:std/base"
 import "plugins:vfx/runtime/effect"
 
+// What an emitter shows, held by what reads it: the emitters of the same
+// values share one (emitter_info_intern); an entity that gives values of its
+// own owns one, written in place when they change (emitter_info_own).
 Emitter_Info :: struct {
     info:effect.Particle_Info,
     program:Program,
     references:int,
     allocator:runtime.Allocator,
+    owned:bool,
 }
 
 @(private)
@@ -45,6 +49,21 @@ emitter_info_intern :: proc(cache:^map[u64]^Emitter_Info,value:^Emitter_Info) ->
     held.references=2
     if _,err:=map_insert(cache,key,held);err!=nil {free(held);return nil}
     return held
+}
+
+// The values of an emitter with values of its own, in held when it owns one
+// already: no frame that changes them allocates. nil without memory.
+@(private)
+emitter_info_own :: proc(held:^Emitter_Info,value:^Emitter_Info) -> ^Emitter_Info {
+    if held!=nil && held.owned {
+        held.info,held.program=value.info,value.program
+        emitter_info_keep(held)
+        return held
+    }
+    made,err:=new(Emitter_Info)
+    if err!=nil {return nil}
+    made^={info=value.info,program=value.program,references=1,allocator=context.allocator,owned=true}
+    return made
 }
 
 @(private)

@@ -427,7 +427,9 @@ non-prefab scene, missing override, or non-instance entity -> `-32602`; other fa
   `--preferences` is in-memory only; invalid key/range -> `-32602`).
 - `vfx` plugin (`particle.*`, undo steps): `particle.inspect`/`set` (new path fails if exists;
   `parameters` typed against Vfx program; bad type/range -> `-32602`), `particle.programs`,
-  `particle.instance.inspect` (includes GPU readback `gpu` & `not_finite`), `set` (up to 16
+  `particle.instance.inspect` (one call: waits the frames its GPU readback takes; `layer`; `why`
+  names the first broken link or the drawing pass; `space`, positions in the world; `gpu`
+  & `not_finite`), `set` (up to 16
   overrides), `revert`/`apply`, `control` (`Start`/`Stop` Play-only; `Restart`/`Pause`/`Resume`/
   `Burst`), `particle.pool.inspect`.
 - Materials (`material.*`, undo steps): `material.inspect` (includes `imported` and `overrides` on

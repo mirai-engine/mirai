@@ -137,6 +137,13 @@ Attributes go by the names of the fields the catalog reflects (`Program.attribut
 - Rows that come back are scanned: values that are not finite are the `vfx.nan` problem of the
   entity, which names the fields. A particle lives as the passes tell (a lifetime that is not a
   number lives on), for the count and the scan alike.
+- `particle.instance.inspect` answers in one call: the first time it watches an emitter it lets
+  the frames its readback takes go by (`rows_wait`, `WATCH_WAIT`, `editor.api_frames`). `layer`
+  reads that layer (`vfx.layer_id`); `space` says where its particles move, and `pose_world`
+  turns local ones through the emitter's transform of the frame read. `why` names the first
+  broken link (`instance_why`: `unresolved`, `invalid_program`, `hidden`, `culled`, `pool_full`,
+  `missing_resource` (`vfx.resource_missing`), `zero_alive`) or the pass that draws it
+  (`gbuffer`, `blend`).
 
 ## Thumbnails
 
@@ -159,8 +166,9 @@ without `file`) it is the default effect. They are stored in `.mirai/thumbs` lik
   `the_preview_of_a_document_shows_what_its_rows_hold_and_frames_where_its_particles_reach`
   (unwritten values like those of an instance, framing). The rows that write through `write`:
   `curves_show_as_keys_and_held_values_take_what_a_popup_chose` (`editor`). Debugging:
-  `instance_inspect_names_the_attributes_of_its_program` and
-  `rows_name_their_attributes_and_report_the_fields_that_are_not_finite`.
+  `instance_inspect_names_the_attributes_of_its_program`,
+  `rows_name_their_attributes_and_report_the_fields_that_are_not_finite`,
+  `why_names_the_first_broken_link` and `particles_read_back_in_the_world`.
 - In an open editor with `vfx` enabled (the demo): `editor.document` with `Open` and the path of a
   `.particle`, `capture` with the UI and the content browser filtered by Particle,
   `particle.inspect` and `particle.instance.inspect`. The preview (document and thumbnails) is

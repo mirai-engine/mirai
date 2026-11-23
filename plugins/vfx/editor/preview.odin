@@ -153,7 +153,7 @@ preview_view :: proc(a:^host.Assets,info:^effect.Particle_Info,side:u32,
 effect_reach :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (low,high:[3]f32) {
     shape:=max(info.shape_size.x,info.shape_size.y,info.shape_size.z,0)
     low,high=-shape,shape
-    if info.shape==.Surface || info.shape==.Bones {low,high={-0.5,-0.5,-0.5},{0.5,0.5,0.5}}
+    if info.shape==.Surface {low,high={-0.5,-0.5,-0.5},{0.5,0.5,0.5}}
     life:=max(info.lifetime[0],info.lifetime[1],0.05)
     speed:=max(abs(info.speed[0]),abs(info.speed[1]))
     pull:=info.acceleration+vfx.GRAVITY*info.gravity

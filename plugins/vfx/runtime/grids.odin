@@ -6,7 +6,6 @@ import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:std/base"
 import mm "mirai:std/math"
-import "plugins:vfx/runtime/gridfile"
 
 // The grids of a world: a region of cells around an entity, each with layers
 // of four floats, that the stages of Vfx programs leave and read and that
@@ -18,7 +17,7 @@ import "plugins:vfx/runtime/gridfile"
 // another size, is a load transaction: their cells start at zero.
 
 GRID_CAPACITY :: 128        // grids of a world
-GRID_LAYERS :: gridfile.GRID_LAYERS
+GRID_LAYERS :: 16
 GRID_CELLS_MAX :: 65535*64  // of a grid: what one dispatch reaches
 GRID_NAME_BYTES :: 32
 
@@ -28,7 +27,6 @@ Particle_Grid :: struct {
     cells:[3]u32,                         // along x, y and z of the world; an axis of one cell is flat
     cell_size:f32 `mirai:"min=0,unit=m"`,
     layers:u32 `mirai:"min=1,max=16"`,    // of four floats in each cell
-    cached:base.Asset_Id,                 // a .grid of its cells and layers whose state its cells start from, when the grid is made or names another
     follow_view:bool,                     // its region is around where the view (the camera that draws the world) looks at the height of its entity, instead of around its entity
 }
 
@@ -128,8 +126,6 @@ Grid_Entry :: struct {
     texture_name:u32,        // world_texture_name of its name
     texture_dirty:bool,
     texture_index:u32,       // the place of its texture in the table, from particles_frame
-    cached:base.Asset_Id,    // the .grid its cells start from
-    loaded:base.Asset_Id,    // the .grid its cells took last; zero since they were made
     packed:u32,              // with has_texture: bytes of its layer as halves among the grids, which its texture copies
     light:u32,               // of a volume: bytes of the light of its cells among the grids
 }
@@ -261,7 +257,6 @@ grids_sync :: proc(g:^Grids,grids:^core.Table(Particle_Grid,$A),volumes:^core.Ta
         before_texture,had_texture:=entry.texture,entry.has_texture
         entry.texture,entry.has_texture=core.get(textures,e)
         entry.texture_dirty||=entry.has_texture && (!had_texture || before_texture!=entry.texture)
-        entry.cached=grid.cached
         entry.texture_name=world_texture_name(base.text_get(grid.name[:]))
         switch {
         case !entry.has_texture:

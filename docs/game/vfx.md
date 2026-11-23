@@ -1,7 +1,8 @@
 ---
 name: vfx
 description: Particles and visual effects from game code with the `vfx` plugin - emitters,
-  one-shot effects, bursts, impacts, sparks, dust, smoke, per-instance values, channels, reports.
+  one-shot effects, bursts, impacts, sparks, dust, smoke, per-instance values, layers, channels,
+  distance culling.
 ---
 
 # Game VFX
@@ -16,7 +17,7 @@ sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 - Start, stop or burst an existing emitter: [requests](#control-an-emitter).
 - Other color or rate for one entity: [values](#values-of-one-instance).
 - Many hits per tick, each with its place and velocity: [channels](vfx/channels.md).
-- A sound or decal where a particle dies or hits: [reports](vfx/reports.md).
+- Many emitters of one effect far apart: [culling](vfx/culling.md).
 - A trail behind each spark or comet: [trails](#trails).
 - Write or tune an effect: [authoring](#author-an-effect).
 
@@ -28,29 +29,30 @@ forget](core/prefabs.md#spawn-and-forget), with `transient=true`, which keeps it
 
 ## Control an emitter
 
-`vfx.Particle_Requests` is applied in the next fixed step, in order.
+`vfx.Particle_Requests` is applied in the next fixed step, in order; a rollback draws none twice:
 ```odin
 // inside a fixed function, with requests:^vfx.Particle_Requests
 vfx.start(requests, e); vfx.stop(requests, e) // set or clear active; live particles finish
-vfx.burst(requests, e, 30)
+vfx.burst(requests, e, 30) // every layer; layer=1: the second alone
 ```
 
-`start` and `stop` change the emitter's `active`, as writing the field does. Also `restart`,
-`pause` and `resume`. `vfx.status(clocks, emitter, e)` gives a `Particle_Status` with its `state`
-(`Playing`, `Done`).
+`start` and `stop` change `active`. Also `restart`, `pause`, `resume`. `vfx.status(clocks,
+emitter, e)` is of the whole effect (`Playing` while a layer plays, `Done` once all are); with
+`layer=N`, of that layer.
 
 ## Values of one instance
 
 ```odin
-err:=vfx.request_value(requests, e, "colors.1", [4]f32{1, 0.2, 0, 1})
+err:=vfx.request_value(requests, e, "parameters.heat", f32(0.8)) // layers whose program has it
 if err!=.None {core.report(problems, e, "game.vfx", "%s", vfx.error_message(err))}
-vfx.request_value(requests, e, "parameters.heat", f32(0.8)) // a parameter of its program
+vfx.request_value(requests, e, "layers.1.rate", f32(40))     // the second layer alone
 ```
 
-A name is a field path of the effect (`rate`, `bursts.0.count`) or `parameters.` and a parameter
-of its program, checked when asked; with a parameter its program does not declare, the emitter
-runs without the program and `particle.instance.inspect` says why. Also `request_value_remove`
-and `request_values_clear`. Assets belong to the effect.
+A name is a field path (`rate`, `bursts.0.count`) or `parameters.` and a parameter of the
+program, checked when asked; without `layers.N.` a field is of the primary layer and a parameter
+of every layer whose program declares it (none: `particle.instance.inspect` says why). Also
+`request_value_remove`, `request_values_clear`. Assets belong to the effect. A value changed every
+tick allocates nothing.
 
 ## Author an effect
 
@@ -71,10 +73,8 @@ first with `trigger` `Trail`, `sub_count` 1; a program may set `particle.ribbon`
 
 ## Pitfalls
 
-- Nothing draws unless `"vfx"` is in `plugins` of `project.mirai`.
-- A request for an entity without `Particle_Emitter` only reports `vfx.request` in
-  `engine.diagnostics`. An emitter that finds no room in the particle pool reports `vfx.capacity`.
+- Nothing draws without `"vfx"` in `plugins` of `project.mirai`. Bad requests report
+  `vfx.request`, a full pool `vfx.capacity` (`engine.diagnostics`).
 - `destroy_when_done` never fires with `loop` on, unless the emitter is stopped.
-- Particles that hold NaN or Inf report `vfx.nan` while `particle.instance.inspect` looks at
-  their emitter, naming the fields of its program that hold them.
-- Requests go in `fixed`, so a rollback does not draw them twice.
+- An emitter that does not show: `particle.instance.inspect` gives `why`; NaN or Inf in its
+  particles report `vfx.nan`, naming the fields of its program that hold them.

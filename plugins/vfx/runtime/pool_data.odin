@@ -53,20 +53,3 @@ pool_data_make :: proc(pool:^Pool,pass:^erender.Pass,copy:erender.Pipeline) -> b
     pool.data_side,pool.data_bytes,pool.retire_data=next,bytes,true
     return true
 }
-
-@(private)
-pool_birth_entries :: proc(sync:^Particle_Sync) {
-    pool:=&sync.pool
-    for &resource in sync.resources {
-        if resource.kind!=.Emitter {continue}
-        at:=pool_slot_find(pool,resource.emitter)
-        if at<0 {continue}
-        slot:=&pool.slots[at]
-        if slot.birth_entries!=max(u32) {continue}
-        start,ok:=pool_data_take(pool,(u64(slot.capacity)*4+15)&~u64(15))
-        if !ok {continue}
-        slot.birth_entries=u32(start)
-        slot.birth_clear=true
-        bits_add(&pool.dirty,at)
-    }
-}

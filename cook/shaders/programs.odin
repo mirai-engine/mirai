@@ -45,8 +45,7 @@ PARAMETER_BYTES :: abi.PROGRAM_PARAMETER_BYTES
 ATTRIBUTE_BYTES :: abi.PARTICLE_ATTRIBUTE_BYTES
 MAX_PARAMETER_RANGE :: 1e30
 MAX_RESOURCES :: abi.PROGRAM_RESOURCES
-RESOURCE_KINDS :: [?]string{"surface","channel","grid","emitter","data"}
-DATA_WORDS :: abi.PROGRAM_DATA_WORDS // of an entry of a data channel
+RESOURCE_KINDS :: [?]string{"surface","channel","grid"}
 MAX_STAGES :: abi.PROGRAM_STAGES
 MAX_ITERATIONS :: 64
 PARAMETER_GROUP_BYTES :: 32
@@ -160,14 +159,7 @@ program_resources :: proc(program:string,lines:[][]string,allocator:=context.all
     list:=make([dynamic]abi.Program_Resource,allocator)
     for words in lines {
         cleared:=len(words)==5 && words[3]=="grid" && words[4]=="cleared"
-        data:=len(words)==5 && words[3]=="data"
-        if len(words)!=4 && !cleared && !data || !identifier_valid(words[2]) || len(words)==4 && words[3]=="data" {return nil,fmt.aprintf("%s: declare a resource as `//! resource name kind`, kind %v; a grid may add `cleared`, data adds the words of an entry",program,RESOURCE_KINDS,allocator=allocator)}
-        count:=0
-        if data {
-            n,parsed:=strconv.parse_int(words[4])
-            if !parsed || n<1 || n>DATA_WORDS {return nil,fmt.aprintf("%s.%s: an entry of a data channel has 1 to %d words, not %s",program,words[2],DATA_WORDS,words[4],allocator=allocator)}
-            count=n
-        }
+        if len(words)!=4 && !cleared || !identifier_valid(words[2]) {return nil,fmt.aprintf("%s: declare a resource as `//! resource name kind`, kind %v; a grid may add `cleared`",program,RESOURCE_KINDS,allocator=allocator)}
         kind,known:=abi.Program_Resource_Kind(0),false
         for name,i in RESOURCE_KINDS {if name==words[3] {kind,known=abi.Program_Resource_Kind(i),true}}
         if !known {return nil,fmt.aprintf("%s.%s: a resource is of kind %v, not %s",program,words[2],RESOURCE_KINDS,words[3],allocator=allocator)}
@@ -175,7 +167,7 @@ program_resources :: proc(program:string,lines:[][]string,allocator:=context.all
             if resource.name==words[2] {return nil,fmt.aprintf("%s.%s: the program declares this resource twice",program,words[2],allocator=allocator)}
         }
         if len(list)==MAX_RESOURCES {return nil,fmt.aprintf("%s: a program reads at most %d resources",program,MAX_RESOURCES,allocator=allocator)}
-        append(&list,abi.Program_Resource{strings.clone(words[2],allocator),kind,cleared,u32(count)})
+        append(&list,abi.Program_Resource{strings.clone(words[2],allocator),kind,cleared})
     }
     return list[:],""
 }

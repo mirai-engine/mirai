@@ -30,6 +30,7 @@ Particle_World :: enum u8 {Edit,Play}
 Api_Particle_Instance_Params :: struct {
     entity:editor.Api_Entity_Text `mirai:"text,entity"`,
     world:Particle_World `mirai:"optional,label=Edit: the document; Play: the Play of the caller"`,
+    layer:u8 `mirai:"optional,max=7,label=The layer of its effect it reads: 0 the primary"`,
 }
 
 @(private)
@@ -76,7 +77,7 @@ Pool_Emitter :: struct {
 
 Particle_Inspect_Params :: struct {
     particle:string `mirai:"optional,label=An effect: its path under the assets folder, or its id"`,
-    path:string `mirai:"optional,label=particle.create: where the new effect goes, under the assets folder"`,
+    path:string `mirai:"optional,label=particle.set: where a new effect goes, under the assets folder"`,
     preset:effect.Particle_Preset `mirai:"optional,label=Starter values of the primary layer"`,
     layers:[]Particle_Layer_Params `mirai:"optional,label=Additional emitter layers; replaces the sequence"`,
     values:serial.Json `mirai:"optional,label=Fields of the effect to change, as particle.inspect shows them"`,
@@ -137,12 +138,16 @@ Instance_Result :: struct {
     id:base.Entity_Id,
     world:string,
     particle:base.Asset_Id,
-    values:effect.Particle_Info `mirai:"label=Of its effect with its own over them"`,
-    overrides:serial.Json `mirai:"label=Its own values by the path of their field"`,
-    parameters:serial.Json `mirai:"label=Its own parameters of the program by name"`,
+    layer:u8 `mirai:"label=The layer it reads, 0 the primary"`,
+    layers:u8 `mirai:"label=Of its effect, the primary one among them"`,
+    why:string `mirai:"label=The first link that keeps it from being seen (unresolved, invalid_program, hidden, culled, pool_full, missing_resource, zero_alive), or the pass that draws it (gbuffer, blend)"`,
+    space:string `mirai:"label=Where its particles move: local (with the entity) or world; their places here are in the world either way"`,
+    values:effect.Particle_Info `mirai:"label=Of that layer of its effect with its own over them"`,
+    overrides:serial.Json `mirai:"label=Its own values by their path: layers.N. names a layer, a parameter without it every layer that declares it"`,
+    parameters:serial.Json `mirai:"label=Its own parameters of the program of that layer by name"`,
     problem:string `mirai:"optional,label=Why its program does not run"`,
-    status:Instance_Status `mirai:"optional,label=Its clock"`,
-    gpu:Instance_Gpu `mirai:"optional,label=What the GPU copied back of its particles"`,
+    status:Instance_Status `mirai:"optional,label=The clock of that layer"`,
+    gpu:Instance_Gpu `mirai:"optional,label=What the GPU copied back of the particles of that layer"`,
 }
 Instance_Status :: struct {
     state:string,
@@ -169,7 +174,7 @@ Gpu_Particle :: struct {
 api_register :: proc(s:^editor.Session) {
     editor.api_method_register(s,{name="particle.inspect",params=type_info_of(Particle_Inspect_Params),summary="The primary and additional layers of a particle effect (.particle), and the primary layer’s Vfx parameters and hidden fields.",flags={.Read_Only},result=type_info_of(Particle_Result),run=api_particle_inspect})
     editor.api_method_register(s,{name="particle.set",params=type_info_of(Particle_Inspect_Params),summary="Changes a particle effect for every entity that shows it, or makes one at path. Set preset to start from a starter effect and layers to give additional emitters.",flags={.Idempotent},result=type_info_of(Particle_Result),run=api_particle_set})
-    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, bones, channels, grids) and its stages: what each goes over and its iterations.",flags={.Read_Only},result=type_info_of(Programs_Result),run=api_particle_programs})
+    editor.api_method_register(s,{name="particle.programs",summary="The Vfx programs of the shaders: their parameters with kind, components, default and range, the bytes each keeps per particle, the resources it reads by name (surfaces, channels, grids) and its stages: what each goes over and its iterations.",flags={.Read_Only},result=type_info_of(Programs_Result),run=api_particle_programs})
     inspect:=Api_Particle_Instance_Params{world=.Edit}
     control:=Api_Particle_Control_Params{world=.Play}
     editor.api_method_register(s,{name="particle.instance.inspect",params=type_info_of(Api_Particle_Instance_Params),defaults=&inspect,summary="What an emitter shows: the values of its effect with its own over them, its own values by path, the parameters of its program, why its program does not run, and its clock (state, seconds, generation, births).",flags={.Read_Only},result=type_info_of(Instance_Result),run=api_particle_instance_inspect})
@@ -488,7 +493,8 @@ particle_entity :: proc(w:core.World_Ref,call:^api.Call,named:[]u8) -> (e:core.E
     return e,true
 }
 
-// The text of each value of an instance that is a field of its effect, by its path.
+// The text of each value of an instance that is a field of its effect, by its
+// path, layers.N. before it for a layer it names.
 @(private)
 particle_overrides_json :: proc(call:^api.Call,override:^vfx.Particle_Override) -> serial.Json {
     w:serial.Writer
@@ -505,7 +511,9 @@ particle_overrides_json :: proc(call:^api.Call,override:^vfx.Particle_Override) 
             if name!=hash {continue}
             if !first {serial.write_u8(out,',')}
             first=false
-            serial.text_write_string(out,field.path)
+            path:=field.path
+            if layer:=override.layers[i];layer>0 {path=fmt.tprintf("%s%d.%s",vfx.PARTICLE_LAYER_PATH,layer-1,field.path)}
+            serial.text_write_string(out,path)
             serial.write_u8(out,':')
             type,_:=serial.schema_add_type_info(&schema,field.info)
             serial.text_write(out,&schema,type,override.values[i][:field.size],.Line)
@@ -516,43 +524,94 @@ particle_overrides_json :: proc(call:^api.Call,override:^vfx.Particle_Override) 
 }
 
 @(private)
-particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity,world:Particle_World) {
+particle_instance_write :: proc(s:^editor.Session,call:^api.Call,w:core.World_Ref,e:core.Entity,world:Particle_World,layer:=0) {
     a:=s.app.assets
     emitter,_:=editor.entity_get(w,e,vfx.Particle_Emitter)
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
+    layers:=1
+    if a!=nil && emitter.particle!={} {
+        if view,found:=vfx.effect_view(a,emitter.particle);found {layers=1+len(view.layers)}
+    }
+    if layer>=layers {
+        api.call_failf(call,api.INVALID_PARAMS,"its effect has %d layers: read one from 0 to %d",layers,layers-1)
+        return
+    }
+    // The editor watches its particles from now on; the frames the first
+    // readback takes go by here, before what they would leave in temporary
+    // memory is read.
+    id:=vfx.layer_id(e,layer)
+    v:=vfx_editor_of(s)
+    if v!=nil {
+        watch_emitter(s,&v.watch,w.data,id)
+        rows_wait(s,v,w.data,e,layer)
+    }
     info:effect.Particle_Info
-    error:=vfx.particle_resolve_checked(a,emitter.particle,&override,&info,emitter.preset)
-    given:Particle_File
-    given.info=info
-    instance_parameters(s,&override,&given)
+    error:=vfx.particle_resolve_checked(a,emitter.particle,&override,&info,emitter.preset,u8(layer))
+    given:=particle_file(s,emitter.particle)
+    given.info=vfx.particle_resolve(a,emitter.particle,&override,emitter.preset)
+    given.parameter_count=0
+    instance_parameters(s,&override,&given,emitter.particle,emitter.preset)
     r:=api.call_result(call,Instance_Result)
     r.id,r.world,r.particle=editor.api_entity_id(w,e),fmt.tprint(world),emitter.particle
+    r.layer,r.layers=u8(layer),u8(layers)
     r.values=info
+    r.space="local" if info.local_space else "world"
     r.overrides=particle_overrides_json(call,&override)
-    r.parameters=particle_parameters_json(call,given.parameters[:given.parameter_count])
+    r.parameters=particle_parameters_json(call,given.parameters[:given.parameter_count],u8(layer))
     r.problem=vfx.error_message(error)
+    facts:=Why_Facts{unresolved=error!=.None,alive=-1}
     if r.problem=="" {
         program:vfx.Program
-        r.problem=vfx.particle_program(a,emitter.particle,&info,&override,&program)
+        r.problem=vfx.particle_program(a,emitter.particle,&info,&override,&program,layer=u8(layer))
+        facts.program=r.problem!=""
     }
     if clocks:=core.world_storage_of(w,vfx.Particle_Clocks);clocks!=nil {
-        if status,found:=vfx.status(clocks,emitter,e);found {
+        if status,found:=vfx.status(clocks,emitter,e,layer);found {
             r.status={fmt.tprint(status.state),status.time,u64(status.generation),u64(status.emitted)}
+            facts.culled=status.state==.Culled
         }
     }
-    // What the GPU copied back of its particles, and the editor watches it from now on.
-    if v:=vfx_editor_of(s);v!=nil {
-        watch_emitter(s,&v.watch,w.data,u64(e))
-        if sync:=host.app_world_storage(s.app,w.data,vfx.Particle_Sync);sync!=nil {instance_gpu(s,call,sync,&v.watch,&info,&r.gpu)}
+    facts.hidden=erender.is_hidden(core.world_table_of(w,erender.Hidden),core.world_table_of(w,core.Parent),e)
+    // What the GPU copied back of its particles.
+    if v!=nil {
+        if sync:=host.app_world_storage(s.app,w.data,vfx.Particle_Sync);sync!=nil {
+            shown:=vfx.shown_find(sync,e,layer)
+            facts.told=shown!=nil && shown.resolved!=0 && shown.desc.spec!=nil
+            facts.pooled=vfx.pool_slot_find(&sync.pool,id)>=0
+            facts.missing=vfx.resource_missing(sync,shown)
+            facts.gbuffer=info.render==.Mesh && shown!=nil && !shown.desc.blended
+            facts.program||=shown!=nil && base.text_get(shown.problem[:])!=""
+            if instance_gpu(s,call,sync,&v.watch,id,&info,&r.gpu) {facts.alive=r.gpu.alive}
+        }
+    }
+    names:=WHY_NAMES
+    r.why=names[instance_why(facts)]
+}
+
+// The frames that tell the renderer of a layer of the emitter at e and bring
+// back its rows go by, a few at most: none when they came already, or once
+// it is resolved and the pool does not hold it (hidden, or no room).
+@(private)
+rows_wait :: proc(s:^editor.Session,v:^Vfx_Editor,world:rawptr,e:core.Entity,layer:int) {
+    id:=vfx.layer_id(e,layer)
+    for _ in 0..<WATCH_WAIT {
+        sync:=host.app_world_storage(s.app,world,vfx.Particle_Sync)
+        if sync==nil || s.app.renderer==nil {return}
+        shown:=vfx.shown_find(sync,e,layer)
+        told:=shown!=nil && shown.resolved!=0
+        if told && vfx.pool_slot_find(&sync.pool,id)<0 {return}
+        if rows,ok:=emitter_rows(s.app.renderer,sync,v.watch.poses[:]);told && ok && rows.id==id {return}
+        if editor.api_frames(s,1,0)==0 || !world_live(s,world) {return}
     }
 }
 
-// What the GPU copied back of the watched emitter: its counters and its
-// first particles in the world, with their Attributes by name.
+// What the GPU copied back of an emitter: its counters and its first
+// particles in the world, with their Attributes by name. False while none
+// came back.
 @(private)
-instance_gpu :: proc(s:^editor.Session,call:^api.Call,sync:^vfx.Particle_Sync,w:^Particle_Watch,info:^effect.Particle_Info,out:^Instance_Gpu) {
+instance_gpu :: proc(s:^editor.Session,call:^api.Call,sync:^vfx.Particle_Sync,w:^Particle_Watch,id:u64,info:^effect.Particle_Info,out:^Instance_Gpu) -> bool {
     rows,ok:=emitter_rows(s.app.renderer,sync,w.poses[:])
-    if !ok || rows.id!=w.emitter {return}
+    if !ok || rows.id!=id {return false}
     fields:[]erender.Program_Attribute
     if program,_:=particle_program_of(s,info);program!=nil {fields=program.attribute_fields}
     out.frame=rows.frame
@@ -568,17 +627,60 @@ instance_gpu :: proc(s:^editor.Session,call:^api.Call,sync:^vfx.Particle_Sync,w:
         shown+=1
     }
     out.particles=out.particles[:shown]
+    return true
 }
 
 // A particle of rows in the world, with its Attributes by name.
 @(private)
 gpu_particle :: proc(rows:^Emitter_Rows,slot:int,fields:[]erender.Program_Attribute,allocator:=context.temp_allocator) -> Gpu_Particle {
     p:=rows.particles[slot]
-    shown:=Gpu_Particle{slot=u32(slot),position=p.position+rows.origin,velocity=p.velocity,age=p.age,size=p.size,seed=p.seed}
+    position,velocity:=pose_world(rows.pose,p)
+    shown:=Gpu_Particle{slot=u32(slot),position=position,velocity=velocity,age=p.age,size=p.size,seed=p.seed}
     if words:=int(rows.stride/4);words>0 && len(fields)>0 && (slot+1)*words<=len(rows.words) {
         shown.attributes=serial.Json(attributes_text(rows.words[slot*words:][:words],fields,allocator))
     }
     return shown
+}
+
+// What particle.instance.inspect knows of an emitter, link by link, from
+// its effect to the pass that draws it.
+@(private)
+Why_Facts :: struct {
+    unresolved:bool, // its effect or its values are not those of an effect
+    told:bool,       // the renderer has what it shows: its effect, its assets and the triangles of its meshes
+    program:bool,    // its Vfx program does not run
+    hidden:bool,
+    culled:bool,
+    pooled:bool,     // the pool of its world holds it
+    missing:bool,    // a resource it reads has no source
+    alive:int,       // particles the GPU copied back; -1: none came back
+    gbuffer:bool,    // its opaque Mesh particles are drawn in the G-buffer
+}
+
+@(private)
+Why :: enum u8 {Unresolved,Invalid_Program,Hidden,Culled,Pool_Full,Missing_Resource,Zero_Alive,Gbuffer,Blend}
+
+@(private)
+WHY_NAMES :: [Why]string{
+    .Unresolved="unresolved",.Invalid_Program="invalid_program",.Hidden="hidden",.Culled="culled",
+    .Pool_Full="pool_full",.Missing_Resource="missing_resource",.Zero_Alive="zero_alive",.Gbuffer="gbuffer",.Blend="blend",
+}
+
+// The first link that keeps an emitter from being seen, or the pass that
+// draws it when none does.
+@(private)
+instance_why :: proc(f:Why_Facts) -> Why {
+    switch {
+    case f.unresolved || !f.told: return .Unresolved
+    case f.program: return .Invalid_Program
+    case f.hidden: return .Hidden
+    case f.culled: return .Culled
+    case !f.pooled: return .Pool_Full
+    case f.missing: return .Missing_Resource
+    case f.alive==0: return .Zero_Alive
+    case f.gbuffer: return .Gbuffer
+    }
+    return .Blend
 }
 
 @(private)
@@ -587,7 +689,7 @@ api_particle_instance_inspect :: proc(s:^editor.Session,call:^api.Call) {
     w,ok:=particle_world(s,call,p.world)
     if !ok {return}
     e,found:=particle_entity(w,call,p.entity[:])
-    if found {particle_instance_write(s,call,w,e,p.world)}
+    if found {particle_instance_write(s,call,w,e,p.world,int(p.layer))}
 }
 
 @(private)
@@ -671,14 +773,25 @@ instance_clear :: proc(w:core.World_Ref,e:core.Entity) {
     if table:=core.world_table_of(w,vfx.Particle_Override);table!=nil && core.has(table,e) {core.remove(table,e)}
 }
 
-// Puts the parameters an instance gives the program of the file over its
-// own, as the program declares them; what it does not declare is left out.
+// Puts what an instance gives each layer of the file over its own: the
+// values of the layers past the primary, resolved again from its effect
+// (particle: none leaves them), and the parameters of every layer as the
+// program of each declares them, a parameter of no layer in each that
+// declares it; what none declares is left out.
 @(private)
-instance_parameters :: proc(s:^editor.Session,override:^vfx.Particle_Override,file:^Particle_File) {
-    program,_:=particle_program_of(s,&file.info)
-    if program==nil {return}
-    for name,at in override.names[:min(override.count,vfx.PARTICLE_OVERRIDE_CAPACITY)] {
-        if parameter,declared:=vfx.value_parameter(program,name,override.values[at]);declared {effect_parameter_store(file,parameter)}
+instance_parameters :: proc(s:^editor.Session,override:^vfx.Particle_Override,file:^Particle_File,particle:base.Asset_Id={},preset:=effect.Particle_Preset.Default) {
+    for layer in 0..=file.layer_count {
+        info:=&file.info if layer==0 else &file.layers[layer-1]
+        if layer>0 && particle!={} {info^=vfx.particle_resolve(s.app.assets,particle,override,preset,u8(layer))}
+        program,_:=particle_program_of(s,info)
+        if program==nil {continue}
+        for name,at in override.names[:min(override.count,vfx.PARTICLE_OVERRIDE_CAPACITY)] {
+            if named:=override.layers[at];named!=0 && int(named)!=layer+1 {continue}
+            if parameter,declared:=vfx.value_parameter(program,name,override.values[at]);declared {
+                parameter.layer=u8(layer)
+                effect_parameter_store(file,parameter)
+            }
+        }
     }
 }
 
@@ -696,7 +809,7 @@ api_particle_instance_apply :: proc(s:^editor.Session,call:^api.Call) {
     override,_:=editor.entity_get(w,e,vfx.Particle_Override)
     file:=particle_file(s,emitter.particle)
     file.info=vfx.particle_resolve(s.app.assets,emitter.particle,&override,emitter.preset)
-    instance_parameters(s,&override,&file)
+    instance_parameters(s,&override,&file,emitter.particle,emitter.preset)
     a:=s.app.assets
     record,_:=asset.registry_find(&a.registry,emitter.particle)
     // The file and the entity in one step.

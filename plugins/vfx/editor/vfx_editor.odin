@@ -9,7 +9,6 @@ import "mirai:std/base"
 import "mirai:ui"
 import vfx "plugins:vfx/runtime"
 import "plugins:vfx/runtime/effect"
-import "plugins:vfx/runtime/gridfile"
 
 // What the vfx plugin gives the editor: the kind .particle in the content
 // browser (its family, color and icon, and a click on its card that gives it
@@ -19,7 +18,6 @@ import "plugins:vfx/runtime/gridfile"
 
 PARTICLES_COLOR :: ui.Color{240,160,210,255}
 EFFECT_COLOR :: ui.Color{1,202,252,255}
-GRID_STATE_COLOR :: ui.Color{120,200,170,255}
 
 @(storage,free="vfx_editor_free")
 Vfx_Editor :: struct {

@@ -1,7 +1,6 @@
 //! mirai constant EMITTER_CAPACITY uint ../runtime/gpu.odin
 //! mirai constant WORK_AT uint ../runtime/gpu.odin
 //! mirai constant SORT_AT uint ../runtime/gpu.odin
-//! mirai constant REPORT_WORDS uint ../runtime/reports.odin
 //! mirai constant FLAG_DRAIN uint ../runtime/gpu.odin
 //! mirai constant PARTICLE_CURVE_KEYS uint ../runtime/effect/effect.odin
 //! mirai constant RIBBON_SHIFT uint ../runtime/gpu.odin
@@ -37,7 +36,7 @@ struct Particle_Emitter {
     float4 previous[3];
     uint4 range;          // first slot, capacity, births this frame, PARTICLE_FLAG_*
     uint4 random;         // seed, event target slot+1, particles per event, groups of births
-    uint4 program;        // Vfx program (0: none), first slot of the drawn lists, the event its reports tell
+    uint4 program;        // Vfx program (0: none), first slot of the drawn lists
     float4 shape;         // size, w cone half-angle
     uint4 kinds;          // shape, render, collision, event
     float4 lifetime_speed;
@@ -66,7 +65,7 @@ struct Particle_Emitter {
     float4 from_world[3];
     uint2 emitter_uid;
     float birth_limit;
-    uint birth_entries;
+    uint pad;
     float4 beam;
     uint4 mesh_handles;   // and the meshes, whose indices the frame lists (render.frame_mesh_whole)
 };
@@ -114,7 +113,6 @@ struct Particle_Event {
 #define PARTICLE_SHAPE_CIRCLE 5u
 #define PARTICLE_SHAPE_LINE 6u
 #define PARTICLE_SHAPE_SURFACE 7u
-#define PARTICLE_SHAPE_BONES 8u
 
 #define PARTICLE_RENDER_BILLBOARD 0u
 #define PARTICLE_RENDER_VELOCITY 1u
@@ -145,12 +143,7 @@ struct Particle_Event {
 #define PARTICLE_RESOURCE_NONE 0u
 #define PARTICLE_RESOURCE_SURFACE 1u
 #define PARTICLE_RESOURCE_CHANNEL 2u
-#define PARTICLE_RESOURCE_BONES 3u
-#define PARTICLE_RESOURCE_GRID 4u
-#define PARTICLE_RESOURCE_EMITTER 5u
-#define PARTICLE_RESOURCE_DATA 6u
-#define PARTICLE_DATA_ENTRIES 4096u      // vfx.DATA_ENTRIES
-#define PARTICLE_SEGMENT_BYTES 64u
+#define PARTICLE_RESOURCE_GRID 3u
 // The stages of an emitter after its resources (vfx.Gpu_Stage).
 #define PARTICLE_STAGES 32u
 #define PARTICLE_STAGE_BYTES 32u
@@ -194,8 +187,8 @@ float particle_surface_area(uint at) { return asfloat(particle_world_bytes.Load(
 struct Particle_Resource {
     uint kind;
     uint mesh;            // a surface: the mesh of the scene it is
-    uint first;           // a surface: the area of its first triangle in particle_surfaces; a channel: bytes to its first birth; bones: to its first bone; an emitter: its slot
-    uint count;           // a surface: its triangles by primitive (geometry.slang), CLUSTER_TRIANGLES a cluster of level 0, of no area past those of the cluster; a channel: its births; bones: its bones
+    uint first;           // a surface: the area of its first triangle in particle_surfaces; a channel: bytes to its first birth
+    uint count;           // a surface: its triangles by primitive (geometry.slang), CLUSTER_TRIANGLES a cluster of level 0, of no area past those of the cluster; a channel: its births
     float4 world[3];      // where it is this frame
     float4 previous[3];   // and the frame before
 };
@@ -204,12 +197,10 @@ float4 particle_frame_row(uint at) { return asfloat(particle_frame.Load4(at)); }
 
 // What the emitters of the frame share, first in particle_frame (vfx.Gpu_Frame): the seconds
 // of the frame, of each step, the steps and the time at the end of the frame; the bytes to
-// the births of the channels; and those of particle_world_bytes to the copy of the reports
-// channel the frame writes (INVALID: none).
+// the births of the channels and to the slots of the frame.
 float4 particle_frame_step() { return particle_frame_row(0u); }
 uint particle_frame_births() { return particle_frame.Load(16u); }
-uint particle_frame_reports() { return particle_frame.Load(20u); }
-uint particle_frame_slot(uint index) { return particle_frame.Load(particle_frame.Load(24u) + index * 4u); }
+uint particle_frame_slot(uint index) { return particle_frame.Load(particle_frame.Load(20u) + index * 4u); }
 
 // The gravity and the wind of the world in the rows of the frame (vfx.Gpu_Fields): the
 // gravity where no Gravity rules, then every Gravity and every Wind in the order they apply.
@@ -299,25 +290,6 @@ Particle_Birth particle_birth_at(uint at) {
     b.count = n.x; b.number = n.y;
     b.normal = asfloat(particle_frame.Load3(at + 72u));
     return b;
-}
-
-// A bone of a bones resource (vfx.Gpu_Segment), from the joint of its parent
-// to its own, in the space of its mesh, this frame and the one before.
-struct Particle_Segment {
-    float3 start; float length; // of the bones up to this one, added up
-    float3 end;
-    float3 previous_start;
-    float3 previous_end;
-};
-
-Particle_Segment particle_segment_at(uint at) {
-    Particle_Segment s;
-    float4 a = particle_frame_row(at);
-    s.start = a.xyz; s.length = a.w;
-    s.end = particle_frame_row(at + 16u).xyz;
-    s.previous_start = particle_frame_row(at + 32u).xyz;
-    s.previous_end = particle_frame_row(at + 48u).xyz;
-    return s;
 }
 
 // A grid of the world (vfx.Gpu_Grid): its cells, layers, where its region starts and

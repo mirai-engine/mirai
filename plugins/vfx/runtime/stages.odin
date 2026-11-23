@@ -151,10 +151,9 @@ world_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Pa
     if !g.made {
         erender.pass_buffer_fill(pass,world,u64(grids_base(sync)),u64(g.bytes))
         g.made=true
-        for &entry in g.entries {entry.cleared,entry.loaded,entry.texture_dirty=entry.first,{},true}
+        for &entry in g.entries {entry.cleared,entry.texture_dirty=entry.first,true}
         return true
     }
-    grids_load(sync,pass)
     params.mode=STAGE_CLEAR
     erender.pass_pipeline(pass,sync.pipelines.stage)
     for &entry,at in g.entries {
@@ -169,10 +168,10 @@ world_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,params:^Simulate_Pa
     return true
 }
 
-// The world buffer: the areas of the surfaces, the grids, then the data channels.
+// The world buffer: the areas of the surfaces, then the grids.
 @(private)
 world_buffer :: proc "contextless" (sync:^Particle_Sync) -> erender.Buffer_Desc {
-    return {"vfx world",u64(data_base(sync))+u64(sync.data.bytes)}
+    return {"vfx world",u64(grids_base(sync))+u64(sync.grids.bytes)}
 }
 
 @(private)

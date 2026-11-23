@@ -13,19 +13,23 @@ import "plugins:vfx/runtime/effect"
 
 PARTICLE_OVERRIDE_CAPACITY :: 16
 PARTICLE_PARAMETER_PATH :: "parameters." // a parameter of the program of an effect, by its name after it, as the file's table names it
+PARTICLE_LAYER_PATH :: "layers."         // then the layer (0 the primary) and a path of that layer: "layers.1.rate", "layers.2.parameters.heat"
 
 // Values of this entity alone for its effect, as erender.Material_Override
 // keeps those of a material: names are base.name_hash of a path of
 // effect.Particle_Info (effect.particle_fields) or of a parameter of the Vfx
 // program of the effect (parameter_hash: "parameters.heat"); values, the
 // bytes of the field, or of a parameter its numbers as [4]f32 or the
-// base.Asset_Id of its texture (parameter_value).
+// base.Asset_Id of its texture (parameter_value). A path without
+// "layers.N." is of the primary layer, but a parameter, which every layer
+// whose program declares it takes; layers keeps the layer a path names, + 1.
 // Assets an effect names belong to the effect: an instance does not change them.
 @(component)
 Particle_Override :: struct {
     count:u32,
     names:[PARTICLE_OVERRIDE_CAPACITY]u64,
     values:[PARTICLE_OVERRIDE_CAPACITY][effect.PARTICLE_VALUE_BYTES]u8,
+    layers:[PARTICLE_OVERRIDE_CAPACITY]u8, // 0: of no layer named
 }
 
 // What went wrong with a particle request or value; error_message says how to
@@ -45,7 +49,7 @@ Error :: enum u8 {
 error_message :: proc(error:Error) -> string {
     switch error {
     case .None: return ""
-    case .Unknown_Field: return "Name a value of the effect by its path, as effect.particle_fields lists them (rate, colors.1, bursts.0.count), or a parameter of its Vfx program as parameters. and its name in fewer than 64 bytes (parameters.heat)"
+    case .Unknown_Field: return fmt.tprintf("Name a value of the effect by its path, as effect.particle_fields lists them (rate, colors.1, bursts.0.count), or a parameter of its Vfx program as parameters. and its name in fewer than 64 bytes (parameters.heat); layers.N. before either names layer N, below %d (layers.1.rate)",effect.PARTICLE_LAYERS)
     case .Type_Mismatch: return "Give a field a value of its type (f32, [N]f32, u32, bool or its enum), and a parameter one to four numbers or bools, or the base.Asset_Id of a texture"
     case .Invalid_Value: return "Give a finite value inside the range of its field; curve key times go up from 0 to 1"
     case .Effect_Field: return "The assets and the program of an effect are the effect's: change them in the .particle (particle.set), not in an instance"
@@ -64,8 +68,21 @@ error_message :: proc(error:Error) -> string {
 // when the emitter resolves it (particle_program).
 value_set :: proc(override:^Particle_Override,name:string,value:$T,resolved:^effect.Particle_Info=nil) -> Error {
     bytes:[effect.PARTICLE_VALUE_BYTES]u8
-    if error:=value_encode(name,value,&bytes);error!=.None {return error}
-    return value_put(override,base.name_hash(name),bytes[:],resolved)
+    path,layer,named:=value_layer(name)
+    if !named {return .Unknown_Field}
+    if error:=value_encode(path,value,&bytes);error!=.None {return error}
+    return value_put(override,base.name_hash(path),bytes[:],resolved,layer)
+}
+
+// The path of a value inside the layer it names, and that layer + 1 (0: no
+// layer named); false for a layer the effect cannot have.
+@(private)
+value_layer :: proc(name:string) -> (path:string,layer:u8,ok:bool) {
+    if !strings.has_prefix(name,PARTICLE_LAYER_PATH) {return name,0,true}
+    rest:=name[len(PARTICLE_LAYER_PATH):]
+    dot:=strings.index_byte(rest,'.')
+    if dot!=1 || rest[0]<'0' || int(rest[0]-'0')>=effect.PARTICLE_LAYERS {return}
+    return rest[dot+1:],rest[0]-'0'+1,true
 }
 
 @(private)
@@ -107,26 +124,49 @@ types_match :: proc(a,b:^runtime.Type_Info) -> bool {
 }
 
 // Takes a value away from an instance: that of its effect shows again.
-value_remove :: proc(override:^Particle_Override,name:string) {value_drop(override,base.name_hash(name))}
+value_remove :: proc(override:^Particle_Override,name:string) {
+    if path,layer,named:=value_layer(name);named {value_drop(override,base.name_hash(path),layer)}
+}
 
 @(private)
-value_drop :: proc(override:^Particle_Override,name:u64) {
+value_drop :: proc(override:^Particle_Override,name:u64,layer:u8=0) {
     count:=int(min(override.count,PARTICLE_OVERRIDE_CAPACITY))
     for stored,i in override.names[:count] {
-        if stored!=name {continue}
+        if stored!=name || override.layers[i]!=layer {continue}
         copy(override.names[i:count-1],override.names[i+1:count])
         copy(override.values[i:count-1],override.values[i+1:count])
-        override.names[count-1],override.values[count-1]=0,{}
+        copy(override.layers[i:count-1],override.layers[i+1:count])
+        override.names[count-1],override.values[count-1],override.layers[count-1]=0,{},0
         override.count=u32(count-1)
         return
     }
 }
 
+// Whether some value of an override may change a layer (0 the primary): one
+// of that layer, or a parameter of no layer, which its program may declare.
+@(private)
+override_reaches :: proc(override:^Particle_Override,layer:u8) -> bool {
+    for name,at in override.names[:min(override.count,PARTICLE_OVERRIDE_CAPACITY)] {
+        if value_of_layer(override,at,layer) {return true}
+        if _,field:=effect.particle_value_find(name);!field && override.layers[at]==0 {return true}
+    }
+    return false
+}
+
+// Whether the value at of an override is of a layer (0 the primary): one that
+// names it, or a field that names none for the primary layer.
+@(private)
+value_of_layer :: proc "contextless" (override:^Particle_Override,at:int,layer:u8) -> bool {
+    named:=override.layers[at]
+    return named==layer+1 || named==0 && layer==0
+}
+
 // Puts the bytes of a value by the hash of its name, as value_set does by the
 // name: those of a field of the effect inside its range, those of a parameter
-// as parameter_value gives them.
-value_put :: proc(override:^Particle_Override,name:u64,bytes:[]u8,resolved:^effect.Particle_Info=nil) -> Error {
-    if override==nil || override.count>PARTICLE_OVERRIDE_CAPACITY || len(bytes)>effect.PARTICLE_VALUE_BYTES {return .Invalid_Value}
+// as parameter_value gives them. layer: the layer its path names + 1, 0 for
+// none (value_layer); resolved: the values of that layer.
+value_put :: proc(override:^Particle_Override,name:u64,bytes:[]u8,resolved:^effect.Particle_Info=nil,layer:u8=0) -> Error {
+    if override==nil || override.count>PARTICLE_OVERRIDE_CAPACITY || len(bytes)>effect.PARTICLE_VALUE_BYTES || int(layer)>effect.PARTICLE_LAYERS {return .Invalid_Value}
     if field,found:=effect.particle_value_find(name);found {
         if field.kind==.Asset {return .Effect_Field}
         if len(bytes)<field.size {return .Type_Mismatch}
@@ -138,14 +178,14 @@ value_put :: proc(override:^Particle_Override,name:u64,bytes:[]u8,resolved:^effe
     }
     at:=-1
     for stored,i in override.names[:override.count] {
-        if stored==name {at=i;break}
+        if stored==name && override.layers[i]==layer {at=i;break}
     }
     if at<0 {
         if override.count>=PARTICLE_OVERRIDE_CAPACITY {return .Override_Capacity}
         at=int(override.count)
         override.count+=1
     }
-    override.names[at]=name
+    override.names[at],override.layers[at]=name,layer
     override.values[at]={}
     copy(override.values[at][:],bytes)
     return .None
@@ -210,16 +250,20 @@ value_parameter :: proc(program:^erender.Program,name:u64,value:[effect.PARTICLE
     return
 }
 
-// The values an entity shows: those of its effect (the defaults without one)
-// with the fields the entity gives over them. Its parameters, and values for
-// assets, are left out.
-particle_resolve :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override,preset:=effect.Particle_Preset.Default) -> (info:effect.Particle_Info) {
+// The values an entity shows of a layer of its effect (0 the primary): those
+// of the effect (the defaults without one) with the fields the entity gives
+// that layer over them. Its parameters, and values for assets, are left out.
+particle_resolve :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override,preset:=effect.Particle_Preset.Default,layer:u8=0) -> (info:effect.Particle_Info) {
     info=effect.particle_preset(preset)
     if a!=nil && particle!={} {
-        if view,ok:=effect_view(a,particle);ok {info=view.info}
+        if view,ok:=effect_view(a,particle);ok {
+            info=view.info
+            if layer>0 && int(layer)<=len(view.layers) {info=view.layers[layer-1]}
+        }
     }
     if override==nil {return}
     for name,i in override.names[:min(override.count,PARTICLE_OVERRIDE_CAPACITY)] {
+        if !value_of_layer(override,i,layer) {continue}
         value,found:=effect.particle_value_find(name)
         if !found || value.kind==.Asset {continue}
         mem.copy(rawptr(uintptr(&info)+value.offset),&override.values[i],value.size)
@@ -229,7 +273,7 @@ particle_resolve :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particl
 
 // particle_resolve, saying what is wrong with the effect or the fields of
 // the entity instead of leaving them out.
-particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override,info:^effect.Particle_Info,preset:=effect.Particle_Preset.Default) -> Error {
+particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:^Particle_Override,info:^effect.Particle_Info,preset:=effect.Particle_Preset.Default,layer:u8=0) -> Error {
     info^=effect.particle_preset(preset)
     if particle!={} {
         if a==nil {return .Asset_Not_Found}
@@ -240,7 +284,7 @@ particle_resolve_checked :: proc(a:^host.Assets,particle:base.Asset_Id,override:
             if value,found:=effect.particle_value_find(name);found && value.kind==.Asset {return .Effect_Field}
         }
     }
-    info^=particle_resolve(a,particle,override,preset)
+    info^=particle_resolve(a,particle,override,preset,layer)
     if !effect.particle_check({info=info^}) {return .Invalid_Value}
     return .None
 }
@@ -264,8 +308,15 @@ effect_view :: proc(a:^host.Assets,id:base.Asset_Id) -> (view:effect.Particle_De
 // temporary memory; the emitter then shows its effect without a program.
 particle_program :: proc(a:^host.Assets,particle:base.Asset_Id,info:^effect.Particle_Info,override:^Particle_Override,program:^Program,needs:^Program_Needs=nil,layer:u8=0) -> (problem:string) {
     stored:[]effect.Particle_Parameter
+    others:[effect.PARTICLE_LAYERS]effect.Particle_Info
+    count:=0
     if a!=nil && particle!={} {
-        if view,ok:=effect_view(a,particle);ok {stored=view.parameters}
+        if view,ok:=effect_view(a,particle);ok {
+            stored=view.parameters
+            others[0]=view.info
+            copy(others[1:],view.layers)
+            count=1+min(len(view.layers),effect.PARTICLE_LAYERS-1)
+        }
     }
-    return particle_program_check(a,info,stored,override,program,needs,layer)
+    return particle_program_check(a,info,stored,override,program,needs,layer,others[:count])
 }

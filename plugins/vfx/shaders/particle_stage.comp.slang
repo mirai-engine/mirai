@@ -29,7 +29,6 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
         work = particle_work(group, local.x, params.emitter_first);
         if (work.slot == INVALID) return;
     }
-    particle_step_last = params.last != 0u;
     switch (params.mode) {
     case 0u: {
         uint slot = work.slot;

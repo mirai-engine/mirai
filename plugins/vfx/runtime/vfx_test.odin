@@ -9,7 +9,9 @@ import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
+import scene "mirai:engine/scene"
 import "mirai:host"
+import gpu "mirai:render"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
@@ -40,7 +42,7 @@ Emitters_World :: struct {
 @(private="file")
 Emitters_Fixture :: struct {
     using w:Emitters_World,
-    reports:Particle_Reports,
+    sources:scene.Simulation_Sources,
     drawn:erender.Render_Sync,
     sync:Particle_Sync,
     app:host.App,
@@ -52,7 +54,6 @@ fixture_init :: proc(t:^testing.T,f:^Emitters_Fixture) -> bool {return test_worl
 
 @(private="file")
 fixture_destroy :: proc(f:^Emitters_Fixture) {
-    particle_reports_free(&f.reports)
     particle_sync_free(&f.sync)
     test_world_destroy(&f.w)
 }
@@ -73,13 +74,13 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.sync,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems)
+    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.sync,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems,core.ref(&f.sources))
     fixture_settle(f)
 }
 
 @(private="file")
 fixture_sync :: proc(f:^Emitters_Fixture,id:core.World_Id,time:core.Time,frame:=FRAME) {
-    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),nil,core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,&f.reports,nil,nil,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
+    particles_sync(core.read(&f.emitters),core.read(&f.overrides),core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.bindings),nil,core.read(&f.meshes),core.ref(&f.drawn),core.read(&f.listeners),core.read(&f.grids),core.read(&f.volumes),core.read(&f.textures),core.ref(&f.clocks),core.ref(&f.settings),&f.sync,nil,{},id,time,frame,{},&f.problems,&f.app,{},{},{},{},{})
 }
 
 @(private="file")
@@ -437,7 +438,7 @@ curves_read_on_the_cpu_as_the_shader_reads_them :: proc(t:^testing.T) {
 the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) {
     defines:=make(map[string]u64,context.temp_allocator)
     rest:=string(#load("../shaders/particles.slang"))
-    testing.expect(t,strings.contains(rest,"//! mirai constant REPORT_WORDS uint ../runtime/reports.odin"))
+    testing.expect(t,strings.contains(rest,"//! mirai constant EMITTER_CAPACITY uint ../runtime/gpu.odin"))
     for line in strings.split_lines_iterator(&rest) {
         words:=strings.fields(line,context.temp_allocator)
         if len(words)<3 || words[0]!="#define" || !strings.has_suffix(words[2],"u") {continue}
@@ -455,7 +456,6 @@ the_values_particles_slang_copies_are_those_of_the_plugin :: proc(t:^testing.T) 
         {"PARTICLE_STATE_BYTES",STATE_BYTES},{"PARTICLE_SPAWNS",SPAWNS},
         {"PARTICLE_EVENT_CAPACITY",EVENT_CAPACITY},{"PARTICLE_EVENTS_AT",EVENTS_AT/4},{"PARTICLE_EVENT_WORDS",size_of(Gpu_Event)/4},
         {"PARTICLE_RESOURCES",RESOURCE_ROWS},{"PARTICLE_RESOURCE_BYTES",size_of(Gpu_Resource)},
-        {"PARTICLE_DATA_ENTRIES",DATA_ENTRIES},{"PARTICLE_SEGMENT_BYTES",size_of(Gpu_Segment)},
         {"PARTICLE_STAGES",erender.PROGRAM_STAGES},{"PARTICLE_STAGE_BYTES",size_of(Gpu_Stage)},{"PARTICLE_BIRTH_BYTES",size_of(Gpu_Birth)},
     }) {expect(t,defines,each.name,each.value)}
     kinds :: proc(t:^testing.T,defines:map[string]u64,kind:typeid,prefix:string,none:bool,loc:=#caller_location) {
@@ -767,47 +767,6 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
     testing.expect_value(t,f.sync.births[0].number,u32(4))
 }
 
-// The places of the reports come back to the world from the origin of the
-// frame they were written in, but those of an effect view, which are of the
-// view; what does not fit is lost and counted, and a frame comes once.
-@(test)
-reports_come_back_to_the_world_from_the_origin_of_their_frame :: proc(t:^testing.T) {
-    pool:Pool
-    if !testing.expect(t,pool_make(&pool,64)) {return}
-    defer pool_free(&pool)
-    world_at:=pool_slot_take(&pool,1,8)
-    view_at:=pool_slot_take(&pool,2,8)
-    pool.slots[world_at].desc.owner=core.Entity(7)
-    pool.slots[view_at].desc.owner,pool.slots[view_at].desc.view=core.Entity(9),1
-    row :: proc(slot:int,uid:u64,kind:effect.Particle_Event,position:[3]f32) -> Gpu_Report {
-        return {slot=u32(slot),kind=u32(kind),position=position,emitter_uid={u32(uid),u32(uid>>32)}}
-    }
-    origin:=transmute([3]u32)[3]f32{-20480,1024,15360}
-    Bytes :: struct {head:[4]u32,rows:[3]Gpu_Report}
-    bytes:=Bytes{head={DATA_ENTRIES+5,origin.x,origin.y,origin.z}}
-    world_uid,view_uid:=pool.slots[world_at].uid,pool.slots[view_at].uid
-    old_uid:=view_uid
-    pool_slot_release(&pool,view_at)
-    if !testing.expect_value(t,pool_slot_take(&pool,3,8),view_at) {return}
-    pool.slots[view_at].desc.owner,pool.slots[view_at].desc.view=core.Entity(9),1
-    view_uid=pool.slots[view_at].uid
-    bytes.rows={
-        row(world_at,world_uid,.Death,{1.5,-2,0.25}),
-        row(view_at,view_uid,.Collision,{0.5,0.5,0}),
-        row(view_at,old_uid,.Death,{3,3,3}),
-    }
-    reports:Particle_Reports
-    defer particle_reports_free(&reports)
-    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
-    reports_take(&reports,&pool,([^]u8)(&bytes)[:size_of(bytes)],1)
-    if !testing.expect_value(t,len(reports.reports),2) {return}
-    testing.expect_value(t,reports.reports[0].position,[3]f32{-20478.5,1022,15360.25})
-    testing.expect_value(t,reports.reports[0].entity,core.Entity(7))
-    testing.expect_value(t,reports.reports[1].position,[3]f32{0.5,0.5,0})
-    testing.expect_value(t,reports.reports[1].entity,core.Entity(9))
-    testing.expect_value(t,reports.lost,u32(DATA_ENTRIES+2))
-}
-
 // The textures of the world reach a view relative to its origin: the region
 // of a grid far from the centre of the world, and the uv of its lowest corner,
 // which the cells before it in the world turned.
@@ -901,4 +860,279 @@ particle_births_of_lists_between_frames_join_without_losing_any :: proc(t: ^test
 		testing.expect(t, s.count > 0)
 		testing.expectf(t, spawn_youngest(s) >= -1e-6 && s.age <= 0.15 + 1e-6, "a joined group spans what its births spanned: %v", s)
 	}
+}
+
+// A renderer without a device whose catalog has the Vfx programs given, each
+// with float parameters of those names: what the values of an instance are
+// checked against. Its assets let go of it before they are destroyed.
+@(private="file")
+fake_programs :: proc(a:^host.Assets,programs:[]struct{name:string,parameters:[]string}) -> ^gpu.Renderer {
+    r:=new(gpu.Renderer,context.temp_allocator)
+    list:=make([]gpu.Program,len(programs),context.temp_allocator)
+    for each,i in programs {
+        parameters:=make([]gpu.Program_Parameter,len(each.parameters),context.temp_allocator)
+        for name,k in each.parameters {parameters[k]={name=name,kind=.Float,components=1,offset=u16(16*k),min=-1000,max=1000}}
+        list[i]={id=u32(i+1),name=each.name,domain=.Vfx,size=16*len(each.parameters),parameters=parameters}
+    }
+    r.programs={programs=list,loaded=true}
+    a.renderer=r
+    return r
+}
+
+// An effect of layers at folder, each with the program named, saved and read.
+@(private="file")
+fake_effect :: proc(t:^testing.T,folder:string,id:base.Asset_Id,layers:[]effect.Particle_Info) -> bool {
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    path:=strings.concatenate({folder,"/fake.particle"},context.temp_allocator)
+    return testing.expect_value(t,effect.particle_save(path,&types,{id=id,info=layers[0],layers=layers[1:]}),asset.Error.None)
+}
+
+@(private="file")
+layer_of :: proc(program:string,rate:f32) -> (info:effect.Particle_Info) {
+    info=effect.PARTICLE_DEFAULTS
+    info.rate=rate
+    base.text_set(info.program[:],program)
+    return
+}
+
+// A game that changes a value of an emitter every frame (a parameter it
+// animates) writes it in place: once warm, no frame allocates, the row of
+// the emitter goes to the GPU again and the pool keeps how it grouped its
+// programs.
+@(test)
+an_animated_value_allocates_nothing_and_keeps_the_pool_grouped :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-animated")
+    id:=base.Asset_Id{0x616e696d,1}
+    layers:=[2]effect.Particle_Info{layer_of("Heat",10),layer_of("Heat",5)}
+    if !fake_effect(t,folder,id,layers[:]) {return}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    defer assets.renderer=nil
+    fake_programs(&assets,{{"Heat",{"heat"}}})
+    f.app.assets=&assets
+    e:=fixture_emitter(f,Particle_Emitter{particle=id,active=true,loop=true})
+    if !testing.expect(t,pool_make(&f.sync.pool,8192)) {return}
+    frame :: proc(f:^Emitters_Fixture,e:core.Entity,value:f32) {
+        _=request_value(&f.requests,e,"parameters.heat",value)
+        _=request_value(&f.requests,e,"colors.0",[4]f32{value/10,0,0,1})
+        fixture_tick(f,TICK)
+        fixture_sync(f,{0,1},TICK)
+        for layer in 0..<2 {
+            if shown:=shown_find(&f.sync,e,layer);shown!=nil {pool_put(&f.sync.pool,&shown.desc)}
+        }
+    }
+    for i in 0..<3 {frame(f,e,f32(i))}
+    f.sync.pool.regroup=false
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    regrouped:=false
+    {
+        context.allocator=mem.tracking_allocator(&tracker)
+        for i in 0..<8 {
+            for &s in f.sync.pool.slots[:f.sync.pool.slot_end] {s.look_dirty,s.program_dirty=false,false}
+            frame(f,e,4+f32(i))
+            regrouped||=f.sync.pool.regroup
+            for layer in 0..<2 {
+                at:=pool_slot_find(&f.sync.pool,layer_id(e,layer))
+                if !testing.expect(t,at>=0) {return}
+                s:=&f.sync.pool.slots[at]
+                testing.expectf(t,s.look_dirty && s.program_dirty,"layer %d writes its row and parameters again",layer)
+                testing.expect_value(t,s.desc.program.parameters[0][0],4+f32(i))
+            }
+        }
+    }
+    testing.expect_value(t,tracker.total_allocation_count,i64(0))
+    testing.expect(t,!regrouped,"a value that changes alone does not group the pool again")
+    shown:=shown_find(&f.sync,e,0)
+    testing.expect(t,shown.desc.spec.owned && abs(shown.desc.info.colors[0].x-1.1)<1e-5)
+}
+
+// layers.N. names a layer: its fields change that layer alone. A parameter
+// without it reaches every layer whose program declares it and leaves the
+// others; one no program declares is a problem of the primary layer. A burst
+// and the status name a layer or take all of them.
+@(test)
+layer_paths_change_their_layer_and_parameters_every_layer_that_declares_them :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-layer-paths")
+    id:=base.Asset_Id{0x6c617972,1}
+    layers:=[3]effect.Particle_Info{layer_of("Heat",10),layer_of("Heat",5),layer_of("Cold",2)}
+    if !fake_effect(t,folder,id,layers[:]) {return}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    defer assets.renderer=nil
+    fake_programs(&assets,{{"Heat",{"heat"}},{"Cold",{"chill","heat_unused"}}})
+    f.app.assets=&assets
+    e:=fixture_emitter(f,Particle_Emitter{particle=id,loop=true})
+    testing.expect_value(t,request_value(&f.requests,e,"layers.1.rate",f32(40)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"parameters.heat",f32(7)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"layers.2.parameters.chill",f32(3)),Error.None)
+    testing.expect_value(t,request_value(&f.requests,e,"layers.8.rate",f32(1)),Error.Unknown_Field)
+    testing.expect_value(t,request_value(&f.requests,e,"layers.x.rate",f32(1)),Error.Unknown_Field)
+    fixture_tick(f,TICK)
+    fixture_tick(f,TICK)
+    fixture_sync(f,{0,1},TICK)
+    Case :: struct {layer:int,rate:f32,parameter:f32}
+    for c in ([]Case{{0,10,7},{1,40,7},{2,2,3}}) {
+        clock:=clock_find(&f.clocks,e,c.layer)
+        shown:=shown_find(&f.sync,e,c.layer)
+        if !testing.expectf(t,clock!=nil && shown!=nil,"layer %d has a clock and was told",c.layer) {continue}
+        testing.expectf(t,clock.emission.rate==c.rate && shown.desc.info.rate==c.rate,"layer %d emits %v, not %v",c.layer,c.rate,clock.emission.rate)
+        testing.expectf(t,shown.desc.program.parameters[0][0]==c.parameter,"layer %d takes %v, not %v",c.layer,c.parameter,shown.desc.program.parameters[0][0])
+        testing.expectf(t,base.text_get(shown.problem[:])=="","layer %d runs its program: %s",c.layer,base.text_get(shown.problem[:]))
+    }
+    // A layer that does not exist is refused when its request is taken.
+    testing.expect_value(t,request_value(&f.requests,e,"layers.5.rate",f32(1)),Error.None)
+    f.problems={}
+    fixture_tick(f,TICK)
+    testing.expect_value(t,f.problems.count,1)
+    // A parameter no layer declares.
+    testing.expect_value(t,request_value(&f.requests,e,"parameters.nothing",f32(1)),Error.None)
+    fixture_tick(f,TICK)
+    fixture_sync(f,{0,1},TICK)
+    testing.expect(t,base.text_get(shown_find(&f.sync,e,0).problem[:])!="")
+    testing.expect(t,base.text_get(shown_find(&f.sync,e,1).problem[:])=="")
+    // A burst of a layer, then of all; the status of each layer and of the whole.
+    burst(&f.requests,e,4,layer=1)
+    fixture_tick(f,TICK)
+    emitted:[3]u64
+    for &n,layer in emitted {n=clock_find(&f.clocks,e,layer).emitted}
+    testing.expect_value(t,emitted,[3]u64{0,4,0})
+    burst(&f.requests,e,2)
+    fixture_tick(f,TICK)
+    whole,found:=status(&f.clocks,PARTICLE_EMITTER_DEFAULT,e)
+    testing.expect(t,found && whole.layers==3 && whole.emitted==10)
+    one,_:=status(&f.clocks,PARTICLE_EMITTER_DEFAULT,e,1)
+    testing.expect_value(t,one.emitted,u64(6))
+    _,beyond:=status(&f.clocks,PARTICLE_EMITTER_DEFAULT,e,3)
+    testing.expect(t,!beyond)
+}
+
+// The box of an emitter holds every place its particles reach, from their
+// speed, the gravity and the wind of the world, the motion of their entity
+// and their bounces: an emitter is culled by the frustum unless its program
+// moves its particles or a surface starts them.
+@(test)
+emitter_bounds_hold_what_forces_and_motion_reach :: proc(t:^testing.T) {
+    Case :: struct {
+        name:string,
+        gravity,drag,inherit:f32,
+        collision:effect.Particle_Collision,
+        shape:effect.Particle_Shape,
+        program:u32,
+        reach:[3]f32, // a place a particle reaches
+        unbounded:bool,
+    }
+    LIFE,SPEED :: f32(2),f32(5)
+    cases:=[]Case{
+        {name="gravity",gravity=1,reach={0,SPEED*LIFE-0.5*9.81*LIFE*LIFE,0}},
+        {name="gravity of the world",gravity=2,reach={0,-0.5*2*50*LIFE*LIFE,0}},
+        {name="drag into the wind",drag=3,reach={50*LIFE,SPEED*LIFE,0}},
+        {name="inherit",inherit=0.5,reach={0.5*60*LIFE,SPEED*LIFE,0}},
+        {name="collision",collision=.World,gravity=1,reach={SPEED*LIFE,0,0}},
+        {name="program",program=1,unbounded=true},
+        {name="surface",shape=.Surface,unbounded=true},
+    }
+    for c in cases {
+        pool:Pool
+        if !testing.expect(t,pool_make(&pool,4096)) {return}
+        defer pool_free(&pool)
+        pool.dt,pool.gravity_reach,pool.wind_reach=1.0/60,50,50
+        info:Emitter_Info
+        info.info=effect.PARTICLE_DEFAULTS
+        m:=&info.info
+        m.lifetime,m.speed,m.gravity,m.drag,m.inherit_velocity,m.collision,m.shape=LIFE,SPEED,c.gravity,c.drag,c.inherit,c.collision,c.shape
+        info.program.id=c.program
+        // It moved a metre along x in the frame.
+        desc:=Emitter_Desc{id=1,capacity=64,spec=&info,transform=1,previous=1}
+        desc.previous[0,3]=-1
+        if !testing.expect(t,pool_put(&pool,&desc)) {return}
+        s:=&pool.slots[pool_slot_find(&pool,1)]
+        testing.expectf(t,s.unbounded==c.unbounded,"%s: unbounded %v",c.name,s.unbounded)
+        if c.unbounded {continue}
+        for axis in 0..<3 {
+            testing.expectf(t,abs(s.bounds_min[axis])<1e30 && abs(s.bounds_max[axis])<1e30,"%s: a finite box",c.name)
+            testing.expectf(t,s.bounds_min[axis]<=c.reach[axis] && c.reach[axis]<=s.bounds_max[axis] && s.bounds_min[axis]<=-c.reach[axis] && -c.reach[axis]<=s.bounds_max[axis],
+                "%s: %v inside %v %v",c.name,c.reach,s.bounds_min,s.bounds_max)
+        }
+    }
+}
+
+// An effect that runs at most max_instances emitters keeps the nearest to
+// the simulation sources; one with a cull_distance waits past it. Those
+// that wait keep their clock and are not drawn; no step allocates once warm.
+@(test)
+emitters_past_their_cull_distance_or_max_instances_wait :: proc(t:^testing.T) {
+    f:=new(Emitters_Fixture)
+    defer free(f)
+    if !fixture_init(t,f) {return}
+    defer fixture_destroy(f)
+    folder:=base.test_folder(t,"vfx-cull")
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    crowd,far:=base.Asset_Id{0x63756c6c,1},base.Asset_Id{0x63756c6c,2}
+    crowded:=effect.PARTICLE_DEFAULTS
+    crowded.max_instances=2
+    distant:=effect.PARTICLE_DEFAULTS
+    distant.cull_distance=10
+    testing.expect_value(t,effect.particle_save(strings.concatenate({folder,"/crowd.particle"},context.temp_allocator),&types,{id=crowd,info=crowded}),asset.Error.None)
+    testing.expect_value(t,effect.particle_save(strings.concatenate({folder,"/far.particle"},context.temp_allocator),&types,{id=far,info=distant}),asset.Error.None)
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    f.app.assets=&assets
+    xs:=[4]f32{4,1,3,2}
+    crowds:[4]core.Entity
+    for &e,i in crowds {e=fixture_emitter(f,Particle_Emitter{particle=crowd,active=true,loop=true},{xs[i],0,0})}
+    near:=fixture_emitter(f,Particle_Emitter{particle=far,active=true,loop=true},{5,0,0})
+    away:=fixture_emitter(f,Particle_Emitter{particle=far,active=true,loop=true},{25,0,0})
+    f.sources.count=1
+    step :: proc(f:^Emitters_Fixture,source:f32) {
+        f.sources.items[0].position={source,0,0}
+        fixture_tick(f,TICK)
+        fixture_sync(f,{0,1},TICK)
+    }
+    Case :: struct {source:f32,waiting:[6]bool}
+    cases:=[]Case{
+        {0,{true,false,true,false,false,true}},   // the two nearest of x 1 and 2; 25 is past 10
+        {5,{false,true,false,true,false,true}},   // 4 and 3 now
+        {20,{false,true,false,true,true,false}},  // 4 and 3 again; x 25 within 10, x 5 past it
+    }
+    all:=[6]core.Entity{crowds[0],crowds[1],crowds[2],crowds[3],near,away}
+    for c in cases {
+        step(f,c.source)
+        for e,i in all {
+            clock:=clock_find(&f.clocks,e)
+            shown:=sync_shown(&f.sync,e)
+            if !testing.expect(t,clock!=nil && shown!=nil) {return}
+            testing.expectf(t,clock.culled==c.waiting[i] && shown.culled==c.waiting[i] && shown.paused==c.waiting[i],"source at %v: emitter %d waits %v",c.source,i,clock.culled)
+            s,_:=status(&f.clocks,PARTICLE_EMITTER_DEFAULT,e)
+            testing.expect(t,(s.state==.Culled)==c.waiting[i])
+        }
+    }
+    // A clock that waits stands still.
+    before:=clock_find(&f.clocks,away).time
+    step(f,cases[0].source)
+    testing.expect_value(t,clock_find(&f.clocks,away).time,before)
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    {
+        context.allocator=mem.tracking_allocator(&tracker)
+        for i in 0..<12 {step(f,cases[i%len(cases)].source)}
+    }
+    testing.expect_value(t,tracker.total_allocation_count,i64(0))
 }

@@ -72,43 +72,6 @@ Mirai_Vfx_Surface mirai_vfx_surface_at(Mirai_Vfx_Context ctx, uint resource, uin
     return particle_surface_at(particle_resource(ctx.emitter, 1u + resource), triangle, barycentric, particle_frame_step().x);
 }
 
-// A point of a bone of the Bones shape: where it is in the world, the way the
-// bone goes (from the joint of its parent to its own) and how fast it moves.
-struct Particle_Bone {
-    float3 position;
-    float3 axis;
-    float3 velocity;   // m/s
-    bool valid;
-};
-
-// The point of a bone at along (0: the joint of its parent, 1: its own), as
-// it is this frame, and how fast it moves since the frame before over dt.
-Particle_Bone particle_bone_at(Particle_Resource r, uint bone, float along, float dt) {
-    Particle_Bone b = (Particle_Bone)0;
-    if (r.kind != PARTICLE_RESOURCE_BONES || bone >= r.count) return b;
-    Particle_Segment s = particle_segment_at(r.first + bone * PARTICLE_SEGMENT_BYTES);
-    b.position = transform_point(r.world, lerp(s.start, s.end, along));
-    float3 before = transform_point(r.previous, lerp(s.previous_start, s.previous_end, along));
-    b.velocity = dt > 0.0 ? (b.position - before) / dt : float3(0.0);
-    float3 axis = transform_vector(r.world, s.end - s.start);
-    b.axis = dot(axis, axis) > 1e-12 ? normalize(axis) : float3(0.0, 1.0, 0.0);
-    b.valid = true;
-    return b;
-}
-
-// A point of the bones chosen by length: the bone whose running length
-// passes a random share of the whole, and a point of it chosen evenly.
-Particle_Bone particle_bone_sample(Particle_Resource r, inout uint seed, float dt) {
-    if (r.kind != PARTICLE_RESOURCE_BONES || r.count == 0u) return (Particle_Bone)0;
-    float wanted = random01(seed) * particle_segment_at(r.first + (r.count - 1u) * PARTICLE_SEGMENT_BYTES).length;
-    uint low = 0u, high = r.count - 1u;
-    while (low < high) {
-        uint middle = (low + high) / 2u;
-        if (particle_segment_at(r.first + middle * PARTICLE_SEGMENT_BYTES).length <= wanted) low = middle + 1u; else high = middle;
-    }
-    return particle_bone_at(r, low, random01(seed), dt);
-}
-
 // Where a cell of the world is among those of a grid, which wrap in place; false outside
 // its region. An axis of one cell takes every index.
 bool particle_grid_cell(Particle_Grid_Row g, int3 index, out uint at) {
@@ -269,12 +232,8 @@ uint particle_attributes(uint slot, uint index) {
     return data.x + (index - particle_emitters[slot].range.x) * data.y;
 }
 
-// Optional birth lookup slots, addressed by birth modulo the emitter's capacity.
+// The seed of the particle an emitter starts as its birth-th.
 uint particle_birth_seed(uint slot, uint birth) { return hash_u32(hash_u32(particle_emitters[slot].random.x * 9781u + birth * 26699u) ^ 0x9E3779B9u); }
-uint particle_birth_entry(uint slot, uint birth) {
-    uint2 range = particle_emitters[slot].range.xy;
-    return particle_emitters[slot].birth_entries + 4u * (birth % max(range.y, 1u));
-}
 
 // What the program of an emitter keeps of it between its prepare and the rest of the frame.
 uint mirai_vfx_state_load(Mirai_Vfx_Context ctx, uint word) {
@@ -286,111 +245,6 @@ void mirai_vfx_state_store(Mirai_Vfx_Context ctx, uint word, uint value) {
 }
 #else
 void mirai_vfx_state_store(Mirai_Vfx_Context ctx, uint word, uint value) {}
-#endif
-
-// The slot of the emitter a resource of the emitter of ctx reads; false without one.
-bool particle_emitter_resource(Mirai_Vfx_Context ctx, uint resource, out uint other) {
-    Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
-    other = 0u;
-    if (r.kind != PARTICLE_RESOURCE_EMITTER) return false;
-    other = r.first;
-    return (particle_emitters[other].range.w & PARTICLE_FLAG_ACTIVE) != 0u;
-}
-
-uint mirai_vfx_emitter_capacity(Mirai_Vfx_Context ctx, uint resource) {
-    uint other;
-    return particle_emitter_resource(ctx, resource, other) ? particle_emitters[other].range.y : 0u;
-}
-
-bool mirai_vfx_emitter_particle(Mirai_Vfx_Context ctx, uint resource, uint slot, out Mirai_Vfx_Particle value) {
-    uint other;
-    value = (Mirai_Vfx_Particle)0;
-    if (!particle_emitter_resource(ctx, resource, other) || slot >= particle_emitters[other].range.y) return false;
-    Particle p = particles[particle_emitters[other].range.x + slot];
-    if (p.lifetime <= 0.0) return false;
-    value = particle_program_value(other, p);
-    return true;
-}
-
-uint mirai_vfx_emitter_word(Mirai_Vfx_Context ctx, uint resource, uint slot, uint word) {
-    uint other;
-    if (!particle_emitter_resource(ctx, resource, other) || slot >= particle_emitters[other].range.y || word * 4u >= particle_emitters[other].data.y) return 0u;
-    return particle_data.Load(particle_attributes(other, particle_emitters[other].range.x + slot) + word * 4u);
-}
-
-uint2 mirai_vfx_emitter_births(Mirai_Vfx_Context ctx, uint resource) {
-    uint other;
-    if (!particle_emitter_resource(ctx, resource, other)) return uint2(0u);
-#ifdef PARTICLES_WRITABLE
-    if ((particle_emitters[other].range.w & PARTICLE_FLAG_BIRTHS) != 0u) return uint2(particle_states[other].born - particle_states[other].births, particle_states[other].births);
-#endif
-    return uint2(particle_emitters[other].data.w, particle_emitters[other].range.z);
-}
-
-int mirai_vfx_emitter_birth(Mirai_Vfx_Context ctx, uint resource, uint birth, out uint seed) {
-    uint other;
-    seed = 0u;
-    if (!particle_emitter_resource(ctx, resource, other)) return -1;
-    uint2 range = particle_emitters[other].range.xy;
-    if (range.y == 0u || particle_emitters[other].birth_entries == INVALID) return -1;
-    seed = particle_birth_seed(other, birth);
-    uint slot = particle_data.Load(particle_birth_entry(other, birth));
-    if (slot >= range.y) return -1;
-    Particle p = particles[range.x + slot];
-    return p.lifetime > 0.0 && p.seed == seed ? int(slot) : -1;
-}
-
-// A data channel (vfx/runtime/data.odin): its bytes in the world buffer, the
-// words of an entry and the copy the frame writes.
-struct Particle_Data_Channel { uint at; uint words; uint parity; };
-
-bool particle_data_of(Mirai_Vfx_Context ctx, uint resource, out Particle_Data_Channel d) {
-    Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
-    d.at = r.mesh; d.words = r.first; d.parity = r.count;
-    return r.kind == PARTICLE_RESOURCE_DATA && d.words > 0u;
-}
-
-// Where a copy is: its counter, padding, then its entries.
-uint particle_data_copy(Particle_Data_Channel d, uint parity) { return d.at + parity * (16u + PARTICLE_DATA_ENTRIES * d.words * 4u); }
-
-uint particle_data_written(Particle_Data_Channel d) {
-    return min(particle_world_bytes.Load(particle_data_copy(d, 1u - d.parity)), PARTICLE_DATA_ENTRIES);
-}
-
-uint mirai_vfx_data_count(Mirai_Vfx_Context ctx, uint resource) {
-    Particle_Data_Channel d;
-    if (!particle_data_of(ctx, resource, d)) return 0u;
-    return particle_data_written(d);
-}
-
-uint mirai_vfx_data_word(Mirai_Vfx_Context ctx, uint resource, uint entry, uint word) {
-    Particle_Data_Channel d;
-    if (!particle_data_of(ctx, resource, d) || word >= d.words) return 0u;
-    if (entry >= particle_data_written(d)) return 0u;
-    return particle_world_bytes.Load(particle_data_copy(d, 1u - d.parity) + 16u + (entry * d.words + word) * 4u);
-}
-
-// Updates and stages append to data channels in the last step of the frame
-// alone: a frame of several steps would write each entry once a step.
-static bool particle_step_last = true;
-
-#ifdef PARTICLES_WRITABLE
-bool mirai_vfx_data_append(Mirai_Vfx_Context ctx, uint resource, out uint entry) {
-    entry = 0u;
-    Particle_Data_Channel d;
-    if (!particle_step_last || !particle_data_of(ctx, resource, d)) return false;
-    particle_world_bytes.InterlockedAdd(particle_data_copy(d, d.parity), 1u, entry);
-    return entry < PARTICLE_DATA_ENTRIES;
-}
-
-void mirai_vfx_data_store(Mirai_Vfx_Context ctx, uint resource, uint entry, uint word, uint value) {
-    Particle_Data_Channel d;
-    if (!particle_data_of(ctx, resource, d) || word >= d.words || entry >= PARTICLE_DATA_ENTRIES) return;
-    particle_world_bytes.Store(particle_data_copy(d, d.parity) + 16u + (entry * d.words + word) * 4u, value);
-}
-#else
-bool mirai_vfx_data_append(Mirai_Vfx_Context ctx, uint resource, out uint entry) { entry = 0u; return false; }
-void mirai_vfx_data_store(Mirai_Vfx_Context ctx, uint resource, uint entry, uint word, uint value) {}
 #endif
 
 uint2 mirai_vfx_particle_id(Mirai_Vfx_Context ctx) {

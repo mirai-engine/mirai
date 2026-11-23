@@ -66,12 +66,14 @@ MESH_PROGRAMS :: 8 // Surface programs of the materials of the mesh of an emitte
 Emitter_Desc :: struct {
     using spec:^Emitter_Info,
     id:u64,              // stable while the emitter lives
+    look:u64,            // what its values were resolved from: another one writes its row and parameters again
     generation:u32,      // another one starts its range empty
     capacity:u32,        // particles alive at once
     transform:matrix[4,4]f32, // where the emitter is this frame
     previous:matrix[4,4]f32,  // and was the last one: births spread between both
     spawns:[SPAWNS]Particle_Spawn, // since the last list, in the order of their births
     paused:bool,         // its particles stay as they are
+    culled:bool,         // and they are not drawn: its emitter waits (Emitter_Clock.culled)
     material:erender.Material_Handle, // of info.material
     meshes:[effect.PARTICLE_MESHES]Mesh_Choice, // of Mesh particles: what each mesh draws, mesh_count of them
     mesh_count:u32,
@@ -127,7 +129,7 @@ Gpu_Emitter :: struct {
     world,previous:[3][4]f32,
     range:[4]u32,       // first slot of the pool, capacity, births this frame, FLAG_*
     random:[4]u32,      // seed, event target slot+1 (0: none), particles per event, groups of births
-    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, Particle_Event its reports tell, 0
+    program:[4]u32,     // Vfx program (0: none), first slot of the drawn lists, 0, 0
     shape:[4]f32,       // size, w cone half-angle
     kinds:[4]u32,       // Particle_Shape, Particle_Render, Particle_Collision, Particle_Event
     lifetime_speed:[4]f32,
@@ -153,7 +155,7 @@ Gpu_Emitter :: struct {
     from_world:[3][4]f32,
     emitter_uid:[2]u32,
     birth_limit:f32,
-    birth_entries:u32,
+    pad:u32,
     beam:[4]f32,
     mesh_handles:[effect.PARTICLE_MESHES]u32, // and the meshes, whose indices the frame lists (erender.frame_mesh_whole)
 }
@@ -163,9 +165,8 @@ Gpu_Emitter :: struct {
 Gpu_Frame :: struct {
     step:[4]f32, // seconds of the frame, of each step, steps, and the time at the end of the frame
     births:u32,  // bytes of the rows of the frame to the births of the channels
-    reports:u32, // bytes of the world buffer to the copy of the reports channel the frame writes; max(u32): none
     slots:u32,
-    pad:u32,
+    pad:[2]u32,
 }
 #assert(size_of(Gpu_Frame)==32)
 
@@ -228,8 +229,6 @@ Pool_Slot :: struct {
     order_at:int,
     id:u64,
     offset,capacity:u32,
-    birth_entries:u32, // in the attribute arena, max(u32) when no program reads births
-    birth_clear:bool,
     attributes,stride:u32, // bytes of the Attributes of the pool to those of its range, and of each particle
     generation:u32,
     live,fresh,draining:bool,
@@ -238,7 +237,33 @@ Pool_Slot :: struct {
     unbounded:bool,
     bound_scale:[3]f32,
     program_dirty,look_dirty:bool,
+    structure:Emitter_Structure,
     desc:Emitter_Desc,
+}
+
+// What of an emitter decides the spans of the programs and the kinds of the
+// frame (pool_kinds, programs_find): another one groups the pool again. Values
+// that change alone, as a parameter a game animates, only write its row again.
+@(private)
+Emitter_Structure :: struct {
+    program:u32,
+    births,prepare:bool,
+    render:effect.Particle_Render,
+    blended,mixed:bool,
+    view:erender.Texture_Handle,
+    event_target:u64,
+    material:erender.Material_Handle,
+    mesh_count:u32,
+    meshes:[effect.PARTICLE_MESHES]Mesh_Choice,
+}
+
+@(private)
+emitter_structure :: proc "contextless" (d:^Emitter_Desc) -> Emitter_Structure {
+    return {
+        program=d.program.id,births=d.program.births,prepare=d.program.prepare,render=d.info.render,
+        blended=d.blended,mixed=d.mixed,view=d.view,event_target=d.event_target,material=d.material,
+        mesh_count=d.mesh_count,meshes=d.meshes,
+    }
 }
 
 // A bit for each slot of the pool.
@@ -297,6 +322,7 @@ Pool :: struct {
     pool_end:u32,            // end of the pool in use
     regroup:bool,            // a range, a program, an event target or how an emitter is drawn changed since the spans of the programs were found
     dt:f32,                  // simulated by the next frame: every frame given since the last one that simulated adds its seconds
+    gravity_reach,wind_reach:f32, // m/s2 and m/s: the strongest gravity and wind of the fields of the world, which the boxes of the emitters take
     added:f32,               // seconds the last frame given added
     drawn:bool,              // a frame simulated the particles since the last one given
     still:bool,              // the emitters of the world keep their particles as they are: effect views play alone
@@ -314,7 +340,6 @@ Pool :: struct {
     // What the live emitters ask, found with the spans of the programs.
     sprites,meshes:bool,     // some draws them
     views:bool,              // some draws into an effect view
-    reports:bool,            // some reports what its particles do
     // Of the frame, from pool_prepare.
     resources:erender.Pass_Rows,
     rows_frame:u64,          // the frame whose rows they are; 0: none
@@ -419,16 +444,16 @@ pool_put :: proc(pool:^Pool,desc:^Emitter_Desc) -> bool {
     }
     slot:=&pool.slots[slot_at]
     before:=&slot.desc
-    if before.spec!=desc.spec {
-        emitter_info_keep(desc.spec)
-        emitter_info_drop(before.spec)
-        pool.regroup=true
+    if before.spec!=desc.spec || before.look!=desc.look {
+        if before.spec!=desc.spec {
+            emitter_info_keep(desc.spec)
+            emitter_info_drop(before.spec)
+        }
         slot.look_dirty=true
         slot.program_dirty=desc.program.id!=0
     }
-    if before.mesh_count!=desc.mesh_count || before.event_target!=desc.event_target ||
-        before.blended!=desc.blended || before.mixed!=desc.mixed || before.view!=desc.view || before.material!=desc.material ||
-        before.meshes!=desc.meshes {
+    if structure:=emitter_structure(desc);structure!=slot.structure {
+        slot.structure=structure
         pool.regroup=true
         slot.look_dirty=true
     }
@@ -439,7 +464,7 @@ pool_put :: proc(pool:^Pool,desc:^Emitter_Desc) -> bool {
         slot.desc.previous=previous
         spawns_join(&slot.desc.spawns,spawns,desc.spawns,0)
     } else {slot.desc=desc^}
-    emitter_bounds(slot)
+    emitter_bounds(pool,slot)
     bits_add(&pool.pending,slot_at)
     bits_add(&pool.dirty,slot_at)
     return true
@@ -574,7 +599,7 @@ pool_slot_take :: proc(p:^Pool,id:u64,capacity:u32,stride:u32=0) -> int {
         return -1
     }
     p.next_uid+=1
-    p.slots[at]={order_at=p.order_count,birth_entries=max(u32),id=id,uid=p.next_uid,offset=u32(offset),capacity=capacity,attributes=u32(attributes),stride=stride,live=true,fresh=true}
+    p.slots[at]={order_at=p.order_count,id=id,uid=p.next_uid,offset=u32(offset),capacity=capacity,attributes=u32(attributes),stride=stride,live=true,fresh=true}
     p.pool_end=max(p.pool_end,u32(offset)+capacity)
     p.regroup=true
     p.order[p.order_count]=u16(at)
@@ -593,9 +618,6 @@ pool_slot_release :: proc(p:^Pool,at:int) {
     p.slots[swapped].order_at=slot.order_at
     base.ranges_give(&p.free,u64(slot.offset),u64(slot.capacity))
     base.ranges_give(&p.attribute_free,u64(slot.attributes),u64(slot.capacity)*u64(slot.stride))
-    if slot.birth_entries!=max(u32) {
-        base.ranges_give(&p.attribute_free,u64(slot.birth_entries),(u64(slot.capacity)*4+15)&~u64(15))
-    }
     if slot.draining {p.drains-=1}
     slot.live=false
     p.pending[at/64]&~=u64(1)<<(uint(at)%64)
@@ -639,10 +661,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
     if reset || pass.origin!=pool.rows_origin {pool_dirty_all(pool)}
     pool.rows_origin=pass.origin
     header:Gpu_Frame
-    // Where the reports of the frame go: the copy of their channel it writes.
-    header.reports=max(u32)
-    if at:=data_find(&sync.data,REPORTS_CHANNEL);at>=0 {header.reports=data_base(sync)+sync.data.entries[at].offset+u32(pool.frame&1)*data_copy_bytes(REPORT_WORDS)}
-    bytes:=size_of(Gpu_Frame)+len(sync.segments)*size_of(Gpu_Segment)
+    bytes:=size_of(Gpu_Frame)
     bytes+=len(sync.grids.entries)*(size_of(Gpu_Grid)+size_of(Gpu_Volume))
     if len(sync.resources)>=RESOURCE_ROWS {bytes+=pool.order_count*RESOURCE_ROWS*size_of(Gpu_Resource)}
     if len(sync.stage_rows)>=erender.PROGRAM_STAGES {
@@ -652,9 +671,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
     if reserve(&pool.frame_bytes,bytes)!=nil {return false}
     clear(&pool.frame_bytes)
     append(&pool.frame_bytes,..([^]u8)(&header)[:size_of(header)])
-    // The bones of the frame, then the grids: the resources that read them name their bytes.
-    segments:=u32(len(pool.frame_bytes))
-    append(&pool.frame_bytes,..([^]u8)(raw_data(sync.segments))[:len(sync.segments)*size_of(Gpu_Segment)])
+    // The grids: the resources that read them name their bytes.
     pool.grids_at=u32(len(pool.frame_bytes))
     base:=grids_base(sync)
     for &entry,at in sync.grids.entries {
@@ -736,8 +753,6 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         g.frame={max(u32),d.births.x*size_of(Gpu_Birth),d.births.y,max(u32)}
         g.data.z,g.data.w=transmute(u32)d.age,d.born
         g.birth_limit=d.birth_limit if d.owner!=core.NONE else max(f32)
-        g.birth_entries=s.birth_entries
-        if g.birth_entries!=max(u32) {g.birth_entries+=u32(pool_data_bytes(pool.capacity))}
         g.flipbook.zw={}
         if d.resources>0 && int(d.resources-1)+RESOURCE_ROWS<=len(sync.resources) {
             resources:=sync.resources[d.resources-1:][:RESOURCE_ROWS]
@@ -754,21 +769,9 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                         row.head={u32(Resource_Kind.Surface),u32(resource.mesh),first+size_of(Gpu_Fields)/4,resource.triangles}
                     }
                 case .Channel: row.head={u32(Resource_Kind.Channel),0,resource.first,resource.count}
-                case .Bones:
-                    if int(resource.first+resource.count)<=len(sync.segments) {
-                        row.head={u32(Resource_Kind.Bones),0,segments+resource.first*size_of(Gpu_Segment),resource.count}
-                    }
                 case .Grid:
                     if int(resource.first)<len(sync.grids.entries) {
                         row.head={u32(Resource_Kind.Grid),pool.grids_at+resource.first*size_of(Gpu_Grid),0,0}
-                    }
-                case .Emitter:
-                    if other:=pool_slot_find(pool,resource.emitter);other>=0 {row.head={u32(Resource_Kind.Emitter),0,u32(other),0}}
-                case .Data:
-                    // The bytes of the channel, the words of an entry, and the copy the frame writes.
-                    if at:=data_find(&sync.data,resource.emitter);at>=0 {
-                        entry:=&sync.data.entries[at]
-                        row.head={u32(Resource_Kind.Data),data_base(sync)+entry.offset,entry.words,u32(pool.frame&1)}
                     }
                 }
                 append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
@@ -840,14 +843,7 @@ pool_rows_write :: proc(sync:^Particle_Sync,pass:^erender.Pass) -> bool {
         if !erender.pass_buffer_write(pass,emitters,u64(first)*size_of(Gpu_Emitter),&pool.gpu[first],(end-first)*size_of(Gpu_Emitter)) {return false}
         for slot in first..<end {
             s:=&pool.slots[slot]
-            if s.live {
-                s.look_dirty=false
-                if s.birth_clear {
-                    offset:=pool_data_bytes(pool.capacity)+u64(s.birth_entries)
-                    if !erender.pass_buffer_fill(pass,data,offset,u64(s.capacity)*4,0xff) {return false}
-                    s.birth_clear=false
-                }
-            }
+            if s.live {s.look_dirty=false}
             if s.live && s.program_dirty {
                 if !erender.pass_buffer_write(pass,data,u64(slot)*erender.PROGRAM_PARAMETER_BYTES,&s.desc.program.parameters,erender.PROGRAM_PARAMETER_BYTES) {return false}
                 s.program_dirty=false
@@ -864,7 +860,7 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     d,m:=&s.desc,&s.desc.info
     event:=m.trigger if d.event_target!=0 else .None
     g.random.x,g.random.z=u32(base.hash_combine(d.id,0x7061727469636c65)),min(m.sub_count,EVENT_SPAWN_MAX)
-    g.program={d.program.id,capacity,u32(m.report),u32(ATTRIBUTES_AT)}
+    g.program={d.program.id,capacity,0,u32(ATTRIBUTES_AT)}
     g.emitter_uid={u32(s.uid),u32(s.uid>>32)}
     g.shape={m.shape_size.x,m.shape_size.y,m.shape_size.z,m.shape_angle}
     g.kinds={u32(m.shape),u32(m.render),u32(m.collision),u32(event)}
@@ -923,19 +919,18 @@ Program_Group :: struct {
 // particles in another are built again: its slot may have moved.
 @(private)
 pool_kinds :: proc(pool:^Pool) {
-    pool.sprites,pool.meshes,pool.views,pool.reports,pool.mesh_count=false,false,false,false,0
-    for &s,at in pool.slots[:pool.slot_end] {
-        if !s.live {continue}
+    pool.sprites,pool.meshes,pool.views,pool.mesh_count=false,false,false,0
+    for at in pool.order[:pool.order_count] {
+        s:=&pool.slots[at]
         d:=&s.desc
         pool.meshes||=d.info.render==.Mesh && !d.blended
         pool.sprites||=d.info.render!=.Mesh || d.blended || d.mixed
         pool.views||=d.view!=0
-        pool.reports||=d.info.report!=.None
         if d.info.render==.Mesh {
             pool.meshed[pool.mesh_count]=u16(at)
             pool.mesh_count+=1
         }
-        if d.event_target!=0 {bits_add(&pool.dirty,at)}
+        if d.event_target!=0 {bits_add(&pool.dirty,int(at))}
     }
 }
 
@@ -948,8 +943,8 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,assets:^hos
     clear(&p.by_program)
     if reserve(&p.groups,pool.order_count+1)!=nil {return false}
     append(&p.groups,Program_Group{emit=p.emit,simulate=p.simulate,stage=p.stage})
-    for &s in pool.slots[:pool.slot_end] {
-        if !s.live {continue}
+    for at in pool.order[:pool.order_count] {
+        s:=&pool.slots[at]
         id:=s.desc.program.id
         index:=0
         if id!=0 {
@@ -978,8 +973,9 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,assets:^hos
         span.births||=!s.draining && s.desc.program.births
         span.prepare||=!s.draining && s.desc.program.prepare
     }
-    for &s in pool.slots[:pool.slot_end] {
-        if !s.live || s.desc.event_target==0 {continue}
+    for at in pool.order[:pool.order_count] {
+        s:=&pool.slots[at]
+        if s.desc.event_target==0 {continue}
         if target:=pool_slot_find(pool,s.desc.event_target);target>=0 {
             slot:=&pool.slots[target]
             slot.unbounded=true
@@ -988,9 +984,8 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,assets:^hos
     }
     next:u32
     for &group in p.groups {group.first=next;next+=group.count}
-    for &slot,at in pool.slots[:pool.slot_end] {
-        if !slot.live {continue}
-        group:=&p.groups[p.by_program[slot.desc.program.id]]
+    for at in pool.order[:pool.order_count] {
+        group:=&p.groups[p.by_program[pool.slots[at].desc.program.id]]
         pool.frame_slots[group.first+group.cursor]=u32(at)
         group.cursor+=1
     }
@@ -1002,15 +997,11 @@ programs_find :: proc(sync:^Particle_Sync,renderer:^erender.Renderer,assets:^hos
 particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
     pool:=&sync.pool
     if pool.regroup {pool_kinds(pool)}
-    // The data channels the programs asked for, and that of the reports while a live emitter reports.
-    if pool.reports {data_need(&sync.data,REPORTS_CHANNEL,REPORT_WORDS,nil,core.NONE)}
-    data_place(&sync.data)
     if pool.retire_data {
         erender.buffer_release(app.renderer,sync.world_id,particle_data_name(pool.data_side~1))
         pool.retire_data=false
     }
     if pool.slot_end==0 {return true}
-    pool_birth_entries(sync)
     p:=&sync.pipelines
     simulate:=erender.stage_pipeline(app.renderer,{stage=.Simulate,shader="particle_simulate",name="particle simulate"})
     if simulate==0 {return false}
@@ -1045,7 +1036,6 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
         for &entry in sync.surfaces.entries {entry.built=false}
     }
     world_textures_make(sync,app.renderer)
-    grids_load_prepare(sync,app.assets)
     if pool.made {erender.frame_pass(app.renderer,.Geometry,particles_shift,sync)}
     erender.frame_pass(app.renderer,.Simulate,particles_simulate,sync)
     if sync.world_texture_count>0 || sync.world_shown.names!={} {erender.frame_pass(app.renderer,.Mask,world_textures_frame,sync)}
@@ -1106,7 +1096,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     }
     erender.pass_surface_read(pass,7,.Linear_Depth)
     erender.pass_surface_read(pass,8,.Normal)
-    data_frame(sync,pass,u32(pool.frame&1))
     // An interval of the profiler per kind of pass, each to the next mark: those of the first
     // step, then the steps after it together.
     erender.pass_timestamp(pass,"particle begin")
@@ -1185,7 +1174,6 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     }
     volumes_light(sync,pass,&params)
     world_textures_write(sync,pass)
-    data_readback(sync,pass,u32(pool.frame&1))
     // Started: a frame simulated without them moves what there is and starts
     // nothing, and the rows that told more say so again.
     at:=0
@@ -1260,13 +1248,20 @@ particles_shift :: proc(pass:^erender.Pass,user:rawptr) {
 @(private)
 groups :: proc "contextless" (size,group:u32) -> u32 {return (size+group-1)/group}
 
+// A box every particle of an emitter stays in, from its values: past its
+// shape and its size, as far as its speed, the velocity its entity gives,
+// its acceleration and the gravity and the wind of the world (pool.reach)
+// take a particle over its life. Drag and collisions only slow a particle
+// (a bounce turns it, which the sphere of the reach holds); the wind drag
+// pulls toward is in the acceleration. Unbounded: an emitter whose program
+// moves its particles, or whose particles start elsewhere (a surface, the
+// births of a channel, the events of another).
 @(private)
-emitter_bounds :: proc(s:^Pool_Slot) {
+emitter_bounds :: proc(pool:^Pool,s:^Pool_Slot) {
     d,m:=&s.desc,&s.desc.info
     if s.unbounded {return}
-    s.unbounded=d.external_positions || d.births.y>0 || d.program.id!=0 ||
-        m.shape==.Surface || m.shape==.Bones || m.gravity!=0 || m.drag!=0 ||
-        m.inherit_velocity!=0 || m.collision!=.None || m.render==.Mesh && d.mesh_extent<=0
+    s.unbounded=d.external_positions || d.births.y>0 || d.program.id!=0 || m.shape==.Surface ||
+        m.render==.Mesh && d.mesh_extent<=0
     if s.unbounded {return}
     life:=max(m.lifetime[0],m.lifetime[1],0)
     speed:=max(math.abs(m.speed[0]),math.abs(m.speed[1]))
@@ -1286,7 +1281,13 @@ emitter_bounds :: proc(s:^Pool_Slot) {
     scale:=max(linalg.length(rows[0].xyz),linalg.length(rows[1].xyz),
         linalg.length(rows[2].xyz),1)*1.733
     speed+=linalg.length(velocity)*scale
-    acceleration:=linalg.length(m.acceleration)+96*math.abs(m.noise)+math.abs(m.attractor_strength)
+    now:=[3]f32{d.transform[0,3],d.transform[1,3],d.transform[2,3]}
+    prev:=[3]f32{d.previous[0,3],d.previous[1,3],d.previous[2,3]}
+    // What the motion of its entity gives a particle it starts, as particle_emit.comp gives it.
+    speed+=math.abs(m.inherit_velocity)*linalg.length(now-prev)/max(pool.dt,1e-5)
+    gravity:=max(pool.gravity_reach,linalg.length(GRAVITY))
+    acceleration:=linalg.length(m.acceleration)+96*math.abs(m.noise)+math.abs(m.attractor_strength)+
+        math.abs(m.gravity)*gravity+max(m.drag,0)*pool.wind_reach
     curve:=f32(1)
     for value in m.size_over_life.values {curve=max(curve,value)}
     size:=max(m.size[0],m.size[1])*curve
@@ -1295,8 +1296,7 @@ emitter_bounds :: proc(s:^Pool_Slot) {
     // A bounce can turn any velocity component into any other one.
     if m.render==.Beam {radius+=(linalg.length(m.beam_end)+abs(m.beam_arc))*scale}
     radius*=2
-    now:=[3]f32{d.transform[0,3],d.transform[1,3],d.transform[2,3]}
-    prev:=[3]f32{d.previous[0,3],d.previous[1,3],d.previous[2,3]}
+    if !(radius<=1e30) {s.unbounded=true;return}
     for axis in 0..<3 {
         low,high:=min(now[axis],prev[axis])-radius,max(now[axis],prev[axis])+radius
         if !s.fresh && !m.local_space {
@@ -1311,8 +1311,9 @@ emitter_bounds :: proc(s:^Pool_Slot) {
 draw_list :: proc(pool:^Pool,pass:^erender.Pass,meshes:bool,view:erender.Texture_Handle=0) -> []Pool_Draw {
     count:=0
     frustum:=mm.frustum_from_matrix(pass.view_projection)
-    for &s,at in pool.slots[:pool.slot_end] {
-        if !s.live || s.desc.view!=view {continue}
+    for at in pool.order[:pool.order_count] {
+        s:=&pool.slots[at]
+        if s.desc.view!=view || s.desc.culled {continue}
         mesh:=s.desc.info.render==.Mesh
         if meshes && (!mesh || s.desc.blended) ||
             !meshes && mesh && !s.desc.blended && !s.desc.mixed {continue}

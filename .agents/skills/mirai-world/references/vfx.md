@@ -13,8 +13,10 @@ lives in [vfx-editor.md](vfx-editor.md).
 `effect.odin`), `parameters` (`Particle_Parameter`, 1–4 components or texture), `hidden` (primary
 instance hidden fields).
 
-- **Emission & motion**: constant `rate` (custom via program `births`), `Surface`/`Bones` shapes,
-  `gravity`/`drag` sample world `Gravity`/`Wind` [volumes][vol] on GPU (`GRAVITY` in effect views).
+- **Emission & motion**: constant `rate` (custom via program `births`), `Surface` shape (skinned
+  meshes move its triangles), `gravity`/`drag` sample world `Gravity`/`Wind` [volumes][vol] on GPU
+  (`GRAVITY` in effect views). `max_instances`/`cull_distance` of the primary layer:
+  [culling](#culling).
 - **Renderers**: `Mesh` picks from `meshes` by `mesh_weights` (program `particle.mesh` may change
   it; `facing` = `Tumble` or `Velocity` along `-Z` above `PARTICLE_MESH_FACING_SPEED`; sorted mesh
   effects allow 1 mesh). `Beam` draws a camera-facing strip with optional +Y arc.
@@ -22,8 +24,10 @@ instance hidden fields).
   past the last key holds its value.
 - **Paths & validation**: dot paths (`rate`, `colors.1`, `bursts.0.count`,
   `size_over_life.values.2`) via `particle_fields`, `particle_value_at`, and alloc-free
-  `particle_value_find` (program text is not overridable). `particle_validate` / `particle_check`
-  report the first error; `particle_view` rejects invalid files (`host.assets_document_refuse`).
+  `particle_value_find` (program text is not overridable). Instances prefix `layers.N.` for
+  layer `N` (`value_layer`; `Particle_Override.layers` keeps `N+1`). `particle_validate` /
+  `particle_check` report the first error; `particle_view` rejects invalid files
+  (`host.assets_document_refuse`).
 
 [vol]: ../../mirai-gameplay/references/libraries.md#volume
 
@@ -33,40 +37,58 @@ instance hidden fields).
   `active` gates emission in Play, `preview` in Edit; `loop` repeats; stopping lets live particles
   finish; `destroy_when_done` destroys the subtree in Play once every layer and sub effect ends.
   Without an asset, `preset` selects `effect.particle_preset` defaults.
-- `Particle_Override` overrides primary-layer fields or `parameters.<name>` (`value_set`,
-  `value_remove`, `error_message`; assets/program are `Effect_Field`). Resolved via
-  `particle_resolve` / `particle_resolve_checked` and `particle_program` (`erender.program_find`),
-  using `asset/overrides.odin` (`value_leaves`, `overrides_mark`, `override_keep`).
+- `Particle_Override` overrides fields (`rate`: primary layer; `layers.1.rate`: layer 1) or
+  parameters (`parameters.heat`: every layer whose program declares it, a problem of the primary
+  layer when none does; `layers.2.parameters.heat`: that layer) via `value_set`, `value_remove`,
+  `error_message`; assets/program are `Effect_Field`. Resolved per layer by `particle_resolve` /
+  `particle_resolve_checked` (`layer`) and `particle_program` (`erender.program_find`), using
+  `asset/overrides.odin` (`value_leaves`, `overrides_mark`, `override_keep`).
+- An emitter with values of its own owns its `Emitter_Info` (`emitter_info_own`), rewritten in
+  place when they change; others share one interned by content. `pool_put` writes the row again
+  when `Emitter_Desc.look` changes and groups the pool again (`pool.regroup`) only when
+  `Emitter_Structure` (program, render, blending, view, event target, material, meshes) does: an
+  animated value allocates nothing and keeps the spans of the programs.
 - `particles_tick` (`fixed`, game+editor) advances clocks (`time.dt` in Play, `frame.dt` in Edit;
   mode change restarts) and applies `Particle_Requests` (`start`, `stop`, `restart`, `pause`,
-  `resume`, `burst`, `request_value`, `request_value_remove`, `request_values_clear`; invalid
-  requests report `vfx.request`). `PARTICLE_BIRTHS` merges oldest groups on overflow.
+  `resume`, `burst` of every layer or of `layer`, `request_value`, `request_value_remove`,
+  `request_values_clear`; invalid requests, a layer the effect lacks among them, report
+  `vfx.request`). `PARTICLE_BIRTHS` merges oldest groups on overflow. `status` reads one layer
+  (`layer`) or all (playing while one plays, done once all are, births added up).
 - `particles_sync` (`render`, after `render_sync`) updates `Particle_Sync` (`host, by_world`) with
   only unstarted clock births (safe across rollback). `Particle_Settings.capacity` rejections keep
-  the old pool and report `vfx.capacity`; `sort`/`Ribbon` cap at `SORT_MAX`. Sub effect capacity
-  reserves 1/live particle (or `TRAILS_PER_SECOND` × sub life for `Trail`).
+  the old pool and report `vfx.capacity`. Sub effect capacity reserves 1/live particle (or
+  `TRAILS_PER_SECOND` × sub life for `Trail`).
 
 ```odin
-// Burst an emitter, override a field and program parameter, and push a channel birth.
+// Burst an emitter, override fields and program parameters, and push a channel birth.
 vfx.burst(requests, emitter_entity, 32)
 _ = vfx.request_value(requests, emitter_entity, "colors.0", [4]f32{1, 0.4, 0.1, 1})
-_ = vfx.request_value(requests, emitter_entity, "parameters.speed", f32(6.0))
+_ = vfx.request_value(requests, emitter_entity, "layers.1.rate", f32(40))
+_ = vfx.request_value(requests, emitter_entity, "parameters.speed", f32(6.0)) // every layer
 core.push(&births.queue, core.Birth{
     channel = core.birth_channel("impacts"), position = hit_pos, normal = hit_n, count = 12,
 })
 ```
 
-## Surfaces, bones and resources
+## Culling
 
-Resource rows per emitter list shape surface/bones first, then `//! resource name
-surface|channel|grid|emitter|data` in declaration order (`Bones` is shape-only).
+`cull_distance` and `max_instances` of the primary layer make whole emitters wait
+(`Emitter_Clock.culled`): in `particles_tick`, past `cull_distance` from every
+`scene.Simulation_Sources` source (`scene.sources_distance`; never the view, so every machine
+decides the same), or past the `max_instances` nearest of their effect (`culls_rank`: by asset and
+preset, then distance, then entity; scratch `Particle_Sync.culls` keeps its capacity). A waiting
+clock does not advance; its slot stays with `FLAG_PAUSED` and `Emitter_Desc.culled`, which
+`draw_list` skips; `status` says `Culled`.
+
+## Surfaces and resources
+
+Resource rows per emitter list the shape surface first, then `//! resource name
+surface|channel|grid` in declaration order.
 
 - **Surface**: rendered mesh (`Render_Sync`; skinned meshes move triangles with barycentrics).
   Triangle area CDF is built on GPU (`particle_surface.comp`, level-0 clusters via `geometry.slang`)
   once and rebuilt on `erender.vertices_made`.
-- **Bones**: parent-to-joint segments skipping non-deforming rig joints, posed each frame via
-  current and previous `erender.skin_palette` (bind pose if unposed), sampled by summed length.
-- **Bindings**: `Particle_Bindings` selects shape surface/bones (default: own entity).
+- **Bindings**: `Particle_Bindings` selects the shape surface (default: own entity).
   `Particle_Binding` binds a named program resource to an entity or grid; missing target reads
   nothing (no fallback). Unbound grids default to own entity's grid for the first walked grid, else
   world grid by name. Previous+current poses provide `inherit_velocity`.
@@ -129,12 +151,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 }
 ```
 
-## Grid states
-
-`plugins/vfx/runtime/gridfile` (`gridfile.KIND` `VGRD`, `.grid`) stores cell layers (X fastest, then
-Y, Z). `Particle_Grid.cached` initializes both copies on creation or asset change (size/layer
-mismatch reports `vfx.grid`). `follow_view` centers on view ray intersection at entity height
-clamped by `VIEW_NEAR`. A grid whose last writer leaves the pool clears once.
+`follow_view` centers a grid on the view ray intersection at entity height clamped by
+`VIEW_NEAR`. A grid whose last writer leaves the pool clears once.
 
 ## Volumes
 
@@ -151,30 +169,11 @@ Non-silent emitters preview periodically in Edit (`channel_preview`). `particles
 channel births for rollback dedup; host ring discards replaced future on replay and drops
 unlistened channels.
 
-## Data channels
-
-`//! resource name data words` (`data.odin`) double-buffers GPU word entries frame-to-frame
-(appends only in the last step; cap `DATA_CHANNELS` reports `vfx.data`). Games pass inputs via
-`core.Birth.values` and read back asynchronously (presentation only, never in `fixed`):
-
-```odin
-vfx.data_watch(watch, "hits")
-if entries, words := vfx.data_entries(read, "hits"); words > 0 {
-    for i := 0; i+words <= len(entries); i += words { /* consume entries[i:i+words] */ }
-}
-```
-
 ## UI effects
 
 `Particles` nodes in `.ui` push `gui.UI_Effects` each frame; `UI_Particles` advances clocks even
 when world time is paused, draws in the texture's `Effect` stage only (no light, collision, or
 fade), and drops unrequested effects.
-
-## Reports
-
-`report` (deaths/hits) writes into internal `REPORTS_CHANNEL` and reads back asynchronously into
-`Particle_Reports` (`presentation` storage — rejected in `fixed` steps; `DATA_ENTRIES` cap,
-overflow in `lost`).
 
 ## GPU
 
@@ -185,7 +184,13 @@ overflow in `lost`).
 - One pool/world (`pass_buffer`, freed in `particles_release`). `particles_sync` sends only changed
   or per-frame emitters; hidden emitters leave; removed world-space emitters finish in orphaned
   slots. Persistent `Pool_Buffer.Emitters` (`EMITTER_CAPACITY`, `Gpu_Frame`) allocates nothing in
-  stable frames; arena growth preserves GPU state.
+  stable frames; arena growth preserves GPU state. Per-frame walks go over `pool.order` (live
+  slots), never `0..<slot_end`.
+- `emitter_bounds` boxes an emitter analytically: shape and size plus `(speed + inherited speed +
+  a·life)·life`, `a` from acceleration, noise, attractor, `gravity` × the strongest gravity and
+  `drag` × the strongest wind of the world (`fields_reach`, `pool.gravity_reach`/`wind_reach`;
+  boxes are found again when they change). Drag and collisions only slow particles. Unbounded:
+  Vfx programs, `Surface`, channel births and event targets.
 - Particles never enter BVH/TLAS (no shadows/reflections/GI). Positions are renderer-origin
   relative (`render/origin.odin`): `shift` pass (`Geometry`) rebases surviving particles on origin
   moves (programs storing world points declare `//! rebase` with `void rebase(float3 origin_shift,
@@ -215,7 +220,7 @@ overflow in `lost`).
 
 | Stage | Pass | Role |
 | --- | --- | --- |
-| `Simulate` (step) | `begin` / `emit` / `stage` / `simulate` | Reset/init ranges; spawn step+channel+event births; run program stages & grid swaps; forces, noise rotor, attractor, drag, `World` `trace_ray` (Coulomb friction, rest-speed hit gate), events/reports, half-rate `lit` RGBE |
+| `Simulate` (step) | `begin` / `emit` / `stage` / `simulate` | Reset/init ranges; spawn step+channel+event births; run program stages & grid swaps; forces, noise rotor, attractor, drag, `World` `trace_ray` (Coulomb friction, rest-speed hit gate), events, half-rate `lit` RGBE |
 | `Simulate` (frame) | `surface` / `stage` clear / `volume light` / `finish` | Build new surface CDFs; clear entered grid cells; light volumes (`_hw`); indirect draws & tiled sort (ribbons, mesh runs) |
 | `Blend` (view) | `volumes` / `sprites` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`, `.Glass_Depth` split |
 | `Effect` / `Gbuffer` | `effects` / `meshes` | UI effect views; opaque/masked `Mesh` particles |
@@ -238,13 +243,14 @@ does not reach G-buffer meshes.
 
 - `mirai test plugins/vfx/runtime/effect`: format, validation, value paths.
 - `mirai test plugins/vfx/runtime` (`MIRAI_VALIDATION=1`, `-define:ODIN_TEST_THREADS=1`): CPU
-  (`vfx_test.odin`, `data_test.odin`) and GPU (`gpu_test.odin`, shaders in
-  `.mirai/tmp/vfx-test-shaders`): births/steps/pause/events/pools/capacity, ribbons
-  (`two_ribbons.slang`), `Surface`/`Bones` (`testdata/stick.slang`), `World` hits/friction, sprite
-  Surface programs (`hand_over.slang`, `particle_data.slang`), grid stages/splats (`tally.slang`,
-  `spread.slang`), weighted velocity-facing meshes, stage rays (`probe.slang`), volumes
-  (`puff.slang`), world textures (`count_ground.slang`), channel rollback (`testdata/gather.slang`),
-  reports, fog/glass sorting, zero-alloc frames, and debugger (`glitch.slang`).
+  (`vfx_test.odin`: animated values without allocations or regrouping, layer paths and parameter
+  propagation over a device-less catalog, analytical bounds, culling) and GPU (`gpu_test.odin`,
+  shaders in `.mirai/tmp/vfx-test-shaders`): births/steps/pause/events/pools/capacity, ribbons
+  (`two_ribbons.slang`), `Surface` on a posed skin (`testdata/stick.slang`), `World`
+  hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`), grid
+  stages/splats (`tally.slang`, `spread.slang`), weighted velocity-facing meshes, stage rays
+  (`probe.slang`), volumes (`puff.slang`), world textures (`count_ground.slang`), channel rollback
+  (`testdata/gather.slang`), fog/glass sorting, zero-alloc frames, and debugger (`glitch.slang`).
 - `mirai test plugins/vfx/editor -collection:plugins=<root>/plugins`: `document_test.odin`.
 - Demo editor (headless + validation): `physics_gallery/physics_burst.scene` (station 11),
   `particle.*`, and `Surface` + `Particle_Bindings` capture.

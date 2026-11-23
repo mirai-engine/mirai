@@ -7,8 +7,8 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import "plugins:vfx/runtime/effect"
 
-// What an emitter reads besides its values: the surface or the bones its
-// Surface or Bones shape starts particles on, and the resources its Vfx
+// What an emitter reads besides its values: the surface its Surface shape
+// starts particles on, and the resources its Vfx
 // program declares (`//! resource name kind`), in rows the GPU finds through the emitter (its
 // shape first, then those of its program in their order). A surface is the
 // mesh an entity draws in the frame, as the renderer has it: a skin moves its
@@ -19,7 +19,7 @@ import "plugins:vfx/runtime/effect"
 RESOURCES :: erender.PROGRAM_RESOURCES
 RESOURCE_ROWS :: 1+RESOURCES
 
-@(component,description="The entity whose mesh a Surface or Bones emitter samples.")
+@(component,description="The entity whose mesh a Surface emitter samples.")
 Particle_Bindings :: struct {
     surface:core.Entity,
 }
@@ -57,15 +57,14 @@ bindings_sync :: proc(sync:^Particle_Sync,bindings:^core.Table(Particle_Binding,
     }
 }
 
-Resource_Kind :: enum u32 {None,Surface,Channel,Bones,Grid,Emitter,Data}
+Resource_Kind :: enum u32 {None,Surface,Channel,Grid}
 
 // A resource of an emitter in a frame.
 Resource_Desc :: struct {
     kind:Resource_Kind,
     mesh:erender.Mesh_Handle,       // a surface: the mesh of the scene it is
     triangles:u32,                  // and its triangles
-    first,count:u32,                // a channel: its births among those of the frame; bones: its bones among those of the frame; a grid: which of the world
-    emitter:u64,                    // an emitter: the id of the one it reads; a data channel: base.name_hash of its name
+    first,count:u32,                // a channel: its births among those of the frame; a grid: which of the world
     transform,previous:mm.Mat4,     // where it is this frame, and the frame before
 }
 
@@ -73,19 +72,18 @@ Resource_Desc :: struct {
 Resource_Need :: struct {
     name:u64, // base.name_hash of its name
     kind:Resource_Kind,
-    words:u32, // a data channel: of an entry
     channel:core.Birth_Channel, // a channel: the one of its name
 }
 
 // shaders/particles.slang: Particle_Resource.
 Gpu_Resource :: struct {
-    head:[4]u32, // kind; a surface: mesh, first triangle in the surfaces, triangles; a channel: 0, first birth, births; bones: 0, bytes to the first, bones; a grid: bytes to its row; an emitter: 0, its slot
+    head:[4]u32, // kind; a surface: mesh, first triangle in the surfaces, triangles; a channel: 0, first birth, births; a grid: bytes to its row
     world,previous:[3][4]f32,
 }
 #assert(size_of(Gpu_Resource)==112)
 
-// The resources an emitter reads in this frame: the surface or the bones of
-// its shape and those its program needs, from what the entity binds. A
+// The resources an emitter reads in this frame: the surface of its shape and
+// those its program needs, from what the entity binds. A
 // resource without a source has kind None: the program reads nothing from it.
 @(private)
 emitter_resources :: proc(
@@ -95,10 +93,7 @@ emitter_resources :: proc(
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
     source:=bindings.surface if bindings.surface!=core.NONE else e
     shape:=shown.desc.info.shape if shown.desc.spec!=nil else effect.Particle_Shape.Point
-    #partial switch shape {
-    case .Surface: resources[0]=entity_surface(sync,extras,drawn,meshes,worlds,id,assets,renderer,source)
-    case .Bones: resources[0]=entity_bones(sync,drawn,meshes,worlds,id,assets,renderer,source)
-    }
+    if shape==.Surface {resources[0]=entity_surface(sync,extras,drawn,meshes,worlds,id,assets,renderer,source)}
     for need,at in shown.needs.resources {
         source,named:=core.NONE,""
         bound:Particle_Binding
@@ -120,11 +115,6 @@ emitter_resources :: proc(
             if grid>=0 {resources[1+at]={kind=.Grid,first=u32(grid)}}
             continue
         }
-        // A data channel: that of the world of its name.
-        if need.kind==.Data {
-            resources[1+at]={kind=.Data,emitter=need.name}
-            continue
-        }
         // A channel: the births of the channel of its name in this frame.
         if need.kind==.Channel {
             resources[1+at].kind=.Channel
@@ -133,18 +123,13 @@ emitter_resources :: proc(
             }
             continue
         }
-        // An emitter: the particles of the entity it names.
-        if need.kind==.Emitter {
-            if source!=core.NONE {resources[1+at]={kind=.Emitter,emitter=u64(source)}}
-            continue
-        }
         if need.kind==.Surface && source!=core.NONE {
             resources[1+at]=entity_surface(sync,extras,drawn,meshes,worlds,id,assets,renderer,source)
         }
     }
     // Where each was the frame before: the first frame, where it is.
     for &resource,row in resources {
-        if resource.kind!=.Surface && resource.kind!=.Bones {shown.resource_placed[row]=false;continue}
+        if resource.kind!=.Surface {shown.resource_placed[row]=false;continue}
         resource.previous=shown.resource_previous[row] if shown.resource_placed[row] else resource.transform
         shown.resource_previous[row],shown.resource_placed[row]=resource.transform,true
     }

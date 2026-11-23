@@ -27,6 +27,8 @@ Emission :: struct {
     prewarm,program_births:bool,
     longest:f32, // lifetime of its particles at most
     tail:f32,    // seconds its last particles last, with those they start
+    cull_distance:f32, // of the primary layer: m from the nearest simulation source past which the emitter waits; 0: none
+    max_instances:u16, // of the primary layer: emitters of its effect that run at once; 0: all
 }
 
 // Where an emitter is in the cycle of its effect, and what it started.
@@ -34,6 +36,7 @@ Emitter_Clock :: struct {
     time:f64,             // seconds of this generation; a paused clock stays
     generation:u32,       // a restart starts another: the renderer drops the particles of the one before
     paused:bool,          // nothing moves: neither the clock nor its particles
+    culled:bool,          // of the primary clock: too far from every simulation source, or past the max_instances of its effect: as paused, and not drawn
     done:bool,            // its cycle ended and its last particles died
     placed:bool,
     program_until:f64,   // end of the latest active interval for GPU births
@@ -54,6 +57,7 @@ Emitter_Clock :: struct {
 // particles and those their sub effect starts live.
 emission_of :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (e:Emission) {
     e={duration=max(info.duration,0.001),rate=info.rate,rate_over_distance=info.rate_over_distance,bursts=info.bursts,prewarm=info.prewarm}
+    e.cull_distance,e.max_instances=info.cull_distance,info.max_instances
     e.longest=max(info.lifetime[0],info.lifetime[1],0)
     e.tail=e.longest
     if a!=nil && a.renderer!=nil {

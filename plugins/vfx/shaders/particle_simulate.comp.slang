@@ -59,23 +59,6 @@ void event_push(uint slot, uint trigger, float3 position, float3 velocity, uint 
     particle_event_store(params.parity, at, ev);
 }
 
-// Tells the game of a particle whose emitter's reports name what happened to
-// it: an entry of the reports channel (vfx.REPORTS_CHANNEL), in the copy the
-// frame writes.
-void particle_report(uint slot, uint kind, float3 position, float3 velocity, float3 normal) {
-    uint2 reports = uint2(particle_emitters[slot].program.z, particle_frame_reports());
-    if (reports.x != kind || reports.y == INVALID) return;
-    uint entry;
-    particle_world_bytes.InterlockedAdd(reports.y, 1u, entry);
-    if (entry >= PARTICLE_DATA_ENTRIES) return;
-    uint at = reports.y + 16u + entry * REPORT_WORDS * 4u;
-    particle_world_bytes.Store2(at, uint2(slot, kind));
-    particle_world_bytes.Store3(at + 8u, asuint(position));
-    particle_world_bytes.Store3(at + 20u, asuint(velocity));
-    particle_world_bytes.Store3(at + 32u, asuint(normal));
-    particle_world_bytes.Store2(at + 44u, particle_emitters[slot].emitter_uid);
-}
-
 void release(uint index, uint slot, uint2 range) {
     particles[index].lifetime = 0.0;
     uint at;
@@ -105,7 +88,6 @@ bool respond(inout float3 velocity, float3 n, float3 a, float h, float2 collide)
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
-    particle_step_last = params.last != 0u;
     Particle_Work work = particle_work(group, local.x, params.emitter_first);
     if (work.slot == INVALID) return;
     uint slot = work.slot;
@@ -134,7 +116,6 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
     if ((range.w & FLAG_DRAIN) != 0u) v.age = max(v.age, drain_age);
     if (v.age >= v.lifetime) {
         event_push(slot, PARTICLE_EVENT_DEATH, v.position, v.velocity, p.color, v.seed);
-        particle_report(slot, PARTICLE_EVENT_DEATH, v.position, v.velocity, float3(0.0));
         release(index, slot, range.xy);
         return;
     }
@@ -183,7 +164,6 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
         if (hit && respond(velocity, normal, acceleration, h, collide.xy)) {
             v.age += collide.z * v.lifetime;
             event_push(slot, PARTICLE_EVENT_COLLISION, next, velocity, p.color, v.seed);
-            particle_report(slot, PARTICLE_EVENT_COLLISION, next, velocity, normal);
         }
         v.rotation += v.spin * h;
         v.position = next;
