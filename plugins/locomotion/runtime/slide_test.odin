@@ -138,3 +138,49 @@ sprint_by_default_runs_at_sprint_speed_and_a_crouch_slides :: proc(t:^testing.T)
     loco_test_tick(&f,{0,0,-1},2)
     testing.expectf(t,loco_state(&f).mode==MODE_SLIDING,"a crouch while running slides: mode %v",loco_state(&f).mode)
 }
+
+// Every jump of a walk held goes jump_height over where it leaves, with a jump_rise: from walking, from a
+// slide, and climbing out of the water over its surface.
+@(test)
+every_jump_held_reaches_jump_height :: proc(t:^testing.T) {
+    From :: enum {Walking,Sliding,Swimming}
+    // How high over where it leaves a jump held goes.
+    peak :: proc(t:^testing.T,from:From,height,rise:f32) -> f32 {
+        f:Loco_Test
+        if !loco_test_init(t,&f,{0,0,40},from!=.Swimming) {return 0}
+        defer loco_test_destroy(&f)
+        loco_test_tick(&f,{})
+        walk:=core.edit(&f.walks,f.e)
+        walk.jump_height,walk.jump_rise=height,rise
+        base:f32
+        switch from {
+        case .Walking:
+            loco_test_tick(&f,{},20)
+            base=loco_position(&f).y
+        case .Sliding:
+            core.add(&f.slides,f.e,SLIDE_DEFAULT)
+            walk.sprint_speed,walk.sprint_default=8,true
+            loco_test_tick(&f,{0,0,-1},60)
+            loco_test_tick(&f,{0,0,-1},2,CROUCH)
+            testing.expect_value(t,loco_state(&f).mode,MODE_SLIDING)
+            base=loco_position(&f).y
+        case .Swimming:
+            loco_test_box(&f,{20,1,60},{0,-7,0}) // the bottom, 6 m under the sea
+            loco_test_sea(&f,0)
+            core.add(&f.swims,f.e,SWIM_DEFAULT)
+            loco_test_tick(&f,{},300)
+            testing.expect_value(t,loco_state(&f).mode,MODE_SWIMMING)
+        }
+        top:=loco_position(&f).y
+        for _ in 0..<120 {
+            loco_test_tick(&f,{},1,JUMP|CROUCH if from==.Sliding else JUMP)
+            top=max(top,loco_position(&f).y)
+        }
+        return top-base
+    }
+    height,rise:=f32(1.5),f32(5.0/30)
+    for from in From {
+        rose:=peak(t,from,height,rise)
+        testing.expectf(t,abs(rose-height)<0.02*height,"%v: held it rises %v",from,rose)
+    }
+}

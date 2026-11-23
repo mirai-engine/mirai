@@ -33,31 +33,38 @@ crouching_walks_short_and_slow_and_stands_up_where_there_is_room :: proc(t:^test
     testing.expectf(t,abs(height_of(&f)-STANDING)<1e-4,"past the roof it stands: %v",height_of(&f))
 }
 
-// A jump let go at once rises jump_height; held, it keeps the speed it started with for jump_rise and
-// rises that speed by jump_rise more; held longer, no more than that.
+// A jump held to its apex reaches jump_height, whatever its jump_rise; let go at once it keeps only the
+// speed it started with, and with jump_cut less of it.
 @(test)
-a_jump_held_rises_at_its_speed_for_jump_rise :: proc(t:^testing.T) {
-    peak :: proc(t:^testing.T,held_ticks:int,rise:f32) -> f32 {
+a_jump_held_reaches_jump_height_and_one_let_go_early_less :: proc(t:^testing.T) {
+    peak :: proc(t:^testing.T,held_ticks:int,height,rise,cut:f32) -> f32 {
         f:Loco_Test
         if !loco_test_init(t,&f,{0,0,0}) {return 0}
         defer loco_test_destroy(&f)
         loco_test_tick(&f,{},20)
-        core.edit(&f.walks,f.e).jump_rise=rise
+        walk:=core.edit(&f.walks,f.e)
+        walk.jump_height,walk.jump_rise,walk.jump_cut=height,rise,cut
         start:=loco_position(&f).y
         top:=start
-        for i in 0..<90 {
+        for i in 0..<180 {
             loco_test_tick(&f,{},1,JUMP if i<held_ticks else input.Action_Mask(0))
             top=max(top,loco_position(&f).y)
         }
         return top-start
     }
     g:=f32(9.81)
-    speed:=cmath.sqrt(2*g*WALK_DEFAULT.jump_height)
-    tapped:=peak(t,1,0.25)
-    testing.expectf(t,abs(tapped-WALK_DEFAULT.jump_height)<0.05,"let go at once it rises %v, not jump_height %v",tapped,WALK_DEFAULT.jump_height)
-    held:=peak(t,60,0.25)
-    want:=WALK_DEFAULT.jump_height+speed*0.25
-    testing.expectf(t,abs(held-want)<0.08,"held it rises %v, want %v",held,want)
-    without:=peak(t,60,0)
-    testing.expectf(t,abs(without-WALK_DEFAULT.jump_height)<0.05,"without jump_rise holding does nothing: %v",without)
+    Case :: struct {height,rise:f32}
+    for c in ([?]Case{{1.2,0},{1.2,0.25},{2.9,5.0/30},{0.6,0.5}}) {
+        held:=peak(t,170,c.height,c.rise,1)
+        testing.expectf(t,abs(held-c.height)<0.01*c.height,"%v: held it rises %v, not jump_height",c,held)
+        speed:=walk_jump_speed(Walk{jump_height=c.height,jump_rise=c.rise},g)
+        testing.expectf(t,abs(speed*c.rise+speed*speed/(2*g)-c.height)<1e-4*c.height,"%v: launch %v",c,speed)
+        // Let go at once, it holds the tick it jumps in.
+        tapped:=peak(t,1,c.height,c.rise,1)
+        want:=speed*min(c.rise,1.0/60)+speed*speed/(2*g)
+        testing.expectf(t,abs(tapped-want)<0.01*c.height,"%v: let go at once it rises %v, want %v",c,tapped,want)
+        if c.rise>0 {testing.expectf(t,tapped<held-0.05,"%v: let go at once it rises %v, held %v",c,tapped,held)}
+        cut:=peak(t,1,c.height,c.rise,0.5)
+        testing.expectf(t,cut<0.75*tapped,"%v: with jump_cut it rises %v, without %v",c,cut,tapped)
+    }
 }

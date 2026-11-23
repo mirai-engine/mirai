@@ -678,9 +678,14 @@ runtime_speed_and_suspension_leave_authored_character_and_walk_intact :: proc(t:
     loco_test_tick(&f,{0,0,-1},20)
     testing.expect_value(t,loco_position(&f),home)
     testing.expect_value(t,loco_velocity(&f),[3]f32{})
+    // Suspended it collides with nothing, but a ray (a bullet) still hits it; a query of a move does not.
     physics:=core.ref(&f.state)
-    _,hit:=phys.raycast(physics,home+{0,1,2},{0,0,-1},4)
-    testing.expect(t,!hit)
+    shot,hit:=phys.raycast(physics,home+{0,1,2},{0,0,-1},4)
+    testing.expect(t,hit && shot.entity==f.e)
+    moving:=phys.QUERY_FILTER_DEFAULT
+    moving.solid=true
+    _,blocked:=phys.raycast(physics,home+{0,1,2},{0,0,-1},4,filter=moving)
+    testing.expect(t,!blocked)
     move,_:=core.get(&f.moves,f.e)
     testing.expect(t,.Ghosted in move.value.flags && move.value.ground.force==0 && move.value.air.force==0)
 

@@ -99,7 +99,7 @@ filter_response :: #force_inline proc "contextless" (a,b:Filter) -> Response {
 
 @(private)
 shapes_should_collide :: proc "contextless" (w:^World,a,b:^Shape) -> bool #no_bounds_check {
-    if a.body==b.body {return false}
+    if a.body==b.body || .Ghost in (a.flags+b.flags) {return false}
     response:=filter_response(a.filter,b.filter)
     if response==.Ignore || a.type>=.Mesh && b.type>=.Mesh {return false}
     body_a,body_b:=&w.bodies[a.body],&w.bodies[b.body]

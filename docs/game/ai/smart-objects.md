@@ -53,10 +53,10 @@ lists it in `Nav_Agent.manual`) plus a `Smart_Object` offer on the same entity. 
 reaches it, its `Nav_Path` is `Crossing` with `manual` and names the link entity. Only the link's
 `capacity` says how many cross at once (one: exclusive); the offer's `users` does not count.
 `cross_act` waits while the offer is closed to the agent (spent, cooling down), takes the time it
-says and calls `nav.nav_crossing_skip`, which puts the agent at the end of the link. For a custom
-animated crossing, enable passthrough, move the character with the animation or a pose target
-(the `Crossing` `nav.Nav_Event` gives the ends), and call `nav.nav_crossing_done` when it reaches
-the other end.
+says and calls `nav.nav_crossing_skip`, which puts the agent at the end of the link, or leaves it
+where a clip warped onto `nav.nav_crossing_target` (`anim.motion_target`) took it. A `passthrough`
+link lets it through its geometry while rays still hit it (bullets hit a zombie on a barricade);
+moved by a pose target, call `nav.nav_crossing_done` once it reaches the other end.
 
 ```odin
 if p, ok := behavior.agent_path(t); ok && p.state == .Crossing && p.manual && p.kind == LINK_VAULT {

@@ -184,6 +184,7 @@ Shape_Flag :: enum u32 {
     One_Way, // blocks only what comes from the side its local +Y faces
     Hits,    // its contacts raise hit events
     Twin,    // a copy that the twin of its body carries elsewhere (twin.odin)
+    Ghost,   // the step meets nothing with it, as a character crossing a link; queries still find it, but those of moves (Query_Filter.solid)
 }
 Shape_Flags :: bit_set[Shape_Flag;u32]
 

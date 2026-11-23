@@ -73,8 +73,10 @@ The same `world_step` serves the server, the predicting client and resimulation.
   feet, which are the origin of the body. What the character can climb passes under it without
   touching it; what touches it is an obstacle.
 - It has no friction: traction comes from the ground constraint.
-- A ghosted move disables the capsule filter and holds the character at rest. Leaving that
-  mode restores the configured filter and lets the character find its ground again.
+- A ghosted move (a crossing of a link, suspended locomotion) makes its shape a ghost
+  (`Shape_Flag.Ghost`): no contact, CCD or overlap event and kinematic at rest, while rays and
+  overlaps still find it (a bullet hits a climber); the character probes ask `Query_Filter.solid`
+  and pass it by. Leaving that mode makes it solid again and lets it find its ground.
 - A reach drive can accelerate faster along unobstructed directions. Its impulse into walls
   is limited by traction, and its impulse into dynamics by the character push limit.
 - The three angular axes are locked (it stays upright inside the solver), its rotation is

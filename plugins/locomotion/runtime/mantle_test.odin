@@ -32,6 +32,10 @@ jump_facing_a_ledge_mantles_onto_it_where_it_fits :: proc(t:^testing.T) {
         testing.expectf(t,(loco_state(&f).mode==MODE_MANTLING)==c.mantles,"%v: mode %v",c,loco_state(&f).mode)
         if !c.mantles {continue}
         testing.expectf(t,abs(mantle_state(&f).height-c.top)<0.01,"%v: ledge %v",c,mantle_state(&f).height)
+        // What warps a clip of the climb: its ends, and the face of the wall, out toward +Z.
+        climb:=mantle_state(&f)
+        testing.expectf(t,abs(climb.from.y)<0.01 && abs(climb.to.y-c.top)<0.01 && climb.to.z<-0.8,"%v: from %v to %v",c,climb.from,climb.to)
+        testing.expectf(t,linalg.length(climb.normal-[3]f32{0,0,1})<1e-3,"%v: wall normal %v",c,climb.normal)
         ticks:=0
         for loco_state(&f).mode==MODE_MANTLING && ticks<120 {
             loco_test_tick(&f,{},1,yaw=c.yaw)

@@ -180,6 +180,7 @@ physics_step :: proc(
                 }
                 s.budget-=1
             }
+            if link_moves(&s,&link) && !body_off(&s,e) {motion_stop(&s,e)}
             link_release(&s,&link)
             links_remove_at(state,at)
         }
@@ -599,6 +600,10 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
         }
         collider.kind=kind
     }
+    moved:=link_moves(s,l)
+    // A body that stops moving leaves no velocity in its Motion; the row stays, as navigation moves an
+    // entity without a body by it.
+    defer if moved && !link_moves(s,link_find(state,e)) && !has_character && !body_off(s,e) {motion_stop(s,e)}
     switch {
     case has_character:
         if l.kind!=.Character && l.kind!=.None {link_release(s,l)}
@@ -608,6 +613,32 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     case has_rigid || has_collider:
         if l.kind==.Compound || l.kind==.Character {link_release(s,l)}
         body_sync(s,e,l,rigid,has_rigid,row_changed(s.rigids,s.changes[0],e),collider,has_collider,collider_changed)
+    }
+}
+
+// Whether a link is a body of the entity's own that the simulation moves, so its Motion follows it.
+@(private)
+link_moves :: proc(s:^Sync,l:^Link) -> bool {
+    w:=&s.state.world
+    return l!=nil && l.kind==.Body && sim.body_valid(w,l.body) && sim.body_type(w,l.body)!=.Static
+}
+
+// Whether the Rigid_Body or the Collider of an entity is only off: on again, its body comes back with the
+// velocity its Motion kept.
+@(private)
+body_off :: proc(s:^Sync,e:core.Entity) -> bool {
+    for t in ([2]^core.Raw_Table{core.raw(s.rigids),core.raw(s.colliders)}) {
+        if on,_,found:=core.raw_state(t,e);found && !on {return true}
+    }
+    return false
+}
+
+// The Motion of an entity whose body stopped moving: at rest, its row kept.
+@(private)
+motion_stop :: proc(s:^Sync,e:core.Entity) {
+    if row:=core.row_of(s.motions,e);row>=0 {
+        held:=core.edit_at(s.motions,row)
+        held.linear,held.angular,held.island,held.awake={},{},0,false
     }
 }
 

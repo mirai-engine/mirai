@@ -53,6 +53,7 @@ NAV_OFF_LEVEL :: f32(0.5)      // m beyond its climb that an agent may be above 
 NAV_CORRIDOR_AHEAD :: 8        // steps of its corridor that must stay valid, and before the end of a cut one, that an agent plans again
 NAV_BLOCKED :: f32(2)          // s walking in place before an agent plans again; twice that, it fails
 NAV_CROSS_SLACK :: f32(1.0)    // s a crossing may outlast its arc before it counts as failed
+NAV_CROSS_REACHED :: f32(0.25) // m from the end of a link within which the game took the agent across
 NAV_FLY_AHEAD :: 6             // portals of its corridor a flying agent looks for ahead
 NAV_SHORE_MARGIN :: f32(16)    // m around its way where an agent that swims looks for shores
 NAV_SHORE_SPACING :: f32(2)    // m between the links of a shore
@@ -151,8 +152,23 @@ nav_look_along :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Re
 // The game crossed the link the agent waits at: it goes on from its end.
 nav_crossing_done :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Crossing_Done,entity=e})}
 // The game is done with the link the agent waits at without taking it across:
-// navigation puts it at the end, facing as it was, and it goes on from there.
+// navigation puts it at the end, facing as it was, unless it stands within
+// NAV_CROSS_REACHED of it (a clip warped onto nav_crossing_target took it
+// there), and it goes on from there.
 nav_crossing_skip :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Crossing_Skip,entity=e})}
+
+// The link an agent crosses while its Nav_Path is Crossing, in the world: its
+// ends, as the Crossing Nav_Event gave them, and facing from one to the other
+// across +Y. A clip that climbs or vaults it warps onto `to` with `facing`
+// (anim.motion_target of its window).
+nav_crossing_target :: proc "contextless" (a:^Navigation_Agents,p:Nav_Path,e:core.Entity) -> (from,to:[3]f32,facing:mm.Quat,ok:bool) {
+    r:=agent_route(a,e)
+    if r==nil || p.state!=.Crossing {return}
+    along:=r.to-r.from
+    yaw:f32
+    if linalg.length(along.xz)>1e-4 {yaw=mm.yaw_of_direction(along)}
+    return r.from,r.to,mm.quat_axis_angle({0,1,0},yaw),true
+}
 
 Nav_Event_Kind :: enum u8 {
     Arrived,
@@ -324,8 +340,9 @@ class_fit :: proc "contextless" (
     return
 }
 
-// What an agent can cross: its jump from its Walk (how high, and how far in
-// the time in the air at its speed, under the gravity it falls by), its drop
+// What an agent can cross: its jump from its Walk (how high, jump_height,
+// the apex of every jump of the walk, and how far in the time in the air of
+// an arc to that apex at its speed, under the gravity it falls by), its drop
 // and abilities from Nav_Agent.
 agent_can :: proc "contextless" (n:^Navigation,class:int,agent:Nav_Agent,walk:locomotion.Walk,gravity:f32) -> ai.Nav_Need {
     c:=n.classes[class].class
@@ -415,10 +432,9 @@ navigation_agents :: proc(
             p.looking=false
         case .Crossing_Done,.Crossing_Skip:
             if n.ptr==nil || p.state!=.Crossing || !p.manual {continue}
-            if asked.kind==.Crossing_Skip {
-                rotation:=mm.Quat(1)
-                if pose,placed:=core.get(worlds,asked.entity);placed {rotation=pose.rotation}
-                core.place(placer,asked.entity,r.to,rotation)
+            // One the clip of the crossing took to the end goes on from where it stands.
+            if pose,placed:=core.get(worlds,asked.entity);asked.kind==.Crossing_Skip && !(placed && linalg.length(pose.position-r.to)<=NAV_CROSS_REACHED) {
+                core.place(placer,asked.entity,r.to,pose.rotation if placed else 1)
                 r.walked=r.to
             }
             agent_crossed(n.ptr,a,p,r,asked.entity,events,loco)

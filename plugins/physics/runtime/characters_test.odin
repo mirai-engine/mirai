@@ -183,3 +183,35 @@ a_character_its_section_holds_stays_where_it_is_and_a_place_moves_it :: proc(t:^
     for _ in 0..<30 {step(&f)}
     testing.expectf(t,physics_test_pose(&f,e).position.y<7,"let go, it falls: %v",physics_test_pose(&f,e).position)
 }
+
+// A ghosted character (one crossing a link) collides with nothing that moves, a box falls through it to the
+// floor, but a ray still hits its Collider, a bullet at a climber; a query of a move (solid) passes it by.
+@(test)
+a_ghosted_character_collides_with_nothing_and_a_ray_still_hits_it :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.gravity={0,-9.81,0}
+    physics_test_box(&f,{0,-1,0},{50,1,50})
+    ghost:=core.create(&f.entities)
+    core.add(&f.transforms,ghost,core.Transform{{0,0,0},1,{1,1,1}})
+    core.add(&f.colliders,ghost,collider_character())
+    core.add(&f.characters,ghost,character_default())
+    for _ in 0..<10 {physics_test_step(&f)}
+    core.add(&f.moves,ghost,Character_Move{value={flags={.Ghosted}}})
+    box:=physics_test_box(&f,{0,3,0},{0.2,0.2,0.2},RIGID_BODY_DYNAMIC)
+    for _ in 0..<120 {physics_test_step(&f)}
+    fell:=physics_test_pose(&f,box).position.y
+    testing.expectf(t,abs(fell-0.2)<0.05,"the box falls through the ghost onto the floor: at %v",fell)
+    hit,met:=raycast(core.ref(&f.state),{0,5,0},{0,-1,0},10)
+    testing.expectf(t,met && hit.entity==ghost && abs(hit.point.y-1.8)<0.05,"the ray hits the ghost: %v at %v",hit.entity,hit.point)
+    solid:=QUERY_FILTER_DEFAULT
+    solid.solid=true
+    passed,_:=raycast(core.ref(&f.state),{0,5,0},{0,-1,0},10,filter=solid)
+    testing.expectf(t,passed.entity==box,"a query of a move passes the ghost by: %v",passed.entity)
+    // Once it walks again it is solid: the ray of a move meets it.
+    core.add(&f.moves,ghost,Character_Move{})
+    physics_test_step(&f)
+    again,_:=raycast(core.ref(&f.state),{0,5,0},{0,-1,0},10,filter=solid)
+    testing.expectf(t,again.entity==ghost,"walking, the query of a move meets it: %v",again.entity)
+}

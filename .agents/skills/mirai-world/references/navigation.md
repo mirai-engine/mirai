@@ -90,8 +90,11 @@ depends on `physics`). Core algorithms live in
   `MODE_FLYING`, swim lets physics own mode.
 - **Crossings** (`MODE_NAV_LINK`, `navigation_crossing` before `locomotion_step`, gated by
   `Nav_Crossings.count`): Jump/Drop launch ballistically, Climb/Ladder move linearly; Door/game/
-  `Nav_Agent.manual` wait for `nav_crossing_done`; `passthrough` suspends collision while the game
-  moves the character and restores on finish/cancel. Overrun replans.
+  `Nav_Agent.manual` wait for `nav_crossing_done`; `passthrough` suspends collision (a ghost that
+  rays still hit) while the game moves the character and restores on finish/cancel. Overrun
+  replans. `nav_crossing_target` gives the ends of the link and the facing across it while
+  `Crossing`, for the warp of a clip (`Nav_Path` stays at 64 bytes); `nav_crossing_skip` within
+  `NAV_CROSS_REACHED` of the end goes on from there instead of placing the agent.
 
 ```odin
 // Command an agent and finish manual door crossings in a fixed step.

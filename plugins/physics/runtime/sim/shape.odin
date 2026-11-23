@@ -498,6 +498,17 @@ shape_set_filter :: proc(w:^World,h:Shape_Handle,filter:Filter) {
     shape_moved(w,index)
     body_wake(w,shape.body)
 }
+// A ghost meets nothing in the step, and queries still find it (Shape_Flag.Ghost).
+@(private)
+shape_set_ghost :: proc(w:^World,h:Shape_Handle,ghost:bool) {
+    shape,index:=shape_get(w,h)
+    if shape==nil || (.Ghost in shape.flags)==ghost {return}
+    w.grounds_stale=true
+    if ghost {shape.flags+={.Ghost}} else {shape.flags-={.Ghost}}
+    shape_destroy_contacts(w,index)
+    shape_moved(w,index)
+    body_wake(w,shape.body)
+}
 // Takes effect on the contacts of the shape at once, as shape_set_material.
 shape_set_rolling_resistance :: proc(w:^World,h:Shape_Handle,rolling_resistance:f32) -> bool {
     friction,restitution:=shape_material(w,h)

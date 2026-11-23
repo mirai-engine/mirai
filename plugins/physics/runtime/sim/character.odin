@@ -268,7 +268,7 @@ character_set_move :: proc(w:^World,h:Character_Handle,move:Character_Move) -> b
     toggled:=(.Ghosted in ch.move.flags)!=(.Ghosted in move.flags)
     ch.move=move
     if toggled {
-        shape_set_filter(w,ch.shape,.Ghosted in move.flags?{}:ch.desc.filter)
+        shape_set_ghost(w,ch.shape,.Ghosted in move.flags)
         ch.state=Character_State{up_frame=ch.state.up_frame,ground={.Stale}}
         character_held_update(w,ch)
     }
@@ -340,7 +340,7 @@ character_set_filter :: proc(w:^World,h:Character_Handle,filter:Filter) {
     ch,_:=character_get(w,h)
     if ch==nil {return}
     ch.desc.filter=filter
-    if .Ghosted not_in ch.move.flags {shape_set_filter(w,ch.shape,filter)}
+    shape_set_filter(w,ch.shape,filter)
 }
 // Changes the height of the capsule with the feet where they are: to crouch and to stand up again.
 // Growing first checks the taller capsule, CHARACTER_SKIN thinner so a wall it leans on is not in the
@@ -358,7 +358,7 @@ character_set_height :: proc(w:^World,h:Character_Handle,height:f32) -> bool {
     center:=Vec3{0,character_center_height(&d),0}
     capsule:=Capsule{d.radius,character_half_segment(&d)}
     if height>ch.desc.height {
-        filter:=Query_Filter{filter=d.filter,ignore_body=ch.body}
+        filter:=Query_Filter{filter=d.filter,ignore_body=ch.body,solid=true}
         blocking:[1]Shape_Handle
         thin:=Capsule{max(capsule.radius-CHARACTER_SKIN,0.5*capsule.radius),capsule.half_height}
         if overlap_shape(w,thin,{body.position+q_rotate(body.rotation,center),body.rotation},blocking[:],filter)>0 {return false}
@@ -510,7 +510,7 @@ character_probe :: proc(w:^World,ch:^Character,body:^Body,up:Vec3,fall:f32) -> (
     rest:=d.step_height+r-rc
     reach:=rest+d.step_height+fall
     low:=body.position+up*(d.step_height+r)
-    filter:=Query_Filter{filter=d.filter,ignore_body=ch.body}
+    filter:=Query_Filter{filter=d.filter,ignore_body=ch.body,solid=true}
     cos_max:=cmath.cos(d.max_slope)
     ground_index=-1
     hit,found:=shape_cast_closest(w,Sphere{rc},{low,QUAT_IDENTITY},-up*reach,filter)

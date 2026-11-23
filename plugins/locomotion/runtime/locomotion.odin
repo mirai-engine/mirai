@@ -58,8 +58,8 @@ Walk :: struct {
     acceleration:f32 `mirai:"min=0,unit=m/s2"`,
     braking:f32 `mirai:"min=0,unit=m/s2"`,
     air_control:f32 `mirai:"min=0,max=1"`,  // share of the acceleration and of the traction left in the air
-    jump_height:f32 `mirai:"min=0,unit=m"`,     // of a jump let go at once
-    jump_rise:f32 `mirai:"min=0,unit=s"`,       // a jump held keeps rising at the speed it started with for up to this long, then falls as it would
+    jump_height:f32 `mirai:"min=0,unit=m"`,     // the highest a jump goes, held to its apex
+    jump_rise:f32 `mirai:"min=0,unit=s"`,       // a jump held keeps the speed it starts with for up to this long, then falls as it would: let go earlier, it goes less high
     jump_cut:f32 `mirai:"min=0,max=1"`,         // share of its speed up a jump keeps when it is let go while it rises; 1 or 0: all of it
     coyote_time:f32 `mirai:"min=0,unit=s"`, // after walking off a ledge, in which a jump still starts
     crouch_speed:f32 `mirai:"min=0,unit=m/s"`,  // top speed while crouched
@@ -549,7 +549,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
                 rising:=linalg.dot(v,up)
                 if held && rising>=loco.jump_speed-2*linalg.length(gravity)*dt {
                     move.launch+=up*(loco.jump_speed-rising)
-                    loco.jump_rise=max(loco.jump_rise-dt,0)
+                    jump_hold(loco,&move,up,linalg.length(gravity),dt)
                 } else {loco.jump_rise=0}
             }
             if released && loco.jumped && walk.jump_cut>0 && walk.jump_cut<1 {
@@ -593,16 +593,40 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
 
         if pressed && (ground.standing || loco.coyote>0 && !loco.jumped) {
             base:=linalg.dot(ground.standing?v-ground.ground_velocity:v,up)
-            rise:=cmath.sqrt(2*linalg.length(gravity)*walk.jump_height)
+            rise:=walk_jump_speed(walk,linalg.length(gravity))
             move.launch+=up*(rise-base)
             if ground.standing {move.air={velocity=across(v,up)+across(move.launch,up)}}
             loco.mode,loco.jumped,loco.coyote,loco.crouched,loco.crouch_on=MODE_FALLING,true,0,false,false
             loco.jump_speed,loco.jump_rise=rise,walk.jump_rise
+            jump_hold(loco,&move,up,linalg.length(gravity),dt)
         }
     }
     loco.driven=move.ground.velocity+ground.ground_velocity if ground.standing && .Airborne not_in move.flags else move.air.velocity
     layers_apply(loco,&move,traction,pace)
     return
+}
+
+// The speed up a jump of a walk starts with under a gravity (m/s2): held for jump_rise and then
+// falling, it reaches jump_height, h=v*r+v*v/(2*g); without jump_rise, sqrt(2*g*h). In the form
+// 2*h/(r+sqrt(r*r+2*h/g)), which loses no digits to a long rise.
+walk_jump_speed :: proc "contextless" (walk:Walk,gravity:f32) -> f32 {
+    h,r:=walk.jump_height,max(walk.jump_rise,0)
+    if !(h>0) || !(gravity>0) {return 0}
+    return 2*h/(r+cmath.sqrt(r*r+2*h/gravity))
+}
+
+// A tick of a jump held, from the tick it starts: it keeps jump_speed while jump_rise lasts, whole
+// ticks of it without gravity and the part of a tick left with as much more speed as the gravity
+// takes from it then, so that it rises what walk_jump_speed counts on whatever the tick.
+@(private)
+jump_hold :: proc "contextless" (loco:^Locomotion_State,move:^phys.Character_Drive,up:[3]f32,gravity,dt:f32) {
+    if loco.jump_rise>=dt {
+        move.flags+={.No_Gravity}
+        loco.jump_rise-=dt
+    } else {
+        move.launch+=up*(loco.jump_rise*gravity)
+        loco.jump_rise=0
+    }
 }
 
 // The part of the velocity of a body that the additive layered moves of the last tick put in it: of
@@ -789,7 +813,7 @@ Ledge_Query :: struct {
 // go a radius past the face, or onto the middle of a top narrower than that (the top of a thin wall).
 // Its capsule fits standing there, and a thinner one goes up along the wall and across onto it without
 // hitting anything.
-ledge_find :: proc(physics:core.Ref(phys.Physics_State),capsule:phys.Character_Capsule,facing:[3]f32,query:Ledge_Query) -> (to:[3]f32,height:f32,found:bool) {
+ledge_find :: proc(physics:core.Ref(phys.Physics_State),capsule:phys.Character_Capsule,facing:[3]f32,query:Ledge_Query) -> (to:[3]f32,height:f32,normal:[3]f32,found:bool) {
     if !(query.reach>0) || !(query.max_height>query.min_height) {return}
     frame:=capsule.up_frame
     up:=mm.quat_rotate(frame,{0,1,0})
@@ -834,7 +858,7 @@ ledge_find :: proc(physics:core.Ref(phys.Physics_State),capsule:phys.Character_C
     if _,blocked:=phys.sweep(physics,thin,start,frame,raised-start,linalg.length(raised-start),filter=filter);blocked {return}
     across_to:=top.point+up*(center+LEDGE_INSET)-raised
     if _,blocked:=phys.sweep(physics,thin,raised,frame,across_to,linalg.length(across_to),filter=filter);blocked {return}
-    return top.point,height,true
+    return top.point,height,-into,true
 }
 
 // Whether the ground falls away ahead of a standing character along direction: a sphere almost as

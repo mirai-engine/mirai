@@ -165,3 +165,51 @@ one_body_owns_two_joints :: proc(t:^testing.T) {
     pose:=physics_test_pose(&f,plank)
     testing.expectf(t,linalg.length(pose.position-[3]f32{0,5,0})<0.02,"the plank sagged to %v",pose.position)
 }
+
+// Two entities that do not move yet keep their joint without an error, whatever makes them static; the one that
+// turns dynamic hangs from it at once. A joint of an entity to itself has no two bodies.
+@(test)
+a_joint_between_static_entities_waits_for_one_to_move :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.gravity={0,-9.81,0}
+    static:=RIGID_BODY_DYNAMIC
+    static.type=.Static
+    Case :: struct {name:string,rigid:Maybe(Rigid_Body),moves_a:bool}
+    cases:=[?]Case{
+        {"colliders, b moves",nil,false},
+        {"static bodies, b moves",static,false},
+        {"colliders, a moves",nil,true},
+        {"static bodies, a moves",static,true},
+    }
+    joined:[len(cases)][3]core.Entity
+    for c,i in cases {
+        x:=f32(i)*10
+        a:=physics_test_box(&f,{x,5,0},{0.2,0.2,0.2},c.rigid)
+        b:=physics_test_box(&f,{x+1,5,0},{0.2,0.2,0.2},c.rigid)
+        joined[i]={a,b,physics_test_joint(&f,a,{0.5,0,0},joint_spherical(b))}
+    }
+    self:=physics_test_box(&f,{-10,5,0},{0.2,0.2,0.2})
+    looped:=physics_test_joint(&f,self,{},joint_spherical(self))
+    for _ in 0..<3 {physics_test_step(&f)}
+    for c,i in cases {
+        state,_:=core.get(&f.joint_states,joined[i][2])
+        testing.expectf(t,state.error==.None && state.taken,"%s: error %v, taken %v",c.name,state.error,state.taken)
+        core.add(&f.rigids,joined[i][0] if c.moves_a else joined[i][1],RIGID_BODY_DYNAMIC)
+    }
+    for _ in 0..<120 {physics_test_step(&f)}
+    for c,i in cases {
+        a,b,joint:=joined[i][0],joined[i][1],joined[i][2]
+        state,_:=core.get(&f.joint_states,joint)
+        testing.expectf(t,state.error==.None,"%s: error %v",c.name,state.error)
+        testing.expectf(t,sim.joint_valid(&f.state.world,core.entity_map_get(&f.state.joints,joint).joint),"%s: no joint",c.name)
+        // Each hangs 1 m from the other: the anchor 0.5 m from a, b 0.5 m beyond.
+        distance:=linalg.length(physics_test_pose(&f,b).position-physics_test_pose(&f,a).position)
+        testing.expectf(t,abs(distance-1)<0.06,"%s: %v m apart",c.name,distance)
+        problem:=core.problem_find(&f.problems,joint,"physics.joints")
+        testing.expectf(t,problem==nil,"%s: a problem",c.name)
+    }
+    state,_:=core.get(&f.joint_states,looped)
+    testing.expect_value(t,state.error,Joint_Error.Invalid_Bodies)
+}

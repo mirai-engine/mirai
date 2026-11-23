@@ -231,7 +231,8 @@ assert(phys.world_hash(&w) == h0)
 ## Queries
 
 Zero-alloc on caller buffers using `Query_Filter` (`filter`, `include_sensors`, `debris`,
-`ignore_body`, `ignore_user_data`—falls back to shape user data on shared static body):
+`solid`—skips ghosts, for moves—, `ignore_body`, `ignore_user_data`—falls back to shape user data
+on shared static body):
 
 - `ray_cast_closest`/`ray_cast_any` (blockers), `ray_cast_all` (distance-sorted up to first
   blocker, keeps nearest on overflow), `shape_cast_*` (translating convex; rounded ray = point

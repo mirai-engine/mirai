@@ -14,7 +14,7 @@ an_authored_link_reserves_both_directions_and_ghosts_its_crossing :: proc(t:^tes
     if !nav_test_init(t,&f) {return}
     defer nav_test_destroy(&f)
     nav_test_box(&f,{0,-0.5,0},{8,0.5,3})
-    nav_test_box(&f,{0,1,0},{0.2,1,3})
+    wall:=nav_test_box(&f,{0,1,0},{0.2,1,3})
     door:=core.create(&f.entities)
     core.add(&f.transforms,door,core.Transform{{-1,0,0},1,{1,1,1}})
     core.add(&f.links,door,Nav_Link{
@@ -49,13 +49,18 @@ an_authored_link_reserves_both_directions_and_ghosts_its_crossing :: proc(t:^tes
     move,_:=core.get(&f.moves,active)
     testing.expect(t,p.state==.Crossing && p.link_entity==door && .Ghosted in move.value.flags)
     testing.expect(t,other.state==.Moving && other.link_entity==core.NONE)
+    // Through the wall it collides with nothing, but a bullet still hits it.
+    crosser,_:=core.get(&f.worlds,active)
+    shot,hit:=phys.raycast(core.ref(&f.state),crosser.position+{0,5,0},{0,-1,0},10,ignore=wall)
+    testing.expectf(t,hit && shot.entity==active,"a ray down at the crossing agent hits %v",shot.entity)
 
     core.add(&f.disabled,active,core.Disabled{})
     started:=false
+    began:Nav_Event
     for _ in 0..<60 {
         agents_test_step(&f)
         for event in f.nav_events.queue.items {
-            started|=event.entity==waiting && event.kind==.Crossing && event.link_entity==door
+            if event.entity==waiting && event.kind==.Crossing && event.link_entity==door {started,began=true,event}
         }
         if started {break}
     }
@@ -68,17 +73,23 @@ an_authored_link_reserves_both_directions_and_ghosts_its_crossing :: proc(t:^tes
     testing.expect(t,f.problems.count==0)
     core.destroy(&f.entities,active)
 
-    route:=agent_route(&f.run,waiting)
-    from,to:=route.from,route.to
+    // The ends of the link it crosses are what its clip warps onto, facing across it.
+    crossing,_:=core.get(&f.paths,waiting)
+    from,to,facing,crosses:=nav_crossing_target(&f.run,crossing,waiting)
+    testing.expectf(t,crosses && from==began.from && to==began.to && from!=to,"link from %v to %v, the event %v",from,to,began)
+    ahead:=mm.quat_forward(facing)
+    testing.expectf(t,linalg.dot(ahead.xz,linalg.normalize((to-from).xz))>0.999,"it faces %v across the link",ahead)
+    // The clip takes it to the end, a little aside: a skip lets it go on from there, not put at the end.
+    aside:=to+{0,0,0.15}
     for k in 1..=12 {
-        position:=from+(to-from)*f32(k)/12
+        position:=from+(aside-from)*f32(k)/12
         core.add(&f.replicas,waiting,core.Pose_Target{
             follow=true,position=position,rotation=1,scale={1,1,1},
         })
         agents_test_step(&f)
     }
     core.remove(&f.replicas,waiting)
-    nav_crossing_done(&f.nav_requests,waiting)
+    nav_crossing_skip(&f.nav_requests,waiting)
     agents_test_step(&f)
     crossed:=false
     for event in f.nav_events.queue.items {
@@ -86,9 +97,11 @@ an_authored_link_reserves_both_directions_and_ghosts_its_crossing :: proc(t:^tes
     }
     p,_=core.get(&f.paths,waiting)
     move,_=core.get(&f.moves,waiting)
-    pose,_:=core.get(&f.worlds,waiting)
+    pose,_:=core.get(&f.transforms,waiting)
     testing.expect(t,crossed && p.link_entity==core.NONE && .Ghosted not_in move.value.flags)
-    testing.expect(t,linalg.length(pose.position.xz-to.xz)<0.3)
+    testing.expectf(t,linalg.length(pose.position.xz-aside.xz)<0.07,"it goes on from %v, at %v",aside,pose.position)
+    _,_,_,after:=nav_crossing_target(&f.run,p,waiting)
+    testing.expect(t,!after,"no target once across")
     testing.expect(t,core.entity_map_get(&f.run.reservations,door)==nil)
 }
 

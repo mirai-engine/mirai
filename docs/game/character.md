@@ -50,11 +50,13 @@ A walker is a `Character` and a `Walk` of the `locomotion` plugin, which the pro
 (`import locomotion "plugins:locomotion/runtime"`); it starts walking, and a game that starts it
 flying or swimming asks `locomotion.set_mode`. Start from `locomotion.WALK_DEFAULT`, then set
 `max_speed`, `jump_height` and the rest (`component.list` on `Walk`: sprint, air control, coyote
-time, crouch). A held jump keeps rising for `jump_rise`.
-**`jump_cut`** is the share of its upward speed a jump keeps when the button is let go while
-rising: `0.4` lets a tap make a short hop, `1` or `0` keeps all of it. Locomotion does the rest
-from the seat's actions: the game sets how fast (`max_speed`), it does not steer by writing a
-velocity. A launch, such as a jump pad, works on a `Character`:
+time, crouch). **`jump_height`** is the highest a jump goes, held to its apex, from walking, from
+a slide or out of the water, and the height navigation lets agents jump. With **`jump_rise`** a
+jump starts slower and keeps that speed while held for up to `jump_rise` seconds, so a tap goes
+lower than a held jump. **`jump_cut`** is the share of its upward speed a jump keeps when the
+button is let go while rising: `0.4` lets a tap make a short hop, `1` or `0` keeps all of it.
+Locomotion does the rest from the seat's actions: the game sets how fast (`max_speed`), it does
+not steer by writing a velocity. A launch, such as a jump pad, works on a `Character`:
 `phys.set_velocity(requests,e,v)` replaces its velocity and `phys.apply_impulse(requests,e,impulse)`
 adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are components too
 (`locomotion.Fly`, `locomotion.Swim`), and so are a slide and a climb onto ledges

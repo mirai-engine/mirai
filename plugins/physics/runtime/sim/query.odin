@@ -11,6 +11,7 @@ Query_Filter :: struct {
     ignore_user_data:u64,
     include_sensors:bool,
     debris:bool,
+    solid:bool, // only what the step collides with, as a move does: no ghosted shape (Shape_Flag.Ghost)
 }
 QUERY_FILTER_DEFAULT :: Query_Filter{filter=FILTER_DEFAULT}
 
@@ -37,6 +38,7 @@ query_filter_response :: #force_inline proc "contextless" (filter:Query_Filter,t
 query_response :: #force_inline proc "contextless" (w:^World,shape:^Shape,filter:Query_Filter) -> Response {
     if !filter.debris && .Debris in w.bodies[shape.body].flags {return .Ignore}
     if filter.ignore_body!={} && body_handle(w,shape.body)==filter.ignore_body {return .Ignore}
+    if filter.solid && .Ghost in shape.flags {return .Ignore}
     if filter.ignore_user_data!=0 && shape_owner_data(w,shape)==filter.ignore_user_data {return .Ignore}
     return query_filter_response(filter,shape.filter)
 }

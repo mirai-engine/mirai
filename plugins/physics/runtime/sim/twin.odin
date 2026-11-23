@@ -257,8 +257,8 @@ twin_source_removed :: proc(w:^World,body,source:i32) {
 }
 
 // Takes what the shapes of the body are now into their copies and puts the copies where the twin
-// carries them. A copy that took another filter meets the others again. A copy is written only when it
-// changes.
+// carries them. A copy that took another filter, or became a ghost or solid, meets the others again. A
+// copy is written only when it changes.
 @(private)
 twin_refresh :: proc(w:^World,t:^Twin) #no_bounds_check {
     body:=&w.bodies[base.handle_index(base.Handle(t.body))]
@@ -268,9 +268,10 @@ twin_refresh :: proc(w:^World,t:^Twin) #no_bounds_check {
     for s:=t.shapes;s>=0;s=w.shapes[s].next {
         shape:=&w.shapes[s]
         source:=&w.shapes[shape.source]
-        if shape.filter!=source.filter {
+        if ghost:=source.flags&{.Ghost};shape.filter!=source.filter || shape.flags&{.Ghost}!=ghost {
             stamp(w,shape)
             shape.filter=source.filter
+            shape.flags=shape.flags-{.Ghost}+ghost
             shape_destroy_contacts(w,s)
             shape_moved(w,s)
         }

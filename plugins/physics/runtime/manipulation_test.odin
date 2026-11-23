@@ -266,3 +266,37 @@ large_manipulations_reach_the_target_before_releasing_and_can_return :: proc(t:^
     testing.expect(t,!pose_differs(sim.body_transform(&f.state.world,body),{q=1}))
     testing.expect_value(t,f.state.stats.teleports,u64(0))
 }
+
+// A body that stops moving, by turning static or losing its Rigid_Body or all of its physics, leaves its Motion at
+// rest and keeps the row, which navigation writes for an entity without a body.
+@(test)
+a_body_that_stops_moving_leaves_its_motion_at_rest :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.gravity={0,-9.81,0}
+    Stop :: enum {Static,No_Rigid_Body,No_Physics}
+    boxes:[Stop]core.Entity
+    for &box,stop in boxes {
+        box=physics_test_box(&f,{f32(stop)*5,5,0},{0.2,0.2,0.2},RIGID_BODY_DYNAMIC)
+        apply_angular_impulse(&f.requests,box,{0,0.01,0})
+    }
+    for _ in 0..<20 {physics_test_step(&f)}
+    static:=RIGID_BODY_DYNAMIC
+    static.type=.Static
+    for box,stop in boxes {
+        motion,_:=core.get(&f.bodies,box)
+        testing.expectf(t,motion.linear.y< -1 && motion.angular!={},"%v: it moves at %v, %v",stop,motion.linear,motion.angular)
+        switch stop {
+        case .Static: core.add(&f.rigids,box,static)
+        case .No_Rigid_Body: core.remove(&f.rigids,box)
+        case .No_Physics: core.remove(&f.rigids,box);core.remove(&f.colliders,box)
+        }
+    }
+    physics_test_step(&f)
+    for box,stop in boxes {
+        motion,kept:=core.get(&f.bodies,box)
+        testing.expectf(t,kept,"%v: its Motion row is gone",stop)
+        testing.expectf(t,motion.linear=={} && motion.angular=={} && !motion.awake,"%v: Motion %v",stop,motion)
+    }
+}

@@ -25,14 +25,18 @@ follow their entity's transform.
   `ground_turn`, `wall_normal`, fluid state, velocity; restored on save; callers add `ground_turn`
   to yaw each tick). `core.Vertical` (`transient`) mirrors character up for cameras/gameplay.
 - Disabling `Rigid_Body`/`Collider`/`Character` removes it from `sim.World` while retaining
-  components and `core.Motion`; re-enabling rebuilds at current `Transform`/velocity.
+  components and `core.Motion`; re-enabling rebuilds at current `Transform`/velocity. A body that
+  stops moving (turned `.Static`, or its `Rigid_Body` or physics removed) zeroes its `core.Motion`
+  and keeps the row, which navigation writes for an agent without a body.
 - `Fluid` (`replicated`): `Plane`/`Box`/`Outline` `Volume` with density/current (zero density = dry
   box overriding lower `priority`).
 - `Force_Field`: applies `apply_area` each tick in `force_fields_step` across its `Volume`, one
   request for `force` (N) and one `per_mass` for `acceleration` (m/s^2), with the same direction,
   falloff, range and noise; a value that is not finite is the problem `physics.request_area`.
 - `Joint` & `Joint_State` (`replicated`): entity joining `a` (default parent) and `b` (default
-  world); presets `joint_{fixed,spherical,revolute,prismatic,distance}`.
+  world); presets `joint_{fixed,spherical,revolute,prismatic,distance}`. Two static entities keep
+  their joint without an error (each a static body of its own) and it holds once one moves; a
+  joint whose `a` and `b` are one body is `Invalid_Bodies`.
 - `Body_Twin` & `Collider_Cuts`: portal twin colliders and box cutouts synced in `physics_twins`
   (errors: `physics.twin`, `physics.cuts`).
 
@@ -122,7 +126,8 @@ bounded/planetary `Center` fields update awake bodies in parallel via `sim.world
 Optional `locomotion` plugin (`Character` + capsule `Collider` + `Walk`/`Swim`/`Fly` +
 `Locomotion_State`), in three tiers by nature, not by genre:
 - **Tier 1 (`locomotion.odin`):** `Walk` (ground/air drive, sprint: `sprint_default` / 60 deg
-  forward cone / `backward_slowdown`, coyote-time jump + rise hold `jump_rise`, crouch), `Fly`,
+  forward cone / `backward_slowdown`, coyote-time jump to the apex `jump_height` held, whose
+  launch `walk_jump_speed` solves `h=v*r+v^2/(2g)` for the rise hold `jump_rise`, crouch), `Fly`,
   `Swim`, each with its `turn_speed` toward the look; speed/gravity scales, layered moves and the
   geometric queries `ledge_find` (a ledge to climb) and `ledge_ahead` (ground falling away ahead).
   `Locomotion_State` publishes what the mode heads to (`desired`, `acceleration`, `braking`,
@@ -138,7 +143,8 @@ Optional `locomotion` plugin (`Character` + capsule `Collider` + `Walk`/`Swim`/`
 - **Tier 2 (same plugin, own files, zero cost without rows):** `Slide` (`slide.odin`,
   `Slide_State`) and `Mantle` (`mantle.odin`, `Mantle_State`: `ledge_find`, the climb as a custom
   mode; root motion of the climb is an `Override` layered move from `animation_physics`, and
-  `Mantle_State.to` is its warp target). Both are written only on the custom-mode extension point.
+  `Mantle_State.to` is its warp target, with `from` and the wall `normal` for callers). Both are
+  written only on the custom-mode extension point.
 - **Tier 3 (game rules):** stamina, tactical sprints and ledge jumps are `abilities` data (speed
   attribute -> `set_speed_scale`, `per_second` costs, `Speed`/`Ledge_Ahead` conditions, window
   moves) ([abilities](../../mirai-abilities/SKILL.md)); locomotion holds no economy.

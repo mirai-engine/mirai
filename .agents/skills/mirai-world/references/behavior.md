@@ -118,9 +118,10 @@ what it perceives; `think` only reads and proposes, and the actions write.
   its entity: navigation starts a crossing only within `Nav_Link.capacity` and the agent waits
   at its start in `Crossing`; `cross_act` reads the offer on `Nav_Path.link_entity`, waits while
   it is closed to the agent (spent, cooling down), asks navigation to put it on the other side
-  (`nav.nav_crossing_skip`), and finishes when navigation takes it from there. The link's
-  capacity is the one count of who crosses at once: `cross_act` claims nothing, and the offer's
-  `users` does not count there.
+  (`nav.nav_crossing_skip`, which leaves where it stands an agent a clip warped onto
+  `nav.nav_crossing_target` took there), and finishes when navigation takes it from there. The
+  link's capacity is the one count of who crosses at once: `cross_act` claims nothing, and the
+  offer's `users` does not count there.
 
 ## Influence maps
 
