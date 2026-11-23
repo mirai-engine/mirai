@@ -376,7 +376,7 @@ match_step :: proc(f:^Match_Fixture,dt:f32,mode:u16,velocity:=mm.Vec3{},desired:
     output,programmed,ok:=program_resolve(f.state,f.animation,&f.app,&f.graphs,dt,&f.events,&f.playback,content,&f.problems,goals[:])
     if !ok || !programmed || !curves_prepare(f.state,content) || !program_players(f.state,output,content,f.animation,&f.events,&f.playback,dt,-1,nil) {return false}
     if f.state.program.has_root {f.state.root=f.state.program.root}
-    actions_sample(&f.actions,f.state,f.animation,dt,&f.problems,content,&f.playback,&f.events,nil,1)
+    actions_sample(&f.actions,f.state,f.animation,dt,&f.problems,content,&f.playback,&f.events,1)
     layers_advance(&f.playback,f.state,content,f.animation,&f.events,dt,&f.problems,&f.graphs,&f.app,&f.actions)
     actions_layer_finish(&f.actions,f.state)
     stack_parameters_check(f.state,&f.problems)

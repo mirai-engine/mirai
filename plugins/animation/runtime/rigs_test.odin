@@ -40,21 +40,18 @@ rig_operations_preserve_named_operations_generations_and_copied_per_rig_state ::
     source_entity:=core.entity_make(7,1)
     append(&playback.states,rig_test_state(source_entity,3,1));resize(&playback.rows,8);playback.rows[7]=1
     playing_pose(&playback.states[0],.Sampled)[2].rotation=mm.quat_axis_angle({0,0,1},.2)
-    kinds:=[?]Modifier_Kind{.Chain_IK,.Twist,.Spring,.Multi_IK,.Chain_Retarget}
+    kinds:=[?]Modifier_Kind{.Twist,.Spring,.Multi_IK,.Chain_Retarget}
     for i in 0..<3 {
         entity:=core.entity_make(i+1,1);append(&states,rig_test_state(entity,5,.5))
         // It takes the sampled pose of the source, chain by chain.
         states[len(states)-1].leader,states[len(states)-1].stage=source_entity,.Sampled
-        chains:=make([]Chain_IK_Constraint,2,context.temp_allocator)
         twists:=make([]Twist_Constraint,2,context.temp_allocator)
         springs:=make([]Spring_Constraint,2,context.temp_allocator)
         multis:=make([]Multi_IK_Constraint,2,context.temp_allocator)
         retargets:=make([]Chain_Retarget_Constraint,2,context.temp_allocator)
         for slot in 0..<2 {
             name:="first" if slot==0 else "second"
-            chain:=CHAIN_IK_CONSTRAINT_DEFAULT
-            chain.root,chain.end,chain.enabled=bone_ref("joint1"),bone_ref("joint4"),false
-            base.text_set(chain.name[:],name)
+            chain:=struct {root,end:Bone_Ref}{bone_ref("joint1"),bone_ref("joint4")}
             twist:=TWIST_CONSTRAINT_DEFAULT
             twist.source,twist.root,twist.end,twist.enabled=bone_ref("joint5"),chain.root,chain.end,false
             base.text_set(twist.name[:],name)
@@ -71,11 +68,11 @@ rig_operations_preserve_named_operations_generations_and_copied_per_rig_state ::
             retarget.source_root,retarget.source_end,retarget.target_root,retarget.target_end=bone_ref("joint1"),bone_ref("joint3"),bone_ref("joint1"),bone_ref("joint5")
             base.text_set(retarget.name[:],name)
             base.text_set(multi.effectors[0].name[:],"hand")
-            chains[slot]=chain;twists[slot]=twist;springs[slot]=spring
+            twists[slot]=twist;springs[slot]=spring
             multis[slot]=multi;retargets[slot]=retarget
         }
         if !testing.expect(t,test_modifier_profile(&modifiers,&characters,entity,
-            {chain_ik=chains,twist=twists,springs=springs,multi_ik=multis,retarget_chains=retargets})!=nil) {return}
+            {twist=twists,springs=springs,multi_ik=multis,retarget_chains=retargets})!=nil) {return}
     }
     for &state in states {
         if !testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60) && test_rigs_retarget(&state,&playback,&modifiers,&characters,&problems)) {return}
@@ -90,13 +87,14 @@ rig_operations_preserve_named_operations_generations_and_copied_per_rig_state ::
     }
     rig:=states[1].entity
     requests:Animation_Requests;defer delete(requests.modifiers.items)
-    modifier(&requests,{rig=rig,kind=.Chain_IK,target=spatial_point({.3,1,0}),weight=.75,enabled=true,goal=true},"second")
+    modifier(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({.3,1,0}),weight=.75,enabled=true,goal=true},"first")
     modifier(&requests,{rig=rig,kind=.Multi_IK,target=spatial_point({.4,1,0}),weight=.5,enabled=true,goal=true},"second","hand")
     modifier(&requests,{rig=rig,kind=.Spring,position={1,0,0},weight=.5,enabled=true,goal=true},"second")
     modifier_take(&modifiers,&characters,&requests,&problems,0)
     prepared:=modifier_rig(core.ref(&modifiers),rig)
-    testing.expect_value(t,modifier_override(prepared,.Chain_IK,1).target.position,mm.Vec3{.3,1,0})
-    testing.expect_value(t,test_modifier_weight(&modifiers,rig,.Chain_IK,"second"),f32(.75))
+    // A goal that names no effector is for the one effector of its operation.
+    testing.expect_value(t,modifier_override(prepared,.Multi_IK,0).target.position,mm.Vec3{.3,1,0})
+    testing.expect_value(t,test_modifier_weight(&modifiers,rig,.Multi_IK,"first"),f32(.75))
     testing.expect_value(t,modifier_override(prepared,.Multi_IK,1).target.position,mm.Vec3{.4,1,0})
     testing.expect(t,test_rigs_apply(&states[1],&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
@@ -118,13 +116,13 @@ rig_operations_preserve_named_operations_generations_and_copied_per_rig_state ::
     testing.expect_value(t,prepared.spring_states[1].springs,([RIG_CHAIN_BONES]lib.Spring_Joint_State{}))
     replacement:=core.entity_make(1,2);new_state:=rig_test_state(replacement,5,.5);defer playing_free(&new_state)
     modifier_rig_remove(&modifiers,int(modifiers.rows[1])-1)
-    chain:=CHAIN_IK_CONSTRAINT_DEFAULT;chain.root,chain.end,chain.enabled=bone_ref("joint1"),bone_ref("joint4"),false
-    base.text_set(chain.name[:],"new")
-    test_modifier_profile(&modifiers,&characters,replacement,{chain_ik={chain}})
+    twist:=TWIST_CONSTRAINT_DEFAULT;twist.source,twist.root,twist.end,twist.enabled=bone_ref("joint5"),bone_ref("joint1"),bone_ref("joint4"),false
+    base.text_set(twist.name[:],"new")
+    test_modifier_profile(&modifiers,&characters,replacement,{twist={twist}})
     testing.expect(t,test_rigs_apply(&new_state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,0))
-    _,old_diagnostic:=animation_rig_diagnostic(core.ref(&modifiers),states[0].entity,.Chain_IK,base.name_hash("first"))
+    _,old_diagnostic:=animation_rig_diagnostic(core.ref(&modifiers),states[0].entity,.Twist,base.name_hash("first"))
     testing.expect(t,!old_diagnostic)
-    diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),replacement,.Chain_IK,base.name_hash("new"))
+    diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),replacement,.Twist,base.name_hash("new"))
     testing.expect(t,found && diagnostic.rig==replacement)
 }
 
@@ -232,25 +230,33 @@ rig_test_state :: proc(entity:core.Entity,count:int,step:f32) -> Playing {
 
 @(test)
 rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities :: proc(t:^testing.T) {
-    chain:=CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.end=bone_ref("joint1"),bone_ref("joint4")
+    chain:=struct {root,end:Bone_Ref}{bone_ref("joint1"),bone_ref("joint4")}
     twist:=TWIST_CONSTRAINT_DEFAULT;base.text_set(twist.name[:],"roll");twist.source,twist.root,twist.end=bone_ref("joint5"),bone_ref("joint1"),bone_ref("joint4")
     spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end
     multi:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joints=make([]Multi_IK_Joint,1,context.temp_allocator);multi.effectors=make([]Multi_IK_Effector,1,context.temp_allocator)
     multi.joints[0]=MULTI_IK_JOINT_DEFAULT;multi.joints[0].bone=chain.root
     multi.effectors[0]=MULTI_IK_EFFECTOR_DEFAULT;base.text_set(multi.effectors[0].name[:],"hand");multi.effectors[0].bone=chain.end
     retarget:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;base.text_set(retarget.name[:],"arm_transfer");retarget.source_root,retarget.source_end,retarget.target_root,retarget.target_end=chain.root,chain.end,chain.root,chain.end
-    profile:=Pose_Profile{chain_ik={chain},twist={twist},springs={spring},multi_ik={multi},retarget_chains={retarget}}
+    multi.effectors[0].pole,multi.effectors[0].use_pole,multi.effectors[0].reach={0,0,2},true,{soft_distance=.2,max_stretch=.3}
+    profile:=Pose_Profile{twist={twist},springs={spring},multi_ik={multi},retarget_chains={retarget}}
     testing.expect(t,pose_profile_check(profile))
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     directory:=base.test_folder(t,"rigs")
     if !test_character_save(t,directory,"rig",&types,{42,43},{pose=profile}) {return}
     file:asset.Asset;testing.expect_value(t,asset.asset_load(&file,fmt.tprintf("%s/rig.character",directory)),asset.Error.None);defer asset.asset_close(&file)
     set,error:=character_view(&file,&types);testing.expect_value(t,error,asset.Error.None);view:=set.pose
-    testing.expect(t,len(view.chain_ik)==1 && len(view.multi_ik)==1 && len(view.retarget_chains)==1)
+    testing.expect(t,len(view.multi_ik)==1 && len(view.retarget_chains)==1 && view.multi_ik[0].effectors[0]==multi.effectors[0])
     testing.expect_value(t,view.springs[0],spring)
     invalid:=multi;invalid.effectors=make([]Multi_IK_Effector,RIG_EFFECTORS+1,context.temp_allocator)
     testing.expect(t,!pose_profile_check({multi_ik={invalid}}))
     invalid=multi;invalid.joints[0].preferred=0;testing.expect(t,!pose_profile_check({multi_ik={invalid}}))
+    nan:=f32(0);nan/=nan
+    for hostile,i in ([4]Multi_IK_Effector{{pole={nan,0,0}},{reach={soft_distance=-1}},{reach={max_stretch=-.1}},{reach={max_stretch=nan}}}) {
+        effector:=multi.effectors[0];effector.pole,effector.reach=hostile.pole,hostile.reach
+        effectors:=[1]Multi_IK_Effector{effector};invalid=multi;invalid.effectors=effectors[:]
+        testing.expectf(t,!pose_profile_check({multi_ik={invalid}}),"hostile effector %d is refused",i)
+    }
+    invalid=multi;invalid.joints=nil;testing.expect(t,pose_profile_check({multi_ik={invalid}}),"a Multi IK without joints chains its effectors")
     spring.collision_count=RIG_COLLISIONS+1;testing.expect(t,!pose_profile_check({springs={spring}}))
 }
 
@@ -279,29 +285,32 @@ named_modifier_controls_preserve_full_bone_paths_and_reject_ambiguous_references
 }
 
 @(test)
-chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls :: proc(t:^testing.T) {
+multi_ik_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls :: proc(t:^testing.T) {
     problems:core.Problems
     rig:=core.entity_make(1,1);state:=rig_test_state(rig,4,1);defer playing_free(&state)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     characters:Character_Assets;defer character_assets_free(&characters)
-    chain:=CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.end=bone_ref("joint1"),bone_ref("joint4")
-    chain.target=spatial_definition_point({1.5,1,0});chain.pole,chain.use_pole={0,0,2},true
-    prepared:=test_modifier_profile(&modifiers,&characters,rig,{chain_ik={chain}})
+    // Without joints every bone from the effector up to the root is one.
+    effectors:=[1]Multi_IK_Effector{MULTI_IK_EFFECTOR_DEFAULT}
+    effectors[0].bone,effectors[0].target=bone_ref("joint4"),spatial_definition_point({1.5,1,0});effectors[0].pole,effectors[0].use_pole={0,0,2},true
+    chain:=MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.effectors=bone_ref("joint1"),effectors[:]
+    prepared:=test_modifier_profile(&modifiers,&characters,rig,{multi_ik={chain}})
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
-    diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),rig,.Chain_IK,base.name_hash("arm"))
-    testing.expect(t,found && diagnostic.valid && diagnostic.reached && diagnostic.residual<.001)
-    modifier_states(prepared,.Chain_IK)[0].base_enabled=false
-    spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end;spring.settings.gravity={};spring.settings.force={2,0,0}
+    diagnostic,found:=animation_rig_diagnostic(core.ref(&modifiers),rig,.Multi_IK,base.name_hash("arm"))
+    testing.expect(t,found && diagnostic.valid && diagnostic.reached && diagnostic.residual<.001 && prepared.multi_states[0].joint_count==4)
+    testing.expect(t,playing_pose(&state,.World)[2].position.z+playing_pose(&state,.World)[3].position.z>0,"the chain bends toward its pole")
+    modifier_states(prepared,.Multi_IK)[0].base_enabled=false
+    spring:=SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=bone_ref("joint1"),bone_ref("joint4");spring.settings.gravity={};spring.settings.force={2,0,0}
     chain.enabled=false
-    prepared=test_modifier_profile(&modifiers,&characters,rig,{chain_ik={chain},springs={spring}})
+    prepared=test_modifier_profile(&modifiers,&characters,rig,{multi_ik={chain},springs={spring}})
     copy(playing_pose(&state,.Local),state.rest[:]);testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     copied_state:Playing;core.value_copy(&copied_state,&state,type_info_of(Playing));defer playing_free(&copied_state)
     requests:Animation_Requests;defer delete(requests.modifiers.items)
-    modifier(&requests,{rig=rig,kind=.Chain_IK,weight=.2,enabled=true},"arm")
+    modifier(&requests,{rig=rig,kind=.Multi_IK,weight=.2,enabled=true},"arm")
     modifier_take(&modifiers,&characters,&requests,&problems,0)
-    testing.expect_value(t,modifier_states(prepared,.Chain_IK)[0].target,f32(.2))
-    modifier_states(prepared,.Chain_IK)[0].base_enabled=false
+    testing.expect_value(t,modifier_states(prepared,.Multi_IK)[0].target,f32(.2))
+    modifier_states(prepared,.Multi_IK)[0].base_enabled=false
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<120 {

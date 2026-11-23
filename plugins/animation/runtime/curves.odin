@@ -108,16 +108,16 @@ curves_accumulate :: proc(results:[]Curve_Output,library:^lib.Library,player:lib
 animation_curve :: proc(playback:core.Ref(Playback),entity:core.Entity,name:string,slot:u8=0,default_value:f32=0) -> f32 {
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame {return default_value}
-    curves:=playing_curves(state)
-    if row,found:=slice.binary_search_by(curves,{target=base.name_hash(name),property=.Float,slot=slot},curve_compare);found {return curves[row].value.x+default_value*(1-curves[row].weight)}
+    at:=[2]i32{-1,-1}
+    if curve:=rig_curve(state,rig_leader(playback,state),{target=base.name_hash(name),property=.Float,slot=slot},&at);curve!=nil {return curve.value.x+default_value*(1-curve.weight)}
     return default_value
 }
 
 animation_vector :: proc(playback:core.Ref(Playback),entity:core.Entity,name:string,slot:u8=0,default_value:mm.Vec4={}) -> mm.Vec4 {
     state:=constraint_playing(playback,entity)
     if state==nil || state.seen!=playback.frame {return default_value}
-    curves:=playing_curves(state)
-    if row,found:=slice.binary_search_by(curves,{target=base.name_hash(name),property=.Vector,slot=slot},curve_compare);found {return curves[row].value+default_value*(1-curves[row].weight)}
+    at:=[2]i32{-1,-1}
+    if curve:=rig_curve(state,rig_leader(playback,state),{target=base.name_hash(name),property=.Vector,slot=slot},&at);curve!=nil {return curve.value+default_value*(1-curve.weight)}
     return default_value
 }
 

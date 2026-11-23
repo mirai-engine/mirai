@@ -75,14 +75,6 @@ character_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Para
     }
     r.warp=set.motion.warp
     r.windows_total,r.windows=u32(len(set.motion.windows)),authoring_pages(call,set.motion.windows,o,l,anim.Motion_Window)
-    r.distances_total=u32(len(set.motion.distances))
-    first:=min(int(o),len(set.motion.distances))
-    r.distances=make([]Authoring_Page(Motion_Distance_Params),min(first+int(l),len(set.motion.distances))-first,call.allocator)
-    for &page,i in r.distances {
-        track:=set.motion.distances[first+i]
-        page={index=u32(first+i),value={clip=track.clip,name=track.name,animation=track.animation}}
-        copy(page.value.keys[:],set.motion.keys[track.first:][:track.count])
-    }
     character_modifiers(call,set.pose,p.table,o,l,r)
 }
 

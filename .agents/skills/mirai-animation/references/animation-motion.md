@@ -1,7 +1,9 @@
 # Warping
 
-The warping of the `.character` an entity plays: root motion windows, pose adaptation and
-distance→time curves, without components per window, foot or operation. Math:
+The warping of the `.character` an entity plays: root motion windows and pose adaptation, without
+components per window, foot or operation. A stop or a jump that ends at a place is a clip matched
+by [motion matching](animation.md#locomotion-by-motion-matching), landed on time by its
+[marker](animation.md#landing) and warped to the place by a window. Math:
 [std/anim](../../mirai-std/references/anim-motion.md).
 
 ## Definitions and state
@@ -24,20 +26,6 @@ distance→time curves, without components per window, foot or operation. Math:
   asked by a spring, so a body that starts or turns at once does not swing the legs round, nor
   drop the pelvis that a long stride lowers, in a tick; a clip
   that stands travels nowhere, so a start turns from the walk's own direction, not the idle's.
-- A distance (`Motion_Distance`) is strictly monotonic keys of a clip. `motion_distance_time` gives
-  clip and time without advancing the world; `motion_play_distance` and `animation_distance` enqueue
-  that time for the active clip, without choosing another.
-
-Advance by distance:
-
-- It keeps events and root motion of the traversed interval. `distance_request_check` validates
-  player, active clip, time, direction and clock before consuming; the API and the tick share the
-  validator.
-- Over locomotion it advances the clock of the clip that plays, and those in phase with it follow.
-  A dominant action accepts the time if its interval is continuous.
-- A regressive time asks for `seek=true`: it is a discontinuity, without events or root motion of
-  what was skipped.
-
 `Motion_Runtime` (of the world, copied for Play and rollback):
 
 - Flat rows per rig with targets, resolved references and diagnostics. It is discovered from
@@ -87,14 +75,13 @@ Limits of the correction:
 
 ## Authoring and control API
 
-- `animation.motion.set` receives the warp, windows and distances of a `.character` as arrays and
-  derives the quantities; on a `path` that has one it replaces its warping and keeps the rest of
-  the set, the id and, on an error, the previous file. `animation.motion.distance` queries a time
-  without touching clocks. Distance failures give the path of the invalid keys.
-- `motion`, `locomotion` and `distance` of
+- `animation.motion.set` receives the warp and windows of a `.character` as arrays and derives
+  the quantities; on a `path` that has one it replaces its warping and keeps the rest of the set,
+  the id and, on an error, the previous file.
+- `motion` and `locomotion` of
   [`animation.request`](animation-authoring.md#per-instance-control-and-preview) require Play or
-  Simulation. A target must be declared by a window of the set, and `distance` validates track
-  and clock before enqueuing. The `locomote` intent uses the `locomote` window.
+  Simulation. A target must be declared by a window of the set. The `locomote` intent uses the
+  `locomote` window.
 - `animation.inspect` part `Motion` shows state and targets of the rig.
 
 ## Verification
@@ -102,14 +89,12 @@ Limits of the correction:
 - `plugins/animation/runtime`:
   - `motion_discovers_changed_profiles_retries_first_targets_and_compacts_instances_in_world_copies`
     (discovery, copies and lack of memory).
-  - `motion_warp_test.odin`: windows over the spans of the clip, monotonic curves, endpoint,
-    targets, seek and reverse, action clock, prefixes with turns and uneven scale, several windows
-    per step, bind by name, bone replacement and generational recycling.
-  - `distance_test.odin` and `distance_integration_test.odin`: requests, capacity, stable memory and
-    the tick with advance by distance; an independent source of a program is not accelerated.
+  - `motion_warp_test.odin`: windows over the spans of the clip, endpoint, targets, seek and
+    reverse, action clock, prefixes with turns and uneven scale, several windows per step, bind by
+    name, bone replacement and generational recycling.
   - `discovery_bench_test.odin`: optional preparation together with actions.
 - `plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):
-  `authoring_motion_test.odin` covers counts derived from JSON, defaults, identity, errors with
-  path, inverted distance, forward/seek requests and rejection of transient controls in Edit.
+  `authoring_motion_test.odin` covers counts derived from JSON, defaults, identity, windows of one
+  name refused and rejection of transient controls in Edit.
 - The demo includes an [integrated tour](../../mirai-gameplay/references/animation-gallery.md) with
   a physics controller; the visual correction requires a build and a run.

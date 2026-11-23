@@ -102,7 +102,7 @@ program_player_find :: proc(runtime:^Program_Playing,key:u32) -> int {
     return -1
 }
 
-program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,playback:^Playback,dt,sought:f32,problems:^core.Problems,distance:^Animation_Distance_Request=nil) -> bool {
+program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,playback:^Playback,dt,sought:f32,problems:^core.Problems) -> bool {
     runtime:=&state.program
     runtime.error=.None
     if output.count==0 || output.count>PROGRAM_LEAVES {runtime.error=.Capacity;return false}
@@ -179,47 +179,6 @@ program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
     if leaves[leader].sync && duration>0 {
         scale=lib.clip_duration(&content.lib,lead.player.clip)/(duration*max(abs(leaves[leader].speed),1e-6))
     }
-    clock_dt:=dt
-    selected:=-1
-    distance_dt:=dt
-    if distance!=nil {
-        name:=source_clip_name(content.id,distance.animation,distance.clip)
-        for leaf,i in leaves {
-            if leaf.clip==name && (selected<0 || leaf.weight>leaves[selected].weight) {selected=i}
-        }
-        if selected<0 {runtime.error=.Invalid_Parameter;return false}
-        sample:=&runtime.players[leaves[selected].player].player
-        synced:=leaves[selected].sync
-        target:=sample^
-        target.time,target.done=distance.time,false
-        phase,valid:=lib.sync_phase(&content.lib,target)
-        if !valid {runtime.error=.Invalid_Parameter;return false}
-        if output.normalized {phase.markers=false}
-        if distance.seek {
-            if synced {
-                for leaf in leaves {if leaf.sync {lib.player_synchronize(&content.lib,&runtime.players[leaf.player].player,phase)}}
-                clock_dt=0
-            } else {
-                sample.time=distance.time
-                sample.done,sample.fresh=false,false
-                distance_dt=0
-            }
-        } else {
-            clock:=&lead.player if synced else sample
-            at:=distance.time
-            if clock.clip!=sample.clip {
-                converted,found:=lib.sync_time(&content.lib,clock.clip,phase)
-                if !found {runtime.error=.Invalid_Parameter;return false}
-                at=converted
-            }
-            if at<clock.time {
-                if lib.clip_data(&content.lib,clock.clip).loop!=.Loop {runtime.error=.Invalid_Parameter;return false}
-                at+=lib.clip_duration(&content.lib,clock.clip)
-            }
-            if clock.speed<=0 {runtime.error=.Invalid_Parameter;return false}
-            if synced {clock_dt=(at-clock.time)/(clock.speed*scale)} else {distance_dt=(at-clock.time)/clock.speed}
-        }
-    }
     state.motion=ROOT_DELTA_DEFAULT
     state.root_enabled=has_root
     root_bone:=bone_target(state,root.bone) if has_root else 0
@@ -249,7 +208,7 @@ program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
             player.done=lead.player.done
         } else if animation.playing {
             advance:=dt
-            if leaf.sync {advance=clock_dt*(scale if i==leader else 1)} else if i==selected {advance=distance_dt}
+            if leaf.sync {advance=dt*(scale if i==leader else 1)}
             to=from+advance*player.speed
             if !finite(to) {runtime.error=.Invalid_Parameter;return false}
             written,dropped=lib.player_advance(&content.lib,player,advance,batch[:])
@@ -257,7 +216,7 @@ program_players :: proc(state:^Playing,output:^Program_Output,content:^host.Cont
         share:=leaf.weight*mm.saturate(animation.weight)
         if animation.event_policy!=.Dominant || i==dominant {emit_events(playback,events,state.entity,content,batch[:written],dropped,problems,share,leaf.key,0,animation)}
         slot.from,slot.to=from,to
-        if has_root && animation.playing && sought<0 && !(distance!=nil && distance.seek) && !was_done {
+        if has_root && animation.playing && sought<0 && !was_done {
             moved,turned:=lib.clip_root_motion(&content.lib,player.clip,root_bone,from,to)
             moved,turned=root_motion_to_rig(state,root_bone,moved,turned)
             if root.translation {state.motion.translation+=moved*share}

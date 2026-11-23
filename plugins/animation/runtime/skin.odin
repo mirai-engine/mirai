@@ -317,7 +317,7 @@ animation_skin :: proc(
         instance.seen=state.frame
         source:=host.assets_mesh(assets,static.mesh)
         if source==nil || source.handle==host.ASSETS_MESH_NONE {continue}
-        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,characters.ptr,pose,int(source.slot_count),lives,entity) {
+        if !rigid && modifiers.ptr!=nil && !curve_materials_apply(modifiers.ptr,characters.ptr,playback,pose,int(source.slot_count),lives,entity) {
             core.report(problems,entity,"animation.curve_material","the curve materials of the .character of the rig of this entity set more than %d material values, so some are not drawn; move fewer values, or fewer slots",erender.MATERIAL_VALUES_CAPACITY)
         }
         bones:=len(playing_pose(pose,.Local)) if !rigid else 0

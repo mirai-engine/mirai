@@ -62,14 +62,12 @@ morph_weights_compose_the_mesh_the_default_the_curve_and_the_overrides_without_a
     named:=Morph_Playing{curve_count=-1};defer morph_playing_free(&named)
     imported:=Playing{seen=4,curves_ready=true};defer delete(imported.curves)
     append(&imported.curves,Curve_Output{target=base.name_hash("Armature/Body/@morph/Smile"),property=.Float,value={.6,0,0,0},weight=1})
-    testing.expect(t,morph_bind(&named,&rig,{},base.HASH_SEED,1) && named.by_name && morph_compose(&named,&rig,{},&imported,{},&content) && abs(named.current[0]-.6)<1e-6)
-    // A curve named as the target, as face captures and curve drives name them, and the
-    // final curves of a rig with drives, which replace those of its animation.
-    face:=Playing{seen=4,curves_ready=true,driven_ready=true,curve_layout=9};defer delete(face.curves);defer delete(face.driven)
-    append(&face.curves,Curve_Output{target=base.name_hash("Smile"),property=.Float,value={.1,0,0,0},weight=1})
-    append(&face.driven,Curve_Output{target=base.name_hash("Smile"),property=.Float,value={.3,0,0,0},weight=1})
+    testing.expect(t,morph_bind(&named,&rig,{},base.HASH_SEED,1) && named.by_name && morph_compose(&named,&rig,{},&imported,&content) && abs(named.current[0]-.6)<1e-6)
+    // A curve named as the target, as face captures name them, read again as it changes.
+    face:=Playing{seen=4,curves_ready=true};defer delete(face.curves)
+    append(&face.curves,Curve_Output{target=base.name_hash("Smile"),property=.Float,value={.3,0,0,0},weight=1})
     testing.expect(t,morph_compose(&named,&rig,{},&face) && abs(named.current[0]-.3)<1e-6)
-    face.driven[0].value.x=.7
+    face.curves[0].value.x=.7
     testing.expect(t,morph_compose(&named,&rig,{},&face) && abs(named.current[0]-.7)<1e-6)
     pathed:=Morph_Playing{curve_count=-1};defer morph_playing_free(&pathed)
     testing.expect(t,morph_bind(&pathed,&rig,{},base.name_hash("Face"),1) && !pathed.by_name && morph_compose(&pathed,&rig,{},&face) && abs(pathed.current[0]-.7)<1e-6,"a mesh bound by path takes the curve of the target's name too")
@@ -125,7 +123,7 @@ Morph_World :: struct {
 
 @(private="file")
 morph_test_step :: proc(w:^Morph_World,playback:^Playback,cache:^Skin_Runtime,state:^Morph_Playback,app:^host.App) {
-    animation_morph(core.read(&w.meshes),core.read(&w.configs),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),{playback},{},cache,state,{},app,{playing=true},nil)
+    animation_morph(core.read(&w.meshes),core.read(&w.configs),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),{playback},cache,state,{},app,{playing=true},nil)
 }
 
 @(test)

@@ -1,8 +1,8 @@
 # Rigs and chain modifiers
 
-The tables `chain_ik`, `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`,
-`correctives`, `follow`, `curve_poses`, `curve_drives` and `curve_materials` extend the [modifiers
-of the `.character`](animation.md#components-and-shared-data): they are rows of a shared definition,
+The tables `twist`, `springs`, `multi_ik`, `retarget_chains`, `spline_ik`, `follow`, `curve_poses`
+and `curve_materials` extend the [modifiers of the
+`.character`](animation.md#components-and-shared-data): they are rows of a shared definition,
 without components per operation. A `.character` of another `CHARACTER_VERSION` is rejected and
 written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
 
@@ -12,7 +12,7 @@ named with `Bone_Ref`.
 
 ## Spatial targets
 
-`Spatial_Target` is the target of IK, Look, Chain IK, each effector of Multi IK, each control of
+`Spatial_Target` is the target of IK, Look, each effector of Multi IK, each control of
 Spline IK, Follow and each [warping](animation-motion.md#requests-and-order) window; there is no
 other way to name it.
 
@@ -30,17 +30,9 @@ other way to name it.
 
 ## Operations
 
-- **Chain IK**: FABRIK from `root` to `end`, with pole, iterations, tolerance, flexion limits and
-  reach: `soft_distance` smooths the arrival at full extension and `max_stretch` allows stretching
-  those meters, distributed by the weight of each bone.
 - **Spline IK**: the chain over a cubic Bézier of four targets, with `up` as the axis it keeps and
   `twist` distributed. With all controls `World`, the profile checks that the curve has length; if
   it is shorter than the chain, the chain continues straight and the residual remains in `end`.
-- **Corrective**: rotation samples of the `driver` bone (that of the animation, before the other
-  operations), weighted by the inverse of the square of the angular distance. Each gives a delta of
-  `bone` (with `apply_pose`) and a value that is added to the Float curve `curve`: it moves the
-  morph target of that name of the rig's mesh ([morphs](animation-morphs.md)) and is read with
-  `animation_corrective_curve`. Two samples of the same rotation are rejected.
 - **Follow**: takes a bone to its target in position, rotation and scale (each optional); with
   `keep_world`, when the target changes it keeps the place of the bone as an offset, without jumps.
 - **Twist**: distributes the animated twist of a source, outside the chain, among the bones of the
@@ -48,16 +40,28 @@ other way to name it.
 - **Spring**: Verlet with explicit spherical collisions in the evaluation space; pose and force
   arrive as data, without querying physics. It resets when the bind or configuration changes, when
   deactivated, when reaching zero weight or when passing the teleport distance.
-- **Multi IK**: a subtree with joints (stiffness, preferred pose, limits) and named effectors with
-  independent weights of position and rotation. The root is resolved by name, not as an index of a
-  skeleton, and its translation is `Fixed` or `Translate`. It diagnoses residual, angular error and
-  convergence.
+- **Multi IK**: the one solver of chains past two bones (a reach, a tail, a spine, a body of
+  several limbs): a subtree with joints (stiffness, preferred pose, limits about axes) and named
+  effectors with independent weights of position and rotation. The root is resolved by name, not
+  as an index of a skeleton, and its translation is `Fixed` or `Translate`. Without joints every
+  bone from each effector up to the root is one, of default settings. It diagnoses residual,
+  angular error and convergence.
+  - Per effector, `use_pole` bends its chain toward `pole`, a point of the world: a straight chain
+    first turns its joints a little toward it, and each iteration turns the chain about the line
+    from its top joint to the effector, which keeps the effector in place, until its bend faces
+    the pole; a turn that the limits of the top joint clamp waits, so the pole never fights them.
+  - `reach` (`soft_distance`, `max_stretch`) softens the approach to full extension and stretches
+    the bones below the top joint past it, before the solve; the residual is measured from that
+    softened goal. Its stretch blends by the weight of the operation as the rest of the pose.
+  - A goal that names no effector is for the one effector of an operation that has one.
+  - Near full extension a long chain takes more iterations than the default to settle (the
+    playground's reach of nine bones uses 64).
 - **Chain Retarget**: pairs of semantic chains of the destination's set, applied to the sampled
   pose its `Pose_Source` of stage `Sampled` takes, where the bone names do not pair. It admits
   different topologies, keeps translations and scale of the destination and separates the
   placement of both actors.
 
-## Curve poses and drives
+## Curve poses
 
 The face of a character is poses that Float curves weigh, as a pose asset of other engines, over
 its body animation; no solver evaluates it.
@@ -68,23 +72,16 @@ its body animation; no solver evaluates it.
   their weights, normalized past 1 so that only they count, before the additive ones (a pose library
   of hands or props). The additive poses of a bone are summed (rotations by their logarithms) and
   applied once, so the order of the rows does not change the pose. A curve can name a pose, a
-  phoneme or a corrective; `animation.modifier.poses` makes the rows from the frames of a clip.
-- **Curve drive**: `to` receives what it reads of `from` (with `combine`, the product, least or
-  most of `from` and `with`: a combination shape that two curves bring together), times `scale`
-  plus `offset`, clamped to `low`..`high` with `clamp`; `mode` adds it, replaces the curve or keeps
-  the most, and `weight` blends from the curve before. Rows apply in order: the 52 curves of a
-  face capture (ARKit) become the curves of the poses of a face, and a curve named
-  as a morph target of the mesh moves it ([morphs](animation-morphs.md)). There are no free
-  expressions.
-- The curves come from the animation of the rig (clips, layers, actions, programs) and, in a
-  follower, from its [leader](animation.md#following-a-rig-of-another-skeleton). The drives make
-  the final curves of the rig (`Playing.driven`), which lookups and morphs read; the poses move the
+  phoneme or a shape of a bend; `animation.modifier.poses` makes the rows from the frames of a clip.
+  A curve names its pose directly: a face capture (ARKit) names its poses by its 52 curves.
+- The curves come from the animation of the rig (clips, layers, actions, programs). A rig that
+  follows a [leader](animation.md#following-a-rig-of-another-skeleton) (a modular head) reads the
+  curve of its leader while the leader animates it and its own otherwise (`rig_curve`), so the
+  face a body plays poses the head; its morphs read the leader's curves too. The poses move the
   bones before the other operations of the profile.
-- The final curves of a rig are laid out once, when its curves, its leader's, its profile or its
-  skeleton change: its own, its leader's and those its drives write, each once in `curve_order`
-  (name hash, property, slot), with where each curve and each drive goes. A tick only copies values
-  by those places; curve materials take their names hashed and their curves found by the tick, so
-  the drawing searches nothing.
+- Each row keeps where its curve was found among the curves of the rig and of its leader, so a
+  stable tick finds it at once and searches by halves only when the curves change place; curve
+  materials do the same, so the drawing searches nothing.
 - **Curve material**: a value of the material of the meshes of the rig (`parameter`: a value of the
   material or of its program, in `slot` or in every slot) is `offset` plus `scale` times the
   curve, rounded to multiples of `step` when it is positive: the frame of a flipbook face, a
@@ -94,8 +91,8 @@ its body animation; no solver evaluates it.
   the problem `animation.curve_material`.
 - A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the
   plugin has
-  no rig evaluator. Poses driven by bone rotations are correctives (inverse distance), not an RBF
-  solver.
+  no rig evaluator, no curve expressions and no pose-space correctives: a bend that needs a shape
+  takes it from `Twist` and morph targets the clip keys.
 
 The capacities are fixed contracts, not growing per frame: a path that does not form a parent-child
 chain, a topology that is too long or an incompatible target is a bind failure or a residual.
@@ -103,9 +100,8 @@ chain, a topology that is too long or an incompatible target is a bind failure o
 ## Order and state
 
 - Order: retarget of bones and chains (from `Playing.sampled`, before their constraints), removal of
-  root motion, the follow of a leader, curve drives and curve poses, grounding, IK/look-at, Chain
-  IK, Multi IK, twist, springs, Spline IK, correctives, Follow and, at the end, limits and
-  attachments.
+  root motion, the follow of a leader, curve poses, grounding, IK/look-at, Multi IK, twist,
+  springs, Spline IK, Follow and, at the end, limits and attachments.
 - Each world owns its `Modifier_Runtime`, indexed by generational entity. A row keeps bindings,
   influence, overrides and solver state for one rig. It reads definitions from the shared character
   content by asset identity and revision. A rig without modifiers or attachments takes no row.
@@ -162,11 +158,12 @@ topology differs.
 `plugins/animation/runtime` (repeat with `--release` only if a failure may depend on optimization):
 
 - `rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities` and the cases of
-  `rig_shapes_test.odin` (spline, correctives, spatial targets, Follow, aligned IK, Look with an up
-  axis, targets by name after reordering the set, curve poses and drives)
-- Curve drives and poses over a follower, combinations, full poses in any order of the rows, the
-  final curves laid out again only when they change, and curve materials: `follow_test.odin`
-- `chain_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls`
+  `rig_shapes_test.odin` (spline, spatial targets, Follow, aligned IK, Look with an up axis,
+  targets by name after reordering the set, curve poses, versions other than this one refused)
+- Curve poses over a follower that reads its leader's curves and its own without them, full poses
+  in any order of the rows, curves renamed in place, and curve materials: `follow_test.odin`
+- `multi_ik_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls` (a Multi
+  IK without joints, its pole, and its goal without an effector name)
 - `semantic_retarget_bindings_ignore_actor_placement_and_replay_without_allocations`
 - `multi_ik_modifiers_accept_named_goals_keep_effectors_independent_and_clone_solver_scratch`
 - `modifier_controls_preserve_targets_and_fade_independently_through_world_copies` and
@@ -174,7 +171,8 @@ topology differs.
 - Also: `modifier_requests_*`, `rotation_limits_*`, `shared_profiles_*`,
   `rig_goal_persistence_*`, `profile_reload_allocation_failure_*`, `rigs_without_operations_*`,
   `rig_operations_preserve_*` and `multi_ik_full_and_partial_weights_*`.
-- Math: `std/anim/rigs_test.odin`.
+- Math: `std/anim/rigs_test.odin` (Multi IK with pole and reach on a chain of nine, the pole
+  yielding to hinges, hostile poles and reaches).
 - `bench_rig_dispatch_and_multi_ik_scaling` (with `MIRAI_BENCH`).
 
 `plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):

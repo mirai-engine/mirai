@@ -25,7 +25,6 @@ Request_Locomotion :: struct {
     weight:f32 `mirai:"optional,min=0,max=1"`,
     enabled:bool `mirai:"optional"`,
 }
-Request_Distance :: struct {name:[32]u8 `mirai:"text,label=A distance track of its .character"`,distance:f32 `mirai:"unit=m"`,seek:bool `mirai:"optional,label=Jumps to its time instead of advancing the clock with crossed events and root motion"`}
 Hand_Side :: enum u8 {Left,Right}
 Gesture_Mask :: enum u8 {Upper_Body,Arm_L,Arm_R}
 Intent_Look :: struct {
@@ -61,7 +60,6 @@ Request_Params :: struct {
     controls:[REQUEST_ROWS]Preview_Control `mirai:"optional"`,
     motion:[16]Request_Motion `mirai:"optional,label=Targets of warp windows"`,
     locomotion:Request_Locomotion `mirai:"optional,label=Velocity the body travels at for orientation and stride"`,
-    distance:Request_Distance `mirai:"optional,label=Plays a clip by distance left"`,
     locomote:Intent_Locomote `mirai:"optional,label=Walk toward a point or entity"`,
     look:Intent_Look `mirai:"optional,label=Look at something"`,
     gesture:Intent_Gesture `mirai:"optional,label=Play a gesture over the moving body"`,
@@ -96,7 +94,7 @@ request_register :: proc(s:^editor.Session) {
 // Fields of a request that change the document in Edit; the rest change only a running world.
 @(private)
 request_runtime_field :: proc(call:^api.Call) -> string {
-    for field in ([?]string{"parameters","actions","goals","controls","motion","locomotion","distance","locomote","look","gesture","reach"}) {
+    for field in ([?]string{"parameters","actions","goals","controls","motion","locomotion","locomote","look","gesture","reach"}) {
         if authoring_field_present(call,field) {return field}
     }
     return ""
@@ -158,7 +156,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
     motions,_:=api.params_array_count(call,"motion")
     reaches,_:=api.params_array_count(call,"reach")
     animation,present:=editor.entity_get(world,entity,anim.Animation)
-    needs:=count>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"distance") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
+    needs:=count>0 || actions>0 || authoring_field_present(call,"locomote") || authoring_field_present(call,"gesture") || authoring_field_present(call,"stop") || authoring_field_present(call,"seek")
     if needs && !present {authoring_failure(call,"entity","Missing_Component","an Animation component","missing component","The entity plays nothing",fix="Assign playback with animation.play or animation.character.setup");return false}
     when intrinsics.type_has_field(T,"stop") {
         if authoring_field_present(call,"stop") && p.stop {
@@ -248,7 +246,7 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
             if !request_aim(s,call,world,entity,.IK,hand,reach.target,reach.weight,reach.fade,reach.off,raw,fmt.tprintf("reach[%d]",i),applied) {return false}
         }
     }
-    if motions>0 || authoring_field_present(call,"locomotion") || authoring_field_present(call,"distance") || authoring_field_present(call,"locomote") {
+    if motions>0 || authoring_field_present(call,"locomotion") || authoring_field_present(call,"locomote") {
         character:=anim.animation_character(s.app.assets,animation)
         if character=={} {
             authoring_failure(call,"Animation.asset","Missing_Character","Animation.asset a .character","none","The entity plays no .character, so it has no warping",fix="Create one with animation.character.setup (want Locomotion) or animation.motion.set with path");return false
@@ -272,23 +270,6 @@ request_apply :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,enti
                 anim.motion_locomotion(requests,{rig=entity,velocity=value.velocity,source_velocity=value.source_velocity,weight=value.weight,enabled=value.enabled})
                 if len(requests.locomotion.items)==waiting {authoring_failure(call,"locomotion","Rejected_Request","finite velocities, weight in [0,1] and queue capacity","invalid data or capacity","The locomotion input was rejected");return false}
                 request_note(applied,"Locomotion","",linalg.length(value.velocity))
-            }
-            if authoring_field_present(call,"distance") {
-                name:=base.text_get(p.distance.name[:])
-                time,clip,valid:=anim.motion_distance_time(profile,name,p.distance.distance)
-                if !valid {authoring_failure(call,"distance","Invalid_Distance","a distance track of its .character and a finite distance",name,"The distance track cannot be evaluated",fix="List the tracks with animation.asset.inspect section motion");return false}
-                state:^anim.Playing
-                if playback:=core.world_storage_of(world,anim.Playback);playback!=nil {for &value in playback.states {if value.entity==entity {state=&value;break}}}
-                if state!=nil {
-                    content:=anim.animation_playing_content(core.ref(core.world_storage_of(core.world_ref(s.app.shared,s.info,.Shared),anim.Source_Assets)),s.app,state)
-                    query:=anim.Animation_Distance_Request{entity=entity,clip=base.name_hash(base.text_get(clip[:])),time=time,seek=p.distance.seek,animation=anim.motion_distance_source(profile,name)}
-                    if error:=anim.distance_request_check(state,content,query,core.world_storage_of(world,anim.Action_Runtime));error!=.None {authoring_failure(call,"distance",fmt.tprintf("%v",error),"the active source clip and a forward interval; seek allows a discontinuity",base.text_get(clip[:]),"The active animation clock cannot accept this distance",fix="Pass seek true to jump, or a distance ahead of the clock");return false}
-                }
-                requested:=core.world_storage_of(world,anim.Animation_Requests)
-                waiting:=len(requested.distances.items)
-                anim.motion_play_distance(requested,entity,profile,name,p.distance.distance,p.distance.seek)
-                if len(requested.distances.items)==waiting {authoring_failure(call,"distance","Invalid_Distance","a distance track of its .character and a finite distance",name,"The distance playback could not be queued",fix="List the tracks with animation.asset.inspect section motion");return false}
-                request_note(applied,"Distance",name,p.distance.distance)
             }
             if authoring_field_present(call,"locomote") {
                 position,ok:=request_target_position(call,world,p.locomote.target,"locomote.target");if !ok {return false}

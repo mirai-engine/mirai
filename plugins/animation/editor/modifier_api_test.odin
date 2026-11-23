@@ -52,7 +52,7 @@ grounding_inspection_derives_final_pose_errors_and_reports_blocked_legs_without_
 rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the_character :: proc(t:^testing.T) {
     f:=new(Authoring_Test);defer free(f);if !authoring_test_init(f,t,"rig-modifiers") {return};defer authoring_test_destroy(f)
     pose_id,retarget_id:=base.Asset_Id{111,222},base.Asset_Id{112,223}
-    chain:=anim.CHAIN_IK_CONSTRAINT_DEFAULT;base.text_set(chain.name[:],"arm");chain.root,chain.end=anim.bone_ref("a"),anim.bone_ref("c")
+    chain:=struct {root,end:anim.Bone_Ref}{anim.bone_ref("a"),anim.bone_ref("c")}
     spring:=anim.SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end
     twist:=anim.TWIST_CONSTRAINT_DEFAULT;base.text_set(twist.name[:],"roll");twist.source,twist.root,twist.end=anim.bone_ref("d"),chain.root,chain.end
     multi:=anim.MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joints=make([]anim.Multi_IK_Joint,1,context.temp_allocator);multi.effectors=make([]anim.Multi_IK_Effector,2,context.temp_allocator)
@@ -61,7 +61,7 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the
     base.text_set(multi.effectors[0].name[:],"left");base.text_set(multi.effectors[1].name[:],"right")
     retarget:=anim.CHAIN_RETARGET_CONSTRAINT_DEFAULT;base.text_set(retarget.name[:],"transfer")
     retarget.source_root,retarget.source_end,retarget.target_root,retarget.target_end=chain.root,chain.end,chain.root,chain.end
-    set:=anim.character_set_make({});set.pose={chain_ik={chain},twist={twist},springs={spring},multi_ik={multi},retarget_chains={retarget}}
+    set:=anim.character_set_make({});set.pose={twist={twist},springs={spring},multi_ik={multi},retarget_chains={retarget}}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/rig.character",f.root),&f.assets.types,pose_id,set),asset.Error.None)
     set.pose={retarget_chains={retarget}}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/transfer.character",f.root),&f.assets.types,retarget_id,set),asset.Error.None)
@@ -77,7 +77,7 @@ rig_modifier_api_discovers_named_operations_effectors_and_retarget_chains_of_the
     authoring_test_register(f,t,"inspect",Instance_Inspect_Params,instance_inspect,&inspect)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
     output:=api.json_compact(string(serial.writer_bytes(&f.out)))
-    testing.expect(t,strings.contains(output,`"total":5`) && strings.contains(output,`"name":"transfer"`))
+    testing.expect(t,strings.contains(output,`"total":4`) && strings.contains(output,`"name":"transfer"`))
     testing.expect(t,!strings.contains(output,`"diagnostic"`) && !strings.contains(output,`"slot"`) && !strings.contains(output,`"index"`) && strings.contains(output,`"left"`) && strings.contains(output,`"right"`))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011","diagnostics":true}`).code,0)
     testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"target_alpha"`))

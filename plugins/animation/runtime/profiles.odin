@@ -29,16 +29,13 @@ Pose_Profile :: struct {
     look:[]Look_Constraint,
     limits:[]Rotation_Constraint,
     grounding:Foot_Grounding,
-    chain_ik:[]Chain_IK_Constraint,
     twist:[]Twist_Constraint,
     springs:[]Spring_Constraint,
     multi_ik:[]Multi_IK_Constraint,
     retarget_chains:[]Chain_Retarget_Constraint,
     spline_ik:[]Spline_IK_Constraint,
-    correctives:[]Pose_Corrective,
     follow:[]Follow_Constraint,
     curve_poses:[]Curve_Pose,
-    curve_drives:[]Curve_Drive,
     curve_materials:[]Curve_Material,
 }
 
@@ -67,8 +64,8 @@ pose_profile_check :: proc(profile:Pose_Profile) -> bool {
 @(private) profile_vector :: proc "contextless" (value:mm.Vec3) -> bool {for number in value {if !finite(number) {return false}};return true}
 @(private) profile_rotation :: proc "contextless" (value:mm.Quat) -> bool {return abs(value.x*value.x+value.y*value.y+value.z*value.z+value.w*value.w-1)<1e-3}
 
-Modifier_Kind :: enum u8 {IK,Look,Grounding,Limit,Chain_IK,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Corrective,Follow}
-MODIFIER_TARGETED :: bit_set[Modifier_Kind]{.IK,.Look,.Chain_IK,.Multi_IK,.Spline_IK,.Follow}
+Modifier_Kind :: enum u8 {IK,Look,Grounding,Limit,Twist,Spring,Multi_IK,Chain_Retarget,Spline_IK,Follow}
+MODIFIER_TARGETED :: bit_set[Modifier_Kind]{.IK,.Look,.Multi_IK,.Spline_IK,.Follow}
 
 @(storage,free="modifier_runtime_free")
 Modifier_Runtime :: struct {
@@ -96,15 +93,13 @@ Modifier_Rig :: struct {
     limit_states:[dynamic]Limit_Binding,
     attachments:[dynamic]Attachment_Binding,
     grounding:[dynamic]Grounding_Binding,
-    chain_states:[dynamic]Chain_IK_Binding,
     twist_states:[dynamic]Twist_Binding,
     spring_states:[dynamic]Spring_Binding,
     multi_states:[dynamic]Multi_IK_Binding,
     retarget_chain_states:[dynamic]Chain_Retarget_Binding,
     spline_states:[dynamic]Spline_IK_Binding,
-    corrective_states:[dynamic]Pose_Corrective_Binding,
     follow_states:[dynamic]Follow_Binding,
-    curve_pose_states,curve_drive_states,curve_material_states:[dynamic]Curve_Binding,
+    curve_pose_states,curve_material_states:[dynamic]Curve_Binding,
 }
 
 modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
@@ -123,10 +118,10 @@ modifier_rig_free :: proc(rig:^Modifier_Rig) {
     free_states(rig.ik_states);free_states(rig.look_states);delete(rig.limit_states)
     for &record in rig.grounding {delete(record.links)}
     delete(rig.grounding)
-    free_states(rig.chain_states);free_states(rig.twist_states);free_states(rig.spring_states)
+    free_states(rig.twist_states);free_states(rig.spring_states)
     free_states(rig.multi_states);free_states(rig.retarget_chain_states)
-    free_states(rig.spline_states);delete(rig.corrective_states);free_states(rig.follow_states)
-    delete(rig.curve_pose_states);delete(rig.curve_drive_states);delete(rig.curve_material_states)
+    free_states(rig.spline_states);free_states(rig.follow_states)
+    delete(rig.curve_pose_states);delete(rig.curve_material_states)
     rig^={}
 }
 
@@ -178,16 +173,13 @@ modifier_rig_prepare :: proc(rig:^Modifier_Rig,pose:Pose_Profile,id:base.Asset_I
     ground:=1 if len(pose.grounding.legs)>0 else 0
     if resize(&next.ik_states,len(pose.ik))!=nil || resize(&next.look_states,len(pose.look))!=nil ||
         resize(&next.limit_states,len(pose.limits))!=nil || resize(&next.grounding,ground)!=nil ||
-        resize(&next.chain_states,len(pose.chain_ik))!=nil ||
         resize(&next.twist_states,len(pose.twist))!=nil ||
         resize(&next.spring_states,len(pose.springs))!=nil ||
         resize(&next.multi_states,len(pose.multi_ik))!=nil ||
         resize(&next.retarget_chain_states,len(pose.retarget_chains))!=nil ||
         resize(&next.spline_states,len(pose.spline_ik))!=nil ||
-        resize(&next.corrective_states,len(pose.correctives))!=nil ||
         resize(&next.follow_states,len(pose.follow))!=nil ||
         resize(&next.curve_pose_states,len(pose.curve_poses))!=nil ||
-        resize(&next.curve_drive_states,len(pose.curve_drives))!=nil ||
         resize(&next.curve_material_states,len(pose.curve_materials))!=nil {return false}
     if !modifier_controls_prepare(&next,rig,pose) {return false}
     next.attachments=rig.attachments;rig.attachments=nil
@@ -280,9 +272,8 @@ modifier_profile :: proc(runtime:core.Ref(Modifier_Runtime),characters:core.Ref(
 @(private)
 has_modifiers :: proc(pose:Pose_Profile) -> bool {
     return len(pose.ik)+len(pose.look)+len(pose.limits)+len(pose.grounding.legs)+
-        len(pose.chain_ik)+len(pose.twist)+len(pose.springs)+len(pose.multi_ik)+
-        len(pose.retarget_chains)+len(pose.spline_ik)+len(pose.correctives)+len(pose.follow)+
-        len(pose.curve_poses)+len(pose.curve_drives)+len(pose.curve_materials)>0
+        len(pose.twist)+len(pose.springs)+len(pose.multi_ik)+len(pose.retarget_chains)+
+        len(pose.spline_ik)+len(pose.follow)+len(pose.curve_poses)+len(pose.curve_materials)>0
 }
 
 @(step="fixed",loops="game editor",stage="apply")

@@ -55,3 +55,35 @@ mirai_character_walk_binds_and_changes_its_leg_pose :: proc(t:^testing.T) {
         testing.expectf(t,abs(clearance)<.015,"foot clearance %.3f m at %.3f s",clearance,at)
     }
 }
+
+@(test)
+every_character_of_the_demo_reads_at_this_version :: proc(t:^testing.T) {
+    paths:=[?]string{
+        "demo/assets/ai/arena_agent.character",
+        "demo/assets/animation_gallery/rig_playground/playground_spline.character",
+        "demo/assets/animation_gallery/rig_playground/playground_stretch.character",
+        "demo/assets/characters/jelly/jelly_moods.character",
+        "demo/assets/characters/mirai/mirai_actions.character",
+        "demo/assets/characters/mirai/mirai_constraints.character",
+        "demo/assets/characters/mirai/mirai_gallery.character",
+        "demo/assets/characters/mirai/mirai_greeting.character",
+        "demo/assets/characters/mirai/mirai_matching.character",
+        "demo/assets/characters/mirai/mirai_reach.character",
+        "demo/assets/characters/mirai/mirai_strides.character",
+        "demo/assets/characters/mirai/mirai_wave_additive.character",
+        "demo/assets/characters/spider/spider.character",
+    }
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    for path in paths {
+        file:asset.Asset
+        if !testing.expectf(t,asset.asset_load(&file,path)==.None,"%s loads",path) {continue}
+        set,error:=anim.character_view(&file,&types)
+        testing.expectf(t,error==.None && anim.character_check(set),"%s reads as a .character of version %d: %v",path,anim.CHARACTER_VERSION,error)
+        if path=="demo/assets/animation_gallery/rig_playground/playground_stretch.character" && error==.None {
+            // The reach of the playground: one Multi IK of no joints, its tip bent by a pole.
+            reach:=set.pose.multi_ik
+            testing.expect(t,len(reach)==1 && len(reach[0].joints)==0 && len(reach[0].effectors)==1 && reach[0].effectors[0].use_pole && reach[0].effectors[0].reach.max_stretch==.4)
+        }
+        asset.asset_close(&file)
+    }
+}

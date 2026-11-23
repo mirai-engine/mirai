@@ -21,7 +21,8 @@ anim.modifier(requests,{rig=e,kind=.IK,fade=.2},"left_hand")
   Entity, bone and socket targets follow what they name.
 - A goal supplies a spatial target, spring force or grounding contact. An influence request
   adjusts weight and activation independently of the goal. A fade uses the current influence.
-- For Multi IK or Spline IK goals, pass the effector or control name after the operation name.
+- For Multi IK or Spline IK goals, pass the effector or control name after the operation name; a
+  Multi IK of one effector (a reach, a tail) takes its goal without one.
 - `animation.inspect` part `Modifiers` lists the names and reports the last request that failed.
 
 ## Feet on the ground
@@ -85,9 +86,9 @@ anim.play_clip(requests,e,"stride",.2,loop=false)
 ## Many characters
 
 Far from the players a rig costs less by itself, alike on the server and on every client: the
-project settings `Animation_Budget_Config` leave out its grounding, springs, twists and
-correctives past `cosmetic_distance` (25 m) from every simulation source (the bodies the seats
-drive and each `Streaming_Source`), and past twice `cadence_near` (20 m) pose it and search its
+project settings `Animation_Budget_Config` leave out its grounding, springs and twists past
+`cosmetic_distance` (25 m) from every simulation source (the bodies the seats drive and each
+`Streaming_Source`), and past twice `cadence_near` (20 m) pose it and search its
 matching once every `distance / cadence_near` ticks, at most every `cadence_slowest` (0.25 s).
 Its clock, markers, events and root motion run in every tick, and between two poses it holds the
 last one. A rig that follows another (`Pose_Source`, an attached rig) is posed on the ticks of

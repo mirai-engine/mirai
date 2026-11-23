@@ -2,7 +2,6 @@ package animation_editor
 
 import "core:fmt"
 import "core:math/linalg"
-import "core:strings"
 import aa "mirai:asset"
 import "mirai:editor"
 import "mirai:editor/api"
@@ -33,7 +32,6 @@ Profile_Poses_Result :: struct {
     using written:Authoring_Write_Result `mirai:"inline"`,
     poses,rows:u32 `mirai:"label=The poses made and the rows of the bones they move"`,
     still:u32 `mirai:"optional,label=Poses whose frame moves no bone from base: they make no row"`,
-    drives:u32 `mirai:"optional,label=Curve drives from the Float curves of the clip at the frame of each pose"`,
 }
 
 @(private)
@@ -97,12 +95,6 @@ authoring_profile_poses :: proc(s:^editor.Session,call:^api.Call) {
         for &pose in poses {if pose.curve==row.curve {replaced=true;break}}
         if !replaced {append(&rows,row)}
     }
-    drives:=make([dynamic]anim.Curve_Drive,0,len(profile.curve_drives),allocator)
-    for row in profile.curve_drives {
-        replaced:=false
-        for &pose in poses {if pose.curve==row.from {replaced=true;break}}
-        if !replaced {append(&drives,row)}
-    }
     result:=api.call_result(call,Profile_Poses_Result)
     for &pose,i in poses {
         if pose.time>duration+1e-4 || !lib.skeleton_sample(&library,bindings,rest,pose.time,frame) {authoring_failure(call,fmt.tprintf("poses[%d].time",i),"Invalid_Value",fmt.tprintf("a time within the clip (0 to %v s)",duration),fmt.tprintf("%v",pose.time),"The pose could not be sampled");return}
@@ -126,21 +118,8 @@ authoring_profile_poses :: proc(s:^editor.Session,call:^api.Call) {
             result.rows+=1;moved=true
         }
         if moved {result.poses+=1} else {result.still+=1}
-        // The Float curves of the clip at its frame are what the pose brings with it.
-        for &track,t in view.tracks[clip.first_track:][:clip.track_count] {
-            name:=base.text_get(track.target[:])
-            if track.property!=.Float || track.slot!=0 || strings.contains(name,aa.ANIMATION_MORPH_PATH) || len(name)>=64 || name==base.text_get(pose.curve[:]) {continue}
-            value:=lib.clip_evaluate(&library,lib.clip_tracks(&library,handle)[t],pose.time).x
-            if abs(value)<=tolerance || !(abs(value)<1e9) {continue}
-            drive:=anim.CURVE_DRIVE_DEFAULT
-            drive.from,drive.scale=pose.curve,value
-            base.text_set(drive.to[:],name)
-            if len(drives)>=anim.POSE_CURVE_ROWS {authoring_failure(call,"poses","Capacity",fmt.tprintf("at most %d curve drives",anim.POSE_CURVE_ROWS),fmt.tprintf("%d and more",len(drives)),"The curves of the poses are more than a .character holds",fix="Make fewer poses, or raise tolerance");return}
-            append(&drives,drive)
-            result.drives+=1
-        }
     }
-    profile.curve_poses,profile.curve_drives=rows[:],drives[:]
+    profile.curve_poses=rows[:]
     doc:aa.Document;defer aa.document_destroy(&doc)
     if error:=anim.character_document(&doc,&s.app.assets.types,p.asset,set,s.app.allocator);error!=.None {authoring_failure(call,"asset","Out_Of_Memory" if error==.Out_Of_Memory else "Invalid_Definition","valid curve poses within the capacities of a .character",fmt.tprintf("%v",error),"The edit of the .character could not be prepared",api.SERVER_ERROR if error==.Out_Of_Memory else api.INVALID_PARAMS);return}
     _=authoring_publish(s,call,file,&doc,&result.written)

@@ -147,15 +147,6 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
             if name=="" {authoring_failure(call,"curves","Missing_Name","a source name for each composed curve",fmt.tprintf("%x",curve.target),"A curve name could not be resolved");return false}
             if !pose_bake_track(call,&tracks,name,curve.property,curve.slot,frames) {return false}
         }
-        modifiers:=core.world_storage_of(world,anim.Modifier_Runtime)
-        characters:=core.world_storage_of(core.world_ref(s.app.shared,world.info,.Shared),anim.Character_Assets)
-        if content:=anim.character_content(characters,s.app.assets,s.app.allocator,
-            anim.animation_character(s.app.assets,animation));content!=nil {
-            for &value in content.set.pose.correctives {
-                if value.curve[0]==0 {continue}
-                if !pose_bake_track(call,&tracks,base.text_get(value.curve[:]),.Float,0,frames) {return false}
-            }
-        }
         if !pose_bake_morph_tracks(call,world,s.app,entity,&tracks,frames) {return false}
         baked_root,valid:=pose_bake_root(call,world,state,&root,origin,p.root_motion);if !valid {return false}
         for &track in tracks {
@@ -169,7 +160,6 @@ pose_bake_sample :: proc(s:^editor.Session,call:^api.Call,world:core.World_Ref,e
                 value.x=morph.weights[track.morph_index]
             } else {
                 for curve in state.curves {if curve.target==track.hash && curve.property==track.desc.property && curve.slot==track.desc.slot {value=curve.value;break}}
-                if track.desc.property==.Float && track.desc.slot==0 {value.x+=anim.animation_corrective_curve(core.ref(modifiers),entity,track.hash)}
             }
             track.desc.keys[frame]={time=time,value=value}
         }

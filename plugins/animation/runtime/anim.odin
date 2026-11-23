@@ -104,7 +104,6 @@ Animation_Progress :: struct {
 @(storage,queue)
 Animation_Requests :: struct {
     timeline:core.Queue(Animation_Command), // timeline.odin
-    distances:core.Queue(Animation_Distance_Request),
     poses:core.Queue(Pose_Request),
     final_poses:core.Queue(Pose_Request),
     match_goals:core.Queue(Match_Goal),
@@ -280,11 +279,6 @@ Playing :: struct {
     retarget_rest:[dynamic]mm.Transform,   // sampled: the rests of the leader and its own
     world_final:u64,                       // Playback.frame whose finished pose world holds, in the world, for its followers
     follow_bound:[2]u64,                   // the bound of the leader and its own the follow was paired for
-    driven:[dynamic]Curve_Output,          // its curves after those of its leader and the drives of its profile, while driven_ready
-    driven_own,driven_leader:[dynamic]i32, // where each of its curves and of its leader's goes in driven
-    driven_key:Driven_Key,                 // what driven was laid out for
-    driven_ready:bool,
-    curve_layout:u64,                      // changes when the curves a lookup reads change place
     scratch:Playing_Scratch,               // a copy of the world keeps its own (playing_copy)
 }
 // What a state works in during a tick and keeps nothing of: sized where it is used, on the owner
@@ -401,7 +395,7 @@ animation_tick :: proc(
 ) {
     playback.frame+=1
     playback.events_from=len(events.items)
-    if app.assets==nil || !finite(time.dt) || time.dt<0 {for &state in playback.states {clear(&state.curves);state.curves_ready=false;state.driven_ready=false;state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.body_motion={}};return}
+    if app.assets==nil || !finite(time.dt) || time.dt<0 {for &state in playback.states {clear(&state.curves);state.curves_ready=false;state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.body_motion={}};return}
     // The editor runs this once a frame with dt 0: a preview advances by the frame.
     tick_dt:=time.dt
     if !time.playing {tick_dt=frame.dt if finite(frame.dt) && frame.dt>0 else 0}
@@ -417,13 +411,12 @@ animation_tick :: proc(
     }
     if !motion_prepare(motion,requests,animations,playback,characters,app.assets,app.allocator,problems) {return}
     motion_resolve_targets(motion,playback,skeleton_assets,core.read(transforms),parents,nil)
-    distances:=core.take(&requests.distances)
     commands:=requests.timeline.items[:]
     requests.timeline.refused+=len(requests.timeline.waiting)
     clear(&requests.timeline.waiting)
     pose_requests:=core.take(&requests.poses)
     match_goals:=core.take(&requests.match_goals)
-    if !request_sort(playback,distances) || !request_sort(playback,commands) ||
+    if !request_sort(playback,commands) ||
         !request_sort(playback,pose_requests) || !request_sort(playback,match_goals) {
         memory_problem(problems,core.NONE,"the ordering of its animation requests")
         return
@@ -556,22 +549,16 @@ animation_tick :: proc(
         state.motion=ROOT_DELTA_DEFAULT;state.root_enabled=false;state.body_motion={}
         // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
         state.root={}
-        state.driven_ready=false
-        distance:^Animation_Distance_Request;action_distance:^Animation_Distance_Request;distance_error:=Distance_Error.None
-        for &request in entity_requests(distances,e) {distance_error=distance_request_check(state,content,request,actions);_,on_action:=action_player(actions,e,request.clip,content,request.animation);if !request.seek && !on_action && animation.speed<=0 {distance_error=.Unsupported_Clock};if distance_error==.None {distance=&request}}
-        if distance!=nil {_,on_action:=action_player(actions,e,distance.clip,content,distance.animation);if on_action {action_distance=distance;distance=nil}}
-        current_dt:=dt
-        if distance!=nil && !programmed {if distance.seek {sought=distance.time;current_dt=0} else {current_dt=(distance.time-state.fader.current.time)/animation.speed}}
         if !stack_asks(actions,state,animation,content) {memory_problem(problems,e,"the stack of its layers")}
         state.held=false
         if content!=nil {
             if programmed {
                 if !curves_prepare(state,content) {state.program.error=.Out_Of_Memory;program_problem(problems,e,app.assets,animation,state.program.error);continue}
-                if !program_players(state,program,content,animation,events,playback,dt,sought,problems,distance) {program_problem(problems,e,app.assets,animation,state.program.error);continue}
+                if !program_players(state,program,content,animation,events,playback,dt,sought,problems) {program_problem(problems,e,app.assets,animation,state.program.error);continue}
                 if state.program.has_root {state.root=state.program.root}
             } else {
                 state.program.ready=false;state.program.has_root=false
-                advance(playback,state,content,animation,events,dt,problems,sought,current_dt,
+                advance(playback,state,content,animation,events,dt,problems,sought,
                     selection=state.selection,restart=edit.restart,stop=edit.stop)
                 if root:=clip_root(content,lib.Clip(state.clip+1));animation.root_motion!=.None && (root.translation || root.rotation) {
                     state.root=root;state.root.in_place=animation.root_motion==.In_Place
@@ -579,8 +566,7 @@ animation_tick :: proc(
                 curves_prepare(state,content)
             }
             if !source_pending || content!=nil {
-                actions_sample(actions,state,animation,dt,problems,content,playback,events,
-                    action_distance,pace)
+                actions_sample(actions,state,animation,dt,problems,content,playback,events,pace)
             }
             if overlay_was!=0 && overlay_was!=state.overlay.slot && state.stack!=nil {
                 i:=int(overlay_was)-1
@@ -599,7 +585,7 @@ animation_tick :: proc(
         } else {clear(&state.curves);state.curves_ready=false}
         played:=work_content(playback,content)
         if played<0 {memory_problem(problems,e,"its animation");continue}
-        append(&playback.work.rows,Pose_Row{state=playback.rows[core.entity_index(e)]-1,rig=i32(row) if skeletal else -1,content=played,programmed=programmed,animation=animation,dt=dt,current_dt=current_dt,sought=sought,distance=distance,action_distance=action_distance,distance_error=distance_error,placed=placed})
+        append(&playback.work.rows,Pose_Row{state=playback.rows[core.entity_index(e)]-1,rig=i32(row) if skeletal else -1,content=played,programmed=programmed,animation=animation,dt=dt,sought=sought,placed=placed})
     }
     clip_commands_finish(&requests.timeline,time.playing,problems)
     lod_settle(playback)
@@ -616,7 +602,7 @@ animation_tick :: proc(
         e:=state.entity
         animation:=&row.animation
         content:=&playback.work.contents[row.content-1] if row.content>0 else nil
-        programmed,dt,current_dt,sought,distance,action_distance:=row.programmed,row.dt,row.current_dt,row.sought,row.distance,row.action_distance
+        programmed,dt,sought:=row.programmed,row.dt,row.sought
         if row.faults.program {program_problem(problems,e,app.assets,animation^,state.program.error);continue}
         pose_faults_report(problems,e,row.faults,actions)
         for request in entity_requests(pose_requests,e) {
@@ -634,7 +620,7 @@ animation_tick :: proc(
             motion:=ROOT_DELTA_DEFAULT
             if content!=nil && animation.playing && sought<0 {
                 root_bone:=bone_target(state,based.bone)
-                motion=root_motion_sample(&content.lib,state.prev_fader,based,dt,root_bone,current_dt)
+                motion=root_motion_sample(&content.lib,state.prev_fader,based,dt,root_bone)
                 motion.translation,motion.rotation=root_motion_to_rig(state,root_bone,motion.translation,motion.rotation)
                 motion.translation*=mm.saturate(animation.weight)
                 motion.rotation=mm.quat_slerp(1,motion.rotation,mm.saturate(animation.weight))
@@ -649,13 +635,13 @@ animation_tick :: proc(
         }
         if character:=animation_character(app.assets,animation^);character!={} && content!=nil {
             actor,ok:=constraint_world(transforms,parents,nil,e)
-            clock:=animation_motion_clock(state,content,&state.program.output if programmed else nil,dt,current_dt)
+            clock:=animation_motion_clock(state,content,&state.program.output if programmed else nil,dt)
             clock.weight*=mm.saturate(animation.weight)
             if !programmed && (based.translation || based.rotation) {clock.root=based}
             if action:=action_clock(actions,state,content,leading,share);action.player.clip!=0 {clock=action}
             if animation.mirror && len(playing_topology(state).mirror_pairs)>0 {clock.mirror=!clock.mirror}
             unwarped:=state.motion.translation
-            if ok && !motion_apply_root(motion,characters,app.assets,app.allocator,state,character,content,actor,dt,sought>=0 || distance!=nil && distance.seek || action_distance!=nil && action_distance.seek,clock,mm.saturate(animation.weight)) {
+            if ok && !motion_apply_root(motion,characters,app.assets,app.allocator,state,character,content,actor,dt,sought>=0,clock,mm.saturate(animation.weight)) {
                 if instance:=motion_instance(motion,e);instance!=nil {motion_problem(problems,e,instance.error)}
             }
             // The warp of the clock of an action that moves the body moves the body as much.
@@ -667,7 +653,6 @@ animation_tick :: proc(
             if programmed {match_lag_apply(state,row.placed)}
             copy(playing_pose(state,.Sampled),playing_pose(state,.Local))
         }
-        if row.distance_error!=.None {state.program.error=.Invalid_Parameter;distance_problem(problems,e,row.distance_error)}
         state.seen=playback.frame
     }
     clear(&playback.work.rows);clear(&playback.work.contents);clear(&playback.work.lods)
@@ -707,27 +692,12 @@ program_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Asset
     switch error {
     case .None,.Out_Of_Memory: memory_problem(problems,e,"its animation program")
     case .Invalid_Asset: core.report(problems,e,"animation.program_asset","Animation.asset %s, its library or a clip source it names cannot be read or is of another kind, or they name more than %d animations; check them with animation.asset.inspect, and import or save them again",path,ANIMATION_SOURCES)
-    case .Invalid_Parameter: core.report(problems,e,"animation.program_parameter","a speed, a sync or a transition of %s cannot advance: a value of it is not finite, or a clip it plays by distance cannot reach the time asked; check Animation.speed and the distance asked",path)
+    case .Invalid_Parameter: core.report(problems,e,"animation.program_parameter","a speed, a sync or a transition of %s cannot advance: a value of it is not finite; check Animation.speed and the values of its clips and spaces",path)
     case .Missing_Clip: core.report(problems,e,"animation.program_clip","%s plays a clip its animation library does not have; add the clip, or set Animation.library to an .anim that has it",path)
     case .Incompatible_Root: core.report(problems,e,"animation.program_root","%s blends clips whose root motion has different bones or channels; give them the same root motion, or blend clips without it",path)
     case .Capacity: core.report(problems,e,"animation.program_capacity","%s plays more clips at once than fit (%d); blend fewer clips at a time",path,PROGRAM_PLAYERS)
     case .Pending: // its sources still load: it plays once they are ready
     }
-}
-
-@(private)
-distance_problem :: proc(problems:^core.Problems,e:core.Entity,error:Distance_Error) {
-    cause:string
-    switch error {
-    case .None: return
-    case .Missing_Player: cause="names another entity than the one it plays on"
-    case .Missing_Clip: cause="names a clip the animation does not have"
-    case .Inactive_Clip: cause="names a clip that is not playing"
-    case .Backwards: cause="asks for a time before the one the clip is at; seek instead"
-    case .Unsupported_Clock: cause="needs the clip to advance forward and it is stopped, ended or played backwards; seek instead"
-    case .Invalid_Time: cause="asks for a time outside the clip"
-    }
-    core.report(problems,e,"animation.distance","a distance-matched request for this entity was refused: it %s",cause)
 }
 
 // Reports markers crossed in a tick that did not reach Animation_Events.
@@ -879,7 +849,7 @@ state_get :: proc(playback:^Playback,e:core.Entity) -> ^Playing {
 }
 
 @(private)
-advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,seek:f32=-1,current_dt:f32=-1,selection:Maybe(Clip_Selection)=nil,restart:bool=false,stop:bool=false) {
+advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,seek:f32=-1,selection:Maybe(Clip_Selection)=nil,restart:bool=false,stop:bool=false) {
     animation:=animation
     library:=&content.lib
     name:=base.text_get(animation.clip[:])
@@ -934,7 +904,7 @@ advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animatio
             clip_lifecycle(playback,events,&state.clip_event,.Started,current.time,problems)
         }
         batch:[EVENT_BATCH]lib.Event
-        written,dropped:=lib.fader_advance(library,&state.fader,dt,batch[:],current_dt)
+        written,dropped:=lib.fader_advance(library,&state.fader,dt,batch[:])
         fader_emit(playback,events,state.entity,content,batch[:written],dropped,state.fader,mm.saturate(animation.weight),0,animation,problems)
         state.ended=!animation.loop && current.done
         state.clip_event.time=current.time
@@ -1500,7 +1470,7 @@ animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation
             state.started=false
         }
         for &state in actions.states {state.slots={}}
-        clear(&requests.timeline.items);clear(&requests.plays.items);clear(&requests.distances.items)
+        clear(&requests.timeline.items);clear(&requests.plays.items)
     }
     playback.previewed=!time.playing
     code,capacity,setting:="animation.requests",int(settings.requests),"Animation_Settings.requests"
@@ -1508,7 +1478,6 @@ animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation
         memory_problem(problems,core.NONE,"the ordering of animation requests")
     }
     core.queue_serve(&requests.timeline,capacity,problems,code,"timeline commands",setting,"it names an entity, a command, a finite time and a finite speed")
-    core.queue_serve(&requests.distances,capacity,problems,code,"animation distance plays",setting,"it names an entity, a clip and a time of 0 or more, or a distance track of its .character")
     core.queue_serve(&requests.poses,capacity,problems,code,"bone poses",setting,"it names a rig and a bone, with a finite pose, a unit rotation and a weight from 0 to 1")
     core.queue_serve(&requests.final_poses,capacity,problems,code,"final bone poses",setting,"it names a rig and a bone, with a finite pose, a unit rotation and a weight from 0 to 1")
     core.queue_serve(&requests.match_goals,int(settings.match_goals),problems,code,"motion matching goals","Animation_Settings.match_goals","it names a rig and a mode up to 31, with finite values and rates of 0 or more")
@@ -1587,7 +1556,7 @@ playing_free :: proc(state:^Playing) {
     if state.stack!=nil {stack_free(state.stack)}
     playing_topology_free(state)
     delete(state.curves);delete(state.bindings);delete(state.pose_slab)
-    delete(state.follow);delete(state.retarget);delete(state.retarget_rest);delete(state.driven);delete(state.driven_own);delete(state.driven_leader)
+    delete(state.follow);delete(state.retarget);delete(state.retarget_rest)
     delete(state.scratch.retarget_world)
     state^={}
 }
@@ -1770,7 +1739,7 @@ fader_emit :: proc(playback:^Playback,events:^Animation_Events,entity:core.Entit
     markers_lost(problems,entity,dropped,MARKERS_PAST_BATCH)
 }
 @(private)
-animation_motion_clock :: proc(state:^Playing,content:^host.Content_Animation,output:^Program_Output,dt,current_dt:f32) -> (clock:Motion_Clock) {
+animation_motion_clock :: proc(state:^Playing,content:^host.Content_Animation,output:^Program_Output,dt:f32) -> (clock:Motion_Clock) {
     if state==nil || content==nil || !state.root_enabled {return}
     if output!=nil {
         for leaf in output.leaves[:output.count] {
@@ -1788,7 +1757,7 @@ animation_motion_clock :: proc(state:^Playing,content:^host.Content_Animation,ou
     if !lib.clip_valid(&content.lib,player.clip) {return}
     from:=state.prev_fader.current.time
     if state.prev_fader.current.clip!=player.clip {from=player.time}
-    clock={player=player,from=from,to=from+current_dt*player.speed,root=clip_root(content,player.clip),weight=lib.fader_current_weight(state.fader),active=true}
+    clock={player=player,from=from,to=from+dt*player.speed,root=clip_root(content,player.clip),weight=lib.fader_current_weight(state.fader),active=true}
     for outgoing in state.fader.outgoing[:state.fader.outgoing_count] {
         share:=lib.fade_out_weight(outgoing)
         if share<=clock.weight {continue}
@@ -1797,23 +1766,4 @@ animation_motion_clock :: proc(state:^Playing,content:^host.Content_Animation,ou
         }}
     }
     return
-}
-
-distance_request_check :: proc(state:^Playing,content:^host.Content_Animation,request:Animation_Distance_Request,actions:^Action_Runtime=nil) -> Distance_Error {
-    if state==nil || state.entity!=request.entity {return .Missing_Player}
-    if content==nil || request.clip==0 {return .Missing_Clip}
-    clip_name:=source_clip_name(content.id,request.animation,request.clip)
-    index:=int(lib.clip_find(&content.lib,clip_name))-1
-    if index<0 || index>=content.clip_count {return .Missing_Clip}
-    duration:=lib.clip_duration(&content.lib,lib.Clip(index+1))
-    if !finite(request.time) || request.time<0 || request.time>duration {return .Invalid_Time}
-    player:=state.fader.current
-    if action,on_action:=action_player(actions,request.entity,request.clip,content,request.animation);on_action {player=action} else if state.program.ready {
-        for slot in state.program.players {if slot.seen!=state.program.frame || !lib.clip_valid(&content.lib,slot.player.clip) {continue};if lib.clip_data(&content.lib,slot.player.clip).name==clip_name {player=slot.player;break}}
-    }
-    if !lib.clip_valid(&content.lib,player.clip) || lib.clip_data(&content.lib,player.clip).name!=clip_name {return .Inactive_Clip}
-    if request.seek {return .None}
-    if !state.was_playing || player.done || player.speed<=0 {return .Unsupported_Clock}
-    if request.time<lib.player_time(&content.lib,player) {return .Backwards}
-    return .None
 }

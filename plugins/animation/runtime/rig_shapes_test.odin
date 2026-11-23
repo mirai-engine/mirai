@@ -12,19 +12,6 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 
 @(private="file")
-rig_shapes_corrective :: proc() -> Pose_Corrective {
-    corrective:=POSE_CORRECTIVE_DEFAULT
-    base.text_set(corrective.name[:],"bulge");base.text_set(corrective.curve[:],"bulge")
-    corrective.driver,corrective.bone=bone_ref("joint2"),bone_ref("joint3")
-    corrective.sample_count=2
-    corrective.samples[0],corrective.samples[1]=POSE_CORRECTIVE_SAMPLE_DEFAULT,POSE_CORRECTIVE_SAMPLE_DEFAULT
-    corrective.samples[1].rotation=mm.quat_axis_angle({0,0,1},1)
-    corrective.samples[1].delta.scale={1.5,1,1}
-    corrective.samples[1].curve_value=1
-    return corrective
-}
-
-@(private="file")
 rig_shapes_spline :: proc(points:[4]mm.Vec3) -> Spline_IK_Constraint {
     spline:=SPLINE_IK_CONSTRAINT_DEFAULT
     base.text_set(spline.name[:],"tail")
@@ -34,12 +21,11 @@ rig_shapes_spline :: proc(points:[4]mm.Vec3) -> Spline_IK_Constraint {
 }
 
 @(test)
-rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines :: proc(t:^testing.T) {
+rig_shape_profiles_roundtrip_refuse_other_versions_and_degenerate_splines :: proc(t:^testing.T) {
     follow:=FOLLOW_CONSTRAINT_DEFAULT;base.text_set(follow.name[:],"hand");follow.bone=bone_ref("joint3")
     follow.target.kind=.Socket;base.text_set(follow.target.socket[:],"grip")
     pose:=CURVE_POSE_DEFAULT;base.text_set(pose.curve[:],"jaw_open_pose");pose.bone=bone_ref("jaw");pose.delta.rotation=mm.quat_axis_angle({1,0,0},.5)
-    drive:=CURVE_DRIVE_DEFAULT;base.text_set(drive.from[:],"jawOpen");base.text_set(drive.to[:],"jaw_open_pose");drive.scale=.8
-    profile:=Pose_Profile{spline_ik={rig_shapes_spline({{0,0,0},{0,1,0},{1,2,0},{1,3,0}})},correctives={rig_shapes_corrective()},follow={follow},curve_poses={pose},curve_drives={drive}}
+    profile:=Pose_Profile{spline_ik={rig_shapes_spline({{0,0,0},{0,1,0},{1,2,0},{1,3,0}})},follow={follow},curve_poses={pose}}
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Document;defer asset.document_destroy(&doc)
     if !testing.expect_value(t,character_document(&doc,&types,{3,4},{match={info=MATCH_INFO_DEFAULT},motion={warp=POSE_WARP_PROFILE_DEFAULT},pose=profile}),asset.Error.None) {return}
@@ -51,14 +37,14 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
     defer asset.asset_close(&file)
     set,read:=character_view(&file,&types);view:=set.pose
     testing.expect_value(t,read,asset.Error.None)
-    testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.correctives[0].samples[1].curve_value==1 && view.follow[0].target.kind==.Socket)
-    testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose && len(view.curve_drives)==1 && view.curve_drives[0]==drive)
-    // A set of the current version without curve poses, drives and materials is incomplete, and
-    // one of another version is refused.
-    for name in ([3]string{"curve_poses","curve_drives","curve_materials"}) {
+    testing.expect(t,len(view.spline_ik)==1 && view.spline_ik[0].controls[3].position==mm.Vec3{1,3,0} && view.follow[0].target.kind==.Socket)
+    testing.expect(t,len(view.curve_poses)==1 && view.curve_poses[0]==pose)
+    // A set of the current version without curve poses and materials is incomplete, and one of an
+    // older or newer version is refused.
+    for name in ([2]string{"curve_poses","curve_materials"}) {
         if table,found:=asset.document_table(&doc,name);found {asset.document_table_remove(&doc,table)}
     }
-    for version,i in ([2]u16{CHARACTER_VERSION,CHARACTER_VERSION+1}) {
+    for version,i in ([3]u16{CHARACTER_VERSION,CHARACTER_VERSION-1,CHARACTER_VERSION+1}) {
         doc.kind_version=version
         bytes,written:=asset.document_bytes(&doc,context.temp_allocator)
         if !testing.expect_value(t,written,asset.Error.None) {continue}
@@ -68,40 +54,16 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
         _,error:=character_view(&old,&types)
         switch i {
         case 0: testing.expect_value(t,error,asset.Error.Not_Found)
-        case 1: testing.expect_value(t,error,asset.Error.Version)
+        case 1,2: testing.expect_value(t,error,asset.Error.Version)
         }
     }
     nan:=f32(0);nan/=nan
-    bad_drive:=drive;bad_drive.to=drive.from
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}),"a curve that drives itself")
-    bad_drive=drive;bad_drive.scale=nan
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}))
-    bad_drive=drive;bad_drive.from={}
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}))
-    bad_drive=drive;bad_drive.combine=.Product
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}),"a product without its second curve")
-    bad_drive=drive;base.text_set(bad_drive.with[:],"mouthClose")
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}),"a second curve read by nothing")
-    bad_drive.combine=.Min;bad_drive.with=bad_drive.to
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}),"a curve that drives itself through with")
-    bad_drive=drive;bad_drive.clamp,bad_drive.low,bad_drive.high=true,1,0
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}))
-    bad_drive=drive;bad_drive.offset=nan
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}))
-    bad_drive=drive;bad_drive.weight=2
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}))
-    bad_drive=drive;bad_drive.mode=Curve_Drive_Mode(7)
-    testing.expect(t,!pose_profile_check({curve_drives={bad_drive}}))
     bad_pose:=pose;bad_pose.delta.rotation={}
     testing.expect(t,!pose_profile_check({curve_poses={bad_pose}}))
     bad_pose=pose;bad_pose.weight=2
     testing.expect(t,!pose_profile_check({curve_poses={bad_pose}}))
     bad_pose=pose;bad_pose.curve={}
     testing.expect(t,!pose_profile_check({curve_poses={bad_pose}}))
-    invalid:=rig_shapes_corrective();invalid.samples[1].rotation=-invalid.samples[0].rotation
-    testing.expect(t,!pose_profile_check({correctives={invalid}}),"two samples of one rotation")
-    invalid=rig_shapes_corrective();invalid.sample_count=RIG_POSE_SAMPLES+1
-    testing.expect(t,!pose_profile_check({correctives={invalid}}))
     spline:=rig_shapes_spline({{0,0,0},{0,1,0},{1,2,0},{1,3,0}});spline.up={}
     testing.expect(t,!pose_profile_check({spline_ik={spline}}))
     spline=rig_shapes_spline({});testing.expect(t,!pose_profile_check({spline_ik={spline}}),"a spline of fixed points without length")
@@ -110,25 +72,22 @@ rig_shape_profiles_roundtrip_and_refuse_repeated_samples_and_degenerate_splines 
 }
 
 @(test)
-spline_ik_and_correctives_replay_goals_and_curves_without_stable_allocations :: proc(t:^testing.T) {
+spline_ik_replays_goals_without_stable_allocations :: proc(t:^testing.T) {
     rig:=core.entity_make(1,1)
     state:=rig_test_state(rig,4,.5);defer playing_free(&state)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     characters:Character_Assets;defer character_assets_free(&characters)
-    corrective:=rig_shapes_corrective()
-    playing_pose(&state,.Sampled)[2].rotation=corrective.samples[1].rotation
     splines:=[1]Spline_IK_Constraint{rig_shapes_spline({{0,0,0},{.4,.5,0},{.4,1,0},{0,1.5,0}})}
-    prepared:=test_modifier_profile(&modifiers,&characters,rig,{spline_ik=splines[:],correctives={corrective}})
+    prepared:=test_modifier_profile(&modifiers,&characters,rig,{spline_ik=splines[:]})
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
     expected:=playing_pose(&state,.World)[4]
-    testing.expect(t,abs(playing_pose(&state,.Local)[3].scale.x-1.5)<1e-5 && abs(animation_corrective_curve(core.ref(&modifiers),rig,base.name_hash("bulge"))-1)<1e-5)
     copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=true
     for _ in 0..<32 {
         copy(playing_pose(&state,.Local),state.rest[:])
         stable &&=test_rigs_apply(&state,&copied,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
-        stable &&=linalg.length(playing_pose(&state,.World)[4].position-expected.position)<1e-5 && animation_corrective_curve(core.ref(&copied),rig,base.name_hash("bulge"))==1
+        stable &&=linalg.length(playing_pose(&state,.World)[4].position-expected.position)<1e-5
     }
     context=saved
     testing.expect(t,stable)
@@ -136,9 +95,6 @@ spline_ik_and_correctives_replay_goals_and_curves_without_stable_allocations :: 
     modifier(&requests,{rig=rig,kind=.Spline_IK,target=spatial_point({1,2,0}),weight=1,enabled=true,goal=true},"tail","end")
     modifier_take(&modifiers,&characters,&requests,nil,0)
     testing.expect_value(t,modifier_override(prepared,.Spline_IK,0,3).target.position,mm.Vec3{1,2,0})
-    modifier_states(prepared,.Corrective)[0].base_enabled=false
-    copy(playing_pose(&state,.Local),state.rest[:])
-    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60) && animation_corrective_curve(core.ref(&modifiers),rig,base.name_hash("bulge"))==0)
     controls:=SPLINE_CONTROLS
     // Out of reach the chain lies along the curve, and says so.
     for point,i in ([4]mm.Vec3{{0,0,0},{0,1,0},{0,2,0},{0,20,0}}) {modifier(&requests,{rig=rig,kind=.Spline_IK,target=spatial_point(point),weight=1,enabled=true,goal=true},"tail",controls[i])}
@@ -153,24 +109,6 @@ spline_ik_and_correctives_replay_goals_and_curves_without_stable_allocations :: 
     testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
     diagnostic,available=animation_rig_diagnostic(core.ref(&modifiers),rig,.Spline_IK,base.name_hash("tail"))
     testing.expect(t,available && diagnostic.valid && diagnostic.reached && diagnostic.residual<=.001)
-}
-
-@(test)
-corrective_curves_drive_the_morph_target_of_their_name :: proc(t:^testing.T) {
-    rig:=core.entity_make(1,1)
-    state:=rig_test_state(rig,4,.5);defer playing_free(&state)
-    modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
-    characters:Character_Assets;defer character_assets_free(&characters)
-    corrective:=rig_shapes_corrective();corrective.apply_pose=false
-    playing_pose(&state,.Sampled)[2].rotation=corrective.samples[1].rotation
-    test_modifier_profile(&modifiers,&characters,rig,{correctives={corrective}})
-    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{},nil,{},mm.TRANSFORM_IDENTITY,1.0/60))
-    targets:=[2]asset.Morph_Target{{weight=.25},{weight=.5}}
-    base.text_set(targets[0].name[:],"bulge");base.text_set(targets[1].name[:],"blink")
-    mesh:=Skin_Rig{id={5,7},revision=1,morphs=targets[:]}
-    playing:=Morph_Playing{entity=core.entity_make(2,1),source=rig,curve_count=-1};defer morph_playing_free(&playing)
-    testing.expect(t,morph_bind(&playing,&mesh,{},base.name_hash("Face"),1) && morph_compose(&playing,&mesh,{},nil,core.ref(&modifiers)))
-    testing.expect(t,abs(playing.current[0]-1.25)<1e-5 && playing.current[1]==.5,"the corrective adds to the target it names only")
 }
 
 @(test)

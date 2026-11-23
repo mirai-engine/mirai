@@ -126,7 +126,7 @@ mirai rpc --project . capture '{
 - Sockets live on `.skeleton`; equipped entities use `Bone_Attachment`.
 - `animation.modifier.set` edits `.character` modifier tables by key (entity targets arrive at
   runtime via `animation.request {goals}`). `animation.modifier.poses` extracts facial `curve_poses`
-  and ARKit remap drives from a multi-pose clip. `animation.retarget.bake` bakes a retargeted
+  from a multi-pose clip, each named by its curve. `animation.retarget.bake` bakes a retargeted
   `.anim` between skeletons (using destination `.character` chains for differing topologies).
 
 ## Motion matching and additive spaces

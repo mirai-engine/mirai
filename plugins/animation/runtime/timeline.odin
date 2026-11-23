@@ -560,7 +560,7 @@ animation_fields :: proc(world:core.World_Ref,playback:core.Ref(Playback),fields
     for &bound in fields.fields {
         if state==nil || state.entity!=bound.player {state=constraint_playing(playback,bound.player)}
         if state==nil || state.seen!=playback.frame || state.held {continue}
-        curve:=curve_find(playing_curves(state),{target=bound.curve,property=bound.property,slot=bound.slot},&bound.row)
+        curve:=curve_find(state.curves[:],{target=bound.curve,property=bound.property,slot=bound.slot},&bound.row)
         if curve==nil || curve.weight<=0 {continue}
         table:=core.world_table_at(world,bound.table)
         row:=core.raw_row(table,bound.entity)

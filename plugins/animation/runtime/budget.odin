@@ -26,7 +26,7 @@ BUDGET_LONGEST :: .25
 @(storage,setting)
 Animation_Budget_Config :: struct {
     max_palette_updates:u32 `mirai:"advanced"`,job_grain:u16 `mirai:"advanced"`,parallel:bool `mirai:"advanced"`,
-    cosmetic_distance:f32 `mirai:"min=0,unit=m"`, // past it from every source, a rig leaves out its grounding, springs, twists and correctives
+    cosmetic_distance:f32 `mirai:"min=0,unit=m"`, // past it from every source, a rig leaves out its grounding, springs and twists
     cadence_near:f32 `mirai:"min=0,unit=m"`,      // per this from a source, a tick less often a rig is posed and searches its matching
     cadence_slowest:f32 `mirai:"min=0,unit=s"`,   // between two poses of a rig at most
 }

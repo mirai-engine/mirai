@@ -264,3 +264,83 @@ multi_ik_recomposes_only_the_branch_of_each_joint :: proc(t:^testing.T) {
     few,many:=recomposed(t,5),recomposed(t,4000)
     testing.expectf(t,few>5 && many-few==4000-5,"a solve with 3995 more bones outside its chain recomposes %d bones against %d",many,few)
 }
+
+// A chain of nine bones .28 apart up +Y, every bone a joint, its end the effector.
+@(private="file")
+Multi_IK_Chain :: struct {
+    parents:[9]i32,names:[9]u64,rest,local:[9]math.Transform,world:[9]math.Transform,
+    links:[9]Pose_Link,joints:[9]Multi_IK_Joint,
+}
+@(private="file")
+multi_ik_chain_make :: proc(c:^Multi_IK_Chain) -> (Skeleton,Pose_Hierarchy) {
+    for i in 0..<9 {
+        c.parents[i],c.names[i]=i32(i-1),u64(i+1)
+        c.rest[i]=math.TRANSFORM_IDENTITY;if i>0 {c.rest[i].position={0,.28,0}}
+        c.joints[i]=MULTI_IK_JOINT_DEFAULT;c.joints[i].bone=i32(i)
+    }
+    c.local=c.rest
+    hierarchy,_:=pose_hierarchy_prepare(c.parents[:],c.links[:])
+    return Skeleton{c.parents[:],c.names[:],c.rest[:]},hierarchy
+}
+
+@(test)
+multi_ik_bends_toward_a_pole_reaches_softly_and_stretches_by_weight :: proc(t:^testing.T) {
+    Case :: struct {name:string,target,pole:math.Vec3,use_pole:bool,reach:Chain_Reach,weight:f32,side:f32}
+    cases:=[?]Case{
+        {"a straight chain folds toward a pole in front",{0,1.5,0},{0,1,1},true,{},1,1},
+        {"a straight chain folds toward a pole behind",{0,1.5,0},{0,1,-1},true,{},1,-1},
+        {"an aside target keeps the bend toward the pole",{.6,1.6,0},{0,1,1},true,{},1,1},
+        {"a far target softens and stretches",{0,2.4,0},{0,1,1},true,{soft_distance=.3,max_stretch=.4},1,0},
+        {"soft reach alone does not stretch",{0,3,0},{0,1,1},true,{soft_distance=.3},1,0},
+        {"half weight stretches half",{0,2.5,0},{0,1,1},true,{max_stretch=.4},.5,0},
+    }
+    for c in cases {
+        chain:Multi_IK_Chain;skeleton,hierarchy:=multi_ik_chain_make(&chain)
+        effector:=MULTI_IK_EFFECTOR_DEFAULT
+        effector.bone,effector.position,effector.pole,effector.use_pole,effector.reach=8,c.target,c.pole,c.use_pole,c.reach
+        effectors:=[1]Multi_IK_Effector{effector};residuals:[1]f32
+        // Near full extension a chain of nine needs more turns than the default.
+        settings:=MULTI_IK_DEFAULT;settings.root=0;settings.iterations=64
+        result,ok:=multi_ik(skeleton,hierarchy,chain.local[:],chain.world[:],chain.joints[:8],effectors[:],settings,residuals[:])
+        for &value,i in chain.local {value=math.transform_interpolate(chain.rest[i],value,c.weight)}
+        testing.expectf(t,ok && pose_world(chain.parents[:],chain.local[:],chain.world[:]),"%s: solves",c.name)
+        goal,scale,_:=chain_reach({},c.target,2.24,c.reach)
+        if c.weight==1 {testing.expectf(t,result.reached && linalg.length(chain.world[8].position-goal)<=.001,"%s: reaches %v at %v",c.name,goal,chain.world[8].position)}
+        stretch:=1+(scale-1)*c.weight
+        for i in 1..<9 {testing.expectf(t,abs(chain.local[i].position.y-.28*stretch)<1e-5,"%s: bone %d stretches by %v",c.name,i,stretch)}
+        middle:f32;for i in 1..<8 {middle+=chain.world[i].position.z}
+        if c.side!=0 {testing.expectf(t,middle*c.side>.05,"%s: bends toward the pole (%v)",c.name,middle)}
+    }
+}
+
+@(test)
+multi_ik_rejects_hostile_poles_and_reaches :: proc(t:^testing.T) {
+    nan:=cmath.nan_f32()
+    cases:=[?]struct {name:string,pole:math.Vec3,reach:Chain_Reach}{
+        {"a pole that is not a number",{nan,0,0},{}},
+        {"a soft distance longer than the chain",{},{soft_distance=3}},
+        {"a negative stretch",{},{max_stretch=-.1}},
+        {"a soft distance that is not a number",{},{soft_distance=nan}},
+        {"a negative soft distance",{},{soft_distance=-.1}},
+    }
+    for c in cases {
+        chain:Multi_IK_Chain;skeleton,hierarchy:=multi_ik_chain_make(&chain)
+        effector:=MULTI_IK_EFFECTOR_DEFAULT;effector.bone,effector.position,effector.pole,effector.use_pole,effector.reach=8,{0,1,0},c.pole,true,c.reach
+        effectors:=[1]Multi_IK_Effector{effector};residuals:[1]f32
+        settings:=MULTI_IK_DEFAULT;settings.root=0
+        _,ok:=multi_ik(skeleton,hierarchy,chain.local[:],chain.world[:],chain.joints[:8],effectors[:],settings,residuals[:])
+        testing.expectf(t,!ok,"%s is refused",c.name)
+    }
+}
+
+@(test)
+multi_ik_pole_yields_to_hinges_and_still_reaches :: proc(t:^testing.T) {
+    chain:Multi_IK_Chain;skeleton,hierarchy:=multi_ik_chain_make(&chain)
+    for &joint in chain.joints {joint.limits={{.Locked,0,0},{.Locked,0,0},{.Free,0,0}}}
+    effector:=MULTI_IK_EFFECTOR_DEFAULT;effector.bone,effector.position,effector.pole,effector.use_pole=8,{.6,1.6,0},{0,1,1},true
+    effectors:=[1]Multi_IK_Effector{effector};residuals:[1]f32
+    settings:=MULTI_IK_DEFAULT;settings.root=0;settings.iterations=64
+    result,ok:=multi_ik(skeleton,hierarchy,chain.local[:],chain.world[:],chain.joints[:8],effectors[:],settings,residuals[:])
+    testing.expect(t,ok && result.reached,"the hinges reach a target in their plane")
+    for value in chain.world {testing.expect(t,abs(value.position.z)<1e-4,"a pole out of the plane of the hinges does not bend them out of it")}
+}

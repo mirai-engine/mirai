@@ -4,6 +4,32 @@ import cmath "core:math"
 import "core:math/linalg"
 import math "mirai:std/math"
 
+// The least and most bend of a joint of a chain, in radians between the bone before it and its own.
+Chain_Limit :: struct {min_bend,max_bend:f32}
+CHAIN_LIMIT_FREE :: Chain_Limit{0,cmath.PI}
+
+@(private)
+chain_direction :: proc "contextless" (value,fallback:math.Vec3) -> math.Vec3 {
+    result,ok:=anim_unit(value)
+    if !ok {result,ok=anim_unit(fallback)}
+    return result if ok else math.Vec3{1,0,0}
+}
+
+@(private)
+chain_limit_direction :: proc "contextless" (incoming,outgoing,pole:math.Vec3,limit:Chain_Limit) -> math.Vec3 {
+    cosine:=clamp(linalg.dot(incoming,outgoing),-1,1)
+    angle:=cmath.acos(cosine)
+    bounded:=clamp(angle,limit.min_bend,limit.max_bend)
+    if abs(bounded-angle)<1e-6 {return outgoing}
+    tangent,ok:=anim_unit(outgoing-incoming*cosine)
+    if !ok {
+        tangent,ok=anim_unit(pole-incoming*linalg.dot(pole,incoming))
+        if !ok {tangent=anim_perpendicular(incoming)}
+    }
+    sine,cos:=cmath.sincos(bounded)
+    return incoming*cos+tangent*sine
+}
+
 Spring_Collision :: struct {position:math.Vec3,radius:f32}
 Spring_Joint_State :: struct {position,previous:math.Vec3,ready:bool}
 Spring_Chain :: struct {

@@ -102,7 +102,7 @@ root_motion_walks_and_turns_a_physical_character_and_leaves_other_bodies_as_they
     progress:core.Table(anim.Animation_Progress);defer core.table_destroy(&progress)
     characters:anim.Character_Assets;defer anim.character_assets_free(&characters)
     anim.animation_prepare(core.read(&f.animations),core.read(&f.attachments),core.read(&f.meshes),core.read(&f.sources),&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,nil)
-    anim.animation_sample(core.read(&f.animations),core.read(&progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,time,{},nil,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT)
+    anim.animation_sample(core.read(&f.animations),core.read(&progress),&f.played,&f.transforms,core.read(&f.parents),core.ref(&f.hierarchy),core.read(&f.names),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&characters,&f.skeletons,&f.app,time,{},nil,&f.actions,&f.motion,&f.content_sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT,{},{})
     delta,present:=anim.animation_root_delta(core.ref(&f.playback),driven)
     testing.expect(t,present && abs(delta.translation.x-time.dt)<1e-5)
     before_control,_:=core.get(&f.transforms,controlled);before_driven,_:=core.get(&f.transforms,driven)

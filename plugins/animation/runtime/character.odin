@@ -34,7 +34,7 @@ character_set_make :: proc(animation:base.Asset_Id) -> Character_Set {
 }
 
 character_check :: proc(set:Character_Set) -> bool {
-    clipless:=len(set.match.clips)+len(set.actions.actions)+len(set.actions.layers)+len(set.spaces)+len(set.motion.distances)==0
+    clipless:=len(set.match.clips)+len(set.actions.actions)+len(set.actions.layers)+len(set.spaces)==0
     if set.info.animation=={} && !clipless || !match_check(set.match) || !action_profile_check(set.actions) || !motion_profile_check(set.motion) || !pose_profile_check(set.pose) {return false}
     if len(set.spaces)>STACK_LAYERS || len(set.space_samples)>lib.BLEND_MAX_SAMPLES*len(set.spaces) {return false}
     for &space,i in set.spaces {
@@ -86,23 +86,18 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put(doc,types,"space_samples",set.space_samples) or_return
     asset.document_put_row(doc,types,"warp",&warp) or_return
     asset.document_put(doc,types,"windows",set.motion.windows) or_return
-    asset.document_put(doc,types,"distances",set.motion.distances) or_return
-    asset.document_put(doc,types,"keys",set.motion.keys) or_return
     asset.document_put(doc,types,"ik",pose.ik) or_return
     asset.document_put(doc,types,"look",pose.look) or_return
     asset.document_put(doc,types,"limits",pose.limits) or_return
     asset.document_put_row(doc,types,"grounding",&grounding) or_return
     asset.document_put(doc,types,"grounding_legs",pose.grounding.legs) or_return
-    asset.document_put(doc,types,"chain_ik",pose.chain_ik) or_return
     asset.document_put(doc,types,"twist",pose.twist) or_return
     asset.document_put(doc,types,"springs",pose.springs) or_return
     character_multi_write(doc,types,pose.multi_ik) or_return
     asset.document_put(doc,types,"retarget_chains",pose.retarget_chains) or_return
     asset.document_put(doc,types,"spline_ik",pose.spline_ik) or_return
-    asset.document_put(doc,types,"correctives",pose.correctives) or_return
     asset.document_put(doc,types,"follow",pose.follow) or_return
     asset.document_put(doc,types,"curve_poses",pose.curve_poses) or_return
-    asset.document_put(doc,types,"curve_drives",pose.curve_drives) or_return
     asset.document_put(doc,types,"curve_materials",pose.curve_materials) or_return
     return .None
 }
@@ -167,24 +162,19 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     set.space_samples=asset.asset_rows(file,types,"space_samples","",Blend_Sample) or_return
     set.motion.warp=(asset.asset_row(file,types,"warp",Pose_Warp_Profile) or_return)^
     set.motion.windows=asset.asset_rows(file,types,"windows","",Motion_Window) or_return
-    set.motion.distances=asset.asset_rows(file,types,"distances","",Motion_Distance) or_return
-    set.motion.keys=asset.asset_rows(file,types,"keys","",lib.Distance_Key) or_return
     pose:=&set.pose
     pose.ik=asset.asset_rows(file,types,"ik","",IK_Constraint) or_return
     pose.look=asset.asset_rows(file,types,"look","",Look_Constraint) or_return
     pose.limits=asset.asset_rows(file,types,"limits","",Rotation_Constraint) or_return
     pose.grounding.definition=(asset.asset_row(file,types,"grounding",Grounding_Definition) or_return)^
     pose.grounding.legs=asset.asset_rows(file,types,"grounding_legs","",Grounded_Leg) or_return
-    pose.chain_ik=asset.asset_rows(file,types,"chain_ik","",Chain_IK_Constraint) or_return
     pose.twist=asset.asset_rows(file,types,"twist","",Twist_Constraint) or_return
     pose.springs=asset.asset_rows(file,types,"springs","",Spring_Constraint) or_return
     pose.multi_ik=character_multi_read(file,types) or_return
     pose.retarget_chains=asset.asset_rows(file,types,"retarget_chains","",Chain_Retarget_Constraint) or_return
     pose.spline_ik=asset.asset_rows(file,types,"spline_ik","",Spline_IK_Constraint) or_return
-    pose.correctives=asset.asset_rows(file,types,"correctives","",Pose_Corrective) or_return
     pose.follow=asset.asset_rows(file,types,"follow","",Follow_Constraint) or_return
     pose.curve_poses=asset.asset_rows(file,types,"curve_poses","",Curve_Pose) or_return
-    pose.curve_drives=asset.asset_rows(file,types,"curve_drives","",Curve_Drive) or_return
     pose.curve_materials=asset.asset_rows(file,types,"curve_materials","",Curve_Material) or_return
     if !character_check(set) {return {},.Corrupt}
     return set,.None

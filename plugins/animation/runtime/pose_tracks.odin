@@ -45,9 +45,7 @@ Pose_Row :: struct {
     content:i32, // in Playback.work_contents + 1; 0: it plays nothing
     programmed:bool,
     animation:Animation,
-    dt,current_dt,sought:f32,
-    distance,action_distance:^Animation_Distance_Request,
-    distance_error:Distance_Error,
+    dt,sought:f32,
     placed:mm.Transform,
     faults:Pose_Faults,
 }

@@ -9,8 +9,7 @@ import "mirai:std/base"
 
 // The weight of a target of a mesh is, in order: the mesh's own, the
 // entity's Default, the animation's curve "<path>/@morph/<target>" over them
-// by its weight, plus the correctives of its rig that name the target, then
-// the entity's Override or Additive. Without a path (none in Morph_Weights and
+// by its weight, then the entity's Override or Additive. Without a path (none in Morph_Weights and
 // no Animation_Target) a target takes the first curve of the animation that
 // ends in "/@morph/<target>", whatever its path. Without either curve it
 // takes the curve named as the target.
@@ -70,9 +69,8 @@ Morph_Playing :: struct {
     curve_asset:base.Asset_Id,
     curve_generation:u32,
     curve_count:int,       // of the source when curve_rows were found; -1: find them again
-    curve_layout:u64,      // of the source when curve_rows were found
     tracks:[dynamic]u64,   // the curve of each target
-    names:[dynamic]u64,    // base.name_hash of the name of each target, which correctives name
+    names:[dynamic]u64,    // base.name_hash of the name of each target, which curves of its name move
     entries:[dynamic]i8,   // the entry of Morph_Weights of each target; -1: none
     curve_rows:[dynamic]i32,
     current,previous:[dynamic]f32, // of each target, at the end of this tick and of the one before
@@ -190,7 +188,8 @@ morph_rig_read :: proc(rig:^Skin_Rig,view:asset.Mesh_View,allocator:mem.Allocato
 // nearest animated ancestor.
 morph_source :: proc(entity:core.Entity,config:Morph_Weights,animations:^core.Table(Animation,$A),sources:^core.Table(Pose_Source,$B),parents:^core.Table(core.Parent,$C),playback:core.Ref(Playback)={}) -> core.Entity {
     if config.source!=core.NONE {return config.source}
-    if own:=constraint_playing(playback,entity);own!=nil && own.leader!=core.NONE {return entity}
+    // A modular head that follows a body takes the curves of the face from the body.
+    if own:=constraint_playing(playback,entity);own!=nil && own.leader!=core.NONE {return own.leader}
     if source,has:=core.get(sources,entity);has {return source.rig}
     return core.ancestor_with(parents,animations,entity)
 }
@@ -232,7 +231,7 @@ morph_bind :: proc(state:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,path_
 animation_morph :: proc(
     meshes:^core.Table(erender.Mesh_Renderer,.Read),configs:^core.Table(Morph_Weights,.Read),animations:^core.Table(Animation,.Read),
     targets:^core.Table(Animation_Target,.Read),sources:^core.Table(Pose_Source,.Read),parents:^core.Table(core.Parent,.Read),
-    playback:core.Ref(Playback),modifiers:core.Ref(Modifier_Runtime),cache:^Skin_Runtime,state:^Morph_Playback,libraries:core.Ref(Source_Assets),app:^host.App,time:core.Time,
+    playback:core.Ref(Playback),cache:^Skin_Runtime,state:^Morph_Playback,libraries:core.Ref(Source_Assets),app:^host.App,time:core.Time,
     problems:^core.Problems,
 ) {
     if app.assets==nil {return}
@@ -288,16 +287,15 @@ animation_morph :: proc(
         source:=constraint_playing(playback,playing.source)
         if source!=nil && (source.seen!=playback.frame || !source.curves_ready) {source=nil}
         content:=animation_playing_content(libraries,app,source) if source!=nil && playing.by_name else nil
-        if !morph_compose(&playing,rig,config,source,modifiers,content) {playing.error=.Invalid_Value;morph_problem(problems,playing.entity,.Invalid_Value,0)}
+        if !morph_compose(&playing,rig,config,source,content) {playing.error=.Invalid_Value;morph_problem(problems,playing.entity,.Invalid_Value,0)}
         if !time.playing {copy(playing.previous[:],playing.current[:])}
     }
 }
 
 @(private)
-morph_compose :: proc(playing:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,source:^Playing,modifiers:core.Ref(Modifier_Runtime)={},content:^host.Content_Animation=nil) -> bool {
-    curves:=playing_curves(source) if source!=nil else nil
-    layout:=source.curve_layout if source!=nil && source.driven_ready else 0
-    if source!=nil && (playing.curve_asset!=source.asset || playing.curve_generation!=source.generation || playing.curve_count!=len(curves) || playing.curve_layout!=layout) {
+morph_compose :: proc(playing:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,source:^Playing,content:^host.Content_Animation=nil) -> bool {
+    curves:=source.curves[:] if source!=nil else nil
+    if source!=nil && (playing.curve_asset!=source.asset || playing.curve_generation!=source.generation || playing.curve_count!=len(curves)) {
         find :: proc(curves:[]Curve_Output,target:u64) -> i32 {
             for curve,c in curves {if curve.property==.Float && curve.slot==0 && curve.target==target {return i32(c)}}
             return -1
@@ -307,10 +305,10 @@ morph_compose :: proc(playing:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,
             if !playing.by_name {row=find(curves,playing.tracks[t])} else if content!=nil {
                 for morph in content.morphs {if morph.target==playing.names[t] {if row=find(curves,morph.curve);row>=0 {break}}}
             }
-            // Else a curve named as the target, as faces, their captures and curve drives name them.
+            // Else a curve named as the target, as faces and their captures name them.
             if row<0 {row=find(curves,playing.names[t])}
         }
-        playing.curve_asset,playing.curve_generation,playing.curve_count,playing.curve_layout=source.asset,source.generation,len(curves),layout
+        playing.curve_asset,playing.curve_generation,playing.curve_count=source.asset,source.generation,len(curves)
     }
     ok:=true
     for &target,t in rig.morphs {
@@ -320,7 +318,6 @@ morph_compose :: proc(playing:^Morph_Playing,rig:^Skin_Rig,config:Morph_Weights,
         if source!=nil {
             if row:=int(playing.curve_rows[t]);row>=0 && row<len(curves) {curve:=curves[row];value=curve.value.x+value*(1-curve.weight)}
         }
-        value+=animation_corrective_curve(modifiers,playing.source,playing.names[t])
         if entry>=0 {
             #partial switch config.modes[entry] {
             case .Override: value=config.values[entry]

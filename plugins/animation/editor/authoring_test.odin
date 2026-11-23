@@ -329,13 +329,10 @@ curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves
     json=fmt.tprintf(`{{"asset":"%s","animation":"%s","clip":"poses","skeleton":"%s"}}`,profile,clip,skeleton)
     result=authoring_test_execute(f,"poses",json)
     if !testing.expect(t,result.code==0,result.message) {return}
-    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"poses":1,"rows":1,"drives":1`),api.json_compact(string(serial.writer_bytes(&f.out))))
+    testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"poses":1,"rows":1`),api.json_compact(string(serial.writer_bytes(&f.out))))
     testing.expect_value(t,authoring_test_load(f,"face.character",&file),asset.Error.None)
     set,error=anim.character_view(&file,&f.assets.types);view=set.pose
-    if testing.expect(t,error==.None && len(view.curve_poses)==1 && len(view.curve_drives)==1) {
-        drive:=view.curve_drives[0]
-        testing.expect(t,base.text_get(drive.from[:])=="jaw_open" && base.text_get(drive.to[:])=="jawOpen" && abs(drive.scale-.8)<1e-5 && !view.curve_poses[0].full)
-    }
+    testing.expect(t,error==.None && len(view.curve_poses)==1 && base.text_get(view.curve_poses[0].curve[:])=="jaw_open" && !view.curve_poses[0].full)
     asset.asset_close(&file)
     revision:=authoring_test_revision(f,"face.character")
     for bad in ([3]string{

@@ -188,19 +188,7 @@ pose_stride_warp_keeps_nearly_straight_knees_on_the_source_side_when_shortening_
 }
 
 @(test)
-distance_matching_inverts_increasing_and_decreasing_curves_and_rejects_ambiguous_keys :: proc(t:^testing.T) {
-    keys:=[3]Distance_Key{{0,0},{.5,2},{1,3}}
-    time,ok:=distance_to_time(keys[:],1);testing.expect(t,ok && time==.25)
-    time,ok=distance_to_time(keys[:],4);testing.expect(t,ok && time==1)
-    keys[0].distance=3;keys[1].distance=1;keys[2].distance=0
-    time,ok=distance_to_time(keys[:],2);testing.expect(t,ok && time==.25)
-    keys[1].distance=3;testing.expect(t,!distance_track_validate(keys[:]))
-    keys[1].distance=2;keys[1].time=0;testing.expect(t,!distance_track_validate(keys[:]))
-    _,ok=distance_to_time(nil,0);testing.expect(t,!ok)
-}
-
-@(test)
-hostile_warp_and_distance_inputs_return_without_nonfinite_successes :: proc(t:^testing.T) {
+hostile_warp_inputs_return_without_nonfinite_successes :: proc(t:^testing.T) {
     values:=[10]f32{0,1,-1,1e30,-1e30,1e-30,f32(0h7fc00000),f32(0h7f800000),f32(0hff800000),.25}
     for iteration in 0..<#config(ANIM_WARP_HOSTILE_ROUNDS,400) {
         value:=values[iteration%len(values)]
@@ -211,7 +199,5 @@ hostile_warp_and_distance_inputs_return_without_nonfinite_successes :: proc(t:^t
         if angle_ok {testing.expect(t,anim_finite(angle))}
         scale,scale_ok:=stride_warp_scale(value,values[(iteration/11)%len(values)],.5,2)
         if scale_ok {testing.expect(t,anim_finite(scale) && scale>0)}
-        keys:=[2]Distance_Key{{0,value},{1,values[(iteration/13)%len(values)]}}
-        time,time_ok:=distance_to_time(keys[:],value);if time_ok {testing.expect(t,anim_finite(time))}
     }
 }

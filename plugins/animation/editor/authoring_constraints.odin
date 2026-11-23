@@ -7,7 +7,6 @@ import lib "mirai:std/anim"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
-Profile_Chain_Params :: struct {name:[64]u8 `mirai:"text"`,root,end:anim.Bone_Ref,target:anim.Spatial_Definition `mirai:"optional"`,pole:mm.Vec3 `mirai:"optional"`,iterations:u16 `mirai:"optional"`,tolerance,weight:f32 `mirai:"optional"`,reach:lib.Chain_Reach `mirai:"optional"`,limits:[anim.RIG_CHAIN_BONES-2]lib.Chain_Limit `mirai:"optional,trim"`,use_pole,enabled:bool `mirai:"optional"`}
 Profile_Twist_Amount :: struct {value:f32}
 Profile_Twist_Params :: struct {name:[64]u8 `mirai:"text"`,source,root,end:anim.Bone_Ref,axis:mm.Vec3 `mirai:"optional"`,reference:mm.Quat `mirai:"optional"`,amounts:[anim.RIG_CHAIN_BONES]Profile_Twist_Amount `mirai:"optional,trim"`,weight:f32 `mirai:"optional"`,enabled:bool `mirai:"optional"`}
 Profile_Spring_Params :: struct {name:[64]u8 `mirai:"text"`,root,end:anim.Bone_Ref,settings:lib.Spring_Chain `mirai:"optional"`,limits:[anim.RIG_CHAIN_BONES-2]lib.Chain_Limit `mirai:"optional,trim"`,collisions:[anim.RIG_COLLISIONS]lib.Spring_Collision `mirai:"optional,trim"`,weight:f32 `mirai:"optional"`,enabled:bool `mirai:"optional"`}
@@ -37,15 +36,12 @@ authoring_struct_fields :: proc(out:^$T,source:$S) {
 @(private)
 profile_constraints_defaults :: proc(p:^Profile_Set_Params) {
     authoring_struct_fields(&p.spline_ik,anim.SPLINE_IK_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.follow,anim.FOLLOW_CONSTRAINT_DEFAULT)
-    authoring_struct_fields(&p.corrective,anim.POSE_CORRECTIVE_DEFAULT);for &sample in p.corrective.samples {sample=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT}
-    authoring_struct_fields(&p.chain_ik,anim.CHAIN_IK_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.twist,anim.TWIST_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.spring,anim.SPRING_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.multi_ik,anim.MULTI_IK_CONSTRAINT_DEFAULT.definition);authoring_struct_fields(&p.multi_ik.settings,lib.MULTI_IK_DEFAULT)
+    authoring_struct_fields(&p.twist,anim.TWIST_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.spring,anim.SPRING_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.multi_ik,anim.MULTI_IK_CONSTRAINT_DEFAULT.definition);authoring_struct_fields(&p.multi_ik.settings,lib.MULTI_IK_DEFAULT)
     for &joint in p.multi_ik.joints {joint=anim.MULTI_IK_JOINT_DEFAULT};for &effector in p.multi_ik.effectors {effector=anim.MULTI_IK_EFFECTOR_DEFAULT}
     authoring_struct_fields(&p.grounding,anim.FOOT_GROUNDING_DEFAULT.definition);for &leg in p.grounding.legs {authoring_struct_fields(&leg,anim.GROUNDED_LEG_DEFAULT)}
 }
 @(private)
 profile_array_count :: proc(call:^api.Call,field,array:string) -> int {text:=api.json_member(call.raw,field);nested:=api.Call{raw=text,allocator=call.allocator};count,_:=api.params_array_count(&nested,array);return count}
-@(private)
-profile_chain_value :: proc(call:^api.Call,p:Profile_Chain_Params) -> (value:anim.Chain_IK_Constraint) {authoring_struct_fields(&value,p);value.limit_count=u8(profile_array_count(call,"chain_ik","limits"));return}
 @(private)
 profile_twist_value :: proc(call:^api.Call,p:Profile_Twist_Params) -> (value:anim.Twist_Constraint) {authoring_struct_fields(&value,p);value.amount_count=u8(profile_array_count(call,"twist","amounts"));for i in 0..<int(value.amount_count) {value.amounts[i]=p.amounts[i].value};return}
 @(private)

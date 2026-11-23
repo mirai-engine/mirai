@@ -25,7 +25,6 @@ Pose_Bake_Params :: struct {
     actions:[64]Preview_Action `mirai:"optional"`,
     motion:[16]Request_Motion `mirai:"optional"`,
     locomotion:Request_Locomotion `mirai:"optional"`,
-    distance:Request_Distance `mirai:"optional"`,
     locomote:Intent_Locomote `mirai:"optional"`,
     look:Intent_Look `mirai:"optional"`,
     gesture:Intent_Gesture `mirai:"optional"`,
@@ -69,7 +68,7 @@ authoring_pose_bake :: proc(s:^editor.Session,call:^api.Call) {
     copy(preview.entity[:],p.entity[:]);preview.time,preview.ticks,preview.dt=p.start,u32(steps64),1/p.rate
     copy(preview.parameters[:],p.parameters[:]);copy(preview.controls[:],p.controls[:]);copy(preview.goals[:],p.goals[:]);copy(preview.actions[:],p.actions[:])
     // One store per value until odin-lang/Odin#7937.
-    preview.locomotion=p.locomotion;preview.distance=p.distance;preview.locomote=p.locomote
+    preview.locomotion=p.locomotion;preview.locomote=p.locomote
     preview.look=p.look;preview.gesture=p.gesture;preview.reach=p.reach;preview.motion=p.motion
     clone:=preview_world_clone(s,call,source);if clone==nil {return};defer host.app_world_free(s.app,clone)
     world:=core.world_ref(clone,s.info)

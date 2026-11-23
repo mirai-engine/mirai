@@ -57,7 +57,7 @@ motion_targets_queued_before_the_first_tick_bind_and_warp_the_same_interval :: p
     hierarchy:core.Hierarchy;defer core.value_free(&hierarchy,type_info_of(core.Hierarchy))
     core.hierarchy_settle(&hierarchy,&parents,&entities)
     requests:Animation_Requests;events:Animation_Events;playback:Playback;skeletons:Skeleton_Assets
-    defer {delete(requests.timeline.items);delete(requests.poses.items);delete(requests.distances.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
+    defer {delete(requests.timeline.items);delete(requests.poses.items);delete(events.items);playback_free(&playback);skeleton_assets_free(&skeletons)}
     motion:Motion_Runtime;characters:Character_Assets;extra:Test_Storages
     defer {motion_runtime_free(&motion);delete(requests.warps.items);delete(requests.locomotion.items);character_assets_free(&characters);test_storages_free(&extra)}
     profile:=motion_test_profile();defer motion_test_free(&profile)
@@ -84,21 +84,19 @@ motion_test_spans :: proc(content:^host.Content_Animation,spans:..Motion_Test_Sp
 }
 
 @(private)
-motion_test_free :: proc(profile:^Motion_Profile) {delete(profile.windows);delete(profile.distances);delete(profile.keys);profile^={}}
+motion_test_free :: proc(profile:^Motion_Profile) {delete(profile.windows);profile^={}}
 
-// A warp window ledge, over the span of that name of a clip, and a distance track of the walk.
+// A warp window ledge, over the span of that name of a clip.
 @(private)
 motion_test_profile :: proc() -> Motion_Profile {
     profile:=Motion_Profile{warp=POSE_WARP_PROFILE_DEFAULT}
     profile.windows=make([]Motion_Window,1);profile.windows[0]=MOTION_WINDOW_DEFAULT
     base.text_set(profile.windows[0].name[:],"ledge")
-    profile.distances=make([]Motion_Distance,1);base.text_set(profile.distances[0].clip[:],"walk");base.text_set(profile.distances[0].name[:],"stop");profile.distances[0].count=3
-    profile.keys=make([]lib.Distance_Key,3);profile.keys[0],profile.keys[1],profile.keys[2]={0,3},{1,1},{2,0}
     return profile
 }
 
 @(test)
-motion_profiles_roundtrip_windows_distance_keys_and_reject_windows_of_one_name :: proc(t:^testing.T) {
+motion_profiles_roundtrip_windows_and_reject_windows_of_one_name :: proc(t:^testing.T) {
     profile:=motion_test_profile();defer motion_test_free(&profile)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     doc:asset.Document;defer asset.document_destroy(&doc)
@@ -109,11 +107,9 @@ motion_profiles_roundtrip_windows_distance_keys_and_reject_windows_of_one_name :
     if !testing.expect_value(t,asset.asset_open(&file,serial.writer_bytes(&writer)),asset.Error.None) {return}
     set,error:=character_view(&file,&types);view:=set.motion
     testing.expect_value(t,error,asset.Error.None);testing.expect_value(t,view.warp,profile.warp)
-    testing.expect_value(t,view.windows[0],profile.windows[0]);testing.expect_value(t,view.keys[2],profile.keys[2])
-    time,clip,ok:=motion_distance_time(view,"stop",2);testing.expect(t,ok && time==.5 && clip==profile.distances[0].clip)
+    testing.expect_value(t,view.windows[0],profile.windows[0])
     duplicate:=[2]Motion_Window{profile.windows[0],profile.windows[0]};invalid:=profile;invalid.windows=duplicate[:]
     testing.expect(t,!motion_profile_check(invalid))
-    profile.keys[1].distance=3;testing.expect(t,!motion_profile_check(profile))
 }
 
 @(private)

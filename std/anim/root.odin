@@ -71,14 +71,14 @@ player_root_motion :: proc "contextless" (lib:^Library,p:Player,root:u64,dt:f32)
 }
 
 // The root motion of a fader: that of every clip it plays, by its weight halfway through dt.
-fader_root_motion :: proc "contextless" (lib:^Library,fader:Fader,target:u64,dt:f32,current_dt:f32=-1) -> (position:math.Vec3,rotation:math.Quat) {
+fader_root_motion :: proc "contextless" (lib:^Library,fader:Fader,target:u64,dt:f32) -> (position:math.Vec3,rotation:math.Quat) {
     fader:=fader
     rotation=1
-    if fader.outgoing_count<0 || fader.outgoing_count>len(fader.outgoing) || !anim_finite(dt) || !anim_finite(current_dt) || current_dt< -1 {return}
+    if fader.outgoing_count<0 || fader.outgoing_count>len(fader.outgoing) || !anim_finite(dt) {return}
     center:=fader
     center.elapsed+=abs(dt)*0.5
     for &outgoing in center.outgoing[:center.outgoing_count] {outgoing.elapsed+=abs(dt)*0.5}
-    p,q:=player_root_motion(lib,fader.current,target,current_dt if current_dt>=0 else dt)
+    p,q:=player_root_motion(lib,fader.current,target,dt)
     weight:=fader_current_weight(center)
     position=p*weight
     sum:=quat_vec4(q)*weight

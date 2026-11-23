@@ -87,10 +87,10 @@ Limit_Binding :: struct {
     bone:int,
 }
 
-root_motion_sample :: proc(library:^lib.Library,fader:lib.Fader,config:Root_Motion,dt:f32,target:u64=0,current_dt:f32=-1) -> Root_Delta {
+root_motion_sample :: proc(library:^lib.Library,fader:lib.Fader,config:Root_Motion,dt:f32,target:u64=0) -> Root_Delta {
     target:=target
     if target==0 {target=config.bone}
-    position,rotation:=lib.fader_root_motion(library,fader,target,dt,current_dt)
+    position,rotation:=lib.fader_root_motion(library,fader,target,dt)
     return {position if config.translation else mm.Vec3{},rotation if config.rotation else mm.Quat(1)}
 }
 

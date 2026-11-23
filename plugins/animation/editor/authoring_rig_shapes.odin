@@ -17,15 +17,6 @@ Profile_Spline_Params :: struct {
     weight:f32 `mirai:"optional,min=0,max=1"`,
     enabled:bool `mirai:"optional"`,
 }
-Profile_Corrective_Params :: struct {
-    name:[64]u8 `mirai:"text"`,
-    driver:anim.Bone_Ref,
-    bone:anim.Bone_Ref `mirai:"optional"`,
-    curve:[64]u8 `mirai:"optional,text,label=A Float curve it adds to (such as a morph target of the rig's mesh)"`,
-    samples:[anim.RIG_POSE_SAMPLES]anim.Pose_Corrective_Sample `mirai:"trim"`,
-    weight:f32 `mirai:"optional,min=0,max=1"`,
-    apply_pose,enabled:bool `mirai:"optional"`,
-}
 Profile_Follow_Params :: struct {
     name:[64]u8 `mirai:"text"`,
     bone:anim.Bone_Ref,
@@ -51,12 +42,6 @@ SPATIAL_TARGET_PARAMS_DEFAULT :: Spatial_Target_Params{rotation=1,scale={1,1,1}}
 profile_spline_value :: proc(p:Profile_Spline_Params) -> (value:anim.Spline_IK_Constraint) {authoring_struct_fields(&value,p);return}
 @(private)
 profile_follow_value :: proc(p:Profile_Follow_Params) -> (value:anim.Follow_Constraint) {authoring_struct_fields(&value,p);return}
-@(private)
-profile_corrective_value :: proc(call:^api.Call,p:Profile_Corrective_Params) -> (value:anim.Pose_Corrective) {
-    authoring_struct_fields(&value,p)
-    value.sample_count=u8(profile_array_count(call,"corrective","samples"))
-    return
-}
 
 // The target of a goal in a world, or a failure that says what is wrong with it.
 @(private)

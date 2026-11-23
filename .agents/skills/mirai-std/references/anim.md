@@ -138,7 +138,7 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
 - `two_bone_ik` receives three transforms in the same space, target and pole. It keeps the lengths
   also with intermediate weight, clamps targets out of reach, keeps the rotation of the end and
   gives `reached` apart from numeric success. With a `Chain_Reach` it softens and stretches as a
-  chain does ([reach](anim-rigs.md#reach-spline-aiming-and-pose-samples-rig_shapesodin)).
+  chain does ([reach](anim-rigs.md#reach-spline-and-aiming-rig_shapesodin)).
   `skeleton_ik` applies it to a direct parent-child chain and recomposes the pose.
 - `look_at` and `aim_at` aim the ray from an `offset` of the bone (eyes, muzzle) through the
   target, so the vector to the target is not normalized; a target nearer the bone than that ray
@@ -183,7 +183,7 @@ equal length, at least one bone, finite transforms and unit quaternions. No proc
   twist and springs. The definition is shared among characters; each parallel evaluation receives
   its state and its scratch.
 
-## Procedural without clips (`procedural.odin`, `chain_ik.odin`)
+## Procedural without clips (`procedural.odin`)
 
 They need no `Library` or clips: they are `contextless`, do not allocate and use plain states.
 Points, normals, targets and global poses go in the same space; `std/anim` makes no physics queries:
@@ -211,11 +211,9 @@ the consumer delivers contacts and transforms of the live supports.
   moving anchors or stretching segments. `gait_body_target` adapts the height and orientation of the
   body to the supports, with local vertical axis Y, and limits the correction; legs in flight or
   with an inactive anchor are excluded even if their weight keeps decaying.
-- **Chain IK.** `chain_ik` is FABRIK on positions with a fixed root, an optional pole and per-joint
-  bend limits (between straight and π); it reports residual, iterations and `reached`, without
-  guaranteeing convergence with constraints. `out` may be exactly `points`. `skeleton_chain_ik`
-  applies it over a parent-child chain: it keeps local translations, weights rotations and
-  recomposes siblings and descendants. For two segments the analytic `skeleton_ik` is preferred.
+- **Chains.** A chain past two segments is solved by
+  [`multi_ik`](anim-rigs.md#ik-with-several-targets) with a pole and a reach per effector; for two
+  segments the analytic `skeleton_ik` is preferred.
 
 Integration order: base or sampled pose, support queries, gait and planting, body adjustment, IK and
 orientation of ends, sockets and palette. Do not sample the pose again after the procedural. There

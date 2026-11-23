@@ -34,7 +34,6 @@ Animation_Capture_Params :: struct {
     actions:[64]aed.Preview_Action `mirai:"optional"`,
     motion:[16]aed.Request_Motion `mirai:"optional"`,
     locomotion:aed.Request_Locomotion `mirai:"optional"`,
-    distance:aed.Request_Distance `mirai:"optional"`,
     locomote:aed.Intent_Locomote `mirai:"optional"`,
     look:aed.Intent_Look `mirai:"optional"`,
     gesture:aed.Intent_Gesture `mirai:"optional"`,

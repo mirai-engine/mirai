@@ -71,21 +71,20 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     playing_pose(leader,.Local)[5].rotation=mm.quat_axis_angle({0,1,0},.4)
     jaw_own:=mm.quat_axis_angle({0,1,0},.1)
     playing_pose(follower,.Local)[4].rotation=jaw_own
-    append(&leader.curves,Curve_Output{target=base.name_hash("jawOpen"),property=.Float,value={.5,0,0,0},weight=1})
+    append(&leader.curves,Curve_Output{target=base.name_hash("jawOpen"),property=.Float,value={1,0,0,0},weight=1});leader.curves_ready=true
     append(&follower.curves,Curve_Output{target=base.name_hash("jawOpen"),property=.Float,value={.1,0,0,0},weight=1})
     append(&follower.curves,Curve_Output{target=base.name_hash("blink"),property=.Float,value={1,0,0,0},weight=1})
     head_sampled:[6]mm.Transform;copy(head_sampled[:],playing_pose(follower,.Local))
 
-    // A capture curve drives the curve of a pose of the face, which opens the jaw.
+    // The capture curve the body plays opens the jaw of the head by a pose of its face: the head
+    // reads the curves of the body over its own.
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     characters:Character_Assets;defer character_assets_free(&characters)
-    drive:=CURVE_DRIVE_DEFAULT;drive.scale=2
-    base.text_set(drive.from[:],"jawOpen");base.text_set(drive.to[:],"jaw_open_pose")
     open:=mm.quat_axis_angle({1,0,0},.6)
     pose:=CURVE_POSE_DEFAULT;pose.bone=bone_ref("jaw")
-    base.text_set(pose.curve[:],"jaw_open_pose");pose.delta.rotation=open
-    drives:=[1]Curve_Drive{drive};poses:=[1]Curve_Pose{pose}
-    profile:=Pose_Profile{curve_drives=drives[:],curve_poses=poses[:]}
+    base.text_set(pose.curve[:],"jawOpen");pose.delta.rotation=open
+    poses:=[1]Curve_Pose{pose}
+    profile:=Pose_Profile{curve_poses=poses[:]}
     test_modifier_profile(&modifiers,&characters,head,profile)
     problems:core.Problems
     tick :: proc(playback:^Playback,characters:^Character_Assets,modifiers:^Modifier_Runtime,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent),problems:^core.Problems,sampled:[]mm.Transform,head:core.Entity) {
@@ -103,7 +102,7 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
             same &&=linalg.length(head_world[pair[0]].position-body_world[pair[1]].position)<1e-4 && mm.quat_angle(head_world[pair[0]].rotation,body_world[pair[1]].rotation)<1e-3
         }
         same &&=mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw)<1e-4 && playing_pose(follower,.Local)[4].position==mm.Vec3{0,-.05,.05}
-        same &&=animation_curve(core.ref(playback),head,"jawOpen")==.5 && animation_curve(core.ref(playback),head,"blink")==1 && animation_curve(core.ref(playback),head,"jaw_open_pose")==1
+        same &&=animation_curve(core.ref(playback),head,"jawOpen")==1 && animation_curve(core.ref(playback),head,"blink")==1
         return same
     }
     tick(&playback,&characters,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
@@ -120,10 +119,15 @@ a_head_of_its_own_skeleton_follows_the_body_and_its_curves_pose_its_face_without
     context=saved
     testing.expect(t,stable && problems.count==0)
 
-    // Half the drive opens half the jaw; a disabled pose leaves the jaw its own turn.
-    drives[0].scale=.5
+    // A quarter of the curve of the body opens a quarter of the jaw; while the body does not
+    // animate it, the head reads its own; a disabled pose leaves the jaw its own turn.
+    leader.curves[0].value.x=.25
     tick(&playback,&characters,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,abs(mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw_own)-.15)<1e-3)
+    leader.curves[0].weight=0
+    tick(&playback,&characters,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
+    testing.expect(t,abs(mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw_own)-.06)<1e-3)
+    leader.curves[0].value.x,leader.curves[0].weight=1,1
     poses[0].enabled=false
     tick(&playback,&characters,&modifiers,&w.transforms,&w.parents,&problems,head_sampled[:],head)
     testing.expect(t,mm.quat_angle(playing_pose(follower,.Local)[4].rotation,jaw_own)<1e-5)
@@ -159,73 +163,52 @@ follow_problem :: proc(problems:^core.Problems,e:core.Entity,code:string) -> boo
 }
 
 @(test)
-curve_drives_combine_clamp_and_replace_and_full_poses_blend_before_additive_ones :: proc(t:^testing.T) {
+full_curve_poses_blend_before_additive_ones_in_any_order_without_stable_allocations :: proc(t:^testing.T) {
     face:=core.entity_make(1,1)
     playback:Playback;defer playback_free(&playback)
     playback.frame=1
     step:=mm.Transform{{0,.1,0},1,{1,1,1}}
     follow_rig(&playback,face,3,{"","root","jaw","lid"},{-1,0,1,1},{mm.TRANSFORM_IDENTITY,step,step,step})
     state:=constraint_playing(core.ref(&playback),face)
-    values:=[4]f32{.8,.5,.3,.9}
-    for name,i in ([4]string{"jawOpen","mouthClose","smileL","smileR"}) {
+    values:=[3]f32{1,.9,.4}
+    for name,i in ([3]string{"jawOpen","smile","jawClose"}) {
         append(&state.curves,Curve_Output{target=base.name_hash(name),property=.Float,value={values[i],0,0,0},weight=1})
     }
     slice.sort_by(state.curves[:],curve_order)
     modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
     characters:Character_Assets;defer character_assets_free(&characters)
-    drives:[dynamic]Curve_Drive;defer delete(drives)
-    drive :: proc(drives:^[dynamic]Curve_Drive,from,with,to:string,combine:Curve_Combine=.From,mode:Curve_Drive_Mode=.Add,scale:f32=1,offset:f32=0,clamped:=false,weight:f32=1) -> bool {
-        row:=CURVE_DRIVE_DEFAULT
-        base.text_set(row.from[:],from);base.text_set(row.with[:],with);base.text_set(row.to[:],to)
-        row.combine,row.mode,row.scale,row.offset,row.clamp,row.weight=combine,mode,scale,offset,clamped,weight
-        return pose_profile_check({curve_drives={row}}) && append(drives,row)==1
-    }
-    testing.expect(t,drive(&drives,"jawOpen","mouthClose","jaw_close",.Product))
-    testing.expect(t,drive(&drives,"smileL","smileR","smile",.Min))
-    testing.expect(t,drive(&drives,"smileR","","smile",mode=.Max))
-    testing.expect(t,drive(&drives,"jawOpen","","jaw",scale=2,offset=-.2,clamped=true))
-    testing.expect(t,drive(&drives,"mouthClose","","jawOpen",mode=.Replace,weight=.5))
     full_a:=CURVE_POSE_DEFAULT;full_a.bone,full_a.full=bone_ref("lid"),true
-    base.text_set(full_a.curve[:],"jaw");full_a.delta.position={1,0,0}
+    base.text_set(full_a.curve[:],"jawOpen");full_a.delta.position={1,0,0}
     full_b:=full_a;base.text_set(full_b.curve[:],"smile");full_b.delta.position={0,1,0}
     additive:=CURVE_POSE_DEFAULT;additive.bone=bone_ref("lid")
-    base.text_set(additive.curve[:],"jaw_close");additive.delta.position={0,0,1}
+    base.text_set(additive.curve[:],"jawClose");additive.delta.position={0,0,1}
     // The additive row first: full poses still go before it.
     poses:=[3]Curve_Pose{additive,full_a,full_b}
-    profile:=Pose_Profile{curve_drives=drives[:],curve_poses=poses[:]}
+    profile:=Pose_Profile{curve_poses=poses[:]}
     prepared:=test_modifier_profile(&modifiers,&characters,face,profile)
     problems:core.Problems
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,prepared,profile,false,&problems) && problems.count==0)
-    value :: proc(playback:^Playback,e:core.Entity,name:string) -> f32 {return animation_curve(core.ref(playback),e,name)}
-    state.seen=playback.frame
-    testing.expect(t,abs(value(&playback,face,"jaw_close")-.4)<1e-5,"the product of both")
-    testing.expect(t,abs(value(&playback,face,"smile")-.9)<1e-5,"their least, then the most of that and smileR")
-    testing.expect(t,abs(value(&playback,face,"jaw")-1)<1e-5,"clamped to 1")
-    testing.expect(t,abs(value(&playback,face,"jawOpen")-.65)<1e-5,"replaced by half its weight")
-    testing.expect(t,slice.is_sorted_by(state.driven[:],curve_order),"the curves drives write are laid out in order")
     // lid: (1*{1,0,0} + .9*{0,1,0}) / 1.9, then .4 along Z.
     expected:=mm.Vec3{1/1.9,.9/1.9,.4}
     testing.expectf(t,linalg.length(playing_pose(state,.Local)[3].position-expected)<1e-4,"full poses normalized, then the additive one: %v",playing_pose(state,.Local)[3].position)
     testing.expect(t,modifiers.curve_full[3]=={},"the sums start over")
 
-    // The rows of the poses in another order (a new profile) give the same pose, and
-    // laying the curves out again within their room reserves nothing.
+    // The rows of the poses in another order (a new profile) give the same pose and reserve
+    // nothing.
     playing_pose(state,.Local)[3]=step
-    laid:=raw_data(state.driven)
     poses[0],poses[2]=poses[2],poses[0]
     prepared=test_modifier_profile(&modifiers,&characters,face,profile)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     stable:=curve_poses_apply(state,&playback,&modifiers,prepared,profile,false,&problems)
     context=saved
-    testing.expect(t,stable && raw_data(state.driven)==laid && abs(value(&playback,face,"jaw_close")-.4)<1e-5 && linalg.length(playing_pose(state,.Local)[3].position-expected)<1e-4)
+    testing.expect(t,stable && linalg.length(playing_pose(state,.Local)[3].position-expected)<1e-4)
 
-    // A curve renamed in place lays the curves out again: smileR is gone, so smile is
-    // the least of smileL and nothing.
-    for &curve in state.curves {if curve.target==base.name_hash("smileR") {curve.target=base.name_hash("browUp")}}
+    // A curve renamed in place is found again: smile is gone, so only jawOpen poses fully.
+    for &curve in state.curves {if curve.target==base.name_hash("smile") {curve.target=base.name_hash("browUp")}}
     slice.sort_by(state.curves[:],curve_order)
     playing_pose(state,.Local)[3]=step
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,prepared,profile,false,&problems))
-    testing.expect(t,abs(value(&playback,face,"browUp")-.9)<1e-5 && abs(value(&playback,face,"smile"))<1e-5 && abs(value(&playback,face,"jaw_close")-.4)<1e-5)
+    testing.expect(t,linalg.length(playing_pose(state,.Local)[3].position-mm.Vec3{1,0,.4})<1e-4)
 }
 
 // A world a scene is saved from, with the look of its entities.
@@ -269,7 +252,7 @@ curve_materials_are_live_over_what_the_entity_authors_and_no_scene_saves_them ::
     profile:=Pose_Profile{curve_materials=materials[:]}
     prepared:=test_modifier_profile(&modifiers,&characters,face,profile)
     apply :: proc(modifiers:^Modifier_Runtime,characters:^Character_Assets,state:^Playing,w:^Look_World,e:core.Entity) -> (live:erender.Material_Live,fits:bool) {
-        fits=curve_materials_apply(modifiers,characters,state,2,&w.lives,e)
+        fits=curve_materials_apply(modifiers,characters,{},state,2,&w.lives,e)
         test_world_settle(w)
         live,_=core.get(&w.lives,e)
         return
@@ -288,7 +271,7 @@ curve_materials_are_live_over_what_the_entity_authors_and_no_scene_saves_them ::
     problems:core.Problems
     testing.expect(t,curve_poses_apply(state,&playback,&modifiers,prepared,profile,false,&problems) && len(prepared.curve_material_states)==2)
     bound:=prepared.curve_material_states[0]
-    testing.expect(t,bound.ready && bound.rig==face && bound.to==base.name_hash("frame") && bound.slot>=0 && state.curves[bound.slot].target==base.name_hash("mouth_frame"))
+    testing.expect(t,bound.ready && bound.rig==face && bound.to==base.name_hash("frame") && bound.at[0]>=0 && state.curves[bound.at[0]].target==base.name_hash("mouth_frame"))
     drawn,applied=apply(&modifiers,&characters,state,&w,face)
     value,found=find(&drawn,1,"frame");testing.expect(t,applied && found && value==[4]f32{3,3,3,3})
     base.text_set(materials[0].curve[:],"blush");prepared=test_modifier_profile(&modifiers,&characters,face,profile)

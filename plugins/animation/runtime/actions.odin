@@ -630,7 +630,7 @@ action_exit :: proc(content:^host.Content_Animation,handle:lib.Clip,definition:^
 
 // Advances the actions of an entity and asks their slots for their clips. dt is the entity's own
 // time; pace its seconds per second of the world, which a World action divides out.
-actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,dt:f32,problems:^core.Problems,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,distance:^Animation_Distance_Request,pace:f32) {
+actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,dt:f32,problems:^core.Problems,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,pace:f32) {
     if !finite(dt) || dt<0 {return}
     active:=action_state(runtime,state.entity);if active==nil {return}
     planned:=active.plan>=0 && int(active.plan)<len(runtime.plans)
@@ -713,9 +713,6 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         if slot.seeking {current.time,layer.from=slot.time,slot.time;current.fresh=true;current.done=false;slot.seeking=false}
         current.speed=speed
         slot.player=current^;slot.from=slot.time
-        controlled:=distance!=nil && distance.entity==state.entity && source_clip_name(content.id,distance.animation,distance.clip)==asked.clip
-        seek:=controlled && distance.seek
-        rejected:=false
         remaining:=dt if animation.playing else 0
         if driven {
             // Forward it plays to the time asked; sought or back it starts over and goes there.
@@ -727,43 +724,10 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             remaining=slot.drive-slot.elapsed
         }
         exit:=action_exit(content,handle,definition,plan.names[slot.action],duration)
-        if controlled {
-            target:=distance.time;valid:=finite(target) && target>=0 && target<=duration
-            if slot.section>=0 {
-                section:=int(slot.section)
-                start,end,_:=section_span(plan,content,handle,section)
-                if seek {valid &&=target>=start && target<=end} else {
-                    for pass in 0..<ACTION_PASSES {
-                        if target<end {break}
-                        next:=int(profile.sections[section].next)
-                        if next<0 {valid &&=target<=end;break}
-                        next_start,next_end,_:=section_span(plan,content,handle,next)
-                        if next_start!=end {valid=false;break}
-                        end=next_end
-                        section=next
-                        if pass+1==ACTION_PASSES {valid=false}
-                    }
-                }
-            }
-            if !seek {valid &&=target>=slot.time}
-            if !valid {
-                core.report(problems,state.entity,"animation.action_distance","a distance-matched request for action '%s' was refused: its time %f is outside the clip or its section, or before the time the action is at without seek; ask for a time ahead within them",base.text_get(definition.name[:]),target)
-                remaining=0;rejected=true
-            } else if seek {
-                slot.time=target;slot.from,slot.to=target,target;slot.continuous=false;slot.windows={}
-                windows:for marker in lib.clip_markers(&content.lib,handle) {
-                    if marker.duration<=0 || target<marker.time || target>=marker.time+marker.duration || int(marker.id)>=len(content.markers) {continue}
-                    if action_section_named(plan,slot.action,content.markers[marker.id].name) {continue windows}
-                    for &open in slot.windows {if open==0 {open=content.markers[marker.id].name;break}}
-                }
-                current.time,current.fresh,current.done,layer.from=target,false,false,target;remaining=0
-            } else {remaining=(target-slot.time)/speed}
-        }
         event_weight:=definition.weight*animation.weight
         action_name:=plan.names[slot.action].name
         event_span,event_elapsed:=remaining,f32(0)
         for pass in 0..<ACTION_PASSES {
-            if seek || rejected {break}
             end:=exit
             if slot.section>=0 {_,end,_=section_span(plan,content,handle,int(slot.section))}
             step:=min(remaining,max(end-slot.time,0)/speed)
@@ -842,18 +806,6 @@ action_hand_back :: proc(stack:^Stack_Playing,i:int,slot:^Action_Playing,fade:f3
     if layer.weight>0 && layer.player.clip==slot.player.clip {stack_blend(stack,i,fade)}
     layer.root_motion,layer.body,layer.body_vertical=.None,.None,false
 }
-action_player :: proc(runtime:^Action_Runtime,entity:core.Entity,clip:u64,content:^host.Content_Animation=nil,animation:base.Asset_Id={}) -> (player:lib.Player,ok:bool) {
-    state:=action_state(runtime,entity);if state==nil || state.plan<0 || int(state.plan)>=len(runtime.plans) {return}
-    profile:=runtime.plans[state.plan].profile
-    for slot in state.slots {
-        if !slot.active || slot.finishing || slot.player.clip==0 || int(slot.action)>=len(profile.actions) {continue}
-        if content!=nil {if !lib.clip_valid(&content.lib,slot.player.clip) || lib.clip_data(&content.lib,slot.player.clip).name!=source_clip_name(content.id,animation,clip) {continue}} else if runtime.plans[state.plan].names[slot.action].clip!=clip {continue}
-        player=slot.player;player.time=slot.time
-        return player,true
-    }
-    return
-}
-
 // The clock of the action that plays in the layer leading, which has share of the root of state;
 // none for a layer without one.
 action_clock :: proc(runtime:^Action_Runtime,state:^Playing,content:^host.Content_Animation,leading:int,share:f32) -> (clock:Motion_Clock) {

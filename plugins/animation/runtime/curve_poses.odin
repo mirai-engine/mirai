@@ -8,7 +8,7 @@ import "mirai:std/base"
 import erender "mirai:engine/render"
 import mm "mirai:std/math"
 
-POSE_CURVE_ROWS :: 4096 // rows of curve_poses, and of curve_drives, of a .character
+POSE_CURVE_ROWS :: 4096 // rows of curve_poses, and of curve_materials, of a .character
 
 // A pose that a Float curve brings to a bone, as the poses of a face (a blink,
 // an open jaw, a phoneme): with the value of curve, from 0 to 1, the bone
@@ -26,32 +26,6 @@ Curve_Pose :: struct {
     enabled:bool,
 }
 CURVE_POSE_DEFAULT :: Curve_Pose{delta=mm.TRANSFORM_IDENTITY,weight=1,enabled=true}
-
-// What a drive reads of from and with: from alone, or both multiplied (a
-// shape that only both curves together bring), their least or their most.
-Curve_Combine :: enum u8 {From,Product,Min,Max}
-// What a drive does to its curve: adds to it, replaces it or keeps the most.
-Curve_Drive_Mode :: enum u8 {Add,Replace,Max}
-
-// A Float curve that drives another: to receives scale times what it reads
-// of from (and with), plus offset, clamped to low..high when clamp is on. The
-// rows apply in order, so a curve an earlier row drives drives the next: the
-// curves of a face capture become those of the poses of a face, two curves
-// together give a combination shape, and a curve named as a morph target of
-// the mesh moves it. weight blends the curve from before the drive.
-Curve_Drive :: struct {
-    from,to:[64]u8 `mirai:"text"`,
-    with:[64]u8 `mirai:"text,optional"`, // the second curve of Product, Min and Max
-    combine:Curve_Combine `mirai:"optional"`,
-    mode:Curve_Drive_Mode `mirai:"optional"`,
-    scale:f32,
-    offset:f32 `mirai:"optional"`,
-    clamp:bool `mirai:"optional"`,
-    low,high:f32 `mirai:"optional"`,
-    weight:f32 `mirai:"optional,min=0,max=1"`,
-    enabled:bool,
-}
-CURVE_DRIVE_DEFAULT :: Curve_Drive{scale=1,high=1,weight=1,enabled=true}
 
 // A value of the material of the meshes of a rig that a Float curve moves:
 // offset plus scale times the curve, which step rounds to its multiples (the
@@ -77,15 +51,14 @@ Curve_Binding :: struct {
     bound:u64,
     generation:u32,
     ready:bool,
-    bone:i32,           // of a pose
-    curve,with,to:u64,  // name hashes: of the pose or of the curves a drive reads, and of the one it drives; of a material value, to is its parameter
-    slot,with_slot:i32, // where they were found last
-    to_slot:i32,        // where the curve a drive writes is in the final curves
+    bone:i32,     // of a pose
+    curve,to:u64, // name hashes: of its curve, and of the parameter of a material value
+    at:[2]i32,    // where its curve was found last among those of the rig and of its leader
 }
 
 @(private)
 curve_poses_check :: proc(profile:Pose_Profile) -> bool {
-    if len(profile.curve_poses)>POSE_CURVE_ROWS || len(profile.curve_drives)>POSE_CURVE_ROWS || len(profile.curve_materials)>POSE_CURVE_ROWS {return false}
+    if len(profile.curve_poses)>POSE_CURVE_ROWS || len(profile.curve_materials)>POSE_CURVE_ROWS {return false}
     for &value in profile.curve_materials {
         if !blend_text_valid(value.curve[:],false) || !blend_text_valid(value.parameter[:],false) || int(value.slot)>=erender.MATERIAL_SLOTS || !finite(value.step) || value.step<0 {return false}
         for axis in 0..<4 {if !finite(value.scale[axis]) || !finite(value.offset[axis]) {return false}}
@@ -93,18 +66,22 @@ curve_poses_check :: proc(profile:Pose_Profile) -> bool {
     for &value in profile.curve_poses {
         if !blend_text_valid(value.curve[:],false) || !profile_bone(value.bone) || !spatial_transform_valid(value.delta) || !profile_weight(value.weight) {return false}
     }
-    for &value in profile.curve_drives {
-        paired:=value.combine!=.From
-        if !blend_text_valid(value.from[:],false) || !blend_text_valid(value.to[:],false) || !blend_text_valid(value.with[:],!paired) || paired==(value.with[0]==0) || value.from==value.to || paired && value.with==value.to {return false}
-        if value.combine>max(Curve_Combine) || value.mode>max(Curve_Drive_Mode) || !finite(value.scale) || !finite(value.offset) || !finite(value.low) || !finite(value.high) || value.clamp && value.low>value.high || !profile_weight(value.weight) {return false}
-    }
     return true
 }
 
-// The curves a lookup of a rig reads: those of its animation, or with a
-// leader or drives, those after them. Both are in curve_order.
-playing_curves :: proc "contextless" (state:^Playing) -> []Curve_Output {
-    return state.driven[:] if state.driven_ready else state.curves[:]
+// The rig whose curves a rig reads over its own: the one it follows, while that animates in this
+// tick.
+rig_leader :: proc(playback:core.Ref(Playback),state:^Playing) -> ^Playing {
+    if state==nil || state.leader==core.NONE {return nil}
+    leader:=constraint_playing(playback,state.leader)
+    return leader if leader!=nil && leader.seen==playback.frame && leader.curves_ready else nil
+}
+
+// The curve of key that a rig reads: that of its leader while the leader animates it, so a modular
+// head that follows a body takes the curves of its face, else its own. at keeps where each was.
+rig_curve :: proc(state,leader:^Playing,key:Curve_Output,at:^[2]i32) -> ^Curve_Output {
+    if leader!=nil {if curve:=curve_find(leader.curves[:],key,&at[1]);curve!=nil && curve.weight>0 {return curve}}
+    return curve_find(state.curves[:],key,&at[0])
 }
 
 // The order of the curves of a rig: by name hash, property and slot.
@@ -116,12 +93,6 @@ curve_order :: proc(a,b:Curve_Output) -> bool {
 
 @(private)
 curve_compare :: proc(a,b:Curve_Output) -> slice.Ordering {return .Less if curve_order(a,b) else .Greater if curve_order(b,a) else .Equal}
-
-// The Float curve of slot 0 with this name hash among curves (curve_find).
-@(private)
-curve_slot :: proc(curves:[]Curve_Output,target:u64,slot:^i32) -> ^Curve_Output {
-    return curve_find(curves,{target=target,property=.Float},slot)
-}
 
 // The curve of the target, property and slot of key among curves; at keeps where it was, so a rig
 // whose curves stay in place finds it at once, and curves in curve_order are searched by halves.
@@ -139,136 +110,24 @@ curve_find :: proc(curves:[]Curve_Output,key:Curve_Output,at:^i32) -> ^Curve_Out
 @(private)
 curve_same :: proc "contextless" (a,b:Curve_Output) -> bool {return a.target==b.target && a.property==b.property && a.slot==b.slot}
 
-// What the final curves of a rig were laid out for: how many curves it and its
-// leader have, the rows of its profile, its skeleton and its leader.
-@(private)
-Driven_Key :: [7]u64
-
-// Lays out the final curves of a rig once: its own curves, its leader's and
-// those its drives write, each once in curve_order; where each of its own and
-// of its leader's goes; and where the drives of its profile find theirs. It
-// runs again only when what it was laid out for changes, so a stable tick
-// reserves and searches nothing.
-@(private)
-curves_layout :: proc(state:^Playing,leader:[]Curve_Output,rig:^Modifier_Rig,drives:[]Curve_Drive) -> bool {
-    if reserve(&state.driven,len(state.curves)+len(leader)+len(drives))!=nil || resize(&state.driven_own,len(state.curves))!=nil || resize(&state.driven_leader,len(leader))!=nil {return false}
-    clear(&state.driven)
-    for curve in state.curves {append(&state.driven,Curve_Output{target=curve.target,property=curve.property,slot=curve.slot})}
-    for curve in leader {append(&state.driven,Curve_Output{target=curve.target,property=curve.property,slot=curve.slot})}
-    for &drive in drives {append(&state.driven,Curve_Output{target=base.name_hash(base.text_get(drive.to[:])),property=.Float})}
-    slice.sort_by(state.driven[:],curve_order)
-    kept:=0
-    for curve in state.driven {
-        if kept>0 && curve_same(curve,state.driven[kept-1]) {continue}
-        state.driven[kept]=curve;kept+=1
-    }
-    base.truncate(&state.driven,kept)
-    find :: proc(curves:[]Curve_Output,key:Curve_Output) -> i32 {
-        at,found:=slice.binary_search_by(curves,key,curve_compare)
-        return i32(at) if found else -1
-    }
-    for curve,i in state.curves {state.driven_own[i]=find(state.driven[:],curve)}
-    for curve,i in leader {state.driven_leader[i]=find(state.driven[:],curve)}
-    for &config,row in drives {
-        binding:=&rig.curve_drive_states[row]
-        binding^={rig=state.entity,bound=state.bound,generation=state.generation,ready=true}
-        binding.curve,binding.to=base.name_hash(base.text_get(config.from[:])),base.name_hash(base.text_get(config.to[:]))
-        binding.with=base.name_hash(base.text_get(config.with[:])) if config.combine!=.From else 0
-        binding.slot=find(state.driven[:],{target=binding.curve,property=.Float})
-        binding.with_slot=find(state.driven[:],{target=binding.with,property=.Float}) if binding.with!=0 else -1
-        binding.to_slot=find(state.driven[:],{target=binding.to,property=.Float})
-    }
-    layout:u64=0
-    for curve in state.driven {layout=base.hash_mix(layout,curve.target)}
-    state.curve_layout=base.hash_mix(layout,u64(len(state.driven)))
-    return true
-}
-
-// The final curves of a rig take the values of this tick: its own, and over
-// them those its leader animates. False when its curves or its leader's are not
-// those they were laid out for.
-@(private)
-curves_fill :: proc "contextless" (state:^Playing,leader:[]Curve_Output) -> bool {
-    if len(state.driven_own)!=len(state.curves) || len(state.driven_leader)!=len(leader) {return false}
-    driven:=state.driven[:]
-    for &curve in driven {curve.value,curve.weight={},0}
-    for curve,i in state.curves {
-        at:=int(state.driven_own[i])
-        if at<0 || at>=len(driven) || !curve_same(driven[at],curve) {return false}
-        driven[at]=curve
-    }
-    for curve,i in leader {
-        if curve.weight<=0 {continue}
-        at:=int(state.driven_leader[i])
-        if at<0 || at>=len(driven) || !curve_same(driven[at],curve) {return false}
-        driven[at]=curve
-    }
-    return true
-}
-
-// The final curves of a rig with a leader or curve drives: those of its
-// animation, where the leader's animated ones replace them, and then the
-// drives of its profile in their order. Then the curve poses of its profile
-// move its bones: the full ones first, then the additive ones, each summed by
-// bone so that the order of the rows does not matter. Its curve materials find
-// their curves for animation_skin. Reserving happens only when the curves, the
-// profile or the skeleton change.
+// The curve poses of the profile of a rig move its bones by the curves it reads (rig_curve): the
+// full ones first, then the additive ones, each summed by bone so that the order of the rows does
+// not matter. Its curve materials find their curves for animation_skin.
 @(private)
 curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Runtime,rig:^Modifier_Rig,pose:Pose_Profile,followed:bool,problems:^core.Problems) -> bool {
     if len(pose.curve_poses)>0 && len(runtime.curve_full)<len(playing_pose(state,.Local)) &&
         resize(&runtime.curve_full,len(playing_pose(state,.Local)))!=nil {
         memory_problem(problems,state.entity,"the curve poses of its .character")
-        state.driven_ready=false
         return false
     }
-    leader:=constraint_playing(core.ref(playback),state.leader) if followed else nil
-    state.driven_ready=false
-    if leader!=nil || len(pose.curve_drives)>0 {
-        leader_curves:=playing_curves(leader) if leader!=nil else nil
-        key:=Driven_Key{1,u64(len(state.curves)),u64(len(leader_curves)),base.hash_combine(rig.asset[0]~rig.asset[1],rig.revision) if rig!=nil else 0,state.bound,u64(state.generation),u64(state.leader) if leader!=nil else 0}
-        if state.driven_key!=key || !curves_fill(state,leader_curves) {
-            state.driven_key={}
-            if !curves_layout(state,leader_curves,rig,pose.curve_drives) {memory_problem(problems,state.entity,"its curves");return false}
-            curves_fill(state,leader_curves)
-            state.driven_key=key
-        }
-        driven:=state.driven[:]
-        for &config,row in pose.curve_drives {
-            binding:=rig.curve_drive_states[row]
-            if !config.enabled || config.weight<=0 || binding.to_slot<0 || int(binding.to_slot)>=len(driven) {continue}
-            a,b:f32;weight:f32
-            if at:=int(binding.slot);at>=0 && at<len(driven) {a,weight=driven[at].value.x,driven[at].weight}
-            if at:=int(binding.with_slot);config.combine!=.From && at>=0 && at<len(driven) {b=driven[at].value.x;weight=max(weight,driven[at].weight)}
-            if weight<=0 {continue}
-            read:=a
-            switch config.combine {
-            case .From:
-            case .Product: read=a*b
-            case .Min: read=min(a,b)
-            case .Max: read=max(a,b)
-            }
-            value:=read*config.scale+config.offset
-            if config.clamp {value=clamp(value,config.low,config.high)}
-            to:=&driven[binding.to_slot]
-            before:=to.value.x
-            switch config.mode {
-            case .Add: value+=before
-            case .Replace:
-            case .Max: value=max(before,value)
-            }
-            value=mm.lerp(before,value,config.weight)
-            if finite(value) {to.value.x=value;to.weight=max(to.weight,weight*config.weight)}
-        }
-        state.driven_ready=true
-    }
-    curves:=playing_curves(state)
+    leader:=rig_leader(core.ref(playback),state) if followed else nil
     for &config,row in pose.curve_materials {
         binding:=&rig.curve_material_states[row]
         if !binding.ready {
-            binding^={rig=state.entity,ready=true,slot=-1}
+            binding^={rig=state.entity,ready=true,at=-1}
             binding.curve,binding.to=base.name_hash(base.text_get(config.curve[:])),base.name_hash(base.text_get(config.parameter[:]))
         }
-        curve_slot(curves,binding.curve,&binding.slot)
+        rig_curve(state,leader,{target=binding.curve,property=.Float},&binding.at)
     }
     valid:=true
     for &config,row in pose.curve_poses {
@@ -276,7 +135,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
         if !rig_binding_current(binding,state) {
             binding.bone=i32(bone_resolve(state,config.bone))
             binding.curve=base.name_hash(base.text_get(config.curve[:]))
-            binding.slot=-1
+            binding.at=-1
             binding.rig,binding.bound,binding.generation,binding.ready=state.entity,state.bound,state.generation,true
         }
         if binding.bone<=0 || int(binding.bone)>=len(playing_pose(state,.Local)) {
@@ -285,7 +144,7 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
             continue
         }
         if !config.enabled || config.weight<=0 {continue}
-        curve:=curve_slot(curves,binding.curve,&binding.slot)
+        curve:=rig_curve(state,leader,{target=binding.curve,property=.Float},&binding.at)
         if curve==nil || curve.weight<=0 || curve.value.x==0 {continue}
         sum:=&runtime.curve_full[binding.bone]
         applied:=lib.pose_accumulate(sum,config.delta,curve.value.x*config.weight) if config.full else lib.pose_delta_accumulate(sum,config.delta,curve.value.x*config.weight)
@@ -315,22 +174,22 @@ curve_poses_apply :: proc(state:^Playing,playback:^Playback,runtime:^Modifier_Ru
 // the curves that do not play, and the component with the last of them.
 // False when they do not fit in it (the others still apply).
 @(private)
-curve_materials_apply :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,playing:^Playing,slots:int,lives:^core.Table(erender.Material_Live),entity:core.Entity) -> (fits:bool) {
+curve_materials_apply :: proc(runtime:^Modifier_Runtime,characters:^Character_Assets,playback:core.Ref(Playback),playing:^Playing,slots:int,lives:^core.Table(erender.Material_Live),entity:core.Entity) -> (fits:bool) {
     fits=true
     if playing==nil {return}
     rig:=modifier_rig(core.ref(runtime),playing.entity)
     pose:=modifier_pose(rig,characters)
     if pose==nil || len(pose.curve_materials)==0 {return}
     live:=core.staged(lives,entity)
-    curves:=playing_curves(playing)
+    leader:=rig_leader(playback,playing)
     for &config,row in pose.curve_materials {
         binding:=rig.curve_material_states[row]
-        name,parameter,slot:=binding.curve,binding.to,binding.slot
+        name,parameter,at:=binding.curve,binding.to,binding.at
         if !binding.ready {
             name,parameter=base.name_hash(base.text_get(config.curve[:])),base.name_hash(base.text_get(config.parameter[:]))
-            slot=-1
+            at=-1
         }
-        curve:=config.enabled?curve_slot(curves,name,&slot):nil
+        curve:=config.enabled?rig_curve(playing,leader,{target=name,property=.Float},&at):nil
         amount:=curve!=nil?curve.value.x:0
         if config.step>0 {amount=math.floor(amount/config.step+.5)*config.step}
         value:=config.offset+config.scale*amount

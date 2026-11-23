@@ -60,9 +60,12 @@ soft_reach_and_stretch_keep_a_bounded_continuous_reach :: proc(t:^testing.T) {
     parents:=[3]i32{-1,0,1};names:=[3]u64{1,2,3}
     rest:=[3]math.Transform{math.TRANSFORM_IDENTITY,{{0,1,0},1,{1,1,1}},{{0,1,0},1,{1,1,1}}}
     skeleton:=Skeleton{parents[:],names[:],rest[:]};local:=rest;world:[3]math.Transform
-    bones:=[3]i32{0,1,2};points,solved:[3]math.Vec3;lengths:[2]f32
-    result,valid:=skeleton_chain_ik(skeleton,local[:],world[:],bones[:],nil,{target={0,3,0},iterations=24,tolerance=.001},points[:],solved[:],lengths[:],reach={max_stretch=.25})
-    testing.expect(t,valid && !result.reached && abs(result.error-.75)<1e-4)
+    links:[3]Pose_Link;hierarchy,_:=pose_hierarchy_prepare(parents[:],links[:])
+    joints:=[2]Multi_IK_Joint{MULTI_IK_JOINT_DEFAULT,MULTI_IK_JOINT_DEFAULT};joints[1].bone=1
+    effector:=MULTI_IK_EFFECTOR_DEFAULT;effector.bone,effector.position,effector.reach=2,{0,3,0},{max_stretch=.25}
+    effectors:=[1]Multi_IK_Effector{effector};residuals:[1]f32
+    result,valid:=multi_ik(skeleton,hierarchy,local[:],world[:],joints[:],effectors[:],MULTI_IK_DEFAULT,residuals[:])
+    testing.expect(t,valid && result.reached && abs(linalg.length(world[2].position-effector.position)-.75)<1e-4)
     testing.expect(t,abs(local[1].position.y-1.125)<1e-5 && abs(local[2].position.y-1.125)<1e-5)
 }
 
@@ -98,20 +101,4 @@ spline_ik_follows_a_cubic_preserves_lengths_and_extends_a_short_curve :: proc(t:
         if weight==1 {for bone,i in bones {stable &&=linalg.length(branch_world[bone].position-points[i])<1e-4}}
     }
     context=saved;testing.expect(t,stable)
-}
-
-@(test)
-pose_samples_are_exact_sign_invariant_and_convex_without_allocations :: proc(t:^testing.T) {
-    samples:=[3]math.Quat{1,math.quat_axis_angle({0,0,1},math.PI*.5),math.quat_axis_angle({1,0,0},math.PI*.5)}
-    weights:[3]f32
-    testing.expect(t,pose_sample_weights(-samples[1],samples[:],weights[:]) && weights==[3]f32{0,1,0})
-    saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
-    stable:=true
-    for i in 0..<100 {
-        stable &&=pose_sample_weights(math.quat_axis_angle({0,0,1},f32(i)*.03),samples[:],weights[:])
-        sum:f32;for weight in weights {stable &&=weight>=0 && weight<=1;sum+=weight};stable &&=abs(sum-1)<1e-5
-    }
-    context=saved;testing.expect(t,stable)
-    samples[2]=-samples[1];testing.expect(t,!pose_sample_weights(1,samples[:],weights[:]))
-    testing.expect(t,!pose_sample_weights(0,samples[:],weights[:]) && !pose_sample_weights(1,nil,nil))
 }

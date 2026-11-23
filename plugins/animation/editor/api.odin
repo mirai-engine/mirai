@@ -49,7 +49,6 @@ Preview_Params :: struct {
     actions:[64]Preview_Action `mirai:"optional"`,
     motion:[16]Request_Motion `mirai:"optional"`,
     locomotion:Request_Locomotion `mirai:"optional"`,
-    distance:Request_Distance `mirai:"optional"`,
     locomote:Intent_Locomote `mirai:"optional"`,
     look:Intent_Look `mirai:"optional"`,
     gesture:Intent_Gesture `mirai:"optional"`,

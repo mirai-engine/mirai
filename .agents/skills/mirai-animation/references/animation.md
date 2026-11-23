@@ -25,7 +25,7 @@ or animation graph ([what replaces them](#what-replaces-the-state-machine)).
   list revision advances only when rig entities or skeletons change (unrelated reloads keep
   constraints/springs).
 - **`.character` set.** Shared per body: locomotion (`Match_Profile`), layer stack, actions +
-  sections, aim/additive spaces, warp/distance tracks, and modifiers (`Pose_Profile`: IK, Look,
+  sections, aim/additive spaces, warp windows, and modifiers (`Pose_Profile`: IK, Look,
   limits, [grounding](animation-grounding.md), [rigs](animation-rigs.md)). Limbs/pelvis come from
   `.skeleton` body; sections/windows reference clip span names, never raw seconds.
 - **Bone refs & modifiers.** `Bone_Ref` accepts canonical path, unique short name, or `@part` /
@@ -45,7 +45,9 @@ e.g. face/head rig on body):
 
 - Shared bones copy the leader's finished pose (by name, or path on duplicates); follower-only
   bones keep its own `Animation` and set under moved parents. Pairs build on bind, never per tick.
-- Leader curves override follower curves; remaining curves stay (`source_kind` `Own` for morphs).
+- A follower reads the curve of its leader where the leader animates it and its own otherwise
+  (`rig_curve`: lookups, curve poses, curve materials), so the face a body plays poses a modular
+  head; its morphs take the curves of the leader (`source_kind` `Pose_Source`).
 - `rigs_update` topologically sorts `Playback.follow_order` for single-pass `animation_finish`;
   cycles run last and report `animation.follow_rig`, zero common names report
   `animation.follow_bones`. Leader `Playing.world_final` builds once per tick; follower entity
@@ -157,7 +159,7 @@ if pose, ok := anim.pose_space(playback, body, context.temp_allocator, .Finished
 
 ### Multiple sources
 
-Any match source, space sample, layer, action, or distance track may specify `animation` (empty
+Any match source, space sample, layer or action may specify `animation` (empty
 uses set or `library`). Main source keeps clip names; extra sources use `source_clip_name`
 (collisions fail with `Invalid_Asset`). `Source_Assets` shares merged libraries across worlds,
 rebuilding only on asset change. Inspect via `animation_playing_content`, `source_clip_source`,
@@ -228,7 +230,7 @@ Runtime failures report `animation.*` codes in
   `attach`, `attach_socket`, `parameter`, `match_clip`, `layer_space`, `match_database`,
   `match_memory`, `match_blend`, `match_mirror`, `match_span`, `match_extra`, `match_forward`,
   `rig_*`, `constraint_*`, `grounding_*`,
-  `retarget_*`, `motion_*`, `morph_*`, `action_*`, `modifier_*`, `distance`, `match_goal`.
+  `retarget_*`, `motion_*`, `morph_*`, `action_*`, `modifier_*`, `match_goal`.
 - **Follow/curves/limits:** `follow_rig`, `follow_bones`, `follow_pose`, `curve_pose_bone`,
   `curve_pose_value`, `curve_material`, `final_pose_binding`, `final_pose_bone`, `mirror`,
   `markers_lost`, `events_lost`, `animation.memory` (keeps last pose and retries).

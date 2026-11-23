@@ -152,14 +152,6 @@ rig; `fraction` is the part of the remaining time that this step consumes.
   - The limbs share no bones and the local and global buffers do not overlap. It is a pose
     adaptation, not a physical balance solver.
 
-## Distance to time
-
-- `Distance_Key` uses seconds and the distance units of the caller. `distance_track_validate`
-  requires at least two keys, strictly increasing non-negative time and strictly monotonic
-  distance: a plateau would make the inversion ambiguous.
-- `distance_to_time` finds the segment by bisection and interpolates in `f64`; outside the range it
-  gives the time of the nearest end.
-
 ## Verification
 
 - `mirai test std/anim` with the affected cases of `inertial_test.odin`, `warp_test.odin` and

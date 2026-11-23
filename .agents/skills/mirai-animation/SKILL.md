@@ -83,9 +83,9 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [weights](references/animation-morphs.md#weights),
   [runtime](references/animation-morphs.md#runtime), [API](references/animation-morphs.md#api) and
   [deformation](references/animation-morphs.md#deformation).
-- Faces: poses that curves weigh, drives from a face capture (ARKit), material values that curves
-  move (flipbook faces) and the poses made from a clip:
-  [curve poses](references/animation-rigs.md#curve-poses-and-drives); a head or another part
+- Faces: poses that curves weigh (a face capture names them by its curves), material values that
+  curves move (flipbook faces) and the poses made from a clip:
+  [curve poses](references/animation-rigs.md#curve-poses); a head or another part
   of its own skeleton that follows the body:
   [following](references/animation.md#following-a-rig-of-another-skeleton).
 - Supports, clip adaptation and gait without clips (the ground is the `core.World_Query` of

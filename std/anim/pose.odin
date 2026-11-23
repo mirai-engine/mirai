@@ -224,10 +224,10 @@ fade_out_weight :: proc "contextless" (o:Fade_Out) -> f32 {
     if o.duration<=0 {return 0}
     return o.weight*(1-math.ease_apply(o.ease,math.saturate(o.elapsed/o.duration)))
 }
-fader_advance :: proc "contextless" (lib:^Library,f:^Fader,dt:f32,events:[]Event,current_dt:f32=-1) -> (written,dropped:int) {
-    if f==nil || !anim_finite(dt) || !anim_finite(current_dt) || current_dt< -1 {return}
+fader_advance :: proc "contextless" (lib:^Library,f:^Fader,dt:f32,events:[]Event) -> (written,dropped:int) {
+    if f==nil || !anim_finite(dt) {return}
     f.elapsed+=dt
-    w,d:=player_advance(lib,&f.current,current_dt if current_dt>=0 else dt,events)
+    w,d:=player_advance(lib,&f.current,dt,events)
     written,dropped=w,d
     kept:=0
     for &o in f.outgoing[:f.outgoing_count] {

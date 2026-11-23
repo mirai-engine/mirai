@@ -44,21 +44,20 @@ description: Mirai standard library for games, with the packages `std/base`, `st
   [blend spaces](references/anim.md#blend-spaces-blend_spaceodin),
   [skeleton](references/anim.md#skeletal-pose-skeletonodin),
   [adaptation](references/anim.md#adaptation-ikodin-retargetodin-followodin) and
-  [procedural](references/anim.md#procedural-without-clips-proceduralodin-chain_ikodin).
+  [procedural](references/anim.md#procedural-without-clips-proceduralodin).
   - Compressed and cooked clips: [error](references/anim-storage.md#error),
     [sampling](references/anim-storage.md#sampling), [stream](references/anim-storage.md#stream),
     [bit rates](references/anim-storage.md#bit-rates) and
     [access](references/anim-storage.md#access).
-  - Motion matching, inertialization, warping and distance to time:
+  - Motion matching, inertialization and warping:
     [matching](references/anim-motion.md#motion-matching-matchingodin),
-    [inertialization](references/anim-motion.md#inertialization),
-    [warping](references/anim-motion.md#orientation-and-stride-warping) and
-    [distance to time](references/anim-motion.md#distance-to-time).
-  - Chains, Multi IK, springs, twist, reach with stretch, spline, aiming with an up axis and pose
-    samples: [retarget](references/anim-rigs.md#retarget-between-chains),
+    [inertialization](references/anim-motion.md#inertialization) and
+    [warping](references/anim-motion.md#orientation-and-stride-warping).
+  - Chains, Multi IK with poles, springs, twist, reach with stretch, spline and aiming with an up
+    axis: [retarget](references/anim-rigs.md#retarget-between-chains),
     [IK](references/anim-rigs.md#ik-with-several-targets),
     [springs](references/anim-rigs.md#springs), [twist](references/anim-rigs.md#twist-distribution)
-    and [reach](references/anim-rigs.md#reach-spline-aiming-and-pose-samples-rig_shapesodin).
+    and [reach](references/anim-rigs.md#reach-spline-and-aiming-rig_shapesodin).
   - Body map, clip metrics and editing verbs:
     [body](references/anim-body.md#body-map-bodyodin),
     [metrics](references/anim-body.md#metrics-metricsodin) and

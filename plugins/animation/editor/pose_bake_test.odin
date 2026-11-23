@@ -56,7 +56,7 @@ pose_bake_test_advance :: proc(data,shared,editor,app_data:rawptr) {
 @(private)
 pose_bake_test_morph :: proc(data,shared,editor,app_data:rawptr) {
     w,s,app:=(^Pose_Bake_Test_World)(data),(^Pose_Bake_Test_Shared)(shared),(^host.App)(app_data)
-    anim.animation_morph(core.read(&w.meshes),core.read(&w.morph_weights),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),core.ref(&w.playback),core.ref(&w.modifier_runtime),&s.skin,&w.morphs,{},app,w.time,host.app_world_storage(app,data,core.Problems))
+    anim.animation_morph(core.read(&w.meshes),core.read(&w.morph_weights),core.read(&w.animations),core.read(&w.targets),core.read(&w.sources),core.read(&w.parents),core.ref(&w.playback),&s.skin,&w.morphs,{},app,w.time,host.app_world_storage(app,data,core.Problems))
 }
 @(private)
 pose_bake_test_propagate :: proc(data,shared,editor,app_data:rawptr) {
@@ -142,13 +142,15 @@ pose_bake_samples_final_constraints_curves_markers_root_and_exact_partial_endpoi
             {target="joint1",property=.Rotation,keys={{time=0,value={0,0,0,1}},{time=1,value=lib.quat_vec4(rotation)}}},
             {target="pulse",property=.Float,keys={{time=0,value={}},{time=1,value={1 if i==0 else 2,0,0,0}}}},
             {target="direction",property=.Vector,keys={{time=0,value={1,2,3,4}},{time=1,value={2,3,4,5}}}},
+            {target="bulge",property=.Float,keys={{time=0,value={1,0,0,0}},{time=1,value={1,0,0,0}}}},
         },markers={{time=.1,name="history"},{time=.35,name="step" if i==0 else "stride"}}}
         path:="source.anim" if i==0 else "other.anim";id:=source_id if i==0 else other_id
         testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/%s",a.root,path),&a.assets.types,{id=id,clips=clips[i:i+1]}),asset.Error.None)
     }
     ik:=anim.IK_CONSTRAINT_DEFAULT;ik.root,ik.joint,ik.end=anim.bone_ref("joint2"),anim.bone_ref("joint3"),anim.bone_ref("joint4")
-    corrective:=anim.POSE_CORRECTIVE_DEFAULT;base.text_set(corrective.name[:],"root-offset");corrective.driver,corrective.bone=anim.bone_ref("joint1"),anim.bone_ref("joint1");base.text_set(corrective.curve[:],"bulge");corrective.sample_count=1;corrective.samples[0]=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT;corrective.samples[0].delta.position={.1,0,0};corrective.samples[0].curve_value=.7
-    set:=anim.character_set_make(source_id);set.pose={ik={ik},correctives={corrective}}
+    // A curve of the clip offsets the root bone by a pose.
+    offset:=anim.CURVE_POSE_DEFAULT;base.text_set(offset.curve[:],"bulge");offset.bone=anim.bone_ref("joint1");offset.delta.position={.1,0,0}
+    set:=anim.character_set_make(source_id);set.pose={ik={ik},curve_poses={offset}}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/blend.character",a.root),&a.assets.types,pose_id,set),asset.Error.None)
     testing.expect(t,host.assets_scan(&a.assets))
     // The walk carries the root; a layer under it plays the run of the other source in step, at half its weight.
@@ -165,17 +167,17 @@ pose_bake_samples_final_constraints_curves_markers_root_and_exact_partial_endpoi
     testing.expect(t,len(output.clips)==1 && output.clips[0].root==root && len(file.dependencies)==0)
     testing.expect(t,len(output.markers)==1)
     for &marker in output.markers {testing.expect(t,abs(marker.time-.15)<1e-5 && base.text_get(marker.name[:])!="history")}
-    saw_unkeyed_bone,saw_pulse,saw_vector,saw_corrective:bool
+    saw_unkeyed_bone,saw_pulse,saw_vector,saw_offset:bool
     for &track in output.tracks {
         keys:=output.keys[track.first_key:][:track.key_count];testing.expect(t,len(keys)==5 && keys[0].time==0 && abs(keys[4].time-.37)<1e-6)
         name:=base.text_get(track.target[:])
         if name=="joint2" && track.property==.Rotation {saw_unkeyed_bone=mm.quat_angle(lib.vec4_quat(keys[4].value),mm.QUAT_IDENTITY)>.1}
         if name=="pulse" {saw_pulse=abs(keys[4].value.x-.855)<1e-4}
         if name=="direction" {saw_vector=keys[4].value.w>4.5}
-        if name=="bulge" {saw_corrective=abs(keys[4].value.x-.7)<1e-5}
+        if name=="bulge" {saw_offset=abs(keys[4].value.x-1)<1e-5}
         if name=="joint1" && track.property==.Position {testing.expect(t,keys[0].value.x>.09 && keys[4].value.x>.83)}
     }
-    testing.expect(t,saw_unkeyed_bone && saw_pulse && saw_vector && saw_corrective)
+    testing.expect(t,saw_unkeyed_bone && saw_pulse && saw_vector && saw_offset)
     library:lib.Library;desc:=asset.animation_library_desc(output);testing.expect(t,lib.library_init(&library,desc));defer lib.library_destroy(&library);testing.expect(t,asset.animation_clips_add(output,&library,.Once)>0)
     actor,wanted:=mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY;previous:f32
     for frame in 1..=4 {
@@ -235,15 +237,14 @@ pose_bake_creates_editable_tracks_from_an_unanimated_skeleton_and_exports_final_
     target:=asset.Morph_Target{weight=.2,count=1};base.text_set(target.name[:],"Smile")
     testing.expect_value(t,source_mesh_save(fmt.tprintf("%s/rig.mesh",a.root),&a.assets.types,{id=mesh_id,skeleton=skeleton_id,joints={{node=0,inverse_bind=1}}},{vertices=vertices[:],skin=skin[:],morphs={target},morph_deltas={{vertex=0,position={.1,0,0}}}},{0,1,2}),asset.Error.None)
     follow:=anim.FOLLOW_CONSTRAINT_DEFAULT;follow.bone=anim.bone_ref("joint2");follow.target=anim.spatial_definition_point({.3,1,0});base.text_set(follow.name[:],"hand")
-    corrective:=anim.POSE_CORRECTIVE_DEFAULT;corrective.driver=anim.bone_ref("joint1");corrective.apply_pose=false;corrective.sample_count=1;corrective.samples[0]=anim.POSE_CORRECTIVE_SAMPLE_DEFAULT;corrective.samples[0].curve_value=.3;base.text_set(corrective.curve[:],"Smile");base.text_set(corrective.name[:],"face")
     // A .character without clips: only its modifiers.
-    set:=anim.character_set_make({});set.pose={follow={follow},correctives={corrective}}
+    set:=anim.character_set_make({});set.pose={follow={follow}}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/procedural.character",a.root),&a.assets.types,profile_id,set),asset.Error.None);testing.expect(t,host.assets_scan(&a.assets))
     animation:=anim.ANIMATION_DEFAULT;animation.asset=profile_id
     core.add(&f.world.meshes,f.rig,{mesh=mesh_id});core.add(&f.world.animations,f.rig,animation);core.settle(&f.info,&f.world,nil)
     testing.expect(t,core.count(&f.world.sources)==0 && len(f.world.playback.states)==0)
-    // The curve of the corrective adds .3 to the weight of the morph unless an override sets it.
-    expected:=[4]f32{.5,.7,.8,.6};paths:=[4]string{"zero.anim","default.anim","override.anim","additive.anim"}
+    // The weight of the mesh, the default the entity sets, an override and an additive one.
+    expected:=[4]f32{.2,.4,.8,.3};paths:=[4]string{"zero.anim","default.anim","override.anim","additive.anim"}
     modes:=[4]anim.Morph_Weight_Mode{.Default,.Default,.Override,.Additive};values:=[4]f32{0,.4,.8,.1}
     for pass in 0..<4 {
         if pass>0 {weights:=anim.Morph_Weights{source=f.rig};anim.morph_weight_set(&weights,"Smile",values[pass],modes[pass]);core.add(&f.world.morph_weights,f.rig,weights);core.settle(&f.info,&f.world,nil)}

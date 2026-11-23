@@ -25,8 +25,8 @@ Blend_Write_Params :: struct {
 Blend_Sample_Params :: struct {asset:base.Asset_Id `mirai:"label=The .character"`,space:[32]u8 `mirai:"text"`,position:mm.Vec2 `mirai:"label=Outside the hull it projects to the nearest edge"`}
 Blend_Contribution :: struct {index:u32 `mirai:"label=The sample"`,clip:string,animation:base.Asset_Id,weight:f32}
 Blend_Sample_Result :: struct {samples:[]Blend_Contribution}
-Modifier_Goal_Kind :: enum u8 {IK,Look,Grounding,Chain_IK,Spring,Multi_IK,Spline_IK,Follow}
-MODIFIER_GOAL_KINDS :: [Modifier_Goal_Kind]anim.Modifier_Kind{.IK=.IK,.Look=.Look,.Grounding=.Grounding,.Chain_IK=.Chain_IK,.Spring=.Spring,.Multi_IK=.Multi_IK,.Spline_IK=.Spline_IK,.Follow=.Follow}
+Modifier_Goal_Kind :: enum u8 {IK,Look,Grounding,Spring,Multi_IK,Spline_IK,Follow}
+MODIFIER_GOAL_KINDS :: [Modifier_Goal_Kind]anim.Modifier_Kind{.IK=.IK,.Look=.Look,.Grounding=.Grounding,.Spring=.Spring,.Multi_IK=.Multi_IK,.Spline_IK=.Spline_IK,.Follow=.Follow}
 @(private)
 program_modifier_goal_kind :: proc(kind:Modifier_Goal_Kind) -> anim.Modifier_Kind {kinds:=MODIFIER_GOAL_KINDS;return kinds[kind]}
 Modifier_Diagnostic_Result :: struct {valid,reached:bool,residual,angular_error:f32,iterations:int,blocked_legs:u16 `mirai:"optional"`}
@@ -299,14 +299,16 @@ program_modifier_goal_value :: proc(s:^editor.Session,call:^api.Call,world:core.
         case "effector":allowed=kind==.Multi_IK || kind==.Spline_IK
         }
         if present && !allowed {authoring_failure(call,field_path(prefix,field),"Kind","a field used by this operation",fmt.tprintf("%v",kind),"This field does not apply to the operation");return {},false}
-        if !present && allowed && (field=="target" || field=="effector") {authoring_failure(call,field_path(prefix,field),"Required",fmt.tprintf("the %s of this operation",field),"missing","Supply it: animation.inspect parts Modifiers lists effectors");return {},false}
+        // A Multi IK of one effector takes a goal that names none.
+        alone:=field=="effector" && kind==.Multi_IK && len(profile.multi_ik[resolved].effectors)==1
+        if !present && allowed && !alone && (field=="target" || field=="effector") {authoring_failure(call,field_path(prefix,field),"Required",fmt.tprintf("the %s of this operation",field),"missing","Supply it: animation.inspect parts Modifiers lists effectors");return {},false}
     }
     wanted:=base.text_get(p.effector[:])
     #partial switch kind {
     case .Multi_IK:
         config:=profile.multi_ik[resolved]
-        found:bool
-        _,found=anim.multi_ik_effector_named(&config,wanted)
+        found:=wanted=="" && len(config.effectors)==1
+        if !found {_,found=anim.multi_ik_effector_named(&config,wanted)}
         if !found {authoring_failure(call,field_path(prefix,"effector"),"Missing_Reference","an effector name of this Multi IK operation",wanted,"The named Multi IK effector does not exist");return {},false}
     case .Spline_IK:
         found:=false

@@ -143,15 +143,21 @@ bench_procedural_gait_and_chain :: proc(t:^testing.T) {
         best=min(best,time.tick_since(start))
     }
     log.infof("procedural gait + 8 two-bone IK: %.2f ns/creature (check %v)",f64(time.duration_nanoseconds(best))/REPEATS,sink)
-    points:=[6]math.Vec3{{},{1,0,0},{2,0,0},{3,0,0},{4,0,0},{5,0,0}}
-    lengths:=[5]f32{1,1,1,1,1};solved:[6]math.Vec3
-    settings:=CHAIN_IK_DEFAULT;settings.target={2,1,0};settings.pole={0,0,2};settings.use_pole=true
+    parents:=[6]i32{-1,0,1,2,3,4};names:=[6]u64{1,2,3,4,5,6};links:[6]Pose_Link
+    rest:[6]math.Transform;for &value,i in rest {value={{1 if i>0 else 0,0,0},1,{1,1,1}}}
+    hierarchy,_:=pose_hierarchy_prepare(parents[:],links[:]);local:[6]math.Transform;world:[6]math.Transform
+    joints:[5]Multi_IK_Joint;for &joint,i in joints {joint=MULTI_IK_JOINT_DEFAULT;joint.bone=i32(i)}
+    effector:=MULTI_IK_EFFECTOR_DEFAULT;effector.bone,effector.position,effector.pole,effector.use_pole=5,{2,1,0},{0,0,2},true
+    effectors:=[1]Multi_IK_Effector{effector};residuals:[1]f32
     best=max(time.Duration)
     for _ in 0..<5 {
         start:=time.tick_now()
-        for _ in 0..<REPEATS {result,_:=chain_ik(points[:],lengths[:],nil,settings,solved[:]);sink+=result.error}
+        for _ in 0..<REPEATS {
+            local=rest
+            result,_:=multi_ik({parents[:],names[:],rest[:]},hierarchy,local[:],world[:],joints[:],effectors[:],MULTI_IK_DEFAULT,residuals[:]);sink+=result.residual
+        }
         best=min(best,time.tick_since(start))
     }
-    log.infof("FABRIK 6 joints + pole: %.2f ns/chain (check %v)",f64(time.duration_nanoseconds(best))/REPEATS,sink)
+    log.infof("Multi IK 6 joints + pole: %.2f ns/chain (check %v)",f64(time.duration_nanoseconds(best))/REPEATS,sink)
 }
 }

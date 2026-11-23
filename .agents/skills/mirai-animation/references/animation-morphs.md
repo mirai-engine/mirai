@@ -12,18 +12,16 @@ The weight of a target is, in order:
 1. that of the mesh (`Morph_Target.weight`);
 2. the `Default` of the entity, if it has one with that name;
 3. the Float curve `"<path>/@morph/<target>"` of the animation that moves it, or without it the
-   curve named as the target (as faces, their captures and curve drives name them), over the above
-   by the weight of the curve;
-4. plus the [correctives](animation-rigs.md#operations) of that rig whose `curve` is the name of the
-   target;
-5. the `Override` of the entity, which replaces it, or its `Additive`, which is added to it.
+   curve named as the target (as faces and their captures name them), over the above by the weight
+   of the curve;
+4. the `Override` of the entity, which replaces it, or its `Additive`, which is added to it.
 
 `Morph_Weights` is the component of the entity; a mesh with targets without it is deformed all the
 same with the weights of its mesh and its animation.
 
-- `source` is the entity whose animation gives the curves (without it, itself when it is a rig that
-  follows another, the rig of its `Pose_Source` or the nearest animated ancestor, as `morph_source`
-  resolves); the curves are its final ones, with those of its leader and its drives; `path`, that of
+- `source` is the entity whose animation gives the curves (without it, the leader of a rig that
+  follows another, so a modular head takes the face its body plays, the rig of its `Pose_Source`
+  or the nearest animated ancestor, as `morph_source` resolves); `path`, that of
   its curves (empty,
   that of its `Animation_Target`). The prefab writes `path` only on an entity without
   `Animation_Target`, the mesh that a rig shows.

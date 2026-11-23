@@ -41,6 +41,14 @@ without clips or an assumed human rig.
   does it guarantee global convergence.
 - The membership of each effector in the subtree is checked on entry; the walk ends at the root and
   preserves its ancestors and the siblings of the subtree.
+- It is the one solver of chains past two bones. Per effector, with `use_pole`, a chain whose
+  bones lie on one line turns its joints by `MULTI_IK_POLE_BEND` toward `pole` before the solve,
+  and each pass turns the topmost joint above the effector about the line from it to the effector
+  until the bend of the chain faces the pole: the effector stays in place, and a turn its limits
+  clamp is skipped, so the pole never fights them. `reach` applies `chain_reach` from that joint
+  before the passes: it stretches the local translations of the bones below it and the residual
+  is measured from the softened goal. A reach or pole that is not finite, a negative reach and a
+  soft distance longer than the chain are refused; at most `MULTI_IK_EFFECTORS` effectors.
 
 ## Springs
 
@@ -65,26 +73,28 @@ without clips or an assumed human rig.
   compensating the twist of its parent. The source keeps its pose and cannot be in the chain; local
   translations and scales are kept.
 
-## Reach, spline, aiming and pose samples (`rig_shapes.odin`)
+## Reach, spline and aiming (`rig_shapes.odin`)
 
 - `chain_reach` adjusts the target and the scale of a chain: past the extension minus
   `soft_distance`, the reach approaches the extension with a smooth curve instead of stopping dead,
-  and what is missing is covered by stretching up to `max_stretch`. `skeleton_chain_ik(..., reach)`
-  and `two_bone_ik(..., reach)` apply it and put the stretch in the local translations: one reach
-  for every chain, so a leg near full extension does not snap its knee.
+  and what is missing is covered by stretching up to `max_stretch`. `multi_ik` (per effector) and
+  `two_bone_ik(..., reach)` apply it and put the stretch in the local translations: one reach for
+  every chain, so a leg near full extension does not snap its knee.
 - `spline_chain` puts the points of the chain on a cubic Bézier (`SPLINE_SEGMENTS` segments) and
   continues straight if the curve ends; `skeleton_spline_ik` orients each bone toward the next,
   keeps `up` and distributes `twist` by distance.
 - `aim_at` is `look_at` that also turns the `up` axis toward `world_up` around the line from the
   bone to where its ray passes, which keeps an offset ray on the target.
-- `pose_sample_weights` weighs rotation samples by angular closeness (inverse of the square,
-  normalized; an exact sample weighs 1) and rejects repeated or non-unit samples.
 
 ## Verification
 
 - `mirai test std/anim` with the affected cases of `rigs_test.odin` and `rig_shapes_test.odin`;
-  for Multi IK, `joint_limit_axes_*`, `multi_ik_hinge_knee_*` and
-  `multi_ik_recomposes_only_the_branch_of_each_joint`.
+  for Multi IK, `joint_limit_axes_*`, `multi_ik_hinge_knee_*`,
+  `multi_ik_recomposes_only_the_branch_of_each_joint`,
+  `multi_ik_bends_toward_a_pole_reaches_softly_and_stretches_by_weight` (a chain of nine: residual
+  within tolerance, the side of the bend from a straight start, soft reach and stretch at full and
+  half weight), `multi_ik_pole_yields_to_hinges_and_still_reaches` and
+  `multi_ik_rejects_hostile_poles_and_reaches`.
 - The hostile rig cases are repeated with `ANIM_RIG_HOSTILE_ROUNDS=20000` after changing validation
   or memory.
 - `multi_ik_validates_reference_and_current_pose_before_iterating_without_joint_corrections`: the

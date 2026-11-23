@@ -44,9 +44,9 @@ action_test_set :: proc(profile:Action_Profile) -> Character_Set {return {info={
 // A tick of the actions and the layers of state over content, as animation_tick runs them, over a
 // base whose root motion is base: stack_root blends the layers over it.
 @(private="file")
-stack_step :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,dt:f32,problems:^core.Problems=nil,base:=ROOT_DELTA_DEFAULT,distance:^Animation_Distance_Request=nil) {
+stack_step :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,dt:f32,problems:^core.Problems=nil,base:=ROOT_DELTA_DEFAULT) {
     stack_asks(actions,state,description,content)
-    actions_sample(actions,state,description,dt,problems,content,playback,events,distance,1)
+    actions_sample(actions,state,description,dt,problems,content,playback,events,1)
     layers_advance(playback,state,content,description,events,dt,problems)
     actions_layer_finish(actions,state)
     state.motion,state.body_motion=base,{}
@@ -179,7 +179,7 @@ an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is :: proc(t
     run :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,w:^Actions_World,requests:^Animation_Requests,cache:^Character_Assets,app:^host.App) -> (time:f32,started:int,ok:bool) {
         for tick in u64(11)..=12 {
             if !prepare(actions,requests,cache,&w.descriptions,playback,events,app,nil,core.read(&w.remotes),&w.played,tick=tick) {return}
-            stack_asks(actions,state,description,content);actions_sample(actions,state,description,.1,nil,content,playback,events,nil,1)
+            stack_asks(actions,state,description,content);actions_sample(actions,state,description,.1,nil,content,playback,events,1)
             started+=count(events,.Started)
             if tick==11 {time=actions.states[0].slots[0].time}
         }
@@ -252,7 +252,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
     // It tells it started when it plays, in the sample of the tick.
     testing.expect(t,len(requests.plays.items)==0 && actions.states[0].slots[0].active && len(events.items)==0)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.4,nil,&content,&playback,&events,nil,1)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.4,nil,&content,&playback,&events,1)
     layers_advance(&playback,&state,&content,description,&events,.4,nil);actions_layer_finish(&actions,&state)
     testing.expect(t,abs(state.stack.layers[0].player.time-1.15)<1e-5)
     // One queue, in the order it happened: the markers of its clip between what the action tells.
@@ -272,7 +272,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     testing.expect(t,actions.states[0].slots[0].cancel_pending && !actions.states[0].slots[0].finishing && len(events.items)==0,"a stop of Finish_Section waits for the end of the section")
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();app.allocator=context.allocator
     okay:=prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.5,nil,&content,&playback,&events,nil,1);layers_advance(&playback,&state,&content,description,&events,.5,nil);actions_layer_finish(&actions,&state)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.5,nil,&content,&playback,&events,1);layers_advance(&playback,&state,&content,description,&events,.5,nil);actions_layer_finish(&actions,&state)
     context=saved;cache.allocator=saved.allocator;actions.allocator=saved.allocator
     testing.expect(t,okay && actions.states[0].slots[0].finishing && count(&events,.Interrupted)==1 && count(&events,.Ended)==0)
     play(nil,entity,"attack");play(&requests,core.NONE,"attack");stop(&requests,entity,"")
@@ -423,35 +423,8 @@ action_root_motion_uses_section_segments_and_its_weight_from_its_start_and_expos
     // A set whose action names another clip binds its plan again, as a new revision of it does.
     base.text_set(profile.actions[0].clip[:],"missing");action_plan_bind(&actions.plans[0],action_test_set(profile))
     problems:core.Problems
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,1)
     testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && actions.states[0].slots[0].finishing && state.stack.asked[0].clip==0 && state.stack.asked[0].weight==0)
-}
-
-@(test)
-action_distance_requests_advance_only_the_selected_clip_and_reject_discontinuous_sections :: proc(t:^testing.T) {
-    content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.asset={1,2}
-    action_test_spans(&content);defer action_test_spans_free(&content)
-    actions:=Action_Runtime{allocator=context.allocator};defer actions_runtime_free(&actions)
-    action_test_plan(&actions,Action_Plan{profile=action_test_profile()});action_test_add_state(&actions,Action_State{entity=state.entity,plan=0})
-    actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0}
-    description:=ANIMATION_DEFAULT;description.asset=state.asset
-    request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("walk"),time=.15}
-    playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,abs(state.stack.layers[0].player.time-.15)<1e-5 && count(&events,.Span_Begin)==1)
-    player,selected:=action_player(&actions,state.entity,request.clip)
-    testing.expect(t,selected && player.clip!=0 && player.time==.15 && actions.plans[0].profile.actions[0].root_motion==.None)
-    _,selected=action_player(&actions,state.entity,base.name_hash("run"));testing.expect(t,!selected)
-    problems:core.Problems
-    before:=len(events.items);request.time=1.1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,&problems,&content,&playback,&events,&request,1)
-    testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_distance")!=nil && state.stack.layers[0].player.time==.15 && len(events.items)==before)
-    request.time=.1;request.seek=true;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,state.stack.layers[0].player.time==.1 && !actions.states[0].slots[0].continuous && state.stack.layers[0].from==.1 && len(events.items)==before)
-    request.clip=base.name_hash("run");request.seek=false;request.time=1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.02,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,abs(state.stack.layers[0].player.time-.12)<1e-5)
-    content.lib.markers[3].time=.25
-    request.clip=base.name_hash("walk");request.time=.4;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,abs(state.stack.layers[0].player.time-.4)<1e-5 && actions.states[0].slots[0].section==1 && actions.states[0].slots[0].continuous)
 }
 
 @(test)
@@ -468,7 +441,7 @@ root_actions_can_start_over_an_idle_clip_without_root_channels :: proc(t:^testin
     description:=ANIMATION_DEFAULT;description.asset=state.asset;description.root_motion=.In_Place
     problems:core.Problems
     playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
-    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
+    stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,1)
     testing.expect(t,problems.count==0 && state.stack.layers[0].root_motion==.In_Place && !actions.states[0].slots[0].finishing)
 }
 
@@ -491,13 +464,13 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
         actions.plans[0].profile.actions[0].root_motion=policy;actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};if state.stack!=nil {state.stack.layers={}}
         description:=ANIMATION_DEFAULT;description.asset=state.asset;state.clip=0
         state.root={bone=base.name_hash("hip"),translation=true,in_place=true} if policy==.Extract else {}
-        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.25,nil,&content,&playback,&events,nil,1);layers_advance(&playback,&state,&content,description,&events,.25,nil);actions_layer_finish(&actions,&state)
+        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.25,nil,&content,&playback,&events,1);layers_advance(&playback,&state,&content,description,&events,.25,nil);actions_layer_finish(&actions,&state)
         copy(playing_pose(&state,.Local),state.rest[:]);playing_pose(&state,.Local)[1].position.x=1 if policy==.In_Place else 0
         pose_layers(&playback,&state,&content,description,playing_pose(&state,.Local))
         expected:f32=.5 if policy==.In_Place else .125
         testing.expectf(t,state.stack.layers[0].root_motion==policy && abs(playing_pose(&state,.Local)[1].position.x-expected)<1e-5,"%v: %v",policy,playing_pose(&state,.Local)[1].position)
         actions.states[0].slots[0].finishing=true
-        description=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,nil,1)
+        description=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,1)
         testing.expect(t,state.stack.layers[0].root_motion==.None && state.stack.blend.slots==1,"a finishing action hands its layer back, which moves the root no more")
     }
     // The stack has one root bone: an action whose clip moves another than the base is stopped.
@@ -505,7 +478,7 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     content.roots[2]=content.roots[0];base.text_set(content.roots[2].bone[:],"spine")
     state.root={bone=base.name_hash("hip"),translation=true}
     problems:core.Problems
-    description:=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
+    description:=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,1)
     testing.expect(t,problems.count==1 && core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && !actions.states[0].slots[0].finishing && actions.states[0].slots[1].finishing)
 }
 
@@ -563,7 +536,7 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_blends_its_lay
             if !prepare(actions,requests,cache,descriptions,playback,events,app,nil) {return false}
             state:=&playback.states[0];sampled,_:=core.get(descriptions,state.entity)
             stack_asks(actions,state,sampled,content)
-            actions_sample(actions,state,sampled,dt,nil,content,playback,events,nil,1);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
+            actions_sample(actions,state,sampled,dt,nil,content,playback,events,1);layers_advance(playback,state,content,sampled,events,dt,nil);actions_finish(actions,playback,dt)
             return true
         }
         play(&requests,entity,"attack")
@@ -664,7 +637,7 @@ action_playing_answers_while_an_action_plays_and_a_section_asked_of_it_moves_it_
     content:host.Content_Animation;state:=layer_fixture(t,&content);defer lib.library_destroy(&content.lib);defer playing_free(&state);state.entity,state.asset=entity,content.id
     action_test_spans(&content);defer action_test_spans_free(&content)
     // What plays tells what it does and where it is in the sample of the tick.
-    sample :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events) {stack_asks(actions,state,description,content);actions_sample(actions,state,description,0,nil,content,playback,events,nil,1)}
+    sample :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events) {stack_asks(actions,state,description,content);actions_sample(actions,state,description,0,nil,content,playback,events,1)}
     problems:core.Problems
     _,_,playing:=action_playing({&actions},entity,"attack");testing.expect(t,!playing)
     play(&requests,entity,"attack")
@@ -708,7 +681,7 @@ a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.
         play(&requests,entity,"attack")
         testing.expect(t,prepare(&actions,&requests,&cache,&w.descriptions,&playback,&events,&app,nil))
         // A tick of 0.2 s of the world while the entity runs at half pace: 0.1 s of its own time.
-        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,nil,&content,&playback,&events,nil,.5)
+        stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,nil,&content,&playback,&events,.5)
         want:=f32(.2) if clock==.World else .1
         testing.expectf(t,abs(actions.states[0].slots[0].time-want)<1e-5,"%v: the action is at %v s of its clip, want %v",clock,actions.states[0].slots[0].time,want)
         layers_advance(&playback,&state,&content,description,&events,.1,nil);actions_layer_finish(&actions,&state)

@@ -280,14 +280,17 @@ procedural_inputs_reject_nonfinite_numbers_and_preserve_chain_lengths :: proc(t:
         _,_=gait_step_position(desired[0],contacts[0].position,config.up,procedural_hostile_number(&random),procedural_hostile_number(&random))
         low,high,valid:=limb_height_range(desired[0],contacts[0].position,config.up,procedural_hostile_number(&random))
         if valid {testing.expect(t,anim_finite(low) && anim_finite(high) && low<=high)}
-        points:=[4]math.Vec3{{},{1,0,0},{2,0,0},{3,0,0}}
-        lengths:=[3]f32{1,1,1};solved:[4]math.Vec3
-        settings:=CHAIN_IK_DEFAULT
-        settings.target={procedural_hostile_number(&random),procedural_hostile_number(&random),procedural_hostile_number(&random)}
-        result,ok:=chain_ik(points[:],lengths[:],nil,settings,solved[:])
+        parents:=[4]i32{-1,0,1,2};names:=[4]u64{1,2,3,4};links:[4]Pose_Link
+        rest:=[4]math.Transform{math.TRANSFORM_IDENTITY,{{1,0,0},1,{1,1,1}},{{1,0,0},1,{1,1,1}},{{1,0,0},1,{1,1,1}}}
+        hierarchy,_:=pose_hierarchy_prepare(parents[:],links[:]);local:=rest;world:[4]math.Transform
+        joints:=[3]Multi_IK_Joint{MULTI_IK_JOINT_DEFAULT,MULTI_IK_JOINT_DEFAULT,MULTI_IK_JOINT_DEFAULT};joints[1].bone,joints[2].bone=1,2
+        effector:=MULTI_IK_EFFECTOR_DEFAULT;effector.bone,effector.use_pole,effector.pole=3,true,{0,0,2}
+        effector.position={procedural_hostile_number(&random),procedural_hostile_number(&random),procedural_hostile_number(&random)}
+        effectors:=[1]Multi_IK_Effector{effector};residuals:[1]f32
+        result,ok:=multi_ik({parents[:],names[:],rest[:]},hierarchy,local[:],world[:],joints[:],effectors[:],MULTI_IK_DEFAULT,residuals[:])
         if ok {
-            testing.expect(t,anim_finite(result.error) && solved[0]==points[0])
-            for i in 1..<4 {testing.expect(t,abs(linalg.length(solved[i]-solved[i-1])-1)<0.0001)}
+            testing.expect(t,anim_finite(result.residual) && world[0].position=={})
+            for i in 1..<4 {testing.expect(t,abs(linalg.length(world[i].position-world[i-1].position)-1)<0.0001)}
         }
     }
 }

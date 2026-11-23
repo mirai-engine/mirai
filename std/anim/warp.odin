@@ -126,27 +126,3 @@ pose_warp :: proc "contextless" (skeleton:Skeleton,local,world:[]math.Transform,
     }
     return true
 }
-
-Distance_Key :: struct {time,distance:f32}
-
-distance_track_validate :: proc "contextless" (keys:[]Distance_Key) -> bool {
-    if len(keys)<2 {return false}
-    direction:=1 if keys[len(keys)-1].distance>keys[0].distance else -1
-    for key,i in keys {
-        if !anim_finite(key.time) || key.time<0 || !anim_finite(key.distance) {return false}
-        if i>0 && (key.time<=keys[i-1].time || (key.distance-keys[i-1].distance)*f32(direction)<=0) {return false}
-    }
-    return true
-}
-
-distance_to_time :: proc "contextless" (keys:[]Distance_Key,distance:f32) -> (time:f32,ok:bool) {
-    if !anim_finite(distance) || !distance_track_validate(keys) {return}
-    direction:=f32(1) if keys[len(keys)-1].distance>keys[0].distance else f32(-1)
-    if distance*direction<=keys[0].distance*direction {return keys[0].time,true}
-    if distance*direction>=keys[len(keys)-1].distance*direction {return keys[len(keys)-1].time,true}
-    low,high:=0,len(keys)-1
-    for high-low>1 {mid:=low+(high-low)/2;if distance*direction<keys[mid].distance*direction {high=mid} else {low=mid}}
-    a,b:=keys[low],keys[high]
-    ratio:=(f64(distance)-f64(a.distance))/(f64(b.distance)-f64(a.distance))
-    return f32(f64(a.time)+(f64(b.time)-f64(a.time))*ratio),true
-}

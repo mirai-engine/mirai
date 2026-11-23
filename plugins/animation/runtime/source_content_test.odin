@@ -63,9 +63,6 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     for curve in state.curves {if curve.target==base.name_hash("Smile") {found=abs(curve.value.x-.5)<.001}}
     testing.expect(t,found && len(events.items)==2 && events.items[0].clip==base.name_hash("Walk") && events.items[1].clip==base.name_hash("Walk"))
     testing.expect(t,events.items[0].animation!=events.items[1].animation && events.items[0].fraction>0)
-    request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("Walk"),animation=sources[1].id,time=1}
-    state.program.ready,state.was_playing=true,true
-    testing.expect_value(t,distance_request_check(&state,combined,request),Distance_Error.None)
     actions:Action_Runtime;defer actions_runtime_free(&actions)
     action_profile:=Action_Profile{actions=make([]Action_Definition,1)}
     action_profile.actions[0]=ACTION_DEFINITION_DEFAULT;definition:=&action_profile.actions[0]
@@ -73,7 +70,7 @@ multiple_animation_sources_keep_duplicate_clip_names_curves_markers_root_and_act
     append(&actions.plans,Action_Plan{profile=action_profile});action_plan_bind(&actions.plans[0],{info={animation=sources[0].id},actions=action_profile});action_test_add_state(&actions,{entity=state.entity,plan=0,slots={0={active=true,starting=true,section=-1}}})
     animation.root_motion=.None
     stack_asks(&actions,&state,animation,combined)
-    actions_sample(&actions,&state,animation,.1,&problems,combined,&playback,&events,nil,1)
+    actions_sample(&actions,&state,animation,.1,&problems,combined,&playback,&events,1)
     testing.expect(t,state.stack.layers[0].clip==alias && actions.states[0].slots[0].active && problems.count==0)
     // A layer whose space names a clip of each source keeps them apart.
     samples:=[2]Blend_Sample{{position={0,0},speed=1},{position={1,0},speed=1,animation=sources[1].id}}

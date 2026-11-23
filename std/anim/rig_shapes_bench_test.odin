@@ -7,13 +7,11 @@ package mirai_anim
 
 when #config(MIRAI_BENCH,false) {
 @(test)
-bench_spline_and_angular_pose_samples :: proc(t:^testing.T) {
+bench_spline_chain_and_skeleton_spline_ik :: proc(t:^testing.T) {
     REPEATS :: 20000
     settings:=Spline_Chain{controls={{},{0,1,0},{1,2,0},{0,3,0}},up={0,0,1}}
     points:[32]math.Vec3;lengths:[31]f32;for &length in lengths {length=.1}
-    rotations:[16]math.Quat;weights:[16]f32
-    for &rotation,i in rotations {rotation=math.quat_axis_angle({0,0,1},f32(i)*.15)}
-    testing.expect(t,spline_chain(settings,lengths[:],points[:]) && pose_sample_weights(1,rotations[:],weights[:]))
+    testing.expect(t,spline_chain(settings,lengths[:],points[:]))
     best:=max(time.Duration);sink:f32
     for _ in 0..<5 {
         start:=time.tick_now()
@@ -30,12 +28,5 @@ bench_spline_and_angular_pose_samples :: proc(t:^testing.T) {
         best=min(best,time.tick_since(start))
     }
     log.infof("skeleton spline IK 32 bones including validation and world recomposition: %.2f ns/evaluation (check %v)",f64(time.duration_nanoseconds(best))/REPEATS,sink)
-    best=max(time.Duration)
-    for _ in 0..<5 {
-        start:=time.tick_now()
-        for i in 0..<REPEATS {pose_sample_weights(math.quat_axis_angle({0,0,1},(f32(i%16)+.5)*.15),rotations[:],weights[:]);sink+=weights[i%16]}
-        best=min(best,time.tick_since(start))
-    }
-    log.infof("16 angular corrective samples: %.2f ns/evaluation (check %v)",f64(time.duration_nanoseconds(best))/REPEATS,sink)
 }
 }

@@ -116,29 +116,3 @@ skeleton_spline_ik :: proc "contextless" (skeleton:Skeleton,local,world:[]math.T
     }
     return pose_world(skeleton.parents,local,world,root_transform)
 }
-
-@(private)
-pose_sample_distance :: proc "contextless" (a,b:math.Quat) -> f32 {
-    a,b:=linalg.normalize0(a),linalg.normalize0(b)
-    if linalg.dot(a,b)<0 {b=-b}
-    difference:=a-b
-    chord:=cmath.sqrt(linalg.dot(difference,difference))
-    return 4*cmath.asin(clamp(chord*.5,0,1))
-}
-
-pose_sample_weights :: proc "contextless" (rotation:math.Quat,samples:[]math.Quat,out:[]f32) -> bool {
-    if len(samples)==0 || len(out)!=len(samples) || !anim_rotation_valid(rotation) {return false}
-    minimum:=f32(math.PI)
-    for sample,i in samples {
-        if !anim_rotation_valid(sample) {return false}
-        for previous in samples[:i] {if pose_sample_distance(previous,sample)<1e-3 {return false}}
-        distance:=pose_sample_distance(rotation,sample)
-        out[i]=distance;minimum=min(minimum,distance)
-    }
-    if minimum<=1e-5 {for &value in out {value=1 if value<=1e-5 else 0};return true}
-    total:f32
-    for &value in out {value=(minimum/value)*(minimum/value);total+=value}
-    if !anim_finite(total) || total<=0 {return false}
-    for &value in out {value/=total}
-    return true
-}

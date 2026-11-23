@@ -44,13 +44,11 @@ modifier_count :: proc(pose:Pose_Profile,kind:Modifier_Kind) -> int {
     case .Look: return len(pose.look)
     case .Grounding: return 1 if len(pose.grounding.legs)>0 else 0
     case .Limit: return len(pose.limits)
-    case .Chain_IK: return len(pose.chain_ik)
     case .Twist: return len(pose.twist)
     case .Spring: return len(pose.springs)
     case .Multi_IK: return len(pose.multi_ik)
     case .Chain_Retarget: return len(pose.retarget_chains)
     case .Spline_IK: return len(pose.spline_ik)
-    case .Corrective: return len(pose.correctives)
     case .Follow: return len(pose.follow)
     }
     return 0
@@ -66,13 +64,11 @@ modifier_definition :: proc(pose:^Pose_Profile,kind:Modifier_Kind,slot:int) -> (
     case .Look: return info(&pose.look[slot])
     case .Grounding: return info(&pose.grounding)
     case .Limit: return info(&pose.limits[slot])
-    case .Chain_IK: return info(&pose.chain_ik[slot])
     case .Twist: return info(&pose.twist[slot])
     case .Spring: return info(&pose.springs[slot])
     case .Multi_IK: return info(&pose.multi_ik[slot])
     case .Chain_Retarget: return info(&pose.retarget_chains[slot])
     case .Spline_IK: return info(&pose.spline_ik[slot])
-    case .Corrective: return info(&pose.correctives[slot])
     case .Follow: return info(&pose.follow[slot])
     }
     return
@@ -109,6 +105,8 @@ modifier_influence :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.Entity
 modifier_effector_slot :: proc(pose:Pose_Profile,kind:Modifier_Kind,slot:int,name:u64) -> int {
     #partial switch kind {
     case .Multi_IK:
+        // A goal that names no effector is for the one effector of an operation that has one.
+        if name==0 && len(pose.multi_ik[slot].effectors)==1 {return 0}
         for &effector,i in pose.multi_ik[slot].effectors {
             if base.name_hash(base.text_get(effector.name[:]))==name {return i}
         }
@@ -255,13 +253,11 @@ animation_rig_diagnostic :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.
     #partial switch kind {
     case .IK: return read(&rig.ik_states[index])
     case .Look: return read(&rig.look_states[index])
-    case .Chain_IK: return read(&rig.chain_states[index])
     case .Twist: return read(&rig.twist_states[index])
     case .Spring: return read(&rig.spring_states[index])
     case .Multi_IK: return read(&rig.multi_states[index])
     case .Chain_Retarget: return read(&rig.retarget_chain_states[index])
     case .Spline_IK: return read(&rig.spline_states[index])
-    case .Corrective: return read(&rig.corrective_states[index])
     case .Follow: return read(&rig.follow_states[index])
     }
     return {},false

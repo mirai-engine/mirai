@@ -11,7 +11,6 @@ import mm "mirai:std/math"
 import "base:runtime"
 
 MOTION_WINDOWS :: 64
-MOTION_KEYS :: 4096
 // The warping of the pose of a .character to the velocity of its body: orientation turns its legs
 // toward where it goes, against the spine; stride stretches them to its speed. Its pelvis, spine
 // and legs are those of the body of the skeleton.
@@ -33,21 +32,15 @@ Motion_Window :: struct {
     weight:f32 `mirai:"optional,min=0,max=1"`,
 }
 MOTION_WINDOW_DEFAULT :: Motion_Window{translation=true,rotation=true,axes={true,true,true},weight=1}
-Motion_Distance :: struct {clip:[64]u8 `mirai:"text"`,name:[32]u8 `mirai:"text"`,first,count:u32,animation:base.Asset_Id}
-Motion_Profile :: struct {warp:Pose_Warp_Profile,windows:[]Motion_Window,distances:[]Motion_Distance,keys:[]lib.Distance_Key}
+Motion_Profile :: struct {warp:Pose_Warp_Profile,windows:[]Motion_Window}
 
 motion_profile_check :: proc(profile:Motion_Profile) -> bool {
-    if len(profile.windows)>MOTION_WINDOWS || len(profile.distances)>MOTION_WINDOWS || len(profile.keys)>MOTION_KEYS {return false}
+    if len(profile.windows)>MOTION_WINDOWS {return false}
     pose:=profile.warp
     if !profile_weight(pose.weight) || !finite(pose.min_stride) || !finite(pose.max_stride) || pose.min_stride<=0 || pose.max_stride<pose.min_stride || !finite(pose.max_angle) || pose.max_angle<0 || pose.max_angle>mm.PI {return false}
     for &window,i in profile.windows {
         if !blend_text_valid(window.name[:],false) || !profile_weight(window.weight) || !window.translation && !window.rotation {return false}
         for &previous in profile.windows[:i] {if previous.name==window.name {return false}}
-    }
-    for &track,i in profile.distances {
-        if !blend_text_valid(track.clip[:],false) || !blend_text_valid(track.name[:],false) || track.first>u32(len(profile.keys)) || track.count>256 || track.count>u32(len(profile.keys))-track.first {return false}
-        if !lib.distance_track_validate(profile.keys[track.first:][:track.count]) {return false}
-        for &previous in profile.distances[:i] {if previous.name==track.name {return false}}
     }
     return true
 }
@@ -376,15 +369,4 @@ motion_apply_pose :: proc(runtime:^Motion_Runtime,state:^Playing,profile:base.As
     ok:=lib.pose_warp(playing_skeleton(state),playing_pose(state,.Local),playing_pose(state,.World),{pelvis=instance.pelvis,spine=instance.spine[:instance.spine_count],legs=instance.legs[:instance.leg_count],up=up,direction=goal.velocity,angle=instance.warp[0],stride=max(1+instance.warp[1],min(config.min_stride,1)),weight=1},root_transform)
     if !ok {instance.error=.Invalid;motion_problem(problems,state.entity,.Invalid)}
     return ok
-}
-
-motion_distance_time :: proc(profile:Motion_Profile,name:string,distance:f32) -> (time:f32,clip:[64]u8,ok:bool) {
-    if !motion_profile_check(profile) {return}
-    for &track in profile.distances {if base.text_get(track.name[:])==name {time,ok=lib.distance_to_time(profile.keys[track.first:][:track.count],distance);return time,track.clip,ok}}
-    return
-}
-
-motion_distance_source :: proc "contextless" (profile:Motion_Profile,name:string) -> base.Asset_Id {
-    for &track in profile.distances {if base.text_get(track.name[:])==name {return track.animation}}
-    return {}
 }

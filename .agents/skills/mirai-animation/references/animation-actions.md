@@ -171,10 +171,6 @@ Discovery and memory:
   of it, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
   that ends or cancels while fading its root, suspends the warp without applying a window of the
   base to that delta.
-- Advance by distance modifies only the matching active clip: the positive advance drives its clock
-  and crosses contiguous sections; a discontinuity or an out-of-range time is rejected before
-  changing anything. An explicit seek within the section repositions without markers, windows or
-  root delta. It does not start actions or choose another section.
 
 ## Verification
 
@@ -182,7 +178,7 @@ Discovery and memory:
 
 - `actions_test.odin`: roundtrip of layers and actions, the table of what a set refuses, windows and
   sections as spans of the clip in one queue, cancellation, copies, queues, weighted extraction,
-  clocks and distance; the query through play, section and stop; discovery by stamp, lack of memory
+  clocks; the query through play, section and stop; discovery by stamp, lack of memory
   and generational recycling; what another end started
   (`an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is`).
 - `matching_test.odin`, over the locomotion of a `.character`:

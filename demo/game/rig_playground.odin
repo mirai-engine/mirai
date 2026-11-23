@@ -5,7 +5,7 @@ import "mirai:core"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
-Rig_Playground_Kind :: enum u8 {Spline,Stretch,Corrective}
+Rig_Playground_Kind :: enum u8 {Spline,Stretch}
 @(component)
 Rig_Playground :: struct {kind:Rig_Playground_Kind,origin:mm.Vec3}
 
@@ -21,10 +21,7 @@ rig_playground_animate :: proc(items:^core.Table(Rig_Playground,.Read),requests:
             for point,i in controls {anim.modifier(requests,{rig=rig,kind=.Spline_IK,target=anim.spatial_point(point),weight=1,enabled=true,goal=true},"tail",names[i])}
         case .Stretch:
             target:=item.origin+mm.Vec3{.4*math.sin(phase*.7),2.25+.65*math.sin(phase*.7),0}
-            anim.modifier(requests,{rig=rig,kind=.Chain_IK,target=anim.spatial_point(target),weight=1,enabled=true,goal=true},"reach")
-        case .Corrective:
-            pose:=mm.TRANSFORM_IDENTITY;pose.position={0,.28,0};pose.rotation=mm.quat_axis_angle({0,0,1},(.5+.5*math.sin(phase))*1.4)
-            anim.animation_pose(requests,rig,anim.bone_ref("joint3"),pose)
+            anim.modifier(requests,{rig=rig,kind=.Multi_IK,target=anim.spatial_point(target),weight=1,enabled=true,goal=true},"reach")
         }
     }
 }
