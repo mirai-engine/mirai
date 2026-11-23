@@ -1,16 +1,12 @@
 package foliage
 
-import "core:math"
 import "core:math/linalg"
 import "core:slice"
 import "core:testing"
-import "mirai:core"
 import render "mirai:engine/render"
 import "mirai:std/base"
-import scene "mirai:engine/scene"
 import "mirai:std/geom"
-import mm "mirai:std/math"
-import physics "plugins:physics/runtime"
+import pcg "plugins:pcg/runtime"
 
 // A crown of two quads that cross in a box, dense enough to be solid, and a
 // lone triangle elsewhere that is not: the crown is the closed surface of the
@@ -58,8 +54,7 @@ a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves :: proc(t:^testing
     testing.expect(t,!crown_build(sparse[:],{0,1,2,0,2,3,4,5,6,4,6,7},&shape))
     // Rays meet it as they meet its type: its shadow, and in reflections and
     // indirect light in the mean linear color of the frames it covers.
-    tree:=FOLIAGE_TYPE_DEFAULT
-    tree.casts_shadow,tree.ray_visible=true,false
+    tree:=Look{casts_shadow=true}
     testing.expect_value(t,crown_flags(&tree),render.Batch_Flags{.Casts_Shadow,.Rays_Only})
     tree.casts_shadow,tree.ray_visible=false,true
     testing.expect_value(t,crown_flags(&tree),render.Batch_Flags{.Ray_Visible,.Rays_Only})
@@ -68,7 +63,7 @@ a_crown_is_the_closed_surface_of_the_voxels_dense_with_leaves :: proc(t:^testing
     testing.expectf(t,abs(albedo.x-0.5)<1e-3 && albedo.y==0 && abs(albedo.z-0.5)<5e-3,"%v",albedo)
 }
 
-// A type casts swaying shadows by its size, not by its wind: one standing
+// A layer casts swaying shadows by its size, not by its wind: one standing
 // lower than SHADOW_SWAY_HEIGHT casts at rest however much it sways, one
 // over it follows the wind if it sways at all, as far as its farthest point
 // moves in the strongest wind; one that casts no shadow, or does not sway, none.
@@ -80,20 +75,19 @@ a_type_casts_swaying_shadows_by_its_size :: proc(t:^testing.T) {
         {"tree",12,1,true,true},{"tree without shadow",12,1,false,false},{"tree without wind",12,0,true,false},
     }
     for c in cases {
-        k:=FOLIAGE_TYPE_DEFAULT
-        k.wind,k.casts_shadow,k.scale,k.height=c.wind,c.shadow,{1,1},{1,1}
+        k:=Look{wind=c.wind,casts_shadow=c.shadow,scale={1,1},height={1,1}}
         sway:=shadow_sway(k,c.size,c.size)
         testing.expectf(t,(sway>0)==c.sways,"%s of %v m: its shadow sways %v m",c.name,c.size,sway)
         if c.sways {testing.expectf(t,abs(sway-c.size*sway_amount(k)*WIND_SPEED_MAX)<1e-4,"%s sways %v m at its tip",c.name,sway)}
     }
 }
 
-// The mesh of a type with an impostor gives way to it at its distance, and
-// is gone a blend past it; one whose impostor would come after it is gone has none.
+// The mesh of a layer with an impostor gives way to it at its distance, and
+// is gone a blend past it; one whose impostor would come after it is gone
+// has none. A dense cell gives way sooner: its row of the band of the cell.
 @(test)
-a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) {
-    tree:=FOLIAGE_TYPE_DEFAULT
-    tree.fade_distance,tree.cull_distance,tree.impostor_distance=1500,2000,100
+a_layer_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) {
+    tree:=Look{scale={0.8,1.2},height={1,1},fade_distance=1500,cull_distance=2000,impostor_distance=100}
     testing.expect(t,type_far(tree))
     fade,cull:=mesh_distances(tree,true)
     testing.expect(t,fade==100 && abs(cull-100*(1+IMPOSTOR_BLEND))<1e-3)
@@ -102,7 +96,7 @@ a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) 
     tree.impostor_distance=2500
     testing.expect(t,!type_far(tree))
     tree.impostor_distance,tree.cull_distance=100,0
-    testing.expect(t,type_far(tree),"a type never culled keeps its impostor to any distance")
+    testing.expect(t,type_far(tree),"a layer never culled keeps its impostor to any distance")
     // Its frames are as sharp as the mesh it replaces: a tree of 10 m at 100 m spans 125
     // pixels, and so does one of 20 m at 200 m; a bush of 1 m, few.
     tree.scale,tree.height={1,1},{1,1}
@@ -111,13 +105,26 @@ a_type_with_an_impostor_draws_its_mesh_up_to_its_distance :: proc(t:^testing.T) 
     testing.expect_value(t,impostor_frame(tree,20),u32(128))
     testing.expect_value(t,impostor_frame(tree,1),u32(IMPOSTOR_FRAME_MIN))
     testing.expect_value(t,impostor_frame(tree,1000),u32(IMPOSTOR_FRAME_MAX))
-    tree.impostor_distance=100
-    // The new fields keep the source valid within their range.
-    s:Source
-    defer source_destroy(&s)
-    append(&s.types,tree)
-    s.info.next_type=1
-    testing.expect(t,source_valid(&s))
+    tree.impostor_distance,tree.cull_distance=100,2000
+    resident:Foliage_Resident
+    defer foliage_resident_free(&resident)
+    resident.detail={1,1}
+    key:=Kind_Key{{6,6},64}
+    append(&resident.kinds,Resident_Kind{key=key,made=true,color=1,normal=2,surface=3})
+    sparse,full:=impostor_row(&resident,&tree,key,0),impostor_row(&resident,&tree,key,DENSITY_BANDS-1)
+    testing.expect(t,sparse.low.w==100 && abs(full.low.w-100*DENSITY_LOD_MIN)<1e-3 && full.high.w<sparse.high.w,"the full cell gives way sooner")
+    testing.expect(t,full.far==sparse.far,"and is gone where the sparse one is")
+    // Every look of a Foliage has a row for each band, from the base of its slot.
+    owner:Resident_Owner
+    append(&owner.looks,tree,Look{})
+    append(&owner.kinds,key,Kind_Key{})
+    owner.slot=1
+    append(&resident.owners,owner)
+    impostor_rows_build(&resident)
+    d:=&resident.impostors
+    testing.expect(t,len(d.rows)==2*DENSITY_BANDS && len(d.bases)==2 && d.bases[1]==0)
+    testing.expect_value(t,d.rows[DENSITY_BANDS-1].low.w,full.low.w)
+    testing.expect_value(t,d.rows[DENSITY_BANDS].frames,[4]u32{})
 }
 
 // A cell that changes writes only its block of the impostors: in its room
@@ -153,48 +160,6 @@ a_cell_writes_only_its_block_of_impostors :: proc(t:^testing.T) {
     testing.expect(t,a==0 && len(d.instances)==8 && d.count==4)
 }
 
-@(private)
-@(test_world)
-Collision_World :: struct {
-    using world:Test_World,
-    foliages:core.Table(Foliage),
-    worlds:core.Table(core.World_Transform),
-    kept:core.Table(scene.Far_Kept),
-    data:Foliage_Data,
-    sources:scene.Simulation_Sources,
-}
-
-// Every cell of a loaded Foliage collides wherever the sources of the
-// simulation are.
-@(test)
-every_cell_of_a_loaded_foliage_collides_wherever_the_sources_are :: proc(t:^testing.T) {
-    w:Collision_World
-    if !test_world_init(t,&w) {return}
-    defer test_world_destroy(&w)
-    state:physics.Physics_State
-    if !testing.expect(t,physics.test_state_make(&state)) {return}
-    defer physics.state_destroy(&state)
-    append(&w.data.entries,Data_Entry{id={9,9},epoch=1,loads=1})
-    s:=&w.data.entries[0].source
-    tree:=source_type_add(s,"tree",{2,2})
-    tree.collision,tree.size,tree.cull_distance,tree.fade_distance=.Capsule,{0.3,4,0},40,30
-    for x in 0..<4 {source_instance_add(s,tree.id,{f32(x)*CELL_SIZE*4+5,0,5},u32(mm.quat_pack(1,10)),{1,1})}
-    for &cell,i in s.cells {cell.version=u32(i+1)}
-    e:=core.create(&w.entities)
-    core.add(&w.foliages,e,Foliage{source={9,9}})
-    core.add(&w.worlds,e,core.World_Transform{transform={rotation=1,scale={1,1,1}}})
-    test_world_settle(&w)
-    fp:Foliage_Physics
-    defer core.value_free(&fp,type_info_of(Foliage_Physics))
-    problems:core.Problems
-    // A source by the last tree, 400 m from the first: every tree collides.
-    w.sources.items[0]={position={CELL_SIZE*12+5,0,5},ahead={CELL_SIZE*12+5,0,5}}
-    w.sources.count=1
-    foliage_physics(&fp,&state,nil,nil,{},core.ref(&w.data),{},{},core.read(&w.foliages),core.read(&w.worlds),core.read(&w.kept),core.ref(&w.sources),nil,{},&problems)
-    testing.expect_value(t,len(fp.cells),4)
-    testing.expect_value(t,int(state.world.body_count),4)
-    testing.expect_value(t,problems.count,0)
-}
 // The crown of a cell of a wood: the crowns of its trees, each a box of 4 m,
 // placed and scaled as each instance is, give one crown of the cell that
 // covers every tree and has fewer triangles than their crowns together.
@@ -205,14 +170,14 @@ the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs :: proc(t:
     defer geom.mesh_buffer_destroy(&tree)
     geom.cube_build(&tree,{4,4,4})
     crowns:=[2]Crown_Triangles{{},{tree.positions[:],tree.indices[:]}}
-    placed:=make([dynamic]Placed,context.temp_allocator)
+    placed:=make([dynamic]pcg.Placed,context.temp_allocator)
     for z in 0..<10 {
         for x in 0..<10 {
-            append(&placed,Placed{type=1,position={f32(x)*3+2,4,f32(z)*3+2},rotation=1,scale={1,1}})
+            append(&placed,pcg.Placed{layer=1,position={f32(x)*3+2,4,f32(z)*3+2},rotation=1,scale={1,1,1}})
         }
     }
-    // A type without crown triangles adds nothing.
-    append(&placed,Placed{type=0,position={100,0,100},rotation=1,scale={1,1}})
+    // A look without crown triangles adds nothing.
+    append(&placed,pcg.Placed{layer=0,position={100,0,100},rotation=1,scale={1,1,1}})
     cell:geom.Mesh_Buffer
     geom.mesh_buffer_init(&cell)
     defer geom.mesh_buffer_destroy(&cell)
@@ -221,12 +186,12 @@ the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs :: proc(t:
     low,high:=geom.mesh_bounds(cell.positions[:])
     testing.expectf(t,low.x<2 && low.z<2 && high.x>27 && high.z>27 && high.x<40,"it covers the wood and not the type without a crown: %v %v",low,high)
     // A scaled tree is a taller crown.
-    tall:=[1]Placed{{type=1,position={0,0,0},rotation=1,scale={1,3}}}
+    tall:=[1]pcg.Placed{{layer=1,position={0,0,0},rotation=1,scale={1,3,1}}}
     if !testing.expect(t,cell_crown_build(tall[:],crowns[:],&cell)) {return}
     low,high=geom.mesh_bounds(cell.positions[:])
     testing.expectf(t,high.y-low.y>2*(high.x-low.x),"%v %v",low,high)
     // Cells share a crown when they are made of the same: the same trees on
-    // another ground, or with a type near enough to draw its mesh, are not.
+    // another ground, or with a layer near enough to draw its mesh, are not.
     wood:=placed[:100]
     key:=crown_key(wood,crowns[:])
     same:=slice.clone(wood,context.temp_allocator)
@@ -234,21 +199,7 @@ the_crown_of_a_cell_covers_its_trees_with_fewer_triangles_than_theirs :: proc(t:
     same[7].position.y+=0.5
     testing.expect(t,crown_key(same,crowns[:])!=key,"a ground sculpted under one tree")
     none:=[2]Crown_Triangles{}
-    testing.expect(t,crown_key(nil,none[:])!=key,"the type near: its trees give no crown")
-}
-
-// Past RESIDENT_CELLS a Foliage keeps the nearest resident cells; those
-// within reach that it leaves out are a problem.
-@(test)
-past_their_budget_the_nearest_cells_stay_resident :: proc(t:^testing.T) {
-    cells:=[]Resident_Cell{{resident=true},{resident=true},{resident=false},{resident=true},{resident=true}}
-    order:=[]scene.Resident_Order{{near=1.2,index=0},{near=0.5,index=1},{near=0,index=3},{near=0.9,index=4}}
-    testing.expect_value(t,resident_cap(cells,order,8,1),0)
-    testing.expect(t,cells[0].resident && cells[1].resident && cells[3].resident && cells[4].resident,"under the budget all stay")
-    left_out:=resident_cap(cells,order,2,1)
-    testing.expect(t,cells[3].resident && cells[1].resident,"the nearest stay")
-    testing.expect(t,!cells[4].resident && !cells[0].resident && !cells[2].resident,"the farthest go")
-    testing.expect_value(t,left_out,1)
+    testing.expect(t,crown_key(nil,none[:])!=key,"the layer near: its trees give no crown")
 }
 
 // When the renderer forgets its batches and meshes, the cells let go of the
@@ -271,7 +222,7 @@ what_the_renderer_forgets_takes_the_crowns_and_far_forms_with_it :: proc(t:^test
     testing.expect(t,len(resident.owners[0].cells)==0 && !resident.owners[0].built && len(resident.owners[0].kinds)==0)
 }
 
-// The far form of a type is not made, nor the budget of the frame spent on
+// The far form of a layer is not made, nor the budget of the frame spent on
 // it, while what its parts show is not settled: its frames are drawn once,
 // as they will stay.
 @(test)

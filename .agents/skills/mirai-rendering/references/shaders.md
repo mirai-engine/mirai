@@ -136,7 +136,7 @@ void render(
   `//! per vertex program` emits `surface_vertices.comp` for vertex-moving programs only.
   Editing a program recompiles only its domain stages (never tracing, visibility, or shadows).
 - **Program uses (`build.program_uses`):** Inferred from project materials, overlays, plugin
-  `program_uses` (`.particle`, `.foliage`), `//! use <uses>`, and editor on-demand `preview`
+  `program_uses` (`.particle`, `.pcg`), `//! use <uses>`, and editor on-demand `preview`
   (tests build all uses). Missing runtime use falls back to plain stage and reports
   `Stats.problem` with the `//! use` line to add (`renderer_programs_missing`).
 - Program IDs are consecutive across domains in file order (engine, project, plugins).

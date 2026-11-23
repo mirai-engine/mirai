@@ -1,350 +1,247 @@
 package foliage
 
-import "base:runtime"
 import "core:math"
 import "core:math/linalg"
-import "core:mem/virtual"
-import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
 import render "mirai:engine/render"
-import "mirai:host"
+import scene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
+import pcg "plugins:pcg/runtime"
 import physics "plugins:physics/runtime"
 
-// Two types, a generated cell with overrides and a manual cell.
+// A point of a layer as its graph places it, standing up.
 @(private="file")
-sample :: proc(s:^Source) {
-    s.info.seed=7
-    grass:=source_type_add(s,"grass",{1,1})
-    grass.density=0.05
-    tree:=source_type_add(s,"tree",{2,2})
-    tree.density=0.01
-    tree.collision=.Capsule
-    tree.size={0.3,4,0}
-    tree.casts_shadow=true
-    source_cell(s,{0,0},true).generate=true
-    source_instance_add(s,1,{40,1,-5},u32(mm.quat_pack(1,10)),{1,2},INSTANCE_GROUNDED,0.25)
-    source_instance_add(s,0,{-0.5,0,63.9},u32(mm.quat_pack(1,10)),{1,1})
-    source_override_set(s,{0,0},{type=0,point=0,kind=.Deleted})
-    source_override_set(s,{0,0},{type=0,point=1,kind=.Moved,instance={position={3,0,4},rotation=u32(mm.quat_pack(1,10)),scale={2,2}}})
-    source_override_set(s,{0,0},{type=1,point=0,kind=.Replaced,instance={type=0,position={10,0,10},rotation=u32(mm.quat_pack(1,10)),scale={1,1}}})
+point :: proc "contextless" (layer,index:u32,at:[3]f32,height:=f32(1),collides:=true) -> pcg.Placed {
+    return {position=at,rotation=1,scale={1,height,1},id=u64(layer)<<32|u64(index),layer=layer,collides=collides}
 }
 
-@(test)
-cells_take_the_points_of_their_32_metres_including_negative_coordinates :: proc(t:^testing.T) {
-    coord,local:=cell_of({40,1,-5})
-    testing.expect_value(t,coord,[2]i32{1,-1})
-    testing.expect(t,abs(local.x-8)<1e-4 && local.y==1 && abs(local.z-27)<1e-4)
-    coord,local=cell_of({-0.5,0,63.9})
-    testing.expect_value(t,coord,[2]i32{-1,1})
-    coord,local=cell_of({32,0,0})
-    testing.expect(t,coord==[2]i32{1,0} && local.x==0)
-    // What rounds onto the far side is the first point of the next cell.
-    coord,local=cell_of({-1e-7,0,0})
-    testing.expect(t,local.x>=0 && local.x<CELL_SIZE)
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    testing.expect_value(t,len(s.cells),3)
-    for i in 1..<len(s.cells) {testing.expect(t,coord_before(s.cells[i-1].coord,s.cells[i].coord),"cells in the order of z, then x")}
-    cell:=source_cell(&s,{1,-1})
-    if !testing.expect(t,cell!=nil && len(cell.manual)==1) {return}
-    testing.expect(t,cell.manual[0].flags==INSTANCE_GROUNDED && cell.manual[0].ground==0.25,"the offset to the ground is kept")
-    testing.expect(t,source_valid(&s))
+// A graph of an entity in generated, with no cells.
+@(private="file")
+graph_add :: proc(g:^pcg.Pcg_Generated,e:core.Entity) -> ^pcg.Generated_Graph {
+    append(&g.graphs,pcg.Generated_Graph{entity=e,cells=make([dynamic]pcg.Generated_Cell)})
+    return &g.graphs[len(g.graphs)-1]
 }
 
-@(test)
-a_foliage_asset_comes_back_as_it_was_written_and_damage_is_refused :: proc(t:^testing.T) {
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    // A cell whose neighbours are coded from each other: ids out of turn,
-    // positions and grounds of both signs and -0, every rotation pattern.
-    rotations:=[?]u32{0,max(u32),u32(mm.quat_pack(1,10)),0x9abcdef1}
-    for k in 0..<64 {
-        f:=f32(k)
-        coord,id:=source_instance_add(&s,u32(k%2),{64+f*0.49,-f*1.75+3,-31.5+f*0.3},rotations[k%len(rotations)],{0.5+f,1+f*0.01},INSTANCE_GROUNDED,-f*0.125)
-        testing.expect(t,coord==[2]i32{2,-1} && id!=0)
-    }
-    shuffled:=source_cell(&s,{2,-1})
-    shuffled.manual[3].ground=-0.0
-    shuffled.manual[5].position.y=-0.0
-    shuffled.manual[7],shuffled.manual[40]=shuffled.manual[40],shuffled.manual[7]
-    // A painted one, manual and generated: their tint and wetness come back with them.
-    shuffled.manual[9].flags|=INSTANCE_COLORED
-    shuffled.manual[9].color=render.batch_color({0.2,0.1,0.05},0.75)
-    source_override_set(&s,{2,-1},{type=1,point=900,kind=.Moved,instance={type=1,position={31.99,-4,0},rotation=max(u32),scale={3,3},flags=INSTANCE_GROUNDED|INSTANCE_COLORED,ground=-0.0,color=max(u32)}})
-    s.types[1].radius=2
-    source_generate_area(&s,{-20,0,-10},9,true,0.5)
-    data,error:=source_bytes(&s,{5,6},&types)
-    defer delete(data)
-    if !testing.expect_value(t,error,asset.Error.None) {return}
-    file:asset.Asset
-    testing.expect_value(t,asset.asset_open(&file,data),asset.Error.None)
-    back:Source
-    defer source_destroy(&back)
-    id,ok:=source_read(&back,&file,&types)
-    asset.asset_close(&file)
-    testing.expect(t,ok && id==base.Asset_Id{5,6})
-    testing.expect_value(t,back.info,s.info)
-    testing.expect_value(t,len(back.types),len(s.types))
-    for t2,i in s.types {testing.expect_value(t,back.types[i],t2)}
-    testing.expect_value(t,len(back.cells),len(s.cells))
-    for cell,i in s.cells {
-        other:=back.cells[i]
-        testing.expect(t,other.coord==cell.coord && other.generate==cell.generate && slice.equal(other.density[:],cell.density[:]))
-        testing.expect(t,same_rows(other.manual[:],cell.manual[:]),"manual instances come back bit for bit, in their order")
-        testing.expect(t,same_rows(other.overrides[:],cell.overrides[:]),"overrides come back bit for bit")
-    }
-    // Cut at any length, a file is refused and the source it would replace stays.
-    for length in 0..<len(data) {
-        cut:asset.Asset
-        if asset.asset_open(&cut,data[:length])!=.None {continue}
-        _,read:=source_read(&back,&cut,&types)
-        asset.asset_close(&cut)
-        testing.expect(t,!read,"a cut file is refused")
-    }
-    testing.expect_value(t,len(back.cells),len(s.cells))
-    // What does not validate is not written: a color without its flag, a scale of 0.
-    painted:=source_cell(&s,{2,-1})
-    painted.manual[9].flags&~=INSTANCE_COLORED
-    _,uncolored:=source_bytes(&s,{5,6},&types)
-    testing.expect_value(t,uncolored,asset.Error.Invalid)
-    painted.manual[9].flags|=INSTANCE_COLORED
-    painted.manual[0].scale={0,1}
-    _,invalid:=source_bytes(&s,{5,6},&types)
-    testing.expect_value(t,invalid,asset.Error.Invalid)
-    source_cell(&s,{2,-1}).manual[0].scale={1,1}
-    // A cell is no farther from its entity than POSITION_MAX.
-    testing.expect(t,f32(COORD_MAX+1)*CELL_SIZE<=POSITION_MAX+CELL_SIZE && source_valid(&s))
-    source_cell(&s,{COORD_MAX+1,0},true)
-    testing.expect(t,!source_valid(&s))
+// A cell its graph built placing placed, in the order of the coordinates.
+@(private="file")
+cell_add :: proc(graph:^pcg.Generated_Graph,coord:[2]i32,placed:[]pcg.Placed,near:=f32(0)) {
+    at:=0
+    for at<len(graph.cells) && coord_before(graph.cells[at].coord,coord) {at+=1}
+    cell:=pcg.Generated_Cell{coord=coord,built=true,revision=1,near=near,placed=make([dynamic]pcg.Placed)}
+    append(&cell.placed,..placed)
+    inject_at(&graph.cells,at,cell)
+    graph.revision+=1
 }
 
-// A manual instance keeps its id while its source keeps it: deleting one
-// before it in its cell, adding another or moving it to another cell does
-// not give its id to another. No two share one, and one is never given again.
-@(test)
-a_manual_instance_keeps_its_id_through_the_edits_of_its_cell :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    source_type_add(&s,"bush",{3,3})
-    rotation:=u32(mm.quat_pack(1,10))
-    _,first:=source_instance_add(&s,0,{2,0,2},rotation,{1,1})
-    _,kept:=source_instance_add(&s,0,{4,0,4},rotation,{1,1})
-    position_of :: proc(s:^Source,coord:[2]i32,id:u64) -> (position:[3]f32,found:bool) {
-        work:Build_Work
-        defer build_work_destroy(&work)
-        cell:=source_cell(s,coord)
-        if cell==nil {return}
-        cell_build(s,cell,{},&work)
-        for p in work.placed {if p.id==id {return p.position,true}}
-        return
-    }
-    position,found:=position_of(&s,{0,0},MANUAL|u64(kept))
-    testing.expect(t,found && position==[3]f32{4,0,4})
-    testing.expect(t,source_instance_remove(&s,{0,0},first))
-    _,added:=source_instance_add(&s,0,{1,0,1},rotation,{1,1})
-    testing.expect(t,added!=first && added!=kept,"an id is never given again")
-    position,found=position_of(&s,{0,0},MANUAL|u64(kept))
-    testing.expect(t,found && position==[3]f32{4,0,4},"the cell changed before it, and its id names it still")
-    _,found=position_of(&s,{0,0},MANUAL|u64(first))
-    testing.expect(t,!found,"the id of one deleted names nothing")
-    testing.expect(t,source_valid(&s))
-    // Two instances with one id, or an id the source did not give, are damage.
-    cell:=source_cell(&s,{0,0})
-    cell.manual[1].id=cell.manual[0].id
-    testing.expect(t,!source_valid(&s))
-    cell.manual[1].id=s.info.instances+1
-    testing.expect(t,!source_valid(&s))
-    cell.manual[1].id=0
-    testing.expect(t,!source_valid(&s))
+// What the graph places in a cell from now on: another revision of it.
+@(private="file")
+cell_place :: proc(graph:^pcg.Generated_Graph,coord:[2]i32,placed:[]pcg.Placed) {
+    cell:=pcg.generated_cell(graph,coord)
+    clear(&cell.placed)
+    append(&cell.placed,..placed)
+    cell.revision+=1
+    graph.revision+=1
 }
 
+// The layers of a source give their looks: what they place, their
+// distances and whether they collide or fill, drawn and swaying as the
+// Foliage says of a mesh; the span of the ids of their points and how many a
+// full cell holds are those of the points of their unit (a dither group
+// shares one set) and, for a cascade, of the children of its parents.
 @(test)
-the_generator_makes_the_same_points_with_the_same_ids :: proc(t:^testing.T) {
-    kind:=FOLIAGE_TYPE_DEFAULT
-    kind.id,kind.density,kind.tilt=3,0.2,0.3
-    a,b:[dynamic]Generated
-    defer delete(a)
-    defer delete(b)
-    scatter(11,{4,-2},kind,&a)
-    scatter(11,{4,-2},kind,&b)
-    testing.expect(t,len(a)>150 && len(a)<260,"about the density by the area of the cell")
-    testing.expect_value(t,len(a),len(b))
-    for g,i in a {
-        testing.expect_value(t,g,b[i])
-        testing.expect_value(t,g.point,u32(i))
-        testing.expect(t,g.position.x>=0 && g.position.x<CELL_SIZE && g.position.y>=0 && g.position.y<CELL_SIZE)
-        testing.expect(t,g.scale[0]>=kind.scale[0] && g.scale[0]<=kind.scale[1])
-    }
-    // A lower density keeps its first points where they were.
-    fewer:=kind
-    fewer.density=0.05
-    c:[dynamic]Generated
-    defer delete(c)
-    scatter(11,{4,-2},fewer,&c)
-    testing.expect(t,len(c)<len(a))
-    for g,i in c {testing.expect_value(t,g,a[i])}
-    // Another cell, seed or type is another scatter.
-    clear(&b)
-    scatter(11,{5,-2},kind,&b)
-    testing.expect(t,b[0].position!=a[0].position)
-    clear(&b)
-    scatter(12,{4,-2},kind,&b)
-    testing.expect(t,b[0].position!=a[0].position)
+looks_take_their_layers_and_the_values_of_their_foliage :: proc(t:^testing.T) {
+    s:pcg.Pcg_Source
+    pcg.source_init(&s)
+    defer pcg.source_destroy(&s)
+    s.info.cell_size=10
+    tree:=pcg.source_layer_add(&s,.Scatter,.Macro)
+    tree.asset,tree.density,tree.impostor_distance,tree.collides=base.Asset_Id{7,7},0.1,80,true
+    tree_id:=tree.id
+    grass:=pcg.source_layer_add(&s,.Scatter,.Meso)
+    grass.density,grass.filler,grass.dither_group=0.5,true,3
+    flowers:=pcg.source_layer_add(&s,.Scatter,.Meso)
+    flowers.density,flowers.dither_group=0.3,3
+    sapling:=pcg.source_layer_add(&s,.Cascade,.Macro)
+    sapling.parent_layer,sapling.density=tree_id,2
+    looks:[dynamic]Look
+    defer delete(looks)
+    f:=Foliage{wind=0.5,flutter=2,shadows=true,rays=false}
+    if !testing.expect(t,looks_make(&looks,&s,f,nil)) {return}
+    if !testing.expect_value(t,len(looks),4) {return}
+    l:=looks[0]
+    testing.expect(t,l.layer==tree_id && l.asset==base.Asset_Id{7,7} && !l.prefab && l.collides && !l.filler && l.impostor_distance==80)
+    testing.expect(t,l.wind==0.5 && l.flutter==2 && l.casts_shadow && !l.ray_visible,"a mesh is drawn as the Foliage says")
+    testing.expect(t,abs(l.span-10)<1e-4 && abs(l.expected-10)<1e-4,"0.1 points a square metre over 100 of them")
+    testing.expect(t,abs(looks[1].span-80)<1e-3 && abs(looks[1].expected-50)<1e-3 && looks[1].filler,"the grass shares the points of its group")
+    testing.expect(t,abs(looks[2].span-80)<1e-3 && abs(looks[2].expected-30)<1e-3)
+    testing.expect(t,abs(looks[3].span-10*pcg.CASCADE_CHILDREN_MAX)<1e-3 && abs(looks[3].expected-20)<1e-3,"two saplings a tree")
+    ids:[dynamic][2]u32
+    defer delete(ids)
+    testing.expect(t,looks_ids(looks[:],&ids))
+    for look,i in looks {testing.expect_value(t,look_index(ids[:],look.layer),i)}
+    testing.expect_value(t,look_index(ids[:],99),-1)
 }
 
+// A lower detail draws the first points of each cell of a filler layer, so
+// it takes the last ones away and keeps the others; what is not filler, or a
+// grammar, keeps all. A cell full of a layer gives way to its far form at
+// DENSITY_LOD_MIN of its distances, a sparse one at all of them.
 @(test)
-overrides_change_their_generated_instance_and_orphans_are_kept :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
+filler_keeps_the_first_points_and_full_cells_give_way_sooner :: proc(t:^testing.T) {
+    grass:=Look{filler=true,span=100}
+    cases:=[?]struct{look:Look,point:u32,thin:f32,kept:bool}{
+        {grass,0,0.4,true},{grass,39,0.4,true},{grass,40,0.4,false},{grass,99,0.4,false},
+        {grass,99,1,true},{grass,140,1,true},{grass,10,0,false},
+        {Look{span=100},99,0.4,true},{Look{filler=true},7,0.4,true},
+    }
+    for c in cases {
+        testing.expectf(t,filler_kept(c.look,u64(5)<<32|u64(c.point),c.thin)==c.kept,"point %d at %v",c.point,c.thin)
+    }
+    bands:=[?]struct{count:int,expected:f32,band:u8}{{0,10,0},{1,10,0},{5,10,2},{10,10,3},{30,10,3},{4,0,0}}
+    for b in bands {testing.expectf(t,density_band(b.count,b.expected)==b.band,"%d of %v",b.count,b.expected)}
+    testing.expect_value(t,band_scale(0),f32(1))
+    testing.expect(t,abs(band_scale(DENSITY_BANDS-1)-DENSITY_LOD_MIN)<1e-6)
+    testing.expect(t,band_scale(1)>band_scale(2))
+}
+
+// The instances of a cell group by look keeping their order; the detail
+// thins the filler ones, and counts all of them for the band; a layer
+// without a look is left out.
+@(test)
+placed_instances_group_by_look_keeping_their_order :: proc(t:^testing.T) {
+    looks:=[2]Look{{layer=1},{layer=2,filler=true,span=10}}
+    ids:[dynamic][2]u32
+    defer delete(ids)
+    testing.expect(t,looks_ids(looks[:],&ids))
+    placed:=[?]pcg.Placed{point(1,0,{}),point(2,8,{}),point(1,1,{}),point(9,0,{}),point(2,1,{}),point(1,2,{})}
     work:Build_Work
     defer build_work_destroy(&work)
-    cell:=source_cell(&s,{0,0})
-    cell_build(&s,cell,{},&work)
-    testing.expect_value(t,len(work.orphans),0)
-    grass,trees:=0,0
-    for p in work.placed {
-        if p.type==0 {grass+=1} else {trees+=1}
-        testing.expect(t,p.id!=generated_id(0,0),"the deleted instance is not there")
-        if p.id==generated_id(0,1) {testing.expect(t,p.position==[3]f32{3,0,4} && p.scale==[2]f32{2,2} && p.type==0,"the moved one is where its override says")}
-        if p.id==generated_id(1,0) {testing.expect(t,p.type==0 && p.position==[3]f32{10,0,10},"a tree replaced by grass")}
-    }
-    points:[dynamic]Generated
-    defer delete(points)
-    scatter(s.info.seed,{0,0},s.types[0],&points)
-    expected_grass:=len(points)-1+1 // the moved one stays, one deleted, one tree replaced by grass
-    clear(&points)
-    scatter(s.info.seed,{0,0},s.types[1],&points)
-    testing.expect_value(t,grass,expected_grass)
-    testing.expect_value(t,trees,len(points)-1)
-    // Regenerating gives the same instances.
-    first:=make([]Placed,len(work.placed))
-    defer delete(first)
-    copy(first,work.placed[:])
-    cell_build(&s,cell,{},&work)
-    for p,i in work.placed {testing.expect_value(t,p,first[i])}
-    // An override the generator no longer makes is an orphan, kept in the source.
-    source_override_set(&s,{0,0},{type=0,point=100000,kind=.Deleted})
-    s.types[1].density=0
-    cell_build(&s,cell,{},&work)
-    testing.expect_value(t,len(work.orphans),2)
-    testing.expect_value(t,len(cell.overrides),4)
-    // A cell that no longer generates makes orphans of all its overrides.
-    cell.generate=false
-    cell_build(&s,cell,{},&work)
-    testing.expect_value(t,len(work.orphans),4)
-    testing.expect_value(t,len(work.placed),0)
+    if !testing.expect(t,placed_group(looks[:],ids[:],placed[:],0.5,&work)) {return}
+    trees:=work.order[work.firsts[0]:work.firsts[1]]
+    grass:=work.order[work.firsts[1]:work.firsts[2]]
+    testing.expect(t,len(trees)==3 && trees[0]==0 && trees[1]==2 && trees[2]==5)
+    testing.expect(t,len(grass)==1 && grass[0]==4,"the point past half of the span of the grass goes")
+    testing.expect(t,work.counts[0]==3 && work.counts[1]==2)
 }
 
 @(test)
-batch_instances_carry_the_transform_of_their_entity :: proc(t:^testing.T) {
-    owner:=mm.Transform{position={100,5,0},rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5),scale={2,2,2}}
-    p:=Placed{position={1,0,0},rotation=1,scale={1,1.5}}
-    b:=batch_instance_of(p,owner)
-    testing.expect(t,linalg.length(b.position-[3]f32{100,5,-2})<1e-4,"turned and scaled by its entity")
+batch_instances_carry_the_frame_of_their_graph :: proc(t:^testing.T) {
+    frame:=mm.Transform{position={100,5,0},rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5),scale={2,2,2}}
+    p:=point(1,0,{1,0,0},1.5)
+    b:=batch_instance_of(p,frame)
+    testing.expect(t,linalg.length(b.position-[3]f32{100,5,-2})<1e-4,"turned and scaled by its frame")
     _,scale:=render.batch_instance_unpack(b)
     testing.expect(t,linalg.length(scale-[3]f32{2,3,2})<1e-3)
 }
 
+// Every cell the graph keeps collides with one static body at its corner;
+// a cell that only lost instances keeps its body and loses their shapes, one
+// whose instances moved is built again, and one the graph no longer keeps
+// goes. Within a budget the cells nearest the sources go first and the
+// others wait.
 @(test)
-a_cell_collides_with_one_static_body_and_one_instance_leaves_alone :: proc(t:^testing.T) {
+every_cell_of_a_graph_collides_and_what_is_taken_out_leaves_alone :: proc(t:^testing.T) {
     w:physics.Physics_State
     if !testing.expect(t,physics.test_state_make(&w)) {return}
     defer physics.state_destroy(&w)
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
+    g:pcg.Pcg_Generated
+    defer pcg.pcg_generated_free(&g)
+    e:=core.Entity(42)
+    graph:=graph_add(&g,e)
+    // Two trees and grass that does not collide; a tree twice as tall in (1,-1); one in (10,0).
+    cell_add(graph,{0,0},{point(1,0,{5,0,5}),point(1,1,{10,0,5}),point(2,0,{7,0,7},1,false)})
+    cell_add(graph,{1,-1},{point(1,0,{40,1,-5},2)})
+    cell_add(graph,{10,0},{point(1,0,{325,0,5})})
+    capsule:=physics.collider_capsule(0.3,max(4*0.5-0.3,0))
+    capsule.center.y=2
+    shapes:=[1]Type_Shape{{layer=1,collider=capsule,placement=1}}
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     collision:physics.Collision_Settings
-    e:=core.Entity(42)
-    for &cell,i in s.cells {cell.version=u32(i+1)}
-    types:=make([dynamic]Type_Shape,context.temp_allocator)
-    left_out,_:=type_shapes(nil,nil,nil,nil,&s,nil,&types)
-    testing.expect_value(t,left_out,0)
-    // The entity far from the origin: each body stands at the corner of its cell.
-    owner:=mm.Transform{position={20000,0,-30000},rotation=1,scale={1,1,1}}
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,owner,types[:]);testing.expect(t,complete && enough)}
-    // Trees collide, grass does not: the generated cell and the manual tree of cell (1,-1).
-    testing.expect_value(t,len(fp.cells),len(s.cells))
-    testing.expect_value(t,int(w.world.body_count),2)
-    shapes:=int(w.world.shape_count)
-    testing.expect_value(t,shapes,len(fp.shapes))
-    tree,generated:=[2]i32{1,-1},[2]i32{0,0}
-    at:=-1
+    // The graph far from the origin: each body stands at the corner of its cell.
+    frame:=mm.Transform{position={20000,0,-30000},rotation=1,scale={1,1,1}}
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,graph,32,frame,shapes[:]);testing.expect(t,complete && enough)}
+    testing.expect_value(t,len(fp.cells),3)
+    testing.expect_value(t,int(w.world.body_count),3)
+    testing.expect_value(t,int(w.world.shape_count),4)
+    bodies:[3]physics.Body_Handle
     for cell,i in fp.cells {
-        if cell.coord==generated {at=i}
-        if cell.body=={} {continue}
+        bodies[i]=cell.body
         owned,_:=physics.owned_body_of(&w,cell.body)
         testing.expect(t,owned.owner==BODY_OWNER && owned.entity==e)
         info,_:=physics.body_info({ptr=&w},cell.body)
-        testing.expect(t,linalg.length(info.pose.position-(owner.position+cell_corner(cell.coord)))<1e-3,"at the corner of its cell")
+        testing.expect(t,linalg.length(info.pose.position-(frame.position+pcg.cell_corner(32,cell.coord)))<1e-3,"at the corner of its cell")
     }
-    // The manual tree, twice as tall, 8 m and 27 m from the corner of its cell: its capsule from its foot up.
-    manual:=Placed{type=1,position={40,1,-5},rotation=1,scale={1,2}}
-    shape,made:=instance_shape(types[0],manual,tree,owner)
+    // The tree twice as tall, 8 m and 27 m from the corner of its cell: its capsule from its foot up.
+    shape,made:=instance_shape(shapes[0],point(1,0,{40,1,-5},2),pcg.cell_corner(32,{1,-1}),frame)
     testing.expect(t,made && linalg.length(shape.position-[3]f32{8,1+4,27})<1e-3)
     testing.expect(t,abs(shape.collider.size.x-0.3)<1e-5 && abs(shape.collider.size.y-(4-0.3))<1e-4,"8 m from end to end")
-    // One instance leaves: its shapes, and nothing else.
-    if !testing.expect(t,at>=0 && fp.cells[at].count>1) {return}
-    gone:=fp.shapes[fp.cells[at].first].instance
-    testing.expect(t,collider_remove(&fp,&w,at,gone))
-    testing.expect_value(t,int(w.world.shape_count),shapes-1)
-    testing.expect(t,!collider_remove(&fp,&w,at,gone),"once")
-    for shape,i in fp.shapes {if i!=int(fp.cells[at].first) {_,valid:=physics.owned_shape_user(&w,shape.handle);testing.expect(t,valid)}}
-    // Building again replaces the bodies of the entity.
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,owner,types[:]);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.world.body_count),2)
-    testing.expect_value(t,int(w.world.shape_count),shapes)
-    // Building what changed keeps the bodies of the other cells.
-    kept:physics.Body_Handle
-    for cell in fp.cells {if cell.coord==tree {kept=cell.body}}
-    source_cell(&s,{0,0}).version+=10
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,owner,types[:],nil,false);testing.expect(t,complete && enough)}
-    testing.expect_value(t,int(w.world.body_count),2)
-    testing.expect_value(t,int(w.world.shape_count),shapes)
-    testing.expect_value(t,len(fp.shapes),shapes)
+    // A ray down on the first tree meets its instance.
+    hit,met:=physics.raycast(core.ref(&w),frame.position+{5,10,5},{0,-1,0},20)
+    plant,found:=hit_of(core.ref(&w),hit)
+    testing.expect(t,met && found && plant==pcg.Pcg_Instance{e,{0,0},u64(1)<<32},"the tree that stands there")
+    // A tree taken out: its shapes go, and the body of its cell and the others stay.
+    cell_place(graph,{0,0},{point(1,1,{10,0,5}),point(2,0,{7,0,7},1,false)})
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,graph,32,frame,shapes[:],false);testing.expect(t,complete && enough)}
+    testing.expect_value(t,int(w.world.shape_count),3)
+    testing.expect_value(t,int(w.world.body_count),3)
+    for cell,i in fp.cells {testing.expect_value(t,cell.body,bodies[i])}
+    testing.expect_value(t,fp.stats.removed,u64(1))
+    // The last tree of the cell moved: it is built again, and still collides.
+    cell_place(graph,{0,0},{point(1,1,{12,0,5})})
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,graph,32,frame,shapes[:],false);testing.expect(t,complete && enough)}
+    testing.expect_value(t,int(w.world.shape_count),3)
+    testing.expect_value(t,int(w.world.body_count),3)
     for cell in fp.cells {
-        if cell.coord==tree {testing.expect_value(t,cell.body,kept)}
-        if cell.coord==generated {_,owned:=physics.owned_body_of(&w,cell.body);testing.expect(t,owned,"the cell that changed has a body again")}
-        for shape in fp.shapes[cell.first:][:cell.count] {_,valid:=physics.owned_shape_user(&w,shape.handle);testing.expect(t,valid)}
+        for s in fp.shapes[cell.first:][:cell.count] {_,valid:=physics.owned_shape_user(&w,s.handle);testing.expect(t,valid)}
     }
+    // The graph no longer keeps (10,0): its body goes.
+    pcg.generated_cell(graph,{10,0}).built=false
+    delete(graph.cells[2].placed)
+    ordered_remove(&graph.cells,2)
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,graph,32,frame,shapes[:],false);testing.expect(t,complete && enough)}
+    testing.expect(t,len(fp.cells)==2 && w.world.body_count==2)
+    // Built again within one instance a tick, the nearest a source first.
     physics_owner_clear(&fp,&w,e)
     testing.expect(t,w.world.body_count==0 && len(fp.cells)==0 && len(fp.shapes)==0)
+    sources:=[1]scene.Source{{position=frame.position+{40,0,-5},ahead=frame.position+{40,0,-5}}}
+    near:=scene.sources_near_of(sources[:],mm.transform_matrix(frame),32)
+    budget:=Physics_Budget{instances=1}
+    physics_owner_build(&fp,&w,&collision,e,graph,32,frame,shapes[:],true,&near,&budget)
+    testing.expect(t,budget.waiting && w.world.body_count==1,"one cell, and the other waits")
+    for cell in fp.cells {testing.expect(t,(cell.body!={})==(cell.coord==[2]i32{1,-1}),"the nearest")}
+    budget=Physics_Budget{instances=PHYSICS_INSTANCES_A_TICK}
+    physics_owner_build(&fp,&w,&collision,e,graph,32,frame,shapes[:],false,&near,&budget)
+    testing.expect(t,!budget.waiting && w.world.body_count==2)
+    physics_owner_clear(&fp,&w,e)
 }
 
-// Rocks of a type of Hull collision share one hull, which each instance
-// scales and turns: a ray meets each at its own size, and the hull goes
-// back to physics once no rock uses it.
+// Rocks of one mesh share one hull, which each instance scales and turns: a
+// ray meets each at its own size, and the hull goes back to physics once no
+// rock uses it.
 @(test)
 rocks_collide_as_one_hull_each_instance_scales :: proc(t:^testing.T) {
     w:physics.Physics_State
     if !testing.expect(t,physics.test_state_make(&w)) {return}
     defer physics.state_destroy(&w)
-    s:Source
-    defer source_destroy(&s)
-    rock:=source_type_add(&s,"rock",{2,2})
-    rock.collision=.Hull
-    turned:=u32(mm.quat_pack(mm.quat_axis_angle({0,1,0},math.PI*0.5),10))
-    _,wide:=source_instance_add(&s,rock.id,{5,0,5},turned,{2,1})
-    source_instance_add(&s,rock.id,{10,0,5},u32(mm.quat_pack(1,10)),{1,3})
-    for &cell,i in s.cells {cell.version=u32(i+1)}
+    g:pcg.Pcg_Generated
+    defer pcg.pcg_generated_free(&g)
+    e:=core.Entity(5)
+    graph:=graph_add(&g,e)
+    wide:=point(1,0,{5,0,5})
+    wide.rotation,wide.scale=mm.quat_axis_angle({0,1,0},math.PI*0.5),{2,1,2}
+    cell_add(graph,{0,0},{wide,point(1,1,{10,0,5},3)})
     fp:Foliage_Physics
     defer core.value_free(&fp,type_info_of(Foliage_Physics))
     hulls:=make([dynamic]physics.Hull_Handle,context.temp_allocator)
     if made,_:=physics.owned_hulls(&w,nil,nil,{shape=.Cube},&hulls);!testing.expect(t,made && len(hulls)==1) {return}
     append(&fp.hulls,hulls[0])
-    types:=[1]Type_Shape{{rock.id,physics.collider_hull(),1,hulls[0]}}
+    types:=[1]Type_Shape{{1,physics.collider_hull(),1,hulls[0]}}
     collision:physics.Collision_Settings
-    e:=core.Entity(5)
-    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,&s,{rotation=1,scale={1,1,1}},types[:]);testing.expect(t,complete && enough)}
+    {complete,enough:=physics_owner_build(&fp,&w,&collision,e,graph,32,{rotation=1,scale={1,1,1}},types[:]);testing.expect(t,complete && enough)}
     testing.expect_value(t,len(fp.shapes),2)
     top,on_top:=physics.raycast(core.ref(&w),{5,10,5},{0,-1,0},20)
     tall,on_tall:=physics.raycast(core.ref(&w),{10,10,5},{0,-1,0},20)
@@ -353,7 +250,7 @@ rocks_collide_as_one_hull_each_instance_scales :: proc(t:^testing.T) {
     side,on_side:=physics.raycast(core.ref(&w),{0,0.2,5},{1,0,0},20)
     testing.expect(t,on_side && abs(side.distance-4)<1e-3,"two metres wide across x")
     plant,found:=shape_instance(&w,side.body,side.shape)
-    testing.expect(t,found && plant.instance==MANUAL|u64(wide))
+    testing.expect(t,found && plant.id==wide.id)
     hulls_sweep(&fp,&w)
     testing.expect_value(t,len(fp.hulls),1)
     physics_owner_clear(&fp,&w,e)
@@ -362,187 +259,10 @@ rocks_collide_as_one_hull_each_instance_scales :: proc(t:^testing.T) {
 }
 
 @(test)
-overrides_keep_the_order_of_type_and_point_and_are_found_by_it :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    source_override_set(&s,{0,0},{type=0,point=7,kind=.Deleted})
-    source_override_set(&s,{0,0},{type=0,point=3,kind=.Deleted})
-    cell:=source_cell(&s,{0,0})
-    for k in 1..<len(cell.overrides) {
-        a,b:=cell.overrides[k-1],cell.overrides[k]
-        testing.expect(t,a.type<b.type || a.type==b.type && a.point<b.point)
-    }
-    testing.expect_value(t,cell.overrides[override_find(cell,0,3)].point,u32(3))
-    testing.expect_value(t,override_find(cell,0,4),-1)
-    testing.expect(t,source_override_remove(&s,{0,0},0,3))
-    testing.expect_value(t,override_find(cell,0,3),-1)
-    testing.expect(t,source_valid(&s))
-    // Out of order, a source is not valid: what writes it keeps the order.
-    cell.overrides[0],cell.overrides[1]=cell.overrides[1],cell.overrides[0]
-    testing.expect(t,!source_valid(&s))
-}
-
-@(test)
-a_source_read_again_keeps_the_version_of_the_cells_that_did_not_change :: proc(t:^testing.T) {
-    before,after:Source
-    defer source_destroy(&before)
-    defer source_destroy(&after)
-    sample(&before)
-    sample(&after)
-    versions:=u32(0)
-    for &cell in before.cells {versions+=1;cell.version=versions}
-    source_instance_add(&after,0,{2,0,3},u32(mm.quat_pack(1,10)),{1,1})
-    source_cell(&after,{5,5},true).generate=true
-    cells_version(&after,&before,&versions)
-    for cell in after.cells {
-        old:=source_cell(&before,cell.coord)
-        switch cell.coord {
-        case {0,0},{5,5}: testing.expect(t,cell.version>3,"a changed or new cell takes the next version")
-        case:             testing.expect_value(t,cell.version,old.version)
-        }
-    }
-    // A type drawn otherwise keeps every cell and raises the look.
-    look:=u32(0)
-    kept:=versions
-    drawn:Source
-    defer source_destroy(&drawn)
-    sample(&drawn)
-    for &cell,i in drawn.cells {cell.version=u32(i+1)}
-    drawn_after:Source
-    defer source_destroy(&drawn_after)
-    sample(&drawn_after)
-    drawn_after.types[0].cull_distance,drawn_after.types[0].casts_shadow,drawn_after.types[0].mesh=77,true,{9,9}
-    cells_version(&drawn_after,&drawn,&versions,&look)
-    testing.expect(t,look==1 && versions==kept)
-    for cell,i in drawn_after.cells {testing.expect_value(t,cell.version,u32(i+1))}
-    // Other types change every cell.
-    previous:=versions
-    after.types[0].density=0.2
-    keep:Source
-    defer source_destroy(&keep)
-    sample(&keep)
-    for &cell,i in keep.cells {cell.version=u32(i+1)}
-    cells_version(&after,&keep,&versions)
-    for cell in after.cells {testing.expect(t,cell.version>previous)}
-}
-
-@(test)
-instances_stand_on_their_ground_and_generated_ones_leave_where_it_has_none :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    s.types[0].align=1
-    // A slope that rises 1 m a metre along x, and a hole where x is past 16 m.
-    samples:=5
-    heights:=make([]f32,samples*samples)
-    defer delete(heights)
-    for z in 0..<samples {for x in 0..<samples {
-        heights[z*samples+x]=f32(x)*CELL_SIZE/f32(samples-1)
-        if x>2 {heights[z*samples+x]=NO_GROUND}
-    }}
-    ground:=Ground_Cell{samples=samples,heights=heights}
-    h,n,ok:=ground_at(ground,4,10)
-    testing.expect(t,ok && abs(h-4)<1e-4 && abs(n.x+0.7071)<1e-3 && abs(n.y-0.7071)<1e-3)
-    _,_,ok=ground_at(ground,20,10)
-    testing.expect(t,!ok,"no ground in the hole")
-    cell:=source_cell(&s,{0,0})
-    append(&cell.manual,Foliage_Instance{id=10,type=0,flags=INSTANCE_GROUNDED,position={6,0,6},rotation=u32(mm.quat_pack(1,10)),scale={1,1},ground=0.5})
-    append(&cell.manual,Foliage_Instance{id=11,type=0,position={7,3,7},rotation=u32(mm.quat_pack(1,10)),scale={1,1}})
-    s.info.instances=11
-    work:Build_Work
-    defer build_work_destroy(&work)
-    cell_build(&s,cell,ground,&work)
-    flat:Build_Work
-    defer build_work_destroy(&flat)
-    cell_build(&s,cell,{},&flat)
-    testing.expect(t,len(work.placed)<len(flat.placed),"generated instances over the hole are not there")
-    // Under a Foliage that has ground, a cell whose ground is not known is not the plane y = 0.
-    owner:Ground_Owner
-    unknown,_:=ground_cell(&owner,{0,0})
-    unread:Build_Work
-    defer build_work_destroy(&unread)
-    cell_build(&s,cell,unknown,&unread)
-    testing.expect_value(t,len(unread.placed),2)
-    for p in unread.placed {testing.expect(t,p.id&MANUAL!=0,"no generated instance where the ground is not known")}
-    for p in work.placed {
-        switch p.id {
-        case MANUAL|10: testing.expect(t,abs(p.position.y-6.5)<1e-4,"a grounded instance stands its offset over the ground")
-        case MANUAL|11: testing.expect_value(t,p.position.y,f32(3))
-        case:
-            if p.id&MANUAL!=0 || p.id==generated_id(0,1) || p.id==generated_id(1,0) {continue}
-            testing.expect(t,p.position.x<=16+1e-3,"no generated instance past the hole")
-            testing.expect(t,abs(p.position.y-p.position.x)<1e-3,"on the slope")
-            if p.type==0 {
-                up:=mm.quat_rotate(p.rotation,{0,1,0})
-                testing.expect(t,up.x< -0.5,"leans with the slope")
-            }
-        }
-    }
-}
-
-@(test)
-a_manual_instance_aligned_with_its_ground_leans_with_the_ground_that_changes :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    s.types[0].align=1
-    cell:=source_cell(&s,{0,0})
-    cell.generate=false
-    yaw:=mm.Quat(quaternion(w=0.9238795,x=0,y=0.38268343,z=0))
-    append(&cell.manual,Foliage_Instance{id=10,type=0,flags=INSTANCE_GROUNDED|INSTANCE_ALIGNED,position={6,0,6},rotation=u32(mm.quat_pack(yaw,10)),scale={1,1},ground=0.5})
-    append(&cell.manual,Foliage_Instance{id=11,type=0,flags=INSTANCE_GROUNDED,position={8,0,8},rotation=u32(mm.quat_pack(yaw,10)),scale={1,1}})
-    s.info.instances=11
-    testing.expect(t,source_valid(&s))
-    samples:=5
-    heights:=make([]f32,samples*samples)
-    defer delete(heights)
-    work:Build_Work
-    defer build_work_destroy(&work)
-    // Flat at 2 m, then a slope that rises 1 m a metre along x.
-    for slope in ([2]bool{false,true}) {
-        for z in 0..<samples {for x in 0..<samples {heights[z*samples+x]=slope?f32(x)*CELL_SIZE/f32(samples-1):2}}
-        cell_build(&s,cell,{samples=samples,heights=heights},&work)
-        if !testing.expect_value(t,len(work.placed),2) {return}
-        aligned,kept:=work.placed[0],work.placed[1]
-        testing.expect(t,abs(aligned.position.y-(slope?6.5:2.5))<1e-4,"it stands its offset over the ground")
-        up:=mm.quat_rotate(aligned.rotation,{0,1,0})
-        if slope {
-            testing.expect(t,abs(up.x+0.7071)<1e-2 && abs(up.y-0.7071)<1e-2,"the aligned one leans with the new slope")
-        } else {
-            testing.expect(t,abs(up.y-1)<1e-3,"on flat ground it stands up")
-        }
-        normal:=slope?[3]f32{-0.70710677,0.70710677,0}:[3]f32{0,1,0}
-        forward:=mm.quat_rotate(conj(ground_slope(1,normal))*aligned.rotation,{1,0,0})
-        testing.expect(t,abs(forward.z-mm.quat_rotate(yaw,{1,0,0}).z)<1e-2,"it keeps its own turn")
-        testing.expect(t,abs(mm.quat_rotate(kept.rotation,{0,1,0}).y-1)<1e-3,"one only grounded keeps its rotation")
-    }
-    // An aligned one that is not grounded is damage.
-    cell.manual[1].flags=INSTANCE_ALIGNED
-    testing.expect(t,!source_valid(&s))
-}
-
-@(test)
-placed_instances_group_by_type_keeping_their_order :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    work:Build_Work
-    defer build_work_destroy(&work)
-    for type in ([]u32{1,0,1,9,0,1}) {append(&work.placed,Placed{type=type})}
-    placed_group(&s,&work)
-    testing.expect_value(t,len(work.firsts),3)
-    grass:=work.order[work.firsts[0]:work.firsts[1]]
-    trees:=work.order[work.firsts[1]:work.firsts[2]]
-    testing.expect(t,len(grass)==2 && grass[0]==1 && grass[1]==4)
-    testing.expect(t,len(trees)==3 && trees[0]==0 && trees[1]==2 && trees[2]==5)
-    testing.expect_value(t,len(work.order),5)
-}
-
-@(test)
 a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out :: proc(t:^testing.T) {
     owner:=mm.transform_matrix({position={10,0,0},rotation=1,scale={2,2,2}})
-    p:=Placed{position={1,0,0},rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5),scale={1,1.5}}
+    p:=point(1,0,{1,0,0},1.5)
+    p.rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5)
     part:=mm.transform_matrix({position={0,1,0},rotation=1,scale={1,1,1}})
     b,error:=part_instance(p,owner,part)
     testing.expect(t,error<1e-4)
@@ -561,6 +281,8 @@ a_part_of_a_prefab_composes_with_its_instance_and_says_what_it_leaves_out :: pro
     testing.expect(t,error>PREFAB_ERROR)
 }
 
+// A prefab a layer places: its shown meshes placed from its root, the
+// colliders an instance can have, and the wind of the Foliage_Sway of its root.
 @(test)
 the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testing.T) {
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
@@ -588,6 +310,11 @@ the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testi
     triangles:=physics.COLLIDER_DEFAULT
     triangles.kind=.Mesh
     asset.scene_set(&prefab,1,"Collider",&triangles)
+    // The root sways; the sway of another entity says nothing of the prefab.
+    root_sway:=Foliage_Sway{wind=2.5,flutter=0.5}
+    asset.scene_set(&prefab,1,"Foliage_Sway",&root_sway)
+    other_sway:=Foliage_Sway{wind=9}
+    asset.scene_set(&prefab,3,"Foliage_Sway",&other_sway)
     data,error:=asset.scene_bytes(&prefab)
     defer delete(data)
     if !testing.expect_value(t,error,asset.Error.None) {return}
@@ -610,534 +337,169 @@ the_parts_of_a_prefab_are_its_shown_meshes_placed_from_its_root :: proc(t:^testi
     testing.expect(t,colliders[0].collider.kind==.Capsule && linalg.length(colliders[0].placement[3].xyz-[3]f32{0,1,0})<1e-5)
     testing.expect(t,colliders[1].collider.kind==.Hull && colliders[1].renderer.mesh==base.Asset_Id{7,7})
     // An instance 1.5 times as tall turned a quarter: the trunk's capsule twice as thick, three times as long, one and a half metres up from its foot.
-    p:=Placed{type=0,position={33,0,1},rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5),scale={1,1.5}}
-    made,ok:=instance_shape({0,colliders[0].collider,colliders[0].placement,{}},p,{1,0},{rotation=1,scale={1,1,1}})
+    p:=point(1,0,{33,0,1},1.5)
+    p.rotation=mm.quat_axis_angle({0,1,0},math.PI*0.5)
+    made,ok:=instance_shape({1,colliders[0].collider,colliders[0].placement,{}},p,pcg.cell_corner(32,{1,0}),{rotation=1,scale={1,1,1}})
     testing.expect(t,ok && linalg.length(made.position-[3]f32{1,1.5,1})<1e-4)
     testing.expect(t,abs(made.collider.size.x-0.5)<1e-4 && abs(made.collider.size.y-((1+0.25)*3-0.5))<1e-4)
+    sway,sways:=prefab_sway(&file,&types)
+    testing.expect(t,sways && sway==root_sway,"the sway of its root")
 }
 
+// The instance a pick of a batch names: the index-th of the layer in its
+// cell, past those the detail thins.
 @(test)
-a_removed_type_takes_its_instances_and_overrides_with_it :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    // Grass: a manual one in (-1,1), a Deleted, a Moved and the instance that replaces a tree.
-    testing.expect(t,source_type_remove(&s,0))
-    testing.expect(t,!source_type_remove(&s,0),"there is no such type any more")
-    testing.expect_value(t,len(s.types),1)
-    testing.expect_value(t,len(source_cell(&s,{-1,1}).manual),0)
-    testing.expect_value(t,len(source_cell(&s,{1,-1}).manual),1)
-    overrides:=source_cell(&s,{0,0}).overrides[:]
-    if testing.expect_value(t,len(overrides),1) {
-        testing.expect(t,overrides[0].type==1 && overrides[0].kind==.Deleted,"the tree it replaced is not there")
+a_pick_names_the_instance_its_batch_draws :: proc(t:^testing.T) {
+    looks:=[2]Look{{layer=1},{layer=2,filler=true,span=4}}
+    ids:[dynamic][2]u32
+    defer delete(ids)
+    testing.expect(t,looks_ids(looks[:],&ids))
+    placed:=[?]pcg.Placed{point(2,3,{}),point(1,0,{}),point(2,0,{}),point(1,1,{}),point(2,1,{})}
+    cases:=[?]struct{layer:u32,index:int,thin:f32,id:u64,ok:bool}{
+        {1,0,1,u64(1)<<32,true},{1,1,1,u64(1)<<32|1,true},{1,2,1,0,false},
+        {2,0,1,u64(2)<<32|3,true},{2,0,0.5,u64(2)<<32,true},{2,1,0.5,u64(2)<<32|1,true},{2,2,0.5,0,false},
+        {3,0,1,0,false},{1,-1,1,0,false},
     }
-    testing.expect(t,source_valid(&s))
+    for c in cases {
+        id,ok:=layer_instance(looks[:],ids[:],placed[:],c.layer,c.index,c.thin)
+        testing.expectf(t,ok==c.ok && id==c.id,"layer %d, instance %d at %v: %x",c.layer,c.index,c.thin,id)
+    }
 }
 
-// One type of grass over a generated cell, and the points it gets there
-// without a rule, on the ground given.
+// The cells to build go nearest the sources first, within the instances of
+// the frame; one goes while some are left.
+@(test)
+cells_are_built_nearest_first_within_the_instances_of_a_frame :: proc(t:^testing.T) {
+    g:pcg.Pcg_Generated
+    defer pcg.pcg_generated_free(&g)
+    graph:=graph_add(&g,1)
+    many:=make([]pcg.Placed,3000,context.temp_allocator)
+    cell_add(graph,{0,0},nil,2)
+    cell_add(graph,{1,0},many,0.5)
+    cell_add(graph,{2,0},nil,0)
+    cells:=[3]Resident_Cell{{coord={0,0}},{coord={1,0}},{coord={2,0}}}
+    builds:=[3]scene.Resident_Order{{near=2,index=0},{near=0.5,index=1},{near=0,index=2}}
+    left:=CELL_COST_MIN+10
+    testing.expect_value(t,builds_take(builds[:],graph,cells[:],&left),2)
+    testing.expect(t,builds[0].index==2 && builds[1].index==1,"the nearest, then the next one past the budget")
+    testing.expect_value(t,left,10-3000)
+}
+
+@(private)
+@(test_world)
+Foliage_World :: struct {
+    using world:Test_World,
+    ids:core.Table(core.Id),
+    parents:core.Table(core.Parent),
+    transforms:core.Table(core.Transform),
+    foliages:core.Table(Foliage),
+    graphs:core.Table(pcg.Pcg_Graph),
+    worlds:core.Table(core.World_Transform),
+    marked:core.Table(Foliage_Marked),
+    data:pcg.Pcg_Data,
+    marks:Foliage_Marks,
+    requests:Foliage_Requests,
+    network:core.Network,
+}
+
+// A Foliage of a graph of source {9,9} at a place of the world, with an Id when id is not 0.
 @(private="file")
-rule_sample :: proc(s:^Source,ground:Ground_Cell,work:^Build_Work) -> ^Cell {
-    s.info.seed=5
-    source_type_add(s,"grass",{1,1}).density=0.08
-    cell:=source_cell(s,{0,0},true)
-    cell.generate=true
-    cell_build(s,cell,ground,work)
-    return cell
+foliage_add :: proc(w:^Foliage_World,id:base.Entity_Id,at:[3]f32,anchored:=false) -> core.Entity {
+    e:=core.create(&w.entities)
+    if id!=0 {core.add(&w.ids,e,core.Id{value=id})}
+    core.add(&w.foliages,e,FOLIAGE_DEFAULT)
+    core.add(&w.graphs,e,pcg.Pcg_Graph{source={9,9},world_anchored=anchored})
+    core.add(&w.worlds,e,core.World_Transform{transform={position=at,rotation=1,scale={1,1,1}}})
+    return e
 }
 
-@(private="file")
-placed_by_id :: proc(placed:[]Placed,id:u64) -> (Placed,bool) {
-    for p in placed {if p.id==id {return p,true}}
-    return {},false
-}
-
+// What a game finds is what the graphs of the Foliage of the world place,
+// in the world: in a sphere, in a box, or by its instance; an entity
+// without a Foliage, or a cell its graph does not keep, gives nothing.
 @(test)
-a_rule_of_slope_and_height_takes_out_the_generated_points_off_it_and_keeps_the_ids_of_the_rest :: proc(t:^testing.T) {
-    // Flat at 2 m up to x = 16 m, then a rise of 2 m a metre.
-    samples:=5
-    heights:=make([]f32,samples*samples)
-    defer delete(heights)
-    for z in 0..<samples {for x in 0..<samples {heights[z*samples+x]=2+f32(max(x-2,0))*16}}
-    ground:=Ground_Cell{samples=samples,heights=heights}
-    s:Source
-    defer source_destroy(&s)
-    all:Build_Work
-    defer build_work_destroy(&all)
-    cell:=rule_sample(&s,ground,&all)
-    testing.expect(t,len(all.placed)>40)
-    work:Build_Work
-    defer build_work_destroy(&work)
-    s.types[0].rule={enabled=true,slope={0,0.3},height={-POSITION_MAX,POSITION_MAX}}
-    testing.expect(t,source_valid(&s))
-    cell_build(&s,cell,ground,&work)
-    flat,steep:=0,0
-    for p in all.placed {
-        kept,found:=placed_by_id(work.placed[:],p.id)
-        if p.position.x<16-1e-3 {
-            flat+=1
-            testing.expect(t,found && kept==p,"a point on the flat stays as it was, with its id")
-        } else if p.position.x>16+1e-3 {
-            steep+=1
-            testing.expect(t,!found,"a point on the slope is not there")
-        }
+the_instances_a_game_finds_are_those_their_graphs_place :: proc(t:^testing.T) {
+    w:Foliage_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    append(&w.data.entries,pcg.Pcg_Data_Entry{id={9,9},epoch=1,loads=1})
+    pcg.source_init(&w.data.entries[0].source)
+    w.data.entries[0].source.info.cell_size=32
+    g:pcg.Pcg_Generated
+    defer pcg.pcg_generated_free(&g)
+    wood:=foliage_add(&w,0,{100,0,0})
+    anchored:=foliage_add(&w,0,{100,0,0},true)
+    test_world_settle(&w)
+    a,b:=point(1,0,{5,0,5}),point(1,1,{40,0,5})
+    for e in ([2]core.Entity{wood,anchored}) {
+        graph:=graph_add(&g,e)
+        cell_add(graph,{0,0},{a})
+        cell_add(graph,{1,0},{b})
     }
-    testing.expect(t,flat>0 && steep>0)
-    testing.expect_value(t,len(work.placed),flat)
-    // Height: only the ground from 1 m to 3 m takes it.
-    s.types[0].rule={enabled=true,slope={0,math.PI/2},height={1,3}}
-    cell_build(&s,cell,ground,&work)
-    for p in work.placed {testing.expect(t,p.position.y>=1 && p.position.y<=3)}
-    testing.expect(t,len(work.placed)>=flat && len(work.placed)<len(all.placed))
-    // Off, the rule takes nothing out.
-    s.types[0].rule.enabled=false
-    cell_build(&s,cell,ground,&work)
-    testing.expect_value(t,len(work.placed),len(all.placed))
+    found:=make([dynamic]Foliage_Found,context.temp_allocator)
+    testing.expect(t,foliage_in_sphere(&found,{105,0,5},2,core.ref(&w.data),core.ref(&g),core.read(&w.foliages),core.read(&w.graphs),core.read(&w.worlds)))
+    if testing.expect_value(t,len(found),1) {
+        testing.expect(t,found[0].plant==pcg.Pcg_Instance{wood,{0,0},a.id} && found[0].layer==1 && linalg.length(found[0].transform.position-[3]f32{105,0,5})<1e-4)
+    }
+    clear(&found)
+    testing.expect(t,foliage_in_box(&found,{0,-1,0},{150,1,10},core.ref(&w.data),core.ref(&g),core.read(&w.foliages),core.read(&w.graphs),core.read(&w.worlds)))
+    testing.expect_value(t,len(found),4)
+    clear(&found)
+    // The graph anchored to the world places where its points are, wherever its entity is.
+    testing.expect(t,foliage_in_sphere(&found,{5,0,5},1,core.ref(&w.data),core.ref(&g),core.read(&w.foliages),core.read(&w.graphs),core.read(&w.worlds)))
+    testing.expect(t,len(found)==1 && found[0].plant.graph==anchored)
+    at,shown:=foliage_plant({wood,{1,0},b.id},core.ref(&g),core.read(&w.foliages),core.read(&w.graphs),core.read(&w.worlds))
+    testing.expect(t,shown && linalg.length(at.transform.position-[3]f32{140,0,5})<1e-4)
+    _,shown=foliage_plant({wood,{1,0},a.id},core.ref(&g),core.read(&w.foliages),core.read(&w.graphs),core.read(&w.worlds))
+    testing.expect(t,!shown,"not in that cell")
+    _,shown=foliage_plant({wood,{5,0},a.id},core.ref(&g),core.read(&w.foliages),core.read(&w.graphs),core.read(&w.worlds))
+    testing.expect(t,!shown,"a cell the graph does not keep")
+    core.remove(&w.foliages,wood)
+    test_world_settle(&w)
+    _,shown=foliage_plant({wood,{1,0},b.id},core.ref(&g),core.read(&w.foliages),core.read(&w.graphs),core.read(&w.worlds))
+    testing.expect(t,!shown,"without its Foliage")
 }
-
-// A rule names layers by their material: two terrains with the same
-// materials in another order give the same forest.
-@(test)
-a_rule_of_layers_takes_its_materials_in_any_order_and_nothing_unknown :: proc(t:^testing.T) {
-    GRASS,ROCK:=base.Asset_Id{1,1},base.Asset_Id{2,2}
-    testing.expect(t,rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers={GRASS,ROCK,{},{}},weight=0.6}},0,{0,1,0},0.7,true))
-    testing.expect(t,!rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers={GRASS,{},{},{}},weight=0.6}},0,{0,1,0},0.5,true))
-    testing.expect(t,!rule_allows({rule={enabled=true,slope={0,1},height={-1,1},layers={GRASS,{},{},{}}}},0,{0,1,0},0,false),"no weights known")
-    testing.expect(t,rule_allows({rule={enabled=true,slope={0,1},height={-1,1}}},0,{0,1,0},0,false),"no layers asked")
-    // Up to x = 16 m a terrain with grass second, all grass; from 24 m one
-    // with grass first, all rock; between them, half of each at 20 m.
-    samples:=5
-    heights:=make([]f32,samples*samples)
-    defer delete(heights)
-    weights:=make([]Layer_Weights,samples*samples)
-    defer delete(weights)
-    layers:=[]Ground_Layers{{ROCK,GRASS,{},{}},{GRASS,ROCK,{},{}}}
-    for z in 0..<samples {for x in 0..<samples {weights[z*samples+x]=x<=2?{{0,255,0,0},0}:{{0,255,0,0},1}}}
-    ground:=Ground_Cell{samples=samples,heights=heights,weights=weights,layers=layers}
-    grass:=layer_mask({layers={GRASS,{},{},{}}},layers)
-    w,ok:=ground_layer_weight(ground,&grass,20,5)
-    testing.expect(t,ok && abs(w-0.5)<1e-4)
-    s:Source
-    defer source_destroy(&s)
-    all:Build_Work
-    defer build_work_destroy(&all)
-    cell:=rule_sample(&s,ground,&all)
-    s.types[0].rule={enabled=true,slope={0,math.PI/2},height={-POSITION_MAX,POSITION_MAX},layers={GRASS,{},{},{}},weight=1}
-    work:Build_Work
-    defer build_work_destroy(&work)
-    cell_build(&s,cell,ground,&work)
-    kept:=0
-    for p in all.placed {
-        _,found:=placed_by_id(work.placed[:],p.id)
-        if p.position.x<=16-1e-3 {testing.expect(t,found,"all grass");kept+=1}
-        if p.position.x>16+1e-3 {testing.expect(t,!found,"less than all grass")}
-    }
-    testing.expect(t,kept>0)
-    // Half of it takes the ground to x = 20 m.
-    s.types[0].rule.weight=0.5
-    cell_build(&s,cell,ground,&work)
-    for p in work.placed {testing.expect(t,p.position.x<=20+1e-3)}
-    testing.expect(t,len(work.placed)>kept)
-    // Grass on both terrains, first on one and second on the other: all of it.
-    s.types[0].rule.weight=1
-    for z in 0..<samples {for x in 3..<samples {weights[z*samples+x]={{255,0,0,0},1}}}
-    cell_build(&s,cell,ground,&work)
-    testing.expect_value(t,len(work.placed),len(all.placed))
-    // A sample without layers, or no weights at all: a rule of layers takes nothing.
-    weights[1]={}
-    _,ok=ground_layer_weight(ground,&grass,1,1)
-    testing.expect(t,!ok)
-    cell_build(&s,cell,{samples=samples,heights=heights},&work)
-    testing.expect_value(t,len(work.placed),0)
-    s.types[0].rule.layers={}
-    cell_build(&s,cell,{samples=samples,heights=heights},&work)
-    testing.expect_value(t,len(work.placed),len(all.placed))
-}
-
-@(test)
-a_generated_point_takes_an_offset_of_its_type_and_keeps_its_other_values :: proc(t:^testing.T) {
-    kind:=FOLIAGE_TYPE_DEFAULT
-    kind.id,kind.density,kind.tilt=2,0.05,0.2
-    before,after:[dynamic]Generated
-    defer delete(before)
-    defer delete(after)
-    scatter(9,{1,3},kind,&before)
-    kind.offset={-0.5,1.5}
-    scatter(9,{1,3},kind,&after)
-    testing.expect_value(t,len(after),len(before))
-    low,high:=f32(1e9),f32(-1e9)
-    for g,i in after {
-        testing.expect(t,g.offset>=-0.5 && g.offset<=1.5)
-        low,high=min(low,g.offset),max(high,g.offset)
-        moved:=g
-        moved.offset=0
-        testing.expect_value(t,moved,before[i])
-    }
-    testing.expect(t,low<0 && high>1,"over the range")
-    // Each stands its offset along its own y over the ground.
-    s:Source
-    defer source_destroy(&s)
-    s.info.seed=9
-    grass:=source_type_add(&s,"grass",{1,1})
-    grass.density,grass.tilt,grass.offset=0.05,0.2,{-0.5,1.5}
-    cell:=source_cell(&s,{1,3},true)
-    cell.generate=true
-    work:Build_Work
-    defer build_work_destroy(&work)
-    cell_build(&s,cell,{},&work)
-    clear(&after)
-    scatter(9,{1,3},s.types[0],&after)
-    testing.expect_value(t,len(work.placed),len(after))
-    for p,i in work.placed {
-        g:=after[i]
-        foot:=p.position-mm.quat_rotate(p.rotation,{0,g.offset,0})
-        testing.expect(t,abs(foot.y)<1e-4 && abs(foot.x-(g.position.x+CELL_SIZE))<1e-3,"the offset along its y, from the plane")
-    }
-}
-
-@(test)
-a_foliage_file_written_before_the_rules_reads_them_off_and_bad_rules_are_refused :: proc(t:^testing.T) {
-    // The type as it was before offset and rule.
-    Older_Type :: struct {
-        id:u32,
-        name:[32]u8 `mirai:"text"`,
-        mesh:base.Asset_Id,
-        density:f32,
-        scale:[2]f32,
-        height:[2]f32,
-        yaw:f32,
-        tilt:f32,
-        align:f32,
-    }
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    document:asset.Document
-    asset.document_init(&document,FOLIAGE_KIND,{7,8})
-    defer asset.document_destroy(&document)
-    document.kind_version=FOLIAGE_VERSION
-    info:=Foliage_Info{seed=3,next_type=1}
-    older:=[]Older_Type{{id=0,mesh={1,1},density=0.2,scale={1,1},height={1,2},yaw=1,align=1}}
-    _,put:=asset.document_put_row(&document,&types,"foliage",&info)
-    testing.expect_value(t,put,asset.Error.None)
-    _,put=asset.document_put(&document,&types,"types",older)
-    testing.expect_value(t,put,asset.Error.None)
-    data,error:=asset.document_bytes(&document)
-    defer delete(data)
-    if !testing.expect_value(t,error,asset.Error.None) {return}
-    file:asset.Asset
-    testing.expect_value(t,asset.asset_open(&file,data),asset.Error.None)
-    s:Source
-    defer source_destroy(&s)
-    _,ok:=source_read(&s,&file,&types)
-    asset.asset_close(&file)
-    if !testing.expect(t,ok && len(s.types)==1) {return}
-    testing.expect(t,s.types[0].density==0.2 && s.types[0].height==[2]f32{1,2})
-    testing.expect_value(t,s.types[0].rule,Foliage_Rule{})
-    testing.expect_value(t,s.types[0].offset,[2]f32{})
-    testing.expect(t,rule_allows(s.types[0],100,{1,0,0},0,false),"a rule that is off takes any ground")
-    // The default, turned on, is valid; what is out of range is not.
-    s.types[0].rule=FOLIAGE_TYPE_DEFAULT.rule
-    s.types[0].rule.enabled=true
-    testing.expect(t,source_valid(&s))
-    bad:=[?]Foliage_Rule{
-        {slope={0.5,0.2}},
-        {slope={-0.1,1}},
-        {slope={0,2}},
-        {height={1,0}},
-        {height={0,math.F32_MAX}},
-        {weight=1.5},
-        {slope={0,math.nan_f32()}},
-    }
-    for rule in bad {
-        s.types[0].rule=rule
-        testing.expect(t,!source_valid(&s))
-    }
-    s.types[0].rule={}
-    s.types[0].offset={1,0}
-    testing.expect(t,!source_valid(&s),"an inverted offset")
-    s.types[0].offset={0,math.inf_f32(1)}
-    testing.expect(t,!source_valid(&s))
-}
-
-// An allocator that serves `remaining` requests of its owner and refuses the rest.
-@(private="file")
-Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
 
 @(private="file")
-memory_limit_proc :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old_memory:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
-    limit:=(^Memory_Limit)(data)
-    if mode==.Alloc || mode==.Alloc_Non_Zeroed || mode==.Resize || mode==.Resize_Non_Zeroed {
-        if limit.remaining<=0 {return nil,.Out_Of_Memory}
-        limit.remaining-=1
-    }
-    return limit.owner.procedure(limit.owner.data,mode,size,alignment,old_memory,old_size,loc)
+marks_step :: proc(w:^Foliage_World,problems:^core.Problems) {
+    foliage_marks(&w.marks,&w.requests,&w.marked,core.read(&w.foliages),core.read(&w.ids),core.ref(&w.network),core.commands(w,test_world_info(w)),context.allocator,problems)
+    test_world_settle(w)
 }
 
-// What a cell asks memory for (its instances placed, grouped by type, its
-// tile of ground and its collision), a new type of a source and a source read
-// from its file, with the memory ending at each request in turn: the call is
-// refused and what it works on stays usable, and with memory enough it goes
-// through.
+// The game marks instances in play (burnt, wet): the end that decides keeps
+// each mark of a cell in one entity, a later mark of an instance changes its
+// entry, the cell shows them over its own look, and taking the entity away
+// gives it back.
 @(test)
-foliage_calls_without_memory_are_refused :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    for &cell,i in s.cells {cell.version=u32(i+1)}
-    owner:=context.allocator
-    limit:=Memory_Limit{owner=owner}
-    whole:Build_Work
-    defer build_work_destroy(&whole)
-    if !testing.expect(t,cell_build(&s,source_cell(&s,{0,0}),{},&whole) && len(whole.placed)>0) {return}
-    types:asset.Types
-    asset.types_init(&types)
-    defer asset.types_destroy(&types)
-    data,written:=source_bytes(&s,{5,6},&types)
-    defer delete(data)
-    file:asset.Asset
-    if !testing.expect(t,written==.None && asset.asset_open(&file,data)==.None) {return}
-    defer asset.asset_close(&file)
-    shapes:=make([dynamic]Type_Shape,context.temp_allocator)
-    type_shapes(nil,nil,nil,nil,&s,nil,&shapes)
-    Call :: enum {Cell_Build,Placed_Group,Ground_Tile,Collision,Type_Add,Source_Read}
-    for call in Call {
-        fresh:Source
-        work:Build_Work
-        ground:Ground_Owner
-        fp:Foliage_Physics
-        collision:physics.Collision_Settings
-        w:physics.Physics_State
-        if !testing.expect(t,physics.test_state_make(&w)) {return}
-        if call==.Placed_Group {append(&work.placed,..whole.placed[:])}
-        done,refused:=false,false
-        for served in 0..<64 {
-            limit.remaining=served
-            context.allocator={memory_limit_proc,&limit}
-            switch call {
-            case .Cell_Build:
-                done=cell_build(&s,source_cell(&s,{0,0}),{},&work)
-            case .Placed_Group:
-                done=placed_group(&s,&work)
-            case .Ground_Tile:
-                _,_,tile:=ground_tile(&ground,{0,0},4)
-                done=tile!=nil
-            case .Collision:
-                _,done=physics_owner_build(&fp,&w,&collision,core.Entity(42),&s,{scale={1,1,1},rotation=1},shapes[:])
-            case .Type_Add:
-                done=source_type_add(&fresh,"moss",{2,2})!=nil
-            case .Source_Read:
-                _,done=source_read(&fresh,&file,&types)
-            }
-            context.allocator=owner
-            limit.remaining=max(int)
-            if done {
-                if call==.Cell_Build {testing.expectf(t,len(work.placed)==len(whole.placed),"a cell built with %d requests served has %d of its %d instances",served,len(work.placed),len(whole.placed))}
-                break
-            }
-            refused=true
-            #partial switch call {
-            case .Cell_Build:  testing.expectf(t,len(work.placed)==0,"%v with %d requests served leaves %d instances",call,served,len(work.placed))
-            case .Ground_Tile: testing.expectf(t,len(ground.tiles)==0,"%v with %d requests served leaves a tile",call,served)
-            case .Type_Add,.Source_Read: testing.expectf(t,len(fresh.types)+len(fresh.cells)==0 && fresh.info=={},"%v with %d requests served leaves a part of the source",call,served)
-            }
-        }
-        testing.expectf(t,done && refused,"%v: refused without memory, and with it it goes through",call)
-        // With memory again what was refused is whole.
-        #partial switch call {
-        case .Cell_Build:
-            testing.expect(t,cell_build(&s,source_cell(&s,{0,0}),{},&work) && len(work.placed)==len(whole.placed))
-        case .Placed_Group:
-            testing.expect(t,len(work.firsts)==len(s.types)+1 && len(work.order)==len(work.placed))
-        case .Ground_Tile:
-            heights,_,tile:=ground_tile(&ground,{0,0})
-            testing.expect(t,tile!=nil && len(heights)==16)
-        case .Type_Add:
-            testing.expect(t,len(fresh.types)==1 && fresh.info.next_type==1,"the type that was refused took no id")
-        case .Source_Read:
-            testing.expect(t,len(fresh.types)==len(s.types) && len(fresh.cells)==len(s.cells))
-        }
-        source_destroy(&fresh)
-        build_work_destroy(&work)
-        ground_owner_destroy(&ground)
-        physics_owner_clear(&fp,&w,core.Entity(42))
-        core.value_free(&fp,type_info_of(Foliage_Physics))
-        physics.state_destroy(&w)
-    }
-}
-
-// The points of a type cover their cell evenly: 256 of them put one in each
-// square of 2 m, as no points at random do.
-@(test)
-generated_points_cover_their_cell_with_one_in_each_square :: proc(t:^testing.T) {
-    kind:=FOLIAGE_TYPE_DEFAULT
-    kind.id,kind.density=5,0.25
-    for coord in ([?][2]i32{{0,0},{-3,7}}) {
-        points:[dynamic]Generated
-        defer delete(points)
-        scatter(21,coord,kind,&points)
-        if !testing.expect_value(t,len(points),256) {return}
-        squares:[256]int
-        for g in points {squares[int(g.position.y/2)*16+int(g.position.x/2)]+=1}
-        for n,k in squares {testing.expectf(t,n==1,"square %d holds %d points",k,n)}
-    }
-}
-
-// Types with a radius keep their instances apart, of one type and of two,
-// within a cell and across the borders of cells, the same each time; one
-// without a radius stands anywhere.
-@(test)
-instances_with_a_radius_keep_apart_within_and_across_cells :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    s.info.seed=3
-    tree:=source_type_add(&s,"tree",{1,1})
-    tree.density,tree.radius=0.3,1.5
-    bush:=source_type_add(&s,"bush",{2,2})
-    bush.density,bush.radius=1,0.5
-    grass:=source_type_add(&s,"grass",{3,3})
-    grass.density=0.2
-    for z in i32(0)..<2 {for x in i32(0)..<2 {source_cell(&s,{x,z},true).generate=true}}
-    testing.expect(t,source_valid(&s))
-    work:Build_Work
-    defer build_work_destroy(&work)
-    placed:[dynamic]Placed
-    defer delete(placed)
-    for &cell in s.cells {
-        if !testing.expect(t,cell_build(&s,&cell,{},&work)) {return}
-        append(&placed,..work.placed[:])
-        again:=make([]Placed,len(work.placed))
-        defer delete(again)
-        copy(again,work.placed[:])
-        cell_build(&s,&cell,{},&work)
-        testing.expect(t,slice.equal(again,work.placed[:]),"the same each time")
-    }
-    radius:=[3]f32{1.5,0.5,0}
-    counts:[3]int
-    for a,i in placed {
-        counts[a.type]+=1
-        for b in placed[i+1:] {
-            if radius[a.type]==0 || radius[b.type]==0 {continue}
-            d:=a.position.xz-b.position.xz
-            reach:=radius[a.type]*a.scale[0]+radius[b.type]*b.scale[0]
-            testing.expectf(t,d.x*d.x+d.y*d.y>=reach*reach*(1-1e-5),"types %d and %d %v apart, nearer than %v",a.type,b.type,linalg.length(d),reach)
-        }
-    }
-    points:[dynamic]Generated
-    defer delete(points)
-    for &cell in s.cells {scatter(s.info.seed,cell.coord,s.types[2],&points)}
-    testing.expect_value(t,counts[2],len(points))
-    testing.expect(t,counts[0]>100 && counts[1]>100,"spaced types still fill the cells")
-}
-
-// The density of a cell and what keeps foliage out of it take its generated
-// instances away and leave the others with their ids.
-@(test)
-the_density_of_a_cell_and_what_keeps_foliage_out_thin_its_instances :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    s.info.seed=5
-    grass:=source_type_add(&s,"grass",{1,1})
-    grass.density=0.5
-    cell:=source_cell(&s,{0,0},true)
-    cell.generate=true
-    all:Build_Work
-    defer build_work_destroy(&all)
-    cell_build(&s,cell,{},&all)
-    n:=DENSITY_SAMPLES
-    resize(&cell.density,n*n)
-    for z in 0..<n {for x in 0..<n {cell.density[z*n+x]=x<n/2?255:0}}
-    testing.expect(t,source_valid(&s))
-    work:Build_Work
-    defer build_work_destroy(&work)
-    cell_build(&s,cell,{},&work)
-    left:=0
-    for p in work.placed {
-        testing.expect(t,p.position.x<16,"none where it generates none")
-        original,found:=placed_by_id(all.placed[:],p.id)
-        testing.expect(t,found && original==p,"the others keep their id and place")
-        if p.position.x<14 {left+=1}
-    }
-    full:=0
-    for p in all.placed {if p.position.x<14 {full+=1}}
-    testing.expect_value(t,left,full)
-    // Squares kept out over x and z from 8 to 12 m take what stands there.
-    clear(&cell.density)
-    heights:=make([]f32,9*9)
-    defer delete(heights)
-    kept:[KEEP_OUT_WORDS]u64
-    step:=CELL_SIZE/KEEP_OUT_SIDE
-    for k in 0..<KEEP_OUT_SIDE*KEEP_OUT_SIDE {
-        x,z:=(f32(k%KEEP_OUT_SIDE)+0.5)*step,(f32(k/KEEP_OUT_SIDE)+0.5)*step
-        if x>8 && x<12 && z>8 && z<12 {kept[k>>6]|=1<<(uint(k)&63)}
-    }
-    cell_build(&s,cell,{samples=9,heights=heights,kept=kept[:]},&work)
-    testing.expect(t,len(work.placed)>0 && len(work.placed)<len(all.placed))
-    for p in work.placed {testing.expect(t,!(p.position.x>8 && p.position.x<12 && p.position.z>8 && p.position.z<12),"none where foliage is kept out")}
-}
-
-// The Generate brush raises the density of the cells under it, fading toward
-// its border, lowers it again with off, and keeps no grid where all of it is.
-@(test)
-the_generate_brush_paints_the_density_of_the_cells_under_it :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    testing.expect(t,source_generate_area(&s,{16,0,16},6,true,0.5))
-    cell:=source_cell(&s,{0,0})
-    if !testing.expect(t,cell!=nil && cell.generate && len(cell.density)==DENSITY_SAMPLES*DENSITY_SAMPLES) {return}
-    testing.expect(t,source_valid(&s))
-    testing.expect(t,cell_density_at(cell,16,16)==1 && cell_density_at(cell,0,0)==0,"all of it at the centre, none away from it")
-    soft:=cell_density_at(cell,21,16)
-    testing.expect(t,soft>0 && soft<1,"less of it toward its border")
-    testing.expect(t,!source_generate_area(&s,{16,0,16},6,true,0.5),"again it changes nothing")
-    testing.expect(t,source_generate_area(&s,{16,0,16},60,true,0.5) && len(source_cell(&s,{0,0}).density)==0,"all of it everywhere keeps no grid")
-    testing.expect(t,source_generate_area(&s,{16,0,16},6,false,0.5))
-    cell=source_cell(&s,{0,0})
-    testing.expect(t,cell.generate && cell_density_at(cell,16,16)==0 && cell_density_at(cell,0,0)==1)
-    testing.expect(t,source_generate_area(&s,{16,0,16},60,false,0.5) && source_cell(&s,{0,0})==nil,"none of it takes out the cell that holds nothing else")
-}
-
-// Memory whose pages are released when it is freed: a read of it after that faults.
-@(private="file")
-released_on_free :: proc(data:rawptr,mode:runtime.Allocator_Mode,size,alignment:int,old:rawptr,old_size:int,loc:=#caller_location) -> ([]byte,runtime.Allocator_Error) {
-    #partial switch mode {
-    case .Alloc,.Alloc_Non_Zeroed,.Resize,.Resize_Non_Zeroed:
-        bytes,error:=virtual.reserve_and_commit(uint(size))
-        if error!=nil {return nil,error}
-        if old!=nil {
-            copy(bytes,([^]byte)(old)[:min(old_size,size)])
-            virtual.release(old,uint(old_size))
-        }
-        return bytes,nil
-    case .Free:
-        if old!=nil {virtual.release(old,uint(old_size))}
-        return nil,nil
-    }
-    return nil,.Mode_Not_Implemented
-}
-
-// The cells of a frame are expanded from the ground of the call: the work
-// a storage keeps holds no view of it, which a change of the ground frees
-// while the asset marks read the storages between frames.
-@(test)
-expanded_cells_keep_no_view_of_the_ground_they_read :: proc(t:^testing.T) {
-    s:Source
-    defer source_destroy(&s)
-    sample(&s)
-    at:=-1
-    for cell,i in s.cells {if cell.coord==([2]i32{0,0}) {at=i}}
-    if !testing.expect(t,at>=0) {return}
-    owner:Ground_Owner
-    owner.layers.allocator={released_on_free,nil}
-    layer:=base.Asset_Id{7,7}
-    _,added:=ground_layers_index(&owner,{layer,{},{},{}})
-    _,_,tile:=ground_tile(&owner,{0,0},2)
-    if !testing.expect(t,added && tile!=nil) {ground_owner_destroy(&owner);return}
-    work:Build_Work
-    defer build_work_destroy(&work)
-    expanded:=cells_expand(&work,&s,&owner,nil,{{index=u32(at)}},1,nil,context.allocator)
-    testing.expect_value(t,len(expanded),1)
-    ground_owner_destroy(&owner)
-    info:=core.World_Info{storages=[]core.Storage_Info{{name="Build_Work",info=type_info_of(Build_Work),place=.World}}}
-    ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
-    host.world_asset_ids(core.world_ref(&work,&info),&ids)
-    testing.expect(t,!slice.contains(ids[:],layer),"the work names no layer of a ground it does not own")
+marks_of_play_are_one_entry_for_each_instance_of_their_cell :: proc(t:^testing.T) {
+    w:Foliage_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    problems:core.Problems
+    wood:=foliage_add(&w,800,{})
+    test_world_settle(&w)
+    plant:=pcg.Pcg_Instance{wood,{1,0},u64(1)<<32|7}
+    w.network.role=.Client
+    foliage_mark(&w.requests,plant,{0.1,0.1,0.1},0)
+    marks_step(&w,&problems)
+    testing.expect_value(t,core.count(&w.marked),0)
+    w.network.role=.Server
+    foliage_mark(&w.requests,plant,{0.1,0.1,0.1},0)
+    marks_step(&w,&problems)
+    foliage_mark(&w.requests,plant,{0.2,0.2,0.2},1)
+    marks_step(&w,&problems)
+    marks_step(&w,&problems)
+    testing.expect_value(t,core.count(&w.marked),1)
+    page:=core.at(&w.marked,0)
+    testing.expect(t,page.foliage==800 && page.coord==plant.coord && page.count==1,"one entry, changed in place")
+    wet:=render.batch_color({0.2,0.2,0.2},1)
+    testing.expect_value(t,page.instances[0].color,wet)
+    marks,hash:=marked_cell(marked_owner(&w.marks,wood),plant.coord)
+    testing.expect(t,len(marks)==1 && hash!=0)
+    testing.expect(t,marked_color(marks,plant.id)==wet && marked_color(marks,plant.id+1)==render.BATCH_COLOR_PLAIN,"only the marked one")
+    // Without the entity, the cell has no marks.
+    core.destroy(&w.entities,core.entity_at(&w.marked,0))
+    test_world_settle(&w)
+    marks_step(&w,&problems)
+    marks,hash=marked_cell(marked_owner(&w.marks,wood),plant.coord)
+    testing.expect(t,len(marks)==0 && hash==0)
 }

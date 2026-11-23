@@ -218,8 +218,7 @@ sheets_mesh :: proc(t: ^testing.T, f: ^Gpu_Fixture, sheets: []Sheet) -> (mesh: g
 // its farthest point `size` metres from where it stands, by the plugin's rules.
 @(private = "file")
 swaying_desc :: proc(f: ^Gpu_Fixture, mesh: gpu.Mesh_Handle, wind, size: f32) -> render.Batch_Desc {
-	kind := FOLIAGE_TYPE_DEFAULT
-	kind.wind, kind.casts_shadow, kind.scale, kind.height = wind, true, {1, 1}, {1, 1}
+	kind := Look{wind = wind, casts_shadow = true, scale = {1, 1}, height = {1, 1}}
 	_, high, _ := render.mesh_bounds(&f.renderer, mesh)
 	return {mesh = mesh, tint = 1, flags = {.Casts_Shadow, .Ray_Visible}, vertex = hook_vertex(kind), reach = hook_reach(kind, high.y), sway = shadow_sway(kind, high.y, size)}
 }
@@ -523,8 +522,7 @@ a_kind_that_flutters_moves_its_leaves_on_their_own_and_one_that_does_not_stands 
 	_, high, _ := render.mesh_bounds(&f.renderer, plant)
 	places := [2]f32{-2.2, 2.2}
 	for place, k in places {
-		kind := FOLIAGE_TYPE_DEFAULT
-		kind.wind, kind.flutter = 0, 4 if k == 0 else 0
+		kind := Look{scale = {0.8, 1.2}, height = {1, 1}, flutter = 4 if k == 0 else 0}
 		desc := render.Batch_Desc{mesh = plant, tint = 1, vertex = hook_vertex(kind), reach = hook_reach(kind, high.y)}
 		_, problem := render.batch_set(&f.renderer, f.resident.world, 0, desc, {render.batch_instance({place, 0, 0}, 1, 1)})
 		if !testing.expect(t, problem == "", problem) {return}

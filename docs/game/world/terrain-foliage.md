@@ -1,9 +1,10 @@
 # Terrain and foliage
 
-Ground is a `Terrain` entity and vegetation a `Foliage` entity: assets (`.terrain`, `.foliage`)
-the plugins stream, draw with levels of detail and collide. Add `"terrain"` and `"foliage"` to
-`plugins` in `project.mirai`. Never make ground or vegetation from cubes, planes or imported
-meshes placed one by one: they do not stream, paint, scatter or collide as these do.
+Ground is a `Terrain` entity and vegetation a `Pcg_Graph` with a `Foliage` on the same entity:
+assets (`.terrain`, `.pcg`) the plugins stream, draw with levels of detail and collide. Add
+`"terrain"` and `"foliage"` to `plugins` in `project.mirai` (`foliage` brings `pcg`). Never make
+ground or vegetation from cubes, planes or imported meshes placed one by one: they do not stream,
+paint, scatter or collide as these do.
 
 Name what you make: later calls find it by that name, so one `batch` file builds a
 whole scene, with no ids to pass between calls ([whole-scene.md](../assets/whole-scene.md)).
@@ -49,33 +50,33 @@ $P terrain.layer '{"entity":"Hills","material":"hills/rock.mat","automatic":true
 ## Vegetation
 
 ```sh
-$P foliage.create '{"name":"Woods"}'
-$P foliage.type_add '{"entity":"Woods","mesh":"meshes/pine.mesh","name":"pine","density":0.05,
-  "scale":[0.8,1.4],"yaw":360,"align":0.3,"rule":true,"slope":[0,30],"wind":0.5}'
-$P foliage.paint '{"entity":"Woods","mode":"generate","at":[256,0,256],"radius":200}'
+$P scene.write '{"entities":[{"name":"Woods","components":{"Pcg_Graph":{"source":"woods/woods.pcg"},
+  "Foliage":{"wind":0.5},"Volume":{"shape":"Box","extents":[200,500,200]}}}]}'
+$P foliage.query '{"entity":"Woods"}'
 ```
 
-- `foliage.type_add` makes a type from a `.mesh` with the settings given (its name, by default that
-  of the mesh, names it in the other methods); `type_set` changes only the fields it names
-  (`describe` lists them): how dense, how large, turned and leaned it is, a `radius` that keeps
-  its generated instances apart from each other and from other types with one (trees off rocks),
-  a `rule` that confines it by slope, height and terrain layers (as dense as the layers are),
-  its distances, `wind` and shadow.
-- `mode`: `generate` paints where the generator places instances, fading at the border of the
-  ring (large radii cover a whole terrain; `ungenerate` takes it away), `paint` and `erase`
-  place or remove manual instances (a `ground_only` paint stays on the terrain), `reapply` redoes
-  scale and turn. `foliage.place` puts one instance, `foliage.query` lists types and instances.
+- The `.pcg` says what grows where: a list of layers, each one mesh or prefab with its density,
+  `radius` (trees kept off each other and off rocks), scale, turn and lean, a `ground_rule` of
+  slope, height and terrain layers, a field expression of how viable it is where, its distances
+  (`impostor_distance` turns it into impostors far away), whether it `collides` and whether it is
+  `filler` (what a lower detail thins first). It is an asset a
+  [content tool](../assets/content-tool.md) writes, as a generated mesh is; the demo's
+  `forest/Woods.pcg` is one.
+- The `Pcg_Graph` places its layers around the players in cells, again from its seed; a `Volume`
+  on its entity bounds where. `Foliage` draws and collides them: `wind`, `flutter`, `shadows` and
+  `rays` for the layers that place a mesh; a prefab draws, sways (`Foliage_Sway` on its root) and
+  collides as it is.
 - Foliage stands on the terrain by itself and follows it when it is sculpted.
-- A `Foliage_Keep_Out` (`foliage "plugins:foliage/runtime"`, with a `margin`) on a house with a
-  `Volume` or a box `Collider`, or on a road's `Spline`, keeps generated foliage out of it,
-  also when it moves.
-  Far away it becomes impostors; collision is per type.
+- A `Pcg_Zone` (`pcg "plugins:pcg/runtime"`) with `exclude` on a house with a `Volume`, or on a
+  road's `Spline`, keeps the graph out of it, also when it moves.
+- Taking a plant out in play is `pcg.pcg_suppress_request` with the instance `foliage.hit_of`
+  gives; `foliage.foliage_promote` makes it an entity of its prefab (a tree that falls).
 - A `Wind` component (`volume "mirai:engine/volume"`) on any entity makes foliage sway; `wind` on
-  a type scales it.
+  the `Foliage` scales it.
 
 ## Pitfalls that fail silently
 
-- Nothing shows after `foliage.create`: it has no types until `type_add`, and no instances until
-  `generate` or `paint` has run over the area.
+- A `Foliage` without a `Pcg_Graph` on its entity draws nothing (`foliage.graph` says so), and a
+  graph without a `Foliage` places but nothing draws it.
 - Foliage placed away from the terrain or over a hole has no ground and generates nothing.
-- A `rule` with `slope` but no `rule: true` is ignored; `layers` 0 means any layer.
+- A `ground_rule` with `slope` but no `enabled` is ignored; `layers` none means any layer.

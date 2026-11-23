@@ -73,7 +73,7 @@ kind_files :: proc(t:^testing.T,types:^Types) -> (names:[dynamic]string,files:[d
         testing.expect_value(t,font_document(&doc,types,{id={4,4},file=#load("../assets/fixtures/cff.otf"),compression=.Stream},context.temp_allocator),Error.None)
         add(&names,&files,"font",document_file(&doc))
     }
-    for file in ([]string{"blockout/column.mesh","gallery/plant/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","showcase/hud.ui","showcase/lift.anim","characters/spider/spider.skeleton","characters/jelly/jelly_moods.character","vfx_gallery/smoke_plume.particle","interface/merchant_answers.records","physics_gallery/bricks.fracture","forest/Hills.terrain","texts.strings","forest/Woods.foliage","physics_gallery/recorded.physics_cache","../../plugins/prompts_kenney/assets/kenney.prompts"}) {
+    for file in ([]string{"blockout/column.mesh","gallery/plant/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","showcase/hud.ui","showcase/lift.anim","characters/spider/spider.skeleton","characters/jelly/jelly_moods.character","vfx_gallery/smoke_plume.particle","interface/merchant_answers.records","physics_gallery/bricks.fracture","forest/Hills.terrain","texts.strings","forest/Woods.pcg","physics_gallery/recorded.physics_cache","../../plugins/prompts_kenney/assets/kenney.prompts"}) {
         bytes,error:=serial.file_read(strings.concatenate({PARTS_DEMO,file},context.temp_allocator),context.temp_allocator)
         if testing.expectf(t,error==.None,"%s reads",file) {add(&names,&files,file,bytes)}
     }

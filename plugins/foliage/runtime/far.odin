@@ -10,13 +10,14 @@ import "mirai:std/base"
 import "mirai:std/geom"
 import "mirai:std/jobs"
 import mm "mirai:std/math"
+import pcg "plugins:pcg/runtime"
 
-// The far form of a type with an impostor distance: past it its mesh gives
+// The far form of a layer with an impostor distance: past it its mesh gives
 // way to an octahedral impostor, which the Gbuffer stage draws (the fade of
 // the mesh and the appearance of the impostor share the pattern of the
 // batches, so the instance stays whole), and the rays meet its crown instead
-// of its leaves. Both are made once per asset a type shows (its mesh or its
-// prefab) and frame size in each world, when a type first shows it, and made
+// of its leaves. Both are made once per asset a layer shows (its mesh or its
+// prefab) and frame size in each world, when a layer first shows it, and made
 // again when it changes, as any cooking: the frames by the render of the
 // thumbnails (render.impostor_capture), the crown from the triangles of the
 // mesh (crown_build). A cell decides by its distance to the streaming sources
@@ -37,19 +38,19 @@ IMPOSTOR_WAITING :: "foliage impostors waiting"
 IMPOSTOR_SLOTS_MIN :: 4096 // instances the buffer holds at least
 IMPOSTOR_NONE :: 0xFFFFFFFF // the row of a place of the buffer that holds no instance
 
-// What a far form is made of: the asset a type shows, and the pixels a side
+// What a far form is made of: the asset a layer shows, and the pixels a side
 // of each of its frames.
 Kind_Key :: struct {
     id:base.Asset_Id,
     frame:u32,
 }
 
-// What a type shows far away, kept by the asset it shows.
+// What a layer shows far away, kept by the asset it shows.
 Resident_Kind :: struct {
     key:Kind_Key,
     made:bool,                                  // its impostor and its crown were asked for
     color,normal,surface:render.Texture_Handle, // its frames; none when they could not be made
-    sphere:[4]f32,                              // centre and radius of its frames, in the space of the type
+    sphere:[4]f32,                              // centre and radius of its frames, in the space of the layer
     low,high:[3]f32,                            // the box of its mesh, which the batches of its mesh fade by
     albedo:[3]f32,                              // the mean base color of its frames, linear: what rays see of its crown
     transmission:[3]f32,                        // the color of the light its leaves let through
@@ -59,24 +60,24 @@ Resident_Kind :: struct {
     bake:^Kind_Bake,                            // what a job makes of it; nil once the renderer has it
 }
 
-// Whether the mesh of a type gives way to an impostor before it is gone.
-type_far :: proc "contextless" (t:Foliage_Type) -> bool {
+// Whether the mesh of a layer gives way to an impostor before it is gone.
+type_far :: proc "contextless" (t:Look) -> bool {
     return t.impostor_distance>0 && (t.cull_distance<=0 || t.impostor_distance<t.cull_distance)
 }
 
-// Where the mesh of a type starts to fade out and where it is gone: those of
-// the type, or with a far form, the impostor distance and IMPOSTOR_BLEND past it.
-mesh_distances :: proc "contextless" (t:Foliage_Type,far:bool) -> (fade,cull:f32) {
+// Where the mesh of a layer starts to fade out and where it is gone: those of
+// the layer, or with a far form, the impostor distance and IMPOSTOR_BLEND past it.
+mesh_distances :: proc "contextless" (t:Look,far:bool) -> (fade,cull:f32) {
     if !far {return t.fade_distance,t.cull_distance}
     fade,cull=t.impostor_distance,t.impostor_distance*(1+IMPOSTOR_BLEND)
     if t.cull_distance>0 {cull=min(cull,t.cull_distance)}
     return
 }
 
-// The pixels a side of the frames of a type whose parts span a box of that
+// The pixels a side of the frames of a layer whose parts span a box of that
 // diagonal at scale 1: those its largest instance spans where its mesh gives
 // way to them, in a power of two.
-impostor_frame :: proc "contextless" (t:Foliage_Type,diagonal:f32) -> u32 {
+impostor_frame :: proc "contextless" (t:Look,diagonal:f32) -> u32 {
     across:=diagonal*max(t.scale[1],t.scale[1]*t.height[1])
     pixels:=across/max(t.impostor_distance,1e-3)*IMPOSTOR_FOCAL
     frame:=u32(IMPOSTOR_FRAME_MIN)
@@ -84,8 +85,8 @@ impostor_frame :: proc "contextless" (t:Foliage_Type,diagonal:f32) -> u32 {
     return frame
 }
 
-// The pixels a side of the frames of a type of those parts (impostor_frame).
-kind_frame :: proc(renderer:^render.Renderer,t:Foliage_Type,parts:[]Part_Draw) -> u32 {
+// The pixels a side of the frames of a layer of those parts (impostor_frame).
+kind_frame :: proc(renderer:^render.Renderer,t:Look,parts:[]Part_Draw) -> u32 {
     low,high:=[3]f32{max(f32),max(f32),max(f32)},[3]f32{min(f32),min(f32),min(f32)}
     for part in parts {
         a,b,known:=render.mesh_bounds(renderer,part.desc.mesh)
@@ -101,7 +102,7 @@ kind_find :: proc(resident:^Foliage_Resident,key:Kind_Key) -> ^Resident_Kind {
     return nil
 }
 
-// The kind of an asset, made the first time a type shows it: a load
+// The kind of an asset, made the first time a layer shows it: a load
 // transaction that draws its frames and takes its triangles in a frame, and
 // fills out the frames, builds their levels and the crown in a job, given to
 // the renderer in a later frame. KINDS_A_FRAME of those steps a frame; -1
@@ -155,7 +156,7 @@ Kind_Bake :: struct {
     color,normal,surface:render.Texture_Data,
     albedo:[3]f32,
     built:bool,
-    positions:[dynamic][3]f32, // the triangles of its meshes, in the space of the type
+    positions:[dynamic][3]f32, // the triangles of its meshes, in the space of the layer
     indices:[dynamic]u32,
     crown:geom.Mesh_Buffer,
     crowned:bool,
@@ -311,7 +312,8 @@ kind_free :: proc(app:^host.App,kind:^Resident_Kind) {
 
 // What the shaders read (foliage_impostor.slang): an instance relative to
 // the anchor of all of them, and its row: the slot of its Foliage
-// (Resident_Owner.slot) in the high half, the index of its type in the low.
+// (Resident_Owner.slot) in the high half, in the low the index of its look
+// times DENSITY_BANDS plus the density band of its cell.
 Impostor_Instance :: struct {
     position:[3]f32,
     rotation:u32,
@@ -325,7 +327,7 @@ Impostor_Row :: struct {
     sphere:[4]f32,
     low,high:[4]f32,     // w: where the mesh fades out, and where it is gone
     frames:[4]u32,       // the textures of color, of normal and of surface; frames a side | pixels a side of a frame << 16
-    far:[4]f32,          // where the impostor fades out, and where it is gone (0: never); z: the sway of its type (sway_amount)
+    far:[4]f32,          // where the impostor fades out, and where it is gone (0: never); z: the sway of its layer (sway_amount)
     transmission:[4]f32, // the color of the light its leaves let through
 }
 
@@ -426,39 +428,42 @@ impostors_free :: proc(d:^Impostor_Draw,block:^u32) {
     }
 }
 
-// The row of a type of a Foliage: its frames and the distances that fade
-// them in and out, scaled as the meshes are (Foliage_Resident.detail). Zero,
-// and never drawn, for a type without them.
-impostor_row :: proc(resident:^Foliage_Resident,t:^Foliage_Type,key:Kind_Key) -> (row:Impostor_Row) {
+// The row of a look of a Foliage in a density band: its frames and the
+// distances that fade them in and out, scaled as the meshes are
+// (Foliage_Resident.detail), those of its mesh by the band (band_scale).
+// Zero, and never drawn, for a look without them.
+impostor_row :: proc(resident:^Foliage_Resident,t:^Look,key:Kind_Key,band:u8) -> (row:Impostor_Row) {
     if !type_far(t^) {return}
     kind:=kind_find(resident,key)
     if !kind_ready(kind) {return}
     distance:=resident.detail[1]
     fade,cull:=mesh_distances(t^,true)
+    scale:=distance*band_scale(band)
     row.sphere=kind.sphere
-    row.low={kind.low.x,kind.low.y,kind.low.z,fade*distance}
-    row.high={kind.high.x,kind.high.y,kind.high.z,cull*distance}
+    row.low={kind.low.x,kind.low.y,kind.low.z,fade*scale}
+    row.high={kind.high.x,kind.high.y,kind.high.z,cull*scale}
     row.frames={render.texture_index(kind.color),render.texture_index(kind.normal),render.texture_index(kind.surface),IMPOSTOR_GRID | key.frame<<16}
     row.far={t.fade_distance*distance,t.cull_distance*distance,sway_amount(t^),0}
     row.transmission={kind.transmission.x,kind.transmission.y,kind.transmission.z,0}
     return
 }
 
-// The rows of the types of every Foliage, those of each from the base of its slot.
-impostor_rows_build :: proc(resident:^Foliage_Resident,data:^Foliage_Data) {
+// The rows of the looks of every Foliage, DENSITY_BANDS of each, those of
+// each Foliage from the base of its slot.
+impostor_rows_build :: proc(resident:^Foliage_Resident) {
     d:=&resident.impostors
     clear(&d.rows);clear(&d.bases)
     for &owner in resident.owners {
-        entry:=data_find(data,owner.source)
-        if entry==nil {continue}
         if int(owner.slot)>=len(d.bases) && resize(&d.bases,int(owner.slot)+1)!=nil {return}
         d.bases[owner.slot]=u32(len(d.rows))
-        for &t,i in entry.source.types {append(&d.rows,impostor_row(resident,&t,i<len(owner.kinds)?owner.kinds[i]:{}))}
+        for &t,i in owner.looks {
+            for band in 0..<u8(DENSITY_BANDS) {append(&d.rows,impostor_row(resident,&t,i<len(owner.kinds)?owner.kinds[i]:{},band))}
+        }
     }
 }
 
 // The impostors of the world into the G-buffer of each view: what changed
-// goes to the buffer, and a quad of each in the band of its type that the
+// goes to the buffer, and a quad of each in the band of its layer that the
 // view sees, in two phases as the scene is drawn: a dispatch keeps those the
 // depth pyramids of the view do not hide and one draw makes them, the
 // pyramid takes them, and a second dispatch and draw those of the first
@@ -561,28 +566,28 @@ impostors_phase :: proc(pass:^render.Pass,v:^Impostor_View,late:bool) -> (waited
     return before && !late
 }
 
-// Past CELL_CROWN_REACH times the reach of the meshes of its types, a cell
-// gives rays one crown for all the instances of its types that rays meet far
+// Past CELL_CROWN_REACH times the reach of the meshes of its layers, a cell
+// gives rays one crown for all the instances of its layers that rays meet far
 // in place of a crown each: one entry of the structure of rays a cell, and
-// a BLAS of the cell, coarse and opaque, made as the crown of a type is
+// a BLAS of the cell, coarse and opaque, made as the crown of a layer is
 // (crown_build) of the crowns of its instances, in the space of its
 // Foliage. Impostors still draw each instance.
 CELL_CROWN_REACH :: f32(4)
 
 // The crown of a cell, into out: of the crowns of the instances placed (in
 // the space of their Foliage), each from the triangles of the crown of its
-// type, crowns[type] (type: the index of the type); a type without them
+// layer, crowns[p.layer] (there: the index of its look); a layer without them
 // gives none. False when there is nothing to cover.
-cell_crown_build :: proc(placed:[]Placed,crowns:[]Crown_Triangles,out:^geom.Mesh_Buffer) -> bool {
+cell_crown_build :: proc(placed:[]pcg.Placed,crowns:[]Crown_Triangles,out:^geom.Mesh_Buffer) -> bool {
     positions:=make([dynamic][3]f32,context.temp_allocator)
     indices:=make([dynamic]u32,context.temp_allocator)
     for p in placed {
-        if int(p.type)>=len(crowns) {continue}
-        c:=crowns[p.type]
+        if int(p.layer)>=len(crowns) {continue}
+        c:=crowns[p.layer]
         if len(c.indices)==0 {continue}
         first:=u32(len(positions))
         for v in c.positions {
-            scaled:=[3]f32{v.x*p.scale[0],v.y*p.scale[1],v.z*p.scale[0]}
+            scaled:=v*p.scale
             append(&positions,p.position+mm.quat_rotate(p.rotation,scaled))
         }
         for index in c.indices {append(&indices,first+index)}
@@ -590,16 +595,16 @@ cell_crown_build :: proc(placed:[]Placed,crowns:[]Crown_Triangles,out:^geom.Mesh
     return crown_build(positions[:],indices[:],out)
 }
 
-// The triangles of the crown of a type, as its far form keeps them.
+// The triangles of the crown of a layer, as its far form keeps them.
 Crown_Triangles :: struct {
     positions:[][3]f32,
     indices:[]u32,
 }
 
-// What rays meet of the crown of a type: it casts shadows if the type does,
+// What rays meet of the crown of a layer: it casts shadows if the layer does,
 // and reflections and indirect light see it, in the mean color of its
-// frames, if they see the type.
-crown_flags :: proc "contextless" (t:^Foliage_Type) -> (flags:render.Batch_Flags) {
+// frames, if they see the layer.
+crown_flags :: proc "contextless" (t:^Look) -> (flags:render.Batch_Flags) {
     flags={.Rays_Only}
     if t.casts_shadow {flags+={.Casts_Shadow}}
     if t.ray_visible {flags+={.Ray_Visible}}

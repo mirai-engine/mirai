@@ -4,9 +4,9 @@ import "core:math"
 import "core:math/linalg"
 import "mirai:std/geom"
 
-// The crown of a type: what rays meet of its far instances in place of its
+// The crown of a layer: what rays meet of its far instances in place of its
 // mesh, which their impostors draw. It is the surface of the voxels of the
-// box of the type where its triangles are dense, coarse and opaque: the far
+// box of the layer where its triangles are dense, coarse and opaque: the far
 // forest keeps casting its shadow without leaves of alpha. Each face sits
 // inside its voxel by CROWN_INSET of it, so that the surface an impostor
 // draws, at the depth of its leaves, is lit from the side that faces the

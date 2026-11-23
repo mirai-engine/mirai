@@ -181,7 +181,7 @@ Each milestone lands from `main` in its own worktree branch with proving tests:
 
 1. **M0 — Sampling Lift (`std/pcg/sample.odin` + `plugins/foliage` refactor):**
    - Lift Sobol+Owen (`scatter`, `sobol_second`, `owen_scramble`), 3×3 spacing `Grid`, and
-     deterministic scatter helpers from `plugins/foliage/runtime/generate.odin` into
+     deterministic scatter helpers from the former scatterer of `plugins/foliage` into
      `std/pcg/sample.odin`. Add stochastic rounding, layered dithering, viability competition, and
      coverage-probability acceptance.
    - **Verify:** `mirai test std/pcg`, `mirai test plugins/foliage/runtime --no-gpu` (bit-identical
@@ -206,7 +206,7 @@ Each milestone lands from `main` in its own worktree branch with proving tests:
 5. **M3 — Foliage Unification (Zero Legacy):**
    - Switch `plugins/foliage` to depend on `pcg`; delete `Foliage_Rule`, old scatter fields,
      `Foliage_Keep_Out`, `Foliage_Ground`, `Foliage_Override` (`Moved`/`Replaced`), `manual` lists,
-     `orphans`, `removal.odin` duplication (unified into `Pcg_Suppressed`), and custom batch gizmo
+     `orphans`, the duplicated play removals (unified into `Pcg_Suppressed`), and custom batch gizmo
      modes; add filler budgets, density-modulated LODs, and `foliage.promote`; update `demo`.
    - **Verify:** `mirai test plugins/foliage/runtime`, `mirai play test`, validation-clean
      `mirai capture` on `demo`, `mirai bench compare --base main`.
@@ -218,7 +218,8 @@ Each milestone lands from `main` in its own worktree branch with proving tests:
      `Gbuffer`, sharing `foliage` wind/sway/bender shaders. Zero changes to `render/`.
    - **Verify:** GPU validation on Metal (macOS ARM64) & Vulkan (Windows x64),
      `mirai render check --views`, `mirai bench compare --base main`, headless server skips cleanly.
-7. **M5 — Automatic Bridges & Editor (`pcg_terrain`, `pcg_physics`, `pcg_shapes`, `plugins/pcg/editor`):**
+7. **M5 — Automatic Bridges & Editor (`pcg_terrain`, `pcg_physics`, `pcg_shapes`,
+   `plugins/pcg/editor`):**
    - Bridges for terrain conform/brushes, collider keep-outs/3D overlap, and Grammar → `shapes`.
    - Editor layer/expression inspector, density/mask brush (`F`), `Revision_History`,
      `Edit_Follow_Provider`, 1-click Suppress+Promote picking, `Inspect` overlays, `pcg.*` API, and

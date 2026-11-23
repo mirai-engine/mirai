@@ -154,8 +154,7 @@ sway_update :: proc(resident:^Foliage_Resident,t:Sway_Tables,commands:core.Comma
         held.key=key if key.hidden else {}
         return
     }
-    kind:=FOLIAGE_TYPE_DEFAULT
-    kind.wind,kind.flutter,kind.casts_shadow=sway.wind,sway.flutter,static.shadows
+    kind:=Look{wind=sway.wind,flutter=sway.flutter,casts_shadow=static.shadows}
     desc.flags={.Ray_Visible}
     if static.shadows {desc.flags+={.Casts_Shadow}}
     desc.layers=key.layers

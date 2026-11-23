@@ -1,7 +1,7 @@
 ---
 name: mirai-assets
 description: Mirai binary assets (.scene, prefabs, .mat, .mesh, .tex, .anim, .sound, .sound_set,
-  .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .foliage),
+  .ui, .font, .strings, .prompts, .records and those of plugins, such as .terrain and .pcg),
   their container, the `asset` package, the registry, prefab resolution (`cook/prefab`), the
   compression of assets (MDC2 in `std/compressor/data`),
   `std/serial` and the `mirai asset` tool. Use when reading, creating or editing an asset, adding
@@ -42,7 +42,7 @@ instances, registry).
   [font](references/kinds.md#font), [texts](references/kinds.md#texts),
   [records](references/kinds.md#records) and [prompts](references/kinds.md#prompts). A plugin's
   types are its own: `.particle` ([vfx](../mirai-world/references/vfx.md#format)), `.terrain`,
-  `.foliage`.
+  `.pcg`.
 - Scenes, what makes one a prefab, instances and overrides:
   [scene](references/scenes.md#scene), [prefab](references/scenes.md#prefab),
   [prefab instances](references/scenes.md#prefab-instances) and
