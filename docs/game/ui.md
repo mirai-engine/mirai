@@ -40,7 +40,7 @@ menu:=gui.UI_Screen{asset=shell_id,order=10,input=.Modal}     // over the HUD, f
   animations; turning off `UI_Screen` or `core.Disabled` removes it at once.
 - `back=true` makes Escape or East report `Back` while it is on top.
 - `pause=true` on a `Modal` screen stops the clock while it shows, unless in a network session.
-- A free cursor: [Mouse](ui/menus-settings.md#mouse).
+- A free cursor: [Mouse](ui/menus-settings.md#mouse); its shape and image: [cursor](ui/cursor.md).
 
 ## Events
 

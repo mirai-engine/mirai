@@ -233,6 +233,7 @@ Api_Play_Result :: struct {
     ticks_dropped:u64,
     game_camera:bool,
     input_released:bool,
+    cursor:host.App_Cursor_Shown `mirai:"label=What the pointer of the window shows, which no capture has: its shape (Hidden while the game hides it), the .tex of the image it shows (none: the system's) and whether the relative mouse hides it"`,
 }
 
 
@@ -1114,6 +1115,7 @@ api_play_result :: proc(s:^Session,call:^api.Call,r:^Run) {api_play_result_fill(
 @(private)
 api_play_result_fill :: proc(s:^Session,result:^Api_Play_Result,r:^Run) {
     result.ticks_dropped=s.app.stats.ticks_dropped
+    result.cursor=host.app_cursor_shown(s.app)
     if r==nil {return}
     result.playing=true
     result.detached=r.owner!=0

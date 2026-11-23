@@ -215,4 +215,15 @@ a_screen_on_the_body_of_a_player_shows_in_the_part_of_that_player :: proc(t:^tes
     testing.expect(t,window.open && context_shows(window.ctx,"3") && context_shows(window.ctx,"90") && !context_shows(window.ctx,"8"),"With one player the HUD of its body is in the window")
     testing.expect(t,!first.open && !second.open)
     players_frame_end(f)
+
+    // The game asks for its cursor only while it has the input: otherwise the editor's shows.
+    Cursor_Case :: struct {blocked,mouse_off,want:bool}
+    for c in ([]Cursor_Case{{want=true},{blocked=true},{mouse_off=true}}) {
+        f.app.cursor={}
+        f.app.game_input_blocked,f.app.game_mouse_off=c.blocked,c.mouse_off
+        players_frame(f)
+        gui_frame_end(&f.gui,&f.app,{hidden=true},core.ref(&f.state),core.read(&f.w.seats),&f.seat_requests,core.ref(&f.contexts),&f.context_requests,&f.problems)
+        testing.expectf(t,f.app.cursor.game_hidden==c.want,"blocked %v, mouse off %v: the game hides the cursor %v",c.blocked,c.mouse_off,f.app.cursor.game_hidden)
+    }
+    f.app.game_input_blocked,f.app.game_mouse_off=false,false
 }

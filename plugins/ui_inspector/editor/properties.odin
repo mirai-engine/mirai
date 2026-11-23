@@ -908,6 +908,7 @@ style_rows :: proc(p:^Pane,a:^host.Assets,n:^ui.Tree_Node) {
             look_changed(p,"Shadow",.Shadow,value_row(p,"Shadow offset",Pair_Value,&v.shadow_offset,d.shadow_offset))
         }
     }
+    look_changed(p,"Style",.Cursor,value_row(p,"Cursor",Enum_Value(ui.Cursor),&v.cursor,d.cursor,"What the pointer shows while it is on the node or holds it; Default: what is under it"))
     if shows_text(n.kind) {text_rows(p)}
 }
 

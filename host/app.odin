@@ -239,6 +239,7 @@ App :: struct {
     game_input_blocked:bool, // the pointer is on the editor: the game gets no input this frame
     game_mouse_off:bool,     // the editor has the mouse (Play paused or released, Simulate, Watch): the game does not capture it
     game_input_excluded:core.Keys,
+    cursor:App_Cursor, // what the pointer of the window shows (cursor.odin)
 }
 
 // A World the application made, at the index of its core.World_Id. A free

@@ -236,6 +236,24 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
     testing.expect(t,os.write_entire_file(fresh,`{"nodes":[{"name":"score","kind":"Text","colour":"red"}]}`)==nil)
     refused:=on(&p,.Ui,"write","hud/score.ui",fresh)
     testing.expectf(t,refused.code==1 && strings.contains(refused.err,"mirai ui write: hud/score.ui: nodes[0]") && strings.contains(refused.err,"colour"),"%d %s%s",refused.code,refused.out,refused.err)
+    // A file of another version of .ui is made again from its document, with its id; an id of no file is refused.
+    score:=project.path(root,"assets/hud/score.ui",allocator=context.temp_allocator)
+    old:asset.Document
+    if testing.expect_value(t,asset.document_load(&old,score,context.temp_allocator),asset.Error.None) {
+        id:=old.id
+        old.kind_version=asset.UI_VERSION-1
+        testing.expect_value(t,asset.document_save(&old,score),asset.Error.None)
+        testing.expect_value(t,asset.registry_refresh(&p.registry,{"hud/score.ui"}),asset.Error.None)
+        testing.expect(t,os.write_entire_file(fresh,`{"use":["menu/theme.ui"],"nodes":[{"name":"score","kind":"Text","style":"chip_value","text":"1"}]}`)==nil)
+        remade:=on(&p,.Ui,"write","hud/score.ui",fresh)
+        testing.expectf(t,remade.code==0 && strings.contains(remade.out,"hud/score.ui: written"),"%d %s%s",remade.code,remade.out,remade.err)
+        now:asset.Document
+        if testing.expect_value(t,asset.document_load(&now,score,context.temp_allocator),asset.Error.None) {
+            testing.expect(t,now.id==id && now.kind_version==asset.UI_VERSION,"the file keeps its id at the version of this build")
+        }
+    }
+    nobody:=on(&p,.Ui,"write","0123456789abcdef0123456789abcdef",fresh)
+    testing.expectf(t,nobody.code==1 && strings.contains(nobody.err,"is not a .ui of the project"),"%d %s%s",nobody.code,nobody.out,nobody.err)
     // A check reports what the game would not load and exits non-zero.
     testing.expect(t,os.remove(project.path(root,"assets/menu/theme.ui",allocator=context.temp_allocator))==nil)
     testing.expect_value(t,asset.registry_refresh(&p.registry,{"menu/theme.ui"}),asset.Error.None)

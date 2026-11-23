@@ -20,7 +20,7 @@ Style_Key :: enum u8 {
     Text_Align_X, Text_Align_Y, Text_Wrap, Ellipsis, Line_Height,
     Fill_Mode, Program, Program_Values, Sounds, Transition, Layout_Transition, Blur,
     Width, Height, Direction, Padding, Gap, Align_X, Align_Y, Columns, Span, Self_X, Self_Y, Aspect,
-    Italic, Gradient, Bar, Rotate, Skew, Color2,
+    Italic, Gradient, Bar, Rotate, Skew, Color2, Cursor,
 }
 Style_Keys :: bit_set[Style_Key;u64]
 
@@ -114,6 +114,7 @@ STYLE_KEYS := [Style_Key]Style_Key_Info{
     .Rotate={name="rotate",kind=.Number,offset=u16(offset_of(Node_Style,rotate)),size=size_of(f32)},
     .Skew={name="skew",kind=.Number,offset=u16(offset_of(Node_Style,skew)),size=size_of(f32)},
     .Color2={name="color2",kind=.Color,offset=u16(offset_of(Node_Style,text)+offset_of(Text_Style,color2)),size=size_of(Color),rule=true,field=.Text_Color},
+    .Cursor={name="cursor",kind=.Enum,offset=u16(offset_of(Node_Style,cursor)),size=size_of(Cursor),type=Cursor,rule=true,field=.Cursor},
 }
 
 // The bytes of a value of a style; none for a key of its layout or its blur.

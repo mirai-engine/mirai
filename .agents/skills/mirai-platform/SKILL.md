@@ -18,6 +18,7 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   crashes, file watching, paths, trash, audio device:
   [context](references/platform.md#context), [frame](references/platform.md#frame),
   [input](references/platform.md#input), [window](references/platform.md#window),
+  [cursor and its images](references/platform.md#cursor),
   [crashes](references/platform.md#crashes),
   [file watching](references/platform.md#file-watching), [paths](references/platform.md#paths) and
   [audio device](references/platform.md#audio-device).
@@ -47,7 +48,7 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   the same API as one with a window.
 - These do not allocate: `frame_begin`, `frame_end`, `input_tick_take`, `input_inject*`,
   `window_set_regions`, `window_hit_at` and `watch_poll`. These are transactions: `create`,
-  `watch_create`,
+  `watch_create`, `window_cursor_image_set`,
   `audio_device_open`, `audio_device_switch`, the lists of displays and audio outputs, the
   clipboard and the title with a window.
 - `pressed` and `released` of `Input_Tick` hold for a single tick: `input_tick_take` delivers and

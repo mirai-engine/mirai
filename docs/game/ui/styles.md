@@ -48,7 +48,7 @@ The template's `assets/menu/theme.ui` is the example of tokens and styles, and i
   `layout_transition` carries the node to a new place or size when the layout changes (an item
   inserted above it in a `List` with `bind_key`, a panel that grows), over its own seconds: change
   its size in the layout, never with an animation. `blur` blurs what is behind the node, for a
-  pause screen.
+  pause screen; `cursor` is what the pointer shows over it ([cursor](cursor.md)).
 - Layout goes in a style too: `width`, `height`, `direction`, `gap`, `padding`, `align_x`,
   `align_y`. A node takes it and states only what differs; a change of the style reaches every node
   that uses it.
