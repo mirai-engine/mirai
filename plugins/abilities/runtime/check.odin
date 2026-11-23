@@ -18,13 +18,25 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
     if !finite(a.duration) || a.duration<=0 {return fmt.bprintf(out,"duration is %v: give the seconds the ability lasts, above 0",a.duration)}
     if !seconds_ok(a.cooldown) {return fmt.bprintf(out,"cooldown is %v: give the seconds before it starts again, 0 or more",a.cooldown)}
     for c,i in a.conditions {
-        if !finite(c.at_least) || !finite(c.at_most) {return fmt.bprintf(out,"conditions[%d] has a bound that is not a number: give finite at_least and at_most",i)}
-        if c.attribute==ATTRIBUTE_NONE && (c.at_least!=0 || c.at_most!=0) {return fmt.bprintf(out,"conditions[%d] has bounds and names no attribute: name the attribute it measures",i)}
+        if c.kind>max(Ability_Condition_Kind) {return fmt.bprintf(out,"conditions[%d].kind is %d: use attribute, speed or ledge_ahead",i,u8(c.kind))}
+        if !finite(c.at_least) || !finite(c.at_most) || !finite(c.reach) {return fmt.bprintf(out,"conditions[%d] has a bound that is not a number: give finite at_least, at_most and reach",i)}
         if c.at_most>0 && c.at_most<c.at_least {return fmt.bprintf(out,"conditions[%d] asks for at least %v and at most %v: no value is both; raise at_most or set it to 0 for no limit",i,c.at_least,c.at_most)}
+        switch c.kind {
+        case .Attribute:
+            if c.attribute==ATTRIBUTE_NONE && (c.at_least!=0 || c.at_most!=0) {return fmt.bprintf(out,"conditions[%d] has bounds and names no attribute: name the attribute it measures",i)}
+            if c.reach!=0 {return fmt.bprintf(out,"conditions[%d] measures an attribute and has a reach, which only ledge_ahead reads: clear it",i)}
+        case .Speed:
+            if c.attribute!=ATTRIBUTE_NONE || c.reach!=0 {return fmt.bprintf(out,"conditions[%d] measures the speed of the Character and names an attribute or a reach: clear them",i)}
+            if c.at_least<0 {return fmt.bprintf(out,"conditions[%d] asks for a speed of at least %v: give 0 or more metres per second",i,c.at_least)}
+        case .Ledge_Ahead:
+            if c.attribute!=ATTRIBUTE_NONE || c.at_most!=0 {return fmt.bprintf(out,"conditions[%d] looks for a ledge ahead and names an attribute or at_most: clear them",i)}
+            if !(c.reach>0) || !(c.at_least>0) {return fmt.bprintf(out,"conditions[%d] looks for a ledge ahead with reach %v and a drop of %v: give both above 0 metres",i,c.reach,c.at_least)}
+        }
     }
     for c,i in a.costs {
         if !finite(c.amount) || c.amount<0 {return fmt.bprintf(out,"costs[%d].amount is %v: give what it takes, 0 or more",i,c.amount)}
-        if c.attribute==ATTRIBUTE_NONE && c.amount!=0 {return fmt.bprintf(out,"costs[%d] takes %v of no attribute: name the attribute it takes from",i,c.amount)}
+        if !finite(c.per_second) || c.per_second<0 {return fmt.bprintf(out,"costs[%d].per_second is %v: give what it takes every second, 0 or more",i,c.per_second)}
+        if c.attribute==ATTRIBUTE_NONE && (c.amount!=0 || c.per_second!=0) {return fmt.bprintf(out,"costs[%d] takes from no attribute: name the attribute it takes from",i)}
     }
     for &w,i in a.windows {
         if w.to==0 {

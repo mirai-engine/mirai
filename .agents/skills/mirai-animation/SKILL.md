@@ -70,7 +70,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   [definitions](references/animation-motion.md#definitions-and-state),
   [requests and order](references/animation-motion.md#requests-and-order) and
   [authoring and control API](references/animation-motion.md#authoring-and-control-api).
-- An action whose root motion moves its `Character` (a lunge, a vault: `body_move`, not game code):
+- An action whose root motion moves its `Character` (a lunge, a vault: `body_move`, not game code),
+  or a whole clip that strides or turns it (`animation_physics.Root_Motion_Body`):
   [root and movement](references/animation-actions.md#root-and-movement).
 - Rigs, spatial targets and chain modifiers:
   [spatial targets](references/animation-rigs.md#spatial-targets),
@@ -148,8 +149,11 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
    the character plays and adapts; `animation.character.setup` writes it from the clip names and
    the skeleton body.
 2. **Locomotion:** the match clips of the set with the locomotion mode each one serves. With a
-   `Character`, `animation_physics` tells it on each tick the mode, the velocity and the request:
-   the game writes nothing. Without physics, the game calls `match_goal`.
+   `Character`, `animation_physics` tells it on each tick the mode, the velocity and what its
+   locomotion heads to (published on `Locomotion_State`: `desired`, rates, `facing`, `turn_speed`,
+   across the up of its `core.Vertical`): the game writes nothing. Without physics, the game calls
+   `match_goal`. Its feet ground only while its `Character_State` stands (`animation_grounding`),
+   and a `Root_Motion_Body` makes the root motion of its whole animation walk and turn it.
 3. **Few clips:** idle and walk are enough; a run or jog widens the range. The rate of a clip
    (`min_rate`..`max_rate` of the set, or of its source: a crouch authored slower than it is
    played, a jog kept below the sprint) covers the velocities between those of its clips and the

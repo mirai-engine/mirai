@@ -128,7 +128,7 @@ Animation_Gallery_Diagnostics :: struct {
 
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
-@(step="fixed",stage="apply",after="animation_motor_drive")
+@(step="fixed",stage="apply")
 gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),moves:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seat_state:core.Ref(inp.Seats),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
     empty:Animation_Gallery_State
     for row in 0..<core.count(gallery) {
@@ -144,7 +144,7 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:
             // The warp walks up to its stride from its origin; past that, or fallen, it goes back.
             limit:=1.2*item.stride if item.kind==.Warp else 2.6
             if placed.position.y< -2 || linalg.length((placed.position-item.origin).xz)>limit {core.place(placer,entity,home,at_rest=true)}
-            // While it turns toward its next goal its motor is off: it stands and faces that way.
+            // While it turns toward its next goal it stands in idle and faces that way.
             if item.kind==.Warp {
                 if warp:=gallery_warp(state,time.dt);warp.turn {
                     // Half a turn in a bit less than the time it has, so that it faces its goal before it strides.
@@ -193,26 +193,11 @@ gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),states
     }
 }
 
-// The bodies that walk by their physics plant their feet only while they stand on the ground.
-// It reads the gallery as gallery_observe left it in the last tick.
-@(step="fixed",stage="react",before="gallery_observe")
-gallery_control :: proc(gallery:^core.Table(Animation_Gallery,.Read),players:^core.Table(Gallery_Player,.Read),characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests) {
-    ground :: proc(characters:^core.Table(phys.Character_State,.Read),requests:^anim.Animation_Requests,entity:core.Entity,name:string) {
-        character,exists:=core.get(characters,entity)
-        if exists {anim.modifier(requests,{rig=entity,kind=.Grounding,weight=1 if character.standing else 0,enabled=true,goal=true},name)}
-    }
-    for row in 0..<core.count(gallery) {
-        kind:=core.at(gallery,row).kind
-        if kind==.Walker || kind==.Jumper || kind==.Spider {ground(characters,requests,core.entity_at(gallery,row),"body" if kind==.Spider else "grounding")}
-    }
-    for row in 0..<core.count(players) {ground(characters,requests,core.at(players,row).mirai,"grounding")}
-}
-
 // The matching station is told the speed it walks at and now and then plays a wave over its whole
 // body, faded in and out over it; the additive, greeting and synchronized stations set
 // their parameter; the actions station greets and steps; the warp station strides to its goal.
 @(step="fixed")
-gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),animations:^core.Table(anim.Animation,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),motors:^core.Table(Animation_Motor,.Read),motor_states:^core.Table(Animation_Motor_State),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights),problems:^core.Problems) {
+gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),animations:^core.Table(anim.Animation,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights)) {
     if morphs!=nil && morph_weights!=nil {morph_playground_animate(morphs,requests,morph_weights,time)}
     for event in ui_events.items {
         if event.kind!=.Clicked || event.name!=base.name_hash("toggle") {continue}
@@ -248,19 +233,11 @@ gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^cor
             if gallery_period(state.age,time.dt,GALLERY_ACTIONS_PERIOD,1) {anim.play(requests,entity,"Greet")}
             if gallery_period(state.age,time.dt,GALLERY_ACTIONS_PERIOD,1+GALLERY_ACTIONS_PERIOD*.5) {anim.play(requests,entity,"Step")}
         case .Warp:
-            // It turns in idle with its motor off, strides by its root motion to the goal and waits
-            // there in idle.
+            // It turns in idle toward its look, strides by its root motion (its Root_Motion_Body) to
+            // the goal and waits there in idle.
             if !core.has(animations,entity) {continue}
             progress,_:=core.get(progresses,entity)
             warp:=gallery_warp(state,time.dt)
-            if warp.turn || warp.start {
-                if motor,found:=core.get(motors,entity);found {
-                    state,_:=core.get(motor_states,entity)
-                    if (state.enabled.? or_else motor.enabled)!=warp.start {
-                        if next:=demo_state(motor_states,entity,Animation_Motor_State{},problems);next!=nil {next.enabled=warp.start}
-                    }
-                }
-            }
             if warp.turn {
                 if progress.selection.clip!=base.name_hash("idle") {anim.play_clip(requests,entity,"idle",.2,loop=true)}
             }

@@ -14,14 +14,13 @@ Loco_World :: struct {
     using physics:phys.Test_Physics,
     loco_states:core.Table(Locomotion_State),
     inputs:core.Table(input.Move_Input),
-    parkours:core.Table(Parkour_State),
     walks:core.Table(Walk),
     flights:core.Table(Fly),
     swims:core.Table(Swim),
     slides:core.Table(Slide),
     mantles:core.Table(Mantle),
-    tacticals:core.Table(Tactical_Sprint),
-    ledges:core.Table(Ledge_Jump),
+    slide_states:core.Table(Slide_State),
+    mantle_states:core.Table(Mantle_State),
     remotes:core.Table(core.Remote),
     paces:core.Table(core.Own_Pace),
     loco_requests:Locomotion_Requests,
@@ -70,10 +69,10 @@ loco_test_walker :: proc(f:^Loco_Test,position:[3]f32,rotation:=mm.QUAT_IDENTITY
     core.add(&f.transforms,e,core.Transform{position,rotation,{1,1,1}})
     core.add(&f.colliders,e,phys.collider_character())
     // It faces the look it is asked at once: what a test asks of its move is in the axes of that look.
-    body:=phys.character_default()
-    body.turn_speed=0
-    core.add(&f.characters,e,body)
-    if walks {core.add(&f.walks,e,WALK_DEFAULT)}
+    core.add(&f.characters,e,phys.character_default())
+    walk:=WALK_DEFAULT
+    walk.turn_speed=0
+    if walks {core.add(&f.walks,e,walk)}
     return e
 }
 
@@ -135,26 +134,35 @@ loco_found :: proc(f:^Loco_Test,e:=core.NONE) -> phys.Character_State {
 }
 
 @(private)
-loco_velocity :: proc(f:^Loco_Test,e:=core.NONE) -> [3]f32 {return loco_found(f,e).velocity}
+loco_velocity :: proc(f:^Loco_Test,e:=core.NONE) -> [3]f32 {
+    motion,_:=core.get(&f.bodies,e if e!=core.NONE else f.e)
+    return motion.linear
+}
 
 @(private)
 near :: proc(a,b,tolerance:f32) -> bool {return abs(a-b)<=tolerance}
 
 @(private)
-parkour_state :: proc(f:^Loco_Test) -> Parkour_State {
-    state,_:=core.get(&f.parkours,f.e)
+mantle_state :: proc(f:^Loco_Test) -> Mantle_State {
+    state,_:=core.get(&f.mantle_states,f.e)
     return state
 }
 
 @(private)
 loco_test_move :: proc(f:^Loco_Test,dt:f32,clock:core.Clock) {
     time:=core.Time{playing=true,dt=dt}
-    locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.parkours,&f.moves,&f.inputs,
-        core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),core.read(&f.mantles),&f.loco_requests,time,&f.problems)
+    actions:=input.Input_Of(Walk_Action){base=TEST_WALK_BASE}
+    slide_step(core.read(&f.slides),&f.slide_states,core.read(&f.loco_states),core.read(&f.walks),core.read(&f.characters),core.read(&f.colliders),
+        core.read(&f.character_states),core.read(&f.bodies),core.read(&f.inputs),&f.moves,&f.loco_requests,core.ref(&f.state),core.read(&f.paces),actions,time,clock)
+    mantle_step(core.read(&f.mantles),&f.mantle_states,core.read(&f.loco_states),core.read(&f.walks),core.read(&f.characters),core.read(&f.colliders),
+        core.read(&f.character_states),core.read(&f.inputs),core.read(&f.transforms),core.read(&f.parents),&f.moves,&f.loco_requests,core.ref(&f.state),core.read(&f.paces),actions,time,clock)
+    test_world_settle(&f.w)
+    locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,&f.inputs,
+        core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco_requests,time,&f.problems)
     test_world_settle(&f.w)
     locomotion_step(
-        core.read(&f.characters),&f.loco_states,&f.parkours,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.slides),
-        core.read(&f.mantles),core.read(&f.tacticals),core.read(&f.ledges),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
-        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),core.read(&f.paces),{base=TEST_WALK_BASE},time,clock,&f.problems,
+        core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),
+        core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),
+        core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),core.read(&f.paces),actions,time,clock,&f.problems,
     )
 }

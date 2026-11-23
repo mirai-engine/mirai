@@ -146,7 +146,6 @@ Character :: struct {
     density:f32 `mirai:"min=0,unit=kg/m3"`, // of the body in a fluid, whose volume is its mass over this: 985 a person; 0: no buoyancy
     up_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its up turns toward the opposite of its gravity: around a planet; 0: it keeps its up
     locks:Body_Locks,                       // world axes the simulation never moves its feet along, as for a Rigid_Body; a place still does. Its move turns it: the angular ones do nothing
-    turn_speed:f32 `mirai:"angle,min=0,unit=deg/s"`, // its yaw toward the look its input.Move_Input asks, whoever drives it; 0: at once
 }
 
 // A human of 80 kg: the values of sim.CHARACTER_DESC_DEFAULT. Its capsule is collider_character().
@@ -155,7 +154,6 @@ character_default :: proc "contextless" () -> Character {
     return {
         mass=d.mass,max_slope=d.max_slope,step_height=d.step_height,traction_force=d.traction_force,
         adhesion_force=d.adhesion_force,gravity_scale=d.gravity_scale,push_force=d.push_force,density=d.density,up_speed=d.up_speed,
-        turn_speed=500*mm.RAD_PER_DEG,
     }
 }
 
@@ -194,7 +192,6 @@ Character_State :: struct {
     fluid_velocity:[3]f32 `mirai:"transient,readonly,hidden,unit=m/s"`, // the current around it
     height:f32 `mirai:"transient,readonly,hidden,unit=m"`, // of its capsule now, from the feet to the top of the head
     cramped:bool `mirai:"transient,readonly"`,             // shorter than the height its Character_Move asks: what is over it keeps it down
-    velocity:[3]f32 `mirai:"transient,readonly,unit=m/s"`, // of the character itself after the last step, vertical speed included
 }
 
 Joint_Motion :: sim.Joint_Motion

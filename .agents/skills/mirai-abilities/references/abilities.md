@@ -22,8 +22,12 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
     window of that one however far it is (a combo's next technique pressed before the branch).
     It leaves with that run: an interruption or a cancel drops it after the kit's buffer.
 - `requires` (all of them) and `blocked_by` (any) are status masks; `modes` are locomotion modes
-  of the user's `Character` (none: any); `conditions` bound attributes; `costs` are taken from
-  attribute bases when it starts and it cannot start with less; `cooldown` is per ability row.
+  of the user's `Character` (none: any); `conditions` bound, by their `kind`, an attribute, the
+  `speed` of the `Character` across its up relative to its ground, or ask for a `ledge_ahead`
+  (standing, no ground within `at_least` m under the feet `reach` m ahead along where it goes:
+  `locomotion.ledge_ahead`); `costs` take `amount` from attribute bases when it starts (it cannot
+  start with less) and `per_second` every tick it runs after that, and it completes when the
+  attribute cannot pay the tick; `cooldown` is per ability row.
 - `duration` in seconds; `hold` ends it when its input is let go.
 - `action` names an action of the user's `.character`: in its layer over locomotion, or over the
   whole body when it names no layer. Empty plays nothing.
@@ -73,6 +77,13 @@ Why a candidate does not start is `start_block` (`Ability_Block`), which `abilit
 reports for each ability of the kit.
 
 ## Attributes and effects
+- `Ability_User.speed` names the attribute whose current value scales the locomotion of its
+  `Character` (`locomotion.set_speed_scale`, asked when the value changes). A sprint is then data:
+  a `hold` ability on the sprint action, `modes` walking, a condition on the energy left, a cost
+  `per_second` and a window whose `modify` raises the speed attribute; the energy comes back by its
+  `regen`. A jump off a ledge with a boost is an ability on the jump action with `speed` and
+  `ledge_ahead` conditions and a window whose additive `move` adds to the jump of the walk
+  (`movement_test.odin`).
 
 - `Ability_User.attributes` are entries of an attribute, its base, its max (0: none) and its
   regeneration per second. Bases stay in 0..max. `values` (transient) are

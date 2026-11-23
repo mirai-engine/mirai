@@ -162,6 +162,11 @@ Discovery and memory:
   most share. With physics, `animation_physics` makes it a one-tick layered move of that mix for
   its `Character` in the following physics step. The move follows the body's own time and stays
   across its up unless `body_vertical` is enabled. Mantling uses its climb delta.
+- **A whole clip moves a `Character` with `animation_physics.Root_Motion_Body`** (`move` Additive
+  or Override, `vertical`): the root delta of the whole animation (`animation_root_delta`) becomes
+  that layered move, and its yaw its `turn`, which faces the body instead of its look while it
+  turns (under `ROOT_TURN_MIN` a tick it does not). An action with `body_move` takes over while it
+  plays; no game code feeds the input.
 - `action_clock` gives the `Motion_Clock` of the layer that leads the root when it has at least half
   of it, for [motion warping](animation-motion.md). A discontinuous jump of section, or an action
   that ends or cancels while fading its root, suspends the warp without applying a window of the

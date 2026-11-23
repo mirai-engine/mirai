@@ -894,7 +894,9 @@ arena_drone :: proc(c:core.Commands,position:mm.Vec3) -> core.Entity {
     core.commands_add(c,e,core.Transform{position,1,{1,1,1}})
     core.commands_add_default(c,e,phys.Character)
     core.commands_add(c,e,phys.collider_character(0.25,0.8))
-    core.commands_add(c,e,locomotion.Fly{speed=5,acceleration=20})
+    fly:=locomotion.FLY_DEFAULT
+    fly.speed,fly.acceleration=5,20
+    core.commands_add(c,e,fly)
     core.commands_add_default(c,e,nav.Nav_Agent)
     arena_shown(c,e,{{0,0.4,0},1,{0.5,0.4,0.5}},{0.95,0.6,0.2,1})
     return e

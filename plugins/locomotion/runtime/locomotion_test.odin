@@ -133,7 +133,7 @@ the_body_turns_toward_its_look_at_its_turn_speed :: proc(t:^testing.T) {
     defer loco_test_destroy(&f)
     loco_test_tick(&f,{})
     testing.expect(t,near(loco_state(&f).yaw,0,1e-6))
-    core.edit(&f.characters,f.e).turn_speed=cmath.PI
+    core.edit(&f.walks,f.e).turn_speed=cmath.PI
     dt:=f32(1.0/60)
     core.edit(&f.inputs,f.e)^=input.Move_Input{move={1,0,0},look_yaw=-0.5*cmath.PI}
     test_world_settle(&f.w)
@@ -186,18 +186,17 @@ a_walker_placed_at_rest_stops_and_starts_its_locomotion_over :: proc(t:^testing.
     f:Loco_Test
     if !loco_test_init(t,&f,{0,60,0}) {return}
     defer loco_test_destroy(&f)
-    core.add(&f.mantles,f.e,MANTLE_DEFAULT)
     loco_test_tick(&f,{},60)
     core.push(&f.requests.queue,phys.Body_Request{entity=f.e,kind=.Velocity,linear={0,-20,0}})
     loco_test_tick(&f,{})
-    testing.expectf(t,loco_velocity(&f).y< -19.5 && parkour_state(&f).fall_time>0.9,"it falls at %v for %v s",loco_velocity(&f).y,parkour_state(&f).fall_time)
+    testing.expectf(t,loco_velocity(&f).y< -19.5 && loco_state(&f).mode==MODE_FALLING,"it falls at %v",loco_velocity(&f).y)
     turned:=mm.quat_axis_angle({0,1,0},1)
     core.place({&f.transforms,core.read(&f.parents),&f.places,nil},f.e,{0,0,0},turned,at_rest=true)
     loco_test_tick(&f,{})
     v:=loco_velocity(&f)
     testing.expectf(t,abs(v.y)<0.2 && abs(v.x)<0.01 && abs(v.z)<0.01,"it stops where it is put: %v",v)
-    state,p:=loco_state(&f),parkour_state(&f)
-    testing.expectf(t,p.fall_time==0 && p.air_time<0.02 && near(state.yaw,1,1e-4),"its locomotion starts over facing the place: %v",state)
+    state:=loco_state(&f)
+    testing.expectf(t,!state.jumped && state.coyote==0 && near(state.yaw,1,1e-4),"its locomotion starts over facing the place: %v",state)
     loco_test_tick(&f,{},10)
     testing.expect_value(t,loco_state(&f).mode,MODE_WALKING)
 }
@@ -336,6 +335,31 @@ layered_moves_go_on_top_of_the_move_of_a_mode_of_the_game :: proc(t:^testing.T) 
     testing.expect_value(t,move,swim)
 }
 
+// A custom mode owns the Character_Move its owner writes: locomotion keeps its yaw, its flags
+// (no Reach_Drive added), its gravity scale over one asked of locomotion and its height over a
+// crouch, and only composes its layered moves on top, without carrying them to the next tick.
+@(test)
+a_custom_mode_owns_its_move_and_layered_moves_compose_on_top :: proc(t:^testing.T) {
+    f:Loco_Test
+    if !loco_test_init(t,&f,{0,0,0}) {return}
+    defer loco_test_destroy(&f)
+    loco_test_tick(&f,{},20)
+    CUSTOM :: Locomotion_Mode(16)
+    set_mode(&f.loco_requests,f.e,CUSTOM)
+    set_gravity_scale(&f.loco_requests,f.e,3)
+    written:=phys.Character_Move{value={air={velocity={1,0,0},force=500},yaw=1.25,flags={.Airborne,.No_Gravity},gravity_scale=2},height=1.1}
+    for added in ([3][3]f32{{},{0,0,2},{}}) {
+        core.edit(&f.moves,f.e)^=written
+        if added!={} {add_move(&f.loco_requests,f.e,{velocity=added,ticks=1,mix=.Additive,id=7})}
+        loco_test_tick(&f,{0,0,-1},1,CROUCH|JUMP,yaw=2)
+        move,_:=core.get(&f.moves,f.e)
+        testing.expect_value(t,loco_state(&f).mode,CUSTOM)
+        testing.expectf(t,move.value.yaw==1.25 && move.value.flags=={.Airborne,.No_Gravity} && move.value.gravity_scale==2 && move.height==1.1,"the owner's move stays: %v",move)
+        testing.expectf(t,move.value.air.velocity==[3]f32{1,0,0}+added && move.value.air.force==500,"layered moves compose on top once: %v",move.value.air)
+    }
+    testing.expect(t,loco_state(&f).jump_held,"the jump its owner took is not taken again by the walk")
+}
+
 // A Character starts in the first of walking (falling until it stands), swimming and flying whose
 // component it has, and one without any is not moved by locomotion. A mode asked of an entity without
 // its component, or a request for one that is no Character with a mode, is a problem and changes
@@ -471,8 +495,7 @@ without_gravity_a_swimmer_on_the_surface_does_not_climb :: proc(t:^testing.T) {
     found:phys.Character_State
     found.fluid,found.head_depth,found.depth={.In_Fluid},-0.25,1.55
     given:=input.Move_Input{buttons=JUMP}
-    parkour:Parkour_State
-    move:=locomotion_move(&loco,&parkour,phys.character_default(),WALK_DEFAULT,{},SWIM_DEFAULT,{},found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,{},{},1.0/60)
+    move:=locomotion_move(&loco,phys.character_default(),WALK_DEFAULT,{},SWIM_DEFAULT,found,1,given,TEST_JUMP,TEST_SPRINT,TEST_CROUCH,{},{},1.0/60)
     testing.expect_value(t,loco.mode,MODE_SWIMMING)
     testing.expect_value(t,loco.move_count,0)
     testing.expect(t,.Float in move.flags)
@@ -617,17 +640,17 @@ derived_rows_follow_their_character_and_mode_owners :: proc(t:^testing.T) {
         if !loco_test_init(t,&f,{0,0,0}) {return}
         defer loco_test_destroy(&f)
         loco_test_tick(&f,{})
-        testing.expect(t,!core.has(&f.parkours,f.e),"simple walkers have no parkour row")
+        testing.expect(t,!core.has(&f.slide_states,f.e),"simple walkers have no slide row")
         core.add(&f.slides,f.e,SLIDE_DEFAULT)
         loco_test_tick(&f,{})
-        testing.expect(t,core.has(&f.parkours,f.e) && core.has(&f.character_states,f.e))
+        testing.expect(t,core.has(&f.slide_states,f.e) && core.has(&f.character_states,f.e))
         switch removed {
         case "walk": core.remove(&f.walks,f.e)
         case "character": core.remove(&f.characters,f.e)
         case "collider": core.remove(&f.colliders,f.e)
         }
         loco_test_tick(&f,{})
-        testing.expect(t,!core.has(&f.loco_states,f.e) && !core.has(&f.parkours,f.e))
+        testing.expect(t,!core.has(&f.loco_states,f.e) && !core.has(&f.slide_states,f.e))
         testing.expect(t,!core.has(&f.inputs,f.e) && !core.has(&f.moves,f.e))
         testing.expect_value(t,core.has(&f.character_states,f.e),removed=="walk")
     }
@@ -668,7 +691,9 @@ runtime_speed_and_suspension_leave_authored_character_and_walk_intact :: proc(t:
     returned,solid:=phys.raycast(physics,position+{0,1,2},{0,0,-1},4)
     testing.expect(t,solid && returned.entity==f.e)
     walk,_:=core.get(&f.walks,f.e)
-    testing.expect_value(t,walk,WALK_DEFAULT)
+    authored:=WALK_DEFAULT
+    authored.turn_speed=0
+    testing.expect_value(t,walk,authored)
     testing.expect(t,core.has(&f.characters,f.e) && core.has(&f.colliders,f.e))
 }
 

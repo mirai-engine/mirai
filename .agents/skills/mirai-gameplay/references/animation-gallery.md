@@ -58,7 +58,6 @@ sets of the stations show one feature each.
   and what E does there (`gallery_interact`).
 - `animation_gallery_view.odin`: `Gallery_Hud`, what `animation_hud.ui` shows of the station and
   of what E does.
-- `animation_motor.odin`: [the motor](#demo-animation-motor) of the actions and warp stations.
 
 ## API walkthrough
 
@@ -87,25 +86,23 @@ schemas and `scene.inspect` for the ids of the stations, which are named after w
 5. `Mirai presentation every 4 frames`: `Animation_Budget` presents it every fourth frame while the
    simulation runs every tick; the one beside it, every frame.
 
-## Demo animation motor
+## Root motion and grounding
 
-`Animation_Motor` is a gameplay capability of the demo, shared by the characters with root motion.
+The stations take both from `animation_physics`, with no gallery code:
 
-- `animation_motor_drive` writes the `Move_Input` velocity (`world_velocity`) after animation
-  sampling, over what the seat asked. The horizontal root motion gives the velocity and its yaw
-  gives the facing. The current locomotion mode limits the speed, and the seat keeps its buttons.
-- Functions before the animation, like `game_use`, read the players' request.
-- The physical character keeps authority over the transform: contact, acceleration and saturation
-  may prevent reaching a target.
-- The component does not request actions, targets or distances, nor modify shared definitions.
-- Vertical root motion and rotation other than yaw are not converted into character displacement.
+- The actions and warp stations carry `Root_Motion_Body` (`move=Additive`): the root motion of
+  their animation becomes a layered move of every tick (velocity across the up, and `turn` while
+  the root turns). The warp turns in idle toward the look `gallery_move_inputs` writes, then strides
+  by its root motion; contact and traction may keep it from its target.
+- The feet of every character whose rig has grounding plant only while its `Character_State`
+  stands (`animation_grounding`).
 
 ## Verification
 
 - `mirai test demo/game`: `animation_gallery_controls_test.odin`
   (manual and automatic stations, bounded queue), `animation_gallery_matching_test.odin` (the speed
   asked picks idle, walk or jog of `mirai_gallery.character`), `mirai_matching_test.odin`,
-  `mirai_character_test.odin`, `grounding_physics_test.odin` and `animation_motor_test.odin`.
+  `mirai_character_test.odin`, `grounding_physics_test.odin` and `root_motion_test.odin`.
 - New assets: `mirai asset verify`.
 - Generate and build the demo editor and walk the gallery in Play with graphics validation: E at a
   station with a panel, a slider and a button. A type check does not prove physics execution,

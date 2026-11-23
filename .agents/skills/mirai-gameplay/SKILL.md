@@ -95,8 +95,9 @@ the same attributes and no private paths. Declaration and parameter binding:
    actions, spawns, who drives what, and the `Move_Input` of whoever drives a seat; after it, in
    `apply`: the camera of the focused player, spawns and animation preparation.
    In `simulate`, physics feeds the current body motion to animation sampling.
-   - A controller that feeds physics from animation (`animation_motor_drive`) runs in
-     `stage="apply"` and reads the pose sampled on the preceding tick.
+   - Root motion that moves a body (`animation_physics.Root_Motion_Body`, action `body_move`, the
+     climb of a mantle) becomes layered moves in `stage="apply"` from the pose sampled on the
+     preceding tick; the feet ground by themselves from `Character_State.standing`.
    - A game that reacts to contacts or damage of the tick goes in `stage="react"`; what it pushes
      to `Destruct_Requests` there breaks in the same tick.
    - What only the server or a single-player game decides carries `server` instead of asking
@@ -142,7 +143,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   `Move_Input` of a body is one request for every driver: a move in the world and the yaw to face.
   The seat's comes from its actions toward the forward of the camera it sees (`camera_drive`); an
   AI or the game writes it for the bodies no seat drives. The mover turns the body toward its look
-  at its own rate (locomotion: `Character.turn_speed`); nobody else turns it. An own mode
+  at its own rate (locomotion: the `turn_speed` of its `Walk`, `Fly` or `Swim`), or as its root
+  motion turns it (`Layered_Move.turn`); nobody else turns it. An own mode
   (swimming, climbing) is requested with `locomotion.set_mode`. Player bodies appear at the
   `Spawn_Point`s with `players` on of the `spawn` plugin when a player prefab is named, not through
   game code; a point with `players` off serves what the game spawns (enemies) and never gives a
