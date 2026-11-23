@@ -156,6 +156,12 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     testing.expect(t,repeated.code==0 && slice.equal(reported_paths(repeated.out),reported_paths(turned.out)),"importing again without options gives the same assets")
     bare:=import_run(kept,copy,"--front","negative_z","--lods","none")
     testing.expect(t,bare.code==0 && slice.equal(ids(bare.out),ids(turned.out)) && strings.contains(bare.out,"  3232 triangles"),bare.out)
+    baked:=import_run(kept,copy,"--bake-scale")
+    stored,_,_=importer.settings_load({store=test_store(t,kept)},copy)
+    testing.expect(t,baked.code==0 && stored.bake_scale,"--bake-scale is a setting the package keeps")
+    unbaked:=import_run(kept,copy,"--no-bake-scale")
+    stored,_,_=importer.settings_load({store=test_store(t,kept)},copy)
+    testing.expect(t,unbaked.code==0 && !stored.bake_scale && stored.lods==.None,"--no-bake-scale takes it away and keeps the others")
 
     // A source outside any project: ingested into the library alone.
     outside:=fmt.tprintf("%s/outside",root_folder)
@@ -181,6 +187,7 @@ mirai_import_writes_assets_that_mirai_asset_verifies :: proc(t:^testing.T) {
     testing.expect_value(t,import_run(kept,copy,"--lods","some").code,2)
     testing.expect_value(t,import_run(kept,copy,"--front","up").code,2)
     testing.expect_value(t,import_run(kept,bricks,"--front","x").code,2)
+    testing.expect_value(t,import_run(kept,bricks,"--bake-scale").code,2)
     testing.expect_value(t,import_run(kept).code,2)
     testing.expect_value(t,import_run(kept,copy,"--srgb").code,2)
     testing.expect_value(t,import_run(kept,copy,"--alpha-coverage","0.5").code,2)

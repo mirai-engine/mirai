@@ -85,6 +85,7 @@ Import_Settings :: struct {
     front:Front,
     rig:Rig,
     rig_crotch,rig_neck:f32,    // of a Humanoid rig, above 0: the heights in meters in the model of the crotch and the neck, in place of where the fit finds them
+    bake_scale:bool,            // of a model: a positive scale that is the same on every axis goes from the nodes into the meshes they draw, which keep none (scale.odin)
     skeleton:base.Asset_Id,     // of a model, not zero: its clips play on this skeleton the project has (with the same bones), and the import writes only its .anim, bound to it: no textures, materials, skeletons, meshes or prefab
     sound:Sound_Coding,         // of a sound
 }
@@ -98,5 +99,11 @@ Import_Settings :: struct {
 // it is part of the mesh's.
 mesh_settings_hash :: proc(settings:Import_Settings) -> u64 {
     built:=[5]u64{u64(settings.lods),u64(settings.front),u64(settings.rig),u64(transmute(u32)settings.rig_crotch),u64(transmute(u32)settings.rig_neck)}
-    return base.hash64(mem.slice_to_bytes(built[:2] if settings.rig==.Source else built[:]))
+    hash:=base.hash64(mem.slice_to_bytes(built[:2] if settings.rig==.Source else built[:]))
+    // A mesh the scales of its nodes were baked into is another.
+    if settings.bake_scale {
+        baked:=[2]u64{hash,1}
+        hash=base.hash64(mem.slice_to_bytes(baked[:]))
+    }
+    return hash
 }

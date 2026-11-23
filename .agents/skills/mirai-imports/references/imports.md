@@ -165,6 +165,14 @@ manifest and override CLI options unless `ignore_stored` is set (invalid fields 
 - `rdo_lambda` (0 = default, negative via `--rdo-lambda 0` = lowest error).
 - `front` (`auto|negative_z|z|x|negative_x`); affects mesh hash.
 - `rig` (`Humanoid` or Mesh2Motion animal; `rig_crotch`/`rig_neck` override humanoid fit).
+- `bake_scale` (`--bake-scale`, `--no-bake-scale`; mesh hash): `model_scales`
+  (`cook/import/scale.odin`) pushes each positive uniform node scale down the hierarchy into the
+  non-skinned meshes the nodes draw (vertices, bounds, morph deltas, colliders; LODs and outlines
+  are built after), giving those nodes 1 and their children the scale and offset they lost, so
+  world transforms stay exact. It keeps, with a warning naming the reason, a negative or uneven
+  scale, a scale over a skin or a node a clip moves, and a mesh nodes of other scales draw. Never
+  decided by counts of instances. With or without it, a non-skinned mesh drawn beyond
+  `SCALE_LARGE`/`SCALE_SMALL` (2x, 0.5x) of its size by its node and those above warns once.
 - `skeleton` (`--skeleton <id>`): imports `.anim` only, bound to an existing skeleton (no meshes/
   materials/prefab).
 - `sound` (`--sound lossless|file`): `File` keeps the source file of a sound as it is

@@ -92,6 +92,10 @@ the assets.
   says them and declares its `Source_Space`; the import bakes units, axes, mirroring and V origin
   into the geometry, transforms, bones, clips and maps. What is written is in meters and in the
   engine's axes, with no added nodes or negative scales.
+- **A scale is baked only when the settings ask for it.** `bake_scale` puts positive uniform node
+  scales into non-skinned meshes and refuses the rest with a warning; without it a mesh drawn at
+  more than twice or less than half its size warns
+  ([settings](references/imports.md#settings-of-a-source)).
 - **Every model faces -Z, and the source is parsed once.** What faces elsewhere is turned in
   place after the read: from the `front` its settings state, or else, for a file that is a rig,
   from where its body is found facing ([front](references/imports.md#front)).
@@ -207,7 +211,7 @@ the assets.
 ## Verification
 
 - `mirai test cook/import` (source space, PBR, levels, sounds, hand grips, bounded and ordered Final
-  texture refresh),
+  texture refresh), `cook/import/gltf/scale_test.odin` (scales baked, kept and warned),
   `cook/rig` (fit and weights over a body of boxes, each animal stretched by its skin, meshes
   that are neither a person nor an animal), `cook/import/obj`, `cook/import/gltf` (with the rig
   fits of `rig_test.odin` and the decoding of `meshopt_test.odin`), `cook/import/usd`,
