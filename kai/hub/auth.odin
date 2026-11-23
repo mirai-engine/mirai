@@ -215,7 +215,7 @@ assertion_parse :: proc(c:^Call,b:Assertion_Body) -> (credential:[]u8,a:kai.Web_
     credential,ok=base64_parse(b.credential,255)
     data,ok1:=base64_parse(b.authenticator_data,kai.AUTHENTICATOR_DATA_MAX)
     client,ok2:=base64_parse(b.client_data_json,kai.CLIENT_DATA_MAX)
-    signature,ok3:=base64_parse(b.signature,255)
+    signature,ok3:=base64_parse(b.signature,kai.WEBAUTHN_SIGNATURE_MAX)
     if !ok || !ok1 || !ok2 || !ok3 || len(credential)==0 {
         fail(c,400,"the assertion's fields are base64url of the browser's bytes: credential, authenticator_data, client_data_json, signature")
         return nil,{},false
@@ -743,7 +743,7 @@ route_passkey_link :: proc(c:^Call) {
         return
     }
     if _,parsed:=kai.cose_key_parse(cose);!parsed {
-        fail(c,400,"the passkey is not an Ed25519 or P-256 COSE key: register a passkey of those")
+        fail(c,400,"the passkey is not an Ed25519, P-256 or RSA-256 COSE key: register a passkey of those")
         return
     }
     if user_fold_of(c.h,user)==nil {

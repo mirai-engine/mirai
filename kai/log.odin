@@ -70,7 +70,7 @@ Entry_Head :: struct #packed {
 
 ENTRY_PARENTS_MAX :: 8
 ENTRY_BODY_MAX :: 64<<10
-ASSERTION_MAX :: 2048
+ASSERTION_MAX :: 4096
 LOG_ENTRIES_MAX :: 1<<20 // entries of one log; far above what a team writes in years
 LOG_BLOCK_MAX :: 1<<20   // bytes of a block of a log's entries: the first is small, each next one twice the last
 NAME_MAX :: 64           // bytes of the name of a user, device, org or project

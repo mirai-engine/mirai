@@ -105,7 +105,7 @@ async function passkeyCreate(name, prompt = {text: 'Create a passkey for this br
             rp: {id: app.node.rp_id, name: 'Kai'},
             user: {id: crypto.getRandomValues(new Uint8Array(16)), name, displayName: name},
             challenge: crypto.getRandomValues(new Uint8Array(32)),
-            pubKeyCredParams: [{type: 'public-key', alg: -8}, {type: 'public-key', alg: -7}],
+            pubKeyCredParams: [{type: 'public-key', alg: -8}, {type: 'public-key', alg: -7}, {type: 'public-key', alg: -257}],
             authenticatorSelection: {residentKey: 'required', userVerification: 'required'},
             attestation: 'none',
             timeout: TIMEOUT_MS,

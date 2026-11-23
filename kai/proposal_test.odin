@@ -3,6 +3,7 @@ package kai
 import "core:crypto/ecdsa"
 import "core:crypto/ed25519"
 import "core:crypto/hash"
+import "core:crypto/rsa"
 import "core:encoding/base64"
 import "core:fmt"
 import "core:math/rand"
@@ -349,6 +350,7 @@ Passkey :: struct {
     alg:Cose_Alg,
     ed:ed25519.Private_Key,
     ec:ecdsa.Private_Key,
+    rs:rsa.Private_Key,
 }
 
 @(private="file")
@@ -360,6 +362,7 @@ passkey_make :: proc(alg:Cose_Alg) -> (p:Passkey) {
         _=rand.read(seed[:])
         _=ed25519.private_key_set_bytes(&p.ed,seed[:])
     case .ES256: _=ecdsa.private_key_generate(&p.ec,.SECP256R1)
+    case .RS256: _=rsa.private_key_generate(&p.rs,2048)
     }
     return
 }
@@ -381,6 +384,20 @@ passkey_cose :: proc(p:^Passkey) -> []u8 {
         append(&out,..public[1:33])
         append(&out,0x22,0x58,0x20)
         append(&out,..public[33:])
+    case .RS256:
+        n_len:=rsa.private_key_size(&p.rs)
+        n:=make([]u8,n_len,context.temp_allocator)
+        _=rsa.private_key_n(&p.rs,n)
+        e_val:=rsa.private_key_e(&p.rs)
+        e_buf:[4]u8={u8(e_val>>24),u8(e_val>>16),u8(e_val>>8),u8(e_val)}
+        e:=e_buf[:]
+        for len(e)>1 && e[0]==0 {e=e[1:]}
+        // {1: 3, 3: -257, -1: n, -2: e}
+        append(&out,0xa4,0x01,0x03,0x03,0x39,0x01,0x00,0x20)
+        if len(n)<256 {append(&out,0x58,u8(len(n)))} else {append(&out,0x59,u8(len(n)>>8),u8(len(n)))}
+        append(&out,..n)
+        append(&out,0x21,u8(0x40|len(e)))
+        append(&out,..e)
     }
     return out[:]
 }
@@ -404,6 +421,9 @@ passkey_assert :: proc(p:^Passkey,rp_id,origin:string,challenge:[]u8,flags:u8=0x
         signature=make([]u8,64,context.temp_allocator)
         ed25519.sign(&p.ed,message,signature)
     case .ES256: signature,_=ecdsa.sign_asn1(&p.ec,.SHA256,message,context.temp_allocator)
+    case .RS256:
+        signature=make([]u8,rsa.private_key_size(&p.rs),context.temp_allocator)
+        _=rsa.sign_pkcs1(&p.rs,.SHA256,message,signature)
     }
     return {data,transmute([]u8)client,signature}
 }
@@ -516,6 +536,20 @@ webauthn_login_and_signed_verdict_verify_offline :: proc(t:^testing.T) {
     stranger:=passkey_make(.EdDSA)
     stranger_key:=passkey_cose(&stranger)
     unknown:=browser_sign(t,&l,&stranger,stranger_key,web_key_id(stranger_key,RP),.Proposal_Comment,comment_body,ctx,oc,30)
+
+    // An RS256 passkey (Windows Hello) signs a 256-byte signature and encodes cleanly;
+    // a 1024-bit RSA key is refused.
+    {
+        rs:=passkey_make(.RS256)
+        rs_key:=passkey_cose(&rs)
+        rs_entry:=browser_sign(t,&l,&rs,rs_key,web_key_id(rs_key,RP),.Proposal_Comment,comment_body,ctx,oc,30)
+        decoded,de:=entry_decode(rs_entry)
+        testing.expect(t,de==.None && entry_verify(rs_entry,&decoded),"an RS256-signed entry decodes and verifies")
+        small:Passkey={alg=.RS256}
+        _=rsa.private_key_generate(&small.rs,1024)
+        _,small_ok:=cose_key_parse(passkey_cose(&small))
+        testing.expect(t,!small_ok,"a 1024-bit RSA COSE key is refused")
+    }
 
     {
         d:=Draft{type=.Proposal_Verdict,log_id=l.id,parents=test_heads(&l),author_ctx=ctx,org_ctx=oc,time=31,body=verdict_body}
