@@ -65,6 +65,7 @@ frame_input_is_immediate_without_consuming_or_repeating_tick_input :: proc(t:^te
     app_game_frame(&app,&w)
     testing.expect_value(t,w.frame.mouse_delta,([2]f32{}))
     testing.expect_value(t,w.tick_delta,([2]f32{23,-1}))
+    testing.expect_value(t,w.frame.window_size,w.input.window_size)
     app.game_input_blocked=false
     app.game_input_excluded={.Space}
     platform.frame_begin(p)

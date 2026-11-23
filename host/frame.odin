@@ -318,6 +318,7 @@ app_game_frame :: proc(app:^App,world:rawptr,phases:=ALL_PHASES,step:=false,dt:=
             input.keys_down-=app.game_input_excluded
             input.keys_pressed-=app.game_input_excluded
             input.keys_released-=app.game_input_excluded
+            input.window_size={f32(frame.window.size.x),f32(frame.window.size.y)}
         }
         if record!=nil {record.frame_input=input.input}
     }
