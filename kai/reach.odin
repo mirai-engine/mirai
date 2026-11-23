@@ -8,8 +8,9 @@ import "mirai:store"
 // every link inside a record is named here, by the kind of object it names:
 // the sweep keeps all of it (store_live), and the members', public and grant
 // sets serve what of it their peer may read, through the same gate
-// (walk_admits). A new kind of object or entry that names another object
-// adds its case to walk_children or entry_names, and nothing else.
+// (walk_admits) and the same walk (walk_all). A new kind of object or entry
+// that names another object adds its case to walk_children or entry_names,
+// and nothing else.
 
 // What an object of a walk is, and so what it names.
 @(private)
@@ -49,6 +50,7 @@ Walk :: struct {
     entries:bool,       // a leaf page gives what each of its entries names (the sweep); a served set takes the entries a fold holds instead
     untainted:bool,     // a DDC set gives only the outputs no scope taints
     proven:^Provenance, // the gate of a served set; nil walks everything (the sweep)
+    held:^map[store.Hash]struct{}, // what the walk stops at: the members' set it grows
     tree:[dynamic]Tree_Entry,
     terms:Terms(Term),
 }
@@ -193,26 +195,26 @@ walk_children :: proc(w:^Walk,item:Walk_Item,stack:^[dynamic]Walk_Item) {
     }
 }
 
-// The objects roots reach as far as w admits them: present gets those in
-// the store, missing those that are not or wait to come from the org (what
-// lies under them is not walked).
+// The objects roots reach as far as w admits them, short of what it holds:
+// present gets those in the store, missing those that are not or wait to
+// come from the org (what lies under them is not walked).
 @(private)
-walk_all :: proc(w:^Walk,roots:[]Walk_Item,present,missing:^[dynamic]store.Hash) {
+walk_all :: proc(w:^Walk,roots:[]Walk_Item,present,missing:^[dynamic]Walk_Item) {
     stack:=make([dynamic]Walk_Item,context.temp_allocator)
     seen:=make(map[store.Hash]bool,context.temp_allocator)
     append(&stack,..roots)
     empty:=empty_address()
     for len(stack)>0 {
         item:=pop(&stack)
-        if item.address=={} || seen[item.address] {continue}
+        if item.address=={} || seen[item.address] || (w.held!=nil && item.address in w.held) {continue}
         seen[item.address]=true
         admit:=walk_admits(w,item)
         if admit==.No {continue}
         if admit==.Wait || !object_present(w.s,item.address) {
-            if item.address!=empty {append(missing,item.address)}
+            if item.address!=empty {append(missing,item)}
             continue
         }
-        append(present,item.address)
+        append(present,item)
         walk_children(w,item,&stack)
     }
 }
@@ -225,15 +227,26 @@ closure_walk :: proc(s:^store.Store,revisions:[]Revision,present,missing:^[dynam
     w:=walk_make(s)
     roots:=make([dynamic]Walk_Item,0,len(revisions),context.temp_allocator)
     for r in revisions {append(&roots,Walk_Item{r,.Change,false})}
-    walk_all(&w,roots[:],present,missing)
+    here:=make([dynamic]Walk_Item,context.temp_allocator)
+    lacking:=make([dynamic]Walk_Item,context.temp_allocator)
+    walk_all(&w,roots[:],&here,&lacking)
+    for x in here {append(present,x.address)}
+    for x in lacking {append(missing,x.address)}
+}
+
+// The chunks of the objects roots reach that w admits and the store holds
+// whole, appended to out: what a peer of a served set reads of them.
+@(private)
+walk_chunks :: proc(w:^Walk,roots:[]Walk_Item,out:^[dynamic]store.Hash,scratch:[]u8) {
+    present:=make([dynamic]Walk_Item,context.temp_allocator)
+    missing:=make([dynamic]Walk_Item,context.temp_allocator)
+    walk_all(w,roots,&present,&missing)
+    for o in present {object_chunks(w.s,o.address,out,scratch)}
 }
 
 // The chunks of the index at address and of every page below it, as far as
 // the store holds them: what a peer reads of a log.
 log_objects :: proc(s:^store.Store,address:store.Hash,out:^[dynamic]store.Hash,scratch:[]u8) {
     w:=walk_make(s)
-    present:=make([dynamic]store.Hash,context.temp_allocator)
-    missing:=make([dynamic]store.Hash,context.temp_allocator)
-    walk_all(&w,{{address,.Log,false}},&present,&missing)
-    for o in present {object_chunks(s,o,out,scratch)}
+    walk_chunks(&w,{{address,.Log,false}},out,scratch)
 }

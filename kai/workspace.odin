@@ -505,9 +505,11 @@ conflicts_apply :: proc(st:^Workspace_State,files:^[dynamic]File) -> Error {
     return .None
 }
 
+// Whether relative is a file of the project: never what Kai keeps of the
+// workspace, under .mirai/kai in any case, as a system that folds case reads it.
 @(private)
 own_path :: proc(w:^Workspace,relative:string) -> bool {
-    if relative==".mirai/kai" || strings.has_prefix(relative,".mirai/kai/") {return false}
+    if len(relative)>=10 && strings.equal_fold(relative[:10],".mirai/kai") && (len(relative)==10 || relative[10]=='/') {return false}
     if w.options.filter.procedure!=nil {return w.options.filter.procedure(w.options.filter.data,relative)}
     return true
 }
@@ -762,6 +764,8 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
         }
         address:=d.after.address
         executable:=d.after.kind==.Executable
+        if !own_path(w,d.path) {continue}
+        found,here:=checkout_safe(w,d.path) or_return
         switch {
         case address=={}:
             if e:=os.remove(path);e!=nil && os.exists(path) {return .Io}
@@ -778,7 +782,7 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
                 put,f:=store.put(w.repo.s,content[:])
                 if f!=.None {return store_error(f)}
                 m.written=put
-            } else if os.exists(path) && !os.is_dir(path) {
+            } else if here && found!=.Directory {
                 os.remove(path)
             }
             cloned,f:=strings.clone(d.path,w.allocator)
@@ -789,7 +793,7 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
                 return .Out_Of_Memory
             }
         case:
-            if os.is_dir(path) {
+            if here && found==.Directory {
                 if os.remove_all(path)!=nil {return .Io}
             }
             file_write_object(w,&sibling,address,path,d.path,executable) or_return
@@ -809,6 +813,23 @@ checkout :: proc(w:^Workspace,target:store.Hash) -> Error {
     w.state.tree,w.state.target,w.state.op=target,{},w.repo.op
     index_save(w,&w.index) or_return
     return state_save(w,&w.state)
+}
+
+// What a checkout finds at relative before it writes there, when here: a
+// link there is replaced as a file is, never followed. A folder on the way
+// that is a link is refused, so nothing a checkout writes or removes lands
+// outside the root.
+@(private)
+checkout_safe :: proc(w:^Workspace,relative:string) -> (found:os.File_Type,here:bool,error:Error) {
+    for i in 0..=len(relative) {
+        if i<len(relative) && relative[i]!='/' {continue}
+        info,e:=os.lstat(path_join(w.root,relative[:i]),context.temp_allocator)
+        if e!=nil {return}
+        if i==len(relative) {return info.type,true,.None}
+        if info.type==.Symlink {return {},false,.Unsupported}
+        if info.type!=.Directory {return}
+    }
+    return
 }
 
 // Removes the folders a deleted file leaves empty.

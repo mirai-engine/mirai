@@ -56,6 +56,8 @@ record_receive :: proc(c:^Conn) -> Error {
         c.change_cipher_spec=true
         return nil
     case .Application_Data:
+        // Protected or skipped as early data, a record holds at least its tag (RFC 8446, 5.2).
+        if n==0 {return .Bad_Record_Mac}
         if !c.read.active {
             // Early data of a client that offered it, before the server reads under keys.
             if c.early_skip<n {return .Unexpected_Message}

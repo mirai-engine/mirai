@@ -24,6 +24,8 @@ import "mirai:store"
 //   kai-ddc-<org>         derived data: Member, Node; Grant of ddc
 //   kai-ovl-<project>-<scope>  overlay records, ciphertext only: Member, Node
 //
+// What a peer names is fetched as its class allows (agent_takes), and peers
+// that connect with nothing the logs place take at most AGENT_UNPROVEN slots.
 // Members and nodes get the chunks of what the org reaches (Members); Pending,
 // Anonymous and Grant peers are restricted: they get only the chunks
 // of the user logs, of the public closure, or of what the grant covers. The
@@ -65,6 +67,7 @@ import "mirai:store"
 
 AGENT_PROTOCOL :: u32(0x3149414b) // "KAI1"
 AGENT_PEERS :: 16
+AGENT_UNPROVEN :: AGENT_PEERS/2 // of them, connected to this end anonymously or by a key the logs do not place yet
 AGENT_CLIENTS :: 8
 AGENT_LOGS :: 4096 // logs an agent holds loaded at once: closed and landed proposals load when asked for
 AGENT_FETCHES :: 256
@@ -185,6 +188,7 @@ Agent :: struct {
     folded:bool,                // org holds a fold
     allowed:[dynamic]Allowed,
     closure:Public_Closure,
+    closure_due:bool, // closure is built again before the next peer is served
     fetches:[dynamic]Agent_Fetch,
     queries:[AGENT_QUERIES]Agent_Query,
     hints:[dynamic]Agent_Fetch, // what peers told, taken in agent_update
@@ -787,7 +791,7 @@ agent_changed :: proc(a:^Agent,namespace,name:string) {
     case .Refs:
         exchange.ref_changed(&a.x,namespace,name,address)
         a.dirty=true
-        agent_closure(a)
+        a.closure_due=true
         members_ref(a,kind,namespace,address)
     case:
         exchange.ref_changed(&a.x,namespace,name,address)
@@ -816,8 +820,22 @@ agent_peer_find :: proc(a:^Agent,tag:u64) -> int {
 @(private)
 agent_restricted :: proc "contextless" (class:Agent_Class) -> bool {return class!=.Member && class!=.Node}
 
+// Whether peer p connected to this end with nothing the org's log proves:
+// Anonymous, or a key it does not know yet.
+@(private)
+agent_unproven :: proc "contextless" (p:Agent_Peer) -> bool {return p.used && p.client<0 && (p.class==.Anonymous || p.class==.Pending)}
+
 @(private)
 agent_peer_add :: proc(a:^Agent,h:^net.Host,connection:net.Connection,client:int,dh:Dh_Key,class:Agent_Class) {
+    // Unproven peers take at most AGENT_UNPROVEN slots: strangers never crowd out the org.
+    if client<0 && (class==.Anonymous || class==.Pending) {
+        unproven:=0
+        for p in a.peers {unproven+=int(agent_unproven(p))}
+        if unproven>=AGENT_UNPROVEN {
+            net.host_disconnect(h,connection)
+            return
+        }
+    }
     for &p,i in a.peers {
         if p.used {continue}
         a.tags+=1
@@ -899,8 +917,8 @@ agent_namespaces :: proc(a:^Agent,out:^[dynamic]string) {
 @(private)
 agent_ask :: proc(a:^Agent,i:int) {
     p:=&a.peers[i]
-    // An anonymous end is listed nothing: it asks by address.
-    if p.client>=0 && a.client_anonymous[p.client] {return}
+    // An anonymous end is listed nothing: it asks by address; and an anonymous peer is asked nothing.
+    if (p.client>=0 && a.client_anonymous[p.client]) || p.class==.Anonymous {return}
     namespaces:=make([dynamic]string,context.temp_allocator)
     agent_namespaces(a,&namespaces)
     for ns in namespaces {agent_query(a,i,ns,"")}
@@ -983,12 +1001,54 @@ agent_asked :: proc(user:rawptr,peer:exchange.Peer_Id,address:store.Hash) {
 @(private)
 agent_hint :: proc(user:rawptr,peer:exchange.Peer_Id,namespace,name:string,address:store.Hash) {
     a:=(^Agent)(user)
-    if address=={} || len(a.hints)>=AGENT_HINTS {return}
+    if address=={} || len(a.hints)>=AGENT_HINTS || !agent_takes(a,agent_peer_find(a,peer.tag),namespace,name) {return}
     h:Agent_Fetch
     h.address=address
     h.namespace_len=copy(h.namespace[:],namespace)
     h.name_len=copy(h.name[:],name)
     append(&a.hints,h)
+}
+
+// Whether this end fetches what peer i names: anything of a member or a
+// node. A grant holder or a peer the logs do not place yet names the org's
+// log and a User_Log only of a user that log names or this end holds, which
+// is how a machine that lacks them comes to place its peers, or any while
+// this end has no org's log; a grant holder names the other logs and its
+// refs too, each checked as it merges. An anonymous peer names nothing.
+@(private)
+agent_takes :: proc(a:^Agent,i:int,namespace,name:string) -> bool {
+    if i<0 {return false}
+    class:=a.peers[i].class
+    if class==.Member || class==.Node {return true}
+    if class!=.Grant && class!=.Pending {return false}
+    if namespace!=USER_NAMESPACE && namespace!=LOG_NAMESPACE {return class==.Grant}
+    id,ok:=store.parse_hex(name)
+    if !ok {return false}
+    if namespace==LOG_NAMESPACE {return class==.Grant || id==a.desc.org}
+    // A machine that holds no org's log yet recovers its user: it reads them all to find its own.
+    org:=agent_log(a,a.desc.org)
+    if org==nil || len(org.items)==0 {return true}
+    if l:=agent_log(a,id);l!=nil && len(l.items)>0 {return true}
+    return org_log_names(org,id)
+}
+
+// Whether an entry of the org's log l names user: its owner, a member added,
+// set or removed, valid or not yet: the logs that tell are what is fetched.
+@(private)
+org_log_names :: proc(l:^Log,user:Log_Id) -> bool {
+    if l==nil {return false}
+    for &item in l.items {
+        e:=&item.entry
+        #partial switch e.type {
+        case .Org_Genesis:
+            if b,_,ok:=body_head(e.body,Org_Genesis_Body);ok && b.owner==user {return true}
+        case .Member_Add,.Role_Set:
+            if b,_,ok:=body_head(e.body,Member_Body);ok && b.user==user {return true}
+        case .Member_Remove,.Owner_Transfer:
+            if b,_,ok:=body_head(e.body,Subject_Body);ok && b.subject==store.Hash(user) {return true}
+        }
+    }
+    return false
 }
 
 @(private)
@@ -1137,7 +1197,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
             a.stats.refs_accepted+=1
             a.dirty=true
             exchange.ref_changed(&a.x,namespace,name,f.address)
-            agent_closure(a)
+            a.closure_due=true
             members_ref(a,.Refs,namespace,f.address)
         }
     case .DDC:
@@ -1155,7 +1215,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         if changed {
             a.stats.ddc_accepted+=1
             agent_tell(a,namespace,name)
-            agent_closure(a)
+            a.closure_due=true
             if address,re:=store.ref_get(a.desc.store,namespace,name);re==.None {members_ref(a,.DDC,namespace,address)}
         }
     case .Overlay:
@@ -1180,8 +1240,11 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
         a.stats.objects_fetched+=1
         a.dirty=true
         provenance_received(&a.members.provenance,a.desc.store,f.address)
-        agent_closure(a)
-        if item,waiting:=a.members.frontier[f.address];waiting {members_walk(a,{item})}
+        // What restricted peers read grows only by what the org's set waited for.
+        if item,waiting:=a.members.frontier[f.address];waiting {
+            members_walk(a,{item})
+            a.closure_due=true
+        }
         agent_retry(a,.None)
     }
 }
@@ -1190,6 +1253,7 @@ agent_merge :: proc(a:^Agent,f:^Agent_Fetch) {
 agent_update :: proc(a:^Agent,now:f64) {
     a.now=now
     if a.grants_turn!=0 && time.now()._nsec>a.grants_turn {agent_refold(a)}
+    if a.closure_due {agent_closure(a)}
     agent_behind_settle(a)
     agent_poll(a,&a.server,-1)
     for k in 0..<a.client_count {agent_poll(a,&a.clients[k],k)}
@@ -1200,7 +1264,7 @@ agent_update :: proc(a:^Agent,now:f64) {
         namespace:=string(q.namespace[:q.namespace_len])
         last:=""
         for n in result.names {
-            agent_want(a,namespace,n.name,n.address)
+            if agent_takes(a,q.peer,namespace,n.name) {agent_want(a,namespace,n.name,n.address)}
             last=n.name
         }
         more,peer:=result.more,q.peer
@@ -1237,6 +1301,7 @@ agent_update :: proc(a:^Agent,now:f64) {
         p.saved=now
         _=provenance_save(p,a.desc.store,a.desc.org)
     }
+    if a.closure_due {agent_closure(a)}
     exchange.update(&a.x,now)
     net.host_update(&a.server,now)
     for k in 0..<a.client_count {net.host_update(&a.clients[k],now)}
@@ -1368,6 +1433,7 @@ agent_project_fold :: proc(a:^Agent,l:^Log,f:^Project_Fold) -> bool {
 // Rebuilds the chunks restricted peers may get.
 @(private)
 agent_closure :: proc(a:^Agent) {
+    a.closure_due=false
     scratch:=scratch_make()
     identity:=make([dynamic]store.Hash,context.temp_allocator)
     if refs,e:=store.ref_list(a.desc.store,USER_NAMESPACE,context.temp_allocator);e==.None {
@@ -1579,52 +1645,50 @@ members_roots :: proc(a:^Agent,kind:Fetch_Kind,namespace:string,address:store.Ha
 
 // Adds to the members' set the chunks of what roots reach, down to what it
 // holds; an object that is not here, or not whole, or a root that did not
-// come from the org yet, waits in the frontier (walk_admits).
+// come from the org yet, waits in the frontier (walk_admits). A change brings
+// the overlay records its scopes keep for it: a snapshot writes their refs
+// without telling the agent, which tells the peers that read them here.
 @(private)
 members_walk :: proc(a:^Agent,roots:[]Walk_Item) {
     scratch:=scratch_make()
     m:=&a.members
-    stack:=make([dynamic]Walk_Item,context.temp_allocator)
-    append(&stack,..roots)
-    seen:=make(map[store.Hash]bool,context.temp_allocator)
-    added:=make([dynamic]store.Hash,context.temp_allocator)
     empty:=empty_address()
     w:=walk_make(a.desc.store)
-    w.proven,w.own=&m.provenance,a.desc.identity.key
-    for len(stack)>0 {
-        item:=pop(&stack)
-        if item.address=={} || item.address in m.chunks || seen[item.address] {continue}
-        admit:=walk_admits(&w,item)
-        if admit==.No {continue}
-        if admit==.Wait {
+    w.proven,w.own,w.held=&m.provenance,a.desc.identity.key,&m.chunks
+    next:=make([dynamic]Walk_Item,context.temp_allocator)
+    present:=make([dynamic]Walk_Item,context.temp_allocator)
+    missing:=make([dynamic]Walk_Item,context.temp_allocator)
+    chunks:=make([dynamic]store.Hash,context.temp_allocator)
+    append(&next,..roots)
+    for len(next)>0 {
+        clear(&present)
+        clear(&missing)
+        walk_all(&w,next[:],&present,&missing)
+        clear(&next)
+        for item in missing {
             if item.address!=empty {m.frontier[item.address]=item}
-            continue
         }
-        seen[item.address]=true
-        at:=len(added)
-        if !object_chunks(a.desc.store,item.address,&added,scratch) {
-            resize(&added,at)
-            if item.address!=empty {m.frontier[item.address]=item}
-            continue
-        }
-        delete_key(&m.frontier,item.address)
-        if a.desc.hosted {m.stored+=object_bytes(a.desc.store,item.address)}
-        walk_children(&w,item,&stack)
-        // A change's overlays: a snapshot writes their refs without telling the
-        // agent, which tells the peers that read them here.
-        if item.kind!=.Change || !a.folded {continue}
-        name:[64]u8
-        for sc in a.org.scopes {
-            ns:[len(OVERLAY_PREFIX)+64+1+32]u8
-            namespace:=overlay_namespace(sc.project,sc.scope,&ns)
-            if record,e:=store.ref_get(a.desc.store,namespace,store.hex(item.address,&name));e==.None {
-                members_roots(a,.Overlay,namespace,record,&stack)
-                exchange.ref_changed(&a.x,namespace,store.hex(item.address,&name),record)
+        for item in present {
+            clear(&chunks)
+            if !object_chunks(a.desc.store,item.address,&chunks,scratch) {
+                if item.address!=empty {m.frontier[item.address]=item}
+                continue
+            }
+            for c in chunks {m.chunks[c]={}}
+            delete_key(&m.frontier,item.address)
+            if a.desc.hosted {m.stored+=object_bytes(a.desc.store,item.address)}
+            if item.kind!=.Change || !a.folded {continue}
+            name:[64]u8
+            for sc in a.org.scopes {
+                ns:[len(OVERLAY_PREFIX)+64+1+32]u8
+                namespace:=overlay_namespace(sc.project,sc.scope,&ns)
+                if record,e:=store.ref_get(a.desc.store,namespace,store.hex(item.address,&name));e==.None {
+                    members_roots(a,.Overlay,namespace,record,&next)
+                    exchange.ref_changed(&a.x,namespace,store.hex(item.address,&name),record)
+                }
             }
         }
     }
-    if len(added)==0 {return}
-    for c in added {m.chunks[c]={}}
 }
 
 // The chunks the grant of x covers besides the user logs (see the head of
@@ -1671,10 +1735,7 @@ agent_grant_chunks :: proc(a:^Agent,x:Allowed,out:^[dynamic]store.Hash) {
         for r in refs {append(&roots,Walk_Item{r.hash,.DDC_Set,false})}
         w:=walk_make(a.desc.store)
         w.untainted,w.proven,w.own=true,&a.members.provenance,a.desc.identity.key
-        present:=make([dynamic]store.Hash,context.temp_allocator)
-        missing:=make([dynamic]store.Hash,context.temp_allocator)
-        walk_all(&w,roots[:],&present,&missing)
-        for o in present {object_chunks(a.desc.store,o,out,scratch)}
+        walk_chunks(&w,roots[:],out,scratch)
     }
 }
 

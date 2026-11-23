@@ -346,9 +346,9 @@ keyring_wraps :: proc(k:^Keyring_Fold,epoch:u32,dh:Dh_Key) -> bool {
     return found
 }
 
-// Whether a write must wait for a rotation: no epoch yet, or the newest one
-// still wraps its key for a device that may no longer read the scope. An
-// epoch whose envelopes are not here yet is judged once they are.
+// Whether a write must wait for a rotation: no epoch yet, the newest one
+// still wraps its key for a device that may no longer read the scope, or its
+// envelopes are not here to tell.
 keyring_needs_rotation :: proc(k:^Keyring_Fold) -> bool {
     scope,ok:=keyring_scope(k)
     if !ok || k.epoch==0 {return true}
@@ -357,7 +357,7 @@ keyring_needs_rotation :: proc(k:^Keyring_Fold) -> bool {
     }
     body,_:=keyring_epoch(k,k.epoch)
     envelopes,e:=keyring_envelopes(k,body)
-    if e!=.None {return false}
+    if e!=.None {return true}
     for x in envelopes {
         if !dh_reads(k.org,scope,x.dh) {return true}
     }
@@ -1077,7 +1077,8 @@ overlay_record_write :: proc(s:^store.Store,identity:^Identity,r:^Overlay_Record
 }
 
 // Takes the record a peer gave at address for the ref namespace/name: signed
-// by a device of a writer, of a scope of the org, and newer than the one held.
+// by a device of a writer who reads the scope, of a scope of the org, and
+// newer than the one held.
 // One signed by a device its user revoked, of a user who still writes, is
 // taken only where none is held: it replaces nothing, so a revoked key rolls
 // no private file over, and what the device wrote before its revocation still
@@ -1089,8 +1090,9 @@ overlay_accept :: proc(s:^store.Store,org:^Org_Fold,namespace,name:string,addres
     commit,commit_ok:=store.parse_hex(name)
     if !commit_ok {return {},false,.Invalid_Argument}
     known:=false
+    writes:=Role.Writer
     for sc in org.scopes {
-        if sc.project==project && sc.scope==scope {known=true}
+        if sc.project==project && sc.scope==scope {known,writes=true,max(Role.Writer,sc.readers)}
     }
     if !known {return {},false,.Unauthorized}
     bytes:=object_get(s,address,.Overlay_Record,context.temp_allocator,limit=OVERLAY_RECORD_MAX) or_return
@@ -1098,9 +1100,9 @@ overlay_accept :: proc(s:^store.Store,org:^Org_Fold,namespace,name:string,addres
     if r.project!=project || r.scope!=scope || r.commit!=commit {return {},false,.Corrupt}
     if !signed_valid(bytes,r.author) {return {},false,.Unauthorized}
     revoked:=false
-    if _,role:=org_device_role(org,r.author);role<.Writer {
+    if _,role:=org_device_role(org,r.author);role<writes {
         for u in org.users {
-            if k:=user_device_index(u,r.author);k>=0 && u.devices[k].revoked && org_role(org,u.log.id)>=.Writer {revoked=true}
+            if k:=user_device_index(u,r.author);k>=0 && u.devices[k].revoked && org_role(org,u.log.id)>=writes {revoked=true}
         }
         if !revoked {return {},false,.Unauthorized}
     }

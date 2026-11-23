@@ -133,16 +133,19 @@ machine_dh :: proc(s:^store.Store) -> (key:net.Dh_Key,error:Error) {
 }
 
 // The secret bytes of the file name at the root of the store, as many as out
-// holds, random and owner-only the first time.
+// holds, random and owner-only the first time: only a file that is not there
+// is made, never one that does not read now (no right, no handle left).
 @(private)
 machine_secret :: proc(s:^store.Store,name:string,out:[]u8) -> Error {
     file:=strings.concatenate({s.root,"/",name},context.temp_allocator)
-    if bytes,read_error:=os.read_entire_file(file,context.temp_allocator);read_error==nil {
+    bytes,read_error:=os.read_entire_file(file,context.temp_allocator)
+    if read_error==nil {
         defer crypto.zero_explicit(raw_data(bytes),len(bytes))
         if len(bytes)!=len(out) {return .Corrupt}
         copy(out,bytes)
         return .None
     }
+    if general,is_general:=read_error.(os.General_Error);!is_general || general!=.Not_Exist {return .Io}
     crypto.rand_bytes(out)
     temp:=strings.concatenate({file,".tmp"},context.temp_allocator)
     if os.write_entire_file(temp,out,{.Read_User,.Write_User})!=nil {return .Io}
@@ -151,10 +154,10 @@ machine_secret :: proc(s:^store.Store,name:string,out:[]u8) -> Error {
         return .Io
     }
     // Two processes made one each at once: the one that won the rename counts.
-    bytes,read_error:=os.read_entire_file(file,context.temp_allocator)
-    if read_error!=nil || len(bytes)!=len(out) {return .Io}
-    copy(out,bytes)
-    crypto.zero_explicit(raw_data(bytes),len(bytes))
+    won,won_error:=os.read_entire_file(file,context.temp_allocator)
+    if won_error!=nil || len(won)!=len(out) {return .Io}
+    copy(out,won)
+    crypto.zero_explicit(raw_data(won),len(won))
     return .None
 }
 
@@ -595,6 +598,13 @@ machine_repo_name :: proc(repo:Repo_Id) -> string {
 // The project and org the repository of a workspace is.
 machine_project_of :: proc(m:^Machine,repo:Repo_Id) -> (project,org:Log_Id,ok:bool) {
     return store_project_of(&m.store,repo)
+}
+
+// Whether the repository of a workspace is bound to a project in this store,
+// even when that project's log is missing or corrupt.
+store_project_bound :: proc(s:^store.Store,repo:Repo_Id) -> bool {
+    _,e:=store.ref_get(s,MACHINE_NAMESPACE,machine_repo_name(repo))
+    return e==.None
 }
 
 // The project and org the repository of a workspace is in the machine of store s.

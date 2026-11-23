@@ -2,30 +2,25 @@ package kai
 
 import net "mirai:net"
 
-// A relay node: stateless rendezvous and the last rung of the connection
-// ladder. It sees the reflexive address a device's datagrams come from on two
-// of its ports, which tells a hard (symmetric) NAT from a cone one; it tells
-// two cone devices when to punch at each other at once (the lower dh
-// initiates), and forwards the opaque datagrams of the rest. What it forwards
-// is net datagrams already sealed end to end: the relay reads only the
-// envelope, the X25519 key of who it is for. Each sending device draws on its
-// own token bucket of bytes.
+// A relay node: rendezvous and the last rung of the connection ladder. It
+// keeps where each admitted device's datagrams come from and the addresses
+// the device announced (its global IPv6, its router's mapping), which it
+// tells a device that asks for that peer, and forwards the opaque datagrams
+// of the rest. What it forwards is net datagrams already sealed end to end:
+// the relay reads only the envelope, the X25519 key of who it is for. Each
+// sending device draws on its own token bucket of bytes.
 
 RELAY_DEVICES_MAX :: 1024
 RELAY_ENVELOPE :: 1+32    // RELAY_MAGIC, then the key of who it is for
 RELAY_MAGIC :: u8('R')
 RELAY_DATAGRAM_MAX :: 1+RUNNER_ROUTE+net.PACKET_BYTES // what it forwards: a net datagram with the runner's route
-
-Nat_Kind :: enum u8 {
-    Unknown,   // seen on fewer than two ports
-    Cone,      // the same reflexive address on both: punching works
-    Symmetric, // another port for each destination: punching is futile, relay
-}
+RELAY_ANNOUNCED :: 4
 
 Relay_Device :: struct {
     dh:Dh_Key,
-    observed:[2]net.Address,
-    seen:[2]bool,
+    observed:net.Address, // where its datagrams come from; none until it greets
+    announced:[RELAY_ANNOUNCED]net.Address,
+    announced_count:int,
     tokens:f64, // bytes it may send now
     refilled:f64,
     forwarded,dropped:u64,
@@ -35,14 +30,6 @@ Relay :: struct {
     devices:[dynamic]Relay_Device,
     rate:f64,  // bytes per second each device may send
     burst:f64, // bytes it may send at once
-}
-
-// How two devices meet: punching at once at each other's reflexive address,
-// or through the relay.
-Punch_Plan :: struct {
-    initiator,responder:Dh_Key,
-    initiator_target,responder_target:net.Address, // where each one sends
-    relay:bool,
 }
 
 relay_init :: proc(r:^Relay,rate,burst:f64,allocator:=context.allocator) {
@@ -76,22 +63,14 @@ relay_remove :: proc(r:^Relay,dh:Dh_Key) {
     if k:=relay_find(r,dh);k>=0 {unordered_remove(&r.devices,k)}
 }
 
-// Records the reflexive address a device's datagram came from on one of the
-// relay's two ports.
-relay_observe :: proc(r:^Relay,dh:Dh_Key,port:int,from:net.Address) -> bool {
+// Records where a device's greeting came from and the addresses it announced.
+relay_observe :: proc(r:^Relay,dh:Dh_Key,from:net.Address,announced:[]net.Address) -> bool {
     k:=relay_find(r,dh)
-    if k<0 || port<0 || port>1 {return false}
-    r.devices[k].observed[port],r.devices[k].seen[port]=from,true
-    return true
-}
-
-relay_nat :: proc(r:^Relay,dh:Dh_Key) -> Nat_Kind {
-    k:=relay_find(r,dh)
-    if k<0 {return .Unknown}
+    if k<0 {return false}
     d:=&r.devices[k]
-    if !d.seen[0] || !d.seen[1] {return .Unknown}
-    if d.observed[0].kind==d.observed[1].kind && d.observed[0].ip==d.observed[1].ip && d.observed[0].port==d.observed[1].port {return .Cone}
-    return .Symmetric
+    d.observed=from
+    d.announced_count=copy(d.announced[:],announced)
+    return true
 }
 
 @(private)
@@ -100,18 +79,6 @@ dh_less :: proc "contextless" (a,b:Dh_Key) -> bool {
         if a[k]!=b[k] {return a[k]<b[k]}
     }
     return false
-}
-
-// How a and b should meet. Not ok when either is not admitted or was not
-// seen yet.
-relay_rendezvous :: proc(r:^Relay,a,b:Dh_Key) -> (plan:Punch_Plan,ok:bool) {
-    ka,kb:=relay_find(r,a),relay_find(r,b)
-    if ka<0 || kb<0 || a==b || !r.devices[ka].seen[0] || !r.devices[kb].seen[0] {return}
-    if dh_less(b,a) {ka,kb=kb,ka}
-    first,second:=&r.devices[ka],&r.devices[kb]
-    plan={initiator=first.dh,responder=second.dh,initiator_target=second.observed[0],responder_target=first.observed[0]}
-    plan.relay=relay_nat(r,first.dh)==.Symmetric || relay_nat(r,second.dh)==.Symmetric
-    return plan,true
 }
 
 // Forwards an envelope from a device: who it is for and the datagram, as it

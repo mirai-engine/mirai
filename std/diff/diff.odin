@@ -145,10 +145,10 @@ compare :: proc(a,b:[]u32,tokens:int,removed,added:[]bool,allocator:runtime.Allo
         if a0<a1&&b0<b1&&budget>0 {
             budget-=(a1-a0)+(b1-b0)
             for i:=a1-1;i>=a0;i-=1 {t:=a[i];next[i]=head[t];head[t]=i32(i);count[t]+=1}
-            for j:=b0;j<b1; {
+            for j:=b0;j<b1&&budget>0; {
                 step:=j+1
                 if c:=int(count[b[j]]);c>0&&c<=min(rarest,MAX_CHAIN) {
-                    for i:=int(head[b[j]]);i>=0;i=int(next[i]) {
+                    for i:=int(head[b[j]]);i>=0&&budget>0;i=int(next[i]) {
                         s,u:=i,j
                         for s>a0&&u>b0&&a[s-1]==b[u-1] {s-=1;u-=1}
                         e,v:=i+1,j+1

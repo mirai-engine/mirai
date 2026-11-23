@@ -24,22 +24,22 @@ import "mirai:store"
 //   C route datagram       net, to the client host that sent to this address
 //   R to datagram          to a relay node: forward to the device of key to
 //   F from datagram        from a relay node: what the device of key from sent
-//   Z type from time body mac   rendezvous between a device and a node
+//   Z type from time body mac   rendezvous between a device and a node, each
+//                               (sender, type) newer than the last taken
 //   B beacon               the LAN beacon of beacon.odin
-//   P message              pairing (pair.odin)
+//   P message              pairing (pair.odin, pair_run.odin)
 //   L token id op body     a request of a local process (control.odin), A its answer
 //
 // route is the first RUNNER_ROUTE bytes of a hash of the org's id, so one
 // socket serves every org. A device reaches a peer by the ladder of rungs,
 // best first: a LAN address a beacon gave, the global IPv6 and mapped
-// addresses a node passed on, the reflexive address a node saw (both ends
-// punch at once), then the node's relay, then the node's relay over TCP
-// (tcp.odin) when UDP to the node is blocked. A connection on a worse rung is
-// replaced when a better one appears. A node is the same runner with modes:
-// relay (rendezvous, NAT kind on two ports, forwarding under per-device
-// quotas, over UDP and TCP), seed (it mirrors every closure and overlay
-// ciphertext) and ddc (it keeps derived data). Nothing polls: data moves by
-// the exchange's hints.
+// addresses a node passed on, then the node's relay, then the node's relay
+// over TCP (tcp.odin) when UDP to the node is blocked. A connection on a
+// worse rung is replaced when a better one appears. A node is the same runner
+// with modes: relay (rendezvous and forwarding under per-device quotas, over
+// UDP and TCP), seed (it mirrors every closure and overlay ciphertext) and
+// ddc (it keeps derived data). Nothing polls: data moves by the exchange's
+// hints.
 
 RUNNER_ROUTE :: 8
 FRAME_MAX :: 1+RELAY_ENVELOPE+1+RUNNER_ROUTE+net.PACKET_BYTES // the longest datagram of the socket
@@ -62,25 +62,22 @@ RETRY_SECONDS :: 30            // after the whole ladder failed
 DIAL_SECONDS :: 2              // what a direct rung may take
 PLAN_WAIT :: 1.5               // seconds a device waits for a node's plan
 RENDEZVOUS_SKEW :: i64(120)*1_000_000_000 // ns a Z message's time may be off
+RUNNER_KEYS :: RELAY_DEVICES_MAX+64 // rendezvous keys kept, the least recently used going first
 RELAY_RATE :: 4<<20            // bytes per second each device may send through a relay node
 RELAY_BURST :: 16<<20
-PAIR_RESEND :: 1.0             // seconds between repeats of a pairing message
-PAIR_JOIN_SECONDS :: 30        // a joiner gives up on a responder that does not answer
-PAIR_TICKET_SECONDS :: 10*60   // a ticket lasts
 IDLE_SECONDS :: 120            // an agent with nothing to do for this long may exit
 
 @(private) VIRTUAL_QUEUE :: 128
 @(private) BATCH :: 32
 @(private) Z_MAC :: 16
 
-Rung :: enum u8 {None,LAN,IPv6,Punched,Relayed,Tcp}
+Rung :: enum u8 {None,LAN,Global,Relayed,Tcp}
 
 rung_text :: proc(r:Rung) -> string {
     switch r {
     case .None: return "connecting"
     case .LAN: return "lan"
-    case .IPv6: return "ipv6"
-    case .Punched: return "punched"
+    case .Global: return "global"
     case .Relayed: return "relayed"
     case .Tcp: return "relayed over tcp"
     }
@@ -92,7 +89,7 @@ Runner_Desc :: struct {
     bind:net.Address,            // where the socket listens; zero: every interface (address_any6) at port
     port:int,                    // with a zero bind; 0 lets the system choose
     modes:Node_Modes,            // empty: a device; else what this node serves
-    observe_port:int,            // a relay node's second port, which tells a hard NAT; 0 lets the system choose
+    observe_port:int,            // ignored: a relay node listens on its one port
     beacon:bool,                 // send LAN beacons and listen for them on beacon_port
     beacon_port:int,             // 0: BEACON_PORT; -1: no socket of its own, beacons go through the main one
     beacon_targets:[]net.Address, // where beacons go; empty: the IPv4 broadcast and BEACON_GROUP6 on every interface, at beacon_port
@@ -137,12 +134,10 @@ Runner_Peer :: struct {
     lan:net.Address,      // from its beacon
     lan_seen:f64,
     answered:f64,         // when this end last answered its beacon
-    announced:[4]net.Address, // global IPv6 and mapped, from a node's plan
+    announced:[RELAY_ANNOUNCED]net.Address, // global IPv6 and mapped, from a node's plan
     announced_count:int,
-    target:net.Address,   // its reflexive address, from a node's plan
     relay:net.Address,    // the relay address through the node that planned
     planned:f64,
-    hard:bool,            // the plan found a hard NAT: punching is futile
     asked:f64,            // when this end asked a node for a plan
     attempt:int,          // the client host of the attempt in flight, -1
     attempt_rung:Rung,
@@ -170,11 +165,9 @@ Runner_Org :: struct {
     full:Dh_Key,         // a device: the node whose storage for the org is full, as its Welcome said; zero for none
 }
 
+// last: the time of the newest message of each type taken from dh.
 @(private)
-Shared_Key :: struct {dh:Dh_Key,key:[32]u8}
-
-@(private)
-Relay_Seen :: struct {dh:Dh_Key,announced:[4]net.Address,announced_count:int}
+Shared_Key :: struct {dh:Dh_Key,key:[32]u8,used:f64,last:[Z_Type]i64}
 
 @(private)
 Relay_Want :: struct {from,peer:Dh_Key,at:f64}
@@ -187,7 +180,6 @@ Runner :: struct {
     allocator:runtime.Allocator,
     udp:net.Udp,
     transport:net.Transport,
-    observe:net.Udp,            // a relay node's second port
     beacon_socket:net.Udp,  // IPv4
     beacon_socket6:net.Udp, // IPv6
     has_beacon_socket:bool,
@@ -198,15 +190,14 @@ Runner :: struct {
     orgs:[dynamic]^Runner_Org,
     user:Log_Id,                // of the machine when the agents started
     receive:[BATCH][FRAME_MAX]u8,
-    keys:[dynamic]Shared_Key,
+    keys:[dynamic]Shared_Key,   // at most RUNNER_KEYS
+    z_time:i64,                 // ns of the last rendezvous message sent: each one is later
     relay:Relay,
-    relay_seen:[dynamic]Relay_Seen,
     wants:[dynamic]Relay_Want,  // a relay node: who asked for a device not seen yet
     mapping:net.Port_Mapping,
     mapping_on:bool,
     beacon_at:f64,
     hello_at:f64,
-    observe_ports:[dynamic]Node_Observe,
     offer:Pair_Offer,
     join:Pair_Join,
     ddc:[dynamic]DDC_Lookup,    // lookups under way, at most DDC_LOOKUPS_MAX
@@ -222,70 +213,6 @@ Runner :: struct {
     has_tcp:bool,
     tcp_port:int,
     over_udp:bool,              // what runner_frame reads came over the UDP socket
-}
-
-@(private)
-Node_Observe :: struct {node:Dh_Key,address:net.Address}
-
-// What a request to pair this machine's user, org or node shows the person
-// who answers it.
-Pair_Request :: struct {
-    mode:Pair_Mode,
-    code:string,
-    name:string,        // what the other end calls itself
-    user:Log_Id,        // Member: the user that joins
-    device:Key,
-}
-
-Pair_Phase :: enum u8 {None,Asking,Waiting,Approved,Denied,Failed}
-
-// How a pairing this machine joins goes.
-Pair_Progress :: struct {
-    phase:Pair_Phase,
-    code:string,        // once both ends have it
-    why:string,         // Failed: what failed and how to fix it
-}
-
-@(private)
-Pair_Offer :: struct {
-    active:bool,
-    ticket:Ticket,
-    org:Log_Id,
-    role:Role,
-    modes:Node_Modes,
-    gate:Pair_Gate,
-    pair:Pair,
-    from:net.Address,
-    step:Pair_Message,   // what was read last
-    shown:bool,          // the code waits for an answer
-    last:[FRAME_MAX+PAIR_PAYLOAD_MAX]u8,
-    last_len:int,
-    name:[NAME_MAX]u8,
-    name_len:int,
-    info:Pair_Info,
-    closes:f64,          // a finished pairing answers repeats until then
-    at:net.Address,      // where the other machine listens, when this one cannot be reached: knocked until it asks
-    knocked:f64,
-}
-
-@(private)
-Pair_Join :: struct {
-    active:bool,
-    ticket:Ticket,
-    pair:Pair,
-    phase:Pair_Phase,
-    to:net.Address,      // the responder, once it answered
-    knock:net.Address,   // where a knock of this ticket came from: asked as the ticket's addresses are
-    last:[FRAME_MAX]u8,
-    last_len:int,
-    keys:[PAIR_KEM_PARTS][1+PAIR_K_SIZE]u8, // a device's K frames, sent with each repeat of P3
-    key_frames:int,
-    sent:f64,
-    started:f64,
-    name:[NAME_MAX]u8,
-    name_len:int,
-    why:string,
-    code:[PAIR_CODE_TEXT]u8,
 }
 
 DDC_State :: enum u8 {Waiting,Found,Missing}
@@ -313,16 +240,14 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
     r.allocator=desc.allocator.procedure==nil?context.allocator:desc.allocator
     allocator:=r.allocator
     r.orgs=make([dynamic]^Runner_Org,allocator)
-    r.keys=make([dynamic]Shared_Key,allocator)
-    r.relay_seen=make([dynamic]Relay_Seen,allocator)
     r.wants=make([dynamic]Relay_Want,allocator)
-    r.observe_ports=make([dynamic]Node_Observe,allocator)
-    ddc_error,use_error:runtime.Allocator_Error
+    ddc_error,use_error,keys_error:runtime.Allocator_Error
+    r.keys,keys_error=make([dynamic]Shared_Key,0,RUNNER_KEYS,allocator)
     r.ddc,ddc_error=make([dynamic]DDC_Lookup,0,DDC_LOOKUPS_MAX,allocator)
     r.ddc_use,use_error=make([dynamic]DDC_Use,0,DDC_USES_MAX,allocator)
     r.tcp=make([dynamic]^Tcp_Stream,allocator)
     r.tcp_spare=make([dynamic]^Tcp_Stream,allocator)
-    if ddc_error!=nil || use_error!=nil {
+    if ddc_error!=nil || use_error!=nil || keys_error!=nil {
         runner_free(r)
         return .Out_Of_Memory
     }
@@ -345,15 +270,6 @@ runner_start :: proc(r:^Runner,desc:Runner_Desc) -> (error:Error) {
     }
     r.port=r.udp.address.port
     r.transport=net.udp_transport(&r.udp)
-    if .Relay in desc.modes {
-        observe:=bind
-        observe.port=u16(desc.observe_port)
-        if !net.udp_open(&r.observe,observe) {
-            runner_free(r)
-            m.why="the relay's second UDP port does not open: give another"
-            return .Io
-        }
-    }
     if .Relay in desc.modes && desc.tcp_port!=0 {runner_tcp_listen(r,bind)}
     if desc.beacon && desc.beacon_port>=0 {
         port:=desc.beacon_port==0?BEACON_PORT:desc.beacon_port
@@ -378,7 +294,6 @@ runner_stop :: proc(r:^Runner) {
 runner_free :: proc(r:^Runner) {
     if r.mapping_on {net.mapping_close(&r.mapping)}
     net.udp_close(&r.udp)
-    net.udp_close(&r.observe)
     net.udp_close(&r.beacon_socket)
     net.udp_close(&r.beacon_socket6)
     control_end(&r.control)
@@ -388,9 +303,7 @@ runner_free :: proc(r:^Runner) {
     runner_tcp_close(r)
     delete(r.orgs)
     delete(r.keys)
-    delete(r.relay_seen)
     delete(r.wants)
-    delete(r.observe_ports)
     delete(r.ddc)
     delete(r.ddc_use)
     r^={}
@@ -533,9 +446,8 @@ runner_update :: proc(r:^Runner,wait:f64=0) {
     r.now=time.duration_seconds(time.tick_since(r.start))
     runner_receive(r,&r.udp,0)
     runner_tcp_step(r)
-    if .Relay in r.desc.modes {runner_receive(r,&r.observe,1)}
-    if r.has_beacon_socket {runner_receive(r,&r.beacon_socket,2)}
-    if r.has_beacon_socket6 {runner_receive(r,&r.beacon_socket6,2)}
+    if r.has_beacon_socket {runner_receive(r,&r.beacon_socket,1)}
+    if r.has_beacon_socket6 {runner_receive(r,&r.beacon_socket6,1)}
     for o in r.orgs {
         agent_update(&o.agent,r.now)
         runner_org_watch(r,o)
@@ -556,6 +468,8 @@ runner_update :: proc(r:^Runner,wait:f64=0) {
 // Runs until stop is set, or until it was idle IDLE_SECONDS when idle_exit.
 runner_run :: proc(r:^Runner,stop:^bool,idle_exit:bool) {
     for !stop^ {
+        // What a step leaves in the temp allocator goes before the next.
+        runtime.DEFAULT_TEMP_ALLOCATOR_TEMP_GUARD()
         runner_update(r,0.02)
         if idle_exit && r.now-r.active>IDLE_SECONDS {return}
     }
@@ -794,8 +708,7 @@ address_text :: proc(a:net.Address) -> string {
 rung_of :: proc "contextless" (a:net.Address) -> Rung {
     switch {
     case a.kind==.Relay: return .Relayed
-    case a.kind==.IP6 && net.address_global(a): return .IPv6
-    case net.address_global(a): return .Punched
+    case net.address_global(a): return .Global
     }
     return .LAN
 }
@@ -858,7 +771,7 @@ runner_ladder_peer :: proc(r:^Runner,o:^Runner_Org,p:^Runner_Peer) {
                 if l:=runner_tcp_link(r,p.addresses[0]);l!=nil && !l.failed {break}
                 dialed=runner_dial(r,o,p,rung_of(p.addresses[0]),..p.addresses[:min(p.address_count,2)])
             }
-        case .IPv6:
+        case .Global:
             if p.node {break}
             // A node of the org plans: where the peer says it is, and where it saw it.
             if !planned {
@@ -870,8 +783,6 @@ runner_ladder_peer :: proc(r:^Runner,o:^Runner_Org,p:^Runner_Peer) {
                 }
             }
             if p.announced_count>0 {dialed=runner_dial(r,o,p,rung_of(p.announced[0]),..p.announced[:min(p.announced_count,2)])}
-        case .Punched:
-            if !p.node && !p.hard && p.target.kind!=.None && planned {dialed=runner_dial(r,o,p,.Punched,p.target)}
         case .Relayed:
             if !p.node && p.relay.kind==.Relay && planned {dialed=runner_dial(r,o,p,.Relayed,p.relay)}
         case .Tcp:
@@ -1011,30 +922,22 @@ runner_beacon_read :: proc(r:^Runner,from:net.Address,bytes:[]u8) {
     }
 }
 
-// A device greets the relay nodes of its orgs, on both of their ports.
+// A device greets the relay nodes of its orgs with the addresses it announces.
 @(private)
 runner_hellos :: proc(r:^Runner) {
     if r.desc.modes!={} {return}
     if r.hello_at>=0 && r.now-r.hello_at<HELLO_SECONDS {return}
     r.hello_at=r.now
     announced:=runner_announced(r)
+    body:[1+RELAY_ANNOUNCED*size_of(Node_Address)]u8
+    body[0]=u8(len(announced))
+    copy(body[1:],slice.to_bytes(announced[:]))
     for o in r.orgs {
         for p in o.peers {
             if !p.node || .Relay not_in p.modes || p.address_count==0 {continue}
-            runner_hello(r,p.dh,p.addresses[0],0,announced[:])
-            for ob in r.observe_ports {
-                if ob.node==p.dh {runner_hello(r,p.dh,ob.address,1,announced[:])}
-            }
+            runner_z_send(r,p.dh,p.addresses[0],.Hello,body[:1+len(announced)*size_of(Node_Address)])
         }
     }
-}
-
-@(private)
-runner_hello :: proc(r:^Runner,node:Dh_Key,to:net.Address,port:u8,announced:[]Node_Address) {
-    body:[2+4*size_of(Node_Address)]u8
-    body[0],body[1]=port,u8(len(announced))
-    copy(body[2:],slice.to_bytes(announced))
-    runner_z_send(r,node,to,.Hello,body[:2+len(announced)*size_of(Node_Address)])
 }
 
 // The addresses this device tells its nodes others may reach it at: its
@@ -1044,7 +947,7 @@ runner_announced :: proc(r:^Runner) -> [dynamic]Node_Address {
     out:=make([dynamic]Node_Address,context.temp_allocator)
     if len(r.desc.addresses)>0 {
         for a in r.desc.addresses {
-            if n,ok:=node_address_of(a);ok && len(out)<4 {append(&out,n)}
+            if n,ok:=node_address_of(a);ok && len(out)<RELAY_ANNOUNCED {append(&out,n)}
         }
         return out
     }
@@ -1087,7 +990,7 @@ runner_addresses :: proc(r:^Runner,out:^[dynamic]net.Address) {
     }
 }
 
-// Datagrams of the socket u (0 main, 1 a relay node's second port, 2 beacons).
+// Datagrams of the socket u (0 main, 1 beacons).
 @(private)
 runner_receive :: proc(r:^Runner,u:^net.Udp,port:int) {
     t:=net.udp_transport(u)
@@ -1244,7 +1147,7 @@ runner_forward :: proc(r:^Runner,from:net.Address,bytes:[]u8) {
     sender:Dh_Key
     known:=false
     for d in r.relay.devices {
-        if d.seen[0] && d.observed[0]==from {
+        if d.observed.kind!=.None && d.observed==from {
             sender,known=d.dh,true
             break
         }
@@ -1253,16 +1156,20 @@ runner_forward :: proc(r:^Runner,from:net.Address,bytes:[]u8) {
     to,datagram,ok:=relay_forward(&r.relay,sender,bytes,r.now)
     if !ok || len(datagram)<1+RUNNER_ROUTE+1 {return}
     k:=relay_find(&r.relay,to)
-    if k<0 || !r.relay.devices[k].seen[0] {return}
+    if k<0 || r.relay.devices[k].observed.kind==.None {return}
     frame:[FRAME_MAX]u8
     frame[0]=FRAME_FROM
     s:=sender
     copy(frame[1:],s[:])
     n:=copy(frame[33:],datagram)
-    runner_send(r,r.relay.devices[k].observed[0],frame[:33+n])
+    runner_send(r,r.relay.devices[k].observed,frame[:33+n])
 }
 
-Z_Type :: enum u8 {None,Hello,Welcome,Want,Plan,Punch,Probe}
+// Hello: a device greets a node, [count]Node_Address it announces. Welcome:
+// the node's answer, Z_Welcome. Want: a device asks for the Dh_Key of a peer.
+// Plan: the node tells it where the peer may be reached, Z_Plan. Probe: a
+// device on TCP asks over UDP, and the node answers the same way.
+Z_Type :: enum u8 {None,Hello,Welcome,Want,Plan,Probe}
 
 @(private)
 Z_Head :: struct #packed {
@@ -1275,54 +1182,61 @@ Z_Head :: struct #packed {
 @(private)
 Z_Plan :: struct #packed {
     peer:Dh_Key,
-    initiator:b8,
-    hard:b8,
-    target:Node_Address,
     count:u8,
 } // + [count]Node_Address announced
 
 @(private)
 Z_Welcome :: struct #packed {
-    observe_port:u16,
-    observed:Node_Address,
     full:u8,
 } // + [full] routes of the orgs the node hosts whose storage is full, of those the device is a member of
 
 @(private)
 WELCOME_FULL_MAX :: 32
 
-// The key a device and a node authenticate rendezvous messages under.
+// The key a device and a node authenticate rendezvous messages under, and
+// what was taken from dh: one entry of the cache of the RUNNER_KEYS used
+// last, made with an X25519 when dh is not in it.
 @(private)
-runner_shared :: proc(r:^Runner,dh:Dh_Key) -> (key:[32]u8,ok:bool) {
-    for k in r.keys {
-        if k.dh==dh {return k.key,true}
+runner_shared :: proc(r:^Runner,dh:Dh_Key) -> ^Shared_Key {
+    oldest:=-1
+    for &k,i in r.keys {
+        if k.dh==dh {
+            k.used=r.now
+            return &k
+        }
+        if oldest<0 || k.used<r.keys[oldest].used {oldest=i}
     }
     shared:[32]u8
     defer crypto.zero_explicit(&shared,32)
     d:=dh
     x25519.scalarmult(shared[:],r.machine.dh.private[:],d[:])
     zero:[32]u8
-    if crypto.compare_constant_time(shared[:],zero[:])==1 {return {},false}
+    if crypto.compare_constant_time(shared[:],zero[:])==1 {return nil}
     h:blake3.Hasher
     blake3.init(&h)
     blake3.update(&h,shared[:])
     blake3.update(&h,transmute([]u8)string(LABEL_RENDEZVOUS))
-    key=blake3.final(&h)
-    if len(r.keys)>=1024 {clear(&r.keys)}
-    append(&r.keys,Shared_Key{dh,key})
-    return key,true
+    entry:=Shared_Key{dh=dh,key=blake3.final(&h),used=r.now}
+    if len(r.keys)<RUNNER_KEYS {
+        if _,e:=append(&r.keys,entry);e!=nil {return nil}
+        return &r.keys[len(r.keys)-1]
+    }
+    r.keys[oldest]=entry
+    return &r.keys[oldest]
 }
 
 @(private)
 runner_z_send :: proc(r:^Runner,to_dh:Dh_Key,to:net.Address,type:Z_Type,body:[]u8,udp:=false) {
-    key,ok:=runner_shared(r,to_dh)
-    if !ok || len(body)>512 {return}
+    k:=runner_shared(r,to_dh)
+    if k==nil || len(body)>512 {return}
+    // Later than the last one: the other end takes each (sender, type) once.
+    r.z_time=max(time.now()._nsec,r.z_time+1)
     frame:[size_of(Z_Head)+512+Z_MAC]u8
-    head:=Z_Head{frame=FRAME_RENDEZVOUS,type=type,from=Dh_Key(r.machine.dh.public),time=time.now()._nsec}
+    head:=Z_Head{frame=FRAME_RENDEZVOUS,type=type,from=Dh_Key(r.machine.dh.public),time=r.z_time}
     copy(frame[:],mem.ptr_to_bytes(&head))
     copy(frame[size_of(Z_Head):],body)
     size:=size_of(Z_Head)+len(body)
-    mac:=keyed_hash(key[:],frame[:size])
+    mac:=keyed_hash(k.key[:],frame[:size])
     copy(frame[size:],mac[:Z_MAC])
     if udp {
         runner_send_on(r,&r.udp,to,frame[:size+Z_MAC])
@@ -1331,22 +1245,34 @@ runner_z_send :: proc(r:^Runner,to_dh:Dh_Key,to:net.Address,type:Z_Type,body:[]u
     }
 }
 
+// A rendezvous message: its frame, time and sender are checked before the
+// X25519 of its key, and it is taken only when newer than the last of its
+// type from that sender, so a copy replayed within RENDEZVOUS_SKEW is not.
 @(private)
 runner_z_read :: proc(r:^Runner,from:net.Address,bytes:[]u8,port:int) {
-    if len(bytes)<size_of(Z_Head)+Z_MAC {return}
+    if port!=0 || len(bytes)<size_of(Z_Head)+Z_MAC {return}
     head:=(^Z_Head)(raw_data(bytes))^
-    if head.type==.Punch || head.type<.Hello || head.type>.Probe {return}
-    now:=time.now()._nsec
-    if abs(now-head.time)>RENDEZVOUS_SKEW {return}
-    key,ok:=runner_shared(r,head.from)
-    if !ok {return}
+    if head.type<.Hello || head.type>.Probe {return}
+    if abs(time.now()._nsec-head.time)>RENDEZVOUS_SKEW {return}
+    if .Relay in r.desc.modes {
+        // Who is no member's device or node of an org of the node uses its relay no more.
+        if !runner_admitted(r,head.from) {
+            relay_remove(&r.relay,head.from)
+            return
+        }
+    } else if !runner_is_node(r,head.from) {
+        return
+    }
+    k:=runner_shared(r,head.from)
+    if k==nil {return}
     size:=len(bytes)-Z_MAC
-    mac:=keyed_hash(key[:],bytes[:size])
-    if crypto.compare_constant_time(mac[:Z_MAC],bytes[size:])!=1 {return}
+    mac:=keyed_hash(k.key[:],bytes[:size])
+    if crypto.compare_constant_time(mac[:Z_MAC],bytes[size:])!=1 || head.time<=k.last[head.type] {return}
+    k.last[head.type]=head.time
     body:=bytes[size_of(Z_Head):size]
     if .Relay in r.desc.modes {
-        runner_node_z(r,from,head,body,port)
-    } else if port==0 && runner_is_node(r,head.from) {
+        runner_node_z(r,from,head,body)
+    } else {
         runner_device_z(r,from,head,body)
     }
 }
@@ -1373,39 +1299,24 @@ runner_admitted :: proc(r:^Runner,dh:Dh_Key) -> bool {
 }
 
 @(private)
-runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int) {
+runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8) {
     #partial switch head.type {
     case .Probe:
         // Answered the way it came: over UDP, a device on TCP learns UDP works again.
-        if len(body)==0 && port==0 && runner_admitted(r,head.from) {runner_z_send(r,head.from,from,.Probe,nil)}
+        if len(body)==0 {runner_z_send(r,head.from,from,.Probe,nil)}
     case .Hello:
-        if len(body)<2 || body[0]!=u8(port) || len(body)!=2+int(body[1])*size_of(Node_Address) || body[1]>4 {return}
-        if !runner_admitted(r,head.from) {
-            relay_remove(&r.relay,head.from)
-            return
-        }
+        if len(body)<1 || body[0]>RELAY_ANNOUNCED || len(body)!=1+int(body[0])*size_of(Node_Address) {return}
         if relay_admit(&r.relay,head.from,r.now)!=.None {return}
-        relay_observe(&r.relay,head.from,port,from)
-        if port!=0 {return}
-        seen:Relay_Seen
-        seen.dh=head.from
-        for a in slice.reinterpret([]Node_Address,body[2:]) {
-            if n,ok:=node_address_net(a);ok && seen.announced_count<len(seen.announced) {
-                seen.announced[seen.announced_count]=n
-                seen.announced_count+=1
+        announced:[RELAY_ANNOUNCED]net.Address
+        n:=0
+        for a in slice.reinterpret([]Node_Address,body[1:]) {
+            if x,ok:=node_address_net(a);ok {
+                announced[n]=x
+                n+=1
             }
         }
-        found:=false
-        for &s in r.relay_seen {
-            if s.dh==head.from {
-                // One store per value until odin-lang/Odin#7937.
-                s=seen
-                found=true
-            }
-        }
-        if !found && len(r.relay_seen)<RELAY_DEVICES_MAX {append(&r.relay_seen,seen)}
-        welcome:=Z_Welcome{observe_port=r.observe.address.port}
-        welcome.observed,_=node_address_of(from)
+        relay_observe(&r.relay,head.from,from,announced[:n])
+        welcome:Z_Welcome
         out:[size_of(Z_Welcome)+WELCOME_FULL_MAX*RUNNER_ROUTE]u8
         for o in r.orgs {
             if int(welcome.full)>=WELCOME_FULL_MAX || !agent_full(&o.agent) || agent_class_of(&o.agent,head.from)!=.Member {continue}
@@ -1414,7 +1325,7 @@ runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int)
         }
         copy(out[:],mem.ptr_to_bytes(&welcome))
         runner_z_send(r,head.from,from,.Welcome,out[:size_of(Z_Welcome)+int(welcome.full)*RUNNER_ROUTE])
-        // Who waited for this device meets it now.
+        // Who waited for this device hears of it now.
         for k:=0;k<len(r.wants); {
             w:=r.wants[k]
             if r.now-w.at>WANT_SECONDS || w.peer==head.from {
@@ -1425,7 +1336,7 @@ runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int)
             k+=1
         }
     case .Want:
-        if port!=0 || len(body)!=size_of(Dh_Key) {return}
+        if len(body)!=size_of(Dh_Key) {return}
         peer:=(^Dh_Key)(raw_data(body))^
         if runner_plan(r,head.from,peer) || relay_find(&r.relay,head.from)<0 {return}
         for w in r.wants {
@@ -1435,34 +1346,23 @@ runner_node_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8,port:int)
     }
 }
 
-// Tells a and b how to meet; false while either was not seen.
+// Tells device to where peer said it may be reached and that the relay
+// carries the two; false while either has not greeted.
 @(private)
-runner_plan :: proc(r:^Runner,a,b:Dh_Key) -> bool {
-    plan,ok:=relay_rendezvous(&r.relay,a,b)
-    if !ok {return false}
-    {
-        for side in 0..<2 {
-            me:=side==0?plan.initiator:plan.responder
-            other:=side==0?plan.responder:plan.initiator
-            k:=relay_find(&r.relay,me)
-            if k<0 {continue}
-            z:Z_Plan
-            z.peer,z.initiator,z.hard=other,b8(side==0),b8(plan.relay)
-            z.target,_=node_address_of(side==0?plan.initiator_target:plan.responder_target)
-            out:[size_of(Z_Plan)+4*size_of(Node_Address)]u8
-            for &s in r.relay_seen {
-                if s.dh!=other {continue}
-                for a in s.announced[:s.announced_count] {
-                    if n,valid:=node_address_of(a);valid {
-                        copy(out[size_of(Z_Plan)+int(z.count)*size_of(Node_Address):],mem.ptr_to_bytes(&n))
-                        z.count+=1
-                    }
-                }
-            }
-            copy(out[:],mem.ptr_to_bytes(&z))
-            runner_z_send(r,me,r.relay.devices[k].observed[0],.Plan,out[:size_of(Z_Plan)+int(z.count)*size_of(Node_Address)])
+runner_plan :: proc(r:^Runner,device,peer:Dh_Key) -> bool {
+    a,b:=relay_find(&r.relay,device),relay_find(&r.relay,peer)
+    if a<0 || b<0 || device==peer || r.relay.devices[a].observed.kind==.None || r.relay.devices[b].observed.kind==.None {return false}
+    other:=&r.relay.devices[b]
+    z:=Z_Plan{peer=peer}
+    out:[size_of(Z_Plan)+RELAY_ANNOUNCED*size_of(Node_Address)]u8
+    for x in other.announced[:other.announced_count] {
+        if n,ok:=node_address_of(x);ok {
+            copy(out[size_of(Z_Plan)+int(z.count)*size_of(Node_Address):],mem.ptr_to_bytes(&n))
+            z.count+=1
         }
     }
+    copy(out[:],mem.ptr_to_bytes(&z))
+    runner_z_send(r,device,r.relay.devices[a].observed,.Plan,out[:size_of(Z_Plan)+int(z.count)*size_of(Node_Address)])
     return true
 }
 
@@ -1489,33 +1389,16 @@ runner_device_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8) {
                 o.full={}
             }
         }
-        if w.observe_port==0 {return}
-        observe:=from
-        observe.port=w.observe_port
-        for &ob in r.observe_ports {
-            if ob.node==head.from {
-                if ob.address!=observe {
-                    ob.address=observe
-                    runner_hello(r,head.from,observe,1,runner_announced(r)[:])
-                }
-                return
-            }
-        }
-        if len(r.observe_ports)<RUNNER_ORGS*4 {
-            append(&r.observe_ports,Node_Observe{head.from,observe})
-            runner_hello(r,head.from,observe,1,runner_announced(r)[:])
-        }
     case .Plan:
         if len(body)<size_of(Z_Plan) {return}
         z:=(^Z_Plan)(raw_data(body))^
-        if z.count>4 || len(body)!=size_of(Z_Plan)+int(z.count)*size_of(Node_Address) {return}
-        target,_:=node_address_net(z.target)
+        if z.count>RELAY_ANNOUNCED || len(body)!=size_of(Z_Plan)+int(z.count)*size_of(Node_Address) {return}
         relayed,_:=net.address_relay(from,net.Key(z.peer))
         for o in r.orgs {
             k:=runner_peer_index(o,z.peer)
             if k<0 {continue}
             p:=&o.peers[k]
-            p.target,p.hard,p.relay,p.planned=target,bool(z.hard),relayed,r.now
+            p.relay,p.planned=relayed,r.now
             p.announced_count=0
             for a in slice.reinterpret([]Node_Address,body[size_of(Z_Plan):]) {
                 if n,ok:=node_address_net(a);ok {
@@ -1523,13 +1406,8 @@ runner_device_z :: proc(r:^Runner,from:net.Address,head:Z_Head,body:[]u8) {
                     p.announced_count+=1
                 }
             }
-            if !bool(z.initiator) && !bool(z.hard) && target.kind!=.None {
-                // The responder opens its NAT toward the initiator.
-                punch:=Z_Head{frame=FRAME_RENDEZVOUS,type=.Punch,from=Dh_Key(r.machine.dh.public)}
-                for _ in 0..<3 {runner_send(r,target,mem.ptr_to_bytes(&punch))}
-            }
             // A fresh plan starts the ladder again past the LAN rung.
-            if bool(z.initiator) && p.attempt<0 {p.stage,p.next_try=int(Rung.IPv6),0}
+            if p.attempt<0 {p.stage,p.next_try=int(Rung.Global),0}
         }
     }
 }
@@ -1570,409 +1448,6 @@ runner_peers :: proc(r:^Runner,out:^[dynamic]Runner_Peer_Info) {
             append(out,info)
         }
     }
-}
-
-// Offers a pairing: the ticket the other device takes, valid for
-// PAIR_TICKET_SECONDS. Device links a second device of this machine's user;
-// Member adds a user to org with role; Node adds a node with modes.
-// With at, the address the other machine listens at, this end knocks there
-// until the other asks: a machine behind a router that no ticket address
-// reaches is asked through the way its own knocks opened.
-runner_pair_offer :: proc(r:^Runner,mode:Pair_Mode,org:Log_Id,role:Role,modes:Node_Modes,buffer:^[TICKET_TEXT]u8,at:=net.Address{}) -> (ticket:string,error:Error) {
-    m:=r.machine
-    switch mode {
-    case .Device:
-        if m.user=={} {return "",machine_fail(m,.Invalid_Argument,"this device has no user to link another device to: mirai kai identity makes one")}
-    case .Member:
-        if !role_valid(role) {return "",machine_fail(m,.Invalid_Argument,"a member's role is reader, writer or admin")}
-        if !slice.contains(m.orgs[:],org) {return "",machine_fail(m,.Invalid_Argument,"this machine does not serve that org")}
-    case .Node:
-        if modes=={} {return "",machine_fail(m,.Invalid_Argument,"a node serves relay, seed or ddc")}
-        if !slice.contains(m.orgs[:],org) {return "",machine_fail(m,.Invalid_Argument,"this machine does not serve that org")}
-    case .Recover:
-        if !slice.contains(m.orgs[:],org) {return "",machine_fail(m,.Invalid_Argument,"this machine does not serve that org")}
-    }
-    if r.offer.active && r.offer.shown {return "",machine_fail(m,.Locked,"another pairing request waits for an answer: answer it first")}
-    pair_end(&r.offer.pair)
-    gate:=r.offer.gate
-    r.offer={active=true,org=org,role=role,modes=modes,gate=gate,at=at,knocked=-PAIR_RESEND}
-    t:=&r.offer.ticket
-    t.id=random_id([16]u8)
-    t.responder=Dh_Key(m.dh.public)
-    t.mode=mode
-    t.expires=time.now()._nsec+i64(PAIR_TICKET_SECONDS)*1_000_000_000
-    list:=make([dynamic]net.Address,context.temp_allocator)
-    runner_addresses(r,&list)
-    // A node or a device on this same machine reaches it by loopback, which
-    // a host firewall lets through where it drops the LAN address.
-    if loopback:=net.address_ip4(127,0,0,1,int(r.port));!slice.contains(list[:],loopback) {
-        inject_at(&list,min(len(list),TICKET_ADDRESSES-1),loopback)
-    }
-    t.address_count=copy(t.addresses[:],list[:])
-    return ticket_encode(t^,buffer),.None
-}
-
-// The open request, once the other end revealed its keys and the code exists.
-runner_pair_request :: proc(r:^Runner) -> (request:Pair_Request,ok:bool) {
-    o:=&r.offer
-    if !o.active || !o.shown {return}
-    return {mode=o.ticket.mode,code=pair_code(&o.pair),name=string(o.name[:o.name_len]),user=o.info.log_id,device=o.info.device},true
-}
-
-// The person's answer to the open request; when code is given it must be the
-// one shown, or the request is denied.
-runner_pair_answer :: proc(r:^Runner,approve:bool,code:string="") -> Error {
-    m:=r.machine
-    o:=&r.offer
-    if !o.active || !o.shown {return machine_fail(m,.Missing,"no pairing request waits for an answer")}
-    now:=time.now()._nsec
-    yes:=approve && (code=="" || code==pair_code(&o.pair))
-    payload:=make([dynamic]u8,context.temp_allocator)
-    if yes {
-        switch o.ticket.mode {
-        case .Device:
-            l:Log
-            log_init(&l,m.user,context.temp_allocator)
-            if e:=log_open(&m.store,&l,m.user,.User);e!=.None {return machine_fail(m,e,"this device's User_Log is not in its store")}
-            if _,e:=pair_approve_device(&o.pair,&l,&m.identity,now);e!=.None {return machine_fail(m,e,"the device's proof does not hold: pair again")}
-            machine_log_save(m,&l) or_return
-            id:=m.user
-            append(&payload,..id[:])
-            for org in m.orgs {
-                g:=org
-                append(&payload,..g[:])
-            }
-        case .Member:
-            // One who is a member already keeps its role: the pairing only
-            // brings its machine to this one again.
-            member:=false
-            {
-                s:Org_State
-                machine_org_open(m,o.org,&s) or_return
-                member=org_role(&s.fold,o.info.log_id)!=.None
-                org_state_destroy(&s)
-            }
-            if !member {machine_member_add(m,o.org,o.info.log_id,o.role) or_return}
-            id:=o.org
-            append(&payload,..id[:])
-        case .Node:
-            machine_node_add(m,o.org,o.info.device,pair_remote(&o.pair),o.modes,{o.from}) or_return
-            id:=o.org
-            append(&payload,..id[:])
-        case .Recover:
-            // Nothing is signed: the other machine reaches the org as a peer
-            // not admitted, which reads the user logs alone, until its user
-            // is recovered onto it.
-            id:=o.org
-            append(&payload,..id[:])
-        }
-    }
-    runner_pair_finish(r,yes?.Approved:.Denied,payload[:])
-    if approve && !yes {return machine_fail(m,.Unauthorized,"the code is not the one the other device shows: the request is denied, pair again")}
-    return .None
-}
-
-@(private)
-runner_pair_finish :: proc(r:^Runner,status:Pair_Status,payload:[]u8) {
-    o:=&r.offer
-    message,e:=pair_write_p4(&o.pair,status,payload,o.last[1:])
-    if e==.None {
-        o.last[0]=FRAME_PAIR
-        o.last_len=1+len(message)
-        runner_send(r,o.from,o.last[:o.last_len])
-    }
-    pair_gate_close(&o.gate,status==.Approved,time.now()._nsec)
-    o.shown=false
-    o.closes=r.now+PAIR_JOIN_SECONDS
-    runner_event(r,"pairing %v",status)
-}
-
-// Joins a pairing with the ticket another machine offered; name is what this
-// end calls itself. runner_pair_progress tells how it goes.
-runner_pair_join :: proc(r:^Runner,text:string,name:string) -> Error {
-    m:=r.machine
-    t,ok:=ticket_decode(strings.trim_space(text))
-    if !ok {return machine_fail(m,.Corrupt,"the ticket does not read: copy it again, whole")}
-    if t.expires<time.now()._nsec {return machine_fail(m,.Expired,"the ticket expired: ask for a new one")}
-    if t.address_count==0 {return machine_fail(m,.Invalid_Argument,"the ticket names no address to reach the other machine at")}
-    if !name_valid(name) {return machine_fail(m,.Invalid_Argument,"a name is 1 to 64 bytes of text")}
-    switch t.mode {
-    case .Device: if m.user!={} {return machine_fail(m,.Invalid_Argument,"this device belongs to a user already: only a device without one is linked")}
-    case .Member: if m.user=={} {return machine_fail(m,.Invalid_Argument,"this device has no user: mirai kai identity makes one first")}
-    case .Recover: if m.user!={} {return machine_fail(m,.Invalid_Argument,"this device belongs to a user already: a user is recovered onto a device that has none")}
-    case .Node:
-    }
-    if r.join.active {return machine_fail(m,.Locked,"this machine is joining another pairing: wait for it to end")}
-    pair_end(&r.join.pair)
-    r.join={active=true,ticket=t,phase=.Asking,started=r.now}
-    r.join.name_len=copy(r.join.name[:],name)
-    pair_init(&r.join.pair,true,m.dh,t.id,t.responder)
-    message,e:=pair_write_p1(&r.join.pair,r.join.last[1:])
-    if e!=.None {return machine_fail(m,.Invalid_Argument,pair_error_text(e))}
-    r.join.last[0]=FRAME_PAIR
-    r.join.last_len=1+len(message)
-    runner_pair_resend(r)
-    return .None
-}
-
-runner_pair_progress :: proc(r:^Runner) -> Pair_Progress {
-    j:=&r.join
-    p:=Pair_Progress{phase=j.phase,why=j.why}
-    if j.code[0]!=0 {p.code=string(j.code[:])}
-    return p
-}
-
-@(private)
-runner_pair_resend :: proc(r:^Runner) {
-    j:=&r.join
-    j.sent=r.now
-    if j.to.kind!=.None {
-        runner_send(r,j.to,j.last[:j.last_len])
-        for k in 0..<j.key_frames {runner_send(r,j.to,j.keys[k][:])}
-        return
-    }
-    for a in j.ticket.addresses[:j.ticket.address_count] {runner_send(r,a,j.last[:j.last_len])}
-    if j.knock.kind!=.None {runner_send(r,j.knock,j.last[:j.last_len])}
-}
-
-@(private)
-runner_pair_fail :: proc(r:^Runner,why:string) {
-    j:=&r.join
-    j.phase,j.why,j.active=.Failed,why,false
-    pair_end(&j.pair)
-    runner_event(r,"pairing failed: %s",why)
-}
-
-@(private)
-runner_pair_step :: proc(r:^Runner) {
-    j:=&r.join
-    if j.active {
-        limit:=j.phase==.Waiting?f64(PAIR_TIMEOUT/1_000_000_000):PAIR_JOIN_SECONDS
-        if r.now-j.started>limit {
-            runner_pair_fail(r,"the other machine did not answer: check that its agent runs and the ticket's addresses reach it")
-        } else if r.now-j.sent>PAIR_RESEND {
-            runner_pair_resend(r)
-        }
-    }
-    o:=&r.offer
-    if o.active {
-        now:=time.now()._nsec
-        if o.shown && pair_gate_expire(&o.gate,now) {
-            runner_pair_finish(r,.Denied,nil)
-        }
-        if !o.shown && o.closes>0 && r.now>o.closes {o.active=false}
-        if now>o.ticket.expires && !o.shown {o.active=false}
-        if o.active && o.at.kind!=.None && o.step==.None && r.now-o.knocked>=PAIR_RESEND {
-            o.knocked=r.now
-            frame:[1+PAIR_HEAD]u8
-            frame[0],frame[1]=FRAME_PAIR,u8(Pair_Message.Knock)
-            tag:=pair_knock_tag(o.ticket.id)
-            copy(frame[2:],tag[:])
-            runner_send(r,o.at,frame[:])
-        }
-    }
-}
-
-// A pairing message from from.
-@(private)
-runner_pair_read :: proc(r:^Runner,from:net.Address,message:[]u8) {
-    if len(message)<PAIR_HEAD {return}
-    switch Pair_Message(message[0]) {
-    case .None:
-    case .P1,.P3,.K: runner_pair_responder(r,from,message)
-    case .P2,.P4: runner_pair_initiator(r,from,message)
-    case .Knock:
-        // Kept and asked with the next repeat: a knock is answered by nothing.
-        j:=&r.join
-        tag:=pair_knock_tag(j.ticket.id)
-        if j.active && j.phase==.Asking && bytes_equal(message[1:PAIR_HEAD],tag[:]) {j.knock=from}
-    }
-}
-
-@(private)
-runner_pair_responder :: proc(r:^Runner,from:net.Address,message:[]u8) {
-    m:=r.machine
-    o:=&r.offer
-    if !o.active || !bytes_equal(message[1:PAIR_HEAD],o.ticket.id[:]) {return}
-    now:=time.now()._nsec
-    // A repeat of what was answered gets the same answer.
-    if o.step>=Pair_Message(message[0]) && from==o.from {
-        if o.last_len>0 {runner_send(r,from,o.last[:o.last_len])}
-        return
-    }
-    if o.closes>0 {return}
-    switch Pair_Message(message[0]) {
-    case .P1:
-        if now>o.ticket.expires || o.step!=.None {return}
-        if pair_gate_open(&o.gate,o.ticket.id,now)!=.None {return}
-        pair_init(&o.pair,false,m.dh,o.ticket.id)
-        if pair_read_p1(&o.pair,message)!=.None {
-            pair_gate_close(&o.gate,false,now)
-            pair_end(&o.pair)
-            return
-        }
-        info:=Pair_Info{mode=o.ticket.mode,log_id=o.ticket.mode==.Device?m.user:o.org,device=m.identity.key}
-        buffer:[PAIR_INFO_MAX]u8
-        out,e:=pair_write_p2(&o.pair,pair_info_encode(info,"",&buffer),o.last[1:])
-        if e!=.None {return}
-        o.last[0]=FRAME_PAIR
-        o.last_len=1+len(out)
-        o.from,o.step=from,.P1
-        runner_send(r,from,o.last[:o.last_len])
-    case .P3:
-        if o.step!=.P1 || from!=o.from {return}
-        e:=pair_read_p3(&o.pair,message)
-        if e!=.None {
-            runner_event(r,"pairing refused: %s",pair_error_text(e))
-            pair_gate_close(&o.gate,false,now)
-            pair_end(&o.pair)
-            o.step=.None
-            return
-        }
-        info,name,ok:=pair_info_decode(pair_info(&o.pair))
-        if !ok || info.mode!=o.ticket.mode || (info.mode==.Member && info.log_id=={}) {
-            pair_gate_close(&o.gate,false,now)
-            pair_end(&o.pair)
-            o.step=.None
-            return
-        }
-        o.info=info
-        o.name_len=copy(o.name[:],name)
-        o.step=.P3
-        // A device shows once its ML-KEM key came whole in the K frames.
-        if info.mode!=.Device {runner_pair_show(r)}
-    case .K:
-        if o.step!=.P3 || from!=o.from {return}
-        if o.shown {
-            runner_send(r,from,o.last[:o.last_len])
-            return
-        }
-        complete,e:=pair_read_key(&o.pair,message,o.info.kem)
-        if e==.Key {
-            runner_event(r,"pairing refused: %s",pair_error_text(e))
-            pair_gate_close(&o.gate,false,now)
-            pair_end(&o.pair)
-            o.step=.None
-            return
-        }
-        if complete {runner_pair_show(r)}
-    case .None,.P2,.P4,.Knock:
-    }
-}
-
-// Shows the open request: its code waits for the person's answer.
-@(private)
-runner_pair_show :: proc(r:^Runner) {
-    o:=&r.offer
-    o.shown=true
-    runner_event(r,"pairing request from %s: code %s",string(o.name[:o.name_len]),pair_code(&o.pair))
-    out,_:=pair_write_p4(&o.pair,.Pending,nil,o.last[1:])
-    o.last[0]=FRAME_PAIR
-    o.last_len=1+len(out)
-    runner_send(r,o.from,o.last[:o.last_len])
-}
-
-@(private)
-runner_pair_initiator :: proc(r:^Runner,from:net.Address,message:[]u8) {
-    m:=r.machine
-    j:=&r.join
-    if !j.active || !bytes_equal(message[1:PAIR_HEAD],j.ticket.id[:]) {return}
-    switch Pair_Message(message[0]) {
-    case .P2:
-        if j.phase!=.Asking || j.pair.step!=.P1 {return}
-        if e:=pair_read_p2(&j.pair,message);e!=.None {
-            runner_pair_fail(r,pair_error_text(e))
-            return
-        }
-        remote,_,ok:=pair_info_decode(pair_info(&j.pair))
-        if !ok || remote.mode!=j.ticket.mode {
-            runner_pair_fail(r,"the other machine answers another kind of pairing: ask for a new ticket")
-            return
-        }
-        info:=Pair_Info{mode=j.ticket.mode,device=m.identity.key}
-        switch j.ticket.mode {
-        case .Device:
-            info.kem=machine_kem_hash(m)
-            info.proof=device_proof(&m.identity,transmute([32]u8)remote.log_id,Dh_Key(m.dh.public),info.kem)
-        case .Member: info.log_id=m.user
-        case .Node,.Recover:
-        }
-        buffer:[PAIR_INFO_MAX]u8
-        out,e:=pair_write_p3(&j.pair,pair_info_encode(info,string(j.name[:j.name_len]),&buffer),j.last[1:])
-        if e!=.None {
-            runner_pair_fail(r,pair_error_text(e))
-            return
-        }
-        j.last_len=1+len(out)
-        if j.ticket.mode==.Device {
-            kem:=machine_kem_public(m)
-            for k in 0..<PAIR_KEM_PARTS {
-                j.keys[k][0]=FRAME_PAIR
-                pair_write_key(&j.pair,&kem,k,j.keys[k][1:])
-            }
-            j.key_frames=PAIR_KEM_PARTS
-        }
-        j.to,j.phase,j.code=from,.Waiting,j.pair.code
-        runner_pair_resend(r)
-        runner_event(r,"pairing code %s: check that the other machine shows the same",string(j.code[:]))
-    case .P4:
-        if j.phase!=.Waiting || from!=j.to {return}
-        status,payload,e:=pair_read_p4(&j.pair,message)
-        if e!=.None {return}
-        switch status {
-        case .Pending: j.started=r.now
-        case .Denied:
-            runner_pair_fail(r,"the other machine denied the pairing: compare the codes and pair again")
-            j.phase=.Denied
-        case .Approved:
-            if runner_pair_take(r,payload) {
-                j.phase,j.active=.Approved,false
-                runner_event(r,"pairing approved")
-            }
-        }
-    case .None,.P1,.P3,.K,.Knock:
-    }
-}
-
-// What an approved pairing gave: the user this device joins and its orgs,
-// or the org this member or node joins.
-@(private)
-runner_pair_take :: proc(r:^Runner,payload:[]u8) -> bool {
-    m:=r.machine
-    j:=&r.join
-    if len(payload)<32 || len(payload)%32!=0 || len(payload)/32>MACHINE_ORGS_MAX+1 {
-        runner_pair_fail(r,"the other machine's answer does not read: pair again")
-        return false
-    }
-    ids:=slice.reinterpret([]Log_Id,payload)
-    orgs:=ids
-    if j.ticket.mode==.Device {
-        if machine_user_set(m,ids[0])!=.None {
-            runner_pair_fail(r,m.why)
-            return false
-        }
-        orgs=ids[1:]
-    }
-    for id in orgs {
-        if machine_org_join(m,id)!=.None {
-            runner_pair_fail(r,m.why)
-            return false
-        }
-    }
-    runner_reload(r)
-    // This end connects to the machine it paired with, whatever the keys say.
-    for o in r.orgs {
-        if !slice.contains(orgs,o.id) {continue}
-        k:=runner_peer_index(o,j.ticket.responder)
-        if k<0 && len(o.peers)<RUNNER_PEERS {
-            append(&o.peers,Runner_Peer{dh=j.ticket.responder,attempt=-1})
-            k=len(o.peers)-1
-        }
-        if k<0 {continue}
-        p:=&o.peers[k]
-        p.first,p.lan,p.lan_seen,p.stage,p.next_try=true,j.to,r.now,0,0
-    }
-    return true
 }
 
 // Looks for what a peer built for key in the org: what the store holds, then

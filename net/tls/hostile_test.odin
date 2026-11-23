@@ -270,6 +270,20 @@ tls13_refuses_hostile_and_downgraded_input :: proc(t:^testing.T) {
             }
         }
     }
+    // A record of no bytes is no ciphertext, before keys or under them: bad_record_mac, never
+    // a silent drop that IDLE_RECORDS_MAX does not count.
+    {
+        server,_:=create(server_config,.Server)
+        defer destroy(server)
+        expect_failure(t,"an empty record before the handshake",server,record_of(.Application_Data,{}),.Bad_Record_Mac)
+        client,_:=create(client_config,.Client)
+        defer destroy(client)
+        connected,_:=create(server_config,.Server)
+        defer destroy(connected)
+        if testing.expect_value(t,pump(client,connected),Error.None) {
+            expect_failure(t,"an empty record under keys",connected,record_of(.Application_Data,{}),.Bad_Record_Mac)
+        }
+    }
     // ChangeCipherSpec once, after the ClientHello.
     {
         client,_:=create(client_config,.Client)

@@ -321,7 +321,9 @@ store_reach :: proc(s:^store.Store,live:^[dynamic]store.Hash,overlays:bool) -> E
     }
     w:=walk_make(s)
     w.entries=true
-    missing:=make([dynamic]store.Hash,context.temp_allocator)
-    walk_all(&w,roots[:],live,&missing)
+    present:=make([dynamic]Walk_Item,context.temp_allocator)
+    missing:=make([dynamic]Walk_Item,context.temp_allocator)
+    walk_all(&w,roots[:],&present,&missing)
+    for x in present {append(live,x.address)}
     return .None
 }

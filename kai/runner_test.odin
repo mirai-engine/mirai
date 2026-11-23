@@ -575,7 +575,7 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     box_block(b,1,0)
     lower:=dh_less(Dh_Key(alice.dh.public),Dh_Key(bob.dh.public))?0:1
     relayed:=Goal{k=lower,dh=Dh_Key(b.machines[1-lower].dh.public),rung=.Relayed}
-    if !testing.expectf(t,box_until(b,20,&relayed,connected_by),"the node relays the two: %v %v %v",ladder_of(&b.runners[lower],Dh_Key(b.machines[1-lower].dh.public)),b.runners[2].relay.devices[:],b.runners[lower].observe_ports[:]) {return}
+    if !testing.expectf(t,box_until(b,20,&relayed,connected_by),"the node relays the two: %v %v",ladder_of(&b.runners[lower],Dh_Key(b.machines[1-lower].dh.public)),b.runners[2].relay.devices[:]) {return}
     relayed.k=1-lower
     relayed.dh=Dh_Key(b.machines[lower].dh.public)
     testing.expect(t,box_until(b,5,&relayed,connected_by),"each end sees the connection relayed")
@@ -590,15 +590,13 @@ a_relay_node_joins_two_agents_that_cannot_reach_each_other :: proc(t:^testing.T)
     for d in stats {forwarded+=d.forwarded}
     testing.expect(t,forwarded>0,"the node forwarded datagrams")
 
-    // UDP to the node is blocked as well, on both of its ports: each comes
-    // back, the one that is dialed first.
-    observe:=b.addresses[2][0]
-    observe.port=b.runners[2].observe.address.port
+    // UDP to the node is blocked as well: each comes back, the one that is
+    // dialed first.
     for k in ([]int{1-lower,lower}) {
         box_stop(b,k)
         if !box_start(t,b,k,relay_tcp_port=tcp_port) {return}
-        b.blocked[k][0],b.blocked[k][1],b.blocked[k][2]=b.addresses[1-k][0],b.addresses[2][0],observe
-        b.runners[k].desc.blocked=b.blocked[k][:3]
+        b.blocked[k][0],b.blocked[k][1]=b.addresses[1-k][0],b.addresses[2][0]
+        b.runners[k].desc.blocked=b.blocked[k][:2]
         over_tcp:=Goal{k=k,dh=Dh_Key(node.dh.public),rung=.Tcp}
         if !testing.expectf(t,box_until(b,20,&over_tcp,connected_by),"%d reaches the node over TCP: %v",k,ladder_of(&b.runners[k],Dh_Key(node.dh.public))) {return}
     }
@@ -914,7 +912,8 @@ runner_refuses_hostile_datagrams :: proc(t:^testing.T) {
         }
         // A rendezvous message under the right key, its body cut and too long.
         if k==1 {
-            key,_:=runner_shared(r,Dh_Key(alice.dh.public))
+            shared:=runner_shared(r,Dh_Key(alice.dh.public))
+            key:=shared.key
             for type in Z_Type {
                 for size in ([]int{0,1,2,size_of(Z_Plan)-1,size_of(Z_Plan),size_of(Z_Plan)+3,200}) {
                     out:[size_of(Z_Head)+256+Z_MAC]u8

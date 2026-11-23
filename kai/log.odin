@@ -1116,6 +1116,9 @@ log_index_read :: proc(s:^store.Store,address:store.Hash) -> (head:Log_Index_Hea
 // signature when verify; changed when one was new. The pages l holds already
 // are not read again. Pages the store lacks are appended to missing, when it
 // is given, and the error is Missing: what was read is taken all the same.
+// A page read with verify, a peer's, never stands for one of l: an entry it
+// skipped or one l has and it lacks would persist through its address, so
+// the next save writes l's own pages from the entries it verified.
 log_load :: proc(s:^store.Store,l:^Log,address:store.Hash,verify:bool,missing:^[dynamic]store.Hash=nil) -> (changed:bool,error:Error) {
     head,_:=log_index_read(s,address) or_return
     if l.id!={} && l.id!=head.id {return false,.Invalid_Argument}
@@ -1125,9 +1128,11 @@ log_load :: proc(s:^store.Store,l:^Log,address:store.Hash,verify:bool,missing:^[
     read:=make([dynamic]Page_Read,context.temp_allocator)
     lacking:=false
     page_load(s,l,head.root,0,{},verify,&changed,&read,&lacking,missing) or_return
-    // The pages read stand for the pages l now holds where they cover the same entries.
-    for x in read {
-        if k:=page_at(l,x.path,x.depth);k>=0 && l.pages[k].count==x.count && bool(l.pages[k].leaf)==x.leaf {l.pages[k].address=x.address}
+    // The pages of l's own log stand for the pages l now holds where they cover the same entries.
+    if !verify {
+        for x in read {
+            if k:=page_at(l,x.path,x.depth);k>=0 && l.pages[k].count==x.count && bool(l.pages[k].leaf)==x.leaf {l.pages[k].address=x.address}
+        }
     }
     return changed,lacking?.Missing:.None
 }

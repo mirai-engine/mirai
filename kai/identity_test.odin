@@ -948,9 +948,9 @@ the_discovery_secret_rotates_when_a_member_device_or_node_goes :: proc(t:^testin
     }
 }
 
-// The relay tells cone NATs to punch, the lower key first, and relays the
-// rest; it forwards a sealed datagram unchanged between admitted devices,
-// within each sender's byte quota, which refills with time.
+// The relay forwards a sealed datagram unchanged between admitted devices,
+// within each sender's byte quota, which refills with time, and keeps where
+// each device greeted from and what it announced.
 @(test)
 relay_quota_and_forwarding :: proc(t:^testing.T) {
     r:Relay
@@ -958,18 +958,12 @@ relay_quota_and_forwarding :: proc(t:^testing.T) {
     defer relay_destroy(&r)
     a,b,c:=Dh_Key{0=1},Dh_Key{0=2},Dh_Key{0=3}
     testing.expect(t,relay_admit(&r,a,0)==.None && relay_admit(&r,b,0)==.None && relay_admit(&r,c,0)==.None)
-    cone:=net.address_ip4(203,0,113,5,40000)
-    relay_observe(&r,b,0,cone)
-    relay_observe(&r,b,1,cone)
-    relay_observe(&r,a,0,net.address_ip4(198,51,100,7,50000))
-    relay_observe(&r,a,1,net.address_ip4(198,51,100,7,50000))
-    relay_observe(&r,c,0,net.address_ip4(192,0,2,9,1000))
-    relay_observe(&r,c,1,net.address_ip4(192,0,2,9,1001))
-    testing.expect(t,relay_nat(&r,a)==.Cone && relay_nat(&r,c)==.Symmetric && relay_nat(&r,Dh_Key{0=9})==.Unknown)
-    plan,ok:=relay_rendezvous(&r,b,a)
-    testing.expect(t,ok && !plan.relay && plan.initiator==a && plan.responder==b && plan.initiator_target==cone)
-    plan,ok=relay_rendezvous(&r,a,c)
-    testing.expect(t,ok && plan.relay,"a symmetric NAT is relayed, not punched")
+    seen:=net.address_ip4(203,0,113,5,40000)
+    many:[RELAY_ANNOUNCED+2]net.Address
+    for &x,i in many {x=net.address_ip4(198,51,100,u8(i),50000)}
+    testing.expect(t,relay_observe(&r,b,seen,many[:]) && !relay_observe(&r,Dh_Key{0=9},seen,nil),"a device not admitted is not observed")
+    k:=relay_find(&r,b)
+    testing.expect(t,r.devices[k].observed==seen && r.devices[k].announced_count==RELAY_ANNOUNCED,"what a device announces is kept within its bound")
 
     datagram:[1000]u8
     for &x,i in datagram {x=u8(i*7)}

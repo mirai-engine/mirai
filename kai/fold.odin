@@ -1792,7 +1792,8 @@ envelope_subject :: proc(epoch:u32,dh:Dh_Key) -> store.Hash {
 }
 
 // The rules of a Keyring_Log, against the epochs of the entry's causal past:
-// a writer, as it was when it signed, starts it and adds the next epoch;
+// a writer, as it was when it signed, starts it and one who also reads the
+// scope adds the next epoch;
 // concurrent epochs of one number: the first in order wins, the other is not
 // authorized. A member who read the scope when it signed (a device that holds
 // the key wraps it) adds an envelope to an epoch there for a device or a
@@ -1830,7 +1831,8 @@ keyring_authorized :: proc(f:^Keyring_Fold,e:int) -> bool {
         return b.org==f.org.log.id && org_project_index(f.org,b.project)>=0
     case .Epoch_Add:
         b,_,_:=body_head(entry.body,Epoch_Add_Body)
-        return b.epoch==epoch+1
+        scope,ok:=keyring_scope(f)
+        return ok && role>=scope.readers && b.epoch==epoch+1
     }
     return false
 }

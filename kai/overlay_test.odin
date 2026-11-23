@@ -919,6 +919,7 @@ Seed_Goal :: struct {
     namespace:string,
     name:string,
     record:store.Hash,
+    envelopes:store.Hash, // of the keyring's epoch, which the seed fetches with its log
     record_value:Overlay_Record,
     keyring:Log_Id,
 }
@@ -980,12 +981,13 @@ public_peer_sees_zero_overlay_metadata_or_chunks :: proc(t:^testing.T) {
 
     ns:[len(OVERLAY_PREFIX)+64+1+32]u8
     name:[64]u8
-    g:=Seed_Goal{namespace=overlay_namespace(o.project.id,scope,&ns),name=store.hex(revision,&name),record=record_address,record_value=record,keyring=kl.id}
+    epoch,_:=keyring_epoch(&kf,1)
+    g:=Seed_Goal{namespace=overlay_namespace(o.project.id,scope,&ns),name=store.hex(revision,&name),record=record_address,record_value=record,keyring=kl.id,envelopes=epoch.envelopes}
     mirrored :: proc(m:^Mesh,data:rawptr) -> bool {
         g:=(^Seed_Goal)(data)
         s:=&m.stores[1]
         held,e:=store.ref_get(s,g.namespace,g.name)
-        if e!=.None || held!=g.record || !object_whole(s,g.record_value.tree_root) {return false}
+        if e!=.None || held!=g.record || !object_whole(s,g.record_value.tree_root) || !object_whole(s,g.envelopes) {return false}
         for o in g.record_value.objects {
             if !object_whole(s,o) {return false}
         }
