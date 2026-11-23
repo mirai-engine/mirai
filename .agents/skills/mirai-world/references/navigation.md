@@ -60,7 +60,8 @@ depends on `physics`). Core algorithms live in
   search mesh + volume across shores/`LINK_FLY`; deep water ground is `AREA_WATER` (blocked without
   `Swim`).
 - Requests via `Nav_Requests` (`nav_move_to`, `nav_follow`, `nav_stop`, `nav_look_at`,
-  `nav_look_along`, `nav_crossing_done`); derived `Nav_Path` (navigation sole writer) and
+  `nav_look_along`, `nav_crossing_done`, `nav_crossing_skip` that puts it at the end of the link);
+  derived `Nav_Path` (navigation sole writer) and
   `Nav_Events` report status; removing `Nav_Agent` cleans route/path/drive. Volume and coarse
   scratch allocate lazily.
 - **Shared follow**: 2+ matching walkers following one target share a reverse `Follow_Tree` search;

@@ -207,6 +207,25 @@ an_agent_queued_behind_a_crossing_keeps_its_path :: proc(t:^testing.T) {
     testing.expect(t,p.state==.Moving && core.problem_find(&f.problems,e,"navigation.blocked")==nil)
 }
 
+// A wide agent ahead counts as a crowd however far its center stands beyond the narrow one's reach.
+@(test)
+a_wide_agent_ahead_is_a_crowd :: proc(t:^testing.T) {
+    f:Nav_Test
+    if !nav_test_init(t,&f) {return}
+    defer nav_test_destroy(&f)
+    e,wide:=core.create(&f.entities),core.create(&f.entities)
+    core.add(&f.paths,e,Nav_Path{state=.Moving,velocity={2,0,0}})
+    core.add(&f.paths,wide,Nav_Path{state=.Moving,velocity={0.05,0,0}})
+    nav_test_settle(&f)
+    append(&f.run.near,Near{entity=e,position={1,0.9,1},radius=0.3,height=1.8,path_row=1})
+    append(&f.run.near,Near{
+        entity=wide,position={3.7,0.9,1},velocity={0.05,0,0},radius=2,height=1.8,path_row=2,
+    })
+    agents_avoid(&f.nav,&f.run,&f.paths,nil,1.0/60,&f.problems)
+    testing.expect_value(t,f.run.widest_ground,f32(2))
+    testing.expect(t,crowd_ahead(&f.run,&f.run.near[0],core.NONE))
+}
+
 @(test)
 parallel_avoidance_matches_the_owner_and_excludes_the_target :: proc(t:^testing.T) {
     f:Nav_Test

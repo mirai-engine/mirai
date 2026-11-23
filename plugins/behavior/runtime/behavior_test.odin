@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:slice"
 import "core:testing"
 import "mirai:core"
 import scene "mirai:engine/scene"
@@ -139,6 +140,41 @@ minds_register_by_name_and_tick_their_agents :: proc(t:^testing.T) {
     problems:core.Problems
     minds_unknown(core.ref(minds),core.read(&world.mind_agents),c.world.time,&problems)
     testing.expect(t,core.problem_find(&problems,lost,"behavior.mind")!=nil && core.problem_find(&problems,a,"behavior.mind")==nil)
+}
+
+// With Mind_Rows a mind registers the first time it ticks in a world and
+// visits only its rows, grouped again when an agent changes its mind.
+@(test)
+a_mind_visits_its_own_rows_and_follows_a_change_of_mind :: proc(t:^testing.T) {
+    minds:=new(Minds)
+    defer free(minds)
+    rows:Mind_Rows
+    defer mind_rows_free(&rows)
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    a,other,b:=core.create(&world.entities),core.create(&world.entities),core.create(&world.entities)
+    core.add(&world.mind_agents,a,Mind_Agent{mind=mind_name("counter")})
+    core.add(&world.mind_agents,other,Mind_Agent{mind=mind_name("other")})
+    core.add(&world.mind_agents,b,Mind_Agent{mind=mind_name("counter")})
+    test_world_settle(&world)
+    row :: proc(world:^Behavior_World,e:core.Entity) -> i32 {return i32(core.row_of(&world.mind_agents,e))}
+    c:=Counting{world={minds=minds,agents=&world.mind_agents,rows=&rows,time={tick=1,dt=1.0/60,playing=true}}}
+    minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
+    testing.expect_value(t,c.entered,2)
+    testing.expect(t,minds.count==1 && rows.count==1 && !rows.stale)
+    testing.expect(t,slice.equal(rows.rows[0][:],[]i32{row(&world,a),row(&world,b)}))
+    testing.expect(t,slice.equal(rows.loose[:],[]i32{row(&world,other)}))
+    // Registered in this world: a tick does not register it again.
+    minds^={}
+    core.edit(&world.mind_agents,other).mind=mind_name("counter")
+    core.edit(&world.mind_agents,a).mind=mind_name("other")
+    test_world_settle(&world)
+    c.world.time.tick=2
+    minds_tick(&c.world,"counter",&COUNTING_ACTS,counting_think)
+    testing.expect_value(t,minds.count,0)
+    testing.expect(t,slice.equal(rows.rows[0][:],[]i32{row(&world,other),row(&world,b)}))
+    testing.expect(t,slice.equal(rows.loose[:],[]i32{row(&world,a)}) && !rows.stale)
 }
 
 // A mind decides in a world that plays; a world that does not play, or a tick
@@ -772,22 +808,59 @@ places_are_answered_in_order_within_the_budget :: proc(t:^testing.T) {
     q.querier=b
     place_query(&world.requests,q)
     problems:core.Problems
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},{},&problems)
+    places_run(&world.requests,&world.results,test_place_world(&world,&places,1),{},&problems)
     test_world_settle(&world)
     first,_:=core.get(&world.results,a)
     second,_:=core.get(&world.results,b)
     testing.expect(t,first.status==.Found && first.request==1 && first.count==3 && first.points[0]=={3,0,0} && first.scores[0]>=first.scores[1])
     testing.expect(t,second.status==.Waiting && second.request==2)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},{},&problems)
+    places_run(&world.requests,&world.results,test_place_world(&world,&places,2),{},&problems)
     second,_=core.get(&world.results,b)
     testing.expect(t,second.status==.Found && linalg.distance(second.points[0],mm.Vec3{6,0,0})<1e-4)
     // Of two queries of one querier, the last one is answered and the first does not take its place.
     q.querier=a
     place_query(&world.requests,q)
     place_query(&world.requests,q)
-    places_run(&world.requests,&places,&world.results,core.ref(&world.settings),core.read(&world.worlds),core.read(&world.perceivers),core.read(&world.perceptions),{},core.read(&world.paths),core.read(&world.agents),core.read(&world.characters),core.read(&world.walks),core.read(&world.swims),core.ref(&world.navigation),core.ref(&world.physics),{},{},{},&problems)
+    places_run(&world.requests,&world.results,test_place_world(&world,&places,3),{},&problems)
     first,_=core.get(&world.results,a)
     testing.expect(t,first.status==.Found && first.request==4)
+}
+
+// An action picks its places at once, within the queries of the tick it
+// shares with those that wait: once they are spent it waits for the next.
+@(test)
+an_action_picks_places_now_within_the_queries_of_the_tick :: proc(t:^testing.T) {
+    world:Behavior_World
+    if !test_world_init(t,&world) {return}
+    defer test_world_destroy(&world)
+    e:=core.create(&world.entities)
+    core.add(&world.worlds,e,core.World_Transform{transform={rotation=1,scale=1}})
+    test_world_settle(&world)
+    places:Places
+    defer places_free(&places)
+    world.settings=Behavior_Settings{queries=1}
+    problems:core.Problems
+    mind:=Mind_World{claims=&world.claims,problems=&problems}
+    m:ai.Mind
+    ctx:=ai.Mind_Context{user=&mind,holder=u64(e)}
+    act:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main,phase=.Update}
+    q:=Place_Query{center=.Querier,layout=.Grid,outer=4,spacing=1,keep=1}
+    q.tests[0]={measure=.Distance,from=.Point,point={3,0,0},min=0,max=8,response={kind=.Linear,slope=-1,shift_y=1}}
+    q.test_count=1
+    picked:=place_pick(&act,test_place_world(&world,&places,1),q)
+    testing.expect(t,picked.status==.Found && picked.request==0 && picked.count==1 && picked.points[0]=={3,0,0})
+    testing.expect_value(t,place_pick(&act,test_place_world(&world,&places,1),q).status,Place_Status.Waiting)
+    q.querier=e
+    place_query(&world.requests,q)
+    places_run(&world.requests,&world.results,test_place_world(&world,&places,1),{},&problems)
+    testing.expect_value(t,len(places.waiting),1)
+    places_run(&world.requests,&world.results,test_place_world(&world,&places,2),{},&problems)
+    test_world_settle(&world)
+    answered,ready:=place_result(&world.results,e,1)
+    testing.expect(t,ready && answered.points[0]==picked.points[0] && len(places.waiting)==0)
+    testing.expect_value(t,place_pick(&act,test_place_world(&world,&places,2),q).status,Place_Status.Waiting)
+    testing.expect_value(t,place_pick(&act,test_place_world(&world,&places,3),q).points[0],picked.points[0])
+    testing.expect_value(t,problems.count,0)
 }
 
 @(private="file")
@@ -795,6 +868,21 @@ Places_Test :: struct {
     using w:Behavior_World,
     places:Places,
     problems:core.Problems,
+    tick:u64, // each runs Behavior_Settings.queries
+}
+
+// What a place query of a test world reads, at a tick.
+@(private="file")
+test_place_world :: proc(f:^Behavior_World,places:^Places,tick:u64,index:^Smart_Index=nil) -> Place_World {
+    return {
+        places=places,settings=core.ref(&f.settings),worlds=core.read(&f.worlds),
+        perceivers=core.read(&f.perceivers),perceptions=core.read(&f.perceptions),
+        perceivables=core.read(&f.perceivables),paths=core.read(&f.paths),agents=core.read(&f.agents),
+        characters=core.read(&f.characters),walks=core.read(&f.walks),swims=core.read(&f.swims),
+        navigation=core.ref(&f.navigation),physics=core.ref(&f.physics),
+        offers={objects=core.read(&f.objects),index=core.ref(index),states=core.read(&f.states),worlds=core.read(&f.worlds)},
+        time={tick=tick},
+    }
 }
 
 // A query around a target, or measured from it, finds nothing once the
@@ -820,8 +908,8 @@ places_of_a_target_that_is_destroyed_are_none :: proc(t:^testing.T) {
     from.test_count=1
     orphan:=Place_Query{querier=gone,center=.Querier,layout=.Grid,outer=2,spacing=1,keep=1}
     run :: proc(f:^Places_Test) {
-        places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),{},core.read(&f.paths),
-            core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_Offers{objects=core.read(&f.objects),states=core.read(&f.states),worlds=core.read(&f.worlds)},core.ref(&f.claims),{},&f.problems)
+        f.tick+=1
+        places_run(&f.requests,&f.results,test_place_world(&f.w,&f.places,f.tick),core.ref(&f.claims),&f.problems)
         test_world_settle(&f.w)
     }
     place_query(&f.requests,around)
@@ -939,8 +1027,8 @@ places_come_from_the_mesh_joined_to_the_center_from_entities_and_from_offers :: 
         defer smart_index_free(&index)
         if !smart_index_update(&index,core.read(&f.objects)) {return {}}
         place_query(&f.requests,q)
-        places_run(&f.requests,&f.places,&f.results,core.ref(&f.settings),core.read(&f.worlds),core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),core.read(&f.paths),
-            core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),core.read(&f.swims),core.ref(&f.navigation),core.ref(&f.physics),Smart_Offers{objects=core.read(&f.objects),index=core.ref(&index),states=core.read(&f.states),worlds=core.read(&f.worlds)},core.ref(&f.claims),{},&f.problems)
+        f.tick+=1
+        places_run(&f.requests,&f.results,test_place_world(&f.w,&f.places,f.tick,&index),core.ref(&f.claims),&f.problems)
         test_world_settle(&f.w)
         result,_:=core.get(&f.results,q.querier)
         return result
@@ -1481,7 +1569,7 @@ a_tick_with_nothing_to_do_goes_through_no_row :: proc(t:^testing.T) {
 
     // No request and none waiting: no table is looked at, the results least of all.
     places:Places
-    places_run(&f.requests,&places,nil,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},nil)
+    places_run(&f.requests,nil,{places=&places},{},nil)
 
     // The objects get their state when they come; a tick after, with the tables as they were, none is gone through.
     box:=placed(&f,{})
@@ -1581,8 +1669,6 @@ a_crossing_claims_the_open_offer_on_its_link_entity :: proc(t:^testing.T) {
     f:Behavior_World
     if !test_world_init(t,&f) {return}
     defer test_world_destroy(&f)
-    routes:nav.Navigation_Agents
-    defer core.entity_map_destroy(&routes.routes)
     use :: Smart_Use(1)
     now:=clock_at(60,1)
     walker:=placed(&f,{})
@@ -1600,8 +1686,6 @@ a_crossing_claims_the_open_offer_on_its_link_entity :: proc(t:^testing.T) {
     }
     core.add(&f.objects,link,offers)
     core.add(&f.objects,nearby,Smart_Object{offers={0={use=use}}})
-    _,route:=core.entity_map_put(&routes.routes,walker,nav.Nav_Route{to={0,0,-4}})
-    if !testing.expect(t,route) {return}
     test_world_settle(&f)
 
     w:=Mind_World{
@@ -1611,7 +1695,7 @@ a_crossing_claims_the_open_offer_on_its_link_entity :: proc(t:^testing.T) {
     m:ai.Mind
     ctx:=ai.Mind_Context{user=&w,holder=u64(walker),tick=now.tick,dt=now.dt,reservations=&f.claims.reservations}
     a:=ai.Act(Smart_Act){ctx=&ctx,mind=&m,frame=&m.main,phase=.Enter}
-    testing.expect_value(t,cross_act(&a,core.ref(&routes),{},use,{entity=walker},1),ai.Status.Running)
+    testing.expect_value(t,cross_act(&a,use,{entity=walker},1),ai.Status.Running)
     testing.expect(t,claim_held(&f.claims,smart_key({object=link,offer=5}),walker,now))
     testing.expect(t,!claim_held(&f.claims,smart_key({object=nearby,offer=0}),walker,now))
 
@@ -1691,10 +1775,7 @@ a_step_can_perceive_take_a_token_query_places_and_patrol_without_a_mind :: proc(
     request:=f.requests.last
     _,ready:=place_result(&f.results,scout,request)
     testing.expect(t,!ready && request!=0)
-    places_run(&f.requests,&places,&f.results,core.ref(&f.settings),core.read(&f.worlds),
-        core.read(&f.perceivers),core.read(&f.perceptions),core.read(&f.perceivables),
-        core.read(&f.paths),core.read(&f.agents),core.read(&f.characters),core.read(&f.walks),
-        core.read(&f.swims),{},{},{},{},{},&f.problems)
+    places_run(&f.requests,&f.results,test_place_world(&f.behavior,&places,time.tick),{},&f.problems)
     test_world_settle(&f)
     answer,found:=place_result(&f.results,scout,request)
     testing.expect(t,found && answer.status==.Found && answer.count>0)

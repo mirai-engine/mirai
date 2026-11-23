@@ -53,6 +53,7 @@ NAV_CROSS_SLACK :: f32(1.0)    // s a crossing may outlast its arc before it cou
 NAV_FLY_AHEAD :: 6             // portals of its corridor a flying agent looks for ahead
 NAV_SHORE_MARGIN :: f32(16)    // m around its way where an agent that swims looks for shores
 NAV_SHORE_SPACING :: f32(2)    // m between the links of a shore
+NAV_CLASS_MISSING :: i8(-2)    // Nav_Route.named of an agent whose class name no class has
 
 @(component,description="A Character that walks, flies with a Fly or swims with a Swim where navigation is asked to take it, with a class that fits its capsule and collision.")
 Nav_Agent :: struct {
@@ -103,6 +104,8 @@ Nav_Route :: struct {
     replans:u32,
     steering:bool,
     partner:i8, // class of the other space; -1: none
+    named:i8,   // the class Nav_Agent.class names: -1 none, NAV_CLASS_MISSING when no class has that name
+    named_known:bool, // named is looked up: false after Nav_Agent or the classes changed
     medium,through,queued:bool,
     passthrough,placed:bool,
     seat:enum u8 {None,Player,Shared},
@@ -115,7 +118,7 @@ agent_route :: proc "contextless" (a:^Navigation_Agents,e:core.Entity) -> ^Nav_R
     return core.entity_map_get(&a.routes,e) if a!=nil else nil
 }
 
-Nav_Request_Kind :: enum u8 {Move_To,Follow,Stop,Look_At,Look_Along,Crossing_Done}
+Nav_Request_Kind :: enum u8 {Move_To,Follow,Stop,Look_At,Look_Along,Crossing_Done,Crossing_Skip}
 
 Nav_Request :: struct {
     kind:Nav_Request_Kind,
@@ -141,6 +144,9 @@ nav_look_at :: proc(r:^Nav_Requests,e:core.Entity,point:[3]f32) {core.push(&r.qu
 nav_look_along :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Look_Along,entity=e})}
 // The game crossed the link the agent waits at: it goes on from its end.
 nav_crossing_done :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Crossing_Done,entity=e})}
+// The game is done with the link the agent waits at without taking it across:
+// navigation puts it at the end, facing as it was, and it goes on from there.
+nav_crossing_skip :: proc(r:^Nav_Requests,e:core.Entity) {core.push(&r.queue,Nav_Request{kind=.Crossing_Skip,entity=e})}
 
 Nav_Event_Kind :: enum u8 {
     Arrived,
@@ -196,11 +202,12 @@ Navigation_Agents :: struct {
     head,waiting_count:int,
     places_read:int,
     shapes:[4]core.Shape,  // agents, paths, authored links and characters
+    agents_seen:core.Seen, // of the Nav_Agents the routes last looked up their named class in
     refs:[dynamic]ai.Nav_Ref,
     grid:spatial.Grid,     // the agents and obstacles of the tick (near) by where they stand on the ground
     avoid_scratch:[]Avoid_Scratch,
     near:[dynamic]Near,
-    widest_ground:f32,
+    widest_ground:f32,     // m, the widest radius of the agents of the tick that crowd others (crowd_ahead)
 }
 
 // The search toward a target that its followers share: those of one class
@@ -337,10 +344,13 @@ navigation_agents :: proc(
         for &tree in a.trees {tree.target,tree.built=core.NONE,false}
         a.head,a.waiting_count=0,0
         for &r,i in a.routes.values {
-            r.queued=false
+            r.queued,r.named_known=false,false
             e:=a.routes.entities[i]
             if p:=core.staged(paths,e);p!=nil {agent_reset(a,p,&r,e,loco)}
         }
+    }
+    if core.table_touched(agents,&a.agents_seen) {
+        for &r in a.routes.values {r.named_known=false}
     }
     for asked in core.take(&requests.queue) {
         if far_request(paths,fars,asked,worlds) {continue}
@@ -373,8 +383,14 @@ navigation_agents :: proc(
             p.look,p.looking=asked.point,true
         case .Look_Along:
             p.looking=false
-        case .Crossing_Done:
-            if n.ptr!=nil && p.state==.Crossing && p.manual {agent_crossed(n.ptr,a,p,r,asked.entity,events,loco)}
+        case .Crossing_Done,.Crossing_Skip:
+            if n.ptr==nil || p.state!=.Crossing || !p.manual {continue}
+            if asked.kind==.Crossing_Skip {
+                rotation:=mm.Quat(1)
+                if pose,placed:=core.get(worlds,asked.entity);placed {rotation=pose.rotation}
+                core.place(placer,asked.entity,r.to,rotation)
+            }
+            agent_crossed(n.ptr,a,p,r,asked.entity,events,loco)
         }
     }
     for &r in a.routes.values {r.placed,r.seat=false,.None}
@@ -427,17 +443,21 @@ navigation_agents :: proc(
         flies:=can_fly && (!walker || moving.mode==locomotion.MODE_FLYING)
         swims:=!flies && can_swim && (!walker || moving.mode==locomotion.MODE_SWIMMING)
         space:=Nav_Space.Air if flies else (.Water if swims else .Surface)
-        selected:=-1
-        class_name:=agent.class
-        if name:=base.text_get(class_name[:]);name!="" {
-            selected=class_find(n.ptr,name)
-            if selected<0 {
-                core.report(problems,e,"navigation.agent_class","Navigation class %q does not exist: choose a class from Navigation_Settings",name)
-                agent_stop_crossing(a,p,r,e,loco)
-                if p.state!=.Idle && p.state!=.Failed {agent_fail(p,e,events)}
-                continue
-            }
+        if !r.named_known {
+            class_name:=agent.class
+            name:=base.text_get(class_name[:])
+            r.named=-1 if name=="" else i8(class_find(n.ptr,name))
+            if name!="" && r.named<0 {r.named=NAV_CLASS_MISSING}
+            r.named_known=true
         }
+        if r.named==NAV_CLASS_MISSING {
+            class_name:=agent.class
+            core.report(problems,e,"navigation.agent_class","Navigation class %q does not exist: choose a class from Navigation_Settings",base.text_get(class_name[:]))
+            agent_stop_crossing(a,p,r,e,loco)
+            if p.state!=.Idle && p.state!=.Failed {agent_fail(p,e,events)}
+            continue
+        }
+        selected:=int(r.named)
         class,radius,height:=class_of(n.ptr,character,collider,pose.scale,space,selected)
         // The other space it may cross into: the surface for one that walks, or the water or the air from it.
         partner:=-1
@@ -1398,6 +1418,7 @@ agents_avoid :: proc(
         }
         tick.fastest=max(tick.fastest,linalg.length(near.velocity))
         tick.widest=max(tick.widest,near_sphere(near))
+        if near.crowd {a.widest_ground=max(a.widest_ground,near.radius)}
     }
     if count<2 {return}
     if system!=nil && jobs.worker_count(system)>0 {

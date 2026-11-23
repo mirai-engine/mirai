@@ -283,50 +283,43 @@ soldier_advance :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Sold
     return behavior.move_act(a,position)
 }
 
-// Asks for the wall that covers it best and stays behind it: stage 0 waits
-// for the answer and claims the place, 1 walks there while it holds it, 2
-// holds it in use. A wounded soldier claims first.
+// Picks the wall that covers it best and stays behind it: stage 0 picks it
+// (at the next tick when the queries of places of this one are spent) and
+// claims it, 1 walks there while it holds it, 2 holds it in use. A wounded
+// soldier claims first.
 @(act="Take_Cover")
-soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State,.Read),places:^behavior.Place_Requests,results:^core.Table(behavior.Place_Result,.Read),requests:^nav.Nav_Requests) -> ai.Status {
+soldier_cover :: proc(a:^ai.Act(Soldier_Act),w:Arena,soldiers:^core.Table(Soldier_State,.Read),places:behavior.Place_World,requests:^nav.Nav_Requests) -> ai.Status {
     e:=behavior.agent(a)
+    if a.phase==.Exit {
+        if ai.stage(a)==1 {nav.nav_stop(requests,e)}
+        return .Success
+    }
     user:=arena_user(w,e)
     if s,ok:=core.get(soldiers,e);ok && s.health<SOLDIER_WOUNDED {user.priority=SOLDIER_FIRST}
-    switch a.phase {
-    case .Enter:
+    switch ai.stage(a) {
+    case 0:
         subject,_,_:=arena_seen(w,e)
-        mine:=user.team
-        q:=behavior.Place_Query{querier=e,center=.Querier,layout=.Offers,use=USE_COVER,priority=user.priority,outer=14,keep=1}
+        q:=behavior.Place_Query{center=.Querier,layout=.Offers,use=USE_COVER,priority=user.priority,outer=14,keep=1}
         falling:=ai.Response{kind=.Linear,slope=-1,shift_y=1}
         q.tests[0]={measure=.Visible,from=.Target if subject!=core.NONE else .Querier,target=subject,min=0,max=1,response=falling}
         q.tests[1]={measure=.Path,from=.Querier,min=0,max=30,response=falling}
-        q.tests[2]={measure=.Influence,teams=behavior.Teams(1<<u32(TEAM_RED+TEAM_BLUE-mine)),min=0,max=2,response={kind=.Linear,slope=-0.5,shift_y=1}}
+        q.tests[2]={measure=.Influence,teams=behavior.Teams(1<<u32(TEAM_RED+TEAM_BLUE-user.team)),min=0,max=2,response={kind=.Linear,slope=-0.5,shift_y=1}}
         q.test_count=3
-        request:=behavior.place_query(places,q)
-        if request==0 {return .Failure}
-        a.memory[0]=u64(request)
-        return .Running
-    case .Update:
-        switch ai.stage(a) {
-        case 0:
-            result,ready:=behavior.place_result(results,e,u32(a.memory[0]))
-            if !ready {return .Running}
-            if result.status!=.Found || result.offers[0]<0 {return .Failure}
-            found,open:=behavior.smart_offer_at(behavior.mind_smart_view(a),result.entities[0],int(result.offers[0]),user,USE_COVER)
-            if !open || !behavior.smart_claim(a,found,user) {return .Failure}
-            nav.nav_move_to(requests,e,result.points[0])
-            return ai.next_stage(a)
-        case 1:
-            if !ai.claim_held(a) {return .Failure}
-            status:=behavior.path_status(a)
-            if status!=.Success {return status}
-            ai.claim_use(a)
-            return ai.next_stage(a)
-        }
-        return .Running
-    case .Exit:
-        if ai.stage(a)==1 {nav.nav_stop(requests,e)}
+        result:=behavior.place_pick(a,places,q)
+        if result.status==.Waiting {return .Running}
+        if result.status!=.Found || result.offers[0]<0 {return .Failure}
+        found,open:=behavior.smart_offer_at(behavior.mind_smart_view(a),result.entities[0],int(result.offers[0]),user,USE_COVER)
+        if !open || !behavior.smart_claim(a,found,user) {return .Failure}
+        nav.nav_move_to(requests,e,result.points[0])
+        return ai.next_stage(a)
+    case 1:
+        if !ai.claim_held(a) {return .Failure}
+        status:=behavior.path_status(a)
+        if status!=.Success {return status}
+        ai.claim_use(a)
+        return ai.next_stage(a)
     }
-    return .Success
+    return .Running
 }
 
 // Fires its magazine at the enemy it sees, a round every 0.4 s, holding one
@@ -534,9 +527,9 @@ guard_patrol :: proc(a:^ai.Act(Guard_Act)) -> ai.Status {return behavior.patrol_
 
 // Once begun it lasts until navigation takes the guard on from the other side.
 @(act="Vault")
-guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena,routes:core.Ref(nav.Navigation_Agents),placer:core.Placer) -> ai.Status {
+guard_vault :: proc(a:^ai.Act(Guard_Act),w:Arena) -> ai.Status {
     if ai.entering(a) {ai.commit(a,1)}
-    return behavior.cross_act(a,routes,placer,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
+    return behavior.cross_act(a,USE_VAULT,arena_user(w,behavior.agent(a)),0.6)
 }
 
 // Builds the arenas that have not been built, once the world runs: their

@@ -17,9 +17,12 @@ reservations) belongs to
   (`Time.resimulating`) do not decide.
 - The generator checks a mind when it builds (every value has one action, the shapes, the name
   and how many minds fit in `Minds`); `minds_tick` registers it by name in `Minds` (application
-  storage, shared), which keeps the action names as bytes for the editor, which does not know the
-  game's enum. `minds_unknown` (`fixed`, `apply`, `server`) reports the agents of a name no mind
-  declares with the `behavior.mind` problem.
+  storage, shared) the first time it ticks in a world, which keeps the action names as bytes for
+  the editor, which does not know the game's enum. `Mind_Rows` (by world, shared) keeps the rows
+  of each mind, so a mind visits only its own agents; it groups them again when the rows move, a
+  mind ticks there first, or an agent changed its mind (seen at the first tick after).
+  `minds_unknown` (`fixed`, `apply`, `server`) reports the agents of a name no mind declares with
+  the `behavior.mind` problem.
 - `Mind_Agent` carries the name and the `ai.Mind` of the agent, which is copied with the world. It
   is shared: the step of each mind writes those of its agents.
 - `Mind_World` is what every mind reads (its agents, paths, smart objects, claims, time); the
@@ -102,8 +105,8 @@ what it perceives; `think` only reads and proposes, and the actions write.
 - A link that the game crosses (a kind of its own or one of `Nav_Agent.manual`) with an offer on
   its entity: the agent waits at its start in `Crossing`; `cross_act` reserves an offer directly
   on `Nav_Path.link_entity`, waits
-  its turn, puts it on the other side (`core.place`) and notifies navigation, and finishes when
-  navigation takes it from there.
+  its turn, asks navigation to put it on the other side (`nav.nav_crossing_skip`), and finishes
+  when navigation takes it from there.
 
 ## Influence maps
 
@@ -175,8 +178,10 @@ what it perceives; `think` only reads and proposes, and the actions write.
 - A query whose center or one of whose tests measures from an entity that no longer exists finds
   no places (`Empty`), and that of one who was destroyed while waiting is not answered. Of
   several queries of an agent that wait, only the last is answered.
-- `places_run` (`fixed`, `react`, `server`) resolves in arrival order `Behavior_Settings.queries`
-  per tick and is the sole writer of `Place_Result`.
+- `places_run` (`fixed`, `react`, `server`) resolves in arrival order and is the sole writer of
+  `Place_Result`. An action that needs its places now runs its query itself with `place_pick`
+  (`Place_World`): the two share `Behavior_Settings.queries` per tick (`Places.spent`), and a pick
+  past them answers `Waiting`, to ask again at the next tick.
 
 ## Game steps
 

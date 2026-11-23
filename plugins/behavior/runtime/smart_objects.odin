@@ -208,17 +208,16 @@ smart_offer_read :: proc(v:Smart_View,object:core.Entity,i:int,user:Smart_User) 
 
 // Crosses the link the agent waits at (Nav_Path.state Crossing, of a kind the
 // game crosses), claiming the offer of `use` on the entity of the link: it
-// waits while others hold it (stage 0), takes `seconds` (1), lands at the
-// other end and waits for navigation to take it from there (2). Success once
-// across; Failure when it is not at such a link.
-cross_act :: proc(a:^ai.Act($A),routes:core.Ref(nav.Navigation_Agents),placer:core.Placer,use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
+// waits while others hold it (stage 0), takes `seconds` (1), and navigation
+// puts it at the other end (nav.nav_crossing_skip) and takes it from there
+// (2). Success once across; Failure when it is not at such a link.
+cross_act :: proc(a:^ai.Act($A),use:Smart_Use,user:Smart_User,seconds:f64) -> ai.Status {
     if a.phase==.Exit {return .Success}
     w,e,v:=world_of(a),agent(a),mind_smart_view(a)
     p,ok:=agent_path(a)
     crossing:=ok && p.state==.Crossing && p.manual
     if ai.stage(a)==2 {return .Running if crossing else .Success}
-    route:=nav.agent_route(routes.ptr,e)
-    if !crossing || route==nil {return .Failure}
+    if !crossing {return .Failure}
     if ai.stage(a)==0 {
         found,open:=smart_offer(v,p.link_entity,use,user)
         if !open || !smart_claim(a,found,user) {return .Running}
@@ -226,10 +225,7 @@ cross_act :: proc(a:^ai.Act($A),routes:core.Ref(nav.Navigation_Agents),placer:co
         ai.next_stage(a)
     }
     if ai.stage_elapsed(a)<seconds {return .Running}
-    rotation:=mm.Quat(1)
-    if pose,placed:=core.get(v.worlds,e);placed {rotation=pose.rotation}
-    core.place(placer,e,route.to,rotation)
-    nav.nav_crossing_done(w.requests,e)
+    nav.nav_crossing_skip(w.requests,e)
     return ai.next_stage(a)
 }
 

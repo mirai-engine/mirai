@@ -1873,13 +1873,11 @@ walkers_that_crowd_at_the_start_of_a_link_keep_to_the_mesh :: proc(t:^testing.T)
             drops[i]=drops[i]+heights[i]-pose.position.y if p.state!=.Crossing && pose.position.y<heights[i] else 0
             if drops[i]>1 {fell+=1}
             heights[i]=pose.position.y
-            // The game crosses the fence a while after it starts, as the guards of the demo.
+            // The game is done with the fence a while after it starts, and navigation puts the
+            // walker at its end, as the guards of the demo.
             if p.state==.Crossing && p.manual {
                 crossing[i]+=1
-                if crossing[i]==36 {
-                    core.place({&f.transforms,core.read(&f.parents),&f.places,nil},e,agent_route(&f.run,e).to)
-                    nav_crossing_done(&f.nav_requests,e)
-                }
+                if crossing[i]==36 {nav_crossing_skip(&f.nav_requests,e)}
                 continue
             }
             crossing[i]=0

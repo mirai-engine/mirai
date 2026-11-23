@@ -2,8 +2,7 @@
 
 A fixed step binds `behavior.Smart_Offers` and combines it with a reference to `Claims` in
 `Smart_View{offers=offers, claims=core.ref(claims)}`. Minds use `behavior.mind_smart_view`.
-Bind `^behavior.Smart_Uses` to spend an offer, and `core.Ref(nav.Navigation_Agents)` and
-`core.Placer` for a custom link crossing.
+Bind `^behavior.Smart_Uses` to spend an offer.
 
 ## An object that offers a use
 
@@ -53,27 +52,30 @@ get_ammo :: proc(a:^ai.Act(Act), uses:^behavior.Smart_Uses) -> ai.Status {
 A `nav.Nav_Link` whose kind the game declares (`LINK_VAULT :: nav.Nav_Link_Kind(7)`; the agent
 lists it in `Nav_Agent.manual`) plus a `Smart_Object` offer on the same entity. When the agent
 reaches it, its `Nav_Path` is `Crossing` with `manual` and names the link entity. Set the
-link's capacity to one for an exclusive crossing. For a custom animated crossing, enable
-passthrough, move the character with the animation or a pose target, and call
-`nav.nav_crossing_done` when it reaches the other end.
+link's capacity to one for an exclusive crossing. `cross_act` waits its turn, takes the time it
+says and calls `nav.nav_crossing_skip`, which puts the agent at the end of the link. For a custom
+animated crossing, enable passthrough, move the character with the animation or a pose target
+(the `Crossing` `nav.Nav_Event` gives the ends), and call `nav.nav_crossing_done` when it reaches
+the other end.
 
 ```odin
 if p, ok := behavior.agent_path(t); ok && p.state == .Crossing && p.manual && p.kind == LINK_VAULT {
     ai.propose(t, .Vault, 1)
 }
 @(act="Vault")
-vault :: proc(a:^ai.Act(Act),routes:core.Ref(nav.Navigation_Agents),placer:core.Placer)
-              -> ai.Status {
+vault :: proc(a:^ai.Act(Act)) -> ai.Status {
     if ai.entering(a) {ai.commit(a, 1)}
     user := behavior.Smart_User{entity=behavior.agent(a), team=TEAM_ENEMY}
-    return behavior.cross_act(a, routes, placer, USE_VAULT, user, 0.6)
+    return behavior.cross_act(a, USE_VAULT, user, 0.6)
 }
 ```
 
 ## Choosing a place (cover, flank)
 
-Submit a query with `place_query` from an action or a fixed step. The answer arrives in the
-querier's `Place_Result`. Bind `^behavior.Place_Requests` to submit and
+An action runs a query now with `place_pick`, binding `behavior.Place_World`: it answers within
+the queries of the tick (`Behavior_Settings.queries`), or says `Waiting` when they are spent, to
+ask again at the next tick. A fixed step submits a query with `place_query`, and the answer
+arrives in the querier's `Place_Result`: bind `^behavior.Place_Requests` to submit and
 `^core.Table(behavior.Place_Result,.Read)` to read it. Layouts and tests are also available via
 `behavior.query`. Layout
 `Remembered` takes what the agent remembers (the enemies of the teams asked and the noises with no
@@ -84,25 +86,23 @@ Set `Place_Test.sight_layers` to choose the blockers for a visibility test. For 
 cover scores, set `Behavior_Settings.influence_enabled` in project settings.
 
 ```odin
-case .Enter:
-    q := behavior.Place_Query{querier=behavior.agent(a), center=.Querier,
-        layout=.Offers, use=USE_COVER, outer=14, keep=1}
-    falling := ai.Response{kind=.Linear, slope=-1, shift_y=1}
-    q.tests[0] = {measure=.Visible, from=.Target, target=enemy, min=0, max=1, response=falling}
-    q.tests[1] = {measure=.Path, from=.Querier, min=0, max=30, response=falling}
-    q.test_count = 2
-    request := behavior.place_query(places, q)
-    if request == 0 {return .Failure}
-    a.memory[0] = u64(request)
-    return .Running
-case .Update:
-    r, ready := behavior.place_result(results, behavior.agent(a), u32(a.memory[0]))
-    if !ready {return .Running}
-    if r.status != .Found {return .Failure}
-    // r.points[0] is the best place; r.entities[0] and r.offers[0] name the object and its offer
+@(act="Take_Cover")
+cover :: proc(a:^ai.Act(Act), places:behavior.Place_World) -> ai.Status {
+    if ai.stage(a) == 0 {
+        q := behavior.Place_Query{center=.Querier, layout=.Offers, use=USE_COVER, outer=14, keep=1}
+        falling := ai.Response{kind=.Linear, slope=-1, shift_y=1}
+        q.tests[0] = {measure=.Visible, from=.Target, target=enemy, min=0, max=1, response=falling}
+        q.tests[1] = {measure=.Path, from=.Querier, min=0, max=30, response=falling}
+        q.test_count = 2
+        r := behavior.place_pick(a, places, q) // the querier is the agent
+        if r.status == .Waiting {return .Running}
+        if r.status != .Found {return .Failure}
+        // r.points[0] is the best place; r.entities[0] and r.offers[0] name its object and offer
+    }
+}
 ```
 
-Set the query's `priority` to the querier's `Smart_User.priority`. When it completes, use
+Set the query's `priority` to the querier's `Smart_User.priority`. With the answer, use
 `smart_offer_at` with the returned entity and offer index to check whether it can still be taken.
 Claim it with `smart_claim` and walk to the result point. Check `ai.claim_held(a)` while walking
 and call `ai.claim_use(a)` when the agent starts using it.

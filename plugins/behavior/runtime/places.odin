@@ -16,9 +16,11 @@ import phys "plugins:physics/runtime"
 // keeps those on the navigation mesh of the querier, measures each by its
 // tests and scores them with their considerations; the best come
 // back in the Place_Result of the querier, with the request it answers.
-// Queries run in order of arrival, Behavior_Settings.queries of them a tick.
-// The score is a product, so a ray or a search is spent only on a candidate
-// the cheaper measures left above zero that can still be among the kept.
+// Queries run in order of arrival; an action that needs its places now runs
+// its query itself (place_pick). Both take from Behavior_Settings.queries of
+// them a tick. The score is a product, so a ray or a search is spent only on a
+// candidate the cheaper measures left above zero that can still be among the
+// kept.
 
 PLACE_TESTS :: 8
 PLACE_CANDIDATES :: 128
@@ -123,15 +125,40 @@ place_result :: proc "contextless" (
     return result,true
 }
 
-// What the queries keep between ticks: those that wait, and a search for the
-// Path measure. Not the state of the world.
-@(storage,host,by_world,free="places_free")
+// What the queries keep between ticks: those that wait, a search for the
+// Path measure and the queries run in the tick. Not the state of the world.
+// Shared: the actions of the minds of every library run their queries.
+@(storage,host,by_world,shared,free="places_free")
 Places :: struct {
     waiting:[dynamic]Place_Query, // from head on, in order of arrival
     head:int,
     query:ai.Nav_Query,
     volume_query:ai.Nav_Volume_Query,
     refs:[dynamic]ai.Nav_Ref,
+    tick:u64,                     // of spent
+    spent:int,                    // queries run in that tick
+}
+
+// What a query of places reads, and the search it runs with. Without
+// Smart_View.claims: the step that receives it gives its own.
+@(params)
+Place_World :: struct {
+    places:^Places,
+    settings:core.Ref(Behavior_Settings),
+    worlds:^core.Table(core.World_Transform,.Read),
+    perceivers:^core.Table(Perceiver,.Read),
+    perceptions:^core.Table(Perception,.Read),
+    perceivables:^core.Table(Perceivable,.Read),
+    paths:^core.Table(nav.Nav_Path,.Read),
+    agents:^core.Table(nav.Nav_Agent,.Read),
+    characters:^core.Table(phys.Character,.Read),
+    walks:^core.Table(locomotion.Walk,.Read),
+    swims:^core.Table(locomotion.Swim,.Read),
+    navigation:core.Ref(nav.Navigation),
+    physics:core.Ref(phys.Physics_State),
+    offers:Smart_Offers,
+    influence:core.Ref(Influence),
+    time:core.Time,
 }
 
 places_free :: proc(p:^Places) {
@@ -143,14 +170,11 @@ places_free :: proc(p:^Places) {
 
 @(step="fixed",stage="react",server)
 places_run :: proc(
-    requests:^Place_Requests,places:^Places,results:^core.Table(Place_Result),settings:core.Ref(Behavior_Settings),
-    worlds:^core.Table(core.World_Transform,.Read),perceivers:^core.Table(Perceiver,.Read),perceptions:^core.Table(Perception,.Read),perceivables:^core.Table(Perceivable,.Read),paths:^core.Table(nav.Nav_Path,.Read),
-    agents:^core.Table(nav.Nav_Agent,.Read),characters:^core.Table(phys.Character,.Read),walks:^core.Table(locomotion.Walk,.Read),swims:^core.Table(locomotion.Swim,.Read),
-    navigation:core.Ref(nav.Navigation),physics:core.Ref(phys.Physics_State),
-    offers:Smart_Offers,claims:core.Ref(Claims),influence:core.Ref(Influence),problems:^core.Problems,
+    requests:^Place_Requests,results:^core.Table(Place_Result),w:Place_World,
+    claims:core.Ref(Claims),problems:^core.Problems,
 ) {
+    places:=w.places
     if len(requests.queue.items)==0 && len(places.waiting)==0 {return}
-    smart:=Smart_View{offers=offers,claims=claims}
     for query in core.take(&requests.queue) {
         if _,err:=append(&places.waiting,query);err!=nil {
             core.report(problems,query.querier,"behavior.memory","No memory to queue a place query; free memory")
@@ -161,21 +185,22 @@ places_run :: proc(
             core.add(results,query.querier,Place_Result{request=query.request,status=.Waiting})
         } else {result^={request=query.request,status=.Waiting}}
     }
-    budget:=int(settings.queries) if settings.ptr!=nil else 4
-    for budget>0 && places.head<len(places.waiting) {
+    for places.head<len(places.waiting) {
         query:=places.waiting[places.head]
-        places.head+=1
         // A querier destroyed while it waited gets no answer.
-        if _,alive:=core.get(worlds,query.querier);!alive {continue}
+        if _,alive:=core.get(w.worlds,query.querier);!alive {
+            places.head+=1
+            continue
+        }
         // Only the last query of a querier is answered: one asked after it waits in its row.
         row:=core.staged(results,query.querier)
-        if row!=nil && row.request!=query.request {continue}
-        budget-=1
-        result:Place_Result
-        filter:=place_filter(navigation,query.querier,paths,agents,characters,walks,swims,physics)
-        if _,memory:=place_run(places,query,&result,worlds,perceivers,perceptions,perceivables,paths,navigation,physics,&filter,smart,agents,influence.ptr);!memory {
-            core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
+        if row!=nil && row.request!=query.request {
+            places.head+=1
+            continue
         }
+        if !place_spend(w) {break}
+        places.head+=1
+        result:=place_answer(w,claims,query,problems)
         if row!=nil {row^=result}
     }
     if places.head==len(places.waiting) {
@@ -186,6 +211,40 @@ places_run :: proc(
         base.truncate(&places.waiting,len(places.waiting)-places.head)
         places.head=0
     }
+}
+
+// Runs a query of places for the agent of an action now, when the queries of
+// the tick (Behavior_Settings.queries, shared with those that wait) are not
+// spent: its best places, Found or Empty, without a request. Waiting when they
+// are: it asks again at the next tick. The querier is the agent.
+place_pick :: proc(a:^$T,w:Place_World,query:Place_Query) -> Place_Result {
+    if !place_spend(w) {return {status=.Waiting,offers=-1}}
+    query:=query
+    query.querier,query.request=agent(a),0
+    world:=world_of(a)
+    return place_answer(w,core.ref(world.claims),query,world.problems)
+}
+
+// Takes one of the queries of the tick; false when they are spent.
+@(private)
+place_spend :: proc "contextless" (w:Place_World) -> bool {
+    places:=w.places
+    if places.tick!=w.time.tick {places.tick,places.spent=w.time.tick,0}
+    budget:=int(w.settings.queries) if w.settings.ptr!=nil else 4
+    if places.spent>=budget {return false}
+    places.spent+=1
+    return true
+}
+
+// The answer to a query, as the querier walks and with the claims given.
+@(private)
+place_answer :: proc(w:Place_World,claims:core.Ref(Claims),query:Place_Query,problems:^core.Problems) -> (result:Place_Result) {
+    filter:=place_filter(w.navigation,query.querier,w.paths,w.agents,w.characters,w.walks,w.swims,w.physics)
+    smart:=Smart_View{offers=w.offers,claims=claims}
+    if _,memory:=place_run(w.places,query,&result,w.worlds,w.perceivers,w.perceptions,w.perceivables,w.paths,w.navigation,w.physics,&filter,smart,w.agents,w.influence.ptr);!memory {
+        core.report(problems,query.querier,"behavior.memory","no memory for the path search of a place query: its Path tests find no path to any place; free memory")
+    }
+    return
 }
 
 // What the querier walks and crosses, for the Path measure: as navigation moves it.

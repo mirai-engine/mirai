@@ -327,8 +327,14 @@ sight_around :: proc(s:^Sight,eye:mm.Vec3,reach:f32,limit:int) -> []u32 {
         s.rows[count]=u32(row)
         count+=1
     }
-    slice.sort(s.rows[:count])
-    return s.rows[:count]
+    // The grid lists the rows of a cell last in first: those of one cell come reversed, of several mixed.
+    rows:=s.rows[:count]
+    switch {
+    case count<2 || slice.is_sorted(rows):
+    case slice.is_sorted_by(rows,proc(a,b:u32) -> bool {return a>b}): slice.reverse(rows)
+    case: slice.sort(rows)
+    }
+    return rows
 }
 
 @(private)
