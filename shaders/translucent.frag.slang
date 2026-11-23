@@ -3,19 +3,25 @@
 //! variant cost MIRAI_COST=1
 // The light of the blended surfaces behind the per-pixel glass layers, added
 // back to front over the scene that glass_filter.frag has filtered: sun and
-// local lights shadowed by the maps of the view alone, whose pages it marks
-// for the next frame (a light no map holds reaches it whole), and the probe
-// volume for diffuse and specular indirect light.
+// local lights shadowed by the texel of the maps of the view they fall in,
+// whose pages it marks for the next frame (a light no map holds reaches it
+// whole), and the probe volume for diffuse and specular indirect light.
+// [earlydepthstencil] lets hardware reject fragments hidden behind the opaque
+// depth buffer before running lighting or storage-buffer atomics.
+//
+// unlayered: no blended instance in sight has material layers.
+// quiet: off the feedback turn of the program, texture feedback is skipped.
+// unlisted: the frame has no shadowless lights, compiling out the shadowless
+// list walk and its thread-private arrays.
+//! constant unlayered MIRAI_MATERIAL_NO_LAYERS
+//! constant quiet MIRAI_TEXTURE_FEEDBACK_QUIET
+//! constant unlisted MIRAI_TRANSLUCENT_UNLISTED
 #define MIRAI_LIGHT_MAPS
 #define MIRAI_NO_SHADOW_RAYS
 #define SUN_SHADOW_SLOT SLOT_PASS5
 #define SHADOW_DATA_SLOT SLOT_PASS8
 #define SHADOW_MARKS_SLOT SLOT_PASS6
 #define MIRAI_TEXTURE_FEEDBACK
-// The lights of its points, decided once for a cell of its instance
-// (translucent_draws.comp): a point in it takes every light with shadows that
-// reaches it, with no budget since it traces no rays, and those without
-// shadows from a list, with no walk of the trees.
 #define MIRAI_LIGHTS_GIVEN
 #include "raster.slang"
 #include "glass.slang"
@@ -35,53 +41,58 @@ struct Params_Block { uint light_budget; uint near_layer; uint far_layer; uint o
 [[vk::binding(SLOT_PASS4, 0)]] StructuredBuffer<uint2> entries : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 #include "direct_grid.slang"
 
-// The cells of the instance of the fragment and the box they split.
-static uint2 given_cells;
+// Shadowed lights of a forward blend point: brightest up to min(budget, TRANSLUCENT_LIGHTS)
+// from the world light_grid cell, capped at DIRECT_FEW cell entries so coarse cells never
+// trigger an unbounded per-fragment scan.
+#define TRANSLUCENT_LIGHTS 8u
+static uint given_lights[TRANSLUCENT_LIGHTS];
+static uint given_instance;
 static float3 given_low, given_high;
-bool given_holds(float3 position, uint share) {
-    return share == LIGHT_SHARE_ALL && all(position >= given_low) && all(position <= given_high);
-}
 
-// Shadowed local lights from the 1m world light_grid (O(1) cell lookup, capped
-// to the brightest `budget` lights reaching the point); falls back to light_cut
-// only when a single cell holds more than DIRECT_FEW lights.
 uint point_light_cut(float3 position, float3 normal, uint budget, uint share) {
-    budget = min(budget, LIGHT_CUT_MAX);
+    budget = min(budget, TRANSLUCENT_LIGHTS);
     if (budget == 0u || params.cells == 0u) return 0u;
     uint4 row = direct_cell(position);
     uint total = row.y + row.z;
     if (total == 0u) return 0u;
-    if (total > DIRECT_FEW) return light_cut(position, normal, budget, share);
+    uint limit = min(total, DIRECT_FEW);
+    float weights[TRANSLUCENT_LIGHTS];
     uint count = 0u;
     float worst = FLT_MAX;
     uint worst_at = 0u;
     [loop]
-    for (uint i = 0u; i < total; i++) {
+    for (uint i = 0u; i < limit; i++) {
         uint light = light_grid[row.x + i].x;
         float w = light_weight(light_grid[params.cells + LIGHT_WEIGHT_ROWS * light],
             light_grid[params.cells + LIGHT_WEIGHT_ROWS * light + 1u], position, normal);
         if (!(w > 0.0)) continue;
         if (count < budget) {
-            light_cut_nodes[count] = LIGHT_CUT_DIRECT | light;
-            light_cut_needs[count] = w;
+            given_lights[count] = light;
+            weights[count] = w;
             if (w < worst) { worst = w; worst_at = count; }
             count++;
         } else if (w > worst) {
-            light_cut_nodes[worst_at] = LIGHT_CUT_DIRECT | light;
-            light_cut_needs[worst_at] = w;
-            worst = light_cut_needs[0];
+            given_lights[worst_at] = light;
+            weights[worst_at] = w;
+            worst = weights[0];
             worst_at = 0u;
             [loop]
             for (uint j = 1u; j < count; j++) {
-                if (light_cut_needs[j] < worst) { worst = light_cut_needs[j]; worst_at = j; }
+                if (weights[j] < worst) { worst = weights[j]; worst_at = j; }
             }
         }
     }
     return count;
 }
 
+uint point_light_item(uint i) {
+    return LIGHT_CUT_DIRECT | given_lights[i];
+}
+
 float3 point_shadowless_lighting(Shading s, float known, uint share) {
-    int2 block = given_holds(s.position, share) ? light_list_block(translucent_cell_block(given_cells, s.position, given_low, given_high)) : int2(-1, -1);
+    if (MIRAI_TRANSLUCENT_UNLISTED) return float3(0.0);
+    bool held = share == LIGHT_SHARE_ALL && all(s.position >= given_low) && all(s.position <= given_high);
+    int2 block = held ? light_list_block(translucent_cell_block(entries[given_instance], s.position, given_low, given_high)) : int2(-1, -1);
     return light_list_lighting(s, known, block, share);
 }
 
@@ -89,28 +100,45 @@ struct Stage_Output {
     [[vk::location(0)]] float4 out_color : SV_Target0;
 };
 [shader("fragment")]
+[earlydepthstencil]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
     Stage_Output output;
     input = raster_facing(input, front_facing);
     int2 p = int2(pixel_position.xy);
-    float opaque = g_depth.Load(int3(p, 0)).r;
     float depth = fragment_depth(input);
     if (params.near_layer != 0u && !behind_layer(depth, near_layer_depth.Load(int3(p, 0)).r)) discard;
     if (params.far_layer != 0u && behind_layer(depth, far_layer_depth.Load(int3(p, 0)).r)) discard;
     bool overflow = params.overflow != 0u;
-    if (!fragment_forward(input, fragment_material(input), opaque, overflow)) discard;
+    Instance inst = scene_instance(input.in_instance);
+    Material material = material_row(input.in_material, inst.material_values);
+    if (!fragment_forward(input, material, overflow)) discard;
 #ifdef MIRAI_COST
     if (!IsHelperLane()) {
         uint mesh = cost_instance_mesh(input.in_instance);
         cost_add(mesh, input.in_material, COST_TRANSLUCENT_FRAGMENTS, 1u);
     }
 #endif
-    Fragment f = fragment_evaluate(input, opaque);
-    Instance inst = scene_instance(input.in_instance);
-    given_cells = entries[input.in_instance];
-    given_low = inst.bounds_min.xyz;
-    given_high = inst.bounds_max.xyz;
+    // Unlit non-program forward blends need no normal map, PBR, lights, shadows or probes.
+    if (!overflow && material.program_id == 0u && (material.layers & MATERIAL_LAYER_UNLIT) != 0u) {
+        float2 bias = float2(frame.texturing.x);
+        float covered = saturate(material_base_color(material, input.in_uv, input.in_uv1, bias, input.in_color, false).a);
+        if (!(covered > 0.0)) discard;
+        float3 emissive = material.emission;
+        if (material_has(material.textures[MATERIAL_MAP_EMISSION])) {
+            emissive *= material_map_texel(material, MATERIAL_MAP_EMISSION, material.textures[MATERIAL_MAP_EMISSION], input.in_uv, input.in_uv1, bias, false).rgb;
+        }
+        float3 color = emission_render_units(emissive + input.in_emission, material.emission_mode == EMISSION_RELATIVE) * covered;
+        output.out_color = float4(finite_or_zero(color), covered);
+        return output;
+    }
+    Fragment f = fragment_evaluate(input, material, inst, g_depth.Load(int3(p, 0)).r);
     Glass g = fragment_glass(f, input.in_world);
+    if (!overflow && !(g.alpha > 0.0)) discard;
+    if (!MIRAI_TRANSLUCENT_UNLISTED) {
+        given_instance = input.in_instance;
+        given_low = inst.bounds_min.xyz;
+        given_high = inst.bounds_max.xyz;
+    }
     float3 color = glass_light(g, glass_shading(f.material, g), overflow ? 0.08 : 0.0, params.light_budget);
     output.out_color = float4(finite_or_zero(color), overflow ? 0.0 : saturate(g.alpha));
     return output;

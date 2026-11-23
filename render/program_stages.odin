@@ -109,6 +109,17 @@ program_graphics :: proc(r: ^Renderer, target: ^rhi.Pipeline, program: u32, now 
 	return entry.pipeline if entry.pipeline != 0 else target^
 }
 
+// The pipeline of a Surface program for the stage of `spared`, a variant of
+// the stage of `base` with constants that only spare work: that of base while
+// the one of spared is made (pipeline_of, `optional`).
+@(private)
+program_spared :: proc(r: ^Renderer, base, spared: ^rhi.Pipeline, program: u32) -> rhi.Pipeline {
+	if spared == base {return program_graphics(r, base, program)}
+	if program == 0 || program == GPU_NONE {return spared^}
+	if made := program_graphics(r, spared, program, early = true, speculative = true); made != spared^ {return made}
+	return program_graphics(r, base, program)
+}
+
 // The pipelines of every Surface program of the shaders for the stages of
 // list of the rays wanted a renderer makes, into builds: those of the stages
 // of the engine the program was compiled for, of its points and of its

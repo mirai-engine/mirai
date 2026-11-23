@@ -76,6 +76,7 @@ Glass fragment_glass(Fragment f, float3 position) {
 float3 glass_light(Glass g, Shading s, float faint, uint light_budget) {
     float covered = saturate(g.alpha);
     if (!(covered > 0.0)) return float3(0.0);
+    if ((s.layers & MATERIAL_LAYER_UNLIT) != 0u) return g.emission * covered;
     float bias = view_bias(eye_distance(g.position));
     float3 color = float3(0.0);
     uint sides = shading_transmits(s) ? 2u : 1u;

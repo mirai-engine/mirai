@@ -128,6 +128,7 @@ translucency_in_frustum :: proc(p: ^Pass, f: ^Gpu_Frame) {
 		p.draw_forward ||= entry.forward
 		p.draw_glass ||= entry.glass
 		p.glass_material_layers ||= entry.layered
+		p.forward_material_layers ||= entry.forward_layered
 		p.glass_rough ||= entry.glass && !entry.glass_smooth
 	}
 	translucent_before_glass(p, f)
@@ -242,15 +243,30 @@ translucent_run_end :: proc(p: ^Pass, run: ^Translucent_Run, plain: rhi.Transien
 	run.count = 0
 }
 
-// The draws of the blended programs of entry k with the stage of target.
+// A stage of the blends: its pipeline, the one with the constants that spare
+// work, and that one without the feedback of the textures
+// (translucent_forward_pipelines).
+@(private)
+Translucent_Stage :: struct {
+	base, target, quiet: ^rhi.Pipeline,
+}
+
+// The pipeline of a stage of the blends for a Surface program.
 @(private = "file")
-translucent_entry_draw :: proc(p: ^Pass, run: ^Translucent_Run, target: ^rhi.Pipeline, k: int, plain: rhi.Transient) {
+translucent_pipeline :: proc(r: ^Renderer, stage: Translucent_Stage, program: u32) -> rhi.Pipeline {
+	return program_spared(r, stage.base, stage.target if textures_feedback_turn(r, program) else stage.quiet, program)
+}
+
+// The draws of the blended programs of entry k with that stage.
+@(private = "file")
+translucent_entry_draw :: proc(p: ^Pass, run: ^Translucent_Run, stage: Translucent_Stage, k: int, plain: rhi.Transient) -> (flushed: int) {
 	entry := p.translucent[k]
 	if !entry.multi_program {
 		program := entry.program
-		pipeline := program_graphics(p.r, target, program)
+		pipeline := translucent_pipeline(p.r, stage, program)
 		if run.count > 0 && (run.pipeline != pipeline || run.program != program || run.first + run.count != u32(k)) {
 			translucent_run_end(p, run, plain)
+			flushed += 3
 		}
 		if run.count == 0 {run^ = {pipeline = pipeline, program = program, first = u32(k)}}
 		run.count += 1
@@ -258,13 +274,15 @@ translucent_entry_draw :: proc(p: ^Pass, run: ^Translucent_Run, target: ^rhi.Pip
 	}
 	programs, count := instance_blended_programs(&p.r.scene, entry.instance)
 	for program in programs[:count] {
-		pipeline := program_graphics(p.r, target, program)
+		pipeline := translucent_pipeline(p.r, stage, program)
 		if run.count > 0 && (run.pipeline != pipeline || run.program != program || run.first + run.count != u32(k)) {
 			translucent_run_end(p, run, plain)
+			flushed += 3
 		}
 		if run.count == 0 {run^ = {pipeline = pipeline, program = program, first = u32(k)}}
 		run.count += 1
 	}
+	return
 }
 
 // Split between complete instances so the command count stays within the pass bound.
@@ -283,7 +301,7 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 	for entry, k in p.translucent {
 		if !entry.glass {continue}
 		needed := 3 * (int(entry.slots) if entry.multi_program else 1)
-		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+		if commands + needed + 3 > rhi.MAX_RENDER_PASS_COMMANDS {
 			translucent_run_end(p, &run, plain)
 			rhi.cmd_end_render_pass(cmd)
 			for &color in pass.colors[:pass.color_count] {color.load = .Load}
@@ -291,8 +309,7 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 			rhi.cmd_begin_render_pass(cmd, pass)
 			commands = 0
 		}
-		translucent_entry_draw(p, &run, target, k, plain)
-		commands += needed
+		commands += translucent_entry_draw(p, &run, {target, target, target}, k, plain)
 	}
 	translucent_run_end(p, &run, plain)
 	rhi.cmd_end_render_pass(cmd)
@@ -368,8 +385,19 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.translucent_entries)
 	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, s.translucent_lists)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, t.shadow_raster.pages if p.frame.sun_maps.z != 0 else r.scratch_buffer)
-	set_params(cmd, &params)
-	targets := translucent_forward_pipelines(p, overflow)
+	params_forward := rhi.frame_alloc(r.device, size_of(Params))
+	if params_forward.ptr == nil {return}
+	(^Params)(params_forward.ptr)^ = params
+	params_overflow: rhi.Transient
+	if overflow {
+		params_overflow = rhi.frame_alloc(r.device, size_of(Params))
+		if params_overflow.ptr == nil {return}
+		over := params
+		over.overflow = 1
+		(^Params)(params_overflow.ptr)^ = over
+	}
+	rhi.cmd_bind_transient(cmd, SLOT_PARAMS, params_forward)
+	stages := translucent_forward_pipelines(p, overflow)
 	behind := near_layer != 0
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -378,27 +406,30 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	for entry, k in p.translucent {
 		forward := entry.forward && !(behind && entry.before)
 		draws := 0
-		for target, i in targets {
-			if target != nil && (i < 2 ? entry.glass : forward) {draws += 1}
+		for stage, i in stages {
+			if stage.base != nil && (i < 2 ? entry.glass : forward) {draws += 1}
 		}
 		if draws == 0 {continue}
 		needed := (3 * (int(entry.slots) if entry.multi_program else 1) + 1) * draws
-		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+		if commands + needed + 3 > rhi.MAX_RENDER_PASS_COMMANDS {
 			translucent_run_end(p, &run, plain)
 			rhi.cmd_end_render_pass(cmd)
 			rhi.cmd_begin_render_pass(cmd, &pass)
 			commands = 0
 		}
-		for target, i in targets {
-			if target == nil || (i < 2 ? !entry.glass : !forward) {continue}
+		for stage, i in stages {
+			if stage.base == nil || (i < 2 ? !entry.glass : !forward) {continue}
 			if filter := u32(1 if i < 2 else 0); filter != params.overflow {
-				translucent_run_end(p, &run, plain)
+				if run.count > 0 {
+					translucent_run_end(p, &run, plain)
+					commands += 3
+				}
 				params.overflow = filter
-				set_params(cmd, &params)
+				rhi.cmd_bind_transient(cmd, SLOT_PARAMS, params_overflow if filter != 0 else params_forward)
+				commands += 1
 			}
-			translucent_entry_draw(p, &run, target, k, plain)
+			commands += translucent_entry_draw(p, &run, stage, k, plain)
 		}
-		commands += needed
 	}
 	translucent_run_end(p, &run, plain)
 	rhi.cmd_end_render_pass(cmd)

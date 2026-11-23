@@ -154,17 +154,31 @@ cost_pixels :: proc(p: ^Pass) {
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 }
 
+// The stages of the passes of translucent_forward: the filter of the glass
+// beyond the layers and its light, then the forward blends; nil for a pass not
+// drawn. Those of translucent.frag take the constants that spare work:
+// unlayered where nothing in sight they draw has layers, unlisted where the
+// frame has no shadowless lights, and quiet off a program's feedback turn.
 @(private)
-translucent_forward_pipelines :: proc(p: ^Pass, overflow: bool) -> (targets: [3]^rhi.Pipeline) {
+translucent_forward_pipelines :: proc(p: ^Pass, overflow: bool) -> (stages: [3]Translucent_Stage) {
 	r := p.r
 	counting := p.cost != 0
 	if counting {rhi.cmd_bind_buffer(p.cmd, SLOT_PASS7, p.cost)}
+	shadowless := p.frame.shadowless_lights != 0
+	spared :: proc(r: ^Renderer, id: Pipeline_Id, layered, shadowless: bool) -> Translucent_Stage {
+		fewer := rhi.Shader_Constants{}
+		if !layered {fewer += {TRANSLUCENT_FRAG_UNLAYERED}}
+		if !shadowless {fewer += {TRANSLUCENT_FRAG_UNLISTED}}
+		quiet := fewer + {TRANSLUCENT_FRAG_QUIET}
+		return {pipeline_of(r, id), pipeline_of(r, id, fewer, optional = fewer), pipeline_of(r, id, quiet, optional = quiet)}
+	}
 	if overflow {
-		targets[0] = &r.pipelines[.Glass_Filter]
-		targets[1] = pipeline_of(r, .Glass_Overflow_Cost if counting else .Glass_Overflow)
+		filter := &r.pipelines[.Glass_Filter]
+		stages[0] = {filter, filter, filter}
+		stages[1] = spared(r, .Glass_Overflow_Cost if counting else .Glass_Overflow, p.glass_material_layers, shadowless)
 	}
 	if p.draw_forward {
-		targets[2] = pipeline_of(r, .Translucent_Cost if counting else .Translucent)
+		stages[2] = spared(r, .Translucent_Cost if counting else .Translucent, p.forward_material_layers, shadowless)
 	}
 	return
 }

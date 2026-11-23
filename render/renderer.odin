@@ -1075,16 +1075,14 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		cull = .None, name = "translucent",
 	}
 	graphics(list, r, .Glass_Filter, translucent)
-	translucent.fragment = &r.shader_codes[.Translucent_Frag]
-	translucent.blend = {0 = .Additive}
-	graphics(list, r, .Glass_Overflow, translucent)
-	translucent.blend = {0 = .Premultiplied}
-	graphics(list, r, .Translucent, translucent)
-	translucent.fragment = &r.shader_codes[.Translucent_Cost_Frag]
-	translucent.blend = {0 = .Additive}
-	graphics(list, r, .Glass_Overflow_Cost, translucent, required = false)
-	translucent.blend = {0 = .Premultiplied}
-	graphics(list, r, .Translucent_Cost, translucent, required = false)
+	translucent.vertex, translucent.vertex_constants = &r.shader_codes[.Translucent_Vert], {}
+	for counting in ([]bool{false, true}) {
+		translucent.fragment = &r.shader_codes[.Translucent_Cost_Frag if counting else .Translucent_Frag]
+		translucent.blend = {0 = .Additive}
+		graphics(list, r, .Glass_Overflow_Cost if counting else .Glass_Overflow, translucent, required = !counting)
+		translucent.blend = {0 = .Premultiplied}
+		graphics(list, r, .Translucent_Cost if counting else .Translucent, translucent, required = !counting)
+	}
 	graphics(list, r, .Highlight, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_HIGHLIGHT}, fragment = &r.shader_codes[.Highlight_Frag],
 		color_formats = {0 = .RG32_Float}, color_count = 1,

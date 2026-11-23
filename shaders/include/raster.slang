@@ -123,8 +123,12 @@ bool fragment_blended(Raster_Input input, Material m) {
     return m.alpha_mode == ALPHA_BLEND && (!material_solid(m) || !raster_back(input));
 }
 
+bool fragment_forward(Raster_Input input, Material m, bool overflow) {
+    return fragment_blended(input, m) && (m.transmission > 0.0) == overflow;
+}
+
 bool fragment_forward(Raster_Input input, Material m, float opaque, bool overflow) {
-    return fragment_blended(input, m) && (m.transmission > 0.0) == overflow
+    return fragment_forward(input, m, overflow)
         && (depth_empty(opaque) || fragment_depth(input) < depth_distance(opaque));
 }
 
@@ -193,6 +197,13 @@ Fragment fragment_evaluate(Raster_Input input, Material material, float opaque) 
     float3 to_camera = to_eye(input.in_world);
     float3 n;
     Mirai_Surface_Context ctx = material_context_over(fragment_context(input, material, to_camera, n), opaque);
+    return fragment_evaluate(input, material, to_camera, ctx, n);
+}
+// The same of a fragment whose instance and material its stage decoded.
+Fragment fragment_evaluate(Raster_Input input, Material material, Instance inst, float opaque) {
+    float3 to_camera = to_eye(input.in_world);
+    float3 n;
+    Mirai_Surface_Context ctx = material_context_over(fragment_context(input, inst, material, to_camera, n), opaque);
     return fragment_evaluate(input, material, to_camera, ctx, n);
 }
 Fragment fragment_evaluate(Raster_Input input, float opaque) { return fragment_evaluate(input, fragment_material(input), opaque); }
