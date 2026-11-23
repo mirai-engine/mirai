@@ -3,9 +3,8 @@
 A `.ui` is the source of an interface and it has one route: you write a document, nested and by
 name, and the editor keeps it in the file. `ui.inspect` gives back the same document, and the
 visual editor edits the same `.ui`; nothing regenerates over what either did. Names stay named:
-`ui.write(ui.inspect(x))` changes nothing. Names are unique in a file, siblings included: a
-second `icon` is refused with the path of both, so call them `icon_left` and `icon_right`. Add `ui_inspector` to the `plugins` of `project.mirai`
-for this (a new game has it).
+`ui.write(ui.inspect(x))` changes nothing; names are unique in a file (a second `icon` is refused
+with both paths). Add `ui_inspector` to the `plugins` of `project.mirai` (a new game has it).
 
 ## A working document
 

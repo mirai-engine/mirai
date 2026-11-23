@@ -38,15 +38,11 @@ A spawn that fails (no such scene, or one that is not a prefab) returns `core.NO
 problem `scene.spawn` of the parent or of the world, which says what to change. The root of a copy
 has `scene.Prefab_Instance`, whose `prefab` is the scene it came from.
 
-A spawn never waits for a file. A prefab the scene names in a field (a `Spawn_Point`'s prefab) is
-read with the scene, with the prefabs it places, before the first tick, and its spawn is whole at
-once. For prefabs only code spawns (projectiles, effects, enemies of a wave), name them in a
-`scene.Prefab_Preload` on any entity of the scene: up to `PREFAB_PRELOADS` each, more entities for
-more. One that is not loaded yet is read in the background: the root comes at once with its
-transform, parent and `scene.Prefab_Pending`. The first such spawn of each prefab is the problem
-`scene.spawn_pending` on its root, once until one of them is placed. Wait for `Prefab_Pending` to
-go before using the prefab's components. Values the game gives the root while it waits take
-precedence. Loading another scene stops the reads the spawns of the one before began.
+A spawn never waits for a file. A prefab the scene names in a field (a `Spawn_Point`'s, or a
+`scene.Prefab_Preload` for what only code spawns) is read with the prefabs it places before tick 0.
+One not loaded comes at once as its root with `scene.Prefab_Pending`, read in the background; the
+first such spawn of each prefab is a `scene.spawn_pending` problem. Use its components once
+`Prefab_Pending` goes; values given meanwhile win. A new scene stops the old one's reads.
 
 ## Keep the root
 
