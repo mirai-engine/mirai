@@ -19,7 +19,8 @@ optional: an org with no node works on a LAN and between machines that can reach
 - A node serves the orgs whose log names it with `Node_Add`. A new node serves none: it prints the
   command that pairs it, an admin runs `mirai kai pair offer node --org <org> --modes ...` and the
   node runs `mirai-kai pair join <ticket> --store <folder>` while it serves, and the same eight
-  digits are compared ([pairing](identity.md#pairing)).
+  digits are compared ([pairing](identity.md#pairing)). A node no address of the ticket reaches
+  (the admin is behind a router) is offered `--at` its public address.
 - A node signs nothing for a user, holds no org key and no scope key. Everything it keeps is what
   members and the mesh already hold, plus the keys of its own device and its web certificates, in
   its store's folder, owner-only ([confinement](#confinement)).

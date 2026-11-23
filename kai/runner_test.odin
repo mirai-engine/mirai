@@ -187,6 +187,69 @@ join_ended :: proc(b:^Box,data:rawptr) -> bool {
     return p.phase==.Approved || p.phase==.Denied || p.phase==.Failed
 }
 
+// A node that no address of the ticket reaches (the admin is behind a router)
+// is paired through the admin's knocks at the node's own address: it asks
+// where a knock of its ticket came from. A knock with another tag and a P2 of
+// another ticket change nothing.
+@(test)
+a_node_no_ticket_address_reaches_is_paired_through_knocks :: proc(t:^testing.T) {
+    b:=new(Box)
+    defer free(b)
+    if !box_open(t,b,"kai-runner-knock",2) {return}
+    defer box_close(b)
+    alice,node:=&b.machines[0],&b.machines[1]
+    user_make(t,alice,"alice")
+    org,e:=machine_org_create(alice,"studio")
+    testing.expect_value(t,e,Error.None)
+    if !box_start(t,b,0) || !box_start(t,b,1,{.Relay,.Seed}) {return}
+    a,n:=&b.runners[0],&b.runners[1]
+    ALICE,NODE:=0,1
+    // Where nothing listens: a socket opened for its port and closed.
+    dead:net.Udp
+    testing.expect(t,net.udp_open(&dead,net.address_loopback(0)))
+    nowhere:=dead.address
+    net.udp_close(&dead)
+
+    buffer,forged_buffer:[TICKET_TEXT]u8
+    ticket,te:=runner_pair_offer(a,.Node,org,.None,{.Relay,.Seed},&buffer)
+    testing.expect_value(t,te,Error.None)
+    forged,_:=ticket_decode(ticket)
+    forged.addresses[0],forged.address_count=nowhere,1
+    testing.expect_value(t,runner_pair_join(n,ticket_encode(forged,&forged_buffer),"node"),Error.None)
+
+    other:net.Udp
+    testing.expect(t,net.udp_open(&other,net.address_loopback(0)))
+    defer net.udp_close(&other)
+    t2:=net.udp_transport(&other)
+    wrong:[1+PAIR_HEAD]u8
+    wrong[0],wrong[1]=FRAME_PAIR,u8(Pair_Message.Knock)
+    raw:=forged.id
+    copy(wrong[2:],raw[:])
+    p2:[1+PAIR_HEAD+64]u8
+    p2[0],p2[1]=FRAME_PAIR,u8(Pair_Message.P2)
+    for frame in ([][]u8{wrong[:],p2[:]}) {
+        out:=[1]net.Datagram{{b.addresses[1][0],frame}}
+        t2.send(t2.data,out[:])
+    }
+    for _ in 0..<20 {box_step(b)}
+    testing.expect(t,n.join.knock.kind==.None,"a knock with the ticket's id in place of its tag is not heard")
+    testing.expect_value(t,runner_pair_progress(n).phase,Pair_Phase.Asking)
+    _,shown:=runner_pair_request(a)
+    testing.expect(t,!shown,"no ticket address reaches alice")
+
+    // Alice knocks at the node's address: the node asks her there.
+    a.offer.at=b.addresses[1][0]
+    if !testing.expect(t,box_until(b,10,&ALICE,request_shown),"the node's request reaches alice through her knocks") {return}
+    request,_:=runner_pair_request(a)
+    testing.expect(t,request.mode==.Node && runner_pair_progress(n).code==request.code,"both ends show one code")
+    testing.expect_value(t,runner_pair_answer(a,true,request.code),Error.None)
+    testing.expect(t,box_until(b,5,&NODE,join_ended))
+    testing.expect_value(t,runner_pair_progress(n).phase,Pair_Phase.Approved)
+    testing.expect(t,len(node.orgs)==1 && node.orgs[0]==org)
+    g:=Goal{k=1,dh=Dh_Key(alice.dh.public)}
+    testing.expect(t,box_until(b,10,&g,connected_by),"the node connects to alice and is admitted")
+}
+
 // Alice makes a user and an org; Bob, on another machine with its own store,
 // pairs as a member through the code over real UDP on 127.0.0.1. A wrong code
 // is denied, and a middle that answers the ticket with its own key is

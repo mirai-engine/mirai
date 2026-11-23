@@ -41,6 +41,7 @@ LABEL_PAIR_PROLOGUE :: "kai-1/pair"
 LABEL_PAIR_COMMIT :: "kai-1/pair-commit"
 LABEL_PAIR_CODE :: "kai-1/pair-code"
 LABEL_TICKET :: "kai-1/ticket"
+LABEL_PAIR_KNOCK :: "kai-1/pair-knock"
 PAIR_INFO_MAX :: 512
 PAIR_PAYLOAD_MAX :: 32<<10 // the entries a P4 carries
 PAIR_TIMEOUT :: i64(5*60)*1_000_000_000
@@ -57,7 +58,7 @@ PAIR_KEM_PART :: KEM_PUBLIC/PAIR_KEM_PARTS
 PAIR_K_SIZE :: PAIR_HEAD+1+PAIR_KEM_PART+PAIR_TAG
 #assert(PAIR_KEM_PART*PAIR_KEM_PARTS==KEM_PUBLIC)
 
-Pair_Message :: enum u8 {None,P1,P2,P3,P4,K}
+Pair_Message :: enum u8 {None,P1,P2,P3,P4,K,Knock}
 Pair_Mode :: enum u8 {Device,Member,Node,Recover} // Recover: a machine with no user reaches the org, to fetch the user logs it recovers from
 Pair_Status :: enum u8 {Pending,Approved,Denied}
 
@@ -175,6 +176,15 @@ carried_decode :: proc(label,text:string,head_size:int,addresses:^[TICKET_ADDRES
         at+=CARRIED_ADDRESS
     }
     return bytes[:head_size],count,bytes[at:len(bytes)-4],true
+}
+
+// What a knock carries in place of the ticket's id: who hears it on the way
+// cannot open the pairing with it.
+pair_knock_tag :: proc(id:[16]u8) -> (tag:[16]u8) {
+    id:=id
+    sum:=keyed_hash(transmute([]u8)string(LABEL_PAIR_KNOCK),id[:])
+    copy(tag[:],sum[:16])
+    return
 }
 
 // One end of a pairing handshake.

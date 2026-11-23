@@ -7,6 +7,7 @@ import "core:strings"
 import ka "mirai:cook/kai"
 import "mirai:editor/api"
 import vcs "mirai:kai"
+import net "mirai:net"
 
 // The kai.* methods of the team: the user of this device, the orgs, pairing
 // another machine, the peers of the mesh, the proposals of the project and
@@ -80,6 +81,7 @@ Api_Kai_Pair_Params :: struct {
     org:string `mirai:"optional,label=With offer member or node: the org; none: the only one"`,
     role:string `mirai:"optional,label=With offer member: reader, writer or admin; writer when none"`,
     modes:string `mirai:"optional,label=With offer node: relay, seed and ddc apart by commas; relay,seed when none"`,
+    at:string `mirai:"optional,label=With offer: where the other machine listens, as address:port, when it cannot reach this one (a node in the cloud)"`,
     join:string `mirai:"optional,label=A ticket another machine offered"`,
     name:string `mirai:"optional,label=With join, on a device with no user: the name its user will know it by; none: the machine's host name"`,
     answer:string `mirai:"optional,label=approve or deny: the pairing request that waits"`,
@@ -479,7 +481,15 @@ api_kai_pair :: proc(s:^Session,call:^api.Call) {
             if org,e=vcs.machine_org_find(m,p.org);e!=.None {api_kai_why(call,m,e);return}
         }
         buffer:[vcs.TICKET_TEXT]u8
-        ticket,e:=vcs.control_pair_offer(c,mode,org,role,modes,&buffer)
+        at:net.Address
+        if p.at!="" {
+            parsed:bool
+            if at,parsed=net.address_parse(p.at);!parsed || at.port==0 {
+                api.call_failf(call,api.INVALID_PARAMS,"at takes where the other machine listens, as 203.0.113.7:47914 or [2001:db8::7]:47914, not %q",p.at)
+                return
+            }
+        }
+        ticket,e:=vcs.control_pair_offer(c,mode,org,role,modes,&buffer,at)
         if e!=.None {api.call_fail(call,e==.Invalid_Argument?api.INVALID_PARAMS:api.SERVER_ERROR,c.why);return}
         t.ticket_length=copy(t.ticket[:],ticket)
         r.ticket=strings.clone(ticket,call.allocator)

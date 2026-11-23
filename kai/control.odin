@@ -167,11 +167,13 @@ control_do :: proc(r:^Runner,op:u8,body:[]u8,w:^Answer_Writer) -> Error {
             answer_put(w,{u8(behind),u8(behind>>8),u8(unfound),u8(unfound>>8),u8(x.changes),u8(x.changes>>8),u8(x.changes>>16),u8(x.changes>>24)})
         }
     case .Pair_Offer:
-        if len(body)!=3+32 || body[0]>u8(max(Pair_Mode)) || body[1]>u8(max(Role)) {return .Invalid_Argument}
+        if len(body)!=3+32+CARRIED_ADDRESS || body[0]>u8(max(Pair_Mode)) || body[1]>u8(max(Role)) || body[35]>u8(net.Address_Kind.IP6) {return .Invalid_Argument}
         org:Log_Id
-        copy(org[:],body[3:])
+        copy(org[:],body[3:35])
+        at:=net.Address{kind=net.Address_Kind(body[35]),port=endian.unchecked_get_u16le(body[36:])}
+        copy(at.ip[:],body[38:])
         buffer:[TICKET_TEXT]u8
-        ticket:=runner_pair_offer(r,Pair_Mode(body[0]),org,Role(body[1]),transmute(Node_Modes)body[2],&buffer) or_return
+        ticket:=runner_pair_offer(r,Pair_Mode(body[0]),org,Role(body[1]),transmute(Node_Modes)body[2],&buffer,at) or_return
         answer_put(w,transmute([]u8)ticket)
     case .Pair_Request:
         if len(body)!=0 {return .Invalid_Argument}
@@ -390,11 +392,15 @@ control_addresses :: proc(c:^Control,out:^[dynamic]net.Address) -> Error {
     return .None
 }
 
-control_pair_offer :: proc(c:^Control,mode:Pair_Mode,org:Log_Id,role:Role,modes:Node_Modes,buffer:^[TICKET_TEXT]u8) -> (ticket:string,error:Error) {
-    body:[3+32]u8
+control_pair_offer :: proc(c:^Control,mode:Pair_Mode,org:Log_Id,role:Role,modes:Node_Modes,buffer:^[TICKET_TEXT]u8,at:=net.Address{}) -> (ticket:string,error:Error) {
+    body:[3+32+CARRIED_ADDRESS]u8
     body[0],body[1],body[2]=u8(mode),u8(role),transmute(u8)modes
     id:=org
     copy(body[3:],id[:])
+    body[35]=u8(at.kind)
+    endian.unchecked_put_u16le(body[36:],at.port)
+    ip:=at.ip
+    copy(body[38:],ip[:])
     out:[FRAME_MAX]u8
     answer:=control_call(c,.Pair_Offer,body[:],&out) or_return
     if len(answer)>TICKET_TEXT {return "",.Corrupt}

@@ -164,6 +164,12 @@ and `kai/refs_ddc.odin`.
   show hash only values each side fixed before it saw the other's nonce: no label, no info and no
   transcript hash enter them, so a man in the middle has nothing left to vary
   (`pairing_rejects_mitm_label_grinding`).
+- The initiator dials the ticket's addresses. A responder none of them reaches (it is behind a
+  router and the initiator is not) is given the initiator's address and knocks there: a datagram
+  with a tag keyed from the ticket's id, never the id, answered by nothing. The initiator only
+  adds the knock's source to the addresses it dials, so a knock gives no more than a ticket
+  address does and the handshake, the commitment and the code are what they were
+  (`a_node_no_ticket_address_reaches_is_paired_through_knocks`).
 - A person must approve the request on the responder: nothing is the default, an unanswered request
   is denied after a timeout, and several denials in a row pause pairing for a while. One request is
   open at a time. A code given to `mirai kai pair approve` must be the one shown or the request is

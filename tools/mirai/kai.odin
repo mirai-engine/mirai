@@ -14,14 +14,14 @@ import "mirai:project"
 import "mirai:store"
 
 KAI_USAGE :: "kai init [project]|status|snapshot|log [-n N]|diff [change]|undo|conflicts|verify | kai prune | kai new [change...] [-m text] | kai describe [change] -m text | kai split [-r change] [-m text] <path...> | kai restore <change> | kai bookmarks [set|move <name> <change> | delete <name> | policy <name> [--approvals N] [--checks a,b]] [--project P] [--store S]"
-KAI_MESH_USAGE :: "kai identity [--name N] | kai identity revoke <device> | kai identity recovery | kai identity recover <user> [--name N] | kai agent [--stay] [--port N] | kai pair offer device|member|node|recover [--org O] [--role R] [--modes relay,seed,ddc] | kai pair join <ticket> [--name N] | kai pair approve [--code dddd-dddd] [--deny] | kai peers [--store S]"
+KAI_MESH_USAGE :: "kai identity [--name N] | kai identity revoke <device> | kai identity recovery | kai identity recover <user> [--name N] | kai agent [--stay] [--port N] | kai pair offer device|member|node|recover [--org O] [--role R] [--modes relay,seed,ddc] [--at address:port] | kai pair join <ticket> [--name N] | kai pair approve [--code dddd-dddd] [--deny] | kai peers [--store S]"
 KAI_TEAM_USAGE :: "kai org list|leave | kai org new <name> | kai org add public|org | kai org remove|transfer <member> | kai org role <member> reader|writer|admin | kai grant issue <subject> --rights read,write,ddc,check,relay [--days N] [--path P] | kai grant list|load <text>|revoke <grant> | kai scope add <pattern...> [--readers R] [--history] | kai scope list|remove|rotate <scope> | kai public add <path>[:line] [--org O] [--project P] [--store S]"
 KAI_REVIEW_USAGE :: "kai proposal open <target> [change...] [-m title] [--text T] | kai proposal list|show|approve|changes|withdraw|close|reopen|land <proposal> | kai proposal revise <proposal> [change...] | kai proposal comment <proposal> -m text [--file P | --lines P:A-B | --entity P#id] [--reply C] | kai check <name> [--proposal P] -- <command...> [--project P] [--store S]"
 
 // What the verbs of mirai kai take, besides --store and their positionals.
 @(private="file")
 Kai_Args :: struct {
-    folder,message,change,name,port,org,role,modes,code:string,
+    folder,message,change,name,port,org,role,modes,at,code:string,
     rights,path,readers,checks,text,file,lines,entity,reply,proposal:string,
     limit,days,approvals:int,
     folder_given,stay,deny,history:bool,
@@ -35,7 +35,7 @@ KAI_OPTIONS :: [?][2]string{
     {"init","--project"},{"status","--project"},{"snapshot","--project"},{"log","--project -n"},{"diff","--project"},
     {"undo","--project"},{"conflicts","--project"},{"verify","--project"},{"new","--project -m"},{"describe","--project -m"},
     {"split","--project -r -m"},{"restore","--project"},{"bookmarks","--project --approvals --checks"},
-    {"prune",""},{"identity","--name"},{"agent","--port --stay"},{"pair","--org --role --modes --code --deny --name"},{"peers",""},
+    {"prune",""},{"identity","--name"},{"agent","--port --stay"},{"pair","--org --role --modes --at --code --deny --name"},{"peers",""},
     {"org","--project --org"},{"grant","--project --org --rights --days --path"},{"scope","--project --readers --history"},
     {"public","--project"},{"proposal","--project -m --text --file --lines --entity --reply"},{"check","--project --proposal"},
 }
@@ -108,6 +108,7 @@ kai_args :: proc(verb:string,args:[]string,a:^Kai_Args) -> int {
         case "--org": a.org=value
         case "--role": a.role=value
         case "--modes": a.modes=value
+        case "--at": a.at=value
         case "--code": a.code=value
         case "--rights": a.rights=value
         case "--days": if a.days,ok=number(command,name,value,1,30);!ok {return 2}
@@ -781,10 +782,19 @@ kai_pair :: proc(k:^Kai_Machine,a:^Kai_Args) -> int {
         if !modes_ok {fmt.eprintln("mirai kai pair offer: --modes takes relay, seed and ddc");return 2}
         if mode==.Node && modes=={} {modes={.Relay,.Seed}}
         buffer:[vcs.TICKET_TEXT]u8
-        ticket,e:=vcs.control_pair_offer(c,mode,org,role,modes,&buffer)
+        at:net.Address
+        if a.at!="" {
+            parsed:bool
+            if at,parsed=net.address_parse(a.at);!parsed || at.port==0 {
+                fmt.eprintln("mirai kai pair offer: --at takes where the other machine listens, as 203.0.113.7:47914 or [2001:db8::7]:47914")
+                return 2
+            }
+        }
+        ticket,e:=vcs.control_pair_offer(c,mode,org,role,modes,&buffer,at)
         if e!=.None {fmt.eprintfln("mirai kai pair: %s",c.why);return 1}
         fmt.printfln("Ticket, valid ten minutes: on the other machine run\n  mirai kai pair join %s",ticket)
         fmt.println("then mirai kai pair approve here, comparing the codes both show.")
+        if a.at=="" && mode!=.Device {fmt.println("If the other machine is not on this network and cannot reach this one (a node in the cloud), offer again with --at <its address:port>.")}
     case "join":
         name,ne:=vcs.machine_pair_name(m,a.name)
         if ne!=.None {return kai_why("pair",k)}

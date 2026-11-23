@@ -262,6 +262,8 @@ Pair_Offer :: struct {
     name_len:int,
     info:Pair_Info,
     closes:f64,          // a finished pairing answers repeats until then
+    at:net.Address,      // where the other machine listens, when this one cannot be reached: knocked until it asks
+    knocked:f64,
 }
 
 @(private)
@@ -271,6 +273,7 @@ Pair_Join :: struct {
     pair:Pair,
     phase:Pair_Phase,
     to:net.Address,      // the responder, once it answered
+    knock:net.Address,   // where a knock of this ticket came from: asked as the ticket's addresses are
     last:[FRAME_MAX]u8,
     last_len:int,
     keys:[PAIR_KEM_PARTS][1+PAIR_K_SIZE]u8, // a device's K frames, sent with each repeat of P3
@@ -1539,7 +1542,10 @@ runner_peers :: proc(r:^Runner,out:^[dynamic]Runner_Peer_Info) {
 // Offers a pairing: the ticket the other device takes, valid for
 // PAIR_TICKET_SECONDS. Device links a second device of this machine's user;
 // Member adds a user to org with role; Node adds a node with modes.
-runner_pair_offer :: proc(r:^Runner,mode:Pair_Mode,org:Log_Id,role:Role,modes:Node_Modes,buffer:^[TICKET_TEXT]u8) -> (ticket:string,error:Error) {
+// With at, the address the other machine listens at, this end knocks there
+// until the other asks: a machine behind a router that no ticket address
+// reaches is asked through the way its own knocks opened.
+runner_pair_offer :: proc(r:^Runner,mode:Pair_Mode,org:Log_Id,role:Role,modes:Node_Modes,buffer:^[TICKET_TEXT]u8,at:=net.Address{}) -> (ticket:string,error:Error) {
     m:=r.machine
     switch mode {
     case .Device:
@@ -1556,7 +1562,7 @@ runner_pair_offer :: proc(r:^Runner,mode:Pair_Mode,org:Log_Id,role:Role,modes:No
     if r.offer.active && r.offer.shown {return "",machine_fail(m,.Locked,"another pairing request waits for an answer: answer it first")}
     pair_end(&r.offer.pair)
     gate:=r.offer.gate
-    r.offer={active=true,org=org,role=role,modes=modes,gate=gate}
+    r.offer={active=true,org=org,role=role,modes=modes,gate=gate,at=at,knocked=-PAIR_RESEND}
     t:=&r.offer.ticket
     t.id=random_id([16]u8)
     t.responder=Dh_Key(m.dh.public)
@@ -1693,6 +1699,7 @@ runner_pair_resend :: proc(r:^Runner) {
         return
     }
     for a in j.ticket.addresses[:j.ticket.address_count] {runner_send(r,a,j.last[:j.last_len])}
+    if j.knock.kind!=.None {runner_send(r,j.knock,j.last[:j.last_len])}
 }
 
 @(private)
@@ -1722,6 +1729,14 @@ runner_pair_step :: proc(r:^Runner) {
         }
         if !o.shown && o.closes>0 && r.now>o.closes {o.active=false}
         if now>o.ticket.expires && !o.shown {o.active=false}
+        if o.active && o.at.kind!=.None && o.step==.None && r.now-o.knocked>=PAIR_RESEND {
+            o.knocked=r.now
+            frame:[1+PAIR_HEAD]u8
+            frame[0],frame[1]=FRAME_PAIR,u8(Pair_Message.Knock)
+            tag:=pair_knock_tag(o.ticket.id)
+            copy(frame[2:],tag[:])
+            runner_send(r,o.at,frame[:])
+        }
     }
 }
 
@@ -1733,6 +1748,11 @@ runner_pair_read :: proc(r:^Runner,from:net.Address,message:[]u8) {
     case .None:
     case .P1,.P3,.K: runner_pair_responder(r,from,message)
     case .P2,.P4: runner_pair_initiator(r,from,message)
+    case .Knock:
+        // Kept and asked with the next repeat: a knock is answered by nothing.
+        j:=&r.join
+        tag:=pair_knock_tag(j.ticket.id)
+        if j.active && j.phase==.Asking && bytes_equal(message[1:PAIR_HEAD],tag[:]) {j.knock=from}
     }
 }
 
@@ -1803,7 +1823,7 @@ runner_pair_responder :: proc(r:^Runner,from:net.Address,message:[]u8) {
             return
         }
         if complete {runner_pair_show(r)}
-    case .None,.P2,.P4:
+    case .None,.P2,.P4,.Knock:
     }
 }
 
@@ -1823,7 +1843,7 @@ runner_pair_show :: proc(r:^Runner) {
 runner_pair_initiator :: proc(r:^Runner,from:net.Address,message:[]u8) {
     m:=r.machine
     j:=&r.join
-    if !j.active {return}
+    if !j.active || !bytes_equal(message[1:PAIR_HEAD],j.ticket.id[:]) {return}
     switch Pair_Message(message[0]) {
     case .P2:
         if j.phase!=.Asking || j.pair.step!=.P1 {return}
@@ -1877,7 +1897,7 @@ runner_pair_initiator :: proc(r:^Runner,from:net.Address,message:[]u8) {
                 runner_event(r,"pairing approved")
             }
         }
-    case .None,.P1,.P3,.K:
+    case .None,.P1,.P3,.K,.Knock:
     }
 }
 

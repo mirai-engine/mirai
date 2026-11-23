@@ -96,7 +96,9 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
 2. `mirai kai pair offer device|member|node` prints a ticket; the other machine runs `mirai kai
    pair join <ticket>`. Both show the same eight digits: the person on the offering machine
    compares them and runs `mirai kai pair approve --code <digits>`, or `--deny`.
-3. A node is paired the same way from its own machine (`mirai-kai pair join`).
+3. A node is paired the same way from its own machine (`mirai-kai pair join`). When the node is
+   in the cloud and the offering machine behind a router, offer with `--at <node address:port>`:
+   the offering machine knocks there and the node asks it back the way the knocks opened.
 4. Pairing a user who is a member already changes no role: it brings its machine to the other
    again, which is how a machine that lost the org (it has its id and not its log) gets it back.
 5. On the paired machine, `mirai kai init <project> --project <folder>` makes a folder, empty or
