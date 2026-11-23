@@ -3,8 +3,9 @@
 //! variant cost MIRAI_COST=1
 // The light of the blended surfaces behind the per-pixel glass layers, added
 // back to front over the scene that glass_filter.frag has filtered: sun and
-// local lights shadowed by the texel of the maps of the view they fall in,
-// whose pages it marks for the next frame (a light no map holds reaches it
+// local lights shadowed by the texel of the maps of the view they fall in, at
+// the level or mip of its pixel, in its page or the nearest coarser one drawn,
+// whose pages it marks for the next frame (a light no page holds reaches it
 // whole), and the probe volume for diffuse and specular indirect light.
 // [earlydepthstencil] lets hardware reject fragments hidden behind the opaque
 // depth buffer before running lighting or storage-buffer atomics.

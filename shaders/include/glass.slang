@@ -26,11 +26,14 @@ struct Glass {
 };
 
 // The surface where it covers, as the lights see it, with its layers: it
-// diffuses, and lets through diffusely, what its transmission leaves.
+// diffuses, and lets through diffusely, what its transmission leaves. Its
+// footprint is the pixel of the view there, so the maps of the shadows read
+// it at the level or mip the opaque surfaces beside it read and draw.
 Shading glass_shading(Material m, Glass g) {
     float diffused = 1.0 - m.transmission;
     Shading s = shading_make(g.position, g.normal, g.view, diffuse_reflectance(g.base_color, g.metallic) * diffused, g.f0, float3(g.f90), g.roughness);
     shading_layers(s, g.layers, g.metallic);
+    s.footprint = frame.footprint.x + frame.footprint.y * max(view_depth(g.position), 0.0);
     s.transmit *= diffused;
     return s;
 }

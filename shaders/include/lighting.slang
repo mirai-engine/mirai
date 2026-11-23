@@ -1259,7 +1259,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             if (changes) changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #endif
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = sun_shadow_seen(s.position, s.normal, s.across, SHADOW_RAYS, swayed);
+            mapped = sun_shadow_seen(s.position, s.normal, shading_footprint(s), SHADOW_RAYS, swayed);
 #endif
         } else if (item <= local_items) {
             uint entry = point_light_item(item - 1u);
@@ -1290,7 +1290,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
 #endif
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across, swayed, SHADOW_RAYS);
+            mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), shading_footprint(s), swayed, SHADOW_RAYS);
 #endif
         }
         // The other side of a thin surface: its ray, where the maps hide the light or tell nothing, is that of light_through.

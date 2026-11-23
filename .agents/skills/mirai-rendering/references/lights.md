@@ -99,7 +99,10 @@ rect := render.Light_Desc{
   lights, per-blended-instance (or subdivided from `TRANSLUCENT_CELLS`) cells hold the shadowless
   list. For shadowed lights, forward blends read the world [light grid](#direct-light-of-a-view)
   up to `light_budget` brightest reaching lights (falling back to `light_cut` past `DIRECT_FEW`),
-  shadowed by a single-tap map lookup without tracing rays.
+  shadowed by a single-tap map lookup without tracing rays: at the level/mip of the view pixel
+  (`Shading.footprint`, as the opaque surfaces beside it), read in the page of its texel or the
+  nearest coarser one drawn (`shadow_texel`). Only a point no drawn page holds gets the light
+  unshadowed, so never pick blend levels finer than the view's pages.
 
 ### Cutoff of a point that traces its own rays
 

@@ -581,9 +581,11 @@ float shadow_texel_seen(Shadow_Map m, Shadow_Taps t) {
 // -1 where no level drawn holds the point, or the view drew none: a ray
 // tells. n: the normal of its surface, zero for a point of a medium; across:
 // its width, metres, which picks its level (sun_pick). blended: between the
-// texels around the point, the border of a shadow as fine as the map; else
-// by the texel it falls in alone, as the samples of the direct light tell a
-// point lit (shadow_map_seen of direct_samples.comp).
+// texels around the point, the border of a shadow as fine as the map, where
+// the pages around it are drawn (shadow_map_held); else by the texel it falls
+// in alone, as the samples of the direct light tell a point lit
+// (shadow_map_seen of direct_samples.comp), read in its page or the nearest
+// coarser one drawn (shadow_texel), for a stage that traces no ray.
 float sun_shadow_seen(float3 position, float3 n, float across, bool blended = true, float3 swayed = float3(0.0)) {
     Sun_Pick pick;
     if (!sun_pick(position, across, pick, swayed)) return -1.0;
@@ -592,7 +594,7 @@ float sun_shadow_seen(float3 position, float3 n, float across, bool blended = tr
     shadow_mark_late(m, position, swayed, blended);
 #endif
     Shadow_Taps t;
-    if (!shadow_map_held(m, position, swayed)) return -1.0;
+    if (blended && !shadow_map_held(m, position, swayed)) return -1.0;
     if (!shadow_map_point(m, true, frame.sun_direction.xyz, position, n, 0.0, m.rect.x == pick.level ? pick.grow : 1.0, t, swayed)) return 1.0;
     return blended ? shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t) : shadow_texel_seen(m, t);
 }
@@ -672,7 +674,8 @@ bool shadow_beside(Shadow_Map m, int2 texel, out float b, out uint coarser) {
 // How much of local light `light` reaches a point past what its map holds, as
 // sun_shadow_seen; -1 where no map of it holds the point drawn. radius: of
 // the light, metres: about that near it lies its body, not what it shines past.
-// blended: 2x2 texel blend; false: single texel lookup for forward blends.
+// blended: 2x2 texel blend where the pages around it are drawn; false: the
+// texel it falls in, in its page or the nearest coarser one drawn.
 float light_shadow_seen(uint light, float3 position, float3 n, float radius, float across, float3 swayed = float3(0.0), bool blended = true) {
     if (frame.sun_maps.z == 0u) return -1.0;
     uint word = shadow_light_word(view_shadow_data, light);
@@ -692,7 +695,7 @@ float light_shadow_seen(uint light, float3 position, float3 n, float radius, flo
 #ifdef SHADOW_MARKS_SLOT
     shadow_mark_late_unit(m, unit, blended);
 #endif
-    if (!shadow_map_held_unit(m, unit)) return -1.0;
+    if (blended && !shadow_map_held_unit(m, unit)) return -1.0;
     Shadow_Taps t;
     if (!shadow_map_point(m, false, normalize(light_pos - placed), position, n, radius, shadow_rect_mip(m.rect) == pick.level ? pick.grow : 1.0, t, swayed)) return 1.0;
     // Past its far plane a map holds nothing: an empty texel would read as a blocker there.

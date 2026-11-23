@@ -437,7 +437,10 @@ void shading_layers(inout Shading s, Material_Layers layers, float metallic) {
 // The other side of a thin surface as the lights there see it: a Lambert
 // reflector of what it transmits, facing away from the side the view is on.
 Shading shading_back(Shading s) {
-    return shading_diffuse(s.position, -s.normal, s.transmit);
+    Shading back = shading_diffuse(s.position, -s.normal, s.transmit);
+    back.across = s.across;
+    back.footprint = s.footprint;
+    return back;
 }
 bool shading_transmits(Shading s) { return max(s.transmit.r, max(s.transmit.g, s.transmit.b)) > 0.0; }
 

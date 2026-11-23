@@ -703,3 +703,51 @@ blended_light_is_the_same_from_the_lists_of_its_instance_as_from_those_of_its_ce
 	testing.expectf(t, seen[0].x > 0 && max(abs(delta.x), abs(delta.y), abs(delta.z)) <= 1e-3 * seen[0].x, "the same light from the lists of the sheet and of a cell: %v and %v", seen[0], seen[1])
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
+
+// A decal blended 1 cm over the whole floor of a closed room is as dark as
+// the floor under the roof the sun lights, frame after frame of a still view:
+// a forward blend traces no ray, so the maps of the view hide the sun from it
+// at the level of its pixel, which the floor beside it reads, in the page of
+// its texel or the nearest coarser one drawn, near the eye as far from it.
+@(test)
+blended_decal_indoors_takes_the_shadow_of_the_roof :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 320, 180, glass_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	decal := DEFAULT_MATERIAL
+	decal.base_color = {0.8, 0.8, 0.8}
+	decal.opacity = 0.9
+	decal.alpha_mode = .Blend
+	materials_set(r, {decal})
+	box := box_mesh(r)
+	sheet := sheet_mesh(r)
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = box, transform = placed({0, -0.1, 0}, {24, 0.2, 24}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = box, transform = placed({0, 3.1, 0}, {24, 0.2, 24}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 3, mesh = box, transform = placed({12, 1.5, 0}, {0.2, 3.2, 24}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 4, mesh = box, transform = placed({-12, 1.5, 0}, {0.2, 3.2, 24}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 5, mesh = box, transform = placed({0, 1.5, 12}, {24, 3.2, 0.2}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 6, mesh = box, transform = placed({0, 1.5, -12}, {24, 3.2, 0.2}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 7, mesh = sheet, transform = placed({0, 0.01, 0}, {23.6, 1, 23.6}), material = 1, tint = {1, 1, 1}},
+	}
+	sun := Sun_Desc{direction = {1, 1, 0.3}, color = {1, 1, 1}, illuminance = 10 * math.PI, enabled = true, indirect = 1, scattering = 1}
+	testing.expect(t, scene_given(r, instances, nil, sun, {}), r.error)
+	camera := Camera{position = {-10, 2.5, 0.01}, forward = {10, -2.5, 0}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	for _ in 0 ..< 30 {testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)}
+	rhi.device_wait_idle(f.device)
+	w, h := int(r.targets.width), int(r.targets.height)
+	pixels := make([]f16, w * h * 4, context.temp_allocator)
+	testing.expect(t, golden_read_texture(f.device, r.targets.display, mem.slice_data_cast([]u8, pixels)), rhi.device_error(f.device))
+	// The lower half of the image is the decal over the floor, near and far.
+	lit, brightest := 0, f32(0)
+	for y in h / 2 ..< h {
+		for x in 0 ..< w {
+			v := f32(pixels[(y * w + x) * 4])
+			if v > 0.02 {lit += 1}
+			brightest = max(brightest, v)
+		}
+	}
+	testing.expectf(t, lit == 0, "%d of %d pixels of the decal under the roof are lit, up to %f", lit, w * (h - h / 2), brightest)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
