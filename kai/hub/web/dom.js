@@ -117,8 +117,21 @@ export function state(values) {
             Object.assign(values, changes)
             for (const key of Object.keys(changes)) for (const watcher of watchers[key] ?? []) watcher()
         },
+        // Calls watcher after each change of key; answers what stops it.
         watch(key, watcher) {
             (watchers[key] ??= []).push(watcher)
+            return () => {
+                watchers[key] = watchers[key].filter(w => w !== watcher)
+            }
         },
     })
+}
+
+// An element made directly, for the many small nodes of code and diffs:
+// el('span', 'tok-kw', 'proc'). Children are as html`...` takes them.
+export function el(tag, className, ...children) {
+    const e = document.createElement(tag)
+    if (className) e.className = className
+    if (children.length) e.append(...nodes(children))
+    return e
 }

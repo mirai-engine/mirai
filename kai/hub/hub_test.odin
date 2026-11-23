@@ -378,7 +378,12 @@ hub_serves_public_and_member_views :: proc(t:^testing.T) {
         for x in TYPES {
             if strings.has_suffix(w.name,x[0]) {want=x[1]}
         }
-        testing.expectf(t,a.status==200 && a.content_type==want && a.body==string(w.data) && a.headers=="","%s is served as %q: %d %q",w.name,want,a.status,a.content_type)
+        tag:=static_etag(w.data)
+        testing.expectf(t,a.status==200 && a.content_type==want && a.body==string(w.data) && a.headers==fmt.tprintf("ETag: %s\r\n",tag) && a.cache=="no-cache","%s is served as %q, revalidated by its ETag: %d %q %q",w.name,want,a.status,a.content_type,a.headers)
+        again:=call(f,"GET",fmt.tprintf("/%s",w.name),if_none_match=tag)
+        testing.expectf(t,again.status==304 && again.body=="" && strings.contains(again.headers,tag),"%s unchanged answers 304 with no body: %d",w.name,again.status)
+        stale:=call(f,"GET",fmt.tprintf("/%s",w.name),if_none_match=`"0000", W/"1111"`)
+        testing.expectf(t,stale.status==200 && stale.body==string(w.data),"%s with another tag is served whole: %d",w.name,stale.status)
         text:=string(w.data)
         for banned in ([?]string{"eval(","new Function","<style",`style="`,"javascript:","document.write"}) {
             testing.expectf(t,!strings.contains(text,banned),"%s holds no %q",w.name,banned)
@@ -1219,4 +1224,80 @@ passkey_born :: proc(t:^testing.T,f:^Fixture,key:^Test_Passkey,name:string,rp:=R
     m:Made
     if a.status==201 && json_read(t,a,&m) {user,_=hash_parse(m.user)}
     return a.status,user
+}
+
+// A writer's passkey lands a proposal from the browser, as proposal_land
+// signs it: refused while the target's policy lacks an approval, or when the
+// page read the proposal or the target before they moved; then the move of
+// main to the stack's final revision and the proposal's Land, which the
+// node's fold takes: main moves and the proposal is landed.
+@(test)
+hub_lands_a_proposal_from_the_browser :: proc(t:^testing.T) {
+    f:=new(Fixture)
+    defer free(f)
+    defer fixture_close(f)
+    if !fixture_open(t,f,"kai-hub-land") {return}
+    erin_key:=passkey_make()
+    status,erin:=passkey_born(t,f,&erin_key,"erin")
+    if !testing.expect_value(t,status,201) {return}
+    testing.expect_value(t,kai.machine_member_add(&f.alice,f.org,erin,.Writer),kai.Error.None)
+    testing.expect_value(t,kai.machine_bookmark_move(&f.alice,f.public,"main",f.r1),kai.Error.None)
+    testing.expect_value(t,kai.machine_policy_set(&f.alice,f.org,f.public,"main",1,{}),kai.Error.None)
+    f.now+=2
+    f.hub.now=f.now
+    waiting_step(&f.hub)
+    kai.runner_update(&f.runner)
+    cookie:=sign_in(t,f,&erin_key)
+    if cookie=="" {return}
+    P,X,r1,r2,r3:=hex(f.public[:]),hex(f.proposal[:]),hex(f.r1[:]),hex(f.r2[:]),hex(f.r3[:])
+    View :: struct {revision,status:string,heads:[]string,can_land:bool}
+    read :: proc(t:^testing.T,f:^Fixture,X,cookie:string) -> (v:View,body:string) {
+        a:=call(f,"GET",fmt.tprintf("/api/proposals/%s",X),cookie=cookie)
+        json_read(t,a,&v)
+        return v,a.body
+    }
+    move :: proc(P,X,revision:string,heads:[]string,from:string) -> string {
+        b:=strings.builder_make(context.temp_allocator)
+        for h,i in heads {fmt.sbprintf(&b,`%s"%s"`,i>0?",":"",h)}
+        return fmt.tprintf(`{{"type":"bookmark_move","log":"%s","proposal":"%s","bookmark":"main","revision":"%s","heads":[%s],"from":["%s"]}}`,P,X,revision,strings.to_string(b),from)
+    }
+    v,body:=read(t,f,X,cookie)
+    testing.expectf(t,v.can_land && v.revision==r3 && strings.contains(body,`"reason":"approvals"`) && strings.contains(body,`"policy":{"approvals":1`),"a writer may land, once main's policy is met: %s",body)
+    refused:=passkey_write(t,f,cookie,&erin_key,move(P,X,r3,v.heads,r1))
+    testing.expectf(t,refused.status==409 && strings.contains(refused.body,"approval"),"the move waits for the approval main's policy asks: %d %s",refused.status,refused.body)
+
+    approved:=passkey_write(t,f,cookie,&erin_key,fmt.tprintf(`{{"type":"proposal_verdict","log":"%s","verdict":"approve","revision":"%s"}}`,X,r3))
+    if !testing.expectf(t,approved.status==201,"the writer approves: %d %s",approved.status,approved.body) {return}
+    stale:=v.heads
+    v,body=read(t,f,X,cookie)
+    testing.expectf(t,strings.contains(body,`"blocked":null`) && strings.contains(body,`"landing":null`),"the proposal may land now: %s",body)
+    Refusal :: struct {name,action:string}
+    for x in ([?]Refusal{
+        {"heads the proposal moved past",move(P,X,r3,stale,r1)},
+        {"another revision",move(P,X,r2,v.heads,r1)},
+        {"a target main no longer has",move(P,X,r3,v.heads,r2)},
+    }) {
+        w:=passkey_write(t,f,cookie,&erin_key,x.action)
+        testing.expectf(t,w.status==409,"a move from %s is refused: %d %s",x.name,w.status,w.body)
+    }
+    moved:=passkey_write(t,f,cookie,&erin_key,move(P,X,r3,v.heads,r1))
+    if !testing.expectf(t,moved.status==201,"the passkey signs the move: %d %s",moved.status,moved.body) {return}
+    M:=hex(moved.address[:])
+    v,body=read(t,f,X,cookie)
+    testing.expectf(t,v.status=="open" && strings.contains(body,fmt.tprintf(`"landing":"%s"`,M)),"a move without its Land is what the page finishes: %s",body)
+
+    bogus:=passkey_write(t,f,cookie,&erin_key,fmt.tprintf(`{{"type":"proposal_land","log":"%s","revision":"%s","bookmark_move":"%s"}}`,X,r3,r1))
+    testing.expectf(t,bogus.status==404,"a Land names a move of the project: %d %s",bogus.status,bogus.body)
+    landed:=passkey_write(t,f,cookie,&erin_key,fmt.tprintf(`{{"type":"proposal_land","log":"%s","revision":"%s","bookmark_move":"%s"}}`,X,r3,M))
+    if !testing.expectf(t,landed.status==201,"the passkey signs the Land: %d %s",landed.status,landed.body) {return}
+    v,body=read(t,f,X,cookie)
+    testing.expectf(t,v.status=="landed" && strings.contains(body,`"landing":null`),"the proposal is landed: %s",body)
+    Overview :: struct {bookmarks:[]struct {name,revision:string,landed:bool}}
+    o:Overview
+    json_read(t,call(f,"GET",fmt.tprintf("/api/projects/%s",P)),&o)
+    found:=false
+    for b in o.bookmarks {found||=b.name=="main" && b.landed && b.revision==r3}
+    testing.expectf(t,found,"main is at the proposal's final revision for anyone: %v",o.bookmarks)
+    again:=passkey_write(t,f,cookie,&erin_key,move(P,X,r3,v.heads,r3))
+    testing.expectf(t,again.status==409,"a landed proposal lands once: %d %s",again.status,again.body)
 }

@@ -130,6 +130,19 @@ route_session :: proc(c:^Call) {
         json_hex(&j,key[:])
     }
     json_member_bool(&j,"recovered",recovered)
+    json_key(&j,"devices")
+    json_array(&j)
+    if u:=user_fold_of(c.h,s.user);u!=nil {
+        for d,k in u.devices {
+            json_object(&j)
+            key:=d.key
+            json_member_hex(&j,"key",key[:])
+            json_member_string(&j,"name",kai.device_name(u,k))
+            json_member_bool(&j,"revoked",d.revoked)
+            json_end_object(&j)
+        }
+    }
+    json_end_array(&j)
     json_key(&j,"hosting")
     json_object(&j)
     json_member_int(&j,"made",i64(kai.store_hosted_count(store_of(c.h),s.user)))
@@ -598,11 +611,16 @@ route_user_create :: proc(c:^Call) {
         return
     }
     c.h.waiting[slot]={used=true,user=l.id,made=c.h.now}
+    // The genesis's assertion is the passkey's, made for this user alone and
+    // kept once: it signs the user in, with no further prompt.
+    _,cookie:=session_new(c.h,l.id,f.web_keys[0].key,credential)
     j:=json_make()
     json_object(&j)
     json_member_hash(&j,"user",l.id)
+    json_member_string(&j,"name",user_name(&f))
     json_end_object(&j)
     json_response(c,&j,201)
+    c.response.headers=cookie
 }
 
 // Saves a log with the entries the store keeps of it already, so a log from a

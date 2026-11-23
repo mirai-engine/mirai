@@ -10,6 +10,8 @@ export const HEAD = 152
 export const PARENTS_MAX = 8
 export const BODY_MAX = 64 << 10
 export const NAME_MAX = 64
+export const BOOKMARK_NAME_MAX = 255
+export const CONFLICT_SIDES_MAX = 16
 export const KEM_PUBLIC = 1184
 export const SIG_ED25519 = 0
 export const SIG_WEBAUTHN = 1
@@ -18,12 +20,12 @@ export const TIME_SKEW_NS = 600n * 1000000000n
 export const TYPES = {
     device_add: 2, web_key_add: 5,
     org_genesis: 6, member_add: 7, member_remove: 8, role_set: 9, project_add: 11, node_add: 17,
-    project_genesis: 19,
-    proposal_comment: 23, proposal_verdict: 24, proposal_close: 27, proposal_reopen: 28,
+    project_genesis: 19, bookmark_move: 20,
+    proposal_comment: 23, proposal_verdict: 24, proposal_land: 26, proposal_close: 27, proposal_reopen: 28,
     passkey_genesis: 33,
 }
 // The entries whose log is a proposal's or a project's, which name the org's entry their author signs under.
-const ORG_BOUND = new Set(['proposal_comment', 'proposal_verdict', 'proposal_close', 'proposal_reopen', 'project_genesis'])
+const ORG_BOUND = new Set(['proposal_comment', 'proposal_verdict', 'proposal_close', 'proposal_reopen', 'proposal_land', 'project_genesis', 'bookmark_move'])
 // The entries that begin a log: no parents, no log of their own yet.
 const GENESIS = new Set(['org_genesis', 'project_genesis'])
 export const MODES = {relay: 1, seed: 2, ddc: 4}
@@ -183,6 +185,18 @@ export function actionBody(a) {
     case 'proposal_close':
     case 'proposal_reopen':
         return new Uint8Array(0)
+    case 'bookmark_move': {
+        // The move that lands a proposal: to, the proposal, then the heads of its log and the targets it moves from.
+        const heads = (a.heads || []).map(h => need(unhex(h, 32), 'a head is an entry address, 64 hex'))
+        const from = (a.from || []).map(r => need(unhex(r, 32), 'a target is a revision, 64 hex'))
+        const name = utf8(a.bookmark || '')
+        if (heads.length < 1 || heads.length > PARENTS_MAX) throw new Error(`a landing names 1 to ${PARENTS_MAX} heads of the proposal's log`)
+        if (from.length > CONFLICT_SIDES_MAX) throw new Error(`a move goes from at most ${CONFLICT_SIDES_MAX} targets`)
+        if (name.length < 1 || name.length > BOOKMARK_NAME_MAX) throw new Error(`a bookmark's name is 1 to ${BOOKMARK_NAME_MAX} bytes`)
+        return concat(need(unhex(a.revision, 32), 'revision is 64 hex'), need(unhex(a.proposal, 32), 'proposal is 64 hex'), Uint8Array.of(heads.length, from.length), ...heads, ...from, name)
+    }
+    case 'proposal_land':
+        return concat(need(unhex(a.revision, 32), 'revision is 64 hex'), need(unhex(a.bookmark_move, 32), 'bookmark_move is an entry address, 64 hex'))
     case 'member_add':
     case 'role_set': {
         const role = ROLES[a.role]

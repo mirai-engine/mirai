@@ -364,9 +364,12 @@ conn_answer :: proc(h:^Hub,c:^Conn,method:Method,response:^Response) {
     strings.write_string(&b,response.cache)
     strings.write_string(&b,"\r\n")
     strings.write_string(&b,response.headers)
-    strings.write_string(&b,"Content-Length: ")
-    strings.write_int(&b,len(response.body))
-    strings.write_string(&b,"\r\n")
+    // A 304 carries no body and no length of its own: the client keeps the one it has.
+    if response.status!=304 {
+        strings.write_string(&b,"Content-Length: ")
+        strings.write_int(&b,len(response.body))
+        strings.write_string(&b,"\r\n")
+    }
     if response.close {strings.write_string(&b,"Connection: close\r\n")}
     strings.write_string(&b,"\r\n")
     conn_queue(c,b.buf[:])

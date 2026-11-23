@@ -449,6 +449,7 @@ route_projects :: proc(c:^Call) {
             json_object(&j)
             json_member_hash(&j,"id",p.id)
             json_member_hash(&j,"org",o.id)
+            json_member_string(&j,"org_name",org_name(o))
             json_member_string(&j,"name",project_name(kai.agent_log(&o.agent,p.id)))
             json_member_bool(&j,"public",p.public)
             json_end_object(&j)
@@ -468,6 +469,7 @@ route_project :: proc(c:^Call) {
     json_object(&j)
     json_member_hash(&j,"id",v.id)
     json_member_hash(&j,"org",v.org.id)
+    json_member_string(&j,"org_name",org_name(v.org))
     json_member_string(&j,"name",v.name)
     json_member_bool(&j,"public",v.public)
     json_key(&j,"main")
@@ -489,6 +491,10 @@ route_project :: proc(c:^Call) {
         if !b.landed {
             d:=b.device
             json_member_hex(&j,"device",d[:])
+            if u,device_name:=key_owner(v.org,b.device);u!=nil {
+                json_member_string(&j,"owner_name",user_name(u))
+                json_member_string(&j,"device_name",device_name)
+            }
             json_member_int(&j,"time",b.time)
         }
         json_end_object(&j)
@@ -730,6 +736,7 @@ route_changes :: proc(c:^Call) {
         if e==.None {
             author:=ch.author
             json_member_hex(&j,"author",author[:])
+            if u,_:=key_owner(v.org,ch.author);u!=nil {json_member_string(&j,"author_name",user_name(u))}
             json_member_int(&j,"written",ch.written)
             json_member_string(&j,"summary",summary_line(ch.description))
         }
@@ -989,6 +996,7 @@ route_evolution :: proc(c:^Call) {
         json_member_int(&j,"written",x.written)
         author:=x.change.author
         json_member_hex(&j,"author",author[:])
+        if u,_:=key_owner(v.org,x.change.author);u!=nil {json_member_string(&j,"author_name",user_name(u))}
         json_member_string(&j,"summary",summary_line(x.change.description))
         json_key(&j,"files")
         json_array(&j)

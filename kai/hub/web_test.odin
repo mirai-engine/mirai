@@ -17,15 +17,13 @@ import "mirai:store"
 // and tree boundaries, devices' link codes, web key ids, the credential of an
 // authenticator's data, a new user's Passkey_Genesis, the constants of an
 // entry, and the server's draft of every write a browser makes,
-// which the check takes, and tampered or mismatched drafts it refuses.
-// Without node the run is reported skipped.
+// which the check takes, and tampered or mismatched drafts it refuses, with
+// the two entries of a landing; and the Markdown, highlighting and word diff
+// of web_test.mjs's own cases. Without node the test fails: it says where it looked.
 @(test)
 hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
-    state,version,_,ve:=subprocess.exec({command={"node","--version"}},context.temp_allocator)
-    if ve!=nil || state.exit_code!=0 {
-        log.warnf("SKIPPED: no node here to run the frontend's modules (%v)",ve)
-        return
-    }
+    node,version:=node_find()
+    if !testing.expectf(t,node!="","the frontend's modules run under node, which is not on PATH nor in %v: install Node.js 18 or later",NODE_PLACES) {return}
     f:=new(Fixture)
     defer free(f)
     defer fixture_close(f)
@@ -105,6 +103,8 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     json_member_int(&constants,"BODY_MAX",kai.ENTRY_BODY_MAX)
     json_member_int(&constants,"KEM_PUBLIC",kai.KEM_PUBLIC)
     json_member_int(&constants,"NAME_MAX",kai.NAME_MAX)
+    json_member_int(&constants,"BOOKMARK_NAME_MAX",kai.BOOKMARK_NAME_MAX)
+    json_member_int(&constants,"CONFLICT_SIDES_MAX",kai.CONFLICT_SIDES_MAX)
     names :: proc(j:^Json,key:string,text:[$E]string) {
         json_key(j,key)
         json_object(j)
@@ -133,7 +133,8 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     device_proof:=kai.device_proof(&device_identity,transmute([32]u8)user,device_dh,blake3.hash(device_kem[:]))
     P,O:=hex_of(f.proposal),hex_of(f.org)
     change,r1,r3,me:=hex(f.change[:]),hex_of(f.r1),hex_of(f.r3),hex_of(user)
-    actions:=[?]string{
+    actions:=make([dynamic]string,context.temp_allocator)
+    append(&actions,
         fmt.tprintf(`{{"type":"proposal_comment","log":"%s","text":"On the whole proposal"}}`,P),
         fmt.tprintf(`{{"type":"proposal_comment","log":"%s","text":"On a file","change":"%s","path":"src/a.txt","anchor":{{"kind":"file"}}}}`,P,change),
         fmt.tprintf(`{{"type":"proposal_comment","log":"%s","text":"On lines, ü","change":"%s","path":"src/a.txt","anchor":{{"kind":"lines","line":2,"lines":2}}}}`,P,change),
@@ -151,7 +152,19 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         node_action(f,O,`"relay","seed"`),
         fmt.tprintf(`{{"type":"project_genesis","org":"%s","name":"game","public":true}}`,O),
         fmt.tprintf(`{{"type":"project_add","log":"%s","project":"%s","public":false}}`,O,r1),
+    )
+    // A landing: the move of main, from where it is to the stack's final revision, then the Land naming it.
+    Heads :: struct {heads:[]string}
+    ph:Heads
+    if !json_read(t,call(f,"GET",fmt.tprintf("/api/proposals/%s",P),cookie=cookie),&ph) {return}
+    quoted:=strings.builder_make(context.temp_allocator)
+    for h,i in ph.heads {fmt.sbprintf(&quoted,`%s"%s"`,i>0?",":"",h)}
+    L:=hex_of(f.public)
+    land_move:=len(actions)
+    move_of :: proc(L,P,revision,heads,from:string) -> string {
+        return fmt.tprintf(`{{"type":"bookmark_move","log":"%s","proposal":"%s","bookmark":"main","revision":"%s","heads":[%s],"from":["%s"]}}`,L,P,revision,heads,from)
     }
+    append(&actions,move_of(L,P,r3,strings.to_string(quoted),r3))
     // What the user asked otherwise than each draft says, by the draft it is checked against.
     Mismatch :: struct {draft:int,action:string}
     mismatches:=[?]Mismatch{
@@ -169,15 +182,29 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
         {14,node_action(f,O,`"relay"`)},
         {15,fmt.tprintf(`{{"type":"project_genesis","org":"%s","name":"game","public":false}}`,O)},
         {16,fmt.tprintf(`{{"type":"project_add","log":"%s","project":"%s","public":true}}`,O,r1)},
+        {land_move,move_of(L,P,r1,strings.to_string(quoted),r3)},
+        {land_move,move_of(L,P,r3,strings.to_string(quoted),r1)},
+        {land_move,move_of(L,P,r3,fmt.tprintf(`"%s"`,r1),r3)},
+        {land_move+1,fmt.tprintf(`{{"type":"proposal_land","log":"%s","revision":"%s","bookmark_move":"%s"}}`,P,r3,r1)},
     }
     Draft_Answer :: struct {unsigned:string}
-    drafts:[len(actions)][]u8
+    drafts:=make([dynamic][]u8,context.temp_allocator)
     fmt.sbprint(&b,`"drafts":[`)
-    for action,i in actions {
+    for i:=0;i<len(actions);i+=1 {
+        action:=actions[i]
+        f.now+=2 // a write's token back: the drafts outnumber the burst
         d:Draft_Answer
-        if !json_read(t,call(f,"POST","/api/drafts",action,cookie),&d) {return}
-        drafts[i]=unb64(d.unsigned)
+        drafted:=call(f,"POST","/api/drafts",action,cookie)
+        if !testing.expectf(t,drafted.status==200,"the server drafts %s: %d %s",action,drafted.status,drafted.body) || !json_read(t,drafted,&d) {return}
+        append(&drafts,unb64(d.unsigned))
         fmt.sbprintf(&b,`%s{{"action":%s,"unsigned":"%s"}}`,i>0?",":"",action,d.unsigned)
+        if i==land_move {
+            // The move is signed and kept, so the Land that names it drafts.
+            f.now+=4
+            w:=passkey_write(t,f,cookie,&p256,action)
+            if !testing.expectf(t,w.status==201,"the browser's move lands the proposal's stack: %d %s",w.status,w.body) {return}
+            append(&actions,fmt.tprintf(`{{"type":"proposal_land","log":"%s","revision":"%s","bookmark_move":"%s"}}`,P,r3,hex_of(w.address)))
+        }
     }
     fmt.sbprint(&b,`],"refused":[`)
     first:=true
@@ -187,8 +214,9 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     }
     for action,i in actions {
         u:=drafts[i]
+        other_type:=kai.Entry_Type(u[6])==.Proposal_Land?kai.Entry_Type.Proposal_Close:kai.Entry_Type.Proposal_Land
         Tamper :: struct {name:string,at,value:int}
-        for x in ([?]Tamper{{"the magic",0,'X'},{"the version",4,9},{"the type",6,int(kai.Entry_Type.Proposal_Land)},{"the log",8,-1},{"the author",40,-1},{"the author's context",72,0},{"the org's context",104,0},{"the signature kind",148,0},{"a reserved byte",150,1}}) {
+        for x in ([?]Tamper{{"the magic",0,'X'},{"the version",4,9},{"the type",6,int(other_type)},{"the log",8,-1},{"the author",40,-1},{"the author's context",72,0},{"the org's context",104,0},{"the signature kind",148,0},{"a reserved byte",150,1}}) {
             bad:=make([]u8,len(u),context.temp_allocator)
             copy(bad,u)
             if x.name=="the author's context" {
@@ -287,8 +315,33 @@ hub_web_modules_agree_with_the_node :: proc(t:^testing.T) {
     vectors:=fmt.tprintf("%s/vectors.json",f.folder)
     if !testing.expect(t,os.write_entire_file(vectors,transmute([]u8)strings.to_string(b))==nil) {return}
     script:=fmt.tprintf("%s/web_test.mjs",#directory)
-    state2,out,errs,e:=subprocess.exec({command={"node",script,vectors}},context.temp_allocator)
-    testing.expectf(t,e==nil && state2.exit_code==0,"the frontend's modules under node %s: %v\n%s%s",strings.trim_space(string(version)),e,out,errs)
+    state,out,errs,e:=subprocess.exec({command={node,script,vectors}},context.temp_allocator)
+    if testing.expectf(t,e==nil && state.exit_code==0,"the frontend's modules under node %s: %v\n%s%s",version,e,out,errs) {
+        log.infof("the frontend's modules under node %s: %s",version,strings.trim_space(string(out)))
+    }
+}
+
+// Where node is looked for after PATH: where its installers put it.
+@(private="file")
+NODE_PLACES :: [?]string{"/opt/homebrew/bin/node","/usr/local/bin/node","/usr/bin/node","C:/Program Files/nodejs/node.exe"}
+
+// The node that runs the frontend's modules and its version; "" when there is none.
+@(private="file")
+node_find :: proc() -> (path,version:string) {
+    if v,ok:=node_version("node");ok {return "node",v}
+    places:=NODE_PLACES
+    for candidate in places {
+        if !os.exists(candidate) {continue}
+        if v,ok:=node_version(candidate);ok {return candidate,v}
+    }
+    return "",""
+}
+
+@(private="file")
+node_version :: proc(command:string) -> (version:string,ok:bool) {
+    state,out,_,e:=subprocess.exec({command={command,"--version"}},context.temp_allocator)
+    if e!=nil || state.exit_code!=0 {return}
+    return strings.trim_space(string(out)),true
 }
 
 // The node_add of this node to org, with modes, as the page builds it from GET /api/node.

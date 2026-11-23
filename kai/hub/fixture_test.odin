@@ -219,14 +219,15 @@ fixture_close :: proc(f:^Fixture) {
     if f.open[2] {kai.machine_close(&f.peer)}
 }
 
-Answer :: struct {status:int,body:string,content_type:string,headers:string,cookie:string}
+Answer :: struct {status:int,body:string,content_type:string,cache:string,headers:string,cookie:string}
 
 // One request as a browser sends it, answered by the hub's routes; from
 // address when one is given.
-call :: proc(f:^Fixture,method,path:string,body:="",cookie:="",address:=[16]u8{}) -> Answer {
+call :: proc(f:^Fixture,method,path:string,body:="",cookie:="",address:=[16]u8{},if_none_match:="") -> Answer {
     b:=strings.builder_make(context.temp_allocator)
     fmt.sbprintf(&b,"%s %s HTTP/1.1\r\nHost: %s\r\n",method,path,RP)
     if cookie!="" {fmt.sbprintf(&b,"Cookie: %s\r\n",cookie)}
+    if if_none_match!="" {fmt.sbprintf(&b,"If-None-Match: %s\r\n",if_none_match)}
     if method=="POST" {fmt.sbprintf(&b,"Content-Type: application/json\r\nContent-Length: %d\r\n",len(body))}
     fmt.sbprintf(&b,"\r\n%s",body)
     p:=request_parse(b.buf[:])
@@ -238,7 +239,7 @@ call :: proc(f:^Fixture,method,path:string,body:="",cookie:="",address:=[16]u8{}
         conn.address=address
     }
     r:=dispatch(&f.hub,conn,&p.request)
-    a:=Answer{status=r.status,body=string(r.body),content_type=r.content_type,headers=r.headers}
+    a:=Answer{status=r.status,body=string(r.body),content_type=r.content_type,cache=r.cache,headers=r.headers}
     if at:=strings.index(r.headers,COOKIE+"=");at>=0 {
         rest:=r.headers[at:]
         a.cookie=rest[:strings.index_byte(rest,';')]

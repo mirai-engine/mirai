@@ -1,149 +1,254 @@
-// Signing in: with a passkey, as a new user whose first passkey this is, by
-// linking a passkey to an existing user, or by a device's approval.
-import {html, mount} from './dom.js'
+// Accounts: signing in with a passkey or from a computer, creating an
+// account, the three steps of setting up (passkey, computer, organization)
+// and the account page with its user ID and devices.
+import {el, html, mount} from './dom.js'
 import {app} from './api.js'
 import {link as linkPasskey, linkDevice, linkOffer, makeOrg, recoveryWait, register, signIn, signInByDevice} from './passkey.js'
-import {action, copyField, icon, navigate, plural, size} from './ui.js'
+import {action, avatar, badge, confirmDialog, copyField, icon, navigate, plural, setPage, short, size, toast} from './ui.js'
 
-export function SignIn() {
-    // Where the person is: the user just made, a passkey just linked, a
-    // device's offer to compare, a device just linked and whether it set the
-    // recovery key yet.
-    let made = null, linked = false, offer = null, device = false, recovering = false
+// The machine being linked, across draws of the page: its offer to compare,
+// whether it was linked and whether it set the recovery key yet.
+const linking = {offer: null, linked: false, recovering: false, waiting: false}
+
+const startLink = action(async () => {
+    Object.assign(linking, {offer: null, linked: false, waiting: true})
+    app.set({approval: app.approval})
+    try {
+        linking.offer = await linkOffer()
+    } finally {
+        linking.waiting = false
+        app.set({approval: app.approval})
+    }
+})
+
+const confirmLink = action(async () => {
+    const offer = linking.offer
+    await linkDevice(offer)
+    Object.assign(linking, {offer: null, linked: true, recovering: !app.session.recovered})
+    app.set({approval: app.approval})
+    toast(`${offer.name} is linked to your account`)
+    if (!linking.recovering) return
+    try {
+        await recoveryWait(offer)
+    } finally {
+        linking.recovering = false
+        app.set({approval: app.approval})
+    }
+})
+
+const rejectLink = () => {
+    linking.offer = null
+    toast('The computer was not linked', 'info')
+    app.set({approval: null})
+}
+
+const createOrg = action(async event => {
+    const name = event.target.elements.name.value.trim()
+    if (!name) throw new Error("give your organization a name: 1 to 64 characters")
+    const ok = await confirmDialog({
+        title: `Create ${name}`,
+        text: 'Your passkey signs two things, one prompt each:',
+        steps: ['the new organization, with you as its owner', 'that this server keeps it for your team'],
+        confirm: 'Continue',
+    })
+    if (!ok) return
+    const org = await makeOrg(name)
+    toast(`${name} is ready: add its first project`)
+    navigate(`/org/${org}`)
+})
+
+// The steps of setting up an account: each done, current or to come.
+function steps(s) {
+    const linked = s.recovered || (s.devices ?? []).some(d => !d.revoked)
+    const hosts = s.hosting.max > 0
+    const org = s.orgs.length > 0
+    const project = org && (app.projects ?? []).some(p => s.orgs.some(o => o.org === p.org))
+    return [
+        {key: 'passkey', title: s.passkey ? 'Passkey created' : 'Signed in from your computer', done: true},
+        {key: 'computer', title: 'Link your computer', done: linked},
+        {key: 'org', title: hosts ? 'Create your organization and first project' : 'Join an organization', done: org && (project || !hosts)},
+    ]
+}
+
+// Whether every step of setting up is done.
+export function setUp(s) {
+    return steps(s).every(x => x.done)
+}
+
+// The setting-up card: compact on Home with a link to finish, whole on the
+// account page where each step is done.
+export function onboarding(s, whole = false) {
+    if (!s || setUp(s)) return null
+    const list = steps(s)
+    const current = list.findIndex(x => !x.done)
+    return html`<section class="onboarding">
+        <header><div>${icon('rocket')}<div><h2>Get set up</h2><p class="quiet">${plural(list.filter(x => x.done).length, 'step')} of 3 done</p></div></div>
+            ${whole ? null : html`<a class="button primary" href="/account">Continue setup${icon('arrow-right')}</a>`}</header>
+        <ol class="steps">${list.map((x, i) => html`<li class=${x.done ? 'done' : i === current ? 'current' : 'todo'}>
+            <span class="step-mark tabular">${x.done ? icon('check') : String(i + 1)}</span>
+            <div class="step-body"><strong>${x.title}</strong>${whole && i === current ? stepBody(s, x.key) : null}</div>
+        </li>`)}</ol>
+    </section>`
+}
+
+function stepBody(s, key) {
+    if (key === 'computer') return linkFlow(s)
+    if (key === 'org') return orgStep(s)
+    return null
+}
+
+// Linking a computer: the command to run there, then the code both show.
+function linkFlow(s) {
+    if (!s.passkey) return html`<p class="quiet">Add a passkey to this browser first (below): linking a computer is signed with it.</p>`
+    if (linking.recovering) return html`<div class="notice">${icon('shield')}<p>Linked. Your computer now sets your recovery key and shows it once: write it down and keep it somewhere safe, offline.</p></div>`
+    if (linking.offer) return html`<div class="link-compare">
+        <p>A computer called <strong>${linking.offer.name}</strong> asks to be linked. Check that it shows exactly this code:</p>
+        <div class="code-compare tabular" aria-label="Verification code">${linking.offer.code.split('').map(c => c === '-' ? el('span', 'code-sep', '–') : el('span', 'code-digit', c))}</div>
+        <div class="actions"><button type="button" class="primary" @click=${confirmLink}>${icon('check')}The codes match: link it</button>
+            <button type="button" class="ghost" @click=${rejectLink}>They differ</button></div>
+    </div>`
+    const a = app.approval
+    if (linking.waiting && a?.kind === 'device') return html`<div class="link-wait">
+        <p>On your computer, open a terminal in any folder and run:</p>
+        ${copyField(a.command, {label: 'Command to run on your computer'})}
+        <p class="waiting-line"><span class="spinner" aria-hidden="true"></span>Waiting for your computer…</p>
+    </div>`
+    return html`<div class="link-start">
+        <p class="quiet">Your computer becomes a device of your account: it works on your projects, approves sign-ins and keeps your recovery key. You need Mirai installed there.</p>
+        <button type="button" class="primary" @click=${startLink}>${icon('laptop')}Link a computer</button>
+    </div>`
+}
+
+function orgStep(s) {
+    if (s.hosting.max === 0) return html`<div><p class="quiet">This server makes no organizations from the web. Ask an admin of your team's organization to add you with your user ID:</p>${copyField(s.user, {label: 'Your user ID'})}</div>`
+    if (s.orgs.length) {
+        const o = s.orgs[0]
+        return html`<p class="quiet">${o.name} is ready. <a href=${`/org/${o.org}`}>Add its first project</a>.</p>`
+    }
+    if (!s.recovered) return html`<p class="quiet">Link your computer first: an organization needs its owner to have a recovery key, which the computer sets.</p>`
+    if (s.hosting.made >= s.hosting.max) return html`<p class="quiet">You made as many organizations here as this server keeps for one person. For more, run a server of your own with mirai kai serve.</p>`
+    return html`<form class="inline-form" @submit=${createOrg}>
+        <input name="name" class="grow" placeholder="Your organization's name" aria-label="Organization name" maxlength="64" autocomplete="organization">
+        <button type="submit" class="primary">${icon('building')}Create organization</button>
+    </form>
+    <p class="quiet small-text">This server keeps up to ${size(app.node.hosting.quota)} for it. You can also join an existing one: share your user ID with its admin.</p>`
+}
+
+export function Account() {
     const root = html`<div class="page narrow"></div>`
-
-    const withPasskey = action(async () => {
-        await signIn()
-        navigate('/')
-    })
-    const byDevice = action(async () => {
-        await signInByDevice()
-        navigate('/')
-    })
-    const create = action(async event => {
-        const name = event.target.elements.name.value.trim()
-        if (!name) throw new Error('give your name: 1 to 64 bytes')
-        made = await register(name)
-        draw()
-    })
-    const addPasskey = action(async () => {
-        await linkPasskey(app.session.user, app.session.name || 'Kai user')
-        linked = true
-        draw()
-    })
-    const askOffer = action(async () => {
-        offer = await linkOffer()
-        draw()
-    })
-    const confirm = action(async () => {
-        const linking = offer
-        await linkDevice(linking)
-        offer = null
-        device = true
-        recovering = !app.session.recovered
-        draw()
-        if (!recovering) return
-        try {
-            await recoveryWait(linking)
-        } finally {
-            recovering = false
-            draw()
-        }
-    })
-    const makeAnOrg = action(async event => {
-        const name = event.target.elements.name.value.trim()
-        if (!name) throw new Error("give the org's name: 1 to 64 bytes")
-        navigate(`/org/${await makeOrg(name)}`)
-    })
-
-    const draw = mount(root, () => app.session ? signedIn() : made ? madeView() : choices())
-
-    function signedIn() {
-        const s = app.session
-        return html`<header class="page-head"><h1>Signed in</h1><p class="quiet">You are ${s.name || s.user}.</p></header>
-        ${s.passkey ? html`<section class="panel">
-            <h2>Link a machine</h2>
-            <p class="quiet">${s.recovered ? 'Makes a machine a device of yours.'
-                : 'Makes a machine a device of yours. Your user has no recovery key yet: the first machine you link sets it and shows it there once, and making an org needs it.'}</p>
-            ${recovering ? html`<div class="notice">${icon('dot')}<p>Linked. The command on the machine sets your recovery key now and shows it once: write it down and keep it offline.</p></div>`
-                : device ? html`<div class="notice ok">${icon('check')}<p>The machine is yours now${s.recovered ? ', and your user has its recovery key' : ''}.</p></div>`
-                : offer ? html`<div>
-                    <p>${offer.name} offers itself with the code <code class="code-big">${offer.code}</code>. Link it only if the machine shows the same.</p>
-                    <div class="actions"><button type="button" class="primary" @click=${confirm}>Link it</button></div>
-                </div>`
-                : html`<div class="actions"><button type="button" @click=${askOffer}>Link a machine</button></div>`}
-        </section>
-        ${orgPanel(s)}` : html`<section class="panel">
-            <h2>Add a passkey to this browser</h2>
-            <p class="quiet">A device of yours approved this session. A passkey of this browser signs you in with no device from now on: the device approves it once.</p>
-            ${linked ? html`<div class="notice ok">${icon('check')}<p>The passkey is yours now: this browser signs in with it.</p></div>`
-                : html`<div class="actions"><button type="button" class="primary" ?disabled=${!app.node?.passkeys_work} @click=${addPasskey}>Add a passkey</button></div>`}
-        </section>`}`
-    }
-
-    // Making an org this node hosts, or what is missing for it; nothing when the node makes none.
-    function orgPanel(s) {
-        const most = s.hosting.max, quota = app.node.hosting.quota
-        if (most === 0) return null
-        return html`<section class="panel">
-            <h2>Make an org</h2>
-            ${!s.recovered ? html`<div class="notice">${icon('lock')}<p>An org needs its owner to have a recovery key: link a machine above, and it sets yours.</p></div>`
-                : s.hosting.made >= most ? html`<div class="notice">${icon('dot')}<p>You made ${plural(s.hosting.made, 'org')} here, as many as this node hosts for one user. For more, run a node of your own: mirai kai serve.</p></div>`
-                : html`<p class="quiet">This node hosts it: it keeps up to ${size(quota)} of the org and no derived data. Your passkey signs the org and the entry that adds this node to it. ${plural(most - s.hosting.made, 'org')} left for you here.</p>
-                <form class="inline-form" @submit=${makeAnOrg}>
-                    <input name="name" class="grow" placeholder="The org's name" aria-label="Org name" maxlength="64" autocomplete="off">
-                    <button type="submit" class="primary">Make the org</button>
-                </form>`}
-        </section>`
-    }
-
-    function madeView() {
-        return html`<header class="page-head"><h1>Your user is made</h1></header>
-        <section class="panel">
-            <p>${app.node.hosting.orgs > 0
-                ? 'Sign in with your passkey and link a machine of yours, which sets your recovery key; then make an org here. Or give your user id to an admin of an org this node serves.'
-                : 'Your user id: give it to an admin of an org this node serves. Then sign in with your passkey and link a machine of yours, which sets your recovery key.'}</p>
-            ${copyField(made.user)}
-            <div class="actions"><button type="button" class="primary" @click=${withPasskey}>Sign in</button></div>
-        </section>`
-    }
-
-    function choices() {
-        const work = app.node?.passkeys_work
-        return html`<header class="page-head"><h1>Sign in</h1>
-            ${work ? null : html`<div class="notice">${icon('lock')}<p>Passkeys need the node over HTTPS on its domain; this address serves reads. A device of yours can still approve a sign-in.</p></div>`}
-        </header>
-        <section class="panel">
-            <h2>With a passkey</h2>
-            <div class="actions"><button type="button" class="primary" ?disabled=${!work} @click=${withPasskey}>Sign in with a passkey</button></div>
-        </section>
-        <section class="panel">
-            <h2>New here</h2>
-            <p class="quiet">Makes a user of this passkey alone: it signs your user's first entry, the node only keeps it.</p>
-            <form class="inline-form" @submit=${create}>
-                <input name="name" class="grow" placeholder="Your name" aria-label="Your name" maxlength="64" autocomplete="name">
-                <button type="submit" ?disabled=${!work}>Create a passkey</button>
-            </form>
-        </section>
-        <section class="panel">
-            <h2>With a device of yours</h2>
-            <p class="quiet">A machine that is a device of your user approves this browser's sign-in. Signed in, this browser can add a passkey of its own.</p>
-            <div class="actions"><button type="button" @click=${byDevice}>Approve from a device</button></div>
-        </section>`
-    }
-
+    const draw = mount(root, () => app.session ? signedIn(app.session) : signedOut())
+    const stops = ['session', 'approval', 'projects'].map(key => app.watch(key, () => root.isConnected ? draw() : stops.forEach(stop => stop())))
     return root
 }
 
-// The approval the page waits for, whatever asked it.
+// --- Signed out ---
+
+const withPasskey = action(async () => {
+    await signIn()
+    toast(`Welcome back${app.session?.name ? `, ${app.session.name}` : ''}`)
+    navigate('/')
+})
+
+const byDevice = action(async () => {
+    await signInByDevice()
+    toast('Signed in from your computer')
+    navigate('/')
+})
+
+const create = action(async event => {
+    const name = event.target.elements.name.value.trim()
+    if (!name) throw new Error('give your name: 1 to 64 characters')
+    await register(name)
+    toast('Your account is ready')
+    navigate('/account', true)
+})
+
+function signedOut() {
+    setPage({title: 'Sign in', crumbs: [{label: 'Sign in'}]})
+    const work = app.node?.passkeys_work
+    return html`<header class="page-head center">
+        ${el('span', 'hero-mark', icon('key'))}
+        <h1>Sign in to KaiHub</h1>
+        <p class="lead">No password: your device's passkey (Touch ID, Windows Hello, a security key) signs you in.</p>
+    </header>
+    ${work ? null : html`<div class="notice">${icon('lock')}<p>Passkeys work only when this server is opened over HTTPS on its domain. From this address, sign in from your computer instead.</p></div>`}
+    <section class="card-panel">
+        <h2>${icon('key')}Sign in with a passkey</h2>
+        <p class="quiet">Use the passkey you created for this server.</p>
+        <button type="button" class="primary wide" ?disabled=${!work} @click=${withPasskey}>Sign in with a passkey</button>
+    </section>
+    <section class="card-panel">
+        <h2>${icon('sparkle')}New here? Create an account</h2>
+        <p class="quiet">Your browser asks twice: once to create the passkey, once to confirm it. Then you are signed in.</p>
+        <form class="inline-form" @submit=${create}>
+            <input name="name" class="grow" placeholder="Your name" aria-label="Your name" maxlength="64" autocomplete="name">
+            <button type="submit" ?disabled=${!work}>Create account</button>
+        </form>
+    </section>
+    <section class="card-panel">
+        <h2>${icon('laptop')}Sign in from your computer</h2>
+        <p class="quiet">A computer already linked to your account approves this browser. You get a command to run there.</p>
+        <button type="button" class="wide" @click=${byDevice}>Approve from my computer</button>
+    </section>`
+}
+
+// --- Signed in ---
+
+const addPasskey = action(async () => {
+    await linkPasskey(app.session.user, app.session.name || 'Kai user')
+    toast('This browser now signs in with its own passkey')
+})
+
+function signedIn(s) {
+    setPage({title: 'Account', crumbs: [{label: 'Account'}]})
+    const devices = (s.devices ?? []).filter(d => !d.revoked)
+    return html`<header class="profile">
+        ${avatar(s.name || '?', s.user, true)}
+        <div><h1>${s.name || 'Your account'}</h1>
+            <p class="quiet">${s.passkey ? 'Signed in with a passkey' : 'Signed in from your computer'} · ${plural(s.orgs.length, 'organization')}</p></div>
+    </header>
+    <section class="card-panel">
+        <h2>${icon('users')}Your user ID</h2>
+        <p class="quiet">Share it with an admin who adds you to their organization.</p>
+        ${copyField(s.user, {label: 'Your user ID'})}
+    </section>
+    ${onboarding(s, true)}
+    <section class="card-panel">
+        <div class="panel-head"><h2>${icon('laptop')}Your computers</h2>
+            ${s.passkey && setUp(s) && !linking.waiting && !linking.offer ? html`<button type="button" class="small" @click=${startLink}>${icon('plus')}Link another</button>` : null}</div>
+        ${devices.length === 0 ? html`<p class="quiet">No computer is linked yet.</p>` : html`<ul class="device-list">${devices.map(d => html`<li>
+            ${icon('laptop')}<div><strong>${d.name && d.name !== short(d.key) ? d.name : 'Computer'}</strong><code class="hash" title=${d.key}>${short(d.key)}</code></div></li>`)}</ul>`}
+        ${setUp(s) && (linking.waiting || linking.offer || linking.recovering) ? linkFlow(s) : null}
+        ${linking.linked && !linking.recovering && !linking.offer ? html`<div class="notice ok">${icon('check-circle')}<p>Linked${s.recovered ? ', and your account has its recovery key' : ''}.</p></div>` : null}
+    </section>
+    ${s.passkey ? null : html`<section class="card-panel">
+        <h2>${icon('key')}Add a passkey to this browser</h2>
+        <p class="quiet">Your computer approved this session. With a passkey, this browser signs in and signs your reviews by itself; your computer approves it once.</p>
+        <button type="button" class="primary" ?disabled=${!app.node?.passkeys_work} @click=${addPasskey}>Add a passkey</button>
+    </section>`}
+    ${s.orgs.length ? html`<section class="card-panel">
+        <h2>${icon('building')}Organizations</h2>
+        <ul class="org-list">${s.orgs.map(o => html`<li><a href=${`/org/${o.org}`}>${avatar(o.name || '?', o.org)}<strong>${o.name || 'Organization'}</strong></a>${badge(o.role, 'neutral')}</li>`)}</ul>
+        ${s.hosting.max > s.hosting.made && s.recovered && setUp(s) ? html`<details class="more"><summary>${icon('plus')}Create another organization</summary>${orgForm()}</details>` : null}
+    </section>` : null}`
+}
+
+function orgForm() {
+    return html`<form class="inline-form" @submit=${createOrg}>
+        <input name="name" class="grow" placeholder="Organization name" aria-label="Organization name" maxlength="64" autocomplete="organization">
+        <button type="submit" class="primary">Create</button>
+    </form>`
+}
+
+// The approval the page waits for from a computer: a sign-in or a write,
+// with the command to run there. Linking a computer shows its own on the account page.
 export function approvalPanel() {
     const a = app.approval
-    if (!a) return null
+    if (!a || a.kind === 'device') return null
     return html`<aside class="approval" role="status">
-        <div class="approval-head"><span class="spinner" aria-hidden="true"></span><strong>Waiting for a device of yours to approve</strong>
-            <span class="badge">${a.state}</span></div>
-        <p class="quiet">Run this on it:</p>
-        ${copyField(a.command)}
-        <div class="actions"><button type="button" class="ghost" @click=${() => app.set({approval: null})}>Dismiss</button></div>
+        <div class="approval-head"><span class="spinner" aria-hidden="true"></span><strong>Approve on your computer</strong>${badge(a.state, 'neutral')}</div>
+        <p class="quiet">Run this in a terminal on a computer linked to your account:</p>
+        ${copyField(a.command, {label: 'Command to run on your computer'})}
+        <div class="actions"><button type="button" class="ghost small" @click=${() => app.set({approval: null})}>Cancel</button></div>
     </aside>`
 }

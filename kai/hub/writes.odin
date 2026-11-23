@@ -18,6 +18,14 @@ import "mirai:store"
 // Node_Add of this node, which then hosts the org (kai/node.odin), at most
 // hosted_orgs of them per user. A project is born empty, by its genesis and
 // the org's Project_Add: its files come from a machine.
+//
+// Landing a proposal is two entries, as kai/proposal.odin's proposal_land
+// signs them: the Bookmark_Move of the project's log from the target's
+// targets to the stack's final revision, naming the proposal and the heads
+// of its log, then the proposal's Land naming that move. The browser names
+// every field of the move from what it read (GET /api/proposals and the
+// project's bookmarks); the draft is refused when the node folds otherwise,
+// or when the proposal may not land.
 
 Draft_Body :: struct {
     type:string,
@@ -43,6 +51,11 @@ Draft_Body :: struct {
     node:string,     // node_add: this node's key, dh, modes and addresses, as GET /api/node gives them
     modes:[]string,
     addresses:[]Address_Body,
+    proposal:string,      // bookmark_move: the proposal it lands
+    bookmark:string,      // bookmark_move: the proposal's target
+    heads:[]string,       // bookmark_move: the heads of the proposal's log it was checked at
+    from:[]string,        // bookmark_move: the targets the bookmark moves from
+    bookmark_move:string, // proposal_land: the move's address
 }
 
 Address_Body :: struct {kind:u8,port:u16,ip:string} // a Node_Address: kind 1 IPv4 or 2 IPv6, ip 32 hex
@@ -61,7 +74,7 @@ TYPE_TEXT :: [kai.Entry_Type]string{
 }
 
 // The entries a browser writes through drafts.
-WRITABLE :: bit_set[kai.Entry_Type]{.Proposal_Comment,.Proposal_Verdict,.Proposal_Close,.Proposal_Reopen,.Member_Add,.Member_Remove,.Role_Set,.Device_Add,.Org_Genesis,.Node_Add,.Project_Genesis,.Project_Add}
+WRITABLE :: bit_set[kai.Entry_Type]{.Proposal_Comment,.Proposal_Verdict,.Proposal_Close,.Proposal_Reopen,.Member_Add,.Member_Remove,.Role_Set,.Device_Add,.Org_Genesis,.Node_Add,.Project_Genesis,.Project_Add,.Bookmark_Move,.Proposal_Land}
 
 // The node modes a hosted org's Node_Add names: never derived data.
 HOSTED_MODES :: kai.Node_Modes{.Relay,.Seed}
@@ -84,13 +97,13 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
         if name!="" && name==b.type && t in WRITABLE {d.type=t}
     }
     if d.type==.None {
-        fail(c,400,"type is one of proposal_comment, proposal_verdict, proposal_close, proposal_reopen, member_add, member_remove, role_set, device_add, org_genesis, node_add, project_genesis, project_add")
+        fail(c,400,"type is one of proposal_comment, proposal_verdict, proposal_close, proposal_reopen, bookmark_move, proposal_land, member_add, member_remove, role_set, device_add, org_genesis, node_add, project_genesis, project_add")
         return
     }
     if d.type==.Org_Genesis || d.type==.Project_Genesis {return genesis_draft(c,b,d)}
     log,lok:=hash_parse(b.log)
     if !lok {
-        fail(c,400,"log is the id of the proposal, org or user the entry joins, 64 hex")
+        fail(c,400,"log is the id of the proposal, project, org or user the entry joins, 64 hex")
         return
     }
     d.log=log
@@ -198,6 +211,20 @@ draft_build :: proc(c:^Call,b:^Draft_Body) -> (d:Draft,ok:bool) {
             return
         }
         d.body=kai.body_make(kai.Project_Add_Body{project=project,public=b8(b.public)})
+    case .Bookmark_Move:
+        body,status,why:=landing_move_body(c,b,&d)
+        if status!=0 {
+            fail(c,status,why)
+            return
+        }
+        d.body=body
+    case .Proposal_Land:
+        body,status,why:=landing_land_body(c,b,&d)
+        if status!=0 {
+            fail(c,status,why)
+            return
+        }
+        d.body=body
     }
     if e!=.None || !kai.body_valid(d.type,d.body) {
         fail(c,400,"the fields do not make a valid body: the body of each type is in kai/log.odin")
@@ -358,9 +385,15 @@ entry_keep :: proc(c:^Call,bytes:[]u8,user:kai.Log_Id) -> (address:store.Hash,st
     case .Proposal:
         f:kai.Proposal_Fold
         valid=kai.proposal_fold(&f,&l,&o.agent.org,context.temp_allocator)==.None && f.valid[at]
-    case .Project,.Keyring:
+    case .Project:
+        f:kai.Project_Fold
+        snapshots:[dynamic]^kai.Proposal_Fold
+        valid=project_fold_of(c.h,o,&l,&f,&snapshots) && f.valid[at]
+        project_fold_end(&snapshots)
+    case .Keyring:
     }
     if !valid {
+        if e.type==.Bookmark_Move {return {},403,"the project's log does not take the move: the target's policy is not met at the proposal's heads, or its author is no writer"}
         if e.type==.Node_Add || e.type==.Project_Add {return {},403,"the org's log does not take the entry: an admin or the owner adds a node or a project, with a recovery key; the node and the project must not be in the org yet"}
         return {},403,"the log does not take the entry: its author lacks the right, or its parents are not in the log yet"
     }
@@ -509,4 +542,126 @@ genesis_keep :: proc(c:^Call,bytes:[]u8,e:^kai.Entry,user:kai.Log_Id) -> (status
     m:=runner_of(h).machine
     if kai.machine_org_host(m,l.id,user)!=.None || store.commit(&m.store)!=.None {return 500,m.why!=""?m.why:"the store does not take the org: see the node's disk"}
     return 0,""
+}
+
+// The hashes of a list of 64 hex, in its order; false when one is not.
+@(private)
+hashes_parse :: proc(list:[]string) -> (out:[]store.Hash,ok:bool) {
+    hashes:=make([]store.Hash,len(list),context.temp_allocator)
+    for text,i in list {hashes[i]=hash_parse(text) or_return}
+    return hashes,true
+}
+
+// Whether a and b hold the same hashes, each once.
+@(private)
+same_set :: proc(a,b:[]store.Hash) -> bool {
+    if len(a)!=len(b) {return false}
+    for x,i in a {
+        if !slice.contains(b,x) || slice.contains(a[:i],x) {return false}
+    }
+    return true
+}
+
+// The proposal of id in org, folded and settled: nil when the org holds no such log.
+@(private)
+proposal_open_fold :: proc(c:^Call,o:^kai.Runner_Org,id:kai.Log_Id) -> ^kai.Proposal_Fold {
+    l:=kai.agent_log_open(&o.agent,id)
+    if l==nil || l.kind!=.Proposal || len(l.items)==0 {return nil}
+    f:=new(kai.Proposal_Fold,context.temp_allocator)
+    if kai.proposal_fold(f,l,&o.agent.org,context.temp_allocator)!=.None {return nil}
+    return f
+}
+
+// The project's fold with the proposals its moves land, as every peer folds
+// it; false when it does not fold. Free it with project_fold_end.
+@(private)
+project_fold_of :: proc(h:^Hub,o:^kai.Runner_Org,l:^kai.Log,f:^kai.Project_Fold,snapshots:^[dynamic]^kai.Proposal_Fold) -> bool {
+    snapshots^=make([dynamic]^kai.Proposal_Fold,context.temp_allocator)
+    if kai.project_snapshots(store_of(h),l,&o.agent.org,snapshots,context.temp_allocator)!=.None {return false}
+    return kai.project_fold(f,l,&o.agent.org,snapshots[:],context.temp_allocator)==.None
+}
+
+@(private)
+project_fold_end :: proc(snapshots:^[dynamic]^kai.Proposal_Fold) {
+    kai.project_snapshots_destroy(snapshots,context.temp_allocator)
+}
+
+// The body of the move that lands a proposal on the project d.log, from the
+// fields the browser read: status 0, or the answer's status and why.
+@(private)
+landing_move_body :: proc(c:^Call,b:^Draft_Body,d:^Draft) -> (body:[]u8,status:int,why:string) {
+    o:=d.org
+    if session_role(c,o)<.Writer {return nil,403,"landing a proposal is a writer's: an admin of the org gives you that role"}
+    id,iok:=hash_parse(b.proposal)
+    if !iok {return nil,400,"proposal is the id of the proposal's log, 64 hex"}
+    pf:=proposal_open_fold(c,o,id)
+    if pf==nil {return nil,404,"no such proposal in the project's org"}
+    if pf.project!=d.log {return nil,400,"the proposal is of another project than the log the move joins"}
+    s:=store_of(c.h)
+    refusal,e:=kai.proposal_can_land(s,pf)
+    if e!=.None {return nil,409,"a change of the stack is not on this node yet: wait for a peer to give it, then land"}
+    if refusal!=.None {return nil,409,kai.land_blocker(&o.agent.org,pf,refusal)}
+    target:=kai.proposal_target(pf)
+    to,tok:=hash_parse(b.revision)
+    if b.bookmark!=target || !tok || to!=pf.revision {return nil,409,"the proposal was revised or retargeted since this page read it: reload it and land again"}
+    pfold:kai.Project_Fold
+    snapshots:[dynamic]^kai.Proposal_Fold
+    defer project_fold_end(&snapshots)
+    if !project_fold_of(c.h,o,d.l,&pfold,&snapshots) {return nil,500,"the project's log does not fold on this node"}
+    from:=make([dynamic]kai.Revision,context.temp_allocator)
+    kai.project_bookmark(&pfold,target,&from)
+    if len(from)>kai.CONFLICT_SIDES_MAX {return nil,409,"the target diverged too far: land it from a machine"}
+    heads:=make([dynamic]store.Hash,context.temp_allocator)
+    kai.log_heads(pf.log,&heads)
+    if len(heads)>kai.ENTRY_PARENTS_MAX {return nil,409,"the proposal's log has too many heads: comment on it once to join them, then land"}
+    asked_from,fok:=hashes_parse(b.from)
+    asked_heads,hok:=hashes_parse(b.heads)
+    if !fok || !hok {return nil,400,"from and heads are lists of 64 hex"}
+    if !same_set(asked_from,from[:]) || !same_set(asked_heads,heads[:]) {return nil,409,"the target or the proposal moved since this page read it: reload it and land again"}
+    old:kai.Revision
+    if len(from)>0 {old=from[0]}
+    m:=runner_of(c.h).machine
+    if kai.machine_publish_check(m,&o.agent.org,d.log,pfold.public,old,pf.revision)!=.None {return nil,409,m.why}
+    return kai.move_body(target,asked_from,pf.revision,id,asked_heads),0,""
+}
+
+// The body of the Land of the proposal d.log, naming a move of its project
+// that lands it at its final revision: status 0, or the answer's status and why.
+@(private)
+landing_land_body :: proc(c:^Call,b:^Draft_Body,d:^Draft) -> (body:[]u8,status:int,why:string) {
+    o:=d.org
+    pf:=proposal_open_fold(c,o,d.log)
+    if pf==nil {return nil,404,"no such proposal in an org the session's user is a member of"}
+    to,tok:=hash_parse(b.revision)
+    move,mok:=hash_parse(b.bookmark_move)
+    if !tok || !mok {return nil,400,"revision is the proposal's final revision and bookmark_move the address of the move that lands it, 64 hex each"}
+    if pf.status!=.Open || to!=pf.revision {return nil,409,"the proposal is not open at that revision: reload it"}
+    pl:=kai.agent_log_open(&o.agent,pf.project)
+    k:=pl==nil?-1:kai.log_find(pl,move)
+    if k<0 || pl.items[k].entry.type!=.Bookmark_Move {return nil,404,"bookmark_move is no move of the proposal's project on this node: land the move first"}
+    head,_,_,_:=kai.move_parts(pl.items[k].entry.body)
+    if head.proposal!=d.log || head.to!=pf.revision {return nil,400,"the move lands another proposal or revision"}
+    return kai.body_make(kai.Proposal_Land_Body{revision=to,bookmark_move=move}),0,""
+}
+
+// The move of the project's log that lands f at its final revision, kept
+// there and valid, that no Land of f names yet: what a browser whose second
+// prompt was dismissed finishes with. Zero when there is none.
+landing_pending :: proc(h:^Hub,o:^kai.Runner_Org,f:^kai.Proposal_Fold) -> store.Hash {
+    if f.status!=.Open || f.revision=={} {return {}}
+    pl:=kai.agent_log_open(&o.agent,f.project)
+    if pl==nil || len(pl.items)==0 {return {}}
+    found:store.Hash
+    for &item in pl.items {
+        if item.entry.type!=.Bookmark_Move {continue}
+        head,_,_,_:=kai.move_parts(item.entry.body)
+        if head.proposal==f.log.id && head.to==f.revision {found=item.address}
+    }
+    if found=={} {return {}}
+    pfold:kai.Project_Fold
+    snapshots:[dynamic]^kai.Proposal_Fold
+    defer project_fold_end(&snapshots)
+    if !project_fold_of(h,o,pl,&pfold,&snapshots) {return {}}
+    if k:=kai.log_find(pl,found);k<0 || !pfold.valid[k] {return {}}
+    return found
 }

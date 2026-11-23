@@ -81,6 +81,10 @@ route_stacks :: proc(c:^Call) {
                 id:=ch.id
                 json_member_hex(&j,"change",id[:])
                 json_member_string(&j,"summary",summary_line(ch.description))
+                author:=ch.author
+                json_member_hex(&j,"author",author[:])
+                if owner,_:=key_owner(v.org,ch.author);owner!=nil {json_member_string(&j,"author_name",user_name(owner))}
+                json_member_int(&j,"written",ch.written)
                 json_end_object(&j)
                 if len(ch.parents)==0 {break}
                 at=ch.parents[0]
@@ -199,7 +203,12 @@ route_proposal :: proc(c:^Call) {
             change:=item.change
             json_member_hex(&j,"change",change[:])
             json_member_hash(&j,"revision",item.revision)
-            if ch,e:=kai.change_get(s,item.revision,context.temp_allocator);e==.None && served(o,true,item.revision) {json_member_string(&j,"summary",summary_line(ch.description))}
+            if ch,e:=kai.change_get(s,item.revision,context.temp_allocator);e==.None && served(o,true,item.revision) {
+                json_member_string(&j,"summary",summary_line(ch.description))
+                author:=ch.author
+                json_member_hex(&j,"author",author[:])
+                if u,_:=key_owner(o,ch.author);u!=nil {json_member_string(&j,"author_name",user_name(u))}
+            }
             json_end_object(&j)
         }
     }
@@ -259,14 +268,29 @@ route_proposal :: proc(c:^Call) {
     }
     json_end_array(&j)
     json_member_int(&j,"approvals",i64(f.approvals))
+    json_key(&j,"policy")
+    if p:=kai.org_policy(&o.agent.org,f.project,kai.proposal_target(&f));p==nil {json_null(&j)} else {
+        names:=make([dynamic]string,context.temp_allocator)
+        kai.org_policy_checks(&o.agent.org,p,&names)
+        json_object(&j)
+        json_member_int(&j,"approvals",i64(p.approvals))
+        json_key(&j,"checks")
+        json_array(&j)
+        for n in names {json_string(&j,n)}
+        json_end_array(&j)
+        json_end_object(&j)
+    }
     json_key(&j,"blocked")
     if refusal==.None {json_null(&j)} else {
         json_object(&j)
         refusals:=REFUSAL_TEXT
         json_member_string(&j,"reason",refusals[refusal])
-        json_member_string(&j,"text",kai.land_refusal_text(refusal))
+        json_member_string(&j,"text",kai.land_blocker(&o.agent.org,&f,refusal))
         json_end_object(&j)
     }
+    json_member_bool(&j,"can_land",session_role(c,o)>=.Writer)
+    json_key(&j,"landing")
+    if move:=landing_pending(c.h,o,&f);move=={} {json_null(&j)} else {json_hash(&j,move)}
     heads_write(&j,l)
     json_end_object(&j)
     json_response(c,&j)
