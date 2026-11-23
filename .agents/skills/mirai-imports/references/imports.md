@@ -232,6 +232,11 @@ Import stores only source-authored `asset.Collider` rows (never auto-generates; 
 - glTF: `KHR_physics_rigid_bodies` / `KHR_implicit_shapes` and `OMI_physics_body`/`shape`.
 - USD: `PhysicsCollisionAPI` (`Mesh` approximation, `Cube`/`Sphere`/`Capsule`/`Cylinder`/`Cone`).
 - Plugins: fill `Imported_Mesh.collision` directly (e.g. Unreal `BodySetup`).
+- Settings: `Import_Settings.colliders` (up to `COLLIDER_SETTINGS`, by mesh name) replace the
+  source's colliders of the meshes they name, in the space of the written mesh (after front and
+  `bake_scale`): `Box`/`Sphere`/`Capsule` (center, rotation, size), `Points` (a hull of up to
+  `COLLIDER_SETTING_POINTS`), `Hull`/`Decompose`/`Mesh` of its geometry (`colliders_set`). They
+  are in the mesh hash and the package, so a reimport makes them again; a name no mesh has warns.
 
 ## Textures (`cook/textures`)
 

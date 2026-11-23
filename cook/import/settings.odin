@@ -75,6 +75,34 @@ Sound_Coding :: enum u8 {
     File,     // its file as it is: an Ogg Vorbis 5 to 8 times smaller than its samples coded, decoded whole when it loads unless it streams
 }
 
+// Colliders the settings of a source give its meshes, in place of those the
+// source gives them: what a person or an agent authored for a mesh, which
+// every import of the source makes again (collision.odin, colliders_set).
+COLLIDER_SETTINGS :: 8
+COLLIDER_SETTING_POINTS :: 32
+
+Collider_Setting_Shape :: enum u8 {
+    None,      // the entry gives nothing
+    Box,       // center, rotation and size: half extents
+    Sphere,    // size.x: radius
+    Capsule,   // size.x: radius; size.y: half the distance between the centers of its caps, along its Y
+    Points,    // the convex hull of points
+    Hull,      // the convex hull of each piece of the mesh
+    Decompose, // the convex pieces a decomposition of the mesh gives
+    Mesh,      // the triangles of the mesh
+}
+
+// In the space of the mesh as it is written, in meters.
+Collider_Setting :: struct {
+    mesh:[64]u8 `mirai:"text"`, // the mesh as the source names it
+    shape:Collider_Setting_Shape,
+    center:[3]f32,
+    rotation:quaternion128,     // zero: none
+    size:[3]f32,
+    points:[COLLIDER_SETTING_POINTS][3]f32, // of Points
+    point_count:u8,
+}
+
 Import_Settings :: struct {
     textures:textures.Encoding, // .Blocks by use; .Uncompressed by source precision
     rdo_lambda:int,             // of textures in blocks, up to textures.RDO_LAMBDA_MAX: how much error their rate-distortion optimization trades for files that compress smaller. 0: textures.RDO_LAMBDA_DEFAULT; below 0: none
@@ -85,6 +113,7 @@ Import_Settings :: struct {
     front:Front,
     rig:Rig,
     rig_crotch,rig_neck:f32,    // of a Humanoid rig, above 0: the heights in meters in the model of the crotch and the neck, in place of where the fit finds them
+    colliders:[COLLIDER_SETTINGS]Collider_Setting, // of a model: the colliders of the meshes they name, in place of the source's
     bake_scale:bool,            // of a model: a positive scale that is the same on every axis goes from the nodes into the meshes they draw, which keep none (scale.odin)
     skeleton:base.Asset_Id,     // of a model, not zero: its clips play on this skeleton the project has (with the same bones), and the import writes only its .anim, bound to it: no textures, materials, skeletons, meshes or prefab
     sound:Sound_Coding,         // of a sound
@@ -98,6 +127,7 @@ Import_Settings :: struct {
 // and record 0. A rig other than the source's changes the skin of a mesh, so
 // it is part of the mesh's.
 mesh_settings_hash :: proc(settings:Import_Settings) -> u64 {
+    settings:=settings
     built:=[5]u64{u64(settings.lods),u64(settings.front),u64(settings.rig),u64(transmute(u32)settings.rig_crotch),u64(transmute(u32)settings.rig_neck)}
     hash:=base.hash64(mem.slice_to_bytes(built[:2] if settings.rig==.Source else built[:]))
     // A mesh the scales of its nodes were baked into is another.
@@ -105,5 +135,35 @@ mesh_settings_hash :: proc(settings:Import_Settings) -> u64 {
         baked:=[2]u64{hash,1}
         hash=base.hash64(mem.slice_to_bytes(baked[:]))
     }
+    // And one the settings give colliders, by what each one gives.
+    for &c in settings.colliders {
+        if c.shape==.None {continue}
+        hash=base.hash_combine(hash,base.hash64(c.mesh[:]))
+        values:=[11]f32{f32(c.shape),c.center.x,c.center.y,c.center.z,real(c.rotation),imag(c.rotation),jmag(c.rotation),kmag(c.rotation),c.size.x,c.size.y,c.size.z}
+        hash=base.hash_combine(hash,base.hash64(mem.slice_to_bytes(values[:])))
+        if c.shape==.Points {hash=base.hash_combine(hash,base.hash64(mem.slice_to_bytes(c.points[:min(int(c.point_count),COLLIDER_SETTING_POINTS)])))}
+    }
     return hash
+}
+
+// Whether the colliders of the settings are ones an import can make.
+@(private)
+collider_settings_valid :: proc(colliders:[]Collider_Setting) -> bool {
+    finite :: proc(values:..f32) -> bool {
+        for v in values {if v-v!=0 {return false}}
+        return true
+    }
+    for &c in colliders {
+        if c.shape==.None {continue}
+        if c.shape>max(Collider_Setting_Shape) || base.text_get(c.mesh[:])=="" || int(c.point_count)>COLLIDER_SETTING_POINTS {return false}
+        if !finite(c.center.x,c.center.y,c.center.z,real(c.rotation),imag(c.rotation),jmag(c.rotation),kmag(c.rotation),c.size.x,c.size.y,c.size.z) {return false}
+        for p in c.points[:c.point_count] {if !finite(p.x,p.y,p.z) {return false}}
+        #partial switch c.shape {
+        case .Box:     if !(c.size.x>0 && c.size.y>0 && c.size.z>0) {return false}
+        case .Sphere:  if !(c.size.x>0) {return false}
+        case .Capsule: if !(c.size.x>0 && c.size.y>=0) {return false}
+        case .Points:  if c.point_count<4 {return false}
+        }
+    }
+    return true
 }

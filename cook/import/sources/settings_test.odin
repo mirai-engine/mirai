@@ -192,3 +192,85 @@ a_vertex_that_is_not_a_number_fails_its_model_with_a_message :: proc(t:^testing.
     refs,_:=store.ref_list(s,asset.REF_PACKAGES,context.temp_allocator)
     testing.expect(t,len(refs)==0,"a failed import names no package")
 }
+
+// The colliders of a mesh in its written asset, by kind.
+@(private="file")
+written_colliders :: proc(t:^testing.T,report:^importer.Import_Report) -> (colliders:[]asset.Collider,points:int) {
+    types:asset.Types;asset.types_init(&types,context.temp_allocator);defer asset.types_destroy(&types)
+    for written in report.assets {
+        if written.kind!=asset.KIND_MESH {continue}
+        a:asset.Asset
+        if !testing.expect_value(t,asset.asset_load(&a,written.path),asset.Error.None) {return}
+        defer asset.asset_close(&a)
+        view,view_error:=asset.mesh_view(&a,&types)
+        if !testing.expect_value(t,view_error,asset.Error.None) {return}
+        held:=make([]asset.Collider,len(view.colliders),context.temp_allocator)
+        copy(held,view.colliders)
+        return held,len(view.collision_points)
+    }
+    return
+}
+
+// Colliders a person authored for a mesh live in the settings of the package
+// of its source: every import of the source makes them again on the mesh it
+// builds, which stays an object of the cache like any other mesh; a reimport
+// with no options keeps them, and settings with a collider an import cannot
+// make are refused.
+@(test)
+the_colliders_the_settings_give_a_mesh_come_back_with_every_import :: proc(t:^testing.T) {
+    root,folder:=test_project(t,"collider-settings")
+    if folder=="" {return}
+    testing.expect(t,asset.import_cached(asset.KIND_MESH),"a mesh is of the cache: nothing edits it after the import")
+    source:=sphere_obj(folder)
+    wanted:importer.Import_Settings
+    box:=&wanted.colliders[0]
+    base.text_set(box.mesh[:],"Ball")
+    box.shape,box.center,box.size=.Box,{0,1,0},{1,2,3}
+    hull:=&wanted.colliders[1]
+    base.text_set(hull.mesh[:],"Ball")
+    hull.shape,hull.point_count=.Points,4
+    hull.points[0],hull.points[1],hull.points[2],hull.points[3]={0,0,0},{2,0,0},{0,2,0},{0,0,2}
+    options:=test_options(t,source,{root=root,world=prefab.import_world(t)})
+    chosen:=options
+    chosen.settings=wanted
+    first,error:=import_source(source,chosen)
+    if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+    defer importer.report_destroy(&first)
+    objects_written(options.store,&first)
+    p,_:=asset.package_get(options.store,first.manifest,context.temp_allocator)
+    testing.expect(t,strings.contains(p.settings,"colliders"),p.settings)
+    check :: proc(t:^testing.T,report:^importer.Import_Report,loc:=#caller_location) {
+        colliders,points:=written_colliders(t,report)
+        testing.expectf(t,len(colliders)==2,"the box and the hull, in place of none: %v",colliders,loc=loc)
+        if len(colliders)!=2 {return}
+        testing.expect(t,colliders[0].kind==.Box && colliders[0].center=={0,1,0} && colliders[0].size=={1,2,3},loc=loc)
+        testing.expect(t,colliders[1].kind==.Hull && colliders[1].point_count==4 && points==4,loc=loc)
+    }
+    check(t,&first)
+
+    // Imported again, built anew, with the settings of no one: the package keeps them.
+    again:=options
+    again.rebuild=true
+    second,second_error:=import_source(source,again)
+    if !testing.expectf(t,second_error.code==.None,"%s",second_error.message) {return}
+    defer importer.report_destroy(&second)
+    objects_written(options.store,&second)
+    check(t,&second)
+
+    // A collider that names no mesh of the source is warned of.
+    lost:=wanted
+    base.text_set(lost.colliders[2].mesh[:],"Crate")
+    lost.colliders[2].shape=.Hull
+    model,ok:=import_ok(t,source,{settings=lost,ignore_stored=true})
+    if ok {
+        warned:=false
+        for warning in model.warnings {warned||=strings.contains(warning,"Crate")}
+        testing.expectf(t,warned,"%v",model.warnings)
+        importer.model_destroy(&model)
+    }
+    for broken in ([]string{`{"colliders": [{"mesh": "Ball", "shape": "Box"}]}`,`{"colliders": [{"shape": "Hull"}]}`,`{"colliders": [{"mesh": "Ball", "shape": "Points", "point_count": 3}]}`}) {
+        _,valid:=importer.settings_parse(broken)
+        testing.expectf(t,!valid,"%s is refused",broken)
+    }
+    testing.expect(t,importer.mesh_settings_hash(wanted)!=importer.mesh_settings_hash({}),"a mesh records the colliders it was given")
+}

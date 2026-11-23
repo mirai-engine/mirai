@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:strings"
 import "mirai:asset"
+import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
@@ -162,6 +163,46 @@ colliders_resolve :: proc(r:^Reader) -> bool {
     }
     nodes_remove(r,removed,collision_meshes)
     return true
+}
+
+// The colliders the settings give meshes (Import_Settings.colliders), in
+// place of those the source gave them, in the space of each mesh as it is
+// written: after its space, its front and the scales baked into it. A mesh
+// they name that the source does not have is warned of.
+colliders_set :: proc(r:^Reader) {
+    named:=make([]bool,len(r.meshes),context.temp_allocator)
+    for &c in r.options.settings.colliders {
+        if c.shape==.None {continue}
+        name:=base.text_get(c.mesh[:])
+        row:=-1
+        for mesh,i in r.meshes {if mesh.name==name {row=i;break}}
+        if row<0 {
+            warn(r,"the import settings give the mesh %s a collider, and the source has no mesh of that name: name one of its meshes",name)
+            continue
+        }
+        named[row]=true
+    }
+    for &mesh,row in r.meshes {
+        if !named[row] {continue}
+        colliders:=make([dynamic]asset.Collider,r.out)
+        points:=make([dynamic][3]f32,r.out)
+        indices:=make([dynamic]u32,r.out)
+        triangles:=make([dynamic]u32,context.temp_allocator)
+        surface:=make([dynamic][3]f32,context.temp_allocator)
+        for &c in r.options.settings.colliders {
+            if c.shape==.None || base.text_get(c.mesh[:])!=mesh.name {continue}
+            shapes:=[Collider_Setting_Shape]Source_Shape{.None=.Box,.Box=.Box,.Sphere=.Sphere,.Capsule=.Capsule,.Points=.Points,.Hull=.Hull,.Decompose=.Decompose,.Mesh=.Mesh}
+            rotation:=c.rotation if c.rotation!=0 else 1
+            source:=Source_Collider{placed=-1,target=-1,shape=shapes[c.shape],rotation=1,size=c.size,points=c.points[:min(int(c.point_count),COLLIDER_SETTING_POINTS)],mesh=row}
+            collider_place(r,&source,mm.transform_matrix({c.center,rotation,{1,1,1}}),&colliders,&points,&triangles,&surface)
+        }
+        if len(triangles)>0 {
+            append(&colliders,asset.Collider{kind=.Mesh,rotation=1,first_point=u32(len(points)),point_count=u32(len(surface)),first_index=u32(len(indices)),index_count=u32(len(triangles))})
+            append(&points,..surface[:])
+            append(&indices,..triangles[:])
+        }
+        mesh.collision={colliders[:],points[:],indices[:]}
+    }
 }
 
 // The node of the drawn mesh a name names: the whole name, then without what
