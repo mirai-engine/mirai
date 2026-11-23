@@ -1,0 +1,7 @@
+{
+  "name": "pcg_shapes",
+  "version": "0.1.0",
+  "dependencies": ["pcg", "shapes", "physics"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

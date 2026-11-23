@@ -1,0 +1,7 @@
+{
+  "name": "pcg_terrain",
+  "version": "0.1.0",
+  "dependencies": ["pcg", "terrain"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

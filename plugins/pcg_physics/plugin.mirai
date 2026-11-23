@@ -1,0 +1,7 @@
+{
+  "name": "pcg_physics",
+  "version": "0.1.0",
+  "dependencies": ["pcg", "physics"],
+  "parts": ["Runtime"],
+  "automatic": true
+}
