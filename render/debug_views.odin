@@ -51,10 +51,6 @@ debug_view_status :: proc(r: ^Renderer, plan: ^Render_Plan, mode: Debug_View) ->
 	#partial switch mode {
 	case .Shadows:
 		if .Direct not_in plan.stages {return false, "This pipeline has no direct light"}
-	case .Reflections, .Reflections_Raw:
-		if .Reflections not_in plan.stages {return false, "This pipeline has no traced reflections"}
-		if s.reflections == .Off {return false, "Traced reflections are off in the settings"}
-		if r.scene.smoothest >= s.reflection_roughness {return false, "No material is smooth enough to trace a reflection"}
 	case .Indirect:
 		if !s.gi_enabled {return false, "Indirect light is off in the settings"}
 	case .Probes:
@@ -69,7 +65,7 @@ debug_view_status :: proc(r: ^Renderer, plan: ^Render_Plan, mode: Debug_View) ->
 @(private)
 debug_view_pass_needed :: proc "contextless" (mode: Debug_View) -> bool {
 	#partial switch mode {
-	case .Shadows, .Reflections, .Reflections_Raw, .Lights: return true
+	case .Shadows, .Lights: return true
 	}
 	return false
 }
@@ -82,9 +78,7 @@ debug_views_pass :: proc(p: ^Pass) {
 	available, _ := debug_view_status(r, p.plan, mode)
 	source := r.dummy_texture
 	#partial switch mode {
-	case .Shadows:             source = texture_or_dummy(r, t.direct_points)
-	case .Reflections:         if p.use_reflections {source = texture_or_dummy(r, t.reflections)}
-	case .Reflections_Raw:     if p.use_reflections {source = texture_or_dummy(r, t.reflect_raw)}
+	case .Shadows: source = texture_or_dummy(r, t.direct_points)
 	}
 	rhi.cmd_timestamp(cmd, "debug view")
 	Params :: struct {mode, available, lights_scale: u32}

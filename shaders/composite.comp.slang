@@ -4,13 +4,11 @@
 // Final HDR composition: the direct light, the light around each pixel
 // (indirect_compose) and its emission. The irradiance comes from the probe
 // volume, darkened by its contact occlusion, or from the reference of the
-// indirect light while it is on; the specular lobe takes the filtered
-// traced reflection for the share the reflection pass traced, and the probe
-// volume around its dominant direction for the rest. contact_pixels.comp
-// leaves both lights of the probe volume at each pixel; the coat and the
-// other side of what lets light through read it here. Under an atmosphere,
-// the image shown takes the air between the eye and each pixel (its aerial
-// perspective, air_aerial.comp).
+// indirect light while it is on; the specular lobe takes the probe volume
+// around its dominant direction. contact_pixels.comp leaves both lights of the
+// probe volume at each pixel; the coat and the other side of what lets light
+// through read it here. Under an atmosphere, the image shown takes the air
+// between the eye and each pixel (its aerial perspective, air_aerial.comp).
 #define GBUFFER_ALBEDO SLOT_PASS0
 #define GBUFFER_NORMAL SLOT_PASS1
 #define GBUFFER_EMISSION SLOT_PASS2
@@ -32,7 +30,7 @@ struct Params_Block { uint gathered; uint pad0; uint pad1; uint pad2; };
 // rgb with FRAME_FLAG_GI_GIVEN: the diffuse indirect light a custom pass of the pipeline gives.
 [[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> indirect_input : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 [[vk::binding(SLOT_PASS6, 0)]] Texture3D<float4> aerial : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
-[[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> reflections : register(MIRAI_REGISTER(t, SLOT_PASS7), space0); // rgb the filtered traced reflection
+[[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> g_motion : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PASS8, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_display : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
 
 // What lies at distance along the ray of uv seen through the air: its light
@@ -72,7 +70,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     Pixel pixel = pixel_at(p, uv, depth);
     Gbuffer_Pixel g = gbuffer_read(p);
-    float4 motion = pixel_views.Load(int3(p, 0));
     Shading s = gbuffer_shading(g, pixel);
     float3 direct = direct_light.Load(int3(p, 0)).rgb;
     bool given = (frame.flags & (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN)) == (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN);
@@ -86,9 +83,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         light.radiance = light_unpack(around.y);
     }
     float3 indirect = light.irradiance;
-    light.traced_coat = (g.bits & GBUFFER_TRACE_COAT) != 0u;
-    light.traced_share = reflection_weight(motion.b + ROUGHNESS_ROUNDING);
-    if (light.traced_share > 0.0) light.traced = reflections.Load(int3(p, 0)).rgb;
     float3 color = finite_or_zero(direct + indirect_compose(s, light) + g.emission);
     if (frame.sky_map.y > 0.5 && frame.sun_direction.w > 0.5) color = aerial_perspective(color, uv, pixel.distance);
     switch (frame.debug_view) {
@@ -97,7 +91,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     case DEBUG_DIRECT: color = direct; break;
     case DEBUG_INDIRECT: color = indirect; break;
     case DEBUG_PROBES: color = sample_probes(s.position, s.normal, s.view); break;
-    case DEBUG_MOTION: color = float3(abs(motion.rg) * 50.0, 0.0); break;
+    case DEBUG_MOTION: color = float3(abs(g_motion.Load(int3(p, 0)).rg) * 50.0, 0.0); break;
     case DEBUG_DEPTH: color = float3(1.0 / (1.0 + depth_distance(depth) * 0.1)); break;
     case DEBUG_ROUGHNESS: color = float3(g.roughness); break;
     case DEBUG_METALLIC: color = float3(g.metallic); break;

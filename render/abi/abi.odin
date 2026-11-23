@@ -94,15 +94,17 @@ FRAME_FLAG_GI_GIVEN     :: 2   // a custom pass of the pipeline wrote Gi: the co
 FRAME_FLAG_HW_RT        :: 4
 FRAME_FLAG_STUDIO       :: 8   // a preview lit by the analytic studio
 FRAME_FLAG_GRID         :: 16
-FRAME_FLAG_GLASS        :: 32  // some instance has blended triangles
+FRAME_FLAG_RESOLVE_COUNTED :: 32 // the resolve counts what it shades (Stats.resolved_pixels)
 FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (surface_specular)
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)
+FRAME_FLAG_NESTED       :: 512 // the view added nested views: the views target names the view of each pixel (pixel_view)
 
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
 INSTANCE_RAY_SHIFT          :: 24
 INSTANCE_UNSHADOWED         :: u32(1) << 26
+INSTANCE_FLAG_GLASS         :: u32(1) << 27
 INSTANCE_FLAG_HIDDEN        :: 1
 INSTANCE_FLAG_COLLAPSED     :: 2
 INSTANCE_FLAG_SMALL         :: 4
@@ -198,7 +200,6 @@ LIGHT_LIST_WORDS           :: 128
 // than a list holds is split into cells, at most TRANSLUCENT_CELL_SPLIT along
 // its longest side, with lists of the TRANSLUCENT_CELLS a view keeps for them.
 TRANSLUCENT_LIST_COLUMNS   :: 128
-TRANSLUCENT_CUT_WORDS      :: LIGHT_CUT_MAX + 1
 TRANSLUCENT_CELL_SPLIT     :: 4
 TRANSLUCENT_CELLS          :: 4096
 
@@ -450,7 +451,6 @@ SHADOW_MASKED_COST         :: 4
 SHADOW_ARGS_DISPATCH       :: 0
 SHADOW_ARGS_DRAW           :: 9
 SHADOW_ARGS_HIZ            :: 17
-REFLECTION_SHARED_ROUGHNESS :: f32(0.15)
 
 // The levels of the depth pyramid a dispatch of hiz.comp makes.
 DEPTH_PYRAMID_BATCH :: 4
@@ -501,7 +501,7 @@ WIND_VOLUMES :: 8
 // What a view shows instead of its lit image (DEBUG_* in the shaders).
 Debug_View :: enum u32 {
 	None, Albedo, Normal, Direct, Indirect, Probes, Motion, Depth, Roughness, Metallic, Emission, Unlit, Lighting,
-	Shadows, Reflections, Reflections_Raw, Lights,
+	Shadows, Lights,
 }
 
 // The header of the material points, in words. Points and heads go round the
@@ -522,6 +522,7 @@ POINTS_HEADS_FROM  :: 11 // and the heads of the round it ended, which the resum
 POINTS_HEADS_TO    :: 12
 POINTS_ARGS        :: 13 // three words: a thread per point of the window
 POINTS_HEAD_ARGS   :: 16 // three words: a thread per head of the round, in groups of POINTS_HEAD_GROUP
+POINTS_PROGRAM_CAPACITY :: 1024 // bins the groups of points.comp aggregate (BINS_MAX of bins.slang), and draws of the resolve of programs
 POINTS_HEADER      :: 20
 POINT_WORDS        :: 9
 RECORD_WORDS       :: 18
@@ -569,6 +570,15 @@ CULL_SHADOW_TAKEN       :: 138 // of a cull of the maps of the shadows, the unit
 CULL_INSTANCE_DISPATCH  :: 139 // three words: the groups of the cull by instance, those of the instances of the scene, then those of the batches listed
 // The phase of cull.comp that tests each batch by its box before phase 0.
 CULL_PHASE_BATCHES      :: 2
+
+// How cull.comp treated the instance it probes (Gpu_Cull_Stats.probe): phase 0
+// tested it, the view draws its box (not hidden, in its layers, in front of its
+// clip plane, in its frustum), its box is in the frustum, and a phase found it
+// not hidden by the depth pyramid.
+CULL_PROBE_TESTED  :: 1
+CULL_PROBE_DRAWS   :: 2
+CULL_PROBE_FRUSTUM :: 4
+CULL_PROBE_VISIBLE :: 8
 
 // What the raster of the visibility target draws of the visible clusters
 // (raster_lists.slang): a vertex is RASTER_VERTEX_WORDS, where it is in the
@@ -624,6 +634,9 @@ INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PA
 MATERIAL_WORDS           :: 29 + len(asset.Material_Map_Kind)
 MATERIAL_BLOCK_WORDS     :: 19
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
+// The bits of what the program of a row does (render.Gpu_Material_Volume.program).
+MATERIAL_PROGRAM_CHANGING    :: 1 // what it gives a point changes with nothing that says so: it reads the time
+MATERIAL_PROGRAM_REFLECTANCE :: 2 // it may give a reflectance its base color and metallic do not (Program.reflectance)
 
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256
@@ -667,7 +680,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 5
+SHADER_CATALOG_VERSION :: 6
 
 Shader_Catalog :: struct {
     version:int,
@@ -727,6 +740,7 @@ Program :: struct {
     layers:asset.Material_Layers, // of a Surface program: those of the OpenPBR model its source writes
     coverage:bool,                // of a Surface program: it sets alpha, which a masked material may not (its mask map cuts it)
     standard:bool,                // of a Surface program: it builds on the standard model of its material (mirai_surface_standard), whose maps it reads
+    reflectance:bool,             // of a Surface program: its source names the specular color, factor or IOR of Mirai_Surface, so what it reflects may depart from what its base color and metallic give
     reads:Program_Reads,          // of a Surface program: what its evaluation reads of its context
     attributes:int,               // of a Vfx program: bytes of what it keeps of each particle
     attribute_fields:[]Program_Attribute, // of a Vfx program: the fields of those bytes, in the order it declares them

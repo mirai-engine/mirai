@@ -2778,6 +2778,8 @@ render_culls_and_keeps_steady_frames_allocation_free :: proc(t: ^testing.T) {
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expect_value(t, r.stats.culled_instances, u32(1))
 	testing.expect_value(t, r.stats.visible_instances, u32(1))
+	// The cull reports on the instance behind the camera without allocating.
+	renderer_probe_set(r, 1)
 	tracker: mem.Tracking_Allocator
 	mem.tracking_allocator_init(&tracker, context.allocator)
 	defer mem.tracking_allocator_destroy(&tracker)
@@ -2786,6 +2788,10 @@ render_culls_and_keeps_steady_frames_allocation_free :: proc(t: ^testing.T) {
 		for _ in 0 ..< 4 {renderer_frame(r, {camera = camera})}
 	}
 	testing.expect_value(t, tracker.total_allocation_count, i64(0))
+	rhi.device_wait_idle(f.device)
+	renderer_stats_of_last_frame(r)
+	behind, held := renderer_instance_inspect(r, 1)
+	testing.expectf(t, held && behind.cull == .Frustum && behind.level == -1 && behind.distance > 25, "the cube behind the camera is out of its frustum: %v", behind)
 	expect_clean(t, f.device)
 }
 
@@ -2805,6 +2811,20 @@ render_two_phase_occlusion_culls_without_popping :: proc(t: ^testing.T) {
 	scene_given(r, []Instance_Desc{wall, hidden_cube}, nil, sun, {sky = {0.2, 0.2, 0.2}})
 	for _ in 0 ..< 5 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
 	testing.expectf(t, r.stats.occluded_instances == 1 && r.stats.visible_instances == 1, "wall hides the cube: occluded %d visible %d", r.stats.occluded_instances, r.stats.visible_instances)
+	// What the cull did with each, as the inspection of an instance reads it back.
+	probed :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera, instance: int) -> Instance_Inspect {
+		renderer_probe_set(f.renderer, instance)
+		for _ in 0 ..< rhi.MAX_FRAMES_IN_FLIGHT + 1 {testing.expect(t, renderer_frame(f.renderer, {camera = camera}), f.renderer.error)}
+		rhi.device_wait_idle(f.device)
+		renderer_stats_of_last_frame(f.renderer)
+		found, held := renderer_instance_inspect(f.renderer, instance)
+		testing.expect(t, held)
+		return found
+	}
+	wall_seen, cube_seen := probed(t, &f, camera, 0), probed(t, &f, camera, 1)
+	renderer_probe_set(r, -1)
+	testing.expectf(t, wall_seen.cull == .None && wall_seen.level >= 0 && wall_seen.distance > 0, "the wall is drawn: %v", wall_seen)
+	testing.expectf(t, cube_seen.cull == .Occluded && cube_seen.level == -1, "the cube is behind it: %v", cube_seen)
 	// Move the wall away: phase 0 still rejects the cube with last frame's
 	// pyramid, phase 1 must rescue it in this very frame.
 	wall.transform = trs({20, 1, 2}, {6, 4, 0.2})
@@ -3748,11 +3768,11 @@ camera_cuts_reset_screen_history_and_preserve_world_lighting_and_pipelines :: pr
     rhi.device_wait_idle(f.device)
     pipelines,probes,irradiance:=r.pipelines,r.ddgi.probes,r.ddgi.irradiance
     testing.expect(t,r.has_previous && r.targets.taa_valid)
-    r.targets.glass_valid,r.targets.hiz_valid=true,true
+    r.targets.hiz_valid=true
     renderer_camera_cut(r)
     testing.expect(t,!r.has_previous && r.prev_jitter=={})
     testing.expect(t,!r.targets.taa_valid)
-    testing.expect(t,!r.targets.glass_valid && !r.targets.hiz_valid)
+    testing.expect(t,!r.targets.hiz_valid)
     testing.expect_value(t,r.pipelines,pipelines)
     testing.expect_value(t,r.ddgi.probes,probes)
     testing.expect_value(t,r.ddgi.irradiance,irradiance)
@@ -4821,10 +4841,11 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 			seen.width, seen.height, seen.eye = s.width, s.height, s.eye
 			seen.nested = pass_nested_add(s, {to_world = 1, previous = 1})
 			seen.data = len(pass_extension_data(s, "absent"))
-			pass_mask_begin(s, "test mask")
-			pass_scissor(s, {1, 1, 4, 4})
-			pass_scissor(s, {})
-			pass_end(s)
+			if pass_mask_begin(s, "test mask") {
+				pass_scissor(s, {1, 1, 4, 4})
+				pass_scissor(s, {})
+				pass_end(s)
+			}
 		case .Surface:
 			pass_surface_begin(s, {.Albedo, .Emission}, "test surfaces")
 			pass_end(s)

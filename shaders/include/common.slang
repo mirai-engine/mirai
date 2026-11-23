@@ -82,7 +82,7 @@ struct Frame_Data {
     uint shadowless_lights;  // the root of the tree of the local lights that cast no shadows (render/light_tree.odin), which ends at light_nodes; 0: none
     uint3 pad0;
     float4 jitter;            // xy current TAA jitter in render pixels, zw previous
-    float4 texturing;         // x = mip bias of rasterized material textures, y = roughness below which reflections are traced (0: none are), z = first box of a glass instance listed after the TLAS nodes, w = how many
+    float4 texturing;         // x = mip bias of rasterized material textures
     float4 time; // current, previous simulation time in seconds
     // The ray of the pixel at uv: a point at linear depth d along it is
     // (eye_origin + eye_du * uv.x + eye_dv * uv.y) + d * (ray_origin + ray_du * uv.x + ray_dv * uv.y),
@@ -100,7 +100,7 @@ struct Frame_Data {
     float4 clip_plane;       // world plane nothing is drawn behind; zero for none
     float2 footprint;        // x width of a pixel at depth 0, y what it grows by per unit of depth
     uint layers;             // the instances the view draws: those whose layers share a bit with these
-    uint view_index;         // of the nested view these constants draw; 0 for the view itself
+    uint pad1;
     float4 sky_map;          // x = the image of the sky in the texture table, y = 1 for an atmosphere lit by the sun, z = its last level, w = 1 with an image
     float4 sky_orientation;  // the turn of the sky, a quaternion (xyz, w): a direction of the world is one of the sky by its inverse
     float4 sky_from;         // a change of the sky on its way: rgb the luminance it changes from (render units), a how much of it still shows
@@ -276,7 +276,7 @@ struct Material_Coat { float3 color; float weight; float roughness; float ior; f
 struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
-struct Material_Volume { float3 scatter; uint changing; }; // what a solid scatters of what it stops; 1: what its program gives a point changes with nothing that says so (it reads the time)
+struct Material_Volume { float3 scatter; uint program; }; // what a solid scatters of what it stops; MATERIAL_PROGRAM_* bits of what its program does
 struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;
@@ -452,7 +452,8 @@ float4 unpack_tangent_angle(uint normal_packed, uint angle) {
     }
     uint least = abs(y) < abs(x) ? 1u : 0u;
     if (abs(z) < abs(least == 0u ? x : y)) least = 2u;
-    float3 n = unpack_normal(normal_packed);
+    // The normal of those integers (unpack_normal), folded already.
+    float3 n = normalize(float3(x, y, z));
     float3 along = normalize(cross(float3(least == 0u ? 1.0 : 0.0, least == 1u ? 1.0 : 0.0, least == 2u ? 1.0 : 0.0), n));
     float3 across = cross(n, along);
     float turn = float(angle & 0x7fffu) * (2.0 * PI / 32768.0);

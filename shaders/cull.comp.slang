@@ -116,8 +116,13 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group_id : SV_GroupID, 
     // A blended instance has nothing for the G-buffer: its own passes draw it.
     bool blended = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;
     bool visible = false;
+    bool probed = !batched && params.probe == i + 1u;
     if (params.phase == 0u) {
         bool in_frustum = view_draws_box(inst, batched, row, inst.bounds_min.xyz, inst.bounds_max.xyz);
+        if (probed) {
+            uint seen = CULL_PROBE_TESTED | (in_frustum ? CULL_PROBE_DRAWS : 0u) | (frustum_visible(inst.bounds_min.xyz, inst.bounds_max.xyz) ? CULL_PROBE_FRUSTUM : 0u);
+            InterlockedOr(stats[0].probe[0], seen);
+        }
         float3 before_low, before_high;
         box_before(inst, inst.bounds_min.xyz, inst.bounds_max.xyz, before_low, before_high);
         bool hidden = in_frustum && params.occlusion != 0u && occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
@@ -129,7 +134,11 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group_id : SV_GroupID, 
         visible = candidate && !(params.occlusion != 0u && occluded(inst.bounds_min.xyz, inst.bounds_max.xyz, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane));
         if (candidate && !visible && !blended) InterlockedAdd(stats[0].occluded_instances, 1u);
     }
-    if (visible && !batched && params.glass_groups.x != 0u && (inst.meta.w & INSTANCE_FLAG_TRANSLUCENT) != 0u) {
+    if (probed && visible) {
+        InterlockedOr(stats[0].probe[0], CULL_PROBE_VISIBLE);
+        stats[0].probe[1] = instance_levels(view_detail(), inst, mesh).x + 1u;
+    }
+    if (visible && !batched && params.glass_groups.x != 0u && (inst.meta.x & INSTANCE_FLAG_GLASS) != 0u) {
         InterlockedMax(glass_dispatch[0], params.glass_groups.x);
         InterlockedMax(glass_dispatch[1], params.glass_groups.y);
         InterlockedMax(glass_dispatch[2], 1u);

@@ -4,17 +4,16 @@
 //   GBUFFER_ALBEDO   RGBA8 sRGB: base color, a metallic
 //   GBUFFER_NORMAL   RGBA16F: xy the shading normal (octahedral), z its
 //                    roughness widened by specular antialiasing, w its
-//                    MATERIAL_LAYER_* bits, GBUFFER_TRACE_COAT and
-//                    GBUFFER_EMISSION_RELATIVE
+//                    MATERIAL_LAYER_* bits and GBUFFER_EMISSION_RELATIVE
 //   GBUFFER_EMISSION RGBA16F: emission in render units, a ambient occlusion
-// The other targets of the G-buffer are bound for every pass: the motion
-// target is pixel_views (rg the motion of the pixel, b the roughness traced
-// reflections decide by, a 1 + its nested view) and the reflectance target
-// surface_specular (pixel_reflectance), and while an instance with layers is
-// in sight, the layers target gbuffer_layers_target, and while a batch gives
-// the vertex hook values (FRAME_FLAG_SWAY), the rest target pixel_rests,
-// which rest.comp writes after the resolve (pixel_rest). The linear depth keeps
-// its own decoders (depth_* of common.slang).
+// The other targets of the G-buffer are bound for every pass: the views
+// target pixel_views (pixel_view), the reflectance target surface_specular
+// (pixel_reflectance), and while an instance with layers is in sight, the
+// layers target gbuffer_layers_target, and while a batch gives the vertex
+// hook values (FRAME_FLAG_SWAY), the rest target pixel_rests, which rest.comp
+// writes after the resolve (pixel_rest). The motion target (RG16F, the offset
+// of each pixel to the previous frame in UV) is bound by the passes that read
+// it. The linear depth keeps its own decoders (depth_* of common.slang).
 #ifndef MIRAI_GBUFFER_SLANG
 #define MIRAI_GBUFFER_SLANG
 #include "scene.slang"
@@ -27,8 +26,7 @@ float3 gbuffer_normal_unpack(float4 texel) { return oct_decode(texel.xy); }
 uint gbuffer_bits_unpack(float4 texel) { return uint(texel.w + 0.5); }
 
 // The bits of the normal target besides the layers of the material
-// (MATERIAL_LAYER_*): the traced reflection of the pixel is the one of its coat.
-#define GBUFFER_TRACE_COAT 32u
+// (MATERIAL_LAYER_*):
 // Its emission is relative to the exposure (EMISSION_RELATIVE): it shows in
 // the image, but neither lights the scene nor is metered.
 #define GBUFFER_EMISSION_RELATIVE 64u
@@ -202,7 +200,7 @@ struct Gbuffer_Pixel {
     float f90;        // the grazing reflectance of its specular lobe
     float3 emission;  // render units
     float occlusion;
-    uint bits;        // MATERIAL_LAYER_*, GBUFFER_TRACE_COAT and GBUFFER_EMISSION_RELATIVE
+    uint bits;        // MATERIAL_LAYER_* and GBUFFER_EMISSION_RELATIVE
     Material_Layers layers;
 };
 

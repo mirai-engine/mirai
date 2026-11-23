@@ -19,7 +19,6 @@ material_settings :: proc() -> Settings {
 	s := DEFAULT_SETTINGS
 	s.gi_enabled = false
 	s.taa = false
-	s.reflections = .Detailed
 	return s
 }
 
@@ -157,6 +156,16 @@ read_depth :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> f
 	return depths[p.y * int(r.targets.width) + p.x]
 }
 
+// The base color of the G-buffer (sRGB bytes), zero where nothing was drawn:
+// there it holds nothing defined.
+@(private)
+albedo_drawn :: proc(t: ^testing.T, device: ^rhi.Device, r: ^Renderer, pixels: []u8, loc := #caller_location) -> bool {
+	depths := make([]f32, int(r.targets.width * r.targets.height), context.temp_allocator)
+	if !testing.expect(t, golden_read_texture(device, r.targets.albedo, pixels, loc) && golden_read_texture(device, r.targets.linear_depth, mem.slice_data_cast([]u8, depths), loc), rhi.device_error(device), loc = loc) {return false}
+	for depth, i in depths {if depth == 0 {mem.zero_slice(pixels[i * 4:][:4])}}
+	return true
+}
+
 @(private = "file")
 near_bytes :: proc(a, b: [4]int, tolerance: int) -> bool {
 	for i in 0 ..< 4 {if abs(a[i] - b[i]) > tolerance {return false}}
@@ -192,7 +201,7 @@ a_view_fades_out_the_body_of_its_player_by_a_share_of_its_pixels :: proc(t: ^tes
 		camera.own, camera.fade = c.own, c.fade
 		frames(t, &f, camera, 2)
 		rhi.device_wait_idle(f.device)
-		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
+		albedo_drawn(t, f.device, r, pixels)
 		drawn := 0
 		for i in 0 ..< ALL {if pixels[i * 4] > 200 {drawn += 1}}
 		testing.expectf(t, drawn == c.drawn, "own %d, fade %v: %d pixels of the body, not %d", c.own, c.fade, drawn, c.drawn)
@@ -232,7 +241,7 @@ a_view_hides_the_head_of_its_own_body_and_no_other :: proc(t: ^testing.T) {
 		camera.own, camera.own_hidden, camera.layers = c.own, c.own_hidden, c.layers
 		frames(t, &f, camera, 2)
 		rhi.device_wait_idle(f.device)
-		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
+		albedo_drawn(t, f.device, r, pixels)
 		drawn := 0
 		for i in 0 ..< ALL {if pixels[i * 4] > 200 {drawn += 1}}
 		testing.expectf(t, drawn == c.drawn, "own %d, own_hidden %#x, layers %#x: %d pixels of the head, not %d", c.own, c.own_hidden, c.layers, drawn, c.drawn)
@@ -642,77 +651,14 @@ material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
-@(test)
-material_smooth_surfaces_reflect_the_scene :: proc(t: ^testing.T) {
-	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings(), reference = {.Lights}) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	mirror, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
-	mirror.base_color = {0.9, 0.9, 0.9}
-	mirror.metallic = 1
-	mirror.roughness = 0.05
-	lamp.base_color = {0, 0, 0}
-	lamp.emission = {4, 0, 0}
-	materials_set(r, {mirror, lamp})
-	quad := ground_quad(r)
-	// A red emitter hangs over a mirror floor; the camera looks at the floor
-	// point that mirrors it.
-	emitter := scale_matrix(1.5)
-	emitter[1, 3] = 2
-	emitter[2, 3] = -2
-	instances := []Instance_Desc{
-		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
-		{object_id = 2, mesh = quad, transform = emitter, material = 2, tint = {1, 1, 1}},
-	}
-	scene_given(r, instances, nil, {}, {sky = {0, 0, 0.2}})
-	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	floor_point :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
-		r := f.renderer
-		for _ in 0 ..< 3 {testing.expect(t, fixture_frame(f, {camera = camera}), r.error)}
-		rhi.device_wait_idle(f.device)
-		pixels, w, _, ok := golden_capture(r)
-		testing.expect(t, ok, r.error)
-		if !ok {return {}}
-		defer delete(pixels)
-		p := target_pixel(r, camera, world)
-		i := (p.y * w + p.x) * 4
-		return {f32(pixels[i]), f32(pixels[i + 1]), f32(pixels[i + 2])}
-	}
-	mirrored := floor_point(t, &f, camera, {0, 0, 0})
-	beside := floor_point(t, &f, camera, {3, 0, 0})
-	testing.expectf(t, mirrored.r > 150 && mirrored.r > mirrored.b * 3, "the mirror shows the red emitter: %v", mirrored)
-	testing.expectf(t, beside.b > beside.r + 20, "next to it the mirror shows the sky: %v", beside)
-	traced := r.stats.rays_per_frame
-
-	settings := r.settings
-	settings.reflections = .Off
-	testing.expect(t, renderer_apply_settings(r, settings))
-	untraced := floor_point(t, &f, camera, {0, 0, 0})
-	testing.expectf(t, untraced.r < 40, "without traced reflections the mirror only has the probe volume: %v", untraced)
-	testing.expect_value(t, traced - r.stats.rays_per_frame, u64(r.targets.width * r.targets.height)) // a mirror ray per pixel
-
-	// A rough floor never traces: the pass is skipped altogether.
-	settings.reflections = .Detailed
-	testing.expect(t, renderer_apply_settings(r, settings))
-	mirror.roughness = 0.9
-	materials_set(r, {mirror, lamp})
-	rough := floor_point(t, &f, camera, {0, 0, 0})
-	testing.expectf(t, rough.r < 60, "a rough metal does not mirror: %v", rough)
-	settings.reflection_roughness = 2
-	testing.expect(t, !renderer_apply_settings(r, settings), "a limit outside 0 to 1 is rejected")
-	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
-}
-
-// Without traced reflections a mirror reads the probe volume, which holds the
-// sky blurred over a hemisphere: under an open sky it shows the sky as sharp
-// as without the volume, and under a roof the roof, not the sky.
+// A mirror reads the probe volume, which holds the sky blurred over a
+// hemisphere: under an open sky it shows the sky as sharp as without the
+// volume, and under a roof the roof, not the sky.
 @(test)
 material_mirror_reads_the_sky_sharp_from_the_probes_and_not_under_a_roof :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := material_settings()
 	settings.gi_enabled = true
-	settings.reflections = .Off
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -768,7 +714,6 @@ material_metal_without_traced_reflections_shows_what_is_around_it :: proc(t: ^te
 	f: Fixture
 	settings := material_settings()
 	settings.gi_enabled = true
-	settings.reflections = .Off
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
@@ -803,7 +748,6 @@ beyond_the_probe_volume_a_surface_takes_the_sky_it_sees :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := material_settings()
 	settings.gi_enabled = true
-	settings.reflections = .Off
 	settings.probe_grid, settings.probe_cascades, settings.probe_spacing = 8, 1, 1
 	if !fixture_init(t, &f, 64, 64, settings) {return}
 	defer fixture_destroy(&f)
@@ -831,26 +775,27 @@ beyond_the_probe_volume_a_surface_takes_the_sky_it_sees :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
-// A ray that finds a surface with a program shows what the program gives
-// there (points.odin), not the values of its row: no stage of rays runs it.
-// With the program alone in the scene its stage takes the whole window of
+// A probe ray that finds a surface with a program gathers what the program
+// gives there (points.odin), not the values of its row: no stage of rays runs
+// it. With the program alone in the scene its stage takes the whole window of
 // points; with another one the points are binned by program.
 @(test)
-material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
+material_program_shows_in_what_the_probes_find :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, 96, 64, material_settings(), programs = true, reference = {.Lights}) {return}
+	settings := material_settings()
+	settings.gi_enabled = true
+	if !fixture_init(t, &f, 96, 64, settings, programs = true, reference = {.Lights}) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	grid, pieces := program_find(r, "Grid", .Surface), program_find(r, "Pieces", .Surface)
 	testing.expect(t, grid != nil && pieces != nil, "the tests have the Grid and Pieces programs")
 	if grid == nil || pieces == nil {return}
-	mirror, wall, other := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	floor_mat, wall, other := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	other.program_id = pieces.id
 	other.custom_params = program_defaults(pieces)
 	other.alpha_mode = .Blend
-	mirror.base_color = {0.9, 0.9, 0.9}
-	mirror.metallic = 1
-	mirror.roughness = 0.05
+	floor_mat.base_color = {0.9, 0.9, 0.9}
+	floor_mat.roughness = 0.9
 	// Its row is blue; its program paints it red.
 	wall.base_color = {0, 0, 1}
 	wall.program_id = grid.id
@@ -858,26 +803,28 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 	testing.expect(t, program_parameter_set(&wall.custom_params, program_parameter(grid, "color"), {1, 0, 0, 0}))
 	testing.expect(t, program_parameter_set(&wall.custom_params, program_parameter(grid, "line_color"), {1, 0, 0, 0}))
 	quad := ground_quad(r)
-	// A wall stands beyond a mirror floor, turned about x to face +z, lit from the side of the camera.
+	// A wall stands beside the floor, facing +z, lit from the side of the camera so it bounces red onto the floor.
 	standing := scale_matrix(10)
 	standing[1, 1], standing[1, 2], standing[2, 1], standing[2, 2] = 0, -10, 10, 0
-	standing[2, 3] = -3
+	standing[2, 3] = -2
 	instances := []Instance_Desc{
 		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
 	}
-	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
+	// Sun aims horizontally at the wall (+z -> -z), grazing the floor so floor color comes from wall bounce.
+	sun := Sun_Desc{direction = linalg.normalize(Vec3{0, 0.05, 1}), color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1}
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for binned in ([]bool{false, true}) {
 		// The other program is in a row of the table that no instance takes.
-		materials_set(r, {mirror, wall, other if binned else DEFAULT_MATERIAL})
-		scene_given(r, instances, nil, sun, {sky = {0, 0, 0.05}})
+		materials_set(r, {floor_mat, wall, other if binned else DEFAULT_MATERIAL})
+		scene_given(r, instances, nil, sun, {})
 		testing.expect_value(t, r.scene.programs_used, u32(2 if binned else 1))
 		// The resolve of the visibility target draws the opaque program alone: the other one is blended.
 		testing.expect_value(t, r.scene.program_opaque_rows[grid.id], 1)
 		testing.expect_value(t, r.scene.program_opaque_rows[pieces.id], 0)
-		mirrored := screen_color(t, &f, camera, {0, 0, 0})
-		testing.expectf(t, mirrored.r > 100 && mirrored.r > 3 * mirrored.b, "binned %v: the mirror shows the wall as its program paints it: %v", binned, mirrored)
+		frames(t, &f, camera, 16)
+		bounced := screen_color(t, &f, camera, {0, 0, -0.5})
+		testing.expectf(t, bounced.r > bounced.b + 20, "binned %v: the probes gather the wall as its program paints it: %v", binned, bounced)
 	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
@@ -885,8 +832,8 @@ material_program_shows_in_what_a_reflection_finds :: proc(t: ^testing.T) {
 // With the pipeline thread a frame does not wait for the driver to make the
 // pipelines of a program whose stages changed since the renderer started (an
 // edit in the editor, program_stages_publish): it draws its materials as their
-// rows, on the camera as on the rays, and the frames after they are made draw
-// the program. A thumbnail, read back at once, waits for them.
+// rows, and the frames after they are made draw the program. A thumbnail, read
+// back at once, waits for them.
 @(test)
 material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^testing.T) {
 	f: Fixture
@@ -898,8 +845,7 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 	points_pipelines_destroy(r)
 	grid := program_find(r, "Grid", .Surface)
 	if !testing.expect(t, grid != nil, "the tests have the Grid program") {return}
-	mirror, wall := DEFAULT_MATERIAL, DEFAULT_MATERIAL
-	mirror.base_color, mirror.metallic, mirror.roughness = {0.9, 0.9, 0.9}, 1, 0.05
+	floor_mat, wall := DEFAULT_MATERIAL, DEFAULT_MATERIAL
 	// Its row is blue; its program paints it red.
 	wall.base_color = {0, 0, 1}
 	wall.program_id = grid.id
@@ -916,7 +862,7 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 		center := (32 * 64 + 32) * 4
 		testing.expectf(t, pixels[center] > pixels[center + 2] + 70, "a thumbnail draws the program at once: %v", pixels[center:center + 4])
 	}
-	materials_set(r, {mirror, wall})
+	materials_set(r, {floor_mat, wall})
 	quad := ground_quad(r)
 	standing := scale_matrix(10)
 	standing[1, 1], standing[1, 2], standing[2, 1], standing[2, 2] = 0, -10, 10, 0
@@ -926,18 +872,15 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 		{object_id = 2, mesh = quad, transform = standing, material = 2, tint = {1, 1, 1}},
 	}, nil, {direction = linalg.normalize(Vec3{0, 0.5, 1}), color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0, 0, 0.05}})
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	look :: proc(t: ^testing.T, f: ^Fixture, camera: Camera) -> (seen, mirrored: [3]f32) {
+	look :: proc(t: ^testing.T, f: ^Fixture, camera: Camera) -> [3]f32 {
 		rhi.device_wait_idle(f.device)
 		pixels, w, _, ok := golden_capture(f.renderer)
 		testing.expect(t, ok, f.renderer.error)
-		if !ok {return}
+		if !ok {return {}}
 		defer delete(pixels)
-		at :: proc(r: ^Renderer, pixels: []u8, w: int, camera: Camera, world: Vec3) -> [3]f32 {
-			p := target_pixel(r, camera, world, true)
-			i := (p.y * w + p.x) * 4
-			return {f32(pixels[i]), f32(pixels[i + 1]), f32(pixels[i + 2])}
-		}
-		return at(f.renderer, pixels, w, camera, {0, 0.3, -3}), at(f.renderer, pixels, w, camera, {0, 0, 0})
+		p := target_pixel(f.renderer, camera, {0, 0.3, -3}, true)
+		i := (p.y * w + p.x) * 4
+		return {f32(pixels[i]), f32(pixels[i + 1]), f32(pixels[i + 2])}
 	}
 	testing.expect(t, fixture_frame(&f, {camera = camera}), r.error)
 	// What a capture waits for until it is 0: the pipelines the frame drew without.
@@ -945,16 +888,16 @@ material_program_draws_as_its_rows_until_its_pipelines_are_made :: proc(t: ^test
 	testing.expectf(t, asked >= 1, "the frame asked the thread for the pipelines of the program: %d pending", asked)
 	late := renderer_pipelines_late(r)
 	testing.expect(t, late > 0)
-	seen, mirrored := look(t, &f, camera)
-	testing.expectf(t, seen.b > seen.r + 40 && mirrored.b > mirrored.r + 40, "until they are made the wall is its row: %v, in the mirror %v", seen, mirrored)
+	seen := look(t, &f, camera)
+	testing.expectf(t, seen.b > seen.r + 40, "until they are made the wall is its row: %v", seen)
 	for renderer_pipelines_pending(r) > 0 {
 		renderer_pipelines_wait(r)
 		testing.expect_value(t, renderer_pipelines_pending(r), 0)
 		renderer_reset_history(r)
 		frames(t, &f, camera, 3)
 	}
-	seen, mirrored = look(t, &f, camera)
-	testing.expectf(t, seen.r > 3 * seen.b && mirrored.r > 3 * mirrored.b, "then it is what its program paints: %v, in the mirror %v", seen, mirrored)
+	seen = look(t, &f, camera)
+	testing.expectf(t, seen.r > 3 * seen.b, "then it is what its program paints: %v", seen)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -1027,6 +970,7 @@ material_program_resolve_shades_each_pixel_once :: proc(t: ^testing.T) {
 	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	r.resolve_counted = true
 	grid, sampled := program_find(r, "Grid", .Surface), program_find(r, "Sampled", .Surface)
 	if !testing.expect(t, grid != nil && sampled != nil, "the tests have the Grid and Sampled programs") {return}
 	lined, imaged := DEFAULT_MATERIAL, DEFAULT_MATERIAL
@@ -1062,6 +1006,7 @@ material_program_with_derivatives_of_its_own_evaluates_no_quad_again :: proc(t: 
 	if !fixture_init(t, &f, 64, 64, material_settings(), programs = true) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
+	r.resolve_counted = true
 	for name in ([]string{"Sampled", "Tiled"}) {
 		program := program_find(r, name, .Surface)
 		if !testing.expectf(t, program != nil, "the tests have the %s program", name) {return}
@@ -1496,7 +1441,7 @@ material_mask_keeps_its_coverage_far_away :: proc(t: ^testing.T) {
 		frames(t, f, camera, 2)
 		rhi.device_wait_idle(f.device)
 		pixels := make([]u8, int(r.targets.width * r.targets.height) * 4, context.temp_allocator)
-		testing.expect(t, golden_read_texture(f.device, r.targets.albedo, pixels), rhi.device_error(f.device))
+		albedo_drawn(t, f.device, r, pixels)
 		red := 0
 		for i := 0; i < len(pixels); i += 4 {if pixels[i] > 200 && pixels[i + 1] < 60 {red += 1}}
 		return red
@@ -1665,123 +1610,6 @@ uniform_instance_color_overrides_vertex_colors_in_raster :: proc(t:^testing.T) {
     testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
 }
 
-@(test)
-material_mirror_lighting_is_exact_with_four_local_lights :: proc(t:^testing.T) {
-    f:Fixture
-    if !fixture_init(t,&f,64,64,material_settings(), reference = {.Lights}) {return}
-    defer fixture_destroy(&f)
-    r:=f.renderer
-    mirror:=DEFAULT_MATERIAL;mirror.metallic=1;mirror.roughness=0.03
-    materials_set(r,{mirror})
-    quad:=ground_quad(r)
-    patch:=placed(1.5,2);patch[2,3]=-2
-    instances:=[]Instance_Desc{
-        {object_id=1,mesh=quad,transform=scale_matrix(20),material=1,tint={1,1,1}},
-        {object_id=2,mesh=quad,transform=patch,tint={1,1,1}},
-    }
-    lights:=[]Light_Desc{
-        {position={0,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,direction={0,1,0},cone=0.7,indirect=1,scattering=1},
-        {position={0,3,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
-        {position={10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
-        {position={-10,1,-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1},
-    }
-    scene_given(r,instances,lights,{},{})
-    camera:=Camera{position={0,2,2},forward={0,-2,-2},up={0,1,0},fov_y=60,near=0.05,far=100,exposure=UNIT_EXPOSURE}
-    for provider in ([]Trace_Mode{.Software,.Hardware}) {
-        if !fixture_traces(r,provider) {continue}
-        settings:=r.settings;settings.trace_mode=provider;settings.reflection_light_budget=8
-        testing.expect(t,renderer_apply_settings(r,settings))
-        low,high:=f32(1e6),f32(0)
-        for _ in 0..<12 {
-            frames(t, &f,camera,1)
-            lit:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
-            low=min(low,lit);high=max(high,lit)
-        }
-        testing.expectf(t,low>0.5 && high-low<0.005,"%v exact reflected spotlight is stable: %v..%v",provider,low,high)
-        // More lights around the patch than a reflected point traces rays
-        // to: groups stand for the far ones, the same every frame, so the
-        // reflection holds still and shows about the light of them all.
-        crowd:[8]Light_Desc
-        crowd[0]=lights[0]
-        for &light,i in crowd[1:] {light={position={f32(i%3)-1,3+0.2*f32(i),-2},color={1,1,1},intensity=6 * math.PI,range=6,indirect=1,scattering=1}}
-        scene_lights_given(r,crowd[:],{},{})
-        frames(t, &f,camera,4)
-        every:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
-        settings.reflection_light_budget=2;testing.expect(t,renderer_apply_settings(r,settings))
-        low,high=1e6,0
-        for _ in 0..<16 {
-            frames(t, &f,camera,1)
-            raw:=read_light(t,&f,camera,{},r.targets.reflect_raw).r
-            low=min(low,raw);high=max(high,raw)
-        }
-        testing.expectf(t,high-low<0.005 && abs(low-every)<0.25*every,"%v grouped lighting holds still near that of every light: %v..%v, every light %v",provider,low,high,every)
-        scene_lights_given(r,lights,{},{})
-    }
-    testing.expectf(t,rhi.device_validation_errors(f.device)==0,"validation: %s",rhi.device_validation_message(f.device))
-}
-
-@(test)
-material_rough_reflections_are_blurred_and_steady :: proc(t: ^testing.T) {
-	f: Fixture
-	// Wide enough that the tile a shared ray is filtered over, 8 pixels, is small beside the lobe.
-	settings := material_settings()
-	settings.reflections = .Traced
-	if !fixture_init(t, &f, 192, 128, settings, reference = {.Lights}) {return}
-	defer fixture_destroy(&f)
-	r := f.renderer
-	floor, lamp := DEFAULT_MATERIAL, DEFAULT_MATERIAL
-	floor.base_color = {0.9, 0.9, 0.9}
-	floor.metallic = 1
-	lamp.base_color = {0, 0, 0}
-	lamp.emission = {4, 0, 0}
-	quad := ground_quad(r)
-	emitter := scale_matrix(1.5)
-	emitter[1, 3] = 2
-	emitter[2, 3] = -2
-	instances := []Instance_Desc{
-		{object_id = 1, mesh = quad, transform = scale_matrix(20), material = 1, tint = {1, 1, 1}},
-		{object_id = 2, mesh = quad, transform = emitter, material = 2, tint = {1, 1, 1}},
-	}
-	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
-	// The mirror image of the emitter covers the floor from x = -0.375 to 0.375.
-	inside := Vec3{0, 0, 0}
-	beside := Vec3{0.6, 0, 0}
-	settled :: proc(t: ^testing.T, f: ^Fixture, camera: Camera, world: Vec3) -> [3]f32 {
-		frames(t, f, camera, 24)
-		return screen_color(t, f, camera, world)
-	}
-	floor.roughness = 0.05
-	materials_set(r, {floor, lamp})
-	scene_given(r, instances, nil, {}, {})
-	mirror_inside := settled(t, &f, camera, inside)
-	mirror_beside := settled(t, &f, camera, beside)
-	// Rough, under the roughness reflections trace up to (Settings.reflection_roughness).
-	floor.roughness = 0.25
-	materials_set(r, {floor, lamp})
-	rough_inside := settled(t, &f, camera, inside)
-	rough_beside := settled(t, &f, camera, beside)
-	testing.expectf(t, mirror_beside.r < 12, "a mirror keeps the image sharp: %v beside it", mirror_beside)
-	testing.expectf(t, rough_beside.r > mirror_beside.r + 15, "a rough surface spreads the image past its edge: %v against %v", rough_beside, mirror_beside)
-	testing.expectf(t, rough_inside.r > 40 && rough_inside.r < mirror_inside.r, "and dims it where the mirror showed it: %v against %v", rough_inside, mirror_inside)
-	// One ray per pixel, filtered: the image stays put from frame to frame.
-	low, high := f32(255), f32(0)
-	for _ in 0 ..< 6 {
-		sample := screen_color(t, &f, camera, beside).r
-		low, high = min(low, sample), max(high, sample)
-	}
-	testing.expectf(t, high - low < 12, "the filtered reflection flickers between %v and %v", low, high)
-	// The rays above were one per block of 2x2 pixels. A ray per pixel shows the same image.
-	pixels := u64(r.targets.width * r.targets.height)
-	shared := r.stats.rays_per_frame
-	settings.reflections = .Detailed
-	testing.expect(t, renderer_apply_settings(r, settings))
-	full_inside := settled(t, &f, camera, inside)
-	full_beside := settled(t, &f, camera, beside)
-	testing.expect_value(t, r.stats.rays_per_frame - shared, pixels - u64(r.targets.half_width * r.targets.half_height))
-	testing.expectf(t, abs(full_inside.r - rough_inside.r) < 14 && abs(full_beside.r - rough_beside.r) < 14, "shared rays change the image: %v and %v against %v and %v", rough_inside, rough_beside, full_inside, full_beside)
-	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
-}
-
 // Every level of a square BC1 texture of one color, the way a cooked
 // texture arrives: 200,100,50 in 5:6:5 on both endpoints.
 @(private = "file")
@@ -1938,7 +1766,7 @@ material_independent_uv1_bindings_rotation_and_specular_reach_gbuffer :: proc(t:
 @(test)
 material_without_specular_keeps_the_whole_diffuse_lobe :: proc(t:^testing.T) {
     f:Fixture
-    settings:=material_settings();settings.reflections=.Traced
+    settings:=material_settings()
     if !fixture_init(t,&f,64,64,settings) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
@@ -1965,11 +1793,16 @@ material_without_specular_keeps_the_whole_diffuse_lobe :: proc(t:^testing.T) {
 material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(t:^testing.T) {
     f:Fixture
     settings:=material_settings()
-    if !fixture_init(t,&f,32,32,settings) {return}
+    if !fixture_init(t,&f,32,32,settings,programs=true) {return}
     defer fixture_destroy(&f)
     r:=f.renderer
+    // A program that names no specular field reflects what its base color and metallic give.
+    grid:=program_find(r,"Grid",.Surface)
+    if !testing.expect(t,grid!=nil,"the tests have the Grid program") {return}
     plain,reflective:=DEFAULT_MATERIAL,DEFAULT_MATERIAL
     plain.roughness=.2
+    plain.program_id=grid.id
+    plain.custom_params=program_defaults(grid)
     reflective.specular_color={.2,.8,.4}
     materials_set(r,{plain,reflective})
     mesh:=ground_quad(r)
@@ -2060,13 +1893,11 @@ read_reflectance :: proc(t:^testing.T,device:^rhi.Device,r:^Renderer,target:rhi.
 
 // ---------------------------------------------------------------- layers
 
-// Light reaches a pixel from the sky alone: no traced reflections, so the
-// specular lobes read the sky as the deferred passes do.
+// Light reaches a pixel from the sky alone, so the specular lobes read the sky
+// as the deferred passes do.
 @(private = "file")
 layer_settings :: proc() -> Settings {
-    s:=material_settings()
-    s.reflections=.Off
-    return s
+    return material_settings()
 }
 
 @(private = "file")
@@ -2077,11 +1908,12 @@ OBLIQUE :: Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, f
 target_at :: proc(t:^testing.T,f:^Fixture,target:rhi.Texture,camera:Camera,world:Vec3) -> Vec3 {
     r:=f.renderer
     rhi.device_wait_idle(f.device)
-    values:=make([]f16,int(r.targets.width*r.targets.height)*4,context.temp_allocator)
+    channels:=rhi.format_size(rhi.texture_desc(f.device,target).format)/size_of(f16)
+    values:=make([]f16,int(r.targets.width*r.targets.height)*channels,context.temp_allocator)
     testing.expect(t,golden_read_texture(f.device,target,mem.slice_data_cast([]u8,values)),rhi.device_error(f.device))
     p:=target_pixel(r,camera,world)
-    at:=(p.y*int(r.targets.width)+p.x)*4
-    return {f32(values[at]),f32(values[at+1]),f32(values[at+2])}
+    at:=(p.y*int(r.targets.width)+p.x)*channels
+    return {f32(values[at]),f32(values[at+1]),f32(values[at+2]) if channels>2 else 0}
 }
 
 // The split-sum table the renderer built (dfg.comp), DFG_SIZE texels a side.

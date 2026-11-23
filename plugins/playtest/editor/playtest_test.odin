@@ -78,6 +78,7 @@ probe_standing :: proc(w:core.World_Ref,body:core.Entity) -> (standing,known:boo
 @(private="file")
 probe_tick :: proc(data,shared,editor,app:rawptr) {
     w:=cast(^Probe_World)data
+    if !w.bindings.built {probe_bindings(&w.bindings)}
     input.input_holds(core.read(&w.seats),&w.seat_runtime,&w.holds,w.time,nil)
     for row in 0..<core.count(&w.seats) {
         input.seat_feed(input.seat_runtime_edit(&w.seat_runtime,core.entity_at(&w.seats,row)),&w.input,&w.bindings,false,1.0/60)
@@ -98,6 +99,16 @@ probe_tick :: proc(data,shared,editor,app:rawptr) {
     place:=core.edit(&w.transforms,hero)
     place.position.x=clamp(place.position.x+move.vector.x,-100,6)
     if input.seat_action(core.ref(&w.seat_runtime),seat,PROBE_JUMP).pressed {place.position.y-=5}
+}
+
+// As a game's, the map is built by a tick: a run that never ticked has none.
+@(private="file")
+probe_bindings :: proc(m:^input.Input_Map) {
+    input.input_map_action(m,PROBE_MOVE,.Axis2)
+    input.input_map_action(m,PROBE_JUMP,.Button)
+    input.input_map_bind(m,PROBE_JUMP,input.binding_key(.Space))
+    input.input_map_compile(m)
+    m.built=true
 }
 
 @(private="file")
@@ -142,10 +153,7 @@ probe_open :: proc(t:^testing.T,f:^Probe) -> bool {
     f.seat=core.create(&world.entities)
     core.add(&world.seats,f.seat,input.Seat{})
     world.players.local_count=1
-    input.input_map_action(&world.bindings,PROBE_MOVE,.Axis2)
-    input.input_map_action(&world.bindings,PROBE_JUMP,.Button)
-    input.input_map_bind(&world.bindings,PROBE_JUMP,input.binding_key(.Space))
-    input.input_map_compile(&world.bindings)
+    probe_bindings(&world.bindings)
     core.settle(&f.info,f.data,nil)
     f.viewport={orbit=editor.ORBIT_DEFAULT}
     f.gui={layout={left_open=true,right_open=true,library_tab=.Content,bottom_open=true}}
@@ -404,6 +412,52 @@ the_monitors_take_the_height_of_a_fall_from_the_scene :: proc(t:^testing.T) {
     testing.expect(t,q.limits.falls && q.limits.fall_below==-2)
 }
 
+// The audit names what is broken in the game that plays, errors first, each
+// with its entity; the document has none of it, and with no game play.audit
+// says how to start one while scene.audit reads the document.
+@(test)
+the_audit_flags_what_is_broken_with_its_entity_errors_first :: proc(t:^testing.T) {
+    f:=new(Probe);defer free(f)
+    if !probe_open(t,f) {return}
+    defer probe_close(f)
+    probe_drive(f)
+    Flag :: struct {severity,area,code,entity:string}
+    Audit :: struct {passed:bool,flags:[]Flag,summary:struct {problems:int}}
+    audit :: proc(t:^testing.T,f:^Probe,method,params:string) -> (answer:Audit) {
+        error,text:=probe_call(f,method,params)
+        if !testing.expectf(t,error.code==0,"%s: %v",method,error) {return}
+        testing.expect_value(t,api.result_mismatch(Api_Audit,text),"")
+        testing.expect(t,json.unmarshal_string(text,&answer,allocator=context.temp_allocator)==nil,text)
+        return
+    }
+    testing.expect(t,audit(t,f,"play.audit",`{}`).passed,"a sound game passes")
+    running:=cast(^Probe_World)editor.run_find(&f.s,0).world
+    core.report(host.app_world_storage(&f.app,running,core.Problems),f.hero,"test.broken","The hero is broken: fix it.")
+    core.edit(&running.transforms,f.foe).scale.y=math.inf_f32(1)
+    f.app.stats.frame_ms=80
+    found:=audit(t,f,"play.audit",`{"frame_ms_budget":50}`)
+    testing.expect(t,!found.passed && found.summary.problems==1)
+    seen:map[string]Flag
+    seen.allocator=context.temp_allocator
+    for flag in found.flags {seen[flag.code]=flag}
+    testing.expect(t,len(found.flags)>0 && found.flags[0].severity=="Error","errors first")
+    testing.expect_value(t,seen["test.broken"],Flag{"Error","Problems","test.broken","Hero"})
+    testing.expect_value(t,seen["physics.non_finite_transform"].entity,"Foe")
+    testing.expect_value(t,seen["performance.frame_over_budget"].severity,"Warn")
+    testing.expect(t,audit(t,f,"scene.audit",`{"world":"Document"}`).passed,"the document has neither")
+    testing.expect(t,!audit(t,f,"scene.audit",`{}`).passed,"Auto reads the game that plays")
+    core.edit(&running.transforms,f.foe).scale.y=1
+    stepped:=audit(t,f,"play.audit",`{"ticks":3,"frame_ms_budget":0}`)
+    for flag in stepped.flags {testing.expect(t,flag.code!="physics.non_finite_transform" && flag.area!="Performance",flag.code)}
+    error,_:=probe_call(f,"play.stop",`{}`)
+    testing.expect_value(t,error.code,0)
+    error,_=probe_call(f,"play.audit",`{}`)
+    testing.expect(t,error.code!=0 && strings.contains(error.message,"play.start"),error.message)
+    error,_=probe_call(f,"scene.audit",`{"world":"Game"}`)
+    testing.expect(t,error.code!=0,"no game to read")
+    testing.expect(t,audit(t,f,"scene.audit",`{}`).passed,"without a game Auto reads the document")
+}
+
 // The bot moves over the cells of the world, the same with the same seed,
 // and its bugs come with repros; a game that asks to quit does not end it.
 // It goes to each cell as a drive does: by the way a plugin gives.
@@ -421,7 +475,9 @@ the_bot_explores_the_same_with_the_same_seed_and_a_quit_does_not_end_it :: proc(
         testing.expect_value(t,error.code,0)
         error,_=probe_call(f,"play.start",`{}`)
         testing.expect_value(t,error.code,0)
-        (cast(^Probe_World)editor.run_find(&f.s,0).world).quit_at=40
+        running:=cast(^Probe_World)editor.run_find(&f.s,0).world
+        running.quit_at=40
+        running.bindings={} // the bot reads the actions once the first tick built them
         error,_=probe_call(f,"play.qa.start",`{"fall_below":-2,"stuck_seconds":0,"non_finite":false,"problems":false}`)
         testing.expect_value(t,error.code,0)
         text:string

@@ -11,7 +11,11 @@
 // small enough as it sees it, and opens the others to their children.
 #ifndef MIRAI_LIGHTING_SLANG
 #define MIRAI_LIGHTING_SLANG
+#ifndef MIRAI_NO_SHADOW_RAYS
 #include "trace.slang"
+#else
+#include "scene.slang"
+#endif
 #include "probe_light.slang"
 // A pass with the maps of the view (SUN_SHADOW_SLOT and SHADOW_DATA_SLOT) that
 // takes the shadows of direct_lighting from them where they hold the point,
@@ -672,15 +676,24 @@ float estimate_visit(uint at, float weight, float3 position, float3 normal, uint
     return total;
 }
 float lights_estimate_walk(float3 position, float3 normal, uint root, uint share) {
-    float total = estimate_visit(root, 1.0, position, normal, share);
-    uint at;
-    float weight;
+    float total = 0.0;
+    uint pair[2] = {root, 0u};
+    uint count = 1u;
+    float weight = 1.0;
     [loop]
-    while (light_walk_next(at, weight)) {
-        total += estimate_visit(at + 1u, weight, position, normal, share);
-        total += estimate_visit(light_nodes[at].child, weight, position, normal, share);
+    while (true) {
+        [loop]
+        for (uint c = 0u; c < count; c++) {
+            total += estimate_visit(pair[c], weight, position, normal, share);
+        }
+        uint at;
+        if (!light_walk_next(at, weight)) break;
+        pair[0] = at + 1u;
+        pair[1] = light_nodes[at].child;
+        count = 2u;
     }
     if (!light_walk.ordered) return total;
+    [loop]
     for (uint i = 0u; i < light_walk.held; i++) {
         Light_Node node = light_nodes[light_walk.at[i]];
         float3 direction;
@@ -753,15 +766,24 @@ float3 local_visit(uint at, float weight, Shading s, float total, uint share) {
     return radiance;
 }
 float3 local_lighting_walk(Shading s, float total, uint root, uint share) {
-    float3 result = local_visit(root, 1.0, s, total, share);
-    uint at;
-    float weight;
+    float3 result = float3(0.0);
+    uint pair[2] = {root, 0u};
+    uint count = 1u;
+    float weight = 1.0;
     [loop]
-    while (light_walk_next(at, weight)) {
-        result += local_visit(at + 1u, weight, s, total, share);
-        result += local_visit(light_nodes[at].child, weight, s, total, share);
+    while (true) {
+        [loop]
+        for (uint c = 0u; c < count; c++) {
+            result += local_visit(pair[c], weight, s, total, share);
+        }
+        uint at;
+        if (!light_walk_next(at, weight)) break;
+        pair[0] = at + 1u;
+        pair[1] = light_nodes[at].child;
+        count = 2u;
     }
     if (!light_walk.ordered) return result;
+    [loop]
     for (uint i = 0u; i < light_walk.held; i++) {
         Light_Node node = light_nodes[light_walk.at[i]];
         float doubt;
@@ -1094,6 +1116,7 @@ float3 extension_radiance(Shading s, Extension_Light light) {
 #define LIGHTS_CHANGES 32u
 #define LIGHTS_THROUGH 64u
 
+#ifndef MIRAI_NO_SHADOW_RAYS
 // The share of a light that reaches the other side of a thin surface that
 // the maps see `seen` of (mapped), or that they do not hold: through the thin
 // surfaces that let light through in the way, each leaving `each`
@@ -1106,6 +1129,7 @@ float3 light_through(float seen, bool mapped, float3 origin, float3 direction, f
     if (!mapped) return through;
     return seen + (1.0 - seen) * (crossed != 0u ? through : float3(0.0));
 }
+#endif
 
 // Whether a light that moved since the frame before (light_moved) reaches
 // the point where it is now.
@@ -1137,6 +1161,7 @@ uint cut_ray(uint at, float3 position, float3 normal, uint share, out float3 dir
     return node.child;
 }
 
+#ifndef MIRAI_NO_SHADOW_RAYS
 // Whether what direct_lighting gives a point with LIGHTS_CHANGES may have
 // changed since the frame before, by the same tests on the same rays, without
 // taking its light: for a pass that keeps the light of a point that did not
@@ -1161,6 +1186,7 @@ bool lights_changed(float3 position, float3 normal, float bias, uint budget, uin
     }
     return false;
 }
+#endif
 
 // Whether a point traces shadow rays: one of a stage that does not
 // (MIRAI_NO_SHADOW_RAYS: translucent.frag) takes the shadow of each light from
@@ -1174,9 +1200,13 @@ static const bool SHADOW_RAYS = true;
 // The cut of the lights with shadows and the light of those without that a
 // point of direct_lighting takes: by walking the tree, unless the stage gives
 // what was decided for a cell that holds the point (MIRAI_LIGHTS_GIVEN:
-// translucent.frag, from the lists of its instance).
+// translucent.frag, from the grid of the lights and the lists of its
+// instance). point_light_cut gives how many items the cut has, and
+// point_light_item each: a node of the tree, or a light with LIGHT_CUT_DIRECT.
+#define LIGHT_CUT_DIRECT 0x80000000u
 #ifndef MIRAI_LIGHTS_GIVEN
 uint point_light_cut(float3 position, float3 normal, uint budget, uint share) { return light_cut(position, normal, budget, share); }
+uint point_light_item(uint i) { return light_cut_nodes[i]; }
 float3 point_shadowless_lighting(Shading s, float known, uint share) { return shadowless_lighting(s, known, share); }
 #endif
 
@@ -1225,19 +1255,42 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             if (luminance(radiance) <= light_cutoff()) continue;
             direction = frame.sun_direction.xyz;
             reach = sun_reach(origin, direction);
+#ifndef MIRAI_NO_SHADOW_RAYS
             if (changes) changed = changed || (frame.moved.z & MOVED_SUN) != 0u || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
+#endif
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = sun_shadow_seen(s.position, s.normal, s.across, true, swayed);
+            mapped = sun_shadow_seen(s.position, s.normal, s.across, SHADOW_RAYS, swayed);
 #endif
         } else if (item <= local_items) {
-            Light_Node node = light_nodes[light_cut_nodes[item - 1u]];
+            uint entry = point_light_item(item - 1u);
+            uint aimed;
             float distance;
-            radiance = node_radiance(node, s, direction, distance) * node_share(node, share);
-            if (luminance(radiance) <= light_cutoff()) continue;
-            uint aimed = cut_ray(light_cut_nodes[item - 1u], rest, s.normal, share, direction, reach);
+            bool direct_light = (entry & LIGHT_CUT_DIRECT) != 0u;
+            Light_Node node = direct_light ? (Light_Node)0 : light_nodes[entry];
+            bool leaf = direct_light || (node.flags & LIGHT_NODE_LEAF) != 0u;
+            if (leaf) {
+                aimed = direct_light ? (entry & ~LIGHT_CUT_DIRECT) : node.child;
+                Light l = lights[aimed];
+                float shared = direct_light ? (share == LIGHT_SHARE_ALL ? 1.0 : (share == LIGHT_SHARE_BOUNCED ? light_shares(l).x : light_shares(l).y)) : node_share(node, share);
+                radiance = light_radiance(l, s, direction, distance) * shared;
+                if (luminance(radiance) <= light_cutoff()) continue;
+                if (SHADOW_RAYS || changes) {
+                    float3 toward = light_is_rect(l) || light_is_capsule(l) ? light_aim(l, rest, s.normal) : l.position_range.xyz - rest;
+                    float far = length(toward);
+                    direction = toward / max(far, 1e-6);
+                    reach = light_reach(l, far);
+                }
+            } else {
+                float doubt;
+                radiance = group_radiance(node, s, doubt) * node_share(node, share);
+                if (luminance(radiance) <= light_cutoff()) continue;
+                aimed = cut_ray(entry, rest, s.normal, share, direction, reach);
+            }
+#ifndef MIRAI_NO_SHADOW_RAYS
             if (changes) changed = changed || occluder_changed(origin, direction, reach, INVALID, FLT_MAX);
+#endif
 #ifdef MIRAI_LIGHT_MAPS
-            mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across, swayed);
+            mapped = light_shadow_seen(aimed, s.position, s.normal, light_extent(lights[aimed]), s.across, swayed, SHADOW_RAYS);
 #endif
         }
         // The other side of a thin surface: its ray, where the maps hide the light or tell nothing, is that of light_through.
@@ -1260,6 +1313,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             beyond_reach = light.beyond_reach;
         }
         float through = 1.0;
+#ifndef MIRAI_NO_SHADOW_RAYS
         for (uint segment = 0u; segment < 2u && mapped < 0.0 && !thin && SHADOW_RAYS; segment++) {
             if (!trace_visible(from, direction, reach, item <= local_items)) through = 0.0;
             if (segment != 0u || beyond_reach <= 0.0 || through <= 0.0) break;
@@ -1267,16 +1321,25 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
             direction = beyond_direction;
             reach = beyond_reach;
         }
+#endif
         if (mapped >= 0.0 || thin && SHADOW_RAYS) through = mapped;
         if (item > local_items) {
             extension += radiance * through;
             continue;
         }
 #else
+#ifndef MIRAI_NO_SHADOW_RAYS
         float through = mapped >= 0.0 ? mapped : !SHADOW_RAYS ? 1.0 : thin ? mapped : float(trace_visible(origin, direction, reach));
+#else
+        float through = mapped >= 0.0 ? mapped : 1.0;
 #endif
+#endif
+#ifndef MIRAI_NO_SHADOW_RAYS
         if (thin && through < 1.0 && SHADOW_RAYS) radiance *= light_through(through, mapped >= 0.0, origin, direction, reach, s.diffuse);
         else radiance *= through;
+#else
+        radiance *= through;
+#endif
         if (item == 0u) sun = radiance;
         else local += radiance;
     }
@@ -1287,7 +1350,7 @@ float3 direct_lighting(Shading s, float bias, uint budget, uint which, float2 ex
 #ifdef MIRAI_HOOK_LIGHTS
         known += extension;
 #endif
-        local += point_shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
+        if (frame.shadowless_lights != 0u) local += point_shadowless_lighting(s, luminance(known) / luminance(max(s.diffuse + specular_albedo(s), float3(0.02))), share);
         if (changes) changed = changed || lights_moved_near(s.position);
     }
 #ifdef MIRAI_HOOK_LIGHTS
@@ -1328,58 +1391,6 @@ float3 shade_hit(Surface s, float3 ray_dir, float hit_distance, uint light_budge
         radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, which | LIGHTS_THROUGH) + through * (sample_probes(s.position, -n, -ray_dir, hit_distance) * around);
     }
     return radiance;
-}
-
-// The same radiance from the probe volume alone, which holds the direct light
-// of the surfaces around too: no shadow rays, and no sharp shadows either.
-float3 shade_hit_cached(Surface s, float3 ray_dir, float hit_distance) {
-    float3 n = hit_normal(s, ray_dir);
-    float3 radiance = s.emission + s.albedo * (sample_probes(s.position, n, -ray_dir, hit_distance) * frame.indirect);
-    float3 through = surface_transmit(s);
-    if (max(through.r, max(through.g, through.b)) > 0.0) radiance += through * (sample_probes(s.position, -n, -ray_dir, hit_distance) * frame.indirect);
-    return radiance;
-}
-
-// The radiance of a hit as the glossy surface it is, for a reflection sharp
-// enough to reflect lights and probes in its specular lobe.
-float3 shade_hit_glossy(Surface s, float3 ray_dir, float hit_distance, uint light_budget) {
-    float3 n = hit_normal(s, ray_dir);
-    float3 radiance = s.emission;
-    Shading point = surface_shading(s, n, -ray_dir);
-    // Seen at a grazing angle, the footprint of the ray stretches along the
-    // surface past the relief it hits: one sample of that relief catches the
-    // highlights of the lights as sparks rather than their mean, so the gloss
-    // of the lights fades out there; the probes keep what they reflect.
-    Shading lit = point;
-    float facing = smoothstep(0.02, 0.15, dot(n, -ray_dir));
-    lit.f0 *= facing;
-    lit.f90 *= facing;
-    radiance += direct_lighting(lit, hit_bias(hit_distance), light_budget);
-    if (shading_transmits(point)) {
-        Shading back = shading_back(point);
-        radiance += direct_lighting(back, hit_bias(hit_distance), light_budget, LIGHTS_ALL | LIGHTS_THROUGH);
-        radiance += point.transmit * (sample_probes(s.position, -n, -ray_dir, hit_distance) * frame.indirect);
-    }
-    // What a surface that reflects little would add is not worth the lookup;
-    // it comes in gradually, so no edge shows where a floor starts to shine.
-    float3 specular = specular_albedo(point);
-    float shown = smoothstep(0.1, 0.2, max(specular.r, max(specular.g, specular.b)));
-    Probe_Directions directions = probe_directions(n);
-    if (shown > 0.0) {
-        directions.at[PROBE_SPECULAR] = dominant_direction(point);
-        directions.rough[PROBE_SPECULAR] = point.roughness;
-        directions.wants |= 1u << PROBE_SPECULAR;
-        if (point.coat > 0.0) {
-            directions.at[PROBE_COAT] = coat_dominant_direction(point);
-            directions.rough[PROBE_COAT] = point.coat_roughness;
-            directions.wants |= 1u << PROBE_COAT;
-        }
-    }
-    float4 around[PROBE_READS];
-    sample_probes_around(s.position, n, -ray_dir, directions, around, hit_distance);
-    Indirect light = indirect_make(around[PROBE_DIFFUSE].rgb * frame.indirect, probe_specular(around[PROBE_SPECULAR], directions.at[PROBE_SPECULAR], point.roughness) * (shown * frame.indirect), 1.0);
-    light.coat_radiance = probe_specular(around[PROBE_COAT], directions.at[PROBE_COAT], point.coat_roughness) * (shown * frame.indirect);
-    return radiance + indirect_compose(point, light);
 }
 
 #endif

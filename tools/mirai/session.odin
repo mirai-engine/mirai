@@ -410,12 +410,14 @@ SESSION_COPY_PREFIX :: "session-copy-"
 
 // Whether a path relative to the project, with forward slashes, stays out of
 // a copy: what is not the project's (project.own_path) and the generated folder
-// except its caches and thumbnails, so that neither the port file, the record,
+// except its caches, its thumbnails and what the builds of the project left
+// (build.build_state_kept), so that neither the port file, the record,
 // the locks nor the libraries of the editor that holds the project go with it.
 session_copy_skips :: proc(relative:string) -> bool {
     first,_,rest:=strings.partition(relative,"/")
     if first!=project.FOLDER_NAMES[.Generated] {return !project.own_path(relative)}
     if rest=="" {return false}
+    if build.build_state_kept(rest) {return false}
     kept,_,_:=strings.partition(rest,"/")
     if kept!=project.CACHE_FOLDER && kept!=project.THUMBNAIL_FOLDER {return true}
     return strings.has_suffix(relative,".lock")
@@ -429,7 +431,8 @@ SESSION_COPY_LOCK :: "copy.lock"
 SESSION_COPIES_LOCK :: "session-copies.lock"
 
 // A fresh copy of the project at folder under its .mirai/tmp/, without what
-// session_copy_skips leaves out, and its SESSION_COPY_LOCK, which the caller
+// session_copy_skips leaves out, with what the builds of the project left
+// naming the copy, and its SESSION_COPY_LOCK, which the caller
 // releases once the editor of the copy answers; problem says why it could not
 // and what to do.
 session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:string) {
@@ -474,6 +477,7 @@ session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:
     if problem=="" {
         if path,walk_error:=os.walker_error(&walker);walk_error!=nil {problem=fmt.tprintf("could not read %s (%v)",path,walk_error)}
     }
+    if problem=="" && !build.build_state_rebase(folder,copy) {problem=fmt.tprintf("could not write the paths of %s as those of the copy in %s",folder,copy)}
     if problem!="" {
         workspace.lock_release(&lock)
         _=base.remove_all(copy)

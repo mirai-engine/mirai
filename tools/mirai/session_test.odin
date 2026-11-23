@@ -135,18 +135,22 @@ a_path_is_inside_a_folder_only_past_a_separator :: proc(t:^testing.T) {
     }
 }
 
-// A copy for a session takes the sources, the assets, the list of its packages and the caches, never
-// the files of the editor that holds the project; stop knows it by its place.
+// A copy for a session takes the sources, the assets, the list of its packages, the caches and what
+// the builds of the project left, naming the copy where they name the project, so its build keeps
+// the libraries its sources still give; never the files of the editor that holds the project, nor
+// its locks. Stop knows it by its place.
 @(test)
-a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor :: proc(t:^testing.T) {
+a_session_copy_takes_the_project_its_caches_and_its_builds_without_the_files_of_its_editor :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
     folder:=base.test_folder(t,"copy")
     if folder=="" {return}
+    library:=fmt.tprintf(".mirai/%s",project.library_file("editor"))
     kept:=[]string{project.PROJECT_FILE,"packages.mirai","assets/scenes/main.scene","game/game.odin","assets/props/art.fbx",
-        ".mirai/cache/registry/index",".mirai/thumbs/main.png"}
+        ".mirai/cache/registry/index",".mirai/thumbs/main.png",".mirai/gen/editor/world.odin",library,
+        ".mirai/plugins/lib/libgame-minimal-1.dylib",".mirai/build/o/editor-1/editor.o"}
     left:=[]string{".git/HEAD",".mirai/api.json",".mirai/session.json",".mirai/session.lock",
-        ".mirai/session.log",".mirai/editor.dll",".mirai/editor-live-12-0.dll",".mirai/gen/world.odin",
-        ".mirai/tmp/probe.scene",".mirai/cache/textures.lock"}
+        ".mirai/session.log",".mirai/editor-live-12-0.dll",".mirai/tmp/probe.scene",".mirai/cache/textures.lock",
+        ".mirai/build-turn.lock",".mirai/build-turn.lock.owner",".mirai/plugins/minimal/build.lock"}
     for files in ([][]string{kept,left}) {
         for file in files {
             path:=project.path(folder,file)
@@ -154,6 +158,9 @@ a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor 
             testing.expect(t,os.write_entire_file(path,file)==nil)
         }
     }
+    // What a build read and where it published, by their whole paths.
+    named:=[]string{".mirai/build/editor.sources.json",".mirai/build/editor.stamp",".mirai/plugins/minimal/game.stamp"}
+    for file in named {testing.expect(t,os.write_entire_file(project.path(folder,file),fmt.tprintf("%s/game/game.odin",folder))==nil)}
     copy,lock,problem:=session_copy(folder)
     if !testing.expect_value(t,problem,"") {return}
     workspace.lock_release(&lock)
@@ -163,6 +170,12 @@ a_session_copy_takes_the_project_and_its_caches_without_the_files_of_its_editor 
         testing.expectf(t,read==nil && string(data)==file,"%s is copied",file)
     }
     for file in left {testing.expectf(t,!os.exists(project.path(copy,file)),"%s stays out",file)}
+    for file in named {
+        data,_:=os.read_entire_file(project.path(copy,file),context.temp_allocator)
+        testing.expectf(t,string(data)==fmt.tprintf("%s/game/game.odin",copy),"%s names the copy: %s",file,string(data))
+        original,_:=os.read_entire_file(project.path(folder,file),context.temp_allocator)
+        testing.expectf(t,string(original)==fmt.tprintf("%s/game/game.odin",folder),"%s of the project stays as it was",file)
+    }
     testing.expect(t,session_copied(copy) && !session_copied(folder))
     testing.expect(t,!session_copied(project.path(folder,".mirai","tmp","other")),"only what session_copy names")
     testing.expect(t,session_copy_remove(copy,"test") && !os.exists(copy))

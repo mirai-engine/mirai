@@ -120,13 +120,13 @@ float cluster_along(Detail d, Instance inst, float scale, Mesh mesh, Cluster c, 
 // CULL_CHUNK, a group each, in rows of CULL_DISPATCH_X groups.
 #define CULL_CHUNK 64u
 #define CULL_DISPATCH_X 32768u
-// The clusters of the levels of a mesh the cut can take under an instance:
-// those whose least error a pixel of the threshold spans at the far side of
-// its box, and whose greatest parent error none spans at the near side. Of a
-// streamed mesh, up to its coarsest level: a coarser cluster stands for
-// children whose page is not in the pools.
-uint2 instance_clusters(Detail d, Instance inst, Mesh mesh) {
-    if ((mesh.flags & MESH_FLAG_LEVEL0) != 0u) return mesh_level_clusters(mesh, 0u);
+// The levels of a mesh the cut can take under an instance, x the finest and
+// y the coarsest: those whose least error a pixel of the threshold spans at
+// the far side of its box, and whose greatest parent error none spans at the
+// near side. Of a streamed mesh, up to its coarsest level: a coarser cluster
+// stands for children whose page is not in the pools.
+uint2 instance_levels(Detail d, Instance inst, Mesh mesh) {
+    if ((mesh.flags & MESH_FLAG_LEVEL0) != 0u) return uint2(0u, 0u);
     float scale = instance_scale(inst);
     float2 span = detail_span(d, inst.bounds_min.xyz, inst.bounds_max.xyz);
     float threshold = frame.cut.x;
@@ -144,8 +144,14 @@ uint2 instance_clusters(Detail d, Instance inst, Mesh mesh) {
         last = mesh.level_count - 1u;
         first = min(first, last);
     }
-    if (first > last) return mesh_level_clusters(mesh, 0u);
-    uint2 begin = mesh_level_clusters(mesh, first), end = mesh_level_clusters(mesh, last);
+    if (first > last) return uint2(0u, 0u);
+    return uint2(first, last);
+}
+
+// The clusters of those levels.
+uint2 instance_clusters(Detail d, Instance inst, Mesh mesh) {
+    uint2 levels = instance_levels(d, inst, mesh);
+    uint2 begin = mesh_level_clusters(mesh, levels.x), end = mesh_level_clusters(mesh, levels.y);
     return uint2(begin.x, end.x + end.y - begin.x);
 }
 

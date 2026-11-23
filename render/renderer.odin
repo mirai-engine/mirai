@@ -8,14 +8,12 @@
 //               normal + roughness, emission + occlusion, motion, linear depth
 //   lighting    sun + local lights with ray traced shadows (RIS above budget),
 //               reflected by the diffuse and GGX specular lobes of each pixel
-//   reflect     one ray of the specular lobe of the pixels smoother than the
-//               roughness limit, then a filter over space and time
 //   ddgi        probe batch: trace -> irradiance/distance blend -> relocate
 //   contact     short traced rays that darken the probe volume at contact
 //   composite   direct + diffuse and specular indirect + emission, debug views
 //   translucent blended surfaces: the nearest ones of each pixel as layers,
 //               the ones behind them forward and back to front
-//   glass       the layers once per pixel: lights, traced reflection, refraction
+//   glass       the layers once per pixel: lights, refraction
 //   exposure    histogram of the luminance of the image, then the exposure the view adapts to
 //   tonemap     exposure and the display LUT (ACES 2.0, sRGB) into the window-sized LDR target
 //   ui          editor overlay (alpha blended)
@@ -45,14 +43,6 @@ Trace_Mode :: enum u8 {Auto, Software, Hardware}
 // alone, and its shaders have no code of the stages of the software tracer.
 SOFTWARE_TRACER :: rhi.SHADER_FORMAT != .Msl
 
-// Whether smooth surfaces trace their reflection; off, every reflection comes
-// from the probe volume.
-Reflections :: enum u8 {
-	Off,
-	Traced,   // from REFLECTION_SHARED_ROUGHNESS a block of 2x2 pixels shares one ray, whose hit takes its light from the probe volume
-	Detailed, // every pixel traces its ray, and those sharper than REFLECTION_SHARED_ROUGHNESS show the glass it crosses and the gloss of what it finds
-}
-
 // Every effect has an explicit budget so cost scales with settings, not scene
 // size alone.
 Settings :: struct {
@@ -67,19 +57,15 @@ Settings :: struct {
 	probe_cascades:       u32,    // cascades of probes around the camera, 1 to VOLUME_CASCADES_MAX
 	probe_rays:           u32,    // rays of a probe (multiple of 32, at most 256)
 	probe_budget:         u32,    // probes traced at most per frame
-	gi_max_distance:      f32,    // the farthest a traced reflection or glass ray goes, in meters
-	light_budget:         u32,    // shadow rays of a point that traces its own (glass, overlays, the other side of a surface that lets light through; probes and reflections take theirs from it), each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
+	gi_max_distance:      f32,    // the farthest the view through glass goes, in meters
+	light_budget:         u32,    // shadow rays of a point that traces its own (glass, overlays, the other side of a surface that lets light through; probes take theirs from it), each to a light or to a group of far ones that stands for them (at most LIGHT_CUT_MAX)
 	direct_samples:       u32,    // samples of the direct light of a pixel, spread over the lights by what each gives it, one of them traced through the whole scene (1 to DIRECT_SAMPLES_MAX)
 	direct_half_resolution: bool, // the samples of the direct light are taken at one pixel of each 2x2 and the filter takes them to the others by their surfaces
-	firefly_clamp:        f32,    // the brightest a ray of a traced reflection or of glass counts, in render units (Scene.light_scale)
 	texture_max_size:     u32,    // larger images are loaded at the first mip level that fits
 	texture_pool_megabytes: u32,  // GPU memory for textures; past it they load without their largest levels (0: no limit)
 	page_pool_bytes:      u64,    // the most the slots of the vertex pool for the pages of streamed meshes out of their root take as they grow to what the views ask for (pages.odin); 0: they keep their root alone
-	reflections:          Reflections,
-	reflection_roughness: f32,    // surfaces at or above this roughness are not traced
-	reflection_light_budget: u32, // shadow rays at a reflected hit, each to a light or a group of them (at most LIGHT_CUT_MAX)
 	sun_shadows:           bool, // rays go to the sun; off, it lights everything it faces
-	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with traced reflection and refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
+	glass_layers:          u32,  // nearest blended surfaces of a pixel lit once per pixel with refraction (1 to GLASS_LAYERS_MAX); the ones behind are drawn forward
 	sun_radius:           f32, // angular radius of the sun, radians
 }
 
@@ -108,9 +94,9 @@ DEFAULT_SETTINGS :: Settings{
 	gi_enabled = true, trace_mode = .Auto, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.0, probe_grid = 16, probe_cascades = 6, probe_rays = 128, probe_budget = 640,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 8, direct_samples = 15,
-	firefly_clamp = 20, texture_max_size = 2048,
+	texture_max_size = 2048,
 	texture_pool_megabytes = 1024, page_pool_bytes = 256 << 20,
-	reflection_roughness = 0.3, reflection_light_budget = 8, glass_layers = 1,
+	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
 }
 
@@ -119,17 +105,14 @@ SUN_RADIUS :: f32(0.0047)
 // The samples of the direct light of a pixel at most (direct_samples.slang).
 DIRECT_SAMPLES_MAX :: u32(127)
 
-// SHARED_RAY_ROUGHNESS of the shaders.
-REFLECTION_SHARED_ROUGHNESS :: abi.REFLECTION_SHARED_ROUGHNESS
-
 // Conservative budgets for software rasterizers (lavapipe, SwiftShader).
 CPU_DEVICE_SETTINGS :: Settings{
 	gi_enabled = true, trace_mode = .Auto, resolution = 360, taa = true, lod_error_pixels = 1, batch_min_pixels = 1,
 	probe_spacing = 1.5, probe_grid = 12, probe_cascades = 3, probe_rays = 64, probe_budget = 64,
 	gi_max_distance = 1e4, sun_shadows = true, light_budget = 4, direct_samples = 7,
-	firefly_clamp = 20, texture_max_size = 1024,
+	texture_max_size = 1024,
 	texture_pool_megabytes = 256, page_pool_bytes = 128 << 20,
-	reflection_roughness = 0.3, reflection_light_budget = 4, glass_layers = 1,
+	glass_layers = 1,
 	sun_radius = SUN_RADIUS,
 }
 
@@ -254,10 +237,10 @@ Stats :: struct {
 	raster_vertices:   u32, // the vertices the raster of the visibility target drew, of abi.RASTER_VERTEX_WORDS each
 	raster_triangles:  u32, // and its triangles, of those the cull found visible (visible_triangles): three indices and a word each
 	raster_deferred:   u32, // the clusters a round of it left to the next, their lists full; 0 once the lists hold a frame in a round
-	// What the resolve of the G-buffer of the last view culled shaded: each
-	// pixel of a triangle once, the lanes of their quads that ran only for
-	// derivatives, and the quads whose triangles do not continue one another
-	// that a program evaluated again, once per triangle.
+	// While resolve_counted, what the resolve of the G-buffer of the last
+	// view culled shaded: each pixel of a triangle once, the lanes of their
+	// quads that ran only for derivatives, and the quads whose triangles do
+	// not continue one another that a program evaluated again, once per triangle.
 	resolved_pixels:   u32,
 	resolve_helpers:   u32,
 	resolve_quads_again: u32,
@@ -325,7 +308,7 @@ Pipeline_Id :: enum {
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
 	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values,
-	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter, Reflect, Reflect_Resolve,
+	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter,
 	Translucent, Glass_Overflow,
 	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Pages_Sort, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages (the steps that sort the pool apart) and the farthest depth of the cache
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside, Translucent_Draws,
@@ -387,11 +370,9 @@ Frame_Targets :: struct {
 	motion:                  rhi.Texture,
 	linear_depth:            rhi.Texture,
 	direct:                  rhi.Texture,
-	reflect_raw:             rhi.Texture, // radiance and hit distance of this frame's reflection rays
-	reflect_shared:          rhi.Texture, // the same at half resolution: the rays that blocks of 2x2 pixels share
-	reflections:             rhi.Texture, // the traced reflections of the frame, filtered
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
 	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
+	views:                   rhi.Texture, // R8 uint: 1 + the nested view of each pixel, 0 the view itself (pass_nested_add)
 	using contact_targets: struct {
 		contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
 		contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
@@ -437,8 +418,6 @@ Targets :: struct {
 	glass:                   [GLASS_LAYERS_MAX]Glass_Layer,
 	glass_zbuffer:           rhi.Texture,
 	glass_scene:             rhi.Texture, // copy of the scene a glass layer is drawn over, for the layer to read, and its levels to blur it (glass_levels.comp)
-	glass_reflections:       rhi.Texture, // the traced reflections of the nearest layer of glass, filtered
-	glass_valid:             bool,
 	direct_scale:            u32, // the pixels across a point of the direct targets
 	reactive:                rhi.Texture, // the share of each pixel the Blend stage drew over: TAA keeps less of its history there
 	reactive_drawn:          bool,        // the Blend stage drew in reactive since it was last cleared
@@ -497,7 +476,7 @@ Frame_Desc :: struct {
 	ui_textures:    []Ui_Texture_Draw, // world panels drawn into textures, before the views
 	effect_views:   []Effect_View,     // what extensions draw into textures (the Effect stage), before the UI that shows them
 	probes:         []Depth_Probe,     // pixels whose depth goes back to the CPU (renderer_depth_probes)
-	debug:  []Debug_Lines, // line and triangle batches, over the panels and under the screen UI
+	debug:  []Debug_Lines, // line and triangle batches, over the panels and under the screen UI; of a frame alone, over its first view
 	// Drawn only into the image renderer_capture reads, for a world that is
 	// not shown: nothing reaches the window, and the probe volume keeps the
 	// light of the world that is.
@@ -588,7 +567,7 @@ view_camera_cut :: proc(v:^View_State) {
     v.prev_jitter={}
     t:=&v.targets
     t.taa_valid=false
-    t.glass_valid,t.hiz_valid=false,false
+    t.hiz_valid=false
 }
 
 Renderer :: struct {
@@ -598,6 +577,7 @@ Renderer :: struct {
 	settings:        Settings,
 	highlight:       Highlight_Style, // the editor's outline levels
 	outlines:        Highlight_Style, // the game's outline styles: none drawn until it sets them
+	probe:           Instance_Probe,  // the instance whose cull the frames read back (renderer_probe_set)
 	pipelines:       [Pipeline_Id]rhi.Pipeline, // of each stage that traces no rays, without constants
 	variants:        [PIPELINE_VARIANTS]Pipeline_Variant, // the others (pipeline_of)
 	variant_count:   int,
@@ -719,6 +699,7 @@ Renderer :: struct {
 	pixel_density:   f32, // device pixels per native window coordinate
 	frame:           u64,
 	stats:           Stats,
+	resolve_counted: bool, // the resolve counts what it shades (Stats.resolved_pixels), an atomic per wave
 	submissions:     Gpu_Submissions,
 	error_buffer:    [512]u8,
 	error:           string,
@@ -1010,9 +991,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Hiz, .Hiz_Comp)
 	compute(list, r, .Exposure_Histogram, .Exposure_Histogram_Comp)
 	compute(list, r, .Exposure_Adapt, .Exposure_Adapt_Comp)
-	traced(list, r, .Reflect, .Reflect_Comp, .Reflect_Hw_Comp)
-	compute(list, r, .Reflect_Resolve, .Reflect_Resolve_Comp)
-	compute(list, r, .Reflect_Resolve, .Reflect_Resolve_Comp, constants = {REFLECT_RESOLVE_COMP_GLASS})
 	compute(list, r, .History_Scale, .History_Scale_Comp)
 	compute(list, r, .Air_Transmittance, .Air_Transmittance_Comp)
 	compute(list, r, .Air_Scattering, .Air_Scattering_Comp)
@@ -1050,7 +1028,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	// The G-buffer each program resolves where the program depth is its own.
 	gbuffer := rhi.Graphics_Pipeline_Desc{
 		vertex = &r.shader_codes[.Vis_Resolve_Vert], fragment = &r.shader_codes[.Vis_Resolve_Frag],
-		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RGBA16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
+		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG16_Float, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
 		depth_format = .D16_Unorm, depth_test = true, depth_write = false, depth_compare = .Equal,
 		name = "resolve",
 	}
@@ -1075,9 +1053,9 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Reflectance_Frag],
 		color_formats = {0 = .RGBA8_Srgb}, color_count = 1, name = "reflectance of a view before its nested views",
 	})
-	traced(list, r, .Glass, .Glass_Comp, .Glass_Hw_Comp)
+	compute(list, r, .Glass, .Glass_Comp)
 	traced(list, r, .Glass_Light, .Glass_Light_Comp, .Glass_Light_Hw_Comp)
-	traced(list, r, .Glass_Inside, .Glass_Inside_Comp, .Glass_Inside_Hw_Comp)
+	compute(list, r, .Glass_Inside, .Glass_Inside_Comp)
 	graphics(list, r, .Glass_Layer, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_BLENDED}, fragment = &r.shader_codes[.Glass_Layer_Frag],
 		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA16_Float, 3 = .RG32_Uint, 4 = .R32_Float, 5 = .RGBA8_Srgb}, color_count = 6,
@@ -1097,18 +1075,13 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		cull = .None, name = "translucent",
 	}
 	graphics(list, r, .Glass_Filter, translucent)
-	for hardware in ([]bool{false, true}) {
-		mask := Pipeline_Rays.Hardware if hardware else Pipeline_Rays.Software
-		translucent.fragment = &r.shader_codes[.Translucent_Hw_Frag if hardware else .Translucent_Frag]
+	translucent.vertex, translucent.vertex_constants = &r.shader_codes[.Translucent_Vert], {}
+	for counting in ([]bool{false, true}) {
+		translucent.fragment = &r.shader_codes[.Translucent_Cost_Frag if counting else .Translucent_Frag]
 		translucent.blend = {0 = .Additive}
-		graphics(list, r, .Glass_Overflow, translucent, mask)
+		graphics(list, r, .Glass_Overflow_Cost if counting else .Glass_Overflow, translucent, required = !counting)
 		translucent.blend = {0 = .Premultiplied}
-		graphics(list, r, .Translucent, translucent, mask)
-		translucent.fragment = &r.shader_codes[.Translucent_Hw_Cost_Frag if hardware else .Translucent_Cost_Frag]
-		translucent.blend = {0 = .Additive}
-		graphics(list, r, .Glass_Overflow_Cost, translucent, mask, required = false)
-		translucent.blend = {0 = .Premultiplied}
-		graphics(list, r, .Translucent_Cost, translucent, mask, required = false)
+		graphics(list, r, .Translucent_Cost if counting else .Translucent, translucent, required = !counting)
 	}
 	graphics(list, r, .Highlight, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_HIGHLIGHT}, fragment = &r.shader_codes[.Highlight_Frag],
@@ -1631,8 +1604,7 @@ renderer_set_thumbnails :: proc(r: ^Renderer, pixels: []u8, width, height: int, 
 renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if settings.probe_spacing <= 0 {return false}
 	if settings.probe_grid < 4 || settings.probe_grid > PROBE_GRID_MAX || settings.probe_grid % 2 != 0 || settings.probe_cascades < 1 || settings.probe_cascades > VOLUME_CASCADES_MAX {return false}
-	if !(settings.reflection_roughness >= 0 && settings.reflection_roughness <= 1) {return false}
-	if settings.light_budget > LIGHT_CUT_MAX || settings.reflection_light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
+	if settings.light_budget > LIGHT_CUT_MAX || settings.glass_layers < 1 || settings.glass_layers > GLASS_LAYERS_MAX {return false}
 	hardware, made := tracer_settle(r, settings, retry = settings.trace_mode != r.settings.trace_mode)
 	if !made {return false}
 	old := r.settings
@@ -1646,14 +1618,14 @@ renderer_apply_settings :: proc(r: ^Renderer, settings: Settings) -> bool {
 	if volume {ddgi_release(r)} else if gathered {scene_relit(&r.scene)}
 	// The worlds not shown kept light gathered with the settings before.
 	if volume || gathered {world_light_destroy(r)}
-	traced := old.sun_shadows != settings.sun_shadows || old.reflection_light_budget != settings.reflection_light_budget || old.reflections != settings.reflections
+	traced := old.sun_shadows != settings.sun_shadows
 	layers := old.glass_layers != settings.glass_layers
 	resolution := old.resolution != settings.resolution
 	// Targets a frame in flight may still read.
 	if layers || resolution {rhi.device_wait_idle(r.device)}
 	for view in views_all(r) {
 		t := &view.targets
-		if traced {t.taa_valid, t.glass_valid = false, false}
+		if traced {t.taa_valid = false}
 		if layers {destroy_glass_targets(r, t)}
 	}
 	if hardware != r.hardware_rt {
@@ -1923,16 +1895,6 @@ ensure_direct_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets,
 	return ok
 }
 
-// Traced reflections: the rays of the frame, per pixel and per block of 2x2,
-// and what the filter makes of them.
-@(private)
-ensure_reflect_targets :: proc(r: ^Renderer, cmd: ^rhi.Command_List, t: ^Targets) -> bool {
-	ok := target(r, cmd, &t.reflect_raw, t.width, t.height, .RGBA16_Float, {.Sampled, .Storage}, "reflection rays", shared = true)
-	ok &&= target(r, cmd, &t.reflect_shared, t.half_width, t.half_height, .RGBA16_Float, HISTORY_USAGE, "shared reflection rays", shared = true)
-	ok &&= target(r, cmd, &t.reflections, t.width, t.height, .RGBA16_Float, HISTORY_USAGE, "reflections", true, true)
-	return ok
-}
-
 // The mask of the highlighted instances and its filtered coat, in window
 // points: independent of scene downscaling and of TAA.
 @(private)
@@ -2030,7 +1992,7 @@ scene_targets :: proc(r: ^Renderer, v: ^View_State) -> bool {
 	ok &&= full(r, t, &t.albedo, .RGBA8_Srgb, attachment, "gbuffer albedo")
 	ok &&= full(r, t, &t.normal, .RGBA16_Float, attachment, "gbuffer normal")
 	ok &&= full(r, t, &t.emission, .RGBA16_Float, attachment, "gbuffer emission")
-	ok &&= full(r, t, &t.motion, .RGBA16_Float, attachment, "gbuffer motion")
+	ok &&= full(r, t, &t.motion, .RG16_Float, attachment, "gbuffer motion")
 	ok &&= full(r, t, &t.linear_depth, .R32_Float, attachment, "gbuffer depth")
 	ok &&= full(r, t, &t.direct, .RGBA16_Float, {.Sampled, .Storage}, "direct light")
 	ok &&= full(r, t, &t.display, .RGBA16_Float, HISTORY_USAGE, "display")

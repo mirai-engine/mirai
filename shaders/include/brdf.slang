@@ -14,7 +14,7 @@
 // lobe overflows half floats.
 #define MIN_ROUGHNESS 0.045
 #define MIN_DIRECT_ROUGHNESS 0.08
-// Below this a traced reflection follows the mirror direction alone.
+// Below this glass shows the scene behind it sharp without blurring.
 #define MIRROR_ROUGHNESS 0.06
 
 // A lobe narrower than the spread of the normal over what one value of the
@@ -25,12 +25,6 @@ float roughness_widened(float roughness, float variance) {
     float alpha = roughness * roughness;
     return sqrt(sqrt(clamp(alpha * alpha + min(2.0 * variance, 0.18), 0.0, 1.0)));
 }
-// From this roughness a block of 2x2 pixels can share one reflection ray: the
-// lobe is wide enough for the filter to hide it: SHARED_RAY_ROUGHNESS
-// (render.REFLECTION_SHARED_ROUGHNESS).
-// Share of the tail of the lobe that reflection rays do not sample: the rare
-// directions far from the mirror one are most of the noise.
-#define LOBE_TAIL_CUT 0.3
 
 // What a point holds besides its base (asset.Material_Layers), as its
 // material gives it there; zero weights where it holds none.
@@ -610,9 +604,6 @@ struct Indirect {
     float3 irradiance;    // around the normal, in the units of the irradiance of a light
     float3 radiance;      // around dominant_direction, from what holds the light around (the probes, the sky)
     float3 coat_radiance; // the same around coat_dominant_direction
-    float3 traced;        // what rays along a lobe found
-    float traced_share;   // of the lobe `traced` stands for; the radiance gives the rest
-    bool traced_coat;     // the lobe traced is that of the coat, not that of the base
     float occlusion;      // the ambient occlusion of the material
     float3 back_irradiance; // around the opposite of the normal, for what a thin surface lets through (Shading.transmit)
 };
@@ -622,9 +613,6 @@ Indirect indirect_make(float3 irradiance, float3 radiance, float occlusion) {
     light.irradiance = irradiance;
     light.radiance = radiance;
     light.coat_radiance = radiance;
-    light.traced = float3(0.0);
-    light.traced_share = 0.0;
-    light.traced_coat = false;
     light.occlusion = occlusion;
     light.back_irradiance = float3(0.0);
     return light;
@@ -651,12 +639,10 @@ float3 occlusion_bounced(float3 albedo, float occlusion) {
 float3 indirect_compose(Shading s, Indirect light) {
     float3 reflectance = environment_reflectance(s);
     float3 diffuse = s.diffuse * base_diffuse_share(s) * light.irradiance * occlusion_bounced(s.diffuse, light.occlusion);
-    float3 around = light.traced_coat ? light.radiance : lerp(light.radiance, light.traced, light.traced_share);
-    float3 color = diffuse + reflectance * around * specular_occlusion(s.nov, s.roughness, light.occlusion);
+    float3 color = diffuse + reflectance * light.radiance * specular_occlusion(s.nov, s.roughness, light.occlusion);
     if (s.layers == 0u) return color;
     if (s.coat > 0.0) {
-        float3 coat = light.traced_coat ? lerp(light.coat_radiance, light.traced, light.traced_share) : light.coat_radiance;
-        color = color * ((1.0 - s.coat) + s.below_coat * s.coat_through) + coat_reflectance(s) * coat * specular_occlusion(s.coat_nov, s.coat_roughness, light.occlusion);
+        color = color * ((1.0 - s.coat) + s.below_coat * s.coat_through) + coat_reflectance(s) * light.coat_radiance * specular_occlusion(s.coat_nov, s.coat_roughness, light.occlusion);
     }
     if (s.fuzz > 0.0) color = color * (1.0 - s.fuzz) + s.fuzz_color * light.irradiance * light.occlusion;
     return color + s.transmit * light.back_irradiance * light.occlusion;

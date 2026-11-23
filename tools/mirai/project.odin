@@ -309,10 +309,11 @@ edit_unnamed :: proc(root:string) -> (folder:string,extra:[]string) {
     return build.template_folder(root,allocator=context.temp_allocator),slice.clone(launcher,context.temp_allocator)
 }
 
-// mirai play [project] [--release] [arguments] (mirai play test: play_test.odin): builds the library of
+// mirai play [project] [--release] [arguments] (mirai play test: play_test.odin; audit: play.odin): builds the library of
 // the project and plays its game from the project, without cooking.
 cmd_play :: proc(root:string,args:[]string) -> int {
     if len(args)>0 && args[0]=="test" {return cmd_play_test(root,args[1:])}
+    if len(args)>0 && args[0]=="audit" {return cmd_play_audit(root,args[1:])}
     mode,args:=build_mode_take(args)
     store_root,ok:=store_root_take(&args,"play")
     if !ok {return 2}
@@ -425,7 +426,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
         if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root,log);code!=0 {return code,"",false}
     } else if target!=.Game {
         _=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root,log)
-    } else if !engine_shaders(root,turn_held=true) {
+    } else if !engine_shaders(root,turn_held=true,ship=mode==.Release) {
         return 1,"",false
     }
     rebuilt:bool
@@ -477,8 +478,17 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     }
     if library_only {return 0,output,false}
     if target==.Editor {
-        generation:=build.shaders_run(p,store_root=store_root)
+        generation:=build.shaders_start(p,store_root=store_root)
         defer build.shaders_destroy(generation)
+        shader_started:=time.tick_now()
+        shader_noticed:=false
+        for !build.shaders_poll(generation) {
+            if !shader_noticed && time.tick_since(shader_started)>=2*time.Second {
+                fmt.fprintfln(log,"%s: compiling shaders...",generation.result.output)
+                shader_noticed=true
+            }
+            time.sleep(100*time.Millisecond)
+        }
         switch generation.result.status {
         case .Running,.None,.Cancelled:
         case .Up_To_Date: fmt.printfln("%s unchanged.",generation.result.output)
@@ -498,7 +508,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
 // libraries together shows. It prints the methods that did not register.
 @(private="file")
 editor_methods_register :: proc(root,folder:string,engine:build.Engine_Paths) -> bool {
-    command:=[]string{engine.editor_program,"--project",folder,"--headless","--no-gpu","--frames","1","--no-api"}
+    command:=[]string{engine.editor_program,"--project",folder,"--check-api"}
     state,_,stderr,error:=subprocess.exec({command=command,working_dir=root},context.temp_allocator)
     if error!=nil {
         fmt.eprintfln("mirai build: could not run %s to check its API: %v",command[0],error)

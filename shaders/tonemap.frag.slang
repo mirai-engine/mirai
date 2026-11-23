@@ -41,8 +41,6 @@ float3 inspected(float3 value) {
     case DEBUG_PROBES:
     case DEBUG_EMISSION:
     case DEBUG_LIGHTING:
-    case DEBUG_REFLECTIONS:
-    case DEBUG_REFLECTIONS_RAW:
         value *= exposure[0].exposure;
         break;
     default: break;

@@ -34,7 +34,9 @@ project world. Layout, manifests and build:
 - World content (`terrain`, `foliage`, `water`, `imprint`, `vfx`, `navigation`, `behavior`,
   `shapes` and their bridges): [mirai-world](../mirai-world/SKILL.md)
 - `paint` (vertex color brush, `paint.*`): [plugins.md#paint](references/plugins.md#paint)
-- `previews` (animation documents, animation and skeleton thumbnails; `animation.capture`):
+- `previews` (animation documents, animation and skeleton thumbnails; isolated `animation.capture` —
+  use Play `capture` filmstrips + `debug` for live locomotion per
+  [debugging cheatsheet](../mirai-agent-api/SKILL.md#debugging-and-verification-cheatsheet)):
   [animation document](references/previews.md#animation-document),
   [thumbnails](references/previews.md#animation-thumbnails),
   [capture](references/previews.md#animation-capture) and
@@ -59,8 +61,9 @@ project world. Layout, manifests and build:
   [document](references/ui-inspector.md#document), [paths](references/ui-inspector.md#paths),
   [API](references/ui-inspector.md#api) and
   [document bar](references/ui-inspector.md#document-bar)
-- `playtest` (what an agent or a bot plays with: `play.observe`, the monitors of `play.qa.*` and
-  `play.explore`): [plugins.md](references/plugins.md#first-party-plugins)
+- `playtest` (`play.observe`, `play.qa.*`, `play.explore`, `play.audit` and
+  `.claude/agents/playtester.md`): [plugins.md](references/plugins.md#first-party-plugins) and
+  [debugging cheatsheet](../mirai-agent-api/SKILL.md#debugging-and-verification-cheatsheet)
 - `profiler` and `tracy` (development: captures panel and Tracy client in Odin):
   [profiler in the editor](references/profiling.md#profiler-editor) and
   [Tracy at runtime](references/profiling.md#tracy-runtime)

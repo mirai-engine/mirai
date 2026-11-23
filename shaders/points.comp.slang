@@ -17,11 +17,16 @@
 // of the frame before asked for.
 struct Params_Block { uint mode; uint capacity; uint programs; uint frame_start; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+// Indirect dispatch arguments, separate from material_points so Surface program
+// dispatches read indirect arguments without Draw_Indirect <-> Shader_Write stalls:
+// [0..2] window points, [3..5] round heads, [6 + 3 * p ..] bin of program p.
+// Uses SLOT_PASS9 so points_resolve never clobbers SLOT_PASS0..4 of a pass that resumes across rounds.
+[[vk::binding(SLOT_PASS9, 0)]] RWStructuredBuffer<uint> points_args : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
 
 void args_write(uint at, uint threads, uint group = POINTS_GROUP) {
-    material_points[at] = (threads + group - 1u) / group;
-    material_points[at + 1u] = 1u;
-    material_points[at + 2u] = 1u;
+    points_args[at] = (threads + group - 1u) / group;
+    points_args[at + 1u] = 1u;
+    points_args[at + 2u] = 1u;
 }
 
 [shader("compute")]
@@ -68,8 +73,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         material_points[POINTS_HEADS_BASE] = heads_after ? heads_to : 0u;
         material_points[POINTS_HEADS_LIMIT] = heads_after ? capacity : heads_from;
         material_points[POINTS_HEADS] = 0u;
-        args_write(POINTS_ARGS, to - from);
-        args_write(POINTS_HEAD_ARGS, heads_to - heads_from, POINTS_HEAD_GROUP);
+        args_write(0u, to - from);
+        args_write(3u, heads_to - heads_from, POINTS_HEAD_GROUP);
         return;
     }
     uint from = material_points[POINTS_FROM];
@@ -81,7 +86,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint local : SV_GroupIndex) {
         for (uint p = 0u; p < programs; p++) {
             uint count = material_points[points_bin_count(p)];
             material_points[points_bin_offset(p)] = running;
-            args_write(points_bin_args(p), count);
+            args_write(6u + 3u * p, count);
             running += count;
         }
         return;

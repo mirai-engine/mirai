@@ -40,7 +40,7 @@ Gpu_Frame :: struct {
 	shadowless_lights: u32, // the root of the tree of the local lights that cast no shadows, which ends at light_nodes; 0: none (light_tree_shadowless)
 	pad0:            [3]u32,
 	jitter:          Vec4, // xy current jitter (render pixels), zw previous
-	texturing:       Vec4, // x mip bias of rasterized material textures, y traced reflection roughness, zw where the boxes of the glass instances are listed after the TLAS nodes and how many
+	texturing:       Vec4, // x mip bias of rasterized material textures
 	time: Vec4, // current seconds, previous seconds, frame dt, reserved
 	// The ray of the pixel at uv: a point at linear depth d along it is
 	// (eye_origin + eye_du * u + eye_dv * v) + d * (ray_origin + ray_du * u + ray_dv * v).
@@ -53,7 +53,7 @@ Gpu_Frame :: struct {
 	clip_plane:       Vec4, // world plane nothing is drawn behind; zero: none
 	footprint:        Vec2, // width of a pixel at depth 0, and what it grows by per unit of depth
 	layers:           u32,  // bits 0-15: the layers the view draws; bits 16-31: those of its own body it does not draw
-	view_index:       u32,  // of the nested view these constants draw; 0: the view itself
+	pad1:             u32,
 	sky_map:          Vec4, // x = the image of the sky in the texture table, y = 1 for an atmosphere lit by the sun, z = its last level, w = 1 with an image
 	sky_orientation:  Vec4, // the turn of the sky, a quaternion (xyz, w)
 	sky_from:         Vec4, // rgb the luminance a change of the sky comes from (render units), a how much of it still shows
@@ -94,10 +94,11 @@ FRAME_FLAG_GI_GIVEN     :: abi.FRAME_FLAG_GI_GIVEN
 FRAME_FLAG_HW_RT        :: abi.FRAME_FLAG_HW_RT
 FRAME_FLAG_STUDIO       :: abi.FRAME_FLAG_STUDIO
 FRAME_FLAG_GRID         :: abi.FRAME_FLAG_GRID
-FRAME_FLAG_GLASS        :: abi.FRAME_FLAG_GLASS
+FRAME_FLAG_RESOLVE_COUNTED :: abi.FRAME_FLAG_RESOLVE_COUNTED
 FRAME_FLAG_REFLECTANCE  :: abi.FRAME_FLAG_REFLECTANCE
 FRAME_FLAG_NEUTRAL      :: abi.FRAME_FLAG_NEUTRAL
 FRAME_FLAG_SWAY         :: abi.FRAME_FLAG_SWAY
+FRAME_FLAG_NESTED       :: abi.FRAME_FLAG_NESTED
 
 // A whole vertex, which thumbnails and previews upload for themselves; the
 // scene keeps its vertices in clusters (Gpu_Cluster).
@@ -169,6 +170,7 @@ INSTANCE_RAY_SHIFT :: abi.INSTANCE_RAY_SHIFT
 // is of the RAY_UNSHADOWED class, or RAY_GLASS if all glass, which no shadow
 // ray meets, and no map of the shadows draws it.
 INSTANCE_UNSHADOWED :: abi.INSTANCE_UNSHADOWED
+INSTANCE_FLAG_GLASS :: abi.INSTANCE_FLAG_GLASS
 INSTANCE_FLAG_HIDDEN :: abi.INSTANCE_FLAG_HIDDEN
 // Hidden only because it cannot be drawn yet: its transform has no inverse
 // (a zero scale, or not finite) or the geometry of its mesh still goes to the
@@ -358,7 +360,7 @@ Gpu_Material_Diffuse_Transmission :: struct {
 // What a solid of glass scatters of what it stops (asset.Material_Info.scatter_color).
 Gpu_Material_Volume :: struct {
 	scatter:  Vec3,
-	changing: u32, // 1: what its program gives a point changes with nothing that says so (it reads the time, abi.Program.reads): no pass keeps what a ray found of it
+	program:  u32, // MATERIAL_PROGRAM_* bits of what its program does; changing (abi.Program.reads): no pass keeps what a ray found of it
 }
 
 Gpu_Material_Blocks :: struct {
@@ -509,6 +511,7 @@ Gpu_Cull_Stats :: struct {
 	lists: Light_List_Stats, // of the lists of the lights without shadows (light_lists.comp)
 	raster_need: [2]u32, // the most vertices and triangles the view would hold in a round of the raster (Gpu_Cull_State.raster_need)
 	shadow: Shadow_Stats,
+	probe:  [2]u32, // how the cull treated the instance it probes (abi.CULL_PROBE_*), and the finest level of its cut + 1 (0: none)
 	// Of dropped and raster_need, the most any view of the frame counted
 	// (cull_stats_fold.comp), which the lists grow from, and of shadow the sum
 	// of its views. The rest counts a view: the next clears it.

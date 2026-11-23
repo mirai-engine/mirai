@@ -22,6 +22,7 @@ COMMANDS :: [?]Command{
     {"edit",EDIT_USAGE,"Generates, builds and opens the editor of a project",cmd_edit},
     {"play",PLAY_USAGE,"Generates, builds and plays a project without cooking its assets",cmd_play},
     {"play",PLAY_TEST_USAGE,"Plays the scenarios of a project (gameplay tests in tests/scenarios) in a headless editor and says which pass",cmd_play},
+    {"play",PLAY_AUDIT_USAGE,"Plays a project in a headless editor and audits it (problems, materials, animations, a cursor hidden over a menu, frame time): one line per red flag with its fix, PASS or FAIL",cmd_play},
     {"new",NEW_USAGE,"Creates a project from a template of templates/, a Kai workspace of its own",cmd_new},
     {"kai",KAI_USAGE,"The version control of a project: its working change, the log, new changes, undo, conflicts and bookmarks",cmd_kai},
     {"kai",KAI_MESH_USAGE,"The identity of this machine's user and devices, and its agent: pairing devices, members and nodes, and the peers it reaches",cmd_kai},

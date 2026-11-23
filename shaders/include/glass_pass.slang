@@ -1,7 +1,7 @@
 // What the passes of glass share (glass_light.comp, glass.comp and
 // glass_inside.comp): the layer they light and, but in glass_light.comp
-// (GLASS_LIGHT), the scene behind it and the way the view takes through a
-// solid and out of it to what it shows.
+// (GLASS_LIGHT), the scene behind it and where the view that leaves a solid
+// meets it on screen.
 #ifndef MIRAI_GLASS_PASS_SLANG
 #define MIRAI_GLASS_PASS_SLANG
 #include "glass.slang"
@@ -9,19 +9,19 @@
 #include <extension_hooks.slang>
 #include "depth.slang"
 
-// light_budget: lights of a point of the layer (glass_light.comp); traced: its
-// reflection was traced; max_distance: the farthest the view goes; snapshot:
-// the dispatch copies the scene (glass.comp); medium: the instance plus one of
-// the solid the camera may be in, 0 none; near_top: m over and under its top
-// within which each pixel decides whether it starts in it (glass_inside.comp).
-struct Params_Block { uint light_budget; uint traced; float max_distance; uint snapshot; uint medium; float near_top; uint pad0; uint pad1; };
+// light_budget: lights of a point of the layer (glass_light.comp);
+// max_distance: the farthest the view goes; snapshot: the dispatch copies the
+// scene (glass.comp); medium: the instance plus one of the solid the camera
+// may be in, 0 none, and medium_row the row of its material; near_top: m over
+// and under its top within which each pixel decides whether it starts in it
+// (glass_inside.comp).
+struct Params_Block { uint light_budget; uint pad; float max_distance; uint snapshot; uint medium; float near_top; uint medium_row; uint pad1; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> layer_albedo : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);   // rgb base color, a metallic
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> layer_normal : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);   // encoded as the normal target of the G-buffer
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> layer_emission : register(MIRAI_REGISTER(t, SLOT_PASS2), space0); // rgb emission, a alpha
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<uint2> layer_ids : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);     // material row, instance
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> layer_depth : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
-[[vk::binding(SLOT_PASS6, 0)]] Texture2D<float4> reflection : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);     // filtered radiance of the layer's reflection rays
 [[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_color : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PASS9, 0)]] Texture2D<float4> layer_specular : register(MIRAI_REGISTER(t, SLOT_PASS9), space0); // rgb F0, a F90
 
@@ -56,52 +56,6 @@ static const float SCATTER_SPREAD = 0.6;
 float opaque_depth(float2 uv) {
     float depth = g_depth.SampleLevel(point_sampler, uv, 0.0).r;
     return depth_empty(depth) ? frame.camera_forward.w : depth_distance(depth);
-}
-
-// The plane of the opaque surface at uv on screen: where it is, and its normal
-// towards the eye, from the depth of the pixels beside it, on each axis the
-// side nearer it, so that an edge does not bend it.
-float3 opaque_plane(float2 uv, out float3 normal) {
-    float3 center = position_from_depth(uv, opaque_depth(uv));
-    float2 step = frame.inv_resolution;
-    float3 right = position_from_depth(uv + float2(step.x, 0.0), opaque_depth(uv + float2(step.x, 0.0))) - center;
-    float3 left = center - position_from_depth(uv - float2(step.x, 0.0), opaque_depth(uv - float2(step.x, 0.0)));
-    float3 down = position_from_depth(uv + float2(0.0, step.y), opaque_depth(uv + float2(0.0, step.y))) - center;
-    float3 up = center - position_from_depth(uv - float2(0.0, step.y), opaque_depth(uv - float2(0.0, step.y)));
-    float3 across = dot(right, right) < dot(left, left) ? right : left;
-    float3 along = dot(down, down) < dot(up, up) ? down : up;
-    normal = normalize(cross(across, along));
-    if (dot(normal, frame.camera_position.xyz - center) < 0.0) normal = -normal;
-    return center;
-}
-
-// Where a ray that leaves the layer meets the opaque scene on screen: it meets
-// the plane of the surface the screen holds where it starts, and, where the
-// screen holds another surface at that point, the plane of that one, up to
-// CROSSING_TURNS times. What lies nearer the eye than `nearest` (in front of
-// the layer) hides the point. Off the screen it ends at its edge. False where
-// the screen does not hold where it ends: it goes past params.max_distance,
-// turns away from the planes or meets what is in front of the layer.
-#define CROSSING_TURNS 3
-bool screen_crossing(float3 origin, float3 direction, float nearest, out float2 uv) {
-    uv = project_uv(origin);
-    for (int turn = 0; turn < CROSSING_TURNS; turn++) {
-        if (opaque_depth(uv) < nearest) return false;
-        float3 normal;
-        float3 surface = opaque_plane(uv, normal);
-        float facing = dot(direction, normal);
-        if (!(facing < -1e-4)) return false;
-        float travelled = dot(surface - origin, normal) / facing;
-        if (!(travelled > 0.0) || travelled > params.max_distance) return false;
-        float3 met = origin + direction * travelled;
-        float2 next = project_uv(met);
-        float2 inside = clamp(next, 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution);
-        uv = inside;
-        if (any(((inside) != (next)))) return true;
-        float z = view_depth(met);
-        if (abs(opaque_depth(uv) - z) <= 0.01 * z + 0.02) return true;
-    }
-    return true;
 }
 
 // What lies behind the layer around uv spread over a disc `radius` pixels
@@ -184,9 +138,15 @@ Sheet_Seen sheet_through(Material m, Glass g, float2 uv) {
     return seen;
 }
 
-float3 scene_distorted(float3 origin, float3 direction, float depth, float roughness, float2 uv) {
-    float2 at;
-    if (!screen_crossing(origin, direction, depth, at)) at = uv;
+// What the scene shows of the view that leaves the layer at `exit` along
+// `direction`: the screen where the view would be as far beyond `exit` as the
+// pixel holds the opaque scene, clamped to its edges. Where that point holds
+// something in front of the layer, the pixel shows its own.
+float3 scene_refracted(float3 exit, float3 direction, float depth, float roughness, float2 uv) {
+    float reach = min(length(position_from_depth(uv, opaque_depth(uv)) - exit), params.max_distance);
+    float3 met = exit + direction * reach;
+    float2 at = view_depth(met) > 0.0 ? clamp(project_uv(met), 0.5 * frame.inv_resolution, 1.0 - 0.5 * frame.inv_resolution) : uv;
+    if (opaque_depth(at) < depth) at = uv;
     return scene_through(at, depth, roughness);
 }
 #endif

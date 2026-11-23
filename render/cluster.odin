@@ -101,7 +101,7 @@ ray_cuts_update :: proc(r: ^Renderer, eye: Vec3) {
 		for cut != always && !ray_cut_traceable(m^, int(cut), r.hardware_rt) {cut = cut + 1 if always > cut else cut - 1}
 		m.rays[cut].wanted, m.rays[cut].traced = stamp, stamp
 		if cut == inst.meta.x >> INSTANCE_RAY_SHIFT & 3 {continue}
-		inst.meta.x = mesh | cut << INSTANCE_RAY_SHIFT | inst.meta.x & INSTANCE_UNSHADOWED
+		inst.meta.x = mesh | cut << INSTANCE_RAY_SHIFT | inst.meta.x & (INSTANCE_UNSHADOWED | INSTANCE_FLAG_GLASS)
 		if abs(m.rays[cut].error - m.rays[was].error) * scale > probe_spacing_at(r.settings, distance) * 0.5 {scene_changed_box(s, low, high)}
 		instance_touch(s, u32(index))
 		s.tlas_dirty = true

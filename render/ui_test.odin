@@ -365,6 +365,18 @@ debug_lines_are_hidden_behind_the_scene_only_when_depth_tested :: proc(t:^testin
     testing.expect(t,!crosses(pixels,30,row(r,1),green),"and is hidden behind it")
     testing.expect(t,crosses(pixels,100,row(r,-1),magenta),"the overlay line shows beside the wall")
     testing.expect(t,crosses(pixels,30,row(r,-1),magenta),"and through it")
+    // A frame drawn only into a texture draws them over its first view alike.
+    image,made:=view_texture_add(r,128,96,"capture")
+    testing.expect(t,made,r.error)
+    defer view_texture_remove(r,image)
+    views:=[1]Frame_View{{camera=PANEL_CAMERA,rect={0,0,128,96},texture=image}}
+    for _ in 0..<4 {testing.expect(t,renderer_frame(r,{camera=PANEL_CAMERA,views=views[:],offscreen=true,debug={tested,overlay}}),r.error)}
+    rhi.device_wait_idle(f.device)
+    alone,_,_,read:=view_texture_capture(r,image)
+    testing.expect(t,read,r.error)
+    defer delete(alone)
+    testing.expect(t,crosses(alone,100,row(r,1),green) && !crosses(alone,30,row(r,1),green),"a frame alone hides the tested line behind the wall")
+    testing.expect(t,crosses(alone,30,row(r,-1),magenta),"and shows the overlay line through it")
     // In front of the wall a tested line is visible over it.
     debug_lines_clear(&tested)
     debug_line(&tested,{-4,1,1},{4,1,1},{0,1,0,1})

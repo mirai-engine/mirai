@@ -69,27 +69,29 @@ Glass fragment_glass(Fragment f, float3 position) {
 #endif
 
 // Light the surface `s` (glass_shading) sends to the viewer by itself, where
-// it covers: direct light with shadow rays, the probe volume for the indirect
-// part, and its emission. reflection is what a traced ray found for the share
-// `traced` of the specular lobe of its base; its coat reflects the probe
-// volume. A surface that shows less than `faint` of what is around does not
+// it covers: direct light, the probe volume for the indirect part, and its
+// emission. A surface that shows less than `faint` of what is around does not
 // read the probes for its specular lobes; their share comes in between that
 // and twice as much, so no edge shows where the reflectance of a pane crosses it.
-float3 glass_light(Glass g, Shading s, float3 reflection, float traced, float faint, uint light_budget) {
+float3 glass_light(Glass g, Shading s, float faint, uint light_budget) {
     float covered = saturate(g.alpha);
     if (!(covered > 0.0)) return float3(0.0);
+    if ((s.layers & MATERIAL_LAYER_UNLIT) != 0u) return g.emission * covered;
     float bias = view_bias(eye_distance(g.position));
-    float3 color = direct_lighting(s, bias, light_budget);
-    if (shading_transmits(s)) color += direct_lighting(shading_back(s), bias, light_budget, LIGHTS_ALL | LIGHTS_THROUGH);
+    float3 color = float3(0.0);
+    uint sides = shading_transmits(s) ? 2u : 1u;
+    // One direct_lighting call site in the loop so Slang does not inline it twice.
+    [loop]
+    for (uint side = 0u; side < sides; side++) {
+        color += direct_lighting(side == 0u ? s : shading_back(s), bias, light_budget, side == 0u ? LIGHTS_ALL : (LIGHTS_ALL | LIGHTS_THROUGH));
+    }
     float3 specular = specular_albedo(s) * covered;
     float shown = faint > 0.0 ? smoothstep(faint, 2.0 * faint, max(specular.r, max(specular.g, specular.b))) : 1.0;
     bool diffuse = max(s.diffuse.r, max(s.diffuse.g, s.diffuse.b)) > 0.0 || s.fuzz > 0.0;
-    uint wants = (diffuse ? INDIRECT_DIFFUSE : 0u) | (traced < 1.0 && shown > 0.0 ? INDIRECT_SPECULAR : 0u) | (s.coat > 0.0 && shown > 0.0 ? INDIRECT_COAT : 0u);
+    uint wants = (diffuse ? INDIRECT_DIFFUSE : 0u) | (shown > 0.0 ? INDIRECT_SPECULAR : 0u) | (s.coat > 0.0 && shown > 0.0 ? INDIRECT_COAT : 0u);
     Indirect light = indirect_lobes(g.position, g.normal, g.view, s, wants, g.occlusion);
     light.radiance *= shown;
     light.coat_radiance *= shown;
-    light.traced = reflection;
-    light.traced_share = traced;
     color += indirect_compose(s, light);
     return (color + g.emission) * covered;
 }

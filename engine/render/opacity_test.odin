@@ -58,7 +58,6 @@ a_fade_is_given_to_its_instance_alone_without_a_row_or_an_allocation :: proc(t:^
         testing.expect_value(t,sync.drawn.entities[0],entities[0])
         testing.expect_value(t,sync.drawn.entities[1],entities[1])
         host.app_frame_end(app)
-        if !app.renderer.hardware_rt {testing.expect_value(t,app.renderer.scene.glass_node_count,0)}
         pixels,_,_,captured:=host.app_capture_pixels(app)
         if !testing.expect(t,captured) {delete(pixels);return}
         red,green:=0,0

@@ -8,8 +8,9 @@
 #include "scene.slang"
 
 struct Nested_Face_Output {
-    [[vk::location(0)]] float4 out_motion : SV_Target0;
+    [[vk::location(0)]] float2 out_motion : SV_Target0;
     [[vk::location(1)]] float out_depth : SV_Target1;
+    [[vk::location(2)]] uint out_view : SV_Target2;
     float depth : SV_Depth;
 };
 
@@ -30,8 +31,9 @@ bool nested_face_crossing(float4 pixel, float4 plane, out float3 crossing) {
 Nested_Face_Output nested_face_output(float3 crossing, uint index) {
     float4 clip = view_clip(crossing);
     Nested_Face_Output output;
-    output.out_motion = float4(0.0, 0.0, 0.0, 1.0 + float(index));
+    output.out_motion = float2(0.0, 0.0);
     output.out_depth = 0.0;
+    output.out_view = index;
     // A face nearer than the near plane is still in front of everything drawn.
     output.depth = clip.w > 0.0 ? saturate(clip.z / clip.w) : 1.0;
     return output;

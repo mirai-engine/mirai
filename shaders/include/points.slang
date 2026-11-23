@@ -29,11 +29,6 @@
 // thread of it takes head group.x * (its threads) + its index in the group.
 #define POINTS_HEAD_GROUP 32u
 
-// Material_Point.flags.
-#define POINT_FILTER 1u // a glass crossing of a ray, whose filter its owner multiplies in
-#define POINT_RUN 2u    // the first filter of a ray: weight is what its filters multiply
-#define POINT_EXIT 4u   // a ray leaves a solid through it: the filter is what the face lets through
-
 #ifdef POINTS_SLOT
 [[vk::binding(POINTS_SLOT, 0)]] RWStructuredBuffer<uint> material_points : register(MIRAI_REGISTER(u, POINTS_SLOT), space0);
 
@@ -42,8 +37,7 @@ uint points_programs() { return material_points[POINTS_PROGRAMS]; }
 uint points_bin_count(uint program) { return POINTS_HEADER + program; }
 uint points_bin_offset(uint program) { return POINTS_HEADER + points_programs() + program; }
 uint points_bin_cursor(uint program) { return POINTS_HEADER + 2u * points_programs() + program; }
-uint points_bin_args(uint program) { return POINTS_HEADER + 3u * points_programs() + 3u * program; }
-uint points_base() { return POINTS_HEADER + 6u * points_programs(); }
+uint points_base() { return POINTS_HEADER + 3u * points_programs(); }
 uint points_records() { return points_base() + points_capacity() * POINT_WORDS; }
 uint points_list() { return points_records() + points_capacity() * RECORD_WORDS; }
 uint points_heads() { return points_list() + points_capacity(); }
@@ -122,19 +116,7 @@ Material_Point point_load(uint index) {
 uint record_half2(float a, float b) { return half_bits(a) | (half_bits(b) << 16u); }
 float2 record_unhalf2(uint v) { return float2(half_value(v & 0xffffu), half_value(v >> 16u)); }
 
-// What the filters of a run multiply (the first of them, POINT_RUN).
-void point_weigh(uint index, float3 weight) {
-    uint at = points_base() + index * POINT_WORDS;
-    material_points[at + 7u] = record_half2(weight.r, weight.g);
-    material_points[at + 8u] = half_bits(weight.b);
-}
-float3 point_weight(uint index) {
-    uint at = points_base() + index * POINT_WORDS;
-    return float3(record_unhalf2(material_points[at + 7u]), half_value(material_points[at + 8u] & 0xffffu));
-}
-
-// Two words a pass keeps with a point of a surface (not a filter one), which
-// its resume reads back.
+// Two words a pass keeps with a point of a surface, which its resume reads back.
 void point_keep(uint index, float2 kept) {
     uint at = points_base() + index * POINT_WORDS;
     material_points[at + 7u] = asuint(kept.x);
@@ -277,39 +259,5 @@ Mirai_Surface point_record_load(uint index) {
 }
 void point_record_clear(uint index) { material_points[points_records() + index * RECORD_WORDS + 17u] = 0u; }
 bool point_record_given(uint index) { return (material_points[points_records() + index * RECORD_WORDS + 17u] >> 24u) != 0u; }
-
-// The record of a filter point is the filter its owner multiplies in, which
-// the stage of its program works out in place of the surface: the owner reads
-// three halves and not the hit.
-void point_filter_store(uint index, float3 filter) {
-    uint at = points_records() + index * RECORD_WORDS;
-    material_points[at] = record_half2(filter.r, filter.g);
-    material_points[at + 1u] = half_bits(filter.b);
-    material_points[at + 17u] = 0xffu << 24u;
-}
-float3 point_filter_record(uint index) {
-    uint at = points_records() + index * RECORD_WORDS;
-    return float3(record_unhalf2(material_points[at]), half_value(material_points[at + 1u] & 0xffffu));
-}
-
-#ifdef MIRAI_SCENE_SLANG
-// The filter of a filter point at its hit h, from what its program gave
-// there (given, program) or else from the row of its material.
-float3 point_filter_at(Material_Point point, Hit_Point h, bool given, Mirai_Surface program) {
-    float3 normal = h.normal;
-    Material_Sample values = material_sample_given(h.m, h.ctx, instance_color(h.inst, h.m, h.color.rgb), h.inst.emission.rgb, normal, given, program);
-    float3 through;
-    float3 tint = blend_filter_of(h.m, values, through);
-    if (!material_solid(h.m)) return tint * through;
-    return (point.flags & POINT_EXIT) != 0u ? through : tint * material_absorption(h.m, h.m.thickness) * through;
-}
-
-// The filter of a filter point: its record, or the row of its material while
-// its program has no pipeline.
-float3 point_filter(uint index, Material_Point point) {
-    if (point_record_given(index)) return point_filter_record(index);
-    return point_filter_at(point, hit_point(point.instance, point.primitive, point.bary, point.footprint), false, (Mirai_Surface)0);
-}
-#endif
 #endif
 #endif

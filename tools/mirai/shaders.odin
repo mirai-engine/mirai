@@ -149,10 +149,10 @@ shaders_check :: proc(root:string,args:[]string) -> int {
 // current: render and the tests of rhi embed them, and git does not keep them.
 // A generation that compiles takes its turn with the other compilations,
 // unless the caller already has it. backends: {} for the host's.
-engine_shaders :: proc(root:string,turn_held:=false,backends:shaders.Backends={}) -> bool {
+engine_shaders :: proc(root:string,turn_held:=false,backends:shaders.Backends={},ship:=false) -> bool {
     // An installed engine carries them, generated when it was packaged.
     if project.engine_installed(root) {return true}
-    options:=shaders.Options{root=root,odin=true,backends=backends}
+    options:=shaders.Options{root=root,odin=true,backends=backends,ship=ship}
     lock:workspace.Lock
     defer workspace.lock_release(&lock)
     if !turn_held {

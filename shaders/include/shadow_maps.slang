@@ -364,10 +364,11 @@ bool sun_pick(float3 position, float across, out Sun_Pick pick, float3 swayed = 
 // than the widest penumbra the light of radius `radius` casts there over
 // SHADOW_SEARCH_MAX of its texels, which its taps search. across 0: the
 // finest the penumbra allows.
-Sun_Pick light_pick(Shadow_Map m, float3 position, float across, float radius, float3 swayed = float3(0.0)) {
+// The mip of a face of a local light a point at depth `z` along it takes.
+Sun_Pick light_pick_z(Shadow_Map m, float z, float across, float radius) {
     Sun_Pick pick = (Sun_Pick)0;
     pick.grow = 1.0;
-    float z = max(shadow_map_local(m, shadow_place(m, position, swayed)).z, m.near);
+    z = max(z, m.near);
     float penumbra = radius * max(z - m.skip, 0.0) / max(m.skip, 1e-3);
     float mip = log2(max(max(across * SHADOW_TEXEL_PIXELS, penumbra / SHADOW_SEARCH_MAX), 1e-9) / shadow_map_texel(shadow_map_mip(m, 0u), z));
     pick.level = uint(clamp(floor(mip), 0.0, float(SHADOW_MIPS - 1u)));
@@ -375,6 +376,10 @@ Sun_Pick light_pick(Shadow_Map m, float3 position, float across, float radius, f
     pick.grow = exp2(within);
     if (pick.level + 1u < SHADOW_MIPS) pick.blend = saturate((within - (1.0 - SHADOW_LEVEL_BAND)) / SHADOW_LEVEL_BAND);
     return pick;
+}
+
+Sun_Pick light_pick(Shadow_Map m, float3 position, float across, float radius, float3 swayed = float3(0.0)) {
+    return light_pick_z(m, shadow_map_local(m, shadow_place(m, position, swayed)).z, across, radius);
 }
 
 // Whether the maps give a point the light of the sun: its level holds it,
@@ -473,8 +478,8 @@ bool shadow_texel_near(Shadow_Map m, Shadow_Near n, int2 texel, out int2 at, out
 // around it each drawn or held by a coarser one, so that every tap of the
 // point reads a blocker, else the nearest coarser one so drawn; false where
 // none is, and the light of the point is then traced.
-bool shadow_map_held(inout Shadow_Map m, float3 position, float3 swayed = float3(0.0)) {
-    float2 unit = clamp(shadow_map_unit(m, shadow_map_local(m, shadow_place(m, position, swayed))), -0.9999, 0.9999);
+bool shadow_map_held_unit(inout Shadow_Map m, float2 unit) {
+    unit = clamp(unit, -0.9999, 0.9999);
     int2 texel = int2(floor(float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z)));
     uint e;
     if (!shadow_texel_entry(m, texel, e)) return false;
@@ -482,6 +487,9 @@ bool shadow_map_held(inout Shadow_Map m, float3 position, float3 swayed = float3
     if (held == 0u) return false;
     if (held > 1u) m = shadow_map_coarser(m, held - 1u, texel);
     return true;
+}
+bool shadow_map_held(inout Shadow_Map m, float3 position, float3 swayed = float3(0.0)) {
+    return shadow_map_held_unit(m, shadow_map_unit(m, shadow_map_local(m, shadow_place(m, position, swayed))));
 }
 
 #ifdef SHADOW_MARKS_SLOT
@@ -491,13 +499,14 @@ bool shadow_map_held(inout Shadow_Map m, float3 position, float3 swayed = float3
 // marked that is not drawn asks the steps of the pages to run then.
 [[vk::binding(SHADOW_MARKS_SLOT, 0)]] RWStructuredBuffer<uint> view_shadow_marks : register(MIRAI_REGISTER(u, SHADOW_MARKS_SLOT), space0);
 
-// Marks the pages of map m at its mip the 2x2 texels around a point read.
-void shadow_mark_late(Shadow_Map m, float3 position, float3 swayed = float3(0.0)) {
-    float2 unit = shadow_map_unit(m, shadow_map_local(m, shadow_place(m, position, swayed)));
+// Marks the pages of map m at its mip that a point at unit reads: the 2x2
+// texels around it when blended, else the single texel it falls in.
+void shadow_mark_late_unit(Shadow_Map m, float2 unit, bool blended = true) {
     if (any(abs(unit) >= 1.0)) return;
     float2 texel = float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z);
     int last = int(m.rect.z) - 1;
-    uint2 first = uint2(clamp(int2(floor(texel - 0.5)), 0, last)) / SHADOW_PAGE, end = uint2(clamp(int2(floor(texel + 0.5)), 0, last)) / SHADOW_PAGE;
+    uint2 first = uint2(clamp(int2(floor(blended ? texel - 0.5 : texel)), 0, last)) / SHADOW_PAGE;
+    uint2 end = blended ? uint2(clamp(int2(floor(texel + 0.5)), 0, last)) / SHADOW_PAGE : first;
     for (uint y = first.y; y <= end.y; y++) {
         for (uint x = first.x; x <= end.x; x++) {
             uint entry = shadow_page_entry(m.rect, uint2(x, y));
@@ -510,6 +519,9 @@ void shadow_mark_late(Shadow_Map m, float3 position, float3 swayed = float3(0.0)
             if ((before & bit) == 0u && shadow_entry_asks(shadow_table_entry(m.rect.x, entry))) InterlockedOr(view_shadow_marks[SHADOW_STEP_NEW], 1u);
         }
     }
+}
+void shadow_mark_late(Shadow_Map m, float3 position, float3 swayed = float3(0.0), bool blended = true) {
+    shadow_mark_late_unit(m, shadow_map_unit(m, shadow_map_local(m, shadow_place(m, position, swayed))), blended);
 }
 #endif
 
@@ -554,6 +566,17 @@ float shadow_hard_seen(Shadow_Map m, Shadow_Near n, Shadow_Taps t) {
     return total > 0.0 ? seen / total : 1.0;
 }
 
+// Whether the center of the light sees a point past what the texel it falls
+// in holds (shadow_map_point); -1 where no page holds that texel.
+float shadow_texel_seen(Shadow_Map m, Shadow_Taps t) {
+    int2 at;
+    Shadow_Map held;
+    uint coarser;
+    if (!shadow_texel(m, int2(floor(t.texel)), at, held, coarser)) return -1.0;
+    float b = shadow_map_distance(held, view_shadow_atlas.Load(int3(at, 0)).r) + dot(held.origin - m.origin, m.forward);
+    return shadow_blocks(t, b, float2(0.0), coarser) ? 0.0 : 1.0;
+}
+
 // How much of the sun reaches a point past what the maps of the view hold;
 // -1 where no level drawn holds the point, or the view drew none: a ray
 // tells. n: the normal of its surface, zero for a point of a medium; across:
@@ -566,17 +589,12 @@ float sun_shadow_seen(float3 position, float3 n, float across, bool blended = tr
     if (!sun_pick(position, across, pick, swayed)) return -1.0;
     Shadow_Map m = sun_level(pick.level);
 #ifdef SHADOW_MARKS_SLOT
-    shadow_mark_late(m, position, swayed);
+    shadow_mark_late(m, position, swayed, blended);
 #endif
     Shadow_Taps t;
     if (!shadow_map_held(m, position, swayed)) return -1.0;
     if (!shadow_map_point(m, true, frame.sun_direction.xyz, position, n, 0.0, m.rect.x == pick.level ? pick.grow : 1.0, t, swayed)) return 1.0;
-    Shadow_Near near = shadow_near(m, t.texel, 1.0);
-    if (blended) return shadow_hard_seen(m, near, t);
-    float b;
-    uint coarser;
-    if (!shadow_blocker(m, near, int2(floor(t.texel)), b, coarser)) return -1.0;
-    return shadow_blocks(t, b, float2(0.0), coarser) ? 0.0 : 1.0;
+    return blended ? shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t) : shadow_texel_seen(m, t);
 }
 #endif
 
@@ -654,15 +672,32 @@ bool shadow_beside(Shadow_Map m, int2 texel, out float b, out uint coarser) {
 // How much of local light `light` reaches a point past what its map holds, as
 // sun_shadow_seen; -1 where no map of it holds the point drawn. radius: of
 // the light, metres: about that near it lies its body, not what it shines past.
-float light_shadow_seen(uint light, float3 position, float3 n, float radius, float across, float3 swayed = float3(0.0)) {
-    Shadow_Map m;
-    Sun_Pick pick;
-    if (!light_map_given(light, position, across, m, pick, swayed)) return -1.0;
+// blended: 2x2 texel blend; false: single texel lookup for forward blends.
+float light_shadow_seen(uint light, float3 position, float3 n, float radius, float across, float3 swayed = float3(0.0), bool blended = true) {
+    if (frame.sun_maps.z == 0u) return -1.0;
+    uint word = shadow_light_word(view_shadow_data, light);
+    if (word == 0u) return -1.0;
+    uint faces = word >> SHADOW_LIGHT_FACES;
+    float3 light_pos = lights[light].position_range.xyz;
+    uint face = (faces & (1u << SHADOW_SPOT_FACE)) != 0u ? SHADOW_SPOT_FACE : shadow_face_of(position - light_pos);
+    if ((faces & (1u << face)) == 0u) return -1.0;
+    Shadow_Map m = shadow_map_at(view_shadow_data, frame.sun_maps.y, (word & 0xFFFFu) - 1u + face);
+    float3 placed = shadow_place(m, position, swayed);
+    float3 local = shadow_map_local(m, placed);
+    if (!(local.z > m.near && local.z < m.far)) return -1.0;
+    float2 unit = shadow_map_unit(m, local);
+    if (any(abs(unit) >= 1.0)) return -1.0;
+    Sun_Pick pick = light_pick_z(m, local.z, across, radius);
+    m = shadow_map_mip(m, pick.level);
+#ifdef SHADOW_MARKS_SLOT
+    shadow_mark_late_unit(m, unit, blended);
+#endif
+    if (!shadow_map_held_unit(m, unit)) return -1.0;
     Shadow_Taps t;
-    if (!shadow_map_point(m, false, normalize(lights[light].position_range.xyz - shadow_place(m, position, swayed)), position, n, radius, shadow_rect_mip(m.rect) == pick.level ? pick.grow : 1.0, t, swayed)) return 1.0;
+    if (!shadow_map_point(m, false, normalize(light_pos - placed), position, n, radius, shadow_rect_mip(m.rect) == pick.level ? pick.grow : 1.0, t, swayed)) return 1.0;
     // Past its far plane a map holds nothing: an empty texel would read as a blocker there.
     if (any(t.texel <= 0.0) || any(t.texel >= float(m.rect.z)) || t.d <= m.near || t.d >= m.far) return -1.0;
-    return shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t);
+    return blended ? shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t) : shadow_texel_seen(m, t);
 }
 #endif
 #endif

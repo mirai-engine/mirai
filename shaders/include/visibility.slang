@@ -39,6 +39,34 @@ uint visibility_id(uint entry, uint triangle) { return entry * CLUSTER_TRIANGLES
 uint visibility_entry(uint id) { return (id - 1u) / CLUSTER_TRIANGLES; }
 uint visibility_triangle(uint id) { return (id - 1u) % CLUSTER_TRIANGLES; }
 
+// The edge functions of a triangle a pixel shows, from the clip positions of
+// its corners as the raster had them: what gives the weights whose sum of the
+// corners projects to a point of the screen, which hold for corners behind
+// the eye too (homogeneous rasterization, Olano and Greer 1997), and for a
+// point off the triangle, along its plane.
+struct Visibility_Edges {
+    float3 a, b, c;
+};
+Visibility_Edges visibility_edges(float4 a, float4 b, float4 c) {
+    float3 ra = a.xyw, rb = b.xyw, rc = c.xyw;
+    Visibility_Edges e;
+    e.a = cross(rb, rc);
+    e.b = cross(rc, ra);
+    e.c = cross(ra, rb);
+    return e;
+}
+// The weights of the corners at a point of the screen, in pixels.
+float3 visibility_barycentrics(Visibility_Edges e, float2 pixel) {
+    float3 p = float3(pixel.x * frame.inv_resolution.x * 2.0 - 1.0, 1.0 - pixel.y * frame.inv_resolution.y * 2.0, 1.0);
+    float3 w = float3(dot(e.a, p), dot(e.b, p), dot(e.c, p));
+    float sum = w.x + w.y + w.z;
+    return abs(sum) > 1e-30 ? w / sum : float3(1.0, 0.0, 0.0);
+}
+// Whether the triangle whose first corner is at `a` is counter-clockwise on
+// the screen: the sign of the homogeneous determinant, which holds behind
+// the eye too.
+bool visibility_counterclockwise(Visibility_Edges e, float4 a) { return dot(a.xyw, e.a) > 0.0; }
+
 // The depth a pixel of a Surface program (0: of none) is classified at, in
 // the 16-bit program depth target, which the resolve of that program tests
 // for equality; 0 where nothing is. A quarter of a step past the step of the

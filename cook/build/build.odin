@@ -553,7 +553,7 @@ job_project_start :: proc(job:^Job) -> ^Job {
     if !job.force {
         if saved,built,stamped:=stamp_read(job.stamp_file);stamped {
             if sources,listed:=dependencies_read(job.sources_file,context.temp_allocator);listed {
-                current,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources)
+                current,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,project_folder=job.root)
                 present:=current==saved && os.is_file(job.published)
                 // The game built for another folder is the same executable.
                 if current==saved && !present && job.target==.Game && built!="" && !project.path_same(built,job.published) && os.is_file(built) {
@@ -572,7 +572,7 @@ job_project_start :: proc(job:^Job) -> ^Job {
                 // What the library compiles to is what its last compile
                 // left but for the names of the plugin libraries: it links that again.
                 if job.target!=.Game && !job.compiled {
-                    masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked)
+                    masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked,project_folder=job.root)
                     if record,ok:=link_record_read(job.link_file,virtual.arena_allocator(&job.arena));ok && link_record_stands(record,masked) {
                         a:=virtual.arena_allocator(&job.arena)
                         compile:=Compile{library=-1,staged=link_staged(record.folder,a),folder=record.folder,relink=true,streams=job.stream_files}
@@ -872,7 +872,7 @@ target_state :: proc(p:^project.Project,target:Target,compiler:="",dev:=false,en
     saved,_,stamped:=stamp_read(project.path(work,fmt.tprintf("%s.stamp",names[target]),allocator=temp))
     sources,listed:=dependencies_read(project.path(work,fmt.tprintf("%s.sources.json",names[target]),allocator=temp),temp)
     if !stamped || !listed {return .Stale}
-    hash,_:=fingerprint(p.engine_root,slashes(found,temp),target_flags(p,target,nil,temp,dev,engine),sources)
+    hash,_:=fingerprint(p.engine_root,slashes(found,temp),target_flags(p,target,nil,temp,dev,engine),sources,project_folder=p.root)
     if hash!=saved || target==.Editor && !plugins_current(p,slashes(found,temp),dev,engine) {return .Stale}
     return .Current
 }
@@ -1038,7 +1038,7 @@ job_finish :: proc(job:^Job,compile:^Compile,exit_code:int) {
     }
     // The previous one, which a program may have loaded, is removed once it is free (job_files_remove).
     retired:=project.path(job.work,fmt.tprintf("%s.old",job.prefix),allocator=context.temp_allocator)
-    published,stamped:=publish_and_stamp(compile.staged,job.published,retired,sources,{file=job.stamp_file,sources_file=job.sources_file,sources_staged="" if compile.relink else job.sources_staged,root=job.engine_root,compiler=job.compiler,flags=job.flags,started=job.started})
+    published,stamped:=publish_and_stamp(compile.staged,job.published,retired,sources,{file=job.stamp_file,sources_file=job.sources_file,sources_staged="" if compile.relink else job.sources_staged,root=job.engine_root,compiler=job.compiler,project=job.root,flags=job.flags,started=job.started})
     if !published {
         job_fail(job,.Output_Locked)
         return
@@ -1047,7 +1047,7 @@ job_finish :: proc(job:^Job,compile:^Compile,exit_code:int) {
     if compile.folder!="" && !compile.relink {
         command,found:=link_command_find(output)
         if stamped && found {
-            masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked)
+            masked,_:=fingerprint(job.engine_root,job.compiler,job.flags,sources,masked=job.masked,project_folder=job.root)
             link_folder_trim(compile.folder)
             link_record_write(job.link_file,{hash=masked,folder=compile.folder,command=command})
         } else {

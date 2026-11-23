@@ -1,351 +1,179 @@
 # Asset formats and API
 
-Container, typed tables, asset types, registry and text. By topic:
-
-- [std/serial](serial.md): streams, schemas, migration, paths and JSON.
-- [Asset types in detail](kinds.md): mesh, skeleton, texture, material, fracture, animation, sound
-  and interface.
-- [Scene and prefab](scenes.md): the `asset.Scene` document and prefab instances.
-- [`mirai asset` tool](cli.md).
+Related: [std/serial](serial.md), [asset types in detail](kinds.md),
+[scene and prefab](scenes.md), [`mirai asset` CLI](cli.md).
 
 ## Container
 
-Little endian (`asset/container.odin`): a fixed header (magic `MIRA`, type fourcc, container and
-type version, flags, id, `owner`, the `content_hash` of everything that follows), a directory of
-chunks (tag, compression `None` or `Stream`, alignment, offset and sizes) and the chunks,
-each at a multiple of its alignment.
+Little-endian (`asset/container.odin`): fixed header (`MIRA`, fourcc, container/type versions,
+flags, `id`, `owner`, `content_hash` of payload), chunk directory (tag, `None`/`Stream`, alignment,
+offset, sizes), and aligned chunks.
 
-- **The header id is an asset's only identity**: nothing derives it from its path, name or source,
-  and a moved or renamed asset remains the same.
-- `owner` is the asset this one is a part of (the prefab of the import that made it); zero for one
-  of its own. `Document.owner` and the `owner` of each importable `*_Desc` write it;
-  `header_owner_set` and `file_owner_set` change it without touching the content or `content_hash`.
-- `header_read` validates only the header (what a scan uses). `blob_open` validates the whole file:
-  exact size, each chunk inside the file and aligned, uncompressed size below `PACK_MAX` and a
-  total memory limit (`DEFAULT_MEMORY_LIMIT`).
-- **An asset of the store** (`asset/parts.odin`) is an object of the
-  [store](../../mirai-store/SKILL.md): one group per container chunk in directory order, and the
-  header and directory as the meta of its root. It holds its file as `Codecs.None` writes it:
-  `object_put` writes again a file a compressor touched (a stream chunk, a mesh page not
-  `STORED`, texture planes chosen otherwise), so compressing an asset leaves its object identity
-  unchanged. The store compresses each chunk in its frame. It cuts each chunk where the
-  format reads alone: between the levels of `texels` (smallest first, so the first chunks are the
-  small levels), between the blocks of a mesh's `page_data` and of a block table. The file is the
-  meta, each group at its chunk's offset and zeros between: `object_file` gives the bytes
-  `object_put` kept. `asset_open_object` checks meta against groups (tags, order, sizes,
-  limit) and reads each chunk the first time a table needs it: one chunk of a sealed pack is a
-  slice of its mapping, several are gathered into memory of the asset, and a stream that holds
-  levels reads only the pieces asked for. A chunk the store does not hold yet is `Not_Here` to
-  whoever reads it; nothing checks a whole-file hash.
-- `blob_build` stores a chunk compressed only when that shrinks it. The dependencies, names,
-  schema and table directory are stored as they are: a scan reads them without a decoder.
+- **Identity**: header `id` is sole identity (path/rename invariant). `owner` marks part-of-import
+  assets (`Document.owner`, `*_Desc.owner`; `header_owner_set`/`file_owner_set` keep
+  `content_hash`).
+- **Validation**: `header_read` validates header only (scans); `blob_open` checks size, chunk
+  bounds/alignment, `PACK_MAX`, and `DEFAULT_MEMORY_LIMIT`.
+- **Store objects** (`asset/parts.odin`): [store](../../mirai-store/SKILL.md) object with header +
+  directory as root meta and one group per chunk in canonical `Codecs.None` layout (`object_put`
+  strips outer compression; splits `texels` by mip smallest-first, mesh `page_data` and block
+  tables by block). `object_file` reconstructs exact bytes. `asset_open_object` validates meta vs
+  groups and reads chunks lazily (`Not_Here` if absent; no whole-file hash check).
+- `blob_build` compresses a chunk only if smaller; `DEPS`, `STRS`, `SCHM`, `TDIR` stay uncompressed
+  so scans need no decoder.
 
 ### Compression
 
-Every compressed byte is a stream (`asset/compress.odin`): a version byte, the format of its
-pieces (`data.Format`, `STORED` for the bytes as they are), its piece count and the size of each
-piece; a reader knows what decodes it from the stream. `pack`, `Stream_Encoder` and `unpack` are
-the entry points of what compresses outside a chunk (mesh pages, the parts a
-journal sends over the network, editor thumbnails, the shaders the executables embed).
+Streams (`asset/compress.odin`): version byte, `data.Format` (`STORED` or MDC2), piece count/sizes.
+`pack`, `Stream_Encoder`, `unpack` compress non-chunk data (mesh pages, net journals, thumbnails,
+embedded shaders).
 
-- **MDC2** in `std/compressor/data` compresses bytes. The GPU encodes texture blocks during
-  [texture cooking](../../mirai-imports/references/imports.md#textures-cooktextures).
-- **Profiles.** A write says what it favors (`data.Profile`): `Fast` for what the editor,
-  imports and a running game save; a cook writes with `Ultra` (a shipped game) or `Balanced` (a
-  dev game), and what streams while playing with `profile_streamed` of it (`Speed` in place of
-  `Ultra`). All profiles write MDC2. A read needs no profile: the stream names its format.
-- **MDC2 blocks.** Entropy tags carry short lengths directly and take longer lengths from a byte
-  stream. Aligned distances use fewer extra bits. A block can store literal differences against
-  the bytes at its previous match distance. Each block can match into earlier blocks in its
-  piece. The decoder uses preallocated scratch to reconstruct it.
-- **Codecs.** A document's writer selects `None` (the zero value) or `Compressed` (MDC2).
-  A cook uses the project's `build.compression`. Under `None`, mesh pages keep their page
-  coding and eligible texture mips keep their planes of fields. An unsupported stream format
-  returns `Codec_Missing`.
-- **Block tables.** A kind whose asset stores blocks it reads alone keeps them in `<name>_blocks`,
-  with the `Block_Record`s of its pages in `<name>_pages`; the kind codes each block itself, and
-  neither a write, a cook nor the store's object compresses them.
-- **Pieces.** A chunk over `PACK_PIECE` is a run of pieces of that many raw bytes, each decoding
-  without the others: a scene load decodes them at once on its workers (`Piece_Decoders`), and a
-  write with a worker compresses them at once into the same bytes.
-- **Decoders.** `Decoder` holds stream scratch, made once by
-  whoever reads (a job keeps one per thread) and lent to `asset_open`/`asset_load`; an asset opened
-  without one makes its own the first time it decodes. A mesh page or a terrain block decodes with
-  a `Stream_Decoder` of its reader (the renderer keeps one per worker).
-- **Texture levels.** The `texels` column holds the smallest level first: a read of the small
-  levels decodes only the first pieces. Mips may store planes of fields
-  ([texture](kinds.md#texture)); `texture_decode` can restore the original block bytes or expose
-  the planes to the renderer.
+- **MDC2** (`std/compressor/data`): entropy tags with inline short lengths, aligned distances,
+  prev-distance literal deltas, cross-block matches, preallocated scratch. Texture blocks encode on
+  GPU ([texture cooking](../../mirai-imports/references/imports.md#textures-cooktextures)).
+- **Profiles & codecs**: `data.Profile` `Fast` (editor/imports/runtime), `Balanced` (dev cook),
+  `Ultra` (ship cook), `profile_streamed` (`Speed` for streamed assets). `Codecs` is `None` or
+  `Compressed` (cook uses `build.compression`; unknown format -> `Codec_Missing`).
+- **Block tables & pieces**: `<name>_blocks` + `<name>_pages` (`Block_Record`) self-code and skip
+  outer/store compression. Chunks `> PACK_PIECE` split into independent parallel pieces
+  (`Piece_Decoders`). Reuse `Decoder` / `Stream_Decoder` per worker thread. `texels` stores
+  smallest mip first ([texture](kinds.md#texture), `texture_decode`).
 
 ## Typed tables
 
-An asset is a set of **tables**; a table is a set of **columns** of equal length; a column keeps
-the images of values of one type of the file's schema. The chunks, in this order: `DEPS` (ids it
-names, sorted and without repeats), `STRS` (names), `SCHM` (the `std/serial` schema), `TDIR`
-(directory of tables and columns), the record columns (`RECS`, and `IMPT` that of the `Import`
-table) and finally the `BULK` ones.
+Chunk order: `DEPS` (sorted unique ids), `STRS`, `SCHM`, `TDIR`, `RECS`/`IMPT`, `BULK`. Table
+flags: `Single` (1 row), `Bulk` (heavy data), `Import`. Unnamed column = sole row column; `key`
+identifies rows; `ref` indexes another table; names forbid dots, brackets, `@`, `=`, quotes,
+spaces, controls; `rows > 1` requires a sized column.
 
-- Table flags: `Single` (one row, read without an index), `Bulk` (heavy data for direct use; the
-  tools summarize them), `Import` (provenance).
-- An unnamed column is the row itself and is the only one in its table.
-- `key` is the column that identifies the rows; `ref` says that the values of a column (unsigned
-  integers) are rows of another table.
-- Names: without dots, brackets, `@`, `=`, quotes, spaces or controls.
-- More than one row requires some column with size: the number of rows never exceeds the data that
-  backs them.
+- **Reading (`Asset`)**: `asset_rows` returns zero-copy slice when uncompressed, aligned, and same
+  layout; else owned decoded/migrated copy. `asset_row` reads a `Single` table. `asset_load_front`
+  skips bulk (`Truncated` if touched, no hash check). `asset_column_*` reads against an external
+  schema.
+- **Writing (`Document`, `asset/document.odin`)**: deterministic `document_write`/`document_save`
+  (runs `document_check`, derives `DEPS`). Reservations are OOM-safe (`Out_Of_Memory`, index `-1`,
+  retryable; failed name reserve is not treated as unnamed). Paths/text/diff: `document_locate`,
+  `document_get`, `document_set` ([syntax](cli.md#paths)), `document_text_write`/`read`,
+  `document_diff`.
+- **`asset.Types`**: `types_index` caches schema, hashes, transient flags, layouts (`Types.error`
+  is `Invalid` or `Out_Of_Memory`, retryable; incomplete hashes rejected by `document_from_asset`
+  and text reader).
 
-### Reading: `Asset`
+```odin
+// Read typed rows (zero-copy when uncompressed + matching layout)
+types: asset.Types; asset.types_init(&types); defer asset.types_destroy(&types)
+a: asset.Asset
+if asset.asset_load(&a, path) == .None {
+    defer asset.asset_close(&a)
+    info, err := asset.asset_row(&a, &types, "material", asset.Material_Info, whole=true)
+    params, _ := asset.asset_rows(&a, &types, "parameters", "", asset.Material_Parameter)
+    _ = info; _ = params; _ = err
+}
+```
 
-- `asset_rows(&a,&types,"table","column",T,default)` returns `[]T`: **the file itself** if the
-  column is uncompressed, aligned and with `T`'s layout; otherwise, a decompressed or migrated copy
-  that belongs to the `Asset`. `asset_row` is the row of a one-row table.
-- `asset_load_front` reads everything but the bulk columns, which stay in the file to be read by
-  range (`blob_chunk`); it does not check the hash and reaching a bulk one gives `Truncated`. A
-  terrain's pages use it.
-- `asset_column_*` read against another schema (that of the world's components).
-
-### Building and editing: `Document`
-
-Owner of everything it contains; `asset/document.odin` builds by tables, columns and rows.
-
-- Writing (`document_write`/`document_save`) validates (`document_check`), derives dependencies and
-  is a function of the content only: reading and writing again gives the same bytes.
-- Adding a table or column checks the reservation of the name, the data and the destination array
-  before publishing it. On out of memory it returns `Out_Of_Memory` and index `-1`, frees what was
-  reserved and keeps existing tables and rows; it can be retried. An empty name produced by a
-  failed reservation is not interpreted as an unnamed column.
-- Paths and values: `document_locate`, `document_get`, `document_set` ([syntax](cli.md#paths));
-  text: `document_text_write`/`document_text_read`; differences: `document_diff`.
-
-`asset.Types` contains the schema of the program's types, their hashes and layouts.
-
-- `types_index(&types,T)` adds a type the first time; it returns `ok=true` only when its hash,
-  transient field and layout tables are also ready.
-- `Types.error` distinguishes `Invalid` from `Out_Of_Memory`; a later call retries completing the
-  tables even if the schema already knows the type.
-- `document_from_asset` and text reading reject an incomplete hash update.
+```odin
+// Build and save a custom Document deterministically
+doc: asset.Document
+asset.document_init(&doc, asset.KIND_SOUND_SET, id)
+defer asset.document_destroy(&doc)
+doc.kind_version = asset.SOUND_SET_VERSION
+info := asset.SOUND_SET_DEFAULTS
+_ = asset.document_put_row(&doc, &types, "sound_set", &info)
+_ = asset.document_save(&doc, out_path)
+```
 
 ## Asset types
 
-`asset.KINDS` gives extension, fourcc, name and version of each engine type; their tables are in
-their `asset/<type>.odin` and `mirai asset info` shows them. Contract of each: [kinds.md](kinds.md);
-scenes and their prefab instances: [scenes.md](scenes.md). The plugins' types are declared and
-validated by their plugin without adding them to the core:
-[`.character`](../../mirai-animation/references/animation.md#components-and-shared-data),
-[`.foliage`](../../mirai-world/references/foliage.md#format),
-[`.terrain`](../../mirai-world/references/terrain.md) and
-[`.physics_cache`](../../mirai-plugins/references/physics-cache.md).
+`asset.KINDS` registers engine fourcc/version (`mirai asset info`). Details in [kinds.md](kinds.md)
+and [scenes.md](scenes.md). Plugin kinds (`.character`, `.foliage`, `.terrain`, `.physics_cache`)
+live in their plugins.
 
-- **`.mesh`** (`MESH`): `mesh` (`Mesh_Info`); `clusters` bulk (`Cluster`); `levels`
-  (`Mesh_Level`); `vertices` bulk with columns `vertex` (`Cluster_Vertex`), `uv1`, `color`, `skin`
-  (`Skin_Vertex`) and `surface` (`Surface_Vertex`, of a far mesh, `Has_Surface`, always with
-  `color`); `triangles` bulk (`u32`, `u8` indices four at a time); `slots` (`Material_Slot`);
-  `joints` (the mesh's bind to the skeleton); `morphs` with `morph_deltas`; `colliders` with
-  `collision_points` and `collision_indices`.
-- **`.skeleton`** (`SKEL`): `skeleton` (`Skeleton_Info`), `bones` (`Skeleton_Bone`), `sockets`
-  (`Skeleton_Socket`).
-- **`.tex`** (`TEX `): `texture` (`Texture_Info`, with `layers` defaulting to 1), `mips`
-  (`Texture_Mip`, with all the layers of each level), `texels` bulk.
-- **`.mat`** (`MAT `): `material` (`Material_Info`), `imported` (`Material_Info`, of an imported
-  material: what the source gave), `parameters`, `overlays`, `hidden`.
-- **`.scene`** (`SCEN`): `entities`, a table per component (those of prefab instances among
-  them), `scene`, `overrides` and `off` (turned-off components). `Header_Flag.Prefab` makes it a
-  [prefab](scenes.md#prefab).
-- **`.anim`** (`ANIM`): `clips` (`Animation_Clip`), `tracks` (`Animation_Track`), `keys`
-  (`anim.Keyframe`), `markers` (`Animation_Marker`, a moment or, with a duration, a span) and the
-  bulk `streams`, empty but in a cooked `.anim`.
-- **`.sound`** (`SND `): `sound` (`Sound_Info`) and one of two bulk tables: `samples` (`i16`) or
-  `file` (`u8`).
-- **`.sound_set`** (`SSET`): `sound_set` (`Sound_Set_Info`).
-- **`.ui`** (`UI  `): the records of `ui.Tree_Data` (`ui/tree_data.odin`).
-- **`.records`** (`RCDS`): `records` (`Records_Info`), `rows` with `id`, `name` and `value` (the
-  code's type, with the file's schema), `texts` (`Records_Text`) and `text` bulk
-  ([records](kinds.md#records)).
-- **`.particle`** (`PART`, of the [`vfx`](../../mirai-world/references/vfx.md#format) plugin):
-  `particle` (`Particle_Info`), `parameters` (`Particle_Parameter`), `hidden` (`Particle_Field`).
-- **`.fracture`** (`FRAC`, of the `destruct` plugin): `fracture` (`Fracture_Info`), `pieces`,
-  `connections`, `clusters`, `vertices` (`Vertex`) and `indices` local to each piece.
-- **`.foliage`** (`FOLI`): `foliage` (`Foliage_Info`), `types`, `cells`, and packed bulk `manual`
-  and `overrides`; defined and validated by the
-  [foliage](../../mirai-world/references/foliage.md#format) plugin.
-- **`.physics_cache`** (`PCAC`): format of the
-  [physics_cache](../../mirai-plugins/references/physics-cache.md) plugin (unique geometry, tracks,
-  frames and poses).
+| Kind | Fourcc | Tables |
+| --- | --- | --- |
+| `.mesh` | `MESH` | `mesh`, bulk `clusters`/`vertices`(`vertex`,`uv1`,`color`,`skin`,`surface`)/`triangles`, `levels`, `slots`, `joints`, `morphs`/`morph_deltas`, `colliders`/`collision_*` |
+| `.skeleton` | `SKEL` | `skeleton`, `bones`, `sockets` |
+| `.tex` | `TEX ` | `texture` (`layers` default 1), `mips`, bulk `texels` |
+| `.mat` | `MAT ` | `material`, `imported`, `parameters`, `overlays`, `hidden` |
+| `.scene` | `SCEN` | `entities`, per-component tables, `scene`, `overrides`, `off` (`Header_Flag.Prefab` -> [prefab](scenes.md#prefab)) |
+| `.anim` | `ANIM` | `clips`, `tracks`, `keys`, `markers`, bulk `streams` (cooked only) |
+| `.sound` / `.sound_set` | `SND ` / `SSET` | `sound` + bulk `samples`/`file`; `sound_set` |
+| `.ui` / `.records` | `UI  ` / `RCDS` | `ui.Tree_Data` tables (`ui/tree_data.odin`); `records`, `rows` (`id`,`name`,`value`), `texts`, bulk `text` |
+| `.particle` / `.fracture` | `PART` / `FRAC` | [`vfx`](../../mirai-world/references/vfx.md#format); `fracture`, `pieces`, `connections`, `clusters`, `vertices`, `indices` |
+| `.foliage` / `.physics_cache` | `FOLI` / `PCAC` | [`foliage`](../../mirai-world/references/foliage.md#format); [`physics_cache`](../../mirai-plugins/references/physics-cache.md) |
 
-Any can have the `import` table (`Import_Info`: source, name of what was taken from it, position,
-size and hash of what was read, importer, its version and that of its format, and the settings
-hash); the asset then carries the `Cooked` flag (`import_put`). That record is the [import
-cache](../../mirai-imports/references/imports.md#import-cache) and the only thing that
-says where an asset came from. `import_peek(path,&types)` reads the header and the `Import_Info`
-from the
-front of the file (header, directory and chunks up to `IMPT`, before the bulk ones), without loading
-meshes or textures: the search for an import's outputs uses it.
+Optional `import` table (`Import_Info`, sets `Cooked` via `import_put`) is the
+[import cache](../../mirai-imports/references/imports.md#import-cache). `import_peek(path,&types)`
+reads header + `IMPT` before bulk chunks.
 
 ### Versions
 
-One rule for all types, of the engine and of plugins:
-
-- **A type reads only the version it writes** (`*_VERSION`): each `*_view` (and a plugin's read)
-  starts with `kind_check(&a,KIND,VERSION)`, which gives `Invalid` for another type and `Version`
-  for a file of another version, older or newer. The engine's types carry theirs in `KINDS`; a
-  plugin's type, in the `version` of its `asset_kinds`, which the build generates as
-  `<STEM>_VERSION` ([manifests](../../mirai-projects/references/projects.md#manifests)).
-- **A change in what a type stores or in what a stored value means raises its version**, and every
-  file of the type is made again: the [refresh](../../mirai-imports/references/imports.md#library)
-  of the next build ingests again the source of an imported one. `version_message` says which asset
-  it is, its type, its version and the one the build reads and, if it was imported, the
-  `mirai import` that rebuilds it in its folder with the root where its source is; for a newer
-  file, a newer engine. `mirai asset verify`
-  and the `asset_errors` of `engine.diagnostics` show it.
-- **Rows are read by the schema the file carries**, by field name (`serial.Migration`): the types
-  a game declares (components, records) change while its files stay, and a field their file lacks
-  reads the default of the read (`asset_rows` with `default`). The rows of an asset type hold
-  every field of its version: its read asks for them `whole`, and a file that does not store one
-  fails with `Version`; `version_message` names the table and the field. A table a file may omit
-  reads empty (`table_rows`, like `skin` in `vertices`).
-- **Saving writes the current version**: a type's `*_document` and a scene taken as `asset.Scene`
-  stamp it. A generic `Document` (`mirai asset set`, a merge, a move) keeps the version of the file
-  it came from, and its rows that file's schema.
+- **Exact version**: every `*_view` calls `kind_check(&a, KIND, VERSION)` (`Invalid` wrong kind,
+  `Version` mismatch). Plugin kinds get `<STEM>_VERSION` from manifest `asset_kinds`
+  ([manifests](../../mirai-projects/references/projects.md#manifests)).
+- **Bump = rebuild**: format/meaning changes bump version; next build refreshes imports
+  ([library](../../mirai-imports/references/imports.md#library)). `version_message` reports the
+  reimport command (`mirai asset verify`, `asset_errors`).
+- **Schema migration**: game types migrate by field name (`serial.Migration`, missing fields get
+  `default`); asset-kind rows require `whole=true` (missing field -> `Version`); optional tables
+  use `table_rows`. Typed saves stamp current version; generic `Document` preserves file version.
 
 ## Registry
 
-`asset.Registry` (`asset/registry.odin`, with the behavior of each operation in its comments) knows
-which file of a folder has which id, of what type and what it depends on. A scan reads only the
-start of each file, skips names that start with a dot and files being written, and keeps what it
-saw in a cache: a file whose size and date did not change is not opened again, not even in another
-run. The editor has the cache in the project's `.mirai/cache/registry`; the player, cooking and
-`mirai asset` do not use it. What a scan saw depends on how the build reads a header: a cache (or
-packed index) of another `REGISTRY_CACHE_VERSION` or container `VERSION` is not read, and the
-scan opens every file and writes it again.
+`asset.Registry` (`asset/registry.odin`) maps folder files to id/kind/deps via header-only scans
+(skips dotfiles and active writes), cached by size+mtime in `.mirai/cache/registry` (invalidated
+on `REGISTRY_CACHE_VERSION` or container `VERSION` mismatch; player/cook/`mirai asset` skip cache).
 
-- `registry_refresh` updates only the paths it is given, without walking the folder: the editor
-  uses it with what it writes (save, import) and the watcher with what it sees change
-  ([host](../../mirai-core/references/host.md#failures-unloading-and-watching)).
-- `Registry.revision` advances before a scan, a refresh or a load replace files and paths, even if
-  the operation fails. The rows and their borrowed strings are valid until then: whoever caches them
-  checks the revision, even if the address and count of `files` repeat. It belongs to the registry,
-  not to the GPU resource counter of `host.Assets`.
-- With a cache, `Registry.removed` gathers the ids that no file is anymore, also those deleted with
-  the program closed. Whoever keeps something per asset (the
-  [previews](../../mirai-editor/references/panels.md#previews)) reads them and empties it.
-- `Registry_File.flags` are those of the header: `registry_prefab` reads from them whether a scene
-  is a prefab ([prefab](scenes.md#prefab)).
-- `registry_dependents` comes from an inverse index built with each change: how many use an asset is
-  its length, without walking the files (`asset.list` reports it as `used_by`).
-- **Listed outputs.** What the
-  [imports](../../mirai-imports/references/imports.md#identity-and-reimport) build that nobody
-  edits is not a file of the assets folder but an object of the machine store. The root and each
-  mount take the entries `root_packages` gives for the packages their root pins: `packages_resolve`
-  of its `packages.mirai` against the store (`asset/packages_root.odin`). Every program that sets
-  up the registry of a root that is not shipped goes through it, with the store root as a value
-  (the machine's unless it names another); a root without the list opens no store, and what it
-  cannot list is a problem that names the package, reported where that program reports asset
-  problems, never a failure to start. A scan lists each like any asset (`Registry_File.listed`),
-  with no source anywhere, from the header and dependencies `packages_resolve` read of its object.
-  An entry whose build is not on this machine, or whose object is not here, stays listed as
-  `Not_Built` (its id and kind, not found by id), never removed and never an error of the scan;
-  an object that is not the asset its entry names is `Broken`. A path a file, a folder or another
-  entry has takes the id of the entry after its name, never the order of a scan, and an entry with
-  no id or a path that is empty or leaves its folder is refused (`Registry.refused`). Objects do
-  not change: a refresh keeps what is listed, unless a file of the folder appears at its path
-  (which runs a scan), and memory holds no listed path. A listed path has no file
-  (`registry_file_path` gives ""): `registry_listed_object` gives its object, which `host` opens
-  by parts, and `registry_read` its file from `Registry.store`. A cooked folder has none: the cook
-  writes every asset at its path.
-- **Mounts.** `registry_mount` adds a folder under a prefix (a plugin's assets, in
-  `plugins/<name>`). A prefix that starts with a dot belongs to the program's assets (the editor's,
-  in `.editor`): they are found by id and by path, but a project's lists omit them
-  (`registry_listed`). Whoever opens a file by its registry path resolves it with
-  `registry_file_path`.
-- **Guest mounts.** `registry_mount_guest` mounts while running a folder the program did not ship
-  (what a player saved or downloaded, mods) and reads its files at once, also over a packed index;
-  `registry_unmount` takes it out with its files. What the program has wins: a guest file whose id
-  a file outside the guests has, or a guest file before it in path order, is not in the registry,
-  neither by id nor by path, and stays in `Registry.refused` until a scan, a refresh of its path or
-  the unmount. `host` opens a guest file with a byte limit far below the default one
-  (`ASSETS_GUEST_LIMIT`, read and decompressed).
-- **In-memory files** (`registry_memory.odin`): what an editor changed in a step that has not ended
-  and so has not written. While a
-  path is in memory, its registry entry is what that content says and `registry_read` gives its
-  bytes; a scan or a refresh keep it, the cache and the index do not store it, and
-  `registry_memory_write` writes it and forgets it. A file outside the folders (a program's `.slang`
-  source) can also be in memory (`registry_outside`), without being a registry file: whoever reads
-  it asks the memory and, without it, the disk.
-- **Packed index.** `registry_save` writes what the registry has and `registry_load` reads it
-  without looking at the folder.
-  [Cooking](../../mirai-projects/references/build.md#asset-cooking) leaves it as `.index`
-  (`REGISTRY_INDEX`) and `host.assets_init` uses it instead of scanning: the folder is then what
-  its index says (`Assets.indexed`) and `assets_scan` does not look at it again, nor
-  `assets_refresh` outside the guest mounts; an unreadable one is ignored and scanned. Whoever opens
-  a file still checks its hash, id and type.
-- **Repeated ids.** Several files with one id are copies made outside the editor of one of them.
-  With `Registry.resolve_duplicates` (the registry of `host.assets_init`), the oldest is the
-  original (`file_newer`) and each copy receives, in the registry's memory, an id of its own derived
-  from the one it had and from its path, so it is the same on each scan until its file is written
-  with it; it stops being part of another asset and an output of an import. An unedited copy follows
-  its file; one that was already in memory with the repeated id is an edit and keeps it. A tool that
-  only reads (`mirai asset ls`, cooking) does not activate it and sees the pair in `r.duplicates`.
-  The cook refuses the pair (`Duplicate_Id`, naming both files): which one the editor takes depends
-  on the creation times of a machine, so a game ships neither until the copy is written with its own
-  id.
+- `registry_refresh` updates given paths only
+  ([watching](../../mirai-core/references/host.md#failures-unloading-and-watching)).
+  `Registry.revision` increments before every scan/refresh/load swap (even on failure); cached
+  borrowed strings must check it. `Registry.removed` tracks vanished ids for
+  [previews](../../mirai-editor/references/panels.md#previews). `registry_prefab` reads
+  `Registry_File.flags`. `registry_dependents` uses a live inverse index (`used_by`).
+- **Listed outputs** (`asset/packages_root.odin`): unedited import blobs live in the store via
+  `root_packages` / `packages_resolve` (`Registry_File.listed`; `Not_Built` if missing, `Broken`
+  if mismatched, invalid paths in `Registry.refused`; `registry_file_path` returns `""`; read via
+  `registry_listed_object` / `registry_read` from `Registry.store`). Cooked folders have none.
+- **Mounts**: `registry_mount` adds plugin folders (`plugins/<name>`); dot prefixes (`.editor`)
+  are hidden from `registry_listed`; resolve disk paths with `registry_file_path`.
+- **Guest mounts**: `registry_mount_guest` / `registry_unmount` load runtime user/mod folders;
+  shipped assets win id collisions (losers go to `Registry.refused`); `host` enforces
+  `ASSETS_GUEST_LIMIT`.
+- **In-memory & index**: `registry_memory.odin` shadows uncommitted edits (`registry_memory_write`,
+  `registry_outside` for `.slang`). Cooked `.index` (`REGISTRY_INDEX`) loads via `registry_load`
+  (`Assets.indexed`, disables rescan outside guests).
+- **Duplicates**: `Registry.resolve_duplicates` (editor/host) assigns deterministic in-memory ids
+  to newer copies (`file_newer`), dropping owner/import flags; cook disables it and fails with
+  `Duplicate_Id`.
+
+```odin
+reg: asset.Registry
+if asset.registry_init(&reg, "demo/assets", "demo/.mirai/cache/registry") {
+    defer asset.registry_destroy(&reg)
+    _ = asset.registry_mount(&reg, "plugins/physics/assets", "plugins/physics")
+    _ = asset.registry_scan(&reg)
+    _ = asset.registry_refresh(&reg, {"control/control.scene"})
+}
+```
 
 ## Packages
 
-The records of the imports kept in the [machine store](../../mirai-store/SKILL.md)
-(`asset/packages.odin`), three texts with a version each.
+Import records in the [machine store](../../mirai-store/SKILL.md) (`asset/packages.odin`):
 
-- **Package manifest** (`Package`): an object, named by `manifests/<BLAKE3 of its text>`, what a
-  pin names; `packages/<package id>` holds that BLAKE3, not an object, on the machine that
-  ingested it, so a refresh asks a source or a peer for a manifest only by `manifests/`. The
-  import that ingests a source writes it. A root that pins it also keeps
-  its text, versioned, in `packages/<package id>.mirai` beside `packages.mirai`
-  (`package_file`). An importer's catalog path groups the package in the store browser.
-  It does not set the project's asset destination or the identity of the source.
-- **Build manifest** (`Build`): an object that names each output and the generated program sources
-  it needs, named by
-  `imports/<import_key>` (Final) or `imports-fast/<import_key>` by the import that builds it, and by
-  `builds/<build_select>` by the refresh of a project that chose it.
-- **Project list** (`Packages`): `packages.mirai` beside `project.mirai`, versioned. The library
-  (`project_pin`, `project_unpin`) writes it and the manifest files, and nothing else does.
-
-- **A project pins the manifest, never a build.** The manifest holds what the source is (its
-  `identity`), where it was (`origin`, a hint) and each asset with its id, and nothing that
-  depends on the engine version: an engine that changes a version leaves the list as it is.
-- **A generated program is a store object.** Its identifier includes the address of its source.
-  Store copies, peer fetches and sweep reach it through the build manifest. The project generates
-  its compiled stages using its active shader sources and the requested backend.
-- **A root carries the manifests it pins.** The address a pin names is that of its manifest
-  file's bytes, so a clone or a copy of the root, with an empty store, has every id and setting;
-  only builds need the store, a source or a peer. `package_load` takes a manifest the store
-  lacks from that file and puts it in the store; a file that is not its pin's bytes is a problem
-  of that package, also when the store has the manifest.
-- **The origin of a source in a root is relative to it** (`assets/...`, from the root whose
-  assets folder holds it), so every copy of the root writes the same manifest and finds the
-  source; a source in no root keeps its absolute path.
-- **Builds are found by name.** `import_key` combines the identity with the versions of what
-  imports; any machine with the manifest computes it, without the source, and a peer that built
-  that key gives it. `build_select` combines the manifest with the version of each kind of the
-  cache it holds, so a program without importers (the dev player) finds the build the refresh
-  chose. The caches of `cook/cache` name theirs in `cache-<name>`.
-- `packages_resolve` lists, for each package of the list, its assets of the cache the project
-  uses with what they depend on, at `<folder>/<name><extension>`, with their object and its
-  header. A missing build lists them not built; a manifest that neither the store nor the root
-  has, that does not read or whose file is not its pin, a build that does not read and an asset
-  the manifest lacks are problems of the result. It removes, builds and fetches nothing.
-- An asset id is random at the first ingest and the manifest keeps it; an ingest again takes
-  each id from the manifest before it.
+- **`Package` manifest**: `manifests/<BLAKE3>` object (`packages/<id>` ref on ingest machine;
+  versioned copy in `packages/<id>.mirai` via `package_file`). Holds source `identity`, `origin`
+  (root-relative for in-root sources), and asset ids (random on first ingest, preserved on
+  re-ingest). No engine-version data.
+- **`Build` manifest**: `imports/<import_key>` (Final), `imports-fast/<import_key>`, and
+  `builds/<build_select>` (chosen by refresh). Lists outputs and generated shader program objects.
+- **`Packages` list**: versioned `packages.mirai`, written only by `project_pin`/`project_unpin`.
+  Projects pin manifests, never builds; `package_load` verifies manifest file bytes against pin
+  hash; `packages_resolve` lists outputs read-only.
 
 ## Text
 
-`document_text_write` produces the JSON that `mirai asset dump` prints and `unpack` saves, of
-every kind but a scene and a `.ui`, whose text is their document ([CLI](cli.md#subcommands)):
-`mirai_asset`, the header (`kind`, `kind_version`, `id`, `owner` only on a part of another asset,
-`flags`), `dependencies`, the optional `schema` and the `tables`, each with its columns and `data`.
-
-- One row per line. With a single unnamed column the row is the value; otherwise, an object with one
-  value per column.
-- `"schema"` is written with `Text_Options.schema`. `Bulk` tables carry no `"data"`: with
-  `bulk=.Files` each column names its file. `Text_Options.diff` leaves out the index
-  of the type of each column, which a type added before it would change.
-- `document_text_read` rebuilds the document (with a `Bulk_Loader` for the files) and reports
-  `Text_Problem {code, rule, offset}`.
+`document_text_write` emits JSON (`mirai asset dump`/`unpack`, all kinds except scene/`.ui` which
+use document JSON; [CLI](cli.md#subcommands)): `mirai_asset`, header (`kind`, `kind_version`,
+`id`, optional `owner`, `flags`), `dependencies`, optional `schema` (`Text_Options.schema`), and
+`tables` (1 row/line; `Bulk` omits `data`, `bulk=.Files` names files; `Text_Options.diff` omits
+column type indices). `document_text_read` uses `Bulk_Loader` and reports
+`Text_Problem{code, rule, offset}`.

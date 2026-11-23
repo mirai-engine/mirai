@@ -40,8 +40,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
     input = raster_facing(input, front_facing);
     int2 p = int2(pixel_position.xy);
     float depth = fragment_depth(input);
-    float opaque = g_depth.Load(int3(p, 0)).r;
-    if (!depth_empty(opaque) && depth >= depth_distance(opaque)) discard;
+    // What the opaque scene hides failed the depth test (glass_layers).
     if (params.peeled != 0u && !behind_layer(depth, nearer_depth.Load(int3(p, 0)).r)) discard;
     uint bits = 0u;
     Material m = fragment_material(input);
@@ -50,7 +49,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
         if (params.peeled != 0u || input.in_instance + 1u != params.medium || m.alpha_mode != ALPHA_BLEND || !material_solid(m)) discard;
         bits = GBUFFER_GLASS_EXIT;
     }
-    Fragment f = fragment_evaluate(input, opaque);
+    Fragment f = fragment_evaluate(input, m, g_depth.Load(int3(p, 0)).r);
     bits |= f.values.layers.bits;
 #ifdef MIRAI_GLASS_LAYERS
     output.out_layers = gbuffer_layers_pack(f.values.layers);

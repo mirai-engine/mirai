@@ -99,7 +99,7 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	clear(&s.tlas_nodes)
 	append(&s.tlas_nodes, TLAS_EMPTY)
 	append(&s.tlas_refs, 0)
-	s.tlas_node_count, s.glass_node_count = 1, 0
+	s.tlas_node_count = 1
 	// What the maps of the shadows held of them is stale.
 	if s.has_bounds {
 		s.shadow_stale_by[.Scene] += 1
@@ -108,7 +108,7 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	clear(&s.shadow_changes)
 	clear(&s.shadow_tracks)
 	clear(&s.shadow_followed)
-	s.has_bounds = false
+	s.has_bounds, s.bounds_stale = false, false
 }
 
 // Removes only this mesh's ranges and hides the instances that named it.

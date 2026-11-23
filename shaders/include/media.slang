@@ -19,7 +19,7 @@ static float media_across = 0.0;
 // The most nodes of the tree of the lights with shadows a point of a medium
 // takes through a shadow ray each (light_cut): past it, groups stand for
 // their lights.
-#define MEDIA_LIGHT_BUDGET 4u
+#define MEDIA_LIGHT_BUDGET 16u
 
 // What the local lights give a point of a medium towards the eye, of the
 // share of their light media scatter, as direct_lighting gives a surface the

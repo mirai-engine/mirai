@@ -75,9 +75,9 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 [[vk::binding(SLOT_IRRADIANCE, 0)]] Texture2D<float4> irradiance_atlas : register(MIRAI_REGISTER(t, SLOT_IRRADIANCE), space0);
 [[vk::binding(SLOT_DISTANCE, 0)]] Texture2D<float4> distance_atlas : register(MIRAI_REGISTER(t, SLOT_DISTANCE), space0);
 [[vk::binding(SLOT_SURFACE, 0)]] Texture2D<float4> surface_specular : register(MIRAI_REGISTER(t, SLOT_SURFACE), space0);
-// The motion target of the view: rg the motion of each pixel, b the roughness
-// of its material before specular antialiasing, a 1 + its nested view.
-[[vk::binding(SLOT_VIEWS, 0)]] Texture2D<float4> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
+// The views target of the view while it has nested views (FRAME_FLAG_NESTED):
+// 1 + the nested view of each pixel, 0 for the view itself (pixel_view).
+[[vk::binding(SLOT_VIEWS, 0)]] Texture2D<uint> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
 #include "brdf.slang"
 #include "air.slang"
 
@@ -288,49 +288,6 @@ float3 sky_shown(float3 dir) {
 float3 sky_reflected(float3 dir, float spread) {
     float3 light = sky_radiance(dir, spread);
     return frame.background_map.y > 0.5 ? lerp(background_look(dir, spread), light, saturate(spread)) : light;
-}
-
-// How much of a pixel's specular reflection is traced instead of read from
-// the probe volume: all of it on smooth surfaces, fading to none at the limit.
-// The G-buffer keeps roughness in half floats, and a material set exactly at a
-// limit (the 0.15 of a polished metal) may come back a hair below it: the
-// reflections decide by its roughness plus this, so that it stays on its side.
-#define ROUGHNESS_ROUNDING 0.001
-
-float reflection_weight(float roughness) {
-    float limit = frame.texturing.y;
-    return limit > 0.0 ? 1.0 - smoothstep(limit * 0.5, limit, roughness) : 0.0;
-}
-
-// The pattern of the traced reflections: each cell of a tile of
-// REFLECT_PATTERN x REFLECT_PATTERN traces its own stratum of the lobe,
-// neighbours far apart in it, so that a filter over a tile takes every stratum
-// once (reflect_resolve.comp), and the same one every frame.
-#define REFLECT_PATTERN 4
-static const uint REFLECT_PATTERN_RANKS[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
-float2 reflect_pattern_stratum(int2 cell) {
-    uint rank = REFLECT_PATTERN_RANKS[(cell.y & 3) * 4 + (cell.x & 3)];
-    return (float2(float(rank & 3u), float(rank >> 2u)) + 0.5) / 4.0;
-}
-
-// The pixel of a block of `block` x `block` (a power of two) that traces the
-// block's ray this frame. Every pixel takes its turn, and turns that follow
-// each other fall in different quarters of the block.
-int2 block_pixel(uint frame_index, uint block) {
-    int2 p = int2(0);
-    uint i = frame_index;
-    for (uint size = block >> 1u; size > 0u; size >>= 1u) {
-        uint q = i & 3u;
-        p += int2(int(q & 1u), int((q >> 1u) ^ (q & 1u))) * int(size);
-        i >>= 2u;
-    }
-    return p;
-}
-
-// The pixel of a block of 2x2 that traces the reflection of a cell: always the
-// same one, scattered over the cells.
-int2 reflect_block_pixel(int2 cell) {
-    return block_pixel(hash_u32(uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u), 2u);
 }
 
 // ---------------------------------------------------------------- instances of batches
@@ -650,23 +607,19 @@ float4 material_texel(uint texture_index, float2 uv, float lod) {
 #endif
 }
 
-float2 material_map_uv(Material m, uint map, float2 uv0, float2 uv1) {
-    Material_Map_Transform transform = materials[m.row].map_transforms[map];
+float2 material_map_uv(Material_Map_Transform transform, float2 uv0, float2 uv1) {
     float2 uv = transform.uv_set == 1u ? uv1 : uv0;
     return float2(dot(transform.linear.xy, uv), dot(transform.linear.zw, uv)) + transform.offset;
 }
-float material_map_lod(Material m, uint map, float2 lod, bool ray) {
-    Material_Map_Transform transform = materials[m.row].map_transforms[map];
-    float value = transform.uv_set == 1u ? lod.y : lod.x;
-    return ray ? value + transform.ray_lod : value;
-}
+float2 material_map_uv(Material m, uint map, float2 uv0, float2 uv1) { return material_map_uv(materials[m.row].map_transforms[map], uv0, uv1); }
 float4 material_map_texel(Material m, uint map, uint texture_index, float2 uv0, float2 uv1, float2 lod, bool ray) {
-    float2 uv = material_map_uv(m, map, uv0, uv1);
-    float level = material_map_lod(m, map, lod, ray);
+    Material_Map_Transform transform = materials[m.row].map_transforms[map];
+    float2 uv = material_map_uv(transform, uv0, uv1);
+    float level = transform.uv_set == 1u ? lod.y : lod.x;
+    if (ray) level += transform.ray_lod;
 #ifdef MATERIAL_GRADIENTS
     if (!ray) {
         // The gradients of its uv set, through the linear part of its transform, `level` a bias.
-        Material_Map_Transform transform = materials[m.row].map_transforms[map];
         float4 g = material_uv_gradients[transform.uv_set == 1u ? 1 : 0];
         float2 dx = float2(dot(transform.linear.xy, g.xy), dot(transform.linear.zw, g.xy));
         float2 dy = float2(dot(transform.linear.xy, g.zw), dot(transform.linear.zw, g.zw));
@@ -708,13 +661,14 @@ bool instance_mirrored(Instance inst) { return dot(inst.world[0].xyz, cross(inst
 // A tangent of an instance in the world: a unit direction along its surface,
 // as long as the normal it is interpolated with (MikkTSpace), and the side
 // its bitangent is on, which a reflection turns around.
-float4 instance_tangent(Instance inst, float4 tangent) {
-    return float4(normalize(transform_vector(inst.world, tangent.xyz)), instance_mirrored(inst) ? -tangent.w : tangent.w);
+// mirrored: instance_mirrored of the instance.
+float4 instance_tangent(Instance inst, bool mirrored, float4 tangent) {
+    return float4(normalize(transform_vector(inst.world, tangent.xyz)), mirrored ? -tangent.w : tangent.w);
 }
 // The tangent of a point of a triangle a ray hit: those of its corners interpolated at w, in the world.
 float4 hit_tangent(Instance inst, float3 w, Mesh_Triangle t) {
     float3 along = t.a.tangent.xyz * w.x + t.b.tangent.xyz * w.y + t.c.tangent.xyz * w.z;
-    return instance_tangent(inst, float4(along, t.a.tangent.w));
+    return instance_tangent(inst, instance_mirrored(inst), float4(along, t.a.tangent.w));
 }
 // The normal the normal map of a material gives where a ray hit a triangle.
 float3 material_ray_normal(Material m, Instance inst, float3 normal, float3 w, Mesh_Triangle t, float2 uv, float2 uv1, float2 lod) {
@@ -857,6 +811,13 @@ uint material_layers_allowed(uint layers) {
     if (MIRAI_MATERIAL_NO_LAYERS) return layers & MATERIAL_LAYER_UNLIT;
 #endif
     return layers;
+}
+// Whether a material reads the tangent of its surface: by its normal map, the
+// normal map of its coat, an anisotropic lobe or a program.
+bool material_tangents(Material m) {
+    uint layers = material_layers_allowed(m.layers);
+    return m.program_id != 0u || material_has(m.textures[MATERIAL_MAP_NORMAL]) || (layers & MATERIAL_LAYER_ANISOTROPY) != 0u
+        || ((layers & MATERIAL_LAYER_COAT) != 0u && material_has(m.textures[MATERIAL_MAP_COAT_NORMAL]));
 }
 // The layers a material holds at a point (MATERIAL_LAYER_* of its row): the
 // blocks of the row, under the values of the instance, by their maps. The coat follows the surface under the
@@ -1130,8 +1091,12 @@ void material_wet_apply(inout Material_Sample s, Material m, float wet) {
 // the shared maps; the normal supplied by the caller remains its input.
 Material_Sample material_sample_finish(Material_Sample values, Material m, Mirai_Surface_Context ctx) {
     material_wet_apply(values, m, ctx.wet);
-    // A masked material covers by its mask map, whatever its program or standard model give.
+    // A masked material covers by its mask map, whatever its program or standard model give. A
+    // surface resolved from the visibility target (MATERIAL_GRADIENTS) was cut by it there
+    // (vis_raster.frag), and nothing reads its alpha.
+#ifndef MATERIAL_GRADIENTS
     if (m.alpha_mode == ALPHA_MASK) values.alpha = material_mask(m, ctx.uv0, ctx.uv1, float2(ctx.lod, ctx.lod1), ctx.ray);
+#endif
     // The emission of the instance takes the mode of the material's.
     values.emission_relative = m.emission_mode == EMISSION_RELATIVE;
     return values;
@@ -1340,34 +1305,6 @@ float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direc
     return hit_normal_turned(face, surface_from_triangle(instance_index, primitive, bary, 1e-4).normal, direction);
 }
 
-// The filter of a blended surface from the values of its material at a
-// point, for light that crosses it: the color it filters with (its tint) and
-// what each of its faces lets through of what it does not reflect (through,
-// white without transmission). Both hold where it covers (alpha): zero passes
-// white, one the linear base color (black blocks) less what it reflects.
-float3 blend_filter_of(Material m, Material_Sample values, out float3 through) {
-    float covered = saturate(values.alpha);
-    through = 1.0 - values.f0 * (m.transmission * covered);
-    return lerp(float3(1.0), saturate(values.base_color), covered);
-}
-// The same at the point of a triangle with barycentric weights w, as a ray
-// that stands for `footprint` meters of it sees it, for a material without a
-// program. UVs, vertex colors and object tint follow the same material
-// evaluation as the visible surface.
-float3 blend_filter(Instance inst, Material m, Mesh_Triangle t, float3 w, float footprint, out float3 through) {
-    float4 vertex_color = t.a.color * w.x + t.b.color * w.y + t.c.color * w.z;
-    float3 color = instance_color(inst, m, vertex_color.rgb);
-    float3 edge1 = transform_vector(inst.world, t.b.position - t.a.position);
-    float3 edge2 = transform_vector(inst.world, t.c.position - t.a.position);
-    float2 lod = float2(hit_lod(edge1, edge2, t.b.uv - t.a.uv, t.c.uv - t.a.uv, footprint), hit_lod(edge1, edge2, t.b.uv1 - t.a.uv1, t.c.uv1 - t.a.uv1, footprint));
-    float2 uv = t.a.uv * w.x + t.b.uv * w.y + t.c.uv * w.z;
-    float2 uv1 = t.a.uv1 * w.x + t.b.uv1 * w.y + t.c.uv1 * w.z;
-    float3 position = transform_point(inst.world, t.a.position * w.x + t.b.position * w.y + t.c.position * w.z);
-    float3 normal = transform_normal(inst.world_inv, t.a.normal * w.x + t.b.normal * w.y + t.c.normal * w.z);
-    Material_Sample values = material_sample(m, material_context_cone(material_context_instance(material_context(position, normal, uv, uv1, lod, true), inst, vertex_color), footprint), color, inst.emission.rgb, normal);
-    return blend_filter_of(m, values, through);
-}
-
 // footprint: width in world units of what the ray gathers at the hit. Wide
 // rays read coarse texture levels, which also keeps their noise low.
 // The point of a triangle a ray met, as its material reads it.
@@ -1450,7 +1387,7 @@ Surface surface_from_hit(Hit_Point h, bool given, Mirai_Surface program) {
 }
 // Whether what a material gives a point changes with nothing that says so:
 // its program reads the time. A pass that keeps what a ray found does not keep it.
-bool material_changing(Material m) { return m.program_id != 0u && materials[m.row].volume.changing != 0u; }
+bool material_changing(Material m) { return m.program_id != 0u && (materials[m.row].volume.program & MATERIAL_PROGRAM_CHANGING) != 0u; }
 Surface surface_from_triangle(uint instance_index, uint primitive, float2 bary, float footprint) {
     return surface_from_hit(hit_point(instance_index, primitive, bary, footprint), false, (Mirai_Surface)0);
 }

@@ -1,0 +1,1 @@
+../../templates/common/.claude/agents/playtester.md

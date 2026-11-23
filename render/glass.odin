@@ -9,7 +9,6 @@ import "mirai:rhi"
 import mm "mirai:std/math"
 
 GLASS_LAYERS_MAX :: 2
-GLASS_CACHED_REFLECTANCE :: f32(0.25)
 
 Glass_Layer :: struct {
 	albedo:   rhi.Texture, // rgb base color, a metallic
@@ -56,12 +55,12 @@ ensure_glass_targets :: proc(r: ^Renderer, t: ^Targets) -> bool {
 
 // Every texture of the glass of a view, made or not.
 @(private)
-glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 3]rhi.Texture) {
+glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 2]rhi.Texture) {
 	for layer, i in t.glass {
 		each := [7]rhi.Texture{layer.albedo, layer.normal, layer.emission, layer.ids, layer.depth, layer.surface, layer.layers}
 		copy(all[i * 7:], each[:])
 	}
-	rest := [3]rhi.Texture{t.glass_zbuffer, t.glass_scene, t.glass_reflections}
+	rest := [2]rhi.Texture{t.glass_zbuffer, t.glass_scene}
 	copy(all[GLASS_LAYERS_MAX * 7:], rest[:])
 	return
 }
@@ -69,8 +68,7 @@ glass_textures :: proc(t: ^Targets) -> (all: [GLASS_LAYERS_MAX * 7 + 3]rhi.Textu
 @(private)
 destroy_glass_targets :: proc(r: ^Renderer, t: ^Targets) {
 	for tex in glass_textures(t) {if tex != 0 {rhi.texture_destroy(r.device, tex)}}
-	t.glass, t.glass_zbuffer, t.glass_scene, t.glass_reflections = {}, 0, 0, 0
-	t.glass_valid = false
+	t.glass, t.glass_zbuffer, t.glass_scene = {}, 0, 0
 }
 
 // m over the top of a solid within which the pixels of a view near it decide whether they start in it
@@ -80,17 +78,17 @@ GLASS_MEDIUM_NEAR :: f32(0.25)
 // The solid blended instance under the top of whose box the camera is, within its sides, plus one: the smallest
 // of them, the one further in, by its box down to the camera when the camera is below it. Under, not only
 // inside: under a sheet open below, as the surface of water, is inside it. The glass passes find whether
-// the camera is in its solid; 0 when it is under none.
+// the camera is in its solid; 0 when it is under none. row: that of the material of its medium.
 @(private)
-glass_medium :: proc(r: ^Renderer, camera: Vec3) -> (medium: u32) {
+glass_medium :: proc(r: ^Renderer, camera: Vec3) -> (medium, row: u32) {
 	smallest := max(f32)
 	for entry in r.scene.translucent {
-		if !entry.solid {continue}
+		if entry.medium == 0 {continue}
 		inst := &r.scene.instances[entry.instance]
 		lo, hi := inst.bounds_min.xyz, inst.bounds_max.xyz
 		if camera.x < lo.x || camera.z < lo.z || camera.x > hi.x || camera.y > hi.y + GLASS_MEDIUM_NEAR || camera.z > hi.z {continue}
 		size := hi - lo
-		if volume := size.x * size.z * (hi.y - min(lo.y, camera.y)); volume < smallest {smallest, medium = volume, entry.instance + 1}
+		if volume := size.x * size.z * (hi.y - min(lo.y, camera.y)); volume < smallest {smallest, medium, row = volume, entry.instance + 1, entry.medium - 1}
 	}
 	return
 }
@@ -125,26 +123,13 @@ glass_visible :: proc(s: ^Scene_State, frame: ^Gpu_Frame) -> []Translucent {
 
 @(private)
 translucency_in_frustum :: proc(p: ^Pass, f: ^Gpu_Frame) {
-	settings := &p.r.settings
-	size := f.resolution
-	lo, hi := Vec2{1, 1}, Vec2{}
 	p.translucent = glass_visible(&p.r.scene, f)
 	for entry in p.translucent {
-		inst := &p.r.scene.instances[entry.instance]
-		bounds := mm.Aabb{inst.bounds_min.xyz, inst.bounds_max.xyz}
 		p.draw_forward ||= entry.forward
 		p.draw_glass ||= entry.glass
 		p.glass_material_layers ||= entry.layered
-		if settings.reflections != .Off && entry.glass_roughness < settings.reflection_roughness {
-			rect := projected_box(bounds, f.view_proj, f.camera_position.xyz)
-			lo, hi = linalg.min(lo, rect.xy), linalg.max(hi, rect.zw)
-		}
-	}
-	if lo.x < hi.x && lo.y < hi.y {
-		p.glass_reflect_bounds = {
-			u32(max(math.floor(lo.x * size.x) - 1, 0)), u32(max(math.floor(lo.y * size.y) - 1, 0)),
-			u32(min(math.ceil(hi.x * size.x) + 1, size.x)), u32(min(math.ceil(hi.y * size.y) + 1, size.y)),
-		}
+		p.forward_material_layers ||= entry.forward_layered
+		p.glass_rough ||= entry.glass && !entry.glass_smooth
 	}
 	translucent_before_glass(p, f)
 }
@@ -157,6 +142,7 @@ GLASS_TILES :: 32
 // nearest layer has fragments of them to draw.
 @(private = "file")
 translucent_before_glass :: proc(p: ^Pass, f: ^Gpu_Frame) {
+	if !p.draw_glass || !p.draw_forward {return}
 	s := &p.r.scene
 	eye, forward := f.camera_position.xyz, f.camera_forward.xyz
 	margin := 2 / linalg.max(f.resolution, Vec2{1, 1})
@@ -210,23 +196,23 @@ translucent_draws_record :: proc(p: ^Pass) -> bool {
 	instances := rhi.frame_alloc(r.device, u64(count) * size_of(u32), 16)
 	if instances.ptr == nil {return false}
 	for entry, k in p.translucent {([^]u32)(instances.ptr)[k] = entry.instance}
-	// The cells of those split, a thread each, in a pass after; while it is made, none is split.
-	cells := pipeline_of(r, .Translucent_Draws, {TRANSLUCENT_DRAWS_COMP_CELLS})^
+	// The cells of those split for shadowless lights, a thread each, in a pass after; skipped without shadowless lights.
+	shadowless := p.frame.shadowless_lights != 0
+	cells := pipeline_of(r, .Translucent_Draws, {TRANSLUCENT_DRAWS_COMP_CELLS})^ if shadowless else 0
 	Params :: struct {count, hiz_levels, occlusion, cells, split, pad0, pad1, pad2: u32}
 	params := Params{
 		count = u32(count), hiz_levels = t.hiz_levels, occlusion = 1 if p.pyramid else 0,
 		cells = u32(s.translucent_draws_capacity), split = 1 if cells != 0 else 0,
 	}
-	rhi.cmd_fill_buffer(cmd, s.translucent_cell_jobs, 0, size_of([2]u32), 0)
+	if cells != 0 {rhi.cmd_fill_buffer(cmd, s.translucent_cell_jobs, 0, size_of([2]u32), 0)}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Translucent_Draws])
 	set_params(cmd, &params)
 	rhi.cmd_bind_transient(cmd, SLOT_PASS0, instances)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.hiz[p.current] if p.pyramid else r.dummy_texture)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, s.translucent_draws)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, s.translucent_lists)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.translucent_cuts)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.translucent_entries)
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.translucent_cell_jobs)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.translucent_entries)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS5, s.translucent_cell_jobs)
 	rhi.cmd_dispatch(cmd, groups(u32(count), 64))
 	if cells != 0 {
 		rhi.cmd_bind_pipeline(cmd, cells)
@@ -257,18 +243,46 @@ translucent_run_end :: proc(p: ^Pass, run: ^Translucent_Run, plain: rhi.Transien
 	run.count = 0
 }
 
-// The draws of the blended programs of entry k with the stage of target.
+// A stage of the blends: its pipeline, the one with the constants that spare
+// work, and that one without the feedback of the textures
+// (translucent_forward_pipelines).
+@(private)
+Translucent_Stage :: struct {
+	base, target, quiet: ^rhi.Pipeline,
+}
+
+// The pipeline of a stage of the blends for a Surface program.
 @(private = "file")
-translucent_entry_draw :: proc(p: ^Pass, run: ^Translucent_Run, target: ^rhi.Pipeline, k: int, plain: rhi.Transient) {
-	programs, count := instance_blended_programs(&p.r.scene, p.translucent[k].instance)
-	for program in programs[:count] {
-		pipeline := program_graphics(p.r, target, program)
+translucent_pipeline :: proc(r: ^Renderer, stage: Translucent_Stage, program: u32) -> rhi.Pipeline {
+	return program_spared(r, stage.base, stage.target if textures_feedback_turn(r, program) else stage.quiet, program)
+}
+
+// The draws of the blended programs of entry k with that stage.
+@(private = "file")
+translucent_entry_draw :: proc(p: ^Pass, run: ^Translucent_Run, stage: Translucent_Stage, k: int, plain: rhi.Transient) -> (flushed: int) {
+	entry := p.translucent[k]
+	if !entry.multi_program {
+		program := entry.program
+		pipeline := translucent_pipeline(p.r, stage, program)
 		if run.count > 0 && (run.pipeline != pipeline || run.program != program || run.first + run.count != u32(k)) {
 			translucent_run_end(p, run, plain)
+			flushed += 3
+		}
+		if run.count == 0 {run^ = {pipeline = pipeline, program = program, first = u32(k)}}
+		run.count += 1
+		return
+	}
+	programs, count := instance_blended_programs(&p.r.scene, entry.instance)
+	for program in programs[:count] {
+		pipeline := translucent_pipeline(p.r, stage, program)
+		if run.count > 0 && (run.pipeline != pipeline || run.program != program || run.first + run.count != u32(k)) {
+			translucent_run_end(p, run, plain)
+			flushed += 3
 		}
 		if run.count == 0 {run^ = {pipeline = pipeline, program = program, first = u32(k)}}
 		run.count += 1
 	}
+	return
 }
 
 // Split between complete instances so the command count stays within the pass bound.
@@ -286,9 +300,8 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 	run: Translucent_Run
 	for entry, k in p.translucent {
 		if !entry.glass {continue}
-		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
-		needed := 3 * int(max(s.meshes[mesh].slot_count, 1))
-		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+		needed := 3 * (int(entry.slots) if entry.multi_program else 1)
+		if commands + needed + 3 > rhi.MAX_RENDER_PASS_COMMANDS {
 			translucent_run_end(p, &run, plain)
 			rhi.cmd_end_render_pass(cmd)
 			for &color in pass.colors[:pass.color_count] {color.load = .Load}
@@ -296,8 +309,7 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 			rhi.cmd_begin_render_pass(cmd, pass)
 			commands = 0
 		}
-		translucent_entry_draw(p, &run, target, k, plain)
-		commands += needed
+		commands += translucent_entry_draw(p, &run, {target, target, target}, k, plain)
 	}
 	translucent_run_end(p, &run, plain)
 	rhi.cmd_end_render_pass(cmd)
@@ -306,7 +318,7 @@ glass_raster :: proc(p: ^Pass, pass: ^rhi.Render_Pass_Desc, target: ^rhi.Pipelin
 @(private)
 glass_layers :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
-	p.glass_medium = glass_medium(r, p.camera.position)
+	p.glass_medium, p.glass_medium_row = glass_medium(r, p.camera.position)
 	rhi.cmd_timestamp(cmd, "glass layers")
 	if !translucent_draws_record(p) {return}
 	for k in 0 ..< glass_layer_count(r) {
@@ -348,22 +360,44 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	pass := rhi.Render_Pass_Desc{color_count = 1, name = "translucent forward"}
 	pass.colors[0] = {texture = t.display, load = .Load, store = .Store}
 	pass.depth = {texture = t.depth, load = .Load, store = .Store}
-	Params :: struct {light_budget, near_layer, far_layer, overflow: u32}
+	if s.light_grid_dirty {
+		light_grid_record(r, cmd)
+		s.light_grid_dirty = false
+	}
+	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
+	Params :: struct {
+		light_budget, near_layer, far_layer, overflow: u32,
+		grid_origin: Vec3, grid_cell: f32,
+		grid_size: [3]u32, cells: u32,
+	}
 	params := Params{
 		light_budget = r.settings.light_budget,
 		near_layer = 1 if near_layer != 0 else 0, far_layer = 1 if far_layer != 0 else 0,
+		grid_origin = s.light_grid.origin, grid_cell = s.light_grid.cell,
+		grid_size = s.light_grid.size, cells = cells if s.light_grid_buffer != 0 else 0,
 	}
 	bind_light_maps(p, p.frame.sun_maps.z != 0)
 	textures_feedback_bind(r, cmd)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, texture_or_dummy(r, near_layer))
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, texture_or_dummy(r, far_layer))
-	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.translucent_cuts)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, or_dummy(r, s.light_grid_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.translucent_entries)
 	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, s.translucent_lists)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, t.shadow_raster.pages if p.frame.sun_maps.z != 0 else r.scratch_buffer)
-	set_params(cmd, &params)
-	targets := translucent_forward_pipelines(p, overflow)
+	params_forward := rhi.frame_alloc(r.device, size_of(Params))
+	if params_forward.ptr == nil {return}
+	(^Params)(params_forward.ptr)^ = params
+	params_overflow: rhi.Transient
+	if overflow {
+		params_overflow = rhi.frame_alloc(r.device, size_of(Params))
+		if params_overflow.ptr == nil {return}
+		over := params
+		over.overflow = 1
+		(^Params)(params_overflow.ptr)^ = over
+	}
+	rhi.cmd_bind_transient(cmd, SLOT_PARAMS, params_forward)
+	stages := translucent_forward_pipelines(p, overflow)
 	behind := near_layer != 0
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -372,28 +406,30 @@ translucent_forward :: proc(p: ^Pass, near_layer, far_layer: rhi.Texture, overfl
 	for entry, k in p.translucent {
 		forward := entry.forward && !(behind && entry.before)
 		draws := 0
-		for target, i in targets {
-			if target != nil && (i < 2 ? entry.glass : forward) {draws += 1}
+		for stage, i in stages {
+			if stage.base != nil && (i < 2 ? entry.glass : forward) {draws += 1}
 		}
 		if draws == 0 {continue}
-		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
-		needed := (3 * int(max(s.meshes[mesh].slot_count, 1)) + 1) * draws
-		if commands + needed > rhi.MAX_RENDER_PASS_COMMANDS {
+		needed := (3 * (int(entry.slots) if entry.multi_program else 1) + 1) * draws
+		if commands + needed + 3 > rhi.MAX_RENDER_PASS_COMMANDS {
 			translucent_run_end(p, &run, plain)
 			rhi.cmd_end_render_pass(cmd)
 			rhi.cmd_begin_render_pass(cmd, &pass)
 			commands = 0
 		}
-		for target, i in targets {
-			if target == nil || (i < 2 ? !entry.glass : !forward) {continue}
+		for stage, i in stages {
+			if stage.base == nil || (i < 2 ? !entry.glass : !forward) {continue}
 			if filter := u32(1 if i < 2 else 0); filter != params.overflow {
-				translucent_run_end(p, &run, plain)
+				if run.count > 0 {
+					translucent_run_end(p, &run, plain)
+					commands += 3
+				}
 				params.overflow = filter
-				set_params(cmd, &params)
+				rhi.cmd_bind_transient(cmd, SLOT_PARAMS, params_overflow if filter != 0 else params_forward)
+				commands += 1
 			}
-			translucent_entry_draw(p, &run, target, k, plain)
+			commands += translucent_entry_draw(p, &run, stage, k, plain)
 		}
-		commands += needed
 	}
 	translucent_run_end(p, &run, plain)
 	rhi.cmd_end_render_pass(cmd)
@@ -404,20 +440,6 @@ glass_shade :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
 	layers := glass_layer_count(r)
 	translucent_forward(p, t.glass[layers - 1].depth, 0, true)
-	traced := p.glass_reflect_bounds != {}
-	if traced {
-		if !ensure_reflect_targets(r, cmd, t) ||
-		   !target(r, cmd, &t.glass_reflections, t.width, t.height, .RGBA16_Float, HISTORY_USAGE,
-		           "glass reflections", clear = true) {
-			return false
-		}
-		rhi.cmd_timestamp(cmd, "glass reflect")
-		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, t.glass[0].surface)
-		glass_bind_layers(p, t.glass[0])
-		traced = reflect_pass(p, glass = true)
-		rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, t.surface))
-	}
-	t.glass_valid = traced
 
 	rhi.cmd_timestamp(cmd, "glass")
 	params := glass_params(p)
@@ -430,14 +452,14 @@ glass_shade :: proc(p: ^Pass) -> bool {
 		glass_layer_bind(p, k)
 		// The layer reads the scene from a copy and writes over its own pixels: its own light
 		// (glass_light.comp, with the maps of the view), then what it lets through.
-		params.snapshot, params.traced = 1, 0
+		params.snapshot = 1
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.display)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.glass_scene, 0)
 		rhi.cmd_dispatch_indirect(cmd, p.view.glass_dispatch, 0)
-		glass_scene_levels_record(p)
+		if p.glass_rough {glass_scene_levels_record(p)}
 		glass_layer_bind(p, k)
-		params.snapshot, params.traced = 0, 1 if traced && k == 0 else 0
+		params.snapshot = 0
 		rhi.cmd_bind_pipeline(cmd, light)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.shadow_raster.atlas if maps else r.dummy_texture)
@@ -482,12 +504,12 @@ glass_scene_levels_record :: proc(p: ^Pass) {
 
 // glass_pass.slang Params_Block.
 @(private)
-Glass_Params :: struct {light_budget, traced: u32, max_distance: f32, snapshot, medium: u32, near_top: f32, pad0, pad1: u32}
+Glass_Params :: struct {light_budget, pad: u32, max_distance: f32, snapshot, medium: u32, near_top: f32, medium_row, pad1: u32}
 
 @(private)
 glass_params :: proc(p: ^Pass) -> Glass_Params {
 	settings := &p.r.settings
-	return {light_budget = settings.light_budget, max_distance = settings.gi_max_distance, medium = p.glass_medium, near_top = GLASS_MEDIUM_NEAR}
+	return {light_budget = settings.light_budget, max_distance = settings.gi_max_distance, medium = p.glass_medium, near_top = GLASS_MEDIUM_NEAR, medium_row = p.glass_medium_row}
 }
 
 @(private = "file")
@@ -507,7 +529,6 @@ glass_layer_bind :: proc(p: ^Pass, k: int) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, layer.emission)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, layer.ids)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, layer.depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, texture_or_dummy(p.r, t.glass_reflections))
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.linear_depth)
 }
 
@@ -520,7 +541,6 @@ glass_inside :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "glass inside")
 	params := glass_params(p)
-	params.traced = 1 if t.glass_valid else 0
 	glass_layer_bind(p, 0)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.glass_scene)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.display)

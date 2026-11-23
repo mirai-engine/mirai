@@ -144,13 +144,17 @@ Environment :: struct {
 
 // An instance with blended triangles, and how far it is from the camera.
 Translucent :: struct {
-	instance: u32,
-	distance: f32,
-	glass_roughness: f32, // a lower bound before textures, programs and antialiasing
-	forward, glass: bool,
-	before:   bool, // of the view drawing it: nearer than every glass where it covers, so in front of the nearest layer
-	solid:    bool, // a blended material of it has a medium (material_solid): the camera can be in it
-	layered:  bool, // a blended material of it has layers: the glass layers keep them in a target
+	instance:        u32,
+	distance:        f32,
+	program:         u32, // its one blended Surface program (0: plain), when !multi_program
+	slots:           u8,  // mesh slots, capped at MESH_MAX_SLOTS, for render-pass command budget
+	multi_program:   bool, // more than one blended Surface program across its slots
+	glass_smooth:    bool, // every glass slot is a thin smooth pane (no blurred mips of glass_scene needed)
+	forward, glass:  bool,
+	before:          bool, // of the view drawing it: nearer than every glass where it covers, so in front of the nearest layer
+	medium:          u32,  // the row plus one of a blended material of it with a medium (material_solid), 0 none: the camera can be in it
+	layered:         bool, // a blended material of it has layers: the glass layers keep them in a target
+	forward_layered: bool, // a forward blended material of it has layers
 }
 
 // Where the light of the world changed since the GI last looked: spheres
@@ -391,7 +395,6 @@ Scene_State :: struct {
 	materials_dirty:      bool,                      // the whole table goes to the GPU
 	material_ranges:      [dynamic]Pool_Range,       // else the rows that changed since the last upload
 	material_capacity:    int,
-	smoothest:            f32, // lowest roughness a material of the table can have
 	instance_keys:        [dynamic]Instance_Key,
 	instance_revision:    u64, // counts the updates that gave an index another instance, or another number of them
 	highlighted:          int,          // instances with a highlight level
@@ -418,8 +421,7 @@ Scene_State :: struct {
 	candidate_capacity:   int, // of the candidates: one per instance and per slot of a batch, then one per group of slots
 	tlas_node_capacity:   int,
 	tlas_ref_capacity:    int,
-	tlas_node_count:      int, // nodes of the tree in tlas_nodes; the glass instances are listed after them, a box each
-	glass_node_count:     int,
+	tlas_node_count:      int, // nodes of the tree in tlas_nodes
 	instance_buffer:      rhi.Buffer,
 	material_buffer:      rhi.Buffer,
 	tlas_node_buffer:     rhi.Buffer,
@@ -449,7 +451,6 @@ Scene_State :: struct {
 	candidate_buffer:     rhi.Buffer, // per instance and slot of a batch: rejected by the phase 0 occlusion test; then the groups of slots the cull lists
 	translucent_draws:    rhi.Buffer, // rhi.Draw_Indexed_Indirect of each entry of translucent a view draws (translucent_draws.comp)
 	translucent_lists:    rhi.Texture, // the lists of the lights without shadows of each, then of the cells they are split into, a block as a tile's (light_lists.slang)
-	translucent_cuts:     rhi.Buffer, // and the cuts of the lights with shadows, abi.TRANSLUCENT_CUT_WORDS a block
 	translucent_cell_jobs: rhi.Buffer, // the cells listed by the second pass, the first counting them
 	translucent_draws_capacity: int,
 	translucent_entries:  rhi.Buffer, // of each instance, the cells a view drew it with last (translucent_cells_word)
@@ -548,6 +549,7 @@ Scene_State :: struct {
 	bounds_min:           Vec3,
 	bounds_max:           Vec3,
 	has_bounds:           bool,
+	bounds_stale:         bool, // instances came, went, moved or hid: bounds_settle updates bounds_min/max once
 	triangle_total:       u64,
 	ray_cut_eye:          Vec3, // where the eye was when the cuts rays trace were chosen (ray_cuts_update)
 	ray_cut_frame:        u64,  // and the frame
@@ -573,8 +575,6 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.pages.streamed = make([dynamic]u32, a)
 	s.light_scale, s.lights_scale = 1, 1
 	s.indirect = 1
-	// An empty table has no smooth material.
-	s.smoothest = 1
 	for &ranges in s.pool_free {ranges=make([dynamic]Pool_Range,a)}
 	for &ranges in s.pool_dirty {ranges=make([dynamic]Pool_Range,a)}
 	s.mesh_dirty=make([dynamic]Pool_Range,a)
@@ -663,7 +663,8 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 		for program in renderer_programs(r) {
 			if program.id != m.program_id || program.domain != .Surface {continue}
 			layers += program.layers
-			result.volume.changing = u32(.Time in program.reads)
+			if .Time in program.reads {result.volume.program |= abi.MATERIAL_PROGRAM_CHANGING}
+			if program.reflectance {result.volume.program |= abi.MATERIAL_PROGRAM_REFLECTANCE}
 		}
 	}
 	result.layers = transmute(u32)layers
@@ -750,7 +751,6 @@ Material_Changes :: struct {
 	lit:       [MATERIAL_LIT_ROWS]u32, // rows whose light changed (material_lit)
 	lit_count: int,                    // past MATERIAL_LIT_ROWS the light changed everywhere
 	class:     bool, // how their instances are traced and drawn (material_class)
-	smoothest: bool, // the smoothest row of the table may be another
 }
 
 MATERIAL_LIT_ROWS :: 16
@@ -773,7 +773,6 @@ materials_grow :: proc(r: ^Renderer, rows: int) -> (changes: Material_Changes, o
 		material_range_add(s, u32(len(s.materials)))
 		append(&s.materials, gpu_material(r, DEFAULT_MATERIAL))
 	}
-	changes.smoothest = true
 	return changes, true
 }
 
@@ -797,7 +796,6 @@ material_store :: proc(s: ^Scene_State, row: u32, value: Gpu_Material_Row, chang
 			s.shadow_stale.covers = true
 		}
 	}
-	changes.smoothest ||= material_smoothness(value.shared) < s.smoothest || material_smoothness(held.shared) == s.smoothest
 	if held.program_id != value.program_id || held.alpha_mode != value.alpha_mode {
 		program_rows_count(s, held^, false)
 		program_rows_count(s, value, true)
@@ -897,8 +895,8 @@ Material_Class :: struct {
 	specular_color:                 Vec3,
 	specular_factor, ior:           f32,
 	transmissive, solid:            bool,
-	glass_roughness:                f32,
 	specular, specular_colored:     u32,
+	program_reflectance:            bool,
 }
 
 @(private = "file")
@@ -907,8 +905,8 @@ material_class :: proc "contextless" (row: Gpu_Material_Row) -> Material_Class {
 		alpha_mode = row.alpha_mode, program_id = row.program_id, layers = row.layers,
 		specular_color = row.specular_color, specular_factor = row.specular_factor, ior = row.ior,
 		transmissive = row.transmission > 0, solid = row.transmission > 0 && row.thickness > 0,
-		glass_roughness = material_smoothness(row.shared) if row.transmission > 0 else 1,
 		specular = row.textures[.Specular], specular_colored = row.textures[.Specular_Color],
+		program_reflectance = row.volume.program & abi.MATERIAL_PROGRAM_REFLECTANCE != 0,
 	}
 }
 
@@ -925,27 +923,15 @@ materials_reach :: proc(r: ^Renderer, row: u32) -> bool {
 	for int(row) >= len(s.materials) {
 		value := gpu_material(r, DEFAULT_MATERIAL)
 		append(&s.materials, value)
-		s.smoothest = min(s.smoothest, material_smoothness(value.shared))
 		s.materials_dirty = true
 	}
 	return true
-}
-
-// The lowest roughness a row can have: a roughness texture or a Surface
-// program can make a mirror regardless of the roughness stored in it.
-@(private = "file")
-material_smoothness :: proc "contextless" (row: Gpu_Material) -> f32 {
-	return 0 if row.program_id != 0 || row.textures[.Metallic_Roughness] != GPU_NONE else row.roughness
 }
 
 @(private = "file")
 materials_changed :: proc(s: ^Scene_State, changes: Material_Changes) {
 	changes := changes
 	if changes.lit_count > MATERIAL_LIT_ROWS {scene_changed(s)} else if changes.lit_count > 0 {materials_lit(s, changes.lit[:changes.lit_count])}
-	if changes.smoothest {
-		s.smoothest = 1
-		for m in s.materials {s.smoothest = min(s.smoothest, material_smoothness(m.shared))}
-	}
 	// The alpha mode of a material decides how its instances are traced and drawn,
 	// and its program whether they move their vertices.
 	if changes.class {instances_classify(s);s.displaced_stale=true;s.tested_stale=true;s.geometry_dirty=true}
@@ -992,11 +978,12 @@ instances_classify :: proc(s: ^Scene_State) {
 			}
 		}
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
+		word := inst.meta.x &~ INSTANCE_FLAG_GLASS | glass_flag(a)
 		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
-		mask_flags := tlas_mask_flags(ray_class(inst.meta.x, flags), a.tested, mesh.tested)
-		if flags != inst.meta.w || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
+		mask_flags := tlas_mask_flags(ray_class(word, flags), a.tested, mesh.tested)
+		if flags != inst.meta.w || word != inst.meta.x || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
 			before := inst
-			inst.meta.w, inst.tested = flags, a.tested
+			inst.meta.x, inst.meta.w, inst.tested = word, flags, a.tested
 			// What its values made glass, or fade, the maps draw again where it is.
 			if !instance_shades_same(before, inst) {occluder_moved(s, u32(i), before, inst)}
 			s.hw_instances[i].mask_flags = mask_flags
@@ -1012,22 +999,11 @@ instances_classify :: proc(s: ^Scene_State) {
 // Marks the references of the instances that are glass for rays.
 @(private = "file")
 tlas_refs_classify :: proc(s: ^Scene_State) {
-	if s.tlas_off {return}
-	s.glass_node_count = 0
-	if s.tlas_node_count == 0 {return}
+	if s.tlas_off || s.tlas_node_count == 0 {return}
 	for &ref in s.tlas_refs {
 		index := ref &~ TLAS_REF_GLASS
 		if int(index) >= len(s.instances) {continue}
 		ref = index | (TLAS_REF_GLASS if s.instances[index].meta.w & INSTANCE_FLAG_BLENDED != 0 else 0)
-	}
-	// A ray that only looks for glass tests these boxes, usually a handful,
-	// instead of walking the whole tree: left_first is the instance.
-	base.truncate(&s.tlas_nodes, s.tlas_node_count)
-	for inst, i in s.instances {
-		if inst.meta.w & INSTANCE_FLAG_BLENDED != 0 && inst.meta.w & INSTANCE_FLAG_HIDDEN == 0 {
-			append(&s.tlas_nodes, Gpu_Bvh_Node{bounds_min = inst.bounds_min.xyz, left_first = u32(i), bounds_max = inst.bounds_max.xyz, count = 1})
-			s.glass_node_count += 1
-		}
 	}
 }
 
@@ -1053,7 +1029,9 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
     palette:=slots
     defaults:=asset.MATERIAL_DEFAULTS
     a.glass = mesh.slot_count > 0
-    a.translucent.glass_roughness = max(f32)
+    a.translucent.glass_smooth = true
+    a.translucent.slots = u8(max(mesh.slot_count, 1))
+    blended_seen := false
     // A fade leaves out, by a pattern, what rays and the maps of the shadows meet of every row.
     faded:=instance_values_fade(s,given)>0
     for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
@@ -1063,16 +1041,30 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
             if given!=0 && m!=.Blend && values.program_id!=0 && s.materials[row].alpha_mode==u32(asset.Alpha_Mode.Blend) {a.shown_opaque|=1<<u32(k)}
-            departs:=values.program_id!=0 || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
+            // A program departs where its source may give a reflectance of its own (abi.Program.reflectance).
+            held:=&s.materials[row]
+            programmed:=values.program_id!=0 && (values.program_id!=held.program_id || held.volume.program&abi.MATERIAL_PROGRAM_REFLECTANCE!=0)
+            departs:=programmed || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
             if m != .Blend && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
             if m == .Blend {
+                if !blended_seen {
+                    a.translucent.program = values.program_id
+                    blended_seen = true
+                } else if values.program_id != a.translucent.program {
+                    a.translucent.multi_program = true
+                }
                 if values.transmission > 0 {
                     a.translucent.glass = true
-                    a.translucent.solid ||= values.thickness > 0
+                    if a.translucent.medium == 0 && values.thickness > 0 {a.translucent.medium = row + 1}
                     a.translucent.layered ||= lit != {}
-                    a.translucent.glass_roughness = min(a.translucent.glass_roughness, material_smoothness(values))
-                } else {a.translucent.forward = true}
+                    if values.thickness > 0 || values.program_id != 0 || values.textures[.Metallic_Roughness] != GPU_NONE || values.roughness > 0.06 {
+                        a.translucent.glass_smooth = false
+                    }
+                } else {
+                    a.translucent.forward = true
+                    a.translucent.forward_layered ||= lit != {}
+                }
             } else {a.layered ||= lit != {}}
         }
         if m != .Opaque || faded {a.tested |= 1 << u32(k)}
@@ -1099,6 +1091,10 @@ mesh_tested :: proc "contextless" (s: ^Scene_State, m: Mesh_Record) -> (tested: 
 alpha_flags :: proc "contextless" (a: Instance_Alpha) -> u32 {
 	return (INSTANCE_FLAG_ALPHA_TESTED if a.tested != 0 else 0) | (INSTANCE_FLAG_TRANSLUCENT if a.blended else 0) | (INSTANCE_FLAG_BLENDED if a.glass else 0)
 }
+
+// The flag of Gpu_Instance.meta.x of an instance a blended material of which lets light through.
+@(private)
+glass_flag :: proc "contextless" (a: Instance_Alpha) -> u32 {return INSTANCE_FLAG_GLASS if a.translucent.glass else 0}
 
 @(private = "file")
 instance_small :: proc "contextless" (low, high: Vec3) -> u32 {
@@ -1519,7 +1515,7 @@ tlas_build :: proc(s: ^Scene_State) {
 	s.tlas_node_count = len(s.tlas_nodes)
 	// Without memory for the tree rays meet nothing, and the next frame builds it again.
 	if !built && len(items) > 0 {
-		s.tlas_stale, s.tlas_cost, s.glass_node_count = true, 0, 0
+		s.tlas_stale, s.tlas_cost = true, 0
 		return
 	}
 	tlas_refs_classify(s)
@@ -1670,8 +1666,8 @@ mesh_shown :: proc(r: ^Renderer, handle: u32) {
 @(private)
 instances_moved :: proc(s: ^Scene_State) {
 	bounds_settle(s)
-	// A move is one call a frame: the tree is refit now, unless it is to be built again anyway.
-	if !s.tlas_stale {
+	// A move is one call a frame: the tree is refit now, unless it is off or to be built again anyway.
+	if !s.tlas_off && !s.tlas_stale {
 		if tlas_refit(s) > s.tlas_cost * TLAS_REFIT_SLACK {
 			tlas_build(s)
 			s.tlas_refs_dirty = true
@@ -1684,7 +1680,7 @@ instances_moved :: proc(s: ^Scene_State) {
 // The box of the instances shown, from those of each.
 @(private)
 bounds_settle :: proc(s: ^Scene_State) {
-	s.has_bounds = false
+	s.has_bounds, s.bounds_stale = false, false
 	s.bounds_min = {1e30, 1e30, 1e30}
 	s.bounds_max = {-1e30, -1e30, -1e30}
 	if s.hidden_count == 0 {
@@ -1709,7 +1705,11 @@ bounds_settle :: proc(s: ^Scene_State) {
 @(private)
 tlas_settle :: proc(s: ^Scene_State) {
 	// Instances that came, went, moved or were hidden by scene_update: the box of the scene follows.
-	if s.tlas_stale || s.tlas_classify || s.tlas_moved {bounds_settle(s)}
+	if s.bounds_stale {bounds_settle(s)}
+	if s.tlas_off {
+		s.tlas_classify, s.tlas_moved = false, false
+		return
+	}
 	if s.tlas_stale {
 		tlas_build(s)
 		s.tlas_nodes_dirty, s.tlas_refs_dirty = true, true
@@ -2062,6 +2062,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		a := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
 		a.translucent.instance = index
 		flags |= alpha_flags(a)
+		s.instances[index].meta.x |= glass_flag(a)
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
 		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered})}
 		if a.blended && !hidden {append(&s.translucent, a.translucent)}
@@ -2183,10 +2184,11 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
     }
     if identities || len(s.instances)!=old {s.instance_revision+=1}
     if len(s.instances)!=old {
-        s.tlas_stale,s.instances_dirty=true,true
+        s.tlas_stale,s.instances_dirty,s.bounds_stale=true,true,true
     } else {
         s.tlas_classify||=classification
         s.tlas_moved||=spatial
+        s.bounds_stale||=classification || spatial
     }
     s.tlas_dirty||=spatial || ray_properties || len(s.instances)!=old
     return written
@@ -2493,7 +2495,7 @@ renderer_reset_history :: proc(r:^Renderer,reset_camera:bool=false) {
     r.gi_warm=true
     for view in views_all(r) {
         view.targets.taa_valid=false
-        view.targets.glass_valid,view.targets.hiz_valid=false,false
+        view.targets.hiz_valid=false
         if reset_camera {view.has_previous=false}
     }
 }
@@ -2624,11 +2626,9 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		capacity := max(len(s.translucent) + len(s.translucent) / 2, abi.TRANSLUCENT_LIST_COLUMNS)
 		capacity = (capacity + abi.TRANSLUCENT_LIST_COLUMNS - 1) / abi.TRANSLUCENT_LIST_COLUMNS * abi.TRANSLUCENT_LIST_COLUMNS
 		if s.translucent_draws != 0 {rhi.buffer_destroy(d, s.translucent_draws)}
-		if s.translucent_cuts != 0 {rhi.buffer_destroy(d, s.translucent_cuts)}
 		if s.translucent_lists != 0 {rhi.texture_destroy(d, s.translucent_lists)}
 		blocks := capacity + abi.TRANSLUCENT_CELLS
 		s.translucent_draws = rhi.buffer_create(d, {size = u64(capacity * size_of(rhi.Draw_Indexed_Indirect)), usage = {.Storage, .Indirect}, name = "draws of the blended instances"})
-		s.translucent_cuts = rhi.buffer_create(d, {size = u64(blocks * abi.TRANSLUCENT_CUT_WORDS * size_of(u32)), usage = {.Storage}, name = "light cuts of the blended instances"})
 		s.translucent_lists = rhi.texture_create(d, {
 			width = abi.TRANSLUCENT_LIST_COLUMNS * LIGHT_LIST_TILE, height = u32(blocks / abi.TRANSLUCENT_LIST_COLUMNS) * LIGHT_LIST_ROWS,
 			format = .R32_Uint, usage = {.Sampled, .Storage}, name = "light lists of the blended instances",
@@ -2636,7 +2636,7 @@ ensure_scene_capacity :: proc(r: ^Renderer) -> bool {
 		if s.translucent_cell_jobs == 0 {
 			s.translucent_cell_jobs = rhi.buffer_create(d, {size = (1 + abi.TRANSLUCENT_CELLS) * size_of([2]u32), usage = {.Storage}, name = "light cells of the blended instances"})
 		}
-		made := s.translucent_draws != 0 && s.translucent_cuts != 0 && s.translucent_lists != 0 && s.translucent_cell_jobs != 0
+		made := s.translucent_draws != 0 && s.translucent_lists != 0 && s.translucent_cell_jobs != 0
 		s.translucent_draws_capacity = capacity if made else 0
 	}
 	if len(s.instances) > s.translucent_entries_capacity || s.translucent_entries == 0 {
@@ -2898,7 +2898,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.translucent_cuts, s.translucent_cell_jobs, s.translucent_entries, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.translucent_cell_jobs, s.translucent_entries, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)

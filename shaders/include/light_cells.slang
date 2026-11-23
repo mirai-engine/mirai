@@ -242,37 +242,4 @@ bool cell_list(int2 block, out uint count) {
     out_lists[block] = count;
     return true;
 }
-
-// The nodes of the tree of the lights with shadows that light_cut gives a
-// point of the cell while they fit in `budget`: each light, and each group
-// that does not open, that may reach some point of it. A point takes those
-// that reach it, in the budget as the cut of the point. False when more may
-// reach the cell: its points cut by themselves.
-static uint cell_cut_nodes[LIGHT_CUT_MAX];
-bool cell_cut(uint budget, out uint count) {
-    count = 0u;
-    budget = min(budget, LIGHT_CUT_MAX);
-    if (frame.light_nodes == 0u || budget == 0u) return true;
-    uint depth = 0u;
-    uint at = 0u;
-    [loop]
-    while (true) {
-        Light_Node node = light_nodes[at];
-        if (span_reaches(node, cell_span(node))) {
-            if (depth < LIGHT_TREE_DEPTH && light_node_opens(node, at)) {
-                walk_pending[depth] = node.child;
-                depth++;
-                at++;
-                continue;
-            }
-            if (count == budget) return false;
-            cell_cut_nodes[count] = at;
-            count++;
-        }
-        if (depth == 0u) break;
-        depth--;
-        at = walk_pending[depth];
-    }
-    return true;
-}
 #endif
