@@ -86,6 +86,10 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.mesh_weights[1]=-1},"mesh_weights"},
         {proc(p:^Particle_Info) {p.facing=Particle_Facing(5)},"facing"},
         {proc(p:^Particle_Info) {p.lifetime={0,0}},"lifetime"},
+        {proc(p:^Particle_Info) {p.blend=Particle_Blend(3)},"blend"},
+        {proc(p:^Particle_Info) {p.ribbon_axis=Particle_Ribbon_Axis(2)},"ribbon_axis"},
+        {proc(p:^Particle_Info) {p.scale.y=-1},"scale"},
+        {proc(p:^Particle_Info) {p.ribbon_tile=-0.5},"ribbon_tile"},
     }
     for c in cases {
         info:=PARTICLE_DEFAULTS
@@ -96,6 +100,16 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
     }
     info:=PARTICLE_DEFAULTS
     testing.expect_value(t,particle_validate({info=info}).message,"")
+    // A scale left at 0 on an axis keeps that axis.
+    info.scale={0,2,0}
+    testing.expect_value(t,particle_scale(&info),[3]f32{1,2,1})
+    info.scale=PARTICLE_DEFAULTS.scale
+    // A mesh blends as its material does; only a ribbon has an axis and a tile.
+    info.render=.Mesh
+    testing.expect(t,!particle_field_applies(&info,"blend") && particle_field_applies(&info,"facing") && !particle_field_applies(&info,"ribbon_tile"))
+    info.render=.Ribbon
+    testing.expect(t,particle_field_applies(&info,"blend") && particle_field_applies(&info,"ribbon_axis") && !particle_field_applies(&info,"facing"))
+    info.render=PARTICLE_DEFAULTS.render
     // Some particles of a range may die as they are born.
     info.lifetime={0,2}
     testing.expect_value(t,particle_validate({info=info}).message,"")

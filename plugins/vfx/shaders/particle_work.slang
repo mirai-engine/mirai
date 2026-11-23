@@ -82,11 +82,13 @@ uint2 particle_channel_span(uint slot, uint step) {
 }
 
 // Ordinals are dense within the step; the seeds still use the original birth indices.
-bool particle_spawn(uint slot, uint step, uint ordinal, out uint birth, out float age) {
+// ribbon: the one the group of the birth joins.
+bool particle_spawn(uint slot, uint step, uint ordinal, out uint birth, out float age, out uint ribbon) {
     float4 frame_step = particle_frame_step();
     uint4 range = particle_emitters[slot].range;
     birth = 0u;
     age = 0.0;
+    ribbon = 0u;
     if ((range.w & PARTICLE_FLAG_BIRTHS) != 0u) {
         uint count = particle_states[slot].births;
         float2 window = particle_birth_window(slot, frame_step.x);
@@ -112,6 +114,7 @@ bool particle_spawn(uint slot, uint step, uint ordinal, out uint birth, out floa
             uint item = span.x + ordinal;
             birth = spawn.z + item;
             age = particle_age_at(births, item);
+            ribbon = particle_emitters[slot].ribbons[g / 4u][g % 4u];
             return true;
         }
         ordinal -= span.y;

@@ -7,6 +7,8 @@
 //! mirai constant BEAM_PIECES uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES_SHIFT uint ../runtime/gpu.odin
 //! mirai constant DRAW_LOOK_BYTES uint ../runtime/gpu.odin
+//! mirai constant POSE_AT uint ../runtime/gpu.odin
+//! mirai constant FLAG_MULTIPLY uint ../runtime/gpu.odin
 //! mirai constant RIBBON_PIECES uint ../runtime/gpu.odin
 //! mirai constant TRAILS_PER_SECOND uint ../runtime/gpu.odin
 //! mirai constant MESH_CHOICE_SHIFT uint ../runtime/gpu.odin
@@ -65,9 +67,11 @@ struct Particle_Emitter {
     float4 from_world[3];
     uint2 emitter_uid;
     float birth_limit;
-    uint pad;
+    uint ribbon_axis;     // PARTICLE_RIBBON_AXIS_*
     float4 beam;
     uint4 mesh_handles;   // and the meshes, whose indices the frame lists (render.frame_mesh_whole)
+    float4 scale;         // of every particle; w metres a ribbon repeats its texture over (0: once over its length)
+    uint4 ribbons[2];     // the ribbon each group of births joins
 };
 
 struct Particle_State {
@@ -124,6 +128,9 @@ struct Particle_Event {
 #define PARTICLE_COLLISION_WORLD 1u
 #define PARTICLE_FACING_TUMBLE 0u
 #define PARTICLE_FACING_VELOCITY 1u
+#define PARTICLE_FACING_EMITTER 2u
+#define PARTICLE_RIBBON_AXIS_CAMERA 0u
+#define PARTICLE_RIBBON_AXIS_EMITTER_UP 1u
 #define PARTICLE_EVENT_DEATH 1u
 #define PARTICLE_EVENT_COLLISION 2u
 #define PARTICLE_EVENT_TRAIL 3u
@@ -452,7 +459,82 @@ void particle_alive_append(uint slot, uint parity, uint index) {
 }
 #endif
 
+float3 particle_unit(float3 value, float3 fallback) {
+    float squared = dot(value, value);
+    return squared > 1e-12 ? value * rsqrt(squared) : fallback;
+}
+
 uint particle_drawn(uint slot, uint i) { return particle_lists[particle_emitters[slot].program.y + particle_emitters[slot].range.x + i]; }
+
+// Where in the data buffer what a particle shows is (particle_draw_look), and
+// after it the pose it was born with: the turn of its emitter (a quaternion,
+// snorm16 a component, of the space its particles are in) and, of a ribbon,
+// the metres from its head to it and its whole length, which the sort finds.
+uint particle_draw_look_at(uint slot, uint index) {
+    return particle_emitters[slot].program.w + index * DRAW_LOOK_BYTES;
+}
+uint particle_pose_at(uint slot, uint index) { return particle_draw_look_at(slot, index) + POSE_AT; }
+#define PARTICLE_TRAIL_AT 8u // bytes of the pose to the metres along its ribbon
+
+uint2 particle_pose_pack(float4 q) {
+    int4 s = int4(round(clamp(q, -1.0, 1.0) * 32767.0));
+    return uint2((uint(s.x) & 0xFFFFu) | (uint(s.y) << 16u), (uint(s.z) & 0xFFFFu) | (uint(s.w) << 16u));
+}
+float4 particle_pose_unpack(uint2 w) {
+    float4 q = float4(int4(int(w.x << 16u) >> 16, int(w.x) >> 16, int(w.y << 16u) >> 16, int(w.y) >> 16)) / 32767.0;
+    float squared = dot(q, q);
+    return squared > 1e-6 ? q * rsqrt(squared) : float4(0.0, 0.0, 0.0, 1.0);
+}
+
+// The turn of a basis of three axes at right angles, as a quaternion.
+float4 particle_quat_of(float3 x, float3 y, float3 z) {
+    float trace = x.x + y.y + z.z;
+    float4 q;
+    if (trace > 0.0) {
+        float s = sqrt(trace + 1.0) * 2.0;
+        q = float4((y.z - z.y) / s, (z.x - x.z) / s, (x.y - y.x) / s, 0.25 * s);
+    } else if (x.x > y.y && x.x > z.z) {
+        float s = sqrt(1.0 + x.x - y.y - z.z) * 2.0;
+        q = float4(0.25 * s, (y.x + x.y) / s, (z.x + x.z) / s, (y.z - z.y) / s);
+    } else if (y.y > z.z) {
+        float s = sqrt(1.0 + y.y - x.x - z.z) * 2.0;
+        q = float4((y.x + x.y) / s, 0.25 * s, (z.y + y.z) / s, (z.x - x.z) / s);
+    } else {
+        float s = sqrt(1.0 + z.z - x.x - y.y) * 2.0;
+        q = float4((z.x + x.z) / s, (z.y + y.z) / s, 0.25 * s, (x.y - y.x) / s);
+    }
+    return normalize(q);
+}
+
+// The turn of an affine transform given by its rows, without its scale.
+float4 particle_turn_of(float4 rows[3]) {
+    float3 x = particle_unit(float3(rows[0].x, rows[1].x, rows[2].x), float3(1.0, 0.0, 0.0));
+    float3 y = float3(rows[0].y, rows[1].y, rows[2].y);
+    y = particle_unit(y - x * dot(x, y), abs(x.y) < 0.99 ? normalize(cross(float3(0.0, 0.0, 1.0), x)) : float3(0.0, 0.0, 1.0));
+    return particle_quat_of(x, y, cross(x, y));
+}
+
+// The axes of a turn: the columns of its rotation.
+float3x3 particle_quat_matrix(float4 q) {
+    float3 x = float3(1.0 - 2.0 * (q.y * q.y + q.z * q.z), 2.0 * (q.x * q.y + q.w * q.z), 2.0 * (q.x * q.z - q.w * q.y));
+    float3 y = float3(2.0 * (q.x * q.y - q.w * q.z), 1.0 - 2.0 * (q.x * q.x + q.z * q.z), 2.0 * (q.y * q.z + q.w * q.x));
+    float3 z = float3(2.0 * (q.x * q.z + q.w * q.y), 2.0 * (q.y * q.z - q.w * q.x), 1.0 - 2.0 * (q.x * q.x + q.y * q.y));
+    return float3x3(x.x, y.x, z.x, x.y, y.y, z.y, x.z, y.z, z.z);
+}
+
+// The pose a particle of the emitter is born with: none in its space when its particles move
+// with it, else its turn between the frame before (t 0) and this one (t 1).
+float4 particle_birth_pose(uint slot, float t) {
+    if ((particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u) return float4(0.0, 0.0, 0.0, 1.0);
+    float4 now = particle_turn_of(particle_emitters[slot].world);
+    if (t >= 1.0) return now;
+    float4 before = particle_turn_of(particle_emitters[slot].previous);
+    if (dot(before, now) < 0.0) before = -before;
+    return normalize(lerp(before, now, t));
+}
+
+// The scale of the particles of an emitter (effect.particle_scale).
+float3 particle_scale(uint slot) { return particle_emitters[slot].scale.xyz; }
 
 uint pack_unorm4(float4 c) {
     uint4 b = uint4(saturate(c) * 255.0 + 0.5);
@@ -473,11 +555,6 @@ bool particle_mesh_point(Mesh mesh, uint vertex_id, out Cluster cluster, out Mes
     if (triangle >= cluster_triangle_count(cluster) || !cluster_resident(mesh, cluster)) return false;
     point = cluster_point(mesh, cluster, cluster_triangle(mesh, cluster, triangle)[corner % 3u]);
     return true;
-}
-
-float3 particle_unit(float3 value, float3 fallback) {
-    float squared = dot(value, value);
-    return squared > 1e-12 ? value * rsqrt(squared) : fallback;
 }
 
 // Light as three bytes over a shared power of two.
@@ -627,29 +704,52 @@ float3x3 particle_rotation(uint seed, float angle) {
 
 // The rotation of a Mesh particle as its effect turns it (Particle_Facing):
 // Tumble, about an axis of its own; Velocity, its front (-Z) along its
-// velocity (up when still), its +Y as near the up of the world, rolled about
-// its front by its rotation.
-float3x3 particle_mesh_rotation(uint slot, Particle p) {
-    if (particle_emitters[slot].mesh.y != PARTICLE_FACING_VELOCITY) return particle_rotation(p.seed, p.rotation);
-    float3 v = particle_world_vector(slot, p.velocity);
-    float3 forward = (p.flags & PARTICLE_HEADING_HELD) != 0u ? particle_heading(p.flags) : length(v) > 1e-5 ? normalize(v) : float3(0.0, 1.0, 0.0);
-    float3 up = abs(forward.y) > 0.99 ? float3(0.0, 0.0, forward.y > 0.0 ? 1.0 : -1.0) : float3(0.0, 1.0, 0.0);
-    float3 z = -forward;
-    float3 x = normalize(cross(up, z));
-    float3 y = cross(z, x);
+// velocity (up when still), its +Y as near the up of the world; Emitter, as
+// pose (particle_birth_pose) turns it. The last two roll about its front by
+// its rotation.
+float3x3 particle_mesh_rotation(uint slot, Particle p, float4 pose) {
+    uint facing = particle_emitters[slot].mesh.y;
+    if (facing == PARTICLE_FACING_TUMBLE) return particle_rotation(p.seed, p.rotation);
+    float3 x, y, z;
+    if (facing == PARTICLE_FACING_EMITTER) {
+        float3x3 turned = particle_quat_matrix(pose);
+        x = float3(turned[0].x, turned[1].x, turned[2].x);
+        y = float3(turned[0].y, turned[1].y, turned[2].y);
+        z = float3(turned[0].z, turned[1].z, turned[2].z);
+    } else {
+        float3 v = particle_world_vector(slot, p.velocity);
+        float3 forward = (p.flags & PARTICLE_HEADING_HELD) != 0u ? particle_heading(p.flags) : length(v) > 1e-5 ? normalize(v) : float3(0.0, 1.0, 0.0);
+        float3 up = abs(forward.y) > 0.99 ? float3(0.0, 0.0, forward.y > 0.0 ? 1.0 : -1.0) : float3(0.0, 1.0, 0.0);
+        z = -forward;
+        x = normalize(cross(up, z));
+        y = cross(z, x);
+    }
     float s = sin(p.rotation), c = cos(p.rotation);
     float3 rx = x * c + y * s, ry = y * c - x * s;
     return float3x3(rx.x, ry.x, z.x, rx.y, ry.y, z.y, rx.z, ry.z, z.z);
 }
 
-// A vector of the space of its mesh in the world: one that tumbles turns in
-// the space of its emitter; one that faces its velocity, in the world, grown
-// by the scale of its emitter along each axis.
-float3 particle_mesh_vector(uint slot, float3x3 rotation, float3 v) {
-    float4 w[3] = particle_emitters[slot].world;
-    if (particle_emitters[slot].mesh.y == PARTICLE_FACING_TUMBLE) return particle_world_vector(slot, mul(rotation, v));
-    float3 scale = float3(length(float3(w[0].x, w[1].x, w[2].x)), length(float3(w[0].y, w[1].y, w[2].y)), length(float3(w[0].z, w[1].z, w[2].z)));
+// A vector of the space of its mesh in the world, by the rows of its emitter
+// in a frame: one that tumbles, or that its emitter turns when its particles
+// move with it, turns in the space of its emitter; the others in the world,
+// grown by the scale of its emitter along each axis.
+float3 particle_mesh_vector_by(uint slot, float4 rows[3], float3x3 rotation, float3 v) {
+    uint facing = particle_emitters[slot].mesh.y;
+    bool local = (particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u;
+    if (facing == PARTICLE_FACING_TUMBLE || facing == PARTICLE_FACING_EMITTER && local) {
+        float3 turned = mul(rotation, v);
+        return local ? transform_vector(rows, turned) : turned;
+    }
+    float3 scale = float3(length(float3(rows[0].x, rows[1].x, rows[2].x)), length(float3(rows[0].y, rows[1].y, rows[2].y)), length(float3(rows[0].z, rows[1].z, rows[2].z)));
     return mul(rotation, v * scale);
+}
+float3 particle_mesh_vector(uint slot, float3x3 rotation, float3 v) {
+    return particle_mesh_vector_by(slot, particle_emitters[slot].world, rotation, v);
+}
+
+// The normal of a mesh particle, of a normal of its mesh: across the scale of its effect.
+float3 particle_mesh_normal(uint slot, float3x3 rotation, float3 n) {
+    return particle_unit(particle_mesh_vector(slot, rotation, n / particle_scale(slot)), n);
 }
 
 #endif

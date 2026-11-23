@@ -13,11 +13,13 @@ PARTICLE_BIRTHS :: 8 // groups of births a clock keeps
 // Particles an emitter started: count of them, per at each instant, the first
 // instant at time (seconds of the clock) and the next ones spacing seconds
 // apart. first: the index of the first among every birth of the emitter.
+// segment: the stretch of emission they are of (Emitter_Clock.segment).
 Particle_Birth :: struct {
     first:u64,
     time:f64,
     count,per:u32,
     spacing:f32,
+    segment:u32,
 }
 
 // What of its effect the clock of an emitter follows.
@@ -48,6 +50,8 @@ Emitter_Clock :: struct {
     last:f64,             // time of its last birth; -max for none
     births:[PARTICLE_BIRTHS]Particle_Birth, // the latest, in the order of their indices
     birth_count:u32,
+    emitting:bool,        // it emitted in its last step
+    segment:u32,          // stretches of emission it began: one each time it starts to emit again or its entity jumps (core.Jump); the ribbon of its births
     layers:u8, // additional clocks of the primary emitter
     resolved:u64,         // what emission was resolved from
     emission:Emission,
@@ -100,20 +104,24 @@ clock_restart :: proc(clock:^Emitter_Clock) {
 }
 
 // Adds births to the clock: they take the next indices. A clock full of
-// births joins its two oldest groups, spread between their first and last
-// instants.
+// births joins its two oldest groups of one segment (the two oldest when all
+// differ), spread between their first and last instants.
 births_add :: proc(clock:^Emitter_Clock,time:f64,count,per:u32,spacing:f32) {
     if count==0 {return}
     if clock.birth_count==PARTICLE_BIRTHS {
-        a,b:=clock.births[0],clock.births[1]
+        at:=0
+        for i in 0..<PARTICLE_BIRTHS-1 {
+            if clock.births[i].segment==clock.births[i+1].segment {at=i;break}
+        }
+        a,b:=clock.births[at],clock.births[at+1]
         end:=b.time+f64(birth_instants(b)-1)*f64(b.spacing)
         start:=min(a.time,b.time)
         total:=a.count+b.count
-        clock.births[1]={first=a.first,time=start,count=total,per=1,spacing=total>1?f32((end-start)/f64(total-1)):0}
-        copy(clock.births[:PARTICLE_BIRTHS-1],clock.births[1:])
+        clock.births[at+1]={first=a.first,time=start,count=total,per=1,spacing=total>1?f32((end-start)/f64(total-1)):0,segment=a.segment}
+        copy(clock.births[at:PARTICLE_BIRTHS-1],clock.births[at+1:])
         clock.birth_count-=1
     }
-    clock.births[clock.birth_count]={first=clock.emitted,time=time,count=count,per=max(per,1),spacing=spacing}
+    clock.births[clock.birth_count]={first=clock.emitted,time=time,count=count,per=max(per,1),spacing=spacing,segment=clock.segment}
     clock.birth_count+=1
     clock.emitted+=u64(count)
     instants:=(count+max(per,1)-1)/max(per,1)
@@ -134,6 +142,9 @@ emission_step :: proc(clock:^Emitter_Clock,e:^Emission,emitting,looping:bool,pos
     after:=before+f64(dt)
     clock.time=after
     over:=!looping && before>=duration
+    // Emission that starts again begins another segment: its ribbon does not join the last one.
+    if emitting && !over && !clock.emitting {clock.segment+=1}
+    clock.emitting=emitting && !over
     if emitting && !over {
         if before==0 && e.prewarm && looping && e.rate>0 && e.longest>0 {
             count:=u32(min(f64(e.rate)*f64(e.longest),f64(1<<20)))

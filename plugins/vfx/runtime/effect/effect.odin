@@ -34,12 +34,19 @@ PARTICLE_MESHES :: 4
 
 Particle_Shape :: enum u32 {Point,Sphere,Hemisphere,Cone,Box,Circle,Line,Surface}
 Particle_Render :: enum u32 {Billboard,Velocity,Horizontal,Ribbon,Mesh,Beam}
-Particle_Blend :: enum u32 {Additive,Alpha}
+// How a sprite, a ribbon or a beam covers what is behind it: Additive adds
+// its light, Alpha covers it by its opacity, Multiply darkens it by its color.
+// A Mesh particle blends as the alpha mode of its material says.
+Particle_Blend :: enum u32 {Additive,Alpha,Multiply}
 Particle_Collision :: enum u32 {None,World}
 // How a Mesh particle turns: Tumble, about an axis of its own by its rotation
 // and spin; Velocity, its front (-Z) along its velocity, its +Y as near the
-// up of the world, rolled about its front by its rotation.
-Particle_Facing :: enum u32 {Tumble,Velocity}
+// up of the world; Emitter, as its emitter was turned when it was born. The
+// last two roll about its front by its rotation.
+Particle_Facing :: enum u32 {Tumble,Velocity,Emitter}
+// What a ribbon is wide along: across its path, facing the camera; or the +Y
+// of its emitter where each of its particles was born (the blade of a sword).
+Particle_Ribbon_Axis :: enum u32 {Camera,Emitter_Up}
 // Trail: vfx.TRAILS_PER_SECOND times each second of its life, where it is.
 // The particles an event starts join a ribbon of the particle that made it:
 // those of Trail are a trail behind it.
@@ -117,6 +124,9 @@ Particle_Info :: struct {
     meshes:[PARTICLE_MESHES]base.Asset_Id,    // of Mesh particles, each picked by its weight; none: a cube
     mesh_weights:[PARTICLE_MESHES]f32 `mirai:"min=0"`, // how often each of meshes is picked; all 0: each as often
     facing:Particle_Facing,
+    scale:[3]f32 `mirai:"min=0"`,             // of every particle: x and y of a sprite, the width of a ribbon or a beam, the axes of a mesh; 0: 1
+    ribbon_axis:Particle_Ribbon_Axis,
+    ribbon_tile:f32 `mirai:"min=0,unit=m"`,   // a ribbon repeats its texture every this many metres from its head; 0: once from its head to its tail
     stretch:f32 `mirai:"min=0,unit=s"`,       // Velocity: seconds of motion a sprite spans
     soft:f32 `mirai:"min=0,unit=m"`,          // a sprite fades over this distance into what is behind it
     flipbook:[2]u32,                          // columns and rows
@@ -137,7 +147,7 @@ PARTICLE_DEFAULTS :: Particle_Info{
     duration=2,rate=20,
     shape=.Cone,shape_size={0.1,0.1,0.1},shape_angle=0.35,
     lifetime={1.5,2},speed={1,2},size={0.2,0.35},colors={{1,1,1,1},{1,1,1,1}},intensity=1,emission_mode=.Relative,
-    blend=.Alpha,lit=true,soft=0.3,flipbook={1,1},
+    blend=.Alpha,lit=true,scale={1,1,1},soft=0.3,flipbook={1,1},
     size_over_life={values={0.5,1,1,1,1,1,1,1},times={0,0.3,1,1,1,1,1,1}},
     color_over_life={
         colors={{1,1,1,0},{1,1,1,1},{1,1,1,1},{1,1,1,0},{1,1,1,0},{1,1,1,0},{1,1,1,0},{1,1,1,0}},
@@ -249,9 +259,12 @@ particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem
     if field,ok:=particle_finite(p);!ok {return {field,"Use finite numbers"}}
     if p.shape>max(Particle_Shape) {return {"shape","Use Point, Sphere, Hemisphere, Cone, Box, Circle, Line or Surface"}}
     if p.render>max(Particle_Render) {return {"render","Use Billboard, Velocity, Horizontal, Ribbon, Mesh or Beam"}}
-    if p.blend>max(Particle_Blend) {return {"blend","Use Additive or Alpha"}}
+    if p.blend>max(Particle_Blend) {return {"blend","Use Additive, Alpha or Multiply"}}
     if p.collision>max(Particle_Collision) {return {"collision","Use None or World"}}
-    if p.facing>max(Particle_Facing) {return {"facing","Use Tumble or Velocity"}}
+    if p.facing>max(Particle_Facing) {return {"facing","Use Tumble, Velocity or Emitter"}}
+    if p.ribbon_axis>max(Particle_Ribbon_Axis) {return {"ribbon_axis","Use Camera or Emitter_Up"}}
+    for scale in p.scale {if scale<0 {return {"scale","Use scales of zero or more; 0 keeps that axis at 1"}}}
+    if p.ribbon_tile<0 {return {"ribbon_tile","Use a length of zero or more metres; 0 spans the texture over the whole ribbon"}}
     for weight in p.mesh_weights {if weight<0 {return {"mesh_weights","Use weights of zero or more"}}}
     if coupled && p.render==.Mesh && p.sort {
         meshes:=0
@@ -292,6 +305,25 @@ particle_field_valid :: proc(field:Particle_Value,bytes:[]u8) -> bool {
 }
 
 particle_check :: proc(desc:Particle_Desc) -> bool {return particle_validate(desc).message==""}
+
+// The scale of the particles of an effect: 1 on an axis it leaves at 0.
+particle_scale :: proc "contextless" (info:^Particle_Info) -> [3]f32 {
+    scale:=info.scale
+    for &axis in scale {if axis<=0 {axis=1}}
+    return scale
+}
+
+// Whether a field of Particle_Info means anything to what the effect draws:
+// a Mesh particle blends as its material does, and only a ribbon has an axis
+// and a tile.
+particle_field_applies :: proc(info:^Particle_Info,top:string) -> bool {
+    switch top {
+    case "blend": return info.render!=.Mesh
+    case "ribbon_axis","ribbon_tile": return info.render==.Ribbon
+    case "facing","meshes","mesh_weights": return info.render==.Mesh
+    }
+    return true
+}
 
 @(private="file")
 particle_times_valid :: proc(times:[]f32,ordered:bool) -> bool {

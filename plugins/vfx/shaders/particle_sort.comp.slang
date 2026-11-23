@@ -8,6 +8,8 @@
 struct Params_Block { uint mode; uint emitters; uint count; uint parity; uint step; uint last; uint pad0; uint pad1; };
 [[vk::binding(SLOT_PASS7, 0)]] StructuredBuffer<uint> particle_sort_slots : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
+// The data buffer of the pool (particle_programs.slang): where each particle of a ribbon is along it.
+[[vk::binding(SLOT_PASS9, 0)]] RWByteAddressBuffer particle_data : register(MIRAI_REGISTER(u, SLOT_PASS9), space0);
 
 // The error a ribbon may leave between the curve through its particles and
 // the straight pieces it is drawn with, metres: at least the first, and
@@ -21,6 +23,8 @@ groupshared float keys[SORT_TILE];
 groupshared uint ribbons[SORT_TILE];
 groupshared uint values[SORT_TILE];
 groupshared uint partial[MIRAI_GROUP_X];
+groupshared float along_partial[MIRAI_GROUP_X];
+groupshared uint along_heads[MIRAI_GROUP_X];
 groupshared uint mesh_counts[PARTICLE_MESHES];
 groupshared uint mesh_cursors[PARTICLE_MESHES];
 
@@ -112,6 +116,56 @@ void sort_particles(uint slot, uint t, uint alive, uint drawn, uint scratch, boo
 
 float3 unit(float3 v) { return length(v) > 1e-6 ? normalize(v) : float3(0.0); }
 
+// Where each particle of the ribbons of an emitter is along its ribbon, sorted
+// from its head: the metres of the chords from its head to it, by a scan that
+// starts again at each head; then the length of its ribbon, that of its last
+// particle. Both after its pose (particle_pose_at).
+void ribbon_lengths(uint slot, uint t, uint alive, uint drawn) {
+    float carry = 0.0;
+    for (uint block = 0u; block < alive; block += MIRAI_GROUP_X) {
+        uint k = block + t;
+        float chord = 0.0;
+        uint head = 1u;
+        if (k < alive && k > 0u) {
+            Particle a = particles[particle_lists[drawn + k - 1u]];
+            Particle b = particles[particle_lists[drawn + k]];
+            if (particle_ribbon(a) == particle_ribbon(b)) {
+                chord = length(particle_world(slot, b.position) - particle_world(slot, a.position));
+                head = 0u;
+            }
+        }
+        along_partial[t] = chord;
+        along_heads[t] = head;
+        GroupMemoryBarrierWithGroupSync();
+        for (uint stride = 1u; stride < MIRAI_GROUP_X; stride <<= 1u) {
+            float add = t >= stride ? along_partial[t - stride] : 0.0;
+            uint headed = t >= stride ? along_heads[t - stride] : 0u;
+            GroupMemoryBarrierWithGroupSync();
+            if (along_heads[t] == 0u) along_partial[t] += add;
+            along_heads[t] |= headed;
+            GroupMemoryBarrierWithGroupSync();
+        }
+        if (k < alive) {
+            float from_head = along_partial[t] + (along_heads[t] == 0u ? carry : 0.0);
+            particle_data.Store(particle_pose_at(slot, particle_lists[drawn + k]) + PARTICLE_TRAIL_AT, asuint(isfinite(from_head) ? from_head : 0.0));
+        }
+        carry = along_partial[MIRAI_GROUP_X - 1u] + (along_heads[MIRAI_GROUP_X - 1u] == 0u ? carry : 0.0);
+        GroupMemoryBarrierWithGroupSync();
+    }
+    DeviceMemoryBarrierWithGroupSync();
+    for (uint k = t; k < alive; k += MIRAI_GROUP_X) {
+        uint index = particle_lists[drawn + k];
+        uint id = particle_ribbon(particles[index]);
+        uint low = k, high = alive - 1u;
+        while (low < high) {
+            uint middle = (low + high + 1u) >> 1u;
+            if (particle_ribbon(particles[particle_lists[drawn + middle]]) == id) low = middle; else high = middle - 1u;
+        }
+        uint last = particle_pose_at(slot, particle_lists[drawn + low]) + PARTICLE_TRAIL_AT;
+        particle_data.Store(particle_pose_at(slot, index) + PARTICLE_TRAIL_AT + 4u, particle_data.Load(last));
+    }
+}
+
 // The pieces a segment from a to b needs so that each straight piece stays
 // within error of the arc that turns from the direction ta at a to tb at b:
 // an arc turning by angle over a chord of length c has radius
@@ -185,6 +239,7 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID) {
             GroupMemoryBarrierWithGroupSync();
         }
         total = prefix;
+        ribbon_lengths(slot, t, alive, drawn);
     }
     // The scratch list groups particles by mesh and gives each draw its first instance.
     if (particle_emitters[slot].mesh.x > 1u) {

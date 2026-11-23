@@ -314,6 +314,7 @@ effect_rows :: proc(s:^editor.Session,p:^Effect_Document,assets:^host.Assets) {
             of=particle_group(fields.tags[index],of)
             if of!=group {continue}
             field:=fields.names[index]
+            if !effect.particle_field_applies(value,field) {continue}
             hidden:=effect.particle_hidden(p.held.hidden[:p.held.hidden_count],field)
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
                 if p.layer==0 && ui.button(ctx,ui.id(ctx,"hidden",index+1),{icon=hidden?.Eye_Off:.Eye,icon_size=13,icon_color=hidden?ui.tone(ctx,"text_faint"):ui.tone(ctx,"text_muted"),variant="ghost",width=EYE_WIDTH-2,height=ui.metric(ctx,"row")}).clicked {

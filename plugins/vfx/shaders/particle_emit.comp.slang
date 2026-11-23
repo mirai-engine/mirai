@@ -76,11 +76,34 @@ void shape_sample(uint slot, inout uint seed, out float3 position, out float3 di
     }
 }
 
+// How fast the emitter at slot moves in the frame.
+float3 emitter_velocity(uint slot, float frame_dt) {
+    float4 w[3] = particle_emitters[slot].world, b[3] = particle_emitters[slot].previous;
+    return (float3(w[0].w, w[1].w, w[2].w) - float3(b[0].w, b[1].w, b[2].w)) / max(frame_dt, 1e-5);
+}
+
+// What a particle takes of the velocity of what starts it (inherit_velocity):
+// of an emitter whose particles move with it, what goes faster than it, since
+// they already go with it.
+float3 particle_inherited(uint slot, float3 velocity, float3 emitter) {
+    bool local = (particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u;
+    return (local ? velocity - emitter : velocity) * particle_emitters[slot].spin.w;
+}
+
+// A turn of the world as the pose of a particle of the emitter: of its space when its particles move with it.
+float4 particle_pose_of_world(uint slot, float4 q) {
+    if ((particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) == 0u) return q;
+    float4 turn = particle_turn_of(particle_emitters[slot].world);
+    float4 a = float4(-turn.xyz, turn.w);
+    return normalize(float4(a.w * q.xyz + q.w * a.xyz + cross(a.xyz, q.xyz), a.w * q.w - dot(a.xyz, q.xyz)));
+}
+
 // A particle of the emitter at slot `slot`: where it starts in the world,
 // with what velocity, how far into the step (age: the seconds the step does
-// not move it, as a negative age) and how much of its life it already lived.
+// not move it, as a negative age), how much of its life it already lived and
+// the pose it is born with (particle_birth_pose).
 // False when its emitter has no free slot or it would be dead already.
-bool particle_start(uint slot, uint seed, uint birth, float3 world_position, float3 world_velocity, float age, float lived, float time, float4 tint = float4(1.0), float scale = 1.0, float4 values = float4(0.0), uint ribbon = 0u, bool leader = false, bool drawn = false) {
+bool particle_start(uint slot, uint seed, uint birth, float3 world_position, float3 world_velocity, float age, float lived, float time, float4 pose, float4 tint = float4(1.0), float scale = 1.0, float4 values = float4(0.0), uint ribbon = 0u, bool leader = false, bool drawn = false) {
     float lifetime = lerp(particle_emitters[slot].lifetime_speed.x, particle_emitters[slot].lifetime_speed.y, random01(seed));
     // A leader lives until the next step.
     if (leader) lifetime = min(lifetime, 1e-6);
@@ -117,6 +140,7 @@ bool particle_start(uint slot, uint seed, uint birth, float3 world_position, flo
     p.flags = 0u;
     particle_program_store(slot, v, true, p);
     particles[index] = p;
+    particle_pose_store(slot, index, pose);
     particle_alive_append(slot, drawn ? params.parity ^ 1u : params.parity, index);
     return true;
 }
@@ -165,14 +189,16 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
 
         if (particle_emitters[slot].program.x != params.program) return;
         if ((particle_emitters[slot].range.w & (PARTICLE_FLAG_ACTIVE | FLAG_DRAIN)) != PARTICLE_FLAG_ACTIVE) return;
-        uint birth;
+        uint birth, ribbon;
         float age;
-        if (!particle_spawn(slot, params.step, ordinal, birth, age)) return;
+        if (!particle_spawn(slot, params.step, ordinal, birth, age, ribbon)) return;
         float frame_dt = frame_step.x, h = frame_step.y;
         float born = frame_dt - age;
         bool local_space = (particle_emitters[slot].range.w & PARTICLE_FLAG_LOCAL) != 0u;
         float since_birth = local_space ? 0.0 : clamp(frame_dt - born, 0.0, frame_dt);
         uint seed = hash_u32(particle_emitters[slot].random.x * 9781u + birth * 26699u);
+        float3 moved = emitter_velocity(slot, frame_dt);
+        float t = frame_dt > 0.0 ? saturate(born / frame_dt) : 1.0;
         float3 position, velocity;
         if (particle_emitters[slot].kinds.x == PARTICLE_SHAPE_SURFACE) {
             Mirai_Vfx_Surface s = particle_surface_sample(particle_resource(slot, 0u), seed, frame_dt);
@@ -181,11 +207,10 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
             position = s.position - s.velocity * since_birth;
             float speed = lerp(particle_emitters[slot].lifetime_speed.z, particle_emitters[slot].lifetime_speed.w, random01(seed));
             float3 local_velocity = lerp(particle_emitters[slot].velocity_a.xyz, particle_emitters[slot].velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
-            velocity = s.normal * speed + transform_vector(particle_emitters[slot].world, local_velocity) + s.velocity * particle_emitters[slot].spin.w;
+            velocity = s.normal * speed + transform_vector(particle_emitters[slot].world, local_velocity) + particle_inherited(slot, s.velocity, moved);
         } else {
             float3 local, direction;
             shape_sample(slot, seed, local, direction);
-            float t = frame_dt > 0.0 ? saturate(born / frame_dt) : 1.0;
             position = transform_point(particle_emitters[slot].world, local);
             if (!local_space) {
                 position = lerp(transform_point(particle_emitters[slot].previous, local), position, t);
@@ -193,12 +218,11 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
             float speed = lerp(particle_emitters[slot].lifetime_speed.z, particle_emitters[slot].lifetime_speed.w, random01(seed));
             float3 local_velocity = lerp(particle_emitters[slot].velocity_a.xyz, particle_emitters[slot].velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
             velocity = particle_unit(transform_vector(particle_emitters[slot].world, direction), direction) * speed + transform_vector(particle_emitters[slot].world, local_velocity);
-            float3 moved = (float3(particle_emitters[slot].world[0].w, particle_emitters[slot].world[1].w, particle_emitters[slot].world[2].w) - float3(particle_emitters[slot].previous[0].w, particle_emitters[slot].previous[1].w, particle_emitters[slot].previous[2].w)) / max(frame_dt, 1e-5);
-            velocity += moved * particle_emitters[slot].spin.w;
+            velocity += particle_inherited(slot, moved, moved);
         }
         // Born at `born` in the frame: the rest of its step moves it. Born before the frame, it lived the time before.
         float start = float(params.step) * h;
-        particle_start(slot, seed, birth, position, velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - age);
+        particle_start(slot, seed, birth, position, velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - age, particle_birth_pose(slot, t), float4(1.0), 1.0, float4(0.0), ribbon);
         return;
     }
     if (params.mode == 2u) {
@@ -212,6 +236,8 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
         float born = frame_dt - b.age;
         float start = float(params.step) * h;
         uint seed = hash_u32(particle_emitters[slot].random.x * 7919u + b.number * 104729u);
+        // Each birth of a channel starts a ribbon of its own.
+        uint ribbon = particle_own_ribbon(seed);
         for (uint k = 0u; k < b.count; k++) {
             float3 local, direction;
             shape_sample(slot, seed, local, direction);
@@ -220,15 +246,18 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
             float3 offset = transform_vector(particle_emitters[slot].world, local);
             float3 along = transform_vector(particle_emitters[slot].world, direction);
             float normal_scale = max(abs(b.normal.x), max(abs(b.normal.y), abs(b.normal.z)));
+            float4 pose = particle_birth_pose(slot, 1.0);
             if (particle_emitters[slot].kinds.x == PARTICLE_SHAPE_CONE && normal_scale > 0.0 && all(isfinite(b.normal))) {
                 float3 up = normalize(b.normal / normal_scale);
                 float3 side = normalize(cross(up, abs(up.z) < 0.99 ? float3(0, 0, 1) : float3(1, 0, 0)));
                 float3 front = cross(side, up);
                 along = direction.x * side + direction.y * up + direction.z * front;
                 offset = local.x * side + local.y * up + local.z * front;
+                // Turned as the cone it leaves: its +Y along the normal of the birth.
+                pose = particle_pose_of_world(slot, particle_quat_of(side, up, front));
             }
             float3 velocity = particle_unit(along, direction) * speed + transform_vector(particle_emitters[slot].world, local_velocity) + b.velocity;
-            if (!particle_start(slot, seed, INVALID, b.position + offset, velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - b.age, b.color, b.size, b.values)) break;
+            if (!particle_start(slot, seed, INVALID, b.position + offset, velocity, born >= 0.0 ? start - born : 0.0, max(-born, 0.0), frame_step.w - b.age, pose, b.color, b.size, b.values, ribbon)) break;
         }
         return;
     }
@@ -253,6 +282,7 @@ void main(uint3 id : SV_DispatchThreadID, uint3 group : SV_GroupID, uint3 local 
         float speed = lerp(particle_emitters[slot].lifetime_speed.z, particle_emitters[slot].lifetime_speed.w, random01(seed));
         float3 local_velocity = lerp(particle_emitters[slot].velocity_a.xyz, particle_emitters[slot].velocity_b.xyz, float3(random01(seed), random01(seed), random01(seed)));
         float3 velocity = particle_unit(transform_vector(particle_emitters[slot].world, direction), direction) * speed + transform_vector(particle_emitters[slot].world, local_velocity);
-        if (!particle_start(slot, seed, INVALID, ev.position + offset, velocity + ev.velocity * particle_emitters[slot].spin.w, 0.0, 0.0, late ? frame_step.w : frame_step.w - frame_step.x + float(params.step) * frame_step.y, float4(1.0), 1.0, float4(0.0), ev.ribbon, leader, late)) break;
+        velocity += particle_inherited(slot, ev.velocity, emitter_velocity(slot, frame_step.x));
+        if (!particle_start(slot, seed, INVALID, ev.position + offset, velocity, 0.0, 0.0, late ? frame_step.w : frame_step.w - frame_step.x + float(params.step) * frame_step.y, particle_birth_pose(slot, 1.0), float4(1.0), 1.0, float4(0.0), ev.ribbon, leader, late)) break;
     }
 }

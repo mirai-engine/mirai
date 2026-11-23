@@ -18,7 +18,7 @@ sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 - Other color or rate for one entity: [values](#values-of-one-instance).
 - Many hits per tick, each with its place and velocity: [channels](vfx/channels.md).
 - Many emitters of one effect far apart: [culling](vfx/culling.md).
-- A trail behind each spark or comet: [trails](#trails).
+- A trail behind each spark: [trails](#trails); a sword trail or slash: [weapons](vfx/weapons.md).
 - Write or tune an effect: [authoring](#author-an-effect).
 
 ## One-shot effect

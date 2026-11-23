@@ -22,7 +22,8 @@ uint work_count(uint slot) {
     case 2u: {
         uint count;
         float unused;
-        particle_spawn(slot, params.step, INVALID, count, unused);
+        uint ribbon;
+        particle_spawn(slot, params.step, INVALID, count, unused, ribbon);
         return count;
     }
     case 3u: return particle_channel_span(slot, params.step).y;

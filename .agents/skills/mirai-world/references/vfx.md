@@ -18,8 +18,14 @@ instance hidden fields).
   (`GRAVITY` in effect views). `max_instances`/`cull_distance` of the primary layer:
   [culling](#culling).
 - **Renderers**: `Mesh` picks from `meshes` by `mesh_weights` (program `particle.mesh` may change
-  it; `facing` = `Tumble` or `Velocity` along `-Z` above `PARTICLE_MESH_FACING_SPEED`; sorted mesh
-  effects allow 1 mesh). `Beam` draws a camera-facing strip with optional +Y arc.
+  it; `facing` = `Tumble`, `Velocity` along `-Z` above `PARTICLE_MESH_FACING_SPEED`, or `Emitter`,
+  the emitter's turn at birth; sorted mesh effects allow 1 mesh). `Beam` draws a camera-facing
+  strip with optional +Y arc. `scale` (0 on an axis: 1, `effect.particle_scale`) stretches quads
+  in x/y, ribbon and beam width by x, meshes per axis.
+- **Blending**: `blend` (`Additive`, `Alpha`, `Multiply`) is of sprites, ribbons and beams; a `Mesh`
+  blends by its material's `alpha_mode` (`asset.alpha_blended`: `Blend`/`Additive` draw in `Blend`,
+  `Additive` with alpha 0). `effect.particle_field_applies` hides what does not apply in the
+  editor (`blend` of meshes, ribbon fields of others).
 - **Curves & gradients**: non-decreasing active times in `[0, 1]`; trailing zeros unused; sampling
   past the last key holds its value.
 - **Paths & validation**: dot paths (`rate`, `colors.1`, `bursts.0.count`,
@@ -48,6 +54,10 @@ instance hidden fields).
   when `Emitter_Desc.look` changes and groups the pool again (`pool.regroup`) only when
   `Emitter_Structure` (program, render, blending, view, event target, material, meshes) does: an
   animated value allocates nothing and keeps the spans of the programs.
+- `Emitter_Clock.segment` counts stretches of emission: +1 when emission starts again (`emitting`)
+  and, in Play, when `World_Transform.previous` is not where the clock saw it (`core.Jump`,
+  `JUMP_DISTANCE`). Births carry it (`Particle_Birth.segment` -> `Particle_Spawn.ribbon`);
+  `births_add` and `spawns_join` join groups of one segment first.
 - `particles_tick` (`fixed`, game+editor) advances clocks (`time.dt` in Play, `frame.dt` in Edit;
   mode change restarts) and applies `Particle_Requests` (`start`, `stop`, `restart`, `pause`,
   `resume`, `burst` of every layer or of `layer`, `request_value`, `request_value_remove`,
@@ -200,7 +210,12 @@ fade), and drops unrequested effects.
 ### Births and steps
 
 - Up to `SPAWNS` `Particle_Spawn` groups per emitter (merges on overflow); deterministic seed from
-  `(emitter, birth_index)`. Stale/prewarm births advance analytically. Each simulating frame runs
+  `(emitter, birth_index)`. Stale/prewarm births advance analytically. Each group's ribbon is in
+  `Gpu_Emitter.ribbons` (Ribbon effects only); each channel birth starts its own ribbon.
+- A birth stores its pose (`particle_birth_pose`: the emitter turn between `previous` and `world`,
+  identity in local space; a cone aligned to a channel normal takes that frame) after its draw look
+  (`POSE_AT` of `DRAW_LOOK_BYTES`). `inherit_velocity` in local space takes only the velocity
+  relative to the emitter (`particle_inherited`). Each simulating frame runs
   `dt <= FRAME_MAX` in steps `<= STEP` (up to `STEPS`) on window/texture views (`ui_only` defers);
   `paused` freezes particles.
 
@@ -222,7 +237,7 @@ fade), and drops unrequested effects.
 | --- | --- | --- |
 | `Simulate` (step) | `begin` / `emit` / `stage` / `simulate` | Reset/init ranges; spawn step+channel+event births; run program stages & grid swaps; forces, noise rotor, attractor, drag, `World` `trace_ray` (Coulomb friction, rest-speed hit gate), events, half-rate `lit` RGBE |
 | `Simulate` (frame) | `surface` / `stage` clear / `volume light` / `finish` | Build new surface CDFs; clear entered grid cells; light volumes (`_hw`); indirect draws & tiled sort (ribbons, mesh runs) |
-| `Blend` (view) | `volumes` / `sprites` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`, `.Glass_Depth` split |
+| `Blend` (view) | `volumes` / `sprites` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`, mesh normal), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`/`Multiply` (unlit, `FLAG_MULTIPLY`), `.Glass_Depth` split |
 | `Effect` / `Gbuffer` | `effects` / `meshes` | UI effect views; opaque/masked `Mesh` particles |
 
 ## Ribbons
@@ -230,14 +245,19 @@ fade), and drops unrequested effects.
 Particles join ribbons via `flags >> RIBBON_SHIFT` (`particle_own_ribbon` from event seed or
 `particle.ribbon`). `Trail` emits every `1/TRAILS_PER_SECOND` plus a 1-step leader at frame end.
 Sorted by `(ribbon, age, slot)`, adaptively subdivided to ~1 px cubic error in scratch; look cached
-in `RIBBON_LOOK_BYTES` after Attributes. Deaths auto-bridge next frame.
+in `DRAW_LOOK_BYTES` per particle. Deaths auto-bridge next frame. The frame sort also writes, after
+each pose, the metres from the ribbon head (segmented scan of chords) and the ribbon length; `v`
+is those metres over `ribbon_tile` (0: over the length). `ribbon_axis` `Emitter_Up` widens along
+the pose's +Y across the path, else toward the camera. Rate/distance births join the clock segment
+(stop/start and jumps do not stitch).
 
 ## Mesh particles
 
 Drawn in `Gbuffer` via `particle_mesh.vert` + engine/Surface fragment (1 draw/mesh/program via
 `pass_mesh_programs`, `frame_gbuffer_mesh`, `MESH_DRAWS_AT`). `frame_mesh_whole` keeps all level-0
 pages resident (read through `geometry.slang`); motion vectors use velocity. Program `render` data
-does not reach G-buffer meshes.
+does not reach G-buffer meshes. Local-space meshes take motion vectors from the emitter's
+`previous` rows (`particle_mesh_vector_by`).
 
 ## Verification
 
@@ -250,7 +270,9 @@ does not reach G-buffer meshes.
   hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`), grid
   stages/splats (`tally.slang`, `spread.slang`), weighted velocity-facing meshes, stage rays
   (`probe.slang`), volumes (`puff.slang`), world textures (`count_ground.slang`), channel rollback
-  (`testdata/gather.slang`), fog/glass sorting, zero-alloc frames, and debugger (`glitch.slang`).
+  (`testdata/gather.slang`), fog/glass sorting, zero-alloc frames, debugger (`glitch.slang`),
+  additive meshes, `Multiply`, ribbon segments, `Emitter_Up` and tiles (`trail_stripes.slang`),
+  `Emitter` facing with `scale`, local-space motion vectors and inheritance.
 - `mirai test plugins/vfx/editor -collection:plugins=<root>/plugins`: `document_test.odin`.
 - Demo editor (headless + validation): `physics_gallery/physics_burst.scene` (station 11),
   `particle.*`, and `Surface` + `Particle_Bindings` capture.

@@ -19,7 +19,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     uint material = particle_emitters[params.emitter].mesh.w;
     if (material == 0u) material = cluster_material(mesh, c) & 0xffffffu;
     Material row = material_row(material);
-    if (row.alpha_mode == ALPHA_BLEND || (params.program != INVALID && row.program_id != params.program)) {
+    if (material_blended(row) || (params.program != INVALID && row.program_id != params.program)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
@@ -27,11 +27,18 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];
     Particle_Look look = particle_draw_look(params.emitter, index);
-    float3x3 rotation = particle_mesh_rotation(params.emitter, p);
-    float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);
-    float3 prev_world = world - particle_world_vector(params.emitter, p.velocity) * particle_frame_step().x;
-    output.out_normal = particle_unit(particle_mesh_vector(params.emitter, rotation, v.normal), v.normal);
-    output.out_tangent = float4(particle_unit(particle_mesh_vector(params.emitter, rotation, v.tangent.xyz), v.tangent.xyz), v.tangent.w);
+    float3x3 rotation = particle_mesh_rotation(params.emitter, p, particle_pose(params.emitter, index));
+    float3 shape = v.position * look.size * particle_scale(params.emitter);
+    float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, shape);
+    float dt = particle_frame_step().x;
+    float3 prev_world = world - particle_world_vector(params.emitter, p.velocity) * dt;
+    // One that moves with its emitter was where the emitter was the frame before.
+    if ((particle_emitters[params.emitter].range.w & PARTICLE_FLAG_LOCAL) != 0u) {
+        float4 before[3] = particle_emitters[params.emitter].previous;
+        prev_world = transform_point(before, p.position - p.velocity * dt) + particle_mesh_vector_by(params.emitter, before, rotation, shape);
+    }
+    output.out_normal = particle_mesh_normal(params.emitter, rotation, v.normal);
+    output.out_tangent = float4(particle_unit(particle_mesh_vector(params.emitter, rotation, v.tangent.xyz * particle_scale(params.emitter)), v.tangent.xyz), v.tangent.w);
     output.out_color = material_vertex_tint(row, v.color.rgb) * look.color.rgb;
     output.out_vertex_color = v.color;
     output.out_emission = float3(0.0);

@@ -105,8 +105,9 @@ the left and **Effect** with the rows on the right, in the editor's document col
   that returns each field to the value it had when the document read the effect
   (`Effect_Document.base`). The `Particle_Info` fields go in foldable groups, each the one its
   `group` tag names, or that of the field before it: there is no other list of the fields.
-  Curves are key tables
-  ([rows by reflection](../../mirai-editor/references/inspector.md#rows-by-reflection)).
+  Fields that do not apply to the layer's `render` are left out (`effect.particle_field_applies`:
+  `blend` of a Mesh, `facing`/`meshes` of others, ribbon fields of non-ribbons). Curves are key
+  tables ([rows by reflection](../../mirai-editor/references/inspector.md#rows-by-reflection)).
 - **Hidden**: each field's eye toggles whether the instances show it (`hidden` list).
 - **Program parameters**: those that the named Vfx program declares according to the renderer's
   catalog, with the value that the effect stores or its default. Bools as switches, colors,

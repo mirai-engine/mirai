@@ -22,6 +22,7 @@ struct Stage_Output {
     [[vk::location(10)]] nointerpolation uint out_given : TEXCOORD10;
     [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
     [[vk::location(11)]] nointerpolation float2 out_random_radius : TEXCOORD11;
+    [[vk::location(13)]] float3 out_normal : TEXCOORD13;
 };
 
 [shader("vertex")]
@@ -39,7 +40,7 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     uint override_material = particle_emitters[params.emitter].mesh.w;
     output.material = override_material != 0u ? override_material : (cluster_material(mesh, c) & 0xffffffu);
     Material row = material_row(output.material);
-    if (row.alpha_mode != ALPHA_BLEND || (params.pad1 != INVALID && row.program_id != params.pad1)) {
+    if (!material_blended(row) || (params.pad1 != INVALID && row.program_id != params.pad1)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }
@@ -47,8 +48,9 @@ Stage_Output main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vulk
     uint index = particle_drawn(params.emitter, instance_id);
     Particle p = particles[index];
     Particle_Look look = particle_draw_look(params.emitter, index);
-    float3x3 rotation = particle_mesh_rotation(params.emitter, p);
-    float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size);
+    float3x3 rotation = particle_mesh_rotation(params.emitter, p, particle_pose(params.emitter, index));
+    float3 world = particle_world(params.emitter, p.position) + particle_mesh_vector(params.emitter, rotation, v.position * look.size * particle_scale(params.emitter));
+    output.out_normal = particle_mesh_normal(params.emitter, rotation, v.normal);
     output.position = view_clip(world);
     // The color of the mesh tints it as it tints the mesh in the G-buffer.
     output.out_color = float4(material_vertex_tint(row, v.color.rgb), 1.0) * look.color;

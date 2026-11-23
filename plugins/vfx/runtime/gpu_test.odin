@@ -679,17 +679,9 @@ mesh_particles_pick_their_meshes_by_weight :: proc(t: ^testing.T) {
 
 // A long box along -Z of its mesh, which a particle that faces its velocity
 // lays along where it goes.
-@(test)
-mesh_particles_face_their_velocity :: proc(t: ^testing.T) {
-	f := new(Gpu_Fixture)
-	defer free(f)
-	settings := test_settings()
-	settings.taa = false
-	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
-	defer gpu_fixture_destroy(f)
-	r := &f.renderer
-	gpu.scene_set_environment(r,{direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.02, 0.02, 0.02}})
-	// A box 0.1 across and 1 long, along z.
+// A box 0.1 across and 1 long, along z.
+@(private = "file")
+stick_mesh :: proc(r: ^gpu.Renderer) -> (gpu.Mesh_Handle, bool) {
 	corners := [8][3]f32{{-0.05, -0.05, -0.5}, {0.05, -0.05, -0.5}, {0.05, 0.05, -0.5}, {-0.05, 0.05, -0.5}, {-0.05, -0.05, 0.5}, {0.05, -0.05, 0.5}, {0.05, 0.05, 0.5}, {-0.05, 0.05, 0.5}}
 	faces := [6][4]u32{{0, 3, 2, 1}, {4, 5, 6, 7}, {0, 1, 5, 4}, {2, 3, 7, 6}, {1, 2, 6, 5}, {0, 4, 7, 3}}
 	vertices := make([dynamic]gpu.Mesh_Vertex, context.temp_allocator)
@@ -701,7 +693,20 @@ mesh_particles_face_their_velocity :: proc(t: ^testing.T) {
 		for k in face {append(&vertices, gpu.Mesh_Vertex{position = corners[k], normal = normal, color = {1, 1, 1}, tangent = {1, 0, 0, 1}})}
 		append(&indices, first, first + 1, first + 2, first, first + 2, first + 3)
 	}
-	stick, added := gpu.mesh_add(r, vertices[:], indices[:])
+	return gpu.mesh_add(r, vertices[:], indices[:])
+}
+
+@(test)
+mesh_particles_face_their_velocity :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r,{direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1},{sky = {0.02, 0.02, 0.02}})
+	stick, added := stick_mesh(r)
 	if !testing.expect(t, added) {return}
 	camera := gpu.Camera{position = {0, 0, 3}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
 	for _ in 0 ..< 3 {testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)}
@@ -2088,5 +2093,304 @@ particle_attributes_are_where_the_catalog_names_them :: proc(t: ^testing.T) {
 		testing.expect_value(t, transmute(f32)words[slot * stride + int(calm.offset / 4)], f32(1))
 	}
 	testing.expect_value(t, held, 5)
+	expect_clean(t, f.device)
+}
+
+// A wall lit from the front, behind what the camera at z 5 sees around the origin.
+@(private = "file")
+lit_wall :: proc(f: ^Gpu_Fixture) {
+	gpu.scene_set_environment(&f.renderer, {direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.02, 0.02, 0.02}})
+	gpu.scene_update(&f.renderer, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, 0, -2}, {12, 12, 0.2}), tint = {0.2, 0.2, 0.2}}}, true)
+}
+
+@(private = "file")
+FRONT :: gpu.Camera{position = {0, 0, 5}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+
+// Frames of emitters whose first frame starts one particle each.
+@(private = "file")
+frames_of_one :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc, frames: int, camera: gpu.Camera) {
+	DT :: f32(1.0 / 60)
+	for i in 0 ..< frames {
+		for &e in emitters {e.spawns = test_burst(1) if i == 0 else {}}
+		testing.expect(t, frame_emitters(f, &f.sync, emitters, DT))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera, time = f32(i) * DT}), f.renderer.error)
+	}
+	rhi.device_wait_idle(f.device)
+}
+
+// Mesh particles of an additive material add its light over the lit scene
+// without hiding what is behind them; those of an opaque one go into the
+// G-buffer.
+@(test)
+mesh_particles_of_an_additive_material_add_their_light :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	glow := gpu.DEFAULT_MATERIAL
+	glow.base_color, glow.alpha_mode = {0.3, 0, 0}, .Additive
+	gpu.materials_set(r, {glow})
+	lit_wall(f)
+	// The blended flag is what emitter_desc gives a mesh of an additive material.
+	added := test_emitter(1, {-1.2, 0, 0})
+	added.info.render, added.material, added.blended = .Mesh, 1, true
+	added.info.lifetime, added.info.size, added.info.soft, added.info.emission_mode, added.info.intensity = {10, 10}, {1, 1}, 0, .Relative, 1
+	mesh_choices(&added, f.app.renderer, {f.cube}, {1})
+	opaque := test_emitter(2, {1.2, 0, 0})
+	opaque.info.render, opaque.info.lifetime, opaque.info.size = .Mesh, {10, 10}, {1, 1}
+	mesh_choices(&opaque, f.app.renderer, {f.cube}, {1})
+	emitters := [2]Emitter_Desc{added, opaque}
+	frames_of_one(t, f, emitters[:], 8, FRONT)
+	testing.expect(t, f.sync.pool.meshes && f.sync.pool.sprites, "the opaque mesh goes into the G-buffer and the additive one over it")
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	glowing := pixel(pixels, w, project(r, FRONT, {-1.2, 0, 0.5}))
+	solid := pixel(pixels, w, project(r, FRONT, {1.2, 0, 0.5}))
+	wall := pixel(pixels, w, project(r, FRONT, {0, 1.5, 0}))
+	testing.expectf(t, wall[1] > 40, "the wall %v is lit", wall)
+	testing.expectf(t, glowing[0] > wall[0] + 40, "the additive cube %v adds its red to the wall %v", glowing, wall)
+	testing.expectf(t, glowing[1] > wall[1] - 8 && glowing[2] > wall[2] - 8, "and darkens nothing of it: %v over %v", glowing, wall)
+	testing.expectf(t, abs(solid[0] - solid[1]) < 12 && abs(solid[0] - wall[0]) > 8, "the opaque cube %v is drawn as a gray surface, not as the wall %v", solid, wall)
+	expect_clean(t, f.device)
+}
+
+// A sprite that multiplies darkens what is behind it by its color and adds nothing.
+@(test)
+particle_sprites_that_multiply_darken_what_is_behind :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	lit_wall(f)
+	filter := test_emitter(1, {0, 0, 0})
+	filter.info.blend, filter.info.lifetime, filter.info.soft = .Multiply, {10, 10}, 0
+	filter.info.colors = {{0.1, 1, 1, 1}, {0.1, 1, 1, 1}}
+	emitters := [1]Emitter_Desc{filter}
+	frames_of_one(t, f, emitters[:], 6, FRONT)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	under := pixel(pixels, w, project(r, FRONT, {0, 0, 0}))
+	wall := pixel(pixels, w, project(r, FRONT, {0, 1.5, 0}))
+	testing.expectf(t, wall[0] > 40, "the wall %v is lit", wall)
+	testing.expectf(t, under[0] < wall[0] * 0.75, "the sprite takes red from the wall: %v over %v", under, wall)
+	testing.expectf(t, abs(under[1] - wall[1]) < 12 && abs(under[2] - wall[2]) < 12, "and keeps what its color lets through: %v over %v", under, wall)
+	expect_clean(t, f.device)
+}
+
+// A trail that stops and starts again lays two ribbons: nothing between where
+// the first ended and where the second began.
+@(test)
+ribbons_of_two_stretches_of_emission_do_not_join :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {}, {sky = {0.02, 0.02, 0.02}})
+	trail := test_emitter(1, {-2, 0, 0})
+	trail.info.render, trail.info.lifetime, trail.info.size, trail.info.soft = .Ribbon, {2, 2}, {0.3, 0.3}, 0
+	DT :: f32(1.0 / 60)
+	birth := u32(0)
+	for i in 0 ..< 60 {
+		trail.previous = trail.transform
+		trail.transform = trs({-2 + f32(i + 1) * 4.0 / 60, 0, 0}, {1, 1, 1})
+		trail.spawns = {}
+		if i < 20 || i >= 40 {
+			trail.spawns = test_rate(2, DT, birth)
+			trail.spawns[0].ribbon = 1 if i < 20 else 2
+			birth += 2
+		}
+		frame_emitters(f, &f.sync, {trail}, DT)
+		testing.expect(t, gpu.renderer_frame(r, {camera = FRONT, time = f32(i) * DT}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	first := pixel(pixels, w, project(r, FRONT, {-1.3, 0, 0}))
+	gap := pixel(pixels, w, project(r, FRONT, {0, 0, 0}))
+	second := pixel(pixels, w, project(r, FRONT, {1.3, 0, 0}))
+	above := pixel(pixels, w, project(r, FRONT, {0, 0.6, 0}))
+	testing.expectf(t, first[0] > above[0] + 60 && second[0] > above[0] + 60, "both stretches lay a band: %v and %v over %v", first, second, above)
+	testing.expectf(t, abs(gap[0] - above[0]) < 10, "and nothing joins them: %v, the sky %v", gap, above)
+	expect_clean(t, f.device)
+}
+
+// A ribbon wide along the up of its emitter stands on edge seen from above,
+// where one that faces the camera lies flat; and its texture repeats every
+// ribbon_tile metres from its head (testdata/trail_stripes.slang).
+@(test)
+ribbons_lie_along_the_up_of_their_emitter_and_tile_by_their_length :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	surface := gpu.program_find(r, "Trail_Stripes", .Surface)
+	if !testing.expect(t, surface != nil, "testdata has the Surface program Trail_Stripes") {return}
+	stripes := gpu.DEFAULT_MATERIAL
+	stripes.program_id = surface.id
+	gpu.materials_set(r, {stripes})
+	gpu.scene_set_environment(r, {}, {sky = {0.02, 0.02, 0.02}})
+	above := gpu.Camera{position = {0, 6, 0.001}, forward = {0, -6, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	flat := test_emitter(1, {-2, 0, -1})
+	flat.info.render, flat.info.lifetime, flat.info.size, flat.info.soft = .Ribbon, {5, 5}, {0.3, 0.3}, 0
+	flat.capacity = 256
+	upright := flat
+	upright.spec = new(Emitter_Info, context.temp_allocator)
+	upright.spec^ = flat.spec^
+	upright.id, upright.info.ribbon_axis = 2, .Emitter_Up
+	tiled := flat
+	tiled.spec = new(Emitter_Info, context.temp_allocator)
+	tiled.spec^ = flat.spec^
+	tiled.id, tiled.material, tiled.info.ribbon_tile = 3, 1, 1
+	z := [3]f32{-1, 1, 2.2}
+	DT :: f32(1.0 / 60)
+	for i in 0 ..< 60 {
+		emitters := [3]^Emitter_Desc{&flat, &upright, &tiled}
+		for e, k in emitters {
+			e.previous = e.transform
+			e.transform = trs({-2 + f32(i + 1) * 4.0 / 60, 0, z[k]}, {1, 1, 1})
+			e.spawns = test_rate(2, DT, u32(i) * 2)
+		}
+		frame_emitters(f, &f.sync, {flat, upright, tiled}, DT)
+		testing.expect(t, gpu.renderer_frame(r, {camera = above, time = f32(i) * DT}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	sky := pixel(pixels, w, project(r, above, {0, 0, 0}))
+	beside_flat := pixel(pixels, w, project(r, above, {0, 0, -1 + 0.1}))
+	beside_upright := pixel(pixels, w, project(r, above, {0, 0, 1 + 0.1}))
+	testing.expectf(t, beside_flat[0] > sky[0] + 60, "the ribbon that faces the camera lies flat: %v, the sky %v", beside_flat, sky)
+	testing.expectf(t, abs(beside_upright[0] - sky[0]) < 10, "the one along the up of its emitter stands on edge: %v, the sky %v", beside_upright, sky)
+	// Its head is at x 2: white the first half metre of each metre from it, black the second.
+	for x, k in ([4]f32{1.75, 1.25, 0.75, 0.25}) {
+		shown := pixel(pixels, w, project(r, above, {x, 0, z[2]}))
+		white := k % 2 == 0
+		testing.expectf(t, white == (shown[0] > sky[0] + 60), "at x %v, %v metres from its head, the stripes show %v", x, 2 - x, shown)
+	}
+	expect_clean(t, f.device)
+}
+
+// A Mesh particle that faces as its emitter turns as the emitter was when it
+// was born, and the scale of its effect stretches it along each axis.
+@(test)
+mesh_particles_turn_as_their_emitter_was_and_scale_by_axis :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 128, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.02, 0.02, 0.02}})
+	stick, added := stick_mesh(r)
+	if !testing.expect(t, added) {return}
+	camera := gpu.Camera{position = {0, 0, 3}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	for _ in 0 ..< 3 {testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)}
+	// Born turned a quarter about y, its z along the x of the world; then the emitter turns back.
+	turned: matrix[4, 4]f32 = 1
+	turned[0, 0], turned[0, 2], turned[2, 0], turned[2, 2] = 0, 1, -1, 0
+	sticks := test_emitter(1, {0, 0, 0})
+	sticks.info.render, sticks.info.lifetime, sticks.info.size, sticks.info.lit = .Mesh, {30, 30}, {1, 1}, true
+	sticks.info.facing, sticks.info.scale = .Emitter, {1, 3, 1}
+	sticks.transform, sticks.previous = turned, turned
+	if !testing.expect(t, mesh_choices(&sticks, f.app.renderer, {stick}, {1})) {return}
+	for i in 0 ..< 12 {
+		sticks.spawns = test_burst(1) if i == 0 else {}
+		if i == 1 {sticks.previous, sticks.transform = turned, 1}
+		if i == 2 {sticks.previous = 1}
+		testing.expect(t, frame_emitters(f, &f.sync, {sticks}, 1.0 / 60))
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) / 60}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	sky := pixel(pixels, w, project(r, camera, {0, 0.6, 0}))
+	for x in ([]f32{-0.35, 0.35}) {
+		along := pixel(pixels, w, project(r, camera, {x, 0, 0}))
+		testing.expectf(t, along[0] > sky[0] + 30, "the stick lies along x, as its emitter was turned at its birth: at x %v %v, the sky %v", x, along, sky)
+	}
+	thick := pixel(pixels, w, project(r, camera, {0.2, 0.12, 0}))
+	testing.expectf(t, thick[0] > sky[0] + 30, "three times as thick along y: %v, the sky %v", thick, sky)
+	beyond := pixel(pixels, w, project(r, camera, {0.2, 0.3, 0}))
+	testing.expectf(t, abs(beyond[0] - sky[0]) < 10, "and no more: %v, the sky %v", beyond, sky)
+	expect_clean(t, f.device)
+}
+
+// Particles that move with their emitter take nothing more of its motion by
+// inherit_velocity, and their meshes are drawn coming from where the emitter
+// was the frame before (motion vectors).
+@(test)
+local_particles_move_with_their_emitter_once :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 128, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {direction = {0.2, 0.4, 1}, color = {1, 1, 1}, illuminance = 4 * math.PI, enabled = true, indirect = 1, scattering = 1}, {sky = {0.02, 0.02, 0.02}})
+	ridden := test_emitter(1, {-1, 0, 0})
+	ridden.info.render, ridden.info.lifetime, ridden.info.size, ridden.info.local_space = .Mesh, {30, 30}, {0.5, 0.5}, true
+	mesh_choices(&ridden, f.app.renderer, {f.cube}, {1})
+	inheriting := ridden
+	inheriting.spec = new(Emitter_Info, context.temp_allocator)
+	inheriting.spec^ = ridden.spec^
+	inheriting.id, inheriting.info.inherit_velocity = 2, 1
+	inheriting.transform = trs({-1, 20, 0}, {1, 1, 1})
+	inheriting.previous = inheriting.transform
+	STEP :: f32(0.02)
+	DT :: f32(1.0 / 60)
+	frame :: proc(t: ^testing.T, f: ^Gpu_Fixture, emitters: []Emitter_Desc, i: int, view: gpu.Debug_View) {
+		for &e in emitters {
+			e.previous = e.transform
+			e.transform[0, 3] += STEP
+			e.spawns = test_burst(1) if i == 0 else {}
+		}
+		testing.expect(t, frame_emitters(f, &f.sync, emitters, DT))
+		testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = FRONT, time = f32(i) * DT, inspection = {mode = view}}), f.renderer.error)
+	}
+	emitters := [2]Emitter_Desc{ridden, inheriting}
+	for i in 0 ..< 20 {frame(t, f, emitters[:], i, .None)}
+	for i in 20 ..< 23 {frame(t, f, emitters[:], i, .Motion)}
+	rhi.device_wait_idle(f.device)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	moving := pixel(pixels, w, project(r, FRONT, {emitters[0].transform[0, 3], 0, 0.25}))
+	still := pixel(pixels, w, project(r, FRONT, {1.5, 0.5, 0}))
+	delete(pixels)
+	testing.expectf(t, moving[0] > still[0] + 20, "the mesh that rides its emitter moves on screen as it does: %v, what stays %v", moving, still)
+	read := test_frame_read(t, f, emitters[:], DT, FRONT, 1, {pool_buffer(&f.sync.pool, .Particles), {}})
+	if read[0] == nil {return}
+	slot := u32(pool_slot_find(&f.sync.pool, 2))
+	found := false
+	for p in mem.slice_data_cast([]Gpu_Particle, read[0]) {
+		if p.lifetime <= 0 || p.emitter != slot {continue}
+		found = true
+		testing.expectf(t, linalg.length(p.position) < 0.01 && linalg.length(p.velocity) < 0.01, "it stays where its emitter is: at %v going %v of its emitter", p.position, p.velocity)
+	}
+	testing.expect(t, found)
 	expect_clean(t, f.device)
 }

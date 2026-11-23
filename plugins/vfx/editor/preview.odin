@@ -159,7 +159,8 @@ effect_reach :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (low,high:[3]
     pull:=info.acceleration+vfx.GRAVITY*info.gravity
     size:f32=0
     for value in info.size_over_life.values {size=max(size,value)}
-    size*=max(info.size[0],info.size[1],0)*0.5
+    scale:=effect.particle_scale(info)
+    size*=max(info.size[0],info.size[1],0)*0.5*max(scale.x,scale.y,scale.z)
     if info.render==.Beam {size+=linalg.length(info.beam_end)+abs(info.beam_arc)}
     start_low,start_high:=low,high
     for axis in 0..<3 {

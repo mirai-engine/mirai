@@ -476,9 +476,16 @@ void particle_program_update(uint slot, uint index, float time, float dt, inout 
 }
 #endif
 
-uint particle_draw_look_at(uint slot, uint index) {
-    return particle_emitters[slot].program.w + index * DRAW_LOOK_BYTES;
+// The pose a particle was born with (particle_pose_at), and of a ribbon the metres from its
+// head to it and its whole length.
+float4 particle_pose(uint slot, uint index) { return particle_pose_unpack(particle_data.Load2(particle_pose_at(slot, index))); }
+float2 particle_trail(uint slot, uint index) { return asfloat(particle_data.Load2(particle_pose_at(slot, index) + PARTICLE_TRAIL_AT)); }
+#ifdef PARTICLES_WRITABLE
+void particle_pose_store(uint slot, uint index, float4 pose) {
+    particle_data.Store4(particle_pose_at(slot, index), uint4(particle_pose_pack(pose), 0u, 0u));
 }
+#endif
+
 Particle_Look particle_draw_look(uint slot, uint index) {
     uint at = particle_draw_look_at(slot, index);
     Particle_Look look;

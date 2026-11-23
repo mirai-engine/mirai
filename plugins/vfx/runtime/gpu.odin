@@ -26,7 +26,8 @@ STEP :: f32(1.0/30) // the longest step a simulation takes
 TRAILS_PER_SECOND :: 30 // Trail events of a particle in each second of its life
 BEAM_PIECES :: 16
 RIBBON_PIECES :: 8 // most pieces a ribbon cuts the curve between two of its particles into
-DRAW_LOOK_BYTES :: 96
+DRAW_LOOK_BYTES :: 112 // what a particle shows in the frame (particle_draw_look), then the pose it was born with and where it is along its ribbon
+POSE_AT :: 96 // bytes of the look of a particle to its pose
 STEPS :: 8
 FRAME_MAX :: f32(0.25) // seconds a frame simulates at most
 
@@ -34,11 +35,13 @@ FRAME_MAX :: f32(0.25) // seconds a frame simulates at most
 // first ones are age seconds old at the end of the frame, and each next
 // instant spacing seconds younger. Older than the frame, they start where and
 // how old their life took them (a prewarm). birth: the index of the first,
-// which picks the random values of each particle.
+// which picks the random values of each particle. ribbon: the one they join,
+// the segment of the clock that started them (Emitter_Clock.segment).
 Particle_Spawn :: struct {
     count,per:u32,
     birth:u32,
     age,spacing:f32,
+    ribbon:u32,
 }
 
 // A Vfx program for an emitter: its id (0: none), its parameters, laid out
@@ -80,7 +83,7 @@ Emitter_Desc :: struct {
     mesh_extent:f32,
     external_positions:bool,
     mixed:bool,               // a mesh uses opaque and blended slots
-    blended:bool,             // of Mesh particles: its material blends (alpha mode Blend), so they are drawn over the lit scene with the sprites
+    blended:bool,             // of Mesh particles: its material blends or adds (asset.alpha_blended), so they are drawn over the lit scene with the sprites
     view:erender.Texture_Handle, // drawn only into the effect view of this texture (gui.UI_Effects); 0: in the views of the world
     event_target:u64,         // id of the emitter info.trigger starts info.sub_count particles in; 0: none
     resources:u32,           // first resource row + 1, or 0 without resources
@@ -105,6 +108,7 @@ FLAG_BIRTHS :: 512 // its program gives its births
 FLAG_PREPARE :: 1024 // its program prepares what it keeps each frame
 FLAG_DRAIN :: 4096
 FLAG_VIEW :: 2048 // drawn into an effect view: its places are of that view, not of the world, and the origin does not move them
+FLAG_MULTIPLY :: 8192 // its sprites multiply what is behind them by their color
 STATE_BYTES :: 512 // what a program keeps of each emitter between its prepare and the rest of the frame
 // The data buffer: the parameters of each emitter, what their programs keep, then the Attributes.
 STATES_AT :: EMITTER_CAPACITY*erender.PROGRAM_PARAMETER_BYTES
@@ -155,11 +159,13 @@ Gpu_Emitter :: struct {
     from_world:[3][4]f32,
     emitter_uid:[2]u32,
     birth_limit:f32,
-    pad:u32,
+    ribbon_axis:u32,    // effect.Particle_Ribbon_Axis
     beam:[4]f32,
     mesh_handles:[effect.PARTICLE_MESHES]u32, // and the meshes, whose indices the frame lists (erender.frame_mesh_whole)
+    scale:[4]f32,       // of every particle (effect.particle_scale); w: metres a ribbon repeats its texture over, 0 once over its length
+    ribbons:[2][4]u32,  // the ribbon each group of births joins
 }
-#assert(size_of(Gpu_Emitter)==928)
+#assert(size_of(Gpu_Emitter)==976)
 
 // What the emitters of a frame share, first in its rows (particle_frame of particles.slang).
 Gpu_Frame :: struct {
@@ -545,16 +551,18 @@ spawns_join :: proc(spawns:^[SPAWNS]Particle_Spawn,before,after:[SPAWNS]Particle
         count+=1
     }
     for count>SPAWNS {
-        // The pair that spans the least time joins.
-        best,span:=0,f32(max(f32))
+        // The pair that spans the least time joins, one of a ribbon before two of two.
+        best,span,apart:=0,f32(max(f32)),true
         for i in 0..<count-1 {
-            if s:=spawn_oldest(all[i])-spawn_youngest(all[i+1]);abs(s)<span {best,span=i,abs(s)}
+            s:=abs(spawn_oldest(all[i])-spawn_youngest(all[i+1]))
+            split:=all[i].ribbon!=all[i+1].ribbon
+            if !split && apart || split==apart && s<span {best,span,apart=i,s,split}
         }
         a,b:=all[best],all[best+1]
         oldest:=max(spawn_oldest(a),spawn_oldest(b))
         youngest:=min(spawn_youngest(a),spawn_youngest(b))
         total:=a.count+b.count
-        all[best]={count=total,per=1,birth=a.birth,age=oldest,spacing=total>1?(oldest-youngest)/f32(total-1):0}
+        all[best]={count=total,per=1,birth=a.birth,age=oldest,spacing=total>1?(oldest-youngest)/f32(total-1):0,ribbon=a.ribbon}
         copy(all[best+1:count-1],all[best+2:count])
         count-=1
     }
@@ -711,7 +719,9 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         if d.info.sort || d.info.render==.Ribbon {flags|=FLAG_SORT}
         // While an effect view plays alone, the emitters of the world keep their particles as they are.
         if d.paused || pool.still && d.view==0 {flags|=FLAG_PAUSED}
-        if d.info.blend==.Additive {flags|=FLAG_ADDITIVE}
+        // A Mesh particle blends as its material says.
+        if d.info.render!=.Mesh && d.info.blend==.Additive {flags|=FLAG_ADDITIVE}
+        if d.info.render!=.Mesh && d.info.blend==.Multiply {flags|=FLAG_MULTIPLY}
         if d.info.emission_mode==.Relative {flags|=FLAG_RELATIVE}
         // The places of an emitter of an effect view are of that view.
         origin:=pass.origin
@@ -726,10 +736,11 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
             if group.count==0 {continue}
             g.spawns[groups]={group.count,max(group.per,1),group.birth,transmute(u32)group.age}
             g.spacing[groups/4][groups%4]=group.spacing
+            g.ribbons[groups/4][groups%4]=group.ribbon if d.info.render==.Ribbon else 0
             spawn+=group.count
             groups+=1
         }
-        for i in groups..<SPAWNS {g.spawns[i]={};g.spacing[i/4][i%4]=0}
+        for i in groups..<SPAWNS {g.spawns[i]={};g.spacing[i/4][i%4]=0;g.ribbons[i/4][i%4]=0}
         // More than a few times its capacity cannot start: the rest would find no slot.
         spawn=min(spawn,s.capacity*4)
         pool.needs_clock||=spawn>0
@@ -879,6 +890,9 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
     g.beam={m.beam_end.x,m.beam_end.y,m.beam_end.z,m.beam_arc}
     g.attractor={m.attractor.x,m.attractor.y,m.attractor.z,m.attractor_strength}
     g.mesh={d.mesh_count,u32(m.facing),0,u32(d.material)}
+    scale:=effect.particle_scale(m)
+    g.scale={scale.x,scale.y,scale.z,max(m.ribbon_tile,0)}
+    g.ribbon_axis=u32(m.ribbon_axis)
     g.mesh_weights,g.mesh_handles={},{}
     for choice,c in d.meshes[:min(d.mesh_count,effect.PARTICLE_MESHES)] {g.mesh_weights[c],g.mesh_handles[c]=choice.weight,u32(choice.handle)}
     g.flipbook={max(m.flipbook[0],1),max(m.flipbook[1],1),0,0}
@@ -899,7 +913,7 @@ emitter_row :: proc(g:^Gpu_Emitter,s:^Pool_Slot,capacity:u32) {
 // asked again when the shaders are, or when the renderer takes another
 // variant of a stage (the one particle_simulate gives changes).
 Particle_Pipelines :: struct {
-    shift,data_copy,begin,emit,simulate,finish,sort,mesh_draws,surface,stage,volume_light,world_texture,additive,alpha,volume:erender.Pipeline,
+    shift,data_copy,begin,emit,simulate,finish,sort,mesh_draws,surface,stage,volume_light,world_texture,additive,alpha,multiply,volume:erender.Pipeline,
     groups:[dynamic]Program_Group, // first: emitters without a program
     by_program:map[u32]int,
     reloads:u64,
@@ -1022,7 +1036,8 @@ particles_frame :: proc(sync:^Particle_Sync,app:^host.App) -> bool {
         p.volume=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_volume",blend=.Premultiplied,name="particle volumes"})
         p.additive=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Additive,name="particles additive"})
         p.alpha=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"})
-        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.sort==0 || p.mesh_draws==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.volume==0 {return false}
+        p.multiply=erender.stage_pipeline(app.renderer,{stage=.Blend,shader="particle_sprite",blend=.Multiply,name="particles multiplied"})
+        if p.shift==0 || p.begin==0 || p.emit==0 || p.finish==0 || p.sort==0 || p.mesh_draws==0 || p.surface==0 || p.stage==0 || p.volume_light==0 || p.world_texture==0 || p.additive==0 || p.alpha==0 || p.multiply==0 || p.volume==0 {return false}
         p.simulate=simulate
         pool.regroup=true
     }
@@ -1168,6 +1183,8 @@ particles_simulate :: proc(pass:^erender.Pass,user:rawptr) {
     params.mode=0
     erender.pass_params(pass,&params,size_of(params))
     erender.pass_buffer(pass,7,pool_buffer(pool,.Events))
+    // Where the ribbons write how far along them each particle is: the counters took the slot.
+    erender.pass_buffer(pass,9,pool_buffer(pool,.Data))
     erender.pass_dispatch_indirect(pass,events,SORT_AT)
     if pool.drains>0 {
         erender.pass_readback(pass,pool_buffer(pool,.State),0,{DRAIN_READBACK,u64(EMITTER_CAPACITY)*size_of(Gpu_State)})
@@ -1290,7 +1307,8 @@ emitter_bounds :: proc(pool:^Pool,s:^Pool_Slot) {
         math.abs(m.gravity)*gravity+max(m.drag,0)*pool.wind_reach
     curve:=f32(1)
     for value in m.size_over_life.values {curve=max(curve,value)}
-    size:=max(m.size[0],m.size[1])*curve
+    scaled:=effect.particle_scale(m)
+    size:=max(m.size[0],m.size[1])*curve*max(scaled.x,scaled.y,scaled.z)
     radius:=linalg.length(m.shape_size)*scale+(speed+acceleration*life)*life
     radius+=size*max(d.mesh_extent*scale,1)+(speed+acceleration*life)*m.stretch
     // A bounce can turn any velocity component into any other one.
@@ -1363,8 +1381,8 @@ view_sort :: proc(sync:^Particle_Sync,pass:^erender.Pass,draws:[]Pool_Draw) -> b
         count+=1
     }
     if count==0 {return true}
-    for b in ([]Pool_Buffer{.Particles,.Emitters,.State,.Lists,.Events}) {
-        binding:=#partial [Pool_Buffer]u32{.Particles=0,.Emitters=1,.State=2,.Lists=3,.Events=5}
+    for b in ([]Pool_Buffer{.Particles,.Emitters,.State,.Lists,.Events,.Data}) {
+        binding:=#partial [Pool_Buffer]u32{.Particles=0,.Emitters=1,.State=2,.Lists=3,.Events=5,.Data=9}
         erender.pass_buffer(pass,binding[b],pool_buffer(pool,b))
     }
     erender.pass_pipeline(pass,sync.pipelines.sort)
@@ -1431,9 +1449,12 @@ particles_sprites :: proc(pass:^erender.Pass,user:rawptr) {
     for draw in draws {
         // The stage of its program, with the fragment of the Surface program of its material.
         desc:=&pool.slots[draw.slot].desc
-        additive:=desc.info.blend==.Additive
+        // A Mesh particle blends as its material says: an additive material gives its light
+        // without alpha in the premultiplied blend.
         mesh:=desc.info.render==.Mesh
-        stage:=erender.Stage_Pipeline_Desc{stage=.Blend,shader="particle_sprite",blend=.Additive if additive else .Premultiplied,name="particles additive" if additive else "particles blended"}
+        stage:=erender.Stage_Pipeline_Desc{stage=.Blend,shader="particle_sprite",blend=.Premultiplied,name="particles blended"}
+        if !mesh && desc.info.blend==.Additive {stage.blend,stage.name=.Additive,"particles additive"}
+        if !mesh && desc.info.blend==.Multiply {stage.blend,stage.name=.Multiply,"particles multiplied"}
         if mesh {stage.shader,stage.fragment="particle_mesh_blend","particle_sprite"}
         params:=Params{emitter=draw.slot,pass=u32(pass.glass),media=media}
         if !mesh {

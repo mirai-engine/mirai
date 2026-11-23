@@ -1136,3 +1136,81 @@ emitters_past_their_cull_distance_or_max_instances_wait :: proc(t:^testing.T) {
     }
     testing.expect_value(t,tracker.total_allocation_count,i64(0))
 }
+
+// A ribbon is a stretch of emission: births of a clock that starts to emit
+// again, or whose entity jumps (core.Jump), join another one, which the GPU
+// is told by group of births; groups of one ribbon join before two of two.
+@(test)
+ribbons_begin_again_where_emission_starts_again_or_the_emitter_jumps :: proc(t:^testing.T) {
+    e:=Emission{duration=1,rate=60,longest=1,tail=1}
+    clock:Emitter_Clock
+    emitter:=Particle_Emitter{active=true,loop=true}
+    PLAYING :: core.Time{playing=true}
+    tick :: proc(clock:^Emitter_Clock,emitter:Particle_Emitter,position,before:[3]f32) {
+        world:=core.World_Transform{transform={position=position,rotation=1,scale={1,1,1}},previous={position=before,rotation=1,scale={1,1,1}}}
+        emitter_tick(clock,emitter,{},world,1.0/60,PLAYING,nil,nil,false)
+    }
+    clock.emission=e
+    for i in 0..<4 {tick(&clock,emitter,{f32(i),0,0},{f32(i-1) if i>0 else 0,0,0})}
+    first:=clock.segment
+    testing.expect(t,first>0,"emission that starts begins a segment")
+    started:u64
+    slash:=births_since(&clock,&started)
+    testing.expect(t,slash[0].count>0 && slash[0].ribbon==first)
+    // It stops, then emits again: another ribbon.
+    emitter.active=false
+    for i in 4..<6 {tick(&clock,emitter,{f32(i),0,0},{f32(i-1),0,0})}
+    testing.expect_value(t,clock.segment,first)
+    emitter.active=true
+    tick(&clock,emitter,{6,0,0},{5,0,0})
+    second:=births_since(&clock,&started)
+    testing.expect(t,clock.segment==first+1 && second[0].count>0 && second[0].ribbon==first+1,"emission that starts again joins another ribbon")
+    // Its entity jumps: where it was before this tick is not where the clock saw it.
+    tick(&clock,emitter,{50,0,0},{40,0,0})
+    testing.expect_value(t,clock.segment,first+2)
+    tick(&clock,emitter,{51,0,0},{50,0,0})
+    testing.expect_value(t,clock.segment,first+2)
+    // A full clock joins its two oldest groups of one segment.
+    full:Emitter_Clock
+    full.segment=1
+    births_add(&full,0,1,1,0)
+    full.segment=2
+    for k in 1..<PARTICLE_BIRTHS {births_add(&full,f64(k),1,1,0)}
+    births_add(&full,9,1,1,0)
+    testing.expect(t,full.births[0].segment==1 && full.births[0].count==1,"the group of the first ribbon stays apart")
+    testing.expect(t,full.births[1].segment==2 && full.births[1].count==2)
+    // And so do the groups given to the GPU.
+    before,after:[SPAWNS]Particle_Spawn
+    for k in 0..<SPAWNS {before[k]={count=1,per=1,birth=u32(k),age=f32(SPAWNS-k),ribbon=1 if k==0 else 2}}
+    after[0]={count=1,per=1,birth=SPAWNS,age=0,ribbon=2}
+    joined:[SPAWNS]Particle_Spawn
+    spawns_join(&joined,before,after,0)
+    testing.expect(t,joined[0].ribbon==1 && joined[0].count==1,"a group of another ribbon does not join")
+}
+
+// Mesh particles blend as the alpha mode of their material says: Opaque and
+// Mask go into the G-buffer, Blend and Additive over the lit scene.
+@(test)
+mesh_particles_blend_as_the_alpha_mode_of_their_material :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"vfx-mesh-blend")
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    modes:=[asset.Alpha_Mode]bool{.Opaque=false,.Mask=false,.Blend=true,.Additive=true}
+    for mode in asset.Alpha_Mode {
+        info:=asset.MATERIAL_DEFAULTS
+        info.alpha_mode=mode
+        path:=strings.concatenate({folder,"/",reflect.enum_string(mode),".mat"},context.temp_allocator)
+        testing.expect_value(t,asset.material_save(path,&types,{id={9,u64(mode)+1},info=info}),asset.Error.None)
+    }
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=folder})) {return}
+    defer host.assets_destroy(&assets)
+    for blended,mode in modes {
+        spec:Emitter_Info
+        spec.info=effect.PARTICLE_DEFAULTS
+        spec.info.render,spec.info.material=.Mesh,{9,u64(mode)+1}
+        d,_:=emitter_desc(&spec,&assets,nil,1,0)
+        testing.expectf(t,d.blended==blended,"a mesh of a material %v blends: %v",mode,d.blended)
+    }
+}

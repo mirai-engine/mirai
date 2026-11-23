@@ -9,10 +9,12 @@
 // gives it (Mirai_Surface_Context.particle_data); another shows its base
 // color texture as the flipbook, blended between two frames, tinted by the
 // color of the particle.
-// Radiance is premultiplied: additive emitters add it, the others cover what
-// is behind by alpha. The second target is the share of the pixel covered.
-// An additive emitter adds the light of its material whatever its opacity,
-// and an unlit one shows the emission of its material in its own units
+// Radiance is premultiplied: additive emitters, and mesh particles of an
+// additive material, add it; the others cover what is behind by alpha. A
+// multiplying emitter darkens what is behind by its color instead, unlit. The
+// second target is the share of the pixel covered.
+// An additive emitter adds the light of its material whatever its opacity (an
+// additive material, by its opacity), and an unlit one shows the emission of its material in its own units
 // (Particle_Info.emission_mode), as it shows its color. The media of the view
 // between it and the eye take what it sends and add what they scatter over
 // what it covers, as over the opaque scene behind.
@@ -42,6 +44,7 @@ struct Stage_Input {
     [[vk::location(10)]] nointerpolation uint in_given : TEXCOORD10;
     [[vk::location(12)]] nointerpolation uint material : TEXCOORD12;
     [[vk::location(11)]] nointerpolation float2 in_random_radius : TEXCOORD11;
+    [[vk::location(13)]] float3 in_normal : TEXCOORD13;
 };
 struct Stage_Output {
     [[vk::location(0)]] float4 out_color : SV_Target0;
@@ -72,13 +75,23 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         if (in_front != (params.pass == PARTICLE_PASS_FRONT_OF_GLASS)) discard;
     }
     Material m = material_row(input.material);
-    bool additive = (particle_emitters[params.emitter].range.w & PARTICLE_FLAG_ADDITIVE) != 0u;
+    uint kind = particle_emitters[params.emitter].kinds.y;
+    bool mesh = kind == PARTICLE_RENDER_MESH;
+    uint flags = particle_emitters[params.emitter].range.w;
+    // A mesh blends as the alpha mode of its material says.
+    bool additive = mesh ? m.alpha_mode == ALPHA_ADDITIVE : (flags & PARTICLE_FLAG_ADDITIVE) != 0u;
+    bool multiply = !mesh && (flags & FLAG_MULTIPLY) != 0u;
     float scene = g_depth.Load(int3(pixel, 0)).r;
     float3 base_color, emission;
     float alpha;
     float4 tint = input.in_color;
     Material_Sample values;
+    // A quad faces the eye; a mesh its normal, turned toward the eye.
     float3 facing = to_eye(input.in_world);
+    if (mesh) {
+        float3 n = particle_unit(input.in_normal, facing);
+        facing = dot(n, facing) < 0.0 ? -n : n;
+    }
     if (m.program_id != 0u && material_program(m, sprite_context(input, facing, scene), float3(1.0), float3(0.0), values, facing)) {
         base_color = (values.layers.bits & MATERIAL_LAYER_UNLIT) != 0u ? float3(0.0) : values.base_color;
         emission = values.emission;
@@ -87,10 +100,9 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
     } else {
         // Without a texture a sprite is a puff, a ribbon fades to its edges and a mesh is whole.
         float2 tile = frac(input.in_uv.xy * float2(particle_emitters[params.emitter].flipbook.xy)) * 2.0 - 1.0;
-        uint kind = particle_emitters[params.emitter].kinds.y;
         bool band = kind == PARTICLE_RENDER_RIBBON || kind == PARTICLE_RENDER_BEAM;
-        float4 texel = float4(1.0, 1.0, 1.0, band ? 1.0 - abs(tile.x) : kind == PARTICLE_RENDER_MESH ? 1.0 : particle_puff(tile, input.in_seed));
-        if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR]) && particle_emitters[params.emitter].kinds.y == PARTICLE_RENDER_MESH) {
+        float4 texel = float4(1.0, 1.0, 1.0, band ? 1.0 - abs(tile.x) : mesh ? 1.0 : particle_puff(tile, input.in_seed));
+        if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR]) && mesh) {
             // A mesh reads its texture through the map of its material, at the uv of its vertices.
             texel = material_texel(m.textures[MATERIAL_MAP_BASE_COLOR], material_map_uv(m, MATERIAL_MAP_BASE_COLOR, input.in_uv.xy, input.in_uv.zw), frame.texturing.x);
         } else if (material_has(m.textures[MATERIAL_MAP_BASE_COLOR])) {
@@ -98,7 +110,7 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         }
         base_color = m.base_color * texel.rgb;
         emission = m.emission * texel.rgb;
-        alpha = (additive ? 1.0 : m.opacity) * texel.a;
+        alpha = (additive && !mesh ? 1.0 : m.opacity) * texel.a;
     }
     float3 surface = base_color * tint.rgb;
     alpha = saturate(alpha * tint.a);
@@ -108,6 +120,12 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         alpha *= saturate((depth - frame.camera_position.w) / soft);
     }
     if (alpha <= 1e-4) discard;
+    if (multiply) {
+        // What is behind times its color, by how much of the pixel it covers.
+        output.out_color = float4(lerp(float3(1.0), saturate(surface), alpha), 1.0);
+        output.out_coverage = float4(alpha, 0.0, 0.0, 0.0);
+        return output;
+    }
     bool relative = m.emission_mode == EMISSION_RELATIVE;
     float3 radiance = finite_or_zero(surface * input.in_light + emission_render_units(emission * tint.rgb, relative));
     float4 medium = media_over(media, params.media, input.in_world);

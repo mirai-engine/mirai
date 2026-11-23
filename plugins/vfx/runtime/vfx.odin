@@ -3,6 +3,7 @@ package vfx
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
+import "mirai:asset"
 import "mirai:core"
 import scene "mirai:engine/scene"
 import volume "mirai:engine/volume"
@@ -218,7 +219,7 @@ particles_tick :: proc(
             layer_clock:=clock_find(clocks,e,layer)
             if layer_clock==nil {continue}
             emits_preview:=layer==0
-            if !clock.culled {emitter_tick(layer_clock,emitter,listener,world.transform.position,dt,time,clocks,sync,emits_preview)}
+            if !clock.culled {emitter_tick(layer_clock,emitter,listener,world,dt,time,clocks,sync,emits_preview)}
             all_done&&=layer_clock.done
         }
         if time.playing && all_done && emitter.destroy_when_done {append(&done,e)}
@@ -299,10 +300,14 @@ clocks_resolve :: proc(clocks:^Particle_Clocks,sync:^Particle_Sync,overrides:^co
 
 @(private)
 emitter_tick :: proc(clock:^Emitter_Clock,emitter:Particle_Emitter,listener:Particle_Channel,
-    position:[3]f32,dt:f32,time:core.Time,clocks:^Particle_Clocks,sync:^Particle_Sync,emits_preview:bool,
+    world:core.World_Transform,dt:f32,time:core.Time,clocks:^Particle_Clocks,sync:^Particle_Sync,emits_preview:bool,
 ) {
     emitting:=time.playing?emitter.active:emitter.preview
     before:=clock.time
+    position:=world.transform.position
+    // An entity that jumps (core.Jump) comes from elsewhere than where the clock saw it last:
+    // its ribbons do not join across the jump.
+    if time.playing && clock.placed && linalg.length(world.previous.position-clock.position)>JUMP_DISTANCE {clock.segment+=1}
     emission_step(clock,&clock.emission,emitting,emitter.loop,position,dt)
     if !listener.silent && !clock.paused && channel_key(listener)!=0 {
         if time.playing {
@@ -682,7 +687,7 @@ births_since :: proc(clock:^Emitter_Clock,started:^u64) -> (spawns:[SPAWNS]Parti
         instant:=f64(skip/per)*f64(b.spacing)
         spawns[count]={
             count=u32(u64(b.count)-skip),per=b.per,birth=u32(b.first+skip),
-            age=f32(max(clock.time-(b.time+instant),0)),spacing=b.spacing,
+            age=f32(max(clock.time-(b.time+instant),0)),spacing=b.spacing,ribbon=b.segment,
         }
         count+=1
     }
@@ -747,6 +752,10 @@ emitter_look_for_view :: proc(info:^effect.Particle_Info,view:erender.Texture_Ha
     }
 }
 
+// Metres between where the clock of an emitter saw it last and where its entity says it
+// was before this tick past which it jumped.
+JUMP_DISTANCE :: f32(1e-3)
+
 // The id the pool knows a layer of the emitter of an entity by (0 the primary).
 layer_id :: proc "contextless" (e:core.Entity,layer:int) -> u64 {
     return u64(e) if layer==0 else base.hash_combine(u64(e),u64(layer)+0x706172746c617965)
@@ -792,8 +801,8 @@ emitter_desc :: proc(spec:^Emitter_Info,a:^host.Assets,renderer:^erender.Rendere
     if a==nil {return d,false}
     d.material=erender.Material_Handle(m.material!={}?host.assets_material_row(a,m.material):0)
     if m.render==.Mesh {
-        // A material that blends draws its meshes over the lit scene, as a sprite.
-        if found:=host.assets_material(a,m.material);found!=nil {d.blended=found.info.alpha_mode==.Blend}
+        // A material that blends or adds draws its meshes over the lit scene, as a sprite.
+        if found:=host.assets_material(a,m.material);found!=nil {d.blended=asset.alpha_blended(found.info.alpha_mode)}
         // Each mesh of the effect with its weight; none: the cube.
         handles:[effect.PARTICLE_MESHES]erender.Mesh_Handle
         weights:[effect.PARTICLE_MESHES]f32
@@ -809,7 +818,7 @@ emitter_desc :: proc(spec:^Emitter_Info,a:^host.Assets,renderer:^erender.Rendere
             opaque||=entry.slot_count==0
             for material in entry.slot_materials[:entry.slot_count] {
                 row:=host.assets_material(a,material)
-                alpha:=row!=nil && row.info.alpha_mode==.Blend
+                alpha:=row!=nil && asset.alpha_blended(row.info.alpha_mode)
                 opaque||=!alpha
                 blended||=alpha
             }
