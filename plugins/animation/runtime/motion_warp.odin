@@ -87,6 +87,7 @@ Motion_Instance :: struct {
     spine:[16]i32,
     legs:[16]lib.Pose_Warp_Limb,
     spine_count,leg_count:u8,
+    window_names:[MOTION_WINDOWS]u64, // base.name_hash of each warp window of its .character, the span of a clip it warps
     targets:[dynamic]Motion_Target, // at most MOTION_WINDOWS
     bindings:[dynamic]Spatial_Target_Binding, // of each target; never fewer
     locomotion:Motion_Locomotion,
@@ -141,6 +142,8 @@ motion_bind :: proc(instance:^Motion_Instance,state:^Playing,content:^Character_
     config:=content.set.motion.warp
     instance.profile,instance.revision,instance.bound=content.id,content.revision,state.bound
     instance.bound_valid=false
+    instance.window_names={}
+    for &window,w in content.set.motion.windows[:min(len(content.set.motion.windows),MOTION_WINDOWS)] {instance.window_names[w]=base.name_hash(base.text_get(window.name[:]))}
     instance.spine_count,instance.leg_count=0,0
     instance.error=.None;instance.window=-1
     if config.orientation || config.stride {
@@ -294,10 +297,10 @@ motion_apply_root :: proc(runtime:^Motion_Runtime,characters:^Character_Assets,l
     root_target:=bone_target(state,root.bone)
     if root_target==0 {instance.error=.Unbound_Bone;return false}
     spans:[MOTION_WINDOWS]Motion_Window_Span;span_count:=0
-    for &window,w in definition.set.motion.windows {
+    for &window,w in definition.set.motion.windows[:min(len(definition.set.motion.windows),MOTION_WINDOWS)] {
         if window.weight==0 || !(window.translation && root.translation && (window.axes[0] || window.axes[1] || window.axes[2]) || window.rotation && root.rotation) {continue}
         // Its span on the clip that plays: one without that span is not warped.
-        window_start,window_end,spanned:=clip_span(content,player.clip,base.name_hash(base.text_get(window.name[:])))
+        window_start,window_end,spanned:=clip_span(content,player.clip,instance.window_names[w])
         if !spanned {continue}
         offset:=f32(0)
         if to>duration && from>=window_end {offset=duration}

@@ -23,9 +23,8 @@ curves_prepare :: proc(state:^Playing,content:^host.Content_Animation) -> bool {
         if count==0 || !curve_same(next[count-1],curve) {next[count]=curve;count+=1}
     }
     base.truncate(&next,count)
-    if !program_array_resize(&state.curve_scratch,count*3) {return false}
     delete(state.curves);state.curves=next;next=nil;state.curves_ready=true
-    return true
+    return state.stack==nil || stack_scratch_prepare(state)
 }
 
 sample_curves :: proc(state:^Playing,content:^host.Content_Animation,weight:f32=1,animation:Animation=ANIMATION_DEFAULT) {
@@ -45,9 +44,10 @@ sample_curves :: proc(state:^Playing,content:^host.Content_Animation,weight:f32=
 
 // The curves of the clips the slots of the stack play, over those of the base.
 sample_layer_curves :: proc(state:^Playing,content:^host.Content_Animation,animation:Animation) {
-    if state.stack==0 {return}
-    for &layer,i in state.layers[:state.stack] {
-        asked:=state.asked[i]
+    stack:=state.stack
+    if stack==nil || stack.slots==0 || len(stack.scratch.curves)<3*len(state.curves) {return}
+    for &layer,i in stack.layers[:stack.slots] {
+        asked:=stack.asked[i]
         if layer.weight<=0 || asked.curves==.Ignore {continue}
         players:[LAYER_PLAYERS]lib.Player
         count:=layer_players(&layer,&players)
@@ -55,7 +55,7 @@ sample_layer_curves :: proc(state:^Playing,content:^host.Content_Animation,anima
         additive:=asked.mode==.Additive || asked.curves==.Additive
         from:=lib.clip_find(&content.lib,asked.reference_clip) if additive && asked.reference_clip!=0 else 0
         n:=len(state.curves)
-        overlay,rest,own:=state.curve_scratch[:n],state.curve_scratch[n:2*n],state.curve_scratch[2*n:3*n]
+        overlay,rest,own:=stack.scratch.curves[:n],stack.scratch.curves[n:2*n],stack.scratch.curves[2*n:3*n]
         for curve,k in state.curves {
             key:=Curve_Output{target=curve.target,property=curve.property,slot=curve.slot}
             overlay[k],rest[k],own[k]=key,key,key

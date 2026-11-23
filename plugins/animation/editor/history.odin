@@ -116,7 +116,7 @@ history_look :: proc(s:^editor.Session,w:core.World_Ref,row:bool,data:rawptr) ->
     if matching {
         out.match=m.result
         out.searched,out.jumped=l.searched,l.jumped
-        if out.searched && p.candidates>0 && m.state!=nil && m.state.program.match.searched.search==m.result.searches {
+        if out.searched && p.candidates>0 && m.state!=nil && m.searched.search==m.result.searches {
             out.candidates=match_candidates(call,&m,p.candidates)
         }
     }

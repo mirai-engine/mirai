@@ -1,5 +1,6 @@
 package anim
 
+import "base:runtime"
 import "core:strings"
 
 import "core:slice"
@@ -187,8 +188,6 @@ Stack_Inertia :: struct {
     dt:f32,     // seconds between shown_before and shown
     kept:u8,    // ticks shown holds, up to 2
     frame,bound:u64, // Playback.frame of shown, and the bindings it was shown with
-    values:[dynamic]f32,          // 5 a curve (its value and weight) for the shown curves, those before them and the target
-    durations:[dynamic]f32,       // by bone, the seconds of its blend (lib.Inertial_Input)
     state:lib.Inertial_State,
     bones:[dynamic]lib.Inertial_Bone,
     curves:[dynamic]lib.Inertial_Curve,
@@ -197,6 +196,30 @@ Stack_Inertia :: struct {
 // The root motion a stack showed in its last tick, as velocities (translation and the logarithm of
 // the rotation, per second), and the difference from it that decays over a blend.
 Root_Inertia :: struct {velocity,offset:[2]mm.Vec3,frame:u64,shown:bool,duration,elapsed:f32}
+
+// What an entity plays over its base clip: the layers and actions of its .character, a clip a
+// command plays over it, and the inertia that blends what they change or what its locomotion
+// jumps to. An entity that plays a clip alone, as a prop or a timeline, has none.
+Stack_Playing :: struct {
+    allocator:mem.Allocator,                // the one it was made with, which frees it
+    layers:[STACK_SLOTS]Layer_Playing,
+    asked:[STACK_SLOTS]Layer_Ask,           // what each slot plays in this tick
+    slots:u8,                               // slots its .character or its overlay give it
+    blend:Stack_Blend,                      // what its slots changed in this tick
+    inertia:Stack_Inertia,
+    parameters:[STACK_PARAMETERS]Stack_Parameter, // what set gave it; name 0: free
+    masks:[dynamic]f32,                // by slot of the stack and binding: the share of its layer each bone takes (layer_mask)
+    masks_over:[STACK_SLOTS]Layer_Over, // the branches each row of masks was made for
+    masks_made:u16,                    // a bit a row made for the bindings of masks_bound
+    masks_bound:u64,
+    scratch:Stack_Scratch,             // a copy of the world keeps its own (playing_copy)
+}
+// What the pose of a stack works in during a tick, sized by stack_inertia_prepare before the pose.
+Stack_Scratch :: struct {
+    curves:[dynamic]Curve_Output, // 3 a curve: those of a layer, those below it and its own
+    values:[dynamic]f32,          // 5 a curve (its value and weight) for the shown curves, those before them and the target
+    durations:[dynamic]f32,       // by bone, the seconds of its blend (lib.Inertial_Input)
+}
 
 Playing :: struct {
     entity:core.Entity,
@@ -221,18 +244,9 @@ Playing :: struct {
     restore_time:Maybe(f32),
     was_playing:bool,
     previewed:bool,            // played in the editor in the last tick
-    layers:[STACK_SLOTS]Layer_Playing,
-    asked:[STACK_SLOTS]Layer_Ask,           // what each slot plays in this tick
-    stack:u8,                               // slots its .character gives it; 0: none
-    blend:Stack_Blend,                      // what its slots changed in this tick
-    inertia:Stack_Inertia,
-    parameters:[STACK_PARAMETERS]Stack_Parameter, // what set gave it; name 0: free
-    masks:[dynamic]f32,                // by slot of the stack and binding: the share of its layer each bone takes (layer_mask)
-    masks_over:[STACK_SLOTS]Layer_Over, // the branches each row of masks was made for
-    masks_made:u16,                    // a bit a row made for the bindings of masks_bound
-    masks_bound:u64,
+    stack:^Stack_Playing,      // owned; nil until it plays more than its base clip (stack_make)
     program:Program_Playing,
-    curves,curve_scratch:[dynamic]Curve_Output,
+    curves:[dynamic]Curve_Output,
     curves_ready:bool,
     root:Root_Motion,          // the root bone and channels of its stack in this tick, and whether its base keeps them in place
     motion:Root_Delta,         // of root, from the base and the layers by their weights
@@ -257,7 +271,7 @@ Playing :: struct {
     stage:Pose_Stage,          // of the pose of its leader it takes
     follow:[dynamic]lib.Follow_Bone,       // by bone: the bone of the leader it takes
     retarget:[dynamic]lib.Retarget_Bone,   // sampled: by bone, how it takes the pose of its bone of the leader
-    retarget_rest,retarget_world:[dynamic]mm.Transform, // sampled: the rests of the leader and its own, and room for their poses in the world
+    retarget_rest:[dynamic]mm.Transform,   // sampled: the rests of the leader and its own
     world_final:u64,                       // Playback.frame whose finished pose world holds, in the world, for its followers
     follow_bound:[2]u64,                   // the bound of the leader and its own the follow was paired for
     driven:[dynamic]Curve_Output,          // its curves after those of its leader and the drives of its profile, while driven_ready
@@ -265,6 +279,12 @@ Playing :: struct {
     driven_key:Driven_Key,                 // what driven was laid out for
     driven_ready:bool,
     curve_layout:u64,                      // changes when the curves a lookup reads change place
+    scratch:Playing_Scratch,               // a copy of the world keeps its own (playing_copy)
+}
+// What a state works in during a tick and keeps nothing of: sized where it is used, on the owner
+// thread.
+Playing_Scratch :: struct {
+    retarget_world:[dynamic]mm.Transform, // sampled: room for the poses of the leader and its own in the world
 }
 
 // An entity whose Mesh_Renderer shows a mesh with a skeleton and that does
@@ -279,7 +299,9 @@ Stats :: struct {
     skipped:u64, // writes left out because another component owns the transform
 }
 
-// Playback belongs to the simulated world, including its cross-fades and rest pose.
+// Playback belongs to the simulated world, including its cross-fades and rest pose. A copy of
+// the world (Play, a rollback snapshot) copies its states and leaves work and searches to each
+// copy (playback_copy).
 @(storage,copy="playback_copy",free="playback_free",save_prepare="playback_save_prepare")
 Playback :: struct {
     states:[dynamic]Playing,
@@ -294,16 +316,22 @@ Playback :: struct {
     hierarchy_shapes:[2]core.Shape, // and the rows of the transforms and the animations
     hierarchy_stamp:u64, // moves when any of them does
     track_maps:[dynamic]Track_Map,
-    scratch:[dynamic]Pose_Scratch, // one a job that poses
     prepared:bool,
     previewed:bool,                // its last tick did not play: what it played was the editor's preview
-    bones_peak:int,                // bindings of the largest state bound: the room of each scratch
-    work:[dynamic]Pose_Row,        // the entities of the tick under way
-    work_contents:[dynamic]host.Content_Animation, // what they play, each once: its library outlives the tick, its place in the host may not
-    final_rows:[dynamic]i32,
-    request_order:[dynamic]Request_Index,
+    bones_peak:int,                // bindings of the largest state bound: the room of each scratch of work.jobs
     frame,binding_revision:u64,
     stats:Stats,
+    work:Playback_Work,
+    searches:[dynamic]Match_Searched, // by state: its last search of matching, for inspection only
+}
+
+// What a tick of Playback works in and keeps nothing of between ticks.
+Playback_Work :: struct {
+    jobs:[dynamic]Pose_Scratch,    // one a job that poses
+    rows:[dynamic]Pose_Row,        // the entities of the tick under way
+    contents:[dynamic]host.Content_Animation, // what they play, each once: its library outlives the tick, its place in the host may not
+    final_rows:[dynamic]i32,
+    request_order:[dynamic]Request_Index,
 }
 
 @(private)
@@ -318,8 +346,8 @@ Request_Index :: struct {entity:core.Entity,row:int}
 @(private)
 request_sort :: proc(playback:^Playback,requests:[]$T) -> bool {
     if len(requests)<2 {return true}
-    if !program_array_resize(&playback.request_order,len(requests)) {return false}
-    order:=playback.request_order[:]
+    if !program_array_resize(&playback.work.request_order,len(requests)) {return false}
+    order:=playback.work.request_order[:]
     for &request,i in requests {order[i]={request_entity(&request),i}}
     slice.sort_by(order,proc(a,b:Request_Index) -> bool {
         return a.entity<b.entity || a.entity==b.entity && a.row<b.row
@@ -392,8 +420,8 @@ animation_tick :: proc(
         return
     }
     rig_count:=len(playback.rigs)
-    clear(&playback.work);clear(&playback.work_contents)
-    if reserve(&playback.work,rig_count+core.count(animations))!=nil {memory_problem(problems,core.NONE,"the poses of the animated entities, so nothing is animated in this tick");return}
+    clear(&playback.work.rows);clear(&playback.work.contents)
+    if reserve(&playback.work.rows,rig_count+core.count(animations))!=nil {memory_problem(problems,core.NONE,"the poses of the animated entities, so nothing is animated in this tick");return}
     for row in 0..<rig_count+core.count(animations) {
         skeletal:=row<rig_count
         e:=playback.rigs[row].entity if skeletal else core.entity_at(animations,row-rig_count)
@@ -484,7 +512,7 @@ animation_tick :: proc(
                 state.fader.outgoing_count=0
                 state.fader.current.clip=mapped+lib.Clip(content.clip_count if selection_was.loop else 0)
             }
-            state.layers,state.asked,state.stack={},{},0
+            if state.stack!=nil {state.stack.layers,state.stack.asked,state.stack.slots={},{},0}
             mem.zero_slice(state.program.players[:])
             if !skeletal {state.hierarchy_stamp=0}
         }
@@ -520,7 +548,7 @@ animation_tick :: proc(
         if distance!=nil {_,on_action:=action_player(actions,e,distance.clip,content,distance.animation);if on_action {action_distance=distance;distance=nil}}
         current_dt:=dt
         if distance!=nil && !programmed {if distance.seek {sought=distance.time;current_dt=0} else {current_dt=(distance.time-state.fader.current.time)/animation.speed}}
-        stack_asks(actions,state,animation,content)
+        if !stack_asks(actions,state,animation,content) {memory_problem(problems,e,"the stack of its layers")}
         state.held=false
         if content!=nil {
             if programmed {
@@ -540,30 +568,32 @@ animation_tick :: proc(
                 actions_sample(actions,state,animation,dt,problems,content,playback,events,
                     action_distance,pace)
             }
-            if overlay_was!=0 && overlay_was!=state.overlay.slot {
+            if overlay_was!=0 && overlay_was!=state.overlay.slot && state.stack!=nil {
                 i:=int(overlay_was)-1
-                state.layers[i]={}
-                stack_blend(state,i,state.overlay.selection.fade)
+                state.stack.layers[i]={}
+                stack_blend(state.stack,i,state.overlay.selection.fade)
             }
             clip_overlay_sample(state,content,animation,edit,actions,playback,events,dt,problems)
             layers_advance(playback,state,content,animation,events,dt,problems,characters,app,actions)
             actions_layer_finish(actions,state)
-            for &layer in state.layers[:state.stack] {if layer.weight>0 {state.held=false}}
-            if state.blend.slots!=0 || state.inertia.state.active {state.held=false}
+            if stack:=state.stack;stack!=nil {
+                for &layer in stack.layers[:stack.slots] {if layer.weight>0 {state.held=false}}
+                if stack.blend.slots!=0 || stack.inertia.state.active {state.held=false}
+            }
             stack_parameters_check(state,problems)
             if !stack_inertia_prepare(state) {memory_problem(problems,e,"the blends of its actions")}
         } else {clear(&state.curves);state.curves_ready=false}
         played:=work_content(playback,content)
         if played<0 {memory_problem(problems,e,"its animation");continue}
-        append(&playback.work,Pose_Row{state=playback.rows[core.entity_index(e)]-1,content=played,programmed=programmed,animation=animation,dt=dt,current_dt=current_dt,sought=sought,distance=distance,action_distance=action_distance,distance_error=distance_error,placed=placed})
+        append(&playback.work.rows,Pose_Row{state=playback.rows[core.entity_index(e)]-1,content=played,programmed=programmed,animation=animation,dt=dt,current_dt=current_dt,sought=sought,distance=distance,action_distance=action_distance,distance_error=distance_error,placed=placed})
     }
     clip_commands_finish(&requests.timeline,time.playing,problems)
     pose_rows_run(playback,transforms,&app.jobs if budget.parallel else nil,int(budget.job_grain))
-    for &row in playback.work {
+    for &row in playback.work.rows {
         state:=&playback.states[row.state]
         e:=state.entity
         animation:=&row.animation
-        content:=&playback.work_contents[row.content-1] if row.content>0 else nil
+        content:=&playback.work.contents[row.content-1] if row.content>0 else nil
         programmed,dt,current_dt,sought,distance,action_distance:=row.programmed,row.dt,row.current_dt,row.sought,row.distance,row.action_distance
         if row.faults.program {program_problem(problems,e,app.assets,animation^,state.program.error);continue}
         pose_faults_report(problems,e,row.faults,actions)
@@ -607,14 +637,14 @@ animation_tick :: proc(
                 if instance:=motion_instance(motion,e);instance!=nil {motion_problem(problems,e,instance.error)}
             }
             // The warp of the clock of an action that moves the body moves the body as much.
-            if leading>=0 && state.layers[leading].body!=.None {state.body_motion.translation+=state.motion.translation-unwarped}
+            if leading>=0 && state.stack.layers[leading].body!=.None {state.body_motion.translation+=state.motion.translation-unwarped}
         }
         if programmed {match_lag_apply(state,row.placed)}
         copy(playing_pose(state,.Sampled),playing_pose(state,.Local))
         if row.distance_error!=.None {state.program.error=.Invalid_Parameter;distance_problem(problems,e,row.distance_error)}
         state.seen=playback.frame
     }
-    clear(&playback.work);clear(&playback.work_contents)
+    clear(&playback.work.rows);clear(&playback.work.contents)
     for &state in playback.states {
         if state.seen==playback.frame {continue}
         if state.clip_event.clip!=0 {
@@ -633,11 +663,11 @@ animation_tick :: proc(
 @(private)
 work_content :: proc(playback:^Playback,content:^host.Content_Animation) -> i32 {
     if content==nil {return 0}
-    for &known,i in playback.work_contents {
+    for &known,i in playback.work.contents {
         if known.id==content.id && known.generation==content.generation && raw_data(known.lib.tracks)==raw_data(content.lib.tracks) {return i32(i+1)}
     }
-    if append(&playback.work_contents,content^)!=1 {return -1}
-    return i32(len(playback.work_contents))
+    if append(&playback.work.contents,content^)!=1 {return -1}
+    return i32(len(playback.work.contents))
 }
 
 
@@ -899,26 +929,30 @@ animation_progress :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (t
 
 // The value set gave a parameter of an entity; false when none was set.
 @(private)
-stack_parameter :: proc "contextless" (state:^Playing,name:u64) -> (value:f32,given:bool) {
-    if name==0 {return}
-    for &parameter in state.parameters {if parameter.name==name {parameter.used=true;return parameter.value,true}}
+stack_parameter :: proc "contextless" (stack:^Stack_Playing,name:u64) -> (value:f32,given:bool) {
+    if name==0 || stack==nil {return}
+    for &parameter in stack.parameters {if parameter.name==name {parameter.used=true;return parameter.value,true}}
     return
 }
+// False when the parameters of the entity are full, or memory ran out for its stack.
 @(private)
-stack_parameter_set :: proc "contextless" (state:^Playing,name:u64,value:f32) -> bool {
+stack_parameter_set :: proc(state:^Playing,name:u64,value:f32) -> bool {
+    stack:=stack_make(state)
+    if stack==nil {return false}
     free:=-1
-    for &parameter,i in state.parameters {
+    for &parameter,i in stack.parameters {
         if parameter.name==name {parameter.value=value;return true}
         if parameter.name==0 && free<0 {free=i}
     }
     if free<0 || name==0 {return false}
-    state.parameters[free]={name=name,value=value}
+    stack.parameters[free]={name=name,value=value}
     return true
 }
 // A parameter no layer or axis of the stack read in this tick names nothing: it is dropped.
 @(private)
 stack_parameters_check :: proc(state:^Playing,problems:^core.Problems) {
-    for &parameter in state.parameters {
+    if state.stack==nil {return}
+    for &parameter in state.stack.parameters {
         if parameter.name==0 {continue}
         if !parameter.used {
             core.report(problems,state.entity,"animation.parameter","a parameter was set on this entity that names no layer of its .character and no axis of the space of one, or it plays no .character; set the name of a layer (its weight) or of an axis of a space of its set (animation.inspect lists them)")
@@ -948,11 +982,11 @@ layer_players :: proc "contextless" (layer:^Layer_Playing,out:^[LAYER_PLAYERS]li
 // Asks that slot of the stack of state shows what it changed to at once and blends from the pose
 // shown over duration seconds; zero cuts.
 @(private)
-stack_blend :: proc "contextless" (state:^Playing,slot:int,duration:f32) {
+stack_blend :: proc "contextless" (stack:^Stack_Playing,slot:int,duration:f32) {
     bit:=u16(1)<<u16(slot)
-    state.blend.slots|=bit
-    asked:=&state.blend.durations[slot]
-    if duration>0 {asked^=duration if asked^==0 else min(asked^,duration)} else {state.blend.cuts|=bit}
+    stack.blend.slots|=bit
+    asked:=&stack.blend.durations[slot]
+    if duration>0 {asked^=duration if asked^==0 else min(asked^,duration)} else {stack.blend.cuts|=bit}
 }
 
 // The clips of the space of a layer at the place its axes are set to (set), and its weight on the
@@ -964,8 +998,8 @@ layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,
     if set==nil || index<0 || index>=len(set.spaces) {layer^={};return false}
     info:=set.set.spaces[index];ready:=&set.spaces[index]
     position:mm.Vec2
-    x,_:=stack_parameter(state,ready.axis_names[0]);position.x=clamp(x,info.x.min,info.x.max)
-    if info.dimension==.Two {y,_:=stack_parameter(state,ready.axis_names[1]);position.y=clamp(y,info.y.min,info.y.max)}
+    x,_:=stack_parameter(state.stack,ready.axis_names[0]);position.x=clamp(x,info.x.min,info.x.max)
+    if info.dimension==.Two {y,_:=stack_parameter(state.stack,ready.axis_names[1]);position.y=clamp(y,info.y.min,info.y.max)}
     weights,sampled:=space_sample(info,ready,position)
     if !sampled {layer^={};return false}
     if layer.space!=asked.space {layer^={space=asked.space}}
@@ -990,23 +1024,25 @@ layer_space_advance :: proc(state:^Playing,layer:^Layer_Playing,asked:Layer_Ask,
 // weight of another moves to the one asked over fade, and a slot without clip fades out.
 @(private)
 layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,events:^Animation_Events,dt:f32,problems:^core.Problems,characters:^Character_Assets=nil,app:^host.App=nil,actions:^Action_Runtime=nil) {
+    stack:=state.stack
+    if stack==nil {return}
     library:=&content.lib
     n:=len(state.bindings)
-    if state.masks_bound!=state.bound {state.masks_made,state.masks_bound=0,state.bound}
-    for &layer,i in state.layers[:state.stack] {
-        asked:=state.asked[i]
+    if stack.masks_bound!=state.bound {stack.masks_made,stack.masks_bound=0,state.bound}
+    for &layer,i in stack.layers[:stack.slots] {
+        asked:=stack.asked[i]
         // The share each bone takes, made again only when the branches or the bindings change.
         bit:=u16(1)<<u16(i)
-        if asked.over!={} && (state.masks_made&bit==0 || state.masks_over[i]!=asked.over) {
-            if len(state.masks)<STACK_SLOTS*n && resize(&state.masks,STACK_SLOTS*n)!=nil {memory_problem(problems,state.entity,"the masks of its layers");continue}
-            state.masks_over[i]=asked.over;state.masks_made|=bit
-            if !layer_mask(state,asked.over,state.masks[i*n:][:n]) {
+        if asked.over!={} && (stack.masks_made&bit==0 || stack.masks_over[i]!=asked.over) {
+            if len(stack.masks)<STACK_SLOTS*n && resize(&stack.masks,STACK_SLOTS*n)!=nil {memory_problem(problems,state.entity,"the masks of its layers");continue}
+            stack.masks_over[i]=asked.over;stack.masks_made|=bit
+            if !layer_mask(state,asked.over,stack.masks[i*n:][:n]) {
                 core.report(problems,state.entity,"animation.layer_bone","layer '%s' of the .character of this entity plays over a bone, or a part or region of the body, that this rig does not have, so it plays nothing; give each branch of its over one of its bones, a part or region of its body (@upper_body), or none",stack_slot_name(actions,state.entity,i))
             }
         }
         if state.overlay.slot==u8(i+1) {continue}
         if asked.space!=0 {
-            if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt,state.blend.slots&bit!=0) {
+            if app==nil || !layer_space_advance(state,&layer,asked,content,animation,characters,app,dt,stack.blend.slots&bit!=0) {
                 core.report(problems,state.entity,"animation.layer_space","layer '%s' of the .character of this entity samples a space that names a clip its animation does not have; check it with animation.asset.inspect, and fix it with animation.space.set",stack_slot_name(actions,state.entity,i))
             }
             continue
@@ -1017,7 +1053,7 @@ layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
         if asked.clip!=0 && !known {core.report(problems,state.entity,"animation.layer_clip","layer '%s' of the .character of this entity plays a clip its animation does not have, so it plays nothing; name one of its clips in the layer (animation.asset.inspect lists them)",stack_slot_name(actions,state.entity,i))}
         handle:=lib.Clip(index+1+(asked.loop?content.clip_count:0)) if known else 0
         if known && asked.clip!=layer.clip && (layer.clip!=0 || asked.weight>0) {
-            if layer.clip!=0 {stack_blend(state,i,asked.fade)}
+            if layer.clip!=0 {stack_blend(stack,i,asked.fade)}
             layer.player=lib.player_make(handle,asked.speed)
             layer.clip,layer.from=asked.clip,0
         }
@@ -1029,7 +1065,7 @@ layers_advance :: proc(playback:^Playback,state:^Playing,content:^host.Content_A
             layer.player.speed=asked.speed
         }
         step:=dt/asked.fade if asked.fade>0 else 1
-        layer.weight=target if state.blend.slots&bit!=0 || abs(target-layer.weight)<=step else layer.weight+(step if target>layer.weight else -step)
+        layer.weight=target if stack.blend.slots&bit!=0 || abs(target-layer.weight)<=step else layer.weight+(step if target>layer.weight else -step)
         if layer.weight<=0 && target<=0 {layer={};continue}
         batch:[EVENT_BATCH]lib.Event
         written,dropped:=lib.player_advance(library,&layer.player,dt,batch[:])
@@ -1078,8 +1114,9 @@ clip_root_lock :: proc(state:^Playing,content:^host.Content_Animation,clip:lib.C
 @(private)
 stack_root :: proc(state:^Playing,content:^host.Content_Animation,animation:Animation) -> (leading:int,share:f32) {
     leading=-1
+    if state.stack==nil {state.body_motion={};return}
     moving,strongest:f32
-    for &layer,i in state.layers[:state.stack] {
+    for &layer,i in state.stack.layers[:state.stack.slots] {
         root:=clip_root(content,layer.player.clip)
         if layer.root_motion==.None || layer.weight<=0 || layer.leaf_count>0 || layer.clip==0 || !(root.translation || root.rotation) {continue}
         if state.root.translation || state.root.rotation {root.bone=state.root.bone} else {state.root=root;state.root.in_place=layer.root_motion==.In_Place}
@@ -1224,20 +1261,21 @@ pose_layer_mesh_additive :: proc(rotations:[]mm.Quat,state:^Playing,local:[]mm.T
 // change from its reference. previous: each clip where it was when the tick began.
 @(private)
 pose_layers :: proc(playback:^Playback,state:^Playing,content:^host.Content_Animation,animation:Animation,local:[]mm.Transform,transforms:^core.Table(core.Transform,.Read)=nil,worker:=0,previous:=false) -> (faults:Pose_Faults) {
-    if state.stack==0 {return}
+    stack:=state.stack
+    if stack==nil || stack.slots==0 {return}
     library:=&content.lib
     n:=len(state.bindings)
     if len(local)!=n {faults.memory=true;return}
-    for &layer,i in state.layers[:state.stack] {
-        asked:=state.asked[i]
+    for &layer,i in stack.layers[:stack.slots] {
+        asked:=stack.asked[i]
         if layer.weight<=0 {continue}
         players:[LAYER_PLAYERS]lib.Player
         count:=layer_players(&layer,&players,previous)
         if count==0 {continue}
         mask:[]f32
         if asked.over!={} {
-            if state.masks_made&(u16(1)<<u16(i))==0 || state.masks_over[i]!=asked.over || len(state.masks)<(i+1)*n {continue}
-            mask=state.masks[i*n:][:n]
+            if stack.masks_made&(u16(1)<<u16(i))==0 || stack.masks_over[i]!=asked.over || len(stack.masks)<(i+1)*n {continue}
+            mask=stack.masks[i*n:][:n]
         }
         additive:=asked.mode==.Additive
         from:lib.Clip
@@ -1436,7 +1474,7 @@ animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation
     }
     playback.previewed=!time.playing
     code,capacity,setting:="animation.requests",int(settings.requests),"Animation_Settings.requests"
-    if !program_array_reserve(&playback.request_order,max(capacity,int(settings.match_goals))) {
+    if !program_array_reserve(&playback.work.request_order,max(capacity,int(settings.match_goals))) {
         memory_problem(problems,core.NONE,"the ordering of animation requests")
     }
     core.queue_serve(&requests.timeline,capacity,problems,code,"timeline commands",setting,"it names an entity, a command, a finite time and a finite speed")
@@ -1453,32 +1491,122 @@ animation_requests_serve :: proc(requests:^Animation_Requests,settings:Animation
 
 playback_free :: proc(playback:^Playback) {
     for &state in playback.states {playing_free(&state)}
-    delete(playback.states);delete(playback.rows);delete(playback.rigs);delete(playback.follow_order);delete(playback.final_rows)
+    delete(playback.states);delete(playback.rows);delete(playback.rigs);delete(playback.follow_order)
     for &shared in playback.track_maps {track_map_free(&shared)}
-    for &scratch in playback.scratch {delete(scratch.bones);delete(scratch.references);delete(scratch.rig_rotations);delete(scratch.pose)}
-    delete(playback.request_order)
-    delete(playback.track_maps);delete(playback.scratch);delete(playback.work);delete(playback.work_contents)
+    delete(playback.track_maps);delete(playback.searches)
+    work:=&playback.work
+    for &scratch in work.jobs {pose_scratch_free(&scratch)}
+    delete(work.jobs);delete(work.rows);delete(work.contents);delete(work.final_rows);delete(work.request_order)
     playback^={}
 }
 
+// Copies what src simulates into dst: its states with their stacks, rigs and maps. dst keeps its
+// own work and scratch, which its next tick sizes, and forgets what it noted for inspection, so a
+// snapshot or a rollback copies no more than the world needs to go on alike.
 playback_copy :: proc(dst,src:^Playback) -> bool {
     if dst==src {return true}
-    for &state in dst.states {skeleton_topology_release(state.shared_topology);state.shared_topology=nil}
-    copied:=core.value_copy(dst,src,type_info_of(Playback))
-    for &state in dst.states {
-        if copied {skeleton_topology_retain(state.shared_topology)} else {state.shared_topology=nil}
+    for i in len(src.states)..<len(dst.states) {playing_free(&dst.states[i])}
+    base.truncate(&dst.states,min(len(dst.states),len(src.states)))
+    // A state copied over another keeps the buffers of that one to copy into.
+    at:=len(dst.states)
+    if resize(&dst.states,len(src.states))!=nil {return false}
+    for &state in dst.states[at:] {state={}}
+    copied:=value_copy_except(dst,src,type_info_of(Playback),offset_of(Playback,states),offset_of(Playback,work),offset_of(Playback,searches))
+    for &state,i in dst.states {copied=playing_copy(&state,&src.states[i]) && copied}
+    clear(&dst.searches)
+    return copied
+}
+
+// Copies src into dst as core.value_copy does, but for its stack, which it copies into the one dst
+// had, and its scratch, which dst keeps.
+playing_copy :: proc(dst,src:^Playing) -> bool {
+    if dst==src {return true}
+    stack:=dst.stack;dst.stack=nil
+    skeleton_topology_release(dst.shared_topology);dst.shared_topology=nil
+    copied:=value_copy_except(dst,src,type_info_of(Playing),offset_of(Playing,stack),offset_of(Playing,scratch))
+    if copied {skeleton_topology_retain(dst.shared_topology)} else {dst.shared_topology=nil}
+    if src.stack==nil {
+        if stack!=nil {stack_free(stack)}
+        return copied
+    }
+    if stack==nil {
+        made,error:=new(Stack_Playing)
+        if error!=nil {return false}
+        stack=made;stack.allocator=context.allocator
+    }
+    dst.stack=stack
+    return value_copy_except(stack,src.stack,type_info_of(Stack_Playing),offset_of(Stack_Playing,allocator),offset_of(Stack_Playing,scratch)) && copied
+}
+
+// core.value_copy of a struct but for the fields at skipped, which dst keeps as they are.
+@(private)
+value_copy_except :: proc(dst,src:rawptr,info:^runtime.Type_Info,skipped:..uintptr) -> bool {
+    fields:=runtime.type_info_base(info).variant.(runtime.Type_Info_Struct)
+    copied:=true
+    next: for i in 0..<int(fields.field_count) {
+        offset:=fields.offsets[i]
+        for skip in skipped {if offset==skip {continue next}}
+        copied=core.value_copy(rawptr(uintptr(dst)+offset),rawptr(uintptr(src)+offset),fields.types[i]) && copied
     }
     return copied
 }
 
 playing_free :: proc(state:^Playing) {
     program_free(&state.program)
-    inertia:=&state.inertia
-    delete(inertia.poses);delete(inertia.history);delete(inertia.values);delete(inertia.durations);delete(inertia.bones);delete(inertia.curves)
+    if state.stack!=nil {stack_free(state.stack)}
     playing_topology_free(state)
-    delete(state.curves);delete(state.curve_scratch);delete(state.bindings);delete(state.masks);delete(state.pose_slab)
-    delete(state.follow);delete(state.retarget);delete(state.retarget_rest);delete(state.retarget_world);delete(state.driven);delete(state.driven_own);delete(state.driven_leader)
+    delete(state.curves);delete(state.bindings);delete(state.pose_slab)
+    delete(state.follow);delete(state.retarget);delete(state.retarget_rest);delete(state.driven);delete(state.driven_own);delete(state.driven_leader)
+    delete(state.scratch.retarget_world)
     state^={}
+}
+
+// The stack of state, made the first time it plays more than its base clip; nil when memory ran
+// out. A state keeps it once made, so a stable tick does not make it again.
+stack_make :: proc(state:^Playing) -> ^Stack_Playing {
+    if state.stack==nil {
+        stack,error:=new(Stack_Playing)
+        if error!=nil {return nil}
+        stack.allocator=context.allocator
+        state.stack=stack
+    }
+    return state.stack
+}
+
+// The slots of the stack of state; 0 without one.
+stack_slots :: #force_inline proc "contextless" (state:^Playing) -> int {
+    return int(state.stack.slots) if state.stack!=nil else 0
+}
+
+@(private)
+stack_free :: proc(stack:^Stack_Playing) {
+    inertia:=&stack.inertia
+    delete(inertia.poses);delete(inertia.history);delete(inertia.bones);delete(inertia.curves)
+    delete(stack.masks)
+    delete(stack.scratch.curves);delete(stack.scratch.values);delete(stack.scratch.durations)
+    free(stack,stack.allocator)
+}
+
+// Where the last search of the matching of state is kept for inspection; nil when there is no
+// room. Copies of the world do not carry it.
+@(private)
+playback_searched :: proc(playback:^Playback,state:^Playing) -> ^Match_Searched {
+    if playback==nil || len(playback.states)==0 {return nil}
+    row:=mem.ptr_sub(state,&playback.states[0])
+    if row<0 || row>=len(playback.states) || &playback.states[row]!=state {return nil}
+    if len(playback.searches)<len(playback.states) && resize(&playback.searches,len(playback.states))!=nil {return nil}
+    return &playback.searches[row]
+}
+
+// The last search of the matching of a rig, as inspection replays it; none in a copy of the world
+// until it searches again.
+match_searched :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (searched:Match_Searched,ok:bool) {
+    if playback.ptr==nil {return}
+    state:=constraint_playing(playback,entity)
+    if state==nil {return}
+    row:=mem.ptr_sub(state,&playback.states[0])
+    if row<0 || row>=len(playback.searches) {return}
+    return playback.searches[row],playback.searches[row].search!=0
 }
 
 Pose_Buffer :: enum {Local,World,Sampled,Previous}
@@ -1583,8 +1711,10 @@ animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,runtime:^Mo
         if i!=last {
             playback.states[i]=playback.states[last]
             playback.rows[core.entity_index(playback.states[i].entity)]=i32(i+1)
+            if last<len(playback.searches) {playback.searches[i]=playback.searches[last]}
         }
         pop(&playback.states)
+        base.truncate(&playback.searches,min(len(playback.searches),len(playback.states)))
     }
 }
 

@@ -173,7 +173,8 @@ an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is :: proc(t
     testing.expect(t,prepare(&client,&requests,&cache,&w.descriptions,&playback,&events,&app,nil,core.read(&w.remotes),&w.played,tick=10))
     core.add(&w.remotes,entity,core.Remote{});test_world_settle(&w)
     before:Action_Runtime;defer actions_runtime_free(&before)
-    core.value_copy(&before,&client,type_info_of(Action_Runtime));layers:=state.layers
+    if !testing.expect(t,stack_make(&state)!=nil) {return}
+    core.value_copy(&before,&client,type_info_of(Action_Runtime));layers:=state.stack.layers
     // Two ticks: it starts as far in as the server is, once, and plays on.
     run :: proc(actions:^Action_Runtime,state:^Playing,description:Animation,content:^host.Content_Animation,playback:^Playback,events:^Animation_Events,w:^Actions_World,requests:^Animation_Requests,cache:^Character_Assets,app:^host.App) -> (time:f32,started:int,ok:bool) {
         for tick in u64(11)..=12 {
@@ -188,7 +189,7 @@ an_action_another_end_started_plays_once_as_far_into_it_as_that_end_is :: proc(t
     testing.expectf(t,ok && abs(time-.2)<1e-5 && started==1 && client.states[0].slots[0].active,"a tick late it starts a tick in, once: %v %v",time,started)
     // A rollback to before it was heard plays it the same, and does not start it twice.
     after:=client.states[0].slots[0]
-    actions_runtime_free(&client);core.value_copy(&client,&before,type_info_of(Action_Runtime));state.layers=layers
+    actions_runtime_free(&client);core.value_copy(&client,&before,type_info_of(Action_Runtime));state.stack.layers=layers
     time,started,ok=run(&client,&state,description,&content,&playback,&events,&w,&requests,&cache,&app)
     testing.expect(t,ok && abs(time-.2)<1e-5 && started==1 && client.states[0].slots[0]==after)
 }
@@ -221,7 +222,7 @@ an_action_that_moves_its_body_gives_it_its_share_of_the_root_delta :: proc(t:^te
     stack_step(&actions,state,description,&content,&playback,&events,.2,base={translation={.1,0,0},rotation=1});stack_root(state,&content,description)
     body,moving:=animation_body_motion(core.ref(&playback),entity)
     testing.expectf(t,moving && body.move==.Additive && !body.vertical && abs(body.translation.x-.15)<1e-5 && abs(state.motion.translation.x-.175)<1e-5,"the action has .75 of .2 and the base the rest of .1: %v %v",body,state.motion)
-    state.layers[0].body=.None;state.motion={translation={.1,0,0},rotation=1};stack_root(state,&content,description)
+    state.stack.layers[0].body=.None;state.motion={translation={.1,0,0},rotation=1};stack_root(state,&content,description)
     _,moving=animation_body_motion(core.ref(&playback),entity)
     testing.expect(t,!moving && abs(state.motion.translation.x-.175)<1e-5)
 }
@@ -253,7 +254,7 @@ actions_segment_sections_and_windows_copy_state_and_obey_cancellation_without_st
     testing.expect(t,len(requests.plays.items)==0 && actions.states[0].slots[0].active && len(events.items)==0)
     stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.4,nil,&content,&playback,&events,nil,1)
     layers_advance(&playback,&state,&content,description,&events,.4,nil);actions_layer_finish(&actions,&state)
-    testing.expect(t,abs(state.layers[0].player.time-1.15)<1e-5)
+    testing.expect(t,abs(state.stack.layers[0].player.time-1.15)<1e-5)
     // One queue, in the order it happened: the markers of its clip between what the action tells.
     kinds:=[?]Animation_Event_Kind{.Started,.Section,.Marker,.Span_Begin,.Span_End,.Section,.Marker}
     names:=[?]string{"windup","windup","windup","contact","contact","recover","recover"}
@@ -315,7 +316,7 @@ a_driven_action_shows_the_time_of_its_driver_played_or_sought :: proc(t:^testing
             seen.events+=len(events.items)
         }
         slot:=actions.states[0].slots[0]
-        seen.time,seen.clip,seen.weight,seen.section,seen.finishing=slot.time,state.layers[0].player.time,state.layers[0].weight,slot.section,slot.finishing
+        seen.time,seen.clip,seen.weight,seen.section,seen.finishing=slot.time,state.stack.layers[0].player.time,state.stack.layers[0].weight,slot.section,slot.finishing
         return
     }
     played:=drive(t,{{0,false},{.1,false},{.2,false},{.3,false},{.35,false}})
@@ -416,13 +417,14 @@ action_root_motion_uses_section_segments_and_its_weight_from_its_start_and_expos
     testing.expect(t,!action_clock(&actions,&state,&content,leading,share).active && abs(state.motion.translation.x-.2*.75)<1e-5)
     // The pose blends over fade_in; the root moves by its clip from the first tick.
     profile.actions[0].fade_in=1
-    actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0};state.layers[0]={}
+    actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=0};state.stack.layers[0]={}
     stack_step(&actions,&state,description,&content,&playback,&events,.1);stack_root(&state,&content,description)
-    testing.expect(t,abs(state.motion.translation.x-.1*.75)<1e-5 && state.blend.durations[0]==1)
-    base.text_set(profile.actions[0].clip[:],"missing")
+    testing.expect(t,abs(state.motion.translation.x-.1*.75)<1e-5 && state.stack.blend.durations[0]==1)
+    // A set whose action names another clip binds its plan again, as a new revision of it does.
+    base.text_set(profile.actions[0].clip[:],"missing");action_plan_bind(&actions.plans[0],action_test_set(profile))
     problems:core.Problems
     stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
-    testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && actions.states[0].slots[0].finishing && state.asked[0].clip==0 && state.asked[0].weight==0)
+    testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_clip")!=nil && actions.states[0].slots[0].finishing && state.stack.asked[0].clip==0 && state.stack.asked[0].weight==0)
 }
 
 @(test)
@@ -436,20 +438,20 @@ action_distance_requests_advance_only_the_selected_clip_and_reject_discontinuous
     request:=Animation_Distance_Request{entity=state.entity,clip=base.name_hash("walk"),time=.15}
     playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
     stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,abs(state.layers[0].player.time-.15)<1e-5 && count(&events,.Span_Begin)==1)
+    testing.expect(t,abs(state.stack.layers[0].player.time-.15)<1e-5 && count(&events,.Span_Begin)==1)
     player,selected:=action_player(&actions,state.entity,request.clip)
     testing.expect(t,selected && player.clip!=0 && player.time==.15 && actions.plans[0].profile.actions[0].root_motion==.None)
     _,selected=action_player(&actions,state.entity,base.name_hash("run"));testing.expect(t,!selected)
     problems:core.Problems
     before:=len(events.items);request.time=1.1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,&problems,&content,&playback,&events,&request,1)
-    testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_distance")!=nil && state.layers[0].player.time==.15 && len(events.items)==before)
+    testing.expect(t,core.problem_find(&problems,state.entity,"animation.action_distance")!=nil && state.stack.layers[0].player.time==.15 && len(events.items)==before)
     request.time=.1;request.seek=true;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,state.layers[0].player.time==.1 && !actions.states[0].slots[0].continuous && state.layers[0].from==.1 && len(events.items)==before)
+    testing.expect(t,state.stack.layers[0].player.time==.1 && !actions.states[0].slots[0].continuous && state.stack.layers[0].from==.1 && len(events.items)==before)
     request.clip=base.name_hash("run");request.seek=false;request.time=1;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.02,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,abs(state.layers[0].player.time-.12)<1e-5)
+    testing.expect(t,abs(state.stack.layers[0].player.time-.12)<1e-5)
     content.lib.markers[3].time=.25
     request.clip=base.name_hash("walk");request.time=.4;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,&request,1)
-    testing.expect(t,abs(state.layers[0].player.time-.4)<1e-5 && actions.states[0].slots[0].section==1 && actions.states[0].slots[0].continuous)
+    testing.expect(t,abs(state.stack.layers[0].player.time-.4)<1e-5 && actions.states[0].slots[0].section==1 && actions.states[0].slots[0].continuous)
 }
 
 @(test)
@@ -467,7 +469,7 @@ root_actions_can_start_over_an_idle_clip_without_root_channels :: proc(t:^testin
     problems:core.Problems
     playback:Playback;defer playback_free(&playback);events:Animation_Events;defer delete(events.items)
     stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.1,&problems,&content,&playback,&events,nil,1)
-    testing.expect(t,problems.count==0 && state.layers[0].root_motion==.In_Place && !actions.states[0].slots[0].finishing)
+    testing.expect(t,problems.count==0 && state.stack.layers[0].root_motion==.In_Place && !actions.states[0].slots[0].finishing)
 }
 
 @(test)
@@ -486,20 +488,20 @@ action_root_projection_preserves_each_base_and_action_contribution_and_validates
     // An action kept in place blends the reference of the root bone by its weight, one that extracts
     // its clip: over a base kept in place, the base is at the reference.
     for policy in ([?]Root_Motion_Policy{.In_Place,.Extract}) {
-        actions.plans[0].profile.actions[0].root_motion=policy;actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};state.layers={}
+        actions.plans[0].profile.actions[0].root_motion=policy;actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};if state.stack!=nil {state.stack.layers={}}
         description:=ANIMATION_DEFAULT;description.asset=state.asset;state.clip=0
         state.root={bone=base.name_hash("hip"),translation=true,in_place=true} if policy==.Extract else {}
         stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.25,nil,&content,&playback,&events,nil,1);layers_advance(&playback,&state,&content,description,&events,.25,nil);actions_layer_finish(&actions,&state)
         copy(playing_pose(&state,.Local),state.rest[:]);playing_pose(&state,.Local)[1].position.x=1 if policy==.In_Place else 0
         pose_layers(&playback,&state,&content,description,playing_pose(&state,.Local))
         expected:f32=.5 if policy==.In_Place else .125
-        testing.expectf(t,state.layers[0].root_motion==policy && abs(playing_pose(&state,.Local)[1].position.x-expected)<1e-5,"%v: %v",policy,playing_pose(&state,.Local)[1].position)
+        testing.expectf(t,state.stack.layers[0].root_motion==policy && abs(playing_pose(&state,.Local)[1].position.x-expected)<1e-5,"%v: %v",policy,playing_pose(&state,.Local)[1].position)
         actions.states[0].slots[0].finishing=true
         description=ANIMATION_DEFAULT;description.asset=state.asset;stack_asks(&actions,&state,description,&content);actions_sample(&actions,&state,description,.01,nil,&content,&playback,&events,nil,1)
-        testing.expect(t,state.layers[0].root_motion==.None && state.blend.slots==1,"a finishing action hands its layer back, which moves the root no more")
+        testing.expect(t,state.stack.layers[0].root_motion==.None && state.stack.blend.slots==1,"a finishing action hands its layer back, which moves the root no more")
     }
     // The stack has one root bone: an action whose clip moves another than the base is stopped.
-    state.layers={};actions.states[0].slots={};actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};actions.states[0].slots[1]={active=true,starting=true,seeking=true,action=1,section=-1}
+    if state.stack!=nil {state.stack.layers={}};actions.states[0].slots={};actions.states[0].slots[0]={active=true,starting=true,seeking=true,action=0,section=-1};actions.states[0].slots[1]={active=true,starting=true,seeking=true,action=1,section=-1}
     content.roots[2]=content.roots[0];base.text_set(content.roots[2].bone[:],"spine")
     state.root={bone=base.name_hash("hip"),translation=true}
     problems:core.Problems
@@ -565,12 +567,12 @@ a_new_actions_asset_or_revision_interrupts_the_playing_action_and_blends_its_lay
             return true
         }
         play(&requests,entity,"attack")
-        if !testing.expect(t,tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.1) && state.layers[0].weight==1) {continue}
+        if !testing.expect(t,tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.1) && state.stack.layers[0].weight==1) {continue}
         if change=="another asset" {core.free(&w.descriptions,entity).asset={5,6}} else {cache.contents[0].revision+=1}
         ticked:=tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.05)
         testing.expectf(t,ticked && count(&events,.Interrupted)==1,"%s interrupts the action once",change)
-        testing.expectf(t,!actions.states[0].slots[0].active && state.layers[0].weight==0 && state.blend=={slots=1,durations={0=.2}},"%s hands the layer back at once, which blends from the action over fade_out: %v",change,state.blend)
-        testing.expect(t,tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.05) && count(&events,.Interrupted)==0 && state.blend=={})
+        testing.expectf(t,!actions.states[0].slots[0].active && state.stack.layers[0].weight==0 && state.stack.blend=={slots=1,durations={0=.2}},"%s hands the layer back at once, which blends from the action over fade_out: %v",change,state.stack.blend)
+        testing.expect(t,tick(&actions,&requests,&cache,&w.descriptions,&playback,&app,&content,&events,.05) && count(&events,.Interrupted)==0 && state.stack.blend=={})
     }
 }
 
@@ -710,7 +712,7 @@ a_world_action_plays_at_its_speed_while_its_entity_is_slowed :: proc(t:^testing.
         want:=f32(.2) if clock==.World else .1
         testing.expectf(t,abs(actions.states[0].slots[0].time-want)<1e-5,"%v: the action is at %v s of its clip, want %v",clock,actions.states[0].slots[0].time,want)
         layers_advance(&playback,&state,&content,description,&events,.1,nil);actions_layer_finish(&actions,&state)
-        testing.expectf(t,abs(state.layers[0].player.time-want)<1e-5,"%v: the pose is at %v s of its clip, want %v",clock,state.layers[0].player.time,want)
+        testing.expectf(t,abs(state.stack.layers[0].player.time-want)<1e-5,"%v: the pose is at %v s of its clip, want %v",clock,state.stack.layers[0].player.time,want)
     }
 }
 

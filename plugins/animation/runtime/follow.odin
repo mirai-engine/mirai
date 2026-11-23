@@ -34,12 +34,15 @@ leader_follow :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs
         state.follow_bound=bound
     }
     if state.stage==.Sampled {
+        m,n:=len(playing_topology(leader).rest),len(playing_topology(state).rest)
+        world:=&state.scratch.retarget_world
+        if len(world)!=m+n+m && resize(world,m+n+m)!=nil {memory_problem(problems,state.entity,"the pose it follows");return false}
         source:=playing_skeleton(leader);target:=playing_skeleton(state)
-        source.rest,target.rest=state.retarget_rest[:len(playing_topology(leader).rest)],state.retarget_rest[len(playing_topology(leader).rest):]
-        sampled:=state.retarget_world[len(playing_topology(leader).rest)+len(playing_topology(state).rest):]
+        source.rest,target.rest=state.retarget_rest[:m],state.retarget_rest[m:]
+        sampled:=world[m+n:]
         copy(sampled,playing_pose(leader,.Sampled));if follow_wrapped(leader) {sampled[0]=mm.TRANSFORM_IDENTITY}
         actor:=playing_pose(state,.Local)[0]
-        ok:=lib.retarget_pose(source,target,state.retarget[:],sampled,state.retarget_world[:len(playing_topology(leader).rest)],state.retarget_world[len(playing_topology(leader).rest):][:len(playing_topology(state).rest)],playing_pose(state,.Local))
+        ok:=lib.retarget_pose(source,target,state.retarget[:],sampled,world[:m],world[m:][:n],playing_pose(state,.Local))
         if follow_wrapped(state) {playing_pose(state,.Local)[0]=actor}
         if !ok {core.report(problems,state.entity,"animation.follow_pose","the sampled pose of entity 0x%016x cannot be carried onto this rig: a value of it is not finite; check its animation (animation.analyze)",u64(state.leader))}
         return ok
@@ -77,7 +80,8 @@ follow_wrapped :: proc(state:^Playing) -> bool {return len(state.bindings)>0 && 
 @(private)
 follow_retarget_prepare :: proc(state,leader:^Playing) -> bool {
     n,m:=len(playing_topology(state).rest),len(playing_topology(leader).rest)
-    if resize(&state.retarget,n)!=nil || resize(&state.retarget_rest,m+n)!=nil || resize(&state.retarget_world,m+n+m)!=nil {return false}
+    world:=&state.scratch.retarget_world
+    if resize(&state.retarget,n)!=nil || resize(&state.retarget_rest,m+n)!=nil || resize(world,m+n+m)!=nil {return false}
     mapping:=make([]i32,n,context.temp_allocator)
     for bone,i in state.follow {mapping[i]=bone.leader}
     copy(state.retarget_rest[:m],playing_topology(leader).rest[:]);copy(state.retarget_rest[m:],playing_topology(state).rest[:])
@@ -85,5 +89,5 @@ follow_retarget_prepare :: proc(state,leader:^Playing) -> bool {
     if follow_wrapped(state) {state.retarget_rest[m]=mm.TRANSFORM_IDENTITY}
     source:=playing_skeleton(leader);target:=playing_skeleton(state)
     source.rest,target.rest=state.retarget_rest[:m],state.retarget_rest[m:]
-    return lib.retarget_prepare(source,target,mapping,state.retarget_world[:m],state.retarget_world[m:][:n],state.retarget[:])
+    return lib.retarget_prepare(source,target,mapping,world[:m],world[m:][:n],state.retarget[:])
 }

@@ -125,7 +125,8 @@ preview_match :: proc(world:core.World_Ref,app:^host.App,entity:core.Entity) -> 
 preview_program :: proc(call:^api.Call,world:core.World_Ref,app:^host.App,state:^anim.Playing,animation:anim.Animation) -> (r:Preview_Program_Result) {
     r.asset=animation.asset
     if state==nil {return}
-    runtime:=&state.program;r.ready,r.error,r.fade_remaining=runtime.ready,runtime.error,max(0,state.inertia.state.duration-state.inertia.state.elapsed)
+    runtime:=&state.program;r.ready,r.error=runtime.ready,runtime.error
+    if stack:=state.stack;stack!=nil {r.fade_remaining=max(0,stack.inertia.state.duration-stack.inertia.state.elapsed)}
     parameters:=make([]anim.Stack_Parameter_Info,anim.STACK_PARAMETERS*2,call.allocator)
     characters:=core.world_storage_of(core.world_ref(app.shared,world.info,.Shared),anim.Character_Assets)
     r.parameters=parameters[:anim.stack_parameters(core.ref(core.world_storage_of(world,anim.Action_Runtime)),core.ref(characters),core.ref(core.world_storage_of(world,anim.Playback)),state.entity,parameters)]
@@ -160,15 +161,15 @@ preview_trace_frame :: proc(call:^api.Call,trace:^Preview_Trace,world:core.World
         for outgoing in state.fader.outgoing[:state.fader.outgoing_count] {total+=1;if len(leaves)>=PREVIEW_TRACE_ROWS {continue};append(&leaves,preview_leaf(sources,state,content,outgoing.player,.Base,0,0,0,true,lib.fade_out_weight(outgoing)*description.weight,.Independent))}
     }
     actions:=core.world_storage_of(world,anim.Action_Runtime)
-    for &layer,i in state.layers[:state.stack] {
-        asked:=state.asked[i]
+    if stack:=state.stack;stack!=nil {for &layer,i in stack.layers[:stack.slots] {
+        asked:=stack.asked[i]
         if layer.weight<=0 {continue}
         players:[anim.LAYER_PLAYERS]lib.Player
         for player in players[:anim.layer_players(&layer,&players)] {
             total+=1;if len(leaves)>=PREVIEW_TRACE_ROWS {continue}
             append(&leaves,preview_leaf(sources,state,content,player,.Layer,u32(i),0,u8(i),false,player.weight*layer.weight*description.weight,.Markers if asked.sync else .Independent))
         }
-    }
+    }}
     r.leaves,r.leaves_total=leaves[:],u32(total)
     marks:=make([dynamic]Preview_Marker_Result,call.allocator)
     total=0

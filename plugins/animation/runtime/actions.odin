@@ -190,7 +190,12 @@ Action_Plan :: struct {
     slots:[ACTION_CAPACITY]u8,         // by action: the slot it plays in
     layers:[STACK_LAYERS]Layer_Ask,    // by layer: what it asks for by itself, its clips named as its source names them
     layer_names:[STACK_LAYERS]u64,     // base.name_hash of the name of each layer: the parameter that is its weight
+    names:[ACTION_CAPACITY]Action_Names, // by action
+    sections:[ACTION_ROWS]u64,         // by section of the profile: base.name_hash of its name, the span of its clip
 }
+// The base.name_hash of the name, the clip and the exit marker (0: none) of an action, made once
+// when its plan binds so that a tick compares names without hashing them.
+Action_Names :: struct {name,clip,exit_marker:u64}
 Action_Playing :: struct {
     next_clip:u64,
     source:base.Asset_Id,
@@ -242,7 +247,7 @@ action_plan :: proc(runtime:^Action_Runtime,entity:core.Entity) -> ^Action_Plan 
 @(private)
 action_plan_bind :: proc(plan:^Action_Plan,set:Character_Set) {
     plan.animation=set.info.animation
-    plan.slots,plan.layers,plan.layer_names={},{},{}
+    plan.slots,plan.layers,plan.layer_names,plan.names,plan.sections={},{},{},{},{}
     for &layer,i in plan.profile.layers {
         plan.layer_names[i]=base.name_hash(base.text_get(layer.name[:]))
         plan.layers[i]={
@@ -252,7 +257,17 @@ action_plan_bind :: proc(plan:^Action_Plan,set:Character_Set) {
     }
     for &value,i in plan.profile.actions {
         if layer,found:=action_layer_find(plan.profile,value.layer);found {plan.slots[i]=u8(layer+1)}
+        plan.names[i]={name=base.name_hash(base.text_get(value.name[:])),clip=base.name_hash(base.text_get(value.clip[:]))}
+        if value.exit_marker[0]!=0 {plan.names[i].exit_marker=base.name_hash(base.text_get(value.exit_marker[:]))}
     }
+    for &section,i in plan.profile.sections {plan.sections[i]=base.name_hash(base.text_get(section.name[:]))}
+}
+// Whether section k of the profile of plan is one of action, whose span is a section and not a
+// window.
+@(private)
+action_section_named :: proc "contextless" (plan:^Action_Plan,action:i16,name:u64) -> bool {
+    for &section,k in plan.profile.sections {if int(section.action)==int(action) && plan.sections[k]==name {return true}}
+    return false
 }
 // The name of the layer of a slot of the stack of an entity, for a message.
 @(private)
@@ -270,7 +285,7 @@ stack_parameters :: proc(runtime:core.Ref(Action_Runtime),characters:core.Ref(Ch
     if characters.ptr!=nil {for &value in characters.contents {if value.id==plan.asset && value.valid {content=&value}}}
     state:=constraint_playing(playback,entity)
     value_of :: proc(state:^Playing,name:u64,fallback:f32) -> f32 {
-        if state!=nil {for parameter in state.parameters {if parameter.name==name && name!=0 {return parameter.value}}}
+        if state!=nil && state.stack!=nil {for parameter in state.stack.parameters {if parameter.name==name && name!=0 {return parameter.value}}}
         return fallback
     }
     for &layer,i in plan.profile.layers {
@@ -293,10 +308,10 @@ stack_parameters :: proc(runtime:core.Ref(Action_Runtime),characters:core.Ref(Ch
 // section (0 without sections), as Animation_Event gives them.
 action_playing :: proc(runtime:core.Ref(Action_Runtime),entity:core.Entity,name:string) -> (time:f32,section:u64,ok:bool) {
     state:=action_state(runtime.ptr,entity);if state==nil || state.plan<0 || int(state.plan)>=len(runtime.plans) {return}
-    profile:=runtime.plans[state.plan].profile
+    plan:=&runtime.plans[state.plan];profile:=plan.profile
     for slot in state.slots {
         if !slot.active || slot.finishing || slot.action<0 || int(slot.action)>=len(profile.actions) || base.text_get(profile.actions[slot.action].name[:])!=name {continue}
-        if slot.section>=0 && int(slot.section)<len(profile.sections) {section=base.name_hash(base.text_get(profile.sections[slot.section].name[:]))}
+        if slot.section>=0 && int(slot.section)<len(profile.sections) {section=plan.sections[slot.section]}
         return slot.time,section,true
     }
     return
@@ -313,20 +328,20 @@ clip_span :: proc(content:^host.Content_Animation,handle:lib.Clip,name:u64) -> (
 }
 // The span of a section of an action on the clip it plays.
 @(private)
-section_span :: proc(profile:Action_Profile,content:^host.Content_Animation,handle:lib.Clip,section:int) -> (start,end:f32,ok:bool) {
-    if section<0 || section>=len(profile.sections) {return}
-    return clip_span(content,handle,base.name_hash(base.text_get(profile.sections[section].name[:])))
+section_span :: proc(plan:^Action_Plan,content:^host.Content_Animation,handle:lib.Clip,section:int) -> (start,end:f32,ok:bool) {
+    if plan==nil || section<0 || section>=len(plan.profile.sections) {return}
+    return clip_span(content,handle,plan.sections[section])
 }
 // name: of the span for Span_Begin and Span_End; otherwise the section the action is in.
 @(private)
 action_emit :: proc(runtime:^Action_Runtime,state:^Action_State,slot:^Action_Playing,kind:Animation_Event_Kind,time:f32,playback:^Playback,events:^Animation_Events,problems:^core.Problems,span:u64=0) {
     if runtime==nil || state==nil || slot==nil || playback==nil || events==nil || state.plan<0 || int(state.plan)>=len(runtime.plans) {return}
-    profile:=runtime.plans[state.plan].profile
+    plan:=&runtime.plans[state.plan];profile:=plan.profile
     if slot.action<0 || int(slot.action)>=len(profile.actions) {return}
-    value:=profile.actions[slot.action];name:=span
-    if span==0 && slot.section>=0 && int(slot.section)<len(profile.sections) {name=base.name_hash(base.text_get(profile.sections[slot.section].name[:]))}
-    if !event_push(playback,events,Animation_Event{entity=state.entity,kind=kind,action=base.name_hash(base.text_get(value.name[:])),name=name,
-        clip=base.name_hash(base.text_get(value.clip[:])),animation=slot.source,time=time,weight=value.weight}) {
+    value:=profile.actions[slot.action];named:=plan.names[slot.action];name:=span
+    if span==0 && slot.section>=0 && int(slot.section)<len(profile.sections) {name=plan.sections[slot.section]}
+    if !event_push(playback,events,Animation_Event{entity=state.entity,kind=kind,action=named.name,name=name,
+        clip=named.clip,animation=slot.source,time=time,weight=value.weight}) {
         core.report(problems,state.entity,"animation.events_lost","a %v event of action '%s' was lost: memory ran out, or the animations of the world gave more events in this tick than fit in Animation_Events; free memory, or play fewer actions in one tick, with fewer windows and sections",kind,base.text_get(value.name[:]))
     }
 }
@@ -339,11 +354,11 @@ action_windows :: proc(runtime:^Action_Runtime,state:^Action_State,slot:^Action_
         return
     }
     if content==nil || !lib.clip_valid(&content.lib,handle) {return}
-    profile:=runtime.plans[state.plan].profile
-    spans:for marker in lib.clip_markers(&content.lib,handle) {
+    plan:=&runtime.plans[state.plan]
+    for marker in lib.clip_markers(&content.lib,handle) {
         if marker.duration<=0 || int(marker.id)>=len(content.markers) {continue}
         name:=content.markers[marker.id].name
-        for &section in profile.sections {if int(section.action)==int(slot.action) && base.name_hash(base.text_get(section.name[:]))==name {continue spans}}
+        if action_section_named(plan,slot.action,name) {continue}
         start,end:=marker.time,marker.time+marker.duration
         open:=-1;free:=-1
         for value,k in slot.windows {if value==name {open=k};if value==0 && free<0 {free=k}}
@@ -531,14 +546,14 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
         if !time.playing || !core.owned(remotes,request.entity) {continue}
         // What the end that decides the entity asks, the others play from the same tick.
         record,_:=core.get(played,request.entity)
-        record.slots[plan.slots[index]]={action=base.name_hash(name),section=base.name_hash(base.text_get(request.section[:])) if section>=0 else 0,tick=time.tick,stop=request.stop,next_clip=request.next_clip}
+        record.slots[plan.slots[index]]={action=plan.names[index].name,section=plan.sections[section] if section>=0 else 0,tick=time.tick,stop=request.stop,next_clip=request.next_clip}
         if at:=core.row_of(played,request.entity);at>=0 {core.edit_at(played,at)^=record} else {core.add(played,request.entity,record)}
     }
     // An entity another end decides plays what that end asked, as far into it as that end is.
     for &state in runtime.states {
         if !time.playing || state.retry || state.seen!=runtime.frame || state.plan<0 || int(state.plan)>=len(runtime.plans) || core.owned(remotes,state.entity) {continue}
         record,found:=core.get(played,state.entity);if !found {continue}
-        profile:=runtime.plans[state.plan].profile
+        plan:=&runtime.plans[state.plan];profile:=plan.profile
         for started,slot in record.slots {
             if started.tick==state.heard[slot] {continue}
             description,exists:=core.get(animations,state.entity)
@@ -546,8 +561,8 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
                 problems) {break}
             state.heard[slot]=started.tick
             index,section:=-1,-1
-            for &value,i in profile.actions {if base.name_hash(base.text_get(value.name[:]))==started.action {index=i;break}}
-            for &value,i in profile.sections {if started.section!=0 && int(value.action)==index && base.name_hash(base.text_get(value.name[:]))==started.section {section=i;break}}
+            for i in 0..<len(profile.actions) {if plan.names[i].name==started.action {index=i;break}}
+            for &value,i in profile.sections {if started.section!=0 && int(value.action)==index && plan.sections[i]==started.section {section=i;break}}
             if index<0 {continue}
             if action_ask(runtime,&state,index,section,started.stop,
                 f32(time.tick-started.tick)*time.dt if time.tick>started.tick else 0,
@@ -567,38 +582,45 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
     return true
 }
 
-// What each layer of the stack of an entity asks for by itself in this tick, into state.asked: its
-// clip or its space, at the weight its parameter gives it. The actions that play ask over it.
+// What each layer of the stack of an entity asks for by itself in this tick, into its asked: its
+// clip or its space, at the weight its parameter gives it. The actions that play ask over it. An
+// entity that plays its clip alone has no stack; one that plays more makes it here. False when
+// memory ran out for it.
 @(private)
-stack_asks :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,content:^host.Content_Animation) {
+stack_asks :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animation,content:^host.Content_Animation) -> bool {
     plan:=action_plan(runtime,state.entity)
     count:=len(plan.profile.layers)+1 if plan!=nil && content!=nil else 0
-    if state.overlay.slot>0 || state.inertia.state.active {
-        count=max(count,int(state.overlay.slot),int(state.stack))
+    stack:=state.stack
+    if stack==nil {
+        if count==0 && state.overlay.slot==0 {return true}
+        if stack=stack_make(state);stack==nil {return false}
     }
-    if count<int(state.stack) {for &layer in state.layers[count:state.stack] {layer={}}}
-    state.blend={}
-    if count==0 && state.stack==0 {return}
-    state.stack=u8(count);state.asked={}
+    if state.overlay.slot>0 || stack.inertia.state.active {
+        count=max(count,int(state.overlay.slot),int(stack.slots))
+    }
+    if count<int(stack.slots) {for &layer in stack.layers[count:stack.slots] {layer={}}}
+    stack.blend={}
+    if count==0 && stack.slots==0 {return true}
+    stack.slots=u8(count);stack.asked={}
     // The root motion of a layer counts from where its clip is now.
-    for &layer in state.layers[:state.stack] {layer.from,layer.carried=layer.time if layer.space!=0 else layer.player.time,ROOT_DELTA_DEFAULT}
-    if plan==nil || content==nil {return}
+    for &layer in stack.layers[:stack.slots] {layer.from,layer.carried=layer.time if layer.space!=0 else layer.player.time,ROOT_DELTA_DEFAULT}
+    if plan==nil || content==nil {return true}
     for &layer,i in plan.profile.layers {
         ask:=plan.layers[i]
-        if value,given:=stack_parameter(state,plan.layer_names[i]);given {ask.weight=mm.saturate(value)}
+        if value,given:=stack_parameter(stack,plan.layer_names[i]);given {ask.weight=mm.saturate(value)}
         source:=source_effective(layer.animation,plan.animation,animation.library)
         if ask.clip!=0 {ask.clip=source_clip_name(content.id,source,ask.clip)}
         if ask.reference_clip!=0 {ask.reference_clip=source_clip_name(content.id,source,ask.reference_clip)}
-        state.asked[i+1]=ask
+        stack.asked[i+1]=ask
     }
+    return true
 }
 
 // The time of its clip an action that names no section ends at: its exit marker, or the share
 // of its clip its exit says.
 @(private)
-action_exit :: proc(content:^host.Content_Animation,handle:lib.Clip,definition:^Action_Definition,duration:f32) -> f32 {
-    if definition.exit_marker[0]!=0 {
-        name:=base.name_hash(base.text_get(definition.exit_marker[:]))
+action_exit :: proc(content:^host.Content_Animation,handle:lib.Clip,definition:^Action_Definition,names:Action_Names,duration:f32) -> f32 {
+    if name:=names.exit_marker;name!=0 {
         for marker in lib.clip_markers(&content.lib,handle) {
             if int(marker.id)<len(content.markers) && content.markers[marker.id].name==name && marker.time>0 {return min(marker.time,duration)}
         }
@@ -612,19 +634,21 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
     if !finite(dt) || dt<0 {return}
     active:=action_state(runtime,state.entity);if active==nil {return}
     planned:=active.plan>=0 && int(active.plan)<len(runtime.plans)
-    profile:=runtime.plans[active.plan].profile if planned else {}
-    if content==nil {actions_interrupt(runtime,active,playback,events,problems);return}
+    plan:=&runtime.plans[active.plan] if planned else nil
+    profile:=plan.profile if planned else {}
+    stack:=state.stack
+    if content==nil || stack==nil {actions_interrupt(runtime,active,playback,events,problems);return}
     for &slot,i in active.slots {
         if !slot.active {continue}
         driven:=slot.driven;slot.driven=false
         // A driven play sought or sent back tells nothing of this tick, as a seek of a clip.
         silent:=len(events.items) if driven && (slot.drive_seek || slot.drive<slot.elapsed) else -1
         if !planned && !slot.finishing {action_end(runtime,active,&slot,true,playback,events,problems)}
-        layer:=&state.layers[i]
+        layer:=&stack.layers[i]
         // A finishing slot hands its layer back to what it plays by itself, which blends from the
         // action over its fade out whatever its actions asset has become.
         if slot.finishing {
-            action_hand_back(state,i,&slot,slot.fade_out)
+            action_hand_back(stack,i,&slot,slot.fade_out)
             continue
         }
         definition:=&profile.actions[slot.action]
@@ -636,15 +660,15 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         source:=source_effective(definition.animation,runtime.plans[active.plan].animation,animation.library)
         slot.source=source
         // The layer keeps its branch, its mode and its reference; the action gives the clip.
-        standing:=state.asked[i]
+        standing:=stack.asked[i]
         asked:=standing
-        asked.clip,asked.space,asked.weight,asked.speed,asked.fade,asked.loop,asked.sync=source_clip_name(content.id,source,base.name_hash(base.text_get(definition.clip[:]))),0,definition.weight,0,definition.fade_in,false,false
+        asked.clip,asked.space,asked.weight,asked.speed,asked.fade,asked.loop,asked.sync=source_clip_name(content.id,source,plan.names[slot.action].clip),0,definition.weight,0,definition.fade_in,false,false
         handle:=lib.clip_find(&content.lib,asked.clip)
         duration:=lib.clip_duration(&content.lib,handle)
         // A play asked in this tick starts at the span of its section, and tells it started.
         entered:=slot.entering
         if entered {
-            if start,_,spanned:=section_span(profile,content,handle,int(slot.section));spanned {slot.time=start}
+            if start,_,spanned:=section_span(plan,content,handle,int(slot.section));spanned {slot.time=start}
         }
         valid:=true
         if handle==0 {valid,cause=false,"its clip is not in the animation it plays"} else if asked.mode==.Additive && asked.reference_clip==0 && asked.reference>duration {valid,cause=false,"the reference of its layer is past the end of its clip"}
@@ -655,12 +679,12 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
         }
         for &section,k in profile.sections {
             if section.action!=u16(slot.action) {continue}
-            if _,end,ok:=section_span(profile,content,handle,k);!ok || end>duration {valid,cause=false,"its clip has no span for a section of it, or the span ends past the end of the clip"}
+            if _,end,ok:=section_span(plan,content,handle,k);!ok || end>duration {valid,cause=false,"its clip has no span for a section of it, or the span ends past the end of the clip"}
         }
         if !valid {
             core.report(problems,state.entity,"animation.action_clip","action '%s' stopped: %s; fix the action with animation.action.set",base.text_get(definition.name[:]),cause)
             action_end(runtime,active,&slot,true,playback,events,problems)
-            action_hand_back(state,i,&slot,definition.fade_out)
+            action_hand_back(stack,i,&slot,definition.fade_out)
             continue
         }
         layer.root_motion,layer.body,layer.body_vertical=definition.root_motion,definition.body_move,definition.body_vertical
@@ -681,7 +705,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             action_windows(runtime,active,&slot,content,handle,slot.time,slot.time,playback,events,problems,true)
         }
         if slot.starting || layer.clip!=asked.clip {
-            stack_blend(state,i,definition.fade_in)
+            stack_blend(stack,i,definition.fade_in)
             layer.player=lib.player_make(handle,speed)
             layer.clip,layer.space,layer.leaf_count,layer.from=asked.clip,0,0,0;slot.starting=false
         }
@@ -702,18 +726,18 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             }
             remaining=slot.drive-slot.elapsed
         }
-        exit:=action_exit(content,handle,definition,duration)
+        exit:=action_exit(content,handle,definition,plan.names[slot.action],duration)
         if controlled {
             target:=distance.time;valid:=finite(target) && target>=0 && target<=duration
             if slot.section>=0 {
                 section:=int(slot.section)
-                start,end,_:=section_span(profile,content,handle,section)
+                start,end,_:=section_span(plan,content,handle,section)
                 if seek {valid &&=target>=start && target<=end} else {
                     for pass in 0..<ACTION_PASSES {
                         if target<end {break}
                         next:=int(profile.sections[section].next)
                         if next<0 {valid &&=target<=end;break}
-                        next_start,next_end,_:=section_span(profile,content,handle,next)
+                        next_start,next_end,_:=section_span(plan,content,handle,next)
                         if next_start!=end {valid=false;break}
                         end=next_end
                         section=next
@@ -729,19 +753,19 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
                 slot.time=target;slot.from,slot.to=target,target;slot.continuous=false;slot.windows={}
                 windows:for marker in lib.clip_markers(&content.lib,handle) {
                     if marker.duration<=0 || target<marker.time || target>=marker.time+marker.duration || int(marker.id)>=len(content.markers) {continue}
-                    for &section in profile.sections {if int(section.action)==int(slot.action) && base.name_hash(base.text_get(section.name[:]))==content.markers[marker.id].name {continue windows}}
+                    if action_section_named(plan,slot.action,content.markers[marker.id].name) {continue windows}
                     for &open in slot.windows {if open==0 {open=content.markers[marker.id].name;break}}
                 }
                 current.time,current.fresh,current.done,layer.from=target,false,false,target;remaining=0
             } else {remaining=(target-slot.time)/speed}
         }
         event_weight:=definition.weight*animation.weight
-        action_name:=base.name_hash(base.text_get(definition.name[:]))
+        action_name:=plan.names[slot.action].name
         event_span,event_elapsed:=remaining,f32(0)
         for pass in 0..<ACTION_PASSES {
             if seek || rejected {break}
             end:=exit
-            if slot.section>=0 {_,end,_=section_span(profile,content,handle,int(slot.section))}
+            if slot.section>=0 {_,end,_=section_span(plan,content,handle,int(slot.section))}
             step:=min(remaining,max(end-slot.time,0)/speed)
             from:=slot.time;current.time=from;current.speed=speed;current.done=false
             batch:[EVENT_BATCH]lib.Event;written,dropped:=lib.player_advance(&content.lib,current,step,batch[:])
@@ -771,7 +795,7 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
                 break
             }
             action_windows(runtime,active,&slot,nil,0,slot.time,slot.time,playback,events,problems,leave=true)
-            next_start,_,_:=section_span(profile,content,handle,int(next))
+            next_start,_,_:=section_span(plan,content,handle,int(next))
             // The root motion before a jump is kept, and what follows counts from where it lands.
             if next_start!=slot.time {
                 slot.continuous=false
@@ -795,26 +819,27 @@ actions_sample :: proc(runtime:^Action_Runtime,state:^Playing,animation:Animatio
             base.truncate(&events.items,silent)
             slot.from,slot.continuous,layer.from,layer.carried=slot.time,false,slot.time,ROOT_DELTA_DEFAULT
             // Sought past its end it is over: nothing of it shows.
-            if slot.finishing {asked.weight,asked.fade=0,0;stack_blend(state,i,0)}
+            if slot.finishing {asked.weight,asked.fade=0,0;stack_blend(stack,i,0)}
         }
         // One that ends in this tick plays its last part at its weight, and hands its layer back in the next.
         current.speed=0
         slot.to=slot.time
-        state.asked[i]=asked
+        stack.asked[i]=asked
     }
 }
 actions_layer_finish :: proc(runtime:^Action_Runtime,state:^Playing) {
-    active:=action_state(runtime,state.entity);if active==nil {return}
-    for slot,i in active.slots {if slot.active && state.layers[i].player.clip==slot.player.clip {state.layers[i].player.speed=slot.speed}}
+    active:=action_state(runtime,state.entity);if active==nil || state.stack==nil {return}
+    layers:=&state.stack.layers
+    for slot,i in active.slots {if slot.active && layers[i].player.clip==slot.player.clip {layers[i].player.speed=slot.speed}}
 }
-// Hands slot i of the stack of state, whose action ended, back to what its layer plays by itself:
+// Hands slot i of a stack, whose action ended, back to what its layer plays by itself:
 // what shows of the action blends from it over fade seconds, and the layer moves the root no more.
 @(private)
-action_hand_back :: proc(state:^Playing,i:int,slot:^Action_Playing,fade:f32) {
-    asked,layer:=&state.asked[i],&state.layers[i]
+action_hand_back :: proc(stack:^Stack_Playing,i:int,slot:^Action_Playing,fade:f32) {
+    asked,layer:=&stack.asked[i],&stack.layers[i]
     asked.fade=fade
     if asked.clip==0 && asked.space==0 {asked.weight=0}
-    if layer.weight>0 && layer.player.clip==slot.player.clip {stack_blend(state,i,fade)}
+    if layer.weight>0 && layer.player.clip==slot.player.clip {stack_blend(stack,i,fade)}
     layer.root_motion,layer.body,layer.body_vertical=.None,.None,false
 }
 action_player :: proc(runtime:^Action_Runtime,entity:core.Entity,clip:u64,content:^host.Content_Animation=nil,animation:base.Asset_Id={}) -> (player:lib.Player,ok:bool) {
@@ -822,7 +847,7 @@ action_player :: proc(runtime:^Action_Runtime,entity:core.Entity,clip:u64,conten
     profile:=runtime.plans[state.plan].profile
     for slot in state.slots {
         if !slot.active || slot.finishing || slot.player.clip==0 || int(slot.action)>=len(profile.actions) {continue}
-        if content!=nil {if !lib.clip_valid(&content.lib,slot.player.clip) || lib.clip_data(&content.lib,slot.player.clip).name!=source_clip_name(content.id,animation,clip) {continue}} else if base.name_hash(base.text_get(profile.actions[slot.action].clip[:]))!=clip {continue}
+        if content!=nil {if !lib.clip_valid(&content.lib,slot.player.clip) || lib.clip_data(&content.lib,slot.player.clip).name!=source_clip_name(content.id,animation,clip) {continue}} else if runtime.plans[state.plan].names[slot.action].clip!=clip {continue}
         player=slot.player;player.time=slot.time
         return player,true
     }
@@ -833,9 +858,9 @@ action_player :: proc(runtime:^Action_Runtime,entity:core.Entity,clip:u64,conten
 // none for a layer without one.
 action_clock :: proc(runtime:^Action_Runtime,state:^Playing,content:^host.Content_Animation,leading:int,share:f32) -> (clock:Motion_Clock) {
     active:=action_state(runtime,state.entity)
-    if active==nil || leading<0 || leading>=STACK_SLOTS || !active.slots[leading].active {return}
+    if active==nil || state.stack==nil || leading<0 || leading>=STACK_SLOTS || !active.slots[leading].active {return}
     slot:=active.slots[leading]
-    root:=clip_root(content,slot.player.clip);root.in_place=state.layers[leading].root_motion==.In_Place
+    root:=clip_root(content,slot.player.clip);root.in_place=state.stack.layers[leading].root_motion==.In_Place
     return {player=slot.player,from=slot.from,to=slot.to,root=root,weight=share,active=slot.continuous && !slot.finishing}
 }
 // Frees the slots whose action has left its layer.
@@ -847,7 +872,7 @@ actions_finish :: proc(runtime:^Action_Runtime,playback:^Playback,dt:f32) {
         actions_layer_finish(runtime,state)
         for &slot,i in active.slots {
             if !slot.active || !slot.finishing {continue}
-            layer:=state.layers[i]
+            layer:=state.stack.layers[i] if state.stack!=nil else Layer_Playing{}
             if !(layer.weight>0 && layer.player.clip==slot.player.clip) {slot={}}
         }
     }

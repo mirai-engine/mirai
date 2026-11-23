@@ -139,7 +139,7 @@ authoring_action_inspect :: proc(s:^editor.Session,call:^api.Call,w:core.World_R
     playing:=make([dynamic]Action_Playing_Result,call.allocator)
     if runtime!=nil {for &state in runtime.states {if state.entity!=e || state.plan<0 || int(state.plan)>=len(runtime.plans) {continue};profile:=runtime.plans[state.plan].profile
         for slot,i in state.slots {if !slot.active {continue};definition:=profile.actions[slot.action];value:=Action_Playing_Result{name=definition.name,layer=definition.layer,time=slot.time,finishing=slot.finishing,root_motion=definition.root_motion};if slot.section>=0 {value.section=profile.sections[slot.section].name}
-            if playback!=nil {for played in playback.states {if played.entity==e {value.weight=played.layers[i].weight;break}}}
+            if playback!=nil {for played in playback.states {if played.entity==e {if played.stack!=nil {value.weight=played.stack.layers[i].weight};break}}}
             append(&playing,value)
         }
     }}

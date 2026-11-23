@@ -1,6 +1,8 @@
 package anim
 
 import "core:testing"
+import "core:log"
+import "core:mem"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
@@ -315,4 +317,63 @@ a_character_plays_an_explicit_additive_clip_over_its_base :: proc(t:^testing.T) 
         }
     }
     testing.expect(t,false,"the additive clip did not report its source and name")
+}
+
+// A prop or a timeline plays its clip alone: it makes no stack, no inertia, no matching and no
+// retarget, so its state stays small, and a copy of its world (Play, a rollback snapshot) carries
+// its clock, bindings and pose without the work of a tick; a copy back into a world that played
+// allocates nothing.
+@(test)
+props_play_without_a_stack_and_copy_only_what_they_simulate :: proc(t:^testing.T) {
+    problems:core.Problems
+    assets:host.Assets;app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
+    id:=base.Asset_Id{0x71,0x73}
+    rise:=[]lib.Keyframe{{time=0,value={0,0,0,0}},{time=1,value={0,4,0,0}}}
+    ramp:=[]lib.Keyframe{{time=0,value={2,0,0,0}},{time=1,value={6,0,0,0}}}
+    if !timeline_content(t,&app,id,{{"",.Position,rise},{"leaf",.Position,rise},{"@field/Animation_Progress.time",.Float,ramp}}) {return}
+    w:Timeline_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    PROPS :: 64
+    doors:[PROPS]core.Entity
+    for &door in doors {
+        door=timeline_named(&w,"door")
+        timeline_named(&w,"leaf",door)
+        animation:=ANIMATION_DEFAULT;animation.asset=id
+        core.add(&w.animations,door,animation)
+        core.add(&w.progress,door,Animation_Progress{})
+    }
+    test_world_settle(&w)
+    core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities)
+    for _ in 0..<2 {timeline_tick(&w,&app,&problems)}
+    animation_command(&w.requests,doors[0],.Pause)
+    timeline_tick(&w,&app,&problems)
+    progress,_:=core.get(&w.progress,doors[1])
+    sought,_:=core.get(&w.progress,doors[0])
+    testing.expectf(t,problems.count==0 && len(w.playback.states)==PROPS && progress.time==5 && sought.time==4,"the props play, pause their clips and write their fields: %d problems, %v and %v",problems.count,progress.time,sought.time)
+    for &state in w.playback.states {
+        testing.expect(t,state.stack==nil && state.program.players==nil && state.follow==nil && state.retarget==nil && state.driven==nil && state.scratch.retarget_world==nil,"a prop has no stack, matching, follow or retarget")
+    }
+    // Taken into a world that never played, and back into this one.
+    tracking:mem.Tracking_Allocator;mem.tracking_allocator_init(&tracking,context.allocator);defer mem.tracking_allocator_destroy(&tracking)
+    copied:Playback;defer playback_free(&copied)
+    {
+        context.allocator=mem.tracking_allocator(&tracking)
+        testing.expect(t,playback_copy(&copied,&w.playback))
+    }
+    taken,bytes:=tracking.total_allocation_count,tracking.total_memory_allocated
+    for &state in copied.states {testing.expect(t,state.stack==nil)}
+    testing.expect(t,len(copied.work.rows)==0 && len(copied.work.contents)==0 && len(copied.work.jobs)==0,"a copy carries no work of a tick")
+    // What one prop costs a copy is less than a stack alone would.
+    testing.expectf(t,int(bytes)/PROPS<size_of(Playing)+size_of(Stack_Playing),"a copy takes %d B a prop",int(bytes)/PROPS)
+    back:mem.Tracking_Allocator;mem.tracking_allocator_init(&back,context.allocator)
+    {
+        context.allocator=mem.tracking_allocator(&back)
+        testing.expect(t,playback_copy(&w.playback,&copied))
+    }
+    again:=back.total_allocation_count;mem.tracking_allocator_destroy(&back)
+    testing.expectf(t,again==0,"a copy back into a world that played allocates nothing (%d allocations)",again)
+    timeline_tick(&w,&app,&problems)
+    testing.expect(t,problems.count==0)
+    log.infof("copy of %d props: %d allocations, %d B, Playing %d B (before the split of the stack and its scratch: 458 allocations, 450332 B, Playing 6416 B)",PROPS,taken,bytes,size_of(Playing))
 }

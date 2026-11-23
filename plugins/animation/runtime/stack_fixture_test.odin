@@ -12,25 +12,25 @@ import mm "mirai:std/math"
 // .character: the layer a .character would ask for, written where layers_advance reads it.
 @(private)
 test_layer :: proc(state:^Playing,slot:int,clip:string,fade:f32=0,over:="",depth:u8=0,sync:=false,weight:f32=1,speed:f32=1,loop:=true,mode:Layer_Mode=.Override,reference:f32=0,curves:Curve_Blend=.Override,mesh_space:=false,reference_clip:="") -> bool {
-    if state==nil || slot<1 || slot>=STACK_SLOTS {return false}
-    state.asked[slot]={
+    if state==nil || slot<1 || slot>=STACK_SLOTS || stack_make(state)==nil {return false}
+    state.stack.asked[slot]={
         clip=base.name_hash(clip),over={0={base.name_hash(over),depth}} if over!="" else {},weight=mm.saturate(weight),speed=speed,fade=fade,loop=loop,sync=sync,
         mode=mode,reference=reference,reference_clip=base.name_hash(reference_clip) if reference_clip!="" else 0,curves=curves,mesh_space=mesh_space,
     }
-    state.stack=max(state.stack,u8(slot+1))
+    state.stack.slots=max(state.stack.slots,u8(slot+1))
     return true
 }
 @(private)
 test_layer_weight :: proc(state:^Playing,slot:int,weight:f32) -> bool {
     if state==nil || slot<1 || slot>=STACK_SLOTS {return false}
-    state.asked[slot].weight=mm.saturate(weight)
+    state.stack.asked[slot].weight=mm.saturate(weight)
     return true
 }
 // The layer of a slot stops playing its clip and fades out over fade seconds.
 @(private)
 test_layer_stop :: proc(state:^Playing,slot:int,fade:f32) -> bool {
     if state==nil || slot<1 || slot>=STACK_SLOTS {return false}
-    state.asked[slot].clip,state.asked[slot].fade=0,fade
+    state.stack.asked[slot].clip,state.stack.asked[slot].fade=0,fade
     return true
 }
 

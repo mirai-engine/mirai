@@ -306,9 +306,10 @@ clip_overlay_sample :: proc(state:^Playing,content:^host.Content_Animation,anima
     edit:Clip_Edit,actions:^Action_Runtime,playback:^Playback,events:^Animation_Events,
     dt:f32,problems:^core.Problems) {
     overlay:=&state.overlay
-    if overlay.slot==0 {return}
+    stack:=state.stack
+    if overlay.slot==0 || stack==nil {return}
     i:=int(overlay.slot)-1
-    layer:=&state.layers[i]
+    layer:=&stack.layers[i]
     selection:=overlay.selection
     active:=action_state(actions,state.entity)
     occupied:=active!=nil && active.slots[i].active && !active.slots[i].finishing
@@ -316,7 +317,7 @@ clip_overlay_sample :: proc(state:^Playing,content:^host.Content_Animation,anima
     if overlay.finished || occupied || clip==0 {
         if overlay.event.clip!=0 {clip_lifecycle(playback,events,&overlay.event,.Interrupted,
             overlay.event.time,problems)}
-        if !occupied {stack_blend(state,i,selection.fade);layer^={}}
+        if !occupied {stack_blend(stack,i,selection.fade);layer^={}}
         overlay.slot,overlay.playing,overlay.finished=0,false,false
         return
     }
@@ -324,7 +325,7 @@ clip_overlay_sample :: proc(state:^Playing,content:^host.Content_Animation,anima
     handle:=clip+lib.Clip(content.clip_count if selection.loop else 0)
     name:=lib.clip_data(library,clip).name
     if layer.clip!=name || edit.overlay_restart || layer.player.clip==0 {
-        if selection.fade<=0 || layer.clip!=0 {stack_blend(state,i,selection.fade)}
+        if selection.fade<=0 || layer.clip!=0 {stack_blend(stack,i,selection.fade)}
         if overlay.event.clip!=0 {clip_lifecycle(playback,events,&overlay.event,.Interrupted,
             overlay.event.time,problems)}
         layer.player=lib.player_make(handle,overlay.speed)
@@ -333,7 +334,7 @@ clip_overlay_sample :: proc(state:^Playing,content:^host.Content_Animation,anima
     layer.clip,layer.space,layer.leaf_count=name,0,0
     weight_step:=dt/selection.fade if selection.fade>0 else 1
     layer.weight+=clamp(overlay.weight-layer.weight,-weight_step,weight_step)
-    if state.blend.slots&(u16(1)<<u16(i))!=0 {layer.weight=overlay.weight}
+    if stack.blend.slots&(u16(1)<<u16(i))!=0 {layer.weight=overlay.weight}
     layer.player.clip,layer.player.speed=handle,overlay.speed
     layer.root_motion,layer.body,layer.body_vertical=.None,.None,false
     if edit.overlay_seek>=0 {
@@ -341,7 +342,7 @@ clip_overlay_sample :: proc(state:^Playing,content:^host.Content_Animation,anima
         layer.player.done,layer.player.fresh=false,false
     }
     layer.from=layer.player.time
-    asked:=&state.asked[i]
+    asked:=&stack.asked[i]
     asked.clip,asked.space,asked.weight,asked.sync=name,0,overlay.weight,false
     if overlay.additive {asked.mode=.Additive}
     if !overlay.playing {return}
@@ -383,6 +384,7 @@ Field_Bound :: struct {
     bit:u8,    // Bit: the member of the bit set
     table:^core.Table_Info,
     offset:u32,
+    row:i32,   // where the curve was among those of the player in the last tick (curve_find)
 }
 
 // What the "@field" tracks of the playing clips write: derived from Playback, made again when
@@ -555,17 +557,14 @@ animation_fields :: proc(world:core.World_Ref,playback:core.Ref(Playback),fields
         fields.stamp,fields.info=stamp,world.info
     }
     state:^Playing
-    for bound in fields.fields {
+    for &bound in fields.fields {
         if state==nil || state.entity!=bound.player {state=constraint_playing(playback,bound.player)}
         if state==nil || state.seen!=playback.frame || state.held {continue}
-        for curve in playing_curves(state) {
-            if curve.target!=bound.curve || curve.property!=bound.property || curve.slot!=bound.slot {continue}
-            if curve.weight<=0 {break}
-            table:=core.world_table_at(world,bound.table)
-            row:=core.raw_row(table,bound.entity)
-            if row<0 {break}
-            if field_write(bound,([^]u8)(core.raw_value(table,bound.table.info,row)),curve.value/curve.weight) {core.raw_touch(table,bound.entity)}
-            break
-        }
+        curve:=curve_find(playing_curves(state),{target=bound.curve,property=bound.property,slot=bound.slot},&bound.row)
+        if curve==nil || curve.weight<=0 {continue}
+        table:=core.world_table_at(world,bound.table)
+        row:=core.raw_row(table,bound.entity)
+        if row<0 {continue}
+        if field_write(bound,([^]u8)(core.raw_value(table,bound.table.info,row)),curve.value/curve.weight) {core.raw_touch(table,bound.entity)}
     }
 }

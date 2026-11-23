@@ -88,12 +88,12 @@ a_program_blends_its_clips_with_curves_and_root_motion_under_the_layers_without_
     if bone,reference,pinned:=animation_root_reference(state,state.program.root,playing_pose(state,.Local),(^core.Table(core.Transform))(nil));pinned {playing_pose(state,.Local)[bone]=reference}
     testing.expect_value(t,playing_pose(state,.Local)[1].position,mm.Vec3{})
     copy(playing_pose(state,.Local),state.rest[:]);state.program.root.in_place=false
-    resize(&state.inertia.poses,len(playing_pose(state,.Local))*4);copy(state.inertia.poses[:len(playing_pose(state,.Local))],playing_pose(state,.Local))
+    resize(&state.stack.inertia.poses,len(playing_pose(state,.Local))*4);copy(state.stack.inertia.poses[:len(playing_pose(state,.Local))],playing_pose(state,.Local))
     before:=state.program.players[0].player.time
     copied:Playback;playback_copy(&copied,&playback);defer playback_free(&copied)
-    copied.states[0].inertia.poses[1].position.x=17
+    copied.states[0].stack.inertia.poses[1].position.x=17
     copied.states[0].program.players[0].player.time=17
-    testing.expect(t,state.inertia.poses[1].position.x==0 && raw_data(copied.states[0].inertia.poses)!=raw_data(state.inertia.poses))
+    testing.expect(t,state.stack.inertia.poses[1].position.x==0 && raw_data(copied.states[0].stack.inertia.poses)!=raw_data(state.stack.inertia.poses))
     testing.expect(t,state.program.players[0].player.time==before && raw_data(copied.states[0].program.players)!=raw_data(state.program.players))
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     steady:=true
@@ -226,7 +226,7 @@ program_players_allocate_only_for_programs_replay_once_clips_and_retire_optional
     events:Animation_Events;defer delete(events.items)
     built:=program_test_output(program_test_leaf("walk",0));output:=&built
     animation:=ANIMATION_DEFAULT;animation.loop=false
-    testing.expect(t,state.program.players==nil && state.inertia.poses==nil)
+    testing.expect(t,state.program.players==nil && state.stack==nil)
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
     failed:=program_players(&state,output,&content,animation,&events,&playback,0,-1,nil)
     context=saved

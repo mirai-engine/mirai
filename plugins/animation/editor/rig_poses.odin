@@ -34,6 +34,6 @@ rig_poses :: proc(s:^editor.Session,w:core.World_Ref,out:^[dynamic]editor.Rig_Po
             for &bone,i in content.bones[:min(len(content.bones),len(names)-1)] {names[i+1]=strings.clone(base.text_get(bone.name[:]),allocator)}
         }
         clip:=state.clip>=0 && state.duration>0 && !state.ended
-        append(out,editor.Rig_Pose{entity=state.entity,playing=state.playing && state.speed!=0 && (clip || state.stack>0),bones=bones,names=names})
+        append(out,editor.Rig_Pose{entity=state.entity,playing=state.playing && state.speed!=0 && (clip || anim.stack_slots(&state)>0),bones=bones,names=names})
     }
 }
