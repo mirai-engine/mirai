@@ -98,7 +98,9 @@ rig_assets :: proc(t:^testing.T,directory:string) -> (skeleton,mesh,clips:base.A
     turn:=[2]lib.Keyframe{{time=0,value=lib.quat_vec4(1)},{time=1,value=lib.quat_vec4(mm.quat_axis_angle({1,0,0},mm.PI*0.5))}}
     socket:=asset.Skeleton_Socket{offset=mm.TRANSFORM_IDENTITY}
     base.text_set(socket.name[:],"sole");base.text_set(socket.bone[:],"upper/lower/foot")
-    ok=testing.expect_value(t,asset.skeleton_save(fmt.tprintf("%s/rig.skeleton",directory),&types,{id=skeleton,bones=bones[:],sockets={socket}}),asset.Error.None) &&
+    belt:=asset.Skeleton_Socket{offset={{0.5,0,0},1,{1,1,1}}}
+    base.text_set(belt.name[:],"belt");base.text_set(belt.bone[:],"upper")
+    ok=testing.expect_value(t,asset.skeleton_save(fmt.tprintf("%s/rig.skeleton",directory),&types,{id=skeleton,bones=bones[:],sockets={socket,belt}}),asset.Error.None) &&
        testing.expect_value(t,rig_mesh_save(fmt.tprintf("%s/rig.mesh",directory),&types,{id=mesh,skeleton=skeleton,joints=joints[:]},vertices[:],{0,1,2},influences[:]),asset.Error.None) &&
        testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/rig.anim",directory),&types,{id=clips,clips={{name="lift",tracks={{target="upper",property=.Rotation,keys=turn[:]}}}}}),asset.Error.None)
     return
@@ -863,3 +865,63 @@ attached_rigs_finish_after_their_host_even_when_sampled_first :: proc(t:^testing
     }
     testing.expect_value(t,w.problems.count,0)
 }
+
+// attach moves a Bone_Attachment to another socket of its rig, at once or over a blend that starts
+// where it was and follows the bone; an empty socket takes it back to its own. A socket the skeleton
+// does not have, a blend out of range and an entity without a Bone_Attachment are problems, and the
+// entity stays where its Bone_Attachment says.
+@(test)
+attach_switches_the_socket_of_a_bone_attachment_at_once_or_over_a_blend :: proc(t:^testing.T) {
+    directory:=base.test_folder(t,"attach-switch")
+    _,mesh_id,_,saved:=rig_assets(t,directory)
+    if !saved {return}
+    assets:host.Assets
+    if !testing.expect(t,host.assets_init(&assets,{root=directory})) {return}
+    defer host.assets_destroy(&assets)
+    app:=host.App{assets=&assets,allocator=context.allocator}
+    w:Rig_Test
+    if !rig_test_init(t,&w) {return}
+    defer rig_test_destroy(&w)
+    rig,held,bare:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.transforms,rig,core.TRANSFORM_IDENTITY)
+    core.add(&w.meshes,rig,{mesh=mesh_id})
+    core.add(&w.transforms,held,core.TRANSFORM_IDENTITY)
+    attachment:=BONE_ATTACHMENT_DEFAULT
+    attachment.rig=rig
+    base.text_set(attachment.socket[:],"belt")
+    core.add(&w.attachments,held,attachment)
+    rig_test_settle(&w)
+    // The upper bone is at 2 m with the belt half a metre to its side; the foot, with the sole, at 0.
+    BELT,SOLE :: [3]f32{0.5,2,0},[3]f32{0,0,0}
+    Step :: struct {socket:string,blend:f32,entity:core.Entity,at:[3]f32,problem:string,what:string}
+    steps:=[]Step{
+        {what="it rests at the socket of its Bone_Attachment",at=BELT},
+        {socket="sole",what="switched at once",at=SOLE},
+        {socket="sole",what="asked again, it stays",at=SOLE},
+        {socket="",blend=0.2,what="back over 0.2 s: halfway after 0.1 s, from where it was",at={0.25,1,0}},
+        {socket="",blend=0.2,what="and there after 0.2 s",at=BELT},
+        {socket="sole",blend=0.5,what="a blend longer than 0.2 s is refused",at=BELT,problem="animation.attach"},
+        {socket="nope",what="a socket the skeleton does not have leaves it at its own",at=BELT,problem="animation.attach_socket"},
+        {socket="sole",entity=bare,what="an entity without a Bone_Attachment",at=BELT,problem="animation.attach"},
+    }
+    for s,i in steps {
+        target:=s.entity if s.entity!=core.NONE else held
+        if i>0 {attach(&w.requests,target,s.socket,s.blend)}
+        attaches_take(&w.modifiers,&w.requests,&w.problems)
+        animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),
+            core.read(&w.skins),&w.modifiers,&w.playback,&w.characters,&w.cache,&app,&w.problems)
+        rig_test_advance(&w,&app,{dt=.1,playing=true})
+        placed,_:=core.get(&w.transforms,held)
+        testing.expectf(t,linalg.length(placed.position-s.at)<1e-4,"%s: at %v, not %v",s.what,placed.position,s.at)
+        if s.problem!="" {
+            testing.expectf(t,core.problem_find(&w.problems,target,s.problem)!=nil,"%s: %s",s.what,s.problem)
+        } else {
+            testing.expectf(t,w.problems.count==0,"%s: %v",s.what,core.problems_list(&w.problems))
+        }
+        w.problems={}
+    }
+    testing.expect(t,len(attach_asked_all(&w.modifiers))==1,"what was asked of an entity without a Bone_Attachment is let go")
+}
+
+@(private="file")
+attach_asked_all :: proc(runtime:^Modifier_Runtime) -> []Attach_Asked {return runtime.attached[:]}

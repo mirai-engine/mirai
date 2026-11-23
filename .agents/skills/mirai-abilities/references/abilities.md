@@ -38,7 +38,8 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
   ability closes it. A window can at
   the same time accept abilities by tag (`cancel_into`), put the user in statuses, modify one of
   its attributes, carry a hitbox with its effect, move its `Character` with a layered move along
-  the axes it faces when the window opens, and carry a cue. A window with `to` at 0 is unused.
+  the axes it faces when the window opens, hold the user's `Ability_Held` at its socket
+  (`attach`), and carry a cue. A window with `to` at 0 is unused.
 - `next`: a candidate when it completes (a charge that ends in its dash). It is checked in the
   statuses the windows gave on the last tick the ability ran, so a dash that `requires` the
   charging status of its charge (and so never starts while idle) still starts as its `next`.
@@ -71,7 +72,12 @@ Each tick, for a user its end decides:
 4. Starting interrupts the running one (its open windows close and their moves are removed, its
    animation stops unless the new one plays one of the same kind), takes the costs, starts the
    cooldown, fires the animation and opens the windows at 0.
-5. Open hitboxes touch each entity once per window of that use.
+5. Open hitboxes touch each entity once per window of that use. A hitbox open on the tick before
+   is also tested at up to `HITBOX_STEPS` poses between the user's `World_Transform.previous` and
+   its place, spaced at most its smallest half extent apart along what its farthest point moves
+   and turns: a dash at 80 m/s or a fast swing hits what it crossed between two ticks. The tick a
+   window opens it is tested only where the user is, and a teleport (`core.place`) moves the
+   previous pose with it (`core.Jumps`), so neither sweeps across where the user was.
 
 Why a candidate does not start is `start_block` (`Ability_Block`), which `abilities.inspect`
 reports for each ability of the kit.
@@ -120,8 +126,13 @@ reports for each ability of the kit.
   ability ends before the window closes; knockback is a move of the target. The dash is a layered
   move, not a teleport.
 - Hitboxes: `phys.overlap_box`, `overlap_sphere` and `overlap_capsule` at the user's
-  `World_Transform`, against the physics of the tick before. Tests pass their own overlap to
-  `abilities_tick`.
+  `World_Transform` (and between it and its `previous`, above), against the physics of the tick
+  before. Tests pass their own overlap to `abilities_tick`.
+- Held props: an `Ability_Held` on the user names an entity with a `Bone_Attachment` on it (a
+  weapon), the `socket` the windows with `attach` hold it at and the `blend` (0 to 0.2 s). Each
+  tick, on the owner and on replicas, the socket is derived from the running ability and asked with
+  `anim.attach`, which does nothing while it is already there: an ability that ends or is
+  interrupted leaves it at the socket of its `Bone_Attachment`, whatever events were missed.
 
 ## Network
 
@@ -154,6 +165,8 @@ reports for each ability of the kit.
 - `a_stable_tick_allocates_nothing`
 - `an_input_counts_from_its_delay_and_waits_for_the_branch_of_the_running_ability`
 - `a_window_on_the_own_clock_follows_the_pace_of_the_user`
+- `an_open_hitbox_sweeps_between_ticks_but_not_when_it_opens_or_across_a_teleport`
+- `a_window_attaches_the_held_entity_while_it_is_open`
 
 The methods need a build with the plugin (the demo enables it) and a session on a copy; hitboxes
 against real colliders need Play with physics.

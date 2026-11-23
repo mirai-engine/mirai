@@ -32,6 +32,7 @@ Drive_World :: struct {
     look_input:Camera_Input,
     changes:Camera_Changes,
     shakes:Camera_Shakes,
+    modifiers:Camera_Modifiers,
     queries:core.World_Queries,
     bindings:input.Input_Map,
     free:Free_Camera,
@@ -226,7 +227,7 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
          look_actions={actions=core.ref(&w.frame),state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),
                        seats=core.read(&w.seats),base=DRIVE_LOOK},
          queries=core.ref(&w.queries),verticals=core.read(&w.verticals)},
-        &w.look_input,&w.changes,{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,
+        &w.look_input,&w.changes,{dt=1.0/60,alpha=1},{dt=1.0/60},&problems,&w.shakes,&w.modifiers,
     )
     testing.expect(t,w.follows.version==authored && !core.table_has_edits(&w.follows),"following and turning leave the authored table untouched")
     first,_:=core.get(&w.states,eyes[0])

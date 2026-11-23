@@ -115,7 +115,7 @@ Asset_Match_Clip :: struct {
     samples:[]Asset_Match_Sample `mirai:"optional,label=A blend: its points the search picks"`,
 }
 Asset_Match_Sample :: struct {weights:[anim.MATCH_BLEND]f32 `mirai:"label=Of clip, then of each of blend"`,speed:f32 `mirai:"optional,unit=m/s,label=Set by hand; omitted is measured from the blended feet"`}
-Asset_Match_Database :: struct {rows:u32,lanes:u32 `mirai:"optional,label=f32x4 a row: 8, or 12 with extra points"`,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`}
+Asset_Match_Database :: struct {rows:u32,lanes:u32 `mirai:"optional,label=f32x4 a row: 8, or 12 with extra points"`,bytes:u64 `mirai:"optional"`,error:lib.Match_Build_Error `mirai:"label=Memory_Limit: it keeps more than memory; Invalid: a bone or clip is missing on the skeleton"`,unforward:[][32]u8 `mirai:"text,optional,label=Locomotion modes with clips that travel and none toward -Z, where the rig faces: turn them with the Face_Rest verb of animation.clip.edit"`}
 Asset_Clip_Track :: struct {target:[aa.NODE_PATH_CAPACITY]u8 `mirai:"text"`,property:lib.Property,slot:u8,keys_total:u32}
 // What a part the entity lacks holds instead of its fields.
 Instance_Missing :: struct {

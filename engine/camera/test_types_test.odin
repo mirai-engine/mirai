@@ -25,4 +25,5 @@ Test_Cameras :: struct {
     selected:Cameras,
     requests:Camera_Requests,
     shakes:Camera_Shakes,
+    modifiers:Camera_Modifiers,
 }

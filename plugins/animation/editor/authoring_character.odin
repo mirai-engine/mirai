@@ -115,6 +115,7 @@ character_match :: proc(s:^editor.Session,call:^api.Call,id:base.Asset_Id,profil
             for &built in content.databases {
                 row:=Asset_Match_Database{rows=u32(built.database.rows),lanes=u32(built.database.lanes),error=built.error}
                 if built.error==.None {row.bytes=u64(lib.match_database_size(built.database))}
+                if built.unforward!=0 {row.unforward=match_modes(call,modes,built.unforward)}
                 append(&databases,row)
             }
         }

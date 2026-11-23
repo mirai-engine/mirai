@@ -114,6 +114,7 @@ Animation_Requests :: struct {
     warps:core.Queue(Motion_Target_Request),
     locomotion:core.Queue(Motion_Locomotion),
     reads:core.Queue(core.Entity), // animation_read: the rigs gameplay reads the pose of in this tick
+    attaches:core.Queue(Attach_Request), // attach: the sockets Bone_Attachments are asked to be at
 }
 
 // What the animation of an entity tells in a tick. Marker: a playing Animation crossed a marker of

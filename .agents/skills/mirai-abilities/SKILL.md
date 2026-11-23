@@ -23,8 +23,9 @@ and the tick it started, and derives everything else from the tick against the s
 - Statuses, attributes, modifiers and effects (damage, knockback, a reaction, damage over time,
   stacks, cleanse, immunity, scaling by the source):
   [attributes and effects](references/abilities.md#attributes-and-effects).
-- Events, animation, layered moves and hitboxes against physics:
-  [what it asks of others](references/abilities.md#what-it-asks-of-others).
+- Events, animation, layered moves, hitboxes against physics and a weapon drawn into the hand
+  (`Ability_Held`): [what it asks of others](references/abilities.md#what-it-asks-of-others); fast
+  dashes and swings that sweep between ticks: [selection](references/abilities.md#selection).
 - Network, rollback and replicas: [network](references/abilities.md#network).
 - `abilities.inspect`, `abilities.check`, `abilities.use`, and authoring with `records.*`:
   [API](references/abilities.md#api).
@@ -91,6 +92,7 @@ and the tick it started, and derives everything else from the tick against the s
   the input delay and the wait for the branch, a window on the own clock, the charged dash with
   charges, a copy halfway that runs the same future, a cancel that leaves
   nothing, replicas, lasting effects with stacks, cleanse and immunity, invalid sheets and
-  requests, and a stable tick without allocations).
+  requests, a stable tick without allocations, hitboxes that sweep between ticks but not when they
+  open or across a teleport, and a held weapon in the hand while a window is open).
 - Methods: `mirai generate demo`, `mirai build editor demo` and, in a session on a copy,
   `abilities.check`, `abilities.inspect` and `abilities.use` against rows written with `records.*`.

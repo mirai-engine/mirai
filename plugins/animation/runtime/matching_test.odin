@@ -1646,3 +1646,25 @@ a_rig_posed_after_skipped_ticks_blends_from_the_pose_it_showed :: proc(t:^testin
         testing.expectf(t,f.state.stack.inertia.state.active,"after %d skipped ticks the action blends in from the pose shown",skipped)
     }
 }
+
+// A locomotion mode with two or more clips that travel and none toward the -Z the rig faces is
+// told: its clips were made facing another axis. One forward clip, a single one that travels, those
+// that stand and the entries leave it silent; each mode is told on its own.
+@(test)
+a_mode_whose_travelling_clips_all_go_sideways_or_back_is_told :: proc(t:^testing.T) {
+    R :: lib.Match_Range
+    Case :: struct {name:string,ranges:[]R,modes:u32}
+    cases:=[]Case{
+        {"walk and run made facing +Z",{{modes=1,speed=1.5,travel={0,0,1.5}},{modes=1,speed=4,travel={0,0,4}}},1},
+        {"a strafe and its mirror along X",{{modes=1,speed=1.5,travel={1.5,0,0}},{modes=1,speed=1.5,travel={-1.5,0,0},mirror=true}},1},
+        {"a forward walk among strafes",{{modes=1,speed=1.5,travel={1.5,0,0}},{modes=1,speed=1.4,travel={0.3,0,-1.37}},{modes=1,speed=1.5,travel={0,0,1.5}}},0},
+        {"a single clip that travels",{{modes=1,speed=1.5,travel={1.5,0,0}},{modes=1,speed=0.01}},0},
+        {"entries and idles do not count",{{modes=1},{modes=1,entry=true,speed=3,travel={0,0,3}},{modes=1,entry=true,speed=3,travel={3,0,0}},{modes=1,speed=1,travel={1,0,0}}},0},
+        {"each mode on its own",{{modes=0b11,speed=1.5,travel={0,0,-1.5}},{modes=0b110,speed=2,travel={0,0,2}},{modes=0b100,speed=4,travel={0,0,4}}},0b100},
+    }
+    for c in cases {
+        db:=lib.Match_Database{ranges=c.ranges}
+        testing.expectf(t,match_unforward_modes(&db)==c.modes,"%s: 0x%x, not 0x%x",c.name,match_unforward_modes(&db),c.modes)
+    }
+    testing.expect(t,match_unforward_modes(nil)==0)
+}

@@ -81,8 +81,9 @@ Camera_Follow_State :: struct {
     written:core.Transform, // what the last frame left in the transform
     wrote:bool,
     shakes:[CAMERA_SHAKES]Shake_Playing, // the sequence shakes it plays over its view (camera_shake)
-    fov_base:f32,         // the fov of its render.Camera without the shakes, while fov_shaken
-    fov_shaken:bool,
+    modifiers:[CAMERA_MODIFIERS]Modifier_Playing, // what it adds to its setup (camera_modifier)
+    fov_own:f32,          // the fov of its render.Camera without what shakes and modifiers add, while widened
+    widened:bool,
 }
 
 CAMERA_FOLLOW_DEFAULT :: Camera_Follow{
@@ -332,20 +333,21 @@ camera_follow :: proc(
     follows:^core.Table(Camera_Follow),states:^core.Table(Camera_Follow_State),
     cameras:^core.Table(render.Camera),transforms:^core.Table(core.Transform),
     view:Follow_View,look_input:^Camera_Input,changes:^Camera_Changes,
-    frame:core.Frame_Time,time:core.Time,problems:^core.Problems,shakes:^Camera_Shakes,
+    frame:core.Frame_Time,time:core.Time,problems:^core.Problems,shakes:^Camera_Shakes,modifiers:^Camera_Modifiers,
 ) {
     seats,seat_state:=view.look_actions.seats,view.look_actions.state
     // Restore the lens before changing its mode or adding a shake.
     for e,row in states.entities {
-        if states.values[row].fov_shaken {
+        if states.values[row].widened {
             if camera:=core.edit(cameras,e);camera!=nil {
-                shakes_fov_restore(camera,core.edit_at(states,row))
+                lens_restore(camera,core.edit_at(states,row))
             }
         }
         if core.raw_row(core.raw(follows),e)<0 {core.remove(states,e)}
     }
     for change in core.take(&changes.queue) {mode_take(follows,states,cameras,view.worlds,change,problems)}
     shakes_take(follows,states,shakes,problems)
+    modifiers_take(follows,states,modifiers,problems)
     for item in view.shown.overrides {
         if !item.active || item.fov<=0 {continue}
         if camera:=core.edit(cameras,item.camera);camera!=nil && (camera.fov!=item.fov || camera.near!=item.near) {camera.fov,camera.near=item.fov,item.near}
@@ -529,10 +531,11 @@ arm_tune :: proc "contextless" (arm:^Spring_Arm,follow:Camera_Follow) {
 
 // vertical: the frame of the vertical of the target. tick: seconds of a fixed
 // tick, which the velocity of the target is measured over. camera: its lens,
-// which its shakes widen; nil without one.
+// which its shakes and modifiers widen; nil without one. It follows as setup
+// says with what its modifiers add.
 @(private)
 follow_one :: proc(
-    e:core.Entity,follow:^Camera_Follow,s:^Camera_Follow_State,target:core.Entity,transforms:^core.Table(core.Transform),
+    e:core.Entity,setup:^Camera_Follow,s:^Camera_Follow_State,target:core.Entity,transforms:^core.Table(core.Transform),
     worlds:^core.Table(core.World_Transform,$A),parents:^core.Table(core.Parent,$B),
     moves:^core.Table(input.Move_Input,$C),vertical:mm.Quat,query:core.World_Query,frame:core.Frame_Time,tick:f32,
     camera:^render.Camera=nil,
@@ -540,6 +543,8 @@ follow_one :: proc(
     placed,has_target:=core.get(worlds,target)
     row:=core.edit(transforms,e)
     if !has_target || row==nil {return}
+    add:=modifiers_advance(s,frame.dt)
+    follow:=modifiers_on(setup^,add)
     position:=placed.position
     if frame.alpha<1 {position=mm.lerp(placed.previous.position,placed.position,frame.alpha)}
     up:=mm.quat_rotate(vertical,{0,1,0})
@@ -548,7 +553,7 @@ follow_one :: proc(
         ground=(placed.position-placed.previous.position)/tick
         ground-=up*linalg.dot(ground,up)
     }
-    goal:=position+mm.quat_rotate(vertical,follow.offset)+follow_lead(follow^,ground)
+    goal:=position+mm.quat_rotate(vertical,follow.offset)+follow_lead(follow,ground)
     if !s.ready {
         s.pivot=Follow{position=goal}
         s.zone=goal
@@ -557,7 +562,7 @@ follow_one :: proc(
         s.side.min_length=0
         s.looking={follow.yaw,follow.pitch}
         if s.handing {
-            low,high:=pitch_limits(follow^)
+            low,high:=pitch_limits(follow)
             s.looking={s.handoff.x,clamp(s.handoff.y,low,high)}
         }
         s.handing,s.idle,s.ready=false,0,true
@@ -573,7 +578,7 @@ follow_one :: proc(
     world_position:[3]f32
     world_rotation:mm.Quat
     look,aiming:=core.get(moves,target)
-    low,high:=pitch_limits(follow^)
+    low,high:=pitch_limits(follow)
     switch follow.mode {
     case .Follow:
         world_position=pivot
@@ -599,14 +604,14 @@ follow_one :: proc(
         world_rotation=vertical*orbit_rotation(orbit)
         probe:=Arm_Probe{query,target}
         collide:=follow.probe_radius>0?arm_query:nil
-        origin:=pivot+mm.quat_rotate(world_rotation,look_offset(follow^,s.looking.y))
+        origin:=pivot+mm.quat_rotate(world_rotation,look_offset(follow,s.looking.y))
         if side:=mm.quat_rotate(world_rotation,[3]f32{follow.shoulder.x,follow.shoulder.y,0});follow.shoulder!={} {
             // What stands beside the target brings the shoulder in, as the arm.
-            arm_tune(&s.side,follow^)
+            arm_tune(&s.side,follow)
             s.side.length=linalg.length(side)
             origin=spring_arm_update(&s.side,pivot,side/s.side.length,collide,&probe,dt)
         }
-        arm_tune(&s.arm,follow^)
+        arm_tune(&s.arm,follow)
         s.arm.length=follow.distance
         world_position=spring_arm_update(&s.arm,origin,mm.quat_rotate(vertical,orbit_direction(orbit)),collide,&probe,dt)
     case .Eyes:
@@ -616,8 +621,8 @@ follow_one :: proc(
 
     }
     turn,widen:=shakes_advance(s,dt)
-    world_rotation*=turn
-    if camera!=nil {shakes_fov(camera,s,widen)}
+    world_rotation*=turn*mm.quat_axis_angle({0,0,1},add.roll)
+    if camera!=nil {lens_widen(camera,s,widen+add.fov)}
     if core.world_set(row,transforms,parents,e,world_position,world_rotation) {
         s.written,s.wrote=row^,true
     }

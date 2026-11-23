@@ -2,7 +2,6 @@ package camera
 
 import "core:math"
 import "mirai:core"
-import render "mirai:engine/render"
 import lib "mirai:std/anim"
 import mm "mirai:std/math"
 
@@ -16,10 +15,6 @@ import mm "mirai:std/math"
 
 SHAKE_KEYS :: 16
 CAMERA_SHAKES :: 4
-// The field of view a shake leaves a perspective lens within, radians: render.Camera takes 0 as its
-// default and needs less than pi.
-SHAKE_FOV_MIN :: 1*mm.RAD_PER_DEG
-SHAKE_FOV_MAX :: 179*mm.RAD_PER_DEG
 
 Shake_Sequence :: struct {
     keys:[SHAKE_KEYS]lib.Keyframe,        // in time order (seconds of the sequence); value: pitch, yaw, roll and field of view, radians
@@ -126,24 +121,4 @@ shakes_advance :: proc "contextless" (state:^Camera_Follow_State,dt:f32) -> (tur
         widen+=more
     }
     return
-}
-
-// Gives a perspective camera its field of view without the shakes plus widen, within
-// SHAKE_FOV_MIN..SHAKE_FOV_MAX. What it had without them is kept in state, so the shakes of one
-// frame never add to those of the last; an orthographic one keeps its own.
-@(private)
-shakes_fov :: proc "contextless" (camera:^render.Camera,state:^Camera_Follow_State,widen:f32) {
-    shakes_fov_restore(camera,state)
-    if camera.projection!=.Perspective || widen==0 {return}
-    state.fov_base,state.fov_shaken=camera.fov,true
-    lens:=camera.fov if camera.fov>0 else render.CAMERA_DEFAULT.fov
-    camera.fov=clamp(lens+widen,SHAKE_FOV_MIN,SHAKE_FOV_MAX)
-}
-
-// Puts back the field of view a camera had without its shakes.
-@(private)
-shakes_fov_restore :: proc "contextless" (camera:^render.Camera,state:^Camera_Follow_State) {
-    if !state.fov_shaken {return}
-    camera.fov=state.fov_base
-    state.fov_shaken=false
 }

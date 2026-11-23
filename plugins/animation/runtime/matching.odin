@@ -295,10 +295,10 @@ animation_match_database :: proc(matches:core.Ref(Character_Assets),library:^hos
 // skeleton loads it, or ahead for a library of the set (match_prebuild). One built for an earlier
 // generation of the library or revision of the skeleton is released then.
 @(private)
-match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault,Match_Span_Fault) {
-    if library==nil || len(playing_topology(state).parents)<2 || len(playing_topology(state).rest)!=len(playing_topology(state).parents) {return nil,.Invalid,{},{}}
+match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault,Match_Span_Fault,u32) {
+    if library==nil || len(playing_topology(state).parents)<2 || len(playing_topology(state).rest)!=len(playing_topology(state).parents) {return nil,.Invalid,{},{},0}
     key:=match_database_key(library,state,source)
-    for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault,built.span}}
+    for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault,built.span,built.unforward}}
     // Of the same library, skeleton and source: the key without generation and revision.
     #reverse for &built,i in content.databases {
         if built.key[0]==key[0] && built.key[1]==key[1] && built.key[3]==key[3] && built.key[4]==key[4] && built.key[6]==key[6] {
@@ -386,11 +386,34 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
                     if lib.match_rows_flagged(db,int(r.first),int(r.first+r.count),.Exclude,all=true) {built.span={kind=.Whole,clip=i32(range)};break}
                 }
             }
+            if built.error==.None {built.unforward=match_unforward_modes(&built.database)}
         }
     }
-    if append(&content.databases,built)!=1 {lib.match_database_free(&built.database);return nil,.Out_Of_Memory,{},{}}
+    if append(&content.databases,built)!=1 {lib.match_database_free(&built.database);return nil,.Out_Of_Memory,{},{},0}
     last:=&content.databases[len(content.databases)-1]
-    return &last.database if last.error==.None else nil,last.error,last.fault,last.span
+    return &last.database if last.error==.None else nil,last.error,last.fault,last.span,last.unforward
+}
+
+// Within this cosine of the -Z a rig faces, a clip travels forward (60 degrees).
+MATCH_FORWARD_COS :: 0.5
+
+// Bit m for each locomotion mode m of a database with two or more clips that travel (no entry,
+// above MATCH_STILL) and none that goes forward, toward the -Z its rig faces: clips made facing
+// another axis (+Z, +X) play backward or sideways to where the body goes. A clip in place told its
+// speed goes where its body faces.
+match_unforward_modes :: proc "contextless" (db:^lib.Match_Database) -> (modes:u32) {
+    if db==nil {return}
+    for m in u32(0)..<32 {
+        bit:=u32(1)<<m
+        moving,forward:=0,false
+        for r in db.ranges {
+            if r.entry || r.modes&bit==0 || !(r.speed>lib.MATCH_STILL) {continue}
+            moving+=1
+            forward||=r.travel.z< -MATCH_FORWARD_COS*linalg.length(r.travel)
+        }
+        if moving>=2 && !forward {modes|=bit}
+    }
+    return
 }
 
 // Moves the root of the pose of a rig that matches to where its spring left it from the body: the
@@ -412,7 +435,11 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     goal:Match_Goal;has_goal:=len(goals)>0
     if has_goal {goal=goals[len(goals)-1]}
     mode:=goal.mode if has_goal else m.mode
-    db,built,fault,span_fault:=match_database(content,library,state,source,allocator)
+    db,built,fault,span_fault,unforward:=match_database(content,library,state,source,allocator)
+    if db!=nil && unforward!=0 {
+        name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
+        core.report(problems,state.entity,"animation.match_forward","%s has locomotion modes (bits 0x%x) with clips that travel and none toward -Z, where the rig faces: they play backward or sideways to where the body goes; turn the clips to face -Z (animation.clip.edit with Face_Rest), or give the mode a clip that walks forward",path,unforward)
+    }
     if db!=nil && span_fault.kind!=.None {
         name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
         switch span_fault.kind {

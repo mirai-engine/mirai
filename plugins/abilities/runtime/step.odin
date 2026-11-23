@@ -25,6 +25,7 @@ Ability_World :: struct {
     worlds:^core.Table(core.World_Transform,.Read),
     remotes:^core.Table(core.Remote,.Read),
     paces:^core.Table(core.Own_Pace,.Read), // the windows on the Own clock count the user's own time
+    helds:^core.Table(Ability_Held,.Read),
     clock:core.Clock,
     physics:core.Ref(phys.Physics_State),
     moves:^locomotion.Locomotion_Requests,
@@ -401,6 +402,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     next:core.Record(Ability)
     handoff:Ability_Statuses // of the windows open on the last tick of the ability that completed: its next starts in them
     at:Ability_Time
+    before:=TIME_BEFORE_START
     active:=sheet_valid(t,e,u.state.ability)
     if u.state.ability!={} && active==nil {ability_end(t,e,u,nil,{},.Canceled,nil)}
     seat:^inp.Seat_State
@@ -408,7 +410,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
         seat=inp.seat_runtime(t.w.seat_states,inp.seat_of(t.w.seats,e))
     }
     if active!=nil {
-        before:=time_advance(t,e,u)
+        before=time_advance(t,e,u)
         at=time_of(t,u.state)
         windows_advance(t,e,u,active,before,at)
         if at.local>=ability_ticks(active,t.dt) {
@@ -459,11 +461,12 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     if best_sheet!=nil {
         if active!=nil {ability_end(t,e,u,active,at,.Interrupted,best_sheet)}
         ability_start(t,e,u,best_ref,best_sheet)
-        active,at=best_sheet,{}
-        windows_advance(t,e,u,active,TIME_BEFORE_START,at)
+        active,at,before=best_sheet,{},TIME_BEFORE_START
+        windows_advance(t,e,u,active,before,at)
     }
-    if active!=nil {hitboxes(t,e,u,active,at)}
+    if active!=nil {hitboxes(t,e,u,active,before,at)}
     if best_sheet!=nil {derive(t,e,u,active,at)}
+    held_attach(t,e,active,at)
 }
 
 // Takes what the running ability costs every second for this tick; false when an attribute cannot
@@ -498,6 +501,24 @@ replica_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
         } else {active=nil}
     }
     derive(t,e,u,active,at,replica=true)
+    held_attach(t,e,active,at)
+}
+
+// Where the held entity of a user is, derived like its statuses: at its socket while a window
+// with attach of the running ability is open, or at its own. The animation does nothing while it is
+// already there, and an ability that ends or is interrupted leaves it at its own.
+@(private)
+held_attach :: proc(t:^Tick,e:core.Entity,a:^Ability,at:Ability_Time) {
+    if t.w.animations==nil || t.w.helds==nil || core.count(t.w.helds)==0 {return}
+    held,found:=core.get(t.w.helds,e)
+    if !found || held.entity==core.NONE {return}
+    socket:string
+    if a!=nil {
+        for &w in a.windows {
+            if w.attach && ability_window_open(w,t.dt,at) {socket=base.text_get(held.socket[:]);break}
+        }
+    }
+    anim.attach(t.w.animations,held.entity,socket,held.blend)
 }
 
 @(private)
@@ -724,33 +745,59 @@ windows_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Abil
 }
 
 // Each open hitbox touches each entity once: a Hit and the effect of the window, on the tick after.
+// One open on the tick before (before) also touches what it passed through since: it is tested at
+// poses between where the user was then (World_Transform.previous, which a teleport moves with it,
+// core.Jumps) and where it is, so a dash or a swing faster than the hitbox is long hits what it
+// crossed. The tick a window opens it is tested only where the user is.
 @(private)
-hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time) {
-    pose,found:=core.get(t.w.worlds,e)
-    if !found {pose.rotation=1}
+hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Time) {
+    placed,found:=core.get(t.w.worlds,e)
+    if !found {placed.rotation,placed.previous.rotation=1,1}
     for &w,i in a.windows {
         if w.hitbox=={} || !ability_window_open(w,t.dt,at) || t.overlap==nil {continue}
         h:=record_sheet(t.hitboxes,w.hitbox)
         if h==nil {continue}
-        results:[HITBOX_RESULTS]core.Entity
-        count:=clamp(t.overlap(t.w,h,pose.transform,results[:]),0,HITBOX_RESULTS)
-        each: for target in results[:count] {
-            if target==e || target==core.NONE {continue}
-            for j in 0..<min(int(u.track.hit_count),USER_HITS) {
-                if u.track.targets[j]==target && int(u.track.windows[j])==i {continue each}
+        steps:=hitbox_steps(h,placed.previous,placed.transform) if ability_window_open(w,t.dt,before) else 1
+        for step in 1..=steps {
+            pose:=placed.transform
+            if step<steps {pose=mm.transform_interpolate(placed.previous,placed.transform,f32(step)/f32(steps))}
+            results:[HITBOX_RESULTS]core.Entity
+            count:=clamp(t.overlap(t.w,h,pose,results[:]),0,HITBOX_RESULTS)
+            each: for target in results[:count] {
+                if target==e || target==core.NONE {continue}
+                for j in 0..<min(int(u.track.hit_count),USER_HITS) {
+                    if u.track.targets[j]==target && int(u.track.windows[j])==i {continue each}
+                }
+                if int(u.track.hit_count)>=USER_HITS {
+                    core.report(t.w.problems,e,"abilities.hits","the ability %s touched more than %d entities: smaller hitboxes, or fewer windows with hitboxes",core.record_name(t.abilities,u.state.ability),USER_HITS)
+                    return
+                }
+                track:=core.edit_at(t.tracking,u.track_row)
+                track.targets[track.hit_count],track.windows[track.hit_count]=target,u8(i)
+                track.hit_count+=1
+                event_push(t,{kind=.Hit,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue,target=target})
+                feedback_emit(t,h.on_hit,target,e)
+                if h.effect!={} {ability_effect(t.requests,target,h.effect,e)}
             }
-            if int(u.track.hit_count)>=USER_HITS {
-                core.report(t.w.problems,e,"abilities.hits","the ability %s touched more than %d entities: smaller hitboxes, or fewer windows with hitboxes",core.record_name(t.abilities,u.state.ability),USER_HITS)
-                return
-            }
-            track:=core.edit_at(t.tracking,u.track_row)
-            track.targets[track.hit_count],track.windows[track.hit_count]=target,u8(i)
-            track.hit_count+=1
-            event_push(t,{kind=.Hit,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue,target=target})
-            feedback_emit(t,h.on_hit,target,e)
-            if h.effect!={} {ability_effect(t.requests,target,h.effect,e)}
         }
     }
+}
+
+// How many poses between from and to test a hitbox so that two in a row are at most its smallest
+// half extent apart, along what its farthest point travels (moving and turning): 1 to HITBOX_STEPS.
+hitbox_steps :: proc "contextless" (h:^Ability_Hitbox,from,to:mm.Transform) -> int {
+    least,reach:f32
+    switch h.shape {
+    case .None: return 1
+    case .Box: least,reach=min(h.size.x,h.size.y,h.size.z),linalg.length(h.size)
+    case .Sphere: least,reach=h.size.x,h.size.x
+    case .Capsule: least,reach=h.size.x,h.size.x+h.size.y
+    }
+    travel:=linalg.length(to.position-from.position)+mm.quat_angle(from.rotation,to.rotation)*(linalg.length(h.center)+reach)
+    steps:=travel/max(least,HITBOX_STEP_MIN)
+    if !(steps>1) {return 1}
+    if !(steps<HITBOX_STEPS) {return HITBOX_STEPS}
+    return int(math.ceil(steps))
 }
 
 // The statuses and current values of a user: those of its timers and of the windows open at at.

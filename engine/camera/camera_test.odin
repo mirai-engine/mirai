@@ -477,7 +477,7 @@ a_camera_plays_sequence_shakes_over_its_view_until_they_end :: proc(t:^testing.T
         if p.sequence.keys[0].value.w>0 {p.sequence.scale=100}
     }
     shake_test_look(f,camera,body,0.1)
-    testing.expect(t,lens.fov==SHAKE_FOV_MAX,"and a perspective one stays below pi")
+    testing.expect(t,lens.fov==CAMERA_FOV_MAX,"and a perspective one stays below pi")
     shake_test_look(f,camera,body,1)
     testing.expect(t,lens.fov==1.2,"ended: the lens is its own again")
 }
@@ -558,4 +558,111 @@ an_orbit_recenters_only_behind_a_target_that_goes_away :: proc(t:^testing.T) {
             testing.expectf(t,close(state.looking.x,c.heading,0.05),"%s: the camera comes behind, at %v",c.name,state.looking.x)
         }
     }
+}
+
+// A wall 5 m from where the arm starts, along any direction.
+@(private="file")
+wall_probe :: proc(user:rawptr,origin,direction:[3]f32,length,radius:f32,ignore:core.Entity,mask:u32) -> (core.World_Hit,bool) {
+    if length<5 {return {},false}
+    return {point=origin+direction*5,distance=5},true
+}
+
+// Modifiers add to the setup of a camera by their weights, each blending in and out on its own: one
+// asked again while it blends out goes back up from where it was, a released one leaves its slot.
+// The field of view and the arm stay within their limits, the arm a modifier lengthens stops at
+// what the probe finds, and the lens of the setup, the shakes and the modifiers add up without
+// one frame adding to the last.
+@(test)
+camera_modifiers_add_up_with_their_own_blends :: proc(t:^testing.T) {
+    f:=test_make(t)
+    if f==nil {return}
+    defer test_free(f)
+    camera,body:=core.create(&f.entities),core.create(&f.entities)
+    test_place(f,body,{})
+    test_place(f,camera,{})
+    core.add(&f.transforms,camera,core.Transform{rotation=1,scale={1,1,1}})
+    orbit:=Camera_Follow{target=body,mode=.Orbit,offset={0,1.6,0},distance=4,probe_radius=0.2}
+    core.add(&f.follows,camera,orbit)
+    core.add(&f.cameras,camera,render.Camera{projection=.Perspective,fov=1,near=0.1,active=true})
+    test_world_settle(&f.w)
+    problems:core.Problems
+    // One frame as camera_follow runs it: the lens back to its own, then what was asked, then the view.
+    Seen :: struct {fov,arm,roll,pivot_y:f32}
+    frame :: proc(f:^Camera_Test,camera,body:core.Entity,dt:f32,problems:^core.Problems,query:core.World_Query={}) -> Seen {
+        lens:=core.edit(&f.cameras,camera)
+        state:=follow_state(&f.states,camera,problems)
+        lens_restore(lens,state)
+        shakes_take(&f.follows,&f.states,&f.shakes,problems)
+        modifiers_take(&f.follows,&f.states,&f.modifiers,problems)
+        following,_:=core.get(&f.follows,camera)
+        follow_one(camera,&following,state,body,&f.transforms,core.read(&f.worlds),core.read(&f.parents),core.read(&f.moves),1,query,{dt=dt,alpha=1},dt,lens)
+        placed,_:=core.get(&f.transforms,camera)
+        pivot:=[3]f32{0,following.offset.y,0}
+        for p in state.modifiers {if p.weight>0 {pivot.y+=p.modifier.offset.y*p.weight}}
+        up:=mm.quat_rotate(placed.rotation,{0,1,0})
+        return {lens.fov,linalg.length(placed.position-pivot),math.atan2(-up.x,up.y),pivot.y}
+    }
+    sprint:=Camera_Modifier{id=1,fov=0.2,distance=2,blend_in=0.4,blend_out=0.4}
+    crouch:=Camera_Modifier{id=2,fov=0.1,offset={0,-0.5,0},roll=0.1,blend_in=0.1,blend_out=0.2}
+    camera_modifier(&f.modifiers,camera,sprint)
+    camera_modifier(&f.modifiers,camera,crouch)
+    Step :: struct {ask,release:[]u32,fov,arm,roll:f32,what:string}
+    steps:=[]Step{
+        {ask={1,2},fov=1.15,arm=4.5,roll=0.1,what="the sprint a quarter in, the crouch whole"},
+        {fov=1.2,arm=5,roll=0.1,what="the sprint halfway in"},
+        {release={1},fov=1.15,arm=4.5,roll=0.1,what="the sprint released blends out from where it was"},
+        {ask={1},fov=1.2,arm=5,roll=0.1,what="asked again, it goes back up from there, not from 0"},
+        {release={2},fov=1.2,arm=5.5,roll=0.05,what="the crouch blends out over its own blend_out"},
+        {fov=1.2,arm=6,roll=0,what="the crouch left, the sprint whole"},
+    }
+    for s,i in steps {
+        if i>0 {
+            for id in s.ask {camera_modifier(&f.modifiers,camera,sprint if id==1 else crouch)}
+            for id in s.release {camera_modifier_release(&f.modifiers,camera,id)}
+        }
+        seen:=frame(f,camera,body,0.1,&problems)
+        testing.expectf(t,close(seen.fov,s.fov,1e-4) && close(seen.arm,s.arm,1e-3) && close(seen.roll,s.roll,1e-3),"%s: %v",s.what,seen)
+    }
+    state:=core.staged(&f.states,camera)
+    playing:=0
+    for p in state.modifiers {if modifier_playing(p) {playing+=1}}
+    testing.expect_value(t,playing,1)
+
+    // The lens stays within its limits and the arm is 0 or more.
+    camera_modifier(&f.modifiers,camera,{id=3,fov=10,distance=-100})
+    seen:=frame(f,camera,body,0.1,&problems)
+    testing.expectf(t,seen.fov==CAMERA_FOV_MAX && close(seen.arm,0),"the widest lens and no arm: %v",seen)
+    camera_modifier(&f.modifiers,camera,{id=3,fov=-10})
+    seen=frame(f,camera,body,0.1,&problems)
+    testing.expectf(t,seen.fov==CAMERA_FOV_MIN && close(seen.arm,6),"the narrowest lens: %v",seen)
+    camera_modifier_release(&f.modifiers,camera,3)
+    frame(f,camera,body,0.1,&problems)
+
+    // The arm the sprint lengthens to 6 m stops at a wall 5 m away.
+    seen=frame(f,camera,body,0.1,&problems,{probe=wall_probe})
+    testing.expectf(t,seen.arm<=5+1e-3,"the probe sees the arm with what the modifiers add: %v",seen)
+    seen=frame(f,camera,body,0.1,&problems)
+
+    // The lens of a setup, a shake and the modifiers add up, and do not grow frame to frame.
+    zoom:Shake_Sequence
+    zoom.keys[0]={value={0,0,0,0.05}}
+    zoom.count,zoom.length,zoom.scale=1,10,1
+    camera_shake(&f.shakes,camera,zoom)
+    seen=frame(f,camera,body,0.1,&problems)
+    testing.expectf(t,close(seen.fov,1.25,1e-4),"the lens, the shake and the sprint: %v",seen.fov)
+    seen=frame(f,camera,body,0.1,&problems)
+    testing.expectf(t,close(seen.fov,1.25,1e-4),"and not more the next frame: %v",seen.fov)
+    lens_restore(core.edit(&f.cameras,camera),core.staged(&f.states,camera))
+    setup:=Camera_Setup{follow=orbit,lens={projection=.Perspective,fov=0.8,near=0.1}}
+    mode_take(&f.follows,&f.states,&f.cameras,core.read(&f.worlds),{camera=camera,setup=setup},&problems)
+    seen=frame(f,camera,body,0.1,&problems)
+    testing.expectf(t,close(seen.fov,1.05,1e-4),"a new setup takes the place of the lens, under what is added: %v",seen.fov)
+
+    camera_modifier(&f.modifiers,body,sprint)
+    camera_modifier(&f.modifiers,camera,{id=4,blend_in=-1})
+    for id in u32(10)..<u32(10+CAMERA_MODIFIERS) {camera_modifier(&f.modifiers,camera,{id=id})}
+    frame(f,camera,body,0.1,&problems)
+    testing.expect(t,core.problem_find(&problems,body,"camera.modifier")!=nil,"one asked of what does not follow is a problem")
+    testing.expect(t,core.problem_find(&problems,camera,"camera.modifier")!=nil,"and one with a negative blend")
+    testing.expect(t,core.problem_find(&problems,camera,"camera.modifiers_full")!=nil,"and one more than fit")
 }

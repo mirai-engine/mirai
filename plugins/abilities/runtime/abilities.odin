@@ -25,6 +25,10 @@ USER_COOLDOWNS :: 8
 USER_TIMERS :: 8
 EVENT_CAPACITY :: 1024
 HITBOX_RESULTS :: 32
+// A hitbox open on the tick before is tested at up to this many poses between that tick and this
+// one, spaced at most its smallest half extent (not less than HITBOX_STEP_MIN m) apart.
+HITBOX_STEPS :: 6
+HITBOX_STEP_MIN :: 0.05
 // The layered moves of the windows of an ability use these ids, plus the window index.
 MOVE_ID :: u32(0x4142_0000)
 // The knockback of an effect, as a layered move of its target.
@@ -160,6 +164,7 @@ Ability_Window :: struct {
     move:Ability_Move,
     cue:Ability_Cue,
     clock:Ability_Clock,
+    attach:bool, // while it is open the Ability_Held of the user is at its socket
 }
 
 Ability_Attribute_Entry :: struct {
@@ -190,6 +195,16 @@ Ability_User :: struct {
     kit:core.Record(Ability_Kit),
     attributes:[ATTRIBUTE_ENTRIES]Ability_Attribute_Entry,
     speed:Ability_Attribute, // its current value is the speed scale of its locomotion (locomotion.set_speed_scale); none: abilities leave that scale
+}
+
+// What an Ability_User holds that the windows with attach of its abilities move: at socket while
+// one is open, and otherwise where its Bone_Attachment says (a sword drawn into the hand for a
+// combo, then back to the hip).
+@(component,description="An entity with a Bone_Attachment on this Ability_User (a weapon) that ability windows with attach hold at socket, and that rests at the socket of its Bone_Attachment otherwise.")
+Ability_Held :: struct {
+    entity:core.Entity,
+    socket:[32]u8 `mirai:"text"`, // of the skeleton of the user, where the windows with attach hold it (a hand)
+    blend:f32 `mirai:"min=0,max=0.2,unit=s"`, // seconds it takes from one socket to the other; 0: at once
 }
 
 // Saved with the tracking row so a save can resume an ability in progress.

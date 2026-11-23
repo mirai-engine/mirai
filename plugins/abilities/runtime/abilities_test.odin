@@ -64,8 +64,15 @@ Abilities_World :: struct {
     characters:core.Table(phys.Character),
     locomotions:core.Table(locomotion.Locomotion_State),
     worlds:core.Table(core.World_Transform),
+    transforms:core.Table(core.Transform),
+    parents:core.Table(core.Parent),
+    hierarchy:core.Hierarchy,
+    propagation:core.Propagation,
+    jumps:core.Jumps,
+    places:core.Places,
     remotes:core.Table(core.Remote),
     paces:core.Table(core.Own_Pace),
+    helds:core.Table(Ability_Held),
     requests:Ability_Requests,
     events:Ability_Events,
     moves:locomotion.Locomotion_Requests,
@@ -203,7 +210,7 @@ test_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transform,r
 
 @(private="file")
 world_of :: proc(f:^Fixture) -> Ability_World {
-    return {time=f.time,seats=core.ref(&f.seat_state),seat_states=core.ref(&f.seat_runtime),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems,sounds=&f.sounds,births=&f.births}
+    return {time=f.time,seats=core.ref(&f.seat_state),seat_states=core.ref(&f.seat_runtime),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),helds=core.read(&f.helds),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems,sounds=&f.sounds,births=&f.births}
 }
 
 @(private="file")
@@ -835,4 +842,122 @@ feedback_rows_emit_once_at_start_window_and_hit :: proc(t:^testing.T) {
     step(f)
     testing.expect_value(t,len(f.sounds.queue.items),0)
     testing.expect_value(t,len(f.births.queue.items),1)
+}
+
+// A hitbox open on the tick before also touches what the user passed through since: a dash faster
+// than its hitbox is long, a swing that turns past a target between two ticks. The tick its window
+// opens and a teleport (core.place) test only where the user is. Each target is hit once.
+@(test)
+an_open_hitbox_sweeps_between_ticks_but_not_when_it_opens_or_across_a_teleport :: proc(t:^testing.T) {
+    Pose :: struct {position:[3]f32,yaw:f32,teleport:bool}
+    Case :: struct {
+        name:string,
+        hitbox:Ability_Hitbox,
+        poses:[]Pose, // of the player, one before each tick from the press on; the first is where it was before
+        targets:[][3]f32,
+        hits:[]int, // of each target
+    }
+    DASH :: f32(80.0/RATE) // m a tick at 80 m/s
+    thin:=Ability_Hitbox{shape=.Box,center={0,1,0},size={0.25,1,0.25}}
+    blade:=Ability_Hitbox{shape=.Box,center={0,1,-1.5},size={0.2,0.2,0.2}}
+    diagonal:=[3]f32{-1.5*math.SQRT_TWO/2,0,-1.5*math.SQRT_TWO/2}
+    cases:=[]Case{
+        {"a dash at 80 m/s hits a thin target it passes between two ticks",thin,
+         {{},{},{position={DASH,0,0}},{position={2*DASH,0,0}}},{{0.7,0,0}},{1}},
+        {"several targets along the dash are each hit once",thin,
+         {{},{},{position={DASH,0,0}},{position={2*DASH,0,0}},{position={3*DASH,0,0}}},{{0.7,0,0},{1.9,0,0},{3.1,0,0},{1.25,0,0}},{1,1,1,1}},
+        {"the tick its window opens tests only where the user is",thin,
+         {{position={-5,0,0}},{},{}},{{-2.5,0,0}},{0}},
+        {"a teleport does not sweep across where the user was",thin,
+         {{},{},{position={10,0,0},teleport=true},{position={10,0,0}}},{{5,0,0}},{0}},
+        {"a swing hits a target on its arc between two ticks",blade,
+         {{yaw=0},{yaw=0},{yaw=math.PI/2},{yaw=math.PI/2}},{diagonal},{1}},
+    }
+    for c in cases {
+        f:=new(Fixture);defer free(f)
+        if !fixture_make(t,f) {return}
+        defer fixture_destroy(f)
+        f.sheets[SLASH_1].windows[0]={from=0,to=1,hitbox={HITBOX_TABLE,1}}
+        f.sheets[SLASH_1].windows[1]={}
+        f.sheets[SLASH_1].duration=1
+        f.hitboxes[0]=c.hitbox
+        targets:=make([]core.Entity,len(c.targets));defer delete(targets)
+        for p,i in c.targets {
+            targets[i]=core.create(&f.entities)
+            core.add(&f.transforms,targets[i],core.Transform{position=p,rotation=1,scale=1})
+        }
+        // Without a Character its Transform is free: placed at once, as physics places its body.
+        core.remove(&f.characters,f.player)
+        core.add(&f.transforms,f.player,core.Transform{rotation=1,scale=1})
+        core.add(&f.transforms,f.dummy,core.Transform{position={100,0,100},rotation=1,scale=1})
+        test_world_settle(&f.w)
+        for pose,k in c.poses {
+            // Where the tick before left the player: the propagation at the end of that tick.
+            placer:=core.Placer{&f.transforms,core.read(&f.parents),&f.places,&f.jumps}
+            turn:=mm.quat_axis_angle({0,1,0},pose.yaw)
+            testing.expect(t,core.place(placer,f.player,pose.position,turn,teleport=pose.teleport))
+            test_world_settle(&f.w)
+            core.hierarchy_settle(&f.hierarchy,&f.parents,&f.entities)
+            core.transforms_propagate(core.read(&f.transforms),core.ref(&f.hierarchy),&f.worlds,&f.propagation,&f.jumps,{phase=.Fixed})
+            test_world_settle(&f.w)
+            if k==0 {continue}
+            f.down[0]=k==1
+            step(f)
+        }
+        testing.expectf(t,user(f,f.player).ability==ref(SLASH_1),"%s: the ability runs",c.name)
+        for target,i in targets {
+            hits:=0
+            for ev in f.log {if ev.kind==.Hit && ev.target==target {hits+=1}}
+            testing.expectf(t,hits==c.hits[i],"%s: target %d at %v is hit %d times, not %d",c.name,i,c.targets[i],hits,c.hits[i])
+        }
+    }
+}
+
+// A window with attach holds the Ability_Held of the user at its socket while it is open: the socket
+// is derived each tick from the running ability, so its end or an interrupt asks for its own
+// socket again, and a replica derives the same.
+@(test)
+a_window_attaches_the_held_entity_while_it_is_open :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+    sword:=core.create(&f.entities)
+    held:=Ability_Held{entity=sword,blend=0.1}
+    base.text_set(held.socket[:],"hand_r")
+    core.add(&f.helds,f.player,held)
+    test_world_settle(&f.w)
+    f.sheets[SLASH_1].windows[0].attach=true
+    asked :: proc(f:^Fixture) -> (socket:string,blend:f32,ok:bool) {
+        items:=f.animations.attaches.items
+        if len(items)==0 {return}
+        last:=&items[len(items)-1]
+        return base.text_get(last.socket[:]),last.blend,last.entity!=core.NONE
+    }
+    socket,blend,ok:=asked(f)
+    testing.expect(t,!ok,"nothing is asked before a tick")
+    f.down[0]=true
+    step(f)
+    socket,blend,ok=asked(f)
+    testing.expect(t,ok && socket=="" && blend==0.1,"before the window it rests at its own")
+    step(f,seconds(0.25)-1)
+    socket,_,_=asked(f)
+    testing.expectf(t,socket=="","still before the window opens: %s",socket)
+    step(f)
+    socket,_,_=asked(f)
+    testing.expectf(t,socket=="hand_r","in the hand while the window is open: %s",socket)
+    for a in f.animations.attaches.items {testing.expect(t,a.entity==sword)}
+    // Interrupted while the window is open, it goes back.
+    ability_cancel(&f.requests,f.player)
+    step(f)
+    socket,_,_=asked(f)
+    testing.expectf(t,socket=="" && user(f,f.player).ability=={},"cancelled, it goes back to its own: %s",socket)
+
+    // A replica derives the socket from the ability its owner runs.
+    core.add(&f.remotes,f.player,core.Remote{})
+    state:=core.edit(&f.states,f.player)
+    state.ability,state.start=ref(SLASH_1),f.time.tick-u64(seconds(0.25))
+    test_world_settle(&f.w)
+    step(f)
+    socket,_,_=asked(f)
+    testing.expectf(t,socket=="hand_r","a replica in the window holds it in the hand: %s",socket)
 }

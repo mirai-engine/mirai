@@ -78,6 +78,25 @@ cam.camera_shake(shakes,camera,nod) // shakes:^cam.Camera_Shakes
 `rate`, `blend_in` and `blend_out` play it faster and fade it; `single` with an `id` restarts the
 one that plays instead of adding another.
 
+## Add to the view without changing its mode
+
+A sprint that widens the lens, a crouch that lowers the pivot or an ability that pulls the arm out
+each own a slot of the camera by an `id` of the game, so none undoes another or the mode:
+
+```odin
+sprint:=cam.Camera_Modifier{id=SPRINT,fov=0.12,distance=0.6,blend_in=0.3,blend_out=0.5}
+cam.camera_modifier(modifiers,camera,sprint)  // while sprinting; asking every tick is fine
+cam.camera_modifier_release(modifiers,camera,SPRINT) // modifiers:^cam.Camera_Modifiers
+```
+
+- What the modifiers add (`fov`, `distance`, `offset`, `shoulder`, `roll`) is summed by their
+  weights over the `Camera_Follow` and the lens of the mode and the shakes: no priority.
+- Asked, a modifier blends in over `blend_in` from the weight it has (also halfway out); released,
+  it blends out over `blend_out` and frees its slot. A camera plays `cam.CAMERA_MODIFIERS` (8).
+- `distance`, `offset` and `shoulder` move the arm before its probe, so a longer arm stops at a
+  wall; `roll` turns the view after it. The lens stays within `CAMERA_FOV_MIN..CAMERA_FOV_MAX`
+  radians and the arm at 0 or more.
+
 ## Pitfalls that fail silently
 
 - `Camera.fov` is vertical, in radians (`70*mm.RAD_PER_DEG`).

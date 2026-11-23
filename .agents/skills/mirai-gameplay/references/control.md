@@ -190,6 +190,14 @@ to driven ancestor/root/focused player; writing its transform elsewhere triggers
 | `Orbit` | Orbits pivot at `distance`/`shoulder` (`yaw`/`pitch`/`min_pitch`/`max_pitch`), `look_up_offset`/`look_down_offset`, `Spring_Arm` probe (`probe_radius` via [`core.World_Queries`](../../mirai-core/references/core.md#world-queries), `pull_grace`/`pull_time`/`return_delay`/`return_time`/`arm_margin`, `engine/camera/rigs.odin` also has `Follow`/`Orbit`/`Shake`), `hide_within` fades `<2x` and hides `<1x`; `aim` follows `Move_Input` look, else `turn`/`recenter`/`camera_look` |
 | `Eyes` | First-person at `offset` following `Move_Input` look |
 
+- **Modifiers**: `camera_modifier`/`camera_modifier_release` (`Camera_Modifiers`, by `id`, up to
+  `CAMERA_MODIFIERS` a camera) add `fov`, `distance`, `offset`, `shoulder` and `roll` by their
+  weights over the mode, each with its own `blend_in`/`blend_out` (asked again mid blend-out it
+  resumes from its weight). Distance, offset and shoulder go in before the arm probe, roll after;
+  the lens of the mode, the shakes and the modifiers sum into `render.Camera.fov` each frame from
+  `Camera_Follow_State.fov_own`, within `CAMERA_FOV_MIN..CAMERA_FOV_MAX`
+  ([guide](../../../../docs/game/character/camera.md#add-to-the-view-without-changing-its-mode)).
+
 - **Own body**: `camera_blend` writes `render.View_Bodies`; lens `own_hidden` hides layers
   (`HEAD_LAYER`, `Skin_Part` in
   [animation](../../mirai-animation/references/animation.md#components-and-shared-data))

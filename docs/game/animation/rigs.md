@@ -55,6 +55,12 @@ anim.play_clip(requests,e,"stride",.2,loop=false)
 - A held object has the `Bone_Attachment` component: `rig` (the character), `socket` (a name in
   the skeleton, `base.text_set(att.socket[:],"hand_r")`) or `bone`
   (`att.bone=anim.bone_ref("hand_r")`), and `offset`. Author sockets with `skeleton.socket.set`.
+- A weapon drawn from the hip to the hand: its `Bone_Attachment` says where it rests (`"hip"`), and
+  `anim.attach(requests,sword,"hand_r",0.1)` moves it to another socket of the skeleton of its rig
+  over a blend of 0 to `anim.ATTACH_BLEND_MAX` (0.2 s; 0 at once), from where it was and following
+  the hand as it moves; `anim.attach(requests,sword,"",0.1)` puts it back where it rests. Asking
+  for where it is does nothing, so a game may ask every tick from its own state. An ability holds
+  it in the hand while a window with `attach` is open through `abilities.Ability_Held`.
 - `Pose_Source{rig}` on another mesh is the one way another rig drives a pose: at stage
   `Finished` (armor, a head) it shares or follows that rig's finished pose; at stage `Sampled` a
   character of other proportions plays its sampled animation by bone names, or by the

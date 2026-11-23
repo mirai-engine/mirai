@@ -272,11 +272,16 @@ constraints_apply :: proc(state:^Playing,playback:^Playback,inputs:Constraint_In
             attachment.index=bone_find(state,attachment.bone)
             attachment.bound,attachment.generation=state.bound,state.generation
         }
-        transform,ok:=lib.skeleton_socket(playing_pose(state,.World),attachment.index,attachment.offset)
+        offset:=attachment.offset
+        if attachment.index>=0 && attachment.index<len(playing_pose(state,.World)) {
+            offset=attachment_offset(&attachment,playing_pose(state,.World)[attachment.index],dt)
+        }
+        transform,ok:=lib.skeleton_socket(playing_pose(state,.World),attachment.index,offset)
         if !ok {
             core.report(problems,entity,"animation.socket_bone","this Bone_Attachment names a bone that the skeleton of its rig does not have; name a bone or socket of that skeleton")
             continue
         }
+        attachment.placed,attachment.placed_ok=transform,true
         if parents!=nil {
             if parent,found:=core.get(parents,entity);found && parent.entity!=core.NONE {
                 socket_parent,parent_ok:=constraint_world(transforms,parents,inputs.worlds,parent.entity)

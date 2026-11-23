@@ -14,7 +14,7 @@ or animation graph ([what replaces them](#what-replaces-the-state-machine)).
 | `Animation` | Plays `.anim` (clip) or `.character` set; `library` override, `mirror`, `root_motion` |
 | `Animation_Progress` | Saved clip clock/selection materialized by `Playback` on slot capture |
 | `Pose_Source` | `Finished`: share pose or [follow another skeleton](#following-a-rig-of-another-skeleton); `Sampled`: [live retarget](#offline-and-live-retarget) |
-| `Bone_Attachment` | Attaches entity to bone or `Skeleton_Socket` (local offset after socket TRS) |
+| `Bone_Attachment` | Attaches entity to bone or `Skeleton_Socket` (local offset after socket TRS): where it rests; `attach` switches it to another socket in Play |
 | `Animation_Budget` | Update cadence/LOD ([budget](animation-budget.md)) |
 | `Morph_Weights` | Blendshape weights ([morphs](animation-morphs.md)) |
 | `Animation_Target` | Hidden imported rigid-target identity; survives entity renames |
@@ -64,7 +64,11 @@ Locomotion is the `Match_Profile` of `Animation.asset` (`.character`):
 - **Database.** `std/anim/matching.odin` features (feet, hips, body velocity, past/future
   trajectory, and the `extras` of `Match_Info`: up to two bone tips, `offset` in the bone's frame,
   such as a blade's tip) build on first rig load into `Character_Assets`, capped by `memory`
-  (`animation.match_memory`; a missing extra bone reports `animation.match_extra`). 8 lanes a row,
+  (`animation.match_memory`; a missing extra bone reports `animation.match_extra`). A mode with
+  two or more clips that travel (no entry, above `MATCH_STILL`) and none within 60 degrees of the
+  `-Z` the rig faces reports `animation.match_forward` once per build (`match_unforward_modes`;
+  `animation.asset.inspect` lists them as `unforward`): its clips were made facing `+Z` or `+X`;
+  turn them with the `Face_Rest` verb of `animation.clip.edit`. 8 lanes a row,
   12 with extras. Linear SIMD below `MATCH_LINEAR_ROWS`, bounded runs above. A database of an
   older library generation or skeleton revision is released when its successor builds.
 - **Per tick.** `match_goal` feeds mode, velocity, desired velocity, accel/braking, facing, wall
@@ -221,8 +225,9 @@ Runtime failures report `animation.*` codes in
 
 - **Assets:** `animation.asset`, `program_asset`, `skeleton`, `skin_mesh`.
 - **Binding/data:** `animation.clip`, `layer_clip`, `layer_bone`, `pose_bone`, `attachment_socket`,
-  `parameter`, `match_clip`, `layer_space`, `match_database`, `match_memory`, `match_blend`,
-  `match_mirror`, `match_span`, `match_extra`, `rig_*`, `constraint_*`, `grounding_*`,
+  `attach`, `attach_socket`, `parameter`, `match_clip`, `layer_space`, `match_database`,
+  `match_memory`, `match_blend`, `match_mirror`, `match_span`, `match_extra`, `match_forward`,
+  `rig_*`, `constraint_*`, `grounding_*`,
   `retarget_*`, `motion_*`, `morph_*`, `action_*`, `modifier_*`, `distance`, `match_goal`.
 - **Follow/curves/limits:** `follow_rig`, `follow_bones`, `follow_pose`, `curve_pose_bone`,
   `curve_pose_value`, `curve_material`, `final_pose_binding`, `final_pose_bone`, `mirror`,

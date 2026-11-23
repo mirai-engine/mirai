@@ -75,7 +75,9 @@ Modifier_Runtime :: struct {
     rigs:[dynamic]Modifier_Rig,
     rows:[dynamic]i32,
     curve_full:[dynamic]lib.Pose_Accumulator,
-    inputs:[7]u64,
+    inputs:[8]u64,
+    attached:[dynamic]Attach_Asked, // the sockets attach asked for, by entity
+    attach_serial:u64,
     time:f64,
     request_error:Modifier_Request_Error,
     request_error_rig:core.Entity,
@@ -107,7 +109,7 @@ Modifier_Rig :: struct {
 
 modifier_runtime_free :: proc(runtime:^Modifier_Runtime) {
     for &rig in runtime.rigs {modifier_rig_free(&rig)}
-    delete(runtime.rigs);delete(runtime.rows);delete(runtime.curve_full)
+    delete(runtime.rigs);delete(runtime.rows);delete(runtime.curve_full);delete(runtime.attached)
     runtime^={}
 }
 
@@ -201,8 +203,8 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
     if loaded==nil {return false}
     context.allocator=allocator
     revision:=assets_stamp(loaded)
-    headers:=[7]u64{core.layout(animations),core.version(animations),revision,
-        core.layout(attachments),core.version(attachments),playback.rigs_stamp,loaded.structure}
+    headers:=[8]u64{core.layout(animations),core.version(animations),revision,
+        core.layout(attachments),core.version(attachments),playback.rigs_stamp,loaded.structure,runtime.attach_serial}
     if runtime.inputs==headers {return true}
     pending:=false
     if runtime.inputs[0]!=headers[0] || runtime.inputs[1]!=headers[1] || runtime.inputs[2]!=headers[2] {
@@ -247,7 +249,7 @@ modifier_prepare :: proc(runtime:^Modifier_Runtime,animations:^core.Table(Animat
     }
     if runtime.inputs[2]!=headers[2] || runtime.inputs[3]!=headers[3] ||
         runtime.inputs[4]!=headers[4] || runtime.inputs[5]!=headers[5] ||
-        runtime.inputs[6]!=headers[6] {
+        runtime.inputs[6]!=headers[6] || runtime.inputs[7]!=headers[7] {
         if !modifier_attachments_prepare(runtime,attachments,skeletons,playback,loaded,allocator,problems,meshes) {
             memory_problem(problems,core.NONE,"the bone attachments")
             return false
@@ -311,6 +313,7 @@ animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.
     budget:Animation_Budget_Config,sources:core.Ref(scene.Simulation_Sources),fields:core.Ref(Field_Playback)) {
     if !playback.prepared {playback.frame+=1;core.take(&requests.reads);return}
     modifier_take(runtime,characters,requests,problems,0)
+    attaches_take(runtime,requests,problems)
     lod_decide(playback,runtime,requests,fields.ptr,sources.ptr,transforms,parents,budget,time,lod_presented(app),problems)
     animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget,progress)
 }
