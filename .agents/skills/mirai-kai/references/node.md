@@ -56,10 +56,10 @@ optional: an org with no node works on a LAN and between machines that can reach
   prebuilt musl and the compiler's builtins (compiler-rt, which musl's long-double formatting
   calls), both of which `mirai` downloads and checks by hash. The result has no dynamic loader and
   needs nothing installed on the machine.
-- Why a VM and a real filesystem: rendezvous needs a stable public address and the real source
-  address of UDP datagrams (a container bridge's NAT breaks hole punching), and the
-  [store](../../mirai-store/SKILL.md) maps its packs, flushes and keeps process leases, which need a
-  local ext4 or xfs volume and not overlayfs or a network filesystem.
+- Why a VM and a real filesystem: rendezvous and relays need a stable public address without
+  container bridge NAT overhead, and the [store](../../mirai-store/SKILL.md) maps its packs,
+  flushes and keeps process leases, which need a local ext4 or xfs volume and not overlayfs or a
+  network filesystem.
 - A unit that runs a seed with the web view, as an unprivileged user:
 
 ```ini
@@ -179,26 +179,22 @@ WantedBy=multi-user.target
 
 ## The frontend
 
-- `kai/hub/web` is embedded as it is, at build time, and served flat; names that start with a dot
-  are not served and a path with no dot that names no file gets `index.html`, so the page routes
-  itself. It is ES modules with no framework, no third-party code and no build step: what is in
-  the folder is what ships, so building needs no Node.
-- Views are `html` tagged templates (`web/dom.js`, the whole toolkit): a value becomes a text
-  node, an attribute, a property or a listener, never markup, so repository content cannot become
-  part of the page. Nothing draws on its own: a view draws when its route or data changes or an
-  action asks (`mount` answers the function that draws again), and the shared `state` calls its
-  watchers on `set`. A form keeps its own DOM, and the proposal keeps its composers across draws,
-  so what is being typed survives a reload. A failed action surfaces in one place, `report`, with
-  the node's text.
-- The pure modules (`blake3.js`, `entry.js`, `preview.js`) must agree with the node bit for bit:
-  BLAKE3 across chunk boundaries, recovery texts, web key ids, the layout of an entry and the
-  check of a draft, which tampered or mismatched drafts fail, and the previews the node takes.
-  `hub_web_modules_agree_with_the_node` runs them under the system's `node` and is skipped, with
-  a warning, where it is not installed.
-- Views: a project's overview, tree, file (with the [previews](#previews) of an asset), changes,
-  diff and the evolution of a change, and for members the stacks, a proposal and its review, the
-  org and the node. The page makes no third party
-  request and takes no passkey over plain HTTP.
+- `kai/hub/web` is embedded at build time and served flat with `Cache-Control: no-cache` and a
+  strong `ETag` (`304 Not Modified` on match); names starting with a dot are refused and a path with
+  no dot that names no file gets `index.html`. It is ES modules with no framework, no third-party
+  code and no build step, styled in Mirai's light-mode palette (`#7050f0` accent, Inter and
+  JetBrains Mono, sidebar app shell and `⌘K` search).
+- Views are `html` tagged templates (`web/dom.js`): values become text nodes, attributes, properties
+  or listeners, never markup. `web/markdown.js` renders Markdown (http/https/relative links only),
+  `web/highlight.js` tokenizes code and `web/diffs.js` renders unified/split diffs with word-level
+  highlights, file trees and inline comments without `innerHTML`. Refreshes preserve loaded views
+  and scroll position; large files paginate by 2,000 lines; failed actions surface via toast.
+- The pure modules (`blake3.js`, `entry.js`, `preview.js`, `markdown.js`, `highlight.js`,
+  `diffs.js`) are tested against the node's binary layout and safety rules by
+  `hub_web_modules_agree_with_the_node` under `node` (fails if `node` is absent).
+- Views: project overview, tree, file (with [previews](#previews)), changes, diff and revision
+  history; for members: stacks, proposals (with inline review, verdicts and browser landing via
+  signed `bookmark_move` + `proposal_land`), orgs and server status. Zero third-party requests.
 
 ## Previews
 

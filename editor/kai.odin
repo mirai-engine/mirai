@@ -16,7 +16,8 @@ import "mirai:project"
 import "mirai:store"
 
 // Kai from the editor: the project is a workspace of its own repository in the
-// machine's store, opened or made when the editor starts on it. What the
+// machine's store, opened when the editor starts on it; a project without one
+// uses no version control until Enable Kai (kai_enable) makes it. What the
 // editor writes and what the watch of the folder sees are pushed as touched
 // paths (kai.workspace_touched), so a snapshot stats only those; the working
 // copy snapshots once the files are quiet, with the authors of the steps since
@@ -144,27 +145,64 @@ kai_types :: proc(s:^Session) -> ^asset.Types {
     return &s.app.assets.types
 }
 
-// Opens the workspace of the project, or makes one of its files: once per
-// project, with the machine's store. A guest of a session opens none, nor
-// does a run that ends by itself after a count of frames (a check of a build,
-// a capture): only an editor that someone drives records history.
+// Opens the workspace of the project: once per project, with the machine's
+// store. A project without one keeps no history until kai_enable makes it
+// (Missing). A guest of a session opens none, nor does a run that ends by
+// itself after a count of frames (a check of a build, a capture): only an
+// editor that someone drives records history.
 kai_open :: proc(s:^Session) {
     k:=s.kai
     if k==nil || k.tried || k.state!=nil || !s.has_project || s.store.root=="" || s.frames>0 {return}
     if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return}
     k.tried=true
     if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}
+    if !ka.project_exists(s.project_root) {
+        k.error=.Missing
+        return
+    }
+    if e:=kai_attach(s,false);e!=.None {
+        log.warnf("the Kai workspace of %s does not open: %s",s.project_root,vcs.error_text(e))
+    }
+}
+
+// Makes the project a Kai workspace whose first change holds its files, and
+// opens it. "" or why it could not.
+kai_enable :: proc(s:^Session) -> string {
+    k:=s.kai
+    if k==nil || !s.has_project {return "The editor has no project"}
+    if k.state!=nil {return "The project already uses Kai"}
+    if s.store.root=="" {return kai_missing(s)}
+    if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return kai_missing(s)}
+    if ka.project_exists(s.project_root) {return "The project already has a Kai workspace: it opens with the project"}
+    k.tried=true
+    if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}
+    if e:=kai_attach(s,true);e!=.None {
+        return fmt.tprintf("The Kai workspace of the project could not be made: %s",vcs.error_text(e))
+    }
+    log.infof("%s is a Kai workspace now: its files are its first change",s.project_root)
+    return ""
+}
+
+// Opens the workspace at the project's root, or makes it first with create,
+// and starts watching its files.
+@(private)
+kai_attach :: proc(s:^Session,create:bool) -> vcs.Error {
+    k:=s.kai
     st:=new(Kai_State)
-    e:=ka.project_open(&st.project,s.project_root,&s.store,kai_types(s))
-    if e==.Missing {
+    if st==nil {
+        k.error=.Out_Of_Memory
+        return .Out_Of_Memory
+    }
+    e:vcs.Error
+    if create {
         e=ka.project_create(&st.project,s.project_root,&s.store,kai_types(s))
-        if e==.None {log.infof("%s is a Kai workspace now: its files are its first change",s.project_root)}
+    } else {
+        e=ka.project_open(&st.project,s.project_root,&s.store,kai_types(s))
     }
     if e!=.None {
         free(st)
         k.error=e
-        log.warnf("the Kai workspace of %s does not open: %s",s.project_root,vcs.error_text(e))
-        return
+        return e
     }
     k.error=.None
     k.state=st
@@ -178,6 +216,7 @@ kai_open :: proc(s:^Session) {
     }
     kai_team_open(s)
     kai_read(s)
+    return .None
 }
 
 kai_close :: proc(s:^Session) {
@@ -299,7 +338,7 @@ kai_snapshot :: proc(s:^Session) -> string {
     _,e:=ka.snapshot_authored(w,keys[:],turns[:])
     // A refusal stays until a snapshot holds; one of a publish, until a publish does.
     t:=&st.team
-    if refusal:=ka.snapshot_refusal(&st.project);e==.Unauthorized && refusal.path!="" {
+    if refusal:=ka.snapshot_refusal(&st.project);e==.Unauthorized && refusal.text!="" {
         kai_refusal_set(t,refusal)
     } else if e==.None && t.refusal.text!="" && t.refusal.line==0 {
         kai_refusal_set(t,{})
@@ -315,6 +354,7 @@ kai_missing :: proc(s:^Session) -> string {
     if !s.has_project {return "The editor has no project"}
     if s.store.root=="" {return "The editor has no store, where Kai keeps the changes: start it with --store <folder>"}
     if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return "A guest of a session keeps no changes: its host records them"}
+    if k:=s.kai;k!=nil && k.error==.Missing {return "The project does not use version control: kai.init, or Enable Kai in the Kai tab, makes it a Kai workspace"}
     if k:=s.kai;k!=nil && k.error!=.None {return fmt.tprintf("The Kai workspace of the project does not open: %s",vcs.error_text(k.error))}
     return "The Kai workspace of the project is not open"
 }

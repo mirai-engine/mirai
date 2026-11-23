@@ -1,8 +1,13 @@
 # Plan: Kai (Phase 2 — Native VCS, Orgs, P2P Sync and Repo Server)
 
 Design blueprint for **Kai**, Mirai's native, data-oriented, zero-legacy version control and
-peer-to-peer distribution system built on `store`, `net` and `exchange`. Everything here is
-proposed design; facts about current code are cited by file.
+peer-to-peer distribution system built on `store`, `net` and `exchange`.
+
+**Status:** Phase 2 is implemented: milestones M0 to M6 (section 11) landed with their focal
+tests, and the sections below describe them as built, with their reasons; facts about the code are
+cited by file. What remains is Phase 3 (section 1), the items marked "not done" or "not built"
+in section 10, and the open decisions of section 12. Kai is optional per project: `mirai new
+--no-kai`, or a project opened without `.mirai/kai`, has no workspace until `kai.init`.
 
 ---
 
@@ -21,7 +26,8 @@ proposed design; facts about current code are cited by file.
 ### Deferred to Phase 3 (general code and the Mirai engine itself)
 - Standalone `kai` binary distributed independently of `mirai`.
 - Generic `.kaiignore` globs and POSIX symlink tracking (Phase 2 uses `project.own_path`, which
-  excludes `.mirai/` and rejects symlinks).
+  excludes `.mirai/` and the folders of other version control at any depth, and rejects
+  symlinks).
 - Power-user terminal CLI: revset query language, interactive hunk `split`, `bisect`, `absorb`,
   terminal `blame`, pager and shell completions.
 - Arbitrary external CI script runners (Phase 2 signs `Check` events from Mirai peers running
@@ -434,7 +440,8 @@ Entry_Head :: struct #packed {
   as the last rung when UDP is blocked, length-prefixed over the node's TCP 443, which the hub
   tells apart from TLS by its first byte. HTTPS is used **only** for web browsers hitting KaiHub.
 - **Transport for browsers:** HTTP over TLS 1.3 (1-RTT, early data refused; HTTP/3 over QUIC
-  optional via a thin edge proxy like Caddy) serving a static **Vue** frontend plus a clean
+  optional via a thin edge proxy like Caddy) serving a static frontend of plain JavaScript
+  modules (`kai/hub/web`, no framework or build step) embedded in the binary, plus a clean
   JSON/binary API straight from `mirai kai serve` (no Postgres, Redis or Node backend).
 - **Views:**
   - Public: project overview, public bookmarks, README, file tree/viewer (including Mirai asset
@@ -503,8 +510,8 @@ Entry_Head :: struct #packed {
     `deny_set_and_publish_scanner_block_leaks`.
 - **M5 — Proposals, ARM64 Server and KaiHub Web View:** `Proposal_Log` with structural/line
   re-anchoring and signed `Check` events; headless `linux_arm64` `mirai kai serve` (TLS 1.3 +
-  ACME + Landlock/seccomp, JSON API + static Vue frontend); passkey-first WebAuthn login/signing;
-  `mirai-kai` skill and `ARCHITECTURE.md` update.
+  ACME + Landlock/seccomp, JSON API + static JavaScript frontend); passkey-first WebAuthn
+  login/signing; `mirai-kai` skill and `ARCHITECTURE.md` update.
   - Focal tests: `proposal_comments_reanchor_across_rewrites`,
     `landing_enforces_policy_and_zero_conflicts`,
     `webauthn_login_and_signed_verdict_verify_offline`,

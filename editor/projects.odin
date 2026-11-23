@@ -16,6 +16,7 @@ import "mirai:cook/build"
 import "mirai:cook/install"
 import ka "mirai:cook/kai"
 import "mirai:cook/textures"
+import vcs "mirai:kai"
 import wire "mirai:net"
 import "mirai:platform"
 import "mirai:project"
@@ -103,6 +104,7 @@ Projects :: struct {
     templates:[PROJECTS_TEMPLATES][32]u8,
     template_count:int,
     template:int,
+    kai:bool,       // the new project is a Kai workspace of its own; off: no version control
     plugins:[PROJECTS_PLUGINS]Projects_Plugin, // of the engine and the template the new project can get
     plugin_count:int,
     picked:[project.MAX_CATALOG]bool,   // plugins of the catalog the new project gets
@@ -612,6 +614,7 @@ projects_create :: proc(s:^Session) -> string {
     if strings.contains_any(name,"/\\:*?\"<>|") {return "The name is the name of its folder: it cannot have / \\ : * ? \" < > |"}
     if location=="" {return "Choose where the project goes"}
     if p.template<0 || p.template>=p.template_count {return "Choose a template"}
+    if p.kai && s.store.root=="" {return "Version control needs a store, where Kai keeps the changes: start the editor with --store <folder>, or uncheck Version control (Kai)"}
     folder:=project.path(location,name,allocator=context.temp_allocator)
     template:=build.template_folder(s.engine_root,base.text_get(p.templates[p.template][:]),context.temp_allocator)
     switch build.project_create(template,folder,name) {
@@ -620,6 +623,15 @@ projects_create :: proc(s:^Session) -> string {
     case .Folder_Not_Empty: return fmt.tprintf("%s is not an empty folder",folder)
     case .Copy_Failed:      return fmt.tprintf("%s could not be written",folder)
     case .Manifest_Failed:  return "The name does not fit in the manifest of the project"
+    }
+    if p.kai {
+        // Its files are the first change of a Kai workspace of its own.
+        k:=new(ka.Project,context.temp_allocator)
+        if k==nil {return "No memory for the Kai workspace of the project"}
+        if e:=ka.project_create(k,project.path_absolute(folder,context.temp_allocator),&s.store);e!=.None {
+            return fmt.tprintf("The project was made in %s, but its Kai workspace was not: %s",folder,vcs.error_text(e))
+        }
+        ka.project_close(k)
     }
     p.creating=false
     if p.plugin_count>0 {
@@ -651,6 +663,7 @@ projects_new_start :: proc(s:^Session,template:int) {
     p.creating=true
     p.name_length=copy(p.name[:],"new_project")
     p.template=0
+    p.kai=true
     p.picked,p.link_count,p.plugins_scroll={},0,0
     for i in 0..<p.template_count {
         if base.text_get(p.templates[i][:])==build.TEMPLATE_DEFAULT {p.template=i}
@@ -1063,6 +1076,10 @@ projects_new_build :: proc(s:^Session) {
                     location:=string(p.location[:p.location_length])
                     if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_LOCATION,location=os.is_dir(location)?location:""}) {notify(s,"A file dialog is already open")}
                 }
+            }
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
+                ui.checkbox(ctx,ui.id(ctx,"new_project_kai"),&p.kai)
+                ui.label(ctx,"Version control (Kai)",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0,fade=true)
             }
         }
         projects_new_plugins(s)

@@ -18,7 +18,7 @@ import "mirai:std/serial"
 import "mirai:std/subprocess"
 import "mirai:store"
 
-NEW_USAGE :: "new <folder> [--name N] [--template T] [--store S] | new --list"
+NEW_USAGE :: "new <folder> [--name N] [--template T] [--store S] [--no-kai] | new --list"
 BUILD_USAGE :: "build tools|kai [--target linux_arm64] [--debug]"
 BUILD_ENGINE_USAGE :: "build engine [--release] [--force]"
 BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--release] [--out folder] [--store folder]"
@@ -67,6 +67,7 @@ store_root_take :: proc(args:^[]string,command:string) -> (store_root:string,ok:
 
 cmd_new :: proc(root:string,args:[]string) -> int {
     folder,name,template:="","",build.TEMPLATE_DEFAULT
+    kai:=true
     store_root,list,store_ok:=store_take(args)
     if !store_ok {fmt.eprintln("mirai new: --store needs the folder of a store");return 2}
     args:=list
@@ -74,6 +75,10 @@ cmd_new :: proc(root:string,args:[]string) -> int {
         if args[i]=="--list" {
             for found in build.templates_list(root) {fmt.printfln("  %-12s %s",found.name,found.summary)}
             return 0
+        }
+        if args[i]=="--no-kai" {
+            kai=false
+            continue
         }
         if value,matched,ok:=option_value(args,&i,"--name");matched {
             if !ok || value=="" {fmt.eprintln("mirai new: --name needs a name");return 2}
@@ -99,6 +104,7 @@ cmd_new :: proc(root:string,args:[]string) -> int {
     }
     absolute:=project.path_absolute(folder)
     fmt.printfln("Project created in %s.",absolute)
+    if !kai {return 0}
     // Its files are the first change of a Kai workspace of its own.
     s,store_error:=store.open(store_root!=""?store_root:store.default_root(context.temp_allocator))
     if store_error!=.None {fmt.eprintfln("mirai new: the store does not open (%v): mirai kai init --project %s --store <folder> makes the workspace",store_error,folder);return 1}

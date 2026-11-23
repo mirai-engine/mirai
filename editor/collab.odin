@@ -2,6 +2,7 @@ package editor
 
 import "base:runtime"
 import "core:crypto"
+import "core:crypto/ed25519"
 import "core:fmt"
 import "core:log"
 import "core:mem"
@@ -9,6 +10,7 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import ka "mirai:cook/kai"
 import "mirai:cook/share"
 import "mirai:core"
 import "mirai:editor/history"
@@ -44,7 +46,10 @@ import "mirai:ui"
 // its address on its network and on its router, and the key of the session.
 
 COLLAB_PORT :: share.PORT
-COLLAB_VERSION :: 9 // of the messages: an editor of another one has another version of the project
+COLLAB_VERSION :: 10 // of the messages: an editor of another one has another version of the project
+// What a guest signs with its Kai key, with the host's challenge, to be its coauthor.
+COLLAB_KEY_PROOF :: "mirai collab key proof v1"
+COLLAB_CHALLENGE :: 32
 COLLAB_PEERS :: share.PEERS
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
@@ -113,7 +118,9 @@ Collab_Peer :: struct {
     name:[COLLAB_NAME_BYTES]u8,
     name_length:int,
     client:u64,          // Collab.client of the editor
-    key:vcs.Key,         // the identity its changes are recorded under (Kai)
+    key:vcs.Key,         // the identity its changes are recorded under (Kai): proven by signing the challenge; zero until then
+    claimed:vcs.Key,     // the key its Hello says, not proven yet
+    challenge:[COLLAB_CHALLENGE]u8, // the host's: what Welcome asks it to sign
     orbit:Orbit,
     has_pose:bool,
     playing:bool,        // is inside a Play or a Simulate of their own
@@ -181,6 +188,7 @@ Collab_State :: struct {
     invite:wire.Invite_Key, // of the session: the host's, with its private key
     invitation:wire.Invitation, // a guest: of the host
     self:u8,
+    challenge:[COLLAB_CHALLENGE]u8, // a guest: what the host's Welcome asks its key to sign
     peers:[COLLAB_PEERS]Collab_Peer,
     layout:u32,
     tables:[]Collab_Table,
@@ -781,17 +789,23 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             break
         }
         peer:=&st.peers[from]
-        peer.client,peer.key=client,key
+        peer.client,peer.claimed,peer.key=client,key,{}
         peer.name_length=copy(peer.name[:COLLAB_NAME_BYTES-1],name)
+        crypto.rand_bytes(peer.challenge[:])
         w:serial.Writer
         collab_begin(&w,.Welcome)
         serial.write_scalar(&w,u8(from))
+        serial.write_bytes(&w,peer.challenge[:])
         collab_queue(peer,serial.writer_bytes(&w))
         if collab_snapshot_send(s,st,peer) {collab_files_join(s,st,peer)}
     case .Welcome:
         if st.role!=.Guest {return}
         id:=serial.read_u8(&r)
-        if !r.failed {st.self=id}
+        challenge:=serial.read_bytes(&r,COLLAB_CHALLENGE)
+        if !r.failed {
+            st.self=id
+            copy(st.challenge[:],challenge)
+        }
     case .Snapshot:
         if st.role!=.Guest {return}
         if !collab_snapshot_load(s,st,data[1:]) {
@@ -799,11 +813,16 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             return
         }
         st.phase=.Joined
-        ready:=[1]u8{u8(Collab_Message.Ready)}
-        collab_queue(&st.peers[0],ready[:])
+        ready:[1+size_of(vcs.Signature)]u8
+        ready[0]=u8(Collab_Message.Ready)
+        proven:=collab_key_sign(s,st.challenge,ready[1:])
+        collab_queue(&st.peers[0],ready[:proven?len(ready):1])
     case .Ready:
         if st.role!=.Host || from<0 || st.peers[from].client==0 {return}
-        st.peers[from].joined=true
+        peer:=&st.peers[from]
+        peer.joined=true
+        // A key is recorded as a coauthor only when the guest signed the challenge with it.
+        if len(data)==1+size_of(vcs.Signature) && collab_key_valid(peer.claimed,peer.challenge,data[1:]) {peer.key=peer.claimed}
         collab_roster_send(st)
     case .Edit:
         if st.role==.Host && (from<0 || !st.peers[from].joined) {return}
@@ -902,6 +921,42 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
     }
 }
 
+// What a key signs to prove it to the host: the domain and the host's challenge.
+@(private)
+collab_key_message :: proc(challenge:[COLLAB_CHALLENGE]u8) -> (message:[len(COLLAB_KEY_PROOF)+COLLAB_CHALLENGE]u8) {
+    copy(message[:],COLLAB_KEY_PROOF)
+    c:=challenge
+    copy(message[len(COLLAB_KEY_PROOF):],c[:])
+    return
+}
+
+// A guest: signs the host's challenge with the identity of its store, when
+// that is the key its Hello said. False when it has none to sign with.
+@(private)
+collab_key_sign :: proc(s:^Session,challenge:[COLLAB_CHALLENGE]u8,signature:[]u8) -> bool {
+    if s.kai==nil || s.kai.key==({}) || s.store.root=="" || challenge==({}) {return false}
+    identity,e:=ka.identity_load(&s.store)
+    defer crypto.zero_explicit(&identity,size_of(identity))
+    if e!=.None || identity.key!=s.kai.key {return false}
+    private:ed25519.Private_Key
+    if !ed25519.private_key_set_bytes(&private,identity.seed[:]) {return false}
+    defer ed25519.private_key_clear(&private)
+    message:=collab_key_message(challenge)
+    ed25519.sign(&private,message[:],signature)
+    return true
+}
+
+// The host: whether signature is key's over the challenge it sent.
+@(private)
+collab_key_valid :: proc(key:vcs.Key,challenge:[COLLAB_CHALLENGE]u8,signature:[]u8) -> bool {
+    if key==({}) || challenge==({}) {return false}
+    public:ed25519.Public_Key
+    k:=key
+    if !ed25519.public_key_set_bytes(&public,k[:]) {return false}
+    message:=collab_key_message(challenge)
+    return ed25519.verify(&public,message[:],signature)
+}
+
 // A guest whose folder has the host's snapshot asks for the scene.
 @(private)
 collab_hello :: proc(s:^Session,st:^Collab_State) {
@@ -913,7 +968,15 @@ collab_hello :: proc(s:^Session,st:^Collab_State) {
     serial.write_string(&w,string(c.name[:c.name_length]))
     serial.write_scalar(&w,collab_client(c))
     key:vcs.Key
-    if s.kai!=nil {key=s.kai.key}
+    if s.kai!=nil {
+        // A guest opens no workspace, so its key is read here: what it proves at Ready.
+        if s.kai.key==({}) && s.store.root!="" {
+            identity,e:=ka.identity_load(&s.store)
+            if e==.None {s.kai.key=identity.key}
+            crypto.zero_explicit(&identity,size_of(identity))
+        }
+        key=s.kai.key
+    }
     serial.write_bytes(&w,key[:])
     collab_queue(&st.peers[0],serial.writer_bytes(&w))
 }

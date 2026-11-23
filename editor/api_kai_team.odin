@@ -213,7 +213,7 @@ kai_team_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="kai.pair",summary="Pairing another machine as a member, a second device or a node: offers a ticket, joins with one, or answers the request that waits with the code both machines show.",params=type_info_of(Api_Kai_Pair_Params),result=type_info_of(Api_Kai_Pair),run=api_kai_pair})
     api_register(s,st,{name="kai.peers",summary="Who runs the machine's mesh, and the peers connected now with the rung each is reached by.",result=type_info_of(Api_Kai_Peers),flags={.Read_Only},run=api_kai_peers})
     api_register(s,st,{name="kai.proposals",summary="The proposals of the open project; opens one on a shared bookmark first when asked, by default with the changes from it to the working copy's parent.",params=type_info_of(Api_Kai_Proposals_Params),result=type_info_of(Api_Kai_Proposals),run=api_kai_proposals})
-    api_register(s,st,{name="kai.proposal",summary="One proposal whole: its stack with what each change did, comments placed on the current stack, verdicts, checks and what keeps it from landing; comments, gives a verdict, revises, runs a check, closes, reopens or lands it first when asked.",params=type_info_of(Api_Kai_Proposal_Params),result=type_info_of(Api_Kai_Proposal),run=api_kai_proposal})
+    api_register(s,st,{name="kai.proposal",summary="One proposal whole: its stack with what each change did, comments placed on the current stack, verdicts, checks and what keeps it from landing; comments, gives a verdict, revises, runs a check, closes, reopens or lands it first when asked.",params=type_info_of(Api_Kai_Proposal_Params),result=type_info_of(Api_Kai_Proposal),flags={.Destructive},run=api_kai_proposal})
     api_register(s,st,{name="kai.scopes",summary="The private files of the open project: its scopes and the paths kept public, and what refused the last snapshot or publish; adds, removes or rotates a scope, or keeps a path public, first when asked.",params=type_info_of(Api_Kai_Scopes_Params),result=type_info_of(Api_Kai_Scopes),run=api_kai_scopes})
 }
 
@@ -221,7 +221,12 @@ kai_team_api_register :: proc(s:^Session,st:^Api_State) {
 @(private)
 api_kai_machine :: proc(s:^Session,call:^api.Call) -> ^vcs.Machine {
     m,message:=kai_team_machine(s)
-    if m==nil {api.call_fail(call,api.SERVER_ERROR,message)}
+    if m==nil {
+        api.call_fail(call,api.SERVER_ERROR,message)
+        return nil
+    }
+    // What failed before this call is not why it fails.
+    m.why=""
     return m
 }
 
@@ -554,6 +559,7 @@ api_kai_revision :: proc(s:^Session,call:^api.Call,text:string) -> (revision:vcs
     w:=kai_workspace(s)
     if r,e:=ka.revision_find(w,text);e==.None {return r,true}
     if m,_:=kai_team_machine(s);m!=nil {
+        m.why=""
         if r,e:=ka.revision_resolve(&s.kai.state.project,m,text);e==.None {return r,true}
         api.call_failf(call,api.INVALID_PARAMS,"%q: %s",text,m.why)
         return

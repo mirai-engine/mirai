@@ -3,7 +3,7 @@ name: mirai-kai
 description: Kai, the native version control and peer-to-peer distribution of Mirai - `std/diff`
   (line diff and three-way merge), `kai` (changes, trees, conflicts as values, the operation log and
   undo, workspaces, drivers), identity, orgs, pairing, grants and the signed logs, the mesh (LAN
-  beacon, hole punching, relay, seed and derived-data nodes, derived data shared between machines),
+  beacon, relay, seed and derived-data nodes, derived data shared between machines),
   private files in encrypted overlays, proposals and review with policies and checks, `kai/hub`
   (the node `mirai kai serve`, its web view and passkey sign-in), `net/tls` (TLS 1.3 and ACME),
   `cook/kai` (the Mirai asset driver), the `mirai kai` commands and the `kai.*` methods. Use when
@@ -14,14 +14,16 @@ description: Kai, the native version control and peer-to-peer distribution of Mi
 
 # Mirai Kai
 
-Kai is the version control of every Mirai project and how its teams reach each other: changes
+Kai is the version control of a Mirai project and how its teams reach each other: changes
 and operations in the machine's [store](../mirai-store/SKILL.md), identities and orgs as signed
 logs, and a mesh of the machines of an org that finds its peers, syncs by
 [exchange](../mirai-store/references/exchange.md#what-the-owner-calls) and reviews work through
 proposals.
 There is no account, no central server and no Git: a node is an optional machine of the org that
-is always on. It is used from the Kai tab of the [editor](../mirai-editor/references/kai.md), from
-`mirai kai`, from the `kai.*` methods and, for review, from a browser.
+is always on. Kai itself is optional per project: a project without `.mirai/kai` has no history
+until it is [enabled](#start-a-project-on-kai). It is used from the Kai tab of the
+[editor](../mirai-editor/references/kai.md), from `mirai kai`, from the `kai.*` methods and, for
+review, from a browser.
 
 - `std/diff` (layer 0): line diff and three-way merge; imports nothing of Mirai.
 - `kai` (layer 4): records, trees, conflicts, operations, workspaces, the logs, pairing, the mesh,
@@ -83,8 +85,10 @@ is always on. It is used from the Kai tab of the [editor](../mirai-editor/refere
 
 ### Start a project on Kai
 
-1. `mirai new` makes the project a workspace of a repository in the machine's store; a folder that
-   exists takes `mirai kai init`. The editor opens the project as a workspace or makes one.
+1. `mirai new` makes the project a workspace of a repository in the machine's store, unless
+   `--no-kai` (the editor's New Project dialog: "Version control (Kai)"). A project that has none
+   takes `mirai kai init`, or in the editor the tab's Enable Kai or `kai.init`. The editor opens
+   a project with `.mirai/kai` as its workspace and never makes one by itself.
 2. Work in the files. `mirai kai status` snapshots and lists what changed; `new`, `describe`,
    `split`, `undo` and `conflicts` act on the working change `@`.
 3. To share it: `mirai kai identity` makes this machine's user (the recovery key is shown once,
@@ -205,8 +209,9 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
 - A node on Linux runs confined, or refuses to start unless it is told `--no-sandbox`.
 - A node keeps no derived data of an org a user made on its web view and stores at most its bound
   of it; an org its operator paired it into is bound by neither.
-- Kai is the only version control of a project: its snapshots track what `project.own_path`
-  accepts and nothing else decides which files are the project's.
+- Kai is the only version control of a project that has it: its snapshots track what
+  `project.own_path` accepts (never `.mirai` nor a `.git`, `.hg`, `.svn` or `.jj` at any depth)
+  and nothing else decides which files are the project's. A project without it records nothing.
 
 ## Verification
 
@@ -237,8 +242,8 @@ test -- mirai test <package>` against the proposal's final revision. Nothing run
   `runner_refuses_hostile_datagrams`, `a_ddc_node_drops_least_used_outputs_past_its_quota`,
   `a_peer_fed_a_stale_org_log_learns_it_is_behind` and
   `a_forged_org_head_stalls_a_peer_no_longer_than_its_bound` in `kai`;
-  `a_cook_takes_derived_data_a_peer_built` and
-  `asset_summaries_are_stable_and_follow_their_bytes` in `cook/kai`.
+  `asset_summaries_are_stable_and_follow_their_bytes` in `cook/kai`;
+  `a_cook_takes_derived_data_a_peer_built` in `cook/import/sources`.
 - Private files: `scoped_plaintext_never_enters_public_store`,
   `removed_member_cannot_decrypt_post_rotation_epoch`, `removing_a_keyring_signer_keeps_its_epochs`,
   `envelope_adds_give_the_newest_key_to_readers_alone`,

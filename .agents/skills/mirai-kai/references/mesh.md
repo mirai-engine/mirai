@@ -131,9 +131,9 @@ or anonymous (an empty claim). The namespace decides who reads it:
 ## The connection ladder
 
 - A device reaches a peer by rungs, best first, and raced in parallel: a LAN address a beacon gave;
-  the global IPv6 and mapped addresses a node passed on; the reflexive address a node saw, with both
-  ends punching at once; the node's relay over UDP; the node's relay over TCP when UDP to the node
-  is blocked. A connection on a worse rung is replaced when a better one appears.
+  the global IPv6 and mapped addresses a node passed on; the node's relay over UDP; the node's relay
+  over TCP when UDP to the node is blocked. A connection on a worse rung is replaced when a better
+  one appears.
 - The **LAN beacon** is a datagram sent periodically, and at once when `D` changes, to the
   broadcast address of every IPv4 network the machine is on (the limited broadcast leaves through
   one interface alone, often not the LAN's on a machine with virtual adapters) and the IPv6
@@ -141,12 +141,11 @@ or anonymous (an empty claim). The namespace decides who reads it:
   rotate with time buckets, so to anyone without `D` the beacons of one device in two buckets, or of
   two orgs in one, are unrelated noise, and clocks a few minutes apart still meet. The end that does
   not dial (the higher X25519 key) answers a beacon with its own. There is no mDNS.
-- A **relay** node is stateless rendezvous. It sees the reflexive address of a device's datagrams on
-  two of its ports, which tells a hard (symmetric) NAT from a cone one so that punching is not tried
-  where it cannot work; it tells two cone devices when to punch (the lower key starts) and forwards
-  the datagrams of the rest. What it forwards is already sealed end to end: it reads the envelope's
-  destination and nothing else, and each sending device draws on its own byte bucket. Rendezvous
-  messages are authenticated with a key both ends derive from their X25519 keys.
+- A **relay** node is stateless rendezvous. It passes peers' global and mapped addresses to each
+  other and forwards datagrams when direct reach fails. What it forwards is already sealed end to
+  end: it reads the envelope's destination and nothing else, and each sending device draws on its
+  own byte bucket. Rendezvous messages are authenticated with a key both ends derive from their
+  X25519 keys.
 - The relay over TCP carries what the UDP socket would, as length-prefixed frames after a magic, on
   the node's HTTPS port: no TLS and no HTTP, told apart by the first byte, which a TLS record never
   starts with. A device opens one only when the UDP rungs to the node failed and drops it when the

@@ -3,7 +3,6 @@ package editor
 import "core:fmt"
 import vmem "core:mem/virtual"
 import "core:strings"
-import "core:time"
 import ka "mirai:cook/kai"
 import vcs "mirai:kai"
 import "mirai:ui"
@@ -39,26 +38,23 @@ Kai_Detail :: struct {
 }
 
 // Reads what the change at revision did to the file at path into out; "" or
-// why it does not read. Bytes a peer has are asked of the mesh, waited for
-// up to wait seconds; waiting: they are still on their way.
-kai_detail_read :: proc(s:^Session,revision:vcs.Revision,path:string,out:^ka.File_Detail,allocator:=context.temp_allocator,wait:=0.0) -> (message:string,waiting:bool) {
+// why it does not read. Bytes a peer has are asked of the mesh without
+// waiting for them; waiting: they are on their way, and a later call reads
+// them (the tab reads again in the team's poll, kai_detail_retry).
+kai_detail_read :: proc(s:^Session,revision:vcs.Revision,path:string,out:^ka.File_Detail,allocator:=context.temp_allocator) -> (message:string,waiting:bool) {
     w:=kai_workspace(s)
     if w==nil {return kai_missing(s),false}
-    started:=time.tick_now()
-    for {
-        #partial switch e:=ka.file_detail(w,revision,path,out,allocator);e {
-        case .None: return "",false
-        case .Invalid_Argument: return fmt.tprintf("the change did not change %s: give a file it lists",path),false
-        case .Missing:
-            org:=kai_mesh_org(s)
-            if org=={} {return fmt.tprintf("the bytes of %s are not in this store, and no mesh runs to fetch them from a peer",path),false}
-            for address in out.missing {
-                if address!={} {vcs.control_object_ask(&s.kai.state.team.control,org,address)}
-            }
-            if time.duration_seconds(time.tick_since(started))>=wait {return fmt.tprintf("the bytes of %s are on a peer: the mesh is fetching them, ask again in a moment",path),true}
-            time.sleep(50*time.Millisecond)
-        case: return fmt.tprintf("what the change did to %s does not read: %s",path,vcs.error_text(e)),false
+    #partial switch e:=ka.file_detail(w,revision,path,out,allocator);e {
+    case .None: return "",false
+    case .Invalid_Argument: return fmt.tprintf("the change did not change %s: give a file it lists",path),false
+    case .Missing:
+        org:=kai_mesh_org(s)
+        if org=={} {return fmt.tprintf("the bytes of %s are not in this store, and no mesh runs to fetch them from a peer",path),false}
+        for address in out.missing {
+            if address!={} {vcs.control_object_ask(&s.kai.state.team.control,org,address)}
         }
+        return fmt.tprintf("the bytes of %s are on a peer: the mesh is fetching them, ask again in a moment",path),true
+    case: return fmt.tprintf("what the change did to %s does not read: %s",path,vcs.error_text(e)),false
     }
 }
 

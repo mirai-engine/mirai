@@ -391,6 +391,29 @@ paths_are_the_same_file_as_their_system_tells_them_apart :: proc(t:^testing.T) {
 }
 
 @(test)
+own_paths_leave_out_generated_and_version_control_folders :: proc(t:^testing.T) {
+    cases:=[?]struct{relative:string,own:bool}{
+        {"assets/a.scene",true},
+        {"project.mirai",true},
+        {"plugins/terrain/runtime/terrain.odin",true},
+        {"assets/.gitignore",true},
+        {"assets/.jjx/a",true},
+        {".mirai/kai/head",false},
+        {".mirai",false},
+        {".git/HEAD",false},
+        {".jj",false},
+        {"plugins/terrain/.git/HEAD",false},
+        {"a/b/.jj",false},
+        {"a/.hg/store",false},
+        {"a/.svn/",false},
+        {"A/.Git/config",ODIN_OS!=.Windows && ODIN_OS!=.Darwin},
+        {"",false},
+        {"/a",false},
+    }
+    for c in cases {testing.expectf(t,own_path(c.relative)==c.own,"%q",c.relative)}
+}
+
+@(test)
 paths_of_git_bash_name_the_drive_on_windows :: proc(t:^testing.T) {
     named :: proc(t:^testing.T,location,expected:string,expected_ok:bool,loc:=#caller_location) {
         native,ok:=path_native(location)

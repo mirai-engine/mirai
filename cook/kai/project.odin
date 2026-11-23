@@ -18,6 +18,7 @@ import vcs "mirai:kai"
 
 CHANGE_TEXT :: 12               // hex digits a change id is shown with
 CHANGE_TEXT_MIN :: 4            // the fewest digits a change is named by
+UNROUTED :: "the org's scopes do not read on this device, so its private files would go out in plain text: let the agent fetch the org's logs; snapshots wait until they route"
 
 // It must not move once opened: the workspace keeps its drivers, which point
 // into it.
@@ -97,11 +98,26 @@ project_close :: proc(p:^Project) {
     p^={}
 }
 
+// Snapshots the working copy: Unauthorized while its repository is a project
+// of an org whose scopes do not route here (project_route failed, or has not
+// run since it became one), as its private files would land in the public
+// tree in plain text. Every snapshot of Kai's operations goes through it.
+snapshot :: proc(w:^vcs.Workspace) -> (report:vcs.Snapshot_Report,error:vcs.Error) {
+    if unrouted(w) {return {},.Unauthorized}
+    return vcs.workspace_snapshot(w)
+}
+
+@(private)
+unrouted :: proc(w:^vcs.Workspace) -> bool {
+    if w.repo.overlay!=nil {return false}
+    return vcs.store_project_bound(w.repo.s,w.repo.id)
+}
+
 // Snapshots the working copy and records coauthors and attachments in it
 // (an editor's agent turns): those it does not name yet join it, the author
 // excepted, up to the bounds of a change.
 snapshot_authored :: proc(w:^vcs.Workspace,coauthors:[]vcs.Key,attachments:[]vcs.Attachment) -> (report:vcs.Snapshot_Report,error:vcs.Error) {
-    report=vcs.workspace_snapshot(w) or_return
+    report=snapshot(w) or_return
     if len(coauthors)==0 && len(attachments)==0 {return}
     r:=&w.repo
     c:=vcs.change_get(r.s,report.revision,context.temp_allocator) or_return
@@ -250,7 +266,7 @@ diff :: proc(w:^vcs.Workspace,revision:vcs.Revision,out:^[dynamic]vcs.Diff,alloc
 // changed, in allocator. Undoing an undo is a redo.
 undo :: proc(w:^vcs.Workspace,changed:^[dynamic]string,allocator:=context.temp_allocator) -> (undone:vcs.Operation,error:vcs.Error) {
     r:=&w.repo
-    vcs.workspace_snapshot(w) or_return
+    snapshot(w) or_return
     target:=vcs.op_undo_target(r) or_return
     undone=vcs.op_get(r.s,target,allocator) or_return
     before,working:=w.state.tree,vcs.repo_working(r)
@@ -276,7 +292,7 @@ prune :: proc(s:^store.Store,now:i64) -> (result:store.Sweep_Result,error:vcs.Er
 // changed.
 restore :: proc(w:^vcs.Workspace,from:vcs.Revision,changed:^[dynamic]string,allocator:=context.temp_allocator) -> vcs.Error {
     r:=&w.repo
-    vcs.workspace_snapshot(w) or_return
+    snapshot(w) or_return
     before,working:=w.state.tree,vcs.repo_working(r)
     vcs.change_restore(r,working,from) or_return
     vcs.workspace_update(w) or_return
@@ -289,7 +305,7 @@ restore :: proc(w:^vcs.Workspace,from:vcs.Revision,changed:^[dynamic]string,allo
 // changed. With several parents their trees merge, and what does not merge is
 // a conflict in its files.
 new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,changed:^[dynamic]string,allocator:=context.temp_allocator) -> (revision:vcs.Revision,error:vcs.Error) {
-    vcs.workspace_snapshot(w) or_return
+    snapshot(w) or_return
     before:=w.state.tree
     on:=parents
     working:=[1]vcs.Revision{vcs.repo_working(&w.repo)}
@@ -304,7 +320,7 @@ new_change :: proc(w:^vcs.Workspace,parents:[]vcs.Revision,description:string,ch
 // files, the second the rest; the working copy's files stay as they are. An
 // Invalid_Argument says why in refused, in the temp allocator.
 split :: proc(w:^vcs.Workspace,change:string,paths:[]string,description:Maybe(string),refused:^string) -> (first,second:vcs.Revision,error:vcs.Error) {
-    vcs.workspace_snapshot(w) or_return
+    snapshot(w) or_return
     revision,e:=revision_find(w,change)
     if e!=.None {
         refused^=fmt.tprintf("%q names no single visible change: @, @-, a bookmark or a prefix of at least %d digits of a change id",change,CHANGE_TEXT_MIN)

@@ -223,7 +223,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         if len(st.changes)==0 {fmt.println("  no changes")}
         if st.conflicts>0 {fmt.printfln("%d files in conflict: mirai kai conflicts lists them",st.conflicts)}
     case "snapshot":
-        report,e:=vcs.workspace_snapshot(w)
+        report,e:=ka.snapshot(w)
         if e!=.None {return kai_refused(verb,p,e)}
         fmt.printfln("%d files, %d read again.",report.files,report.hashed)
         if !kai_publish(p,store_root) {return 1}
@@ -243,7 +243,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         if code:=kai_split(w,a.change,a.message,positionals);code!=0 {return code}
     case "describe":
         if a.message=="" {fmt.eprintln("mirai kai describe: -m gives the description");return 2}
-        if _,e:=vcs.workspace_snapshot(w);e!=.None {return kai_refused(verb,p,e)}
+        if _,e:=ka.snapshot(w);e!=.None {return kai_refused(verb,p,e)}
         target:=vcs.repo_working(&w.repo)
         if len(positionals)==1 {
             ok:bool
@@ -251,7 +251,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         }
         if _,e:=vcs.change_describe(&w.repo,target,a.message);e!=.None {return kai_failed(verb,e)}
     case "log":
-        if _,e:=vcs.workspace_snapshot(w);e!=.None {return kai_refused(verb,p,e)}
+        if _,e:=ka.snapshot(w);e!=.None {return kai_refused(verb,p,e)}
         rows:=make([dynamic]ka.Log_Row,context.temp_allocator)
         if e:=ka.log(w,a.limit,&rows);e!=.None {return kai_failed(verb,e)}
         for row in rows {
@@ -271,7 +271,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
             fmt.printfln(" %s",description_line(row.change.description))
         }
     case "diff":
-        if _,e:=vcs.workspace_snapshot(w);e!=.None {return kai_refused(verb,p,e)}
+        if _,e:=ka.snapshot(w);e!=.None {return kai_refused(verb,p,e)}
         target:=vcs.repo_working(&w.repo)
         if len(positionals)==1 {
             ok:bool
@@ -289,7 +289,7 @@ cmd_kai :: proc(_:string,args:[]string) -> int {
         if !ok {return 1}
         if e:=ka.restore(w,from,nil);e!=.None {return kai_refused(verb,p,e)}
     case "conflicts":
-        if _,e:=vcs.workspace_snapshot(w);e!=.None {return kai_refused(verb,p,e)}
+        if _,e:=ka.snapshot(w);e!=.None {return kai_refused(verb,p,e)}
         for m in w.state.conflicts {fmt.println(m.path)}
         if len(w.state.conflicts)==0 {fmt.println("no conflicts")}
     case "bookmarks":
@@ -476,8 +476,8 @@ kai_failed :: proc(verb:string,e:vcs.Error) -> int {
 // A snapshot refused for a private or denied path says which and how to fix it.
 @(private="file")
 kai_refused :: proc(verb:string,p:^ka.Project,e:vcs.Error) -> int {
-    if e==.Unauthorized && p.routing.refused!="" {
-        fmt.eprintfln("mirai kai %s: %s",verb,p.routing.refused)
+    if refusal:=ka.snapshot_refusal(p);e==.Unauthorized && refusal.text!="" {
+        fmt.eprintfln("mirai kai %s: %s",verb,refusal.text)
         return 1
     }
     return kai_failed(verb,e)
@@ -611,7 +611,7 @@ kai_bookmarks :: proc(p:^ka.Project,k:^Kai_Machine,machined:^bool,store_root:str
         if ka.bookmarks_publish(p,&k.machine)!=.None {return kai_why("bookmarks",k)}
     case "move":
         if !machine(k,machined,store_root) {return 1}
-        if _,e:=vcs.workspace_snapshot(w);e!=.None {return kai_refused("bookmarks",p,e)}
+        if _,e:=ka.snapshot(w);e!=.None {return kai_refused("bookmarks",p,e)}
         target,ok:=resolve(p,k,positionals[2])
         if !ok {return 1}
         if ka.bookmark_move(p,&k.machine,positionals[1],target)!=.None {return kai_why("bookmarks move",k)}

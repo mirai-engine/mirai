@@ -1,5 +1,8 @@
 package kai_assets
 
+import "core:fmt"
+import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
@@ -228,5 +231,70 @@ a_merge_that_breaks_its_kind_conflicts_as_ours :: proc(t:^testing.T) {
             got:=value_text(&doc,pair[0],context.temp_allocator)
             testing.expectf(t,got==pair[1],"%s: %s is %s, not %q",c.name,pair[0],pair[1],got)
         }
+    }
+}
+
+// What a kept result was made from decides its scopes by the paths the file
+// system resolves under the project's folder, through a link to that folder
+// and, where it ignores case, in any case; when that cannot be told, the
+// result is not taken as public.
+@(test)
+provenance_resolves_sources_and_refuses_unknown_ones :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-kai-provenance")
+    if folder=="" {return}
+    real:=fmt.tprintf("%s/Project",folder)
+    outside:=fmt.tprintf("%s/tools/tool.txt",folder)
+    plan:=fmt.tprintf("%s/secrets/plan.txt",real)
+    for dir in ([]string{fmt.tprintf("%s/secrets",real),fmt.tprintf("%s/tools",folder)}) {
+        testing.expect(t,os.make_directory_all(dir)==nil)
+    }
+    for file in ([]string{plan,outside}) {
+        testing.expect(t,os.write_entire_file(file,transmute([]u8)string("words\n"))==nil)
+    }
+    info,e:=os.stat(real,context.temp_allocator)
+    if !testing.expect(t,e==nil,"the project's folder resolves") {return}
+    alias:=fmt.tprintf("%s/alias",folder)
+    linked:=os.symlink(real,alias)==nil
+    upper:=fmt.tprintf("%s/PROJECT/secrets/PLAN.TXT",folder)
+    Case :: struct {from:[]string,known,scoped,runs:bool}
+    cases:=[]Case{
+        {from={},runs=true},
+        {from={fmt.tprintf("%s/secrets/missing.txt",real)},runs=true},
+        {from={outside,fmt.tprintf("%s/missing.txt",folder)},runs=true},
+        {from={plan},known=true,scoped=true,runs=true},
+        {from={outside},known=true,runs=true},
+        {from={fmt.tprintf("%s/secrets/plan.txt",alias)},known=true,scoped=true,runs=linked},
+        {from={upper},known=true,scoped=true,runs=FOLDED_PATHS && os.exists(upper)},
+    }
+    for c,k in cases {
+        if !c.runs {continue}
+        paths:=make([dynamic]string,context.temp_allocator)
+        known:=provenance(info.fullpath,c.from,&paths)
+        testing.expectf(t,known==c.known,"case %d: known %v",k,known)
+        testing.expectf(t,slice.contains(paths[:],"secrets/plan.txt")==c.scoped,"case %d: paths %v",k,paths[:])
+    }
+}
+
+// A check's log keeps its output up to CHECK_OUTPUT_MAX bytes and says once
+// that the rest was dropped, however the reads split it.
+@(test)
+a_check_log_keeps_its_bound_and_marks_the_cut :: proc(t:^testing.T) {
+    chunk:=make([]u8,4096,context.temp_allocator)
+    for &b,k in chunk {b=u8('a'+k%26)}
+    Case :: struct {reads,size:int,cut:bool}
+    cases:=[]Case{
+        {reads=1,size=100},
+        {reads=CHECK_OUTPUT_MAX/4096,size=4096},
+        {reads=CHECK_OUTPUT_MAX/4096+1,size=4096,cut=true},
+        {reads=CHECK_OUTPUT_MAX/1000+50,size=1000,cut=true},
+    }
+    for c,k in cases {
+        log:=make([dynamic]u8,context.temp_allocator)
+        for _ in 0..<c.reads {testing.expect(t,check_log_append(&log,chunk[:c.size]))}
+        whole:=min(c.reads*c.size,CHECK_OUTPUT_MAX)
+        kept:=whole+(len(CHECK_OUTPUT_CUT) if c.cut else 0)
+        testing.expectf(t,len(log)==kept,"case %d: %d bytes",k,len(log))
+        testing.expectf(t,strings.has_suffix(string(log[:]),CHECK_OUTPUT_CUT)==c.cut,"case %d: the cut is marked once",k)
+        testing.expectf(t,strings.count(string(log[:]),CHECK_OUTPUT_CUT)==(1 if c.cut else 0),"case %d: one mark",k)
     }
 }

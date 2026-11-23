@@ -168,7 +168,7 @@ conflict_settle :: proc(w:^vcs.Workspace,path:string) -> vcs.Error {
         if m.path!=path {continue}
         delete(m.path,w.allocator)
         ordered_remove(&w.state.conflicts,k)
-        _,e:=vcs.workspace_snapshot(w)
+        _,e:=snapshot(w)
         return e
     }
     return .Invalid_Argument

@@ -52,6 +52,10 @@ Api_Kai_Describe_Params :: struct {
 
 Api_Kai_Change :: struct {change:string}
 
+Api_Kai_Init :: struct {
+    change:string `mirai:"label=The working copy, on the first change, which holds the project's files"`,
+}
+
 Api_Kai_Log_Params :: struct {
     limit:int `mirai:"optional,min=1,max=4096,label=Changes listed, newest first"`,
     file:string `mirai:"optional,label=A file change changed, from the folder of the project: detail says what it did to it"`,
@@ -92,6 +96,7 @@ Api_Kai_Detail :: struct {
     changed:int `mirai:"label=Of an asset: fields changed"`,
     rows:[]Api_Kai_Detail_Row,
     cut:int `mirai:"label=Rows past the bound of a detail, not given"`,
+    fetching:bool `mirai:"optional,label=The bytes of a side are on a peer and the mesh fetches them: the rows are not given yet; call again until it is false"`,
 }
 
 Api_Kai_Undone :: struct {undone:string `mirai:"label=The operation taken back"`}
@@ -144,12 +149,13 @@ Api_Kai_Bookmarks :: struct {bookmarks:[]Api_Kai_Bookmark}
 
 @(private)
 kai_api_register :: proc(s:^Session,st:^Api_State) {
+    api_register(s,st,{name="kai.init",summary="Makes the open project, which uses no version control, a Kai workspace whose first change holds its files, and opens it as the Kai tab's Enable Kai does.",result=type_info_of(Api_Kai_Init),run=api_kai_init})
     api_register(s,st,{name="kai.status",summary="The working copy as the Kai tab shows it, snapshot first: its change, what it changed, the files in conflict and the newest operation.",result=type_info_of(Api_Kai_Status),run=api_kai_status})
     api_register(s,st,{name="kai.snapshot",summary="Records the files of the project as they are now as the working copy, with the editors and agent turns that changed them since.",result=type_info_of(Api_Kai_Snapshot),run=api_kai_snapshot})
     api_register(s,st,{name="kai.new",summary="Starts a new change as the working copy, on the working copy or on given changes, whose trees merge; what does not merge is a conflict in its files that never blocks.",params=type_info_of(Api_Kai_New_Params),result=type_info_of(Api_Kai_Change),run=api_kai_new})
     api_register(s,st,{name="kai.split",summary="Splits a change by files: the first keeps its id, parents and description with only the files picked; the second, a new change on it, holds the rest, and what pointed at the change moves onto it. The files on disk stay as they are.",params=type_info_of(Api_Kai_Split_Params),result=type_info_of(Api_Kai_Split),run=api_kai_split})
     api_register(s,st,{name="kai.describe",summary="Gives a change its description.",params=type_info_of(Api_Kai_Describe_Params),result=type_info_of(Api_Kai_Change),run=api_kai_describe})
-    api_register(s,st,{name="kai.log",summary="The visible changes, newest first, with their bookmarks, conflicts, coauthors and agent turns; with file, what a change did to that file: its lines, or an asset's rows and fields.",params=type_info_of(Api_Kai_Log_Params),result=type_info_of(Api_Kai_Log),flags={.Read_Only},run=api_kai_log})
+    api_register(s,st,{name="kai.log",summary="The visible changes, newest first, with their bookmarks, conflicts, coauthors and agent turns; with file, what a change did to that file: its lines, or an asset's rows and fields. It records nothing: the working copy is as last snapshot (kai.snapshot records it now).",params=type_info_of(Api_Kai_Log_Params),result=type_info_of(Api_Kai_Log),flags={.Read_Only},run=api_kai_log})
     api_register(s,st,{name="kai.undo",summary="Takes back the newest operation of the repository and writes the files as it leaves them; undoing an undo redoes it.",result=type_info_of(Api_Kai_Undone),flags={.Destructive},run=api_kai_undo})
     api_register(s,st,{name="kai.prune",summary="Prunes the operation log of every repository of the machine's store to its last 30 days and what the workspaces stand on, then has the store reclaim what nothing reaches any more. Undo does not go past a prune.",result=type_info_of(Api_Kai_Pruned),flags={.Destructive},run=api_kai_prune})
     api_register(s,st,{name="kai.restore",summary="Gives the working copy the files of another change and writes them.",params=type_info_of(Api_Kai_Restore_Params),result=type_info_of(Api_Kai_Done),flags={.Destructive},run=api_kai_restore})
@@ -183,6 +189,13 @@ api_kai_text :: proc(w:^vcs.Workspace,revision:vcs.Revision,call:^api.Call) -> s
 api_kai_ended :: proc(call:^api.Call,message:string) -> bool {
     if message!="" {api.call_fail(call,api.SERVER_ERROR,message);return false}
     return true
+}
+
+@(private)
+api_kai_init :: proc(s:^Session,call:^api.Call) {
+    if !api_kai_ended(call,kai_enable(s)) {return}
+    w:=kai_workspace(s)
+    api.call_result(call,Api_Kai_Init).change=api_kai_text(w,vcs.repo_working(&w.repo),call)
 }
 
 @(private)
@@ -272,10 +285,6 @@ api_kai_log :: proc(s:^Session,call:^api.Call) {
     if w==nil {return}
     revision:vcs.Revision
     if p.file!="" {
-        if p.change=="" {
-            vcs.workspace_touched(w,nil,false)
-            if !api_kai_ended(call,kai_snapshot(s)) {return}
-        }
         found:bool
         if revision,found=api_kai_revision(s,call,p.change!=""?p.change:"@");!found {return}
     }
@@ -304,7 +313,12 @@ api_kai_log :: proc(s:^Session,call:^api.Call) {
 api_kai_detail :: proc(s:^Session,call:^api.Call,revision:vcs.Revision,path:string,out:^Api_Kai_Detail) -> bool {
     a:=call.allocator
     d:ka.File_Detail
-    if message,_:=kai_detail_read(s,revision,path,&d,a,ka.MESH_WAIT);message!="" {
+    message,waiting:=kai_detail_read(s,revision,path,&d,a)
+    if waiting {
+        out^={file=strings.clone(path,a),change=api_kai_text(kai_workspace(s),revision,call),fetching=true}
+        return true
+    }
+    if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return false
     }

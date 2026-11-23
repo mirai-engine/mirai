@@ -463,7 +463,7 @@ ai_step_icon :: proc(method:string) -> ui.Icon {
     case "play","player":          return .Play
     case "asset","import":         return user(.Folder)
     case "prefab":                 return .Prefab
-    case "git":                    return user(.Branch)
+    case "kai":                    return user(.Branch)
     case "panel":                  return .Layers
     case "audio","sound_set":      return .Sound
     case "editor","view","camera": return user(.Camera)

@@ -53,6 +53,7 @@ jobs:
             exit 1
           fi
           echo "name=mirai-$version-${{ matrix.platform }}" >> "$GITHUB_OUTPUT"
+          echo "kai=mirai-kai-$version-linux-arm64" >> "$GITHUB_OUTPUT"
 
       - name: Odin ${{ env.ODIN_RELEASE }}
         run: |
@@ -70,7 +71,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config \
+          sudo apt-get install -y --no-install-recommends clang lld cmake ninja-build pkg-config \
             libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev libxss-dev libxtst-dev libxkbcommon-dev \
             libasound2-dev libpulse-dev libudev-dev libdbus-1-dev
 
@@ -128,6 +129,25 @@ jobs:
             fi
           done
 
+      # The headless Kai node for a small Linux ARM server, cross-built here:
+      # static, with the musl and compiler-rt that mirai build kai pins.
+      - name: Kai node (linux-arm64)
+        if: runner.os == 'Linux'
+        run: |
+          name="${{ steps.package.outputs.kai }}"
+          ./mirai build kai --target linux_arm64
+          mkdir -p "$RUNNER_TEMP/kai/$name"
+          cp bin/mirai-kai-linux-arm64 "$RUNNER_TEMP/kai/$name/mirai-kai"
+          tar -czf "$RUNNER_TEMP/kai/$name.tar.gz" -C "$RUNNER_TEMP/kai" "$name"
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: ${{ steps.package.outputs.kai }}
+          path: ${{ runner.temp }}/kai/${{ steps.package.outputs.kai }}.tar.gz
+          compression-level: 0
+          if-no-files-found: error
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package.outputs.name }}
@@ -159,5 +179,7 @@ jobs:
           3. `mirai new <folder> --template game` creates a project and `mirai edit <folder>` builds it and opens the editor.
 
           Building the game code needs the system linker: Visual Studio Build Tools with C++ on Windows, clang on Linux, the Xcode Command Line Tools on macOS. `mirai doctor` checks the machine. On macOS the binaries are not signed: `xattr -dr com.apple.quarantine <folder>`.
+
+          `mirai-kai-*-linux-arm64` is the headless Kai node alone, a static executable for a Linux ARM64 server: `mirai-kai serve --mode relay|seed|seed+ddc --store <folder>`.
           EOF
           gh release create "$GITHUB_REF_NAME" packages/* --repo "$GITHUB_REPOSITORY" --draft --title "Mirai $GITHUB_REF_NAME" --notes-file notes.md

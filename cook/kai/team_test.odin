@@ -504,3 +504,56 @@ a_scope_keeps_private_files_from_non_readers_through_the_shared_operations :: pr
     testing.expect_value(t,project_route(pa),vcs.Error.None)
     testing.expect_value(t,len(pa.org.fold.scopes),0)
 }
+
+// When the org's scopes stop reading on this device (its key here is
+// corrupt), the routing goes whole and every snapshot is refused, so a
+// scoped file never enters the public tree in plain text; once they read
+// again it is sealed.
+@(test)
+a_routing_that_fails_refuses_snapshots_until_it_routes :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-kai-unrouted")
+    if folder=="" {return}
+    alice:=new(Team_Machine)
+    defer free(alice)
+    if !team_open(t,alice,folder,"alice") {return}
+    defer team_close(alice)
+    team_user(t,alice,"alice")
+    org,_:=vcs.machine_org_create(&alice.m,"studio")
+    p:=new(Project)
+    defer free(p)
+    root:=fmt.tprintf("%s/ws",alice.folder)
+    write(t,root,"readme.txt","public words\n")
+    if !testing.expect_value(t,project_create(p,root,&alice.m.store),vcs.Error.None) {return}
+    defer project_close(p)
+    project,je:=project_join(p,&alice.m,org,true)
+    testing.expect_value(t,je,vcs.Error.None)
+    _,se:=vcs.machine_scope_add(&alice.m,org,project,{"secrets/**"},.Writer,false)
+    testing.expect_value(t,se,vcs.Error.None)
+    testing.expect_value(t,project_route(p),vcs.Error.None)
+
+    dh:=strings.concatenate({alice.m.store.root,"/",vcs.DH_FILE},context.temp_allocator)
+    key,re:=os.read_entire_file(dh,context.temp_allocator)
+    if !testing.expect(t,re==nil,"the device's key reads") {return}
+    testing.expect(t,os.write_entire_file(dh,key[:1])==nil)
+    testing.expect_value(t,project_route(p),vcs.Error.Corrupt)
+    testing.expect(t,!p.routed && p.workspace.repo.overlay==nil && len(p.keyrings)==0,"nothing of the failed routing stays")
+    write(t,root,"secrets/plan.txt","the secret plan\n")
+    in_public :: proc(p:^Project) -> bool {
+        c,_:=vcs.change_get(p.workspace.repo.s,vcs.repo_working(&p.workspace.repo),context.temp_allocator)
+        _,found,_:=vcs.tree_file(p.workspace.repo.s,c.tree,"secrets/plan.txt")
+        return found
+    }
+    _,e:=snapshot_authored(&p.workspace,nil,nil)
+    testing.expect_value(t,e,vcs.Error.Unauthorized)
+    _,e=new_change(&p.workspace,nil,"",nil)
+    testing.expect_value(t,e,vcs.Error.Unauthorized)
+    testing.expect(t,snapshot_refusal(p).text==UNROUTED,"the refusal says the scopes do not read")
+    testing.expect(t,!in_public(p),"the scoped file is not in the public tree")
+
+    testing.expect(t,os.write_entire_file(dh,key)==nil)
+    testing.expect_value(t,project_route(p),vcs.Error.None)
+    _,e=snapshot_authored(&p.workspace,nil,nil)
+    testing.expect_value(t,e,vcs.Error.None)
+    testing.expect(t,!in_public(p),"the scoped file is sealed, not public")
+    testing.expect(t,snapshot_refusal(p).text=="","no refusal once routed")
+}

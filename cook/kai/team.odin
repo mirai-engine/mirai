@@ -15,22 +15,25 @@ import vcs "mirai:kai"
 
 // Routes the private paths of the workspace's snapshots by the scopes and
 // keyrings its org has in the store now, when its repository is a project of
-// an org; call it again after they change.
-project_route :: proc(p:^Project) -> vcs.Error {
+// an org; call it again after they change. When they do not read, nothing of
+// them stays and snapshots are refused until a later call routes (snapshot).
+project_route :: proc(p:^Project) -> (error:vcs.Error) {
     route_drop(p)
     w:=&p.workspace
     project,org,ok:=vcs.store_project_of(w.repo.s,w.repo.id)
-    if !ok {return .None}
-    allocator:=w.allocator
-    if e:=vcs.org_state_load(w.repo.s,org,&p.org,allocator);e!=.None {
-        vcs.org_state_destroy(&p.org)
-        return e
+    if !ok {
+        if vcs.store_project_bound(w.repo.s,w.repo.id) {return .Missing}
+        return .None
     }
     p.routed=true
+    defer if error!=.None {route_drop(p)}
+    allocator:=w.allocator
     p.keyrings=make([dynamic]^vcs.Keyring_Fold,allocator)
     p.public_allow=make([dynamic]string,allocator)
+    vcs.org_state_load(w.repo.s,org,&p.org,allocator) or_return
     vcs.machine_keyrings(w.repo.s,&p.org,&p.keyrings,allocator) or_return
     device:=vcs.machine_device_of(w.repo.s) or_return
+    defer crypto.zero_explicit(&device,size_of(device))
     for x in p.org.fold.publics {
         if x.project==project && x.fingerprint=={} {
             if _,e:=append(&p.public_allow,x.path);e!=nil {return .Out_Of_Memory}
@@ -58,7 +61,7 @@ route_drop :: proc(p:^Project) {
     delete(p.public_allow)
     vcs.org_state_destroy(&p.org)
     crypto.zero_explicit(&p.routing,size_of(p.routing))
-    p.routing,p.routed={},false
+    p.routing,p.routed,p.keyrings,p.public_allow={},false,nil,nil
 }
 
 // The project and org the workspace's repository is.

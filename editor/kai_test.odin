@@ -9,6 +9,7 @@ import "core:time"
 import "mirai:asset"
 import "mirai:cook/cache"
 import ka "mirai:cook/kai"
+import "mirai:core"
 import "mirai:editor/api"
 import vcs "mirai:kai"
 import "mirai:std/base"
@@ -108,7 +109,7 @@ editor_kai_snapshot_diff_conflict_and_undo :: proc(t:^testing.T) {
     s.frames=0
 
     // The project becomes a workspace: its files are the first change.
-    kai_open(s)
+    testing.expect_value(t,kai_enable(s),"")
     w:=kai_workspace(s)
     if !testing.expectf(t,w!=nil,"the workspace opens: %v",s.kai.error) {return}
     testing.expect(t,ka.project_exists(k.root))
@@ -257,7 +258,7 @@ editor_kai_new_change_takes_only_the_checked_files :: proc(t:^testing.T) {
     for name in ([]string{"a.txt","b.txt","c.txt"}) {
         testing.expect(t,os.write_entire_file(fmt.tprintf("%s/%s",k.root,name),transmute([]u8)string("one"))==nil)
     }
-    kai_open(s)
+    testing.expect_value(t,kai_enable(s),"")
     w:=kai_workspace(s)
     if !testing.expectf(t,w!=nil,"the workspace opens: %v",s.kai.error) {return}
     st:=s.kai.state
@@ -338,7 +339,7 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     a,b:=&ka_.s,&kb.s
     for s in ([2]^Session{a,b}) {
         s.kai.mesh_loopback=true
-        kai_open(s)
+        testing.expect_value(t,kai_enable(s),"")
         if !testing.expectf(t,kai_workspace(s)!=nil,"the workspace opens: %v",s.kai.error) {return}
     }
 
@@ -430,7 +431,11 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     testing.expect_value(t,asset.texture_document(&doc,&ka_.assets.types,{id=cache.id(KEY,VERSION),width=4,height=4,format=.RGBA8,mips=mips[:]},context.temp_allocator),asset.Error.None)
     texture,_:=asset.document_bytes(&doc,context.temp_allocator)
     asset.document_destroy(&doc)
-    testing.expect(t,cache.put({store=&a.store,source=put_source},"textures",KEY,VERSION,texture),"the first editor's import keeps and publishes it")
+    // What it is made from decides its scopes: a file of the project, in none.
+    swatch:=fmt.tprintf("%s/swatch.png",ka_.root)
+    testing.expect(t,os.write_entire_file(swatch,pixels)==nil)
+    from:=[1]string{swatch}
+    testing.expect(t,cache.put({store=&a.store,source=put_source,from=from[:]},"textures",KEY,VERSION,texture),"the first editor's import keeps and publishes it")
     loaded:asset.Asset
     if testing.expect(t,cache.load({store=&b.store,source=take_source},"textures",KEY,VERSION,&loaded),"the second editor's import takes it") {
         testing.expect(t,loaded.blob.header.id==cache.id(KEY,VERSION))
@@ -476,10 +481,15 @@ editor_kai_pairs_and_lands_a_proposal :: proc(t:^testing.T) {
     call,seen=kai_call(a,api_kai_proposal,&comment,Api_Kai_Proposal)
     if !kai_ok(t,call,"comment") {return}
     testing.expectf(t,len(seen.comments)==1 && seen.comments[0].lines=="1-2" && seen.comments[0].change==change && !seen.comments[0].outdated,"%v",seen.comments)
-    // The first reads what the change did to b.txt: its bytes come from the second.
+    // The first reads what the change did to b.txt: its bytes come from the
+    // second, asked without waiting, and read on a later call.
     look:=Api_Kai_Proposal_Params{proposal=id,file="b.txt"}
-    call,seen=kai_call(a,api_kai_proposal,&look,Api_Kai_Proposal)
-    if !kai_ok(t,call,"detail") {return}
+    for {
+        call,seen=kai_call(a,api_kai_proposal,&look,Api_Kai_Proposal)
+        if !kai_ok(t,call,"detail") {return}
+        if !seen.detail.fetching {break}
+        if !testing.expect(t,kai_tick(a,b,started),"the bytes of b.txt come from the second") {return}
+    }
     rows:=seen.detail.rows
     testing.expectf(t,seen.detail.kind=="text" && seen.detail.change==change && len(rows)==2 && rows[0].mark=="+" && rows[0].new==1 && rows[0].text=="one" && rows[1].text=="two","%v",seen.detail)
     verdict:=Api_Kai_Proposal_Params{proposal=id,verdict="approve"}
@@ -615,7 +625,7 @@ editor_kai_team_views_ask_their_methods_and_keep_still_frames :: proc(t:^testing
     k.gui.ctx,k.gui.begun=&ctx,true
     if !test_commands_open(t,s,&k.editor.api) {return}
     defer test_commands_close(s)
-    kai_open(s)
+    testing.expect_value(t,kai_enable(s),"")
     if !testing.expect(t,kai_workspace(s)!=nil) {return}
     st:=s.kai.state
     team:=&st.team
@@ -750,7 +760,7 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
     if !kai_fixture_init(t,k,"kai-team-hostile") {return}
     defer kai_fixture_destroy(k)
     s:=&k.s
-    kai_open(s)
+    testing.expect_value(t,kai_enable(s),"")
     if !testing.expect(t,kai_workspace(s)!=nil) {return}
     refused :: proc(t:^testing.T,call:api.Call,want:string,loc:=#caller_location) {
         testing.expectf(t,call.failed && call.error.code==api.INVALID_PARAMS && strings.contains(call.error.message,want),"wanted %q: %v %s",want,call.failed,call.error.message,loc=loc)
@@ -850,4 +860,180 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
         call,_:=kai_call(s,api_kai_bookmarks,&p,Api_Kai_Bookmarks)
         refused(t,call,c.want)
     }
+}
+
+@(private="file") Kai_None :: struct {}
+
+// A project without a Kai workspace uses no version control: opening and
+// polling it makes none, the editor edits as ever, the Kai tab offers Enable
+// Kai, which asks kai.init, and kai.init makes the workspace on demand, once;
+// it then opens with the project.
+@(test)
+editor_kai_is_optional_until_enabled :: proc(t:^testing.T) {
+    k:=new(Kai_Fixture);defer free(k)
+    if !kai_fixture_init(t,k,"kai-optional") {return}
+    defer kai_fixture_destroy(k)
+    s:=&k.s
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    k.gui.ctx,k.gui.begun=&ctx,true
+    if !test_commands_open(t,s,&k.editor.api) {return}
+    defer test_commands_close(s)
+    notes:=fmt.tprintf("%s/notes.txt",k.root)
+    testing.expect(t,os.write_entire_file(notes,transmute([]u8)string("one"))==nil)
+
+    kai_open(s)
+    kai_poll(s)
+    testing.expect(t,kai_workspace(s)==nil && !ka.project_exists(k.root),"opening makes no workspace")
+    testing.expect_value(t,s.kai.error,vcs.Error.Missing)
+    testing.expect(t,strings.contains(kai_missing(s),"does not use version control"),kai_missing(s))
+
+    // The editor edits as ever; what would record history says why it does not.
+    made:=entity_create(s,{name="Lamp",named=true})
+    prefab_fixture_step(&k.f)
+    testing.expect(t,api_entity(edited_world(s),api_entity_id(edited_world(s),made))!=core.NONE,"the edit is made")
+    kai_touched(s,notes)
+    testing.expect(t,strings.contains(kai_snapshot(s),"does not use version control"))
+    none:Kai_None
+    call,_:=kai_call(s,api_kai_status,&none,Api_Kai_Status)
+    testing.expectf(t,call.failed && strings.contains(call.error.message,"kai.init"),"%s",call.error.message)
+    kai_poll(s)
+    testing.expect(t,!ka.project_exists(k.root),"nothing made a workspace")
+
+    // The tab offers Enable Kai, which asks kai.init.
+    kai_panel_still(t,s)
+    if !kai_panel_click(t,s,ui.id(&ctx,"kai_enable")) {return}
+    method,params:=kai_panel_asked(s)
+    testing.expectf(t,method=="kai.init" && params=="{}","%s %s",method,params)
+    api_state(s).commands.asked_count=0
+    testing.expect(t,!ka.project_exists(k.root),"the button only asks")
+
+    // Without a store kai.init says where Kai keeps the changes.
+    store_root:=s.store.root
+    s.store.root=""
+    call,_=kai_call(s,api_kai_init,&none,Api_Kai_Init)
+    testing.expectf(t,call.failed && strings.contains(call.error.message,"--store"),"%s",call.error.message)
+    s.store.root=store_root
+
+    // kai.init makes the workspace whose first change holds the files; once.
+    init:^Api_Kai_Init
+    call,init=kai_call(s,api_kai_init,&none,Api_Kai_Init)
+    if !kai_ok(t,call,"kai.init") {return}
+    w:=kai_workspace(s)
+    if !testing.expect(t,w!=nil && ka.project_exists(k.root) && init.change!="") {return}
+    testing.expect(t,strings.contains(kai_paths(w,vcs.repo_working(&w.repo)),"notes.txt"),"the first change holds the files")
+    call,_=kai_call(s,api_kai_init,&none,Api_Kai_Init)
+    testing.expectf(t,call.failed && strings.contains(call.error.message,"already"),"%s",call.error.message)
+    kai_panel_still(t,s)
+
+    // The next editor on the project opens it.
+    kai_close(s)
+    s.kai.tried=false
+    kai_open(s)
+    testing.expect(t,kai_workspace(s)!=nil && s.kai.error==.None,"the workspace opens with the project")
+}
+
+// kai.status, kai.snapshot, kai.describe, kai.undo, kai.restore,
+// kai.conflicts, kai.resolve, kai.prune and kai.peers through the API; kai.log
+// reads and records nothing.
+@(test)
+editor_kai_methods_record_read_and_settle_the_working_copy :: proc(t:^testing.T) {
+    k:=new(Kai_Fixture);defer free(k)
+    if !kai_fixture_init(t,k,"kai-methods") {return}
+    defer kai_fixture_destroy(k)
+    s:=&k.s
+    a:=fmt.tprintf("%s/a.txt",k.root)
+    testing.expect(t,os.write_entire_file(a,transmute([]u8)string("one\n"))==nil)
+    testing.expect_value(t,kai_enable(s),"")
+    w:=kai_workspace(s)
+    if !testing.expect(t,w!=nil) {return}
+    origin:=vcs.repo_working(&w.repo)
+    none:Kai_None
+
+    // kai.snapshot records a file written behind the editor's back.
+    testing.expect_value(t,kai_new(s,nil,""),"")
+    testing.expect(t,os.write_entire_file(a,transmute([]u8)string("two\n"))==nil)
+    call,snapshot:=kai_call(s,api_kai_snapshot,&none,Api_Kai_Snapshot)
+    if !kai_ok(t,call,"kai.snapshot") {return}
+    testing.expect(t,snapshot.change!="" && snapshot.files>=1)
+    status:^Api_Kai_Status
+    call,status=kai_call(s,api_kai_status,&none,Api_Kai_Status)
+    if !kai_ok(t,call,"kai.status") {return}
+    testing.expectf(t,status.change==snapshot.change && len(status.files)==1 && status.files[0].path=="a.txt" && status.files[0].change=="M" && len(status.conflicts)==0,"%v",status^)
+
+    // kai.log records nothing: a file written since stays out of the history.
+    testing.expect(t,os.write_entire_file(a,transmute([]u8)string("three\n"))==nil)
+    kai_touched(s,a)
+    op:=w.repo.op
+    log_params:=Api_Kai_Log_Params{file="a.txt"}
+    call,_=kai_call(s,api_kai_log,&log_params,Api_Kai_Log)
+    if !kai_ok(t,call,"kai.log") {return}
+    testing.expect(t,w.repo.op==op,"kai.log ran no operation")
+    testing.expect(t,os.write_entire_file(a,transmute([]u8)string("two\n"))==nil)
+
+    // kai.describe, and kai.undo takes it back.
+    describe:=Api_Kai_Describe_Params{description="edit a"}
+    described:^Api_Kai_Change
+    call,described=kai_call(s,api_kai_describe,&describe,Api_Kai_Change)
+    if !kai_ok(t,call,"kai.describe") {return}
+    testing.expect_value(t,described.change,status.change)
+    testing.expect_value(t,s.kai.state.view.description,"edit a")
+    undone:^Api_Kai_Undone
+    call,undone=kai_call(s,api_kai_undo,&none,Api_Kai_Undone)
+    if !kai_ok(t,call,"kai.undo") {return}
+    testing.expect(t,undone.undone!="" && s.kai.state.view.description=="","the description is taken back")
+
+    // kai.restore gives the working copy the files of its parent.
+    restore:=Api_Kai_Restore_Params{from="@-"}
+    call,_=kai_call(s,api_kai_restore,&restore,Api_Kai_Done)
+    if !kai_ok(t,call,"kai.restore") {return}
+    data,_:=os.read_entire_file(a,context.temp_allocator)
+    testing.expect_value(t,string(data),"one\n")
+    wrong:=Api_Kai_Restore_Params{from="zzzzzz"}
+    call,_=kai_call(s,api_kai_restore,&wrong,Api_Kai_Done)
+    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
+
+    // Ours and theirs change the same line on the origin: their merge is a conflict.
+    kai_write(t,s,a,transmute([]u8)string("ours\n"))
+    ours:=vcs.repo_working(&w.repo)
+    parents:=[1]vcs.Revision{origin}
+    testing.expect_value(t,kai_new(s,parents[:],""),"")
+    kai_write(t,s,a,transmute([]u8)string("theirs\n"))
+    theirs:=vcs.repo_working(&w.repo)
+    both:=[2]vcs.Revision{ours,theirs}
+    testing.expect_value(t,kai_new(s,both[:],"merge"),"")
+    conflicts:^Api_Kai_Conflicts
+    call,conflicts=kai_call(s,api_kai_conflicts,&none,Api_Kai_Conflicts)
+    if !kai_ok(t,call,"kai.conflicts") {return}
+    if !testing.expectf(t,len(conflicts.files)==1 && conflicts.files[0].path=="a.txt" && !conflicts.files[0].asset,"%v",conflicts.files) {return}
+    call,status=kai_call(s,api_kai_status,&none,Api_Kai_Status)
+    testing.expectf(t,!call.failed && len(status.conflicts)==1 && status.conflicts[0]=="a.txt","%v",status.conflicts)
+
+    // kai.resolve refuses what is no side, then takes theirs whole.
+    bad:=Api_Kai_Resolve_Params{file="a.txt",whole="maybe"}
+    call,_=kai_call(s,api_kai_resolve,&bad,Api_Kai_Done)
+    testing.expect(t,call.failed && call.error.code==api.INVALID_PARAMS)
+    nowhere:=Api_Kai_Resolve_Params{file="b.txt",whole="ours"}
+    call,_=kai_call(s,api_kai_resolve,&nowhere,Api_Kai_Done)
+    testing.expectf(t,call.failed && strings.contains(call.error.message,"not in conflict"),"%s",call.error.message)
+    resolve:=Api_Kai_Resolve_Params{file="a.txt",whole="theirs"}
+    call,_=kai_call(s,api_kai_resolve,&resolve,Api_Kai_Done)
+    if !kai_ok(t,call,"kai.resolve") {return}
+    testing.expect_value(t,len(w.state.conflicts),0)
+    data,_=os.read_entire_file(a,context.temp_allocator)
+    testing.expect_value(t,string(data),"theirs\n")
+
+    // kai.prune sweeps the store and leaves the working copy as it is.
+    working:=vcs.repo_working(&w.repo)
+    pruned:^Api_Kai_Pruned
+    call,pruned=kai_call(s,api_kai_prune,&none,Api_Kai_Pruned)
+    if !kai_ok(t,call,"kai.prune") {return}
+    testing.expect(t,pruned.freed>=0 && vcs.repo_working(&w.repo)==working)
+
+    // kai.peers: no runner, no peers.
+    peers:^Api_Kai_Peers
+    call,peers=kai_call(s,api_kai_peers,&none,Api_Kai_Peers)
+    if !kai_ok(t,call,"kai.peers") {return}
+    testing.expectf(t,peers.mesh!="" && len(peers.peers)==0,"%v",peers^)
 }

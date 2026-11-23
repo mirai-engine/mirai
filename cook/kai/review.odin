@@ -54,7 +54,7 @@ target_revision :: proc(p:^Project,ps:^vcs.Project_State,target:string) -> vcs.R
 @(private)
 stack_make :: proc(p:^Project,m:^vcs.Machine,ps:^vcs.Project_State,target:string,revisions:[]vcs.Revision,out:^[dynamic]vcs.Stack_Item) -> vcs.Error {
     w:=&p.workspace
-    vcs.workspace_snapshot(w) or_return
+    snapshot(w) or_return
     for r in revisions {
         c,e:=vcs.change_get(w.repo.s,r,context.temp_allocator)
         if e!=.None {
@@ -319,6 +319,9 @@ proposal_comment :: proc(p:^Project,m:^vcs.Machine,id:vcs.Log_Id,path:string,anc
     return vcs.machine_proposal_comment(m,project,id,anchor,path,change,reply,text)
 }
 
+CHECK_OUTPUT_MAX :: 1<<20 // bytes of a check's output its log keeps; the rest is read and dropped
+CHECK_OUTPUT_CUT :: "\n[the check's output past 1 MiB was dropped]\n"
+
 // Where a check's output goes while it runs.
 Check_Output :: struct {
     data:rawptr,
@@ -328,12 +331,13 @@ Check_Output :: struct {
 // Runs command in the workspace's folder for the check name and signs what it
 // found on the final revision of the proposal of id, whose files the working
 // copy must hold: Passed when it exits with 0. Its output, kept as an object
-// of the store, is the log the Check names. id zero takes the one open
+// of the store up to CHECK_OUTPUT_MAX bytes and CHECK_OUTPUT_CUT, is the log
+// the Check names; output streams whole. id zero takes the one open
 // proposal whose final revision the working copy holds.
 check_run :: proc(p:^Project,m:^vcs.Machine,id:vcs.Log_Id,name:string,command:[]string,output:Check_Output={}) -> (passed:bool,proposal:vcs.Log_Id,error:vcs.Error) {
     project,_:=project_of(p,m) or_return
     w:=&p.workspace
-    vcs.workspace_snapshot(w) or_return
+    snapshot(w) or_return
     ps:vcs.Project_State
     project_state(m,project,&ps) or_return
     tree:=w.state.tree
@@ -362,10 +366,11 @@ check_run :: proc(p:^Project,m:^vcs.Machine,id:vcs.Log_Id,name:string,command:[]
     defer subprocess.release(&process)
     log:=make([dynamic]u8,context.temp_allocator)
     buffer:[4096]u8
+    out_of_memory:=false
     for {
         n,open:=subprocess.read(&process,.Stdout,buffer[:])
         if n>0 {
-            append(&log,..buffer[:n])
+            out_of_memory||=!check_log_append(&log,buffer[:n])
             if output.procedure!=nil {output.procedure(output.data,buffer[:n])}
         }
         if !open {break}
@@ -373,6 +378,10 @@ check_run :: proc(p:^Project,m:^vcs.Machine,id:vcs.Log_Id,name:string,command:[]
     }
     state,wait_error:=subprocess.wait(&process)
     passed=wait_error==nil && state.exited && state.exit_code==0
+    if out_of_memory {
+        m.why="memory ran out keeping the check's output"
+        return passed,{},.Out_Of_Memory
+    }
     root,put_error:=store.put(&m.store,log[:])
     if put_error!=.None {
         m.why="the store refused the check's output: give this user access to the store"
@@ -381,4 +390,19 @@ check_run :: proc(p:^Project,m:^vcs.Machine,id:vcs.Log_Id,name:string,command:[]
     proposal=target.log.id
     error=vcs.machine_proposal_check(m,project,proposal,target.revision,name,passed,root)
     return
+}
+
+// Appends bytes to the log of a check up to CHECK_OUTPUT_MAX, then
+// CHECK_OUTPUT_CUT once, past which it drops them; false when memory ran out.
+@(private)
+check_log_append :: proc(log:^[dynamic]u8,bytes:[]u8) -> bool {
+    room:=CHECK_OUTPUT_MAX-len(log)
+    if room<0 {return true}
+    if len(bytes)<=room {
+        _,e:=append(log,..bytes)
+        return e==nil
+    }
+    _,e:=append(log,..bytes[:room])
+    _,f:=append(log,CHECK_OUTPUT_CUT)
+    return e==nil && f==nil
 }

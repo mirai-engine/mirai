@@ -9,8 +9,13 @@ Everything the tab does goes through `cook/kai` and `kai`, as `mirai kai` does w
 ([commands](../../mirai-projects/references/projects.md#common-commands)): a procedure the editor
 needs from the command moves into `cook/kai`.
 
-The editor opens the project as a workspace of its own repository in the machine's store, or makes
-one of its files when it has none (`editor/kai.odin`). A guest of a collaboration session opens no
+The editor opens a project that has `.mirai/kai` as a workspace of its own repository in the
+machine's store (`editor/kai.odin`) and never makes one by itself: Kai is
+[optional](../../mirai-kai/SKILL.md#start-a-project-on-kai). Without one the tab shows "This
+project does not use version control." and Enable Kai, which calls `kai.init`: it makes the
+workspace of the project's files and opens it, and is refused when one is open or the editor has
+no store. The New Project dialog's "Version control (Kai)" (on by default) is `mirai new`'s
+`--no-kai` when unchecked. A guest of a collaboration session opens no
 workspace, and neither does a run that ends by itself after a count of frames (a check of a build,
 a capture): only an editor someone drives records history, and a host records what its guests do.
 

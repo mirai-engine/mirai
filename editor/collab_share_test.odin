@@ -10,6 +10,7 @@ import "core:testing"
 import "core:thread"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import ka "mirai:cook/kai"
 import "mirai:cook/share"
 import "mirai:core"
 import "mirai:editor/history"
@@ -531,14 +532,20 @@ collab_coauthorship_and_agent_turns_record_in_change :: proc(t:^testing.T) {
     defer {share_end_destroy(guest);kai_close(&host.s);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
     if !ok {return}
     if _,made:=share_host_project(t,n);!made {return}
-    guest_key:=vcs.identity_make().key
-    guest.s.kai.key=guest_key
-    kai_open(&host.s)
+    guest_identity,identity_error:=ka.identity_load(&guest.s.store)
+    if !testing.expect_value(t,identity_error,vcs.Error.None) {return}
+    guest_key:=guest_identity.key
+    testing.expect_value(t,kai_enable(&host.s),"")
     w:=kai_workspace(&host.s)
     if !testing.expectf(t,w!=nil,"the host's workspace opens: %v",host.s.kai.error) {return}
     if !share_join(t,n) {return}
     testing.expect(t,kai_workspace(&guest.s)==nil,"a guest keeps no workspace")
-    testing.expect(t,collab_state(&host.s).peers[1].key==guest_key,"the guest said hello with its key")
+    // The guest proves its key with its Ready, after it has the scene.
+    for _ in 0..<2000 {
+        if collab_state(&host.s).peers[1].joined {break}
+        share_step(n)
+    }
+    testing.expect(t,collab_state(&host.s).peers[1].key==guest_key,"the guest proved its key by signing the host's challenge")
 
     // The guest edits: the host applies it.
     made:=entity_create(&guest.s,{name="Lamp",named=true})
@@ -570,4 +577,39 @@ collab_coauthorship_and_agent_turns_record_in_change :: proc(t:^testing.T) {
     testing.expect_value(t,kai_snapshot(&host.s),"")
     again,_:=vcs.change_get(w.repo.s,vcs.repo_working(&w.repo),context.temp_allocator)
     testing.expect(t,len(again.coauthors)==1 && len(again.attachments)==1)
+}
+
+// A key a guest claims is a coauthor only when it signed the host's
+// challenge with it: someone else's key, another challenge or no signature
+// records nothing.
+@(test)
+a_guest_proves_its_key_before_it_is_a_coauthor :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"collab-key-proof");if folder=="" {return}
+    opened,error:=store.open(folder)
+    if !testing.expect_value(t,error,store.Error.None) {return}
+    s:=new(Session);defer free(s)
+    s.store=opened
+    defer store.close(&s.store)
+    k:=new(Kai);defer free(k)
+    s.kai=k
+    identity,_:=ka.identity_load(&s.store)
+    k.key=identity.key
+    challenge,other:[COLLAB_CHALLENGE]u8
+    challenge[0],other[0]=1,2
+    signature:[size_of(vcs.Signature)]u8
+    if !testing.expect(t,collab_key_sign(s,challenge,signature[:])) {return}
+    stranger:=vcs.identity_make().key
+    cases:=[]struct{key:vcs.Key,challenge:[COLLAB_CHALLENGE]u8,signature:[]u8,valid:bool}{
+        {identity.key,challenge,signature[:],true},
+        {stranger,challenge,signature[:],false},
+        {identity.key,other,signature[:],false},
+        {identity.key,challenge,make([]u8,len(signature),context.temp_allocator),false},
+        {{},challenge,signature[:],false},
+    }
+    for c,i in cases {
+        testing.expectf(t,collab_key_valid(c.key,c.challenge,c.signature)==c.valid,"case %d",i)
+    }
+    // A guest whose store is not the key it said signs nothing.
+    k.key=stranger
+    testing.expect(t,!collab_key_sign(s,challenge,signature[:]))
 }

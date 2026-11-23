@@ -15,7 +15,8 @@ import "mirai:ui"
 // (kai_detail.odin), and its button, or a click on a shared bookmark, starts
 // a new change on it. Proposals and Team are the team's
 // (kai_team_panel.odin). It draws what kai_read and kai_team_read left: a
-// frame reads nothing of the repository.
+// frame reads nothing of the repository. A project with no workspace uses no
+// version control, and the tab offers Enable Kai (kai.init).
 
 KAI_HEAD :: 22
 KAI_ROW_PAD :: 4
@@ -24,6 +25,11 @@ kai_panel_build :: proc(s:^Session,width,room:f32) {
     ctx:=s.gui.ctx
     w:=kai_workspace(s)
     if w==nil {
+        if s.kai!=nil && s.kai.error==.Missing {
+            kai_line(ctx,"This project does not use version control.")
+            if ui.button(ctx,ui.id(ctx,"kai_enable"),{label="Enable Kai",variant="accent",width=-1,center=true}).clicked {kai_ask(s,"kai.init","{{}}")}
+            return
+        }
         ui.label(ctx,kai_missing(s),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),width)
         return
     }

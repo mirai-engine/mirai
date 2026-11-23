@@ -263,6 +263,7 @@ Refusal :: struct {
 // What refused the workspace's last snapshot, read from its routing: its
 // strings stay in the temp allocator.
 snapshot_refusal :: proc(p:^Project) -> Refusal {
+    if unrouted(&p.workspace) {return {text=UNROUTED}}
     r:=&p.routing
     switch r.refusal {
     case .None: return {}

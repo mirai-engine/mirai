@@ -3,6 +3,7 @@ package kai_assets
 import "base:runtime"
 import "core:crypto"
 import "core:mem"
+import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import "core:sync"
@@ -32,13 +33,14 @@ import vcs "mirai:kai"
 LABEL_DDC_CACHE :: "kai-1/ddc-cache"
 MESH_WAIT :: 10.0 // seconds a miss waits for peers
 SEALED_VERSION :: 1 // of the chunks a sealed output holds
+FOLDED_PATHS :: ODIN_OS==.Darwin || ODIN_OS==.Windows // whose file systems ignore case by default
 
 Mesh_Cache :: struct {
     machine:^vcs.Machine, // signs what is published; its store is the runner's
     control:vcs.Control,
     org:vcs.Log_Id,
     project:vcs.Log_Id, // whose scopes taint what is published; zero: no scope applies
-    root:string,        // the project's folder, which its scopes' paths are under
+    root:string,        // the project's folder as the file system resolves it; "": unresolved
     state:vcs.Org_State,
     keyrings:[dynamic]^vcs.Keyring_Fold,
     scoped:bool,        // keyrings are held
@@ -66,14 +68,14 @@ ddc_key :: proc(namespace,name:string) -> store.Hash {
 // reaches the peers at once; c stays where it is while open. Missing when no
 // runner runs: the cook then builds alone. With
 // project, the files under root what is kept is made from decide its scopes;
-// when the org's scopes do not read, nothing is published.
+// when the org's scopes or root do not read, nothing is published.
 mesh_cache_open :: proc(c:^Mesh_Cache,m:^vcs.Machine,org:vcs.Log_Id,project:=vcs.Log_Id{},root:="",allocator:=context.allocator) -> vcs.Error {
     c^={machine=m,org=org,project=project,allocator=allocator}
     vcs.control_open(&c.control,m.store.root) or_return
     c.connected=true
     m.changed=vcs.control_machine_changed(&c.control)
     if project=={} {return .None}
-    c.root=strings.clone(root,allocator)
+    if info,e:=os.stat(root,context.temp_allocator);e==nil {c.root=strings.clone(info.fullpath,allocator)}
     if vcs.org_state_load(&m.store,org,&c.state,allocator)!=.None {
         vcs.org_state_destroy(&c.state)
         c.state={}
@@ -162,24 +164,30 @@ peers_free :: proc(p:^Peers) {
 mesh_fetch :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
     c:=(^Mesh_Cache)(user)
     if !c.connected {return}
-    sync.mutex_lock(&c.lock)
-    defer sync.mutex_unlock(&c.lock)
     Wanted :: struct {key,output_root:store.Hash,state:vcs.DDC_State}
     wanted:=make([]Wanted,len(names),context.temp_allocator)
     for name,k in names {wanted[k]={key=ddc_key(namespace,name),state=.Waiting}}
-    start:=time.tick_now()
-    for time.duration_seconds(time.tick_since(start))<MESH_WAIT {
-        waiting:=false
+    // Asks one round with the lock held; the wait between rounds lets mesh_kept in.
+    ask :: proc(c:^Mesh_Cache,wanted:[]Wanted) -> (waiting:bool,error:vcs.Error) {
+        sync.mutex_lock(&c.lock)
+        defer sync.mutex_unlock(&c.lock)
         for &w in wanted {
             if w.state!=.Waiting {continue}
-            state,output_root,e:=vcs.control_ddc_ask(&c.control,c.org,w.key)
-            if e!=.None {return}
+            state,output_root:=vcs.control_ddc_ask(&c.control,c.org,w.key) or_return
             w.state,w.output_root=state,output_root
             waiting||=w.state==.Waiting
         }
+        return
+    }
+    start:=time.tick_now()
+    for time.duration_seconds(time.tick_since(start))<MESH_WAIT {
+        waiting,e:=ask(c,wanted)
+        if e!=.None {return}
         if !waiting {break}
         time.sleep(20*time.Millisecond)
     }
+    sync.mutex_lock(&c.lock)
+    defer sync.mutex_unlock(&c.lock)
     from:=store.read_index(&c.machine.store)
     scratch:[]u8
     for &w,k in wanted {
@@ -223,9 +231,7 @@ mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
         // Whose scopes cannot be told is not published.
         if !c.scoped {return}
         paths:=make([dynamic]string,context.temp_allocator)
-        for file in from {
-            if path,under:=project_path(c.root,file);under {append(&paths,path)}
-        }
+        if !provenance(c.root,from,&paths) {return}
         if vcs.overlay_taint(&c.state.fold,c.project,paths[:],&tainted)!=.None {return}
     }
     if len(tainted)>0 {
@@ -237,14 +243,45 @@ mesh_kept :: proc(user:rawptr,namespace,name:string,object:store.Hash,from:[]str
     if _,e:=vcs.machine_publish_ddc(c.machine,c.org,ddc_key(namespace,name),objects[:],tainted[:]);e==.None {c.published+=1}
 }
 
-// The path of file under the folder root, with forward slashes; false outside it.
+// The paths under the folder root (resolved as mesh_cache_open resolves it)
+// of the files from, which decide the scopes what they made falls in, into
+// out, in the temp allocator. Each file is taken as the file system resolves
+// it (its case, every link) and as its folder does with its own name (a link
+// inside root stays the path it is there). False when what they were made
+// from cannot be told: none are known, root is unresolved, or a file does not
+// resolve. A file resolved outside root is in no scope.
+@(private)
+provenance :: proc(root:string,from:[]string,out:^[dynamic]string) -> (known:bool) {
+    if root=="" || len(from)==0 {return false}
+    for file in from {
+        real,e:=os.stat(file,context.temp_allocator)
+        if e!=nil {return false}
+        dir,name:=os.split_path(file)
+        folder,fe:=os.stat(dir,context.temp_allocator)
+        if fe!=nil {return false}
+        named:=strings.concatenate({folder.fullpath,"/",name},context.temp_allocator)
+        for full in ([2]string{real.fullpath,named}) {
+            if path,under:=project_path(root,full);under {append(out,path)}
+        }
+    }
+    return true
+}
+
+// The path of file under the folder root, with forward slashes; false outside
+// it. Where file systems ignore case, so does the folder's match.
 @(private)
 project_path :: proc(root,file:string) -> (path:string,under:bool) {
     if root=="" {return}
     slashed,_:=strings.replace_all(file,"\\","/",context.temp_allocator)
     top,_:=strings.replace_all(root,"\\","/",context.temp_allocator)
     top=strings.trim_right(top,"/")
-    if !strings.has_prefix(slashed,top) || len(slashed)<=len(top)+1 || slashed[len(top)]!='/' {return}
+    if len(slashed)<=len(top)+1 || slashed[len(top)]!='/' {return}
+    head:=slashed[:len(top)]
+    when FOLDED_PATHS {
+        if !strings.equal_fold(head,top) {return}
+    } else {
+        if head!=top {return}
+    }
     return slashed[len(top)+1:],true
 }
 

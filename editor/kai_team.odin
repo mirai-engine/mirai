@@ -3,6 +3,7 @@ package editor
 import "base:runtime"
 import "core:crypto"
 import "core:fmt"
+import "core:log"
 import vmem "core:mem/virtual"
 import "core:strings"
 import "core:sync"
@@ -31,6 +32,8 @@ import "mirai:store"
 
 KAI_TEAM_POLL :: 0.5   // seconds between looks at the runner, the pairing and the logs
 KAI_RUNNER_WAIT :: 5.0 // seconds an operation waits for the runner the editor starts
+KAI_RUNNER_RETRY :: 5.0       // seconds before the poll starts a runner that failed again
+KAI_RUNNER_RETRY_MAX :: 300.0 // the most the wait doubles to while it keeps failing
 KAI_TEXT :: 256        // bytes of a text the editor keeps of the runner
 
 Kai_Runner_State :: enum u8 {Starting,Running,Elsewhere,Failed}
@@ -138,6 +141,8 @@ Kai_Team :: struct {
     connected:bool,
     runner:^Kai_Runner,  // this editor's; nil when another process runs it or none runs
     polled:f64,
+    runner_retry:f64,    // seconds the poll waits after a runner failed; 0 while none failed
+    runner_failed:f64,   // when the last one failed
     signature:store.Hash, // of the machine's refs and logs when the view was read
     peers:[vcs.RUNNER_PEERS]vcs.Runner_Peer_Info,
     peer_count:int,
@@ -223,6 +228,9 @@ kai_team_connect :: proc(s:^Session,wait:bool) -> string {
         case .Failed:
             why:=strings.clone(string(r.why[:r.why_length]),context.temp_allocator)
             kai_runner_end(t)
+            if t.runner_retry==0 {log.warnf("the Kai runner does not start: %s",why)}
+            t.runner_retry=t.runner_retry==0?KAI_RUNNER_RETRY:min(2*t.runner_retry,KAI_RUNNER_RETRY_MAX)
+            t.runner_failed=platform.clock_seconds()
             return fmt.tprintf("The Kai runner does not start: %s",why)
         }
         if !wait || time.duration_seconds(time.tick_since(started))>KAI_RUNNER_WAIT {return "The Kai runner is starting: try again in a moment"}
@@ -234,6 +242,7 @@ kai_team_connect :: proc(s:^Session,wait:bool) -> string {
 kai_team_connected :: proc(s:^Session) {
     t:=&s.kai.state.team
     t.connected=true
+    t.runner_retry=0
     t.machine.changed=vcs.control_machine_changed(&t.control)
     // What the machine wrote before the runner answered: it reads the machine again.
     vcs.control_changed(&t.control,vcs.MACHINE_NAMESPACE,vcs.MACHINE_USER)
@@ -245,7 +254,13 @@ kai_team_connected :: proc(s:^Session) {
 kai_runner_start :: proc(s:^Session) {
     t:=&s.kai.state.team
     r:=new(Kai_Runner)
-    r.root=strings.clone(t.machine.store.root)
+    if r==nil {return}
+    root,error:=strings.clone(t.machine.store.root)
+    if error!=nil {
+        free(r)
+        return
+    }
+    r.root=root
     r.loopback=s.kai.mesh_loopback
     r.thread=thread.create_and_start_with_poly_data(r,kai_runner_run)
     if r.thread==nil {
@@ -279,6 +294,10 @@ kai_runner_run :: proc(r:^Kai_Runner) {
         sync.atomic_store(&r.state,state)
     }
     m:=new(vcs.Machine)
+    if m==nil {
+        fail(r,.Failed,"no memory for the machine of the runner")
+        return
+    }
     defer free(m)
     if vcs.machine_open(m,r.root)!=.None {
         fail(r,.Failed,m.why)
@@ -286,6 +305,10 @@ kai_runner_run :: proc(r:^Kai_Runner) {
     }
     defer vcs.machine_close(m)
     runner:=new(vcs.Runner)
+    if runner==nil {
+        fail(r,.Failed,"no memory for the runner")
+        return
+    }
     defer free(runner)
     desc:=vcs.Runner_Desc{machine=m,beacon=!r.loopback,portmap=!r.loopback,control=true}
     if r.loopback {desc.bind=net.address_loopback(0)}
@@ -328,7 +351,9 @@ kai_team_poll :: proc(s:^Session) {
     if now-t.polled<KAI_TEAM_POLL {return}
     t.polled=now
     changed:=false
-    if !t.connected && (t.machine.user!={} || len(t.machine.orgs)>0 || t.runner!=nil) {
+    // A runner that failed starts again only once its wait is over: its failure was logged.
+    resting:=t.runner==nil && t.runner_retry>0 && now-t.runner_failed<t.runner_retry
+    if !t.connected && !resting && (t.machine.user!={} || len(t.machine.orgs)>0 || t.runner!=nil) {
         changed=kai_team_connect(s,false)=="" || changed
     }
     if t.connected {
@@ -373,7 +398,7 @@ kai_team_poll :: proc(s:^Session) {
     signature:=kai_team_signature(s)
     if signature!=t.signature {
         t.signature=signature
-        if ka.project_route(&st.project)!=.None {notify(s,"Kai: the org's scopes do not read: let the agent fetch the org's logs")}
+        if e:=ka.project_route(&st.project);e!=.None {notify(s,fmt.tprintf("Kai: the org's scopes do not read (%s): snapshots wait until they do; let the agent fetch the org's logs",vcs.error_text(e)))}
         changed=true
         kai_team_read(s)
         kai_read(s)
@@ -518,7 +543,7 @@ kai_team_wrote :: proc(s:^Session) {
     vcs.machine_reload(&t.machine)
     if t.machine.user!={} || len(t.machine.orgs)>0 {kai_team_connect(s,false)}
     t.signature=kai_team_signature(s)
-    ka.project_route(&st.project)
+    if e:=ka.project_route(&st.project);e!=.None {notify(s,fmt.tprintf("Kai: the org's scopes do not read (%s): snapshots wait until they do; let the agent fetch the org's logs",vcs.error_text(e)))}
     kai_team_read(s)
     kai_read(s)
 }

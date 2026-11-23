@@ -181,7 +181,9 @@ failure) and compiles into `<engine>/.mirai/engine/<mode>/`.
 
 Assembled by `mirai package engine --out <folder>` (CI `.github/workflows/release.yml` on tag
 `v<ENGINE_VERSION>`), marked by `engine.mirai` (`project.ENGINE_FILE`). Compiles projects, never
-itself.
+itself. The same release attaches `mirai-kai-<version>-linux-arm64`, the static
+[node](../../mirai-kai/references/node.md#deployment) that the Linux job cross-builds with
+`mirai build kai --target linux_arm64`.
 
 - **Root lookup (`project.engine_root_find`):** `--engine`, `MIRAI_ROOT`, or nearest ancestor with
   `engine.mirai` (or `AGENTS.md` + `tools/mirai`). CLI propagates `MIRAI_ROOT`.
@@ -247,7 +249,9 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 ## Project
 
 - `mirai new [dir]` copies `templates/<T>` (`empty` default) + `templates/common` and initializes a
-  [Kai](../../mirai-kai/SKILL.md) workspace in the store (`--list` lists templates).
+  [Kai](../../mirai-kai/SKILL.md) workspace in the store; `--no-kai` makes a project with no
+  version control, which [can take it later](../../mirai-kai/SKILL.md#start-a-project-on-kai)
+  (`--list` lists templates).
 - `mirai docs [topic] [section]` (and MCP `docs`) serves `docs/game` from the engine root.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` sharing `.deps` and caches.
 - `mirai doctor [project]` validates machine/project (exit 1 on error; requires `core.symlinks` and

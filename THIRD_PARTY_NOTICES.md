@@ -53,7 +53,12 @@ are kept here and, where the license asks for it, in the header of the file.
 - **BLAKE3** (CC0 1.0, Apache-2.0, or Apache-2.0 with LLVM exceptions;
   © 2019 Jack O'Connor and Samuel Neves), <https://github.com/BLAKE3-team/BLAKE3>.
   `std/blake3`, translated from the reference implementation under CC0 1.0, with test vectors.
-  Game.
+  Game. `kai/hub/web/blake3.js`, the hash mode of the same reference in JavaScript under CC0 1.0,
+  for the browser frontend of KaiHub. Node and editor.
+- **Jujutsu `jj-lib`** (Apache-2.0; © 2020 The Jujutsu Authors), <https://github.com/jj-vcs/jj>,
+  and **imara-diff** (Apache-2.0; © Pascal Kuthe), <https://github.com/pascalkuthe/imara-diff>.
+  `std/diff`, the histogram line diff over interned lines and the three-way merge of its hunks,
+  altered. Node and editor.
 - **Clay v0.14** (zlib; © 2024 Nic Barker), <https://github.com/nicbarker/clay>.
   `ui/layout_tree.odin`, altered. Game.
 - **MikkTSpace** (zlib; © 2011 Morten S. Mikkelsen), <https://github.com/mmikk/MikkTSpace>.
