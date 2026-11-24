@@ -28,11 +28,18 @@ Kit_Cache :: struct {
     count:int,
 }
 
+Ability_Span_Cache :: struct {
+    action:u64,
+    windows:[ABILITY_WINDOWS]u64,
+    any:bool,
+}
+
 @(storage,host)
 Ability_Sheets :: struct {
     generation:[4]u32,
     ready:bool,
     abilities,hitboxes:[dynamic]Sheet_Problem,
+    ability_spans:[dynamic]Ability_Span_Cache,
     kits:[dynamic]Kit_Cache,
     channels:[dynamic]core.Birth_Channel,
 }
@@ -58,6 +65,7 @@ sheets_refresh :: proc(cache:^Ability_Sheets,data:Ability_Data) -> bool {
     if cache.ready && cache.generation==generation {return true}
     cache.ready=false
     if resize(&cache.abilities,core.records_count(data.abilities))!=nil ||
+       resize(&cache.ability_spans,core.records_count(data.abilities))!=nil ||
        resize(&cache.kits,core.records_count(data.kits))!=nil ||
        resize(&cache.hitboxes,core.records_count(data.hitboxes))!=nil ||
        resize(&cache.channels,core.records_count(data.feedback))!=nil {return false}
@@ -88,6 +96,17 @@ sheets_refresh :: proc(cache:^Ability_Sheets,data:Ability_Data) -> bool {
     }
     for &problem,i in cache.abilities {
         a:=record_at(data.abilities,i)
+        spans:Ability_Span_Cache
+        if a!=nil {
+            if name:=ability_name_text(&a.action);name!="" {spans.action=base.name_hash(name)}
+            for &w,j in a.windows {
+                if text:=base.text_get(w.span[:]);text!="" {
+                    spans.windows[j]=base.name_hash(text)
+                    spans.any=true
+                }
+            }
+        }
+        cache.ability_spans[i]=spans
         message:=ability_check(a,text[:]) if a!=nil else "ability row could not be read"
         if message=="" {message=ability_links(a,data,cache,text[:])}
         base.text_set(problem[:],message)

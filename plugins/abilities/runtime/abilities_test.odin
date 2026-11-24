@@ -1221,10 +1221,11 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
     testing.expect(t,!ability_has(user(f,f.player).state,CHARGING),"closed before Span_Begin")
     testing.expect_value(t,logged(f,.Window_Begin,f.player,0),0)
 
-    // Wrong entity, wrong action, and wrong span name are ignored.
+    // Wrong entity, wrong action, unnamed clip (when action is named), and wrong span name are ignored.
     append(&f.anim_events.items,
         anim.Animation_Event{entity=f.dummy,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")},
         anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("other"),name=base.name_hash("active")},
+        anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=0,name=base.name_hash("active")},
         anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("other_span")},
     )
     step(f)
@@ -1261,10 +1262,25 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
     for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Remove_Moves && m.move.id==MOVE_ID {move_removed=true}}
     testing.expect(t,move_removed,"layered move removed on Span_End")
 
-    // Re-opening and canceling before .Span_End closes cleanly.
+    // Re-opening, world_copy round-trip preserves span_open/span_start/regen_at/air_ticks,
+    // and canceling before .Span_End closes cleanly.
     append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")})
     step(f)
     testing.expect(t,ability_has(user(f,f.player).state,CHARGING))
+    core.edit(&f.states,f.player).air_ticks=7
+    core.edit(&f.tracking,f.player).regen_at[0]=999
+    test_world_settle(&f.w)
+    snap:Abilities_World
+    testing.expect(t,test_world_init(t,&snap))
+    defer test_world_destroy(&snap)
+    testing.expect(t,test_world_copy(&snap,&f.w))
+    snap_state,_:=core.get(&snap.states,f.player)
+    snap_track,_:=core.get(&snap.tracking,f.player)
+    testing.expect_value(t,snap_state.span_open,user(f,f.player).span_open)
+    testing.expect_value(t,snap_state.air_ticks,u16(7))
+    testing.expect_value(t,snap_track.span_start[0],user(f,f.player).span_start[0])
+    testing.expect_value(t,snap_track.regen_at[0],u64(999))
+
     ability_cancel(&f.requests,f.player)
     step(f)
     testing.expect_value(t,user(f,f.player).span_open,u16(0))

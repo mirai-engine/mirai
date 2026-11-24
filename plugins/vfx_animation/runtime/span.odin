@@ -29,9 +29,35 @@ Particle_Animation_Span :: struct {
 
 Span_Active :: struct {
     source:core.Entity,
-    action:u64, // action hash that opened the active span (0 for unnamed clip)
-    depth:u16,  // overlapping active duration spans currently holding emission on
+    span_hash:u64,   // cached hash of Particle_Animation_Span.span
+    end_hash:u64,    // cached hash of Particle_Animation_Span.end_marker (0 when duration span)
+    action_hash:u64, // cached hash of Particle_Animation_Span.action (0 when any action)
+    action:u64,      // action hash that opened the active span (0 for unnamed clip)
+    depth:u16,       // overlapping active duration spans currently holding emission on
+    paired:bool,     // true when end_marker is non-empty
     active:bool,
+}
+
+@(private="file")
+span_hashes_sync :: proc(entry:^Span_Active,cfg:Particle_Animation_Span) {
+    cfg:=cfg
+    span_text:=base.text_get(cfg.span[:])
+    entry.span_hash=base.name_hash(span_text) if len(span_text)>0 else 0
+    end_text:=base.text_get(cfg.end_marker[:])
+    entry.paired=len(end_text)>0
+    entry.end_hash=base.name_hash(end_text) if entry.paired else 0
+    action_text:=base.text_get(cfg.action[:])
+    entry.action_hash=base.name_hash(action_text) if len(action_text)>0 else 0
+}
+
+@(private="file")
+span_entry_sync :: proc(state:^Particle_Span_State,e:core.Entity,cfg:Particle_Animation_Span) {
+    entry:=core.entity_map_get(&state.entries,e)
+    if entry==nil {
+        entry,_=core.entity_map_put(&state.entries,e,Span_Active{})
+        if entry==nil {return}
+    }
+    span_hashes_sync(entry,cfg)
 }
 
 // Derived state of active span-driven emitters; copied on Play and rollback.
@@ -72,51 +98,53 @@ vfx_animation_spans :: proc(
     core.entity_map_prune(&state.entries,spans,c_spans)
     core.entity_map_prune(&state.entries,emitters,c_emitters)
 
+    // Pre-populate and re-hash entries only when spans or emitters change,
+    // so steady ticks neither hash strings nor allocate in state.entries.
+    for row in core.each_changed(spans,&c_spans) {
+        e:=core.entity_at(spans,row)
+        if core.has(emitters,e) {span_entry_sync(state,e,core.at(spans,row))}
+    }
+    for row in core.each_changed(emitters,&c_emitters) {
+        e:=core.entity_at(emitters,row)
+        if cfg,has:=core.get(spans,e);has && core.entity_map_get(&state.entries,e)==nil {
+            span_entry_sync(state,e,cfg)
+        }
+    }
+
     items:[]anim.Animation_Event
     if events.ptr!=nil {items=events.items[:]}
 
     joined:=core.join(spans,emitters)
     for e,cfg,_ in core.each_joined(&joined) {
-        cfg:=cfg
         source:=span_resolve_source(e,cfg.source,animations,parents,entities.ptr)
         entry:=core.entity_map_get(&state.entries,e)
-        if entry!=nil && entry.active {
+        if entry==nil {continue}
+        if entry.active {
             source_dead:=entry.source==core.NONE || !core.alive(entities.ptr,entry.source) || !core.has(animations,entry.source)
             if source_dead || source!=entry.source {
                 vfx.stop(requests,e)
-                entry^={}
+                entry.source,entry.action,entry.depth,entry.active=core.NONE,0,0,false
             }
         }
-        if source==core.NONE || cfg.span[0]==0 || len(items)==0 {continue}
-
-        span_hash:=base.name_hash(base.text_get(cfg.span[:]))
-        end_text:=base.text_get(cfg.end_marker[:])
-        paired:=len(end_text)>0
-        end_hash:=base.name_hash(end_text) if paired else 0
-        action_text:=base.text_get(cfg.action[:])
-        action_hash:=base.name_hash(action_text) if len(action_text)>0 else 0
+        if source==core.NONE || entry.span_hash==0 || len(items)==0 {continue}
 
         for ev in items {
             if ev.entity!=source {continue}
-            if action_hash!=0 && ev.action!=action_hash {continue}
+            if entry.action_hash!=0 && ev.action!=entry.action_hash {continue}
 
-            is_begin:=(!paired && ev.kind==.Span_Begin && ev.name==span_hash) ||
-                (paired && ev.kind==.Marker && ev.name==span_hash)
-            is_end:=(!paired && ev.kind==.Span_End && ev.name==span_hash) ||
-                (paired && ev.kind==.Marker && ev.name==end_hash)
+            is_begin:=(!entry.paired && ev.kind==.Span_Begin && ev.name==entry.span_hash) ||
+                (entry.paired && ev.kind==.Marker && ev.name==entry.span_hash)
+            is_end:=(!entry.paired && ev.kind==.Span_End && ev.name==entry.span_hash) ||
+                (entry.paired && ev.kind==.Marker && ev.name==entry.end_hash)
 
             switch {
             case is_begin:
-                if entry==nil {
-                    entry,_=core.entity_map_put(&state.entries,e,Span_Active{})
-                    if entry==nil {continue}
-                }
                 if !entry.active {
                     if cfg.restart_on_begin {vfx.restart(requests,e)}
                     vfx.start(requests,e)
                     entry.active=true
                     entry.depth=1
-                } else if !paired {
+                } else if !entry.paired {
                     if entry.depth<max(u16) {entry.depth+=1}
                 } else if cfg.restart_on_begin {
                     vfx.restart(requests,e)
@@ -124,18 +152,18 @@ vfx_animation_spans :: proc(
                 entry.source=source
                 entry.action=ev.action
             case is_end:
-                if entry!=nil && entry.active {
-                    if !paired && entry.depth>1 {
+                if entry.active {
+                    if !entry.paired && entry.depth>1 {
                         entry.depth-=1
                     } else {
                         vfx.stop(requests,e)
-                        entry^={}
+                        entry.source,entry.action,entry.depth,entry.active=core.NONE,0,0,false
                     }
                 }
             case ev.kind==.Interrupted || ev.kind==.Ended:
-                if entry!=nil && entry.active && (entry.action==0 || ev.action==0 || entry.action==ev.action) {
+                if entry.active && entry.action==ev.action {
                     vfx.stop(requests,e)
-                    entry^={}
+                    entry.source,entry.action,entry.depth,entry.active=core.NONE,0,0,false
                 }
             }
         }

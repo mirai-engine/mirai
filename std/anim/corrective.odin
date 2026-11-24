@@ -113,51 +113,88 @@ corrective_apply :: proc "contextless" (local:^math.Transform,delta:math.Transfo
     return true
 }
 
+// Computes topological execution order for directed edges (drivers[i] -> drivens[i]) using
+// Kahn's algorithm in O(n^2) with zero allocations. Writes acyclic edge indices into order[:ordered]
+// when order is given, marks each acyclic edge true in peeled when peeled is given, and returns
+// acyclic == true iff all edges are free of self-loops and cycles.
+corrective_order :: proc "contextless" (
+    drivers,drivens:[]$T,order:[]u16=nil,peeled:[]bool=nil,
+) -> (ordered:int,acyclic:bool) where T==i32 || T==u64 {
+    n:=len(drivers)
+    if n!=len(drivens) || n>CORRECTIVE_MAX_EDGES {return 0,false}
+    if peeled!=nil && len(peeled)<n {return 0,false}
+    if order!=nil && len(order)<n {return 0,false}
+    local_peeled:[CORRECTIVE_MAX_EDGES]bool
+    marks:=peeled[:n] if peeled!=nil else local_peeled[:n]
+    for &m in marks {m=false}
+    if n==0 {return 0,true}
+
+    blocked:[CORRECTIVE_MAX_EDGES]u16
+    queue:[CORRECTIVE_MAX_EDGES]u16
+    head,tail:=0,0
+    for i in 0..<n {
+        count:u16
+        source:=drivers[i]
+        for j in 0..<n {
+            if drivens[j]==source {count+=1}
+        }
+        blocked[i]=count
+        if count==0 {
+            queue[tail]=u16(i)
+            tail+=1
+        }
+    }
+    for head<tail {
+        idx:=int(queue[head])
+        head+=1
+        marks[idx]=true
+        if order!=nil {order[ordered]=u16(idx)}
+        ordered+=1
+        target:=drivens[idx]
+        for k in 0..<n {
+            if !marks[k] && drivers[k]==target {
+                blocked[k]-=1
+                if blocked[k]==0 {
+                    queue[tail]=u16(k)
+                    tail+=1
+                }
+            }
+        }
+    }
+    return ordered,ordered==n
+}
+
 // Whether directed edges (drivers[i] -> drivens[i]) are free of self-loops and cycles.
 // When peeled is given (length >= len(drivers)), marks each acyclic edge true and each
 // cyclic or cycle-dependent edge false.
 corrective_acyclic :: proc "contextless" (drivers,drivens:[]$T,peeled:[]bool=nil) -> bool where T==i32 || T==u64 {
-    n:=len(drivers)
-    if n!=len(drivens) || n>CORRECTIVE_MAX_EDGES {return false}
-    if peeled!=nil && len(peeled)<n {return false}
-    local_peeled:[CORRECTIVE_MAX_EDGES]bool
-    marks:=peeled[:n] if peeled!=nil else local_peeled[:n]
-    for &m in marks {m=false}
-    if n==0 {return true}
-    remaining:=n
-    for remaining>0 {
-        progress:=false
-        for i in 0..<n {
-            if marks[i] {continue}
-            source:=drivers[i]
-            blocked:=false
-            for j in 0..<n {
-                if !marks[j] && drivens[j]==source {blocked=true;break}
-            }
-            if !blocked {
-                marks[i]=true
-                remaining-=1
-                progress=true
-            }
-        }
-        if !progress {return false}
+    _,acyclic:=corrective_order(drivers,drivens,nil,peeled)
+    return acyclic
+}
+
+// Evaluates and applies one corrective edge in local pose space without recomputing world poses.
+corrective_solve :: proc "contextless" (
+    rest,local:[]math.Transform,driver,driven:i32,config:Corrective,weight:f32=1,
+) -> (applied_weight:f32,ok:bool) {
+    if len(local)!=len(rest) ||
+        driver<0 || int(driver)>=len(local) || driven<0 || int(driven)>=len(local) ||
+        driver==driven || !anim_finite(weight) || !corrective_valid(config) {
+        return
     }
-    return true
+    driven_weight,valid:=corrective_weight(local[driver].rotation,rest[driver].rotation,config.driver)
+    if !valid {return}
+    effective:=driven_weight*math.saturate(weight)
+    if !corrective_apply(&local[driven],config.delta,effective) {return}
+    return effective,true
 }
 
 skeleton_corrective :: proc "contextless" (
     skeleton:Skeleton,local,world:[]math.Transform,driver,driven:i32,config:Corrective,
     weight:f32=1,root_transform:math.Transform=math.TRANSFORM_IDENTITY,
 ) -> (applied_weight:f32,ok:bool) {
-    if !skeleton_validate(skeleton) || len(local)!=len(skeleton.rest) || len(world)!=len(local) ||
-        driver<0 || int(driver)>=len(local) || driven<0 || int(driven)>=len(local) ||
-        driver==driven || !anim_finite(weight) || !corrective_valid(config) {
-        return
-    }
-    driven_weight,valid:=corrective_weight(local[driver].rotation,skeleton.rest[driver].rotation,config.driver)
+    if !skeleton_validate(skeleton) || len(world)!=len(local) {return}
+    effective,valid:=corrective_solve(skeleton.rest,local,driver,driven,config,weight)
     if !valid {return}
-    effective:=driven_weight*math.saturate(weight)
-    if !corrective_apply(&local[driven],config.delta,effective) {return}
     if !pose_world(skeleton.parents,local,world,root_transform) {return}
     return effective,true
 }

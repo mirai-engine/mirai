@@ -191,4 +191,9 @@ corrective_rejects_hostile_inputs_and_cycles :: proc(t:^testing.T) {
     peeled:[3]bool
     testing.expect(t,!corrective_acyclic([]i32{0,1,2},[]i32{1,2,1},peeled[:]))
     testing.expect(t,peeled[0] && !peeled[1] && !peeled[2],"stem edge peeled, cycle edges unpeeled")
+
+    // Reverse-listed chain 2->3 before 1->2 orders upstream edge first.
+    order:[2]u16
+    count,acyclic:=corrective_order([]i32{2,1},[]i32{3,2},order[:])
+    testing.expect(t,acyclic && count==2 && order[0]==1 && order[1]==0,"topological order puts upstream edge first")
 }

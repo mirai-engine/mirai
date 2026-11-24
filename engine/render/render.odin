@@ -407,6 +407,7 @@ Render_Sync :: struct {
     tinted_values:[dynamic]gpu.Instance_Material_Values,
     light_owners:[dynamic]Light_Owner,  // by light of the renderer
     lit:[Light_Kind]core.Entity_Map(u32), // by entity with a light of the kind that shines: its light of the renderer
+    extra_lights:int, // per-frame lights appended after light_owners in the renderer
     sun:gpu.Sun_Desc,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
     round:u32, // of the frame: Drawn.replaced of what a visual instance replaces in it
@@ -756,6 +757,7 @@ render_sync :: proc(
     }
 
     lights_settle(sync,a,r,t,&c,sync.under[:shaded],extras)
+    extra_lights_settle(sync,r,host.extras_lights(&app.extras))
     // The sun that lights the world: the one previewed, or else the first not hidden.
     // .ptr spelled out: a field reached through using in a ternary is loaded before its nil check (see ODIN_WORKAROUNDS).
     own:gpu.Sun_Desc
@@ -855,6 +857,7 @@ sync_forget :: proc(sync:^Render_Sync,r:^gpu.Renderer) {
     clear(&sync.changed);clear(&sync.lerping);clear(&sync.deriving);clear(&sync.replaced)
     clear(&sync.light_owners)
     for &lit in sync.lit {core.entity_map_clear(&lit)}
+    sync.extra_lights=0
     lights_clear(r)
     sync.seen={}
     sync.owned={}
@@ -1278,6 +1281,8 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     switch {
     case at==nil && !on:
     case at==nil:
+        // Keep per-frame extra lights after entity lights so indices stay compact.
+        extra_lights_strip(sync,r)
         // Without memory in the renderer or here for the light, a later frame gives it everything again.
         if !gpu.scene_light_update(r,u32(len(sync.light_owners)),desc) {sync.starved=true;return}
         if _,kept:=core.entity_map_put(&sync.lit[kind],e,u32(len(sync.light_owners)));!kept {sync.starved=true;return}
@@ -1285,6 +1290,7 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     case on:
         if !gpu.scene_light_update(r,at^,desc) {sync.starved=true}
     case:
+        extra_lights_strip(sync,r)
         gpu.scene_light_remove(r,at^)
         last:=pop(&sync.light_owners)
         if place:=at^;int(place)<len(sync.light_owners) {
@@ -1293,6 +1299,32 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
         }
         core.entity_map_remove(&sync.lit[kind],e)
     }
+}
+
+// Removes trailing per-frame extra lights before adding or removing an entity light.
+@(private)
+extra_lights_strip :: proc(sync:^Render_Sync,r:^gpu.Renderer) {
+    for sync.extra_lights>0 {
+        sync.extra_lights-=1
+        gpu.scene_light_remove(r,u32(len(sync.light_owners)+sync.extra_lights))
+    }
+}
+
+// Updates per-frame extra lights in place after entity lights, trimming any surplus slots.
+@(private)
+extra_lights_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,extra_lights:[]gpu.Light_Desc) {
+    base:=len(sync.light_owners)
+    kept:=0
+    for desc in extra_lights {
+        if !gpu.light_gives(desc) {continue}
+        if !gpu.scene_light_update(r,u32(base+kept),desc) {sync.starved=true;return}
+        kept+=1
+    }
+    for sync.extra_lights>kept {
+        sync.extra_lights-=1
+        gpu.scene_light_remove(r,u32(base+sync.extra_lights))
+    }
+    sync.extra_lights=kept
 }
 
 // The lights whose rows, place or visibility changed since the last frame

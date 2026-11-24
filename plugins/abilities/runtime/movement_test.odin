@@ -240,11 +240,11 @@ a_ledge_jump_is_an_ability_with_a_ledge_ahead_condition_and_a_layered_boost :: p
     }
 }
 
-// End-to-end Fortnite Tactical Sprint expressed 100% in pure ability data:
+// End-to-end tactical sprint expressed 100% in pure ability data:
 // 115 energy, 15/s drain paused while airborne with fall_grace, 52/s regen after 2 s regen_delay,
 // ramped 1.4x speed (0.6224 s), ramped 1.2x jump (0.7265 s), and 3x acceleration.
 @(test)
-a_fortnite_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
+a_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
     f:=new(Movement);defer free(f)
     if !movement_init(t,f,{0,0,40}) {return}
     defer movement_destroy(f)

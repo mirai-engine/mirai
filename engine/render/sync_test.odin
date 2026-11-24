@@ -358,3 +358,58 @@ an_entity_whose_mesh_arrives_is_drawn_alone_once_it_arrived :: proc(t:^testing.T
     testing.expect_value(t,len(f.sync.arriving),0)
     testing.expect_value(t,sync_frame(f),0)
 }
+
+// Per-frame extra lights submitted through Frame_Extras sit after entity lights,
+// update in place on steady frames, shrink cleanly, and stay intact when entity
+// lights are added or removed.
+@(test)
+extra_lights_sync_in_place_and_interleave_with_entity_lights :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+
+    e1:=core.create(&f.world.entities)
+    core.add(&f.world.worlds,e1,core.World_Transform{transform={position={0,2,0},rotation=1,scale=1},previous={position={0,2,0},rotation=1,scale=1}})
+    core.add(&f.world.points,e1,POINT_LIGHT_DEFAULT)
+    sync_frame(f)
+    s:=&f.renderer.scene
+    testing.expect_value(t,len(s.lights),1)
+    testing.expect_value(t,f.sync.extra_lights,0)
+
+    // Frame 1: submit two extra lights.
+    l1:=Light_Desc{position={2,1,0},color={1,0.5,0.2},intensity=400,range=8,radius=0.1,shadowless=true}
+    l2:=Light_Desc{position={4,1,0},color={0.2,0.5,1},intensity=250,range=6,radius=0.1,shadowless=true}
+    testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
+    sync_frame(f)
+    f.app.extras.light_count=0
+    testing.expect_value(t,len(s.lights),3)
+    testing.expect_value(t,f.sync.extra_lights,2)
+
+    // Frame 2: update same count in place at the exact same slots after entity lights.
+    l1.position.y=1.5
+    testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
+    sync_frame(f)
+    f.app.extras.light_count=0
+    testing.expect_value(t,len(s.lights),3)
+    testing.expect_value(t,f.sync.extra_lights,2)
+    testing.expect_value(t,s.lights[1].position_range.y,f32(1.5))
+
+    // Frame 3: add an entity light while shrinking extra lights to 1.
+    e2:=core.create(&f.world.entities)
+    core.add(&f.world.worlds,e2,core.World_Transform{transform={position={-2,2,0},rotation=1,scale=1},previous={position={-2,2,0},rotation=1,scale=1}})
+    core.add(&f.world.points,e2,POINT_LIGHT_DEFAULT)
+    testing.expect(t,light_add(&f.app.extras,l1))
+    sync_frame(f)
+    f.app.extras.light_count=0
+    testing.expect_value(t,len(f.sync.light_owners),2)
+    testing.expect_value(t,f.sync.extra_lights,1)
+    testing.expect_value(t,len(s.lights),3)
+
+    // Frame 4: remove entity light e1 and submit 0 extra lights.
+    core.remove(&f.world.points,e1)
+    sync_frame(f)
+    testing.expect_value(t,len(f.sync.light_owners),1)
+    testing.expect_value(t,f.sync.extra_lights,0)
+    testing.expect_value(t,len(s.lights),1)
+    testing.expect_value(t,f.sync.light_owners[0].entity,e2)
+}

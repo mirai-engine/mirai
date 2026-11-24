@@ -1,7 +1,6 @@
 package vfx
 
 import "core:math"
-import "core:math/linalg"
 import "mirai:core"
 import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
@@ -12,39 +11,15 @@ import "plugins:vfx/runtime/effect"
 // Dynamic point lights emitted by particle effects.
 //
 // Each emitter whose resolved Particle_Info sets light.intensity > 0 and
-// light.range > 0 drives up to EMITTER_LIGHTS_MAX bounded erender.Point_Light
-// nodes from a preallocated world pool of PARTICLE_LIGHTS_MAX transient
-// entities (no core.Id: never saved in scenes, outliner or editor history).
-// Color, intensity, range and analytical offset follow the effect's light
-// config, color_over_life, size_over_life and the emitter's live clock births.
-// When no emitter enables lights (clocks.lit_count == 0) and none are active,
-// particles_lights returns in O(1) with zero work and zero allocations.
+// light.range > 0 contributes up to EMITTER_LIGHTS_MAX bounded per-frame lights
+// (up to PARTICLE_LIGHTS_MAX per world) directly into host.Frame_Extras via
+// erender.light_add before render_sync. No entities or component tables are
+// created or written, so games keep exclusive ownership of Point_Light and
+// steady frames allocate nothing. When clocks.lit_count == 0, particles_lights
+// returns in O(1) with zero work.
 
-PARTICLE_LIGHTS_MAX :: 32 // hard preallocated world cap on particle-emitted point lights
+PARTICLE_LIGHTS_MAX :: 32 // hard world cap on particle-emitted point lights
 EMITTER_LIGHTS_MAX :: 4   // hard per-emitter cap on concurrent point lights
-
-@(component,derived,description="Derived transient point light owned by a Particle_Emitter.")
-Particle_Light_Node :: struct {
-    owner:core.Entity `mirai:"readonly"`,
-}
-
-Particle_Light_Slot :: struct {
-    entity:core.Entity, // transient entity (no core.Id) holding Transform, Parent and Point_Light
-    owner:core.Entity,  // emitter currently driving this slot; NONE when parked
-    parent:core.Entity, // current Parent.entity of entity
-    transform:core.Transform,
-    light:erender.Point_Light,
-    active:bool,
-}
-
-// Derived state of particle-emitted point lights for one world. Plain copyable
-// fixed storage: Play copies and rollbacks keep matching handles with their tables.
-@(storage)
-Particle_Lights :: struct {
-    slots:[PARTICLE_LIGHTS_MAX]Particle_Light_Slot,
-    active_count:u32,
-    pool_count:u32,
-}
 
 @(private="file")
 Light_Candidate :: struct {
@@ -52,17 +27,13 @@ Light_Candidate :: struct {
     layer:u8,
     sample:u8,
     distance:f32,
-    transform:core.Transform,
-    light:erender.Point_Light,
+    light:erender.Light_Desc,
 }
 
-// Updates the world's bounded pool of particle-emitted Point_Lights before
-// transforms_propagate (late/end) and render_sync (render). Uses core.World_Ref
-// so games that write erender.Point_Light directly never hit a single-writer
-// conflict. Zero cost when disabled; zero allocations once slots are warm.
-@(step="late",loops="game editor",stage="intent")
+// Submits bounded per-frame particle lights into host.Frame_Extras before
+// render_sync. Zero cost when disabled; zero allocations always.
+@(step="render",loops="game editor",before="render_sync")
 particles_lights :: proc(
-    world:core.World_Ref,
     emitters:^core.Table(Particle_Emitter,.Read),
     overrides:^core.Table(Particle_Override,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
@@ -70,157 +41,35 @@ particles_lights :: proc(
     parents:^core.Table(core.Parent,.Read),
     clocks:core.Ref(Particle_Clocks),
     settings:core.Ref(Particle_Settings),
-    lights:^Particle_Lights,
     sources:core.Ref(scene.Simulation_Sources),
     assets:^host.Assets,
+    extras:^host.Frame_Extras,
 ) {
-    if clocks.ptr==nil || lights==nil {return}
-    if clocks.lit_count==0 && lights.active_count==0 {return}
-    es:=core.world_entities(world)
-    points:=core.world_table_of(world,erender.Point_Light)
-    transforms:=core.world_table_of(world,core.Transform)
-    if es==nil || points==nil || transforms==nil {return}
-    parent_table:=core.world_table_of(world,core.Parent)
-    nodes:=core.world_table_of(world,Particle_Light_Node)
-
-    lights_prune(lights,es,points)
+    if clocks.ptr==nil || clocks.lit_count==0 || extras==nil {return}
 
     budget:=PARTICLE_LIGHTS_MAX
     if settings.ptr!=nil {budget=min(int(settings.max_lights),PARTICLE_LIGHTS_MAX)}
+    if budget<=0 {return}
 
     candidates:[PARTICLE_LIGHTS_MAX]Light_Candidate
     cand_count:=0
-    if budget>0 && clocks.lit_count>0 {
-        placed:=core.join(emitters,worlds)
-        for e,emitter,wt in core.each_joined(&placed) {
-            primary:=clock_find(clocks.ptr,e)
-            if primary==nil || primary.culled {continue}
-            if erender.is_hidden(hidden,parents,e) {continue}
-            override,_:=core.get(overrides,e)
-            for layer in 0..=int(primary.layers) {
-                clock:=clock_find(clocks.ptr,e,layer)
-                if clock==nil || !clock.emission.has_light || clock.done || clock.last<=-max(f64)*0.5 {continue}
-                info:=particle_resolve(assets,emitter.particle,&override,emitter.preset,u8(layer))
-                if info.light.intensity<=0 || info.light.range<=0 {continue}
-                emitter_light_candidates(e,u8(layer),wt.transform,clock,&info,sources.ptr,budget,&candidates,&cand_count)
-            }
+    placed:=core.join(emitters,worlds)
+    for e,emitter,wt in core.each_joined(&placed) {
+        primary:=clock_find(clocks.ptr,e)
+        if primary==nil || primary.culled {continue}
+        if erender.is_hidden(hidden,parents,e) {continue}
+        override,_:=core.get(overrides,e)
+        for layer in 0..=int(primary.layers) {
+            clock:=clock_find(clocks.ptr,e,layer)
+            if clock==nil || !clock.emission.has_light || clock.done || clock.last<=-max(f64)*0.5 {continue}
+            info:=particle_resolve(assets,emitter.particle,&override,emitter.preset,u8(layer))
+            if info.light.intensity<=0 || info.light.range<=0 {continue}
+            emitter_light_candidates(e,u8(layer),wt.transform,clock,&info,sources.ptr,budget,&candidates,&cand_count)
         }
     }
-
-    // Sticky slot assignment: match candidates to slots already owned by the same
-    // emitter first so Parent and Transform stay untouched on steady ticks.
-    slot_used:[PARTICLE_LIGHTS_MAX]bool
-    cand_slot:[PARTICLE_LIGHTS_MAX]int
-    for i in 0..<cand_count {cand_slot[i]=-1}
 
     for i in 0..<cand_count {
-        cand:=&candidates[i]
-        for s in 0..<int(lights.pool_count) {
-            if slot_used[s] {continue}
-            if lights.slots[s].owner==cand.owner || (!lights.slots[s].active && lights.slots[s].parent==cand.owner) {
-                slot_used[s]=true
-                cand_slot[i]=s
-                break
-            }
-        }
-    }
-    for i in 0..<cand_count {
-        if cand_slot[i]>=0 {continue}
-        for s in 0..<int(lights.pool_count) {
-            if slot_used[s] {continue}
-            slot_used[s]=true
-            cand_slot[i]=s
-            break
-        }
-    }
-
-    active:=u32(0)
-    for i in 0..<cand_count {
-        cand:=&candidates[i]
-        s:=cand_slot[i]
-        if s<0 {
-            if int(lights.pool_count)>=PARTICLE_LIGHTS_MAX {continue}
-            s=int(lights.pool_count)
-            e:=core.create(es)
-            if e==core.NONE {continue}
-            core.add(transforms,e,cand.transform)
-            if parent_table!=nil {core.add(parent_table,e,core.Parent{entity=cand.owner})}
-            core.add(points,e,cand.light)
-            if nodes!=nil {core.add(nodes,e,Particle_Light_Node{owner=cand.owner})}
-            lights.slots[s]={
-                entity=e,
-                owner=cand.owner,
-                parent=cand.owner,
-                transform=cand.transform,
-                light=cand.light,
-                active=true,
-            }
-            lights.pool_count+=1
-            slot_used[s]=true
-            active+=1
-            continue
-        }
-        slot:=&lights.slots[s]
-        e:=slot.entity
-        if slot.parent!=cand.owner && parent_table!=nil {
-            table_put(parent_table,e,core.Parent{entity=cand.owner})
-            slot.parent=cand.owner
-        }
-        if slot.transform!=cand.transform {
-            table_put(transforms,e,cand.transform)
-            slot.transform=cand.transform
-        }
-        if !slot.active || slot.light!=cand.light {
-            table_put(points,e,cand.light)
-            slot.light=cand.light
-        }
-        if nodes!=nil && slot.owner!=cand.owner {
-            table_put(nodes,e,Particle_Light_Node{owner=cand.owner})
-        }
-        slot.owner=cand.owner
-        slot.active=true
-        active+=1
-    }
-
-    // Park unused slots at zero intensity so render_sync removes them from the
-    // GPU light list without destroying entities or allocating on reuse.
-    for s in 0..<int(lights.pool_count) {
-        if slot_used[s] {continue}
-        slot:=&lights.slots[s]
-        if !slot.active {continue}
-        table_put(points,slot.entity,erender.Point_Light{color={},intensity=0,range=0,radius=0,shadows=false,indirect=0,scattering=0})
-        slot.light={}
-        slot.owner=core.NONE
-        slot.active=false
-    }
-    lights.active_count=active
-}
-
-@(private="file")
-table_put :: proc(t:^core.Table($T),e:core.Entity,value:T) {
-    if row:=core.staged(t,e);row!=nil {row^=value} else {core.add(t,e,value)}
-}
-
-// Drops slots whose transient light entity or parent emitter was destroyed.
-@(private="file")
-lights_prune :: proc(lights:^Particle_Lights,es:^core.Entities,points:^core.Table(erender.Point_Light)) {
-    i:=0
-    for i<int(lights.pool_count) {
-        slot:=&lights.slots[i]
-        entity_alive:=core.alive(es,slot.entity)
-        parent_dead:=slot.parent!=core.NONE && !core.alive(es,slot.parent)
-        if !entity_alive || parent_dead {
-            if entity_alive {
-                if row:=core.staged(points,slot.entity);row!=nil {row^={}}
-                core.destroy(es,slot.entity)
-            }
-            last:=int(lights.pool_count)-1
-            lights.slots[i]=lights.slots[last]
-            lights.slots[last]={}
-            lights.pool_count-=1
-            continue
-        }
-        i+=1
+        _=erender.light_add(extras,candidates[i].light)
     }
 }
 
@@ -304,40 +153,39 @@ emitter_light_candidates :: proc(
             world_spread:=mm.quat_rotate(owner_world.rotation,owner_world.scale*spread)
             world_pos=owner_world.position+world_spread+world_v0*t+0.5*info.acceleration*(t*t)
         }
-        rel,ok:=mm.transform_relative(mm.Transform{position=world_pos,rotation=1,scale={1,1,1}},owner_world)
-        if !ok {rel=mm.TRANSFORM_IDENTITY}
 
         cand:=Light_Candidate{
             owner=owner,
             layer=layer,
             sample=u8(k),
             distance=scene.sources_distance(sources,world_pos,world_pos),
-            transform=core.Transform{position=rel.position,rotation=rel.rotation,scale=rel.scale},
             light={
+                position=world_pos,
                 color=color,
                 intensity=intensity,
                 range=range,
                 radius=info.light.radius,
-                shadows=info.light.shadows,
                 indirect=info.light.indirect,
                 scattering=info.light.scattering,
+                shadowless=!info.light.shadows,
             },
         }
         candidate_insert(candidates,count,budget,cand)
     }
 }
 
-// Deterministic small spread across the emitter shape when emitting >1 light.
+// Deterministic spread across the emitter shape when emitting >1 light.
+// shape_size.x is already the radius or half-extent (effect.Particle_Info).
 @(private="file")
 light_shape_spread :: proc "contextless" (info:^effect.Particle_Info,index,total:int) -> [3]f32 {
     if total<=1 || info.shape==.Point {return {}}
     t:=f32(index)/f32(total-1)*2-1 // -1..1
     #partial switch info.shape {
     case .Line: return {0,info.shape_size.x*t,0}
-    case .Box:  return {info.shape_size.x*t*0.5,0,0}
+    case .Box:  return {info.shape_size.x*t,0,0}
     case .Circle,.Sphere,.Hemisphere,.Cone:
         angle:=f32(index)*math.TAU/f32(total)
-        r:=info.shape_size.x*0.5
+        r:=info.shape_size.x
         return {math.cos(angle)*r,0,math.sin(angle)*r}
     }
     return {}

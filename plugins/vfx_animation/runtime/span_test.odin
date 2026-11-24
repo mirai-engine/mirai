@@ -110,9 +110,14 @@ animation_spans_and_paired_markers_start_and_stop_emitters :: proc(t:^testing.T)
     }
     interrupt_paired_steps:=[?]Step_Event{
         {.Marker,"FortMeleeAnimTrails_On","swing",true},
+        {.Interrupted,"","",true},          // unrelated unnamed clip end must NOT stop named-action trail
+        {.Ended,"","other_action",true},    // unrelated other action end must NOT stop trail
         {.Interrupted,"","swing",false},
         {.Marker,"FortMeleeAnimTrails_On","swing",true},
         {.Ended,"","swing",false},
+        {.Marker,"FortMeleeAnimTrails_On","",true},
+        {.Ended,"","other_action",true},    // named action end must NOT stop unnamed-clip trail
+        {.Ended,"","",false},
     }
 
     cases:=[?]Case{
@@ -221,13 +226,10 @@ animation_span_handles_destruction_removal_and_zero_stable_allocations :: proc(t
     testing.expect(t,!em.active,"removing Particle_Animation_Span stops active emitter")
     testing.expect_value(t,len(f.span_state.entries.values),0)
 
-    // 3. Re-add span, warm up, and verify zero allocations across steady begin/end cycles.
+    // 3. Re-add span, sync once (no events), then verify zero allocations even on the very first
+    //    Span_Begin and across steady begin/end cycles.
     core.add(&f.spans,emitter,make_span_config("swing_trail","","",rig2))
     test_world_settle(&f.w)
-    append(&f.events.items,anim.Animation_Event{entity=rig2,kind=.Span_Begin,name=base.name_hash("swing_trail")})
-    span_fixture_tick(f,now)
-    now.seconds+=f64(now.dt)
-    append(&f.events.items,anim.Animation_Event{entity=rig2,kind=.Span_End,name=base.name_hash("swing_trail")})
     span_fixture_tick(f,now)
     now.seconds+=f64(now.dt)
 
@@ -247,10 +249,21 @@ animation_span_handles_destruction_removal_and_zero_stable_allocations :: proc(t
     }
     testing.expect_value(t,tracker.total_allocation_count,i64(0))
 
-    // 4. Destroying the emitter entity mid-span prunes state and leaves no problems.
-    append(&f.events.items,anim.Animation_Event{entity=rig2,kind=.Span_Begin,name=base.name_hash("swing_trail")})
+    // 4. World copy round-trip preserves active span state and cached hashes without losing stop.
+    append(&f.events.items,anim.Animation_Event{entity=rig2,kind=.Span_Begin,name=base.name_hash("swing_trail"),action=base.name_hash("slash")})
     span_fixture_tick(f,now)
     now.seconds+=f64(now.dt)
+    copied:=new(Span_Fixture)
+    defer free(copied)
+    if !span_fixture_init(t,copied) {return}
+    defer span_fixture_destroy(copied)
+    testing.expect(t,test_world_copy(&copied.w,&f.w))
+    append(&copied.events.items,anim.Animation_Event{entity=rig2,kind=.Span_End,name=base.name_hash("swing_trail"),action=base.name_hash("slash")})
+    span_fixture_tick(copied,now)
+    em_copied,_:=core.get(&copied.emitters,emitter)
+    testing.expect(t,!em_copied.active,"copied world closes active span cleanly")
+
+    // 5. Destroying the emitter entity mid-span prunes state and leaves no problems.
     core.destroy(&f.entities,emitter)
     test_world_settle(&f.w)
     span_fixture_tick(f,now)

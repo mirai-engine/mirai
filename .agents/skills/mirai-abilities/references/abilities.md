@@ -35,7 +35,8 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
   whole body when it names no layer. Empty plays nothing.
 - `windows`: spans `[from, to)` in seconds from the start inside the duration, or bound by clip
   span name (`span`, mutually exclusive with `from`/`to`) opened/closed by `Animation_Events`
-  `.Span_Begin`/`.Span_End` of the ability's action. `clock` says what the seconds count: `world`
+  `.Span_Begin`/`.Span_End` of the ability's action (unnamed clips match only when `action` is
+  empty). `clock` says what the seconds count: `world`
   (the fixed step) or `own`, the user's own time (`core.Own_Pace`) as its animation counts it, for
   a window that follows a clip played slower or faster (the branch of a charge clip in slow
   motion). An `own` window may close after the duration; the end of the ability closes it. A window

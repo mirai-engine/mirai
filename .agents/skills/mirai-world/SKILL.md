@@ -153,9 +153,10 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 - Far-away simulation: automatic coarse simulation through the portal graph.
 - Water: Gerstner waves.
 - Particles: GPU particles remain un-indexed in the BVH/light list; when an effect enables
-  `Particle_Light` (`light.intensity > 0` and `light.range > 0`), `particles_lights` drives CPU
-  `erender.Point_Light` nodes from a bounded preallocated pool (`PARTICLE_LIGHTS_MAX`,
-  `EMITTER_LIGHTS_MAX`), keeping all scene lights CPU-known with zero cost when disabled.
+  `Particle_Light` (`light.intensity > 0` and `light.range > 0`), `particles_lights` submits
+  bounded per-frame lights (`PARTICLE_LIGHTS_MAX`, `EMITTER_LIGHTS_MAX`) via `erender.light_add`
+  into `host.Frame_Extras` before `render_sync`, keeping all scene lights CPU-known with zero
+  transient entities, zero allocations and zero cost when disabled.
 - **VFX pruned/unified surfaces (do not look for or reintroduce):** cross-emitter births use
   `core.Births` and `Particle_Channel` (no `Data_Channels`, `Particle_Reports` or GPU-to-GPU
   `Emitter` events); baked `.grid` caches and `Particle_Shape.Bones` do not exist (use

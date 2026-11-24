@@ -62,7 +62,6 @@ Corrective_Binding :: struct {
     using binding:Rig_Binding,
     driver,bone:i32,
     cyclic:bool,
-    applied_weight:f32,
 }
 
 @(private)
@@ -160,7 +159,8 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier_
         }
         if rebind {
             drivers,drivens:[POSE_CONSTRAINTS]i32
-            slots:[POSE_CONSTRAINTS]int
+            slots:[POSE_CONSTRAINTS]u16
+            order:[POSE_CONSTRAINTS]u16
             peeled:[POSE_CONSTRAINTS]bool
             edges:=0
             for &config,slot in pose.correctives {
@@ -171,45 +171,47 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier_
                 binding.bone=i32(bone_resolve(state,config.bone))
                 if binding.driver<0 || binding.bone<0 || binding.driver==binding.bone {continue}
                 if edges<POSE_CONSTRAINTS {
-                    drivers[edges],drivens[edges],slots[edges]=binding.driver,binding.bone,slot
+                    drivers[edges],drivens[edges],slots[edges]=binding.driver,binding.bone,u16(slot)
                     edges+=1
                 }
             }
-            _=lib.corrective_acyclic(drivers[:edges],drivens[:edges],peeled[:edges])
+            ordered,_:=lib.corrective_order(drivers[:edges],drivens[:edges],order[:edges],peeled[:edges])
             for e in 0..<edges {
                 binding:=&rig.corrective_states[slots[e]]
                 binding.cyclic=!peeled[e]
                 rig_binding_publish(binding,state,.Corrective)
             }
+            count:=min(ordered,len(rig.corrective_order))
+            for k in 0..<count {
+                rig.corrective_order[k]=slots[order[k]]
+            }
+            rig.corrective_order_count=u16(count)
         }
         changed:=false
         local:=playing_pose(state,.Local)
         for &config,slot in pose.correctives {
-            weight,enabled:=modifier_weight(&modifier_states(rig,.Corrective)[slot],runtime.time)
             binding:=&rig.corrective_states[slot]
             binding.diagnostic.valid,binding.diagnostic.reached=false,false
-            binding.applied_weight=0
             if !binding.ready || binding.cyclic {
                 rig_problem(inputs.problems,state.entity,.Corrective,&config,.Bind)
                 valid=false
-                continue
             }
-            if !enabled || weight<=0 || state.lod.plain {continue}
-            driven_weight,ok:=lib.corrective_weight(local[binding.driver].rotation,skeleton.rest[binding.driver].rotation,corrective_driver(config))
-            if !ok {
-                rig_problem(inputs.problems,state.entity,.Corrective,&config,.Solve)
-                valid=false
-                continue
+        }
+        if !state.lod.plain {
+            for k in 0..<int(rig.corrective_order_count) {
+                slot:=int(rig.corrective_order[k])
+                config:=&pose.correctives[slot]
+                weight,enabled:=modifier_weight(&modifier_states(rig,.Corrective)[slot],runtime.time)
+                binding:=&rig.corrective_states[slot]
+                if !enabled || weight<=0 {continue}
+                if _,ok:=lib.corrective_solve(skeleton.rest,local,binding.driver,binding.bone,corrective_config(config^),weight);!ok {
+                    rig_problem(inputs.problems,state.entity,.Corrective,config,.Solve)
+                    valid=false
+                    continue
+                }
+                binding.diagnostic.valid,binding.diagnostic.reached=true,true
+                changed=true
             }
-            effective:=driven_weight*weight
-            if !lib.corrective_apply(&local[binding.bone],corrective_delta(config),effective) {
-                rig_problem(inputs.problems,state.entity,.Corrective,&config,.Solve)
-                valid=false
-                continue
-            }
-            binding.applied_weight=effective
-            binding.diagnostic.valid,binding.diagnostic.reached=true,true
-            changed=true
         }
         if changed && !lib.pose_world(skeleton.parents,local,playing_pose(state,.World),root_transform) {
             pose_problem(inputs.problems,state.entity)

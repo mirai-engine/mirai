@@ -495,6 +495,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
     walk.sprint_speed*=scale
     walk.crouch_speed*=scale
     walk.acceleration*=acceleration_scale
+    walk.braking*=acceleration_scale
     move.yaw=move_input.look_yaw
     traction:=body.traction_force
     held:=move_input.buttons&input.action_bit(jump)!=0

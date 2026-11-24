@@ -22,19 +22,14 @@ Lights_World :: struct {
     parents:core.Table(core.Parent),
     disabled:core.Table(core.Disabled),
     hidden:core.Table(erender.Hidden),
-    points:core.Table(erender.Point_Light),
     emitters:core.Table(Particle_Emitter),
     overrides:core.Table(Particle_Override),
     listeners:core.Table(Particle_Channel),
-    nodes:core.Table(Particle_Light_Node),
     births:core.Births,
     hierarchy:core.Hierarchy,
-    propagation:core.Propagation,
-    jumps:core.Jumps,
     clocks:Particle_Clocks,
     requests:Particle_Requests,
     settings:Particle_Settings,
-    lights:Particle_Lights,
 }
 
 @(private="file")
@@ -43,6 +38,7 @@ Lights_Fixture :: struct {
     sources:scene.Simulation_Sources,
     sync:Particle_Sync,
     assets:host.Assets,
+    extras:host.Frame_Extras,
     has_assets:bool,
     problems:core.Problems,
 }
@@ -63,6 +59,7 @@ lights_fixture_init :: proc(t:^testing.T,f:^Lights_Fixture,folder:string="") -> 
 @(private="file")
 lights_fixture_destroy :: proc(f:^Lights_Fixture) {
     if f.has_assets {host.assets_destroy(&f.assets)}
+    host.extras_free(&f.extras)
     particle_sync_free(&f.sync)
     test_world_destroy(&f.w)
 }
@@ -88,25 +85,10 @@ lights_fixture_step :: proc(f:^Lights_Fixture,time:core.Time) {
         core.commands_of(test_world_ref(&f.w)),&f.clocks,&f.sync,&f.requests,&f.births,
         core.read(&f.listeners),time,{dt=time.dt,alpha=1},a,&f.problems,core.ref(&f.sources))
     test_world_settle(&f.w)
-    particles_lights(test_world_ref(&f.w),core.read(&f.emitters),core.read(&f.overrides),
+    f.extras.light_count=0
+    particles_lights(core.read(&f.emitters),core.read(&f.overrides),
         core.read(&f.worlds),core.read(&f.hidden),core.read(&f.parents),core.ref(&f.clocks),
-        core.ref(&f.settings),&f.lights,core.ref(&f.sources),a)
-    test_world_settle(&f.w)
-    core.transforms_propagate(core.read(&f.transforms),core.ref(&f.hierarchy),&f.worlds,
-        &f.propagation,&f.jumps,{dt=time.dt,phase=.Late})
-    test_world_settle(&f.w)
-}
-
-@(private="file")
-active_point_lights :: proc(f:^Lights_Fixture) -> (count:int,total_intensity:f32) {
-    for row in 0..<core.count(&f.points) {
-        p:=core.at(&f.points,row)
-        if p.intensity>0 && p.range>0 {
-            count+=1
-            total_intensity+=p.intensity
-        }
-    }
-    return
+        core.ref(&f.settings),core.ref(&f.sources),a,&f.extras)
 }
 
 // Table-driven check: particle light emission obeys effect config (color,
@@ -195,27 +177,24 @@ particle_lights_follow_effect_config_particle_life_and_emitter_state :: proc(t:^
             lights_fixture_step(f,now)
             now.seconds+=f64(c.dt)
         }
-        count,total:=active_point_lights(f)
-        testing.expectf(t,count==c.want_active,"%s: active lights=%d want=%d",c.name,count,c.want_active)
-        testing.expectf(t,int(f.lights.active_count)==c.want_active,"%s: storage active_count=%d want=%d",c.name,f.lights.active_count,c.want_active)
+        submitted:=host.extras_lights(&f.extras)
+        testing.expectf(t,len(submitted)==c.want_active,"%s: active lights=%d want=%d",c.name,len(submitted),c.want_active)
         if c.want_active>0 {
-            testing.expectf(t,total>=c.want_intensity_lo && total<=c.want_intensity_hi,"%s: intensity=%f not in [%f,%f]",c.name,total,c.want_intensity_lo,c.want_intensity_hi)
-            slot:=f.lights.slots[0]
-            testing.expectf(t,slot.light.range>=c.want_range_lo && slot.light.range<=c.want_range_hi,"%s: range=%f not in [%f,%f]",c.name,slot.light.range,c.want_range_lo,c.want_range_hi)
-            testing.expectf(t,slot.light.shadows==c.want_shadows,"%s: shadows=%v want=%v",c.name,slot.light.shadows,c.want_shadows)
+            l:=submitted[0]
+            testing.expectf(t,l.intensity>=c.want_intensity_lo && l.intensity<=c.want_intensity_hi,"%s: intensity=%f not in [%f,%f]",c.name,l.intensity,c.want_intensity_lo,c.want_intensity_hi)
+            testing.expectf(t,l.range>=c.want_range_lo && l.range<=c.want_range_hi,"%s: range=%f not in [%f,%f]",c.name,l.range,c.want_range_lo,c.want_range_hi)
+            testing.expectf(t,!l.shadowless==c.want_shadows,"%s: shadows=%v want=%v",c.name,!l.shadowless,c.want_shadows)
             for axis in 0..<3 {
-                testing.expectf(t,math.abs(slot.light.color[axis]-c.want_color[axis])<0.12,"%s: color[%d]=%f want~%f",c.name,axis,slot.light.color[axis],c.want_color[axis])
+                testing.expectf(t,math.abs(l.color[axis]-c.want_color[axis])<0.12,"%s: color[%d]=%f want~%f",c.name,axis,l.color[axis],c.want_color[axis])
             }
-            // World_Transform was propagated to the emitter's position.
-            wt,placed:=core.get(&f.worlds,slot.entity)
-            testing.expectf(t,placed && math.abs(wt.transform.position.x-2)<0.05 && math.abs(wt.transform.position.z-4)<0.05,"%s: light world pos=%v",c.name,wt.transform.position)
+            testing.expectf(t,math.abs(l.position.x-2)<0.05 && math.abs(l.position.z-4)<0.05,"%s: light world pos=%v",c.name,l.position)
         }
     }
 }
 
 // Per-emitter and per-world budgets strictly cap active lights, prioritize
-// nearest simulation source then intensity, clean up on emitter destruction,
-// and allocate zero memory on steady ticks or when disabled.
+// nearest simulation source then intensity, spread across full shape radius/half-extent,
+// clean up on emitter destruction, and allocate zero memory on every frame.
 @(test)
 particle_lights_respect_budgets_cleanup_and_zero_stable_allocations :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"vfx-lights-budget")
@@ -227,6 +206,8 @@ particle_lights_respect_budgets_cleanup_and_zero_stable_allocations :: proc(t:^t
     multi_fx:=effect.PARTICLE_DEFAULTS
     multi_fx.rate=60
     multi_fx.lifetime={1.0,1.0}
+    multi_fx.shape=.Circle
+    multi_fx.shape_size={0.5,0,0}
     multi_fx.color_over_life={colors={{1,1,1,1},{1,1,1,1},{},{},{},{},{},{}},times={0,1,0,0,0,0,0,0}}
     multi_fx.size_over_life=effect.PARTICLE_CURVE_ONE
     multi_fx.light={color={1,0.8,0.5},intensity=300,range=8,max_lights=99} // clamped to EMITTER_LIGHTS_MAX
@@ -242,8 +223,7 @@ particle_lights_respect_budgets_cleanup_and_zero_stable_allocations :: proc(t:^t
         _=lights_fixture_emitter(f,{active=true,loop=true})
         lights_fixture_step(f,{playing=true,dt=1.0/60})
         testing.expect_value(t,f.clocks.lit_count,u32(0))
-        testing.expect_value(t,f.lights.pool_count,u32(0))
-        testing.expect_value(t,core.count(&f.points),0)
+        testing.expect_value(t,len(host.extras_lights(&f.extras)),0)
         tracker:mem.Tracking_Allocator
         mem.tracking_allocator_init(&tracker,context.allocator)
         defer mem.tracking_allocator_destroy(&tracker)
@@ -266,6 +246,7 @@ particle_lights_respect_budgets_cleanup_and_zero_stable_allocations :: proc(t:^t
         near:=lights_fixture_emitter(f,{particle=multi_id,active=true,loop=true},{1,0,0})
         mid:=lights_fixture_emitter(f,{particle=multi_id,active=true,loop=true},{5,0,0})
         far:=lights_fixture_emitter(f,{particle=multi_id,active=true,loop=true},{20,0,0})
+        _ = mid
         _ = far
 
         // World budget of 5: near takes 4 (EMITTER_LIGHTS_MAX), mid takes 1, far gets 0.
@@ -275,24 +256,29 @@ particle_lights_respect_budgets_cleanup_and_zero_stable_allocations :: proc(t:^t
             lights_fixture_step(f,now)
             now.seconds+=0.1
         }
-        active,_:=active_point_lights(f)
-        testing.expect_value(t,active,5)
-        testing.expect_value(t,f.lights.active_count,u32(5))
-        testing.expect_value(t,f.lights.pool_count,u32(5))
+        submitted:=host.extras_lights(&f.extras)
+        testing.expect_value(t,len(submitted),5)
         near_count,mid_count,far_count:=0,0,0
-        for s in 0..<int(f.lights.pool_count) {
-            if !f.lights.slots[s].active {continue}
-            switch f.lights.slots[s].owner {
-            case near: near_count+=1
-            case mid:  mid_count+=1
-            case far:  far_count+=1
+        max_near_radius:=f32(0)
+        for l in submitted {
+            switch {
+            case math.abs(l.position.x-1)<1.0:
+                near_count+=1
+                dx,dz:=l.position.x-1,l.position.z
+                max_near_radius=max(max_near_radius,math.sqrt(dx*dx+dz*dz))
+            case math.abs(l.position.x-5)<1.0:
+                mid_count+=1
+            case math.abs(l.position.x-20)<1.0:
+                far_count+=1
             }
         }
         testing.expect_value(t,near_count,EMITTER_LIGHTS_MAX)
         testing.expect_value(t,mid_count,1)
         testing.expect_value(t,far_count,0)
+        // Circle shape_size.x = 0.5 is radius directly (not halved to 0.25).
+        testing.expectf(t,math.abs(max_near_radius-0.5)<0.05,"circle light spread radius=%f want=0.5",max_near_radius)
 
-        // Steady-state ticks allocate zero memory (including budget reduction and restore).
+        // Steady-state frames allocate zero memory (including budget reduction and restore).
         tracker:mem.Tracking_Allocator
         mem.tracking_allocator_init(&tracker,context.allocator)
         defer mem.tracking_allocator_destroy(&tracker)
@@ -310,17 +296,16 @@ particle_lights_respect_budgets_cleanup_and_zero_stable_allocations :: proc(t:^t
             now.seconds+=0.1
         }
         testing.expect_value(t,tracker.total_allocation_count,i64(0))
-        active,_=active_point_lights(f)
-        testing.expect_value(t,active,5)
+        testing.expect_value(t,len(host.extras_lights(&f.extras)),5)
 
-        // Destroying near emitter cleans up its child lights and lets mid + far take budget.
+        // Destroying near emitter drops its lights and lets mid + far take budget.
         core.destroy(&f.entities,near)
         test_world_settle(&f.w)
         lights_fixture_step(f,now)
-        active,_=active_point_lights(f)
-        testing.expect_value(t,active,5)
-        for s in 0..<int(f.lights.pool_count) {
-            testing.expect(t,f.lights.slots[s].owner!=near)
+        submitted=host.extras_lights(&f.extras)
+        testing.expect_value(t,len(submitted),5)
+        for l in submitted {
+            testing.expect(t,math.abs(l.position.x-1)>1.0,"destroyed emitter submits no light")
         }
 
         // Particle_Override can enable or boost light on an instance.
@@ -336,10 +321,9 @@ particle_lights_respect_budgets_cleanup_and_zero_stable_allocations :: proc(t:^t
         now.seconds+=0.2
         lights_fixture_step(f,now)
         found_override:=false
-        for s in 0..<int(f.lights.pool_count) {
-            if f.lights.slots[s].active && f.lights.slots[s].owner==override_emitter {
+        for l in host.extras_lights(&f.extras) {
+            if math.abs(l.position.x-0.5)<0.1 && l.intensity>0 && l.color.b>l.color.r {
                 found_override=true
-                testing.expect(t,f.lights.slots[s].light.intensity>0 && f.lights.slots[s].light.color.b>f.lights.slots[s].light.color.r)
             }
         }
         testing.expect(t,found_override,"Particle_Override light fields emit a dynamic point light")

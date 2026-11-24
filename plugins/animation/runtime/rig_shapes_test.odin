@@ -438,4 +438,25 @@ pose_correctives_drive_helper_bones_validate_hostile_inputs_and_stay_allocation_
     copy(playing_pose(&state,.Local),state.rest[:])
     testing.expect(t,!test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
     testing.expect(t,core.problem_find(&problems,rig,"animation.rig_bind")!=nil)
+
+    // Chained correctives listed in reverse dependency order (B before A, where A drives joint2
+    // and B reads joint2) run in topological order so B sees A's rotated pose on the same tick.
+    chain_a:=POSE_CORRECTIVE_DEFAULT
+    base.text_set(chain_a.name[:],"chain_a")
+    chain_a.driver,chain_a.bone=bone_ref("joint1"),bone_ref("joint2")
+    chain_a.mode=.Twist;chain_a.axis={1,0,0};chain_a.min_angle=0;chain_a.max_angle=mm.PI*0.5
+    chain_a.rotation=mm.quat_axis_angle({0,1,0},mm.PI*0.5)
+    chain_b:=POSE_CORRECTIVE_DEFAULT
+    base.text_set(chain_b.name[:],"chain_b")
+    chain_b.driver,chain_b.bone=bone_ref("joint2"),bone_ref("joint3")
+    chain_b.mode=.Twist;chain_b.axis={0,1,0};chain_b.min_angle=0;chain_b.max_angle=mm.PI*0.5
+    chain_b.position={0,0.2,0}
+    test_modifier_profile(&modifiers,&characters,rig,{correctives={chain_b,chain_a}})
+    problems={}
+    copy(playing_pose(&state,.Local),state.rest[:])
+    playing_pose(&state,.Local)[1].rotation=mm.quat_axis_angle({1,0,0},mm.PI*0.5)
+    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect_value(t,problems.count,0)
+    testing.expectf(t,linalg.length(playing_pose(&state,.Local)[3].position-(state.rest[3].position+chain_b.position))<1e-5,
+        "reverse-listed chain B saw A's rotation: got %v want %v",playing_pose(&state,.Local)[3].position,state.rest[3].position+chain_b.position)
 }

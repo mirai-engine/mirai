@@ -756,8 +756,9 @@ runtime_jump_and_acceleration_scales_apply_without_editing_walk :: proc(t:^testi
         testing.expectf(t,-loco_velocity(f).z<WALK_DEFAULT.max_speed-0.05,"accel_scale %v short a tick early: %v",c.scale,loco_velocity(f))
         loco_test_tick(f,{0,0,-1},1)
         testing.expectf(t,near(-loco_velocity(f).z,WALK_DEFAULT.max_speed,0.05),"accel_scale %v reaches max_speed in %d ticks: %v",c.scale,ticks,loco_velocity(f))
+        braking:=WALK_DEFAULT.braking*c.scale
         state:=loco_state(f)
-        testing.expectf(t,near(state.acceleration,accel,1e-3) && near(state.braking,WALK_DEFAULT.braking,1e-3),"accel_scale %v publishes accel %v and keeps braking %v",c.scale,state.acceleration,state.braking)
+        testing.expectf(t,near(state.acceleration,accel,1e-3) && near(state.braking,braking,1e-3),"accel_scale %v publishes accel %v and braking %v",c.scale,state.acceleration,state.braking)
         testing.expect_value(t,f.problems.count,0)
     }
 

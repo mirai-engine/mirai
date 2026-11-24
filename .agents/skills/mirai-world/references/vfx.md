@@ -84,21 +84,20 @@ core.push(&births.queue, core.Birth{
 
 `Particle_Info.light` (`effect.Particle_Light`: `color`, `intensity`, `range`, `radius`,
 `max_lights`, `shadows`, `indirect`, `scattering`) lets a `.particle` effect emit dynamic CPU
-`erender.Point_Light`s without GPU readback or single-writer conflicts:
+local lights without GPU readback or single-writer conflicts:
 
 - **Zero cost when off**: `intensity <= 0` or `range <= 0` sets `Emission.has_light = false`;
-  when `Particle_Clocks.lit_count == 0` and `Particle_Lights.active_count == 0`,
-  `particles_lights` (`late`, `stage="intent"`, before `transforms_propagate` and `render_sync`)
+  when `Particle_Clocks.lit_count == 0`, `particles_lights` (`render`, before `render_sync`)
   returns immediately.
-- **Bounded preallocated pool**: up to `EMITTER_LIGHTS_MAX` (4) concurrent lights per emitter and
+- **Direct per-frame submission**: up to `EMITTER_LIGHTS_MAX` (4) concurrent lights per emitter and
   `min(Particle_Settings.max_lights, PARTICLE_LIGHTS_MAX)` (32) per world, ranked deterministically
-  by distance to `scene.Simulation_Sources`, then intensity, then entity. Transient child entities
-  (no `core.Id`, parented to the emitter) never enter scenes, outliner, or editor history, and park
-  at zero intensity when idle for zero stable-tick allocations.
+  by distance to `scene.Simulation_Sources`, then intensity, then entity, submitted into
+  `host.Frame_Extras` via `erender.light_add` with zero entities, zero component writes and zero
+  allocations.
 - **Driven by life and state**: sample ages come from `Emitter_Clock.births`; `color_over_life`
   modulates color and intensity (falling back to the midpoint of `colors` when `light.color` is
-  zero), `size_over_life` scales `range`, and hidden, culled, done, or destroyed emitters release
-  their slots automatically.
+  zero), `size_over_life` scales `range`, and hidden, culled, done, or destroyed emitters simply
+  stop submitting lights on the next frame.
 
 ## Animation spans
 

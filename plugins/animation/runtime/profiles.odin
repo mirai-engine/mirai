@@ -96,6 +96,8 @@ Modifier_Rig :: struct {
     multi_states:[dynamic]Multi_IK_Binding,
     spline_states:[dynamic]Spline_IK_Binding,
     corrective_states:[dynamic]Corrective_Binding,
+    corrective_order:[dynamic]u16,
+    corrective_order_count:u16,
     follow_states:[dynamic]Follow_Binding,
     curve_pose_states:[dynamic]Curve_Binding,
 }
@@ -118,7 +120,7 @@ modifier_rig_free :: proc(rig:^Modifier_Rig) {
     delete(rig.grounding)
     free_states(rig.twist_states);free_states(rig.spring_states)
     free_states(rig.multi_states)
-    free_states(rig.spline_states);delete(rig.corrective_states);free_states(rig.follow_states)
+    free_states(rig.spline_states);delete(rig.corrective_states);delete(rig.corrective_order);free_states(rig.follow_states)
     delete(rig.curve_pose_states)
     rig^={}
 }
@@ -176,6 +178,7 @@ modifier_rig_prepare :: proc(rig:^Modifier_Rig,pose:Pose_Profile,id:base.Asset_I
         resize(&next.multi_states,len(pose.multi_ik))!=nil ||
         resize(&next.spline_states,len(pose.spline_ik))!=nil ||
         resize(&next.corrective_states,len(pose.correctives))!=nil ||
+        resize(&next.corrective_order,len(pose.correctives))!=nil ||
         resize(&next.follow_states,len(pose.follow))!=nil ||
         resize(&next.curve_pose_states,len(pose.curve_poses))!=nil {return false}
     if !modifier_controls_prepare(&next,rig,pose) {return false}

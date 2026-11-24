@@ -306,7 +306,10 @@ timer_end :: proc(t:^Tick,e:core.Entity,timer:^Ability_Timer) {
 base_add :: proc(t:^Tick,e:core.Entity,u:^Actor,index:int,amount:f32,spend:=false) {
     entry:=u.user.attributes[index]
     if spend && amount<0 && entry.regen_delay>0 {
-        core.edit_at(t.tracking,u.track_row).regen_at[index]=core.deadline(t.w.time,entry.regen_delay)
+        next_at:=core.deadline(t.w.time,entry.regen_delay)
+        if next_at!=u.track.regen_at[index] {
+            core.edit_at(t.tracking,u.track_row).regen_at[index]=next_at
+        }
     }
     value:=clamp_base(entry,entry.base+amount)
     if !finite(value) {value=max(f32) if value>0 else 0}
@@ -335,7 +338,8 @@ buffer_add :: proc(t:^Tick,u:^Actor,ability:core.Record(Ability),running:bool) {
             if b.tick<u.track.buffer[slot].tick {slot=i}
         }
     }
-    core.edit_at(t.tracking,u.track_row).buffer[slot]={ability=ability,tick=t.tick,run=u.state.start,running=running && u.state.ability!={}}
+    run:=u.state.start+1 if running && u.state.ability!={} else 0
+    core.edit_at(t.tracking,u.track_row).buffer[slot]={ability=ability,tick=t.tick,run=run}
 }
 
 @(private)
@@ -406,7 +410,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     buffer:=ticks_of(kit.buffer,t.dt) if kit!=nil else 0
     for &b,i in u.track.buffer {
         if b.ability=={} || t.tick<=b.tick || t.tick-b.tick<=buffer {continue}
-        if b.running && u.state.ability!={} && u.state.start==b.run {continue}
+        if b.run!=0 && u.state.ability!={} && u.state.start+1==b.run {continue}
         core.edit_at(t.tracking,u.track_row).buffer[i]={}
     }
     for entry,i in u.user.attributes {
@@ -814,26 +818,25 @@ time_advance :: proc(t:^Tick,e:core.Entity,u:^Actor) -> (before:Ability_Time) {
 }
 
 // Updates state.span_open from Animation_Events (.Span_Begin / .Span_End) for clip-span-bound
-// windows of the running ability a of entity e.
+// windows of the running ability a of entity e. When a.action is set, only events from that
+// action match (unnamed clips are ignored); when a.action is empty, any action or clip matches.
 @(private)
 span_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at_local:i64) {
     if t.w.anim_events.ptr==nil || len(t.w.anim_events.items)==0 {return}
-    has_span:=false
-    for &w in a.windows {if w.span[0]!=0 {has_span=true;break}}
-    if !has_span {return}
-    action_name:=ability_name_text(&a.action)
-    action_hash:=base.name_hash(action_name) if action_name!="" else 0
+    row:=record_row(t.abilities,u.state.ability)
+    if row<0 || row>=len(t.sheets.ability_spans) {return}
+    cached:=&t.sheets.ability_spans[row]
+    if !cached.any {return}
     spans:=u.state.span_open
     for ev in t.w.anim_events.items {
         if ev.entity!=e || (ev.kind!=.Span_Begin && ev.kind!=.Span_End) {continue}
-        if action_hash!=0 && ev.action!=0 && ev.action!=action_hash {continue}
-        for &w,i in a.windows {
-            if w.span[0]==0 {continue}
-            if base.name_hash(base.text_get(w.span[:]))!=ev.name {continue}
+        if cached.action!=0 && ev.action!=cached.action {continue}
+        for hash,i in cached.windows {
+            if hash==0 || hash!=ev.name {continue}
             bit:=u16(1)<<u16(i)
             if ev.kind==.Span_Begin {
                 if spans&bit==0 {
-                    core.edit_at(t.tracking,u.track_row).span_start[i]=u16(clamp(at_local,0,i64(max(u16))))
+                    core.edit_at(t.tracking,u.track_row).span_start[i]=u32(clamp(at_local,0,i64(max(u32))))
                 }
                 spans|=bit
             } else {

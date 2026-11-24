@@ -202,7 +202,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     r.attributes=attributes[:]
     buffer:=make([dynamic]Buffer_Result,call.allocator)
     for b in track.buffer {
-        if b.ability!={} {append(&buffer,Buffer_Result{row_name(abilities,b.ability),f32(time.tick-b.tick)*dt if time.tick>=b.tick else 0,b.running && state.ability!={} && state.start==b.run})}
+        if b.ability!={} {append(&buffer,Buffer_Result{row_name(abilities,b.ability),f32(time.tick-b.tick)*dt if time.tick>=b.tick else 0,b.run!=0 && state.ability!={} && state.start+1==b.run})}
     }
     r.buffer=buffer[:]
     cooldowns:=make([dynamic]Cooldown_Result,call.allocator)

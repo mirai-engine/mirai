@@ -19,7 +19,6 @@ ABILITY_CONDITIONS :: 4
 ABILITY_COSTS :: 4
 ABILITY_NAME :: 64
 ABILITY_SPAN_NAME :: 32
-HITBOX_TARGET_EFFECTS :: 4
 KIT_ABILITIES :: 32
 ATTRIBUTE_ENTRIES :: 8
 USER_HITS :: 16
@@ -187,8 +186,8 @@ Ability_Attribute_Entry :: struct {
     regen_delay:f32 `mirai:"min=0,unit=s"`, // seconds after the last cost or negative effect before positive regen resumes
 }
 
-// An input waits while the ability that started at run is still running, if requested.
-Ability_Buffered :: struct {ability:core.Record(Ability),tick,run:u64,running:bool}
+// An input waits while the ability that started at run-1 is still running (run == 0: buffer only).
+Ability_Buffered :: struct {ability:core.Record(Ability),tick,run:u64}
 Ability_Cooldown :: struct {ability:core.Record(Ability),until:u64}
 
 Ability_Timer :: struct {
@@ -243,7 +242,7 @@ Ability_Tracking :: struct {
     cooldowns:[USER_COOLDOWNS]Ability_Cooldown `mirai:"readonly,hidden"`,
     timers:[USER_TIMERS]Ability_Timer `mirai:"readonly,hidden"`,
     regen_at:[ATTRIBUTE_ENTRIES]u64 `mirai:"readonly,hidden"`, // tick from which entry i may regenerate after being spent
-    span_start:[ABILITY_WINDOWS]u16 `mirai:"readonly,hidden"`, // local tick offset when span-bound window i opened
+    span_start:[ABILITY_WINDOWS]u32 `mirai:"readonly,hidden"`, // local tick offset when span-bound window i opened
 }
 
 Ability_Request_Kind :: enum u8 {Use,Cancel,Effect,Kit}

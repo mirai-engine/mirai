@@ -394,6 +394,8 @@ instance_colors_set :: proc(renderer:^Renderer,index:int,colors:Colors_Handle) -
 }
 // Visual instances for this frame, without an entity of their own in the renderer.
 instance_add :: proc(extras:^host.Frame_Extras,instances:..Instance_Desc) -> bool {return host.extras_instance_add(extras,..instances)}
+// Local lights for this frame, without an entity of their own in the world.
+light_add :: proc(extras:^host.Frame_Extras,light:Light_Desc) -> bool {return host.extras_light_add(extras,light)}
 
 Highlight_Levels :: gpu.Highlight_Levels
 
