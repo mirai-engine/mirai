@@ -196,9 +196,11 @@ Slot saves in `<user_folder>/saves/<slot>.save` (`saves_serve`, `input`, game on
   `request_checkpoint`/`load_checkpoint`, `request_autosave`, `request_load`, `request_delete`,
   `request_new_game`, `request_end_game`, `request_label` (`Invalid_Slot`/`Invalid_Label`).
 - **Format & thumbnails:** header + PNG thumbnail + `scene.capture` (IDed entities, non-transient
-  fields, `save_prepare` hook; storages not saved—persist in components) + borrowed ids. Captures
-  immediately; waits up to `THUMBNAIL_WAIT` frames for view thumbnail then writes atomically in a
-  job. `thumbnail_texture` / `thumbnail_release` display slot thumbnails in `.ui`
+  fields, `save_prepare` hook; storages not saved—persist in components) + borrowed ids. Hooks run
+  on a partial snapshot copying only entities and their own library's tables (hooks may only write
+  components of their own library; unsettled worlds still copy whole). Captures immediately; waits
+  up to `THUMBNAIL_WAIT` frames for view thumbnail then compresses (MDC2) and writes atomically in
+  a job. `thumbnail_texture` / `thumbnail_release` display slot thumbnails in `.ui`
   (`THUMBNAIL_TEXTURES` cap).
 - **Autosave & load:** `Save_Settings` rotates `autosave 1..N` on interval, scene change or `Manual`
   section activation (server/singleplayer only, never when `Save_Game` is off). Loading swaps world
