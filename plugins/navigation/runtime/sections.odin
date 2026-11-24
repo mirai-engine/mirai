@@ -37,17 +37,28 @@ section_key :: proc "contextless" (ids:^core.Table(core.Id,$A),e:core.Entity) ->
     return u64(e)|u64(1)<<63
 }
 
-sections_gather :: proc(references:^core.Table(scene.Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B),ids:^core.Table(core.Id,$C)) -> (s:Nav_Sections) {
+// Past NAV_SECTIONS_MAX sections with a box, the rest are not seen: a
+// problem names the first of them and how many there are.
+sections_gather :: proc(references:^core.Table(scene.Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B),ids:^core.Table(core.Id,$C),problems:^core.Problems) -> (s:Nav_Sections) {
+    first:=core.NONE
+    dropped:=0
     for row in 0..<core.count(references) {
-        if s.count==NAV_SECTIONS_MAX {break}
         reference:=core.at(references,row)
         e:=core.entity_at(references,row)
         pose,placed:=core.get(worlds,e)
         if !placed {continue}
         box:=scene.section_bounds(reference,pose.transform)
         if mm.aabb_is_empty(box) {continue}
-        s.items[s.count]={box=box,key=section_key(ids,e),here=reference.loaded!={} && reference.state==.Active}
+        if s.count==NAV_SECTIONS_MAX {
+            if dropped==0 {first=e}
+            dropped+=1
+            continue
+        }
+        s.items[s.count]={box=box,key=section_key(ids,e),here=reference.loaded!={} && scene.section_state(reference)==.Active}
         s.count+=1
+    }
+    if dropped>0 {
+        core.report(problems,first,"navigation.sections","%d sections with a box past the %d navigation sees, from this one (key %x) on: their tiles do not wait for them. Merge sections or give fewer of them extents",dropped,NAV_SECTIONS_MAX,section_key(ids,first))
     }
     h:=u64(s.count)
     for &item in s.items[:s.count] {

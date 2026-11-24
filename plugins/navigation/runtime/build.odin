@@ -509,7 +509,7 @@ navigation_build :: proc(
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
     // A section away is not loaded: like the terrain that is not, its tiles wait for it.
     if core.touched(references,&b.sections_tables[0]) | core.touched(worlds,&b.sections_tables[1]) | core.touched(ids,&b.sections_tables[2]) || !n.ready {
-        b.sections=sections_gather(references,worlds,ids)
+        b.sections=sections_gather(references,worlds,ids,problems)
         b.looked+=u64(core.count(references))
     }
     q:=core.ground_query(world,ground)

@@ -83,7 +83,7 @@ prefab_variants_build :: proc(s:^Session) {
     current:=s.document.id
     if a==nil || s.content==nil {return}
     content_registry_read(s.content,&a.registry,content_plugin_kinds(s),&a.types)
-    chain:=prefab_variant_chain(s,current)
+    chain:=prefab_variant_chain_kept(s,current)
     top:=len(chain)>0?chain[len(chain)-1]:current
     label:="Prefab"
     if file,_,found:=prefab_file(s,current);found {label=asset_name(file.path)}

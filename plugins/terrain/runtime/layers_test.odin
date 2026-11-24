@@ -56,6 +56,37 @@ painted_weights_stay_normalized_and_keep_the_proportions_of_the_other_layers :: 
     testing.expect(t,!weights_full(Weights(u32(3|3<<WEIGHT_LAYER_BITS)|128<<WEIGHT_VALUES_SHIFT|127<<(WEIGHT_VALUES_SHIFT+8))))
 }
 
+// A sample keeps its three heaviest layers: painting a fourth into one that
+// holds three displaces its lightest, which the change names; painting one it
+// holds, or into one with a free slot, displaces none.
+@(test)
+painting_a_fourth_layer_into_a_sample_names_the_one_it_displaced :: proc(t:^testing.T) {
+    Case :: struct {old:Weights,layer:int,amount:f32,displaced:Layer_Set}
+    cases:=[]Case{
+        {weights_of({4,9,20},{100,90,65}),30,0.5,{20}},
+        {weights_of({4,9,20},{100,90,65}),9,0.5,{}},
+        {weights_of({4,9,0},{128,127,0}),30,0.5,{}},
+        {weights_of({4,9,20},{100,90,65}),30,-0.5,{}},
+    }
+    for c,i in cases {
+        next:=weights_paint(c.old,c.layer,c.amount,LAYERS_MAX)
+        testing.expectf(t,weights_displaced(c.old,next,c.layer)==c.displaced,"case %d: %v",i,weights_displaced(c.old,next,c.layer))
+    }
+    // A stroke: three layers over the whole terrain, a fourth painted at one corner.
+    s:Source;defer source_destroy(&s)
+    if !testing.expect(t,source_make(&s,.Heightfield,{9,1,9},1,4)) {return}
+    for i in 0..<4 {testing.expect(t,source_layer_set(&s,i,LAYER_DEFAULT))}
+    for z in 0..<9 {for x in 0..<9 {
+        testing.expect(t,grid_prepare(&s.weights,{x,0,z},{x,0,z},s.allocator))
+        grid_write(&s.weights,{x,0,z},weights_of({0,1,2},{100,90,65}))
+    }}
+    corner:=source_origin(&s)+[3]f32{1,0,1}
+    change:=source_edit(&s,{kind=.Paint,center=corner,radius=1.5,amount=0.6,layer=3})
+    testing.expect(t,change.changed && change.displaced==Layer_Set{2},fmt.tprint(change.displaced))
+    change=source_edit(&s,{kind=.Paint,center=corner,radius=1.5,amount=0.6,layer=0})
+    testing.expect(t,change.changed && change.displaced=={},fmt.tprint(change.displaced))
+}
+
 // The ground gives the four layers that weigh most at a point, by material:
 // layers of one material add up, and what the rest weigh goes to them.
 @(test)

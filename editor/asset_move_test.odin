@@ -285,6 +285,74 @@ a_folder_moves_and_copies_with_all_it_holds :: proc(t:^testing.T) {
     testing.expect_value(t,len(r.duplicates),0)
 }
 
+// A move lists the string literals of the code of the project that name an
+// old path, file and line, in the API result and the toast; a folder those
+// of every asset in it. It changes no source and lists nothing without one.
+@(test)
+a_move_lists_the_code_that_names_the_old_path :: proc(t:^testing.T) {
+    m:=new(Move_Test,context.temp_allocator)
+    if !move_test_open(t,m,"asset-move-sources") {return}
+    defer move_test_close(m)
+    s:=&m.s
+    testing.expect_value(t,asset_create(s,asset.KIND_SCENE,"levels/a.scene",MOVE_TEST_START),"")
+    move_test_texture(t,m,"levels/maps/ground.tex",MOVE_TEST_TEXTURE)
+    move_test_texture(t,m,"quiet.tex",MOVE_TEST_OTHER)
+    host.assets_scan(&m.assets)
+    game:=project.path(m.root,"game",allocator=context.temp_allocator)
+    tools:=project.path(m.root,"plugins","tools","runtime",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(game)==nil && os.make_directory_all(tools)==nil)
+    main_text:="package game\n\nstart :: proc() {\n    scene.load(w,app,\"levels/a.scene\")\n    _=\"levels/a.scenes\"\n}\n"
+    tools_text:="package tools\n\nGROUND :: \"levels/maps/ground.tex\" // \"levels/a.scene\"\n"
+    main_file:=project.path(game,"main.odin",allocator=context.temp_allocator)
+    tools_file:=project.path(tools,"tools.odin",allocator=context.temp_allocator)
+    testing.expect(t,os.write_entire_file(main_file,main_text)==nil && os.write_entire_file(tools_file,tools_text)==nil)
+    Hit :: struct {file:string,line:int,path:string}
+    hits_of :: proc(result:Api_Asset_Moved_Result) -> []Hit {
+        out:=make([]Hit,len(result.sources),context.temp_allocator)
+        for hit,i in result.sources {out[i]={hit.file,hit.line,hit.path}}
+        slice.sort_by(out,proc(a,b:Hit) -> bool {return a.file<b.file || a.file==b.file && a.line<b.line})
+        return out
+    }
+    run :: proc(s:^Session,asset_name,folder,name:string) -> (result:Api_Asset_Moved_Result,call:api.Call) {
+        params:Api_Asset_Move_Params
+        base.text_set(params.asset[:],asset_name)
+        base.text_set(params.folder[:],folder)
+        base.text_set(params.name[:],name)
+        method:=api.Method{params_id=Api_Asset_Move_Params,result_id=Api_Asset_Moved_Result}
+        call=api.Call{method=&method,params=&params,result=&result,allocator=context.temp_allocator}
+        api_asset_move(s,&call)
+        call.method,call.params,call.result=nil,nil,nil
+        return
+    }
+
+    Case :: struct {asset,folder,name:string,hits:[]Hit}
+    cases:=[]Case{
+        // An asset: the literal that is its old path, not one that starts with it.
+        {"levels/a.scene","levels","b",{{"game/main.odin",4,"levels/a.scene"},{"plugins/tools/runtime/tools.odin",3,"levels/a.scene"}}},
+        // No literal names it: no list and no toast.
+        {"quiet.tex","","loud",{}},
+        // A folder: every asset under it, each by its old path.
+        {"levels","","world",{{"plugins/tools/runtime/tools.odin",3,"levels/maps/ground.tex"}}},
+    }
+    for c in cases {
+        s.toast_length=0
+        result,call:=run(s,c.asset,c.folder,c.name)
+        testing.expect(t,!call.failed,call.error.message)
+        got:=hits_of(result)
+        testing.expectf(t,slice.equal(got,c.hits),"%s: %v",c.asset,got)
+        toast:=string(s.toast[:s.toast_length])
+        if len(c.hits)==0 {
+            testing.expect_value(t,toast,"")
+        } else {
+            for hit in c.hits {testing.expectf(t,strings.contains(toast,fmt.tprintf("%s:%d",hit.file,hit.line)),"%s",toast)}
+        }
+    }
+    // It only read: the sources are as they were.
+    main_after,_:=os.read_entire_file(main_file,context.temp_allocator)
+    tools_after,_:=os.read_entire_file(tools_file,context.temp_allocator)
+    testing.expect(t,string(main_after)==main_text && string(tools_after)==tools_text)
+}
+
 // The API names an asset by its path or its id and a folder by its path,
 // answers with where it is and its id, and says what failed.
 @(test)

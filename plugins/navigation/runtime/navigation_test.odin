@@ -535,13 +535,13 @@ the_tiles_of_a_section_that_streams_wait_for_it_to_be_on :: proc(t:^testing.T) {
     nav_test_settled(t,&f)
     built:=f.nav.stats.built+f.nav.stats.emptied
     // It goes off and its wall with it: nothing is built there.
-    core.edit(&f.references,section).state=.Loaded
+    core.edit(&f.references,section).streamed=.Loaded
     core.destroy(&f.entities,wall)
     nav_test_settled(t,&f)
     _,status:=nav_test_path(t,&f,{-5,0,0},{5,0,0})
     testing.expect_value(t,status,ai.Search_Status.No_Path)
     testing.expect_value(t,f.nav.stats.built+f.nav.stats.emptied,built)
-    core.edit(&f.references,section).state=.Active
+    core.edit(&f.references,section).streamed=.Active
     nav_test_settled(t,&f)
     _,status=nav_test_path(t,&f,{-5,0,0},{5,0,0})
     testing.expect_value(t,status,ai.Search_Status.Found)

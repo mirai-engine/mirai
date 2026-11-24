@@ -143,6 +143,7 @@ Id_Result :: struct {
 Terrain_Edit_Result :: struct {
     changed:bool,
     touches:int `mirai:"optional"`,
+    displaced:[]string `mirai:"optional,label=Of paint: the layers some sample lost to the one painted, as a sample keeps its three heaviest; paint them again where they are wanted, or paint less of this one there"`,
 }
 
 Terrain_Layer_Result :: struct {
@@ -182,7 +183,7 @@ terrain_api_register :: proc(s:^editor.Session) {
     for &vein in interior_defaults.veins {vein.scale,vein.amount,vein.depth=4,0.3,{0,terrain.HEIGHT_LIMIT}}
     editor.api_method_register(s,{name="terrain.create",summary="Makes a terrain in the edited scene: a Heightfield (heights over x and z, for open ground) or a Volume (solid and air, for caves, overhangs and digging), flat or from a heightmap. One step of undo takes it and its .terrain away.",params=type_info_of(Create_Params),defaults=&create_defaults,result=type_info_of(Id_Result),run=api_create})
     editor.api_method_register(s,{name="terrain.edit",summary="One stroke of a brush of the terrain tool on a terrain, from at to to (or at alone), as one step of undo: sculpting (raise, lower, smooth, flatten, set_height, terrace, noise, erode, thermal, a ramp between at and to), painting a layer (paint, erase), holes (hole, fill) or a shape it joins or takes out (add, carve: a sphere at at, a capsule to to, or a box), on a Heightfield or a Volume alike. The error says what failed and what to use.",params=type_info_of(Edit_Params),defaults=&edit_defaults,result=type_info_of(Terrain_Edit_Result),run=api_edit})
-    editor.api_method_register(s,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to four.",params=type_info_of(Layer_Params),defaults=&layer_defaults,result=type_info_of(Terrain_Layer_Result),run=api_layer})
+    editor.api_method_register(s,{name="terrain.layer",summary="Adds, changes or takes out a material layer of a terrain, with its tiling, height blend and its automatic rule of slope and height, as one step of undo; what it is not given stays as it is. From one layer, which covers everything when the terrain is made, up to 32; each sample blends its three heaviest.",params=type_info_of(Layer_Params),defaults=&layer_defaults,result=type_info_of(Terrain_Layer_Result),run=api_layer})
     editor.api_method_register(s,{name="terrain.interior",summary="Sets what a Volume holds under its surface, as its layers, and writes it into every sample as one step of undo: strata down from the top of each column (grass, dirt, rock) and pockets or veins of noise over them (ore). The walls and floor of what is dug show it, and what a game digs reports it by layer (terrain.Terrain_Digs). What it is not given stays as it is.",params=type_info_of(Interior_Params),defaults=&interior_defaults,result=type_info_of(Terrain_Interior_Result),run=api_interior})
     editor.api_method_register(s,{name="terrain.sample",summary="What a terrain has under a point: the height and normal of its surface in the world, its slope, the weight of each of its layers there by its name (rules included) and whether it is a hole; while a game of the caller plays, in that game, with check, a hash of every value of its source, equal in two games that hold the same.",params=type_info_of(Sample_Params),flags={.Read_Only},result=type_info_of(Terrain_Sample_Result),run=api_sample})
     editor.api_method_register(s,{name="terrain.heightmap",summary="Imports a heightmap into a Heightfield Terrain as one step of undo, or exports its heights as a 16-bit PNG or R16 (the scale and offset it answers import it back) or as R32 floats; with layer, the weightmap of that layer instead.",params=type_info_of(Heightmap_Params),result=type_info_of(Terrain_Heightmap_Result),run=api_heightmap})
@@ -220,8 +221,8 @@ api_terrain :: proc(s:^editor.Session,call:^api.Call,named:[]u8) -> (tool:^Terra
 }
 
 @(private)
-api_changed_write :: proc(call:^api.Call,changed:bool,touches:int) {
-    api.call_result(call,Terrain_Edit_Result)^={changed,touches}
+api_changed_write :: proc(call:^api.Call,changed:bool,touches:int,displaced:[]string=nil) {
+    api.call_result(call,Terrain_Edit_Result)^={changed,touches,displaced}
 }
 
 @(private)
@@ -413,6 +414,7 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
     stroke.active=true
     defer if stroke.active {stroke_cancel(tool)}
     touches:=0
+    displaced:terrain.Layer_Set
     s.toast_length=0
     path:=p.to!={}
     // A ramp and a shape are one touch from at to to; the others touch along the stroke.
@@ -441,14 +443,17 @@ api_edit :: proc(s:^editor.Session,call:^api.Call) {
                 if change.error!=.None {api.call_failf(call,api.INVALID_PARAMS,"The terrain was not edited: %s",terrain.edit_error_fix(change.error,brush.kind));return}
                 if change.changed {stroke_brush_keep(tool,brush)}
                 stroke_changed(stroke,change)
+                displaced+=change.displaced
                 touches+=1
             }
         }
     }
     if !stroke.changed {stroke_cancel(tool);api_changed_write(call,false,touches);return}
+    names:=make([dynamic]string,call.allocator)
+    for layer in displaced {append(&names,strings.clone(layer_names(s,source)[layer],call.allocator))}
     stroke_end(s,tool,world,s.app.assets,label=fmt_label(kind,level),layered=true)
     if stroke.active || stroke.changed {editor.tool_call_fail(s,call,"The stroke could not be kept");return}
-    api_changed_write(call,true,touches)
+    api_changed_write(call,true,touches,names[:])
 }
 
 @(private)

@@ -1149,6 +1149,18 @@ prefab_variants_follow_their_base_and_apply_to_it :: proc(t:^testing.T) {
     chain:=prefab_variant_chain(s,variant)
     testing.expect(t,len(chain)==1 && chain[0]==crate)
     testing.expect_value(t,len(prefab_variant_chain(s,crate)),0)
+    // The toolbar keeps the chain of the document: frames that change nothing
+    // read no file, another prefab or a new state of the registry reads it again.
+    kept:=prefab_variant_chain_kept(s,variant)
+    reads:=f.prefabs.chain.reads
+    for _ in 0..<3 {kept=prefab_variant_chain_kept(s,variant)}
+    testing.expect(t,len(kept)==1 && kept[0]==crate && f.prefabs.chain.reads==reads)
+    testing.expect(t,len(prefab_variant_chain_kept(s,crate))==0 && f.prefabs.chain.reads==reads+1)
+    _=prefab_variant_chain_kept(s,variant)
+    testing.expect_value(t,f.prefabs.chain.reads,reads+2)
+    s.app.assets.registry.revision+=1
+    kept=prefab_variant_chain_kept(s,variant)
+    testing.expect(t,len(kept)==1 && kept[0]==crate && f.prefabs.chain.reads==reads+3)
     if loaded,found:=prefab_scene_load(s,variant);testing.expect(t,found) {
         base_id,based:=asset.prefab_variant_base(loaded)
         testing.expect(t,based && base_id==crate && len(loaded.overrides)==0)

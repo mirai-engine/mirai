@@ -1,6 +1,7 @@
 package project
 
 import "base:runtime"
+import "core:log"
 import "core:mem"
 import "core:os"
 import "core:strings"
@@ -124,12 +125,22 @@ settings_version_of :: proc(text:string) -> u64 {
     return !ok || negative?0:magnitude
 }
 
+// Whether the text of a file of the machine is of SETTINGS_VERSION; when it
+// is not, a warning says the file is ignored, since a person or an agent who
+// wrote it by hand cannot tell otherwise.
+settings_versioned :: proc(path,text:string) -> bool {
+    version:=settings_version_of(text)
+    if version==SETTINGS_VERSION {return true}
+    log.warnf("%s: settings version %d, this engine reads %d; the file is ignored and the next save writes it anew. Add \"%s\": %d as its first field to keep it",path,version,SETTINGS_VERSION,SETTINGS_VERSION_KEY,SETTINGS_VERSION)
+    return false
+}
+
 // A missing file leaves the settings as they are, and so does a file of the
-// machine of another version.
+// machine of another version, with a warning.
 settings_read :: proc(path:string,settings:[]Setting,versioned:=false) -> (result:Error) {
     data,file_error:=serial.file_read(path,context.temp_allocator)
     if file_error!=.None {result.code=file_error==.Not_Found?.None:.Read_Failed;return}
-    if versioned && settings_version_of(string(data))!=SETTINGS_VERSION {return}
+    if versioned && !settings_versioned(path,string(data)) {return}
     return settings_parse(string(data),settings)
 }
 
@@ -306,7 +317,7 @@ settings_merge :: proc(root,engine_root:string,machine:[]string,allocator:=conte
         data,file_error:=serial.file_read(file,context.temp_allocator)
         if file_error==.Not_Found {continue}
         if file_error!=.None {return "",{code=.Read_Failed},layer}
-        if layer==.Engine && settings_version_of(string(data))!=SETTINGS_VERSION {continue}
+        if layer==.Engine && !settings_versioned(file,string(data)) {continue}
         r:serial.Text_Reader
         serial.text_reader_init(&r,string(data),context.temp_allocator)
         if !merge_read(&r,&merged,0) || !serial.text_end(&r) {

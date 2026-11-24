@@ -38,7 +38,18 @@ Api_Asset_Move_Params :: struct {
 Api_Asset_Moved_Result :: struct {
     id:[base.ASSET_ID_TEXT]u8 `mirai:"text,label=The id of the asset: the same after a move and a new one for a copy; empty for a folder"`,
     path:[API_PATH_BYTES]u8 `mirai:"text,label=Where it is now under the asset folder"`,
+    sources:[]Asset_Source_Hit `mirai:"optional,label=Of a move: the string literals of the Odin sources of the project that name an old path, which the move does not change"`,
 }
+
+// A string literal of the code of the project that names the path an asset
+// had: game code that loads it by path (scene.load) no longer finds it.
+Asset_Source_Hit :: struct {
+    file:string `mirai:"label=The source, under the project folder"`,
+    line:int,
+    path:string `mirai:"label=The old path it names"`,
+}
+
+ASSET_SOURCE_HITS :: 32 // literals a move lists, past which it says how many more
 
 @(private)
 Asset_Move :: struct {from,to:string} // paths of the registry
@@ -99,7 +110,7 @@ asset_move_refusal :: proc(s:^Session,r:^asset.Registry,file:^asset.Registry_Fil
 // extension ("" keeps the one it has): renaming is moving to its own folder.
 // A part keeps where it is beside the asset. Returns where the asset is, or
 // what failed as how to correct it.
-asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,message:string) {
+asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string,hits:^[dynamic]Asset_Source_Hit=nil) -> (path,message:string) {
     r:=files_registry(s)
     if r==nil {return "","The editor has no asset folder it can change"}
     file,found:=asset.registry_find(r,id)
@@ -158,10 +169,13 @@ asset_move :: proc(s:^Session,id:base.Asset_Id,folder,name:string) -> (path,mess
         }
         return "",message
     }
+    olds:=make([dynamic]string,context.temp_allocator)
     for move in moves {
         asset_history_moved(s,asset.registry_file_path(r,move.from,context.temp_allocator),asset.registry_file_path(r,move.to,context.temp_allocator),false)
         asset_start_scene_moved(s,move.from,move.to,false)
+        append(&olds,move.from)
     }
+    asset_sources_moved(s,olds[:],hits)
     if pinned && listing!=pin.entry.folder {
         entry:=pin.entry
         entry.folder=listing
@@ -235,7 +249,7 @@ asset_folder_listed :: proc(r:^asset.Registry,folder:string) -> bool {
 
 // Moves the folder from, with all it holds, to folder under name ("" keeps
 // the one it has). Returns where it is, or what failed as how to correct it.
-asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:string) {
+asset_folder_move :: proc(s:^Session,from,folder,name:string,hits:^[dynamic]Asset_Source_Hit=nil) -> (path,message:string) {
     r,source,refusal:=asset_folder_subject(s,from)
     if refusal!="" {return "",refusal}
     into,refused:=asset_folder_clean(r,folder)
@@ -256,6 +270,10 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     to_root,to_rest,rooted:=import_root_of(s,r,path)
     pins:=asset_folder_pins(root,from_rest,to_rest)
     if len(pins)>0 && (!rooted || to_root.root!=root.root) {return "",fmt.tprintf("%s lists packages pinned in %s: give a folder of its assets",source,root.root)}
+    olds:=make([dynamic]string,context.temp_allocator)
+    for &file in r.files {
+        if file.state==.Asset && asset_path_inside(file.path,source) {append(&olds,strings.clone(file.path,context.temp_allocator))}
+    }
     full:=asset.registry_file_path(r,source,context.temp_allocator)
     target:=asset.registry_file_path(r,path,context.temp_allocator)
     if os.is_dir(full) {
@@ -264,6 +282,7 @@ asset_folder_move :: proc(s:^Session,from,folder,name:string) -> (path,message:s
     }
     asset_history_moved(s,full,target,true)
     asset_start_scene_moved(s,source,path,true)
+    asset_sources_moved(s,olds[:],hits)
     for entry in pins {
         if error:=sources.project_pin(root.root,&s.store,entry);error!=.None {
             message=fmt.tprintf("%s/%s could not be written (%v): the folder moved and some of its packages are listed where it was; check that the file is not read-only and move them",root.root,asset.PACKAGES_FILE,error)
@@ -480,6 +499,69 @@ asset_start_scene_moved :: proc(s:^Session,from,to:string,folder:bool) {
     }
 }
 
+// The string literals of the Odin sources of the project (its game, editor,
+// panels and plugins) that name a path in olds, the paths of the assets that
+// moved: game code that loads by path does not follow a move, so the move
+// lists where to look in hits, if given, and in a toast. It only reads.
+@(private)
+asset_sources_moved :: proc(s:^Session,olds:[]string,hits:^[dynamic]Asset_Source_Hit) {
+    if s.project_root=="" || len(olds)==0 {return}
+    found:=asset_source_hits(s.project_root,olds)
+    if len(found)==0 {return}
+    if hits!=nil {append(hits,..found)}
+    text:=strings.builder_make(context.temp_allocator)
+    fmt.sbprintf(&text,"The code names the old path; change it there:")
+    for hit,i in found {
+        if i==3 {
+            fmt.sbprintf(&text," and %d more",len(found)-i)
+            break
+        }
+        fmt.sbprintf(&text," %s:%d (%s)",hit.file,hit.line,hit.path)
+    }
+    notify(s,strings.to_string(text))
+}
+
+// The literals of the .odin files of the project at root that name a path in
+// olds; up to ASSET_SOURCE_HITS, in the temp allocator.
+@(private)
+asset_source_hits :: proc(root:string,olds:[]string) -> []Asset_Source_Hit {
+    hits:=make([dynamic]Asset_Source_Hit,context.temp_allocator)
+    names:=project.FOLDER_NAMES
+    for top in ([4]project.Folder{.Game,.Editor,.Panels,.Plugins}) {
+        start:=project.path(root,names[top],allocator=context.temp_allocator)
+        if !os.is_dir(start) {continue}
+        w:=os.walker_create(start)
+        defer os.walker_destroy(&w)
+        for info in os.walker_walk(&w) {
+            if info.type!=.Regular || !strings.has_suffix(info.name,".odin") {continue}
+            data,error:=os.read_entire_file(info.fullpath,context.temp_allocator)
+            if error!=nil {continue}
+            under,_:=strings.replace_all(info.fullpath[min(len(start)+1,len(info.fullpath)):],"\\","/",context.temp_allocator)
+            file:=strings.concatenate({names[top],"/",under},context.temp_allocator)
+            text:=string(data)
+            for line_number:=1;len(text)>0;line_number+=1 {
+                end:=strings.index_byte(text,'\n')
+                line:=text[:end] if end>=0 else text
+                text=text[len(line)+1:] if end>=0 else ""
+                for at:=strings.index_byte(line,'"');at>=0;at=strings.index_byte(line,'"') {
+                    line=line[at+1:]
+                    close:=strings.index_byte(line,'"')
+                    if close<0 {break}
+                    literal:=line[:close]
+                    line=line[close+1:]
+                    for old in olds {
+                        if literal!=old {continue}
+                        if len(hits)==ASSET_SOURCE_HITS {return hits[:]}
+                        append(&hits,Asset_Source_Hit{file=strings.clone(file,context.temp_allocator),line=line_number,path=strings.clone(literal,context.temp_allocator)})
+                        break
+                    }
+                }
+            }
+        }
+    }
+    return hits[:]
+}
+
 // ---------------------------------------------------------------- asset.move
 
 // What a call names: an asset by its id or path, or a folder of the assets.
@@ -500,7 +582,7 @@ api_asset_subject :: proc(call:^api.Call,r:^asset.Registry,name:string) -> (id:b
 }
 
 @(private)
-api_asset_moved :: proc(call:^api.Call,id:base.Asset_Id,path,message:string) {
+api_asset_moved :: proc(call:^api.Call,id:base.Asset_Id,path,message:string,hits:[]Asset_Source_Hit=nil) {
     if message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
@@ -508,6 +590,9 @@ api_asset_moved :: proc(call:^api.Call,id:base.Asset_Id,path,message:string) {
     result:=api.call_result(call,Api_Asset_Moved_Result)
     if id!={} {base.asset_id_format(id,result.id[:])}
     base.text_set(result.path[:],path)
+    sources:=make([]Asset_Source_Hit,len(hits),call.allocator)
+    for hit,i in hits {sources[i]={strings.clone(hit.file,call.allocator),hit.line,strings.clone(hit.path,call.allocator)}}
+    result.sources=sources
 }
 
 @(private)
@@ -547,11 +632,12 @@ api_asset_move :: proc(s:^Session,call:^api.Call) {
         api_asset_moved(call,made,path,message)
         return
     }
+    hits:=make([dynamic]Asset_Source_Hit,context.temp_allocator)
     if id=={} {
-        path,message:=asset_folder_move(s,folder,place,name)
-        api_asset_moved(call,{},path,message)
+        path,message:=asset_folder_move(s,folder,place,name,&hits)
+        api_asset_moved(call,{},path,message,hits[:])
         return
     }
-    path,message:=asset_move(s,id,place,name)
-    api_asset_moved(call,id,path,message)
+    path,message:=asset_move(s,id,place,name,&hits)
+    api_asset_moved(call,id,path,message,hits[:])
 }

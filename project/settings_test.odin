@@ -1,5 +1,6 @@
 package project
 
+import "core:log"
 import "core:os"
 import "core:strings"
 import "core:testing"
@@ -140,12 +141,27 @@ settings_files_of_the_machine_of_another_version_are_not_read :: proc(t:^testing
     engine_file:=settings_file(.Engine,root,engine,context.temp_allocator)
     sample:Sample
     settings:=[]Setting{{name="Sample",info=type_info_of(Sample),value=&sample,default=sample_default,machine=true}}
-    for text in ([]string{`{"version": 1, "Sample": {"scale": 9}, "Other": {"x": 1}}`,`{"Sample": {"scale": 9}, "Other": {"x": 1}}`}) {
-        testing.expect(t,os.write_entire_file(engine_file,text)==nil)
-        error,_:=settings_load(settings,root,engine)
-        testing.expect_value(t,error.code,Error_Code.None)
-        testing.expect_value(t,sample,SAMPLE_DEFAULT)
+    // Each load says once that the file is ignored, with its version and the one read.
+    Case :: struct {text,warning:string}
+    cases:=[]Case{
+        {`{"version": 1, "Sample": {"scale": 9}, "Other": {"x": 1}}`,"settings version 1, this engine reads 3; the file is ignored"},
+        {`{"Sample": {"scale": 9}, "Other": {"x": 1}}`,"settings version 0, this engine reads 3; the file is ignored"},
+        {`{"version": 3, "Sample": {"scale": 9}}`,""},
     }
+    for c in cases {
+        testing.expect(t,os.write_entire_file(engine_file,c.text)==nil)
+        warnings:=settings_test_warnings({settings,root,engine,false})
+        merged:=settings_test_warnings({settings,root,engine,true})
+        for got in ([2][]string{warnings,merged}) {
+            if c.warning=="" {
+                testing.expectf(t,len(got)==0,"%s: %v",c.text,got)
+            } else {
+                testing.expectf(t,len(got)==1 && strings.has_prefix(got[0],engine_file) && strings.contains(got[0],c.warning),"%s: %v",c.text,got)
+            }
+        }
+        testing.expect_value(t,sample,c.warning=="" ? Sample{count=1,scale=9} : SAMPLE_DEFAULT)
+    }
+    testing.expect(t,os.write_entire_file(engine_file,cases[1].text)==nil)
     sample.scale=5
     error,_:=settings_save(settings,.Engine,root,engine)
     testing.expect_value(t,error.code,Error_Code.None)
@@ -155,6 +171,32 @@ settings_files_of_the_machine_of_another_version_are_not_read :: proc(t:^testing
     error,_=settings_load(settings,root,engine)
     testing.expect_value(t,error.code,Error_Code.None)
     testing.expect_value(t,sample.scale,f32(5))
+}
+
+@(private="file")
+Settings_Test_Load :: struct {settings:[]Setting,root,engine:string,merge:bool}
+
+// The warnings a load or a merge logs, kept outside the temporary allocator,
+// which the load rewinds.
+@(private="file")
+Settings_Test_Warnings :: struct {texts:[4][512]u8,lengths:[4]int,count:int}
+
+@(private="file")
+settings_test_warnings :: proc(load:Settings_Test_Load) -> []string {
+    kept:=new(Settings_Test_Warnings,context.temp_allocator)
+    keep :: proc(data:rawptr,level:log.Level,text:string,options:log.Options,location:=#caller_location) {
+        k:=(^Settings_Test_Warnings)(data)
+        if level!=.Warning || k.count==len(k.texts) {return}
+        k.lengths[k.count]=copy(k.texts[k.count][:],text)
+        k.count+=1
+    }
+    {
+        context.logger=log.Logger{keep,kept,.Debug,nil}
+        if load.merge {settings_merge(load.root,load.engine,{"Sample"},context.temp_allocator)} else {settings_load(load.settings,load.root,load.engine)}
+    }
+    warnings:=make([]string,kept.count,context.temp_allocator)
+    for &w,i in warnings {w=string(kept.texts[i][:kept.lengths[i]])}
+    return warnings
 }
 
 // The value of the code on this machine is under the files: a field back to

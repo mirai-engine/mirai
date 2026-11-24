@@ -107,6 +107,16 @@ Prefabs :: struct {
     stamps:[dynamic]Prefab_Stamp,
     changes:u64,      // counts the edits that are not steps of the history: those of the others of a session
     derived:Prefab_Derived,
+    chain:Prefab_Chain,
+}
+
+// The bases of the variant of the document, read from the files once for
+// each document and state of the registry.
+Prefab_Chain :: struct {
+    bases:[dynamic]base.Asset_Id,
+    key:[3]u64, // the document and the registry.revision it was read at
+    known:bool,
+    reads:u64,  // counts the times it was read from the files
 }
 
 @(private)
@@ -127,6 +137,7 @@ prefabs_state_free :: proc(p:^Prefabs) {
     delete(p.bases)
     delete(p.stamps)
     delete(p.derived.overrides)
+    delete(p.chain.bases)
     p^={}
 }
 
@@ -1019,6 +1030,22 @@ prefab_variant_chain :: proc(s:^Session,id:base.Asset_Id,allocator:=context.temp
         at=next
     }
     return chain[:]
+}
+
+// prefab_variant_chain of a prefab, read again only when it or the registry
+// changes; the slice lives until then.
+@(private)
+prefab_variant_chain_kept :: proc(s:^Session,id:base.Asset_Id) -> []base.Asset_Id {
+    p:=prefabs_of(s)
+    if p==nil || s.app.assets==nil {return prefab_variant_chain(s,id)}
+    c:=&p.chain
+    key:=[3]u64{u64(id[0]),u64(id[1]),s.app.assets.registry.revision}
+    if c.known && c.key==key {return c.bases[:]}
+    clear(&c.bases)
+    append(&c.bases,..prefab_variant_chain(s,id))
+    c.key,c.known=key,true
+    c.reads+=1
+    return c.bases[:]
 }
 
 // The base of the variant an entity is the root of: of the prefab its

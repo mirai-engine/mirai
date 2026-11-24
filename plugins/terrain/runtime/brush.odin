@@ -72,6 +72,7 @@ Change :: struct {
     changed:bool,
     low,high:[3]int, // inclusive sample coordinates
     error:Edit_Error,
+    displaced:Layer_Set, // of Paint: layers a sample that held WEIGHT_SLOTS lost to the one painted, its lightest
 }
 
 // What an error of an edit asks of whoever made it. kind: the brush, which

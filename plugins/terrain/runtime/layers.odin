@@ -69,6 +69,7 @@ WEIGHT_HOLE :: u32(1<<WEIGHT_HOLE_BIT)
 // The share of each layer at a point, from 0 to 1: what blends, rules and
 // brushes work with.
 Layer_Mix :: [LAYERS_MAX]f32
+Layer_Set :: bit_set[0..<LAYERS_MAX;u32]
 
 weights_slot :: #force_inline proc "contextless" (w:Weights,slot:int) -> (layer,value:int) {
     v:=u32(w)
@@ -187,6 +188,20 @@ weights_paint :: proc "contextless" (w:Weights,layer:int,amount:f32,count:int) -
     }
     f[layer]=target
     return weights_quantize(f,count,amount>0?layer:-1)
+}
+
+// The layer a sample that held WEIGHT_SLOTS layers, without layer, lost when
+// layer was painted into it: the lightest, whose slot it took.
+weights_displaced :: proc "contextless" (old,next:Weights,layer:int) -> (displaced:Layer_Set) {
+    held,kept:Layer_Set
+    for slot in 0..<WEIGHT_SLOTS {
+        a,a_value:=weights_slot(old,slot)
+        if a_value==0 {return}
+        held+={a}
+        if b,b_value:=weights_slot(next,slot);b_value>0 {kept+={b}}
+    }
+    if layer in held || layer not_in kept {return}
+    return held-kept
 }
 
 // Takes a layer out of the weights: the others keep their proportions and
@@ -500,6 +515,7 @@ source_paint :: proc(s:^Source,brush:Brush) -> (change:Change) {
         }
         next:=weights_paint(old,int(brush.layer),brush.kind==.Erase?-share:share,count)
         if next==old {continue}
+        if brush.kind==.Paint {change.displaced+=weights_displaced(old,next,int(brush.layer))}
         grid_write(&s.weights,p,next)
         for axis in 0..<3 {low[axis],high[axis]=min(low[axis],p[axis]),max(high[axis],p[axis])}
         change.changed=true
