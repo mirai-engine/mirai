@@ -4,9 +4,12 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
+import "core:time"
 import "mirai:core"
 import "mirai:editor/api"
 import "mirai:editor/history"
+import "mirai:host"
+import "mirai:rhi"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -148,4 +151,50 @@ editor_engine_diagnostics_names_the_entity_of_each_problem :: proc(t:^testing.T)
     testing.expect_value(t,int(clip["count"].(json.Float)),2)
     testing.expect_value(t,int(clip["first"].(json.Float)),2)
     testing.expect_value(t,int(clip["last"].(json.Float)),3)
+}
+
+@(test)
+a_manual_editor_closes_after_idle_monotonic_or_wall_time :: proc(t:^testing.T) {
+    world:Api_Diagnostics_Test_Editor
+    edits:history.Edits
+    info:core.World_Info
+    session,described:=api_diagnostics_session(t,&world,&edits,&info)
+    if !described {return}
+    defer test_info_destroy(&info)
+    api_opened,api_problem:=api_open(&session,0,true,listen=false)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
+    defer api_close(&session)
+    st:=api_state(&session)
+    dummy_device:rhi.Device
+    app:host.App
+    session.app=&app
+    Case :: struct {
+        name:string,
+        manual,device,in_call:bool,
+        tick_ago,wall_ago:time.Duration,
+        quits:bool,
+    }
+    over:=api.SESSION_IDLE+time.Second
+    cases:=[]Case{
+        {name="monotonic idle past limit",manual=true,device=true,tick_ago=over,wall_ago=time.Second,quits=true},
+        {name="wall idle past limit after sleep",manual=true,device=true,tick_ago=time.Second,wall_ago=over,quits=true},
+        {name="recent call stays open",manual=true,device=true,tick_ago=time.Minute,wall_ago=time.Minute,quits=false},
+        {name="no GPU device stays open",manual=true,device=false,tick_ago=over,wall_ago=over,quits=false},
+        {name="windowed editor stays open",manual=false,device=true,tick_ago=over,wall_ago=over,quits=false},
+        {name="active call stays open",manual=true,device=true,in_call=true,tick_ago=over,wall_ago=over,quits=false},
+    }
+    for c in cases {
+        session.quit=false
+        app.device=&dummy_device if c.device else nil
+        st.manual=c.manual
+        st.in_call=1 if c.in_call else 0
+        now_tick:=time.tick_now()
+        now_wall:=time.now()
+        st.opened=time.Tick{_nsec=now_tick._nsec-i64(c.tick_ago)}
+        st.opened_wall=time.Time{_nsec=now_wall._nsec-i64(c.wall_ago)}
+        st.last_call={}
+        st.last_call_wall={}
+        api_idle_close(&session)
+        testing.expectf(t,session.quit==c.quits,"%s: quit=%v want %v",c.name,session.quit,c.quits)
+    }
 }

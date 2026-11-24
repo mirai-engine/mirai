@@ -78,7 +78,9 @@ Api_State :: struct {
     in_call:int,
     provided_calls:int, // handlers of plugins on the stack, which a swap of their library would strand
     last_call:time.Tick, // when a call arrived last: an agent that drives the editor keeps it at its rate
+    last_call_wall:time.Time,
     opened:time.Tick,    // when the API opened: the idle time of a manual editor before its first call
+    opened_wall:time.Time,
     stepping:bool,
     waiting:int,    // handlers inside api_wait: what runs meanwhile holds no world of theirs
     restart:bool,   // a Build asked to start the editor again while a call waits for it
@@ -150,6 +152,7 @@ api_open :: proc(s:^Session,port:int,manual:bool,listen:=true) -> (error:Api_Ope
     st.allocator=context.allocator
     st.manual=manual
     st.opened=time.tick_now()
+    st.opened_wall=time.now()
     if error:=api.server_init(&st.server,{port=port,local=!listen,name="mirai",version=API_VERSION,instructions=API_INSTRUCTIONS,docs_root=s.engine_root,max_methods=API_METHOD_CAPACITY+1,max_response=4<<20,allocator=context.allocator});error!=.None {
         free(st)
         return .Server,fmt.tprintf("the server could not start on port %d: %v",port,error)
@@ -320,6 +323,7 @@ api_idle :: proc(s:^Session) -> bool {
         if s.quit {return true}
     }
     api_jobs(s)
+    if s.quit {return true}
     api.server_wait(&st.server,API_IDLE_WAIT)
     return true
 }
@@ -347,10 +351,14 @@ api_jobs :: proc(s:^Session) {
 @(private)
 api_idle_close :: proc(s:^Session) {
     st:=api_state(s)
-    if st==nil || !st.manual || s.app.device==nil || s.quit {return}
+    if st==nil || !st.manual || s.app==nil || s.app.device==nil || s.quit {return}
     if st.in_call>0 || st.stepping || st.waiting>0 {return}
     since:=st.last_call if st.last_call!={} else st.opened
-    if time.tick_since(since)<api.SESSION_IDLE {return}
+    wall:=st.last_call_wall if st.last_call_wall!={} else st.opened_wall
+    // Monotonic ticks pause during system sleep on macOS, so also check wall time.
+    idle:=time.tick_since(since)
+    if wall!={} {idle=max(idle,time.diff(wall,time.now()))}
+    if idle<api.SESSION_IDLE {return}
     log.infof("no call for %.0f min: the editor closes and gives back its turn of the GPU; the next command that needs it opens it again",time.duration_minutes(api.SESSION_IDLE))
     runs_stop(s)
     s.quit=true
@@ -484,7 +492,10 @@ api_trampoline :: proc(call:^api.Call) {
     st.in_call+=1
     st.provided_calls+=int(entry.provided)
     defer {st.in_call-=1;st.provided_calls-=int(entry.provided)}
-    if !st.person {st.last_call=time.tick_now()}
+    if !st.person {
+        st.last_call=time.tick_now()
+        st.last_call_wall=time.now()
+    }
     task:^Ai_Task
     if call.client_tag!="" {
         if entry.session.ai==nil {api.call_fail(call,api.SERVER_ERROR,"The editor has no AI task context");return}

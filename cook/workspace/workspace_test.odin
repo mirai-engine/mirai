@@ -422,6 +422,31 @@ a_gpu_charge_is_the_last_peak_of_the_project :: proc(t:^testing.T) {
     charge,charged:=gpu_holder_charge(gpu_holder_text("pid 1, mirai session in a, b",700<<20))
     testing.expect(t,charged)
     testing.expect_value(t,charge,i64(700)<<20)
+
+    // Worktrees of the same repository share the peak of a project inside it
+    // (including session copies), while projects outside keep their own.
+    main_repo:=slashes(join(root,"repo"),context.temp_allocator)
+    tree:=join(main_repo,".git","worktrees","side")
+    worktree:=slashes(join(root,"side"),context.temp_allocator)
+    other_game:=slashes(join(root,"external","demo"),context.temp_allocator)
+    testing.expect(t,os.make_directory_all(tree)==nil && os.make_directory_all(worktree)==nil && os.make_directory_all(other_game)==nil)
+    testing.expect(t,os.write_entire_file(join(tree,"commondir"),"../..\n")==nil)
+    testing.expect(t,os.write_entire_file(join(worktree,".git"),strings.concatenate({"gitdir: ",tree,"\n"},context.temp_allocator))==nil)
+    main_demo:=join(main_repo,"demo")
+    side_demo:=join(worktree,"demo")
+    side_copy:=join(side_demo,".mirai","tmp","session-copy-1")
+    gpu_peak_write(main_repo,main_demo,1200<<20)
+    Case :: struct {name,root,folder:string,charge:i64}
+    cases:=[]Case{
+        {name="main checkout",root=main_repo,folder=main_demo,charge=1200<<20},
+        {name="worktree project",root=worktree,folder=side_demo,charge=1200<<20},
+        {name="worktree session copy",root=worktree,folder=side_copy,charge=1200<<20},
+        {name="main calling into worktree",root=main_repo,folder=side_demo,charge=1200<<20},
+        {name="external project with same folder name",root=worktree,folder=other_game,charge=GPU_CHARGE_DEFAULT},
+    }
+    for c in cases {
+        testing.expectf(t,gpu_charge(c.root,c.folder)==c.charge,"%s: got %d MiB, want %d MiB",c.name,gpu_charge(c.root,c.folder)>>20,c.charge>>20)
+    }
 }
 
 // The card admission takes is the one the devices said, whatever said it

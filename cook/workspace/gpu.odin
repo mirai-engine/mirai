@@ -298,11 +298,24 @@ gpu_card_write :: proc(root:string,said:Gpu_Card) -> (refused:string) {
 }
 
 // The file of the peak of the sessions of a project: by the project, which a
-// copy of it under its .mirai/tmp/ shares.
+// copy of it under its .mirai/tmp/ and another git worktree of its repository
+// share.
 gpu_peak_path :: proc(root,folder:string,allocator:=context.allocator) -> string {
     key:=slashes(folder,context.temp_allocator)
     if at:=strings.index(key,"/.mirai/tmp/");at>=0 {key=key[:at]}
     key=strings.trim_right(key,"/")
+    for at:=key;at!=""; {
+        if os.exists(join(at,".git")) {
+            shared:=strings.trim_right(project.shared_root(at,context.temp_allocator),"/")
+            if !project.path_same(shared,at) {
+                key=strings.concatenate({shared,key[len(at):]},context.temp_allocator)
+            }
+            break
+        }
+        slash:=strings.last_index_byte(at,'/')
+        if slash<=0 || (slash==2 && at[1]==':') {break}
+        at=at[:slash]
+    }
     when ODIN_OS==.Windows || ODIN_OS==.Darwin {key=strings.to_lower(key,context.temp_allocator)}
     name:=fmt.tprintf("%016x",hash.fnv64a(transmute([]u8)key))
     return slashes(join(cache_folder(root,GPU_FOLDER,context.temp_allocator),"peaks",name),allocator)
