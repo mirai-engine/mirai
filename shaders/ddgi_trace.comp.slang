@@ -135,6 +135,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group : SV_GroupID, uin
     } else if (trace) {
         Ray_Path path;
         Hit found = trace_ray(origin, direction, 0.0, params.max_distance, false, path);
+        count(chosen_cut_short(), trace_cut_short);
         // What a ray finds beyond a gate of an extension lights the probe, and for
         // its visibility is as far as the gate: what is behind it is another place.
         gate = path.gate;

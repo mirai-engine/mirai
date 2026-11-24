@@ -2691,6 +2691,50 @@ render_probes_see_swaying_batches_at_rest :: proc(t: ^testing.T) {
 	}
 }
 
+// A tree of a mesh that leads back to itself (stale or broken while a frame
+// reads it) does not keep a ray of the software tracer walking until the
+// device resets: the walk stops at TRACE_STEPS_MAX (trace.slang), the frame
+// ends and the probe volume counts the rays it cut short. A sound tree cuts none.
+@(test)
+render_a_circular_tree_cuts_the_walk_of_a_ray_short :: proc(t: ^testing.T) {
+	settings := test_settings()
+	settings.trace_mode = .Software
+	f: Cube_Fixture
+	if !cube_fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	instances := []Instance_Desc{{object_id = 1, mesh = f.cube, transform = trs({0, 1, 0}, {2, 2, 2}), tint = {0.8, 0.8, 0.8}}}
+	sun := Sun_Desc{direction = {0.3, 1, 0.2}, color = {1, 1, 1}, illuminance = 3, enabled = true, indirect = 1, scattering = 1}
+	scene_given(r, instances, nil, sun, {sky = {0.2, 0.3, 0.5}})
+	camera := Camera{position = {0, 2, 6}, forward = {0, -0.2, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 200, exposure = UNIT_EXPOSURE}
+	cut_short :: proc(t: ^testing.T, r: ^Renderer) -> (traced, cut: u32) {
+		counts: [3]u32
+		rhi.device_wait_idle(r.device)
+		testing.expect(t, rhi.buffer_read_slice(r.device, r.ddgi.chosen, ddgi_counts_offset(&r.ddgi), counts[:]))
+		return counts[0], counts[2]
+	}
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	traced, cut := cut_short(t, r)
+	testing.expectf(t, traced > 0 && cut == 0, "a sound tree cuts no ray short: %d of %d", cut, traced)
+	// The root of the tree of the cube becomes a node whose first child is itself.
+	root := r.scene.meshes[f.cube].rays[0].bvh_root
+	node: [1]Gpu_Bvh_Node
+	if !testing.expect(t, rhi.buffer_read_slice(r.device, r.scene.blas_node_buffer, u64(root) * size_of(Gpu_Bvh_Node), node[:])) {return}
+	testing.expect(t, node[0].count == 0, "the root of the cube has children")
+	node[0].left_first = 0
+	testing.expect(t, rhi.buffer_upload(r.device, r.scene.blas_node_buffer, u64(root) * size_of(Gpu_Bvh_Node), slice_bytes(node[:])))
+	// Another volume: every probe traces its rays again.
+	changed := r.settings
+	changed.probe_spacing = 1.25
+	testing.expect(t, renderer_apply_settings(r, changed))
+	start := time.now()
+	testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
+	traced, cut = cut_short(t, r)
+	testing.expectf(t, cut > 0 && cut <= traced, "the walks of the rays that reach the cube stop: %d of %d", cut, traced)
+	testing.expectf(t, time.since(start) < 2 * time.Second, "the frame ends: %v", time.since(start))
+	expect_clean(t, f.device)
+}
+
 // When the volume moves with the camera, the new probes a pixel reads are
 // gathered in the frame they come, and those none reads wait behind them,
 // taking at most an eighth of the budget a frame while it moves; once it

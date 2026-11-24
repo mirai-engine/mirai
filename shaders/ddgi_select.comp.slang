@@ -128,6 +128,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         chosen[0] = 0u;
         chosen[1u + 2u * params.room] = 0u;
         chosen[2u + 2u * params.room] = 0u;
+        chosen[3u + 2u * params.room] = 0u;
     } else if (params.mode == 2u) {
         if (index >= params.total) return;
         uint bucket = buckets[index];

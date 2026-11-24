@@ -73,6 +73,25 @@ struct Hit {
 };
 
 #define TRACE_STACK 32
+// The steps (a node, or a triangle or a reference of a leaf) the walks of the
+// trees by software take at most for a ray of trace_ray_impl, or for a call
+// of trace_blas after trace_steps is set to 0: a tree that is circular or
+// stale while a frame reads it ends the ray instead of spinning until the
+// device resets. A ray of a sound tree takes far fewer.
+#define TRACE_STEPS_MAX 16384u
+static uint trace_steps = 0u;
+// Whether a walk of this invocation stopped at TRACE_STEPS_MAX: the nearest
+// hit it found until then is that of its ray.
+static bool trace_cut_short = false;
+// Takes a step of a walk, or stops it once the steps of the ray are spent.
+bool trace_step() {
+    if (trace_steps >= TRACE_STEPS_MAX) {
+        trace_cut_short = true;
+        return false;
+    }
+    trace_steps++;
+    return true;
+}
 
 // The classes of instances a ray can meet. Those whose every material is
 // blended are a class apart, so a ray that goes through glass never visits
@@ -205,10 +224,10 @@ bool trace_blas(uint mesh_word, float3 origin, float3 dir, float t_min, inout Hi
     uint top = 0u;
     uint node_index = ray.bvh_root;
     bool found = false;
-    for (;;) {
+    while (trace_step()) {
         Bvh_Node node = blas_nodes[node_index];
         if (node.count > 0u) {
-            for (uint i = 0u; i < node.count; i++) {
+            for (uint i = 0u; i < node.count && trace_step(); i++) {
                 Bvh_Triangle tri = blas_triangles[ray.triangle_offset + node.left_first + i];
                 float t;
                 float2 bary;
@@ -267,10 +286,10 @@ bool trace_batch(uint batch, float3 origin, float3 direction, float t_min, inout
     bool found = false;
     Bvh_Node top_node = blas_nodes[root];
     if (ray_box(origin, inv_dir, top_node.bounds_min, top_node.bounds_max, t_min, hit.t) == FLT_MAX) return false;
-    for (;;) {
+    while (trace_step()) {
         Bvh_Node node = blas_nodes[node_index];
         if (node.count > 0u) {
-            for (uint i = 0u; i < node.count; i++) {
+            for (uint i = 0u; i < node.count && trace_step(); i++) {
                 uint local = indices[order + node.left_first + i];
                 float4 world[3], inverse[3];
                 batch_placement(words + local * BATCH_WORDS, float3(0.0), world, inverse);
@@ -311,6 +330,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     hit.instance = INVALID;
     hit.primitive = INVALID;
     hit.bary = float2(0.0);
+    trace_steps = 0u;
     if (frame.instance_count == 0u && frame.batches.w == 0u) { hit.t = -1.0; return hit; }
     float3 inv_dir = safe_inverse(direction);
     uint stack[TRACE_STACK];
@@ -322,10 +342,10 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
     // glass, its absence for one that meets nothing else.
     uint unseen = (classes & RAY_GLASS) != 0u ? 0u : TLAS_REF_GLASS;
     uint wanted = (classes & RAY_SOLID) != 0u ? 0u : TLAS_REF_GLASS;
-    for (;;) {
+    while (trace_step()) {
         Bvh_Node node = tlas_nodes[node_index];
         if (node.count > 0u) {
-            for (uint i = 0u; i < node.count; i++) {
+            for (uint i = 0u; i < node.count && trace_step(); i++) {
                 uint ref = tlas_refs[node.left_first + i];
                 if ((ref & unseen) != 0u || (~ref & wanted) != 0u) continue;
                 uint instance_index = ref & ~TLAS_REF_GLASS;

@@ -135,6 +135,19 @@ textures_and_detail_set_the_limits_of_the_renderer_and_the_pool_follows_the_memo
 }
 
 @(test)
+the_probe_grid_of_high_probes_goes_back_when_the_probes_are_lowered :: proc(t:^testing.T) {
+    g:=GRAPHICS_SETTINGS_DEFAULT
+    g.light_probes=.High
+    s:=graphics_render_settings(gpu.DEFAULT_SETTINGS,g,{type=.Discrete})
+    testing.expect_value(t,s.probe_grid,u32(32))
+    // The renderer hands back its own settings: lowered, the grid is not left at the high one.
+    for probes in ([]Light_Probes{.Medium,.Low}) {
+        g.light_probes=probes
+        testing.expect_value(t,graphics_render_settings(s,g,{type=.Discrete}).probe_grid,gpu.DEFAULT_SETTINGS.probe_grid)
+    }
+}
+
+@(test)
 memory_chosen_in_megabytes_replaces_the_automatic_pools_and_no_preset_touches_it :: proc(t:^testing.T) {
     g:=GRAPHICS_SETTINGS_DEFAULT
     g.texture_memory,g.geometry_memory=1500,512

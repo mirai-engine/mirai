@@ -38,7 +38,8 @@ struct Params_Block {
 // meet changed (CHOSEN_CROSSED) and whether one met what changes with nothing
 // that says so (CHOSEN_PASSING, PROBE_PASSING), whether its light stayed
 // within half of what is a change (CHOSEN_STILL, ddgi_irradiance.comp), and
-// where it counts the rays traced and the hits lit.
+// where it counts the rays traced, the hits lit and the rays whose walk was
+// cut short (TRACE_STEPS_MAX).
 #define CHOSEN_TRACED 1u
 #define CHOSEN_CROSSED 2u
 #define CHOSEN_PASSING 4u
@@ -46,6 +47,7 @@ struct Params_Block {
 uint chosen_traced(uint slot) { return 1u + params.room + slot; }
 uint chosen_rays() { return 1u + 2u * params.room; }
 uint chosen_lit() { return 2u + 2u * params.room; }
+uint chosen_cut_short() { return 3u + 2u * params.room; }
 
 // What a probe keeps of its rays as an update finds it: the slot it holds for
 // it (INVALID: none); whether it is what they found from where it is, with

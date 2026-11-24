@@ -61,10 +61,10 @@ texture_plane_mips :: proc(r: ^Renderer, format: asset.Texture_Format, width, he
 		}
 		if mip.rows, allocation = make([]asset.Texture_Field_Counts, rows + 1, r.allocator);
 			allocation != nil {return}
-		valid: bool
-		if mip.index, valid = asset.texture_fields_index(&layout, level, n, mip.rows); !valid {
-			return
-		}
+		// One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
+		index, valid := asset.texture_fields_index(&layout, level, n, mip.rows)
+		if !valid {return}
+		mip.index = index
 	}
 	return made, true
 }

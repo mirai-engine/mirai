@@ -141,13 +141,14 @@ ddgi_ensure :: proc(r: ^Renderer) -> bool {
 	g.probes = rhi.buffer_create(d, {size = u64(g.total) * size_of(Gpu_Probe), usage = {.Storage}, name = "probes"})
 	g.buckets = rhi.buffer_create(d, {size = u64(g.total) * 4, usage = {.Storage}, name = "probe buckets"})
 	g.histogram = rhi.buffer_create(d, {size = PROBE_HISTOGRAM_WORDS * 4, usage = {.Storage}, name = "probe histogram"})
-	// After the count and the probes: whether each traced a ray, then the rays the update traced and the hits it lit.
-	g.chosen = rhi.buffer_create(d, {size = u64(1 + 2 * room + 2) * 4, usage = {.Storage}, name = "chosen probes"})
+	// After the count and the probes: whether each traced a ray, then the rays the update traced, the hits it lit
+	// and the rays whose walk of the trees it cut short (TRACE_STEPS_MAX of trace.slang).
+	g.chosen = rhi.buffer_create(d, {size = u64(1 + 2 * room + 3) * 4, usage = {.Storage}, name = "chosen probes"})
 	g.dispatch = rhi.buffer_create(d, {size = PROBE_DISPATCH_WORDS * 4, usage = {.Storage, .Indirect}, name = "probe dispatch"})
 	// Under the tiles of the irradiance, those of the light around the narrow lobes, in the same rows and columns.
 	g.irradiance = rhi.texture_create(d, {width = g.per_row * max(IRRADIANCE_TILE, abi.PROBE_GLOSS_TILE), height = rows * (IRRADIANCE_TILE + abi.PROBE_GLOSS_TILE), format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe irradiance"})
 	g.kept = rhi.texture_create(d, {width = g.per_row * IRRADIANCE_TILE, height = rows * IRRADIANCE_TILE, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe irradiance kept"})
-	g.distance = rhi.texture_create(d, {width = g.per_row * DISTANCE_TILE, height = rows * DISTANCE_TILE, format = .RGBA16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe distance"})
+	g.distance = rhi.texture_create(d, {width = g.per_row * DISTANCE_TILE, height = rows * DISTANCE_TILE, format = .RG16_Float, usage = {.Sampled, .Storage, .Color_Target}, name = "probe distance"})
 	g.rays = rhi.texture_create(d, {width = g.rays_per_probe, height = room, format = .RGBA16_Float, usage = {.Sampled, .Storage}, name = "probe rays"})
 	// No probe holds light: every slot stands for a cell it was not traced for.
 	initial := make([]Gpu_Probe, g.total, context.temp_allocator)

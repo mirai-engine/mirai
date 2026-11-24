@@ -133,6 +133,7 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
     Hit found = trace_ray_impl(o, w, 0.0, reach, true, BLEND_PASSES, RAY_SHADOWS);
     return found.instance != INVALID ? found.t : -1.0;
 #else
+    trace_steps = 0u;
     float3 inv = safe_inverse(w);
     for (uint word = 0u; word < 2u; word++) {
         uint bits = mask[word];

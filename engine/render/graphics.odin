@@ -136,7 +136,7 @@ graphics_render_settings :: proc(settings:gpu.Settings,quality:Graphics_Settings
     s.gi_enabled=quality.indirect_light!=.Off
     s.probe_budget,s.probe_rays=probes[quality.light_probes][0],probes[quality.light_probes][1]
     // The finest cascade reaches 15 m from the eye: what changes where it hands over to the next is far.
-    if quality.light_probes==.High {s.probe_grid=32}
+    s.probe_grid=quality.light_probes==.High?32:gpu.DEFAULT_SETTINGS.probe_grid
     s.sun_shadows=quality.sun_shadows
     s.direct_samples=clamp(quality.light_samples,1,GRAPHICS_LIGHT_SAMPLES_MAX)
     s.direct_half_resolution=quality.light_half_resolution

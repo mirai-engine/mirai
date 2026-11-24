@@ -12,8 +12,7 @@
 #define MIRAI_GROUP_Z 1
 
 [[vk::binding(SLOT_PASS0, 0)]] Texture2D<float4> ray_data : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
-// RGBA16F because Metal read-write textures do not support two-channel half formats.
-[[vk::binding(SLOT_PASS1, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> distances : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
+[[vk::binding(SLOT_PASS1, 0)]] [[vk::image_format("rg16f")]] RWTexture2D<float2> distances : register(MIRAI_REGISTER(u, SLOT_PASS1), space0);
 
 groupshared float2 tile_values[TILE][TILE];
 #define MAX_RAYS 256
@@ -60,5 +59,5 @@ void main(uint3 group_id : SV_GroupID, uint3 local_id : SV_GroupThreadID, uint l
     }
     GroupMemoryBarrierWithGroupSync();
     int2 source = interior ? local : probe_tile_interior(local, TILE);
-    distances[origin + local] = float4(tile_values[source.y][source.x], 0.0, 0.0);
+    distances[origin + local] = tile_values[source.y][source.x];
 }
