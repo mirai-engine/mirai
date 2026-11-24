@@ -16,6 +16,8 @@ import phys "plugins:physics/runtime"
 
 @(private="file") ENERGY :: Ability_Attribute(1)
 @(private="file") SPEED :: Ability_Attribute(2)
+@(private="file") JUMP_ATTR :: Ability_Attribute(3)
+@(private="file") ACCEL_ATTR :: Ability_Attribute(4)
 @(private="file") SPRINT :: 0
 @(private="file") LEDGE_JUMP :: 1
 @(private="file") TABLE :: base.Asset_Id{9,9}
@@ -236,4 +238,92 @@ a_ledge_jump_is_an_ability_with_a_ledge_ahead_condition_and_a_layered_boost :: p
         }
         testing.expect_value(t,f.problems.count,0)
     }
+}
+
+// End-to-end Fortnite Tactical Sprint expressed 100% in pure ability data:
+// 115 energy, 15/s drain paused while airborne with fall_grace, 52/s regen after 2 s regen_delay,
+// ramped 1.4x speed (0.6224 s), ramped 1.2x jump (0.7265 s), and 3x acceleration.
+@(test)
+a_fortnite_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
+    f:=new(Movement);defer free(f)
+    if !movement_init(t,f,{0,0,40}) {return}
+    defer movement_destroy(f)
+    // High ledge (y=0, z in [5, 45]) and a deep floor below (-20) to test fall_grace off a cliff.
+    movement_box(f,{20,1,20},{0,-1,25})
+    movement_box(f,{50,1,50},{0,-21,-40})
+
+    walking:=Ability_Modes(1<<u32(locomotion.MODE_WALKING))
+    sprint:=&f.sheets[SPRINT]
+    sprint^={duration=100,modes=walking}
+    sprint.conditions[0]={attribute=ENERGY,at_least=10}
+    sprint.costs[0]={attribute=ENERGY,per_second=15,pause_falling=true,fall_grace=0.7}
+    sprint.windows[0]={from=0,to=100,modify={attribute=SPEED,more=0.4,ramp_in=0.6224}}
+    sprint.windows[1]={from=0,to=100,modify={attribute=JUMP_ATTR,more=0.2,ramp_in=0.7265}}
+    sprint.windows[2]={from=0,to=100,modify={attribute=ACCEL_ATTR,more=2.0}}
+
+    u:=core.edit(&f.users,f.e)
+    u.speed,u.jump,u.acceleration=SPEED,JUMP_ATTR,ACCEL_ATTR
+    u.attributes[0]={attribute=ENERGY,base=115,max=115,regen=52,regen_delay=2.0}
+    u.attributes[1]={attribute=SPEED,base=1}
+    u.attributes[2]={attribute=JUMP_ATTR,base=1}
+    u.attributes[3]={attribute=ACCEL_ATTR,base=1}
+    test_world_settle(&f.w)
+
+    // Settle on ground and start sprint.
+    movement_tick(f,{0,0,-1},30)
+    ability_use(&f.ability_requests,f.e,{TABLE,core.Record_Id(SPRINT+1)})
+    movement_tick(f,{0,0,-1},1)
+    testing.expect(t,running(f),"tactical sprint started")
+    loco,_:=core.get(&f.loco_states,f.e)
+    testing.expectf(t,abs(loco.acceleration_scale-3.0)<1e-4,"3x acceleration immediate: %v",loco.acceleration_scale)
+
+    // Mid-ramp (~0.3 s): speed and jump are strictly between 1.0 and their targets.
+    movement_tick(f,{0,0,-1},18)
+    loco,_=core.get(&f.loco_states,f.e)
+    testing.expectf(t,loco.speed_scale>1.15 && loco.speed_scale<1.25,"mid-ramp speed_scale: %v",loco.speed_scale)
+    testing.expectf(t,loco.jump_scale>1.06 && loco.jump_scale<1.12,"mid-ramp jump_scale: %v",loco.jump_scale)
+
+    // Past both ramps (total 1.0 s): full 1.4x speed, 1.2x jump, 3x accel; ~15 energy drained with
+    // zero regen fighting it because regen_delay=2.0.
+    movement_tick(f,{0,0,-1},41)
+    loco,_=core.get(&f.loco_states,f.e)
+    walk:=locomotion.WALK_DEFAULT
+    testing.expectf(t,abs(loco.speed_scale-1.4)<1e-4 && abs(flat_speed(f)-walk.max_speed*1.4)<0.05,"full speed_scale %v at %v m/s",loco.speed_scale,flat_speed(f))
+    testing.expectf(t,abs(loco.jump_scale-1.2)<1e-4,"full jump_scale: %v",loco.jump_scale)
+    testing.expectf(t,abs(energy(f)-(115-15))<0.5,"1 s drained 15 energy without regen: %v",energy(f))
+
+    // Jump while sprinting: boosted apex (~1.44 * 1.2 = 1.728 m), drain pauses in the air, sprint survives landing.
+    energy_before_jump:=energy(f)
+    apex:f32
+    air_ticks:=0
+    for i in 0..<90 {
+        movement_tick(f,{0,0,-1},1,JUMP if i==0 else 0)
+        pose,_:=core.get(&f.transforms,f.e)
+        apex=max(apex,pose.position.y)
+        ground,_:=core.get(&f.character_states,f.e)
+        if !ground.standing {air_ticks+=1}
+        if i>10 && ground.standing {break}
+    }
+    testing.expect(t,running(f),"sprint survives normal jump")
+    testing.expectf(t,apex>1.6 && apex<1.85,"boosted jump apex %v m (normal 1.2 m)",apex)
+    testing.expect(t,air_ticks>50,"spent substantial ticks airborne")
+    // Energy barely dropped (only the 1-2 ground ticks around takeoff/landing), not ~1.1s * 15 = 16.5!
+    testing.expectf(t,energy_before_jump-energy(f)<1.5,"drain paused while airborne: lost %v over %d air ticks",energy_before_jump-energy(f),air_ticks)
+
+    // Run off the ledge (z = -5) and fall past fall_grace (0.7 s): sprint completes cleanly and scales reset to 1.0.
+    for _ in 0..<240 {
+        movement_tick(f,{0,0,-1},1)
+        if !running(f) {break}
+    }
+    testing.expect(t,!running(f),"falling past fall_grace ended tactical sprint")
+    loco,_=core.get(&f.loco_states,f.e)
+    testing.expectf(t,abs(loco.speed_scale-1)<1e-4 && abs(loco.jump_scale-1)<1e-4 && abs(loco.acceleration_scale-1)<1e-4,"scales reset to 1 after sprint ends: %v %v %v",loco.speed_scale,loco.jump_scale,loco.acceleration_scale)
+
+    // Energy waits for the full 2.0 s regen_delay (counting from last ground drain before cliff) before regenerating at 52/s.
+    e_after_end:=energy(f)
+    movement_tick(f,{},45) // ~0.75 s after fall_grace (total ~1.45 s since last spend < 2.0 s)
+    testing.expectf(t,abs(energy(f)-e_after_end)<1e-3,"still waiting on regen_delay: %v vs %v",energy(f),e_after_end)
+    movement_tick(f,{},90) // +1.5 s: well past 2.0 s delay -> regenerates strongly at 52/s
+    testing.expectf(t,energy(f)>e_after_end+30,"regen resumed at 52/s after regen_delay: %v from %v",energy(f),e_after_end)
+    testing.expect_value(t,f.problems.count,0)
 }

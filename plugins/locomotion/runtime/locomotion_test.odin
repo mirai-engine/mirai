@@ -713,3 +713,77 @@ world_velocity_steers_on_spawn_tick_without_seat_input :: proc(t:^testing.T) {
     move,_:=core.get(&f.moves,e)
     testing.expect(t,move.value.ground.velocity.x>0 && near(move.value.yaw,-cmath.PI/2,1e-4))
 }
+
+// Runtime jump_scale and acceleration_scale requests scale jump velocity and acceleration without
+// altering the authored Walk, survive placed.at_rest, and reject invalid numbers.
+@(test)
+runtime_jump_and_acceleration_scales_apply_without_editing_walk :: proc(t:^testing.T) {
+    Jump_Case :: struct {scale,apex:f32,leaves_ground:bool}
+    for c in ([]Jump_Case{
+        {scale=1.0,apex=WALK_DEFAULT.jump_height,leaves_ground=true},
+        {scale=1.2,apex=WALK_DEFAULT.jump_height*1.44,leaves_ground=true},
+        {scale=0.5,apex=WALK_DEFAULT.jump_height*0.25,leaves_ground=true},
+        {scale=0.0,apex=0,leaves_ground=false},
+    }) {
+        f:=new(Loco_Test);defer free(f)
+        if !loco_test_init(t,f,{0,0,0}) {return}
+        defer loco_test_destroy(f)
+        loco_test_tick(f,{},30)
+        set_jump_scale(&f.loco_requests,f.e,c.scale)
+        apex:f32
+        left:=false
+        for i in 0..<140 {
+            loco_test_tick(f,{},1,JUMP)
+            apex=max(apex,loco_position(f).y)
+            if i==5 && loco_state(f).mode==MODE_FALLING {left=true}
+        }
+        testing.expect_value(t,left,c.leaves_ground)
+        testing.expectf(t,near(apex,c.apex,max(0.05*c.apex,0.02)),"jump_scale %v apex %v, want %v",c.scale,apex,c.apex)
+        testing.expect_value(t,loco_state(f).jump_scale,c.scale)
+        testing.expect_value(t,f.problems.count,0)
+    }
+
+    Accel_Case :: struct {scale:f32}
+    for c in ([]Accel_Case{{scale=1.0},{scale=3.0},{scale=0.5}}) {
+        f:=new(Loco_Test);defer free(f)
+        if !loco_test_init(t,f,{0,0,0}) {return}
+        defer loco_test_destroy(f)
+        loco_test_tick(f,{},30)
+        set_acceleration_scale(&f.loco_requests,f.e,c.scale)
+        accel:=WALK_DEFAULT.acceleration*c.scale
+        ticks:=int(cmath.ceil(WALK_DEFAULT.max_speed/(accel/60)-1e-3))
+        loco_test_tick(f,{0,0,-1},ticks-1)
+        testing.expectf(t,-loco_velocity(f).z<WALK_DEFAULT.max_speed-0.05,"accel_scale %v short a tick early: %v",c.scale,loco_velocity(f))
+        loco_test_tick(f,{0,0,-1},1)
+        testing.expectf(t,near(-loco_velocity(f).z,WALK_DEFAULT.max_speed,0.05),"accel_scale %v reaches max_speed in %d ticks: %v",c.scale,ticks,loco_velocity(f))
+        state:=loco_state(f)
+        testing.expectf(t,near(state.acceleration,accel,1e-3) && near(state.braking,WALK_DEFAULT.braking,1e-3),"accel_scale %v publishes accel %v and keeps braking %v",c.scale,state.acceleration,state.braking)
+        testing.expect_value(t,f.problems.count,0)
+    }
+
+    // Invalid scales are reported and ignored; valid ones survive place(at_rest=true) and leave Walk untouched.
+    f:=new(Loco_Test);defer free(f)
+    if !loco_test_init(t,f,{0,0,0}) {return}
+    defer loco_test_destroy(f)
+    loco_test_tick(f,{},10)
+    set_jump_scale(&f.loco_requests,f.e,1.5)
+    set_acceleration_scale(&f.loco_requests,f.e,2.5)
+    loco_test_tick(f,{})
+    for bad in ([]f32{-1,cmath.nan_f32(),cmath.inf_f32(1),JUMP_SCALE_MAX+1}) {
+        set_jump_scale(&f.loco_requests,f.e,bad)
+        set_acceleration_scale(&f.loco_requests,f.e,bad)
+    }
+    loco_test_tick(f,{})
+    testing.expect(t,core.problem_find(&f.problems,f.e,"locomotion.request")!=nil)
+    testing.expect_value(t,loco_state(f).jump_scale,f32(1.5))
+    testing.expect_value(t,loco_state(f).acceleration_scale,f32(2.5))
+    placer:=core.Placer{&f.transforms,core.read(&f.parents),&f.places,nil}
+    testing.expect(t,core.place(placer,f.e,{0,0,0},at_rest=true))
+    loco_test_tick(f,{})
+    testing.expect_value(t,loco_state(f).jump_scale,f32(1.5))
+    testing.expect_value(t,loco_state(f).acceleration_scale,f32(2.5))
+    walk,_:=core.get(&f.walks,f.e)
+    authored:=WALK_DEFAULT
+    authored.turn_speed=0
+    testing.expect_value(t,walk,authored)
+}

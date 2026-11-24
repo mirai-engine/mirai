@@ -164,9 +164,11 @@ without velocity jumps on pace changes.
 ### What drives it
 
 Seats write `Move_Input` via `camera_drive`; AI/scripts call `locomotion.drive` (world velocity +
-facing, overrides seat movement while preserving buttons). `set_speed_scale` scales top speed;
-`set_suspended` freezes drive/gravity/collision for `core.place` animation. Actions: `move`/`look`
-(`engine/input`; wrong type -> `camera.seat_actions`), `jump`/`sprint`/`crouch` (`locomotion`).
+facing, overrides seat movement while preserving buttons). `set_speed_scale`, `set_jump_scale` and
+`set_acceleration_scale` scale top speed, jump velocity and acceleration without editing `Walk`,
+`Fly` or `Swim`; `set_suspended` freezes drive/gravity/collision for `core.place` animation.
+Actions: `move`/`look` (`engine/input`; wrong type -> `camera.seat_actions`),
+`jump`/`sprint`/`crouch` (`locomotion`).
 
 ## Physics step outside the loop
 

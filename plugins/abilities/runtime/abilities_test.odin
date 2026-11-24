@@ -7,6 +7,7 @@ import "core:testing"
 import "mirai:core"
 import inp "mirai:engine/input"
 import audio "mirai:engine/audio"
+import scene "mirai:engine/scene"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
@@ -73,10 +74,12 @@ Abilities_World :: struct {
     remotes:core.Table(core.Remote),
     paces:core.Table(core.Own_Pace),
     helds:core.Table(Ability_Held),
+    tags:core.Table(scene.Tags),
     requests:Ability_Requests,
     events:Ability_Events,
     moves:locomotion.Locomotion_Requests,
     animations:anim.Animation_Requests,
+    anim_events:anim.Animation_Events,
     time:core.Time,
 }
 
@@ -210,7 +213,7 @@ test_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transform,r
 
 @(private="file")
 world_of :: proc(f:^Fixture) -> Ability_World {
-    return {time=f.time,seats=core.ref(&f.seat_state),seat_states=core.ref(&f.seat_runtime),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),helds=core.read(&f.helds),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,problems=&f.problems,sounds=&f.sounds,births=&f.births}
+    return {time=f.time,seats=core.ref(&f.seat_state),seat_states=core.ref(&f.seat_runtime),characters=core.read(&f.characters),locomotions=core.read(&f.locomotions),worlds=core.read(&f.worlds),remotes=core.read(&f.remotes),paces=core.read(&f.paces),helds=core.read(&f.helds),tags=core.read(&f.tags),clock=core.CLOCK_DEFAULT,moves=&f.moves,animations=&f.animations,anim_events=core.ref(&f.anim_events),problems=&f.problems,sounds=&f.sounds,births=&f.births}
 }
 
 @(private="file")
@@ -237,6 +240,7 @@ step :: proc(f:^Fixture,ticks:=1) {
         abilities_tick(tables_of(f),data_of(f),&f.cache,&f.checks,&f.requests,&f.events,&w,test_overlap)
         for e in f.events.queue.items[from:] {append(&f.log,e)}
         core.events_age(&f.events.queue)
+        clear(&f.anim_events.items)
         test_world_settle(&f.w)
         core.time_advance(&f.time)
     }
@@ -735,12 +739,12 @@ lasting_effects_stack_by_tags_end_by_cleanse_and_skip_blocked_targets :: proc(t:
 
 @(test)
 authored_rows_and_frequently_written_state_stay_compact :: proc(t:^testing.T) {
-    testing.expectf(t,size_of(Ability_User)<=160,"user setup is %d B",size_of(Ability_User))
+    testing.expectf(t,size_of(Ability_User)<=192,"user setup is %d B",size_of(Ability_User))
     testing.expectf(t,size_of(Ability_State)<=80,"hot state is %d B",size_of(Ability_State))
-    testing.expectf(t,size_of(Ability_Window)<=104,"window is %d B",size_of(Ability_Window))
-    testing.expectf(t,size_of(Ability)<=2000,"ability is %d B",size_of(Ability))
+    testing.expectf(t,size_of(Ability_Window)<=144,"window is %d B",size_of(Ability_Window))
+    testing.expectf(t,size_of(Ability)<=2640,"ability is %d B",size_of(Ability))
     size:=size_of(Ability_User)+size_of(Ability_State)+size_of(Ability_Tracking)
-    testing.expectf(t,size<=1352,"total user state is %d B",size)
+    testing.expectf(t,size<=1480,"total user state is %d B",size)
 }
 
 @(test)
@@ -975,4 +979,302 @@ a_window_attaches_the_held_entity_while_it_is_open :: proc(t:^testing.T) {
     step(f)
     socket,_,_=asked(f)
     testing.expectf(t,socket=="hand_r","a replica in the window holds it in the hand: %s",socket)
+}
+
+// Attributes with regen_delay wait that long after the last cost or negative effect before
+// positive regeneration resumes; a repeat spend resets the delay, a positive effect does not, and
+// negative regen_delay is rejected as a problem.
+@(test)
+attribute_regen_waits_for_regen_delay_after_spend :: proc(t:^testing.T) {
+    Spend :: enum {Startup_Cost,Per_Second,Negative_Effect}
+    Case :: struct {spend:Spend,delay:f32}
+    for c in ([]Case{
+        {.Startup_Cost,0},
+        {.Startup_Cost,0.5},
+        {.Startup_Cost,1.5},
+        {.Per_Second,0.5},
+        {.Negative_Effect,0.5},
+    }) {
+        f:=new(Fixture);defer free(f)
+        if !fixture_make(t,f) {return}
+        defer fixture_destroy(f)
+        u:=core.edit(&f.users,f.player)
+        u.attributes[0]={attribute=HEALTH,base=100,max=100,regen=20,regen_delay=c.delay}
+        f.sheets[SLASH_1]={duration=0.25}
+        switch c.spend {
+        case .Startup_Cost:
+            f.sheets[SLASH_1].costs[0]={attribute=HEALTH,amount=30}
+        case .Per_Second:
+            f.sheets[SLASH_1].costs[0]={attribute=HEALTH,per_second=60}
+        case .Negative_Effect:
+        }
+        test_world_settle(&f.w)
+        if c.spend==.Negative_Effect {
+            ability_effect(&f.requests,f.player,{attribute=HEALTH,amount=-30})
+            step(f)
+        } else {
+            ability_use(&f.requests,f.player,ref(SLASH_1))
+            step(f,seconds(0.25)+2 if c.spend==.Per_Second else 1)
+        }
+        spent_base:=user(f,f.player).attributes[0].base
+        testing.expectf(t,spent_base<95,"%v: spend took from base: %v",c,spent_base)
+        if c.delay>0 {
+            // Halfway through the delay, nothing regenerated yet.
+            step(f,seconds(c.delay*0.5))
+            testing.expectf(t,abs(user(f,f.player).attributes[0].base-spent_base)<1e-4,"%v: no regen before delay: %v vs %v",c,user(f,f.player).attributes[0].base,spent_base)
+            // Positive healing does not reset the delay; a negative effect does.
+            ability_effect(&f.requests,f.player,{attribute=HEALTH,amount=5})
+            step(f)
+            healed:=user(f,f.player).attributes[0].base
+            testing.expectf(t,abs(healed-(spent_base+5))<1e-4,"%v: positive effect applies during delay: %v",c,healed)
+            ability_effect(&f.requests,f.player,{attribute=HEALTH,amount=-5})
+            step(f)
+            // After waiting another half delay, still delayed because the negative effect reset it.
+            step(f,seconds(c.delay*0.5))
+            testing.expectf(t,abs(user(f,f.player).attributes[0].base-spent_base)<1e-4,"%v: repeat spend reset delay: %v",c,user(f,f.player).attributes[0].base)
+            // Wait the rest of the delay plus 0.5 s of regen (~10 restored).
+            step(f,seconds(c.delay*0.5)+seconds(0.5))
+            testing.expectf(t,abs(user(f,f.player).attributes[0].base-(spent_base+10))<1.0,"%v: regen resumed after delay: %v from %v",c,user(f,f.player).attributes[0].base,spent_base)
+        } else {
+            step(f,seconds(0.5))
+            testing.expectf(t,user(f,f.player).attributes[0].base>spent_base+9,"%v: zero delay regenerates immediately: %v from %v",c,user(f,f.player).attributes[0].base,spent_base)
+        }
+        testing.expect_value(t,f.problems.count,0)
+    }
+
+    // Negative regen_delay is rejected as an attribute problem.
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+    core.edit(&f.users,f.player).attributes[0].regen_delay=-0.1
+    test_world_settle(&f.w)
+    step(f)
+    testing.expect(t,core.problem_find(&f.problems,f.player,"abilities.attributes")!=nil)
+}
+
+// Modifier ramp_in and ramp_out smoothly scale window and timer modifiers; invalid negative ramps
+// are reported by ability_check and effect_check.
+@(test)
+modifier_ramps_fade_in_and_out_on_windows_and_timers :: proc(t:^testing.T) {
+    Case :: struct {
+        ramp_in,ramp_out:f32,
+        sample_s:f32,
+        want_value:f32,
+    }
+    // Window [0, 1.0] modifying STRENGTH (base 2) with more=1.0 (full value = 4.0).
+    for c in ([]Case{
+        {ramp_in=0.5,ramp_out=0,sample_s=0.0,want_value=2.0},
+        {ramp_in=0.5,ramp_out=0,sample_s=0.25,want_value=3.0},
+        {ramp_in=0.5,ramp_out=0,sample_s=0.5,want_value=4.0},
+        {ramp_in=0,ramp_out=0.5,sample_s=0.25,want_value=4.0},
+        {ramp_in=0,ramp_out=0.5,sample_s=0.75,want_value=3.0},
+        {ramp_in=0.6,ramp_out=0.6,sample_s=0.5,want_value=2.0*(1+5.0/6.0)},
+    }) {
+        f:=new(Fixture);defer free(f)
+        if !fixture_make(t,f) {return}
+        defer fixture_destroy(f)
+        f.sheets[SLASH_1]={duration=1.0}
+        f.sheets[SLASH_1].windows[0]={from=0,to=1.0,modify={attribute=STRENGTH,more=1.0,ramp_in=c.ramp_in,ramp_out=c.ramp_out}}
+        ability_use(&f.requests,f.player,ref(SLASH_1))
+        step(f,1+seconds(c.sample_s))
+        got:=user(f,f.player).values[3]
+        testing.expectf(t,abs(got-c.want_value)<0.05,"%v: window value %v, want %v",c,got,c.want_value)
+        testing.expect_value(t,f.problems.count,0)
+    }
+
+    // Lasting effect timer with ramp_in and ramp_out.
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+    ability_effect(&f.requests,f.player,{seconds=1.0,modify={attribute=STRENGTH,more=1.0,ramp_in=0.4,ramp_out=0.4}})
+    step(f)
+    testing.expectf(t,abs(user(f,f.player).values[3]-2.0)<0.05,"timer start value: %v",user(f,f.player).values[3])
+    step(f,seconds(0.2))
+    testing.expectf(t,abs(user(f,f.player).values[3]-3.0)<0.1,"timer mid ramp_in: %v",user(f,f.player).values[3])
+    step(f,seconds(0.3))
+    testing.expectf(t,abs(user(f,f.player).values[3]-4.0)<0.05,"timer full plateau: %v",user(f,f.player).values[3])
+    step(f,seconds(0.3))
+    testing.expectf(t,abs(user(f,f.player).values[3]-3.0)<0.1,"timer mid ramp_out: %v",user(f,f.player).values[3])
+
+    // Validation catches negative ramp_in/ramp_out and ramp without attribute.
+    buf:[256]u8
+    bad_a:=Ability{duration=1}
+    bad_a.windows[0]={from=0,to=1,modify={attribute=STRENGTH,more=0.5,ramp_in=-0.1}}
+    testing.expect(t,ability_check(&bad_a,buf[:])!="")
+    bad_a.windows[0]={from=0,to=1,modify={ramp_out=0.2}}
+    testing.expect(t,ability_check(&bad_a,buf[:])!="")
+}
+
+// A single hitbox applies different effects based on target scene.Tags (e.g. 35 damage + knockback
+// to players vs 75 damage to structures/environment, default to untagged, 0 override to immune).
+@(test)
+hitbox_applies_per_target_class_effects_by_tags :: proc(t:^testing.T) {
+    TAG_PLAYER :: 0
+    TAG_STRUCTURE :: 1
+    TAG_ENVIRONMENT :: 2
+    TAG_IMMUNE_CLASS :: 3
+
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+
+    // Configure hitbox 0 with per-target-class effects.
+    f.sheets[SLASH_1]={duration=0.5}
+    f.sheets[SLASH_1].windows[0]={from=0,to=0.2,hitbox={HITBOX_TABLE,1}}
+    f.hitboxes[0]={
+        shape=.Box,center={0,1,-1.5},size={2,2,2},
+        effect={attribute=HEALTH,amount=-20},
+        target_effects={
+            0={attribute=HEALTH,amount=-35,target_tags={bits=u64(1)<<TAG_PLAYER},knockback={0,4,-8},knockback_seconds=0.1},
+            1={attribute=HEALTH,amount=-75,target_tags={bits=(u64(1)<<TAG_STRUCTURE)|(u64(1)<<TAG_ENVIRONMENT)}},
+            2={target_tags={bits=u64(1)<<TAG_IMMUNE_CLASS}},
+        },
+    }
+
+    Target_Case :: struct {name:string,tag:int,want_health:f32,want_knockback:bool}
+    cases:=[]Target_Case{
+        {"player",TAG_PLAYER,65,true},
+        {"structure",TAG_STRUCTURE,25,false},
+        {"environment",TAG_ENVIRONMENT,25,false},
+        {"untagged",-1,80,false},
+        {"immune_class",TAG_IMMUNE_CLASS,100,false},
+    }
+    entities:=make([]core.Entity,len(cases));defer delete(entities)
+    // Move original dummy out of hitbox so only our table targets are tested.
+    core.edit(&f.worlds,f.dummy).transform.position={100,0,0}
+    for c,i in cases {
+        e:=core.create(&f.entities)
+        entities[i]=e
+        u:=Ability_User{}
+        u.attributes[0]={attribute=HEALTH,base=100,max=100}
+        core.add(&f.users,e,u)
+        core.add(&f.characters,e,phys.character_default())
+        core.add(&f.worlds,e,core.World_Transform{transform={position={1.5,0,0},rotation=1,scale=1}})
+        if c.tag>=0 {
+            tags:scene.Tags
+            scene.tag_set(&tags,c.tag)
+            core.add(&f.tags,e,tags)
+        }
+    }
+    test_world_settle(&f.w)
+    ability_rows(tables_of(f),&f.checks,&f.problems)
+    test_world_settle(&f.w)
+
+    ability_use(&f.requests,f.player,ref(SLASH_1))
+    step(f,3)
+    for c,i in cases {
+        hp:=user(f,entities[i]).attributes[0].base
+        testing.expectf(t,abs(hp-c.want_health)<1e-3,"%s: health is %v, want %v",c.name,hp,c.want_health)
+        kb:=false
+        for m in f.moves.queue.items {
+            if m.entity==entities[i] && m.kind==.Add_Move && m.move.id==KNOCKBACK_ID {kb=true}
+        }
+        testing.expectf(t,kb==c.want_knockback,"%s: knockback %v, want %v",c.name,kb,c.want_knockback)
+    }
+
+    // Standalone ability_effect with target_tags skips non-matching targets.
+    ability_effect(&f.requests,entities[1],{attribute=HEALTH,amount=-10,target_tags={bits=u64(1)<<TAG_PLAYER}})
+    ability_effect(&f.requests,entities[0],{attribute=HEALTH,amount=-10,target_tags={bits=u64(1)<<TAG_PLAYER}})
+    step(f)
+    testing.expectf(t,abs(user(f,entities[1]).attributes[0].base-25)<1e-3,"structure ignored player-only effect")
+    testing.expectf(t,abs(user(f,entities[0]).attributes[0].base-55)<1e-3,"player took player-only effect")
+    testing.expect_value(t,f.problems.count,0)
+
+    // Validation catches target_effects entry without target_tags.
+    buf:[256]u8
+    bad_hb:=Ability_Hitbox{shape=.Box,size={1,1,1}}
+    bad_hb.target_effects[0]={attribute=HEALTH,amount=-10}
+    testing.expect(t,hitbox_check(&bad_hb,buf[:])!="")
+}
+
+// Clip-span-bound windows open on Animation_Events .Span_Begin and close on .Span_End, driving
+// hitboxes, statuses, cancel windows, ramped modifiers, held attachments and layered moves.
+@(test)
+clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T) {
+    f:=new(Fixture);defer free(f)
+    if !fixture_make(t,f) {return}
+    defer fixture_destroy(f)
+
+    f.sheets[SLASH_1]={duration=1.0}
+    base.text_set(f.sheets[SLASH_1].action[:],"slash_1")
+    f.sheets[SLASH_1].windows[0]={
+        statuses=status_bit(CHARGING),
+        cancel_into=tag_bit(FOLLOW),
+        hitbox={HITBOX_TABLE,1},
+        modify={attribute=STRENGTH,more=1.0,ramp_in=0.2},
+        move={velocity={0,0,-10},mix=.Additive},
+        cue=SLASH,
+        attach=true,
+    }
+    base.text_set(f.sheets[SLASH_1].windows[0].span[:],"active")
+    f.sheets[SLASH_1].windows[1]={}
+    sword:=core.create(&f.entities)
+    held:=Ability_Held{entity=sword,blend=0.05}
+    base.text_set(held.socket[:],"hand_r")
+    core.add(&f.helds,f.player,held)
+    test_world_settle(&f.w)
+
+    // Start ability: span window is closed before .Span_Begin.
+    ability_use(&f.requests,f.player,ref(SLASH_1))
+    step(f)
+    testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
+    testing.expect(t,!ability_has(user(f,f.player).state,CHARGING),"closed before Span_Begin")
+    testing.expect_value(t,logged(f,.Window_Begin,f.player,0),0)
+
+    // Wrong entity, wrong action, and wrong span name are ignored.
+    append(&f.anim_events.items,
+        anim.Animation_Event{entity=f.dummy,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")},
+        anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("other"),name=base.name_hash("active")},
+        anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("other_span")},
+    )
+    step(f)
+    testing.expect(t,!ability_has(user(f,f.player).state,CHARGING),"unrelated events ignored")
+    testing.expect_value(t,logged(f,.Window_Begin,f.player,0),0)
+
+    // Matching .Span_Begin opens the window: status, hitbox, Window_Begin, move, attach, ramp_in.
+    append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")})
+    step(f)
+    testing.expect(t,ability_has(user(f,f.player).state,CHARGING),"status active during span")
+    testing.expect_value(t,logged(f,.Window_Begin,f.player,0),1)
+    testing.expect_value(t,logged(f,.Hit,f.player,0),1)
+    testing.expectf(t,abs(user(f,f.player).values[3]-2.0)<0.05,"ramp_in starts at base on open tick: %v",user(f,f.player).values[3])
+    last_attach:=f.animations.attaches.items[len(f.animations.attaches.items)-1]
+    testing.expect_value(t,base.text_get(last_attach.socket[:]),"hand_r")
+    move_added:=false
+    for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Add_Move && m.move.id==MOVE_ID {move_added=true}}
+    testing.expect(t,move_added,"layered move added on Span_Begin")
+
+    // Mid-ramp and full-ramp while span stays open.
+    step(f,seconds(0.1))
+    testing.expectf(t,abs(user(f,f.player).values[3]-3.0)<0.15,"mid ramp_in inside span: %v",user(f,f.player).values[3])
+    step(f,seconds(0.1))
+    testing.expectf(t,abs(user(f,f.player).values[3]-4.0)<0.05,"full ramp_in inside span: %v",user(f,f.player).values[3])
+
+    // .Span_End closes the window and removes the layered move.
+    clear(&f.moves.queue.items)
+    append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_End,action=base.name_hash("slash_1"),name=base.name_hash("active")})
+    step(f)
+    testing.expect(t,!ability_has(user(f,f.player).state,CHARGING),"status cleared on Span_End")
+    testing.expect_value(t,logged(f,.Window_End,f.player,0),1)
+    testing.expectf(t,abs(user(f,f.player).values[3]-2.0)<0.05,"modifier cleared on Span_End: %v",user(f,f.player).values[3])
+    move_removed:=false
+    for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Remove_Moves && m.move.id==MOVE_ID {move_removed=true}}
+    testing.expect(t,move_removed,"layered move removed on Span_End")
+
+    // Re-opening and canceling before .Span_End closes cleanly.
+    append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")})
+    step(f)
+    testing.expect(t,ability_has(user(f,f.player).state,CHARGING))
+    ability_cancel(&f.requests,f.player)
+    step(f)
+    testing.expect_value(t,user(f,f.player).span_open,u16(0))
+    testing.expect_value(t,logged(f,.Window_End,f.player,0),2)
+    testing.expect_value(t,f.problems.count,0)
+
+    // Validation rejects span combined with from or to.
+    buf:[256]u8
+    bad:=Ability{duration=1}
+    bad.windows[0]={from=0.1,to=0.5}
+    base.text_set(bad.windows[0].span[:],"active")
+    testing.expect(t,ability_check(&bad,buf[:])!="")
 }

@@ -37,6 +37,7 @@ Ability_Hitbox :: struct {
     center:[3]f32 `mirai:"unit=m"`, // Center in the axes of the user, in metres
     size:[3]f32 `mirai:"min=0,unit=m"`, // Box half extents, sphere radius, or capsule radius and half height, in metres
     effect:Ability_Effect,
+    target_effects:[4]Ability_Effect, // Per-target-class effects matched by target_tags before falling back to effect
     on_hit:core.Record(Ability_Feedback), // Audio and particles at the target on hit
 }
 ABILITY_HITBOX_DEFAULT :: Ability_Hitbox{shape=.Box,size={0=1,1=1,2=1}}

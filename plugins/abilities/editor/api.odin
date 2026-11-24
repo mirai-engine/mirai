@@ -44,6 +44,7 @@ Inspect_Result :: struct {
 Window_Result :: struct {
     index:int,
     from,to:f32 `mirai:"unit=s"`,
+    span:string `mirai:"optional,label=Animation clip span name when span-bound"`,
     clock:string `mirai:"optional,label=own: on the clock of the ability"`,
     cancel_into:[]string `mirai:"optional"`,
     hitbox:Hitbox_Result `mirai:"optional,label=Its hitbox where it is now; left out without one"`,
@@ -183,8 +184,9 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
         r.seconds,r.own_seconds,r.duration=f32(at.local)*dt,at.own*dt,active.duration
         windows:=make([dynamic]Window_Result,call.allocator)
         for &win,i in active.windows {
-            if !ab.ability_window_open(win,dt,at) {continue}
+            if !ab.ability_window_open(win,dt,at,i) {continue}
             shown:=Window_Result{index=i,from=win.from,to=win.to,cancel_into=bits_names(s,call,ab.Ability_Tag,u64(win.cancel_into))}
+            if win.span[0]!=0 {shown.span=base.text_get(win.span[:])}
             if win.clock==.Own {shown.clock="own"}
             if hitbox:=ab.record_sheet(data.hitboxes,win.hitbox);hitbox!=nil {shown.hitbox=window_hitbox(world,e,&track,hitbox,i,call.allocator)}
             if win.cue!=ab.CUE_NONE {shown.cue=value_name(s,ab.Ability_Cue,i64(win.cue))}
@@ -305,11 +307,11 @@ world_clock :: proc(world:core.World_Ref) -> (time:core.Time,dt:f32) {
     return
 }
 
-// Where the running ability of a user is on its clocks.
+// Where the running ability of a user is on its clocks and clip spans.
 @(private)
 running_at :: proc(time:core.Time,state:^ab.Ability_State) -> ab.Ability_Time {
     if state.ability=={} {return {}}
-    return {local=i64(time.tick-state.start) if time.tick>=state.start else 0,own=state.own}
+    return {local=i64(time.tick-state.start) if time.tick>=state.start else 0,own=state.own,spans=state.span_open}
 }
 
 // Where the user e is in world: its World_Transform, or the identity without one.

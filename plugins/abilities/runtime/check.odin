@@ -36,16 +36,24 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
     for c,i in a.costs {
         if !finite(c.amount) || c.amount<0 {return fmt.bprintf(out,"costs[%d].amount is %v: give what it takes, 0 or more",i,c.amount)}
         if !finite(c.per_second) || c.per_second<0 {return fmt.bprintf(out,"costs[%d].per_second is %v: give what it takes every second, 0 or more",i,c.per_second)}
-        if c.attribute==ATTRIBUTE_NONE && (c.amount!=0 || c.per_second!=0) {return fmt.bprintf(out,"costs[%d] takes from no attribute: name the attribute it takes from",i)}
+        if !seconds_ok(c.fall_grace) {return fmt.bprintf(out,"costs[%d].fall_grace is %v: give 0 or more seconds",i,c.fall_grace)}
+        if c.pause_falling && !(c.per_second>0) {return fmt.bprintf(out,"costs[%d] sets pause_falling without per_second: give per_second above 0 or clear pause_falling",i)}
+        if c.fall_grace>0 && !c.pause_falling {return fmt.bprintf(out,"costs[%d] sets fall_grace without pause_falling: enable pause_falling or clear fall_grace",i)}
+        if c.attribute==ATTRIBUTE_NONE && (c.amount!=0 || c.per_second!=0 || c.pause_falling || c.fall_grace!=0) {return fmt.bprintf(out,"costs[%d] takes from no attribute: name the attribute it takes from",i)}
     }
     for &w,i in a.windows {
-        if w.to==0 {
-            if w!=(Ability_Window{}) {return fmt.bprintf(out,"windows[%d] does something but its to is 0, which leaves it unused: give it the second it closes at",i)}
+        has_span:=w.span[0]!=0
+        if !has_span && w.to==0 {
+            if w!=(Ability_Window{}) {return fmt.bprintf(out,"windows[%d] does something but its to is 0, which leaves it unused: give it the second it closes at or a clip span",i)}
             continue
         }
-        if !finite(w.from) || !finite(w.to) || w.from<0 || w.from>=w.to {return fmt.bprintf(out,"windows[%d] runs from %v to %v: from must be 0 or more and below to",i,w.from,w.to)}
+        if has_span {
+            if w.from!=0 || w.to!=0 {return fmt.bprintf(out,"windows[%d] names a clip span and also sets from or to: clear from and to, or clear span",i)}
+        } else {
+            if !finite(w.from) || !finite(w.to) || w.from<0 || w.from>=w.to {return fmt.bprintf(out,"windows[%d] runs from %v to %v: from must be 0 or more and below to",i,w.from,w.to)}
+        }
         if w.clock>max(Ability_Clock) {return fmt.bprintf(out,"windows[%d].clock is %d: use world or own",i,u8(w.clock))}
-        if w.clock==.World && w.to>a.duration {return fmt.bprintf(out,"windows[%d] closes at %v, after the duration %v: close it by then or lengthen the ability",i,w.to,a.duration)}
+        if !has_span && w.clock==.World && w.to>a.duration {return fmt.bprintf(out,"windows[%d] closes at %v, after the duration %v: close it by then or lengthen the ability",i,w.to,a.duration)}
         if text:=modifier_check(w.modify,out);text!="" {return fmt.bprintf(out,"windows[%d].modify %s",i,text)}
         for v in w.move.velocity {if !finite(v) {return fmt.bprintf(out,"windows[%d].move.velocity is not a velocity: give finite metres per second",i)}}
         if w.move.mix>max(locomotion.Move_Mix) {return fmt.bprintf(out,"windows[%d].move.mix is %d: use additive or override",i,u8(w.move.mix))}
@@ -67,6 +75,11 @@ hitbox_check :: proc(h:^Ability_Hitbox,out:[]u8) -> string {
         }
     }
     if text:=effect_check(h.effect,out);text!="" {return fmt.bprintf(out,"effect %s",text)}
+    for te,i in h.target_effects {
+        if te==(Ability_Effect{}) {continue}
+        if te.target_tags.bits==0 {return fmt.bprintf(out,"target_effects[%d] has no target_tags: set target_tags or clear it",i)}
+        if text:=effect_check(te,out);text!="" {return fmt.bprintf(out,"target_effects[%d] %s",i,text)}
+    }
     return ""
 }
 
@@ -97,7 +110,8 @@ effect_check :: proc(e:Ability_Effect,out:[]u8) -> string {
 @(private)
 modifier_check :: proc(m:Ability_Modifier,out:[]u8) -> string {
     if !finite(m.add) || !finite(m.more) {return "has add or more that is not a number: give finite values"}
-    if m.attribute==ATTRIBUTE_NONE && (m.add!=0 || m.more!=0) {return "changes no attribute: name the attribute it modifies"}
+    if !seconds_ok(m.ramp_in) || !seconds_ok(m.ramp_out) {return "has ramp_in or ramp_out that is not 0 or more seconds"}
+    if m.attribute==ATTRIBUTE_NONE && (m.add!=0 || m.more!=0 || m.ramp_in!=0 || m.ramp_out!=0) {return "changes no attribute: name the attribute it modifies"}
     if m.more<=-1 {return "has more at -1 or below, which leaves nothing or a negative value: keep it above -1"}
     return ""
 }
@@ -108,7 +122,7 @@ attributes_check :: proc(user:^Ability_User) -> (problem:Attribute_Problem,index
     seen:[256]bool
     for entry,i in user.attributes {
         if entry.attribute==ATTRIBUTE_NONE {continue}
-        if !finite(entry.base) || !finite(entry.max) || !finite(entry.regen) || entry.max<0 {
+        if !finite(entry.base) || !finite(entry.max) || !finite(entry.regen) || !finite(entry.regen_delay) || entry.max<0 || entry.regen_delay<0 {
             return .Number,i
         }
         id:=int(entry.attribute)
@@ -122,7 +136,7 @@ attribute_report :: proc(problems:^core.Problems,e:core.Entity,problem:Attribute
     switch problem {
     case .None:
     case .Number:
-        core.report(problems,e,"abilities.attributes","attributes[%d] needs a finite base, max and regen and a max of 0 or more",i)
+        core.report(problems,e,"abilities.attributes","attributes[%d] needs finite base, max, regen and regen_delay, with max and regen_delay of 0 or more",i)
     case .Duplicate:
         core.report(problems,e,"abilities.attributes","attributes[%d] repeats an attribute: keep one entry per attribute",i)
     }

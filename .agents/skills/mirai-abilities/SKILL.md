@@ -57,9 +57,10 @@ and the tick it started, and derives everything else from the tick against the s
   open cancel windows and by the kit's interrupts against the tags of the candidate; among valid
   candidates the highest priority wins. `next` only adds one candidate when an ability completes.
 - **The state is the start tick** (and `own`, the user's own time since then, for windows on the
-  `own` clock). Phase, open windows, granted statuses and modifiers are derived each tick from
-  them against the immutable sheet: ending or rolling back an ability leaves nothing behind. One
-  ability runs per user.
+  `own` clock, plus `span_open` for clip-span-bound windows). Phase, open windows, granted statuses
+  and modifiers (with optional `ramp_in`/`ramp_out`) are derived each tick from them against the
+  immutable sheet: ending or rolling back an ability leaves nothing behind. One ability runs per
+  user.
 - **Combo input rules are data.** When a follow-up's input counts (`input.after`) and whether it
   waits for the branch of the running ability (`input.wait` `running`) are fields of its sheet; a
   branch that follows a clip in slow motion is a window on the `own` clock. The game does not
@@ -78,8 +79,8 @@ and the tick it started, and derives everything else from the tick against the s
   does not import audio or effects.
 - Pace and gravity changes during an ability (slow motion while charging, low gravity) are not
   part of the plugin: the game sets `core.Own_Pace` from events, and gravity belongs to locomotion.
-  The plugin reads the pace for `own` windows; it does not read animation state (the end that
-  decides may not sample animation).
+  The plugin reads the pace for `own` windows and `Animation_Events` (`.Span_Begin`/`.Span_End`)
+  for clip-span-bound windows; it does not sample animation state directly.
 - A sheet, kit, attribute entry or effect that is not valid is a problem of its user that says
   what to fix (`abilities.invalid`, `abilities.kit`, `abilities.attributes`, `abilities.effect`)
   and never runs; `abilities.check` returns the same text.

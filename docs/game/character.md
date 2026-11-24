@@ -61,9 +61,10 @@ not steer by writing a velocity. A launch, such as a jump pad, works on a `Chara
 adds to it, with `requests:^phys.Body_Requests`. Flying and swimming are components too
 (`locomotion.Fly`, `locomotion.Swim`), and so are a slide and a climb onto ledges
 (`locomotion.Slide`, `locomotion.Mantle`). What costs stamina or energy (a tactical sprint, a jump
-off a ledge with a boost) is data of the `abilities` plugin, not of locomotion: a window that
-raises the speed attribute of its `Ability_User` (its `speed`, which scales the walk), a cost
-`per_second`, and conditions on the speed of the body or a ledge ahead.
+off a ledge with a boost) is data of the `abilities` plugin, not of locomotion: windows that raise
+the `speed`, `jump` and `acceleration` attributes of its `Ability_User` (with optional `ramp_in`),
+a `per_second` cost with `pause_falling` and `regen_delay`, and conditions on the speed of the body
+or a ledge ahead.
 
 ## Pitfalls that fail silently
 

@@ -73,6 +73,14 @@ sheets_refresh :: proc(cache:^Ability_Sheets,data:Ability_Data) -> bool {
         if message=="" && ref_missing(data.abilities,h.effect.use) {
             message="effect.use names a missing Ability row: pick another row or none"
         }
+        if message=="" {
+            for te,j in h.target_effects {
+                if ref_missing(data.abilities,te.use) {
+                    message=fmt.bprintf(text[:],"target_effects[%d].use names a missing Ability row: pick another row or none",j)
+                    break
+                }
+            }
+        }
         if message=="" && ref_missing(data.feedback,h.on_hit) {
             message="on_hit names a missing Ability_Feedback row: pick another row or none"
         }

@@ -117,6 +117,19 @@ an_open_hitbox_is_placed_in_the_world_with_what_it_hit_and_drawn_by_the_overlay 
     hitboxes_draw(&lines,w,data)
     testing.expect_value(t,lines.count,24)
     testing.expect_value(t,storage[0].color,mm.rgba8_pack(HITBOXES_CAPTURE_OPEN))
+
+    // Clip-span-bound window hitbox draws only while its bit in state.span_open is set.
+    sheets[0].windows[0]={}
+    sheets[0].windows[1]={hitbox={HITBOX_TABLE,1}}
+    base.text_set(sheets[0].windows[1].span[:],"swing")
+    erender.debug_lines_clear(&lines)
+    hitboxes_draw(&lines,w,data)
+    testing.expect_value(t,lines.count,0)
+    core.edit(&world.states,player).span_open=u16(1)<<1
+    core.settle(&info,&world,nil)
+    erender.debug_lines_clear(&lines)
+    hitboxes_draw(&lines,w,data)
+    testing.expect_value(t,lines.count,24)
 }
 
 @(private="file")

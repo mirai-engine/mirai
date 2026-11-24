@@ -2,6 +2,7 @@ package abilities
 
 import "mirai:core"
 import inp "mirai:engine/input"
+import scene "mirai:engine/scene"
 import "mirai:std/base"
 import locomotion "plugins:locomotion/runtime"
 
@@ -17,6 +18,8 @@ ABILITY_WINDOWS :: 16
 ABILITY_CONDITIONS :: 4
 ABILITY_COSTS :: 4
 ABILITY_NAME :: 64
+ABILITY_SPAN_NAME :: 32
+HITBOX_TARGET_EFFECTS :: 4
 KIT_ABILITIES :: 32
 ATTRIBUTE_ENTRIES :: 8
 USER_HITS :: 16
@@ -108,13 +111,19 @@ Ability_Cost :: struct {
     attribute:Ability_Attribute,
     amount:f32 `mirai:"min=0"`, // taken from its base when the ability starts; it cannot start with less
     per_second:f32 `mirai:"min=0,unit=1/s"`, // taken from its base every second it runs after its start; it completes when the attribute cannot pay the tick
+    fall_grace:f32 `mirai:"min=0,unit=s"`, // with pause_falling: falling longer than this completes the ability; 0: no limit
+    pause_falling:bool, // pauses per_second drain while the user's Character is airborne/falling
 }
 
 // value = (base + add) * (1 + more), summed over the modifiers in force.
+// With ramp_in / ramp_out, the modifier fades from 0 to full over ramp_in seconds after its window
+// or timer starts, and back to 0 over ramp_out seconds before it ends.
 Ability_Modifier :: struct {
     attribute:Ability_Attribute,
     add:f32,
     more:f32, // 0.5: half as much more; -0.5: half
+    ramp_in:f32 `mirai:"min=0,unit=s"`,  // seconds from start to reach full effect; 0: at once
+    ramp_out:f32 `mirai:"min=0,unit=s"`, // seconds before end to fade to zero; 0: instant
 }
 
 // What an ability does to what it hits, or what a game asks for through Ability_Requests. With
@@ -133,6 +142,7 @@ Ability_Effect :: struct {
     max_stacks:u8,              // 0 and 1: applying again only lasts seconds from then
     remove:Ability_Tags,        // the timers of the target with one of these tags end: a cleanse
     blocked_by:Ability_Statuses, // a target in any of them takes nothing: immune, unstoppable
+    target_tags:scene.Tags,     // when non-zero, applies only to targets whose scene.Tags share at least one bit
     cue:Ability_Cue,            // carried by the events of the start and end of its timer
     knockback:[3]f32 `mirai:"unit=m/s"`, // in the axes of the source: a velocity its Character takes
     knockback_seconds:f32 `mirai:"min=0,unit=s"`,
@@ -152,8 +162,9 @@ Ability_Clock :: enum u8 {
     Own,   // the user's own time (core.Own_Pace), as its animation counts it: a window that follows a clip played in slow motion
 }
 
-// A span of the timeline of an ability, in seconds from its start; it is open while
-// from <= time < to. A window with to at 0 is not used.
+// A span of the timeline of an ability, either in seconds from its start (open while
+// from <= time < to) or bound to an animation clip span name (Animation_Events .Span_Begin /
+// .Span_End). A window with empty span and to at 0 is not used.
 Ability_Window :: struct {
     from,to:f32 `mirai:"min=0,unit=s"`,
     cancel_into:Ability_Tags,
@@ -165,6 +176,7 @@ Ability_Window :: struct {
     cue:Ability_Cue,
     clock:Ability_Clock,
     attach:bool, // while it is open the Ability_Held of the user is at its socket
+    span:[ABILITY_SPAN_NAME]u8 `mirai:"text"`, // animation clip span name; when non-empty, opens/closes on .Span_Begin/.Span_End instead of from/to
 }
 
 Ability_Attribute_Entry :: struct {
@@ -172,6 +184,7 @@ Ability_Attribute_Entry :: struct {
     base:f32 `mirai:"min=0"`, // costs and effects change it; it stays in 0..max
     max:f32 `mirai:"min=0"`,  // 0: no limit
     regen:f32 `mirai:"unit=1/s"`, // added to base every second
+    regen_delay:f32 `mirai:"min=0,unit=s"`, // seconds after the last cost or negative effect before positive regen resumes
 }
 
 // An input waits while the ability that started at run is still running, if requested.
@@ -190,11 +203,13 @@ Ability_Timer :: struct {
     stacks:u8,
 }
 
-@(component,replicated,description="Uses the abilities of its kit and holds the attributes that costs and effects change. The current value of its speed attribute scales the speed of the locomotion of its Character: a sprint is a window or an effect that modifies it.")
+@(component,replicated,description="Uses the abilities of its kit and holds the attributes that costs and effects change. The current values of its speed, jump and acceleration attributes scale the locomotion of its Character: a sprint is a window or an effect that modifies them.")
 Ability_User :: struct {
     kit:core.Record(Ability_Kit),
     attributes:[ATTRIBUTE_ENTRIES]Ability_Attribute_Entry,
-    speed:Ability_Attribute, // its current value is the speed scale of its locomotion (locomotion.set_speed_scale); none: abilities leave that scale
+    speed:Ability_Attribute,        // its current value is the speed scale of its locomotion (locomotion.set_speed_scale); none: abilities leave that scale
+    jump:Ability_Attribute,         // its current value is the jump scale of its locomotion (locomotion.set_jump_scale); none: abilities leave that scale
+    acceleration:Ability_Attribute, // its current value is the acceleration scale of its locomotion (locomotion.set_acceleration_scale); none: abilities leave that scale
 }
 
 // What an Ability_User holds that the windows with attach of its abilities move: at socket while
@@ -215,6 +230,8 @@ Ability_State :: struct {
     statuses:Ability_Statuses `mirai:"transient,readonly,local"`,
     values:[ATTRIBUTE_ENTRIES]f32 `mirai:"transient,readonly,local"`,
     own:f32 `mirai:"readonly,hidden"`, // ticks on the user's own clock
+    span_open:u16 `mirai:"readonly,hidden"`, // bit i: clip-span-bound window i is open
+    air_ticks:u16 `mirai:"readonly,hidden"`, // consecutive falling ticks while running an ability with fall_grace
 }
 
 @(component,replicated,description="The pending inputs, cooldowns, and effects of an ability user.")
@@ -225,6 +242,8 @@ Ability_Tracking :: struct {
     buffer:[USER_BUFFER]Ability_Buffered `mirai:"readonly,hidden"`,
     cooldowns:[USER_COOLDOWNS]Ability_Cooldown `mirai:"readonly,hidden"`,
     timers:[USER_TIMERS]Ability_Timer `mirai:"readonly,hidden"`,
+    regen_at:[ATTRIBUTE_ENTRIES]u64 `mirai:"readonly,hidden"`, // tick from which entry i may regenerate after being spent
+    span_start:[ABILITY_WINDOWS]u16 `mirai:"readonly,hidden"`, // local tick offset when span-bound window i opened
 }
 
 Ability_Request_Kind :: enum u8 {Use,Cancel,Effect,Kit}
@@ -320,9 +339,9 @@ ability_value :: proc "contextless" (user:^Ability_User,state:^Ability_State,att
     return
 }
 
-// Where a running ability is in its timeline: ticks of the world and of the user's own time since
-// it started.
-Ability_Time :: struct {local:i64,own:f32}
+// Where a running ability is in its timeline: ticks of the world, of the user's own time since
+// it started, and the bitmask of open clip-span-bound windows.
+Ability_Time :: struct {local:i64,own:f32,spans:u16}
 
 ability_has :: #force_inline proc "contextless" (state:Ability_State,status:Ability_Status) -> bool {
     return u64(status)<64 && state.statuses&Ability_Statuses(u64(1)<<u64(status))!=0

@@ -113,6 +113,8 @@ Locomotion_State :: struct {
     moves:[LAYERED_MOVE_CAPACITY]Layered_Move `mirai:"transient,readonly,hidden"`,
     overridden:bool `mirai:"transient,readonly,hidden"`, // an Override layered move drove its last tick
     speed_scale:f32 `mirai:"transient,readonly"`,
+    jump_scale:f32 `mirai:"transient,readonly"`,
+    acceleration_scale:f32 `mirai:"transient,readonly"`,
     suspended:bool `mirai:"transient,readonly"`,
     placed,placed_at_rest:bool `mirai:"transient,local,hidden"`,
     crouched:bool `mirai:"transient,readonly,hidden"`,    // it asks for the crouch_height of its Walk
@@ -133,6 +135,8 @@ Locomotion_Request_Kind :: enum u8 {
     Remove_Moves, // those of the id of the move
     Set_Mode,
     Set_Speed_Scale,
+    Set_Jump_Scale,
+    Set_Acceleration_Scale,
     Set_Suspended,
     Set_Gravity_Scale, // times the gravity_scale of its Character until asked again: low gravity while charging a dash
 }
@@ -142,12 +146,14 @@ Locomotion_Request :: struct {
     kind:Locomotion_Request_Kind,
     move:Layered_Move,
     mode:Locomotion_Mode,
-    gravity_scale,speed_scale:f32,
+    gravity_scale,speed_scale,jump_scale,acceleration_scale:f32,
     suspended:bool,
 }
 
 GRAVITY_SCALE_MAX :: f32(1000)
 SPEED_SCALE_MAX :: f32(1000)
+JUMP_SCALE_MAX :: f32(1000)
+ACCELERATION_SCALE_MAX :: f32(1000)
 
 // Runtime controls are applied by locomotion_prepare before the characters move.
 @(storage,queue)
@@ -174,6 +180,12 @@ set_gravity_scale :: proc(requests:^Locomotion_Requests,e:core.Entity,scale:f32)
 set_speed_scale :: proc(requests:^Locomotion_Requests,e:core.Entity,scale:f32) {
     core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Set_Speed_Scale,speed_scale=scale})
 }
+set_jump_scale :: proc(requests:^Locomotion_Requests,e:core.Entity,scale:f32) {
+    core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Set_Jump_Scale,jump_scale=scale})
+}
+set_acceleration_scale :: proc(requests:^Locomotion_Requests,e:core.Entity,scale:f32) {
+    core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Set_Acceleration_Scale,acceleration_scale=scale})
+}
 set_suspended :: proc(requests:^Locomotion_Requests,e:core.Entity,suspended:bool) {
     core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Set_Suspended,suspended=suspended})
 }
@@ -190,7 +202,7 @@ locomotion_prepare :: proc(
             e:=core.entity_at(characters,row)
             if core.has(states,e) || !phys.character_owner(characters,colliders,e) {continue}
             if mode,ok:=initial_mode(walks,flights,swims,e);ok {
-                core.add(states,e,Locomotion_State{mode=mode,speed_scale=1})
+                core.add(states,e,Locomotion_State{mode=mode,speed_scale=1,jump_scale=1,acceleration_scale=1})
             }
         }
     }
@@ -235,6 +247,18 @@ locomotion_prepare :: proc(
                 continue
             }
             c.speed_scale=asked.speed_scale
+        case .Set_Jump_Scale:
+            if !(asked.jump_scale>=0 && asked.jump_scale<=JUMP_SCALE_MAX) {
+                core.report(problems,asked.entity,"locomotion.request","jump scale must be finite and between zero and %v",JUMP_SCALE_MAX)
+                continue
+            }
+            c.jump_scale=asked.jump_scale
+        case .Set_Acceleration_Scale:
+            if !(asked.acceleration_scale>=0 && asked.acceleration_scale<=ACCELERATION_SCALE_MAX) {
+                core.report(problems,asked.entity,"locomotion.request","acceleration scale must be finite and between zero and %v",ACCELERATION_SCALE_MAX)
+                continue
+            }
+            c.acceleration_scale=asked.acceleration_scale
         case .Set_Suspended:
             if c.suspended!=asked.suspended {
                 c.suspended=asked.suspended
@@ -277,7 +301,7 @@ locomotion_step :: proc(
             frame:=capsule.up_frame if made else mm.QUAT_IDENTITY
             if placed.at_rest {
                 mode:=MODE_FALLING if core.has(walks,e) else c.mode
-                c^={mode=mode,speed_scale=c.speed_scale,suspended=c.suspended,gravity=c.gravity}
+                c^={mode=mode,speed_scale=c.speed_scale,jump_scale=c.jump_scale,acceleration_scale=c.acceleration_scale,suspended=c.suspended,gravity=c.gravity}
             }
             c.placed,c.placed_at_rest,c.ready=true,placed.at_rest || c.placed_at_rest,true
             c.yaw=phys.look_yaw_of(frame,rotation)
@@ -383,7 +407,7 @@ locomotion_state_of :: proc(states:^core.Table(Locomotion_State),walks:^core.Tab
     if !given {
         if first,ok:=initial_mode(walks,flights,swims,e);ok {mode=first} else {return nil}
     }
-    core.add(states,e,Locomotion_State{mode=mode,speed_scale=1})
+    core.add(states,e,Locomotion_State{mode=mode,speed_scale=1,jump_scale=1,acceleration_scale=1})
     return core.staged(states,e)
 }
 
@@ -461,7 +485,7 @@ sprint_forward :: proc "contextless" (move_input:input.Move_Input,sprinting:bool
 // for a character that cannot walk or swim: one that only swims stays in the
 // mode out of the water. It also leaves in loco what the mode heads to
 // (desired, acceleration and braking), in its own time.
-locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),ground:phys.Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt:f32,pace:f32=1,scale:f32=1) -> (move:phys.Character_Drive) {
+locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe(Walk),fly:Fly,swim:Maybe(Swim),ground:phys.Character_State,frame:mm.Quat,move_input:input.Move_Input,jump,sprint,crouch:input.Action,velocity,gravity:[3]f32,dt:f32,pace:f32=1,scale:f32=1,jump_scale:f32=1,acceleration_scale:f32=1) -> (move:phys.Character_Drive) {
     up:=mm.quat_rotate(frame,{0,1,0})
     across :: proc "contextless" (v,up:[3]f32) -> [3]f32 {return v-up*linalg.dot(v,up)}
     look:=frame*mm.quat_axis_angle({0,1,0},move_input.look_yaw)
@@ -470,10 +494,11 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
     walk.max_speed*=scale
     walk.sprint_speed*=scale
     walk.crouch_speed*=scale
+    walk.acceleration*=acceleration_scale
     move.yaw=move_input.look_yaw
     traction:=body.traction_force
     held:=move_input.buttons&input.action_bit(jump)!=0
-    pressed:=held && !loco.jump_held && walk.jump_height>0
+    pressed:=held && !loco.jump_held && walk.jump_height>0 && jump_scale>0
     released:=!held && loco.jump_held
     loco.jump_held=held
     v:=velocity-additive_delivered(velocity,loco.added,loco.driven)
@@ -494,6 +519,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
         loco.jumped,loco.coyote,loco.crouched=false,0,false
         swim:=swim
         swim.speed*=scale
+        swim.acceleration*=acceleration_scale
         current:=ground.fluid_velocity
         relative:=v-current
         aim:=mm.quat_rotate(look,move_share(move_input,swim.speed))
@@ -508,7 +534,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
             move.float_height=swim.surface_offset
             // Out onto a ledge or a raft: a climb, for a jump against the drag of the water takes no one out.
             // It takes the feet to the surface at the speed of a jump, which then takes them jump_height over it.
-            if speed:=cmath.sqrt(2*linalg.length(gravity)*walk.jump_height);pressed && speed*dt>0 && loco.move_count<LAYERED_MOVE_CAPACITY {
+            if speed:=cmath.sqrt(2*linalg.length(gravity)*walk.jump_height)*jump_scale;pressed && speed*dt>0 && loco.move_count<LAYERED_MOVE_CAPACITY {
                 loco.moves[loco.move_count]={velocity=up*speed+move_wish(move_input,frame,swim.speed)*swim.speed,ticks=max(u32(cmath.ceil(max(ground.depth,0)/(speed*dt))),1),mix=.Override}
                 loco.move_count+=1
                 loco.mode,loco.jumped=MODE_FALLING,true
@@ -524,10 +550,11 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
     } else if loco.mode==MODE_FLYING {
         loco.jumped,loco.coyote,loco.crouched=false,0,false
         speed:=fly.speed*scale
+        fly_accel:=fly.acceleration*acceleration_scale
         aim:=mm.quat_rotate(look,move_share(move_input,speed))
-        move.air={mm.approach_point(v,aim*speed,fly.acceleration*dt),traction}
+        move.air={mm.approach_point(v,aim*speed,fly_accel*dt),traction}
         move.flags={.Airborne,.Drive_Vertical,.No_Gravity}
-        loco.desired,loco.acceleration,loco.braking=aim*speed,fly.acceleration,fly.acceleration
+        loco.desired,loco.acceleration,loco.braking=aim*speed,fly_accel,fly_accel
     } else {
         sprint_held:=move_input.buttons&input.action_bit(sprint)!=0
         crouches:=walk.crouch_height>0
@@ -593,7 +620,7 @@ locomotion_move :: proc(loco:^Locomotion_State,body:phys.Character,walking:Maybe
 
         if pressed && (ground.standing || loco.coyote>0 && !loco.jumped) {
             base:=linalg.dot(ground.standing?v-ground.ground_velocity:v,up)
-            rise:=walk_jump_speed(walk,linalg.length(gravity))
+            rise:=walk_jump_speed(walk,linalg.length(gravity))*jump_scale
             move.launch+=up*(rise-base)
             if ground.standing {move.air={velocity=across(v,up)+across(move.launch,up)}}
             loco.mode,loco.jumped,loco.coyote,loco.crouched,loco.crouch_on=MODE_FALLING,true,0,false,false
@@ -711,7 +738,7 @@ locomotion_move_paced :: proc(loco:^Locomotion_State,body:phys.Character,walking
     own:=ground
     own.ground_velocity/=pace
     own.fluid_velocity/=pace
-    move=locomotion_move(loco,body,walking,fly,swim,own,frame,move_input,jump,sprint,crouch,velocity/(loco.pace>0?loco.pace:1),gravity,dt*pace,pace,loco.speed_scale)
+    move=locomotion_move(loco,body,walking,fly,swim,own,frame,move_input,jump,sprint,crouch,velocity/(loco.pace>0?loco.pace:1),gravity,dt*pace,pace,loco.speed_scale,loco.jump_scale,loco.acceleration_scale)
     move_paced(&move,loco,body,pace,velocity,ground,frame)
     return
 }

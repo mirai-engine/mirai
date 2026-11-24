@@ -8,6 +8,7 @@ import "mirai:std/base"
 import audio "mirai:engine/audio"
 import "mirai:core"
 import inp "mirai:engine/input"
+import scene "mirai:engine/scene"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 import locomotion "plugins:locomotion/runtime"
@@ -27,10 +28,12 @@ Ability_World :: struct {
     remotes:^core.Table(core.Remote,.Read),
     paces:^core.Table(core.Own_Pace,.Read), // the windows on the Own clock count the user's own time
     helds:^core.Table(Ability_Held,.Read),
+    tags:^core.Table(scene.Tags,.Read), // target class tags for hitbox/effect matching
     clock:core.Clock,
     physics:core.Ref(phys.Physics_State),
     moves:^locomotion.Locomotion_Requests,
     animations:^anim.Animation_Requests,
+    anim_events:core.Ref(anim.Animation_Events), // .Span_Begin/.Span_End for clip-span-bound windows
     problems:^core.Problems,
     sounds:^audio.Sound_Requests,
     births:^core.Births,
@@ -226,6 +229,11 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         core.report(t.w.problems,target,"abilities.effect","an effect asked for it %s",text)
         return
     }
+    if effect.target_tags.bits!=0 {
+        target_tags:scene.Tags
+        if t.w.tags!=nil {target_tags,_=core.get(t.w.tags,target)}
+        if !scene.tag_has_any(target_tags,effect.target_tags) {return}
+    }
     row:=core.row_of(t.users,target)
     u,valid:=actor_at(t,target,row)
     if row>=0 && !valid {return}
@@ -249,7 +257,7 @@ effect_apply :: proc(t:^Tick,target,source:core.Entity,effect:Ability_Effect) {
         }
         if effect.period==0 && effect.attribute!=ATTRIBUTE_NONE && amount!=0 {
             for entry,i in u.user.attributes {
-                if entry.attribute==effect.attribute {base_add(t,target,&u,i,amount)}
+                if entry.attribute==effect.attribute {base_add(t,target,&u,i,amount,spend=amount<0)}
             }
         }
         lasting:=effect.statuses!=0 || effect.modify.attribute!=ATTRIBUTE_NONE || effect.period>0 || effect.cue!=CUE_NONE || effect.tags!=0
@@ -295,8 +303,11 @@ timer_end :: proc(t:^Tick,e:core.Entity,timer:^Ability_Timer) {
 }
 
 @(private)
-base_add :: proc(t:^Tick,e:core.Entity,u:^Actor,index:int,amount:f32) {
+base_add :: proc(t:^Tick,e:core.Entity,u:^Actor,index:int,amount:f32,spend:=false) {
     entry:=u.user.attributes[index]
+    if spend && amount<0 && entry.regen_delay>0 {
+        core.edit_at(t.tracking,u.track_row).regen_at[index]=core.deadline(t.w.time,entry.regen_delay)
+    }
     value:=clamp_base(entry,entry.base+amount)
     if !finite(value) {value=max(f32) if value>0 else 0}
     if value==entry.base {return}
@@ -338,8 +349,10 @@ window_ticks :: #force_inline proc "contextless" (w:Ability_Window,dt:f32) -> (f
     return
 }
 
-// Whether a window is open at a place of its ability's timeline, on the clock it counts.
-ability_window_open :: #force_inline proc "contextless" (w:Ability_Window,dt:f32,at:Ability_Time) -> bool {
+// Whether a window is open at a place of its ability's timeline, on the clock it counts or by its
+// clip span bitmask (at.spans). Pass the window's index in Ability.windows for span-bound windows.
+ability_window_open :: #force_inline proc "contextless" (w:Ability_Window,dt:f32,at:Ability_Time,index:int=-1) -> bool {
+    if w.span[0]!=0 {return index>=0 && index<ABILITY_WINDOWS && at.spans&(u16(1)<<u16(index))!=0}
     if w.to==0 {return false}
     from,to:=window_ticks(w,dt)
     if w.clock==.Own {return at.own>=f32(from) && at.own<f32(to)}
@@ -349,7 +362,7 @@ ability_window_open :: #force_inline proc "contextless" (w:Ability_Window,dt:f32
 // Where the running ability of u is at this tick.
 @(private)
 time_of :: #force_inline proc "contextless" (t:^Tick,u:^Ability_State) -> Ability_Time {
-    return {local=i64(t.tick-u.start) if t.tick>=u.start else 0,own=u.own}
+    return {local=i64(t.tick-u.start) if t.tick>=u.start else 0,own=u.own,spans=u.span_open}
 }
 
 // The ticks of its own time e lives in one tick of the world.
@@ -380,7 +393,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
         if timer.until==0 {continue}
         if timer.period>0 && t.tick>timer.start && t.tick<=timer.until && (t.tick-timer.start)%u64(timer.period)==0 {
             for entry,j in u.user.attributes {
-                if entry.attribute==timer.attribute {base_add(t,e,u,j,timer.amount*f32(max(timer.stacks,1)))}
+                if entry.attribute==timer.attribute {base_add(t,e,u,j,timer.amount*f32(max(timer.stacks,1)),spend=timer.amount<0)}
             }
         }
         if core.due(t.w.time,timer.until) {timer_end(t,e,&core.edit_at(t.tracking,u.track_row).timers[i])}
@@ -397,7 +410,9 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
         core.edit_at(t.tracking,u.track_row).buffer[i]={}
     }
     for entry,i in u.user.attributes {
-        if entry.attribute!=ATTRIBUTE_NONE && entry.regen!=0 {base_add(t,e,u,i,entry.regen*t.dt)}
+        if entry.attribute==ATTRIBUTE_NONE || entry.regen==0 {continue}
+        if entry.regen>0 && entry.regen_delay>0 && !core.due(t.w.time,u.track.regen_at[i]) {continue}
+        base_add(t,e,u,i,entry.regen*t.dt)
     }
     // The running ability advances to this tick, on the clock of the world and on its own.
     next:core.Record(Ability)
@@ -412,12 +427,13 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     }
     if active!=nil {
         before=time_advance(t,e,u)
+        span_advance(t,e,u,active,i64(t.tick-u.state.start) if t.tick>=u.state.start else 0)
         at=time_of(t,u.state)
         windows_advance(t,e,u,active,before,at)
         if at.local>=ability_ticks(active,t.dt) {
             next=active.next
-            for &w in active.windows {
-                if ability_window_open(w,t.dt,before) {handoff|=w.statuses}
+            for &w,i in active.windows {
+                if ability_window_open(w,t.dt,before,i) {handoff|=w.statuses}
             }
             ability_end(t,e,u,active,at,.Completed,nil)
             active=nil
@@ -470,20 +486,82 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     held_attach(t,e,active,at)
 }
 
+// Whether e's Character is airborne (falling, not standing, and not flying or swimming).
+@(private)
+character_airborne :: proc(t:^Tick,e:core.Entity) -> bool {
+    if t.w.grounds!=nil {
+        if ground,has:=core.get(t.w.grounds,e);has {
+            if ground.standing {return false}
+            if t.w.locomotions!=nil {
+                if loco,has_loco:=core.get(t.w.locomotions,e);has_loco {
+                    return loco.mode==locomotion.MODE_FALLING
+                }
+            }
+            return true
+        }
+    }
+    if t.w.locomotions!=nil {
+        if loco,has:=core.get(t.w.locomotions,e);has {
+            return loco.mode==locomotion.MODE_FALLING
+        }
+    }
+    return false
+}
+
+// Whether an airborne Character is descending along its up (or lacks motion data).
+@(private)
+character_falling :: proc(t:^Tick,e:core.Entity) -> bool {
+    if t.w.motions==nil {return true}
+    motion,has:=core.get(t.w.motions,e)
+    if !has {return true}
+    up:=mm.Vec3{0,1,0}
+    if t.w.physics.ptr!=nil {
+        if capsule,made:=phys.character_capsule(t.w.physics,e);made {
+            up=mm.quat_rotate(capsule.up_frame,mm.Vec3{0,1,0})
+        }
+    }
+    return linalg.dot(motion.linear,up)<0
+}
+
 // Takes what the running ability costs every second for this tick; false when an attribute cannot
-// pay it, which completes the ability.
+// pay it or fall_grace is exceeded, which completes the ability.
 @(private)
 costs_pay :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability) -> bool {
+    airborne_checked,airborne,has_grace:=false,false,false
+    for c in a.costs {
+        if c.pause_falling && c.fall_grace>0 {has_grace=true;break}
+    }
+    if has_grace {
+        airborne_checked,airborne=true,character_airborne(t,e)
+        falling:=airborne && character_falling(t,e)
+        ticks:=u.state.air_ticks
+        if falling {
+            if ticks<max(u16) {ticks+=1}
+        } else {
+            ticks=0
+        }
+        if ticks!=u.state.air_ticks {core.edit_at(t.states,u.state_row).air_ticks=ticks}
+        if falling {
+            for c in a.costs {
+                if c.pause_falling && c.fall_grace>0 && u64(ticks)>ticks_of(c.fall_grace,t.dt) {return false}
+            }
+        }
+    }
     for c in a.costs {
         if c.attribute==ATTRIBUTE_NONE || !(c.per_second>0) {continue}
+        if c.pause_falling {
+            if !airborne_checked {airborne_checked,airborne=true,character_airborne(t,e)}
+            if airborne {continue}
+        }
         amount:=c.per_second*t.dt
         value,found:=ability_value(u.user,u.state,c.attribute)
         if !found || value<amount {return false}
     }
     for c in a.costs {
         if c.attribute==ATTRIBUTE_NONE || !(c.per_second>0) {continue}
+        if c.pause_falling && airborne {continue}
         for entry,i in u.user.attributes {
-            if entry.attribute==c.attribute {base_add(t,e,u,i,-c.per_second*t.dt)}
+            if entry.attribute==c.attribute {base_add(t,e,u,i,-c.per_second*t.dt,spend=true)}
         }
     }
     return true
@@ -496,6 +574,7 @@ replica_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     at:Ability_Time
     if active!=nil {
         before:=time_advance(t,e,u)
+        span_advance(t,e,u,active,i64(t.tick-u.state.start) if t.tick>=u.state.start else 0)
         at=time_of(t,u.state)
         if at.local<ability_ticks(active,t.dt) {
             windows_advance(t,e,u,active,before,at,replica=true)
@@ -515,8 +594,8 @@ held_attach :: proc(t:^Tick,e:core.Entity,a:^Ability,at:Ability_Time) {
     if !found || held.entity==core.NONE {return}
     socket:string
     if a!=nil {
-        for &w in a.windows {
-            if w.attach && ability_window_open(w,t.dt,at) {socket=base.text_get(held.socket[:]);break}
+        for &w,i in a.windows {
+            if w.attach && ability_window_open(w,t.dt,at,i) {socket=base.text_get(held.socket[:]);break}
         }
     }
     anim.attach(t.w.animations,held.entity,socket,held.blend)
@@ -622,8 +701,8 @@ start_block :: proc(w:^Ability_World,tick:u64,dt:f32,e:core.Entity,user:^Ability
     }
     if active!=nil {
         accepted:=kit.interrupts if kit!=nil else 0
-        for &w in active.windows {
-            if ability_window_open(w,dt,at) {accepted|=w.cancel_into}
+        for &w,i in active.windows {
+            if ability_window_open(w,dt,at,i) {accepted|=w.cancel_into}
         }
         if accepted&a.tags==0 {return .No_Cancel,-1}
     }
@@ -660,10 +739,19 @@ condition_holds :: proc(w:^Ability_World,e:core.Entity,user:^Ability_User,state:
 
 @(private)
 ability_start :: proc(t:^Tick,e:core.Entity,u:^Actor,ref:core.Record(Ability),a:^Ability) {
+    airborne_checked,airborne:=false,false
     for c in a.costs {
-        if c.attribute==ATTRIBUTE_NONE || c.amount==0 {continue}
+        if c.attribute==ATTRIBUTE_NONE || (c.amount==0 && !(c.per_second>0)) {continue}
         for entry,i in u.user.attributes {
-            if entry.attribute==c.attribute {base_add(t,e,u,i,-c.amount)}
+            if entry.attribute!=c.attribute {continue}
+            if c.amount>0 {
+                base_add(t,e,u,i,-c.amount,spend=true)
+            } else if c.per_second>0 && entry.regen_delay>0 {
+                if c.pause_falling && !airborne_checked {airborne_checked,airborne=true,character_airborne(t,e)}
+                if !(c.pause_falling && airborne) {
+                    core.edit_at(t.tracking,u.track_row).regen_at[i]=core.deadline(t.w.time,entry.regen_delay)
+                }
+            }
         }
     }
     if a.cooldown>0 {
@@ -678,7 +766,7 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Actor,ref:core.Record(Ability),a:
         if b.ability==ref {core.edit_at(t.tracking,u.track_row).buffer[i]={}}
     }
     state:=core.edit_at(t.states,u.state_row)
-    state.ability,state.start,state.own=ref,t.tick,0
+    state.ability,state.start,state.own,state.span_open,state.air_ticks=ref,t.tick,0,0,0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
     feedback_emit(t,a.on_start,e)
     if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,e,name)}
@@ -693,7 +781,7 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time,ki
     ref:=u.state.ability
     if a!=nil {
         for &w,i in a.windows {
-            if !ability_window_open(w,t.dt,at) {continue}
+            if !ability_window_open(w,t.dt,at,i) {continue}
             event_push(t,{kind=.Window_End,entity=e,ability=ref,window=i8(i),cue=w.cue})
             if w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
@@ -702,7 +790,7 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time,ki
         }
     }
     state:=core.edit_at(t.states,u.state_row)
-    state.ability,state.start,state.own={},0,0
+    state.ability,state.start,state.own,state.span_open,state.air_ticks={},0,0,0,0
     if u.track.hit_count!=0 {
         track:=core.edit_at(t.tracking,u.track_row)
         track.hit_count,track.targets,track.windows=0,{},{}
@@ -712,7 +800,7 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time,ki
 
 // Where an ability is on the tick before its start: no window is open there.
 @(private)
-TIME_BEFORE_START :: Ability_Time{local=-1,own=-1}
+TIME_BEFORE_START :: Ability_Time{local=-1,own=-1,spans=0}
 
 // Moves the running ability of u to this tick: its own time grows by the pace of e. Returns where
 // it was on the tick before.
@@ -725,29 +813,78 @@ time_advance :: proc(t:^Tick,e:core.Entity,u:^Actor) -> (before:Ability_Time) {
     return
 }
 
+// Updates state.span_open from Animation_Events (.Span_Begin / .Span_End) for clip-span-bound
+// windows of the running ability a of entity e.
+@(private)
+span_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at_local:i64) {
+    if t.w.anim_events.ptr==nil || len(t.w.anim_events.items)==0 {return}
+    has_span:=false
+    for &w in a.windows {if w.span[0]!=0 {has_span=true;break}}
+    if !has_span {return}
+    action_name:=ability_name_text(&a.action)
+    action_hash:=base.name_hash(action_name) if action_name!="" else 0
+    spans:=u.state.span_open
+    for ev in t.w.anim_events.items {
+        if ev.entity!=e || (ev.kind!=.Span_Begin && ev.kind!=.Span_End) {continue}
+        if action_hash!=0 && ev.action!=0 && ev.action!=action_hash {continue}
+        for &w,i in a.windows {
+            if w.span[0]==0 {continue}
+            if base.name_hash(base.text_get(w.span[:]))!=ev.name {continue}
+            bit:=u16(1)<<u16(i)
+            if ev.kind==.Span_Begin {
+                if spans&bit==0 {
+                    core.edit_at(t.tracking,u.track_row).span_start[i]=u16(clamp(at_local,0,i64(max(u16))))
+                }
+                spans|=bit
+            } else {
+                spans&=~bit
+            }
+        }
+    }
+    if spans!=u.state.span_open {core.edit_at(t.states,u.state_row).span_open=spans}
+}
+
 // The windows that open or close at at, against before (the tick before).
 @(private)
 windows_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Time,replica:=false) {
     for &w,i in a.windows {
-        was,is:=ability_window_open(w,t.dt,before),ability_window_open(w,t.dt,at)
+        was,is:=ability_window_open(w,t.dt,before,i),ability_window_open(w,t.dt,at,i)
         if is && !was {
             event_push(t,{kind=.Window_Begin,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue})
             feedback_emit(t,w.on_begin,e)
             if !replica && w.move.velocity!={} {
                 velocity:=w.move.velocity
                 if pose,found:=core.get(t.w.worlds,e);found {velocity=mm.quat_rotate(pose.rotation,velocity)}
-                from,to:=window_ticks(w,t.dt)
-                ticks:=u32(to-from)
-                // On the Own clock it lasts until the window closes, which removes it.
-                if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,e),1.0/64)))}
+                ticks:u32
+                if w.span[0]!=0 {
+                    // Span-bound moves last until .Span_End or ability_end removes them.
+                    ticks=u32(max(ability_ticks(a,t.dt)-at.local,1))
+                } else {
+                    from,to:=window_ticks(w,t.dt)
+                    ticks=u32(to-from)
+                    // On the Own clock it lasts until the window closes, which removes it.
+                    if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,e),1.0/64)))}
+                }
                 locomotion.add_move(t.w.moves,e,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
             }
         }
         if was && !is {
             event_push(t,{kind=.Window_End,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue})
-            if !replica && w.clock==.Own && w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
+            if !replica && (w.clock==.Own || w.span[0]!=0) && w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
         }
     }
+}
+
+// The effect hitbox h applies to a target carrying target_tags: the first target_effects entry
+// whose target_tags share a bit with target_tags, else the hitbox's default effect (if its
+// target_tags are zero or match), else empty.
+hitbox_effect_for :: proc "contextless" (h:^Ability_Hitbox,target_tags:scene.Tags) -> Ability_Effect {
+    if h==nil {return {}}
+    for te in h.target_effects {
+        if te.target_tags.bits!=0 && scene.tag_has_any(target_tags,te.target_tags) {return te}
+    }
+    if h.effect.target_tags.bits!=0 && !scene.tag_has_any(target_tags,h.effect.target_tags) {return {}}
+    return h.effect
 }
 
 // Each open hitbox touches each entity once: a Hit and the effect of the window, on the tick after.
@@ -760,10 +897,10 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
     placed,found:=core.get(t.w.worlds,e)
     if !found {placed.rotation,placed.previous.rotation=1,1}
     for &w,i in a.windows {
-        if w.hitbox=={} || !ability_window_open(w,t.dt,at) || t.overlap==nil {continue}
+        if w.hitbox=={} || !ability_window_open(w,t.dt,at,i) || t.overlap==nil {continue}
         h:=record_sheet(t.hitboxes,w.hitbox)
         if h==nil {continue}
-        steps:=hitbox_steps(h,placed.previous,placed.transform) if ability_window_open(w,t.dt,before) else 1
+        steps:=hitbox_steps(h,placed.previous,placed.transform) if ability_window_open(w,t.dt,before,i) else 1
         for step in 1..=steps {
             pose:=placed.transform
             if step<steps {pose=mm.transform_interpolate(placed.previous,placed.transform,f32(step)/f32(steps))}
@@ -783,7 +920,9 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
                 track.hit_count+=1
                 event_push(t,{kind=.Hit,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue,target=target})
                 feedback_emit(t,h.on_hit,target,e)
-                if h.effect!={} {ability_effect(t.requests,target,h.effect,e)}
+                target_tags:scene.Tags
+                if t.w.tags!=nil {target_tags,_=core.get(t.w.tags,target)}
+                if effect:=hitbox_effect_for(h,target_tags);effect!={} {ability_effect(t.requests,target,effect,e)}
             }
         }
     }
@@ -812,15 +951,25 @@ hitbox_steps :: proc "contextless" (h:^Ability_Hitbox,from,to:mm.Transform) -> i
     return int(math.ceil(steps))
 }
 
+// Weight in 0..1 of a modifier with optional ramp_in (from start) and ramp_out (before end).
+// remaining < 0 means the end time is unknown (a clip-span-bound window): only ramp_in applies.
+@(private)
+modifier_weight :: proc "contextless" (m:Ability_Modifier,elapsed,remaining:f32) -> f32 {
+    weight:=f32(1)
+    if m.ramp_in>0 {weight=min(weight,clamp(elapsed/m.ramp_in,0,1))}
+    if m.ramp_out>0 && remaining>=0 {weight=min(weight,clamp(remaining/m.ramp_out,0,1))}
+    return weight
+}
+
 // The statuses and current values of a user: those of its timers and of the windows open at at.
 @(private)
 derive :: proc(t:^Tick,e:core.Entity,u:^Actor,active:^Ability,at:Ability_Time,replica:=false) {
     statuses:Ability_Statuses
     add,more:[ATTRIBUTE_ENTRIES]f32
-    modify :: proc(u:^Ability_User,m:Ability_Modifier,add,more:^[ATTRIBUTE_ENTRIES]f32) {
-        if m.attribute==ATTRIBUTE_NONE {return}
+    modify :: proc(u:^Ability_User,m:Ability_Modifier,weight:f32,add,more:^[ATTRIBUTE_ENTRIES]f32) {
+        if m.attribute==ATTRIBUTE_NONE || weight==0 {return}
         for entry,i in u.attributes {
-            if entry.attribute==m.attribute {add[i]+=m.add;more[i]+=m.more}
+            if entry.attribute==m.attribute {add[i]+=m.add*weight;more[i]+=m.more*weight}
         }
     }
     for &timer in u.track.timers {
@@ -829,13 +978,26 @@ derive :: proc(t:^Tick,e:core.Entity,u:^Actor,active:^Ability,at:Ability_Time,re
         m:=timer.modify
         stacks:=f32(max(timer.stacks,1))
         m.add*=stacks;m.more*=stacks
-        modify(u.user,m,&add,&more)
+        elapsed:=f32(t.tick-timer.start)*t.dt if t.tick>=timer.start else 0
+        remaining:=f32(timer.until-t.tick)*t.dt if timer.until>=t.tick else 0
+        modify(u.user,m,modifier_weight(m,elapsed,remaining),&add,&more)
     }
     if active!=nil {
-        for &w in active.windows {
-            if !ability_window_open(w,t.dt,at) {continue}
+        for &w,i in active.windows {
+            if !ability_window_open(w,t.dt,at,i) {continue}
             statuses|=w.statuses
-            modify(u.user,w.modify,&add,&more)
+            if w.modify.attribute!=ATTRIBUTE_NONE {
+                elapsed,remaining:f32
+                if w.span[0]!=0 {
+                    elapsed=max(f32(at.local-i64(u.track.span_start[i]))*t.dt,0)
+                    remaining=-1
+                } else {
+                    now_s:=at.own*t.dt if w.clock==.Own else f32(at.local)*t.dt
+                    elapsed=max(now_s-w.from,0)
+                    remaining=max(w.to-now_s,0)
+                }
+                modify(u.user,w.modify,modifier_weight(w.modify,elapsed,remaining),&add,&more)
+            }
         }
     }
     values:[ATTRIBUTE_ENTRIES]f32
@@ -845,12 +1007,22 @@ derive :: proc(t:^Tick,e:core.Entity,u:^Actor,active:^Ability,at:Ability_Time,re
         }
     }
     if u.state.statuses==statuses && u.state.values==values {return}
-    // The speed of its locomotion follows its speed attribute when that changes.
-    if !replica && u.user.speed!=ATTRIBUTE_NONE && core.has(t.w.characters,e) {
+    // The speed, jump and acceleration scales of its locomotion follow their attributes when changed.
+    if !replica && t.w.moves!=nil && core.has(t.w.characters,e) {
         for entry,i in u.user.attributes {
-            if entry.attribute!=u.user.speed {continue}
-            scale:=min(values[i],locomotion.SPEED_SCALE_MAX)
-            if scale!=u.state.values[i] {locomotion.set_speed_scale(t.w.moves,e,scale)}
+            if entry.attribute==ATTRIBUTE_NONE {continue}
+            if entry.attribute==u.user.speed {
+                scale:=min(values[i],locomotion.SPEED_SCALE_MAX)
+                if scale!=u.state.values[i] {locomotion.set_speed_scale(t.w.moves,e,scale)}
+            }
+            if entry.attribute==u.user.jump {
+                scale:=min(values[i],locomotion.JUMP_SCALE_MAX)
+                if scale!=u.state.values[i] {locomotion.set_jump_scale(t.w.moves,e,scale)}
+            }
+            if entry.attribute==u.user.acceleration {
+                scale:=min(values[i],locomotion.ACCELERATION_SCALE_MAX)
+                if scale!=u.state.values[i] {locomotion.set_acceleration_scale(t.w.moves,e,scale)}
+            }
         }
     }
     state:=core.edit_at(t.states,u.state_row)

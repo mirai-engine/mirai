@@ -26,20 +26,24 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
   `speed` of the `Character` across its up relative to its ground, or ask for a `ledge_ahead`
   (standing, no ground within `at_least` m under the feet `reach` m ahead along where it goes:
   `locomotion.ledge_ahead`); `costs` take `amount` from attribute bases when it starts (it cannot
-  start with less) and `per_second` every tick it runs after that, and it completes when the
-  attribute cannot pay the tick; `cooldown` is per ability row.
+  start with less) and `per_second` every tick it runs after that, completing when the attribute
+  cannot pay the tick (`pause_falling` pauses `per_second` drain while airborne/falling, with
+  optional `fall_grace` completing the ability after falling that long); `cooldown` is per ability
+  row.
 - `duration` in seconds; `hold` ends it when its input is let go.
 - `action` names an action of the user's `.character`: in its layer over locomotion, or over the
   whole body when it names no layer. Empty plays nothing.
-- `windows`: spans `[from, to)` in seconds from the start, inside the duration. `clock` says what
-  the seconds count: `world` (the fixed step) or `own`, the user's own time (`core.Own_Pace`) as
-  its animation counts it, for a window that follows a clip played slower or faster (the branch of
-  a charge clip in slow motion). An `own` window may close after the duration; the end of the
-  ability closes it. A window can at
-  the same time accept abilities by tag (`cancel_into`), put the user in statuses, modify one of
-  its attributes, carry a hitbox with its effect, move its `Character` with a layered move along
-  the axes it faces when the window opens, hold the user's `Ability_Held` at its socket
-  (`attach`), and carry a cue. A window with `to` at 0 is unused.
+- `windows`: spans `[from, to)` in seconds from the start inside the duration, or bound by clip
+  span name (`span`, mutually exclusive with `from`/`to`) opened/closed by `Animation_Events`
+  `.Span_Begin`/`.Span_End` of the ability's action. `clock` says what the seconds count: `world`
+  (the fixed step) or `own`, the user's own time (`core.Own_Pace`) as its animation counts it, for
+  a window that follows a clip played slower or faster (the branch of a charge clip in slow
+  motion). An `own` window may close after the duration; the end of the ability closes it. A window
+  can at the same time accept abilities by tag (`cancel_into`), put the user in statuses, modify
+  one of its attributes (with optional `ramp_in`/`ramp_out` durations), carry a hitbox with its
+  effect (and per-target-class `target_effects` matched against `scene.Tags`), move its `Character`
+  with a layered move along the axes it faces when the window opens, hold the user's `Ability_Held`
+  at its socket (`attach`), and carry a cue. A window with empty `span` and `to` at 0 is unused.
 - `next`: a candidate when it completes (a charge that ends in its dash). It is checked in the
   statuses the windows gave on the last tick the ability ran, so a dash that `requires` the
   charging status of its charge (and so never starts while idle) still starts as its `next`.
@@ -83,24 +87,30 @@ Why a candidate does not start is `start_block` (`Ability_Block`), which `abilit
 reports for each ability of the kit.
 
 ## Attributes and effects
-- `Ability_User.speed` names the attribute whose current value scales the locomotion of its
-  `Character` (`locomotion.set_speed_scale`, asked when the value changes). A sprint is then data:
+- `Ability_User.speed`, `jump` and `acceleration` name the attributes whose current values scale
+  the locomotion of its `Character` (`locomotion.set_speed_scale`, `set_jump_scale`,
+  `set_acceleration_scale`, asked when the value changes). A tactical sprint is then pure data:
   a `hold` ability on the sprint action, `modes` walking, a condition on the energy left, a cost
-  `per_second` and a window whose `modify` raises the speed attribute; the energy comes back by its
-  `regen`. A jump off a ledge with a boost is an ability on the jump action with `speed` and
-  `ledge_ahead` conditions and a window whose additive `move` adds to the jump of the walk
+  `per_second` with `pause_falling` (and optional `fall_grace`), windows whose `modify` raises
+  speed, jump (with `ramp_in`) and acceleration attributes, and energy `regen` with `regen_delay`.
+  A jump off a ledge with a boost is an ability on the jump action with `speed` and `ledge_ahead`
+  conditions and a window whose additive `move` adds to the jump of the walk
   (`movement_test.odin`).
 
-- `Ability_User.attributes` are entries of an attribute, its base, its max (0: none) and its
-  regeneration per second. Bases stay in 0..max. `values` (transient) are
-  `(base + add) * (1 + more)` over the modifiers of the timers and of the open windows;
-  `statuses` (transient) join the statuses of the timers and of the open windows.
+- `Ability_User.attributes` are entries of an attribute, its base, its max (0: none), its
+  regeneration per second and its `regen_delay` (seconds to wait after the last cost or negative
+  effect before positive regeneration resumes). Bases stay in 0..max. `values` (transient) are
+  `(base + add) * (1 + more)` over the modifiers of the timers and of the open windows (each
+  weighted by optional `ramp_in`/`ramp_out`); `statuses` (transient) join the statuses of the
+  timers and of the open windows.
 - An `Ability_Effect` adds `amount` (times the current value of the source's `scale_by`
   attribute, if named) to the base of an attribute of its target, at once or every `period` while
   it lasts; grants statuses and a modifier for `seconds`; gives a `knockback` velocity along the
-  axes of its source as an override layered move of the target's `Character`; and may ask the
-  target to `use` an ability (a hit reaction, which reaches a running ability through the kit's
-  `interrupts`).
+  axes of its source as an override layered move of the target's `Character`; may filter by target
+  `scene.Tags` (`target_tags`); and may ask the target to `use` an ability (a hit reaction, which
+  reaches a running ability through the kit's `interrupts`). An `Ability_Hitbox` may declare up to
+  four `target_effects` matched in order against the target's `scene.Tags` before falling back to
+  its default `effect` (`hitbox_effect_for`).
 - What lasts is a timer of the target. Its `tags` say what it is: an effect with the same tags
   applied again stacks up to `max_stacks` (its modifier and periodic amount count once per stack)
   and lasts `seconds` from then, keeping the phase of its period. `remove` ends the timers with
