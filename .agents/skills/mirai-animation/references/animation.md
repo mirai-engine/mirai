@@ -66,12 +66,12 @@ Locomotion is the `Match_Profile` of `Animation.asset` (`.character`):
 - **Database.** `std/anim/matching.odin` features (feet, hips, body velocity, past/future
   trajectory, and the `extras` of `Match_Info`: up to two bone tips, `offset` in the bone's frame,
   such as a blade's tip) build on first rig load into `Character_Assets`, capped by `memory`
-  (`animation.match_memory`; a missing extra bone reports `animation.match_extra`). A mode with
-  two or more clips that travel (no entry, above `MATCH_STILL`) and none within 60 degrees of the
-  `-Z` the rig faces reports `animation.match_forward` once per build (`match_unforward_modes`;
-  `animation.asset.inspect` lists them as `unforward`): its clips were made facing `+Z` or `+X`;
-  turn them with the `Face_Rest` verb of `animation.clip.edit`. 8 lanes a row,
-  12 with extras. Linear SIMD below `MATCH_LINEAR_ROWS`, bounded runs above. A database of an
+  (`animation.match_memory`; a missing extra bone reports `animation.match_extra`). Looping,
+  non-entry clips that travel (above `MATCH_STILL`) with the body turned away from `-Z` in every
+  frame (`body_turn`, so pivots stay quiet) report `animation.match_forward` once per build
+  (`animation.asset.inspect` lists them as `turned`): turn them with the `Face_Rest` verb of
+  `animation.clip.edit`. 8 lanes a row, 12 with extras. Linear SIMD below `MATCH_LINEAR_ROWS`,
+  bounded runs above. A database of an
   older library generation or skeleton revision is released when its successor builds.
 - **Per tick.** `match_goal` feeds mode, velocity, desired velocity, accel/braking, facing, wall
   normal, and `time_to_land`. An animated entity with `core.Motion` and no `Character` or
