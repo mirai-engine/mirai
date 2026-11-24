@@ -70,6 +70,7 @@ Pass :: struct {
 	plan:      ^Render_Plan, // of the pipeline the view is drawn with
 	texture:   bool, // drawn into a texture: nothing of the window goes over it
 	offscreen: bool, // a frame no window shows: it leaves what lights the world to those that are
+	settle_gi: bool, // with offscreen: updates the probe volume of the world shown without presenting
 	inspection: View_Inspection,
 	wide:      View_Wide, // of a view into a texture: its image is kept wide too
 	view_matrix, unjittered: Mat4,
@@ -533,7 +534,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         ray_cuts_update(r,eye)
         base.profile_end(zone)
     }
-    if r.settings.gi_enabled && !frame.offscreen && !frame.ui_only {
+    if r.settings.gi_enabled && (!frame.offscreen || frame.settle_gi) && !frame.ui_only {
         // The probes follow the focus of the first view of the window.
         focus:=camera_focus(frame.camera)
         for view in frame.views {if view.texture==0 && !view.disabled {focus=camera_focus(view.camera);break}}
@@ -641,7 +642,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
         if view.texture==0 || view.disabled || !recorded_ok || frame.ui_only {continue}
         state:=texture_view_find(r,view.texture)
         if state==nil {continue}
-        recorded_ok=record_view(r,cmd,state,view,{debug=frame.debug if first else nil,offscreen=frame.offscreen},slot,&ui_written,first)
+        recorded_ok=record_view(r,cmd,state,view,{debug=frame.debug if first else nil,offscreen=frame.offscreen,settle_gi=frame.settle_gi},slot,&ui_written,first)
         first=false
         if recorded_ok {texture_view_show(r,cmd,state,slot,view.readback)}
     }
@@ -672,7 +673,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
             state:=&r.views[index]
             index+=1
             if view.disabled {state.has_previous=false;continue}
-            ok:=record_view(r,cmd,state,view,{panels=frame.panels,debug=frame.debug,effect_views=frame.effect_views,offscreen=frame.offscreen},slot,&ui_written,first,index-1)
+            ok:=record_view(r,cmd,state,view,{panels=frame.panels,debug=frame.debug,effect_views=frame.effect_views,offscreen=frame.offscreen,settle_gi=frame.settle_gi},slot,&ui_written,first,index-1)
             first=false
             recorded_ok &&=ok
             if !ok {break}
@@ -794,7 +795,7 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     shown:=generate && state.has_previous && !state.resources_made
     if generate && !ensure_generated_target(r,&state.targets) {return false}
     extension_textures_release(r,state)
-    p:=Pass{r=r,cmd=cmd,view=state,t=&state.targets,camera=view.camera,slot=slot,first=first,index=index,plan=plan,texture=view.texture!=0,offscreen=frame.offscreen,inspection=view.inspection,wide=view.texture!=0?view.wide:.None}
+    p:=Pass{r=r,cmd=cmd,view=state,t=&state.targets,camera=view.camera,slot=slot,first=first,index=index,plan=plan,texture=view.texture!=0,offscreen=frame.offscreen,settle_gi=frame.settle_gi,inspection=view.inspection,wide=view.texture!=0?view.wide:.None}
     p.cost=cost_take(r,first,view.texture!=0,state.targets.hiz_valid)
     p.current=int(state.frames%2)
     p.previous=1-p.current
@@ -1619,7 +1620,8 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 	r, cmd := p.r, p.cmd
 	g := &r.ddgi
 	changes := &r.scene.changes
-	if p.first && !p.offscreen && p.use_gi {
+	update_gi := p.first && (!p.offscreen || p.settle_gi)
+	if update_gi && p.use_gi {
 		if changes.count > 0 && !changes.all && !upload_transient(r, cmd, changes.spheres[:changes.count], r.light_changes) {return false}
 		if r.gi_warm {r.gi_warm_spread = max(r.gi_warm_spread, ddgi_warm_frames(g, GI_WARM_UPDATES))}
 		r.gi_warm = false
@@ -1631,12 +1633,12 @@ pass_world_lighting :: proc(p: ^Pass) -> bool {
 		}
 		r.light_frame += 1
 	}
-	if p.use_probes && p.first && !p.offscreen {
+	if p.use_probes && update_gi {
 		// Later passes sample the updated atlases through the scene table.
 		rhi.cmd_bind_texture(cmd, SLOT_IRRADIANCE, g.irradiance)
 		rhi.cmd_bind_texture(cmd, SLOT_DISTANCE, g.distance)
 	}
-	if p.first && !p.offscreen {
+	if update_gi {
 		r.frame_changes = changes^
 		changes^ = {}
 	}

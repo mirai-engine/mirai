@@ -242,6 +242,31 @@ a_world_gathers_its_light_in_its_first_frames_within_a_frame_budget :: proc(t: ^
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
+@(test)
+an_offscreen_frame_gathers_gi_only_with_settle_gi :: proc(t: ^testing.T) {
+	f: Gi_Fixture
+	defer gi_fixture_destroy(&f)
+	if !gi_indirect_fixture(t, &f) {return}
+	r := f.r
+	gi_restart(r)
+	gi_setup(&f, .Interior)
+	origin := renderer_origin(r)
+	before := r.light_frame
+	// Plain offscreen leaves the probe volume untouched.
+	testing.expect(t, renderer_frame(r, {camera = f.camera, time = r.time + 1.0 / 60, offscreen = true, inspection = {mode = .Indirect}}), r.error)
+	testing.expect_value(t, r.light_frame, before)
+	testing.expect(t, r.gi_warm, "plain offscreen keeps gi_warm pending")
+	// With settle_gi, offscreen warms the probe volume without moving the origin.
+	for i in 0 ..< 8 {
+		testing.expect(t, renderer_frame(r, {camera = f.camera, camera_cut = i == 0, time = r.time + 1.0 / 60, offscreen = true, settle_gi = true, inspection = {mode = .Indirect}}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	testing.expect(t, r.light_frame > before && !r.gi_warm, "offscreen with settle_gi updates the probe volume")
+	testing.expect_value(t, renderer_origin(r), origin)
+	testing.expect(t, r.stats.probes_traced > 0, "offscreen with settle_gi traces probes")
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
 // ---------------------------------------------------------------- fixtures
 
 @(private = "file")

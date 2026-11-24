@@ -485,6 +485,9 @@ Frame_Desc :: struct {
 	// With offscreen: textures stream for what this frame sees, as for the
 	// views of the window, until the next frame the window shows.
 	streamed: bool,
+	// With offscreen: the probe volume of the world shown gathers light as for a
+	// frame of the window, without presenting or moving the origin.
+	settle_gi: bool,
 	// A texture the finished image is also copied into, the size of the
 	// frame: the shared texture of a player another process shows.
 	output: rhi.Texture,

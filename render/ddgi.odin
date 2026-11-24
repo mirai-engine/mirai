@@ -172,6 +172,16 @@ ddgi_warm_frames :: proc "contextless" (g: ^Ddgi_State, updates: u32) -> u32 {
 	return (probes + g.budget - 1) / g.budget
 }
 
+// Whether the probe volume of the world shown still gathers light: warm-up
+// frames remain, the cascades moved, or the last readback traced at least
+// half a frame budget of probes. False when GI is off.
+renderer_gi_settling :: proc "contextless" (r: ^Renderer) -> bool {
+	if r == nil || !r.settings.gi_enabled {return false}
+	g := &r.ddgi
+	if !g.valid || g.needs_clear || r.gi_warm || r.gi_warm_spread > 0 || g.moved {return true}
+	return r.stats.probes_traced >= max(g.budget / 2, 1)
+}
+
 // Probes the list of the chosen has room for: those of an update.
 @(private)
 ddgi_room :: proc "contextless" (g: ^Ddgi_State) -> u32 {return g.budget}

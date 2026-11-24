@@ -190,7 +190,11 @@ api_capture :: proc(s:^Session,call:^api.Call) {
     } else {
         drawn:=s.app.stats.frames_drawn
         if p.seconds>=0 {s.app.seconds=p.seconds}
-        api_frames(s,max(p.frames,1),p.dt)
+        if p.frames>0 {
+            api_frames(s,p.frames,p.dt)
+        } else {
+            api_capture_settle(s,p.dt,wait)
+        }
         // What those frames found being made (a program's pipelines, a mesh arriving): frames more once it is.
         for {
             ok,changed:=api_view_wait(s,call,p.dt,started)
@@ -199,7 +203,6 @@ api_capture :: proc(s:^Session,call:^api.Call) {
             api_frames(s,API_CAPTURE_SETTLE,p.dt)
         }
         if s.app.stats.frames_drawn==drawn {api.call_failf(call,api.SERVER_ERROR,"The renderer could not draw the frame: %s",host.app_draw_problem(s.app));return}
-        if p.ui && wait>0 {api_capture_textures_settle(s,p.dt,wait)}
         if p.generated && !gpu.renderer_stats(s.app.renderer).generated {
             api.call_fail(call,api.SERVER_ERROR,"The last frame showed no generated image: frame generation needs FSR 3.1 as the antialiasing, frame_generation on in Graphics_Settings and a frame with history")
             return
@@ -306,17 +309,20 @@ api_capture_debug_draw :: proc(s:^Session,w:core.World_Ref,overlays:^Api_Capture
     for draw in overlays.draws[:overlays.count] {draw(s,w,lines)}
 }
 
-// Window frames until no texture of what the window shows is pending or the
-// wait runs out, then enough for what builds up over frames to settle with them.
+// Window frames when capture leaves frames automatic (0): at least
+// API_CAPTURE_SETTLE for TAA, exposure and probe stats, then while textures
+// stream (up to wait) or GI probes still gather (up to host.CAPTURE_GI_MAX).
 @(private)
-api_capture_textures_settle :: proc(s:^Session,dt:f32,wait:time.Duration) {
+api_capture_settle :: proc(s:^Session,dt:f32,wait:time.Duration) {
     started:=time.tick_now()
-    waited:=false
-    for gpu.textures_update(s.app.renderer)+host.app_assets_arriving(s.app)>0 && time.tick_since(started)<wait && !s.quit {
-        api_frames(s,1,dt)
-        waited=true
+    r:=s.app.renderer
+    count:=API_CAPTURE_SETTLE
+    gi_limit:=max(API_CAPTURE_SETTLE,host.CAPTURE_GI_MAX)
+    for frame:=0;frame<count && !s.quit;frame+=1 {
+        if api_frames(s,1,dt)==0 {return}
+        pending:=gpu.textures_update(r)+host.app_assets_arriving(s.app)
+        count=host.capture_frames_settle(count,frame,API_CAPTURE_SETTLE,pending,gpu.renderer_gi_settling(r),&gi_limit,time.tick_since(started),wait)
     }
-    if waited {api_frames(s,API_CAPTURE_SETTLE,dt)}
 }
 
 // Until nothing the frames draw is being made (view_pending), for at most
