@@ -73,6 +73,19 @@ Particle_Gradient :: struct {
     times:[PARTICLE_CURVE_KEYS]f32 `mirai:"min=0,max=1"`,
 }
 
+// Dynamic point lights emitted by a particle effect, driven by its clock and
+// particle life. intensity or range of 0 disables light emission at zero cost.
+Particle_Light :: struct {
+    color:[3]f32 `mirai:"color"`,          // tint; {0,0,0} uses the effect's particle color
+    intensity:f32 `mirai:"min=0,unit=cd"`, // peak candela per emitted light; 0 disables
+    range:f32 `mirai:"min=0,unit=m"`,      // attenuation range; 0 disables
+    radius:f32 `mirai:"min=0,unit=m"`,     // source sphere radius for soft highlights and shadows
+    max_lights:u16,                        // max concurrent lights for this emitter; 0 uses 1 when enabled
+    shadows:bool,                          // whether emitted lights cast shadows
+    indirect:f32 `mirai:"min=0"`,         // indirect GI bounce multiplier
+    scattering:f32 `mirai:"min=0"`,       // volumetric fog scattering multiplier
+}
+
 // The shape faces +Y of the entity, where a cone opens; the particles leave
 // it along its normal, or along +Y from a box and a line. A Surface starts
 // them on the triangles of a mesh, by their area, and they leave along its
@@ -138,6 +151,7 @@ Particle_Info :: struct {
     sub_count:u32,                            // its particles per event
     beam_end:[3]f32 `mirai:"section=Look,unit=m"`, // endpoint offset in the emitter's axes
     beam_arc:f32 `mirai:"unit=m"`, // midpoint offset along the emitter's +Y
+    light:Particle_Light, // dynamic point lights driven by particle life; intensity or range 0 disables
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"section=Program,text"`, // a Vfx program of the shaders; "" for none
 }
 
@@ -292,6 +306,10 @@ particle_info_problem :: proc(p:^Particle_Info,coupled:bool) -> Particle_Problem
     if !particle_times_valid(p.size_over_life.times[:],coupled) {return {"size_over_life","Use key times that go up from 0 to 1"}}
     if !particle_times_valid(p.color_over_life.times[:],coupled) {return {"color_over_life","Use key times that go up from 0 to 1"}}
     for value in p.size_over_life.values {if value<0 {return {"size_over_life","Use sizes of zero or more"}}}
+    for c in p.light.color {if c<0 {return {"light","Use light color channels of zero or more"}}}
+    if p.light.intensity<0 || p.light.range<0 || p.light.radius<0 || p.light.indirect<0 || p.light.scattering<0 {
+        return {"light","Use zero or more for light intensity, range, radius, indirect and scattering"}
+    }
     return {}
 }
 

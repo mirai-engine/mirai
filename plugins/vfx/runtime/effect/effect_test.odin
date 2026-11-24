@@ -15,6 +15,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     info.bursts[1]={time=0.5,count=9,cycles=2,interval=0.1}
     info.velocity={{-1,2,0},{1,3,0}}
     info.size_over_life.values[1]=0.25
+    info.light={color={1,0.5,0.2},intensity=400,range=8,radius=0.1,max_lights=2,shadows=true,indirect=1,scattering=0.5}
     base.text_set(info.program[:],"Swirl")
     hidden:[2]Particle_Field
     base.text_set(hidden[0].name[:],"noise")
@@ -90,6 +91,13 @@ invalid_effects_say_which_field_and_how_to_correct_it :: proc(t:^testing.T) {
         {proc(p:^Particle_Info) {p.ribbon_axis=Particle_Ribbon_Axis(2)},"ribbon_axis"},
         {proc(p:^Particle_Info) {p.scale.y=-1},"scale"},
         {proc(p:^Particle_Info) {p.ribbon_tile=-0.5},"ribbon_tile"},
+        {proc(p:^Particle_Info) {p.light.intensity=-1},"light"},
+        {proc(p:^Particle_Info) {p.light.range=-2},"light"},
+        {proc(p:^Particle_Info) {p.light.radius=-0.1},"light"},
+        {proc(p:^Particle_Info) {p.light.color.x=-0.5},"light"},
+        {proc(p:^Particle_Info) {p.light.indirect=-1},"light"},
+        {proc(p:^Particle_Info) {p.light.scattering=-1},"light"},
+        {proc(p:^Particle_Info) {p.light.intensity=math.nan_f32()},"light"},
     }
     for c in cases {
         info:=PARTICLE_DEFAULTS
@@ -142,6 +150,14 @@ particle_values_are_named_by_their_paths :: proc(t:^testing.T) {
     testing.expect(t,has_velocity && velocity.size==12 && velocity.top=="velocity")
     material,has_material:=found("material")
     testing.expect(t,has_material && material.kind==.Asset)
+    light_intensity,has_light_intensity:=particle_value_at("light.intensity")
+    testing.expect(t,has_light_intensity && light_intensity.top=="light" && light_intensity.kind==.Float && light_intensity.offset==offset_of(Particle_Info,light)+offset_of(Particle_Light,intensity))
+    light_color,has_light_color:=particle_value_at("light.color")
+    testing.expect(t,has_light_color && light_color.size==12 && light_color.top=="light")
+    light_max,has_light_max:=particle_value_at("light.max_lights")
+    testing.expect(t,has_light_max && light_max.kind==.Integer && light_max.size==2)
+    light_shadows,has_light_shadows:=particle_value_at("light.shadows")
+    testing.expect(t,has_light_shadows && light_shadows.kind==.Bool && light_shadows.size==1)
     _,missing:=found("colors")
     testing.expect(t,!missing)
     _,program:=found("program")

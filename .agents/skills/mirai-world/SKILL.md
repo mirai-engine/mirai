@@ -24,8 +24,11 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
 ## Map
 
 - `vfx` (particles: layered `.particle` effects, presets, GPU pools and passes, surfaces and
-  Vfx programs with surfaces, channels and grids, stages, volumes, distance culling):
+  Vfx programs with surfaces, channels and grids, stages, volumes, distance culling, dynamic
+  particle lights, animation span bridge):
   [format](references/vfx.md#format), [game](references/vfx.md#game),
+  [particle lights](references/vfx.md#particle-lights),
+  [animation spans](references/vfx.md#animation-spans),
   [surfaces and resources](references/vfx.md#surfaces-and-resources),
   [grids and stages](references/vfx.md#grids-and-stages),
   [world textures](references/vfx.md#world-textures),
@@ -149,11 +152,10 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   do not add a separate `Nav_Walker`.
 - Far-away simulation: automatic coarse simulation through the portal graph.
 - Water: Gerstner waves.
-- Particles: a particle glows by its emission and is not a light; an effect that must light its
-  surroundings carries a light on its entity. The lights of a frame are the scene's, known on the
-  CPU, so what depends on them (their lists, caches and shadow pages) is kept while they stay
-  still. Decided by the user: per-particle or GPU-written lights come back only with a measured
-  reason that holds against this.
+- Particles: GPU particles remain un-indexed in the BVH/light list; when an effect enables
+  `Particle_Light` (`light.intensity > 0` and `light.range > 0`), `particles_lights` drives CPU
+  `erender.Point_Light` nodes from a bounded preallocated pool (`PARTICLE_LIGHTS_MAX`,
+  `EMITTER_LIGHTS_MAX`), keeping all scene lights CPU-known with zero cost when disabled.
 - **VFX pruned/unified surfaces (do not look for or reintroduce):** cross-emitter births use
   `core.Births` and `Particle_Channel` (no `Data_Channels`, `Particle_Reports` or GPU-to-GPU
   `Emitter` events); baked `.grid` caches and `Particle_Shape.Bones` do not exist (use

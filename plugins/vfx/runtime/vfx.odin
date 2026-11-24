@@ -56,6 +56,7 @@ Particle_Clocks :: struct {
     channels:[dynamic]Channel_Clock,
     seen_channels:core.Seen,
     seen_emitters,seen_worlds:core.Seen, // what the clocks of the emitters that went are pruned from
+    lit_count:u32,                       // emitters with at least one light-emitting layer; 0 skips light work
     playing:bool,                        // of a world that plays
 }
 
@@ -63,9 +64,10 @@ Particle_Clocks :: struct {
 @(storage,setting)
 Particle_Settings :: struct {
     capacity:u32 `mirai:"min=1024,max=16777216,advanced"`, // the device may take less: then the renderer keeps the pool it has
+    max_lights:u32 `mirai:"min=0,max=32,advanced"`,        // dynamic point lights emitted by particle effects at once; 0 disables
 }
 
-PARTICLE_SETTINGS_DEFAULT :: Particle_Settings{capacity=CAPACITY}
+PARTICLE_SETTINGS_DEFAULT :: Particle_Settings{capacity=CAPACITY,max_lights=PARTICLE_LIGHTS_MAX}
 
 // What the renderer was told of an emitter.
 Emitter_Shown :: struct {
@@ -208,6 +210,7 @@ particles_tick :: proc(
         if most>0 {append(&sync.culls,Emitter_Cull{particle=emitter.particle,preset=emitter.preset,distance=near,entity=e,most=most})}
     }
     culls_rank(clocks,sync.culls[:])
+    clocks.lit_count=0
     ticked:=core.join(emitters,worlds)
     for e,emitter,world in core.each_joined(&ticked) {
         clock:=clock_find(clocks,e)
@@ -215,13 +218,16 @@ particles_tick :: proc(
         listener,listens:=core.get(listeners,e)
         if !listens {listener={}}
         all_done:=true
+        has_light:=false
         for layer in 0..=int(clock.layers) {
             layer_clock:=clock_find(clocks,e,layer)
             if layer_clock==nil {continue}
             emits_preview:=layer==0
             if !clock.culled {emitter_tick(layer_clock,emitter,listener,world,dt,time,clocks,sync,emits_preview)}
             all_done&&=layer_clock.done
+            has_light||=layer_clock.emission.has_light
         }
+        if has_light {clocks.lit_count+=1}
         if time.playing && all_done && emitter.destroy_when_done {append(&done,e)}
     }
     for e in done {

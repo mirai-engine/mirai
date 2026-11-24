@@ -1,0 +1,7 @@
+{
+  "name": "vfx_animation",
+  "version": "0.1.0",
+  "dependencies": ["vfx", "animation"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

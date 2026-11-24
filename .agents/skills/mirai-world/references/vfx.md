@@ -80,6 +80,41 @@ core.push(&births.queue, core.Birth{
 })
 ```
 
+## Particle lights
+
+`Particle_Info.light` (`effect.Particle_Light`: `color`, `intensity`, `range`, `radius`,
+`max_lights`, `shadows`, `indirect`, `scattering`) lets a `.particle` effect emit dynamic CPU
+`erender.Point_Light`s without GPU readback or single-writer conflicts:
+
+- **Zero cost when off**: `intensity <= 0` or `range <= 0` sets `Emission.has_light = false`;
+  when `Particle_Clocks.lit_count == 0` and `Particle_Lights.active_count == 0`,
+  `particles_lights` (`late`, `stage="intent"`, before `transforms_propagate` and `render_sync`)
+  returns immediately.
+- **Bounded preallocated pool**: up to `EMITTER_LIGHTS_MAX` (4) concurrent lights per emitter and
+  `min(Particle_Settings.max_lights, PARTICLE_LIGHTS_MAX)` (32) per world, ranked deterministically
+  by distance to `scene.Simulation_Sources`, then intensity, then entity. Transient child entities
+  (no `core.Id`, parented to the emitter) never enter scenes, outliner, or editor history, and park
+  at zero intensity when idle for zero stable-tick allocations.
+- **Driven by life and state**: sample ages come from `Emitter_Clock.births`; `color_over_life`
+  modulates color and intensity (falling back to the midpoint of `colors` when `light.color` is
+  zero), `size_over_life` scales `range`, and hidden, culled, done, or destroyed emitters release
+  their slots automatically.
+
+## Animation spans
+
+`plugins/vfx_animation` (`dependencies: ["vfx", "animation"]`, `"automatic": true`) bridges
+`anim.Animation_Events` to `vfx.Particle_Requests` without coupling `vfx` or `animation`:
+
+- Attach `vfx_animation.Particle_Animation_Span` to a `Particle_Emitter` entity (`source` `NONE`
+  resolves self or nearest `core.Parent` ancestor with `anim.Animation`).
+- Duration spans (`end_marker` empty) start on `.Span_Begin` and stop on `.Span_End` (reference-
+  counted for overlapping spans); paired point markers (`end_marker` set, e.g.
+  `FortMeleeAnimTrails_On` / `FortMeleeAnimTrails_Off`) start/stop on `.Marker`. Optional `action`
+  filters to one action name; `restart_on_begin` restarts generation on start.
+- `vfx_animation_spans` (`fixed`, `stage="react"`, after `animation_advance`, before
+  `particles_tick`) applies requests in the same tick and stops active emitters on `.Interrupted`,
+  `.Ended`, span removal, or source entity destruction so trails never stick on.
+
 ## Culling
 
 `cull_distance` and `max_instances` of the primary layer make whole emitters wait
@@ -274,5 +309,7 @@ does not reach G-buffer meshes. Local-space meshes take motion vectors from the 
   additive meshes, `Multiply`, ribbon segments, `Emitter_Up` and tiles (`trail_stripes.slang`),
   `Emitter` facing with `scale`, local-space motion vectors and inheritance.
 - `mirai test plugins/vfx/editor -collection:plugins=<root>/plugins`: `document_test.odin`.
+- `mirai test plugins/vfx_animation/runtime --no-gpu`: `span_test.odin` (duration spans, paired
+  markers, action filtering, interruption, source destruction, zero-alloc steady ticks).
 - Demo editor (headless + validation): `physics_gallery/physics_burst.scene` (station 11),
   `particle.*`, and `Surface` + `Particle_Bindings` capture.
