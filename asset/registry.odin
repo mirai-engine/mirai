@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import vmem "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -522,6 +523,9 @@ registry_probe :: proc(r:^Registry,full:string,file:^Registry_File,dependencies:
 // Walks the folder and brings the registry up to date. Files and folders
 // whose name starts with a dot, and files being written, are left out.
 registry_scan :: proc(r:^Registry) -> Error {
+    scan_arena:vmem.Arena
+    defer vmem.arena_destroy(&scan_arena)
+    context.temp_allocator=vmem.arena_allocator(&scan_arena)
     r.revision+=1
     allocator:=r.allocator
     previous:=r.files
