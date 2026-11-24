@@ -22,8 +22,9 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   [crashes](references/platform.md#crashes),
   [file watching](references/platform.md#file-watching), [paths](references/platform.md#paths) and
   [audio device](references/platform.md#audio-device).
-- Mixer, threads, sounds, decoders, feeds and streams, voices, buses, sends, the master limiter,
-  reverb, positional audio: [mixer](references/audio.md#mixer),
+- Mixer, threads, sounds, decoders, feeds and streams, voices, batches, buses, sends, filters,
+  delay, solo, meters, the master limiter, reverb, positional audio:
+  [mixer](references/audio.md#mixer),
   [sounds](references/audio.md#sounds), [voices](references/audio.md#voices),
   [buses, sends and limiter](references/audio.md#buses),
   [reverb](references/audio.md#reverb) and [positional audio](references/audio.md#positional-audio).
@@ -82,6 +83,7 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   screen).
 - Vulkan surface, on request: `-define:PLATFORM_TEST_VULKAN=true` with `VK_DRIVER_FILES` pointing
   to the driver (lavapipe avoids the GPU).
+- Filters, delay, solo, meters, the low-pass of a voice and batches: `audio/filter_test.odin`.
 - Audio: the tests render to memory and compare samples; `audio/testdata/*.ogg` are tones
   generated once and not regenerated. Mixers of tests have no decoder thread, so the output is
   exact; a test that uses one decodes with `mixer_decode` before each render.

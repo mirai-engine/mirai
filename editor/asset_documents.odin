@@ -605,6 +605,7 @@ asset_documents_retain :: proc(s:^Session) {
     ids:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for d in s.asset_documents {if d.id!={} {append(&ids,d.id)}}
     for &tab in s.documents {if tab.document.id!={} {append(&ids,tab.document.id)}}
+    if s.heard_sound.sound!={} && sound_heard(s,s.heard_sound.sound) {append(&ids,s.heard_sound.sound)}
     scope:=host.assets_scope_of(a,s)
     if !slice.equal(host.assets_scope_ids(a,scope),ids[:]) {host.assets_scope_set(a,scope,ids[:])}
 }

@@ -253,7 +253,9 @@ id (never reused; input buffers freeable on return):
 `.sound_set`, `.font`, `.prompts` (`.strings` lives in `host/texts.odin`). Each entry carries a
 `generation` that bumps on reload.
 
-- `content_sound_pick` selects from `.sound`/`.sound_set`; streamed sounds stay open until exit.
+- `content_sound_pick` selects from `.sound`/`.sound_set` (one sound, or every layer of a Layered
+  set, with the entry of the set each is); `content_sound_set_info` gives a set's values for its
+  curves. Streamed sounds stay open until exit.
   `.ui` re-resolves images/programs on `Assets.revision`. `prompts_find` maps key/mouse to
   `Keyboard`.
 - **Fonts:** `content_font` registers into `App.ui_font` (`app_ui_fonts_apply` before UI

@@ -71,57 +71,12 @@ buses_are_limited_to_their_capacity :: proc(t:^testing.T) {
     _,ok=bus_create(m)
     testing.expect(t,!ok)
     missing:=Bus(1+1)
-    testing.expect(t,!bus_set_volume(m,missing,1) && !bus_set_mute(m,missing,true) && !bus_set_lowpass(m,missing,100))
-    testing.expect(t,bus_volume(m,missing)==0 && !bus_muted(m,missing) && bus_lowpass(m,missing)==0)
+    testing.expect(t,!bus_set_volume(m,missing,1) && !bus_set_mute(m,missing,true) && !bus_set_filter(m,missing,0,{kind=.Lowpass,frequency=100}))
+    testing.expect(t,bus_volume(m,missing)==0 && !bus_muted(m,missing) && bus_filter(m,missing,0)=={})
     testing.expect(t,!bus_set_duck(m,missing,{source=BUS_MASTER,amount=1}))
     testing.expect(t,!bus_set_duck(m,first,{source=missing,amount=1}))
     testing.expect(t,!bus_set_duck(m,first,{source=first,amount=1}))
     testing.expect(t,!bus_set_duck(m,BUS_MASTER,{source=first,amount=1}))
-}
-
-@(private="file") tone_low :: proc(i:int) -> f32 {return math.sin_f32(2*math.PI*100*f32(i)/RATE)}
-@(private="file") tone_cut :: proc(i:int) -> f32 {return math.sin_f32(2*math.PI*1000*f32(i)/RATE)}
-@(private="file") tone_high :: proc(i:int) -> f32 {return math.sin_f32(2*math.PI*8000*f32(i)/RATE)}
-
-@(test)
-bus_low_pass_keeps_the_lows_and_removes_the_highs :: proc(t:^testing.T) {
-    m:=test_mixer(t)
-    defer mixer_destroy(m)
-    bus,_:=bus_create(m)
-    testing.expect(t,bus_set_lowpass(m,bus,1000))
-    testing.expect_value(t,bus_lowpass(m,bus),f32(1000))
-    desc:=VOICE_DEFAULT
-    desc.loop=true;desc.bus=bus
-    // Whole periods in a second of sound: the loops are seamless.
-    Case :: struct {tone:proc(i:int) -> f32,low,high:f32}
-    full:=f32(math.SQRT_TWO/2) // RMS of a sine
-    cases:=[?]Case{
-        {tone_low,0.99*full,1.01*full},    // two decades below the cutoff
-        {tone_cut,0.68*full,0.74*full},    // at the cutoff: -3 dB
-        {tone_high,0,0.02*full},           // three octaves above: 12 dB per octave
-    }
-    for c in cases {
-        voice:=voice_play(m,test_stereo(t,m,RATE,c.tone),desc)
-        test_render(m,4800) // the filter settles
-        out:=test_render(m,9600)
-        level:=rms(out,0)
-        testing.expectf(t,level>=c.low && level<=c.high,"RMS %v outside [%v,%v]",level,c.low,c.high)
-        test_near(t,rms(out,1),level,1e-4)
-        voice_stop(m,voice)
-        test_render(m,4800)
-        mixer_update(m)
-    }
-    // Turned off, the bus passes everything again.
-    bus_set_lowpass(m,bus,0)
-    voice_play(m,test_stereo(t,m,RATE,tone_high),desc)
-    test_render(m,CHUNK_FRAMES)
-    out:=test_render(m,9600)
-    test_near(t,rms(out,0),full,1e-3)
-    // A cutoff at or above half the sample rate is no filter.
-    bus_set_lowpass(m,bus,RATE)
-    test_render(m,CHUNK_FRAMES)
-    out=test_render(m,9600)
-    test_near(t,rms(out,0),full,1e-3)
 }
 
 // The water plugin sweeps the cutoff while the listener goes under: a
@@ -143,7 +98,7 @@ bus_low_pass_sweep_has_no_steps :: proc(t:^testing.T) {
     // From 16 kHz down to 300 Hz, a new cutoff every chunk.
     swept:f32
     for cutoff:=f32(16000);cutoff>300;cutoff*=0.7 {
-        bus_set_lowpass(m,bus,cutoff)
+        bus_set_filter(m,bus,0,{kind=.Lowpass,frequency=cutoff})
         swept=max(swept,largest_step(test_render(m,CHUNK_FRAMES),&last))
     }
     testing.expectf(t,swept<=unfiltered,"the sweep steps by %v, the sine by %v",swept,unfiltered)
@@ -264,4 +219,26 @@ the_master_limiter_holds_a_loud_mix_under_full_scale :: proc(t:^testing.T) {
         quiet=voice_play(m,test_mono(t,m,RATE,test_small),desc)
         quiet_mix(t,test_render(m,RATE/10),channels,level,0)
     }
+}
+
+// Nested batches hold commands until the outermost end; toggling a bus delay
+// from off to wet in one chunk delivers its line safely with the command.
+@(test)
+nested_batches_flush_once_and_delay_toggle_is_safe :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    mixer_batch_begin(m)
+    mixer_batch_begin(m)
+    bus_set_volume(m,BUS_MASTER,0.5)
+    mixer_batch_end(m)
+    // Inner end must not publish yet.
+    test_render(m,CHUNK_FRAMES)
+    testing.expect_value(t,m.buses[BUS_MASTER].volume,f32(1))
+    bus_set_delay(m,BUS_MASTER,{seconds=0.05,feedback=0,wet=0})
+    bus_set_delay(m,BUS_MASTER,{seconds=0.05,feedback=0.3,wet=0.5})
+    mixer_batch_end(m)
+    test_render(m,CHUNK_FRAMES)
+    testing.expect_value(t,m.buses[BUS_MASTER].volume,f32(0.5))
+    testing.expect_value(t,m.buses[BUS_MASTER].delay.params.wet,f32(0.5))
+    testing.expect(t,len(m.buses[BUS_MASTER].delay.memory)>0)
 }

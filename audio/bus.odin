@@ -1,12 +1,13 @@
 package mirai_audio
 
 import "core:math"
+import "core:sync"
 
 // Buses: every voice plays into one, every bus but the master plays into
 // the one it sends to (the master unless bus_set_send says another), and the
 // master, through its limiter, is what mixer_render writes out. A bus has a
-// reverb, a low-pass filter, a volume and a mute, in that order, and can be
-// ducked by another bus.
+// reverb, BUS_FILTERS filters, a delay, a volume and a mute, in that order,
+// can be ducked by another bus and soloed, and meters what it plays.
 
 Bus :: distinct u16
 BUS_MASTER :: Bus(0)
@@ -14,7 +15,7 @@ BUS_MASTER :: Bus(0)
 // While the source bus is louder than threshold, the bus is turned down by
 // amount (0 does nothing, 1 silences it), getting there in attack seconds
 // and coming back in release seconds. The level of the source is taken after
-// its own volume and filter.
+// its own volume and filters.
 Duck :: struct {
     source:Bus,
     threshold:f32, // linear peak
@@ -22,22 +23,28 @@ Duck :: struct {
     attack,release:f32,
 }
 
+// A meter falls this many dB a second from the last peak it held.
+METER_FALL :: f32(20)
+
 @(private)
-Bus_Shadow :: struct {volume:f32,muted:bool,lowpass:f32,duck:Duck,reverb:Reverb,send:Bus}
-@(private)
-Biquad :: struct {b0,b1,b2,a1,a2:f32}
+Bus_Shadow :: struct {
+    volume:f32,
+    muted,soloed:bool,
+    silent:bool, // what the audio thread was told: muted, or left out by a solo
+    filters:[BUS_FILTERS]Filter,
+    delay:Delay,
+    duck:Duck,reverb:Reverb,send:Bus,
+}
 @(private)
 Mix_Bus :: struct {
-    volume:f32,muted:bool,
+    volume:f32,silent:bool,
     gain:f32, // applied at the end of the last chunk
-    // The low-pass, and the one it changes from: across the chunk after a
-    // change both run and the output crossfades from the old to the new.
-    filter,old:Biquad,
-    filtering,old_filtering,fading:bool,
-    filter_state,old_state:[2]Biquad_State, // per output channel
+    filters:[BUS_FILTERS]Biquad_Fade,
+    delay:Delay_Line,
     duck:Duck,
     duck_gain,duck_gain_now:f32,
     peak:f32, // of the last chunk, before ducking
+    meter:[2]f32, // per channel: the peak, falling METER_FALL dB a second
     send:Bus,
 }
 
@@ -68,29 +75,62 @@ bus_count :: proc(m:^Mixer) -> int {return m.bus_count}
 
 bus_volume :: proc(m:^Mixer,bus:Bus) -> f32 {return m.bus_shadows[bus].volume if bus_valid(m,bus) else 0}
 bus_set_volume :: proc(m:^Mixer,bus:Bus,volume:f32) -> bool {
-    if !bus_valid(m,bus) || !command_push(m,{kind=.Bus_Volume,index=u32(bus),value=max(volume,0)}) {return false}
+    if !bus_valid(m,bus) || !finite(volume) || !command_push(m,{kind=.Bus_Volume,index=u32(bus),value=max(volume,0)}) {return false}
     m.bus_shadows[bus].volume=max(volume,0)
     return true
 }
+// A muted bus keeps its volume for when it comes back.
 bus_muted :: proc(m:^Mixer,bus:Bus) -> bool {return bus_valid(m,bus) && m.bus_shadows[bus].muted}
 bus_set_mute :: proc(m:^Mixer,bus:Bus,muted:bool) -> bool {
-    if !bus_valid(m,bus) || !command_push(m,{kind=.Bus_Mute,index=u32(bus),flag=muted}) {return false}
+    if !bus_valid(m,bus) {return false}
     m.bus_shadows[bus].muted=muted
-    return true
+    return buses_silence(m)
 }
+// While any bus is soloed only the soloed ones are heard, with the buses
+// that play into them and those they play into on their way to the master
+// (Godot's solo, which also keeps what plays into a soloed bus). The master
+// cannot be soloed.
+bus_soloed :: proc(m:^Mixer,bus:Bus) -> bool {return bus_valid(m,bus) && m.bus_shadows[bus].soloed}
+bus_set_solo :: proc(m:^Mixer,bus:Bus,soloed:bool) -> bool {
+    if !bus_valid(m,bus) || bus==BUS_MASTER {return false}
+    m.bus_shadows[bus].soloed=soloed
+    return buses_silence(m)
+}
+// Whether a bus is silent: muted, or left out by a solo.
+bus_silent :: proc(m:^Mixer,bus:Bus) -> bool {return bus_valid(m,bus) && m.bus_shadows[bus].silent}
 // The bus a bus plays into: the master, or a bus created before it, so what
 // sends never loops back.
 bus_send :: proc(m:^Mixer,bus:Bus) -> Bus {return m.bus_shadows[bus].send if bus_valid(m,bus) else BUS_MASTER}
 bus_set_send :: proc(m:^Mixer,bus,to:Bus) -> bool {
     if !bus_valid(m,bus) || bus==BUS_MASTER || to>=bus || !command_push(m,{kind=.Bus_Send,index=u32(bus),frames=u32(to)}) {return false}
     m.bus_shadows[bus].send=to
+    return buses_silence(m)
+}
+// Filter band of a bus, 0 to BUS_FILTERS-1; they run in that order.
+bus_filter :: proc(m:^Mixer,bus:Bus,band:int) -> Filter {
+    if !bus_valid(m,bus) || band<0 || band>=BUS_FILTERS {return {}}
+    return m.bus_shadows[bus].filters[band]
+}
+// False for a band or a filter out of range (filter_valid).
+bus_set_filter :: proc(m:^Mixer,bus:Bus,band:int,filter:Filter) -> bool {
+    if !bus_valid(m,bus) || band<0 || band>=BUS_FILTERS || !filter_valid(filter) {return false}
+    if !command_push(m,{kind=.Bus_Filter,index=u32(bus),frames=u32(band),filter=filter}) {return false}
+    m.bus_shadows[bus].filters[band]=filter
     return true
 }
-// Cutoff of the low-pass filter of the bus in Hz (12 dB per octave); 0 turns the filter off.
-bus_lowpass :: proc(m:^Mixer,bus:Bus) -> f32 {return m.bus_shadows[bus].lowpass if bus_valid(m,bus) else 0}
-bus_set_lowpass :: proc(m:^Mixer,bus:Bus,cutoff_hz:f32) -> bool {
-    if !bus_valid(m,bus) || !command_push(m,{kind=.Bus_Lowpass,index=u32(bus),value=max(cutoff_hz,0)}) {return false}
-    m.bus_shadows[bus].lowpass=max(cutoff_hz,0)
+bus_delay :: proc(m:^Mixer,bus:Bus) -> Delay {return m.bus_shadows[bus].delay if bus_valid(m,bus) else {}}
+// Reserves the line of the bus the first time it is given a delay (a
+// transaction): false without memory for it, or for a value that is not a number.
+bus_set_delay :: proc(m:^Mixer,bus:Bus,delay:Delay) -> bool {
+    if !bus_valid(m,bus) || !finite(delay.seconds) || !finite(delay.feedback) || !finite(delay.wet) {return false}
+    delay:=delay_clamp(delay)
+    if m.delay_memory[bus]==nil && delay.wet>0 {
+        memory,failed:=make([]f32,delay_line_frames(m.sample_rate)*2,m.allocator)
+        if failed!=nil {return false}
+        m.delay_memory[bus]=memory
+    }
+    if !command_push(m,{kind=.Bus_Delay,index=u32(bus),vectors={{delay.seconds,delay.feedback,delay.wet},{},{}},delay_memory=m.delay_memory[bus]}) {return false}
+    m.bus_shadows[bus].delay=delay
     return true
 }
 bus_duck :: proc(m:^Mixer,bus:Bus) -> Duck {return m.bus_shadows[bus].duck if bus_valid(m,bus) else {}}
@@ -104,65 +144,72 @@ bus_set_duck :: proc(m:^Mixer,bus:Bus,duck:Duck) -> bool {
     m.bus_shadows[bus].duck=duck
     return true
 }
-
-// Second order low-pass with no resonance (Butterworth), from the Audio EQ Cookbook.
-@(private)
-biquad_lowpass :: proc "contextless" (cutoff_hz,sample_rate:f32) -> Biquad {
-    omega:=2*math.PI*cutoff_hz/sample_rate
-    sine,cosine:=math.sin(omega),math.cos(omega)
-    alpha:=sine/math.SQRT_TWO
-    a0:=1+alpha
-    return {b0=(1-cosine)/2/a0,b1=(1-cosine)/a0,b2=(1-cosine)/2/a0,a1=-2*cosine/a0,a2=(1-alpha)/a0}
-}
-// Godot's AudioFilterSW::update_coeffs moves its coefficients over the
-// buffer; here, as the EQ of a spatial voice does, the filter before the
-// change keeps running through the chunk and the output crossfades to the
-// new one, which takes over its memory, so a sweep has no steps.
-@(private)
-bus_lowpass_apply :: proc "contextless" (m:^Mixer,bus:^Mix_Bus,cutoff_hz:f32) {
-    filtering:=cutoff_hz>0 && cutoff_hz<f32(m.sample_rate)*0.49
-    if !bus.fading {bus.old,bus.old_state,bus.old_filtering,bus.fading=bus.filter,bus.filter_state,bus.filtering,true}
-    if filtering {bus.filter=biquad_lowpass(cutoff_hz,f32(m.sample_rate))}
-    bus.filter_state=bus.old_state if bus.old_filtering else {}
-    bus.filtering=filtering
-}
-@(private)
-biquad_tick :: #force_inline proc "contextless" (f:Biquad,s:^Biquad_State,x:f32) -> f32 {
-    y:=f.b0*x+s.z1
-    s.z1=f.b1*x-f.a1*y+s.z2
-    s.z2=f.b2*x-f.a2*y
-    return y
+// The level of each output channel of a bus, linear, after its volume: the
+// peak of what it played, falling METER_FALL dB a second. Any thread may read
+// it; the audio thread writes it every chunk.
+bus_meter :: proc "contextless" (m:^Mixer,bus:Bus) -> (meter:[2]f32) {
+    if int(bus)>=len(m.bus_meters) {return}
+    for &level,c in meter {level=transmute(f32)sync.atomic_load_explicit(&m.bus_meters[bus][c],.Relaxed)}
+    return
 }
 
-// Filter, volume and peak of one bus over n frames of its buffer.
+// Tells the audio thread which buses are silent, by their mutes and solos;
+// false when the queue was full for one of them, which a later change sends.
 @(private)
-bus_process :: proc "contextless" (bus:^Mix_Bus,buffer:[^]f32,n:int) {
-    #no_bounds_check {
-        for channel in 0..<2 {
-            switch {
-            case bus.fading:
-                for k in 0..<n {
-                    x:=buffer[k*2+channel]
-                    y:=biquad_tick(bus.filter,&bus.filter_state[channel],x) if bus.filtering else x
-                    old:=biquad_tick(bus.old,&bus.old_state[channel],x) if bus.old_filtering else x
-                    buffer[k*2+channel]=old+(y-old)*(f32(k)/f32(n))
-                }
-            case bus.filtering:
-                for k in 0..<n {buffer[k*2+channel]=biquad_tick(bus.filter,&bus.filter_state[channel],buffer[k*2+channel])}
-            }
+buses_silence :: proc(m:^Mixer) -> bool {
+    shadows:=m.bus_shadows[:m.bus_count]
+    solo:=false
+    for shadow in shadows[1:] {solo||=shadow.soloed}
+    ok:=true
+    for &shadow,i in shadows {
+        silent:=shadow.muted || solo && i!=0 && !bus_on_solo(m,Bus(i))
+        if silent==shadow.silent {continue}
+        if !command_push(m,{kind=.Bus_Mute,index=u32(i),flag=silent}) {ok=false;continue}
+        shadow.silent=silent
+    }
+    return ok
+}
+// Whether a bus is soloed, plays into a soloed one, or a soloed one plays through it.
+@(private)
+bus_on_solo :: proc(m:^Mixer,bus:Bus) -> bool {
+    for at:=bus;;at=m.bus_shadows[at].send {
+        if m.bus_shadows[at].soloed {return true}
+        if at==BUS_MASTER {break}
+    }
+    for shadow,i in m.bus_shadows[1:m.bus_count] {
+        if !shadow.soloed {continue}
+        for at:=Bus(i+1);at!=BUS_MASTER; {
+            at=m.bus_shadows[at].send
+            if at==bus {return true}
         }
-        bus.fading=false
-        target:=f32(0) if bus.muted else bus.volume
-        gain,step:=bus.gain,(target-bus.gain)/f32(n)
-        peak:=f32(0)
-        for k in 0..<n {
-            g:=gain+step*f32(k)
-            left,right:=buffer[k*2]*g,buffer[k*2+1]*g
-            buffer[k*2]=left;buffer[k*2+1]=right
-            peak=max(peak,abs(left),abs(right))
-        }
-        bus.gain=target
-        bus.peak=peak
+    }
+    return false
+}
+
+// Filters, delay, volume, peak and meter of one bus over n frames of its buffer.
+@(private)
+bus_process :: proc "contextless" (m:^Mixer,index:int,buffer:[^]f32,n:int) {
+    bus:=&m.buses[index]
+    for &f in bus.filters {
+        if f.on || f.fading {biquad_fade_run(&f,buffer,0,n)}
+    }
+    delay_run(&bus.delay,buffer,n)
+    target:=f32(0) if bus.silent else bus.volume
+    gain,step:=bus.gain,(target-bus.gain)/f32(n)
+    peaks:[2]f32
+    #no_bounds_check for k in 0..<n {
+        g:=gain+step*f32(k)
+        left,right:=buffer[k*2]*g,buffer[k*2+1]*g
+        buffer[k*2]=left;buffer[k*2+1]=right
+        peaks={max(peaks[0],abs(left)),max(peaks[1],abs(right))}
+    }
+    bus.gain=target
+    bus.peak=max(peaks[0],peaks[1])
+    fall:=m.meter_fall if n==CHUNK_FRAMES else math.pow(10,-METER_FALL*f32(n)/(20*f32(m.sample_rate)))
+    for c in 0..<2 {
+        bus.meter[c]=max(peaks[c],bus.meter[c]*fall)
+        if bus.meter[c]<1e-6 {bus.meter[c]=0}
+        sync.atomic_store_explicit(&m.bus_meters[index][c],transmute(u32)bus.meter[c],.Relaxed)
     }
 }
 
@@ -177,7 +224,7 @@ buses_mix :: proc "contextless" (m:^Mixer,out:[]f32,n:int) {
             bus:=&m.buses[i]
             buffer:=master[i*CHUNK_FRAMES*2:]
             reverb_run(&m.bus_reverbs[i],buffer,buffer,n)
-            bus_process(bus,buffer,n)
+            bus_process(m,i,buffer,n)
             to:=master[int(bus.send)*CHUNK_FRAMES*2:]
             target:=f32(1)
             if bus.duck.amount>0 {
@@ -198,7 +245,7 @@ buses_mix :: proc "contextless" (m:^Mixer,out:[]f32,n:int) {
             bus.duck_gain_now=target
         }
         reverb_run(&m.bus_reverbs[0],master,master,n)
-        bus_process(&m.buses[0],master,n)
+        bus_process(m,0,master,n)
         if m.channels==2 {
             for i in 0..<n*2 {out[i]=master[i]}
         } else {

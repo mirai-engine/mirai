@@ -155,12 +155,18 @@ Content_Sound_Set :: struct {
     last:int, // the variation chosen last; -1: none
 }
 
-// What plays for a .sound or a .sound_set: a sound of the mixer, the volume
-// and pitch it takes over those it is played at, and how audio.play hears it.
+// What plays for a .sound or a .sound_set: the sounds of the mixer that play
+// together (one, or each layer of a Layered set) with the entry of the set
+// each is, the volume and pitch they take over those they are played at, and
+// how audio.play hears them.
 Sound_Pick :: struct {
-    sound:audio.Sound,
+    sounds:[asset.SOUND_SET_CAPACITY]audio.Sound,
+    layers:[asset.SOUND_SET_CAPACITY]u8,  // entry of the set of each sound; 0 for a .sound
+    gains:[asset.SOUND_SET_CAPACITY]f32,  // per-entry gain (1 when unset)
+    pitches:[asset.SOUND_SET_CAPACITY]f32, // per-entry pitch (1 when unset)
+    delays:[asset.SOUND_SET_CAPACITY]f32, // s after the start of its cue: a layer of a Layered set
+    count:int,
     volume,pitch:f32,
-    delay:f32, // s after the start of its cue: a layer of a set that plays all
     hearing:asset.Sound_Hearing,
 }
 
@@ -664,32 +670,49 @@ content_sound_set :: proc(app:^App,id:base.Asset_Id) -> ^Content_Sound_Set {
     return entry.failed?nil:entry
 }
 
-// What plays for a .sound, at its volume and pitch, or for a .sound_set: one
-// of its sounds by their weights, not the last one when it says no_repeat,
-// with a volume and a pitch from its ranges over the gain and pitch of its
-// entry. A sound of the set that does not load is left out. A .sound is heard
-// as SOUND_HEARING_DEFAULT. Zero when nothing of it can play, and for a set
-// that plays all, which is more than one voice (content_sound_picks).
-content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> Sound_Pick {
+// What plays for a .sound, at its volume and pitch, or for a .sound_set:
+// Random, one of its sounds by their weights, not the last one when it says
+// no_repeat; Layered, every sound of it that loads, each with its delay.
+// With a volume and a pitch from its ranges, which the layers share over the
+// gain and pitch of each entry. A sound of the set that does not load is left
+// out. A .sound is heard as SOUND_HEARING_DEFAULT. Zero sounds when nothing
+// of it can play.
+content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> (pick:Sound_Pick) {
     set:=content_sound_set(app,id)
     if set==nil {
-        if sound:=content_sound(app,id);sound!={} {return {sound,1,1,0,asset.SOUND_HEARING_DEFAULT}}
-        return {}
+        if sound:=content_sound(app,id);sound!={} {
+            pick.sounds[0],pick.gains[0],pick.pitches[0],pick.count=sound,1,1,1
+            pick.volume,pick.pitch,pick.hearing=1,1,asset.SOUND_HEARING_DEFAULT
+        }
+        return
     }
-    if set.info.all {return {}}
     c:=app.content
+    info:=&set.info
+    pick.volume,pick.pitch,pick.hearing=mm.random_range(&c.rng,info.volume_min,info.volume_max),mm.random_range(&c.rng,info.pitch_min,info.pitch_max),info.hearing
+    if info.mode==.Layered {
+        for variation,i in info.sounds {
+            if variation.sound=={} {continue}
+            if sound:=content_sound(app,variation.sound);sound!={} {
+                k:=pick.count
+                pick.sounds[k],pick.layers[k]=sound,u8(i)
+                pick.gains[k],pick.pitches[k],pick.delays[k]=entry_gain(variation),entry_pitch(variation),variation.delay
+                pick.count+=1
+            }
+        }
+        return
+    }
     sounds:[asset.SOUND_SET_CAPACITY]audio.Sound
     weights:[asset.SOUND_SET_CAPACITY]f32
     total:=f32(0)
     others:=false
-    for variation,i in set.info.sounds {
+    for variation,i in info.sounds {
         if variation.sound=={} {continue}
         sounds[i]=content_sound(app,variation.sound)
         if sounds[i]=={} {continue}
         weights[i]=variation.weight>0?variation.weight:1
         if i!=set.last {others=true}
     }
-    if set.info.no_repeat && others && set.last>=0 {weights[set.last]=0}
+    if info.no_repeat && others && set.last>=0 {weights[set.last]=0}
     for weight in weights {total+=weight}
     if total<=0 {return {}}
     at:=mm.random_f32(&c.rng)*total
@@ -701,42 +724,16 @@ content_sound_pick :: proc(app:^App,id:base.Asset_Id) -> Sound_Pick {
         at-=weight
     }
     set.last=chosen
-    info:=&set.info
-    volume:=mm.random_range(&c.rng,info.volume_min,info.volume_max)
-    pitch:=mm.random_range(&c.rng,info.pitch_min,info.pitch_max)
-    return {sounds[chosen],volume*entry_gain(info.sounds[chosen]),pitch*entry_pitch(info.sounds[chosen]),0,info.hearing}
+    variation:=info.sounds[chosen]
+    pick.sounds[0],pick.layers[0],pick.count=sounds[chosen],u8(chosen),1
+    pick.gains[0],pick.pitches[0]=entry_gain(variation),entry_pitch(variation)
+    return
 }
 
-// What plays for a .sound or a .sound_set as a cue, into picks: the one
-// sound content_sound_pick chooses or, of a set that plays all, every sound
-// of it that loads, each with the delay of its entry, and one volume and pitch
-// drawn for the whole cue over the gain and pitch of each entry. How many; 0
-// when nothing of it can play.
-content_sound_picks :: proc(app:^App,id:base.Asset_Id,picks:^[asset.SOUND_SET_CAPACITY]Sound_Pick) -> int {
+// The values of a .sound_set as it loaded; nil for a .sound or what does not load.
+content_sound_set_info :: proc(app:^App,id:base.Asset_Id) -> ^asset.Sound_Set_Info {
     set:=content_sound_set(app,id)
-    if set==nil || !set.info.all {
-        picks[0]=content_sound_pick(app,id)
-        return picks[0].sound!={}?1:0
-    }
-    c:=app.content
-    info:=&set.info
-    volume:=mm.random_range(&c.rng,info.volume_min,info.volume_max)
-    pitch:=mm.random_range(&c.rng,info.pitch_min,info.pitch_max)
-    count:=0
-    for variation in info.sounds {
-        if variation.sound=={} {continue}
-        sound:=content_sound(app,variation.sound)
-        if sound=={} {continue}
-        picks[count]={sound,volume*entry_gain(variation),pitch*entry_pitch(variation),variation.delay,info.hearing}
-        count+=1
-    }
-    return count
-}
-
-// Whether a .sound_set plays all its sounds together: more than one voice.
-content_sound_layered :: proc(app:^App,id:base.Asset_Id) -> bool {
-    set:=content_sound_set(app,id)
-    return set!=nil && set.info.all
+    return &set.info if set!=nil else nil
 }
 
 @(private="file")
@@ -745,11 +742,22 @@ entry_gain :: proc "contextless" (v:asset.Sound_Variation) -> f32 {return v.gain
 entry_pitch :: proc "contextless" (v:asset.Sound_Variation) -> f32 {return v.pitch>0?v.pitch:1}
 
 // The generation of what content_sound_pick plays for a .sound or a
-// .sound_set: another one once its file was loaded again. 0 when it does not load.
+// .sound_set: another one once its file or any loaded member .sound was loaded
+// again. 0 when it does not load.
 content_sound_generation :: proc(app:^App,id:base.Asset_Id) -> u32 {
-    if set:=content_sound_set(app,id);set!=nil {return set.generation}
-    c:=app.content
+    if set:=content_sound_set(app,id);set!=nil {
+        c:=app.content
+        gen:=set.generation
+        for variation in set.info.sounds {
+            if variation.sound=={} {continue}
+            if ref,found:=c.index[variation.sound];found && ref.kind==.Sound && !c.sounds[ref.index].failed {
+                gen=(gen*31)~c.sounds[ref.index].generation
+            }
+        }
+        return gen!=0?gen:1
+    }
     if content_sound(app,id)=={} {return 0}
+    c:=app.content
     ref:=c.index[id]
     return c.sounds[ref.index].generation
 }

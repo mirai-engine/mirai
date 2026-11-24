@@ -111,9 +111,12 @@ invalid one return false.
   yet is stopped at once.
 - **Aligned start.** With `start_frame` (mixer clock) the first sample comes out exactly on that
   frame, even if it falls in the middle of a render. `delay` (seconds) counts from the chunk the
-  play reaches (or `start_frame`), resolved on the audio thread. Commands sent between
-  `mixer_hold` and `mixer_release` are published together and reach one chunk, so the layers of
-  one cue keep their delays to the sample.
+  play reaches (or `start_frame`), resolved on the audio thread. What the game thread asks between
+  `mixer_batch_begin` and `mixer_batch_end` reaches the audio thread at once and takes effect in
+  one chunk: the layers of a sound start, retune and stop in step and keep their delays to the
+  sample.
+- **Low-pass** (`lowpass`, `voice_set_lowpass`): a voice with one is mixed apart and filtered as a
+  bus band is, crossfading a new cutoff over a chunk.
 - **Send.** A spatial voice, or one with a reverb send, is mixed apart: a spatial one goes through
   its [direct effect and its output](#positional-audio), then any voice through its send, ramped
   without clicks; a binaural voice is sent as one source, before its HRTF. Any other goes straight
@@ -139,10 +142,24 @@ game's named buses belong to [`engine/audio`](../../mirai-gameplay/references/li
   `LIMITER_CEILING` brings the gain down to it at once, which holds `LIMITER_HOLD` and comes back
   in `LIMITER_RELEASE`. A mix that never reaches full scale comes out as it is.
 
-- Volume and mute are ramped within a chunk; a muted bus keeps its volume. A new cutoff of its
-  low-pass runs beside the old filter for a chunk, whose memory it takes, and the output
-  crossfades from one to the other, so a sweep has no steps.
-- `bus_set_duck`: while the peak of the `source` bus, measured after its volume and its filter,
+- A bus runs its [reverb](#reverb), `BUS_FILTERS` filters in order, its delay and its volume.
+- **Filters** (`filter.odin`, `bus_set_filter(m,bus,band,Filter)`): the Audio EQ Cookbook's
+  biquads, `Lowpass`, `Highpass`, `Bandpass` (0 dB at its center) and `Peak` (`gain` dB), in
+  transposed direct form II; `q` 0 is Butterworth. A low-pass or a peak at or above
+  `FILTER_HZ_MAX` of the rate passes everything. A new filter runs beside the old one for a
+  chunk, whose memory it takes, and the output crossfades, so a sweep has no steps. A value that
+  is not a number is refused (`filter_valid`).
+- **Delay** (`delay.odin`, `bus_set_delay`): miniaudio's echo, `wet` times what came in
+  `seconds` ago, each echo `feedback` times the last; `wet` and `feedback` ramp across a chunk and
+  a new time crossfades the taps. Its line (`DELAY_SECONDS_MAX`) is reserved the first time the
+  bus has one; turned off, it forgets its echoes.
+- **Mute and solo.** Volume and mute are ramped within a chunk; a muted bus keeps its volume. While
+  any bus is soloed (`bus_set_solo`; never the master), only the soloed ones, those that play into
+  them and those they play through are heard (Godot's solo, which silences what plays into a
+  soloed bus); `bus_silent` says which are left out.
+- **Meters.** `bus_meter` gives the peak of each channel after the volume, falling `METER_FALL` dB
+  a second; the audio thread stores it as atomics every chunk, so any thread reads it.
+- `bus_set_duck`: while the peak of the `source` bus, measured after its volume and its filters,
   exceeds `threshold`, the bus drops to `1-amount` in `attack` and returns in `release`. The master
   is not ducked and a bus does not duck itself.
 

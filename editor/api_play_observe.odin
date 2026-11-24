@@ -113,6 +113,8 @@ Api_Play_Audio_Voice :: struct {
     state:eaudio.Voice_State `mirai:"label=Playing on a voice of the mixer, virtual (out of the budget of voices or silent), fading out of the voice it lost, or its sound not loaded"`,
     effective_gain:f32 `mirai:"label=Linear gain at its nearest listener: volume, bus and distance, before what hides it; what ranks it for a voice"`,
     priority:u8 `mirai:"label=Of its Audio_Source: the higher keep their voices before the louder"`,
+    layers:int `mirai:"label=Voices it plays on at once: the sounds of a Layered set, else 1"`,
+    parameters:[eaudio.PARAMETERS]f32 `mirai:"label=Where the parameters of its set are now, on their way to those of its source"`,
     spatial:bool,
     position:[3]f32 `mirai:"optional,label=Of a spatial voice: where it was placed last in meters"`,
     distance:f32 `mirai:"optional,label=Of a spatial voice: meters to its nearest listener"`,
@@ -534,7 +536,8 @@ play_audio :: proc(s:^Session,heard:Play_Audio_Heard,allocator:=context.temp_all
             if s.info!=nil {bus,_=core.name_of(s.info,eaudio.Audio_Bus,i64(kind.bus))}
             gain:=eaudio.entry_gain(m,source,entry,&listeners)
             row={entity=e,id=play_entity_id(w,e),name=entity_name(w,e) if w.data!=nil && w.info!=nil else "",sound=kind.sound,path=asset_path(s,kind.sound),bus=bus if bus!="" else fmt.tprintf("%d",int(kind.bus)),
-                volume=source.volume*entry.pick[0],pitch=(source.pitch>0?source.pitch:1)*entry.pick[1],loop=source.loop,state=eaudio.voice_state(m,entry,gain),effective_gain=gain,priority=source.priority,spatial=kind.spatial,reverb=source.reverb}
+                volume=source.volume*entry.sound.volume,pitch=(source.pitch>0?source.pitch:1)*entry.sound.pitch,loop=source.loop,state=eaudio.voice_state(m,entry,gain),effective_gain=gain,priority=source.priority,spatial=kind.spatial,reverb=source.reverb,
+                layers=entry.sound.count,parameters=entry.values}
             if kind.spatial {
                 row.position,row.occlusion,row.transmission=entry.position,state.occlusion,entry.transmission
                 if listeners.count>0 {row.distance=eaudio.listeners_distance(&listeners,entry.position)}

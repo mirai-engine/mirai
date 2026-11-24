@@ -25,7 +25,7 @@ Reverb :: struct {
 @(private) REVERB_INPUT :: f32(0.015)
 
 @(private)
-Delay :: struct {
+Reverb_Line :: struct {
     buffer:[]f32,
     at:int,
     store:f32, // what the damping of a comb kept
@@ -36,8 +36,8 @@ Reverb_Unit :: struct {
     params:Reverb,
     wet_now:f32,  // reached at the end of the last chunk
     silent:bool,  // its delays hold zeros
-    combs:[2][len(REVERB_COMBS)]Delay,
-    allpasses:[2][len(REVERB_ALLPASSES)]Delay,
+    combs:[2][len(REVERB_COMBS)]Reverb_Line,
+    allpasses:[2][len(REVERB_ALLPASSES)]Reverb_Line,
     memory:[]f32,
 }
 

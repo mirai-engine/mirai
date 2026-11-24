@@ -205,15 +205,38 @@ settings_layer_set :: proc(s:^Session,layer:project.Settings_Layer) {
     s.settings_layer=layer
 }
 
-// The value the project gives a setting of the world, of its type, as the
-// dialog edits it: what a plugin shows as the game would. nil when the world
-// has no setting of that type. Only read it.
+// The value the project gives a setting of the world, of its type: what a
+// plugin shows as the game would. nil when the world has no setting of that
+// type. Only read it.
 setting_value :: proc(s:^Session,type:typeid) -> rawptr {
     if s.info==nil {return nil}
     for &info,i in s.info.storages {
-        if info.type==type && info.setting!=.None {return setting_data(s,i)}
+        if info.type==type && info.setting!=.None {return setting_project_data(s,i)}
     }
     return nil
+}
+
+// Writes the whole value of a project setting of the world, of its type; with
+// save the project file takes it now, as at the end of the gesture that
+// changed it. False when the world has no setting of that type.
+setting_set :: proc(s:^Session,type:typeid,value:rawptr,save:bool) -> bool {
+    if s.info==nil || value==nil {return false}
+    for &info,i in s.info.storages {
+        if info.type!=type || info.setting==.None {continue}
+        mem.copy(setting_project_data(s,i),value,info.info.size)
+        if save {settings_save(s,.Project)}
+        return true
+    }
+    return false
+}
+
+// Where the project holds a setting of the world info: the edited World or the
+// application, regardless of which layer the Project Settings dialog shows.
+@(private)
+setting_project_data :: proc(s:^Session,storage:int) -> rawptr {
+    info:=&s.info.storages[storage]
+    data:=info.place==.Shared?s.app.shared:s.edit_world
+    return rawptr(uintptr(data)+info.offset)
 }
 
 // Where the dialog reads and writes a setting of the world info: the edited
@@ -224,8 +247,7 @@ setting_data :: proc(s:^Session,storage:int) -> rawptr {
     if s.settings_layer==.Engine {
         if value:=setting_engine_value(s,info.name);value!=nil {return value}
     }
-    data:=info.place==.Shared?s.app.shared:s.edit_world
-    return rawptr(uintptr(data)+info.offset)
+    return setting_project_data(s,storage)
 }
 
 // Writes bytes at an offset of a setting of the world info, where the dialog

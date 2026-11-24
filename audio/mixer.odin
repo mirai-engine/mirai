@@ -77,8 +77,8 @@ Mixer_Stats :: struct {
 
 @(private)
 Command_Kind :: enum u8 {
-    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Reverb,Voice_Listener,
-    Bus_Volume,Bus_Mute,Bus_Lowpass,Bus_Duck,Bus_Reverb,Bus_Send,
+    Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Reverb,Voice_Listener,Voice_Lowpass,
+    Bus_Volume,Bus_Mute,Bus_Filter,Bus_Delay,Bus_Duck,Bus_Reverb,Bus_Send,
     Reverb,
     Listener,Listeners,
     Output,
@@ -95,6 +95,8 @@ Command :: struct {
     vectors:[3][3]f32,
     rotation:quaternion128,
     duck:Duck,
+    filter:Filter,
+    delay_memory:[]f32,
     start:Voice_Start,
 }
 // One producer (the game thread) and one consumer (the audio thread).
@@ -102,9 +104,9 @@ Command :: struct {
 Command_Queue :: struct {
     items:[]Command,
     head:u64, // next to read; written by the audio thread
-    tail:u64, // the end of what the audio thread may read; written by the game thread
-    written:u64, // next to write: past tail while held
-    held:bool,   // mixer_hold: what is written waits for mixer_release
+    tail:u64, // the audio thread reads up to it; written by the game thread
+    written:u64, // next to write: ahead of tail while a batch is open
+    batch_depth:u32,
 }
 
 Mixer :: struct {
@@ -151,6 +153,8 @@ Mixer :: struct {
     reverb:Reverb_Unit,  // the room
     reverb_bus:u16,      // where the room returns
     bus_reverbs:[]Reverb_Unit,
+    delay_memory:[][]f32, // per bus: game-thread owned delay lines freed on destroy; passed to audio thread via Command
+    meter_fall:f32,       // precomputed per-CHUNK_FRAMES decay factor for bus meters
     limiter:Limiter,
     scratch:[]f32,     // source frames of a voice that plays from a feed, laid out in a row
     listeners:[LISTENERS_MAX]Listener,
@@ -181,6 +185,7 @@ Mixer :: struct {
     sound_released:[]u32,  // per sound slot: 1 once no voice plays it any more
     voices_active:i32,
     underruns:u64,
+    bus_meters:[][2]u32, // per bus and channel: Mix_Bus.meter, as the bits of an f32
 }
 
 mixer_create :: proc(desc:Mixer_Desc) -> (m:^Mixer,error:Error) {
@@ -242,6 +247,8 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     if m.bus_shadows,failed=make([]Bus_Shadow,buses,allocator);failed!=nil {return .Out_Of_Memory}
     if m.buses,failed=make([]Mix_Bus,buses,allocator);failed!=nil {return .Out_Of_Memory}
     if m.bus_buffers,failed=make([]f32,buses*CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.delay_memory,failed=make([][]f32,buses,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.bus_meters,failed=make([][2]u32,buses,allocator);failed!=nil {return .Out_Of_Memory}
     if m.voice_scratch,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     if m.reverb_input,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     reverb_init(m,&m.reverb) or_return
@@ -274,6 +281,7 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     for &l in m.listeners {l.rotation,l.medium=1,{1,1,1}}
     m.listener_count=1
     m.limiter.gain=1
+    m.meter_fall=math.pow(f32(10),-METER_FALL*f32(CHUNK_FRAMES)/(20*f32(m.sample_rate)))
     if m.spatial_mono,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     if m.spatial_old,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     if desc.output==.Headphones {
@@ -330,6 +338,8 @@ mixer_destroy :: proc(m:^Mixer) {
     delete(m.shadows,allocator);delete(m.free_voices,allocator)
     delete(m.voices,allocator);delete(m.finished,allocator)
     delete(m.bus_shadows,allocator);delete(m.buses,allocator);delete(m.bus_buffers,allocator)
+    for memory in m.delay_memory {delete(memory,allocator)}
+    delete(m.delay_memory,allocator);delete(m.bus_meters,allocator)
     delete(m.voice_scratch,allocator);delete(m.reverb_input,allocator);delete(m.reverb.memory,allocator)
     for unit in m.bus_reverbs {delete(unit.memory,allocator)}
     delete(m.bus_reverbs,allocator)
@@ -427,18 +437,6 @@ stream_feed_close :: proc(m:^Mixer,f:^Feed) {
     f.workspace,f.ring32,f.capacity=nil,nil,0
 }
 
-// Commands sent from now on wait for mixer_release, which hands them all to
-// the audio thread at once: they take effect in the same chunk, so the
-// delays of the voices they start are exact to the sample between them.
-mixer_hold :: proc(m:^Mixer) {
-    m.commands.held=true
-}
-mixer_release :: proc(m:^Mixer) {
-    q:=&m.commands
-    q.held=false
-    sync.atomic_store_explicit(&q.tail,q.written,.Release)
-}
-
 // Once per frame on the game thread: frees the voices that ended, the feeds
 // they let go of and the sounds that were destroyed, and, without a decoder
 // thread, decodes ahead for the voices that decode as they play.
@@ -475,13 +473,24 @@ mixer_update :: proc(m:^Mixer) {
 @(private)
 command_push :: proc(m:^Mixer,command:Command) -> bool {
     q:=&m.commands
-    at:=q.written
     head:=sync.atomic_load_explicit(&q.head,.Acquire)
-    if at-head>=u64(len(q.items)) {m.counters.commands_dropped+=1;return false}
-    q.items[at&u64(len(q.items)-1)]=command
-    q.written=at+1
-    if !q.held {sync.atomic_store_explicit(&q.tail,q.written,.Release)}
+    if q.written-head>=u64(len(q.items)) {m.counters.commands_dropped+=1;return false}
+    q.items[q.written&u64(len(q.items)-1)]=command
+    q.written+=1
+    if q.batch_depth==0 {sync.atomic_store_explicit(&q.tail,q.written,.Release)}
     return true
+}
+
+// What the game thread asks between mixer_batch_begin and mixer_batch_end
+// reaches the audio thread at once, so it takes effect in one chunk: the
+// layers of a sound started, retuned or stopped together stay in step to the
+// sample. A batch holds at most the capacity of the queue; batches may nest.
+mixer_batch_begin :: proc(m:^Mixer) {m.commands.batch_depth+=1}
+mixer_batch_end :: proc(m:^Mixer) {
+    q:=&m.commands
+    if q.batch_depth==0 {return}
+    q.batch_depth-=1
+    if q.batch_depth==0 {sync.atomic_store_explicit(&q.tail,q.written,.Release)}
 }
 @(private)
 command_pop :: proc "contextless" (m:^Mixer,command:^Command) -> bool {
@@ -530,11 +539,16 @@ commands_apply :: proc "contextless" (m:^Mixer) {
                 if v.has_next {feed_release(m,&v.next)}
                 v.next=command.start;v.has_next=true
             }
-        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Occlusion,.Voice_Reverb,.Voice_Listener:
+        case .Voice_Stop,.Voice_Pause,.Voice_Volume,.Voice_Pitch,.Voice_Pan,.Voice_Loop,.Voice_Fade,.Voice_Place,.Voice_Occlusion,.Voice_Reverb,.Voice_Listener,.Voice_Lowpass:
             voice_command(m,&command)
         case .Bus_Volume:m.buses[command.index].volume=command.value
-        case .Bus_Mute:m.buses[command.index].muted=command.flag
-        case .Bus_Lowpass:bus_lowpass_apply(m,&m.buses[command.index],command.value)
+        case .Bus_Mute:m.buses[command.index].silent=command.flag
+        case .Bus_Filter:
+            b,on:=biquad_of(command.filter,f32(m.sample_rate))
+            biquad_fade_set(&m.buses[command.index].filters[command.frames],b,on)
+        case .Bus_Delay:
+            d:=command.vectors[0]
+            delay_apply(&m.buses[command.index].delay,{d[0],d[1],d[2]},command.delay_memory,m.sample_rate)
         case .Bus_Duck:
             bus:=&m.buses[command.index]
             bus.duck=command.duck

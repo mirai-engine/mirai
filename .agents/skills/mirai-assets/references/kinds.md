@@ -148,10 +148,11 @@ or `File` (WAV/OGG in `file` bulk; an Ogg without `Stream` is decoded whole when
 
 ## Sound set
 
-`asset/sound_set.odin`: weighted `.sound` refs (dependencies; weight 0 = 1, empty ignored), each
-with `gain` and `pitch` over the drawn volume/pitch (0 = 1) and a `delay` (s, up to
-`SOUND_SET_DELAY_MAX`) used when `all` plays every entry as one layered cue; volume/pitch ranges,
-`hearing` for `audio.play`
+`asset/sound_set.odin`: `mode` (`Random` weighted pick or `Layered` all in step), `.sound` refs
+(dependencies; weight 0 = 1, empty ignored) with per-entry `gain`, `pitch` (0 = 1) and `delay` (s,
+up to `SOUND_SET_DELAY_MAX`, for `Layered`), volume/pitch ranges, `hearing` for `audio.play`, up to
+4 named `parameters` (`glide` s) and 8 `curves` (parameter, `Gain`/`Pitch`/`Lowpass`, layer or all,
+up to 4 points; `sound_set_shape` evaluates them; a Layered pitch curve shapes all layers)
 ([audio](../../mirai-gameplay/references/libraries.md#audio)). Validated by `sound_set_problem`;
 edited via `sound_set.set` or
 [previews](../../mirai-plugins/references/previews.md#sound-documents).

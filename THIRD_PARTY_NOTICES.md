@@ -94,9 +94,18 @@ are kept here and, where the license asks for it, in the header of the file.
   <https://github.com/ValveSoftware/steam-audio>. `audio/hrtf.odin`, `audio/binaural.odin`,
   `audio/direct.odin`, the mix per ear and the delay of a voice of `audio/mix.odin`, and the
   occlusion and transmission of `engine/audio/audio.odin`, altered. Game.
+- **Audio EQ Cookbook** (W3C Software and Document License; © Robert Bristow-Johnson),
+  <https://www.w3.org/TR/audio-eq-cookbook/>. The low-pass, high-pass, band-pass and peaking
+  biquads of `audio/filter.odin`. Game.
+- **miniaudio** (Unlicense or MIT No Attribution; © David Reid), <https://miniaud.io>. The
+  delay with decay as feedback of `audio/delay.odin`, altered. Game.
+- **Kira** (MIT or Apache-2.0; © Andrew Minnich), <https://github.com/tesselode/kira>. The
+  parameters that glide to a value and the mappings by which they shape a sound, and the layers
+  started on one clock time, of `engine/audio/layers.odin` and `asset/sound_set.odin`, altered.
+  Game.
 - **Godot Engine** (MIT; © 2014-present Godot Engine contributors, © 2007-2014 Juan Linietsky,
   Ariel Manzur), <https://github.com/godotengine/godot>. The Hermite resampling of
-  `audio/mix.odin`, the loop points of `audio/wav.odin`, the limiter and the filter coefficients
+  `audio/mix.odin`, the loop points of `audio/wav.odin`, the limiter, the solo and the meters
   of `audio/bus.odin`, the steady ticks of `host/frame.odin`, the floor between two slopes of
   `plugins/physics/runtime/sim/character.odin` and the start of a process of
   `std/subprocess/subprocess_posix.odin`, altered. Game.

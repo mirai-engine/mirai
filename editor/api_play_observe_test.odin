@@ -289,8 +289,8 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     test_world_settle(&world)
     voices:eaudio.Voices
     defer core.entity_map_destroy(&voices.entries)
-    core.entity_map_put(&voices.entries,near,eaudio.Voice_Entry{kind={sound={1,2},bus=eaudio.BUS_MUSIC},pick={0.5,1.5}})
-    core.entity_map_put(&voices.entries,far,eaudio.Voice_Entry{kind={sound={1,3},bus=eaudio.Audio_Bus(6),spatial=true},pick={1,1},position={1,2,3},transmission={1,0.5,0.25}})
+    core.entity_map_put(&voices.entries,near,eaudio.Voice_Entry{kind={sound={1,2},bus=eaudio.BUS_MUSIC},sound={volume=0.5,pitch=1.5}})
+    core.entity_map_put(&voices.entries,far,eaudio.Voice_Entry{kind={sound={1,3},bus=eaudio.Audio_Bus(6),spatial=true},sound={volume=1,pitch=1},position={1,2,3},transmission={1,0.5,0.25}})
     voices.stats={started=3,ended=1}
     played:eaudio.Sounds_Played
     for outcome,i in ([3]eaudio.One_Shot_Outcome{.Played,.Culled_Distance,.Deduped}) {
@@ -345,8 +345,8 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     samples:=make([]i16,4800,context.temp_allocator)
     sound,loaded:=mixer.sound_create_pcm16(m,samples,1,mixer.MIXER_RATE)
     if !testing.expect_value(t,loaded,mixer.Error.None) {return}
-    for &entry in voices.entries.values {entry.sound=sound}
-    core.entity_map_get(&voices.entries,near).voice=mixer.voice_play(m,sound,mixer.VOICE_DEFAULT)
+    for &entry in voices.entries.values {entry.sound.sounds[0],entry.sound.count,entry.shapes[0]=sound,1,{gain=1,pitch=1}}
+    core.entity_map_get(&voices.entries,near).sound.voices[0]=mixer.voice_play(m,sound,mixer.VOICE_DEFAULT)
     core.entity_map_get(&voices.entries,far).position={1,2,500}
     heard.mixer=m
     list,_=observe_json(t,observe_text(play_audio(&s,heard)))["voices"].(json.Array)

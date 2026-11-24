@@ -40,8 +40,10 @@ benchmark_mixing_ten_milliseconds :: proc(t:^testing.T) {
             buses:[3]Bus
             for &bus in buses {bus,_=bus_create(m)}
             if scenario==.Mixed_Buses {
-                bus_set_lowpass(m,buses[0],4000)
-                bus_set_lowpass(m,buses[1],800)
+                bus_set_filter(m,buses[0],0,{kind=.Lowpass,frequency=4000})
+                bus_set_filter(m,buses[1],0,{kind=.Lowpass,frequency=800})
+                bus_set_filter(m,buses[1],1,{kind=.Peak,frequency=2000,q=1,gain=-6})
+                bus_set_delay(m,buses[1],{seconds=0.25,feedback=0.4,wet=0.3})
                 bus_set_duck(m,buses[0],{source=buses[2],threshold=0.001,amount=0.5,attack=0.01,release=0.2})
             }
             voices:=make([]Voice,count,context.temp_allocator)

@@ -533,14 +533,14 @@ held_voices_keep_their_delays_apart_to_the_sample :: proc(t:^testing.T) {
     defer mixer_destroy(m)
     test_render(m,100)
     body,tail:=test_stereo(t,m,4000,test_one),test_stereo(t,m,4000,test_one)
-    mixer_hold(m)
+    mixer_batch_begin(m)
     desc:=VOICE_DEFAULT
     desc.volume=0.25
     testing.expect(t,voice_play(m,body,desc)!=0)
     desc.volume,desc.delay=0.5,300.0/RATE
     testing.expect(t,voice_play(m,tail,desc)!=0)
     for sample in test_render(m,64) {testing.expect_value(t,sample,f32(0))}
-    mixer_release(m)
+    mixer_batch_end(m)
     out:=make([]f32,1000*2,context.temp_allocator)
     for done:=0;done<1000;done+=125 {mixer_render(m,out[done*2:][:250])}
     for i in 0..<1000 {
@@ -788,7 +788,10 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
             if frame%4==0 {voice_stop(m,voice,0.02)}
             listener_set(m,{f32(frame%3),0,0},1,{1,0,0})
             bus_set_volume(m,bus,0.5+f32(frame%2)*0.5)
-            bus_set_lowpass(m,bus,2000 if frame%10<5 else 0)
+            bus_set_filter(m,bus,frame%BUS_FILTERS,{kind=Filter_Kind(frame%5),frequency=2000 if frame%10<5 else 0,q=1,gain=6})
+            bus_set_delay(m,bus,{seconds=0.01*f32(frame%3),feedback=0.5,wet=f32(frame%2)})
+            bus_set_solo(m,sent,frame%6==0)
+            voice_set_lowpass(m,voice,f32(frame%4)*1000)
             bus_set_duck(m,bus,{source=BUS_MASTER,threshold=0.1,amount=0.5,attack=0.01,release=0.1})
             bus_set_send(m,sent,bus if frame%7<3 else BUS_MASTER)
             mixer_render(m,out)

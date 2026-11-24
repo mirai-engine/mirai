@@ -4,17 +4,22 @@ import "core:fmt"
 import "mirai:asset"
 import mixer "mirai:audio"
 import "mirai:editor"
+import eaudio "mirai:engine/audio"
 import "mirai:host"
 import "mirai:std/base"
 import "mirai:ui"
 
 // The documents of sounds. That of a .sound shows the shape of its wave and
 // what it is: its length, its channels, its sample rate and whether it is
-// decoded while it plays. That of a .sound_set shows its sounds with their
-// weights and the ranges of volume and pitch it draws from, as rows of
-// Details; what they change is written into the .sound_set once the UI lets
-// go of it: a step of the history of the document each time. Play, in the toolbar of both, plays it to be heard, and a set
-// chooses one of its sounds each time.
+// decoded while it plays. That of a .sound_set shows its mode, its sounds
+// with their weights, the ranges of volume and pitch it draws from, its
+// parameters and the curves they move, as rows of Details; what they change
+// is written into the .sound_set once the UI lets go of it: a step of the
+// history of the document each time. Beside them, how often each sound plays
+// (Random) or the gain of each layer (Layered) at the values of a slider per
+// parameter. Play, in the toolbar of both, plays it to be heard: a set
+// chooses one of its sounds each time, or plays its layers in step, and loops
+// while it has parameters, so the sliders are heard as they move.
 
 WAVE_WIDTH :: 1024
 WAVE_HEIGHT :: 256
@@ -22,6 +27,9 @@ WAVE_WINDOW :: f32(0.02) // s
 SOUND_WIDTH :: f32(320)
 SCOPE_SOUND :: ui.Id(0x736f756e)
 KEY_SOUND_SET :: u64(0x736f756e64736574)
+KEY_PARAMETERS :: u64(64)   // after KEY_SOUND_SET: the keys of its parameters
+KEY_CURVES :: u64(128)      // after KEY_SOUND_SET: 8 keys per curve, its own and those of its points
+LAYER_BAR :: f32(96)        // of the gain of a layer
 
 Sound :: struct {
     image:editor.Asset_Image,
@@ -36,6 +44,7 @@ Sound :: struct {
     held:asset.Sound_Set_Info, // file with the edits of the rows, until they are written
     base:asset.Sound_Set_Info, // what the file held when the document read it: the arrows of the rows give it back
     scroll:[2]f32,
+    preview:[asset.SOUND_SET_PARAMETERS]f64, // the value of each parameter Play is heard at
     pixels:[dynamic]u8,
 }
 
@@ -49,7 +58,7 @@ sound_subject :: proc(p:^Sound,id:base.Asset_Id,kind:asset.Fourcc) {
     p.id,p.kind,p.read=id,kind,false
     p.info,p.seconds,p.peaks={},0,{}
     p.file,p.held,p.base={},{},{}
-    p.scroll=0
+    p.scroll,p.preview=0,{}
     p.image.signature=0
 }
 
@@ -150,11 +159,32 @@ sound_bar :: proc(s:^editor.Session,m:^mixer.Mixer,p:^Sound) {
         if ui.button(ctx,ui.id(ctx,"play"),{icon=heard?.Stop:.Play,tip=heard?"Stop sound":"Play sound",variant="tab",active=heard,width=26,height=ui.metric(s.gui.ctx,"control"),disabled=m==nil || !p.read}).clicked {
             if heard {
                 editor.sound_hear_stop(s)
-            } else if !editor.sound_hear(s,p.id) {
+            } else if !editor.sound_hear_source(s,sound_heard_as(p)) {
                 editor.notify(s,"It did not play: the sound does not load, or a set has no sound that does")
             }
         }
     }
+}
+
+// How Play hears the subject: on the master bus at the values of the
+// sliders, looping a set that has parameters so they can be moved while it plays.
+@(private)
+sound_heard_as :: proc(p:^Sound) -> eaudio.Audio_Source {
+    source:=eaudio.AUDIO_SOURCE_DEFAULT
+    source.sound,source.bus=p.id,eaudio.BUS_MASTER
+    if p.kind!=asset.KIND_SOUND_SET {return source}
+    for value,i in p.preview {source.parameters[i]=f32(value)}
+    source.loop=sound_set_named(&p.held)>0
+    return source
+}
+
+// The parameters of a set that have a name.
+@(private)
+sound_set_named :: proc(info:^asset.Sound_Set_Info) -> (count:int) {
+    for &parameter in info.parameters {
+        if base.text_get(parameter.name[:])!="" {count+=1}
+    }
+    return
 }
 
 @(private)
@@ -183,8 +213,11 @@ sound_document :: proc(s:^editor.Session,previews:^Previews,assets:^host.Assets,
                     editor.asset_column_end(ctx)
                 }
             } else {
-                if editor.asset_column_begin(ctx,ui.GROW,"Chances") {
-                    if p.read {sound_set_chances(s,assets,p)}
+                if editor.asset_column_begin(ctx,ui.GROW,"Layers" if p.held.mode==.Layered else "Chances") {
+                    if p.read {
+                        if p.held.mode==.Layered {sound_set_layers(s,assets,p)} else {sound_set_chances(s,assets,p)}
+                        sound_set_sliders(s,p)
+                    }
                     editor.asset_column_end(ctx)
                 }
                 editor.asset_column_divider(ctx)
@@ -241,19 +274,87 @@ sound_set_chances :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
                 ui.icon(ctx,.Sound,editor.asset_color(asset.KIND_SOUND),13)
                 ui.label(ctx,editor.asset_name_of(assets,variation.sound),ui.metric(ctx,"font_small"),ui.tone(ctx,"text"))
                 ui.spacer(ctx)
-                chance:=fmt.tprintf("+%.0f ms",1000*variation.delay) if p.held.all else fmt.tprintf("%.0f %%",100*(variation.weight>0?variation.weight:1)/total)
+                chance:=fmt.tprintf("+%.0f ms",1000*variation.delay) if p.held.mode==.Layered else fmt.tprintf("%.0f %%",100*(variation.weight>0?variation.weight:1)/total)
                 ui.label(ctx,chance,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             }
         }
     }
 }
 
-// The sounds of the set up to the last one it has and a free entry after it,
-// each with its weight (its delay, when the set plays all), gain and pitch
-// and the x that takes it out; then its ranges.
+// Each layer of a Layered set with its gain at the values of the sliders, and
+// its low-pass when a curve gives it one.
+@(private)
+sound_set_layers :: proc(s:^editor.Session,assets:^host.Assets,p:^Sound) {
+    ctx:=s.gui.ctx
+    values:[asset.SOUND_SET_PARAMETERS]f32
+    for value,i in p.preview {values[i]=f32(value)}
+    small:=ui.metric(ctx,"font_small")
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3,padding={8,8,10,8}}) {
+        for variation,i in p.held.sounds {
+            if variation.sound=={} {continue}
+            shape:=asset.sound_set_shape(&p.held,i,values)
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
+                ui.icon(ctx,.Sound,editor.asset_color(asset.KIND_SOUND),13)
+                ui.label(ctx,editor.asset_name_of(assets,variation.sound),small,ui.tone(ctx,"text"))
+                ui.spacer(ctx)
+                if variation.delay>0 {ui.label(ctx,fmt.tprintf("+%.0f ms",1000*variation.delay),small,ui.tone(ctx,"text_muted"))}
+                if shape.lowpass>0 {ui.label(ctx,fmt.tprintf("%.0f Hz",shape.lowpass),small,ui.tone(ctx,"text_muted"))}
+                if shape.pitch!=1 {ui.label(ctx,fmt.tprintf("x%.2f",shape.pitch),small,ui.tone(ctx,"text_muted"))}
+                gain:=clamp(shape.gain,0,1)
+                if ui.box(ctx,{width=ui.fixed(LAYER_BAR),height=ui.fixed(4),fill=ui.tone(ctx,"field"),radius=1}) {
+                    if gain>0 {
+                        if ui.box(ctx,{width=ui.fixed(gain*LAYER_BAR),height=ui.GROW,fill=ui.tone(ctx,"accent"),radius=1}) {}
+                    }
+                }
+                ui.label(ctx,fmt.tprintf("%.0f %%",100*shape.gain),small,ui.tone(ctx,"text_muted"),40)
+            }
+        }
+    }
+}
+
+// A slider per parameter with a name, over the values its curves span (0 to 1
+// without curves): what Play is heard at, retuned as it moves.
+@(private)
+sound_set_sliders :: proc(s:^editor.Session,p:^Sound) {
+    ctx:=s.gui.ctx
+    if sound_set_named(&p.held)==0 {return}
+    small:=ui.metric(ctx,"font_small")
+    moved:=false
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3,padding={8,4,10,8}}) {
+        ui.label(ctx,"Parameters",small,ui.tone(ctx,"text_muted"))
+        for &parameter,i in p.held.parameters {
+            name:=base.text_get(parameter.name[:])
+            if name=="" {continue}
+            low,high:=f64(0),f64(1)
+            first:=true
+            for c in p.held.curves {
+                if int(c.parameter)!=i+1 || c.count==0 {continue}
+                a,b:=f64(c.points[0].at),f64(c.points[min(int(c.count),asset.SOUND_CURVE_POINTS)-1].at)
+                low,high=(a if first else min(low,a)),(b if first else max(high,b))
+                first=false
+            }
+            if high<=low {high=low+1}
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"row")),gap=8,align_y=.Center}) {
+                ui.label(ctx,name,small,ui.tone(ctx,"text"),ui.metric(ctx,"label_width"))
+                if ui.slider(ctx,ui.id(ctx,"preview",i),&p.preview[i],{min=low,max=high}).changed {moved=true}
+                if ui.number_field(ctx,ui.id(ctx,"preview_value",i),&p.preview[i],{width=ui.fixed(64),decimals=2,speed=(high-low)/200}).changed {moved=true}
+            }
+        }
+    }
+    if moved && editor.sound_heard(s,p.id) {editor.sound_hear_tune(s,sound_heard_as(p))}
+}
+
+// The rows of the set: its mode; its sounds up to the last one it has and a
+// free entry after it, each with its weight (Random) or delay (Layered), gain
+// and pitch and the x that takes it out; its ranges and hearing; its
+// parameters and its curves, each up to the last one it has and a free one
+// after it.
 @(private)
 sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
     ctx:=s.gui.ctx
+    values:=editor.Held_Values{key=KEY_SOUND_SET,info=type_info_of(asset.Sound_Set_Info),value=&p.held,defaults=&p.base,width=SOUND_WIDTH}
+    editor.held_field_row(s,values,"mode")
+    random:=p.held.mode==.Random
     used:=0
     for variation,i in p.held.sounds {
         if variation!={} {used=i+1}
@@ -263,9 +364,9 @@ sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
         variation:=editor.Held_Values{key=KEY_SOUND_SET+u64(i+1),info=type_info_of(asset.Sound_Variation),value=&p.held.sounds[i],defaults=&p.base.sounds[i]}
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
             if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
-                editor.held_field_row(s,variation,"sound",fmt.tprintf("Sound %d",i+1))
+                editor.held_field_row(s,variation,"sound",fmt.tprintf("Layer %d",i+1) if !random else fmt.tprintf("Sound %d",i+1))
                 if p.held.sounds[i].sound!={} {
-                    editor.held_field_row(s,variation,"delay" if p.held.all else "weight")
+                    editor.held_field_row(s,variation,"weight" if random else "delay")
                     editor.held_field_row(s,variation,"gain")
                     editor.held_field_row(s,variation,"pitch")
                 }
@@ -276,10 +377,122 @@ sound_set_rows :: proc(s:^editor.Session,p:^Sound) {
     if removed>=0 {
         copy(p.held.sounds[removed:],p.held.sounds[removed+1:])
         p.held.sounds[asset.SOUND_SET_CAPACITY-1]={}
+        // The curves of the layers after it follow it; those of it go.
+        for &c in p.held.curves {
+            if int(c.layer)==removed+1 {c={}} else if int(c.layer)>removed+1 {c.layer-=1}
+        }
     }
     ui.spacer(ctx,1,6)
-    values:=editor.Held_Values{key=KEY_SOUND_SET,info=type_info_of(asset.Sound_Set_Info),value=&p.held,defaults=&p.base}
-    for field in ([6]string{"all","volume_min","volume_max","pitch_min","pitch_max","no_repeat"}) {editor.held_field_row(s,values,field)}
+    ranges:=[5]string{"volume_min","volume_max","pitch_min","pitch_max","no_repeat"}
+    for field in ranges[:5 if random else 4] {editor.held_field_row(s,values,field)}
     hearing:=editor.Held_Values{key=KEY_SOUND_SET+asset.SOUND_SET_CAPACITY+1,info=type_info_of(asset.Sound_Hearing),value=&p.held.hearing,defaults=&p.base.hearing}
     for field in ([6]string{"attenuation","min_distance","max_distance","rolloff","reverb","priority"}) {editor.held_field_row(s,hearing,field)}
+    ui.spacer(ctx,1,6)
+    sound_set_parameter_rows(s,p)
+    ui.spacer(ctx,1,6)
+    sound_set_curve_rows(s,p)
+}
+
+// A parameter: its name and its glide.
+@(private)
+sound_set_parameter_rows :: proc(s:^editor.Session,p:^Sound) {
+    ctx:=s.gui.ctx
+    used:=0
+    for parameter,i in p.held.parameters {
+        if parameter!={} {used=i+1}
+    }
+    removed:=-1
+    for i in 0..<min(used+1,asset.SOUND_SET_PARAMETERS) {
+        values:=editor.Held_Values{key=KEY_SOUND_SET+KEY_PARAMETERS+u64(i),info=type_info_of(asset.Sound_Parameter),value=&p.held.parameters[i],defaults=&p.base.parameters[i]}
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
+                editor.held_field_row(s,values,"name",fmt.tprintf("Parameter %d",i+1))
+                if p.held.parameters[i]!={} {editor.held_field_row(s,values,"glide")}
+            }
+            if i<used && ui.button(ctx,ui.id(ctx,"remove_parameter",i+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
+        }
+    }
+    if removed>=0 {
+        // Its curves go with it; there is no gap left for those of the others to follow.
+        p.held.parameters[removed]={}
+        p.preview[removed]=0
+        for &c in p.held.curves {
+            if int(c.parameter)==removed+1 {c={}}
+        }
+    }
+}
+
+// A curve: the parameter it follows, its target, the layer it shapes and its points.
+@(private)
+sound_set_curve_rows :: proc(s:^editor.Session,p:^Sound) {
+    ctx:=s.gui.ctx
+    used:=0
+    for c,i in p.held.curves {
+        if c!={} {used=i+1}
+    }
+    removed:=-1
+    for i in 0..<min(used+1,asset.SOUND_SET_CURVES) {
+        c:=&p.held.curves[i]
+        values:=editor.Held_Values{key=KEY_SOUND_SET+KEY_CURVES+u64(i)*8,info=type_info_of(asset.Sound_Curve),value=c,defaults=&p.base.curves[i],width=SOUND_WIDTH}
+        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=2,align_y=.Start}) {
+            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
+                editor.held_field_row(s,values,"parameter",fmt.tprintf("Curve %d",i+1))
+                if c.parameter!=0 {
+                    // A curve that starts following a parameter starts flat at no change.
+                    if c.count==0 {curve_flat(c)}
+                    prev_target:=c.target
+                    for field in ([3]string{"target","layer","count"}) {editor.held_field_row(s,values,field)}
+                    if c.target!=prev_target {curve_clamp_target(c,p.held.mode)}
+                    for k in 0..<clamp(int(c.count),0,asset.SOUND_CURVE_POINTS) {
+                        point:=editor.Held_Values{key=KEY_SOUND_SET+KEY_CURVES+u64(i)*8+u64(k)+1,info=type_info_of(asset.Sound_Curve_Point),value=&c.points[k],defaults=&p.base.curves[i].points[k]}
+                        if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=4}) {
+                            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=3}) {
+                                editor.held_field_row(s,point,"at",fmt.tprintf("Point %d at",k+1))
+                                editor.held_field_row(s,point,"value",curve_value_label(c.target))
+                            }
+                        }
+                    }
+                }
+            }
+            if i<used && ui.button(ctx,ui.id(ctx,"remove_curve",i+1),{icon=.Cross,variant="ghost",width=ui.metric(ctx,"row"),height=ui.metric(ctx,"row")}).clicked {removed=i}
+        }
+    }
+    if removed>=0 {
+        copy(p.held.curves[removed:],p.held.curves[removed+1:])
+        p.held.curves[asset.SOUND_SET_CURVES-1]={}
+    }
+}
+
+// Two points that change nothing over 0 to 1.
+@(private)
+curve_flat :: proc(c:^asset.Sound_Curve) {
+    unchanged:=asset.SOUND_LOWPASS_MAX if c.target==.Lowpass else 1
+    c.count=2
+    c.points[0],c.points[1]={0,unchanged},{1,unchanged}
+}
+
+// Brings points within what a target accepts after switching target.
+@(private)
+curve_clamp_target :: proc(c:^asset.Sound_Curve,mode:asset.Sound_Set_Mode) {
+    if mode==.Layered && c.target==.Pitch {c.layer=0}
+    for &p in c.points[:clamp(int(c.count),0,asset.SOUND_CURVE_POINTS)] {
+        switch c.target {
+        case .Gain:
+            if p.value<0 {p.value=1}
+        case .Pitch:
+            if !(p.value>0) || p.value>asset.SOUND_SET_PITCH_MAX {p.value=1}
+        case .Lowpass:
+            if !(p.value>0) {p.value=asset.SOUND_LOWPASS_MAX}
+        }
+    }
+}
+
+@(private)
+curve_value_label :: proc(target:asset.Sound_Curve_Target) -> string {
+    switch target {
+    case .Gain:return "Gain"
+    case .Pitch:return "Pitch"
+    case .Lowpass:return "Low-pass Hz"
+    }
+    return "Value"
 }

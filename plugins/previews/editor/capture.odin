@@ -57,6 +57,7 @@ Animation_Capture_Result :: struct {
 previews_register :: proc(s:^editor.Session) {
     defaults:=Animation_Capture_Params{frames=6,seconds=1,size=256,views={.Three_Quarter}}
     aed.request_rows_defaults(&defaults)
+    mixer_register(s)
     editor.api_method_register(s,{name="animation.capture",summary="Shows how an animated entity moves as a PNG: a strip of frames over seconds with a row per view at one scale, from a copy run with the fields of animation.preview.",params=type_info_of(Animation_Capture_Params),result=type_info_of(Animation_Capture_Result),defaults=&defaults,flags={.Read_Only,.Draws},run=capture})
 }
 

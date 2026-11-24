@@ -1,8 +1,8 @@
 ---
 name: audio
-description: Sound in a game - `.sound` and `.sound_set`, `Audio_Source`, `audio.play`,
-  `Sound_Requests`, positional audio, headphones and speakers, buses, sends, ducking, limiter,
-  volume options, reverb volumes, occlusion, materials, music, ambience.
+description: Sound in a game - `.sound`, `.sound_set` (random, layered, parameters), `Audio_Source`,
+  `audio.play`, positional audio, buses, filters, EQ, delay, ducking, snapshots, limiter, volume
+  options, reverb volumes, occlusion, materials, music, ambience, engines.
 ---
 
 # Game audio
@@ -11,10 +11,9 @@ Package `audio "mirai:engine/audio"`. Code names a sound by its path in the asse
 its `base.Asset_Id` (import: [assets](assets.md)).
 
 ## Map
-- Entity sound (speaker, engine, music): [source](#a-source-on-an-entity); from code (hit,
-  pickup): [one-shots](#one-shots-from-code); variations and layered cues: [sets](#sets).
-- Levels, ducking, options, headphones: [buses](#buses). Caves, walls:
-  [rooms](#rooms-and-occlusion). Nothing is heard: [pitfalls](#pitfalls).
+- Entity sound: [source](#a-source-on-an-entity); from code: [one-shots](#one-shots-from-code);
+  variations, layers, parameters: [sets](#sets). Levels, filters, ducking, snapshots, options:
+  [buses](#buses). Caves, walls: [rooms](#rooms-and-occlusion). Silence: [pitfalls](#pitfalls).
 
 ## A source on an entity
 ```odin
@@ -47,18 +46,18 @@ crash_sound :: proc(sounds:^audio.Sound_Requests, broken:core.Ref(destruct.Destr
   place: a rollback never plays it twice, yet plays what only the correction asks.
 
 ## Sets
-A `.sound_set` picks one sound (weights, volume, pitch, each entry's `gain` and `pitch` on top) each
-time it starts; with `all`, `audio.play` starts all as a layered cue, each after its `delay` (s) to
-the sample (not an `Audio_Source`). `hearing` is how a one-shot hears it; `sound_set.set`/`inspect`.
+A `.sound_set` goes where a sound goes: `Random` picks one (weights, ranges, per-entry `gain`/
+`pitch`), `Layered` plays all in step (loops, stems, or delayed cues via `delay` s). `parameters`
+drive `curves` (`Gain`/`Pitch`/`Lowpass`) per `layer` (`audio.parameter_set(app, src, "rpm", v)`).
+`hearing` sets one-shot range; edit with `sound_set.set`/`inspect`.
 
 ## Buses
-`BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI` (interface sounds). Add
-your own as constants below `AUDIO_BUS_CAPACITY`: `BUS_AMBIENCE :: audio.Audio_Bus(5)`.
-`Audio_Settings` (project setting) mixes a bus: `gain` in dB (0 as it comes; `volume` fields are
-linear), `lowpass`, `reverb`, ducking (`duck_by`, `duck_amount`, `duck_threshold`) and `send`, the
-bus it plays into (the master, or one of a lower number: ambience into effects); `stream_capacity`
-is the streamed sounds at once (0: 16, up to 64). A limiter on the master keeps a loud moment under
-full scale. Edit it in Project Settings, `settings.set` or `audio.audio_bus_setting_set`.
+`BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI`, plus custom constants
+below `AUDIO_BUS_CAPACITY` (`BUS_AMBIENCE :: audio.Audio_Bus(5)`). `Audio_Settings` sets per-bus
+`gain` dB, `reverb`, 4 `filters` (`Lowpass`/`Highpass`/`Bandpass`/`Peak`), `delay`, ducking
+(`duck_by`, `duck_amount`), acyclic `send`, `stream_capacity` (0: 16, max 64) and `snapshots`
+(`audio.snapshot_blend(mix, "underwater", 0.5)` on `^audio.Audio_Mix`). A master limiter prevents
+clipping. Edit in Project Settings, View > Audio Mixer or `audio.audio_bus_setting_set`.
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
 options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing. So is
@@ -76,5 +75,5 @@ options: a slider bound to `Audio_Volumes.music` writes it itself; the game writ
 - An ended one-shot stays `ended`; `plays += 1` plays it again (also while it sounds). `sound`,
   `bus` or the curve restart the voice; the other fields tune it live. Zero `pitch` means 1.
 - A source that cannot sound is a problem of its entity, a request one of no entity: see
-  `engine.diagnostics` (`audio.*`). Headless, nothing plays and nothing is said. In an open editor:
-  `audio.play`, and `audio.status` shows the buses.
+  `engine.diagnostics` (`audio.*`). Headless, nothing plays. In an editor: `audio.play`
+  (`parameters`), `audio.snapshot`, `audio.status` (meters).

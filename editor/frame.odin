@@ -80,6 +80,7 @@ editor_tools :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,world:core.World_Ref) {
         ai_annotation_pointer(s,world)
     }
     collab_follow(s)
+    sound_mix_step(s,s.app.ui_input.dt)
     viewport_camera(v)
     view_write(s,world)
 }

@@ -35,6 +35,7 @@ Voice_Start :: struct {
     transmission:[BANDS]f32,
     reverb:f32,
     listener:u8,
+    lowpass:f32, // Hz; 0: none
 }
 Voice_Phase :: enum u8 {Free,Playing,Paused}
 Mix_Voice :: struct {
@@ -73,6 +74,7 @@ Mix_Voice :: struct {
     // or, with tail_pause, pauses.
     tail,tail_pause:bool,
     reverb_now:f32, // the send, ramped over every chunk from where it was
+    filter:Biquad_Fade, // its low-pass
     next:Voice_Start,has_next:bool,
 }
 
@@ -88,6 +90,7 @@ voice_begin :: proc "contextless" (m:^Mixer,v:^Mix_Voice,start:Voice_Start) {
     v.spatial_dirty=true
     v.spatial_pitch=1
     v.reverb_now=start.reverb
+    v.filter.now,v.filter.on=biquad_of({kind=.Lowpass,frequency=start.lowpass},f32(m.sample_rate))
     if start.spatial && start.attenuation.delay {
         // DirectSimulator::calcDelay, applied once to where the voice starts.
         l:=listener_of(m,start.listener)
@@ -144,6 +147,7 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
         case .Voice_Occlusion:target.occlusion=command.value;target.transmission=command.vectors[0]
         case .Voice_Reverb:target.reverb=command.value
         case .Voice_Listener:target.listener=u8(command.frames)
+        case .Voice_Lowpass:target.lowpass=command.value
         }
         return
     }
@@ -192,6 +196,11 @@ voice_command :: proc "contextless" (m:^Mixer,command:^Command) {
     case .Voice_Listener:
         v.listener=u8(command.frames)
         v.spatial_dirty=true
+    case .Voice_Lowpass:
+        if command.value==v.lowpass {return}
+        v.lowpass=command.value
+        b,on:=biquad_of({kind=.Lowpass,frequency=v.lowpass},f32(m.sample_rate))
+        biquad_fade_set(&v.filter,b,on)
     }
 }
 
@@ -269,9 +278,10 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     }
     bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
     out:=bus
-    // A voice that is placed or sent is mixed apart first.
+    // A voice that is placed, sent or filtered is mixed apart first.
     sent:=v.reverb>0 || v.reverb_now>0
-    apart:=placed || sent
+    filtered:=v.filter.on || v.filter.fading
+    apart:=placed || sent || filtered
     if apart {
         out=raw_data(m.voice_scratch)
         #no_bounds_check for i in offset*2..<n*2 {out[i]=0}
@@ -284,6 +294,7 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
         alive,_=segments_mix(v,v.source.samples,u64(v.source.frames),v.loop,false,false,out,offset,n,max(step,1),mixed,span)
     }
     v.base=target
+    if filtered {biquad_fade_run(&v.filter,out,offset,n)}
     if placed && spatial_post(m,v,out,offset,n,pans,silent) {
         // Binaural: its mid sent as one source, then added to the sums of its
         // bus; a silent one adds nothing once its last block is complete. A

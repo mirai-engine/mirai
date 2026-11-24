@@ -103,19 +103,35 @@ sees the result without opening the document.
 
 ## Sound documents
 
-**Play** in the bar makes it sound with `editor.sound_hear`, like Play sound in the content
-browser; a set picks one of its sounds each time. The state is `Previews.sound`.
+**Play** in the bar makes it sound with `editor.sound_hear_source`, like Play sound in the content
+browser; a Random set picks one of its sounds each time, a Layered one plays its layers in step,
+and a set with parameters loops at the values of its sliders. The state is `Previews.sound`.
 
 - **`.sound`**: the waveform (minimum and maximum of the samples per column, drawn on the CPU and
   uploaded with `editor.asset_image_pixels`; a stream is decoded whole once) and its data. It is
   computed when the assets revision changes.
-- **`.sound_set`**: its sounds up to the last one with a free entry after it, each with its weight
-  and an x that removes it, and its ranges. The rows are those of Details over the document's
+- **`.sound_set`**: its mode, its sounds up to the last one with a free entry after it, each with
+  its weight (Random) and an x that removes it, its ranges and hearing, its parameters and its
+  curves (parameter, target, layer and points; a curve that starts following a parameter starts
+  flat). The left column shows the chances of each sound (Random) or each layer's gain, pitch and
+  low-pass (Layered) at the values of a slider per named parameter, which spans the points of its
+  curves; moving one retunes what plays (`editor.sound_hear_tune`), so a crossfade is heard as it
+  is scrubbed. The rows are those of Details over the document's
   values, with the arrow that returns what they had when read. They are written with
   `editor.sound_set_write` when the UI releases them: one history step each
   time; what `editor.sound_set_refusal` rejects (a sound that is not a `.sound`, an inverted
   range) is said by a toast and the rows go back to the file. A file read again replaces the rows
   only if they had no changes.
+
+## Audio Mixer
+
+View > Audio Mixer (`mixer.odin`, `Mixer_Panel`): a row per bus the mixer has or the project
+names, with its meter (`audio.bus_meter`, -60 to +6 dB, danger at full scale), M and S (the
+editor's mixer, also in Play, never saved), its gain and a low-pass and a high-pass (the first
+band of that kind, else the first that is off). Gain and cutoffs write the project's
+`Audio_Settings` with `editor.setting_set`, the file once no gesture holds them. The snapshot row
+blends the editor's buses to one over Blend seconds (`editor.sound_mix_preview`, stepped each
+frame by `sound_mix_step` outside Play); `audio.snapshot` does the same by code.
 
 ## Verification
 
@@ -136,6 +152,9 @@ browser; a set picks one of its sounds each time. The state is `Previews.sound`.
   `curves_show_as_keys_and_held_values_take_what_a_popup_chose` (`editor`).
 - The documents in an open editor: `editor.document` with `Open` and the asset path, and
   `capture` with the UI next to the prototype. The sound ones have no prototype:
-  `audio.play` and `sound_set.inspect` check what they do.
+  `audio.play` (with `parameters`), `audio.snapshot` and `audio.status` (meters, solos, filters)
+  and `sound_set.inspect` check what they do.
+- `quick_filters_edit_the_band_of_their_kind_or_a_free_one` and
+  `a_set_is_heard_at_its_sliders_and_new_curves_change_nothing` (`plugins/previews/editor`).
 
 [render-verif]: ../../mirai-rendering/references/verification.md#gpu-environment

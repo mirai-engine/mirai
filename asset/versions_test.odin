@@ -89,7 +89,7 @@ a_row_that_lacks_a_field_of_its_kind_is_refused :: proc(t:^testing.T) {
     Old_Sound_Set :: struct {volume_min,volume_max:f32}
     types:Types;types_init(&types);defer types_destroy(&types)
     Case :: struct {kind:Fourcc,version:u16,table,lacking:string}
-    for c in ([3]Case{{KIND_MATERIAL,MATERIAL_VERSION,"material","opacity"},{KIND_TEXTURE,TEXTURE_VERSION,"texture","layers"},{KIND_SOUND_SET,SOUND_SET_VERSION,"sound_set","sounds"}}) {
+    for c in ([3]Case{{KIND_MATERIAL,MATERIAL_VERSION,"material","opacity"},{KIND_TEXTURE,TEXTURE_VERSION,"texture","layers"},{KIND_SOUND_SET,SOUND_SET_VERSION,"sound_set","mode"}}) {
         doc:Document;document_init(&doc,c.kind,{4,4});defer document_destroy(&doc)
         doc.kind_version=c.version
         put:Error

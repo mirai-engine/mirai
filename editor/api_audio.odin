@@ -17,7 +17,7 @@ import "mirai:std/serial"
 
 // Whether the editor plays this asset to be heard now.
 sound_heard :: proc(s:^Session,id:base.Asset_Id) -> bool {
-    return s.heard_sound.sound==id && s.app.mixer!=nil && eaudio.cue_playing(s.app.mixer,&s.heard)
+    return s.heard_sound.sound==id && eaudio.sound_voices_valid(s.app.mixer,&s.heard)
 }
 
 // Plays an asset to be heard, at its own volume and pitch on the master bus,
@@ -27,23 +27,25 @@ sound_hear :: proc(s:^Session,id:base.Asset_Id,volume:f32=1,pitch:f32=1) -> bool
 }
 
 // Plays the sound of a source as it is set, in no place, with the buses as
-// the settings of the project say.
+// the settings of the project say: every layer of a Layered set, shaped by
+// the parameters of the source.
 sound_hear_source :: proc(s:^Session,source:eaudio.Audio_Source) -> bool {
     sound_hear_stop(s)
     if s.app.mixer==nil {return false}
     content_used(s,source.sound)
-    eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes))
+    eaudio.buses_apply(s.app.mixer,core.world_storage_of(edited_world(s),eaudio.Audio_Settings),core.world_storage_of(edited_world(s),eaudio.Audio_Volumes),levels=&s.mix.blend.now if s.mix.blend.set else nil)
     shared:=core.world_ref(s.app.shared,s.app.info,.Shared)
     if applied:=core.world_storage_of(shared,eaudio.Mixer_Buses);applied!=nil {applied.set=false}
     heard:=source
     heard.spatial=false
-    s.heard=eaudio.cue_start(s.app.mixer,s.app,heard,core.NONE,nil)
-    if !eaudio.cue_playing(s.app.mixer,&s.heard) {return false}
+    s.heard=eaudio.voice_start(s.app.mixer,s.app,heard,core.NONE,nil)
+    if s.heard.count==0 {return false}
     s.heard_sound=source
     return true
 }
 
-// What plays to be heard takes the values of its source as they change.
+// What plays to be heard takes the values of its source as they change, its
+// parameters among them: the layers of a set are shaped at once.
 sound_hear_tune :: proc(s:^Session,source:eaudio.Audio_Source) {
     if !sound_heard(s,source.sound) || s.heard_sound==source {return}
     if source.bus!=s.heard_sound.bus {
@@ -52,13 +54,50 @@ sound_hear_tune :: proc(s:^Session,source:eaudio.Audio_Source) {
     }
     heard:=source
     heard.spatial=false
-    eaudio.cue_tune(s.app.mixer,&s.heard,heard)
+    eaudio.sound_voices_tune(s.app.mixer,s.app,&s.heard,heard)
     s.heard_sound=source
 }
 
 sound_hear_stop :: proc(s:^Session) {
-    if s.app.mixer!=nil {eaudio.cue_stop(s.app.mixer,&s.heard)}
+    eaudio.sound_voices_stop(s.app.mixer,&s.heard)
     s.heard,s.heard_sound={},{}
+}
+
+// The buses of the editor's mixer on their way to a snapshot of the
+// project's Audio_Settings, which the Audio Mixer panel and audio.snapshot
+// preview while nothing plays; in Play the game blends its own.
+Mix_Preview :: struct {
+    blend:eaudio.Mix_Blend,
+    snapshot:int, // 1 + its index in Audio_Settings.snapshots; 0: the settings as they are
+    seconds:f32,  // the blend takes this long
+    settings:eaudio.Audio_Settings, // as they were applied last
+}
+
+// Blends the buses to a snapshot of the settings (-1: none) over seconds.
+sound_mix_preview :: proc(s:^Session,snapshot:int,seconds:f32) {
+    s.mix.snapshot,s.mix.seconds=max(snapshot,-1)+1,max(seconds,0) if seconds==seconds else 0
+}
+
+// The snapshot the buses go to: its index, -1 for none.
+sound_mix_snapshot :: proc(s:^Session) -> int {return s.mix.snapshot-1}
+
+// Once a frame, dt seconds after the last: goes on with the blend, and gives
+// the buses what it and the settings say when either changed. Nothing while
+// a Play runs.
+sound_mix_step :: proc(s:^Session,dt:f32) {
+    m:=s.app.mixer
+    if m==nil || playing(s) {return}
+    settings:=core.world_storage_of(edited_world(s),eaudio.Audio_Settings)
+    if settings==nil {return}
+    snapshot:=s.mix.snapshot-1
+    if snapshot>=eaudio.AUDIO_SNAPSHOT_CAPACITY || snapshot>=0 && base.text_get(settings.snapshots[snapshot].name[:])=="" {snapshot=-1}
+    blend:=&s.mix.blend
+    changed:=settings^!=s.mix.settings || !blend.set
+    if !changed && snapshot==blend.snapshot && blend.t>=1 {return}
+    if eaudio.mix_blend_step(blend,settings,snapshot,s.mix.seconds,dt) || changed {
+        eaudio.buses_apply(m,settings,core.world_storage_of(edited_world(s),eaudio.Audio_Volumes),levels=&blend.now)
+        s.mix.settings=settings^
+    }
 }
 
 @(private)
@@ -66,7 +105,11 @@ Api_Audio_Bus :: struct {
     bus:[NAME_CAPACITY]u8 `mirai:"text"`,
     volume:f32,
     muted:bool,
-    lowpass:f32 `mirai:"label=Cutoff in Hz; 0: none"`,
+    soloed:bool,
+    silent:bool `mirai:"label=Muted, or left out by the solo of another bus"`,
+    meter:[2]f32 `mirai:"label=Level of its left and right channels, linear: the peak of what it played, falling 20 dB a second"`,
+    filters:[mixer.BUS_FILTERS]mixer.Filter `mirai:"label=Its filters in order; Off: none"`,
+    delay:mixer.Delay `mirai:"label=Its echo; wet 0: none"`,
     duck_by:[NAME_CAPACITY]u8 `mirai:"text"`,
     duck_amount:f32,
     reverb_wet:f32 `mirai:"label=Of the reverb of the bus; 0: none"`,
@@ -87,12 +130,20 @@ Api_Audio_Play_Params :: struct {
     sound:[API_PATH_BYTES]u8 `mirai:"text,label=A .sound or a .sound_set: its path under the assets folder (with or without its extension) or its id"`,
     volume:f32 `mirai:"optional,min=0,label=Linear gain"`,
     pitch:f32 `mirai:"optional,min=0,label=Rate of playback"`,
+    loop:bool `mirai:"optional,label=Plays until audio.stop"`,
+    parameters:[eaudio.PARAMETERS]f32 `mirai:"optional,label=Values of the parameters of a .sound_set, in their order: its curves shape its sounds by them"`,
+}
+
+@(private)
+Api_Audio_Snapshot_Params :: struct {
+    snapshot:string `mirai:"optional,label=Name of a snapshot of Audio_Settings.snapshots; empty: the settings as they are"`,
+    blend_seconds:f32 `mirai:"optional,min=0,unit=s,label=How long the buses take to get there"`,
 }
 
 @(private)
 Api_Audio_Play_Result :: struct {
     sound:[API_PATH_BYTES]u8 `mirai:"text"`,
-    seconds:f32 `mirai:"label=Of the sound that plays; a set chose one of its sounds, and lasts as its longest, after its delay, when it plays all"`,
+    seconds:f32 `mirai:"label=Of the sound that plays, or the longest sound of a set (after its delay when Layered)"`,
 }
 
 @(private)
@@ -104,7 +155,7 @@ Api_Audio_Stop_Result :: struct {
 Api_Sound_Set_Result :: struct {
     sound_set:base.Asset_Id,
     path:string `mirai:"optional,label=Under the assets folder"`,
-    values:asset.Sound_Set_Info `mirai:"label=Its sounds by id with their weights, gains, pitches and delays; the ranges of volume and pitch it draws from, whether it repeats a sound and whether it plays all of them together as layers; as sound_set.set takes them"`,
+    values:asset.Sound_Set_Info `mirai:"label=Its mode (Random or Layered), sounds by id with weights, gains, pitches and delays, ranges, parameters and curves; as sound_set.set takes them"`,
     sounds:[]string `mirai:"label=The path of each of its sounds; empty for one the assets do not have"`,
 }
 
@@ -118,10 +169,11 @@ Api_Sound_Set_Params :: struct {
 audio_api_register :: proc(s:^Session,st:^Api_State) {
     play:=Api_Audio_Play_Params{volume=1,pitch=1}
     api_register(s,st,{name="audio.status",summary="The mixer of the editor with its counters and its buses, and what audio.play plays.",result=type_info_of(Api_Audio_Status),flags={.Read_Only},run=api_audio_status})
-    api_register(s,st,{name="audio.play",params=type_info_of(Api_Audio_Play_Params),defaults=&play,result=type_info_of(Api_Audio_Play_Result),summary="Plays a .sound, or one sound of a .sound_set with its ranges (all its sounds with their delays, of one that plays all), to be heard in the editor out of every world in place of what played, as Play sound of the content browser does.",run=api_audio_play})
+    api_register(s,st,{name="audio.play",params=type_info_of(Api_Audio_Play_Params),defaults=&play,result=type_info_of(Api_Audio_Play_Result),summary="Plays a .sound or a .sound_set (Random or Layered with delays and parameters) to be heard in the editor out of every world in place of what played, as Play sound of the content browser does.",run=api_audio_play})
     api_register(s,st,{name="audio.stop",result=type_info_of(Api_Audio_Stop_Result),summary="Stops what audio.play or the content browser plays.",flags={.Idempotent},run=api_audio_stop})
+    api_register(s,st,{name="audio.snapshot",params=type_info_of(Api_Audio_Snapshot_Params),result=type_info_of(Api_Audio_Status),summary="Blends the buses of the editor to a snapshot of Audio_Settings to hear it, as the Audio Mixer panel previews it; outside Play.",flags={.Idempotent},run=api_audio_snapshot})
     api_register(s,st,{name="sound_set.inspect",params=type_info_of(Api_Sound_Set_Params),summary="The values of a sound set (.sound_set) and the paths of its sounds.",result=type_info_of(Api_Sound_Set_Result),flags={.Read_Only},run=api_sound_set_inspect})
-    api_register(s,st,{name="sound_set.set",params=type_info_of(Api_Sound_Set_Params),summary="Changes the sounds (with their weights, gains, pitches and delays), ranges and whether it plays all of a sound set (.sound_set) for every source and call that plays it, or makes a new one at path over the defaults.",result=type_info_of(Api_Sound_Set_Result),run=api_sound_set_set})
+    api_register(s,st,{name="sound_set.set",params=type_info_of(Api_Sound_Set_Params),summary="Changes the mode, sounds (with their weights, gains, pitches and delays), ranges, parameters and curves of a sound set (.sound_set) for every source and call that plays it, or makes a new one at path over the defaults.",result=type_info_of(Api_Sound_Set_Result),run=api_sound_set_set})
 }
 
 @(private)
@@ -141,7 +193,9 @@ api_audio_status :: proc(s:^Session,call:^api.Call) {
         bus:=mixer.Bus(index)
         entry:=&r.buses[index]
         name(s,bus,entry.bus[:])
-        entry.volume,entry.muted,entry.lowpass=mixer.bus_volume(m,bus),mixer.bus_muted(m,bus),mixer.bus_lowpass(m,bus)
+        entry.volume,entry.muted,entry.soloed,entry.silent=mixer.bus_volume(m,bus),mixer.bus_muted(m,bus),mixer.bus_soloed(m,bus),mixer.bus_silent(m,bus)
+        entry.meter,entry.delay=mixer.bus_meter(m,bus),mixer.bus_delay(m,bus)
+        for &f,band in entry.filters {f=mixer.bus_filter(m,bus,band)}
         entry.reverb_wet=mixer.bus_reverb(m,bus).wet
         if duck:=mixer.bus_duck(m,bus);duck.amount>0 {
             name(s,duck.source,entry.duck_by[:])
@@ -181,7 +235,7 @@ api_audio_play :: proc(s:^Session,call:^api.Call) {
     }
     id,found:=sound_named(s,call,base.text_get(p.sound[:]))
     if !found {return}
-    if !sound_hear(s,id,p.volume,p.pitch) {
+    if !sound_hear_source(s,{sound=id,bus=eaudio.BUS_MASTER,volume=p.volume,pitch=p.pitch,loop=p.loop,parameters=p.parameters}) {
         api.call_fail(call,api.SERVER_ERROR,"It did not play: the sound does not load (sound_set.inspect shows the sounds of a set), or every voice of the mixer plays something; audio.status shows them")
         return
     }
@@ -190,8 +244,25 @@ api_audio_play :: proc(s:^Session,call:^api.Call) {
     r.seconds=sound_seconds_of(s,id)
 }
 
-// The length of a .sound, or of the longest sound of a set, after its delay
-// when the set plays all.
+@(private)
+api_audio_snapshot :: proc(s:^Session,call:^api.Call) {
+    p:=api.call_params(call,Api_Audio_Snapshot_Params)
+    if playing(s) {
+        api.call_fail(call,api.INVALID_PARAMS,"A Play runs: the game blends its own snapshots (Audio_Mix); play.stop first")
+        return
+    }
+    settings:=core.world_storage_of(edited_world(s),eaudio.Audio_Settings)
+    index,found:=eaudio.snapshot_index(settings,p.snapshot)
+    if !found {
+        api.call_failf(call,api.INVALID_PARAMS,"Audio_Settings has no snapshot %q: settings.get Audio_Settings shows its snapshots",p.snapshot)
+        return
+    }
+    sound_mix_preview(s,index,p.blend_seconds)
+    sound_mix_step(s,0)
+    api_audio_status(s,call)
+}
+
+// The length of a .sound, or of the longest sound of a set (after its delay when Layered).
 @(private)
 sound_seconds_of :: proc(s:^Session,id:base.Asset_Id) -> f32 {
     m:=s.app.mixer
@@ -200,7 +271,7 @@ sound_seconds_of :: proc(s:^Session,id:base.Asset_Id) -> f32 {
         for variation in info.sounds {
             if variation.sound=={} {continue}
             seconds:=mixer.sound_seconds(m,host.content_sound(s.app,variation.sound))
-            if info.all {seconds+=variation.delay}
+            if info.mode==.Layered {seconds+=variation.delay}
             longest=max(longest,seconds)
         }
         return longest

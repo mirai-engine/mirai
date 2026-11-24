@@ -132,14 +132,19 @@ Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
   a switch re-tests its occlusion at once from the new one. With more than one listener the
   mixer drops listener velocity from Doppler.
   `pitch` changes speed and tone; paused `core.Clock` pauses world voices (not one-shots).
+- **Layers & parameters (`layers.odin`):** a source holds `Sound_Voices`, one voice per sound of a
+  Layered set, started in one mixer batch on one frame `LAYER_LEAD` ahead and retuned together;
+  `voices_assign` gives an entry all its voices or none, and a stolen layer sends the others
+  virtual to restart in step. `Audio_Source.parameters` (by name: `audio.parameter_set`) glide
+  over the set's `glide`; its curves (`asset.sound_set_shape`) shape gain, pitch and low-pass of
+  each layer when the values move.
 - **One-shots:** `audio.play` pushes `Sound_Requests` (`audio_requests` drains at end of `fixed`/
   `late`; skipped past `max_distance` of every listener; heard from the nearest). A `fixed` tick of
   the game loop plays a key once: `(tick, by, sound)`, or `(tick, sound, place)` within
   `SOUND_SAME_DISTANCE` when `by` is `NONE`. `Sounds_Played` (`host,by_world`, a ring of
   `SOUNDS_PLAYED_CAPACITY`, never rolled back) keeps the keys, so a resimulated tick skips what it
-  played and plays what only the correction asks; a clock that goes back clears it. A set with
-  `all` starts every layer as a `Cue` between `mixer_hold`/`mixer_release`, each at its sample
-  delay; an `Audio_Source` holds one voice and reports `audio.layered` for one.
+  played and plays what only the correction asks; a clock that goes back clears it. A `Layered` set
+  starts every layer in one `mixer_batch_begin`/`mixer_batch_end` batch, each at its sample delay.
 - **Reverb & medium:** `Audio_Reverb` zone volume blends at each listener, averaged, onto
   `reverb_bus`; `Audio_Medium` (per listener slot, written by `water`) overlays underwater reverb.
   The master low-pass applies only while every listener is under a medium (`medium_lowpass`, the
@@ -148,12 +153,18 @@ Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
 - **Occlusion (`Audio_Occlusion`):** raycasts via `core.World_Query` (`OCCLUSION_SAMPLES`,
   `TRANSMISSION_SURFACES`, `Audio_Material.transmission`) fading `Audio_Source_State.occlusion`.
 - **Buses & state:** named `Audio_Bus` (`master`, `music`, `effects`, `voice`, `ui` + game buses),
-  project `Audio_Settings` (dB gain, LPF, ducking, reverb, acyclic sends else `audio.send`),
-  machine `Audio_Volumes` & `Audio_Output` (fallback + `audio.output` on unplug). `Voices`
-  (`host,by_world`) isolates worlds; failures report `audio.{sound,bus,voices,memory}`.
-  `Audio_Settings.stream_capacity` (0: `STREAM_CAPACITY_DEFAULT`, clamped to
-  `STREAM_CAPACITY_MAX` with `audio.stream_capacity`) is applied by `audio_buses`, which reports
-  refused streams once per frame that had them (`audio.streams`, from `streams_busy`).
+  project `Audio_Settings` (dB gain, `filters` chain, `delay`, ducking, reverb, acyclic sends else
+  `audio.send`; invalid filter -> `audio.filter`). `Audio_Settings.stream_capacity` (0:
+  `STREAM_CAPACITY_DEFAULT`, clamped to `STREAM_CAPACITY_MAX` with `audio.stream_capacity`) is
+  applied by `audio_buses`, which reports refused streams once per frame (`audio.streams`, from
+  `streams_busy`).
+- **Snapshots (`snapshots.odin`):** `Audio_Settings.snapshots` name per-bus gain dB, filter cutoffs
+  and reverb wet dB; the game writes `Audio_Mix` (`audio.snapshot_blend(mix,"underwater",0.5)`)
+  and `audio_buses` blends `Mixer_Buses.blend` (`mix_blend_step`: dB and wet linear, cutoffs by
+  octaves) from where the buses are; an unknown name -> `audio.snapshot`.
+- **Player options:** machine `Audio_Volumes` & `Audio_Output` (fallback + `audio.output` on
+  unplug). `Voices` (`host,by_world`) isolates worlds; failures report
+  `audio.{sound,bus,voices,memory}`.
 
 ## `anim`
 

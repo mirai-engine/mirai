@@ -26,7 +26,7 @@ Voice_Desc :: struct {
     start_frame:u64,
     // Seconds it starts after the start of the chunk its play reaches (or
     // after start_frame), exact to the sample: the layers of one cue sent
-    // between mixer_hold and mixer_release keep their delays between them.
+    // between mixer_batch_begin and mixer_batch_end keep their delays between them.
     delay:f32,
     // Placed in the world and heard from the listener: attenuated, dulled by
     // the air over distance, and through the HRTF on headphones or panned on
@@ -43,6 +43,7 @@ Voice_Desc :: struct {
     transmission:[BANDS]f32,
     reverb:f32, // share of the voice sent to the reverb of the mixer, after its gains
     listener:u8, // the slot of the listener it is heard from (listener_set); one that does not hear is the first
+    lowpass:f32, // Hz: cutoff of a low-pass of the voice (12 dB per octave); 0: none
 }
 VOICE_DEFAULT :: Voice_Desc{volume=1,pitch=1,rotation=1,attenuation=ATTENUATION_DEFAULT,directivity={power=1},transmission=TRANSMISSION_DEFAULT}
 
@@ -79,7 +80,7 @@ voice_shadow_free :: proc(m:^Mixer,index:u32) {
 // the world is invalid, no voice or feed is available, or the command queue is full.
 voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice {
     slot:=sound_slot(m,sound)
-    if slot==nil || !bus_valid(m,desc.bus) || desc.spatial && !voice_desc_finite(desc) || desc.listener>=LISTENERS_MAX || !(desc.delay>=0 && desc.delay<=max(f32)) {return 0}
+    if slot==nil || !bus_valid(m,desc.bus) || desc.spatial && !voice_desc_finite(desc) || desc.listener>=LISTENERS_MAX || !(desc.delay>=0 && desc.delay<=max(f32)) || !finite(desc.lowpass) {return 0}
     feed:=i32(-1)
     if slot.stream {
         if m.free_stream_count==0 {m.counters.streams_busy+=1;return 0}
@@ -122,6 +123,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
         occlusion=clamp(desc.occlusion,0,1),transmission=transmission_clamp(desc.transmission),
         reverb=max(desc.reverb,0),
         listener=desc.listener,
+        lowpass=max(desc.lowpass,0),
     }
     frames:=slot.frames
     offset:u32
@@ -211,6 +213,13 @@ voice_fade :: proc(m:^Mixer,voice:Voice,level:f32,seconds:f32) -> bool {
 }
 voice_set_reverb :: proc(m:^Mixer,voice:Voice,send:f32) -> bool {
     return voice_send(m,voice,{kind=.Voice_Reverb,value=max(send,0)})
+}
+// Cutoff in Hz of the low-pass of the voice; 0 takes it out. A change
+// crossfades from the filter before it over a chunk. False for a value that is
+// not a number.
+voice_set_lowpass :: proc(m:^Mixer,voice:Voice,cutoff_hz:f32) -> bool {
+    if !finite(cutoff_hz) {return false}
+    return voice_send(m,voice,{kind=.Voice_Lowpass,value=max(cutoff_hz,0)})
 }
 // Where a spatial voice is, how fast it moves and where its directivity
 // faces. False for a value that is not a number.
