@@ -105,7 +105,7 @@ lossless_refuses_what_it_does_not_code_and_survives_damage :: proc(t:^testing.T)
             desc:=VOICE_DEFAULT
             desc.loop=true;desc.pitch=3
             voice_play(m,kept,desc)
-            desc.pitch=f32(0h7FC00000);desc.offset=f32(0h7F800000)
+            desc.pitch=f32(0h7FC00000);desc.offset=f64(f32(0h7F800000))
             voice_play(m,kept,desc)
         }
         for _ in 0..<12 {
@@ -180,7 +180,7 @@ lossless_voices_and_their_offsets_play_the_whole_decode :: proc(t:^testing.T) {
         testing.expect(t,voice_stop(m,voice))
         play(m,CHUNK_FRAMES*2)
         // Past the end, or not a number, or before the beginning: the last frame, or the first.
-        for offset,i in ([?]f32{1e9,f32(0h7FC00000),-5}) {
+        for offset,i in ([?]f64{1e9,f64(f32(0h7FC00000)),-5}) {
             desc=VOICE_DEFAULT
             desc.offset=offset
             voice=voice_play(m,sound,desc)
@@ -217,7 +217,7 @@ encoded_sound_plays_like_its_decode_in_memory :: proc(t:^testing.T) {
     voices:[4][2]Voice
     for i in 0..<4 {
         desc:=VOICE_DEFAULT
-        desc.loop=i%2==0;desc.pitch=0.75+f32(i)*0.3;desc.pan=f32(i)*0.5-0.75;desc.offset=f32(i)*0.04;desc.volume=0.25
+        desc.loop=i%2==0;desc.pitch=0.75+f32(i)*0.3;desc.pan=f32(i)*0.5-0.75;desc.offset=f64(i)*0.04;desc.volume=0.25
         voices[i]={voice_play(memory,a,desc),voice_play(kept,b,desc)}
         testing.expect(t,voices[i][0]!=0 && voices[i][1]!=0)
     }

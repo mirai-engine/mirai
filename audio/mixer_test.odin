@@ -483,12 +483,36 @@ voice_starts_on_the_frame_it_was_scheduled_for :: proc(t:^testing.T) {
     }
     mixer_update(m)
     testing.expect(t,!voice_valid(m,voice))
-    // A start in the past is a start now; an offset skips into the sound.
-    desc.start_frame=5
+    // A start in the past plays where it would be had it started then, in memory and from a stream.
+    desc.start_frame=mixer_clock(m)-40
     desc.offset=100.0/RATE
-    voice_play(m,test_stereo(t,m,500,test_ramp),desc)
+    past:=voice_play(m,test_stereo(t,m,500,test_ramp),desc)
     out=test_render(m,4)
-    test_near(t,out[0],test_ramp(100),0)
+    test_near(t,out[0],test_ramp(140),0)
+    voice_stop(m,past)
+    test_render(m,CHUNK_FRAMES)
+    mixer_update(m)
+    // A stream started in the past skips the same frames.
+    {
+        pcm:=make([]i16,500*2,context.temp_allocator)
+        for i in 0..<500 {
+            sample:=i16(test_ramp(i)*32767)
+            pcm[i*2],pcm[i*2+1]=sample,sample
+        }
+        wav,_:=lossless_encode(pcm,2,RATE,context.temp_allocator)
+        stream,err:=sound_stream(m,wav)
+        if testing.expect_value(t,err,Error.None) {
+            sdesc:=VOICE_DEFAULT
+            sdesc.start_frame=mixer_clock(m)-40
+            sdesc.offset=100.0/RATE
+            sv:=voice_play(m,stream,sdesc)
+            sout:=test_render(m,4)
+            test_near(t,sout[0],f32(pcm[140*2])/32768.0,1e-4)
+            voice_stop(m,sv)
+            test_render(m,CHUNK_FRAMES)
+            mixer_update(m)
+        }
+    }
     // A voice stopped before its start never sounds.
     desc.start_frame=mixer_clock(m)+50
     desc.offset=0

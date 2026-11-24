@@ -49,7 +49,7 @@ benchmark_mixing_ten_milliseconds :: proc(t:^testing.T) {
                 desc:=VOICE_DEFAULT
                 desc.loop=true
                 desc.pan=f32(i%9)/4-1
-                desc.offset=f32(i)*0.003
+                desc.offset=f64(i)*0.003
                 sound:=mono
                 switch scenario {
                 case .Mono_Direct:
@@ -137,7 +137,7 @@ benchmark_encoded_sounds_against_decoded_ones :: proc(t:^testing.T) {
             if encoded {sound,_=sound_load(m,file)} else {pcm,_:=decode(file,context.allocator);sound,_=sound_create(m,pcm.samples,2,44100);pcm_destroy(&pcm)}
             for i in 0..<count {
                 desc:=VOICE_DEFAULT
-                desc.loop=true;desc.volume=0.01;desc.pitch=0.8+f32(i%8)*0.05;desc.offset=f32(i)*0.003
+                desc.loop=true;desc.volume=0.01;desc.pitch=0.8+f32(i%8)*0.05;desc.offset=f64(i)*0.003
                 voice_play(m,sound,desc)
             }
             mixer_render(m,out)

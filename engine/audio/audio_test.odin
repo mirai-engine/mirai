@@ -105,7 +105,7 @@ world_destroy :: proc(w:^Heard_World) {
 
 @(private="file")
 world_run :: proc(w:^Heard_World,listener:^Mixer_Listeners,app:^host.App,dt:f32=1.0/60) {
-    hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query}
+    hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
     sources_update(core.read(&w.sources),&w.states,hearing,dt,&w.voices,listener,app,nil)
     test_world_settle(&w.data)
 }
@@ -975,6 +975,9 @@ a_placed_request_plays_as_a_source_at_its_place :: proc(t:^testing.T) {
     for _ in 0..<6 {_=heard(m)}
     mixer.mixer_update(m)
     world_run(&w,&listener,&f.app)
+    // A source schedules one chunk ahead (VOICE_LEAD) so a live audio thread clips no attack.
+    lead:[VOICE_LEAD*2]f32
+    mixer.mixer_render(m,lead[:])
     sourced:=heard(m)
     worst:=f32(0)
     for x,i in requested {worst=max(worst,abs(x-sourced[i]))}
@@ -1027,7 +1030,7 @@ the_loudest_sources_hold_the_voices_and_the_others_keep_their_time :: proc(t:^te
     mem.tracking_allocator_init(&track,context.allocator)
     defer mem.tracking_allocator_destroy(&track)
     for _ in 0..<100 {
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
         {
             context.allocator,context.temp_allocator=mem.tracking_allocator(&track),mem.tracking_allocator(&track)
             sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,&listener,&f.app,nil)
@@ -1055,6 +1058,60 @@ the_loudest_sources_hold_the_voices_and_the_others_keep_their_time :: proc(t:^te
     want:=(int(mixer.mixer_clock(m))-3*mixer.CHUNK_FRAMES)%int(mixer.sound_frames(m,host.content_sound(&f.app,HUM)))
     testing.expectf(t,abs(started-want)<=1,"it comes back %d frames into its loop, not %d",started,want)
     testing.expect_value(t,mixer.mixer_stats(m).voices_stolen,u64(0))
+
+    // Two looping stems started in the same frame stay sample-aligned through
+    // muting to virtual and through a clock pause/resume, even across
+    // non-chunk-aligned renders.
+    {
+        sf:Fixture
+        if !fixture_init(t,&sf) {return}
+        defer fixture_destroy(&sf)
+        slistener:Mixer_Listeners
+        left_src:=AUDIO_SOURCE_DEFAULT;left_src.sound,left_src.loop,left_src.pan=HUM,true,-1
+        right_src:=AUDIO_SOURCE_DEFAULT;right_src.sound,right_src.loop,right_src.pan=HUM,true,1
+        sw:Heard_World
+        left_e,ok:=world_init(t,&sw,left_src);defer world_destroy(&sw)
+        if !ok {return}
+        _ = left_e
+        right_e:=core.create(&sw.entities)
+        core.add(&sw.sources,right_e,right_src)
+        test_world_settle(&sw.data)
+        step_audio :: proc(w:^Heard_World,l:^Mixer_Listeners,app:^host.App,paused:bool,frames:int) -> []f32 {
+            test_world_settle(&w.data)
+            space:=Audio_Scene{core.world_read(test_world_ref(&w.data)),core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},{}}
+            audio_sources(core.read(&w.sources),&w.states,space,{dt=1.0/60},{paused=paused},&w.voices,l,app,nil)
+            test_world_settle(&w.data)
+            out:=make([]f32,frames*2,context.temp_allocator)
+            mixer.mixer_render(app.mixer,out)
+            mixer.mixer_update(app.mixer)
+            return out
+        }
+        // Start both stems together; render non-chunk-aligned pieces.
+        _=step_audio(&sw,&slistener,&sf.app,false,173)
+        _=step_audio(&sw,&slistener,&sf.app,false,311)
+        // Mute right stem to 0 so it goes virtual, then bring it back.
+        core.edit(&sw.sources,right_e).volume=0
+        for _ in 0..<4 {_=step_audio(&sw,&slistener,&sf.app,false,211)}
+        core.edit(&sw.sources,right_e).volume=1
+        _=step_audio(&sw,&slistener,&sf.app,false,VOICE_LEAD+mixer.CHUNK_FRAMES)
+        after_mute:=step_audio(&sw,&slistener,&sf.app,false,256)
+        peak_mute:=f32(0)
+        for i in 0..<256 {
+            peak_mute=max(peak_mute,abs(after_mute[i*2]))
+            if !testing.expectf(t,abs(after_mute[i*2]-after_mute[i*2+1])<=1e-6,"after mute frame %d: L=%v R=%v",i,after_mute[i*2],after_mute[i*2+1]) {break}
+        }
+        testing.expect(t,peak_mute>0,"stems are audible after mute recovery")
+        // Pause clock and resume: both stems come back in exact phase.
+        _=step_audio(&sw,&slistener,&sf.app,true,333)
+        _=step_audio(&sw,&slistener,&sf.app,false,VOICE_LEAD+mixer.CHUNK_FRAMES)
+        after_pause:=step_audio(&sw,&slistener,&sf.app,false,256)
+        peak_pause:=f32(0)
+        for i in 0..<256 {
+            peak_pause=max(peak_pause,abs(after_pause[i*2]))
+            if !testing.expectf(t,abs(after_pause[i*2]-after_pause[i*2+1])<=1e-6,"after pause frame %d: L=%v R=%v",i,after_pause[i*2],after_pause[i*2+1]) {break}
+        }
+        testing.expect(t,peak_pause>0,"stems are audible after pause recovery")
+    }
 }
 
 // A source with values that are not numbers, or heard over no range, plays
@@ -1081,7 +1138,7 @@ a_source_of_hostile_values_is_refused :: proc(t:^testing.T) {
         w:Heard_World
         e,made:=world_init(t,&w,source,{0,0,-2})
         if !made {return}
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
         sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,&listener,&f.app,&problems)
         testing.expectf(t,core.entity_map_get(&w.voices.entries,e)==nil && core.problem_find(&problems,e,"audio.source")!=nil,"%s is refused",c.name)
         world_destroy(&w)
@@ -1159,7 +1216,7 @@ each_source_is_heard_from_its_nearest_listener_of_a_split_screen :: proc(t:^test
     w.query={user=&wall,probe=east_wall_probe}
     medium:Audio_Medium
     run :: proc(w:^Heard_World,listeners:^Mixer_Listeners,medium:^Audio_Medium,app:^host.App) {
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),core.ref(medium),w.query}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),core.ref(medium),w.query,0}
         sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,listeners,app,nil)
         test_world_settle(&w.data)
         out:[mixer.CHUNK_FRAMES*2]f32

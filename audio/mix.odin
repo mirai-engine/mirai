@@ -41,6 +41,8 @@ Mix_Voice :: struct {
     phase:Voice_Phase,
     using start:Voice_Start,
     cursor:u64, // 32.32 frames into the source
+    skip:u64,   // 32.32 source frames left to discard from a feed that started after start_frame
+    started:bool,
     wrapped:bool, // a loop went round: the frame before its loop start is its last
     kept:[2]f32,  // a voice of a feed: the frame before those its ring holds
     // Gains from each source channel to each output: {left to left, left to
@@ -77,6 +79,7 @@ Mix_Voice :: struct {
 voice_begin :: proc "contextless" (m:^Mixer,v:^Mix_Voice,start:Voice_Start) {
     v^={start=start}
     v.phase=.Paused if start.paused else .Playing
+    v.started=start.paused
     v.cursor=u64(start.offset if start.source.feed<0 else min(start.offset,1))<<32
     v.fade=1;v.fade_target=1
     if start.fade_in>0 {
@@ -242,6 +245,28 @@ voice_mix_chunk :: proc "contextless" (m:^Mixer,index:u32,n:int,clock:u64) {
     silent:=placed && mixed=={} && v.base=={}
     pitch:=clamp((v.pitch if v.pitch>0 else 1)*(v.spatial_pitch if v.spatial else 1),PITCH_MIN,PITCH_MAX)
     step:=u64(f64(pitch)*f64(v.source.rate)/f64(m.sample_rate)*f64(ONE))
+    if !v.started {
+        v.started=true
+        if v.start_frame>0 && clock>v.start_frame {
+            late:=clock-v.start_frame
+            step_use:=min(step,FEED_STEP_MAX) if v.source.feed>=0 else max(step,1)
+            advance:=u128(late)*u128(step_use)
+            if v.source.feed>=0 {
+                v.skip=u64(min(advance,u128(max(u64))))
+            } else {
+                frames:=u64(v.source.frames)
+                length:=u128(frames)<<32
+                next:=u128(v.cursor)+advance
+                if next>=length {
+                    if !v.loop || frames==0 {voice_end(m,index);return}
+                    loop_start:=u128(v.source.loop_start)<<32
+                    next=loop_start+(next-length)%(length-loop_start)
+                    v.wrapped=true
+                }
+                v.cursor=u64(next)
+            }
+        }
+    }
     bus:=raw_data(m.bus_buffers[int(v.bus)*CHUNK_FRAMES*2:])
     out:=bus
     // A voice that is placed or sent is mixed apart first.

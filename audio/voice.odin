@@ -19,9 +19,10 @@ Voice_Desc :: struct {
     paused:bool,  // created paused; voice_set_paused starts it
     priority:u8,  // when no voice is free, the one of lowest priority is stolen, the oldest among equals; never one of higher priority
     fade_in:f32,  // seconds
-    offset:f32,   // seconds into the sound where it starts; a loop goes back to the loop start of the sound
+    offset:f64,   // seconds into the sound where it starts; a loop goes back to the loop start of the sound
     // Mixer clock (mixer_clock) of the frame in which the first sample
-    // plays. 0, or a frame already rendered, starts as soon as possible.
+    // plays. 0 starts as soon as possible. A frame already rendered plays
+    // where it would be had it started then.
     start_frame:u64,
     // Seconds it starts after the start of the chunk its play reaches (or
     // after start_frame), exact to the sample: the layers of one cue sent
@@ -123,7 +124,10 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
         listener=desc.listener,
     }
     frames:=slot.frames
-    offset:=frames>0?u32(min(max(f64(desc.offset),0)*rate,f64(frames-1))):0
+    offset:u32
+    if frames>0 && desc.offset==desc.offset {
+        offset=u32(min(max(desc.offset,0)*rate+0.5,f64(frames-1)))
+    }
     start.offset=offset
     if feed>=0 {
         f:=&m.feeds[feed]

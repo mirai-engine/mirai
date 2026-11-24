@@ -350,15 +350,19 @@ audio_sources :: proc(
     if voices!=nil && app.mixer!=nil && clock.paused!=voices.paused {
         voices.paused=clock.paused
         now:=mixer.mixer_clock(app.mixer)
-        for &entry in voices.entries.values {
-            mixer.voice_set_paused(app.mixer,entry.voice,clock.paused)
-            if clock.paused {entry.cursor=entry_time(&entry,now)}
-            entry.clock=now
+        for &entry,at in voices.entries.values {
+            if clock.paused {
+                entry.cursor=entry_time(&entry,now)
+                if entry.voice!={} {voice_virtual(voices,app.mixer,at,states)}
+            }
+            entry.clock=now if clock.paused else now+VOICE_LEAD
         }
     }
     if voices!=nil && voices.paused {return}
-    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,space.medium,core.world_query_read(space.world,space.queries)},frame.dt,voices,listeners,app,problems)
+    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,space.medium,core.world_query_read(space.world,space.queries),0},frame.dt,voices,listeners,app,problems)
 }
+
+VOICE_LEAD :: mixer.CHUNK_FRAMES
 
 // What the voices of a frame look at besides their sources.
 @(private)
@@ -370,6 +374,7 @@ Hearing :: struct {
     view:core.Ref(core.View),
     medium:core.Ref(Audio_Medium),
     query:core.World_Query, // what hides a source
+    now:u64, // mixer clock read once for the pass
 }
 
 @(private)
@@ -381,6 +386,7 @@ sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(A
         return
     }
     hearing:=hearing
+    hearing.now=mixer.mixer_clock(m)
     listener_update(listeners,m,&hearing,dt)
     // The voices of the sources that went stop.
     changes,at,left:=core.changes(sources,&voices.seen),0,Voice_Entry{}
@@ -485,7 +491,8 @@ voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners
     e:=voices.entries.entities[at]
     source,_:=core.get(sources,e)
     state,_:=core.get(states,e)
-    offset:=entry_time(entry,mixer.mixer_clock(m))
+    start:=max(h.now+VOICE_LEAD,entry.clock)
+    offset:=entry_time(entry,start)
     if source.loop && entry.length>0 {offset=math.mod(offset,f64(entry.length))}
     heard:=source
     heard.spatial=entry.kind.spatial
@@ -494,7 +501,7 @@ voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners
         entry.transmission=hidden(h,listeners.slots[entry.listener].position,e,world,0,&state,true)
     }
     desc:=voice_desc(heard,entry.pick,entry.position,entry.rotation,state.occlusion,entry.transmission,entry.listener)
-    desc.offset=f32(offset)
+    desc.offset,desc.start_frame=offset,start
     if entry.voice=mixer.voice_play(m,entry.sound,desc);entry.voice=={} {return false}
     state.voice=entry.voice
     state_put(states,e,state)
@@ -969,8 +976,11 @@ source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^M
     }
     _,placed:=core.get(h.worlds,e)
     if entry!=nil && mixer.sound_valid(m,entry.sound) && entry.kind==kind_of(source,placed) && source_problem(source)=="" {
-        now:=mixer.mixer_clock(m)
-        entry.cursor,entry.clock,entry.speed=entry_time(entry,now),now,(source.pitch>0?source.pitch:1)*entry.pick[1]
+        if h.now>entry.clock {
+            entry.cursor=entry_time(entry,h.now)
+            entry.clock=h.now
+        }
+        entry.speed=(source.pitch>0?source.pitch:1)*entry.pick[1]
         if source.loop && entry.length>0 {entry.cursor=math.mod(entry.cursor,f64(entry.length))}
         if entry.voice=={} {return}
         mixer.voice_set_volume(m,entry.voice,source.volume*entry.pick[0])
@@ -1008,7 +1018,7 @@ source_start :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:
         return
     }
     world,placed:=core.get(h.worlds,e)
-    entry:=Voice_Entry{kind=kind_of(source,placed),generation=host.content_sound_generation(app,source.sound),clock=mixer.mixer_clock(m),rotation=1,transmission=mixer.TRANSMISSION_DEFAULT}
+    entry:=Voice_Entry{kind=kind_of(source,placed),generation=host.content_sound_generation(app,source.sound),clock=h.now+VOICE_LEAD,rotation=1,transmission=mixer.TRANSMISSION_DEFAULT}
     pick,picked:=sound_pick(m,app,source,e,problems)
     if !picked && !bus_ready(m,source.bus) {return}
     entry.sound,entry.pick,entry.length=pick.sound,{pick.volume,pick.pitch},mixer.sound_seconds(m,pick.sound)
@@ -1065,7 +1075,7 @@ voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:
         return
     }
     if entry.voice!={} && !mixer.voice_valid(m,entry.voice) {entry.voice,state.voice={},{}}
-    if entry.voice=={} && !source.loop && entry_time(entry,mixer.mixer_clock(m))>=f64(entry.length) {
+    if entry.voice=={} && !source.loop && entry_time(entry,h.now)>=f64(entry.length) {
         core.entity_map_remove(&voices.entries,e)
         state.voice,state.ended={},true
         voices.stats.ended+=1
