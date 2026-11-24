@@ -613,6 +613,9 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     case has_rigid || has_collider:
         if l.kind==.Compound || l.kind==.Character {link_release(s,l)}
         body_sync(s,e,l,rigid,has_rigid,row_changed(s.rigids,s.changes[0],e),collider,has_collider,collider_changed)
+    case:
+        // Only an External Collider left: its shapes are another entity's, and so is its body.
+        if l.kind!=.None {link_release(s,l)}
     }
 }
 

@@ -273,3 +273,52 @@ what_has_no_room_waits_until_something_is_let_go :: proc(t:^testing.T) {
     physics_test_step(&f,0)
     testing.expect(t,made(&f,other,.Character),"the character takes the room of the one taken out")
 }
+
+// A Collider left External, by a Rigid_Body taken out or by its own kind, gives its body and shapes up: the
+// shapes are those of its child. Taken out of a falling body, the entity stays where it was, at rest, and its
+// child holds its shape on the static world body; a static collider turned External loses its shape.
+@(test)
+an_external_collider_alone_keeps_no_body :: proc(t:^testing.T) {
+    Case :: struct {name:string,rigid:bool}
+    cases:=[]Case{{"Rigid_Body taken out",true},{"static collider turned External",false}}
+    for c in cases {
+        f:=new(Physics_Test)
+        defer free(f)
+        if !physics_test_init(t,f) {return}
+        defer physics_test_destroy(f)
+        f.gravity={0,-9.81,0}
+        physics_test_box(f,{0,-0.5,0},{20,0.5,20})
+        e:=physics_test_box(f,{0,5,0},{0.5,0.5,0.5},c.rigid?RIGID_BODY_DYNAMIC:nil)
+        child:=core.NONE
+        if c.rigid {
+            external:=collider_box({0.5,0.5,0.5});external.kind=.External
+            core.add(&f.colliders,e,external)
+            child=physics_test_box(f,{},{0.4,0.4,0.4})
+            core.add(&f.parents,child,core.Parent{e,0})
+        }
+        for _ in 0..<10 {physics_test_step(f)}
+        before:=sim.world_stats(&f.state.world)
+        if c.rigid {
+            core.remove(&f.rigids,e)
+        } else {
+            core.edit(&f.colliders,e).kind=.External
+        }
+        physics_test_step(f)
+        after:=sim.world_stats(&f.state.world)
+        kind:=Link_Kind.None
+        if l:=link_find(&f.state,e);l!=nil {kind=l.kind}
+        testing.expectf(t,kind==.None,"%s: the entity keeps a link of kind %v",c.name,kind)
+        if !c.rigid {
+            testing.expectf(t,after.shapes==before.shapes-1 && after.bodies==before.bodies,"%s: %v shapes and %v bodies, from %v and %v",c.name,after.shapes,after.bodies,before.shapes,before.bodies)
+            continue
+        }
+        testing.expectf(t,after.bodies==before.bodies-1 && after.shapes==before.shapes,"%s: %v bodies and %v shapes, from %v and %v",c.name,after.bodies,after.shapes,before.bodies,before.shapes)
+        held:=link_find(&f.state,child)
+        testing.expectf(t,held!=nil && held.kind==.Compound && held.body==f.state.world_body,"%s: the child is not on the world body",c.name)
+        motion,_:=core.get(&f.bodies,e)
+        testing.expectf(t,motion.linear==0 && motion.angular==0,"%s: the entity keeps the velocity %v",c.name,motion.linear)
+        pose:=physics_test_pose(f,e)
+        for _ in 0..<30 {physics_test_step(f)}
+        testing.expectf(t,physics_test_pose(f,e)==pose,"%s: the entity moves from %v to %v",c.name,pose.position,physics_test_pose(f,e).position)
+    }
+}
