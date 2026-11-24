@@ -95,6 +95,7 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     asset.document_put(doc,types,"springs",pose.springs) or_return
     character_multi_write(doc,types,pose.multi_ik) or_return
     asset.document_put(doc,types,"spline_ik",pose.spline_ik) or_return
+    if len(pose.correctives)>0 {asset.document_put(doc,types,"correctives",pose.correctives) or_return}
     asset.document_put(doc,types,"follow",pose.follow) or_return
     asset.document_put(doc,types,"curve_poses",pose.curve_poses) or_return
     return .None
@@ -170,6 +171,9 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     pose.springs=asset.asset_rows(file,types,"springs","",Spring_Constraint) or_return
     pose.multi_ik=character_multi_read(file,types) or_return
     pose.spline_ik=asset.asset_rows(file,types,"spline_ik","",Spline_IK_Constraint) or_return
+    if _,found:=asset.asset_table(file,"correctives");found {
+        pose.correctives=asset.asset_rows(file,types,"correctives","",Pose_Corrective) or_return
+    }
     pose.follow=asset.asset_rows(file,types,"follow","",Follow_Constraint) or_return
     pose.curve_poses=asset.asset_rows(file,types,"curve_poses","",Curve_Pose) or_return
     if !character_check(set) {return {},.Corrupt}

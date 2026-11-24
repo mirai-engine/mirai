@@ -293,3 +293,149 @@ named_modifier_goals_follow_their_operation_through_a_reordered_profile :: proc(
     modifier_take(&w.modifiers,&profiles,&controls,&problems,0)
     testing.expect(t,problems.count==2 && core.problem_find(&problems,rig,"animation.modifier_name")!=nil && modifier_request_error(&w.modifiers,rig)==.Missing_Operation && test_modifier_weight(&w.modifiers,rig,.Look,"eyes")==1)
 }
+
+@(test)
+pose_correctives_drive_helper_bones_validate_hostile_inputs_and_stay_allocation_free :: proc(t:^testing.T) {
+    // Round-trip through .character asset and verify optional table omission loads cleanly.
+    knee:=POSE_CORRECTIVE_DEFAULT
+    base.text_set(knee.name[:],"dyn_kneepad_l")
+    knee.driver,knee.bone=bone_ref("joint1"),bone_ref("joint2")
+    knee.mode,knee.axis,knee.min_angle,knee.max_angle=.Twist,{1,0,0},0,mm.PI*0.5
+    knee.position,knee.rotation,knee.scale={0,0,-0.04},mm.quat_axis_angle({1,0,0},0.4),{1.1,1,1}
+
+    pelvis:=POSE_CORRECTIVE_DEFAULT
+    base.text_set(pelvis.name[:],"pelvis_side_l")
+    pelvis.driver,pelvis.bone=bone_ref("joint1"),bone_ref("joint3")
+    pelvis.mode,pelvis.axis,pelvis.cone_axis,pelvis.min_angle,pelvis.max_angle=.Cone,{0,-1,0},{0,0,-1},0,mm.PI*0.5
+    pelvis.smooth=true
+    pelvis.position,pelvis.rotation,pelvis.scale={0.03,0.02,0},mm.quat_axis_angle({0,0,1},0.25),{1,1,1}
+
+    clav:=POSE_CORRECTIVE_DEFAULT
+    base.text_set(clav.name[:],"clavPushJnt_l")
+    clav.driver,clav.bone=bone_ref("joint1"),bone_ref("joint4")
+    clav.mode,clav.axis,clav.min_angle,clav.max_angle=.Swing,{0,1,0},0.1,mm.PI*0.5
+    clav.position,clav.rotation,clav.scale={0,0.05,0},1,{1,1.2,1}
+
+    profile:=Pose_Profile{correctives={knee,pelvis,clav}}
+    testing.expect(t,pose_profile_check(profile))
+
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    doc:asset.Document;defer asset.document_destroy(&doc)
+    if !testing.expect_value(t,character_document(&doc,&types,{9,10},{match={info=MATCH_INFO_DEFAULT},motion={warp=POSE_WARP_PROFILE_DEFAULT},pose=profile}),asset.Error.None) {return}
+    bytes,written:=asset.document_bytes(&doc,context.temp_allocator)
+    if !testing.expect_value(t,written,asset.Error.None) {return}
+    file:asset.Asset
+    if !testing.expect_value(t,asset.asset_open(&file,bytes,context.temp_allocator),asset.Error.None) {return}
+    defer asset.asset_close(&file)
+    view,read:=character_view(&file,&types)
+    testing.expect_value(t,read,asset.Error.None)
+    testing.expect(t,len(view.pose.correctives)==3 && view.pose.correctives[0]==knee && view.pose.correctives[1]==pelvis && view.pose.correctives[2]==clav)
+
+    // Table-driven hostile profile validation.
+    nan:=f32(0);nan/=nan
+    Bad_Case :: struct {name:string,rows:[]Pose_Corrective}
+    self_drive:=knee;self_drive.bone=self_drive.driver
+    dup_a,dup_b:=knee,pelvis;dup_b.name=dup_a.name
+    cyc_a:=knee;base.text_set(cyc_a.name[:],"c1");cyc_a.driver,cyc_a.bone=bone_ref("joint1"),bone_ref("joint2")
+    cyc_b:=knee;base.text_set(cyc_b.name[:],"c2");cyc_b.driver,cyc_b.bone=bone_ref("joint2"),bone_ref("joint1")
+    bad_angle:=knee;bad_angle.min_angle=1;bad_angle.max_angle=0.5
+    bad_nan:=knee;bad_nan.position.x=nan
+    bad_scale:=knee;bad_scale.scale={1,0,1}
+    bad_cone:=pelvis;bad_cone.cone_axis={}
+    bad_weight:=knee;bad_weight.weight=1.5
+    bad_empty:=knee;bad_empty.name={}
+    bad_cases:=[]Bad_Case{
+        {"self-drive",{self_drive}},
+        {"duplicate names",{dup_a,dup_b}},
+        {"two-row cycle",{cyc_a,cyc_b}},
+        {"inverted angle range",{bad_angle}},
+        {"NaN position",{bad_nan}},
+        {"zero scale",{bad_scale}},
+        {"zero cone axis",{bad_cone}},
+        {"weight out of range",{bad_weight}},
+        {"empty name",{bad_empty}},
+    }
+    for c in bad_cases {
+        testing.expectf(t,!pose_profile_check({correctives=c.rows}),"hostile corrective '%s' must be rejected",c.name)
+    }
+
+    // Runtime driving: twist, cone, swing, modifier influence fade, LOD plain skip, and 0 stable allocs.
+    rig:=core.entity_make(1,1)
+    state:=rig_test_state(rig,4,.5);defer playing_free(&state)
+    // Make joints 2, 3, 4 siblings under root (joint 0) so helper bones move independently of joint 1.
+    state.parents[2],state.parents[3],state.parents[4]=0,0,0
+    modifiers:Modifier_Runtime;defer modifier_runtime_free(&modifiers)
+    characters:Character_Assets;defer character_assets_free(&characters)
+    rows:=[3]Pose_Corrective{knee,pelvis,clav}
+    test_modifier_profile(&modifiers,&characters,rig,{correctives=rows[:]})
+    problems:core.Problems
+
+    // Drive joint1 by +45 deg around X:
+    // - knee (Twist X, 0..90 deg): weight = 0.5
+    // - pelvis (Cone axis -Y -> -Z, 0..90 deg, smooth): 45 deg forward -> t=0.5 -> smoothstep=0.5
+    // - clav (Swing Y, 0.1..pi/2): angle=pi/4 -> t=(pi/4 - 0.1)/(pi/2 - 0.1)
+    half_angle:=f32(mm.PI*0.25)
+    copy(playing_pose(&state,.Local),state.rest[:])
+    playing_pose(&state,.Local)[1].rotation=mm.quat_axis_angle({1,0,0},half_angle)
+    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect_value(t,problems.count,0)
+    testing.expect(t,linalg.length(playing_pose(&state,.Local)[2].position-(state.rest[2].position+knee.position*0.5))<1e-5)
+    testing.expect(t,linalg.length(playing_pose(&state,.Local)[3].position-(state.rest[3].position+pelvis.position*0.5))<1e-5)
+    expected_clav:=(half_angle-0.1)/(mm.PI*0.5-0.1)
+    testing.expect(t,linalg.length(playing_pose(&state,.Local)[4].position-(state.rest[4].position+clav.position*expected_clav))<1e-5)
+    diag,has_diag:=animation_rig_diagnostic(core.ref(&modifiers),rig,.Corrective,base.name_hash("dyn_kneepad_l"))
+    testing.expect(t,has_diag && diag.valid && diag.reached)
+
+    // Backward swing (-45 deg around X): twist clamps to 0, cone clamps to 0, swing still activates.
+    copy(playing_pose(&state,.Local),state.rest[:])
+    playing_pose(&state,.Local)[1].rotation=mm.quat_axis_angle({1,0,0},-half_angle)
+    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,playing_pose(&state,.Local)[2].position==state.rest[2].position)
+    testing.expect(t,playing_pose(&state,.Local)[3].position==state.rest[3].position)
+    testing.expect(t,linalg.length(playing_pose(&state,.Local)[4].position-(state.rest[4].position+clav.position*expected_clav))<1e-5)
+
+    // Modifier control scales influence; LOD plain skips correctives.
+    requests:Animation_Requests;defer delete(requests.modifiers.items)
+    modifier(&requests,{rig=rig,kind=.Corrective,weight=0.5,enabled=true},"dyn_kneepad_l")
+    modifier_take(&modifiers,&characters,&requests,&problems,0)
+    copy(playing_pose(&state,.Local),state.rest[:])
+    playing_pose(&state,.Local)[1].rotation=mm.quat_axis_angle({1,0,0},half_angle)
+    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,linalg.length(playing_pose(&state,.Local)[2].position-(state.rest[2].position+knee.position*0.25))<1e-5)
+
+    state.lod.plain=true
+    copy(playing_pose(&state,.Local),state.rest[:])
+    playing_pose(&state,.Local)[1].rotation=mm.quat_axis_angle({1,0,0},half_angle)
+    testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,playing_pose(&state,.Local)[2].position==state.rest[2].position)
+    state.lod.plain=false
+
+    // Zero stable-tick allocations on both original and snapshot copy.
+    copied:Modifier_Runtime;core.value_copy(&copied,&modifiers,type_info_of(Modifier_Runtime));defer modifier_runtime_free(&copied)
+    saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator()
+    stable:=true
+    for _ in 0..<32 {
+        copy(playing_pose(&state,.Local),state.rest[:])
+        playing_pose(&state,.Local)[1].rotation=mm.quat_axis_angle({1,0,0},half_angle)
+        stable &&=test_rigs_apply(&state,&copied,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60)
+    }
+    context=saved
+    testing.expect(t,stable && problems.count==0)
+
+    // Missing bone reports animation.rig_bind without crashing.
+    missing:=knee;missing.bone=bone_ref("absent_helper")
+    test_modifier_profile(&modifiers,&characters,rig,{correctives={missing}})
+    copy(playing_pose(&state,.Local),state.rest[:])
+    testing.expect(t,!test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,core.problem_find(&problems,rig,"animation.rig_bind")!=nil)
+
+    // Resolved-bone cycle (e.g. path vs alias resolving to same indices) caught at bind time.
+    state.aliases[1]=base.name_hash("alias_driver")
+    alias_a:=knee;base.text_set(alias_a.name[:],"a");alias_a.driver,alias_a.bone=bone_ref("joint1"),bone_ref("joint2")
+    alias_b:=knee;base.text_set(alias_b.name[:],"b");alias_b.driver,alias_b.bone=bone_ref("joint2"),bone_ref("alias_driver")
+    test_modifier_profile(&modifiers,&characters,rig,{correctives={alias_a,alias_b}})
+    problems={}
+    copy(playing_pose(&state,.Local),state.rest[:])
+    testing.expect(t,!test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,nil,mm.TRANSFORM_IDENTITY,1.0/60))
+    testing.expect(t,core.problem_find(&problems,rig,"animation.rig_bind")!=nil)
+}

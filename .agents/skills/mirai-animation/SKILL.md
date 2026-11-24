@@ -267,8 +267,8 @@ Adapt the source's data to these features instead of rebuilding its runtime:
 - **Pruned/unified surfaces (do not look for or reintroduce):** multi-bone chains use `Multi_IK`
   (no `Chain_IK`), command clips play in layer stack slots (no `Clip_Overlay`), material curves
   are `@field/Material_Live` clip tracks (no `Curve_Material`), retargeting runs on load in
-  `Source_Assets` (no per-tick `Chain_Retarget` or `Pose_Source.stage`), and `Distance_Key`,
-  `Pose_Corrective` and `Curve_Drive` do not exist (use `Curve_Pose`, clips and morphs).
+  `Source_Assets` (no per-tick `Chain_Retarget` or `Pose_Source.stage`), and `Distance_Key` and
+  `Curve_Drive` do not exist (use `Curve_Pose`, `Pose_Corrective`, clips and morphs).
 - What the runtime cannot do is a problem of the entity (`core.report` with an `animation.*` code
   and how to fix it), never a counter ([problems](references/animation.md#problems)). The functions
   and helpers receive `^core.Problems`; `Constraint_Inputs` and `Grounding_Inputs` carry it.

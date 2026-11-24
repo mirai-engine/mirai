@@ -28,9 +28,68 @@ Spline_IK_Binding :: struct {
     points:[RIG_CHAIN_BONES]mm.Vec3,
     lengths:[RIG_CHAIN_BONES-1]f32,
 }
+
+// Drives a procedural helper bone from a driver bone's rotation relative to its rest pose:
+// twist, swing or directional cone angle maps to a clamped [0, 1] weight scaling an additive
+// local position/rotation/scale offset on the driven bone.
+Pose_Corrective :: struct {
+    name:[64]u8 `mirai:"text"`,
+    driver,bone:Bone_Ref,
+    mode:lib.Corrective_Mode `mirai:"optional"`,
+    axis:mm.Vec3 `mirai:"optional"`,
+    cone_axis:mm.Vec3 `mirai:"optional"`,
+    min_angle,max_angle:f32 `mirai:"optional,angle"`,
+    smooth:bool `mirai:"optional"`,
+    position:mm.Vec3 `mirai:"optional,unit=m"`,
+    rotation:mm.Quat `mirai:"optional"`,
+    scale:mm.Vec3 `mirai:"optional"`,
+    weight:f32 `mirai:"optional,min=0,max=1"`,
+    enabled:bool `mirai:"optional"`,
+}
+POSE_CORRECTIVE_DEFAULT :: Pose_Corrective{
+    mode=.Swing,
+    axis={0,1,0},
+    cone_axis={0,0,-1},
+    min_angle=0,
+    max_angle=mm.PI*0.5,
+    rotation=1,
+    scale={1,1,1},
+    weight=1,
+    enabled=true,
+}
+
+Corrective_Binding :: struct {
+    using binding:Rig_Binding,
+    driver,bone:i32,
+    cyclic:bool,
+    applied_weight:f32,
+}
+
+@(private)
+corrective_driver :: proc "contextless" (config:Pose_Corrective) -> lib.Corrective_Driver {
+    return {
+        mode=config.mode,
+        axis=config.axis,
+        cone_axis=config.cone_axis,
+        min_angle=config.min_angle,
+        max_angle=config.max_angle,
+        smooth=config.smooth,
+    }
+}
+
+@(private)
+corrective_delta :: proc "contextless" (config:Pose_Corrective) -> mm.Transform {
+    return {position=config.position,rotation=config.rotation,scale=config.scale}
+}
+
+@(private)
+corrective_config :: proc "contextless" (config:Pose_Corrective) -> lib.Corrective {
+    return {driver=corrective_driver(config),delta=corrective_delta(config)}
+}
+
 @(private)
 rig_shapes_check :: proc(profile:Pose_Profile) -> bool {
-    if len(profile.spline_ik)>POSE_CONSTRAINTS || len(profile.follow)>POSE_CONSTRAINTS {return false}
+    if len(profile.spline_ik)>POSE_CONSTRAINTS || len(profile.follow)>POSE_CONSTRAINTS || len(profile.correctives)>POSE_CONSTRAINTS {return false}
     for &value,i in profile.follow {
         if !rig_named_valid(value.name[:]) || !profile_bone(value.bone) || !spatial_target_valid(spatial_compile(&value.target),false) || !profile_weight(value.weight) || !value.position && !value.rotation && !value.scale {return false}
         for &other in profile.follow[:i] {if value.name==other.name {return false}}
@@ -47,6 +106,17 @@ rig_shapes_check :: proc(profile:Pose_Profile) -> bool {
         points:[2]mm.Vec3;lengths:=[1]f32{1}
         if fixed && !lib.spline_chain(settings,lengths[:],points[:]) {return false}
         for &other in profile.spline_ik[:i] {if value.name==other.name {return false}}
+    }
+    if len(profile.correctives)>0 {
+        drivers,drivens:[POSE_CONSTRAINTS]u64
+        for &value,i in profile.correctives {
+            driver_hash,driver_ok:=bone_ref_hash(value.driver)
+            bone_hash,bone_ok:=bone_ref_hash(value.bone)
+            if !rig_named_valid(value.name[:]) || !driver_ok || !bone_ok || !profile_weight(value.weight) || !lib.corrective_valid(corrective_config(value)) {return false}
+            for &other in profile.correctives[:i] {if value.name==other.name {return false}}
+            drivers[i],drivens[i]=driver_hash,bone_hash
+        }
+        if !lib.corrective_acyclic(drivers[:len(profile.correctives)],drivens[:len(profile.correctives)]) {return false}
     }
     return true
 }
@@ -82,6 +152,69 @@ rig_shapes_apply :: proc(state:^Playing,runtime:^Modifier_Runtime,rig:^Modifier_
             binding.diagnostic.reached=binding.diagnostic.residual<=.001
         }
         valid &&=solved
+    }
+    if len(pose.correctives)>0 {
+        rebind:=false
+        for _,slot in pose.correctives {
+            if !rig_binding_current(&rig.corrective_states[slot],state) {rebind=true;break}
+        }
+        if rebind {
+            drivers,drivens:[POSE_CONSTRAINTS]i32
+            slots:[POSE_CONSTRAINTS]int
+            peeled:[POSE_CONSTRAINTS]bool
+            edges:=0
+            for &config,slot in pose.correctives {
+                binding:=&rig.corrective_states[slot]
+                binding.ready=false
+                binding.cyclic=false
+                binding.driver=i32(bone_resolve(state,config.driver))
+                binding.bone=i32(bone_resolve(state,config.bone))
+                if binding.driver<0 || binding.bone<0 || binding.driver==binding.bone {continue}
+                if edges<POSE_CONSTRAINTS {
+                    drivers[edges],drivens[edges],slots[edges]=binding.driver,binding.bone,slot
+                    edges+=1
+                }
+            }
+            _=lib.corrective_acyclic(drivers[:edges],drivens[:edges],peeled[:edges])
+            for e in 0..<edges {
+                binding:=&rig.corrective_states[slots[e]]
+                binding.cyclic=!peeled[e]
+                rig_binding_publish(binding,state,.Corrective)
+            }
+        }
+        changed:=false
+        local:=playing_pose(state,.Local)
+        for &config,slot in pose.correctives {
+            weight,enabled:=modifier_weight(&modifier_states(rig,.Corrective)[slot],runtime.time)
+            binding:=&rig.corrective_states[slot]
+            binding.diagnostic.valid,binding.diagnostic.reached=false,false
+            binding.applied_weight=0
+            if !binding.ready || binding.cyclic {
+                rig_problem(inputs.problems,state.entity,.Corrective,&config,.Bind)
+                valid=false
+                continue
+            }
+            if !enabled || weight<=0 || state.lod.plain {continue}
+            driven_weight,ok:=lib.corrective_weight(local[binding.driver].rotation,skeleton.rest[binding.driver].rotation,corrective_driver(config))
+            if !ok {
+                rig_problem(inputs.problems,state.entity,.Corrective,&config,.Solve)
+                valid=false
+                continue
+            }
+            effective:=driven_weight*weight
+            if !lib.corrective_apply(&local[binding.bone],corrective_delta(config),effective) {
+                rig_problem(inputs.problems,state.entity,.Corrective,&config,.Solve)
+                valid=false
+                continue
+            }
+            binding.applied_weight=effective
+            binding.diagnostic.valid,binding.diagnostic.reached=true,true
+            changed=true
+        }
+        if changed && !lib.pose_world(skeleton.parents,local,playing_pose(state,.World),root_transform) {
+            pose_problem(inputs.problems,state.entity)
+            valid=false
+        }
     }
     return valid
 }

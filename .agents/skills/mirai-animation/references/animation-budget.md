@@ -10,7 +10,7 @@ copies, a server and its clients decide alike.
 - Past twice `cadence_near` a rig runs on the ticks of `ai.cadence_period` (up to
   `cadence_slowest`) at the phase of its entity index, as the minds of `behavior` think:
   `skip` leaves its pose (and the pose job) out, `wait` its searches of matching that nothing
-  forces. Past `cosmetic_distance`, `plain` leaves out grounding, springs and twists.
+  forces. Past `cosmetic_distance`, `plain` leaves out grounding, springs, twists and correctives.
 - Clocks, markers, events, actions, root motion and warping run in every tick; a skipped rig keeps
   `Local`, `Sampled` and `World` of its last pose, with `Local[0]` carried with its entity and
   `Previous` equal to `Local`, so the palette does not interpolate backwards.

@@ -36,6 +36,7 @@ authoring_struct_fields :: proc(out:^$T,source:$S) {
 @(private)
 profile_constraints_defaults :: proc(p:^Profile_Set_Params) {
     authoring_struct_fields(&p.spline_ik,anim.SPLINE_IK_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.follow,anim.FOLLOW_CONSTRAINT_DEFAULT)
+    p.corrective=anim.POSE_CORRECTIVE_DEFAULT
     authoring_struct_fields(&p.twist,anim.TWIST_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.spring,anim.SPRING_CONSTRAINT_DEFAULT);authoring_struct_fields(&p.multi_ik,anim.MULTI_IK_CONSTRAINT_DEFAULT.definition);authoring_struct_fields(&p.multi_ik.settings,lib.MULTI_IK_DEFAULT)
     for &joint in p.multi_ik.joints {joint=anim.MULTI_IK_JOINT_DEFAULT};for &effector in p.multi_ik.effectors {effector=anim.MULTI_IK_EFFECTOR_DEFAULT}
     authoring_struct_fields(&p.grounding,anim.FOOT_GROUNDING_DEFAULT.definition);for &leg in p.grounding.legs {authoring_struct_fields(&leg,anim.GROUNDED_LEG_DEFAULT)}

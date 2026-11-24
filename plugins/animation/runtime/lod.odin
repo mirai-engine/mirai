@@ -13,7 +13,7 @@ Rig_Lod :: struct {
     period:u32, // ticks between two of its poses (ai.cadence_period); 0 or 1: every tick
     wait:bool,  // not a tick of its cadence: its matching searches only when it must
     skip:bool,  // its pose is not evaluated: it keeps the last one, carried with its entity
-    plain:bool, // its grounding, springs and twists do not run
+    plain:bool, // its grounding, springs, twists and correctives do not run
 }
 
 // The decision of a rig in the tick under way, and the rig whose decision it shares: the rigs

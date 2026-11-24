@@ -48,6 +48,7 @@ modifier_count :: proc(pose:Pose_Profile,kind:Modifier_Kind) -> int {
     case .Spring: return len(pose.springs)
     case .Multi_IK: return len(pose.multi_ik)
     case .Spline_IK: return len(pose.spline_ik)
+    case .Corrective: return len(pose.correctives)
     case .Follow: return len(pose.follow)
     }
     return 0
@@ -67,6 +68,7 @@ modifier_definition :: proc(pose:^Pose_Profile,kind:Modifier_Kind,slot:int) -> (
     case .Spring: return info(&pose.springs[slot])
     case .Multi_IK: return info(&pose.multi_ik[slot])
     case .Spline_IK: return info(&pose.spline_ik[slot])
+    case .Corrective: return info(&pose.correctives[slot])
     case .Follow: return info(&pose.follow[slot])
     }
     return
@@ -255,6 +257,7 @@ animation_rig_diagnostic :: proc(runtime:core.Ref(Modifier_Runtime),entity:core.
     case .Spring: return read(&rig.spring_states[index])
     case .Multi_IK: return read(&rig.multi_states[index])
     case .Spline_IK: return read(&rig.spline_states[index])
+    case .Corrective: return read(&rig.corrective_states[index])
     case .Follow: return read(&rig.follow_states[index])
     }
     return {},false

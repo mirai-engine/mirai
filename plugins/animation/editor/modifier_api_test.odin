@@ -55,11 +55,12 @@ rig_modifier_api_discovers_named_operations_and_effectors_of_the_character :: pr
     chain:=struct {root,end:anim.Bone_Ref}{anim.bone_ref("a"),anim.bone_ref("c")}
     spring:=anim.SPRING_CONSTRAINT_DEFAULT;base.text_set(spring.name[:],"tail");spring.root,spring.end=chain.root,chain.end
     twist:=anim.TWIST_CONSTRAINT_DEFAULT;base.text_set(twist.name[:],"roll");twist.source,twist.root,twist.end=anim.bone_ref("d"),chain.root,chain.end
+    corrective:=anim.POSE_CORRECTIVE_DEFAULT;base.text_set(corrective.name[:],"kneepad");corrective.driver,corrective.bone=anim.bone_ref("a"),anim.bone_ref("b")
     multi:=anim.MULTI_IK_CONSTRAINT_DEFAULT;base.text_set(multi.name[:],"body");multi.root=chain.root;multi.joints=make([]anim.Multi_IK_Joint,1,context.temp_allocator);multi.effectors=make([]anim.Multi_IK_Effector,2,context.temp_allocator)
     multi.joints[0]=anim.MULTI_IK_JOINT_DEFAULT;multi.joints[0].bone=chain.root
     for &effector in multi.effectors[:2] {effector=anim.MULTI_IK_EFFECTOR_DEFAULT;effector.bone=chain.end}
     base.text_set(multi.effectors[0].name[:],"left");base.text_set(multi.effectors[1].name[:],"right")
-    set:=anim.character_set_make({});set.pose={twist={twist},springs={spring},multi_ik={multi}}
+    set:=anim.character_set_make({});set.pose={twist={twist},springs={spring},multi_ik={multi},correctives={corrective}}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/rig.character",f.root),&f.assets.types,pose_id,set),asset.Error.None)
     set.pose={springs={spring}}
     testing.expect_value(t,anim.character_save(fmt.tprintf("%s/transfer.character",f.root),&f.assets.types,retarget_id,set),asset.Error.None)
@@ -75,25 +76,26 @@ rig_modifier_api_discovers_named_operations_and_effectors_of_the_character :: pr
     authoring_test_register(f,t,"inspect",Instance_Inspect_Params,instance_inspect,&inspect)
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011"}`).code,0)
     output:=api.json_compact(string(serial.writer_bytes(&f.out)))
-    testing.expect(t,strings.contains(output,`"total":3`) && strings.contains(output,`"name":"tail"`))
+    testing.expect(t,strings.contains(output,`"total":4`) && strings.contains(output,`"name":"tail"`) && strings.contains(output,`"name":"kneepad"`))
     testing.expect(t,!strings.contains(output,`"diagnostic"`) && !strings.contains(output,`"slot"`) && !strings.contains(output,`"index"`) && strings.contains(output,`"left"`) && strings.contains(output,`"right"`))
     testing.expect_value(t,authoring_test_execute(f,"inspect",`{"entity":"0000000000000011","diagnostics":true}`).code,0)
     testing.expect(t,strings.contains(api.json_compact(string(serial.writer_bytes(&f.out))),`"target_alpha"`))
+    testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","controls":[{"kind":"Corrective","name":"kneepad","weight":0.5}]}`).code,0)
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000012","controls":[{"kind":"Spring","name":"tail","weight":0.4}]}`).code,0)
-    testing.expect(t,len(play.animation_requests.modifiers.items)==1 && play.animation_requests.modifiers.items[0].rig==second && play.animation_requests.modifiers.items[0].name==base.name_hash("tail"))
+    testing.expect(t,len(play.animation_requests.modifiers.items)==2 && play.animation_requests.modifiers.items[1].rig==second && play.animation_requests.modifiers.items[1].name==base.name_hash("tail"))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[1,2,3]}}]}`).code,0)
-    testing.expect_value(t,play.animation_requests.modifiers.items[1].effector,base.name_hash("right"))
+    testing.expect_value(t,play.animation_requests.modifiers.items[2].effector,base.name_hash("right"))
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"left","target":{"position":[4,5,6]}}]}`).code,0)
-    testing.expect_value(t,play.animation_requests.modifiers.items[2].effector,base.name_hash("left"))
-    for request in ([8]string{`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"absent"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector_index":0}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Spring","name":"tail","target":"0000000000000012"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Twist","name":"absent"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Twist","name":"roll"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"left","weight":0.5}]}`,`{"entity":"0000000000000012","goals":[{"kind":"Multi_IK","name":"body","effector":"left"}]}`}) {result:=authoring_test_execute(f,"request",request);testing.expectf(t,result.code==api.INVALID_PARAMS,"%s: %d %s",request,result.code,result.data)}
+    testing.expect_value(t,play.animation_requests.modifiers.items[3].effector,base.name_hash("left"))
+    for request in ([9]string{`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"absent"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector_index":0}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Spring","name":"tail","target":"0000000000000012"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Twist","name":"absent"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Twist","name":"roll"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Corrective","name":"kneepad"}]}`,`{"entity":"0000000000000011","goals":[{"kind":"Multi_IK","name":"body","effector":"left","weight":0.5}]}`,`{"entity":"0000000000000012","goals":[{"kind":"Multi_IK","name":"body","effector":"left"}]}`}) {result:=authoring_test_execute(f,"request",request);testing.expectf(t,result.code==api.INVALID_PARAMS,"%s: %d %s",request,result.code,result.data)}
     testing.expect_value(t,authoring_test_execute(f,"request",`{"entity":"0000000000000012","controls":[{"kind":"Spring","name":"tail","slot":0}]}`).code,api.INVALID_PARAMS)
-    testing.expect_value(t,len(play.animation_requests.modifiers.items),3)
+    testing.expect_value(t,len(play.animation_requests.modifiers.items),4)
     preview:Preview_Params;copy(preview.entity[:],"0000000000000011");preview.controls[0]={kind=.Spring,weight=.3,enabled=true};base.text_set(preview.controls[0].name[:],"tail")
     preview.goals[0]={kind=.Multi_IK,target={position={0,1,0},rotation=1,scale={1,1,1}}};base.text_set(preview.goals[0].name[:],"body");base.text_set(preview.goals[0].effector[:],"right")
     call:=api.Call{raw=`{"controls":[{"kind":"Spring","name":"tail"}],"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]}}]}`,allocator=context.temp_allocator}
     testing.expect(t,request_apply(&f.session,&call,test_world_ref(&play),first,&preview,0,nil))
-    testing.expect_value(t,len(play.animation_requests.modifiers.items),5)
+    testing.expect_value(t,len(play.animation_requests.modifiers.items),6)
     call.raw=`{"goals":[{"kind":"Multi_IK","name":"body","effector":"right","target":{"position":[0,1,0]},"contact":0.5}]}`
     testing.expect(t,!request_apply(&f.session,&call,test_world_ref(&play),first,&preview,0,nil))
-    testing.expect(t,strings.contains(call.error.data,`"path":"goals[0].contact"`));testing.expect_value(t,len(play.animation_requests.modifiers.items),5)
+    testing.expect(t,strings.contains(call.error.data,`"path":"goals[0].contact"`));testing.expect_value(t,len(play.animation_requests.modifiers.items),6)
 }

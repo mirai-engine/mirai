@@ -24,6 +24,11 @@ anim.modifier(requests,{rig=e,kind=.IK,fade=.2},"left_hand")
 - For Multi IK or Spline IK goals, pass the effector or control name after the operation name; a
   Multi IK of one effector (a reach, a tail) takes its goal without one.
 - `animation.inspect` part `Modifiers` lists the names and reports the last request that failed.
+- Procedural helper bones (pelvis/clavicle push joints, shoulder top points, kneepads) use
+  `Pose_Corrective` rows (`table: "Corrective"` in `animation.modifier.set`): a `driver` bone's
+  rotation relative to its rest pose (`Twist`, `Swing` or directional `Cone` across
+  `min_angle..max_angle`) scales an additive local `position`/`rotation`/`scale` offset on `bone`.
+  Influence can be faded or disabled at runtime via `anim.modifier` with `kind = .Corrective`.
 
 ## Feet on the ground
 
@@ -88,8 +93,8 @@ anim.play_clip(requests,e,"stride",.2,loop=false)
 ## Many characters
 
 Far from the players a rig costs less by itself, alike on the server and on every client: the
-project settings `Animation_Budget_Config` leave out its grounding, springs and twists past
-`cosmetic_distance` (25 m) from every simulation source (the bodies the seats drive and each
+project settings `Animation_Budget_Config` leave out its grounding, springs, twists and correctives
+past `cosmetic_distance` (25 m) from every simulation source (the bodies the seats drive and each
 `Streaming_Source`), and past twice `cadence_near` (20 m) pose it and search its
 matching once every `distance / cadence_near` ticks, at most every `cadence_slowest` (0.25 s).
 Its clock, markers, events and root motion run in every tick, and between two poses it holds the

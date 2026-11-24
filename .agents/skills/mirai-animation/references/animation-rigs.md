@@ -1,9 +1,10 @@
 # Rigs and chain modifiers
 
-The tables `twist`, `springs`, `multi_ik`, `spline_ik`, `follow` and `curve_poses` extend the
-[modifiers of the `.character`](animation.md#components-and-shared-data): they are rows of a shared
-definition, without components per operation. A `.character` of another `CHARACTER_VERSION` is
-rejected and written again. Math: [std/anim](../../mirai-std/references/anim-rigs.md).
+The tables `twist`, `springs`, `multi_ik`, `spline_ik`, `correctives`, `follow` and `curve_poses`
+extend the [modifiers of the `.character`](animation.md#components-and-shared-data): they are rows
+of a shared definition, without components per operation. A `.character` of another
+`CHARACTER_VERSION` is rejected and written again. Math:
+[std/anim](../../mirai-std/references/anim-rigs.md).
 
 Each row has a name, a weight and an activation; the name is unique in its table and is what an
 instance controls and inspects. The defaults are the `*_DEFAULT` constants of each type; bones are
@@ -32,6 +33,15 @@ other way to name it.
 - **Spline IK**: the chain over a cubic Bézier of four targets, with `up` as the axis it keeps and
   `twist` distributed. With all controls `World`, the profile checks that the curve has length; if
   it is shorter than the chain, the chain continues straight and the residual remains in `end`.
+- **Corrective** (`Pose_Corrective`): drives a procedural helper bone (`bone`, e.g. pelvis/clavicle
+  push joints, shoulder top points, kneepads) from a `driver` bone's local rotation relative to its
+  rest pose. `mode` maps the rotation to a clamped `[0, 1]` weight (`Twist`: signed twist about
+  `axis` across `[min_angle, max_angle]`; `Swing`: unsigned swing of `axis` from rest; `Cone`:
+  unsigned angle between rotated `axis` and `cone_axis`, 1 inside `min_angle` and 0 past
+  `max_angle`), optionally smoothed with `smooth`, and applies an additive local `position`,
+  `rotation` and positive `scale` factor scaled by that weight times the operation weight.
+  Self-drives and driver->bone cycles are rejected at validation and bind; skipped when `lod.plain`
+  is active.
 - **Follow**: takes a bone to its target in position, rotation and scale (each optional); with
   `keep_world`, when the target changes it keeps the place of the bone as an offset, without jumps.
 - **Twist**: distributes the animated twist of a source, outside the chain, among the bones of the
@@ -80,9 +90,8 @@ its body animation; no solver evaluates it.
 - A material value of a face (a flipbook frame, a blush) is a track of its clip, not a row:
   [`@field/Material_Live`](animation-timeline.md#material-values-of-a-rig).
 - A face of a rig evaluator or of a control rig is baked to curves and poses or to morphs: the
-  plugin has
-  no rig evaluator, no curve expressions and no pose-space correctives: a bend that needs a shape
-  takes it from `Twist` and morph targets the clip keys.
+  plugin has no rig evaluator or curve expressions; procedural helper bones use `Twist` and
+  `Pose_Corrective`, and shapes use `Curve_Pose` and morph targets.
 
 The capacities are fixed contracts, not growing per frame: a path that does not form a parent-child
 chain, a topology that is too long or an incompatible target is a bind failure or a residual.
@@ -90,7 +99,7 @@ chain, a topology that is too long or an incompatible target is a bind failure o
 ## Order and state
 
 - Order: removal of root motion, the follow of a leader, curve poses, grounding, IK/look-at, Multi
-  IK, twist, springs, Spline IK, Follow and, at the end, limits and attachments.
+  IK, twist, springs, Spline IK, correctives, Follow and, at the end, limits and attachments.
 - Each world owns its `Modifier_Runtime`, indexed by generational entity. A row keeps bindings,
   influence, overrides and solver state for one rig. It reads definitions from the shared character
   content by asset identity and revision. A rig without modifiers or attachments takes no row.
@@ -147,7 +156,8 @@ chain, a topology that is too long or an incompatible target is a bind failure o
 
 - `rig_profiles_roundtrip_typed_operations_and_reject_invalid_capacities` and the cases of
   `rig_shapes_test.odin` (spline, spatial targets, Follow, aligned IK, Look with an up axis,
-  targets by name after reordering the set, curve poses, versions other than this one refused)
+  targets by name after reordering the set, curve poses, `Pose_Corrective` twist/swing/cone driving
+  and cycle rejection, versions other than this one refused)
 - Curve poses over a follower that reads its leader's curves and its own without them, full poses
   in any order of the rows and curves renamed in place: `follow_test.odin`
 - `multi_ik_and_spring_modifiers_reuse_bind_buffers_copy_snapshots_and_retire_controls` (a Multi
@@ -159,7 +169,8 @@ chain, a topology that is too long or an incompatible target is a bind failure o
   `rig_goal_persistence_*`, `profile_reload_allocation_failure_*`, `rigs_without_operations_*`,
   `rig_operations_preserve_*` and `multi_ik_full_and_partial_weights_*`.
 - Math: `std/anim/rigs_test.odin` (Multi IK with pole and reach on a chain of nine, the pole
-  yielding to hinges, hostile poles and reaches).
+  yielding to hinges, hostile poles and reaches) and `std/anim/corrective_test.odin` (twist, swing
+  and cone corrective weights, clamping, hostile inputs and cycle checks).
 - `bench_rig_dispatch_and_multi_ik_scaling` (with `MIRAI_BENCH`).
 
 `plugins/animation/editor` (with `-collection:plugins=<root>/plugins`):
@@ -168,7 +179,8 @@ chain, a topology that is too long or an incompatible target is a bind failure o
   `baking_pairs_differently_named_skeletons_by_their_bodies_and_preserves_curves_markers_and_root`,
   `baking_rejects_skeletons_that_pair_no_bone_and_allocation_failure_without_publishing` and
   `baking_a_walk_onto_a_shorter_body_keeps_its_feet_from_sliding_more_than_the_source`.
-- `rig_modifier_api_discovers_named_operations_and_effectors_of_the_character`.
+- `rig_modifier_api_discovers_named_operations_and_effectors_of_the_character` and
+  `pose_corrective_authoring_roundtrips_inspects_and_rejects_invalid_rows`.
 - `curve_poses_are_made_from_the_frames_of_a_clip_and_replace_those_of_their_curves`.
 
 The CPU cases verify neither the GPU nor the visual quality of a model: that requires a build and a

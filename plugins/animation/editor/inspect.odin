@@ -94,6 +94,7 @@ Asset_Inspect_Result :: struct {
     springs:[]Authoring_Page(Profile_Spring_Params) `mirai:"optional"`,
     multi_ik:[]Authoring_Page(Profile_Multi_Params) `mirai:"optional"`,
     spline_ik:[]Authoring_Page(Profile_Spline_Params) `mirai:"optional"`,
+    correctives:[]Authoring_Page(anim.Pose_Corrective) `mirai:"optional"`,
     follow:[]Authoring_Page(Profile_Follow_Params) `mirai:"optional"`,
     curve_poses:[]Authoring_Page(anim.Curve_Pose) `mirai:"optional"`,
 }
@@ -194,7 +195,7 @@ Instance_Lod :: struct {
     period:u32 `mirai:"optional,label=Ticks between two of its poses; 0 or 1: every tick"`,
     wait:bool `mirai:"optional,label=Not a tick of its cadence: its matching searches only when it must"`,
     skip:bool `mirai:"optional,label=Its pose was not evaluated: it keeps the last one"`,
-    plain:bool `mirai:"optional,label=Its grounding, springs and twists did not run"`,
+    plain:bool `mirai:"optional,label=Its grounding, springs, twists and correctives did not run"`,
     skipped:u32 `mirai:"optional,label=Ticks since its pose was last evaluated"`,
     waited:f32 `mirai:"optional,unit=s,label=Seconds of those ticks"`,
 }
