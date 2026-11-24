@@ -262,3 +262,25 @@ a_sync_brings_only_the_files_named_into_a_copy :: proc(t:^testing.T) {
     _,refused=session_sync_plan(folder,copy,{})
     testing.expect(t,refused!="","a sync names its files")
 }
+
+// What session start reads of the log of an editor that starts: the last
+// count of pipelines it compiled, and nothing before one or from a broken line.
+@(test)
+session_reads_the_last_count_of_shaders_compiled :: proc(t:^testing.T) {
+    Case :: struct {text:string,made,total:int,found:bool}
+    line :: project.PIPELINES_PROGRESS
+    cases:=[]Case{
+        {"",0,0,false},
+        {"mirai editor: loading\n",0,0,false},
+        {"x\n"+line+"3/120\n",3,120,true},
+        {line+"3/120\r\n"+line+"47/120\nother\n",47,120,true},
+        {line+"47/120",47,120,true},
+        {line+"47/12\n",0,0,false},
+        {line+"/120\n",0,0,false},
+        {line+"47\n",0,0,false},
+    }
+    for c in cases {
+        made,total,found:=session_compiling(c.text)
+        testing.expectf(t,made==c.made && total==c.total && found==c.found,"%q: %d/%d %v",c.text,made,total,found)
+    }
+}

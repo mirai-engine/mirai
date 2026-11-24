@@ -24,7 +24,6 @@ import "base:runtime"
 import "core:fmt"
 import "core:math"
 import "core:math/linalg"
-import "core:os"
 import "core:reflect"
 import "core:slice"
 import "core:sync"
@@ -1326,15 +1325,16 @@ pipeline_possible :: proc(info: ^rhi.Device_Info, item: Pipeline_Make) -> bool {
 }
 
 // Makes the pipelines of r of the rays wanted that it lacks and the device
-// can, the costliest first, on a thread a core (half the logical processors):
-// the driver compiles each one for up to seconds. The variants of the stages
-// that only spare work are left to the pipeline thread (pipeline_variants_ask).
+// can, the costliest first: the driver compiles each one for up to minutes.
+// The variants of the stages that only spare work are left to the pipeline
+// thread (pipeline_variants_ask).
 // programs: those of the stages of every Surface program of the shaders too
 // (programs_listed), so no frame draws a program as its row while they are
 // made. A transaction that may allocate. Once r.reload_stop is set, from any
-// thread, none more is made. With progress they are made on a thread of their
-// own while the calling one reports how many are (Renderer_Desc.on_pipelines),
-// after the pipeline of the screen UI, made first so it can draw
+// thread, none more is made. They are made on threads of their own, as many at
+// once as cores and memory allow (Pipeline_Memory), while the calling one
+// reports with progress how many are (Renderer_Desc.on_pipelines), after the
+// pipeline of the screen UI, made first so it can draw
 // (renderer_startup_frame). False when one the renderer needs is not there;
 // those of rays traced by hardware are not needed (tracer_missing).
 @(private)
@@ -1372,43 +1372,65 @@ create_pipelines :: proc(r: ^Renderer, wanted: bit_set[Pipeline_Rays], programs 
 		return false
 	}
 	slice.sort_by(builds[:], proc(a, b: Pipeline_Build) -> bool {return a.cost > b.cost})
+	// Threads of their own, owned by this call: a reload makes them on a
+	// thread that is not the owner of r.jobs. Each takes the costliest build
+	// left once there is room for it (Pipeline_Memory); this one watches what
+	// they take and reports.
 	Work :: struct {
 		r:      ^Renderer,
 		builds: []Pipeline_Build,
+		next:   int, // the build taken next (lock)
 		made:   int, // atomic
-		done:   sync.Sema,
+		lock:   sync.Mutex,
+		room:   sync.Cond, // a compile ended or what they take was sampled
+		memory: Pipeline_Memory, // lock
+		ended:  sync.Sema, // a thread ended
 	}
-	work := Work{r = r, builds = builds[:]}
-	run :: proc(work: ^Work, first, last: int, worker: int) {
+	work := Work{r = r, builds = builds[:], memory = pipeline_memory_init(len(builds))}
+	run :: proc(work: ^Work) {
 		r := work.r
-		for build in work.builds[first:last] {
-			if r.reload_stop != nil && sync.atomic_load(r.reload_stop) {return}
+		sync.mutex_lock(&work.lock)
+		for work.next < len(work.builds) && !(r.reload_stop != nil && sync.atomic_load(r.reload_stop)) {
+			if !pipeline_memory_take(&work.memory) {
+				sync.cond_wait_with_timeout(&work.room, &work.lock, PIPELINE_MEMORY_POLL)
+				continue
+			}
+			build := work.builds[work.next]
+			work.next += 1
+			sync.mutex_unlock(&work.lock)
+			started := time.tick_now()
 			pipeline_make(r, build.target, build.graphics, build.compute, now = true)
+			took := time.tick_since(started)
 			sync.atomic_add(&work.made, 1)
+			sync.mutex_lock(&work.lock)
+			pipeline_memory_end(&work.memory, took)
+			sync.cond_broadcast(&work.room)
 		}
+		sync.mutex_unlock(&work.lock)
+		sync.sema_post(&work.ended, 1)
 	}
-	// A system of its own, owned by the thread that runs it: a reload makes
-	// them on a thread that is not the owner of r.jobs.
-	run_all :: proc(work: ^Work) {
-		defer sync.sema_post(&work.done, 1)
-		count := len(work.builds)
-		js: jobs.Job_System
-		if jobs.system_init(&js, {threads = clamp(os.get_processor_core_count() / 2, 1, min(PIPELINE_THREADS_MAX, max(count, 1))) - 1}) {
-			jobs.parallel_for(&js, jobs.OWNER, count, 1, run, work)
-			jobs.system_destroy(&js)
-		} else {
-			run(work, 0, count, jobs.OWNER)
-		}
+	threads: [PIPELINE_THREADS_MAX]^thread.Thread
+	count := 0
+	for _ in 0 ..< (work.memory.cores if len(builds) > 0 else 0) {
+		threads[count] = thread.create_and_start_with_poly_data(&work, run)
+		if threads[count] == nil {break}
+		count += 1
 	}
-	maker := thread.create_and_start_with_poly_data(&work, run_all) if progress != nil && len(builds) > 0 else nil
-	if maker == nil {
-		run_all(&work)
-	} else {
-		for !sync.sema_wait_with_timeout(&work.done, PIPELINE_PROGRESS_INTERVAL) {
-			progress(progress_user, sync.atomic_load(&work.made), len(builds))
+	if count == 0 && len(builds) > 0 {run(&work)}
+	for ended := 0; ended < count; {
+		if sync.sema_wait_with_timeout(&work.ended, PIPELINE_PROGRESS_INTERVAL if progress != nil else PIPELINE_MEMORY_POLL) {
+			ended += 1
+			continue
 		}
-		thread.join(maker)
-		thread.destroy(maker)
+		sync.mutex_lock(&work.lock)
+		pipeline_memory_watch(&work.memory)
+		sync.cond_broadcast(&work.room)
+		sync.mutex_unlock(&work.lock)
+		if progress != nil {progress(progress_user, sync.atomic_load(&work.made), len(builds))}
+	}
+	for worker in threads[:count] {
+		thread.join(worker)
+		thread.destroy(worker)
 	}
 	for item in list.items[:list.count] {
 		if item.rays == .Hardware || item.rays not_in wanted || !item.required || !pipeline_possible(info, item) || item.target == nil || item.target^ != 0 {continue}

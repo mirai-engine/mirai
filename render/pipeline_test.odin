@@ -229,3 +229,44 @@ pipeline_jobs_go_by_need_then_cheapest_speculative :: proc(t: ^testing.T) {
 		testing.expectf(t, pipeline_job_next(c.jobs, c.first) == c.next, "%s: %d, not %d", c.name, pipeline_job_next(c.jobs, c.first), c.next)
 	}
 }
+
+// How many pipelines compile at once follows the memory as well as the cores:
+// a machine with little available starts one, one with many cores no more
+// than memory holds, and a charge measured in this run replaces the first
+// guess. Those running count with what they may still take.
+@(test)
+pipeline_compiles_at_once_follow_memory_and_cores :: proc(t: ^testing.T) {
+	GiB :: i64(1) << 30
+	MiB :: i64(1) << 20
+	Case :: struct {name: string, memory: Pipeline_Memory, available: i64, at_once: int}
+	cases := []Case{
+		{"16 GB, 4 cores, nothing measured: two", {cores = 4, total = 16 * GiB}, 10 * GiB, 2},
+		{"8 GB with 2 available on 32 cores: one", {cores = 32, total = 8 * GiB}, 2 * GiB, 1},
+		{"little available on many cores: one", {cores = 16, total = 64 * GiB}, 4 * GiB, 1},
+		{"no memory said: one", {cores = 16}, 0, 1},
+		{"measured cheap: as many as cores", {cores = 16, total = 16 * GiB, charge = 100 * MiB, measured = true}, 8 * GiB, 16},
+		{"measured cheap, 4 cores: four", {cores = 4, total = 128 * GiB, charge = 100 * MiB, measured = true}, 100 * GiB, 4},
+		{"measured 2.5 GB on 16 GB: three", {cores = 8, total = 16 * GiB, charge = 5 * GiB / 2, measured = true}, 10 * GiB, 3},
+		{"those running may still grow to their charge", {cores = 8, total = 16 * GiB, charge = 3 * GiB, measured = true, running = 2, baseline = 9 * GiB}, 8 * GiB, 2},
+		{"those that took their charge leave what is available", {cores = 8, total = 16 * GiB, charge = 2 * GiB, measured = true, running = 2, baseline = 12 * GiB}, 8 * GiB, 5},
+	}
+	for c in cases {
+		m := c.memory
+		for m.running < 64 && pipeline_memory_admits(m, c.available) {
+			if m.running == 0 {m.baseline = c.available}
+			m.running += 1
+		}
+		testing.expectf(t, m.running == c.at_once, "%s: %d at once, not %d", c.name, m.running, c.at_once)
+	}
+	// What two running take since the first began is what each is charged, the most seen.
+	m := Pipeline_Memory{cores = 4, total = 16 * GiB, running = 2, baseline = 12 * GiB}
+	pipeline_memory_sample(&m, 6 * GiB)
+	pipeline_memory_sample(&m, 9 * GiB)
+	testing.expect_value(t, m.charge, 3 * GiB)
+	pipeline_memory_end(&m, PIPELINE_CHARGE_MEASURED / 2)
+	testing.expect(t, m.running == 1 && !m.measured, "a short compile measures nothing")
+	pipeline_memory_end(&m, PIPELINE_CHARGE_MEASURED)
+	testing.expect(t, m.running == 0 && m.measured, "a long one measures the charge")
+	init := pipeline_memory_init(1 << 20)
+	testing.expect(t, init.cores >= 1 && init.cores <= PIPELINE_THREADS_MAX, "the cores are clamped")
+}

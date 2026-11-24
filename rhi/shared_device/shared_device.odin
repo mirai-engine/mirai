@@ -3,9 +3,11 @@ package shared_device
 import "base:runtime"
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:strings"
 import "core:sync"
 import "core:testing"
+import "mirai:project"
 import "mirai:rhi"
 
 // The devices the GPU tests of a process share. A device for each test costs
@@ -104,14 +106,25 @@ keep_one :: proc() {
 make_shared :: proc(i: int) {
 	if shared.devices[i] != nil || shared.refused[i] != "" {return}
 	context.allocator = runtime.heap_allocator()
-	// The pipelines compiled are kept beside the executable of the tests, as an
-	// editor keeps its own: a run compiles only what changed, whatever the
-	// cache of the driver still holds.
-	store := ""
-	if len(os.args) > 0 {store = fmt.tprintf("%s/gpu-test-pipelines-%d.bin", os.dir(os.args[0]), i)}
+	store := pipeline_store_path(os.get_env(project.PIPELINES_PATH_ENV, context.temp_allocator), os.args[0] if len(os.args) > 0 else "", i == 1, context.temp_allocator)
 	d, refusal := rhi.device_create({app_name = "mirai GPU tests", validation = true, allow_hardware_ray_tracing = i == 1, on_message = count_message, message_user = &shared.errors, allocator = context.allocator, pipeline_cache_path = store})
 	shared.devices[i] = d
 	if d == nil {shared.refused[i] = strings.clone(refusal != "" ? refusal : "no device")}
+}
+
+// Where the devices of GPU tests keep the pipelines they compiled, as an
+// editor keeps its own: a run compiles only what changed, whatever the cache
+// of the driver still holds. named is the store project.PIPELINES_PATH_ENV
+// names, which `mirai test` sets for every test executable and the
+// applications the tests create take too (host.app_create); without it, the
+// store is beside the executable. A device without hardware ray tracing
+// keeps its own, "-software" before the extension. "" without either.
+pipeline_store_path :: proc(named, executable: string, hardware_rt: bool, allocator := context.allocator) -> string {
+	path := named
+	if path == "" && executable != "" {path = fmt.tprintf("%s/%s", os.dir(executable), project.TEST_PIPELINES_FILE)}
+	if path == "" || hardware_rt {return strings.clone(path, allocator)}
+	extension := filepath.ext(path)
+	return strings.concatenate({path[:len(path) - len(extension)], "-software", extension}, allocator)
 }
 
 @(private)

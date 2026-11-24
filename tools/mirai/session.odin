@@ -329,8 +329,19 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     if error!=nil {fmt.eprintfln("mirai session: could not open %s: %v",command[0],error);return {},1}
     gpu_turn_hand_over(&turn,process,fmt.tprintf("the session of %s",folder),charge)
     session_record_write(folder,{process.pid,editor_args})
-    deadline:=time.tick_now()
-    for time.duration_seconds(time.tick_since(deadline))<f64(timeout) {
+    // The timeout counts from the start, and again from each time the count
+    // of pipelines the editor compiled rose: a cold driver takes minutes.
+    since:=time.tick_now()
+    compiled,compiling:=-1,0
+    said:Maybe(time.Tick)
+    for time.duration_seconds(time.tick_since(since))<f64(timeout) {
+        if made,total,found:=session_compiling(session_log_end(log));found && made!=compiled {
+            since,compiled,compiling=time.tick_now(),made,total
+            if at,was:=said.?;!was || time.tick_since(at)>=SESSION_PROGRESS_SAY {
+                fmt.eprintfln("mirai session: the editor compiles shaders %d/%d; it is waited for while the count rises",made,total)
+                said=time.tick_now()
+            }
+        }
         if found,alive:=session_find(folder);alive && session_answers(found.port) {
             card,known:=workspace.gpu_card(root)
             preferred,_:=os.lookup_env("MIRAI_GPU",context.temp_allocator)
@@ -350,9 +361,45 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     }
     // Left open, it would run out of reach, holding the binaries of the engine.
     process_kill_pid(process.pid)
-    fmt.eprintfln("mirai session: the API did not answer in %d s and the editor was closed (pid %d); its log:",timeout,process.pid)
+    if compiled>=0 {
+        fmt.eprintfln("mirai session: the editor compiled no shader for %d s at %d/%d and was closed (pid %d); one alone takes minutes on some drivers: pass --timeout S with more seconds. Most of what it compiled is kept for the next start; its log:",timeout,compiled,compiling,process.pid)
+    } else {
+        fmt.eprintfln("mirai session: the API did not answer in %d s and the editor was closed (pid %d); its log:",timeout,process.pid)
+    }
     session_log_tail(log)
     return {},1
+}
+
+// How often session_open says the count of shaders the editor compiled.
+SESSION_PROGRESS_SAY :: 10*time.Second
+// Bytes of the end of the log of a session that starts read for its progress.
+SESSION_LOG_END :: 16<<10
+
+// The last count of pipelines the editor wrote to its log text while it
+// compiles those it starts with (project.PIPELINES_PROGRESS); found is false
+// before it writes one.
+session_compiling :: proc(text:string) -> (made,total:int,found:bool) {
+    at:=strings.last_index(text,project.PIPELINES_PROGRESS)
+    if at<0 {return}
+    rest:=text[at+len(project.PIPELINES_PROGRESS):]
+    if end:=strings.index_any(rest,"\r\n");end>=0 {rest=rest[:end]}
+    slash:=strings.index_byte(rest,'/')
+    if slash<0 {return}
+    m,made_ok:=strconv.parse_int(rest[:slash],10)
+    n,total_ok:=strconv.parse_int(rest[slash+1:],10)
+    if !made_ok || !total_ok || m<0 || n<m {return}
+    return m,n,true
+}
+
+// The last SESSION_LOG_END bytes of the log; "" when it cannot be read.
+session_log_end :: proc(log:string) -> string {
+    file,error:=os.open(log)
+    if error!=nil {return ""}
+    defer os.close(file)
+    size,_:=os.file_size(file)
+    buffer:=make([]u8,SESSION_LOG_END,context.temp_allocator)
+    read,_:=os.read_at(file,buffer,max(size-SESSION_LOG_END,0))
+    return string(buffer[:max(read,0)])
 }
 
 // Whether an editor of the project that answers can serve a headless session

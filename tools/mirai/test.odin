@@ -102,6 +102,11 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     times:Test_Times
     tests:=join(root,"bin","tests")
     if os.make_directory_all(tests)!=nil && !os.is_dir(tests) {return 1}
+    // The GPU tests of every executable, and the applications they create,
+    // read back the pipelines those before compiled (shared_device.pipeline_store_path).
+    if os.get_env(project.PIPELINES_PATH_ENV,context.temp_allocator)=="" {
+        _=os.set_env(project.PIPELINES_PATH_ENV,join(tests,project.TEST_PIPELINES_FILE))
+    }
     prepared:=time.tick_now()
     // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
     if !engine_shaders(root) || !ensure_runtime_dependencies(root) {return 1}

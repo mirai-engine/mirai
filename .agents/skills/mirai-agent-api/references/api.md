@@ -40,7 +40,9 @@ parts, and `tools/mirai/rpc.odin`, `mcp.odin`, `session.odin`, `capture.odin`.
 ([`subprocess.detached`](../../mirai-std/references/subprocess.md)) via `.mirai/session.json`,
 `api.json`, and `.mirai/session.log`.
 
-- `start` builds (unless `--no-build`) and waits up to `--timeout`; live headless sessions are
+- `start` builds (unless `--no-build`) and waits up to `--timeout`, counted again each time the
+  `mirai: compiling shaders N/M` the editor logs on a cold driver cache rises (shown on stderr
+  every 10 s); a stall names the count and asks for a larger `--timeout`. Live headless sessions are
   reused (warns if binaries/library are stale); windowed editors are never reused/closed (fails
   with pid); unresponsive headless needs `stop --force`. `restart` keeps prior mode/args.
 - **Open-session builds**: `build.engine_unlock` retires running binaries to

@@ -10,6 +10,12 @@ USER_ORGANIZATION :: "Mirai"
 // In the user folder of a project: the GPU pipelines its runs compiled, read back by the next.
 PIPELINES_FILE :: "pipelines.bin"
 PIPELINES_PATH_ENV :: "MIRAI_PIPELINES_PATH"
+// In the folder of the test executables: the pipelines their GPU tests compiled.
+TEST_PIPELINES_FILE :: "gpu-test-pipelines.bin"
+// Before "made/total" on stderr while an application without a window compiles
+// the pipelines it starts with: what waits for it (mirai session start) tells
+// a renderer that compiles from one that is stuck.
+PIPELINES_PROGRESS :: "mirai: compiling shaders "
 
 // Folder for what an application keeps for its user (settings, saves,
 // caches), made when missing: <user data>/<organization>/<application>.

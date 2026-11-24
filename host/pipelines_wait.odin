@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "mirai:platform"
+import "mirai:project"
 import render "mirai:render"
 import "mirai:rhi"
 import "mirai:ui"
@@ -19,6 +20,7 @@ import "mirai:ui"
 PIPELINES_WAIT_HEADLINE :: "Compiling shaders %d/%d"
 PIPELINES_WAIT_DETAIL :: "%d:%02d elapsed"
 PIPELINES_WAIT_SHOWN_NS :: u64(1_000_000_000) // a start that compiles for less says nothing
+PIPELINES_LOG_NS :: u64(2_000_000_000)        // the least between two lines of pipelines_log_report
 PIPELINES_WAIT_SIZES :: [2]f32{22,15}         // of the headline and the detail, in points
 PIPELINES_WAIT_BAR :: f32(36)                 // points of the bar of a custom chrome
 PIPELINES_WAIT_CONTROL :: f32(46)             // width of a button of the window on the bar
@@ -41,6 +43,19 @@ Pipelines_Wait :: struct {
     title_length:int,
     shown:bool,
     ctx:^ui.Context,
+    logged:int,     // made when pipelines_log_report last wrote
+    logged_at:u64,  // and when
+}
+
+// Without a window, stderr says how many are made (project.PIPELINES_PROGRESS)
+// once they take PIPELINES_WAIT_SHOWN_NS, and again while the count rises.
+@(private)
+pipelines_log_report :: proc(user:rawptr,made,total:int) {
+    w:=(^Pipelines_Wait)(user)
+    now:=platform.clock_ns()
+    if now-w.started<PIPELINES_WAIT_SHOWN_NS || w.logged_at!=0 && (made==w.logged || now-w.logged_at<PIPELINES_LOG_NS) {return}
+    w.logged,w.logged_at=made,now
+    fmt.eprintfln(project.PIPELINES_PROGRESS+"%d/%d",made,total)
 }
 
 @(private)

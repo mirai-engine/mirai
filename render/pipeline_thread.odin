@@ -2,8 +2,11 @@ package mirai_render
 
 import "core:os"
 import "core:sync"
+import si "core:sys/info"
 import "core:thread"
+import "core:time"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // The variants of the stages (pipeline_of, pipeline_variants_ask) and, with
 // Renderer_Desc.pipeline_thread, the pipelines of the stages of Surface
@@ -43,8 +46,92 @@ Pipeline_Thread :: struct {
 	installed: u64, // times pipelines went in place
 	quit:   bool,
 	late_frames: u64,  // submitted frames that still had a requested pipeline pending
+	memory: Pipeline_Memory, // which job may start: the threads wait for room (mutex)
 	threads: [PIPELINE_THREADS_MAX]^thread.Thread,
 	thread_count: int,
+}
+
+// How many pipelines compile at once. The driver takes up to gigabytes to
+// compile one (the stages of the software tracer on some drivers), which no
+// count of cores tells: a compile beyond the first starts only while there is
+// a physical core for it and the memory the system says is available, less a
+// reserve, holds it and what those running may still take. What a compile
+// takes is learned from this run: how much less is available than when the
+// first of those running began, shared among them. Until a compile that ran
+// PIPELINE_CHARGE_MEASURED ended, one is charged at least
+// 1/PIPELINE_CHARGE_FIRST_SHARE of the memory of the machine.
+@(private)
+Pipeline_Memory :: struct {
+	cores:    int, // compiles at once at most
+	total:    i64, // bytes of the machine; 0 when the system does not say: one compile at a time
+	running:  int,
+	baseline: i64, // bytes available when the first of those running began
+	charge:   i64, // the most bytes one compile was seen to take
+	measured: bool, // a compile that ran PIPELINE_CHARGE_MEASURED ended: charge is what this run took
+}
+
+@(private)
+PIPELINE_CHARGE_FIRST_SHARE :: 4      // of the memory of the machine, charged to a compile before one is measured
+@(private)
+PIPELINE_MEMORY_RESERVE_SHARE :: 16   // of the memory of the machine, left to everything else
+@(private)
+PIPELINE_CHARGE_MEASURED :: time.Second // a compile this long was sampled through its peak
+@(private)
+PIPELINE_MEMORY_POLL :: 50 * time.Millisecond // how often who waits for room looks again
+
+// For compiles on at most cores threads (clamped to the physical cores).
+@(private)
+pipeline_memory_init :: proc(cores: int) -> (m: Pipeline_Memory) {
+	physical, _, known := si.cpu_core_count()
+	if !known || physical <= 0 {physical = os.get_processor_core_count()}
+	m.cores = clamp(min(cores, physical), 1, PIPELINE_THREADS_MAX)
+	total, _, ok := base.memory_stats()
+	if ok {m.total = total}
+	return
+}
+
+// Whether one more compile may start with available bytes available now.
+@(private)
+pipeline_memory_admits :: proc(m: Pipeline_Memory, available: i64) -> bool {
+	if m.running == 0 {return true}
+	if m.running >= m.cores || m.total <= 0 {return false}
+	charge := m.charge if m.measured else max(m.charge, m.total / PIPELINE_CHARGE_FIRST_SHARE)
+	taken := max(m.baseline - available, 0)
+	growing := max(i64(m.running) * charge - taken, 0)
+	return available - m.total / PIPELINE_MEMORY_RESERVE_SHARE - growing - charge >= 0
+}
+
+// What those running take, with available bytes available now.
+@(private)
+pipeline_memory_sample :: proc(m: ^Pipeline_Memory, available: i64) {
+	if m.running == 0 {return}
+	m.charge = max(m.charge, (m.baseline - available) / i64(m.running))
+}
+
+// Starts a compile when there is room for it: the caller holds the lock of m.
+@(private)
+pipeline_memory_take :: proc(m: ^Pipeline_Memory) -> bool {
+	_, available, ok := base.memory_stats()
+	if !ok {available = 0}
+	if ok {pipeline_memory_sample(m, available)}
+	if !pipeline_memory_admits(m^, available) {return false}
+	if m.running == 0 {m.baseline = available}
+	m.running += 1
+	return true
+}
+
+// A compile that took took ended: the caller holds the lock of m.
+@(private)
+pipeline_memory_end :: proc(m: ^Pipeline_Memory, took: time.Duration) {
+	m.running = max(m.running - 1, 0)
+	m.measured ||= took >= PIPELINE_CHARGE_MEASURED
+}
+
+// Samples what those running take: the caller holds the lock of m.
+@(private)
+pipeline_memory_watch :: proc(m: ^Pipeline_Memory) {
+	if m.running == 0 {return}
+	if _, available, ok := base.memory_stats(); ok {pipeline_memory_sample(m, available)}
 }
 
 @(private)
@@ -52,7 +139,9 @@ pipeline_thread_start :: proc(r: ^Renderer) {
 	t, t_error := new(Pipeline_Thread, r.allocator)
 	if t_error != nil {return}
 	t.device = r.device
-	for i in 0 ..< clamp(os.get_processor_core_count() / 2, 2, PIPELINE_THREADS_MAX) {
+	// A core goes to the frames; the memory bounds how many of the others compile.
+	t.memory = pipeline_memory_init(PIPELINE_THREADS_MAX)
+	for i in 0 ..< clamp(t.memory.cores - 1, 2, PIPELINE_THREADS_MAX) {
 		// The first takes every job; the others are reserved for those that are not speculative.
 		t.threads[t.thread_count] = thread.create_and_start_with_poly_data2(t, i > 0, pipeline_thread_run)
 		if t.threads[t.thread_count] == nil {break}
@@ -68,18 +157,26 @@ pipeline_thread_run :: proc(t: ^Pipeline_Thread, reserved: bool) {
 		sync.mutex_lock(&t.mutex)
 		job: ^Pipeline_Job
 		for job == nil && !t.quit {
-			if next := pipeline_job_next(t.jobs[:], reserved); next >= 0 {job = &t.jobs[next]}
-			if job == nil && !t.quit {sync.cond_wait(&t.asked, &t.mutex)}
+			next := pipeline_job_next(t.jobs[:], reserved)
+			switch {
+			case next < 0: sync.cond_wait(&t.asked, &t.mutex)
+			case pipeline_memory_take(&t.memory): job = &t.jobs[next]
+			case: sync.cond_wait_with_timeout(&t.asked, &t.mutex, PIPELINE_MEMORY_POLL)
+			}
 		}
 		if t.quit {sync.mutex_unlock(&t.mutex); return}
 		job.state = .Making
 		graphics, compute := job.graphics, job.compute
 		sync.mutex_unlock(&t.mutex)
+		started := time.tick_now()
 		made := rhi.pipeline_create_compute(t.device, compute) if compute.shader != nil else rhi.pipeline_create_graphics(t.device, graphics)
+		took := time.tick_since(started)
 		free_all(context.temp_allocator)
 		sync.mutex_lock(&t.mutex)
 		job.made, job.state = made, .Made
+		pipeline_memory_end(&t.memory, took)
 		sync.cond_broadcast(&t.made)
+		sync.cond_broadcast(&t.asked) // the room it held is free
 		sync.mutex_unlock(&t.mutex)
 	}
 }
@@ -152,6 +249,7 @@ pipelines_install :: proc(r: ^Renderer) {
 	if t == nil || sync.atomic_load(&t.busy) == 0 {return}
 	sync.mutex_lock(&t.mutex)
 	defer sync.mutex_unlock(&t.mutex)
+	pipeline_memory_watch(&t.memory)
 	for &job in t.jobs {
 		if job.state != .Made {continue}
 		job.owner^ = job.made

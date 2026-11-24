@@ -182,6 +182,12 @@ pipe := rhi.pipeline_create_compute(dev, {
   thread records ([host loading](shaders.md#loading-in-host); Vulkan caches omit
   `EXTERNALLY_SYNCHRONIZED`). `Device.pipeline_lock` guards pipelines, `message_lock` guards
   messages, `pool_get` is slot-local. Destruction stays on the frame thread.
+- How many compile at once (`create_pipelines`, `Pipeline_Thread`) is bounded by physical cores and
+  by memory (`Pipeline_Memory`): one compile can take gigabytes in the driver (software tracer on
+  Mesa/amdvlk), so each beyond the first waits until `base.memory_stats` leaves room for the
+  per-compile charge learned in this run (a quarter of RAM until one is measured).
+- GPU tests share one store: `mirai test` sets `MIRAI_PIPELINES_PATH` to
+  `bin/tests/gpu-test-pipelines.bin`, read by `shared_device` and by `host.app_create`.
 
 ## Limits
 
