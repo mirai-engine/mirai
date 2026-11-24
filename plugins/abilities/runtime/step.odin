@@ -52,12 +52,12 @@ Ability_Tables :: struct {
 @(step="fixed",stage="begin",loops="game")
 abilities_prepare :: proc(
     tables:Ability_Tables,checks:^Ability_Attributes,events:^Ability_Events,
-    sounds:^audio.Sound_Requests,births:^core.Births,problems:^core.Problems,app:^host.App,
+    sounds:^audio.Sound_Requests,problems:^core.Problems,app:^host.App,
 ) {
     ability_rows(tables,checks,problems)
     if core.count(tables.users)==0 {return}
     // The log holds the preceding frame and every tick of this one until the next age.
-    ability_room(events,sounds,births,2*max(app.max_ticks,1)*EVENT_CAPACITY,problems)
+    ability_room(events,sounds,2*max(app.max_ticks,1)*EVENT_CAPACITY,problems)
 }
 
 @(step="fixed")
@@ -67,12 +67,11 @@ abilities_step :: proc(tables:Ability_Tables,data:Ability_Data,sheets:^Ability_S
 }
 
 @(private)
-ability_room :: proc(events:^Ability_Events,sounds:^audio.Sound_Requests,births:^core.Births,room:int,problems:^core.Problems) {
+ability_room :: proc(events:^Ability_Events,sounds:^audio.Sound_Requests,room:int,problems:^core.Problems) {
     if events!=nil && cap(events.queue.items)<room && reserve(&events.queue.items,room)!=nil {
         core.report(problems,core.NONE,"abilities.events","out of memory for ability events")
     }
-    if sounds!=nil && cap(sounds.queue.items)<EVENT_CAPACITY && reserve(&sounds.queue.items,EVENT_CAPACITY)!=nil ||
-       births!=nil && cap(births.queue.items)<EVENT_CAPACITY && reserve(&births.queue.items,EVENT_CAPACITY)!=nil {
+    if sounds!=nil && cap(sounds.queue.items)<EVENT_CAPACITY && reserve(&sounds.queue.items,EVENT_CAPACITY)!=nil {
         core.report(problems,core.NONE,"abilities.feedback","out of memory for ability feedback")
     }
 }
@@ -1059,10 +1058,7 @@ feedback_emit :: proc(t:^Tick,ref:core.Record(Ability_Feedback),entity:core.Enti
         } else {feedback_full(t,entity)}
     }
     if t.w.births!=nil && placed && t.sheets.channels[row]!=0 {
-        births:=t.w.births
-        if len(births.queue.items)<cap(births.queue.items) {
-            core.push(&births.queue,core.Birth{channel=t.sheets.channels[row],position=pose.position})
-        } else {feedback_full(t,entity)}
+        core.push(&t.w.births.queue,core.Birth{channel=t.sheets.channels[row],position=pose.position})
     }
 }
 

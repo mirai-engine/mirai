@@ -179,7 +179,7 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     f.time={tick=1,dt=1.0/RATE,playing=true}
     ability_rows(tables_of(f),&f.checks,&f.problems)
     test_world_settle(&f.w)
-    ability_room(&f.events,&f.sounds,&f.births,16*EVENT_CAPACITY,&f.problems)
+    ability_room(&f.events,&f.sounds,16*EVENT_CAPACITY,&f.problems)
     return true
 }
 
@@ -854,7 +854,7 @@ feedback_rows_emit_once_at_start_window_and_hit :: proc(t:^testing.T) {
         testing.expect_value(t,births[i].position,pose.position)
     }
     core.take(&f.sounds.queue)
-    core.take(&f.births.queue)
+    core.log_reset(&f.births.queue.log)
     ability_cancel(&f.requests,f.player)
     ability_use(&f.requests,f.player,ref(SLASH_1))
     f.time.resimulating=true

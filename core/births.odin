@@ -2,11 +2,9 @@ package core
 
 import "mirai:std/base"
 
-// Births of effects by channel, for whoever draws them without knowing who
-// asks: the library that asks pushes them to the queue, and the one that draws
-// effects (vfx) takes them in the next fixed step and starts, at each, the
-// particles of the emitters that listen to its channel. A birth to a channel
-// nobody listens to is let go.
+// Births of effects by channel, for whoever shows them without knowing who
+// asks: a library pushes them to the log, and what shows effects (vfx) reads
+// what came since it last ran. A birth nobody reads ages out with the log.
 
 // A channel of births is a name (birth_channel): whoever pushes and whoever
 // listens say the same text, as the data channels of vfx are named, and
@@ -32,7 +30,7 @@ Birth :: struct {
     values:[4]f32,
 }
 
-@(storage,queue)
+@(storage,shared)
 Births :: struct {
-    queue:Queue(Birth),
+    queue:Events(Birth),
 }

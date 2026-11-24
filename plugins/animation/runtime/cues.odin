@@ -82,16 +82,14 @@ cue_emit :: proc(
         if cue_room(&sounds.queue) {audio.play_id(sounds,cue.sound,pose.position)} else {full=true}
     }
     if cue.channel[0]!=0 && births!=nil {
-        if cue_room(&births.queue) {
-            birth:=core.Birth{channel=core.birth_channel(base.text_get(cue.channel[:])),
-                position=pose.position}
-            if cue.align_up {birth.normal=mm.quat_rotate(pose.rotation,{0,1,0})}
-            core.push(&births.queue,birth)
-        } else {full=true}
+        birth:=core.Birth{channel=core.birth_channel(base.text_get(cue.channel[:])),
+            position=pose.position}
+        if cue.align_up {birth.normal=mm.quat_rotate(pose.rotation,{0,1,0})}
+        core.push(&births.queue,birth)
     }
     if full {
         core.report(problems,entity,"animation.cue_capacity",
-            "the marker cue did not fit in the sound or particle queue; use fewer simultaneous cues")
+            "the marker cue did not fit in the sound queue; use fewer simultaneous cues")
     }
 }
 

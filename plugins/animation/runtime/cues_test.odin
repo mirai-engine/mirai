@@ -48,7 +48,7 @@ a_crossed_marker_emits_one_spatial_cue_and_replay_keeps_only_the_birth :: proc(t
     birth:=w.births.queue.items[0]
     testing.expect(t,birth.channel==core.birth_channel("dust") && birth.normal=={0,1,0} &&
         birth.position=={2,3,4})
-    _=core.take(&w.births.queue)
+    core.log_reset(&w.births.queue.log)
     _=core.take(&w.sounds.queue)
     tracker:mem.Tracking_Allocator
     mem.tracking_allocator_init(&tracker,context.allocator)

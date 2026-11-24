@@ -168,7 +168,7 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
 particles_tick :: proc(
     emitters:^core.Table(Particle_Emitter),overrides:^core.Table(Particle_Override),
     worlds:^core.Table(core.World_Transform,.Read),hierarchy:core.Ref(core.Hierarchy),entities:core.Commands,
-    clocks:^Particle_Clocks,sync:^Particle_Sync,requests:^Particle_Requests,births:^core.Births,listeners:^core.Table(Particle_Channel,.Read),
+    clocks:^Particle_Clocks,sync:^Particle_Sync,requests:^Particle_Requests,births:core.Ref(core.Births),listeners:^core.Table(Particle_Channel,.Read),
     time:core.Time,frame:core.Frame_Time,assets:^host.Assets,problems:^core.Problems,sources:core.Ref(scene.Simulation_Sources),
 ) {
     if clocks.playing!=time.playing {
@@ -179,7 +179,7 @@ particles_tick :: proc(
         channels_clear(sync)
         clocks.playing=time.playing
     }
-    channels_step(clocks,sync,core.take(&births.queue),listeners,time)
+    channels_step(clocks,sync,births.queue.items[:],listeners,time)
     // The clocks of the emitters that went, or whose entity is no longer placed.
     c_emitters:=core.changes(emitters,&clocks.seen_emitters)
     c_worlds:=core.changes(worlds,&clocks.seen_worlds)

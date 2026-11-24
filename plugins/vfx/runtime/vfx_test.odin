@@ -42,6 +42,7 @@ Emitters_World :: struct {
 @(private="file")
 Emitters_Fixture :: struct {
     using w:Emitters_World,
+    births_cursor:u64,
     sources:scene.Simulation_Sources,
     drawn:erender.Render_Sync,
     sync:Particle_Sync,
@@ -74,7 +75,10 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
-    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.sync,&f.requests,&f.births,core.read(&f.listeners),time,frame,f.app.assets,&f.problems,core.ref(&f.sources))
+    births:=f.births
+    core.events_read(&births.queue,&f.births_cursor)
+    particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.sync,&f.requests,core.ref(&births),core.read(&f.listeners),time,frame,f.app.assets,&f.problems,core.ref(&f.sources))
+    core.events_age(&f.births.queue)
     fixture_settle(f)
 }
 

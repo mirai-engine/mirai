@@ -153,7 +153,7 @@ demo enables. How an `editor/` adds steps, panels and tools:
   [grounding](../../mirai-animation/references/animation-grounding.md) and the arm of the cameras
   use `core.World_Queries`, which `physics` provides; pcg and navigation read the ground of
   `core.Ground_Queries`, which `terrain` provides; births of effects go through `core.Births`,
-  which `vfx` takes; and a component declared `replicated="object"` (suppressed pcg points) is
+  which `vfx` reads; and a component declared `replicated="object"` (suppressed pcg points) is
   replicated by `multiplayer` without a bridge ([core](../../mirai-core/references/core.md#ground)).
 - **`navigation`** (`Runtime`, `Editor`; depends on `physics` and `locomotion`): automatic
   navmesh from static collision, per agent class and by tiles that rebuild themselves, areas,
