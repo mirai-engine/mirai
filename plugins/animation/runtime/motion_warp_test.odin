@@ -321,6 +321,33 @@ motion_runtime_reuses_generational_entity_slots_and_retires_only_the_mapping_it_
 }
 
 @(test)
+motion_prepare_waits_until_the_rig_is_bound_before_reporting_missing_body_bones :: proc(t:^testing.T) {
+    problems:core.Problems
+    w:Motion_Warp_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    playback:Playback;defer playback_free(&playback)
+    motion:Motion_Runtime;defer motion_runtime_free(&motion)
+    requests:Animation_Requests;defer {delete(requests.warps.items);delete(requests.locomotion.items)}
+    profile:=motion_test_profile();profile.warp.stride=true;defer motion_test_free(&profile)
+    cache:Character_Assets;defer character_assets_free(&cache);test_character_seed(&cache,{1,2},{motion=profile})
+    host_assets:host.Assets;app:=host.App{assets=&host_assets,allocator=context.allocator}
+    test_character_register(&host_assets,{1,2});defer test_registry_free(&host_assets)
+    entity:=core.create(&w.entities);index:=core.entity_index(entity)
+    // actions_prepare creates an unbound Playing state (bound == 0) before skeleton_bind runs in the same tick.
+    append(&playback.states,Playing{entity=entity,bound=0});resize(&playback.rows,index+1);playback.rows[index]=1
+    config:=ANIMATION_DEFAULT;config.asset={1,2};core.add(&w.animations,entity,config);test_world_settle(&w)
+    testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems))
+    testing.expect_value(t,problems.count,0)
+    // Once bound without a body, motion_prepare still reports animation.motion_bones.
+    playback.states[0].bound=1
+    testing.expect(t,motion_prepare(&motion,&requests,core.read(&w.animations),&playback,&cache,app.assets,app.allocator,&problems))
+    testing.expect_value(t,problems.count,1)
+    listed:=core.problems_list(&problems)
+    testing.expect_value(t,base.text_get(listed[0].code[:]),"animation.motion_bones")
+}
+
+@(test)
 motion_discovers_changed_profiles_retries_first_targets_and_compacts_instances_in_world_copies :: proc(t:^testing.T) {
     w:Motion_Warp_World
     if !test_world_init(t,&w) {return}

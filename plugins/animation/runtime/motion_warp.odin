@@ -232,7 +232,7 @@ motion_prepare :: proc(runtime:^Motion_Runtime,requests:^Animation_Requests,anim
         content:=character_content(characters,loaded,allocator,id,&instance.content)
         if content==nil {
             instance.error=.Missing_Profile
-        } else if state!=nil && !motion_bind(&instance,state,content) {
+        } else if state!=nil && state.bound!=0 && !motion_bind(&instance,state,content) {
             motion_problem(problems,instance.entity,instance.error)
         }
         if kept!=i {runtime.instances[kept]=instance};runtime.rows[index]=i32(kept+1);kept+=1

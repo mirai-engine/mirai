@@ -51,16 +51,16 @@ path_stem :: proc(path:string) -> string {
 // The paths nearest to a name among the assets of the kinds, as a list.
 @(private="file")
 registry_nearest :: proc(r:^Registry,name,kinds:string) -> string {
-    paths,stems:=make([dynamic]string,context.temp_allocator),make([dynamic]string,context.temp_allocator)
-    for &file in r.files {
+    last:=path_stem(name)
+    matcher:base.Name_Nearest
+    if !base.name_nearest_init(&matcher,last[strings.last_index_byte(last,'/')+1:],base.NAME_NEAREST,context.temp_allocator) {return ""}
+    for &file,i in r.files {
         if file.state!=.Asset || !registry_listed(&file) || !path_of_kinds(file.path,kinds) {continue}
-        append(&paths,file.path)
-        append(&stems,path_stem(file.path))
+        base.name_nearest_add(&matcher,i,path_stem(file.path))
     }
     nearest:[base.NAME_NEAREST]int
-    last:=path_stem(name)
-    count:=base.names_nearest(last[strings.last_index_byte(last,'/')+1:],stems[:],nearest[:])
+    count:=base.name_nearest_finish(&matcher,nearest[:])
     b:=strings.builder_make(context.temp_allocator)
-    for at,i in nearest[:count] {fmt.sbprintf(&b,"%s%s",i>0?", ":"",paths[at])}
+    for at,i in nearest[:count] {fmt.sbprintf(&b,"%s%s",i>0?", ":"",r.files[at].path)}
     return strings.to_string(b)
 }

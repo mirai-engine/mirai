@@ -102,3 +102,21 @@ names_without_memory_say_less_and_never_past_their_candidates :: proc(t:^testing
         testing.expectf(t,done && refused,"%v of %q: asked for memory %v, went through with it %v",c.call,c.name,refused,done)
     }
 }
+
+@(test)
+names_nearest_handles_many_candidates_in_tiny_scratch_arena :: proc(t:^testing.T) {
+    arena:Arena
+    testing.expect(t,arena_init(&arena,4096))
+    defer arena_destroy(&arena)
+    matcher:Name_Nearest
+    testing.expect(t,name_nearest_init(&matcher,"zombie_soldier_body",NAME_NEAREST,arena_allocator(&arena)))
+    for i in 0..<20000 {
+        name_nearest_add(&matcher,i,"props/crate_metal_rusty_01")
+    }
+    name_nearest_add(&matcher,20000,"characters/zombie_soldier_body_v2")
+    nearest:[NAME_NEAREST]int
+    count:=name_nearest_finish(&matcher,nearest[:])
+    testing.expect_value(t,count,1)
+    testing.expect_value(t,nearest[0],20000)
+    testing.expect_value(t,arena.failed,0)
+}
