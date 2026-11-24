@@ -36,8 +36,10 @@
 
 Mirai is a native 3D engine and editor where people and AI agents build the same game, in the
 same scene, at the same time. Connect your favorite agent inside the editor, or connect it
-externally via MCP or JSON-RPC.  <p align="center">
-  <img src=".github/media/agents.png" alt="Three AI agents working in the Mirai editor"
+externally via MCP or JSON-RPC.
+
+<p align="center">
+  <img src=".github/media/collaboration.png" alt="Live collaboration in the Mirai editor"
     width="100%">
 </p>
 
