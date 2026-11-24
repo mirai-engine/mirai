@@ -204,6 +204,7 @@ space_bake :: proc(r:^Reader,b:Basis) {
         node.transform=space_transform(b,node.transform)
         if light,has:=&node.light.?;has {
             light.range*=b.units
+            light.length*=b.units
             light.size*=b.units
             if radius,sized:=&light.radius.?;sized {radius^*=b.units}
         }

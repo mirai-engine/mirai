@@ -38,7 +38,7 @@ test_read :: proc(r:^Reader,bytes:[]u8) -> bool {
     row:=mesh_add(r,mesh)
     turn:=linalg.quaternion_angle_axis_f32(math.PI/2,{0,0,1})
     append(&r.nodes,Imported_Node{name=own(r,"Root"),parent=-1,transform={{100,200,300},turn,{1,2,3}},mesh=-1,visible=true})
-    append(&r.nodes,Imported_Node{name=own(r,"Triangle"),parent=0,transform=mm.TRANSFORM_IDENTITY,mesh=row,visible=true,light=Imported_Light{kind=.Point,range=1000}})
+    append(&r.nodes,Imported_Node{name=own(r,"Triangle"),parent=0,transform=mm.TRANSFORM_IDENTITY,mesh=row,visible=true,light=Imported_Light{kind=.Point,range=1000,length=80}})
     bones:=make([]asset.Skeleton_Bone,1,r.out)
     bones[0]={parent=-1,translation={0,0,100},rotation=turn,scale={1,2,3}}
     append(&r.skeletons,Imported_Skeleton{name=own(r,"Rig"),bones=bones})
@@ -250,7 +250,7 @@ the_space_a_reader_declares_is_baked_once_into_what_the_import_gives :: proc(t:^
     testing.expect(t,near(linalg.quaternion_mul_vector3(root.rotation,[3]f32{0,0,-1}),{1,0,0}),"a rotation keeps what it does to the source")
     testing.expect(t,model.nodes[1].parent==0 && near(model.nodes[1].transform.position,{0,0,0}))
     light,has_light:=model.nodes[1].light.?
-    testing.expect(t,has_light && abs(light.range-10)<1e-4)
+    testing.expect(t,has_light && abs(light.range-10)<1e-4 && abs(light.length-0.8)<1e-4)
 
     // The mirror turns the triangle: its normal, from the order of its corners, stays outside.
     mesh:=&model.meshes[0]

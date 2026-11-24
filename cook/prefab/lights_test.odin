@@ -120,3 +120,145 @@ def Mesh "Floor"
     point,is_point:=asset.scene_get(&scene,entity_of(&scene,"Bulb"),"Point_Light",render.Point_Light)
     testing.expectf(t,is_point && abs(point.radius-0.1)<1e-6,"a point keeps the radius of its sphere: %v",point)
 }
+
+// Imported lights carry shadowless fill, indirect/scattering multipliers,
+// capsule tube length (scaled to match engine/render sphere_desc), and Hidden
+// when the source node is invisible.
+@(test)
+imported_lights_keep_shadows_multipliers_tube_length_and_hidden :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"light-options")
+    if folder=="" {return}
+    path:=fmt.tprintf("%s/light_options.scene",folder)
+    model:=importer.Imported_Model{
+        name="light_options",
+        nodes={
+            {
+                name="FillTube",
+                path="FillTube",
+                parent=-1,
+                transform={rotation=1,scale={1,1,1}},
+                mesh=-1,
+                visible=true,
+                light=importer.Imported_Light{
+                    kind=.Point,color={0.8,0.9,1},intensity=250,range=10,
+                    radius=f32(0.05),length=0.8,
+                    shadows=false,indirect=f32(1.4),scattering=f32(0.5),
+                },
+            },
+            {
+                name="OffSpot",
+                path="OffSpot",
+                parent=-1,
+                transform={rotation=1,scale={1,1,1}},
+                mesh=-1,
+                visible=false,
+                light=importer.Imported_Light{
+                    kind=.Spot,color={1,1,1},intensity=500,range=15,outer_cone=0.5,
+                    shadows=false,indirect=f32(0),scattering=f32(0),
+                },
+            },
+        },
+    }
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    assets:=importer.Import_Report{allocator=context.allocator}
+    defer importer.report_destroy(&assets)
+    _,write_error:=model_prefab(&model,&assets,&types,import_world(t),{2,3},"light_options",path)
+    if !testing.expect_value(t,write_error,Error.None) {return}
+    scene:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&scene,&types,path),asset.Error.None) {return}
+    defer asset.scene_destroy(&scene)
+    entity_of :: proc(scene:^asset.Scene,name:string) -> base.Entity_Id {
+        for i in 0..<asset.scene_entity_count(scene) {if record:=asset.scene_entity(scene,i);record.name==name {return record.id}}
+        return 0
+    }
+    tube_id:=entity_of(&scene,"FillTube")
+    pt,ok_pt:=asset.scene_get(&scene,tube_id,"Point_Light",render.Point_Light)
+    tr,ok_tr:=asset.scene_get(&scene,tube_id,"Transform",core.Transform)
+    testing.expectf(t,ok_pt && !pt.shadows && abs(pt.indirect-1.4)<1e-5 && abs(pt.scattering-0.5)<1e-5 && abs(pt.radius-0.05)<1e-5,"fill tube light fields preserved: %v",pt)
+    testing.expectf(t,ok_tr && abs(2*pt.radius*(tr.scale.x-1)-0.8)<1e-4,"tube scale yields length 0.8 m: %v",tr.scale)
+    _,tube_hidden:=asset.scene_get(&scene,tube_id,"Hidden",render.Hidden)
+    testing.expect(t,!tube_hidden,"visible light is not hidden")
+
+    off_id:=entity_of(&scene,"OffSpot")
+    sp,ok_sp:=asset.scene_get(&scene,off_id,"Spot_Light",render.Spot_Light)
+    _,off_hidden:=asset.scene_get(&scene,off_id,"Hidden",render.Hidden)
+    testing.expectf(t,ok_sp && !sp.shadows && sp.indirect==0 && sp.scattering==0,"off spot preserves flags: %v",sp)
+    testing.expect(t,off_hidden,"invisible light carries Hidden")
+
+    // Hostile non-finite and negative light values fall back safely with warnings.
+    nan:=math.nan_f32()
+    inf:=math.inf_f32(1)
+    bad:=importer.Imported_Model{
+        name="hostile_lights",
+        nodes={
+            {
+                name="BadInf",path="BadInf",parent=-1,transform={rotation=1,scale={1,1,1}},mesh=-1,visible=true,
+                light=importer.Imported_Light{kind=.Point,color={1,1,1},intensity=100,range=5,length=inf,radius=nan,indirect=inf,scattering=nan},
+            },
+            {
+                name="BadNeg",path="BadNeg",parent=-1,transform={rotation=1,scale={1,1,1}},mesh=-1,visible=true,
+                light=importer.Imported_Light{kind=.Point,color={1,1,1},intensity=100,range=5,length=-2,radius=f32(-1),indirect=f32(-0.5),scattering=f32(-1)},
+            },
+        },
+    }
+    bad_path:=fmt.tprintf("%s/hostile_lights.scene",folder)
+    bad_assets:=importer.Import_Report{allocator=context.allocator}
+    defer importer.report_destroy(&bad_assets)
+    _,bad_err:=model_prefab(&bad,&bad_assets,&types,import_world(t),{2,4},"hostile_lights",bad_path)
+    if !testing.expect_value(t,bad_err,Error.None) {return}
+    bad_scene:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&bad_scene,&types,bad_path),asset.Error.None) {return}
+    defer asset.scene_destroy(&bad_scene)
+    for node_name in ([]string{"BadInf","BadNeg"}) {
+        id:=entity_of(&bad_scene,node_name)
+        p,ok_p:=asset.scene_get(&bad_scene,id,"Point_Light",render.Point_Light)
+        tr_b,ok_tr_b:=asset.scene_get(&bad_scene,id,"Transform",core.Transform)
+        testing.expectf(t,ok_p && p.radius==render.POINT_LIGHT_DEFAULT.radius && p.indirect==1 && p.scattering==1,"%s fell back cleanly: %v",node_name,p)
+        testing.expectf(t,ok_tr_b && tr_b.scale=={1,1,1},"%s kept finite unit scale: %v",node_name,tr_b.scale)
+    }
+    testing.expectf(t,len(bad_assets.warnings)==8,"every invalid field reported a warning: %d",len(bad_assets.warnings))
+
+    // USD CylinderLight + inputs:shadow:enable = false flows through import -> prefab.
+    usd_source:=fmt.tprintf("%s/tube.usda",folder)
+    usd_path:=fmt.tprintf("%s/tube.scene",folder)
+    usd_text:=`#usda 1.0
+(
+    metersPerUnit = 0.01
+    upAxis = "Y"
+)
+def CylinderLight "NeonTube"
+{
+    float inputs:intensity = 50
+    float inputs:radius = 5
+    float inputs:length = 80
+    bool inputs:shadow:enable = false
+    float3 xformOp:scale = (2, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:scale"]
+}
+def Mesh "Floor"
+{
+    point3f[] points = [(0, 0, 0), (100, 0, 0), (0, 100, 0)]
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    uniform token subdivisionScheme = "none"
+}
+`
+    if !testing.expect(t,os.write_entire_file(usd_source,transmute([]u8)usd_text)==nil) {return}
+    usd_opts:=usd.Options{no_usdcat=true}
+    usd_formats:=[1]importer.Format{usd.format(&usd_opts)}
+    usd_model,usd_err:=importer.import_model(usd_source,usd_formats[:])
+    if !testing.expectf(t,usd_err.code==.None,"%v: %s",usd_err.code,usd_err.message) {return}
+    defer importer.model_destroy(&usd_model)
+    usd_assets:=importer.Import_Report{allocator=context.allocator}
+    defer importer.report_destroy(&usd_assets)
+    _,usd_write_err:=model_prefab(&usd_model,&usd_assets,&types,import_world(t),{2,5},"tube",usd_path)
+    if !testing.expect_value(t,usd_write_err,Error.None) {return}
+    usd_scene:asset.Scene
+    if !testing.expect_value(t,asset.scene_load(&usd_scene,&types,usd_path),asset.Error.None) {return}
+    defer asset.scene_destroy(&usd_scene)
+    neon_id:=entity_of(&usd_scene,"NeonTube")
+    neon_pt,ok_neon:=asset.scene_get(&usd_scene,neon_id,"Point_Light",render.Point_Light)
+    neon_tr,ok_neon_tr:=asset.scene_get(&usd_scene,neon_id,"Transform",core.Transform)
+    testing.expectf(t,ok_neon && !neon_pt.shadows && abs(neon_pt.radius-0.05)<1e-4,"USD CylinderLight shadow:enable=false and 5cm radius: %v",neon_pt)
+    testing.expectf(t,ok_neon_tr && abs(2*neon_pt.radius*(neon_tr.scale.x-1)-1.6)<1e-3,"USD CylinderLight 80cm*2 length in meters: %v",neon_tr.scale)
+}

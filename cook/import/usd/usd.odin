@@ -280,11 +280,11 @@ usd_import :: proc(r:^importer.Reader,source:string,composed:bool) -> bool {
             if !ok {return importer.fail_prefix(r,prim.path)}
             if has_triangles {r.nodes[row].mesh=mesh_row}
             if has_triangles && usd_collides(prim) {usd_collider(r,prim,row,mesh_row) or_return}
-        case "SphereLight","DiskLight","RectLight","DistantLight":
+        case "SphereLight","CylinderLight","DiskLight","RectLight","DistantLight":
             light,read:=usd_light(r,prim)
             if !read {return importer.fail_prefix(r,prim.path)}
             r.nodes[row].light=light
-        case "CylinderLight","DomeLight","DomeLight_1","GeometryLight","PortalLight","PluginLight":
+        case "DomeLight","DomeLight_1","GeometryLight","PortalLight","PluginLight":
             importer.warn(r,"%s: a USD %s is not imported",prim.path,prim.type_name)
         case "Cube","Sphere","Capsule","Cylinder","Cone":
             if !usd_collides(prim) {return importer.fail(r,.Unsupported,"%s: %s is unsupported; export static polygon meshes, or give it PhysicsCollisionAPI to collide as it",prim.path,prim.type_name)}

@@ -99,7 +99,28 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
             transform=mm.transform_compose(model.nodes[ancestor].transform,transform)
             ancestor=model.nodes[ancestor].parent
         }
-        if light,has:=node.light.?;has && light.kind==.Rect {transform.scale.x*=light.size.x;transform.scale.y*=light.size.y}
+        effective_radius:f32
+        effective_length:f32
+        if light,has:=node.light.?;has {
+            switch light.kind {
+            case .Rect:
+                transform.scale.x*=light.size.x;transform.scale.y*=light.size.y
+            case .Point,.Spot:
+                effective_length=light_tube_length(light,node.name,assets)
+                effective_radius=light_radius(light,effective_length>0,node.name,assets)
+                if effective_length>0 {
+                    for child,j in model.nodes {
+                        if j>i && child.parent==i && keep[j] {
+                            append(&assets.warnings,fmt.aprintf("the tube light of %s has child %s, which inherits its tube stretch",node.name,child.name,allocator=assets.allocator))
+                            break
+                        }
+                    }
+                    across:=max(abs(transform.scale.y),abs(transform.scale.z),1e-4)
+                    transform.scale.x=across+effective_length*abs(transform.scale.x)/(2*effective_radius)
+                }
+            case .Directional:
+            }
+        }
         if !entity_add(&scene,info,own,parent,node.name,core.Transform(transform),&report) {return report,.Write}
         if node.path!="" && bone_rig[i]<0 {
             target:Animation_Target
@@ -142,7 +163,7 @@ model_prefab :: proc(model:^importer.Imported_Model,assets:^importer.Import_Repo
             hidden:=render.Hidden{}
             if put(&scene,info,own,"Hidden",&hidden)!=.None {return report,.Write}
         }
-        if light,has:=node.light.?;has && !model_light(&scene,info,own,light,node.name,assets) {return report,.Write}
+        if light,has:=node.light.?;has && !model_light(&scene,info,own,light,effective_radius,node.name,assets) {return report,.Write}
     }
     // One root, the model's own or the entity that wraps several: the scene is a prefab.
     root,rooted:=asset.prefab_root(&scene)
@@ -209,26 +230,63 @@ Morph_Weights :: struct {
     modes:[asset.MORPH_WEIGHTS]Morph_Weight_Mode,
 }
 
+@(private="file")
+light_finite :: #force_inline proc "contextless" (v:f32) -> bool {return !math.is_nan(v) && !math.is_inf(v,0)}
+
+@(private="file")
+light_tube_length :: proc(light:importer.Imported_Light,name:string,assets:^importer.Import_Report) -> f32 {
+    if !light_finite(light.length) || light.length<0 {
+        append(&assets.warnings,fmt.aprintf("the light of %s has an invalid length of %v: treated as a sphere",name,light.length,allocator=assets.allocator))
+        return 0
+    }
+    return light.length
+}
+
+@(private="file")
+light_radius :: proc(light:importer.Imported_Light,tube:bool,name:string,assets:^importer.Import_Report) -> f32 {
+    fallback:=render.POINT_LIGHT_DEFAULT.radius if light.kind==.Point else render.SPOT_LIGHT_DEFAULT.radius
+    r,has:=light.radius.?
+    if !has {r=fallback} else if !light_finite(r) || r<0 {
+        append(&assets.warnings,fmt.aprintf("the light of %s has an invalid radius of %v: given %.2f m",name,r,fallback,allocator=assets.allocator))
+        r=fallback
+    }
+    return max(r,0.01) if tube else r
+}
+
+@(private="file")
+light_multiplier :: proc(value:Maybe(f32),field,name:string,assets:^importer.Import_Report) -> f32 {
+    v,has:=value.?
+    if !has {return 1}
+    if !light_finite(v) || v<0 {
+        append(&assets.warnings,fmt.aprintf("the light of %s has an invalid %s of %v: given 1",name,field,v,allocator=assets.allocator))
+        return 1
+    }
+    return v
+}
+
 // The light of a node as the light of its entity: they shine toward -Z of
 // their node, in the units of Imported_Light.
 @(private="file")
-model_light :: proc(scene:^asset.Scene,info:^core.World_Info,entity:base.Entity_Id,light:importer.Imported_Light,name:string,assets:^importer.Import_Report) -> bool {
+model_light :: proc(scene:^asset.Scene,info:^core.World_Info,entity:base.Entity_Id,light:importer.Imported_Light,radius:f32,name:string,assets:^importer.Import_Report) -> bool {
+    shadows:=light.shadows.? or_else true
+    indirect:=light_multiplier(light.indirect,"indirect",name,assets)
+    scattering:=light_multiplier(light.scattering,"scattering",name,assets)
     switch light.kind {
     case .Directional:
-        sun:=render.Sun{color=light.color,illuminance=light.intensity,disc=true,shadows=true,indirect=1,scattering=1}
+        sun:=render.Sun{color=light.color,illuminance=light.intensity,disc=true,shadows=shadows,indirect=indirect,scattering=scattering}
         return put(scene,info,entity,"Sun",&sun)==.None
     case .Point:
-        point:=render.Point_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.POINT_LIGHT_DEFAULT.radius,shadows=true,indirect=1,scattering=1}
+        point:=render.Point_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=radius,shadows=shadows,indirect=indirect,scattering=scattering}
         return put(scene,info,entity,"Point_Light",&point)==.None
     case .Spot:
         angle:=clamp(light.outer_cone,render.SPOT_MIN,render.SPOT_MAX)
         if angle!=light.outer_cone {
             append(&assets.warnings,fmt.aprintf("the spot of %s has an outer cone of %.1f°, out of 1° to 89°: it was given %.1f°",name,light.outer_cone*mm.DEG_PER_RAD,angle*mm.DEG_PER_RAD,allocator=assets.allocator))
         }
-        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=light.radius.? or_else render.SPOT_LIGHT_DEFAULT.radius,angle=angle,shadows=true,indirect=1,scattering=1}
+        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=radius,angle=angle,shadows=shadows,indirect=indirect,scattering=scattering}
         return put(scene,info,entity,"Spot_Light",&spot)==.None
     case .Rect:
-        rect:=render.Rect_Light{color=light.color,luminance=light.intensity,range=light_range(light),shadows=true,indirect=1,scattering=1}
+        rect:=render.Rect_Light{color=light.color,luminance=light.intensity,range=light_range(light),shadows=shadows,indirect=indirect,scattering=scattering}
         return put(scene,info,entity,"Rect_Light",&rect)==.None
     }
     return true

@@ -44,7 +44,7 @@ light_flag :: proc(prim:Usd_Prim,name:string) -> bool {
     return value=="1" || value=="true"
 }
 
-// The light of a SphereLight, DiskLight, RectLight or DistantLight prim.
+// The light of a SphereLight, CylinderLight, DiskLight, RectLight or DistantLight prim.
 @(private)
 usd_light :: proc(r:^importer.Reader,prim:Usd_Prim) -> (light:importer.Imported_Light,ok:bool) {
     intensity:=light_number(r,prim,"intensity",1) or_return
@@ -75,6 +75,16 @@ usd_light :: proc(r:^importer.Reader,prim:Usd_Prim) -> (light:importer.Imported_
         area,shown=4*math.PI*world*world,math.PI*world*world
         light.kind=.Point
         light.radius=0 if light_flag(prim,"treatAsPoint") else f32(radius)
+    case "CylinderLight":
+        radius:=light_length(r,prim,"radius",0.5) or_return
+        length:=light_length(r,prim,"length",1) or_return
+        r_world:=radius*max(scale.y,scale.z)
+        l_world:=length*scale.x
+        area,shown=2*math.PI*r_world*l_world,2*r_world*l_world
+        light.kind=.Point
+        light.radius=0 if light_flag(prim,"treatAsLine") else f32(radius)
+        light.length=f32(length)
+        spot_radius=radius
     case "DiskLight":
         radius:=light_length(r,prim,"radius",0.5) or_return
         area=math.PI*radius*radius*scale.x*scale.y
@@ -111,9 +121,13 @@ usd_light :: proc(r:^importer.Reader,prim:Usd_Prim) -> (light:importer.Imported_
         light.kind=.Spot
         light.outer_cone=f32(math.to_radians(cone))
         light.inner_cone=light.outer_cone*f32(1-clamp(softness,0,1))
-        if prim.type_name!="SphereLight" {light.radius,light.size=f32(spot_radius),{}}
+        if prim.type_name!="SphereLight" && prim.type_name!="CylinderLight" {light.radius,light.size=f32(spot_radius),{}}
     } else if prim.type_name=="DiskLight" {
         importer.warn(r,"%s: a DiskLight is a rectangle of its area",prim.path)
+    }
+    if property,found:=light_attribute(prim,"shadow:enable");found {
+        value:=usd_string(property)
+        light.shadows=value=="1" || value=="true"
     }
     if light.kind==.Point || light.kind==.Spot {luminance*=shown*meters*meters}
     focus:=light_number(r,prim,"shaping:focus",0) or_return

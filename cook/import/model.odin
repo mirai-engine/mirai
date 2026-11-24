@@ -190,11 +190,15 @@ Light_Kind :: enum u8 {Directional,Point,Spot,Rect}
 Imported_Light :: struct {
     kind:Light_Kind,
     color:[3]f32,
-    intensity:f32,      // lux for directional lights, nits for rectangles, candela for the others
-    range:f32,          // 0: unlimited
+    intensity:f32,          // lux for directional lights, nits for rectangles, candela for the others
+    range:f32,              // 0: unlimited
     inner_cone,outer_cone:f32, // radians
-    radius:Maybe(f32),  // of the sphere a point or spot glows from; nil: the engine's default
-    size:[2]f32,        // of a rectangle, along x and y of its node
+    radius:Maybe(f32),      // of the sphere a point or spot glows from; nil: the engine's default
+    length:f32,             // of a tube (capsule) point or spot light, along +X of its node; 0: sphere
+    size:[2]f32,            // of a rectangle, along x and y of its node
+    shadows:Maybe(bool),    // nil: the engine's default (true)
+    indirect:Maybe(f32),    // nil: the engine's default (1)
+    scattering:Maybe(f32),  // nil: the engine's default (1)
 }
 
 Imported_Node :: struct {
