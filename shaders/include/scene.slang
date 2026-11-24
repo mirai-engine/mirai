@@ -697,6 +697,7 @@ Mirai_Surface mirai_surface_default(Mirai_Surface_Context ctx) {
     s.coat_ior = MATERIAL_DEFAULT_COAT_IOR; s.coat_normal = ctx.vertex_normal;
     s.fuzz_weight = 0.0; s.fuzz_color = MATERIAL_DEFAULT_FUZZ_COLOR; s.fuzz_roughness = MATERIAL_DEFAULT_FUZZ_ROUGHNESS;
     s.diffuse_transmission_weight = 0.0; s.diffuse_transmission_color = MATERIAL_DEFAULT_DIFFUSE_TRANSMISSION_COLOR;
+    s.subsurface_weight = 0.0; s.subsurface_color = MATERIAL_DEFAULT_SUBSURFACE_COLOR; s.subsurface_radius = MATERIAL_DEFAULT_SUBSURFACE_RADIUS;
     s.specular_anisotropy = 0.0; s.specular_tangent = ctx.tangent.xyz; s.unlit = false;
     return s;
 }
@@ -812,6 +813,14 @@ uint material_layers_allowed(uint layers) {
 #endif
     return layers;
 }
+// A subsurface takes the place of a diffuse transmission, as a solid that of
+// a thin surface; neither is held with a weight of 0.
+void material_layers_settle(inout Material_Layers l) {
+    if (!(l.subsurface > 0.0)) l.bits &= ~MATERIAL_LAYER_SUBSURFACE;
+    if ((l.bits & MATERIAL_LAYER_SUBSURFACE) == 0u) return;
+    l.bits &= ~MATERIAL_LAYER_DIFFUSE_TRANSMISSION;
+    l.diffuse_transmission = 0.0;
+}
 // Whether a material reads the tangent of its surface: by its normal map, the
 // normal map of its coat, an anisotropic lobe or a program.
 bool material_tangents(Material m) {
@@ -838,6 +847,7 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
     Material_Fuzz fuzz = blocks.fuzz;
     Material_Diffuse_Transmission transmission = blocks.diffuse_transmission;
     Material_Anisotropy anisotropy = blocks.anisotropy;
+    Material_Subsurface subsurface = blocks.subsurface;
     if ((bits & MATERIAL_LAYER_COAT) != 0u) {
         l.coat = coat.weight;
         l.coat_roughness = coat.roughness;
@@ -864,6 +874,14 @@ Material_Layers material_layers(Material m, Mirai_Surface_Context ctx) {
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION])) l.diffuse_transmission *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
         if (material_has(m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR])) l.diffuse_transmission_color *= material_map_texel(m, MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR, m.textures[MATERIAL_MAP_DIFFUSE_TRANSMISSION_COLOR], ctx.uv0, ctx.uv1, lod, ctx.ray).rgb;
     }
+    if ((bits & MATERIAL_LAYER_SUBSURFACE) != 0u) {
+        l.subsurface = subsurface.weight;
+        l.subsurface_color = subsurface.color;
+        l.subsurface_radius = subsurface.radius;
+        if (material_has(m.textures[MATERIAL_MAP_SUBSURFACE])) l.subsurface *= material_map_texel(m, MATERIAL_MAP_SUBSURFACE, m.textures[MATERIAL_MAP_SUBSURFACE], ctx.uv0, ctx.uv1, lod, ctx.ray).a;
+        if (material_has(m.textures[MATERIAL_MAP_SUBSURFACE_RADIUS])) l.subsurface_radius *= material_map_texel(m, MATERIAL_MAP_SUBSURFACE_RADIUS, m.textures[MATERIAL_MAP_SUBSURFACE_RADIUS], ctx.uv0, ctx.uv1, lod, ctx.ray).r;
+    }
+    material_layers_settle(l);
     if ((bits & MATERIAL_LAYER_ANISOTROPY) != 0u) {
         float2 direction = float2(1.0, 0.0);
         l.anisotropy = anisotropy.amount;
@@ -945,6 +963,9 @@ Mirai_Surface material_standard(Material m, Mirai_Surface_Context ctx, float3 ti
     }
     if ((layers.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) != 0u) {
         s.diffuse_transmission_weight = layers.diffuse_transmission; s.diffuse_transmission_color = layers.diffuse_transmission_color;
+    }
+    if ((layers.bits & MATERIAL_LAYER_SUBSURFACE) != 0u) {
+        s.subsurface_weight = layers.subsurface; s.subsurface_color = layers.subsurface_color; s.subsurface_radius = layers.subsurface_radius;
     }
     return s;
 }
@@ -1041,14 +1062,18 @@ void material_program_apply(Material m, Mirai_Surface result, float3 tint, float
         l.fuzz = saturate(result.fuzz_weight); l.fuzz_color = saturate(result.fuzz_color); l.fuzz_roughness = saturate(result.fuzz_roughness);
         l.anisotropy = saturate(result.specular_anisotropy); l.tangent = result.specular_tangent;
         l.diffuse_transmission = saturate(result.diffuse_transmission_weight); l.diffuse_transmission_color = saturate(result.diffuse_transmission_color);
+        l.subsurface = saturate(result.subsurface_weight); l.subsurface_color = saturate(result.subsurface_color);
+        l.subsurface_radius = clamp(result.subsurface_radius, 0.0, MATERIAL_SUBSURFACE_RADIUS_MAX);
         l.bits = (l.coat > 0.0 ? MATERIAL_LAYER_COAT : 0u) | (l.fuzz > 0.0 ? MATERIAL_LAYER_FUZZ : 0u) | (l.anisotropy > 0.0 ? MATERIAL_LAYER_ANISOTROPY : 0u)
-            | (l.diffuse_transmission > 0.0 ? MATERIAL_LAYER_DIFFUSE_TRANSMISSION : 0u);
+            | (l.diffuse_transmission > 0.0 ? MATERIAL_LAYER_DIFFUSE_TRANSMISSION : 0u) | (l.subsurface > 0.0 ? MATERIAL_LAYER_SUBSURFACE : 0u);
     }
     l.bits &= material_layers_allowed(m.layers);
+    material_layers_settle(l);
     if ((l.bits & MATERIAL_LAYER_COAT) == 0u) l.coat = 0.0;
     if ((l.bits & MATERIAL_LAYER_FUZZ) == 0u) l.fuzz = 0.0;
     if ((l.bits & MATERIAL_LAYER_ANISOTROPY) == 0u) l.anisotropy = 0.0;
     if ((l.bits & MATERIAL_LAYER_DIFFUSE_TRANSMISSION) == 0u) l.diffuse_transmission = 0.0;
+    if ((l.bits & MATERIAL_LAYER_SUBSURFACE) == 0u) l.subsurface = 0.0;
     values.layers = l;
     material_specular(values, result.specular_color, max(result.specular_ior, 1.0), result.specular_factor);
 }

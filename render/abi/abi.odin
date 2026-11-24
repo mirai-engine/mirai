@@ -54,6 +54,8 @@ SLOT_SHADOW_TABLE     :: 35
 SLOT_LIGHT_LISTS      :: 36
 // Where the vertex hook moved each pixel of the view from where it rests (gbuffer.slang).
 SLOT_REST             :: 37
+// The aerial perspective of the view (render/air.odin): what the air between the eye and each place does to its light.
+SLOT_AERIAL           :: 38
 SLOT_DRAW             :: SLOT_PASS9
 
 // The finest level the passes that shade surfaces sample of each texture
@@ -632,7 +634,7 @@ INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PA
 // values shading holds, then the blocks of its layers, and from
 // MATERIAL_PARAMETERS_WORD the parameters of its program.
 MATERIAL_WORDS           :: 29 + len(asset.Material_Map_Kind)
-MATERIAL_BLOCK_WORDS     :: 19
+MATERIAL_BLOCK_WORDS     :: 24
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
 // The bits of what the program of a row does (render.Gpu_Material_Volume.program).
 MATERIAL_PROGRAM_CHANGING    :: 1 // what it gives a point changes with nothing that says so: it reads the time

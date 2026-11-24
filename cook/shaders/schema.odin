@@ -48,6 +48,8 @@ material_schema :: proc(allocator:=context.temp_allocator) -> string {
     color(&b,"FUZZ_COLOR",d.fuzz.color)
     scalar(&b,"FUZZ_ROUGHNESS",d.fuzz.roughness)
     color(&b,"DIFFUSE_TRANSMISSION_COLOR",d.diffuse_transmission.color)
+    color(&b,"SUBSURFACE_COLOR",d.subsurface.color)
+    scalar(&b,"SUBSURFACE_RADIUS",d.subsurface.radius)
     strings.write_string(&b,"#endif\n")
     return strings.to_string(b)
 }
@@ -126,6 +128,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     i(&b,"SLOT_SHADOW_TABLE",abi.SLOT_SHADOW_TABLE)
     i(&b,"SLOT_LIGHT_LISTS",abi.SLOT_LIGHT_LISTS)
     i(&b,"SLOT_REST",abi.SLOT_REST)
+    i(&b,"SLOT_AERIAL",abi.SLOT_AERIAL)
     i(&b,"SLOT_POINTS",abi.SLOT_POINTS)
     i(&b,"SLOT_PASS0",abi.SLOT_PASS0)
     i(&b,"SLOT_PASS1",abi.SLOT_PASS1)
@@ -207,6 +210,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"ISLAND_DROPPED",asset.ISLAND_DROPPED)
     f(&b,"ISLAND_SCALE_ONE",asset.ISLAND_SCALE_ONE)
     f(&b,"ISLAND_FADE_BAND",asset.ISLAND_FADE_BAND)
+    f(&b,"MATERIAL_SUBSURFACE_RADIUS_MAX",asset.MATERIAL_SUBSURFACE_RADIUS_MAX)
 
     u(&b,"CLUSTER_WORDS",abi.CLUSTER_WORDS)
     u(&b,"VERTEX_WORDS",abi.VERTEX_WORDS)

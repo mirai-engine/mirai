@@ -4,6 +4,8 @@
 //! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // unlisted: while no light is without shadows, and no tile has a list (light_lists.slang).
 //! constant unlisted MIRAI_NO_LIGHT_LISTS
+// unscattered: while no instance with a subsurface is in sight (subsurface.comp).
+//! constant unscattered MIRAI_NO_SUBSURFACE
 // The last pass of the direct light of a view (direct_samples.slang): each
 // pixel takes what its points hold (direct_points.comp, direct_spread.comp),
 // with a point for each 2x2 pixels from the four around it of its surface.
@@ -15,7 +17,9 @@
 // (light_lists.slang), those of extensions each through its ray, and the
 // other side of a surface that lets light through by its own rays
 // (direct_lighting). It also leaves 1 where a sample met what changed, for
-// TAA.
+// TAA. Of a pixel with a subsurface it leaves the light of the share its base
+// does not spread, and apart the light a white Lambert reflector there takes
+// (shading_lambert), which subsurface.comp spreads.
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SUN_SHADOW_SLOT SLOT_PASS8
@@ -38,17 +42,18 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 // The part of the sun that got to each point, below 0 where it gives none.
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> sun_points : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
 [[vk::binding(SLOT_PASS5, 0)]] [[vk::image_format("r8")]] RWTexture2D<float> out_marks : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
+// rgb: of a pixel with a subsurface, the light a white Lambert reflector there takes.
+[[vk::binding(SLOT_PASS6, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_scatter : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
 // The light of the local lights with nothing in the way over the reflectance
 // at each point, and the part of it that got there, plus 2 where a sample met
 // what changed.
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> points_in : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 
-// The light of pixel p: that of the local lights with nothing in the way over
-// its reflectance by the part of it that got there, and its own of the sun by
-// the part of it that did (sun), below 0 where none of its points tells.
-float3 filter_light(int2 p, float depth, float3 normal, float3 open, float part, float sun) {
-    Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
-    Shading s = gbuffer_shading(gbuffer_read(p), pixel);
+// The light pixel p of shading s sends: that of the local lights with nothing
+// in the way over its reflectance by the part of it that got there, and its
+// own of the sun by the part of it that did (sun), below 0 where none of its
+// points tells.
+float3 filter_light(int2 p, Pixel pixel, Shading s, float depth, float3 normal, float3 open, float part, float sun) {
     float3 swayed = pixel_rest(p, depth);
     float3 reflectance = max(s.diffuse + specular_albedo(s), float3(0.02));
     float3 light = open * reflectance * part;
@@ -131,6 +136,12 @@ void main(uint3 id : SV_DispatchThreadID) {
     }
     float4 texel = weight > 0.0 ? sum / weight : nearest;
     sun = sun_weight > 0.0 ? sun / sun_weight : -1.0;
-    out_direct[p] = float4(filter_light(p, depth, normal.xyz, texel.rgb, saturate(texel.a), sun), 1.0);
+    Gbuffer_Pixel g = gbuffer_read(p);
+    Shading s = gbuffer_shading(g, pixel);
+    if (!MIRAI_NO_SUBSURFACE && (g.layers.bits & MATERIAL_LAYER_SUBSURFACE) != 0u) {
+        out_scatter[p] = float4(filter_light(p, pixel, shading_lambert(s), depth, normal.xyz, texel.rgb, saturate(texel.a), sun), 1.0);
+        s.diffuse *= 1.0 - g.layers.subsurface;
+    }
+    out_direct[p] = float4(filter_light(p, pixel, s, depth, normal.xyz, texel.rgb, saturate(texel.a), sun), 1.0);
     out_marks[p] = marked ? 1.0 : 0.0;
 }

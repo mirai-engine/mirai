@@ -305,7 +305,7 @@ Pipeline_Id :: enum {
 	Light_Lists, // the lists of the lights without shadows of the tiles of a view (light_lists.comp)
 	Direct_Maps, Direct_Rays, Direct_Samples, Direct_Points, Direct_Spread, Direct_Filter,
 	Ddgi_Trace, Ddgi_Irradiance, Ddgi_Distance, Ddgi_Keep,
-	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Taa, Hiz,
+	Ddgi_Relocate, Ddgi_Select, Ddgi_Touch, Ddgi_Mark, Contact, Contact_Light, Contact_Pixels, Composite, Subsurface, Taa, Hiz,
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values,
 	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter,
 	Translucent, Glass_Overflow,
@@ -370,6 +370,7 @@ Frame_Targets :: struct {
 	linear_depth:            rhi.Texture,
 	direct:                  rhi.Texture,
 	display:                 rhi.Texture, // composite output shown by tonemap (debug views)
+	subsurface:              [2]rhi.Texture, // of the pixels with a subsurface, the light to spread and that light spread across the view (subsurface.comp); made when the view first shows one
 	nested_depth:            rhi.Texture, // the depth buffer of the nested views, which draw only the pixels their mask gave them
 	views:                   rhi.Texture, // R8 uint: 1 + the nested view of each pixel, 0 the view itself (pass_nested_add)
 	using contact_targets: struct {
@@ -987,6 +988,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Contact_Pixels, .Contact_Pixels_Comp)
 	compute(list, r, .Rest, .Rest_Comp)
 	compute(list, r, .Composite, .Composite_Comp)
+	compute(list, r, .Subsurface, .Subsurface_Comp)
 	compute(list, r, .Taa, .Taa_Comp)
 	compute(list, r, .Hiz, .Hiz_Comp)
 	compute(list, r, .Exposure_Histogram, .Exposure_Histogram_Comp)
@@ -2277,24 +2279,26 @@ scene_layered :: proc(s: ^Scene_State) -> bool {
 }
 
 @(private)
-// Whether some instance in the frustum needs the reflectance target, and
-// whether one needs the layers target too.
-reflectance_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> (reflectance, layered: bool) {
+// Whether some instance in the frustum needs the reflectance target, whether
+// one needs the layers target too, and whether one has a subsurface.
+reflectance_in_frustum :: proc(r: ^Renderer, planes: [6]Vec4) -> (reflectance, layered, subsurface: bool) {
 	frustum := transmute(mm.Frustum)planes
 	for entry in r.scene.reflective {
-		if reflectance && (layered || !entry.layered) {continue}
+		if reflectance && (layered || !entry.layered) && (subsurface || !entry.subsurface) {continue}
 		inst := &r.scene.instances[entry.instance]
 		if mm.frustum_overlaps_aabb(frustum, {inst.bounds_min.xyz, inst.bounds_max.xyz}) {
 			reflectance = true
 			layered ||= entry.layered
+			subsurface ||= entry.subsurface
 		}
 	}
 	for entry in r.scene.batch.reflective {
-		if reflectance && (layered || !entry.layered) {continue}
+		if reflectance && (layered || !entry.layered) && (subsurface || !entry.subsurface) {continue}
 		box := &r.scene.batch.boxes[entry.instance]
 		if mm.frustum_overlaps_aabb(frustum, box^) {
 			reflectance = true
 			layered ||= entry.layered
+			subsurface ||= entry.subsurface
 		}
 	}
 	return

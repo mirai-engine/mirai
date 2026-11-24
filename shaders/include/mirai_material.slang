@@ -141,6 +141,9 @@ struct Mirai_Surface {
     float fuzz_roughness;
     float diffuse_transmission_weight; // of the light the base scatters, the share that leaves through the other side of a thin surface
     float3 diffuse_transmission_color;
+    float subsurface_weight;   // of the light the base scatters, the share that spreads under a solid before it leaves; it takes the place of diffuse_transmission
+    float3 subsurface_color;   // the share of subsurface_radius each channel spreads over
+    float subsurface_radius;   // metres
     bool unlit;                // it reflects no light: emission alone
 };
 // The values of the default material (asset.MATERIAL_DEFAULTS) at the point.
@@ -164,6 +167,7 @@ Mirai_Surface mirai_surface_mix(Mirai_Surface a, Mirai_Surface b, float mask) {
     a.coat_ior=lerp(a.coat_ior,b.coat_ior,w);a.coat_normal=normalize(lerp(a.coat_normal,b.coat_normal,w));
     a.fuzz_weight=lerp(a.fuzz_weight,b.fuzz_weight,w);a.fuzz_color=lerp(a.fuzz_color,b.fuzz_color,w);a.fuzz_roughness=lerp(a.fuzz_roughness,b.fuzz_roughness,w);
     a.diffuse_transmission_weight=lerp(a.diffuse_transmission_weight,b.diffuse_transmission_weight,w);a.diffuse_transmission_color=lerp(a.diffuse_transmission_color,b.diffuse_transmission_color,w);
+    a.subsurface_weight=lerp(a.subsurface_weight,b.subsurface_weight,w);a.subsurface_color=lerp(a.subsurface_color,b.subsurface_color,w);a.subsurface_radius=lerp(a.subsurface_radius,b.subsurface_radius,w);
     a.unlit=w<0.5?a.unlit:b.unlit;
     return a;
 }

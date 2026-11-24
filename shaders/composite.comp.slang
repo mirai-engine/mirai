@@ -1,6 +1,8 @@
 #include "native.slang"
 // unlayered: while no instance with layers is in sight (gbuffer.slang).
 //! constant unlayered MIRAI_GBUFFER_NO_LAYERS
+// unscattered: while no instance with a subsurface is in sight (subsurface.comp).
+//! constant unscattered MIRAI_NO_SUBSURFACE
 // Final HDR composition: the direct light, the light around each pixel
 // (indirect_compose) and its emission. The irradiance comes from the probe
 // volume, darkened by its contact occlusion, or from the reference of the
@@ -8,7 +10,10 @@
 // around its dominant direction. contact_pixels.comp leaves both lights of the
 // probe volume at each pixel; the coat and the other side of what lets light
 // through read it here. Under an atmosphere, the image shown takes the air
-// between the eye and each pixel (its aerial perspective, air_aerial.comp).
+// between the eye and each pixel (its aerial perspective, aerial.slang).
+// A pixel with a subsurface shows the share of its diffuse light its base
+// does not spread, and leaves the light a white Lambert reflector there takes
+// to subsurface.comp, which spreads it and adds what it reflects of it.
 #define GBUFFER_ALBEDO SLOT_PASS0
 #define GBUFFER_NORMAL SLOT_PASS1
 #define GBUFFER_EMISSION SLOT_PASS2
@@ -16,33 +21,27 @@
 #include "grid.slang"
 #include "pixel.slang"
 #include "probe_light.slang"
+#include "aerial.slang"
 #define MIRAI_GROUP_X 8
 #define MIRAI_GROUP_Y 8
 #define MIRAI_GROUP_Z 1
 
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
 [[vk::binding(SLOT_PASS4, 0)]] Texture2D<float4> direct_light : register(MIRAI_REGISTER(t, SLOT_PASS4), space0);
-// gathered: 1 when the light of the probe volume of each pixel is in indirect_input.
-struct Params_Block { uint gathered; uint pad0; uint pad1; uint pad2; };
+// gathered: 1 when the light of the probe volume of each pixel is in indirect_input;
+// scattered: 1 when direct_filter.comp left in scatter the direct light of the subsurfaces.
+struct Params_Block { uint gathered; uint scattered; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 // With params.gathered, the light of the probe volume around the normal by its
 // contact occlusion and around the specular lobe, packed (contact_pixels.comp);
 // rgb with FRAME_FLAG_GI_GIVEN: the diffuse indirect light a custom pass of the pipeline gives.
 [[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> indirect_input : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
-[[vk::binding(SLOT_PASS6, 0)]] Texture3D<float4> aerial : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
+// rgb: of a pixel with a subsurface, the light a white Lambert reflector there
+// takes, of the lights in, then with the light around, as the air keeps it; a:
+// its distance, below 0 for every other pixel.
+[[vk::binding(SLOT_PASS6, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> scatter : register(MIRAI_REGISTER(u, SLOT_PASS6), space0);
 [[vk::binding(SLOT_PASS7, 0)]] Texture2D<float4> g_motion : register(MIRAI_REGISTER(t, SLOT_PASS7), space0);
 [[vk::binding(SLOT_PASS8, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_display : register(MIRAI_REGISTER(u, SLOT_PASS8), space0);
-
-// What lies at distance along the ray of uv seen through the air: its light
-// times what crosses, plus what the air sends.
-float3 aerial_perspective(float3 color, float2 uv, float distance) {
-    float slices = float(AIR_AERIAL_SLICES);
-    // A texel holds the air to the end of its slice; nearer than the first, a share of it.
-    float w = saturate(distance / AIR_AERIAL_DISTANCE - 0.5 / slices);
-    float4 air = aerial.SampleLevel(linear_sampler, float3(uv, w), 0.0);
-    float near = saturate(distance * slices / AIR_AERIAL_DISTANCE);
-    return color * lerp(1.0, air.a, near) + air.rgb * near * sun_above_air();
-}
 
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
@@ -66,11 +65,15 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         // The editor's reference grid goes behind transparency.
         float3 backdrop = nested ? sky.rgb : ground_grid_background(sky.rgb, uv);
         out_display[p] = float4(backdrop, 1.0);
+        if (!MIRAI_NO_SUBSURFACE) scatter[p] = float4(0.0, 0.0, 0.0, -1.0);
         return;
     }
     Pixel pixel = pixel_at(p, uv, depth);
     Gbuffer_Pixel g = gbuffer_read(p);
     Shading s = gbuffer_shading(g, pixel);
+    bool scatters = !MIRAI_NO_SUBSURFACE && (g.layers.bits & MATERIAL_LAYER_SUBSURFACE) != 0u;
+    float3 diffuse = s.diffuse;
+    if (scatters) s.diffuse *= 1.0 - g.layers.subsurface;
     float3 direct = direct_light.Load(int3(p, 0)).rgb;
     bool given = (frame.flags & (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN)) == (FRAME_FLAG_GI | FRAME_FLAG_GI_GIVEN);
     bool gathered = params.gathered != 0u;
@@ -84,7 +87,13 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     float3 indirect = light.irradiance;
     float3 color = finite_or_zero(direct + indirect_compose(s, light) + g.emission);
-    if (frame.sky_map.y > 0.5 && frame.sun_direction.w > 0.5) color = aerial_perspective(color, uv, pixel.distance);
+    Air_Between air = air_between(uv, pixel.distance);
+    color = color * air.kept + air.sent;
+    if (!MIRAI_NO_SUBSURFACE) {
+        float3 lit = scatters && params.scattered != 0u ? scatter[p].rgb : float3(0.0);
+        float3 around = light.irradiance * occlusion_bounced(diffuse, light.occlusion);
+        scatter[p] = scatters ? float4(finite_or_zero(lit + around) * air.kept, pixel.distance) : float4(0.0, 0.0, 0.0, -1.0);
+    }
     switch (frame.debug_view) {
     case DEBUG_ALBEDO: color = g.base_color; break;
     case DEBUG_NORMAL: color = s.normal * 0.5 + 0.5; break;

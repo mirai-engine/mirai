@@ -1884,7 +1884,7 @@ material_reflectance_target_follows_frustum_and_preserves_plain_shading :: proc(
     testing.expect_value(t,len(r.scene.reflective),1)
     camera_needs_reflectance :: proc(r:^Renderer,camera:Camera)->bool {
         view,proj,_:=camera_matrices(camera,1)
-        reflectance,_:=reflectance_in_frustum(r,transmute([6]Vec4)mm.frustum_from_matrix(proj*view))
+        reflectance,_,_:=reflectance_in_frustum(r,transmute([6]Vec4)mm.frustum_from_matrix(proj*view))
         return reflectance
     }
     testing.expect(t,!camera_needs_reflectance(r,OVERHEAD),"An off-camera reflective surface uses the plain G-buffer")
@@ -2452,5 +2452,192 @@ gpu_instances_of_one_mesh_draw_their_own_colors_at_every_level :: proc(t: ^testi
 		testing.expectf(t, near_bytes(read_albedo(t, &f, OVERHEAD, {0.5, 0, 0}), {0, 0, 255, 0}, 3), "the right instance shows its blue at %v pixels: %v", error, read_albedo(t, &f, OVERHEAD, {0.5, 0, 0}))
 	}
 	testing.expectf(t, clusters[1] < clusters[0], "a coarser level is drawn: %d clusters, %d at level 0", clusters[1], clusters[0])
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// ---------------------------------------------------------------- subsurface
+
+// A white surface whose base spreads all its diffuse light under it sends
+// back all of a white sky, as without the subsurface: the spread neither
+// adds nor loses light.
+@(test)
+material_subsurface_keeps_a_white_furnace :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 32, 32, layer_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	skin := DEFAULT_MATERIAL
+	skin.base_color = {1, 1, 1}
+	skin.roughness = 0.5
+	// As wide as a subsurface spreads: a few pixels of the view.
+	skin.subsurface = {weight = 1, color = {1, 0.5, 0.25}, radius = asset.MATERIAL_SUBSURFACE_RADIUS_MAX}
+	materials_set(r, {skin})
+	quad := ground_quad(r)
+	for camera in ([2]Camera{OVERHEAD, OBLIQUE}) {
+		seen := sky_albedo(t, &f, quad, 1, camera)
+		testing.expectf(t, abs(seen.x - 1) < 0.02 && abs(seen.y - 1) < 0.02 && abs(seen.z - 1) < 0.02, "from %v: %v", camera.position, seen)
+	}
+	testing.expect(t, r.targets.subsurface[0] != 0 && r.targets.subsurface[1] != 0, "the subsurface passes ran")
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// A sphere of radius 1, its tangents along its turn about y.
+@(private = "file")
+unit_sphere :: proc(r: ^Renderer) -> Mesh_Handle {
+	RINGS, SEGMENTS :: 48, 96
+	vertices := make([dynamic]Mesh_Vertex, context.temp_allocator)
+	indices := make([dynamic]u32, context.temp_allocator)
+	for i in 0 ..= RINGS {
+		polar := math.PI * f32(i) / RINGS
+		for j in 0 ..= SEGMENTS {
+			turn := 2 * math.PI * f32(j) / SEGMENTS
+			n := Vec3{math.sin(polar) * math.cos(turn), math.cos(polar), math.sin(polar) * math.sin(turn)}
+			append(&vertices, Mesh_Vertex{position = n, normal = n, tangent = {-math.sin(turn), 0, math.cos(turn), 1}, uv = {f32(j) / SEGMENTS, f32(i) / RINGS}, color = {1, 1, 1}})
+		}
+	}
+	for i in 0 ..< RINGS {
+		for j in 0 ..< SEGMENTS {
+			a := u32(i * (SEGMENTS + 1) + j)
+			b := a + SEGMENTS + 1
+			append(&indices, a, a + 1, b, a + 1, b + 1, b)
+		}
+	}
+	mesh, _ := mesh_add(r, vertices[:], indices[:])
+	return mesh
+}
+
+// A sphere 6 cm wide lit from its side by the sun alone, with no sky: with a
+// subsurface 5 mm wide, light spreads over its terminator into the half the
+// sun does not reach, which without it is black. A subsurface of weight 0
+// draws every pixel as none does.
+@(test)
+material_subsurface_spreads_light_over_the_terminator :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 128, 128, material_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	plain := DEFAULT_MATERIAL
+	plain.base_color = {0.8, 0.8, 0.8}
+	plain.roughness = 0.6
+	skin, none := plain, plain
+	skin.subsurface = {weight = 1, color = {1, 1, 1}, radius = 0.005}
+	none.subsurface = {weight = 0, color = {1, 0.5, 0.25}, radius = 0.005}
+	materials_set(r, {plain, skin, none})
+	sphere := unit_sphere(r)
+	RADIUS :: f32(0.03)
+	camera := Camera{position = {0, 0, 0.12}, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 30, near = 0.01, far = 10, exposure = UNIT_EXPOSURE}
+	sun := Sun_Desc{direction = {1, 0, 0}, color = {1, 1, 1}, illuminance = math.PI, enabled = true, indirect = 1, scattering = 1}
+	ALL :: 128 * 128 * 4
+	seen :: proc(t: ^testing.T, f: ^Fixture, sphere: Mesh_Handle, material: Material_Handle, camera: Camera, sun: Sun_Desc) -> []f16 {
+		r := f.renderer
+		scene_given(r, {{object_id = 1, mesh = sphere, transform = scale_matrix(RADIUS), material = material, tint = {1, 1, 1}}}, nil, sun, {})
+		frames(t, f, camera, 3)
+		rhi.device_wait_idle(f.device)
+		values := make([]f16, ALL, context.temp_allocator)
+		testing.expect(t, golden_read_texture(f.device, r.targets.display, mem.slice_data_cast([]u8, values)), rhi.device_error(f.device))
+		return values
+	}
+	at :: proc(r: ^Renderer, values: []f16, camera: Camera, world: Vec3) -> f32 {
+		p := target_pixel(r, camera, world)
+		return f32(values[(p.y * int(r.targets.width) + p.x) * 4 + 1])
+	}
+	// 1.5 mm on each side of the terminator, on the side facing the camera.
+	across := f32(0.0015)
+	dark := Vec3{-across, 0, math.sqrt(RADIUS * RADIUS - across * across)}
+	lit := Vec3{across, 0, dark.z}
+	without := seen(t, &f, sphere, 1, camera, sun)
+	with := seen(t, &f, sphere, 2, camera, sun)
+	testing.expect(t, r.targets.subsurface[0] != 0, "the subsurface passes ran")
+	lit_without, dark_without := at(r, without, camera, lit), at(r, without, camera, dark)
+	dark_with := at(r, with, camera, dark)
+	testing.expectf(t, lit_without > 0 && dark_without < lit_without * 0.01, "without a subsurface the side the sun does not reach is black: %v against %v", dark_without, lit_without)
+	testing.expectf(t, dark_with > lit_without * 0.1, "the subsurface spreads light past the terminator: %v against %v lit", dark_with, lit_without)
+	weightless := seen(t, &f, sphere, 3, camera, sun)
+	differ := 0
+	for v, i in weightless {if v != without[i] {differ += 1}}
+	testing.expectf(t, differ == 0, "a subsurface of weight 0 draws as none: %d values differ", differ)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// While no instance with a subsurface is in sight, a view runs no pass of it
+// and makes none of its targets, whatever other layers it shows; the first
+// one in sight brings them.
+@(test)
+material_subsurface_costs_nothing_while_none_is_in_sight :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, 32, 32, layer_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	coated, skin := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	coated.coat.weight = 1
+	skin.subsurface = {weight = 1, color = {1, 0.5, 0.25}, radius = 0.01}
+	materials_set(r, {coated, skin})
+	quad := ground_quad(r)
+	rhi.timestamps_want(f.device, true)
+	defer rhi.timestamps_want(f.device, false)
+	timed :: proc(r: ^Renderer) -> (ran, measured: bool) {
+		timings: []rhi.Gpu_Timing
+		timings, _, measured = rhi.frame_timings(r.device)
+		for timing in timings {ran ||= timing.name == "subsurface"}
+		return
+	}
+	floor := Instance_Desc{object_id = 1, mesh = quad, transform = scale_matrix(12), material = 1, tint = {1, 1, 1}}
+	away := Instance_Desc{object_id = 2, mesh = quad, transform = linalg.matrix4_translate_f32({500, 0, 500}), material = 2, tint = {1, 1, 1}}
+	scene_given(r, {floor, away}, nil, {}, {sky = {1, 1, 1}})
+	frames(t, &f, OVERHEAD, 4)
+	testing.expect(t, r.targets.layers != 0, "the coat is drawn with its layers")
+	testing.expect(t, r.targets.subsurface == {}, "no target of the subsurface is made while none is in sight")
+	ran, measured := timed(r)
+	testing.expect(t, !ran, "no subsurface pass runs while none is in sight")
+	away.transform = scale_matrix(4)
+	scene_given(r, {floor, away}, nil, {}, {sky = {1, 1, 1}})
+	frames(t, &f, OVERHEAD, 4)
+	testing.expect(t, r.targets.subsurface[0] != 0 && r.targets.subsurface[1] != 0, "the first subsurface in sight makes its targets")
+	if ran, measured = timed(r); measured {testing.expect(t, ran, "and runs its passes")}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// An anisotropic metal reads the light around it along its bent reflection
+// with the probe volume as without it: under a sky lit only behind the
+// camera, the lobe stretched towards the camera shows it, and the one
+// stretched across shows the dark sky ahead, whether the composition takes
+// the light of the probes at each pixel or gathered at the points of the
+// contact occlusion.
+@(test)
+material_anisotropy_keeps_its_bent_reflection_with_the_probe_volume :: proc(t: ^testing.T) {
+	f: Fixture
+	settings := material_settings()
+	settings.gi_enabled = true
+	if !fixture_init(t, &f, 64, 64, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	// Lit where z > 0 (u above a half): behind a camera that looks towards -z.
+	WIDE, TALL :: 32, 16
+	image: [WIDE * TALL * 4]u8
+	for y in 0 ..< TALL {
+		for x in WIDE / 2 ..< WIDE {for c in 0 ..< 4 {image[(y * WIDE + x) * 4 + c] = 255}}
+		for x in 0 ..< WIDE / 2 {image[(y * WIDE + x) * 4 + 3] = 255}
+	}
+	sky, added := texture_add(r, {pixels = image[:], width = WIDE, height = TALL, name = "behind"})
+	testing.expect(t, added, r.error)
+	across, along := DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	across.base_color, across.metallic, across.roughness = {1, 1, 1}, 1, 0.3
+	across.anisotropy.amount = 1
+	along = across
+	along.anisotropy.rotation = math.PI / 2
+	materials_set(r, {across, along})
+	quad := ground_quad(r)
+	shown :: proc(t: ^testing.T, f: ^Fixture, quad: Mesh_Handle, material: Material_Handle, sky: Texture_Handle) -> f32 {
+		scene_given(f.renderer, {{object_id = 1, mesh = quad, transform = scale_matrix(20), material = material, tint = {1, 1, 1}}}, nil, {}, {sky = {1, 1, 1}, sky_texture = sky})
+		frames(t, f, OBLIQUE, 48)
+		return target_at(t, f, f.renderer.targets.display, OBLIQUE, {}).y
+	}
+	probed_across, probed_along := shown(t, &f, quad, 1, sky), shown(t, &f, quad, 2, sky)
+	settings.gi_enabled = false
+	testing.expect(t, renderer_apply_settings(r, settings))
+	sky_across, sky_along := shown(t, &f, quad, 1, sky), shown(t, &f, quad, 2, sky)
+	testing.expectf(t, sky_along > sky_across * 3, "without the volume the lobe stretched towards the camera shows the sky behind it: %v against %v", sky_along, sky_across)
+	testing.expectf(t, probed_along > probed_across * 3, "with the volume too: %v against %v", probed_along, probed_across)
+	testing.expectf(t, abs(probed_along - sky_along) < sky_along * 0.35, "as bright: %v against %v", probed_along, sky_along)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

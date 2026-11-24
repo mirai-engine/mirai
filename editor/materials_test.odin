@@ -280,4 +280,32 @@ material_set_gives_a_material_its_values_textures_and_overlays_in_one_step :: pr
     testing.expect(t,!ok && strings.contains(failure.message,"glow is not a number of the Surface program"),failure.message)
     _,failure,ok=call(t,state,"material.set",`{"material":"wall.mat","overlays":[{"material":"wall.mat"}]}`)
     testing.expect(t,!ok && strings.contains(failure.message,"a material other than the one it is drawn over"),failure.message)
+
+    // A subsurface by its fields, which material.inspect shows; a value out of
+    // its range is refused with the field and the range it takes.
+    _,failure,ok=call(t,state,"material.set",`{"material":"wall.mat","values":{"subsurface":{"weight":0.8,"color":[1,0.4,0.2],"radius":0.004}}}`)
+    files_test_commit(&f)
+    if !testing.expectf(t,ok,"%s %s",failure.message,failure.data) {return}
+    reply,failure,ok=call(t,state,"material.inspect",`{"material":"wall.mat"}`)
+    if testing.expectf(t,ok,"%s %s",failure.message,failure.data) {
+        values,_:=reply["values"].(json.Object)
+        subsurface,_:=values["subsurface"].(json.Object)
+        weight,_:=subsurface["weight"].(json.Float)
+        radius,_:=subsurface["radius"].(json.Float)
+        testing.expectf(t,abs(weight-0.8)<1e-6 && abs(radius-0.004)<1e-6,"material.inspect shows the subsurface: %v",subsurface)
+        maps,_:=values["maps"].(json.Object)
+        _,has_map:=maps["subsurface_radius"].(json.Object)
+        testing.expect(t,has_map,"and its radius map")
+    }
+    Refused :: struct {values,problem:string}
+    refused:=[?]Refused{
+        {`{"subsurface":{"radius":0.5}}`,"subsurface.radius is 0.5; it takes 0 to 0.1"},
+        {`{"subsurface":{"weight":-0.25}}`,"subsurface.weight is -0.25; it takes 0 to 1"},
+        {`{"subsurface":{"color":[1,2,0]}}`,"subsurface.color.g is 2; it takes 0 to 1"},
+        {`{"diffuse_transmission":{"weight":0.5}}`,"subsurface.weight and diffuse_transmission.weight are both above 0"},
+    }
+    for c in refused {
+        _,failure,ok=call(t,state,"material.set",fmt.tprintf(`{{"material":"wall.mat","values":%s}}`,c.values))
+        testing.expectf(t,!ok && strings.contains(failure.message,c.problem),"%s: %s",c.values,failure.message)
+    }
 }

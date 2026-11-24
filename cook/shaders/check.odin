@@ -462,8 +462,8 @@ rules_parameters :: proc(c:^Checker,layout:Layout,reflected:bool) -> (supported:
 
 @(private="file")
 CHECK_USE :: `float4 mirai_check_use(Mirai_Surface s) {
-    float3 v=s.base_color+s.normal+s.emission+s.specular_color+s.specular_tangent+s.coat_color+s.coat_normal+s.fuzz_color+s.diffuse_transmission_color;
-    return float4(v,s.alpha+s.metallic+s.roughness+s.occlusion+s.specular_factor+s.specular_ior+s.specular_anisotropy+s.coat_weight+s.coat_roughness+s.coat_ior+s.fuzz_weight+s.fuzz_roughness+s.diffuse_transmission_weight+(s.unlit?1.0:0.0));
+    float3 v=s.base_color+s.normal+s.emission+s.specular_color+s.specular_tangent+s.coat_color+s.coat_normal+s.fuzz_color+s.diffuse_transmission_color+s.subsurface_color;
+    return float4(v,s.alpha+s.metallic+s.roughness+s.occlusion+s.specular_factor+s.specular_ior+s.specular_anisotropy+s.coat_weight+s.coat_roughness+s.coat_ior+s.fuzz_weight+s.fuzz_roughness+s.diffuse_transmission_weight+s.subsurface_weight+s.subsurface_radius+(s.unlit?1.0:0.0));
 }
 `
 

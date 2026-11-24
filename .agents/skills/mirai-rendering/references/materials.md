@@ -1,7 +1,7 @@
 # Materials and textures
 
 OpenPBR 1.1 model: glTF 2.0 metallic-roughness base with optional [layers](#layers-openpbr)
-(coat, fuzz, specular anisotropy, diffuse transmission) and an unlit mode.
+(coat, fuzz, specular anisotropy, diffuse transmission, subsurface) and an unlit mode.
 
 ## Material row
 
@@ -89,12 +89,37 @@ erender.material_texture(&values, base.name_hash("maps.mask"), 0, mask_tex_id)
 | Coat | GGX lobe with own normal, roughness, IOR; darkens base, relative IOR below (`material_specular`). |
 | Fuzz | Zeltner-Burley-Chiang (2022) LTC + MaterialX adjustments; counted in diffuse filter lobe. |
 | Diffuse transmission | Thin-sheet OpenPBR / `KHR_materials_diffuse_transmission`: back lit via inverted Lambert (`shading_back`, `back_irradiance`, `direct_lighting` rays). `LIGHTS_THROUGH` / `trace_through` crosses masked transmitting sheets only; GI reflects diffuse part only. |
-| Anisotropy | Anisotropic GGX on MikkTSpace tangent rotated by `rotation`/map; bent normal for environment (Revie 2011). |
+| Anisotropy | Anisotropic GGX on MikkTSpace tangent rotated by `rotation`/map; bent normal for environment (Revie 2011), also in the probe light `contact_light.comp` gathers. |
+| Subsurface | `weight`, `color` (share of `radius` per channel), `radius` (m, up to `MATERIAL_SUBSURFACE_RADIUS_MAX`); maps `subsurface` (a), `subsurface_radius` (r). Opaque G-buffer only; excludes diffuse transmission (same layer bits). See [subsurface](#subsurface). |
 | Unlit | BSDF = 0 everywhere; outputs emission (nits or [relative](display.md#exposure-relative-emission)). Base color/opacity still govern coverage. |
 
-- **Zero-cost when unused:** `direct` and `composite` run `unlayered` (`MIRAI_GBUFFER_NO_LAYERS`)
-  when no layered instance is visible. Glass uses its `layers` variant of `glass_layer` only when
-  layered glass is in view.
+- **Zero-cost when unused:** `direct`, `contact_light` and `composite` run `unlayered`
+  (`MIRAI_GBUFFER_NO_LAYERS`) when no layered instance is visible. Glass uses its `layers` variant
+  of `glass_layer` only when layered glass is in view.
+
+### Subsurface
+
+Separable screen-space diffusion (Jimenez et al. 2015) of the opaque scene (`subsurface.comp`,
+`render/subsurface.odin`):
+
+- `direct_filter` and `composite` light a pixel with the subsurface layer by `diffuse * (1 -
+  weight)` and leave in `t.subsurface[0]` the light a white Lambert reflector takes there
+  (`shading_lambert`), times what the air keeps; `subsurface.comp` spreads it across then down by a
+  Gaussian per channel (sigma = radius / 2, in pixels by `frame.footprint`) and adds
+  `weight * diffuse * subsurface_kept * spread`: base color after the spread, texture detail sharp.
+- Taps off the subsurface or across a step of distance wider than the radius stand for the center
+  (edge mask; weights stay normalized, so a white furnace stays white). Rays, probes and GI read
+  the unspread light of each point.
+- **Zero-cost:** `Reflective_Instance.subsurface` -> `Pass.subsurface`; without it in the frustum
+  (or under an inspection mode) the passes run `unscattered` (`MIRAI_NO_SUBSURFACE`), no subsurface
+  pass is recorded and its targets are not made. Nested views do not turn it on.
+- G-buffer: the layers target keeps the weight in the diffuse transmission slot and a 5-bit log
+  radius per channel in its color slot (`subsurface_radius_code`).
+- **Focal tests:** `material_subsurface_keeps_a_white_furnace`,
+  `material_subsurface_spreads_light_over_the_terminator`,
+  `material_subsurface_costs_nothing_while_none_is_in_sight`,
+  `material_anisotropy_keeps_its_bent_reflection_with_the_probe_volume`; CPU:
+  `material_problem_names_the_value_out_of_its_range` (`asset`).
 
 ## Derived graph
 
@@ -335,6 +360,11 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
   surfaces filter forward. Blend-only instances sit in `RAY_GLASS`. All glass passes skip when
   no transmissive instance is in frustum, and their full-screen dispatches when none passes the
   depth pyramid (`INSTANCE_FLAG_GLASS`): a blend without transmission never arms them.
+- **Aerial perspective:** `glass.comp` and forward blends (`translucent.frag`) take the air between
+  the eye and the layer (`aerial.slang`, `SLOT_AERIAL`) as `composite` does the opaque scene: its
+  light times what the air keeps, plus what the air sends where the layer hides what is behind
+  (additive blends hide nothing).
+  Test: `the_air_hazes_far_glass_and_blends_as_it_hazes_what_is_opaque`.
 - **Limits:** No refraction behind layers, no caustics/dispersion, TAA uses background motion, 1
   immersed solid per view (no absorption between interior layers or on shadows/GI/particles).
 
@@ -360,7 +390,8 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 
 ## Limits
 
-- No node-based material editor, virtual textures, subsurface scattering, iridescence,
-  dispersion, or OpenPBR transmission outside glass.
+- No node-based material editor, virtual textures, iridescence, dispersion, or OpenPBR
+  transmission outside glass. The subsurface is screen space: nothing spreads through thin parts
+  lit from behind (use diffuse transmission) or past the edge of the view.
 - [Residency by sampling](#residency-by-sampling) does not track `glass_inside.comp` or
   extension stages.

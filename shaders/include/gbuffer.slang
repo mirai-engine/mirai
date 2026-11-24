@@ -40,7 +40,12 @@ uint gbuffer_bits_unpack(float4 texel) { return uint(texel.w + 0.5); }
 // ((ior - 1) / 2) of the coat (7, 7 and 6), the amount of anisotropy (6), the
 // weight and roughness of the fuzz (6 each), the weight of the diffuse
 // transmission (6), and the colors of the coat (4, 5, 5), of the fuzz and of
-// the diffuse transmission (5 per channel each), as their square roots.
+// the diffuse transmission (5 per channel each), as their square roots. A
+// subsurface, which a pixel holds in place of a diffuse transmission, keeps
+// its weight where that weight goes and the radius of each channel where its
+// color goes (subsurface_radius_code).
+// The layers whose values the layers target holds.
+#define MATERIAL_LAYERS_HELD (MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION | MATERIAL_LAYER_SUBSURFACE)
 uint gbuffer_unorm(float value, uint bits) { return uint(round(saturate(value) * float((1u << bits) - 1u))); }
 // `bits` of `value` at bit `at` of the 128, which may cross from one word into the next.
 void gbuffer_put(inout uint4 v, inout uint at, uint value, uint bits) {
@@ -81,7 +86,21 @@ float3 gbuffer_take_color(uint4 v, inout uint at, uint3 bits) {
     root.b = gbuffer_take_unorm(v, at, bits.z);
     return root * root;
 }
+// The radius of a subsurface along one channel in 5 bits: 0 none, then 31
+// steps from SUBSURFACE_RADIUS_LOW to MATERIAL_SUBSURFACE_RADIUS_MAX, each
+// the same share wider than the one before.
+static const float SUBSURFACE_RADIUS_LOW = 1e-4;
+uint subsurface_radius_code(float radius) {
+    if (!(radius >= 0.5 * SUBSURFACE_RADIUS_LOW)) return 0u;
+    float steps = 30.0 * log2(radius / SUBSURFACE_RADIUS_LOW) / log2(MATERIAL_SUBSURFACE_RADIUS_MAX / SUBSURFACE_RADIUS_LOW);
+    return uint(clamp(round(steps), 0.0, 30.0)) + 1u;
+}
+float subsurface_radius_of(uint code) {
+    if (code == 0u) return 0.0;
+    return SUBSURFACE_RADIUS_LOW * exp2(float(code - 1u) / 30.0 * log2(MATERIAL_SUBSURFACE_RADIUS_MAX / SUBSURFACE_RADIUS_LOW));
+}
 uint4 gbuffer_layers_pack(Material_Layers l) {
+    bool scatters = (l.bits & MATERIAL_LAYER_SUBSURFACE) != 0u;
     uint4 v = uint4(0u);
     uint at = 0u;
     gbuffer_put_oct(v, at, l.coat_normal, 11u);
@@ -92,15 +111,22 @@ uint4 gbuffer_layers_pack(Material_Layers l) {
     gbuffer_put_unorm(v, at, l.anisotropy, 6u);
     gbuffer_put_unorm(v, at, l.fuzz, 6u);
     gbuffer_put_unorm(v, at, l.fuzz_roughness, 6u);
-    gbuffer_put_unorm(v, at, l.diffuse_transmission, 6u);
+    gbuffer_put_unorm(v, at, scatters ? l.subsurface : l.diffuse_transmission, 6u);
     gbuffer_put_color(v, at, l.coat_color, uint3(4u, 5u, 5u));
     gbuffer_put_color(v, at, l.fuzz_color, uint3(5u, 5u, 5u));
-    gbuffer_put_color(v, at, l.diffuse_transmission_color, uint3(5u, 5u, 5u));
+    if (scatters) {
+        float3 radius = l.subsurface_radius * saturate(l.subsurface_color);
+        gbuffer_put(v, at, subsurface_radius_code(radius.r), 5u);
+        gbuffer_put(v, at, subsurface_radius_code(radius.g), 5u);
+        gbuffer_put(v, at, subsurface_radius_code(radius.b), 5u);
+    } else {
+        gbuffer_put_color(v, at, l.diffuse_transmission_color, uint3(5u, 5u, 5u));
+    }
     return v;
 }
 Material_Layers gbuffer_layers_unpack(uint4 v, uint bits) {
     Material_Layers l = material_layers_none();
-    uint held = MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION;
+    uint held = MATERIAL_LAYERS_HELD;
     l.bits = bits & (held | MATERIAL_LAYER_UNLIT);
     if ((l.bits & held) == 0u) return l;
     uint at = 0u;
@@ -112,10 +138,21 @@ Material_Layers gbuffer_layers_unpack(uint4 v, uint bits) {
     l.anisotropy = gbuffer_take_unorm(v, at, 6u);
     l.fuzz = gbuffer_take_unorm(v, at, 6u);
     l.fuzz_roughness = gbuffer_take_unorm(v, at, 6u);
-    l.diffuse_transmission = gbuffer_take_unorm(v, at, 6u);
+    float share = gbuffer_take_unorm(v, at, 6u);
     l.coat_color = gbuffer_take_color(v, at, uint3(4u, 5u, 5u));
     l.fuzz_color = gbuffer_take_color(v, at, uint3(5u, 5u, 5u));
-    l.diffuse_transmission_color = gbuffer_take_color(v, at, uint3(5u, 5u, 5u));
+    if ((bits & MATERIAL_LAYER_SUBSURFACE) != 0u) {
+        float3 radius;
+        radius.r = subsurface_radius_of(gbuffer_take(v, at, 5u));
+        radius.g = subsurface_radius_of(gbuffer_take(v, at, 5u));
+        radius.b = subsurface_radius_of(gbuffer_take(v, at, 5u));
+        l.subsurface = share;
+        l.subsurface_radius = max(radius.r, max(radius.g, radius.b));
+        l.subsurface_color = l.subsurface_radius > 0.0 ? radius / l.subsurface_radius : float3(1.0);
+    } else {
+        l.diffuse_transmission = share;
+        l.diffuse_transmission_color = gbuffer_take_color(v, at, uint3(5u, 5u, 5u));
+    }
     if ((bits & MATERIAL_LAYER_COAT) == 0u) l.coat = 0.0;
     if ((bits & MATERIAL_LAYER_ANISOTROPY) == 0u) l.anisotropy = 0.0;
     if ((bits & MATERIAL_LAYER_FUZZ) == 0u) l.fuzz = 0.0;
@@ -134,7 +171,7 @@ Material_Layers gbuffer_layers(int2 p, uint bits) {
 #ifdef MIRAI_GBUFFER_NO_LAYERS
     if (MIRAI_GBUFFER_NO_LAYERS) return l;
 #endif
-    if ((bits & (MATERIAL_LAYER_COAT | MATERIAL_LAYER_FUZZ | MATERIAL_LAYER_ANISOTROPY | MATERIAL_LAYER_DIFFUSE_TRANSMISSION)) != 0u) l = gbuffer_layers_unpack(gbuffer_layers_target.Load(int3(p, 0)), bits);
+    if ((bits & MATERIAL_LAYERS_HELD) != 0u) l = gbuffer_layers_unpack(gbuffer_layers_target.Load(int3(p, 0)), bits);
     return l;
 }
 

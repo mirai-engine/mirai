@@ -167,8 +167,8 @@ api_material_instance_set :: proc(s:^Session,call:^api.Call) {
     if values!="" {
         shown:=a.values.info
         if !asset_values_read(call,values,&shown) {return}
-        if !asset.material_check({info=&shown}) {
-            api.call_fail(call,api.INVALID_PARAMS,"values: a number that is not finite or is outside its range")
+        if problem:=asset.material_problem({info=&shown});problem!="" {
+            api.call_fail(call,api.INVALID_PARAMS,fmt.tprintf("values: %s",problem))
             return
         }
         kept:=material.info

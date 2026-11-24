@@ -42,6 +42,9 @@ struct Material_Layers {
     float3 tangent;        // the direction the specular lobe of the base stretches along, across its normal
     float diffuse_transmission;          // of the light the base scatters, the share that leaves through the other side
     float3 diffuse_transmission_color;
+    float subsurface;                    // of the light the base scatters, the share that spreads under it (subsurface.comp)
+    float3 subsurface_color;             // the share of subsurface_radius each channel spreads over
+    float subsurface_radius;             // metres
 };
 Material_Layers material_layers_none() {
     Material_Layers l = (Material_Layers)0;
@@ -50,6 +53,7 @@ Material_Layers material_layers_none() {
     l.fuzz_color = float3(1.0);
     l.fuzz_roughness = MATERIAL_DEFAULT_FUZZ_ROUGHNESS;
     l.diffuse_transmission_color = float3(1.0);
+    l.subsurface_color = float3(1.0);
     return l;
 }
 
@@ -432,6 +436,29 @@ void shading_layers(inout Shading s, Material_Layers layers, float metallic) {
         if (s.coat > 0.0) s.transmit *= (1.0 - s.coat) + s.below_coat * s.coat_through;
         if (s.fuzz > 0.0) s.transmit *= 1.0 - s.fuzz;
     }
+}
+
+// A subsurface (OpenPBR) spreads under the surface a share of the light its
+// base scatters: the passes that light the image give the point the rest
+// (its diffuse reflectance times 1 - the share), and the subsurface pass
+// spreads around it the light a white Lambert reflector there takes
+// (shading_lambert), which each point then reflects by its diffuse
+// reflectance and what the layers over it leave (subsurface_kept).
+Shading shading_lambert(Shading s) {
+    Shading lambert = shading_diffuse(s.position, s.normal, float3(1.0));
+    lambert.view = s.view;
+    lambert.nov = s.nov;
+    lambert.across = s.across;
+    lambert.footprint = s.footprint;
+    return lambert;
+}
+// What the specular lobe of the base, the coat and the fuzz leave at the view
+// of the diffuse light of the base, light from everywhere alike.
+float3 subsurface_kept(Shading s) {
+    float3 kept = float3(s.glossy ? base_diffuse_share(s) : 1.0);
+    if (s.coat > 0.0) kept *= (1.0 - s.coat) + s.below_coat * s.coat_through;
+    if (s.fuzz > 0.0) kept *= 1.0 - s.fuzz;
+    return kept;
 }
 
 // The other side of a thin surface as the lights there see it: a Lambert

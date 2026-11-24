@@ -1,13 +1,15 @@
 package asset
 
+import "core:fmt"
 import "core:mem"
+import "core:strings"
 import "mirai:std/base"
 import "mirai:std/serial"
 
 // .mat: the values of a material. The standard model is OpenPBR's: a
 // metallic-roughness base, as in glTF 2.0, with glass, and the layers a
 // material may add over it (coat, fuzz, specular anisotropy, diffuse
-// transmission) or no light at all (unlit). A material may instead name a Surface program and carry the
+// transmission, subsurface) or no light at all (unlit). A material may instead name a Surface program and carry the
 // values of its parameters. Textures are asset ids.
 //
 //   material     Material_Info, one row: what the material is
@@ -28,10 +30,12 @@ import "mirai:std/serial"
 // A source gives the values of the standard model and of the parameters of
 // its program; overlays and hidden names are always the material's own.
 
-MATERIAL_VERSION :: 5
+MATERIAL_VERSION :: 6
 MATERIAL_MAX_PARAMETERS :: 32
 MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
+// Metres: the farthest a subsurface spreads light (Material_Subsurface.radius).
+MATERIAL_SUBSURFACE_RADIUS_MAX :: 0.1
 
 Alpha_Mode :: enum u8 {
     Opaque,   // the alpha of the material is ignored
@@ -71,6 +75,8 @@ Material_Maps :: struct {
     anisotropy:Material_Map,         // rg a direction of tangent space from -1 to 1, turned by anisotropy.rotation; b multiplies anisotropy.amount
     diffuse_transmission:Material_Map,       // a multiplies diffuse_transmission.weight
     diffuse_transmission_color:Material_Map, // sRGB; multiplies diffuse_transmission.color
+    subsurface:Material_Map,                 // a multiplies subsurface.weight
+    subsurface_radius:Material_Map,          // r multiplies subsurface.radius
     // a times opacity: the coverage of a masked material, against alpha_cutoff;
     // without a texture of its own, the base_color map. A program never decides it.
     mask:Material_Map,
@@ -80,7 +86,7 @@ Material_Maps :: struct {
 Material_Map_Kind :: enum u8 {
     Base_Color,Metallic_Roughness,Normal,Emission,Occlusion,Specular,Specular_Color,
     Coat,Coat_Roughness,Coat_Normal,Fuzz_Color,Fuzz_Roughness,Anisotropy,
-    Diffuse_Transmission,Diffuse_Transmission_Color,Mask,
+    Diffuse_Transmission,Diffuse_Transmission_Color,Subsurface,Subsurface_Radius,Mask,
 }
 
 material_maps :: proc "contextless" (maps:^Material_Maps) -> ^[Material_Map_Kind]Material_Map {
@@ -101,6 +107,8 @@ material_maps :: proc "contextless" (maps:^Material_Maps) -> ^[Material_Map_Kind
 #assert(offset_of(Material_Maps,anisotropy)==uintptr(Material_Map_Kind.Anisotropy)*size_of(Material_Map))
 #assert(offset_of(Material_Maps,diffuse_transmission)==uintptr(Material_Map_Kind.Diffuse_Transmission)*size_of(Material_Map))
 #assert(offset_of(Material_Maps,diffuse_transmission_color)==uintptr(Material_Map_Kind.Diffuse_Transmission_Color)*size_of(Material_Map))
+#assert(offset_of(Material_Maps,subsurface)==uintptr(Material_Map_Kind.Subsurface)*size_of(Material_Map))
+#assert(offset_of(Material_Maps,subsurface_radius)==uintptr(Material_Map_Kind.Subsurface_Radius)*size_of(Material_Map))
 #assert(offset_of(Material_Maps,mask)==uintptr(Material_Map_Kind.Mask)*size_of(Material_Map))
 
 // OpenPBR coat: a clear dielectric layer over the base. It reflects with a
@@ -138,6 +146,16 @@ Material_Diffuse_Transmission :: struct {
     color:[3]f32 `mirai:"color"`,
 }
 
+// OpenPBR subsurface: of the light the base scatters diffusely, weight enters
+// a solid and leaves it again around where it entered, spread over radius
+// (each channel by its share in color: skin spreads red the farthest), and
+// takes the base color as it leaves. A thin surface lets it through instead
+// (diffuse_transmission), which a material with a subsurface does not have.
+Material_Subsurface :: struct {
+    weight:f32 `mirai:"min=0,max=1"`,
+    color:[3]f32 `mirai:"color"`,              // the share of radius each channel spreads over
+    radius:f32 `mirai:"min=0,max=0.1,unit=m"`, // up to MATERIAL_SUBSURFACE_RADIUS_MAX
+}
 
 // How the emission of a material is measured.
 Emission_Mode :: enum u8 {
@@ -151,7 +169,7 @@ Emission_Mode :: enum u8 {
 }
 // What a material holds besides the base. Unlit has none of the others: it
 // reflects no light.
-Material_Layer :: enum u8 {Coat,Fuzz,Anisotropy,Unlit,Diffuse_Transmission}
+Material_Layer :: enum u8 {Coat,Fuzz,Anisotropy,Unlit,Diffuse_Transmission,Subsurface}
 Material_Layers :: bit_set[Material_Layer;u32]
 
 material_layers :: proc "contextless" (m:^Material_Info) -> (layers:Material_Layers) {
@@ -160,6 +178,7 @@ material_layers :: proc "contextless" (m:^Material_Info) -> (layers:Material_Lay
     if m.fuzz.weight>0 {layers+={.Fuzz}}
     if m.anisotropy.amount>0 {layers+={.Anisotropy}}
     if m.diffuse_transmission.weight>0 {layers+={.Diffuse_Transmission}}
+    if m.subsurface.weight>0 {layers+={.Subsurface}}
     return
 }
 
@@ -188,6 +207,7 @@ Material_Info :: struct {
     fuzz:Material_Fuzz,
     anisotropy:Material_Anisotropy,
     diffuse_transmission:Material_Diffuse_Transmission,
+    subsurface:Material_Subsurface,
     unlit:bool, // it reflects no light and shows its emission alone; base color and opacity still cover
     maps:Material_Maps,
     program:[MATERIAL_NAME_BYTES]u8 `mirai:"text"`, // generated program id, authored name, or ""
@@ -220,10 +240,11 @@ MATERIAL_DEFAULTS :: Material_Info{
     base_color={1,1,1},opacity=1,alpha_cutoff=0.5,roughness=1,normal_scale=1,occlusion_strength=1,
     specular_factor=1,specular_color={1,1,1},ior=1.5,attenuation_color={1,1,1},
     coat={color={1,1,1},ior=1.6,normal_scale=1},fuzz={color={1,1,1},roughness=0.5},diffuse_transmission={color={1,1,1}},
+    subsurface={color={1,0.5,0.25},radius=0.005},
     maps={
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
-        MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
+        MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
     },
 }
 
@@ -236,7 +257,7 @@ Material_Value_Field :: struct {
     kind:enum u8 {Number,Color,Flag,Mode},
     modes:u8,
 }
-MATERIAL_VALUE_FIELDS :: [22]Material_Value_Field{
+MATERIAL_VALUE_FIELDS :: [25]Material_Value_Field{
     {"base_color",offset_of(Material_Info,base_color),.Color,0},{"opacity",offset_of(Material_Info,opacity),.Number,0},
     {"metallic",offset_of(Material_Info,metallic),.Number,0},{"roughness",offset_of(Material_Info,roughness),.Number,0},
     {"emission",offset_of(Material_Info,emission),.Color,0},{"specular",offset_of(Material_Info,specular_factor),.Number,0},
@@ -251,6 +272,9 @@ MATERIAL_VALUE_FIELDS :: [22]Material_Value_Field{
     {"unlit",offset_of(Material_Info,unlit),.Flag,0},{"emission_mode",offset_of(Material_Info,emission_mode),.Mode,len(Emission_Mode)},
     {"diffuse_transmission",offset_of(Material_Info,diffuse_transmission)+offset_of(Material_Diffuse_Transmission,weight),.Number,0},
     {"diffuse_transmission_color",offset_of(Material_Info,diffuse_transmission)+offset_of(Material_Diffuse_Transmission,color),.Color,0},
+    {"subsurface",offset_of(Material_Info,subsurface)+offset_of(Material_Subsurface,weight),.Number,0},
+    {"subsurface_color",offset_of(Material_Info,subsurface)+offset_of(Material_Subsurface,color),.Color,0},
+    {"subsurface_radius",offset_of(Material_Info,subsurface)+offset_of(Material_Subsurface,radius),.Number,0},
 }
 
 // Puts a value of the standard model over the values of a material (put), or
@@ -387,9 +411,6 @@ material_revert :: proc(types:^Types,view:Material_View,paths:[]string) -> (info
     return info,"",.None
 }
 
-@(private="file")
-unit :: proc "contextless" (value:f32) -> bool {return value>=0 && value<=1}
-
 // Names that end, kinds and components that exist, finite values, overlays
 // that are there and one row per name of each.
 @(private="file")
@@ -436,35 +457,96 @@ material_parameters_follow :: proc(view:Material_View,given:[]Material_Parameter
 }
 
 // Values a renderer can take as they are: finite, inside their ranges, with
-// names that end and layers that exist.
-material_check :: proc(view:Material_View) -> bool {
+// names that end and layers that exist (material_problem says what is not).
+material_check :: proc(view:Material_View) -> bool {return material_problem(view)==""}
+
+// What keeps a renderer from taking a material as it is: the first value
+// that is not a number or is out of its range, with the range it takes, from
+// the temp allocator; "" for a valid material.
+material_problem :: proc(view:Material_View) -> string {
     m:=view.info
-    if m==nil || view.imported!=nil && !material_check({info=view.imported}) {return false}
-    if !finite(m.base_color.r,m.base_color.g,m.base_color.b,m.emission.r,m.emission.g,m.emission.b,m.normal_scale) {return false}
-    if !finite(m.specular_color.r,m.specular_color.g,m.specular_color.b,m.attenuation_color.r,m.attenuation_color.g,m.attenuation_color.b,m.thickness,m.attenuation_distance,m.ior) {return false}
-    if !unit(m.scatter_color.r) || !unit(m.scatter_color.g) || !unit(m.scatter_color.b) {return false}
-    if !unit(m.opacity) || !unit(m.alpha_cutoff) || !unit(m.metallic) || !unit(m.roughness) || !unit(m.occlusion_strength) || !unit(m.specular_factor) || !unit(m.transmission) {return false}
-    if m.alpha_mode>max(Alpha_Mode) || m.emission_mode>max(Emission_Mode) || !(m.ior>=1) || m.thickness<0 || m.attenuation_distance<0 || !text_valid(m.program[:]) {return false}
-    coat,fuzz:=&m.coat,&m.fuzz
-    if !unit(coat.weight) || !unit(coat.roughness) || !unit(coat.color.r) || !unit(coat.color.g) || !unit(coat.color.b) || !(coat.ior>=1) || !finite(coat.ior,coat.normal_scale) {return false}
-    if !unit(fuzz.weight) || !unit(fuzz.roughness) || !unit(fuzz.color.r) || !unit(fuzz.color.g) || !unit(fuzz.color.b) {return false}
-    if !unit(m.anisotropy.amount) || !finite(m.anisotropy.rotation) {return false}
-    transmission:=&m.diffuse_transmission
-    if !unit(transmission.weight) || !unit(transmission.color.r) || !unit(transmission.color.g) || !unit(transmission.color.b) {return false}
-    maps:=material_maps(&m.maps)
-    for slot in maps {
-        if !finite(slot.scale.x,slot.scale.y,slot.offset.x,slot.offset.y,slot.rotation) || slot.uv_set>1 {return false}
+    if m==nil {return "the material has no values"}
+    if view.imported!=nil {
+        if problem:=material_problem({info=view.imported});problem!="" {return fmt.tprintf("its imported values: %s",problem)}
     }
-    if len(view.parameters)>MATERIAL_MAX_PARAMETERS*(1+MATERIAL_MAX_OVERLAYS) || len(view.overlays)>MATERIAL_MAX_OVERLAYS {return false}
+    problem:=""
+    p:=&problem
+    color_number(p,"base_color",m.base_color);color_number(p,"emission",m.emission);number(p,"normal_scale",m.normal_scale)
+    color_number(p,"specular_color",m.specular_color);color_number(p,"attenuation_color",m.attenuation_color)
+    color_range(p,"scatter_color",m.scatter_color)
+    unit_range(p,"opacity",m.opacity);unit_range(p,"alpha_cutoff",m.alpha_cutoff);unit_range(p,"metallic",m.metallic)
+    unit_range(p,"roughness",m.roughness);unit_range(p,"occlusion_strength",m.occlusion_strength)
+    unit_range(p,"specular_factor",m.specular_factor);unit_range(p,"transmission",m.transmission)
+    at_least(p,"ior",m.ior,1);at_least(p,"thickness",m.thickness,0);at_least(p,"attenuation_distance",m.attenuation_distance,0)
+    if problem=="" && m.alpha_mode>max(Alpha_Mode) {problem=fmt.tprintf("alpha_mode is %d; it takes 0 to %d",m.alpha_mode,max(Alpha_Mode))}
+    if problem=="" && m.emission_mode>max(Emission_Mode) {problem=fmt.tprintf("emission_mode is %d; it takes 0 to %d",m.emission_mode,max(Emission_Mode))}
+    if problem=="" && !text_valid(m.program[:]) {problem=fmt.tprintf("program is longer than %d bytes",MATERIAL_NAME_BYTES-1)}
+    coat,fuzz:=&m.coat,&m.fuzz
+    unit_range(p,"coat.weight",coat.weight);unit_range(p,"coat.roughness",coat.roughness);color_range(p,"coat.color",coat.color)
+    at_least(p,"coat.ior",coat.ior,1);number(p,"coat.normal_scale",coat.normal_scale)
+    unit_range(p,"fuzz.weight",fuzz.weight);unit_range(p,"fuzz.roughness",fuzz.roughness);color_range(p,"fuzz.color",fuzz.color)
+    unit_range(p,"anisotropy.amount",m.anisotropy.amount);number(p,"anisotropy.rotation",m.anisotropy.rotation)
+    transmission,subsurface:=&m.diffuse_transmission,&m.subsurface
+    unit_range(p,"diffuse_transmission.weight",transmission.weight);color_range(p,"diffuse_transmission.color",transmission.color)
+    unit_range(p,"subsurface.weight",subsurface.weight);color_range(p,"subsurface.color",subsurface.color)
+    in_range(p,"subsurface.radius",subsurface.radius,0,MATERIAL_SUBSURFACE_RADIUS_MAX)
+    if problem=="" && subsurface.weight>0 && transmission.weight>0 {
+        problem="subsurface.weight and diffuse_transmission.weight are both above 0: a solid takes a subsurface, a thin surface a diffuse transmission; set one of them to 0"
+    }
+    maps:=material_maps(&m.maps)
+    for &slot,kind in maps {
+        if problem!="" {break}
+        name:=fmt.tprintf("maps.%s",strings.to_lower(fmt.tprint(kind),context.temp_allocator))
+        number(p,fmt.tprintf("%s.scale.x",name),slot.scale.x);number(p,fmt.tprintf("%s.scale.y",name),slot.scale.y)
+        number(p,fmt.tprintf("%s.offset.x",name),slot.offset.x);number(p,fmt.tprintf("%s.offset.y",name),slot.offset.y)
+        number(p,fmt.tprintf("%s.rotation",name),slot.rotation)
+        if problem=="" && slot.uv_set>1 {problem=fmt.tprintf("%s.uv_set is %d; it takes 0 or 1",name,slot.uv_set)}
+    }
+    if problem!="" {return problem}
+    if len(view.parameters)>MATERIAL_MAX_PARAMETERS*(1+MATERIAL_MAX_OVERLAYS) {return fmt.tprintf("it has %d parameters; it takes up to %d",len(view.parameters),MATERIAL_MAX_PARAMETERS*(1+MATERIAL_MAX_OVERLAYS))}
+    if len(view.overlays)>MATERIAL_MAX_OVERLAYS {return fmt.tprintf("it has %d overlays; it takes up to %d",len(view.overlays),MATERIAL_MAX_OVERLAYS)}
     for overlay,at in view.overlays {
-        if overlay.id==0 || overlay.blend>max(Overlay_Blend) {return false}
+        if overlay.id==0 || overlay.blend>max(Overlay_Blend) {return fmt.tprintf("overlay %d has id %d and blend %d: an id above 0 and a blend of 0 to %d",at,overlay.id,overlay.blend,max(Overlay_Blend))}
         for other in view.overlays[:at] {
-            if other.id==overlay.id {return false}
+            if other.id==overlay.id {return fmt.tprintf("two overlays have the id %d",overlay.id)}
         }
     }
-    if len(view.imported_parameters)>MATERIAL_MAX_PARAMETERS || !parameters_check(view.parameters,view.overlays) || !parameters_check(view.imported_parameters,nil) {return false}
-    for &hidden in view.hidden {
-        if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return false}
+    if len(view.imported_parameters)>MATERIAL_MAX_PARAMETERS {return fmt.tprintf("it has %d imported parameters; it takes up to %d",len(view.imported_parameters),MATERIAL_MAX_PARAMETERS)}
+    if !parameters_check(view.parameters,view.overlays) || !parameters_check(view.imported_parameters,nil) {
+        return "a parameter has no name, a kind or a number of components out of range (1 to 4), a value that is not a number, an overlay the material does not have, or the name of another"
     }
-    return true
+    for &hidden in view.hidden {
+        if name:=serial.text_field(hidden.name[:]);name=="" || len(name)==len(hidden.name) {return fmt.tprintf("a hidden name is empty or longer than %d bytes",MATERIAL_NAME_BYTES-1)}
+    }
+    return ""
+}
+
+// The first problem of the values a material_problem reads: each writes its
+// own only while there is none before it.
+@(private="file")
+in_range :: proc(problem:^string,name:string,value,low,high:f32) {
+    if problem^!="" || value>=low && value<=high {return}
+    problem^=fmt.tprintf("%s is %v; it takes %v to %v",name,value,low,high)
+}
+@(private="file")
+unit_range :: proc(problem:^string,name:string,value:f32) {in_range(problem,name,value,0,1)}
+@(private="file")
+at_least :: proc(problem:^string,name:string,value,low:f32) {
+    if problem^!="" || value>=low && finite(value) {return}
+    problem^=fmt.tprintf("%s is %v; it takes a number of %v or more",name,value,low)
+}
+@(private="file")
+number :: proc(problem:^string,name:string,value:f32) {
+    if problem^!="" || finite(value) {return}
+    problem^=fmt.tprintf("%s is %v; it takes a finite number",name,value)
+}
+@(private="file")
+color_number :: proc(problem:^string,name:string,color:[3]f32) {
+    channels:=[3]rune{'r','g','b'}
+    for value,i in color {number(problem,fmt.tprintf("%s.%c",name,channels[i]),value)}
+}
+@(private="file")
+color_range :: proc(problem:^string,name:string,color:[3]f32) {
+    channels:=[3]rune{'r','g','b'}
+    for value,i in color {unit_range(problem,fmt.tprintf("%s.%c",name,channels[i]),value)}
 }

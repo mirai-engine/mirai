@@ -4,6 +4,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -493,6 +494,54 @@ material_keeps_values_parameters_and_overlays :: proc(t:^testing.T) {
     wide[0].components=5
     bad=desc;bad.parameters=wide[:];refuse(t,&types,bad)
     bad=desc;bad.info.ior=0;refuse(t,&types,bad)
+}
+
+// A subsurface reads back as it was saved, and a value out of its range or
+// not a number is refused with the field and the range it takes.
+@(test)
+material_problem_names_the_value_out_of_its_range :: proc(t:^testing.T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    info:=MATERIAL_DEFAULTS
+    info.subsurface={weight=0.75,color={1,0.4,0.2},radius=0.005}
+    info.maps.subsurface_radius.texture={3,3}
+    testing.expect(t,material_layers(&info)=={.Subsurface})
+    path:=fmt.tprintf("%s/skin.mat",base.test_folder(t,"asset"))
+    testing.expect_value(t,material_save(path,&types,{id={8,10},info=info}),Error.None)
+    a:Asset
+    testing.expect_value(t,asset_load(&a,path),Error.None)
+    view,error:=material_view(&a,&types)
+    testing.expect_value(t,error,Error.None)
+    testing.expect(t,error==.None && view.info^==info,"a subsurface reads back as it was saved")
+    asset_close(&a)
+    value:=[4]f32{0.02,0,0,0}
+    testing.expect(t,material_standard_value(&info,base.name_hash("subsurface_radius"),&value,true) && info.subsurface.radius==0.02)
+
+    nan:=transmute(f32)u32(0x7fc00000)
+    Case :: struct {name:string,info:Material_Info,problem:string}
+    cases:=[?]Case{
+        {"subsurface weight NaN",MATERIAL_DEFAULTS,"subsurface.weight is NaN; it takes 0 to 1"},
+        {"subsurface radius too wide",MATERIAL_DEFAULTS,"subsurface.radius is 0.5; it takes 0 to 0.1"},
+        {"subsurface radius below 0",MATERIAL_DEFAULTS,"subsurface.radius is -0.001; it takes 0 to 0.1"},
+        {"subsurface color above 1",MATERIAL_DEFAULTS,"subsurface.color.g is 1.5; it takes 0 to 1"},
+        {"both subsurface and diffuse transmission",MATERIAL_DEFAULTS,"subsurface.weight and diffuse_transmission.weight are both above 0"},
+        {"roughness NaN",MATERIAL_DEFAULTS,"roughness is NaN; it takes 0 to 1"},
+        {"ior below 1",MATERIAL_DEFAULTS,"ior is 0.5; it takes a number of 1 or more"},
+        {"map scale infinite",MATERIAL_DEFAULTS,"maps.subsurface.scale.x is +Inf; it takes a finite number"},
+    }
+    cases[0].info.subsurface.weight=nan
+    cases[1].info.subsurface.radius=0.5
+    cases[2].info.subsurface.radius=-0.001
+    cases[3].info.subsurface.color.g=1.5
+    cases[4].info.subsurface.weight,cases[4].info.diffuse_transmission.weight=0.5,0.5
+    cases[5].info.roughness=nan
+    cases[6].info.ior=0.5
+    cases[7].info.maps.subsurface.scale.x=transmute(f32)u32(0x7f800000)
+    for &c in cases {
+        problem:=material_problem({info=&c.info})
+        testing.expectf(t,strings.contains(problem,c.problem),"%s: %q",c.name,problem)
+        testing.expectf(t,!material_check({info=&c.info}),"%s is refused",c.name)
+    }
+    testing.expect_value(t,material_problem({info=&info}),"")
 }
 
 @(test)

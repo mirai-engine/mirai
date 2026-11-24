@@ -11,7 +11,9 @@
 // depth buffer before running lighting or storage-buffer atomics.
 // The target blends premultiplied: an additive surface gives its light with an
 // alpha of 0, which leaves all that is behind it, and its coverage to the
-// reactive target, where TAA keeps less of its history.
+// reactive target, where TAA keeps less of its history. The air between the
+// eye and the surface (aerial.slang) keeps a share of its light and, where it
+// covers, sends its own: the scene behind holds the air in front of it.
 //
 // unlayered: no blended instance in sight has material layers.
 // quiet: off the feedback turn of the program, texture feedback is skipped.
@@ -30,6 +32,7 @@
 #include "raster.slang"
 #include "glass.slang"
 #include "light_lists.slang"
+#include "aerial.slang"
 #include <extension_hooks.slang>
 #ifdef MIRAI_COST
 #define COST_SLOT SLOT_PASS7
@@ -105,10 +108,13 @@ struct Stage_Output {
     [[vk::location(1)]] float out_reactive : SV_Target1;
 };
 
-// The light a surface sends over what is behind it where it covers.
-Stage_Output translucent_output(Material material, float3 color, float covered) {
+// The light a surface sends over what is behind it where it covers, through
+// the air in front of it: an additive surface hides nothing, so the air in
+// front of it sends nothing more.
+Stage_Output translucent_output(Material material, float3 color, float covered, Air_Between air) {
     Stage_Output output;
     bool additive = material.alpha_mode == ALPHA_ADDITIVE;
+    color = color * air.kept + (additive ? float3(0.0) : covered * air.sent);
     output.out_color = float4(finite_or_zero(color), additive ? 0.0 : covered);
     output.out_reactive = additive ? covered : 0.0;
     return output;
@@ -125,6 +131,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
     Instance inst = scene_instance(input.in_instance);
     Material material = material_row(input.in_material, inst.material_values);
     if (!fragment_forward(input, material, overflow)) discard;
+    Air_Between air = air_between(pixel_position.xy * frame.inv_resolution, length(input.in_world - frame.camera_position.xyz));
 #ifdef MIRAI_COST
     if (!IsHelperLane()) {
         uint mesh = cost_instance_mesh(input.in_instance);
@@ -140,7 +147,7 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
         if (material_has(material.textures[MATERIAL_MAP_EMISSION])) {
             emissive *= material_map_texel(material, MATERIAL_MAP_EMISSION, material.textures[MATERIAL_MAP_EMISSION], input.in_uv, input.in_uv1, bias, false).rgb;
         }
-        return translucent_output(material, emission_render_units(emissive + input.in_emission, material.emission_mode == EMISSION_RELATIVE) * covered, covered);
+        return translucent_output(material, emission_render_units(emissive + input.in_emission, material.emission_mode == EMISSION_RELATIVE) * covered, covered, air);
     }
     Fragment f = fragment_evaluate(input, material, inst, g_depth.Load(int3(p, 0)).r);
     Glass g = fragment_glass(f, input.in_world);
@@ -151,5 +158,5 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
         given_high = inst.bounds_max.xyz;
     }
     float3 color = glass_light(g, glass_shading(f.material, g), overflow ? 0.08 : 0.0, params.light_budget);
-    return translucent_output(material, color, overflow ? 0.0 : saturate(g.alpha));
+    return translucent_output(material, color, overflow ? 0.0 : saturate(g.alpha), air);
 }

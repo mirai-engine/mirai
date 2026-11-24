@@ -371,7 +371,7 @@ MATERIAL_MAP_NAMES :: [asset.Material_Map_Kind]string{
     .Coat_Roughness="maps.coat_roughness",.Coat_Normal="maps.coat_normal",.Fuzz_Color="maps.fuzz_color",
     .Fuzz_Roughness="maps.fuzz_roughness",.Anisotropy="maps.anisotropy",
     .Diffuse_Transmission="maps.diffuse_transmission",.Diffuse_Transmission_Color="maps.diffuse_transmission_color",
-    .Mask="maps.mask",
+    .Subsurface="maps.subsurface",.Subsurface_Radius="maps.subsurface_radius",.Mask="maps.mask",
 }
 
 // Toward the sun of the editor's presets, a morning one behind who looks along -Z.

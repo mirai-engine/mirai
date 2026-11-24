@@ -201,3 +201,40 @@ the_air_draws_the_same_while_nothing_changes_and_follows_the_sun :: proc(t: ^tes
 	testing.expect(t, mem.compare(mem.slice_to_bytes(first), mem.slice_to_bytes(moved)) != 0, "and the sky changes with it")
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
+
+// Far glass and far blends take the haze of the air as a far opaque wall
+// does: the air in front of them keeps a share of their light and sends its
+// own where they cover, so a far blend shows as the same wall opaque, and a
+// dark glass far away shows the light of the air it hides.
+@(test)
+the_air_hazes_far_glass_and_blends_as_it_hazes_what_is_opaque :: proc(t: ^testing.T) {
+	f: Air_Fixture
+	if !air_fixture(t, &f) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	lambert := DEFAULT_MATERIAL
+	lambert.specular_factor = 0
+	blend := lambert
+	blend.alpha_mode = .Blend
+	glass := DEFAULT_MATERIAL
+	glass.base_color, glass.transmission, glass.roughness = {0.05, 0.05, 0.05}, 1, 0.05
+	materials_set(r, {lambert, blend, glass})
+	sun := sun_at(40)
+	sun.direction.z = 0.5
+	look := LEVEL
+	look.fov_y = 20
+	seen :: proc(t: ^testing.T, f: ^Air_Fixture, sun: Sun_Desc, look: Camera, distance: f32, material: Material_Handle) -> Vec3 {
+		r := f.renderer
+		wall := Instance_Desc{object_id = 1, mesh = f.square, transform = linalg.matrix4_translate_f32({0, 1, -distance}) * linalg.matrix4_scale_f32({distance, distance, 1}), material = material, tint = {1, 1, 1}}
+		scene_given(r, {wall}, nil, sun, AIR_SKY)
+		for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = look}), r.error)}
+		return nits_at(t, f, r.targets.display, 0.5, 0.5)
+	}
+	opaque_far := seen(t, &f, sun, look, 15000, 1)
+	blend_near, blend_far := seen(t, &f, sun, look, 20, 2), seen(t, &f, sun, look, 15000, 2)
+	testing.expectf(t, blend_far.b / blend_far.r > blend_near.b / blend_near.r * 1.1, "the far blend is bluer: %v against %v", blend_far, blend_near)
+	testing.expectf(t, linalg.length(blend_far - opaque_far) < linalg.length(opaque_far) * 0.05, "a far blend that covers shows as the opaque wall there: %v against %v", blend_far, opaque_far)
+	glass_near, glass_far := seen(t, &f, sun, look, 20, 3), seen(t, &f, sun, look, 15000, 3)
+	testing.expectf(t, glass_far.g > glass_near.g * 1.5, "a dark glass far away shows the light of the air in front of it: %v against %v", glass_far, glass_near)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}

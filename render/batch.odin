@@ -606,7 +606,7 @@ batches_build :: proc(r: ^Renderer) {
 		})
 		append(&b.boxes, mm.Aabb{low, high})
 		b.bounds_min, b.bounds_max = linalg.min(b.bounds_min, low), linalg.max(b.bounds_max, high)
-		if a.reflectance && !a.glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, a.layered})}
+		if a.reflectance && !a.glass && layers != 0 {append(&b.reflective, Reflective_Instance{drawn, a.layered, a.subsurface})}
 		for _ in 0 ..< groups {append(&s.indices, drawn)}
 		if classes != 0 {
 			if record.tree_nodes > 0 {append(&b.traced, drawn)}

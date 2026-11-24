@@ -1,7 +1,10 @@
 #include "native.slang"
+// unlayered: while no instance with layers is in sight (gbuffer.slang).
+//! constant unlayered MIRAI_GBUFFER_NO_LAYERS
 // The light the probe volume gives each point of contact.comp, around its
-// normal and the specular lobe of its roughness, which contact_pixels.comp
-// takes to the pixels. Apart from the rays of contact.comp, which would leave
+// normal and the specular lobe of its roughness, bent along an anisotropic
+// lobe as composite.comp bends it, which contact_pixels.comp takes to the
+// pixels. Apart from the rays of contact.comp, which would leave
 // it fewer registers.
 #include "probe_light.slang"
 #define MIRAI_GROUP_X 8
@@ -35,6 +38,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
     float4 normal = gbuffer_normal_roughness(p);
     Shading s = shading_surface(pixel.position, normal.xyz, -pixel.view, float3(0.0), 0.0, normal.w);
+    // The light around an anisotropic lobe comes from its bent reflection.
+    Material_Layers layers = gbuffer_layers(p, gbuffer_bits_unpack(gbuffer_normal_texel(p)));
+    layers.bits &= MATERIAL_LAYER_ANISOTROPY;
+    shading_layers(s, layers, 0.0);
     // Read where the point rests: the probes see what rests around it.
     Indirect light = indirect_lobes(pixel.position - pixel_rest(p, depth), normal.xyz, -pixel.view, s, INDIRECT_DIFFUSE | INDIRECT_SPECULAR, 1.0);
     out_irradiance[q] = float4(light.irradiance, 1.0);

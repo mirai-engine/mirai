@@ -279,12 +279,14 @@ struct Material_Coat { float3 color; float weight; float roughness; float ior; f
 struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
+struct Material_Subsurface { float3 color; float weight; float radius; }; // color: the share of radius (metres) each channel spreads over
 struct Material_Volume { float3 scatter; uint program; }; // what a solid scatters of what it stops; MATERIAL_PROGRAM_* bits of what its program does
 struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;
     Material_Anisotropy anisotropy;
     Material_Diffuse_Transmission diffuse_transmission;
+    Material_Subsurface subsurface;
 };
 struct Material_Row {
     Material shared;

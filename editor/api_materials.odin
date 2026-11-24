@@ -1,5 +1,6 @@
 package editor
 
+import "core:fmt"
 import "mirai:asset"
 import "mirai:editor/api"
 import erender "mirai:engine/render"
@@ -51,8 +52,8 @@ materials_api_register :: proc(s:^Session,st:^Api_State) {
 @(private)
 material_values_read :: proc(call:^api.Call,text:string,info:^asset.Material_Info) -> bool {
     if !asset_values_read(call,text,info) {return false}
-    if !asset.material_check({info=info}) {
-        api.call_fail(call,api.INVALID_PARAMS,"values: a number that is not finite or is outside its range: opacity, metallic, roughness, weights, amounts and the colors of the layers go from 0 to 1, ior and the coat ior are at least 1")
+    if problem:=asset.material_problem({info=info});problem!="" {
+        api.call_fail(call,api.INVALID_PARAMS,fmt.tprintf("values: %s",problem))
         return false
     }
     return true

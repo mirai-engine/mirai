@@ -81,6 +81,7 @@ Instance_Desc :: struct {
 Reflective_Instance :: struct {
 	instance: u32,
 	layered:  bool, // some of its materials have layers (asset.Material_Layers): the layers target too
+	subsurface: bool, // and one has a subsurface: the subsurface passes too (subsurface.odin)
 }
 
 // Rendered copies retain the source object id without sharing its motion history.
@@ -678,11 +679,12 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 	}
 	result.layers = transmute(u32)layers
 	// The blocks of the layers it does not hold too: those an instance gives a weight take the rest from them.
-	c, f, d := m.coat, m.fuzz, m.diffuse_transmission
+	c, f, d, u := m.coat, m.fuzz, m.diffuse_transmission, m.subsurface
 	result.coat = {color = linalg.clamp(c.color, 0, 1), weight = clamp(c.weight, 0, 1), roughness = clamp(c.roughness, 0, 1), ior = max(c.ior, 1), normal_scale = c.normal_scale}
 	result.fuzz = {color = linalg.clamp(f.color, 0, 1), weight = clamp(f.weight, 0, 1), roughness = clamp(f.roughness, 0, 1)}
 	result.anisotropy = {amount = clamp(m.anisotropy.amount, 0, 1), rotation = {math.cos(m.anisotropy.rotation), math.sin(m.anisotropy.rotation)}}
 	result.diffuse_transmission = {color = linalg.clamp(d.color, 0, 1), weight = clamp(d.weight, 0, 1)}
+	result.subsurface = {color = linalg.clamp(u.color, 0, 1), weight = clamp(u.weight, 0, 1), radius = clamp(u.radius, 0, asset.MATERIAL_SUBSURFACE_RADIUS_MAX)}
 	for texture, kind in m.textures {result.textures[kind] = texture_index(r, texture)}
 	if !material_mask_own(m) {result.textures[.Mask] = result.textures[.Base_Color]}
 	// The usual packing of glTF: occlusion in the red of the metallic-roughness
@@ -988,7 +990,7 @@ instances_classify :: proc(s: ^Scene_State) {
 		}
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
 		word := inst.meta.x &~ INSTANCE_FLAG_GLASS | glass_flag(a)
-		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered})}
+		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered, a.subsurface})}
 		mask_flags := tlas_mask_flags(ray_class(word, flags), a.tested, mesh.tested)
 		if flags != inst.meta.w || word != inst.meta.x || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
 			before := inst
@@ -1022,12 +1024,12 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 // blended; glass: all of them; reflectance: one of its opaque materials
 // reflects other than the default dielectric, which the albedo and metallic
 // of the G-buffer give by themselves; layered: one of its opaque materials
-// has layers. shown_opaque: a bit for each slot
+// has layers; subsurface: one of them a subsurface. shown_opaque: a bit for each slot
 // whose row is a blended one with a program that its values show otherwise.
 @(private)
 Instance_Alpha :: struct {
 	tested, shown_opaque: u32,
-	blended, glass, reflectance, layered: bool,
+	blended, glass, reflectance, layered, subsurface: bool,
 	translucent: Translucent,
 }
 
@@ -1075,7 +1077,10 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
                     a.translucent.forward_layered ||= lit != {}
                     a.translucent.additive ||= m == .Additive
                 }
-            } else {a.layered ||= lit != {}}
+            } else {
+                a.layered ||= lit != {}
+                a.subsurface ||= .Subsurface in lit
+            }
         }
         if m != .Opaque || faded {a.tested |= 1 << u32(k)}
         a.blended ||= asset.alpha_blended(m)
@@ -2074,7 +2079,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		flags |= alpha_flags(a)
 		s.instances[index].meta.x |= glass_flag(a)
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
-		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered})}
+		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered, a.subsurface})}
 		if a.blended && !hidden {append(&s.translucent, a.translucent)}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1

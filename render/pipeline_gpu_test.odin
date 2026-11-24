@@ -208,11 +208,13 @@ variants_that_spare_work_come_later_and_a_refused_one_once :: proc(t: ^testing.T
 	defer fixture_destroy(&f)
 	r := f.renderer
 	testing.expect(t, pipeline_slot(r, .Translucent_Draws, .Any, {TRANSLUCENT_DRAWS_COMP_CELLS})^ != 0 && pipeline_slot(r, .Cull_Clusters, .Any, {CULL_CLUSTERS_COMP_CANDIDATES})^ != 0, "the renderer starts with the variants a pass cannot go without")
-	unlayered := pipeline_slot(r, .Composite, .Any, {COMPOSITE_COMP_UNLAYERED})
+	// What an empty frame asks of the composite: neither layers nor a subsurface.
+	spare := rhi.Shader_Constants{COMPOSITE_COMP_UNLAYERED, COMPOSITE_COMP_UNSCATTERED}
+	unlayered := pipeline_slot(r, .Composite, .Any, spare)
 	testing.expect(t, unlayered^ == 0, "and without those that spare work")
 
 	// As a change of the shaders that the driver fails to compile.
-	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Composite_Comp].name, {COMPOSITE_COMP_UNLAYERED})
+	rhi.device_refuse_pipeline(f.device, r.shader_codes[.Composite_Comp].name, spare)
 	defer rhi.device_refuse_pipeline(f.device, "", {})
 	camera := Camera{position = {0, 2, 2}, forward = {0, -2, -2}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	for _ in 0 ..< 100 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}

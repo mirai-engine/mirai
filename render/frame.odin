@@ -48,6 +48,7 @@ SLOT_DISTANCE       :: abi.SLOT_DISTANCE
 SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
 SLOT_LIGHT_LISTS    :: abi.SLOT_LIGHT_LISTS
 SLOT_REST           :: abi.SLOT_REST
+SLOT_AERIAL         :: abi.SLOT_AERIAL
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -79,6 +80,8 @@ Pass :: struct {
 	pyramid:          bool, // that of this frame holds what the view drew of the opaque scene
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
 	layered:        bool, // and the layers of its material (gbuffer.slang)
+	subsurface:     bool, // an instance with a subsurface is in sight and the view shows the image lit: the subsurface passes run (subsurface.odin)
+	scattered:      bool, // the direct light of the view left the light of its subsurfaces in t.subsurface[0]
 	instance_count: u32,
 	batch_slots:    u32, // instance slots of the batches drawn, after the instances
 
@@ -127,6 +130,8 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.views if p.t.views != 0 else r.dummy_uint)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
 	rhi.cmd_bind_texture(cmd, SLOT_REST, p.t.rest if p.t.rest != 0 else r.dummy_rest)
+	// Without an atmosphere no pass reads the aerial perspective: any volume stands for it.
+	rhi.cmd_bind_texture(cmd, SLOT_AERIAL, p.t.aerial if p.t.aerial != 0 else r.display_lut)
 	rhi.cmd_bind_texture(cmd, SLOT_SHADOW_TABLE, p.t.shadow_raster.table if p.t.shadow_raster.table != 0 else r.dummy_uint)
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHTS, or_dummy(r, s.light_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_LIGHT_TREE, or_dummy(r, s.light_tree_buffer))
@@ -975,7 +980,10 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if r.hardware_rt {f.flags |= FRAME_FLAG_HW_RT}
 	if s.environment.ground_grid && !p.texture {f.flags |= FRAME_FLAG_GRID}
 	if r.resolve_counted {f.flags |= FRAME_FLAG_RESOLVE_COUNTED}
-	p.reflectance, p.layered = reflectance_in_frustum(r, f.frustum)
+	p.reflectance, p.layered, p.subsurface = reflectance_in_frustum(r, f.frustum)
+	// A mode of inspection shows each pixel as the G-buffer and the lights give it.
+	p.subsurface &&= p.inspection.mode == .None
+	p.scattered = false
 	// What the surfaces of the Gbuffer stage of extensions need, wherever they are.
 	if stage_asked(r, .Gbuffer) {
 		p.layered ||= .Layers in r.gbuffer_asked
@@ -983,6 +991,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	}
 	if p.reflectance && !ensure_surface_target(r, t) {return false}
 	if p.layered && !ensure_layers_target(r, t) {return false}
+	if p.subsurface && !subsurface_targets(r, t) {return false}
 	if r.frame_layout.instance_ids && !ensure_instance_target(r, t) {return false}
 	if s.batch.hooked && !ensure_rest_target(r, t) {return false}
 	if p.reflectance {f.flags |= FRAME_FLAG_REFLECTANCE}
@@ -1005,6 +1014,8 @@ view_begin :: proc(p: ^Pass) -> bool {
 	}
 	bind_scene_table(p)
 	if !air_aerial(p) {return false}
+	// The volume the view may have made just now.
+	rhi.cmd_bind_texture(cmd, SLOT_AERIAL, t.aerial if t.aerial != 0 else r.display_lut)
 
 	// What the stages a pipeline may leave out give the ones after them.
 	p.gi, p.gathered = r.dummy_texture, false
@@ -1337,7 +1348,7 @@ nested_targets :: proc(p: ^Pass) -> bool {
 	if p.nested_count == 0 || p.layered {return true}
 	reflectance, layered := p.reflectance, false
 	for &nested in p.nested[:p.nested_count] {
-		seen, seen_layered := reflectance_in_frustum(r, nested_frustum(p.frame.frustum, &nested))
+		seen, seen_layered, _ := reflectance_in_frustum(r, nested_frustum(p.frame.frustum, &nested))
 		reflectance ||= seen
 		layered ||= seen_layered
 		if layered {break}
@@ -1575,8 +1586,8 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	base.profile_end(zone)
 	if !listed {return false}
 	rhi.cmd_timestamp(cmd, "direct pixels")
-	filter := unlayered + ({DIRECT_FILTER_COMP_UNLISTED} if p.frame.shadowless_lights == 0 else {})
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, filter, {DIRECT_FILTER_COMP_UNLAYERED, DIRECT_FILTER_COMP_UNLISTED})^)
+	filter := unlayered + ({DIRECT_FILTER_COMP_UNLISTED} if p.frame.shadowless_lights == 0 else {}) + ({} if p.subsurface else {DIRECT_FILTER_COMP_UNSCATTERED})
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Filter, filter, {DIRECT_FILTER_COMP_UNLAYERED, DIRECT_FILTER_COMP_UNLISTED, DIRECT_FILTER_COMP_UNSCATTERED})^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1584,10 +1595,12 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_marks)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.subsurface[0] if p.subsurface else r.dummy_texture)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_points)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_texture(cmd, SLOT_LIGHT_LISTS, lists)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
+	p.scattered = p.subsurface
 	return true
 }
 
@@ -1672,7 +1685,7 @@ pass_contact :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.contact_rays)
 	rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
 	rhi.cmd_timestamp(cmd, "contact light")
-	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Contact_Light])
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Contact_Light, {} if p.layered else {CONTACT_LIGHT_COMP_UNLAYERED}, {CONTACT_LIGHT_COMP_UNLAYERED})^)
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
@@ -1699,9 +1712,10 @@ pass_contact :: proc(p: ^Pass) -> bool {
 pass_composite :: proc(p: ^Pass) {
 	r, cmd, t := p.r, p.cmd, p.t
 	rhi.cmd_timestamp(cmd, "composite")
-	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, {} if p.layered else {COMPOSITE_COMP_UNLAYERED}, {COMPOSITE_COMP_UNLAYERED})^)
-	Params :: struct {gathered, pad0, pad1, pad2: u32}
-	params := Params{gathered = u32(p.gathered)}
+	constants := ({} if p.layered else rhi.Shader_Constants{COMPOSITE_COMP_UNLAYERED}) + ({} if p.subsurface else {COMPOSITE_COMP_UNSCATTERED})
+	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Composite, constants, {COMPOSITE_COMP_UNLAYERED, COMPOSITE_COMP_UNSCATTERED})^)
+	Params :: struct {gathered, scattered, pad1, pad2: u32}
+	params := Params{gathered = u32(p.gathered), scattered = u32(p.scattered)}
 	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.albedo)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.normal)
@@ -1709,11 +1723,11 @@ pass_composite :: proc(p: ^Pass) {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, p.gi)
-	// Without an atmosphere the composite reads no aerial perspective: any volume stands for it.
-	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.aerial if t.aerial != 0 else r.display_lut)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.subsurface[0] if p.subsurface else r.dummy_texture)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.motion)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, t.display)
 	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
+	if p.subsurface {pass_subsurface(p)}
 	p.shown = t.display
 	debug_views_pass(p)
 	if p.inspection.record != nil {stage_inspect(p)}

@@ -30,7 +30,8 @@ MAP_LABELS :: [asset.Material_Map_Kind]string{
     .Occlusion="Occlusion map",.Specular="Specular map",.Specular_Color="Specular color map",.Coat="Coat map",
     .Coat_Roughness="Coat roughness map",.Coat_Normal="Coat normal map",.Fuzz_Color="Fuzz color map",
     .Fuzz_Roughness="Fuzz roughness map",.Anisotropy="Anisotropy map",
-    .Diffuse_Transmission="Transmission map",.Diffuse_Transmission_Color="Transmission color map",.Mask="Mask map",
+    .Diffuse_Transmission="Transmission map",.Diffuse_Transmission_Color="Transmission color map",
+    .Subsurface="Subsurface map",.Subsurface_Radius="Subsurface radius map",.Mask="Mask map",
 }
 TEXTURE_PARAMETER :: 100 // the index of the row of a texture of a program starts here; below it, a map of MAP_LABELS plus one
 OVERLAY_BLEND_NAMES :: [asset.Overlay_Blend]string{.Alpha="Alpha",.Additive="Additive",.Multiply="Multiply"}
@@ -42,7 +43,7 @@ MATERIAL_LIST_ROWS :: 8
 Material_Value :: enum u8 {
     Base_Color,Opacity,Metallic,Roughness,Emission,Specular,Ior,Transmission,Alpha_Mode,
     Coat,Coat_Roughness,Coat_Color,Coat_Ior,Fuzz,Fuzz_Color,Fuzz_Roughness,Anisotropy,Anisotropy_Rotation,Unlit,
-    Emission_Mode,Diffuse_Transmission,Diffuse_Transmission_Color,
+    Emission_Mode,Diffuse_Transmission,Diffuse_Transmission_Color,Subsurface,Subsurface_Color,Subsurface_Radius,
 }
 #assert(len(Material_Value)==len(asset.MATERIAL_VALUE_FIELDS))
 
@@ -608,6 +609,14 @@ material_parameters :: proc(c:^Inspect,a:^Appearance) {
         transmission_color:=material_value_name(.Diffuse_Transmission_Color)
         appearance_swatch(s,"Transmission color",5,values.diffuse_transmission.color,{key=value_key(a.entity,a.slot,transmission_color),entity=a.entity,slot=a.slot,name=transmission_color})
         map_row(c,a,info,.Diffuse_Transmission_Color)
+    }
+    override_number_row(s,a,"Subsurface",.Subsurface,values.subsurface.weight)
+    if values.subsurface.weight>0 {
+        map_row(c,a,info,.Subsurface)
+        subsurface_color:=material_value_name(.Subsurface_Color)
+        appearance_swatch(s,"Subsurface color",6,values.subsurface.color,{key=value_key(a.entity,a.slot,subsurface_color),entity=a.entity,slot=a.slot,name=subsurface_color})
+        override_number_row(s,a,"Subsurface radius",.Subsurface_Radius,values.subsurface.radius,0,asset.MATERIAL_SUBSURFACE_RADIUS_MAX)
+        map_row(c,a,info,.Subsurface_Radius)
     }
 }
 
