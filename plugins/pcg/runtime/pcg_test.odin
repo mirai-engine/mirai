@@ -1,6 +1,7 @@
 package pcg
 
 import "core:fmt"
+import "core:math"
 import "core:math/linalg"
 import "core:mem"
 import "core:os"
@@ -677,4 +678,96 @@ hostile_inputs_place_nothing_and_never_crash :: proc(t:^testing.T) {
     coord,local:=cell_of(32,{f32(0h7fc00000),f32(0h7f800000)})
     testing.expect(t,coord.x<=COORD_MAX && local.x>=0 && local.y>=0)
     testing.expect_value(t,zone_mask(nil,0,{0,0,0}),f32(0))
+}
+
+@(private="file")
+hills_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+    probe :: proc(user:rawptr,origin,down:[3]f32) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
+        f:=cast(^Pcg_Test)user
+        f.probes+=1
+        height:=2*math.sin(origin.x*0.7)+math.cos(origin.z*0.9)
+        return {point={origin.x,height,origin.z},normal={0,1,0},weights={0,255,0,0},layers={1={7,7}}},.Ground
+    }
+    return {user=w.data,probe=probe,spacing=0.5},true
+}
+
+// The ground cache is state of the world: a copy for Play, or a rollback into
+// the world it came from, places on its first frame what the world placed,
+// without reading the ground again. A world without it reads the whole ground
+// again over frames, its cells standing meanwhile on the coarse tiles of
+// cells not read yet: what excluding it from the copy (copy=false) would cost.
+@(test)
+the_ground_cache_copies_with_the_world_and_spares_reading_it_again :: proc(t:^testing.T) {
+    Case :: struct {name:string,rollback,without:bool}
+    cases:=[]Case{
+        {"Play: a new world from the edited one",false,false},
+        {"a rollback into the world it came from",true,false},
+        {"a new world without the ground cache",false,true},
+    }
+    placements :: proc(g:^Pcg_Generated,e:core.Entity) -> (all:[dynamic]Placed) {
+        all=make([dynamic]Placed,context.temp_allocator)
+        if graph:=generated_graph(g,e);graph!=nil {
+            for &cell in graph.cells {if cell.built {append(&all,..cell.placed[:])}}
+        }
+        return
+    }
+    for c in cases {
+        f:=new(Pcg_Test)
+        defer free(f)
+        if !test_init(t,f) {return}
+        defer test_destroy(f)
+        f.queries.open=hills_open
+        s:Pcg_Source
+        forest(&s)
+        if !testing.expect_value(t,source_compile(&s).kind,Pcg_Issue_Kind.None) {source_destroy(&s);return}
+        graph:=test_graph(f,&s,{8,8})
+        core.add(&f.volumes,graph,volume.box({40,10,40}))
+        test_world_settle(&f.w)
+        for _ in 0..<64 {
+            test_step(f)
+            if f.probes==0 {break}
+        }
+        before:=placements(&f.generated,graph)
+        bytes:=ground_bytes(&f.ground)
+        if !testing.expectf(t,len(before)>0 && bytes>0,"%s: placed %d, ground %d bytes",c.name,len(before),bytes) {continue}
+        into:=f
+        if c.rollback {
+            snapshot:=new(Pcg_World)
+            defer free(snapshot)
+            if !test_world_init(t,snapshot) {return}
+            defer test_world_destroy(snapshot)
+            testing.expect(t,test_world_copy(snapshot,&f.w))
+            // The world goes on and the ground changes under it, then rolls back.
+            f.ground.owners[0].tiles[0].revision+=1
+            test_step(f)
+            testing.expect(t,test_world_copy(&f.w,snapshot))
+        } else {
+            into=new(Pcg_Test)
+            if !test_init(t,into) {free(into);return}
+            testing.expect(t,test_world_copy(&into.w,&f.w))
+        }
+        defer if into!=f {test_destroy(into);free(into)}
+        // A copy holds the lists it was given, without the room the world kept to grow them.
+        copied:=ground_bytes(&into.ground)
+        testing.expectf(t,copied>bytes/2 && (c.rollback || copied<=bytes),"%s: the copy holds %d bytes of ground, the world %d",c.name,copied,bytes)
+        if c.without {
+            core.value_free(&into.ground,type_info_of(Pcg_Ground))
+            into.ground={}
+        }
+        test_step(into)
+        after:=placements(&into.generated,graph)
+        if c.without {
+            // It places on coarse tiles first, the same once the ground is read again.
+            testing.expectf(t,into.probes>0 && !slice.equal(after[:],before[:]),"%s: %d probes, placed as before %v",c.name,into.probes,slice.equal(after[:],before[:]))
+            for _ in 0..<16 {
+                test_step(into)
+                if into.probes==0 {break}
+            }
+            again:=placements(&into.generated,graph)
+            testing.expectf(t,slice.equal(again[:],before[:]),"%s: read again, it places as before",c.name)
+            continue
+        }
+        testing.expectf(t,into.probes==0,"%s: %d probes of the ground",c.name,into.probes)
+        testing.expectf(t,slice.equal(after[:],before[:]),"%s: %d placed, %d before",c.name,len(after),len(before))
+    }
 }

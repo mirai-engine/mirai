@@ -48,6 +48,14 @@ Physics_Owner :: struct {
     full:bool,    // some of its cells are full (Physics_Cell.full)
 }
 
+// Bytes the collision of the foliage holds, by the room of its lists: what a
+// copy of the world (Play, a rollback) copies of it. The bodies and shapes
+// its handles name are the simulation's.
+physics_bytes :: proc "contextless" (p:^Foliage_Physics) -> int {
+    if p==nil {return 0}
+    return size_of(Foliage_Physics)+cap(p.owners)*size_of(Physics_Owner)+cap(p.cells)*size_of(Physics_Cell)+cap(p.shapes)*size_of(Physics_Shape)+cap(p.hulls)*size_of(physics.Hull_Handle)
+}
+
 // What a tick builds of the collision of the foliage at most: instances of
 // the cells that collide, the nearest a source first; the rest wait
 // (waiting) for the ticks after.

@@ -3,6 +3,7 @@ package navigation
 import "core:testing"
 import "mirai:core"
 import scene "mirai:engine/scene"
+import mm "mirai:std/math"
 
 @(private)
 @(test_world)
@@ -39,37 +40,44 @@ a_section_is_here_by_its_section_state :: proc(t:^testing.T) {
         core.add(&w.worlds,e,core.World_Transform{transform={rotation=1,scale=1}})
         test_world_settle(&w)
         problems:core.Problems
-        s:=sections_gather(&w.references,&w.worlds,&w.ids,&problems)
-        testing.expectf(t,s.count==1 && s.items[0].here==c.here && s.items[0].away==!c.here,"case %d: %v",i,s.items[0])
+        s:Nav_Sections
+        defer sections_free(&s)
+        testing.expect(t,sections_gather(&s,&w.references,&w.worlds,&w.ids,&problems))
+        testing.expectf(t,len(s.items)==1 && s.items[0].here==c.here && s.items[0].away==!c.here,"case %d: %v",i,s.items[0])
     }
 }
 
-// Past NAV_SECTIONS_MAX sections with a box, a problem names the first left
-// out and how many are; up to it, none.
+// Every section with a box is seen, however many: those away are away
+// and those here keep their tiles, past the 64 of a fixed list too.
 @(test)
-sections_past_the_cap_are_reported :: proc(t:^testing.T) {
-    Case :: struct {sections,seen,dropped:int}
-    cases := []Case{{NAV_SECTIONS_MAX,NAV_SECTIONS_MAX,0},{NAV_SECTIONS_MAX+1,NAV_SECTIONS_MAX,1},{NAV_SECTIONS_MAX+5,NAV_SECTIONS_MAX,5}}
+any_number_of_sections_is_seen :: proc(t:^testing.T) {
+    Case :: struct {sections,away:int}
+    cases := []Case{{0,0},{1,1},{64,10},{65,65},{200,70}}
     for c in cases {
         w:Sections_World
         if !test_world_init(t,&w) {return}
         defer test_world_destroy(&w)
-        made:[NAV_SECTIONS_MAX+8]core.Entity
+        // The last ones are away, past the first 64 when there are more.
         for i in 0..<c.sections {
-            made[i]=core.create(&w.entities)
-            core.add(&w.references,made[i],scene.Scene_Reference{scene={1,1},extents={1,1,1},state=.Active,loaded={1,1}})
-            core.add(&w.worlds,made[i],core.World_Transform{transform={position={f32(i)*4,0,0},rotation=1,scale=1}})
+            e:=core.create(&w.entities)
+            here:=i<c.sections-c.away
+            core.add(&w.references,e,scene.Scene_Reference{scene={1,1},extents={1,1,1},state=.Active if here else .Unloaded,loaded={1,1} if here else {}})
+            core.add(&w.worlds,e,core.World_Transform{transform={position={f32(i)*4,0,0},rotation=1,scale=1}})
         }
         test_world_settle(&w)
         problems:core.Problems
-        s:=sections_gather(&w.references,&w.worlds,&w.ids,&problems)
-        testing.expect_value(t,s.count,c.seen)
-        if c.dropped==0 {
-            testing.expect_value(t,problems.count,0)
-            continue
+        s:Nav_Sections
+        defer sections_free(&s)
+        testing.expect(t,sections_gather(&s,&w.references,&w.worlds,&w.ids,&problems))
+        testing.expectf(t,len(s.items)==c.sections && len(s.away)==c.away && len(s.away_keys)==c.away && len(s.here)==c.sections-c.away,"%v: %d seen, %d away",c,len(s.items),len(s.away))
+        testing.expect_value(t,problems.count,0)
+        if c.away>0 {
+            last:=mm.Vec3{f32(c.sections-1)*4,0,0}
+            testing.expectf(t,sections_away(&s,last) && sections_covered(&s,{last-0.5,last+0.5}),"%v: the last section is away",c)
         }
-        p:=core.problem_find(&problems,made[NAV_SECTIONS_MAX],"navigation.sections")
-        testing.expectf(t,p!=nil && problems.count==1,"%d sections: %v",c.sections,core.problems_list(&problems))
-        if p!=nil {testing.expectf(t,core.problem_text(p)[:2]==(c.dropped==1?"1 ":"5 "),"%s",core.problem_text(p))}
+        if c.away<c.sections {testing.expectf(t,!sections_away(&s,{0,0,0}),"%v: the first is here",c)}
+        // Gathered again, the same.
+        hash:=s.hash
+        testing.expect(t,sections_gather(&s,&w.references,&w.worlds,&w.ids,&problems) && s.hash==hash && len(s.items)==c.sections)
     }
 }

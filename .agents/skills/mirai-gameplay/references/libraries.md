@@ -70,6 +70,9 @@ navmesh and foliage collision.
   distances, `RESIDENT_KEEP` hysteresis). `streaming_crossings` (`fixed`) reparents awake bodies
   crossing `Section_Boxes` (keeps world pose/velocity via `core.Places`; needs matching scales;
   re-attaches `Roaming` entities). `navigation` retains tiles of inactive `Spatial` sections.
+- `streaming.status` (read-only): sources (with `ahead`), `Streaming_Settings`, loads under way
+  (`Section_Loads`, far forms too) and each section's rule, asked/streamed/current state and far
+  form, with loaded/on/far counts.
 - **HLOD far mesh (`streaming_far`, `cook/far`):** displays `Section_Proxy` + transient
   `Mesh_Renderer` when a section is not active (warmed asynchronously up to `FAR_WARMS`; sections
   wait via `scene.section_stay`). Shipped games read cooked `asset.far_mesh_id`; dev projects build

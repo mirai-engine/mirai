@@ -121,6 +121,8 @@ and a river that bends on open ground.
 
 ## Limits
 
+- A frame draws at most `CAPACITY` fluids and dry boxes: those nearest the view by their bounds
+  (`water_nearest`, ties by entity), whatever order the physics lists them in.
 - A prism draws only its surface: the ground, a basin or banks around it are its walls.
 - What is not the surface takes the box around a prism, not its loop: its medium and shafts, the
   caustics and the test of which water a point is in (`water_inside`), and the air of a dry one.

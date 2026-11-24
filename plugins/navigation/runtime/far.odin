@@ -78,7 +78,7 @@ agent_reach :: proc "contextless" (agent:Nav_Agent,p:^Nav_Path) -> f32 {
 // goes by its middle (far_lift).
 @(private)
 agent_via :: proc(n:^Navigation,a:^Navigation_Agents,s:^Nav_Sections,class:int,from,goal:mm.Vec3) -> (via:mm.Vec3,ok:bool) {
-    if s.away_count==0 {return}
+    if len(s.away)==0 {return}
     c:=&n.classes[class]
     if len(c.coarse.portals)==0 {return}
     if !sections_away(s,goal) && sections_region(s,from)==sections_region(s,goal) {return}
@@ -193,7 +193,7 @@ agents_far :: proc(
         if moving!=core.has(roamings,e) {
             if moving {core.add(roamings,e,scene.Roaming{})} else {core.remove(roamings,e)}
         }
-        if !moving || p.state==.Crossing || s.away_count==0 {continue}
+        if !moving || p.state==.Crossing || len(s.away)==0 {continue}
         pose,placed:=core.get(worlds,e)
         agent,is_agent:=core.get(agents,e)
         if !placed || !is_agent {continue}

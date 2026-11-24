@@ -58,8 +58,11 @@ Navigation_Builds :: struct {
     dry:[dynamic]mm.Aabb,            // of their dry boxes
     boxes:[NAV_CHANGES_PER_READ]mm.Aabb,
     sections:Nav_Sections,           // of this tick
-    away:[NAV_SECTIONS_MAX]mm.Aabb,  // the boxes away at the last look
-    away_count:int,
+    resident:scene.Simulation_Sources, // in a run, the sources of the navigation with their reach: empty, everything builds (residency_gather)
+    // A look of the marks with a reach that found none to build, which is not made again while the
+    // reach, the marks (Class_Mesh.marked) and what the ground holds back stay: the marks out of the reach wait.
+    idle:struct {looked:bool,marked:u64,reach:scene.Simulation_Sources},
+    away:[dynamic]mm.Aabb,           // the boxes away at the last look
     sections_seen:u64,               // the hash of the sections at the last look
     bakes:core.Entity_Map(base.Asset_Id), // each Navigation_Bake put in the meshes, with the asset it named
     bakes_seen:core.Seen,
@@ -268,6 +271,8 @@ builds_free :: proc(b:^Navigation_Builds) {
     ai.nav_volume_query_destroy(&b.volume_query)
     ai.nav_coarse_build_destroy(&b.region)
     delete(b.bounds)
+    sections_free(&b.sections)
+    delete(b.away)
     delete(b.air);delete(b.water);delete(b.dry);delete(b.seen)
     fields_clear(b)
     delete(b.fields)
@@ -503,13 +508,13 @@ tile_inside :: proc "contextless" (c:^Class_Mesh,coord:[2]i32,limits:[]mm.Aabb) 
 navigation_build :: proc(
     n:^Navigation,b:^Navigation_Builds,settings:core.Ref(Navigation_Settings),bakes:^core.Table(Navigation_Bake,.Read),physics:core.Ref(phys.Physics_State),requests:^Nav_Build_Requests,
     bounds:^core.Table(Nav_Bounds,.Read),areas:^core.Table(Nav_Area,.Read),links:^core.Table(Nav_Link,.Read),obstacles:^core.Table(Nav_Obstacle,.Read),colliders:^core.Table(phys.Collider,.Read),volumes:^core.Table(volume.Volume,.Read),splines:^core.Table(volume.Spline,.Read),time:core.Time,transforms:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
-    ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Simulation_Sources),paths:^core.Table(Nav_Path,.Read),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
+    ground:core.Ref(core.Ground_Queries),sources:core.Ref(scene.Simulation_Sources),nav_sources:^core.Table(Nav_Source,.Read),paths:^core.Table(Nav_Path,.Read),world:core.World_Ref,references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),ids:^core.Table(core.Id,.Read),app:^host.App,problems:^core.Problems,
 ) {
     if ground.ptr!=nil && len(ground.unloaded.items)>0 {b.unloaded+=1}
     if physics.ptr==nil || !physics.ready || settings.ptr==nil {return}
     // A section away is not loaded: like the terrain that is not, its tiles wait for it.
     if core.touched(references,&b.sections_tables[0]) | core.touched(worlds,&b.sections_tables[1]) | core.touched(ids,&b.sections_tables[2]) || !n.ready {
-        b.sections=sections_gather(references,worlds,ids,problems)
+        sections_gather(&b.sections,references,worlds,ids,problems)
         b.looked+=u64(core.count(references))
     }
     q:=core.ground_query(world,ground)
@@ -538,6 +543,7 @@ navigation_build :: proc(
         core.entity_map_clear(&b.links)
         core.entity_map_clear(&b.obstacles)
         for build in b.builds {if build.busy {build.uid=0}}
+        b.idle.looked=false
         fields_clear(b)
         b.region_busy=false
         // A copy has the meshes of the bakes of its world already.
@@ -581,6 +587,7 @@ navigation_build :: proc(
     b.ticks+=1
     published,spent:=builds_publish(n,b,problems,wait=!time.playing)
     if published>0 {host.load_phase_add(app,.Nav_Tiles,spent,published)}
+    residency_gather(b,settings.ptr,sources.ptr,nav_sources,worlds,time.playing,problems)
     instant,carve_ns:=builds_start(n,b,physics,limits,gone,time.playing,sources.ptr,
                                        paths,worlds,&app.jobs,problems)
     if instant>0 {host.load_phase_add(app,.Nav_Tiles,carve_ns,instant)}
@@ -626,7 +633,7 @@ bounds_update :: proc(n:^Navigation,b:^Navigation_Builds,bounds:^core.Table(Nav_
         box,ok:=phys.static_bounds(physics)
         if !ok {box=mm.AABB_EMPTY}
         for gone in unloaded.ground {box=mm.aabb_merge(box,gone)}
-        if unloaded.sections!=nil {for gone in unloaded.sections.away[:unloaded.sections.away_count] {box=mm.aabb_merge(box,gone)}}
+        if unloaded.sections!=nil {for gone in unloaded.sections.away {box=mm.aabb_merge(box,gone)}}
         if !mm.aabb_is_empty(box) {surface[0]=box;count=1}
     }
     water,dry:[64]mm.Aabb
@@ -752,11 +759,44 @@ areas_update :: proc(n:^Navigation,b:^Navigation_Builds,areas:^core.Table(Nav_Ar
     }
 }
 
+// The sources of the navigation in a run (Nav_Source): each simulation
+// source with Navigation_Settings.resident, and each Nav_Source with its
+// distance. None when one reaches everywhere, outside a run, or when none
+// has a reach: everything builds then.
+@(private)
+residency_gather :: proc(b:^Navigation_Builds,settings:^Navigation_Settings,sources:^scene.Simulation_Sources,marks:^core.Table(Nav_Source,.Read),worlds:^core.Table(core.World_Transform,.Read),playing:bool,problems:^core.Problems) {
+    r:=&b.resident
+    r.count=0
+    if !playing {return}
+    if settings.resident>0 && sources!=nil {
+        for source in sources.items[:clamp(sources.count,0,scene.SOURCES_MAX)] {
+            r.items[r.count]={source.position,source.ahead,settings.resident}
+            r.count+=1
+        }
+    }
+    dropped:=0
+    for row in 0..<core.count(marks) {
+        reach:=core.at(marks,row).distance
+        if !(reach>0) {reach=settings.resident}
+        if !(reach>0) {r.count=0;return}
+        pose,placed:=core.get(worlds,core.entity_at(marks,row))
+        if !placed {continue}
+        if r.count==scene.SOURCES_MAX {dropped+=1;continue}
+        r.items[r.count]={pose.position,pose.position,reach}
+        r.count+=1
+    }
+    if dropped>0 {
+        core.report(problems,core.NONE,"navigation.sources","%d sources of the navigation past the %d it reads: no mesh builds around them but on the way of an agent; take Nav_Source or Streaming_Source from the entities that do not need it",dropped,scene.SOURCES_MAX)
+    }
+}
+
 // Gathers, hashes and starts the builds of marked tiles, up to the free jobs:
 // first those a waiting agent stands on or goes to, as it finds no way until
 // they are built; then those nearest the simulation sources, in metres past
 // what each keeps around it (scene.sources_distance); without sources, in the
-// order of the marks. With no build free it looks at no mark.
+// order of the marks. In a run with sources of the navigation, a tile no
+// agent wants waits until one comes within its reach. With no build free it
+// looks at no mark.
 @(private)
 builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Physics_State),limits:Limits,unloaded:Unloaded,playing:bool,sources:^scene.Simulation_Sources,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read),job_system:^jobs.Job_System,problems:^core.Problems) -> (carved:int,ns:i64) {
     b.jobs=job_system
@@ -783,6 +823,10 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
     // The marks that wait for their collision are looked at again when what is not loaded changes.
     revision:=unloaded.revision
     loaded:=revision!=b.unloaded_seen
+    marked:u64
+    for &c in n.classes[:n.count] {marked+=u64(c.marked)}
+    r:=&b.resident
+    if b.idle.looked && !loaded && marked==b.idle.marked && r.count>0 && !scene.sources_moved(b.idle.reach.items[:b.idle.reach.count],r.items[:r.count]) {return}
     paging:=unloaded.ground if playing else nil
     for i in 0..<n.count {
         c:=&n.classes[i]
@@ -797,6 +841,7 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
             b.looked+=1
             if !build_mark_load(n,b,i,key,volume,unloaded,paging) {continue}
             mark:=base.hash_map_ptr(&c.marks,key)
+            if !mark.wanted && !mark.instant && b.resident.count>0 && mark_distance(c,key,volume,&b.resident)>0 {continue}
             // Kept in order, the last of a full list giving its place.
             at:=Build_Near{mark_distance(c,key,volume,sources),mark.instant,mark.wanted,i,key}
             slot:=count
@@ -809,6 +854,8 @@ builds_start :: proc(n:^Navigation,b:^Navigation_Builds,physics:core.Ref(phys.Ph
         }
     }
     b.unloaded_seen=revision
+    b.idle.looked=r.count>0 && count==0
+    if b.idle.looked {b.idle.marked,b.idle.reach=marked,r^}
     for entry in nearest[:count] {
         mark:=base.hash_map_ptr(&n.classes[entry.class].marks,entry.key)
         if mark!=nil && !build_start(&start,entry.class,entry.key,mark) {return}
@@ -851,8 +898,8 @@ near_before :: #force_inline proc "contextless" (a,b:Build_Near) -> bool {
 }
 
 // Marks wanted the dirty tiles or zones on the way of each agent that waits
-// for a path, from where it stands straight to its goal: it finds no way, or
-// one cut short, until they are built.
+// for a path, or walks one cut short, from where it stands straight to its
+// goal: it finds no way, or one cut short, until they are built.
 @(private)
 marks_wanted :: proc(n:^Navigation,b:^Navigation_Builds,paths:^core.Table(Nav_Path,.Read),worlds:^core.Table(core.World_Transform,.Read)) {
     ready:=0
@@ -861,7 +908,8 @@ marks_wanted :: proc(n:^Navigation,b:^Navigation_Builds,paths:^core.Table(Nav_Pa
     b.looked+=u64(core.count(paths))
     for row in 0..<core.count(paths) {
         p:=core.at(paths,row)
-        if p.state!=.Waiting || p.class<0 || int(p.class)>=n.count {continue}
+        cut:=p.partial && (p.state==.Moving || p.state==.Arrived_Partial)
+        if p.state!=.Waiting && !cut || p.class<0 || int(p.class)>=n.count {continue}
         c:=&n.classes[p.class]
         if c.ready==0 {continue}
         pose,placed:=core.get(worlds,core.entity_at(paths,row))
@@ -1344,14 +1392,18 @@ sections_update :: proc(n:^Navigation,b:^Navigation_Builds,limits:Limits,fresh:b
     s:=&b.sections
     if s.hash==b.sections_seen && !fresh {return}
     b.sections_seen=s.hash
-    for old in b.away[:b.away_count] {
+    for old in b.away {
         still:=false
-        for box in s.away[:s.away_count] {if box==old {still=true;break}}
+        for box in s.away {if box==old {still=true;break}}
         if !still {mark_box(n,old,limits)}
     }
-    b.away=s.away
-    b.away_count=s.away_count
-    if s.away_count==0 {return}
+    clear(&b.away)
+    if _,error:=append(&b.away,..s.away[:]);error!=nil {
+        // What comes back is marked once there is memory to remember what went.
+        b.sections_seen=0
+        clear(&b.away)
+    }
+    if len(s.away)==0 {return}
     gone:=make([dynamic]u64,context.temp_allocator)
     for i in 0..<n.count {
         c:=&n.classes[i]
@@ -1575,15 +1627,10 @@ coarse_update :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems
     next:struct {class:int,item:int,hash:u64}
     next.class=-1
     // The portals toward a section away stay: its mesh is not there to show them again.
-    away:[NAV_SECTIONS_MAX]u64
-    away_count:=0
-    for item in s.items[:s.count] {
-        if item.away {away[away_count]=item.key;away_count+=1}
-    }
     for i in 0..<n.count {
         volume:=class_in_volume(n,i)
         c:=&n.classes[i]
-        for item,k in s.items[:s.count] {
+        for item,k in s.items {
             if !item.here {continue}
             on_its_way:=b.region_busy && b.region_class==i && b.region.key==item.key
             h:u64
@@ -1613,10 +1660,10 @@ coarse_update :: proc(n:^Navigation,b:^Navigation_Builds,problems:^core.Problems
         }
         ok:bool
         if volume {
-            ok=ai.nav_coarse_begin_region_volume(&b.region,&c.coarse,&c.volume,item.key,next.hash,item.box,away[:away_count])
+            ok=ai.nav_coarse_begin_region_volume(&b.region,&c.coarse,&c.volume,item.key,next.hash,item.box,s.away_keys[:])
         } else {
             filter:=coarse_filter(n,c)
-            ok=ai.nav_coarse_begin_region(&b.region,&c.coarse,&c.mesh,&filter,item.key,next.hash,item.box,sections_region_of,s,away[:away_count])
+            ok=ai.nav_coarse_begin_region(&b.region,&c.coarse,&c.mesh,&filter,item.key,next.hash,item.box,sections_region_of,s,s.away_keys[:])
         }
         if ok {b.region_busy,b.region_class,b.region_sections=true,i,s.hash} else {coarse_no_memory(c,problems)}
     }

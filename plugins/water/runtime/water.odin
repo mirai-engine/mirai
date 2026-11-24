@@ -23,7 +23,7 @@ import phys "plugins:physics/runtime"
 // caustics of the sun. A volume draws as WATER_DEFAULT unless its entity has
 // a Water.
 
-CAPACITY :: 8 // fluids and dry boxes a frame draws
+CAPACITY :: 8 // fluids and dry boxes a frame draws: those nearest the view (water_nearest)
 SURFACE_PROGRAM :: "Water_Surface"
 WATER_IOR :: f32(1.333)
 CAUSTIC_TEXELS :: 256 // across the caustic pattern
@@ -71,7 +71,7 @@ Gpu_Params :: struct {
     ior:f32, // of the surface the caustic pattern is made for
 }
 
-@(storage,host)
+@(storage,host,free="water_gpu_free")
 Water_Gpu :: struct {
     surface:base.Asset_Id, // the generated grid of the planes
     made:bool,             // surface was asked for
@@ -92,6 +92,38 @@ Water_Gpu :: struct {
     ribbons:[CAPACITY]Ribbon,
     sheet_pipeline:render.Pipeline,
     frame:u64,
+    fluids:[dynamic]phys.Fluid_Info, // every fluid of the frame, among which the nearest are drawn: grows with them
+}
+
+water_gpu_free :: proc(state:^Water_Gpu) {
+    delete(state.fluids)
+    state.fluids=nil
+}
+
+// Moves to the front of fluids the `count` nearest a point (0 m inside
+// their bounds), nearest first; at the same distance, by entity and then by
+// handle, whatever order the physics lists them in. The count it moved.
+water_nearest :: proc "contextless" (fluids:[]phys.Fluid_Info,at:[3]f32,count:int) -> int {
+    distance :: #force_inline proc "contextless" (info:phys.Fluid_Info,at:[3]f32) -> f32 {
+        low,high:=info.bounds.min,info.bounds.max
+        if low!=low || high!=high || at!=at {return max(f32)}
+        outside:=linalg.max(linalg.max(low-at,at-high),[3]f32{})
+        return linalg.length2(outside)
+    }
+    before :: #force_inline proc "contextless" (a,b:phys.Fluid_Info,da,db:f32) -> bool {
+        if da!=db {return da<db}
+        if a.entity!=b.entity {return a.entity<b.entity}
+        return a.fluid<b.fluid
+    }
+    taken:=clamp(count,0,len(fluids))
+    for i in 0..<taken {
+        best,best_distance:=i,distance(fluids[i],at)
+        for j in i+1..<len(fluids) {
+            if d:=distance(fluids[j],at);before(fluids[j],fluids[best],d,best_distance) {best,best_distance=j,d}
+        }
+        fluids[i],fluids[best]=fluids[best],fluids[i]
+    }
+    return taken
 }
 
 // The material of a volume, made again only when its Water or the assets change.
@@ -204,9 +236,18 @@ water_render :: proc(
     defer sheets_release(state,app.renderer)
     defer ribbons_release(state,app.assets)
     if app.renderer==nil || app.assets==nil {return}
-    found:[CAPACITY]phys.Fluid_Info
     far:=f32(1e30)
-    count:=min(phys.fluids_in(physics,{{-far,-far,-far},{far,far,far}},found[:]),CAPACITY)
+    everywhere:=mm.Aabb{{-far,-far,-far},{far,far,far}}
+    total:=phys.fluids_in(physics,everywhere,state.fluids[:])
+    if total>len(state.fluids) {
+        // More fluids than the frame before: those that find no room are not drawn.
+        _=resize(&state.fluids,total)
+        total=min(phys.fluids_in(physics,everywhere,state.fluids[:]),len(state.fluids))
+    }
+    total=min(total,len(state.fluids))
+    found:[CAPACITY]phys.Fluid_Info
+    count:=water_nearest(state.fluids[:total],view.position,CAPACITY)
+    copy(found[:],state.fluids[:count])
     if count==0 {return}
     if !state.made {
         state.made=true

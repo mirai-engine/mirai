@@ -23,6 +23,11 @@ depends on `physics`). Core algorithms live in
     in one read when back; editor keeps all tiles.
   - **Jobs & carving**: order-independent triangle hash skips unchanged tiles; empty tiles skip
     jobs. Queue priority: cached gate carves > waiting agents > nearest [simulation sources][src].
+  - **Navmesh reach** (Play only): with `Navigation_Settings.resident > 0` (around each simulation
+    source) or any `Nav_Source` (its own `distance`, 0 takes `resident`), tiles no agent wants wait
+    until a source comes within reach; built tiles stay. No reach, a `Nav_Source` reaching
+    everywhere (both 0), or the editor: everything builds, so bakes stay whole. Tiles on the
+    straight way of a waiting or partial agent build anywhere.
     Cached heightfields (`NAV_FIELDS`) let `Nav_Area`/`Nav_Obstacle`-only dirty tiles recarve
     without revoxelizing (`Build_Stats.carved`). Clean ticks skip all work.
 - **Areas & obstacles**: `Nav_Area_Kind` (`AREA_BLOCKED`, `AREA_WALKABLE`, `AREA_WATER`, + game
@@ -85,7 +90,10 @@ depends on `physics`). Core algorithms live in
   (`> climb + 0.5m`), or stuck (retries before `navigation.blocked`; agents queued behind movers
   wait). Held still by what never steps aside (a player) it replans every `2*NAV_BLOCKED` without
   failing. Airborne off-mesh waits to land instead of `navigation.off_mesh`. Partial paths wait
-  while tiles build, then emit `Arrived_Partial`.
+  while tiles build, then emit `Arrived_Partial`. A goal on tiles still building
+  (`Class_Mesh.pending`) is no wait: the agent paths to the edge of what is built along its
+  straight way (`edge_toward`, `Nav_Route.edge`, partial), waits there without arriving and
+  replans as tiles publish.
 - **Flight & swim**: 3D capsule center, straight-line fast path, 3D sphere ORCA; flight requests
   `MODE_FLYING`, swim lets physics own mode.
 - **Crossings** (`MODE_NAV_LINK`, `navigation_crossing` before `locomotion_step`, gated by
@@ -110,7 +118,8 @@ for ev in nav_events.items {
 ## Sections
 
 `Nav_Sections` tracks `Scene_Reference.extents` (loaded+enabled = here; unloaded = far unless
-contained by a loaded section).
+contained by a loaded section), any number of them: its lists are regathered in place when
+references change and grow only then (no memory: `navigation.memory`, the rest unseen).
 
 - Fully far tiles/zones drop with generated links; border tiles touching a loaded section remain
   `unloaded`. Columns covered from above by loaded sections build normally. Returning sections

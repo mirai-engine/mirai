@@ -46,6 +46,7 @@ Foliage_Query_Result :: struct {
     layers:[]Foliage_Query_Layer,
     instances:[]Foliage_Query_Instance `mirai:"optional"`,
     more:bool `mirai:"optional"`,
+    physics_bytes:int `mirai:"label=Of the collision of every Foliage of the world (Foliage_Physics): what a copy of the world (Play, a rollback) copies of it"`,
 }
 
 @(private)
@@ -107,4 +108,5 @@ api_query :: proc(s:^editor.Session,call:^api.Call) {
     r:=api.call_result(call,Foliage_Query_Result)
     listing:=p.min!={} || p.max!={}
     query_fill(r,&entry.source,gen,pcg.graph_frame(graph,placed.transform),listing,linalg.min(p.min,p.max),linalg.max(p.min,p.max),int(p.limit),call.allocator)
+    r.physics_bytes=foliage.physics_bytes(core.world_storage_of(world,foliage.Foliage_Physics))
 }

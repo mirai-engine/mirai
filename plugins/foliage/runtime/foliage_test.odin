@@ -219,6 +219,56 @@ every_cell_of_a_graph_collides_and_what_is_taken_out_leaves_alone :: proc(t:^tes
     physics_owner_clear(&fp,&w,e)
 }
 
+// The collision of the foliage names bodies of the simulation, and copies
+// with it: in a copy for Play or a rollback the same cells keep the bodies
+// the copied simulation has, and building them again makes none. A copy
+// without it (copy=false) would find none of its own and make every body
+// twice, the copied ones left with nobody to take them away.
+@(test)
+the_collision_of_the_foliage_copies_with_the_simulation :: proc(t:^testing.T) {
+    Case :: struct {name:string,with:bool}
+    cases:=[]Case{{"copied with the simulation",true},{"a copy without it",false}}
+    for c in cases {
+        w:physics.Physics_State
+        if !testing.expect(t,physics.test_state_make(&w)) {return}
+        defer physics.state_destroy(&w)
+        g:pcg.Pcg_Generated
+        defer pcg.pcg_generated_free(&g)
+        e:=core.Entity(42)
+        graph:=graph_add(&g,e)
+        cell_add(graph,{0,0},{point(1,0,{5,0,5}),point(1,1,{10,0,5})})
+        cell_add(graph,{1,-1},{point(1,0,{40,1,-5},2)})
+        capsule:=physics.collider_capsule(0.3,1.7)
+        shapes:=[1]Type_Shape{{layer=1,collider=capsule,placement=1}}
+        fp:Foliage_Physics
+        defer core.value_free(&fp,type_info_of(Foliage_Physics))
+        collision:physics.Collision_Settings
+        frame:=mm.TRANSFORM_IDENTITY
+        physics_owner_build(&fp,&w,&collision,e,graph,32,frame,shapes[:])
+        testing.expect(t,w.world.body_count==2 && w.world.shape_count==3 && physics_bytes(&fp)>size_of(Foliage_Physics))
+        copied:physics.Physics_State
+        defer physics.state_destroy(&copied)
+        if !testing.expect(t,physics.state_copy(&copied,&w)) {return}
+        cfp:Foliage_Physics
+        defer core.value_free(&cfp,type_info_of(Foliage_Physics))
+        if c.with {testing.expect(t,core.value_copy(&cfp,&fp,type_info_of(Foliage_Physics)))}
+        physics_owner_build(&cfp,&copied,&collision,e,graph,32,frame,shapes[:],false)
+        if !c.with {
+            testing.expectf(t,copied.world.body_count==4,"%s: %d bodies, the copied ones twice",c.name,copied.world.body_count)
+            continue
+        }
+        testing.expectf(t,copied.world.body_count==2 && copied.world.shape_count==3,"%s: %d bodies, %d shapes",c.name,copied.world.body_count,copied.world.shape_count)
+        for cell,i in cfp.cells {
+            testing.expect_value(t,cell.body,fp.cells[i].body)
+            owned,_:=physics.owned_body_of(&copied,cell.body)
+            testing.expect(t,owned.owner==BODY_OWNER && owned.entity==e,"the copied simulation owns it for the foliage")
+        }
+        physics_owner_clear(&cfp,&copied,e)
+        testing.expect(t,copied.world.body_count==0,"cleared, the copy leaves no body behind")
+        physics_owner_clear(&fp,&w,e)
+    }
+}
+
 // Rocks of one mesh share one hull, which each instance scales and turns: a
 // ray meets each at its own size, and the hull goes back to physics once no
 // rock uses it.

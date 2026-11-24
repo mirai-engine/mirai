@@ -108,7 +108,11 @@ scatters them on the GPU through `engine/render` alone (`Foliage_Micro`, `host, 
 
 - `foliage_physics` (`fixed`, after `physics_prepare pcg_update`, before `physics_places`, skipped
   while `time.resimulating`) creates one [owned static body][owned] per generated cell at its corner
-  (shape user = `Placed.id`). `Foliage_Physics` copies with the world.
+  (shape user = `Placed.id`). `Foliage_Physics` copies with the world: its handles name bodies of
+  the copied simulation, and a copy without it would build every body twice. The ground cache
+  (`pcg.Pcg_Ground`) copies too: without it a copy re-probes the ground and places on coarse
+  tiles for a few frames. `foliage.query` `physics_bytes` and `pcg.inspect`
+  `ground_bytes`/`ground_total_bytes` say what each copy carries.
 - **Every cell the graph keeps collides**, at any detail and whoever looks, built nearest
   `scene.Simulation_Sources` first (`PHYSICS_INSTANCES_A_TICK`/tick); cells past the budget keep
   their old bodies until built. A cell that only lost instances (suppressed) destroys their shapes

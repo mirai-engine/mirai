@@ -58,6 +58,7 @@ NAV_FLY_AHEAD :: 6             // portals of its corridor a flying agent looks f
 NAV_SHORE_MARGIN :: f32(16)    // m around its way where an agent that swims looks for shores
 NAV_SHORE_SPACING :: f32(2)    // m between the links of a shore
 NAV_CLASS_MISSING :: i8(-2)    // Nav_Route.named of an agent whose class name no class has
+NAV_EDGE_STEPS :: 256          // points of its straight way an agent looks at for the edge of what is built toward its goal
 
 @(component,description="Walks where navigation is asked to take it: a Character, which flies with a Fly or swims with a Swim, by its locomotion with a class that fits its capsule and collision; without one, moved by navigation along the surface, as wide and tall as its class.")
 Nav_Agent :: struct {
@@ -119,6 +120,7 @@ Nav_Route :: struct {
     walked:mm.Vec3, // where navigation last saw or put one without a body
     stuck:f32,
     bodyless:bool,  // it has no Character: navigation moves it (agents_walk)
+    edge:bool,      // its search ends where what is built ends toward a goal whose tiles still build (edge_toward)
 }
 
 agent_route :: proc "contextless" (a:^Navigation_Agents,e:core.Entity) -> ^Nav_Route {
@@ -1070,7 +1072,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
             pose,placed:=core.get(worlds,e)
             if p==nil || r==nil || r.placed || !ok || !placed || p.state!=.Waiting || p.class<0 || int(p.class)>=n.count {continue}
             class:=n.classes[p.class].class
-            r.medium=false
+            r.medium,r.edge=false,false
             if r.partner>=0 && int(r.partner)<n.count && agent_medium_begin_search(n,a,b,p,r,e,agent,pose,characters,colliders,walks,swims,physics,sections) {continue}
             if class_in_volume(n,int(p.class)) {
                 volume:=&n.classes[p.class].volume
@@ -1085,6 +1087,11 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 }
                 from,start,found:=ai.nav_volume_find_nearest(volume,center,extents)
                 to,end,found_goal:=ai.nav_volume_find_nearest(volume,goal,extents*4)
+                // Its goal in zones still building: toward the edge of what is built meanwhile.
+                if found && !found_goal && n.classes[p.class].pending>0 {
+                    to,end,found_goal=edge_toward(&n.classes[p.class],true,start,goal,extents*4,nil)
+                    r.edge=found_goal
+                }
                 if (!found || !found_goal) && n.classes[p.class].pending>0 {
                     agent_enqueue(a,r,e)
                     deferred+=1
@@ -1105,7 +1112,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 // In sight: straight there, with no search.
                 if clear,_:=ai.nav_volume_raycast(volume,start,end);clear {
                     r.corridor.target=end
-                    p.partial,p.state,r.time=false,.Moving,0
+                    p.partial,p.state,r.time=r.edge,.Moving,0
                     continue
                 }
                 if len(a.volume_query.points)==0 && !ai.nav_volume_query_init(&a.volume_query,1<<15) {
@@ -1135,6 +1142,11 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 if found {ai.nav_corridor_reset(&r.corridor,from,start)}
             }
             to,end,found_goal:=ai.nav_find_nearest(mesh,goal,extents*4,&filter)
+            // Its goal on tiles still building: toward the edge of what is built meanwhile.
+            if found && !found_goal && n.classes[p.class].pending>0 {
+                to,end,found_goal=edge_toward(&n.classes[p.class],false,start,goal,extents*4,&filter)
+                r.edge=found_goal
+            }
             ground,_:=core.get(grounds,e)
             // One in the air (falling, or asked elsewhere in the middle of a jump) looks for the mesh again once it stands.
             if (!found || !found_goal) && (n.classes[p.class].pending>0 || !found && !ground.standing && !r.bodyless) {
@@ -1155,7 +1167,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 core.push(&events.queue,Nav_Event{kind=.Failed,entity=e})
                 continue
             }
-            if p.target!=core.NONE && !r.through {
+            if p.target!=core.NONE && !r.through && !r.edge {
                 if tree:=follow_tree(a,p,r,e,agent,mesh,&filter,to,end);tree>=0 {
                     // Toward the target as the shared search saw it.
                     p.goal=a.trees[tree].goal
@@ -1234,7 +1246,7 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
                 target=linalg.clamp(target,box.min,box.max)
             }
             if !ai.nav_volume_corridor_set(&r.corridor,volume,target,a.refs[:count]) {agent_fail(p,e,events);continue}
-            p.partial=partial || final!=.Found
+            p.partial=partial || final!=.Found || r.edge
             p.state=.Moving
             r.time=0
             continue
@@ -1256,10 +1268,29 @@ agents_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,pa
         // From where the search began: the next move of the corridor takes it to where the agent walked since.
         r.corridor.position=a.query.start
         if !ai.nav_corridor_set(&r.corridor,mesh,&a.query.filter,target,a.refs[:count]) {agent_fail(p,e,events);continue}
-        p.partial=partial || final!=.Found
+        p.partial=partial || final!=.Found || r.edge
         p.state=.Moving
         r.time=0
     }
+}
+
+// The point of the mesh, or of the volume, nearest the goal on the straight
+// way from start: where what is built ends toward a goal whose tiles or
+// zones still build. The agent walks there, waits without arriving, and plans
+// again as they come (a partial path).
+@(private)
+edge_toward :: proc "contextless" (c:^Class_Mesh,volume:bool,start,goal,extents:mm.Vec3,filter:^ai.Nav_Filter) -> (ref:ai.Nav_Ref,point:mm.Vec3,found:bool) {
+    width:=c.volume.zone_size if volume else c.mesh.tile_width
+    step:=max(min(width*0.5,extents.x),0.05)
+    span:=linalg.length(goal-start)/step
+    if !(span<NAV_EDGE_STEPS) {span=NAV_EDGE_STEPS}
+    steps:=int(span)+1
+    for i:=steps-1;i>=0;i-=1 {
+        at:=linalg.lerp(start,goal,f32(i)/f32(steps))
+        if volume {ref,point,found=ai.nav_volume_find_nearest(&c.volume,at,extents)} else {ref,point,found=ai.nav_find_nearest(&c.mesh,at,extents,filter)}
+        if found {return}
+    }
+    return
 }
 
 // The search toward its target that a follower reads its path from, begun, or
@@ -1327,7 +1358,7 @@ agent_space_links :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Build
 // stays in its own space.
 @(private)
 agent_medium_begin_search :: proc(n:^Navigation,a:^Navigation_Agents,b:^Navigation_Builds,p:^Nav_Path,r:^Nav_Route,e:core.Entity,agent:Nav_Agent,pose:core.World_Transform,characters:^core.Table(phys.Character,$A),colliders:^core.Table(phys.Collider,$B),walks:^core.Table(locomotion.Walk,$C),swims:^core.Table(locomotion.Swim,$D),physics:core.Ref(phys.Physics_State),sections:^Nav_Sections) -> bool {
-    if sections!=nil && sections.away_count>0 && sections_away(sections,p.goal) {return false}
+    if sections!=nil && len(sections.away)>0 && sections_away(sections,p.goal) {return false}
     in_volume:=class_in_volume(n,int(p.class))
     if in_volume==class_in_volume(n,int(r.partner)) {return false}
     mesh_class,volume_class:=int(r.partner) if in_volume else int(p.class),int(p.class) if in_volume else int(r.partner)

@@ -111,6 +111,7 @@ Navigation_Settings :: struct {
     max_tiles:i32 `mirai:"min=1,advanced"`,                // of each class
     max_links:i32 `mirai:"min=0,advanced"`,                // of each class, given and generated
     builds:i32 `mirai:"min=1,max=64,advanced"`,            // tiles a tick starts building
+    resident:f32 `mirai:"min=0,unit=m,advanced"`,          // in a run, tiles build only this near a simulation source (Nav_Source sets its own); 0: everywhere
     areas:[NAV_AREA_CAPACITY]Nav_Area_Cost `mirai:"trim"`,
     path_iterations:i32 `mirai:"min=1,section=Agents,advanced"`, // polygons the searches of all agents expand in a tick
     avoidance_reach:f32 `mirai:"min=0,unit=m,advanced"`, // agents step aside this near a source; 0: everywhere
@@ -124,6 +125,19 @@ NAVIGATION_SETTINGS_DEFAULT :: Navigation_Settings{
     },
     cell_size=0.15,cell_height=0.1,tile_cells=64,max_tiles=1024,max_links=4096,builds=4,
     path_iterations=2048,avoidance_reach=160,
+}
+
+// In a run, the tiles and zones of the meshes build only within the reach of
+// a source of the navigation, whatever the streaming keeps loaded around
+// it: each simulation source (the bodies the seats drive and the
+// Streaming_Source entities) with Navigation_Settings.resident, and each
+// Nav_Source with its own distance. Those an agent waits for, or that lie on
+// the way to its goal, build wherever they are. With none of those reaches,
+// everything builds, as in the editor, whose bakes have every tile. A tile
+// built stays when the sources go: it is not built again.
+@(component,description="In a run, navigation meshes build around it this far, apart from what the streaming keeps loaded: the body of a player, a camera, a place agents will go.")
+Nav_Source :: struct {
+    distance:f32 `mirai:"min=0,unit=m"`, // of meshes built around it; 0: Navigation_Settings.resident, or everywhere when that is 0 too
 }
 
 // The three that follow say what the Volume of their entity is to the
@@ -205,6 +219,7 @@ Class_Mesh :: struct {
     ready:int,                           // marked tiles that can start a build
     loading:int,                         // marked tiles that wait for their collision to load
     linking:int,                         // tiles whose generated links wait to be made again
+    marked:u32,                          // counts the changes of which marks are ready, wanted or instant
     coarse:ai.Nav_Coarse,                // of a class of the surface: how the sections join, by their portals
 }
 
@@ -242,7 +257,7 @@ Unloaded :: struct {
 unloaded_overlaps :: proc "contextless" (u:Unloaded,box:mm.Aabb,flat:=false) -> bool {
     for unloaded in u.ground {if mm.aabb_overlaps(unloaded,box) {return true}}
     if u.sections==nil {return false}
-    for away in u.sections.away[:u.sections.away_count] {
+    for away in u.sections.away {
         if !mm.aabb_overlaps(away,box) {continue}
         if flat && sections_stacked(u.sections,{linalg.max(away.min,box.min),linalg.min(away.max,box.max)}) {continue}
         return true
@@ -266,6 +281,7 @@ mark_set :: proc "contextless" (c:^Class_Mesh,key:u64,mark:^Tile_Mark,next:Tile_
     was_queued:=mark.dirty && !mark.building
     queued:=next.dirty && !next.building
     changed:=was_queued!=queued || mark.unloaded!=next.unloaded
+    if changed || mark.wanted!=next.wanted || mark.instant!=next.instant {c.marked+=1}
     slot:=mark.queue_slot
     if changed {
         if was_queued {

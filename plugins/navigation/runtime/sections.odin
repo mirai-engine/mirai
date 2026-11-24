@@ -14,7 +14,6 @@ import mm "mirai:std/math"
 // the coarse graph, is the Id of the reference of the smallest box that holds
 // it; 0 outside every box.
 
-NAV_SECTIONS_MAX :: 64
 NAV_COVER_STEPS :: 4096 // pieces a box is cut into to find whether away boxes cover it; past them it is not covered
 
 Nav_Section :: struct {
@@ -23,12 +22,19 @@ Nav_Section :: struct {
     here,away:bool,
 }
 
+// Gathered again, in what it holds already, when the sections change: it
+// grows with them and allocates only then.
 Nav_Sections :: struct {
-    items:[NAV_SECTIONS_MAX]Nav_Section,
-    count:int,
-    away:[NAV_SECTIONS_MAX]mm.Aabb,
-    away_count:int,
+    items:[dynamic]Nav_Section,
+    away:[dynamic]mm.Aabb, // the boxes of those away
+    away_keys:[dynamic]u64,
+    here:[dynamic]mm.Aabb, // the boxes of those here
     hash:u64, // changes when a box, a key or a state does
+}
+
+sections_free :: proc(s:^Nav_Sections) {
+    delete(s.items);delete(s.away);delete(s.away_keys);delete(s.here)
+    s^={}
 }
 
 // The region key of a reference: its Id, or its handle with the top bit when it has none.
@@ -37,9 +43,11 @@ section_key :: proc "contextless" (ids:^core.Table(core.Id,$A),e:core.Entity) ->
     return u64(e)|u64(1)<<63
 }
 
-// Past NAV_SECTIONS_MAX sections with a box, the rest are not seen: a
-// problem names the first of them and how many there are.
-sections_gather :: proc(references:^core.Table(scene.Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B),ids:^core.Table(core.Id,$C),problems:^core.Problems) -> (s:Nav_Sections) {
+// Gathers the sections with a box into s. Without memory for all of them,
+// those past what it holds are not seen, and without memory for those away
+// none is away (their tiles build from what is here): a problem says so, and false.
+sections_gather :: proc(s:^Nav_Sections,references:^core.Table(scene.Scene_Reference,$A),worlds:^core.Table(core.World_Transform,$B),ids:^core.Table(core.Id,$C),problems:^core.Problems) -> bool {
+    clear(&s.items);clear(&s.away);clear(&s.away_keys);clear(&s.here)
     first:=core.NONE
     dropped:=0
     for row in 0..<core.count(references) {
@@ -49,37 +57,42 @@ sections_gather :: proc(references:^core.Table(scene.Scene_Reference,$A),worlds:
         if !placed {continue}
         box:=scene.section_bounds(reference,pose.transform)
         if mm.aabb_is_empty(box) {continue}
-        if s.count==NAV_SECTIONS_MAX {
-            if dropped==0 {first=e}
-            dropped+=1
-            continue
+        if dropped==0 {
+            item:=Nav_Section{box=box,key=section_key(ids,e),here=reference.loaded!={} && scene.section_state(reference)==.Active}
+            _,error:=append(&s.items,item)
+            if error==nil && item.here {
+                if _,error=append(&s.here,box);error!=nil {pop(&s.items)}
+            }
+            if error==nil {continue}
+            first=e
         }
-        s.items[s.count]={box=box,key=section_key(ids,e),here=reference.loaded!={} && scene.section_state(reference)==.Active}
-        s.count+=1
+        dropped+=1
     }
     if dropped>0 {
-        core.report(problems,first,"navigation.sections","%d sections with a box past the %d navigation sees, from this one (key %x) on: their tiles do not wait for them. Merge sections or give fewer of them extents",dropped,NAV_SECTIONS_MAX,section_key(ids,first))
+        core.report(problems,first,"navigation.memory","No memory for %d sections with a box, from this one (key %x) on: their tiles do not wait for them. Free memory",dropped,section_key(ids,first))
     }
-    h:=u64(s.count)
-    for &item in s.items[:s.count] {
-        if !item.here {
+    roomy:=reserve(&s.away,len(s.items))==nil && reserve(&s.away_keys,len(s.items))==nil
+    if !roomy {core.report(problems,core.NONE,"navigation.memory","No memory for the sections that are not loaded: their tiles build from what is here. Free memory")}
+    h:=u64(len(s.items))
+    for &item in s.items {
+        if !item.here && roomy {
             held:=false
-            for other in s.items[:s.count] {if other.here && mm.aabb_contains(other.box,item.box) {held=true;break}}
+            for here in s.here {if mm.aabb_contains(here,item.box) {held=true;break}}
             item.away=!held
-            if item.away {s.away[s.away_count]=item.box;s.away_count+=1}
+            if item.away {append(&s.away,item.box);append(&s.away_keys,item.key)}
         }
         h=base.hash64(mem.ptr_to_bytes(&item.box),h)
         h=base.hash_combine(h,item.key)
         h=base.hash_combine(h,u64(item.here)|u64(item.away)<<1)
     }
     s.hash=h
-    return
+    return dropped==0 && roomy
 }
 
 // Whether a point is where only away sections are: in an away box and in no box here.
 sections_away :: proc "contextless" (s:^Nav_Sections,point:mm.Vec3) -> bool {
     away:=false
-    for item in s.items[:s.count] {
+    for item in s.items {
         if !mm.aabb_contains_point(item.box,point) {continue}
         if item.here {return false}
         away||=item.away
@@ -93,7 +106,7 @@ sections_region :: proc "contextless" (s:^Nav_Sections,point:mm.Vec3) -> u64 {
     key:u64
     best:=f32(max(f32))
     here:=false
-    for item in s.items[:s.count] {
+    for item in s.items {
         if !mm.aabb_contains_point(item.box,point) {continue}
         volume:=mm.aabb_volume(item.box)
         if volume<best || volume==best && item.here && !here {key,best,here=item.key,volume,item.here}
@@ -104,21 +117,16 @@ sections_region :: proc "contextless" (s:^Nav_Sections,point:mm.Vec3) -> u64 {
 // Whether a box lies where only away sections are: inside the away boxes
 // together and outside every box here; flat, seen from above.
 sections_covered :: proc "contextless" (s:^Nav_Sections,box:mm.Aabb,flat:=false) -> bool {
-    if s.away_count==0 || mm.aabb_is_empty(box) {return false}
+    if len(s.away)==0 || mm.aabb_is_empty(box) {return false}
     target:=level(box,flat)
-    for item in s.items[:s.count] {if item.here && mm.aabb_overlaps(level(item.box,flat),target) {return false}}
-    return boxes_cover(s.away[:s.away_count],box,flat)
+    for here in s.here {if mm.aabb_overlaps(level(here,flat),target) {return false}}
+    return boxes_cover(s.away[:],box,flat)
 }
 
 // Whether, seen from above, the sections here cover a box: what lies there
 // and is not here is above or below them, in their column.
 sections_stacked :: proc "contextless" (s:^Nav_Sections,box:mm.Aabb) -> bool {
-    here:[NAV_SECTIONS_MAX]mm.Aabb
-    count:=0
-    for item in s.items[:s.count] {
-        if item.here {here[count]=item.box;count+=1}
-    }
-    return boxes_cover(here[:count],box,true)
+    return boxes_cover(s.here[:],box,true)
 }
 
 // Whether the boxes together cover a box; flat, seen from above.

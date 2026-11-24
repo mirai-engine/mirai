@@ -1,7 +1,9 @@
 package water
 
 import "core:math/linalg"
+import "core:slice"
 import "core:testing"
+import "mirai:core"
 import render "mirai:engine/render"
 import geom "mirai:std/geom"
 import mm "mirai:std/math"
@@ -98,4 +100,52 @@ the_waves_go_to_the_shaders_from_the_origin_and_dry_boxes_cut_the_planes_they_cr
     testing.expect(t,dry_crosses(&state,1,0) && crosses_water(&state,1))
     testing.expect(t,!dry_crosses(&state,2,0),"a dry box deep under the waves")
     testing.expect(t,!dry_crosses(&state,0,1),"a plane is not a dry box")
+}
+
+// Past CAPACITY fluids, a frame draws those nearest the view, nearest first
+// and at the same distance by entity, in whatever order the physics lists them.
+@(test)
+the_fluids_nearest_the_view_are_drawn :: proc(t:^testing.T) {
+    Case :: struct {
+        name:string,
+        boxes:[]mm.Aabb, // entity i+1 has box i
+        at:[3]f32,
+        drawn:[]int,     // the entities, in order
+    }
+    row:=make([]mm.Aabb,12,context.temp_allocator)
+    for &box,i in row {box={{f32(i)*10,0,0},{f32(i)*10+1,1,1}}}
+    ring:=make([]mm.Aabb,10,context.temp_allocator)
+    for &box in ring {box={{5,0,-1},{6,1,1}}}
+    inside:=make([]mm.Aabb,12,context.temp_allocator)
+    copy(inside,row)
+    nan:=f32(0);nan=nan/nan
+    odd:=make([]mm.Aabb,9,context.temp_allocator)
+    copy(odd,row[:9])
+    odd[0]={{nan,0,0},{nan,1,1}}
+    cases:=[]Case{
+        {"twelve in a row, from the start",row,{-5,0.5,0.5},{1,2,3,4,5,6,7,8}},
+        {"twelve in a row, from the far end",row,{200,0.5,0.5},{12,11,10,9,8,7,6,5}},
+        {"in one: it first",row,{70.5,0.5,0.5},{8,7,9,6,10,5,11,4}},
+        {"all as near: by entity",ring,{0,0.5,0},{1,2,3,4,5,6,7,8}},
+        {"not a number is the farthest",odd,{-5,0.5,0.5},{2,3,4,5,6,7,8,9}},
+        {"fewer than the capacity: all",row[:3],{100,0,0},{3,2,1}},
+    }
+    for c in cases {
+        // In the order given, reversed, and turned by a third: the same drawn.
+        for order in 0..<3 {
+            fluids:=make([]phys.Fluid_Info,len(c.boxes),context.temp_allocator)
+            for box,i in c.boxes {
+                at:=i
+                switch order {
+                case 1: at=len(c.boxes)-1-i
+                case 2: at=(i+len(c.boxes)/3)%len(c.boxes)
+                }
+                fluids[at]={entity=core.Entity(i+1),bounds=box}
+            }
+            count:=water_nearest(fluids,c.at,CAPACITY)
+            drawn:=make([]int,count,context.temp_allocator)
+            for f,i in fluids[:count] {drawn[i]=int(f.entity)}
+            testing.expectf(t,slice.equal(drawn,c.drawn),"%s, order %d: %v",c.name,order,drawn)
+        }
+    }
 }

@@ -128,6 +128,24 @@ ground_request :: proc(requests:^Pcg_Ground_Requests,entity:core.Entity,coord:[2
     core.offer(&requests.cells,Ground_Request{entity,coord})
 }
 
+// Bytes the ground cache holds for an owner, by the room of its lists: what a
+// copy of the world (Play, a rollback) copies of it.
+ground_owner_bytes :: proc "contextless" (owner:^Pcg_Ground_Owner) -> (bytes:int) {
+    room :: #force_inline proc "contextless" (list:[dynamic]$T) -> int {return cap(list)*size_of(T)}
+    bytes=size_of(Pcg_Ground_Owner)+room(owner.layers)+room(owner.tiles)+room(owner.pools)+room(owner.sparse)+room(owner.cells)
+    for &pool in owner.pools {bytes+=room(pool.heights)+room(pool.weights)+room(pool.kept)+room(pool.coords)}
+    for &tile in owner.sparse {bytes+=room(tile.keys)+room(tile.heights)+room(tile.weights)}
+    return
+}
+
+// Bytes the whole ground cache holds, owners and queues.
+ground_bytes :: proc "contextless" (g:^Pcg_Ground) -> (bytes:int) {
+    if g==nil {return}
+    bytes=size_of(Pcg_Ground)+(cap(g.owners)-len(g.owners))*size_of(Pcg_Ground_Owner)+cap(g.queue)*size_of(Pcg_Ground_Task)+cap(g.zones)*size_of(Zone_Seen)
+    for &owner in g.owners {bytes+=ground_owner_bytes(&owner)}
+    return
+}
+
 ground_owner :: proc "contextless" (g:^Pcg_Ground,entity:core.Entity) -> ^Pcg_Ground_Owner {
     if g==nil {return nil}
     for &owner in g.owners {if owner.entity==entity {return &owner}}

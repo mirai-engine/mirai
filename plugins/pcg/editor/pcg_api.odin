@@ -84,6 +84,8 @@ Inspect_Result :: struct {
     placed:int `mirai:"label=What the built cells place"`,
     suppressed:int `mirai:"label=Points taken out of the graph"`,
     suppressed_pages:int `mirai:"label=Pcg_Suppressed entities that hold them"`,
+    ground_bytes:int `mirai:"label=Of the ground cache, for this graph: what a copy of the world (Play, a rollback) copies of it"`,
+    ground_total_bytes:int `mirai:"label=Of the ground cache, for every graph of the world"`,
 }
 
 Symbol_Param :: struct {
@@ -326,7 +328,9 @@ api_inspect :: proc(s:^editor.Session,call:^api.Call) {
         }
     }
     for cell in source.cells {if len(cell.density)>0 {r.painted_cells+=1}}
-    if owner:=pcg.ground_owner(core.world_storage_of(world,pcg.Pcg_Ground),e);owner!=nil {r.wanted_cells=len(owner.cells)}
+    ground:=core.world_storage_of(world,pcg.Pcg_Ground)
+    if owner:=pcg.ground_owner(ground,e);owner!=nil {r.wanted_cells,r.ground_bytes=len(owner.cells),pcg.ground_owner_bytes(owner)}
+    r.ground_total_bytes=pcg.ground_bytes(ground)
     if generated:=pcg.generated_graph(generated_of(s,world),e);generated!=nil {
         for &cell in generated.cells {if cell.built {r.built_cells+=1;r.placed+=len(cell.placed)}}
     }

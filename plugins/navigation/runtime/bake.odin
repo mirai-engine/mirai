@@ -58,14 +58,7 @@ BAKE_ALL :: Bake_Filter{coarse=true}
 bake_takes :: proc(filter:Bake_Filter,box:mm.Aabb) -> bool {
     if filter.within && !mm.aabb_overlaps(filter.inside,box) {return false}
     if len(filter.outside)==0 {return true}
-    s:Nav_Sections
-    for b in filter.outside[:min(len(filter.outside),NAV_SECTIONS_MAX)] {
-        s.items[s.count]={box=b,away=true}
-        s.count+=1
-        s.away[s.away_count]=b
-        s.away_count+=1
-    }
-    return !sections_covered(&s,box)
+    return !boxes_cover(filter.outside,box)
 }
 
 Bake_Zone :: struct {
