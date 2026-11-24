@@ -144,7 +144,9 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   which vfx takes).
 - AI over the network: the minds decide on the server.
 - Navigation builds tiles from collision. Authored surface links keep their owners when toggled,
-  and each agent has one navigation-owned corridor separate from its path status.
+  and each agent has one navigation-owned corridor separate from its path status. One `Nav_Agent`
+  component drives both `Character` bodies and bodyless crowd walkers (via shared `core.Motion`);
+  do not add a separate `Nav_Walker`.
 - Far-away simulation: automatic coarse simulation through the portal graph.
 - Water: Gerstner waves.
 - Particles: a particle glows by its emission and is not a light; an effect that must light its
@@ -152,6 +154,11 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   CPU, so what depends on them (their lists, caches and shadow pages) is kept while they stay
   still. Decided by the user: per-particle or GPU-written lights come back only with a measured
   reason that holds against this.
+- **VFX pruned/unified surfaces (do not look for or reintroduce):** cross-emitter births use
+  `core.Births` and `Particle_Channel` (no `Data_Channels`, `Particle_Reports` or GPU-to-GPU
+  `Emitter` events); baked `.grid` caches and `Particle_Shape.Bones` do not exist (use
+  `Particle_Grid` stages, `Particle_Volume` or bone sockets); mesh particles route by their
+  material's `Alpha_Mode` (including `Additive`).
 
 ## Verification
 
