@@ -8,6 +8,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:slice"
 import "core:strings"
+import "mirai:asset"
 import "mirai:core"
 import erender "mirai:engine/render"
 import "mirai:host"
@@ -17,13 +18,14 @@ import "mirai:std/jobs"
 import "mirai:std/serial"
 import stbi "vendor:stb/image"
 
-// A slot is captured at once and written later: with a renderer it waits for
-// its thumbnail, the view of the player drawn without the interfaces of the
-// scene into a texture that comes back to the CPU a few frames after, without
-// waiting for the GPU; then a job makes the PNG and writes the file, one slot
-// at a time, so two writes of a slot end as the last one asked. Its Result
-// comes once the file is written. A load or a delete first writes what is
-// pending, and so does a world that goes, without the thumbnails it waits for.
+// A slot is captured at once, its scene uncompressed, and written later: with a
+// renderer it waits for its thumbnail, the view of the player drawn without the
+// interfaces of the scene into a texture that comes back to the CPU a few frames
+// after, without waiting for the GPU; then a job compresses the scene, makes the
+// PNG and writes the file, one slot at a time, so two writes of a slot end as
+// the last one asked. Its Result comes once the file is written. A load or a
+// delete first writes what is pending, and so does a world that goes, without
+// the thumbnails it waits for.
 
 THUMBNAIL_SIZE :: [2]u32{320,180} // pixels of the thumbnail of a slot, drawn at twice that and halved
 THUMBNAIL_WAIT :: 30              // frames a slot waits for its thumbnail before it is written without one
@@ -38,7 +40,7 @@ Write :: struct {
     result:Result,
     phase:Write_Phase,
     path:string,   // allocator of the application
-    data:[]u8,     // the slot without its thumbnail, as capture writes it
+    data:[]u8,     // the slot without its thumbnail, as capture writes it: its scene uncompressed
     asked:u64,     // Save_Work.frame when it was captured
     pixels:[]u8,   // RGBA8 at twice THUMBNAIL_SIZE; nil: none
     allocator:runtime.Allocator,
@@ -174,24 +176,39 @@ write_job :: proc(w:^Write,worker:int) {
     w.error=slot_file_write(w.path,w.data,w.pixels)
 }
 
-// Writes the bytes of a slot as capture made them, with the PNG of pixels
+// Writes the bytes of a slot as capture made them, its scene compressed, with the PNG of pixels
 // (RGBA8 at twice THUMBNAIL_SIZE) after the header, replacing the file.
 @(private)
 slot_file_write :: proc(path:string,data:[]u8,pixels:[]u8) -> Error {
+    at:=mem.align_forward_int(size_of(Header),serial.WRITER_ALIGNMENT)
+    if len(data)<at {return .Write_Failed}
+    header:=(cast(^Header)raw_data(data))^
+    if header.stored!=0 || header.bytes>u64(len(data)-at) {return .Write_Failed}
+    document:=data[at:][:header.bytes]
+    stream,no_stream:=make([]u8,asset.pack_bound(len(document)),context.temp_allocator)
+    if no_stream!=nil {return .Write_Failed}
+    encoder:asset.Stream_Encoder
+    if asset.stream_encoder_init(&encoder,context.temp_allocator)!=.None {return .Write_Failed}
+    defer asset.stream_encoder_destroy(&encoder)
+    stored,pack_error:=asset.pack(&encoder,.Fast,.Compressed,document,stream)
+    if pack_error!=.None {return .Write_Failed}
     png:[]u8
     if pixels!=nil {
         made:bool
         if png,made=thumbnail_png(pixels,context.temp_allocator);!made {return .Write_Failed}
     }
+    lent:=data[min(mem.align_forward_int(at+len(document),serial.WRITER_ALIGNMENT),len(data)):]
     out:serial.Writer
-    serial.writer_init(&out,len(data)+len(png)+2*serial.WRITER_ALIGNMENT,context.temp_allocator)
-    header:=(cast(^Header)raw_data(data))^
+    serial.writer_init(&out,at+len(png)+stored+len(lent)+2*serial.WRITER_ALIGNMENT,context.temp_allocator)
+    header.stored=u64(stored)
     header.thumbnail=u32(len(png))
     serial.write_bytes(&out,mem.ptr_to_bytes(&header))
     serial.write_align(&out,serial.WRITER_ALIGNMENT)
     serial.write_bytes(&out,png)
     serial.write_align(&out,serial.WRITER_ALIGNMENT)
-    serial.write_bytes(&out,data[mem.align_forward_int(size_of(Header),serial.WRITER_ALIGNMENT):])
+    serial.write_bytes(&out,stream[:stored])
+    serial.write_align(&out,serial.WRITER_ALIGNMENT)
+    serial.write_bytes(&out,lent)
     if out.overflow!=0 {return .Write_Failed}
     dir:=filepath.dir(path)
     if os.make_directory_all(dir)!=nil && !os.is_dir(dir) {return .Write_Failed}

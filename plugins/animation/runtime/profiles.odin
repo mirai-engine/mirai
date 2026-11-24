@@ -303,6 +303,8 @@ animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.
     animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget,progress)
 }
 
+// In the snapshot of a save, which owns only the tables of this library: it reads Playback and
+// writes Animation_Progress alone.
 playback_save_prepare :: proc(playback:^Playback,world:core.World_Ref) -> bool {
     if playback.previewed {return true}
     progress:=core.world_table_of(world,Animation_Progress)

@@ -23,14 +23,35 @@ import stbi "vendor:stb/image"
 @(component)
 Capture_Value :: struct {value:u32}
 
+Capture_Op :: enum u8 {Add,Edit,Remove}
+
 @(storage,save_prepare="capture_value_prepare")
-Capture_Source :: struct {entity:core.Entity,value:u32,reject:bool}
+Capture_Source :: struct {entity:core.Entity,value:u32,reject:bool,op:Capture_Op}
 
 capture_value_prepare :: proc(source:^Capture_Source,world:core.World_Ref) -> bool {
     if source.reject {return false}
     if source.entity==core.NONE {return true}
     table:=core.world_table_of(world,Capture_Value)
-    return table!=nil && core.add(table,source.entity,{source.value})
+    if table==nil {return false}
+    switch source.op {
+    case .Add: return core.add(table,source.entity,{source.value})
+    case .Edit:
+        row:=core.row_of(table,source.entity)
+        if row<0 {return false}
+        core.edit_at(table,row).value=source.value
+    case .Remove: core.remove(table,source.entity)
+    }
+    return true
+}
+
+// Counts the copies of the World it is in.
+@(storage,copy="copy_counter_copy")
+Copy_Counter :: struct {copies:^int}
+
+copy_counter_copy :: proc(dst,src:^Copy_Counter) -> bool {
+    if src.copies!=nil {src.copies^+=1}
+    dst^=src^
+    return true
 }
 
 @(private)
@@ -50,6 +71,7 @@ Save_Test_World :: struct {
     time:core.Time,
     capture_source:Capture_Source,
     capture_values:core.Table(Capture_Value),
+    copy_counter:Copy_Counter,
 }
 
 // The layout of the World and an application that makes it.
@@ -274,6 +296,57 @@ a_slot_capture_prepares_its_saved_components_and_can_be_refused :: proc(t:^testi
     testing.expect_value(t,restore(ref,&f.app,serial.writer_bytes(&out)),Error.None)
     saved,found:=core.get(&w.capture_values,core.entity_of(&w.entities,1))
     testing.expect(t,found && saved.value==21 && w.capture_source=={})
+}
+
+// A save hook writes the components of its library in a snapshot that copies them and the
+// entities, and shares the rest of the World: nothing of the World is copied, written or left
+// pending, whatever the hook adds, edits or removes. A World that waits for a settle is copied
+// whole, to settle the copy.
+@(test)
+a_save_hook_writes_a_snapshot_of_its_components_without_copying_the_world :: proc(t:^testing.T) {
+    Case :: struct {op:Capture_Op,live:Maybe(u32),pending:bool,saved:Maybe(u32),copies:int}
+    cases:=[]Case{
+        {op=.Add,saved=21},
+        {op=.Edit,live=5,saved=21},
+        {op=.Remove,live=5},
+        {op=.Add,pending=true,saved=21,copies=1},
+    }
+    for c,i in cases {
+        f:Save_Test
+        if !save_test_init(t,&f) {return}
+        defer save_test_destroy(&f)
+        w:=f.w
+        copies:=0
+        w.copy_counter.copies=&copies
+        e:=core.create(&w.entities)
+        core.add(&w.ids,e,{1})
+        core.add(&w.transforms,e,core.TRANSFORM_IDENTITY)
+        if live,ok:=c.live.?;ok {core.add(&w.capture_values,e,{live})}
+        // A row off and room for edits: the table holds memory besides its rows.
+        off:=core.create(&w.entities)
+        core.add(&w.capture_values,off,{3})
+        core.disable(&w.capture_values,off)
+        core.settle(&f.info,w,nil)
+        testing.expect(t,core.table_edit_reserve(&w.capture_values,4))
+        aux,edits:=w.capture_values.aux,w.capture_values.edits
+        if c.pending {core.add(&w.ids,core.create(&w.entities),{2})}
+        w.capture_source={entity=e,value=21,op=c.op}
+        ref:=host.app_world_ref(&f.app,w)
+        values,transforms:=w.capture_values.version,w.transforms.version
+        out:serial.Writer
+        serial.writer_init(&out)
+        defer serial.writer_destroy(&out)
+        if !testing.expectf(t,capture(ref,nil,context.allocator,&out)==.None,"case %d: captured",i) {continue}
+        testing.expectf(t,copies==c.copies,"case %d: %d copies of the World, not %d",i,copies,c.copies)
+        live,found:=core.get(&w.capture_values,e)
+        testing.expectf(t,found==(c.live!=nil) && (!found || live.value==c.live.?),"case %d: the World keeps its value",i)
+        testing.expectf(t,w.capture_values.version==values && len(w.capture_values.pending)==0 && w.transforms.version==transforms,"case %d: the World is not written",i)
+        testing.expectf(t,w.capture_values.aux==aux && w.capture_values.edits==edits && aux!=nil && edits!=nil && core.count(&w.capture_values)==(c.live!=nil?1:0),"case %d: the table keeps what it holds besides its rows",i)
+        testing.expectf(t,len(w.ids.pending)==(c.pending?1:0),"case %d: what the World has pending stays its own",i)
+        if !testing.expectf(t,restore(ref,&f.app,serial.writer_bytes(&out))==.None,"case %d: restored",i) {continue}
+        saved,kept:=core.get(&w.capture_values,core.entity_of(&w.entities,1))
+        testing.expectf(t,kept==(c.saved!=nil) && (!kept || saved.value==c.saved.?),"case %d: the slot holds what the hook wrote",i)
+    }
 }
 
 // A world of the application with its folder of slots, served frame by frame.
@@ -730,6 +803,134 @@ a_slot_waiting_for_its_thumbnail_is_written_before_a_load_or_after_a_while :: pr
     testing.expect_value(t,placed_at(w,5),[3]f32{4,5,6})
 }
 
+// Serves frames until the slots captured are written, keeping the results of each.
+@(private="file")
+serve_written :: proc(f:^Save_Test,s:^Serve,results:^[dynamic]Result) {
+    for _ in 0..<5000 {
+        serve(f,s)
+        append(results,..s.results.queue.items[:])
+        if len(s.work.writes)==0 {return}
+        time.sleep(time.Millisecond)
+    }
+}
+
+// However a slot is written, its scene is compressed by the write, not by the frame that captured
+// it, and loads back as it was: a save, an autosave and a checkpoint that a job writes, two saves
+// of a slot back to back, a save that a load of it writes before its job ran, one that a world
+// that goes writes, and a write at once.
+@(test)
+a_slot_is_compressed_where_it_is_written_and_loads_back :: proc(t:^testing.T) {
+    Flow :: enum {Save,Autosave,Checkpoint,Back_To_Back,Loaded_At_Once,Released,At_Once}
+    for flow in Flow {
+        f:Save_Test
+        if !save_test_init(t,&f) {return}
+        defer save_test_destroy(&f)
+        if !testing.expect(t,jobs.system_init(&f.app.jobs,{threads=1})) {return}
+        defer jobs.system_destroy(&f.app.jobs)
+        s:Serve
+        if !serve_init(t,&f,&s) {return}
+        defer serve_destroy(&f,&s)
+        w:=f.w
+        for id in 1..=64 {save_test_entity(&f,base.Entity_Id(id),{1,2,3})}
+        ref:=host.app_world_ref(&f.app,w)
+        slot,placed:="slot",[3]f32{1,2,3}
+        results:=make([dynamic]Result,context.temp_allocator)
+        switch flow {
+        case .Save:
+            request_save(&s.requests,slot)
+            serve_written(&f,&s,&results)
+        case .Autosave:
+            slot=autosave_name(1)
+            request_autosave(&s.requests)
+            serve_written(&f,&s,&results)
+        case .Checkpoint:
+            slot=CHECKPOINT
+            request_checkpoint(&s.requests)
+            serve_written(&f,&s,&results)
+        case .Back_To_Back:
+            request_save(&s.requests,slot)
+            serve(&f,&s)
+            append(&results,..s.results.queue.items[:])
+            placed={4,5,6}
+            place(w,1,placed)
+            request_save(&s.requests,slot)
+            serve_written(&f,&s,&results)
+        case .Loaded_At_Once:
+            request_save(&s.requests,slot)
+            request_load(&s.requests,slot)
+            serve(&f,&s)
+            append(&results,..s.results.queue.items[:])
+        case .Released:
+            out:serial.Writer
+            serial.writer_init(&out,0,f.app.allocator)
+            if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {continue}
+            path,_:=slot_path(&s.state,&f.app,slot)
+            if !testing.expect_value(t,write_queue(&s.work,f.app.renderer,f.app.allocator,{op=.Save},path,serial.writer_take(&out)),Error.None) {continue}
+            s.work.writes[0].phase=.Thumbnail
+            saves_release(core.world_read(ref),&s.work,&s.thumbnails,&f.app,&s.state,s.problems)
+            testing.expect_value(t,len(s.work.writes),0)
+        case .At_Once:
+            testing.expect_value(t,write(ref,&f.app,&s.state,slot),Error.None)
+        }
+        for &r in results {testing.expectf(t,r.error==.None,"%v: %v of %s: %v",flow,r.op,base.text_get(r.slot[:]),r.error)}
+        path,_:=slot_path(&s.state,&f.app,slot)
+        header,_,error:=slot_header(path)
+        if !testing.expectf(t,error==.None,"%v: written",flow) {continue}
+        testing.expectf(t,header.stored>0 && header.stored<header.bytes,"%v: compressed, %d bytes of %d",flow,header.stored,header.bytes)
+        place(w,1,{9,9,9})
+        testing.expectf(t,read(ref,&f.app,&s.state,slot)==.None && placed_at(w,1)==placed,"%v: loads back",flow)
+    }
+}
+
+// A slot that cannot be written says why in its result, and one whose scene was damaged does not
+// load and leaves the world as it was.
+@(test)
+a_slot_that_is_not_written_or_is_damaged_says_why :: proc(t:^testing.T) {
+    Case :: enum {Unwritable,Damaged,Truncated}
+    for c in Case {
+        f:Save_Test
+        if !save_test_init(t,&f) {return}
+        defer save_test_destroy(&f)
+        if !testing.expect(t,jobs.system_init(&f.app.jobs,{threads=1})) {return}
+        defer jobs.system_destroy(&f.app.jobs)
+        s:Serve
+        if !serve_init(t,&f,&s) {return}
+        defer serve_destroy(&f,&s)
+        w:=f.w
+        for id in 1..=16 {save_test_entity(&f,base.Entity_Id(id),{1,2,3})}
+        results:=make([dynamic]Result,context.temp_allocator)
+        if c==.Unwritable {
+            blocker:=fmt.tprintf("%s/blocker",s.folder)
+            testing.expect(t,os.write_entire_file(blocker,[]u8{1})==nil)
+            folder_set(&s.state,f.app.allocator,fmt.tprintf("%s/saves",blocker))
+        }
+        request_save(&s.requests,"slot")
+        serve_written(&f,&s,&results)
+        if !testing.expectf(t,len(results)==1,"%v: one result",c) {continue}
+        if c==.Unwritable {
+            testing.expectf(t,results[0].error==.Write_Failed,"%v: %v",c,results[0].error)
+            continue
+        }
+        path,_:=slot_path(&s.state,&f.app,"slot")
+        data,read_error:=os.read_entire_file(path,context.temp_allocator)
+        if !testing.expect(t,read_error==nil) {continue}
+        header:=(cast(^Header)raw_data(data))^
+        at:=mem.align_forward_int(size_of(Header),serial.WRITER_ALIGNMENT)
+        switch c {
+        case .Unwritable:
+        case .Damaged:
+            for &b in data[at+int(header.stored)/2:][:min(32,int(header.stored)/2)] {b~=0xa5}
+        case .Truncated:
+            (cast(^Header)raw_data(data)).stored=header.stored/2
+        }
+        testing.expect(t,os.write_entire_file(path,data)==nil)
+        place(w,1,{9,9,9})
+        error:=read(host.app_world_ref(&f.app,w),&f.app,&s.state,"slot")
+        testing.expectf(t,error==.Corrupt,"%v: %v",c,error)
+        testing.expectf(t,placed_at(w,1)==[3]f32{9,9,9} && core.count(&w.ids)==16,"%v: the world stays",c)
+    }
+}
+
 // An allocator that serves `remaining` requests of its owner and refuses the rest.
 @(private="file")
 Memory_Limit :: struct {owner:runtime.Allocator,remaining:int}
@@ -757,6 +958,11 @@ a_slot_without_memory_is_refused_and_leaves_nothing :: proc(t:^testing.T) {
     defer serve_destroy(&f,&s)
     owner:=f.app.allocator
     limit:=Memory_Limit{owner=owner}
+    save_test_entity(&f,5,{1,2,3})
+    out:serial.Writer
+    serial.writer_init(&out,0,context.allocator)
+    defer serial.writer_destroy(&out)
+    if !testing.expect_value(t,capture(host.app_world_ref(&f.app,f.w),nil,context.allocator,&out),Error.None) {return}
     Step :: enum {Queue,Thumbnail,File}
     for step in Step {
         done,refused:=false,false
@@ -783,11 +989,10 @@ a_slot_without_memory_is_refused_and_leaves_nothing :: proc(t:^testing.T) {
                 testing.expectf(t,made==(len(png)>0),"%d requests served: a thumbnail only when it was made",served)
             case .File:
                 pixels:=make([]u8,int(THUMBNAIL_SIZE.x)*int(THUMBNAIL_SIZE.y)*16,context.temp_allocator)
-                captured:=make([]u8,mem.align_forward_int(size_of(Header),serial.WRITER_ALIGNMENT)+64,context.temp_allocator)
                 path:=fmt.tprintf("%s/limit.save",s.folder)
                 limit.owner=context.temp_allocator
                 context.temp_allocator={memory_limit_proc,&limit}
-                error:=slot_file_write(path,captured,pixels)
+                error:=slot_file_write(path,serial.writer_bytes(&out),pixels)
                 done=error==.None
                 if !done {
                     testing.expect_value(t,error,Error.Write_Failed)

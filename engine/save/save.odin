@@ -47,7 +47,7 @@ SLOT_CAPACITY :: 48
 LABEL_CAPACITY :: 64
 EXTENSION :: ".save"
 FOLDER :: "saves"
-VERSION :: u32(7)
+VERSION :: u32(8)
 CHECKPOINT :: "checkpoint" // the slot of the last checkpoint
 
 @(private) MAGIC :: [4]u8{'M','S','A','V'}
@@ -128,6 +128,7 @@ Header :: struct {
     played:f64,
     written:i64,     // nanoseconds since 1970 UTC
     bytes:u64,       // of the scene document
+    stored:u64,      // of the stream (asset.pack) the document is in the file; 0: the document as capture leaves it
     entities:u32,
     lent:u32,        // Ids lent for the trip to entities without one, listed after the document
     thumbnail:u32,   // bytes of the PNG right after the header
@@ -455,64 +456,128 @@ write :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,slot:string,kind:
     return slot_file_write(path,serial.writer_bytes(&out),nil)
 }
 
-// A save hook materializes components in a private world. Pending rows also
-// need a settle there, since world_copy takes only the settled rows.
+// What a capture reads: the World itself, or a snapshot of it that snapshot_free lets go.
 @(private)
-snapshot_for_save :: proc(w:core.World_Ref,allocator:runtime.Allocator) -> (rawptr,bool) {
+Snapshot :: struct {
+    data:rawptr,      // nil: the World itself
+    whole:bool,       // a copy of all of the World (an unsettled one), which world_destroy frees
+    owned:[]bool,     // by table of the World, of one that is not whole: the tables it copied
+    allocator:runtime.Allocator,
+}
+
+// A save hook (save_prepare) materializes components of its own library from the storage that
+// declares it, reading that storage and the World. It runs in a snapshot that copies the
+// entities and the tables of those libraries and shares the rest of the World, read only: the
+// World stays as it was, and the snapshot costs what the hooks write, not the World. Pending
+// rows need a settle of every table, so a World that waits for one is copied whole.
+@(private)
+snapshot_take :: proc(w:core.World_Ref,allocator:runtime.Allocator) -> (s:Snapshot,ok:bool) {
     es:=core.world_entities(w)
     pending:=len(es.doomed)>0
     for waiting in es.pending {pending||=waiting}
     prepare:=false
-    for &storage in w.info.storages {prepare||=storage.procs.save_prepare!=nil}
-    if !pending && !prepare {return nil,true}
+    for &storage in w.info.storages {prepare||=storage.place==.World && storage.procs.save_prepare!=nil}
+    if !pending && !prepare {return {},true}
 
+    s.allocator=allocator
     data,err:=mem.alloc(w.info.sizes[.World],max(w.info.aligns[.World],1),allocator)
-    if err!=nil {return nil,false}
-    copied:=false
-    defer if !copied {
-        core.world_destroy(w.info,.World,data)
-        mem.free(data,allocator)
-    }
-    if !core.world_init(w.info,.World,data,allocator) || !core.world_copy(w.info,data,w.data) {return nil,false}
+    if err!=nil {return {},false}
+    s.data=data
+    defer if !ok {snapshot_free(w.info,&s)}
     snapshot:=core.world_ref(data,w.info)
     if pending {
-        for &info in w.info.tables {
-            if info.place!=.World {continue}
-            src,dst:=core.world_table_at(w,&info),core.world_table_at(snapshot,&info)
-            for change in src.pending {
-                count:=len(dst.pending)
-                switch change.value {
-                case core.PENDING_REMOVE: core.raw_remove(dst,change.entity)
-                case core.PENDING_OFF: core.raw_disable(dst,change.entity)
-                case core.PENDING_ON: core.raw_enable(dst,change.entity)
-                case:
-                    value:=rawptr(uintptr(src.added.data)+uintptr(int(change.value)*info.info.size))
-                    if !core.raw_add(dst,info.info,change.entity,value) {return nil,false}
-                }
-                if len(dst.pending)==count {return nil,false}
-            }
+        s.whole=true
+        if !core.world_init(w.info,.World,data,allocator) || !core.world_copy(w.info,data,w.data) || !snapshot_settle(w,snapshot) {return}
+        if prepare {
+            if !core.world_prepare_save(snapshot) {return}
+            core.world_settle(snapshot)
         }
-        core.world_settle(snapshot)
+        return s,true
     }
-    if prepare {
-        if !core.world_prepare_save(snapshot) {return nil,false}
-        core.world_settle(snapshot)
+
+    owned,no_owned:=make([]bool,len(w.info.tables),allocator)
+    if no_owned!=nil {return}
+    s.owned=owned
+    for &storage in w.info.storages {
+        if storage.place!=.World || storage.procs.save_prepare==nil {continue}
+        for &t,at in w.info.tables {owned[at]||=t.place==.World && t.library==storage.library}
     }
-    copied=true
-    return data,true
+    // Shared until it owns its entities and its tables, which it empties before it copies any.
+    mem.copy(data,w.data,w.info.sizes[.World])
+    copies:=core.world_entities(snapshot)
+    copies^={}
+    for &t,at in w.info.tables {
+        if !owned[at] {continue}
+        table:=core.world_table_at(snapshot,&t)
+        from:=table^
+        table^={}
+        core.raw_init(table,from.name,allocator)
+        table.lock_plan,table.waits=from.lock_plan,from.waits
+    }
+    context.allocator=allocator
+    if !core.entities_copy(copies,es) {return}
+    for &t,at in w.info.tables {
+        if owned[at] && !core.raw_copy(core.world_table_at(snapshot,&t),core.world_table_at(w,&t),t.info,t.flat) {return}
+    }
+    for &storage in w.info.storages {
+        if storage.place!=.World || storage.procs.save_prepare==nil {continue}
+        if !storage.procs.save_prepare(rawptr(uintptr(data)+storage.offset),snapshot) {return}
+    }
+    for &t,at in w.info.tables {
+        if owned[at] {core.raw_settle(core.world_table_at(snapshot,&t),t.info.size,t.info.align,copies)}
+    }
+    return s,true
 }
 
-// The world as the bytes of a slot, without a thumbnail.
+// Applies to a whole copy of a World what the World has pending, and settles it.
+@(private)
+snapshot_settle :: proc(w,snapshot:core.World_Ref) -> bool {
+    for &info in w.info.tables {
+        if info.place!=.World {continue}
+        src,dst:=core.world_table_at(w,&info),core.world_table_at(snapshot,&info)
+        for change in src.pending {
+            count:=len(dst.pending)
+            switch change.value {
+            case core.PENDING_REMOVE: core.raw_remove(dst,change.entity)
+            case core.PENDING_OFF: core.raw_disable(dst,change.entity)
+            case core.PENDING_ON: core.raw_enable(dst,change.entity)
+            case:
+                value:=rawptr(uintptr(src.added.data)+uintptr(int(change.value)*info.info.size))
+                if !core.raw_add(dst,info.info,change.entity,value) {return false}
+            }
+            if len(dst.pending)==count {return false}
+        }
+    }
+    core.world_settle(snapshot)
+    return true
+}
+
+@(private)
+snapshot_free :: proc(info:^core.World_Info,s:^Snapshot) {
+    if s.data==nil {return}
+    if s.whole {
+        core.world_destroy(info,.World,s.data)
+    } else if s.owned!=nil {
+        snapshot:=core.world_ref(s.data,info)
+        for &t,at in info.tables {
+            if s.owned[at] {core.raw_destroy(core.world_table_at(snapshot,&t),t.info.size)}
+        }
+        core.entities_destroy(core.world_entities(snapshot))
+    }
+    delete(s.owned,s.allocator)
+    mem.free(s.data,s.allocator)
+    s^={}
+}
+
+// The world as the bytes of a slot, without a thumbnail and with its scene
+// uncompressed: slot_file_write compresses it.
 capture :: proc(world:core.World_Ref,assets:^host.Assets,allocator:runtime.Allocator,out:^serial.Writer,kind:=Slot_Kind.Manual,label:="",played:=0.0) -> Error {
     w:=world
     if w.place!=.World || w.info==nil || w.data==nil {return .Failed}
-    snapshot,ok:=snapshot_for_save(w,allocator)
+    snapshot,ok:=snapshot_take(w,allocator)
     if !ok {return .Failed}
-    defer if snapshot!=nil {
-        core.world_destroy(w.info,.World,snapshot)
-        mem.free(snapshot,allocator)
-    }
-    if snapshot!=nil {w=core.world_ref(snapshot,w.info)}
+    defer snapshot_free(w.info,&snapshot)
+    if snapshot.data!=nil {w=core.world_ref(snapshot.data,w.info)}
     ids:=core.world_table_of(w,core.Id)
     if ids==nil {return .Failed}
     es:=core.world_entities(w)
@@ -544,6 +609,8 @@ capture :: proc(world:core.World_Ref,assets:^host.Assets,allocator:runtime.Alloc
     report,error:=scene.capture(w,&document,types,{id=DOCUMENT,sections=true,excluded=excluded,temporary_ids=temporary},allocator)
     if error!=.None {return .Failed}
     defer asset.scene_destroy(&document)
+    // slot_file_write compresses the scene whole, in a job: the frame that captures it does not.
+    document.doc.codecs=.None
     body:serial.Writer
     serial.writer_init(&body,0,allocator)
     defer serial.writer_destroy(&body)
@@ -584,8 +651,9 @@ restore :: proc(w:core.World_Ref,app:^host.App,data:[]u8,game:^Save_Game=nil) ->
     if header.version!=VERSION {return .Version}
     at:=u64(mem.align_forward_int(size_of(Header),serial.WRITER_ALIGNMENT))
     at=u64(mem.align_forward_int(int(at)+int(header.thumbnail),serial.WRITER_ALIGNMENT))
-    if at>u64(len(data)) || header.bytes>u64(len(data))-at {return .Corrupt}
-    lent_at:=u64(mem.align_forward_int(int(at+header.bytes),serial.WRITER_ALIGNMENT))
+    size:=header.stored if header.stored!=0 else header.bytes
+    if at>u64(len(data)) || size>u64(len(data))-at {return .Corrupt}
+    lent_at:=u64(mem.align_forward_int(int(at+size),serial.WRITER_ALIGNMENT))
     if u64(header.lent)>(u64(len(data))-min(lent_at,u64(len(data))))/size_of(base.Entity_Id) {return .Corrupt}
     lent:=make([]base.Entity_Id,header.lent,context.temp_allocator)
     if header.lent>0 {mem.copy(raw_data(lent),&data[lent_at],len(lent)*size_of(base.Entity_Id))}
@@ -594,8 +662,23 @@ restore :: proc(w:core.World_Ref,app:^host.App,data:[]u8,game:^Save_Game=nil) ->
     local:asset.Types
     types:=types_open(app.assets,app.allocator,&local)
     defer if types==&local {asset.types_destroy(&local)}
+    document:=data[at:][:size]
+    // Aligned as a file read is: the asset reads its chunks in place, and its names point into it.
+    unpacked:[]u8
+    defer mem.free_bytes(unpacked,app.allocator)
+    if header.stored!=0 {
+        if header.bytes>asset.DEFAULT_MEMORY_LIMIT {return .Corrupt}
+        no_room:mem.Allocator_Error
+        if unpacked,no_room=mem.alloc_bytes_non_zeroed(int(header.bytes),serial.WRITER_ALIGNMENT,app.allocator);no_room!=nil {return .Failed}
+        decoder:asset.Stream_Decoder
+        if asset.stream_decoder_init(&decoder,app.allocator)!=.None {return .Failed}
+        unpack_error:=asset.unpack(&decoder,document,unpacked)
+        asset.stream_decoder_destroy(&decoder)
+        if unpack_error!=.None {return .Failed if unpack_error==.Out_Of_Memory else .Corrupt}
+        document=unpacked
+    }
     file:asset.Asset
-    if asset.asset_open(&file,data[at:][:header.bytes],app.allocator)!=.None {return .Corrupt}
+    if asset.asset_open(&file,document,app.allocator)!=.None {return .Corrupt}
     defer asset.asset_close(&file)
     view,view_error:=asset.scene_view(&file,types)
     if view_error!=.None {return .Corrupt}
