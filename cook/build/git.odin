@@ -16,6 +16,7 @@ import "mirai:std/subprocess"
 // (git_settings). The other kinds are whole files to git.
 
 GIT_DRIVER :: "mirai"
+GIT_TEXT_ATTRIBUTES :: "* text=auto eol=lf"
 
 // A kind of asset of a plugin, or a source its importers read, as its manifest declares it.
 Git_Kind :: struct {
@@ -69,8 +70,8 @@ git_attributes_line :: proc(kind:Git_Kind,lfs:=false,allocator:=context.allocato
     return strings.concatenate({"*",kind.extension," ",attributes},allocator)
 }
 
-// The text of a .gitattributes: the lines existing has for other files, as
-// they are, then one line per kind of asset of the engine and of plugins and,
+// The text of a .gitattributes: the LF default, the lines existing has for
+// other files, then one line per kind of asset of the engine and of plugins and,
 // with lfs or when existing already keeps files in LFS, the kinds git keeps
 // whole and the sources of imports in it. Made again from its own text it
 // comes out the same: changed says whether it differs from existing in more
@@ -92,8 +93,10 @@ git_attributes :: proc(plugins:[]Git_Kind=nil,lfs:=false,existing:="",allocator:
         }
     }
     out:=strings.builder_make(allocator)
+    strings.write_string(&out,GIT_TEXT_ATTRIBUTES+"\n")
     rest:=strings.trim_right(existing,"\r\n")
     for line in strings.split_lines_iterator(&rest) {
+        if strings.trim_space(line)==GIT_TEXT_ATTRIBUTES {continue}
         pattern:=strings.trim_left_space(line)
         if cut:=strings.index_any(pattern," \t");cut>=0 {pattern=pattern[:cut]}
         if strings.has_prefix(pattern,"*") && listed(kinds[:],pattern[1:]) {continue}

@@ -123,6 +123,19 @@ git_setup_wires_a_clone_once_and_again_for_another_engine_or_plugin :: proc(t:^t
     state,_,stale=git_wiring(engine,game,context.temp_allocator)
     testing.expect(t,state==.Wired && !stale)
 
+    // A checkout with Windows Git defaults must preserve the bytes a package pin names.
+    manifest:="game/packages/example.mirai"
+    manifest_text:="{\"version\": 1}\n"
+    write(t,join(clone,manifest),manifest_text)
+    _,added:=git(clone,"add","--",manifest)
+    testing.expect(t,added)
+    _,checked_out:=git(clone,"-c","core.autocrlf=true","-c","core.eol=crlf",
+                       "checkout-index","--force","--",manifest)
+    testing.expect(t,checked_out)
+    bytes,read_error:=os.read_entire_file(join(clone,manifest),context.temp_allocator)
+    testing.expect(t,read_error==nil)
+    testing.expect_value(t,string(bytes),manifest_text)
+
     done,error=git_setup(engine,game,context.temp_allocator)
     testing.expect_value(t,error,Git_Setup_Error.None)
     testing.expect(t,done.settings==0 && done.attributes=="","a second run writes nothing")

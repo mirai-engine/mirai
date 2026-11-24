@@ -276,13 +276,20 @@ links_wraps_and_orders_decide_where_the_focus_goes :: proc(t:^testing.T) {
     test_key(&input,.Tab)
     test_frame(&ctx,&input,test_game_build,&s)
     testing.expect_value(t,ctx.focus,tree_element_id(&ctx,"c"))
-    // A passive tree takes no focus.
+    // A passive tree takes no focus, by navigation or by pointer click.
     ctx.focus=0
     s.passive=true
     test_frame(&ctx,&input,test_game_build,&s)
     test_key(&input,.Tab)
     test_frame(&ctx,&input,test_game_build,&s)
     testing.expect_value(t,ctx.focus,Id(0))
+    input.pointer_absent=false
+    input.pointer={20,10}
+    test_press(&input)
+    clicked_passive:=test_frame(&ctx,&input,test_game_build,&s)
+    test_release(&input)
+    clicked_passive=test_frame(&ctx,&input,test_game_build,&s)
+    testing.expect(t,ctx.focus==0 && !clicked_passive.keyboard_consumed,"clicking a passive button takes neither focus nor the keyboard")
     // In a Modal, under a pointer that never moved, the keys work from its first frame; a page of
     // a Switcher that replaces the one with the focus takes it in the frame it comes back.
     m:Test_Game

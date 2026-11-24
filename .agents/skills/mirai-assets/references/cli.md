@@ -123,7 +123,8 @@ makes is kept whole.
 
 - `build.git_attributes` (`cook/build/git.odin`) writes the `.gitattributes` from those facts: a
   document kind gets `merge=mirai diff=mirai -text`, the others `binary`, or the LFS filter with
-  the sources of imports when the repository uses LFS. It keeps the lines of other files, so it
+  the sources of imports when the repository uses LFS. Text defaults to LF on every platform so
+  a checkout preserves the bytes a package pin addresses. It keeps rules for other files, so it
   can run over a file a person edited. The plugin kinds are those of the plugins the repository
   holds or uses (`build.git_plugin_kinds`): every plugin under `plugins/` of a checkout of the
   engine, the plugins a project uses. `mirai new`, `mirai setup git` and the editor's

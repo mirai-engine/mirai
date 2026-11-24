@@ -264,6 +264,34 @@ a_seat_camera_is_settled_with_its_driving_before_its_move :: proc(t:^testing.T) 
     testing.expectf(t,at[0]<at[1] && at[1]<at[2],"%v run at %v of %v",order,at,calls)
 }
 
+// Every first-party plugin that a project can name generates cleanly with only
+// the dependencies its manifest declares.
+@(test)
+every_first_party_plugin_generates_with_only_its_dependencies :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    root:=slashes(project.path_absolute(#directory+"../.."),context.temp_allocator)
+    entries,read_err:=os.read_all_directory_by_path(project.path(root,"plugins"),context.temp_allocator)
+    if !testing.expectf(t,read_err==nil,"plugins folder opens: %v",read_err) {return}
+    for entry in entries {
+        if entry.type!=.Directory {continue}
+        manifest_path:=project.path(entry.fullpath,"plugin.mirai")
+        raw,ok:=os.read_entire_file(manifest_path,context.temp_allocator)
+        if ok!=nil {continue}
+        if strings.contains(string(raw),"\"automatic\": true") || strings.contains(string(raw),"\"automatic\":true") {continue}
+        folder:=base.test_folder(t,fmt.tprintf("plugin_%s",entry.name))
+        if folder=="" {return}
+        manifest:=fmt.tprintf("{{\"name\":\"probe\",\"plugins\":[%q]}}\n",entry.name)
+        if !testing.expect(t,os.write_entire_file(project.path(folder,"project.mirai"),manifest)==nil) {return}
+        if !testing.expect(t,os.make_directory_all(project.path(folder,"game"))==nil) {return}
+        if !testing.expect(t,os.write_entire_file(project.path(folder,"game","game.odin"),"package game\n")==nil) {return}
+        p,error:=project.open(folder,root)
+        if !testing.expectf(t,error.code==.None,"%s: open failed: %v",entry.name,error) {continue}
+        output:=world_generate(&p)
+        testing.expectf(t,len(output.errors)==0,"%s: %v",entry.name,output.errors)
+        project.close(&p)
+    }
+}
+
 // A server step runs only where the rules are decided: the generated call
 // returns before it on a client, also when a correction resimulates.
 @(test)

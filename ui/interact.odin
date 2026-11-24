@@ -138,6 +138,7 @@ interact :: proc(ctx:^Context,id:Id,flags:Widget_Flags={}) -> (it:Interaction) {
     flags:=flags
     if ctx.disabled_depth>0 {flags+={.Disabled}}
     if ctx.effect_refused>0 || ctx.invisible>0 {flags+={.Disabled,.Passive}}
+    if ctx.unfocusable>0 {flags-={.Focusable}}
     widget_add(ctx,id,flags)
     if .Disabled in flags {
         if ctx.active==id {ctx.active=0}
