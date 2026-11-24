@@ -179,9 +179,13 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
 // A space of a set made ready to sample: its places normalized and triangulated, the names of the
 // clips of its samples and of its axes (base.name_hash).
 Space_Ready :: struct {space:lib.Blend_Space,first:int,names:[]u64,axis_names:[2]u64}
-// A database built for a library and a skeleton.
+// A database built for a library and a skeleton, with its turned clips.
 @(private)
-Match_Built :: struct {key:[7]u64,database:lib.Match_Database,error:lib.Match_Build_Error,fault:Match_Fault,span:Match_Span_Fault,unforward:u32}
+Match_Built :: struct {key:[7]u64,database:lib.Match_Database,error:lib.Match_Build_Error,fault:Match_Fault,span:Match_Span_Fault,turned:Match_Turned}
+MATCH_TURNED :: 8
+// The names of the turned clips of a database (lib.Match_Range), once each: count of them in names,
+// and more when others did not fit.
+Match_Turned :: struct {names:[MATCH_TURNED][asset.ANIMATION_NAME_CAPACITY]u8,count:int,more:bool}
 // What a set reads into while it is the asset: the open file its tables are views into, its
 // spaces ready to sample and the motion matching databases built for it.
 Character_Content :: struct {

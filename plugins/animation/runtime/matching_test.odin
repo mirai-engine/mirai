@@ -1691,24 +1691,31 @@ a_rig_posed_after_skipped_ticks_blends_from_the_pose_it_showed :: proc(t:^testin
     }
 }
 
-// A locomotion mode with two or more clips that travel and none toward the -Z the rig faces is
-// told: its clips were made facing another axis. One forward clip, a single one that travels, those
-// that stand and the entries leave it silent; each mode is told on its own.
+// animation.match_forward names each turned clip of a database once (lib.Match_Range.turned is
+// measured from their poses in std/anim): the clip of a range, of a loop or not, mirrored or the
+// first of a blend, as many as fit and whether more are turned. A database without one names none.
 @(test)
-a_mode_whose_travelling_clips_all_go_sideways_or_back_is_told :: proc(t:^testing.T) {
+match_forward_names_each_turned_clip_once :: proc(t:^testing.T) {
+    f:Match_Fixture;defer match_fixture_free(&f)
+    if !testing.expect(t,match_fixture(t,&f)) {return}
+    f.content.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,f.content.clip_count);defer delete(f.content.names)
+    for &name,i in f.content.names {base.text_set(name[:],fmt.tprintf("clip_%d",i+1))}
     R :: lib.Match_Range
-    Case :: struct {name:string,ranges:[]R,modes:u32}
+    loops:=lib.Clip(f.content.clip_count)
+    Case :: struct {name:string,ranges:[]R,fits:int,names:[]string,more:bool}
     cases:=[]Case{
-        {"walk and run made facing +Z",{{modes=1,speed=1.5,travel={0,0,1.5}},{modes=1,speed=4,travel={0,0,4}}},1},
-        {"a strafe and its mirror along X",{{modes=1,speed=1.5,travel={1.5,0,0}},{modes=1,speed=1.5,travel={-1.5,0,0},mirror=true}},1},
-        {"a forward walk among strafes",{{modes=1,speed=1.5,travel={1.5,0,0}},{modes=1,speed=1.4,travel={0.3,0,-1.37}},{modes=1,speed=1.5,travel={0,0,1.5}}},0},
-        {"a single clip that travels",{{modes=1,speed=1.5,travel={1.5,0,0}},{modes=1,speed=0.01}},0},
-        {"entries and idles do not count",{{modes=1},{modes=1,entry=true,speed=3,travel={0,0,3}},{modes=1,entry=true,speed=3,travel={3,0,0}},{modes=1,speed=1,travel={1,0,0}}},0},
-        {"each mode on its own",{{modes=0b11,speed=1.5,travel={0,0,-1.5}},{modes=0b110,speed=2,travel={0,0,2}},{modes=0b100,speed=4,travel={0,0,4}}},0b100},
+        {"none turned",{{clips={0=1}},{clips={0=2}}},4,{},false},
+        {"a turned loop and its mirror",{{clips={0=1}},{clips={0=2+loops},turned=true},{clips={0=2+loops},mirror=true,turned=true}},4,{"clip_2"},false},
+        {"a blend by its first clip",{{clips={0=3,1=4},weights={0=.5,1=.5},turned=true},{clips={0=3,1=4},weights={0=.2,1=.8},turned=true},{clips={0=5},turned=true}},4,{"clip_3","clip_5"},false},
+        {"more than fit",{{clips={0=2},turned=true},{clips={0=2+loops},turned=true},{clips={0=6},turned=true}},1,{"clip_2"},true},
     }
     for c in cases {
         db:=lib.Match_Database{ranges=c.ranges}
-        testing.expectf(t,match_unforward_modes(&db)==c.modes,"%s: 0x%x, not 0x%x",c.name,match_unforward_modes(&db),c.modes)
+        out:[4][asset.ANIMATION_NAME_CAPACITY]u8
+        count,more:=match_turned_clips(&db,&f.content,out[:c.fits])
+        if !testing.expectf(t,count==len(c.names) && more==c.more,"%s: %d names (more %v)",c.name,count,more) {continue}
+        for name,i in c.names {testing.expectf(t,base.text_get(out[i][:])==name,"%s: %s, not %s",c.name,base.text_get(out[i][:]),name)}
     }
-    testing.expect(t,match_unforward_modes(nil)==0)
+    count,more:=match_turned_clips(nil,&f.content,nil)
+    testing.expect(t,count==0 && !more)
 }

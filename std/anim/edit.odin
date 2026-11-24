@@ -128,7 +128,8 @@ clip_edit_layout :: proc "contextless" (edit:Clip_Edit,f:Frames,max_count:int) -
 clip_edit_buffers :: proc "contextless" (edit:Clip_Edit,f:Frames) -> (transforms,contacts,heights:int) {
     #partial switch e in edit {
     case Lock_Feet: return frames_scratch_size(f),max(frames_count(f)+4,len(e.contacts)),2*frames_count(f)
-    case Offset,Mirror,Face_Rest: return 2*max(f.bones,0),0,0
+    case Offset,Mirror: return 2*max(f.bones,0),0,0
+    case Face_Rest: return frames_scratch_size(f),0,0
     }
     return 0,0,0
 }

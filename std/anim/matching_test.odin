@@ -18,7 +18,7 @@ match_test_rig :: proc(library:^Library) -> (rig:Match_Rig,clips:[3]Match_Clip,o
     body:=body_map_empty();body.up={0,1,0}
     body.bones[.Pelvis],body.bones[.Foot_L],body.bones[.Foot_R],body.bones[.Head]=1,2,3,4
     rig={skeleton={parents[:],names[:],rest[:]},body=body,left_foot=2,right_foot=3,hips=1}
-    if !library_init(library,{max_keys=64,max_tracks=16,max_clips=8,max_markers=8}) {return}
+    if !library_init(library,{max_keys=64,max_tracks=32,max_clips=8,max_markers=8}) {return}
     still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
     other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
     left:=[4]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,-.375,0}}}
@@ -256,6 +256,63 @@ a_mirrored_clip_adds_the_rows_of_its_reflected_pose :: proc(t:^testing.T) {
     testing.expectf(t,match_range_of(&db,best)==3 && raw[1]<raw[0]-.5,"a turn to the right plays row %d of range %d with the right foot ahead: %v",best,match_range_of(&db,best),raw)
     rig.pairs=nil
     testing.expect_value(t,match_database_build(&db,&library,rig,set[:],30),Match_Build_Error.Invalid)
+}
+
+// A loop that travels with its body turned away from the rest of its rig in every frame is
+// turned, alone or among others and in place too: made facing another axis, it plays sideways or
+// backward to where the body goes. A strafe and its mirror (they go sideways facing their rest), a
+// pivot (it faces its rest at its start) and an entry are not.
+@(test)
+a_range_whose_body_faces_away_from_its_rest_in_every_frame_is_turned :: proc(t:^testing.T) {
+    library:Library;defer library_destroy(&library)
+    rig,clips,ok:=match_test_rig(&library)
+    if !testing.expect(t,ok) {return}
+    pairs:=[5]i32{0,1,3,2,4}
+    corrections:[5]math.Quat;scratch:[5]math.Transform
+    if rig.plane,ok=mirror_prepare(rig.skeleton.parents,pairs[:],rig.skeleton.rest,corrections[:],scratch[:]);!testing.expect(t,ok) {return}
+    rig.pairs,rig.corrections=pairs[:],corrections[:]
+    names:=rig.skeleton.names
+    yaw :: proc(time,angle:f32) -> Keyframe {
+        q:=math.quat_axis_angle({0,1,0},angle)
+        return {time=time,value={imag(q),jmag(q),kmag(q),real(q)}}
+    }
+    left:=[4]Keyframe{{time=0,value={.1,-.95,-.375,0}},{time=.5,value={.1,-.95,.375,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={.1,-.95,-.375,0}}}
+    right:=[4]Keyframe{{time=0,value={-.1,-.95,.375,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.1,-.95,-.375,0}},{time=1,value={-.1,-.95,.375,0}}}
+    across_l:=[4]Keyframe{{time=0,value={-.275,-.95,0,0}},{time=.5,value={.475,-.95,0,0}},{time=.75,value={.1,-.8,0,0}},{time=1,value={-.275,-.95,0,0}}}
+    across_r:=[4]Keyframe{{time=0,value={.275,-.95,0,0}},{time=.25,value={-.1,-.8,0,0}},{time=.5,value={-.475,-.95,0,0}},{time=1,value={.275,-.95,0,0}}}
+    still:=[2]Keyframe{{time=0,value={.1,-.95,0,0}},{time=1,value={.1,-.95,0,0}}}
+    other:=[2]Keyframe{{time=0,value={-.1,-.95,0,0}},{time=1,value={-.1,-.95,0,0}}}
+    quarter:=[1]Keyframe{yaw(0,cmath.PI/2)}
+    half:=[1]Keyframe{yaw(0,cmath.PI)}
+    pivot:=[3]Keyframe{yaw(0,0),yaw(.5,cmath.PI/2),yaw(1,cmath.PI)}
+    // At its root: as a 2.5D game turns its body inside the clip.
+    Desc :: struct {name:string,turn:[]Keyframe,feet:[2][]Keyframe}
+    descs:=[5]Desc{{"strafe",nil,{across_l[:],across_r[:]}},{"side",quarter[:],{left[:],right[:]}},{"back",half[:],{left[:],right[:]}},{"pivot",pivot[:],{left[:],right[:]}},{"side_idle",quarter[:],{still[:],other[:]}}}
+    made:[5]Clip
+    for d,i in descs {
+        tracks:=[3]Track_Desc{{target=names[2],property=.Position,keys=d.feet[0]},{target=names[3],property=.Position,keys=d.feet[1]},{target=names[0],property=.Rotation,keys=d.turn}}
+        error:Clip_Error
+        made[i],error=clip_add(&library,{name=base.name_hash(d.name),loop=.Loop,tracks=tracks[:3 if d.turn!=nil else 2]})
+        if !testing.expect_value(t,error,Clip_Error.None) {return}
+    }
+    strafe,side,back,pivoting,side_idle:=made[0],made[1],made[2],made[3],made[4]
+    Case :: struct {name:string,set:[]Match_Clip,turned:[]bool}
+    cases:=[]Case{
+        {"a strafe and its mirror along X",{clips[1],{clips={0=strafe},modes=1<<1},{clips={0=strafe},modes=1<<1,mirror=true}},{false,false,false}},
+        {"a walk turned a quarter and a run turned back",{clips[0],{clips={0=side},modes=1<<1},{clips={0=back},modes=1<<1,speed=4}},{false,true,true}},
+        {"a single turned clip",{{clips={0=side},modes=1<<1}},{true}},
+        {"a turned clip in place told its speed",{clips[0],{clips={0=side_idle},modes=1<<1,speed=2}},{false,true}},
+        {"a pivot and a turned entry",{clips[1],{clips={0=pivoting},modes=1<<1},{clips={0=side},modes=1<<0,entry=true}},{false,false,false}},
+    }
+    for c in cases {
+        db:Match_Database;defer match_database_free(&db)
+        if !testing.expectf(t,match_database_build(&db,&library,rig,c.set,30)==.None,"%s: no database",c.name) {continue}
+        for r,i in db.ranges {
+            // Quiet for where it faces, not for standing: all but the idle travel.
+            testing.expectf(t,r.clips[0]==clips[0].clips[0] || r.speed>MATCH_STILL,"%s: range %d stands",c.name,i)
+            testing.expectf(t,r.turned==c.turned[i],"%s: range %d turned %v",c.name,i,r.turned)
+        }
+    }
 }
 
 // The pose a rig has, a frame of the walk and the one before, asks for that row of the walk: the

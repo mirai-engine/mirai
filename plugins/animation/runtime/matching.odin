@@ -3,6 +3,7 @@ package anim
 import cmath "core:math"
 import "core:mem"
 import "core:math/linalg"
+import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:host"
@@ -295,10 +296,10 @@ animation_match_database :: proc(matches:core.Ref(Character_Assets),library:^hos
 // skeleton loads it, or ahead for a library of the set (match_prebuild). One built for an earlier
 // generation of the library or revision of the skeleton is released then.
 @(private)
-match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault,Match_Span_Fault,u32) {
-    if library==nil || len(playing_topology(state).parents)<2 || len(playing_topology(state).rest)!=len(playing_topology(state).parents) {return nil,.Invalid,{},{},0}
+match_database :: proc(content:^Character_Content,library:^host.Content_Animation,state:^Playing,source:base.Asset_Id,allocator:mem.Allocator) -> (^lib.Match_Database,lib.Match_Build_Error,Match_Fault,Match_Span_Fault,^Match_Turned) {
+    if library==nil || len(playing_topology(state).parents)<2 || len(playing_topology(state).rest)!=len(playing_topology(state).parents) {return nil,.Invalid,{},{},nil}
     key:=match_database_key(library,state,source)
-    for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault,built.span,built.unforward}}
+    for &built in content.databases {if built.key==key {return &built.database if built.error==.None else nil,built.error,built.fault,built.span,&built.turned}}
     // Of the same library, skeleton and source: the key without generation and revision.
     #reverse for &built,i in content.databases {
         if built.key[0]==key[0] && built.key[1]==key[1] && built.key[3]==key[3] && built.key[4]==key[4] && built.key[6]==key[6] {
@@ -386,32 +387,27 @@ match_database :: proc(content:^Character_Content,library:^host.Content_Animatio
                     if lib.match_rows_flagged(db,int(r.first),int(r.first+r.count),.Exclude,all=true) {built.span={kind=.Whole,clip=i32(range)};break}
                 }
             }
-            if built.error==.None {built.unforward=match_unforward_modes(&built.database)}
+            if built.error==.None {built.turned.count,built.turned.more=match_turned_clips(&built.database,library,built.turned.names[:])}
         }
     }
-    if append(&content.databases,built)!=1 {lib.match_database_free(&built.database);return nil,.Out_Of_Memory,{},{},0}
+    if append(&content.databases,built)!=1 {lib.match_database_free(&built.database);return nil,.Out_Of_Memory,{},{},nil}
     last:=&content.databases[len(content.databases)-1]
-    return &last.database if last.error==.None else nil,last.error,last.fault,last.span,last.unforward
+    return &last.database if last.error==.None else nil,last.error,last.fault,last.span,&last.turned
 }
 
-// Within this cosine of the -Z a rig faces, a clip travels forward (60 degrees).
-MATCH_FORWARD_COS :: 0.5
-
-// Bit m for each locomotion mode m of a database with two or more clips that travel (no entry,
-// above MATCH_STILL) and none that goes forward, toward the -Z its rig faces: clips made facing
-// another axis (+Z, +X) play backward or sideways to where the body goes. A clip in place told its
-// speed goes where its body faces.
-match_unforward_modes :: proc "contextless" (db:^lib.Match_Database) -> (modes:u32) {
+// The names of the clips of db that are turned (lib.Match_Range), once each, of library: count of
+// them in out, and more when another does not fit.
+match_turned_clips :: proc "contextless" (db:^lib.Match_Database,library:^host.Content_Animation,out:[][asset.ANIMATION_NAME_CAPACITY]u8) -> (count:int,more:bool) {
     if db==nil {return}
-    for m in u32(0)..<32 {
-        bit:=u32(1)<<m
-        moving,forward:=0,false
-        for r in db.ranges {
-            if r.entry || r.modes&bit==0 || !(r.speed>lib.MATCH_STILL) {continue}
-            moving+=1
-            forward||=r.travel.z< -MATCH_FORWARD_COS*linalg.length(r.travel)
-        }
-        if moving>=2 && !forward {modes|=bit}
+    for r in db.ranges {
+        if !r.turned {continue}
+        label:=source_clip_label(library,r.clips[0])
+        named:=false
+        for name in out[:count] {named||=name==label}
+        if named {continue}
+        if count==len(out) {return count,true}
+        out[count]=label
+        count+=1
     }
     return
 }
@@ -435,10 +431,17 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
     goal:Match_Goal;has_goal:=len(goals)>0
     if has_goal {goal=goals[len(goals)-1]}
     mode:=goal.mode if has_goal else m.mode
-    db,built,fault,span_fault,unforward:=match_database(content,library,state,source,allocator)
-    if db!=nil && unforward!=0 {
+    db,built,fault,span_fault,turned:=match_database(content,library,state,source,allocator)
+    if db!=nil && turned!=nil && turned.count>0 {
         name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)
-        core.report(problems,state.entity,"animation.match_forward","%s has locomotion modes (bits 0x%x) with clips that travel and none toward -Z, where the rig faces: they play backward or sideways to where the body goes; turn the clips to face -Z (animation.clip.edit with Face_Rest), or give the mode a clip that walks forward",path,unforward)
+        text:[MATCH_TURNED*(asset.ANIMATION_NAME_CAPACITY+2)+8]u8
+        listed:=strings.builder_from_bytes(text[:])
+        for &clip,i in turned.names[:turned.count] {
+            if i>0 {strings.write_string(&listed,", ")}
+            strings.write_string(&listed,base.text_get(clip[:]))
+        }
+        if turned.more {strings.write_string(&listed,", ...")}
+        core.report(problems,state.entity,"animation.match_forward","%s loops clips that travel with the body turned away from -Z, where the rig rests facing, in every frame (%s): they play sideways or backward to where the body goes; turn them to face -Z with the Face_Rest verb of animation.clip.edit",path,strings.to_string(listed))
     }
     if db!=nil && span_fault.kind!=.None {
         name:[base.ASSET_ID_TEXT]u8;path:=host.assets_name(assets,content.id,&name)

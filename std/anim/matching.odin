@@ -115,8 +115,10 @@ Match_Clip :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,modes:u32
 // place the one its feet push at. rates and mirror: those of its Match_Clip. rate: its rows per
 // second of its clip, the one that lays them over its whole duration (row k is at k/rate). bias:
 // what the search adds to the cost of its rows, the bias of its Match_Clip plus bias_shift of the
-// database, never negative.
-Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry,mirror:bool,speed:f32,travel:math.Vec3,rates:[2]f32,rate,bias:f32}
+// database, never negative. turned: a loop that travels (no entry, above MATCH_STILL) whose body
+// faces away from the rest of its rig in every frame (FACE_REST_TURN, body_turn): made facing
+// another axis, it plays sideways or backward to where the body goes.
+Match_Range :: struct {clips:[MATCH_BLEND]Clip,weights:[MATCH_BLEND]f32,first,count:i32,modes:u32,loop,entry,mirror,turned:bool,speed:f32,travel:math.Vec3,rates:[2]f32,rate,bias:f32}
 // A point a rig declares besides its feet: the tip of bone, offset in the frame of the bone (m: a
 // blade's tip along it), so that where it is says how the bone turns too. Its position and velocity
 // are features of each row, which weigh weight.
@@ -274,7 +276,12 @@ match_database_build :: proc(db:^Match_Database,lib:^Library,rig:Match_Rig,clips
             speed=c.speed
         }
         motion:=Match_Motion{frames=frames,world=world[:count*n],rest=rest_world,root=root,in_place=ground.in_place,travel=travel}
-        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,mirror=c.mirror,speed=speed,travel=travel,rates=c.rates,rate=exact,bias=c.bias-least_bias}
+        turned:=false
+        if frames.loop && !c.entry && speed>MATCH_STILL {
+            turn,result:=body_turn(body_rig,world[:(count+1)*n])
+            turned=result.error==.None && turn.least>FACE_REST_TURN
+        }
+        ranges[i]={clips=c.clips if blended else {0=c.clips[0]},weights=weights,first=i32(row),count=i32(count),modes=c.modes,loop=frames.loop,entry=c.entry,mirror=c.mirror,turned=turned,speed=speed,travel=travel,rates=c.rates,rate=exact,bias=c.bias-least_bias}
         for frame in 0..<count {
             values:=&raw[row+frame]
             at:=f32(frame)

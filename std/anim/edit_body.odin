@@ -356,45 +356,71 @@ edit_mirror :: proc "contextless" (rig:Body_Rig,input,output:Frames,scratch:[]ma
 // A joint turned about up this far from its rest faces elsewhere; less is a sway of the body.
 FACE_REST_TURN :: math.PI/4
 
+// How a clip turns the body about up from its rest. The joints that carry the body run from the
+// pelvis (or the root of the rig) up to the root of the skeleton: joint is the highest that faces
+// elsewhere (FACE_REST_TURN) in some frame, -1 when none does, and carrier the one the body faces
+// with, the joint right over the pelvis when one above it turns. least: the radians carrier turns
+// from its rest in the frame it turns the least.
 @(private)
-edit_face_rest :: proc "contextless" (rig:Body_Rig,input,output:Frames,scratch:[]math.Transform) -> Edit_Result {
-    n:=input.bones
-    count:=frames_count(input)
-    copy(output.local,input.local);copy(output.values,input.values)
-    rest,world:=scratch[:n],scratch[n:2*n]
-    if !pose_world(rig.parents,rig.rest,rest) {return {error=.Numeric}}
+Body_Turn :: struct {joint,carrier:i32,least:f32}
+
+// The turn about up of a bone from its rest, in the space of the clip.
+@(private)
+body_heading :: proc "contextless" (world,rest:math.Transform,up:math.Vec3) -> math.Quat {
+    _,twist:=math.quat_swing_twist(world.rotation*conj(rest.rotation),up)
+    return twist
+}
+
+// world: the world pose of each frame, then that of the rest (as frames_ground leaves them).
+@(private)
+body_turn :: proc "contextless" (rig:Body_Rig,world:[]math.Transform) -> (turn:Body_Turn,result:Edit_Result) {
+    n:=len(rig.parents)
+    turn.joint=-1
+    if n==0 || len(world)%n!=0 || len(world)<2*n {return turn,{error=.Invalid_Frames}}
+    count:=len(world)/n-1
+    rest:=world[count*n:]
     up:=frames_up(rig)
-    // The turn about up of a bone from its rest, in the space of the clip.
-    heading :: proc "contextless" (world,rest:math.Transform,up:math.Vec3) -> math.Quat {
-        _,twist:=math.quat_swing_twist(world.rotation*conj(rest.rotation),up)
-        return twist
-    }
-    // The joints that carry the body: from the pelvis (or the root of the rig) up to the root of
-    // the skeleton. The highest that faces elsewhere is the one that turns it.
     start:=rig.body.bones[.Pelvis]
     if start<0 {start=rig.root}
-    if start<0 {return {error=.Missing_Part,part=.Pelvis}}
+    if start<0 || int(start)>=n {return turn,{error=.Missing_Part,part=.Pelvis}}
     chain:[64]i32
     depth:=0
     for at:=start;at>=0 && depth<len(chain);at=rig.parents[at] {chain[depth]=at;depth+=1}
     turned:=-1
     for frame in 0..<count {
-        if !pose_world(rig.parents,frames_pose(input,frame),world) {return {error=.Numeric}}
+        pose:=world[frame*n:][:n]
         for i in turned+1..<depth {
-            if math.quat_angle(heading(world[chain[i]],rest[chain[i]],up),1)>FACE_REST_TURN {turned=i}
+            if math.quat_angle(body_heading(pose[chain[i]],rest[chain[i]],up),1)>FACE_REST_TURN {turned=i}
         }
     }
-    if turned<0 {return {}}
-    joint:=chain[turned]
+    if turned>=0 {turn.joint=chain[turned]}
+    turn.carrier=chain[clamp(turned,0,1)]
+    turn.least=math.PI
+    for frame in 0..<count {
+        turn.least=min(turn.least,math.quat_angle(body_heading(world[frame*n+int(turn.carrier)],rest[turn.carrier],up),1))
+    }
+    return turn,{}
+}
+
+// scratch: frames_scratch_size(input) transforms.
+@(private)
+edit_face_rest :: proc "contextless" (rig:Body_Rig,input,output:Frames,scratch:[]math.Transform) -> Edit_Result {
+    n:=input.bones
+    count:=frames_count(input)
+    copy(output.local,input.local);copy(output.values,input.values)
+    world:=scratch[:(count+1)*n]
+    if !frames_world(rig,input,world) || !pose_world(rig.parents,rig.rest,world[count*n:]) {return {error=.Numeric}}
+    turn,result:=body_turn(rig,world)
+    if result.error!=.None || turn.joint<0 {return result}
+    rest:=world[count*n:]
+    up:=frames_up(rig)
     // The body faces where the joint that carries the pelvis does: a turn split between it and
     // those above it (the clip's side and a turn toward a camera on top) is undone whole at the
     // highest, and the pelvis keeps its own sway.
-    carrier:=chain[min(turned,1)]
     for frame in 0..<count {
-        local:=frames_pose(output,frame)
-        if !pose_world(rig.parents,local,world) {return {error=.Numeric}}
-        turn:=heading(world[carrier],rest[carrier],up)
-        if !edit_set_rotation(rig.parents,local,world,joint,conj(turn)*world[joint].rotation) || !anim_pose_valid(local) {return {error=.Numeric}}
+        local,pose:=frames_pose(output,frame),world[frame*n:][:n]
+        heading:=body_heading(pose[turn.carrier],rest[turn.carrier],up)
+        if !edit_set_rotation(rig.parents,local,pose,turn.joint,conj(heading)*pose[turn.joint].rotation) || !anim_pose_valid(local) {return {error=.Numeric}}
     }
     return {}
 }
