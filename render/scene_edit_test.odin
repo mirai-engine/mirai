@@ -850,6 +850,12 @@ the_values_of_an_instance_cost_words_of_the_pool_and_no_material_row :: proc(t:^
     testing.expect_value(t,len(s.materials),rows)
     testing.expect_value(t,s.material_versions[1] if len(s.material_versions)>1 else 0,version)
     testing.expect_value(t,instance_material(s,s.instances[7].material_values,1).roughness,f32(0.75))
+    // A tint and values that change in one call: the instance takes both.
+    tinted:=rough
+    tinted.roughness=0.5
+    testing.expect(t,scene_tint(r,{7},{{0.5,0.5,0.5}},{{}},{held(r,tinted)}))
+    testing.expect_value(t,s.instances[7].tint.xyz,Vec3{0.5,0.5,0.5})
+    testing.expect_value(t,instance_material(s,s.instances[7].material_values,1).roughness,f32(0.5))
     // An emission is light: it changes around the instance that gives it.
     glow:=rough
     glow.emission={4,4,4}
