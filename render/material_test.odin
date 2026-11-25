@@ -651,11 +651,11 @@ material_changes_keep_frames_allocation_free :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
-// A mirror reads the probe volume, which holds the sky blurred over a
-// hemisphere: under an open sky it shows the sky as sharp as without the
-// volume, and under a roof the roof, not the sky.
+// A mirror reads the gloss of the probe volume, which holds the sky blurred
+// over its lobe: under an open sky it shows the lit zenith nearly as bright as
+// without the volume, and under a roof the roof, not the sky.
 @(test)
-material_mirror_reads_the_sky_sharp_from_the_probes_and_not_under_a_roof :: proc(t: ^testing.T) {
+material_mirror_reads_the_sky_from_the_probes_and_not_under_a_roof :: proc(t: ^testing.T) {
 	f: Fixture
 	settings := material_settings()
 	settings.gi_enabled = true
@@ -689,7 +689,7 @@ material_mirror_reads_the_sky_sharp_from_the_probes_and_not_under_a_roof :: proc
 	testing.expect(t, renderer_apply_settings(r, settings))
 	sky_only := settled(t, &f, OVERHEAD)
 	testing.expectf(t, sky_only.r > 100, "without the volume the mirror shows the lit zenith: %v", sky_only)
-	testing.expectf(t, abs(probed.r - sky_only.r) < 12, "with the volume the mirror shows the zenith as sharp: %v against %v", probed, sky_only)
+	testing.expectf(t, probed.r > sky_only.r * 0.7, "with the volume the mirror shows the lit zenith: %v against %v", probed, sky_only)
 
 	// A roof facing down over the floor, the eye under it.
 	settings.gi_enabled = true

@@ -60,12 +60,13 @@ float3 indirect_irradiance(float3 position, float3 normal, float3 view_dir, bool
 }
 
 // What a specular lobe of that roughness gathers around `direction` from what
-// the probes hold there (`around`, w the share of it from the sky): the probes
-// hold the sky blurred over a hemisphere, so that share is the sky itself as
-// sharp as the lobe, as without the probes; a rough lobe keeps what they hold.
+// the probes hold there (`around`, w the share of it from the sky): their
+// gloss, which holds the sky as blurred as their rays read it. Where the frame
+// shows a background, a smoother lobe sees more of that share as the
+// background (sky_reflected).
 float3 probe_specular(float4 around, float3 direction, float roughness) {
-    float sky = around.w * (1.0 - roughness);
-    return sky > 0.0 ? lerp(around.rgb, sky_reflected(direction, roughness), sky) : around.rgb;
+    if (frame.background_map.y < 0.5) return around.rgb;
+    return lerp(around.rgb, background_look(direction, roughness), around.w * (1.0 - roughness));
 }
 
 // What indirect_lobes reads: the light around the normal, and around the

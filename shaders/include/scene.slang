@@ -306,12 +306,12 @@ float3 sky_shown(float3 dir) {
     return frame.background.w > 0.5 ? background_look(dir, 0.0) : sky_seen(dir);
 }
 
-// What a reflection of that roughness (spread) sees of the sky: where the
-// frame shows the background there, a mirror sees it as a camera would, and a
-// rougher lobe less of it and more of the light of the sky, all of it when
-// fully rough, as what gathers light (sky_radiance).
+// What a reflection of that roughness (spread) sees of the sky: the sky as
+// what gathers light sees it (sky_radiance), never its detail; where the frame
+// shows the background there, a mirror sees it as a camera would, and a
+// rougher lobe less of it, none when fully rough.
 float3 sky_reflected(float3 dir, float spread) {
-    float3 light = sky_radiance(dir, spread);
+    float3 light = sky_radiance(dir);
     return frame.background_map.y > 0.5 ? lerp(background_look(dir, spread), light, saturate(spread)) : light;
 }
 

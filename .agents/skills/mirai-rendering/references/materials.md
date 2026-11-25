@@ -141,6 +141,9 @@ composite, overlays, glass, and studio previews.
 
 - `indirect_lobes` (`scene.slang`) reads the probe volume once per requested lobe; specular uses
   the DFG table with multiple scattering and Lagarde-de Rousiers specular occlusion.
+- Reflections are never sharp images: the probes' gloss (or the gathered sky without GI), so a
+  mirror shows soft light and color, not clouds or props ([GI](gi.md#probe-volume)); sharp
+  ones are portals/mirrors and a `use_background` background.
 - Material ambient occlusion applies `occlusion_bounced` (Jimenez et al. 2016) to diffuse.
 
 ## Textures
@@ -385,7 +388,7 @@ Mirai_Surface evaluate(Mirai_Surface_Context ctx, Parameters p) {
 - **Shading & layers:** Transmissive materials draw as blend even when `opaque`; `mask` and
   `additive` ignore transmission. Uses `shading_layers` (`glass_shading`, `glass_light`) and
   `shading_through` (coat tints transmitted light without double darkening). Specular reflections
-  read probes and sky.
+  read the probes' gloss (the gathered sky without GI).
 - **Sheet vs solid:** `thickness == 0` is a two-sided non-refracting sheet. `thickness > 0`
   refracts at entry/exit. Glass traces no rays: a closed mesh is crossed as a slab (its own
   thickness when it is a 20% pane, else `thickness`, clamped by the instance box) and leaves

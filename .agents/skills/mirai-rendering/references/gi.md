@@ -88,8 +88,11 @@
   shrinking normal/view bias, back-plane rejection, `PROBE_HIDDEN_SHARE`. Cascades blend from
   `volume_center` (shared across views) into `probe_volume_beyond`.
 - **Specular.** `sample_probes_around` reads normal, specular and coat together (`sample_probes`
-  for normal). Gloss tiles (`PROBE_GLOSS_TILE`, `PROBE_GLOSS_POWER`) and sky share
-  (`probe_specular`) provide blurred/sky reflections even with reflections `Off`.
+  for normal). Specular is the gloss tile alone (`PROBE_GLOSS_TILE`, `PROBE_GLOSS_POWER`),
+  whose sky is `sky_radiance(dir, 1)` of the probe rays: no per-pixel sky read, so a mirror
+  shows a blurred sky and no clouds; the sun highlight is direct light and stays sharp. The sky
+  share (alpha) only blends a `use_background` background in (`probe_specular`). Without GI,
+  `sky_reflected` reads `sky_radiance(dir, 1)`, with the background on the true roughness.
 
 ```slang
 #include "trace.slang"
