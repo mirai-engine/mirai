@@ -1,4 +1,5 @@
 #include "shared_constants.slang"
+#include "halves.slang"
 
 struct Params {
     uint width, height, source_format, fast;
@@ -49,7 +50,7 @@ void load_block(uint2 block) {
             uint2 pair = source.Load2(8 * at);
             uint4 v = uint4(pair.x, pair.x >> 16, pair.y, pair.y >> 16) & 65535;
             value = params.source_format == BC_COOK_SOURCE_RGBA16F ?
-                float4(f16tof32(v.x), f16tof32(v.y), f16tof32(v.z), f16tof32(v.w)) :
+                float4(half_value(v.x), half_value(v.y), half_value(v.z), half_value(v.w)) :
                 float4(v) / 65535;
         }
         value = float4(isnan(value.x) ? 0 : value.x, isnan(value.y) ? 0 : value.y,
@@ -57,8 +58,8 @@ void load_block(uint2 block) {
 #ifdef BC_ENCODE_6H
         const float scale = 255.0 / 31743.0;
         value = clamp(value, 0, 65504);
-        pixels[i] = float4(float3(f32tof16(value.x), f32tof16(value.y),
-                                 f32tof16(value.z)) * scale, 255);
+        pixels[i] = float4(float3(half_nearest(value.x), half_nearest(value.y),
+                                 half_nearest(value.z)) * scale, 255);
 #else
         pixels[i] = floor(saturate(value) * 255 + 0.5);
 #ifdef BC_ENCODE_7

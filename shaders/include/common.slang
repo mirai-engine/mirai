@@ -12,6 +12,7 @@
 #include <extensions.slang>
 #include <material_schema.slang>
 #include <shared_constants.slang>
+#include "halves.slang"
 #include "origin.slang"
 
 // ---------------------------------------------------------------- binding slots
@@ -496,15 +497,6 @@ uint half_bits(float value) {
 }
 uint2 half_bits(float4 value) {
     return uint2(half_bits(value.x) | (half_bits(value.y) << 16u), half_bits(value.z) | (half_bits(value.w) << 16u));
-}
-// The value of the bits of a half float, without 16-bit types.
-float half_value(uint bits) {
-    uint sign = (bits & 0x8000u) << 16u;
-    uint exponent = (bits >> 10u) & 0x1Fu;
-    uint mantissa = bits & 0x3FFu;
-    if (exponent == 0u) return asfloat(sign | asuint(float(mantissa) * 5.9604645e-8));
-    if (exponent == 31u) return asfloat(sign | 0x7F800000u | (mantissa << 13u));
-    return asfloat(sign | ((exponent + 112u) << 23u) | (mantissa << 13u));
 }
 
 // What of the light of a light the probes gather (x) and media scatter (y),
