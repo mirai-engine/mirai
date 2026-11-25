@@ -44,6 +44,7 @@ Programs_Publication :: struct {
     preview:u64,              // the load of the shaders the previews wait for; 0 while there is none
     whole:u64,                // the load of the generation the last job published
     refused:bool,             // the renderer refused a generation of this publication at once
+    dropped:bool,             // the job gave up the load of the last generation: it loads it again even up to date
     serial:u64,               // publications that ended, published or not
     failed:bool,              // the last one failed: message says why
     message:string,
@@ -106,6 +107,7 @@ programs_start :: proc(s:^Session) {
     // What the renderer still makes of the last generation would compete for
     // the driver with the next one.
     if s.app.renderer!=nil {
+        p.dropped||=host.app_shaders_loading(s.app,p.whole)
         host.app_shaders_drop(s.app,p.preview)
         host.app_shaders_drop(s.app,p.running)
         host.app_shaders_drop(s.app,p.whole)
@@ -152,7 +154,7 @@ programs_missing :: proc(s:^Session) {
         if at<0 {append(&p.tried,Program_Tried{strings.clone(program.name),miss.uses,revision})} else {p.tried[at].revision=revision}
         publish=true
     }
-    if s.app.renderer.frame_layout.viewmodel==0 && p.viewmodel_tried!=revision+1 {
+    if s.app.renderer.frame_layout.viewmodel==0 && p.viewmodel_tried!=revision+1 && !programs_publishing(s) {
         if table:=core.world_table_of(shown_world(s),erender.Viewmodel);table!=nil && core.count(core.read(table))>0 {
             p.viewmodel_tried=revision+1
             publish=true
@@ -206,10 +208,10 @@ programs_poll :: proc(s:^Session) {
     case .None,.Up_To_Date,.Built,.Failed:
         // The renderer takes what was published: the new generation, or the
         // one that stands when it holds first stages of another.
-        if (result.status==.Built || p.mixed) && gpu_ready {
+        if (result.status==.Built || p.mixed || p.dropped && result.status==.Up_To_Date) && gpu_ready {
             p.whole=host.app_shaders_reload(s.app)
             p.refused||=p.whole==0
-            p.mixed=false
+            p.mixed,p.dropped=false,false
             // The previews wait for the first stages while they load, and for
             // the whole generation without them.
             if p.preview==0 || (!host.app_shaders_loading(s.app,p.preview) && s.app.shaders.published<p.preview) {p.preview=p.whole}
