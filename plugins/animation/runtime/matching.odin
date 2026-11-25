@@ -693,9 +693,9 @@ match_output :: proc(state:^Playing,output:^Program_Output,content:^Character_Co
 // lists, so that swapping one into Animation.library does not build it in that tick. A library
 // still loading is built in a later tick; once all are, the rig does not look again until its set
 // or skeleton changes. extras: those of the sources of what it plays (animation_content). A library
-// of clips of another skeleton is retargeted onto skeleton, that of the rig, before its database
-// is built over it (source_retarget).
-match_prebuild :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,sources:^Source_Assets,extras:Source_Extras,skeletons:^Skeleton_Assets=nil,skeleton:=base.Asset_Id{}) {
+// of clips of another skeleton is built over its retarget onto the rig (Playing.rig), which waits
+// for it as for a library that loads.
+match_prebuild :: proc(state:^Playing,animation:Animation,app:^host.App,characters:^Character_Assets,sources:^Source_Assets,extras:Source_Extras) {
     m:=&state.program.match
     shape:=[3]u64{state.skeleton[0],state.skeleton[1],state.skeleton_revision+1}
     if m.prebuilt==shape || !state.program.matched || !state.program.ready || app.assets==nil {return}
@@ -709,7 +709,6 @@ match_prebuild :: proc(state:^Playing,animation:Animation,app:^host.App,characte
         library,error:=animation_content(sources,app,state,description,characters,extras)
         if error==.Pending {done=false;continue}
         if error!=.None || library==nil {continue}
-        library=source_retarget(sources,app,skeletons,library,skeleton)
         match_database(content,library,state,entry.animation,app.allocator)
     }
     if done {m.prebuilt=shape}

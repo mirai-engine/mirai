@@ -133,6 +133,8 @@ Cook_Report :: struct {
     reparented:int,           // entities those scenes added under members their prefabs removed, now under the nearest member left
     reused:int,               // files an earlier cook wrote from what they are made of now, left as they were
     far_meshes:int,           // far meshes written beside the scenes sections reference
+    retargets:int,            // retargets of an .anim onto a skeleton written beside the .anim
+    unretargeted:[]string,    // the .anim and skeletons played together that could not be, and why
     source_bytes:i64,         // of the whole assets folder
     output_bytes:i64,         // of what was written, with the index
     seconds:f64,
@@ -417,8 +419,13 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         append(&written,..made)
         report.far_meshes=len(made)
         for entry in made {report.output_bytes,report.reused=report.output_bytes+entry.bytes,report.reused+int(entry.reused)}
-        slice.sort_by(written[:],proc(a,b:Cook_File) -> bool {return a.path<b.path})
     }
+    retargets,unretargeted,retarget_error,retarget_detail:=retargets_cook(&work,reached,left,allocator)
+    if retarget_error!=.None {cook_fail(&report,retarget_error,retarget_detail,allocator);return}
+    append(&written,..retargets)
+    report.retargets,report.unretargeted=len(retargets),unretargeted
+    for entry in retargets {report.output_bytes,report.reused=report.output_bytes+entry.bytes,report.reused+int(entry.reused)}
+    slice.sort_by(written[:],proc(a,b:Cook_File) -> bool {return a.path<b.path})
     report.files,report.dropped,report.reparented=written[:],dropped[:],work.resolver.reparented
 
     // The output is what was cooked: what an earlier cook left and this one did not write goes.
@@ -466,7 +473,7 @@ Cook_Work :: struct {
     cache:sync.Mutex,      // over the writes of the texture cache and cached
     cached:map[u64]struct{}, // the keys this cook wrote into the texture cache
     previous:map[string]Cook_Key, // what an earlier cook wrote, by path in the output
-    far_keys:[dynamic]Far_Key,    // of the far meshes this cook shipped
+    made_keys:[dynamic]Made_Key,  // of the files this cook made besides those of the folder: far meshes, retargets
 }
 
 @(private="file")
@@ -688,7 +695,7 @@ cook_key :: proc(work:^Cook_Work,at:int,closure:^[dynamic]u32,far:=false) -> u64
 keys_reuse :: proc(work:^Cook_Work) {
     previous:=make(map[string]Cook_Key,context.temp_allocator)
     work.previous=previous
-    work.far_keys=make([dynamic]Far_Key,context.temp_allocator)
+    work.made_keys=make([dynamic]Made_Key,context.temp_allocator)
     if data,error:=serial.file_read(work.desc.keys,context.temp_allocator);work.desc.keys!="" && error==.None {
         r:=serial.reader_init(data)
         count:=serial.read_varint(&r)==COOK_KEYS_VERSION?serial.read_count(&r,11):0
@@ -724,7 +731,7 @@ output_kept :: proc(work:^Cook_Work,path:string,key:u64) -> (old:Cook_Key,kept:b
 }
 
 @(private="file")
-Far_Key :: struct {path:string,key:u64}
+Made_Key :: struct {path:string,key:u64}
 
 // Keeps the key of every file of a cook that succeeded, with its output as it is now.
 @(private="file")
@@ -732,7 +739,7 @@ keys_write :: proc(work:^Cook_Work) {
     if work.desc.keys=="" {return}
     w:serial.Writer;serial.writer_init(&w,allocator=context.temp_allocator)
     serial.write_varint(&w,COOK_KEYS_VERSION)
-    serial.write_varint(&w,u64(len(work.order)+len(work.far_keys)))
+    serial.write_varint(&w,u64(len(work.order)+len(work.made_keys)))
     entry :: proc(w:^serial.Writer,work:^Cook_Work,path:string,key:u64,flags:u8) {
         info,_:=os.stat(fmt.tprintf("%s/%s",work.desc.output,path),context.temp_allocator)
         serial.write_string(w,path)
@@ -745,7 +752,7 @@ keys_write :: proc(work:^Cook_Work) {
         result:=&work.results[order.at]
         entry(&w,work,work.files[order.at].path,result.key,u8(result.entry.compressed)|u8(result.entry.resolved)<<1)
     }
-    for far in work.far_keys {entry(&w,work,far.path,far.key,0)}
+    for made in work.made_keys {entry(&w,work,made.path,made.key,0)}
     _=serial.file_write_atomic(work.desc.keys,serial.writer_bytes(&w))
 }
 
@@ -803,7 +810,7 @@ far_meshes_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Al
     out:=make([dynamic]Cook_File,allocator)
     defer for entry in fw.entries {delete(entry.path,work.allocator)}
     for entry,at in fw.entries {
-        if entry.path!="" && fw.errors[at]==.None {append(&work.far_keys,Far_Key{strings.clone(entry.path,context.temp_allocator),keys[at]})}
+        if entry.path!="" && fw.errors[at]==.None {append(&work.made_keys,Made_Key{strings.clone(entry.path,context.temp_allocator),keys[at]})}
         if fw.errors[at]!=.None {return nil,fw.errors[at],strings.clone(entry.path,allocator)}
         if entry.path=="" {continue}
         kept:=entry
@@ -906,6 +913,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
     if report.textures_compressed>0 {fmt.sbprintf(&b,", %d textures compressed",report.textures_compressed)}
     if report.animations_compressed>0 {fmt.sbprintf(&b,", %d animations sampled",report.animations_compressed)}
     if report.scenes_resolved>0 {fmt.sbprintf(&b,", %d scenes and prefabs with their prefab instances brought up to date",report.scenes_resolved)}
+    if report.retargets>0 {fmt.sbprintf(&b,", %d animations retargeted onto skeletons they were not made on",report.retargets)}
     if report.reparented>0 {fmt.sbprintf(&b,", %d entities they added under members their prefabs removed under the nearest member left (an edit of them in the editor writes that)",report.reparented)}
     if report.removed>0 {fmt.sbprintf(&b,", %d files of an earlier cook removed",report.removed)}
     if report.reused>0 {fmt.sbprintf(&b,", %d files kept from an earlier cook: what they are made of did not change",report.reused)}
@@ -925,6 +933,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
     }
     buffer:[32]u8
     for lost in report.missing {fmt.sbprintf(&b,"missing: %s depends on %s, which no file is\n",lost.path,base.asset_id_format(lost.id,buffer[:]))}
+    for line in report.unretargeted {fmt.sbprintf(&b,"not retargeted, its rigs hold their rest pose: %s\n",line)}
     return strings.to_string(b)
 }
 
@@ -963,6 +972,23 @@ Cooked_Shown :: struct {mesh:base.Asset_Id}
 Cooked_Collider :: struct {kind:enum u8 {Box,Sphere,Capsule,Cylinder,Hull,Mesh,Heightfield,External,Auto}}
 @(private="file")
 Cooked_Body :: struct {type:enum u32 {Static,Kinematic,Dynamic}}
+// The Animation of the animation plugin as a cook reads it: the .anim or .character it plays and
+// the .anim that replaces the library of a .character.
+@(private="file")
+Cooked_Animated :: struct {asset,library:base.Asset_Id}
+
+// The value of a component of each entity of a scene, by row; nil for one without it.
+@(private="file")
+rows_of :: proc(scene:^asset.Asset,types:^asset.Types,name:string,$T:typeid,count:int) -> []^T {
+    out:=make([]^T,count,context.temp_allocator)
+    entities,entities_error:=asset.asset_rows(scene,types,name,asset.COLUMN_ENTITY,u32)
+    values,values_error:=asset.asset_rows(scene,types,name,asset.COLUMN_VALUE,T)
+    if entities_error!=.None || values_error!=.None {return out}
+    for &value,k in values[:min(len(values),len(entities))] {
+        if int(entities[k])<count {out[entities[k]]=&value}
+    }
+    return out
+}
 
 // The meshes, by file, that a reached scene or prefab moves with an Auto
 // Collider: the Collider of an entity that shows the mesh, whose own
@@ -980,16 +1006,6 @@ pieces_wanted :: proc(registry:^asset.Registry,reached,left:[]bool,allocator:run
         defer asset.asset_close(&scene)
         view,error:=asset.scene_view(&scene,&types)
         if error!=.None {continue}
-        rows_of :: proc(scene:^asset.Asset,types:^asset.Types,name:string,$T:typeid,count:int) -> []^T {
-            out:=make([]^T,count,context.temp_allocator)
-            entities,entities_error:=asset.asset_rows(scene,types,name,asset.COLUMN_ENTITY,u32)
-            values,values_error:=asset.asset_rows(scene,types,name,asset.COLUMN_VALUE,T)
-            if entities_error!=.None || values_error!=.None {return out}
-            for &value,k in values[:min(len(values),len(entities))] {
-                if int(entities[k])<count {out[entities[k]]=&value}
-            }
-            return out
-        }
         count:=len(view.ids)
         colliders:=rows_of(&scene,&types,"Collider",Cooked_Collider,count)
         bodies:=rows_of(&scene,&types,"Rigid_Body",Cooked_Body,count)
@@ -1031,4 +1047,134 @@ mesh_pieces_cook :: proc(work:^Cook_Work,source:string,data:[]u8,types:^asset.Ty
     if asset.mesh_pieces_put(&doc,types,points[:],sizes[:])!=.None {return}
     bytes,error:=asset.document_bytes(&doc,context.temp_allocator)
     return bytes,error==.None
+}
+
+// The retarget of each .anim onto each skeleton a reached scene or prefab plays it on: an entity
+// whose Animation names it (as its asset, its library, or through the .character it names) and
+// whose Mesh_Renderer shows a mesh of that skeleton. Each is written beside its .anim, as
+// <anim>.<skeleton id>.anim, the cooked .anim of asset.animation_retarget_id, made as an
+// application makes it (asset.animation_retarget_cooked) and read back: a shipped game reads it
+// and never retargets. An .anim whose clips bind by name on that skeleton needs none; one that
+// cannot be retargeted is listed in unmade, and its rigs hold their rest pose. A pair only game
+// code puts together is not seen.
+@(private="file")
+retargets_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Allocator) -> (made:[]Cook_File,unmade:[]string,error:Cook_Error,detail:string) {
+    registry:=work.registry
+    types:=work_types(work,0)
+    Pair :: struct {animation,skeleton:base.Asset_Id}
+    pairs:=make([dynamic]Pair,context.temp_allocator)
+    seen:=make(map[Pair]struct{},context.temp_allocator)
+    for file,at in work.files {
+        if !reached[at] || left[at] || file.state!=.Asset || file.kind!=asset.KIND_SCENE {continue}
+        scene:asset.Asset
+        if cook_open(work,file.path,&scene)!=.None {return nil,nil,.Read_Failed,strings.clone(file.path,allocator)}
+        defer asset.asset_close(&scene)
+        view,view_error:=asset.scene_view(&scene,types)
+        if view_error!=.None {continue}
+        count:=len(view.ids)
+        animated:=rows_of(&scene,types,"Animation",Cooked_Animated,count)
+        shown:=rows_of(&scene,types,"Mesh_Renderer",Cooked_Shown,count)
+        for row in 0..<count {
+            if animated[row]==nil || shown[row]==nil {continue}
+            mesh,has_mesh:=asset.registry_find(registry,shown[row].mesh)
+            if !has_mesh {continue}
+            skeleton:=asset.registry_skeleton(registry,mesh)
+            if skeleton=={} {continue}
+            // The .anim it reaches through what it names: a .character and the .anim it lists.
+            pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
+            visited:=make(map[base.Asset_Id]struct{},context.temp_allocator)
+            append(&pending,animated[row].asset,animated[row].library)
+            for len(pending)>0 {
+                id:=pop(&pending)
+                if id=={} || id in visited {continue}
+                visited[id]={}
+                record,found:=asset.registry_find(registry,id)
+                if !found || record.state!=.Asset {continue}
+                switch record.kind {
+                case asset.KIND_ANIMATION:
+                    pair:=Pair{id,skeleton}
+                    if pair not_in seen {seen[pair]={};append(&pairs,pair)}
+                case asset.KIND_SCENE,asset.KIND_MESH,asset.KIND_SKELETON,asset.KIND_MATERIAL,asset.KIND_TEXTURE:
+                case: append(&pending,..asset.registry_dependencies(registry,record))
+                }
+            }
+        }
+    }
+    Retarget_Work :: struct {work:^Cook_Work,pairs:[]Pair,entries:[]Cook_File,errors:[]Cook_Error,failures:[]asset.Animation_Retarget_Failure,failed:[]base.Asset_Id}
+    rw:=Retarget_Work{work=work,pairs=pairs[:],entries=make([]Cook_File,len(pairs),context.temp_allocator),errors=make([]Cook_Error,len(pairs),context.temp_allocator),failures=make([]asset.Animation_Retarget_Failure,len(pairs),context.temp_allocator),failed=make([]base.Asset_Id,len(pairs),context.temp_allocator)}
+    path_of :: proc(registry:^asset.Registry,pair:Pair) -> string {
+        record,_:=asset.registry_find(registry,pair.animation)
+        text:[base.ASSET_ID_TEXT]u8
+        return fmt.tprintf("%s.%s.anim",strings.trim_suffix(record.path,".anim"),base.asset_id_format(pair.skeleton,text[:]))
+    }
+    // A retarget is made of its .anim, what that needs and the skeleton: one an earlier cook made of
+    // the same is kept.
+    keys:=make([]u64,len(pairs),context.temp_allocator)
+    closure:=make([dynamic]u32,context.temp_allocator)
+    for pair,at in pairs {
+        skeleton,_:=asset.registry_find(registry,pair.skeleton)
+        if skeleton==nil {continue}
+        keys[at]=cook_key(work,int(registry.by_id[pair.animation]),&closure)
+        keys[at]=base.hash_combine(base.hash_combine(keys[at],skeleton.content_hash),asset.ANIMATION_RETARGET_VERSION)
+        path:=path_of(registry,pair)
+        if old,kept:=output_kept(work,path,keys[at]);kept {rw.entries[at]={path=strings.clone(path,work.allocator),id=asset.animation_retarget_id(pair.animation,pair.skeleton),kind=asset.KIND_ANIMATION,bytes=old.bytes,reused=true}}
+    }
+    each :: proc(rw:^Retarget_Work,first,last:int,worker:int) {
+        context.allocator=rw.work.allocator
+        for at in first..<last {
+            if rw.entries[at].reused {continue}
+            pair:=rw.pairs[at]
+            record,found:=asset.registry_find(rw.work.registry,pair.animation)
+            if !found {continue}
+            types:=work_types(rw.work,worker)
+            source:asset.Asset
+            if cook_open(rw.work,record.path,&source)!=.None {rw.errors[at]=.Read_Failed;continue}
+            defer asset.asset_close(&source)
+            view,view_error:=asset.animation_view(&source,types)
+            if view_error!=.None {rw.errors[at]=.Read_Failed;continue}
+            id:=asset.animation_retarget_id(pair.animation,pair.skeleton)
+            doc:asset.Document
+            result:=asset.animation_retarget_cooked(&doc,types,id,source.blob.header.owner,view,asset.skeleton_open_registry,rw.work.registry,pair.skeleton,context.temp_allocator)
+            if result.direct {continue}
+            if result.failure!=.None {rw.failures[at],rw.failed[at]=result.failure,result.failed;continue}
+            defer asset.document_destroy(&doc)
+            doc.flags=source.blob.header.flags
+            path:=path_of(rw.work.registry,pair)
+            target:=fmt.tprintf("%s/%s",rw.work.desc.output,path)
+            rw.entries[at].path=strings.clone(path,rw.work.allocator)
+            if asset.document_save(&doc,target,profile=cook_profile(rw.work.desc))!=.None {rw.errors[at]=.Write_Failed;continue}
+            check:asset.Asset
+            if asset.asset_load(&check,target,context.temp_allocator)!=.None || !asset.blob_verify_hash(&check.blob) || check.blob.header.id!=id {rw.errors[at]=.Verify_Failed}
+            asset.asset_close(&check)
+            rw.entries[at].id,rw.entries[at].kind=id,asset.KIND_ANIMATION
+            rw.entries[at].source_bytes=record.size
+            if info,stat_error:=os.stat(target,context.temp_allocator);stat_error==nil {rw.entries[at].bytes=info.size}
+        }
+    }
+    jobs.parallel_for(work.on.system,work.on.worker,len(pairs),1,each,&rw)
+    out:=make([dynamic]Cook_File,allocator)
+    lines:=make([dynamic]string,allocator)
+    defer for entry in rw.entries {delete(entry.path,work.allocator)}
+    for entry,at in rw.entries {
+        if rw.errors[at]!=.None {
+            record,_:=asset.registry_find(registry,rw.pairs[at].animation)
+            return nil,nil,rw.errors[at],strings.clone(entry.path if entry.path!="" else record.path,allocator)
+        }
+        if failure:=rw.failures[at];failure!=.None {
+            texts:[3][base.ASSET_ID_TEXT]u8
+            record,_:=asset.registry_find(registry,rw.pairs[at].animation)
+            skeleton,known:=asset.registry_find(registry,rw.pairs[at].skeleton)
+            target:=skeleton.path if known else base.asset_id_format(rw.pairs[at].skeleton,texts[0][:])
+            other,other_known:=asset.registry_find(registry,rw.failed[at])
+            about:=other.path if other_known else base.asset_id_format(rw.failed[at],texts[1][:])
+            append(&lines,fmt.aprintf("%s onto %s: %v (skeleton %s)",record.path,target,failure,about,allocator=allocator))
+            continue
+        }
+        if entry.path=="" {continue}
+        append(&work.made_keys,Made_Key{strings.clone(entry.path,context.temp_allocator),keys[at]})
+        kept:=entry
+        kept.path=strings.clone(entry.path,allocator)
+        append(&out,kept)
+    }
+    return out[:],lines[:],.None,""
 }

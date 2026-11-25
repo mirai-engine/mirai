@@ -443,3 +443,87 @@ a_cook_ships_the_convex_pieces_of_a_mesh_a_body_moves :: proc(t:^testing.T) {
         }
     }
 }
+
+@(private="file") Retarget_Test_Renderer :: struct {mesh:base.Asset_Id}
+@(private="file") Retarget_Test_Animation :: struct {asset,library:base.Asset_Id}
+
+// An .anim a scene plays on a mesh of a skeleton it was not made on ships its retarget onto that
+// skeleton beside it, the cooked .anim of asset.animation_retarget_id, which a shipped game reads
+// instead of retargeting; played on its own skeleton it needs none, and a cook of the same files
+// keeps the one written before.
+@(test)
+a_cook_ships_the_retarget_of_an_animation_a_scene_plays_on_another_skeleton :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-retarget")
+    if folder=="" {return}
+    LEVEL :: base.Asset_Id{0xc1,0x10}
+    SOURCE :: base.Asset_Id{0xc1,0x11}
+    TARGET :: base.Asset_Id{0xc1,0x12}
+    CLIPS :: base.Asset_Id{0xc1,0x13}
+    MESHES:=[2]base.Asset_Id{{0xc1,0x14},{0xc1,0x15}}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    assets:=fmt.tprintf("%s/assets",folder)
+    testing.expect(t,base.make_directory_all(assets)==nil)
+    // The source names its bones otherwise than the target and is shorter: they pair by the parts
+    // of the body both mark.
+    Bone :: struct {name:string,parent:i32,at:mm.Vec3,part:anim.Body_Part}
+    skeletons:=[2][4]Bone{
+        {{"Hips",-1,{0,1,0},.Pelvis},{"LeftUpLeg",0,{.1,0,0},.Hip_L},{"LeftLeg",1,{0,-.45,0},.Knee_L},{"LeftFoot",2,{0,-.45,0},.Foot_L}},
+        {{"pelvis",-1,{0,.8,0},.Pelvis},{"thigh_l",0,{.08,0,0},.Hip_L},{"calf_l",1,{0,-.36,0},.Knee_L},{"foot_l",2,{0,-.36,0},.Foot_L}},
+    }
+    for rows,i in skeletons {
+        bones:[4]asset.Skeleton_Bone
+        parts:[4]asset.Skeleton_Body_Part
+        path:string
+        for row,b in rows {
+            path=row.name if row.parent<0 else fmt.tprintf("%s/%s",path,row.name)
+            bones[b]={parent=row.parent,translation=row.at,rotation=1,scale={1,1,1},target=base.name_hash(path)}
+            base.text_set(bones[b].name[:],row.name);base.text_set(bones[b].path[:],path)
+            parts[b]={part=row.part,confidence=1};base.text_set(parts[b].bone[:],path)
+        }
+        body:=asset.Skeleton_Body{up={0,1,0},confidence=1}
+        testing.expect_value(t,asset.skeleton_save(fmt.tprintf("%s/skeleton%d.skeleton",assets,i),&types,{id=SOURCE if i==0 else TARGET,bones=bones[:],body=&body,body_parts=parts[:]}),asset.Error.None)
+        vertices:=[3]asset.Vertex{{position={-1,0,0},color=0xffffffff},{position={1,0,0},color=0xffffffff},{position={0,1,0},color=0xffffffff}}
+        skin:[3]asset.Skin_Vertex
+        for &v in skin {v.weights[0]=255}
+        joints:=[1]asset.Rig_Joint{{node=0,inverse_bind=1}}
+        desc:=asset.Mesh_Desc{id=MESHES[i],skeleton=SOURCE if i==0 else TARGET,joints=joints[:]}
+        if !testing.expect(t,asset.mesh_build({vertices=vertices[:],skin=skin[:]},{0,1,2},nil,&desc.geometry,context.temp_allocator)) {return}
+        testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/rig%d.mesh",assets,i),&types,desc),asset.Error.None)
+    }
+    bend:=[3]anim.Keyframe{{time=0,value=anim.quat_vec4(1)},{time=.5,value=anim.quat_vec4(mm.quat_axis_angle({1,0,0},.8))},{time=1,value=anim.quat_vec4(1)}}
+    tracks:=[1]asset.Animation_Track_Desc{{target="Hips/LeftUpLeg/LeftLeg",property=.Rotation,keys=bend[:]}}
+    clips:=[1]asset.Animation_Clip_Desc{{name="kick",tracks=tracks[:],skeleton=SOURCE}}
+    testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/kick.anim",assets),&types,{id=CLIPS,clips=clips[:]}),asset.Error.None)
+    level:asset.Scene;asset.scene_init(&level,&types,LEVEL)
+    for mesh,at in MESHES {
+        e:=base.Entity_Id(at+1)
+        asset.scene_entity_add(&level,e,0,"Rig")
+        asset.scene_set(&level,e,"Mesh_Renderer",&Retarget_Test_Renderer{mesh})
+        asset.scene_set(&level,e,"Animation",&Retarget_Test_Animation{asset=CLIPS})
+    }
+    testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/level.scene",assets)),asset.Error.None)
+    asset.scene_destroy(&level)
+
+    output:=fmt.tprintf("%s/game/assets",folder)
+    keys:=fmt.tprintf("%s/keys.bin",folder)
+    for pass in 0..<2 {
+        report:=cook_assets({assets=assets,output=output,keys=keys,quick=true,allocator=context.temp_allocator})
+        if !testing.expect_value(t,report.error,Cook_Error.None) {return}
+        testing.expectf(t,report.retargets==1 && len(report.unretargeted)==0,"pass %d: %d retargets, %v",pass,report.retargets,report.unretargeted)
+        text:[base.ASSET_ID_TEXT]u8
+        path:=fmt.tprintf("kick.%s.anim",base.asset_id_format(TARGET,text[:]))
+        written:=false
+        for file in report.files {
+            if file.path!=path {continue}
+            written=true
+            testing.expectf(t,file.id==asset.animation_retarget_id(CLIPS,TARGET) && file.reused==(pass==1),"pass %d: %v",pass,file)
+        }
+        testing.expectf(t,written,"pass %d: %s is not written",pass,path)
+        cooked:asset.Asset
+        if !testing.expect_value(t,asset.asset_load(&cooked,fmt.tprintf("%s/%s",output,path)),asset.Error.None) {return}
+        defer asset.asset_close(&cooked)
+        view,error:=asset.animation_view(&cooked,&types)
+        if !testing.expect_value(t,error,asset.Error.None) {return}
+        testing.expect(t,len(view.clips)==1 && view.clips[0].skeleton==TARGET && view.clips[0].stream_bytes>0,"its clip is compressed on the target")
+    }
+}

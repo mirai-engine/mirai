@@ -3,7 +3,10 @@ package anim
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:strings"
 import "core:testing"
+import "core:math/linalg"
+import "mirai:std/jobs"
 import "mirai:asset"
 import "mirai:core"
 import scene "mirai:engine/scene"
@@ -37,6 +40,9 @@ Retarget_Assets :: struct {
     app:host.App,
     meshes:[4]base.Asset_Id, // of the source, the target, the variant and the copy
 }
+
+// The cooked retarget of moves.anim onto the target, as the cook of a game writes it.
+@(private="file") RETARGET_COOKED :: "moves.retarget.anim"
 
 @(private="file")
 Retarget_Test :: struct {
@@ -91,7 +97,7 @@ RETARGET_TARGET_BONES :: [12]Retarget_Bone{
 }
 
 @(private="file")
-retarget_assets :: proc(t:^testing.T,a:^Retarget_Assets,name:string) -> bool {
+retarget_assets :: proc(t:^testing.T,a:^Retarget_Assets,name:string,cooked:=false) -> bool {
     a.directory=base.test_folder(t,name)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     source,target:=RETARGET_SOURCE_BONES,RETARGET_TARGET_BONES
@@ -126,7 +132,22 @@ retarget_assets :: proc(t:^testing.T,a:^Retarget_Assets,name:string) -> bool {
         if !testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/%s.anim",a.directory,file.name),&types,{id=file.id,clips=file.clips}),asset.Error.None) {return false}
     }
     if !testing.expect(t,host.assets_init(&a.assets,{root=a.directory})) {return false}
+    if cooked {
+        file:asset.Asset
+        if !testing.expect_value(t,asset.asset_load(&file,fmt.tprintf("%s/moves.anim",a.directory),context.temp_allocator),asset.Error.None) {return false}
+        defer asset.asset_close(&file)
+        view,error:=asset.animation_view(&file,&types)
+        if !testing.expect_value(t,error,asset.Error.None) {return false}
+        doc:asset.Document
+        made:=asset.animation_retarget_cooked(&doc,&types,asset.animation_retarget_id(RETARGET_MOVES,RETARGET_TARGET),{},view,asset.skeleton_open_registry,&a.assets.registry,RETARGET_TARGET)
+        if !testing.expect(t,made.failure==.None && !made.direct) {return false}
+        defer asset.document_destroy(&doc)
+        if !testing.expect_value(t,asset.document_save(&doc,fmt.tprintf("%s/%s",a.directory,RETARGET_COOKED)),asset.Error.None) {return false}
+        if !testing.expect(t,host.assets_scan(&a.assets)) {return false}
+    }
     a.app=host.App{assets=&a.assets,allocator=context.allocator}
+    // Retargets are made in jobs, as in the editor and the player.
+    if !testing.expect(t,jobs.system_init(&a.app.jobs,{threads=2})) {return false}
     for id in ([3]base.Asset_Id{RETARGET_MOVES,RETARGET_KICK,RETARGET_ORPHAN}) {
         if !testing.expect(t,host.content_animation_wait(&a.app,id)!=nil) {return false}
     }
@@ -134,7 +155,7 @@ retarget_assets :: proc(t:^testing.T,a:^Retarget_Assets,name:string) -> bool {
 }
 
 @(private="file")
-retarget_assets_destroy :: proc(a:^Retarget_Assets) {host.app_content_destroy(&a.app);host.assets_destroy(&a.assets)}
+retarget_assets_destroy :: proc(a:^Retarget_Assets) {host.app_content_destroy(&a.app);jobs.system_destroy(&a.app.jobs);host.assets_destroy(&a.assets)}
 
 @(private="file")
 retarget_init :: proc(t:^testing.T,f:^Retarget_Test) -> bool {
@@ -164,10 +185,11 @@ retarget_rig :: proc(f:^Retarget_Test,a:^Retarget_Assets,mesh:base.Asset_Id,clip
     return rig
 }
 
-// One fixed tick of the animation, as the loop runs it, counting the markers whose .anim is that
-// of the clip.
+// One frame of the application with one fixed tick of the animation, as the loop runs them: the
+// frame first takes the loads whose jobs ended. Counts the markers whose .anim is that of the clip.
 @(private="file")
 retarget_step :: proc(f:^Retarget_Test,app:^host.App,tick:u64) {
+    host.app_content_adopt(app)
     time:=core.Time{tick=tick,dt=RETARGET_DT,playing=true}
     test_world_settle(&f.w)
     rigs_update(&f.playback,core.read(&f.meshes),core.read(&f.skins),app.assets,core.read(&f.attachments))
@@ -185,10 +207,26 @@ retarget_problems :: proc(t:^testing.T,f:^Retarget_Test,loc:=#caller_location) {
     }
 }
 
+// The entry of the content for the retarget of a library onto a skeleton, whatever its state.
 @(private="file")
-retarget_entry :: proc(f:^Retarget_Test,library,skeleton:base.Asset_Id) -> ^Source_Retarget {
-    for &entry in f.sources.retargets {if entry.library==library && entry.skeleton==skeleton {return &entry}}
-    return nil
+retarget_entry :: proc(app:^host.App,library,skeleton:base.Asset_Id) -> ^host.Content_Animation {
+    if app.content==nil {return nil}
+    ref,known:=app.content.index[asset.animation_retarget_id(library,skeleton)]
+    return &app.content.animations[ref.index] if known else nil
+}
+
+// How many retargets the content holds.
+@(private="file")
+retarget_count :: proc(app:^host.App) -> (count:int) {
+    if app.content==nil {return}
+    for &entry in app.content.animations {if entry.id!={} && entry.retarget.skeleton!={} {count+=1}}
+    return
+}
+
+// Waits for the job that makes a retarget, which the next frame takes.
+@(private="file")
+retarget_job_wait :: proc(app:^host.App,library,skeleton:base.Asset_Id) {
+    if entry:=retarget_entry(app,library,skeleton);entry!=nil && entry.load!=nil {jobs.wait(&app.jobs,jobs.OWNER,&entry.load.counter)}
 }
 
 // How far a bone of a rig turned from its rest, in radians.
@@ -206,23 +244,23 @@ retarget_curve :: proc(state:^Playing,name:string) -> f32 {
 }
 
 // Two rigs of the target play clips made on a source of other names: they share one retarget of
-// the library, made once and played by name (the knee of the source bends the knee of the
-// target), keeping its curves, markers and the clip made on the target; stable ticks allocate
-// nothing, a new generation of the library replaces it in place, and freeing the cache leaves
-// nothing behind.
+// the library onto it, played by name (the knee of the source bends the knee of the target),
+// keeping its curves, markers and the clip made on the target; stable ticks allocate nothing, the
+// retarget is made again when its .anim changes, and the rigs follow it.
 @(test)
 rigs_of_a_skeleton_share_one_retarget_of_a_library_made_on_another :: proc(t:^testing.T) {
     a:Retarget_Assets;if !retarget_assets(t,&a,"retarget-shared") {return};defer retarget_assets_destroy(&a)
     f:Retarget_Test;if !retarget_init(t,&f) {return};defer retarget_destroy(&f)
     first,second:=retarget_rig(&f,&a,a.meshes[1],RETARGET_MOVES,0),retarget_rig(&f,&a,a.meshes[1],RETARGET_MOVES,2)
+    if _,fault:=host.content_animation_retarget_wait(&a.app,RETARGET_MOVES,RETARGET_TARGET);!testing.expect(t,fault.failure==.None) {return}
     for tick in 0..<u64(30) {retarget_step(&f,&a.app,tick)}
     retarget_problems(t,&f)
-    entry:=retarget_entry(&f,RETARGET_MOVES,RETARGET_TARGET)
-    if !testing.expect(t,entry!=nil && !entry.direct && entry.failure==.None && len(f.sources.retargets)==1) {return}
-    library:=&entry.content
+    library:=retarget_entry(&a.app,RETARGET_MOVES,RETARGET_TARGET)
+    if !testing.expect(t,library!=nil && !library.retarget.direct && !library.failed && retarget_count(&a.app)==1) {return}
+    testing.expect(t,library.id==RETARGET_MOVES && library.retarget.bytes>0 && a.app.content.retarget_bytes==library.retarget.bytes)
     one,other:=constraint_playing(core.ref(&f.playback),first),constraint_playing(core.ref(&f.playback),second)
     if !testing.expect(t,one!=nil && other!=nil) {return}
-    testing.expect(t,library.generation&RETARGET_GENERATION!=0 && one.generation==library.generation && other.generation==library.generation)
+    testing.expect(t,one.generation==library.generation && other.generation==library.generation)
     testing.expect(t,one.tracks!=0 && one.tracks==other.tracks,"both rigs bind the same tracks")
     testing.expect(t,animation_playing_content(core.ref(&f.sources),&a.app,one)==library)
     for rig in ([2]core.Entity{first,second}) {
@@ -234,8 +272,8 @@ rigs_of_a_skeleton_share_one_retarget_of_a_library_made_on_another :: proc(t:^te
     testing.expect(t,base.text_get(library.roots[0].bone[:])=="pelvis" && library.roots[0].translation)
     testing.expect(t,library.skeletons[0]==RETARGET_TARGET && library.skeletons[1]==RETARGET_TARGET)
     moves:=host.content_animation(&a.app,RETARGET_MOVES)
-    kept,base_tracks:=lib.clip_tracks(&library.lib,2),lib.clip_tracks(&moves.lib,2)
-    testing.expect(t,len(kept)==len(base_tracks) && len(kept)>0 && kept[0]==base_tracks[0],"the clip made on the target keeps its tracks")
+    kept,own:=lib.clip_tracks(&library.lib,2),lib.clip_tracks(&moves.lib,2)
+    testing.expect(t,len(kept)==len(own) && len(kept)>0 && kept[0].target==own[0].target,"the clip made on the target keeps its tracks")
     // Stable ticks allocate nothing, in the cache or anywhere.
     allocations:=f.tracking.total_allocation_count
     saved:=context;context.allocator=runtime.nil_allocator();context.temp_allocator=runtime.nil_allocator();a.app.allocator=runtime.nil_allocator()
@@ -243,20 +281,47 @@ rigs_of_a_skeleton_share_one_retarget_of_a_library_made_on_another :: proc(t:^te
     context=saved;a.app.allocator=context.allocator
     testing.expectf(t,f.tracking.total_allocation_count==allocations && f.problems.count==0,"%d allocations and %d problems in stable ticks",f.tracking.total_allocation_count-allocations,f.problems.count)
     retarget_problems(t,&f)
-    // A new generation of the library: the entry is made again in place, and the rigs follow it.
+    // A skeleton its clips were made on changes: the retarget is made again in a job, and the
+    // rigs follow it.
     made:=library.generation
-    moves.generation+=1<<20
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    bones:=RETARGET_SOURCE_BONES
+    bones[4].at.y=-.5
+    if !retarget_skeleton_save(t,&a,&types,RETARGET_SOURCE,"source",bones[:9]) {return}
+    testing.expect(t,host.assets_refresh(&a.assets,{"source.skeleton"}))
+    host.content_refresh(&a.app)
+    retarget_job_wait(&a.app,RETARGET_MOVES,RETARGET_TARGET)
     for tick in 90..<u64(92) {retarget_step(&f,&a.app,tick)}
-    entry=retarget_entry(&f,RETARGET_MOVES,RETARGET_TARGET)
-    testing.expect(t,len(f.sources.retargets)==1 && entry.generation==moves.generation && entry.content.generation!=made)
-    testing.expect(t,one.generation==entry.content.generation && other.generation==entry.content.generation)
+    library=retarget_entry(&a.app,RETARGET_MOVES,RETARGET_TARGET)
+    testing.expect(t,retarget_count(&a.app)==1 && library.generation!=made && !library.failed)
+    testing.expect(t,one.generation==library.generation && other.generation==library.generation)
+    retarget_problems(t,&f)
     source_assets_free(&f.sources)
     testing.expectf(t,len(f.tracking.allocation_map)==0 && len(f.tracking.bad_free_array)==0,"%d allocations left",len(f.tracking.allocation_map))
 }
 
+// The first tick a rig plays a library made on another skeleton does not retarget it: it asks for
+// it, and holds its rest pose while a job makes it; a later frame takes it and the rig plays it.
+@(test)
+the_first_play_of_a_library_on_another_skeleton_waits_in_the_rest_pose_for_a_job :: proc(t:^testing.T) {
+    a:Retarget_Assets;if !retarget_assets(t,&a,"retarget-job") {return};defer retarget_assets_destroy(&a)
+    f:Retarget_Test;if !retarget_init(t,&f) {return};defer retarget_destroy(&f)
+    rig:=retarget_rig(&f,&a,a.meshes[1],RETARGET_MOVES,0)
+    retarget_step(&f,&a.app,0)
+    entry:=retarget_entry(&a.app,RETARGET_MOVES,RETARGET_TARGET)
+    if !testing.expect(t,entry!=nil && entry.load!=nil && entry.generation==0,"the tick asked for it and a job makes it") {return}
+    testing.expect(t,a.app.content.stats.retargets==0 && retarget_bend(&f,rig,RETARGET_CALF)<1e-4,"nothing was retargeted in the tick: the rig holds its rest")
+    retarget_job_wait(&a.app,RETARGET_MOVES,RETARGET_TARGET)
+    testing.expect(t,entry.generation==0,"what the job made waits for the next frame")
+    for tick in 1..<u64(31) {retarget_step(&f,&a.app,tick)}
+    retarget_problems(t,&f)
+    testing.expect(t,a.app.content.stats.retargets==1 && !entry.failed && entry.load==nil)
+    testing.expectf(t,retarget_bend(&f,rig,RETARGET_CALF)>.1,"the rig plays the retarget: the knee bends %v",retarget_bend(&f,rig,RETARGET_CALF))
+}
+
 // A clip made on another skeleton whose bones it moves have the names, parents and rests of those
 // of the rig binds by name as it is: a variant of its skeleton with a weapon bone and a copy of it
-// under another id play the library itself; the target retargets it; the source keeps no entry.
+// under another id play the library itself; the target retargets it; the source asks for nothing.
 @(test)
 clips_of_a_skeleton_whose_moved_bones_match_bind_by_name_without_a_retarget :: proc(t:^testing.T) {
     a:Retarget_Assets;if !retarget_assets(t,&a,"retarget-direct") {return};defer retarget_assets_destroy(&a)
@@ -269,17 +334,20 @@ clips_of_a_skeleton_whose_moved_bones_match_bind_by_name_without_a_retarget :: p
         {"the target",1,RETARGET_TARGET,true,false,RETARGET_CALF},
     }
     rigs:[4]core.Entity
-    for c,i in cases {rigs[i]=retarget_rig(&f,&a,a.meshes[c.mesh],RETARGET_KICK,f32(i))}
+    for c,i in cases {
+        rigs[i]=retarget_rig(&f,&a,a.meshes[c.mesh],RETARGET_KICK,f32(i))
+        if c.entry {_,_=host.content_animation_retarget_wait(&a.app,RETARGET_KICK,c.skeleton)}
+    }
     for tick in 0..<u64(30) {retarget_step(&f,&a.app,tick)}
     retarget_problems(t,&f)
     kick:=host.content_animation(&a.app,RETARGET_KICK)
     for c,i in cases {
-        entry:=retarget_entry(&f,RETARGET_KICK,c.skeleton)
+        entry:=retarget_entry(&a.app,RETARGET_KICK,c.skeleton)
         state:=constraint_playing(core.ref(&f.playback),rigs[i])
         if !testing.expectf(t,(entry!=nil)==c.entry && state!=nil,"%s: entry %v",c.name,entry!=nil) {continue}
         if entry!=nil {
-            testing.expectf(t,entry.direct==c.direct,"%s: direct %v",c.name,entry.direct)
-            if c.direct {testing.expectf(t,entry.content.clip_count==0 && entry.content.lib.tracks==nil,"%s: a library was made",c.name)}
+            testing.expectf(t,entry.retarget.direct==c.direct,"%s: direct %v",c.name,entry.retarget.direct)
+            if c.direct {testing.expectf(t,entry.clip_count==0 && entry.lib.tracks==nil && entry.retarget.bytes==0,"%s: a library was made",c.name)}
         }
         testing.expectf(t,(state.generation==kick.generation)==c.direct,"%s: plays generation %x",c.name,state.generation)
         bend:=retarget_bend(&f,rigs[i],c.knee)
@@ -287,53 +355,123 @@ clips_of_a_skeleton_whose_moved_bones_match_bind_by_name_without_a_retarget :: p
     }
 }
 
-// Clips made on a skeleton that cannot be read hold the rest pose of the rig, which reports it,
-// and play once that skeleton arrives: the entry is made again, never kept broken.
+// Clips made on a skeleton that cannot be read are not played as they are: the rig holds its rest
+// pose and reports the library, the skeleton and the fix, until that skeleton arrives and the
+// retarget is made.
 @(test)
 clips_of_a_skeleton_that_cannot_be_read_hold_the_rest_pose_until_it_arrives :: proc(t:^testing.T) {
     a:Retarget_Assets;if !retarget_assets(t,&a,"retarget-missing") {return};defer retarget_assets_destroy(&a)
     f:Retarget_Test;if !retarget_init(t,&f) {return};defer retarget_destroy(&f)
     rig:=retarget_rig(&f,&a,a.meshes[1],RETARGET_ORPHAN,0)
+    _,fault:=host.content_animation_retarget_wait(&a.app,RETARGET_ORPHAN,RETARGET_TARGET)
+    if !testing.expect(t,fault.failure==.Unread && fault.skeleton==RETARGET_MISSING) {return}
     for tick in 0..<u64(30) {retarget_step(&f,&a.app,tick)}
-    entry:=retarget_entry(&f,RETARGET_ORPHAN,RETARGET_TARGET)
-    if !testing.expect(t,entry!=nil && entry.failure==.Unread && entry.failed==RETARGET_MISSING) {return}
-    testing.expect(t,core.problem_find(&f.problems,rig,"animation.retarget_skeleton")!=nil && f.problems.count==1)
+    problem:=core.problem_find(&f.problems,rig,"animation.retarget_skeleton")
+    testing.expect(t,problem!=nil && f.problems.count==1)
+    if problem!=nil {
+        text:=base.text_get(problem.text[:])
+        testing.expectf(t,strings.contains(text,"orphan.anim") && strings.contains(text,"target.skeleton") && strings.contains(text,"import that .skeleton again"),"the problem names the library, the skeleton and the fix: %s",text)
+    }
     testing.expectf(t,retarget_bend(&f,rig,RETARGET_CALF)<1e-4,"the knee holds its rest: %v",retarget_bend(&f,rig,RETARGET_CALF))
     state:=constraint_playing(core.ref(&f.playback),rig)
-    testing.expect(t,state!=nil && abs(retarget_curve(state,"Smile")-.5)<.05,"its curves still play")
+    testing.expect(t,state!=nil && retarget_curve(state,"Smile")<0,"nothing of the clips plays")
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     source:=RETARGET_SOURCE_BONES
     if !retarget_skeleton_save(t,&a,&types,RETARGET_MISSING,"arrived",source[:9]) {return}
     testing.expect(t,host.assets_scan(&a.assets))
+    host.content_refresh(&a.app)
+    retarget_job_wait(&a.app,RETARGET_ORPHAN,RETARGET_TARGET)
     core.problems_clear(&f.problems)
-    for tick in 30..<u64(31) {retarget_step(&f,&a.app,tick)}
-    for tick in 31..<u64(90) {retarget_step(&f,&a.app,tick)}
-    entry=retarget_entry(&f,RETARGET_ORPHAN,RETARGET_TARGET)
-    testing.expect(t,entry!=nil && entry.failure==.None && !entry.direct && f.problems.count==0)
-    testing.expectf(t,abs(retarget_bend(&f,rig,RETARGET_CALF)-.8)<.02,"the knee bends once its skeleton arrives: %v",retarget_bend(&f,rig,RETARGET_CALF))
+    // Half a second of the clip, which starts once the retarget is made.
+    for tick in 30..<u64(60) {retarget_step(&f,&a.app,tick)}
+    entry:=retarget_entry(&a.app,RETARGET_ORPHAN,RETARGET_TARGET)
+    testing.expect(t,entry!=nil && !entry.failed && !entry.retarget.direct && f.problems.count==0)
+    testing.expectf(t,retarget_bend(&f,rig,RETARGET_CALF)>.1,"the knee bends once its skeleton arrives: %v",retarget_bend(&f,rig,RETARGET_CALF))
 }
 
-// A rollback snapshot keeps the generation its rigs played, never a place in the cache: restored
-// after the retarget it names was made again, its rigs find nothing of the old one and bind the
-// new one in their next tick.
+// Retargets stay within the budget of the application: one that does not fit while the others
+// play leaves its rig in the rest pose with a problem, never playing the clips as they are; once
+// the rig of another is gone and it idled, it is evicted and the waiting one is made.
 @(test)
-a_restored_snapshot_binds_the_retarget_made_since_without_dangling :: proc(t:^testing.T) {
+the_retarget_budget_evicts_only_what_no_rig_plays_and_never_plays_clips_unretargeted :: proc(t:^testing.T) {
+    a:Retarget_Assets;if !retarget_assets(t,&a,"retarget-budget") {return};defer retarget_assets_destroy(&a)
+    f:Retarget_Test;if !retarget_init(t,&f) {return};defer retarget_destroy(&f)
+    first:=retarget_rig(&f,&a,a.meshes[1],RETARGET_MOVES,0)
+    if _,fault:=host.content_animation_retarget_wait(&a.app,RETARGET_MOVES,RETARGET_TARGET);!testing.expect(t,fault.failure==.None) {return}
+    moves:=retarget_entry(&a.app,RETARGET_MOVES,RETARGET_TARGET)
+    // Room for that one alone.
+    a.app.retarget_budget=moves.retarget.bytes
+    second:=retarget_rig(&f,&a,a.meshes[1],RETARGET_KICK,2)
+    tick:=u64(0)
+    for ;tick<10;tick+=1 {retarget_step(&f,&a.app,tick);retarget_job_wait(&a.app,RETARGET_KICK,RETARGET_TARGET)}
+    kick:=retarget_entry(&a.app,RETARGET_KICK,RETARGET_TARGET)
+    if !testing.expect(t,kick!=nil && kick.failed && kick.retarget.failure==.Budget,"the second does not fit") {return}
+    testing.expect(t,core.problem_find(&f.problems,second,"animation.retarget_budget")!=nil)
+    testing.expectf(t,retarget_bend(&f,second,RETARGET_CALF)<1e-4,"its rig holds its rest: %v",retarget_bend(&f,second,RETARGET_CALF))
+    testing.expect(t,a.app.content.retarget_bytes<=a.app.retarget_budget && a.app.content.stats.evicted==0,"the one played stays")
+    // The rig of the first goes: once it idled, the second evicts it.
+    core.destroy(&f.entities,first)
+    bent:f32
+    for ;tick<u64(host.CONTENT_RETARGET_IDLE)+40;tick+=1 {
+        retarget_step(&f,&a.app,tick);retarget_job_wait(&a.app,RETARGET_KICK,RETARGET_TARGET)
+        bent=max(bent,retarget_bend(&f,second,RETARGET_CALF))
+    }
+    core.problems_clear(&f.problems)
+    retarget_step(&f,&a.app,tick)
+    retarget_problems(t,&f)
+    kick=retarget_entry(&a.app,RETARGET_KICK,RETARGET_TARGET)
+    testing.expect(t,kick!=nil && !kick.failed && retarget_entry(&a.app,RETARGET_MOVES,RETARGET_TARGET)==nil && a.app.content.stats.evicted==1)
+    testing.expect(t,a.app.content.retarget_bytes<=a.app.retarget_budget)
+    testing.expectf(t,abs(bent-.8)<.02,"the second plays its retarget: the knee bends up to %v",bent)
+}
+
+// A retarget the cook wrote plays as the one a job makes: the same poses tick by tick, with no
+// retarget made at run time.
+@(test)
+a_cooked_retarget_plays_as_the_one_a_job_makes :: proc(t:^testing.T) {
+    made,cooked:Retarget_Assets
+    if !retarget_assets(t,&made,"retarget-made") {return};defer retarget_assets_destroy(&made)
+    if !retarget_assets(t,&cooked,"retarget-cooked",cooked=true) {return};defer retarget_assets_destroy(&cooked)
+    f,g:Retarget_Test
+    if !retarget_init(t,&f) || !retarget_init(t,&g) {return}
+    defer {retarget_destroy(&f);retarget_destroy(&g)}
+    one,other:=retarget_rig(&f,&made,made.meshes[1],RETARGET_MOVES,0),retarget_rig(&g,&cooked,cooked.meshes[1],RETARGET_MOVES,0)
+    _,_=host.content_animation_retarget_wait(&made.app,RETARGET_MOVES,RETARGET_TARGET)
+    _,_=host.content_animation_retarget_wait(&cooked.app,RETARGET_MOVES,RETARGET_TARGET)
+    testing.expect(t,made.app.content.stats.retargets==1 && cooked.app.content.stats.retargets==0,"the cooked one is read, not made")
+    worst:f32
+    for tick in 0..<u64(70) {
+        retarget_step(&f,&made.app,tick);retarget_step(&g,&cooked.app,tick)
+        a,b:=constraint_playing(core.ref(&f.playback),one),constraint_playing(core.ref(&g.playback),other)
+        if !testing.expect(t,a!=nil && b!=nil) {return}
+        for value,i in playing_pose(a,.Local) {
+            other:=playing_pose(b,.Local)[i]
+            worst=max(worst,linalg.length(value.position-other.position),1-abs(linalg.dot(value.rotation,other.rotation)))
+        }
+    }
+    retarget_problems(t,&f);retarget_problems(t,&g)
+    testing.expectf(t,worst<=1e-6,"the poses differ by %v",worst)
+    testing.expectf(t,retarget_bend(&f,one,RETARGET_CALF)>.1,"they play the retarget: %v",retarget_bend(&f,one,RETARGET_CALF))
+}
+
+// A copy of the animation state of a world (a snapshot a rollback restores, a world copy) keeps the
+// generation its rigs played, never a place in a cache: restored, it plays the same poses again.
+@(test)
+a_restored_copy_of_a_world_plays_the_same_retargeted_poses :: proc(t:^testing.T) {
     a:Retarget_Assets;if !retarget_assets(t,&a,"retarget-snapshot") {return};defer retarget_assets_destroy(&a)
     f:Retarget_Test;if !retarget_init(t,&f) {return};defer retarget_destroy(&f)
     rig:=retarget_rig(&f,&a,a.meshes[1],RETARGET_MOVES,0)
+    _,_=host.content_animation_retarget_wait(&a.app,RETARGET_MOVES,RETARGET_TARGET)
     for tick in 0..<u64(10) {retarget_step(&f,&a.app,tick)}
     snapshot:Playback;defer playback_free(&snapshot)
     if !testing.expect(t,playback_copy(&snapshot,&f.playback)) {return}
-    moves:=host.content_animation(&a.app,RETARGET_MOVES)
-    moves.generation+=1<<20
-    for tick in 10..<u64(12) {retarget_step(&f,&a.app,tick)}
-    entry:=retarget_entry(&f,RETARGET_MOVES,RETARGET_TARGET)
+    poses:[20]f32
+    for tick in 10..<u64(30) {retarget_step(&f,&a.app,tick);poses[tick-10]=retarget_bend(&f,rig,RETARGET_CALF)}
     if !testing.expect(t,playback_copy(&f.playback,&snapshot)) {return}
-    state:=constraint_playing(core.ref(&f.playback),rig)
-    if !testing.expect(t,state!=nil && state.generation!=entry.content.generation) {return}
-    testing.expect(t,animation_playing_content(core.ref(&f.sources),&a.app,state)==nil,"the old retarget is not found")
-    for tick in 10..<u64(30) {retarget_step(&f,&a.app,tick)}
+    for tick in 10..<u64(30) {
+        retarget_step(&f,&a.app,tick)
+        testing.expectf(t,retarget_bend(&f,rig,RETARGET_CALF)==poses[tick-10],"tick %d: %v, before %v",tick,retarget_bend(&f,rig,RETARGET_CALF),poses[tick-10])
+    }
     retarget_problems(t,&f)
-    testing.expect(t,state.generation==entry.content.generation && len(f.sources.retargets)==1)
-    testing.expectf(t,abs(retarget_bend(&f,rig,RETARGET_CALF)-.8)<.02,"the knee bends %v",retarget_bend(&f,rig,RETARGET_CALF))
+    testing.expect(t,poses[19]>.1)
 }

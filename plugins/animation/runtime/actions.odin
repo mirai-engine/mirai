@@ -463,6 +463,7 @@ actions_sources_pending :: proc(state:^Action_State,description:Animation,playba
         return true
     }
     prior:=playing.source_plan
+    if row:=rig_find(playback,state.entity);row>=0 {playing.rig=playback.rigs[row].skeleton}
     _,error:=animation_content(sources,app,playing,description,characters)
     playing.source_plan=prior
     state.retry=error==.Pending

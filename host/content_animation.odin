@@ -21,14 +21,16 @@ import "mirai:std/serial"
 // the application (at once with fewer than two workers), and the main thread takes the library
 // at the start of the frame after the job ended (app_content_adopt), writing the cache then.
 // Until then the job owns what it builds: the entry keeps what it had, and one that never loaded
-// is pending.
+// is pending. The retarget of an .anim onto a skeleton loads the same way (content_retarget.odin).
 
 // What a load of an .anim reads and builds: between content_animation_start and the end of its
 // job, only the job touches it.
 @(private)
 Content_Animation_Load :: struct {
     allocator:runtime.Allocator,
-    id:base.Asset_Id,
+    id:base.Asset_Id, // of what it makes: the .anim, or the retarget (asset.animation_retarget_id)
+    target:base.Asset_Id, // the skeleton the job retargets the .anim onto; {}: none to make
+    retarget:asset.Animation_Retarget, // what the job made of it
     file:asset.Asset, // the .anim, or its compression from the cache: view points into it
     view:asset.Animation_View,
     skeletons:[]Content_Skeleton, // those its clips name: a job does not read the registry
@@ -54,7 +56,11 @@ content_animation_pending :: proc(app:^App,id:base.Asset_Id) -> bool {
     if c==nil {return false}
     ref,known:=c.index[id]
     if !known || ref.kind!=.Animation {return false}
-    entry:=&c.animations[ref.index]
+    return content_animation_entry_pending(c,&c.animations[ref.index])
+}
+
+@(private)
+content_animation_entry_pending :: proc "contextless" (c:^Content,entry:^Content_Animation) -> bool {
     if entry.generation==0 {return entry.load!=nil}
     return content_animation_replay_pending(c,entry)
 }
@@ -110,10 +116,10 @@ content_animations_pending :: proc(app:^App,ids:[]base.Asset_Id,wait:=false) -> 
 // Takes the loads whose jobs ended, at the start of the frame of the application: what a job
 // loads changes only there, so a frame sees the same content from its start to its end and the
 // generations a Frame_Record keeps say what it saw.
-@(private)
 app_content_adopt :: proc(app:^App) {
     c:=app.content
     if c==nil {return}
+    c.frame+=1
     for &entry in c.animations {
         if entry.load==nil || jobs.pending(&entry.load.counter) {continue}
         content_animation_finish(app,&entry,job=true)
@@ -137,7 +143,7 @@ content_animation_start :: proc(app:^App,entry:^Content_Animation) -> bool {
     c:=app.content
     load,error:=new(Content_Animation_Load,c.allocator)
     if error!=nil {return false}
-    load.allocator,load.id=c.allocator,entry.id
+    load.allocator=c.allocator
     started:=time.tick_now()
     if !content_animation_read(app,entry,load) {
         content_animation_load_free(c,load)
@@ -169,13 +175,16 @@ content_animation_finish :: proc(app:^App,entry:^Content_Animation,job:bool) {
         if !job {main,worker=main+worker,0}
         load_asset_done(&app.load_profile,entry.id,.Animation,entry.size,main,worker,!load.ok)
     }
-    if !load.ok {
+    retarget:=entry.retarget.skeleton!={}
+    if retarget && !content_retarget_finish(app,entry,load,first) {return}
+    if !retarget && !load.ok {
         if first {content_loaded(c,entry,false)}
         return
     }
-    if load.compress {c.stats.compressed+=1}
+    if load.target!={} {c.stats.retargets+=1} else if load.compress {c.stats.compressed+=1}
     content_animation_cache_write(app.animation_cache,load)
     content_animation_free(c,entry)
+    if retarget {entry.retarget.bytes=content_animation_bytes(&load.built);c.retarget_bytes+=entry.retarget.bytes}
     built:=&load.built
     entry.lib=built.lib
     entry.clip_count,entry.markers=built.clip_count,built.markers
@@ -203,6 +212,7 @@ content_animation_load_free :: proc(c:^Content,load:^Content_Animation_Load) {
     for &skeleton in load.skeletons {asset.asset_close(&skeleton.file)}
     delete(load.skeletons,load.allocator)
     delete(load.path,load.allocator)
+    asset.animation_retarget_free(&load.retarget,load.allocator)
     mem.free_bytes(load.cached,load.allocator)
     content_animation_free(c,&load.built)
     free(load,load.allocator)
@@ -216,17 +226,26 @@ content_animation_read :: proc(
     load:^Content_Animation_Load,
 ) -> bool {
     a:=app.assets
-    content_open(a,entry.id,asset.KIND_ANIMATION,&load.file,entry) or_return
+    load.id,load.target=entry.id,entry.retarget.skeleton
+    if load.target!={} {
+        load.id=entry.retarget.key
+        // A shipped game carries the retarget its cook wrote (asset.animation_retarget_cooked).
+        if record,cooked:=asset.registry_find(&a.registry,load.id);cooked && record.kind==asset.KIND_ANIMATION {load.target={}}
+    }
+    content_open(a,entry.id if load.target!={} else load.id,asset.KIND_ANIMATION,&load.file,entry) or_return
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     opened,error:=asset.animation_view(&load.file,&a.types)
     load.view=opened
     if error!=.None {return false}
-    for track in load.view.tracks {
-        if track.encoding!=.Raw {return true}
+    // A cooked .anim holds its streams; a retarget is made of its .anim whatever that holds.
+    if load.target=={} {
+        for track in load.view.tracks {
+            if track.encoding!=.Raw {return true}
+        }
     }
     load.compress=true
     allocation:runtime.Allocator_Error
-    load.skeletons,allocation=make([]Content_Skeleton,len(load.view.clips),load.allocator)
+    load.skeletons,allocation=make([]Content_Skeleton,len(load.view.clips)+1,load.allocator)
     if allocation!=nil {return false}
     count:=0
     config:=anim.COMPRESS_DEFAULT
@@ -237,24 +256,17 @@ content_animation_read :: proc(
     curves:=u64(transmute(u32)config.float_precision)|u64(transmute(u32)config.vector_precision)<<32
     key=base.hash_combine(key,curves)
     for clip in load.view.clips {
-        if clip.skeleton=={} {continue}
-        known:=false
-        for skeleton in load.skeletons[:count] {known||=skeleton.id==clip.skeleton}
-        if known {continue}
-        skeleton:=&load.skeletons[count]
-        count+=1
-        skeleton.id=clip.skeleton
-        hash:u64
-        if assets_file(a,clip.skeleton,asset.KIND_SKELETON,&skeleton.file)==.None {
-            hash=skeleton.file.blob.header.content_hash
-        }
-        key=base.hash_combine(key,base.hash_combine(clip.skeleton[0],clip.skeleton[1]))
-        key=base.hash_combine(key,hash)
+        content_animation_skeleton(a,load,&count,&key,clip.skeleton)
+    }
+    // A retarget is made of the skeleton it plays on too.
+    if load.target!={} {
+        key=base.hash_combine(key,asset.ANIMATION_RETARGET_VERSION)
+        content_animation_skeleton(a,load,&count,&key,load.target)
     }
     if app.animation_cache=="" {return true}
     text:[base.ASSET_ID_TEXT]u8
     digits:[16]u8
-    name,hex:=base.asset_id_format(entry.id,text[:]),base.hex_format_u64(key,digits[:])
+    name,hex:=base.asset_id_format(load.id,text[:]),base.hex_format_u64(key,digits[:])
     no_path:runtime.Allocator_Error
     if load.path,no_path=strings.clone(fmt.tprintf("%s/%s-%s.anim",app.animation_cache,name,hex),load.allocator);no_path!=nil {return false}
     cached:asset.Asset
@@ -262,9 +274,10 @@ content_animation_read :: proc(
     header:=cached.blob.header
     view:asset.Animation_View
     error=.Corrupt
-    whole:=asset.blob_verify_hash(&cached.blob) && header.id==entry.id
+    whole:=asset.blob_verify_hash(&cached.blob) && header.id==load.id
     if whole && header.kind==asset.KIND_ANIMATION {view,error=asset.animation_view(&cached,&a.types)}
-    if error!=.None || !content_animation_cache_matches(load.view,view) {
+    matches:=content_animation_cache_matches(load.view,view) if load.target=={} else content_retarget_cache_matches(load.view,view)
+    if error!=.None || !matches {
         asset.asset_close(&cached)
         return true
     }
@@ -272,8 +285,25 @@ content_animation_read :: proc(
     // One store per value until odin-lang/Odin#7937 (see ODIN_WORKAROUNDS).
     load.file=cached
     load.view=view
-    load.compress=false
+    load.compress,load.target=false,{}
     return true
+}
+
+// Opens a skeleton the clips a load builds are made on, once, and folds it into the key of its
+// compression: one that cannot be read folds as none.
+@(private="file")
+content_animation_skeleton :: proc(a:^Assets,load:^Content_Animation_Load,count:^int,key:^u64,id:base.Asset_Id) {
+    if id=={} {return}
+    for skeleton in load.skeletons[:count^] {if skeleton.id==id {return}}
+    skeleton:=&load.skeletons[count^]
+    count^+=1
+    skeleton.id=id
+    hash:u64
+    if assets_file(a,id,asset.KIND_SKELETON,&skeleton.file)==.None {
+        hash=skeleton.file.blob.header.content_hash
+    }
+    key^=base.hash_combine(key^,base.hash_combine(id[0],id[1]))
+    key^=base.hash_combine(key^,hash)
 }
 
 // Whether a compression of the cache holds the clips of source: the same clips, tracks and
@@ -305,7 +335,23 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
     started:=time.tick_now()
     defer load.build_ns=time.duration_nanoseconds(time.tick_since(started))
     context.allocator=load.allocator
+    types:asset.Types
+    asset.types_init(&types)
+    defer asset.types_destroy(&types)
+    open :: proc(data:rawptr,id:base.Asset_Id,file:^asset.Asset) -> bool {
+        for &skeleton in (^Content_Animation_Load)(data).skeletons {
+            if skeleton.id!=id || skeleton.file.file==nil {continue}
+            return asset.asset_open(file,skeleton.file.file,context.temp_allocator)==.None
+        }
+        return false
+    }
     view:=load.view
+    if load.target!={} {
+        load.retarget=asset.animation_retarget(view,&types,open,load,load.target,load.allocator)
+        if load.retarget.direct {load.ok=true}
+        if load.retarget.direct || load.retarget.failure!=.None {return}
+        view=load.retarget.view
+    }
     built:=&load.built
     desc:=asset.animation_library_desc(view)
     desc.max_clips*=2
@@ -335,16 +381,6 @@ content_animation_build :: proc(load:^Content_Animation_Load,worker:int) {
         built.lib.prepared=true
         load.ok=true
         return
-    }
-    types:asset.Types
-    asset.types_init(&types)
-    defer asset.types_destroy(&types)
-    open :: proc(data:rawptr,id:base.Asset_Id,file:^asset.Asset) -> bool {
-        for &skeleton in (^Content_Animation_Load)(data).skeletons {
-            if skeleton.id!=id || skeleton.file.file==nil {continue}
-            return asset.asset_open(file,skeleton.file.file,context.temp_allocator)==.None
-        }
-        return false
     }
     if _,error:=asset.animation_compress(view,&built.lib,&types,open,load);error!=.None {return}
     load.ok=true

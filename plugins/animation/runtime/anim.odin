@@ -228,6 +228,7 @@ Playing :: struct {
     asset:base.Asset_Id,
     source_plan:u32,           // in Source_Assets.plans + 1
     generation:u32,            // of the content the state was made for
+    rig:base.Asset_Id,         // the skeleton of its rig, which its sources are retargeted onto; {}: no rig
     fader:lib.Fader,
     prev_fader:lib.Fader,
     clip:int,                  // of the asset; -1: none
@@ -437,6 +438,7 @@ animation_tick :: proc(
         state:=state_get(playback,e)
         if state==nil {memory_problem(problems,e,"its animation");continue}
         state.lod=lod_of(playback,row if skeletal else -1)
+        state.rig=playback.rigs[row].skeleton if skeletal else {}
         first_event:=len(events.items)
         defer source_markers_resolve(sources,state,events.items[first_event:])
         if !animated {
@@ -460,9 +462,13 @@ animation_tick :: proc(
             previous,played,library,kept:=source_previous(sources,app,state,animation)
             if kept {content,animation.asset,animation.library,source_error=previous,played,library,.None} else {animation.asset,animation.library,source_error={},{},.None}
         }
+        // A rig whose clips cannot be retargeted onto it holds its rest pose, never plays them as
+        // they are.
+        if source_error==.Retarget {
+            source_fault_report(sources,app,state,problems)
+            animation.asset,animation.library,source_error={},{},.None
+        }
         if source_error!=.None {state.program.error=source_error;program_problem(problems,e,app.assets,animation,source_error);continue}
-        // A rig plays clips made on another skeleton retargeted onto its own.
-        if skeletal {content=source_retarget(sources,app,skeleton_assets,content,playback.rigs[row].skeleton,problems,e)}
         if content==nil && animation.asset!={} && animation_character(app.assets,animation)=={} {
             name:[base.ASSET_ID_TEXT]u8
             core.report(problems,e,"animation.asset","Animation.asset names %s, which cannot be played: it is missing, is not an .anim or a .character, or is damaged; asset_errors of engine.diagnostics says which, and importing it again fixes a damaged one",host.assets_name(app.assets,animation.asset,&name))
@@ -472,7 +478,7 @@ animation_tick :: proc(
         rig_goals:=entity_requests(match_goals,e)
         program,programmed,program_valid:=program_resolve(state,animation,app,characters,dt,events,playback,content,problems,rig_goals,facing)
         if !program_valid {program_problem(problems,e,app.assets,animation,state.program.error);continue}
-        if programmed {match_prebuild(state,animation,app,characters,sources,extras,skeleton_assets,playback.rigs[row].skeleton if skeletal else {})}
+        if programmed {match_prebuild(state,animation,app,characters,sources,extras)}
         if programmed && state.clip_event.clip!=0 {
             clip_lifecycle(playback,events,&state.clip_event,.Interrupted,state.time,problems)
         }
@@ -674,6 +680,7 @@ program_problem :: proc(problems:^core.Problems,e:core.Entity,assets:^host.Asset
     case .Incompatible_Root: core.report(problems,e,"animation.program_root","%s blends clips whose root motion has different bones or channels; give them the same root motion, or blend clips without it",path)
     case .Capacity: core.report(problems,e,"animation.program_capacity","%s plays more clips at once than fit (%d); blend fewer clips at a time",path,PROGRAM_PLAYERS)
     case .Pending: // its sources still load: it plays once they are ready
+    case .Retarget: // source_fault_report
     }
 }
 

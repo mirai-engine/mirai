@@ -18,7 +18,8 @@ Program_Leaf :: struct {clip:u64,key:u32,weight,speed:f32,loop,sync:bool,player:
 Program_Output :: struct {asset:base.Asset_Id,leaves:[PROGRAM_LEAVES]Program_Leaf,count:u8,normalized,mirror:bool}
 Program_Player :: struct {key:u32,player:lib.Player,seen:u64,from,to:f32,active_last:bool}
 // Pending: a source still loads (host.content_animation_pending); nothing plays until it is ready.
-Program_Error :: enum u8 {None,Invalid_Asset,Invalid_Parameter,Missing_Clip,Incompatible_Root,Out_Of_Memory,Capacity,Pending}
+// Retarget: a source cannot be retargeted onto the rig (Source_Plan.fault says why).
+Program_Error :: enum u8 {None,Invalid_Asset,Invalid_Parameter,Missing_Clip,Incompatible_Root,Out_Of_Memory,Capacity,Pending,Retarget}
 Program_Playing :: struct {
     error:Program_Error,
     asset:base.Asset_Id,

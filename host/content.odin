@@ -58,6 +58,7 @@ Content_Animation :: struct {
     fields:[]Content_Field, // its curves that drive a field of a component, each once
     load:^Content_Animation_Load, // a load of its file under way (content_animation.odin)
     adopted:u32, // generation of its first load when a job made it; 0 when it loaded at once
+    retarget:Content_Retarget, // of the retarget of the .anim id onto a skeleton (content_retarget.odin)
 }
 // The name_hash of the name of a marker and of its target (0: none); a marker on an entity keeps its
 // name too, the action it plays there.
@@ -174,6 +175,8 @@ Content_Stats :: struct {
     loads,reloads:int,
     compressed:int, // .anim whose keys were compressed: neither cooked nor in the cache
     unloads:int, // entries content_collect unloaded
+    retargets:int, // retargets made from their .anim: neither cooked nor in the cache
+    evicted:int,   // retargets content_retarget_room freed for others
 }
 
 @(private)
@@ -197,6 +200,8 @@ Content :: struct {
     // load a job made after it is pending.
     replay:Maybe(u32),
     fonts_waiting:bool,              // a font waits to be added to App.ui_font, or to take its new bytes
+    frame:u64,                       // frames that adopted loads (app_content_adopt): the clock of Content_Retarget.used
+    retarget_bytes:int,              // what the libraries of the retargets hold (Content_Retarget.bytes)
     stats:Content_Stats,
 }
 
@@ -278,6 +283,8 @@ content_animation_free :: proc(c:^Content,entry:^Content_Animation) {
     delete(entry.markers,c.allocator);delete(entry.names,c.allocator);delete(entry.roots,c.allocator);delete(entry.morphs,c.allocator);delete(entry.fields,c.allocator)
     delete(entry.skeletons,c.allocator)
     entry.markers,entry.names,entry.roots,entry.morphs,entry.fields,entry.skeletons,entry.clip_count=nil,nil,nil,nil,nil,nil,0
+    c.retarget_bytes-=entry.retarget.bytes
+    entry.retarget.bytes=0
 }
 // The mixer reads the file of a stream until its audio thread lets go of the
 // sound, which nothing reports: the file of a stream that is replaced stays
@@ -448,7 +455,7 @@ content_sound_set_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound_Se
     return true
 }
 
-@(private="file")
+@(private)
 content_slot :: proc(c:^Content,list:^[dynamic]$T,id:base.Asset_Id,kind:Content_Kind) -> (entry:^T,fresh:bool) {
     if ref,known:=c.index[id];known {
         return ref.kind==kind?&list[ref.index]:nil,false
@@ -798,11 +805,22 @@ content_refresh :: proc(app:^App) -> (reloaded:int) {
         if stale {done(c,&entry,content_ui_load(app,entry.id,&entry),&reloaded)}
     }
     for &entry in c.animations {
-        if entry.id=={} || !changed(registry,&entry) {continue}
+        if entry.id=={} {continue}
+        if entry.retarget.skeleton!={} {
+            stamp:=content_retarget_stamp(app.assets,entry.id,entry.retarget.skeleton)
+            if stamp==entry.retarget.stamp {continue}
+            entry.retarget.stamp=stamp
+        } else if !changed(registry,&entry) {continue}
         content_animation_drop(app,&entry)
         generation:=entry.generation
         if !content_animation_start(app,&entry) {
-            if generation==0 {content_loaded(c,&entry,false)}
+            if generation==0 {content_loaded(c,&entry,false)} else if entry.retarget.skeleton!={} {
+                // A retarget of what is no longer there plays nothing.
+                content_animation_free(c,&entry)
+                entry.retarget.failure=.Invalid
+                content_reloaded(c,&entry)
+                entry.failed=true
+            }
         } else if generation!=0 && entry.generation!=generation {reloaded+=1}
     }
     for &entry in c.sounds {
@@ -826,7 +844,9 @@ content_collect :: proc(app:^App) -> (unloaded:int) {
     keep:=assets_reached(app.assets,context.temp_allocator)
     gone:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for id,ref in c.index {
-        if !keep[id] && ref.kind!=.Font {append(&gone,id)}
+        // A retarget stays while its .anim does.
+        kept:=keep[c.animations[ref.index].id] if ref.kind==.Animation else keep[id]
+        if !kept && ref.kind!=.Font {append(&gone,id)}
     }
     for id in gone {
         ref:=c.index[id]

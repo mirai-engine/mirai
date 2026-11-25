@@ -7,7 +7,7 @@ import mm "mirai:std/math"
 // Gives a rig that takes the pose of another (Pose_Source) the finished pose of that rig on the
 // bones they share by name or path, paired once per bind, keeping its own animation on the bones
 // only it has: a modular head of its own skeleton that follows a body. The retarget of clips onto
-// another skeleton pairs the bones the same way (source_retarget).
+// another skeleton pairs the bones the same way (asset.animation_retarget).
 @(private)
 leader_follow :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),parent_world:mm.Transform) -> bool {
     problems:=inputs.problems

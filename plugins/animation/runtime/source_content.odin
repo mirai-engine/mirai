@@ -12,6 +12,11 @@ import "base:runtime"
 // its layers or its spaces) plays one library that joins them, prepared once per set of sources
 // and shared by every entity and world. Its primary source is the animation of the set: its
 // clips keep their names, those of another source are named by source_clip_name.
+//
+// A rig plays a source with clips made on another skeleton as its retarget onto the skeleton of
+// the rig (host.content_animation_retarget), which its plan finds when it is made or its sources
+// change, never in a tick that only plays: until the retarget is made the source is pending, and
+// one that cannot be made fails the plan with Retarget (Source_Plan.fault).
 
 ANIMATION_SOURCES :: 64
 SOURCE_CACHE_CAPACITY :: 256
@@ -22,9 +27,11 @@ SOURCE_EXTRAS :: STACK_SLOTS+2
 Source_Extras :: [SOURCE_EXTRAS]base.Asset_Id
 // first: the extra a set without animation plays first (source_extras_primary); extras: sorted,
 // each once, the empty ones last, so the slots they play in do not part plans.
-Source_Key :: struct {asset,library,first:base.Asset_Id,extras:Source_Extras}
+// skeleton: of the rig that plays it (Playing.rig), the one its sources are retargeted onto.
+Source_Key :: struct {asset,library,first,skeleton:base.Asset_Id,extras:Source_Extras}
 // Joined libraries count their generations from here, apart from those of host content.
 SOURCE_GENERATION :: u32(1)<<31
+SOURCE_GENERATION_COUNT :: SOURCE_GENERATION-1
 
 Source_Error :: enum u8 {None,Invalid,Alias_Collision,Out_Of_Memory}
 Source_Dependency :: struct {id:base.Asset_Id,size,time:i64,present:bool}
@@ -38,6 +45,9 @@ Source_Plan :: struct {
     checked:u64,            // Assets.revision + 1
     content_generation:u32, // Content.generations it was checked against
     valid:bool,
+    retarget:bool,          // the primary source alone plays retargeted onto key.skeleton
+    fault:host.Content_Retarget_Fault, // why a source cannot be retargeted: the plan plays nothing
+    faulted:base.Asset_Id,  // that source
 }
 Source_Set :: struct {
     primary:base.Asset_Id,
@@ -45,13 +55,15 @@ Source_Set :: struct {
     generations:[]u32, // of each source when joined
     content:host.Content_Animation,
     clip_sources:[]base.Asset_Id, // of each clip of content
+    skeleton:base.Asset_Id,       // the one sources are retargeted onto; {}: none is
+    retargets:u64,                // by source: whether it is the retarget, which the set keeps used
+    used:u64,                     // host Content.frame it last marked them used
 }
 @(storage,host,free="source_assets_free")
 Source_Assets :: struct {
     allocator:mem.Allocator,
     plans:[dynamic]Source_Plan,
     sets:[dynamic]Source_Set,
-    retargets:[dynamic]Source_Retarget, // by library and skeleton (source_retarget)
     generations:u32,
 }
 
@@ -60,8 +72,7 @@ source_assets_free :: proc(cache:^Source_Assets) {
     allocator:=cache.allocator if cache.allocator.procedure!=nil else context.allocator
     for plan in cache.plans {delete(plan.dependencies,allocator)}
     for &set in cache.sets {source_set_free(&set,allocator)}
-    for &entry in cache.retargets {source_retarget_free(&entry,allocator)}
-    delete(cache.plans);delete(cache.sets);delete(cache.retargets);cache^={}
+    delete(cache.plans);delete(cache.sets);cache^={}
 }
 
 // The source of a clip reference: its own, else the override of the Animation (library), else
@@ -98,13 +109,35 @@ source_ids :: proc "contextless" (cache:core.Ref(Source_Assets),state:^Playing) 
     return set.ids if set!=nil else nil
 }
 
-// The library `state` plays: the one retargeted onto its skeleton, else the joined one of its
-// plan, else the content of its asset.
+// The library `state` plays: the joined one of its plan, else the retarget of its asset onto its
+// rig, of the generation it bound (nil when that was made again since), else its asset.
 animation_playing_content :: proc(cache:core.Ref(Source_Assets),app:^host.App,state:^Playing) -> ^host.Content_Animation {
     if state==nil || app==nil {return nil}
-    if state.generation&RETARGET_GENERATION!=0 {return source_retargeted(cache.ptr,state.asset,state.generation)}
     if set:=source_playing_set(cache.ptr,state);set!=nil {return &set.content}
+    if retarget:=host.content_animation_retargeted(app,state.asset,state.rig);retarget!=nil {
+        return retarget if retarget.generation==state.generation else nil
+    }
     return host.content_animation(app,state.asset)
+}
+
+// Reports why the plan of `state` plays nothing: a source it cannot retarget onto its rig.
+source_fault_report :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,problems:^core.Problems) {
+    if cache==nil || state==nil || state.source_plan==0 || int(state.source_plan)>len(cache.plans) {return}
+    plan:=&cache.plans[state.source_plan-1]
+    fault:=plan.fault
+    if fault.failure==.None {return}
+    texts:[3][base.ASSET_ID_TEXT]u8
+    library:=host.assets_name(app.assets,plan.faulted,&texts[0])
+    target:=host.assets_name(app.assets,plan.key.skeleton,&texts[1])
+    other:=host.assets_name(app.assets,fault.skeleton,&texts[2])
+    switch fault.failure {
+    case .None:
+    case .Unread: core.report(problems,state.entity,"animation.retarget_skeleton","clips of %s are made on another skeleton than %s, that of this rig, and skeleton %s cannot be read, so the rig holds its rest pose; import that .skeleton again, or import the clips onto %s",library,target,other,target)
+    case .Unpaired: core.report(problems,state.entity,"animation.retarget_skeleton","clips of %s are made on skeleton %s, which shares no bone name and no part of the body with %s, that of this rig, so the rig holds its rest pose; mark the body of both .skeletons (skeleton.body.detect) or name their bones alike",library,other,target)
+    case .Uncooked: core.report(problems,state.entity,"animation.retarget_skeleton","clips of %s are made on another skeleton than %s, that of this rig, and the cook of this game did not retarget them onto it, so the rig holds its rest pose; give an entity of a scene or prefab this mesh and that animation so the cook sees them together, or bake the clips onto it with animation.retarget.bake",library,target)
+    case .Budget: core.report(problems,state.entity,"animation.retarget_budget","the retarget of %s onto %s, the skeleton of this rig, does not fit in the memory the application keeps for retargets (App_Desc.retarget_budget, %d MB by default) with those in use, so the rig holds its rest pose; play fewer libraries on skeletons they were not made on, cook the game (its cook retargets them ahead) or bake them with animation.retarget.bake",library,target,host.CONTENT_RETARGET_BUDGET>>20)
+    case .Invalid,.Out_Of_Memory: core.report(problems,state.entity,"animation.retarget_skeleton","clips of %s cannot be retargeted onto %s, the skeleton of this rig (%v), so the rig holds its rest pose; import the .anim again, or free memory",library,target,fault.failure)
+    }
 }
 
 // The library an Animation plays, joining the sources of its .character when there are several. A
@@ -138,7 +171,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
     }
     if cache.allocator.procedure==nil {cache.allocator=app.allocator}
     context.allocator=cache.allocator
-    key:=Source_Key{description.asset,description.library,source_extras_primary(extras),source_extras_key(extras)}
+    key:=Source_Key{description.asset,description.library,source_extras_primary(extras),state.rig,source_extras_key(extras)}
     at:=int(state.source_plan)-1
     if at<0 || at>=len(cache.plans) || cache.plans[at].key!=key {at=-1;for plan,i in cache.plans {if plan.key==key {at=i;break}}}
     if at<0 {
@@ -152,6 +185,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
         state.source_plan=u32(at+1)
         return source_plan_content(cache,app,plan)
     }
+    plan.fault,plan.faulted={},{}
     changed:=!plan.valid
     if !changed && plan.checked!=assets_stamp(app.assets) {for dependency in plan.dependencies {if source_dependency(app.assets,dependency.id)!=dependency {changed=true;break}}}
     ids:[ANIMATION_SOURCES]base.Asset_Id;count:=0
@@ -169,10 +203,18 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
         if allocation!=nil {return nil,.Out_Of_Memory}
         copy(copied,dependencies[:dependency_count])
     }
-    set,prepared:=source_set_prepare(cache,app,primary,ids[:count])
+    set,retarget,prepared:=source_set_prepare(cache,app,primary,ids[:count],key.skeleton,plan)
+    if prepared==.Retarget {
+        // Asked again in the next tick: the retarget may be made by then, or find room.
+        if changed {delete(plan.dependencies,cache.allocator);plan.dependencies=copied}
+        plan.primary,plan.set,plan.checked,plan.valid,plan.content_generation=primary,0,0,true,content_generation
+        state.source_plan=u32(at+1)
+        return nil,.Retarget
+    }
     if prepared!=.None {delete(copied,cache.allocator);return nil,prepared}
     if changed {delete(plan.dependencies,cache.allocator);plan.dependencies=copied}
     plan.primary,plan.set,plan.checked,plan.valid,plan.content_generation=primary,set,assets_stamp(app.assets),true,content_generation
+    plan.retarget=retarget
     state.source_plan=u32(at+1)
     return source_plan_content(cache,app,plan)
 }
@@ -183,7 +225,7 @@ animation_content :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,desc
 source_previous :: proc(cache:^Source_Assets,app:^host.App,state:^Playing,description:Animation) -> (content:^host.Content_Animation,played,library:base.Asset_Id,kept:bool) {
     if cache==nil || app==nil || state==nil || state.source_plan==0 || int(state.source_plan)>len(cache.plans) {return}
     plan:=&cache.plans[state.source_plan-1]
-    if !plan.valid || plan.key.asset!=description.asset || plan.key.library==description.library {return}
+    if !plan.valid || plan.fault.failure!=.None || plan.key.asset!=description.asset || plan.key.library==description.library {return}
     found,error:=source_plan_content(cache,app,plan)
     if error!=.None || found==nil {return}
     return found,plan.key.asset,plan.key.library,true
@@ -289,10 +331,18 @@ source_join :: proc(cache:^Source_Assets,set:^Source_Set,primary:base.Asset_Id,s
     host.content_animation_loops(&joined.lib,count);joined.lib.prepared=true;joined.clip_count=count
     cache.generations=(cache.generations+1)&SOURCE_GENERATION_COUNT
     joined.id,joined.generation=primary,SOURCE_GENERATION|cache.generations
-    next.primary,next.ids,next.generations=set.primary,set.ids,set.generations
+    next.primary,next.ids,next.generations,next.skeleton,next.retargets=set.primary,set.ids,set.generations,set.skeleton,set.retargets
     set.ids,set.generations=nil,nil
     source_set_free(set,allocator);set^=next;published=true
     return .None
+}
+
+@(private)
+source_content_free :: proc(content:^host.Content_Animation,allocator:mem.Allocator) {
+    lib.library_destroy(&content.lib)
+    delete(content.markers,allocator);delete(content.names,allocator);delete(content.roots,allocator)
+    delete(content.morphs,allocator);delete(content.fields,allocator);delete(content.skeletons,allocator)
+    content^={}
 }
 
 @(private)
@@ -310,15 +360,29 @@ source_playing_set :: proc "contextless" (cache:^Source_Assets,state:^Playing) -
     return &cache.sets[plan.set-1]
 }
 
+// What a valid plan plays. A set marks the retargets it joined used once a frame, so the content
+// does not evict them while the set plays (host.CONTENT_RETARGET_IDLE).
 @(private)
 source_plan_content :: proc(cache:^Source_Assets,app:^host.App,plan:^Source_Plan) -> (^host.Content_Animation,Program_Error) {
-    if plan.set>0 {return &cache.sets[plan.set-1].content,.None}
-    return source_single(app,plan.primary)
+    if plan.fault.failure!=.None {return nil,.Retarget}
+    if plan.set==0 {return source_single(app,plan.primary,plan.key.skeleton if plan.retarget else {})}
+    set:=&cache.sets[plan.set-1]
+    if set.retargets!=0 && app.content!=nil && set.used!=app.content.frame {
+        set.used=app.content.frame
+        for id,i in set.ids {if set.retargets&(1<<u64(i))!=0 {_,_,_=host.content_animation_retarget(app,id,set.skeleton)}}
+    }
+    return &set.content,.None
 }
 
-// The library of one .anim; Pending while its first load compresses.
+// The library of one .anim, retargeted onto skeleton when that is not {}; Pending while its
+// first load compresses or its retarget is made.
 @(private)
-source_single :: proc(app:^host.App,id:base.Asset_Id) -> (^host.Content_Animation,Program_Error) {
+source_single :: proc(app:^host.App,id:base.Asset_Id,skeleton:=base.Asset_Id{}) -> (^host.Content_Animation,Program_Error) {
+    if skeleton!={} {
+        content,pending,fault:=host.content_animation_retarget(app,id,skeleton)
+        if fault.failure!=.None {return nil,.Retarget}
+        return content,.Pending if pending else .None
+    }
     content:=host.content_animation(app,id)
     if content==nil && host.content_animation_pending(app,id) {return nil,.Pending}
     return content,.None
@@ -396,47 +460,65 @@ source_collect :: proc(assets:^host.Assets,allocator:runtime.Allocator,descripti
 }
 
 @(private)
-source_set_find :: proc(cache:^Source_Assets,primary:base.Asset_Id,ids:[]base.Asset_Id) -> int {
+source_set_find :: proc(cache:^Source_Assets,primary:base.Asset_Id,ids:[]base.Asset_Id,skeleton:base.Asset_Id) -> int {
     for set,i in cache.sets {
-        if set.primary!=primary || len(set.ids)!=len(ids) {continue}
+        if set.primary!=primary || set.skeleton!=skeleton || len(set.ids)!=len(ids) {continue}
         same:=true;for id,j in ids {if set.ids[j]!=id {same=false;break}}
         if same {return i}
     }
     return -1
 }
 
+// The set that joins the libraries of ids (0: one plays alone), each retargeted onto skeleton when
+// it has clips of another skeleton; retarget: the one alone is. Retarget, with the fault on plan,
+// when a source cannot be retargeted.
 @(private)
-source_set_prepare :: proc(cache:^Source_Assets,app:^host.App,primary:base.Asset_Id,ids:[]base.Asset_Id) -> (u32,Program_Error) {
+source_set_prepare :: proc(cache:^Source_Assets,app:^host.App,primary:base.Asset_Id,ids:[]base.Asset_Id,skeleton:base.Asset_Id,plan:^Source_Plan) -> (set:u32,retarget:bool,error:Program_Error) {
     sources:[ANIMATION_SOURCES]host.Content_Animation
     pending:=false
+    retargets:u64
     for id,i in ids {
         content:=host.content_animation(app,id)
-        if content!=nil {sources[i]=content^;continue}
-        if !host.content_animation_pending(app,id) {return 0,.Invalid_Asset}
-        pending=true
+        if content==nil {
+            if !host.content_animation_pending(app,id) {return 0,false,.Invalid_Asset}
+            pending=true
+            continue
+        }
+        if skeleton!={} && asset.animation_retarget_needed(content.skeletons[:min(content.clip_count,len(content.skeletons))],skeleton) {
+            waiting:bool
+            fault:host.Content_Retarget_Fault
+            content,waiting,fault=host.content_animation_retarget(app,id,skeleton)
+            if fault.failure!=.None {plan.fault,plan.faulted=fault,id;return 0,false,.Retarget}
+            if waiting {pending=true;continue}
+            if content.retarget.skeleton!={} {retargets|=1<<u64(i)}
+        }
+        sources[i]=content^
     }
-    if pending {return 0,.Pending}
-    if len(ids)==1 {return 0,.None}
+    if pending {return 0,false,.Pending}
+    if len(ids)==1 {return 0,retargets!=0,.None}
     joined :: proc(error:Source_Error) -> Program_Error {return .None if error==.None else .Out_Of_Memory if error==.Out_Of_Memory else .Invalid_Asset}
-    at:=source_set_find(cache,primary,ids)
+    // Sets of the same sources share one library on every skeleton that retargets none of them.
+    skeleton:=skeleton if retargets!=0 else {}
+    at:=source_set_find(cache,primary,ids,skeleton)
     if at>=0 {
         set:=&cache.sets[at];same:=true
         for source,i in sources[:len(ids)] {if source.generation!=set.generations[i] {same=false;break}}
-        if same {return u32(at+1),.None}
-        if error:=joined(source_join(cache,set,primary,sources[:len(ids)]));error!=.None {return 0,error}
+        if same {return u32(at+1),false,.None}
+        if error:=joined(source_join(cache,set,primary,sources[:len(ids)]));error!=.None {return 0,false,error}
         for source,i in sources[:len(ids)] {set.generations[i]=source.generation}
-        return u32(at+1),.None
+        set.retargets=retargets
+        return u32(at+1),false,.None
     }
-    if len(cache.sets)>=SOURCE_CACHE_CAPACITY || !program_array_reserve(&cache.sets,len(cache.sets)+1) {return 0,.Out_Of_Memory}
-    next:=Source_Set{primary=primary};published:=false
+    if len(cache.sets)>=SOURCE_CACHE_CAPACITY || !program_array_reserve(&cache.sets,len(cache.sets)+1) {return 0,false,.Out_Of_Memory}
+    next:=Source_Set{primary=primary,skeleton=skeleton,retargets=retargets};published:=false
     defer {if !published {source_set_free(&next,cache.allocator)}}
     e1,e2:mem.Allocator_Error
     next.ids,e1=make([]base.Asset_Id,len(ids),cache.allocator)
     next.generations,e2=make([]u32,len(ids),cache.allocator)
-    if e1!=nil || e2!=nil {return 0,.Out_Of_Memory}
+    if e1!=nil || e2!=nil {return 0,false,.Out_Of_Memory}
     copy(next.ids,ids)
     for source,i in sources[:len(ids)] {next.generations[i]=source.generation}
-    if error:=joined(source_join(cache,&next,primary,sources[:len(ids)]));error!=.None {return 0,error}
+    if error:=joined(source_join(cache,&next,primary,sources[:len(ids)]));error!=.None {return 0,false,error}
     append(&cache.sets,next);published=true
-    return u32(len(cache.sets)),.None
+    return u32(len(cache.sets)),false,.None
 }

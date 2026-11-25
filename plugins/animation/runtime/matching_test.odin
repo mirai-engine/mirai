@@ -1511,48 +1511,46 @@ the_libraries_of_a_set_are_built_before_the_tick_that_swaps_them_in :: proc(t:^t
     }
 }
 
-// A library of a set made on another skeleton is retargeted onto that of the rig before its
-// database is built ahead, so the tick that swaps it in builds nothing and searches the retarget.
+// A library of a set made on another skeleton plays retargeted onto that of the rig: its database
+// is built ahead over the retarget once that is made (here one the content already holds, as a
+// cooked one), so the tick that swaps it in builds nothing and searches the retarget.
 @(test)
-a_library_made_on_another_skeleton_is_retargeted_before_its_database_is_built_ahead :: proc(t:^testing.T) {
+a_library_made_on_another_skeleton_builds_its_database_over_its_retarget_ahead :: proc(t:^testing.T) {
     dt:=f32(1)/30;walking:=mm.Vec3{0,0,-1.5}
     f:Match_Fixture;defer match_fixture_free(&f)
     if !testing.expect(t,match_fixture(t,&f)) {return}
     weapon,made:=match_test_weapon(t,&f)
+    retarget,retargeted_made:=match_test_weapon(t,&f)
     native:=host.app_content(&f.app)
-    append(&native.animations,weapon);native.index[MATCH_TEST_LIBRARY]={kind=.Animation,index=0}
-    defer host.app_content_destroy(&f.app)
-    if !made {return}
-    // Its clips were made on a skeleton of the bones of the rig with longer legs.
+    // Its clips were made on another skeleton; their retarget onto the rig is already made.
     other:=base.Asset_Id{0x3a7c,9}
-    library:=&native.animations[0]
-    library.skeletons=make([]base.Asset_Id,library.clip_count,native.allocator)
-    for &id in library.skeletons {id=other}
-    library.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,library.clip_count,native.allocator)
-    library.roots=make([]asset.Animation_Root,library.clip_count,native.allocator)
-    skeletons:=Skeleton_Assets{allocator=context.allocator};defer skeleton_assets_free(&skeletons)
-    skeletons.rows=make(map[base.Asset_Id]u32)
-    for id,i in ([2]base.Asset_Id{f.definition.id,other}) {
-        bones:=make([]asset.Skeleton_Bone,len(f.bones));copy(bones,f.bones[:])
-        if id==other {bones[1].translation.y,bones[2].translation.y=-1.1,-1.1}
-        append(&skeletons.contents,Skeleton_Content{id=id,checked=assets_stamp(f.app.assets),revision=1,bones=bones,body=f.definition.body})
-        skeletons.rows[id]=u32(i)
+    for library in ([2]^host.Content_Animation{&weapon,&retarget}) {
+        library.skeletons=make([]base.Asset_Id,library.clip_count,native.allocator)
+        for &id in library.skeletons {id=other if library==&weapon else f.definition.id}
+        library.names=make([][asset.ANIMATION_NAME_CAPACITY]u8,library.clip_count,native.allocator)
+        library.roots=make([]asset.Animation_Root,library.clip_count,native.allocator)
     }
+    key:=asset.animation_retarget_id(MATCH_TEST_LIBRARY,f.definition.id)
+    retarget.generation,retarget.retarget=2,{skeleton=f.definition.id,key=key}
+    append(&native.animations,weapon,retarget)
+    native.index[MATCH_TEST_LIBRARY]={kind=.Animation,index=0};native.index[key]={kind=.Animation,index=1}
+    defer host.app_content_destroy(&f.app)
+    if !made || !retargeted_made {return}
     content:=&f.graphs.contents[0]
     libraries:=[1]Match_Library{{animation=MATCH_TEST_LIBRARY}}
     content.set.match.libraries=libraries[:]
     defer content.set.match.libraries=nil
     sources:=Source_Assets{allocator=context.allocator};defer source_assets_free(&sources)
+    f.state.rig=f.definition.id
     for _ in 0..<5 {
         testing.expect(t,match_step_with(&f,&f.content,dt,GROUND,walking))
-        match_prebuild(f.state,f.animation,&f.app,&f.graphs,&sources,{},&skeletons,f.definition.id)
+        match_prebuild(f.state,f.animation,&f.app,&f.graphs,&sources,{})
     }
-    if !testing.expectf(t,len(sources.retargets)==1 && !sources.retargets[0].direct,"%d retargets, direct %v",len(sources.retargets),len(sources.retargets)>0 && sources.retargets[0].direct) {return}
-    retargeted:=&sources.retargets[0].content
-    testing.expectf(t,len(content.databases)==2 && content.databases[1].key[2]==u64(retargeted.generation),"%d databases, the second of generation %x",len(content.databases),content.databases[len(content.databases)-1].key[2])
+    played:=&native.animations[1]
+    testing.expectf(t,len(content.databases)==2 && content.databases[1].key[2]==u64(played.generation),"%d databases, the second of generation %x",len(content.databases),content.databases[len(content.databases)-1].key[2])
     f.animation.library=MATCH_TEST_LIBRARY
-    if !testing.expect(t,match_step_with(&f,retargeted,dt,GROUND,walking)) {return}
-    testing.expect(t,len(content.databases)==2 && animation_match_database(core.ref(&f.graphs),retargeted,f.state)!=nil,"the swap builds nothing and searches the retarget")
+    if !testing.expect(t,match_step_with(&f,played,dt,GROUND,walking)) {return}
+    testing.expect(t,len(content.databases)==2 && animation_match_database(core.ref(&f.graphs),played,f.state)!=nil,"the swap builds nothing and searches the retarget")
 }
 
 // A set of more than 64 clips builds and searches: of 65 idles and 65 walks alike, the one of
