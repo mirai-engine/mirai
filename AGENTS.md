@@ -166,6 +166,9 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
   benchmark sweeps), which serialize through the workspace measurement lock
   (`workspace.measurement_wait`) or run at integration/close. Research subagents do not edit
   versioned files.
+- **Processes.** Never kill a process you did not start, nor any by name (`pkill`, `killall`,
+  `taskkill //IM`). Idle sessions and editors that hold the GPU are ended by the tool: the editor's
+  own idle close and `mirai session stop --orphans`.
 
 ## Token spending
 
