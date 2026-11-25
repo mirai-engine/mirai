@@ -15,9 +15,11 @@ import mm "mirai:std/math"
 // .skeletons mark (anim.retarget_map), with the crotch kept off the floor
 // (anim.retarget_crotch_pose), and each clip is sampled at its own rate into raw keys, leaving
 // out the channels that stay at the rest of their bone, which animation_compress then compresses
-// as any .anim. The cook writes it for each .anim and skeleton a game plays together, as the
-// cooked .anim of animation_retarget_id; an application makes the others in a job
-// (host.content_animation_retarget). Both make it here, so they play the same.
+// as any .anim. A cooked .anim (of a shipped game) retargets as well: what it keeps in streams is
+// sampled at the rate of its clip. The cook writes it for each .anim and skeleton a scene plays
+// together or cook.mirai declares, as the cooked .anim of animation_retarget_id; an application,
+// a shipped game too, makes any other in a job (host.content_animation_retarget). Both make it
+// here.
 
 // Raise it when a retarget is made otherwise from the same inputs: what caches keep is made again.
 ANIMATION_RETARGET_VERSION :: 1
@@ -31,7 +33,6 @@ Animation_Retarget_Failure :: enum u8 {
     None,
     Unread,        // a skeleton, `failed`, cannot be read
     Unpaired,      // the skeleton `failed` shares no bone name and no part of the body with the target
-    Uncooked,      // the .anim keeps only its compression (a shipped game), which is not retargeted
     Invalid,       // the .anim does not hold together, or a clip does not sample
     Out_Of_Memory,
     Budget,        // the application has no room left for it (host.App_Desc.retarget_budget)
@@ -85,6 +86,8 @@ animation_retarget :: proc(view:Animation_View,types:^Types,open:Skeleton_Open,d
     desc:=animation_library_desc(view);desc.allocator=scratch
     if !anim.library_init(&library,desc) {out.failure=.Out_Of_Memory;return}
     if len(view.clips)>0 && animation_clips_add(view,&library)==0 {out.failure=.Invalid;return}
+    // A cooked .anim (that of a shipped game) holds streams, which the library samples as they are.
+    for track in view.tracks {if track.encoding!=.Raw {library.prepared=true;break}}
     // Which clips keep their tracks and which take those of the target.
     retargeted:=make([]i32,len(view.clips),scratch) // the source skeleton a clip retargets from, -1: kept
     any:=false
@@ -96,7 +99,6 @@ animation_retarget :: proc(view:Animation_View,types:^Types,open:Skeleton_Open,d
         retargeted[c]=i32(at);any=true
     }
     if !any {out.direct=true;return}
-    for track in view.tracks {if track.encoding!=.Raw {out.failure=.Uncooked;return}}
     pairs:=make([]Retarget_Pair,len(ids),scratch)
     for at in retargeted {
         if at<0 || pairs[at].tried {continue}
@@ -115,11 +117,8 @@ animation_retarget :: proc(view:Animation_View,types:^Types,open:Skeleton_Open,d
         made.first_track,made.stream,made.stream_bytes=u32(len(tracks)),0,0
         at:=retargeted[c]
         if at<0 {
-            for track in own {
-                kept:=track
-                kept.first_key=u32(len(keys))
-                if _,error:=append(&keys,..view.keys[track.first_key:][:track.key_count]);error!=nil {out.failure=.Out_Of_Memory;return}
-                if _,error:=append(&tracks,kept);error!=nil {out.failure=.Out_Of_Memory;return}
+            for track,i in own {
+                if out.failure=retarget_keep(&library,c,i,track,view,&tracks,&keys);out.failure!=.None {return}
             }
         } else {
             source:=&sources[at];pair:=&pairs[at]
@@ -167,12 +166,9 @@ animation_retarget :: proc(view:Animation_View,types:^Types,open:Skeleton_Open,d
                 }
             }
             // Curves keep their keys.
-            for track in own {
+            for track,i in own {
                 if track.property!=.Float && track.property!=.Vector {continue}
-                kept:=track
-                kept.first_key=u32(len(keys))
-                if _,error:=append(&keys,..view.keys[track.first_key:][:track.key_count]);error!=nil {out.failure=.Out_Of_Memory;return}
-                if _,error:=append(&tracks,kept);error!=nil {out.failure=.Out_Of_Memory;return}
+                if out.failure=retarget_keep(&library,c,i,track,view,&tracks,&keys);out.failure!=.None {return}
             }
             made.skeleton=skeleton
             // The root bone follows its pair, else the clip moves no root.
@@ -191,6 +187,35 @@ animation_retarget :: proc(view:Animation_View,types:^Types,open:Skeleton_Open,d
     out.view={clips=clips[:],tracks=tracks[:],keys=keys[:],markers=view.markers,source=view.source}
     if !animation_check(out.view) {out.failure=.Invalid;return}
     return
+}
+
+// Appends track i of clip c as raw keys: its own, or, of one a stream holds, its values sampled at
+// the rate of the clip.
+@(private="file")
+retarget_keep :: proc(library:^anim.Library,c,i:int,track:Animation_Track,view:Animation_View,tracks:^[dynamic]Animation_Track,keys:^[dynamic]anim.Keyframe) -> Animation_Retarget_Failure {
+    kept:=track
+    kept.encoding,kept.first_key=.Raw,u32(len(keys))
+    if track.encoding==.Raw {
+        if _,error:=append(keys,..view.keys[track.first_key:][:track.key_count]);error!=nil {return .Out_Of_Memory}
+    } else {
+        clip:=anim.Clip(c+1)
+        duration:=anim.clip_duration(library,clip)
+        samples,exact:=anim.frames_layout(duration,anim.clip_rate(library,clip),ANIMATION_MAX_KEYS)
+        if samples==0 {samples,exact=1,1}
+        stored:=library.tracks[int(anim.clip_data(library,clip).first_track)+i]
+        previous:mm.Vec4
+        for frame in 0..<samples {
+            key:=anim.Keyframe{time=min(f32(frame)/exact,duration),interpolation=.Linear}
+            key.value=anim.clip_evaluate(library,stored,key.time)
+            // Each key on the side of the one before, so a key blends the short way.
+            if track.property==.Rotation && frame>0 && linalg.dot(key.value,previous)<0 {key.value=-key.value}
+            previous=key.value
+            if _,error:=append(keys,key);error!=nil {return .Out_Of_Memory}
+        }
+        kept.key_count=u32(samples)
+    }
+    if _,error:=append(tracks,kept);error!=nil {return .Out_Of_Memory}
+    return .None
 }
 
 // Whether every bone a clip of library moves has, in target, a bone of its target with the parent

@@ -97,7 +97,9 @@ RETARGET_TARGET_BONES :: [12]Retarget_Bone{
 }
 
 @(private="file")
-retarget_assets :: proc(t:^testing.T,a:^Retarget_Assets,name:string,cooked:=false) -> bool {
+// cooked: with the retarget of moves.anim onto the target a cook writes; shipped: moves.anim as a
+// cook writes it, its clips compressed into streams.
+retarget_assets :: proc(t:^testing.T,a:^Retarget_Assets,name:string,cooked:=false,shipped:=false) -> bool {
     a.directory=base.test_folder(t,name)
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     source,target:=RETARGET_SOURCE_BONES,RETARGET_TARGET_BONES
@@ -144,6 +146,25 @@ retarget_assets :: proc(t:^testing.T,a:^Retarget_Assets,name:string,cooked:=fals
         defer asset.document_destroy(&doc)
         if !testing.expect_value(t,asset.document_save(&doc,fmt.tprintf("%s/%s",a.directory,RETARGET_COOKED)),asset.Error.None) {return false}
         if !testing.expect(t,host.assets_scan(&a.assets)) {return false}
+    }
+    if shipped {
+        path:=fmt.tprintf("%s/moves.anim",a.directory)
+        file:asset.Asset
+        if !testing.expect_value(t,asset.asset_load(&file,path,context.temp_allocator),asset.Error.None) {return false}
+        view,error:=asset.animation_view(&file,&types)
+        if !testing.expect_value(t,error,asset.Error.None) {return false}
+        desc:=asset.animation_library_desc(view);desc.allocator=context.temp_allocator
+        library:lib.Library
+        if !testing.expect(t,lib.library_init(&library,desc) && asset.animation_clips_add(view,&library)!=0) {return false}
+        defer lib.library_destroy(&library)
+        _,compressed:=asset.animation_compress(view,&library,&types,asset.skeleton_open_registry,&a.assets.registry)
+        if !testing.expect_value(t,compressed,lib.Compress_Error.None) {return false}
+        doc:asset.Document
+        if !testing.expect_value(t,asset.animation_cooked_document(&doc,&types,RETARGET_MOVES,{},view,&library,context.temp_allocator),asset.Error.None) {return false}
+        defer asset.document_destroy(&doc)
+        asset.asset_close(&file)
+        if !testing.expect_value(t,asset.document_save(&doc,path),asset.Error.None) {return false}
+        if !testing.expect(t,host.assets_refresh(&a.assets,{"moves.anim"})) {return false}
     }
     a.app=host.App{assets=&a.assets,allocator=context.allocator}
     // Retargets are made in jobs, as in the editor and the player.
@@ -319,6 +340,29 @@ the_first_play_of_a_library_on_another_skeleton_waits_in_the_rest_pose_for_a_job
     testing.expectf(t,retarget_bend(&f,rig,RETARGET_CALF)>.1,"the rig plays the retarget: the knee bends %v",retarget_bend(&f,rig,RETARGET_CALF))
 }
 
+// A shipped game, whose .anim keep only their streams, meets a library and a skeleton its cook did
+// not retarget: the rig waits in its rest pose while the same job makes the retarget from the
+// streams, then plays it.
+@(test)
+a_shipped_game_retargets_a_pair_it_has_no_cooked_retarget_for_in_a_job :: proc(t:^testing.T) {
+    a:Retarget_Assets;if !retarget_assets(t,&a,"retarget-shipped",shipped=true) {return};defer retarget_assets_destroy(&a)
+    f:Retarget_Test;if !retarget_init(t,&f) {return};defer retarget_destroy(&f)
+    moves:=host.content_animation(&a.app,RETARGET_MOVES)
+    if !testing.expect(t,moves!=nil && moves.lib.stream_bytes>0,"moves.anim is cooked") {return}
+    rig:=retarget_rig(&f,&a,a.meshes[1],RETARGET_MOVES,0)
+    retarget_step(&f,&a.app,0)
+    entry:=retarget_entry(&a.app,RETARGET_MOVES,RETARGET_TARGET)
+    if !testing.expect(t,entry!=nil && entry.load!=nil && entry.generation==0,"the tick asked for it and a job makes it") {return}
+    testing.expect(t,a.app.content.stats.retargets==0 && retarget_bend(&f,rig,RETARGET_CALF)<1e-4,"nothing was retargeted in the tick: the rig holds its rest")
+    retarget_job_wait(&a.app,RETARGET_MOVES,RETARGET_TARGET)
+    for tick in 1..<u64(31) {retarget_step(&f,&a.app,tick)}
+    retarget_problems(t,&f)
+    testing.expect(t,a.app.content.stats.retargets==1 && !entry.failed && !entry.retarget.direct)
+    testing.expectf(t,abs(retarget_bend(&f,rig,RETARGET_CALF)-.8)<.03,"the knee bends %v at half a second",retarget_bend(&f,rig,RETARGET_CALF))
+    state:=constraint_playing(core.ref(&f.playback),rig)
+    testing.expectf(t,state!=nil && abs(retarget_curve(state,"Smile")-.5)<.05,"its curves play")
+}
+
 // A clip made on another skeleton whose bones it moves have the names, parents and rests of those
 // of the rig binds by name as it is: a variant of its skeleton with a weapon bone and a copy of it
 // under another id play the library itself; the target retargets it; the source asks for nothing.
@@ -436,11 +480,16 @@ a_cooked_retarget_plays_as_the_one_a_job_makes :: proc(t:^testing.T) {
     if !retarget_init(t,&f) || !retarget_init(t,&g) {return}
     defer {retarget_destroy(&f);retarget_destroy(&g)}
     one,other:=retarget_rig(&f,&made,made.meshes[1],RETARGET_MOVES,0),retarget_rig(&g,&cooked,cooked.meshes[1],RETARGET_MOVES,0)
+    // The cooked one is read as the first tick asks for it and plays in that tick.
+    retarget_step(&g,&cooked.app,0)
+    read:=retarget_entry(&cooked.app,RETARGET_MOVES,RETARGET_TARGET)
+    testing.expect(t,read!=nil && read.load==nil && read.generation!=0 && cooked.app.content.stats.retargets==0,"the cooked one is read, not made")
+    testing.expect(t,constraint_playing(core.ref(&g.playback),other).generation==read.generation,"it plays in the first tick")
     _,_=host.content_animation_retarget_wait(&made.app,RETARGET_MOVES,RETARGET_TARGET)
-    _,_=host.content_animation_retarget_wait(&cooked.app,RETARGET_MOVES,RETARGET_TARGET)
-    testing.expect(t,made.app.content.stats.retargets==1 && cooked.app.content.stats.retargets==0,"the cooked one is read, not made")
+    retarget_step(&f,&made.app,0)
+    testing.expect(t,made.app.content.stats.retargets==1)
     worst:f32
-    for tick in 0..<u64(70) {
+    for tick in 1..<u64(70) {
         retarget_step(&f,&made.app,tick);retarget_step(&g,&cooked.app,tick)
         a,b:=constraint_playing(core.ref(&f.playback),one),constraint_playing(core.ref(&g.playback),other)
         if !testing.expect(t,a!=nil && b!=nil) {return}

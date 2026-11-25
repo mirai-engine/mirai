@@ -451,17 +451,18 @@ a_cook_ships_the_convex_pieces_of_a_mesh_a_body_moves :: proc(t:^testing.T) {
 // skeleton beside it, the cooked .anim of asset.animation_retarget_id, which a shipped game reads
 // instead of retargeting; played on its own skeleton it needs none, and a cook of the same files
 // keeps the one written before.
-@(test)
-a_cook_ships_the_retarget_of_an_animation_a_scene_plays_on_another_skeleton :: proc(t:^testing.T) {
-    folder:=base.test_folder(t,"cook-retarget")
-    if folder=="" {return}
-    LEVEL :: base.Asset_Id{0xc1,0x10}
-    SOURCE :: base.Asset_Id{0xc1,0x11}
-    TARGET :: base.Asset_Id{0xc1,0x12}
-    CLIPS :: base.Asset_Id{0xc1,0x13}
+@(private="file") RETARGET_LEVEL :: base.Asset_Id{0xc1,0x10}
+@(private="file") RETARGET_SOURCE :: base.Asset_Id{0xc1,0x11}
+@(private="file") RETARGET_TARGET :: base.Asset_Id{0xc1,0x12}
+@(private="file") RETARGET_CLIPS :: base.Asset_Id{0xc1,0x13}
+
+// Two skeletons of other names and lengths, a skinned mesh of each (rig0.mesh, rig1.mesh) and an
+// .anim made on the first (kick.anim), in folder/assets.
+@(private="file")
+retarget_cook_assets :: proc(t:^testing.T,folder:string,types:^asset.Types) -> (assets:string,ok:bool) {
+    SOURCE,TARGET,CLIPS :: RETARGET_SOURCE,RETARGET_TARGET,RETARGET_CLIPS
     MESHES:=[2]base.Asset_Id{{0xc1,0x14},{0xc1,0x15}}
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    assets:=fmt.tprintf("%s/assets",folder)
+    assets=fmt.tprintf("%s/assets",folder)
     testing.expect(t,base.make_directory_all(assets)==nil)
     // The source names its bones otherwise than the target and is shorter: they pair by the parts
     // of the body both mark.
@@ -481,25 +482,57 @@ a_cook_ships_the_retarget_of_an_animation_a_scene_plays_on_another_skeleton :: p
             parts[b]={part=row.part,confidence=1};base.text_set(parts[b].bone[:],path)
         }
         body:=asset.Skeleton_Body{up={0,1,0},confidence=1}
-        testing.expect_value(t,asset.skeleton_save(fmt.tprintf("%s/skeleton%d.skeleton",assets,i),&types,{id=SOURCE if i==0 else TARGET,bones=bones[:],body=&body,body_parts=parts[:]}),asset.Error.None)
+        testing.expect_value(t,asset.skeleton_save(fmt.tprintf("%s/skeleton%d.skeleton",assets,i),types,{id=SOURCE if i==0 else TARGET,bones=bones[:],body=&body,body_parts=parts[:]}),asset.Error.None)
         vertices:=[3]asset.Vertex{{position={-1,0,0},color=0xffffffff},{position={1,0,0},color=0xffffffff},{position={0,1,0},color=0xffffffff}}
         skin:[3]asset.Skin_Vertex
         for &v in skin {v.weights[0]=255}
         joints:=[1]asset.Rig_Joint{{node=0,inverse_bind=1}}
         desc:=asset.Mesh_Desc{id=MESHES[i],skeleton=SOURCE if i==0 else TARGET,joints=joints[:]}
         if !testing.expect(t,asset.mesh_build({vertices=vertices[:],skin=skin[:]},{0,1,2},nil,&desc.geometry,context.temp_allocator)) {return}
-        testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/rig%d.mesh",assets,i),&types,desc),asset.Error.None)
+        testing.expect_value(t,asset.mesh_save(fmt.tprintf("%s/rig%d.mesh",assets,i),types,desc),asset.Error.None)
     }
     bend:=[3]anim.Keyframe{{time=0,value=anim.quat_vec4(1)},{time=.5,value=anim.quat_vec4(mm.quat_axis_angle({1,0,0},.8))},{time=1,value=anim.quat_vec4(1)}}
     tracks:=[1]asset.Animation_Track_Desc{{target="Hips/LeftUpLeg/LeftLeg",property=.Rotation,keys=bend[:]}}
     clips:=[1]asset.Animation_Clip_Desc{{name="kick",tracks=tracks[:],skeleton=SOURCE}}
-    testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/kick.anim",assets),&types,{id=CLIPS,clips=clips[:]}),asset.Error.None)
-    level:asset.Scene;asset.scene_init(&level,&types,LEVEL)
+    testing.expect_value(t,asset.animation_save(fmt.tprintf("%s/kick.anim",assets),types,{id=CLIPS,clips=clips[:]}),asset.Error.None)
+    return assets,true
+}
+
+// The cooked retarget of kick.anim onto the target in a cook, as it ships and reads back.
+@(private="file")
+retarget_cook_check :: proc(t:^testing.T,report:^Cook_Report,output:string,types:^asset.Types,reused:bool,loc:=#caller_location) {
+    testing.expectf(t,report.retargets==1 && len(report.unretargeted)==0,"%d retargets, %v",report.retargets,report.unretargeted,loc=loc)
+    text:[base.ASSET_ID_TEXT]u8
+    path:=fmt.tprintf("kick.%s.anim",base.asset_id_format(RETARGET_TARGET,text[:]))
+    written:=false
+    for file in report.files {
+        if file.path!=path {continue}
+        written=true
+        testing.expectf(t,file.id==asset.animation_retarget_id(RETARGET_CLIPS,RETARGET_TARGET) && file.reused==reused,"%v",file,loc=loc)
+    }
+    testing.expectf(t,written,"%s is not written",path,loc=loc)
+    cooked:asset.Asset
+    if !testing.expect_value(t,asset.asset_load(&cooked,fmt.tprintf("%s/%s",output,path)),asset.Error.None,loc=loc) {return}
+    defer asset.asset_close(&cooked)
+    view,error:=asset.animation_view(&cooked,types)
+    if !testing.expect_value(t,error,asset.Error.None,loc=loc) {return}
+    testing.expect(t,len(view.clips)==1 && view.clips[0].skeleton==RETARGET_TARGET && view.clips[0].stream_bytes>0,"its clip is compressed on the target",loc=loc)
+}
+
+@(test)
+a_cook_ships_the_retarget_of_an_animation_a_scene_plays_on_another_skeleton :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-retarget")
+    if folder=="" {return}
+    MESHES:=[2]base.Asset_Id{{0xc1,0x14},{0xc1,0x15}}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    assets,made:=retarget_cook_assets(t,folder,&types)
+    if !made {return}
+    level:asset.Scene;asset.scene_init(&level,&types,RETARGET_LEVEL)
     for mesh,at in MESHES {
         e:=base.Entity_Id(at+1)
         asset.scene_entity_add(&level,e,0,"Rig")
         asset.scene_set(&level,e,"Mesh_Renderer",&Retarget_Test_Renderer{mesh})
-        asset.scene_set(&level,e,"Animation",&Retarget_Test_Animation{asset=CLIPS})
+        asset.scene_set(&level,e,"Animation",&Retarget_Test_Animation{asset=RETARGET_CLIPS})
     }
     testing.expect_value(t,asset.scene_save(&level,fmt.tprintf("%s/level.scene",assets)),asset.Error.None)
     asset.scene_destroy(&level)
@@ -509,21 +542,30 @@ a_cook_ships_the_retarget_of_an_animation_a_scene_plays_on_another_skeleton :: p
     for pass in 0..<2 {
         report:=cook_assets({assets=assets,output=output,keys=keys,quick=true,allocator=context.temp_allocator})
         if !testing.expect_value(t,report.error,Cook_Error.None) {return}
-        testing.expectf(t,report.retargets==1 && len(report.unretargeted)==0,"pass %d: %d retargets, %v",pass,report.retargets,report.unretargeted)
-        text:[base.ASSET_ID_TEXT]u8
-        path:=fmt.tprintf("kick.%s.anim",base.asset_id_format(TARGET,text[:]))
-        written:=false
-        for file in report.files {
-            if file.path!=path {continue}
-            written=true
-            testing.expectf(t,file.id==asset.animation_retarget_id(CLIPS,TARGET) && file.reused==(pass==1),"pass %d: %v",pass,file)
-        }
-        testing.expectf(t,written,"pass %d: %s is not written",pass,path)
-        cooked:asset.Asset
-        if !testing.expect_value(t,asset.asset_load(&cooked,fmt.tprintf("%s/%s",output,path)),asset.Error.None) {return}
-        defer asset.asset_close(&cooked)
-        view,error:=asset.animation_view(&cooked,&types)
-        if !testing.expect_value(t,error,asset.Error.None) {return}
-        testing.expect(t,len(view.clips)==1 && view.clips[0].skeleton==TARGET && view.clips[0].stream_bytes>0,"its clip is compressed on the target")
+        retarget_cook_check(t,&report,output,&types,pass==1)
     }
+}
+
+// A pair only code plays together, declared in cook.mirai, ships its retarget with the animation
+// and the mesh it names, though no scene names them.
+@(test)
+a_cook_ships_the_retarget_cook_mirai_declares :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"cook-retarget-declared")
+    if folder=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    assets,made:=retarget_cook_assets(t,folder,&types)
+    if !made {return}
+    manifest:=fmt.tprintf("%s/cook.mirai",folder)
+    testing.expect(t,os.write_entire_file(manifest,transmute([]u8)string(`{"retargets":[["kick.anim","rig1.mesh"]]}`))==nil)
+    output:=fmt.tprintf("%s/game/assets",folder)
+    report:=cook_assets({assets=assets,output=output,manifest=manifest,quick=true,allocator=context.temp_allocator})
+    if !testing.expect_value(t,report.error,Cook_Error.None) {return}
+    retarget_cook_check(t,&report,output,&types,false)
+    for path in ([3]string{"kick.anim","rig1.mesh","skeleton1.skeleton"}) {
+        testing.expectf(t,os.exists(fmt.tprintf("%s/%s",output,path)),"%s ships",path)
+    }
+    // One it cannot find fails the cook by its name.
+    testing.expect(t,os.write_entire_file(manifest,transmute([]u8)string(`{"retargets":[["kick.anim","gone.mesh"]]}`))==nil)
+    failed:=cook_assets({assets=assets,output=output,manifest=manifest,quick=true,allocator=context.temp_allocator})
+    testing.expectf(t,failed.error==.Root_Missing && strings.contains(failed.detail,"gone.mesh"),"%v %s",failed.error,failed.detail)
 }

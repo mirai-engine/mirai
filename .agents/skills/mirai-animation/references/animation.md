@@ -220,12 +220,15 @@ and skeleton, never in a tick (`asset.animation_retarget`, `asset/animation_reta
   flags turn off.
 - **Cooked:** the cook writes the retarget of each `.anim` onto each skeleton a scene or prefab
   plays it on (an entity with `Animation` naming it, its `.character` or library, and a
-  `Mesh_Renderer` of that skeleton) beside the `.anim` as `<anim>.<skeleton id>.anim`, id
-  `asset.animation_retarget_id` ([build](../../mirai-projects/references/build.md)). A shipped game
-  reads it and retargets nothing; a pair only game code makes is not cooked and its rigs report
-  `Uncooked`.
-- **Editor and dev:** `host.content_animation_retarget` makes it in a job, like the compression of
-  an `.anim`, keeps it in `App_Desc.animation_cache`, and the frame after takes it. The rig waits in
+  `Mesh_Renderer` of that skeleton), and of each pair `cook.mirai` declares in `retargets`
+  (`[["npc.character","guard.mesh"]]`, what only game code plays together), beside the `.anim` as
+  `<anim>.<skeleton id>.anim`, id `asset.animation_retarget_id`
+  ([build](../../mirai-projects/references/build.md)). A game reads it and plays it in the first
+  tick.
+- **Not cooked (editor, dev, or a pair a shipped game was not cooked for):**
+  `host.content_animation_retarget` makes it in a job, like the compression of an `.anim` (from
+  the streams of a cooked `.anim`, sampled at the rate of each clip), keeps it in
+  `App_Desc.animation_cache`, and the frame after takes it. The rig waits in
   its rest pose meanwhile, as for a skeleton that loads. The plan of the rig (`Source_Key.skeleton`,
   `Playing.rig`) resolves it when its library, its skeleton or the content changes; a tick only
   looks its entry up. Every rig and world of that skeleton shares it; a joined set over retargets is
@@ -233,8 +236,8 @@ and skeleton, never in a tick (`asset.animation_retarget`, `asset/animation_reta
 - **Budget:** retargets held stay within `App_Desc.retarget_budget` (`CONTENT_RETARGET_BUDGET`,
   64 MB): one that does not fit evicts those no rig asked for in `CONTENT_RETARGET_IDLE` frames and
   otherwise fails with `Budget` until there is room.
-- **Never unretargeted:** a source `.skeleton` that cannot be read or pairs no bone, an `Uncooked`
-  pair or a `Budget` failure leaves the rig in its rest pose (nothing of the library plays) with
+- **Never unretargeted:** a source `.skeleton` that cannot be read or pairs no bone, or a `Budget`
+  failure leaves the rig in its rest pose (nothing of the library plays) with
   `animation.retarget_skeleton` or `animation.retarget_budget` naming the library, the skeleton and
   the fix. It is made again when the `.anim` or a skeleton changes (`content_retarget_stamp`).
 - A rig keeps only the generation it bound (`Playing.generation`), never a place in a cache: a

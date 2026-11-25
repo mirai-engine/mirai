@@ -144,6 +144,9 @@ Cook_Report :: struct {
 Cook_Manifest :: struct {
     roots:[]string,
     textures:Cook_Textures,
+    // Of an animation (.anim or .character) and a skeleton (or a mesh of one) that only code plays
+    // together: the cook writes its retarget as for a scene that does (retargets_cook).
+    retargets:[][2]string,
 }
 
 @(private="file")
@@ -155,6 +158,7 @@ manifest_read :: proc(path:string,allocator:runtime.Allocator) -> (manifest:Cook
     object,is_object:=value.(json.Object)
     if parse_error!=.None || !is_object {return {},"it is not a JSON object"}
     roots:=make([dynamic]string,allocator)
+    retargets:=make([dynamic][2]string,allocator)
     for key,member in object {
         switch key {
         case "roots":
@@ -164,6 +168,18 @@ manifest_read :: proc(path:string,allocator:runtime.Allocator) -> (manifest:Cook
                 text,is_text:=entry.(json.String)
                 if !is_text || text=="" {return {},"roots is a list of paths and ids"}
                 append(&roots,strings.clone(text,allocator))
+            }
+        case "retargets":
+            PROBLEM :: "retargets is a list of [animation, skeleton] pairs: the path or id of an .anim or .character and of a .skeleton or .mesh"
+            list,is_list:=member.(json.Array)
+            if !is_list {return {},PROBLEM}
+            for entry in list {
+                pair,is_pair:=entry.(json.Array)
+                if !is_pair || len(pair)!=2 {return {},PROBLEM}
+                animation,is_animation:=pair[0].(json.String)
+                skeleton,is_skeleton:=pair[1].(json.String)
+                if !is_animation || !is_skeleton || animation=="" || skeleton=="" {return {},PROBLEM}
+                append(&retargets,[2]string{strings.clone(animation,allocator),strings.clone(skeleton,allocator)})
             }
         case "textures":
             switch member.(json.String) or_else "" {
@@ -175,7 +191,7 @@ manifest_read :: proc(path:string,allocator:runtime.Allocator) -> (manifest:Cook
             return {},fmt.aprintf("%s is not a setting of a cook",key,allocator=allocator)
         }
     }
-    manifest.roots=roots[:]
+    manifest.roots,manifest.retargets=roots[:],retargets[:]
     return
 }
 
@@ -329,6 +345,17 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         }
         if !named {cook_fail(&report,.Root_Missing,root,allocator);return}
     }
+    // A declared retarget ships its animation and skeleton, as roots.
+    declared:=make([][2]base.Asset_Id,len(manifest.retargets),temp)
+    for pair,i in manifest.retargets {
+        for text,side in pair {
+            at,named:=registry.by_path[text]
+            if id,is_id:=serial.text_parse_asset_id(text);is_id {at,named=registry.by_id[id]}
+            if !named {cook_fail(&report,.Root_Missing,fmt.tprintf("retargets: %s",text),allocator);return}
+            root_add(reached,&pending,&report,at)
+            declared[i][side]=files[at].id
+        }
+    }
     missing:=make([dynamic]Cook_Missing,allocator)
     // Whether something that is cooked depends on a file: an interface, or anything else.
     shown:=make([]bool,len(files),temp)
@@ -420,7 +447,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
         report.far_meshes=len(made)
         for entry in made {report.output_bytes,report.reused=report.output_bytes+entry.bytes,report.reused+int(entry.reused)}
     }
-    retargets,unretargeted,retarget_error,retarget_detail:=retargets_cook(&work,reached,left,allocator)
+    retargets,unretargeted,retarget_error,retarget_detail:=retargets_cook(&work,reached,left,declared,allocator)
     if retarget_error!=.None {cook_fail(&report,retarget_error,retarget_detail,allocator);return}
     append(&written,..retargets)
     report.retargets,report.unretargeted=len(retargets),unretargeted
@@ -1051,19 +1078,45 @@ mesh_pieces_cook :: proc(work:^Cook_Work,source:string,data:[]u8,types:^asset.Ty
 
 // The retarget of each .anim onto each skeleton a reached scene or prefab plays it on: an entity
 // whose Animation names it (as its asset, its library, or through the .character it names) and
-// whose Mesh_Renderer shows a mesh of that skeleton. Each is written beside its .anim, as
+// whose Mesh_Renderer shows a mesh of that skeleton; and of those cook.mirai declares (declared:
+// an animation and a skeleton or mesh), which only code plays together. Each is written beside its .anim, as
 // <anim>.<skeleton id>.anim, the cooked .anim of asset.animation_retarget_id, made as an
 // application makes it (asset.animation_retarget_cooked) and read back: a shipped game reads it
 // and never retargets. An .anim whose clips bind by name on that skeleton needs none; one that
-// cannot be retargeted is listed in unmade, and its rigs hold their rest pose. A pair only game
-// code puts together is not seen.
+// cannot be retargeted is listed in unmade, and its rigs hold their rest pose. Any other pair a
+// game meets it makes at run time (host.content_animation_retarget).
 @(private="file")
-retargets_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.Allocator) -> (made:[]Cook_File,unmade:[]string,error:Cook_Error,detail:string) {
+retargets_cook :: proc(work:^Cook_Work,reached,left:[]bool,declared:[][2]base.Asset_Id,allocator:runtime.Allocator) -> (made:[]Cook_File,unmade:[]string,error:Cook_Error,detail:string) {
     registry:=work.registry
     types:=work_types(work,0)
     Pair :: struct {animation,skeleton:base.Asset_Id}
     pairs:=make([dynamic]Pair,context.temp_allocator)
     seen:=make(map[Pair]struct{},context.temp_allocator)
+    // Each .anim an animation reaches through what it names (a .character and the .anim it
+    // lists) with the skeleton of `shown` (a .skeleton, or the one of a mesh).
+    add :: proc(registry:^asset.Registry,pairs:^[dynamic]Pair,seen:^map[Pair]struct{},animations:[]base.Asset_Id,shown:base.Asset_Id) {
+        skeleton:=shown
+        if record,found:=asset.registry_find(registry,shown);found && record.kind==asset.KIND_MESH {skeleton=asset.registry_skeleton(registry,record)}
+        if skeleton=={} {return}
+        pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
+        visited:=make(map[base.Asset_Id]struct{},context.temp_allocator)
+        append(&pending,..animations)
+        for len(pending)>0 {
+            id:=pop(&pending)
+            if id=={} || id in visited {continue}
+            visited[id]={}
+            record,found:=asset.registry_find(registry,id)
+            if !found || record.state!=.Asset {continue}
+            switch record.kind {
+            case asset.KIND_ANIMATION:
+                pair:=Pair{id,skeleton}
+                if pair not_in seen^ {seen[pair]={};append(pairs,pair)}
+            case asset.KIND_SCENE,asset.KIND_MESH,asset.KIND_SKELETON,asset.KIND_MATERIAL,asset.KIND_TEXTURE:
+            case: append(&pending,..asset.registry_dependencies(registry,record))
+            }
+        }
+    }
+    for pair in declared {add(registry,&pairs,&seen,{pair[0]},pair[1])}
     for file,at in work.files {
         if !reached[at] || left[at] || file.state!=.Asset || file.kind!=asset.KIND_SCENE {continue}
         scene:asset.Asset
@@ -1076,28 +1129,7 @@ retargets_cook :: proc(work:^Cook_Work,reached,left:[]bool,allocator:runtime.All
         shown:=rows_of(&scene,types,"Mesh_Renderer",Cooked_Shown,count)
         for row in 0..<count {
             if animated[row]==nil || shown[row]==nil {continue}
-            mesh,has_mesh:=asset.registry_find(registry,shown[row].mesh)
-            if !has_mesh {continue}
-            skeleton:=asset.registry_skeleton(registry,mesh)
-            if skeleton=={} {continue}
-            // The .anim it reaches through what it names: a .character and the .anim it lists.
-            pending:=make([dynamic]base.Asset_Id,context.temp_allocator)
-            visited:=make(map[base.Asset_Id]struct{},context.temp_allocator)
-            append(&pending,animated[row].asset,animated[row].library)
-            for len(pending)>0 {
-                id:=pop(&pending)
-                if id=={} || id in visited {continue}
-                visited[id]={}
-                record,found:=asset.registry_find(registry,id)
-                if !found || record.state!=.Asset {continue}
-                switch record.kind {
-                case asset.KIND_ANIMATION:
-                    pair:=Pair{id,skeleton}
-                    if pair not_in seen {seen[pair]={};append(&pairs,pair)}
-                case asset.KIND_SCENE,asset.KIND_MESH,asset.KIND_SKELETON,asset.KIND_MATERIAL,asset.KIND_TEXTURE:
-                case: append(&pending,..asset.registry_dependencies(registry,record))
-                }
-            }
+            add(registry,&pairs,&seen,{animated[row].asset,animated[row].library},shown[row].mesh)
         }
     }
     Retarget_Work :: struct {work:^Cook_Work,pairs:[]Pair,entries:[]Cook_File,errors:[]Cook_Error,failures:[]asset.Animation_Retarget_Failure,failed:[]base.Asset_Id}

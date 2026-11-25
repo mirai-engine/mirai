@@ -163,7 +163,8 @@ to `Desc.store_root`, `mirai-import`, cook, editor, and player).
 {
   "roots": ["surfaces/metal/Chrome.mat", "characters/player/",
             "3b4cb4195321a2f7fe61aa57ece0c255"],
-  "textures": "blocks"
+  "textures": "blocks",
+  "retargets": [["characters/npc/npc.character", "characters/guard/guard.mesh"]]
 }
 ```
 
@@ -178,7 +179,9 @@ to `Desc.store_root`, `mirai-import`, cook, editor, and player).
   - *Animations:* Pre-compressed via `asset.animation_compress`. Each `.anim` a scene or prefab
     plays (`Animation` asset, library or `.character`) on a `Mesh_Renderer` of another skeleton
     gets its retarget beside it, `<anim>.<skeleton id>.anim` (`retargets_cook`,
-    `asset.animation_retarget_cooked`); pairs that fail are listed as `unretargeted`.
+    `asset.animation_retarget_cooked`), and so does each `retargets` pair of `cook.mirai` (an
+    `.anim`/`.character` and a `.skeleton`/`.mesh`, both shipped as roots); pairs that fail are
+    listed as `unretargeted`.
   - *Prefabs / Far / Collision:* Resolves stale prefab instances (`asset.Prefab_Resolver`), emits
     `<scene>.far.mesh` when `streaming` is active (`Cook_Desc.far`), and bakes `Auto` dynamic mesh
     convex pieces (`asset.mesh_pieces_put`, `Cook_Desc.collision_cache`).

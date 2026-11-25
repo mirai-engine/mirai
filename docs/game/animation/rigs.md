@@ -73,7 +73,10 @@ anim.play_clip(requests,e,"stride",.2,loop=false)
 - A character of other proportions plays the clips itself: clips made on another skeleton are
   retargeted onto its own the first time it plays them, by bone name, else by the parts of the
   body both `.skeleton`s mark, and shared by every character of that skeleton. Clips whose moved
-  bones have the same names and rests on both skeletons play as they are.
+  bones have the same names and rests on both skeletons play as they are. The build ships the
+  retarget of what a scene plays together; a pair only code makes waits in the rest pose a moment
+  the first time while it is made, unless `cook.mirai` lists it in `retargets`
+  ([assets](../assets.md)).
 - A hand or foot on a contact is an IK row with a spatial target; feet on the ground are
   grounding.
 - `animation_bone_transform(playback.ptr,rig,anim.bone_ref("head"))` reads a bone in the world;
