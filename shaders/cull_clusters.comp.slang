@@ -203,12 +203,8 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         low -= reach;
         high += reach;
     }
-    // Of the viewmodel of the view: where it draws it, which faces the eye as it does.
-    bool viewmodel = view_viewmodel(inst);
-    float3 drawn_low = low, drawn_high = high;
-    view_drawn_box(inst, drawn_low, drawn_high);
     if (MIRAI_CULL_CANDIDATES) {
-        if (boxed && occluded(drawn_low, drawn_high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
+        if (boxed && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
     } else {
         float scale = instance_scale(inst);
         Cluster_Cut cut = cluster_cut(view_detail(), inst, scale, mesh, c, frame.cut.x);
@@ -217,10 +213,10 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         if (material_apart(m)) return;
         if (boxed) {
             bool away = m.two_sided == 0u && (posed ? pose.cone && cone_backfacing(inst, scale, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, c, low, high));
-            if (!frustum_visible(drawn_low, drawn_high) || away) return;
+            if (!frustum_visible(low, high) || away) return;
             // What the depth pyramid hides asks too: it shows once what hides it moves.
             if (!posed && cut.request) page_request(instance_mesh(inst), mesh, c.child_page, cut.pixels);
-            if (params.occlusion != 0u && !viewmodel) {
+            if (params.occlusion != 0u) {
                 if (params.phase == 0u) {
                     float3 before_low, before_high;
                     box_before(inst, low, high, before_low, before_high);
@@ -242,5 +238,5 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
             }
         }
     }
-    cluster_visible(index, mesh, ordinal, c, drawn_low, drawn_high, boxed);
+    cluster_visible(index, mesh, ordinal, c, low, high, boxed);
 }

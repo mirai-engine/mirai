@@ -189,7 +189,6 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"INSTANCE_MESH_MASK",abi.INSTANCE_MESH_MASK)
     u(&b,"INSTANCE_RAY_SHIFT",abi.INSTANCE_RAY_SHIFT)
     u(&b,"INSTANCE_UNSHADOWED",abi.INSTANCE_UNSHADOWED)
-    u(&b,"INSTANCE_VIEWMODEL",abi.INSTANCE_VIEWMODEL)
     u(&b,"INSTANCE_FLAG_GLASS",abi.INSTANCE_FLAG_GLASS)
     u(&b,"PROBE_GLOSS_TILE",abi.PROBE_GLOSS_TILE)
     u(&b,"INSTANCE_FLAG_HIDDEN",abi.INSTANCE_FLAG_HIDDEN)

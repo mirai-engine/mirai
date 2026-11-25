@@ -12,7 +12,14 @@ highlight_filter_bounds_cover_silhouette_glow_and_eye_plane :: proc(t: ^testing.
 	camera := Camera{position = {0, 0, 5}, forward = {0, 0, -5}, up = {0, 1, 0}, fov_y = 50, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
 	view, proj, _ := camera_matrices(camera, 1.6)
 	frame := Gpu_Frame{view_proj_unjittered = proj * view}
-	bounds := highlight_screen_bounds(instances[:], &frame, {800, 500}, {400, 250}, 3)
+	s: Scene_State
+	defer delete(s.instances)
+	bounds_of :: proc(s: ^Scene_State, instances: []Gpu_Instance, frame: ^Gpu_Frame) -> Vec4 {
+		clear(&s.instances)
+		append(&s.instances, ..instances)
+		return highlight_screen_bounds(s, frame, {800, 500}, {400, 250}, 3)
+	}
+	bounds := bounds_of(&s, instances[:], &frame)
 	testing.expect(t, bounds.x > 0.3 && bounds.y > 0.3 && bounds.z < 0.7 && bounds.w < 0.7, "Only highlighted visible instances expand the filtering region")
 	for corner in 0 ..< 8 {
 		p := Vec4{-0.5 if corner & 1 == 0 else 0.5, -0.5 if corner & 2 == 0 else 0.5, -0.5 if corner & 4 == 0 else 0.5, 1}
@@ -21,13 +28,13 @@ highlight_filter_bounds_cover_silhouette_glow_and_eye_plane :: proc(t: ^testing.
 		testing.expect(t, bounds.x < uv.x - 3.0 / 800 && bounds.y < uv.y - 3.0 / 500 && bounds.z > uv.x + 3.0 / 800 && bounds.w > uv.y + 3.0 / 500, "The bound includes every silhouette corner, glow, jitter and reduced-resolution mask texels")
 	}
 	instances[0].bounds_min.x += 100; instances[0].bounds_max.x += 100
-	offscreen := highlight_screen_bounds(instances[:], &frame, {800, 500}, {400, 250}, 3)
+	offscreen := bounds_of(&s, instances[:], &frame)
 	testing.expect(t, offscreen.x > offscreen.z || offscreen.y > offscreen.w, "Offscreen selections perform no outline filtering on drawable pixels")
 	instances[0].bounds_min = {-0.5, -0.5, 4.5}; instances[0].bounds_max = {0.5, 0.5, 5.5, 0}
-	testing.expect_value(t, highlight_screen_bounds(instances[:], &frame, {800, 500}, {400, 250}, 3), Vec4{0, 0, 1, 1})
+	testing.expect_value(t, bounds_of(&s, instances[:], &frame), Vec4{0, 0, 1, 1})
 	// What is drawn only as its outline is outlined although it is hidden.
 	ghost := [1]Gpu_Instance{{bounds_min = {-0.5, -0.5, -0.5}, bounds_max = {0.5, 0.5, 0.5, 0}, meta = {0, 0, 0, (1 << INSTANCE_HIGHLIGHT_SHIFT) | INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_OUTLINE_ONLY}}}
-	outlined := highlight_screen_bounds(ghost[:], &frame, {800, 500}, {400, 250}, 3)
+	outlined := bounds_of(&s, ghost[:], &frame)
 	testing.expect(t, outlined.x < 0.5 && outlined.z > 0.5 && outlined.y < 0.5 && outlined.w > 0.5, "An outline-only instance has the region of its silhouette")
 }
 

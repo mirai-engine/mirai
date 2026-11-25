@@ -105,10 +105,11 @@ glass_visible :: proc(s: ^Scene_State, frame: ^Gpu_Frame) -> []Translucent {
 		owner := frame.own & 0xff
 		own := owner != 0 && flags & INSTANCE_FLAG_OWNED != 0 &&
 		       (flags >> INSTANCE_OWNER_SHIFT) & 3 == owner - 1
-		if layers & frame.layers & LAYERS_ALL == 0 || viewmodel_elsewhere(frame, inst) ||
-		   own && (layers & (frame.layers >> 16) != 0 || frame.own >> 16 == 65535 && inst.meta.x & INSTANCE_VIEWMODEL == 0) ||
+		// A viewmodel, in no layer, is of the view whose list has it.
+		box, listed := viewmodel_drawn(s, frame, entry.instance)
+		if (inst.meta.x & INSTANCE_VIEWMODEL != 0 ? !listed : layers & frame.layers & LAYERS_ALL == 0 ||
+		   own && (layers & (frame.layers >> 16) != 0 || frame.own >> 16 == 65535)) ||
 		   instance_values_fade(s, inst.material_values) >= 1 {continue}
-		box := drawn_box(frame, inst)
 		if !mm.frustum_overlaps_aabb(frustum, box) {continue}
 		offset := (box.min + box.max) * 0.5 - frame.camera_position.xyz
 		entry.distance = linalg.dot(offset, offset)
@@ -149,8 +150,8 @@ translucent_before_glass :: proc(p: ^Pass, f: ^Gpu_Frame) {
 	eye, forward := f.camera_position.xyz, f.camera_forward.xyz
 	margin := 2 / linalg.max(f.resolution, Vec2{1, 1})
 	// The nearest and farthest view depth (fragment_depth) of a box and the tiles it covers.
-	span :: proc(inst: ^Gpu_Instance, f: ^Gpu_Frame, eye, forward: Vec3, margin: Vec2) -> (near, far: f32, lo, hi: [2]int) {
-		box := drawn_box(f, inst)
+	span :: proc(s: ^Scene_State, index: u32, f: ^Gpu_Frame, eye, forward: Vec3, margin: Vec2) -> (near, far: f32, lo, hi: [2]int) {
+		box := drawn_box(s, f, index)
 		along := linalg.dot((box.min + box.max) * 0.5 - eye, forward)
 		reach := linalg.dot((box.max - box.min) * 0.5, linalg.abs(forward))
 		rect := projected_box(box, f.view_proj, eye)
@@ -166,7 +167,7 @@ translucent_before_glass :: proc(p: ^Pass, f: ^Gpu_Frame) {
 		slice.fill(nearest[:], max(f32))
 		for entry in p.translucent {
 			if !entry.glass {continue}
-			near, _, lo, hi := span(&s.instances[entry.instance], f, eye, forward, margin)
+			near, _, lo, hi := span(s, entry.instance, f, eye, forward, margin)
 			for y in lo.y ..= hi.y {
 				for &tile in nearest[y * GLASS_TILES:][lo.x:hi.x + 1] {tile = min(tile, near)}
 			}
@@ -175,7 +176,7 @@ translucent_before_glass :: proc(p: ^Pass, f: ^Gpu_Frame) {
 	for &entry in p.translucent {
 		entry.before = false
 		if !p.draw_glass || !entry.forward {continue}
-		_, far, lo, hi := span(&s.instances[entry.instance], f, eye, forward, margin)
+		_, far, lo, hi := span(s, entry.instance, f, eye, forward, margin)
 		entry.before = true
 		rows: for y in lo.y ..= hi.y {
 			for tile in nearest[y * GLASS_TILES:][lo.x:hi.x + 1] {

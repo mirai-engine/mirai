@@ -297,7 +297,7 @@ occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance)
 // Whether an instance is drawn in the depth of the maps of the shadows and stops their rays.
 @(private)
 instance_casts :: proc "contextless" (inst: Gpu_Instance) -> bool {
-	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & (INSTANCE_UNSHADOWED | INSTANCE_VIEWMODEL) == 0
+	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & INSTANCE_UNSHADOWED == 0
 }
 
 // A light of the set that moved or changed its shape: what it shades is new.
@@ -412,6 +412,10 @@ Scene_State :: struct {
 	instance_revision:    u64, // counts the updates that gave an index another instance, or another number of them
 	highlighted:          int,          // instances with a highlight level
 	viewmodels:           [OWNER_SLOTS]f32, // the field of view of the viewmodel of each local slot (scene_set_viewmodels)
+	viewmodel_instances:  [dynamic]Viewmodel_Instance, // viewmodel.odin
+	viewmodel_cameras:    [OWNER_SLOTS]Camera, // of each local slot, the camera its viewmodel is placed for in this frame
+	viewmodel_list:       rhi.Buffer, // the count and the instances of the viewmodel of the view being recorded (viewmodel_list)
+	viewmodel_list_words: [dynamic]u32,
 	displaced:            map[Instance_Key]Mesh_Handle, // the poses of the instances whose material programs move their vertices (displace.odin)
 	displaced_stale:      bool, // an instance may need a pose it lacks or have one it no longer needs: displaced_reconcile
 	material_versions:    [dynamic]u32, // of each row of the table, counted up whenever its values change
@@ -420,6 +424,7 @@ Scene_State :: struct {
 	tlas_off:             bool, // rays are traced by hardware: the tree of the instances is not kept, and stays stale until they are not
 	tlas_items:           [dynamic]mm.Aabb,
 	tlas_scratch:         [dynamic]mm.Aabb,         // the items of the instances and of the batches rays meet, while the tree is built
+	tlas_scratch_refs:    [dynamic]u32,             // the reference of each of them
 	hw_instances:         [dynamic]rhi.Tlas_Instance, // of the native TLAS, one by instance; their BLAS when it is built (tlas_instances_record)
 	instances_dirty:      bool,
 	touched:              [dynamic]u64, // a bit by instance that goes to the GPU alone: changed since the last upload, or drawn in motion by it
@@ -632,6 +637,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.tlas_refs = make([dynamic]u32, a)
 	s.tlas_items = make([dynamic]mm.Aabb, a)
 	s.tlas_scratch = make([dynamic]mm.Aabb, a)
+	s.tlas_scratch_refs = make([dynamic]u32, a)
 	batches_init(r)
 	s.touched = make([dynamic]u64, a)
 	s.hw_instances = make([dynamic]rhi.Tlas_Instance, a)
@@ -1545,17 +1551,27 @@ tlas_build :: proc(s: ^Scene_State) {
 	s.tlas_stale, s.tlas_moved, s.tlas_classify = false, false, false
 	items := s.tlas_items[:]
 	batches := s.batch.built && s.batch.built_instances == len(s.instances) && len(s.batch.traced) > 0
-	if batches {
+	// The instances of the viewmodels are in no ray structure (viewmodel.odin).
+	viewmodels := len(s.viewmodel_instances) > 0
+	if batches || viewmodels {
 		clear(&s.tlas_scratch)
-		append(&s.tlas_scratch, ..s.tlas_items[:])
-		for drawn in s.batch.traced {append(&s.tlas_scratch, s.batch.boxes[drawn])}
+		clear(&s.tlas_scratch_refs)
+		for item, i in s.tlas_items {
+			if viewmodels && s.instances[i].meta.x & INSTANCE_VIEWMODEL != 0 {continue}
+			append(&s.tlas_scratch, item)
+			append(&s.tlas_scratch_refs, u32(i))
+		}
+		if batches {
+			for drawn in s.batch.traced {
+				append(&s.tlas_scratch, s.batch.boxes[drawn])
+				append(&s.tlas_scratch_refs, u32(len(s.instances)) + u32(drawn))
+			}
+		}
 		items = s.tlas_scratch[:]
 	}
 	built := bvh_build(items, 2, &s.tlas_nodes, &s.tlas_refs)
-	if built && batches {
-		for &ref in s.tlas_refs {
-			if int(ref) >= len(s.instances) {ref = u32(len(s.instances)) + s.batch.traced[int(ref) - len(s.instances)]}
-		}
+	if built && (batches || viewmodels) {
+		for &ref in s.tlas_refs {ref = s.tlas_scratch_refs[ref]}
 	}
 	if !built {
 		clear(&s.tlas_nodes)
@@ -2073,7 +2089,10 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		kept := s.instances[index].meta.x & INSTANCE_MESH_MASK == u32(desc.mesh) && int(desc.mesh) < len(s.meshes) && was < max(mesh.ray_count, 1) && (mesh.stream == nil || mesh.stream.cut_missing[was] == 0)
 		cut := was << INSTANCE_RAY_SHIFT if kept else u32(ray_cut_always(mesh)) << INSTANCE_RAY_SHIFT
 		if desc.shadowless {cut |= INSTANCE_UNSHADOWED}
-		if desc.owner != 0 && desc.viewmodel {cut |= INSTANCE_VIEWMODEL}
+		// A viewmodel is in no layer and casts no shadow: no view, map or ray meets it but by its list (viewmodel.odin).
+		viewmodel := desc.owner != 0 && desc.viewmodel && viewmodel_keep(s, index, true)
+		if !viewmodel {viewmodel_keep(s, index, false)}
+		if viewmodel {cut |= INSTANCE_VIEWMODEL | INSTANCE_UNSHADOWED}
 		reach := pose_reach(mesh)
 		inverse, bmin, bmax, invertible := instance_placement(desc.transform, mesh.bounds_min - reach, mesh.bounds_max + reach)
 		key := Instance_Key{desc.object_id, desc.copy_owner, desc.copy_variant}
@@ -2086,8 +2105,8 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		if desc.outline_only {flags |= INSTANCE_FLAG_OUTLINE_ONLY}
 		if desc.uniform_color {flags |= INSTANCE_FLAG_UNIFORM_COLOR}
 		flags |= highlight_flags(desc.highlight)
-		flags |= (desc.layers & LAYERS_ALL if desc.layers & LAYERS_ALL != 0 else 1) << INSTANCE_LAYERS_SHIFT
-		if desc.owner != 0 {flags |= INSTANCE_FLAG_OWNED | (u32(desc.owner - 1) & 3) << INSTANCE_OWNER_SHIFT}
+		if !viewmodel {flags |= (desc.layers & LAYERS_ALL if desc.layers & LAYERS_ALL != 0 else 1) << INSTANCE_LAYERS_SHIFT}
+		if desc.owner != 0 {flags |= (u32(desc.owner - 1) & 3) << INSTANCE_OWNER_SHIFT | (0 if viewmodel else INSTANCE_FLAG_OWNED)}
 		if desc.highlight != 0 {s.highlighted += 1}
 		if hidden {s.hidden_count += 1}
 		material := u32(desc.material) if desc.material != 0 && int(desc.material) < len(s.materials) else GPU_NONE
@@ -2220,7 +2239,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
         changed:=flags~s.instances[index].meta.w
         classification||=changed&(INSTANCE_FLAG_BLENDED|INSTANCE_FLAG_HIDDEN)!=0
-        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || before.tested!=s.instances[index].tested || (before.meta.x~s.instances[index].meta.x)&INSTANCE_UNSHADOWED!=0
+        ray_properties||=classification || changed&INSTANCE_FLAG_ALPHA_TESTED!=0 || before.tested!=s.instances[index].tested || (before.meta.x~s.instances[index].meta.x)&(INSTANCE_UNSHADOWED|INSTANCE_VIEWMODEL)!=0
         instance_touch(s, index)
     }
     if truncate && end<old {
@@ -2229,6 +2248,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             occluder_moved(s,OCCLUDERS_MANY,s.instances[index],INSTANCE_ABSENT)
             instance_changed_near(s,&s.instances[index])
             if mesh_displaced(s,s.instances[index].meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
+            if s.instances[index].meta.x&INSTANCE_VIEWMODEL!=0 {viewmodel_keep(s,u32(index),false)}
             instance_unlink(s,u32(index))
         }
         s.ray_cuts_stale=true
@@ -3012,7 +3032,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.translucent_cell_jobs, s.translucent_entries, s.decal_entries, s.decal_draws, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.viewmodel_list, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.translucent_cell_jobs, s.translucent_entries, s.decal_entries, s.decal_draws, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)
@@ -3029,6 +3049,8 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.decal_runs)
 	delete(s.decal_meshes)
 	delete(s.instances)
+	delete(s.viewmodel_instances)
+	delete(s.viewmodel_list_words)
 	delete(s.instance_next)
 	delete(s.instance_prev)
 	delete(s.shadow_changes)
@@ -3072,6 +3094,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.tlas_refs)
 	delete(s.tlas_items)
 	delete(s.tlas_scratch)
+	delete(s.tlas_scratch_refs)
 	delete(s.touched)
 	delete(s.hw_instances)
 	delete(s.lights)

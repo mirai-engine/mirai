@@ -19,7 +19,7 @@ float instance_scale(Instance inst) {
 // whose values fade it (its rows that are not blended), or an instance of a
 // batch near its cull distance.
 float instance_fade(uint index, Instance inst) {
-    float fade = max(view_body_fade(inst), material_values_fade(inst.material_values));
+    float fade = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values));
     if (instance_batched(index)) fade = max(fade, batch_faded(batch_row(batch_of(index)), inst.bounds_min.xyz, inst.bounds_max.xyz));
     return fade;
 }

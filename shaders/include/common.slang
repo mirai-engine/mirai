@@ -120,8 +120,6 @@ struct Frame_Data {
     uint4 moved;             // what casts shadows and changed since the frame before (occluder_changed of trace.slang): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
     float4 moved_boxes[OCCLUDER_CHANGES_MAX * 2]; // low (w: the instance, as bits; OCCLUDERS_MANY: several), then high, relative to the origin
     uint4 moved_lights[LIGHT_MOVES_MAX / 4];
-    float4 viewmodel[3];      // what takes a place of the viewmodel of the view from its eye to where it draws it, from its eye: rows, w of the first what a normal gains along camera_forward (render/viewmodel.odin)
-    float4 prev_viewmodel[3]; // the same in the frame before, from prev_eye
     float4 sun_shares;       // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
     uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (render.shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
     uint4 sun_map_rows[SUN_MAP_ROWS];
