@@ -683,7 +683,7 @@ skins_bounds :: proc(r:^Renderer) {
         if !mesh.skin.bounds_dirty {continue}
         mesh.skin.bounds_dirty=false
         for index:=mesh.first_instance;index>=0;index=s.instance_next[index] {
-            changed||=pose_instance_box(s,u32(index))
+            if pose_instance_box(s,u32(index)) {changed=true}
         }
     }
     if !changed {return}
