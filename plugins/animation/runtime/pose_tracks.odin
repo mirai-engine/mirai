@@ -376,7 +376,7 @@ stack_inertia_apply :: proc(state:^Playing,dt:f32,previous_target:bool) {
     }
     if inertia.state.active {
         curves_flatten(state.curves[:],target)
-        if !lib.inertial_advance(&inertia.state,0 if transition>0 && inertia.kept>0 else dt) || !lib.inertial_pose_apply(inertia.state,inertia.bones[:],playing_pose(state,.Local),playing_pose(state,.Local)) || !lib.inertial_curves_apply(inertia.state,inertia.curves[:],target,target) {inertia.state={}} else {
+        if !lib.inertial_advance(&inertia.state,dt) || !lib.inertial_pose_apply(inertia.state,inertia.bones[:],playing_pose(state,.Local),playing_pose(state,.Local)) || !lib.inertial_curves_apply(inertia.state,inertia.curves[:],target,target) {inertia.state={}} else {
             for &curve,k in state.curves {for &v,j in curve.value {v=target[k*5+j]};curve.weight=mm.saturate(target[k*5+4])}
         }
     }

@@ -1029,6 +1029,38 @@ a_jump_nothing_forces_waits_the_hold_after_the_one_before :: proc(t:^testing.T) 
     testing.expectf(t,last>=0 && gap!=max(int) && f32(gap)*dt>=info.hold-1e-4,"jumps come at least %.2f s apart, not %d ticks",info.hold,gap)
 }
 
+// The tick a jump of matching blends in moves the pose on: it is not the pose of the tick before
+// held for a tick.
+@(test)
+a_jump_of_matching_moves_the_pose_in_its_own_tick :: proc(t:^testing.T) {
+    Case :: struct {name:string,walk,stand:int}
+    cases:=[?]Case{{name="walk to stand",walk=40,stand=20},{name="walk and stand by turns",walk=12,stand=12}}
+    dt:=f32(1.0/60)
+    for c in cases {
+        f:Match_Fixture;defer match_fixture_free(&f)
+        if !testing.expect(t,match_fixture(t,&f)) {continue}
+        f.graphs.contents[0].set.match.info.lag=0
+        poses:[dynamic][4]mm.Vec3;defer delete(poses)
+        jumps,checked:=u32(0),0
+        for tick in 0..<120 {
+            speed:=f32(1.5) if tick%(c.walk+c.stand)<c.walk else 0
+            if !testing.expect(t,match_step(&f,dt,GROUND,velocity={0,0,-speed},desired={0,0,-speed})) {break}
+            pose:[4]mm.Vec3
+            for b in 0..<4 {pose[b]=playing_pose(f.state,.Local)[b].position}
+            append(&poses,pose)
+            value,_:=animation_match(core.ref(&f.playback),f.rig)
+            jumped:=value.jumps>jumps;jumps=value.jumps
+            if !jumped || tick<12 {continue}
+            moved,held:f32
+            for b in 0..<4 {moved=max(moved,linalg.length(poses[tick-1][b]-poses[tick-2][b]));held=max(held,linalg.length(pose[b]-poses[tick-1][b]))}
+            if moved<1e-3 {continue}
+            checked+=1
+            testing.expectf(t,held>.1*moved,"%s: the jump at tick %d moves the pose %.5f m, after %.5f m the tick before",c.name,tick,held,moved)
+        }
+        testing.expectf(t,checked>0,"%s: a jump left a moving pose",c.name)
+    }
+}
+
 // With stationary_speed, a body that turns around passes through rest for a tick: it goes on
 // with the clips that travel. One that pushes into a wall goes nowhere and stands.
 @(test)
