@@ -17,4 +17,5 @@ Test_Seats :: struct {
     remotes:core.Table(core.Remote),
     hold_requests:Hold_Requests,
     context_requests:Context_Requests,
+    kicks:Look_Kicks,
 }

@@ -48,3 +48,33 @@ linalg_near :: proc(a,b:[3]f32,within:f32=1e-4) -> bool {
     d:=a-b
     return d.x*d.x+d.y*d.y+d.z*d.z<=within*within
 }
+
+// A kick turns the look of the Move_Input of its body in the next tick, adding to where it looks;
+// a body without one is left alone, and a kick that names none or turns more than half a turn is
+// refused.
+@(test)
+a_look_kick_turns_the_look_of_its_body :: proc(t:^testing.T) {
+    w:Test_Seats
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    body,other:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.moves,body,Move_Input{look_yaw=math.PI-0.01,look_pitch=0.1})
+    test_world_settle(&w)
+    problems:core.Problems
+    look_kick(&w.kicks,body,0.02,0.05)
+    look_kick(&w.kicks,body,0,0.05)
+    look_kick(&w.kicks,other,0.5,0.5)
+    look_kick(&w.kicks,core.NONE,0,0.1)
+    look_kick(&w.kicks,body,0,f32(0h7fc00000))
+    look_kick(&w.kicks,body,4,0)
+    input_look_kicks(&w.kicks,&w.moves,&problems)
+    test_world_settle(&w)
+    move,_:=core.get(&w.moves,body)
+    testing.expectf(t,abs(move.look_yaw-(-math.PI+0.01))<1e-5 && abs(move.look_pitch-0.2)<1e-5,"%v",move)
+    testing.expect(t,!core.has(&w.moves,other))
+    testing.expect(t,core.problem_find(&problems,core.NONE,"input.look_kicks")!=nil,"the refused kicks are reported")
+    // Nothing asked: nothing written.
+    version:=w.moves.version
+    input_look_kicks(&w.kicks,&w.moves,&problems)
+    testing.expect_value(t,w.moves.version,version)
+}
