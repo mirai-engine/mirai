@@ -72,7 +72,7 @@ Sync :: struct {
     budget:int,   // what the tick may still make or let go
     waiting:bool, // something waits for the next tick
     resimulating:bool, // the tick ran before: what a job prepares is waited for here (Collider_Meshes)
-    unmade:bool,  // a body or character could not be made
+    unmade:bool,  // a body, a character or a shape found no room
 }
 
 // Makes the simulation of the world when it has none, before what asks of
@@ -202,7 +202,7 @@ physics_step :: proc(
             for row in 0..<core.count(colliders) {entity_sync(&s,core.entity_at(colliders,row))}
             for row in 0..<core.count(characters) {entity_sync(&s,core.entity_at(characters,row))}
             synced=!s.waiting
-            state.unmade=s.unmade?{w.body_count,w.character_count}:{}
+            state.unmade=s.unmade?{w.body_count,w.character_count,w.shape_count}:{}
             // Without them sealed_sync and poses_write have no room and every tick looks at all the bodies.
             if reserve(&state.sealed,core.count(rigids)+core.count(colliders)+core.count(characters)+(volumes!=nil?core.count(volumes):0))!=nil || reserve(&state.touched,2*len(state.links.values))!=nil {
                 memory_problem(problems,core.NONE,"the bodies whose Transform changes, so every tick looks at all of them")
@@ -380,11 +380,12 @@ sealed_sync :: proc(s:^Sync,structure:u64) -> bool {
     return !s.waiting
 }
 
-// Whether a body or a character was let go since a whole sync left one unmade: the next sync is whole and
-// tries it again. Until then a sync goes only through what changed.
+// Whether a body, a character or a shape was let go since a whole sync left one unmade: the next sync is
+// whole and tries it again. Until then a sync goes only through what changed.
 @(private)
 unmade_room :: proc "contextless" (state:^Physics_State) -> bool {
-    return state.world.body_count<state.unmade[0] || state.world.character_count<state.unmade[1]
+    w:=&state.world
+    return w.body_count<state.unmade[0] || w.character_count<state.unmade[1] || w.shape_count<state.unmade[2]
 }
 
 // Whether something e hangs from has its Transform sealed since: its walk takes e.
@@ -722,8 +723,10 @@ body_sync :: proc(s:^Sync,e:core.Entity,l:^Link,rigid:Rigid_Body,has_rigid,rigid
             }
             geometry_release(s,l)
             if _,sheared:=compound_relative(s,e,core.NONE);sheared {shape_problem(s,e,collider,.Sheared)}
-            if failure:=collider_shapes_make(s,l,e,l.body,collider,scale,filter);failure!=.None {shape_problem(s,e,collider,failure)}
-            l.made=key
+            failure:=collider_shapes_make(s,l,e,l.body,collider,scale,filter)
+            if failure!=.None {shape_problem(s,e,collider,failure)}
+            // Refused for room, it stays unmade: the sync after a shape is let go makes it (unmade_room).
+            l.made=failure==.Shapes_Full?0:key
             mass_changed=true
         } else {shapes_restyle(s,l,collider,filter,collider_changed)}
     }
@@ -859,8 +862,9 @@ compound_sync :: proc(s:^Sync,e:core.Entity,l:^Link,collider:Collider,owner:core
     state.stats.shapes_destroyed+=pieces_shapes_destroy(s,l)
     geometry_release(s,l)
     if sheared {shape_problem(s,e,collider,.Sheared)}
-    if failure:=collider_shapes_make(s,l,e,holder,collider,scale,filter,&relative);failure!=.None {shape_problem(s,e,collider,failure)}
-    l.kind,l.owner,l.body,l.made,l.pose=.Compound,owner,holder,key,pose
+    failure:=collider_shapes_make(s,l,e,holder,collider,scale,filter,&relative)
+    if failure!=.None {shape_problem(s,e,collider,failure)}
+    l.kind,l.owner,l.body,l.made,l.pose=.Compound,owner,holder,failure==.Shapes_Full?0:key,pose
 }
 
 // Moves the shapes of a compound on a static body from where they are to pose, each keeping its offset. False
@@ -1136,13 +1140,14 @@ collider_shapes_make :: proc(s:^Sync,l:^Link,e:core.Entity,body:sim.Body_Handle,
     }
     if relative!=nil {desc.transform={relative.position+mm.quat_rotate(relative.rotation,desc.transform.p),relative.rotation}}
     l.shape=failure==.None?sim.shape_create(w,body,desc):{}
-    if failure==.None && l.shape=={} {failure=.Shapes}
+    if failure==.None && l.shape=={} {failure=int(w.shape_count)<w.desc.shape_capacity?.Shapes:.Shapes_Full}
     for &piece in pieces_of(state,l) {
         if failure!=.None {break}
         desc.geometry=piece.hull
         piece.shape=sim.shape_create(w,body,desc)
-        if piece.shape=={} {failure=.Shapes}
+        if piece.shape=={} {failure=int(w.shape_count)<w.desc.shape_capacity?.Shapes:.Shapes_Full}
     }
+    if failure==.Shapes_Full {s.unmade=true}
     if failure!=.None {
         if l.shape!={} {sim.shape_destroy(w,l.shape)}
         l.shape={}

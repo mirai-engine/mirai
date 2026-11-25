@@ -6,7 +6,7 @@ import "mirai:std/base"
 
 // Why a collider has no shape in the simulation.
 @(private)
-Shape_Failure :: enum u8 {None,No_Mesh,Mesh_Unreadable,No_Heightfield,Mirrored_Heightfield,Hull,Geometry_Budget,Shapes,Convex_Radius,Sheared}
+Shape_Failure :: enum u8 {None,No_Mesh,Mesh_Unreadable,No_Heightfield,Mirrored_Heightfield,Hull,Geometry_Budget,Shapes,Shapes_Full,Convex_Radius,Sheared}
 
 @(private)
 shape_problem :: proc(s:^Sync,e:core.Entity,collider:Collider,failure:Shape_Failure) {
@@ -35,7 +35,9 @@ shape_problem :: proc(s:^Sync,e:core.Entity,collider:Collider,failure:Shape_Fail
     case .Convex_Radius:
         core.report(s.problems,e,"physics.convex_radius","its %v Collider has a convex_radius of %v m, which leaves its shape no core: at the scale of the entity it must be below the smallest half extent of a Box, the radius and half height of a Cylinder, or the distance from the center of a Hull to its nearest face; lower convex_radius",collider.kind,collider.convex_radius)
     case .Shapes:
-        core.report(s.problems,e,"physics.shapes","the simulation refused the shape of its %v Collider: the %d shapes of Physics_Settings.shapes are in use, or its size is zero or not finite; raise shapes, or fix Collider.size",collider.kind,w.desc.shape_capacity)
+        core.report(s.problems,e,"physics.shapes","the simulation refused the shape of its %v Collider: its size is zero or not finite; fix Collider.size",collider.kind)
+    case .Shapes_Full:
+        core.report(s.problems,e,"physics.shapes","its %v Collider has no shape yet: the %d shapes of Physics_Settings.shapes are in use, and it is made when one is let go; raise shapes, or use fewer colliders",collider.kind,w.desc.shape_capacity)
     }
 }
 
