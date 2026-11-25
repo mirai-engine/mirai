@@ -582,7 +582,7 @@ world_light_forget :: proc(renderer:^Renderer,id:core.World_Id) {
 render_sync :: proc(
     sync:^Render_Sync,app:^host.App,id:core.World_Id,frame:core.Frame_Time,view:core.View,
     worlds:^core.Table(core.World_Transform,.Read),meshes:^core.Table(Mesh_Renderer,.Read),values:^core.Table(Material_Values,.Read),lives:^core.Table(Material_Live,.Read),
-    hidden:^core.Table(Hidden,.Read),elsewhere:^core.Table(Drawn_Elsewhere,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
+    hidden:^core.Table(Hidden,.Read),carried:^core.Table(core.Carried,.Read),elsewhere:^core.Table(Drawn_Elsewhere,.Read),parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),
     suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),bounces:^core.Table(Bounce_Light,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
@@ -591,7 +591,7 @@ render_sync :: proc(
     a:=app.assets
     r:=app.renderer
     if a==nil || r==nil || app.ui_only {return}
-    t:=Sync_Tables{worlds,meshes,values,lives,hidden,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{}}
+    t:=Sync_Tables{worlds,meshes,values,lives,hidden,carried,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{}}
     if bodies.ptr!=nil {t.owned=bodies.bodies}
     releases,local_assets:=host.assets_structure_changes(a,sync.assets_structure)
     for change in releases {if change.id=={} {local_assets=false}}
@@ -632,6 +632,7 @@ render_sync :: proc(
     // Hiding, showing, moving under another or offsetting redraws what hangs from it.
     clear(&sync.under)
     changes_gather(sync,hierarchy,hidden,c.hidden,true)
+    changes_gather(sync,hierarchy,carried,c.carried,true)
     changes_gather(sync,hierarchy,parents,c.parents,true)
     shaded:=len(sync.under) // those whose lights are hidden or shown with them
     changes_gather(sync,hierarchy,offsets,c.offsets,true)
@@ -804,6 +805,7 @@ Sync_Tables :: struct {
     values:^core.Table(Material_Values,.Read),
     lives:^core.Table(Material_Live,.Read),
     hidden:^core.Table(Hidden,.Read),
+    carried:^core.Table(core.Carried,.Read), // a rider of a mount that hides it is not drawn
     elsewhere:^core.Table(Drawn_Elsewhere,.Read),
     parents:^core.Table(core.Parent,.Read),
     highlights:^core.Table(Highlight,.Read),
@@ -822,9 +824,9 @@ Sync_Tables :: struct {
 
 // What each table was when the sync last looked, and what it changed since.
 @(private)
-Sync_Seen :: struct {meshes,worlds,values,lives,hidden,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions:core.Seen}
+Sync_Seen :: struct {meshes,worlds,values,lives,hidden,carried,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions:core.Seen}
 @(private)
-Sync_Changes :: struct {meshes,worlds,values,lives,hidden,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions:core.Changes}
+Sync_Changes :: struct {meshes,worlds,values,lives,hidden,carried,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions:core.Changes}
 
 // What the tables changed since the last frame. whole: one of them is other
 // rows than the sync saw, and what it lost is not known.
@@ -833,12 +835,12 @@ sync_changes :: proc(sync:^Render_Sync,t:Sync_Tables) -> (c:Sync_Changes,whole:b
     s:=&sync.seen
     c={
         meshes=core.changes(t.meshes,&s.meshes),worlds=core.changes(t.worlds,&s.worlds),values=core.changes(t.values,&s.values),lives=core.changes(t.lives,&s.lives),
-        hidden=core.changes(t.hidden,&s.hidden),elsewhere=core.changes(t.elsewhere,&s.elsewhere),parents=core.changes(t.parents,&s.parents),
+        hidden=core.changes(t.hidden,&s.hidden),carried=core.changes(t.carried,&s.carried),elsewhere=core.changes(t.elsewhere,&s.elsewhere),parents=core.changes(t.parents,&s.parents),
         offsets=core.changes(t.offsets,&s.offsets),layers=core.changes(t.layers,&s.layers),
         highlights=core.changes(t.highlights,&s.highlights),outlines=core.changes(t.outlines,&s.outlines),points=core.changes(t.points,&s.points),
         spots=core.changes(t.spots,&s.spots),rects=core.changes(t.rects,&s.rects),emissions=core.changes(t.emissions,&s.emissions),
     }
-    whole=c.meshes.all || c.worlds.all || c.values.all || c.lives.all || c.hidden.all || c.elsewhere.all || c.parents.all || c.offsets.all
+    whole=c.meshes.all || c.worlds.all || c.values.all || c.lives.all || c.hidden.all || c.carried.all || c.elsewhere.all || c.parents.all || c.offsets.all
     whole||=c.layers.all || c.highlights.all || c.outlines.all || c.points.all || c.spots.all || c.rects.all || c.emissions.all
     return
 }
@@ -996,7 +998,7 @@ instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Ren
         if _,_,known:=gpu.mesh_bounds(a.renderer,pose.mesh);known {instance.mesh=pose.mesh}
     }
     instance.object_id=u64(e)
-    instance.hidden=is_hidden(t.hidden,t.parents,e)
+    instance.hidden=is_hidden(t.hidden,t.parents,e) || rider_hidden(t.carried,t.parents,e)
     if !instance.hidden {instance.highlight=instance_outline(t.highlights,t.outlines,e)}
     if in_layers,has_layers:=core.get(t.layers,e);has_layers {instance.layers=in_layers.mask}
     instance.owner=body_owner(t,e)
@@ -1106,6 +1108,20 @@ instance_object :: proc(renderer:^Renderer,instance:int) -> u64 {
 // Whether e or something above it is Hidden.
 is_hidden :: proc(hidden:^core.Table(Hidden,$A),parents:^core.Table(core.Parent,$B),e:core.Entity) -> bool {
     return core.count(hidden)>0 && core.ancestor_with(parents,hidden,e)!=core.NONE
+}
+
+// Whether e, or something it hangs from, rides a mount that hides its rider.
+rider_hidden :: proc(carried:^core.Table(core.Carried,$A),parents:^core.Table(core.Parent,$B),e:core.Entity) -> bool {
+    if carried==nil || core.count(carried)==0 {return false}
+    at:=e
+    for _ in 0..=core.HIERARCHY_DEPTH {
+        if at==core.NONE {return false}
+        if rider,ok:=core.get(carried,at);ok && rider.hidden {return true}
+        parent,hung:=core.get(parents,at)
+        if !hung {return false}
+        at=parent.entity
+    }
+    return false
 }
 
 // Where an entity is drawn: between its last two simulated places, at the alpha of the frame.

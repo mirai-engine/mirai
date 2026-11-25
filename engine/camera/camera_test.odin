@@ -310,7 +310,7 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     }
 
     select(f)
-    testing.expect(t,first_of(camera_selected(core.ref(&f.selected),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"without the action, the camera of the body")
+    testing.expect(t,first_of(camera_selected(core.ref(&f.selected),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),core.read(&f.carried),seat))==base,"without the action, the camera of the body")
     testing.expect(t,!has_problem(&f.problems,"camera.activation"),"an unassigned activation waits for an action")
     core.edit(&f.activations,stray).action=input.Action(input.ACTION_CAPACITY)
     select(f)
@@ -319,12 +319,12 @@ a_camera_with_an_activation_is_seen_while_its_player_holds_the_action :: proc(t:
     held:=input.seat_runtime_edit(&f.seat_runtime,seat)
     held.actions.states[AIM].down=true
     select(f)
-    chosen,blend:=camera_selected(core.ref(&f.selected),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat)
+    chosen,blend:=camera_selected(core.ref(&f.selected),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),core.read(&f.carried),seat)
     testing.expect(t,chosen==aim && blend.seconds==0.25,"while it is held, the camera it brings, with its blend")
 
     held.actions.states[AIM].down=false
     select(f)
-    testing.expect(t,first_of(camera_selected(core.ref(&f.selected),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),seat))==base,"and back once it is let go")
+    testing.expect(t,first_of(camera_selected(core.ref(&f.selected),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),core.read(&f.carried),seat))==base,"and back once it is let go")
 }
 
 // On the side of a planet, where the up of a character is +X, the eyes sit

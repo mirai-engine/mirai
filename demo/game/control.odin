@@ -82,7 +82,7 @@ game_seats :: proc(
                 cam.camera_override(camera_requests,seat,seat,camera,blend=OVERHEAD_BLEND)
             }
         }
-        if camera:=cam.body_camera(hierarchy,cameras,body);camera!=core.NONE && inp.seat_pressed(actions,seat,.Camera_Mode) {
+        if camera:=cam.body_camera(hierarchy,cameras,nil,body);camera!=core.NONE && inp.seat_pressed(actions,seat,.Camera_Mode) {
             next:=cam.Camera_Preset.Third_Person
             if mode,preset:=cam.camera_preset_of(camera_follows,cameras,camera);preset {
                 cycle:=CAMERA_CYCLE
