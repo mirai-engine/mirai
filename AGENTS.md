@@ -125,16 +125,21 @@ Full table and session flow:
 
 Three levels; each party reports what ran and what remains without duplicating prior runs:
 
-- **Authoring agent:** `mirai check` on touched packages, focal `mirai test` (GPU + validation only
-  if `render`, `shaders`, `rhi` or GPU code changed). Docs only: `uv run scripts/check_docs.py`;
-  `ui`/`editor`: also `uv run scripts/check_ui_style.py`. Changes to `tools/mirai`, generator,
-  components or steps also require a real project build.
-- **Integrator (per merged batch):** `mirai build editor`, whole touched packages (`--no-gpu`),
-  `mirai play test`, `mirai scene check`, and `mirai render check --views` if `render`/`shaders`/
-  `rhi` changed. Clean merges without conflicts need only `mirai check`.
+- **Authoring agent (per change):** `mirai check` and focal `mirai test --no-gpu` of the touched
+  packages, and a smoke check of what changed: `uv run scripts/check_docs.py` for docs, also
+  `uv run scripts/check_ui_style.py` for `ui`/`editor`, a real project build for `tools/mirai`,
+  generator, components or steps. The GPU tests of a touched package, with validation, only if
+  `render`, `shaders`, `rhi` or GPU code changed.
+- **Integrator (per batch):** `mirai build editor`, whole touched packages (`--no-gpu`),
+  `mirai play test` and `mirai scene check`; once at the close of a batch that changed `render`,
+  `shaders`, `rhi` or GPU code, the full GPU suite with validation and `mirai render check
+  --views`. Clean merges without conflicts need only `mirai check`.
 - **Multi-branch close (unloaded machine):** full test suite with validation,
   [render check](.agents/skills/mirai-rendering/references/verification.md#render-check), and game
   build.
+
+Never the full suite for a change that cannot affect it. Failures
+[known on the base](docs/KNOWN_FAILURES.md) are reported as a count, not investigated again.
 
 Solo changes include the integrator's checks: live call per touched method/flow, plus
 validation-clean captures (`mirai capture --reference` for render/import, `capture` with `ui` for
