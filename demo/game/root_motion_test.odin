@@ -57,7 +57,7 @@ animation_input_fixture_destroy :: proc(f:^Animation_Input_Fixture) {
 @(private)
 animation_input_physics :: proc(f:^Animation_Input_Fixture,time:core.Time) {
     places:core.Places
-    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.locomotion_states,&f.character_moves,&f.inputs,
+    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.locomotion_states,&f.character_moves,core.read(&f.remotes),
         core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.locomotion_requests,time,&f.problems)
     core.table_settle(&f.locomotion_states,&f.entities)
     locomotion.locomotion_step(core.read(&f.characters),&f.locomotion_states,&f.character_moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.body_states),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),{&f.physics},{&places},{},{},time,core.CLOCK_DEFAULT,&f.problems)

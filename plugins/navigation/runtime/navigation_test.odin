@@ -968,8 +968,8 @@ agents_test_step :: proc(f:^Nav_Test,late:Maybe(core.Place_Request)=nil) {
         core.place({&f.transforms,core.read(&f.parents),&f.places,&f.jumps},
                    asked.entity,asked.position,asked.rotation,at_rest=asked.at_rest)
     }
-    navigation_crossing(&f.run,&f.paths,&f.inputs,core.ref(&f.seat_state),core.ref(&f.places),&f.loco,&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
-    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,&f.inputs,
+    navigation_crossing(&f.run,&f.paths,&f.inputs,core.ref(&f.seat_state),core.ref(&f.places),&f.loco,core.read(&f.moves),core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
+    locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,core.read(&f.remotes),
         core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco,time,&f.problems)
     nav_test_settle(f)
     locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),core.read(&f.character_states),core.read(&f.bodies),core.read(&f.transforms),core.read(&f.parents),core.read(&f.remotes),core.ref(&f.state),core.ref(&f.places),{},{},time,core.CLOCK_DEFAULT,&f.problems)
@@ -2197,13 +2197,21 @@ the_crossing_of_links_looks_at_no_path_while_none_crosses :: proc(t:^testing.T) 
     nav_test_settle(&f)
     time:=core.Time{tick=1,seconds=1,dt=1.0/60,playing=true}
     cross :: proc(f:^Nav_Test,time:core.Time) {
-        navigation_crossing(&f.run,&f.paths,&f.inputs,core.ref(&f.seat_state),core.ref(&f.places),&f.loco,&f.moves,core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
+        navigation_crossing(&f.run,&f.paths,&f.inputs,core.ref(&f.seat_state),core.ref(&f.places),&f.loco,core.read(&f.moves),core.read(&f.characters),core.read(&f.walks),core.read(&f.bodies),core.read(&f.worlds),core.ref(&f.state),core.ref(&f.nav_crossings),time)
+    }
+    claimed :: proc(f:^Nav_Test,e:core.Entity) -> (move:phys.Character_Move,found:bool) {
+        for r in f.loco.queue.items {
+            if r.kind==.Claim_Mode && r.entity==e && r.mode==MODE_NAV_LINK {move,found=r.claim,true}
+        }
+        return
     }
     cross(&f,time)
-    testing.expect(t,core.edit(&f.moves,e)^=={},"With no crossing counted, the path was looked at")
+    _,looked:=claimed(&f,e)
+    testing.expect(t,!looked,"With no crossing counted, the path was looked at")
     f.nav_crossings.count=1
     cross(&f,time)
-    testing.expect(t,.No_Gravity in core.edit(&f.moves,e).value.flags,"With a crossing counted, the ladder is not climbed")
+    move,found:=claimed(&f,e)
+    testing.expect(t,found && .No_Gravity in move.value.flags,"With a crossing counted, the ladder is not climbed")
     // Navigation counts those that cross as it steers them, and none once they are done.
     core.edit(&f.paths,e).state=.Idle
     f.nav_crossings.count=7

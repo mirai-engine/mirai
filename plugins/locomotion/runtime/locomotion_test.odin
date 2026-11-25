@@ -335,9 +335,9 @@ layered_moves_go_on_top_of_the_move_of_a_mode_of_the_game :: proc(t:^testing.T) 
     testing.expect_value(t,move,swim)
 }
 
-// A custom mode owns the Character_Move its owner writes: locomotion keeps its yaw, its flags
-// (no Reach_Drive added), its gravity scale over one asked of locomotion and its height over a
-// crouch, and only composes its layered moves on top, without carrying them to the next tick.
+// A custom mode owns the Character_Move its owner claims it with: locomotion keeps its yaw, its
+// flags (no Reach_Drive added), its gravity scale over one asked of locomotion and its height over
+// a crouch, and only composes its layered moves on top, without carrying them to the next tick.
 @(test)
 a_custom_mode_owns_its_move_and_layered_moves_compose_on_top :: proc(t:^testing.T) {
     f:Loco_Test
@@ -345,11 +345,10 @@ a_custom_mode_owns_its_move_and_layered_moves_compose_on_top :: proc(t:^testing.
     defer loco_test_destroy(&f)
     loco_test_tick(&f,{},20)
     CUSTOM :: Locomotion_Mode(16)
-    set_mode(&f.loco_requests,f.e,CUSTOM)
     set_gravity_scale(&f.loco_requests,f.e,3)
     written:=phys.Character_Move{value={air={velocity={1,0,0},force=500},yaw=1.25,flags={.Airborne,.No_Gravity},gravity_scale=2},height=1.1}
     for added in ([3][3]f32{{},{0,0,2},{}}) {
-        core.edit(&f.moves,f.e)^=written
+        claim_mode(&f.loco_requests,f.e,CUSTOM,written)
         if added!={} {add_move(&f.loco_requests,f.e,{velocity=added,ticks=1,mix=.Additive,id=7})}
         loco_test_tick(&f,{0,0,-1},1,CROUCH|JUMP,yaw=2)
         move,_:=core.get(&f.moves,f.e)
@@ -651,7 +650,8 @@ derived_rows_follow_their_character_and_mode_owners :: proc(t:^testing.T) {
         }
         loco_test_tick(&f,{})
         testing.expect(t,!core.has(&f.loco_states,f.e) && !core.has(&f.slide_states,f.e))
-        testing.expect(t,!core.has(&f.inputs,f.e) && !core.has(&f.moves,f.e))
+        // Its Move_Input is what a seat or a game wrote: locomotion leaves it.
+        testing.expect(t,core.has(&f.inputs,f.e) && !core.has(&f.moves,f.e))
         testing.expect_value(t,core.has(&f.character_states,f.e),removed=="walk")
     }
 }

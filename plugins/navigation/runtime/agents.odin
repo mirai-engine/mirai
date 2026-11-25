@@ -38,7 +38,8 @@ import phys "plugins:physics/runtime"
 // the surface as wide and tall as its class, and navigation moves it itself
 // (agents_walk), writing its Transform and its core.Motion.
 
-// The engine crosses links in it: navigation writes the Character_Move.
+// The engine crosses links in it: navigation claims it with the Character_Move of every tick of
+// the crossing (navigation_crossing).
 @(name_requires="Nav_Agent")
 MODE_NAV_LINK :: locomotion.Locomotion_Mode(8)
 
@@ -114,7 +115,7 @@ Nav_Route :: struct {
     medium,through,queued:bool,
     passthrough,placed:bool,
     seat:enum u8 {None,Player,Shared},
-    release:enum u8 {None,Collision,Falling},
+    release:enum u8 {None,Collision},
     anchor:mm.Vec3,
     launch:mm.Vec3, // where it began its crossing
     walked:mm.Vec3, // where navigation last saw or put one without a body
@@ -702,11 +703,7 @@ agents_sync :: proc(
             r:=&a.routes.values[i]
             can_drive:=core.has(characters,e)
             if can_drive {
-                switch r.release {
-                case .None:
-                case .Collision: locomotion.set_suspended(loco,e,false)
-                case .Falling: locomotion.set_mode(loco,e,locomotion.MODE_FALLING)
-                }
+                if r.release==.Collision {locomotion.set_suspended(loco,e,false)}
                 r.release=.None
             }
             has_agent:=core.raw_row(core.raw(agents),e)>=0
@@ -715,7 +712,6 @@ agents_sync :: proc(
             requests:=loco if can_drive else nil
             if parked && r.passthrough {r.release=.Collision}
             if p:=cast(^Nav_Path)core.raw_edit(core.raw(paths),type_info_of(Nav_Path),e);p!=nil {
-                if parked && p.state==.Crossing && !p.manual && !r.medium {r.release=.Falling}
                 agent_reset(a,p,r,e,requests)
             } else {agent_release_link(a,r,e,requests)}
             r.queued=false
@@ -792,9 +788,6 @@ agent_stop_crossing :: proc(
     a:^Navigation_Agents,p:^Nav_Path,r:^Nav_Route,e:core.Entity,
     loco:^locomotion.Locomotion_Requests,
 ) {
-    if loco!=nil && !r.bodyless && p.state==.Crossing && !p.manual && !r.medium {
-        locomotion.set_mode(loco,e,locomotion.MODE_FALLING)
-    }
     agent_release_link(a,r,e,loco)
     p.link_entity,p.manual=core.NONE,false
 }
@@ -933,7 +926,6 @@ agent_begin_link :: proc(
              kind!=LINK_JUMP && kind!=LINK_DROP && kind!=LINK_CLIMB && kind!=LINK_LADDER
     if !r.bodyless {
         if r.passthrough {locomotion.set_suspended(loco,e,true)}
-        if !p.manual {locomotion.set_mode(loco,e,MODE_NAV_LINK)}
     }
     core.push(&events.queue,Nav_Event{
         kind=.Crossing,entity=e,link_entity=owner,link=kind,manual=p.manual,from=from,to=to,
@@ -1841,7 +1833,7 @@ agent_carried :: proc "contextless" (p:Nav_Path,r:Nav_Route,speed,gravity:f32) -
 navigation_crossing :: proc(
     a:^Navigation_Agents,paths:^core.Table(Nav_Path),
     inputs:^core.Table(input.Move_Input),seat_state:core.Ref(input.Seats),places:core.Ref(core.Places),
-    loco:^locomotion.Locomotion_Requests,moves:^core.Table(phys.Character_Move),
+    loco:^locomotion.Locomotion_Requests,moves:^core.Table(phys.Character_Move,.Read),
     characters:^core.Table(phys.Character,.Read),
     walks:^core.Table(locomotion.Walk,.Read),motions:^core.Table(core.Motion,.Read),worlds:^core.Table(core.World_Transform,.Read),
     physics:core.Ref(phys.Physics_State),crossings:core.Ref(Nav_Crossings),time:core.Time,
@@ -1854,9 +1846,9 @@ navigation_crossing :: proc(
         e:=core.entity_at(paths,row)
         r:=agent_route(a,e)
         if r==nil || r.medium {continue}
-        move:=core.edit(moves,e)
+        move,moved:=core.get(moves,e)
         character,ok:=core.get(characters,e)
-        if move==nil || !ok {continue}
+        if !moved || !ok {continue}
         pose,_:=core.get(worlds,e)
         motion,_:=core.get(motions,e)
         walk,_:=core.get(walks,e)
@@ -1880,6 +1872,6 @@ navigation_crossing :: proc(
             next.value.air={velocity=d/max(length,1e-4)*min(speed,length/max(time.dt,1e-4)),force=traction}
             next.value.flags={.Airborne,.Drive_Vertical,.No_Gravity}
         }
-        if move^!=next {move^=next}
+        locomotion.claim_mode(loco,e,MODE_NAV_LINK,next)
     }
 }

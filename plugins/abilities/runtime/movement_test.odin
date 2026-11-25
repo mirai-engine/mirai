@@ -130,7 +130,7 @@ movement_tick :: proc(f:^Movement,move:[3]f32,ticks:=1,buttons:=inp.Action_Mask(
         w:=movement_world(f)
         abilities_tick({&f.users,&f.states,&f.tracking},{abilities={&f.set}},&f.cache,&f.checks,&f.ability_requests,nil,&w,physics_overlap)
         test_world_settle(&f.w)
-        locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,&f.inputs,
+        locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,core.read(&f.remotes),
             core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco_requests,f.time,&f.problems)
         test_world_settle(&f.w)
         locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),

@@ -154,8 +154,9 @@ tables and is the only package that imports it. The game and the other plugins, 
   package of the engine, tests and tools included, and in a game. A library makes static collision
   of its own with the owned bodies of the integration, and what breaks with its breakables.
 - A Character's body and its look both face -Z.
-- A character moves only through its `Character_Move`: locomotion writes it and, in a game mode,
-  the step of that mode writes it first, to which locomotion only adds the layered movements.
+- A character moves only through its `Character_Move`: locomotion writes it and, in a custom mode,
+  takes it from the owner that claims the mode every tick (`claim_mode`), to which it only adds the
+  layered movements; a tick without a claim gives the character back to its default mode.
 - Locomotion is a plugin on top of physics: it drives characters only through the facade, and
   `physics` imports nothing of it. A walker is `Character` + `Walk`; the mode it starts in follows
   from its mode components. Its one input is `input.Move_Input`: the seat that drives it writes
@@ -223,7 +224,8 @@ tables and is the only package that imports it. The game and the other plugins, 
     Editor: `collision`, `api_collision`, `colliders`, `view_mode`, `bodies`, `settle`.
   - Locomotion, on the world through the facade (`test_world_test.odin`): `locomotion` (walk, jump,
     coyote, layers, flight, swimming, start mode, locks, custom-mode ownership), `crouch`,
-    `slide`, `mantle` (on the custom-mode extension point), `planet` (own vertical: walking,
+    `slide`, `mantle` (on the custom-mode extension point, and a removed owner that hands the
+    character back on the next tick), `planet` (own vertical: walking,
     jumping and a world copy on a planet, crossing fields), `pace`; editor: `bodies`.
   - `destruct`: `integration`. `geometry_test` does not need a GPU. Grounding with real bodies:
     `demo/game/grounding_physics_test.odin`.

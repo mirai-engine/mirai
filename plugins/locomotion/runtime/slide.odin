@@ -8,9 +8,8 @@ import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
 // A slide is a custom mode written on the extension point of locomotion: slide_step runs before
-// locomotion_prepare, asks for MODE_SLIDING with set_mode and writes the Character_Move of every
-// tick of it, and hands the character back to its walk with set_mode. Without Slide rows it costs
-// nothing.
+// locomotion_prepare, claims MODE_SLIDING with the Character_Move of every tick of it (claim_mode)
+// and hands the character back to its walk with set_mode. Without Slide rows it costs nothing.
 @(name_requires="Slide") MODE_SLIDING :: Locomotion_Mode(5)
 
 @(component,replicated,description="The character can slide (mode sliding of its Character): crouching while it runs at start_speed or faster, or landing at land_speed with crouch pressed within buffer before (or held), it slides along the ground at its speed, at least min_speed and at most max_speed, which gravity changes on a slope and friction takes, steering toward its move a little. It stops after time unless the ground falls away along its course, when something stops it, or with a jump. It needs a Walk with a crouch_height, the height it slides at.")
@@ -50,7 +49,7 @@ slide_step :: proc(
     slides:^core.Table(Slide,.Read),states:^core.Table(Slide_State),locos:^core.Table(Locomotion_State,.Read),
     walks:^core.Table(Walk,.Read),characters:^core.Table(phys.Character,.Read),colliders:^core.Table(phys.Collider,.Read),
     found:^core.Table(phys.Character_State,.Read),motions:^core.Table(core.Motion,.Read),inputs:^core.Table(input.Move_Input,.Read),
-    moves:^core.Table(phys.Character_Move),requests:^Locomotion_Requests,physics:core.Ref(phys.Physics_State),
+    requests:^Locomotion_Requests,physics:core.Ref(phys.Physics_State),
     paces:^core.Table(core.Own_Pace,.Read),walk_actions:input.Input_Of(Walk_Action),time:core.Time,clock:core.Clock,
 ) {
     for e in states.entities {
@@ -116,7 +115,6 @@ slide_step :: proc(
             if !(crouch_pressed && on && speed>=slide.start_speed || landing && speed>=slide.land_speed) {continue}
             s.buffer=0
             slide_start(s,current,up)
-            set_mode(requests,e,MODE_SLIDING)
         }
         gravity:=phys.gravity_of_entity(physics,e)*body.gravity_scale*locomotion_gravity(loco)
         velocity,ended:=slide_velocity(s,slide,n,up,current,wish,gravity,dt)
@@ -136,7 +134,7 @@ slide_step :: proc(
         next.value.flags={.Reach_Drive}
         next.value.gravity_scale=loco.gravity
         next.height=walk.crouch_height
-        if move:=core.edit(moves,e);move!=nil {move^=next} else {core.add(moves,e,next)}
+        claim_mode(requests,e,MODE_SLIDING,next)
     }
 }
 
