@@ -479,3 +479,31 @@ a_strain_weighs_as_a_volume_does_whole_inside_and_rising_over_its_blend :: proc(
         testing.expect(t,!strained)
     }
 }
+
+// A piece whose shape does not fit leaves the world alone: the pieces after it in the list still take
+// theirs on the body they go to.
+@(test)
+a_piece_without_room_for_its_shape_leaves_the_world_alone :: proc(t:^testing.T) {
+    w:World;testing.expect(t,test_destruct_world(&w));defer world_destroy(&w)
+    h,error:=test_authored_destructible(&w,false)
+    testing.expect_value(t,error,Breakable_Error.None)
+    d,index:=breakable_read(&w,h)
+    if !testing.expect(t,d!=nil) {return}
+    first:=d.piece_list
+    body:=shape_body(&w,w.pieces[first].shape)
+    other:=body_create(&w,BODY_DESC_DEFAULT)
+    // The first piece lost its shape, and something else took its room.
+    shape_destroy(&w,w.pieces[first].shape,false)
+    w.pieces[first].shape={}
+    filler:=SHAPE_DESC_DEFAULT
+    filler.geometry=Sphere{0.1}
+    for shape_create(&w,other,filler)!={} {}
+    break_bodies(&w,d)
+    w.breaking.body[first]=body
+    for slot:=w.pieces[first].next;slot>=0;slot=w.pieces[slot].next {w.breaking.body[slot]=other}
+    testing.expect(t,!break_collide(&w,index,false))
+    testing.expect_value(t,w.pieces[first].shape,Shape_Handle{})
+    for slot:=w.pieces[first].next;slot>=0;slot=w.pieces[slot].next {
+        testing.expectf(t,w.pieces[slot].shape!={} && shape_body(&w,w.pieces[slot].shape)==other,"piece %d is on the body it goes to",slot)
+    }
+}

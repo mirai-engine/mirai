@@ -595,7 +595,7 @@ break_collide :: proc(w:^World,index:i32,fold:bool) -> bool {
         piece_detach(w,slot)
         if body=={} {continue}
         if unit<0 {
-            ok&&=piece_attach(w,slot,body)
+            if !piece_attach(w,slot,body) {ok=false}
             continue
         }
         c:=&w.bonds[unit]
