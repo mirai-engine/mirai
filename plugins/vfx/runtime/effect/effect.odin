@@ -73,15 +73,17 @@ Particle_Gradient :: struct {
     times:[PARTICLE_CURVE_KEYS]f32 `mirai:"min=0,max=1"`,
 }
 
-// Dynamic point lights emitted by a particle effect, driven by its clock and
-// particle life. intensity or range of 0 disables light emission at zero cost.
+// The point light a layer of an effect gives at the entity of its emitter
+// while its particles live: its intensity and color follow color_over_life,
+// at the mean age of the particles alive. intensity or range of 0: none, at
+// no cost.
 Particle_Light :: struct {
     color:[3]f32 `mirai:"color"`,          // tint; {0,0,0} uses the effect's particle color
-    intensity:f32 `mirai:"min=0,unit=cd"`, // peak candela per emitted light; 0 disables
+    intensity:f32 `mirai:"min=0,unit=cd"`, // at full color_over_life alpha; 0 disables
     range:f32 `mirai:"min=0,unit=m"`,      // attenuation range; 0 disables
     radius:f32 `mirai:"min=0,unit=m"`,     // source sphere radius for soft highlights and shadows
-    max_lights:u16,                        // max concurrent lights for this emitter; 0 uses 1 when enabled
-    shadows:bool,                          // whether emitted lights cast shadows
+    offset:[3]f32 `mirai:"unit=m"`,        // from the entity, in its axes
+    shadows:bool,                          // whether the light casts shadows
     indirect:f32 `mirai:"min=0"`,         // indirect GI bounce multiplier
     scattering:f32 `mirai:"min=0"`,       // volumetric fog scattering multiplier
 }
@@ -151,7 +153,7 @@ Particle_Info :: struct {
     sub_count:u32,                            // its particles per event
     beam_end:[3]f32 `mirai:"section=Look,unit=m"`, // endpoint offset in the emitter's axes
     beam_arc:f32 `mirai:"unit=m"`, // midpoint offset along the emitter's +Y
-    light:Particle_Light, // dynamic point lights driven by particle life; intensity or range 0 disables
+    light:Particle_Light, // a point light at the entity while particles live; intensity or range 0 disables
     program:[PARTICLE_NAME_BYTES]u8 `mirai:"section=Program,text"`, // a Vfx program of the shaders; "" for none
 }
 

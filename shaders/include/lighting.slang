@@ -112,6 +112,25 @@ float2 rect_place(Light light, float3 offset) {
 // Whether a light projects a texture (LIGHT_TEXTURE in its image word).
 bool light_projects(Light light) { return (asuint(light.size.w) & LIGHT_TEXTURE) != 0u; }
 
+// The bits of size.z of a spot (light_spot_bits of render/scene.odin): the
+// right of the texture it projects, octahedral in 12 bits an axis, and in the
+// top byte the share of its half-angle it shines whole within.
+float3 light_spot_right(Light light) {
+    uint bits = asuint(light.size.z);
+    return oct_decode(float2(bits & 0xFFFu, (bits >> 12u) & 0xFFFu) * (2.0 / 4095.0) - 1.0);
+}
+// The cosine of the angle from its axis where a spot starts to fade.
+float light_spot_inner(Light light) {
+    return cos(acos(clamp(light.direction_cone.w, -1.0, 1.0)) * (float(asuint(light.size.z) >> 24u) / 255.0));
+}
+// What of a spot falls along a way at that cosine from its axis: whole
+// within the cosine inner, none past outer, smoothly between them, and at
+// once where they meet (a hard edge).
+float spot_fade(float outer, float inner, float along) {
+    float t = saturate((along - outer) / max(inner - outer, 1e-7));
+    return t * t * (3.0 - 2.0 * t);
+}
+
 // The color of a texture of the table at uv, from 0 to 1 across it, blurred
 // over `blur` of its width.
 float3 light_texture(uint entry, float2 uv, float blur) {
@@ -147,7 +166,7 @@ float3 rect_emission(Light light, float2 place, float blur) {
 // `footprint` metres there.
 float3 spot_texture(Light light, float3 along, float distance, float footprint) {
     float3 forward = light.direction_cone.xyz;
-    float3 right = unpack_normal(asuint(light.size.z));
+    float3 right = light_spot_right(light);
     right = normalize(right - forward * dot(right, forward));
     float3 up = cross(right, forward);
     float ahead = max(dot(along, forward), 1e-4);
@@ -191,10 +210,7 @@ float3 light_contribution(Light light, float3 position, float3 normal, out float
     float cone = 1.0;
     float3 color = light.color_intensity.rgb;
     if (light.direction_cone.w > -1.5) {
-        // Spot lights fade out between LIGHT_SPOT_FULL of the half-angle and its edge.
-        float cos_outer = light.direction_cone.w;
-        float cos_inner = cos(acos(cos_outer) * LIGHT_SPOT_FULL);
-        cone = smoothstep(cos_outer, cos_inner, dot(-direction, light.direction_cone.xyz));
+        cone = spot_fade(light.direction_cone.w, light_spot_inner(light), dot(-direction, light.direction_cone.xyz));
         if (cone <= 0.0) return float3(0.0);
         if (light_projects(light)) color *= spot_texture(light, -direction, distance, footprint);
     }
@@ -370,6 +386,7 @@ float node_inner(Light_Node node) { return float(node.widths >> 16u) * (PI / 655
 // spans from the point taken in its favor. A spot fades so to the edge of
 // its cone; a rectangle as a cosine; a point lights every way.
 float node_aim_past(float beyond, float falloff) {
+    if (beyond <= 0.0) return 1.0;
     if (beyond >= falloff) return 0.0;
     return cos(beyond * (0.5 * PI) / max(falloff, 1e-4));
 }
@@ -966,19 +983,19 @@ float light_weight_at(float3 center, float range, float power, float extent, uin
             if (!(along > 0.0)) return 0.0;
             shown = saturate(along + extent * inverse);
         } else {
-            shown = smoothstep(cosines.x, cosines.y, along);
+            shown = spot_fade(cosines.x, cosines.y, along);
             if (!(shown > 0.0)) return 0.0;
         }
     }
     return power * facing * shown * light_window(d2 * inverse, range) / max(d2, extent * extent);
 }
 
-// light_weight_at of a light: a spot fades from LIGHT_SPOT_FULL of its angle out, as its
-// light does (light_contribution).
+// light_weight_at of a light: a spot fades from where it stops shining whole
+// out, as its light does (light_contribution).
 float light_weight_of(Light l, float3 position, float3 normal) {
     bool rect = light_is_rect(l);
     bool spot = !rect && l.direction_cone.w > 0.5 * LIGHT_POINT;
-    float2 cosines = spot ? float2(l.direction_cone.w, cos(acos(l.direction_cone.w) * LIGHT_SPOT_FULL)) : float2(0.0);
+    float2 cosines = spot ? float2(l.direction_cone.w, light_spot_inner(l)) : float2(0.0);
     uint cone = rect ? LIGHT_CONE_RECT : spot ? LIGHT_CONE_SPOT : LIGHT_CONE_NONE;
     return light_weight_at(l.position_range.xyz, l.position_range.w, luminance(l.color_intensity.rgb) * l.color_intensity.w, light_extent(l), cone, l.direction_cone.xyz, cosines, position, normal);
 }

@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math/rand"
 import "core:mem"
 import "core:fmt"
+import "core:slice"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -359,57 +360,87 @@ an_entity_whose_mesh_arrives_is_drawn_alone_once_it_arrived :: proc(t:^testing.T
     testing.expect_value(t,sync_frame(f),0)
 }
 
-// Per-frame extra lights submitted through Frame_Extras sit after entity lights,
-// update in place on steady frames, shrink cleanly, and stay intact when entity
-// lights are added or removed.
+// The lights of the frame (Frame_Extras) take the first slots of the
+// renderer and keep them: one that ends turns its slot off without changing
+// the set or marking every light moved, and lights of entities that come or
+// go leave the slots as they are.
 @(test)
-extra_lights_sync_in_place_and_interleave_with_entity_lights :: proc(t:^testing.T) {
+extra_lights_keep_their_slots_while_they_end_and_entity_lights_change :: proc(t:^testing.T) {
     f:=new(Sync_Fixture);defer free(f)
     if !sync_fixture_init(t,f) {return}
     defer sync_fixture_destroy(f)
+    Bits :: [size_of(gpu.Gpu_Light)/4]u32
+    point :: proc(f:^Sync_Fixture,x:f32) -> core.Entity {
+        e:=core.create(&f.world.entities)
+        place:=mm.Transform{position={x,2,0},rotation=1,scale=1}
+        core.add(&f.world.worlds,e,core.World_Transform{place,place})
+        core.add(&f.world.points,e,POINT_LIGHT_DEFAULT)
+        return e
+    }
+    // What a frame of the renderer does with the set: the tree built again, the moves given.
+    settled :: proc(s:^gpu.Scene_State) {
+        if s.lights_stale {_,_=gpu.light_tree_build(&s.light_tree,&s.light_keys,&s.light_leaves,s.lights[:],s.light_shadowless[:])}
+        s.lights_stale,s.occluders=false,{}
+    }
 
-    e1:=core.create(&f.world.entities)
-    core.add(&f.world.worlds,e1,core.World_Transform{transform={position={0,2,0},rotation=1,scale=1},previous={position={0,2,0},rotation=1,scale=1}})
-    core.add(&f.world.points,e1,POINT_LIGHT_DEFAULT)
+    e1:=point(f,0)
     sync_frame(f)
     s:=&f.renderer.scene
     testing.expect_value(t,len(s.lights),1)
-    testing.expect_value(t,f.sync.extra_lights,0)
 
-    // Frame 1: submit two extra lights.
     l1:=Light_Desc{position={2,1,0},color={1,0.5,0.2},intensity=400,range=8,radius=0.1,shadowless=true}
     l2:=Light_Desc{position={4,1,0},color={0.2,0.5,1},intensity=250,range=6,radius=0.1,shadowless=true}
     testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
     sync_frame(f)
     f.app.extras.light_count=0
-    testing.expect_value(t,len(s.lights),3)
-    testing.expect_value(t,f.sync.extra_lights,2)
+    testing.expect(t,len(s.lights)==3 && f.sync.extra_lights==2,"two slots before the light of the entity")
+    testing.expect(t,f.sync.light_owners[2].entity==e1 && s.lights[2].position_range.xyz=={0,2,0},"which moved to the end")
+    settled(s)
+    built:=slice.clone(s.light_tree[:],context.temp_allocator)
 
-    // Frame 2: update same count in place at the exact same slots after entity lights.
+    // Moved in place: a row of its slot.
     l1.position.y=1.5
     testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
     sync_frame(f)
     f.app.extras.light_count=0
-    testing.expect_value(t,len(s.lights),3)
-    testing.expect_value(t,f.sync.extra_lights,2)
-    testing.expect_value(t,s.lights[1].position_range.y,f32(1.5))
+    testing.expect(t,len(s.lights)==3 && s.lights[0].position_range.y==1.5 && !s.lights_stale)
+    settled(s)
 
-    // Frame 3: add an entity light while shrinking extra lights to 1.
-    e2:=core.create(&f.world.entities)
-    core.add(&f.world.worlds,e2,core.World_Transform{transform={position={-2,2,0},rotation=1,scale=1},previous={position={-2,2,0},rotation=1,scale=1}})
-    core.add(&f.world.points,e2,POINT_LIGHT_DEFAULT)
+    // The second ends: its slot is off, the set holds and the other lights stay.
+    before:=[3]gpu.Gpu_Light{s.lights[0],s.lights[1],s.lights[2]}
     testing.expect(t,light_add(&f.app.extras,l1))
     sync_frame(f)
     f.app.extras.light_count=0
-    testing.expect_value(t,len(f.sync.light_owners),2)
-    testing.expect_value(t,f.sync.extra_lights,1)
-    testing.expect_value(t,len(s.lights),3)
-
-    // Frame 4: remove entity light e1 and submit 0 extra lights.
-    core.remove(&f.world.points,e1)
+    testing.expect(t,len(s.lights)==3 && f.sync.extra_lights==2 && s.lights[1].color_intensity.w==0,"its slot gives no light")
+    testing.expect(t,s.lights[1].position_range==before[1].position_range,"and keeps its place")
+    testing.expect(t,!s.lights_stale && s.occluders.light_count<=gpu.LIGHT_MOVES_MAX,"no new set, not every light moved")
+    testing.expect(t,len(s.light_tree)==len(built) && s.light_leaves[1]!=gpu.LIGHT_TREE_NONE,"the tree holds it, refit")
+    testing.expect(t,transmute(Bits)s.lights[0]==transmute(Bits)before[0] && transmute(Bits)s.lights[2]==transmute(Bits)before[2],"the other lights untouched")
+    // It comes back: a row again.
+    testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
     sync_frame(f)
-    testing.expect_value(t,len(f.sync.light_owners),1)
-    testing.expect_value(t,f.sync.extra_lights,0)
-    testing.expect_value(t,len(s.lights),1)
-    testing.expect_value(t,f.sync.light_owners[0].entity,e2)
+    f.app.extras.light_count=0
+    testing.expect(t,!s.lights_stale && transmute(Bits)s.lights[1]==transmute(Bits)before[1])
+    settled(s)
+
+    // An entity light that comes and one that goes leave the slots as they are.
+    extras:=[2]Bits{transmute(Bits)s.lights[0],transmute(Bits)s.lights[1]}
+    e2:=point(f,-2)
+    testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
+    sync_frame(f)
+    f.app.extras.light_count=0
+    testing.expect(t,len(s.lights)==4 && f.sync.light_owners[3].entity==e2)
+    testing.expect(t,transmute(Bits)s.lights[0]==extras[0] && transmute(Bits)s.lights[1]==extras[1],"the extra lights are not given again")
+    for moved in s.occluders.lights[:min(s.occluders.light_count,gpu.LIGHT_MOVES_MAX)] {testing.expect(t,moved>=2,"nor moved")}
+    settled(s)
+    core.remove(&f.world.points,e1)
+    testing.expect(t,light_add(&f.app.extras,l1) && light_add(&f.app.extras,l2))
+    sync_frame(f)
+    f.app.extras.light_count=0
+    testing.expect(t,len(s.lights)==3 && len(f.sync.light_owners)==3 && f.sync.light_owners[2].entity==e2)
+    testing.expect(t,transmute(Bits)s.lights[0]==extras[0] && transmute(Bits)s.lights[1]==extras[1])
+
+    // A frame without them: both slots off, the light of the entity on.
+    sync_frame(f)
+    testing.expect(t,len(s.lights)==3 && s.lights[0].color_intensity.w==0 && s.lights[1].color_intensity.w==0 && s.lights[2].color_intensity.w>0)
 }

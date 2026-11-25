@@ -359,7 +359,7 @@ light_tree_halves :: proc(nodes: []Gpu_Light_Node, lights: []Gpu_Light, of: proc
 // the cone by half the angle between.
 @(test)
 light_groups_face_the_directions_of_their_lights :: proc(t: ^testing.T) {
-	down := Gpu_Light{position_range = {0, 3, 0, 5}, color_intensity = {1, 1, 1, 2}, direction_cone = {0, -1, 0, math.cos(f32(0.6))}}
+	down := Gpu_Light{position_range = {0, 3, 0, 5}, color_intensity = {1, 1, 1, 2}, direction_cone = {0, -1, 0, math.cos(f32(0.6))}, size = {0, 0, transmute(f32)light_spot_bits({}, 0.8), 0}}
 	lights := [3]Gpu_Light{down, down, down}
 	lights[1].position_range.x = 1
 	nodes: [dynamic]Gpu_Light_Node
@@ -370,7 +370,7 @@ light_groups_face_the_directions_of_their_lights :: proc(t: ^testing.T) {
 	defer delete(leaves)
 	light_tree_build(&nodes, &keys, &leaves, lights[:2])
 	root := nodes[0]
-	whole := 0.6 * f32(GPU_LIGHT_SPOT_FULL)
+	whole := 0.6 * light_spot_inner(down)
 	testing.expectf(t, abs(root.cone.y + 1) < 1e-5 && abs(root.cone.w - whole) < 1e-5 && abs(f32(root.widths[0]) * LIGHT_WIDTH_STEP - (0.6 - whole)) < 1e-4 && abs(f32(root.widths[1]) * LIGHT_WIDTH_STEP - whole) < 1e-4, "the cone of two that look down: %v %v", root.cone, root.widths)
 	tilt := f32(math.PI / 3)
 	lights[2].position_range.x = 2

@@ -182,8 +182,6 @@ LIGHT_RADIUS_MIN           :: f32(0.01)
 // are the entry of the texture table it projects; without it, those of a
 // rectangle are the material row whose emission it shows.
 GPU_LIGHT_TEXTURE          :: u32(1) << 31
-// A spot shines whole out to this share of its half-angle and fades out past it.
-GPU_LIGHT_SPOT_FULL        :: 0.8
 GPU_LIGHT_NODE_LEAF        :: 1
 GPU_LIGHT_NODE_COUNT_SHIFT :: 1
 LIGHT_TREE_DEPTH           :: 48

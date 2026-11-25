@@ -99,6 +99,7 @@ Light_Desc :: struct {
 	range:     f32,
 	direction: Vec3, // spot lights: where the cone points; a rectangle: the side it lights
 	cone:      f32,  // spot lights: half-angle in radians; 0 for point lights
+	inner:     f32,  // spot lights: the share of cone it shines whole within, fading from there to its edge; 1 a hard edge, 0 from its axis
 	radius:    f32,  // of the sphere, or of the capsule, that gives the light, metres
 	axis:      Vec3, // a capsule: along its segment; a rectangle: along its width
 	length:    f32,  // a capsule: of its segment, metres; 0: a sphere
@@ -2284,6 +2285,21 @@ light_image :: proc "contextless" (texture: Texture_Handle, material: Material_H
 	return u32(material)
 }
 
+// The bits of size.z of a spot: the right of the texture it projects across
+// its cone (octahedral, 12 bits an axis; 0 without one) and, in the top
+// byte, the share of its half-angle it shines whole within
+// (Light_Desc.inner), as light_spot_inner and lighting.slang read them.
+light_spot_bits :: proc "contextless" (right: Vec3, inner: f32) -> u32 {
+	share := u32(math.round(clamp(inner, 0, 1) * 255)) if inner == inner else 0
+	if right == {} {return share << 24}
+	p := mm.octahedral_encode(right)
+	axis :: proc "contextless" (v: f32) -> u32 {return u32(math.round((clamp(v, -1, 1) * 0.5 + 0.5) * 4095))}
+	return axis(p.x) | axis(p.y) << 12 | share << 24
+}
+
+// The share of its half-angle a spot shines whole within.
+light_spot_inner :: proc "contextless" (l: Gpu_Light) -> f32 {return f32(transmute(u32)l.size.z >> 24) / 255}
+
 // The material row whose emission a rectangle that projects no texture
 // shows (0: none); false for the other lights.
 light_emission_row :: proc "contextless" (l: Gpu_Light) -> (row: u32, rect: bool) {
@@ -2311,10 +2327,9 @@ gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 		light.direction_cone = {direction.x, direction.y, direction.z, math.cos(clamp(l.cone, 0.001, math.PI * 0.5))}
 		// The right of its texture across the cone: without one, no texture.
 		right := l.texture_axis - linalg.dot(l.texture_axis, direction) * direction
-		if l.texture != 0 && linalg.length(right) > 1e-6 {
-			light.size.z = transmute(f32)mm.normal_pack(linalg.normalize(right))
-			light.size.w = transmute(f32)light_image(l.texture, 0)
-		}
+		projects := l.texture != 0 && linalg.length(right) > 1e-6
+		light.size.z = transmute(f32)light_spot_bits(linalg.normalize(right) if projects else {}, l.inner)
+		if projects {light.size.w = transmute(f32)light_image(l.texture, 0)}
 	}
 	if l.length > 0 && linalg.length(l.axis) > 1e-6 && light.direction_cone.w != GPU_LIGHT_RECT {
 		axis := linalg.normalize(l.axis)
@@ -2371,22 +2386,58 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 		s.lights[index] = light
 		s.lights_stale ||= light_directed(before) != light_directed(light) || light_reach_class(before) != light_reach_class(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
 		s.light_shadowless[index] = desc.shadowless
-		if !s.lights_stale {
-			if !light_placed_same(before, light) {occluder_light_moved(s, index)}
-			// Past LIGHT_REFITS_MAX in a frame the whole tree is refit once (scene_lights_settle).
-			s.light_refits += 1
-			if s.light_refits > LIGHT_REFITS_MAX {s.lights_dirty = true} else {
-				if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
-				if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
-					s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges)
-				}
-				if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
-			}
-		}
+		if !light_placed_same(before, light) {occluder_light_moved(s, index)}
+		light_refit(s, index)
 	}
 	scene_changed_near(s, light.position_range.xyz, light.position_range.w)
 	s.lights_changed = true
 	return true
+}
+
+// Turns off the light at index: it keeps its place, its shape and its kind,
+// so its leaf of the tree only refits, and gives no light until
+// scene_light_update gives it some again. For a slot whose light comes and
+// goes (a flash) without changing the set. Nothing for an index past the last
+// or a light already off.
+scene_light_off :: proc(r: ^Renderer, index: u32) {
+	s := &r.scene
+	if int(index) >= len(s.lights) || s.lights[index].color_intensity.w == 0 {return}
+	light := &s.lights[index]
+	scene_changed_near(s, light.position_range.xyz, light.position_range.w)
+	light.color_intensity.w = 0
+	s.lights_changed = true
+	light_refit(s, index)
+}
+
+// Adds a light one past the last that gives what the light at index gives.
+// False for an index past the last or without memory: nothing changes.
+scene_light_duplicate :: proc(r: ^Renderer, index: u32) -> bool {
+	s := &r.scene
+	if int(index) >= len(s.lights) {return false}
+	if !lights_reserve(s, len(s.lights) + 1) {
+		set_error(r, "%d lights: out of memory", len(s.lights) + 1)
+		return false
+	}
+	append(&s.lights, s.lights[index])
+	append(&s.light_shadowless, s.light_shadowless[index])
+	s.lights_stale, s.lights_changed = true, true
+	occluder_light_moved(s, u32(len(s.lights) - 1))
+	return true
+}
+
+// The leaf of the light at index and the groups above it as it is now, while
+// the set holds; past LIGHT_REFITS_MAX in a frame the whole tree is refit
+// once (scene_lights_settle).
+@(private = "file")
+light_refit :: proc(s: ^Scene_State, index: u32) {
+	if s.lights_stale {return}
+	s.light_refits += 1
+	if s.light_refits > LIGHT_REFITS_MAX {s.lights_dirty = true;return}
+	if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
+	if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
+		s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges)
+	}
+	if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
 }
 
 // Takes out the light at index: the last takes its place. Nothing for an

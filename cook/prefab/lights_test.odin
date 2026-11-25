@@ -58,6 +58,7 @@ imported_lights_are_the_lights_of_their_entities :: proc(t:^testing.T) {
     testing.expectf(t,is_point && point.intensity==50 && abs(point.range-10)<1e-4,"a point in candela, as far as it gives 0.5 lux: %v",point)
     spot,is_spot:=asset.scene_get(&scene,entity_of(&scene,"Spot"),"Spot_Light",render.Spot_Light)
     testing.expectf(t,is_spot && spot.intensity==40 && spot.range==12 && spot.angle==render.SPOT_MAX,"a spot keeps its outer cone, cut to 89°: %v",spot)
+    testing.expectf(t,abs(spot.inner*spot.angle-0.2)<1e-5,"and its inner cone, as a share of the outer one: %v",spot.inner)
     testing.expect(t,len(assets.warnings)==1 && strings.contains(assets.warnings[0],"Spot"),"the cut cone is reported")
 }
 
@@ -122,8 +123,8 @@ def Mesh "Floor"
 }
 
 // Imported lights carry shadowless fill, indirect/scattering multipliers,
-// capsule tube length (scaled to match engine/render sphere_desc), and Hidden
-// when the source node is invisible.
+// the length of a tube as a field with the scale of its node untouched, so a
+// child keeps its own, and Hidden when the source node is invisible.
 @(test)
 imported_lights_keep_shadows_multipliers_tube_length_and_hidden :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"light-options")
@@ -144,6 +145,14 @@ imported_lights_keep_shadows_multipliers_tube_length_and_hidden :: proc(t:^testi
                     radius=f32(0.05),length=0.8,
                     shadows=false,indirect=f32(1.4),scattering=f32(0.5),
                 },
+            },
+            {
+                name="Cap",
+                path="Cap",
+                parent=0,
+                transform={position={0.4,0,0},rotation=1,scale={0.5,0.5,0.5}},
+                mesh=-1,
+                visible=true,
             },
             {
                 name="OffSpot",
@@ -175,7 +184,10 @@ imported_lights_keep_shadows_multipliers_tube_length_and_hidden :: proc(t:^testi
     pt,ok_pt:=asset.scene_get(&scene,tube_id,"Point_Light",render.Point_Light)
     tr,ok_tr:=asset.scene_get(&scene,tube_id,"Transform",core.Transform)
     testing.expectf(t,ok_pt && !pt.shadows && abs(pt.indirect-1.4)<1e-5 && abs(pt.scattering-0.5)<1e-5 && abs(pt.radius-0.05)<1e-5,"fill tube light fields preserved: %v",pt)
-    testing.expectf(t,ok_tr && abs(2*pt.radius*(tr.scale.x-1)-0.8)<1e-4,"tube scale yields length 0.8 m: %v",tr.scale)
+    testing.expectf(t,ok_tr && abs(pt.length-0.8)<1e-5 && tr.scale=={1,1,1},"a tube of 0.8 m with its entity unscaled: %v %v",pt.length,tr.scale)
+    cap,ok_cap:=asset.scene_get(&scene,entity_of(&scene,"Cap"),"Transform",core.Transform)
+    testing.expectf(t,ok_cap && cap.scale=={0.5,0.5,0.5},"the child of the tube keeps its own scale: %v",cap.scale)
+    testing.expectf(t,len(assets.warnings)==0,"nothing to warn of: %v",assets.warnings)
     _,tube_hidden:=asset.scene_get(&scene,tube_id,"Hidden",render.Hidden)
     testing.expect(t,!tube_hidden,"visible light is not hidden")
 
@@ -260,5 +272,5 @@ def Mesh "Floor"
     neon_pt,ok_neon:=asset.scene_get(&usd_scene,neon_id,"Point_Light",render.Point_Light)
     neon_tr,ok_neon_tr:=asset.scene_get(&usd_scene,neon_id,"Transform",core.Transform)
     testing.expectf(t,ok_neon && !neon_pt.shadows && abs(neon_pt.radius-0.05)<1e-4,"USD CylinderLight shadow:enable=false and 5cm radius: %v",neon_pt)
-    testing.expectf(t,ok_neon_tr && abs(2*neon_pt.radius*(neon_tr.scale.x-1)-1.6)<1e-3,"USD CylinderLight 80cm*2 length in meters: %v",neon_tr.scale)
+    testing.expectf(t,ok_neon_tr && abs(neon_pt.length-1.6)<1e-4 && neon_tr.scale=={2,1,1},"USD CylinderLight 80 cm by its scale of 2, in metres, its scale kept: %v %v",neon_pt.length,neon_tr.scale)
 }

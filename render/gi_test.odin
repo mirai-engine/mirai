@@ -467,7 +467,7 @@ GI_CASES :: [?]Gi_Case{
 @(private = "file") HORROR_CEILING :: 1
 @(private = "file")
 horror_flashlight :: proc(yaw: f32) -> Light_Desc {
-	return {position = {0.25, 1.45, 2.2}, color = {1, 0.97, 0.9}, intensity = 9425, range = 14, direction = {math.sin(yaw), -0.12, -math.cos(yaw)}, cone = 0.3, radius = 0.03, indirect = 1, scattering = 1}
+	return {position = {0.25, 1.45, 2.2}, color = {1, 0.97, 0.9}, intensity = 9425, range = 14, direction = {math.sin(yaw), -0.12, -math.cos(yaw)}, cone = 0.3, inner = 0.8, radius = 0.03, indirect = 1, scattering = 1}
 }
 
 // Radians a second a view of GI_PAN_SIZE turns at `pixels` a frame.
@@ -658,7 +658,7 @@ gi_setup :: proc(f: ^Gi_Fixture, kind: Gi_Kind) {
 			x: f32 = -1 if i % 2 == 0 else 0.7
 			gi_block(f, {x, 0, z}, {x + 0.3, 2.5, z + 0.4}, {0.6, 0.6, 0.6})
 		}
-		append(&f.base_lights, Light_Desc{position = {0.3, 1.4, 1}, color = {1, 0.97, 0.9}, intensity = 9425, range = 30, direction = {0, -0.15, 1}, cone = 0.35, radius = 0.03, indirect = 1, scattering = 1})
+		append(&f.base_lights, Light_Desc{position = {0.3, 1.4, 1}, color = {1, 0.97, 0.9}, intensity = 9425, range = 30, direction = {0, -0.15, 1}, cone = 0.35, inner = 0.8, radius = 0.03, indirect = 1, scattering = 1})
 		append(&f.base_lights, Light_Desc{position = {0, 2.3, 0.5}, color = {1, 0.9, 0.8}, intensity = 157, range = 6, radius = 0.05, indirect = 1, scattering = 1})
 		f.camera = {position = {0, 1.6, -0.5}, forward = {0, -0.4, 20.5}, up = {0, 1, 0}, fov_y = 70, near = 0.05, far = 100}
 	case .Box_Push:

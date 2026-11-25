@@ -3,13 +3,16 @@
 ## Local lights
 
 - **Geometry & units:** Local lights are evenly lit spheres of `radius` (`Point_Light`,
-  `Spot_Light`; 0 uses a minimum radius), capsules, or rectangles. All four types aim along `-Z`
-  and take shape from entity scale
+  `Spot_Light`; 0 uses a minimum radius), capsules (their `length` along `+X` of the entity), or
+  rectangles. All aim along `-Z`; points and spots never read the entity scale (`sphere_desc`),
+  so a child keeps its own, while a rectangle is the unit square of its entity
   ([components](../../mirai-gameplay/references/libraries.md#render)). Color is independent of
   entity mesh tint; a smooth window zeros intensity at `range`.
 - **Analytic shading:** Diffuse uses horizon-clipped sphere irradiance (Snyder; Lagarde-de
   Rousiers); specular uses nearest-point sphere approximation with energy-normalized lobe
-  widening (Karis). Spots shade a soft-edged cone of half-angle `angle`.
+  widening (Karis). Spots shine whole within `inner` of their half-angle `angle` and fade
+  smoothly (`spot_fade`) to its edge; `inner` 1 is a hard edge. It travels in the top byte of
+  `Gpu_Light.size.z` with the right of a projected texture (`light_spot_bits`).
 - **Projected textures (`Spot_Light.texture`, `Rect_Light.texture`, `Light_Desc.texture`):**
   Multiplies light color across the cone (`Light_Desc.texture_axis`, +X) or rectangle face
   (overrides `Light_Emission`); point lights ignore textures. Evaluated once in
@@ -29,6 +32,12 @@
 - **CPU-known, stateless:** No light reservoirs or history — changes apply immediately. Lights
   are strictly scene-owned on CPU (never GPU-written or per-particle) so trees, grids, and
   shadow caches persist while lights stay still.
+- **Lights of the frame (`Frame_Extras.lights`, `light_add`):** Take the first slots of the
+  renderer, before entity lights (`extra_lights_settle`), up to the most a frame gave; entity
+  lights that come or go never move them. A slot the frame leaves empty is turned off
+  (`scene_light_off`: power 0, place and kind kept), so a flash that ends refits one leaf and
+  changes no set; a slot reused by a light of another kind or reach class rebuilds the tree.
+  Shadow maps and the light grid skip lights that are off.
 
 ```odin
 // Game components (engine/render) and low-level Light_Desc:

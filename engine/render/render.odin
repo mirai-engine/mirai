@@ -97,14 +97,15 @@ sun_height_factor :: proc "contextless" (fade:Sun_Height_Fade,height:f32) -> f32
 }
 SUN_FADE_STEPS :: 256
 
-// A sphere of radius times the scale, drawn out into a capsule along the axis
-// its scale stretches most.
-@(component,description="Lights all around from a point. Stretching its entity makes a tube.")
+// A sphere of radius, drawn out into a tube of length along +X of its entity.
+// The scale of the entity sizes neither.
+@(component,description="Lights all around from a sphere, or from a tube along its +X when it has a length.")
 Point_Light :: struct {
     color:[3]f32 `mirai:"color"`,
     intensity:f32 `mirai:"min=0,unit=cd"`,
     range:f32 `mirai:"min=0,unit=m"`,
-    radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
+    radius:f32 `mirai:"min=0,unit=m"`, // of the sphere, or of the tube, that glows; it softens shadows and widens highlights
+    length:f32 `mirai:"min=0,unit=m"`, // of the tube along +X, between the centers of its ends; 0: a sphere
     shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
     indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
     scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
@@ -113,20 +114,22 @@ Point_Light :: struct {
 POINT_LIGHT_DEFAULT :: Point_Light{color={1,0.92,0.8},intensity=1000,range=20,radius=0.05,shadows=true,indirect=1,scattering=1} // a 1000 W bulb
 
 // A point light that lights a cone around -Z of its entity.
-@(component,description="Lights a cone in front of it. Stretching its entity makes a tube.")
+@(component,description="Lights a cone in front of it, from a sphere, or from a tube along its +X when it has a length.")
 Spot_Light :: struct {
     color:[3]f32 `mirai:"color"`,
     intensity:f32 `mirai:"min=0,unit=cd"`,
     range:f32 `mirai:"min=0,unit=m"`,
-    radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
-    angle:f32 `mirai:"angle,min=0.0174532,max=1.5533431"`, // from its axis to the edge, 1° to 89°; it fades out over the last fifth
+    radius:f32 `mirai:"min=0,unit=m"`, // of the sphere, or of the tube, that glows; it softens shadows and widens highlights
+    length:f32 `mirai:"min=0,unit=m"`, // of the tube along +X, between the centers of its ends; 0: a sphere
+    angle:f32 `mirai:"angle,min=0.0174532,max=1.5533431"`, // from its axis to the edge, 1° to 89°
+    inner:f32 `mirai:"min=0,max=1"`, // the share of angle it shines whole within, fading out from there to the edge: 1 a hard edge, 0 a fade from its axis
     texture:base.Asset_Id `mirai:"kind=.tex"`, // an image across its cone, as a slide in a projector seen from behind it: it multiplies its color where it falls; none: its color alone
     shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
     indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
     scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6,shadows=true,indirect=1,scattering=1}
+SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6,inner=0.8,shadows=true,indirect=1,scattering=1}
 
 // The unit square of its entity, x by y; it lights the side its -z faces, so
 // a larger one gives more light.
@@ -405,9 +408,9 @@ Render_Sync :: struct {
     tinted:[dynamic]u32, // instances whose Material_Values changed and that show the same rows: what they hold is given in place
     tinted_colors,tinted_emissions:[dynamic][3]f32,
     tinted_values:[dynamic]gpu.Instance_Material_Values,
-    light_owners:[dynamic]Light_Owner,  // by light of the renderer
+    light_owners:[dynamic]Light_Owner,  // by light of the renderer; entity NONE: a slot of the extra lights
     lit:[Light_Kind]core.Entity_Map(u32), // by entity with a light of the kind that shines: its light of the renderer
-    extra_lights:int, // per-frame lights appended after light_owners in the renderer
+    extra_lights:int, // slots of the lights of the frame (Frame_Extras), the first of the renderer: the most a frame gave
     sun:gpu.Sun_Desc,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
     round:u32, // of the frame: Drawn.replaced of what a visual instance replaces in it
@@ -1281,8 +1284,6 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     switch {
     case at==nil && !on:
     case at==nil:
-        // Keep per-frame extra lights after entity lights so indices stay compact.
-        extra_lights_strip(sync,r)
         // Without memory in the renderer or here for the light, a later frame gives it everything again.
         if !gpu.scene_light_update(r,u32(len(sync.light_owners)),desc) {sync.starved=true;return}
         if _,kept:=core.entity_map_put(&sync.lit[kind],e,u32(len(sync.light_owners)));!kept {sync.starved=true;return}
@@ -1290,7 +1291,7 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     case on:
         if !gpu.scene_light_update(r,at^,desc) {sync.starved=true}
     case:
-        extra_lights_strip(sync,r)
+        // The last is the light of an entity: the extra lights come first.
         gpu.scene_light_remove(r,at^)
         last:=pop(&sync.light_owners)
         if place:=at^;int(place)<len(sync.light_owners) {
@@ -1301,30 +1302,47 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     }
 }
 
-// Removes trailing per-frame extra lights before adding or removing an entity light.
+// The lights of the frame (Frame_Extras) in the first slots of the renderer,
+// before those of entities, in order: a slot keeps its index while the lights
+// of entities come and go, and one the frame leaves empty is turned off
+// (gpu.scene_light_off), never removed, so a light that comes or ends changes
+// a row of the set, not the set. A frame that gives more than ever before
+// takes another slot, and the light of an entity there moves to the end.
 @(private)
-extra_lights_strip :: proc(sync:^Render_Sync,r:^gpu.Renderer) {
-    for sync.extra_lights>0 {
-        sync.extra_lights-=1
-        gpu.scene_light_remove(r,u32(len(sync.light_owners)+sync.extra_lights))
+extra_lights_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,lights:[]gpu.Light_Desc) {
+    used:=0
+    for desc in lights {
+        if !gpu.light_gives(desc) {continue}
+        if used==sync.extra_lights && !extra_slot_add(sync,r) {break}
+        if !gpu.scene_light_update(r,u32(used),desc) {sync.starved=true;break}
+        used+=1
     }
+    for slot in used..<sync.extra_lights {gpu.scene_light_off(r,u32(slot))}
 }
 
-// Updates per-frame extra lights in place after entity lights, trimming any surplus slots.
+// One more slot for the lights of the frame, after the others: the light of
+// the entity that holds it goes to the end, where scene_light_update adds
+// the slot when no entity does. False without memory.
 @(private)
-extra_lights_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,extra_lights:[]gpu.Light_Desc) {
-    base:=len(sync.light_owners)
-    kept:=0
-    for desc in extra_lights {
-        if !gpu.light_gives(desc) {continue}
-        if !gpu.scene_light_update(r,u32(base+kept),desc) {sync.starved=true;return}
-        kept+=1
+extra_slot_add :: proc(sync:^Render_Sync,r:^gpu.Renderer) -> bool {
+    slot:=sync.extra_lights
+    if slot<len(sync.light_owners) {
+        owner:=sync.light_owners[slot]
+        end:=u32(len(sync.light_owners))
+        if !gpu.scene_light_duplicate(r,u32(slot)) {sync.starved=true;return false}
+        if _,error:=append(&sync.light_owners,owner);error!=nil {
+            gpu.scene_light_remove(r,end)
+            sync.starved=true
+            return false
+        }
+        core.entity_map_get(&sync.lit[owner.kind],owner.entity)^=end
+        sync.light_owners[slot]={}
+    } else if _,error:=append(&sync.light_owners,Light_Owner{});error!=nil {
+        sync.starved=true
+        return false
     }
-    for sync.extra_lights>kept {
-        sync.extra_lights-=1
-        gpu.scene_light_remove(r,u32(base+sync.extra_lights))
-    }
-    sync.extra_lights=kept
+    sync.extra_lights+=1
+    return true
 }
 
 // The lights whose rows, place or visibility changed since the last frame
@@ -1352,10 +1370,9 @@ lights_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Ta
     for at in sync.tinted {light_settle(sync,a,r,t,extras,sync.drawn.entities[at],.Rect)}
 }
 
-// A point light in the world: a sphere the scale of its entity draws out, as
-// thick as the axes it stretches less, as long as the one it stretches most.
+// A point light in the world: its sphere, or its tube along +X of its entity.
 point_desc :: proc(world:core.World_Transform,point:Point_Light) -> gpu.Light_Desc {
-    desc:=sphere_desc(world,point.color,point.intensity,point.range,point.radius,point.indirect,point.scattering)
+    desc:=sphere_desc(world,point.color,point.intensity,point.range,point.radius,point.length,point.indirect,point.scattering)
     desc.shadowless=!point.shadows
     return desc
 }
@@ -1363,26 +1380,16 @@ point_desc :: proc(world:core.World_Transform,point:Point_Light) -> gpu.Light_De
 // A spot in the world: the sphere of a point light, where it points and its
 // cone, and its texture, the width of it along +X of its entity.
 spot_desc :: proc(world:core.World_Transform,spot:Spot_Light,a:^host.Assets) -> (desc:gpu.Light_Desc) {
-    desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius,spot.indirect,spot.scattering)
-    desc.direction,desc.cone,desc.shadowless=mm.quat_forward(world.rotation),spot.angle,!spot.shadows
+    desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius,spot.length,spot.indirect,spot.scattering)
+    desc.direction,desc.cone,desc.inner,desc.shadowless=mm.quat_forward(world.rotation),spot.angle,spot.inner,!spot.shadows
     desc.texture,desc.texture_axis=image_texture(a,spot.texture),mm.quat_rotate(world.rotation,[3]f32{1,0,0})
     return
 }
 
 @(private)
-sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radius,indirect,scattering:f32) -> (desc:gpu.Light_Desc) {
-    desc={position=world.position,color=color,intensity=intensity,range=range,indirect=indirect,scattering=scattering}
-    scale:=[3]f32{abs(world.scale.x),abs(world.scale.y),abs(world.scale.z)}
-    longest:=0
-    for axis in 1..<3 {if scale[axis]>scale[longest] {longest=axis}}
-    across:=max(scale[(longest+1)%3],scale[(longest+2)%3])
-    desc.radius=radius*across
-    if radius>0 && scale[longest]>across*1.0001 {
-        local:[3]f32
-        local[longest]=1
-        desc.axis=mm.quat_rotate(world.rotation,local)
-        desc.length=2*radius*(scale[longest]-across)
-    }
+sphere_desc :: proc(world:core.World_Transform,color:[3]f32,intensity,range,radius,length,indirect,scattering:f32) -> (desc:gpu.Light_Desc) {
+    desc={position=world.position,color=color,intensity=intensity,range=range,radius=radius,indirect=indirect,scattering=scattering}
+    if length>0 {desc.axis,desc.length=mm.quat_rotate(world.rotation,[3]f32{1,0,0}),length}
     return
 }
 

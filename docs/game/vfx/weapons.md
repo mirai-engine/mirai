@@ -39,6 +39,22 @@ constant for the whole effect. A Mesh particle blends as the `alpha_mode` of its
 `Additive` adds its light without darkening anything (glowing arcs, flashes). The `blend` of the
 effect is for sprites, ribbons and beams only.
 
+## Muzzle flash light
+
+`light` gives a layer one point light at its emitter, moved by `light.offset` (metres, in the
+axes of the emitter), while its particles live: `color_over_life` dims and tints it (its alpha
+scales `light.intensity`) at the mean age of the particles alive; `light.range` stays. A short
+burst with a fading alpha is a flash that lights the walls around the barrel and goes out with
+the sparks. The light stays at the emitter: it does not fly with the
+particles.
+
+```odin
+fx.light = {color = {1, 0.7, 0.4}, intensity = 800, range = 6, radius = 0.05, offset = {0, 0, 0.1}}
+```
+
+At most `Particle_Settings.max_lights` (32) layers shine at once, those nearest the player;
+past that, the problem `vfx.lights_over` names how many were dropped.
+
 ## Local space
 
 With `local_space`, particles move with the emitter: a flame on a swung torch stays on it. They

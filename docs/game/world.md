@@ -57,11 +57,11 @@ without a `Volume` is the whole scene.
 - API: `"preset":"sun"` aims a new entity like the editor's sun; `scene.write {"root":"Sky",
   "entities":[{"components":{"Sky":{"atmosphere":true}}}]}` changes only the fields
   named of the entity `root` names.
-- Indoor: turn the `Sun` off (`"enabled":false`) when the room has no window, keep the `Sky` if
-  a window shows it, and light with `Point_Light`, `Spot_Light` and `Rect_Light` (`range` in
-  metres; spot and rect lights shine toward their -Z). Emission of materials is in nits. A cave
-  lit mostly by its bounces raises the `indirect` of its lights, or all of it with a
-  `Bounce_Light`. A light inside its torch turns off `shadows`: nothing stops it, at no cost.
+- Indoor: no window, turn the `Sun` off (`"enabled":false`); a window shows the `Sky`. Light
+  with `Point_Light`, `Spot_Light` (lit whole over the `inner` share of its `angle`, then fading;
+  1 a hard edge) and `Rect_Light` (`range` in metres; spots and rects shine toward their -Z).
+  Emission is in nits. A cave lit mostly by its bounces raises the `indirect` of its lights, or
+  all of it with a `Bounce_Light`. A light in its torch turns off `shadows`, at no cost.
 - Zones: a `View_Volume` or `Fog_Volume` with a `volume.box(half)` or `volume.sphere(radius)`
   applies only inside it, with its `zone.blend` metres of edge and its `zone.priority`; without a
   `Volume` it is the world's. A `Volume` with `extents` and no `shape` is the

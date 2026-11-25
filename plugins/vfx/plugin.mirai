@@ -5,6 +5,6 @@
   "test_dependencies": ["fog"],
   "parts": ["Runtime", "Editor", "Shaders", "Recipes"],
   "asset_kinds": [
-    {"extension": ".particle", "kind": "PART", "version": 10, "merged": true, "folder": "runtime/effect", "label": "Particle", "color": [1, 202, 252], "icon": "Particles", "field": "particle", "program_uses": ["particle_sprite", "particle_mesh"]}
+    {"extension": ".particle", "kind": "PART", "version": 11, "merged": true, "folder": "runtime/effect", "label": "Particle", "color": [1, 202, 252], "icon": "Particles", "field": "particle", "program_uses": ["particle_sprite", "particle_mesh"]}
   ]
 }

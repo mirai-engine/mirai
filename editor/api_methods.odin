@@ -88,6 +88,7 @@ Api_Status :: struct {
     cpu:Api_Cpu `mirai:"label=Time of the main thread in the parts of the last frame in ms"`,
     render_width,render_height:int,
     instances,visible_instances,lights:int,
+    light_sets:int `mirai:"label=Sets of lights the renderer took: lights that came, went or changed kind; each builds the light tree again"`,
     tlas_instances:int `mirai:"label=Entries of the structure rays walk"`,
     visible_triangles:int `mirai:"label=Of the instances that passed culling two frames ago"`,
     raster_vertices:int `mirai:"label=Vertices the raster of the visibility target drew of them, 16 bytes each"`,
@@ -561,6 +562,7 @@ api_status :: proc(s:^Session,call:^api.Call) {
         stats:=gpu.renderer_stats(renderer)
         r.render_width,r.render_height=int(stats.render_width),int(stats.render_height)
         r.instances,r.visible_instances,r.lights=int(stats.instances),int(stats.visible_instances),int(stats.lights)
+        r.light_sets=int(stats.light_sets)
         r.tlas_instances=int(stats.tlas_instances)
         for counter,i in stats.counters[:min(len(stats.counters),API_COUNTERS)] {r.counters[i]={counter.name,counter.values}}
         r.visible_triangles=int(stats.visible_triangles)

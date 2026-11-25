@@ -31,7 +31,15 @@ Emission :: struct {
     tail:f32,    // seconds its last particles last, with those they start
     cull_distance:f32, // of the primary layer: m from the nearest simulation source past which the emitter waits; 0: none
     max_instances:u16, // of the primary layer: emitters of its effect that run at once; 0: all
-    has_light:bool,    // effect emits dynamic point lights (light.intensity > 0 && light.range > 0)
+    has_light:bool,    // light gives one: its intensity and range are above 0
+    light:Emission_Light,
+}
+
+// The point light of a layer (effect.Particle_Light), resolved with its effect.
+Emission_Light :: struct {
+    using light:effect.Particle_Light,
+    tint:[3]f32,                            // light.color, or the mean of the colors of the particles
+    color_over_life:effect.Particle_Gradient, // its intensity and color by the age of the particles
 }
 
 // Where an emitter is in the cycle of its effect, and what it started.
@@ -64,6 +72,10 @@ emission_of :: proc(a:^host.Assets,info:^effect.Particle_Info) -> (e:Emission) {
     e={duration=max(info.duration,0.001),rate=info.rate,rate_over_distance=info.rate_over_distance,bursts=info.bursts,prewarm=info.prewarm}
     e.cull_distance,e.max_instances=info.cull_distance,info.max_instances
     e.has_light=info.light.intensity>0 && info.light.range>0
+    if e.has_light {
+        e.light={light=info.light,tint=info.light.color,color_over_life=info.color_over_life}
+        if e.light.tint=={} {e.light.tint=0.5*(info.colors[0].rgb+info.colors[1].rgb)}
+    }
     e.longest=max(info.lifetime[0],info.lifetime[1],0)
     e.tail=e.longest
     if a!=nil && a.renderer!=nil {

@@ -81,9 +81,11 @@ void main(uint index : SV_GroupIndex) {
 // What a light could give the cell whose lowest corner is low: its power by
 // the window of its range at the nearest point of the grown cell, over the
 // square of the distance to its center; none when no point of the grown cell
-// is in its range, in the cone of a spot or on the side a rectangle lights.
+// is in its range, in the cone of a spot or on the side a rectangle lights,
+// or for a light turned off (scene_light_off).
 float light_grid_weight(Light l, float3 low, out bool edged) {
     edged = false;
+    if (!(l.color_intensity.w > 0.0)) return 0.0;
     float3 center = l.position_range.xyz;
     float range = l.position_range.w;
     float grown = params.grow != 0u ? 0.5 * params.cell : 0.0;
@@ -102,14 +104,15 @@ float light_grid_weight(Light l, float3 low, out bool edged) {
         if (ahead + spread <= 0.0) return 0.0;
         edged = ahead - spread <= 0.0;
     } else if (l.direction_cone.w > 0.5 * LIGHT_POINT) {
-        // Within the cone a spot lights the cell as a point; the edge fades from 0.8 of its angle out (light_contribution).
+        // Within the cone a spot lights the cell as a point; the edge fades from
+        // where it stops shining whole out (light_contribution).
         edged = true;
         if (distance > corner + extent) {
             float off = acos(clamp(dot(to / distance, l.direction_cone.xyz), -1.0, 1.0));
             float across = asin(min((corner + extent) / distance, 1.0));
             float edge = acos(clamp(l.direction_cone.w, -1.0, 1.0));
             if (off - across >= edge) return 0.0;
-            edged = off + across > 0.8 * edge;
+            edged = off + across > edge * (float(asuint(l.size.z) >> 24u) / 255.0);
         }
     }
     return max(luminance(l.color_intensity.rgb) * l.color_intensity.w * light_window(near, range) / max(distance * distance, corner * corner + extent * extent), 1e-30);
