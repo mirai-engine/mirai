@@ -246,14 +246,12 @@ ogg_vorbis_decodes_to_the_sound_that_was_encoded :: proc(t:^testing.T) {
     testing.expect_value(t,error,Error.Invalid_Data)
     _,error=vorbis_decode(nil,context.allocator)
     testing.expect_value(t,error,Error.Invalid_Data)
-    // More than two channels are not played, in memory or streamed.
+    // More than two channels are not played, decoded whole or loaded.
     _,error=vorbis_decode(THREE_CHANNELS,context.allocator)
     testing.expect_value(t,error,Error.Unsupported_Format)
     m:=test_mixer(t)
     defer mixer_destroy(m)
     _,error=sound_load(m,THREE_CHANNELS)
-    testing.expect_value(t,error,Error.Unsupported_Format)
-    _,error=sound_stream(m,THREE_CHANNELS)
     testing.expect_value(t,error,Error.Unsupported_Format)
     testing.expect_value(t,mixer_stats(m).sounds,0)
 }
@@ -277,13 +275,18 @@ sound_is_loaded_from_a_wav_or_an_ogg_file :: proc(t:^testing.T) {
     }
     ogg,ogg_error:=sound_load(m,SINE_MONO)
     testing.expect_value(t,ogg_error,Error.None)
-    // An Ogg Vorbis is decoded whole.
-    testing.expect_value(t,mixer_stats(m).sound_bytes,len(ramp)*2+22050*4)
+    // An Ogg Vorbis keeps its file, and the setup of the files encoded as it is.
+    setup:=mixer_stats(m).sound_bytes-len(ramp)*2-len(SINE_MONO)
+    testing.expectf(t,setup>0 && setup<200*1024,"its setup holds %d bytes",setup)
     testing.expect(t,sound_frames(m,ogg)==22050 && sound_channels(m,ogg)==1 && sound_sample_rate(m,ogg)==44100)
     test_near(t,sound_seconds(m,ogg),0.5)
-    // Played by a 48 kHz mixer it is still 440 Hz.
+    // Played by a 48 kHz mixer it is still 440 Hz, decoded as it plays.
     voice_play(m,ogg)
-    out=test_render(m,4800)
+    out=make([]f32,4800*2,context.temp_allocator)
+    for at:=0;at<4800;at+=480 {
+        mixer_render(m,out[at*2:][:480*2])
+        mixer_update(m)
+    }
     worst:=f32(0)
     for i in 0..<4800 {
         want:=0.5*f32(math.sin(2*math.PI*440*f64(i)/RATE))*f32(math.SQRT_TWO/2)
@@ -337,6 +340,7 @@ a_damaged_ogg_stream_is_cut_at_its_last_whole_page_for_every_decoder :: proc(t:^
         whole:=ogg_whole_pages(damaged)
         testing.expect(t,whole<=len(damaged))
         pcm,error:=decode(damaged,context.allocator)
+        decoded:=len(pcm.samples)
         if error==.None {
             testing.expect(t,pcm.channels==1 && pcm.sample_rate==44100 && len(pcm.samples)<=22050)
             if len(pcm.samples)<22050 {shorter+=1} else {intact+=1}
@@ -345,9 +349,14 @@ a_damaged_ogg_stream_is_cut_at_its_last_whole_page_for_every_decoder :: proc(t:^
             testing.expect_value(t,error,Error.Invalid_Data)
             refused+=1
         }
-        sound,stream_error:=sound_stream(m,damaged)
-        testing.expect_value(t,stream_error,error)
-        if stream_error==.None {
+        // Loaded, it is refused as its decode is, and when nothing of it decodes.
+        sound,load_error:=sound_load(m,damaged)
+        if error!=.None || decoded==0 {
+            testing.expect(t,load_error!=.None)
+        } else {
+            testing.expect_value(t,load_error,Error.None)
+        }
+        if load_error==.None {
             voice:=voice_play(m,sound)
             testing.expect(t,voice!=0)
             block:[480*2]f32

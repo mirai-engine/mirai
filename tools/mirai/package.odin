@@ -31,7 +31,7 @@ PACKAGE_TRACKED :: [?]string{
 PACKAGE_GENERATED :: [?]string{"render/shaders_gen.odin","shaders/build"}
 // What a C library of third_party keeps besides its sources: its binding and its notices.
 @(private="file")
-PACKAGE_C_LIBRARIES :: [?]string{"third_party/freetype","third_party/ufbx","third_party/sqlite"}
+PACKAGE_C_LIBRARIES :: [?]string{"third_party/freetype","third_party/stb_vorbis","third_party/ufbx","third_party/sqlite"}
 // Of the folder of the Odin compiler, what projects do not use.
 @(private="file")
 PACKAGE_ODIN_SKIPPED :: [?]string{"examples","tests","misc","docs","src","ci",".git",".github"}

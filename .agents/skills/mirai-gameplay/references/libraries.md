@@ -167,10 +167,8 @@ Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
   `TRANSMISSION_SURFACES`, `Audio_Material.transmission`) fading `Audio_Source_State.occlusion`.
 - **Buses & state:** named `Audio_Bus` (`master`, `music`, `effects`, `voice`, `ui` + game buses),
   project `Audio_Settings` (dB gain, `filters` chain, `delay`, ducking, reverb, acyclic sends else
-  `audio.send`; invalid filter -> `audio.filter`). `Audio_Settings.stream_capacity` (0:
-  `STREAM_CAPACITY_DEFAULT`, clamped to `STREAM_CAPACITY_MAX` with `audio.stream_capacity`) is
-  applied by `audio_buses`, which reports refused streams once per frame (`audio.streams`, from
-  `streams_busy`).
+  `audio.send`; invalid filter -> `audio.filter`). Every sound, music included, decodes as it
+  plays from a feed of the mixer; a play refused for want of a voice or a feed is `audio.voices`.
 - **Snapshots (`snapshots.odin`):** `Audio_Settings.snapshots` name per-bus gain dB, filter cutoffs
   and reverb wet dB. Weights add up as rooms do: the game's state whole (`Audio_Mix`,
   `audio.snapshot_blend(mix,"pause",0.5)`; an unknown name -> `audio.snapshot`) and each

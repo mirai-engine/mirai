@@ -201,7 +201,7 @@ cmd_build_engine :: proc(root:string,args:[]string) -> int {
     engine_release("",build.engine_paths(root,mode,context.temp_allocator).folder,"build engine")
     lock:=build_lock(root,"build engine")
     defer workspace.lock_release(&lock)
-    // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
+    // ui and audio link FreeType and stb_vorbis, the importer ufbx and the editor SQLite.
     if !ensure_runtime_dependencies(root) {return 1}
     return engine_report(build.engine_build({engine_root=root,mode=mode,force=force}),root)
 }
@@ -422,7 +422,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     lock:=project_lock(root,fmt.tprintf("build %v %s",target,p.root),p.root,target)
     defer workspace.lock_release(&lock)
     if target==.Game {
-        // ui links the FreeType library, the importer that of ufbx.
+        // ui and audio link FreeType and stb_vorbis, the importer ufbx.
         if !ensure_runtime_dependencies(root) {return 1,"",false}
         if !engine_current {
             if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root,log);code!=0 {return code,"",false}

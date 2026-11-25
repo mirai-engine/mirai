@@ -4,12 +4,16 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-// Feeds: rings of decoded frames that a voice plays from while a decoder
-// fills them ahead. Each voice takes a feed from the pool for encoded sounds
-// or the pool for streams. The decoder thread of the mixer fills them, or, without one,
-// voice_play and mixer_update on the calling thread. The audio thread only
-// reads what was decoded: a voice whose ring is empty goes quiet until there
-// is more, and one whose first frames are not decoded yet waits for them.
+// Feeds: rings of decoded 16 bit frames that a voice of a loaded sound plays
+// from while a decoder fills them ahead. Each voice takes one from the pool,
+// with its own decoder; the decoder thread of the mixer fills them, or,
+// without one, voice_play and mixer_update on the calling thread. Every pass
+// first decodes FEED_START_FRAMES of each voice that has fewer, so many
+// voices that start at once all have their first frames before any is
+// filled further. The audio thread only reads what was decoded: a voice
+// whose first frames are not decoded yet waits for them, silent, and starts
+// late from its first frame; one whose ring runs dry goes silent (underruns)
+// and resumes with the frame it stopped at.
 //
 // The phase of a feed says who touches it: the game thread prepares a Free
 // feed and hands it over as Starting; the decoder seeks, fills it while it is
@@ -21,6 +25,11 @@ import "core:time"
 @(private) FEED_STEP_MAX :: ONE*8
 // How often the decoder thread looks at the feeds while some voice plays from one.
 @(private) FEEDER_PERIOD :: 2*time.Millisecond
+// Frames a start decodes before the decoder fills further: more than a
+// device asks for at a time. A lossless block is decoded whole.
+@(private) FEED_START_FRAMES :: 1024
+// Frames of a WAV or Vorbis file decoded at a time, as f32 before they are rounded to 16 bits.
+@(private) FEED_FLOAT_FRAMES :: 1024
 
 @(private)
 Feed_Phase :: enum u32 {Free,Starting,Running,Done}
@@ -33,9 +42,8 @@ Feed :: struct {
     loop_start:int, // the frame a loop goes back to
     sound:u32,    // slot of the sound it decodes
     owner:Voice,  // the voice it was handed to last; game thread
-    workspace:[]u8, // stream decoder storage, grown only when the game thread loads a sound
-    ring16:[]i16, // a feed of the pool: 16 bit frames, interleaved; a mono sound uses the first half
-    ring32:[]f32, // a stream feed
+    workspace:[]u8, // of a Vorbis decoder, grown when the game thread loads a sound that asks for more
+    ring:[]i16,   // interleaved; a mono sound uses the first half
     capacity:u64, // frames of the ring, a power of two
     // Atomic.
     phase:Feed_Phase,
@@ -74,7 +82,7 @@ feed_hand_over :: proc(m:^Mixer,f:^Feed) {
     feed_phase_set(f,.Starting)
     if m.feeder==nil {
         pump_lock(m)
-        feed_pump(m,f)
+        feed_pump(m,f,FEED_START_FRAMES)
         pump_unlock(m)
         return
     }
@@ -112,20 +120,25 @@ pump_unlock :: proc(m:^Mixer) {
     sync.atomic_store_explicit(&m.pumping,0,.Release)
 }
 
-// Fills every feed it can; true while some feed is in play.
+// Fills every feed it can, the first frames of all of them first; true while
+// some feed is in play.
 @(private)
 feeds_pump :: proc(m:^Mixer) -> (busy:bool) {
+    for &f in m.feeds {feed_pump(m,&f,FEED_START_FRAMES)}
     for &f in m.feeds {
-        if feed_pump(m,&f) {busy=true}
+        if feed_pump(m,&f,int(f.capacity)) {busy=true}
     }
     return
 }
+// Decodes until the ring holds ahead frames that were not played, or is full.
 @(private)
-feed_pump :: proc(m:^Mixer,f:^Feed) -> (busy:bool) {
+feed_pump :: proc(m:^Mixer,f:^Feed,ahead:int) -> (busy:bool) {
     switch feed_phase(f) {
     case .Free,.Done:return false
     case .Starting:
-        decoder_seek(&f.decoder,f.offset-min(f.offset,1))
+        // A decoder that does not open plays nothing.
+        if !decoder_start(&f.decoder) {sync.atomic_store_explicit(&f.ended,1,.Release)}
+        else {decoder_seek(&f.decoder,f.offset-min(f.offset,1))}
         feed_phase_set(f,.Running)
     case .Running:
     }
@@ -133,7 +146,7 @@ feed_pump :: proc(m:^Mixer,f:^Feed) -> (busy:bool) {
         feed_phase_set(f,.Done)
         return false
     }
-    feed_fill(m,f)
+    feed_fill(m,f,u64(ahead))
     return true
 }
 
@@ -164,32 +177,27 @@ feeder_stop :: proc(m:^Mixer) {
     m.feeder=nil
 }
 
-// Decodes into the free part of the ring. A lossless block of a feed of the
-// pool is decoded whole, into the planes of the mixer, once the rest of it
-// fits; the ring holds two blocks at least.
+// Decodes into the free part of the ring until it holds ahead frames not
+// played. A lossless block is decoded whole, into the planes of the mixer,
+// once the rest of it fits; the ring holds two blocks at least. A WAV or a
+// Vorbis file is decoded to f32 in the floats of the mixer and rounded.
 @(private)
-feed_fill :: proc(m:^Mixer,f:^Feed) {
+feed_fill :: proc(m:^Mixer,f:^Feed,ahead:u64) {
     if sync.atomic_load_explicit(&f.ended,.Relaxed)!=0 {return}
     d:=&f.decoder
     channels:=d.channels
     mask:=f.capacity-1
     write:=f.write
-    free:=f.capacity-(write-sync.atomic_load_explicit(&f.read,.Acquire))
+    read:=sync.atomic_load_explicit(&f.read,.Acquire)
+    free:=f.capacity-(write-read)
     rewound:=false
-    fill: for free>0 {
+    fill: for free>0 && write-read<ahead {
         at:=write&mask
         run:=min(free,f.capacity-at)
         got:=0
-        if f.ring32!=nil {
-            got=decoder_read(d,f.ring32[int(at)*channels:][:int(run)*channels])
-        } else {
-            #partial switch d.kind {
-            case .Wav:
-                got=wav_convert_i16(&d.wav,d.cursor,f.ring16[int(at)*channels:][:int(run)*channels])
-                d.cursor+=got
-            case .Lossless:
-                l:=&d.lossless
-                if d.cursor>=l.frames {break}
+        if d.kind==.Lossless {
+            l:=&d.lossless
+            if d.cursor<l.frames {
                 block:=d.cursor/l.block_frames
                 first:=d.cursor-block*l.block_frames
                 rest:=min(l.block_frames,l.frames-block*l.block_frames)-first
@@ -197,11 +205,16 @@ feed_fill :: proc(m:^Mixer,f:^Feed) {
                 // A damaged block plays as silence.
                 lossless_block(l,block,m.feed_planes)
                 split:=min(rest,int(run))
-                lossless_convert_i16(m.feed_planes,l.block_frames,channels,first,split,f.ring16[int(at)*channels:])
-                lossless_convert_i16(m.feed_planes,l.block_frames,channels,first+split,rest-split,f.ring16)
+                lossless_convert_i16(m.feed_planes,l.block_frames,channels,first,split,f.ring[int(at)*channels:])
+                lossless_convert_i16(m.feed_planes,l.block_frames,channels,first+split,rest-split,f.ring)
                 got=rest
                 d.cursor+=rest
             }
+        } else {
+            floats:=m.feed_floats[:int(min(run,FEED_FLOAT_FRAMES))*channels]
+            got=decoder_read(d,floats)
+            ring:=f.ring[int(at)*channels:]
+            for x,i in floats[:got*channels] {ring[i]=sample_pcm16(x)}
         }
         write+=u64(got);free-=u64(got)
         sync.atomic_store_explicit(&f.write,write,.Release)
@@ -237,7 +250,7 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     mask:=f.capacity-1
     channels:=u64(v.source.channels)
     available:=write-read
-    needed:=(u64(u32(v.cursor))+step*u64(to-from))>>32+3
+    needed:=(v.cursor+step*u64(to-from))>>32+3
     count:=min(available,needed)
     // The frame played last, then in two runs of samples: up to the end of the ring, and from its start.
     for c in 0..<channels {m.scratch[c]=v.kept[c]}
@@ -245,18 +258,10 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     first:=min(count,f.capacity-at)*channels
     rest:=count*channels-first
     dst:=raw_data(m.scratch[channels:])
-    if f.ring32!=nil {
-        src:=raw_data(f.ring32)
-        #no_bounds_check {
-            for i in 0..<first {dst[i]=src[at*channels+i]}
-            for i in 0..<rest {dst[first+i]=src[i]}
-        }
-    } else {
-        src:=raw_data(f.ring16)
-        #no_bounds_check {
-            for i in 0..<first {dst[i]=f32(src[at*channels+i])*(1.0/32768)}
-            for i in 0..<rest {dst[first+i]=f32(src[i])*(1.0/32768)}
-        }
+    src:=raw_data(f.ring)
+    #no_bounds_check {
+        for i in 0..<first {dst[i]=f32(src[at*channels+i])*(1.0/32768)}
+        for i in 0..<rest {dst[first+i]=f32(src[i])*(1.0/32768)}
     }
     // More of the sound is still to come after these frames, now or later.
     holds:=!ended || count<available

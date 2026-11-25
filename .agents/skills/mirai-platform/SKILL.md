@@ -22,7 +22,7 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   [crashes](references/platform.md#crashes),
   [file watching](references/platform.md#file-watching), [paths](references/platform.md#paths) and
   [audio device](references/platform.md#audio-device).
-- Mixer, threads, sounds, decoders, feeds and streams, voices, batches, buses, sends, filters,
+- Mixer, threads, sounds, decoders, Vorbis setups, feeds, voices, batches, buses, sends, filters,
   delay, solo, meters, the master limiter, reverb, positional audio:
   [mixer](references/audio.md#mixer),
   [sounds](references/audio.md#sounds), [voices](references/audio.md#voices),
@@ -57,8 +57,9 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
 - The mixer is used by two threads at most: `mixer_render` on one and everything else on another;
   its own decoder thread, when it has one, only fills feeds. `mixer_render` is `"contextless"`: it
   can neither allocate nor take locks, and it never decodes: it reads what a decoder left.
-- A sound loaded into the mixer stays encoded when it is lossless or a WAV of 16 bits or fewer;
-  each voice decodes it. Loading never decodes those.
+- A sound loaded into the mixer stays as its file (of a WAV, its samples), whatever its form or
+  length; each voice decodes it from a feed. Loading never decodes; a Vorbis setup is kept once
+  for every sound that has the same headers.
 - An exhausted capacity returns an error or handle 0 and adds to the statistics
   (`platform.stats`, `watch_stats`, `audio.mixer_stats`); nothing grows.
 - Handles (`Watch`, `audio.Sound`, `audio.Voice`) are generational `base.Handle`s: a
@@ -87,12 +88,15 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
 - Audio: the tests render to memory and compare samples; `audio/testdata/*.ogg` are tones
   generated once and not regenerated. Mixers of tests have no decoder thread, so the output is
   exact; a test that uses one decodes with `mixer_decode` before each render.
-- Feeds: `audio/lossless_test.odin` (voices and offsets, an encoded sound against its decode,
-  damaged input) and `audio/stream_test.odin` (the audio and game threads share a mixer without
-  locks, with the decoder thread).
+- Feeds: `audio/feed_test.odin` (memory held, a voice against the whole decode of its file with
+  loop, seek and pitch 2, a storm of starts, a late decode, refused files, and the audio and game
+  threads sharing a mixer with the decoder thread) and `audio/lossless_test.odin` (lossless voices
+  and offsets, damaged input).
 - Benchmarks, only if the change touches a measured path:
   `mirai test audio benchmark_mixing_ten_milliseconds --release -define:AUDIO_BENCHMARK=true`,
-  `benchmark_encoded_sounds_against_decoded_ones` (load, memory and decode per voice) and
+  `mirai test cook/import bench_sounds_in_the_mixer -define:COOK_BENCH=true` (the sounds of the
+  demo and the template as imported: memory, start, render and decode per 10 ms, a minute of
+  storms) and
   `mirai test platform benchmark_watch_pass --release -define:PLATFORM_BENCHMARK=true`.
 - Native dialogs, dragging and resizing the window with the mouse, maximizing and full screen are
   tested by a person.

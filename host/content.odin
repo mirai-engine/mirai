@@ -126,8 +126,6 @@ content_animation_loops :: proc "contextless" (library:^anim.Library,count:int) 
 Content_Sound :: struct {
     using stamp:Content_Stamp,
     sound:audio.Sound,
-    file:asset.Asset, // kept open while a stream decodes from it
-    stream:bool,
 }
 
 // A .font, a font of App.ui_font from the start of the frame after it is
@@ -192,7 +190,6 @@ Content :: struct {
     rng:base.Rng,                    // of the variations of the sets
     fonts:[dynamic]Content_Font,
     prompts:[dynamic]Content_Prompts,
-    retired:[dynamic]asset.Asset, // files of streams that were replaced or unloaded
     free:[Content_Kind][dynamic]u32, // entries that unloaded content left
     generations:u32,                 // of the last load
     reloaded:u32,                    // generation of the last reload
@@ -205,8 +202,7 @@ Content :: struct {
     stats:Content_Stats,
 }
 
-// The content of the application, created the first time it is asked for: it
-// is freed after the mixer, which may still read the files of its streams.
+// The content of the application, created the first time it is asked for;
 // nil without assets or memory.
 app_content :: proc(app:^App) -> ^Content {
     if app.content!=nil || app.assets==nil {return app.content}
@@ -222,12 +218,11 @@ app_content :: proc(app:^App) -> ^Content {
     c.rng=base.rng_make(0x736f756e64)
     c.fonts,errors[4]=make([dynamic]Content_Font,0,ui.FONT_CAPACITY,app.allocator)
     c.prompts,errors[5]=make([dynamic]Content_Prompts,0,CONTENT_CAPACITY,app.allocator)
-    c.retired=make([dynamic]asset.Asset,app.allocator)
     for &free in c.free {free=make([dynamic]u32,app.allocator)}
     failed:=reserve(&c.index,CONTENT_CAPACITY*4)!=nil
     for error in errors {failed||=error!=nil}
     if failed {
-        delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets);delete(c.retired)
+        delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets)
         delete(c.fonts);delete(c.prompts)
         for free in c.free {delete(free)}
         free(c,app.allocator)
@@ -254,8 +249,6 @@ app_content_destroy :: proc(app:^App) {
     for &entry in c.fonts {delete(entry.data,c.allocator);delete(entry.next,c.allocator)}
     for &entry in c.prompts {delete(entry.images,c.allocator)}
     for free in c.free {delete(free)}
-    for &file in c.retired {asset.asset_close(&file)}
-    delete(c.retired)
     delete(c.index);delete(c.uis);delete(c.animations);delete(c.sounds);delete(c.sound_sets)
     delete(c.fonts);delete(c.prompts)
     free(c,app.allocator)
@@ -286,19 +279,11 @@ content_animation_free :: proc(c:^Content,entry:^Content_Animation) {
     c.retarget_bytes-=entry.retarget.bytes
     entry.retarget.bytes=0
 }
-// The mixer reads the file of a stream until its audio thread lets go of the
-// sound, which nothing reports: the file of a stream that is replaced stays
-// open until the application ends. final: the mixer no longer exists.
+// The mixer holds what it plays of a sound; final: the mixer no longer exists.
 @(private="file")
 content_sound_free :: proc(app:^App,entry:^Content_Sound,final:=false) {
-    c:=app.content
-    if final || !entry.stream {
-        asset.asset_close(&entry.file)
-    } else {
-        append(&c.retired,entry.file)
-    }
     if !final && app.mixer!=nil && entry.sound!={} {audio.sound_destroy(app.mixer,entry.sound)}
-    entry.file,entry.sound,entry.stream={},{},false
+    entry.sound={}
 }
 
 // What Quad.data is for a texture asset: its place in the texture table of
@@ -382,28 +367,19 @@ content_sound_load :: proc(app:^App,id:base.Asset_Id,entry:^Content_Sound) -> bo
     if mixer==nil {return false}
     file:asset.Asset
     content_open(a,id,asset.KIND_SOUND,&file,entry) or_return
+    defer asset.asset_close(&file)
     view,error:=asset.sound_view(&file,&a.types)
     // A sound the importer coded is at the rate of the mixer; one at another is imported again.
-    if error!=.None || view.info.encoding==.Lossless && view.info.sample_rate!=audio.MIXER_RATE {
-        asset.asset_close(&file)
-        return false
-    }
-    sound:audio.Sound
-    failed:audio.Error
-    data:=view.lossless if view.info.encoding==.Lossless else view.file
-    stream:=.Stream in view.info.flags
-    if stream {sound,failed=audio.sound_stream(mixer,data)} else {sound,failed=audio.sound_load(mixer,data)}
+    if error!=.None || view.info.encoding==.Lossless && view.info.sample_rate!=audio.MIXER_RATE {return false}
+    // The mixer copies what it plays.
+    sound,failed:=audio.sound_load(mixer,view.lossless if view.info.encoding==.Lossless else view.file)
     if failed==.None && !audio.sound_set_loop_start(mixer,sound,int(view.info.loop_start)) {
         audio.sound_destroy(mixer,sound)
         failed=.Invalid_Data
     }
-    if failed!=.None {
-        asset.asset_close(&file)
-        return false
-    }
+    if failed!=.None {return false}
     content_sound_free(app,entry)
-    entry.sound,entry.stream=sound,stream
-    if stream {entry.file=file} else {asset.asset_close(&file)}
+    entry.sound=sound
     return true
 }
 
@@ -836,8 +812,7 @@ content_refresh :: proc(app:^App) -> (reloaded:int) {
 // scope of the assets reaches (assets_scope_set): their memory is freed, a
 // sound leaves the mixer, and their entries are there for the next ones.
 // Fonts stay, as App.ui_font keeps them. Asking for one again
-// loads it, with another generation. The file of a stream stays open until
-// the application ends, as when it is replaced. Returns how many it unloaded.
+// loads it, with another generation. Returns how many it unloaded.
 content_collect :: proc(app:^App) -> (unloaded:int) {
     c:=app.content
     if c==nil || app.assets==nil {return}

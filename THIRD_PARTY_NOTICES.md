@@ -16,8 +16,9 @@ texts of the licenses are at the [end](#license-texts).
 
 - **SDL3** (zlib; © 1997-2026 Sam Lantinga), <https://libsdl.org>. Game: `SDL3.dll` or
   `libSDL3.so.0` next to the executable.
-- **stb** `stb_image` and `stb_vorbis` (MIT or public domain; © 2017 Sean Barrett),
-  <https://github.com/nothings/stb>. Game.
+- **stb** `stb_image` and `stb_vorbis` 1.22 (MIT or public domain; © 2017 Sean Barrett),
+  <https://github.com/nothings/stb>. `stb_vorbis` in `third_party/stb_vorbis`, with the decoders
+  of `shared.c` that share a setup. Game.
 - **FreeType 2.14.3** (FreeType License; © The FreeType Project), <https://freetype.org>. Game.
 - **cgltf** (MIT; © 2018-2021 Johannes Kuhlmann), <https://github.com/jkuhlmann/cgltf>. Editor.
 - **ufbx 0.23.1** (MIT or public domain; © 2020 Samuli Raivio), <https://github.com/ufbx/ufbx>.

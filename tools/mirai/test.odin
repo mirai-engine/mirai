@@ -110,7 +110,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         _=os.set_env(project.PIPELINES_PATH_ENV,join(tests,project.TEST_PIPELINES_FILE))
     }
     prepared:=time.tick_now()
-    // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
+    // ui and audio link FreeType and stb_vorbis, the importer ufbx and the editor SQLite.
     if !engine_shaders(root) || !ensure_runtime_dependencies(root) {return 1}
     ensure_sdl(root,tests)
     builds:=make([]build.Test_Build,len(packages))

@@ -506,44 +506,6 @@ a_voice_says_how_it_is_heard_and_at_what_gain :: proc(t:^testing.T) {
     testing.expect(t,voice_state(nil,&cases[0].entry,1)==.Unloaded && entry_gain(nil,source,&cases[0].entry,&listeners)==0)
 }
 
-// The settings give the mixer its streams, within its range; a play refused
-// because every stream plays is said once per frame that had one.
-@(test)
-the_stream_capacity_follows_the_settings_and_a_refused_stream_is_said :: proc(t:^testing.T) {
-    m,error:=mixer.mixer_create({})
-    if !testing.expect_value(t,error,mixer.Error.None) {return}
-    defer mixer.mixer_destroy(m)
-    frames:=4800
-    wav:=make([]u8,44+frames*2,context.temp_allocator)
-    header:=[]u32le{0x46464952,u32le(36+frames*2),0x45564157,0x20746d66,16,0x00010001,48000,96000,0x00100002,0x61746164,u32le(frames*2)}
-    copy(wav,([^]u8)(raw_data(header))[:44])
-    for i in 0..<frames {wav[44+i*2+1]=0x10}
-    stream,streamed:=mixer.sound_stream(m,wav)
-    testing.expect_value(t,streamed,mixer.Error.None)
-    problems:core.Problems
-    applied:Mixer_Buses
-    settings:=Audio_Settings{stream_capacity=1}
-    streams_apply(m,&settings,&applied,&problems)
-    testing.expect_value(t,mixer.mixer_stats(m).stream_capacity,1)
-    testing.expect(t,mixer.voice_play(m,stream)!=0)
-    for refused in 1..=3 {
-        testing.expect_value(t,mixer.voice_play(m,stream),Voice(0))
-        if refused==2 {testing.expect_value(t,mixer.voice_play(m,stream),Voice(0))}
-        streams_apply(m,&settings,&applied,&problems)
-        streams_apply(m,&settings,&applied,&problems)
-        said:=core.problem_find(&problems,core.NONE,"audio.streams")
-        testing.expectf(t,said!=nil && said.count==u64(refused),"said once per frame that refused: %v",said)
-    }
-    Case :: struct {asked,has:int,says:bool}
-    for c in ([?]Case{{0,mixer.STREAM_CAPACITY_DEFAULT,false},{3,3,false},{mixer.STREAM_CAPACITY_MAX+5,mixer.STREAM_CAPACITY_MAX,true},{-2,1,true}}) {
-        cleared:core.Problems
-        settings.stream_capacity=c.asked
-        streams_apply(m,&settings,&applied,&cleared)
-        testing.expectf(t,mixer.mixer_stats(m).stream_capacity==c.has,"%d asked, %d streams",c.asked,mixer.mixer_stats(m).stream_capacity)
-        testing.expect_value(t,core.problem_find(&cleared,core.NONE,"audio.stream_capacity")!=nil,c.says)
-    }
-}
-
 @(test)
 buses_take_their_gain_filter_and_ducking_from_the_settings :: proc(t:^testing.T) {
     f:Fixture
@@ -978,7 +940,11 @@ one_more_play_plays_a_source_again :: proc(t:^testing.T) {
     if !made {return}
     world_run(&w,&listener,&f.app)
     out:=make([]f32,mixer.CHUNK_FRAMES*8*2,context.temp_allocator)
-    for _ in 0..<8 {mixer.mixer_render(m,out)}
+    for _ in 0..<8 {
+        // A loaded sound decodes as it plays: here, before every render.
+        mixer.mixer_decode(m)
+        mixer.mixer_render(m,out)
+    }
     mixer.mixer_update(m)
     world_run(&w,&listener,&f.app)
     world_run(&w,&listener,&f.app)
@@ -1007,6 +973,7 @@ a_placed_request_plays_as_a_source_at_its_place :: proc(t:^testing.T) {
     at:=[3]f32{0.5,0,-1}
     heard :: proc(m:^Mixer) -> []f32 {
         out:=make([]f32,mixer.CHUNK_FRAMES*4*2,context.temp_allocator)
+        mixer.mixer_decode(m)
         mixer.mixer_render(m,out)
         return out
     }

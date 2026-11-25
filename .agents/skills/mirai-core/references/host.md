@@ -255,7 +255,7 @@ id (never reused; input buffers freeable on return):
 
 - `content_sound_pick` selects from `.sound`/`.sound_set` (one sound, or every layer of a Layered
   set, with the entry of the set each is); `content_sound_set_info` gives a set's values for its
-  curves. Streamed sounds stay open until exit.
+  curves. A sound's asset closes once the mixer has copied what it plays.
   `.ui` re-resolves images/programs on `Assets.revision`. `prompts_find` maps key/mouse to
   `Keyboard`.
 - **Fonts:** `content_font` registers into `App.ui_font` (`app_ui_fonts_apply` before UI

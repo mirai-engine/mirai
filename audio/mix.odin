@@ -12,7 +12,7 @@ Voice_Source :: struct {
     loop_start:u32, // the frame a loop goes back to
     channels:u32,   // 1 or 2
     rate:u32,
-    feed:i32,       // the feed it plays from; -1 for a sound decoded in memory
+    feed:i32,       // the feed it plays from; -1 for a sound made in memory
 }
 // What a play command carries, and afterwards the current parameters of the voice.
 Voice_Start :: struct {
@@ -335,7 +335,7 @@ voice_post :: proc "contextless" (m:^Mixer,v:^Mix_Voice,src,bus:[^]f32,from,to:i
 // Mixes output frames [from,to) of a chunk from a source laid out in memory.
 // Segments end where the fade ends and where the source ends or wraps.
 // holds: the last frames of the source lack the neighbours they are
-// interpolated with (a stream that is still being decoded), so they are not
+// interpolated with (a feed that is still being decoded), so they are not
 // played. before: samples[-1] is the frame before the first, which a feed
 // keeps; otherwise it is silence, or the last frame once a loop wrapped.
 // Returns false when the voice has ended.

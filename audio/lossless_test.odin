@@ -95,8 +95,7 @@ lossless_refuses_what_it_does_not_code_and_survives_damage :: proc(t:^testing.T)
         copy(damaged,file)
         damaged[length]~=u8(next(&r,255)+1)
         decode(damaged,context.temp_allocator)
-        m:=test_mixer(t,{stream_frames=1024})
-        if sound,stream_error:=sound_stream(m,damaged);stream_error==.None {voice_play(m,sound)}
+        m:=test_mixer(t)
         // Kept encoded: a cut file whose blocks point past its end is refused, a damaged block plays as silence.
         cut,cut_error:=sound_load(m,file[:length])
         if length>=LOSSLESS_HEADER && length<len(file) {testing.expect_value(t,cut_error,Error.Invalid_Data)}
@@ -119,9 +118,8 @@ lossless_refuses_what_it_does_not_code_and_survives_damage :: proc(t:^testing.T)
     }
 }
 
-// Streamed or kept encoded, from the beginning or from an offset and looping,
-// a lossless sound plays the frames of its whole decode, also while a decoder
-// thread fills its voices.
+// From the beginning or from an offset and looping, a lossless sound plays
+// the frames of its whole decode, also while a decoder thread fills its voices.
 @(test)
 lossless_voices_and_their_offsets_play_the_whole_decode :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
@@ -150,23 +148,19 @@ lossless_voices_and_their_offsets_play_the_whole_decode :: proc(t:^testing.T) {
             }
         }
     }
-    Mode :: enum {Stream,Kept,Kept_With_Thread}
+    Mode :: enum {Kept,Kept_With_Thread}
     for mode in Mode {
-        m:=test_mixer(t,{stream_frames=1024,decoder_thread=mode==.Kept_With_Thread})
+        m:=test_mixer(t,{decoder_thread=mode==.Kept_With_Thread})
         defer mixer_destroy(m)
-        sound:Sound
-        error:Error
-        if mode==.Stream {sound,error=sound_stream(m,file)} else {sound,error=sound_load(m,file)}
+        sound,error:=sound_load(m,file)
         testing.expect_value(t,error,Error.None)
         testing.expect(t,sound_frames(m,sound)==FRAMES && sound_channels(m,sound)==2 && sound_sample_rate(m,sound)==RATE)
         // What stays in memory is the file, not its decode.
-        if mode!=.Stream {testing.expect_value(t,mixer_stats(m).sound_bytes,len(file))}
+        testing.expect_value(t,mixer_stats(m).sound_bytes,len(file))
         voice:=voice_play(m,sound)
-        if mode==.Stream {
-            // Loading a larger decoder workspace leaves the playing lossless decoder intact.
-            _,load_error:=sound_stream(m,TONE_LONG)
-            testing.expect_value(t,load_error,Error.None)
-        }
+        // Loading a Vorbis sound gives every feed a workspace and leaves the playing lossless decoder intact.
+        _,load_error:=sound_load(m,TONE_LONG)
+        testing.expect_value(t,load_error,Error.None)
         same(t,fmt.tprint(mode,"from the beginning"),play(m,FRAMES),whole.samples,0,FRAMES)
         play(m,CHUNK_FRAMES*2)
         testing.expect(t,!voice_valid(m,voice))
@@ -252,29 +246,5 @@ encoded_sound_plays_like_its_decode_in_memory :: proc(t:^testing.T) {
     sound_destroy(kept,b)
     test_render(kept,CHUNK_FRAMES)
     mixer_update(kept)
-    testing.expect(t,kept.free_feed_count==kept.pool_feeds && mixer_stats(kept).sounds==0 && mixer_stats(kept).sound_bytes==0)
-}
-
-// A Vorbis stream starts at an offset as the same file played from memory does.
-@(test)
-ogg_stream_starts_at_an_offset :: proc(t:^testing.T) {
-    defer free_all(context.temp_allocator)
-    memory:=test_mixer(t)
-    defer mixer_destroy(memory)
-    streamed:=test_mixer(t,{stream_frames=2048})
-    defer mixer_destroy(streamed)
-    loaded,_:=sound_load(memory,TONE_LONG)
-    stream,_:=sound_stream(streamed,TONE_LONG)
-    desc:=VOICE_DEFAULT
-    desc.offset=1.25 // 40000 frames at 32 kHz
-    voice_play(memory,loaded,desc)
-    voice_play(streamed,stream,desc)
-    worst:=f32(0)
-    for _ in 0..<60 {
-        want:=test_render(memory,480)
-        got:=test_render(streamed,480)
-        mixer_update(memory);mixer_update(streamed)
-        for i in 0..<len(want) {worst=max(worst,abs(want[i]-got[i]))}
-    }
-    testing.expectf(t,worst<1e-5,"the stream differs from the sound in memory by %v",worst)
+    testing.expect(t,kept.free_feed_count==len(kept.feeds) && mixer_stats(kept).sounds==0 && mixer_stats(kept).sound_bytes==0)
 }

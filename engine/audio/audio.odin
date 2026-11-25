@@ -202,14 +202,12 @@ Audio_Bus_Setting :: struct {
 }
 
 // One entry per bus that does not play as it comes, the first one of a bus
-// being the one that counts, the bus the reverb returns in, how many streamed
-// sounds (music, long ambiences) play at once, and the snapshots Audio_Mix
-// blends to.
+// being the one that counts, the bus the reverb returns in, and the snapshots
+// Audio_Mix blends to.
 @(storage,setting)
 Audio_Settings :: struct {
     buses:[AUDIO_BUS_CAPACITY]Audio_Bus_Setting `mirai:"trim"`,
     reverb_bus:Audio_Bus,
-    stream_capacity:int `mirai:"min=0,max=64"`, // 0: mixer.STREAM_CAPACITY_DEFAULT; one more stream refused is a problem "audio.streams"
     snapshots:[AUDIO_SNAPSHOT_CAPACITY]Audio_Snapshot `mirai:"trim"`,
 }
 
@@ -344,8 +342,6 @@ Mixer_Buses :: struct {
     count:int,
     lowpass:f32,
     set:bool,
-    streams:int,       // the stream capacity applied; 0: none yet
-    streams_busy:u64,  // mixer.Mixer_Stats.streams_busy as last seen
     blend:Mix_Blend,
 }
 
@@ -657,7 +653,6 @@ audio_buses :: proc(
     applied:^Mixer_Buses,m:^Mixer,id:core.World_Id,problems:^core.Problems,
 ) {
     if m==nil || applied==nil {return}
-    streams_apply(m,settings.ptr,applied,problems)
     changed:=core.touched(settings_stamp,&applied.settings) | core.touched(volume_stamp,&applied.volumes)
     snapshot,seconds:=-1,f32(0)
     if mix.ptr!=nil {
@@ -677,29 +672,6 @@ audio_buses :: proc(
     if applied.set && applied.world==id && !changed && !blended && applied.count==mixer.bus_count(m) && applied.lowpass==lowpass {return}
     applied.set=buses_apply(m,settings.ptr,volumes.ptr,lowpass,problems,&blend.now)
     applied.world,applied.count,applied.lowpass=id,mixer.bus_count(m),lowpass
-}
-
-// Gives the mixer the stream capacity of the settings, and says once per
-// frame that had them how many plays of streamed sounds were refused because
-// every stream played: the voices of sources and audio.play alike.
-@(private)
-streams_apply :: proc(m:^Mixer,settings:^Audio_Settings,applied:^Mixer_Buses,problems:^core.Problems) {
-    asked:=settings.stream_capacity if settings!=nil else 0
-    want:=mixer.STREAM_CAPACITY_DEFAULT if asked==0 else clamp(asked,1,mixer.STREAM_CAPACITY_MAX)
-    if asked<0 || asked>mixer.STREAM_CAPACITY_MAX {
-        core.report(problems,core.NONE,"audio.stream_capacity","Audio_Settings.stream_capacity %d is out of its range, so the mixer has %d streams; give it 1 to %d, or 0 for %d",asked,want,mixer.STREAM_CAPACITY_MAX,mixer.STREAM_CAPACITY_DEFAULT)
-    }
-    if want!=applied.streams {
-        if mixer.mixer_set_stream_capacity(m,want)!=.None {
-            core.report(problems,core.NONE,"audio.memory","the mixer keeps %d streams in place of the %d of Audio_Settings.stream_capacity: out of memory for their rings; free memory or ask for fewer",mixer.mixer_stats(m).stream_capacity,want)
-        }
-        applied.streams=want
-    }
-    stats:=mixer.mixer_stats(m)
-    if stats.streams_busy>applied.streams_busy {
-        core.report(problems,core.NONE,"audio.streams","%d plays of streamed sounds were refused: all %d streams of the mixer played; raise Audio_Settings.stream_capacity (at most %d) or stream fewer sounds at once",stats.streams_busy-applied.streams_busy,stats.stream_capacity,mixer.STREAM_CAPACITY_MAX)
-    }
-    applied.streams_busy=stats.streams_busy
 }
 
 // The cutoff of the master by the medium of count listeners: while every one
@@ -1347,10 +1319,11 @@ voices_picked :: proc(m:^Mixer,app:^host.App,source:Audio_Source,pick:host.Sound
     for sound,i in v.sounds[:v.count] {lengths[i]=mixer.sound_seconds(m,sound)}
     shapes:=shapes_of(host.content_sound_set_info(app,source.sound),&v,parameters_clean(source.parameters))
     times:=layers_start(&v)
-    busy:=mixer.mixer_stats(m).streams_busy
+    busy:=mixer.mixer_stats(m).feeds_busy
     if !voices_play(m,&v,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener),&shapes,&times,&lengths) {
-        // A refused stream is said by audio_buses, with the capacity that refused it.
-        if mixer.mixer_stats(m).streams_busy==busy {
+        if mixer.mixer_stats(m).feeds_busy!=busy {
+            core.report(problems,e,"audio.voices","%s did not start: every feed of the mixer decodes a voice, those stolen that still fade out included; play fewer sounds at once",e==core.NONE?"audio.play":"its Audio_Source")
+        } else {
             core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, raise its priority, or raise the voices of the mixer",e==core.NONE?"audio.play":"its Audio_Source")
         }
         return {}

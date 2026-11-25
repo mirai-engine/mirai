@@ -56,7 +56,7 @@ sound_open :: proc(t:^testing.T,s:^store.Store,written:Written,types:^asset.Type
 }
 
 @(test)
-a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^testing.T) {
+a_wav_and_an_ogg_become_sounds_coded_or_kept_as_their_file :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     _,folder,s:=test_assets(t,"sound")
     if folder=="" {return}
@@ -77,46 +77,45 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         testing.expect(t,written.kind==asset.KIND_SOUND && written.id!={} && written.object!={} && written.path=="" && written.bytes<len(samples)*2)
         a:asset.Asset
         if view,ok:=sound_open(t,s,written,&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{}})
+            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless})
             lossless_same(t,view,samples)
             testing.expect(t,view.source!=nil && serial.text_field(view.source.importer[:])==IMPORTER_NAME && view.source.source_size==u64(len(wav)))
         }
         asset.asset_close(&a)
     }
-    // Imported again it is the same asset; told to stream, it streams the same coded samples.
-    again,again_error:=import_sound(path,{storage=.Stream},{store=s})
+    // Imported again it is the same asset, with the same coded samples.
+    again,again_error:=import_sound(path,{store=s})
     testing.expect_value(t,again_error.code,Error_Code.None)
     if len(again.assets)==1 && len(report.assets)==1 {
         testing.expect(t,again.assets[0].id==report.assets[0].id)
         a:asset.Asset
         if view,ok:=sound_open(t,s,again.assets[0],&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless,{.Stream}})
+            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.Lossless})
             lossless_same(t,view,samples)
         }
         asset.asset_close(&a)
     }
     report_destroy(&report);report_destroy(&again)
 
-    // A 24 bit WAV at the rate of the mixer that 16 bits would round streams its file as it is.
+    // A 24 bit WAV told File keeps its file as it is, which 16 bits would round.
     deep:=wav_bytes(samples,2,48000,low=0x40);defer delete(deep)
     deep_path:=fmt.tprintf("%s/deep.wav",folder)
     _=os.write_entire_file(deep_path,deep)
-    report,error=import_sound(deep_path,{storage=.Stream},{store=s})
+    report,error=import_sound(deep_path,{store=s,sound=.File})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
         if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
-            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.File,{.Stream}} && mem.compare(view.file,deep)==0)
+            testing.expect(t,view.info^==asset.Sound_Info{2,48000,4410,0,.File} && mem.compare(view.file,deep)==0)
         }
         asset.asset_close(&a)
     }
     report_destroy(&report)
 
-    // Half a second of Vorbis at 44.1 kHz: coded Lossless when short and brought to the rate of
-    // the mixer, streamed from a quarter of a second on as its file, at its own rate.
+    // Half a second of Vorbis at 44.1 kHz told Lossless: coded and brought to the rate of the mixer.
     ogg:=fmt.tprintf("%s/sine.ogg",folder)
     _=os.write_entire_file(ogg,SINE_OGG)
-    report,error=import_sound(ogg,options={store=s,sound=.Lossless})
+    report,error=import_sound(ogg,{store=s,sound=.Lossless})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
@@ -130,16 +129,6 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
         asset.asset_close(&a)
     }
     report_destroy(&report)
-    report,error=import_sound(ogg,{stream_seconds=0.25},{store=s})
-    testing.expect_value(t,error.code,Error_Code.None)
-    if len(report.assets)==1 {
-        a:asset.Asset
-        if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
-            testing.expect(t,view.info.encoding==.File && .Stream in view.info.flags && view.info.sample_rate==44100 && mem.compare(view.file,SINE_OGG)==0)
-        }
-        asset.asset_close(&a)
-    }
-    report_destroy(&report)
 
     // A 12 kHz sine recorded at 44.1 kHz plays at its level, copied by a voice at its own pitch.
     sine:=make([]i16,44100);defer delete(sine)
@@ -147,7 +136,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     sine_wav:=wav_bytes(sine,1,44100);defer delete(sine_wav)
     sine_path:=fmt.tprintf("%s/air.wav",folder)
     _=os.write_entire_file(sine_path,sine_wav)
-    report,error=import_sound(sine_path,options={store=s})
+    report,error=import_sound(sine_path,{store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
@@ -177,11 +166,12 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     }
     report_destroy(&report)
 
-    // A long Ogg Vorbis at 44.1 kHz streams its file at its own rate: a voice plays its 12 kHz at
-    // that pitch, for its length, and loops back to its LOOPSTART, in the frames of the file.
+    // An Ogg Vorbis at 44.1 kHz smaller than its samples coded keeps its file at its own rate: a
+    // voice plays its 12 kHz at that pitch, for its length, and loops back to its LOOPSTART, in
+    // the frames of the file.
     intro_path:=fmt.tprintf("%s/intro.ogg",folder)
     _=os.write_entire_file(intro_path,INTRO_OGG)
-    report,error=import_sound(intro_path,{stream_seconds=1},{store=s})
+    report,error=import_sound(intro_path,{store=s})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
@@ -189,7 +179,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
             testing.expect(t,view.info.encoding==.File && view.info.sample_rate==44100 && view.info.loop_start==44100 && mem.compare(view.file,INTRO_OGG)==0)
             testing.expectf(t,report.assets[0].bytes-len(INTRO_OGG)<2048,"%d bytes for a file of %d",report.assets[0].bytes,len(INTRO_OGG))
             mixer,_:=audio.mixer_create({})
-            sound,_:=audio.sound_stream(mixer,view.file)
+            sound,_:=audio.sound_load(mixer,view.file)
             testing.expect(t,audio.sound_set_loop_start(mixer,sound,int(view.info.loop_start)))
             desc:=audio.VOICE_DEFAULT
             desc.loop=true
@@ -234,7 +224,7 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     refuse :: proc(t:^testing.T,s:^store.Store,folder,name:string,bytes:[]u8,code:Error_Code) {
         path:=fmt.tprintf("%s/%s",folder,name)
         if bytes!=nil {_=os.write_entire_file(path,bytes)}
-        report,error:=import_sound(path,options={store=s})
+        report,error:=import_sound(path,{store=s})
         testing.expect_value(t,error.code,code)
         testing.expect(t,len(report.assets)==0,name)
     }
@@ -266,7 +256,7 @@ a_short_ogg_keeps_the_smaller_of_its_file_and_its_samples_coded :: proc(t:^testi
     }) {
         options:=Import_Options{store=s}
         if given,told:=c.given.?;told {options.sound,options.ignore_stored=given,true}
-        report,error:=import_sound(ogg,{},options)
+        report,error:=import_sound(ogg,options)
         testing.expectf(t,error.code==.None && len(report.assets)==1,"%s: %v",c.what,error)
         if len(report.assets)!=1 {
             report_destroy(&report)
@@ -275,7 +265,7 @@ a_short_ogg_keeps_the_smaller_of_its_file_and_its_samples_coded :: proc(t:^testi
         a:asset.Asset
         if view,ok:=sound_open(t,s,report.assets[0],&types,&a);ok {
             if c.keeps {
-                testing.expectf(t,view.info.encoding==.File && .Stream not_in view.info.flags && view.info.sample_rate==44100 && view.info.frames==22050 && mem.compare(view.file,SINE_OGG)==0,"%s: %v",c.what,view.info^)
+                testing.expectf(t,view.info.encoding==.File && view.info.sample_rate==44100 && view.info.frames==22050 && mem.compare(view.file,SINE_OGG)==0,"%s: %v",c.what,view.info^)
                 mixer,_:=audio.mixer_create({})
                 sound,loaded:=audio.sound_load(mixer,view.file)
                 testing.expect_value(t,loaded,audio.Error.None)
@@ -296,57 +286,6 @@ a_short_ogg_keeps_the_smaller_of_its_file_and_its_samples_coded :: proc(t:^testi
         report_destroy(&report)
     }
     testing.expectf(t,coded>len(SINE_OGG),"the file kept (%d bytes) is smaller than its samples coded (%d)",len(SINE_OGG),coded)
-    click,error:=sound_build(CLICK_OGG,{},allocator=context.temp_allocator)
+    click,error:=sound_build(CLICK_OGG,allocator=context.temp_allocator)
     testing.expectf(t,error==.None && len(click.file)==0 && len(click.lossless)>0 && len(click.lossless)<len(CLICK_OGG),"a click and its silence code smaller than its file (%d bytes): %d",len(CLICK_OGG),len(click.lossless))
-}
-
-@(test)
-bench_loading_a_lossless_sound_against_decoding_its_file :: proc(t:^testing.T) {
-    if !BENCH {return}
-    ROUNDS :: 20
-    best :: proc(body:proc(data:rawptr),data:rawptr) -> f64 {
-        low:=time.Duration(max(i64))
-        for _ in 0..<ROUNDS {
-            start:=time.tick_now()
-            body(data)
-            low=min(low,time.tick_since(start))
-        }
-        return time.duration_microseconds(low)
-    }
-    State :: struct {mixer:^audio.Mixer,samples:[]i16,scratch:[]f32,file,lossless:[]u8,channels,rate:int}
-    pcm,_:=audio.decode(TONE_OGG,context.allocator)
-    defer audio.pcm_destroy(&pcm)
-    seconds:=f64(len(pcm.samples))/f64(pcm.sample_rate)
-    mixer,_:=audio.mixer_create({})
-    defer audio.mixer_destroy(mixer)
-    s:=State{mixer=mixer,samples=make([]i16,len(pcm.samples)),scratch=make([]f32,len(pcm.samples)),file=TONE_OGG,channels=pcm.channels,rate=pcm.sample_rate}
-    defer {delete(s.samples);delete(s.scratch)}
-    for sample,i in pcm.samples {s.samples[i]=i16(sample*32767)}
-    s.lossless,_=audio.lossless_encode(s.samples,s.channels,s.rate)
-    defer delete(s.lossless)
-    decoded:=best(proc(data:rawptr) {
-        s:=cast(^State)data
-        sound,_:=audio.sound_load(s.mixer,s.lossless)
-        audio.sound_destroy(s.mixer,sound)
-        audio.mixer_render(s.mixer,s.scratch[:512])
-        audio.mixer_update(s.mixer)
-    },&s)
-    vorbis:=best(proc(data:rawptr) {
-        s:=cast(^State)data
-        sound,_:=audio.sound_load(s.mixer,s.file)
-        audio.sound_destroy(s.mixer,sound)
-        audio.mixer_render(s.mixer,s.scratch[:512])
-        audio.mixer_update(s.mixer)
-    },&s)
-    stream:=best(proc(data:rawptr) {
-        s:=cast(^State)data
-        sound,_:=audio.sound_stream(s.mixer,s.file)
-        audio.sound_destroy(s.mixer,sound)
-        audio.mixer_render(s.mixer,s.scratch[:512])
-        audio.mixer_update(s.mixer)
-    },&s)
-    fmt.printfln("sound of %.2f s, %d Hz, %d channel(s): ogg %d bytes, pcm16 %d bytes, lossless %d bytes, f32 in the mixer %d bytes",seconds,pcm.sample_rate,pcm.channels,len(TONE_OGG),len(s.samples)*2,len(s.lossless),len(pcm.samples)*4)
-    fmt.printfln("load by decoding the lossless samples whole:      %.1f us, %.1f us per second of sound",decoded,decoded/seconds)
-    fmt.printfln("load by decoding the Vorbis file whole:           %.1f us, %.1f us per second of sound",vorbis,vorbis/seconds)
-    fmt.printfln("open as a stream (decoder only):                  %.1f us",stream)
 }

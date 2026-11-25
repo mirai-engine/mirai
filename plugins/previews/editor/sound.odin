@@ -241,7 +241,7 @@ sound_document :: proc(s:^editor.Session,previews:^Previews,assets:^host.Assets,
 @(private)
 sound_facts :: proc(s:^editor.Session,p:^Sound) {
     ctx:=s.gui.ctx
-    stored:="Decoded while it plays" if .Stream in p.info.flags else "Decoded whole when it loads"
+    stored:="Coded without loss" if p.info.encoding==.Lossless else "Its file, as it came"
     facts:=[4][2]string{
         {"Length",fmt.tprintf("%.2f s",p.seconds)},
         {"Channels",p.info.channels==2?"Stereo":"Mono"},

@@ -78,7 +78,7 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/pcg","std"},{.Base,"std/input","std"},
     {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},{.Base,"std/compressor/data","std"},
-    {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
+    {.Base,"third_party/stb_vorbis","system"},{.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"store","system"},{.Base,"core",""},
 
     {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"exchange",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},

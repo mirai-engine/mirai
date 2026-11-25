@@ -56,8 +56,7 @@ Voice_Shadow :: struct {
     active:bool,
     priority:u8,
     sequence:u64, // order of creation
-    feed:i32,     // the feed it plays from; -1 for a sound decoded in memory
-    stream:bool,  // it plays a stream
+    feed:i32,     // the feed it plays from; -1 for a sound made in memory
 }
 
 @(private)
@@ -82,10 +81,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     slot:=sound_slot(m,sound)
     if slot==nil || !bus_valid(m,desc.bus) || desc.spatial && !voice_desc_finite(desc) || desc.listener>=LISTENERS_MAX || !(desc.delay>=0 && desc.delay<=max(f32)) || !finite(desc.lowpass) {return 0}
     feed:=i32(-1)
-    if slot.stream {
-        if m.free_stream_count==0 {m.counters.streams_busy+=1;return 0}
-        feed=i32(m.free_feeds[m.pool_feeds+m.free_stream_count-1])
-    } else if slot.source.kind!=.None {
+    if slot.source.kind!=.None {
         if m.free_feed_count==0 {m.counters.feeds_busy+=1;return 0}
         feed=i32(m.free_feeds[m.free_feed_count-1])
     }
@@ -96,7 +92,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     } else {
         victim:=-1
         for shadow,i in m.shadows {
-            if !shadow.active || shadow.stream {continue}
+            if !shadow.active {continue}
             if victim<0 || shadow.priority<m.shadows[victim].priority || (shadow.priority==m.shadows[victim].priority && shadow.sequence<m.shadows[victim].sequence) {victim=i}
         }
         if victim<0 || m.shadows[victim].priority>desc.priority {m.counters.voices_rejected+=1;return 0}
@@ -134,28 +130,21 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
     if feed>=0 {
         f:=&m.feeds[feed]
         f.decoder=slot.source
-        if slot.stream {
-            if !stream_decoder_start(&f.decoder,f.workspace) {return 0}
-            m.counters.sound_bytes+=len(f.decoder.memory)
-        }
+        f.decoder.memory=f.workspace
         feed_prepare(f,sound_index,int(offset),int(slot.loop_start),desc.loop)
     }
-    if !command_push(m,{kind=.Voice_Play,index=index,start=start}) {
-        if slot.stream {stream_decoder_close(m,&m.feeds[feed])}
-        return 0
-    }
+    if !command_push(m,{kind=.Voice_Play,index=index,start=start}) {return 0}
     if !stolen {m.free_count-=1}
     shadow.generation=generation
     shadow.active=true
     shadow.priority=desc.priority
     shadow.sequence=m.sequence;m.sequence+=1
     shadow.feed=feed
-    shadow.stream=slot.stream
     m.counters.voices_played+=1
     if stolen {m.counters.voices_stolen+=1}
     if feed>=0 {
         f:=&m.feeds[feed]
-        if slot.stream {m.free_stream_count-=1} else {m.free_feed_count-=1}
+        m.free_feed_count-=1
         f.owner=handle
         feed_hand_over(m,f)
     }

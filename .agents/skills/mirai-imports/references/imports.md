@@ -76,7 +76,7 @@ Plugin editor packages provide
 
 Each asset's `Import_Info` records source name, index, size/hash of decoded input,
 `importer_version` (`IMPORTER_VERSION` + `Format.version`) and `settings_hash` (mesh: levels/front/
-rig/`MESH_CACHE_VERSION`; texture: `Build_Options`/`BUILD_VERSION`/encoder; sound: `Stream`;
+rig/`MESH_CACHE_VERSION`; texture: `Build_Options`/`BUILD_VERSION`/encoder; sound: its coding;
 materials/skeletons/clips: 0). Changing texture settings preserves cached meshes and vice versa.
 `import_write` reuses unchanged mesh/texture objects (`Written.kept`) from current or prior builds
 when version, `owner` and `Import_Info` match (Fast textures upgrade once Final exists in cache).
@@ -319,13 +319,13 @@ Rejects NURBS, multi-skin meshes, non-root skin bones; warns on lights/cameras/c
 
 ## Sounds
 
-`cook/import/sound.odin` decodes WAV/Ogg (1-2 ch; >2 -> `Unsupported`) via `audio.decode`:
-resamples coded clips to `audio.MIXER_RATE` (Kaiser-windowed sinc), stores `< SOUND_STREAM_SECONDS`
-as `Lossless` 16-bit and longer clips with `Stream` (keeping Ogg/non-16-bit WAV intact). By
-default (`Smallest`) a short Ogg keeps its file, at its own rate, where it is smaller than `MLPC`
-(most are 2-4x smaller; a click with silence codes smaller): the mixer decodes it whole on load,
-so a start decodes nothing, at 4 bytes per sample in memory. `.Lossless` always codes, `.File`
-keeps every file; the coding is in the settings hash.
+`cook/import/sound.odin` decodes WAV/Ogg (1-2 ch; >2 -> `Unsupported`) via `audio.decode` and
+stores `Lossless` 16-bit (`audio.sample_pcm16`) resampled to `audio.MIXER_RATE` (Kaiser-windowed
+sinc), or the file, at its own rate. By default (`Smallest`) an Ogg keeps its file where it is
+smaller than `MLPC` (most are 2-4x smaller; a click with silence codes smaller), whatever its
+length. Either form stays as it is in the mixer, which decodes it as it plays
+([feeds](../../mirai-platform/references/audio.md#feeds)): memory holds the stored bytes.
+`.Lossless` always codes, `.File` keeps every file; the coding is in the settings hash.
 Verifies Ogg page CRCs before stb_vorbis (`Malformed` if no intact pages).
 
 ## Fonts

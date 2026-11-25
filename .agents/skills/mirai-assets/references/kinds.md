@@ -141,8 +141,7 @@ if view, err := asset.material_view(&a, &types); err == .None {
 ## Sound
 
 `asset/sound.odin`: `Lossless` (16-bit `audio.lossless_encode` in raw `lossless` bulk, zero-copy)
-or `File` (WAV/OGG in `file` bulk; an Ogg without `Stream` is decoded whole when it loads).
-`Stream` decodes while playing; without it, mixer keeps it in memory
+or `File` (WAV/OGG in `file` bulk). The mixer copies either as it is and decodes it while playing
 ([audio](../../mirai-platform/references/audio.md#sounds),
 [imports](../../mirai-imports/references/imports.md#sounds)).
 

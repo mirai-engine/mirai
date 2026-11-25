@@ -67,7 +67,7 @@ mixer_rejects_a_desc_it_cannot_serve :: proc(t:^testing.T) {
     testing.expect(t,m==nil && error==.Invalid_Desc)
     m,error=mixer_create({output=Output_Kind(9)})
     testing.expect(t,m==nil && error==.Invalid_Desc)
-    for desc in ([?]Mixer_Desc{{stream_capacity=STREAM_CAPACITY_MAX+1},{feed_capacity=max(int)},{feed_frames=max(int)},{stream_frames=max(int)},{voice_capacity=max(int)},{command_capacity=max(int)},{feed_frames=-1}}) {
+    for desc in ([?]Mixer_Desc{{sound_capacity=max(int)},{feed_capacity=max(int)},{feed_frames=max(int)},{voice_capacity=max(int)},{command_capacity=max(int)},{feed_frames=-1}}) {
         m,error=mixer_create(desc)
         testing.expect(t,m==nil && error==.Invalid_Desc)
     }
@@ -485,7 +485,7 @@ voice_starts_on_the_frame_it_was_scheduled_for :: proc(t:^testing.T) {
     testing.expect(t,!voice_valid(m,voice))
     // A start in the past, such as one that reaches the audio thread after the
     // callback that should have played it, plays whole from its offset in the
-    // chunk its play reaches, in memory and from a stream.
+    // chunk its play reaches, made in memory and loaded.
     desc.start_frame=mixer_clock(m)
     desc.offset=100.0/RATE
     test_render(m,40)
@@ -495,7 +495,7 @@ voice_starts_on_the_frame_it_was_scheduled_for :: proc(t:^testing.T) {
     voice_stop(m,past)
     test_render(m,CHUNK_FRAMES)
     mixer_update(m)
-    // A stream started in the past skips nothing either.
+    // A loaded sound started in the past skips nothing either.
     {
         pcm:=make([]i16,500*2,context.temp_allocator)
         for i in 0..<500 {
@@ -503,7 +503,7 @@ voice_starts_on_the_frame_it_was_scheduled_for :: proc(t:^testing.T) {
             pcm[i*2],pcm[i*2+1]=sample,sample
         }
         wav,_:=lossless_encode(pcm,2,RATE,context.temp_allocator)
-        stream,err:=sound_stream(m,wav)
+        stream,err:=sound_load(m,wav)
         if testing.expect_value(t,err,Error.None) {
             sdesc:=VOICE_DEFAULT
             sdesc.start_frame=mixer_clock(m)
@@ -694,10 +694,10 @@ oldest_voice_of_the_lowest_priority_is_stolen :: proc(t:^testing.T) {
 
 @(test)
 full_command_queue_refuses_instead_of_blocking :: proc(t:^testing.T) {
-    m:=test_mixer(t,{command_capacity=4,stream_capacity=1})
+    m:=test_mixer(t,{command_capacity=4})
     defer mixer_destroy(m)
     sound:=test_stereo(t,m,64,proc(i:int) -> f32 {return 0.25})
-    stream,error:=sound_stream(m,TONE_LONG)
+    stream,error:=sound_load(m,TONE_LONG)
     if !testing.expect_value(t,error,Error.None) {return}
     voices:[4]Voice
     for &voice in voices {
@@ -861,7 +861,7 @@ mixer_that_runs_out_of_memory_leaves_nothing_behind :: proc(t:^testing.T) {
     created:=false
     for allowed in 0..<64 {
         state:=Failing_Allocator{backing=context.allocator,allowed=allowed}
-        m,error:=mixer_create({stream_capacity=2,allocator=failing_allocator(&state)})
+        m,error:=mixer_create({allocator=failing_allocator(&state)})
         if error==.None {
             testing.expect(t,m!=nil && allowed>8)
             // The mixer is full of memory it cannot get more of: sounds fail cleanly too.
@@ -872,12 +872,18 @@ mixer_that_runs_out_of_memory_leaves_nothing_behind :: proc(t:^testing.T) {
             testing.expect_value(t,sound_error,Error.Out_Of_Memory)
             lossless,encode_error:=lossless_encode({1,2,3,4},2,RATE,context.temp_allocator)
             testing.expect_value(t,encode_error,Error.None)
-            state.allowed=state.asked+1
-            _,sound_error=sound_stream(m,lossless)
+            state.allowed=state.asked
+            _,sound_error=sound_load(m,lossless)
             testing.expect_value(t,sound_error,Error.Out_Of_Memory)
             testing.expect_value(t,mixer_stats(m).sounds,0)
+            // A Vorbis setup and the workspaces of the feeds it asks for: none or all.
+            for at in 0..<8 {
+                state.allowed=state.asked+at
+                if _,ogg_error:=sound_load(m,TONE_LONG);ogg_error==.None {break}
+                testing.expect(t,mixer_stats(m).sounds==0 && mixer_stats(m).sound_bytes==0 && m.feed_workspace==0 && m.setups[0].decoder==nil)
+            }
             state.allowed=max(int)
-            stream,retry_error:=sound_stream(m,lossless)
+            stream,retry_error:=sound_load(m,lossless)
             testing.expect_value(t,retry_error,Error.None)
             testing.expect(t,voice_play(m,stream)!=0 && voice_play(m,stream)!=0)
             mixer_destroy(m)

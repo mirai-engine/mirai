@@ -61,9 +61,9 @@ cmd_doctor :: proc(root:string,args:[]string) -> int {
     if installed {
         // The engine comes built; the code of a project is linked with the toolchain of the system.
         report(&errors,has_c,fmt.tprintf("C toolchain, which links the code of projects (%s)",toolchain),"install Visual Studio Build Tools with C++ on Windows, clang on Linux or the Xcode Command Line Tools on macOS")
-        report(&errors,ensure_runtime_dependencies(root),"FreeType, ufbx and SQLite built","unpack the package of the engine again")
+        report(&errors,ensure_runtime_dependencies(root),"FreeType, stb_vorbis, ufbx and SQLite built","unpack the package of the engine again")
     } else {
-        report(&errors,has_c && ensure_runtime_dependencies(root),fmt.tprintf("C compiler, FreeType, ufbx and SQLite (%s)",toolchain),"install a C compiler (on Windows, Visual Studio Build Tools); mirai deps shows the output")
+        report(&errors,has_c && ensure_runtime_dependencies(root),fmt.tprintf("C compiler, FreeType, stb_vorbis, ufbx and SQLite (%s)",toolchain),"install a C compiler (on Windows, Visual Studio Build Tools); mirai deps shows the output")
         // The skills reach the agents through .claude/skills, a symbolic link of the repository.
         _,symlinks,_,_:=subprocess.exec({command={"git","-C",root,"config","--get","core.symlinks"}},context.temp_allocator)
         report(&errors,strings.trim_space(string(symlinks))=="true","git with core.symlinks","git config core.symlinks true (on Windows, with developer mode on) and then git checkout -- .claude/skills")

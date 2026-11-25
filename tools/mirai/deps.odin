@@ -112,9 +112,20 @@ sqlite_definitions:=[?]string{
 
 c_library_sqlite :: proc() -> C_Library {return {"sqlite",sqlite_sources[:],nil,sqlite_definitions[:]}}
 
-// The C libraries of third_party: FreeType, which the runtime links, and
-// ufbx and SQLite, which the editor does.
-c_libraries :: proc() -> [3]C_Library {return {c_library_freetype(),c_library_ufbx(),c_library_sqlite()}}
+// stb_vorbis decodes Ogg Vorbis for the audio (third_party/stb_vorbis/UPSTREAM.md): shared.c
+// includes stb_vorbis.c and adds the decoders that share a setup. Two channels at most, from memory.
+@(rodata,private="file")
+stb_vorbis_sources:=[?]string{"shared.c"}
+@(rodata,private="file")
+stb_vorbis_definitions:=[?]string{
+    "STB_VORBIS_NO_STDIO","STB_VORBIS_NO_PUSHDATA_API","STB_VORBIS_NO_INTEGER_CONVERSION","STB_VORBIS_MAX_CHANNELS=2",
+}
+
+c_library_stb_vorbis :: proc() -> C_Library {return {"stb_vorbis",stb_vorbis_sources[:],nil,stb_vorbis_definitions[:]}}
+
+// The C libraries of third_party: FreeType and stb_vorbis, which the runtime
+// links, and ufbx and SQLite, which the editor does.
+c_libraries :: proc() -> [4]C_Library {return {c_library_freetype(),c_library_stb_vorbis(),c_library_ufbx(),c_library_sqlite()}}
 
 // The C libraries the engine links: games, the editor and the tools that
 // use them. An installed engine carries them built, without their sources.

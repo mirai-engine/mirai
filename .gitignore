@@ -8,6 +8,10 @@ third_party/freetype/macos-arm64/
 third_party/freetype/macos/
 third_party/freetype/linux/
 third_party/freetype/windows/
+third_party/stb_vorbis/macos-arm64/
+third_party/stb_vorbis/macos/
+third_party/stb_vorbis/linux/
+third_party/stb_vorbis/windows/
 third_party/ufbx/macos-arm64/
 third_party/ufbx/macos/
 third_party/ufbx/linux/

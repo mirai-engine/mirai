@@ -72,8 +72,8 @@ rig_from_name :: proc(name:string) -> (rig:Rig,ok:bool) {
 // Of a sound: what its .sound keeps.
 Sound_Coding :: enum u8 {
     Smallest, // as Lossless, but the file of an Ogg Vorbis smaller than its samples coded: most are, besides those mostly silent
-    Lossless, // its 16 bit samples coded without loss at audio.MIXER_RATE, but the file of an Ogg Vorbis or of a WAV of other than 16 bits that streams
-    File,     // its file as it is, decoded whole when it loads unless it streams
+    Lossless, // its 16 bit samples coded without loss at audio.MIXER_RATE
+    File,     // its file as it is, at its own rate
 }
 
 Import_Settings :: struct {

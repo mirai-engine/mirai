@@ -98,7 +98,7 @@ Api_Play_Audio_Stats :: struct {
 }
 Api_Play_Audio_Mixer :: struct {
     voices_active,sounds:int,
-    voices_played,voices_stolen,voices_rejected,commands_dropped,underruns,streams_busy,feeds_busy:u64,
+    voices_played,voices_stolen,voices_rejected,commands_dropped,underruns,feeds_busy:u64,
 }
 Api_Play_Audio_Voice :: struct {
     entity:core.Entity `mirai:"label=The one with the Audio_Source"`,
@@ -551,7 +551,7 @@ play_audio :: proc(s:^Session,heard:Play_Audio_Heard,allocator:=context.temp_all
     if heard.played!=nil {r.deduped=heard.played.deduped}
     if m!=nil {
         c:=mixer.mixer_stats(m)
-        r.mixer={c.voices_active,c.sounds,c.voices_played,c.voices_stolen,c.voices_rejected,c.commands_dropped,c.underruns,c.streams_busy,c.feeds_busy}
+        r.mixer={c.voices_active,c.sounds,c.voices_played,c.voices_stolen,c.voices_rejected,c.commands_dropped,c.underruns,c.feeds_busy}
     }
     return
 }

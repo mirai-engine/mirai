@@ -185,7 +185,7 @@ import_source :: proc(path:string,options:importer.Import_Options={},formats:[]i
     case .Image:
         return importer.import_texture(path,options,allocator)
     case .Sound:
-        return importer.import_sound(path,{},options,allocator)
+        return importer.import_sound(path,options,allocator)
     case .Font:
         return importer.import_font(path,options,allocator)
     case .Prompts:
