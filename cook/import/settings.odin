@@ -71,8 +71,9 @@ rig_from_name :: proc(name:string) -> (rig:Rig,ok:bool) {
 
 // Of a sound: what its .sound keeps.
 Sound_Coding :: enum u8 {
+    Smallest, // as Lossless, but the file of an Ogg Vorbis smaller than its samples coded: most are, besides those mostly silent
     Lossless, // its 16 bit samples coded without loss at audio.MIXER_RATE, but the file of an Ogg Vorbis or of a WAV of other than 16 bits that streams
-    File,     // its file as it is: an Ogg Vorbis 5 to 8 times smaller than its samples coded, decoded whole when it loads unless it streams
+    File,     // its file as it is, decoded whole when it loads unless it streams
 }
 
 // Colliders the settings of a source give its meshes, in place of those the

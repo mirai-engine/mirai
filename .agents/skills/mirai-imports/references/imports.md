@@ -175,8 +175,8 @@ manifest and override CLI options unless `ignore_stored` is set (invalid fields 
   `SCALE_LARGE`/`SCALE_SMALL` (2x, 0.5x) of its size by its node and those above warns once.
 - `skeleton` (`--skeleton <id>`): imports `.anim` only, bound to an existing skeleton (no meshes/
   materials/prefab).
-- `sound` (`--sound lossless|file`): `File` keeps the source file of a sound as it is
-  ([sounds](#sounds)).
+- `sound` (`--sound smallest|lossless|file`): `Smallest` (default) keeps a short Ogg's file where
+  smaller than its samples coded, `File` every file as it is ([sounds](#sounds)).
 
 ## The imported model
 
@@ -321,9 +321,11 @@ Rejects NURBS, multi-skin meshes, non-root skin bones; warns on lights/cameras/c
 
 `cook/import/sound.odin` decodes WAV/Ogg (1-2 ch; >2 -> `Unsupported`) via `audio.decode`:
 resamples coded clips to `audio.MIXER_RATE` (Kaiser-windowed sinc), stores `< SOUND_STREAM_SECONDS`
-as `Lossless` 16-bit and longer clips with `Stream` (keeping Ogg/non-16-bit WAV intact). With
-`Import_Settings.sound = .File` every clip keeps its file at its own rate (a short Ogg stays 5-8x
-smaller than `MLPC`; the mixer decodes it whole on load); the coding is in the settings hash.
+as `Lossless` 16-bit and longer clips with `Stream` (keeping Ogg/non-16-bit WAV intact). By
+default (`Smallest`) a short Ogg keeps its file, at its own rate, where it is smaller than `MLPC`
+(most are 2-4x smaller; a click with silence codes smaller): the mixer decodes it whole on load,
+so a start decodes nothing, at 4 bytes per sample in memory. `.Lossless` always codes, `.File`
+keeps every file; the coding is in the settings hash.
 Verifies Ogg page CRCs before stb_vorbis (`Malformed` if no intact pages).
 
 ## Fonts

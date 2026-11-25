@@ -61,7 +61,7 @@ import "mirai:store"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--bake-scale|--no-bake-scale] [--skeleton <id>] [--sound lossless|file] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--bake-scale|--no-bake-scale] [--skeleton <id>] [--sound smallest|lossless|file] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -143,6 +143,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
             text:string
             text,ok=value(args,&at)
             switch text {
+            case "smallest": given.sound=.Smallest
             case "lossless": given.sound=.Lossless
             case "file": given.sound=.File
             case: ok=false
