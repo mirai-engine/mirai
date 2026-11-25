@@ -12,7 +12,7 @@ A cue (`audio.Cue`) is what plays at one moment where something is: `sound` (a `
 [channels](../vfx/channels.md)) and `align_up` (the birth's normal is the up of where it plays).
 Either half may be empty. The engine plays it; game code writes no loop over events for it.
 
-## At an animation marker
+## At a marker of a character
 
 The cues of a `.character` give a marker name of its clips a cue, one row per marker, up to 256
 rows. Each time a clip of an entity whose `Animation.asset` is that set crosses the marker, its cue
@@ -26,7 +26,25 @@ mirai rpc animation.cue.set '{"path":"characters/zombie.character","cues":[
   {"marker":"swing","cue":{"sound":"<id of whoosh.sound>"}}]}'
 ```
 
-A prop that plays a plain `.anim` gets cues from a `.character` of its clips.
+## On a prop that plays a plain clip
+
+A door, a chest, a machine or a weapon whose `Animation` plays a `.anim` carries its cues as
+`Marker_Cue` components, the same row as those of a `.character`: one on the entity of the
+`Animation`, or one on each entity under it for more markers (a row plays for the nearest
+`Animation` at or above it). A wooden and a metal door share the clip and differ in their rows:
+
+```sh
+mirai rpc --project . scene.write '{"root":"Door","entities":[{
+  "components":{"Marker_Cue":{"marker":"open","cue":{"sound":"<id of creak.sound>"}}},
+  "children":[{"name":"Slam cue","components":{"Marker_Cue":{"marker":"shut",
+    "cue":{"sound":"<id of slam.sound>","channel":"dust"}}}}]}]}'
+```
+
+`anchor` `Bone` or `Socket` names a bone or a socket of the prop's skeleton in `at`; `Entity`
+plays at the entity of the `Animation`. A `Marker_Cue` with no marker, or with a `Bone` or
+`Socket` and no `at`, plays nothing and is reported (`animation.cue`). An entity whose
+`Animation.asset` is a `.character` plays the cues of its set only: its `Marker_Cue` rows play
+nothing.
 
 ## At an ability
 
