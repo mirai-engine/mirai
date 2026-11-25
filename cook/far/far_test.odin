@@ -15,6 +15,8 @@ import mm "mirai:std/math"
 @(private="file") FAR_DECALS :: base.Asset_Id{0xfa,5}
 @(private="file") FAR_BLEND :: base.Asset_Id{0xfa,6}
 @(private="file") FAR_GLASS :: base.Asset_Id{0xfa,7}
+@(private="file") FAR_MUD :: base.Asset_Id{0xfa,8}
+@(private="file") FAR_TOWN :: base.Asset_Id{0xfa,10}
 
 @(private="file")
 Far_Test_Body :: struct {kind:u8}
@@ -90,7 +92,10 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     testing.expect_value(t,asset.material_save(fmt.tprintf("%s/blend.mat",folder),&types,{id=FAR_BLEND,info=blend}),asset.Error.None)
     testing.expect_value(t,asset.material_save(fmt.tprintf("%s/glass.mat",folder),&types,{id=FAR_GLASS,info=glass}),asset.Error.None)
     decals:asset.Scene;asset.scene_init(&decals,&types,FAR_DECALS)
-    for material,id in ([4]base.Asset_Id{{},FAR_BLEND,FAR_BLEND,FAR_GLASS}) {
+    mud:=asset.MATERIAL_DEFAULTS
+    mud.alpha_mode=.Decal
+    testing.expect_value(t,asset.material_save(fmt.tprintf("%s/mud.mat",folder),&types,{id=FAR_MUD,info=mud}),asset.Error.None)
+    for material,id in ([5]base.Asset_Id{{},FAR_BLEND,FAR_BLEND,FAR_GLASS,FAR_MUD}) {
         entity:=base.Entity_Id(id+1)
         asset.scene_entity_add(&decals,entity,0,fmt.tprintf("sheet %d",id))
         pose:=core.Transform{position={0,5 if id==2 else 0.01*f32(id),0},rotation=1,scale={1,1,1}}
@@ -101,6 +106,12 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     }
     testing.expect_value(t,asset.scene_save(&decals,fmt.tprintf("%s/decals.scene",folder)),asset.Error.None)
     asset.scene_destroy(&decals)
+    // A town that references it as a section: the far mesh of the section leaves its decal out.
+    town:asset.Scene;asset.scene_init(&town,&types,FAR_TOWN)
+    asset.scene_entity_add(&town,1,0,"Section")
+    asset.scene_set(&town,1,"Scene_Reference",&Far_Reference{scene=FAR_DECALS})
+    testing.expect_value(t,asset.scene_save(&town,fmt.tprintf("%s/town.scene",folder)),asset.Error.None)
+    asset.scene_destroy(&town)
 
     registry:asset.Registry
     asset.registry_init(&registry,folder)
@@ -122,4 +133,10 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     testing.expect(t,!far_cook(&registry,{0xfa,9},&g,context.temp_allocator),"a scene that is not there gives none")
     testing.expect_value(t,far_flat_blends(&registry,FAR_DECALS),1)
     testing.expect_value(t,far_flat_blends(&registry,FAR_ROOT),0)
+    left:=make([dynamic]Far_Left_Out,context.temp_allocator)
+    far_decals_left_out(&registry,FAR_TOWN,&left,context.temp_allocator)
+    testing.expectf(t,len(left)==1 && left[0].section==FAR_DECALS && left[0].entity=="sheet 4","the decal of the section is named: %v",left[:])
+    clear(&left)
+    far_decals_left_out(&registry,FAR_ROOT,&left,context.temp_allocator)
+    testing.expect_value(t,len(left),0)
 }

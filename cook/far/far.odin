@@ -2,10 +2,12 @@ package far
 
 import "core:math/linalg"
 import "core:mem"
+import "core:strings"
 import "mirai:asset"
 import "mirai:core"
 import "mirai:render/abi"
 import "mirai:std/base"
+import "mirai:std/serial"
 import mm "mirai:std/math"
 
 // The far mesh of a scene (its HLOD), a derived asset of the scene: the cook
@@ -52,6 +54,8 @@ Far_Gathered :: struct {
     mesh:base.Asset_Id,
     materials:[abi.MATERIAL_SLOTS]base.Asset_Id,
     placement:matrix[4,4]f32,
+    scene:base.Asset_Id, // where its entity is
+    name:asset.Entity_Name,
 }
 
 // A scene a scene references, placed in it.
@@ -213,7 +217,7 @@ far_scene_read :: proc(b:^Far_Build,id:base.Asset_Id,file:^asset.Asset) {
     of.inner=make([dynamic]Far_Inner)
     defer b.scenes[id]=of
     count:=asset.scene_entity_count(&s)
-    ids,parents:=asset.scene_ids(&s),asset.scene_parents(&s)
+    ids,parents,names:=asset.scene_ids(&s),asset.scene_parents(&s),asset.scene_names(&s)
     // Where each entity is in the scene, its parents before it whatever their rows.
     placements:=make([]matrix[4,4]f32,count,context.temp_allocator)
     placed:=make([]bool,count,context.temp_allocator)
@@ -244,7 +248,7 @@ far_scene_read :: proc(b:^Far_Build,id:base.Asset_Id,file:^asset.Asset) {
         place(&s,row,ids,parents,placements,placed,left,0)
         if left[row] {continue}
         if renderer,has:=asset.scene_get(&s,ids[row],"Mesh_Renderer",Far_Renderer);has && renderer.mesh!={} && !asset.scene_component_off(&s,ids[row],renderer_hash) {
-            append(&of.parts,Far_Gathered{mesh=renderer.mesh,materials=renderer.materials,placement=placements[row]})
+            append(&of.parts,Far_Gathered{mesh=renderer.mesh,materials=renderer.materials,placement=placements[row],scene=id,name=names[row]})
         }
         if reference,has:=asset.scene_get(&s,ids[row],"Scene_Reference",Far_Reference);has && reference.scene!={} {
             append(&of.inner,Far_Inner{reference.scene,placements[row]})
@@ -361,6 +365,37 @@ far_flat_blends :: proc(registry:^asset.Registry,scene:base.Asset_Id) -> (count:
         }
     }
     return
+}
+
+// A static part of a section that shows a decal: the far mesh of the section
+// leaves it out (asset.mesh_build_far), so past the distance the section is
+// shown by its far mesh the surface under it shows without it.
+Far_Left_Out :: struct {section:base.Asset_Id,entity:string}
+
+// The parts of the sections a scene references, and of those they reference,
+// whose meshes show a decal material, into out with their names from allocator.
+far_decals_left_out :: proc(registry:^asset.Registry,scene:base.Asset_Id,out:^[dynamic]Far_Left_Out,allocator:=context.allocator) {
+    arena:mem.Dynamic_Arena
+    mem.dynamic_arena_init(&arena,context.allocator,context.allocator)
+    defer mem.dynamic_arena_destroy(&arena)
+    b:Far_Build
+    far_init(&b,scene,base.dynamic_arena_allocator(&arena))
+    defer far_destroy(&b)
+    b.untextured=true
+    far_registry_read(registry,&b)
+    parts:=make([dynamic]Far_Gathered,b.allocator)
+    far_expand(&b,b.scene,linalg.MATRIX4F32_IDENTITY,0,&parts)
+    for &part in parts {
+        m,read:=b.meshes[part.mesh]
+        if part.scene==scene || !read {continue}
+        for slot,s in m.view.slots {
+            material:=part.materials[s] if s<abi.MATERIAL_SLOTS else {}
+            if material=={} {material=slot.material}
+            if info,known:=b.materials[material];!known || info.alpha_mode!=.Decal {continue}
+            append(out,Far_Left_Out{part.scene,strings.clone(serial.text_field(part.name[:]),allocator)})
+            break
+        }
+    }
 }
 
 // Reads from a registry what a build asks for, until it asks for nothing.
