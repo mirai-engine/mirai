@@ -263,6 +263,8 @@ in-memory `Project_Panels.kept` values in reverse order. API: `panel.*`
 `preferences.odin`. Machine-wide `editor.mirai` (in `project.machine_folder`, outside git) stores
 non-default flat structs (`Layout`, `Content_View`, `Viewport_Preferences`, plugin
 `Preferences_Provider`) written when UI rests, on close, or before Build restart (never per frame
-or during Play; `--headless` ignores unless `--preferences`). Per-project browser state (`Recent`,
-`Favorites`, folder/filters; not search) saves to `.mirai/content.mirai`. API: `preferences.get`/
-`set` (excludes `content.mirai`).
+or during Play; `--headless` reads them only with `--preferences` and never writes them: only a
+window a person drives writes machine files,
+[settings](../../mirai-projects/references/projects.md#project-settings)). Per-project browser
+state (`Recent`, `Favorites`, folder/filters; not search) saves to `.mirai/content.mirai`. API:
+`preferences.get`/`set` (excludes `content.mirai`).

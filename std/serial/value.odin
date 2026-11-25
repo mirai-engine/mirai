@@ -325,6 +325,11 @@ migration_build :: proc(b:^Build,src_index,dst_index:Type_Index,src_offset,dst_o
                 continue
             }
             if at<0 || .Transient in src_fields[at].flags {
+                // What holds only transient fields is not stored (schema_persistent): nothing of it lacks.
+                if !type_holds_data(b.dst,field.type) {
+                    if size>0 {build_op(b,Op{kind=.Zero,dst_offset=dst_offset+field.offset,size=size})}
+                    continue
+                }
                 if m.added==0 {m.lacking=field.name}
                 m.added+=1
                 continue
@@ -739,4 +744,21 @@ index_text :: proc(i:int,buffer:[]u8) -> string {
         if n==0 || at==0 {break}
     }
     return string(buffer[at:])
+}
+
+// Whether a value of a type has a byte a file stores: not when every field of it is transient or
+// of a type of no such byte.
+type_holds_data :: proc(s:^Schema,index:Type_Index,depth:=0) -> bool {
+    if !type_valid(s,index) || depth>SCHEMA_MAX_DEPTH {return false}
+    type:=s.types[index]
+    #partial switch type.kind {
+    case .Struct:
+        for field in s.fields[type.first:][:type.count] {
+            if .Transient not_in field.flags && type_holds_data(s,field.type,depth+1) {return true}
+        }
+        return false
+    case .Array:
+        return type.count>0 && type_holds_data(s,type.elem,depth+1)
+    }
+    return type.size>0
 }

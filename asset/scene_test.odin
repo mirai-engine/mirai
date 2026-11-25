@@ -296,6 +296,50 @@ scene_reads_components_stored_with_another_layout :: proc(t:^testing.T) {
     testing.expect_value(t,loaded.doc.tables[table].columns[1].size,size_of(Old_Light))
 }
 
+// Two layouts of one component, Probe, with and without what it computes at run time.
+@(private="file")
+probe_scene :: proc(t:^testing.T,w:^serial.Writer,$T:typeid,value:^T) {
+    types:Types;types_init(&types);defer types_destroy(&types)
+    scene:Scene;scene_init(&scene,&types,{6,6});defer scene_destroy(&scene)
+    scene_entity_add(&scene,1,0,"probe")
+    testing.expect_value(t,scene_set(&scene,1,"Probe",value),Error.None)
+    testing.expect_value(t,scene_write(&scene,w),Error.None)
+}
+
+@(test)
+scene_stores_no_bytes_of_transient_fields :: proc(t:^testing.T) {
+    with_cache:serial.Writer;serial.writer_init(&with_cache);defer serial.writer_destroy(&with_cache)
+    without:serial.Writer;serial.writer_init(&without);defer serial.writer_destroy(&without)
+    {
+        Probe :: struct {speed:f32,history:[4096]u8 `mirai:"transient"`,count:u16,ticks:u64 `mirai:"transient"`}
+        value:=Probe{speed=2,count=3,ticks=99}
+        value.history[7]=1
+        probe_scene(t,&with_cache,Probe,&value)
+    }
+    {
+        Probe :: struct {speed:f32,count:u16}
+        value:=Probe{speed=2,count=3}
+        probe_scene(t,&without,Probe,&value)
+    }
+    testing.expect_value(t,len(serial.writer_bytes(&with_cache)),len(serial.writer_bytes(&without)))
+    testing.expect(t,string(serial.writer_bytes(&with_cache))==string(serial.writer_bytes(&without)))
+
+    // Either file reads into either layout; what is transient starts at zero.
+    Probe :: struct {speed:f32,history:[4096]u8 `mirai:"transient"`,count:u16,ticks:u64 `mirai:"transient"`}
+    types:Types;types_init(&types);defer types_destroy(&types)
+    for bytes in ([][]u8{serial.writer_bytes(&with_cache),serial.writer_bytes(&without)}) {
+        loaded:Scene
+        testing.expect_value(t,scene_read(&loaded,&types,bytes),Error.None)
+        value,found:=scene_get(&loaded,1,"Probe",Probe)
+        testing.expect(t,found && value.speed==2 && value.count==3 && value.ticks==0 && value.history[7]==0)
+        again:serial.Writer;serial.writer_init(&again)
+        testing.expect_value(t,scene_write(&loaded,&again),Error.None)
+        testing.expect(t,string(serial.writer_bytes(&again))==string(bytes))
+        serial.writer_destroy(&again)
+        scene_destroy(&loaded)
+    }
+}
+
 @(private="file")
 lamp_prefab :: proc(prefab:^Scene,types:^Types,radius:f32,color:[3]f32) {
     scene_init(prefab,types,{0xa,0xa})

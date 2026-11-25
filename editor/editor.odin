@@ -108,7 +108,7 @@ USAGE_TEXT :: `Usage: [--project <folder>] [--scene <path>] [--headless] [--hidd
   --project     project folder; the current one if missing
   --scene       scene to open: a file or a path relative to the assets folder
   --headless    without a window: draws off screen with steps of 1/60 s; without the editor preferences
-  --preferences with --headless: reads and saves the editor preferences, like one with a window
+  --preferences with --headless: reads the editor preferences, like one with a window; only a window a person drives writes them
   --no-gpu      with --headless: without a renderer
   --density     with --headless: pixels per UI point (1.25, 1.5...), like on a scaled screen; 1 if missing
   --frames      ends after n frames
@@ -194,11 +194,12 @@ Session :: struct {
     settings_unsaved:bool, // a setting changed that the file of its layer does not have yet
     settings_layer:project.Settings_Layer, // the one the settings dialog edits
     settings_engine:[]project.Setting,     // the settings dialog: the values of the code and of the file of the engine (settings.odin)
+    settings_machine:string,               // the engine layer an editor no person drives keeps in place of its file (machine_kept); "": the file
     settings_plugins:Settings_Plugins,     // the settings dialog: the plugins the project can activate (settings.odin)
     settings_project:Settings_Project,     // the settings dialog: project.mirai as it edits it (project_settings.odin)
     plugins_git:Plugins_Git,               // plugins from git and the catalog: what git does for them (plugins_git.odin)
     settings_dialog:Settings_Dialog,       // what the settings dialog shows: its category, section and search
-    headless:bool,
+    headless,hidden:bool,
     args:[dynamic]string, // what a restart passes on besides the scene
     gpu_lost_before:string, // --gpu-lost: what stopped the GPU of the editor that started this one
     gpu:Gpu_Turn,           // the turn of the GPU it holds and what it learns of the card (gpu_turn.odin)
@@ -482,7 +483,7 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     }
     s.has_project=has_project
     if has_project {s.build.sources=code_fingerprint(root)}
-    s.headless=options.headless
+    s.headless,s.hidden=options.headless,options.hidden
     s.frames=options.frames
     s.capture=strings.clone(options.capture)
     s.gpu_lost_before=strings.clone(options.gpu_lost)
@@ -1270,6 +1271,8 @@ session_destroy :: proc(s:^Session) {
     s.recipes=nil
     console_destroy(s.console)
     settings_engine_free(s)
+    delete(s.settings_machine)
+    s.settings_machine=""
     if s.store.root!="" {store.close(&s.store)}
     s.store={}
     delete(s.project_root);delete(s.engine_root);delete(s.program);delete(s.engine_stamp);delete(s.library_stamp);delete(s.assets_root);delete(s.capture);delete(s.gpu_lost_before);delete(s.start_documents);delete(s.start_select)

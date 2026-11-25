@@ -72,7 +72,8 @@ api_show :: proc(s:^Session,call:^api.Call) {
         api.call_fail(call,api.SERVER_ERROR,api_error_text(call,"The window could not open (%v); the editor goes on headless",error))
         return
     }
-    s.headless=false
+    s.headless,s.hidden=false,false
+    settings_machine_drop(s)
     if st:=api_state(s);st!=nil {st.manual=false}
     restart_args_windowed(s)
     if s.preferences.file=="" {preferences_open(s,{})}

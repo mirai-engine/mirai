@@ -373,6 +373,8 @@ player_run :: proc(info:^core.World_Info,project_root,engine_root:string,args:[]
     user:=project.user_folder(root,context.temp_allocator)
     app,error:=app_create({
         info=info,root=root,engine_root=engine_root,options=user,threads=jobs.THREADS_AUTO,
+        // Only a game in a window of its own that no --frames, --input or --capture drives plays for a person.
+        options_kept=windowed && options.frames==0 && options.input=="" && options.capture=="",
         gpu_late_record=project.path(user,PLAYER_GPU_LATE_RECORD,allocator=context.temp_allocator) if user!="" else "",
         window=windowed,shown=surfaced,gpu=gpu,gpu_validation=options.validation,
         window_desc=window,vsync=windowed,game_window=options.window.z<=0, // a window an editor places (--window) keeps its place

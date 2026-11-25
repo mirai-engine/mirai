@@ -69,7 +69,9 @@ navmesh and foliage collision.
 - `streaming_sections` (`frame`) drives `Spatial` sections from `Streaming_Sources` (`load`/`active`
   distances, `RESIDENT_KEEP` hysteresis). `streaming_crossings` (`fixed`) reparents awake bodies
   crossing `Section_Boxes` (keeps world pose/velocity via `core.Places`; needs matching scales;
-  re-attaches `Roaming` entities). `navigation` retains tiles of inactive `Spatial` sections.
+  re-attaches `Roaming` entities). It runs after `inp.input_mounts` (stage `intent`, reads
+  `core.Carried`) and never touches a carried entity, whose `Parent` is the mount step's.
+  `navigation` retains tiles of inactive `Spatial` sections.
 - `streaming.status` (read-only): sources (with `ahead`), `Streaming_Settings`, loads under way
   (`Section_Loads`, far forms too) and each section's rule, asked/streamed/current state and far
   form, with loaded/on/far counts.

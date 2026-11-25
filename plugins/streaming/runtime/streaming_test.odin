@@ -23,6 +23,7 @@ Streaming_World :: struct {
     transforms:core.Table(core.Transform),
     members:core.Table(scene.Section_Member),
     roaming:core.Table(scene.Roaming),
+    carried:core.Table(core.Carried),
     disabled:core.Table(core.Disabled),
     hierarchy:core.Hierarchy,
     requests:scene.Section_Requests,
@@ -220,7 +221,7 @@ what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testin
     core.add(&w.worlds,crate,core.World_Transform{transform={position={25,0,0},rotation=1,scale=1}})
     run :: proc(w:^Streaming_World) {
         test_world_settle(w)
-        streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.places,&w.members,&w.crossings,nil)
+        streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.read(&w.carried),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.places,&w.members,&w.crossings,nil)
         test_world_settle(w)
     }
     run(&w)
@@ -250,4 +251,51 @@ what_moves_out_of_its_section_hangs_from_the_one_that_holds_it :: proc(t:^testin
     testing.expect_value(t,parent.entity,b)
     pose,_=core.get(&w.transforms,agent)
     testing.expect_value(t,pose.position,[3]f32{2,0,0})
+}
+
+// A member of a section that mounts on the tick it would cross keeps the parent input_mounts gave
+// it: that step runs first and owns the Parent of what is carried, which this one never touches.
+// Here the mount stands still in the section and the rider's pose is still the one of the tick
+// before, out of the box of its section and inside another's.
+@(test)
+a_rider_that_mounts_as_it_would_cross_keeps_its_mount :: proc(t:^testing.T) {
+    w:Streaming_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    a,b,mount,rider:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.references,a,scene.Scene_Reference{scene={1,1},extents={10,10,10},loaded={1,1}})
+    core.add(&w.references,b,scene.Scene_Reference{scene={2,2},extents={10,10,10},loaded={2,2}})
+    core.add(&w.worlds,a,core.World_Transform{transform={position={0,0,0},rotation=1,scale=1}})
+    core.add(&w.worlds,b,core.World_Transform{transform={position={30,0,0},rotation=1,scale=1}})
+    core.add(&w.parents,mount,core.Parent{a,0})
+    core.add(&w.transforms,mount,core.Transform{{8,0,0},1,{1,1,1}})
+    core.add(&w.worlds,mount,core.World_Transform{transform={position={8,0,0},rotation=1,scale=1}})
+    core.add(&w.parents,rider,core.Parent{a,1})
+    core.add(&w.members,rider,scene.Section_Member{9})
+    core.add(&w.motions,rider,core.Motion{awake=true})
+    core.add(&w.transforms,rider,core.Transform{{8,0,0},1,{1,1,1}})
+    core.add(&w.worlds,rider,core.World_Transform{transform={position={8,0,0},rotation=1,scale=1}})
+    cross :: proc(w:^Streaming_World) {
+        streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.read(&w.carried),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.places,&w.members,&w.crossings,nil)
+        test_world_settle(w)
+    }
+    test_world_settle(&w)
+    cross(&w)
+    // The tick it mounts: what input_mounts writes (stage input), then the crossing (intent).
+    core.edit(&w.worlds,rider).position={25,0,0}
+    core.edit(&w.parents,rider)^={entity=mount}
+    core.add(&w.carried,rider,core.Carried{by=mount})
+    test_world_settle(&w)
+    cross(&w)
+    parent,_:=core.get(&w.parents,rider)
+    testing.expect_value(t,parent.entity,mount)
+    testing.expect(t,core.has(&w.members,rider),"it is still of the scene of its section")
+    // Without the mount it is a crate that left its section again.
+    core.remove(&w.carried,rider)
+    test_world_settle(&w)
+    core.edit(&w.worlds,rider).position={26,0,0}
+    test_world_settle(&w)
+    cross(&w)
+    parent,_=core.get(&w.parents,rider)
+    testing.expect_value(t,parent.entity,b)
 }

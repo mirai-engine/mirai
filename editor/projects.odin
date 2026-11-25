@@ -388,7 +388,7 @@ projects_when :: proc(opened:i64,now:time.Time,region:^datetime.TZ_Region) -> st
 // A project the editor opened goes first in the list of the machine.
 // Temporary session copies under .mirai/tmp/ are skipped.
 projects_remember :: proc(s:^Session) {
-    if projects_is_temporary(s.project_root) {return}
+    if projects_is_temporary(s.project_root) || !machine_kept(s) {return}
     recent:project.Recent_Projects
     if project.recent_read(s.engine_root,&recent).code!=.None {return}
     project.recent_add(&recent,s.project_root,time.to_unix_nanoseconds(time.now()))
@@ -403,6 +403,7 @@ projects_is_temporary :: proc(folder:string) -> bool {
 @(private)
 projects_recent_save :: proc(s:^Session) {
     p:=s.projects
+    if !machine_kept(s) {return}
     if error:=project.recent_write(s.engine_root,&p.recent);error.code!=.None {notify(s,fmt.tprintf("%s could not be written",project.recent_file(s.engine_root,context.temp_allocator)))}
 }
 

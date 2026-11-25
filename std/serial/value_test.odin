@@ -785,3 +785,62 @@ value_check_names_the_first_part_its_schema_does_not_allow :: proc(t:^testing.T)
     }
     testing.expect_value(t,value_check(&s,type,bytes_of(&good)[:4],path[:]).fault,Value_Fault.None)
 }
+
+@(test)
+schema_persistent_lays_types_out_without_their_transient_fields :: proc(t:^testing.T) {
+    Inner :: struct {scratch:[64]u8 `mirai:"transient"`,weight:f32}
+    Only_Cache :: struct {cache:u64 `mirai:"transient"`}
+    Holder :: struct {a:u8,cache:[256]u8 `mirai:"transient"`,inner:[2]Inner,empty:Only_Cache,b:u16}
+    Plain :: struct {x:u32,y:f32}
+    s:Schema;schema_init(&s);defer schema_destroy(&s)
+    plain,_:=schema_add(&s,Plain)
+    holder,_:=schema_add(&s,Holder)
+    start:=Holder{a=1,inner={{weight=2},{weight=3}},b=4}
+    start.cache[0]=0xff
+    layout:Layout;layout_init(&layout,&s,holder);defer layout_destroy(&layout)
+    image:[size_of(Holder)]u8
+    value_write(&layout,image[:],&start,1)
+    testing.expect(t,schema_default_set(&s,holder,image[:]))
+
+    stored:Schema
+    remap:=make([dynamic]Type_Index);defer delete(remap)
+    changed:=make([dynamic]bool);defer delete(changed)
+    testing.expect_value(t,schema_persistent(&stored,&s,{holder,plain},&remap,&changed),Schema_Error.None)
+    defer schema_destroy(&stored)
+    testing.expect_value(t,schema_validate(&stored),Schema_Error.None)
+    testing.expect(t,!changed[plain] && changed[holder])
+    // What only a transient field held is not stored.
+    cache_type,_:=schema_add(&s,Only_Cache)
+    testing.expect(t,int(cache_type)<len(remap) && remap[cache_type]==TYPE_NONE)
+    for type in stored.types {testing.expect(t,type.size!=256 && type.name!="Only_Cache",type.name)}
+    kept:=remap[holder]
+    // a and 3 of padding, inner (2 x weight), b and 2 of padding to the align of f32.
+    testing.expect_value(t,stored.types[kept].size,u32(16))
+    for field in schema_fields(&stored,kept) {
+        testing.expect(t,.Transient not_in field.flags && field.name!="cache" && field.name!="empty",field.name)
+    }
+    hashes:=make([dynamic]u64);defer delete(hashes)
+    stored_hashes:=make([dynamic]u64);defer delete(stored_hashes)
+    schema_hashes_update(&s,&hashes);schema_hashes_update(&stored,&stored_hashes)
+    testing.expect_value(t,stored_hashes[remap[plain]],hashes[plain])
+
+    // The stored default is the one of the program, and a value goes there and back by name.
+    m:Migration;migration_init(&m,&stored,kept,&s,holder);defer migration_destroy(&m)
+    testing.expect_value(t,len(m.removed)+len(m.incompatible)+m.added,0)
+    back:Holder
+    value_read(&m,&back,stored.types[kept].default,1)
+    expected:=start
+    expected.cache={}
+    testing.expect(t,back==expected)
+
+    // A schema read from the file it is written to is the same.
+    w:Writer;writer_init(&w);defer writer_destroy(&w)
+    schema_write(&w,&stored)
+    r:=reader_init(writer_bytes(&w))
+    read:Schema
+    testing.expect_value(t,schema_read(&r,&read),Schema_Error.None)
+    defer schema_destroy(&read)
+    again:Writer;writer_init(&again);defer writer_destroy(&again)
+    schema_write(&again,&read)
+    testing.expect(t,slice.equal(writer_bytes(&w),writer_bytes(&again)))
+}

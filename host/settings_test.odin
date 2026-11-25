@@ -61,7 +61,13 @@ the_options_of_the_player_are_the_layer_on_top :: proc(t:^testing.T) {
     testing.expect_value(t,world.layered,Layered{code=7,engine=2,both=3})
     testing.expect_value(t,world.rule,Rule{5})
 
+    // A game no person plays (--frames, --input, --capture, no window) keeps what changes in memory.
     world.layered.code,world.layered.engine=1,4
+    unchanged,_:=os.read_entire_file(options,context.temp_allocator)
+    testing.expect(t,app_options_save(&app,&world))
+    now,_:=os.read_entire_file(options,context.temp_allocator)
+    testing.expect(t,string(now)==string(unchanged),"a scripted game leaves the options of the player as they were")
+    app.options_kept=true
     testing.expect(t,app_options_save(&app,&world))
     world.layered,world.rule={},{}
     app_settings_load(&app,&world,.World)

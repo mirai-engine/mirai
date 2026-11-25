@@ -328,11 +328,48 @@ document_write :: proc(doc:^Document,w:^serial.Writer,profile:=data.Profile.Fast
     dependencies:=make([dynamic]base.Asset_Id,allocator);defer delete(dependencies)
     document_dependencies(doc,&dependencies) or_return
 
+    // A file holds the types of its columns and no transient field: a column of a type with
+    // one is written in the layout of what it keeps (serial.schema_persistent), which a reader
+    // migrates by name.
+    roots:=make([dynamic]serial.Type_Index,allocator);defer delete(roots)
+    for table in doc.tables {
+        for column in table.columns {
+            if _,no_room:=append(&roots,column.type);no_room!=nil {return .Out_Of_Memory}
+        }
+    }
+    stored:serial.Schema
+    remap:=make([dynamic]serial.Type_Index,allocator);defer delete(remap)
+    changed:=make([dynamic]bool,allocator);defer delete(changed)
+    if serial.schema_persistent(&stored,&doc.schema,roots[:],&remap,&changed,allocator)!=.None {return .Out_Of_Memory}
+    defer serial.schema_destroy(&stored)
+    converted:=make([dynamic][]u8,allocator)
+    defer {
+        for bytes in converted {delete(bytes,allocator)}
+        delete(converted)
+    }
+    Written :: struct {data:[]u8,alignment:int}
+    written :: proc(doc:^Document,stored:^serial.Schema,remap:[]serial.Type_Index,changed:[]bool,converted:^[dynamic][]u8,table:Doc_Table,column:Doc_Column) -> (out:Written,error:Error) {
+        if !changed[column.type] {return {column.data,column.alignment},.None}
+        type:=remap[column.type]
+        // An alignment above the one of its type was asked for and stays.
+        out.alignment=column.alignment
+        if out.alignment<=int(doc.schema.types[column.type].align) {out.alignment=max(int(stored.types[type].align),1)}
+        no_bytes:runtime.Allocator_Error
+        out.data,no_bytes=make([]u8,table.rows*int(stored.types[type].size),doc.allocator)
+        if no_bytes!=nil {return {},.Out_Of_Memory}
+        if _,no_room:=append(converted,out.data);no_room!=nil {delete(out.data,doc.allocator);return {},.Out_Of_Memory}
+        m:serial.Migration
+        defer serial.migration_destroy(&m)
+        if serial.migration_init(&m,&doc.schema,column.type,stored,type,doc.allocator)!=.None {return {},.Out_Of_Memory}
+        serial.migration_apply(&m,out.data,column.data,table.rows)
+        return out,.None
+    }
+
     names,schema,directory:serial.Writer
     serial.writer_init(&names,allocator=allocator);defer serial.writer_destroy(&names)
     serial.writer_init(&schema,allocator=allocator);defer serial.writer_destroy(&schema)
     serial.writer_init(&directory,allocator=allocator);defer serial.writer_destroy(&directory)
-    serial.schema_write(&schema,&doc.schema)
+    serial.schema_write(&schema,&stored)
 
     // Each name once, in the order tables and columns first use it.
     Name :: struct {text:string,offset:int}
@@ -371,7 +408,8 @@ document_write :: proc(doc:^Document,w:^serial.Writer,profile:=data.Profile.Fast
             else if bulk {tag,counter=TAG_BULK,1}
             first_chunk[t]=len(chunks)
             for column in table.columns {
-                append(&chunks,Build_Chunk{tag=tag,index=counts[counter],alignment=column.alignment,compression=column_compression(doc,table.name),data=column.data})
+                out:=written(doc,&stored,remap[:],changed[:],&converted,table,column) or_return
+                append(&chunks,Build_Chunk{tag=tag,index=counts[counter],alignment=out.alignment,compression=column_compression(doc,table.name),data=out.data})
                 counts[counter]+=1
             }
         }
@@ -385,7 +423,7 @@ document_write :: proc(doc:^Document,w:^serial.Writer,profile:=data.Profile.Fast
         serial.write_varint(&directory,u64(len(table.columns)))
         for column,c in table.columns {
             name_write(&directory,&names,&interned,column.name)
-            serial.write_varint(&directory,u64(column.type))
+            serial.write_varint(&directory,u64(remap[column.type]))
             serial.write_u8(&directory,transmute(u8)column.flags)
             serial.write_varint(&directory,u64(column.ref+1))
             serial.write_varint(&directory,u64(first_chunk[t]+c))
@@ -442,6 +480,8 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
         for from,at in source.columns {
             entry:=blob_chunk(&a.blob,from.chunk)
             column:=Doc_Column{type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2}
+            // A file with a compressed column was written with a compressor: written again, it keeps it.
+            if entry.compression!=.None {doc.codecs=.Compressed}
             no_column_name:runtime.Allocator_Error
             column.name,no_column_name=strings.clone(from.name,allocator)
             error:=column_size(doc,&column,source.rows*from.size)
