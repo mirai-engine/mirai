@@ -4,6 +4,7 @@ import "core:slice"
 import "mirai:asset"
 import "mirai:render/abi"
 import "mirai:rhi"
+import "mirai:std/base"
 
 // Decals: surfaces of materials of asset.Alpha_Mode.Decal change the surface
 // under them before it is lit, and are never lit themselves. Each view draws
@@ -50,6 +51,7 @@ decals_order :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	if !s.decals_stale {return true}
 	clear(&s.decals)
 	clear(&s.decal_runs)
+	clear(&s.decal_meshes)
 	s.decal_emission = false
 	for &inst, index in s.instances {
 		if inst.meta.x & INSTANCE_FLAG_DECAL == 0 || int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
@@ -76,6 +78,15 @@ decals_order :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 		if a.instance != b.instance {return a.instance < b.instance}
 		return a.slot < b.slot
 	})
+	for entry in s.decals {
+		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
+		if _, error := append(&s.decal_meshes, mesh); error != nil {
+			set_error(r, "decals of the scene: out of memory")
+			return false
+		}
+	}
+	slice.sort(s.decal_meshes[:])
+	base.truncate(&s.decal_meshes, len(slice.unique(s.decal_meshes[:])))
 	for entry, k in s.decals {
 		if n := len(s.decal_runs); n > 0 && s.decal_runs[n - 1].program == entry.program {
 			s.decal_runs[n - 1].count += 1
@@ -112,8 +123,7 @@ decals_order :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 // The meshes of the decals are drawn whole (mesh_draws.odin).
 @(private)
 decals_meshes_ask :: proc(s: ^Scene_State, asked: u64) {
-	for entry in s.decals {
-		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
+	for mesh in s.decal_meshes {
 		if int(mesh) < len(s.meshes) {s.meshes[mesh].draw_asked = asked}
 	}
 }

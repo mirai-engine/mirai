@@ -365,6 +365,7 @@ Scene_State :: struct {
 	translucent:          [dynamic]Translucent, // each view puts its visible instances first
 	decals:               [dynamic]Decal_Entry, // the decals of the scene, in the order they are drawn (decals.odin)
 	decal_runs:           [dynamic]Decal_Run,   // its entries of one program in a row
+	decal_meshes:         [dynamic]u32,         // the meshes of its instances, each once
 	decals_stale:         bool, // an instance with a decal came, went or changed its mesh or materials, or the classes of rows did
 	decal_emission:       bool, // a decal of the scene emits
 	decal_entries:        rhi.Buffer, // [2]u32 of each decal: its instance and the slot of its mesh
@@ -591,6 +592,7 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	s.translucent = make([dynamic]Translucent, a)
 	s.decals = make([dynamic]Decal_Entry, a)
 	s.decal_runs = make([dynamic]Decal_Run, a)
+	s.decal_meshes = make([dynamic]u32, a)
 	s.instances = make([dynamic]Gpu_Instance, a)
 	s.instance_next=make([dynamic]i32,a)
 	s.instance_prev=make([dynamic]i32,a)
@@ -3021,6 +3023,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	delete(s.translucent)
 	delete(s.decals)
 	delete(s.decal_runs)
+	delete(s.decal_meshes)
 	delete(s.instances)
 	delete(s.instance_next)
 	delete(s.instance_prev)
