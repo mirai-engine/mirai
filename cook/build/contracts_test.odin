@@ -268,3 +268,27 @@ drain :: proc(inbox:^Inbox) {core.take(&inbox.queue)}
         }
     }
 }
+
+// A step of a game or of a plugin submits a debug shape to engine/render,
+// which takes it: pushing to a queue is not writing it, and the world builds.
+@(test)
+a_step_of_another_package_submits_a_debug_shape :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"debug-draw")
+    if folder=="" {return}
+    engine:=slashes(project.path_absolute(#directory+"../..",context.temp_allocator),context.temp_allocator)
+    game:=project.path(folder,"project",allocator=context.temp_allocator)
+    if !testing.expect(t,base.make_directory_all(project.path(game,"game",allocator=context.temp_allocator))==nil) {return}
+    source:=`package game
+import "mirai:core"
+import "mirai:engine/render"
+@(step="fixed") marks :: proc(draw:^render.Debug_Draw,time:core.Time) {
+    render.debug_draw_line(draw,{},{0,f32(time.tick%2),0},{1,0,0,1},duration=1)
+}
+@(step="late") rays :: proc(draw:^render.Debug_Draw) {render.debug_ray(draw,{},{1,0,0},2,{0,1,0,1})}
+`
+    if !testing.expect(t,os.write_entire_file(project.path(game,"game","game.odin",allocator=context.temp_allocator),source)==nil) {return}
+    p:=project.Project{root=game,engine_root=engine}
+    output:=world_generate(&p,context.temp_allocator)
+    testing.expectf(t,len(output.errors)==0,"%v",output.errors)
+    testing.expect(t,strings.contains(output.game_world,"debug_draw_tick"),"render takes what a tick asks for")
+}
