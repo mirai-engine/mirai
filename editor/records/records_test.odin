@@ -1,6 +1,9 @@
 package records
 
+import "core:fmt"
 import "core:mem"
+import "core:os"
+import "core:path/filepath"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -139,4 +142,48 @@ names_and_types_of_the_code :: proc(t:^testing.T) {
     testing.expect_value(t,column_add(&e,&info,stats),"")
     testing.expect_value(t,row_size(&e),2*size_of(Stats))
     testing.expect(t,column_add(&e,nil,column("other",.Type))!="","a type the code does not declare is refused")
+}
+
+// A table of the game that holds rows of a type a plugin declares takes the type of the code of
+// that plugin, with the names the game gives its values, not the names its file kept when it was
+// written.
+@(test)
+rows_of_a_plugin_type_take_the_names_of_the_code :: proc(t:^testing.T) {
+    Kind :: distinct u8
+    Gear :: struct {kind:Kind}
+    folder:=base.test_folder(t,"records-rows-of")
+    types:asset.Types;asset.types_init(&types,context.temp_allocator)
+    // The plugin's table, written while the code named none of the values.
+    declaring:Edit
+    if !testing.expect_value(t,create({1,1},"plugins/kit/gear.records","plugins/kit","Gear",&declaring,context.temp_allocator),"") {return}
+    kind:=column("kind",.Type)
+    base.text_set(kind.type[:],"Kind")
+    plugin_codes:=[1]core.Record_Code{{name="Kind",folder="plugins/kit",info=type_info_of(Kind)}}
+    testing.expect_value(t,column_add(&declaring,&core.World_Info{record_codes=plugin_codes[:]},kind),"")
+    // The game's table of its rows.
+    rows:Edit
+    if !testing.expect_value(t,create({2,2},"data/gear.records","","Gear",&rows,context.temp_allocator),"") {return}
+    rows.info.declares=false
+    Written :: struct {e:^Edit,path:string}
+    for pair in ([2]Written{{&declaring,"plugins/kit/gear.records"},{&rows,"data/gear.records"}}) {
+        bytes,message:=file_bytes(pair.e,&types)
+        if !testing.expect_value(t,message,"") {return}
+        path:=fmt.tprintf("%s/%s",folder,pair.path)
+        os.make_directory_all(filepath.dir(path))
+        if !testing.expect_value(t,os.write_entire_file(path,bytes),nil) {return}
+    }
+    registry:asset.Registry
+    asset.registry_init(&registry,folder);defer asset.registry_destroy(&registry)
+    testing.expect_value(t,asset.registry_scan(&registry),asset.Error.None)
+    // The game names the values of Kind; the code of the plugin declares it.
+    names:=[1]core.Name_Info{{type=Kind,value=3,name="shield"}}
+    info:=core.World_Info{record_codes=plugin_codes[:],names=names[:]}
+    loaded:Edit
+    if !testing.expect_value(t,load(&registry,&types,&info,{2,2},&loaded,context.temp_allocator),"") {return}
+    defer destroy(&loaded)
+    testing.expect_value(t,loaded.folder,"plugins/kit")
+    found:=false
+    for choice in loaded.named {if choice.name=="shield" && choice.value==3 {found=true}}
+    field,_:=column_field(&loaded,column_find(&loaded,"kind"))
+    testing.expectf(t,found && loaded.schema.types[field.type].named!=.None,"the column takes the names of the code: %v",loaded.schema.types[field.type])
 }

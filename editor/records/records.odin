@@ -21,7 +21,7 @@ ID_BITS :: 53 // ids of rows: whole in the numbers of JSON
 Edit :: struct {
     id:base.Asset_Id,
     file:string,   // absolute
-    folder:string, // the assets it is among: "" for the project's, plugins/<name> for a plugin's
+    folder:string, // the assets of the code its type is in, those of the table that declares it: "" for the project's, plugins/<name> for a plugin's
     info:asset.Records_Info,
     columns:[dynamic]asset.Records_Column, // of its type: its own, or those of the table that declares it
     declaring:base.Asset_Id, // a table that does not declare its type: the one that does; {} when none does
@@ -156,6 +156,9 @@ load :: proc(registry:^asset.Registry,types:^asset.Types,info:^core.World_Info,i
             return fmt.tprintf("%s holds rows of %s, and no .records declares that type: make its table, or records.types lists the types there are",record.path,asset.records_type(view))
         }
         e.declaring=at
+        // Its type is the code of the package of the table that declares it, whatever folder holds it.
+        delete(e.folder,allocator)
+        e.folder=strings.clone(folder_of(declaring_path),allocator)
         bytes,read:=asset.registry_read(registry,declaring_path,context.temp_allocator)
         if read!=.None || asset.asset_take(&declaring,bytes,context.temp_allocator)!=.None {
             destroy(e)
