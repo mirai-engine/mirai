@@ -584,20 +584,6 @@ pool_slot_find :: proc(p:^Pool,id:u64) -> int {
     return -1
 }
 
-// The box in the world the particles of the emitter at e and of its layers
-// and sub effect are drawn in, as the views cull them; false when the pool
-// holds none of them or one is unbounded.
-emitter_box :: proc(p:^Pool,e:core.Entity) -> (low,high:[3]f32,ok:bool) {
-    low,high={max(f32),max(f32),max(f32)},{min(f32),min(f32),min(f32)}
-    for at in p.order[:p.order_count] {
-        s:=&p.slots[at]
-        if s.desc.owner!=e {continue}
-        if s.unbounded {return {},{},false}
-        low,high,ok=linalg.min(low,s.bounds_min),linalg.max(high,s.bounds_max),true
-    }
-    return
-}
-
 pool_slot_take :: proc(p:^Pool,id:u64,capacity:u32,stride:u32=0) -> int {
     if capacity==0 || p.order_count>=len(p.order) {return -1}
     bytes:=u64(capacity)*u64(stride)

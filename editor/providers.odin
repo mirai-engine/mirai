@@ -177,7 +177,7 @@ Audit_Provider :: struct {
     // Appends what is wrong in w, in allocator; without a GPU too.
     audit:proc(s:^Session,w:core.World_Ref,out:^[dynamic]Audit_Finding,allocator:runtime.Allocator),
     // Appends what of w should show in the frames drawn now (an emitter with
-    // particles alive), with its box in the world, in allocator.
+    // particles alive), with where it is, in allocator.
     shown:proc(s:^Session,w:core.World_Ref,out:^[dynamic]Audit_Shown,allocator:runtime.Allocator),
     // The frames drawn next leave out what e draws, NONE none of it: the audit
     // counts the pixels e drew by the difference. What it keeps lives with the
@@ -198,7 +198,8 @@ Audit_Finding :: struct {
 
 Audit_Shown :: struct {
     entity:core.Entity,
-    low,high:[3]f32, // m, the box in the world it draws in
+    at:[3]f32,       // m, where it is in the world
+    reach:f32,       // m, about how far from there what it draws goes
     what:string,     // what it draws, as the message names it (an effect asset)
 }
 

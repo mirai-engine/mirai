@@ -2,6 +2,7 @@ package vfx_editor
 
 import "base:runtime"
 import "core:fmt"
+import "core:math/linalg"
 import "mirai:core"
 import "mirai:editor"
 import erender "mirai:engine/render"
@@ -23,7 +24,8 @@ VFX_AUDIT_DEFAULT :: Vfx_Audit{provider={audit=vfx_audit,shown=vfx_audit_shown,l
 vfx_audit :: proc(s:^editor.Session,w:core.World_Ref,out:^[dynamic]editor.Audit_Finding,allocator:runtime.Allocator) {
     emitters:=core.world_table_of(w,vfx.Particle_Emitter)
     a:=s.app.assets if s.app!=nil else nil
-    if emitters==nil || a==nil || a.renderer==nil {return}
+    // While the shaders of the project load or compile, every program would seem missing.
+    if emitters==nil || a==nil || a.renderer==nil || !a.renderer.programs.loaded || host.app_pending(s.app).programs>0 {return}
     // One finding for each effect and layer, at its first emitter.
     Missing :: struct {particle:base.Asset_Id,layer:int,entity:core.Entity,count:int,problem:string}
     missing:=make([dynamic]Missing,context.temp_allocator)
@@ -54,8 +56,11 @@ vfx_audit :: proc(s:^editor.Session,w:core.World_Ref,out:^[dynamic]editor.Audit_
     }
 }
 
-// The emitters of w with particles alive, neither hidden nor culled, and the
-// box they are drawn in.
+// The emitters of w the GPU holds with particles alive, neither hidden nor
+// culled, where they are and how far their particles go: half the reach of
+// their shape and of their flight, and their size. An emitter whose program
+// feeds a grid is left out: what it shows is drawn from the grid, not its
+// particles.
 @(private)
 vfx_audit_shown :: proc(s:^editor.Session,w:core.World_Ref,out:^[dynamic]editor.Audit_Shown,allocator:runtime.Allocator) {
     emitters:=core.world_table_of(w,vfx.Particle_Emitter)
@@ -69,10 +74,24 @@ vfx_audit_shown :: proc(s:^editor.Session,w:core.World_Ref,out:^[dynamic]editor.
         if core.row_off(emitters,row) || erender.is_hidden(hidden,parents,e) {continue}
         status,found:=vfx.status(clocks,emitter,e)
         if !found || !status.alive || status.state==.Culled || status.state==.Done {continue}
-        low,high,boxed:=vfx.emitter_box(&sync.pool,e)
-        if !boxed {continue}
-        append(out,editor.Audit_Shown{entity=e,low=low,high=high,what=fmt.aprint(editor.asset_path(s,emitter.particle),allocator=allocator)})
+        if vfx.pool_slot_find(&sync.pool,vfx.layer_id(e,0))<0 {continue}
+        shown:=vfx.shown_find(sync,e,0)
+        if shown==nil || shown.desc.spec==nil || vfx_audit_feeds(shown.needs) {continue}
+        info:=&shown.desc.info
+        reach:=0.5*(linalg.length(info.shape_size)+max(info.speed[0],info.speed[1])*max(info.lifetime[0],info.lifetime[1]))+max(info.size[0],info.size[1])
+        scale:=editor.entity_world(w,e).scale
+        reach*=max(abs(scale.x),abs(scale.y),abs(scale.z))
+        append(out,editor.Audit_Shown{entity=e,at=editor.entity_world(w,e).position,reach=reach,what=fmt.aprint(editor.asset_path(s,emitter.particle),allocator=allocator)})
     }
+}
+
+// Whether a program writes a grid, which something else draws.
+@(private)
+vfx_audit_feeds :: proc "contextless" (needs:vfx.Program_Needs) -> bool {
+    for need in needs.resources {
+        if need.kind==.Grid {return true}
+    }
+    return false
 }
 
 @(private)

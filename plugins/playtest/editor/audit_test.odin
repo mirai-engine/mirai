@@ -77,24 +77,23 @@ the_audit_tells_a_trap_from_what_a_game_means :: proc(t:^testing.T) {
 }
 
 // An effect in view that changes a spot of pixels or more is seen; one off
-// the image, behind the camera or that changes a few pixels is not checked or
-// is unseen.
+// the image, behind the camera or so far that it should cover a few pixels is
+// not judged; one in view that changes a few pixels is unseen.
 @(test)
 an_effect_in_view_that_changes_no_pixel_is_unseen :: proc(t:^testing.T) {
     view:=core.View{position={0,0,0},rotation=1,fov=1,near=0.1,far=100,size={256,144}}
-    Box_Case :: struct {low,high:[3]f32,shown:bool,what:string}
-    for c in ([]Box_Case{
-        {{-1,-1,-6},{1,1,-4},true,"ahead"},
-        {{-1,-1,4},{1,1,6},false,"behind the camera"},
-        {{40,-1,-6},{42,1,-4},false,"far to the right"},
-        {{-0.5,-0.5,-0.5},{0.5,0.5,0.5},true,"around the camera"},
-        {{-50,-1,-6},{50,1,-4},true,"wider than the image"},
+    Effect_Case :: struct {at:[3]f32,reach:f32,pixels:int,unseen:bool,what:string}
+    for c in ([]Effect_Case{
+        {{0,0,-5},1,0,true,"ahead, drawing nothing"},
+        {{1,0.5,-5},1,AUDIT_UNSEEN_PIXELS-1,true,"ahead to the side, drawing a few pixels"},
+        {{0,0,-5},1,AUDIT_UNSEEN_PIXELS,false,"ahead, drawing a spot"},
+        {{0,0,-80},0.3,0,false,"so far that it should take a few pixels"},
+        {{0,0,5},1,0,false,"behind the camera"},
+        {{40,0,-5},1,0,false,"far to the right"},
+        {{0,9,-5},1,0,false,"far above"},
     }) {
-        testing.expectf(t,audit_box_in_view(view,c.low,c.high)==c.shown,"%s: in view %v",c.what,!c.shown)
-    }
-    Pixels_Case :: struct {pixels:int,unseen:bool}
-    for c in ([]Pixels_Case{{0,true},{AUDIT_UNSEEN_PIXELS-1,true},{AUDIT_UNSEEN_PIXELS,false},{2000,false}}) {
-        testing.expectf(t,audit_unseen(c.pixels)==c.unseen,"%v",c)
+        unseen:=audit_unseen(c.pixels,audit_covered(view,c.at,c.reach))
+        testing.expectf(t,unseen==c.unseen,"%s: unseen %v",c.what,unseen)
     }
 }
 
@@ -102,16 +101,20 @@ an_effect_in_view_that_changes_no_pixel_is_unseen :: proc(t:^testing.T) {
 // few times is not; one far from the others of its mesh is out of place.
 @(test)
 a_mesh_drawn_far_from_its_size_is_flagged :: proc(t:^testing.T) {
-    Scale_Case :: struct {scale:[3]f32,limit:f32,far:bool,what:string}
-    for c in ([]Scale_Case{
-        {{100,100,100},AUDIT_SCALE_UNITS,true,"a fish in centimeters for meters"},
-        {{0.01,0.01,0.01},AUDIT_SCALE_UNITS,true,"meters for centimeters"},
-        {{3,3,3},AUDIT_SCALE_UNITS,false,"a rock three times its size"},
-        {{1,-1,1},AUDIT_SCALE_UNITS,false,"a mirrored prop"},
-        {{12,12,12},AUDIT_SCALE_KIN,true,"a fish twelve times its school"},
-        {{4,4,4},AUDIT_SCALE_KIN,false,"a fish four times its school"},
+    Far_Case :: struct {scale:[3]f32,far:bool,what:string}
+    for c in ([]Far_Case{
+        {{100,100,100},true,"a fish in meters drawn as if in centimeters"},
+        {{-100,100,100},true,"the same fish mirrored"},
+        {{0.01,0.01,0.01},false,"a mesh in centimeters drawn at its size"},
+        {{3,3,3},false,"a rock three times its size"},
+        {{500,1,500},false,"a ground stretched on two axes"},
+        {{1,-1,1},false,"a mirrored prop"},
     }) {
-        _,far:=mm.scale_beyond(c.scale,c.limit)
-        testing.expectf(t,far==c.far,"%s: far %v",c.what,!c.far)
+        testing.expectf(t,audit_scale_far(c.scale)==c.far,"%s: far %v",c.what,!c.far)
+    }
+    Kin_Case :: struct {ratio:f32,odd:bool,what:string}
+    for c in ([]Kin_Case{{12,true,"a fish twelve times its school"},{0.05,true,"one twenty times smaller"},{4,false,"a fish four times its school"}}) {
+        _,odd:=mm.scale_beyond({c.ratio,c.ratio,c.ratio},AUDIT_SCALE_KIN)
+        testing.expectf(t,odd==c.odd,"%s: odd %v",c.what,!c.odd)
     }
 }

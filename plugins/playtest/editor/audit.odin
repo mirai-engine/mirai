@@ -39,6 +39,7 @@ AUDIT_FLAGS :: 64
 @(private) AUDIT_DIELECTRIC :: f32(0.05)  // metallic under which a material is not a metal
 @(private) AUDIT_COSTS :: 3               // costliest parts a frame over budget names
 @(private) AUDIT_STATUS_ANSWER :: 256*1024
+@(private) AUDIT_CAPTURE_ANSWER :: 4096   // bytes of what capture answers when it writes a file
 // A frame is crushed when this share of it is under img.BLACK_LUMA (0.02
 // linear, about 38 of 255 shown): a night scene keeps more than a tenth of it
 // above that in its lights, its sky and the ground they light.
@@ -53,13 +54,19 @@ AUDIT_FLAGS :: 64
 @(private) AUDIT_LEFT_OUT_FILE :: ".mirai/captures/audit-left-out.png"
 // Pixels of the frame of AUDIT_FRAME_SIZE an effect changes under which nobody
 // sees it: a spot of 4 by 4. A pixel changes when a channel moves by more than
-// AUDIT_PIXEL_STEP of 255, past the noise of dithering between two frames.
+// AUDIT_PIXEL_STEP of 255: past the noise of dithering and the shift of the
+// whole frame (up to 9) when an effect leaves what the exposure meters.
+// Judged only of an effect whose reach covers AUDIT_SHOWN_PIXELS or more: far
+// away, a few pixels are all an effect should take.
 @(private) AUDIT_UNSEEN_PIXELS :: 16
-@(private) AUDIT_PIXEL_STEP :: 3
-@(private) AUDIT_EFFECTS :: 8             // effects in view the audit measures, each with a frame more
-// A mesh drawn more than this many times larger or smaller than its size is
-// in other units: inches for meters are 39, centimeters 100; what a level
-// scales a prop by stays under it.
+@(private) AUDIT_SHOWN_PIXELS :: f32(4*AUDIT_UNSEEN_PIXELS)
+@(private) AUDIT_PIXEL_STEP :: 16
+@(private) AUDIT_EFFECTS :: 8             // effects in view the audit measures, each with two frames more
+// A mesh drawn evenly more than this many times larger than its size is in
+// other units: inches for meters are 39, centimeters 100; what a level scales a
+// prop by stays under it. Smaller is not: a mesh in centimeters is drawn at
+// 0.01 of them by the import, at its size; and a ground stretched on two axes
+// is not even.
 @(private) AUDIT_SCALE_UNITS :: f32(30)
 // Of the median scale of the others of its mesh, past which one is out of
 // place among them (a fish 100 times its school); from AUDIT_SCALE_KIN_COUNT of them.
@@ -266,6 +273,7 @@ audit_materials :: proc(a:^Audit,blend_ratio:f32) {
     Black :: struct {id:base.Asset_Id,entity:core.Entity,count:int,info:asset.Material_Info}
     black:=make([dynamic]Black,context.temp_allocator)
     unbuilt:=make([dynamic]Black,context.temp_allocator)
+    known:=audit_programs_known(a.s.app)
     for &r,row in renderers.values[:core.count(renderers)] {
         e:=renderers.entities[row]
         a.summary.mesh_entities+=1
@@ -279,7 +287,7 @@ audit_materials :: proc(a:^Audit,blend_ratio:f32) {
             m:=audit_material(assets,id)
             if m==nil {continue}
             if m.info.alpha_mode==.Blend {blended=true}
-            if audit_program_missing(assets,m,.Surface) {audit_count(&unbuilt,Black{id,e,1,m.info})}
+            if known && audit_program_missing(assets,m,.Surface) {audit_count(&unbuilt,Black{id,e,1,m.info})}
             if !audit_black(&m.info) {continue}
             known:=false
             for &b in black {
@@ -316,13 +324,19 @@ audit_count :: proc(list:^[dynamic]$T,item:T) {
 }
 
 // Whether a material names a program the shaders have not in that domain
-// (nor, for a Surface, as a PostProcess one); false without a renderer, which
-// knows no program.
+// (nor, for a Surface, as a PostProcess one); false without a renderer.
 @(private)
 audit_program_missing :: proc(assets:^host.Assets,m:^host.Assets_Material,domain:erender.Program_Domain) -> bool {
     if assets==nil || assets.renderer==nil || m.info.program[0]==0 {return false}
     if host.assets_material_program(assets,m,domain)!=nil {return false}
     return domain!=.Surface || host.assets_material_program(assets,m,.Postprocess)==nil
+}
+
+// Whether the renderer knows the programs of the project: not while their
+// shaders are loaded or compiled, when every program would seem missing.
+@(private)
+audit_programs_known :: proc(app:^host.App) -> bool {
+    return app!=nil && app.renderer!=nil && app.renderer.programs.loaded && host.app_pending(app).programs==0
 }
 
 // The layers of the View_Volumes whose material draws no PostProcess program:
@@ -331,7 +345,7 @@ audit_program_missing :: proc(assets:^host.Assets,m:^host.Assets_Material,domain
 audit_post_layers :: proc(a:^Audit) {
     volumes:=core.world_table_of(a.w,erender.View_Volume)
     assets:=a.s.app.assets
-    if volumes==nil || assets==nil || assets.renderer==nil {return}
+    if volumes==nil || assets==nil || !audit_programs_known(a.s.app) {return}
     for &volume,row in volumes.values[:core.count(volumes)] {
         e:=volumes.entities[row]
         for layer,at in volume.layers {
@@ -339,11 +353,21 @@ audit_post_layers :: proc(a:^Audit) {
             m:=audit_material(assets,layer.material)
             if m==nil || m.info.program[0]!=0 && !audit_program_missing(assets,m,.Postprocess) {continue}
             program:=base.text_get(m.info.program[:])
+            why:=fmt.tprintf("names the program %s, which the shaders do not have as a PostProcess program",program) if program!="" else "names no program"
             audit_add(a,{severity=.Error,area=.Render,code="render.post_process_program",entity=audit_entity(a,e),
-                message=fmt.aprintf("Its post-process layer %d draws %s, whose program %s the shaders do not have as a PostProcess program: the layer draws nothing",at,editor.asset_path(a.s,layer.material),program if program!="" else "(none)",allocator=a.allocator),
+                message=fmt.aprintf("Its post-process layer %d draws %s, which %s: the layer draws nothing",at,editor.asset_path(a.s,layer.material),why,allocator=a.allocator),
                 fix="material.program.check says why its source does not compile; give the material a program of the shaders made with `//! mirai postprocess`"})
         }
     }
+}
+
+// Whether a scale draws a mesh in other units: mm.scale_beyond, the rule of
+// the import, growing it about as much on every axis.
+@(private)
+audit_scale_far :: proc "contextless" (scale:[3]f32) -> bool {
+    far,beyond:=mm.scale_beyond(scale,AUDIT_SCALE_UNITS)
+    smallest:=min(abs(scale.x),abs(scale.y),abs(scale.z))
+    return beyond && far>1 && far<=2*smallest
 }
 
 // Mesh entities drawn far from the size of their mesh (mm.scale_beyond, the
@@ -361,7 +385,7 @@ audit_scales :: proc(a:^Audit) {
         e:=renderers.entities[row]
         scale:=editor.entity_world(a.w,e).scale
         if !qa_finite(scale[:]) {continue}
-        if far_scale,beyond:=mm.scale_beyond(scale,AUDIT_SCALE_UNITS);beyond {audit_count(&far,Far{r.mesh,e,1,far_scale})}
+        if audit_scale_far(scale) {audit_count(&far,Far{r.mesh,e,1,max(abs(scale.x),abs(scale.y),abs(scale.z))})}
         append(&drawn,Drawn{r.mesh,e,max(abs(scale.x),abs(scale.y),abs(scale.z))})
     }
     for &f in far {
@@ -602,7 +626,7 @@ api_play_audit :: proc(s:^editor.Session,call:^api.Call) {
                 fix="world exposure in the docs: a light or emission thousands of times too strong, a manual exposure far too high, or an Auto max_ev100 under the light of the scene (about 15 in direct sun)"})
         }
         audit_window_exposure(&a,r,blown)
-        audit_effects(&a,call,frame,p.player)
+        audit_effects(&a,call,p.player)
     }
     api.call_result(call,Api_Audit)^=audit_finish(&a)
 }
@@ -619,9 +643,9 @@ audit_exposure :: proc "contextless" (stats:img.Image_Stats) -> (dark,blown:bool
 @(private)
 audit_frame_measure :: proc(s:^editor.Session,call:^api.Call,player:int,file:string) -> (frame:img.Image,measured:bool) {
     if s.app==nil || s.app.renderer==nil || s.project_root=="" {return}
-    buffer:=make([]u8,AUDIT_STATUS_ANSWER,call.allocator)
+    buffer:[AUDIT_CAPTURE_ANSWER]u8
     params:=fmt.tprintf(`{{"of":"Game","player":%d,"width":%d,"path":"%s"}}`,player,AUDIT_FRAME_SIZE,file)
-    if _,_,called:=editor.api_scenario_call(call.server,"capture",params,buffer);!called {return}
+    if _,_,called:=editor.api_scenario_call(call.server,"capture",params,buffer[:]);!called {return}
     error:img.Error
     frame,error=img.image_load(project.path(s.project_root,file,allocator=context.temp_allocator),context.temp_allocator)
     return frame,error==.None
@@ -648,11 +672,12 @@ audit_window_exposure :: proc(a:^Audit,r:^editor.Run,captured_blown:bool) {
 }
 
 // The effects in view with particles alive that change no pixel of the frame:
-// each is left out of one more frame, and the pixels it drew are those that
-// differ. An effect too dim for the exposure, drawn behind the scene or with a
-// program that draws nothing shows nothing.
+// each is left out of a frame drawn just before one with it, and the pixels it
+// drew are those that differ. Frames further apart differ by what still
+// settles (shadows, indirect light). An effect too dim for the exposure, drawn
+// behind the scene or with a program that draws nothing shows nothing.
 @(private)
-audit_effects :: proc(a:^Audit,call:^api.Call,frame:img.Image,player:int) {
+audit_effects :: proc(a:^Audit,call:^api.Call,player:int) {
     found:[editor.PROVIDER_CAPACITY]editor.Audit_Provider
     providers:=found[:editor.provided_all(a.s,found[:])]
     view:=core.world_storage_of(a.w,core.View)
@@ -663,44 +688,43 @@ audit_effects :: proc(a:^Audit,call:^api.Call,frame:img.Image,player:int) {
         provider.shown(a.s,a.w,&shown,context.temp_allocator)
         for &item in shown {
             if a.summary.effects_measured>=AUDIT_EFFECTS {return}
-            if !audit_box_in_view(view^,item.low,item.high) {continue}
+            covered:=audit_covered(view^,item.at,item.reach)
+            if !audit_unseen(0,covered) {continue}
             provider.leave_out(a.s,a.w,item.entity)
-            without,measured:=audit_frame_measure(a.s,call,player,AUDIT_LEFT_OUT_FILE)
+            without,left:=audit_frame_measure(a.s,call,player,AUDIT_LEFT_OUT_FILE)
             provider.leave_out(a.s,a.w,core.NONE)
-            if !measured {continue}
+            frame,measured:=audit_frame_measure(a.s,call,player,AUDIT_LEFT_OUT_FILE)
+            if !left || !measured {continue}
             a.summary.effects_measured+=1
             diff,error:=img.image_diff(frame,without,{},AUDIT_PIXEL_STEP,allocator=context.temp_allocator)
             if error!=.None {continue}
             pixels:=int(diff.over_threshold_percent*f64(diff.pixels)/100+0.5)
-            if !audit_unseen(pixels) {continue}
+            if !audit_unseen(pixels,covered) {continue}
             audit_add(a,{severity=.Error,area=.Render,code="render.effect_unseen",entity=audit_entity(a,item.entity),
-                message=fmt.aprintf("Its effect %s has particles alive in view and changes %d pixels of the frame (%s): the player does not see it",item.what,pixels,AUDIT_FRAME_FILE,allocator=a.allocator),
+                message=fmt.aprintf("Its effect %s has particles alive in view that should cover about %.0f pixels, and changes %d pixels of the frame (%s): the player does not see it",item.what,covered,pixels,AUDIT_FRAME_FILE,allocator=a.allocator),
                 fix="particle.instance.inspect says why: too dim for the exposure of the scene (raise its emission or make it Relative), hidden behind what is in front, or a program that draws nothing"})
         }
     }
     os.remove(project.path(a.s.project_root,AUDIT_LEFT_OUT_FILE,allocator=context.temp_allocator))
 }
 
-// Whether an effect that changed that many pixels of the frame the audit
-// measures shows nothing.
+// Whether an effect that should cover covered pixels of the frame the audit
+// measures and changed pixels of it shows nothing.
 @(private)
-audit_unseen :: proc "contextless" (pixels:int) -> bool {return pixels<AUDIT_UNSEEN_PIXELS}
+audit_unseen :: proc "contextless" (pixels:int,covered:f32) -> bool {return covered>=AUDIT_SHOWN_PIXELS && pixels<AUDIT_UNSEEN_PIXELS}
 
-// Whether a box in the world is in front of the camera of a view and inside its image.
+// The pixels of the frame the audit measures a disc of radius reach at point
+// covers, through the camera of a view; 0 when the point is behind it or out
+// of the image.
 @(private)
-audit_box_in_view :: proc "contextless" (view:core.View,low,high:[3]f32) -> bool {
-    if view.position.x>=low.x && view.position.x<=high.x && view.position.y>=low.y && view.position.y<=high.y && view.position.z>=low.z && view.position.z<=high.z {return true}
+audit_covered :: proc "contextless" (view:core.View,point:[3]f32,reach:f32) -> f32 {
+    pixel,_,ahead:=core.view_project(view,point)
     size:=[2]f32{max(view.size.x,1),max(view.size.y,1)}
-    seen_low,seen_high:=[2]f32{max(f32),max(f32)},[2]f32{min(f32),min(f32)}
-    front:=false
-    for corner in 0..<8 {
-        point:=[3]f32{corner&1==0?low.x:high.x,corner&2==0?low.y:high.y,corner&4==0?low.z:high.z}
-        pixel,_,ahead:=core.view_project(view,point)
-        if !ahead {continue}
-        front=true
-        seen_low,seen_high=linalg.min(seen_low,pixel),linalg.max(seen_high,pixel)
-    }
-    return front && seen_high.x>=0 && seen_high.y>=0 && seen_low.x<=size.x && seen_low.y<=size.y
+    if !ahead || pixel.x<0 || pixel.y<0 || pixel.x>size.x || pixel.y>size.y {return 0}
+    edge,_,edge_ahead:=core.view_project(view,point+mm.quat_rotate(view.rotation,{reach,0,0}))
+    if !edge_ahead {return 0}
+    radius:=linalg.length(edge-pixel)*AUDIT_FRAME_SIZE/size.x
+    return 3.14159265*radius*radius
 }
 
 // A rig as the ticks of the audit saw it.

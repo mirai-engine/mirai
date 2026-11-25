@@ -18,9 +18,9 @@ mirai rpc --project . play.audit '{"ticks":60,"frame_ms_budget":16.7}'
 Both RPC calls return `{passed, flags: [{severity, area, code, entity, message, fix}], summary}`.
 Both flag a material, effect or post-process layer whose program the shaders do not have
 (`material.program_missing`, `render.particle_program`, `render.post_process_program`): it draws
-nothing and reports nothing else. They flag a mesh drawn 30 times its size or more, a source in
-other units (`render.scale_far`, the import's rule), or 10 times the scale of the others of its mesh
-(`render.scale_odd`), and an attachment whose drawn box is farther from its bone than a quarter of
+nothing and reports nothing else. They flag a mesh grown evenly 30 times its size or more, a
+source in other units (`render.scale_far`, the import's rule), or 10 times larger or smaller than
+the others of its mesh (`render.scale_odd`), and an attachment whose drawn box is farther from its bone than a quarter of
 its size (`animation.attachment_far`).
 
 `play.audit` adds live UI cursor-capture and keyboard-focus checks, NaN/stuck checks, GPU/CPU
