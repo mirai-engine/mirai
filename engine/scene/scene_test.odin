@@ -314,11 +314,9 @@ scene_test_lamps :: proc(t:^testing.T,types:^asset.Types,id:base.Asset_Id,count:
     entry:asset.Chunk_Entry
     if chunk>=0 {entry=asset.blob_chunk(&file.blob,chunk)}
     asset.asset_close(&file)
-    // Stored as they are, the bytes are made a stream that does not decode: the directory says so.
-    if !testing.expect(t,chunk>=0 && entry.compression==.None && entry.size>=64) {return nil}
+    // A save stores the column as a stream: its stored bytes are made one that does not decode.
+    if !testing.expect(t,chunk>=0 && entry.compression==.Stream && entry.size>0) {return nil}
     mem.set(&data[entry.offset],0xff,int(entry.size))
-    entry.compression=.Stream
-    intrinsics.unaligned_store((^asset.Chunk_Entry)(&data[asset.HEADER_SIZE+chunk*asset.CHUNK_ENTRY_SIZE]),entry)
     (cast(^asset.Header)raw_data(data)).content_hash=asset.blob_hash(data)
     return data
 }
