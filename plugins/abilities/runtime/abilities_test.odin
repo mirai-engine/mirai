@@ -56,6 +56,7 @@ Abilities_World :: struct {
     users:core.Table(Ability_User),
     states:core.Table(Ability_State),
     tracking:core.Table(Ability_Tracking),
+    locals:core.Table(Ability_Local),
     sounds:audio.Sound_Requests,
     births:core.Births,
     seats:core.Table(inp.Seat),
@@ -214,7 +215,7 @@ world_of :: proc(f:^Fixture) -> Ability_World {
 }
 
 @(private="file")
-tables_of :: proc(f:^Fixture) -> Ability_Tables {return {&f.users,&f.states,&f.tracking}}
+tables_of :: proc(f:^Fixture) -> Ability_Tables {return {&f.users,&f.states,&f.tracking,&f.locals}}
 
 @(private="file")
 data_of :: proc(f:^Fixture) -> Ability_Data {
@@ -244,13 +245,16 @@ step :: proc(f:^Fixture,ticks:=1) {
 }
 
 @(private="file")
-Test_User :: struct {using setup:Ability_User,using state:Ability_State,using track:Ability_Tracking}
+Test_User :: struct {using setup:Ability_User,using state:Ability_State,using track:Ability_Tracking,using local:Ability_Local,now:[ATTRIBUTE_ENTRIES]f32}
 
+// The rows of a user after the last step, with the bases its line gives on that tick (now).
 @(private="file")
 user :: proc(f:^Fixture,e:core.Entity) -> (u:Test_User) {
     u.setup,_=core.get(&f.users,e)
     u.state,_=core.get(&f.states,e)
     u.track,_=core.get(&f.tracking,e)
+    u.local,_=core.get(&f.locals,e)
+    for _,i in u.now {u.now[i]=ability_base(&u.setup,&u.state,i,f.time.tick-1,f.time.dt)}
     return
 }
 
@@ -281,7 +285,7 @@ a_blade_combo_hits_once_per_window_and_branches_only_inside_cancel_windows :: pr
     step(f,seconds(0.2))
     f.down[0]=false
     step(f,seconds(0.25))
-    testing.expect_value(t,user(f,f.dummy).attributes[0].base,65)
+    testing.expect_value(t,user(f,f.dummy).now[0],65)
     testing.expect_value(t,logged(f,.Hit,f.player,SLASH_1),1)
     knockback:=false
     for m in f.moves.queue.items {if m.entity==f.dummy && m.move.id==KNOCKBACK_ID && m.move.mix==.Override && m.move.velocity.x>7 {knockback=true}}
@@ -300,10 +304,10 @@ a_blade_combo_hits_once_per_window_and_branches_only_inside_cancel_windows :: pr
     asked:=f.animations.plays.items[:]
     testing.expectf(t,len(asked)==3 && asked[1].stop && base.text_get(asked[1].action[:])=="slash_1" && !asked[2].stop && base.text_get(asked[2].action[:])=="slash_2","%v",asked)
     step(f,seconds(0.2))
-    testing.expect_value(t,user(f,f.dummy).attributes[0].base,30)
+    testing.expect_value(t,user(f,f.dummy).now[0],30)
     testing.expect(t,ability_has(user(f,f.dummy),STUNNED))
     testing.expect_value(t,user(f,f.dummy).ability,ref(REACT))
-    testing.expect_value(t,user(f,f.player).attributes[2].base,196)
+    testing.expect_value(t,user(f,f.player).now[2],196)
     // The windows of the interrupted opener closed: every begin has its end.
     testing.expect_value(t,logged(f,.Window_Begin,f.player,SLASH_1),logged(f,.Window_End,f.player,SLASH_1))
     // The follow-up runs out: completed, idle, no status of its own left.
@@ -336,7 +340,7 @@ a_charged_dash_spends_charges_and_is_blocked_without_them :: proc(t:^testing.T) 
     testing.expect(t,dash)
     testing.expect(t,len(f.animations.plays.items)==1 && base.text_get(f.animations.plays.items[0].action[:])=="dash")
     charge_user:=user(f,f.player)
-    charges,_:=ability_value(&charge_user.setup,&charge_user.state,CHARGES)
+    charges,_:=ability_value(&charge_user.setup,&charge_user.local,CHARGES)
     testing.expect(t,charges>1.9 && charges<2.1)
     // Holding through the whole charge dashes when it ends.
     step(f,seconds(0.5))
@@ -370,7 +374,7 @@ a_charged_dash_spends_charges_and_is_blocked_without_them :: proc(t:^testing.T) 
     for c in cases {
         sheet:=f.sheets[CHARGE]
         if c.edit!=nil {c.edit(&sheet)}
-        block,index:=start_block(&w,f.time.tick,f.time.dt,f.player,&u.setup,&u.state,&u.track,u.statuses|c.statuses,kit,nil,{},&sheet,ref(CHARGE))
+        block,index:=start_block(&w,f.time.tick,f.time.dt,f.player,&u.setup,&u.local,&u.track,u.statuses|c.statuses,kit,nil,{},&sheet,ref(CHARGE))
         testing.expectf(t,block==c.block && index==c.index,"%s: %v at %d, not %v at %d",c.name,block,index,c.block,c.index)
     }
     f.down[1]=false
@@ -511,7 +515,7 @@ invalid_sheets_and_requests_are_problems_and_never_run :: proc(t:^testing.T) {
     step(f,2)
     testing.expect(t,core.problem_find(&f.problems,f.dummy,"abilities.effect")!=nil)
     testing.expect(t,core.problem_find(&f.problems,f.dummy,"records.missing")!=nil)
-    testing.expect_value(t,user(f,f.dummy).attributes[0].base,100)
+    testing.expect_value(t,user(f,f.dummy).now[0],100)
     testing.expect_value(t,f.requests.queue.refused,3)
     testing.expect_value(t,len(f.requests.queue.waiting),0)
     for _ in 0..=cap(f.requests.queue.items) {ability_cancel(&f.requests,f.dummy)}
@@ -698,7 +702,7 @@ lasting_effects_stack_by_tags_end_by_cleanse_and_skip_blocked_targets :: proc(t:
     f:=new(Fixture);defer free(f)
     if !fixture_make(t,f) {return}
     defer fixture_destroy(f)
-    health :: proc(f:^Fixture) -> f32 {return user(f,f.dummy).attributes[0].base}
+    health :: proc(f:^Fixture) -> f32 {return user(f,f.dummy).now[0]}
     poison:=Ability_Effect{attribute=HEALTH,amount=-1,period=0.5,seconds=2,tags=tag_bit(POISON),max_stacks=3,cue=SLASH}
     ability_effect(&f.requests,f.dummy,poison,f.player)
     step(f)
@@ -737,12 +741,13 @@ lasting_effects_stack_by_tags_end_by_cleanse_and_skip_blocked_targets :: proc(t:
 @(test)
 authored_rows_and_frequently_written_state_stay_compact :: proc(t:^testing.T) {
     testing.expectf(t,size_of(Ability_User)<=192,"user setup is %d B",size_of(Ability_User))
-    testing.expectf(t,size_of(Ability_State)<=80,"hot state is %d B",size_of(Ability_State))
+    testing.expectf(t,size_of(Ability_State)<=112,"replicated state is %d B",size_of(Ability_State))
     // A window holds the cue it plays (audio.Cue) rather than a reference to a row of another table.
     testing.expectf(t,size_of(Ability_Window)<=176,"window is %d B",size_of(Ability_Window))
-    testing.expectf(t,size_of(Ability)<=3128,"ability is %d B",size_of(Ability))
-    size:=size_of(Ability_User)+size_of(Ability_State)+size_of(Ability_Tracking)
-    testing.expectf(t,size<=1480,"total user state is %d B",size)
+    testing.expectf(t,size_of(Ability)<=3096,"ability is %d B",size_of(Ability))
+    replicated:=size_of(Ability_User)+size_of(Ability_State)+size_of(Ability_Tracking)
+    testing.expectf(t,replicated<=1136,"replicated user state is %d B",replicated)
+    testing.expectf(t,size_of(Ability_Local)<=456,"local user state is %d B",size_of(Ability_Local))
 }
 
 @(test)
@@ -1020,28 +1025,28 @@ attribute_regen_waits_for_regen_delay_after_spend :: proc(t:^testing.T) {
             ability_use(&f.requests,f.player,ref(SLASH_1))
             step(f,seconds(0.25)+2 if c.spend==.Per_Second else 1)
         }
-        spent_base:=user(f,f.player).attributes[0].base
+        spent_base:=user(f,f.player).now[0]
         testing.expectf(t,spent_base<95,"%v: spend took from base: %v",c,spent_base)
         if c.delay>0 {
             // Halfway through the delay, nothing regenerated yet.
             step(f,seconds(c.delay*0.5))
-            testing.expectf(t,abs(user(f,f.player).attributes[0].base-spent_base)<1e-4,"%v: no regen before delay: %v vs %v",c,user(f,f.player).attributes[0].base,spent_base)
+            testing.expectf(t,abs(user(f,f.player).now[0]-spent_base)<1e-4,"%v: no regen before delay: %v vs %v",c,user(f,f.player).now[0],spent_base)
             // Positive healing does not reset the delay; a negative effect does.
             ability_effect(&f.requests,f.player,{attribute=HEALTH,amount=5})
             step(f)
-            healed:=user(f,f.player).attributes[0].base
+            healed:=user(f,f.player).now[0]
             testing.expectf(t,abs(healed-(spent_base+5))<1e-4,"%v: positive effect applies during delay: %v",c,healed)
             ability_effect(&f.requests,f.player,{attribute=HEALTH,amount=-5})
             step(f)
             // After waiting another half delay, still delayed because the negative effect reset it.
             step(f,seconds(c.delay*0.5))
-            testing.expectf(t,abs(user(f,f.player).attributes[0].base-spent_base)<1e-4,"%v: repeat spend reset delay: %v",c,user(f,f.player).attributes[0].base)
+            testing.expectf(t,abs(user(f,f.player).now[0]-spent_base)<1e-4,"%v: repeat spend reset delay: %v",c,user(f,f.player).now[0])
             // Wait the rest of the delay plus 0.5 s of regen (~10 restored).
             step(f,seconds(c.delay*0.5)+seconds(0.5))
-            testing.expectf(t,abs(user(f,f.player).attributes[0].base-(spent_base+10))<1.0,"%v: regen resumed after delay: %v from %v",c,user(f,f.player).attributes[0].base,spent_base)
+            testing.expectf(t,abs(user(f,f.player).now[0]-(spent_base+10))<1.0,"%v: regen resumed after delay: %v from %v",c,user(f,f.player).now[0],spent_base)
         } else {
             step(f,seconds(0.5))
-            testing.expectf(t,user(f,f.player).attributes[0].base>spent_base+9,"%v: zero delay regenerates immediately: %v from %v",c,user(f,f.player).attributes[0].base,spent_base)
+            testing.expectf(t,user(f,f.player).now[0]>spent_base+9,"%v: zero delay regenerates immediately: %v from %v",c,user(f,f.player).now[0],spent_base)
         }
         testing.expect_value(t,f.problems.count,0)
     }
@@ -1167,7 +1172,7 @@ hitbox_applies_per_target_class_effects_by_tags :: proc(t:^testing.T) {
     ability_use(&f.requests,f.player,ref(SLASH_1))
     step(f,3)
     for c,i in cases {
-        hp:=user(f,entities[i]).attributes[0].base
+        hp:=user(f,entities[i]).now[0]
         testing.expectf(t,abs(hp-c.want_health)<1e-3,"%s: health is %v, want %v",c.name,hp,c.want_health)
         kb:=false
         for m in f.moves.queue.items {
@@ -1180,8 +1185,8 @@ hitbox_applies_per_target_class_effects_by_tags :: proc(t:^testing.T) {
     ability_effect(&f.requests,entities[1],{attribute=HEALTH,amount=-10,target_tags={bits=1<<TAG_PLAYER}})
     ability_effect(&f.requests,entities[0],{attribute=HEALTH,amount=-10,target_tags={bits=1<<TAG_PLAYER}})
     step(f)
-    testing.expectf(t,abs(user(f,entities[1]).attributes[0].base-25)<1e-3,"structure ignored player-only effect")
-    testing.expectf(t,abs(user(f,entities[0]).attributes[0].base-55)<1e-3,"player took player-only effect")
+    testing.expectf(t,abs(user(f,entities[1]).now[0]-25)<1e-3,"structure ignored player-only effect")
+    testing.expectf(t,abs(user(f,entities[0]).now[0]-55)<1e-3,"player took player-only effect")
     testing.expect_value(t,f.problems.count,0)
 
     // Validation catches target_effects entry without target_tags.
@@ -1222,7 +1227,7 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
     ability_use(&f.requests,f.player,ref(SLASH_1))
     step(f)
     testing.expect_value(t,user(f,f.player).ability,ref(SLASH_1))
-    testing.expect(t,!ability_has(user(f,f.player).state,CHARGING),"closed before Span_Begin")
+    testing.expect(t,!ability_has(user(f,f.player).local,CHARGING),"closed before Span_Begin")
     testing.expect_value(t,logged(f,.Window_Begin,f.player,0),0)
 
     // Wrong entity, wrong action, unnamed clip (when action is named), and wrong span name are ignored.
@@ -1233,13 +1238,13 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
         anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("other_span")},
     )
     step(f)
-    testing.expect(t,!ability_has(user(f,f.player).state,CHARGING),"unrelated events ignored")
+    testing.expect(t,!ability_has(user(f,f.player).local,CHARGING),"unrelated events ignored")
     testing.expect_value(t,logged(f,.Window_Begin,f.player,0),0)
 
     // Matching .Span_Begin opens the window: status, hitbox, Window_Begin, move, attach, ramp_in.
     append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")})
     step(f)
-    testing.expect(t,ability_has(user(f,f.player).state,CHARGING),"status active during span")
+    testing.expect(t,ability_has(user(f,f.player).local,CHARGING),"status active during span")
     testing.expect_value(t,logged(f,.Window_Begin,f.player,0),1)
     testing.expect_value(t,logged(f,.Hit,f.player,0),1)
     testing.expectf(t,abs(user(f,f.player).values[3]-2.0)<0.05,"ramp_in starts at base on open tick: %v",user(f,f.player).values[3])
@@ -1259,30 +1264,30 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
     clear(&f.moves.queue.items)
     append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_End,action=base.name_hash("slash_1"),name=base.name_hash("active")})
     step(f)
-    testing.expect(t,!ability_has(user(f,f.player).state,CHARGING),"status cleared on Span_End")
+    testing.expect(t,!ability_has(user(f,f.player).local,CHARGING),"status cleared on Span_End")
     testing.expect_value(t,logged(f,.Window_End,f.player,0),1)
     testing.expectf(t,abs(user(f,f.player).values[3]-2.0)<0.05,"modifier cleared on Span_End: %v",user(f,f.player).values[3])
     move_removed:=false
     for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Remove_Moves && m.move.id==MOVE_ID {move_removed=true}}
     testing.expect(t,move_removed,"layered move removed on Span_End")
 
-    // Re-opening, world_copy round-trip preserves span_open/span_start/regen_at/end_ticks,
+    // Re-opening, world_copy round-trip preserves span_open/span_start/regen_at/end_since,
     // and canceling before .Span_End closes cleanly.
     append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")})
     step(f)
-    testing.expect(t,ability_has(user(f,f.player).state,CHARGING))
-    core.edit(&f.states,f.player).end_ticks=7
+    testing.expect(t,ability_has(user(f,f.player).local,CHARGING))
+    core.edit(&f.locals,f.player).end_since=7
     core.edit(&f.tracking,f.player).regen_at[0]=999
     test_world_settle(&f.w)
     snap:Abilities_World
     testing.expect(t,test_world_init(t,&snap))
     defer test_world_destroy(&snap)
     testing.expect(t,test_world_copy(&snap,&f.w))
-    snap_state,_:=core.get(&snap.states,f.player)
+    snap_local,_:=core.get(&snap.locals,f.player)
     snap_track,_:=core.get(&snap.tracking,f.player)
-    testing.expect_value(t,snap_state.span_open,user(f,f.player).span_open)
-    testing.expect_value(t,snap_state.end_ticks,u16(7))
-    testing.expect_value(t,snap_track.span_start[0],user(f,f.player).span_start[0])
+    testing.expect_value(t,snap_local.span_open,user(f,f.player).span_open)
+    testing.expect_value(t,snap_local.end_since,u64(7))
+    testing.expect_value(t,snap_local.span_start[0],user(f,f.player).span_start[0])
     testing.expect_value(t,snap_track.regen_at[0],u64(999))
 
     ability_cancel(&f.requests,f.player)
@@ -1331,8 +1336,112 @@ costs_pause_and_abilities_end_by_the_mode_of_the_character :: proc(t:^testing.T)
             step(f,p.ticks)
         }
         testing.expectf(t,(user(f,f.player).ability==ref(SLASH_1))==c.running,"%v: running %v",c,user(f,f.player).ability)
-        spent:=100-user(f,f.player).attributes[0].base
+        spent:=100-user(f,f.player).now[0]
         testing.expectf(t,abs(spent-c.spent)<0.4,"%v: spent %v",c,spent)
         testing.expect_value(t,f.problems.count,0)
+    }
+}
+
+// A steady drain, one under regeneration and one paused in the air change the bases of the user
+// every tick by the line of its Ability_State, and no replicated row of it (Ability_User,
+// Ability_State, Ability_Tracking) is written on those ticks; its held weapon is asked to the hand
+// once, not every tick.
+@(test)
+a_steady_drain_writes_no_replicated_row_per_tick :: proc(t:^testing.T) {
+    Case :: struct {name:string,mode:locomotion.Locomotion_Mode,regen,delay,change:f32}
+    for c in ([]Case{
+        {"drain while regeneration waits",locomotion.MODE_WALKING,20,1,-10},
+        {"drain under regeneration",locomotion.MODE_WALKING,4,0,-6},
+        {"paused in the air",locomotion.MODE_FALLING,20,0.5,20},
+    }) {
+        f:=new(Fixture);defer free(f)
+        if !fixture_make(t,f) {return}
+        defer fixture_destroy(f)
+        core.edit(&f.users,f.player).attributes[0]={attribute=HEALTH,base=50,max=100,regen=c.regen,regen_delay=c.delay}
+        core.edit(&f.states,f.player).bases[0]=50
+        core.add(&f.locomotions,f.player,locomotion.Locomotion_State{mode=c.mode})
+        sword:=core.create(&f.entities)
+        held:=Ability_Held{entity=sword}
+        base.text_set(held.socket[:],"hand_r")
+        core.add(&f.helds,f.player,held)
+        run:=&f.sheets[SLASH_1]
+        run^={duration=100,pause_modes=Ability_Modes(1<<u32(locomotion.MODE_FALLING))}
+        run.costs[0]={attribute=HEALTH,per_second=10}
+        run.windows[0]={from=0,to=100,attach=true}
+        test_world_settle(&f.w)
+        ability_use(&f.requests,f.player,ref(SLASH_1))
+        step(f,seconds(1.5))
+        testing.expectf(t,user(f,f.player).ability==ref(SLASH_1),"%s: it runs",c.name)
+        stamps :: proc(f:^Fixture) -> [3]u64 {
+            return {core.stamp(&f.users,core.row_of(&f.users,f.player)),core.stamp(&f.states,core.row_of(&f.states,f.player)),core.stamp(&f.tracking,core.row_of(&f.tracking,f.player))}
+        }
+        before,from,attaches:=stamps(f),user(f,f.player).now[0],len(f.animations.attaches.items)
+        step(f,seconds(1))
+        testing.expectf(t,stamps(f)==before,"%s: replicated rows written: %v from %v",c.name,stamps(f),before)
+        testing.expectf(t,abs(user(f,f.player).now[0]-from-c.change)<0.2,"%s: changed by %v",c.name,user(f,f.player).now[0]-from)
+        testing.expectf(t,len(f.animations.attaches.items)==attaches,"%s: the hand asked again %d times",c.name,len(f.animations.attaches.items)-attaches)
+        testing.expect_value(t,f.problems.count,0)
+    }
+}
+
+// A replica that gets only the replicated rows of a user (Ability_User, Ability_State,
+// Ability_Tracking) derives on that tick the same statuses and current values as its owner, and a
+// copy of the world taken halfway, run again with the same input, comes to the same rows, local ones
+// included.
+@(test)
+a_replica_derives_the_local_row_and_a_rollback_runs_to_the_same_state :: proc(t:^testing.T) {
+    Case :: struct {name:string,ability:int,poison:bool,ticks:int}
+    sheets :: proc(f:^Fixture) {
+        f.sheets[SLASH_1]={duration=10,input={action=PRIMARY,on=.Pressed}}
+        f.sheets[SLASH_1].costs[0]={attribute=CHARGES,per_second=0.5}
+        f.sheets[SLASH_1].windows[0]={from=0,to=10,statuses=status_bit(CHARGING),modify={attribute=STRENGTH,more=0.5,ramp_in=0.5}}
+    }
+    for c in ([]Case{
+        {"a drain with a modifier",SLASH_1,false,20},
+        {"a lasting effect with a modifier",-1,true,20},
+        {"a charge in its window",CHARGE,false,20},
+    }) {
+        f:=new(Fixture);defer free(f)
+        if !fixture_make(t,f) {return}
+        defer fixture_destroy(f)
+        sheets(f)
+        test_world_settle(&f.w)
+        if c.ability>=0 {f.down[0 if c.ability==SLASH_1 else 1]=true}
+        if c.poison {ability_effect(&f.requests,f.player,{attribute=HEALTH,amount=-2,period=0.1,seconds=5,tags=tag_bit(POISON),statuses=status_bit(STUNNED),modify={attribute=STRENGTH,add=1}})}
+        step(f,c.ticks)
+        // The replica: a world with the replicated rows of the owner after its last tick, which it
+        // runs as a replica.
+        g:=new(Fixture);defer free(g)
+        if !fixture_make(t,g) {return}
+        defer fixture_destroy(g)
+        sheets(g)
+        g.time=f.time
+        g.time.tick-=1
+        for e in ([2]core.Entity{f.player,f.dummy}) {
+            core.edit(&g.users,e)^,_=core.get(&f.users,e)
+            core.edit(&g.states,e)^,_=core.get(&f.states,e)
+            core.edit(&g.tracking,e)^,_=core.get(&f.tracking,e)
+            core.add(&g.remotes,e,core.Remote{})
+        }
+        test_world_settle(&g.w)
+        step(g)
+        owner,replica:=user(f,f.player),user(g,f.player)
+        testing.expectf(t,owner.ability!={} || c.poison,"%s: it runs",c.name)
+        testing.expectf(t,owner.statuses==replica.statuses && owner.values==replica.values,"%s: the replica derives %v %v, the owner %v %v",c.name,replica.statuses,replica.values,owner.statuses,owner.values)
+        // The rollback: back to a copy, the same ticks again.
+        snap:Abilities_World
+        testing.expect(t,test_world_init(t,&snap))
+        defer test_world_destroy(&snap)
+        testing.expect(t,test_world_copy(&snap,&f.w))
+        snap_time,down,was,held:=f.time,f.down,f.was,f.held
+        step(f,10)
+        after:=user(f,f.player)
+        testing.expect(t,test_world_copy(&f.w,&snap))
+        f.time,f.down,f.was,f.held=snap_time,down,was,held
+        step(f,10)
+        again:=user(f,f.player)
+        testing.expectf(t,again.state==after.state && again.track==after.track && again.local==after.local,"%s: the rollback comes to another state",c.name)
+        testing.expect_value(t,f.problems.count,0)
+        testing.expect_value(t,g.problems.count,0)
     }
 }

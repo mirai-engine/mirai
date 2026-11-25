@@ -46,7 +46,7 @@ Ability_Sheets :: struct {
 }
 
 Attribute_Check :: struct {
-    stamp,write:u64,
+    stamp:u64,
     problem:Attribute_Problem,
     index:int,
 }

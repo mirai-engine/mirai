@@ -18,6 +18,7 @@ Abilities_Editor_World :: struct {
     users:core.Table(ab.Ability_User),
     states:core.Table(ab.Ability_State),
     tracking:core.Table(ab.Ability_Tracking),
+    locals:core.Table(ab.Ability_Local),
     worlds:core.Table(core.World_Transform),
     names:core.Table(core.Name),
     time:core.Time,
@@ -37,7 +38,7 @@ a_blocked_ability_says_which_status_attribute_or_cooldown_and_by_how_much :: pro
     user:ab.Ability_User
     user.attributes[0]={attribute=2,base=0,max=3}
     user.attributes[1]={attribute=3,base=2,max=200}
-    state:=ab.Ability_State{values={0=0,1=2}}
+    local:=ab.Ability_Local{values={0=0,1=2}}
     track:ab.Ability_Tracking
     track.cooldowns[1]={until=130}
     a:ab.Ability
@@ -54,7 +55,7 @@ a_blocked_ability_says_which_status_attribute_or_cooldown_and_by_how_much :: pro
         {.Cooldown,1,"its cooldown runs for 0.5 s more"},
     }
     for c in cases {
-        text:=block_text(&session,c.block,c.index,&a,&user,&state,&track,100,1.0/60)
+        text:=block_text(&session,c.block,c.index,&a,&user,&local,&track,100,1.0/60)
         testing.expectf(t,strings.contains(text,c.says),"%v at %d says %q, not %q",c.block,c.index,text,c.says)
     }
 }
@@ -86,15 +87,15 @@ an_open_hitbox_is_placed_in_the_world_with_what_it_hit_and_drawn_by_the_overlay 
     core.add(&world.worlds,player,core.World_Transform{transform={position={2,0,0},rotation=turned,scale={1,1,1}}})
     core.add(&world.users,player,ab.Ability_User{})
     core.add(&world.states,player,ab.Ability_State{ability={ABILITY_TABLE,1},start=0})
-    track:ab.Ability_Tracking
-    track.targets[0],track.windows[0]=dummy,0
-    track.targets[1],track.windows[1]=other,1
-    track.hit_count=2
-    core.add(&world.tracking,player,track)
+    local:ab.Ability_Local
+    local.targets[0],local.windows[0]=dummy,0
+    local.targets[1],local.windows[1]=other,1
+    local.hit_count=2
+    core.add(&world.locals,player,local)
     world.time={tick=10,dt=1.0/60}
     core.settle(&info,&world,nil)
     // Turned a quarter about Y, forward (-Z) is -X: 1.5 m ahead of the user and 1 m up.
-    r:=window_hitbox(w,player,&track,&hitboxes[0],0)
+    r:=window_hitbox(w,player,&local,&hitboxes[0],0)
     testing.expectf(t,linalg_near(r.center,{0.5,1,0}) && r.rotation==turned && r.size==[3]f32{1,0.5,1} && r.shape==.Box,"placed at %v",r)
     testing.expectf(t,len(r.targets)==1 && r.targets[0]=="Dummy","window 0 hit only Dummy: %v",r.targets)
     // Only window 0 is open at tick 10: one box, of a hit.
@@ -111,21 +112,21 @@ an_open_hitbox_is_placed_in_the_world_with_what_it_hit_and_drawn_by_the_overlay 
     }
     testing.expectf(t,hit==24 && open==0,"the edges of one box of a hit: %d of hits, %d open",hit,open)
     // Without hits the same box is open.
-    track.hit_count=0
-    core.edit(&world.tracking,player).hit_count=0
+    local.hit_count=0
+    core.edit(&world.locals,player).hit_count=0
     erender.debug_lines_clear(&lines)
     hitboxes_draw(&lines,w,data)
     testing.expect_value(t,lines.count,24)
     testing.expect_value(t,storage[0].color,mm.rgba8_pack(HITBOXES_CAPTURE_OPEN))
 
-    // Clip-span-bound window hitbox draws only while its bit in state.span_open is set.
+    // Clip-span-bound window hitbox draws only while its bit in local.span_open is set.
     sheets[0].windows[0]={}
     sheets[0].windows[1]={hitbox={HITBOX_TABLE,1}}
     base.text_set(sheets[0].windows[1].span[:],"swing")
     erender.debug_lines_clear(&lines)
     hitboxes_draw(&lines,w,data)
     testing.expect_value(t,lines.count,0)
-    core.edit(&world.states,player).span_open=u16(1)<<1
+    core.edit(&world.locals,player).span_open=u16(1)<<1
     core.settle(&info,&world,nil)
     erender.debug_lines_clear(&lines)
     hitboxes_draw(&lines,w,data)

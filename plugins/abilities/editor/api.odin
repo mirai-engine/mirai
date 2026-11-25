@@ -169,9 +169,11 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     u,_:=core.get(users,e)
     state:ab.Ability_State
     track:ab.Ability_Tracking
-    state_found:=false
+    local:ab.Ability_Local
+    state_found,local_found:=false,false
     if rows:=core.world_table_of(world,ab.Ability_State);rows!=nil {state,state_found=core.get(rows,e)}
     if rows:=core.world_table_of(world,ab.Ability_Tracking);rows!=nil {track,_=core.get(rows,e)}
+    if rows:=core.world_table_of(world,ab.Ability_Local);rows!=nil {local,local_found=core.get(rows,e)}
     data:=sets(s)
     abilities,kits:=data.abilities,data.kits
     time,dt:=world_clock(world)
@@ -179,7 +181,7 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
     if u.kit!={} {r.kit=core.record_name(kits,u.kit) if core.record_name(kits,u.kit)!="" else "missing row"}
     r.ability=row_name(abilities,state.ability)
     active:=ab.record_sheet(abilities,state.ability)
-    at:=running_at(time,&state)
+    at:=running_at(time,&state,&local)
     if active!=nil {
         r.seconds,r.own_seconds,r.duration=f32(at.local)*dt,at.own*dt,active.duration
         windows:=make([dynamic]Window_Result,call.allocator)
@@ -188,20 +190,22 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
             shown:=Window_Result{index=i,from=win.from,to=win.to,cancel_into=bits_names(s,call,ab.Ability_Tag,u64(win.cancel_into))}
             if win.span[0]!=0 {shown.span=base.text_get(win.span[:])}
             if win.clock==.Own {shown.clock="own"}
-            if hitbox:=ab.record_sheet(data.hitboxes,win.hitbox);hitbox!=nil {shown.hitbox=window_hitbox(world,e,&track,hitbox,i,call.allocator)}
+            if hitbox:=ab.record_sheet(data.hitboxes,win.hitbox);hitbox!=nil {shown.hitbox=window_hitbox(world,e,&local,hitbox,i,call.allocator)}
             if win.cue!=ab.CUE_NONE {shown.cue=value_name(s,ab.Ability_Cue,i64(win.cue))}
             append(&windows,shown)
         }
         r.windows=windows[:]
     }
-    r.statuses=bits_names(s,call,ab.Ability_Status,u64(state.statuses))
+    r.statuses=bits_names(s,call,ab.Ability_Status,u64(local.statuses))
     attributes:=make([dynamic]Attribute_Result,call.allocator)
     for entry,i in u.attributes {
-        if entry.attribute!=ab.ATTRIBUTE_NONE {append(&attributes,Attribute_Result{value_name(s,ab.Ability_Attribute,i64(entry.attribute)),entry.base,state.values[i] if state_found else entry.base,entry.max})}
+        if entry.attribute==ab.ATTRIBUTE_NONE {continue}
+        now:=ab.ability_base(&u,&state,i,time.tick,dt) if state_found else entry.base
+        append(&attributes,Attribute_Result{value_name(s,ab.Ability_Attribute,i64(entry.attribute)),now,local.values[i] if local_found else now,entry.max})
     }
     r.attributes=attributes[:]
     buffer:=make([dynamic]Buffer_Result,call.allocator)
-    for b in track.buffer {
+    for b in local.buffer {
         if b.ability!={} {append(&buffer,Buffer_Result{row_name(abilities,b.ability),f32(time.tick-b.tick)*dt if time.tick>=b.tick else 0,b.run!=0 && state.ability!={} && state.start+1==b.run})}
     }
     r.buffer=buffer[:]
@@ -243,8 +247,8 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
                 if problem:=base.text_get(sheets.abilities[row][:]);problem!="" {
                     blocked=fmt.tprintf("its sheet is not valid: %s",problem)
                 } else {
-                    block,index:=ab.start_block(&params,time.tick,dt,e,&u,&state,&track,state.statuses,kit,active,at,a,ref)
-                    blocked=block_text(s,block,index,a,&u,&state,&track,time.tick,dt)
+                    block,index:=ab.start_block(&params,time.tick,dt,e,&u,&local,&track,local.statuses,kit,active,at,a,ref)
+                    blocked=block_text(s,block,index,a,&u,&local,&track,time.tick,dt)
                 }
             }
             append(&candidates,Candidate_Result{row_name(abilities,ref),blocked})
@@ -256,10 +260,10 @@ inspect :: proc(s:^editor.Session,call:^api.Call) {
 // What blocks a, as start_block found it with what fails at index: the status, the mode, the
 // condition or the cost with its value now against what it needs, or the cooldown left.
 @(private)
-block_text :: proc(s:^editor.Session,block:ab.Ability_Block,index:int,a:^ab.Ability,user:^ab.Ability_User,state:^ab.Ability_State,track:^ab.Ability_Tracking,tick:u64,dt:f32) -> string {
-    attribute :: proc(s:^editor.Session,user:^ab.Ability_User,state:^ab.Ability_State,attribute:ab.Ability_Attribute) -> (name,value:string) {
+block_text :: proc(s:^editor.Session,block:ab.Ability_Block,index:int,a:^ab.Ability,user:^ab.Ability_User,local:^ab.Ability_Local,track:^ab.Ability_Tracking,tick:u64,dt:f32) -> string {
+    attribute :: proc(s:^editor.Session,user:^ab.Ability_User,local:^ab.Ability_Local,attribute:ab.Ability_Attribute) -> (name,value:string) {
         name=value_name(s,ab.Ability_Attribute,i64(attribute))
-        current,found:=ab.ability_value(user,state,attribute)
+        current,found:=ab.ability_value(user,local,attribute)
         return name,fmt.tprintf("%g",current) if found else "missing from the Ability_User"
     }
     switch block {
@@ -276,14 +280,14 @@ block_text :: proc(s:^editor.Session,block:ab.Ability_Block,index:int,a:^ab.Abil
         bounds:=fmt.tprintf("at least %g",c.at_least) if c.at_most<=0 else fmt.tprintf("from %g to %g",c.at_least,c.at_most)
         switch c.kind {
         case .Attribute:
-            name,value:=attribute(s,user,state,c.attribute)
+            name,value:=attribute(s,user,local,c.attribute)
             return fmt.tprintf("condition %d: %s is %s and has to be %s",index,name,value,bounds)
         case .Speed: return fmt.tprintf("condition %d: the speed of its Character over the ground has to be %s m/s",index,bounds)
         }
     case .Cost:
         if index<0 || index>=len(a.costs) {break}
         c:=a.costs[index]
-        name,value:=attribute(s,user,state,c.attribute)
+        name,value:=attribute(s,user,local,c.attribute)
         return fmt.tprintf("cost %d: %s is %s, less than the %g it costs",index,name,value,c.amount)
     case .Cooldown:
         if index<0 || index>=len(track.cooldowns) {break}
@@ -308,9 +312,9 @@ world_clock :: proc(world:core.World_Ref) -> (time:core.Time,dt:f32) {
 
 // Where the running ability of a user is on its clocks and clip spans.
 @(private)
-running_at :: proc(time:core.Time,state:^ab.Ability_State) -> ab.Ability_Time {
+running_at :: proc(time:core.Time,state:^ab.Ability_State,local:^ab.Ability_Local) -> ab.Ability_Time {
     if state.ability=={} {return {}}
-    return {local=i64(time.tick-state.start) if time.tick>=state.start else 0,own=state.own,spans=state.span_open}
+    return {local=i64(time.tick-state.start) if time.tick>=state.start else 0,own=local.own,spans=local.span_open}
 }
 
 // Where the user e is in world: its World_Transform, or the identity without one.
@@ -325,10 +329,10 @@ user_pose :: proc(world:core.World_Ref,e:core.Entity) -> mm.Transform {
 // The hitbox h of the window at index of the ability user e runs, where it is now in world, with
 // what it hit.
 @(private)
-window_hitbox :: proc(world:core.World_Ref,e:core.Entity,track:^ab.Ability_Tracking,h:^ab.Ability_Hitbox,window:int,allocator:=context.temp_allocator) -> (r:Hitbox_Result) {
+window_hitbox :: proc(world:core.World_Ref,e:core.Entity,local:^ab.Ability_Local,h:^ab.Ability_Hitbox,window:int,allocator:=context.temp_allocator) -> (r:Hitbox_Result) {
     center,rotation:=ab.hitbox_world(h,user_pose(world,e))
     r={shape=h.shape,center=center,rotation=rotation,size=h.size}
-    hit:=window_targets(track,window)
+    hit:=window_targets(local,window)
     if len(hit)==0 {return}
     r.targets=make([]string,len(hit),allocator)
     for target,i in hit {r.targets[i]=entity_text(world,target,allocator)}
@@ -337,10 +341,10 @@ window_hitbox :: proc(world:core.World_Ref,e:core.Entity,track:^ab.Ability_Track
 
 // What the window at index of the running ability hit since it started.
 @(private)
-window_targets :: proc(track:^ab.Ability_Tracking,window:int) -> []core.Entity {
+window_targets :: proc(local:^ab.Ability_Local,window:int) -> []core.Entity {
     targets:=make([dynamic]core.Entity,context.temp_allocator)
-    for j in 0..<min(int(track.hit_count),len(track.targets)) {
-        if int(track.windows[j])==window {append(&targets,track.targets[j])}
+    for j in 0..<min(int(local.hit_count),len(local.targets)) {
+        if int(local.windows[j])==window {append(&targets,local.targets[j])}
     }
     return targets[:]
 }

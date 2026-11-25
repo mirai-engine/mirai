@@ -32,6 +32,7 @@ Movement_World :: struct {
     users:core.Table(Ability_User),
     states:core.Table(Ability_State),
     tracking:core.Table(Ability_Tracking),
+    locals:core.Table(Ability_Local),
     loco_states:core.Table(locomotion.Locomotion_State),
     inputs:core.Table(inp.Move_Input),
     walks:core.Table(locomotion.Walk),
@@ -92,7 +93,7 @@ movement_init :: proc(t:^testing.T,f:^Movement,position:[3]f32) -> bool {
     core.add(&f.users,f.e,user)
     f.time={tick=1,dt=1.0/60,playing=true}
     test_world_settle(&f.w)
-    ability_rows({&f.users,&f.states,&f.tracking},&f.checks,&f.problems)
+    ability_rows({&f.users,&f.states,&f.tracking,&f.locals},&f.checks,&f.problems)
     test_world_settle(&f.w)
     return true
 }
@@ -128,7 +129,7 @@ movement_tick :: proc(f:^Movement,move:[3]f32,ticks:=1,buttons:=inp.Action_Mask(
         core.edit(&f.inputs,f.e)^={move=move,buttons=buttons}
         test_world_settle(&f.w)
         w:=movement_world(f)
-        abilities_tick({&f.users,&f.states,&f.tracking},{abilities={&f.set}},&f.cache,&f.checks,&f.ability_requests,nil,&w,physics_overlap)
+        abilities_tick({&f.users,&f.states,&f.tracking,&f.locals},{abilities={&f.set}},&f.cache,&f.checks,&f.ability_requests,nil,&w,physics_overlap)
         test_world_settle(&f.w)
         locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,core.read(&f.remotes),
             core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco_requests,f.time,&f.problems)
@@ -162,10 +163,12 @@ flat_speed :: proc(f:^Movement) -> f32 {
     return linalg.length(motion.linear.xz)
 }
 
+// The energy of the runner on the tick that last ran.
 @(private="file")
 energy :: proc(f:^Movement) -> f32 {
     user,_:=core.get(&f.users,f.e)
-    return user.attributes[0].base
+    state,_:=core.get(&f.states,f.e)
+    return ability_base(&user,&state,0,f.time.tick-1,f.time.dt)
 }
 
 @(private="file")
@@ -232,8 +235,8 @@ a_ledge_jump_is_a_game_query_that_uses_an_ability_with_a_layered_boost :: proc(t
             pose,_:=core.get(&f.transforms,f.e)
             w:=movement_world(f)
             user,_:=core.get(&f.users,f.e)
-            state,_:=core.get(&f.states,f.e)
-            ready=condition_holds(&w,f.e,&user,&state,ledge.conditions[0]) && ledge_jump_ask(f,false)
+            local,_:=core.get(&f.locals,f.e)
+            ready=condition_holds(&w,f.e,&user,&local,ledge.conditions[0]) && ledge_jump_ask(f,false)
             if pose.position.z>-10 {testing.expectf(t,!ready,"%v: no ledge far from the edge, at z %v",c,pose.position.z)}
             if ready || pose.position.z< -14.8 {ready_at=pose.position.z;break}
         }
@@ -283,6 +286,7 @@ a_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
     u.attributes[1]={attribute=SPEED,base=1}
     u.attributes[2]={attribute=JUMP_ATTR,base=1}
     u.attributes[3]={attribute=ACCEL_ATTR,base=1}
+    core.edit(&f.states,f.e).bases={0=115,1=1,2=1,3=1}
     test_world_settle(&f.w)
 
     // Settle on ground and start sprint.
