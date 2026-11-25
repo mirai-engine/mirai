@@ -64,13 +64,17 @@ OS-released locks live in `<main>/.mirai/cache/locks/` (`<lock>.owner` shown by 
   `profile.capture` with `advance`). Non-GPU builds/tests run at `subprocess.Priority.Low` without
   waiting; non-user GPU work waits (`workspace.measured`). `workspace.gpu_load` reports concurrent
   load. `MIRAI_MEASURE` propagates membership to child processes and `mirai rpc`.
-- **GPU turns (`gpu-<n>.lock`, max `workspace.GPU_TURNS`, under `gpu.lock`):** Admits concurrent
-  processes whose VRAM charges fit the card (`gpu/card`, per-project peaks in `gpu/peaks/`) minus
-  desktop headroom (`gpu_admits`; first turn always admitted). Dedicated GPU outranks integrated;
-  mismatched non-`MIRAI_GPU` sessions close with reason. Editors inherit turns via `--gpu-turn`
-  (`lock_hand_over`) and auto-close after `api.SESSION_IDLE`. User windowed `edit`/`play` never
-  waits. Measurements take GPU turns *before* `measure.lock` (`measure_try` marks own turn idle) so
-  deadlocks cannot occur and `bench compare` runs both editors together.
+- **GPU turns (`gpu-<n>.lock`, max `workspace.GPU_TURNS`, under `gpu.lock`):** Admits one process
+  no person runs at a time (`GPU_AGENTS`; a measurement's own editors run together), beside
+  persons' turns whose VRAM charges fit the card (`gpu/card`, per-project peaks in `gpu/peaks/`)
+  minus desktop headroom (`gpu_admits`; first turn always admitted). Waiters queue first come,
+  first served by a ticket lock each in `gpu-queue/`; a ticket or a turn whose process ended is
+  skipped, and the wait names the holders, for how long, and the waiters before it. Dedicated GPU
+  outranks integrated; mismatched non-`MIRAI_GPU` sessions close with reason. Editors inherit
+  turns via `--gpu-turn` (`lock_hand_over`) and auto-close after `api.SESSION_IDLE`. User windowed
+  `edit`/`play` never waits. Measurements take GPU turns *before* `measure.lock` (`measure_try`
+  marks own turn idle) so deadlocks cannot occur and `bench compare` runs both editors together;
+  a turn of a measurement that already holds one does not queue.
 - `bin/mirai` self-refresh serializes via `bin/.refresh.lock`.
 
 ### Implicit Vulkan layers

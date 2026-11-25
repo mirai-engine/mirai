@@ -39,6 +39,7 @@ gpu_turn :: proc(root,folder,what:string,person:=false,limit:=time.Duration(0),o
         } else {
             fmt.eprintfln("mirai: %s waited %s for %.1f GiB of the GPU (%s), the time it was given; these hold it:",what,duration_text(limit),f64(charge)/(1<<30),gpu_card_text(refused))
             gpu_holders_say(refused.holders)
+            for waiter in refused.ahead {fmt.eprintfln("  %s, waiting before it",waiter)}
         }
         fmt.eprintfln("Run it again when they end, or give it more time.")
     }
@@ -66,6 +67,8 @@ gpu_wait_notice :: proc(waiting:workspace.Gpu_Wait) {
     }
     fmt.eprintfln("mirai: waiting for room on the GPU (%s); these hold it:",gpu_card_text(waiting))
     gpu_holders_say(waiting.holders)
+    if len(waiting.ahead)>0 {fmt.eprintfln("and %d came first and wait before it:",len(waiting.ahead))}
+    for waiter in waiting.ahead {fmt.eprintfln("  %s",waiter)}
     fmt.eprintfln("A session closes with mirai session stop <project>, and by itself after %s without calls.",duration_text(api.SESSION_IDLE))
 }
 

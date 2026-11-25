@@ -89,10 +89,12 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 ## Invariants
 
 - `project` imports only `std/*`: the editor, the player and the tools use it.
-- The GPU is used in parallel under its memory budget and held for others only while a
-  measurement times: then what would put work on it and is not part of the measurement waits for
-  it, and the measurement first waits for the GPU work in flight but not for sessions kept open,
-  whose load it reports ([turns](references/build.md#turns-between-processes)).
+- The GPU is used by one program no person runs at a time, in the order they asked, beside the
+  editors and players of a person under its memory budget: GPU work beside a test that times
+  itself, a capture or a measurement changes what it gives. While a measurement times, what would
+  put work on the GPU and is not part of it waits for it, and the measurement first waits for the
+  GPU work in flight but not for sessions kept open, whose load it reports
+  ([turns](references/build.md#turns-between-processes)).
 - A measurement holds `measure.lock` only while it times. The GPU turn comes first and the
   measurement after it: what holds the measurement never waits for room on the GPU, and what
   waits for the measurement says its turn is idle meanwhile.
@@ -164,10 +166,10 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
   the sources, known failures, the scratch a sweep removes); `mirai check cook/build` and `mirai
   check tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who
-  holds a lock, GPU turns by the room of the card, a person and a measurement) and `mirai test
-  std/subprocess` (low priority of a child, handles it inherits). GPU turns with real editors:
-  two sessions at once on a heavy scene both run or the second waits naming the first, and
-  killing the editor of one frees its turn (`mirai locks`). Sharing: `mirai test cook/share`
+  holds a lock, GPU turns by the room of the card, one program at a time, the queue, a person and
+  a measurement) and `mirai test std/subprocess` (low priority of a child, handles it inherits).
+  GPU turns with real editors: a second session waits naming the first, and the end of the
+  editor of the first gives it the turn (`mirai locks`). Sharing: `mirai test cook/share`
   (snapshot rule, hostile trees, join, update by three ways with renames by case, edits while a
   join runs, an incomplete join run again, resume, a third peer, the bytes of a re-join and of an
   insert, the packages as the host's), all on `Sim_Network`; the memory of a large file is the

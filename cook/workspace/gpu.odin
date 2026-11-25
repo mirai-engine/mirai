@@ -23,11 +23,13 @@ import "mirai:std/subprocess"
 // keeps; gpu_card_said decides between them), GPU_MEMORY_ASSUMED before one.
 //
 // The turn of a person (person) is taken without waiting and counts for the
-// others; when every turn file is held it runs without one. Any other waits
-// while a measurement it is not part of runs (measured). The turns of a
-// measurement say so in their owner, and one of them is given beside the
-// others of the same measurement when no one else holds a turn, also beyond
-// the card: what it compares runs at once.
+// memory of the others; when every turn file is held it runs without one. Any
+// other waits while a measurement it is not part of runs (measured), and is
+// given a turn only while no other program a person does not run holds one
+// (GPU_AGENTS). The others wait in a queue, first come first served
+// (GPU_QUEUE). The turns of a measurement say so in their owner, and one of
+// them is given beside the others of the same measurement when no one else
+// holds a turn, also beyond the card: what it compares runs at once.
 //
 // A turn says whether its holder puts work on the GPU now or stays open
 // idle (GPU_OPEN_TAG): a test, a player or an editor that starts or runs a
@@ -36,6 +38,14 @@ import "mirai:std/subprocess"
 // person are open, and a measurement only says that they load the GPU
 // (gpu_load).
 GPU_TURNS :: 8
+// The turns given at once to programs no person runs, but those of one
+// measurement: GPU work beside a test that times itself, a capture or a
+// measurement changes what it gives.
+GPU_AGENTS :: 1
+// The folder of the tickets of the queue: a lock each waiter holds while it
+// waits, named by when it came, so that the names sort in its order. A ticket
+// no process holds is of a waiter that ended: it is skipped and removed.
+GPU_QUEUE :: "gpu-queue"
 GPU_ADMISSION_LOCK :: "gpu.lock"
 GPU_MEMORY_ASSUMED :: i64(4)<<30
 // More than a card holds: a project never measured opens beside no other,
@@ -57,18 +67,20 @@ GPU_HELD_TAG :: ", held "
 GPU_HELD_SUFFIX :: " MiB at most"
 @(private)
 GPU_OPEN_TAG :: ", open and idle"
+@(private)
+GPU_PERSON_TAG :: ", of a person"
 
 // The file of a turn.
 gpu_turn_path :: proc(root:string,turn:int,allocator:=context.allocator) -> string {
     return lock_path(root,fmt.tprintf("gpu-%d.lock",turn),allocator)
 }
 
-// What the holder of a turn writes: what, the measurement it is part of
-// (its MEASURE_ENV; "" for none), whether it is open and idle, what it is
-// charged and the most it held (0 before it says).
-gpu_holder_text :: proc(what:string,charge:i64,part_of:="",held:=i64(0),open:=false,allocator:=context.temp_allocator) -> string {
+// What the holder of a turn writes: what, whether a person runs it, the
+// measurement it is part of (its MEASURE_ENV; "" for none), whether it is
+// open and idle, what it is charged and the most it held (0 before it says).
+gpu_holder_text :: proc(what:string,charge:i64,part_of:="",held:=i64(0),open:=false,person:=false,allocator:=context.temp_allocator) -> string {
     tag:=part_of!=""?strings.concatenate({GPU_MEASUREMENT_TAG,part_of},context.temp_allocator):""
-    return gpu_owner_text(strings.concatenate({what,tag,open?GPU_OPEN_TAG:""},context.temp_allocator),charge,held,allocator)
+    return gpu_owner_text(strings.concatenate({what,person?GPU_PERSON_TAG:"",tag,open?GPU_OPEN_TAG:""},context.temp_allocator),charge,held,allocator)
 }
 
 // The owner text of what (with its tags), its charge and the most it held.
@@ -119,13 +131,14 @@ gpu_holder_charge :: proc(holder:string) -> (charge:i64,ok:bool) {
 }
 
 // A turn that is held: what its holder wrote, its charge, the most it held,
-// since when and whether it is open and idle.
+// since when, whether it is open and idle and whether a person runs it.
 Gpu_Holder :: struct {
     holder:string,
     charge:i64,
     held:i64,
     since:time.Time,
     open:bool,
+    person:bool,
 }
 
 // The turns held now. A holder that wrote no charge, as one that is just
@@ -136,7 +149,7 @@ gpu_holders :: proc(root:string,allocator:=context.allocator) -> []Gpu_Holder {
         taken,holder,since:=lock_holder(gpu_turn_path(root,turn,context.temp_allocator),allocator)
         if !taken {continue}
         what,charge,held,charged:=gpu_holder_parse(holder)
-        append(&holders,Gpu_Holder{holder,charged?charge:GPU_CHARGE_DEFAULT,held,since,charged && strings.has_suffix(what,GPU_OPEN_TAG)})
+        append(&holders,Gpu_Holder{holder,charged?charge:GPU_CHARGE_DEFAULT,held,since,charged && strings.has_suffix(what,GPU_OPEN_TAG),strings.contains(what,GPU_PERSON_TAG)})
     }
     return holders[:]
 }
@@ -363,10 +376,12 @@ gpu_admits :: proc(memory:i64,charges:[]i64,charge:i64) -> bool {
     return room>=0
 }
 
-// Why a turn is not taken: the measurement that runs, or the turns held.
+// Why a turn is not taken: the measurement that runs, the turns held or the
+// waiters that came first.
 Gpu_Wait :: struct {
     measurement:string, // who measures; "" when it is not that
     holders:[]Gpu_Holder,
+    ahead:[]string,     // what the waiters that came first wrote, in their order
     memory:i64,         // of the card, as admission took it
     memory_known:bool,
     refused:Gpu_Refused,
@@ -394,7 +409,7 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
     waiting.holders=gpu_holders(root,context.temp_allocator)
     waiting.memory,waiting.memory_known=gpu_memory(root)
     if !person && !gpu_room(waiting.holders,waiting.memory,charge,part_of) {return}
-    text:=gpu_holder_text(what,charge,part_of,open=person)
+    text:=gpu_holder_text(what,charge,part_of,open=person,person=person)
     for turn in 0..<GPU_TURNS {
         failed:bool
         lock,taken,_,failed=lock_take(gpu_turn_path(root,turn,context.temp_allocator),text)
@@ -404,17 +419,59 @@ gpu_try :: proc(root,what:string,charge:i64,person:=false,part_of:="") -> (lock:
 }
 
 // Whether a turn charged charge fits beside holders on a card of memory
-// bytes: a turn free and the room for it, or every holder part of the same
-// measurement (part_of).
+// bytes: a turn free, fewer than GPU_AGENTS holders a person does not run
+// and the room for it, or every holder part of the same measurement
+// (part_of).
 @(private)
 gpu_room :: proc(holders:[]Gpu_Holder,memory,charge:i64,part_of:string) -> bool {
     charges:=make([]i64,len(holders),context.temp_allocator)
     alone:=part_of!=""
+    agents:=0
     for holder,i in holders {
         charges[i]=holder.charge
-        alone&&=gpu_holder_measurement(holder.holder)==part_of
+        same:=part_of!="" && gpu_holder_measurement(holder.holder)==part_of
+        alone&&=same
+        if !same && !holder.person {agents+=1}
     }
-    return len(holders)<GPU_TURNS && (alone || gpu_admits(memory,charges,charge))
+    return len(holders)<GPU_TURNS && (alone || agents<GPU_AGENTS && gpu_admits(memory,charges,charge))
+}
+
+// Joins the queue: a ticket named by now, held until it is dropped
+// (gpu_ticket_drop). Not held when the lock cannot be made: it waits unseen.
+@(private)
+gpu_ticket_take :: proc(root,what:string) -> (ticket:Lock,name:string) {
+    name=fmt.tprintf("%019d-%d.lock",time.time_to_unix_nano(time.now()),os.get_pid())
+    ticket,_,_,_=lock_take(lock_path(root,join(GPU_QUEUE,name),context.temp_allocator),what)
+    return
+}
+
+@(private)
+gpu_ticket_drop :: proc(ticket:^Lock) {
+    if !ticket.held {return}
+    path:=strings.trim_suffix(strings.clone(ticket.owner,context.temp_allocator),".owner")
+    lock_release(ticket)
+    _=os.remove(path)
+}
+
+// What the waiters whose tickets sort before name wrote, in their order. The
+// ticket of one that ended is removed once it is a second old: a younger one
+// may be of a waiter that is just taking it.
+@(private)
+gpu_queue_ahead :: proc(root,name:string) -> []string {
+    folder:=lock_path(root,GPU_QUEUE,context.temp_allocator)
+    entries,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
+    slice.sort_by(entries,proc(a,b:os.File_Info) -> bool {return a.name<b.name})
+    ahead:=make([dynamic]string,context.temp_allocator)
+    for entry in entries {
+        if !strings.has_suffix(entry.name,".lock") || entry.name>=name {continue}
+        path:=join(folder,entry.name)
+        if held,holder,_:=lock_holder(path,context.temp_allocator);held {
+            append(&ahead,holder)
+        } else if time.diff(entry.modification_time,time.now())>time.Second {
+            _=os.remove(path)
+        }
+    }
+    return ahead[:]
 }
 
 // The holders that wait for a command to end, so that waiting for them does
@@ -452,23 +509,40 @@ process_lineage :: proc(allocator:=context.temp_allocator) -> []int {
 }
 
 // Blocks until a turn is given and takes it (gpu_try), at most limit (zero:
-// no limit). notice runs once with who holds the room, and again when they
-// or their charges change. A person never waits: ok is false when every turn
+// no limit), after the waiters that came first (GPU_QUEUE). notice runs once
+// with who holds the room and who waits before it, and again when they or
+// their charges change. A person never waits: ok is false when every turn
 // file is held. Nor does what waiting would not help (Gpu_Refused.Own: the
 // room is held by holders gpu_own names for its project folder), nor what
-// waited limit: ok is false and refused says why and who holds it.
+// waited limit: ok is false and refused says why and who holds it. A turn of
+// a measurement that already holds one does not queue: those before it may
+// wait for it.
 gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waiting:Gpu_Wait)=nil,limit:=time.Duration(0),folder:="") -> (lock:Lock,ok:bool,refused:Gpu_Wait) {
     told:=""
     part_of:=measurement(context.temp_allocator)
     lineage:=process_lineage()
     start:=time.tick_now()
+    queued:=!person
+    for holder in gpu_holders(root,context.temp_allocator) {
+        if part_of!="" && gpu_holder_measurement(holder.holder)==part_of {queued=false}
+    }
+    ticket:Lock
+    name:string
+    if queued {ticket,name=gpu_ticket_take(root,what)}
+    defer gpu_ticket_drop(&ticket)
     for {
         taken:bool
         waiting:Gpu_Wait
-        lock,taken,waiting=gpu_try(root,what,charge,person,part_of)
-        if taken {return lock,true,{}}
-        if person {return}
-        if waiting.measurement=="" && len(waiting.holders)==0 {return}
+        if queued {waiting.ahead=gpu_queue_ahead(root,name)}
+        if len(waiting.ahead)==0 {
+            lock,taken,waiting=gpu_try(root,what,charge,person,part_of)
+            if taken {return lock,true,{}}
+            if person {return}
+            if waiting.measurement=="" && len(waiting.holders)==0 {return}
+        } else {
+            waiting.holders=gpu_holders(root,context.temp_allocator)
+            waiting.memory,waiting.memory_known=gpu_memory(root)
+        }
         if waiting.measurement=="" && !gpu_room(gpu_own(waiting.holders,lineage,folder),waiting.memory,charge,part_of) {
             waiting.refused=.Own
             return {},false,waiting
@@ -484,6 +558,7 @@ gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waitin
             what_,_,_,_:=gpu_holder_parse(holder.holder)
             fmt.sbprintf(&b,"%s %d;",strings.trim_suffix(what_,GPU_OPEN_TAG),holder.charge)
         }
+        for waiter in waiting.ahead {fmt.sbprintf(&b,"%s;",waiter)}
         if said:=strings.to_string(b);said!=told && notice!=nil {
             notice(waiting)
             told=strings.clone(said,context.temp_allocator)
@@ -493,12 +568,13 @@ gpu_acquire :: proc(root,what:string,charge:i64,person:=false,notice:proc(waitin
 }
 
 // Names the holder of a turn again: the process that holds it now, as an
-// editor started with it. It stays open or working as it was.
+// editor started with it. It stays open or working, and of a person, as it was.
 gpu_turn_rename :: proc(lock:^Lock,what:string,charge:i64) {
     if !lock.held {return}
     before,_:=os.read_entire_file(lock.owner,context.temp_allocator)
     open:=gpu_holder_open(strings.trim_space(string(before)))
-    _=os.write_entire_file(lock.owner,transmute([]u8)gpu_holder_text(what,charge,measurement(context.temp_allocator),open=open))
+    person:=strings.contains(string(before),GPU_PERSON_TAG)
+    _=os.write_entire_file(lock.owner,transmute([]u8)gpu_holder_text(what,charge,measurement(context.temp_allocator),open=open,person=person))
 }
 
 // Names the process `to` the holder of the turns held by process `from`,

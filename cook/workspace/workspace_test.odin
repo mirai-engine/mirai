@@ -151,8 +151,9 @@ a_gpu_turn_is_given_while_the_charges_fit_the_card :: proc(t:^testing.T) {
     for c in cases {testing.expectf(t,gpu_admits(c.memory,c.held,c.charge)==c.admits,"%s",c.name)}
 }
 
-// The turns follow the memory the card said: one that does not fit waits and
-// names who holds them, a person takes one anyway and counts for the others,
+// The turns follow the memory the card said and go to one program a person
+// does not run at a time: another waits, though it fits, and names who holds
+// them; a person takes one anyway and counts for the memory of the others;
 // and a turn whose holder ended is free, whatever its owner file says.
 @(test)
 the_gpu_turns_follow_the_card_and_a_person_never_waits :: proc(t:^testing.T) {
@@ -161,35 +162,79 @@ the_gpu_turns_follow_the_card_and_a_person_never_waits :: proc(t:^testing.T) {
     if root=="" {return}
     GB :: i64(1)<<30
     gpu_card_write(root,{8*GB,true,"card"})
-    first,first_taken,_:=gpu_try(root,"pid 1, mirai session in a",3*GB)
-    second,second_taken,_:=gpu_try(root,"pid 2, mirai session in b",3*GB)
-    testing.expect(t,first_taken && second_taken)
-    // An editor that starts again as another hands it its turn, and its name.
-    gpu_turn_follow(root,2,7)
-    named:=false
-    for holder in gpu_holders(root,context.temp_allocator) {named||=holder.holder==gpu_holder_text("pid 7, mirai session in b",3*GB)}
-    testing.expect(t,named,"the turn names the editor that holds it now")
-    _,third_taken,waiting:=gpu_try(root,"pid 3, mirai capture in c",3*GB)
-    testing.expect(t,!third_taken,"a third one does not fit")
-    testing.expect_value(t,len(waiting.holders),2)
+    first,first_taken,_:=gpu_try(root,"pid 11, mirai session in a",3*GB)
+    testing.expect(t,first_taken)
+    _,second_taken,waiting:=gpu_try(root,"pid 12, mirai capture in b",1*GB)
+    testing.expect(t,!second_taken,"a second program no person runs waits, though it fits")
+    testing.expect_value(t,len(waiting.holders),1)
     testing.expect_value(t,waiting.memory,8*GB)
-    if len(waiting.holders)==2 {
-        testing.expect_value(t,waiting.holders[0].holder,gpu_holder_text("pid 1, mirai session in a",3*GB))
+    if len(waiting.holders)==1 {
+        testing.expect_value(t,waiting.holders[0].holder,gpu_holder_text("pid 11, mirai session in a",3*GB))
         testing.expect_value(t,waiting.holders[0].charge,3*GB)
     }
-    person,person_taken,_:=gpu_try(root,"pid 4, mirai edit in d",3*GB,person=true)
+    person,person_taken,_:=gpu_try(root,"pid 14, mirai edit in d",3*GB,person=true)
     testing.expect(t,person_taken,"a person takes a turn without the room for it")
+    // An editor that starts again as another hands it its turn, and its name.
+    gpu_turn_follow(root,14,17)
+    named:=false
+    for holder in gpu_holders(root,context.temp_allocator) {
+        named||=holder.person && holder.holder==gpu_holder_text("pid 17, mirai edit in d",3*GB,open=true,person=true)
+    }
+    testing.expect(t,named,"the turn names the editor that holds it now, of a person still")
     lock_release(&first)
-    _,fits_taken,_:=gpu_try(root,"pid 5, mirai test rhi",2*GB)
-    testing.expect(t,!fits_taken,"the turn of a person counts for the others")
-    small,small_taken,_:=gpu_try(root,"pid 5, mirai test rhi",1*GB)
-    testing.expect(t,small_taken,"the turn of one that ended is free")
+    _,fits_taken,_:=gpu_try(root,"pid 15, mirai test rhi",5*GB)
+    testing.expect(t,!fits_taken,"the turn of a person counts for the memory of the others")
+    small,small_taken,_:=gpu_try(root,"pid 15, mirai test rhi",2*GB)
+    testing.expect(t,small_taken,"the turn of one that ended is free, and a person's holds no program back")
     lock_release(&small)
-    lock_release(&second)
     lock_release(&person)
     stale:=gpu_turn_path(root,3,context.temp_allocator)
-    testing.expect(t,os.write_entire_file(fmt.tprintf("%s.owner",stale),transmute([]u8)gpu_holder_text("pid 6, ended",6*GB))==nil)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s.owner",stale),transmute([]u8)gpu_holder_text("pid 16, ended",6*GB))==nil)
     testing.expect_value(t,len(gpu_holders(root,context.temp_allocator)),0)
+}
+
+// Waiters take the turn in the order they came, one after another; the turn
+// of a holder that ended and the ticket of a waiter that ended are skipped,
+// and the ticket is removed.
+@(test)
+the_gpu_turn_goes_to_the_waiters_in_the_order_they_came :: proc(t:^testing.T) {
+    if measuring() {return}
+    root:=base.test_folder(t,"workspace")
+    if root=="" {return}
+    GB :: i64(1)<<30
+    gpu_card_write(root,{8*GB,true,"card"})
+    dead:=gpu_turn_path(root,0,context.temp_allocator)
+    testing.expect(t,os.write_entire_file(fmt.tprintf("%s.owner",dead),transmute([]u8)gpu_holder_text("pid 26, ended",GB))==nil)
+    ticket:=lock_path(root,join(GPU_QUEUE,"0000000000000000001-27.lock"),context.temp_allocator)
+    testing.expect(t,os.make_directory_all(os.dir(ticket))==nil && os.write_entire_file(ticket,nil)==nil)
+    long_ago:=time.time_add(time.now(),-time.Minute)
+    testing.expect(t,os.change_times(ticket,long_ago,long_ago)==nil)
+    holder,held,_,_:=lock_take(gpu_turn_path(root,1,context.temp_allocator),gpu_holder_text("pid 21, mirai session in a",GB))
+    testing.expect(t,held)
+    Contender :: struct {root,what:string,taken:bool,at:time.Tick}
+    contenders:=[2]Contender{{root=root,what="pid 22, mirai test render"},{root=root,what="pid 23, mirai capture in b"}}
+    threads:[2]^thread.Thread
+    for &c,i in contenders {
+        threads[i]=thread.create_and_start_with_poly_data(&c,proc(c:^Contender) {
+            lock,taken,_:=gpu_acquire(c.root,c.what,GB,limit=10*time.Second)
+            c.taken,c.at=taken,time.tick_now()
+            time.sleep(300*time.Millisecond)
+            lock_release(&lock)
+        })
+        time.sleep(300*time.Millisecond)
+    }
+    ahead:=gpu_queue_ahead(root,"9999999999999999999")
+    testing.expect_value(t,len(ahead),2)
+    if len(ahead)==2 {testing.expect(t,ahead[0]==contenders[0].what && ahead[1]==contenders[1].what,"the queue in the order they came")}
+    testing.expect(t,!os.exists(ticket),"the ticket of a waiter that ended is removed")
+    lock_release(&holder)
+    for th in threads {
+        thread.join(th)
+        thread.destroy(th)
+    }
+    testing.expect(t,contenders[0].taken && contenders[1].taken,"both take the turn")
+    testing.expectf(t,time.tick_diff(contenders[0].at,contenders[1].at)>=250*time.Millisecond,"the first that came first, and the second once it left: %v",time.tick_diff(contenders[0].at,contenders[1].at))
+    testing.expect_value(t,len(gpu_queue_ahead(root,"9999999999999999999")),0)
 }
 
 // While another process measures, no GPU turn starts but those of a person
