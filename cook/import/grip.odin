@@ -48,7 +48,9 @@ hand_grip :: proc(points:[]mm.Vec3,allocator:=context.temp_allocator) -> (grip:m
     thinnest:=f32(math.F32_MAX)
     for step in 0..<180 {
         angle:=f32(step)*math.PI/180
-        direction:=first*math.cos(angle)+second*math.sin(angle)
+        // The sine and cosine of the engine, the same bits on every platform: a grip is versioned.
+        sine,cosine:=mm.sincos_det(angle)
+        direction:=first*cosine+second*sine
         clear(&values)
         for p in points {if in_palm(linalg.dot(p-center,along),wrist,length) {append(&values,linalg.dot(p-center,direction))}}
         if len(values)<GRIP_MIN_POINTS {return}

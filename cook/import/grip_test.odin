@@ -27,7 +27,7 @@ grip_box :: proc(points:^[dynamic]mm.Vec3,joints:^[dynamic]u16,joint:u16,lo,hi:m
 }
 
 @(private="file")
-grip_hand :: proc(skinned_hand:bool) -> (hand:Grip_Hand) {
+grip_hand :: proc(skinned_hand:bool,roll:=f32(math.PI/4)) -> (hand:Grip_Hand) {
     bones:=make([]asset.Skeleton_Bone,3,context.temp_allocator)
     for name,i in ([3]string{"forearm_r","hand_r","index_r"}) {
         base.text_set(bones[i].name[:],name);base.text_set(bones[i].path[:],name)
@@ -42,7 +42,7 @@ grip_hand :: proc(skinned_hand:bool) -> (hand:Grip_Hand) {
     bones[1].rotation=linalg.quaternion_angle_axis_f32(-.2,{0,0,1})
     bones[2].translation={.09,0,0}
     // The palm turned 45 degrees about the bone and 10 off its length.
-    hand.palm=linalg.quaternion_angle_axis_f32(math.PI/18,{0,0,1})*linalg.quaternion_angle_axis_f32(math.PI/4,{1,0,0})
+    hand.palm=linalg.quaternion_angle_axis_f32(math.PI/18,{0,0,1})*linalg.quaternion_angle_axis_f32(roll,{1,0,0})
 
     points:=make([dynamic]mm.Vec3,context.temp_allocator)
     owners:=make([dynamic]u16,context.temp_allocator)
@@ -114,4 +114,17 @@ a_grip_needs_a_hand_with_skinned_vertices :: proc(t:^testing.T) {
     testing.expect(t,!found && error.code==.None,"a skeleton no mesh skins has nothing to measure")
     _,_,error=hand_grip_socket(&hand.model,0,7,"grip_right")
     testing.expect_value(t,error.code,Error_Code.Malformed)
+}
+
+// A grip is written into a skeleton that is versioned and shared by its bytes: its directions
+// come from the sine and cosine of the engine, the same bits on Windows, Linux and macOS. The
+// palm rolled 10 degrees makes the thinnest direction one whose sine the C library of macOS
+// rounds otherwise.
+@(test)
+a_grip_is_the_same_bits_on_every_platform :: proc(t:^testing.T) {
+    hand:=grip_hand(true,10*math.PI/180)
+    socket,found,error:=hand_grip_socket(&hand.model,0,1,"grip_right")
+    if !testing.expectf(t,found && error.code==.None,"the hand is measured: %s",error.message) {return}
+    testing.expect_value(t,transmute([3]u32)socket.offset.position,[3]u32{1034906415,1012889307,1011289788})
+    testing.expect_value(t,transmute([4]u32)socket.offset.rotation,[4]u32{1037515286,3162342097,1024562234,1065247633})
 }
