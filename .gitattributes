@@ -18,10 +18,9 @@
 *.records merge=mirai diff=mirai -text
 *.character merge=mirai diff=mirai -text
 *.fracture binary
-*.foliage binary
 *.navmesh binary
 *.paint binary
+*.pcg binary
 *.physics_cache binary
 *.terrain binary
 *.particle merge=mirai diff=mirai -text
-*.grid binary
