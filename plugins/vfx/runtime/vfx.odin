@@ -182,7 +182,7 @@ particles_tick :: proc(
         channels_clear(sync)
         clocks.playing=time.playing
     }
-    channels_step(clocks,sync,births.log.items[:],listeners,time)
+    channels_step(clocks,sync,births.log.items[:],listeners,time,problems)
     if lost:=births.log.lost;lost!=sync.births_lost {
         if lost>sync.births_lost {
             core.report(problems,core.NONE,"vfx.births","%d births were lost: core.Births holds %d of a frame and the one before, or memory ran out; push fewer births in a frame",lost-sync.births_lost,core.BIRTHS_CAPACITY)

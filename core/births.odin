@@ -19,9 +19,12 @@ birth_channel :: proc "contextless" (name:string) -> Birth_Channel {
 
 // count particles at position, with velocity besides the one their effect
 // gives them, color and size multiplying theirs, and values its programs read
-// (Mirai_Vfx_Context.values).
+// (Mirai_Vfx_Context.values). by: the entity that causes it, which tells it
+// apart from another birth of its tick when a rollback runs the tick again;
+// NONE for an effect of the world, told apart by its place.
 Birth :: struct {
     channel:Birth_Channel,
+    by:Entity,
     position:[3]f32 `mirai:"unit=m"`,
     normal:[3]f32, // zero: no surface alignment
     velocity:[3]f32 `mirai:"unit=m/s"`,

@@ -62,6 +62,7 @@ splash_of :: proc "contextless" (body:phys.Fluid_Body,before:f32) -> (birth:core
     drops:=f32(SPLASH_DROPS)*math.cbrt(body.whole)*(down/SPLASH_SPEED)
     birth={
         channel=core.birth_channel(CHANNEL_SPLASHES),
+        by=body.entity,
         position={body.center.x,body.surface,body.center.z},
         velocity={0.3*body.velocity.x,0.35*down,0.3*body.velocity.z},
         size=clamp(math.cbrt(body.whole),0.5,3),
@@ -81,6 +82,7 @@ bubbles_of :: proc "contextless" (body:phys.Fluid_Body) -> (birth:core.Birth,ok:
     behind.y=min(behind.y,body.surface-BUBBLE_DEPTH)
     birth={
         channel=core.birth_channel(CHANNEL_BUBBLES),
+        by=body.entity,
         position=behind,
         velocity=0.25*body.velocity,
         size=clamp(size,0.5,1.5),

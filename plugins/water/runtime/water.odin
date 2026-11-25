@@ -239,10 +239,9 @@ water_render :: proc(
     far:=f32(1e30)
     everywhere:=mm.Aabb{{-far,-far,-far},{far,far,far}}
     total:=phys.fluids_in(physics,everywhere,state.fluids[:])
-    if total>len(state.fluids) {
-        // More fluids than the frame before: those that find no room are not drawn.
-        _=resize(&state.fluids,total)
-        total=min(phys.fluids_in(physics,everywhere,state.fluids[:]),len(state.fluids))
+    // More fluids than the frame before; without memory for them, those that find no room are not drawn.
+    if total>len(state.fluids) && resize(&state.fluids,total)==nil {
+        total=phys.fluids_in(physics,everywhere,state.fluids[:])
     }
     total=min(total,len(state.fluids))
     found:[CAPACITY]phys.Fluid_Info

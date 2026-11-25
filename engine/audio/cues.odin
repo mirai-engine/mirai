@@ -32,7 +32,7 @@ cue_play :: proc(sounds:^Sound_Requests,births:^core.Births,cue:Cue,channel:core
         play_id(sounds,cue.sound,position,by=by)
     }
     if channel!=0 && placed && births!=nil {
-        b:=core.Birth{channel=channel,position=pose.position}
+        b:=core.Birth{channel=channel,by=by,position=pose.position}
         if cue.align_up {b.normal=mm.quat_rotate(pose.rotation,{0,1,0})}
         core.birth(births,b)
     }

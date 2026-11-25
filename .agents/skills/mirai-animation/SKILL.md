@@ -39,7 +39,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
   spaces of the `.character`):
   [the layer stack](references/animation-actions.md#the-layer-stack) and
   [additive spaces](references/animation.md#additive-spaces).
-- Sounds and particle births at markers (the cues of the `.character`, `animation.cue.set`):
+- Sounds and particle births at markers (the cues of the `.character`, `animation.cue.set`, and
+  the `Marker_Cue` components of a prop that plays a plain `.anim`):
   [cues](../../../docs/game/audio/cues.md).
 - Components and shared data, the one `.character` set:
   [components](references/animation.md#components-and-shared-data);
