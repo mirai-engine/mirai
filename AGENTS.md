@@ -169,8 +169,9 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
 
 ## Token spending
 
-- **Short waits.** Never block > 4 min or poll with `sleep`/`until`/`tail -f`; background long
-  commands and read on completion.
+- **Waits.** Wait on a build or a test suite in the foreground for up to 15 min; run what takes
+  longer in the background and read it when it completes, never polling with `sleep`/`until`/
+  `tail -f`. Never end a turn or report while work you started still runs.
 - **Closed assignments.** Specify concrete deliverable, done criteria and proving test. Keep final
   reports <= 150 words without pasted diffs or raw logs.
 - **Child sessions & models.** Child sessions avoid spawning subagents except for large independent
