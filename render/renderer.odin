@@ -263,6 +263,7 @@ Stats :: struct {
 	textures_reduced:  u32, // held without the largest levels the frames sample, to fit the pool
 	textures_pending:  u32, // streamed, whose levels are not yet those the frames sample
 	lights:            u32,
+	light_sets:        u64, // since the renderer began: lights came, went or changed kind, and the light tree was built for them again
 	probes:            u32,
 	probes_per_frame:  u32,
 	probes_traced:     u32, // in the frame two frames ago

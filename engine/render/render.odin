@@ -405,9 +405,9 @@ Render_Sync :: struct {
     tinted:[dynamic]u32, // instances whose Material_Values changed and that show the same rows: what they hold is given in place
     tinted_colors,tinted_emissions:[dynamic][3]f32,
     tinted_values:[dynamic]gpu.Instance_Material_Values,
-    light_owners:[dynamic]Light_Owner,  // by light of the renderer
+    light_owners:[dynamic]Light_Owner,  // by light of the renderer; entity NONE: a slot of the extra lights
     lit:[Light_Kind]core.Entity_Map(u32), // by entity with a light of the kind that shines: its light of the renderer
-    extra_lights:int, // per-frame lights appended after light_owners in the renderer
+    extra_lights:int, // slots of the lights of the frame (Frame_Extras), the first of the renderer: the most a frame gave
     sun:gpu.Sun_Desc,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
     round:u32, // of the frame: Drawn.replaced of what a visual instance replaces in it
@@ -1281,8 +1281,6 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     switch {
     case at==nil && !on:
     case at==nil:
-        // Keep per-frame extra lights after entity lights so indices stay compact.
-        extra_lights_strip(sync,r)
         // Without memory in the renderer or here for the light, a later frame gives it everything again.
         if !gpu.scene_light_update(r,u32(len(sync.light_owners)),desc) {sync.starved=true;return}
         if _,kept:=core.entity_map_put(&sync.lit[kind],e,u32(len(sync.light_owners)));!kept {sync.starved=true;return}
@@ -1290,7 +1288,7 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     case on:
         if !gpu.scene_light_update(r,at^,desc) {sync.starved=true}
     case:
-        extra_lights_strip(sync,r)
+        // The last is the light of an entity: the extra lights come first.
         gpu.scene_light_remove(r,at^)
         last:=pop(&sync.light_owners)
         if place:=at^;int(place)<len(sync.light_owners) {
@@ -1301,30 +1299,47 @@ light_settle :: proc(sync:^Render_Sync,a:^host.Assets,r:^gpu.Renderer,t:Sync_Tab
     }
 }
 
-// Removes trailing per-frame extra lights before adding or removing an entity light.
+// The lights of the frame (Frame_Extras) in the first slots of the renderer,
+// before those of entities, in order: a slot keeps its index while the lights
+// of entities come and go, and one the frame leaves empty is turned off
+// (gpu.scene_light_off), never removed, so a light that comes or ends changes
+// a row of the set, not the set. A frame that gives more than ever before
+// takes another slot, and the light of an entity there moves to the end.
 @(private)
-extra_lights_strip :: proc(sync:^Render_Sync,r:^gpu.Renderer) {
-    for sync.extra_lights>0 {
-        sync.extra_lights-=1
-        gpu.scene_light_remove(r,u32(len(sync.light_owners)+sync.extra_lights))
+extra_lights_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,lights:[]gpu.Light_Desc) {
+    used:=0
+    for desc in lights {
+        if !gpu.light_gives(desc) {continue}
+        if used==sync.extra_lights && !extra_slot_add(sync,r) {break}
+        if !gpu.scene_light_update(r,u32(used),desc) {sync.starved=true;break}
+        used+=1
     }
+    for slot in used..<sync.extra_lights {gpu.scene_light_off(r,u32(slot))}
 }
 
-// Updates per-frame extra lights in place after entity lights, trimming any surplus slots.
+// One more slot for the lights of the frame, after the others: the light of
+// the entity that holds it goes to the end, where scene_light_update adds
+// the slot when no entity does. False without memory.
 @(private)
-extra_lights_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,extra_lights:[]gpu.Light_Desc) {
-    base:=len(sync.light_owners)
-    kept:=0
-    for desc in extra_lights {
-        if !gpu.light_gives(desc) {continue}
-        if !gpu.scene_light_update(r,u32(base+kept),desc) {sync.starved=true;return}
-        kept+=1
+extra_slot_add :: proc(sync:^Render_Sync,r:^gpu.Renderer) -> bool {
+    slot:=sync.extra_lights
+    if slot<len(sync.light_owners) {
+        owner:=sync.light_owners[slot]
+        end:=u32(len(sync.light_owners))
+        if !gpu.scene_light_duplicate(r,u32(slot)) {sync.starved=true;return false}
+        if _,error:=append(&sync.light_owners,owner);error!=nil {
+            gpu.scene_light_remove(r,end)
+            sync.starved=true
+            return false
+        }
+        core.entity_map_get(&sync.lit[owner.kind],owner.entity)^=end
+        sync.light_owners[slot]={}
+    } else if _,error:=append(&sync.light_owners,Light_Owner{});error!=nil {
+        sync.starved=true
+        return false
     }
-    for sync.extra_lights>kept {
-        sync.extra_lights-=1
-        gpu.scene_light_remove(r,u32(base+sync.extra_lights))
-    }
-    sync.extra_lights=kept
+    sync.extra_lights+=1
+    return true
 }
 
 // The lights whose rows, place or visibility changed since the last frame

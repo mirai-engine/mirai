@@ -2371,22 +2371,58 @@ scene_light_update :: proc(r: ^Renderer, index: u32, desc: Light_Desc) -> bool {
 		s.lights[index] = light
 		s.lights_stale ||= light_directed(before) != light_directed(light) || light_reach_class(before) != light_reach_class(light) || light_placed(before) != light_placed(light) || s.light_shadowless[index] != desc.shadowless
 		s.light_shadowless[index] = desc.shadowless
-		if !s.lights_stale {
-			if !light_placed_same(before, light) {occluder_light_moved(s, index)}
-			// Past LIGHT_REFITS_MAX in a frame the whole tree is refit once (scene_lights_settle).
-			s.light_refits += 1
-			if s.light_refits > LIGHT_REFITS_MAX {s.lights_dirty = true} else {
-				if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
-				if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
-					s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges)
-				}
-				if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
-			}
-		}
+		if !light_placed_same(before, light) {occluder_light_moved(s, index)}
+		light_refit(s, index)
 	}
 	scene_changed_near(s, light.position_range.xyz, light.position_range.w)
 	s.lights_changed = true
 	return true
+}
+
+// Turns off the light at index: it keeps its place, its shape and its kind,
+// so its leaf of the tree only refits, and gives no light until
+// scene_light_update gives it some again. For a slot whose light comes and
+// goes (a flash) without changing the set. Nothing for an index past the last
+// or a light already off.
+scene_light_off :: proc(r: ^Renderer, index: u32) {
+	s := &r.scene
+	if int(index) >= len(s.lights) || s.lights[index].color_intensity.w == 0 {return}
+	light := &s.lights[index]
+	scene_changed_near(s, light.position_range.xyz, light.position_range.w)
+	light.color_intensity.w = 0
+	s.lights_changed = true
+	light_refit(s, index)
+}
+
+// Adds a light one past the last that gives what the light at index gives.
+// False for an index past the last or without memory: nothing changes.
+scene_light_duplicate :: proc(r: ^Renderer, index: u32) -> bool {
+	s := &r.scene
+	if int(index) >= len(s.lights) {return false}
+	if !lights_reserve(s, len(s.lights) + 1) {
+		set_error(r, "%d lights: out of memory", len(s.lights) + 1)
+		return false
+	}
+	append(&s.lights, s.lights[index])
+	append(&s.light_shadowless, s.light_shadowless[index])
+	s.lights_stale, s.lights_changed = true, true
+	occluder_light_moved(s, u32(len(s.lights) - 1))
+	return true
+}
+
+// The leaf of the light at index and the groups above it as it is now, while
+// the set holds; past LIGHT_REFITS_MAX in a frame the whole tree is refit
+// once (scene_lights_settle).
+@(private = "file")
+light_refit :: proc(s: ^Scene_State, index: u32) {
+	if s.lights_stale {return}
+	s.light_refits += 1
+	if s.light_refits > LIGHT_REFITS_MAX {s.lights_dirty = true;return}
+	if !s.lights_dirty {range_add(&s.light_ranges, {index, 1})}
+	if leaf := s.light_leaves[index]; leaf != LIGHT_TREE_NONE {
+		s.light_tree_cost += light_tree_refit(s.light_tree[:], s.lights[:], leaf, nil if s.lights_dirty else &s.light_node_ranges)
+	}
+	if len(s.light_ranges) > LIGHT_RANGES_MAX || len(s.light_node_ranges) > LIGHT_RANGES_MAX {s.lights_dirty = true}
 }
 
 // Takes out the light at index: the last takes its place. Nothing for an

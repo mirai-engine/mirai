@@ -15,7 +15,7 @@ particle_effects_keep_their_values_parameters_hidden_fields_and_assets :: proc(t
     info.bursts[1]={time=0.5,count=9,cycles=2,interval=0.1}
     info.velocity={{-1,2,0},{1,3,0}}
     info.size_over_life.values[1]=0.25
-    info.light={color={1,0.5,0.2},intensity=400,range=8,radius=0.1,max_lights=2,shadows=true,indirect=1,scattering=0.5}
+    info.light={color={1,0.5,0.2},intensity=400,range=8,radius=0.1,offset={0,0.3,0},shadows=true,indirect=1,scattering=0.5}
     base.text_set(info.program[:],"Swirl")
     hidden:[2]Particle_Field
     base.text_set(hidden[0].name[:],"noise")
@@ -154,8 +154,8 @@ particle_values_are_named_by_their_paths :: proc(t:^testing.T) {
     testing.expect(t,has_light_intensity && light_intensity.top=="light" && light_intensity.kind==.Float && light_intensity.offset==offset_of(Particle_Info,light)+offset_of(Particle_Light,intensity))
     light_color,has_light_color:=particle_value_at("light.color")
     testing.expect(t,has_light_color && light_color.size==12 && light_color.top=="light")
-    light_max,has_light_max:=particle_value_at("light.max_lights")
-    testing.expect(t,has_light_max && light_max.kind==.Integer && light_max.size==2)
+    light_offset,has_light_offset:=particle_value_at("light.offset")
+    testing.expect(t,has_light_offset && light_offset.kind==.Float && light_offset.size==12 && light_offset.offset==offset_of(Particle_Info,light)+offset_of(Particle_Light,offset))
     light_shadows,has_light_shadows:=particle_value_at("light.shadows")
     testing.expect(t,has_light_shadows && light_shadows.kind==.Bool && light_shadows.size==1)
     _,missing:=found("colors")

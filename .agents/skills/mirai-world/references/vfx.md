@@ -83,21 +83,26 @@ core.push(&births.queue, core.Birth{
 ## Particle lights
 
 `Particle_Info.light` (`effect.Particle_Light`: `color`, `intensity`, `range`, `radius`,
-`max_lights`, `shadows`, `indirect`, `scattering`) lets a `.particle` effect emit dynamic CPU
-local lights without GPU readback or single-writer conflicts:
+`offset`, `shadows`, `indirect`, `scattering`) gives a layer one point light at the entity of its
+emitter (`offset` in its axes), never per particle:
 
-- **Zero cost when off**: `intensity <= 0` or `range <= 0` sets `Emission.has_light = false`;
-  when `Particle_Clocks.lit_count == 0`, `particles_lights` (`render`, before `render_sync`)
-  returns immediately.
-- **Direct per-frame submission**: up to `EMITTER_LIGHTS_MAX` (4) concurrent lights per emitter and
-  `min(Particle_Settings.max_lights, PARTICLE_LIGHTS_MAX)` (32) per world, ranked deterministically
-  by distance to `scene.Simulation_Sources`, then intensity, then entity, submitted into
-  `host.Frame_Extras` via `erender.light_add` with zero entities, zero component writes and zero
-  allocations.
-- **Driven by life and state**: sample ages come from `Emitter_Clock.births`; `color_over_life`
-  modulates color and intensity (falling back to the midpoint of `colors` when `light.color` is
-  zero), `size_over_life` scales `range`, and hidden, culled, done, or destroyed emitters simply
-  stop submitting lights on the next frame.
+- **Resolved with the clock**: `emission_of` copies the light, its tint (`light.color`, or the
+  midpoint of `colors`) and the `color_over_life` curve into `Emission.light`. The tick lists
+  the emitters with a lit layer in `Particle_Clocks.lit`;
+  `particles_lights` (`render`, before `render_sync`) visits only those and asks `is_hidden` only
+  of one whose layer gives a light now.
+- **Envelope**: at the mean age of the particles alive (`Emitter_Clock.births`, or the last birth
+  of a program that starts them on the GPU or of a channel the emitter listens to)
+  `color_over_life` scales intensity (alpha) and tints the color; no live particles, no light.
+  `range` stays, so the slot keeps its reach class and the light tree only refits. It does not
+  follow where particles fly: the light stays at the emitter.
+- **Budget**: `min(Particle_Settings.max_lights, PARTICLE_LIGHTS_MAX)` (32) per world, nearest a
+  `scene.Simulation_Sources` first; the dropped ones are reported (`vfx.lights_over`, and
+  `vfx.light_dropped` when the frame's `host.FRAME_LIGHT_CAPACITY` is full).
+- **Renderer slots**: the lights go to `host.Frame_Extras` (`erender.light_add`), which the
+  renderer keeps in fixed slots that turn off instead of going
+  ([extra lights](../../mirai-rendering/references/lights.md#local-lights)), so a flash that ends
+  rebuilds no light tree.
 
 ## Animation spans
 

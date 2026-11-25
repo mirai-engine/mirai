@@ -81,9 +81,11 @@ void main(uint index : SV_GroupIndex) {
 // What a light could give the cell whose lowest corner is low: its power by
 // the window of its range at the nearest point of the grown cell, over the
 // square of the distance to its center; none when no point of the grown cell
-// is in its range, in the cone of a spot or on the side a rectangle lights.
+// is in its range, in the cone of a spot or on the side a rectangle lights,
+// or for a light turned off (scene_light_off).
 float light_grid_weight(Light l, float3 low, out bool edged) {
     edged = false;
+    if (!(l.color_intensity.w > 0.0)) return 0.0;
     float3 center = l.position_range.xyz;
     float range = l.position_range.w;
     float grown = params.grow != 0u ? 0.5 * params.cell : 0.0;

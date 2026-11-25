@@ -1962,6 +1962,7 @@ update_stats :: proc(r: ^Renderer) {
 	s.textures_reduced = u32(r.textures.reduced + r.textures.residency.reduced)
 	s.textures_pending = u32(r.textures.residency.pending)
 	s.lights = u32(len(r.scene.lights))
+	s.light_sets = r.scene.light_revision
 	pages_stats(r, s)
 	geometry := geometry_refused_problem(r, r.problem_buffer[:])
 	s.problem = geometry

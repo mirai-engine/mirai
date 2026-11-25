@@ -29,6 +29,12 @@
 - **CPU-known, stateless:** No light reservoirs or history — changes apply immediately. Lights
   are strictly scene-owned on CPU (never GPU-written or per-particle) so trees, grids, and
   shadow caches persist while lights stay still.
+- **Lights of the frame (`Frame_Extras.lights`, `light_add`):** Take the first slots of the
+  renderer, before entity lights (`extra_lights_settle`), up to the most a frame gave; entity
+  lights that come or go never move them. A slot the frame leaves empty is turned off
+  (`scene_light_off`: power 0, place and kind kept), so a flash that ends refits one leaf and
+  changes no set; a slot reused by a light of another kind or reach class rebuilds the tree.
+  Shadow maps and the light grid skip lights that are off.
 
 ```odin
 // Game components (engine/render) and low-level Light_Desc:
