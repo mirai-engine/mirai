@@ -11,16 +11,16 @@ srgb_to_linear :: proc{srgb_to_linear_scalar,srgb_to_linear_rgb,srgb_to_linear_r
 linear_to_srgb :: proc{linear_to_srgb_scalar,linear_to_srgb_rgb,linear_to_srgb_rgba}
 
 srgb_to_linear_scalar :: proc "contextless" (value:f32) -> f32 {
-    return math.pow((value+0.055)/1.055,2.4) if value>0.04045 else value/12.92
+    return pow_det((value+0.055)/1.055,2.4) if value>0.04045 else value/12.92
 }
 linear_to_srgb_scalar :: proc "contextless" (value:f32) -> f32 {
-    return 1.055*math.pow(value,1.0/2.4)-0.055 if value>0.0031308 else 12.92*value
+    return 1.055*pow_det(value,1.0/2.4)-0.055 if value>0.0031308 else 12.92*value
 }
-srgb_to_linear_rgb :: linalg.vector3_srgb_to_linear_f32
-linear_to_srgb_rgb :: linalg.vector3_linear_to_srgb_f32
+srgb_to_linear_rgb :: proc "contextless" (c:Vec3) -> Vec3 {return {srgb_to_linear_scalar(c.x),srgb_to_linear_scalar(c.y),srgb_to_linear_scalar(c.z)}}
+linear_to_srgb_rgb :: proc "contextless" (c:Vec3) -> Vec3 {return {linear_to_srgb_scalar(c.x),linear_to_srgb_scalar(c.y),linear_to_srgb_scalar(c.z)}}
 // Alpha is not encoded: it stays as it is.
-srgb_to_linear_rgba :: linalg.vector4_srgb_to_linear_f32
-linear_to_srgb_rgba :: linalg.vector4_linear_to_srgb_f32
+srgb_to_linear_rgba :: proc "contextless" (c:Vec4) -> Vec4 {return {srgb_to_linear_scalar(c.x),srgb_to_linear_scalar(c.y),srgb_to_linear_scalar(c.z),c.w}}
+linear_to_srgb_rgba :: proc "contextless" (c:Vec4) -> Vec4 {return {linear_to_srgb_scalar(c.x),linear_to_srgb_scalar(c.y),linear_to_srgb_scalar(c.z),c.w}}
 
 // Hue, saturation and value, each from 0 to 1; the hue is a fraction of a turn.
 hsv_to_rgb :: proc "contextless" (hsv:Vec3) -> Vec3 {

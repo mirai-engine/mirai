@@ -57,7 +57,7 @@ Morph_Cluster_Delta :: struct {
 // The step of the positions of deltas whose largest component is largest.
 morph_step :: proc "contextless" (largest:f32) -> f32 {
     need:=max(f64(largest)/MORPH_POSITION_LIMIT,1e-12)
-    return f32(math.pow(2,math.ceil(math.log2(need))))
+    return f32(math.ldexp(f64(1),int(math.ceil(math.log2(need)))))
 }
 
 // A finite delta on the step of its mesh: each component the nearest step,

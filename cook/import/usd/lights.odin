@@ -60,7 +60,7 @@ usd_light :: proc(r:^importer.Reader,prim:Usd_Prim) -> (light:importer.Imported_
         kelvin:=light_number(r,prim,"colorTemperature",6500) or_return
         color*=mm.blackbody_linear(f32(kelvin))
     }
-    luminance:=intensity*math.pow(2,exposure)
+    luminance:=intensity*mm.pow_det_f64(2,exposure)
     normalize:=light_flag(prim,"normalize")
     // The scale of the prim in the world: normalize divides by the area it gives the light.
     scale:[3]f64
@@ -106,7 +106,7 @@ usd_light :: proc(r:^importer.Reader,prim:Usd_Prim) -> (light:importer.Imported_
         angle:=light_length(r,prim,"angle",0.53) or_return
         // The projected solid angle of the disc of the sky the light is.
         half:=clamp(math.to_radians(angle)/2,0,math.PI)
-        sine:=math.sin(half)
+        sine:=mm.sin_det_f64(half)
         disc:=1.0
         if half>0 && half<=math.PI/2 {disc=math.PI*sine*sine} else if half>math.PI/2 {disc=math.PI*(2-sine*sine)}
         light.kind=.Directional

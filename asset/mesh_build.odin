@@ -304,7 +304,7 @@ island_grown :: proc "contextless" (island:Vertex_Island,position:[3]f32) -> [3]
 @(private="file")
 grid_step :: proc "contextless" (extent:f64,reach:f32) -> f32 {
     need:=max(extent/f64(CLUSTER_GRID-2),f64(reach)/f64(1<<30),1e-12)
-    return f32(math.pow(2,math.ceil(math.log2(need))))
+    return f32(math.ldexp(f64(1),int(math.ceil(math.log2(need)))))
 }
 
 // The step of the grid nearest value, short of those past the largest f32.

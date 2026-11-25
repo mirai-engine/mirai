@@ -26,7 +26,7 @@ hand_grip :: proc(points:[]mm.Vec3,allocator:=context.temp_allocator) -> (grip:m
     for p in points {spread+=linalg.outer_product(p-center,p-center)}
     // The length of the hand is the main axis of its spread, away from the wrist.
     along:=linalg.normalize0(mm.Vec3{1,.7,.4})
-    for _ in 0..<128 {along=linalg.normalize0(spread*along)}
+    for _ in 0..<128 {along=linalg.normalize0(mm.mat3_mul_vec_det(spread,along))}
     if along=={} {return}
     if linalg.dot(along,center)<0 {along=-along}
     hi:=-f32(math.F32_MAX)
@@ -48,7 +48,9 @@ hand_grip :: proc(points:[]mm.Vec3,allocator:=context.temp_allocator) -> (grip:m
     thinnest:=f32(math.F32_MAX)
     for step in 0..<180 {
         angle:=f32(step)*math.PI/180
-        direction:=first*math.cos(angle)+second*math.sin(angle)
+        // The sine and cosine of the engine, the same bits on every platform: a grip is versioned.
+        sine,cosine:=mm.sincos_det(angle)
+        direction:=first*cosine+second*sine
         clear(&values)
         for p in points {if in_palm(linalg.dot(p-center,along),wrist,length) {append(&values,linalg.dot(p-center,direction))}}
         if len(values)<GRIP_MIN_POINTS {return}

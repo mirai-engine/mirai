@@ -99,8 +99,9 @@ usd_collider :: proc(r:^importer.Reader,prim:Usd_Prim,row,mesh:int) -> bool {
         points:=make([dynamic][3]f32,context.temp_allocator)
         for k in 0..<ROUND_SEGMENTS {
             angle:=f32(k)*2*math.PI/ROUND_SEGMENTS
-            append(&points,[3]f32{radius*math.cos(angle),-height*0.5,radius*math.sin(angle)})
-            if prim.type_name=="Cylinder" {append(&points,[3]f32{radius*math.cos(angle),height*0.5,radius*math.sin(angle)})}
+            sine,cosine:=mm.sincos_det(angle)
+            append(&points,[3]f32{radius*cosine,-height*0.5,radius*sine})
+            if prim.type_name=="Cylinder" {append(&points,[3]f32{radius*cosine,height*0.5,radius*sine})}
         }
         if prim.type_name=="Cone" {append(&points,[3]f32{0,height*0.5,0})}
         made.shape,made.points,made.rotation=.Points,points[:],axis_turn(prim)
