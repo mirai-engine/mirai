@@ -150,26 +150,62 @@ goal requires visual or gameplay judgment; it works over MCP or `mirai rpc`.
 
 ### 5. Remote Windows sessions (`eco`)
 
-`eco` on Windows requires Git Bash, so remote recipes are POSIX shell like local ones. Never wrap
-a command in PowerShell or `cmd.exe`: their quoting and encoding mangle arguments.
+The Windows PC takes GPU captures, timings and Vulkan runs by default when it is reachable. `eco`
+there runs Git Bash only, so recipes are POSIX shell like local ones; never PowerShell or
+`cmd.exe` scripts, whose quoting and encoding mangle arguments. In Git Bash a Windows switch takes
+a doubled slash (`cmd //c`), and POSIX paths in arguments convert
+([paths](../mirai-projects/references/projects.md#paths-in-git-bash)).
 
 ```bash
-# 1. One program: eco starts it directly, no shell in between
-eco run -- C:/src/mirai/bin/mirai.exe build engine
-# 2. Several commands: one Git Bash script; arguments after the script are $1, $2...
-eco run --sh -- 'cd C:/src/mirai && git pull --ff-only && bin/mirai.exe build tools'
-job=$(eco start --sh -- 'cd C:/src/mirai && bin/mirai.exe build editor')  # long: detached job
-eco attach "$job"
-# 3. RPC/MCP: start a session there (it outlives the command and prints {"port": N, ...}),
-#    forward a free local port to N and call through it with the local mirai
-eco run --sh -- 'cd C:/src/mirai && bin/mirai.exe session start --copy demo'
-eco forward 127.0.0.1:17940 127.0.0.1:N &
-mirai rpc --port 17940 engine.diagnostics '{}' --select problems
-mirai mcp --port 17940
+# Client environment; ECO_HOME (~/.eco) keeps the PC's key for ECO_ADDR since pairing
+export ECO_ADDR=192.168.1.40:8443 ECO_KEY=$HOME/.eco/client.key ECO_SOCKET=$HOME/.eco/run/pc.sock
+# One program, no shell; several commands, one script whose arguments are $1, $2...
+eco run -- git --version
+eco run --sh --timeout-ms 600000 -- 'cd /c/Users/tzbk/CODIGOS/mirai && git status --short'
+# Long work: a detached job that survives a dropped connection; every agent's jobs are listed
+job=$(eco start --sh -- 'cd /c/Users/tzbk/CODIGOS/mirai/.worktrees/agents && ./mirai test render')
+eco jobs
+eco attach "$job"   # again with the stdout and stderr byte offsets to resume
+# Files: the remote path is relative to the server root, C:/Users/tzbk/Documents, the only
+# folder put and get reach: write there what comes back (capture --out /c/Users/tzbk/Documents/x)
+eco put bin/fix.bundle fix.bundle    # lands in C:/Users/tzbk/Documents/fix.bundle
+eco get captures/view.png bin/view.png
 ```
 
-A forward keeps the editor's loopback-only API on loopback at both ends; the local port must not be
-one that a local editor uses. `--project` names a local project, so remote calls take `--port`.
+- **Socket.** One `ECO_SOCKET` per server and key, shared by every agent; the daemon starts on
+  demand and exits after two minutes idle. A path under the scratchpad is too long for a socket.
+  Leftover `~/.eco/run/*.sock.lock` files are harmless: the lock is an `flock` released when that
+  daemon exits, so "client unavailable" is a live daemon, never a stale file, and no agent needs
+  a socket of its own for that.
+- **A branch on the PC.** Agents share one standing worktree with a warm dev build,
+  `C:/Users/tzbk/CODIGOS/mirai/.worktrees/agents` (made once with `mirai worktree new agents`):
+  bundle the commits the PC lacks, put the bundle, check out its commit there and build
+  incrementally, never a new worktree and a cold build per agent. One agent holds it at a time:
+  the coordinator assigns it, and `eco jobs` shows whether another agent's job runs there. Its
+  GPU work queues with every worktree of that checkout in the
+  [GPU turns](../mirai-projects/references/build.md#turns-between-processes).
+
+```bash
+git bundle create bin/fix.bundle HEAD ^origin/main && eco put bin/fix.bundle fix.bundle
+eco run --sh --timeout-ms 900000 -- 'cd /c/Users/tzbk/CODIGOS/mirai/.worktrees/agents &&
+  git fetch -q origin && git fetch -q /c/Users/tzbk/Documents/fix.bundle HEAD &&
+  git checkout -q --detach FETCH_HEAD && ./mirai build editor demo'
+```
+
+- **Editor API.** Start a session there (it outlives the command and prints `{"port": N, ...}`),
+  forward a free local port to `N` and call through it with the local `mirai`; `--project` names
+  a local project, so remote calls take `--port`. The forward keeps the loopback-only API on
+  loopback at both ends; the local port must not be one a local editor uses.
+
+```bash
+eco run --sh -- 'cd /c/Users/tzbk/CODIGOS/mirai/.worktrees/agents && ./mirai session start demo'
+eco forward 127.0.0.1:17940 127.0.0.1:N &
+mirai rpc --port 17940 engine.diagnostics '{}' --select problems
+```
+
+- A native crash shows as exit 127; the real code comes from
+  `cmd //v:on //c "PROGRAM & echo !errorlevel!"`. End the session with `mirai session stop` there
+  and a job only with `eco kill` of its own id.
 
 ## Workflow
 

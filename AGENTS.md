@@ -115,9 +115,9 @@ Full table and session flow:
 - Against an editor: `mirai session start`, `mirai rpc` / `mirai capture`, `mirai session stop`.
   Never hand-launch `mirai-editor`, write HTTP clients, or wrap `rpc` in `json.load`/`sleep` scripts
   (use `--select` and `--wait-until`).
-- Remote Windows host: one program with `eco run -- PROGRAM`, several commands as one Git Bash
-  script with `eco run --sh`, never PowerShell; the editor API through `eco forward`
-  ([recipe](.agents/skills/mirai-agent-api/SKILL.md#5-remote-windows-sessions-eco)).
+- Remote Windows PC: Git Bash only, never PowerShell, by the
+  [eco recipe](.agents/skills/mirai-agent-api/SKILL.md#5-remote-windows-sessions-eco) (environment,
+  jobs, files, the standing worktree, the editor API); briefs link it instead of repeating it.
 - Search with Grep or `rg pattern <dir>` (never `grep -r` from root; always pass a folder to `rg`,
   and close `$(...)` lists with `/dev/null` or `xargs -r rg`).
 
