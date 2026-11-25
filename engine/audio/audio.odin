@@ -1404,31 +1404,33 @@ One_Shot_Outcome :: enum u8 {
     Played,
     Culled_Distance, // placed beyond where every listener hears it
     Rejected_Mixer,  // the mixer started no voice of it, or has not its bus
-    Missing_Asset,   // its path is not of the assets, or it does not load as a sound
-    Deduped,         // a tick that ran again asked for what that tick played already
+    Missing_Asset,   // it does not load as a sound
 }
 
-// A sound a request asked for: what tells it apart from another and what became of it.
+// A sound a fixed tick of the game asked for: what tells it apart from another
+// and what became of it.
 Sound_Played :: struct {
     tick:u64,
-    sound:base.Asset_Id, // zero for a path the assets do not have
+    sound:base.Asset_Id,
     by:core.Entity,
     at:[3]f32,
     placed:bool,
-    keyed:bool,      // a fixed tick of the game asked for it: a tick that runs again finds it
     outcome:One_Shot_Outcome,
     distance:f32,    // m from a placed one to the nearest listener; 0 when not placed
 }
 
-// The sounds the requests of a world asked for lately, newest last, over a
-// ring: what a tool reads of the one-shot sounds of a game, and what keeps a
-// tick that runs again (a rollback corrects it) from playing one of them
-// twice, while it plays what only the corrected tick asks. One per world,
-// never copied with it, so a rollback does not take it back.
+// The sounds the fixed ticks of a world asked for lately, newest last, over a
+// ring: what keeps a tick that runs again (a rollback corrects it) from
+// playing one of them twice, while it plays what only the corrected tick
+// asks, and what a tool reads of the one-shot sounds of a game. It holds only
+// what such a tick can find: not what a frame or the editor asks, nor the
+// asks of a tick that runs again that were found. One per world, never copied
+// with it, so a rollback does not take it back.
 @(storage,host,by_world)
 Sounds_Played :: struct {
     keys:[SOUNDS_PLAYED_CAPACITY]Sound_Played,
     count:u64,
+    deduped:u64, // asks of a tick that ran again that found what it played
 }
 
 // The sounds kept, oldest first: at most SOUNDS_PLAYED_CAPACITY, in two runs of the ring.
@@ -1442,7 +1444,7 @@ sounds_played :: proc "contextless" (played:^Sounds_Played) -> (older,newer:[]So
 @(private)
 played_found :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) -> bool {
     for k in played.keys[:min(played.count,SOUNDS_PLAYED_CAPACITY)] {
-        if !k.keyed || k.tick!=key.tick || k.sound!=key.sound || k.by!=key.by || k.placed!=key.placed {continue}
+        if k.tick!=key.tick || k.sound!=key.sound || k.by!=key.by || k.placed!=key.placed {continue}
         if key.by!=core.NONE || linalg.length2(k.at-key.at)<=SOUND_SAME_DISTANCE*SOUND_SAME_DISTANCE {return true}
     }
     return false
@@ -1450,13 +1452,12 @@ played_found :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) -> b
 
 @(private)
 played_add :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) {
-    if played==nil {return}
     played.keys[played.count%SOUNDS_PLAYED_CAPACITY]=key
     played.count+=1
 }
 
 // Starts what was asked since the last time, once, and keeps what became of
-// each in Sounds_Played. A fixed tick plays a sound of an entity
+// what a fixed tick asked in Sounds_Played. A fixed tick plays a sound of an entity
 // (Sound_Request.by), or of none near a place, once: a tick that runs again
 // (time.resimulating) asks again what it asked the first time, which is not
 // played twice, and what only the corrected tick asks (the server says a shot
@@ -1485,20 +1486,16 @@ audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,frame:core.Frame_Ti
             path:=base.text_get(r.path[:])
             if source.sound,_=host.assets_id(app.assets,path);source.sound=={} {
                 core.report(problems,core.NONE,"audio.sound","audio.play plays nothing: \"%s\" is not a path of the assets; give it the path of a .sound or a .sound_set under the assets folder, shorter than SOUND_PATH_CAPACITY",path)
-                key.outcome=.Missing_Asset
-                played_add(played,key)
                 continue
             }
             key.sound=source.sound
         }
-        key.keyed=keyed
         if keyed && played_found(played,key) {
-            key.outcome=.Deduped
-            played_add(played,key)
+            played.deduped+=1
             continue
         }
         key.outcome=request_play(app,source,r,listeners,problems)
-        played_add(played,key)
+        if keyed {played_add(played,key)}
     }
 }
 

@@ -311,9 +311,10 @@ Play and Simulate run in-process on world copies
   editor mixer), `play.scenario.run` ([scenarios](../../../../docs/game/testing/scenario.md)).
 - `play.audio`: per voice `state` (`Playing`, `Virtual_Budget`, `Virtual_Silent`, `Fading`,
   `Unloaded`), `effective_gain` (the gain voices are ranked by), `distance`, `transmission`;
-  `listeners` (at most 4); `one_shots`, the newest of the `audio.play` ring (`Sounds_Played`, a
-  host storage no world copy holds) with `outcome` (`Played`, `Culled_Distance`,
-  `Rejected_Mixer`, `Missing_Asset`, `Deduped` by a rollback tick).
+  `listeners` (at most 4); `one_shots`, the newest of the `audio.play` ring of fixed ticks
+  (`Sounds_Played`, a host storage no world copy holds) with `outcome` (`Played`,
+  `Culled_Distance`, `Rejected_Mixer`, `Missing_Asset`); `deduped`, asks of a rollback tick that
+  found what it played.
 - `play.audit` flags `ui.node_collapsed`: a shown content node (text with text, image, button,
   field...) laid out with no width or height; containers, spacers and prompts are exempt.
 - `multiplayer` plugin: `play.join` (outside turns) and `play.network.status`, also inside a

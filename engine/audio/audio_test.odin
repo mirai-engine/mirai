@@ -300,23 +300,29 @@ a_rollback_plays_each_sound_of_a_tick_once_and_what_only_the_correction_asks :: 
     m:=f.app.mixer
     E,OTHER:=core.entity_make(5,1),core.entity_make(6,1)
     Ask :: struct {sound:base.Asset_Id,by:core.Entity,at:Maybe([3]f32)}
-    Step :: struct {tick:u64,again:bool,editor:bool,asks:[]Ask,played:u64,what:string}
+    // noise: requests of no key the editor loop asks first, which a tick that runs again does not look for.
+    Step :: struct {tick:u64,again:bool,editor:bool,asks:[]Ask,played:u64,what:string,noise:int}
     steps:=[]Step{
-        {10,false,false,{{HUM,E,nil}},1,"the first time plays"},
-        {11,false,false,{},1,"the next tick asks nothing"},
-        {10,true,false,{{HUM,E,nil}},1,"the same sound of the same entity in the tick again does not play again"},
-        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"what only the correction asks plays"},
-        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"and does not play again in a second rollback"},
-        {10,true,false,{{HUM,OTHER,nil}},3,"the same sound of another entity plays"},
-        {12,false,false,{{HUM,core.NONE,[3]f32{0,0,0}},{HUM,core.NONE,[3]f32{0.5,0,0}},{HUM,core.NONE,[3]f32{5,0,0}}},5,"of none, one near a place"},
-        {12,true,false,{{HUM,core.NONE,[3]f32{0.2,0,0}},{HUM,core.NONE,nil}},6,"near where it played is that one; not placed is another"},
-        {3,false,false,{{HUM,E,nil}},7,"the clock went back"},
-        {3,false,true,{{HUM,E,nil},{HUM,E,nil}},9,"the editor loop plays each"},
+        {10,false,false,{{HUM,E,nil}},1,"the first time plays",0},
+        {11,false,false,{},1,"the next tick asks nothing",0},
+        {10,true,false,{{HUM,E,nil}},1,"the same sound of the same entity in the tick again does not play again",0},
+        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"what only the correction asks plays",0},
+        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"and does not play again in a second rollback",0},
+        {10,true,false,{{HUM,OTHER,nil}},3,"the same sound of another entity plays",0},
+        {10,true,false,{{HUM,E,nil}},3,"what a tick played is found past many requests of no key",SOUNDS_PLAYED_CAPACITY},
+        {12,false,false,{{HUM,core.NONE,[3]f32{0,0,0}},{HUM,core.NONE,[3]f32{0.5,0,0}},{HUM,core.NONE,[3]f32{5,0,0}}},5,"of none, one near a place",0},
+        {12,true,false,{{HUM,core.NONE,[3]f32{0.2,0,0}},{HUM,core.NONE,nil}},6,"near where it played is that one; not placed is another",0},
+        {3,false,false,{{HUM,E,nil}},7,"the clock went back",0},
+        {3,false,true,{{HUM,E,nil},{HUM,E,nil}},9,"the editor loop plays each",0},
     }
     played:Sounds_Played
     sounds:Sound_Requests
     defer core.value_free(&sounds,type_info_of(Sound_Requests))
     for step in steps {
+        for left:=step.noise;left>0;left-=SOUND_REQUESTS/2 {
+            for _ in 0..<min(left,SOUND_REQUESTS/2) {play(&sounds,"missing.sound")}
+            audio_requests(&sounds,core.Time{tick=step.tick},core.Frame_Time{phase=.Fixed},&played,nil,&f.app,nil)
+        }
         for ask in step.asks {play(&sounds,ask.sound,at=ask.at,by=ask.by)}
         time:=core.Time{tick=step.tick,dt=1.0/60,playing=!step.editor,resimulating=step.again}
         audio_requests(&sounds,time,core.Frame_Time{phase=.Fixed},&played,nil,&f.app,nil)
@@ -368,10 +374,11 @@ a_cue_plays_its_sound_once_per_entity_and_tick_through_a_rollback :: proc(t:^tes
     }
 }
 
-// Each request keeps what became of it, newest last, by the id of its sound:
-// played, beyond every listener, refused by the mixer, of a sound the assets
-// lack, or asked again by a tick that runs again. Placed ones keep how far the
-// nearest listener was.
+// Each request of a fixed tick keeps what became of it, newest last, by the
+// id of its sound: played, beyond every listener, refused by the mixer or of a
+// sound that does not load; one asked again by a tick that runs again is
+// counted. Placed ones keep how far the nearest listener was. A path the
+// assets lack and what the editor loop asks keep nothing.
 @(test)
 each_sound_request_keeps_what_became_of_it :: proc(t:^testing.T) {
     f:Fixture
@@ -395,18 +402,16 @@ each_sound_request_keeps_what_became_of_it :: proc(t:^testing.T) {
     audio_requests(&sounds,core.Time{tick=10,dt=1.0/60,playing=true,resimulating=true},fixed,&played,&listeners,&f.app,nil)
     play(&sounds,"hum.sound")
     audio_requests(&sounds,core.Time{tick=10},{},&played,&listeners,&f.app,nil)
-    Want :: struct {sound:base.Asset_Id,outcome:One_Shot_Outcome,keyed:bool,distance:f32}
-    wants:=[]Want{
-        {HUM,.Played,true,0},{HUM,.Culled_Distance,true,1000},{HUM,.Rejected_Mixer,true,0},
-        {{},.Missing_Asset,false,0},{{9,9},.Missing_Asset,true,1},{HUM,.Deduped,true,0},{HUM,.Played,false,0},
-    }
+    Want :: struct {sound:base.Asset_Id,outcome:One_Shot_Outcome,distance:f32}
+    wants:=[]Want{{HUM,.Played,0},{HUM,.Culled_Distance,1000},{HUM,.Rejected_Mixer,0},{{9,9},.Missing_Asset,1}}
     older,newer:=sounds_played(&played)
     testing.expect_value(t,len(older),0)
     if !testing.expect_value(t,len(newer),len(wants)) {return}
     for want,i in wants {
         got:=newer[i]
-        testing.expectf(t,got.tick==10 && got.sound==want.sound && got.outcome==want.outcome && got.keyed==want.keyed && abs(got.distance-want.distance)<1e-3,"%d: %v, wants %v",i,got,want)
+        testing.expectf(t,got.tick==10 && got.sound==want.sound && got.outcome==want.outcome && abs(got.distance-want.distance)<1e-3,"%d: %v, wants %v",i,got,want)
     }
+    testing.expect_value(t,played.deduped,u64(1))
     testing.expect(t,newer[0].by==E && newer[1].placed && newer[1].at=={0,0,1003})
     // Past the capacity, the ring keeps the newest, oldest first.
     for _ in 0..<SOUNDS_PLAYED_CAPACITY {played_add(&played,{tick=11})}
@@ -461,8 +466,7 @@ the_sounds_played_stay_out_of_the_copies_of_the_world :: proc(t:^testing.T) {
     play(&world.sounds,HUM,by=E)
     audio_requests(&world.sounds,core.Time{tick=4,playing=true,resimulating=true},fixed,played,nil,app,nil)
     testing.expect_value(t,mixer.mixer_stats(app.mixer).voices_played,voices)
-    _,kept:=sounds_played(played)
-    testing.expect(t,len(kept)==2 && kept[1].outcome==.Deduped)
+    testing.expect(t,played.count==1 && played.deduped==1)
 }
 
 @(test_world,host="Played_Shared") @(private) Played_World :: struct {using world:Test_World,sounds:Sound_Requests,id:core.World_Id}

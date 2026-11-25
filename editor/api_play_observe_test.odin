@@ -293,10 +293,10 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
     core.entity_map_put(&voices.entries,far,eaudio.Voice_Entry{kind={sound={1,3},bus=eaudio.Audio_Bus(6),spatial=true},sound={volume=1,pitch=1},position={1,2,3},transmission={1,0.5,0.25}})
     voices.stats={started=3,ended=1}
     played:eaudio.Sounds_Played
-    for outcome,i in ([3]eaudio.One_Shot_Outcome{.Played,.Culled_Distance,.Deduped}) {
+    for outcome,i in ([3]eaudio.One_Shot_Outcome{.Played,.Culled_Distance,.Rejected_Mixer}) {
         played.keys[i]={tick=u64(10+i),sound={1,2},by=near,at={0,0,f32(i)},placed=i==1,outcome=outcome,distance=40}
     }
-    played.count=3
+    played.count,played.deduped=3,2
     names:=[?]core.Name_Info{{type=eaudio.Audio_Bus,name="Music",value=1}}
     info:=core.World_Info{names=names[:]}
     s:=Session{app=&host.App{},info=&info}
@@ -330,10 +330,11 @@ play_audio_lists_the_voices_of_the_game_with_what_they_were_given :: proc(t:^tes
         testing.expect_value(t,culled["outcome"].(json.String) or_else "","Culled_Distance")
         testing.expect_value(t,culled["distance"].(json.Float) or_else 0,40)
         testing.expect_value(t,culled["entity"].(json.String) or_else "",api_handle_text(near))
-        deduped,_:=one_shots[1].(json.Object)
-        _,has_distance:=deduped["distance"]
-        testing.expect(t,(deduped["outcome"].(json.String) or_else "")=="Deduped" && !has_distance)
+        rejected,_:=one_shots[1].(json.Object)
+        _,has_distance:=rejected["distance"]
+        testing.expect(t,(rejected["outcome"].(json.String) or_else "")=="Rejected_Mixer" && !has_distance)
     }
+    testing.expect_value(t,result["deduped"].(json.Float) or_else 0,2)
     _,has_mixer:=result["mixer"]
     testing.expect(t,!has_mixer)
     testing.expect(t,strings.contains(text,`"stats":{"started":3,"ended":1}`))
