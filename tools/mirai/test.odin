@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:odin/ast"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
@@ -11,7 +12,7 @@ import "mirai:cook/build"
 import "mirai:cook/workspace"
 import "mirai:project"
 
-TEST_USAGE :: "test <package> [test|file.odin...] [<package>...] [--no-gpu] [--failed] [--quiet] [--timeout S] [--release] [-flag...]"
+TEST_USAGE :: "test <package> [test|file.odin...] [<package>...] [--no-gpu] [--failed] [--quiet] [--strict] [--timeout S] [--release] [-flag...]"
 TEST_LIST_USAGE :: "test <package> [file.odin...] --list [--no-gpu]"
 
 // A package of a call to mirai test and what is asked of it: tests by their
@@ -41,11 +42,12 @@ Test_Times :: struct {build,turn,run:time.Duration,built,current:int}
 // them, or files of it whose tests are asked; --no-gpu leaves out the tests of
 // the files that reach the device of the GPU tests; --release and the flags
 // are for all of them. The collections plugins and project a package of the
-// engine reaches are passed unless a flag already names them.
+// engine reaches are passed unless a flag already names them. A package whose
+// only failures KNOWN_FAILURES lists passes, unless --strict.
 cmd_test :: proc(root:string,args:[]string) -> int {
     packages:=make([dynamic]Test_Package)
     flags:=make([dynamic]string)
-    release,list,failed_only,quiet,no_gpu:=false,false,false,false,false
+    release,list,failed_only,quiet,no_gpu,strict:=false,false,false,false,false,false
     timeout:=build.TEST_TIMEOUT
     timeout_given:=false
     for i:=0;i<len(args);i+=1 {
@@ -56,6 +58,7 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         case arg=="--failed": failed_only=true
         case arg=="--quiet":  quiet=true
         case arg=="--no-gpu": no_gpu=true
+        case arg=="--strict": strict=true
         case arg=="--timeout":
             seconds,parsed:=strconv.parse_f64(i+1<len(args)?args[i+1]:"")
             if !parsed || !(seconds>=0) {
@@ -129,6 +132,8 @@ cmd_test :: proc(root:string,args:[]string) -> int {
     times.build+=time.tick_since(prepared)
     layers_isolate(root)
     failed:=make([dynamic]string)
+    listed_data,_:=os.read_entire_file(join(root,KNOWN_FAILURES),context.temp_allocator)
+    tolerated:=0
     for &p,i in packages {
         if p.nothing {continue}
         if len(packages)>1 {fmt.printfln("== %s",p.path)}
@@ -164,16 +169,68 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         // A run that ended badly without naming a failed test leaves the list of before.
         if ok || len(names)>0 {test_failed_save(test_executable(root,p),p.names[:],names)}
         if len(names)>0 {fmt.eprintfln("mirai test: to run only the ones that failed: mirai test %s --failed",p.path)}
+        if !ok && len(names)>0 && test_failures_listed(root,p,string(listed_data),names,strict) {
+            tolerated+=1
+            continue
+        }
         if !ok {append(&failed,p.path)}
     }
     if pending>1 {
-        if len(failed)==0 {fmt.printfln("mirai test: %d packages, all pass",pending)}
+        if len(failed)==0 {fmt.printfln("mirai test: %d packages, all pass (%d of them with only listed failures)",pending,tolerated)}
         else {fmt.eprintfln("mirai test: %d of %d packages fail: %s",len(failed),pending,strings.join(failed[:],", "))}
     }
     turn:=""
     if times.turn>=100*time.Millisecond {turn=fmt.tprintf(" (%.1f s waiting for the turn)",time.duration_seconds(times.turn))}
     fmt.eprintfln("mirai test: %d test executables built and %d unchanged; build %.1f s%s, run %.1f s",times.built,times.current,time.duration_seconds(times.build),turn,time.duration_seconds(times.run))
     return len(failed)>0?1:0
+}
+
+// The tests that fail on the base and those whose result depends on the load
+// of the machine: two tables of package and test, under KNOWN_HEADING and
+// LOAD_HEADING.
+KNOWN_FAILURES :: "docs/KNOWN_FAILURES.md"
+KNOWN_HEADING :: "## Fail on the base"
+LOAD_HEADING :: "## Load-dependent"
+
+Failure_Kind :: enum u8 {New,Known,Load}
+
+// What the text of KNOWN_FAILURES says of test of the package folder pkg,
+// relative to the engine with forward slashes.
+failure_kind :: proc(text,pkg,test:string) -> Failure_Kind {
+    rest:=text
+    section:=Failure_Kind.New
+    for line in strings.split_lines_iterator(&rest) {
+        switch {
+        case strings.has_prefix(line,KNOWN_HEADING): section=.Known
+        case strings.has_prefix(line,LOAD_HEADING):  section=.Load
+        case strings.has_prefix(line,"#"):           section=.New
+        case section!=.New && strings.has_prefix(line,"|"):
+            cells:=strings.split(line,"|",context.temp_allocator)
+            if len(cells)>3 && strings.trim(cells[1]," `")==pkg && strings.trim(cells[2]," `")==test {return section}
+        }
+    }
+    return .New
+}
+
+// Says the failures of package p apart: the new ones by name, the known and
+// the load-dependent ones as counts. True when it failed only by listed ones
+// and not strict: it passes.
+@(private="file")
+test_failures_listed :: proc(root:string,p:Test_Package,text:string,names:[]string,strict:bool) -> bool {
+    pkg,_:=filepath.rel(root,p.folder,context.temp_allocator)
+    pkg,_=strings.replace_all(pkg,"\\","/",context.temp_allocator)
+    counts:[Failure_Kind]int
+    fresh:=make([dynamic]string,context.temp_allocator)
+    for name in names {
+        kind:=failure_kind(text,pkg,name)
+        counts[kind]+=1
+        if kind==.New {append(&fresh,name)}
+    }
+    if counts[.Known]+counts[.Load]==0 {return false}
+    fmt.eprintfln("mirai test: %s: %d new failures%s%s; %d known and %d load-dependent (%s)",p.path,counts[.New],len(fresh)>0?": ":"",strings.join(fresh[:],", ",context.temp_allocator),counts[.Known],counts[.Load],KNOWN_FAILURES)
+    if len(fresh)>0 || strict {return false}
+    fmt.eprintfln("mirai test: %s passes with only listed failures; --strict fails on them",p.path)
+    return true
 }
 
 // The flags of the test build of a package of the engine after the package:

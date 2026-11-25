@@ -241,3 +241,45 @@ a_package_is_found_relative_to_the_working_folder :: proc(t:^testing.T) {
     testing.expect(t,os.write_entire_file(fmt.tprintf("%s/a.odin",folder),`package a`)==nil)
     testing.expect_value(t,package_folder("/nowhere",os.base(folder)),folder)
 }
+
+// A failure is known or load-dependent by the table it is listed in, by its
+// package and its name; any other is new, also one of another package or
+// listed under no table of failures.
+@(test)
+a_failure_is_known_by_the_table_that_lists_it :: proc(t:^testing.T) {
+    text:=`# Known failures
+
+| Package | Test | Why |
+| --- | --- | --- |
+| ` + "`net`" + ` | ` + "`above_any_table`" + ` | not under a table of failures |
+
+## Fail on the base
+
+| Package | Test | Why |
+| --- | --- | --- |
+| ` + "`net`" + ` | ` + "`a_long_one`" + ` | too slow |
+
+## Load-dependent
+
+| Package | Test | Depends on |
+| --- | --- | --- |
+| ` + "`render`" + ` | ` + "`a_timed_one`" + ` | GPU time |
+
+## Other
+
+| ` + "`net`" + ` | ` + "`after_the_tables`" + ` | |
+`
+    Case :: struct {pkg,test:string,kind:Failure_Kind}
+    cases:=[]Case{
+        {"net","a_long_one",.Known},
+        {"render","a_timed_one",.Load},
+        {"render","a_long_one",.New},
+        {"net","a_long",.New},
+        {"net","above_any_table",.New},
+        {"net","after_the_tables",.New},
+    }
+    for c in cases {testing.expectf(t,failure_kind(text,c.pkg,c.test)==c.kind,"%s %s: %v",c.pkg,c.test,failure_kind(text,c.pkg,c.test))}
+    // Tests run in the engine root, where the file of the engine is.
+    data,error:=os.read_entire_file(KNOWN_FAILURES,context.temp_allocator)
+    testing.expect(t,error==nil && failure_kind(string(data),"net","a_long_acknowledgement_never_overflows_a_datagram")==.Known)
+}

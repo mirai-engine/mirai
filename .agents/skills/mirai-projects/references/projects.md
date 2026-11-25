@@ -250,7 +250,7 @@ PowerShell/cmd/Python. Builds are dev ([release builds](../../../../AGENTS.md#co
 | Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]`, `mirai records create\|read\|write\|check ...` |
 | Git plugins | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Typecheck + lints | `mirai check [<pkg> [-flag...]]` (alloc lint `tools/mirai/alloc_lint.odin`; solver/render lint `tools/mirai/solver_lint.odin`) |
-| Run tests | `mirai test [<pkg>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]` |
+| Run tests | `mirai test [<pkg>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet\|--strict] [-flag...]` |
 | Editor session | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store dir]` |
 | RPC / Capture | `mirai rpc <method> [k=v\|json] [--select c] [--wait-until c=v]` / `mirai capture [P] --out x.png [--camera N] [--reference r.png]` |
 | Perf / Images | `mirai render check` / `mirai bench compare --base main` / `mirai bench flight\|pipelines` / `mirai image ...` |
@@ -327,6 +327,9 @@ attributes, generating engine shaders first (`check` sets `-define:MIRAI_TEST_SH
   `rhi/shared_device` or `rhi.device_create`; `--list` previews; `--failed` re-runs failures;
   `--timeout` (`TEST_TIMEOUT`, via `ODIN_TEST_LOG_STATE_CHANGES`) kills hung runs. Runs at
   `-o:minimal`, low priority during measurements.
+- **Listed failures:** a package whose only failures
+  [KNOWN_FAILURES.md](../../../../docs/KNOWN_FAILURES.md) lists (failing on the base or
+  load-dependent) passes, its summary counting them apart from new ones; `--strict` fails on them.
 - **CPU suites & CI:** `.github/workflows/checks.yml` runs on PRs to `main` (Windows,
   `MIRAI_ALLOW_GPU_SKIP=1`), executing `mirai check` on all non-`third_party`/`templates` packages
   and listed CPU `mirai test` suites (`core`, `cook/build`, `engine/*`, `std/*`, `plugins/*`,

@@ -101,7 +101,8 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
   duplicated parameter lists; one owning skill per concept, linked elsewhere.
 - `docs/game` is engine-owned game documentation (`mirai docs` / MCP `docs`); skills may link to it,
   it never links outside `docs/game`. `docs/` holds [architecture](docs/ARCHITECTURE.md),
-  [workarounds](docs/ODIN_WORKAROUNDS.md), `game/` and active `PLAN_*.md`.
+  [workarounds](docs/ODIN_WORKAROUNDS.md), [known failures](docs/KNOWN_FAILURES.md), `game/` and
+  active `PLAN_*.md`.
 
 ## Common commands
 
