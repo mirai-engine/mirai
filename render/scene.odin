@@ -297,7 +297,7 @@ occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance)
 // Whether an instance is drawn in the depth of the maps of the shadows and stops their rays.
 @(private)
 instance_casts :: proc "contextless" (inst: Gpu_Instance) -> bool {
-	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_VIEWMODEL) == 0 && inst.meta.x & INSTANCE_UNSHADOWED == 0
+	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & (INSTANCE_UNSHADOWED | INSTANCE_VIEWMODEL) == 0
 }
 
 // A light of the set that moved or changed its shape: what it shades is new.
@@ -1169,7 +1169,7 @@ instance_tlas_flags :: proc "contextless" (s: ^Scene_State, inst: Gpu_Instance) 
 
 @(private = "file")
 ray_class :: proc "contextless" (mesh_word, flags: u32) -> u8 {
-	if flags & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_VIEWMODEL) != 0 {return 0}
+	if flags & INSTANCE_FLAG_HIDDEN != 0 || mesh_word & INSTANCE_VIEWMODEL != 0 {return 0}
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}
 	if mesh_word & INSTANCE_UNSHADOWED != 0 {return RAY_UNSHADOWED}
 	return RAY_SMALL if flags & INSTANCE_FLAG_SMALL != 0 else RAY_SOLID
@@ -2073,6 +2073,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		kept := s.instances[index].meta.x & INSTANCE_MESH_MASK == u32(desc.mesh) && int(desc.mesh) < len(s.meshes) && was < max(mesh.ray_count, 1) && (mesh.stream == nil || mesh.stream.cut_missing[was] == 0)
 		cut := was << INSTANCE_RAY_SHIFT if kept else u32(ray_cut_always(mesh)) << INSTANCE_RAY_SHIFT
 		if desc.shadowless {cut |= INSTANCE_UNSHADOWED}
+		if desc.owner != 0 && desc.viewmodel {cut |= INSTANCE_VIEWMODEL}
 		reach := pose_reach(mesh)
 		inverse, bmin, bmax, invertible := instance_placement(desc.transform, mesh.bounds_min - reach, mesh.bounds_max + reach)
 		key := Instance_Key{desc.object_id, desc.copy_owner, desc.copy_variant}
@@ -2087,7 +2088,6 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		flags |= highlight_flags(desc.highlight)
 		flags |= (desc.layers & LAYERS_ALL if desc.layers & LAYERS_ALL != 0 else 1) << INSTANCE_LAYERS_SHIFT
 		if desc.owner != 0 {flags |= INSTANCE_FLAG_OWNED | (u32(desc.owner - 1) & 3) << INSTANCE_OWNER_SHIFT}
-		if desc.owner != 0 && desc.viewmodel {flags |= INSTANCE_FLAG_VIEWMODEL}
 		if desc.highlight != 0 {s.highlighted += 1}
 		if hidden {s.hidden_count += 1}
 		material := u32(desc.material) if desc.material != 0 && int(desc.material) < len(s.materials) else GPU_NONE

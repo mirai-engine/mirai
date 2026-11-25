@@ -61,7 +61,7 @@ Gbuffer_Cluster gbuffer_cluster_of(uint index, Instance inst, Mesh mesh, uint ma
     float fade = instance_fade(index, inst);
     k.flags = ((inst.meta.w >> INSTANCE_HIGHLIGHT_SHIFT) & RASTER_HIGHLIGHT_MASK)
         | (fade > 0.0 ? RASTER_FLAG_FADING | (uint(saturate(fade) * 65535.0 + 0.5) << RASTER_FADE_SHIFT) : 0u);
-    k.viewmodel = view_viewmodel(inst.meta.w);
+    k.viewmodel = view_viewmodel(inst);
     k.still = k.posed == INVALID && k.previous == INVALID && !k.viewmodel
         && all(inst.world[0] == inst.prev_world[0]) && all(inst.world[1] == inst.prev_world[1]) && all(inst.world[2] == inst.prev_world[2]);
 #if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)

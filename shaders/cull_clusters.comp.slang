@@ -204,9 +204,9 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         high += reach;
     }
     // Of the viewmodel of the view: where it draws it, which faces the eye as it does.
-    bool viewmodel = view_viewmodel(inst.meta.w);
+    bool viewmodel = view_viewmodel(inst);
     float3 drawn_low = low, drawn_high = high;
-    view_drawn_box(inst.meta.w, drawn_low, drawn_high);
+    view_drawn_box(inst, drawn_low, drawn_high);
     if (MIRAI_CULL_CANDIDATES) {
         if (boxed && occluded(drawn_low, drawn_high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane)) return;
     } else {

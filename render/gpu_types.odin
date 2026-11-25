@@ -72,7 +72,7 @@ Gpu_Frame :: struct {
 	moved:            [4]u32, // what casts shadows and changed since the frame before (Occluder_Changes): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
-	// What takes a place of the viewmodel of the view (INSTANCE_FLAG_VIEWMODEL of
+	// What takes a place of the viewmodel of the view (INSTANCE_VIEWMODEL of
 	// its body), from its eye, to where it draws it, from its eye: rows, and in the
 	// w of the first what a normal of it gains along camera_forward per unit along
 	// it (viewmodel.odin). The identity for a view that draws none.
@@ -213,7 +213,7 @@ INSTANCE_FLAG_TRANSLUCENT :: abi.INSTANCE_FLAG_TRANSLUCENT
 // Bit 13: the instance is of the body of a local player, whose slot is in bits 14-15: a
 // view of that slot (Gpu_Frame.own) fades it out and leaves out the layers it does not draw of it.
 INSTANCE_FLAG_OWNED :: abi.INSTANCE_FLAG_OWNED
-INSTANCE_FLAG_VIEWMODEL :: abi.INSTANCE_FLAG_VIEWMODEL
+INSTANCE_VIEWMODEL :: abi.INSTANCE_VIEWMODEL
 OWNER_SLOTS :: 4 // the local slots the owner of an instance names, in its two bits
 INSTANCE_OWNER_SHIFT :: abi.INSTANCE_OWNER_SHIFT
 // Bits 16-31: the layers the instance is in. A view draws those that share one with its own.

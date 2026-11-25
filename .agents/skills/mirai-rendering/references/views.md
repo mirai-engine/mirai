@@ -63,12 +63,13 @@ camera and visible scene since last frame, reprojecting histories instead of cut
 ## Viewmodel
 
 - The sync flags what hangs from an `engine/render.Viewmodel` under a body of `View_Bodies`
-  (`Instance_Desc.viewmodel`, `INSTANCE_FLAG_VIEWMODEL` with the owner bits) and gives each local
-  slot its field of view (`scene_set_viewmodels`). Only the view whose `Camera.own` is that slot
-  draws those instances (`view_draws_viewmodel` in the cull, `glass_visible`, the overlays); nested
-  views (`own` 0), texture views and other players never do. They are in no map
-  (`instance_casts`, `shadow_maps.comp`) and no ray structure (`ray_class`, `trace.slang`); the body
-  stays in both.
+  (`Instance_Desc.viewmodel`: `INSTANCE_VIEWMODEL` in `Gpu_Instance.meta.x`, since the highlight
+  levels take bits 8-12 of `meta.w`, with the owner bits of `meta.w`) and gives each local slot its
+  field of view (`scene_set_viewmodels`). Only the view whose `Camera.own` is that slot draws those
+  instances (`view_draws_viewmodel` in the cull, `viewmodel_elsewhere` for glass, overlays and
+  outlines); nested views (`own` 0), texture views and other players never do. They are in no map
+  (`instance_casts`, `shadow_maps.comp`) and no ray structure (`ray_class`, `trace.slang`); the
+  body stays in both.
 - **Place:** `Gpu_Frame.viewmodel` (and `prev_viewmodel`, from `View_State`) is a 3x3 about the
   eye: `VIEWMODEL_SCALE` toward it and across `camera_forward` by tan(camera fov/2) / tan(viewmodel
   fov/2); the w of its first row is what a normal gains along `camera_forward`. `gbuffer_build`

@@ -462,16 +462,17 @@ a_viewmodel_under_a_local_body_marks_its_meshes :: proc(t:^testing.T) {
     core.add(&f.world.viewmodels,rifle,Viewmodel{fov=1})
     s:=&f.renderer.scene
     flags :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.instances[instance_of(&f.sync,e)].meta.w}
+    word :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.instances[instance_of(&f.sync,e)].meta.x}
     mask :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.hw_instances[instance_of(&f.sync,e)].mask_flags&255}
     sync_frame(f)
-    for e in ([]core.Entity{body,rifle,hand}) {testing.expect(t,flags(f,e)&(gpu.INSTANCE_FLAG_VIEWMODEL|gpu.INSTANCE_FLAG_OWNED)==0 && mask(f,e)!=0,"without a local body nothing is marked")}
+    for e in ([]core.Entity{body,rifle,hand}) {testing.expect(t,flags(f,e)&gpu.INSTANCE_FLAG_OWNED==0 && word(f,e)&gpu.INSTANCE_VIEWMODEL==0 && mask(f,e)!=0,"without a local body nothing is marked")}
     testing.expect_value(t,s.viewmodels,[gpu.OWNER_SLOTS]f32{})
 
     bodies:=View_Bodies{bodies={1=body}}
     sync_frame(f,bodies=&bodies)
-    testing.expect(t,flags(f,body)&gpu.INSTANCE_FLAG_VIEWMODEL==0 && flags(f,body)&gpu.INSTANCE_FLAG_OWNED!=0 && mask(f,body)!=0,"the body is in the rays")
+    testing.expect(t,word(f,body)&gpu.INSTANCE_VIEWMODEL==0 && flags(f,body)&gpu.INSTANCE_FLAG_OWNED!=0 && mask(f,body)!=0,"the body is in the rays")
     for e in ([]core.Entity{rifle,hand}) {
-        testing.expect(t,flags(f,e)&gpu.INSTANCE_FLAG_VIEWMODEL!=0 && flags(f,e)>>gpu.INSTANCE_OWNER_SHIFT&3==1,"the viewmodel and what hangs from it are of slot 1")
+        testing.expect(t,word(f,e)&gpu.INSTANCE_VIEWMODEL!=0 && flags(f,e)>>gpu.INSTANCE_OWNER_SHIFT&3==1,"the viewmodel and what hangs from it are of slot 1")
         testing.expect_value(t,mask(f,e),u32(0))
     }
     testing.expect_value(t,s.viewmodels,[gpu.OWNER_SLOTS]f32{0,1,0,0})
@@ -481,7 +482,7 @@ a_viewmodel_under_a_local_body_marks_its_meshes :: proc(t:^testing.T) {
     core.remove(&f.world.viewmodels,rifle)
     sync_frame(f,bodies=&bodies)
     testing.expect_value(t,s.viewmodels,[gpu.OWNER_SLOTS]f32{})
-    testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_VIEWMODEL==0 && mask(f,rifle)!=0,"without its Viewmodel it is of the body")
+    testing.expect(t,word(f,rifle)&gpu.INSTANCE_VIEWMODEL==0 && mask(f,rifle)!=0,"without its Viewmodel it is of the body")
 }
 
 // The place of the world a viewmodel's point shows at: on the axis of the

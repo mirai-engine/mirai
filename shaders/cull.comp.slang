@@ -61,9 +61,9 @@ void cull_start(uint i) {
 // where it fails, every instance fails.
 bool view_draws_box(Instance inst, bool batched, Instance row, float3 low, float3 high) {
     float3 clipped = lerp(low, high, step(float3(0.0), frame.clip_plane.xyz));
-    bool own = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
+    bool own = max(view_body_fade(inst), material_values_fade(inst.material_values)) >= 1.0;
     bool gone = batched && batch_faded(row, low, high) >= 1.0;
-    return (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w) && view_draws_viewmodel(inst.meta.w)
+    return (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w) && view_draws_viewmodel(inst)
         && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(low, high);
 }
 
@@ -114,9 +114,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group_id : SV_GroupID, 
         inst.bounds_max.xyz += batch_reach(row);
     }
     // The viewmodel of the view where it draws it, in front of all that could hide it.
-    bool viewmodel = view_viewmodel(inst.meta.w);
+    bool viewmodel = view_viewmodel(inst);
     float3 low = inst.bounds_min.xyz, high = inst.bounds_max.xyz;
-    view_drawn_box(inst.meta.w, low, high);
+    view_drawn_box(inst, low, high);
     // A blended instance has nothing for the G-buffer: its own passes draw it.
     bool blended = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;
     bool visible = false;

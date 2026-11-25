@@ -105,8 +105,8 @@ glass_visible :: proc(s: ^Scene_State, frame: ^Gpu_Frame) -> []Translucent {
 		owner := frame.own & 0xff
 		own := owner != 0 && flags & INSTANCE_FLAG_OWNED != 0 &&
 		       (flags >> INSTANCE_OWNER_SHIFT) & 3 == owner - 1
-		if layers & frame.layers & LAYERS_ALL == 0 || viewmodel_elsewhere(frame, flags) ||
-		   own && (layers & (frame.layers >> 16) != 0 || frame.own >> 16 == 65535 && flags & INSTANCE_FLAG_VIEWMODEL == 0) ||
+		if layers & frame.layers & LAYERS_ALL == 0 || viewmodel_elsewhere(frame, inst) ||
+		   own && (layers & (frame.layers >> 16) != 0 || frame.own >> 16 == 65535 && inst.meta.x & INSTANCE_VIEWMODEL == 0) ||
 		   instance_values_fade(s, inst.material_values) >= 1 {continue}
 		box := drawn_box(frame, inst)
 		if !mm.frustum_overlaps_aabb(frustum, box) {continue}

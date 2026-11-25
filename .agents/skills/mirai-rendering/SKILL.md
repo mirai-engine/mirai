@@ -38,7 +38,7 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
 - GPU skinning → [skinning](references/scene.md#gpu-skinning)
 - `Frame_Desc`, split screen, output and capture → [views](references/views.md#frame-and-views)
 - Cameras, layers, texture and nested views → [views](references/views.md#cameras-and-layers)
-- The weapon of a first-person view (`Viewmodel`, `INSTANCE_FLAG_VIEWMODEL`, `Gpu_Frame.viewmodel`,
+- The weapon of a first-person view (`Viewmodel`, `INSTANCE_VIEWMODEL`, `Gpu_Frame.viewmodel`,
   `VIEWMODEL_SCALE`, `viewmodel.odin`) → [viewmodel](references/views.md#viewmodel)
 - Render pipelines and their stages → [pipelines](references/views.md#render-pipelines)
 - Frame generation (passes after `Output`, `Generated`, the UI over both images) →

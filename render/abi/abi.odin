@@ -106,6 +106,11 @@ FRAME_FLAG_NESTED       :: 512 // the view added nested views: the views target 
 INSTANCE_MESH_MASK          :: u32(0xffffff)
 INSTANCE_RAY_SHIFT          :: 24
 INSTANCE_UNSHADOWED         :: u32(1) << 26
+// Of the viewmodel of a local body (with INSTANCE_FLAG_OWNED), which the view
+// of that body alone draws, at the place render.Gpu_Frame.viewmodel gives it,
+// and which casts no shadow and is in no ray structure.
+INSTANCE_VIEWMODEL          :: u32(1) << 29
+#assert(INSTANCE_VIEWMODEL & (INSTANCE_MESH_MASK | 3 << INSTANCE_RAY_SHIFT | INSTANCE_UNSHADOWED | INSTANCE_FLAG_GLASS | INSTANCE_FLAG_DECAL) == 0)
 INSTANCE_FLAG_GLASS         :: u32(1) << 27
 INSTANCE_FLAG_DECAL         :: u32(1) << 28
 INSTANCE_FLAG_HIDDEN        :: 1
@@ -117,10 +122,6 @@ INSTANCE_FLAG_BLENDED       :: 32
 INSTANCE_FLAG_TRANSLUCENT   :: 64
 INSTANCE_FLAG_OUTLINE_ONLY  :: 128
 INSTANCE_HIGHLIGHT_SHIFT    :: 8
-// Of the viewmodel of a local body, which the view of that body alone draws,
-// at the place render.Gpu_Frame.viewmodel gives it, and which casts no shadow
-// and is in no ray structure.
-INSTANCE_FLAG_VIEWMODEL     :: u32(1) << 12
 INSTANCE_FLAG_OWNED         :: u32(1) << 13
 INSTANCE_OWNER_SHIFT        :: 14
 INSTANCE_LAYERS_SHIFT       :: 16

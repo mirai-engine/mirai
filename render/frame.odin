@@ -374,8 +374,8 @@ highlight_pass :: proc(p: ^Pass) {
 	pass.depth = {texture = t.highlight_depth, load = .Clear, store = .Dont_Care, clear = 0}
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
-	for inst, index in s.instances {
-		if !highlight_drawn(inst.meta.w) || viewmodel_elsewhere(&p.frame, inst.meta.w) {continue}
+	for &inst, index in s.instances {
+		if !highlight_drawn(inst.meta.w) || viewmodel_elsewhere(&p.frame, &inst) {continue}
 		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true, blended = true)
 	}
 	rhi.cmd_end_render_pass(cmd)
@@ -390,7 +390,7 @@ highlight_screen_bounds :: proc(instances: []Gpu_Instance, f: ^Gpu_Frame, points
 	lo, hi := Vec2{1e30, 1e30}, Vec2{-1e30, -1e30}
 	found := false
 	for &inst in instances {
-		if !highlight_drawn(inst.meta.w) || viewmodel_elsewhere(f, inst.meta.w) {continue}
+		if !highlight_drawn(inst.meta.w) || viewmodel_elsewhere(f, &inst) {continue}
 		rect := projected_box(drawn_box(f, &inst), f.view_proj_unjittered, f.camera_position.xyz)
 		lo, hi, found = linalg.min(lo, rect.xy), linalg.max(hi, rect.zw), true
 	}

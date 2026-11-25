@@ -46,7 +46,7 @@ overlay_pass :: proc(p:^Pass) {
         // Mixed transparent meshes are currently excluded too: they require
         // interleaving overlays with the glass layer resolve rather than Equal.
         if inst.meta.w & (INSTANCE_FLAG_HIDDEN|INSTANCE_FLAG_TRANSLUCENT)!=0 {continue}
-        if viewmodel_elsewhere(&p.frame,inst.meta.w) {continue}
+        if viewmodel_elsewhere(&p.frame,inst) {continue}
         for layer_index in 0..<int(layers.count) {layer:=layers.entries[layer_index]
             if !layer.enabled || int(layer.blend)>int(max(asset.Overlay_Blend)) {continue}
             params:=Params{material=u32(layer.material),blend=u32(layer.blend),light_budget=r.settings.light_budget}
