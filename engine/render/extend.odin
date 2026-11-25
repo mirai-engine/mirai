@@ -163,6 +163,15 @@ frame_pass :: proc(renderer:^Renderer,stage:Stage,record:Stage_Proc,user:rawptr=
     return renderer!=nil && gpu.frame_pass(renderer,stage,record,user)
 }
 
+// Tells the next frame that the eye of its camera (that of the View of the
+// world) is in a medium (under water) that takes this optical depth of each
+// color of the light of the open sky and sun before it reaches the eye: the
+// views drawn from it meter the light around it. Without asking, in the air.
+// Ask in each frame it lasts.
+frame_eye_medium :: proc(renderer:^Renderer,taken:[3]f32) {
+    if renderer!=nil {gpu.frame_eye_medium(renderer,taken)}
+}
+
 // The pipeline of a stage, from the shaders in use; the renderer keeps it. 0
 // while those shaders do not have its stages: ask again in each frame.
 stage_pipeline :: proc(renderer:^Renderer,desc:Stage_Pipeline_Desc) -> Pipeline {

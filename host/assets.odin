@@ -2131,16 +2131,21 @@ assets_overlays :: proc(a:^Assets,id:base.Asset_Id,overlays:[]asset.Material_Ove
 }
 
 // The effect of a material whose program is a PostProcess one, with the
-// parameters it stores. False for any other material.
-assets_postprocess :: proc(a:^Assets,id:base.Asset_Id) -> (effect:render.Postprocess_Desc,ok:bool) {
+// parameters it stores; for any other material, why it has none.
+assets_postprocess :: proc(a:^Assets,id:base.Asset_Id) -> (effect:render.Postprocess_Desc,problem:Postprocess_Problem) {
     material:=assets_material(a,id)
-    if material==nil || material.failed {return}
+    if material==nil || material.failed {return {},.Material}
+    if base.text_get(material.info.program[:])=="" {return {},.No_Program}
     program:=assets_material_program(a,material,.Postprocess)
-    if program==nil {return}
+    if program==nil {return {},.Program}
     effect={program=program.id,params=render.program_defaults(program),enabled=true}
     assets_program_parameters(a,program,&effect.params,assets_material_parameters(a,material),0)
-    return effect,true
+    return effect,.None
 }
+
+// Why a material gives no PostProcess effect: it does not load, it names no
+// program, or the program it names is not a PostProcess one the renderer has.
+Postprocess_Problem :: enum u8 {None,Material,No_Program,Program}
 
 // --------------------------------------------------------------------- scenes
 

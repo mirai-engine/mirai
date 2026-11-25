@@ -81,11 +81,13 @@ world_light_forget :: proc(r: ^Renderer, world: u64) {
 }
 
 // The world shown starts without light: an empty volume, a light scale of its
-// own, gathered at once in the next frame.
+// own, gathered at once in the next frame. The scale is of the lights, sun and
+// sky the scene has in that frame, whether or not they are given again.
 @(private)
 world_light_restart :: proc(r: ^Renderer) {
 	ddgi_release(r)
 	r.scene.light_scale = 0
+	r.scene.lights_changed = true
 	r.gi_warm = true
 }
 

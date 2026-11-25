@@ -15,6 +15,6 @@ struct Params {uint reset; uint3 pad;};
 [numthreads(1, 1, 1)]
 void main() {
     Exposure_State state = exposure[0];
-    fsr_exposure[uint2(0, 0)] = float2(state.valid != 0u ? state.exposure : 0.0, 0.0);
+    fsr_exposure[uint2(0, 0)] = float2(state.source != 0u ? state.exposure : 0.0, 0.0);
     if (params.reset != 0u) frame_info[uint2(0, 0)] = float4(-1.0, 1e8, 0.0, 0.0);
 }

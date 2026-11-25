@@ -482,7 +482,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     base.profile_end(zone)
     // What the extensions asked of this frame lasts for it alone.
     defer {
-        r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={}
+        r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={};r.eye_taken={}
         r.antialiasing_offered=r.antialiasing
         r.antialiasing_offered_count=r.antialiasing_count
         r.antialiasing_count=0
@@ -495,6 +495,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     if r.world_kept {r.scene.changes={}}
     r.world_switched,r.world_kept=false,false
     r.frame_changes={}
+    r.frame_eye=frame.camera.position
     // The origin follows the eye of the first view of the window; what the
     // frame places comes relative to it. Every view projects from its own eye.
     if !frame.offscreen && !frame.ui_only {

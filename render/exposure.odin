@@ -21,10 +21,15 @@ EXPOSURE_SAMPLES :: 65536
 Gpu_Exposure :: struct {
 	ev100:      f32,
 	exposure:   f32, // the scene-linear value of one render unit
-	valid:      u32,
+	source:     u32, // 0 before the first image, abi.EXPOSURE_ESTIMATED or abi.EXPOSURE_METERED
 	generation: u32, // View_State.exposure_generation it was adapted in
+	target:     f32, // EV100 ev100 comes to: what its frame metered
 }
-#assert(size_of(Gpu_Exposure) == 16)
+#assert(size_of(Gpu_Exposure) == 20)
+
+// EV100 within which an auto exposure has come to what it meters: a quarter
+// of a stop, which the eye barely tells.
+EXPOSURE_SETTLED :: f32(0.25)
 
 // What the last exposure pass of a view was recorded with: the exposure it
 // leaves in view.exposure is that of the next frame while these hold.
@@ -53,7 +58,7 @@ view_exposure_buffers :: proc(r: ^Renderer, cmd: ^rhi.Command_List, view: ^View_
 	for b in view.exposure_readback {
 		if mapped := rhi.buffer_mapped(d, b); mapped != nil {(cast(^Gpu_Exposure)mapped)^ = {}}
 	}
-	view.ev100_known, view.exposure_adapted = false, {}
+	view.ev100_known, view.exposure_adapted, view.exposure_settling = false, {}, true
 	return true
 }
 
@@ -75,16 +80,26 @@ view_exposure :: proc(p: ^Pass) -> f32 {
 	if b := view.exposure_readback[p.slot]; b != 0 {
 		if mapped := rhi.buffer_mapped(p.r.device, b); mapped != nil {
 			state := (cast(^Gpu_Exposure)mapped)^
-			if state.valid != 0 && state.generation == view.exposure_generation {view.ev100, view.ev100_known = state.ev100, true}
+			if state.source != 0 && state.generation == view.exposure_generation {
+				view.ev100, view.ev100_known = state.ev100, true
+				view.exposure_settling = abs(state.target - state.ev100) > EXPOSURE_SETTLED
+			}
 		}
 	}
 	e := exposure_of_camera(p.r, p.camera)
 	scale := p.r.scene.light_scale if p.r.scene.light_scale > 0 else 1
 	ev100 := e.ev100
 	if e.mode == .Auto {ev100 = view.ev100 if view.ev100_known else exposure_first(scale, e.range if e.range != {} else AUTO_EXPOSURE_RANGE)}
-	if view == &p.r.main || (p.r.view_count > 0 && view == &p.r.views[0]) {p.r.stats.ev100 = ev100}
+	if view == &p.r.main || (p.r.view_count > 0 && view == &p.r.views[0]) {
+		p.r.stats.ev100 = ev100
+		p.r.stats.exposure_settling = e.mode == .Auto && view.exposure_settling
+	}
 	return exposure_of_ev100(ev100 - e.compensation, display_exposure_bias(p.r.display_transform)) / scale
 }
+
+// Whether the auto exposure of the main view is still coming to what it
+// meters, as the frames read back: a capture that waits for it draws on.
+renderer_exposure_settling :: proc "contextless" (r: ^Renderer) -> bool {return r != nil && r.stats.exposure_settling}
 
 // How a view exposes: as its camera, when the camera has an exposure of its
 // own, or else as the scene.
@@ -134,8 +149,10 @@ pass_exposure :: proc(p: ^Pass) -> bool {
 		rhi.cmd_dispatch(cmd, groups(meter.grid.x, 16), groups(meter.grid.y, 16))
 	}
 	bias := display_exposure_bias(r.display_transform)
-	Adapt :: struct {manual: u32, ev100, compensation, adaptation: f32, range: [2]f32, dt, light_scale: f32, generation, speed: u32, bias: f32, pad: u32}
-	adapt := Adapt{manual = 1 if e.mode == .Manual else 0, ev100 = e.ev100, compensation = e.compensation, adaptation = max(e.adaptation, 0), range = e.range if e.range != {} else AUTO_EXPOSURE_RANGE, dt = r.delta_time, light_scale = scale, generation = view.exposure_generation, speed = 1 if e.adaptation_mode == .Speed else 0, bias = bias}
+	Adapt :: struct {manual: u32, ev100, compensation, adaptation: f32, range: [2]f32, dt, light_scale: f32, generation, speed: u32, bias: f32, pad: u32, sky_through: [4]f32}
+	adapt := Adapt{manual = 1 if e.mode == .Manual else 0, ev100 = e.ev100, compensation = e.compensation, adaptation = max(e.adaptation, 0), range = e.range if e.range != {} else AUTO_EXPOSURE_RANGE, dt = r.delta_time, light_scale = scale, generation = view.exposure_generation, speed = 1 if e.adaptation_mode == .Speed else 0, bias = bias, sky_through = 1}
+	// A view drawn from the eye of the frame in a medium (frame_eye_medium): what of the sky reaches it.
+	if p.camera.position == r.frame_eye {for c, i in r.eye_taken {adapt.sky_through[i] = math.exp(-c)}}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Exposure_Adapt])
 	set_params(cmd, &adapt)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, view.exposure_histogram)

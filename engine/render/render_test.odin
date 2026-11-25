@@ -1,6 +1,7 @@
 package render
 
 import "base:runtime"
+import "core:math"
 import "core:testing"
 import "core:mem"
 import "mirai:core"
@@ -497,5 +498,58 @@ a_scene_without_memory_is_empty_until_a_frame_makes_it :: proc(t:^testing.T) {
     }
     testing.expect(t,done && refused,"refused without memory, and with it it is made")
     testing.expect_value(t,len(app.renderer.scene.instances),3)
+    testing.expect_value(t,rhi.device_validation_errors(app.device),0)
+}
+
+// Play shows a copy of the world it starts from: another world with the same
+// sun and sky. It takes the light scale of that light, and its first frame
+// exposes within an EV of where the view settles.
+@(test)
+another_world_with_the_same_sun_exposes_for_it_from_its_first_frame :: proc(t:^testing.T) {
+    settings:=gpu.DEFAULT_SETTINGS
+    settings.gi_enabled,settings.taa=false,false
+    app,error:=host.app_create({gpu=true,gpu_validation=true,assets_root="assets",window_desc={size={160,120}},fixed_dt=1.0/60,threads=1,render_settings=settings})
+    testing.expect_value(t,error,host.App_Error.None)
+    if app==nil {return}
+    defer host.app_destroy(app)
+    w:Render_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    sync:Render_Sync;defer sync_free(&sync)
+    sun:=core.create(&w.entities)
+    // Shining down at 45 degrees.
+    aimed:=mm.Transform{rotation=mm.quat_axis_angle({1,0,0},-math.PI*0.25),scale=1}
+    core.add(&w.worlds,sun,core.World_Transform{aimed,aimed})
+    core.add(&w.suns,sun,SUN_DEFAULT)
+    core.add(&w.skies,core.create(&w.entities),SKY_DEFAULT)
+    floor:=core.create(&w.entities)
+    wide:=mm.Transform{position={0,-0.05,0},rotation=1,scale={60,0.1,60}}
+    core.add(&w.worlds,floor,core.World_Transform{wide,wide})
+    core.add(&w.meshes,floor,Mesh_Renderer{shape=.Cube,shadows=true})
+    test_world_settle(&w)
+    w.view.position,w.view.rotation,w.view.size={0,4,8},mm.quat_look({0,-4,-8},{0,1,0}),{160,120}
+    w.view.fov=50*mm.RAD_PER_DEG
+    ev100 :: proc(t:^testing.T,app:^host.App) -> f32 {
+        rhi.device_wait_idle(app.device)
+        state:[1]gpu.Gpu_Exposure
+        testing.expect(t,rhi.buffer_read_slice(app.device,app.renderer.main.exposure,0,state[:]))
+        return state[0].ev100
+    }
+    frame :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id) {
+        host.app_frame_begin(app)
+        host.app_camera_set(app,host.camera_from_view(w.view),w.view.cut,w.view.carried)
+        world_sync(w,sync,app,id)
+        host.app_frame_end(app)
+    }
+    settled_scale:f32
+    for id in ([2]core.World_Id{{index=1},{index=2}}) {
+        frame(&w,&sync,app,id)
+        scale,first:=app.renderer.scene.light_scale,ev100(t,app)
+        for _ in 0..<150 {frame(&w,&sync,app,id)}
+        settled:=ev100(t,app)
+        if id.index==1 {settled_scale=scale}
+        testing.expectf(t,scale>0 && scale==settled_scale,"world %d is in the light scale of its sun: %v, not %v",id.index,scale,settled_scale)
+        testing.expectf(t,abs(first-settled)<1,"world %d: its first frame exposes at EV100 %v, within an EV of the %v it settles at",id.index,first,settled)
+    }
     testing.expect_value(t,rhi.device_validation_errors(app.device),0)
 }

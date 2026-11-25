@@ -4,6 +4,7 @@ import "core:math"
 import "core:mem"
 import "core:testing"
 import "mirai:rhi"
+import "mirai:render/abi"
 
 // The values of ColorGrade by its parameters, in the order of its source.
 @(private="file")
@@ -98,7 +99,7 @@ postprocess_gpu_order_stage_filter_and_hdr_ldr_precision :: proc(t:^testing.T) {
     }
     // An exposure of one: the effects before the tonemap see the values as they are.
     made:=rhi.immediate_begin(d);testing.expect(t,view_exposure_buffers(r,made,&r.main));testing.expect(t,rhi.immediate_end(d,made))
-    one:=[1]Gpu_Exposure{{exposure=1,valid=1}};testing.expect(t,rhi.buffer_upload_slice(d,r.main.exposure,0,one[:]))
+    one:=[1]Gpu_Exposure{{exposure=1,source=abi.EXPOSURE_METERED}};testing.expect(t,rhi.buffer_upload_slice(d,r.main.exposure,0,one[:]))
     renderer_set_postprocesses(r,{count=3,entries={0=a,1=after,2=b}})
     target:=execute(t,r,r.targets.display,false)
     testing.expect_value(t,target,r.targets.post_hdr[1])
@@ -157,7 +158,7 @@ the_color_grade_saturates_around_luminance_and_contrasts_around_middle_gray :: p
     hdr:[8*8][4]f16
     for i in 0..<len(hdr) {c:=colors[i%8];hdr[i]={f16(c.r),f16(c.g),f16(c.b),1}}
     made:=rhi.immediate_begin(d);testing.expect(t,view_exposure_buffers(r,made,&r.main));testing.expect(t,rhi.immediate_end(d,made))
-    one:=[1]Gpu_Exposure{{exposure=1,valid=1}};testing.expect(t,rhi.buffer_upload_slice(d,r.main.exposure,0,one[:]))
+    one:=[1]Gpu_Exposure{{exposure=1,source=abi.EXPOSURE_METERED}};testing.expect(t,rhi.buffer_upload_slice(d,r.main.exposure,0,one[:]))
     gray,vivid,zones:=GRADE_DEFAULT,GRADE_DEFAULT,GRADE_DEFAULT
     gray.saturation=0
     vivid.saturation,vivid.contrast={2,1.5,1},{1.5,1,.5}
@@ -208,7 +209,7 @@ postprocess_reads_the_image_around_its_pixel :: proc(t:^testing.T) {
     for y in 0..<8 {for x in 0..<16 {v:=f16(1 if x>=8 else 0);hdr[y*16+x]={v,v,v,1}}}
     testing.expect(t,rhi.texture_upload(d,r.targets.display,mem.slice_data_cast([]u8,hdr[:]),16*8))
     made:=rhi.immediate_begin(d);testing.expect(t,view_exposure_buffers(r,made,&r.main));testing.expect(t,rhi.immediate_end(d,made))
-    one:=[1]Gpu_Exposure{{exposure=1,valid=1}};testing.expect(t,rhi.buffer_upload_slice(d,r.main.exposure,0,one[:]))
+    one:=[1]Gpu_Exposure{{exposure=1,source=abi.EXPOSURE_METERED}};testing.expect(t,rhi.buffer_upload_slice(d,r.main.exposure,0,one[:]))
     renderer_set_postprocesses(r,{count=1,entries={0=effect}})
     cmd,began:=rhi.frame_begin(d);testing.expect(t,began,rhi.device_error(d));if !began {return}
     frame:=Gpu_Frame{resolution={16,8},inv_resolution={1.0/16,.125}}

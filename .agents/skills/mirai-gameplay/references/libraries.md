@@ -98,7 +98,10 @@ navmesh and foliage collision.
   `Sun`), optional `use_background`, replicable `from`/`fade` transition, or local transition via
   `render.activate` (`Environment_Requests`; invalid -> `render.activate` problem).
 - **`View_Volume` (`view_volume.odin`):** per-zone `exposure`, `tint` and up to 8 post-process
-  `layers` (per split-screen `Camera.slot`; updated on change; sky/sun stay global).
+  `layers` (per split-screen `Camera.slot`; given again when the layers, or a material or program
+  they name, change or load late; sky/sun stay global). An enabled layer whose material does not
+  load or has no PostProcess program draws nothing and is a `render.postprocess` problem of its
+  `View_Volume` naming the layer.
 - **`Material_Values` (`shared`) & `Material_Live` (derived):** per-entity `color`/fade, `emission`,
   named parameter/field overrides (`material_value`/`drop`, updated in place via `values_settle`),
   or texture/overlay overrides (derived content-shared material row). `Material_Live` layers

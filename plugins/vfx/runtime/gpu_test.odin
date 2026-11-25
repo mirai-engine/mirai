@@ -2394,3 +2394,45 @@ local_particles_move_with_their_emitter_once :: proc(t: ^testing.T) {
 	testing.expect(t, found)
 	expect_clean(t, f.device)
 }
+
+// In daylight (EV 15 under a noon sun) an unlit particle shows its emission in
+// the units of its emitter: one relative to the exposure shows whether the
+// emission comes from a Surface program or from its color, and ones too bright
+// for the half floats of the image saturate to white instead of going black.
+@(test)
+unlit_particles_show_their_emission_in_their_own_units_in_daylight :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = true
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	surface := gpu.program_find(r, "Particle_Data", .Surface)
+	if !testing.expect(t, surface != nil, "testdata has the Surface program Particle_Data") {return}
+	glowing := gpu.DEFAULT_MATERIAL
+	glowing.program_id = surface.id
+	gpu.materials_set(r, {glowing})
+	gpu.scene_set_environment(r, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {background = {0, 0, 0}, use_background = true})
+	daylight := FRONT
+	daylight.exposure = {mode = .Manual, ev100 = 15, own = true}
+	program := test_emitter(1, {-1, 0, 0})
+	program.material, program.info.blend, program.info.emission_mode = 1, .Alpha, .Relative
+	bright := test_emitter(2, {1, 0, 0})
+	bright.info.emission_mode, bright.info.intensity = .Relative, 1e6
+	program.info.lifetime, bright.info.lifetime = {10, 10}, {10, 10}
+	// Two of them add up over each other.
+	again := bright
+	again.id = 3
+	emitters := [3]Emitter_Desc{program, bright, again}
+	frames_of_one(t, f, emitters[:], 6, daylight)
+	pixels, w, _, ok := gpu.renderer_capture(r)
+	testing.expect(t, ok, r.error)
+	if !ok {return}
+	defer delete(pixels)
+	green := pixel(pixels, w, project(r, daylight, {-1, 0, 0}))
+	white := pixel(pixels, w, project(r, daylight, {1, 0, 0}))
+	testing.expectf(t, green[1] > 100 && green[1] > green[0] + 60, "the relative emission of its Surface program shows: %v", green)
+	testing.expectf(t, min(white[0], white[1], white[2]) > 200, "an emission past what the image holds saturates to white: %v", white)
+	expect_clean(t, f.device)
+}

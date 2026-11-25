@@ -55,7 +55,7 @@ WATER_DEFAULT :: Water{attenuation_color={0.3,0.7,0.75},attenuation_distance=4,s
 Gpu_Body :: struct {
     to_box:[3][4]f32, // rows: from the world to its box, whose sides are 1
     surface:[4]f32,   // x the height of its still surface, y 1 for a plane, z 1 for a dry box, w priority
-    look:[4]f32,      // x caustics, z the index of refraction of its surface, w its waves
+    look:[4]f32,      // x caustics, y the share of absorption diffuse light takes (diffuse_share), z the index of refraction of its surface, w its waves
     absorption:[4]f32, // xyz 1/m it takes of red, green and blue light
     waves:[phys.FLUID_WAVES][4]f32, // physics.Wave_Term: k along x and z, amplitude, across
     phases:[2][4]f32, // of each wave, at the origin of the pass and the time of the frame
@@ -197,6 +197,25 @@ absorption :: proc "contextless" (look:Water) -> (taken:[3]f32) {
     return
 }
 
+// The shape of the scattering of water: its medium in the fog scatters with
+// this anisotropy, and of what it scatters (1 + it) / 2 goes on ahead, down
+// with the light it was part of.
+MEDIUM_ANISOTROPY :: f32(0.6)
+// The mean cosine of the light that comes down around a point under the
+// water, scattered off the beam of the sun: it crosses 1 / it metres of water
+// for each metre of depth.
+DIFFUSE_COSINE :: f32(0.8)
+
+// What diffuse light going down through the water loses for each metre of
+// depth, as a share of absorption: the light it scatters back is lost and
+// what it scatters ahead goes on down, slanted (DIFFUSE_COSINE). The rest of
+// what the water stops of a beam of the sun comes down around it.
+@(private)
+diffuse_share :: proc "contextless" (look:Water) -> f32 {
+    scattered:=clamp((look.scatter_color.r+look.scatter_color.g+look.scatter_color.b)/3,0,1)
+    return (1-scattered*(1+MEDIUM_ANISOTROPY)*0.5)/DIFFUSE_COSINE
+}
+
 // 1/m the water takes of white light: the mean of what it takes of each channel.
 @(private)
 extinction :: proc "contextless" (look:Water) -> f32 {
@@ -306,7 +325,7 @@ water_render :: proc(
             // The solid of the glass absorbs what the view crosses along its bent way and scatters the light
             // around; the fog scatters the light of the sun in the water, with its shafts, and takes what the
             // water takes of it on its way down.
-            fog.medium_add(media,{box=box,density=extinction(look),color=look.scatter_color,anisotropy=0.6,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look),glass=true})
+            fog.medium_add(media,{box=box,density=extinction(look),color=look.scatter_color,anisotropy=MEDIUM_ANISOTROPY,priority=desc.priority,carved=true,sun_only=true,shade=extinction(look),glass=true})
         } else {
             fog.medium_add(media,{box=box,priority=desc.priority,dry=true})
         }
@@ -314,7 +333,7 @@ water_render :: proc(
         if abs(linalg.determinant(to_world))<1e-12 {continue}
         body.to_box=mm.mat4_rows(linalg.inverse(to_world))
         body.surface={top,desc.shape==.Plane?1:0,dry?1:0,f32(desc.priority)}
-        body.look={max(look.caustics,0),0,made.ior,f32(desc.waves.count)}
+        body.look={max(look.caustics,0),diffuse_share(look),made.ior,f32(desc.waves.count)}
         taken:=absorption(look)
         body.absorption={taken.r,taken.g,taken.b,0}
         state.wet||=!dry
@@ -343,6 +362,12 @@ water_render :: proc(
                 render.instance_add(&app.extras,instance)
             }
         }
+    }
+    // The eye under the surface of a water: the view exposes for the light that comes down around it.
+    if sample,entity,wet:=phys.fluid_at(physics,view.position);wet && sample.density>0 {
+        look,custom:=core.get(waters,entity)
+        if !custom {look=WATER_DEFAULT}
+        render.frame_eye_medium(app.renderer,absorption(look)*diffuse_share(look)*max(sample.height-view.position.y,0))
     }
     if state.count==0 {return}
     state.pipelines={
@@ -405,6 +430,7 @@ under_record :: proc(pass:^render.Pass,user:rawptr) {
     render.pass_texture_sample(pass,1,pattern)
     render.pass_surface_read(pass,2,.Linear_Depth)
     render.pass_surface_read(pass,3,.Direct)
+    render.pass_surface_read(pass,5,.Albedo)
     render.pass_timestamp(pass,"water light")
     render.pass_pipeline(pass,state.pipelines[1])
     if !bodies_bind(pass,state) {return}

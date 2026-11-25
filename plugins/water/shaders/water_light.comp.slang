@@ -1,9 +1,12 @@
 #include "native.slang"
-// The light of what is under the water (water.under_record): the light of
-// each pixel in a fluid, under its surface, by what the water lets through
-// on its way down from the surface (along the sun under the water; without
-// it, straight up), and its direct light changed by the caustic pattern where
-// the light of the sun that reaches it crossed the surface. Before the fog.
+// The light of what is under the water (water.under_record), at each pixel
+// in a fluid, under its surface: its direct light by what the water lets
+// through of a beam on its way down from the surface (along the sun under the
+// water; without it, straight up), changed by the caustic pattern where the
+// light of the sun that reaches it crossed the surface; the rest of its light
+// by what the water lets through of diffuse light; and the light of the sun
+// the water scattered on the way, which comes down around the beam and
+// lights what is in its shadow too. Before the fog.
 #define WATER_STAGE
 #include "scene.slang"
 #include "water.slang"
@@ -16,6 +19,7 @@
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float> pattern : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
 [[vk::binding(SLOT_PASS2, 0)]] Texture2D<float4> linear_depth : register(MIRAI_REGISTER(t, SLOT_PASS2), space0);
 [[vk::binding(SLOT_PASS3, 0)]] Texture2D<float4> direct : register(MIRAI_REGISTER(t, SLOT_PASS3), space0);
+[[vk::binding(SLOT_PASS5, 0)]] Texture2D<float4> albedo : register(MIRAI_REGISTER(t, SLOT_PASS5), space0);
 
 // The pattern at a point in texels, repeating, between its four nearest.
 float pattern_at(float2 texel) {
@@ -65,13 +69,24 @@ void main(uint3 id : SV_DispatchThreadID) {
     float under;
     float2 crossed = water_crossed(b, position, toward, under);
     if (!(under > 0.0)) return;
-    float3 through = water_through(b, position, toward, under);
+    float3 through = water_through(b, position, toward, under, b.absorption.xyz);
+    float3 around = water_diffuse_through(b, position, under);
     float4 color = image[p];
+    float3 lit = direct.Load(int3(p, 0)).rgb;
+    float3 rest = color.rgb - lit;
     if (sun && b.look.x > 0.0) {
         float gathered = pattern_varied(crossed);
         // Sharp a little under the surface, softer deep down.
         float strength = b.look.x * saturate(under / 0.5) * exp(-under / 12.0);
-        color.rgb += direct.Load(int3(p, 0)).rgb * (gathered - 1.0) * strength;
+        lit *= 1.0 + (gathered - 1.0) * strength;
     }
-    image[p] = float4(max(color.rgb * through, 0.0), color.a);
+    // What the water scattered ahead of the sun that came down to the depth,
+    // on a horizontal surface: all that diffuse light lets through, but the beam.
+    float3 scattered = float3(0.0);
+    if (sun) {
+        float4 a = albedo.Load(int3(p, 0));
+        float3 down = sun_light(position) * max(frame.sun_direction.y, 0.0) * max(around - through, 0.0);
+        scattered = a.rgb * (1.0 - a.a) * down;
+    }
+    image[p] = float4(max(lit * through + rest * around + scattered, 0.0), color.a);
 }

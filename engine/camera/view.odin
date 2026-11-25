@@ -273,6 +273,7 @@ camera_local_views :: proc(
     views:^Local_Views,seat_state:core.Ref(input.Seats),slots:core.Ref(Camera_Views),
     cameras:^core.Table(render.Camera,.Read),exposures:^core.Table(render.Exposure,.Read),worlds:^core.Table(core.World_Transform,.Read),app:^host.App,
     view_volumes:^core.Table(render.View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),parents:^core.Table(core.Parent,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
+    problems:^core.Problems,
 ) {
     n:=seat_state.local_count
     if n<2 {return}
@@ -284,7 +285,7 @@ camera_local_views :: proc(
         render.view_of_camera(view,cameras,exposures,worlds,seen.camera,{f32(rects[slot].z),f32(rects[slot].w)},seen.blending?&seen.pose:nil,seen.cut)
         look:=render.view_volume_at(view_volumes,{volumes,worlds,parents,sections,splines},view.position)
         if !view.exposure.own {view.exposure=render.view_exposure_of(look)}
-        render.view_postprocess_sync(app.assets,app.renderer,slot,look.layers,&views.effects[slot])
+        render.view_postprocess_sync(app.assets,app.renderer,slot+1,look.layers,&views.effects[slot],view_volumes,problems)
         view.own,view.slot=u8(slot+1),u8(slot+1)
         view.fade,view.focus=seen.fade,seen.pose.focus
     }
