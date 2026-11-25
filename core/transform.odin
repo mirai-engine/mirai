@@ -25,7 +25,10 @@ World_Transform :: struct {
     previous:mm.Transform `mirai:"transient"`,
 }
 
-@(component,description="The parent entity whose transform this entity follows.")
+// Several libraries hang entities from others: a section that something
+// leaves gives it to the next one (streaming), a mount carries its rider
+// (input.Mount).
+@(component,shared,description="The parent entity whose transform this entity follows.")
 Parent :: struct {
     entity:Entity,
     order:i32, // among its siblings
@@ -93,6 +96,26 @@ place :: proc(p:Placer,e:Entity,position:[3]f32,rotation:mm.Quat=1,teleport:=tru
     }
     was,_:=world_of(p.transforms,p.parents,e)
     world_set(row,p.transforms,p.parents,e,position,rotation) or_return
+    if teleport {
+        turn:=rotation*conj(was.rotation)
+        jump(p.jumps,e,{position-mm.quat_rotate(turn,was.position),turn,{1,1,1}})
+    }
+    return true
+}
+
+// place for an entity whose Parent the same function sets to parent (none:
+// it hangs from nothing): a free Transform is written under that parent, as
+// the settle will leave it. A mount seats its rider so.
+place_under :: proc(p:Placer,e,parent:Entity,position:[3]f32,rotation:mm.Quat=1,teleport:=true,at_rest:=false) -> bool {
+    row:=free(p.transforms,e)
+    if row==nil {
+        if !has(p.transforms,e) {return false}
+        push(&p.places.queue,Place_Request{e,position,rotation,at_rest})
+        return true
+    }
+    was,_:=world_of(p.transforms,p.parents,e)
+    local:=local_under(p.transforms,p.parents,parent,{position,rotation,{1,1,1}}) or_return
+    row.position,row.rotation=local.position,local.rotation
     if teleport {
         turn:=rotation*conj(was.rotation)
         jump(p.jumps,e,{position-mm.quat_rotate(turn,was.position),turn,{1,1,1}})

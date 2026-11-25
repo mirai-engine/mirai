@@ -23,23 +23,37 @@ import "mirai:host"
 LOCAL_CAPACITY :: 4
 BLOCK_CAPACITY :: 64
 
+// The axes move is in. A body that walks takes it in the world, toward the
+// view of its seat; one that steers itself (a boat, a turret: the vehicles
+// plugin) takes it in its own axes, and its seat gives it only where it looks
+// and its buttons: what moves it reads the actions of its own context.
+Move_Frame :: enum u8 {
+    View, // move is in the world, across or along the up of the body
+    Body, // move is in the axes of the body: right, up and back (+Z; it faces -Z), each -1 to 1
+}
+
 // The movement and actions asked of a body: by the seat that drives it, and
 // without one by its AI or a script (move_set).
-@(component,shared,description="What the body is asked this tick: where to go in the world and where to look, from the seat that drives it or else from its AI or a script.")
+@(component,shared,description="What the body is asked this tick: where to go and where to look, from the seat that drives it or else from its AI or a script.")
 Move_Input :: struct {
-    move:[3]f32 `mirai:"readonly"`,                // in the world: across the up of the body (core.Vertical) it walks; along it, modes that fly. A share of the top speed, up to 1 long; with world_velocity, m/s
+    move:[3]f32 `mirai:"readonly"`,                // View: in the world, across the up of the body (core.Vertical) it walks and along it modes that fly, a share of the top speed up to 1 long, with world_velocity m/s. Body: right, up and back of the body, each -1 to 1
     look_yaw,look_pitch:f32 `mirai:"readonly,angle"`, // where it looks and faces: yaw turns left about the up of the body, pitch looks up; at 0 it looks along -Z, as everything does. Ground that turns adds to it (core.Vertical.turn) through whoever writes it
-    world_velocity:bool `mirai:"readonly"`,        // move is a velocity in m/s, as AI and scripts ask, bounded by the top speed of the mode; a seat asks a share
+    world_velocity:bool `mirai:"readonly"`,        // View: move is a velocity in m/s, as AI and scripts ask, bounded by the top speed of the mode; a seat asks a share
+    frame:Move_Frame,                              // the axes of move, as its prefab says: what writes the input keeps it
     buttons:Action_Mask `mirai:"readonly"`,        // the button actions held
 }
 #assert(size_of(Move_Input)==32)
 
 // The Move_Input of a body no seat drives, as its AI or a script asks it:
 // false, and nothing written, while a seat drives it, whose actions are its
-// Move_Input then.
+// Move_Input then. A body that has one keeps its frame.
 move_set :: proc(moves:^core.Table(Move_Input),state:core.Ref(Seats),body:core.Entity,value:Move_Input) -> bool {
     if seat_of(state,body)!=core.NONE {return false}
-    if row:=core.staged(moves,body);row!=nil {row^=value} else if !core.add(moves,body,value) {return false}
+    if row:=core.staged(moves,body);row!=nil {
+        frame:=row.frame
+        row^=value
+        row.frame=frame
+    } else if !core.add(moves,body,value) {return false}
     return true
 }
 
@@ -155,6 +169,7 @@ Seats :: struct {
     keyboard:int,         // the slot that had them last tick, plus one; 0: none
     blocks:[BLOCK_CAPACITY]Block,
     drivers:core.Entity_Map(core.Entity),
+    riders:core.Entity_Map(Rider), // the seat of each rider of a Mount (mounts.odin)
     seen:core.Seen,
 }
 
@@ -164,6 +179,8 @@ Request_Kind :: enum u8 {
     Focus,        // the keyboard and the mouse go to the local seat of slot
     Block_Add,    // owner takes the actions in mask from seat; none: from every local seat
     Block_Remove,
+    Mount,        // the body of seat rides entity, a Mount, and seat drives what the mount drives
+    Dismount,     // the rider of the mount seat drives from gets off, and seat drives it again
 }
 
 Seat_Request :: struct {
@@ -202,8 +219,18 @@ body_of :: proc(seats:^core.Table(Seat,$A),seat:core.Entity) -> core.Entity {
     return value.body
 }
 
-// The seat that drives a body; none without one.
+// The seat that drives a body, or whose actions a rider that keeps its input
+// reads (Mount.keep_input); none without one.
 seat_of :: proc "contextless" (state:core.Ref(Seats),body:core.Entity) -> core.Entity {
+    if state.ptr!=nil {
+        if seat:=core.entity_map_get(&state.drivers,body);seat!=nil {return seat^}
+        if rider:=core.entity_map_get(&state.riders,body);rider!=nil && rider.keep_input {return rider.seat}
+    }
+    return core.NONE
+}
+
+// The seat that drives a body; none without one, as for a rider.
+driver_of :: proc "contextless" (state:core.Ref(Seats),body:core.Entity) -> core.Entity {
     if state.ptr!=nil {
         if seat:=core.entity_map_get(&state.drivers,body);seat!=nil {return seat^}
     }
@@ -389,6 +416,10 @@ Apply :: struct {
     states:^Seat_States,
     role:core.Network_Role,
     elsewhere:^core.Table(core.Remote,.Read),
+    mounts:^core.Table(Mount),
+    carried:^core.Table(core.Carried,.Read),
+    parents:^core.Table(core.Parent,.Read),
+    exits:Mount_Exits,
     problems:^core.Problems,
 }
 
@@ -398,14 +429,15 @@ Apply :: struct {
 @(step="fixed",stage="input")
 input_drive :: proc(
     es:core.Ref(core.Entities),moves:^core.Table(Move_Input),seats:^core.Table(Seat),state:^Seats,states:^Seat_States,requests:^Seat_Requests,
-    network:core.Ref(core.Network),elsewhere:^core.Table(core.Remote,.Read),problems:^core.Problems,
+    network:core.Ref(core.Network),elsewhere:^core.Table(core.Remote,.Read),mounts:^core.Table(Mount),carried:^core.Table(core.Carried,.Read),exits:Mount_Exits,problems:^core.Problems,
 ) {
-    a:=Apply{es=es.ptr,moves=moves,seats=seats,state=state,states=states,role=network.role,elsewhere=elsewhere,problems=problems}
+    a:=Apply{es=es.ptr,moves=moves,seats=seats,state=state,states=states,role=network.role,elsewhere=elsewhere,mounts=mounts,carried=carried,parents=exits.parents,exits=exits,problems=problems}
     core.queue_serve(&requests.queue,BLOCK_CAPACITY*2,problems,"input.seats_requests",
         "seat requests","the input request capacity")
     if !seat_index_sync(es,core.read(seats),state,problems) {return}
     for request in core.take(&requests.queue) {request_apply(&a,request)}
     upkeep(&a)
+    mounts_upkeep(&a)
     blocks_apply(seats,state,states)
 }
 
@@ -431,6 +463,10 @@ request_apply :: proc(a:^Apply,r:Seat_Request) {
         refusal_report(a,r,body_assign(a,r.seat,r.entity))
     case .Release:
         refusal_report(a,r,body_assign(a,r.seat,core.NONE))
+    case .Mount:
+        refusal_report(a,r,mount_apply(a,r))
+    case .Dismount:
+        refusal_report(a,r,dismount_apply(a,r))
     case .Focus:
         if r.slot<0 || r.slot>=LOCAL_CAPACITY {
             core.report(a.problems,core.NONE,"input.focus_slot","the keyboard and the mouse were asked to go to the local seat of slot %d; the slots of local seats are 0 to %d",r.slot,LOCAL_CAPACITY-1)
@@ -453,11 +489,16 @@ request_apply :: proc(a:^Apply,r:Seat_Request) {
 
 // Why a request to drive a body was refused.
 @(private)
-Refusal :: enum u8 {None,Not_A_Seat,Not_Alive,Taken,Server_Decides,Capacity}
+Refusal :: enum u8 {None,Not_A_Seat,Not_Alive,Taken,Server_Decides,Capacity,Not_A_Mount,No_Body,Mount_Taken,Riding,Rides_Itself,Not_Riding,Exits_Blocked}
 
 @(private)
 refusal_report :: proc(a:^Apply,r:Seat_Request,refusal:Refusal) {
-    request:=r.kind==.Drive?"driving a body":"releasing its body"
+    request:="releasing its body"
+    #partial switch r.kind {
+    case .Drive:    request="driving a body"
+    case .Mount:    request="riding a mount"
+    case .Dismount: request="getting off a mount"
+    }
     switch refusal {
     case .None:
     case .Not_A_Seat:
@@ -469,7 +510,21 @@ refusal_report :: proc(a:^Apply,r:Seat_Request,refusal:Refusal) {
     case .Capacity:
         core.report(a.problems,r.seat,"input.seat_index","out of memory for the body-to-seat index; free memory and ask to drive again")
     case .Server_Decides:
-        core.report(a.problems,r.seat,"input.server_decides","%s was refused: a client takes only the bodies it owns; in a network game ask the server, which decides who drives each body",request)
+        core.report(a.problems,r.seat,"input.server_decides","%s was refused: a client takes only the bodies it owns and rides no mount; in a network game ask the server, which decides who drives each body",request)
+    case .Not_A_Mount:
+        core.report(a.problems,r.seat,"input.not_a_mount","riding entity 0x%016x was refused: it is not a live Mount; give it a Mount, or ride another",u64(r.entity))
+    case .No_Body:
+        core.report(a.problems,r.seat,"input.mount_no_body","riding a mount was refused: the seat drives no body to ride it; drive a body first")
+    case .Mount_Taken:
+        core.report(a.problems,r.seat,"input.mount_taken","riding entity 0x%016x was refused: another body rides it; ride another, or wait until it gets off",u64(r.entity))
+    case .Riding:
+        core.report(a.problems,r.seat,"input.mount_riding","riding a mount was refused: the body of the seat rides one already; dismount first")
+    case .Rides_Itself:
+        core.report(a.problems,r.seat,"input.mount_itself","riding entity 0x%016x was refused: that mount hangs from the body that would ride it",u64(r.entity))
+    case .Not_Riding:
+        core.report(a.problems,r.seat,"input.not_riding","getting off a mount was refused: the seat drives from no mount; ask it of the seat whose body rides")
+    case .Exits_Blocked:
+        core.report(a.problems,r.seat,"input.mount_blocked","getting off a mount was refused: something stands at every exit of the mount; move the mount, or give it an exit with room (Mount.exits)")
     }
 }
 
@@ -490,7 +545,7 @@ body_assign :: proc(a:^Apply,seat,body:core.Entity) -> Refusal {
     if !seated(a,seat) {return .Not_A_Seat}
     if body!=core.NONE {
         if !core.alive(a.es,body) {return .Not_Alive}
-        if driver:=seat_of(core.ref(a.state),body);driver!=core.NONE && driver!=seat {return .Taken}
+        if driver:=driver_of(core.ref(a.state),body);driver!=core.NONE && driver!=seat {return .Taken}
     }
     // Letting go decides nothing of a body: a client lets go of what the server gave someone else.
     if !decides(a,body) {return .Server_Decides}
@@ -500,7 +555,7 @@ body_assign :: proc(a:^Apply,seat,body:core.Entity) -> Refusal {
         if _,ok:=core.entity_map_put(&a.state.drivers,body,seat);!ok {return .Capacity}
     }
     core.edit(a.seats,seat).body=body
-    if seat_of(core.ref(a.state),previous)==seat {core.entity_map_remove(&a.state.drivers,previous)}
+    if driver_of(core.ref(a.state),previous)==seat {core.entity_map_remove(&a.state.drivers,previous)}
     if left:=core.edit(a.moves,previous);left!=nil {left.move,left.buttons={},{}}
     if source:=seat_runtime(core.ref(a.states),seat);source!=nil {source.rearm|=source.held}
     return .None

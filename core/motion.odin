@@ -36,6 +36,23 @@ vertical_of :: proc(verticals:^Table(Vertical,$A),e:Entity) -> mm.Quat {
     return mm.QUAT_IDENTITY
 }
 
+// An entity that rides another (input.Mount): it hangs from what carries it
+// and moves with it. What simulates it holds it off (physics makes no body of
+// it and leaves its Transform to the parents), the network sends no pose of
+// it, and hidden stops drawing it with what hangs from it. Only the library
+// that seats riders writes it, on every end alike, from the mount that names
+// the rider.
+@(component,derived,description="This entity rides another and moves with it: its simulation and its pose on the network stay off while it rides.")
+Carried :: struct {
+    by:Entity `mirai:"transient,readonly"`,   // the mount it rides
+    hidden:bool `mirai:"transient,readonly"`, // it is not drawn while it rides
+}
+
+// Whether e, or something it hangs from, rides a mount.
+carried_under :: proc(carried:^Table(Carried,$A),parents:^Table(Parent,$B),e:Entity) -> bool {
+    return carried!=nil && count(carried)>0 && ancestor_with(parents,carried,e)!=NONE
+}
+
 // Where another owner of an entity asks its owner to put it (the network,
 // for the state of another end). A change of placed asks to put it at the
 // pose, with those velocities, at once; a following one heads for the pose
