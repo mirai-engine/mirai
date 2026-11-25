@@ -245,8 +245,10 @@ Mind_World :: struct {
 // (nav.nav_far_decide), and what it claims lasts until its next tick. An
 // agent whose Mind_Agent.mind changed is ticked by its new mind once the old
 // one exited what it ran (Aborted) and forgot its state. Only a world that
-// plays decides, and a tick that runs again (time.resimulating) does not: its
-// actions would repeat what they did. Without Mind_Rows it looks at every row.
+// plays decides. A tick that runs again (time.resimulating) decides again, as
+// the copy it runs from holds the minds as they were: it is a replay of the
+// history of the editor, since a client, which corrects its prediction, runs
+// no server step. Without Mind_Rows it looks at every row.
 minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think(A))) {
     key:=mind_name(name)
     time:=w.time
@@ -255,7 +257,7 @@ minds_tick :: proc(w:^Mind_World,name:string,acts:^[$A]$P,think:proc(t:^ai.Think
         core.report(w.problems,core.NONE,"behavior.memory","No memory to register the mind %q; free memory",name)
         return
     }
-    if !time.playing || time.resimulating || time.dt<=0 {return}
+    if !time.playing || time.dt<=0 {return}
     agents:=w.agents
     on:=core.count(agents)
     total:=len(agents.entities)
@@ -426,7 +428,7 @@ mind_rows_index :: proc "contextless" (g:^Mind_Rows,name:Mind_Name) -> int {
 // Reports the agents of a name no mind of the game declares.
 @(step="fixed",stage="apply",server)
 minds_unknown :: proc(minds:core.Ref(Minds),agents:^core.Table(Mind_Agent,.Read),time:core.Time,problems:^core.Problems) {
-    if !time.playing || time.resimulating {return}
+    if !time.playing {return}
     for row in 0..<core.count(agents) {
         name:=agents.values[row].mind
         if mind_of(minds.ptr,name)!=nil {continue}

@@ -39,15 +39,16 @@ guard_think :: proc(t:^ai.Think(Guard_Action)) {
     if t.tick>=HISTORY_RUN_FROM {ai.propose(t,Guard_Action.Run,2)}
 }
 
+// The step the generator makes of the mind of the guard.
 @(private="file")
 history_test_tick :: proc(data,shared,editor_data,app_data:rawptr) {
     w:=(^History_Test_World)(data)
     acts:=[Guard_Action]proc(a:^ai.Act(Guard_Action)) -> ai.Status{.Walk=guard_act,.Run=guard_act}
-    for row in 0..<core.count(&w.agents) {
-        ctx:=ai.Mind_Context{tick=w.time.tick,dt=w.time.dt}
-        ai.mind_tick(&core.edit_at(&w.agents,row).state,&acts,guard_think,&ctx)
-    }
+    minds:=Mind_World_Test{minds=&(^History_Test_Shared)(shared).minds,agents=&w.agents,time=w.time}
+    behavior.minds_tick(&minds,"guard",&acts,guard_think)
 }
+
+@(private="file") Mind_World_Test :: behavior.Mind_World
 
 // An editor without a window over a world with the guard, whose Play keeps its past.
 @(private="file")
@@ -154,14 +155,27 @@ history_test_frame :: proc(s:^editor.Session) -> bool {
 
 // What the mind of the guard ran, proposed and left at each tick, by playing the ticks again:
 // the tick running interrupts walking shows the exit once, with its cause and what interrupted it.
+// With a keyframe every tick, or one every few ticks of a world too big to
+// keep more, which the ticks between are played again from.
 @(test)
 history_reads_what_a_mind_ran_proposed_and_left_at_each_tick :: proc(t:^testing.T) {
+    for interval in ([]u64{1,4}) {history_reads_a_mind(t,interval)}
+}
+
+@(private="file")
+history_reads_a_mind :: proc(t:^testing.T,interval:u64) {
     f:=new(History_Test);defer free(f)
     defer history_test_close(f)
     if !history_test_open(t,f) {return}
     if !testing.expect(t,editor.play_start(&f.session)) {return}
-    _,error:=history_test_call(f,"play.step",`{"for":20}`)
+    _,error:=history_test_call(f,"play.step",`{"for":1}`)
     if !testing.expectf(t,error.code==0,"%s",error.message) {return}
+    run:=editor.run_find(&f.session,0)
+    if !testing.expect(t,run!=nil && run.history!=nil) {return}
+    run.history.interval=interval
+    _,error=history_test_call(f,"play.step",`{"for":19}`)
+    if !testing.expectf(t,error.code==0,"%s",error.message) {return}
+    testing.expectf(t,run.history.count==(interval==1?20:5),"interval %d: %d keyframes",interval,run.history.count)
     Exit :: struct {action,cause,interrupted_by:string,tick:u64}
     Row :: struct {tick:u64,missing,mind:string,running:struct {action:string},proposals:[]Proposal_Result,exits:[]Exit}
     Result :: struct {next:u64,rows:[]Row}
@@ -180,7 +194,7 @@ history_reads_what_a_mind_ran_proposed_and_left_at_each_tick :: proc(t:^testing.
         // The tick that ran before the time of the row decided what it shows.
         ran:=row.tick-1
         want:="Run" if ran>=HISTORY_RUN_FROM else "Walk"
-        testing.expectf(t,row.running.action==want,"tick %d runs %s, not %s",row.tick,want,row.running.action)
+        testing.expectf(t,row.running.action==want,"interval %d: tick %d runs %s, not %s",interval,row.tick,want,row.running.action)
         if len(row.proposals)>0 {testing.expect_value(t,row.proposals[0].action,want)}
         testing.expectf(t,(len(row.proposals)==2)==(ran>=HISTORY_RUN_FROM),"tick %d: %v",row.tick,row.proposals)
         for exit in row.exits {

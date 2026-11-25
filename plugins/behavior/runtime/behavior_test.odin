@@ -185,10 +185,11 @@ a_mind_visits_its_own_rows_and_follows_a_change_of_mind :: proc(t:^testing.T) {
     testing.expect(t,slice.equal(rows.loose[:],[]i32{row(&world,a)}) && !rows.stale)
 }
 
-// A mind decides in a world that plays; a world that does not play, or a tick
-// that runs again, decides nothing.
+// A mind decides in a world that plays, and a tick that runs again from a copy
+// (a replay of the history) decides again as it did the first time; a world
+// that does not play decides nothing.
 @(test)
-the_mind_of_an_agent_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T) {
+the_mind_of_an_agent_decides_again_in_a_resimulation :: proc(t:^testing.T) {
     minds:=new(Minds)
     defer {minds_free(minds);free(minds)}
     world:Behavior_World
@@ -204,13 +205,21 @@ the_mind_of_an_agent_does_not_tick_again_in_a_resimulation :: proc(t:^testing.T)
     c.world.time.tick=2
     minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
     testing.expect_value(t,c.entered,2)
-    ticks:=world.mind_agents.values[0].state.ticks
-    for time in ([]core.Time{{tick=3,dt=1.0/60,playing=true,resimulating=true},{tick=3,dt=1.0/60}}) {
-        c.world.time=time
-        minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
-        testing.expect_value(t,world.mind_agents.values[0].state.ticks,ticks)
-        testing.expect_value(t,c.entered,2)
-    }
+    kept:=world.mind_agents.values[0].state
+    c.world.time={tick=3,dt=1.0/60}
+    minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
+    testing.expect_value(t,world.mind_agents.values[0].state.ticks,kept.ticks)
+    testing.expect_value(t,c.entered,2)
+    c.world.time.playing=true
+    minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
+    first,entered:=world.mind_agents.values[0].state,c.entered
+    testing.expect(t,first.ticks>kept.ticks)
+    core.edit_at(&world.mind_agents,0).state=kept
+    c.entered=2
+    c.world.time.resimulating=true
+    minds_tick(&c.world,"hunter",&COUNTING_ACTS,counting_think)
+    testing.expect_value(t,world.mind_agents.values[0].state.ticks,first.ticks)
+    testing.expect_value(t,c.entered,entered)
 }
 
 // An agent far from the players is off with its rows, and its mind decides

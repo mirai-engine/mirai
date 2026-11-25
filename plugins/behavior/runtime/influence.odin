@@ -43,7 +43,7 @@ influence_update :: proc(
         if influence.grid.width>0 {influence_free(influence)}
         return
     }
-    if !time.playing || time.resimulating || time.dt<=0 {return}
+    if !time.playing || time.dt<=0 {return}
     s:=settings.ptr^
     size:=int(s.influence_size)
     if !(s.influence_cell>0 && s.influence_cell<=max(f32)) ||

@@ -86,7 +86,7 @@ patrols_walk :: proc(
     splines:^core.Table(volume.Spline,.Read),worlds:^core.Table(core.World_Transform,.Read),
     requests:^nav.Nav_Requests,problems:^core.Problems,time:core.Time,
 ) {
-    if !time.playing || time.resimulating {return}
+    if !time.playing {return}
     for row in 0..<core.count(patrols) {
         walked:=patrols.values[row]
         if !walked.automatic {continue}
