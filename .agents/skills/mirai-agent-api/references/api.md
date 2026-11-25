@@ -55,7 +55,9 @@ parts, and `tools/mirai/rpc.odin`, `mcp.odin`, `session.odin`, `capture.odin`.
   ([turns](../../mirai-projects/references/build.md#turns-between-processes)) and self-exit after
   `api.SESSION_IDLE`.
 - **Orphans**: `status` lists unowned `.mirai/engine/` editors; `stop --orphans [project]` kills
-  headless orphans and removes dead `--copy` dirs (guarded by `SESSION_COPY_LOCK`).
+  headless orphans, closes the sessions whose owner ended (`Session_Record.owner`: the nearest
+  ancestor of `session start` that is no shell or launcher, as the agent) and removes dead
+  `--copy` dirs (guarded by `SESSION_COPY_LOCK`). It is what an agent runs instead of killing.
 
 ## `mirai capture`
 

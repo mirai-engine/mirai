@@ -68,6 +68,7 @@ SESSION_FILE :: "session.json"
 Session_Record :: struct {
     pid:int,
     args:[]string,
+    owner:int, // the process the session was opened from, an agent or a person's terminal; 0: unknown
 }
 
 PARSE_ERROR       :: -32700

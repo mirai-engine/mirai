@@ -178,7 +178,7 @@ one that a local editor uses. `--project` names a local project, so remote calls
 1. Open with `mirai edit` (window/manual) or headless with `mirai session start [project]` (free
    port, never 7940 unless `--api-port`). `mirai rpc --project <p>` and `mirai mcp` auto-start one.
    Use `--copy` when the user's editor holds the project (runs in `.mirai/tmp/`; `mirai session
-   stop <copy>` deletes it; `stop --orphans` cleans killed runs).
+   stop <copy>` deletes it; `stop --orphans` cleans killed runs and sessions whose agent ended).
 2. Discover schemas with `mirai rpc describe [plugin|method...]` before calling a method for the
    first time. Read state with `scene.inspect`, `component.list`, `asset.list`; filter with
    `--select` (`_select` in MCP) and wait with `--wait-until` (`_wait_until`).

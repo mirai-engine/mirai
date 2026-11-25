@@ -2,12 +2,14 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:path/filepath"
 import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/base"
+import "mirai:std/subprocess"
 
 // A headless session, of a copy or not, opens its API on a free port, never the default one of
 // the user's editor, unless the arguments name a port or no API.
@@ -121,6 +123,35 @@ the_role_and_the_record_come_from_the_files_of_the_project :: proc(t:^testing.T)
     testing.expect(t,slice.equal(record.args,[]string{"--frames","2"}))
     file,alive:=session_find(folder)
     testing.expect(t,alive && file.port==7999 && file.manual,"this process is the one the port file names")
+}
+
+// A session is an orphan of its owner once the process it was opened from
+// ended, and never while its owner is unknown. The owner is an ancestor of
+// the command that is no launcher, and the record of the project keeps it.
+@(test)
+a_session_is_an_orphan_once_its_owner_ended :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    state,_,_,error:=subprocess.exec({command={"git","--version"}},context.temp_allocator)
+    testing.expect(t,error==nil && state.exited,"a process that ended")
+    Case :: struct {name:string,owner:int,gone:bool}
+    cases:=[]Case{
+        {"its owner ended",state.pid,true},
+        {"its owner runs",os.get_pid(),false},
+        {"its owner is unknown",0,false},
+    }
+    for c in cases {testing.expectf(t,session_owner_gone({owner=c.owner})==c.gone,"%s",c.name)}
+    owner:=session_owner()
+    lineage:=workspace.process_lineage()
+    testing.expect(t,owner>0 && owner!=os.get_pid() && slice.contains(lineage,owner),"an ancestor owns it")
+    info,_:=os.process_info_by_pid(owner,{.Executable_Path},context.temp_allocator)
+    launchers:=SESSION_LAUNCHERS
+    testing.expectf(t,!slice.contains(launchers[:],strings.to_lower(filepath.stem(info.executable_path))),"no launcher: %s",info.executable_path)
+    folder:=base.test_folder(t,"session")
+    if folder=="" {return}
+    testing.expect(t,base.make_directory_all(project.path(folder,".mirai"))==nil)
+    testing.expect(t,os.write_entire_file(project.path(folder,".mirai",SESSION_FILE),fmt.tprintf(`{{"pid":%d,"args":[],"owner":%d}}`,os.get_pid(),state.pid))==nil)
+    record,found:=session_record(folder)
+    testing.expect(t,found && record.owner==state.pid && session_owner_gone(record),"the record keeps its owner")
 }
 
 @(test)

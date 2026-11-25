@@ -32,8 +32,9 @@ Session_Record :: api.Session_Record
 //            arguments of the last one unless others are given
 //   stop     asks it to quit and, with --force, ends it if it does not
 //            answer. --orphans ends instead the headless editors of this
-//            checkout that no port file names and, with a project, deletes
-//            its copies whose editor ended. Of a copy, it deletes the copy
+//            checkout that no port file names and the sessions whose owner
+//            ended (session_owner) and, with a project, deletes its copies
+//            whose editor ended. Of a copy, it deletes the copy
 //   status   says whether one answers, and which editors of this checkout no
 //            port file names
 //   sync     brings only the files named from the project into a copy and
@@ -326,7 +327,7 @@ session_open :: proc(root,folder:string,mode:Build_Mode,no_build:bool,timeout:in
     process,error:=detached_logged(command[:],log,root,gpu_turn_inherit(&turn))
     if error!=nil {fmt.eprintfln("mirai session: could not open %s: %v",command[0],error);return {},1}
     gpu_turn_hand_over(&turn,process,fmt.tprintf("the session of %s",folder),charge)
-    session_record_write(folder,{process.pid,editor_args})
+    session_record_write(folder,{process.pid,editor_args,session_owner()})
     // The timeout counts from the start, and again from each time the count
     // of pipelines the editor compiled rose: a cold driver takes minutes.
     since:=time.tick_now()
@@ -659,14 +660,52 @@ session_status :: proc(root,folder:string) -> int {
     return code
 }
 
+// The programs that stand between the process that runs a command and this
+// one: shells and launchers, which end with the command.
+SESSION_LAUNCHERS :: [?]string{"sh","bash","zsh","dash","fish","ksh","env","nohup","timeout","uv","cmd","powershell","pwsh","eco","mirai"}
+
+// The process this command is run from: the nearest ancestor that is no
+// launcher (SESSION_LAUNCHERS), as the agent that runs a shell for each
+// command; 0 when it cannot be told.
+session_owner :: proc() -> int {
+    launchers:=SESSION_LAUNCHERS
+    lineage:=workspace.process_lineage()
+    for pid in lineage[1:] {
+        info,error:=os.process_info_by_pid(pid,{.Executable_Path},context.temp_allocator)
+        if error!=nil || info.executable_path=="" {return 0}
+        name:=strings.to_lower(filepath.stem(info.executable_path),context.temp_allocator)
+        if !slice.contains(launchers[:],name) {return pid}
+    }
+    return 0
+}
+
+// Whether the process a session was opened from ended: then no one drives it.
+session_owner_gone :: proc(record:Session_Record) -> bool {
+    return record.owner>0 && !subprocess.process_alive(record.owner)
+}
+
 // Ends the headless orphans of the checkout, of the project at folder when
-// it is not "". One with a window is only named.
+// it is not "", and the sessions whose owner ended. One with a window is only
+// named.
 @(private="file")
 session_stop_orphans :: proc(root,folder:string) -> int {
     closed,kept,failed:=0,0,0
     for p in engine_processes(engine_folder(root)) {
-        if !program_is_editor(p.program) || engine_process_role(p)!=.Orphan {continue}
+        if !program_is_editor(p.program) {continue}
         if folder!="" && !project.path_same(p.project,folder) {continue}
+        if engine_process_role(p)==.Session {
+            record,_:=session_record(p.project)
+            file,alive:=session_find(p.project)
+            if !alive || !session_owner_gone(record) {continue}
+            if !session_close(p.project,file,true,"session stop --orphans") {
+                failed+=1
+                continue
+            }
+            closed+=1
+            fmt.printfln("Session closed: pid %d, %s; the process it was opened from (pid %d) ended.",p.pid,p.project,record.owner)
+            continue
+        }
+        if engine_process_role(p)!=.Orphan {continue}
         if !p.headless {
             kept+=1
             fmt.eprintfln("mirai session: not closing %s",engine_process_text(p,.Orphan))
