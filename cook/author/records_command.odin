@@ -6,6 +6,7 @@ import "core:os"
 import "core:strings"
 import "mirai:asset"
 import "mirai:cook/records"
+import "mirai:project"
 import "mirai:std/serial"
 
 // mirai records: the tables of game data (.records) of a project read,
@@ -116,6 +117,13 @@ table_named :: proc(p:^Project,named:string) -> (path:string,exists:bool,problem
         path=fmt.tprintf("%s.records",path)
     }
     _,exists=asset.registry_find_path(&p.registry,path)
+    // Its file, under the assets of the project or of a plugin, names it too.
+    if !exists {
+        absolute,_:=strings.replace_all(project.path_absolute(named,context.temp_allocator),"\\","/",context.temp_allocator)
+        if relative,under:=asset.registry_relative(&p.registry,absolute);under {
+            if _,known:=asset.registry_find_path(&p.registry,relative);known {return strings.clone(relative,context.temp_allocator),true,""}
+        }
+    }
     return
 }
 
