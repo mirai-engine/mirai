@@ -2,6 +2,7 @@
   "version": 1,
   "id": "0964d5141215cea8462119f07a904e49",
   "name": "planks_orm",
+  "catalog_path": "Demo/surfaces/wood",
   "origin": {"path": "assets/surfaces/wood/planks_orm.png", "folder": false, "importer": "image"},
   "identity": "a2dcb1c391aa037e1f7886bec3d3e17360d588365e162544f1aac4c6cb4532c1",
   "inputs": [],

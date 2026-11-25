@@ -2,6 +2,7 @@
   "version": 1,
   "id": "a68982d58a94bfa0fcb588bf93dfafec",
   "name": "marble_orm",
+  "catalog_path": "Demo/surfaces/marble",
   "origin": {"path": "assets/surfaces/marble/marble_orm.png", "folder": false, "importer": "image"},
   "identity": "318157572d9864452082d14787cc9ac8eb7cf3ce56cf81609d20996ef34a273b",
   "inputs": [],

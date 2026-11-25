@@ -26,6 +26,10 @@ material_schema :: proc(allocator:=context.temp_allocator) -> string {
     fmt.sbprintf(&b,"#define MATERIAL_MAPS %d\n",len(asset.Material_Map_Kind))
     strings.write_string(&b,"// asset.Alpha_Mode\n")
     for name,i in reflect.enum_field_names(asset.Alpha_Mode) {fmt.sbprintf(&b,"#define ALPHA_%s %du\n",strings.to_upper(name,context.temp_allocator),i)}
+    strings.write_string(&b,"// asset.Decal_Writes: the bit of each, from MATERIAL_DECAL_SHIFT of the flags of a row (render.Gpu_Material_Volume)\n")
+    for name,i in reflect.enum_field_names(asset.Decal_Write) {fmt.sbprintf(&b,"#define DECAL_WRITE_%s %du\n",strings.to_upper(name,context.temp_allocator),u32(1)<<uint(i))}
+    fmt.sbprintf(&b,"#define DECAL_WRITES_ALL %du\n",u32(transmute(u8)asset.DECAL_WRITES_ALL))
+    fmt.sbprintf(&b,"#define DECAL_WRITES_DEFAULT %du\n",u32(transmute(u8)asset.MATERIAL_DEFAULTS.decal.writes))
     strings.write_string(&b,"// asset.Emission_Mode\n")
     for name,i in reflect.enum_field_names(asset.Emission_Mode) {fmt.sbprintf(&b,"#define EMISSION_%s %du\n",strings.to_upper(name,context.temp_allocator),i)}
     strings.write_string(&b,"// asset.Material_Layers: the bit of each layer a material holds besides the base.\n")
@@ -159,6 +163,7 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     u(&b,"TEXTURE_FEEDBACK_CODES",abi.TEXTURE_FEEDBACK_CODES)
     f(&b,"MATERIAL_ANISOTROPY",abi.MATERIAL_ANISOTROPY)
     u(&b,"MATERIAL_PROGRAM_CHANGING",abi.MATERIAL_PROGRAM_CHANGING)
+    u(&b,"MATERIAL_DECAL_SHIFT",abi.MATERIAL_DECAL_SHIFT)
 
     i(&b,"NESTED_VIEW_CAPACITY",abi.NESTED_VIEW_CAPACITY)
     i(&b,"VOLUME_CASCADES_MAX",abi.VOLUME_CASCADES_MAX)

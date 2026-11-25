@@ -171,6 +171,9 @@ INSTANCE_RAY_SHIFT :: abi.INSTANCE_RAY_SHIFT
 // ray meets, and no map of the shadows draws it.
 INSTANCE_UNSHADOWED :: abi.INSTANCE_UNSHADOWED
 INSTANCE_FLAG_GLASS :: abi.INSTANCE_FLAG_GLASS
+// meta.x bit 28: a slot of the instance is a decal: it is in the decals of
+// the scene (decals.odin), whose order changes with its mesh and materials.
+INSTANCE_FLAG_DECAL :: abi.INSTANCE_FLAG_DECAL
 INSTANCE_FLAG_HIDDEN :: abi.INSTANCE_FLAG_HIDDEN
 // Hidden only because it cannot be drawn yet: its transform has no inverse
 // (a zero scale, or not finite) or the geometry of its mesh still goes to the
@@ -194,8 +197,8 @@ INSTANCE_HIGHLIGHT_MASK :: u32(31) << INSTANCE_HIGHLIGHT_SHIFT
 INSTANCE_FLAG_ALPHA_TESTED :: abi.INSTANCE_FLAG_ALPHA_TESTED
 // The instance tint replaces vertex colors for every material consumer.
 INSTANCE_FLAG_UNIFORM_COLOR :: abi.INSTANCE_FLAG_UNIFORM_COLOR
-// Every material of the instance is blended: it has nothing for the G-buffer
-// and belongs to the RAY_GLASS class.
+// Every material of the instance is blended or a decal: it has nothing for
+// the G-buffer, casts no shadow and belongs to the RAY_GLASS class.
 INSTANCE_FLAG_BLENDED :: abi.INSTANCE_FLAG_BLENDED
 
 // Some of the triangles of the instance are blended: seeing it turns on the
@@ -365,7 +368,7 @@ Gpu_Material_Subsurface :: struct {
 // What a solid of glass scatters of what it stops (asset.Material_Info.scatter_color).
 Gpu_Material_Volume :: struct {
 	scatter:  Vec3,
-	program:  u32, // MATERIAL_PROGRAM_* bits of what its program does; changing (abi.Program.reads): no pass keeps what a ray found of it
+	flags:    u32, // MATERIAL_PROGRAM_* bits of what its program does (changing, abi.Program.reads: no pass keeps what a ray found of it); of a decal, what it writes and its order (MATERIAL_DECAL_SHIFT, MATERIAL_DECAL_ORDER_SHIFT)
 }
 
 Gpu_Material_Blocks :: struct {

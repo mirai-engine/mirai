@@ -2,6 +2,7 @@
   "version": 1,
   "id": "4840a3f5a151cbe8c1b403b30fe8240d",
   "name": "sky_overcast",
+  "catalog_path": "Demo/sky",
   "origin": {"path": "assets/sky/sky_overcast.jpg", "folder": false, "importer": "image"},
   "identity": "badb56de863cc885d6f6554fa75d6f109b40416b073e2a3ae1e798674bfa030d",
   "settings": {

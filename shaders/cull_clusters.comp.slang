@@ -210,7 +210,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID, uint3 dispatc
         Cluster_Cut cut = cluster_cut(view_detail(), inst, scale, mesh, c, frame.cut.x);
         if (!cut.drawn) return;
         Material m = material_row(material_of(instance_row(index), inst, cluster_material(mesh, c)), inst.material_values);
-        if (material_blended(m)) return;
+        if (material_apart(m)) return;
         if (boxed) {
             bool away = m.two_sided == 0u && (posed ? pose.cone && cone_backfacing(inst, scale, pose.axis, pose.cutoff, low, high) : cluster_backfacing(inst, scale, c, low, high));
             if (!frustum_visible(low, high) || away) return;

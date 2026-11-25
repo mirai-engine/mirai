@@ -48,6 +48,16 @@ and needs no order among others. One entity takes it with
 starts from `render.MESH_RENDERER_DEFAULT`, a cube that casts shadows, or a literal names its
 `shape` and `shadows`.
 
+Mud, grime, paint, puddles or a grid of rebar over a floor or a wall are decals: meshes laid on
+the surface whose material has `alpha_mode` `Decal`. A decal changes the surface under it before
+it is lit, so it is lit and shadowed as that surface is, and is never drawn as a blend over it.
+Its `decal.writes` say what it changes, by its coverage (`opacity` times alpha): `Color`,
+`Normal` (its normal map turns the normal of the surface), `Surface` (roughness, metallic and
+occlusion) and `Emission`; one that writes only `Normal` changes nothing else. Several decals over
+one place compose by `decal.order`, the lower first, the same from every side. `mirai scene check`
+says when blended surfaces lie flat on opaque ones and should be decals. The `decals` plugin's
+`Decal` component projects one inside a box instead of laying a mesh.
+
 In the editor and through the API the same values are the entity's own in the material box of the
 inspector, `material.instance.set`; `material.instance.apply` writes them into the material.
 

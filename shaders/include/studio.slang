@@ -22,8 +22,8 @@ float3 studio_light(float3 reflected, float3 key, float3 fill, float roughness) 
 
 // How much of what is behind it a preview covers: a blended material's alpha,
 // by which the caller weighs everything the radiance of the preview holds. An
-// additive one is previewed as a blend of it.
-float preview_alpha(Material material, Material_Sample values) { return material_blended(material) ? saturate(values.alpha) : 1.0; }
+// additive one and a decal are previewed as a blend of them.
+float preview_alpha(Material material, Material_Sample values) { return material_apart(material) ? saturate(values.alpha) : 1.0; }
 
 // The surface a preview lights where it covers: with its layers, and its diffuse by what its
 // transmission leaves.

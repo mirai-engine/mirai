@@ -16,9 +16,8 @@ import "mirai:rhi"
 // pipeline of its own.
 Render_Stage :: enum u8 {
 	Custom,       // a pass of the pipeline: record dispatches over the resources it declares
-	Geometry,     // culling, G-buffer, depth pyramid, the Simulate and Gbuffer stages of extensions and the selection mask
+	Geometry,     // culling, depth pyramid, decals, G-buffer, the Decal, Simulate and Gbuffer stages of extensions and the selection mask
 	Nested,       // the Mask passes of extensions and the G-buffers of the nested views they add
-	Surface,      // the Surface passes of extensions
 	Direct,       // the sun and the local lights
 	World,        // the probe volume, with the first view of the window
 	Indirect,     // the light of the probe volume at each pixel, with its contact occlusion
@@ -196,9 +195,6 @@ stage_contract :: proc(stage: Render_Stage, pass: ^Plan_Pass) {
 	case .Nested:
 		reads(pass, .Depth, .Motion, .Linear_Depth)
 		writes(pass, .Depth, .Albedo, .Normal, .Emission, .Motion, .Linear_Depth, .Reflectance)
-	case .Surface:
-		reads(pass, .Linear_Depth, .Motion, .Albedo, .Normal, .Emission)
-		writes(pass, .Albedo, .Normal, .Emission)
 	case .Direct:
 		reads(pass, .Normal, .Linear_Depth, .Albedo, .Motion)
 		use(pass, .Reflectance, .Read, optional = true)
@@ -496,11 +492,11 @@ renderer_pipeline :: proc(r: ^Renderer, desc: Render_Pipeline_Desc) -> (Render_P
 // The passes of a standard pipeline.
 standard_pipeline_passes :: proc(kind: Standard_Pipeline) -> []Render_Pass_Desc {
 	@(static, rodata) full := [?]Render_Pass_Desc{
-		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .World},
+		{stage = .Geometry}, {stage = .Nested}, {stage = .Direct}, {stage = .World},
 		{stage = .Indirect}, {stage = .Composite}, {stage = .Lit}, {stage = .Transparency}, {stage = .Resolve}, {stage = .Output},
 	}
 	@(static, rodata) light := [?]Render_Pass_Desc{
-		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .World},
+		{stage = .Geometry}, {stage = .Nested}, {stage = .Direct}, {stage = .World},
 		{stage = .Composite}, {stage = .Lit}, {stage = .Transparency}, {stage = .Resolve}, {stage = .Output},
 	}
 	switch kind {

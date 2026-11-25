@@ -35,7 +35,7 @@ MAP_LABELS :: [asset.Material_Map_Kind]string{
 }
 TEXTURE_PARAMETER :: 100 // the index of the row of a texture of a program starts here; below it, a map of MAP_LABELS plus one
 OVERLAY_BLEND_NAMES :: [asset.Overlay_Blend]string{.Alpha="Alpha",.Additive="Additive",.Multiply="Multiply"}
-ALPHA_MODE_NAMES :: [asset.Alpha_Mode]string{.Opaque="Opaque",.Mask="Mask",.Blend="Blend",.Additive="Additive"}
+ALPHA_MODE_NAMES :: [asset.Alpha_Mode]string{.Opaque="Opaque",.Mask="Mask",.Blend="Blend",.Additive="Additive",.Decal="Decal"}
 EMISSION_MODE_NAMES :: [asset.Emission_Mode]string{.Physical="Nits",.Relative="Exposure"}
 MATERIAL_LIST_ROWS :: 8
 

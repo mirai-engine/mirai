@@ -500,7 +500,7 @@ Material material_row(uint row, uint block) {
     if (at == 0u) m = material_row(row);
     else m = material_words<Material, MATERIAL_WORDS>(at);
     m.row = row;
-    if (material_blended(m)) m.opacity *= 1.0 - material_values_fade(block);
+    if (material_apart(m)) m.opacity *= 1.0 - material_values_fade(block);
     return m;
 }
 // The parameters the program of a row reads at a point of an instance: those
@@ -1326,7 +1326,7 @@ float3 hit_normal_turned(float3 face, float3 n, float3 direction) {
 float3 hit_normal(uint instance_index, uint primitive, float2 bary, float3 direction, out bool blended) {
     uint material;
     float3 face = triangle_face(instance_index, primitive, material);
-    blended = material_blended(material_row(material, material_values_of(instance_index)));
+    blended = material_apart(material_row(material, material_values_of(instance_index)));
     return hit_normal_turned(face, surface_from_triangle(instance_index, primitive, bary, 1e-4).normal, direction);
 }
 
@@ -1410,9 +1410,15 @@ Surface surface_from_hit(Hit_Point h, bool given, Mirai_Surface program) {
     s.f90 = material.f90;
     return s;
 }
+// What a decal writes (DECAL_WRITE_*): those of its row, or those a decal
+// writes by default where an instance shows a row of another mode as one.
+uint material_decal_writes(Material m) {
+    uint writes = (materials[m.row].volume.flags >> MATERIAL_DECAL_SHIFT) & DECAL_WRITES_ALL;
+    return writes != 0u ? writes : DECAL_WRITES_DEFAULT;
+}
 // Whether what a material gives a point changes with nothing that says so:
 // its program reads the time. A pass that keeps what a ray found does not keep it.
-bool material_changing(Material m) { return m.program_id != 0u && (materials[m.row].volume.program & MATERIAL_PROGRAM_CHANGING) != 0u; }
+bool material_changing(Material m) { return m.program_id != 0u && (materials[m.row].volume.flags & MATERIAL_PROGRAM_CHANGING) != 0u; }
 Surface surface_from_triangle(uint instance_index, uint primitive, float2 bary, float footprint) {
     return surface_from_hit(hit_point(instance_index, primitive, bary, footprint), false, (Mirai_Surface)0);
 }

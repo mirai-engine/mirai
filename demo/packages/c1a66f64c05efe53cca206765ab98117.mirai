@@ -2,6 +2,7 @@
   "version": 1,
   "id": "c1a66f64c05efe53cca206765ab98117",
   "name": "sky_night",
+  "catalog_path": "Demo/sky",
   "origin": {"path": "assets/sky/sky_night.jpg", "folder": false, "importer": "image"},
   "identity": "a6bc49bf6d7489954dafb9d55d279df060250cc8f6d8366cbd48b1501a6ee048",
   "settings": {

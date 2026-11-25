@@ -107,6 +107,7 @@ INSTANCE_MESH_MASK          :: u32(0xffffff)
 INSTANCE_RAY_SHIFT          :: 24
 INSTANCE_UNSHADOWED         :: u32(1) << 26
 INSTANCE_FLAG_GLASS         :: u32(1) << 27
+INSTANCE_FLAG_DECAL         :: u32(1) << 28
 INSTANCE_FLAG_HIDDEN        :: 1
 INSTANCE_FLAG_COLLAPSED     :: 2
 INSTANCE_FLAG_SMALL         :: 4
@@ -638,9 +639,13 @@ INSTANCE_ROW_WORDS     :: 1 + MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + PROGRAM_PA
 MATERIAL_WORDS           :: 29 + len(asset.Material_Map_Kind)
 MATERIAL_BLOCK_WORDS     :: 24
 MATERIAL_PARAMETERS_WORD :: MATERIAL_WORDS + MATERIAL_BLOCK_WORDS + 4 + 8 * len(asset.Material_Map_Kind)
-// The bits of what the program of a row does (render.Gpu_Material_Volume.program).
+// The bits of what the program of a row does (render.Gpu_Material_Volume.flags).
 MATERIAL_PROGRAM_CHANGING    :: 1 // what it gives a point changes with nothing that says so: it reads the time
 MATERIAL_PROGRAM_REFLECTANCE :: 2 // it may give a reflectance its base color and metallic do not (Program.reflectance)
+// From this bit of those flags, what a decal row writes (asset.Decal_Writes),
+// and from MATERIAL_DECAL_ORDER_SHIFT its order (asset.Material_Decal.order, 16 bits).
+MATERIAL_DECAL_SHIFT       :: 2
+MATERIAL_DECAL_ORDER_SHIFT :: 16
 
 // The limits of a program of the catalog.
 PROGRAM_PARAMETER_BYTES  :: 256
@@ -701,10 +706,10 @@ Shader_Catalog :: struct {
 // Opaque: the rows of opaque and masked materials; Blend: those of blended
 // ones; Overlay: an overlay layer; Particle_Sprite and Particle_Mesh: the
 // particles of an effect; Preview: the previews and thumbnails of the editor;
-// Impostor: the frames of a far impostor.
-Program_Use :: enum u8 {Opaque,Blend,Overlay,Particle_Sprite,Particle_Mesh,Preview,Impostor}
+// Impostor: the frames of a far impostor; Decal: the rows of decal materials.
+Program_Use :: enum u8 {Opaque,Blend,Overlay,Particle_Sprite,Particle_Mesh,Preview,Impostor,Decal}
 Program_Uses :: bit_set[Program_Use;u8]
-PROGRAM_USE_NAMES :: [Program_Use]string{.Opaque="opaque",.Blend="blend",.Overlay="overlay",.Particle_Sprite="particle_sprite",.Particle_Mesh="particle_mesh",.Preview="preview",.Impostor="impostor"}
+PROGRAM_USE_NAMES :: [Program_Use]string{.Opaque="opaque",.Blend="blend",.Overlay="overlay",.Particle_Sprite="particle_sprite",.Particle_Mesh="particle_mesh",.Preview="preview",.Impostor="impostor",.Decal="decal"}
 
 program_use_named :: proc(name:string) -> (use:Program_Use,ok:bool) {
     for text,each in PROGRAM_USE_NAMES {if text==name {return each,true}}

@@ -2,6 +2,7 @@
   "version": 1,
   "id": "e022a803a1c6fb9fe4b86ab65a48bc24",
   "name": "sky_sunset",
+  "catalog_path": "Demo/sky",
   "origin": {"path": "assets/sky/sky_sunset.jpg", "folder": false, "importer": "image"},
   "identity": "0b4e80818fedc88b32a0b6550eec6158e2727bfd1d99253c232e50cb828668cb",
   "settings": {

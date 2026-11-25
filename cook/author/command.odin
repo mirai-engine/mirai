@@ -7,6 +7,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/far"
 import "mirai:core"
 import "mirai:engine/gui"
 import escene "mirai:engine/scene"
@@ -657,6 +658,11 @@ scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
             fmt.sbprintln(&said,text)
             if warning {problems+=1}
         }
+        if found,listed:=asset.registry_find_path(&run.p.registry,scene.path);listed && scene.file=="" {
+            if flat:=far.far_flat_blends(&run.p.registry,found.id);flat>0 {
+                fmt.sbprintfln(&said,"%s: advice: %d blended surfaces lie flat on opaque ones: give their materials alpha_mode Decal, which changes the surface under them before it is lit, in one pass, shadowed as it is",scene.shown,flat)
+            }
+        }
         fmt.wprint(run.output,strings.to_string(said))
         append(&checked,Scene_Checked{scene.shown,key,problems,strings.to_string(said)})
         count+=problems
@@ -667,7 +673,7 @@ scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
 
 // Raise it when the check says something else of the same scenes and types: every key moves.
 @(private="file")
-SCENE_KEYS_VERSION :: 1
+SCENE_KEYS_VERSION :: 2
 // In the build folder of the project: what the last check of all its scenes said of each.
 SCENE_KEYS_FILE :: "scenes.keys"
 

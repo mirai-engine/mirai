@@ -181,7 +181,8 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
   pin all mips; `mirai_load_texture` skips feedback.
 - **Cadence:** Runs on window frames and `Frame_Desc.streamed` offscreen frames. Programs and
   standard resolve rotate feedback every `TEXTURE_FEEDBACK_TURNS` frames (other turns run the
-  `quiet` pipeline without recording). Decals, particles, sky, and UI do not report feedback.
+  `quiet` pipeline without recording). Mesh decals report it; projected decals, particles, sky,
+  and UI do not.
 - **Hysteresis & budget:** Promotions apply immediately; demotions wait `TEXTURE_FEEDBACK_FRAMES`
   at `TEXTURE_KEEP_LEVELS` coarser (`RESIDENT_KEEP`), bounded by `texture_max_size` and
   `TEXTURE_TAIL`. Unseen textures keep levels until pool pressure evicts them first, then
@@ -225,6 +226,45 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
   alpha of 0 so the premultiplied target keeps the whole background (no sort dependency, one
   pipeline for both). Its coverage goes to `Targets.reactive` for TAA. Never glass: its row keeps
   no `transmission`. Previews and thumbnails show it as a blend.
+- **Decal (`decal`):** Changes the surface under it before it is lit ([decals](#decals)); out of
+  the visibility raster, shadow maps and rays like a blend (`material_apart`, `alpha_apart`), but
+  never lit itself. Never glass. Previews and thumbnails show it as a blend.
+
+## Decals
+
+`render/decals.odin`, `decal_draws.comp`, `decal.vert`, `decal.frag`, `include/decal_buffer.slang`.
+
+- **Material:** `Material_Info.decal`: `writes` (`asset.Decal_Writes`: `Color`, `Normal`,
+  `Surface` = roughness + metallic + occlusion, `Emission`) and `order` (16 bits). Coverage is
+  `opacity * alpha`, which a program may write as for a blend. The row keeps writes and order in
+  `Gpu_Material_Volume.flags` (`MATERIAL_DECAL_SHIFT`, `MATERIAL_DECAL_ORDER_SHIFT`); an instance
+  that shows another row as a decal writes `DECAL_WRITES_DEFAULT`.
+- **Order:** `Scene_State.decals` is (instance, slot) of every decal slot, sorted only when it
+  changes (`decals_stale`: classification, instances with `INSTANCE_FLAG_DECAL` that come, go or
+  change mesh or materials) by order, program, instance, slot: the same in every view, no
+  per-instance order. A frame looks at no entry: `decal_draws.comp` culls (hidden, layers, fade,
+  frustum, this frame's pyramid) and writes one indirect draw each; a run of one program is one
+  multi-draw (`Scene_State.decal_runs`).
+- **Draw:** after the depth pyramid, before the resolve, against `t.depth` (no write,
+  `Greater_Equal`); `decal.vert` pulls clip depth toward the eye by `DECAL_SLACK` pixels of
+  footprint over the facing (receivers drawn at another detail); the fragment evaluates the
+  material only (`emissive` variant while the emission target exists, `quiet` constant).
+- **Targets (`Targets.decal_targets`, shared by size):** `decal_color` RGBA8 sRGB, `decal_normal`
+  RGBA16F (shading normal minus smooth normal), `decal_surface` RGBA8, `decal_emission` RGBA16F
+  only while a decal writes emission or `frame_decal_emission` asks; all premultiplied with
+  coverage in alpha, made only while the scene has a decal or the `Decal` stage is asked.
+- **Apply (`decal_apply`, resolve constant `decals`):** color, surface values and emission by
+  interpolation; normal = receiver shading normal flattened toward its smooth normal by coverage
+  plus the decal deviation, renormalised; F0/F90 and specular antialiasing follow. Nested views do
+  not apply them. Mesh decals record texture feedback; the projected ones of the plugin do not.
+- **Zero cost:** no decal and no `Decal` stage: no target, no pass, the resolve without the
+  constant (`a_scene_without_decals_draws_no_decal_pass_and_the_same_image`).
+- **Limits:** rays, probes and glass do not see decals; surfaces of the `Gbuffer` stage (grass,
+  mesh particles) take none and cover them; decal slots of batches and far meshes are not drawn.
+- **Focal tests (`render`, GPU):** `a_decal_changes_only_what_it_writes_of_the_surface_under_it`,
+  `a_decal_in_the_shadow_of_a_wall_takes_the_light_of_the_floor`,
+  `decal_layers_compose_in_their_order_from_every_side`; CPU:
+  `material_keeps_its_additive_and_decal_modes` (`asset`).
 
 ## Ray hits
 

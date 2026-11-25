@@ -2,6 +2,7 @@
   "version": 1,
   "id": "0ab7eefb80a0bb80c8cd0065d5c53f11",
   "name": "bricks_normal",
+  "catalog_path": "Demo/surfaces/bricks",
   "origin": {"path": "assets/surfaces/bricks/bricks_normal.png", "folder": false, "importer": "image"},
   "identity": "368a6ec83712603a49d698bec592fc764a4c289b9ffacc76273700cb4eaca77b",
   "settings": {

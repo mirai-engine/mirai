@@ -545,7 +545,7 @@ material_problem_names_the_value_out_of_its_range :: proc(t:^testing.T) {
 }
 
 @(test)
-material_keeps_an_additive_mode :: proc(t:^testing.T) {
+material_keeps_its_additive_and_decal_modes :: proc(t:^testing.T) {
     types:Types;types_init(&types);defer types_destroy(&types)
     info:=MATERIAL_DEFAULTS
     info.alpha_mode,info.opacity,info.emission=.Additive,0.5,{4,1,0}
@@ -562,6 +562,18 @@ material_keeps_an_additive_mode :: proc(t:^testing.T) {
     given:=MATERIAL_DEFAULTS
     value:=[4]f32{f32(Alpha_Mode.Additive),0,0,0}
     testing.expect(t,material_standard_value(&given,base.name_hash("alpha_mode"),&value,true) && given.alpha_mode==.Additive)
+    // A decal keeps what it writes and its order; one that writes nothing is a problem.
+    decal:=MATERIAL_DEFAULTS
+    decal.alpha_mode,decal.decal=.Decal,{writes={.Normal},order=3}
+    decal_path:=fmt.tprintf("%s/rebar.mat",base.test_folder(t,"asset"))
+    testing.expect_value(t,material_save(decal_path,&types,{id={8,10},info=decal}),Error.None)
+    b:Asset
+    testing.expect_value(t,asset_load(&b,decal_path),Error.None)
+    defer asset_close(&b)
+    decal_view,decal_error:=material_view(&b,&types)
+    testing.expect(t,decal_error==.None && decal_view.info^==decal && !alpha_blended(.Decal),"a decal reads back as it was saved, and is not a blend")
+    decal.decal.writes={}
+    testing.expect(t,material_problem({info=&decal})!="","a decal that writes nothing says so")
 }
 
 @(test)

@@ -19,15 +19,19 @@ gizmos, and `portals` adds the `nested` inspection mode.
 
 ## Decals
 
-`Decal` projects color, emission, normal map, and optional `overrides` (`Roughness`, `Metallic`)
-along local `+Y` inside its entity's scale box (`order` low-to-high; `fade` uses original surface
-normal; normal map maps R->local X, G->local Z).
+`Decal` projects onto what is inside its entity's scale box, along local `+Y`, the way a material
+of [`Alpha_Mode.Decal`](../../mirai-rendering/references/materials.md#decals) changes a surface:
+in the `Decal` stage, into the decal targets of the view, which the resolve applies before the
+surface is lit (`order` low-to-high, after the mesh decals of the scene; no cap).
 
-- `Surface` stage reconstructs receiver from resolved depth. Color/emission-only decals blend
-  directly; material-property decals tile-gather (`DECAL_TILE`), compose in order in world space,
-  and repack the G-buffer (lowering metallic on metal falls back to dielectric reflectance).
-- Mip level uses `frame.footprint` + box texels/m (avoids reconstructed-depth edge derivatives).
-- Not drawn on nested-view pixels or glass.
+- `writes` (`asset.Decal_Writes`, default `Color` + `Normal`): `Color` from `color` and `texture`,
+  `Normal` from `normal_map` (R->local X, G->local Z; only with one), `Surface` from `roughness`
+  and `metallic` with an occlusion of 1, `Emission` from `emission` (nits; asks
+  `frame_decal_emission`). Coverage is the alpha of color times image, by `fade` against the
+  facing of the surface.
+- `decal_box.frag` finds the surface from the depth buffer (`pass_surface_read .Depth`) and its
+  normal from the depths around it; mip level from `frame.footprint` + box texels/m.
+- Not drawn on nested-view pixels or glass; lit, shadowed and seen by GI as the surface under it.
 
 ## Deform
 

@@ -2,6 +2,7 @@
   "version": 1,
   "id": "181b8168d78256877581cb3f1fda937e",
   "name": "sky_day",
+  "catalog_path": "Demo/sky",
   "origin": {"path": "assets/sky/sky_day.hdr", "folder": false, "importer": "image"},
   "identity": "69fe28de049e33d362a88e29fb8cd207eb86ece14f820cd2495f4ce6ab5e1a63",
   "inputs": [],

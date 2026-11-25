@@ -29,7 +29,10 @@ omit or interleave stages.
    `Renderer.resolve_counted`: atomics per wave); `Stats.cull_dropped` grows
    lists and caches peaks in `Capacity_Marks` (`host/capacities.odin`). Runs `Simulate` (first
    window view, or texture view if textures-only; [particles](../../mirai-world/references/vfx.md)),
-   `Gbuffer`, `Mask`, [nested](views.md#nested-views) G-buffers and `Surface`.
+   `Gbuffer`, `Mask` and [nested](views.md#nested-views) G-buffers. Before the resolve, while the
+   scene has a [decal](materials.md#decals) or an extension asks for `Decal`: `decal_draws.comp`
+   culls the decal list, `decal.vert`/`decal.frag` draw it into the decal targets against the
+   final depth, then the `Decal` stage; the resolve applies them (constant `decals`).
 5. **direct.** Sun, local and [extension](views.md#extension-hooks-and-constants) lights (diffuse +
    GGX): light grid, shadow maps, `direct_rays` (1/2x2), `direct_samples`, `direct_points`,
    `direct_spread`, `direct_filter`, shadowless `light_lists`

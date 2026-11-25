@@ -70,6 +70,8 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   [vertex functions](references/materials.md#vertex-functions); texture levels
   by what the GPU samples, `textures_pending` →
   [residency](references/materials.md#residency-by-sampling)
+- Decals (`Alpha_Mode.Decal`, what they write, their order, decal targets, the `Decal` stage) →
+  [decals](references/materials.md#decals)
 - OpenPBR layers (coat, fuzz, anisotropy, diffuse transmission, unlit), tangents and normal maps →
   [layers](references/materials.md#layers-openpbr),
   [normal maps](references/materials.md#normal-maps-and-specular-antialiasing)
@@ -152,6 +154,10 @@ description: Modify, diagnose and measure Mirai rendering - the `render` rendere
   where it rests, never by skipping what lies near.
 - Shadows are never colored or darkened by the glass they pass, in the maps or in the rays: colored
   light through glass comes from the light, one that projects a texture.
+- A decal changes the surface under it before it is lit and is never lit itself: no decal is a
+  forward blend. Its order is decided once, on change, the same in every view; a frame looks at
+  no entry. Without a decal in the scene and without the `Decal` stage a view has no decal target,
+  no decal pass and the resolve of before ([decals](references/materials.md#decals)).
 - Forward blends trace no shadow rays: the maps of the view shadow them, they mark the pages they
   read, and a light that no map holds at a point reaches it whole.
 - What is decided per instance (its class, the row of its material with its own values) is built

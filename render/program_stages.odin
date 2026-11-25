@@ -172,6 +172,8 @@ programs_ask :: proc(r: ^Renderer) {
 		if alpha_blended(row.alpha_mode) {
 			ids = []Pipeline_Id{.Translucent} if row.transmission <= 0 else
 			      []Pipeline_Id{.Glass_Layer, .Glass_Filter, .Glass_Overflow}
+		} else if row.alpha_mode == u32(asset.Alpha_Mode.Decal) {
+			ids = []Pipeline_Id{.Decal, .Decal_Emissive}
 		}
 		for id in ids {
 			if target := pipeline_of(r, id); target^ != 0 {

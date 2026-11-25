@@ -2,6 +2,7 @@
   "version": 1,
   "id": "44342052da337fa065c60cf296a4466a",
   "name": "church_glass_color",
+  "catalog_path": "Demo/church",
   "origin": {"path": "assets/church/church_glass_color.png", "folder": false, "importer": "image"},
   "identity": "7a992dadb99729c9515c80e3b85b47c43e13b44bdfbedd0ff0815211b10596b7",
   "settings": {

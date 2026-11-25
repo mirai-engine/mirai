@@ -2,6 +2,7 @@
   "version": 1,
   "id": "caae575f45863b717aafbe7fe73862c0",
   "name": "leaves_color",
+  "catalog_path": "Demo/gallery",
   "origin": {"path": "assets/gallery/leaves_color.png", "folder": false, "importer": "image"},
   "identity": "30b62e5a3a6b818103845cb1db9d509622a31605dd8f4cdc740053311340fa93",
   "settings": {
