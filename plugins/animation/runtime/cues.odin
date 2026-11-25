@@ -178,3 +178,13 @@ cue_pose :: proc(
     if bone<0 || bone>=len(poses) {return {},false}
     return mm.transform_compose(poses[bone],offset),true
 }
+
+// Where a socket of the skeleton of rig is in the world, by its finished pose of the last tick, or a
+// bone of that name when the skeleton has no such socket: a muzzle flash at the barrel. False for
+// an entity that is no posed rig, or a name its skeleton does not have.
+animation_socket_world :: proc(playback:core.Ref(Playback),skeletons:core.Ref(Skeleton_Assets),rig:core.Entity,name:string) -> (mm.Transform,bool) {
+    if name=="" {return {},false}
+    hash:=base.name_hash(name)
+    if pose,placed:=cue_pose(.Socket,hash,rig,playback,skeletons,nil,nil,nil);placed {return pose,true}
+    return cue_pose(.Bone,hash,rig,playback,skeletons,nil,nil,nil)
+}

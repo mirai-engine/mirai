@@ -301,11 +301,12 @@ animation_sample :: proc(animations:^core.Table(Animation,.Read),progress:^core.
     skeletons:^Skeleton_Assets,app:^host.App,time:core.Time,frame:core.Frame_Time,
     problems:^core.Problems,actions:^Action_Runtime,motion:^Motion_Runtime,
     content_sources:^Source_Assets,paces:^core.Table(core.Own_Pace,.Read),clock:core.Clock,
-    budget:Animation_Budget_Config,sources:core.Ref(scene.Simulation_Sources),fields:core.Ref(Field_Playback)) {
+    budget:Animation_Budget_Config,sources:core.Ref(scene.Simulation_Sources),fields:core.Ref(Field_Playback),
+    zone_sets:^core.Table(Hit_Zone_Set,.Read)) {
     if !playback.prepared {playback.frame+=1;core.take(&requests.reads);return}
     modifier_take(runtime,characters,requests,problems,0)
     attaches_take(runtime,requests,problems)
-    lod_decide(playback,runtime,requests,fields.ptr,sources.ptr,transforms,parents,budget,time,lod_presented(app),problems)
+    lod_decide(playback,runtime,requests,fields.ptr,zone_sets,sources.ptr,transforms,parents,budget,time,lod_presented(app),problems)
     animation_tick(animations,transforms,parents,hierarchy,names,requests,events,targets,playback,app,time,frame,skeletons,problems,characters,actions,motion,content_sources,remotes,played,paces,clock,budget,progress)
 }
 

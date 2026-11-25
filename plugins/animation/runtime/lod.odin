@@ -46,12 +46,12 @@ lod_presented :: proc "contextless" (app:^host.App) -> bool {
 
 // Decides, before the clocks of the tick, how much of each rig runs: Playback.work.lods by rig.
 // A rig gameplay reads (animation_read, a Bone_Attachment, a pose asked of it, a field its curves
-// write) runs everything, and so does the chain it is in; without sources, out of Play or with
+// write, its hit zones) runs everything, and so does the chain it is in; without sources, out of Play or with
 // cadence_near and cosmetic_distance 0, everything runs where it is drawn. Where nothing is drawn,
 // only what gameplay reads is posed.
 @(private)
 lod_decide :: proc(playback:^Playback,runtime:^Modifier_Runtime,requests:^Animation_Requests,
-    fields:^Field_Playback,sources:^scene.Simulation_Sources,transforms:^core.Table(core.Transform),
+    fields:^Field_Playback,zone_sets:^core.Table(Hit_Zone_Set,.Read),sources:^scene.Simulation_Sources,transforms:^core.Table(core.Transform),
     parents:^core.Table(core.Parent,.Read),config:Animation_Budget_Config,time:core.Time,
     presented:bool,problems:^core.Problems) {
     reads:=core.take(&requests.reads)
@@ -78,6 +78,7 @@ lod_decide :: proc(playback:^Playback,runtime:^Modifier_Runtime,requests:^Animat
     for request in requests.poses.items {mark(playback,request.rig)}
     for request in requests.final_poses.items {mark(playback,request.rig)}
     if fields!=nil {for bound in fields.fields {mark(playback,bound.player)}}
+    if zone_sets!=nil {for row in 0..<core.count(zone_sets) {mark(playback,core.entity_at(zone_sets,row))}}
     // The first rig of each chain: what a rig follows (Pose_Source), else what it is attached to.
     for &lod,i in lods {
         at:=i

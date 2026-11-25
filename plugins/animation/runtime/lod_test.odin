@@ -121,7 +121,7 @@ lod_step :: proc(f:^Lod_Test,app:^host.App,tick:u64,resimulating:=false) {
     }
     f.playback.prepared=true
     clear(&f.events.items)
-    animation_sample(core.read(&f.animations),core.read(&f.progress),&f.played,&f.transforms,core.read(&f.parents),{},core.read(&f.labels),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&f.characters,&f.cache,app,time,{},&f.problems,&f.actions,&f.motion,&f.sources,{},core.CLOCK_DEFAULT,f.config,core.ref(&f.simulation),core.ref(&f.fields))
+    animation_sample(core.read(&f.animations),core.read(&f.progress),&f.played,&f.transforms,core.read(&f.parents),{},core.read(&f.labels),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&f.characters,&f.cache,app,time,{},&f.problems,&f.actions,&f.motion,&f.sources,{},core.CLOCK_DEFAULT,f.config,core.ref(&f.simulation),core.ref(&f.fields),core.read(&f.zone_sets))
     animation_advance(&f.transforms,core.read(&f.parents),core.read(&f.worlds),&f.requests,&f.modifiers,&f.playback,{},{},time,{},&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
 }
 
@@ -200,12 +200,12 @@ rigs_are_posed_by_their_distance_to_the_simulation_sources :: proc(t:^testing.T)
     lod_problems(t,&lodded)
 }
 
-// A far rig that gameplay reads (animation_read, a Bone_Attachment, a pose asked of a bone) is
-// posed with all its modifiers in every tick.
+// A far rig that gameplay reads (animation_read, a Bone_Attachment, a pose asked of a bone, hit
+// zones) is posed with all its modifiers in every tick.
 @(test)
 a_rig_gameplay_reads_runs_in_full_at_any_distance :: proc(t:^testing.T) {
     a:Lod_Assets;if !lod_assets(t,&a,"lod-read") {return};defer lod_assets_destroy(&a)
-    Read :: enum {Request,Attachment,Pose}
+    Read :: enum {Request,Attachment,Pose,Zones}
     for read in Read {
         f:Lod_Test
         if !lod_init(t,&f) {return}
@@ -218,11 +218,13 @@ a_rig_gameplay_reads_runs_in_full_at_any_distance :: proc(t:^testing.T) {
             attachment:=BONE_ATTACHMENT_DEFAULT;attachment.rig,attachment.bone=rig,bone_ref("foot")
             core.add(&f.attachments,hitbox,attachment)
         }
+        if read==.Zones {core.add(&f.zone_sets,rig,Hit_Zone_Set{})}
         for tick in 0..<u64(20) {
             switch read {
             case .Request: animation_read(&f.requests,rig)
             case .Attachment:
             case .Pose: animation_pose(&f.requests,rig,bone_ref("lower"),mm.TRANSFORM_IDENTITY,0)
+            case .Zones:
             }
             lod_step(&f,&a.app,tick)
             state:=constraint_playing(core.ref(&f.playback),rig)
@@ -392,5 +394,55 @@ a_dedicated_server_poses_only_what_gameplay_reads :: proc(t:^testing.T) {
         markers+=lod_markers(&f,shown)
     }
     testing.expect(t,markers>0)
+    lod_problems(t,&f)
+}
+
+// The zones of a rig follow the finished pose of its bones in every tick, and a ray meets the
+// nearest one with its tags, thickened by its radius; a world without zones does no work.
+@(test)
+hit_zones_follow_their_bones_and_a_ray_meets_the_nearest :: proc(t:^testing.T) {
+    a:Lod_Assets;if !lod_assets(t,&a,"lod-zones") {return};defer lod_assets_destroy(&a)
+    f:Lod_Test
+    if !lod_init(t,&f) {return}
+    defer lod_destroy(&f)
+    TABLE :: base.Asset_Id{0x20e,1}
+    zones:[1]Hit_Zones
+    zones[0].zones[0]={shape=.Sphere,size={0.3,0,0},tags={bits=1<<1}}
+    base.text_set(zones[0].zones[0].bone[:],"foot")
+    zones[0].zones[1]={shape=.Capsule,offset={0,-0.5,0},size={0.3,0.5,0},tags={bits=1<<2}}
+    base.text_set(zones[0].zones[1].bone[:],"upper")
+    rows:=[1]core.Record_Row{{table=TABLE,row=1}}
+    index:=[1]u32{0}
+    set:=core.Record_Set{size=size_of(Hit_Zones),rows=rows[:],index=index[:],values=slice.to_bytes(zones[:])}
+    records:=core.Records(Hit_Zones){&set}
+    // No zones: the step leaves its table alone.
+    animation_hit_zones(core.read(&f.zone_sets),&f.zone_poses,records,core.ref(&f.playback),&f.problems)
+    testing.expect_value(t,f.zone_poses.version,0)
+    rig:=lod_rig(&f,&a,0)
+    core.add(&f.zone_sets,rig,Hit_Zone_Set{zones={TABLE,1}})
+    lod_source(&f,{})
+    for tick in 0..<u64(12) {
+        lod_step(&f,&a.app,tick)
+        test_world_settle(&f.w)
+        animation_hit_zones(core.read(&f.zone_sets),&f.zone_poses,records,core.ref(&f.playback),&f.problems)
+        test_world_settle(&f.w)
+        pose,posed:=core.get(&f.zone_poses,rig)
+        if !testing.expectf(t,posed && pose.placed_bits==0b11,"tick %d: %v",tick,pose.placed_bits) {return}
+        foot,_:=animation_bone_transform(core.ref(&f.playback),rig,bone_ref("foot"))
+        upper,_:=animation_bone_transform(core.ref(&f.playback),rig,bone_ref("upper"))
+        testing.expectf(t,linalg.length(pose.placed[0].position-foot.position)<1e-5,"tick %d: the foot zone is on the foot",tick)
+        testing.expectf(t,linalg.length(pose.placed[1].position-(upper.position+mm.quat_rotate(upper.rotation,[3]f32{0,-0.5,0})))<1e-5,"tick %d: the upper zone is below the upper bone",tick)
+        // From 5 m in front of the foot toward it: the foot zone, 0.3 m short of its center.
+        hit,met:=hit_zones_ray(core.read(&f.zone_poses),core.read(&f.zone_sets),records,rig,foot.position+{0,0,5},{0,0,-1},10)
+        testing.expectf(t,met && hit.zone==0 && hit.tags.bits==1<<1 && abs(hit.distance-4.7)<1e-3,"tick %d: %v",tick,hit)
+        // A thick ray that passes 0.4 m beside it meets it; a thin one does not.
+        _,thin:=hit_zones_ray(core.read(&f.zone_poses),core.read(&f.zone_sets),records,rig,foot.position+{0.4,0,5},{0,0,-1},10)
+        _,thick:=hit_zones_ray(core.read(&f.zone_poses),core.read(&f.zone_sets),records,rig,foot.position+{0.4,0,5},{0,0,-1},10,0.2)
+        testing.expectf(t,!thin && thick,"tick %d: thin %v, thick %v",tick,thin,thick)
+        // Down from above: the upper zone comes first.
+        above:=pose.placed[1].position+{0,5,0}
+        hit,met=hit_zones_ray(core.read(&f.zone_poses),core.read(&f.zone_sets),records,rig,above,{0,-1,0},10)
+        testing.expectf(t,met && hit.zone==1 && hit.tags.bits==1<<2,"tick %d: %v",tick,hit)
+    }
     lod_problems(t,&f)
 }

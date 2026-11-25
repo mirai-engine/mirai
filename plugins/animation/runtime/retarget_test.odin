@@ -216,7 +216,7 @@ retarget_step :: proc(f:^Retarget_Test,app:^host.App,tick:u64) {
     rigs_update(&f.playback,core.read(&f.meshes),core.read(&f.skins),app.assets,core.read(&f.attachments))
     f.playback.prepared=true
     clear(&f.events.items)
-    animation_sample(core.read(&f.animations),core.read(&f.progress),&f.played,&f.transforms,core.read(&f.parents),{},core.read(&f.labels),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&f.characters,&f.cache,app,time,{},&f.problems,&f.actions,&f.motion,&f.sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT,core.ref(&f.simulation),core.ref(&f.fields))
+    animation_sample(core.read(&f.animations),core.read(&f.progress),&f.played,&f.transforms,core.read(&f.parents),{},core.read(&f.labels),core.read(&f.targets),core.read(&f.remotes),&f.requests,&f.events,&f.modifiers,&f.playback,&f.characters,&f.cache,app,time,{},&f.problems,&f.actions,&f.motion,&f.sources,{},core.CLOCK_DEFAULT,ANIMATION_BUDGET_CONFIG_DEFAULT,core.ref(&f.simulation),core.ref(&f.fields),nil)
     animation_advance(&f.transforms,core.read(&f.parents),core.read(&f.worlds),&f.requests,&f.modifiers,&f.playback,{},{},time,{},&f.problems,&f.motion,&f.characters,{},{},core.CLOCK_DEFAULT,nil)
     for event in f.events.items {if event.kind==.Marker && event.name==base.name_hash("hit") && (event.animation==RETARGET_MOVES || event.animation==RETARGET_KICK) {f.markers+=1}}
 }

@@ -2,7 +2,7 @@
   "name": "animation",
   "version": "0.1.0",
   "dependencies": [],
-  "parts": ["Runtime", "Editor"],
+  "parts": ["Runtime", "Editor", "Assets"],
   "asset_kinds": [
     {"extension": ".character", "kind": "CHAR", "version": 12, "merged": true}
   ]

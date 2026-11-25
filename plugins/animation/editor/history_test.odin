@@ -47,7 +47,7 @@ history_test_tick :: proc(data,shared,editor_data,app_data:rawptr) {
     }
     core.settle(app.info,data,editor_data)
     anim.animation_prepare(core.read(&w.animations),core.read(&w.attachments),core.read(&w.meshes),core.read(&w.sources),&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,problems)
-    anim.animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,w.time,w.frame,problems,&w.actions,&w.motion,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT,{},{})
+    anim.animation_sample(core.read(&w.animations),core.read(&w.progress),&w.played,&w.transforms,core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.names),core.read(&w.targets),core.read(&w.remotes),&w.requests,&w.events,&w.modifier_runtime,&w.playback,&s.characters,&s.skeletons,app,w.time,w.frame,problems,&w.actions,&w.motion,&s.sources,{},core.CLOCK_DEFAULT,anim.ANIMATION_BUDGET_CONFIG_DEFAULT,{},{},nil)
     core.settle(app.info,data,editor_data)
     anim.animation_advance(&w.transforms,core.read(&w.parents),core.read(&w.worlds),&w.requests,&w.modifier_runtime,&w.playback,{},{},w.time,core.ref(&s.skeletons),problems,&w.motion,&s.characters,{},{},core.CLOCK_DEFAULT,nil)
     core.settle(app.info,data,editor_data)
