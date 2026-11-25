@@ -114,7 +114,7 @@ FOREGROUND_DEPTH     :: f32(15.0 / 16)
 FOREGROUND_CLEARANCE :: f32(0.02)
 FOREGROUND_MAP_SIDE  :: u32(1024) // a map of a viewmodel (render/foreground.odin), texels a side
 FOREGROUND_MAPS      :: 4
-FOREGROUND_MARK_DEPTH :: f32(1) // the pixels of the viewmodel take the maps of the world at the level of a pixel this far, metres, or farther
+FOREGROUND_MARK_DEPTH :: f32(2) // the pixels of the viewmodel take the maps of the world at the level of a pixel this far, metres, or farther: the coarsest whose edges are as sharp as on a wall 1 m away
 VIEWS_FOREGROUND     :: 128
 VIEWS_KEPT           :: 127
 

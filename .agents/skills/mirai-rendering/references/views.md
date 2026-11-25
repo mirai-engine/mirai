@@ -60,6 +60,34 @@
 camera and visible scene since last frame, reprojecting histories instead of cutting them
 (0 = none).
 
+## Viewmodel
+
+- `Scene_State.foreground[slot]`: the instances of `INSTANCE_FLAG_FOREGROUND` of a local slot
+  (`Instance_Desc.foreground`, set by the sync on what hangs from an `engine/render.Viewmodel`
+  under a body of `View_Bodies`), their field of view (`scene_set_foreground`) and the boxes of
+  the weapon and the body (`scene_foreground_bodies`). A view whose `Camera.own` has one draws it
+  (`render/foreground.odin`); no other view, cull, map or ray structure meets those instances.
+- **Depth:** the world of that view is drawn below `FOREGROUND_DEPTH` (15/16) of its depth and of
+  `glass_zbuffer` (`rhi.cmd_set_depth_range` names the targets it holds for); `inv_view_proj`
+  takes the stored depth, so the pyramid and what decodes the depth target follow. After the
+  G-buffer (and the `Gbuffer` stage) the viewmodel is culled (`FRAME_FLAG_FOREGROUND`), rastered
+  above 15/16 and resolved over the G-buffer with its projection and its previous one (motion).
+  The pyramid keeps the world alone: the next frame culls nothing behind the weapon.
+- **Tag:** `foreground_tag.frag` writes `VIEWS_FOREGROUND` and the kept share (`VIEWS_KEPT`) into
+  the views target: `min(1, (world depth - FOREGROUND_CLEARANCE) / its depth)`, from the world
+  depth before the resolve. `pixel_at` returns the cleared place, `Pixel.true_position` the drawn
+  one; `pixel_side` keeps it apart in spatial filters, `pixel_across` takes the maps of the world
+  at `FOREGROUND_MARK_DEPTH` or farther, `pixel_rays_omitted` leaves `RAY_BODY`/`RAY_BODY_SMALL`
+  out of its rays, contact occlusion skips it. A mask of nested views keeps the tags.
+- **Maps:** `FOREGROUND_MAPS` squares of `FOREGROUND_MAP_SIDE` below the pool in the atlas
+  (`FOREGROUND_MAP_SLOT`, read by the shared filter as they are): the weapon and the body
+  (`FRAME_FLAG_BODY`) for the sun and `Gpu_Frame.foreground_light`. The maps of the world of the
+  view leave out its body (`Shadow_Raster.body`: made anew when it changes, its moves stale
+  nothing there); `direct_maps` multiplies a weapon pixel by its layer at its true place and a
+  world pixel by the body layer.
+- **Not yet:** glass, blends and overlays of the viewmodel; maps for more than the sun and one
+  light; hardware rays from its pixels leave out every local body.
+
 ## Texture views
 
 - `view_texture_add` / `view_texture_remove` manage sRGB RGBA8 table entries;
