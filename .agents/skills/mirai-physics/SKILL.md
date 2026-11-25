@@ -237,7 +237,7 @@ tables and is the only package that imports it. The game and the other plugins, 
 - `.fracture`: [assets](../mirai-assets/SKILL.md). Debug draw and selection:
   [editor](../mirai-editor/SKILL.md#verification). Gameplay and networking:
   [engine.md#verification](references/engine.md#verification).
-- Measurements (the table goes in the final report of the task):
+- Measurements, when the owner asks for them (the table goes in the final report of the task):
 
   ```sh
   mirai test plugins/physics/runtime/sim bench_steps bench_snapshot bench_characters \

@@ -273,8 +273,7 @@ A game is a struct in memory and a list of functions that transform it
   without being requested, and every settle names a row written since the last one without a
   request (an edit pointer kept past a settle). It copies tables on every function and settle,
   and settles every table: it is not for measuring.
-- CPU copies of meshes (`host/assets_geometry_test.odin`, `assets_generated_test.odin`): repeat with
-  `--release` only if a failure may depend on optimization.
+- CPU copies of meshes: `host/assets_geometry_test.odin`, `assets_generated_test.odin`.
 - Fonts, texts and prompts of the content: `host/content_interface_test.odin`.
 - GPU failure: `host/gpu_failure_test.odin` (with GPU).
 - Entity pool: also `mirai test plugins/physics/runtime` (scene reload with physics storage).

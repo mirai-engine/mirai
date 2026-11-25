@@ -86,7 +86,7 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
   ':!*_test.odin'`, same for `*.slang`); if not, explain why.
 - **Optional features live in plugins** so unused systems add zero core cost.
 - **Performance.** For perf work or measurable per-frame/tick additions, measure once when done with
-  `mirai bench compare --base main`
+  `mirai bench compare --base main` in dev
   ([profiling](.agents/skills/mirai-agent-api/references/methods.md#profiling)). Non-perf changes
   need only `profile.capture`. Put the results table in the final report; raw output in `bin/`
   (never committed).
@@ -108,9 +108,9 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 Full table and session flow:
 [common commands](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
-- Commands build in dev unless `--release` is passed (`render check` and `bench compare` match
-  modes). Use `--release` only for absolute-number budgets or when asked. Use a worktree if the
-  user's editor holds the dev build.
+- Commands build in dev. `--release` builds, tests and benchmarks are made only when the owner asks
+  for one, never for testing or measuring; a number that only means something in release is
+  reported as such instead of built. Use a worktree if the user's editor holds the dev build.
 - Against an editor: `mirai session start`, `mirai rpc` / `mirai capture`, `mirai session stop`.
   Never hand-launch `mirai-editor`, write HTTP clients, or wrap `rpc` in `json.load`/`sleep` scripts
   (use `--select` and `--wait-until`).

@@ -163,7 +163,7 @@ rig; `fraction` is the part of the remaining time that this step consumes.
   `a_transition_lasts_what_it_asks_also_when_it_interrupts_another` and
   `each_bone_closes_over_its_own_time_or_the_time_left_of_the_one_it_interrupts`.
 - The hostile cases accept `ANIM_INERTIAL_HOSTILE_ROUNDS` and `ANIM_WARP_HOSTILE_ROUNDS`; when
-  changing validations or state, repeat them with `--release` and 20000 rounds.
+  changing validations or state, repeat them with 20000 rounds.
 - Pose and stride warp are run with null allocators: e.g.
   `pose_warp_preserves_identity_and_rotates_the_source_knee_planes_without_ik` and
   `pose_stride_warp_scales_each_foot_from_its_hip_and_preserves_the_source_knee_side`.

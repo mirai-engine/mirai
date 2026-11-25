@@ -184,7 +184,7 @@ planes.
 ## Verification
 
 - `mirai test std/geom`: `shapes_test.odin`, `surface_edit_test.odin`, `boolean_test.odin`,
-  `hostile_test.odin` (`-define:GEOM_HOSTILE_ROUNDS=n`, 20,000 `--release` on validation changes).
+  `hostile_test.odin` (`-define:GEOM_HOSTILE_ROUNDS=n`, 20,000 on validation changes).
 - Key invariants:
   - `calls_without_memory_fail_whole_and_their_workspaces_work_again`
   - `isosurface_regions_of_mixed_levels_join_closed_without_cracks`

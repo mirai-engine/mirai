@@ -96,7 +96,7 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   twice with and without a lagging decoder thread, a dry ring, refused files, and the audio and
   game threads sharing a mixer with the decoder thread) and `audio/lossless_test.odin`
   (lossless voices and offsets, damaged input).
-- Benchmarks, only if the change touches a measured path:
+- Benchmarks, when the owner asks for them:
   `mirai test audio benchmark_mixing_ten_milliseconds --release -define:AUDIO_BENCHMARK=true`,
   `mirai test cook/import bench_sounds_in_the_mixer -define:COOK_BENCH=true` (the sounds of the
   demo and the template as imported: memory, start, render and decode per 10 ms, a minute of

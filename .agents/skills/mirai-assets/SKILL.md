@@ -184,10 +184,10 @@ instances, registry).
 - Readers: files truncated at every length and mutated bytes in `asset/fuzz_test.odin`, which a new
   format or chunk extends; damaged files must give exit 0, 1 or 2 in `asset/cli_test.odin`.
   `-sanitize:address` repeats the tests with the sanitizer.
-- Out of memory: `std/serial/schema_memory_test.odin`, `asset/document_oom_test.odin` (both also
-  with `--release`) and `asset/types_memory_test.odin`. If schema validation changes, add
-  `hostile_schema_binary` and `hostile_random_schemas_validate` of `std/serial/hostile_test.odin`
-  with `--release` and `-define:SERIAL_HOSTILE_ROUNDS=20000`.
+- Out of memory: `std/serial/schema_memory_test.odin`, `asset/document_oom_test.odin` and
+  `asset/types_memory_test.odin`. If schema validation changes, add `hostile_schema_binary` and
+  `hostile_random_schemas_validate` of `std/serial/hostile_test.odin` with
+  `-define:SERIAL_HOSTILE_ROUNDS=20000`.
 - `.character` is verified in its [plugin](../mirai-animation/SKILL.md).
 - Compression: `asset/compress_test.odin` (every profile and codecs, hostile streams, block
   tables), `asset/container_test.odin` (chunks with alignment and pieces) and the pages in

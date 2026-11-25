@@ -236,7 +236,7 @@ print `file(line:column) Error: message`; exit 1 on failure.
 ## Common commands
 
 Omit `[project]` for cwd (`demo` for demo). Use `./mirai` in bash; absolute `mirai.cmd` in
-PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/needed).
+PowerShell/cmd/Python. Builds are dev ([release builds](../../../../AGENTS.md#common-commands)).
 
 | Operation | Command |
 | --- | --- |

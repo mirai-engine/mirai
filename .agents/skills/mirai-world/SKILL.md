@@ -175,8 +175,7 @@ rules of [the plugin system](../mirai-plugins/SKILL.md). Layout, manifests and b
   [behavior](references/behavior.md#verification), [vfx](references/vfx.md#verification),
   [vfx in the editor](references/vfx-editor.md#verification),
   [water](references/water.md#verification), [imprint](references/imprint.md#verification) and
-  [shapes](references/shapes.md#verification); `--release` only if a failure may depend on
-  optimization.
+  [shapes](references/shapes.md#verification).
 - GPU: terrain uses `-define:TERRAIN_GPU=true`; the plugins that draw with shaders of their own,
   graphics validation.
 - Before declaring a method available, generate and build the demo editor and check it with
