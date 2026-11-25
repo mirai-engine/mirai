@@ -20,7 +20,10 @@ offset, sizes), and aligned chunks.
   tables by block). `object_file` reconstructs exact bytes. `asset_open_object` validates meta vs
   groups and reads chunks lazily (`Not_Here` if absent; no whole-file hash check).
 - `blob_build` compresses a chunk only if smaller; `DEPS`, `STRS`, `SCHM`, `TDIR` stay uncompressed
-  so scans need no decoder.
+  so scans need no decoder. Which columns of a document compress is one rule,
+  `column_compression` of `document_write`: with codecs, every column but those read by offset
+  (mesh `page_data`, `*_blocks` tables). A save and the cook's `document_repack` with the same
+  codecs write the same bytes; writers choose no compression of their own.
 
 ### Compression
 

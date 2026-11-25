@@ -26,7 +26,6 @@ Font_Desc :: struct {
     owner:base.Asset_Id,
     file:[]u8,
     source:^Import_Info,
-    compression:Compression,
 }
 
 Font_View :: struct {
@@ -62,7 +61,7 @@ font_document :: proc(doc:^Document,types:^Types,desc:Font_Desc,allocator:=conte
 font_tables :: proc(doc:^Document,types:^Types,info:^Font_Info,desc:Font_Desc) -> Error {
     document_put_row(doc,types,"font",info) or_return
     import_put(doc,types,desc.source) or_return
-    document_put(doc,types,"file",desc.file,{.Bulk},desc.compression,FONT_BULK_ALIGNMENT) or_return
+    document_put(doc,types,"file",desc.file,{.Bulk},FONT_BULK_ALIGNMENT) or_return
     return .None
 }
 

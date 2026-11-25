@@ -89,7 +89,7 @@ a_document_writes_with_what_the_types_it_was_made_with_say :: proc(t:^testing.T)
         doc:Document
         document_init(&doc,fourcc("TEST"),{1,2},context.temp_allocator)
         values:=make([]u8,4000,context.temp_allocator)
-        _,put:=document_put(&doc,&types,"values",values,{.Bulk},.Stream)
+        _,put:=document_put(&doc,&types,"values",values,{.Bulk})
         testing.expect_value(t,put,Error.None)
         bytes,error:=document_bytes(&doc,context.temp_allocator,.Ultra)
         testing.expect_value(t,error,Error.None)

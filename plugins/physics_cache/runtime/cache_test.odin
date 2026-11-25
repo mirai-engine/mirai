@@ -213,3 +213,28 @@ cache_content_reloads_releases_old_geometry_and_obeys_public_player_requests :: 
     testing.expect(t,!host.assets_mesh_generated(&assets,prior_mesh))
     testing.expect_value(t,len(assets.meshes)-len(assets.free_meshes),2)
 }
+
+// A physics cache a tool saves with the codecs of a project is the file the
+// cook's repack writes of it: the same chunks compressed the same way.
+@(test)
+a_saved_cache_is_what_the_repack_of_the_cook_writes :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    record:Cache_Recorder
+    testing.expect_value(t,record_init(&record,{frames=3,tracks=2,samples=6,vertices=64,indices=128,origin=mm.TRANSFORM_IDENTITY}),Cache_Error.None)
+    defer record_destroy(&record)
+    cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube);defer geom.mesh_buffer_destroy(&cube);geom.cube_build(&cube)
+    track,error:=record_mesh(&record,0,0,geom.mesh_buffer_view(&cube))
+    if !testing.expect_value(t,error,Cache_Error.None) {return}
+    samples:=[1]Cache_Sample{{track,mm.TRANSFORM_IDENTITY}}
+    record_frame(&record,0,samples[:]);samples[0].pose.position={2,0,0};record_frame(&record,2,samples[:])
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    types.codecs=.Compressed
+    doc:asset.Document
+    if !testing.expect_value(t,cache_document(&doc,&types,{771,221},record_view(&record)),asset.Error.None) {return}
+    defer asset.document_destroy(&doc)
+    saved,saved_error:=asset.document_bytes(&doc,context.temp_allocator)
+    if !testing.expect_value(t,saved_error,asset.Error.None) {return}
+    repacked,repack_error:=asset.document_repack(saved,.Fast,.Compressed,context.temp_allocator)
+    testing.expect_value(t,repack_error,asset.Error.None)
+    testing.expect(t,string(saved)==string(repacked),"a save and a repack write other bytes")
+}

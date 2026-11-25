@@ -29,7 +29,7 @@ test_fracture :: proc(s:^Test_Fracture) -> Fracture_Desc {
     s.info.source_mesh={42,3}
     s.connections[0]={0,1,0.1,30}
     s.clusters[0]={-1,100}
-    return {id={42,2},source_mesh=s.info.source_mesh,vertices=s.vertices[:],indices=s.indices[:],pieces=s.pieces[:],connections=s.connections[:],clusters=s.clusters[:],compression=.Stream}
+    return {id={42,2},source_mesh=s.info.source_mesh,vertices=s.vertices[:],indices=s.indices[:],pieces=s.pieces[:],connections=s.connections[:],clusters=s.clusters[:]}
 }
 
 @(test)
@@ -185,4 +185,22 @@ fracture_builder_preserves_attributes_and_cooks_exact_gap_proximity :: proc(t:^t
     testing.expect_value(t,f.connections[0].area,f32(1))
     testing.expect_value(t,fracture_connect_proximity(&b,-1,.5),asset.Error.Invalid)
     testing.expect_value(t,fracture_geometry(view,&f,{-1,1,1}),asset.Error.Invalid)
+}
+
+// A fracture a tool saves with the codecs of a project is the file the cook's
+// repack writes of it: the same chunks compressed the same way.
+@(test)
+a_saved_fracture_is_what_the_repack_of_the_cook_writes :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    types.codecs=.Compressed
+    storage:Test_Fracture
+    doc:asset.Document
+    if !testing.expect_value(t,fracture_document(&doc,&types,test_fracture(&storage)),asset.Error.None) {return}
+    defer asset.document_destroy(&doc)
+    saved,error:=asset.document_bytes(&doc,context.temp_allocator)
+    if !testing.expect_value(t,error,asset.Error.None) {return}
+    repacked,repack_error:=asset.document_repack(saved,.Fast,.Compressed,context.temp_allocator)
+    testing.expect_value(t,repack_error,asset.Error.None)
+    testing.expect(t,string(saved)==string(repacked),"a save and a repack write other bytes")
 }

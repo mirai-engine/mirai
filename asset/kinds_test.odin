@@ -92,9 +92,9 @@ mesh_round_trips_its_clusters_compressed :: proc(t:^testing.T) {
     testing.expect(t,view.info.skeleton==base.Asset_Id{7,7} && view.joints[1].node==1)
     testing.expect(t,len(view.colliders)==2 && view.colliders[0].size==[3]f32{1,2,3} && view.collision_points[3]==[3]f32{0,0,1} && view.collision_indices[5]==3)
     testing.expect(t,view.source!=nil && serial.text_field(view.source.source[:])=="models/model.gltf" && view.source.index==2 && view.source.importer_version==3)
-    // The bulk columns are LZ: they are memory of the asset, not the file. LZ keeps a
-    // chunk of a few hundred bytes as it is, like the clusters here.
-    testing.expect(t,inside(&a,view.info) && !inside(&a,raw_data(view.vertices)) && !inside(&a,raw_data(view.triangles)) && !inside(&a,raw_data(view.skin)))
+    // The bulk columns are LZ: they are memory of the asset, not the file. The tables of
+    // records are streams too where that shrinks them, as the cook's repack writes them.
+    testing.expect(t,!inside(&a,raw_data(view.vertices)) && !inside(&a,raw_data(view.triangles)) && !inside(&a,raw_data(view.skin)))
     table,_:=asset_table(&a,"vertices")
     testing.expect(t,.Bulk in table.flags && blob_chunk(&a.blob,table.columns[0].chunk).tag==TAG_BULK)
 }

@@ -705,7 +705,7 @@ carry :: proc(w:core.World_Ref,scene,previous:^asset.Scene,report:^Report) -> as
         }
         target:=asset.document_table_add(&scene.doc,table.name,table.flags) or_return
         for column in table.columns {
-            asset.document_column_add(&scene.doc,target,column.name,asset.document_import(&scene.doc,&link,column.type),column.flags,column.compression,column.alignment) or_return
+            asset.document_column_add(&scene.doc,target,column.name,asset.document_import(&scene.doc,&link,column.type),column.flags,column.alignment) or_return
         }
         asset.document_resize(&scene.doc,target,table.rows) or_return
         for column,c in table.columns {copy(scene.doc.tables[target].columns[c].data,column.data)}

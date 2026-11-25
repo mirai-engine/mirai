@@ -40,7 +40,6 @@ Fracture_Desc :: struct {
     pieces:[]Fracture_Piece,
     connections:[]Fracture_Connection,
     clusters:[]Fracture_Cluster,
-    compression:asset.Compression,
 }
 
 Fracture_View :: struct {
@@ -142,21 +141,21 @@ fracture_document :: proc(doc:^asset.Document,types:^asset.Types,desc:Fracture_D
     if !fracture_check(view) {return .Invalid}
     asset.document_init(doc,FRACTURE_KIND,desc.id,allocator)
     doc.kind_version=FRACTURE_VERSION
-    error:=fracture_tables(doc,types,view,desc.compression)
+    error:=fracture_tables(doc,types,view)
     if error!=.None {asset.document_destroy(doc)}
     return error
 }
 
 @(private="file")
-fracture_tables :: proc(doc:^asset.Document,types:^asset.Types,view:Fracture_View,compression:asset.Compression) -> asset.Error {
+fracture_tables :: proc(doc:^asset.Document,types:^asset.Types,view:Fracture_View) -> asset.Error {
     asset.document_put_row(doc,types,"fracture",view.info) or_return
     asset.document_put(doc,types,"pieces",view.pieces) or_return
     asset.document_put(doc,types,"connections",view.connections) or_return
     asset.document_put(doc,types,"clusters",view.clusters) or_return
     asset.document_put(doc,types,"cluster_hulls",view.cluster_hulls) or_return
     asset.document_put(doc,types,"cluster_points",view.cluster_points) or_return
-    asset.document_put(doc,types,"vertices",view.vertices,{.Bulk},compression,asset.MESH_BULK_ALIGNMENT) or_return
-    asset.document_put(doc,types,"indices",view.indices,{.Bulk},compression,asset.MESH_BULK_ALIGNMENT) or_return
+    asset.document_put(doc,types,"vertices",view.vertices,{.Bulk},asset.MESH_BULK_ALIGNMENT) or_return
+    asset.document_put(doc,types,"indices",view.indices,{.Bulk},asset.MESH_BULK_ALIGNMENT) or_return
     return .None
 }
 

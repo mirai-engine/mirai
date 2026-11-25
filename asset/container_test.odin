@@ -31,7 +31,7 @@ sample_document :: proc(doc:^Document,types:^Types) {
     document_put_row(doc,types,"info",&info)
     points:[64]Point
     for &point,i in points {point={{f32(i),0,0},0.5}}
-    document_put(doc,types,"points",points[:],{.Bulk},.Stream,64)
+    document_put(doc,types,"points",points[:],{.Bulk},64)
     links:=[3]Link{{{7,7},1},{{3,3},2},{{7,7},3}}
     table,_:=document_table_add(doc,"links")
     document_resize(doc,table,3)
@@ -39,7 +39,7 @@ sample_document :: proc(doc:^Document,types:^Types) {
     rows:=[3]u32{2,0,1}
     document_column_put(doc,types,table,"id",ids[:])
     ref,_:=document_column_put(doc,types,table,"point",rows[:])
-    document_column_put(doc,types,table,"value",links[:],{},.Stream)
+    document_column_put(doc,types,table,"value",links[:],{})
     doc.tables[table].key=0
     doc.tables[table].columns[ref].ref=1
     imported:=Info{count=1}
@@ -190,8 +190,6 @@ document_writes_and_reads_back_the_same_tables :: proc(t:^testing.T) {
             testing.expect(t,mem.compare(copied.data[:],column.data[:])==0)
         }
     }
-    points,_:=document_table(&back,"points")
-    testing.expect_value(t,back.tables[points].columns[0].compression,Compression.Stream)
 
     again:serial.Writer;serial.writer_init(&again);defer serial.writer_destroy(&again)
     back.codecs=.Compressed
