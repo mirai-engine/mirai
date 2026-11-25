@@ -1400,7 +1400,7 @@ a_layered_set_plays_its_sounds_in_step_shaped_by_its_parameters :: proc(t:^testi
         entry=core.entity_map_get(&w.voices.entries,e)
         testing.expectf(t,abs(entry.values[0]-step.value)<1e-5,"after %v s: %v",step.dt,entry.values[0])
         for gain,i in step.gains {testing.expectf(t,abs(entry.shapes[i].gain-gain)<1e-5,"layer %d: gain %v, want %v",i,entry.shapes[i].gain,gain)}
-        testing.expect(t,abs(entry.shapes[0].pitch-step.pitch)<1e-5 && abs(entry.speed-step.pitch)<1e-5)
+        testing.expect(t,abs(entry.shapes[0].pitch-step.pitch)<1e-5 && abs(entry.speeds[0]-step.pitch)<1e-5)
     }
     // Retuned in one chunk, the layers keep in step: at the new pitch and
     // with the first layer silent, the mix is the second one alone.
@@ -1408,6 +1408,43 @@ a_layered_set_plays_its_sounds_in_step_shaped_by_its_parameters :: proc(t:^testi
     mixer.mixer_render(m,out)
     testing.expect(t,abs(out[(len(out)/2-1)*2]-level)<1e-4)
     testing.expect_value(t,w.voices.stats.started,u64(1))
+}
+
+// A Layered set without loop plays each layer once to its end, at its own
+// pitch and after its own delay, and ends with its last layer: a layer that
+// ends sooner than another one is not taken for a stolen one.
+@(test)
+layers_of_other_pitches_and_delays_end_once_each :: proc(t:^testing.T) {
+    Case :: struct {pitches:[2]f32,delay:f32,pitch:f32,seconds:f64}
+    for c in ([?]Case{
+        {pitches={1,4},pitch=1,seconds=0.1},           // the second ends at a quarter of the first
+        {pitches={1,1},delay=0.5,pitch=0.5,seconds=0.7}, // the second after its delay, both slowed
+    }) {
+        set:=asset.SOUND_SET_DEFAULTS
+        set.mode=.Layered
+        set.sounds[0].pitch,set.sounds[1].pitch,set.sounds[1].delay=c.pitches[0],c.pitches[1],c.delay
+        f:Fixture
+        if !fixture_init(t,&f,set) {return}
+        defer fixture_destroy(&f)
+        m:=f.app.mixer
+        listener:Mixer_Listeners
+        source:=AUDIO_SOURCE_DEFAULT;source.sound,source.pitch=STEPS,c.pitch
+        w:Heard_World
+        e,made:=world_init(t,&w,source);defer world_destroy(&w)
+        if !made {return}
+        out:=make([]f32,800*2,context.temp_allocator)
+        start:=mixer.mixer_clock(m)+LAYER_LEAD
+        ended:=u64(0)
+        for _ in 0..<120 {
+            world_run(&w,&listener,&f.app)
+            if state,_:=core.get(&w.states,e);state.ended {ended=mixer.mixer_clock(m);break}
+            mixer.mixer_render(m,out)
+            mixer.mixer_update(m)
+        }
+        testing.expectf(t,mixer.mixer_stats(m).voices_played==2,"%v: %d voices played, not one per layer",c,mixer.mixer_stats(m).voices_played)
+        end:=start+u64(c.seconds*mixer.MIXER_RATE)
+        testing.expectf(t,ended>=end && ended<=end+2*800,"%v: ended at frame %d, its last layer at %d",c,ended,end)
+    }
 }
 
 // What a snapshot changes of the buses, and the blend of the buses to it:
@@ -1498,7 +1535,8 @@ fresh_short_layered_oneshot_plays_from_start :: proc(t:^testing.T) {
     lengths[0]=mixer.sound_seconds(m,s0)
     lengths[1]=mixer.sound_seconds(m,s1)
     desc:=mixer.VOICE_DEFAULT
-    if !testing.expect(t,voices_play(m,&v,desc,&shapes,0,&lengths)) {return}
+    times:=layers_start(&v)
+    if !testing.expect(t,voices_play(m,&v,desc,&shapes,&times,&lengths)) {return}
     testing.expect(t,v.voices[0]!={} && v.voices[1]!={})
     out:=make([]f32,(LAYER_LEAD+short_frames+mixer.CHUNK_FRAMES)*2,context.temp_allocator)
     mixer.mixer_render(m,out)

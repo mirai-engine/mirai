@@ -253,14 +253,14 @@ Voice_Entry :: struct {
     kind:Voice_Kind,
     generation:u32, // of what the content loaded for sound
     lengths:[LAYERS]f32, // s of each sound
-    length:f32,          // s of the longest
     // Its parameters: where each is, where it goes and how fast, per second.
     values,targets,rates:[PARAMETERS]f32,
     shapes:[LAYERS]asset.Sound_Shape, // what the curves of its set give each sound at values
-    // Its time: cursor seconds into sound at mixer clock `clock`, going on at speed, its pitch.
-    cursor:f64,
+    // Its time: each sound is times[i] seconds into it at mixer clock `clock`
+    // (below 0: as many seconds before it starts), going on at speeds[i], its pitch.
+    times:[LAYERS]f64,
     clock:u64,
-    speed:f32,
+    speeds:[LAYERS]f32,
     // Of a spatial voice: where it was placed last, how it faces, what hides it
     // and the slot of the listener it is heard from.
     moving:bool,
@@ -367,7 +367,7 @@ audio_sources :: proc(
         now:=mixer.mixer_clock(app.mixer)
         for &entry,at in voices.entries.values {
             if clock.paused {
-                entry.cursor=entry_time(&entry,now)
+                entry.times=entry_times(&entry,now)
                 if entry.real {voice_virtual(voices,app.mixer,at,states)}
             }
             lead:=u64(LAYER_LEAD) if entry.sound.count>1 else u64(VOICE_LEAD)
@@ -534,7 +534,7 @@ voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners
     state,_:=core.get(states,e)
     lead:=u64(LAYER_LEAD) if entry.sound.count>1 else u64(VOICE_LEAD)
     start:=max(h.now+lead,entry.clock)
-    t:=entry_time(entry,start)
+    times:=entry_times(entry,start)
     heard:=source
     heard.spatial=entry.kind.spatial
     if heard.spatial {
@@ -543,17 +543,38 @@ voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners
     }
     desc:=voice_desc(heard,{entry.sound.volume,entry.sound.pitch},entry.position,entry.rotation,state.occlusion,entry.transmission,entry.listener)
     desc.start_frame=start
-    if !voices_play(m,&entry.sound,desc,&entry.shapes,t,&entry.lengths) {return false}
+    if !voices_play(m,&entry.sound,desc,&entry.shapes,&times,&entry.lengths) {return false}
     entry.real=true
     state.voice=entry.sound.voices[0]
     state_put(states,e,state)
     return true
 }
 
-// Seconds into its sound the voice of an entry is, or would be, at mixer clock now.
+// Seconds into its sound the voice of a layer of an entry is, or would be, at
+// mixer clock now; below 0, seconds before its delay lets it start.
 @(private)
-entry_time :: proc "contextless" (entry:^Voice_Entry,now:u64) -> f64 {
-    return entry.cursor+f64(now-min(now,entry.clock))/mixer.MIXER_RATE*f64(entry.speed)
+entry_time :: proc "contextless" (entry:^Voice_Entry,layer:int,now:u64) -> f64 {
+    elapsed:=f64(now-min(now,entry.clock))/mixer.MIXER_RATE
+    time:=entry.times[layer]
+    if time<0 {
+        if elapsed<=-time {return time+elapsed}
+        elapsed+=time
+        time=0
+    }
+    return time+elapsed*f64(entry.speeds[layer])
+}
+@(private)
+entry_times :: proc "contextless" (entry:^Voice_Entry,now:u64) -> (times:[LAYERS]f64) {
+    for i in 0..<clamp(entry.sound.count,0,LAYERS) {times[i]=entry_time(entry,i,now)}
+    return
+}
+// Whether every sound of an entry played to its end by mixer clock now.
+@(private)
+entry_ended :: proc "contextless" (entry:^Voice_Entry,now:u64) -> bool {
+    for i in 0..<clamp(entry.sound.count,0,LAYERS) {
+        if entry_time(entry,i,now)<f64(entry.lengths[i]) {return false}
+    }
+    return true
 }
 
 // The state of a source, written only when it is another.
@@ -1082,7 +1103,11 @@ source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^M
         parameters_aim(entry,set,source.parameters)
         entry.shapes=shapes_of(set,&entry.sound,entry.values)
         entry_speed(entry,source,h.now)
-        if source.loop && entry.length>0 {entry.cursor=math.mod(entry.cursor,f64(entry.length))}
+        if source.loop {
+            for &time,i in entry.times[:entry.sound.count] {
+                if time>0 && entry.lengths[i]>0 {time=math.mod(time,f64(entry.lengths[i]))}
+            }
+        }
         if entry.real {voices_tune(m,&entry.sound,source,&entry.shapes,entry.kind.spatial,true)}
         return
     }
@@ -1095,15 +1120,18 @@ source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^M
     source_start(voices,m,app,h,listeners,source,e,problems)
 }
 
-// The time of an entry goes on from now at the speed its source and the shape
-// of its first sound give it.
+// The time of each sound of an entry goes on from now at the pitch its voice
+// plays at: of its source, its set, its entry and its shape.
 @(private)
-entry_speed :: proc(entry:^Voice_Entry,source:Audio_Source,now:u64) {
+entry_speed :: proc "contextless" (entry:^Voice_Entry,source:Audio_Source,now:u64) {
     if now>entry.clock {
-        entry.cursor,entry.clock=entry_time(entry,now),now
+        entry.times,entry.clock=entry_times(entry,now),now
     }
-    p0:=entry.sound.pitches[0] if entry.sound.pitches[0]>0 else 1
-    entry.speed=(source.pitch>0?source.pitch:1)*entry.sound.pitch*p0*entry.shapes[0].pitch
+    pitch:=(source.pitch>0?source.pitch:1)*entry.sound.pitch
+    for i in 0..<clamp(entry.sound.count,0,LAYERS) {
+        entry_pitch:=entry.sound.pitches[i] if entry.sound.pitches[i]>0 else 1
+        entry.speeds[i]=clamp(pitch*entry_pitch*entry.shapes[i].pitch,mixer.PITCH_MIN,mixer.PITCH_MAX)
+    }
 }
 
 // What the voice of a source is started as, placed or not.
@@ -1131,15 +1159,12 @@ source_start :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:
     entry.generation=host.content_sound_generation(app,source.sound)
     entry.sound=voices_of(pick)
     if entry.sound.count>1 {entry.clock=h.now+LAYER_LEAD}
-    for sound,i in entry.sound.sounds[:entry.sound.count] {
-        entry.lengths[i]=mixer.sound_seconds(m,sound)
-        entry.length=max(entry.length,entry.lengths[i]+entry.sound.delays[i])
-    }
+    for sound,i in entry.sound.sounds[:entry.sound.count] {entry.lengths[i]=mixer.sound_seconds(m,sound)}
+    entry.times=layers_start(&entry.sound)
     entry.values=parameters_clean(source.parameters)
     entry.targets=entry.values
     entry.shapes=shapes_of(host.content_sound_set_info(app,source.sound),&entry.sound,entry.values)
-    p0:=entry.sound.pitches[0] if entry.sound.pitches[0]>0 else 1
-    entry.speed=(source.pitch>0?source.pitch:1)*pick.pitch*p0*entry.shapes[0].pitch
+    entry_speed(&entry,source,h.now)
     if entry.kind.spatial {
         entry.position=world.position
         entry.listener=listener_pick(listeners,world.position,AUDIO_LISTENERS_MAX)
@@ -1200,12 +1225,12 @@ voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:
             if voice=={} {continue}
             if mixer.voice_valid(m,voice) {left+=1;continue}
             voice={}
-            stolen||=source.loop || entry_time(entry,h.now)<f64(entry.lengths[i]+entry.sound.delays[i])-LAYER_ENDED
+            stolen||=source.loop || entry_time(entry,i,h.now)<f64(entry.lengths[i])-LAYER_ENDED
         }
         if stolen {entry_silence(m,entry)} else if left==0 {entry.real=false}
         state.voice=entry.sound.voices[0] if entry.real else {}
     }
-    if !entry.real && !source.loop && entry_time(entry,h.now)>=f64(entry.length) {
+    if !entry.real && !source.loop && entry_ended(entry,h.now) {
         core.entity_map_remove(&voices.entries,e)
         state.voice,state.ended={},true
         voices.stats.ended+=1
@@ -1311,8 +1336,9 @@ voices_picked :: proc(m:^Mixer,app:^host.App,source:Audio_Source,pick:host.Sound
     lengths:[LAYERS]f32
     for sound,i in v.sounds[:v.count] {lengths[i]=mixer.sound_seconds(m,sound)}
     shapes:=shapes_of(host.content_sound_set_info(app,source.sound),&v,parameters_clean(source.parameters))
+    times:=layers_start(&v)
     busy:=mixer.mixer_stats(m).streams_busy
-    if !voices_play(m,&v,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener),&shapes,0,&lengths) {
+    if !voices_play(m,&v,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener),&shapes,&times,&lengths) {
         // A refused stream is said by audio_buses, with the capacity that refused it.
         if mixer.mixer_stats(m).streams_busy==busy {
             core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, raise its priority, or raise the voices of the mixer",e==core.NONE?"audio.play":"its Audio_Source")
