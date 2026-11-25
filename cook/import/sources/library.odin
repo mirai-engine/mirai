@@ -968,7 +968,9 @@ package_refresh :: proc(l:^Library_State,top:string,entry:asset.Project_Package,
     }
     if !found {
         if origin_here {
-            reingest(l,top,&entry,&p,source,documents,prefab,"this engine reads no build of it here",report)
+            // Its source and its manifest are those the project pins: the import makes the objects
+            // of the store this machine lacks, and the documents and their pins stay as they are.
+            reingest(l,top,&entry,&p,source,documents,prefab,"this engine reads no build of it here",report,objects_only=true)
             return
         }
         switch {
@@ -1139,15 +1141,17 @@ source_changed :: proc(l:^Library_State,p:^asset.Package,source:string) -> bool 
 
 // Ingests the source of p again, here at source, keeping its ids, and pins
 // the manifest it gives; a model is imported with the project's folder, which follows its
-// documents and writes its prefab, and any other follows from its build.
+// documents and writes its prefab, and any other follows from its build. objects_only: the
+// source and the manifest are those pinned, and only the objects of its build are made: the
+// documents of the project, which that same import made, are left as they are.
 @(private="file")
-reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,source,documents:string,prefab:bool,why:string,report:^Library_Report) {
+reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^asset.Package,source,documents:string,prefab:bool,why:string,report:^Library_Report,objects_only:=false) {
     if l.options.progress.procedure!=nil {fmt.wprintfln(l.options.progress,"importing %s: %s",source,why)}
     started:=time.tick_now()
     model:=prefab && plugins_world(l)!=nil
     changed:=importer.Changed.Discard if l.options.changed==.Discard else .Keep
     written,error:=library_ingest(
-        l,source,entry.manifest,nil,documents if model else "",entry.written[:],changed,
+        l,source,entry.manifest,nil,documents if model && !objects_only else "",entry.written[:],changed,
         context.temp_allocator)
     if error.code!=.None {
         report_line(&report.failures,"package %s: %s",p.name,error.message)
@@ -1166,6 +1170,7 @@ reingest :: proc(l:^Library_State,top:string,entry:^asset.Project_Package,p:^ass
             }
         }
     }
+    if objects_only {return}
     if model {
         written_pin(l,top,entry,written.written[:],p,report)
         return
