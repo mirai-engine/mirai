@@ -57,8 +57,9 @@ void cull_start(uint i) {
 // Whether the pass draws an instance by its flags: what is not of a
 // viewmodel, or in the pass of the viewmodel of the view's body, that alone.
 bool pass_draws(uint flags) {
-    if ((frame.flags & FRAME_FLAG_FOREGROUND) == 0u) return (flags & INSTANCE_FLAG_FOREGROUND) == 0u;
-    return (flags & INSTANCE_FLAG_FOREGROUND) != 0u && ((flags >> INSTANCE_OWNER_SHIFT) & 3u) + 1u == (frame.own & 0xffu);
+    bool weapon = (frame.flags & FRAME_FLAG_FOREGROUND) != 0u, body = (frame.flags & FRAME_FLAG_BODY) != 0u;
+    if (!weapon && !body) return (flags & INSTANCE_FLAG_FOREGROUND) == 0u;
+    return view_owns(flags) && ((flags & INSTANCE_FLAG_FOREGROUND) != 0u) == weapon;
 }
 
 // What the view draws of what has that box: in its layers, not of the body it

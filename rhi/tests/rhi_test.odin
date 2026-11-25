@@ -347,7 +347,7 @@ rhi_the_depth_range_places_the_draws_of_a_pass_in_part_of_the_depth :: proc(t: ^
 	if !ok {return}
 	ranges := [3][2]f32{{0, 15.0 / 16}, {15.0 / 16, 1}, {0, 15.0 / 16}}
 	for range, i in ranges {
-		rhi.cmd_set_depth_range(cmd, range[0], range[1])
+		rhi.cmd_set_depth_range(cmd, range[0], range[1], depth)
 		pass := rhi.Render_Pass_Desc{color_count = 1, name = "triangle in depth"}
 		pass.colors[0] = {texture = target, load = .Clear if i == 0 else .Load, store = .Store}
 		pass.depth = {texture = depth, load = .Clear if i == 0 else .Load, store = .Store, clear = 0}
@@ -366,6 +366,28 @@ rhi_the_depth_range_places_the_draws_of_a_pass_in_part_of_the_depth :: proc(t: ^
 	testing.expectf(t, pixels[at + 1] > 200 && pixels[at] < 50 && pixels[at + 2] < 50, "the triangle above 15/16 stays in front: %v", pixels[at:at + 4])
 	expect_clean(t, d)
 
+	// A pass into another depth target stores depth as it is: the nearest in clip space stays.
+	other := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .D32_Float, usage = {.Depth_Target}, name = "other depth"})
+	cmd, ok = rhi.frame_begin(d)
+	if !ok {return}
+	for range, i in ranges {
+		rhi.cmd_set_depth_range(cmd, range[0], range[1], depth)
+		pass := rhi.Render_Pass_Desc{color_count = 1, name = "triangle in another depth"}
+		pass.colors[0] = {texture = target, load = .Clear if i == 0 else .Load, store = .Store}
+		pass.depth = {texture = other, load = .Clear if i == 0 else .Load, store = .Store, clear = 0}
+		rhi.cmd_begin_render_pass(cmd, &pass)
+		rhi.cmd_bind_pipeline(cmd, pipeline)
+		rhi.cmd_bind_buffer(cmd, 0, buffer)
+		rhi.cmd_draw(cmd, 3, 1, u32(3 * i))
+		rhi.cmd_end_render_pass(cmd)
+	}
+	testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d))
+	rhi.device_wait_idle(d)
+	testing.expect(t, rhi.texture_read(d, target, pixels[:]), rhi.device_error(d))
+	testing.expectf(t, pixels[at + 2] > 200 && pixels[at] < 50 && pixels[at + 1] < 50, "without a range the nearest in clip space stays: %v", pixels[at:at + 4])
+	rhi.texture_destroy(d, other)
+	expect_clean(t, d)
+
 	// Refused: inside a pass, and outside 0 to 1.
 	cmd, ok = rhi.frame_begin(d)
 	if !ok {return}
@@ -379,6 +401,8 @@ rhi_the_depth_range_places_the_draws_of_a_pass_in_part_of_the_depth :: proc(t: ^
 	testing.expect(t, strings.contains(rhi.device_error(d), "near not above far"), rhi.device_error(d))
 	rhi.cmd_set_depth_range(cmd, -1, 2)
 	testing.expect(t, strings.contains(rhi.device_error(d), "within 0 to 1"), rhi.device_error(d))
+	rhi.cmd_set_depth_range(cmd, 0, 1, depth, target, other)
+	testing.expect(t, strings.contains(rhi.device_error(d), "at most"), rhi.device_error(d))
 	rhi.frame_end(d, cmd)
 	rhi.device_wait_idle(d)
 	rhi.buffer_destroy(d, buffer)

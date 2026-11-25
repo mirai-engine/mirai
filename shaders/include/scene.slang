@@ -140,6 +140,7 @@ struct Pixel {
     float3 position;
     float3 view;     // unit, from the eye towards the pixel
     float distance;  // from the eye, along view
+    float3 true_position; // of a pixel of the viewmodel, where it is drawn (position: where its light is taken, pixel_at); else position
 };
 
 // The levels of the image of the sky left out of what a ray that gathers

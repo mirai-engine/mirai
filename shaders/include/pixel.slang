@@ -51,6 +51,7 @@ Pixel pixel_at(int2 p, float2 uv, float depth) {
     float reach = length(ray);
     Pixel px;
     px.position = origin + ray * (depth_distance(depth) * kept);
+    px.true_position = origin + ray * depth_distance(depth);
     px.view = ray / reach;
     px.distance = depth_distance(depth) * kept * reach;
     return px;

@@ -190,6 +190,9 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     f(&b,"FOREGROUND_DEPTH",abi.FOREGROUND_DEPTH)
     f(&b,"FOREGROUND_CLEARANCE",abi.FOREGROUND_CLEARANCE)
     f(&b,"FOREGROUND_MARK_DEPTH",abi.FOREGROUND_MARK_DEPTH)
+    u(&b,"FOREGROUND_MAPS",abi.FOREGROUND_MAPS)
+    u(&b,"FOREGROUND_MAP_SLOT",abi.FOREGROUND_MAP_SLOT)
+    u(&b,"FRAME_FLAG_BODY",abi.FRAME_FLAG_BODY)
     u(&b,"VIEWS_FOREGROUND",abi.VIEWS_FOREGROUND)
     u(&b,"VIEWS_KEPT",abi.VIEWS_KEPT)
 

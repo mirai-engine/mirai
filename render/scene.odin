@@ -82,8 +82,10 @@ Instance_Desc :: struct {
 // that owner), which the view of the slot draws over its world with this
 // vertical field of view, radians (scene_set_foreground).
 Foreground :: struct {
-	instances: int,
-	fov:       f32,
+	instances:    int,
+	fov:          f32,
+	weapon, body: [2]Vec3, // the boxes of its instances and of the rest of the body, low then high (scene_foreground_bodies)
+	turn:         quaternion128, // of its Viewmodel
 }
 
 // An instance whose materials need more of the G-buffer than base color and metallic.

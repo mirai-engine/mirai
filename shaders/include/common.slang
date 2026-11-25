@@ -80,7 +80,8 @@ struct Frame_Data {
     uint own;               // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
     uint flags;             // FRAME_FLAG_*
     uint shadowless_lights;  // the root of the tree of the local lights that cast no shadows (render/light_tree.odin), which ends at light_nodes; 0: none
-    uint3 pad0;
+    uint foreground_light;   // the local light of foreground_maps 2 and 3; INVALID: none
+    uint2 pad0;
     float4 jitter;            // xy current TAA jitter in render pixels, zw previous
     float4 texturing;         // x = mip bias of rasterized material textures
     float4 time; // current, previous simulation time in seconds
@@ -121,6 +122,7 @@ struct Frame_Data {
     uint4 moved_lights[LIGHT_MOVES_MAX / 4];
     float4 sun_shares;       // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
     float4 foreground_ray[3]; // with FRAME_FLAG_VIEWMODEL: the ray of a pixel of the viewmodel of the view (render/foreground.odin), as ray_origin, ray_du and ray_dv are of the view
+    uint4 foreground_maps[FOREGROUND_MAPS * SHADOW_MAP_ROWS]; // and its maps, SHADOW_MAP_ROWS rows each (shadow_maps.slang): of the sun the weapon and the body, then of foreground_light; rect.z 0: none
     uint4 sun_maps;          // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (sun_shadow_seen of shadow_maps.slang), 0: none; y where the rows of the maps start in their buffer; z the side of their atlas, texels, while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (render.shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
     uint4 sun_map_rows[SUN_MAP_ROWS];
 #ifdef MIRAI_FRAME_NESTED

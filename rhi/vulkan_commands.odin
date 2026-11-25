@@ -74,7 +74,9 @@ Command_List :: struct {
 	command_count:   int,
 	uses:            [PASS_RESOURCE_CAPACITY]Pass_Use,
 	use_count:       int,
-	depth_range:     [2]f32, // what the viewports map depth 0 and 1 to (cmd_set_depth_range)
+	depth_range:     [2]f32, // what the viewports of the passes into depth_ranged map depth 0 and 1 to (cmd_set_depth_range)
+	depth_ranged:    [DEPTH_RANGE_TARGETS]Texture,
+	pass_range:      [2]f32, // of the pass begun
 }
 
 @(private)
@@ -87,7 +89,7 @@ vk_list_reset :: proc(c: ^Command_List) {
 	c.memory_pending = false
 	c.command_count = 0
 	c.use_count = 0
-	c.depth_range = {0, 1}
+	c.depth_range, c.depth_ranged, c.pass_range = {0, 1}, {}, {0, 1}
 }
 
 // ---------------------------------------------------------------- hazards
@@ -282,6 +284,7 @@ cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	assert(!c.in_render_pass, "rhi: nested render pass")
 	c.in_render_pass = true
 	c.pass = desc^
+	c.pass_range = depth_range_of(c.depth_range, c.depth_ranged, desc.depth.texture)
 	c.pass_failed = false
 	c.pass_pipeline, c.pass_slots, c.pass_dirty = c.pipeline, c.slots, c.dirty
 	c.command_count = 0
@@ -492,17 +495,20 @@ cmd_set_viewport :: proc(c: ^Command_List, x, y, width, height: f32) {
 
 @(private)
 vk_viewport :: proc(c: ^Command_List, x, y, width, height: f32) {
-	viewport := vk.Viewport{x = x, y = y + height, width = width, height = -height, minDepth = c.depth_range[0], maxDepth = c.depth_range[1]}
+	viewport := vk.Viewport{x = x, y = y + height, width = width, height = -height, minDepth = c.pass_range[0], maxDepth = c.pass_range[1]}
 	c.device.dvk.CmdSetViewport(c.cmd, 0, 1, &viewport)
 }
 
 // What depth 0 and 1 of the clip space are stored as by the render passes
-// that begin after it, and their viewports, until it is set again: a range
-// within 0 to 1, near not above far. A new list starts with 0 to 1.
-cmd_set_depth_range :: proc(c: ^Command_List, near, far: f32) {
+// that begin after it whose depth target is one of `targets` (at most
+// DEPTH_RANGE_TARGETS), until it is set again: a range within 0 to 1, near
+// not above far. The other passes, and all of a new list, store it as it is.
+cmd_set_depth_range :: proc(c: ^Command_List, near, far: f32, targets: ..Texture) {
 	if c.in_render_pass {set_error(c.device, "the depth range is set outside a render pass"); return}
 	if !(near >= 0 && near <= far && far <= 1) {set_error(c.device, "depth range %v to %v: it is within 0 to 1, near not above far", near, far); return}
-	c.depth_range = {near, far}
+	if len(targets) > DEPTH_RANGE_TARGETS {set_error(c.device, "a depth range of %d targets: %d at most", len(targets), DEPTH_RANGE_TARGETS); return}
+	c.depth_range, c.depth_ranged = {near, far}, {}
+	copy(c.depth_ranged[:], targets)
 }
 
 cmd_set_scissor :: proc(c: ^Command_List, x, y: i32, width, height: u32) {

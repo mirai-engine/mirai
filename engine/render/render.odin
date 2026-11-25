@@ -422,6 +422,7 @@ Render_Sync :: struct {
     changed:[dynamic]core.Entity, // scratch: what may come, go or be made again in the frame
     under:[dynamic]core.Entity,   // scratch: the entities a table changed, and what hangs from them
     made:[dynamic]u32,            // scratch: the instances made again in the frame
+    bodies:[dynamic]u32,          // scratch: the instances of a local body with a viewmodel
     shown:[dynamic]gpu.Instance_Desc, // scratch: a run of them, as the renderer takes it
     lerping:[dynamic]core.Entity,  // drawn between their previous place and their transform (Drawn.lerp)
     deriving:[dynamic]core.Entity, // their rows derive from the values of their materials (Drawn.derives)
@@ -759,6 +760,7 @@ render_sync :: proc(
         sync.shown=nil
     }
     instances_moved(sync,t,c.worlds,frame)
+    if whole || bodies_changed || c.worlds.written || len(sync.made)>0 {bodies_settle(sync,r,hierarchy,t)}
     // The renderer leaves where it is what did not move, and as it is what has the same tint.
     if len(sync.moved)>0 {gpu.scene_move(r,sync.moved[:],sync.moved_transforms[:],sync.moved_anchors[:])}
     if len(sync.tinted)>0 {gpu.scene_tint(r,sync.tinted[:],sync.tinted_colors[:],sync.tinted_emissions[:],sync.tinted_values[:])}
@@ -980,6 +982,25 @@ extras_inherit :: proc(t:Sync_Tables,extras:[]gpu.Instance_Desc) {
 @(private)
 in_viewmodel :: proc(t:Sync_Tables,owner:u8,e:core.Entity) -> bool {
     return owner!=0 && t.viewmodels!=nil && core.count(t.viewmodels)>0 && core.ancestor_with(t.parents,t.viewmodels,e)!=core.NONE
+}
+
+// What the renderer fits the maps of the viewmodel of each local body
+// around: the instances of the body and what hangs from it, and the turn of
+// its Viewmodel.
+@(private)
+bodies_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,h:core.Ref(core.Hierarchy),t:Sync_Tables) {
+    for slot in 0..<gpu.OWNER_SLOTS {
+        if r.scene.foreground[slot].fov<=0 || slot>=len(t.owned) || t.owned[slot]==core.NONE {continue}
+        clear(&sync.bodies)
+        turn:mm.Quat=1
+        for at:=t.owned[slot];at!=core.NONE;at=core.subtree_next(h,t.owned[slot],at) {
+            if core.has(t.viewmodels,at) {
+                if world,placed:=core.get(t.worlds,at);placed {turn=world.rotation}
+            }
+            if instance:=instance_of(sync,at);instance>=0 {push(sync,&sync.bodies,u32(instance))}
+        }
+        gpu.scene_foreground_bodies(r,slot,sync.bodies[:],turn)
+    }
 }
 
 // The field of view the renderer draws the viewmodel of each local body

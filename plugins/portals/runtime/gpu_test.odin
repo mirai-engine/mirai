@@ -155,3 +155,56 @@ a_surface_seen_only_in_a_mirror_keeps_its_reflectance_and_layers :: proc(t: ^tes
 	testing.expectf(t, abs(srgb_linear(ground[0]) - 0.04) < 0.005 && ground[3] == 255, "the view itself reflects what its albedo gives: %v", ground)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
 }
+
+// A mirror in front of a player in first person shows its body and never its
+// viewmodel: the view draws the weapon over its world, the nested view of the
+// mirror the body alone.
+@(test)
+a_mirror_shows_the_body_of_the_player_and_never_its_viewmodel :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
+	eye := [3]f32{0, 1.6, 0}
+	gpu.scene_update(r, 0, {
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -4}, {20, 0.2, 20}), tint = {0.5, 0.5, 0.5}},
+		// The body around the eye, blue, and the weapon under it, red.
+		{object_id = 2, mesh = f.cube, transform = trs({0, 0.85, 0.05}, {0.5, 1.7, 0.3}), tint = {0, 0, 1}, owner = 1},
+		{object_id = 3, mesh = f.cube, transform = trs(eye + {0.12, -0.12, -0.45}, {0.05, 0.05, 0.4}), tint = {1, 0, 0}, owner = 1, foreground = true},
+	}, true)
+	gpu.scene_set_foreground(r, {55 * math.RAD_PER_DEG, 0, 0, 0})
+	camera := gpu.Camera{position = eye, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 90, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE, own = 1}
+	state := new(Portals_Gpu)
+	defer free(state)
+	state.gates[0] = mirror_gate({position = {0, 1.2, -2}, rotation = 1, scale = {3, 2.4, 1}})
+	state.count = 1
+	state.constants.count = 1
+	for _ in 0 ..< 3 {
+		state.pipeline = gpu.stage_pipeline(r, {stage = .Mask, shader = "portal_mask", name = "portal masks"})
+		if !testing.expect(t, state.pipeline != 0, "the shaders of the plugin have the mask of portals") {return}
+		testing.expect(t, gpu.frame_pass(r, .Mask, portals_record, state))
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	targets := &r.targets
+	count := int(targets.width * targets.height)
+	albedo := make([]u8, count * 4, context.temp_allocator)
+	depths := make([]f32, count, context.temp_allocator)
+	views := make([]u8, count, context.temp_allocator)
+	testing.expect(t, rhi.texture_read(f.device, targets.albedo, albedo) && rhi.texture_read(f.device, targets.linear_depth, ([^]u8)(raw_data(depths))[:count * 4]) && rhi.texture_read(f.device, targets.views, views), rhi.device_error(f.device))
+	body, weapon, nested, drawn := 0, 0, 0, 0
+	for i in 0 ..< count {
+		red, blue := albedo[i * 4] > 150 && albedo[i * 4 + 2] < 60, albedo[i * 4 + 2] > 150 && albedo[i * 4] < 60
+		if depths[i] < 0 {
+			nested += 1
+			if blue {body += 1}
+			if red {weapon += 1}
+		} else if views[i] & gpu.VIEWS_FOREGROUND != 0 && red {drawn += 1}
+	}
+	testing.expectf(t, nested > 0 && body > 0, "the mirror shows the body: %d of its %d pixels", body, nested)
+	testing.expectf(t, weapon == 0, "the mirror never shows the viewmodel: %d pixels", weapon)
+	testing.expectf(t, drawn > 0, "the view draws its viewmodel: %d pixels", drawn)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
+}

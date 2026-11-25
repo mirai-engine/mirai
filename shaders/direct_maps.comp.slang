@@ -166,6 +166,10 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     } else if (sun > 0.0) {
         rest = true;
     }
+    // The maps of the viewmodel: the weapon shades itself where it is drawn, the body the world.
+    bool weapon = pixel_foreground(source) != 0u;
+    float3 drawn = weapon ? pixel.true_position : pixel.position;
+    if (sun_part >= 0.0) sun_part *= foreground_shadow_seen(0u, weapon, drawn, normal, frame.sun_direction.xyz);
     float3 open = float3(0.0), lit = float3(0.0);
     float wide = 0.0, hid = 0.0;
     for (uint i = 0u; i < count; i++) {
@@ -200,6 +204,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             part = lerp(part, next_part, mip.blend);
             spread = lerp(spread, next_spread, mip.blend);
         }
+        if (item == frame.foreground_light) part *= foreground_shadow_seen(1u, weapon, drawn, normal, normalize(chosen.position_range.xyz - drawn));
         lit += radiance * part;
         // Within the penumbra of what its taps met, on its lit side as on the other.
         if (spread > 0.0) {

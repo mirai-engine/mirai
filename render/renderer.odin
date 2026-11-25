@@ -325,6 +325,8 @@ Pipeline_Id :: enum {
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
 	Foreground_Tag, // the tags of the pixels of the viewmodel of a view (foreground.odin)
+	// The depth of the maps of the viewmodel by raster bin, as the visibility target draws it, and the clear of a map.
+	Foreground_Map, Foreground_Map_Two_Sided, Foreground_Map_Tested, Foreground_Map_Tested_Two_Sided, Foreground_Map_Clear,
 	Debug_Views,
 	History_Scale,
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
@@ -1046,6 +1048,19 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 			cull = .None if bin & RASTER_BIN_TWO_SIDED != 0 else .Back, name = "visibility",
 		})
 	}
+	for id in Pipeline_Id.Foreground_Map ..= Pipeline_Id.Foreground_Map_Tested_Two_Sided {
+		bin := int(id) - int(Pipeline_Id.Foreground_Map)
+		tested := bin & RASTER_BIN_TESTED != 0
+		graphics(list, r, id, {
+			vertex = &r.shader_codes[.Vis_Raster_Tested_Vert if tested else .Vis_Raster_Vert], fragment = &r.shader_codes[.Vis_Raster_Tested_Frag if tested else .Vis_Raster_Frag],
+			depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater,
+			cull = .None if bin & RASTER_BIN_TWO_SIDED != 0 else .Back, name = "viewmodel map",
+		})
+	}
+	graphics(list, r, .Foreground_Map_Clear, {
+		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Foreground_Clear_Frag],
+		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "viewmodel map clear",
+	})
 	graphics(list, r, .Program_Depth, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Vis_Classify_Frag],
 		depth_format = .D16_Unorm, depth_test = true, depth_write = true, depth_compare = .Always, name = "program depth",

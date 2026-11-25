@@ -417,6 +417,17 @@ Compute_Pipeline_Desc :: struct {
 	name:      string,
 }
 
+// The depth targets a command list keeps a depth range for (cmd_set_depth_range).
+DEPTH_RANGE_TARGETS :: 2
+
+// The range a pass into `depth` stores depth in: that of the list for one of
+// its targets, else 0 to 1.
+@(private)
+depth_range_of :: proc "contextless" (range: [2]f32, targets: [DEPTH_RANGE_TARGETS]Texture, depth: Texture) -> [2]f32 {
+	for target in targets {if depth != 0 && target == depth {return range}}
+	return {0, 1}
+}
+
 Graphics_Pipeline_Desc :: struct {
 	vertex, fragment: ^Shader_Code,
 	vertex_constants, fragment_constants: Shader_Constants,

@@ -474,7 +474,7 @@ a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
         testing.expect(t,flags(f,e)&gpu.INSTANCE_FLAG_FOREGROUND!=0 && flags(f,e)>>gpu.INSTANCE_OWNER_SHIFT&3==1,"the viewmodel and what hangs from it are of slot 1")
         testing.expect_value(t,mask(f,e),u32(0))
     }
-    testing.expect_value(t,s.foreground[1],gpu.Foreground{instances=2,fov=1})
+    testing.expect(t,s.foreground[1].instances==2 && s.foreground[1].fov==1,"the slot has its viewmodel and its field of view")
     testing.expect_value(t,len(s.translucent),0)
 
     core.edit(&f.world.viewmodels,rifle).fov=0.5
@@ -482,7 +482,7 @@ a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
     testing.expect_value(t,s.foreground[1].fov,f32(0.5))
     core.remove(&f.world.viewmodels,rifle)
     sync_frame(f,bodies=&bodies)
-    testing.expect_value(t,s.foreground[1],gpu.Foreground{})
+    testing.expect(t,s.foreground[1].instances==0 && s.foreground[1].fov==0,"without its Viewmodel the slot has none")
     testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && mask(f,rifle)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)!=0,"without its Viewmodel it is of the body")
 }
 

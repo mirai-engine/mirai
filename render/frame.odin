@@ -1002,11 +1002,11 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if r.hardware_rt {f.flags |= FRAME_FLAG_HW_RT}
 	if s.environment.ground_grid && !p.texture {f.flags |= FRAME_FLAG_GRID}
 	if r.resolve_counted {f.flags |= FRAME_FLAG_RESOLVE_COUNTED}
-	// A viewmodel puts the world below its depth, in every pass of the view.
+	// A viewmodel puts the world below its depth, in every pass into the depth of the view.
 	p.foreground = view_foreground(r, camera) if p.draw else 0
 	if p.foreground > 0 {
 		foreground_view_constants(p, &f, reach)
-		rhi.cmd_set_depth_range(cmd, 0, FOREGROUND_DEPTH)
+		foreground_world_depth(p)
 	}
 	p.reflectance, p.layered, p.subsurface = reflectance_in_frustum(r, f.frustum)
 	// A mode of inspection shows each pixel as the G-buffer and the lights give it.
@@ -1534,6 +1534,7 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	zone := render_zone_begin(r, "shadow maps")
 	params.shadow = shadow_maps_pass(p, &params, scale, grid)
 	base.profile_end(zone)
+	if params.shadow.on != 0 && !foreground_maps_record(p) {return false}
 	atlas := t.shadow_raster.atlas if params.shadow.on != 0 else r.dummy_texture
 	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}

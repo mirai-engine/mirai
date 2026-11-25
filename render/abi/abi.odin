@@ -103,6 +103,7 @@ FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: th
 FRAME_FLAG_NESTED       :: 512 // the view added nested views: the views target names the view of each pixel (pixel_view)
 FRAME_FLAG_VIEWMODEL    :: 1024 // the view drew the viewmodel of its body: the views target tags its pixels (VIEWS_FOREGROUND)
 FRAME_FLAG_FOREGROUND   :: 2048 // the constants of the pass that draws that viewmodel: its cull takes those instances alone
+FRAME_FLAG_BODY         :: 4096 // the constants of a map of that viewmodel of the rest of its body: its cull takes those instances alone
 
 // The viewmodel of a view (render/foreground.odin): the depth target holds the
 // world below FOREGROUND_DEPTH and the viewmodel above it. The views target
@@ -111,6 +112,8 @@ FRAME_FLAG_FOREGROUND   :: 2048 // the constants of the pass that draws that vie
 // under it by FOREGROUND_CLEARANCE metres.
 FOREGROUND_DEPTH     :: f32(15.0 / 16)
 FOREGROUND_CLEARANCE :: f32(0.02)
+FOREGROUND_MAP_SIDE  :: u32(1024) // a map of a viewmodel (render/foreground.odin), texels a side
+FOREGROUND_MAPS      :: 4
 FOREGROUND_MARK_DEPTH :: f32(1) // the pixels of the viewmodel take the maps of the world at the level of a pixel this far, metres, or farther
 VIEWS_FOREGROUND     :: 128
 VIEWS_KEPT           :: 127
@@ -263,6 +266,7 @@ SHADOW_POOL_PAGES          :: u32(4096)
 SHADOW_LIGHT_SLOTS         :: 7
 SHADOW_RASTER_LIGHTS       :: 32
 SHADOW_SLOTS               :: SHADOW_SUN_MAPS + SHADOW_RASTER_LIGHTS * SHADOW_LIGHT_SLOTS
+FOREGROUND_MAP_SLOT        :: SHADOW_SLOTS // the slot of a map of a viewmodel, past those of the table: a square of the atlas, read as it is
 SHADOW_LOCAL_SLOTS         :: SHADOW_SLOTS - SHADOW_SUN_MAPS
 // The entries of the table of a slot, its mips the coarsest first; the first of the finest.
 SHADOW_SLOT_ENTRIES        :: (SHADOW_MAP_PAGES * SHADOW_MAP_PAGES * 4 - 1) / 3
