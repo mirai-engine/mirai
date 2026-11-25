@@ -95,9 +95,14 @@ or unchorded bindings.
 
 ## Driving
 
-- `^inp.Seat_Requests` (`drive`, `release`, `focus`, blocks) apply in `input_drive` (`fixed`,
-  `input`). Released bodies zero move/buttons and keep look. Invalid requests make no partial
-  changes and report problems (`input.body_taken`, `body_gone`, `server_decides`).
+- `^inp.Seat_Requests` (`drive`, `release`, `focus`, blocks, `mount`, `dismount`) apply in
+  `input_drive` (`fixed`, `input`). Released bodies zero move/buttons and keep look. Invalid
+  requests make no partial changes and report problems (`input.body_taken`, `body_gone`,
+  `server_decides`, `mount_taken`, `mount_blocked`, `not_riding`).
+- **Frames**: `Move_Input.frame` (authored on the prefab) is `View` (a world move toward the
+  seat's view: what walks) or `Body` (the body's own axes, right/up/back: what steers itself,
+  [vehicles](../../../../docs/game/character/vehicles.md)); for a `Body` frame `camera_drive`
+  writes only the look and the buttons, and `move_set` keeps the frame of an existing row.
 - **Forward**: `camera_drive` (`fixed`, `input`, after `camera_select` + `input_drive`) writes
   `Move_Input` from seat actions in the `core.Vertical` frame (+ `Vertical.turn`) toward the
   seat's tick view (`input.Seat_View`: yaw, pitch and the eye from the body; `camera_blend` writes
@@ -106,7 +111,16 @@ or unchorded bindings.
   Look-with-body cameras (`Eyes`, aiming `Orbit`, body camera without `Camera_Follow`) turn body
   look, from the view when the seat comes from an `Apart` camera; others face movement along the
   view; no camera uses world `-Z`.
-- **1:1 index**: `body_of` reads `Seat`; `seat_of` reads `core.Ref(inp.Seats)`. `Seats` is
+- **Mounts** (`engine/input/mounts.odin`): `inp.Mount{drives,input_context,hide,keep_input,
+  exits,rider}` is a place a body rides while its seat drives `drives` (none: the mount). The
+  server applies `mount`/`dismount` atomically (`Mount.rider` and `Seat.body`, both replicated);
+  `input_mounts` derives on every end the rider's `Parent`, `core.Carried` (physics: no body;
+  multiplayer: no pose; render: hidden with `hide`), the input context and the exit place (first
+  of `exits` a `core.World_Queries` probe finds clear). A destroyed mount leaves its rider where
+  it was (core settle); a seat that is released or disconnects lets its rider off.
+  `Mount_Events` tells presentation.
+- **1:1 index**: `body_of` reads `Seat`; `seat_of` reads `core.Ref(inp.Seats)` (also a rider that
+  keeps its input), `driver_of` only what a seat drives. `Seats` is
   derived (reset on load); dead owners/seats auto-clean. AI and scripts write the `Move_Input` of
   bodies no seat drives with `move_set` (`world_velocity` for m/s) and drop it with
   `move_release`; seated bodies are the seat's.
@@ -163,10 +177,12 @@ inp.hold(hold_req, seat, inp.action_of(actions, .Use), {1, 0}, ticks=2)
 
 ## Cameras
 
-- `camera_selected` picks latest valid override else `body_camera` (first `render.Camera` on/under
-  body). `inp.aim(aims, body)` (`engine/input/aim.odin`) is the seat's `Seat_View` placed on the
-  body: origin, direction and rotation alike on every end (a server aims a remote seat by the view
-  it sent; `view_test.odin` in `plugins/multiplayer/runtime`).
+- `camera_selected` picks latest valid override else `body_camera` (the active `render.Camera`
+  on/under the body, else the first; subtrees of riders, `core.Carried`, are skipped). A change of
+  the seat's body blends over `BODY_BLEND` instead of cutting. `inp.aim(aims, body)`
+  (`engine/input/aim.odin`) is the seat's `Seat_View` placed on the body: origin, direction and
+  rotation alike on every end (a server aims a remote seat by the view it sent; `view_test.odin`
+  in `plugins/multiplayer/runtime`).
 - **Free camera**: in editor Play (`Play_Origin`), if player 1 has no body and scene has no active
   `Camera`, `camera_free` spawns a flying camera; gone permanently once player 1 drives a body
   (never in shipped builds).
@@ -192,6 +208,9 @@ to driven ancestor/root/focused player; writing its transform elsewhere triggers
 | `Follow` | Smoothed pivot at `offset` (`half_life`, `up_half_life`), optional `look_at`, `dead_zone`, `look_ahead`/`look_ahead_max` |
 | `Orbit` | Orbits pivot at `distance`/`shoulder` (`yaw`/`pitch`/`min_pitch`/`max_pitch`), `look_up_offset`/`look_down_offset`, `Spring_Arm` probe (`probe_radius` via [`core.World_Queries`](../../mirai-core/references/core.md#world-queries), `pull_grace`/`pull_time`/`return_delay`/`return_time`/`arm_margin`, `engine/camera/rigs.odin` also has `Follow`/`Orbit`/`Shake`), `hide_within` fades `<2x` and hides `<1x`; `aim` follows `Move_Input` look, else `turn`/`recenter`/`camera_look` |
 | `Eyes` | First-person at `offset` following `Move_Input` look |
+
+`Camera_Follow.frame`: offset, orbit and look in the target's vertical (`Vertical`), also its
+heading (`Heading`, behind a hull that turns) or its whole rotation (`Rotation`, a turret).
 
 - **Modifiers**: `camera_modifier`/`camera_modifier_release` (`Camera_Modifiers`, by `id`, up to
   `CAMERA_MODIFIERS` a camera) add `fov`, `distance`, `offset`, `shoulder` and `roll` by their
@@ -229,7 +248,8 @@ to driven ancestor/root/focused player; writing its transform elsewhere triggers
 ## Verification
 
 - `mirai test engine/input` (`input_test.odin`, `seats_test.odin`, `holds_test.odin`,
-  `remote_test.odin`).
+  `remote_test.odin`, `mounts_test.odin`); mounts over the network:
+  `a_client_enters_drives_and_leaves_a_boat_alike_on_both_ends` in `plugins/multiplayer/runtime`.
 - `mirai test editor renaming_an_action_follows_the_code_in_input_settings
   the_bindings_are_set_as_settings_and_refused_with_the_fix`.
 - `mirai test plugins/spawn/runtime` and `mirai test engine/camera` (`rigs_test.odin`,

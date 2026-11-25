@@ -19,8 +19,8 @@ A player is a seat (`inp.Seat`) that drives a body (`Seat.body`); a body that wa
 - Lifts, moving floors, trigger zones, who is inside:
   [platforms-triggers.md](character/platforms-triggers.md).
 - Water, swimming, the surface at a point: [swimming.md](character/swimming.md).
-- Enemies: [ai](ai.md); clips following the speed:
-  [animation](animation.md); online:
+- Boats, submarines, turrets, getting in and out of them: [vehicles.md](character/vehicles.md).
+- Enemies: [ai](ai.md); clips following the speed: [animation](animation.md); online:
   [networking](networking.md).
 
 ## Body
