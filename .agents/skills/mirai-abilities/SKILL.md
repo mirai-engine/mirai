@@ -58,8 +58,9 @@ and the tick it started, and derives everything else from the tick against the s
 - **No state machine and no transition graph.** What may follow an ability is decided by its
   open cancel windows and by the kit's interrupts against the tags of the candidate; among valid
   candidates the highest priority wins. `next` only adds one candidate when an ability completes.
-- **The state is the start tick** (and `own`, the user's own time since then, for windows on the
-  `own` clock, plus `span_open` for clip-span-bound windows). Phase, open windows, granted statuses
+- **The state is the start tick** (and, in `Ability_Local`, `own`, the user's own time since then,
+  for windows on the `own` clock, plus `span_open` for clip-span-bound windows). Phase, open
+  windows, granted statuses
   and modifiers (with optional `ramp_in`/`ramp_out`) are derived each tick from them against the
   immutable sheet: ending or rolling back an ability leaves nothing behind. One ability runs per
   user.
@@ -67,16 +68,25 @@ and the tick it started, and derives everything else from the tick against the s
   waits for the branch of the running ability (`input.wait` `running`) are fields of its sheet; a
   branch that follows a clip in slow motion is a window on the `own` clock. The game does not
   watch inputs or integrate clip time to ask for the next technique.
-- **Sheets are game data outside the `World`.** Play, copies and rollback copy only the
-  `Ability_User` rows and the queues; times are seconds in data and ticks at run time.
-- **One writer.** `abilities_step` is the only writer of `Ability_User`; the game, other plugins
-  and hitboxes ask through `Ability_Requests`, which apply on the next tick.
-- **Attributes are bases plus modifiers.** Costs and effects change bases (kept in 0..max);
-  current values are recomputed every tick from timers and open windows, never accumulated.
-  What lasts is a timer named by tags; immunity is a status, not a separate mechanism.
+- **Sheets are game data outside the `World`.** Play, copies and rollback copy only the rows of
+  the users and the queues; times are seconds in data and ticks at run time.
+- **One writer.** `abilities_step` is the only writer of `Ability_State`, `Ability_Tracking` and
+  `Ability_Local` (and of `Ability_User.kit`, by request); the game, other plugins and hitboxes ask
+  through `Ability_Requests`, which apply on the next tick.
+- **Authored, replicated and local rows by write rate.** `Ability_User` is authored (an attribute's
+  `base` is where it starts) and never written per tick. `Ability_State` (the run and the bases)
+  and `Ability_Tracking` (cooldowns, timers, regeneration deadlines) are what a client cannot work
+  out, written when they change. `Ability_Local` (statuses, current values, own time, input
+  buffer, hits, held socket) is worked out at each end and never sent. A steady tick writes no
+  replicated row.
+- **Attributes are bases plus modifiers.** A base is a line from `Ability_State.since`: a cost,
+  an effect, a drain that starts, pauses or stops and regeneration that resumes write a new one;
+  `per_second` costs and regeneration are its rate, never a write per tick. Current values are
+  recomputed every tick from timers and open windows, never accumulated. What lasts is a timer
+  named by tags; immunity is a status, not a separate mechanism.
 - **The end that decides an entity runs its abilities** (`core.owned`): a client predicts its
-  own character and the server decides what hits others; a replica only derives statuses and
-  window events.
+  own character and the server decides what hits others; a replica only derives its local row
+  (statuses, values, window events).
 - **One-shot presentation is a cue of the sheet.** A window's `on_begin` and an effect's `on_hit`
   play through `audio.cue_play` by the entity (no per-tick resimulation guard: the audio dedup
   keeps them once); the plugin never imports `vfx`. Anything else answers an `Ability_Cue` id.

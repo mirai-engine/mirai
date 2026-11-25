@@ -22,14 +22,18 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
     window of that one however far it is (a combo's next technique pressed before the branch).
     It leaves with that run: an interruption or a cancel drops it after the kit's buffer.
 - `requires` (all of them) and `blocked_by` (any) are status masks; `modes` are locomotion modes
-  of the user's `Character` (none: any); `conditions` bound, by their `kind`, an attribute, the
-  `speed` of the `Character` across its up relative to its ground, or ask for a `ledge_ahead`
-  (standing, no ground within `at_least` m under the feet `reach` m ahead along where it goes:
-  `locomotion.ledge_ahead`); `costs` take `amount` from attribute bases when it starts (it cannot
-  start with less) and `per_second` every tick it runs after that, completing when the attribute
-  cannot pay the tick (`pause_falling` pauses `per_second` drain while airborne/falling, with
-  optional `fall_grace` completing the ability after falling that long); `cooldown` is per ability
-  row.
+  of the user's `Character` it starts in (none: any); `conditions` bound, by their `kind`, an
+  attribute or the `speed` of the `Character` across its up relative to its ground; `costs` take
+  `amount` from attribute bases when it starts (it cannot start with less) and `per_second` while
+  it runs after that, as the rate of the base, completing on the tick the attribute is spent;
+  `cooldown` is per ability row.
+- `pause_modes`: while the `Character` is in one of them its `per_second` costs take nothing (a
+  sprint in the air). `end_modes` with `end_grace`: it completes once the `Character` has been
+  `end_grace` seconds in a row in one of them (a sprint that runs off a cliff); leaving them starts
+  the grace again.
+- What the game decides about the world (a ledge ahead, a target in sight) is not a condition: a
+  step of the game asks its query (`locomotion.ledge_ahead`) and uses the ability
+  (`ability_use`), or gives the user a status the ability `requires` with an effect.
 - `duration` in seconds; `hold` ends it when its input is let go.
 - `action` names an action of the user's `.character`: in its layer over locomotion, or over the
   whole body when it names no layer. Empty plays nothing.
@@ -57,7 +61,7 @@ buffer and the tags that may `interrupt` any running ability (reactions, death).
 
 Times are seconds in the sheet and ticks of the fixed step at run time (rounded; a window lasts at
 least one tick). The duration, `input.after` and `world` windows count ticks of the world; `own`
-windows count `Ability_User.own`, the ticks of the user's own time since the start (each tick adds
+windows count `Ability_Local.own`, the ticks of the user's own time since the start (each tick adds
 `core.pace_of`). An `own` window shorter than the user's pace per tick can be passed over.
 
 ## Selection
@@ -92,19 +96,28 @@ reports for each ability of the kit.
 ## Attributes and effects
 - `Ability_User.speed`, `jump` and `acceleration` name the attributes whose current values scale
   the locomotion of its `Character` (`locomotion.set_speed_scale`, `set_jump_scale`,
-  `set_acceleration_scale`, asked when the value changes). A tactical sprint is then pure data:
-  a `hold` ability on the sprint action, `modes` walking, a condition on the energy left, a cost
-  `per_second` with `pause_falling` (and optional `fall_grace`), windows whose `modify` raises
-  speed, jump (with `ramp_in`) and acceleration attributes, and energy `regen` with `regen_delay`.
-  A jump off a ledge with a boost is an ability on the jump action with `speed` and `ledge_ahead`
-  conditions and a window whose additive `move` adds to the jump of the walk
-  (`movement_test.odin`).
+  `set_acceleration_scale`, asked when the value changes). A sprint with an energy bar is then
+  data: a `hold` ability on the sprint action, `modes` walking, a condition on the energy left, a
+  cost `per_second`, `pause_modes` and `end_modes` falling with an `end_grace`, windows whose
+  `modify` raises speed, jump (with `ramp_in`) and acceleration attributes, and energy `regen` with
+  `regen_delay`. A jump off a ledge with a boost is an ability with a `speed` condition and a
+  window whose additive `move` adds to the jump of the walk, which a step of the game uses when
+  jump is pressed with `locomotion.ledge_ahead` true. The recipe is `templates/game`
+  (`movement.records`, `game_ledge_jump`); `movement_test.odin` tests the same sheets.
+- What those sheets cannot say: a cost per jump or per slide while the sprint runs (one ability
+  runs per user), a sprint that holds only while moving forward, an exponential ramp (ramps are
+  linear), a grace that counts only the descent of a jump (`end_grace` counts the whole time in
+  the air), and, of the ledge jump, an upward push, a cap on the speed and a least time at speed
+  before it (the boost is a layered move of a few ticks that air control then brakes).
 
-- `Ability_User.attributes` are entries of an attribute, its base, its max (0: none), its
-  regeneration per second and its `regen_delay` (seconds to wait after the last cost or negative
-  effect before positive regeneration resumes). Bases stay in 0..max. `values` (transient) are
+- `Ability_User.attributes` are entries of an attribute, the base it starts at, its max (0: none),
+  its regeneration per second and its `regen_delay` (seconds to wait after the last cost, negative
+  effect or drain before positive regeneration resumes, which also waits while a drain runs). The
+  bases live in `Ability_State` as a line from `since` (`bases` plus `rates` per second, kept in
+  0..max, `ability_base`); `rates` are regeneration less the drains of the running ability, and
+  change only when one starts, pauses, stops or resumes. `Ability_Local.values` are
   `(base + add) * (1 + more)` over the modifiers of the timers and of the open windows (each
-  weighted by optional `ramp_in`/`ramp_out`); `statuses` (transient) join the statuses of the
+  weighted by optional `ramp_in`/`ramp_out`); `Ability_Local.statuses` join the statuses of the
   timers and of the open windows.
 - An `Ability_Effect` adds `amount` (times the current value of the source's `scale_by`
   attribute, if named) to the base of an attribute of its target, at once or every `period` while
@@ -150,9 +163,12 @@ reports for each ability of the kit.
 
 ## Network
 
-- `Ability_User` is replicated; its derived fields are transient. A replica adds its own pace to
-  `own` between the values the network gives it. A rollback copies the rows and
-  the queues with the world and repeats the ticks; the sheets are the same rows in every world.
+- Replicated: `Ability_User` (authored), `Ability_State` (the run and the line of the bases) and
+  `Ability_Tracking` (cooldowns, timers, regeneration deadlines), all written only when they
+  change: a steady sprint sends nothing. `Ability_Local` is never sent: each end works it out from
+  those rows, its input and its animation, and its run fields start again when another run arrives
+  (a replica takes `own` as its pace times the ticks since the start). A rollback copies the rows
+  and the queues with the world and repeats the ticks; the sheets are the same rows in every world.
 - Only the end that decides a user (`core.owned`) applies requests to it, starts, ends and hits:
   a client predicts its own character, the server decides the rest. A replica derives its
   statuses and the window events from the ability and start tick the network gives it.
@@ -181,6 +197,9 @@ reports for each ability of the kit.
 - `a_window_on_the_own_clock_follows_the_pace_of_the_user`
 - `an_open_hitbox_sweeps_between_ticks_but_not_when_it_opens_or_across_a_teleport`
 - `a_window_attaches_the_held_entity_while_it_is_open`
+- `costs_pause_and_abilities_end_by_the_mode_of_the_character`
+- `a_steady_drain_writes_no_replicated_row_per_tick`
+- `a_replica_derives_the_local_row_and_a_rollback_runs_to_the_same_state`
 
 The methods need a build with the plugin (the demo enables it) and a session on a copy; hitboxes
 against real colliders need Play with physics.

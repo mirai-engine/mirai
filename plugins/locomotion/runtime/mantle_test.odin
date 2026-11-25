@@ -32,10 +32,9 @@ jump_facing_a_ledge_mantles_onto_it_where_it_fits :: proc(t:^testing.T) {
         testing.expectf(t,(loco_state(&f).mode==MODE_MANTLING)==c.mantles,"%v: mode %v",c,loco_state(&f).mode)
         if !c.mantles {continue}
         testing.expectf(t,abs(mantle_state(&f).height-c.top)<0.01,"%v: ledge %v",c,mantle_state(&f).height)
-        // What warps a clip of the climb: its ends, and the face of the wall, out toward +Z.
+        // What warps a clip of the climb: its ends.
         climb:=mantle_state(&f)
         testing.expectf(t,abs(climb.from.y)<0.01 && abs(climb.to.y-c.top)<0.01 && climb.to.z<-0.8,"%v: from %v to %v",c,climb.from,climb.to)
-        testing.expectf(t,linalg.length(climb.normal-[3]f32{0,0,1})<1e-3,"%v: wall normal %v",c,climb.normal)
         ticks:=0
         for loco_state(&f).mode==MODE_MANTLING && ticks<120 {
             loco_test_tick(&f,{},1,yaw=c.yaw)
@@ -73,4 +72,37 @@ a_layered_move_drives_a_climb_for_its_time :: proc(t:^testing.T) {
     testing.expectf(t,at.y>2 && abs(at.z)<0.1,"straight up where the move took it, not across onto the top: %v",at)
     loco_test_tick(&f,{},1)
     testing.expectf(t,loco_velocity(&f).y<1,"the move of the last tick does not carry on: %v",loco_velocity(&f))
+}
+
+// A custom mode lasts only while its owner claims it: a slide or a climb whose component is removed
+// halfway hands the character back on the next tick, falling, and its walk stops it where it lands
+// instead of the last move of the slide or the climb going on.
+@(test)
+a_custom_mode_whose_owner_goes_returns_to_the_walk_on_the_next_tick :: proc(t:^testing.T) {
+    Case :: struct {mode:Locomotion_Mode}
+    for c in ([]Case{{MODE_SLIDING},{MODE_MANTLING}}) {
+        f:Loco_Test
+        if !loco_test_init(t,&f,{0,0,0}) {return}
+        defer loco_test_destroy(&f)
+        loco_test_tick(&f,{},20)
+        if c.mode==MODE_SLIDING {
+            core.add(&f.slides,f.e,SLIDE_DEFAULT)
+            loco_test_tick(&f,{0,0,-1},40)
+            loco_test_tick(&f,{0,0,-1},2,CROUCH)
+        } else {
+            core.add(&f.mantles,f.e,MANTLE_DEFAULT)
+            loco_test_box(&f,{2,0.9,0.5},{0,0.9,-1.3})
+            loco_test_tick(&f,{},10)
+            loco_test_tick(&f,{},1,JUMP)
+            loco_test_tick(&f,{},5)
+        }
+        testing.expectf(t,loco_state(&f).mode==c.mode,"%v: in the mode, %v",c,loco_state(&f).mode)
+        if c.mode==MODE_SLIDING {core.remove(&f.slides,f.e)} else {core.remove(&f.mantles,f.e)}
+        loco_test_tick(&f,{},1)
+        mode:=loco_state(&f).mode
+        testing.expectf(t,mode==MODE_FALLING || mode==MODE_WALKING,"%v: back to its walk the next tick, %v",c,mode)
+        loco_test_tick(&f,{},120)
+        testing.expectf(t,flat_speed(&f)<0.1,"%v: it stops without a move, %v m/s",c,flat_speed(&f))
+        testing.expect_value(t,f.problems.count,0)
+    }
 }

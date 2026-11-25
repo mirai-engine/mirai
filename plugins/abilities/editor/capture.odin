@@ -28,22 +28,22 @@ hitboxes_capture_draw :: proc(s:^editor.Session,w:core.World_Ref,lines:^erender.
 hitboxes_draw :: proc(lines:^erender.Debug_Lines,w:core.World_Ref,data:ab.Ability_Data) {
     users,states:=core.world_table_of(w,ab.Ability_User),core.world_table_of(w,ab.Ability_State)
     if users==nil || states==nil {return}
-    tracking:=core.world_table_of(w,ab.Ability_Tracking)
+    locals:=core.world_table_of(w,ab.Ability_Local)
     time,dt:=world_clock(w)
     for row in 0..<core.count(users) {
         e:=core.entity_at(users,row)
         state,found:=core.get(states,e)
         active:=ab.record_sheet(data.abilities,state.ability)
         if !found || active==nil {continue}
-        track:ab.Ability_Tracking
-        if tracking!=nil {track,_=core.get(tracking,e)}
-        at:=running_at(time,&state)
+        local:ab.Ability_Local
+        if locals!=nil {local,_=core.get(locals,e)}
+        at:=running_at(time,&state,&local)
         pose:=user_pose(w,e)
         for &win,i in active.windows {
             if !ab.ability_window_open(win,dt,at,i) {continue}
             h:=ab.record_sheet(data.hitboxes,win.hitbox)
             if h==nil {continue}
-            hitbox_draw(lines,h,pose,HITBOXES_CAPTURE_HIT if len(window_targets(&track,i))>0 else HITBOXES_CAPTURE_OPEN)
+            hitbox_draw(lines,h,pose,HITBOXES_CAPTURE_HIT if len(window_targets(&local,i))>0 else HITBOXES_CAPTURE_OPEN)
         }
     }
 }

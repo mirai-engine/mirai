@@ -11,8 +11,9 @@ import locomotion "plugins:locomotion/runtime"
 import phys "plugins:physics/runtime"
 
 // Movement abilities written as data over physics and locomotion: what a game's economy asks of
-// its characters (a sprint that spends energy, a jump off a ledge) is an Ability sheet, and the
-// locomotion plugin holds no such rules.
+// its characters (a sprint that spends energy, a jump off a ledge) is an Ability sheet plus, for
+// what the world decides (a ledge ahead), a few lines of the game that ask the locomotion query and
+// use the ability. The locomotion plugin holds no such rules. templates/game is the recipe.
 
 @(private="file") ENERGY :: Ability_Attribute(1)
 @(private="file") SPEED :: Ability_Attribute(2)
@@ -31,6 +32,7 @@ Movement_World :: struct {
     users:core.Table(Ability_User),
     states:core.Table(Ability_State),
     tracking:core.Table(Ability_Tracking),
+    locals:core.Table(Ability_Local),
     loco_states:core.Table(locomotion.Locomotion_State),
     inputs:core.Table(inp.Move_Input),
     walks:core.Table(locomotion.Walk),
@@ -60,8 +62,8 @@ Movement :: struct {
 
 // A runner with a Walk and an Ability_User with energy and a speed attribute, and the two sheets: a
 // sprint that runs 40% faster for 15 energy a second while energy lasts, and a jump off a ledge that
-// needs 6 m/s and the ground falling away by 1.9 m within 1.5 m ahead and adds 8 m/s forward on
-// top of the jump for 0.2 s.
+// needs 6 m/s and adds 8 m/s forward on top of the jump for 0.2 s; the game uses it when the ground
+// falls away ahead (ledge_jump_ask).
 @(private="file")
 movement_init :: proc(t:^testing.T,f:^Movement,position:[3]f32) -> bool {
     if !test_world_init(t,&f.w) {return false}
@@ -74,7 +76,6 @@ movement_init :: proc(t:^testing.T,f:^Movement,position:[3]f32) -> bool {
     f.sheets[SPRINT].windows[0]={from=0,to=100,modify={attribute=SPEED,more=0.4}}
     f.sheets[LEDGE_JUMP]={duration=0.2,modes=walking}
     f.sheets[LEDGE_JUMP].conditions[0]={kind=.Speed,at_least=6}
-    f.sheets[LEDGE_JUMP].conditions[1]={kind=.Ledge_Ahead,reach=1.5,at_least=1.9}
     f.sheets[LEDGE_JUMP].windows[0]={from=0,to=0.2,move={velocity={0,0,-8},mix=.Additive}}
     for i in 0..<2 {f.rows[i],f.index[i]={table=TABLE,row=core.Record_Id(i+1)},u32(i)}
     f.set={size=size_of(Ability),rows=f.rows[:],index=f.index[:],values=mem.slice_to_bytes(f.sheets[:])}
@@ -92,7 +93,7 @@ movement_init :: proc(t:^testing.T,f:^Movement,position:[3]f32) -> bool {
     core.add(&f.users,f.e,user)
     f.time={tick=1,dt=1.0/60,playing=true}
     test_world_settle(&f.w)
-    ability_rows({&f.users,&f.states,&f.tracking},&f.checks,&f.problems)
+    ability_rows({&f.users,&f.states,&f.tracking,&f.locals},&f.checks,&f.problems)
     test_world_settle(&f.w)
     return true
 }
@@ -128,9 +129,9 @@ movement_tick :: proc(f:^Movement,move:[3]f32,ticks:=1,buttons:=inp.Action_Mask(
         core.edit(&f.inputs,f.e)^={move=move,buttons=buttons}
         test_world_settle(&f.w)
         w:=movement_world(f)
-        abilities_tick({&f.users,&f.states,&f.tracking},{abilities={&f.set}},&f.cache,&f.checks,&f.ability_requests,nil,&w,physics_overlap)
+        abilities_tick({&f.users,&f.states,&f.tracking,&f.locals},{abilities={&f.set}},&f.cache,&f.checks,&f.ability_requests,nil,&w,physics_overlap)
         test_world_settle(&f.w)
-        locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,&f.inputs,
+        locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,core.read(&f.remotes),
             core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco_requests,f.time,&f.problems)
         test_world_settle(&f.w)
         locomotion.locomotion_step(core.read(&f.characters),&f.loco_states,&f.moves,&f.inputs,core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),
@@ -143,16 +144,31 @@ movement_tick :: proc(f:^Movement,move:[3]f32,ticks:=1,buttons:=inp.Action_Mask(
     }
 }
 
+// What the game does for a ledge jump (templates/game, game_ledge_jump): standing, with the ground
+// falling away by 1.9 m within 1.5 m ahead along where it goes, jump uses the ability.
+@(private="file")
+ledge_jump_ask :: proc(f:^Movement,jumped:bool) -> (ledge:bool) {
+    ground,_:=core.get(&f.character_states,f.e)
+    motion,_:=core.get(&f.bodies,f.e)
+    capsule,made:=phys.character_capsule(core.ref(&f.state),f.e)
+    if !made || !ground.standing {return}
+    ledge=locomotion.ledge_ahead(core.ref(&f.state),capsule,motion.linear-ground.ground_velocity,1.5,1.9)
+    if ledge && jumped {ability_use(&f.ability_requests,f.e,{TABLE,core.Record_Id(LEDGE_JUMP+1)})}
+    return
+}
+
 @(private="file")
 flat_speed :: proc(f:^Movement) -> f32 {
     motion,_:=core.get(&f.bodies,f.e)
     return linalg.length(motion.linear.xz)
 }
 
+// The energy of the runner on the tick that last ran.
 @(private="file")
 energy :: proc(f:^Movement) -> f32 {
     user,_:=core.get(&f.users,f.e)
-    return user.attributes[0].base
+    state,_:=core.get(&f.states,f.e)
+    return ability_base(&user,&state,0,f.time.tick-1,f.time.dt)
 }
 
 @(private="file")
@@ -194,10 +210,12 @@ a_tactical_sprint_is_an_ability_that_spends_energy_for_speed_and_recharges :: pr
     testing.expect_value(t,f.problems.count,0)
 }
 
-// A ledge jump as data: running at 6 m/s or more with the ground falling away 1.9 m within 1.5 m
-// ahead, the ability starts with the jump and its window adds 8 m/s forward on top of it. Far from the edge, or over a lower drop, the condition does not hold and a jump is a jump.
+// A ledge jump: running at 6 m/s or more (a condition of the sheet) with the ground falling away
+// 1.9 m within 1.5 m ahead (the game asks locomotion.ledge_ahead and uses the ability), it starts
+// with the jump and its window adds 8 m/s forward on top of it. Far from the edge, or over a lower
+// drop, the game does not use it and a jump is a jump.
 @(test)
-a_ledge_jump_is_an_ability_with_a_ledge_ahead_condition_and_a_layered_boost :: proc(t:^testing.T) {
+a_ledge_jump_is_a_game_query_that_uses_an_ability_with_a_layered_boost :: proc(t:^testing.T) {
     Case :: struct {drop:f32,ready:bool}
     for c in ([2]Case{{drop=3,ready=true},{drop=1}}) {
         f:=new(Movement)
@@ -217,15 +235,15 @@ a_ledge_jump_is_an_ability_with_a_ledge_ahead_condition_and_a_layered_boost :: p
             pose,_:=core.get(&f.transforms,f.e)
             w:=movement_world(f)
             user,_:=core.get(&f.users,f.e)
-            state,_:=core.get(&f.states,f.e)
-            ready=condition_holds(&w,f.e,&user,&state,ledge.conditions[0]) && condition_holds(&w,f.e,&user,&state,ledge.conditions[1])
+            local,_:=core.get(&f.locals,f.e)
+            ready=condition_holds(&w,f.e,&user,&local,ledge.conditions[0]) && ledge_jump_ask(f,false)
             if pose.position.z>-10 {testing.expectf(t,!ready,"%v: no ledge far from the edge, at z %v",c,pose.position.z)}
             if ready || pose.position.z< -14.8 {ready_at=pose.position.z;break}
         }
         testing.expectf(t,ready==c.ready,"%v: ready %v at z %v",c,ready,ready_at)
         if c.ready {testing.expectf(t,ready_at< -15+1.5+0.05 && ready_at> -15+1.5-0.25,"%v: ready 1.5 m before the edge, at z %v",c,ready_at)}
         before:=flat_speed(f)
-        ability_use(&f.ability_requests,f.e,{TABLE,core.Record_Id(LEDGE_JUMP+1)})
+        ledge_jump_ask(f,true)
         movement_tick(f,{0,0,-1},1,JUMP)
         movement_tick(f,{0,0,-1},1)
         testing.expect_value(t,running(f),c.ready)
@@ -240,9 +258,9 @@ a_ledge_jump_is_an_ability_with_a_ledge_ahead_condition_and_a_layered_boost :: p
     }
 }
 
-// End-to-end tactical sprint expressed 100% in pure ability data:
-// 115 energy, 15/s drain paused while airborne with fall_grace, 52/s regen after 2 s regen_delay,
-// ramped 1.4x speed (0.6224 s), ramped 1.2x jump (0.7265 s), and 3x acceleration.
+// End-to-end tactical sprint expressed in ability data:
+// 115 energy, 15/s drain paused while falling, ended after 1.5 s falling, 52/s regen after a 2 s
+// regen_delay, ramped 1.4x speed (0.6224 s), ramped 1.2x jump (0.7265 s), and 3x acceleration.
 @(test)
 a_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
     f:=new(Movement);defer free(f)
@@ -254,9 +272,10 @@ a_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
 
     walking:=Ability_Modes(1<<u32(locomotion.MODE_WALKING))
     sprint:=&f.sheets[SPRINT]
-    sprint^={duration=100,modes=walking}
+    falling:=Ability_Modes(1<<u32(locomotion.MODE_FALLING))
+    sprint^={duration=100,modes=walking,pause_modes=falling,end_modes=falling,end_grace=1.5}
     sprint.conditions[0]={attribute=ENERGY,at_least=10}
-    sprint.costs[0]={attribute=ENERGY,per_second=15,pause_falling=true,fall_grace=0.7}
+    sprint.costs[0]={attribute=ENERGY,per_second=15}
     sprint.windows[0]={from=0,to=100,modify={attribute=SPEED,more=0.4,ramp_in=0.6224}}
     sprint.windows[1]={from=0,to=100,modify={attribute=JUMP_ATTR,more=0.2,ramp_in=0.7265}}
     sprint.windows[2]={from=0,to=100,modify={attribute=ACCEL_ATTR,more=2.0}}
@@ -267,6 +286,7 @@ a_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
     u.attributes[1]={attribute=SPEED,base=1}
     u.attributes[2]={attribute=JUMP_ATTR,base=1}
     u.attributes[3]={attribute=ACCEL_ATTR,base=1}
+    core.edit(&f.states,f.e).bases={0=115,1=1,2=1,3=1}
     test_world_settle(&f.w)
 
     // Settle on ground and start sprint.
@@ -310,18 +330,18 @@ a_tactical_sprint_runs_entirely_from_ability_data :: proc(t:^testing.T) {
     // Energy barely dropped (only the 1-2 ground ticks around takeoff/landing), not ~1.1s * 15 = 16.5!
     testing.expectf(t,energy_before_jump-energy(f)<1.5,"drain paused while airborne: lost %v over %d air ticks",energy_before_jump-energy(f),air_ticks)
 
-    // Run off the ledge (z = -5) and fall past fall_grace (0.7 s): sprint completes cleanly and scales reset to 1.0.
-    for _ in 0..<240 {
+    // Run off the ledge (z = -5) and fall past end_grace (1.5 s): sprint completes cleanly and scales reset to 1.0.
+    for _ in 0..<360 {
         movement_tick(f,{0,0,-1},1)
         if !running(f) {break}
     }
-    testing.expect(t,!running(f),"falling past fall_grace ended tactical sprint")
+    testing.expect(t,!running(f),"falling past end_grace ended tactical sprint")
     loco,_=core.get(&f.loco_states,f.e)
     testing.expectf(t,abs(loco.speed_scale-1)<1e-4 && abs(loco.jump_scale-1)<1e-4 && abs(loco.acceleration_scale-1)<1e-4,"scales reset to 1 after sprint ends: %v %v %v",loco.speed_scale,loco.jump_scale,loco.acceleration_scale)
 
     // Energy waits for the full 2.0 s regen_delay (counting from last ground drain before cliff) before regenerating at 52/s.
     e_after_end:=energy(f)
-    movement_tick(f,{},45) // ~0.75 s after fall_grace (total ~1.45 s since last spend < 2.0 s)
+    movement_tick(f,{},15) // 0.25 s after end_grace (about 1.75 s since the last spend < 2.0 s)
     testing.expectf(t,abs(energy(f)-e_after_end)<1e-3,"still waiting on regen_delay: %v vs %v",energy(f),e_after_end)
     movement_tick(f,{},90) // +1.5 s: well past 2.0 s delay -> regenerates strongly at 52/s
     testing.expectf(t,energy(f)>e_after_end+30,"regen resumed at 52/s after regen_delay: %v from %v",energy(f),e_after_end)

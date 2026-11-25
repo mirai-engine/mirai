@@ -7,9 +7,9 @@ import mm "mirai:std/math"
 import phys "plugins:physics/runtime"
 
 // A mantle is a custom mode written on the extension point of locomotion: mantle_step runs before
-// locomotion_prepare, asks for MODE_MANTLING with set_mode when a jump faces a ledge (ledge_find),
-// writes the Character_Move of every tick of the climb and gives the character back to its walk,
-// falling onto what it climbed. Without Mantle rows it costs nothing.
+// locomotion_prepare, claims MODE_MANTLING with the Character_Move of every tick of the climb
+// (claim_mode) from a jump that faces a ledge (ledge_find), and gives the character back to its
+// walk, falling onto what it climbed. Without Mantle rows it costs nothing.
 @(name_requires="Mantle") MODE_MANTLING :: Locomotion_Mode(6)
 
 @(component,replicated,description="The character can mantle (mode mantling of its Character): with jump, looking at a wall within reach whose top is between min_height and max_height over its feet, with room to stand there and on the way, it climbs onto it in time. Standing, a top lower than ground_height is jumped onto instead; in the air, jump held climbs once delay has passed since it left the ground. Its Mantle_State keeps the height of the ledge for the animation of the climb. It needs a Walk.")
@@ -28,7 +28,6 @@ MANTLE_DEFAULT :: Mantle{reach=1,min_height=0.5,max_height=2.5,ground_height=1.2
 @(component,derived,replicated,description="The climb of a character that mantles.")
 Mantle_State :: struct {
     from,to:[3]f32 `mirai:"transient,readonly,unit=m"`, // where its feet start and end the climb, in the world: what warps a clip of it
-    normal:[3]f32 `mirai:"transient,readonly"`,         // of the face of the wall it climbs, across its up and out of it: the climb faces -normal
     time:f32 `mirai:"transient,readonly,hidden,unit=s"`,       // of the climb
     height:f32 `mirai:"transient,readonly,unit=m"`,            // of the ledge of its last climb over its feet: the animation of the climb chooses by it
     air_time:f32 `mirai:"transient,readonly,hidden,unit=s"`,   // since it last stood
@@ -48,7 +47,7 @@ mantle_step :: proc(
     walks:^core.Table(Walk,.Read),characters:^core.Table(phys.Character,.Read),colliders:^core.Table(phys.Collider,.Read),
     found:^core.Table(phys.Character_State,.Read),inputs:^core.Table(input.Move_Input,.Read),
     locals:^core.Table(core.Transform,.Read),parents:^core.Table(core.Parent,.Read),
-    moves:^core.Table(phys.Character_Move),requests:^Locomotion_Requests,physics:core.Ref(phys.Physics_State),
+    requests:^Locomotion_Requests,physics:core.Ref(phys.Physics_State),
     paces:^core.Table(core.Own_Pace,.Read),walk_actions:input.Input_Of(Walk_Action),time:core.Time,clock:core.Clock,
 ) {
     for e in states.entities {
@@ -81,10 +80,9 @@ mantle_step :: proc(
             wanted,from_ground:=mantle_wanted(loco,s^,mantle,ground,asked.buttons&input.action_bit(jump)!=0)
             if !wanted || layered_override(loco) {continue}
             facing:=mm.quat_forward(frame*mm.quat_axis_angle({0,1,0},loco.yaw))
-            to,height,normal,found_ledge:=ledge_find(physics,capsule,facing,{mantle.reach,mantle.min_height,mantle.max_height,mantle.facing})
+            to,height,found_ledge:=ledge_find(physics,capsule,facing,{mantle.reach,mantle.min_height,mantle.max_height,mantle.facing})
             if !found_ledge || from_ground && height<=mantle.ground_height {continue}
-            s.from,s.to,s.normal,s.time,s.height=placed.position,to,normal,0,height
-            set_mode(requests,e,MODE_MANTLING)
+            s.from,s.to,s.time,s.height=placed.position,to,0,height
         }
         // Driven by root motion in the last tick (an Override layered move: the animation of the
         // climb, warped onto the ledge), it goes where that takes it and only its time runs.
@@ -100,7 +98,7 @@ mantle_step :: proc(
         }
         next.value.yaw=loco.yaw
         next.value.gravity_scale=loco.gravity
-        if move:=core.edit(moves,e);move!=nil {move^=next} else {core.add(moves,e,next)}
+        claim_mode(requests,e,MODE_MANTLING,next)
     }
 }
 

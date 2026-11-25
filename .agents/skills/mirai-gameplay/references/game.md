@@ -19,7 +19,8 @@ of its owner and is taken by the function in parentheses:
   `launch` in `^phys.Body_Requests` (`physics_step`); teleport it with `core.place(placer, ...)`
   in `^core.Places` (`physics_places`).
 - **Layered moves and mode of a character** (dash, wind; swimming): `locomotion.add_move`,
-  `remove_moves`, `set_mode` in `^locomotion.Locomotion_Requests` (`locomotion_step`).
+  `remove_moves`, `set_mode`, `claim_mode` (a custom mode, every tick it drives) in
+  `^locomotion.Locomotion_Requests` (`locomotion_step`).
 - **Damage or cut**: `destruct.damage(&r, e, point, radius, impulse)`, `slice` in
   `^destruct.Destruct_Requests` (`destruct_step`).
 - **Drive a body, block actions**: `inp.drive`, `release`, `focus`,

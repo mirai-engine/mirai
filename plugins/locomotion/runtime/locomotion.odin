@@ -28,9 +28,10 @@ Locomotion_Mode :: distinct u16
 @(name_requires="Fly") MODE_FLYING :: Locomotion_Mode(2)
 @(name_requires="Swim") MODE_SWIMMING :: Locomotion_Mode(3)
 @(name_requires="Walk") MODE_CROUCHING :: Locomotion_Mode(4)
-// The last mode locomotion_step drives: those after it are custom modes, whose owner writes the
-// Character_Move of every tick before locomotion_step (slide.odin, mantle.odin, or a game) and asks
-// for its mode with set_mode. Locomotion then only adds its layered moves and its pace on top.
+// The last mode locomotion_step drives: those after it are custom modes, whose owner (slide.odin,
+// mantle.odin, navigation or a game) claims it with its Character_Move every tick it drives
+// (claim_mode). Locomotion then only adds its layered moves and its pace on top, and a tick nobody
+// claims it the character goes back to the mode its components start it in.
 MODE_ENGINE_LAST :: MODE_CROUCHING
 
 LAYERED_MOVE_CAPACITY :: 4
@@ -112,6 +113,7 @@ Locomotion_State :: struct {
     move_count:u32 `mirai:"transient,readonly,hidden"`,
     moves:[LAYERED_MOVE_CAPACITY]Layered_Move `mirai:"transient,readonly,hidden"`,
     overridden:bool `mirai:"transient,readonly,hidden"`, // an Override layered move drove its last tick
+    claimed:bool `mirai:"transient,local,hidden"`,         // its custom mode was claimed this tick: only inside locomotion_prepare
     speed_scale:f32 `mirai:"transient,readonly"`,
     jump_scale:f32 `mirai:"transient,readonly"`,
     acceleration_scale:f32 `mirai:"transient,readonly"`,
@@ -133,7 +135,8 @@ Locomotion_State :: struct {
 Locomotion_Request_Kind :: enum u8 {
     Add_Move,
     Remove_Moves, // those of the id of the move
-    Set_Mode,
+    Set_Mode,   // of the engine
+    Claim_Mode, // custom, with the move of this tick
     Set_Speed_Scale,
     Set_Jump_Scale,
     Set_Acceleration_Scale,
@@ -146,6 +149,7 @@ Locomotion_Request :: struct {
     kind:Locomotion_Request_Kind,
     move:Layered_Move,
     mode:Locomotion_Mode,
+    claim:phys.Character_Move,
     gravity_scale,speed_scale,jump_scale,acceleration_scale:f32,
     suspended:bool,
 }
@@ -167,8 +171,15 @@ add_move :: proc(requests:^Locomotion_Requests,e:core.Entity,move:Layered_Move) 
 remove_moves :: proc(requests:^Locomotion_Requests,e:core.Entity,id:u32) {
     core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Remove_Moves,move={id=id}})
 }
+// Puts a Character in a mode of the engine (at most MODE_ENGINE_LAST).
 set_mode :: proc(requests:^Locomotion_Requests,e:core.Entity,mode:Locomotion_Mode) {
     core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Set_Mode,mode=mode})
+}
+// Drives a Character in a custom mode (after MODE_ENGINE_LAST) with move for this tick. Its owner
+// asks every tick it drives it, before locomotion_prepare; a tick nobody claims it, the character
+// goes back to the mode its components start it in (falling with a Walk).
+claim_mode :: proc(requests:^Locomotion_Requests,e:core.Entity,mode:Locomotion_Mode,move:phys.Character_Move) {
+    core.push(&requests.queue,Locomotion_Request{entity=e,kind=.Claim_Mode,mode=mode,claim=move})
 }
 // Scales the gravity of a Character by scale times its gravity_scale until asked again: a game
 // changes it for a while (low gravity while charging, a glide) through here, and the authored
@@ -193,7 +204,7 @@ set_suspended :: proc(requests:^Locomotion_Requests,e:core.Entity,suspended:bool
 @(step="fixed",stage="simulate",before="locomotion_step")
 locomotion_prepare :: proc(
     characters:^core.Table(phys.Character,.Read),colliders:^core.Table(phys.Collider,.Read),states:^core.Table(Locomotion_State),
-    moves:^core.Table(phys.Character_Move),inputs:^core.Table(input.Move_Input),
+    moves:^core.Table(phys.Character_Move),remotes:^core.Table(core.Remote,.Read),
     walks:^core.Table(Walk,.Read),flights:^core.Table(Fly,.Read),swims:^core.Table(Swim,.Read),
     requests:^Locomotion_Requests,time:core.Time,problems:^core.Problems,
 ) {
@@ -208,12 +219,24 @@ locomotion_prepare :: proc(
     }
     for asked in core.take(&requests.queue) {
         start:Maybe(Locomotion_Mode)
-        if asked.kind==.Set_Mode {
+        switch asked.kind {
+        case .Set_Mode:
+            if asked.mode>MODE_ENGINE_LAST {
+                core.report(problems,asked.entity,"locomotion.request","the custom mode %d was asked with set_mode; its owner claims it with its move every tick it drives it (claim_mode)",asked.mode)
+                continue
+            }
             if missing:=mode_missing(asked.mode,asked.entity,walks,flights,swims);missing!="" {
                 core.report(problems,asked.entity,"locomotion.mode_component","the mode %s was asked of an entity without %s; give it a %s, which holds the parameters of that mode",mode_label(asked.mode),missing,missing)
                 continue
             }
             start=asked.mode
+        case .Claim_Mode:
+            if asked.mode<=MODE_ENGINE_LAST {
+                core.report(problems,asked.entity,"locomotion.request","the mode %s of the engine was claimed; ask for it with set_mode, and claim only custom modes",mode_label(asked.mode))
+                continue
+            }
+            start=asked.mode
+        case .Add_Move,.Remove_Moves,.Set_Speed_Scale,.Set_Jump_Scale,.Set_Acceleration_Scale,.Set_Suspended,.Set_Gravity_Scale:
         }
         c:^Locomotion_State
         if phys.character_owner(characters,colliders,asked.entity) {
@@ -233,6 +256,10 @@ locomotion_prepare :: proc(
             c.move_count+=1
         case .Remove_Moves:
             moves_remove(c,asked.move.id)
+        case .Claim_Mode:
+            if c.mode!=asked.mode {c.mode,c.jumped,c.coyote=asked.mode,false,0}
+            c.claimed=true
+            character_move_write(moves,asked.entity,asked.claim)
         case .Set_Mode:
             c.mode,c.jumped,c.coyote=asked.mode,false,0
             // Asked to walk it stands up, and a crouch held meanwhile waits to be let go; asked to
@@ -272,13 +299,23 @@ locomotion_prepare :: proc(
             c.gravity=asked.gravity_scale
         }
     }
+    // A custom mode lasts while its owner claims it; where this end decides the character, a tick
+    // without a claim takes it back to the mode its components start it in. A replica keeps the
+    // mode the network gives it.
     for row in 0..<core.count(states) {
         e:=core.entity_at(states,row)
-        if phys.character_owner(characters,colliders,e) &&
-            (core.at(states,row).mode>MODE_ENGINE_LAST || core.has(walks,e) || core.has(flights,e) || core.has(swims,e)) {continue}
-        core.remove(states,e)
-        core.remove(moves,e)
-        core.remove(inputs,e)
+        c:=core.at(states,row)
+        start,starts:=initial_mode(walks,flights,swims,e)
+        unclaimed:=c.mode>MODE_ENGINE_LAST && !c.claimed && core.owned(remotes,e)
+        if !phys.character_owner(characters,colliders,e) || unclaimed && !starts || !starts && c.mode<=MODE_ENGINE_LAST {
+            core.remove(states,e)
+            core.remove(moves,e)
+            continue
+        }
+        if unclaimed {
+            edit:=core.edit_at(states,row)
+            edit.mode,edit.jumped,edit.coyote=start,false,0
+        } else if c.claimed {core.edit_at(states,row).claimed=false}
     }
 }
 
@@ -841,7 +878,7 @@ Ledge_Query :: struct {
 // go a radius past the face, or onto the middle of a top narrower than that (the top of a thin wall).
 // Its capsule fits standing there, and a thinner one goes up along the wall and across onto it without
 // hitting anything.
-ledge_find :: proc(physics:core.Ref(phys.Physics_State),capsule:phys.Character_Capsule,facing:[3]f32,query:Ledge_Query) -> (to:[3]f32,height:f32,normal:[3]f32,found:bool) {
+ledge_find :: proc(physics:core.Ref(phys.Physics_State),capsule:phys.Character_Capsule,facing:[3]f32,query:Ledge_Query) -> (to:[3]f32,height:f32,found:bool) {
     if !(query.reach>0) || !(query.max_height>query.min_height) {return}
     frame:=capsule.up_frame
     up:=mm.quat_rotate(frame,{0,1,0})
@@ -886,7 +923,7 @@ ledge_find :: proc(physics:core.Ref(phys.Physics_State),capsule:phys.Character_C
     if _,blocked:=phys.sweep(physics,thin,start,frame,raised-start,linalg.length(raised-start),filter=filter);blocked {return}
     across_to:=top.point+up*(center+LEDGE_INSET)-raised
     if _,blocked:=phys.sweep(physics,thin,raised,frame,across_to,linalg.length(across_to),filter=filter);blocked {return}
-    return top.point,height,-into,true
+    return top.point,height,true
 }
 
 // Whether the ground falls away ahead of a standing character along direction: a sphere almost as

@@ -130,7 +130,7 @@ the same attributes and no private paths. Declaration and parameter binding:
     derived follow state, the lens and `Transform` of each following camera and the
     `Move_Input` of the bodies the local seats drive; a mode is requested with `cam.camera_mode`.
   - `physics`: `Transform` of the bodies; locomotion, the `Character_Move` of the characters (in a
-    game mode, after the step of that mode).
+    custom mode, the one its owner claims it with).
   - `animation_sample`/`animation_advance`: buffers and results of `Playback`.
   - The rest is requested.
 - **Input arrives through actions**, members of an enum `@(actions)` of each library, with their
@@ -147,8 +147,9 @@ the same attributes and no private paths. Declaration and parameter binding:
   The seat's comes from its actions toward the forward of the camera it sees (`camera_drive`); an
   AI or the game writes it for the bodies no seat drives. The mover turns the body toward its look
   at its own rate (locomotion: the `turn_speed` of its `Walk`, `Fly` or `Swim`), or as its root
-  motion turns it (`Layered_Move.turn`); nobody else turns it. An own mode
-  (swimming, climbing) is requested with `locomotion.set_mode`. Player bodies appear at the
+  motion turns it (`Layered_Move.turn`); nobody else turns it. A mode of the engine (swimming,
+  flying) is requested with `locomotion.set_mode`; a mode of the game is claimed with its move every
+  tick it drives (`locomotion.claim_mode`). Player bodies appear at the
   `Spawn_Point`s with `players` on of the `spawn` plugin when a player prefab is named, not through
   game code; a point with `players` off serves what the game spawns (enemies) and never gives a
   seat its body. The number of local players is of the run ([control](references/control.md)).

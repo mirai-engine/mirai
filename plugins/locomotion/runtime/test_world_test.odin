@@ -153,11 +153,11 @@ loco_test_move :: proc(f:^Loco_Test,dt:f32,clock:core.Clock) {
     time:=core.Time{playing=true,dt=dt}
     actions:=input.Input_Of(Walk_Action){base=TEST_WALK_BASE}
     slide_step(core.read(&f.slides),&f.slide_states,core.read(&f.loco_states),core.read(&f.walks),core.read(&f.characters),core.read(&f.colliders),
-        core.read(&f.character_states),core.read(&f.bodies),core.read(&f.inputs),&f.moves,&f.loco_requests,core.ref(&f.state),core.read(&f.paces),actions,time,clock)
+        core.read(&f.character_states),core.read(&f.bodies),core.read(&f.inputs),&f.loco_requests,core.ref(&f.state),core.read(&f.paces),actions,time,clock)
     mantle_step(core.read(&f.mantles),&f.mantle_states,core.read(&f.loco_states),core.read(&f.walks),core.read(&f.characters),core.read(&f.colliders),
-        core.read(&f.character_states),core.read(&f.inputs),core.read(&f.transforms),core.read(&f.parents),&f.moves,&f.loco_requests,core.ref(&f.state),core.read(&f.paces),actions,time,clock)
+        core.read(&f.character_states),core.read(&f.inputs),core.read(&f.transforms),core.read(&f.parents),&f.loco_requests,core.ref(&f.state),core.read(&f.paces),actions,time,clock)
     test_world_settle(&f.w)
-    locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,&f.inputs,
+    locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,core.read(&f.remotes),
         core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco_requests,time,&f.problems)
     test_world_settle(&f.w)
     locomotion_step(

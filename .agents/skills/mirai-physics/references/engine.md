@@ -133,21 +133,27 @@ Optional `locomotion` plugin (`Character` + capsule `Collider` + `Walk`/`Swim`/`
   `Locomotion_State` publishes what the mode heads to (`desired`, `acceleration`, `braking`,
   `facing`, `turn_speed`, world axes and time) for animation; nobody recomputes it.
 - **Modes (`Locomotion_Mode` named ids):** `MODE_FALLING`, `MODE_WALKING`, `MODE_FLYING`,
-  `MODE_SWIMMING`, `MODE_CROUCHING` (up to `MODE_ENGINE_LAST`) + custom modes, switched via
-  `set_mode` in `Locomotion_Requests` (missing component -> `locomotion.mode_component`). A custom
-  mode is the extension point: its owner runs `before="locomotion_prepare"`, asks for the mode and
-  writes the whole `Character_Move` of every tick (yaw, flags with `Reach_Drive` if wanted,
-  `gravity_scale`, `height`); `locomotion_step` only composes layered moves and pace on top and
-  keeps the jump/crouch edges current. `set_mode(MODE_WALKING)` stands up (crouch held waits to be
-  let go: `crouch_lock`); `set_mode(MODE_CROUCHING)` crouches.
+  `MODE_SWIMMING`, `MODE_CROUCHING` (up to `MODE_ENGINE_LAST`), switched via `set_mode` in
+  `Locomotion_Requests` (missing component -> `locomotion.mode_component`), + custom modes. A custom
+  mode is the extension point: its owner runs `before="locomotion_prepare"` and claims it with the
+  whole `Character_Move` of every tick it drives (`claim_mode`: yaw, flags with `Reach_Drive` if
+  wanted, `gravity_scale`, `height`); `locomotion_prepare` is the only writer of that move, and
+  `locomotion_step` only composes layered moves and pace on top and keeps the jump/crouch edges
+  current. A tick nobody claims it, where this end decides the character, it goes back to the mode
+  its components start it in (falling with a `Walk`): an owner that is removed, or stops, needs no
+  hand-back. `set_mode` of a custom mode and `claim_mode` of an engine one are
+  `locomotion.request` problems. `set_mode(MODE_WALKING)` stands up (crouch held waits to be let
+  go: `crouch_lock`); `set_mode(MODE_CROUCHING)` crouches. Locomotion never removes `Move_Input`,
+  which seats, AI and games write.
 - **Tier 2 (same plugin, own files, zero cost without rows):** `Slide` (`slide.odin`,
   `Slide_State`) and `Mantle` (`mantle.odin`, `Mantle_State`: `ledge_find`, the climb as a custom
   mode; root motion of the climb is an `Override` layered move from `animation_physics`, and
-  `Mantle_State.to` is its warp target, with `from` and the wall `normal` for callers). Both are
-  written only on the custom-mode extension point.
-- **Tier 3 (game rules):** stamina, tactical sprints and ledge jumps are `abilities` data (speed
-  attribute -> `set_speed_scale`, `per_second` costs, `Speed`/`Ledge_Ahead` conditions, window
-  moves) ([abilities](../../mirai-abilities/SKILL.md)); locomotion holds no economy.
+  `Mantle_State.to` is its warp target, with `from` for callers). Both are written only on the
+  custom-mode extension point.
+- **Tier 3 (game rules):** stamina, sprints with an energy bar and ledge jumps are `abilities`
+  data (speed attribute -> `set_speed_scale`, `per_second` costs paused and ended by locomotion
+  mode, `Speed` conditions, window moves) plus a game step that asks `ledge_ahead`
+  ([abilities](../../mirai-abilities/SKILL.md)); locomotion holds no economy.
 - **Fly & Swim:** 3D flight without gravity; swimming enters/exits at `Swim.depth` (`Float` at
   surface, 3D underwater with buoyancy/current, surface jump-out `Override`).
 - **Layered moves (`Layered_Move`):** `add_move`/`remove_moves` (`Additive` velocity or `Override`

@@ -65,7 +65,8 @@ Ability_Attribute :: distinct u8
 Ability_Cue :: distinct u16
 @(name="none") CUE_NONE :: Ability_Cue(0)
 
-// Locomotion modes of the Character an ability may start in.
+// Locomotion modes of the Character of a user: those an ability may start in, pauses its costs in
+// or ends in.
 @(name_bits="locomotion.Locomotion_Mode")
 Ability_Modes :: distinct u32
 
@@ -91,11 +92,12 @@ Ability_Input :: struct {
     wait:Ability_Wait,
 }
 
-// What a condition measures.
+// What a condition measures. What the game decides about the world (a ledge ahead, a target in
+// sight) is not a condition: a step of the game asks its query and uses the ability, or gives the
+// user a status the ability requires.
 Ability_Condition_Kind :: enum u8 {
-    Attribute,   // the current value of attribute
-    Speed,       // m/s of the user's Character across its up, relative to the ground it stands on
-    Ledge_Ahead, // standing, the ground falls away ahead along where its Character goes: none within at_least m under its feet reach ahead (locomotion.ledge_ahead); at_most stays 0
+    Attribute, // the current value of attribute
+    Speed,     // m/s of the user's Character across its up, relative to the ground it stands on
 }
 
 // It holds while what kind measures is within at_least..at_most.
@@ -104,15 +106,12 @@ Ability_Condition :: struct {
     at_least:f32,
     at_most:f32, // 0: no limit
     kind:Ability_Condition_Kind,
-    reach:f32 `mirai:"min=0,unit=m"`, // of Ledge_Ahead: how far ahead of the feet the ground has to fall away
 }
 
 Ability_Cost :: struct {
     attribute:Ability_Attribute,
     amount:f32 `mirai:"min=0"`, // taken from its base when the ability starts; it cannot start with less
-    per_second:f32 `mirai:"min=0,unit=1/s"`, // taken from its base every second it runs after its start; it completes when the attribute cannot pay the tick
-    fall_grace:f32 `mirai:"min=0,unit=s"`, // with pause_falling: falling longer than this completes the ability; 0: no limit
-    pause_falling:bool, // pauses per_second drain while the user's Character is airborne/falling
+    per_second:f32 `mirai:"min=0,unit=1/s"`, // taken from its base every second it runs after its start, but in the pause_modes of the ability; it completes when the attribute cannot pay the tick
 }
 
 // value = (base + add) * (1 + more), summed over the modifiers in force.
@@ -182,7 +181,7 @@ Ability_Window :: struct {
 
 Ability_Attribute_Entry :: struct {
     attribute:Ability_Attribute,
-    base:f32 `mirai:"min=0"`, // costs and effects change it; it stays in 0..max
+    base:f32 `mirai:"min=0"`, // what it starts at: costs, effects and regeneration then change the base its Ability_State keeps, in 0..max
     max:f32 `mirai:"min=0"`,  // 0: no limit
     regen:f32 `mirai:"unit=1/s"`, // added to base every second
     regen_delay:f32 `mirai:"min=0,unit=s"`, // seconds after the last cost or negative effect before positive regen resumes
@@ -204,7 +203,7 @@ Ability_Timer :: struct {
     stacks:u8,
 }
 
-@(component,replicated,description="Uses the abilities of its kit and holds the attributes that costs and effects change. The current values of its speed, jump and acceleration attributes scale the locomotion of its Character: a sprint is a window or an effect that modifies them.")
+@(component,replicated,description="Uses the abilities of its kit, with the attributes it starts with that costs and effects then change. The current values of its speed, jump and acceleration attributes scale the locomotion of its Character: a sprint is a window or an effect that modifies them.")
 Ability_User :: struct {
     kit:core.Record(Ability_Kit),
     attributes:[ATTRIBUTE_ENTRIES]Ability_Attribute_Entry,
@@ -223,28 +222,47 @@ Ability_Held :: struct {
     blend:f32 `mirai:"min=0,max=0.2,unit=s"`, // seconds it takes from one socket to the other; 0: at once
 }
 
-// Saved with the tracking row so a save can resume an ability in progress.
-@(component,replicated,description="The running ability and its current attribute values.")
+// What a client cannot work out itself, written only when it changes, never every tick: the ability
+// its user runs and the bases of its attributes as a line from the tick since, base i being
+// bases[i] + rates[i] per second after it, kept in 0..max (ability_base). A cost or an effect, a
+// drain that starts, pauses or stops and regeneration that resumes write a new line. Saved with
+// the tracking row so a save can resume an ability in progress.
+@(component,replicated,description="The running ability and the bases of the attributes of an ability user.")
 Ability_State :: struct {
     ability:core.Record(Ability) `mirai:"readonly"`,
     start:u64 `mirai:"readonly,hidden"`,
-    statuses:Ability_Statuses `mirai:"transient,readonly,local"`,
-    values:[ATTRIBUTE_ENTRIES]f32 `mirai:"transient,readonly,local"`,
-    own:f32 `mirai:"readonly,hidden"`, // ticks on the user's own clock
-    span_open:u16 `mirai:"readonly,hidden"`, // bit i: clip-span-bound window i is open
-    air_ticks:u16 `mirai:"readonly,hidden"`, // consecutive falling ticks while running an ability with fall_grace
+    since:u64 `mirai:"readonly,hidden"`, // tick of bases
+    bases:[ATTRIBUTE_ENTRIES]f32 `mirai:"readonly"`,
+    rates:[ATTRIBUTE_ENTRIES]f32 `mirai:"readonly,hidden,unit=1/s"`, // regeneration less what the running ability drains
+    drains:u8 `mirai:"readonly,hidden"`, // bit i: a per_second cost of the running ability takes from entry i
 }
 
-@(component,replicated,description="The pending inputs, cooldowns, and effects of an ability user.")
+// The deadlines a client cannot work out, written when they start or end.
+@(component,replicated,description="The cooldowns, lasting effects and regeneration deadlines of an ability user.")
 Ability_Tracking :: struct {
-    targets:[USER_HITS]core.Entity `mirai:"readonly,hidden"`,
-    windows:[USER_HITS]u8 `mirai:"readonly,hidden"`,
-    hit_count:u8 `mirai:"readonly,hidden"`,
-    buffer:[USER_BUFFER]Ability_Buffered `mirai:"readonly,hidden"`,
     cooldowns:[USER_COOLDOWNS]Ability_Cooldown `mirai:"readonly,hidden"`,
     timers:[USER_TIMERS]Ability_Timer `mirai:"readonly,hidden"`,
     regen_at:[ATTRIBUTE_ENTRIES]u64 `mirai:"readonly,hidden"`, // tick from which entry i may regenerate after being spent
-    span_start:[ABILITY_WINDOWS]u32 `mirai:"readonly,hidden"`, // local tick offset when span-bound window i opened
+}
+
+// What each end works out itself from the replicated rows, its input and its animation, and never
+// sends: a client predicts it for its own character and a rollback runs it again. The fields of
+// the run go back to their start when the ability and start tick of Ability_State change (run).
+@(component,derived,description="The statuses, current values, input buffer and hits an ability user works out each tick.")
+Ability_Local :: struct {
+    statuses:Ability_Statuses `mirai:"transient,readonly"`,
+    values:[ATTRIBUTE_ENTRIES]f32 `mirai:"transient,readonly"`,
+    buffer:[USER_BUFFER]Ability_Buffered `mirai:"transient,readonly,hidden"`,
+    run:u64 `mirai:"transient,readonly,hidden"`, // start+1 of the run the fields below follow; 0: none
+    own:f32 `mirai:"transient,readonly,hidden"`, // ticks on the user's own clock
+    span_open:u16 `mirai:"transient,readonly,hidden"`, // bit i: clip-span-bound window i is open
+    span_start:[ABILITY_WINDOWS]u32 `mirai:"transient,readonly,hidden"`, // local tick offset when span-bound window i opened
+    end_since:u64 `mirai:"transient,readonly,hidden"`, // tick from which its Character has been in an end_modes of the running ability; 0: not in one
+    targets:[USER_HITS]core.Entity `mirai:"transient,readonly,hidden"`,
+    windows:[USER_HITS]u8 `mirai:"transient,readonly,hidden"`,
+    hit_count:u8 `mirai:"transient,readonly,hidden"`,
+    held:core.Entity `mirai:"transient,readonly,hidden"`, // the Ability_Held entity last asked where to be
+    held_at:bool `mirai:"transient,readonly,hidden"`,     // it was asked to the socket of a window
 }
 
 Ability_Request_Kind :: enum u8 {Use,Cancel,Effect,Kit}
@@ -332,20 +350,39 @@ ability_requests_serve :: proc(requests:^Ability_Requests,settings:Ability_Setti
 }
 
 // The current value of an attribute of a user and whether it has it.
-ability_value :: proc "contextless" (user:^Ability_User,state:^Ability_State,attribute:Ability_Attribute) -> (value:f32,found:bool) {
-    if user==nil || state==nil || attribute==ATTRIBUTE_NONE {return}
+ability_value :: proc "contextless" (user:^Ability_User,local:^Ability_Local,attribute:Ability_Attribute) -> (value:f32,found:bool) {
+    if user==nil || local==nil || attribute==ATTRIBUTE_NONE {return}
     for entry,i in user.attributes {
-        if entry.attribute==attribute {return state.values[i],true}
+        if entry.attribute==attribute {return local.values[i],true}
     }
     return
+}
+
+// The base of attributes[i] of a user at tick: the line of its Ability_State, in 0..max.
+ability_base :: proc "contextless" (user:^Ability_User,state:^Ability_State,i:int,tick:u64,dt:f32) -> f32 {
+    return clamp_base(user.attributes[i],base_line(state,i,tick,dt))
+}
+
+// The line of base i at tick, not kept in 0..max.
+@(private)
+base_line :: #force_inline proc "contextless" (state:^Ability_State,i:int,tick:u64,dt:f32) -> f32 {
+    v:=state.bases[i]
+    if tick>state.since && state.rates[i]!=0 {v+=state.rates[i]*dt*f32(tick-state.since)}
+    return v if finite(v) else max(f32) if v>0 else 0
+}
+
+@(private)
+clamp_base :: #force_inline proc "contextless" (entry:Ability_Attribute_Entry,value:f32) -> f32 {
+    v:=max(value,0)
+    return min(v,entry.max) if entry.max>0 else v
 }
 
 // Where a running ability is in its timeline: ticks of the world, of the user's own time since
 // it started, and the bitmask of open clip-span-bound windows.
 Ability_Time :: struct {local:i64,own:f32,spans:u16}
 
-ability_has :: #force_inline proc "contextless" (state:Ability_State,status:Ability_Status) -> bool {
-    return u64(status)<64 && state.statuses&Ability_Statuses(u64(1)<<u64(status))!=0
+ability_has :: #force_inline proc "contextless" (local:Ability_Local,status:Ability_Status) -> bool {
+    return u64(status)<64 && local.statuses&Ability_Statuses(u64(1)<<u64(status))!=0
 }
 
 status_bit :: #force_inline proc "contextless" (status:Ability_Status) -> Ability_Statuses {
