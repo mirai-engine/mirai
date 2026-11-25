@@ -2,6 +2,8 @@
   "version": 1,
   "id": "0512ac6bb76639efa1aa35746972fedb",
   "name": "mirai",
+  "catalog_path": "Demo/characters/mirai",
+  "documents": "mirai",
   "origin": {"path": "assets/characters/mirai/mirai.glb", "folder": false, "importer": "glTF"},
   "identity": "339c12d886baefcd14f96e1c9cb6501e6b85183d0b5edbba6b290d3853c2937c",
   "inputs": [],

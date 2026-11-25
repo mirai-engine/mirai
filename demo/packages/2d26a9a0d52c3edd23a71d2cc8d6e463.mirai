@@ -2,6 +2,8 @@
   "version": 1,
   "id": "2d26a9a0d52c3edd23a71d2cc8d6e463",
   "name": "robot",
+  "catalog_path": "Demo/characters/robot",
+  "documents": "robot",
   "origin": {"path": "assets/characters/robot/robot.glb", "folder": false, "importer": "glTF"},
   "identity": "7afe8a1a9c863a77b6a70bb570e9e678e59d01af0c432e3c93d4d922f5425235",
   "inputs": [],

@@ -2,6 +2,8 @@
   "version": 1,
   "id": "2dbac73486cbcaad3569e05ecd01bb4f",
   "name": "tree_tall",
+  "catalog_path": "Demo/foliage_extreme",
+  "documents": "tree_tall",
   "origin": {"path": "assets/foliage_extreme/tree_tall.obj", "folder": false, "importer": "OBJ"},
   "identity": "3259aa4d9b011a2cd76a9d6f297fe105a7ce5ad76f1a3591db932171c43a4c80",
   "inputs": ["trees.mtl"],

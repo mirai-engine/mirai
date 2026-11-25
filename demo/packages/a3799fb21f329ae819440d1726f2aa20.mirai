@@ -2,6 +2,8 @@
   "version": 1,
   "id": "a3799fb21f329ae819440d1726f2aa20",
   "name": "vase",
+  "catalog_path": "Demo/gallery",
+  "documents": "vase",
   "origin": {"path": "assets/gallery/vase.obj", "folder": false, "importer": "OBJ"},
   "identity": "5875aea8a04578f3158c7f275449d9b33f78c1b058906552335a81afd01f7fe4",
   "inputs": ["vase.mtl", "vase_color.png"],
