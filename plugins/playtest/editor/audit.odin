@@ -340,14 +340,17 @@ audit_programs_known :: proc(app:^host.App) -> bool {
 }
 
 // The layers of the View_Volumes whose material draws no PostProcess program:
-// the effect is never drawn and nothing says so.
+// the effect is never drawn. A volume the renderer already reported as
+// render.postprocess while the game plays comes through audit_problems instead.
 @(private)
 audit_post_layers :: proc(a:^Audit) {
     volumes:=core.world_table_of(a.w,erender.View_Volume)
     assets:=a.s.app.assets
     if volumes==nil || assets==nil || !audit_programs_known(a.s.app) {return}
+    problems:=host.app_world_storage(a.s.app,a.w.data,core.Problems)
     for &volume,row in volumes.values[:core.count(volumes)] {
         e:=volumes.entities[row]
+        if problems!=nil && core.problem_find(problems,e,"render.postprocess")!=nil {continue}
         for layer,at in volume.layers {
             if !layer.enabled || layer.material=={} {continue}
             m:=audit_material(assets,layer.material)
