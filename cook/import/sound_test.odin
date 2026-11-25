@@ -16,6 +16,7 @@ import "mirai:store"
 @(private="file") SINE_OGG :: #load("../../audio/testdata/sine_mono.ogg")           // 0.5 s of 440 Hz at 44.1 kHz, amplitude 0.5
 @(private="file") THREE_OGG :: #load("../../audio/testdata/three_channels.ogg")
 @(private="file") TONE_OGG :: #load("../../audio/testdata/tone_long.ogg")           // 2 s of 330 Hz at 32 kHz, mono
+@(private="file") CLICK_OGG :: #load("../../audio/testdata/click.ogg")              // 20 ms of decaying noise, then silence to 1 s, at 44.1 kHz, mono
 // 2 s at 44.1 kHz, mono: 1 s of silence, 12 kHz at amplitude 0.5 to frame 86000, silence; LOOPSTART=44100.
 @(private="file") INTRO_OGG :: #load("../../audio/testdata/intro_tone.ogg")
 
@@ -111,11 +112,11 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     }
     report_destroy(&report)
 
-    // Half a second of Vorbis at 44.1 kHz: decoded when short and brought to the rate of the
-    // mixer, streamed from a quarter of a second on as its file, at its own rate.
+    // Half a second of Vorbis at 44.1 kHz: coded Lossless when short and brought to the rate of
+    // the mixer, streamed from a quarter of a second on as its file, at its own rate.
     ogg:=fmt.tprintf("%s/sine.ogg",folder)
     _=os.write_entire_file(ogg,SINE_OGG)
-    report,error=import_sound(ogg,options={store=s})
+    report,error=import_sound(ogg,options={store=s,sound=.Lossless})
     testing.expect_value(t,error.code,Error_Code.None)
     if len(report.assets)==1 {
         a:asset.Asset
@@ -243,12 +244,12 @@ a_wav_and_an_ogg_become_sounds_decoded_or_streamed_by_their_length :: proc(t:^te
     refuse(t,s,folder,"none.ogg",nil,.Not_Found)
 }
 
-// What loading a sound costs by how it is stored, and what it holds in memory.
-// A short Ogg Vorbis whose settings say File keeps its file, as compact as it
-// came, and plays as its samples decoded; importing it again without
-// options keeps what its package keeps, and Lossless codes it again.
+// A short Ogg Vorbis keeps by default the smaller of its file and its
+// samples coded: a tone its file, a click and its silence its samples. Kept,
+// it plays as its samples decoded. Lossless and File say which; importing it
+// again without options keeps what its package keeps.
 @(test)
-a_short_ogg_keeps_its_file_when_its_settings_say_so :: proc(t:^testing.T) {
+a_short_ogg_keeps_the_smaller_of_its_file_and_its_samples_coded :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     _,folder,s:=test_assets(t,"sound_file")
     if folder=="" {return}
@@ -257,7 +258,12 @@ a_short_ogg_keeps_its_file_when_its_settings_say_so :: proc(t:^testing.T) {
     _=os.write_entire_file(ogg,SINE_OGG)
     Case :: struct {given:Maybe(Sound_Coding),keeps:bool,what:string}
     coded:=0
-    for c in ([?]Case{{.File,true,"told File"},{nil,true,"again, by what its package keeps"},{.Lossless,false,"told Lossless"}}) {
+    for c in ([?]Case{
+        {nil,true,"by default its file, the smaller"},
+        {.Lossless,false,"told Lossless"},
+        {nil,false,"again, by what its package keeps"},
+        {.File,true,"told File"},
+    }) {
         options:=Import_Options{store=s}
         if given,told:=c.given.?;told {options.sound,options.ignore_stored=given,true}
         report,error:=import_sound(ogg,{},options)
@@ -290,6 +296,8 @@ a_short_ogg_keeps_its_file_when_its_settings_say_so :: proc(t:^testing.T) {
         report_destroy(&report)
     }
     testing.expectf(t,coded>len(SINE_OGG),"the file kept (%d bytes) is smaller than its samples coded (%d)",len(SINE_OGG),coded)
+    click,error:=sound_build(CLICK_OGG,{},allocator=context.temp_allocator)
+    testing.expectf(t,error==.None && len(click.file)==0 && len(click.lossless)>0 && len(click.lossless)<len(CLICK_OGG),"a click and its silence code smaller than its file (%d bytes): %d",len(CLICK_OGG),len(click.lossless))
 }
 
 @(test)

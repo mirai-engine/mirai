@@ -165,7 +165,10 @@ Audio_Listener :: struct {}
 Medium :: struct {
     lowpass:f32 `mirai:"min=0,unit=Hz"`, // cutoff of the low-pass filter of what the listener hears; 0: none
     reverb:Reverb,
-    weight:f32 `mirai:"min=0,max=1"`,    // of its reverb over that of the room
+    weight:f32 `mirai:"min=0,max=1"`,    // how much it is in it: of its reverb over that of the room, and of its snapshot
+    // A snapshot of Audio_Settings the buses blend to while the listener is in
+    // it (medium_snapshots); empty, or one the settings lack: none.
+    snapshot:[AUDIO_SNAPSHOT_NAME]u8 `mirai:"text"`,
 }
 
 // The medium of each listener, by its slot (listener_positions). While every
@@ -173,8 +176,9 @@ Medium :: struct {
 // their lowpasses too, the lower of that and its own; while only some are,
 // the voices heard from those lose their highs through their EQ
 // (mixer.lowpass_bands). audio_reverb mixes the reverb of each by weight over
-// that of its room. One plugin writes it (water), before audio_reverb,
-// audio_buses and audio_sources; zero: the air.
+// that of its room, and audio_buses blends the buses to the snapshot each
+// names by its weight and share of the listeners. One plugin writes it
+// (water), before audio_reverb, audio_buses and audio_sources; zero: the air.
 @(storage)
 Audio_Medium :: struct {
     listeners:[AUDIO_LISTENERS_MAX]Medium,
@@ -253,14 +257,14 @@ Voice_Entry :: struct {
     kind:Voice_Kind,
     generation:u32, // of what the content loaded for sound
     lengths:[LAYERS]f32, // s of each sound
-    length:f32,          // s of the longest
     // Its parameters: where each is, where it goes and how fast, per second.
     values,targets,rates:[PARAMETERS]f32,
     shapes:[LAYERS]asset.Sound_Shape, // what the curves of its set give each sound at values
-    // Its time: cursor seconds into sound at mixer clock `clock`, going on at speed, its pitch.
-    cursor:f64,
+    // Its time: each sound is times[i] seconds into it at mixer clock `clock`
+    // (below 0: as many seconds before it starts), going on at speeds[i], its pitch.
+    times:[LAYERS]f64,
     clock:u64,
-    speed:f32,
+    speeds:[LAYERS]f32,
     // Of a spatial voice: where it was placed last, how it faces, what hides it
     // and the slot of the listener it is heard from.
     moving:bool,
@@ -289,6 +293,7 @@ Voices :: struct {
     seen:core.Seen, // of the sources: the voices of those that went stop
     stats:Audio_Stats,
     paused:bool,    // the voices of the sources were paused with the clock of the world
+    content:u32,    // host.content_generation at the last pass: what its sounds load as is looked at again when it changes
     ranks:[dynamic]Voice_Rank, // of a frame: the entries that are heard, which voices_assign orders
 }
 
@@ -367,7 +372,7 @@ audio_sources :: proc(
         now:=mixer.mixer_clock(app.mixer)
         for &entry,at in voices.entries.values {
             if clock.paused {
-                entry.cursor=entry_time(&entry,now)
+                entry.times=entry_times(&entry,now)
                 if entry.real {voice_virtual(voices,app.mixer,at,states)}
             }
             lead:=u64(LAYER_LEAD) if entry.sound.count>1 else u64(VOICE_LEAD)
@@ -375,7 +380,7 @@ audio_sources :: proc(
         }
     }
     if voices!=nil && voices.paused {return}
-    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,space.medium,core.world_query_read(space.world,space.queries),0},frame.dt,voices,listeners,app,problems)
+    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,space.medium,core.world_query_read(space.world,space.queries),0,false},frame.dt,voices,listeners,app,problems)
 }
 
 VOICE_LEAD :: mixer.CHUNK_FRAMES
@@ -391,6 +396,7 @@ Hearing :: struct {
     medium:core.Ref(Audio_Medium),
     query:core.World_Query, // what hides a source
     now:u64, // mixer clock read once for the pass
+    loaded:bool, // content loaded since the last pass: entries see whether theirs loaded again
 }
 
 @(private)
@@ -403,6 +409,9 @@ sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(A
     }
     hearing:=hearing
     hearing.now=mixer.mixer_clock(m)
+    content:=host.content_generation(app)
+    hearing.loaded=content!=voices.content
+    voices.content=content
     listener_update(listeners,m,&hearing,dt)
     // The voices of the sources that went stop.
     changes,at,left:=core.changes(sources,&voices.seen),0,Voice_Entry{}
@@ -534,7 +543,7 @@ voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners
     state,_:=core.get(states,e)
     lead:=u64(LAYER_LEAD) if entry.sound.count>1 else u64(VOICE_LEAD)
     start:=max(h.now+lead,entry.clock)
-    t:=entry_time(entry,start)
+    times:=entry_times(entry,start)
     heard:=source
     heard.spatial=entry.kind.spatial
     if heard.spatial {
@@ -543,17 +552,38 @@ voice_real :: proc(voices:^Voices,m:^Mixer,h:^Hearing,listeners:^Mixer_Listeners
     }
     desc:=voice_desc(heard,{entry.sound.volume,entry.sound.pitch},entry.position,entry.rotation,state.occlusion,entry.transmission,entry.listener)
     desc.start_frame=start
-    if !voices_play(m,&entry.sound,desc,&entry.shapes,t,&entry.lengths) {return false}
+    if !voices_play(m,&entry.sound,desc,&entry.shapes,&times,&entry.lengths) {return false}
     entry.real=true
     state.voice=entry.sound.voices[0]
     state_put(states,e,state)
     return true
 }
 
-// Seconds into its sound the voice of an entry is, or would be, at mixer clock now.
+// Seconds into its sound the voice of a layer of an entry is, or would be, at
+// mixer clock now; below 0, seconds before its delay lets it start.
 @(private)
-entry_time :: proc "contextless" (entry:^Voice_Entry,now:u64) -> f64 {
-    return entry.cursor+f64(now-min(now,entry.clock))/mixer.MIXER_RATE*f64(entry.speed)
+entry_time :: proc "contextless" (entry:^Voice_Entry,layer:int,now:u64) -> f64 {
+    elapsed:=f64(now-min(now,entry.clock))/mixer.MIXER_RATE
+    time:=entry.times[layer]
+    if time<0 {
+        if elapsed<=-time {return time+elapsed}
+        elapsed+=time
+        time=0
+    }
+    return time+elapsed*f64(entry.speeds[layer])
+}
+@(private)
+entry_times :: proc "contextless" (entry:^Voice_Entry,now:u64) -> (times:[LAYERS]f64) {
+    for i in 0..<clamp(entry.sound.count,0,LAYERS) {times[i]=entry_time(entry,i,now)}
+    return
+}
+// Whether every sound of an entry played to its end by mixer clock now.
+@(private)
+entry_ended :: proc "contextless" (entry:^Voice_Entry,now:u64) -> bool {
+    for i in 0..<clamp(entry.sound.count,0,LAYERS) {
+        if entry_time(entry,i,now)<f64(entry.lengths[i]) {return false}
+    }
+    return true
 }
 
 // The state of a source, written only when it is another.
@@ -617,8 +647,8 @@ reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
     volume.mix_linear((^[4]f32)(value),(^[4]f32)(&by)^,weight,add)
 }
 
-// The buses of the mixer as the settings, the snapshot Audio_Mix blends to
-// and the medium of the listeners say; only what differs is sent.
+// The buses of the mixer as the settings, the snapshots of Audio_Mix and of
+// the medium of the listeners and its lowpass say; only what differs is sent.
 @(step="late",stage="end")
 audio_buses :: proc(
     settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),mix:core.Ref(Audio_Mix),
@@ -638,10 +668,11 @@ audio_buses :: proc(
         }
         seconds=mix.blend_seconds
     }
+    _,count:=listener_positions(worlds,listeners,view)
+    weights:=medium_snapshots(settings.ptr,medium.ptr,count)
     blend:=&applied.blend
     blended:=false
-    if changed || !blend.set || snapshot!=blend.snapshot || blend.t<1 {blended=mix_blend_step(blend,settings.ptr,snapshot,seconds,frame.dt)}
-    _,count:=listener_positions(worlds,listeners,view)
+    if changed || !blend.set || snapshot!=blend.snapshot || weights!=blend.medium || blend.t<1 {blended=mix_blend_step(blend,settings.ptr,snapshot,seconds,frame.dt,weights)}
     lowpass:=medium_lowpass(medium.ptr,count)
     if applied.set && applied.world==id && !changed && !blended && applied.count==mixer.bus_count(m) && applied.lowpass==lowpass {return}
     applied.set=buses_apply(m,settings.ptr,volumes.ptr,lowpass,problems,&blend.now)
@@ -1082,7 +1113,11 @@ source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^M
         parameters_aim(entry,set,source.parameters)
         entry.shapes=shapes_of(set,&entry.sound,entry.values)
         entry_speed(entry,source,h.now)
-        if source.loop && entry.length>0 {entry.cursor=math.mod(entry.cursor,f64(entry.length))}
+        if source.loop {
+            for &time,i in entry.times[:entry.sound.count] {
+                if time>0 && entry.lengths[i]>0 {time=math.mod(time,f64(entry.lengths[i]))}
+            }
+        }
         if entry.real {voices_tune(m,&entry.sound,source,&entry.shapes,entry.kind.spatial,true)}
         return
     }
@@ -1095,15 +1130,18 @@ source_set :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^M
     source_start(voices,m,app,h,listeners,source,e,problems)
 }
 
-// The time of an entry goes on from now at the speed its source and the shape
-// of its first sound give it.
+// The time of each sound of an entry goes on from now at the pitch its voice
+// plays at: of its source, its set, its entry and its shape.
 @(private)
-entry_speed :: proc(entry:^Voice_Entry,source:Audio_Source,now:u64) {
+entry_speed :: proc "contextless" (entry:^Voice_Entry,source:Audio_Source,now:u64) {
     if now>entry.clock {
-        entry.cursor,entry.clock=entry_time(entry,now),now
+        entry.times,entry.clock=entry_times(entry,now),now
     }
-    p0:=entry.sound.pitches[0] if entry.sound.pitches[0]>0 else 1
-    entry.speed=(source.pitch>0?source.pitch:1)*entry.sound.pitch*p0*entry.shapes[0].pitch
+    pitch:=(source.pitch>0?source.pitch:1)*entry.sound.pitch
+    for i in 0..<clamp(entry.sound.count,0,LAYERS) {
+        entry_pitch:=entry.sound.pitches[i] if entry.sound.pitches[i]>0 else 1
+        entry.speeds[i]=clamp(pitch*entry_pitch*entry.shapes[i].pitch,mixer.PITCH_MIN,mixer.PITCH_MAX)
+    }
 }
 
 // What the voice of a source is started as, placed or not.
@@ -1131,15 +1169,12 @@ source_start :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:
     entry.generation=host.content_sound_generation(app,source.sound)
     entry.sound=voices_of(pick)
     if entry.sound.count>1 {entry.clock=h.now+LAYER_LEAD}
-    for sound,i in entry.sound.sounds[:entry.sound.count] {
-        entry.lengths[i]=mixer.sound_seconds(m,sound)
-        entry.length=max(entry.length,entry.lengths[i]+entry.sound.delays[i])
-    }
+    for sound,i in entry.sound.sounds[:entry.sound.count] {entry.lengths[i]=mixer.sound_seconds(m,sound)}
+    entry.times=layers_start(&entry.sound)
     entry.values=parameters_clean(source.parameters)
     entry.targets=entry.values
     entry.shapes=shapes_of(host.content_sound_set_info(app,source.sound),&entry.sound,entry.values)
-    p0:=entry.sound.pitches[0] if entry.sound.pitches[0]>0 else 1
-    entry.speed=(source.pitch>0?source.pitch:1)*pick.pitch*p0*entry.shapes[0].pitch
+    entry_speed(&entry,source,h.now)
     if entry.kind.spatial {
         entry.position=world.position
         entry.listener=listener_pick(listeners,world.position,AUDIO_LISTENERS_MAX)
@@ -1185,7 +1220,7 @@ hidden :: proc(h:^Hearing,listener:[3]f32,e:core.Entity,world:core.World_Transfo
 voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^Mixer_Listeners,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
     entry:=core.entity_map_get(&voices.entries,e)
     world,placed:=core.get(h.worlds,e)
-    if !voices_sounds_valid(m,&entry.sound) || entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
+    if !voices_sounds_valid(m,&entry.sound) || h.loaded && entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
         sound_voices_stop(m,&entry.sound)
         core.entity_map_remove(&voices.entries,e)
         state.voice={}
@@ -1200,12 +1235,12 @@ voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:
             if voice=={} {continue}
             if mixer.voice_valid(m,voice) {left+=1;continue}
             voice={}
-            stolen||=source.loop || entry_time(entry,h.now)<f64(entry.lengths[i]+entry.sound.delays[i])-LAYER_ENDED
+            stolen||=source.loop || entry_time(entry,i,h.now)<f64(entry.lengths[i])-LAYER_ENDED
         }
         if stolen {entry_silence(m,entry)} else if left==0 {entry.real=false}
         state.voice=entry.sound.voices[0] if entry.real else {}
     }
-    if !entry.real && !source.loop && entry_time(entry,h.now)>=f64(entry.length) {
+    if !entry.real && !source.loop && entry_ended(entry,h.now) {
         core.entity_map_remove(&voices.entries,e)
         state.voice,state.ended={},true
         voices.stats.ended+=1
@@ -1311,8 +1346,9 @@ voices_picked :: proc(m:^Mixer,app:^host.App,source:Audio_Source,pick:host.Sound
     lengths:[LAYERS]f32
     for sound,i in v.sounds[:v.count] {lengths[i]=mixer.sound_seconds(m,sound)}
     shapes:=shapes_of(host.content_sound_set_info(app,source.sound),&v,parameters_clean(source.parameters))
+    times:=layers_start(&v)
     busy:=mixer.mixer_stats(m).streams_busy
-    if !voices_play(m,&v,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener),&shapes,0,&lengths) {
+    if !voices_play(m,&v,voice_desc(source,{pick.volume,pick.pitch},position,1,0,mixer.TRANSMISSION_DEFAULT,listener),&shapes,&times,&lengths) {
         // A refused stream is said by audio_buses, with the capacity that refused it.
         if mixer.mixer_stats(m).streams_busy==busy {
             core.report(problems,e,"audio.voices","%s did not start: every voice of the mixer plays a sound of the same or a higher priority; play fewer sounds at once, raise its priority, or raise the voices of the mixer",e==core.NONE?"audio.play":"its Audio_Source")
@@ -1373,31 +1409,33 @@ One_Shot_Outcome :: enum u8 {
     Played,
     Culled_Distance, // placed beyond where every listener hears it
     Rejected_Mixer,  // the mixer started no voice of it, or has not its bus
-    Missing_Asset,   // its path is not of the assets, or it does not load as a sound
-    Deduped,         // a tick that ran again asked for what that tick played already
+    Missing_Asset,   // it does not load as a sound
 }
 
-// A sound a request asked for: what tells it apart from another and what became of it.
+// A sound a fixed tick of the game asked for: what tells it apart from another
+// and what became of it.
 Sound_Played :: struct {
     tick:u64,
-    sound:base.Asset_Id, // zero for a path the assets do not have
+    sound:base.Asset_Id,
     by:core.Entity,
     at:[3]f32,
     placed:bool,
-    keyed:bool,      // a fixed tick of the game asked for it: a tick that runs again finds it
     outcome:One_Shot_Outcome,
     distance:f32,    // m from a placed one to the nearest listener; 0 when not placed
 }
 
-// The sounds the requests of a world asked for lately, newest last, over a
-// ring: what a tool reads of the one-shot sounds of a game, and what keeps a
-// tick that runs again (a rollback corrects it) from playing one of them
-// twice, while it plays what only the corrected tick asks. One per world,
-// never copied with it, so a rollback does not take it back.
+// The sounds the fixed ticks of a world asked for lately, newest last, over a
+// ring: what keeps a tick that runs again (a rollback corrects it) from
+// playing one of them twice, while it plays what only the corrected tick
+// asks, and what a tool reads of the one-shot sounds of a game. It holds only
+// what such a tick can find: not what a frame or the editor asks, nor the
+// asks of a tick that runs again that were found. One per world, never copied
+// with it, so a rollback does not take it back.
 @(storage,host,by_world)
 Sounds_Played :: struct {
     keys:[SOUNDS_PLAYED_CAPACITY]Sound_Played,
     count:u64,
+    deduped:u64, // asks of a tick that ran again that found what it played
 }
 
 // The sounds kept, oldest first: at most SOUNDS_PLAYED_CAPACITY, in two runs of the ring.
@@ -1411,7 +1449,7 @@ sounds_played :: proc "contextless" (played:^Sounds_Played) -> (older,newer:[]So
 @(private)
 played_found :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) -> bool {
     for k in played.keys[:min(played.count,SOUNDS_PLAYED_CAPACITY)] {
-        if !k.keyed || k.tick!=key.tick || k.sound!=key.sound || k.by!=key.by || k.placed!=key.placed {continue}
+        if k.tick!=key.tick || k.sound!=key.sound || k.by!=key.by || k.placed!=key.placed {continue}
         if key.by!=core.NONE || linalg.length2(k.at-key.at)<=SOUND_SAME_DISTANCE*SOUND_SAME_DISTANCE {return true}
     }
     return false
@@ -1419,13 +1457,12 @@ played_found :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) -> b
 
 @(private)
 played_add :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) {
-    if played==nil {return}
     played.keys[played.count%SOUNDS_PLAYED_CAPACITY]=key
     played.count+=1
 }
 
 // Starts what was asked since the last time, once, and keeps what became of
-// each in Sounds_Played. A fixed tick plays a sound of an entity
+// what a fixed tick asked in Sounds_Played. A fixed tick plays a sound of an entity
 // (Sound_Request.by), or of none near a place, once: a tick that runs again
 // (time.resimulating) asks again what it asked the first time, which is not
 // played twice, and what only the corrected tick asks (the server says a shot
@@ -1454,20 +1491,16 @@ audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,frame:core.Frame_Ti
             path:=base.text_get(r.path[:])
             if source.sound,_=host.assets_id(app.assets,path);source.sound=={} {
                 core.report(problems,core.NONE,"audio.sound","audio.play plays nothing: \"%s\" is not a path of the assets; give it the path of a .sound or a .sound_set under the assets folder, shorter than SOUND_PATH_CAPACITY",path)
-                key.outcome=.Missing_Asset
-                played_add(played,key)
                 continue
             }
             key.sound=source.sound
         }
-        key.keyed=keyed
         if keyed && played_found(played,key) {
-            key.outcome=.Deduped
-            played_add(played,key)
+            played.deduped+=1
             continue
         }
         key.outcome=request_play(app,source,r,listeners,problems)
-        played_add(played,key)
+        if keyed {played_add(played,key)}
     }
 }
 

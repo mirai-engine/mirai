@@ -6,12 +6,15 @@ import "mirai:core"
 import mixer "mirai:audio"
 import "mirai:std/base"
 
-// Snapshots: named moments of the mix in Audio_Settings (underwater, a pause
-// menu, a cutscene), each saying, for some buses, what their gain, the
-// frequencies of their filters and the wet of their reverb become. The game
-// names the one it wants in Audio_Mix and audio_buses blends the buses from
-// where they are to it over blend_seconds; an empty name goes back to the
-// settings as they are.
+// Snapshots: named states of the mix in Audio_Settings (a pause menu, a
+// cutscene, under water), each saying, for some buses, what their gain, the
+// frequencies of their filters and the wet of their reverb become. Two things
+// name them and their weights add up, as rooms do for the reverb: the game, in
+// Audio_Mix, the one it wants whole, which audio_buses blends to over
+// blend_seconds (an empty name goes back to the settings); and the medium of
+// the listeners (Medium.snapshot: the water's "underwater"), by its weight and
+// the share of the listeners under it, blended over REVERB_FADE. Code never
+// names a snapshot for what the engine knows of where the listeners are.
 
 AUDIO_SNAPSHOT_CAPACITY :: 4
 AUDIO_SNAPSHOT_NAME :: 24
@@ -29,8 +32,8 @@ Audio_Snapshot :: struct {
     buses:[AUDIO_BUS_CAPACITY]Audio_Snapshot_Bus `mirai:"trim"`,
 }
 
-// The snapshot the buses go to and in how long: what the game writes
-// (snapshot_blend); empty, the settings as they are.
+// The snapshot of its own the game wants the buses at and in how long: what
+// the game writes (snapshot_blend); empty, none.
 @(storage)
 Audio_Mix :: struct {
     snapshot:[AUDIO_SNAPSHOT_NAME]u8 `mirai:"text"`,
@@ -46,11 +49,15 @@ Bus_Levels :: struct {
 }
 Mix_Levels :: struct {buses:[AUDIO_BUS_CAPACITY]Bus_Levels}
 
-// The levels of the buses on their way from where they were to a snapshot.
+// The weight of each snapshot of the settings, by its index: 0 to 1.
+Mix_Weights :: [AUDIO_SNAPSHOT_CAPACITY]f32
+
+// The levels of the buses on their way from where they were to the snapshots.
 Mix_Blend :: struct {
     from,now:Mix_Levels,
-    snapshot:int, // index in Audio_Settings.snapshots; -1: none
-    t:f32,        // 0 where it started to 1 there
+    snapshot:int,       // of the game: index in Audio_Settings.snapshots; -1: none
+    medium:Mix_Weights, // of the medium of the listeners (medium_snapshots)
+    t:f32,              // 0 where it started to 1 there
     seconds:f32,
     set:bool,
 }
@@ -76,25 +83,63 @@ snapshot_index :: proc(settings:^Audio_Settings,name:string) -> (index:int,found
     return -1,false
 }
 
-// The levels of the buses as the settings say, under a snapshot (-1: none).
-mix_levels :: proc(settings:^Audio_Settings,snapshot:int) -> (levels:Mix_Levels) {
+// The levels of the buses as the settings say under the snapshot of the game
+// (-1: none), whole, and those of the medium by their weights, in the order of
+// the settings: gains and reverbs in dB by the weight, cutoffs that far by
+// octaves. A snapshot both name counts whole, once.
+mix_levels :: proc(settings:^Audio_Settings,snapshot:int,medium:Mix_Weights={}) -> (levels:Mix_Levels) {
     for &l,index in levels.buses {
-        bus:=Audio_Bus(index)
-        setting:=audio_bus_setting(core.ref(settings),bus)
+        setting:=audio_bus_setting(core.ref(settings),Audio_Bus(index))
         l.gain,l.wet=setting.gain,max(setting.reverb.wet,0)
         for f,band in setting.filters {l.cutoffs[band]=f.frequency}
-        if settings==nil || snapshot<0 || snapshot>=AUDIO_SNAPSHOT_CAPACITY {continue}
-        for change in settings.snapshots[snapshot].buses {
-            if change=={} || change.bus!=bus {continue}
-            l.gain+=change.gain
-            for cutoff,band in change.cutoffs {
-                if cutoff>0 {l.cutoffs[band]=cutoff}
+    }
+    if settings==nil {return}
+    weights:=medium
+    if snapshot>=0 && snapshot<AUDIO_SNAPSHOT_CAPACITY {weights[snapshot]=1}
+    for weight,i in weights {
+        if !(weight>0) {continue}
+        w:=min(weight,1)
+        for &l,index in levels.buses {
+            for change in settings.snapshots[i].buses {
+                if change=={} || int(change.bus)!=index {continue}
+                l.gain+=change.gain*w
+                for cutoff,band in change.cutoffs {
+                    if cutoff>0 {l.cutoffs[band]=cutoff_blend(l.cutoffs[band],cutoff,w)}
+                }
+                l.wet*=db_volume(change.reverb*w)
+                break
             }
-            l.wet*=db_volume(change.reverb)
-            break
         }
     }
     return
+}
+
+// The weight of each snapshot the media of count listeners name: the weight
+// of each medium over the share of the listeners it holds. A name the
+// settings do not have weighs nothing: the medium still filters and rings.
+medium_snapshots :: proc(settings:^Audio_Settings,medium:^Audio_Medium,count:int) -> (weights:Mix_Weights) {
+    if settings==nil || medium==nil || count<1 {return}
+    listeners:=min(count,AUDIO_LISTENERS_MAX)
+    for &l in medium.listeners[:listeners] {
+        name:=base.text_get(l.snapshot[:])
+        if name=="" || !(l.weight>0) {continue}
+        if index,found:=snapshot_index(settings,name);found && index>=0 {weights[index]+=min(l.weight,1)/f32(listeners)}
+    }
+    return
+}
+
+// A cutoff t of the way from x to y by octaves, 0 being none (SOUND_LOWPASS_MAX).
+@(private)
+cutoff_blend :: proc "contextless" (x,y,t:f32) -> f32 {
+    switch {
+    case t<=0:return x
+    case t>=1:return y
+    case x>0 || y>0:
+        from_hz:=x if x>0 else asset.SOUND_LOWPASS_MAX
+        to_hz:=y if y>0 else asset.SOUND_LOWPASS_MAX
+        return from_hz*math.pow(to_hz/from_hz,t)
+    }
+    return 0
 }
 
 // Levels t of the way from one to the other: gains in dB and wets linearly,
@@ -105,35 +150,28 @@ mix_levels_blend :: proc "contextless" (from,to:Mix_Levels,t:f32) -> (levels:Mix
         a,b:=from.buses[i],to.buses[i]
         l.gain=a.gain+(b.gain-a.gain)*t
         l.wet=a.wet+(b.wet-a.wet)*t
-        for &cutoff,band in l.cutoffs {
-            x,y:=a.cutoffs[band],b.cutoffs[band]
-            switch {
-            case t<=0:cutoff=x
-            case t>=1:cutoff=y
-            case x>0 || y>0:
-                from_hz:=x if x>0 else asset.SOUND_LOWPASS_MAX
-                to_hz:=y if y>0 else asset.SOUND_LOWPASS_MAX
-                cutoff=from_hz*math.pow(to_hz/from_hz,t)
-            case:cutoff=0
-            }
-        }
+        for &cutoff,band in l.cutoffs {cutoff=cutoff_blend(a.cutoffs[band],b.cutoffs[band],t)}
     }
     return
 }
 
-// Goes on blending toward a snapshot (-1: the settings) over seconds, after
-// dt more seconds; another snapshot starts from where the buses are. True
-// when the levels changed.
-mix_blend_step :: proc(b:^Mix_Blend,settings:^Audio_Settings,snapshot:int,seconds,dt:f32) -> bool {
-    to:=mix_levels(settings,snapshot)
+// Goes on blending toward the snapshot of the game (-1: none) and those of
+// the medium (mix_levels), after dt more seconds; another snapshot of the
+// game starts from where the buses are over seconds, other weights of the
+// medium over REVERB_FADE. True when the levels changed.
+mix_blend_step :: proc(b:^Mix_Blend,settings:^Audio_Settings,snapshot:int,seconds,dt:f32,medium:Mix_Weights={}) -> bool {
+    to:=mix_levels(settings,snapshot,medium)
     if !b.set {
-        b^={from=to,now=to,snapshot=snapshot,t=1,set=true}
+        b^={from=to,now=to,snapshot=snapshot,medium=medium,t=1,set=true}
         return true
     }
     if snapshot!=b.snapshot {
-        b.from,b.snapshot,b.t=b.now,snapshot,0
+        b.from,b.t=b.now,0
         b.seconds=seconds if seconds>=0 && seconds<=max(f32) else 0
+    } else if medium!=b.medium {
+        b.from,b.t,b.seconds=b.now,0,REVERB_FADE
     }
+    b.snapshot,b.medium=snapshot,medium
     if b.t<1 {b.t=min(b.t+max(dt,0)/b.seconds,1) if b.seconds>0 else 1}
     now:=mix_levels_blend(b.from,to,b.t)
     changed:=now!=b.now

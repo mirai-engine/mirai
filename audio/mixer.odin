@@ -527,11 +527,10 @@ commands_apply :: proc "contextless" (m:^Mixer) {
         switch command.kind {
         case .Voice_Play:
             v:=&m.voices[command.index]
-            // A delay counts from the chunk the play reaches.
-            if command.start.delay>0 {
-                command.start.start_frame=max(command.start.start_frame,m.clock)+u64(command.start.delay)
-                command.start.delay=0
-            }
+            // A start already past begins whole in the chunk the play reaches, and
+            // a delay counts from there: the voices of one batch keep their delays.
+            command.start.start_frame=max(command.start.start_frame,m.clock)+u64(command.start.delay)
+            command.start.delay=0
             if v.phase==.Free {
                 voice_begin(m,v,command.start)
             } else {

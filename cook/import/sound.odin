@@ -10,14 +10,16 @@ import "mirai:std/base"
 import "mirai:std/serial"
 
 // Sounds: a WAV or an Ogg Vorbis file becomes a .sound. Its 16 bit samples
-// are coded without loss (audio.lossless_encode) and decoded whole when it
-// loads; one of SOUND_STREAM_SECONDS or more is streamed instead, so that it
-// never sits decoded in memory. A long Ogg Vorbis keeps its file, which is
+// are coded without loss (audio.lossless_encode), which each voice decodes as
+// it plays; one of SOUND_STREAM_SECONDS or more is streamed instead, so that
+// it never sits decoded in memory. A long Ogg Vorbis keeps its file, which is
 // smaller than its samples coded, and so does a long WAV with samples that
-// 16 bits would round; with Sound_Coding.File (Import_Settings.sound) every
-// sound keeps its file, so a short Ogg Vorbis stays as compact as it came.
-// Kept as it is, at its own rate, a voice resamples it as it plays, which
-// costs nothing that shows for what plays at once.
+// 16 bits would round. A short Ogg Vorbis keeps its file too where that is
+// the smaller (Sound_Coding.Smallest, the default of Import_Settings.sound):
+// a sound of a game is mostly a fraction of the size of its samples coded,
+// decoded whole once when it loads, so a start decodes nothing; Lossless and
+// File choose either. Kept as it is, at its own rate, a voice resamples it as
+// it plays, which costs nothing that shows for what plays at once.
 // Every sound the importer codes is brought to audio.MIXER_RATE (resample), so
 // a voice at its own pitch copies it. Where a loop of it goes back to is what
 // its file says, the first loop of the smpl chunk of a WAV or the LOOPSTART
@@ -37,7 +39,7 @@ Sound_Options :: struct {
 
 // What a .sound of the bytes of a WAV or Ogg Vorbis file holds, coded as
 // coding says. lossless belongs to allocator; file is the bytes given.
-sound_build :: proc(bytes:[]u8,options:Sound_Options={},coding:=Sound_Coding.Lossless,allocator:=context.allocator) -> (desc:asset.Sound_Desc,error:audio.Error) {
+sound_build :: proc(bytes:[]u8,options:Sound_Options={},coding:=Sound_Coding.Smallest,allocator:=context.allocator) -> (desc:asset.Sound_Desc,error:audio.Error) {
     bytes:=bytes
     ogg:=len(bytes)>=4 && string(bytes[:4])=="OggS"
     if ogg {
@@ -69,6 +71,10 @@ sound_build :: proc(bytes:[]u8,options:Sound_Options={},coding:=Sound_Coding.Los
     defer delete(samples,allocator)
     for sample,i in values {samples[i]=i16_of(sample)}
     desc.lossless=audio.lossless_encode(samples,pcm.channels,audio.MIXER_RATE,allocator) or_return
+    if coding==.Smallest && ogg && len(bytes)<len(desc.lossless) {
+        delete(desc.lossless,allocator)
+        return {channels=pcm.channels,sample_rate=pcm.sample_rate,frames=len(pcm.samples)/pcm.channels,loop_start=pcm.loop_start,flags=desc.flags,file=bytes},.None
+    }
     return desc,.None
 }
 @(private="file")

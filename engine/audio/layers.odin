@@ -105,11 +105,19 @@ shapes_of :: proc(set:^asset.Sound_Set_Info,v:^Sound_Voices,values:[PARAMETERS]f
     return
 }
 
-// Starts the sounds of v together over desc, each with its shape and delay:
-// in one batch. A layer whose sound ended without loop does not start. All or
-// none: false, with none playing, when the mixer refused one or none started.
+// Where each sound of v is at its start: as many seconds before it as its delay.
 @(private)
-voices_play :: proc(m:^Mixer,v:^Sound_Voices,desc:mixer.Voice_Desc,shapes:^[LAYERS]asset.Sound_Shape,time:f64,lengths:^[LAYERS]f32) -> bool {
+layers_start :: proc "contextless" (v:^Sound_Voices) -> (times:[LAYERS]f64) {
+    for i in 0..<v.count {times[i]=-f64(max(v.delays[i],0))}
+    return
+}
+
+// Starts the sounds of v together over desc, each with its shape and at its
+// time, seconds into it (below 0: as many seconds before it starts): in one
+// batch. A layer whose sound ended without loop does not start. All or none:
+// false, with none playing, when the mixer refused one or none started.
+@(private)
+voices_play :: proc(m:^Mixer,v:^Sound_Voices,desc:mixer.Voice_Desc,shapes:^[LAYERS]asset.Sound_Shape,times:^[LAYERS]f64,lengths:^[LAYERS]f32) -> bool {
     base:=desc
     pitch:=desc.pitch if desc.pitch>0 else 1
     mixer.mixer_batch_begin(m)
@@ -119,17 +127,8 @@ voices_play :: proc(m:^Mixer,v:^Sound_Voices,desc:mixer.Voice_Desc,shapes:^[LAYE
         v.voices[i]={}
         entry_gain:=v.gains[i] if v.gains[i]>0 else 1
         entry_pitch:=v.pitches[i] if v.pitches[i]>0 else 1
-        delay:=v.delays[i]
-        offset:=time
-        if delay>0 {
-            if offset>=f64(delay) {
-                offset-=f64(delay)
-                delay=0
-            } else {
-                delay-=f32(offset)
-                offset=0
-            }
-        }
+        offset,delay:=times[i],f32(0)
+        if offset<0 {offset,delay=0,f32(-offset)}
         if desc.loop && lengths[i]>0 {
             offset=math.mod(offset,f64(lengths[i]))
         } else if v.count>1 && offset>=f64(lengths[i]) {

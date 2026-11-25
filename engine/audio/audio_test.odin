@@ -26,12 +26,14 @@ import sdl "vendor:sdl3"
 Fixture :: struct {
     assets:host.Assets,
     app:host.App,
+    root:string,
 }
 
 @(private="file")
 fixture_init :: proc(t:^testing.T,f:^Fixture,set:asset.Sound_Set_Info=asset.SOUND_SET_DEFAULTS) -> bool {
     root:=base.test_folder(t,"engine-audio")
     if root=="" {return false}
+    f.root=root
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     samples:=make([]i16,4800,context.temp_allocator)
     for &sample in samples {sample=8000}
@@ -105,7 +107,7 @@ world_destroy :: proc(w:^Heard_World) {
 
 @(private="file")
 world_run :: proc(w:^Heard_World,listener:^Mixer_Listeners,app:^host.App,dt:f32=1.0/60) {
-    hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
+    hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0,false}
     sources_update(core.read(&w.sources),&w.states,hearing,dt,&w.voices,listener,app,nil)
     test_world_settle(&w.data)
 }
@@ -298,23 +300,29 @@ a_rollback_plays_each_sound_of_a_tick_once_and_what_only_the_correction_asks :: 
     m:=f.app.mixer
     E,OTHER:=core.entity_make(5,1),core.entity_make(6,1)
     Ask :: struct {sound:base.Asset_Id,by:core.Entity,at:Maybe([3]f32)}
-    Step :: struct {tick:u64,again:bool,editor:bool,asks:[]Ask,played:u64,what:string}
+    // noise: requests of no key the editor loop asks first, which a tick that runs again does not look for.
+    Step :: struct {tick:u64,again:bool,editor:bool,asks:[]Ask,played:u64,what:string,noise:int}
     steps:=[]Step{
-        {10,false,false,{{HUM,E,nil}},1,"the first time plays"},
-        {11,false,false,{},1,"the next tick asks nothing"},
-        {10,true,false,{{HUM,E,nil}},1,"the same sound of the same entity in the tick again does not play again"},
-        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"what only the correction asks plays"},
-        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"and does not play again in a second rollback"},
-        {10,true,false,{{HUM,OTHER,nil}},3,"the same sound of another entity plays"},
-        {12,false,false,{{HUM,core.NONE,[3]f32{0,0,0}},{HUM,core.NONE,[3]f32{0.5,0,0}},{HUM,core.NONE,[3]f32{5,0,0}}},5,"of none, one near a place"},
-        {12,true,false,{{HUM,core.NONE,[3]f32{0.2,0,0}},{HUM,core.NONE,nil}},6,"near where it played is that one; not placed is another"},
-        {3,false,false,{{HUM,E,nil}},7,"the clock went back"},
-        {3,false,true,{{HUM,E,nil},{HUM,E,nil}},9,"the editor loop plays each"},
+        {10,false,false,{{HUM,E,nil}},1,"the first time plays",0},
+        {11,false,false,{},1,"the next tick asks nothing",0},
+        {10,true,false,{{HUM,E,nil}},1,"the same sound of the same entity in the tick again does not play again",0},
+        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"what only the correction asks plays",0},
+        {10,true,false,{{HUM,E,nil},{STEP_A,E,nil}},2,"and does not play again in a second rollback",0},
+        {10,true,false,{{HUM,OTHER,nil}},3,"the same sound of another entity plays",0},
+        {10,true,false,{{HUM,E,nil}},3,"what a tick played is found past many requests of no key",SOUNDS_PLAYED_CAPACITY},
+        {12,false,false,{{HUM,core.NONE,[3]f32{0,0,0}},{HUM,core.NONE,[3]f32{0.5,0,0}},{HUM,core.NONE,[3]f32{5,0,0}}},5,"of none, one near a place",0},
+        {12,true,false,{{HUM,core.NONE,[3]f32{0.2,0,0}},{HUM,core.NONE,nil}},6,"near where it played is that one; not placed is another",0},
+        {3,false,false,{{HUM,E,nil}},7,"the clock went back",0},
+        {3,false,true,{{HUM,E,nil},{HUM,E,nil}},9,"the editor loop plays each",0},
     }
     played:Sounds_Played
     sounds:Sound_Requests
     defer core.value_free(&sounds,type_info_of(Sound_Requests))
     for step in steps {
+        for left:=step.noise;left>0;left-=SOUND_REQUESTS/2 {
+            for _ in 0..<min(left,SOUND_REQUESTS/2) {play(&sounds,"missing.sound")}
+            audio_requests(&sounds,core.Time{tick=step.tick},core.Frame_Time{phase=.Fixed},&played,nil,&f.app,nil)
+        }
         for ask in step.asks {play(&sounds,ask.sound,at=ask.at,by=ask.by)}
         time:=core.Time{tick=step.tick,dt=1.0/60,playing=!step.editor,resimulating=step.again}
         audio_requests(&sounds,time,core.Frame_Time{phase=.Fixed},&played,nil,&f.app,nil)
@@ -366,10 +374,11 @@ a_cue_plays_its_sound_once_per_entity_and_tick_through_a_rollback :: proc(t:^tes
     }
 }
 
-// Each request keeps what became of it, newest last, by the id of its sound:
-// played, beyond every listener, refused by the mixer, of a sound the assets
-// lack, or asked again by a tick that runs again. Placed ones keep how far the
-// nearest listener was.
+// Each request of a fixed tick keeps what became of it, newest last, by the
+// id of its sound: played, beyond every listener, refused by the mixer or of a
+// sound that does not load; one asked again by a tick that runs again is
+// counted. Placed ones keep how far the nearest listener was. A path the
+// assets lack and what the editor loop asks keep nothing.
 @(test)
 each_sound_request_keeps_what_became_of_it :: proc(t:^testing.T) {
     f:Fixture
@@ -393,18 +402,16 @@ each_sound_request_keeps_what_became_of_it :: proc(t:^testing.T) {
     audio_requests(&sounds,core.Time{tick=10,dt=1.0/60,playing=true,resimulating=true},fixed,&played,&listeners,&f.app,nil)
     play(&sounds,"hum.sound")
     audio_requests(&sounds,core.Time{tick=10},{},&played,&listeners,&f.app,nil)
-    Want :: struct {sound:base.Asset_Id,outcome:One_Shot_Outcome,keyed:bool,distance:f32}
-    wants:=[]Want{
-        {HUM,.Played,true,0},{HUM,.Culled_Distance,true,1000},{HUM,.Rejected_Mixer,true,0},
-        {{},.Missing_Asset,false,0},{{9,9},.Missing_Asset,true,1},{HUM,.Deduped,true,0},{HUM,.Played,false,0},
-    }
+    Want :: struct {sound:base.Asset_Id,outcome:One_Shot_Outcome,distance:f32}
+    wants:=[]Want{{HUM,.Played,0},{HUM,.Culled_Distance,1000},{HUM,.Rejected_Mixer,0},{{9,9},.Missing_Asset,1}}
     older,newer:=sounds_played(&played)
     testing.expect_value(t,len(older),0)
     if !testing.expect_value(t,len(newer),len(wants)) {return}
     for want,i in wants {
         got:=newer[i]
-        testing.expectf(t,got.tick==10 && got.sound==want.sound && got.outcome==want.outcome && got.keyed==want.keyed && abs(got.distance-want.distance)<1e-3,"%d: %v, wants %v",i,got,want)
+        testing.expectf(t,got.tick==10 && got.sound==want.sound && got.outcome==want.outcome && abs(got.distance-want.distance)<1e-3,"%d: %v, wants %v",i,got,want)
     }
+    testing.expect_value(t,played.deduped,u64(1))
     testing.expect(t,newer[0].by==E && newer[1].placed && newer[1].at=={0,0,1003})
     // Past the capacity, the ring keeps the newest, oldest first.
     for _ in 0..<SOUNDS_PLAYED_CAPACITY {played_add(&played,{tick=11})}
@@ -459,8 +466,7 @@ the_sounds_played_stay_out_of_the_copies_of_the_world :: proc(t:^testing.T) {
     play(&world.sounds,HUM,by=E)
     audio_requests(&world.sounds,core.Time{tick=4,playing=true,resimulating=true},fixed,played,nil,app,nil)
     testing.expect_value(t,mixer.mixer_stats(app.mixer).voices_played,voices)
-    _,kept:=sounds_played(played)
-    testing.expect(t,len(kept)==2 && kept[1].outcome==.Deduped)
+    testing.expect(t,played.count==1 && played.deduped==1)
 }
 
 @(test_world,host="Played_Shared") @(private) Played_World :: struct {using world:Test_World,sounds:Sound_Requests,id:core.World_Id}
@@ -1074,7 +1080,7 @@ the_loudest_sources_hold_the_voices_and_the_others_keep_their_time :: proc(t:^te
     mem.tracking_allocator_init(&track,context.allocator)
     defer mem.tracking_allocator_destroy(&track)
     for _ in 0..<100 {
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0,false}
         {
             context.allocator,context.temp_allocator=mem.tracking_allocator(&track),mem.tracking_allocator(&track)
             sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,&listener,&f.app,nil)
@@ -1182,7 +1188,7 @@ a_source_of_hostile_values_is_refused :: proc(t:^testing.T) {
         w:Heard_World
         e,made:=world_init(t,&w,source,{0,0,-2})
         if !made {return}
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0,false}
         sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,&listener,&f.app,&problems)
         testing.expectf(t,core.entity_map_get(&w.voices.entries,e)==nil && core.problem_find(&problems,e,"audio.source")!=nil,"%s is refused",c.name)
         world_destroy(&w)
@@ -1260,7 +1266,7 @@ each_source_is_heard_from_its_nearest_listener_of_a_split_screen :: proc(t:^test
     w.query={user=&wall,probe=east_wall_probe}
     medium:Audio_Medium
     run :: proc(w:^Heard_World,listeners:^Mixer_Listeners,medium:^Audio_Medium,app:^host.App) {
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),core.ref(medium),w.query,0}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),core.ref(medium),w.query,0,false}
         sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,listeners,app,nil)
         test_world_settle(&w.data)
         out:[mixer.CHUNK_FRAMES*2]f32
@@ -1400,7 +1406,7 @@ a_layered_set_plays_its_sounds_in_step_shaped_by_its_parameters :: proc(t:^testi
         entry=core.entity_map_get(&w.voices.entries,e)
         testing.expectf(t,abs(entry.values[0]-step.value)<1e-5,"after %v s: %v",step.dt,entry.values[0])
         for gain,i in step.gains {testing.expectf(t,abs(entry.shapes[i].gain-gain)<1e-5,"layer %d: gain %v, want %v",i,entry.shapes[i].gain,gain)}
-        testing.expect(t,abs(entry.shapes[0].pitch-step.pitch)<1e-5 && abs(entry.speed-step.pitch)<1e-5)
+        testing.expect(t,abs(entry.shapes[0].pitch-step.pitch)<1e-5 && abs(entry.speeds[0]-step.pitch)<1e-5)
     }
     // Retuned in one chunk, the layers keep in step: at the new pitch and
     // with the first layer silent, the mix is the second one alone.
@@ -1408,6 +1414,135 @@ a_layered_set_plays_its_sounds_in_step_shaped_by_its_parameters :: proc(t:^testi
     mixer.mixer_render(m,out)
     testing.expect(t,abs(out[(len(out)/2-1)*2]-level)<1e-4)
     testing.expect_value(t,w.voices.stats.started,u64(1))
+}
+
+// A source whose .sound_set loads again starts again with what it says, and
+// one whose set did not change goes on with its voices.
+@(test)
+a_source_starts_again_when_its_set_loads_again :: proc(t:^testing.T) {
+    set:=asset.SOUND_SET_DEFAULTS
+    set.mode=.Layered
+    f:Fixture
+    if !fixture_init(t,&f,set) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    listener:Mixer_Listeners
+    source:=AUDIO_SOURCE_DEFAULT;source.sound,source.loop=STEPS,true
+    w:Heard_World
+    e,made:=world_init(t,&w,source);defer world_destroy(&w)
+    if !made {return}
+    world_run(&w,&listener,&f.app)
+    entry:=core.entity_map_get(&w.voices.entries,e)
+    if !testing.expect(t,entry!=nil && entry.real && entry.sound.count==2) {return}
+    voice:=entry.sound.voices[0]
+    // Content loads that are not of its set leave it alone.
+    testing.expect(t,host.content_sound(&f.app,HUM)!={})
+    world_run(&w,&listener,&f.app)
+    testing.expect(t,core.entity_map_get(&w.voices.entries,e).sound.voices[0]==voice)
+    // Its set gains a third layer.
+    set.sounds[0].sound,set.sounds[1].sound,set.sounds[2].sound=STEP_A,STEP_B,HUM
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    testing.expect_value(t,asset.sound_set_save(fmt.tprintf("%s/steps.sound_set",f.root),&types,{id=STEPS,info=set}),asset.Error.None)
+    testing.expect(t,host.assets_refresh(&f.assets,{"steps.sound_set"}))
+    testing.expect_value(t,host.content_refresh(&f.app),1)
+    world_run(&w,&listener,&f.app)
+    entry=core.entity_map_get(&w.voices.entries,e)
+    testing.expectf(t,entry!=nil && entry.sound.count==3 && entry.real && entry.sound.voices[0]!=voice,"%v %v %v",entry.sound.count,entry.real,entry.sound.voices)
+    testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(5))
+}
+
+// A medium that names a snapshot of the settings blends the buses to it by
+// the share of the listeners under it, over REVERB_FADE, with no Audio_Mix:
+// one of two players under water is half of it. The snapshot Audio_Mix
+// names counts whole, and once when the medium names the same.
+@(test)
+the_medium_of_the_listeners_blends_the_buses_to_its_snapshot :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    settings:Audio_Settings
+    testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC,filters={0={kind=.Lowpass,frequency=8000}}}))
+    base.text_set(settings.snapshots[0].name[:],"pause")
+    settings.snapshots[0].buses[0]={bus=BUS_MASTER,gain=-20}
+    base.text_set(settings.snapshots[1].name[:],"underwater")
+    settings.snapshots[1].buses[0]={bus=BUS_MUSIC,gain=-12,cutoffs={0=500}}
+    volumes:=AUDIO_VOLUMES_DEFAULT
+    revision:=u64(1)
+    applied:Mixer_Buses
+    problems:core.Problems
+    w:Audio_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    for x in ([2]f32{0,5}) {
+        e:=core.create(&w.entities)
+        core.add(&w.listeners,e,Audio_Listener{})
+        placed:=mm.TRANSFORM_IDENTITY
+        placed.position.x=x
+        core.add(&w.worlds,e,core.World_Transform{placed,placed})
+    }
+    test_world_settle(&w)
+    water:=Medium{lowpass=800,weight=1}
+    base.text_set(water.snapshot[:],"underwater")
+    Step :: struct {what:string,under:[2]bool,mix:string,dt:f32,gain,cutoff,master:f32}
+    for step in ([?]Step{
+        {"both in the air",{false,false},"",0,0,8000,0},
+        {"both dive: halfway through the fade",{true,true},"",REVERB_FADE/2,-6,2000,0},
+        {"both under",{true,true},"",REVERB_FADE,-12,500,0},
+        {"one comes up: half",{true,false},"",REVERB_FADE,-6,2000,0},
+        {"the game names the same: once, whole",{true,false},"underwater",1,-12,500,0},
+        {"the game names another: both",{true,false},"pause",1,-6,2000,-20},
+        {"both up",{false,false},"",REVERB_FADE,0,8000,0},
+    }) {
+        medium:Audio_Medium
+        for under,i in step.under {
+            if under {medium.listeners[i]=water}
+        }
+        mix:Audio_Mix
+        snapshot_blend(&mix,step.mix,0)
+        audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&medium),core.ref(&mix),core.read(&w.worlds),core.read(&w.listeners),{},{&revision},{&revision},{dt=step.dt},&applied,m,{},&problems)
+        testing.expectf(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-db_volume(step.gain))<1e-4,"%s: music at %v, want %v dB",step.what,mixer.bus_volume(m,mixer.Bus(BUS_MUSIC)),step.gain)
+        testing.expectf(t,abs(mixer.bus_filter(m,mixer.Bus(BUS_MUSIC),0).frequency-step.cutoff)<0.5,"%s: cutoff %v, want %v",step.what,mixer.bus_filter(m,mixer.Bus(BUS_MUSIC),0).frequency,step.cutoff)
+        testing.expectf(t,abs(mixer.bus_volume(m,mixer.BUS_MASTER)-db_volume(step.master))<1e-4,"%s: master at %v, want %v dB",step.what,mixer.bus_volume(m,mixer.BUS_MASTER),step.master)
+    }
+    testing.expect(t,core.problem_find(&problems,core.NONE,"audio.snapshot")==nil)
+}
+
+// A Layered set without loop plays each layer once to its end, at its own
+// pitch and after its own delay, and ends with its last layer: a layer that
+// ends sooner than another one is not taken for a stolen one.
+@(test)
+layers_of_other_pitches_and_delays_end_once_each :: proc(t:^testing.T) {
+    Case :: struct {pitches:[2]f32,delay:f32,pitch:f32,seconds:f64}
+    for c in ([?]Case{
+        {pitches={1,4},pitch=1,seconds=0.1},           // the second ends at a quarter of the first
+        {pitches={1,1},delay=0.5,pitch=0.5,seconds=0.7}, // the second after its delay, both slowed
+    }) {
+        set:=asset.SOUND_SET_DEFAULTS
+        set.mode=.Layered
+        set.sounds[0].pitch,set.sounds[1].pitch,set.sounds[1].delay=c.pitches[0],c.pitches[1],c.delay
+        f:Fixture
+        if !fixture_init(t,&f,set) {return}
+        defer fixture_destroy(&f)
+        m:=f.app.mixer
+        listener:Mixer_Listeners
+        source:=AUDIO_SOURCE_DEFAULT;source.sound,source.pitch=STEPS,c.pitch
+        w:Heard_World
+        e,made:=world_init(t,&w,source);defer world_destroy(&w)
+        if !made {return}
+        out:=make([]f32,800*2,context.temp_allocator)
+        start:=mixer.mixer_clock(m)+LAYER_LEAD
+        ended:=u64(0)
+        for _ in 0..<120 {
+            world_run(&w,&listener,&f.app)
+            if state,_:=core.get(&w.states,e);state.ended {ended=mixer.mixer_clock(m);break}
+            mixer.mixer_render(m,out)
+            mixer.mixer_update(m)
+        }
+        testing.expectf(t,mixer.mixer_stats(m).voices_played==2,"%v: %d voices played, not one per layer",c,mixer.mixer_stats(m).voices_played)
+        end:=start+u64(c.seconds*mixer.MIXER_RATE)
+        testing.expectf(t,ended>=end && ended<=end+2*800,"%v: ended at frame %d, its last layer at %d",c,ended,end)
+    }
 }
 
 // What a snapshot changes of the buses, and the blend of the buses to it:
@@ -1498,7 +1633,8 @@ fresh_short_layered_oneshot_plays_from_start :: proc(t:^testing.T) {
     lengths[0]=mixer.sound_seconds(m,s0)
     lengths[1]=mixer.sound_seconds(m,s1)
     desc:=mixer.VOICE_DEFAULT
-    if !testing.expect(t,voices_play(m,&v,desc,&shapes,0,&lengths)) {return}
+    times:=layers_start(&v)
+    if !testing.expect(t,voices_play(m,&v,desc,&shapes,&times,&lengths)) {return}
     testing.expect(t,v.voices[0]!={} && v.voices[1]!={})
     out:=make([]f32,(LAYER_LEAD+short_frames+mixer.CHUNK_FRAMES)*2,context.temp_allocator)
     mixer.mixer_render(m,out)
