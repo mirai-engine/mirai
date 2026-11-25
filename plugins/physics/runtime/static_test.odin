@@ -184,3 +184,26 @@ a_static_collider_is_a_shape_of_the_world_until_it_moves_as_a_body :: proc(t:^te
     testing.expect(t,found && hit.entity==floors[0] && hit.body==body)
     testing.expect_value(t,f.problems.count,0)
 }
+
+// A static collider the shapes of Physics_Settings had no room for stays unmade: when a shape is let go,
+// the next sync makes it, as streamed sections come and go.
+@(test)
+a_static_collider_refused_for_shapes_is_made_when_one_frees :: proc(t:^testing.T) {
+    f:Physics_Test
+    if !physics_test_init(t,&f) {return}
+    defer physics_test_destroy(&f)
+    f.settings={bodies=2,shapes=2,contacts=8,characters=1}
+    floors:[3]core.Entity
+    for &e,i in floors {e=physics_test_box(&f,{f32(i)*4,0,0},{1,0.1,1})}
+    physics_test_step(&f,0)
+    testing.expect_value(t,f.state.world.shape_count,2)
+    _,found:=raycast(core.ref(&f.state),{8,5,0},{0,-1,0})
+    testing.expect(t,!found)
+    testing.expect(t,f.problems.count>0)
+    core.destroy(&f.entities,floors[0])
+    physics_test_step(&f,0)
+    hit:Hit
+    hit,found=raycast(core.ref(&f.state),{8,5,0},{0,-1,0})
+    testing.expect(t,found && hit.entity==floors[2])
+    testing.expect_value(t,f.state.world.shape_count,2)
+}

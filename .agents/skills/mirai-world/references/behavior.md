@@ -13,8 +13,9 @@ reservations) belongs to
   generator makes a `fixed`, `server` step named after the `think` that ticks every `Mind_Agent`
   of that name with `minds_tick` ([generator](../../mirai-core/references/generator.md#minds)).
   What a procedure receives after its `ai.Think` or `ai.Act` is bound as for a step; the step
-  holds each datum once, after `Mind_World`. A world that does not play and a repeated tick
-  (`Time.resimulating`) do not decide.
+  holds each datum once, after `Mind_World`. A world that does not play does not decide; a tick
+  the editor replays from a copy (`Time.resimulating`) decides again, as the first time. A client
+  never runs it, so a network correction does not repeat what minds did.
 - The generator checks a mind when it builds (every value has one action, the shapes and the
   name); `minds_tick` registers it by name in `Minds` (application storage, shared, as many as the
   game declares) the first time it ticks in a world, which keeps the action names as bytes for
@@ -249,10 +250,11 @@ what it perceives; `think` only reads and proposes, and the actions write.
   far agent by perception, navigation and the game
   (`a_woken_mind_thinks_at_once_whatever_its_cadence`), the old mind's `Exit` on a change of mind
   (`a_mind_change_exits_the_old_action_before_the_new_mind_runs`), crossers counted only by the link
-  (`a_crossing_counts_its_crossers_only_by_the_link`), that it does not decide when resimulating or
-  stopped, far agents and their lease, the cadence of a mind by its distance to the sources,
-  movement, chase and patrol actions, sight by cone and team, noise, forgetting, a remembered
-  subject that is destroyed, ray turns, random crowds that remember by the grid whom they would
+  (`a_crossing_counts_its_crossers_only_by_the_link`), that it decides again when a replay runs a
+  tick again and not when stopped, far agents and their lease, the cadence of a mind by its
+  distance to the sources, movement, chase and patrol actions, sight by cone and team, noise,
+  forgetting, a remembered subject that is destroyed, ray turns, random crowds that remember by
+  the grid whom they would
   among every perceivable, why a subject is seen or not (`sight_why_names_what_hides_a_subject`), a
   tick with nothing to do that goes through no row, places by budget, from the navmesh, from
   entities, from memory and from offers, rays only where they change the answer, the explanation of

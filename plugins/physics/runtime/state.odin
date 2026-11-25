@@ -57,9 +57,9 @@ Physics_State :: struct {
     rows_seen:[5]core.Seen, // of Rigid_Body, Collider, Character, Volume and Spline, at the end of the last sync that reached every body
     sealed_key:u64, // what a sync reads besides the Transform values, at the last one; 0 makes the next whole
     transforms_seen:core.Seen, // of Transform, at the end of the last tick that left the bodies as their rows
-    // The bodies and characters in use after the last whole sync if it left one of them unmade, else zero: with
-    // fewer in use there may be room for it, and the next sync is whole.
-    unmade:[2]i32,
+    // The bodies, characters and shapes in use after the last whole sync if it left one of them unmade, else
+    // zero: with fewer in use there may be room for it, and the next sync is whole.
+    unmade:[3]i32,
     sealed:[dynamic]Sealed_Body, // scratch of sealed_sync, as long as the rows of the bodies
     visited:[dynamic]u32, // scratch of a sync, by link: the pass that synced it
     proxies:[dynamic]core.Entity, // the entities of the Proxy links

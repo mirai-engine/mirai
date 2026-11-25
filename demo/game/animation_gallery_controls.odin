@@ -152,12 +152,12 @@ gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),galler
 
 // Fills each panel with the rows and buttons of its station and what the station does now.
 @(step="fixed",stage="react")
-gallery_panels :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),outputs:^core.Table(Gallery_Panel),gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),progresses:^core.Table(anim.Animation_Progress,.Read),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),problems:^core.Problems) {
+gallery_panels :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),outputs:^core.Table(Gallery_Panel),gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),problems:^core.Problems) {
     for row in 0..<core.count(panels) {
         current:=core.at(panels,row)
         item,exists:=core.get(gallery,current.station)
         if !exists {continue}
-        progress,_:=core.get(progresses,current.station)
+        progress,_:=anim.animation_progress_now(playback,current.station)
         rows,row_count,buttons,button_count:=gallery_controls(item.kind)
         state,ready:=core.view(states,current.station)
         empty:Animation_Gallery_State

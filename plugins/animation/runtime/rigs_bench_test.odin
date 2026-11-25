@@ -14,7 +14,7 @@ when #config(MIRAI_BENCH,false) {
 bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
     problems:core.Problems
     COUNTS :: [?]int{8,64,256}
-    log.infof("rig binding bytes/operation: twist %d, spring %d, Multi IK %d, chain retarget %d",size_of(Twist_Binding),size_of(Spring_Binding),size_of(Multi_IK_Binding),size_of(Chain_Retarget_Binding))
+    log.infof("rig binding bytes/operation: twist %d, spring %d, Multi IK %d",size_of(Twist_Binding),size_of(Spring_Binding),size_of(Multi_IK_Binding))
     labels:=[?]string{"no rig operations","two disabled operations per kind","one active Multi IK"}
     for count in COUNTS {
         for label,variant in labels {
@@ -31,7 +31,6 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
                 others:=operations if variant==1 else 0
                 twists:=make([]Twist_Constraint,others,context.temp_allocator)
                 springs:=make([]Spring_Constraint,others,context.temp_allocator)
-                retargets:=make([]Chain_Retarget_Constraint,others,context.temp_allocator)
                 for operation in 0..<operations {
                     multi:=MULTI_IK_CONSTRAINT_DEFAULT
                     multi.root=bone_ref("joint1")
@@ -50,23 +49,18 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
                     spring:=SPRING_CONSTRAINT_DEFAULT
                     spring.root,spring.end,spring.enabled=chain.root,chain.end,false
                     base.text_set(spring.name[:],fmt.tprintf("tail%d",operation))
-                    retarget:=CHAIN_RETARGET_CONSTRAINT_DEFAULT;retarget.enabled=false
-                    base.text_set(retarget.name[:],fmt.tprintf("transfer%d",operation))
                     twists[operation]=twist
-                    springs[operation]=spring;retargets[operation]=retarget
+                    springs[operation]=spring
                 }
-                test_modifier_profile(&modifiers,&characters,entity,{twist=twists,
-                    springs=springs,multi_ik=multis,retarget_chains=retargets})
+                test_modifier_profile(&modifiers,&characters,entity,{twist=twists,springs=springs,multi_ik=multis})
             }
-            playback:Playback
-            for &state in states {
-                if !testing.expect(t,(variant!=1 || test_rigs_retarget(&state,&playback,&modifiers,&characters,&problems)) && test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
+                        for &state in states {
+                if !testing.expect(t,test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)) {return}
             }
             state_bytes:=0
             for &rig in modifiers.rigs {
-                state_bytes+=cap(rig.twist_states)*size_of(Twist_Binding)+cap(rig.spring_states)*size_of(Spring_Binding)+cap(rig.multi_states)*size_of(Multi_IK_Binding)+cap(rig.retarget_chain_states)*size_of(Chain_Retarget_Binding)
+                state_bytes+=cap(rig.twist_states)*size_of(Twist_Binding)+cap(rig.spring_states)*size_of(Spring_Binding)+cap(rig.multi_states)*size_of(Multi_IK_Binding)
                 for &binding in rig.multi_states {state_bytes+=cap(binding.backup)*size_of(mm.Transform)}
-                for &binding in rig.retarget_chain_states {state_bytes+=(cap(binding.source_rest)+cap(binding.source_pose)+cap(binding.target_rest)+cap(binding.source_world)+cap(binding.target_world))*size_of(mm.Transform)}
             }
             log.infof("rig dispatch, %d rigs, %s: %d capacity bytes for solver state and pose scratch",count,label,state_bytes)
             stable:=true;sink:f32
@@ -78,7 +72,6 @@ bench_rig_dispatch_and_multi_ik_scaling :: proc(t:^testing.T) {
                 for _ in 0..<repeats {
                     for &state in states {
                         if variant==2 {copy(playing_pose(&state,.Local),state.rest[:])}
-                        if variant==1 {stable &&=test_rigs_retarget(&state,&playback,&modifiers,&characters,&problems)}
                         stable &&=test_rigs_apply(&state,&modifiers,&characters,{problems=&problems},nil,{},mm.TRANSFORM_IDENTITY,1.0/60)
                         sink+=playing_pose(&state,.Local)[4].rotation.z
                     }

@@ -89,10 +89,11 @@ animation_target_path :: proc(world:core.World_Ref,entity:core.Entity,target:Ani
     return strings.clone(base.text_get(target.path[:]),context.temp_allocator)
 }
 
-// Where the clip of the Animation of an entity is while the game plays, whether it plays and at
-// what speed: what a saved game keeps, since Playback is derived and starts again when the World
-// loads. Playback writes it when a save is captured.
-@(component,description="Where the clip of the Animation of this entity is while the game plays, whether it plays and at what speed: a saved game goes on from there.")
+// Where the clip of the Animation of an entity was when a save was captured, whether it played and
+// at what speed: what a saved game keeps, since Playback is derived and starts again when the
+// World loads. Playback writes it only when a save is captured; while the game plays,
+// animation_progress_now says where the clip is.
+@(component,description="Where the clip of the Animation of this entity was when the game was saved, whether it played and at what speed: a saved game goes on from there. Written only when a save is captured.")
 Animation_Progress :: struct {
     time:f32 `mirai:"readonly,unit=s"`,
     selection:Clip_Selection `mirai:"readonly,hidden,optional"`,
@@ -902,6 +903,14 @@ animation_progress :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (t
     state:=constraint_playing(playback,entity)
     if state==nil || state.clip<0 {return}
     return state.time,state.duration,state.ended,true
+}
+
+// Where the clip of the Animation of an entity is now, which clip, whether it plays and at what
+// speed: what Animation_Progress keeps of it in a save. False for an entity that plays no clip.
+animation_progress_now :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (progress:Animation_Progress,ok:bool) {
+    state:=constraint_playing(playback,entity)
+    if state==nil || state.clip<0 {return}
+    return {time=state.time,selection=state.selection,speed=state.speed,playing=state.playing},true
 }
 
 // The value set gave a parameter of an entity; false when none was set.

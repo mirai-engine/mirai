@@ -50,11 +50,13 @@ says so (`game_prompt`).
 
 ## Debug drawing
 
-Receive `^render.Debug_Draw` from `mirai:engine/render` in a step and submit a world-space
-primitive, for example `render.debug_line(draw, from, to, {1,1,0,1})`. Lines, rays, boxes,
-spheres, arrows and crosses share the renderer's depth-tested debug line pass. A primitive
-draws once by default. Pass `duration` in frame seconds to keep it visible longer. The request
-returns false if the bounded queue is full or the duration is invalid.
+Receive `^render.Debug_Draw` from `mirai:engine/render` in a step of any package and submit a
+world-space primitive, for example `render.debug_line(draw, from, to, {1,1,0,1})`: it is a request
+queue the render step takes. Lines, rays, boxes, spheres, arrows and crosses share the renderer's
+depth-tested debug line pass. A primitive draws once by default. Pass `duration` in frame seconds
+to keep it visible longer. A fixed tick that runs again (a network correction, a replay of the
+history) does not submit its primitives again. The request returns false if the bounded queue is
+full or the duration is invalid.
 
 A direction that belongs to an entity (where a sun shines, where a spawn point faces) is an
 `render.Arrow` component instead: a solid arrow the editor always shows and the game draws only

@@ -1,6 +1,6 @@
 # Players, seats and visibility
 
-A seat (`inp.Seat`) is one player, of this machine or of a connection (`peer`). The server makes
+A seat (`inp.Seat`) is one player, of this machine or of a connection (`remote`). The server makes
 one per connection and feeds it the actions its client sent, never its devices; read them like any
 seat (`inp.Input_Of(Action)`, `inp.pressed`). A seat that leaves waits, off, for the same player to
 connect again; the player's secret is kept in their profile, so a returning client recovers it.
@@ -24,15 +24,17 @@ give_bodies :: proc(seats:^core.Table(inp.Seat,.Read),requests:^spawn.Spawn_Requ
 ```
 
 `PLAYER_PREFAB` is the path in the assets of a prefab that carries `multiplayer.Replicate`.
-`inp.seat_of(seats,body)` gives the seat of a body. On a client the seat of its own player is the
+`inp.seat_of(seats,body)`, with `seats:core.Ref(inp.Seats)`, gives the seat that drives a body, and
+`inp.body_of(seat_table,seat)` the body of a seat. On a client the seat of its own player is the
 replica of the one the server made for its connection, its local seat 0; the seats of the other
 players are of another end. A client takes only bodies it predicts; `spawn.spawn` on a client is
 refused (`spawn.client_spawn`).
 
 ## Which connection is a seat
 
-`multiplayer.Connection(seat.peer)` is its connection: pass it as `to=` to `send`. `peer` is 0 for
-the seat of this machine.
+On the server, `multiplayer.Net_Seat` on the seat of a player of another end holds its
+`connection` (0 while that player is away): pass it as `to=` to `send`. A seat of this machine has
+no `Net_Seat`. A client finds its own connection with `multiplayer.own_connection(session)`.
 
 ## Who sees what
 

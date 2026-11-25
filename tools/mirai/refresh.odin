@@ -59,7 +59,9 @@ self_refresh :: proc(root:string) -> (code:int,refreshed:bool) {
     again:=make([dynamic]string)
     append(&again,final)
     append(&again,..os.args[1:])
-    return run(root,again[:]),true
+    // Where it was called: the paths of its arguments are relative to it.
+    here,_:=os.get_working_directory(context.temp_allocator)
+    return run(here,again[:]),true
 }
 
 // The packages whose files the tool never reads: render holds the shader
