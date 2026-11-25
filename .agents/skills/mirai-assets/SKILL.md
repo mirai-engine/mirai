@@ -96,6 +96,10 @@ instances, registry).
 - **The image is canonical.** `serial.value_write` zeroes the padding, the `transient` fields and
   what follows a text's NUL: equal values are equal bytes and writing the same document twice gives
   the same file. Do not write raw memory into a column.
+- **A file stores no transient field.** `document_write` writes the types its columns use, in
+  the order they reach them, through `serial.schema_persistent`: a struct with a `transient`
+  field is laid out again over the rest, so it costs the bytes of a struct without it, and the
+  reader migrates it by name (the field starts at zero).
 - The JSON view may omit fields (`text_write.omit_fields`, [serial.md](references/serial.md));
   hiding authoring fields does not remove them from the persistent image.
 - **The header id is an asset's identity**: nothing derives it from its path, name or source;
