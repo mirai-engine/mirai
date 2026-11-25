@@ -6,33 +6,32 @@ import "core:time"
 
 // Feeds: rings of decoded 16 bit frames that a voice of a loaded sound plays
 // from while a decoder fills them ahead. Each voice takes one from the pool,
-// with its own decoder; the decoder thread of the mixer fills them, or,
-// without one, voice_play and mixer_update on the calling thread. Every pass
-// first decodes FEED_START_FRAMES of each voice that has fewer, so many
-// voices that start at once all have their first frames before any is
-// filled further. The audio thread only reads what was decoded: a voice
-// whose first frames are not decoded yet waits for them, silent, and starts
-// late from its first frame; one whose ring runs dry goes silent (underruns)
-// and resumes with the frame it stopped at.
+// with its own decoder. voice_play decodes, on the thread that calls it and
+// before the audio thread hears of the voice, what its first chunk plays
+// (FEED_START_FRAMES at least): a voice sounds at the sample it was
+// scheduled for, whatever the decoder thread is doing. The decoder thread of
+// the mixer fills the rest ahead, or, without one, mixer_update. The audio
+// thread only reads what was decoded: a voice whose ring runs dry later goes
+// silent (underruns) and resumes with the frame it stopped at.
 //
 // The phase of a feed says who touches it: the game thread prepares a Free
-// feed and hands it over as Starting; the decoder seeks, fills it while it is
-// Running and leaves it Done once the audio thread has let it go; the game
-// thread takes a Done feed back as Free.
+// feed, opens its decoder, decodes its first frames and hands it over as
+// Running; the decoder fills it and leaves it Done once the audio thread has
+// let it go; the game thread takes a Done feed back as Free.
 
 // Source frames a voice that plays from a feed may consume per output frame:
 // its pitch times the ratio of the sample rates is clamped to this.
 @(private) FEED_STEP_MAX :: ONE*8
 // How often the decoder thread looks at the feeds while some voice plays from one.
 @(private) FEEDER_PERIOD :: 2*time.Millisecond
-// Frames a start decodes before the decoder fills further: more than a
-// device asks for at a time. A lossless block is decoded whole.
+// Frames a start decodes at least, more if its first chunk plays more at its
+// pitch: more than a device asks for at a time. A lossless block is decoded whole.
 @(private) FEED_START_FRAMES :: 1024
 // Frames of a WAV or Vorbis file decoded at a time, as f32 before they are rounded to 16 bits.
 @(private) FEED_FLOAT_FRAMES :: 1024
 
 @(private)
-Feed_Phase :: enum u32 {Free,Starting,Running,Done}
+Feed_Phase :: enum u32 {Free,Running,Done}
 
 @(private)
 Feed :: struct {
@@ -63,8 +62,7 @@ feed_phase_set :: #force_inline proc "contextless" (f:^Feed,phase:Feed_Phase) {
     sync.atomic_store_explicit((^u32)(&f.phase),u32(phase),.Release)
 }
 
-// Readies a Free feed for a play that begins at offset. The audio thread may
-// see the voice before the decoder sees the feed: it then finds nothing to play.
+// Readies a Free feed for a play that begins at offset.
 @(private)
 feed_prepare :: proc(f:^Feed,sound:u32,offset,loop_start:int,loop:bool) {
     f.offset,f.loop_start=offset,loop_start
@@ -75,19 +73,27 @@ feed_prepare :: proc(f:^Feed,sound:u32,offset,loop_start:int,loop:bool) {
     sync.atomic_store_explicit(&f.ended,0,.Relaxed)
     sync.atomic_store_explicit(&f.released,0,.Release)
 }
-// Hands a prepared feed to the decoder: filled at once without a decoder
-// thread, else the thread is woken.
+// Opens the decoder of a prepared feed, decodes ahead frames of it, with the
+// scratch of the game thread (no decoder touches a Free feed), and hands it to
+// the decoder, waking its thread. A decoder that does not open plays nothing.
 @(private)
-feed_hand_over :: proc(m:^Mixer,f:^Feed) {
-    feed_phase_set(f,.Starting)
-    if m.feeder==nil {
-        pump_lock(m)
-        feed_pump(m,f,FEED_START_FRAMES)
-        pump_unlock(m)
-        return
+feed_hand_over :: proc(m:^Mixer,f:^Feed,ahead:int) {
+    if decoder_start(&f.decoder) {
+        decoder_seek(&f.decoder,f.offset-min(f.offset,1))
+        feed_fill(f,u64(ahead),m.start_planes,m.start_floats)
+    } else {
+        sync.atomic_store_explicit(&f.ended,1,.Relaxed)
     }
+    feed_phase_set(f,.Running)
+    if m.feeder==nil {return}
     sync.atomic_add_explicit((^u32)(&m.feeder_wake),1,.Release)
     sync.futex_signal(&m.feeder_wake)
+}
+// What the first chunk of a voice plays at step, and the frames around them,
+// FEED_START_FRAMES at least.
+@(private)
+feed_start_frames :: proc "contextless" (step:u64) -> int {
+    return max(FEED_START_FRAMES,int((u64(CHUNK_FRAMES)*min(step,FEED_STEP_MAX))>>32)+4)
 }
 // The audio thread lets go of the feed of a voice that ends or is dropped.
 @(private)
@@ -120,34 +126,19 @@ pump_unlock :: proc(m:^Mixer) {
     sync.atomic_store_explicit(&m.pumping,0,.Release)
 }
 
-// Fills every feed it can, the first frames of all of them first; true while
-// some feed is in play.
+// Fills every feed it can; true while some feed is in play.
 @(private)
 feeds_pump :: proc(m:^Mixer) -> (busy:bool) {
-    for &f in m.feeds {feed_pump(m,&f,FEED_START_FRAMES)}
     for &f in m.feeds {
-        if feed_pump(m,&f,int(f.capacity)) {busy=true}
+        if feed_phase(&f)!=.Running {continue}
+        if sync.atomic_load_explicit(&f.released,.Acquire)!=0 {
+            feed_phase_set(&f,.Done)
+            continue
+        }
+        feed_fill(&f,f.capacity,m.feed_planes,m.feed_floats)
+        busy=true
     }
     return
-}
-// Decodes until the ring holds ahead frames that were not played, or is full.
-@(private)
-feed_pump :: proc(m:^Mixer,f:^Feed,ahead:int) -> (busy:bool) {
-    switch feed_phase(f) {
-    case .Free,.Done:return false
-    case .Starting:
-        // A decoder that does not open plays nothing.
-        if !decoder_start(&f.decoder) {sync.atomic_store_explicit(&f.ended,1,.Release)}
-        else {decoder_seek(&f.decoder,f.offset-min(f.offset,1))}
-        feed_phase_set(f,.Running)
-    case .Running:
-    }
-    if sync.atomic_load_explicit(&f.released,.Acquire)!=0 {
-        feed_phase_set(f,.Done)
-        return false
-    }
-    feed_fill(m,f,u64(ahead))
-    return true
 }
 
 @(private)
@@ -178,11 +169,12 @@ feeder_stop :: proc(m:^Mixer) {
 }
 
 // Decodes into the free part of the ring until it holds ahead frames not
-// played. A lossless block is decoded whole, into the planes of the mixer,
-// once the rest of it fits; the ring holds two blocks at least. A WAV or a
-// Vorbis file is decoded to f32 in the floats of the mixer and rounded.
+// played. A lossless block is decoded whole, into planes, once the rest of it
+// fits; the ring holds two blocks at least. A WAV or a Vorbis file is decoded
+// to f32 in floats and rounded. Each thread that decodes has its own planes
+// and floats.
 @(private)
-feed_fill :: proc(m:^Mixer,f:^Feed,ahead:u64) {
+feed_fill :: proc(f:^Feed,ahead:u64,planes:[]i32,floats:[]f32) {
     if sync.atomic_load_explicit(&f.ended,.Relaxed)!=0 {return}
     d:=&f.decoder
     channels:=d.channels
@@ -203,18 +195,18 @@ feed_fill :: proc(m:^Mixer,f:^Feed,ahead:u64) {
                 rest:=min(l.block_frames,l.frames-block*l.block_frames)-first
                 if u64(rest)>free {break fill}
                 // A damaged block plays as silence.
-                lossless_block(l,block,m.feed_planes)
+                lossless_block(l,block,planes)
                 split:=min(rest,int(run))
-                lossless_convert_i16(m.feed_planes,l.block_frames,channels,first,split,f.ring[int(at)*channels:])
-                lossless_convert_i16(m.feed_planes,l.block_frames,channels,first+split,rest-split,f.ring)
+                lossless_convert_i16(planes,l.block_frames,channels,first,split,f.ring[int(at)*channels:])
+                lossless_convert_i16(planes,l.block_frames,channels,first+split,rest-split,f.ring)
                 got=rest
                 d.cursor+=rest
             }
         } else {
-            floats:=m.feed_floats[:int(min(run,FEED_FLOAT_FRAMES))*channels]
-            got=decoder_read(d,floats)
+            decoded:=floats[:int(min(run,FEED_FLOAT_FRAMES))*channels]
+            got=decoder_read(d,decoded)
             ring:=f.ring[int(at)*channels:]
-            for x,i in floats[:got*channels] {ring[i]=sample_pcm16(x)}
+            for x,i in decoded[:got*channels] {ring[i]=sample_pcm16(x)}
         }
         write+=u64(got);free-=u64(got)
         sync.atomic_store_explicit(&f.write,write,.Release)

@@ -57,7 +57,8 @@ a_loaded_sound_holds_its_file_and_what_its_setup_shares :: proc(t:^testing.T) {
     m:=test_mixer(t)
     defer mixer_destroy(m)
     feeds:=mixer_stats(m).feed_bytes
-    testing.expect_value(t,feeds,len(m.feeds)*m.feed_frames*2*2+m.feed_frames*4+FEED_FLOAT_FRAMES*2*4)
+    // The rings, and the scratch of the decoder thread and of the game thread.
+    testing.expect_value(t,feeds,len(m.feeds)*m.feed_frames*2*2+2*(m.feed_frames*4+FEED_FLOAT_FRAMES*2*4))
     samples:=make([]i16,LOSSLESS_BLOCK_FRAMES*3*2,context.temp_allocator)
     for &sample,i in samples {sample=pcm_value(i)}
     lossless,_:=lossless_encode(samples,2,RATE,context.temp_allocator)
@@ -138,45 +139,39 @@ a_voice_of_a_loaded_sound_plays_its_whole_decode :: proc(t:^testing.T) {
     }
 }
 
-// Many voices of one sound that start on one tick each decode it from its
-// first frame: without a decoder thread voice_play decodes their first
-// frames, and the decoder thread gives every one its first frames before it
-// fills any further.
+// Many voices of one sound that start on one tick each sound at the sample
+// they were scheduled for, from their first frame, while the decoder thread
+// does nothing: voice_play decoded their first chunk.
 @(test)
-a_storm_of_starts_plays_every_voice_from_its_first_frame :: proc(t:^testing.T) {
+a_storm_of_starts_places_every_voice_at_its_scheduled_sample :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     VOICES :: 64
-    FRAMES :: 2048
     for threaded in ([?]bool{false,true}) {
         m:=test_mixer(t,{voice_capacity=VOICES,decoder_thread=threaded})
         reference:=test_mixer(t)
         sound,_:=sound_load(m,CLICK)
         once:=whole_sound(t,reference,CLICK)
+        // The decoder is held: what plays is what voice_play decoded.
+        pump_lock(m)
         desc:=VOICE_DEFAULT
         desc.volume=1.0/VOICES
-        // Far enough ahead for the decoder thread: every one sounds on that frame.
-        desc.start_frame=mixer_clock(m)+FRAMES
         started:=time.tick_now()
         mixer_batch_begin(m)
-        for _ in 0..<VOICES {testing.expect(t,voice_play(m,sound,desc)!=0)}
-        mixer_batch_end(m)
-        ready:time.Duration
-        for !threaded || time.tick_since(started)<time.Second {
-            first:=0
-            for &f in m.feeds {
-                if sync.atomic_load(&f.write)>=FEED_START_FRAMES {first+=1}
-            }
-            if first==VOICES {ready=time.tick_since(started);break}
-            if !threaded {break}
-            thread.yield()
+        for i in 0..<VOICES {
+            // Scheduled in the middle of the next chunks, a sample apart.
+            desc.start_frame=mixer_clock(m)+100+u64(i)
+            testing.expect(t,voice_play(m,sound,desc)!=0)
         }
-        if threaded {fmt.printfln("a storm of %d starts has every first %d frames decoded after %v",VOICES,FEED_START_FRAMES,ready)}
-        testing.expect(t,!threaded || ready>0,"the decoder thread decodes the first frames of every voice")
-        desc.volume=1
-        desc.start_frame=mixer_clock(reference)+FRAMES
-        voice_play(reference,once,desc)
-        got:=play_along(m,FRAMES*3,step=480)
-        want:=play_along(reference,FRAMES*3,step=480)
+        mixer_batch_end(m)
+        if threaded {fmt.printfln("a storm of %d starts decodes their first frames in %v",VOICES,time.tick_since(started))}
+        got:=test_render(m,FEED_START_FRAMES)
+        pump_unlock(m)
+        desc.volume=1.0/VOICES
+        for i in 0..<VOICES {
+            desc.start_frame=mixer_clock(reference)+100+u64(i)
+            voice_play(reference,once,desc)
+        }
+        want:=test_render(reference,FEED_START_FRAMES)
         for i in 0..<len(want) {
             if !test_near(t,got[i],want[i],1e-6) {break}
         }
@@ -186,39 +181,86 @@ a_storm_of_starts_plays_every_voice_from_its_first_frame :: proc(t:^testing.T) {
     }
 }
 
-// A decode that misses its deadline: a voice whose first frames are not
-// decoded yet waits silent and then starts from its first frame; one whose
-// ring runs dry goes silent, counts underruns, and resumes with the frame it
-// stopped at.
+// The same scripted mix rendered twice is the same to the sample: once with a
+// decoder thread that lags, once decoding before every render. Clicks start
+// on one tick, a song loops, a hum plays, and some start between renders.
 @(test)
-a_late_decode_delays_the_sound_and_skips_nothing :: proc(t:^testing.T) {
+the_same_mix_rendered_twice_is_the_same_to_the_sample :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    samples:=make([]i16,LOSSLESS_BLOCK_FRAMES*3,context.temp_allocator)
+    for &sample,i in samples {sample=pcm_value(i)}
+    hum,_:=lossless_encode(samples,1,RATE,context.temp_allocator)
+    run :: proc(t:^testing.T,threaded:bool,hum:[]u8) -> []f32 {
+        m:=test_mixer(t,{voice_capacity=48,decoder_thread=threaded})
+        defer mixer_destroy(m)
+        click,_:=sound_load(m,CLICK)
+        song,_:=sound_load(m,TONE_LONG)
+        drone,_:=sound_load(m,hum)
+        out:=make([]f32,48000*2,context.temp_allocator)
+        for at,round:=0,0;at<48000;at,round=at+480,round+1 {
+            // A decoder thread that lags behind the first renders of each start.
+            if threaded && round%4==0 {pump_lock(m)}
+            if round==0 || round==7 {
+                mixer_batch_begin(m)
+                for i in 0..<32 {
+                    desc:=VOICE_DEFAULT
+                    desc.volume=0.03;desc.pan=f32(i%5)*0.4-0.8;desc.pitch=0.9+f32(i%3)*0.1
+                    desc.start_frame=mixer_clock(m)+u64(37*i)
+                    voice_play(m,click,desc)
+                }
+                if round==0 {
+                    desc:=VOICE_DEFAULT
+                    desc.loop=true;desc.volume=0.3
+                    voice_play(m,song,desc)
+                    desc.volume=0.2;desc.offset=0.01
+                    voice_play(m,drone,desc)
+                }
+                mixer_batch_end(m)
+            }
+            if !threaded {mixer_decode(m)}
+            mixer_render(m,out[at*2:][:480*2])
+            if threaded && round%4==0 {
+                pump_unlock(m)
+                mixer_decode(m)
+            }
+            mixer_update(m)
+        }
+        testing.expect_value(t,mixer_stats(m).underruns,u64(0))
+        return out
+    }
+    a,b:=run(t,true,hum),run(t,false,hum)
+    for i in 0..<len(a) {
+        if a[i]!=b[i] {
+            testing.expectf(t,false,"sample %d is %v with a lagging decoder thread, %v decoding before every render",i,a[i],b[i])
+            break
+        }
+    }
+}
+
+// A decode that misses its deadline after the first chunk: the ring of a
+// voice that runs dry goes silent, counts underruns, and resumes with the
+// frame it stopped at.
+@(test)
+a_dry_ring_goes_silent_and_skips_nothing :: proc(t:^testing.T) {
     defer free_all(context.temp_allocator)
     m:=test_mixer(t,{decoder_thread=true})
     defer mixer_destroy(m)
     sound,_:=sound_load(m,ramp_wav(40000))
-    // The decoder is held: nothing is decoded for the voice.
+    // The decoder is held: the voice has what voice_play decoded and nothing more.
     pump_lock(m)
     voice:=voice_play(m,sound)
-    out:=test_render(m,1000)
-    for sample in out {testing.expect_value(t,sample,f32(0))}
-    testing.expect(t,voice_valid(m,voice))
-    testing.expect_value(t,mixer_stats(m).underruns,u64(0))
-    pump_unlock(m)
-    for sync.atomic_load(&m.feeds[0].write)<FEED_START_FRAMES {thread.yield()}
-    out=test_render(m,500)
-    testing.expect(t,test_near(t,out[0],ramp_at(0),0) && test_near(t,out[499*2],ramp_at(499),0))
-    // Held again past the end of what was decoded.
-    pump_lock(m)
     held:=sync.atomic_load(&m.feeds[0].write)
-    out=test_render(m,int(m.feeds[0].capacity)+2000)
+    testing.expect(t,held>=FEED_START_FRAMES)
+    out:=test_render(m,int(held)+1000)
     heard:=0
     for i in 0..<len(out)/2 {
-        if out[i*2]==0 && ramp_at(500+i)!=0 {break}
+        if out[i*2]==0 && ramp_at(i)!=0 {break}
         heard+=1
     }
-    testing.expect_value(t,u64(500+heard),held)
+    testing.expect_value(t,u64(heard),held)
     testing.expect_value(t,out[len(out)-2],f32(0))
     testing.expect(t,mixer_stats(m).underruns>0)
+    testing.expect(t,voice_valid(m,voice))
     pump_unlock(m)
     for sync.atomic_load(&m.feeds[0].write)<held+FEED_START_FRAMES {thread.yield()}
     out=test_render(m,300)

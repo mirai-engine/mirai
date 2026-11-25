@@ -90,9 +90,10 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   generated once and not regenerated. Mixers of tests have no decoder thread, so the output is
   exact; a test that uses one decodes with `mixer_decode` before each render.
 - Feeds: `audio/feed_test.odin` (memory held, a voice against the whole decode of its file with
-  loop, seek and pitch 2, a storm of starts, a late decode, refused files, and the audio and game
-  threads sharing a mixer with the decoder thread) and `audio/lossless_test.odin` (lossless voices
-  and offsets, damaged input).
+  loop, seek and pitch 2, a storm of starts at their scheduled samples, the same mix rendered
+  twice with and without a lagging decoder thread, a dry ring, refused files, and the audio and
+  game threads sharing a mixer with the decoder thread) and `audio/lossless_test.odin`
+  (lossless voices and offsets, damaged input).
 - Benchmarks, only if the change touches a measured path:
   `mirai test audio benchmark_mixing_ten_milliseconds --release -define:AUDIO_BENCHMARK=true`,
   `mirai test cook/import bench_sounds_in_the_mixer -define:COOK_BENCH=true` (the sounds of the

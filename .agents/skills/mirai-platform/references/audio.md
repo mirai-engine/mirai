@@ -77,19 +77,21 @@ a Vorbis file decodes to f32 into the scratch of the decoder and is rounded to 1
 `Mixer_Stats.feed_bytes` is their memory: the rings and, once a Vorbis sound is loaded, the
 workspace of each (about 30 KB stereo).
 
-- **Who decodes.** The mixer's decoder thread wakes when a voice starts and every few milliseconds
-  while a feed plays. Each pass first decodes `FEED_START_FRAMES` (a lossless block whole) of
-  every voice that has fewer, then fills the rings: many voices that start on one tick all get
-  their first frames before any is filled further. Without a decoder thread `voice_play` decodes
-  those first frames and `mixer_update` the rest: whoever renders without one calls
-  `mixer_update` or `mixer_decode` before each render (a recording calls `mixer_decode`). One
-  decoder at a time fills the feeds.
-- **Phases.** The game thread readies a free feed and hands it over; the decoder opens its decoder
-  in the feed's workspace, seeks and fills it until the audio thread lets go of it.
-  `mixer_update` returns the feed to the pool once the decoder is done.
-- **A late decode.** A voice whose first frames are not decoded yet waits silent and starts late
-  from its first frame (a `start_frame` far enough ahead is kept exactly); one whose ring empties
-  goes silent (`underruns`) and resumes with the frame it stopped at.
+- **A start sounds when it was scheduled.** `voice_play` decodes, on the thread that calls it and
+  before the audio thread hears of the voice, what its first chunk plays at its pitch
+  (`FEED_START_FRAMES` at least, a lossless block whole), with scratch of its own: a voice sounds
+  at the sample its play reaches or its `start_frame`, whatever the decoder thread does, so the
+  same input mixes the same samples on every run and machine. It costs the start that decode
+  (about 10-30 µs for an Ogg, 80 µs for a lossless block in a dev build).
+- **Who decodes the rest.** The mixer's decoder thread wakes when a voice starts and every few
+  milliseconds while a feed plays; without one `mixer_update` does it, so whoever renders without
+  one calls `mixer_update` or `mixer_decode` before each render (a recording calls
+  `mixer_decode`). One decoder at a time fills the feeds.
+- **Phases.** The game thread readies a free feed, opens its decoder in the feed's workspace,
+  decodes its first frames and hands it over; the decoder fills it until the audio thread lets go
+  of it. `mixer_update` returns the feed to the pool once the decoder is done.
+- **A late decode.** A ring that empties after the first chunk, the decoder thread behind, goes
+  silent (`underruns`) and resumes with the frame it stopped at.
 - A lossless block is decoded whole, once the rest of it fits the ring: a seek is block exact plus
   a discard.
 - `offset` seeks before the ring fills; a loop seeks to the loop start and is sample exact, also

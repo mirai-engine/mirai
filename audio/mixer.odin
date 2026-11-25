@@ -134,6 +134,8 @@ Mixer :: struct {
     feed_rings:[]i16,   // the rings of all of them
     feed_planes:[]i32,  // a lossless block being decoded
     feed_floats:[]f32,  // FEED_FLOAT_FRAMES stereo frames of a WAV or a Vorbis file being decoded
+    start_planes:[]i32, // the same, for what voice_play decodes on the game thread
+    start_floats:[]f32,
     feeder:^thread.Thread,
     feeder_wake:sync.Futex,
     feeder_quit:bool,
@@ -251,6 +253,8 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     if m.feed_rings,failed=make([]i16,pool*feed_frames*2,allocator);failed!=nil {return .Out_Of_Memory}
     if m.feed_planes,failed=make([]i32,feed_frames,allocator);failed!=nil {return .Out_Of_Memory}
     if m.feed_floats,failed=make([]f32,FEED_FLOAT_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.start_planes,failed=make([]i32,feed_frames,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.start_floats,failed=make([]f32,FEED_FLOAT_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     for &f,i in m.feeds {
         f.ring=m.feed_rings[i*feed_frames*2:][:feed_frames*2]
         f.capacity=u64(feed_frames)
@@ -258,7 +262,7 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
         m.free_feeds[i]=u32(pool-1-i)
     }
     m.free_feed_count=pool
-    m.counters.feed_bytes=len(m.feed_rings)*size_of(i16)+len(m.feed_planes)*size_of(i32)+len(m.feed_floats)*size_of(f32)
+    m.counters.feed_bytes=len(m.feed_rings)*size_of(i16)+(len(m.feed_planes)+len(m.start_planes))*size_of(i32)+(len(m.feed_floats)+len(m.start_floats))*size_of(f32)
     for &slot in m.sounds {slot.generation=1}
     // Slot 0 is handed out first.
     for &shadow,i in m.shadows {
@@ -321,6 +325,7 @@ mixer_destroy :: proc(m:^Mixer) {
     }
     delete(m.setups,allocator)
     delete(m.feeds,allocator);delete(m.free_feeds,allocator);delete(m.feed_rings,allocator);delete(m.feed_planes,allocator);delete(m.feed_floats,allocator)
+    delete(m.start_planes,allocator);delete(m.start_floats,allocator)
     delete(m.commands.items,allocator)
     delete(m.sounds,allocator);delete(m.sound_released,allocator)
     delete(m.shadows,allocator);delete(m.free_voices,allocator)
