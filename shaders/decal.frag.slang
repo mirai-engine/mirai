@@ -25,6 +25,12 @@ struct Stage_Output {
 #endif
 };
 
+// What a decal writes, on a grid of 2^-16. Its values carry the last bits of
+// the interpolation of its vertices, which differ from pixel to pixel and from
+// view to view, and each blend of the targets rounds what it holds: on the
+// grid, a decal of one value writes the same at every pixel, from every side.
+float4 decal_snapped(float4 value) { return round(value * 65536.0) / 65536.0; }
+
 [shader("fragment")]
 [earlydepthstencil]
 Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool front_facing : SV_IsFrontFace) {
@@ -40,9 +46,10 @@ Stage_Output main(Raster_Input input, float4 pixel_position : SV_Position, bool 
     float3 smooth = normalize(input.in_normal);
     if (fragment_turned(input, to_camera)) smooth = -smooth;
     Stage_Output output = (Stage_Output)0;
-    if ((writes & DECAL_WRITE_COLOR) != 0u) output.color = float4(saturate(f.values.base_color), 1.0) * covered;
-    if ((writes & DECAL_WRITE_NORMAL) != 0u) output.normal = float4(f.normal - smooth, 1.0) * covered;
-    if ((writes & DECAL_WRITE_SURFACE) != 0u) output.surface = float4(f.material_roughness, f.values.metallic, f.values.occlusion, 1.0) * covered;
+    covered = decal_snapped(covered).x;
+    if ((writes & DECAL_WRITE_COLOR) != 0u) output.color = decal_snapped(float4(saturate(f.values.base_color), 1.0)) * covered;
+    if ((writes & DECAL_WRITE_NORMAL) != 0u) output.normal = decal_snapped(float4(f.normal - smooth, 1.0)) * covered;
+    if ((writes & DECAL_WRITE_SURFACE) != 0u) output.surface = decal_snapped(float4(f.material_roughness, f.values.metallic, f.values.occlusion, 1.0)) * covered;
 #ifdef MIRAI_DECAL_EMISSIVE
     if ((writes & DECAL_WRITE_EMISSION) != 0u) output.emission = float4(finite_or_zero(f.values.emission), 1.0) * covered;
 #endif
