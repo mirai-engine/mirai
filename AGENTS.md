@@ -51,8 +51,14 @@ own `AGENTS.md` applies, not the one of the checkout that contains it.
 
 ## Scope and done
 
-- **Root fixes, not workarounds.** Fix causes directly (including in-repo third-party code); no
-  wrappers, suppressed warnings or special cases. If a root fix is large, report its size and ask.
+- **Root fixes for defects.** Fix the cause of a defect (including in-repo third-party code), never
+  hide it with wrappers, suppressed warnings or special cases. If the root fix is large, report its
+  size and ask, with the workaround and what it loses as the alternative.
+- **Simplest form first for features.** Before a new feature or redesign of more than about 200
+  non-test lines: read in git history why the current state exists and what the owner removed or
+  decided on purpose; state what the owner needs to see or get; propose the simplest form that
+  delivers it with its size and cost, and the fuller form with what it adds. A workaround is
+  acceptable when the root form is disproportionate; say what it loses.
 - **Defects found in flight.** Fix if blocking or in touched code; ask if large.
 - **Dependency defects** (Odin, Slang, SDL): prepare minimal repro/PR/issue and a named temporary
   workaround (plus [Odin workarounds](docs/ODIN_WORKAROUNDS.md) entry for Odin). Confirm before
