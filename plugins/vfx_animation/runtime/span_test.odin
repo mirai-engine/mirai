@@ -177,6 +177,62 @@ animation_spans_and_paired_markers_start_and_stop_emitters :: proc(t:^testing.T)
     }
 }
 
+// The end of an unnamed clip stops only the emitter that clip opened, told apart by its clip; an
+// emitter re-parented to another animated entity follows it, its source found again when the
+// parents change and kept across steady ticks.
+@(test)
+animation_spans_tell_unnamed_clips_apart_and_follow_a_new_parent :: proc(t:^testing.T) {
+    Step :: struct {kind:anim.Animation_Event_Kind,name,clip:string,from_second,reparent:bool,want_active:bool}
+    Case :: struct {name:string,steps:[]Step}
+    cases:=[?]Case{
+        {"the end of another unnamed clip leaves it on",{
+            {.Marker,"trail_on","walk",false,false,true},
+            {.Ended,"","idle",false,false,true},
+            {.Interrupted,"","run",false,false,true},
+            {.Ended,"","walk",false,false,false},
+        }},
+        {"a re-parented emitter follows its new parent",{
+            {.Marker,"trail_on","walk",false,false,true},
+            {.Marker,"","",false,true,false},
+            {.Marker,"trail_on","walk",false,false,false},
+            {.Marker,"trail_on","walk",true,false,true},
+            {.Marker,"trail_off","walk",true,false,false},
+        }},
+    }
+    for c in cases {
+        f:=new(Span_Fixture)
+        defer free(f)
+        if !span_fixture_init(t,f) {return}
+        defer span_fixture_destroy(f)
+        first,second:=core.create(&f.entities),core.create(&f.entities)
+        core.add(&f.animations,first,anim.ANIMATION_DEFAULT)
+        core.add(&f.animations,second,anim.ANIMATION_DEFAULT)
+        emitter:=core.create(&f.entities)
+        core.add(&f.parents,emitter,core.Parent{entity=first})
+        core.add(&f.worlds,emitter,core.World_Transform{mm.TRANSFORM_IDENTITY,mm.TRANSFORM_IDENTITY})
+        core.add(&f.emitters,emitter,vfx.Particle_Emitter{active=false,loop=true})
+        core.add(&f.spans,emitter,make_span_config("trail_on","trail_off"))
+        test_world_settle(&f.w)
+        now:=core.Time{playing=true,dt=1.0/60}
+        for s,i in c.steps {
+            if s.reparent {
+                core.edit(&f.parents,emitter).entity=second
+                test_world_settle(&f.w)
+            } else {
+                append(&f.events.items,anim.Animation_Event{entity=second if s.from_second else first,kind=s.kind,
+                    name=base.name_hash(s.name) if s.name!="" else 0,clip=base.name_hash(s.clip) if s.clip!="" else 0})
+            }
+            span_fixture_tick(f,now)
+            now.seconds+=f64(now.dt)
+            em,has:=core.get(&f.emitters,emitter)
+            testing.expectf(t,has && em.active==s.want_active,"%s step %d: active=%v want=%v",c.name,i,em.active,s.want_active)
+            entry:=core.entity_map_get(&f.span_state.entries,emitter)
+            want:=second if i>=1 && c.steps[1].reparent else first
+            testing.expectf(t,entry!=nil && entry.resolved==want,"%s step %d: the source found is %v, not %v",c.name,i,entry.resolved if entry!=nil else core.NONE,want)
+        }
+    }
+}
+
 // Source entity destruction, span component removal and emitter destruction
 // never leave trails stuck on or produce stale requests; steady ticks allocate
 // zero memory.

@@ -28,11 +28,13 @@ Particle_Animation_Span :: struct {
 }
 
 Span_Active :: struct {
-    source:core.Entity,
+    resolved:core.Entity, // the animated entity whose events drive it (span_resolve_source), found when the spans, the parents or the animations change
+    source:core.Entity,   // the one that opened the active span
     span_hash:u64,   // cached hash of Particle_Animation_Span.span
     end_hash:u64,    // cached hash of Particle_Animation_Span.end_marker (0 when duration span)
     action_hash:u64, // cached hash of Particle_Animation_Span.action (0 when any action)
     action:u64,      // action hash that opened the active span (0 for unnamed clip)
+    clip:u64,        // and its clip, which tells apart the end of one unnamed clip from another
     depth:u16,       // overlapping active duration spans currently holding emission on
     paired:bool,     // true when end_marker is non-empty
     active:bool,
@@ -66,6 +68,7 @@ Particle_Span_State :: struct {
     entries:core.Entity_Map(Span_Active),
     seen_spans:core.Seen,
     seen_emitters:core.Seen,
+    seen_parents,seen_animations:core.Seen, // what the sources are found again from
 }
 
 // Applies animation span and paired marker events to Particle_Requests in the
@@ -100,14 +103,25 @@ vfx_animation_spans :: proc(
 
     // Pre-populate and re-hash entries only when spans or emitters change,
     // so steady ticks neither hash strings nor allocate in state.entries.
+    synced:=false
     for row in core.each_changed(spans,&c_spans) {
         e:=core.entity_at(spans,row)
-        if core.has(emitters,e) {span_entry_sync(state,e,core.at(spans,row))}
+        if core.has(emitters,e) {span_entry_sync(state,e,core.at(spans,row));synced=true}
     }
     for row in core.each_changed(emitters,&c_emitters) {
         e:=core.entity_at(emitters,row)
         if cfg,has:=core.get(spans,e);has && core.entity_map_get(&state.entries,e)==nil {
             span_entry_sync(state,e,cfg)
+            synced=true
+        }
+    }
+    // The sources are found again when what they are found by changes, not every tick.
+    if core.touched(parents,&state.seen_parents) | core.touched(animations,&state.seen_animations) | synced {
+        joined:=core.join(spans,emitters)
+        for e,cfg,_ in core.each_joined(&joined) {
+            if entry:=core.entity_map_get(&state.entries,e);entry!=nil {
+                entry.resolved=span_resolve_source(e,cfg.source,animations,parents,entities.ptr)
+            }
         }
     }
 
@@ -116,14 +130,15 @@ vfx_animation_spans :: proc(
 
     joined:=core.join(spans,emitters)
     for e,cfg,_ in core.each_joined(&joined) {
-        source:=span_resolve_source(e,cfg.source,animations,parents,entities.ptr)
         entry:=core.entity_map_get(&state.entries,e)
         if entry==nil {continue}
+        source:=entry.resolved
+        if source!=core.NONE && entities.ptr!=nil && !core.alive(entities.ptr,source) {source=core.NONE}
         if entry.active {
             source_dead:=entry.source==core.NONE || !core.alive(entities.ptr,entry.source) || !core.has(animations,entry.source)
             if source_dead || source!=entry.source {
                 vfx.stop(requests,e)
-                entry.source,entry.action,entry.depth,entry.active=core.NONE,0,0,false
+                entry.source,entry.action,entry.clip,entry.depth,entry.active=core.NONE,0,0,0,false
             }
         }
         if source==core.NONE || entry.span_hash==0 || len(items)==0 {continue}
@@ -150,20 +165,21 @@ vfx_animation_spans :: proc(
                     vfx.restart(requests,e)
                 }
                 entry.source=source
-                entry.action=ev.action
+                entry.action,entry.clip=ev.action,ev.clip
             case is_end:
                 if entry.active {
                     if !entry.paired && entry.depth>1 {
                         entry.depth-=1
                     } else {
                         vfx.stop(requests,e)
-                        entry.source,entry.action,entry.depth,entry.active=core.NONE,0,0,false
+                        entry.source,entry.action,entry.clip,entry.depth,entry.active=core.NONE,0,0,0,false
                     }
                 }
             case ev.kind==.Interrupted || ev.kind==.Ended:
-                if entry.active && entry.action==ev.action {
+                // An unnamed clip (action 0) is told apart from another by its clip.
+                if entry.active && entry.action==ev.action && (ev.action!=0 || entry.clip==ev.clip) {
                     vfx.stop(requests,e)
-                    entry.source,entry.action,entry.depth,entry.active=core.NONE,0,0,false
+                    entry.source,entry.action,entry.clip,entry.depth,entry.active=core.NONE,0,0,0,false
                 }
             }
         }
