@@ -411,19 +411,24 @@ build_project :: proc(root:string,target:build.Target,args:[]string,mode:Build_M
 // What build_project does once it has to compile, in its turn.
 @(private="file")
 build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out:string,mode:Build_Mode,engine:build.Engine_Paths,engine_current,server:bool,store_root:string,library_only:bool) -> (code:int,output:string,shaders_failed:bool) {
-    lock:=build_lock(root,fmt.tprintf("build %v %s",target,p.root),{p.root})
-    defer workspace.lock_release(&lock)
     log:=os.stderr if library_only else os.stdout
-    // ui links the FreeType library, the importer that of ufbx and the editor that of SQLite.
-    if !ensure_runtime_dependencies(root) {return 1,"",false}
-    // The libraries of a project are built against the binaries of the engine;
-    // the game, against its sources, with the importer of those binaries.
-    if !engine_current {
-        if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root,log);code!=0 {return code,"",false}
-    } else if target!=.Game {
-        _=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root,log)
-    } else if !engine_shaders(root,turn_held=true,ship=mode==.Release) {
-        return 1,"",false
+    // The libraries of a project are built against the binaries of the engine,
+    // made first in a turn that holds the engine; the game, against its sources,
+    // with the importer of those binaries, in a turn that holds the engine too.
+    if target!=.Game {
+        if !project_engine_ready(root,p,engine.mode,fmt.tprintf("build %v %s",target,p.root)) {return 1,"",false}
+        if engine_current {_=engine_report({status=.Up_To_Date,mode=engine.mode,folder=engine.folder},root,log)}
+    }
+    lock:=project_lock(root,fmt.tprintf("build %v %s",target,p.root),p.root,target)
+    defer workspace.lock_release(&lock)
+    if target==.Game {
+        // ui links the FreeType library, the importer that of ufbx.
+        if !ensure_runtime_dependencies(root) {return 1,"",false}
+        if !engine_current {
+            if code:=engine_report(build.engine_build({engine_root=root,mode=engine.mode,defines=engine.defines}),root,log);code!=0 {return code,"",false}
+        } else if !engine_shaders(root,turn_held=true,ship=mode==.Release) {
+            return 1,"",false
+        }
     }
     rebuilt:bool
     {

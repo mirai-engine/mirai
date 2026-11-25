@@ -11,15 +11,28 @@ import "mirai:project"
 import "mirai:std/subprocess"
 
 // The compilations of every checkout of the repository share a few turns,
-// as many as the memory holds, and go one at a time within a checkout or a
-// project (workspace.build_acquire). One that waits says for whom. A
-// measurement does not stop them: what they compile while it runs runs at low
-// priority (build.compiler_limits), and it can tell that they ran
+// as many as the memory holds, and go one at a time within a folder they write
+// (workspace.build_acquire). One that waits says for whom. A measurement does
+// not stop them: what they compile while it runs runs at low priority
+// (build.compiler_limits), and it can tell that they ran
 // (workspace.builds_since). When the lock cannot be taken the build goes on
-// without it. also: the folders of what it writes besides root.
-build_lock :: proc(root,what:string,also:=[]string{}) -> workspace.Lock {
+// without it. This one writes the engine: its folder is held.
+build_lock :: proc(root,what:string) -> workspace.Lock {return build_lock_folders(root,what,{root})}
+
+// The turn of a build of a project, which holds the folder of the project:
+// the engine only for its game, which compiles the engine from its sources and
+// writes the test worlds of its packages. A library, a test or a program of
+// the project builds against binaries of the engine project_engine_ready made
+// current first, so two projects build side by side.
+project_lock :: proc(root,what,project_root:string,target:build.Target) -> workspace.Lock {
+    if target==.Game {return build_lock_folders(root,what,{root,project_root})}
+    return build_lock_folders(root,what,{project_root})
+}
+
+@(private="file")
+build_lock_folders :: proc(root,what:string,folders:[]string) -> workspace.Lock {
     holder:=fmt.tprintf("pid %d, mirai %s in %s",os.get_pid(),what,root)
-    lock,_:=workspace.build_acquire(root,holder,build_wait_notice,also)
+    lock,_:=workspace.build_acquire(root,holder,folders,build_wait_notice)
     build_lock_measured(root)
     return lock
 }

@@ -261,21 +261,18 @@ test_failed_bare :: proc(names:[]string) -> []string {
 @(private="file")
 test_project_run :: proc(root:string,p:Test_Package,release:bool,flags:[]string,options:build.Test_Options,times:^Test_Times) -> (ok:bool,failed:[]string) {
     mode:=Build_Mode.Release if release else .Dev
-    asked:=time.tick_now()
-    lock:=build_lock(root,fmt.tprintf("test %s",p.path),{p.owner})
-    locked:=true
-    defer if locked {workspace.lock_release(&lock)}
-    times.turn+=time.tick_since(asked)
     opened,error:=project.open(p.owner,root)
     if error.code!=.None {
         fmt.eprintfln("mirai test: %s",project_error_text(p.owner,error))
         return
     }
     defer project.close(&opened)
-    if engine:=build.project_engine(&opened,mode,context.temp_allocator);!c_libraries_current(root) || !build.engine_current(root,mode,engine.defines) {
-        if !ensure_runtime_dependencies(root) {return}
-        if engine_report(build.engine_build({engine_root=root,mode=mode,defines=engine.defines}),root,os.stderr)!=0 {return}
-    }
+    asked:=time.tick_now()
+    if !project_engine_ready(root,&opened,mode,fmt.tprintf("test %s",p.path)) {return}
+    lock:=project_lock(root,fmt.tprintf("test %s",p.path),p.owner,.Editor)
+    locked:=true
+    defer if locked {workspace.lock_release(&lock)}
+    times.turn+=time.tick_since(asked)
     job:=build.job_start({project=&opened,target=.Editor,action=.Test,package_folder=p.folder,test=options,flags=flags,dev=!release,engine=mode})
     defer build.job_destroy(job)
     for !build.job_poll(job) {

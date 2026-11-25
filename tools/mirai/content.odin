@@ -62,7 +62,7 @@ content_build :: proc(root,owner,tool:string,mode:Build_Mode) -> (executable:str
     defer project.close(&opened)
     engine:=build.engine_mode_resolve(root,mode)
     if !project_engine_ready(root,&opened,engine,"content") {return}
-    lock:=build_lock(root,fmt.tprintf("content %s",owner),{owner})
+    lock:=project_lock(root,fmt.tprintf("content %s",owner),owner,.Editor)
     defer workspace.lock_release(&lock)
     job:=build.job_start({project=&opened,target=.Editor,action=.Program,package_folder=tool,dev=mode==.Dev,engine=engine})
     defer build.job_destroy(job)
