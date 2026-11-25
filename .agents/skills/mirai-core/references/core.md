@@ -51,8 +51,13 @@ sections.
   first table's order).
 - **Writes stamp rows:** `edit`, `edit_at`, `free` (on `shared` tables) return `^T`, stamp with
   a new `version` and snapshot original bytes on first request; settle restores the old stamp
-  (and `version` if nothing changed) when bytes are unchanged. `edit_dirty`/`edit_dirty_at` skip
-  byte compare; `writable` stamps all enabled rows. `page_stamps` tracks max per `STAMP_PAGE`.
+  (and `version` if nothing changed) when bytes are unchanged. `edit_dirty`/`edit_dirty_at`
+  skip the snapshot and compare for a writer that knows its value differs (among pending `edit`s
+  of the table they are one more); `writable` stamps all enabled rows. `page_stamps` tracks max
+  per `STAMP_PAGE`. Edits grow with the rows asked for; `table_edit_reserve` makes room before a
+  tick that must not allocate.
+- **A table is a value:** plain dynamic arrays (rows, off, turns, owners, edits), so reflection
+  (`value_copy`, `value_equal`, `value_hash`, `value_free`) handles it with no case of its own.
 - **Pending structural ops:** `add` (add/replace), `remove`, `disable`, `enable` queue in
   `pending` until `table_settle`, which discards dead entities and reserves all adds up front
   (OOM applies none). `staged`/`staged_has` see pending adds in the same step.

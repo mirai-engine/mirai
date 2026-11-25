@@ -267,7 +267,7 @@ cost_of_the_history_of_a_client :: proc(t:^testing.T) {
 // The bytes a whole copy of a table moves.
 @(private)
 history_bench_table_bytes :: proc(table:^core.Raw_Table,size:int) -> int {
-    return table.values.len*size+len(table.entities)*size_of(core.Entity)+(len(table.stamps)+len(table.page_stamps))*size_of(u64)+core.table_aux_bytes(table)+len(table.rows)*core.ROWS_PAGE*size_of(i32)
+    return table.values.len*size+len(table.entities)*size_of(core.Entity)+(len(table.stamps)+len(table.page_stamps)+len(table.turns))*size_of(u64)+len(table.off)+len(table.owners)*size_of(core.Row_Owner)+len(table.rows)*core.ROWS_PAGE*size_of(i32)
 }
 
 // What a correction costs on the same world, counted: the rows a reader of

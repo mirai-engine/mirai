@@ -341,12 +341,10 @@ world_memory :: proc(info:^World_Info,data:rawptr) -> (bytes:int) {
 
 @(private="file")
 table_bytes :: proc(t:^Raw_Table,size:int) -> (bytes:int) {
-    bytes=(t.values.cap+t.added.cap)*size
+    bytes=(t.values.cap+t.added.cap+t.edited.cap)*size
     bytes+=cap(t.entities)*size_of(Entity)+cap(t.stamps)*size_of(u64)+cap(t.page_stamps)*size_of(u64)
-    bytes+=table_aux_bytes(t)+cap(t.pending)*size_of(Pending)+cap(t.gone.items)*size_of(Entity)
-    if b:=t.edits;b!=nil {
-        bytes+=size_of(Edit_Buffer)+cap(b.items)*size_of(Edit)+cap(b.index)*size_of(i32)+b.values.cap*size
-    }
+    bytes+=cap(t.off)*size_of(bool)+cap(t.turns)*size_of(u64)+cap(t.owners)*size_of(Row_Owner)
+    bytes+=cap(t.pending)*size_of(Pending)+cap(t.edits)*size_of(Edit)+cap(t.gone.items)*size_of(Entity)
     bytes+=cap(t.rows)*size_of([]i32)
     for page in t.rows {bytes+=len(page)*size_of(i32)}
     when CHECK_WRITES {bytes+=cap(t.settled.values)}

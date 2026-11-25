@@ -102,15 +102,11 @@ world_union :: proc(dst,src:World_Ref,parent:Entity=NONE,entities:^[dynamic]Enti
         }
         if adds==0 {continue}
         waiting:=0
-        with_off:=offs>0
-        for p in to.pending {
-            if p.value>=0 {waiting+=1}
-            if p.value==PENDING_OFF {with_off=true}
-        }
+        for p in to.pending {if p.value>=0 {waiting+=1}}
         size,align:=info.info.size,info.info.align
         if reserve(&to.pending,len(to.pending)+adds+offs)!=nil {return false}
         if size>0 && !runtime.__dynamic_array_reserve(&to.added,size,align,to.added.len+adds) {return false}
-        if !raw_reserve(to,size,align,to.values.len+waiting+adds,capacity-1,with_off) {return false}
+        if !raw_reserve(to,size,align,to.values.len+waiting+adds,capacity-1) {return false}
     }
 
     for &e in made {if e!=NONE {e=create(des)}}

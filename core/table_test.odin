@@ -305,8 +305,8 @@ reflected_immediate_removal_moves_the_last_row_releases_locks_and_never_allocate
     names:Table(Name);table_init(&names,"Name");defer table_destroy(&names)
     a,b,c:=create(&es),create(&es),create(&es)
     owner:Table(u8);table_init(&owner,"Transform");defer table_destroy(&owner)
-    testing.expect(t,owners_reserve(raw(&owner),len(es.generation)))
-    owners:=&owner.aux.owners
+    owners:=&owner.owners
+    testing.expect(t,resize(owners,len(es.generation))==nil)
     locks:=[1]Lock{{offset=lock_offset(&names,&owner),id=1,target="Transform",names={"","Test owner"}}}
     plan:=locks[:]
     names.lock_plan=&plan
@@ -461,7 +461,7 @@ a_settle_without_changes_leaves_a_single_table_as_it_was :: proc(t:^testing.T) {
     add(&skies,a,1);add(&skies,b,2);add(&plain,a,1);add(&plain,b,2)
     table_settle(&skies,&es);table_settle(&plain,&es)
     testing.expect_value(t,count(&plain),2)
-    testing.expect(t,plain.aux==nil)
+    testing.expect(t,len(plain.turns)==0)
     version,shape:=skies.version,skies.layout
     testing.expect(t,!table_settle(&skies,&es))
     testing.expect(t,skies.version==version && skies.layout==shape)
@@ -587,7 +587,7 @@ a_table_holds_rows_by_entity_only_where_it_has_rows :: proc(t:^testing.T) {
     held:Table(i32)
     testing.expect(t,value_copy(&held,&names,type_info_of(Table(i32))))
     value,found=get(&held,far)
-    testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]) && held.edits==nil)
+    testing.expect(t,found && value==2 && raw_data(held.rows[0])!=raw_data(names.rows[0]) && !table_has_edits(&held))
     edit(&held,near)^=4
     table_settle(&held,&es)
     value_free(&held,type_info_of(Table(i32)))
@@ -736,14 +736,14 @@ dirty_edits_preserve_changes_among_unchanged_precise_edits :: proc(t:^testing.T)
     table_settle(&table,&es)
     _=edit_dirty(&table,a)
     _=edit_dirty(&table,b)
-    testing.expect(t,table.edits==nil)
+    testing.expect(t,!table_has_edits(&table))
     _=edit(&table,a)
     table_settle(&table,&es)
     unchanged:=stamp(&table,row_of(&table,a))
     allocation.remaining=0
     requests,before:=allocation.requests,version(&table)
     _=edit(&table,a)
-    _=edit_dirty(&table,b)
+    edit_dirty(&table,b)^=name_make("c")
     _=edit(&table,a)
     table_settle(&table,&es)
     testing.expect_value(t,allocation.requests,requests)
@@ -753,7 +753,7 @@ dirty_edits_preserve_changes_among_unchanged_precise_edits :: proc(t:^testing.T)
 
 
 @(test)
-a_table_reserves_explicit_turns_only_when_used_and_retries_without_memory :: proc(t:^testing.T) {
+a_row_turned_off_and_on_takes_no_memory :: proc(t:^testing.T) {
     allocation:=Copy_Allocation{remaining=100,owner=context.allocator}
     es:Entities;entities_init(&es);defer entities_destroy(&es)
     table:Table(i32);table_init(&table,"number",{copy_allocator,&allocation})
@@ -761,12 +761,9 @@ a_table_reserves_explicit_turns_only_when_used_and_retries_without_memory :: pro
     e:=create(&es)
     add(&table,e,1)
     table_settle(&table,&es)
-    testing.expect(t,table.aux==nil && has(&table,e))
-
+    testing.expect(t,has(&table,e))
+    // The first row that goes makes the room of gone.
     disable(&table,e)
-    allocation.remaining=1
-    testing.expect(t,!table_settle(&table,&es) && has(&table,e) && !row_off(&table,0))
-    allocation.remaining=100
     testing.expect(t,table_settle(&table,&es) && !has(&table,e) && row_off(&table,0))
 
     allocation.remaining=0

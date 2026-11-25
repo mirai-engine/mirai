@@ -123,6 +123,49 @@ table_swap_keeps_lock_addresses_and_invalidates_readers_without_allocating :: pr
     testing.expect_value(t,b.name,"b")
 }
 
+@(private) Held_Tables :: struct {count:int,places:Table(runtime.Source_Code_Location)}
+
+// A table is a value made of arrays: reflection copies, compares, hashes and
+// frees it as any other, whatever package declared its type, with no case of
+// its own.
+@(test)
+a_table_copies_compares_and_frees_as_any_value :: proc(t:^testing.T) {
+    es:Entities;testing.expect(t,entities_init(&es));defer entities_destroy(&es)
+    a,b:=create(&es),create(&es)
+    numbers:Table(i32);table_init(&numbers,"numbers");defer table_destroy(&numbers)
+    numbers.single=true
+    add(&numbers,a,1);add(&numbers,b,2);disable(&numbers,b);table_settle(&numbers,&es)
+    testing.expect(t,owner_set(&numbers,a,2))
+    _=edit(&numbers,a)
+    held:Held_Tables;table_init(&held.places,"places");defer table_destroy(&held.places)
+    held.count=1
+    add(&held.places,b,#location());table_settle(&held.places,&es)
+    cases:=[]struct{data:rawptr,info:^runtime.Type_Info}{
+        {&numbers,type_info_of(Table(i32))},
+        {&held.places,type_info_of(Table(runtime.Source_Code_Location))},
+        {&held,type_info_of(Held_Tables)},
+    }
+    for c,i in cases {
+        tracking:mem.Tracking_Allocator
+        mem.tracking_allocator_init(&tracking,context.allocator)
+        copied:=make([]u8,c.info.size)
+        defer delete(copied)
+        {
+            context.allocator=mem.tracking_allocator(&tracking)
+            testing.expectf(t,value_copy(raw_data(copied),c.data,c.info),"case %d: copied",i)
+            testing.expectf(t,value_equal(raw_data(copied),c.data,c.info),"case %d: the copy is the same value",i)
+            testing.expectf(t,value_hash(raw_data(copied),c.info,7)==value_hash(c.data,c.info,7),"case %d: and hashes the same",i)
+            value_free(raw_data(copied),c.info)
+        }
+        testing.expectf(t,len(tracking.allocation_map)==0,"case %d: freeing the copy frees all it made",i)
+        mem.tracking_allocator_destroy(&tracking)
+    }
+    other:Table(i32);table_init(&other,"numbers");defer table_destroy(&other)
+    testing.expect(t,value_copy(&other,&numbers,type_info_of(Table(i32))))
+    other.off[1]=false
+    testing.expect(t,!value_equal(&other,&numbers,type_info_of(Table(i32))),"what is off by row is part of the value")
+}
+
 @(test)
 entity_initialization_and_each_table_copy_reservation_fail_without_invalid_ownership :: proc(t:^testing.T) {
     empty:Entities
@@ -144,7 +187,7 @@ entity_initialization_and_each_table_copy_reservation_fail_without_invalid_owner
         if ok {
             succeeded=true
             testing.expect_value(t,target.values[0],i32(44))
-            testing.expect(t,target.single && row_off(&target,0) && target.aux!=source.aux)
+            testing.expect(t,target.single && row_off(&target,0) && raw_data(target.off)!=raw_data(source.off))
             testing.expect_value(t,owner_at(raw(&target),entity_index(e)),Row_Owner{entity_generation(e),3})
         }
         value_free(&target,info)
@@ -439,7 +482,7 @@ a_rollback_gives_the_readers_of_each_table_the_rows_it_brought_back :: proc(t:^t
                 expected[k]=0
                 mark:=marks[from][k]
                 if mark.valid && mark.version==live.version && mark.layout==live.layout && len(live.pending)==0 {continue}
-                if !table.flat || live.on!=kept.on || !slice.equal(live.entities[:],kept.entities[:]) || !raw_off_equal(live,kept) || !aux_ownership_equal(live,kept) {
+                if !table.flat || live.on!=kept.on || !slice.equal(live.entities[:],kept.entities[:]) || !flags_equal(live,kept) {
                     expected[k]=-1
                     continue
                 }

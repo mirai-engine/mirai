@@ -328,7 +328,7 @@ a_save_hook_writes_a_snapshot_of_its_components_without_copying_the_world :: pro
         core.disable(&w.capture_values,off)
         core.settle(&f.info,w,nil)
         testing.expect(t,core.table_edit_reserve(&w.capture_values,4))
-        aux,edits:=w.capture_values.aux,w.capture_values.edits
+        off_rows,edit_room:=raw_data(w.capture_values.off),cap(w.capture_values.edits)
         if c.pending {core.add(&w.ids,core.create(&w.entities),{2})}
         w.capture_source={entity=e,value=21,op=c.op}
         ref:=host.app_world_ref(&f.app,w)
@@ -341,7 +341,7 @@ a_save_hook_writes_a_snapshot_of_its_components_without_copying_the_world :: pro
         live,found:=core.get(&w.capture_values,e)
         testing.expectf(t,found==(c.live!=nil) && (!found || live.value==c.live.?),"case %d: the World keeps its value",i)
         testing.expectf(t,w.capture_values.version==values && len(w.capture_values.pending)==0 && w.transforms.version==transforms,"case %d: the World is not written",i)
-        testing.expectf(t,w.capture_values.aux==aux && w.capture_values.edits==edits && aux!=nil && edits!=nil && core.count(&w.capture_values)==(c.live!=nil?1:0),"case %d: the table keeps what it holds besides its rows",i)
+        testing.expectf(t,raw_data(w.capture_values.off)==off_rows && cap(w.capture_values.edits)==edit_room && edit_room>=4 && core.count(&w.capture_values)==(c.live!=nil?1:0),"case %d: the table keeps what it holds besides its rows",i)
         testing.expectf(t,len(w.ids.pending)==(c.pending?1:0),"case %d: what the World has pending stays its own",i)
         if !testing.expectf(t,restore(ref,&f.app,serial.writer_bytes(&out))==.None,"case %d: restored",i) {continue}
         saved,kept:=core.get(&w.capture_values,core.entity_of(&w.entities,1))
