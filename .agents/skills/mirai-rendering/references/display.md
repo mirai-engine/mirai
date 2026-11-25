@@ -66,7 +66,8 @@ of the display transform (`exposure_of_ev100`).
     horizontal gray card shows under the sky and the sun with nothing in between (`sky_card` of
     `exposure_adapt.comp`). Looking up, down or from afar at the same place measures the same
     light. In a parallel projection (`frame.eye.w` 0) it does not count: all its pixels show a
-    single direction.
+    single direction. With the eye of the frame's camera in a medium (under water,
+    `frame_eye_medium`), that light first crosses the medium in the views drawn from it.
   - The background (`use_background`), the pixels without light and the almost black surfaces do
     not count. A view that sees nothing that counts keeps what it metered; until it meters
     something in its generation it is exposed for a mid gray card under the sun and the sky

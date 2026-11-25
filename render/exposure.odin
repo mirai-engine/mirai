@@ -149,8 +149,10 @@ pass_exposure :: proc(p: ^Pass) -> bool {
 		rhi.cmd_dispatch(cmd, groups(meter.grid.x, 16), groups(meter.grid.y, 16))
 	}
 	bias := display_exposure_bias(r.display_transform)
-	Adapt :: struct {manual: u32, ev100, compensation, adaptation: f32, range: [2]f32, dt, light_scale: f32, generation, speed: u32, bias: f32, pad: u32}
-	adapt := Adapt{manual = 1 if e.mode == .Manual else 0, ev100 = e.ev100, compensation = e.compensation, adaptation = max(e.adaptation, 0), range = e.range if e.range != {} else AUTO_EXPOSURE_RANGE, dt = r.delta_time, light_scale = scale, generation = view.exposure_generation, speed = 1 if e.adaptation_mode == .Speed else 0, bias = bias}
+	Adapt :: struct {manual: u32, ev100, compensation, adaptation: f32, range: [2]f32, dt, light_scale: f32, generation, speed: u32, bias: f32, pad: u32, sky_through: [4]f32}
+	adapt := Adapt{manual = 1 if e.mode == .Manual else 0, ev100 = e.ev100, compensation = e.compensation, adaptation = max(e.adaptation, 0), range = e.range if e.range != {} else AUTO_EXPOSURE_RANGE, dt = r.delta_time, light_scale = scale, generation = view.exposure_generation, speed = 1 if e.adaptation_mode == .Speed else 0, bias = bias, sky_through = 1}
+	// A view drawn from the eye of the frame in a medium (frame_eye_medium): what of the sky reaches it.
+	if p.camera.position == r.frame_eye {for c, i in r.eye_taken {adapt.sky_through[i] = math.exp(-c)}}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Exposure_Adapt])
 	set_params(cmd, &adapt)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS0, view.exposure_histogram)

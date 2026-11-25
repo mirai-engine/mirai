@@ -126,6 +126,16 @@ frame_pass :: proc(r: ^Renderer, stage: Frame_Stage, record: Stage_Proc, user: r
 	return true
 }
 
+// Tells the next frame that the eye of its camera (Frame_Desc.camera) is in a
+// medium (under water) that takes this optical depth of each color of the
+// light of the open sky and sun before it reaches the eye: the meter of every
+// view drawn from that eye takes the sky as that light (sky_card of
+// exposure_adapt.comp), so it exposes for what is around it. Without asking,
+// in the air. Ask in each frame it lasts.
+frame_eye_medium :: proc(r: ^Renderer, taken: Vec3) {
+	for c, i in taken {r.eye_taken[i] = c if c > 0 && c < 1e30 else 0}
+}
+
 // The targets of the G-buffer a view has only while a surface needs them:
 // what it reflects other than the default dielectric, and the layers of its
 // material.

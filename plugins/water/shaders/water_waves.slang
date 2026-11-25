@@ -12,7 +12,7 @@ static const uint WATER_WAVES = 8u;
 struct Water_Body {
     float4 to_box[3]; // rows: from the world to its box, whose sides are 1
     float4 surface;   // x the height of its still surface, y 1 for a plane, z 1 for a dry box, w priority
-    float4 look;      // x caustics, z the index of refraction of its surface, w its waves
+    float4 look;      // x caustics, y the share of absorption diffuse light takes (water.diffuse_share), z the index of refraction of its surface, w its waves
     float4 absorption; // xyz 1/m it takes of red, green and blue light
     float4 waves[WATER_WAVES]; // of a plane: physics.Wave_Term k along x and z, amplitude, across
     float4 phases[2];          // of each wave, at the origin and the time of the frame

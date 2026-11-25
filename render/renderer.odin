@@ -677,6 +677,8 @@ Renderer :: struct {
 	shadow_bound:    Shadow_Bound, // the clusters the rounds of the maps draw in a frame (shadow_bound_update)
 	passes:          [FRAME_PASS_CAPACITY]Frame_Pass, // what extensions record in the next frame
 	pass_count:      int,
+	eye_taken:       Vec3, // frame_eye_medium of the next frame
+	frame_eye:       Vec3, // Frame_Desc.camera.position of the frame drawn: the views drawn from it are in that medium
 	plans:           [RENDER_PIPELINE_CAPACITY]Render_Plan, // of the pipelines asked for
 	standard_pipelines: [Standard_Pipeline]Render_Pipeline_Handle,
 	main_pipeline:   Render_Pipeline_Handle, // of the views of the window in the next frame; 0: Full

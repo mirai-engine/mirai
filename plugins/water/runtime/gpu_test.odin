@@ -269,3 +269,80 @@ the_water_takes_the_light_on_its_way_down :: proc(t: ^testing.T) {
 	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
 }
+
+// Under the water light comes around as well as down: what the water scatters
+// of the sun lights a floor in the shadow of a raft, which the light of the
+// sun alone would leave black (nothing bounces, the sky is black), and keeps
+// it darker than the floor in the sun.
+@(test)
+the_water_lights_what_lies_in_shadow_under_it :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f, indirect = false) {return}
+	defer gpu_fixture_destroy(f)
+	w := &f.world
+	lake := core.create(&w.entities)
+	core.add(&w.fluids, lake, phys.FLUID_DEFAULT)
+	// Its surface 4 m over the floor.
+	core.add(&w.volumes, lake, volume.box({16, 6, 16}))
+	core.add(&w.transforms, lake, core.Transform{{0, 1, 0}, mm.QUAT_IDENTITY, {1, 1, 1}})
+	core.add(&w.waters, lake, WATER_DEFAULT)
+	// A pale floor, part of it in the shadow of a raft on the surface, under a sun 45 degrees high.
+	shown := []gpu.Instance_Desc{
+		{object_id = 10, mesh = f.cube, transform = mm.transform_matrix({{0, 0.05, 0}, mm.QUAT_IDENTITY, {14, 0.1, 14}}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 11, mesh = f.cube, transform = mm.transform_matrix({{-1, 4.2, 0}, mm.QUAT_IDENTITY, {3, 0.2, 6}}), tint = {0.05, 0.05, 0.05}},
+	}
+	pixels, ok := water_frame(t, f, {sun = {1, 1, 0}}, shown)
+	if !ok {return}
+	defer delete(pixels)
+	sx, sy := on_image({-4, 0}, 0.1)
+	lx, ly := on_image({3, 0}, 0.1)
+	shade, lit := pixel_at(pixels, sx, sy), pixel_at(pixels, lx, ly)
+	testing.expectf(t, shade.g > 20 && shade.b > 20, "the floor in the shadow of the raft takes what the water scatters: %v", shade)
+	testing.expectf(t, lit.g > shade.g + 20, "and stays darker than the floor in the sun: %v and %v", shade, lit)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
+}
+
+// A view under the water meters the light down there: it settles at a lower
+// exposure value than the same view in the air, looking at the same sky.
+@(test)
+a_view_under_the_water_exposes_for_the_light_down_there :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	w := &f.world
+	lake := core.create(&w.entities)
+	core.add(&w.fluids, lake, phys.FLUID_DEFAULT)
+	// Its surface 10 m over the floor; the eye 8 m under it.
+	core.add(&w.volumes, lake, volume.box({40, 12, 40}))
+	core.add(&w.transforms, lake, core.Transform{{0, 4, 0}, mm.QUAT_IDENTITY, {1, 1, 1}})
+	core.add(&w.waters, lake, WATER_DEFAULT)
+	settled :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> f32 {
+		camera := gpu.Camera{position = {0, 2, 0}, forward = {0, 0.6, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100}
+		view := core.View{position = camera.position, rotation = mm.quat_between({0, 0, -1}, linalg.normalize(camera.forward)), fov = mm.PI / 3, near = camera.near, far = camera.far, size = {WIDTH, HEIGHT}}
+		for _ in 0 ..< 6 {
+			clear(&f.app.extras.instances)
+			core.queue_clear(&f.media.queue)
+			test_world_settle(&f.world)
+			phys.test_step(&f.world.physics, &f.host, 0)
+			water_render(&f.state, &f.media, core.read(&f.world.waters), {&f.world.state}, {}, view, &f.app, {}, {})
+			host.assets_commit(&f.assets)
+			instances := make([dynamic]gpu.Instance_Desc, context.temp_allocator)
+			append(&instances, gpu.Instance_Desc{object_id = 1, mesh = f.cube, transform = mm.transform_matrix({{0, -0.5, 0}, mm.QUAT_IDENTITY, {40, 1, 40}}), tint = {0.5, 0.5, 0.5}})
+			append(&instances, ..f.app.extras.instances[:])
+			gpu.scene_set_environment(&f.renderer, {direction = {0.2, 1, 0.1}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {sky = {3000, 4000, 5000}})
+			testing.expect(t, gpu.scene_update(&f.renderer, 0, instances[:], true), f.renderer.error)
+			testing.expect(t, gpu.renderer_frame(&f.renderer, {camera = camera}), f.renderer.error)
+		}
+		rhi.device_wait_idle(f.device)
+		state: [1]gpu.Gpu_Exposure
+		testing.expect(t, rhi.buffer_read_slice(f.device, f.renderer.main.exposure, 0, state[:]))
+		return state[0].ev100
+	}
+	under := settled(t, f)
+	core.remove(&w.fluids, lake)
+	dry := settled(t, f)
+	testing.expectf(t, under < dry - 0.5, "8 m under the water it exposes at EV100 %v, under the %v of the air", under, dry)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
+}

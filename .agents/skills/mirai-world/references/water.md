@@ -48,13 +48,21 @@ names the Surface program of a water without its own material (empty or unknown:
   that only gives the sun shafts (`shafts`), that is cut by the dry boxes of higher priority and
   that turns off the sunlight on the way down according to the water's absorption ([media from other
   plugins](../../mirai-plugins/references/render-plugins.md#media-from-other-plugins)).
-- **Light under the water.** `water_light.comp`, in the `Lit` stage before the fog, multiplies the
-  lit image of each pixel under a surface by what the water lets through on the way of its light:
-  `exp(-absorption · way)`, with the absorption of each color that the `Water` colors give (that
-  of the medium is their mean) and the way from the point up to where the sunlight crossed the
-  surface, bent by its IOR (without a sun, straight up), within the box of a prism. Over waves,
-  the depth and the crossing are those of the surface with waves, as for the caustics. Shadows
-  never see the water: this is the only place the light of a surface under it is absorbed.
+- **Light under the water.** `water_light.comp`, in the `Lit` stage before the fog, takes the lit
+  image of each pixel under a surface apart. Its direct light (`Direct`) goes by what the water
+  lets through of a beam: `exp(-absorption · way)`, with the absorption of each color that the
+  `Water` colors give (that of the medium is their mean) and the way from the point up to where
+  the sunlight crossed the surface, bent by its IOR (without a sun, straight up), within the box
+  of a prism. The rest (indirect, emission) goes by what it lets through of diffuse light, straight
+  up at `diffuse_share` of the absorption: what the water scatters ahead (`MEDIUM_ANISOTROPY`) goes
+  on down, slanted (`DIFFUSE_COSINE`). What it scattered of the sun on the way comes down around
+  the beam (the diffuse through less the beam's) and lights every surface by its diffuse albedo,
+  in shadow too. Over waves, the depth and the crossing are those of the surface with waves, as for
+  the caustics. Shadows never see the water: this is the only place the light of a surface under
+  it is absorbed.
+- **Exposure under the water.** With the eye in a fluid, `water_render` gives the renderer
+  (`frame_eye_medium`) what diffuse light loses from the surface down to the eye: the meter takes
+  the sky as that light, so a submerged view exposes for the light down there.
 - **Caustics.** `water_caustics.comp` builds each frame, in the `Lit` stage, the pattern that the
   small waves give to sunlight at a depth: the area to which each part of the surface sends the
   light, a repetition of the waves per texture. `water_light.comp` adds to the direct light

@@ -44,6 +44,7 @@ struct Params_Block {
     uint speed;         // render.Exposure_Adaptation.Speed
     float bias;         // render.display_exposure_bias: EV above the meter under the display transform
     uint pad1;
+    float4 sky_through; // rgb: what of the light of the open sky and sun reaches the eye through the medium it is in (render.frame_eye_medium)
 };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS0, 0)]] RWStructuredBuffer<uint> histogram : register(MIRAI_REGISTER(u, SLOT_PASS0), space0);
@@ -52,13 +53,13 @@ struct Params_Block {
 groupshared uint counts[EXPOSURE_BINS];
 
 // What a middle gray card facing up shows under the sky and the sun at the
-// eye, nothing in their way: the light the sky gives the scene. A pixel of sky
-// counts as this whichever way it looks, so that looking up or down in one
-// place meters the same light.
+// eye, nothing in their way but the medium the eye is in: the light the sky
+// gives the scene there. A pixel of sky counts as this whichever way it looks,
+// so that looking up or down in one place meters the same light.
 float sky_card() {
     float3 light = sky_irradiance(float3(0.0, 1.0, 0.0));
     if (frame.sun_direction.w > 0.5) light += sun_light(frame.camera_position.xyz) * max(frame.sun_direction.y, 0.0);
-    return MIDDLE_GRAY * luminance(light) / params.light_scale;
+    return MIDDLE_GRAY * luminance(light * params.sky_through.rgb) / params.light_scale;
 }
 
 // The EV100 of a view that has metered nothing in its generation: a middle

@@ -100,9 +100,10 @@ float2 water_crossed(Water_Body b, float3 position, float3 toward, out float und
 }
 
 // What of the light that reaches a point at a depth under a body, from up
-// along toward, the water lets through: exp(-absorption x the way to the
-// surface), within the box of a prism.
-float3 water_through(Water_Body b, float3 position, float3 toward, float under) {
+// along toward, the water lets through: exp(-taken x the way to the surface),
+// within the box of a prism. taken: 1/m of each color, the absorption of the
+// body for a beam, less for diffuse light (water_diffuse_through).
+float3 water_through(Water_Body b, float3 position, float3 toward, float under, float3 taken) {
     float way = under / max(toward.y, 0.2);
     if (b.surface.y < 0.5) {
         float3 o = transform_point(b.to_box, position);
@@ -111,6 +112,13 @@ float3 water_through(Water_Body b, float3 position, float3 toward, float under) 
         float3 exits = select(abs(d) > 1e-12, out_at, float3(1e30));
         way = min(way, max(min(exits.x, min(exits.y, exits.z)), 0.0));
     }
-    return exp(-b.absorption.xyz * max(way, 0.0));
+    return exp(-taken * max(way, 0.0));
+}
+
+// What the water lets through of the diffuse light that comes down to a
+// point at a depth: straight up, at the share of absorption diffuse light
+// takes (water.diffuse_share).
+float3 water_diffuse_through(Water_Body b, float3 position, float under) {
+    return water_through(b, position, float3(0.0, 1.0, 0.0), under, b.absorption.xyz * b.look.y);
 }
 #endif
