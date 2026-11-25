@@ -86,6 +86,7 @@ Foreground :: struct {
 	fov:          f32,
 	weapon, body: [2]Vec3, // the boxes of its instances and of the rest of the body, low then high (scene_foreground_bodies)
 	turn:         quaternion128, // of its Viewmodel
+	glass:        u64, // the object of an instance of it with glass, which is not drawn; 0: none
 }
 
 // An instance whose materials need more of the G-buffer than base color and metallic.
@@ -2129,8 +2130,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		s.instances[index].meta.x |= instance_word_flags(a)
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
 		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered, a.subsurface})}
-		// What a viewmodel blends is not drawn yet.
-		if a.blended && !hidden && flags & INSTANCE_FLAG_FOREGROUND == 0 {append(&s.translucent, a.translucent)}
+		if a.blended && !hidden {append(&s.translucent, a.translucent)}
 		if flags & INSTANCE_FLAG_FOREGROUND != 0 {s.foreground[flags >> INSTANCE_OWNER_SHIFT & 3].instances += 1}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1

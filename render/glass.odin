@@ -103,6 +103,8 @@ glass_visible :: proc(s: ^Scene_State, frame: ^Gpu_Frame) -> []Translucent {
 		flags := inst.meta.w
 		layers := flags >> INSTANCE_LAYERS_SHIFT
 		owner := frame.own & 0xff
+		// A viewmodel blends over its view alone (foreground_over_record).
+		if flags & INSTANCE_FLAG_FOREGROUND != 0 {continue}
 		own := owner != 0 && flags & INSTANCE_FLAG_OWNED != 0 &&
 		       (flags >> INSTANCE_OWNER_SHIFT) & 3 == owner - 1
 		if layers & frame.layers & LAYERS_ALL == 0 ||

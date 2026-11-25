@@ -3,6 +3,7 @@ package mirai_render
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:slice"
 import "mirai:rhi"
 import mm "mirai:std/math"
 import "mirai:render/abi"
@@ -24,7 +25,7 @@ import "mirai:render/abi"
 @(private)
 view_foreground :: proc(r: ^Renderer, camera: Camera) -> f32 {
 	slot := int(camera.own) - 1
-	if slot < 0 || slot >= OWNER_SLOTS || camera.projection != .Perspective {return 0}
+	if slot < 0 || slot >= OWNER_SLOTS || camera.projection != .Perspective || r.frame_layout.viewmodel == 0 {return 0}
 	foreground := r.scene.foreground[slot]
 	return foreground.fov if foreground.instances > 0 && foreground.fov > 0 && foreground.fov < math.PI else 0
 }
@@ -50,6 +51,13 @@ foreground_world_depth :: proc(p: ^Pass) {
 	rhi.cmd_set_depth_range(p.cmd, 0, FOREGROUND_DEPTH, p.t.depth, p.t.glass_zbuffer)
 }
 
+// The viewmodel of the view into its constants (Frame_Layout.viewmodel).
+@(private)
+foreground_block_write :: proc(p: ^Pass) {
+	if p.foreground == 0 || p.constants.ptr == nil {return}
+	(^Gpu_Viewmodel)(rawptr(uintptr(p.constants.ptr) + uintptr(p.r.frame_layout.viewmodel)))^ = p.viewmodel
+}
+
 // The camera of the viewmodel: that of the view, with its field of view.
 @(private)
 foreground_camera :: proc(camera: Camera, fov: f32) -> Camera {
@@ -71,7 +79,7 @@ foreground_view_constants :: proc(p: ^Pass, f: ^Gpu_Frame, reach: f32) {
 	shift[1, 3] = -2 * p.jitter.y / f32(t.height)
 	own := f^
 	frame_view_constants(&own, camera, matrix_from_eye(view), shift * proj, proj, forward, f32(t.height))
-	f.foreground_ray = {own.ray_origin, own.ray_du, own.ray_dv}
+	p.viewmodel = {ray = {own.ray_origin, own.ray_du, own.ray_dv}, light = max(u32)}
 	f.inv_view_proj = linalg.inverse(foreground_depth_range(false) * f.view_proj)
 	f.flags |= FRAME_FLAG_VIEWMODEL
 }
@@ -101,6 +109,68 @@ foreground_constants :: proc(p: ^Pass, reach: f32) -> (f: Gpu_Frame, unjittered:
 	return
 }
 
+// The constants of the viewmodel as the view has them now, in memory of the frame.
+@(private)
+foreground_constants_alloc :: proc(p: ^Pass) -> (f: Gpu_Frame, constants: rhi.Transient, ok: bool) {
+	r, d := p.r, p.r.device
+	f, p.foreground_unjittered = foreground_constants(p, p.frame.camera_forward.w)
+	constants = rhi.frame_alloc(d, u64(r.frame_layout.size), 256)
+	if constants.ptr == nil {set_error(r, "viewmodel constants: %s", rhi.device_error(d)); return}
+	mem.copy(constants.ptr, p.constants.ptr, r.frame_layout.size)
+	mem.copy(constants.ptr, &f, size_of(Gpu_Frame))
+	frame_exposure_copy(p, constants)
+	return f, constants, true
+}
+
+// What the viewmodel lays over itself and blends, over the image of the
+// view after its world: its overlays and its forward blends, back to front,
+// with its constants into the depth above FOREGROUND_DEPTH. Its glass is not
+// drawn (Foreground.glass, which the sync reports).
+@(private)
+foreground_over_record :: proc(p: ^Pass) -> bool {
+	if p.foreground == 0 || !p.draw {return true}
+	r, cmd, t := p.r, p.cmd, p.t
+	s := &r.scene
+	slot := u32(p.camera.own) - 1
+	eye := p.frame.camera_position.xyz
+	// The entries of its forward blends, past those of the view (glass_visible leaves them out).
+	first := len(p.translucent)
+	count := first
+	for i in first ..< len(s.translucent) {
+		entry := &s.translucent[i]
+		flags := s.instances[entry.instance].meta.w
+		if flags & (INSTANCE_FLAG_FOREGROUND | INSTANCE_FLAG_HIDDEN) != INSTANCE_FLAG_FOREGROUND || flags >> INSTANCE_OWNER_SHIFT & 3 != slot || !entry.forward {continue}
+		inst := &s.instances[entry.instance]
+		offset := (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5 - eye
+		entry.distance, entry.glass, entry.before = linalg.dot(offset, offset), false, false
+		s.translucent[count], s.translucent[i] = s.translucent[i], s.translucent[count]
+		count += 1
+	}
+	blends := s.translucent[first:count]
+	slice.sort_by(blends, proc(a, b: Translucent) -> bool {return a.distance > b.distance || a.distance == b.distance && a.instance < b.instance})
+	if len(blends) == 0 && !p.draw_overlays {return true}
+	_, constants := foreground_constants_alloc(p) or_return
+	view := p.constants
+	p.constants = constants
+	bind_scene_table(p)
+	rhi.cmd_set_depth_range(cmd, FOREGROUND_DEPTH, 1, t.depth)
+	if p.draw_overlays {overlay_pass(p, true)}
+	if len(blends) > 0 {
+		world, pyramid, forward := p.translucent, p.pyramid, p.draw_forward
+		p.translucent, p.translucent_drawn, p.pyramid, p.draw_forward = blends, false, false, true
+		for entry in blends {
+			p.forward_material_layers ||= entry.forward_layered
+			p.forward_additive ||= entry.additive
+		}
+		translucent_forward(p, 0, 0)
+		p.translucent, p.translucent_drawn, p.pyramid, p.draw_forward = world, false, pyramid, forward
+	}
+	p.constants = view
+	bind_scene_table(p)
+	foreground_world_depth(p)
+	return true
+}
+
 // The viewmodel over the G-buffer of the view, after its world: its cull of
 // one phase, its visibility into the depth above FOREGROUND_DEPTH, the tags
 // of its pixels and their resolve over those of the world.
@@ -110,13 +180,7 @@ foreground_record :: proc(p: ^Pass) -> bool {
 	r, cmd, t := p.r, p.cmd, p.t
 	d := r.device
 	if !target(r, nil, &t.views, t.width, t.height, .R8_Uint, {.Color_Target, .Sampled}, "nested views", shared = true) {return false}
-	f, unjittered := foreground_constants(p, p.frame.camera_forward.w)
-	p.foreground_unjittered = unjittered
-	constants := rhi.frame_alloc(d, u64(r.frame_layout.size), 256)
-	if constants.ptr == nil {set_error(r, "viewmodel constants: %s", rhi.device_error(d)); return false}
-	mem.copy(constants.ptr, p.constants.ptr, r.frame_layout.size)
-	mem.copy(constants.ptr, &f, size_of(Gpu_Frame))
-	frame_exposure_copy(p, constants)
+	f, constants := foreground_constants_alloc(p) or_return
 	rhi.cmd_timestamp(cmd, "viewmodel")
 	rhi.cmd_bind_transient(cmd, SLOT_FRAME, constants)
 	if !cull_reset(r, cmd, p.instance_count) {return false}
@@ -166,17 +230,18 @@ scene_foreground_bodies :: proc(r: ^Renderer, slot: int, instances: []u32, turn:
 	s := &r.scene
 	if slot < 0 || slot >= OWNER_SLOTS {return}
 	f := &s.foreground[slot]
-	f.weapon, f.body, f.turn = {Vec3(max(f32)), Vec3(-max(f32))}, {Vec3(max(f32)), Vec3(-max(f32))}, turn
+	f.weapon, f.body, f.turn, f.glass = {Vec3(max(f32)), Vec3(-max(f32))}, {Vec3(max(f32)), Vec3(-max(f32))}, turn, 0
 	for index in instances {
 		if int(index) >= len(s.instances) {continue}
 		inst := s.instances[index]
 		if inst.meta.w & INSTANCE_FLAG_HIDDEN != 0 || inst.meta.w & INSTANCE_FLAG_OWNED == 0 {continue}
 		box := &f.weapon if inst.meta.w & INSTANCE_FLAG_FOREGROUND != 0 else &f.body
+		if inst.meta.w & INSTANCE_FLAG_FOREGROUND != 0 && inst.meta.x & INSTANCE_FLAG_GLASS != 0 && f.glass == 0 {f.glass = s.instance_keys[index].object}
 		box[0], box[1] = linalg.min(box[0], inst.bounds_min.xyz), linalg.max(box[1], inst.bounds_max.xyz)
 	}
 }
 
-// The maps of a viewmodel (Gpu_Frame.foreground_maps), each a square of
+// The maps of a viewmodel (Gpu_Viewmodel.maps), each a square of
 // FOREGROUND_MAP_SIDE texels below the pool in the atlas of the view: the
 // layers of the weapon and of the body for the sun, then for the local light
 // that lights the weapon most. The weapon reads its own layer at its true
@@ -270,10 +335,9 @@ foreground_maps_record :: proc(p: ^Pass) -> bool {
 		maps[k] = m
 	}
 	bind_scene_table(p)
-	p.frame.foreground_maps = maps
-	p.frame.foreground_light = u32(light) if light >= 0 && maps[2].rect.z != 0 else max(u32)
-	constants := (^Gpu_Frame)(p.constants.ptr)
-	constants.foreground_maps, constants.foreground_light = p.frame.foreground_maps, p.frame.foreground_light
+	p.viewmodel.maps = maps
+	p.viewmodel.light = u32(light) if light >= 0 && maps[2].rect.z != 0 else max(u32)
+	foreground_block_write(p)
 	return true
 }
 

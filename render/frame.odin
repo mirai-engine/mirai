@@ -108,6 +108,7 @@ Pass :: struct {
 	nested_count: int,
 	foreground:   f32,  // the vertical field of view, radians, of the viewmodel the view draws (foreground.odin); 0: none
 	foreground_unjittered: Mat4, // its projection from the eye, which the next frame takes as the previous one
+	viewmodel:    Gpu_Viewmodel, // what its constants hold of it
 	cost:         rhi.Buffer, // the count of a request the view adds to (cost.odin); 0: none
 }
 
@@ -1036,6 +1037,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	}
 	p.frame = f
 	frame_constants_write(p)
+	foreground_block_write(p)
 
 	rhi.cmd_timestamp(cmd, "upload")
 	frame_exposure_copy(p, p.constants)
@@ -1801,6 +1803,7 @@ pass_transparent :: proc(p: ^Pass) -> bool {
 		translucent_forward(p, 0, 0)
 		if p.blend {side_run(p, .Blend, .All)}
 	}
+	if !foreground_over_record(p) {return false}
 	// Without a Blend pass the mask of the frame is zero, as a pass that replaces the Resolve stage reads it.
 	if p.blended {p.t.reactive_drawn = true} else if p.t.reactive_drawn {
 		clear_textures(p.cmd, p.t.reactive)

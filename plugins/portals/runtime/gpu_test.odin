@@ -33,10 +33,11 @@ Gpu_Fixture :: struct {
 }
 
 @(private = "file")
-gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
+gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, generation := "portals") -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
-	output := fmt.tprintf("%s/.mirai/test-shaders/portals", root)
+	// portals_viewmodel: with the stages that draw a viewmodel (testdata_viewmodel/).
+	output := fmt.tprintf("%s/.mirai/test-shaders/%s", root, generation)
 	loaded, problem := gpu.shader_assets_load(output)
 	if !testing.expect(t, problem == "", problem) {return false}
 	device := shared_device.take_or_skip(t)
@@ -163,7 +164,7 @@ a_surface_seen_only_in_a_mirror_keeps_its_reflectance_and_layers :: proc(t: ^tes
 a_mirror_shows_the_body_of_the_player_and_never_its_viewmodel :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
-	if !gpu_fixture_init(t, f) {return}
+	if !gpu_fixture_init(t, f, "portals_viewmodel") {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
 	gpu.scene_set_environment(r, {direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})

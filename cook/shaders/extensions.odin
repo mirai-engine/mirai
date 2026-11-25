@@ -13,6 +13,7 @@ import "mirai:std/base"
 //   //! mirai frame <Struct> <name>          it declares <Struct>, which the constants of every view hold as <name>
 //   //! mirai needs nested_views             the stages are compiled with nested views
 //   //! mirai needs instance_ids             the G-buffer keeps the instance that drew each pixel
+//   //! mirai needs viewmodel                the stages draw the viewmodel of a view (render/foreground.odin)
 //   //! mirai hook ray <function>            it defines the ray hook; one source of a generation may
 //   //! mirai hook lights <count> <light>    it defines lights of its own; those of every source add up
 //   //! mirai hook probes <function>         it defines the probe hook; one source of a generation may
@@ -52,6 +53,7 @@ Light_Hook :: struct {count,light:string}
 Extensions :: struct {
     nested:bool,
     instance_ids:bool,
+    viewmodel:bool,
     fields:[]Frame_Field,
     frame_size:int, // of Frame_Data with what the generation adds; 0 without anything: render.Gpu_Frame alone
     ray:string,
@@ -215,7 +217,8 @@ extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sou
                     switch {
                     case len(words)==4 && words[3]=="nested_views": extensions.nested=true
                     case len(words)==4 && words[3]=="instance_ids": extensions.instance_ids=true
-                    case: return {},fmt.aprintf("%s: `//! mirai needs nested_views` or `//! mirai needs instance_ids`",path,allocator=allocator)
+                    case len(words)==4 && words[3]=="viewmodel": extensions.viewmodel=true
+                    case: return {},fmt.aprintf("%s: `//! mirai needs nested_views`, `//! mirai needs instance_ids` or `//! mirai needs viewmodel`",path,allocator=allocator)
                     }
                 case "hook":
                     switch {
@@ -289,7 +292,7 @@ extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sou
     strings.write_string(&text,"#endif\n")
     if !write_file(path_join(include,VERTEX_INCLUDE,allocator=context.temp_allocator),text.buf[:]) {return {},fmt.aprintf("could not write %s",VERTEX_INCLUDE,allocator=allocator)}
 
-    if !extensions.nested && len(fields)==0 {return extensions,""}
+    if !extensions.nested && !extensions.viewmodel && len(fields)==0 {return extensions,""}
     // Where Slang puts what the generation adds to the constants.
     temporary,temporary_error:=os.make_directory_temp("","mirai-frame-reflection-*",context.temp_allocator)
     if temporary_error!=nil {return {},strings.clone("could not create the temporary reflection folder",allocator)}
@@ -348,8 +351,13 @@ extensions_frame_read :: proc(extensions:^Extensions,data:json.Object) -> (probl
         }
         last,last_size,has_last:=binding_of(members,FRAME_MIRROR_LAST)
         if !has_last {return fmt.tprintf("the frame constants have no %s",FRAME_MIRROR_LAST)}
-        if nested,_,has:=binding_of(members,"nested");extensions.nested && (!has || nested!=last+last_size) {
+        nested,nested_size,has_nested:=binding_of(members,"nested")
+        if extensions.nested && (!has_nested || nested!=last+last_size) {
             return "the nested views are not where the renderer writes them in the frame constants"
+        }
+        after:=nested+nested_size if extensions.nested else last+last_size
+        if viewmodel,_,has:=binding_of(members,"viewmodel");extensions.viewmodel && (!has || viewmodel!=after) {
+            return "the viewmodel is not where the renderer writes it in the frame constants"
         }
         for &field in extensions.fields {
             found:bool
@@ -371,12 +379,12 @@ extensions_frame_read :: proc(extensions:^Extensions,data:json.Object) -> (probl
 // as in a generation that lacks the feature. Frame_Extensions is no name: only
 // sources of the project and its plugins read the fields it adds, so a stage
 // has it when one of its sources is theirs (jobs_tailor).
-Extension_Feature :: enum u8 {Nested_Views,Instance_Ids,Hook_Ray,Hook_Lights,Hook_Probes,Hook_Vertex,Frame_Extensions}
+Extension_Feature :: enum u8 {Nested_Views,Instance_Ids,Hook_Ray,Hook_Lights,Hook_Probes,Hook_Vertex,Frame_Extensions,Viewmodel}
 Extension_Features :: bit_set[Extension_Feature;u8]
 @(private)
 EXTENSION_MACROS :: [Extension_Feature]string{
     .Nested_Views="MIRAI_NESTED_VIEWS",.Instance_Ids="MIRAI_INSTANCE_IDS",.Hook_Ray="MIRAI_HOOK_RAY",.Hook_Lights="MIRAI_HOOK_LIGHTS",
-    .Hook_Probes="MIRAI_HOOK_PROBES",.Hook_Vertex="MIRAI_HOOK_VERTEX",.Frame_Extensions="MIRAI_FRAME_EXTENSIONS",
+    .Hook_Probes="MIRAI_HOOK_PROBES",.Hook_Vertex="MIRAI_HOOK_VERTEX",.Frame_Extensions="MIRAI_FRAME_EXTENSIONS",.Viewmodel="MIRAI_VIEWMODEL",
 }
 
 // What the extensions of a generation define.
@@ -384,6 +392,7 @@ EXTENSION_MACROS :: [Extension_Feature]string{
 extensions_features :: proc(extensions:Extensions) -> (features:Extension_Features) {
     if extensions.nested {features+={.Nested_Views}}
     if extensions.instance_ids {features+={.Instance_Ids}}
+    if extensions.viewmodel {features+={.Viewmodel}}
     if extensions.ray!="" {features+={.Hook_Ray}}
     if len(extensions.lights)>0 {features+={.Hook_Lights}}
     if extensions.probes!="" {features+={.Hook_Probes}}
@@ -400,12 +409,13 @@ extensions_text :: proc(extensions:Extensions,features:Extension_Features,alloca
     macros:=EXTENSION_MACROS
     text:=strings.builder_make(allocator)
     strings.write_string(&text,"// Generated by mirai shaders. DO NOT EDIT.\n#ifndef MIRAI_EXTENSIONS_SLANG\n#define MIRAI_EXTENSIONS_SLANG\n")
-    for feature in ([]Extension_Feature{.Nested_Views,.Instance_Ids,.Hook_Ray,.Hook_Lights,.Hook_Probes,.Hook_Vertex}) {
+    for feature in ([]Extension_Feature{.Nested_Views,.Instance_Ids,.Hook_Ray,.Hook_Lights,.Hook_Probes,.Hook_Vertex,.Viewmodel}) {
         if feature in features {fmt.sbprintf(&text,"#define %s 1\n",macros[feature])}
     }
-    // The nested views come before the fields of the extensions in Frame_Data:
-    // a stage that reads those declares them too.
-    if .Nested_Views in features || (.Frame_Extensions in features && extensions.nested) {strings.write_string(&text,"#define MIRAI_FRAME_NESTED 1\n")}
+    // The nested views come before the viewmodel and the fields of the
+    // extensions in Frame_Data: a stage that reads those declares them too.
+    if .Nested_Views in features || ((.Frame_Extensions in features || .Viewmodel in features) && extensions.nested) {strings.write_string(&text,"#define MIRAI_FRAME_NESTED 1\n")}
+    if .Viewmodel in features || (.Frame_Extensions in features && extensions.viewmodel) {strings.write_string(&text,"#define MIRAI_FRAME_VIEWMODEL 1\n")}
     if .Frame_Extensions in features {
         // A field may share its source with another one.
         for field,i in extensions.fields {

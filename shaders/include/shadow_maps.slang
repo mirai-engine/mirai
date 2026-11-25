@@ -588,22 +588,24 @@ float shadow_texel_seen(Shadow_Map m, Shadow_Taps t) {
     return shadow_blocks(t, b, float2(0.0), coarser) ? 0.0 : 1.0;
 }
 
+#ifdef MIRAI_VIEWMODEL
 // How much of a light reaches a point past what a layer of the maps of the
-// viewmodel of the view holds (Frame.foreground_maps): of the sun (light 0)
-// or of Frame.foreground_light (1), of the weapon for one of its pixels at
+// viewmodel of the view holds (Frame.viewmodel): of the sun (light 0)
+// or of Frame.viewmodel.light (1), of the weapon for one of its pixels at
 // its true place, of the body for any other; 1 where the layer holds nothing
 // of the point. toward: the light from the point.
 float foreground_shadow_seen(uint light, bool weapon, float3 position, float3 n, float3 toward) {
     if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u) return 1.0;
     uint at = (light * 2u + (weapon ? 0u : 1u)) * SHADOW_MAP_ROWS;
-    Shadow_Map m = shadow_map_from(frame.foreground_maps[at], frame.foreground_maps[at + 1u], frame.foreground_maps[at + 2u],
-        frame.foreground_maps[at + 3u], frame.foreground_maps[at + 4u], frame.foreground_maps[at + 5u]);
+    Shadow_Map m = shadow_map_from(frame.viewmodel.maps[at], frame.viewmodel.maps[at + 1u], frame.viewmodel.maps[at + 2u],
+        frame.viewmodel.maps[at + 3u], frame.viewmodel.maps[at + 4u], frame.viewmodel.maps[at + 5u]);
     if (m.rect.z == 0u) return 1.0;
     float3 local = shadow_map_local(m, position);
     Shadow_Taps t;
     if (!(local.z > m.near && local.z < m.far) || any(abs(shadow_map_unit(m, local)) >= 1.0) || !shadow_map_point(m, light == 0u, toward, position, n, 0.0, 1.0, t)) return 1.0;
     return shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t);
 }
+#endif
 
 // How much of the sun reaches a point past what the maps of the view hold;
 // -1 where no level drawn holds the point, or the view drew none: a ray

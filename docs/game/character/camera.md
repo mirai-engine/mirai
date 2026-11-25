@@ -15,18 +15,18 @@ forward is where it looks.
 ### The weapon in view
 
 Hang the weapon and the arms under the camera and put `render.Viewmodel{fov}` on their root (the
-vertical field of view, radians: 55 degrees is `0.96`). The view of that player draws them over its
-world with that field of view: they never sink into a wall, keep their size whatever the `fov` of
-the camera, take their light in front of the wall they would be inside, shade themselves, and the
-body keeps its shadow on the ground. Mirrors and the views of other players show the body and
-never the weapon, and the weapon casts no shadow on the world. Without a body of this machine (the
-editor, the players of other machines) they are drawn as other meshes. What is drawn in the world
-at a point of the weapon, as a flash at its muzzle, goes at
+vertical field of view, radians: 55 degrees is `0.96`), and give the shaders of the project the line
+`//! mirai needs viewmodel` in a `.slang` file of `shaders/` (without it a problem says so and the
+weapon is drawn as other meshes; a game without the line pays nothing). The view of that player
+draws them over its world with that field of view: they never sink into a wall, keep their size
+whatever the `fov` of the camera, take their light in front of the wall they would be inside, shade
+themselves, and the body keeps its shadow on the ground. Mirrors and the views of other players show
+the body and never the weapon, and the weapon casts no shadow on the world. What is drawn in the
+world at a point of the weapon, as a flash at its muzzle, goes at
 `render.viewmodel_world_place(view, viewmodel, muzzle)`, where the view shows that point.
 
-Not yet: glass, blends and overlays on the weapon. It shades itself and the body the world for
-the sun and the local light that lights the weapon most; hardware rays from its pixels leave out
-every local body. In front of a wall its light is taken nearer the eye, in steps of about 6 mm.
+Its overlays and blends (a reticle, a lens tint) are drawn over it; glass is not, and a problem
+names the mesh. It shades itself and the body the world for the sun and the strongest local light.
 
 ## Third person
 

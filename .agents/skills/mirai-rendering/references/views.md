@@ -67,6 +67,10 @@ camera and visible scene since last frame, reprojecting histories instead of cut
   under a body of `View_Bodies`), their field of view (`scene_set_foreground`) and the boxes of
   the weapon and the body (`scene_foreground_bodies`). A view whose `Camera.own` has one draws it
   (`render/foreground.odin`); no other view, cull, map or ray structure meets those instances.
+- **Switch:** only a generation with `//! mirai needs viewmodel` (`MIRAI_VIEWMODEL`, the
+  `Viewmodel_Frame` block after the nested views, `Frame_Layout.viewmodel`) draws one: in any
+  other the stages are the source of before, byte for byte, and the sync reports
+  `render.viewmodel_shaders`. Tests: `render/testdata_viewmodel` (`VIEWMODEL_GENERATION`).
 - **Depth:** the world of that view is drawn below `FOREGROUND_DEPTH` (15/16) of its depth and of
   `glass_zbuffer` (`rhi.cmd_set_depth_range` names the targets it holds for); `inv_view_proj`
   takes the stored depth, so the pyramid and what decodes the depth target follow. After the
@@ -77,18 +81,23 @@ camera and visible scene since last frame, reprojecting histories instead of cut
   FOREGROUND_CLEARANCE) / its depth)`, from the world depth before the resolve: one share for the
   view, as a share of each pixel shows the edge of a wall behind part of the weapon on it.
   `foreground_tag.frag` writes `VIEWS_FOREGROUND` and that share (`VIEWS_KEPT`) into the views
-  target. `pixel_at` returns the cleared place, `Pixel.true_position` the drawn
-  one; `pixel_side` keeps it apart in spatial filters, `pixel_across` takes the maps of the world
-  at `FOREGROUND_MARK_DEPTH` or farther, `pixel_rays_omitted` leaves `RAY_BODY`/`RAY_BODY_SMALL`
-  out of its rays, contact occlusion skips it. A mask of nested views keeps the tags.
+  target. `pixel_at` returns the cleared place (`pixel_ray` shortens the ray of the viewmodel by
+  it), `pixel_drawn` the drawn one; `pixel_side` keeps it apart in spatial filters, `pixel_across`
+  takes the maps of the world at `FOREGROUND_MARK_DEPTH` or farther, `pixel_rays_omitted` leaves
+  `RAY_BODY`/`RAY_BODY_SMALL` out of its rays, contact occlusion skips it. A mask of nested views
+  keeps the tags.
 - **Maps:** `FOREGROUND_MAPS` squares of `FOREGROUND_MAP_SIDE` below the pool in the atlas
   (`FOREGROUND_MAP_SLOT`, read by the shared filter as they are): the weapon and the body
-  (`FRAME_FLAG_BODY`) for the sun and `Gpu_Frame.foreground_light`. The maps of the world of the
+  (`FRAME_FLAG_BODY`) for the sun and `Gpu_Viewmodel.light`. The maps of the world of the
   view leave out its body (`Shadow_Raster.body`: made anew when it changes, its moves stale
   nothing there); `direct_maps` multiplies a weapon pixel by its layer at its true place and a
   world pixel by the body layer.
-- **Not yet:** glass, blends and overlays of the viewmodel; maps for more than the sun and one
-  light; hardware rays from its pixels leave out every local body.
+- **Over it:** `foreground_over_record`, after the blends of the world, draws its overlays and
+  its forward blends (its entries of `Scene_State.translucent`, past those `glass_visible` gives)
+  with its constants above 15/16. Its glass is not drawn: `Foreground.glass`, which the sync
+  reports (`render.viewmodel_glass`).
+- **Not yet:** its glass; maps for more than the sun and one light; hardware rays from its pixels
+  leave out every local body.
 
 ## Texture views
 

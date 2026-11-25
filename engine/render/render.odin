@@ -616,8 +616,10 @@ render_sync :: proc(
     a:=app.assets
     r:=app.renderer
     if a==nil || r==nil || app.ui_only {return}
-    t:=Sync_Tables{worlds,meshes,values,lives,hidden,carried,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{},viewmodels}
+    t:=Sync_Tables{worlds,meshes,values,lives,hidden,carried,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{},viewmodels,false}
     if bodies.ptr!=nil {t.owned=bodies.bodies}
+    // Shaders that draw no viewmodel draw it as other meshes (viewmodels_settle says so).
+    t.foreground=r.frame_layout.viewmodel!=0
     releases,local_assets:=host.assets_structure_changes(a,sync.assets_structure)
     for change in releases {if change.id=={} {local_assets=false}}
     reloaded:=!local_assets || a.appearance!=sync.assets_appearance
@@ -675,7 +677,7 @@ render_sync :: proc(
     }
     sync.owned=t.owned
     // What names the field of view of a body's viewmodel: the Viewmodels and, while there is one, where it hangs.
-    if whole || bodies_changed || c.viewmodels.written || len(c.viewmodels.gone)>0 || core.count(viewmodels)>0 && (c.parents.written || len(c.parents.gone)>0) {viewmodels_settle(r,t)}
+    if whole || bodies_changed || c.viewmodels.written || len(c.viewmodels.gone)>0 || core.count(viewmodels)>0 && (c.parents.written || len(c.parents.gone)>0) {viewmodels_settle(r,t,viewmodels,problems)}
     for e in sync.under {instance_changed(sync,e)}
     for e in c.values.gone {instance_changed(sync,e)}
     for e in c.lives.gone {instance_changed(sync,e)}
@@ -760,7 +762,7 @@ render_sync :: proc(
         sync.shown=nil
     }
     instances_moved(sync,t,c.worlds,frame)
-    if whole || bodies_changed || c.worlds.written || len(sync.made)>0 {bodies_settle(sync,r,hierarchy,t)}
+    if whole || bodies_changed || c.worlds.written || len(sync.made)>0 {bodies_settle(sync,r,hierarchy,t,problems)}
     // The renderer leaves where it is what did not move, and as it is what has the same tint.
     if len(sync.moved)>0 {gpu.scene_move(r,sync.moved[:],sync.moved_transforms[:],sync.moved_anchors[:])}
     if len(sync.tinted)>0 {gpu.scene_tint(r,sync.tinted[:],sync.tinted_colors[:],sync.tinted_emissions[:],sync.tinted_values[:])}
@@ -852,6 +854,7 @@ Sync_Tables :: struct {
     posed:^Posed_Meshes,
     owned:[VIEW_SLOTS]core.Entity, // View_Bodies
     viewmodels:^core.Table(Viewmodel,.Read),
+    foreground:bool, // the shaders in use draw viewmodels (`//! mirai needs viewmodel`)
 }
 
 // What each table was when the sync last looked, and what it changed since.
@@ -981,14 +984,14 @@ extras_inherit :: proc(t:Sync_Tables,extras:[]gpu.Instance_Desc) {
 // Whether e, of the body of owner (body_owner), is or hangs from a Viewmodel.
 @(private)
 in_viewmodel :: proc(t:Sync_Tables,owner:u8,e:core.Entity) -> bool {
-    return owner!=0 && t.viewmodels!=nil && core.count(t.viewmodels)>0 && core.ancestor_with(t.parents,t.viewmodels,e)!=core.NONE
+    return owner!=0 && t.foreground && t.viewmodels!=nil && core.count(t.viewmodels)>0 && core.ancestor_with(t.parents,t.viewmodels,e)!=core.NONE
 }
 
 // What the renderer fits the maps of the viewmodel of each local body
 // around: the instances of the body and what hangs from it, and the turn of
 // its Viewmodel.
 @(private)
-bodies_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,h:core.Ref(core.Hierarchy),t:Sync_Tables) {
+bodies_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,h:core.Ref(core.Hierarchy),t:Sync_Tables,problems:^core.Problems) {
     for slot in 0..<gpu.OWNER_SLOTS {
         if r.scene.foreground[slot].fov<=0 || slot>=len(t.owned) || t.owned[slot]==core.NONE {continue}
         clear(&sync.bodies)
@@ -1000,16 +1003,26 @@ bodies_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,h:core.Ref(core.Hierarch
             if instance:=instance_of(sync,at);instance>=0 {push(sync,&sync.bodies,u32(instance))}
         }
         gpu.scene_foreground_bodies(r,slot,sync.bodies[:],turn)
+        if glass:=r.scene.foreground[slot].glass;glass!=0 {
+            core.report(problems,core.Entity(glass),"render.viewmodel_glass","this mesh of the Viewmodel shows glass, which a viewmodel does not draw: give it a blended material without transmission (Alpha_Mode Blend), or hang it outside the Viewmodel")
+        }
     }
 }
 
 // The field of view the renderer draws the viewmodel of each local body
 // with: that of a Viewmodel in it.
 @(private)
-viewmodels_settle :: proc(r:^gpu.Renderer,t:Sync_Tables) {
+viewmodels_settle :: proc(r:^gpu.Renderer,t:Sync_Tables,viewmodels:^core.Table(Viewmodel,.Read),problems:^core.Problems) {
     fovs:[gpu.OWNER_SLOTS]f32
-    for row in 0..<core.count(t.viewmodels) {
-        if slot:=body_owner(t,core.entity_at(t.viewmodels,row));slot>0 && int(slot)<=len(fovs) {fovs[slot-1]=core.at(t.viewmodels,row).fov}
+    for row in 0..<core.count(viewmodels) {
+        e:=core.entity_at(viewmodels,row)
+        slot:=body_owner(t,e)
+        if slot==0 || int(slot)>len(fovs) {continue}
+        if !t.foreground {
+            core.report(problems,e,"render.viewmodel_shaders","the Viewmodel is drawn as other meshes: the shaders of the project draw none; add the line `//! mirai needs viewmodel` to a .slang file of its shaders folder")
+            continue
+        }
+        fovs[slot-1]=core.at(viewmodels,row).fov
     }
     gpu.scene_set_foreground(r,fovs)
 }

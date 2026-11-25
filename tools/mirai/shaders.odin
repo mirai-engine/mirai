@@ -212,7 +212,11 @@ cmd_setup :: proc(root:string,args:[]string) -> int {
 // its testdata/, which the engine does not ship. A test of a runtime package
 // does not generate them itself: the shipped game compiles its test files
 // too, and cook is not shipped. Only for a package whose tests take the
-// shared device, and one of the engine only with programs in testdata/.
+// shared device, and one of the engine only with programs in testdata/. A
+// folder testdata_<name> of the package gives a generation of its own,
+// <name> of the package's in test-shaders, with what it holds besides: what
+// only some tests ask of the stages (`//! mirai needs viewmodel`) stays out of
+// the others.
 package_test_shaders :: proc(root,folder:string) -> bool {
     absolute:=project.path_absolute(folder,context.temp_allocator)
     engine:=project.path_absolute(root,context.temp_allocator)
@@ -233,21 +237,36 @@ package_test_shaders :: proc(root,folder:string) -> bool {
     } else {
         return true
     }
-    testdata:=join(absolute,"testdata")
-    if entries,error:=os.read_all_directory_by_path(testdata,context.temp_allocator);error==nil {
-        for entry in entries {
-            if strings.has_suffix(entry.name,".slang") {
-                append(&sources,shaders.Source{name=fmt.tprintf("%s_test",name),folder=testdata})
-                break
-            }
-        }
+    has_slang :: proc(folder:string) -> bool {
+        entries,error:=os.read_all_directory_by_path(folder,context.temp_allocator)
+        if error!=nil {return false}
+        for entry in entries {if strings.has_suffix(entry.name,".slang") {return true}}
+        return false
     }
+    testdata:=join(absolute,"testdata")
+    if has_slang(testdata) {append(&sources,shaders.Source{name=fmt.tprintf("%s_test",name),folder=testdata})}
     if len(sources)==0 || !takes_shared_device(absolute) {return true}
-    output:=join(root,".mirai","test-shaders",name)
     lock:=shaders_lock(root)
     defer workspace.lock_release(&lock)
+    if !test_generation(root,name,sources[:]) {return false}
+    entries,_:=os.read_all_directory_by_path(absolute,context.temp_allocator)
+    for entry in entries {
+        if entry.type!=.Directory || !strings.has_prefix(entry.name,"testdata_") || !has_slang(entry.fullpath) {continue}
+        other:=fmt.tprintf("%s_%s",name,entry.name[len("testdata_"):])
+        more:=make([dynamic]shaders.Source,context.temp_allocator)
+        append(&more,..sources[:])
+        append(&more,shaders.Source{name=fmt.tprintf("%s_test",other),folder=entry.fullpath})
+        if !test_generation(root,other,more[:]) {return false}
+    }
+    return true
+}
+
+// One generation of the shaders of tests into <root>/.mirai/test-shaders/<name>.
+@(private="file")
+test_generation :: proc(root,name:string,sources:[]shaders.Source) -> bool {
+    output:=join(root,".mirai","test-shaders",name)
     // The tests draw their programs every way.
-    result:=shaders.generate({root=root,sources=sources[:],output=output,cache=fmt.tprintf("%s-stamp",output),every={.Opaque,.Blend,.Overlay,.Particle_Sprite,.Particle_Mesh,.Preview,.Impostor}})
+    result:=shaders.generate({root=root,sources=sources,output=output,cache=fmt.tprintf("%s-stamp",output),every={.Opaque,.Blend,.Overlay,.Particle_Sprite,.Particle_Mesh,.Preview,.Impostor}})
     defer shaders.result_destroy(&result)
     if result.warnings!="" {fmt.eprint(result.warnings)}
     if result.error!="" {fmt.eprintfln("mirai test: the shaders of the tests of %s could not be generated: %s",name,result.error);return false}

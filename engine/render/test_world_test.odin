@@ -101,13 +101,13 @@ sync_cube :: proc(f:^Sync_Fixture,x:f32) -> core.Entity {
 // renderer was given or moved in it. What it had of the frame before goes, as
 // the upload of a frame takes it.
 @(private)
-sync_frame :: proc(f:^Sync_Fixture,id:core.World_Id={},posed:^Posed_Meshes=nil,bodies:^View_Bodies=nil) -> int {
+sync_frame :: proc(f:^Sync_Fixture,id:core.World_Id={},posed:^Posed_Meshes=nil,bodies:^View_Bodies=nil,problems:^core.Problems=nil) -> int {
     test_world_settle(&f.world)
     core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
     s:=&f.renderer.scene
     for &word in s.touched {word=0}
     s.touched_count,s.lights_changed,s.changes=0,false,{}
-    world_sync(&f.world,&f.sync,&f.app,id,core.ref(&f.world.hierarchy),posed,bodies=bodies)
+    world_sync(&f.world,&f.sync,&f.app,id,core.ref(&f.world.hierarchy),posed,problems,bodies)
     clear(&f.app.extras.instances)
     return s.touched_count
 }

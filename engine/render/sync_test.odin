@@ -467,7 +467,15 @@ a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
     for e in ([]core.Entity{body,rifle,hand}) {testing.expect(t,flags(f,e)&(gpu.INSTANCE_FLAG_FOREGROUND|gpu.INSTANCE_FLAG_OWNED)==0 && mask(f,e)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)==0,"without a local body nothing is marked")}
     testing.expect_value(t,s.foreground[1],gpu.Foreground{})
 
+    // Shaders that draw no viewmodel draw it as other meshes of the body, and say what to add.
     bodies:=View_Bodies{bodies={1=body}}
+    problems:core.Problems
+    sync_frame(f,bodies=&bodies,problems=&problems)
+    testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && s.foreground[1].fov==0,"the shaders draw no viewmodel: none is marked")
+    testing.expect(t,problems.count==1 && problems.entries[0].entity==rifle && string(cstring(&problems.entries[0].code[0]))=="render.viewmodel_shaders","the Viewmodel says what the shaders lack")
+
+    f.renderer.frame_layout.viewmodel=size_of(gpu.Gpu_Frame)
+    f.sync.synced=false
     sync_frame(f,bodies=&bodies)
     testing.expect(t,flags(f,body)&gpu.INSTANCE_FLAG_FOREGROUND==0 && flags(f,body)&gpu.INSTANCE_FLAG_OWNED!=0 && mask(f,body)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)!=0,"the body is a body of the rays")
     for e in ([]core.Entity{rifle,hand}) {

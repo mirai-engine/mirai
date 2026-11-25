@@ -711,7 +711,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 7
+SHADER_CATALOG_VERSION :: 8
 
 Shader_Catalog :: struct {
     version:int,
@@ -743,13 +743,14 @@ program_use_named :: proc(name:string) -> (use:Program_Use,ok:bool) {
 // its name in the manifest without a program (vis_resolve_plain.frag).
 Surface_Stage :: struct {name:string,uses:Program_Uses}
 
-// The constants of a view: Gpu_Frame, then the nested views when the
-// generation has them, then the struct each extension declared. size 0
-// without nested views: Gpu_Frame alone.
+// The constants of a view: Gpu_Frame, then the nested views and the
+// viewmodel when the generation has them, then the struct each extension
+// declared. size 0 without either: Gpu_Frame alone.
 Frame_Catalog :: struct {
     size:int,
     nested:bool,
     instance_ids:bool, // the G-buffer keeps the instance that drew each pixel
+    viewmodel:bool,    // the stages draw the viewmodel of a view (render/foreground.odin)
     extensions:[]Frame_Extension,
 }
 Frame_Extension :: struct {name:string,offset,size:int}

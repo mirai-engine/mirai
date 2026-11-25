@@ -18,11 +18,14 @@ Fixture :: struct {
 // the stages of the references, which `mirai test` makes before the tests run:
 // the engine has neither.
 TEST_GENERATION :: #directory + "/../.mirai/test-shaders/render"
+// The same with the stages that draw the viewmodel of a view (testdata_viewmodel/).
+VIEWMODEL_GENERATION :: #directory + "/../.mirai/test-shaders/render_viewmodel"
 
 // False with the test told why: there is no device (shared_device.take_or_skip)
 // or the renderer does not start. desc gives what a test sets besides the size
-// and the settings. programs: the renderer starts with TEST_GENERATION.
-fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: Maybe(Settings) = nil, hardware_rt := true, desc: Renderer_Desc = {}, programs := false, reference := Reference_Set{}, loc := #caller_location) -> bool {
+// and the settings. programs: the renderer starts with TEST_GENERATION, or
+// with generation where it names another.
+fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: Maybe(Settings) = nil, hardware_rt := true, desc: Renderer_Desc = {}, programs := false, reference := Reference_Set{}, generation := "", loc := #caller_location) -> bool {
 	if s, given := settings.?; given && s.trace_mode == .Software && !SOFTWARE_TRACER {
 		fmt.println("skipped: rays are traced by software only on Vulkan")
 		return false
@@ -33,10 +36,11 @@ fixture_init :: proc(t: ^testing.T, f: ^Fixture, width, height: u32, settings: M
 	desc.device, desc.width, desc.height, desc.settings = device, width, height, settings
 	assets: Shader_Assets
 	f.reference = reference
-	if programs || reference != {} {
+	if programs || reference != {} || generation != "" {
 		problem: string
-		assets, problem = shader_assets_load(TEST_GENERATION)
-		if !testing.expectf(t, problem == "", "%s in %s: `mirai test render` generates it", problem, TEST_GENERATION, loc = loc) {return false}
+		folder := generation if generation != "" else TEST_GENERATION
+		assets, problem = shader_assets_load(folder)
+		if !testing.expectf(t, problem == "", "%s in %s: `mirai test render` generates it", problem, folder, loc = loc) {return false}
 		desc.shaders = &assets
 	}
 	r := new(Renderer)

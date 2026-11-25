@@ -105,7 +105,7 @@ tagged :: proc(t: ^testing.T, f: ^Fixture) -> (count: int, tags: []u8) {
 @(test)
 the_viewmodel_is_drawn_with_its_own_field_of_view :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), generation = VIEWMODEL_GENERATION) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := viewmodel_scene(r)
@@ -148,7 +148,7 @@ the_viewmodel_is_drawn_with_its_own_field_of_view :: proc(t: ^testing.T) {
 @(test)
 a_wall_nearer_than_the_viewmodel_neither_hides_nor_darkens_it :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), generation = VIEWMODEL_GENERATION) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := viewmodel_scene(r)
@@ -217,7 +217,7 @@ mark_seen :: proc(t: ^testing.T, f: ^Fixture) -> (middle: Vec2, at: int, found: 
 @(test)
 the_motion_of_the_viewmodel_is_that_of_its_own_projection :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), generation = VIEWMODEL_GENERATION) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := viewmodel_scene(r)
@@ -289,7 +289,7 @@ the_viewmodel_shades_itself_as_the_rays_do :: proc(t: ^testing.T) {
 	reference: [2 * ANGLES][]f32
 	{
 		f: Fixture
-		if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), reference = {.Lights}) {return}
+		if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), reference = {.Lights}, generation = VIEWMODEL_GENERATION) {return}
 		defer fixture_destroy(&f)
 		instances := scene(f.renderer, grip, hand, false)
 		camera := FIRST_PERSON
@@ -301,7 +301,7 @@ the_viewmodel_shades_itself_as_the_rays_do :: proc(t: ^testing.T) {
 		}
 	}
 	f: Fixture
-	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), generation = VIEWMODEL_GENERATION) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	instances := scene(r, grip, hand, true)
@@ -338,7 +338,7 @@ the_viewmodel_shades_itself_as_the_rays_do :: proc(t: ^testing.T) {
 @(test)
 the_shadow_of_the_body_is_the_same_with_a_viewmodel :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), generation = VIEWMODEL_GENERATION) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := viewmodel_scene(r)
@@ -382,7 +382,7 @@ the_shadow_of_the_body_is_the_same_with_a_viewmodel :: proc(t: ^testing.T) {
 @(test)
 the_viewmodel_darkens_as_the_eye_enters_the_shade :: proc(t: ^testing.T) {
 	f: Fixture
-	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), generation = VIEWMODEL_GENERATION) {return}
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := viewmodel_scene(r)
@@ -435,5 +435,79 @@ the_viewmodel_darkens_as_the_eye_enters_the_shade :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, compared > 1000 && worst < 0.01, "the floor is lit as without the viewmodel: %v at most apart over %d pixels", worst, compared)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// Shaders that draw no viewmodel make nothing of it: the constants of a view
+// are Gpu_Frame alone, and the view of a body has no views target, no share,
+// no maps below the pool and no pass of it.
+@(test)
+without_the_viewmodel_in_the_shaders_nothing_of_it_is_made :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	s := viewmodel_scene(r)
+	body := Instance_Desc{object_id = 5, mesh = s.floor.mesh, transform = placed({0, 0.85, 0.1}, {0.5, 1.7, 0.3}), tint = {1, 1, 1}, owner = 1}
+	s.bar.foreground, s.mark.foreground = false, false
+	scene_given(r, {s.floor, body, s.bar, s.mark}, nil, {direction = {0.15, 0.55, 0.82}, color = {1, 1, 1}, illuminance = 10000, enabled = true}, {})
+	scene_foreground_bodies(r, 0, {1, 2, 3}, 1)
+	for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = FIRST_PERSON}), r.error)}
+	rhi.device_wait_idle(f.device)
+	testing.expect(t, r.frame_layout.viewmodel == 0 && r.frame_layout.size == size_of(Gpu_Frame), "the constants of a view hold no viewmodel")
+	testing.expect(t, r.targets.views == 0 && r.foreground_kept == 0 && r.targets.shadow_raster.body == 0, "the view makes no target, share or maps of a viewmodel")
+	b := &r.targets.shadow_raster
+	testing.expect(t, b.atlas != 0 && rhi.texture_desc(f.device, b.atlas).height == b.rows * SHADOW_PAGE, "the atlas is the pool alone")
+	for timing in r.stats.timings {testing.expectf(t, timing.name != "viewmodel" && timing.name != "viewmodel maps", "no pass of a viewmodel runs: %s", timing.name)}
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// What the viewmodel lays over itself and blends is drawn over it, with its
+// own projection: the red overlay of its bar and the red pane it holds before
+// its muzzle are seen there.
+@(test)
+the_overlays_and_blends_of_the_viewmodel_are_drawn_over_it :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings(), generation = VIEWMODEL_GENERATION) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	s := viewmodel_scene(r)
+	white, green, red, pane := DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL, DEFAULT_MATERIAL
+	white.base_color, green.base_color, red.base_color, pane.base_color = {0.8, 0.8, 0.8}, {0, 1, 0}, {1, 0, 0}, {1, 0, 0}
+	pane.alpha_mode, pane.opacity = .Blend, 0.8
+	materials_set(r, {white, green, red, pane})
+	sun := Sun_Desc{direction = {0, 0.6, 0.8}, color = {1, 1, 1}, illuminance = 10000, enabled = true}
+	front := s.mark
+	front.object_id, front.material = 6, 4
+	front.transform = placed(EYE + MUZZLE + {0, 0.025, 0.06}, {0.06, 0.06, 0.005})
+	look :: proc(t: ^testing.T, f: ^Fixture, s: Viewmodel_Scene, sun: Sun_Desc, bar, front: Instance_Desc, blended: bool) -> (overlay, pane: Vec3) {
+		r := f.renderer
+		scene_given(r, {s.floor, bar, front} if blended else {s.floor, bar}, nil, sun, {})
+		scene_foreground_bodies(r, 0, {1, 2}, 1)
+		for _ in 0 ..< 3 {testing.expect(t, renderer_frame(r, {camera = FIRST_PERSON}), r.error)}
+		display := read_target(t, f, r.targets.display, f16, 4)
+		_, tags := tagged(t, f)
+		count := 0
+		for tag, i in tags {
+			if tag & VIEWS_FOREGROUND == 0 {continue}
+			overlay += {f32(display[i * 4]), f32(display[i * 4 + 1]), f32(display[i * 4 + 2])}
+			count += 1
+		}
+		overlay /= f32(max(count, 1))
+		// The middle of the pane, where the projection of the viewmodel puts it.
+		at := EYE + MUZZLE + {0, 0.025, 0.06} - EYE
+		tangent := math.tan(VIEWMODEL_FOV * 0.5)
+		x := int((at.x / (-at.z * tangent * f32(WIDTH) / f32(HEIGHT)) + 1) * 0.5 * f32(WIDTH))
+		y := int((1 - at.y / (-at.z * tangent)) * 0.5 * f32(HEIGHT))
+		i := (y * WIDTH + x) * 4
+		return overlay, {f32(display[i]), f32(display[i + 1]), f32(display[i + 2])}
+	}
+	plain, before := look(t, &f, s, sun, s.bar, front, false)
+	laid := s.bar
+	laid.overlays = {count = 1, entries = {0 = {id = 10, material = 3, blend = .Alpha, enabled = true}}}
+	over, _ := look(t, &f, s, sun, laid, front, false)
+	testing.expectf(t, plain.x < plain.y * 1.2 && over.x > over.y * 2, "the red overlay of the bar is drawn on it: %v, %v without it", over, plain)
+	_, behind := look(t, &f, s, sun, s.bar, front, true)
+	testing.expectf(t, behind.x > behind.y * 2 && before.x < before.y * 1.2, "the red pane before the muzzle is blended over the weapon: %v, %v without it", behind, before)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

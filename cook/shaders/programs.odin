@@ -1526,7 +1526,7 @@ programs_generate :: proc(
 @(private)
 catalog_text :: proc(catalog:Catalog) -> []u8 {
     e:=catalog.extensions
-    frame:=abi.Frame_Catalog{size=e.frame_size,nested=e.nested,instance_ids=e.instance_ids,extensions=make([]abi.Frame_Extension,len(e.fields),context.temp_allocator)}
+    frame:=abi.Frame_Catalog{size=e.frame_size,nested=e.nested,instance_ids=e.instance_ids,viewmodel=e.viewmodel,extensions=make([]abi.Frame_Extension,len(e.fields),context.temp_allocator)}
     for field,i in e.fields {frame.extensions[i]={field.name,field.offset,field.size}}
     text,_:=serial.text_encode(abi.Shader_Catalog{abi.SHADER_CATALOG_VERSION,catalog.fingerprint,catalog.compiler,catalog.programs,frame,catalog.surface_stages},.Pretty,context.temp_allocator)
     return text

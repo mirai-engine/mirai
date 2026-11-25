@@ -1056,7 +1056,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		bin := int(id) - int(Pipeline_Id.Foreground_Map)
 		tested := bin & RASTER_BIN_TESTED != 0
 		graphics(list, r, id, {
-			vertex = &r.shader_codes[.Vis_Raster_Tested_Vert if tested else .Vis_Raster_Vert], fragment = &r.shader_codes[.Vis_Raster_Tested_Frag if tested else .Vis_Raster_Frag],
+			vertex = &r.shader_codes[.Vis_Raster_Tested_Vert if tested else .Vis_Raster_Vert], fragment = &r.shader_codes[.Vis_Raster_Tested_Depth_Frag if tested else .Vis_Raster_Depth_Frag],
 			depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater,
 			cull = .None if bin & RASTER_BIN_TWO_SIDED != 0 else .Back, name = "viewmodel map",
 		})

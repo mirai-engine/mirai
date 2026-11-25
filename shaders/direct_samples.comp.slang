@@ -74,7 +74,9 @@ groupshared uint list_count;
 groupshared uint list_ids[DIRECT_LIST_MAX];
 groupshared uint list_mesh[DIRECT_LIST_MAX];
 groupshared uint list_tested[DIRECT_LIST_MAX];
+#ifdef MIRAI_VIEWMODEL
 groupshared uint list_flags[DIRECT_LIST_MAX]; // Instance.meta.w
+#endif
 groupshared float4 list_spheres[DIRECT_LIST_MAX];
 groupshared float4 list_lo[DIRECT_LIST_MAX];
 groupshared float4 list_hi[DIRECT_LIST_MAX];
@@ -97,7 +99,9 @@ void list_add(uint id) {
         list_ids[entry] = id;
         list_mesh[entry] = inst.meta.x;
         list_tested[entry] = inst.tested;
+#ifdef MIRAI_VIEWMODEL
         list_flags[entry] = inst.meta.w;
+#endif
         list_lo[entry] = float4(lo, 0.0);
         list_hi[entry] = float4(hi, 0.0);
         list_spheres[entry] = float4(0.5 * (lo + hi), 0.5 * length(hi - lo));
@@ -143,7 +147,9 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask, uint omitted) {
         while (bits != 0u) {
             uint i = word * 32u + firstbitlow(bits);
             bits &= bits - 1u;
+#ifdef MIRAI_VIEWMODEL
             if ((omitted & RAY_BODY) != 0u && (list_flags[i] & INSTANCE_FLAG_OWNED) != 0u) continue;
+#endif
             float4 sphere = list_spheres[i];
             float3 to = sphere.xyz - o;
             float3 off = to - w * clamp(dot(to, w), 0.0, reach);

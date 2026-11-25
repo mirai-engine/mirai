@@ -38,8 +38,7 @@ Gpu_Frame :: struct {
 	own:             u32,  // bits 0-7: 1 + the local slot whose body (INSTANCE_FLAG_OWNED) is the view's own, 0: none; bits 16-31: how much of it the view fades out, unorm
 	flags:           u32,
 	shadowless_lights: u32, // the root of the tree of the local lights that cast no shadows, which ends at light_nodes; 0: none (light_tree_shadowless)
-	foreground_light: u32, // the local light of foreground_maps[2] and [3]; max(u32): none
-	pad0:            [2]u32,
+	pad0:            [3]u32,
 	jitter:          Vec4, // xy current jitter (render pixels), zw previous
 	texturing:       Vec4, // x mip bias of rasterized material textures
 	time: Vec4, // current seconds, previous seconds, frame dt, reserved
@@ -74,8 +73,6 @@ Gpu_Frame :: struct {
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
 	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
-	foreground_ray:   [3]Vec4, // with FRAME_FLAG_VIEWMODEL: the ray of a pixel of the viewmodel, as ray_origin, ray_du and ray_dv are of the view
-	foreground_maps:  [FOREGROUND_MAPS]Gpu_Shadow_Map, // and its maps (foreground.odin); rect.z 0: none
 	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the texels of their atlas from top to bottom (abi.SHADOW_POOL across) while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
@@ -90,6 +87,15 @@ Gpu_Nested :: struct {
 	from_world_previous: [3]Vec4,
 	eye:                 Vec4,
 	opening:             Vec4, // the plane its pixels are seen through, in the world of the view; zero: none known
+}
+
+// The viewmodel of a view in its constants (Viewmodel_Frame of common.slang),
+// after the nested views, in a generation that needs it (Frame_Layout.viewmodel).
+Gpu_Viewmodel :: struct {
+	ray:   [3]Vec4, // the ray of a pixel of it, as ray_origin, ray_du and ray_dv are of the view
+	maps:  [FOREGROUND_MAPS]Gpu_Shadow_Map, // foreground.odin; rect.z 0: none
+	light: u32, // the local light of maps 2 and 3; max(u32): none
+	pad:   [3]u32,
 }
 
 FRAME_FLAG_GI           :: abi.FRAME_FLAG_GI
