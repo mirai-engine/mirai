@@ -35,6 +35,7 @@ Render_World :: struct {
     offsets:core.Table(Draw_Offset),
     layers:core.Table(Layers),
     cameras:core.Table(Camera),
+    viewmodels:core.Table(Viewmodel),
     arrows:core.Table(Arrow),
     hierarchy:core.Hierarchy,
     view:core.View,
@@ -45,8 +46,8 @@ Render_World :: struct {
 // render_sync of a test world, as a frame without players, volumes or
 // cameras gives it: the camera of the application is set by the test.
 @(private)
-world_sync :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id={},hierarchy:core.Ref(core.Hierarchy)={},posed:^Posed_Meshes=nil,problems:^core.Problems=nil) {
-    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.lives),core.read(&w.hidden),core.read(&w.carried),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.bounces),core.read(&w.view_volumes),core.read(&w.volumes),{},{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed,problems)
+world_sync :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id={},hierarchy:core.Ref(core.Hierarchy)={},posed:^Posed_Meshes=nil,problems:^core.Problems=nil,bodies:^View_Bodies=nil) {
+    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.lives),core.read(&w.hidden),core.read(&w.carried),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.bounces),core.read(&w.view_volumes),core.read(&w.volumes),{},{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{bodies},{},{},{},posed,problems,core.read(&w.viewmodels))
 }
 
 // An application that draws nothing: assets over a renderer without a
@@ -100,13 +101,13 @@ sync_cube :: proc(f:^Sync_Fixture,x:f32) -> core.Entity {
 // renderer was given or moved in it. What it had of the frame before goes, as
 // the upload of a frame takes it.
 @(private)
-sync_frame :: proc(f:^Sync_Fixture,id:core.World_Id={},posed:^Posed_Meshes=nil) -> int {
+sync_frame :: proc(f:^Sync_Fixture,id:core.World_Id={},posed:^Posed_Meshes=nil,bodies:^View_Bodies=nil) -> int {
     test_world_settle(&f.world)
     core.hierarchy_settle(&f.world.hierarchy,core.read(&f.world.parents),&f.world.entities)
     s:=&f.renderer.scene
     for &word in s.touched {word=0}
     s.touched_count,s.lights_changed,s.changes=0,false,{}
-    world_sync(&f.world,&f.sync,&f.app,id,core.ref(&f.world.hierarchy),posed)
+    world_sync(&f.world,&f.sync,&f.app,id,core.ref(&f.world.hierarchy),posed,bodies=bodies)
     clear(&f.app.extras.instances)
     return s.touched_count
 }

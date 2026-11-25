@@ -101,6 +101,8 @@ FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (s
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)
 FRAME_FLAG_NESTED       :: 512 // the view added nested views: the views target names the view of each pixel (pixel_view)
+FRAME_FLAG_VIEWMODEL    :: 1024 // the view drew the viewmodel of its body: the views target tags its pixels (VIEWS_FOREGROUND)
+FRAME_FLAG_FOREGROUND   :: 2048 // the constants of the pass that draws that viewmodel: its cull takes those instances alone
 
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
@@ -117,6 +119,10 @@ INSTANCE_FLAG_BLENDED       :: 32
 INSTANCE_FLAG_TRANSLUCENT   :: 64
 INSTANCE_FLAG_OUTLINE_ONLY  :: 128
 INSTANCE_HIGHLIGHT_SHIFT    :: 8
+// Drawn by the view of its owner alone, over the world with the field of
+// view of its viewmodel (Scene_State.foreground), and in no cull, map or ray
+// of the world.
+INSTANCE_FLAG_FOREGROUND    :: u32(1) << 12
 INSTANCE_FLAG_OWNED         :: u32(1) << 13
 INSTANCE_OWNER_SHIFT        :: 14
 INSTANCE_LAYERS_SHIFT       :: 16
@@ -171,6 +177,8 @@ RAY_GLASS       :: 2
 RAY_SMALL       :: 4
 RAY_SHADOW_ONLY :: 8
 RAY_UNSHADOWED  :: 16
+RAY_BODY        :: 32 // a solid of a local body (INSTANCE_FLAG_OWNED), which the rays of its viewmodel's pixels omit
+RAY_BODY_SMALL  :: 64 // a small one: the rays that leave out RAY_SMALL leave it out too
 TLAS_REF_GLASS  :: u32(1) << 31
 
 // Local lights and their tree.

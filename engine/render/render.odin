@@ -190,6 +190,30 @@ Camera :: struct {
     own_hidden:u32,                    // the layers of the body of its own player it does not draw, as its head seen from its eyes
 }
 
+// The weapon and arms its player sees in first person: put on their root,
+// under the camera of the body of a player of this machine. The view of that
+// player draws them over its world with this field of view, so they never
+// sink into a wall in front of the eye; they cast no shadow on the world and
+// rays, mirrors and the views of other players do not see them, while the
+// body keeps its own shadow. Without such a body (in the editor, of the
+// players of other machines) they are drawn as other meshes.
+@(component,description="Draws the weapon and arms under the camera of a local player over the world, with their own field of view, so they never go into walls.")
+Viewmodel :: struct {
+    fov:f32 `mirai:"angle,min=0"`, // vertical
+}
+
+VIEWMODEL_DEFAULT :: Viewmodel{fov=55*mm.RAD_PER_DEG}
+
+// The place of the world where the view shows what its viewmodel draws at
+// place, the World_Transform of a part of it, as the muzzle of a weapon: what
+// is drawn there in the world (a flash, a trace) is seen on the viewmodel.
+viewmodel_world_place :: proc(view:core.View,viewmodel:Viewmodel,place:[3]f32) -> [3]f32 {
+    if view.projection!=.Perspective || viewmodel.fov<=0 || view.fov<=0 {return place}
+    across:=math.tan(view.fov*0.5)/math.tan(min(viewmodel.fov,math.PI*0.99)*0.5)
+    eye:=mm.quat_rotate(mm.quat_inverse(view.rotation),place-view.position)
+    return view.position+mm.quat_rotate(view.rotation,[3]f32{eye.x*across,eye.y*across,eye.z})
+}
+
 // The layers the mesh of an entity is in, as bits: a camera draws it when it
 // draws one of them. Without the component, the first layer.
 @(component,description="Sets which layers this mesh is in. Cameras choose which layers they draw.")
@@ -586,12 +610,12 @@ render_sync :: proc(
     suns:^core.Table(Sun,.Read),points:^core.Table(Point_Light,.Read),spots:^core.Table(Spot_Light,.Read),rects:^core.Table(Rect_Light,.Read),emissions:^core.Table(Light_Emission,.Read),skies:^core.Table(Sky,.Read),bounces:^core.Table(Bounce_Light,.Read),view_volumes:^core.Table(View_Volume,.Read),volumes:^core.Table(volume.Volume,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
     highlights:^core.Table(Highlight,.Read),outlines:^core.Table(Outline,.Read),outline_styles:core.Ref(Outline_Styles),
     offsets:^core.Table(Draw_Offset,.Read),layers:^core.Table(Layers,.Read),bodies:core.Ref(View_Bodies),preview:core.Ref(Environment_Preview),
-    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,problems:^core.Problems,
+    locals:^core.Table(core.Transform,.Read),cameras:^core.Table(Camera,.Read),posed:^Posed_Meshes,problems:^core.Problems,viewmodels:^core.Table(Viewmodel,.Read),
 ) {
     a:=app.assets
     r:=app.renderer
     if a==nil || r==nil || app.ui_only {return}
-    t:=Sync_Tables{worlds,meshes,values,lives,hidden,carried,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{}}
+    t:=Sync_Tables{worlds,meshes,values,lives,hidden,carried,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{},viewmodels}
     if bodies.ptr!=nil {t.owned=bodies.bodies}
     releases,local_assets:=host.assets_structure_changes(a,sync.assets_structure)
     for change in releases {if change.id=={} {local_assets=false}}
@@ -639,13 +663,18 @@ render_sync :: proc(
     changes_gather(sync,hierarchy,layers,c.layers,false)
     changes_gather(sync,hierarchy,highlights,c.highlights,false)
     changes_gather(sync,hierarchy,outlines,c.outlines,false)
+    changes_gather(sync,hierarchy,viewmodels,c.viewmodels,true)
     // A body of a local player taken or given back: its meshes are marked again.
+    bodies_changed:=false
     for body,i in t.owned {
         if body==sync.owned[i] {continue}
         subtree_gather(sync,hierarchy,sync.owned[i])
         subtree_gather(sync,hierarchy,body)
+        bodies_changed=true
     }
     sync.owned=t.owned
+    // What names the field of view of a body's viewmodel: the Viewmodels and, while there is one, where it hangs.
+    if whole || bodies_changed || c.viewmodels.written || len(c.viewmodels.gone)>0 || core.count(viewmodels)>0 && (c.parents.written || len(c.parents.gone)>0) {viewmodels_settle(r,t)}
     for e in sync.under {instance_changed(sync,e)}
     for e in c.values.gone {instance_changed(sync,e)}
     for e in c.lives.gone {instance_changed(sync,e)}
@@ -820,13 +849,14 @@ Sync_Tables :: struct {
     emissions:^core.Table(Light_Emission,.Read),
     posed:^Posed_Meshes,
     owned:[VIEW_SLOTS]core.Entity, // View_Bodies
+    viewmodels:^core.Table(Viewmodel,.Read),
 }
 
 // What each table was when the sync last looked, and what it changed since.
 @(private)
-Sync_Seen :: struct {meshes,worlds,values,lives,hidden,carried,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions:core.Seen}
+Sync_Seen :: struct {meshes,worlds,values,lives,hidden,carried,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions,viewmodels:core.Seen}
 @(private)
-Sync_Changes :: struct {meshes,worlds,values,lives,hidden,carried,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions:core.Changes}
+Sync_Changes :: struct {meshes,worlds,values,lives,hidden,carried,elsewhere,parents,offsets,layers,highlights,outlines,points,spots,rects,emissions,viewmodels:core.Changes}
 
 // What the tables changed since the last frame. whole: one of them is other
 // rows than the sync saw, and what it lost is not known.
@@ -839,6 +869,7 @@ sync_changes :: proc(sync:^Render_Sync,t:Sync_Tables) -> (c:Sync_Changes,whole:b
         offsets=core.changes(t.offsets,&s.offsets),layers=core.changes(t.layers,&s.layers),
         highlights=core.changes(t.highlights,&s.highlights),outlines=core.changes(t.outlines,&s.outlines),points=core.changes(t.points,&s.points),
         spots=core.changes(t.spots,&s.spots),rects=core.changes(t.rects,&s.rects),emissions=core.changes(t.emissions,&s.emissions),
+        viewmodels=core.changes(t.viewmodels,&s.viewmodels),
     }
     whole=c.meshes.all || c.worlds.all || c.values.all || c.lives.all || c.hidden.all || c.carried.all || c.elsewhere.all || c.parents.all || c.offsets.all
     whole||=c.layers.all || c.highlights.all || c.outlines.all || c.points.all || c.spots.all || c.rects.all || c.emissions.all
@@ -941,7 +972,25 @@ extras_inherit :: proc(t:Sync_Tables,extras:[]gpu.Instance_Desc) {
         e:=core.Entity(extra.object_id)
         if in_layers,has_layers:=core.get(t.layers,e);has_layers && extra.layers==0 {extra.layers=in_layers.mask}
         if extra.owner==0 {extra.owner=body_owner(t,e)}
+        extra.foreground||=in_viewmodel(t,extra.owner,e)
     }
+}
+
+// Whether e, of the body of owner (body_owner), is or hangs from a Viewmodel.
+@(private)
+in_viewmodel :: proc(t:Sync_Tables,owner:u8,e:core.Entity) -> bool {
+    return owner!=0 && t.viewmodels!=nil && core.count(t.viewmodels)>0 && core.ancestor_with(t.parents,t.viewmodels,e)!=core.NONE
+}
+
+// The field of view the renderer draws the viewmodel of each local body
+// with: that of a Viewmodel in it.
+@(private)
+viewmodels_settle :: proc(r:^gpu.Renderer,t:Sync_Tables) {
+    fovs:[gpu.OWNER_SLOTS]f32
+    for row in 0..<core.count(t.viewmodels) {
+        if slot:=body_owner(t,core.entity_at(t.viewmodels,row));slot>0 && int(slot)<=len(fovs) {fovs[slot-1]=core.at(t.viewmodels,row).fov}
+    }
+    gpu.scene_set_foreground(r,fovs)
 }
 
 // 1 + the local slot whose body e is or hangs from; 0: none.
@@ -1002,6 +1051,7 @@ instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Ren
     if !instance.hidden {instance.highlight=instance_outline(t.highlights,t.outlines,e)}
     if in_layers,has_layers:=core.get(t.layers,e);has_layers {instance.layers=in_layers.mask}
     instance.owner=body_owner(t,e)
+    instance.foreground=in_viewmodel(t,instance.owner,e)
     return instance,!material_values_plain(&values) || live!={} || instance.overlays.count>0,true
 }
 

@@ -1,6 +1,8 @@
 package render
 
 import "base:runtime"
+import "core:math"
+import "core:math/linalg"
 import "core:math/rand"
 import "core:mem"
 import "core:fmt"
@@ -443,4 +445,61 @@ extra_lights_keep_their_slots_while_they_end_and_entity_lights_change :: proc(t:
     // A frame without them: both slots off, the light of the entity on.
     sync_frame(f)
     testing.expect(t,len(s.lights)==3 && s.lights[0].color_intensity.w==0 && s.lights[1].color_intensity.w==0 && s.lights[2].color_intensity.w>0)
+}
+
+// A Viewmodel under the body of a local player marks its meshes as the
+// foreground of that player's slot, which no ray meets, and gives the
+// renderer its field of view; the body stays in the rays as a body. Without
+// the body, or without the Viewmodel, they are ordinary meshes.
+@(test)
+a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f) {return}
+    defer sync_fixture_destroy(f)
+    body,rifle,hand:=sync_cube(f,0),sync_cube(f,1),sync_cube(f,2)
+    core.add(&f.world.parents,rifle,core.Parent{entity=body})
+    core.add(&f.world.parents,hand,core.Parent{entity=rifle})
+    core.add(&f.world.viewmodels,rifle,Viewmodel{fov=1})
+    s:=&f.renderer.scene
+    flags :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.instances[instance_of(&f.sync,e)].meta.w}
+    mask :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.hw_instances[instance_of(&f.sync,e)].mask_flags & 255}
+    sync_frame(f)
+    for e in ([]core.Entity{body,rifle,hand}) {testing.expect(t,flags(f,e)&(gpu.INSTANCE_FLAG_FOREGROUND|gpu.INSTANCE_FLAG_OWNED)==0 && mask(f,e)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)==0,"without a local body nothing is marked")}
+    testing.expect_value(t,s.foreground[1],gpu.Foreground{})
+
+    bodies:=View_Bodies{bodies={1=body}}
+    sync_frame(f,bodies=&bodies)
+    testing.expect(t,flags(f,body)&gpu.INSTANCE_FLAG_FOREGROUND==0 && flags(f,body)&gpu.INSTANCE_FLAG_OWNED!=0 && mask(f,body)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)!=0,"the body is a body of the rays")
+    for e in ([]core.Entity{rifle,hand}) {
+        testing.expect(t,flags(f,e)&gpu.INSTANCE_FLAG_FOREGROUND!=0 && flags(f,e)>>gpu.INSTANCE_OWNER_SHIFT&3==1,"the viewmodel and what hangs from it are of slot 1")
+        testing.expect_value(t,mask(f,e),u32(0))
+    }
+    testing.expect_value(t,s.foreground[1],gpu.Foreground{instances=2,fov=1})
+    testing.expect_value(t,len(s.translucent),0)
+
+    core.edit(&f.world.viewmodels,rifle).fov=0.5
+    sync_frame(f,bodies=&bodies)
+    testing.expect_value(t,s.foreground[1].fov,f32(0.5))
+    core.remove(&f.world.viewmodels,rifle)
+    sync_frame(f,bodies=&bodies)
+    testing.expect_value(t,s.foreground[1],gpu.Foreground{})
+    testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && mask(f,rifle)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)!=0,"without its Viewmodel it is of the body")
+}
+
+// The place of the world a viewmodel's point shows at: on the axis of the
+// view it is the point itself, and off it the world place lies on the ray of
+// the world's field of view through the same pixel, at the same depth.
+@(test)
+the_world_place_of_a_viewmodel_point_is_on_the_ray_of_its_pixel :: proc(t:^testing.T) {
+    view:=core.VIEW_DEFAULT
+    view.position,view.rotation,view.fov={1,2,3},mm.quat_axis_angle({0,1,0},0.5),100*mm.RAD_PER_DEG
+    viewmodel:=Viewmodel{fov=60*mm.RAD_PER_DEG}
+    ahead:=view.position+mm.quat_rotate(view.rotation,[3]f32{0,0,-0.5})
+    testing.expect(t,linalg.length(viewmodel_world_place(view,viewmodel,ahead)-ahead)<1e-5)
+    // A muzzle 0.1 right and 0.05 down at 0.5 ahead.
+    eye:=[3]f32{0.1,-0.05,-0.5}
+    world:=mm.quat_rotate(mm.quat_inverse(view.rotation),viewmodel_world_place(view,viewmodel,view.position+mm.quat_rotate(view.rotation,eye))-view.position)
+    pixel :: proc(p:[3]f32,fov:f32) -> [2]f32 {return {p.x,p.y}/(-p.z*math.tan(fov*0.5))}
+    testing.expect(t,linalg.length(pixel(world,view.fov)-pixel(eye,viewmodel.fov))<1e-5,"the same pixel")
+    testing.expect(t,abs(world.z-eye.z)<1e-6,"the same depth")
 }

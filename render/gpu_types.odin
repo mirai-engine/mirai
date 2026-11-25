@@ -99,6 +99,8 @@ FRAME_FLAG_REFLECTANCE  :: abi.FRAME_FLAG_REFLECTANCE
 FRAME_FLAG_NEUTRAL      :: abi.FRAME_FLAG_NEUTRAL
 FRAME_FLAG_SWAY         :: abi.FRAME_FLAG_SWAY
 FRAME_FLAG_NESTED       :: abi.FRAME_FLAG_NESTED
+FRAME_FLAG_VIEWMODEL    :: abi.FRAME_FLAG_VIEWMODEL
+FRAME_FLAG_FOREGROUND   :: abi.FRAME_FLAG_FOREGROUND
 
 // A whole vertex, which thumbnails and previews upload for themselves; the
 // scene keeps its vertices in clusters (Gpu_Cluster).
@@ -207,6 +209,8 @@ INSTANCE_FLAG_TRANSLUCENT :: abi.INSTANCE_FLAG_TRANSLUCENT
 // Bit 13: the instance is of the body of a local player, whose slot is in bits 14-15: a
 // view of that slot (Gpu_Frame.own) fades it out and leaves out the layers it does not draw of it.
 INSTANCE_FLAG_OWNED :: abi.INSTANCE_FLAG_OWNED
+INSTANCE_FLAG_FOREGROUND :: abi.INSTANCE_FLAG_FOREGROUND
+OWNER_SLOTS :: 4 // the local slots the owner of an instance names, in its two bits
 INSTANCE_OWNER_SHIFT :: abi.INSTANCE_OWNER_SHIFT
 // Bits 16-31: the layers the instance is in. A view draws those that share one with its own.
 INSTANCE_LAYERS_SHIFT :: abi.INSTANCE_LAYERS_SHIFT
@@ -226,7 +230,9 @@ RAY_SOLID :: abi.RAY_SOLID
 RAY_GLASS :: abi.RAY_GLASS
 RAY_SMALL :: abi.RAY_SMALL // the solid instances of INSTANCE_FLAG_SMALL
 RAY_SHADOW_ONLY :: abi.RAY_SHADOW_ONLY // the instances of a batch that casts shadows and that other rays do not see
-RAY_UNSHADOWED :: abi.RAY_UNSHADOWED // what rays see and casts no shadow: the instances of a batch without Casts_Shadow, and those of INSTANCE_UNSHADOWED
+RAY_UNSHADOWED :: abi.RAY_UNSHADOWED
+RAY_BODY :: abi.RAY_BODY
+RAY_BODY_SMALL :: abi.RAY_BODY_SMALL // what rays see and casts no shadow: the instances of a batch without Casts_Shadow, and those of INSTANCE_UNSHADOWED
 // Set in the reference of a RAY_GLASS instance in the software TLAS.
 TLAS_REF_GLASS :: abi.TLAS_REF_GLASS
 

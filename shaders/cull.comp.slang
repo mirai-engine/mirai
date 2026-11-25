@@ -54,6 +54,13 @@ void cull_start(uint i) {
     for (uint word = i; word < CULL_DEPTH_WORDS; word += threads) depth_buckets[word] = 0u;
 }
 
+// Whether the pass draws an instance by its flags: what is not of a
+// viewmodel, or in the pass of the viewmodel of the view's body, that alone.
+bool pass_draws(uint flags) {
+    if ((frame.flags & FRAME_FLAG_FOREGROUND) == 0u) return (flags & INSTANCE_FLAG_FOREGROUND) == 0u;
+    return (flags & INSTANCE_FLAG_FOREGROUND) != 0u && ((flags >> INSTANCE_OWNER_SHIFT) & 3u) + 1u == (frame.own & 0xffu);
+}
+
 // What the view draws of what has that box: in its layers, not of the body it
 // leaves out nor faded out whole by its values or, of a batch, by its
 // distance and size (batch_faded of its row), in its frustum and not all
@@ -63,7 +70,7 @@ bool view_draws_box(Instance inst, bool batched, Instance row, float3 low, float
     float3 clipped = lerp(low, high, step(float3(0.0), frame.clip_plane.xyz));
     bool own = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
     bool gone = batched && batch_faded(row, low, high) >= 1.0;
-    return (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
+    return (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && pass_draws(inst.meta.w) && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
         && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(low, high);
 }
 
