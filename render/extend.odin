@@ -15,8 +15,8 @@ Frame_Stage :: enum u8 {
 	Geometry, // once a frame, before its views: the vertices an extension deforms
 	Simulate, // once a frame, with the first view of the window after its G-buffer: what moves on the GPU against the depth of that view, the traced scene, its lights and probes
 	Gbuffer,  // each view, after Simulate: surfaces an extension draws into the G-buffer, lit like the scene (pass_gbuffer_begin)
+	Decal,    // each view, after its depth pyramid and the decals of the scene, before its resolve: what an extension changes of its surfaces before they are lit, into its decal targets (pass_decal_begin)
 	Mask,     // each view, after its G-buffer: the pixels of the nested views an extension adds to it
-	Surface,  // each view, after the G-buffers of its nested views: what changes its surfaces before they are lit
 	Lit,      // each view, after composite and before what is blended: dispatches over the lit image of the opaque scene (pass_image_bind), on each side of glass
 	Blend,    // each view, where blended surfaces go: over the lit image before the temporal resolve, on each side of glass (pass_blend_begin)
 	Post,     // each view, as Output begins, after the exposure and before the PostProcess stack: dispatches over the resolved image, each writing the next one (pass_image_write)
@@ -110,7 +110,7 @@ Nested_View :: struct {
 }
 
 // Asks the next frame to call `record` at a stage: every view for Gbuffer,
-// Mask, Surface, Lit, Blend and Post, every effect view for Effect, once for
+// Decal, Mask, Lit, Blend and Post, every effect view for Effect, once for
 // Geometry and Simulate. Passes run in
 // the order they were asked for; asking again for one the frame has is
 // asking once. False without room for another one. A Custom pass goes in a
@@ -273,13 +273,12 @@ pass_image_write :: proc(s: ^Stage_Pass, read, write: u32) -> bool {
 
 // A pipeline of an extension for the passes of a stage, from the stages
 // <shader>.vert and <shader>.frag of the shaders in use, or <shader>.comp for
-// Geometry, Simulate, Lit, Post, Custom and Inspect, and for Surface with compute:
-// a dispatch outside pass_surface_begin that reads the surfaces
-// (pass_surface_read). Without a <shader>.vert its vertices are those of one
-// triangle over the view, drawn with three vertices. One of Mask draws in
-// pass_mask_begin; one of Surface blends into the targets it names, in their
-// order, in a pass_surface_begin with them; one of Blend into the lit image
-// with blend and into the coverage TAA reads, adding, in pass_blend_begin.
+// Geometry, Simulate, Lit, Post, Custom and Inspect. Without a <shader>.vert
+// its vertices are those of one triangle over the view, drawn with three
+// vertices. One of Mask draws in pass_mask_begin; one of Decal blends into the
+// decal targets it names (pass_decal_targets), in their order, in
+// pass_decal_begin; one of Blend into the lit image with blend and into the
+// coverage TAA reads, adding, in pass_blend_begin.
 // Gbuffer takes pass_gbuffer_pipeline instead. A compute stage that traces
 // rays declares the variant hw (//! variant), and its pipeline is that of the
 // rays the renderer traces, as for the stages of the engine.
@@ -289,9 +288,8 @@ pass_image_write :: proc(s: ^Stage_Pass, read, write: u32) -> bool {
 Stage_Pipeline_Desc :: struct {
 	stage:   Frame_Stage,
 	shader:  string,
-	targets: Surface_Targets,
+	targets: Decal_Targets, // Decal: those of the view it draws into
 	blend:   rhi.Blend_Mode,
-	compute: bool, // Surface: <shader>.comp
 	name:    string,
 	fragment:string, // of a graphics stage: <fragment>.frag instead of <shader>.frag
 	program: u32, // of a graphics stage: the Surface program of the materials its draws show
@@ -340,7 +338,7 @@ stage_pipeline_entry :: proc(r: ^Renderer, key: u64) -> (entry: ^Stage_Pipeline,
 // (pipeline_thread.odin): the materials of the program are drawn as their rows.
 stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline {
 	if desc.stage == .Gbuffer {set_error(r, "the pipeline of the Gbuffer stage %s depends on the view: ask pass_gbuffer_pipeline in the pass", desc.shader); return 0}
-	compute := desc.stage != .Mask && desc.stage != .Blend && desc.stage != .Effect && (desc.stage != .Surface || desc.compute)
+	compute := desc.stage != .Mask && desc.stage != .Blend && desc.stage != .Effect && desc.stage != .Decal
 	hardware := compute && r.hardware_rt
 	program := desc.program if !compute && desc.program != GPU_NONE else 0
 	plain: rhi.Pipeline
@@ -377,10 +375,7 @@ stage_pipeline :: proc(r: ^Renderer, desc: Stage_Pipeline_Desc) -> rhi.Pipeline 
 			made.color_formats, made.color_count, made.blend = {0 = .RGBA16_Float, 1 = .R8_Unorm}, 2, {0 = desc.blend, 1 = .Additive}
 			made.depth_format, made.depth_test, made.depth_compare = .D32_Float, true, .Greater
 		} else {
-			formats := [Surface_Target]rhi.Format{
-				.Albedo = .RGBA8_Srgb, .Normal = .RGBA16_Float, .Emission = .RGBA16_Float,
-				.Reflectance = .RGBA8_Srgb,
-			}
+			formats := DECAL_FORMATS
 			for format, target in formats {
 				if target not_in desc.targets {continue}
 				made.color_formats[made.color_count], made.blend[made.color_count] = format, desc.blend
@@ -477,17 +472,26 @@ pass_mask_begin :: proc(s: ^Stage_Pass, name := "nested view mask") -> bool {
 	return true
 }
 
-// The targets of the G-buffer that say what a surface is: base color with
-// metallic in alpha, normal with roughness, emission with occlusion.
-Surface_Target :: enum u8 {Albedo, Normal, Emission, Reflectance}
-Surface_Targets :: bit_set[Surface_Target;u8]
+// The decal targets of a view (decals.odin): what the decals give the
+// surface of each pixel, premultiplied, their coverage in alpha. Color: the
+// base color; Normal: the difference of the shading normal of a decal from
+// the normal of the surface under it; Surface: roughness, metallic and
+// occlusion; Emission: in render units, while a decal of the frame emits.
+Decal_Target :: enum u8 {Color, Normal, Surface, Emission}
+Decal_Targets :: bit_set[Decal_Target;u8]
 
-pass_surface_targets :: proc(s: ^Stage_Pass) -> Surface_Targets {
-	if s.stage != .Surface {return {}}
-	targets := Surface_Targets{.Albedo, .Normal, .Emission}
-	if s.pass.frame.flags & FRAME_FLAG_REFLECTANCE != 0 {targets += {.Reflectance}}
+// The decal targets the view has, in the Decal stage: the emission target
+// while the scene has a decal that emits or an extension asked for it
+// (frame_decal_emission).
+pass_decal_targets :: proc(s: ^Stage_Pass) -> Decal_Targets {
+	if s.stage != .Decal {return {}}
+	_, targets := decal_textures(s.pass)
 	return targets
 }
+
+// Tells the next frame that its Decal stage draws decals that emit: every
+// view has the emission target. Ask in each frame that draws them.
+frame_decal_emission :: proc(r: ^Renderer) {r.decal_emission_asked = true}
 
 // What a pass over the surfaces of a view, or one of its Simulate, Blend,
 // Post or Inspect stages, may read of it: its linear depth, its motion, the surfaces
@@ -501,8 +505,10 @@ pass_surface_targets :: proc(s: ^Stage_Pass) -> Surface_Targets {
 // reads what the Output stage does (stage_contract): Linear_Depth, Motion,
 // Albedo, Normal and Emission, at the size of the targets of the view. Where
 // the linear depth is empty, Albedo, Normal and Emission hold nothing defined.
-// Shadow_Atlas: the depth of the maps of the view.
-Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Instance, Glass_Depth, Direct, Shadow_Atlas}
+// Shadow_Atlas: the depth of the maps of the view. Depth: the depth buffer of
+// the view (reversed: 1 nearest, 0 where nothing is), which the Decal stage
+// reads before the G-buffer is resolved.
+Surface_Source :: enum u8 {Linear_Depth, Motion, Albedo, Normal, Emission, Instance, Glass_Depth, Direct, Shadow_Atlas, Depth}
 
 // Begins the pass in which an extension draws surfaces into the G-buffer of
 // the view, in the Gbuffer stage, with the depth buffer of the view: the
@@ -632,17 +638,14 @@ pass_blend_begin :: proc(s: ^Stage_Pass, name := "blended") {
 	p.blended = true
 }
 
-// Begins a pass over the surfaces of the G-buffer of the view, which its
-// fragments blend into: the targets asked for, in the order of Surface_Target.
-// The others, the linear depth and the motion target are not attached, so a
-// shader of the pass may read them (pass_surface_read). Ends with pass_end.
-pass_surface_begin :: proc(s: ^Stage_Pass, targets: Surface_Targets, name := "surfaces") {
+// Begins a pass over the decal targets of the view in the Decal stage, which
+// its fragments blend into: all it has (pass_decal_targets), in the order of
+// Decal_Target. The depth buffer is not attached, so a shader of the pass may
+// read it (pass_surface_read .Depth): the G-buffer is not resolved yet. Ends
+// with pass_end.
+pass_decal_begin :: proc(s: ^Stage_Pass, name := "decals") {
 	p := s.pass
-	t := p.t
-	textures := [Surface_Target]rhi.Texture{
-		.Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission,
-		.Reflectance = t.surface,
-	}
+	textures, targets := decal_textures(p)
 	rhi.cmd_timestamp(p.cmd, name)
 	pass := rhi.Render_Pass_Desc{name = name}
 	for texture, target in textures {
@@ -653,8 +656,8 @@ pass_surface_begin :: proc(s: ^Stage_Pass, targets: Surface_Targets, name := "su
 	rhi.cmd_begin_render_pass(p.cmd, &pass)
 }
 
-// Binds what a pass of pass_surface_begin, a dispatch of the Surface stage
-// or a pass of the Inspect stage reads of its view at SLOT_PASS0 + slot.
+// Binds what a pass of a stage or a pass of the Inspect stage reads of its
+// view at SLOT_PASS0 + slot.
 // Without instance ids, Instance reads 0 everywhere.
 pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 	t := s.pass.t
@@ -662,7 +665,7 @@ pass_surface_read :: proc(s: ^Stage_Pass, slot: u32, source: Surface_Source) {
 	glass := t.glass[0].depth if s.glass != .All && t.glass[0].depth != 0 else s.pass.r.dummy_texture
 	maps, dummy := s.pass.frame.sun_maps, s.pass.r.dummy_texture
 	shadows := t.shadow_raster.atlas if maps.z != 0 else dummy
-	textures := [Surface_Source]rhi.Texture{.Linear_Depth = t.linear_depth, .Motion = t.motion, .Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission, .Instance = instance, .Glass_Depth = glass, .Direct = t.direct, .Shadow_Atlas = shadows}
+	textures := [Surface_Source]rhi.Texture{.Linear_Depth = t.linear_depth, .Motion = t.motion, .Albedo = t.albedo, .Normal = t.normal, .Emission = t.emission, .Instance = instance, .Glass_Depth = glass, .Direct = t.direct, .Shadow_Atlas = shadows, .Depth = t.depth}
 	if slot <= SLOT_PASS9 - SLOT_PASS0 {rhi.cmd_bind_texture(s.pass.cmd, SLOT_PASS0 + slot, textures[source])}
 }
 

@@ -4923,6 +4923,7 @@ scene_benchmark_moves_one_instance_of_many :: proc(t: ^testing.T) {
 @(private = "file")
 Stages_Seen :: struct {
 	runs:          [Frame_Stage]int,
+	decal_targets: Decal_Targets,
 	width, height: u32,
 	eye:           Vec4,
 	vertices:      bool,
@@ -4973,8 +4974,9 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 				pass_scissor(s, {})
 				pass_end(s)
 			}
-		case .Surface:
-			pass_surface_begin(s, {.Albedo, .Emission}, "test surfaces")
+		case .Decal:
+			seen.decal_targets = pass_decal_targets(s)
+			pass_decal_begin(s, "test decals")
 			pass_end(s)
 		case .Lit:
 			seen.lit_image = pass_image_bind(s, 0)
@@ -5029,7 +5031,7 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 		}
 	}
 	seen: Stages_Seen
-	for stage in ([]Frame_Stage{.Geometry, .Simulate, .Gbuffer, .Mask, .Surface, .Lit, .Blend, .Post, .Effect}) {testing.expect(t, frame_pass(r, stage, record, &seen))}
+	for stage in ([]Frame_Stage{.Geometry, .Simulate, .Gbuffer, .Decal, .Mask, .Lit, .Blend, .Post, .Effect}) {testing.expect(t, frame_pass(r, stage, record, &seen))}
 	testing.expect(t, !frame_pass(r, .Mask, nil))
 	testing.expect(t, !frame_pass(r, .Custom, record, &seen), "a Custom pass goes in a render pipeline")
 	testing.expect(t, !frame_pass(r, .Inspect, record, &seen), "an Inspect pass goes in the inspection of a view")
@@ -5043,8 +5045,9 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 		testing.expect(t, renderer_frame(r, {camera = camera}), r.error)
 	}
 	rhi.device_wait_idle(f.device)
-	testing.expect_value(t, seen.runs, [Frame_Stage]int{.Geometry = 1, .Simulate = 2, .Gbuffer = 1, .Mask = 1, .Surface = 1, .Lit = 3, .Blend = 1, .Post = 1, .Effect = 1, .Custom = 0, .Inspect = 0})
+	testing.expect_value(t, seen.runs, [Frame_Stage]int{.Geometry = 1, .Simulate = 2, .Gbuffer = 1, .Decal = 1, .Mask = 1, .Lit = 3, .Blend = 1, .Post = 1, .Effect = 1, .Custom = 0, .Inspect = 0})
 	testing.expect(t, seen.post && seen.mips)
+	testing.expect_value(t, seen.decal_targets, Decal_Targets{.Color, .Normal, .Surface})
 	testing.expect_value(t, seen.post_size, [2]u32{r.main.targets.output_width, r.main.targets.output_height})
 	testing.expect_value(t, seen.effect, effect)
 	testing.expect_value(t, seen.effect_size, [2]u32{8, 4})
@@ -5081,7 +5084,7 @@ render_stages_run_once_a_frame_and_for_its_view :: proc(t: ^testing.T) {
 	testing.expect_value(t, seen.runs[.Lit], 3)
 	for entry in r.main.extension_textures {testing.expect_value(t, entry.key, u64(0))}
 	for _ in 0 ..< 2 {
-		testing.expect_value(t, stage_pipeline(r, {stage = .Surface, shader = "absent", targets = {.Albedo}, name = "absent"}), rhi.Pipeline(0))
+		testing.expect_value(t, stage_pipeline(r, {stage = .Decal, shader = "absent", targets = {.Color}, name = "absent"}), rhi.Pipeline(0))
 		testing.expect_value(t, stage_pipeline(r, {stage = .Geometry, shader = "absent", name = "absent"}), rhi.Pipeline(0))
 	}
 	asked := 0

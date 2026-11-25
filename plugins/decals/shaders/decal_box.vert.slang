@@ -1,6 +1,6 @@
 #include "native.slang"
 // The box of each decal: the pixels it covers are those its fragments look at.
-#include "decal.slang"
+#include "decal_box.slang"
 
 struct Stage_Output {
     float4 position : SV_Position;

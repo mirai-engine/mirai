@@ -48,7 +48,7 @@ bool hit_covers(uint instance_index, uint primitive, float2 bary, float t, float
     Instance inst = scene_instance(instance_index);
     Mesh mesh = meshes[instance_mesh(inst)];
     Material m = material_row(material_of(instance_row(instance_index), inst, mesh_primitive_material(mesh, primitive)), inst.material_values);
-    if (material_blended(m)) return false;
+    if (material_apart(m)) return false;
     float fade = material_values_fade(inst.material_values);
     if (fade > 0.0 && ray_fade_left(instance_index, direction, fade)) return false;
     if (m.alpha_mode != ALPHA_OPAQUE) {

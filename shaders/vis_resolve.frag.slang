@@ -21,11 +21,13 @@
 // plain: without the reflectance target; layers: with the reflectance and the
 // layers targets (as gbuffer.frag). nested: the pixels of a nested view.
 // quiet: in a frame off the feedback turn of the program, nothing it samples
-// is recorded (textures_feedback_turn).
+// is recorded (textures_feedback_turn). decals: the view drew decals, which
+// change the surface before it is packed (decal_buffer.slang).
 //! variant plain MIRAI_GBUFFER_PLAIN=1
 //! variant layers MIRAI_GBUFFER_LAYERS=1
 //! constant nested MIRAI_NESTED_PIXELS
 //! constant quiet MIRAI_TEXTURE_FEEDBACK_QUIET
+//! constant decals MIRAI_DECALS
 #ifndef MIRAI_GBUFFER_LAYERS
 // Without the layers target no instance with layers is in sight.
 #define MIRAI_MATERIAL_NO_LAYERS true
@@ -35,6 +37,7 @@
 #define MIRAI_BATCHES
 #include "gbuffer_output.slang"
 #include "visibility.slang"
+#include "decal_buffer.slang"
 
 // The visible clusters (cull_bins.comp).
 [[vk::binding(SLOT_PASS0, 0)]] StructuredBuffer<Visible_Cluster> visible : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);
@@ -202,7 +205,7 @@ uint quad_first(uint value) {
     return l0 != 0u ? l0 : l1 != 0u ? l1 : l2 != 0u ? l2 : l3;
 }
 
-Stage_Output resolve_shade(Resolve_Triangle t, Resolve_Point s, bool2 steady) {
+Stage_Output resolve_shade(Resolve_Triangle t, Resolve_Point s, bool2 steady, int2 pixel) {
     material_uv_gradients[0] = s.uv_gradients;
     material_uv_gradients[1] = s.uv1_gradients;
     material_world_gradients[0] = s.world_dx;
@@ -221,6 +224,10 @@ Stage_Output resolve_shade(Resolve_Triangle t, Resolve_Point s, bool2 steady) {
     float3 n;
     Mirai_Surface_Context ctx = fragment_context(s.input, t.inst, t.m, to_camera, n);
     Fragment f = fragment_evaluate(s.input, t.m, to_camera, ctx, n);
+    if (MIRAI_DECALS) {
+        float3 smooth = normalize(s.input.in_normal);
+        decal_apply(f, pixel, fragment_turned(s.input, to_camera) ? -smooth : smooth);
+    }
     Stage_Output output = gbuffer_output(s.input, f);
     if (MIRAI_NESTED_PIXELS) output = gbuffer_output_nested(output);
     return output;
@@ -276,7 +283,7 @@ Stage_Output main(float4 pixel : SV_Position) {
             }
             steady = bool2(true, true);
         }
-        Stage_Output shaded = resolve_shade(t, s, steady);
+        Stage_Output shaded = resolve_shade(t, s, steady, int2(pixel.xy));
         if (!again) return shaded;
         if (pending == leader) {
             output = shaded;

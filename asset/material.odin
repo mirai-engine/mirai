@@ -499,6 +499,7 @@ material_problem :: proc(view:Material_View) -> string {
     if problem=="" && m.alpha_mode>max(Alpha_Mode) {problem=fmt.tprintf("alpha_mode is %d; it takes 0 to %d",m.alpha_mode,max(Alpha_Mode))}
     if problem=="" && m.emission_mode>max(Emission_Mode) {problem=fmt.tprintf("emission_mode is %d; it takes 0 to %d",m.emission_mode,max(Emission_Mode))}
     if problem=="" && transmute(u8)m.decal.writes&~transmute(u8)DECAL_WRITES_ALL!=0 {problem=fmt.tprintf("decal.writes is %d; it takes the bits of %v",transmute(u8)m.decal.writes,DECAL_WRITES_ALL)}
+    if problem=="" && (m.decal.order<i32(min(i16)) || m.decal.order>i32(max(i16))) {problem=fmt.tprintf("decal.order is %d; it takes %d to %d",m.decal.order,min(i16),max(i16))}
     if problem=="" && m.alpha_mode==.Decal && m.decal.writes=={} {problem="a decal writes nothing: give decal.writes its color, normal, surface or emission"}
     if problem=="" && !text_valid(m.program[:]) {problem=fmt.tprintf("program is longer than %d bytes",MATERIAL_NAME_BYTES-1)}
     coat,fuzz:=&m.coat,&m.fuzz

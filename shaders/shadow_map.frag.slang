@@ -17,7 +17,7 @@
 [shader("fragment")]
 void main(float4 position : SV_Position, [[vk::location(0)]] float2 uv : UV0, [[vk::location(1)]] nointerpolation uint2 material : MATERIAL) {
     Material m = material_row(material.x, material.y);
-    if (material_blended(m) || fade_threshold(uint2(position.xy)) < material_values_fade(material.y)) discard;
+    if (material_apart(m) || fade_threshold(uint2(position.xy)) < material_values_fade(material.y)) discard;
     if (m.alpha_mode == ALPHA_MASK && !material_covers(m, material_mask(m, uv, uv, float2(0.0), false))) discard;
 }
 #elif defined(MIRAI_SHADOW_COPY)

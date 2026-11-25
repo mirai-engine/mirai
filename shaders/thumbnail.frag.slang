@@ -101,7 +101,7 @@ float4 main(Stage_Input input, bool front_facing : SV_IsFrontFace) : SV_Target0 
     raster.in_surface = 0u;
     raster = raster_facing(raster, front_facing);
     Fragment surface = fragment_evaluate(raster);
-    if (!material_covers(surface.material, surface.values.alpha) && !material_blended(surface.material)) discard;
+    if (!material_covers(surface.material, surface.values.alpha) && !material_apart(surface.material)) discard;
     float alpha = preview_alpha(surface.material, surface.values);
     if (alpha < 0.05) discard;
 #ifdef MIRAI_THUMBNAIL_IMPOSTOR

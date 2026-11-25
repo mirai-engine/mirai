@@ -91,7 +91,7 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	again := Scale_Pass{pipeline = pipeline, source = .Display, target = .Custom2, scale = 2}
 	back_again := Scale_Pass{pipeline = pipeline, source = .Custom2, target = .Display, scale = 2}
 	passes := []Render_Pass_Desc{
-		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .Composite},
+		{stage = .Geometry}, {stage = .Nested}, {stage = .Direct}, {stage = .Composite},
 		{stage = .Custom, name = "double", uses = []Render_Use{{.Display, .Read, false}, {.Custom0, .Write, false}}, record = scale_record, user = &double},
 		{stage = .Custom, name = "count", uses = []Render_Use{{.Custom1, .Read, true}, {.Custom1, .Write, false}}, record = scale_record, user = &count},
 		{stage = .Custom, name = "back", uses = []Render_Use{{.Custom0, .Read, false}, {.Custom1, .Read, false}, {.Display, .Write, false}}, record = scale_record, user = &back},
@@ -109,7 +109,7 @@ pipeline_passes_run_between_stages_over_the_resources_they_declare :: proc(t: ^t
 	// Output stage finishes that image.
 	upscale := Scale_Pass{pipeline = pipeline, source = .Display, target = .Taa, scale = 2}
 	upscaled := Render_Pipeline_Desc{passes = []Render_Pass_Desc{
-		{stage = .Geometry}, {stage = .Nested}, {stage = .Surface}, {stage = .Direct}, {stage = .Composite}, {stage = .Transparency},
+		{stage = .Geometry}, {stage = .Nested}, {stage = .Direct}, {stage = .Composite}, {stage = .Transparency},
 		{stage = .Custom, name = "upscale", uses = []Render_Use{{.Display, .Read, false}, {.Taa, .Write, false}}, record = scale_record, user = &upscale},
 		{stage = .Output},
 	}, jitter = .None}

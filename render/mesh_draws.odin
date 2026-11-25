@@ -3,7 +3,7 @@ package mirai_render
 import "mirai:rhi"
 
 // The meshes a frame draws whole, out of the raster of a view: those of the
-// instances drawn by themselves (glass and its filter, translucents,
+// instances drawn by themselves (glass and its filter, translucents, decals,
 // overlays, the highlight) and those extensions ask for (frame_mesh_whole:
 // the meshes of particles). Each takes CLUSTER_DRAW_VERTICES indices a
 // cluster in Scene_State.mesh_draws, the three vertices of each triangle of
@@ -29,6 +29,7 @@ mesh_draws_plan :: proc(r: ^Renderer) {
 		if int(mesh) < len(s.meshes) {s.meshes[mesh].draw_asked = asked}
 	}
 	for entry in s.translucent {if int(entry.instance) < len(s.instances) {ask(s, int(entry.instance), asked)}}
+	decals_meshes_ask(s, asked)
 	for inst, index in s.instances {
 		if highlight_drawn(inst.meta.w) || index < len(s.overlays) && s.overlays[index].count > 0 {ask(s, index, asked)}
 	}

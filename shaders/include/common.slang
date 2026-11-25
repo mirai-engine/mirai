@@ -271,6 +271,11 @@ struct Material {
 // Whether a material is drawn over the lit scene by the passes of the blends
 // (asset.alpha_blended): out of the G-buffer, the maps of the shadows and rays.
 bool material_blended(Material m) { return m.alpha_mode == ALPHA_BLEND || m.alpha_mode == ALPHA_ADDITIVE; }
+// Whether a material changes the surface under it before it is lit (decal.frag).
+bool material_decal(Material m) { return m.alpha_mode == ALPHA_DECAL; }
+// Whether a material is drawn apart from the opaque scene, blended or as a
+// decal: out of the G-buffer, the maps of the shadows and rays.
+bool material_apart(Material m) { return material_blended(m) || material_decal(m); }
 // A row of the material table. Shading code holds its Material by value; where
 // a map is placed and what a program reads are fetched from the row at the
 // point that uses them, so a surface without maps or program reads neither.
@@ -280,7 +285,9 @@ struct Material_Fuzz { float3 color; float weight; float roughness; };
 struct Material_Anisotropy { float amount; float2 rotation; }; // rotation: cosine and sine
 struct Material_Diffuse_Transmission { float3 color; float weight; };
 struct Material_Subsurface { float3 color; float weight; float radius; }; // color: the share of radius (metres) each channel spreads over
-struct Material_Volume { float3 scatter; uint program; }; // what a solid scatters of what it stops; MATERIAL_PROGRAM_* bits of what its program does
+// What a solid scatters of what it stops; MATERIAL_PROGRAM_* bits of what its
+// program does and, from MATERIAL_DECAL_SHIFT, DECAL_WRITE_* of what a decal writes.
+struct Material_Volume { float3 scatter; uint flags; };
 struct Material_Blocks {
     Material_Coat coat;
     Material_Fuzz fuzz;

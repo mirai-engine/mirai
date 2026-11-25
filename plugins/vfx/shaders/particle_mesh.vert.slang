@@ -19,7 +19,7 @@ Gbuffer_Vertex main(uint vertex_id : SV_VulkanVertexID, uint instance_id : SV_Vu
     uint material = particle_emitters[params.emitter].mesh.w;
     if (material == 0u) material = cluster_material(mesh, c) & 0xffffffu;
     Material row = material_row(material);
-    if (material_blended(row) || (params.program != INVALID && row.program_id != params.program)) {
+    if (material_apart(row) || (params.program != INVALID && row.program_id != params.program)) {
         output.position = float4(2.0, 2.0, 2.0, 1.0);
         return output;
     }

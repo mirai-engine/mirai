@@ -1,6 +1,6 @@
 // What the stages of the decals share.
-#ifndef DECAL_SLANG
-#define DECAL_SLANG
+#ifndef DECAL_BOX_SLANG
+#define DECAL_BOX_SLANG
 #include "scene.slang"
 
 // decals.Gpu_Decal.
@@ -8,15 +8,15 @@ struct Decal {
     float4 to_box[3];   // rows: the world to the box of the decal, whose sides are 1
     float4 to_world[3]; // rows: that box to the world
     float4 color;       // rgb multiplies the image, a is the opacity
-    float4 emission;    // rgb: emission; a: the facing below which it fades (0: it never does)
+    float4 emission;    // rgb: emission, nits; a: the facing below which it fades (0: it never does)
     uint texture;       // of the texture table; INVALID: the plain color
     uint normal_map;
     float density;      // texels of the image in a metre of the box
     float normal_density;
     float roughness;
     float metallic;
-    uint2 pad;
-    int4 rect;
+    uint writes;        // DECAL_WRITE_*
+    uint pad;
 };
 [[vk::binding(SLOT_PASS0, 0)]]
 StructuredBuffer<Decal> decals : register(MIRAI_REGISTER(t, SLOT_PASS0), space0);

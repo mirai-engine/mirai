@@ -82,6 +82,8 @@ Pass :: struct {
 	reflectance:    bool, // the G-buffer keeps what each pixel reflects
 	layered:        bool, // and the layers of its material (gbuffer.slang)
 	subsurface:     bool, // an instance with a subsurface is in sight and the view shows the image lit: the subsurface passes run (subsurface.odin)
+	decals:         bool, // the scene has decals or an extension asks for the Decal stage: the view draws them and its resolve applies them (decals.odin)
+	decal_emission: bool, // and one of them emits: the view has the emission target
 	scattered:      bool, // the direct light of the view left the light of its subsurfaces in t.subsurface[0]
 	instance_count: u32,
 	batch_slots:    u32, // instance slots of the batches drawn, after the instances
@@ -282,8 +284,14 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.visible_moved)
+		// The decals of the view, which a nested view does not show.
+		decals := p.decals && !nested
+		textures, _ := decal_textures(p)
+		for texture, target in textures {
+			rhi.cmd_bind_texture(cmd, SLOT_PASS5 + u32(target), texture if decals && texture != 0 else r.dummy_texture)
+		}
 		textures_feedback_bind(r, cmd)
-		resolve_programs_draw(r, cmd, id)
+		resolve_programs_draw(r, cmd, id, decals)
 	}
 	rhi.cmd_end_render_pass(cmd)
 }
@@ -309,12 +317,14 @@ rest_pass :: proc(p: ^Pass) {
 // `target` while the shaders in use have none. The draw of a program has an
 // instance only when the cull of the view saw a cluster of it (cull_bins.comp).
 // Off its feedback turn a program takes the pipeline without the recording,
-// once it is made (textures_feedback_turn).
+// once it is made (textures_feedback_turn). decals: it applies what the
+// decals of the view left (decal_buffer.slang), once its pipelines are made.
 @(private)
-resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, id: Pipeline_Id) {
+resolve_programs_draw :: proc(r: ^Renderer, cmd: ^rhi.Command_List, id: Pipeline_Id, decals: bool) {
 	s := &r.scene
-	target := &r.pipelines[id]
-	quiet := pipeline_of(r, id, {VIS_RESOLVE_FRAG_QUIET}, optional = {VIS_RESOLVE_FRAG_QUIET})
+	applied := rhi.Shader_Constants{VIS_RESOLVE_FRAG_DECALS} if decals else {}
+	target := pipeline_of(r, id, applied, optional = applied)
+	quiet := pipeline_of(r, id, applied + {VIS_RESOLVE_FRAG_QUIET}, optional = applied + {VIS_RESOLVE_FRAG_QUIET})
 	pipeline :: proc(r: ^Renderer, target, quiet: ^rhi.Pipeline, program: u32) -> rhi.Pipeline {
 		return program_spared(r, target, target if textures_feedback_turn(r, program) else quiet, program)
 	}
@@ -482,7 +492,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     base.profile_end(zone)
     // What the extensions asked of this frame lasts for it alone.
     defer {
-        r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={};r.eye_taken={}
+        r.pass_count=0;r.main_pipeline=0;r.gbuffer_asked={};r.decal_emission_asked=false;r.eye_taken={}
         r.antialiasing_offered=r.antialiasing
         r.antialiasing_offered_count=r.antialiasing_count
         r.antialiasing_count=0
@@ -609,7 +619,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     recorded_ok=recorded_ok && upload_scene(r,cmd)
     base.profile_end(zone)
     zone=render_zone_begin(r,"mesh draws")
-    recorded_ok=recorded_ok && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
+    recorded_ok=recorded_ok && decals_order(r,cmd) && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
     if recorded_ok {pages_record_begin(r,cmd)}
     recorded_ok=recorded_ok && textures_feedback_begin(r,cmd,frame)
     base.profile_end(zone)
@@ -814,7 +824,6 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         case .Custom:      if !output || generate {custom_pass_record(&p,pass)}
         case .Geometry:    ok=pass_gbuffer(&p)
         case .Nested:      ok=pass_nested(&p)
-        case .Surface:     if r.pass_count>0 {stage_run(&p,.Surface)}
         case .Direct:      ok=pass_direct(&p)
         case .World:       ok=pass_world_lighting(&p)
         case .Indirect:    ok=pass_indirect(&p)
@@ -994,6 +1003,9 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if p.reflectance && !ensure_surface_target(r, t) {return false}
 	if p.layered && !ensure_layers_target(r, t) {return false}
 	if p.subsurface && !subsurface_targets(r, t) {return false}
+	p.decals = p.draw && len(s.decals) > 0 || stage_asked(r, .Decal)
+	p.decal_emission = p.decals && (s.decal_emission || r.decal_emission_asked)
+	if !decal_targets(r, t, p.decals, p.decal_emission) {return false}
 	if r.frame_layout.instance_ids && !ensure_instance_target(r, t) {return false}
 	if s.batch.hooked && !ensure_rest_target(r, t) {return false}
 	if p.reflectance {f.flags |= FRAME_FLAG_REFLECTANCE}
@@ -1252,7 +1264,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	s := &r.scene
 	threads := p.instance_count + p.batch_slots
 	occlusion := threads > 0
-	keep_depth := occlusion || p.draw_glass || p.draw_overlays || p.blend ||
+	keep_depth := occlusion || p.decals || p.draw_glass || p.draw_overlays || p.blend ||
 	              stage_asked(r, .Gbuffer) || r.pass_count > 0 && .Nested in p.plan.stages
 	clip := p.camera.clip_plane != {}
 	glass_groups := [4]u32{groups(t.width, 8), groups(t.height, 8), 0, 0} if p.draw_glass else {}
@@ -1307,6 +1319,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		t.hiz_valid = false
 	}
 	if p.cost != 0 && p.draw {cost_pixels(p)}
+	if p.decals {pass_decals(p)}
 	rhi.cmd_timestamp(cmd, "resolve")
 	resolve_pass(p, false)
 	rest_pass(p)

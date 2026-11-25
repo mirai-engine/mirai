@@ -363,6 +363,13 @@ Scene_State :: struct {
 	pool_dirty:          [Mesh_Pool][dynamic]Pool_Range,
 	mesh_dirty:          [dynamic]Pool_Range,
 	translucent:          [dynamic]Translucent, // each view puts its visible instances first
+	decals:               [dynamic]Decal_Entry, // the decals of the scene, in the order they are drawn (decals.odin)
+	decal_runs:           [dynamic]Decal_Run,   // its entries of one program in a row
+	decals_stale:         bool, // an instance with a decal came, went or changed its mesh or materials, or the classes of rows did
+	decal_emission:       bool, // a decal of the scene emits
+	decal_entries:        rhi.Buffer, // [2]u32 of each decal: its instance and the slot of its mesh
+	decal_draws:          rhi.Buffer, // rhi.Draw_Indexed_Indirect of each, of the view drawn last (decal_draws.comp)
+	decal_capacity:       int,
 	geometry_dirty:       bool,
 	vertices_made:        u64, // times the vertex buffer was made again: what an extension wrote in it is gone
 	vertex_buffer:        rhi.Buffer,
@@ -582,6 +589,8 @@ scene_init :: proc(r: ^Renderer) -> bool {
 	for &ranges in s.pool_dirty {ranges=make([dynamic]Pool_Range,a)}
 	s.mesh_dirty=make([dynamic]Pool_Range,a)
 	s.translucent = make([dynamic]Translucent, a)
+	s.decals = make([dynamic]Decal_Entry, a)
+	s.decal_runs = make([dynamic]Decal_Run, a)
 	s.instances = make([dynamic]Gpu_Instance, a)
 	s.instance_next=make([dynamic]i32,a)
 	s.instance_prev=make([dynamic]i32,a)
@@ -643,6 +652,13 @@ alpha_blended :: proc "contextless" (mode: u32) -> bool {
 	return mode <= u32(max(asset.Alpha_Mode)) && asset.alpha_blended(asset.Alpha_Mode(mode))
 }
 
+// Whether a row is drawn apart from the opaque scene: blended, or a decal
+// (decals.odin). Out of the G-buffer, the maps of the shadows and rays.
+@(private)
+alpha_apart :: proc "contextless" (mode: u32) -> bool {
+	return alpha_blended(mode) || mode == u32(asset.Alpha_Mode.Decal)
+}
+
 // A row of the table but for where its maps are placed.
 @(private = "file")
 gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row {
@@ -666,6 +682,10 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 		custom_params = m.custom_params,
 	}
 	if transmission > 0 && m.thickness > 0 {result.volume.scatter = linalg.clamp(m.scatter_color, 0, 1)}
+	if mode == .Decal {
+		order := u32(u16(i16(clamp(m.decal.order, i32(min(i16)), i32(max(i16))))))
+		result.volume.flags |= u32(transmute(u8)(m.decal.writes & asset.DECAL_WRITES_ALL)) << abi.MATERIAL_DECAL_SHIFT | order << abi.MATERIAL_DECAL_ORDER_SHIFT
+	}
 	info := m.info
 	layers := asset.material_layers(&info)
 	// A program gives the layers its source writes; the row holds the values
@@ -674,8 +694,8 @@ gpu_material_values :: proc(r: ^Renderer, m: Material_Desc) -> Gpu_Material_Row 
 		for program in renderer_programs(r) {
 			if program.id != m.program_id || program.domain != .Surface {continue}
 			layers += program.layers
-			if .Time in program.reads {result.volume.program |= abi.MATERIAL_PROGRAM_CHANGING}
-			if program.reflectance {result.volume.program |= abi.MATERIAL_PROGRAM_REFLECTANCE}
+			if .Time in program.reads {result.volume.flags |= abi.MATERIAL_PROGRAM_CHANGING}
+			if program.reflectance {result.volume.flags |= abi.MATERIAL_PROGRAM_REFLECTANCE}
 		}
 	}
 	result.layers = transmute(u32)layers
@@ -824,7 +844,7 @@ program_rows_count :: proc(s: ^Scene_State, row: Gpu_Material_Row, added: bool) 
 	if added {s.programmed_rows += 1} else {s.programmed_rows -= 1}
 	if program >= POINTS_PROGRAM_CAPACITY {return}
 	if added {s.program_rows[program] += 1} else {s.program_rows[program] -= 1}
-	if !alpha_blended(row.alpha_mode) {
+	if !alpha_apart(row.alpha_mode) {
 		if added {s.program_opaque_rows[program] += 1} else {s.program_opaque_rows[program] -= 1}
 	}
 	if s.program_rows[program] == (1 if added else 0) {
@@ -909,6 +929,7 @@ Material_Class :: struct {
 	transmissive, solid:            bool,
 	specular, specular_colored:     u32,
 	program_reflectance:            bool,
+	decal:                          u32, // what a decal writes and its order
 }
 
 @(private = "file")
@@ -918,7 +939,8 @@ material_class :: proc "contextless" (row: Gpu_Material_Row) -> Material_Class {
 		specular_color = row.specular_color, specular_factor = row.specular_factor, ior = row.ior,
 		transmissive = row.transmission > 0, solid = row.transmission > 0 && row.thickness > 0,
 		specular = row.textures[.Specular], specular_colored = row.textures[.Specular_Color],
-		program_reflectance = row.volume.program & abi.MATERIAL_PROGRAM_REFLECTANCE != 0,
+		program_reflectance = row.volume.flags & abi.MATERIAL_PROGRAM_REFLECTANCE != 0,
+		decal = row.volume.flags >> abi.MATERIAL_DECAL_SHIFT,
 	}
 }
 
@@ -973,6 +995,7 @@ materials_texture_gone :: proc(r: ^Renderer, entry: u32) {
 // their materials and whether they are hidden.
 @(private = "file")
 instances_classify :: proc(s: ^Scene_State) {
+	s.decals_stale = true
 	clear(&s.translucent)
 	clear(&s.reflective)
 	s.program_shown_opaque = {}
@@ -990,7 +1013,7 @@ instances_classify :: proc(s: ^Scene_State) {
 			}
 		}
 		flags := (inst.meta.w &~ (INSTANCE_FLAG_ALPHA_TESTED | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT)) | alpha_flags(a)
-		word := inst.meta.x &~ INSTANCE_FLAG_GLASS | glass_flag(a)
+		word := inst.meta.x &~ (INSTANCE_FLAG_GLASS | INSTANCE_FLAG_DECAL) | instance_word_flags(a)
 		if a.reflectance && flags & INSTANCE_FLAG_HIDDEN == 0 {append(&s.reflective, Reflective_Instance{u32(i), a.layered, a.subsurface})}
 		mask_flags := tlas_mask_flags(ray_class(word, flags), a.tested, mesh.tested)
 		if flags != inst.meta.w || word != inst.meta.x || a.tested != inst.tested || mask_flags != s.hw_instances[i].mask_flags {
@@ -1022,14 +1045,15 @@ tlas_refs_classify :: proc(s: ^Scene_State) {
 // What the materials of an instance make of how it is traced and drawn.
 // tested: the slots whose materials rays and the maps of the shadows ask, a
 // bit each (Gpu_Instance.tested); blended: some of its triangles are
-// blended; glass: all of them; reflectance: one of its opaque materials
+// blended; glass: all of them are blended or decals (INSTANCE_FLAG_BLENDED);
+// decals: a bit for each slot that is a decal (decals.odin); reflectance: one of its opaque materials
 // reflects other than the default dielectric, which the albedo and metallic
 // of the G-buffer give by themselves; layered: one of its opaque materials
 // has layers; subsurface: one of them a subsurface. shown_opaque: a bit for each slot
 // whose row is a blended one with a program that its values show otherwise.
 @(private)
 Instance_Alpha :: struct {
-	tested, shown_opaque: u32,
+	tested, shown_opaque, decals: u32,
 	blended, glass, reflectance, layered, subsurface: bool,
 	translucent: Translucent,
 }
@@ -1052,12 +1076,13 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         if int(row)<len(s.materials) {
             values:=instance_material(s,given,row)
             m=asset.Alpha_Mode(values.alpha_mode)
-            if given!=0 && !asset.alpha_blended(m) && values.program_id!=0 && alpha_blended(s.materials[row].alpha_mode) {a.shown_opaque|=1<<u32(k)}
+            decal:=m==.Decal
+            if given!=0 && !asset.alpha_blended(m) && !decal && values.program_id!=0 && alpha_apart(s.materials[row].alpha_mode) {a.shown_opaque|=1<<u32(k)}
             // A program departs where its source may give a reflectance of its own (abi.Program.reflectance).
             held:=&s.materials[row]
-            programmed:=values.program_id!=0 && (values.program_id!=held.program_id || held.volume.program&abi.MATERIAL_PROGRAM_REFLECTANCE!=0)
+            programmed:=values.program_id!=0 && (values.program_id!=held.program_id || held.volume.flags&abi.MATERIAL_PROGRAM_REFLECTANCE!=0)
             departs:=programmed || values.specular_color!=defaults.specular_color || values.specular_factor!=defaults.specular_factor || values.ior!=defaults.ior
-            if !asset.alpha_blended(m) && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
+            if !asset.alpha_blended(m) && !decal && (departs || values.textures[.Specular]!=GPU_NONE || values.textures[.Specular_Color]!=GPU_NONE) {a.reflectance=true}
             lit:=transmute(asset.Material_Layers)values.layers-{.Unlit}
             if asset.alpha_blended(m) {
                 if !blended_seen {
@@ -1078,6 +1103,8 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
                     a.translucent.forward_layered ||= lit != {}
                     a.translucent.additive ||= m == .Additive
                 }
+            } else if decal {
+                a.decals |= 1 << u32(k)
             } else {
                 a.layered ||= lit != {}
                 a.subsurface ||= .Subsurface in lit
@@ -1085,7 +1112,7 @@ instance_alpha :: proc(s: ^Scene_State, mesh: Mesh_Record, material: u32, slots:
         }
         if m != .Opaque || faded {a.tested |= 1 << u32(k)}
         a.blended ||= asset.alpha_blended(m)
-        a.glass &&= asset.alpha_blended(m)
+        a.glass &&= asset.alpha_blended(m) || m == .Decal
     }
     // The layers of a material reach the G-buffer with its reflectance.
     a.reflectance ||= a.layered
@@ -1108,9 +1135,12 @@ alpha_flags :: proc "contextless" (a: Instance_Alpha) -> u32 {
 	return (INSTANCE_FLAG_ALPHA_TESTED if a.tested != 0 else 0) | (INSTANCE_FLAG_TRANSLUCENT if a.blended else 0) | (INSTANCE_FLAG_BLENDED if a.glass else 0)
 }
 
-// The flag of Gpu_Instance.meta.x of an instance a blended material of which lets light through.
+// The flags of Gpu_Instance.meta.x its materials give an instance: a blended
+// one of them lets light through; one of them is a decal.
 @(private)
-glass_flag :: proc "contextless" (a: Instance_Alpha) -> u32 {return INSTANCE_FLAG_GLASS if a.translucent.glass else 0}
+instance_word_flags :: proc "contextless" (a: Instance_Alpha) -> u32 {
+	return (INSTANCE_FLAG_GLASS if a.translucent.glass else 0) | (INSTANCE_FLAG_DECAL if a.decals != 0 else 0)
+}
 
 @(private = "file")
 instance_small :: proc "contextless" (low, high: Vec3) -> u32 {
@@ -1814,7 +1844,7 @@ instance_row_words :: proc "contextless" (s: ^Scene_State, values, row: u32) -> 
 instance_material :: proc "contextless" (s: ^Scene_State, values, row: u32) -> (m: Gpu_Material) {
 	m = s.materials[row].shared
 	if shown := instance_row_words(s, values, row); shown != nil {m = (cast(^Gpu_Material)raw_data(shown))^}
-	if alpha_blended(m.alpha_mode) {m.opacity *= 1 - instance_values_fade(s, values)}
+	if alpha_apart(m.alpha_mode) {m.opacity *= 1 - instance_values_fade(s, values)}
 	return
 }
 
@@ -2078,7 +2108,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		a := instance_alpha(s, mesh, material, slot_materials, s.instances[index].material_values)
 		a.translucent.instance = index
 		flags |= alpha_flags(a)
-		s.instances[index].meta.x |= glass_flag(a)
+		s.instances[index].meta.x |= instance_word_flags(a)
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
 		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered, a.subsurface})}
 		if a.blended && !hidden {append(&s.translucent, a.translucent)}
@@ -2180,6 +2210,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
             if before.meta.x&INSTANCE_MESH_MASK!=mesh && mesh_displaced(s,before.meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
         }
         if int(index)>=old {before=INSTANCE_ABSENT}
+        if !instance_decals_same(before,s.instances[index]) {s.decals_stale=true}
         if !instance_shades_same(before,s.instances[index]) {occluder_moved(s,index,before,s.instances[index])}
         changed:=flags~s.instances[index].meta.w
         classification||=changed&(INSTANCE_FLAG_BLENDED|INSTANCE_FLAG_HIDDEN)!=0
@@ -2188,6 +2219,7 @@ scene_update :: proc(r:^Renderer,first:u32,instances:[]Instance_Desc,truncate:bo
     }
     if truncate && end<old {
         for index in end..<old {
+            if s.instances[index].meta.x&INSTANCE_FLAG_DECAL!=0 {s.decals_stale=true}
             occluder_moved(s,OCCLUDERS_MANY,s.instances[index],INSTANCE_ABSENT)
             instance_changed_near(s,&s.instances[index])
             if mesh_displaced(s,s.instances[index].meta.x&INSTANCE_MESH_MASK) {s.displaced_stale=true}
@@ -2218,6 +2250,16 @@ instance_changed_near :: proc(s: ^Scene_State, inst: ^Gpu_Instance, glowed := fa
 	glows := glowed || inst.emission.xyz != {}
 	reach := LIGHT_CHANGE_REACH if glows else min(LIGHT_CHANGE_REACH, LIGHT_CHANGE_SIZES * radius)
 	scene_changed_seen(s, inst.bounds_min.xyz, inst.bounds_max.xyz, reach)
+}
+
+// Whether two instances give the decals of the scene the same entries: none
+// of either, or the same slots of the same mesh with the same materials.
+@(private = "file")
+instance_decals_same :: proc(a, b: Gpu_Instance) -> bool {
+	if (a.meta.x | b.meta.x) & INSTANCE_FLAG_DECAL == 0 {return true}
+	CLASS :: INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_TRANSLUCENT
+	return a.meta.x & (INSTANCE_MESH_MASK | INSTANCE_FLAG_DECAL) == b.meta.x & (INSTANCE_MESH_MASK | INSTANCE_FLAG_DECAL) && a.meta.y == b.meta.y &&
+	       a.meta.w & CLASS == b.meta.w & CLASS && a.tested == b.tested && a.slot_materials == b.slot_materials && a.material_values == b.material_values
 }
 
 // Whether two instances cast the same shadows.
@@ -2964,7 +3006,7 @@ scene_destroy :: proc(r: ^Renderer) {
 	if s.tlas != 0 {rhi.accel_destroy(d, s.tlas)}
 	for b in s.geometry_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for move in s.pool_moves {if move.from != 0 {rhi.buffer_destroy(d, move.from)}}
-	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.translucent_cell_jobs, s.translucent_entries, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
+	for b in ([]rhi.Buffer{s.vertex_buffer, s.index_buffer, s.mesh_buffer, s.blas_node_buffer, s.blas_triangle_buffer, s.instance_buffer, s.material_buffer, s.tlas_node_buffer, s.tlas_ref_buffer, s.cull_state_buffer, s.chunk_buffer, s.visible_buffer, s.listed_buffer, s.raster_entries, s.visible_moved, s.raster_vertices, s.raster_indices, s.raster_ids, s.mesh_draws, s.depth_buckets, s.cluster_candidate_buffer, s.program_draws, s.shadow_chunks, s.shadow_entries, s.shadow_raster_entries, s.candidate_buffer, s.translucent_draws, s.translucent_cell_jobs, s.translucent_entries, s.decal_entries, s.decal_draws, s.light_buffer, s.light_tree_buffer, s.light_grid_buffer, s.tlas_instance_buffer}) {
 		if b != 0 {rhi.buffer_destroy(d, b)}
 	}
 	delete(s.vertices)
@@ -2977,6 +3019,8 @@ scene_destroy :: proc(r: ^Renderer) {
 	for ranges in s.pool_free {delete(ranges)}
 	for ranges in s.pool_dirty {delete(ranges)}
 	delete(s.translucent)
+	delete(s.decals)
+	delete(s.decal_runs)
 	delete(s.instances)
 	delete(s.instance_next)
 	delete(s.instance_prev)

@@ -84,6 +84,7 @@ pool_release :: proc(pool:^[dynamic]$T,free:^[dynamic]Pool_Range,first,count:u32
 scene_instances_clear :: proc(s: ^Scene_State) {
 	for &inst in s.instances {instance_material_values_release(s, &inst)}
 	clear(&s.translucent)
+	s.decals_stale = true
 	clear(&s.instances)
 	clear(&s.instance_next)
 	clear(&s.instance_prev)
@@ -170,6 +171,7 @@ mesh_release :: proc(r: ^Renderer, handle: Mesh_Handle) -> bool {
 		index=next
 	}
 	for i:=len(s.translucent)-1;i>=0;i-=1 {if s.instances[s.translucent[i].instance].meta.x&INSTANCE_MESH_MASK==u32(handle) {unordered_remove(&s.translucent,i)}}
+	s.decals_stale = true
 	for i:=len(s.reflective)-1;i>=0;i-=1 {if s.instances[s.reflective[i].instance].meta.x&INSTANCE_MESH_MASK==u32(handle) {unordered_remove(&s.reflective,i)}}
 	batches_mesh_removed(s, handle)
 	s.triangle_total -= u64(removed.triangle_count)

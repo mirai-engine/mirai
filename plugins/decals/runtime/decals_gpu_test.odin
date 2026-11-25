@@ -4,6 +4,7 @@ import "core:math/linalg"
 import "core:mem"
 import "core:testing"
 import render "mirai:engine/render"
+import "mirai:asset"
 import "mirai:host"
 import gpu "mirai:render"
 import "mirai:rhi"
@@ -46,19 +47,19 @@ decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
     })
     if !testing.expect(t,masked,r.error) {return}
     state:=new(Decals_Gpu)
-    defer free(state)
+    defer {decals_gpu_free(state);free(state)}
     box:=mm.transform_matrix({scale={2,1,2},rotation=mm.TRANSFORM_IDENTITY.rotation})
-    state.items[0]={
+    // Red over half of what is under it, with its normal map, roughness and
+    // metallic; then blue over half of that, its color alone.
+    lower:=Gpu_Decal{
         to_box=mm.mat4_rows(linalg.inverse(box)),to_world=mm.mat4_rows(box),
         color={1,0,0,1},texture=render.texture_index(mask),
         normal_map=render.texture_index(normal_map),
-        normal_density=1,roughness=0.2,metallic=1,
+        normal_density=1,roughness=0.2,metallic=1,writes=u32(transmute(u8)asset.Decal_Writes{.Color,.Normal,.Surface}),
     }
-    state.items[1]=state.items[0]
-    state.items[1].color={0,0,1,0.5}
-    state.items[1].texture=max(u32)
-    state.items[1].normal_map,state.items[1].roughness,state.items[1].metallic=max(u32),-1,0
-    state.count=2
+    upper:=lower
+    upper.color,upper.texture,upper.normal_map,upper.writes={0,0,1,0.5},max(u32),max(u32),u32(transmute(u8)asset.Decal_Writes{.Color})
+    append(&state.items,lower,upper)
     camera:=gpu.Camera{position={0,3,0},forward={0,-1,0},up={0,0,-1},height=4,
                        projection=.Orthographic,near=0.1,far=10}
     floor:=mm.transform_matrix({
@@ -72,7 +73,7 @@ decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
         gpu.scene_update(r,0,{
             {object_id=1,mesh=cube.handle,transform=floor,material=1,tint=1},
         },true)
-        decals_submit(state,r,true)
+        decals_submit(state,r)
         if !testing.expect(t,gpu.renderer_frame(r,{camera=camera}),r.error) {return}
         rhi.device_wait_idle(device)
         w,h:=int(r.targets.width),int(r.targets.height)
@@ -91,8 +92,8 @@ decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
         testing.expectf(t,n.x>0.29 && n.y>0.9,"decal tilts the normal toward its U axis: %v",n)
         testing.expectf(t,abs(roughness-0.5)<0.01,
                         "roughness blends through half opacity: %f",roughness)
-        testing.expectf(t,abs(f32(albedo[center].a)/255-0.25)<0.01,
-                        "the upper decal lowers metallic in order: %v",albedo[center])
+        testing.expectf(t,abs(f32(albedo[center].a)/255-0.5)<0.01,
+                        "the lower decal gives half its metallic, the upper one none: %v",albedo[center])
         testing.expectf(t,albedo[center].b>albedo[center].r && albedo[center].b>albedo[center].g,
                         "the upper decal is blue: %v",albedo[center])
         testing.expectf(t,abs(f32(normal[outside].z)-0.8)<0.01 && albedo[outside].a==0,
@@ -102,14 +103,14 @@ decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
         if custom_specular {
             reflectance:=make([][4]u8,w*h,context.temp_allocator)
             if !read(t,device,r.targets.surface,mem.slice_data_cast([]u8,reflectance)) {return}
-            testing.expectf(t,abs(f32(reflectance[center].a)/255-0.625)<0.01 &&
+            testing.expectf(t,abs(f32(reflectance[center].a)/255-0.75)<0.01 &&
                             reflectance[center].b>reflectance[center].r,
                             "the decal's metallic and base color affect stored reflectance: %v",
                             reflectance[center])
         }
     }
     for _ in 0..<3 {
-        decals_submit(state,r,true)
+        decals_submit(state,r)
         if !testing.expect(t,gpu.renderer_frame(r,{camera=camera}),r.error) {return}
     }
     rhi.device_wait_idle(device)
@@ -117,7 +118,7 @@ decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
     allocations:=tracker.total_allocation_count
     {
         context.allocator=allocator
-        decals_submit(state,r,true)
+        decals_submit(state,r)
         testing.expect(t,gpu.renderer_frame(r,{camera=camera}),r.error)
     }
     testing.expect_value(t,tracker.total_allocation_count,allocations)

@@ -34,7 +34,7 @@ Pass_Rows :: gpu.Pass_Rows
 Pass_Indices :: gpu.Pass_Indices
 Glass_Side :: gpu.Glass_Side
 Surface_Source :: gpu.Surface_Source
-Surface_Targets :: gpu.Surface_Targets
+Decal_Targets :: gpu.Decal_Targets
 Blend_Mode :: rhi.Blend_Mode
 Program :: gpu.Program
 Program_Domain :: gpu.Program_Domain
@@ -155,8 +155,8 @@ antialiasing_offered :: proc(renderer:^Renderer) -> []Antialiasing_Desc {
     return renderer!=nil?gpu.renderer_antialiasing(renderer):nil
 }
 
-// Asks the next frame to call `record` at a stage: every view for Mask,
-// Surface and Lit, once for Geometry. False without room for another pass, and for
+// Asks the next frame to call `record` at a stage: every view for Decal,
+// Mask and Lit, once for Geometry. False without room for another pass, and for
 // Inspect: the pass of a mode of inspection goes in the view that shows it,
 // which the editor names (editor.view_mode_declare).
 frame_pass :: proc(renderer:^Renderer,stage:Stage,record:Stage_Proc,user:rawptr=nil) -> bool {
@@ -172,6 +172,12 @@ frame_eye_medium :: proc(renderer:^Renderer,taken:[3]f32) {
     if renderer!=nil {gpu.frame_eye_medium(renderer,taken)}
 }
 
+// Tells the next frame that its Decal stage draws decals that emit: every
+// view has the emission target. Ask in each frame that draws them.
+frame_decal_emission :: proc(renderer:^Renderer) {
+    if renderer!=nil {gpu.frame_decal_emission(renderer)}
+}
+
 // The pipeline of a stage, from the shaders in use; the renderer keeps it. 0
 // while those shaders do not have its stages: ask again in each frame.
 stage_pipeline :: proc(renderer:^Renderer,desc:Stage_Pipeline_Desc) -> Pipeline {
@@ -181,8 +187,8 @@ stage_pipeline :: proc(renderer:^Renderer,desc:Stage_Pipeline_Desc) -> Pipeline 
 pass_extension_data :: gpu.pass_extension_data
 pass_nested_add :: gpu.pass_nested_add
 pass_mask_begin :: gpu.pass_mask_begin
-pass_surface_begin :: gpu.pass_surface_begin
-pass_surface_targets :: gpu.pass_surface_targets
+pass_decal_begin :: gpu.pass_decal_begin
+pass_decal_targets :: gpu.pass_decal_targets
 pass_surface_read :: gpu.pass_surface_read
 pass_shadow_data :: gpu.pass_shadow_data
 pass_shadow_marks :: gpu.pass_shadow_marks

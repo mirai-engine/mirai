@@ -311,6 +311,7 @@ Pipeline_Id :: enum {
 	Exposure_Histogram, Exposure_Adapt, Tonemap, Tonemap_Wide, Ui, Thumbnail, Thumbnail_Values,
 	Impostor, Preview_Backdrop, Blit, Highlight, Highlight_Filter,
 	Translucent, Glass_Overflow,
+	Decal_Draws, Decal, Decal_Emissive, // the decals of the scene (decals.odin): their draws, and their pass without and with the emission target
 	Shadow_Maps, Shadow_Clusters, Shadow_Map, Shadow_Map_Tested, Shadow_Map_Clear, Shadow_Map_Copy, Shadow_Mark, Shadow_Pages, Shadow_Pages_Sort, Shadow_Hiz, // the cull of the maps of the shadows by instance and by cluster, the draws of the triangles their lists hold by what each writes, the pages of the cache they clear and the atlas copies, the marks of the points, the table of the pages (the steps that sort the pool apart) and the farthest depth of the cache
 	Glass_Layer, Glass_Layer_Layers, Glass_Filter, Glass, Glass_Light, Glass_Levels, Glass_Inside, Translucent_Draws,
 	// The raster of the visibility target by raster bin (RASTER_BIN_*), then the same of a view with a clip plane.
@@ -379,6 +380,13 @@ Frame_Targets :: struct {
 		contact_rays:            rhi.Texture, // at each point, its contact occlusion, linear depth and normal (contact.comp)
 		contact_points:          [2]rhi.Texture, // at each point, the irradiance of the probe volume / its light around the specular lobe (contact_light.comp)
 		contact:                 rhi.Texture, // both at each pixel, packed (contact_pixels.comp)
+	},
+	// What the decals give the surface of each pixel (decals.odin), while the view draws them.
+	using decal_targets: struct {
+		decal_color:             rhi.Texture,
+		decal_normal:            rhi.Texture,
+		decal_surface:           rhi.Texture,
+		decal_emission:          rhi.Texture, // while a decal emits
 	},
 	using direct_targets: struct {
 		direct_blockers:         rhi.Texture, // what stopped the ray each pixel traced for its direct light (direct_rays.comp)
@@ -694,6 +702,7 @@ Renderer :: struct {
 	counters:        Extension_Counters, // of pass_counters
 	readbacks:       [EXTENSION_READBACK_CAPACITY]Extension_Readback, // of pass_readback, by world
 	gbuffer_asked:   bit_set[Gbuffer_Target], // of frame_gbuffer_mesh for the next frame
+	decal_emission_asked: bool, // of frame_decal_emission for the next frame
 	table_textures:  [EXTENSION_TABLE_TEXTURE_CAPACITY]Extension_Table_Texture, // of pass_table_texture, by world
 	quad_indices:    rhi.Buffer, // the six of a quad, for the draws of pass_indices
 	scene:           Scene_State,
@@ -1094,6 +1103,18 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 		translucent.blend = {0 = .Premultiplied, 1 = .Additive}
 		graphics(list, r, .Translucent_Cost if counting else .Translucent, translucent, required = !counting)
 	}
+	compute(list, r, .Decal_Draws, .Decal_Draws_Comp)
+	decal := rhi.Graphics_Pipeline_Desc{
+		vertex = &r.shader_codes[.Decal_Vert], fragment = &r.shader_codes[.Decal_Frag],
+		color_formats = {0 = .RGBA8_Srgb, 1 = .RGBA16_Float, 2 = .RGBA8_Unorm}, color_count = 3,
+		blend = {0 = .Premultiplied, 1 = .Premultiplied, 2 = .Premultiplied},
+		depth_format = .D32_Float, depth_test = true, depth_compare = .Greater_Equal, cull = .None,
+		name = "decals",
+	}
+	graphics(list, r, .Decal, decal)
+	decal.fragment, decal.name = &r.shader_codes[.Decal_Emissive_Frag], "decals with emission"
+	decal.color_formats[3], decal.blend[3], decal.color_count = .RGBA16_Float, .Premultiplied, 4
+	graphics(list, r, .Decal_Emissive, decal)
 	graphics(list, r, .Highlight, {
 		vertex = &r.shader_codes[.Gbuffer_Vert], vertex_constants = {GBUFFER_VERT_HIGHLIGHT}, fragment = &r.shader_codes[.Highlight_Frag],
 		color_formats = {0 = .RG32_Float}, color_count = 1,

@@ -17,7 +17,6 @@ STAGE_ZONES :: [Render_Stage]string {
 	.Custom       = "custom pass",
 	.Geometry     = "geometry",
 	.Nested       = "nested views",
-	.Surface      = "surface",
 	.Direct       = "direct",
 	.World        = "probe volume",
 	.Indirect     = "indirect",
