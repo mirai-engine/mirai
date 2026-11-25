@@ -52,7 +52,7 @@ COLLAB_EDIT_INTERVAL :: 1.0/30
 COLLAB_PRESENCE_SEEN :: 3.0 // seconds
 COLLAB_MESSAGE_BYTES :: 1<<30 // what one message may hold: a peer that sends more is cut off
 COLLAB_HELLO_TIMEOUT :: 10.0
-COLLAB_LEAVE_WAIT :: 8*time.Millisecond // for the worker, which host_poll wakes, to send the goodbye
+COLLAB_LEAVE_WAIT :: 8*time.Millisecond // for the pump and the worker to send the goodbye
 COLLAB_PLAYING :: u8(1) // presence: inside a Play or a Simulate of its own
 COLLAB_SERVING :: u8(2) // presence: serves the game of a plugin, whose offer follows
 COLLAB_JOINED :: u8(4)  // presence: a guest that plays the game the host serves
@@ -210,6 +210,7 @@ Collab_State :: struct {
     now:f64,
     node_jobs:^jobs.Job_System, // of the exchange of node
     node:^share.Node,  // the project and the library over the connections of the session (collab_project.odin)
+    pump:^Collab_Pump, // the thread that pumps node; none on the network of a test
     join:^Collab_Join, // a guest: what brings its folder to the host's snapshot
     // The host: its project offered, and what changed since (collab_host_changes).
     offer:^Collab_Offer,
@@ -435,7 +436,9 @@ collab_join :: proc(s:^Session,code,name:string,folder:="",at:=wire.Address{},tr
     if target=="" {return .No_Project}
     st,error:=collab_start(s,.Guest,0,name,invitation,assets=!reopen,transport=transport)
     if error!=.None {return error}
-    connected:=at.kind!=.None?wire.host_connect(&st.host,at):wire.host_connect(&st.host,invitation.lan,invitation.public)
+    h:=collab_host_lock(st)
+    connected:=at.kind!=.None?wire.host_connect(h,at):wire.host_connect(h,invitation.lan,invitation.public)
+    collab_host_unlock(st)
     if connected!=.None || !collab_join_start(s,st,target,reopen) {
         collab_destroy(s)
         return .Transport
@@ -455,13 +458,12 @@ collab_leave :: proc(s:^Session) {
         if st.role==.Host {
             for &peer,i in st.peers {
                 if i!=0 && collab_editor_peer(&peer) {
-                    wire.message_send(&st.host,peer.connection,share.CONTROL_CHANNEL,bye[:])
+                    collab_send(st,peer.connection,share.CONTROL_CHANNEL,bye[:])
                 }
             }
         }
-        wire.host_disconnect(&st.host,0,.Closed)
-        wire.host_poll(&st.host)
-        // The worker sends them before the host goes.
+        collab_disconnect(st,0,.Closed)
+        // The pump hands them to the worker, which sends them before the host goes.
         time.sleep(COLLAB_LEAVE_WAIT)
     }
     collab_destroy(s)
@@ -555,7 +557,7 @@ collab_peer_free :: proc(peer:^Collab_Peer) {
 collab_flush :: proc(st:^Collab_State,peer:^Collab_Peer) {
     for peer.head<len(peer.out) {
         message:=peer.out[peer.head]
-        if wire.message_send(&st.host,peer.connection,share.CONTROL_CHANNEL,message,&peer.sent)!=.None || peer.sent<len(message) {break}
+        if collab_send(st,peer.connection,share.CONTROL_CHANNEL,message,&peer.sent)!=.None || peer.sent<len(message) {break}
         delete(message)
         peer.head+=1
         peer.sent=0
@@ -611,8 +613,13 @@ collab_update :: proc(s:^Session) {
     if st.role==.Host && st.phase==.Joined && st.mapping_on && int(now)%2==0 {
         collab_codes_update(st)
     }
-    for command in wire.host_poll(&st.host) {
-        if share.node_command(st.node,&st.host,command) {continue}
+    if st.pump==nil {share.node_pump(st.node,now)}
+    commands,complete:=share.node_take(st.node)
+    if !complete {
+        collab_end(st,"no memory was left for what the session received")
+        return
+    }
+    for command in commands {
         collab_command(s,st,command,now)
         if st.phase==.Ended {return}
     }
@@ -652,22 +659,6 @@ collab_update :: proc(s:^Session) {
     }
 }
 
-COLLAB_MOVING_RATE :: 1024.0 // chunk bytes per second with the peers from which the node transfers
-
-// Whether the session moves bytes with peers: a join or a package being
-// taken, or chunks the node serves or receives. The node steps once a frame,
-// so meanwhile the editor's frames are not slowed behind other windows or
-// while minimized; once the transfer ends they are again.
-@(private)
-collab_transferring :: proc(s:^Session) -> bool {
-    st:=collab_state(s)
-    if st==nil || st.node==nil || st.phase==.Ended {return false}
-    if t:=st.take;t!=nil && t.thread!=nil {return true}
-    if j:=st.join;j!=nil && !j.finished {return true}
-    totals:=share.node_totals(st.node)
-    return totals.connected>0 && totals.send_rate+totals.receive_rate>=COLLAB_MOVING_RATE
-}
-
 @(private)
 collab_snapshot_loading :: proc(st:^Collab_State) -> bool {
     incoming:=st.peers[0].incoming[:]
@@ -689,7 +680,7 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
                 if i>0 && !peer.used {slot=i;break}
             }
             if slot<0 {
-                wire.host_disconnect(&st.host,command.connection,.Denied_Full)
+                collab_disconnect(st,command.connection,.Denied_Full)
                 return
             }
             st.peers[slot]={used=true,connection=command.connection,connected_at=now}
@@ -738,7 +729,7 @@ collab_incoming :: proc(st:^Collab_State,sender:^Collab_Peer,command:wire.Comman
     if len(sender.incoming)==0 && !command.more {return command.data,true}
     if len(sender.incoming)+len(command.data)>COLLAB_MESSAGE_BYTES {
         if st.role==.Guest {collab_end(st,"the host sent a message larger than a session carries");return}
-        wire.host_disconnect(&st.host,command.connection,.Protocol_Error)
+        collab_disconnect(st,command.connection,.Protocol_Error)
         collab_peer_free(sender)
         collab_roster_send(st)
         return
@@ -760,7 +751,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         client:=serial.read_u64(&r)
         if r.failed || client==0 {return}
         if layout!=st.layout {
-            wire.host_disconnect(&st.host,st.peers[from].connection,.Denied_Version)
+            collab_disconnect(st,st.peers[from].connection,.Denied_Version)
             return
         }
         // An editor that joins again takes its place back, with its color:
@@ -768,7 +759,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         from:=from
         for &other,i in st.peers {
             if i==0 || i==from || !other.used || other.client!=client {continue}
-            wire.host_disconnect(&st.host,other.connection,.Replaced)
+            collab_disconnect(st,other.connection,.Replaced)
             collab_peer_free(&other)
             other=st.peers[from]
             st.peers[from]={}
@@ -843,7 +834,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.role==.Host {
             for &other,i in st.peers {
                 if i!=0 && i!=from && other.used && other.joined {
-                    wire.message_send(&st.host,other.connection,share.PRESENCE_CHANNEL,data)
+                    collab_send(st,other.connection,share.PRESENCE_CHANNEL,data)
                 }
             }
         }
@@ -870,7 +861,7 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         // A guest that leaves frees its place now, and what it selected with it.
         if from>0 && st.peers[from].used {
             peer:=&st.peers[from]
-            wire.host_disconnect(&st.host,peer.connection,.Closed)
+            collab_disconnect(st,peer.connection,.Closed)
             collab_peer_free(peer)
             collab_roster_send(st)
         }
@@ -958,7 +949,7 @@ collab_snapshot_send :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer) -> b
 @(private)
 collab_snapshot_refused :: proc(s:^Session,st:^Collab_State,peer:^Collab_Peer,error:any) {
     notify(s,fmt.tprintf("The scene could not be shared with %s: %v",string(peer.name[:peer.name_length]),error))
-    if peer.connection!=0 {wire.host_disconnect(&st.host,peer.connection,.Closed)}
+    if peer.connection!=0 {collab_disconnect(st,peer.connection,.Closed)}
     collab_peer_free(peer)
     collab_roster_send(st)
 }
@@ -1404,12 +1395,12 @@ collab_presence_send :: proc(s:^Session,st:^Collab_State) {
     }
     bytes:=serial.writer_bytes(&w)
     if st.role==.Guest {
-        wire.message_send(&st.host,0,share.PRESENCE_CHANNEL,bytes)
+        collab_send(st,0,share.PRESENCE_CHANNEL,bytes)
         return
     }
     for &peer,i in st.peers {
         if i!=0 && peer.used && peer.joined {
-            wire.message_send(&st.host,peer.connection,share.PRESENCE_CHANNEL,bytes)
+            collab_send(st,peer.connection,share.PRESENCE_CHANNEL,bytes)
         }
     }
 }

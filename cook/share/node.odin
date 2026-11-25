@@ -15,10 +15,12 @@ import wire "mirai:net"
 // A peer of a shared project: a store, the exchange over the hosts of its
 // owner (a server others join, the client of a join), the lease that keeps
 // what it serves and fetches from a sweep, and what it saw of its peers.
-// Whoever owns it calls node_pump once per step, or, when it polls its hosts
-// itself (an editor's session, whose hosts carry its own channels too),
-// node_command for each command of a host and node_step; a join runs on
-// another thread and reads the clock and waits through the node.
+// One thread calls node_pump once per step; a join runs on another thread
+// and reads the clock and waits through the node. An owner whose hosts carry
+// channels of its own too (an editor's session) inits the node with
+// keep_others, takes those commands with node_take in the order they came,
+// and holds hosts_lock around its own calls on the hosts while another
+// thread pumps.
 
 NAMESPACE :: "shares"      // <hash of the secret of an invitation>: the offer under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
@@ -69,6 +71,12 @@ Node :: struct {
     hosts:[2]^wire.Host,
     host_count:int,
     allocator:runtime.Allocator,
+    hosts_lock:sync.Mutex, // the simulation halves of hosts, which node_pump calls
+    // The commands that are not the exchange's, kept for node_take when
+    // keep_others: their data in bytes, at the offset of each in at.
+    keep_others:bool,
+    kept_lock:sync.Mutex,
+    kept,taken:Kept,
     // Between the pump and the thread that joins.
     lock:sync.Mutex,
     tick:sync.Cond,
@@ -93,6 +101,27 @@ Node :: struct {
     offer_lease:store.Lease, // owned by the thread that offers the project
 }
 
+@(private)
+Kept :: struct {
+    commands:[dynamic]wire.Command,
+    at:[dynamic]int,
+    bytes:[dynamic]u8,
+    lost:bool, // a command found no memory
+}
+
+@(private)
+node_keep :: proc(k:^Kept,command:wire.Command) {
+    count,size:=len(k.commands),len(k.bytes)
+    _,a:=append(&k.commands,command)
+    _,b:=append(&k.at,size)
+    _,c:=append(&k.bytes,..command.data)
+    if a==nil && b==nil && c==nil {return}
+    resize(&k.commands,count)
+    resize(&k.at,count)
+    resize(&k.bytes,size)
+    k.lost=true
+}
+
 // What a test does at the crash points of a join.
 @(private)
 Join_Hooks :: struct {
@@ -101,10 +130,15 @@ Join_Hooks :: struct {
 }
 
 // worker: the job system and worker of the thread that pumps, which reads,
-// hashes, stores and commits for the exchange; none: all of it runs on the pump.
-node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> exchange.Error {
-    n^={s=s,allocator=allocator}
+// hashes, stores and commits for the exchange; none: all of it runs on the
+// pump. keep_others: the commands of the hosts that are not the exchange's
+// wait for node_take.
+node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jobs.Worker_Ref{},keep_others:=false) -> exchange.Error {
+    n^={s=s,allocator=allocator,keep_others=keep_others}
     n.served=make([dynamic]store.Hash,allocator)
+    for k in ([2]^Kept{&n.kept,&n.taken}) {
+        k^={commands=make([dynamic]wire.Command,allocator),at=make([dynamic]int,allocator),bytes=make([dynamic]u8,allocator)}
+    }
     return exchange.init(&n.x,{
         store=s,channel=EXCHANGE_CHANNEL,peers=PEERS,wants=WANTS,
         expose=node_expose,expose_user=n,allocator=allocator,worker=worker,
@@ -117,6 +151,11 @@ node_destroy :: proc(n:^Node) {
     if n.leased {store.lease_release(&n.lease)}
     if n.offer_lease.store!=nil {store.lease_release(&n.offer_lease)}
     delete(n.served)
+    for k in ([2]^Kept{&n.kept,&n.taken}) {
+        delete(k.commands)
+        delete(k.at)
+        delete(k.bytes)
+    }
 }
 
 // Wakes whoever waits on the node, which waits no more: a join running ends.
@@ -161,27 +200,20 @@ node_expose :: proc(user:rawptr,namespace:string) -> bool {
 
 // One step: every host polled, the exchange updated at now (seconds, never
 // back), the lease refreshed when due, and whoever waits on the node woken.
+// With keep_others, the commands of the hosts that are not the exchange's
+// (every connection that came or went, the messages of other channels) wait
+// for node_take.
 node_pump :: proc(n:^Node,now:f64) {
+    sync.mutex_lock(&n.hosts_lock)
     for h in n.hosts[:n.host_count] {
-        for command in wire.host_poll(h) {node_command(n,h,command)}
+        for command in wire.host_poll(h) {
+            if node_command(n,h,command) || !n.keep_others {continue}
+            sync.mutex_guard(&n.kept_lock)
+            node_keep(&n.kept,command)
+        }
     }
-    node_step(n,now)
-}
-
-// A command of a host its owner polled: a connection that came or went, or a
-// message, which it says was the exchange's. The owner sees every command too.
-node_command :: proc(n:^Node,h:^wire.Host,command:wire.Command) -> (own:bool) {
-    #partial switch command.kind {
-    case .Connected: node_joined(n,h,command.connection)
-    case .Disconnected: node_left(n,h,command.connection,command.reason)
-    case .Message: return exchange.receive(&n.x,h,command)
-    }
-    return false
-}
-
-// The step of node_pump after its hosts were polled.
-node_step :: proc(n:^Node,now:f64) {
     exchange.update(&n.x,now)
+    sync.mutex_unlock(&n.hosts_lock)
     sync.mutex_lock(&n.lock)
     n.now=now
     n.stepped=true
@@ -189,6 +221,37 @@ node_step :: proc(n:^Node,now:f64) {
     sync.cond_broadcast(&n.tick)
     sync.mutex_unlock(&n.lock)
     if due {node_lease(n,now)}
+}
+
+// The commands node_pump kept since the last call, oldest first; valid until
+// the next call. For one thread, the owner's. complete is false when one or
+// more found no memory to wait in: the order of what follows is broken.
+node_take :: proc(n:^Node) -> (commands:[]wire.Command,complete:bool) {
+    clear(&n.taken.commands)
+    clear(&n.taken.at)
+    clear(&n.taken.bytes)
+    n.taken.lost=false
+    sync.mutex_lock(&n.kept_lock)
+    n.kept,n.taken=n.taken,n.kept
+    sync.mutex_unlock(&n.kept_lock)
+    for &command,i in n.taken.commands {
+        size:=len(command.data)
+        command.data=n.taken.bytes[n.taken.at[i]:][:size]
+        command.words=nil
+    }
+    return n.taken.commands[:],!n.taken.lost
+}
+
+// A command of a polled host: a connection that came or went, or a message,
+// which it says was the exchange's.
+@(private)
+node_command :: proc(n:^Node,h:^wire.Host,command:wire.Command) -> (own:bool) {
+    #partial switch command.kind {
+    case .Connected: node_joined(n,h,command.connection)
+    case .Disconnected: node_left(n,h,command.connection,command.reason)
+    case .Message: return exchange.receive(&n.x,h,command)
+    }
+    return false
 }
 
 @(private)

@@ -92,6 +92,12 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
   [the project](#the-project).
 - The network half of the session runs in its own thread (`worker_start`): an editor busy for a
   while (generating a game's world, a long frame) keeps responding and nobody gives it up for gone.
+- The node of `cook/share` is pumped on another thread (`Collab_Pump`, `share.node_pump` every
+  `COLLAB_PUMP_SLEEP`), as `mirai join` pumps its own: joins, takes and the chunks served move at
+  the network's pace whatever the editor's frame rate (behind other windows,
+  `EDITOR_BACKGROUND_FPS`). The commands of the session's channels wait in the node in the order
+  they came (`keep_others`, `share.node_take`) for `collab_update` on the editor's thread; the
+  editor calls the host between `collab_host_lock` and its unlock. The pump reads no editor state.
 - Reliable messages wait in each peer's queue (`Collab_Peer.out`) and stream into the channel as
   it drains (`message_send` with `sent`); the pieces they arrive in are joined in
   `Collab_Peer.incoming`. Collaboration never cuts a message itself: the transport does.

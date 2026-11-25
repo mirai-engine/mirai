@@ -36,10 +36,9 @@ with `sleep_precise` what is left of the budget (`1/limit`), and also:
 
 - without a presented image, or with the window minimized or hidden, at least `IDLE_FRAME_NS`: the
   loop attends to events without spinning;
-- without focus and with a `Background` limit (`set_background`), at least `1/limit`: asked for by
-  whoever does not need to run behind other windows (the editor outside Play), not a game;
-- with `Background.awake` neither of the two: the loop carries work the screen does not show
-  (transfers with peers), so each frame lasts what a shown, focused one does;
+- without focus and with a background limit (`set_background`), at least `1/limit`: asked for by
+  whoever does not need to run behind other windows (the editor outside Play), not a game; work
+  the screen does not show runs on threads of its own, never at the loop's pace;
 - with `vsync`, a presented frame and `limit` 0 or not less than the display's refresh rate, one
   refresh period: the swapchain releases the loop unevenly (the Windows compositor, in pairs) and
   input and movement would follow it;

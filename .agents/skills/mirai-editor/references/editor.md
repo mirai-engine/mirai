@@ -49,7 +49,8 @@ mirai-editor --project ./demo --scene main.scene --headless --density 1.5 --fram
 `dt` is 0.
 
 - Unfocused outside Play/Simulate and idle (`> API_ACTIVE`) throttles to `EDITOR_BACKGROUND_FPS`
-  (`platform.set_background`), unless `awake` transferring peer chunks.
+  (`platform.set_background`); a session's transfers do not wait for its frames
+  ([collaboration](collaboration.md#what-travels)).
 - Ordered editor steps (plugin `after` targets, [package rules](extensions.md#package-rules)):
   `ai_input` (`input`, `begin`), `editor_begin` (`input`), `editor_tools` (`frame`, `begin`),
   `editor_panels` (`ui`), `editor_end` (`ui`, `end`), `editor_services` (`ui`, `end`), `ai_frame`

@@ -76,27 +76,22 @@ frame_budget_follows_the_limit_the_display_and_what_was_shown :: proc(t:^testing
 }
 
 @(test)
-background_slows_an_idle_window_and_never_one_that_carries_transfers :: proc(t:^testing.T) {
+background_limits_an_unfocused_window_whatever_it_carries :: proc(t:^testing.T) {
     ms :: u64(1_000_000)
     pacing:=Frame_Pacing{limit=60}
-    idle:=Background{limit=10}
-    busy:=Background{limit=10,awake=true}
     // Shown, with the focus: the limit alone, whatever the background says.
-    testing.expect_value(t,frame_budget_ns(pacing,idle,true,true,60,1),u64(16_666_666))
-    testing.expect_value(t,frame_budget_ns(pacing,busy,true,true,60,1),u64(16_666_666))
-    // Without the focus an idle loop goes at the background limit, one that transfers as with it.
-    testing.expect_value(t,frame_budget_ns(pacing,idle,true,false,60,1),100*ms)
-    testing.expect_value(t,frame_budget_ns(pacing,busy,true,false,60,1),u64(16_666_666))
-    // Minimized or hidden: an idle loop waits as an idle frame or the background, a busy one does not.
-    testing.expect_value(t,frame_budget_ns(pacing,{},false,true,60,1),IDLE_FRAME_NS)
-    testing.expect_value(t,frame_budget_ns(pacing,idle,false,false,60,1),100*ms)
-    testing.expect_value(t,frame_budget_ns(pacing,busy,false,false,60,1),u64(16_666_666))
-    testing.expect_value(t,frame_budget_ns({limit=60,vsync=true},busy,false,false,120,1),u64(16_666_666))
+    testing.expect_value(t,frame_budget_ns(pacing,10,true,true,60,1),u64(16_666_666))
+    // Without the focus: the background limit, shown, hidden or minimized.
+    testing.expect_value(t,frame_budget_ns(pacing,10,true,false,60,1),100*ms)
+    testing.expect_value(t,frame_budget_ns(pacing,10,false,false,60,1),100*ms)
+    testing.expect_value(t,frame_budget_ns({limit=60,vsync=true},10,false,false,120,1),100*ms)
+    // Minimized or hidden with the focus: an idle frame.
+    testing.expect_value(t,frame_budget_ns(pacing,10,false,true,60,1),IDLE_FRAME_NS)
     // A background without a limit leaves an unfocused window as a focused one.
-    testing.expect_value(t,frame_budget_ns(pacing,{},true,false,60,1),u64(16_666_666))
+    testing.expect_value(t,frame_budget_ns(pacing,0,true,false,60,1),u64(16_666_666))
     // The images a shown frame generated count; a hidden one shows none.
-    testing.expect_value(t,frame_budget_ns(pacing,busy,true,false,60,2),u64(33_333_332))
-    testing.expect_value(t,frame_budget_ns(pacing,busy,false,false,60,2),u64(16_666_666))
+    testing.expect_value(t,frame_budget_ns(pacing,0,true,false,60,2),u64(33_333_332))
+    testing.expect_value(t,frame_budget_ns(pacing,10,true,false,60,2),100*ms)
 }
 
 @(test)
