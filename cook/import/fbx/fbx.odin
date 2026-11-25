@@ -1028,7 +1028,7 @@ compensated_scale :: proc(f:^Fbx,node:^ufbx.Node,own,parent:[]anim.Keyframe,rate
     // The value of keys at a time and the one they hold just before it, which differs at a step.
     held :: proc(keys:[]anim.Keyframe,cursor:^int,time:f32) -> (before,at:[3]f32) {
         for cursor^<len(keys) && keys[cursor^].time<time {cursor^+=1}
-        at=anim.track_evaluate(keys,.Scale,time).xyz
+        at=anim.track_evaluate_det(keys,.Scale,time).xyz
         before=at
         if cursor^>0 && cursor^<len(keys) && keys[cursor^].time==time && keys[cursor^].interpolation==.Step {before=keys[cursor^-1].value.xyz}
         return

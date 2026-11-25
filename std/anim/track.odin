@@ -37,7 +37,12 @@ quat_vec4 :: #force_inline proc "contextless" (q:math.Quat) -> math.Vec4 {return
 // The value of a track at a time. Keys are sorted by time; before the first
 // and after the last one the track holds their values, and at a NaN time the
 // value of the first. Zero without keys.
-track_evaluate :: proc "contextless" (keys:[]Keyframe,property:Property,time:f32) -> math.Vec4 {
+track_evaluate :: proc "contextless" (keys:[]Keyframe,property:Property,time:f32) -> math.Vec4 {return track_at(keys,property,time,false)}
+// track_evaluate with the easing curves and slerp of math's _det procedures, the same bits on every
+// platform: what an import computes.
+track_evaluate_det :: proc "contextless" (keys:[]Keyframe,property:Property,time:f32) -> math.Vec4 {return track_at(keys,property,time,true)}
+@(private="file")
+track_at :: #force_inline proc "contextless" (keys:[]Keyframe,property:Property,time:f32,$DET:bool) -> math.Vec4 {
     count:=len(keys)
     if count==0 {return {}}
     last:=count-1
@@ -48,18 +53,20 @@ track_evaluate :: proc "contextless" (keys:[]Keyframe,property:Property,time:f32
         middle:=(low+high)>>1
         if keys[middle].time<=time {low=middle} else {high=middle}
     }
-    return keyframe_segment(keys,low,property,time)
+    return keyframe_segment(keys,low,property,time,DET)
 }
 @(private)
-keyframe_segment :: proc "contextless" (keys:[]Keyframe,index:int,property:Property,time:f32) -> math.Vec4 {
+keyframe_segment :: proc "contextless" (keys:[]Keyframe,index:int,property:Property,time:f32,$DET:bool) -> math.Vec4 {
     a,b:=keys[index],keys[index+1]
     span:=b.time-a.time
     if span<=0 {return b.value}
-    t:=math.ease_apply(b.ease,(time-a.time)/span)
+    when DET {t:=math.ease_apply_det(b.ease,(time-a.time)/span)} else {t:=math.ease_apply(b.ease,(time-a.time)/span)}
     switch b.interpolation {
     case .Step: return a.value
     case .Linear:
-        if property==.Rotation {return quat_vec4(math.quat_slerp(vec4_quat(a.value),vec4_quat(b.value),t))}
+        if property==.Rotation {
+            when DET {return quat_vec4(math.quat_slerp_det(vec4_quat(a.value),vec4_quat(b.value),t))} else {return quat_vec4(math.quat_slerp(vec4_quat(a.value),vec4_quat(b.value),t))}
+        }
         return a.value+(b.value-a.value)*t
     case .Cubic,.Cubic_Spline:
         before:=keys[max(index-1,0)]
@@ -68,7 +75,8 @@ keyframe_segment :: proc "contextless" (keys:[]Keyframe,index:int,property:Prope
         if property==.Rotation && b.interpolation==.Cubic {
             v1=quat_align(v1,v0);vb=quat_align(vb,v0);va=quat_align(va,v1)
             q0,q1:=vec4_quat(v0),vec4_quat(v1)
-            return quat_vec4(squad(q0,q1,squad_control(vec4_quat(vb),q0,q1),squad_control(q0,q1,vec4_quat(va)),t))
+            s0,s1:=squad_control(vec4_quat(vb),q0,q1),squad_control(q0,q1,vec4_quat(va))
+            when DET {return quat_vec4(math.quat_slerp_det(math.quat_slerp_det(q0,q1,t),math.quat_slerp_det(s0,s1,t),2*t*(1-t)))} else {return quat_vec4(squad(q0,q1,s0,s1,t))}
         }
         m0:=a.out_slope if a.tangents else keyframe_tangent(before.time,vb,a.time,v0,b.time,v1)
         m1:=b.in_slope if b.tangents else keyframe_tangent(a.time,v0,b.time,v1,after.time,va)

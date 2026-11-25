@@ -151,7 +151,7 @@ transfer_make :: proc "contextless" (srgb:bool) -> (transfer:Transfer) {
     transfer.srgb=srgb
     for &value,i in transfer.table {
         value=f32(i)/255
-        if srgb {value=mm.srgb_to_linear(value)}
+        if srgb {value=mm.srgb_to_linear_det(value)}
     }
     return
 }
@@ -164,7 +164,7 @@ texel_read :: proc "contextless" (texels:[]u8,format:Source_Format,at:int,transf
         return {transfer.table[t[0]],transfer.table[t[1]],transfer.table[t[2]],f32(t[3])/255}
     case .RGBA16:
         for c in 0..<4 {value[c]=f32(u16(texels[at*8+c*2])|u16(texels[at*8+c*2+1])<<8)/65535}
-        if transfer.srgb {value.rgb={mm.srgb_to_linear(value.r),mm.srgb_to_linear(value.g),mm.srgb_to_linear(value.b)}}
+        if transfer.srgb {value.rgb={mm.srgb_to_linear_det(value.r),mm.srgb_to_linear_det(value.g),mm.srgb_to_linear_det(value.b)}}
     case .RGBA16F:
         for c in 0..<4 {value[c]=f32(transmute(f16)(u16(texels[at*8+c*2])|u16(texels[at*8+c*2+1])<<8))}
     case .RGBA32F:
@@ -179,7 +179,7 @@ texel_read :: proc "contextless" (texels:[]u8,format:Source_Format,at:int,transf
 texel_write :: proc "contextless" (texels:[]u8,format:Source_Format,at:int,value:[4]f32,transfer:^Transfer) #no_bounds_check {
     value:=value
     for &v in value {if v!=v {v=0}}
-    if transfer.srgb && (format==.RGBA8 || format==.RGBA16) {value.rgb={mm.linear_to_srgb(value.r),mm.linear_to_srgb(value.g),mm.linear_to_srgb(value.b)}}
+    if transfer.srgb && (format==.RGBA8 || format==.RGBA16) {value.rgb={mm.linear_to_srgb_det(value.r),mm.linear_to_srgb_det(value.g),mm.linear_to_srgb_det(value.b)}}
     switch format {
     case .RGBA8:
         for c in 0..<4 {texels[at*4+c]=to_byte(value[c])}
