@@ -2,6 +2,7 @@ package game
 
 import "mirai:core"
 import inp "mirai:engine/input"
+import "mirai:engine/scene"
 import render "mirai:engine/render"
 import mm "mirai:std/math"
 
@@ -10,14 +11,13 @@ import mm "mirai:std/math"
 // flickering, and a flashlight the player carries and turns on and off with
 // the flashlight action (F).
 
-// A switch the player turns with use while standing within reach.
-@(component,description="A wall switch: use (E) within reach turns on and off the House_Lamps that name it.")
+// A switch the player turns by using its Interactable.
+@(component,description="A wall switch: using its Interactable (E) turns on and off the House_Lamps that name it.")
 Light_Switch :: struct {
-    reach:f32 `mirai:"min=0,unit=m"`,
     on:bool,
 }
 
-LIGHT_SWITCH_DEFAULT :: Light_Switch{reach=2,on=true}
+LIGHT_SWITCH_DEFAULT :: Light_Switch{on=true}
 
 // A lamp of the house: its Point_Light gives `intensity` while its switch is
 // on and, if it flickers, while its blinking lets it; its globe glows `glow`
@@ -30,9 +30,6 @@ House_Lamp :: struct {
     glow:[3]f32 `mirai:"color"`,      // nits of the globe while lit
     flicker:f32 `mirai:"min=0"`,      // chances a second to blink; 0: steady
 }
-
-@(component,derived)
-House_Lamp_State :: struct {lit:bool}
 
 HOUSE_LAMP_DEFAULT :: House_Lamp{intensity=800}
 
@@ -49,35 +46,29 @@ FLASHLIGHT_DEFAULT :: Flashlight{intensity=9425,on=true}
 // The flashlight, a hand below and to the right of the eyes.
 FLASHLIGHT_OFFSET :: [3]f32{0.25,-0.15,0}
 
-// Use within reach of a switch turns it; the flashlight action turns every flashlight.
+// A switch used turns; the flashlight action turns every flashlight.
 @(step="fixed")
 horror_switches :: proc(
     players:^core.Table(Player,.Read),switches:^core.Table(Light_Switch),flashlights:^core.Table(Flashlight),
-    actions:inp.Input_Of(Action),worlds:^core.Table(core.World_Transform,.Read),
+    used:core.Ref(scene.Interaction_Events),actions:inp.Input_Of(Action),
 ) {
+    for event in used.items {
+        if event.kind!=.Completed {continue}
+        if light_switch:=core.edit(switches,event.target);light_switch!=nil {light_switch.on=!light_switch.on}
+    }
     for row in 0..<core.count(players) {
-        e:=core.entity_at(players,row)
-        placed,has_world:=core.get(worlds,e)
-        if !has_world {continue}
-        if inp.pressed(actions,e,.Use) {
-            for at in 0..<core.count(switches) {
-                switch_entity:=core.entity_at(switches,at)
-                if in_reach(worlds,placed.position,switch_entity,core.at(switches,at).reach) {core.edit_at(switches,at).on=!core.at(switches,at).on}
-            }
-        }
-        if inp.pressed(actions,e,.Flashlight) {
-            for at in 0..<core.count(flashlights) {core.edit_at(flashlights,at).on=!core.at(flashlights,at).on}
-        }
+        if !inp.pressed(actions,core.entity_at(players,row),.Flashlight) {continue}
+        for at in 0..<core.count(flashlights) {core.edit_at(flashlights,at).on=!core.at(flashlights,at).on}
     }
 }
 
-// Each lamp gives its light while its switch is on and its flicker lets it;
-// the flashlights follow the eyes of the first player.
+// Each lamp gives its light, and its globe glows, while its switch is on and
+// its flicker lets it; the flashlights follow the eyes of the first player.
 @(step="fixed",stage="react")
 horror_lights :: proc(
-    lamps:^core.Table(House_Lamp,.Read),states:^core.Table(House_Lamp_State),switches:^core.Table(Light_Switch,.Read),points:^core.Table(render.Point_Light),
+    lamps:^core.Table(House_Lamp,.Read),tints:^core.Table(render.Material_Values),switches:^core.Table(Light_Switch,.Read),points:^core.Table(render.Point_Light),
     flashlights:^core.Table(Flashlight,.Read),spots:^core.Table(render.Spot_Light),transforms:^core.Table(core.Transform),
-    players:^core.Table(Player,.Read),aims:inp.Aims,time:core.Time,problems:^core.Problems,
+    players:^core.Table(Player,.Read),aims:inp.Aims,time:core.Time,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(lamps) {
@@ -89,13 +80,9 @@ horror_lights :: proc(
             slice:=u32(seconds*lamp.flicker*4)+u32(row)*7919
             on=flicker_hash(slice)>0.3
         }
-        e:=core.entity_at(lamps,row)
-        old,_:=core.get(states,e)
-        if old.lit!=on {
-            if state:=demo_state(states,e,House_Lamp_State{},problems);state!=nil {state.lit=on}
-        }
+        glow_set(tints,lamp.globe,on?lamp.glow:[3]f32{})
         intensity:=lamp.intensity if on else 0
-        if at:=core.row_of(points,e);at>=0 && core.at(points,at).intensity!=intensity {
+        if at:=core.row_of(points,core.entity_at(lamps,row));at>=0 && core.at(points,at).intensity!=intensity {
             core.edit_at(points,at).intensity=intensity
         }
     }
@@ -124,14 +111,4 @@ flicker_hash :: proc "contextless" (v:u32) -> f32 {
     x=((x>>((x>>28)+4))~x)*277803737
     x=(x>>22)~x
     return f32(x>>8)/f32(1<<24)
-}
-
-// The globe of each lamp glows while it is lit.
-@(step="fixed")
-horror_glow :: proc(tints:^core.Table(render.Material_Values),lamps:^core.Table(House_Lamp,.Read),states:^core.Table(House_Lamp_State,.Read)) {
-    for row in 0..<core.count(lamps) {
-        lamp:=core.at(lamps,row)
-        state,_:=core.get(states,core.entity_at(lamps,row))
-        glow_set(tints,lamp.globe,state.lit?lamp.glow:[3]f32{})
-    }
 }

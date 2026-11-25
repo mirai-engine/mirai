@@ -18,12 +18,8 @@ RAFT_DROWNED_SECONDS :: 3 // the message stays this long
 Diver :: struct {
     capacity:f32 `mirai:"min=0,unit=s"`, // of oxygen in a full breath
     refill:f32 `mirai:"min=0"`,          // seconds of oxygen it gets back each second with the head out
-}
-
-@(component,derived)
-Diver_State :: struct {
-    oxygen:f32 `mirai:"readonly,unit=s"`, // left
-    drowned:u32 `mirai:"readonly"`,       // times it drowned
+    oxygen:f32 `mirai:"transient,readonly,unit=s"`, // left
+    drowned:u32 `mirai:"transient,readonly"`,       // times it drowned
 }
 
 DIVER_DEFAULT :: Diver{capacity=45,refill=15}
@@ -33,47 +29,35 @@ DIVER_DEFAULT :: Diver{capacity=45,refill=15}
 Raft_Game :: struct {
     raft:core.Entity,
     deck:f32 `mirai:"unit=m"`, // over the center of the raft, where a diver comes back
-}
-
-@(component,derived)
-Raft_Game_State :: struct {
-    message_until:u64 `mirai:"readonly"`, // the tick the drowned message goes at
+    message:core.Countdown `mirai:"transient"`, // the drowned message shows while it runs
 }
 
 @(step="fixed")
 raft_breath :: proc(
-    divers:^core.Table(Diver,.Read),breaths:^core.Table(Diver_State),states:^core.Table(phys.Character_State,.Read),games:^core.Table(Raft_Game,.Read),messages:^core.Table(Raft_Game_State),
-    worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,time:core.Time,problems:^core.Problems,
+    divers:^core.Table(Diver),states:^core.Table(phys.Character_State,.Read),games:^core.Table(Raft_Game),
+    worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,time:core.Time,
 ) {
     if !time.playing || !(time.dt>0) {return}
     for row in 0..<core.count(divers) {
         e:=core.entity_at(divers,row)
         state,has:=core.get(states,e)
         if !has {continue}
-        config:=core.at(divers,row)
-        was,ready:=core.get(breaths,e)
+        was:=core.at(divers,row)
         diver:=was
-        if !ready {diver.oxygen=config.capacity}
+        if core.added(divers,row) {diver.oxygen=diver.capacity} // its first breath
         if state.head_depth>0 {
             diver.oxygen=max(diver.oxygen-time.dt,0)
-        } else {diver.oxygen=min(diver.oxygen+config.refill*time.dt,config.capacity)}
+        } else {diver.oxygen=min(diver.oxygen+diver.refill*time.dt,diver.capacity)}
         drowned:=diver.oxygen<=0
-        if drowned {diver.oxygen,diver.drowned=config.capacity,diver.drowned+1}
-        if !ready || diver!=was {
-            air:=demo_state(breaths,e,diver,problems)
-            if air==nil {continue}
-            air^=diver
-        }
+        if drowned {diver.oxygen,diver.drowned=diver.capacity,diver.drowned+1}
+        if diver!=was {core.edit_at(divers,row)^=diver}
         if !drowned {continue}
         for at in 0..<core.count(games) {
             game:=core.at(games,at)
             raft,found:=core.get(worlds,game.raft)
             if !found {continue}
             core.place(placer,e,raft.position+mm.Vec3{0,game.deck,0},at_rest=true)
-            deadline:=core.deadline(time,RAFT_DROWNED_SECONDS)
-            if message:=demo_state(messages,core.entity_at(games,at),Raft_Game_State{},problems);message!=nil {
-                message.message_until=deadline
-            }
+            core.countdown_start(&core.edit_at(games,at).message,time,RAFT_DROWNED_SECONDS)
             break
         }
     }
@@ -100,15 +84,13 @@ Raft_Hud :: struct {
 
 @(step="frame")
 raft_hud :: proc(
-    huds:^core.Table(Raft_Hud),divers:^core.Table(Diver,.Read),breaths:^core.Table(Diver_State,.Read),games:^core.Table(Raft_Game,.Read),messages:^core.Table(Raft_Game_State,.Read),states:^core.Table(phys.Character_State,.Read),locomotions:^core.Table(locomotion.Locomotion_State,.Read),
+    huds:^core.Table(Raft_Hud),divers:^core.Table(Diver,.Read),games:^core.Table(Raft_Game,.Read),states:^core.Table(phys.Character_State,.Read),locomotions:^core.Table(locomotion.Locomotion_State,.Read),
     time:core.Time,
 ) {
     for row in 0..<core.count(huds) {
         body:=core.entity_at(huds,row)
         next:Raft_Hud
-        if config,is_diver:=core.get(divers,body);is_diver && core.count(games)>0 {
-            diver,ready:=core.get(breaths,body)
-            if !ready {diver.oxygen=config.capacity}
+        if diver,is_diver:=core.get(divers,body);is_diver && core.count(games)>0 {
             state,_:=core.get(states,body)
             character,_:=core.get(locomotions,body)
             switch {
@@ -116,13 +98,10 @@ raft_hud :: proc(
             case character.mode==locomotion.MODE_SWIMMING:                               next.doing=.Surface
             case .In_Fluid in state.fluid:                                         next.doing=.Wading
             }
-            share:=config.capacity>0?clamp(diver.oxygen/config.capacity,0,1):0
+            share:=diver.capacity>0?clamp(diver.oxygen/diver.capacity,0,1):0
             next.oxygen,next.breath,next.air=i32(math.round(diver.oxygen)),share,share<0.25?.Low:.Fine
             next.drowned,next.drowned_once=i32(diver.drowned),diver.drowned>0
-            for at in 0..<core.count(games) {
-                message,ready:=core.get(messages,core.entity_at(games,at))
-                next.message||=ready && !core.due(time,message.message_until)
-            }
+            for at in 0..<core.count(games) {next.message||=core.countdown_running(core.at(games,at).message,time)}
         }
         if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
     }

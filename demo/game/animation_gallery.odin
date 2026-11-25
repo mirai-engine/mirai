@@ -284,8 +284,11 @@ gallery_observe :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^cor
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
-        state:=demo_state(states,entity,Animation_Gallery_State{},problems)
-        if state==nil {continue}
+        if !core.has(states,entity) && !core.add(states,entity,Animation_Gallery_State{}) {
+            core.report(problems,entity,"demo.gallery","out of memory for the measurements of a gallery station")
+            continue
+        }
+        state:=core.staged(states,entity)
         // The warp asks with the age gallery_animate saw, before it advances.
         if item.kind==.Warp {
             if warp:=gallery_warp(core.ref(state),time.dt);warp.start {state.values[0],state.values[1],state.values[2]=warp.share,0,warp.direction}

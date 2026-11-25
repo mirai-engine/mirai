@@ -25,10 +25,9 @@ Vfx_Gallery :: struct {
 @(component)
 Vfx_Gallery_View :: struct {
     station:i32 `mirai:"min=-1"`,
+    volleys:u32 `mirai:"transient,readonly"`,
+    volley_station:i32 `mirai:"transient,readonly"`,
 }
-
-@(component,derived)
-Vfx_Gallery_View_State :: struct {station,volley_station:i32,volleys:u32}
 VFX_GALLERY_VIEW_DEFAULT :: Vfx_Gallery_View{station=-1}
 
 // Hits on a wall, given to its channel: one every interval
@@ -44,13 +43,9 @@ Vfx_Impacts :: struct {
     count:u32,  // particles of a hit; 0: those of the effect
     volley:u32,
     station:u32,
-}
-
-@(component,derived)
-Vfx_Impacts_State :: struct {
-    next:u64, // the tick of the next hit
-    hits:u32,
-    volleys:u32, // of the view it fired
+    next:core.Cooldown `mirai:"transient"`, // to the next hit
+    hits:u32 `mirai:"transient,readonly"`,
+    volleys:u32 `mirai:"transient,readonly"`, // of the view it fired
 }
 
 @(step="input")
@@ -59,14 +54,12 @@ vfx_gallery_reset :: proc(views:^core.Table(Vfx_Gallery_View,.Read),actions:inp.
 }
 
 @(step="fixed")
-vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View,.Read),selections:^core.Table(Vfx_Gallery_View_State),actions:inp.Input_Of(Action),time:core.Time,problems:^core.Problems) {
+vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View),actions:inp.Input_Of(Action),time:core.Time) {
     if !time.playing || !(time.dt>0) || core.count(views)==0 {return}
     previous,next,overview:=inp.pressed(actions,.Gallery_Previous),inp.pressed(actions,.Gallery_Next),inp.pressed(actions,.Gallery_Overview)
     use:=inp.pressed(actions,.Use)
     if !(previous || next || overview || use) {return}
-    for row in 0..<core.count(views) {
-        view:=demo_state(selections,core.entity_at(views,row),Vfx_Gallery_View_State{station=core.at(views,row).station},problems)
-        if view==nil {continue}
+    for &view in core.writable(views) {
         if overview {view.station=-1}
         if previous {view.station=(view.station+VFX_GALLERY_STATIONS-1)%%VFX_GALLERY_STATIONS if view.station>=0 else VFX_GALLERY_STATIONS-1}
         if next {view.station=(view.station+1)%%VFX_GALLERY_STATIONS}
@@ -75,31 +68,31 @@ vfx_gallery_actions :: proc(views:^core.Table(Vfx_Gallery_View,.Read),selections
 }
 
 @(step="fixed")
-vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts,.Read),states:^core.Table(Vfx_Impacts_State),views:^core.Table(Vfx_Gallery_View,.Read),selections:^core.Table(Vfx_Gallery_View_State,.Read),worlds:^core.Table(core.World_Transform,.Read),births:^core.Births,time:core.Time,problems:^core.Problems) {
+vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts),views:^core.Table(Vfx_Gallery_View,.Read),worlds:^core.Table(core.World_Transform,.Read),births:^core.Births,time:core.Time) {
     if !time.playing || !(time.dt>0) {return}
-    camera,_:=core.first(views)
-    view,_:=core.get(selections,camera)
+    view:=core.at(views,0) if core.count(views)>0 else VFX_GALLERY_VIEW_DEFAULT
     for row in 0..<core.count(impacts) {
         e:=core.entity_at(impacts,row)
         world,placed:=core.get(worlds,e)
         if !placed {continue}
-        wall:=core.at(impacts,row)
-        before,_:=core.get(states,e)
-        timed:=wall.interval>0 && core.due(time,before.next)
+        before:=core.at(impacts,row)
+        timed:=before.interval>0 && core.cooldown_ready(before.next,time)
         if view.volleys==before.volleys && !timed {continue}
-        state:=demo_state(states,e,Vfx_Impacts_State{},problems)
-        if state==nil {continue}
+        wall:=core.edit_at(impacts,row)
         due:=u32(0)
-        if view.volleys!=state.volleys {
+        if view.volleys!=wall.volleys {
             if i32(wall.station)==view.volley_station {due=wall.volley}
-            state.volleys=view.volleys
+            wall.volleys=view.volleys
         }
-        if timed {state.next,due=core.deadline(time,wall.interval),due+1}
+        if timed {
+            core.cooldown_start(&wall.next,time,wall.interval)
+            due+=1
+        }
         origin:=mm.transform_point(world.transform,{0,0,0})
         out:=linalg.normalize0(mm.transform_point(world.transform,{0,0,1})-origin)
         for _ in 0..<min(due,64) {
-            state.hits+=1
-            u,v:=vfx_gallery_random(state.hits,1),vfx_gallery_random(state.hits,2)
+            wall.hits+=1
+            u,v:=vfx_gallery_random(wall.hits,1),vfx_gallery_random(wall.hits,2)
             at:=mm.transform_point(world.transform,{(u-0.5)*wall.size.x,(v-0.5)*wall.size.y,0})
             core.birth(births,core.Birth{channel=core.birth_channel(base.text_get(wall.channel[:])),position=at,velocity=out*wall.speed,count=wall.count})
         }
@@ -113,19 +106,18 @@ vfx_gallery_random :: proc(n,use:u32) -> f32 {
 }
 
 @(step="late")
-vfx_gallery_camera :: proc(views:^core.Table(Vfx_Gallery_View,.Read),selections:^core.Table(Vfx_Gallery_View_State,.Read),stations:^core.Table(Vfx_Gallery,.Read),transforms:^core.Table(core.Transform)) {
+vfx_gallery_camera :: proc(views:^core.Table(Vfx_Gallery_View,.Read),stations:^core.Table(Vfx_Gallery,.Read),transforms:^core.Table(core.Transform)) {
     for row in 0..<core.count(views) {
-        entity:=core.entity_at(views,row)
-        selected,ready:=core.get(selections,entity)
-        station:=selected.station if ready else core.at(views,row).station
+        config:=core.at(views,row)
         position,target:=mm.Vec3{42,34,42},mm.Vec3{42,0,-2}
         for at in 0..<core.count(stations) {
             item:=core.at(stations,at)
-            if i32(item.station)!=station {continue}
+            if i32(item.station)!=config.station {continue}
             target=item.origin
             position=target+(item.eye if item.eye!={} else mm.Vec3{0,2.5,7})
             break
         }
+        entity:=core.entity_at(views,row)
         current,found:=core.get(transforms,entity)
         rotation:=mm.quat_look(target-position,{0,1,0})
         if found && (current.position!=position || current.rotation!=rotation) {
@@ -145,19 +137,16 @@ Vfx_Gallery_Hud :: struct {
 }
 
 @(step="frame")
-vfx_gallery_hud :: proc(huds:^core.Table(Vfx_Gallery_Hud),views:^core.Table(Vfx_Gallery_View,.Read),selections:^core.Table(Vfx_Gallery_View_State,.Read),stations:^core.Table(Vfx_Gallery,.Read)) {
+vfx_gallery_hud :: proc(huds:^core.Table(Vfx_Gallery_Hud),views:^core.Table(Vfx_Gallery_View,.Read),stations:^core.Table(Vfx_Gallery,.Read)) {
     for row in 0..<core.count(huds) {
-        e:=core.entity_at(huds,row)
-        view:=core.get(views,e) or_continue
-        selected,ready:=core.get(selections,e)
-        station:=selected.station if ready else view.station
+        view,has_view:=core.get(views,core.entity_at(huds,row))
+        if !has_view {continue}
         next:=Vfx_Gallery_Hud{overview=true,count=VFX_GALLERY_STATIONS}
         for at in 0..<core.count(stations) {
             item:=core.at(stations,at)
-            if i32(item.station)!=station {continue}
+            if i32(item.station)!=view.station {continue}
             next.overview,next.exhibit,next.number=false,true,i32(item.station)+1
-            next.title=item.title
-            next.detail=item.detail
+            next.title,next.detail=item.title,item.detail
             break
         }
         if core.at(huds,row)!=next {core.edit_at(huds,row)^=next}
