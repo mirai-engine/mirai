@@ -14,7 +14,8 @@
 // multiplying emitter darkens what is behind by its color instead, unlit. The
 // second target is the share of the pixel covered.
 // An additive emitter adds the light of its material whatever its opacity (an
-// additive material, by its opacity), and an unlit one shows the emission of its material in its own units
+// additive material, by its opacity). An unlit one shows the emission of its
+// material, or of its Surface program, in its own units
 // (Particle_Info.emission_mode), as it shows its color. The media of the view
 // between it and the eye take what it sends and add what they scatter over
 // what it covers, as over the opaque scene behind.
@@ -126,7 +127,9 @@ Stage_Output main(Stage_Input input, float4 pixel_position : SV_Position) {
         output.out_coverage = float4(alpha, 0.0, 0.0, 0.0);
         return output;
     }
-    bool relative = m.emission_mode == EMISSION_RELATIVE;
+    // An unlit particle shows its emission in the units of its emitter, as it
+    // shows its color (particle_sprite.vert); a lit one, in those of its material.
+    bool relative = (flags & PARTICLE_FLAG_LIT) != 0u ? m.emission_mode == EMISSION_RELATIVE : (flags & PARTICLE_FLAG_RELATIVE) != 0u;
     float3 radiance = finite_or_zero(surface * input.in_light + emission_render_units(emission * tint.rgb, relative));
     float4 medium = media_over(media, params.media, input.in_world);
     radiance = radiance * medium.a + (additive ? float3(0.0) : medium.rgb);

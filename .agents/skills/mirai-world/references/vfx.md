@@ -274,6 +274,11 @@ fade), and drops unrequested effects.
 | `Blend` (view) | `volumes` / `sprites` | Raymarch volumes; draw sorted sprites (`Billboard`/`Velocity`/`Horizontal`/`Beam`/`Ribbon`) & blended `Mesh` (`particle_mesh_blend.vert`, mesh normal), Surface program or flipbook/disc, `soft`, `Additive`/`Alpha`/`Multiply` (unlit, `FLAG_MULTIPLY`), `.Glass_Depth` split |
 | `Effect` / `Gbuffer` | `effects` / `meshes` | UI effect views; opaque/masked `Mesh` particles |
 
+An unlit sprite or blended mesh shows its color and the emission of its material or Surface
+program in the units of its emitter (`Particle_Info.emission_mode`, `PARTICLE_FLAG_RELATIVE`;
+Relative by default, so it shows by day and by night); a lit one takes the emission mode of its
+material.
+
 ## Ribbons
 
 Particles join ribbons via `flags >> RIBBON_SHIFT` (`particle_own_ribbon` from event seed or
