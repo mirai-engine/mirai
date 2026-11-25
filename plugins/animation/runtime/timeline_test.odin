@@ -258,6 +258,33 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect_value(t,len(w.requests.timeline.items),0)
 }
 
+// play and stop of an entity whose Animation plays a plain .anim name its clip: a weapon's reload
+// plays as an ability's action without a .character.
+@(test)
+play_and_stop_name_the_clip_of_a_plain_anim :: proc(t:^testing.T) {
+    problems:core.Problems
+    assets:host.Assets;app:=host.App{assets=&assets,allocator=context.allocator};defer host.app_content_destroy(&app)
+    id:=base.Asset_Id{0x73,0x74}
+    slide:=[]lib.Keyframe{{time=0,value={0,0,0,0}},{time=1,value={8,0,0,0}}}
+    if !timeline_content(t,&app,id,{{"",.Position,slide}},name="reload") {return}
+    w:Timeline_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    gun:=timeline_named(&w,"gun")
+    animation:=ANIMATION_DEFAULT;animation.asset,animation.loop,animation.fade,animation.playing=id,false,0,false
+    core.add(&w.animations,gun,animation)
+    test_world_settle(&w)
+    timeline_tick(&w,&app,&problems)
+    testing.expect(t,!animation_playing(core.ref(&w.playback),gun))
+    play(&w.requests,gun,"reload")
+    timeline_tick(&w,&app,&problems)
+    testing.expect(t,animation_playing(core.ref(&w.playback),gun),"play starts the clip of that name")
+    stop(&w.requests,gun,"reload")
+    timeline_tick(&w,&app,&problems)
+    testing.expect(t,!animation_playing(core.ref(&w.playback),gun),"stop stops it")
+    testing.expect(t,core.problem_find(&problems,gun,"animation.action_owner")==nil)
+}
+
 // The parts of a track target that drives a field, whatever is given.
 @(test)
 a_field_target_names_its_entity_component_and_field :: proc(t:^testing.T) {

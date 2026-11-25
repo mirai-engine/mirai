@@ -244,11 +244,12 @@ Ability_User :: struct {
 }
 
 // The body that holds an Ability_User of its own (a weapon in a hand): the seat of that body drives
-// and aims it, its statuses gate it, the actions of its abilities play on it and their moves move
-// it, and it fires beside whatever the wielder's own abilities do. The attributes (a magazine),
+// and aims it, its statuses gate it, the actions of its abilities play on it (on the weapon when it
+// has an Animation of its own: its clip of that name) and their moves move it, and it fires beside
+// whatever the wielder's own abilities do. The attributes (a magazine),
 // cooldowns and durability stay the weapon's own rows, so they go with it from hand to hand.
 // ability_wield asks for it; a scene or a prefab may author it.
-@(component,replicated,description="The body that wields this ability user (a weapon): its seat drives and aims it, its statuses gate it, and its actions and moves are that body's. The weapon keeps its own attributes, cooldowns and durability.")
+@(component,replicated,description="The body that wields this ability user (a weapon): its seat drives and aims it, its statuses gate it, and its moves and (unless the weapon has an Animation) its actions are that body's. The weapon keeps its own attributes, cooldowns and durability.")
 Ability_Wielded :: struct {
     wielder:core.Entity,
 }

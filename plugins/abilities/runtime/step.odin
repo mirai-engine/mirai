@@ -40,6 +40,7 @@ Ability_World :: struct {
     ids:^core.Table(core.Id,.Read), // what seeds the spread of a ray alike on every end
     verticals:^core.Table(core.Vertical,.Read), // the frame the view of a seat is in, for its aim
     attachments:^core.Table(anim.Bone_Attachment,.Read), // the rig a user hangs from, for a cue at a socket
+    clips:^core.Table(anim.Animation,.Read), // a user that animates itself (a weapon's clip) plays its actions; else its wielder
     playback:core.Ref(anim.Playback),
     skeletons:core.Ref(anim.Skeleton_Assets),
     kicks:^inp.Look_Kicks,
@@ -157,7 +158,8 @@ Actor :: struct {
     local:^Ability_Local,
     user_row,state_row,track_row,local_row:int,
     entity:core.Entity,
-    driver:core.Entity, // its wielder, or itself: whose seat, statuses, modes, animation and moves are its own
+    driver:core.Entity,   // its wielder, or itself: whose seat, statuses, modes and moves are its own
+    animated:core.Entity, // itself when it has an Animation, else its driver: where its actions play and its clip spans come from
 }
 
 @(private)
@@ -170,6 +172,7 @@ actor_at :: proc(t:^Tick,e:core.Entity,row:int) -> (u:Actor,ok:bool) {
     if t.wielded!=nil {
         if held,found:=core.get(t.wielded,e);found && held.wielder!=core.NONE {u.driver=held.wielder}
     }
+    u.animated=e if t.w.clips!=nil && core.has(t.w.clips,e) else u.driver
     stamp:=core.stamp(t.users,row)
     cached:=core.entity_map_get(&t.checks.entries,e)
     if cached==nil {
@@ -201,7 +204,7 @@ local_follow :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     if u.local.run==run {return}
     l:=local_edit(t,u)
     ticks:=f32(t.tick-u.state.start) if run!=0 && t.tick>u.state.start else 0
-    l.run,l.own,l.span_open,l.span_start,l.end_since=run,ticks*pace_tick(t,u.driver),0,{},0
+    l.run,l.own,l.span_open,l.span_start,l.end_since=run,ticks*pace_tick(t,u.animated),0,{},0
     l.hit_count,l.targets,l.windows=0,{},{}
 }
 
@@ -801,7 +804,7 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Actor,ref:core.Record(Ability),a:
     l.run,l.own,l.span_open,l.span_start,l.end_since=t.tick+1,0,0,{},0
     l.hit_count,l.targets,l.windows=0,{},{}
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
-    if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,u.driver,name)}
+    if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,u.animated,name)}
 }
 
 // Ends the running ability at at: its open windows close, their moves stop and its animation
@@ -818,7 +821,7 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time,ki
             if w.move.velocity!={} {locomotion.remove_moves(t.w.moves,u.driver,MOVE_ID+u32(i))}
         }
         if kind!=.Completed || a.hold {
-            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,u.driver,name)}
+            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,u.animated,name)}
         }
     }
     state:=core.edit_at(t.states,u.state_row)
@@ -840,7 +843,7 @@ time_advance :: proc(t:^Tick,e:core.Entity,u:^Actor) -> (before:Ability_Time) {
     before=time_of(t,u)
     if before.local<=0 {return TIME_BEFORE_START}
     before.local-=1
-    if pace:=pace_tick(t,u.driver);pace!=0 {local_edit(t,u).own+=pace}
+    if pace:=pace_tick(t,u.animated);pace!=0 {local_edit(t,u).own+=pace}
     return
 }
 
@@ -856,7 +859,7 @@ span_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at_local:i64) {
     if !cached.any {return}
     spans:=u.local.span_open
     for ev in t.w.anim_events.items {
-        if ev.entity!=u.driver || (ev.kind!=.Span_Begin && ev.kind!=.Span_End) {continue}
+        if ev.entity!=u.animated || (ev.kind!=.Span_Begin && ev.kind!=.Span_End) {continue}
         if cached.action!=0 && ev.action!=cached.action {continue}
         for hash,i in cached.windows {
             if hash==0 || hash!=ev.name {continue}
@@ -894,7 +897,7 @@ windows_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Abil
                     from,to:=window_ticks(w,t.dt)
                     ticks=u32(to-from)
                     // On the Own clock it lasts until the window closes, which removes it.
-                    if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,u.driver),1.0/64)))}
+                    if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,u.animated),1.0/64)))}
                 }
                 locomotion.add_move(t.w.moves,u.driver,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
             }

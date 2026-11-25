@@ -20,7 +20,7 @@ Ability :: struct {
     cooldown:f32 `mirai:"min=0,unit=s"`,
     duration:f32 `mirai:"min=0,unit=s"`,
     hold:bool, // it ends when its input is let go
-    action:[64]u8 `mirai:"text"`, // an action of the user's .character: in its layer over locomotion, or the whole body when it names none
+    action:[64]u8 `mirai:"text"`, // an action of the .character of the user, or of its wielder: in its layer over locomotion, or the whole body when it names none; of a user whose Animation plays a plain .anim (a weapon), its clip of that name
     windows:[16]Ability_Window,
     next:core.Record(Ability), // asked for when it completes, in the statuses its windows gave on its last tick
 }

@@ -142,7 +142,8 @@ Play_Request :: struct {entity:core.Entity,stop,driven,seek:bool,at:f32,action,s
 Value_Request :: struct {entity:core.Entity,name:u64,value:f32}
 
 // Plays the action named name of the .character of entity, from section when
-// one is given. An action that plays in the slot it takes gives way when name has at least its
+// one is given; for an entity whose Animation plays a plain .anim (a prop, a
+// weapon), its clip of that name, once from its start, and stop stops it. An action that plays in the slot it takes gives way when name has at least its
 // priority and its cancel policy allows it; otherwise the request is refused with a problem of
 // the entity. Naming a section of the action while it plays moves it there instead. What happens
 // to it arrives in Animation_Events.
@@ -511,6 +512,11 @@ actions_prepare :: proc(runtime:^Action_Runtime,requests:^Animation_Requests,cha
         state:=action_state(runtime,request.entity)
         if state!=nil && state.retry {requests.plays.items[pending]=request;pending+=1;continue}
         row:=core.row_of(animations,request.entity)
+        if row>=0 && !request.driven && animation_character(app.assets,animations.values[row])=={} {
+            // A plain .anim (a prop, a weapon): its clip of that name plays once from its start.
+            if request.stop {animation_command(requests,request.entity,.Stop)} else {play_clip(requests,request.entity,name,loop=false,restart=true)}
+            continue
+        }
         if row<0 || animation_character(app.assets,animations.values[row])=={} {
             core.report(problems,request.entity,"animation.action_owner","a %s of action '%s' was asked of this entity, and it has no Animation that plays a .character; set Animation.asset to one, or ask the entity that has it",verb,name)
             continue
