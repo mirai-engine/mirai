@@ -259,8 +259,9 @@ a_follower_is_posed_on_the_ticks_of_its_leader :: proc(t:^testing.T) {
     testing.expectf(t,core.problem_find(&f.problems,follower,"animation.follow_rig")==nil && f.problems.count==0,"%d problems",f.problems.count)
 }
 
-// Between two of its poses a rig shows the last one, carried with its entity: Previous is Local
-// after every tick, so what is drawn between the ticks does not go back and forth.
+// Between two of its poses a rig holds the last one, carried with its entity. After every tick,
+// skipped or not, Previous is the pose the tick before left, so the frames between the ticks draw
+// it from there to Local, as they draw its entity: neither back and forth nor a tick ahead.
 @(test)
 a_rig_between_its_poses_holds_its_pose_and_moves_with_its_entity :: proc(t:^testing.T) {
     a:Lod_Assets;if !lod_assets(t,&a,"lod-hold") {return};defer lod_assets_destroy(&a)
@@ -276,7 +277,7 @@ a_rig_between_its_poses_holds_its_pose_and_moves_with_its_entity :: proc(t:^test
         lod_step(&f,&a.app,tick)
         state:=constraint_playing(core.ref(&f.playback),rig)
         if !testing.expect(t,state!=nil) {return}
-        testing.expectf(t,slice.equal(playing_pose(state,.Previous),playing_pose(state,.Local)),"tick %d: Previous is Local",tick)
+        if tick>0 {testing.expectf(t,slice.equal(playing_pose(state,.Previous),held[:]) && state.changed==f.playback.frame,"tick %d: Previous is the pose of the tick before",tick)}
         testing.expectf(t,playing_pose(state,.Local)[0].position.x==100+f32(tick)*.05,"tick %d: the pose is carried with its entity",tick)
         if state.lod.skip {
             skipped+=1

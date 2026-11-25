@@ -576,9 +576,11 @@ animation_tick :: proc(
     }
     clip_commands_finish(&requests.timeline,time.playing,problems)
     lod_settle(playback)
-    // A rig keeps its last pose until it is posed again, carried with its entity.
+    // The pose the last tick left is the one the frames until the next tick draw from
+    // (animation_skin). A rig keeps it until it is posed again, carried with its entity.
     for row in playback.work.rows {
         state:=&playback.states[row.state]
+        copy(playing_pose(state,.Previous),playing_pose(state,.Local))
         if row.rig<0 {continue}
         if !state.lod.skip {copy(playing_pose(state,.Local),playing_topology(state).rest[:])}
         if root,ok:=core.get(transforms,state.entity);ok {playing_pose(state,.Local)[0]=core.to_math(root)}
@@ -1601,6 +1603,7 @@ match_searched :: proc(playback:core.Ref(Playback),entity:core.Entity) -> (searc
     return playback.searches[row],playback.searches[row].search!=0
 }
 
+// Previous: the Local pose the tick before left, which the frames until the next tick draw from.
 Pose_Buffer :: enum {Local,World,Sampled,Previous}
 
 playing_pose :: #force_inline proc "contextless" (state:^Playing,buffer:Pose_Buffer) -> []mm.Transform {
@@ -1670,16 +1673,14 @@ animation_finish :: proc(playback:^Playback,inputs:Constraint_Inputs,runtime:^Mo
     }
     finish :: proc(state:^Playing,playback:^Playback,inputs:Constraint_Inputs,runtime:^Modifier_Runtime,transforms:^core.Table(core.Transform),parents:^core.Table(core.Parent,$A),dt:f32,ground_inputs:Grounding_Inputs,motion:^Motion_Runtime,characters:^Character_Assets,final_poses:[]Pose_Request,paces:^core.Table(core.Own_Pace,$B),clock:core.Clock,places:^core.Places) {
         if state.skeleton!={} {if root,ok:=core.get(transforms,state.entity);ok {playing_pose(state,.Local)[0]=core.to_math(root)}}
-        // A rig not posed in this tick keeps its last pose: it shows the same between the ticks.
+        // A rig not posed in this tick keeps its last pose, moved only with its entity.
         if state.lod.skip {
             if state.pose_ready && !slice.equal(playing_pose(state,.Local),playing_pose(state,.Previous)) {state.changed=playback.frame}
-            copy(playing_pose(state,.Previous),playing_pose(state,.Local))
             return
         }
         constraints_apply(state,playback,inputs,runtime,transforms,core.read(parents),dt*core.pace_of(clock,paces,state.entity),ground_inputs,motion,characters,entity_requests(final_poses,state.entity))
         pose_write(playback,state,transforms,core.read(parents),places)
         if !state.pose_ready || !slice.equal(playing_pose(state,.Local),playing_pose(state,.Previous)) {state.changed=playback.frame}
-        copy(playing_pose(state,.Previous),playing_pose(state,.Local))
         state.pose_ready=true
         state.finished=playback.frame
         state.skipped,state.waited=0,0

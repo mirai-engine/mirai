@@ -384,12 +384,11 @@ animation_skin :: proc(
             // Without a change in the last tick, previous and local are the same pose.
             // Shown as it is in this tick, it stays so until the next one rather than going back.
             exact:=alpha>=1 || fresh || pose.changed!=playback.ptr.frame || instance.exact==pose.changed+1
-            basis:=mm.TRANSFORM_IDENTITY
-            if parent,exists:=core.get(parents,owner);exists && parent.entity!=core.NONE {
-                parent_world,parent_placed:=core.get(worlds,parent.entity)
-                if !parent_placed {continue}
-                basis=erender.drawn_transform(parent_world,frame)
-            }
+            // The rig is drawn where its entity is, as any entity between its ticks (a jump included);
+            // its bones between their poses of both ticks.
+            owner_world,owner_placed:=core.get(worlds,owner)
+            if !owner_placed {continue}
+            basis:=erender.drawn_transform(owner_world,frame)
             drawn:=erender.drawn_transform(world,frame)
             if instance.reset || !exact || instance.exact!=pose.changed+1 || instance.drawn!=drawn || instance.basis!=basis {
                 inverse,invertible:=mm.transform_inverse_matrix(drawn)

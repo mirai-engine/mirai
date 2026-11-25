@@ -162,7 +162,7 @@ Pose_Palette_Work :: struct {
     basis:mm.Transform,
     inverse:mm.Mat4,
     alpha:f32,
-    bone_offset:u32,
+    bone_offset:u32, // 1: index 0 is the entity of the pose, at basis, its own place there unread
     enabled,ok:bool,
 }
 Palette_Range :: struct {start,end:uintptr,writes:bool}
@@ -227,6 +227,7 @@ palette_work_evaluate :: proc(work:^Pose_Palette_Work) {
     if work.alpha>=1 {copy(work.local,work.current)} else if work.alpha<=0 {copy(work.local,work.previous)} else {
         for value,i in work.current {previous:=work.previous[i];work.local[i]=value if value==previous else mm.transform_interpolate(previous,value,work.alpha)}
     }
+    if work.bone_offset>0 {work.local[0]=mm.TRANSFORM_IDENTITY}
     if !lib.pose_world(work.parents,work.local,work.world,work.basis) {return}
     for joint,i in work.joints {
         value:=work.inverse*mm.transform_matrix(work.world[u64(joint.node)+u64(work.bone_offset)])*joint.inverse_bind

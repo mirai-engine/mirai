@@ -141,7 +141,8 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         testing.expect(t,rhi.buffer_read_slice(device,renderer.scene.vertex_buffer,u64(record.posed_word)*4,result[:]))
         for v,j in vertices {testing.expect_value(t,result[j].position,v.position+[3]f32{0,f32(i)+0.5,0})}
     }
-    // A tick that changes the poses, which the frames between it and the next interpolate.
+    // A tick that changes the poses, which the frames between it and the next interpolate. The
+    // place of a rig in its pose before is where it jumped from: it is drawn where its entity is.
     w.playback.frame+=1
     for root,i in roots {
         pose:=constraint_playing(core.ref(&w.playback),root)
@@ -149,6 +150,7 @@ skeletal_instances_use_independent_dense_poses_and_eighth_influence :: proc(t:^t
         playing_pose(pose,.Local)[0].rotation=mm.quat_axis_angle({0,0,1},0.3)
         playing_pose(pose,.Local)[0].scale={1.3,0.8,-1.1}
         playing_pose(pose,.Previous)[0]=playing_pose(pose,.Local)[0]
+        playing_pose(pose,.Previous)[0].position.x+=10
         playing_pose(pose,.Local)[2].position.y+=1
         for entity in ([2]core.Entity{root,draws[i]}) {
             placed:=core.edit(&w.worlds,entity)
