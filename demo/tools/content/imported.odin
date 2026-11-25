@@ -10,11 +10,11 @@ import "mirai:std/base"
 // the package of its source, which the demo pins with the text of each
 // manifest in its packages folder: the demo reads them from there.
 
-// The asset of kind that the import of source (relative to demo/) wrote for
+// The asset of kind that the import of source (relative to the demo) wrote for
 // what the source names name.
 @(private)
 imported_id :: proc(o:^Out,source:string,kind:asset.Fourcc,name:string) -> base.Asset_Id {
-    root:=fmt.tprintf("%s/demo",o.root)
+    root:=o.root
     list,_,_:=asset.packages_load(root,context.temp_allocator)
     for &entry in list.packages {
         text,read_error:=os.read_entire_file(asset.package_file(root,entry.id),context.temp_allocator)

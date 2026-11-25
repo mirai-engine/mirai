@@ -58,13 +58,14 @@ gallery_mixed_source_keeps_supports_and_full_collision_leaves_while_only_small_p
     anchors:[8]bool
     for piece,at in builder.pieces {anchors[at]=piece.anchor}
     physics:phys.Physics_State;settings:=phys.Physics_Settings{bodies=16,shapes=32,contacts=64,joints=1,hulls=16,breakables=1,pieces=16,bonds=64}
-    if !testing.expect(t,phys.test_state_make(&physics,settings)) {return};defer phys.state_destroy(&physics)
+    job_system:jobs.Job_System;problems:core.Problems
+    if !testing.expect(t,phys.state_make(&physics,&settings,&job_system,&problems)) {return};defer phys.state_destroy(&physics)
     view_of:=core.ref(&physics)
     dd:=phys.BREAKABLE_DESC_DEFAULT;dd.fracture=&fracture;dd.piece_anchors=anchors[:];dd.debris_volume=.1;dd.debris_ticks=480
     h,error:=phys.breakable_create(&physics,dd)
     if !testing.expect_value(t,error,phys.Breakable_Error.None) {return}
     root:=phys.breakable_body(view_of,h)
-    broke,_:=phys.test_strain(&physics,h,{0,.7,0},4,10000)
+    _,broke,_:=phys.break_apply(&physics,{breakable=h,piece=-1,region={point={0,.7,0},radius=4,blend=4},strain=10000,kind=.Damage})
     if !testing.expect(t,broke) {return}
     pieces:[8]phys.Piece_Info;testing.expect_value(t,phys.breakable_pieces(view_of,h,pieces[:]),8)
     debris,solids,supports:int
@@ -81,7 +82,6 @@ gallery_mixed_source_keeps_supports_and_full_collision_leaves_while_only_small_p
         }
     }
     testing.expect_value(t,supports,4);testing.expect_value(t,solids,2);testing.expect_value(t,debris,2)
-    job_system:jobs.Job_System
     for _ in 0..<481 {testing.expect(t,phys.simulate(&physics,nil,&job_system,1.0/60,{}))}
     for piece in pieces {
         _,valid:=phys.body_info(core.ref(&physics),piece.body)

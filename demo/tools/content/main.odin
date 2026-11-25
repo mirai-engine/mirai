@@ -27,7 +27,7 @@ Out :: struct {
 }
 
 @(private)
-path :: proc(o:^Out,relative:string) -> string {return fmt.tprintf("%s/demo/%s",o.root,relative)}
+path :: proc(o:^Out,relative:string) -> string {return fmt.tprintf("%s/%s",o.root,relative)}
 
 // Writes a mesh of one level of a source and its indices (asset.mesh_build)
 // to file, a path relative to the demo.
@@ -115,10 +115,10 @@ material_id :: proc(name:string) -> base.Asset_Id {
 
 main :: proc() {
     o:Out
-    o.root=len(os.args)>1?os.args[1]:"."
+    o.root="."
     asset.content_init(&o.content,PROJECT)
     defer asset.content_destroy(&o.content)
-    switch len(os.args)>2?os.args[2]:"" {
+    switch len(os.args)>1?os.args[1]:"" {
     case "":
         write_badge(&o)
         write_panel(&o)
@@ -135,7 +135,7 @@ main :: proc() {
     case "--interface-only": write_interface_icons(&o)
     case "--dig-only":       write_dig_assets(&o)
     case:
-        fmt.eprintfln("demo_content: unknown option %s",os.args[2])
+        fmt.eprintfln("demo_content: unknown option %s",os.args[1])
         o.content.failed=true
     }
     free_all(context.temp_allocator)

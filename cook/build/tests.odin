@@ -96,6 +96,11 @@ project_tests_folder :: proc(project_root:string,allocator:=context.allocator) -
     return project.path(project.folder_path(project_root,.Generated,context.temp_allocator),"build","tests",allocator=allocator)
 }
 
+// Where the executables of the programs of a project (its tools/content) stay.
+project_programs_folder :: proc(project_root:string,allocator:=context.allocator) -> string {
+    return project.path(project.folder_path(project_root,.Generated,context.temp_allocator),"build","programs",allocator=allocator)
+}
+
 // The flag that gives the threads of a test executable the stack of the system with the most:
 // none when the flags already pass linker flags of their own.
 test_link_flag :: proc(flags:[]string) -> string {
@@ -122,19 +127,20 @@ test_states_asked :: proc(flags:[]string) -> (added,seen:bool) {
     return
 }
 
-// What compiling the tests of the package in folder takes: no command when
-// the executable there was built from what is there now. root: the engine,
-// what paths count relative to; flags: those after the package, the
-// collections among them.
-test_build_plan :: proc(root,compiler,folder,executable:string,flags:[]string,allocator:=context.allocator) -> (b:Test_Build) {
+// What compiling the tests of the package in folder takes, or with tests
+// false its main: no command when the executable there was built from what
+// is there now. root: the engine, what paths count relative to; flags: those
+// after the package, the collections among them.
+test_build_plan :: proc(root,compiler,folder,executable:string,flags:[]string,allocator:=context.allocator,tests:=true) -> (b:Test_Build) {
     context.allocator=allocator
     b.allocator=allocator
     b.root,b.compiler,b.executable=slashes(root,allocator),slashes(compiler,allocator),slashes(executable,allocator)
     identity:=make([dynamic]string)
-    append(&identity,"build",slashes(folder,allocator),"-build-mode:test")
+    append(&identity,"build",slashes(folder,allocator))
+    if tests {append(&identity,"-build-mode:test")}
     for flag in flags {append(&identity,strings.clone(flag))}
-    if stack:=test_link_flag(flags);stack!="" {append(&identity,stack)}
-    b.states_added,b.states_seen=test_states_asked(flags)
+    if stack:=test_link_flag(flags);tests && stack!="" {append(&identity,stack)}
+    if tests {b.states_added,b.states_seen=test_states_asked(flags)}
     if b.states_added {append(&identity,"-define:ODIN_TEST_LOG_STATE_CHANGES=true")}
     b.flags=identity[:]
     if test_build_current(&b) {return}

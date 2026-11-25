@@ -2,7 +2,7 @@
 
 `demo/assets/animation_gallery/animation.scene` is the only animation scene of the demo: a hall that
 the player walks with Mirai (`assets/characters/mirai/mirai.glb`), with one numbered station per
-feature on each side of the walkway. The scene is authored; `tools/demo_content --animation-only`
+feature on each side of the walkway. The scene is authored; `mirai content demo -- --animation-only`
 writes its clips, `.character` sets, rigs and meshes
 ([generated content](demo.md#generated-content)).
 Each station's actor plays its own `.character` (`Animation.asset`) over the gallery's clips: the

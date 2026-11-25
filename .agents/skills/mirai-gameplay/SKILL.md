@@ -172,13 +172,13 @@ the same attributes and no private paths. Declaration and parameter binding:
 - **Everything the server decides goes through `fixed` functions** that run on the server or
   without a network; a client only applies (`core.owned`: without `core.Remote`).
 - When changing a library of `engine/*`, update its section of this skill and the consumers
-  (`demo/`, `templates/`, `tools/demo_content`) in the same task.
+  (`demo/` with its `tools/content`, `templates/`) in the same task.
 
 ## Verification
 
 - Types of the affected library and its consumers:
   `mirai check demo/game -collection:plugins=plugins`, `mirai check templates/game/game` and
-  `mirai check tools/demo_content -collection:plugins=plugins`.
+  `mirai check demo` (its game, editor and content tool).
 - `engine/input`: `mirai test engine/input` (map built with the defaults, read by id, names that
   the code does not declare, devices per slot, re-arming, contexts and their capture, chords in
   `Input_Settings` and the problems of a rejected request); the chord tie-break, in

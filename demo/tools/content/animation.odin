@@ -139,7 +139,7 @@ mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
 // (animation_gallery/animation.scene), made from the import of Mirai.
 write_animation_assets :: proc(o:^Out) {
     source:="assets/characters/mirai/mirai.glb"
-    model,error:=importer.import_model(path(o,source),sources.FORMATS[:],{root=fmt.tprintf("%s/demo",o.root)})
+    model,error:=importer.import_model(path(o,source),sources.FORMATS[:],{root=o.root})
     if error.code!=.None {fmt.eprintln(error.message);o.content.failed=true;return}
     defer importer.model_destroy(&model)
     locomotion,locomotion_clips:=mirai_animation(o,&model)

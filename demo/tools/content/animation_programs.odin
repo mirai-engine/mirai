@@ -3,7 +3,7 @@ package main
 import "mirai:asset"
 import "core:fmt"
 import importer "mirai:cook/import"
-import game "mirai:demo/game"
+import game "project:game"
 import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"

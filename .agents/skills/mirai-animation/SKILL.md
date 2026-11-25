@@ -145,7 +145,7 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 3. Change the data in its owner and expose it by name: plain components and storages, requests by
    queue to the writer, no pointers stored between frames.
 4. If an asset or a schema changes, version it and update all its consumers, including the demo
-   content that `tools/demo_content` writes.
+   content that `demo/tools/content` writes.
 5. Verify as [Verification](#verification) says.
 
 ## Character workflow

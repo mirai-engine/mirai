@@ -380,8 +380,8 @@ Numbered layers; a package only imports lower layers.
   [first-party plugins](../.agents/skills/mirai-plugins/references/plugins.md#first-party-plugins)
   says what each one does.
 - **no layer** `tools/mirai`: the `mirai` CLI; `mirai --help` lists its commands.
-- **no layer** `demo`, `templates`, `tools/demo_content`: the demo project, the `mirai new`
-  templates and the generator of the demo's assets.
+- **no layer** `demo`, `templates`: the demo project, whose `tools/content` generates its assets,
+  and the `mirai new` templates.
 - **no layer** `shaders/`: the single Slang source.
 
 The low-level packages `render`, `audio` and `std/anim`, and the `physics` solver, are declared

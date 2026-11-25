@@ -276,7 +276,7 @@ test_project_run :: proc(root:string,p:Test_Package,release:bool,flags:[]string,
         if !ensure_runtime_dependencies(root) {return}
         if engine_report(build.engine_build({engine_root=root,mode=mode,defines=engine.defines}),root,os.stderr)!=0 {return}
     }
-    job:=build.job_start({project=&opened,target=.Editor,action=.Test,test_package=p.folder,test=options,flags=flags,dev=!release,engine=mode})
+    job:=build.job_start({project=&opened,target=.Editor,action=.Test,package_folder=p.folder,test=options,flags=flags,dev=!release,engine=mode})
     defer build.job_destroy(job)
     for !build.job_poll(job) {
         test_lines_show(&job.test_run)

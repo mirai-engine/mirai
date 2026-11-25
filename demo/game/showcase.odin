@@ -6,7 +6,7 @@ import "mirai:std/base"
 
 // The scene assets/showcase/showcase.scene: a lift that an Animation moves, a
 // HUD (UI_Screen) and a sign above the lift (World_Widget) that show this
-// component, and a speaker with a sound. tools/demo_content writes the images,
+// component, and a speaker with a sound. tools/content writes the images,
 // the clip and the sound it uses.
 
 SHOWCASE_LIFT :: "Lift"         // the entity with the Animation
