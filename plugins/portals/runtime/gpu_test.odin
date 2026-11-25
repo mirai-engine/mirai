@@ -36,7 +36,7 @@ Gpu_Fixture :: struct {
 gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, generation := "portals") -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
-	// portals_viewmodel: with the stages that draw a viewmodel (testdata_viewmodel/).
+	// portals_viewmodel: with the stages that draw a viewmodel.
 	output := fmt.tprintf("%s/.mirai/test-shaders/%s", root, generation)
 	loaded, problem := gpu.shader_assets_load(output)
 	if !testing.expect(t, problem == "", problem) {return false}

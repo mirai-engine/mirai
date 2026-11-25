@@ -13,7 +13,6 @@ import "mirai:std/base"
 //   //! mirai frame <Struct> <name>          it declares <Struct>, which the constants of every view hold as <name>
 //   //! mirai needs nested_views             the stages are compiled with nested views
 //   //! mirai needs instance_ids             the G-buffer keeps the instance that drew each pixel
-//   //! mirai needs viewmodel                the stages draw the viewmodel of a view (render/foreground.odin)
 //   //! mirai hook ray <function>            it defines the ray hook; one source of a generation may
 //   //! mirai hook lights <count> <light>    it defines lights of its own; those of every source add up
 //   //! mirai hook probes <function>         it defines the probe hook; one source of a generation may
@@ -186,10 +185,12 @@ owned_constants_write :: proc(files:^Sources,include,project:string,sources:[]So
 }
 
 // Reads what the sources of the folders ask for and writes the two includes
-// of the generation into `output`/include. The layout of the constants is
+// of the generation into `output`/include; viewmodel: the stages draw the
+// viewmodel of a view (Options.viewmodel). The layout of the constants is
 // reflected with the flags the stages are compiled with. Everything returned
 // is in `allocator`.
-extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sources:[]Source,files:^Sources,allocator:=context.allocator) -> (extensions:Extensions,error:string) {
+extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sources:[]Source,files:^Sources,viewmodel:bool,allocator:=context.allocator) -> (extensions:Extensions,error:string) {
+    extensions.viewmodel=viewmodel
     include:=path_join(output,"include",allocator=context.temp_allocator)
     fields:=make([dynamic]Frame_Field,allocator)
     lights:=make([dynamic]Light_Hook,allocator)
@@ -217,8 +218,7 @@ extensions_generate :: proc(runner:^Runner,root,project,output,slangc:string,sou
                     switch {
                     case len(words)==4 && words[3]=="nested_views": extensions.nested=true
                     case len(words)==4 && words[3]=="instance_ids": extensions.instance_ids=true
-                    case len(words)==4 && words[3]=="viewmodel": extensions.viewmodel=true
-                    case: return {},fmt.aprintf("%s: `//! mirai needs nested_views`, `//! mirai needs instance_ids` or `//! mirai needs viewmodel`",path,allocator=allocator)
+                    case: return {},fmt.aprintf("%s: `//! mirai needs nested_views` or `//! mirai needs instance_ids`",path,allocator=allocator)
                     }
                 case "hook":
                     switch {

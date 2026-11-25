@@ -438,6 +438,7 @@ Render_Sync :: struct {
     extra_lights:int, // slots of the lights of the frame (Frame_Extras), the first of the renderer: the most a frame gave
     sun:gpu.Sun_Desc,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
+    foreground:bool, // the shaders the instances were marked for draw viewmodels (Sync_Tables.foreground)
     round:u32, // of the frame: Drawn.replaced of what a visual instance replaces in it
     assets_structure,assets_appearance:u64,
     derived:int, // the derived rows there were after the last round of them
@@ -676,8 +677,12 @@ render_sync :: proc(
         bodies_changed=true
     }
     sync.owned=t.owned
+    // Shaders that start or stop drawing viewmodels (a rebuild) mark what hangs from them again.
+    redrawn:=t.foreground!=sync.foreground
+    if redrawn {for row in 0..<core.count(viewmodels) {subtree_gather(sync,hierarchy,core.entity_at(viewmodels,row))}}
+    sync.foreground=t.foreground
     // What names the field of view of a body's viewmodel: the Viewmodels and, while there is one, where it hangs.
-    if whole || bodies_changed || c.viewmodels.written || len(c.viewmodels.gone)>0 || core.count(viewmodels)>0 && (c.parents.written || len(c.parents.gone)>0) {viewmodels_settle(r,t,viewmodels,problems)}
+    if whole || bodies_changed || redrawn || c.viewmodels.written || len(c.viewmodels.gone)>0 || core.count(viewmodels)>0 && (c.parents.written || len(c.parents.gone)>0) {viewmodels_settle(r,t,viewmodels,problems)}
     for e in sync.under {instance_changed(sync,e)}
     for e in c.values.gone {instance_changed(sync,e)}
     for e in c.lives.gone {instance_changed(sync,e)}
@@ -854,7 +859,7 @@ Sync_Tables :: struct {
     posed:^Posed_Meshes,
     owned:[VIEW_SLOTS]core.Entity, // View_Bodies
     viewmodels:^core.Table(Viewmodel,.Read),
-    foreground:bool, // the shaders in use draw viewmodels (`//! mirai needs viewmodel`)
+    foreground:bool, // the shaders in use draw viewmodels (the build saw a Viewmodel)
 }
 
 // What each table was when the sync last looked, and what it changed since.
@@ -1019,7 +1024,7 @@ viewmodels_settle :: proc(r:^gpu.Renderer,t:Sync_Tables,viewmodels:^core.Table(V
         slot:=body_owner(t,e)
         if slot==0 || int(slot)>len(fovs) {continue}
         if !t.foreground {
-            core.report(problems,e,"render.viewmodel_shaders","the Viewmodel is drawn as other meshes: the shaders of the project draw none; add the line `//! mirai needs viewmodel` to a .slang file of its shaders folder")
+            core.report(problems,e,"render.viewmodel_shaders","the Viewmodel is drawn as other meshes until the project is built again: its build saw no Viewmodel in its scenes, prefabs or code (the editor builds again once one is saved; an API call or a scene from outside the assets adds one it cannot see)")
             continue
         }
         fovs[slot-1]=core.at(viewmodels,row).fov

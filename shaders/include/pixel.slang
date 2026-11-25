@@ -17,7 +17,7 @@ uint pixel_view(int2 p) {
 
 // The tag of a pixel of the viewmodel of the view (FRAME_FLAG_VIEWMODEL):
 // VIEWS_FOREGROUND with its kept share in VIEWS_KEPT; 0 for another pixel.
-// Only a generation that needs the viewmodel has any (`//! mirai needs viewmodel`).
+// Only a generation that draws the viewmodel has any (MIRAI_VIEWMODEL).
 uint pixel_foreground(int2 p) {
 #ifdef MIRAI_VIEWMODEL
     if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u) return 0u;

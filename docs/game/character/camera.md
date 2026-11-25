@@ -15,10 +15,10 @@ forward is where it looks.
 ### The weapon in view
 
 Hang the weapon and the arms under the camera and put `render.Viewmodel{fov}` on their root (the
-vertical field of view, radians: 55 degrees is `0.96`), and give the shaders of the project the line
-`//! mirai needs viewmodel` in a `.slang` file of `shaders/` (without it a problem says so and the
-weapon is drawn as other meshes; a game without the line pays nothing). The view of that player
-draws them over its world with that field of view: they never sink into a wall, keep their size
+vertical field of view, radians: 55 degrees is `0.96`); nothing else. The build finds it in a scene,
+a prefab or the code of the game or of a plugin (the editor builds again once one is saved), and a
+game without one pays nothing. The view of that player draws them over its world with that field of
+view: they never sink into a wall, keep their size
 whatever the `fov` of the camera, take their light in front of the wall they would be inside, shade
 themselves, and the body keeps its shadow on the ground. Mirrors and the views of other players show
 the body and never the weapon, and the weapon casts no shadow on the world. What is drawn in the

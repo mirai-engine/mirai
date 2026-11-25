@@ -474,8 +474,8 @@ a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
     testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && s.foreground[1].fov==0,"the shaders draw no viewmodel: none is marked")
     testing.expect(t,problems.count==1 && problems.entries[0].entity==rifle && string(cstring(&problems.entries[0].code[0]))=="render.viewmodel_shaders","the Viewmodel says what the shaders lack")
 
+    // Shaders built again with the viewmodel mark what hangs from it, with nothing else changed.
     f.renderer.frame_layout.viewmodel=size_of(gpu.Gpu_Frame)
-    f.sync.synced=false
     sync_frame(f,bodies=&bodies)
     testing.expect(t,flags(f,body)&gpu.INSTANCE_FLAG_FOREGROUND==0 && flags(f,body)&gpu.INSTANCE_FLAG_OWNED!=0 && mask(f,body)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)!=0,"the body is a body of the rays")
     for e in ([]core.Entity{rifle,hand}) {
@@ -485,6 +485,11 @@ a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
     testing.expect(t,s.foreground[1].instances==2 && s.foreground[1].fov==1,"the slot has its viewmodel and its field of view")
     testing.expect_value(t,len(s.translucent),0)
 
+    f.renderer.frame_layout.viewmodel=0
+    sync_frame(f,bodies=&bodies)
+    testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && s.foreground[1].fov==0,"shaders built again without it unmark it")
+    f.renderer.frame_layout.viewmodel=size_of(gpu.Gpu_Frame)
+    sync_frame(f,bodies=&bodies)
     core.edit(&f.world.viewmodels,rifle).fov=0.5
     sync_frame(f,bodies=&bodies)
     testing.expect_value(t,s.foreground[1].fov,f32(0.5))

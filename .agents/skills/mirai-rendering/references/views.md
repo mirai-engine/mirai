@@ -67,10 +67,14 @@ camera and visible scene since last frame, reprojecting histories instead of cut
   under a body of `View_Bodies`), their field of view (`scene_set_foreground`) and the boxes of
   the weapon and the body (`scene_foreground_bodies`). A view whose `Camera.own` has one draws it
   (`render/foreground.odin`); no other view, cull, map or ray structure meets those instances.
-- **Switch:** only a generation with `//! mirai needs viewmodel` (`MIRAI_VIEWMODEL`, the
+- **Switch:** only a generation with `shaders.Options.viewmodel` (`MIRAI_VIEWMODEL`, the
   `Viewmodel_Frame` block after the nested views, `Frame_Layout.viewmodel`) draws one: in any
   other the stages are the source of before, byte for byte, and the sync reports
-  `render.viewmodel_shaders`. Tests: `render/testdata_viewmodel` (`VIEWMODEL_GENERATION`).
+  `render.viewmodel_shaders`. The build sets it when a scene or prefab of the project or its
+  plugins holds a `Viewmodel` or their code names it (`build.shaders_uses`); the editor publishes
+  again when the world shows one first (`programs_missing`), and the sync marks again when the
+  shaders change. Tests: a test file that names `<package>_viewmodel` gets that generation
+  (`VIEWMODEL_GENERATION`).
 - **Depth:** the world of that view is drawn below `FOREGROUND_DEPTH` (15/16) of its depth and of
   `glass_zbuffer` (`rhi.cmd_set_depth_range` names the targets it holds for); `inv_view_proj`
   takes the stored depth, so the pyramid and what decodes the depth target follow. After the

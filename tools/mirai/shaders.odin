@@ -56,9 +56,9 @@ cmd_shaders :: proc(root:string,args:[]string) -> int {
         return 1
     }
     if options.project!="" {
-        opened,sources,uses,roots,ok:=project_shader_sources(options.project,root,"mirai shaders")
+        opened,sources,uses,viewmodel,roots,ok:=project_shader_sources(options.project,root,"mirai shaders")
         if !ok {return 1}
-        options.project,options.sources,options.uses=opened,sources,uses
+        options.project,options.sources,options.uses,options.viewmodel=opened,sources,uses,viewmodel
         if !whole && store_root=="" && options.output=="" && options.cache=="" && options.backends=={} {
             if file,alive:=session_find(opened);alive {return shaders_publish_editor(opened,file.port)}
         }
@@ -100,20 +100,20 @@ shaders_publish_editor :: proc(folder:string,port:int) -> int {
 }
 
 // The root of the project in folder, the folders of programs its build passes besides its own
-// shaders/ (build.shader_sources) and what its assets draw its programs as (build.shaders_uses);
-// ok is false, after saying why, when it does not open.
+// shaders/ (build.shader_sources), what its assets draw its programs as and whether its stages
+// draw viewmodels (build.shaders_uses); ok is false, after saying why, when it does not open.
 @(private="file")
 project_shader_sources :: proc(folder,root,who:string) -> (
-    project_root:string,sources:[]shaders.Source,uses:[]shaders.Program_Uses_Of,
+    project_root:string,sources:[]shaders.Source,uses:[]shaders.Program_Uses_Of,viewmodel:bool,
     roots:[]string,ok:bool,
 ) {
     p,error:=project.open(folder,root,context.temp_allocator)
     if error.code!=.None {fmt.eprintfln("%s: could not open the project %s",who,folder);return}
     sources,_=build.shader_sources(&p,context.temp_allocator)
     problem:string
-    if uses,problem=build.shaders_uses(&p,nil,context.temp_allocator);problem!="" {fmt.eprintfln("%s: %s",who,problem);return}
+    if uses,viewmodel,problem=build.shaders_uses(&p,nil,context.temp_allocator);problem!="" {fmt.eprintfln("%s: %s",who,problem);return}
     roots=build.shaders_package_roots(&p,context.temp_allocator)
-    return p.root,sources,uses,roots,true
+    return p.root,sources,uses,viewmodel,roots,true
 }
 
 // Checks a program as material.program.check does: the rules of the check and
@@ -134,7 +134,7 @@ shaders_check :: proc(root:string,args:[]string) -> int {
     options:=shaders.Check_Options{root=root,path=path}
     if folder!="" {
         ok:bool
-        options.project,options.sources,_,_,ok=project_shader_sources(folder,root,"mirai shaders check")
+        options.project,options.sources,_,_,_,ok=project_shader_sources(folder,root,"mirai shaders check")
         if !ok {return 1}
     }
     result:=shaders.program_check(options)
@@ -212,11 +212,10 @@ cmd_setup :: proc(root:string,args:[]string) -> int {
 // its testdata/, which the engine does not ship. A test of a runtime package
 // does not generate them itself: the shipped game compiles its test files
 // too, and cook is not shipped. Only for a package whose tests take the
-// shared device, and one of the engine only with programs in testdata/. A
-// folder testdata_<name> of the package gives a generation of its own,
-// <name> of the package's in test-shaders, with what it holds besides: what
-// only some tests ask of the stages (`//! mirai needs viewmodel`) stays out of
-// the others.
+// shared device, and one of the engine only with programs in testdata/. When
+// a test file names the generation <name>_viewmodel, that one is also made,
+// with stages that draw viewmodels (shaders.Options.viewmodel), which the
+// others go without.
 package_test_shaders :: proc(root,folder:string) -> bool {
     absolute:=project.path_absolute(folder,context.temp_allocator)
     engine:=project.path_absolute(root,context.temp_allocator)
@@ -249,24 +248,22 @@ package_test_shaders :: proc(root,folder:string) -> bool {
     lock:=shaders_lock(root)
     defer workspace.lock_release(&lock)
     if !test_generation(root,name,sources[:]) {return false}
+    viewmodel:=fmt.tprintf("%s_viewmodel",name)
     entries,_:=os.read_all_directory_by_path(absolute,context.temp_allocator)
     for entry in entries {
-        if entry.type!=.Directory || !strings.has_prefix(entry.name,"testdata_") || !has_slang(entry.fullpath) {continue}
-        other:=fmt.tprintf("%s_%s",name,entry.name[len("testdata_"):])
-        more:=make([dynamic]shaders.Source,context.temp_allocator)
-        append(&more,..sources[:])
-        append(&more,shaders.Source{name=fmt.tprintf("%s_test",other),folder=entry.fullpath})
-        if !test_generation(root,other,more[:]) {return false}
+        if entry.type!=.Regular || !strings.has_suffix(entry.name,"_test.odin") {continue}
+        text,error:=os.read_entire_file(entry.fullpath,context.temp_allocator)
+        if error==nil && strings.contains(string(text),fmt.tprintf("%s\"",viewmodel)) {return test_generation(root,viewmodel,sources[:],true)}
     }
     return true
 }
 
 // One generation of the shaders of tests into <root>/.mirai/test-shaders/<name>.
 @(private="file")
-test_generation :: proc(root,name:string,sources:[]shaders.Source) -> bool {
+test_generation :: proc(root,name:string,sources:[]shaders.Source,viewmodel:=false) -> bool {
     output:=join(root,".mirai","test-shaders",name)
     // The tests draw their programs every way.
-    result:=shaders.generate({root=root,sources=sources,output=output,cache=fmt.tprintf("%s-stamp",output),every={.Opaque,.Blend,.Overlay,.Particle_Sprite,.Particle_Mesh,.Preview,.Impostor}})
+    result:=shaders.generate({root=root,sources=sources,output=output,cache=fmt.tprintf("%s-stamp",output),every={.Opaque,.Blend,.Overlay,.Particle_Sprite,.Particle_Mesh,.Preview,.Impostor},viewmodel=viewmodel})
     defer shaders.result_destroy(&result)
     if result.warnings!="" {fmt.eprint(result.warnings)}
     if result.error!="" {fmt.eprintfln("mirai test: the shaders of the tests of %s could not be generated: %s",name,result.error);return false}

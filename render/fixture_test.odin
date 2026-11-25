@@ -18,7 +18,7 @@ Fixture :: struct {
 // the stages of the references, which `mirai test` makes before the tests run:
 // the engine has neither.
 TEST_GENERATION :: #directory + "/../.mirai/test-shaders/render"
-// The same with the stages that draw the viewmodel of a view (testdata_viewmodel/).
+// The same with the stages that draw the viewmodel of a view.
 VIEWMODEL_GENERATION :: #directory + "/../.mirai/test-shaders/render_viewmodel"
 
 // False with the test told why: there is no device (shared_device.take_or_skip)
