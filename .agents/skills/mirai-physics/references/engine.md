@@ -37,6 +37,9 @@ follow their entity's transform.
   world); presets `joint_{fixed,spherical,revolute,prismatic,distance}`. Two static entities keep
   their joint without an error (each a static body of its own) and it holds once one moves; a
   joint whose `a` and `b` are one body is `Invalid_Bodies`.
+- A rider of an `input.Mount` (`core.Carried`), and what hangs from it, has no body or compound
+  shape until it gets off; a `core.place` on an entity without a made body writes its `Transform`
+  (under its parent), where the body is then made.
 - `Body_Twin` & `Collider_Cuts`: portal twin colliders and box cutouts synced in `physics_twins`
   (errors: `physics.twin`, `physics.cuts`).
 
@@ -194,7 +197,8 @@ overlaps.
 Read-only on `core.Ref(Physics_State)` (returns empty when `!ready`; starting inside returns
 distance 0, zero normal): `raycast`, `raycast_all` (up to `QUERY_HIT_CAPACITY`), `sweep`,
 `sweep_all`, `overlap_{sphere,box,capsule,cylinder}` (`complete` flag), `closest_point`,
-`body_bounds`, `collider_raycast`, `fluid_at`, `fluids_in`, `fluid_bodies` (presentation only),
+`body_bounds`, `body_info` (pose, velocities, mass, center and inertia), `collider_raycast`,
+`fluid_at`, `fluids_in`, `fluid_bodies` (presentation only),
 `static_triangles` and `static_changes` (`Static_Cursor` with epoch overflow for navmesh).
 `query_hits(layers, include_sensors)` or collider-specific `Query_Filter`. `physics_prepare`
 publishes `core.World_Queries` for physics-agnostic plugins; `collider_debug_draw`/`collider_bounds`

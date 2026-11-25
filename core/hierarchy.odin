@@ -14,7 +14,8 @@ import mm "mirai:std/math"
 // under itself is left out of the tree, and its entity is a root of it until
 // that Parent or the links above change; one that names an entity not alive
 // leaves it a root. What hangs from an entity destroyed goes with it at the
-// settle (hierarchy_doom): a child to keep is taken out first.
+// settle (hierarchy_doom): a child to keep is taken out first. A rider
+// (Carried) is: it stays where it was, hanging from nothing.
 @(storage,reset="hierarchy_clear")
 Hierarchy :: struct {
     parent:[dynamic]Entity,
@@ -43,17 +44,20 @@ hierarchy_clear :: proc(h:^Hierarchy) {
 // it: its children in the tree whose Parent still names it, those a Parent
 // written since the tree last looked puts under it, and so on down. The
 // settle of a World calls it after settling Parent and before the other
-// tables. True when it destroyed any.
-hierarchy_doom :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities) -> bool {
+// tables. A child that rides what is destroyed (Carried) stays, cut loose
+// where it is: its Transform takes its place in the world and its Parent goes.
+// True when it destroyed or cut loose any.
+hierarchy_doom :: proc(h:^Hierarchy,parents:^Table(Parent),es:^Entities,carried:^Table(Carried)=nil,transforms:^Table(Transform)=nil) -> bool {
     if len(es.doomed)==0 || resize(&es.walk,len(es.generation))!=nil {return false}
     for e in es.doomed {es.walk[entity_index(e)]=true}
     first,k:=len(es.doomed),0
+    loose:=false
     for more:=true;more; {
         for ;k<len(es.doomed);k+=1 {
             gone:=es.doomed[k]
             if entity_index(gone)>=len(h.first_child) {continue}
             for child:=h.first_child[entity_index(gone)];child!=NONE;child=h.next_sibling[entity_index(child)] {
-                if value,ok:=get(parents,child);ok && value.entity==gone {doom(es,child)}
+                if value,ok:=get(parents,child);ok && value.entity==gone {doom_or_loose(es,parents,carried,transforms,child,&loose)}
             }
         }
         more=false
@@ -61,11 +65,25 @@ hierarchy_doom :: proc(h:^Hierarchy,parents:^Table(Parent,$A),es:^Entities) -> b
         c:=changes(parents,&seen)
         for row in each_changed(parents,&c) {
             p:=at(parents,row).entity
-            if p!=NONE && !alive(es,p) && entity_index(p)<len(es.walk) && es.walk[entity_index(p)] {more=doom(es,entity_at(parents,row)) || more}
+            if p!=NONE && !alive(es,p) && entity_index(p)<len(es.walk) && es.walk[entity_index(p)] {more=doom_or_loose(es,parents,carried,transforms,entity_at(parents,row),&loose) || more}
         }
     }
     for e in es.doomed {es.walk[entity_index(e)]=false}
-    return len(es.doomed)>first
+    return len(es.doomed)>first || loose
+}
+
+// A rider (Carried) stays where it is, hanging from nothing; anything else goes.
+@(private="file")
+doom_or_loose :: proc(es:^Entities,parents:^Table(Parent),carried:^Table(Carried),transforms:^Table(Transform),e:Entity,loose:^bool) -> bool {
+    if carried==nil || !has(carried,e) {return doom(es,e)}
+    if transforms!=nil {
+        if world,placed:=world_of(transforms,parents,e);placed {
+            if row:=edit(transforms,e);row!=nil {row^={world.position,world.rotation,world.scale}}
+        }
+    }
+    remove(parents,e)
+    loose^=true
+    return false
 }
 
 @(private="file")

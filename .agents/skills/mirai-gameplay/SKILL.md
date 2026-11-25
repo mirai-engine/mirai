@@ -6,7 +6,7 @@ description: Write games with the game libraries of `engine/scene`, `engine/volu
   (gravity, wind, reverb, view and fog volumes), runtime prefabs, action-based input, player seats,
   driving bodies and cameras, spawn points, saves (slots, autosave, checkpoints), cinematics,
   section streaming, named tags, interaction (focus, use and hold of targets, aim), debug draw,
-  the `demo` project,
+  mounts and vehicles (boats, submarines, turrets), the `demo` project,
   and the game templates. Use when writing game code against
   those libraries, building a game from a template, or looking for where a game feature lives
   (enemies, NPCs and mining games are in `mirai-world`, attacks and skills in `mirai-abilities`).
@@ -45,6 +45,9 @@ the same attributes and no private paths. Declaration and parameter binding:
   (plugin `spawn`), their networking: [seats](references/control.md#seats),
   [driving](references/control.md#driving), [spawn points](references/control.md#spawn-points),
   [cameras](references/control.md#cameras) and [networking](references/control.md#networking).
+- Boats, submarines and turrets (plugin `vehicles`: `Vehicle`, `Thruster`, `Aim`) and getting in
+  and out through an `inp.Mount`: [vehicles](../../../docs/game/character/vehicles.md) and
+  [driving](references/control.md#driving).
 - Declare an input action (`inp.Action`), its default bindings, `Input_Settings` and renaming it:
   [actions](references/control.md#actions). Input contexts (menus, vehicles) and chords:
   [contexts](references/control.md#contexts), [chords](references/control.md#chords).
@@ -142,7 +145,8 @@ the same attributes and no private paths. Declaration and parameter binding:
   the mouse are the engine's too (`UI_Screen.pause`, `input=.Modal`), never game code.
 - **Seats and movement.** A player is a seat (`inp.Seat`), of this machine or of a connection,
   without telling them apart; it carries its actions and the one link to what it drives
-  (`Seat.body`); any entity can be driven, and the camera of a body is the one under it. The
+  (`Seat.body`); any entity can be driven, and the camera of a body is the active one under it,
+  not one of what rides it (a body rides an `inp.Mount` while its seat drives a vehicle). The
   `Move_Input` of a body is one request for every driver: a move in the world and the yaw to face.
   The seat's comes from its actions toward the forward of the camera it sees (`camera_drive`); an
   AI or the game writes it for the bodies no seat drives. The mover turns the body toward its look

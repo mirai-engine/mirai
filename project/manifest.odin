@@ -24,7 +24,7 @@ PLUGIN_COMPANIONS :: "plugins"
 // compatible with the previous one.
 ENGINE_VERSION :: "0.1.0"
 
-MAX_PLUGINS :: 32      // plugins a project names; their dependencies come besides
+MAX_PLUGINS :: 64      // plugins a project names; their dependencies come besides
 MAX_DEPENDENCIES :: 16
 MAX_DEFINES :: 16
 MAX_SOURCES :: 16

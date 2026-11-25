@@ -19,6 +19,7 @@ Test_Cameras :: struct {
     parents:core.Table(core.Parent),
     moves:core.Table(input.Move_Input),
     hierarchy:core.Hierarchy,
+    carried:core.Table(core.Carried),
     seats:core.Table(input.Seat),
     seat_state:input.Seats,
     seat_runtime:input.Seat_States,

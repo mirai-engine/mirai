@@ -1,0 +1,21 @@
+{
+  "scene": "raft/raft.scene",
+  "steps": [
+    {"name": "the swimmer stands on the raft", "method": "play.step", "params": {"for": 30}},
+    {"name": "go to the hatch of the boat", "method": "play.step",
+     "params": {"drive": {"entity": "Hatch", "within": 2}, "for": "20s"}},
+    {"name": "use the hatch", "method": "play.step",
+     "params": {"segments": [{"for": 2, "keys": ["E"]}, {"for": 20}]}},
+    {"name": "the swimmer rides the hatch", "method": "play.check", "params": {"conditions": [
+      {"entity": "Swimmer", "field": "Carried", "compare": "Exists"}]}},
+    {"name": "drive the boat five seconds", "method": "play.step",
+     "params": {"for": "5s", "keys": ["W", "D"]}},
+    {"name": "the boat went out to sea", "method": "play.check", "params": {"conditions": [
+      {"entity": "Boat", "field": "world_position.2", "compare": "Below", "number": -9}]}},
+    {"name": "get off", "method": "play.step",
+     "params": {"segments": [{"for": 2}, {"for": 2, "keys": ["E"]}, {"for": 30}]}},
+    {"name": "the swimmer is off, beside the boat", "method": "play.check", "params": {"conditions": [
+      {"entity": "Swimmer", "field": "Carried", "compare": "Gone"},
+      {"entity": "Swimmer", "field": "world_position.2", "compare": "Below", "number": -6}]}}
+  ]
+}

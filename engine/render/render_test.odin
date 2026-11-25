@@ -302,12 +302,17 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
     test_world_settle(&w)
     testing.expect(t,core.hierarchy_settle(&w.hierarchy,&w.parents,&w.entities))
     sets:u64
-    for pass in 0..<4 {
+    for pass in 0..<6 {
         host.app_frame_begin(app)
         switch pass {
         case 1: core.add(&w.hidden,parent,Hidden{})
         case 2: core.remove(&w.hidden,parent)
         case 3: core.add(&w.hidden,child,Hidden{})
+        // A rider its mount hides goes with what hangs from it, as Hidden does; one it shows is drawn.
+        case 4:
+            core.remove(&w.hidden,child)
+            core.add(&w.carried,parent,core.Carried{hidden=true})
+        case 5: core.edit(&w.carried,parent).hidden=false
         }
         test_world_settle(&w)
         host.app_camera_set(app,host.camera_from_view(w.view),w.view.cut,w.view.carried)
@@ -323,9 +328,9 @@ hiding_and_showing_update_what_hangs_from_it_without_a_new_scene :: proc(t:^test
         }
         delete(pixels)
         testing.expect_value(t,len(app.renderer.scene.instances),2)
-        hidden_count:=[4]int{0,2,0,1}
+        hidden_count:=[6]int{0,2,0,1,2,0}
         testing.expectf(t,app.renderer.scene.hidden_count==hidden_count[pass],"pass %d hides %d instances",pass,app.renderer.scene.hidden_count)
-        testing.expectf(t,pass==1?red==0:red>100,"pass %d draws %d red pixels",pass,red)
+        testing.expectf(t,pass==1 || pass==4?red==0:red>100,"pass %d draws %d red pixels",pass,red)
     }
     testing.expect_value(t,rhi.device_validation_errors(app.device),0)
 }

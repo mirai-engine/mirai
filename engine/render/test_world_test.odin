@@ -17,6 +17,7 @@ Render_World :: struct {
     parents:core.Table(core.Parent),
     meshes:core.Table(Mesh_Renderer),
     hidden:core.Table(Hidden),
+    carried:core.Table(core.Carried),
     elsewhere:core.Table(Drawn_Elsewhere),
     suns:core.Table(Sun),
     points:core.Table(Point_Light),
@@ -45,7 +46,7 @@ Render_World :: struct {
 // cameras gives it: the camera of the application is set by the test.
 @(private)
 world_sync :: proc(w:^Render_World,sync:^Render_Sync,app:^host.App,id:core.World_Id={},hierarchy:core.Ref(core.Hierarchy)={},posed:^Posed_Meshes=nil,problems:^core.Problems=nil) {
-    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.lives),core.read(&w.hidden),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.bounces),core.read(&w.view_volumes),core.read(&w.volumes),{},{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed,problems)
+    render_sync(sync,app,id,core.FRAME_TIME_DEFAULT,{},core.read(&w.worlds),core.read(&w.meshes),core.read(&w.values),core.read(&w.lives),core.read(&w.hidden),core.read(&w.carried),core.read(&w.elsewhere),core.read(&w.parents),hierarchy,core.read(&w.suns),core.read(&w.points),core.read(&w.spots),core.read(&w.rects),core.read(&w.emissions),core.read(&w.skies),core.read(&w.bounces),core.read(&w.view_volumes),core.read(&w.volumes),{},{},core.read(&w.highlights),core.read(&w.outlines),{&w.outline_styles},core.read(&w.offsets),core.read(&w.layers),{},{},{},{},posed,problems)
 }
 
 // An application that draws nothing: assets over a renderer without a

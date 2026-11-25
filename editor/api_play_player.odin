@@ -55,7 +55,7 @@ play_player_snapshot :: proc(w:core.World_Ref) -> (value:Api_Play_Player_Result)
     body:=input.body_of(seats,player)
     value.body=play_player_entity(w,body)
     if cameras:=core.world_table_of(w,render.Camera);value.camera.entity==core.NONE && cameras!=nil {
-        value.camera=play_player_entity(w,ecamera.body_camera(core.Ref(core.Hierarchy){core.world_storage_of(w,core.Hierarchy)},cameras,body))
+        value.camera=play_player_entity(w,ecamera.body_camera(core.Ref(core.Hierarchy){core.world_storage_of(w,core.Hierarchy)},cameras,core.world_table_of(w,core.Carried),body))
     }
     return
 }

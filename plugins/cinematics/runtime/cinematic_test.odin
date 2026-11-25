@@ -199,7 +199,7 @@ the_markers_of_a_clip_cut_between_cameras_and_play_actions_while_it_plays :: pro
     testing.expect(t,len(stops)==1 && stops[0].stop && stops[0].entity==f.hero)
     testing.expect(t,len(f.camera_requests.items)==1 && f.camera_requests.items[0]==asked(f,f.close,.5))
     fixture_tick(f,3,DT)
-    selected,_:=cam.camera_selected(core.ref(&f.shown),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),f.seat)
+    selected,_:=cam.camera_selected(core.ref(&f.shown),core.read(&f.seats),core.read(&f.cameras),core.ref(&f.hierarchy),nil,f.seat)
     testing.expect_value(t,selected,f.close)
     testing.expect(t,len(f.camera_requests.items)==0,"the shot in force is asked once")
     lens,_:=core.get(core.read(&f.cameras),f.close)

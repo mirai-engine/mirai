@@ -538,6 +538,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
     placed:=core.world_table_of(w,scene.Prefab_Instance)
     hierarchy:=core.ref(core.world_storage_of(w,core.Hierarchy))
     seats:=core.world_table_of(w,input.Seat)
+    carried:=core.world_table_of(w,core.Carried)
     // What a message of the tick is about publishes the state of the tick, which the client shows before it reads the message.
     for item in outbox.queue.items {
         if object:=wire.object_of_user(h,u64(item.about));item.about!=core.NONE && object!=0 {server.objects[object_index(object)].said=true}
@@ -637,9 +638,12 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
         // A write the full frame refused keeps the previous stamp, so the next interval sends it again.
         stamp,layout:=slot.stamps[0],slot.layouts[0]
         off,absent:=components_off(w,e,t)
-        moved:=row_changed(core.raw(transforms),e,&slot.stamps[0],&slot.layouts[0])
+        // A rider of a mount is placed by every end from its mount (input.Mount): its pose and its motion wait
+        // until it gets off, and what it moved meanwhile goes then.
+        riding:=carried!=nil && core.raw_row(core.raw(carried),e)>=0
+        moved:=!riding && row_changed(core.raw(transforms),e,&slot.stamps[0],&slot.layouts[0])
         // Off, its pose goes once, as it turns off, and what changed meanwhile goes as it turns on.
-        send:=disabled!=slot.disabled || !disabled && (moved || off!=slot.off || absent!=slot.absent || config.predict!=slot.predict)
+        send:=!riding && (disabled!=slot.disabled || !disabled && (moved || off!=slot.off || absent!=slot.absent || config.predict!=slot.predict))
         if send || moved {
             written:=true
             if send {
@@ -662,7 +666,7 @@ server_publish :: proc(s:^Net_Session,w:core.World_Ref,outbox:^Net_Outbox,tick:u
             if !written {slot.stamps[0],slot.layouts[0]=stamp,layout}
         }
         if disabled {continue}
-        if t.motion>=0 {
+        if t.motion>=0 && !riding {
             motion,awake:=motion_read(n,e)
             if awake || slot.moving {
                 if wire.object_write(h,object,t.motion,&motion)==.None {
