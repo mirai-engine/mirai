@@ -100,9 +100,13 @@ inverse_checked :: proc(m:mm.Mat4) -> (inverse:mm.Mat4,ok:bool) {
 
 @(private="file")
 axis_rotation :: proc(axis:int,degrees:f32) -> mm.Mat4 {
-    direction:[3]f32
-    direction[axis]=1
-    return linalg.matrix4_rotate_f32(math.to_radians(degrees),direction)
+    // linalg.matrix4_rotate about a unit axis, with the sine and cosine of the engine.
+    s,c:=mm.sincos_det(math.to_radians(degrees))
+    u,v:=(axis+1)%3,(axis+2)%3
+    m:mm.Mat4=1
+    m[axis,axis],m[u,u],m[v,v]=c+(1-c),c,c
+    m[v,u],m[u,v]=s,-s
+    return m
 }
 
 @(private="file")

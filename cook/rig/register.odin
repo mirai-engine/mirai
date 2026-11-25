@@ -490,7 +490,8 @@ rodrigues :: proc(r:Vec) -> Mat {
     }
     k:=r/angle
     K:=Mat{0,-k.z,k.y, k.z,0,-k.x, -k.y,k.x,0}
-    return IDENTITY+math.sin(angle)*K+(1-math.cos(angle))*(K*K)
+    sine,cosine:=mm.sincos_det_f64(angle)
+    return IDENTITY+sine*K+(1-cosine)*mm.mat3_mul_det(K,K)
 }
 
 // A joint's rotation, length and thickness, from its slot or its mirror's.
@@ -505,7 +506,7 @@ joint_parameters :: proc(m:^Model,x:[]f64,i:int) -> (r:Vec,length,thickness:f64)
 
 @(private="file")
 model_pose :: proc(m:^Model,x:[]f64,pose:^Pose) {
-    g:=Vec{math.exp(x[3]),math.exp(x[4]),math.exp(x[5])}
+    g:=Vec{mm.exp_det_f64(x[3]),mm.exp_det_f64(x[4]),mm.exp_det_f64(x[5])}
     t:=Vec{x[0],x[1],x[2]}
     scale:=Mat{g.x,0,0, 0,g.y,0, 0,0,g.z}
     for parent,i in m.parents {
@@ -515,21 +516,21 @@ model_pose :: proc(m:^Model,x:[]f64,pose:^Pose) {
             pose.turn[i]=local
             pose.joints[i]=t+m.rest[i]*g
         } else {
-            pose.turn[i]=pose.turn[parent]*local
-            pose.joints[i]=pose.joints[parent]+pose.turn[parent]*(math.exp(length)*(m.rest[i]-m.rest[parent])*g)
+            pose.turn[i]=mm.mat3_mul_det(pose.turn[parent],local)
+            pose.joints[i]=pose.joints[parent]+mm.mat3_mul_vec_det(pose.turn[parent],mm.exp_det_f64(length)*(m.rest[i]-m.rest[parent])*g)
         }
     }
     for i in 0..<len(m.parents) {
         _,_,thickness:=joint_parameters(m,x,i)
         d:=m.dir[i]*g
         if l:=linalg.length(d);l>0 {d/=l}
-        across:=math.exp(thickness)
+        across:=mm.exp_det_f64(thickness)
         stretch:=across
-        if a:=m.along[i];a>=0 {_,stretch,_=joint_parameters(m,x,a);stretch=math.exp(stretch)}
+        if a:=m.along[i];a>=0 {_,stretch,_=joint_parameters(m,x,a);stretch=mm.exp_det_f64(stretch)}
         dd:=linalg.outer_product(d,d)
         D:=across*(IDENTITY-dd)+stretch*dd
-        pose.linear[i]=pose.turn[i]*D*scale
-        pose.offset[i]=pose.joints[i]-pose.linear[i]*m.rest[i]
+        pose.linear[i]=mm.mat3_mul_det(mm.mat3_mul_det(pose.turn[i],D),scale)
+        pose.offset[i]=pose.joints[i]-mm.mat3_mul_vec_det(pose.linear[i],m.rest[i])
     }
 }
 
@@ -539,7 +540,7 @@ point_of :: #force_inline proc(m:^Model,pose:^Pose,i:int) -> (p:Vec) {
         w:=m.weights[i][k]
         if w<=0 {continue}
         b:=m.bones[i][k]
-        p+=w*(pose.linear[b]*m.points[i]+pose.offset[b])
+        p+=w*(mm.mat3_mul_vec_det(pose.linear[b],m.points[i])+pose.offset[b])
     }
     return
 }

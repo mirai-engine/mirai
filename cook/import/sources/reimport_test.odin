@@ -192,7 +192,7 @@ an_import_does_not_write_over_a_document_changed_since_it_wrote_it :: proc(t:^te
     list,_,_:=asset.packages_load(root,context.temp_allocator)
     if !testing.expect_value(t,len(list.packages),1) {return}
     recorded:=list.packages[0].written[:]
-    testing.expectf(t,importer.written_of(recorded,scene.id)==header_of(scene.path).content_hash && importer.written_of(recorded,wood.id)==0,"the pin records what the prefab holds, and nothing of a material: %v",recorded)
+    testing.expectf(t,importer.written_of(recorded,scene.id)==importer.written_hash(scene.path) && importer.written_of(recorded,wood.id)==0,"the pin records what the prefab holds, and nothing of a material: %v",recorded)
     data,_:=os.read_entire_file(scene.path,context.temp_allocator)
     testing.expect_value(t,asset.header_owner_set(data,wood.id),asset.Error.None)
     _=os.write_entire_file(scene.path,data)

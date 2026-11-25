@@ -156,18 +156,18 @@ mesh_rest :: proc(mesh:^Imported_Mesh,bones:[]asset.Skeleton_Bone) {
             lo,hi=linalg.min(lo,vertex.position),linalg.max(hi,vertex.position)
             continue
         }
-        vertex.normal=mm.normal_pack(linalg.normalize0(linalg.inverse_transpose(linear)*mm.normal_unpack(vertex.normal)))
+        vertex.normal=mm.normal_pack(linalg.normalize0(mm.mat3_mul_vec_det(linalg.inverse_transpose(linear),mm.normal_unpack(vertex.normal))))
         tangent,sign:=mm.tangent_unpack(vertex.tangent)
-        vertex.tangent=mm.tangent_pack(linalg.normalize0(linear*tangent),-sign if determinant<0 else sign)
+        vertex.tangent=mm.tangent_pack(linalg.normalize0(mm.mat3_mul_vec_det(linear,tangent)),-sign if determinant<0 else sign)
         lo,hi=linalg.min(lo,vertex.position),linalg.max(hi,vertex.position)
     }
     for &delta in mesh.morph_deltas {
         if int(delta.vertex)>=len(blends) {continue}
         linear:=blends[delta.vertex]
         if abs(linalg.determinant(linear))<1e-12 {continue}
-        delta.position=linear*delta.position
-        delta.normal=linalg.inverse_transpose(linear)*delta.normal
-        delta.tangent=linear*delta.tangent
+        delta.position=mm.mat3_mul_vec_det(linear,delta.position)
+        delta.normal=mm.mat3_mul_vec_det(linalg.inverse_transpose(linear),delta.normal)
+        delta.tangent=mm.mat3_mul_vec_det(linear,delta.tangent)
     }
     if 2*flips>len(mesh.vertices) {
         for i:=0;i+2<len(mesh.indices);i+=3 {mesh.indices[i+1],mesh.indices[i+2]=mesh.indices[i+2],mesh.indices[i+1]}

@@ -495,6 +495,34 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
     return .None
 }
 
+// Copies into doc, after its own, every table of a it lacks, with their types, rows, key and
+// the tables their columns index (by name).
+document_tables_carry :: proc(doc:^Document,a:^Asset) -> Error {
+    link:serial.Schema_Import
+    document_import_begin(doc,&link,&a.schema)
+    defer serial.schema_import_destroy(&link)
+    for &source in a.tables {
+        if _,has:=document_table(doc,source.name);has {continue}
+        table:=document_table_add(doc,source.name,source.flags) or_return
+        for from in source.columns {
+            entry:=blob_chunk(&a.blob,from.chunk)
+            type:=document_import(doc,&link,from.type)
+            if type==serial.TYPE_NONE {return .Out_Of_Memory}
+            document_column_add(doc,table,from.name,type,from.flags,1<<entry.alignment_log2) or_return
+        }
+        document_resize(doc,table,source.rows) or_return
+        target:=&doc.tables[table]
+        target.key=source.key
+        for from,c in source.columns {
+            asset_chunk_read(a,from.chunk,target.columns[c].data) or_return
+            if from.ref<0 {continue}
+            ref,found:=document_table(doc,a.tables[from.ref].name)
+            target.columns[c].ref=ref if found else -1
+        }
+    }
+    return .None
+}
+
 // The file bytes are, written again with profile as codecs allow (column_compression): the same
 // content with its chunks and the pages of a mesh compressed again, the bytes a save of the same
 // document with those codecs writes. With a worker, the pieces of a large chunk are compressed on

@@ -181,7 +181,7 @@ model_cutouts :: proc(r:^Reader) {
         threshold:=info.alpha_cutoff/info.opacity
         if image<0 || image>=len(r.images) {continue}
         if !(threshold>0 && threshold<=1) {continue}
-        sine,cosine:=math.sin(mapping.rotation),math.cos(mapping.rotation)
+        sine,cosine:=mm.sincos_det(mapping.rotation)
         c.materials[i]={
             eligible=true,image=image,threshold=threshold,uv_set=mapping.uv_set,offset=mapping.offset,opaque=i,
             linear={cosine*mapping.scale.x,-sine*mapping.scale.y,sine*mapping.scale.x,cosine*mapping.scale.y},

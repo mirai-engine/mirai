@@ -492,6 +492,25 @@ a_copy_of_a_root_with_its_sources_and_an_empty_store_builds_the_same :: proc(t:^
 
     clone:=fmt.tprintf("%s/clone",top)
     folder_copy(game,clone)
+    // Its documents as another machine may have written them: the same content in other bytes.
+    // The store lacks the builds and makes them again, and the documents and their pins, which
+    // the same import of the same source made, stay as they are.
+    documents:=make(map[string]string,context.temp_allocator)
+    {
+        w:=os.walker_create(fmt.tprintf("%s/assets",clone))
+        defer os.walker_destroy(&w)
+        for entry in os.walker_walk(&w) {
+            if !strings.has_suffix(entry.name,".mat") && !strings.has_suffix(entry.name,".scene") {continue}
+            path:=strings.clone(entry.fullpath,context.temp_allocator)
+            data,_:=os.read_entire_file(path,context.temp_allocator)
+            other,other_error:=asset.document_written_as(data,.None,context.temp_allocator)
+            if !testing.expect_value(t,other_error,asset.Error.None) || !testing.expectf(t,string(other)!=string(data),"%s is written otherwise",path) {return}
+            testing.expect(t,os.write_entire_file(path,other)==nil)
+            documents[path]=string(other)
+        }
+    }
+    testing.expect(t,len(documents)>0,"the box has documents in the project")
+    pins_before,_:=os.read_entire_file(fmt.tprintf("%s/%s",clone,asset.PACKAGES_FILE),context.temp_allocator)
     fresh:=test_store(t,fmt.tprintf("%s/fresh",top))
     if fresh==nil {return}
     again:=options
@@ -499,6 +518,12 @@ a_copy_of_a_root_with_its_sources_and_an_empty_store_builds_the_same :: proc(t:^
     refreshed:=project_refresh(clone,again,context.temp_allocator)
     testing.expectf(t,refreshed.ingested==2,"%v",refreshed)
     if !report_clean(t,refreshed) {return}
+    for path,bytes in documents {
+        now,_:=os.read_entire_file(path,context.temp_allocator)
+        testing.expectf(t,string(now)==bytes,"%s is written again by a build of the same source",path)
+    }
+    pins_after,_:=os.read_entire_file(fmt.tprintf("%s/%s",clone,asset.PACKAGES_FILE),context.temp_allocator)
+    testing.expect(t,string(pins_after)==string(pins_before),"the pins of the documents stay as they were")
     cloned,_,_:=asset.packages_load(clone,context.temp_allocator)
     testing.expect_value(t,len(cloned.packages),len(pinned.packages))
     for entry,at in cloned.packages {

@@ -5,7 +5,8 @@ import "core:math/ease"
 
 // Easing curves: they take t from 0 to 1 and return the eased progress, which
 // starts at 0 and ends at 1. Back and elastic leave that range on the way.
-// The polynomial, sine, exponential and circular curves are core's; back,
+// The polynomial and circular curves are core's; the sine and exponential ones
+// are core's with the sine and pow of the engine (deterministic.odin); back,
 // elastic and bounce are Penner's, which core's are not.
 
 ease_quad_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quadratic_in(t)}
@@ -20,12 +21,15 @@ ease_quart_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return eas
 ease_quint_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quintic_in(t)}
 ease_quint_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quintic_out(t)}
 ease_quint_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quintic_in_out(t)}
-ease_sine_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.sine_in(t)}
-ease_sine_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.sine_out(t)}
-ease_sine_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.sine_in_out(t)}
-ease_expo_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.exponential_in(t)}
-ease_expo_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.exponential_out(t)}
-ease_expo_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.exponential_in_out(t)}
+ease_sine_in :: proc "contextless" (t:f32) -> f32 {return sin_det((t-1)*math.PI/2)+1}
+ease_sine_out :: proc "contextless" (t:f32) -> f32 {return sin_det(t*math.PI/2)}
+ease_sine_in_out :: proc "contextless" (t:f32) -> f32 {return 0.5*(1-cos_det(t*math.PI))}
+ease_expo_in :: proc "contextless" (t:f32) -> f32 {return t if t==0 else pow_det(2,10*(t-1))}
+ease_expo_out :: proc "contextless" (t:f32) -> f32 {return t if t==1 else 1-pow_det(2,-10*t)}
+ease_expo_in_out :: proc "contextless" (t:f32) -> f32 {
+    if t==0 || t==1 {return t}
+    return 0.5*pow_det(2,20*t-10) if t<0.5 else -0.5*pow_det(2,-20*t+10)+1
+}
 ease_circ_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.circular_in(t)}
 ease_circ_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.circular_out(t)}
 ease_circ_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.circular_in_out(t)}
@@ -49,19 +53,19 @@ ease_back_in_out :: proc "contextless" (t:f32) -> f32 {
 ease_elastic_in :: proc "contextless" (t:f32) -> f32 {
     if t<=0 {return 0}
     if t>=1 {return 1}
-    return -math.pow(2,10*t-10)*math.sin((10*t-10.75)*(TAU/3))
+    return -pow_det(2,10*t-10)*sin_det((10*t-10.75)*(TAU/3))
 }
 ease_elastic_out :: proc "contextless" (t:f32) -> f32 {
     if t<=0 {return 0}
     if t>=1 {return 1}
-    return math.pow(2,-10*t)*math.sin((10*t-0.75)*(TAU/3))+1
+    return pow_det(2,-10*t)*sin_det((10*t-0.75)*(TAU/3))+1
 }
 ease_elastic_in_out :: proc "contextless" (t:f32) -> f32 {
     if t<=0 {return 0}
     if t>=1 {return 1}
-    wave:=math.sin((20*t-11.125)*(TAU/4.5))
-    if t<0.5 {return -0.5*math.pow(2,20*t-10)*wave}
-    return 0.5*math.pow(2,-20*t+10)*wave+1
+    wave:=sin_det((20*t-11.125)*(TAU/4.5))
+    if t<0.5 {return -0.5*pow_det(2,20*t-10)*wave}
+    return 0.5*pow_det(2,-20*t+10)*wave+1
 }
 
 ease_bounce_out :: proc "contextless" (t:f32) -> f32 {
