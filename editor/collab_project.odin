@@ -8,6 +8,7 @@ import "core:os"
 import "core:strings"
 import "core:sync"
 import "core:thread"
+import "core:time"
 import "mirai:cook/share"
 import "mirai:platform"
 import wire "mirai:net"
@@ -23,6 +24,13 @@ import "mirai:store"
 // before it says Hello, brings a folder to that snapshot with the join of
 // cook/share: its open project, by three ways, or a folder it names, which it
 // opens once the join is done and joins the session again from there.
+//
+// The node is pumped on a thread of its own (Collab_Pump), as mirai join
+// pumps its own, so what it moves does not wait for the editor's frames: an
+// editor behind other windows, at EDITOR_BACKGROUND_FPS, serves and fetches
+// as fast as a focused one. The commands of the session's channels wait in
+// the node, in the order they came, for collab_update on the editor's
+// thread; the editor sends between collab_host_lock and its unlock.
 
 COLLAB_LINES :: 8            // kept, failed and missing lines collab.status gives
 COLLAB_LINE_BYTES :: 200
@@ -33,6 +41,17 @@ COLLAB_LINE_BYTES :: 200
 COLLAB_OFFER_QUIET :: 0.5 // seconds
 COLLAB_OFFER_EVERY :: 2.0 // seconds
 @(private) COLLAB_WATCH_BUDGET :: 512
+@(private) COLLAB_PUMP_SLEEP :: time.Millisecond // between two steps of the node
+
+// The thread that pumps the node of a session: it reads only these fields,
+// never the editor's state.
+@(private)
+Collab_Pump :: struct {
+    node:^share.Node,
+    clock:^wire.Host,
+    stop:bool,
+    thread:^thread.Thread,
+}
 
 // A guest's join: on a thread of its own, which waits for the steps of the node.
 @(private)
@@ -80,12 +99,70 @@ collab_node_start :: proc(s:^Session,st:^Collab_State) -> bool {
         st.node_jobs=nil
     }
     st.node=new(share.Node)
-    if share.node_init(st.node,&s.store,runtime.heap_allocator(),worker)!=.None {
+    if share.node_init(st.node,&s.store,runtime.heap_allocator(),worker,keep_others=true)!=.None {
         free(st.node)
         st.node=nil
         return false
     }
+    share.node_host(st.node,&st.host)
+    // On the network of a test, collab_update pumps on the test's clock.
+    if st.virtual {return true}
+    p:=new(Collab_Pump)
+    p.node,p.clock=st.node,&st.host
+    p.thread=thread.create_and_start_with_poly_data(p,proc(p:^Collab_Pump) {
+        defer runtime.default_temp_allocator_destroy(&runtime.global_default_temp_allocator_data)
+        for !sync.atomic_load(&p.stop) {
+            share.node_pump(p.node,wire.host_time(p.clock))
+            free_all(context.temp_allocator)
+            time.sleep(COLLAB_PUMP_SLEEP)
+        }
+    })
+    if p.thread==nil {
+        free(p)
+        return false
+    }
+    st.pump=p
     return true
+}
+
+@(private)
+collab_pump_stop :: proc(st:^Collab_State) {
+    p:=st.pump
+    if p==nil {return}
+    sync.atomic_store(&p.stop,true)
+    thread.join(p.thread)
+    thread.destroy(p.thread)
+    free(p)
+    st.pump=nil
+}
+
+// Holds the host of the session for the editor's own calls on it while the
+// pump polls it on its thread; without a pump, the editor's thread is the
+// only one that calls it.
+@(private)
+collab_host_lock :: proc(st:^Collab_State) -> ^wire.Host {
+    if st.pump!=nil {sync.mutex_lock(&st.node.hosts_lock)}
+    return &st.host
+}
+
+@(private)
+collab_host_unlock :: proc(st:^Collab_State) {
+    if st.pump!=nil {sync.mutex_unlock(&st.node.hosts_lock)}
+}
+
+// A message of the session on a channel of a connection (wire.message_send).
+@(private)
+collab_send :: proc(st:^Collab_State,connection:wire.Connection,channel:int,data:[]u8,sent:^int=nil) -> wire.Error {
+    h:=collab_host_lock(st)
+    defer collab_host_unlock(st)
+    return wire.message_send(h,connection,channel,data,sent)
+}
+
+@(private)
+collab_disconnect :: proc(st:^Collab_State,connection:wire.Connection,reason:wire.Disconnect_Reason) {
+    h:=collab_host_lock(st)
+    defer collab_host_unlock(st)
+    wire.host_disconnect(h,connection,reason)
 }
 
 @(private)
@@ -277,12 +354,11 @@ collab_join_start :: proc(s:^Session,st:^Collab_State,folder:string,reopen:bool,
     return j.thread!=nil
 }
 
-// The node stepped after the host was polled, and the end of a guest's join
-// taken: the open project relisted and the Hello sent, or the folder opened.
+// The end of a guest's join taken: the open project relisted and the Hello
+// sent, or the folder opened.
 @(private)
 collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
     if st.node==nil {return}
-    share.node_step(st.node,now)
     collab_take_update(s,st)
     collab_thumbs_update(s,st)
     if st.role==.Host {
@@ -339,9 +415,10 @@ collab_project_update :: proc(s:^Session,st:^Collab_State,now:f64) {
     collab_hello(s,st)
 }
 
-// Stops the join, which ends at its next wait, and frees the node.
+// Stops the pump and the join, which ends at its next wait, and frees the node.
 @(private)
 collab_project_destroy :: proc(s:^Session,st:^Collab_State) {
+    collab_pump_stop(st)
     if o:=st.offer;o!=nil {
         collab_offer_free(o)
         st.offer=nil

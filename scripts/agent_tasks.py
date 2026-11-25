@@ -340,6 +340,8 @@ def check_scenario(check: dict, scene: Scene, session: Session) -> list[str]:
         answer = session.rpc(SCENARIO, {"path": path.as_posix()})
     except (RuntimeError, urllib.error.URLError) as error:
         return [f"the scenario: expected it to play, found {error}"]
+    finally:
+        path.unlink(missing_ok=True)
     return [f"the scenario: expected every step to pass, found {report['failure']}"
             for report in answer["scenarios"] if not report["passed"]]
 

@@ -61,7 +61,7 @@ import "mirai:store"
 // Exit codes: 0 done, 1 failed, 2 misuse.
 
 @(private="file")
-IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--bake-scale|--no-bake-scale] [--skeleton <id>] [--sound lossless|file] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
+IMPORT_USAGE :: "Usage: mirai import <file> [--uncompressed|--blocks] [--rdo-lambda L] [--srgb|--normal|--normal-green-down|--data] [--alpha-coverage C] [--lods auto|none] [--parts auto|all|none] [--front auto|negative_z|z|x|negative_x] [--rig source|humanoid|fox|horse|bird|dragon|kaiju|shark|snake|spider] [--rig-crotch M] [--rig-neck M] [--skeleton <id>] [--sound lossless|file] [--project <root>] [--folder <folder>] [--rebuild] [--discard-changes] [--final] [--store <folder>] [--profile] [--release] | mirai import --refresh <root> [--refresh <root>...] [--final] [--store <folder>] [--from <folder>] [--release]"
 
 // library reads the formats and the importers of whole sources the plugins of
 // a project add and the types of its game (in the import program of the
@@ -76,7 +76,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
     store_root:string // of the store whose caches keep what imports build; "": that of the machine
     from_root:string  // of --from
     // What the options change of the settings the source has.
-    Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Bake_Scale,Skeleton,Sound}
+    Change :: enum {Textures,Rdo_Lambda,Image,Alpha_Coverage,Lods,Parts,Front,Rig,Rig_Crotch,Rig_Neck,Skeleton,Sound}
     given:importer.Import_Settings
     changed:bit_set[Change]
     at:=0
@@ -127,7 +127,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         case "--rebuild": options.rebuild=true
         case "--discard-changes": options.changed=.Discard
         case "--final": options.fast_textures=false
-        case "--bake-scale","--no-bake-scale": given.bake_scale=args[at]=="--bake-scale";changed+={.Bake_Scale}
         case "--uncompressed": given.textures=.Uncompressed;changed+={.Textures}
         case "--blocks": given.textures=.Blocks;changed+={.Textures}
         case "--srgb","--normal","--normal-green-down","--data":
@@ -261,7 +260,7 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         if _,claimed:=whole_find(plugins.wholes,origin);claimed {kind=.None}
     }
     if changed&{.Image,.Alpha_Coverage}!={} && kind!=.Image {fmt.wprintln(errors,"mirai import: --srgb, --normal, --normal-green-down, --data and --alpha-coverage apply only to images");return 2}
-    if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Bake_Scale,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --parts, --front, --bake-scale, --skeleton and the --rig options apply only to models");return 2}
+    if changed&{.Lods,.Parts,.Front,.Rig,.Rig_Crotch,.Rig_Neck,.Skeleton}!={} && kind!=.Model {fmt.wprintln(errors,"mirai import: --lods, --parts, --front, --skeleton and the --rig options apply only to models");return 2}
     if .Sound in changed && kind!=.Sound {fmt.wprintln(errors,"mirai import: --sound applies only to sounds (WAV, Ogg Vorbis)");return 2}
 
     // The settings the package keeps, changed by the options: given only when they change it.
@@ -285,7 +284,6 @@ command :: proc(args:[]string,output,errors:io.Writer,library:Library=nil) -> in
         if .Rig in changed {chosen.rig=given.rig}
         if .Rig_Crotch in changed {chosen.rig_crotch=given.rig_crotch}
         if .Rig_Neck in changed {chosen.rig_neck=given.rig_neck}
-        if .Bake_Scale in changed {chosen.bake_scale=given.bake_scale}
         if .Skeleton in changed {chosen.skeleton=given.skeleton}
         if .Sound in changed {chosen.sound=given.sound}
         // The heights tell the fit of a person where the body is.

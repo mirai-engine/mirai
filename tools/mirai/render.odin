@@ -14,6 +14,7 @@ import img "mirai:cook/image"
 import "mirai:cook/workspace"
 import "mirai:editor/api"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:std/subprocess"
 
@@ -759,6 +760,8 @@ render_session :: proc(root:string,report:^Render_Report,r:^Render_Run,target:Re
     e:=Render_Editor{run=r}
     measure:workspace.Lock
     defer workspace.lock_release(&measure)
+    // Once its editor closed, the scenes it edited go with it.
+    defer base.remove_all(render_copies(e.run.project))
     defer headless_close(&e)
     if !headless_open(&e,"render",label,target.editor,target.project,target.checkout,render_log(out,label,size),size,&port) {return false}
     // The load matters only to the cost.
@@ -801,6 +804,13 @@ render_session :: proc(root:string,report:^Render_Report,r:^Render_Run,target:Re
     return true
 }
 
+// <project>/.mirai/tmp/render-<pid>: the scenes the views of this run edit,
+// apart from those of another run of the same project.
+@(private="file")
+render_copies :: proc(folder:string) -> string {
+    return project.path(folder,".mirai","tmp",fmt.tprintf("render-%d",os.get_pid()),allocator=context.temp_allocator)
+}
+
 // One call; a field an older build does not take is left out, and the run
 // says so.
 @(private="file")
@@ -831,7 +841,7 @@ render_measure :: proc(e:^Render_Editor,plan:Render_Plan,view:Render_View,size:[
     // A view that pushes an entity edits its scene, which the editor writes at once: it runs on a copy.
     if view.push.frames>0 {
         source:=project.path(project.folder_path(e.run.project,.Assets,context.temp_allocator),view.scene,allocator=context.temp_allocator)
-        copied:=project.path_absolute(project.path(e.run.project,".mirai/tmp/render",filepath.base(view.scene),allocator=context.temp_allocator),context.temp_allocator)
+        copied:=project.path_absolute(project.path(render_copies(e.run.project),filepath.base(view.scene),allocator=context.temp_allocator),context.temp_allocator)
         if data,read:=os.read_entire_file(source,context.temp_allocator);read==nil {
             _=os.make_directory_all(filepath.dir(copied))
             if serial.file_write_atomic(copied,data)==.None {scene=copied}

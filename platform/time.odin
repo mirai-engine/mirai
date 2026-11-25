@@ -91,23 +91,18 @@ frame_clock_dt :: proc(p:^Platform,now:u64,presented:bool) -> f32 {
 pacing :: proc(p:^Platform) -> Frame_Pacing {return p.pacing}
 set_pacing :: proc(p:^Platform,pacing:Frame_Pacing) {p.pacing=pacing}
 
-// How a window without focus, or one that shows nothing, paces the loop.
-// limit: frames per second at most without focus, 0: as with it; an
+// The rate a window without focus goes at, at most; 0: as with it. An
 // application that does not need to run behind others (an editor out of
-// Play) lowers what it costs. awake: the loop carries work the screen does
-// not show (transfers with peers), so neither the focus nor a hidden window
-// slows it: each frame lasts what a shown one does.
-Background :: struct {limit:u32,awake:bool}
-
-set_background :: proc(p:^Platform,background:Background) {p.background=background}
+// Play) lowers what it costs.
+set_background :: proc(p:^Platform,limit:u32) {p.background=limit}
 
 // Time a frame has to last, from what it showed and whether its window has
 // the focus (always, headless).
-frame_budget_ns :: proc "contextless" (pacing:Frame_Pacing,background:Background,shown,focused:bool,refresh_hz:f32,images:u32) -> u64 {
-    budget:=pacing_budget_ns(pacing,shown || background.awake,refresh_hz)
+frame_budget_ns :: proc "contextless" (pacing:Frame_Pacing,background:u32,shown,focused:bool,refresh_hz:f32,images:u32) -> u64 {
+    budget:=pacing_budget_ns(pacing,shown,refresh_hz)
     if shown && images>1 {budget*=u64(images)}
-    if background.awake || focused || background.limit==0 {return budget}
-    return max(budget,1_000_000_000/u64(background.limit))
+    if focused || background==0 {return budget}
+    return max(budget,1_000_000_000/u64(background))
 }
 
 // Ends the frame: sleeps what is left of its budget. presented is false when

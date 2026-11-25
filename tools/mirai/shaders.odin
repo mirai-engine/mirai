@@ -206,7 +206,7 @@ cmd_setup :: proc(root:string,args:[]string) -> int {
 }
 
 // The shaders the GPU tests of a package load, in
-// <root>/.mirai/tmp/<name>-test-shaders: for a package of an engine plugin,
+// <root>/.mirai/test-shaders/<name>: for a package of an engine plugin,
 // those of the plugin and, as <plugin>_test, the programs of testdata/ of the
 // package; for a package of the engine, as <package>_test, the programs of
 // its testdata/, which the engine does not ship. A test of a runtime package
@@ -243,7 +243,7 @@ package_test_shaders :: proc(root,folder:string) -> bool {
         }
     }
     if len(sources)==0 || !takes_shared_device(absolute) {return true}
-    output:=join(root,".mirai","tmp",fmt.tprintf("%s-test-shaders",name))
+    output:=join(root,".mirai","test-shaders",name)
     lock:=shaders_lock(root)
     defer workspace.lock_release(&lock)
     // The tests draw their programs every way.

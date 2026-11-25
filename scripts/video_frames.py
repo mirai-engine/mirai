@@ -6,7 +6,8 @@
 # required-version = ">=0.13"
 # ///
 """Reference frames from a video, to compare with Mirai captures. The videos and frames are private:
-they stay in .mirai/tmp/video_frames of the checkout, which git ignores, and are never committed.
+they stay in .mirai/tmp/video_frames of the checkout, which git ignores, are never committed, and
+go with the scratch of the engine once unchanged for three days (mirai test sweeps it).
 
     uv run scripts/video_frames.py <url or file> --start 22 --end 28 [--fps 10 | --every 0.1]
         [--columns 6] [--width 480] [--out <folder>] [--audio] [--item 1]

@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -1554,4 +1555,72 @@ a_peer_gives_derived_data_it_has_and_nothing_it_lacks :: proc(t:^testing.T) {
         _,lacking:=store.ref_get(&w.peers[0].s,NAMESPACE_THUMBS,c.name)
         testing.expect_value(t,lacking==.None,c.then==.Done)
     }
+}
+
+// An owner with channels of its own takes the commands of its node's hosts
+// that are not the exchange's in the order they came, however many steps the
+// node was pumped between two takes: the connection first, then every
+// message of the channel whole and in order, a large one in its pieces, with
+// the exchange's own traffic between them kept by the node.
+@(test)
+the_owners_commands_wait_in_order_between_its_takes :: proc(t:^testing.T) {
+    w:Test_Net
+    if !test_net(t,&w,"share-kept",2) {test_net_destroy(&w);return}
+    defer test_net_destroy(&w)
+    w.peers[0].n.keep_others=true
+    test_connect(&w,1,0)
+    COUNT :: 40
+    LARGE :: 20 // the message of 600 KiB, which streams in pieces
+    message :: proc(i:int) -> []u8 {
+        m:=make([]u8,i==LARGE?600<<10:16+i,context.temp_allocator)
+        for &b,k in m {b=u8(i*7+k)}
+        m[0]=u8(i)
+        return m
+    }
+    next,sent,asked:=0,0,0
+    got:[dynamic]u8
+    defer delete(got)
+    order:[dynamic]int
+    defer delete(order)
+    connected,first:=false,true
+    for steps:=0;steps<20_000 && len(order)<COUNT;steps+=1 {
+        if h,connection,ok:=node_host_peer(&w.peers[1].n);ok {
+            for next<COUNT {
+                m:=message(next)
+                if wire.message_send(h,connection,CONTROL_CHANNEL,m,&sent)!=.None || sent<len(m) {break}
+                next,sent=next+1,0
+                if next%8==0 && asked<8 {
+                    // The exchange's own messages between those of the owner.
+                    exchange.ref_ask(&w.peers[1].n.x,NAMESPACE,fmt.tprintf("none-%d",asked),h,connection)
+                    asked+=1
+                }
+            }
+        }
+        test_step(&w)
+        // The owner's frames come every 37 steps of the node.
+        if steps%37!=0 {continue}
+        commands,complete:=node_take(&w.peers[0].n)
+        testing.expect(t,complete)
+        for command in commands {
+            #partial switch command.kind {
+            case .Connected:
+                testing.expect(t,first,"the connection comes before its messages")
+                connected=true
+            case .Message:
+                testing.expect_value(t,int(command.channel),CONTROL_CHANNEL)
+                append(&got,..command.data)
+                if command.more {continue}
+                i:=int(got[0])
+                testing.expectf(t,slice.equal(got[:],message(i)),"message %d arrives whole",i)
+                append(&order,i)
+                clear(&got)
+            }
+            first=false
+        }
+        free_all(context.temp_allocator)
+    }
+    testing.expect(t,connected)
+    testing.expect(t,asked>0,"the exchange spoke between the messages")
+    testing.expect_value(t,len(order),COUNT)
+    for i,k in order {testing.expect_value(t,i,k)}
 }

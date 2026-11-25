@@ -69,7 +69,7 @@ cmd_play_audit :: proc(root:string,args:[]string) -> int {
         if options.copy {session_copy_remove(opened,"play audit")}
     }
     if options.copy {
-        session_copies_sweep(folder)
+        scratch_sweep_say(folder,"play audit")
         copy,lock,copy_problem:=session_copy(folder)
         if copy_problem!="" {fmt.eprintfln("mirai play audit: %s",copy_problem);return 2}
         opened,copy_lock=copy,lock

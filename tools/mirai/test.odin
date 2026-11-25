@@ -99,6 +99,8 @@ cmd_test :: proc(root:string,args:[]string) -> int {
         if !p.nothing {pending+=1}
     }
     if pending==0 {return 0}
+    // What runs and what was killed left in the scratch of the engine.
+    scratch_sweep_say(root,"test")
     times:Test_Times
     tests:=join(root,"bin","tests")
     if os.make_directory_all(tests)!=nil && !os.is_dir(tests) {return 1}

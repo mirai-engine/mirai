@@ -92,10 +92,10 @@ the assets.
   says them and declares its `Source_Space`; the import bakes units, axes, mirroring and V origin
   into the geometry, transforms, bones, clips and maps. What is written is in meters and in the
   engine's axes, with no added nodes or negative scales.
-- **A scale is baked only when the settings ask for it.** `bake_scale` puts positive uniform node
-  scales into non-skinned meshes and refuses the rest with a warning; without it a mesh drawn at
-  more than twice or less than half its size warns
-  ([settings](references/imports.md#settings-of-a-source)).
+- **The file's unit and root scale are baked, never a scale of its own.** The declared unit is the
+  space's; the uniform scale of the file's root goes into the meshes one node alone draws, with no
+  option. Scales of nodes below the root, of shared meshes, skins and animated nodes stay, and only
+  a mesh still drawn at a change of units warns ([root scale](references/imports.md#root-scale)).
 - **Every model faces -Z, and the source is parsed once.** What faces elsewhere is turned in
   place after the read: from the `front` its settings state, or else, for a file that is a rig,
   from where its body is found facing ([front](references/imports.md#front)).
@@ -191,10 +191,7 @@ the assets.
   `.mesh`; loading does not recompute them.
 - **Collision is the source's, as authored.** The colliders the source brings are the mesh's and
   the import makes none; a mesh without them collides only through an `Auto` collider, whose
-  geometry physics derives and caches. Decided by the owner. Colliders authored for a mesh after
-  the import live in the settings of its package (`Import_Settings.colliders`), which replace the
-  source's for that mesh on every import: a `.mesh` stays an object of the cache
-  (`asset.import_cached`), never a document a person edits.
+  geometry physics derives and caches. Decided by the owner.
 - **No limits of size or triangles are settings.** Texture memory is decided by what the view
   samples (mip streaming); an image above `asset.TEXTURE_MAX_SIZE` is refused, never scaled.
   Levels of detail are chosen by projected error. Decided by the owner.
@@ -214,7 +211,8 @@ the assets.
 ## Verification
 
 - `mirai test cook/import` (source space, PBR, levels, sounds, hand grips, bounded and ordered Final
-  texture refresh), `cook/import/gltf/scale_test.odin` (scales baked, kept and warned),
+  texture refresh), `cook/import/gltf/scale_test.odin` (root scales baked, own ones kept, units
+  warned),
   `cook/rig` (fit and weights over a body of boxes, each animal stretched by its skin, meshes
   that are neither a person nor an animal), `cook/import/obj`, `cook/import/gltf` (with the rig
   fits of `rig_test.odin` and the decoding of `meshopt_test.odin`), `cook/import/usd`,
@@ -258,8 +256,7 @@ the assets.
   identity, importing again keeps ids and objects, a source outside any project imports, a setting
   changes the identity and an engine version only the key, a Fast build is named apart, two stores
   hold the same objects), `cook/import/sources/settings_test.odin` (the package keeps the settings;
-  settings that are not this build's are refused; the colliders of the settings come back with
-  every import) and `cook/import/sources/write_test.odin`
+  settings that are not this build's are refused) and `cook/import/sources/write_test.odin`
   (importing again keeps what was changed in a material and takes the rest from the source).
 - Library: `cook/import/sources/library_test.odin` (a peer without sources fetches, lists and
   loads what a project pins, and without a source of builds reports by package and neither

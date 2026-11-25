@@ -35,7 +35,7 @@ Micro_Gpu :: struct {
 @(private = "file")
 micro_gpu_init :: proc(t: ^testing.T, g: ^Micro_Gpu) -> bool {
 	root, _ := filepath.clean(MICRO_ROOT, context.temp_allocator)
-	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/tmp/foliage-test-shaders", root))
+	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/test-shaders/foliage", root))
 	if !testing.expect(t, problem == "", problem) {return false}
 	device := shared_device.take_or_skip(t)
 	if device == nil {

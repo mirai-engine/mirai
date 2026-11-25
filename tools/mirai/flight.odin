@@ -581,9 +581,7 @@ bench_flight :: proc(root:string,args:[]string) -> int {
     mode:=Build_Mode.Release if o.release else Build_Mode.Dev
 
     load:Render_Report
-    if swept,kept:=session_copies_sweep(folder);swept>0 || kept>0 {
-        fmt.eprintfln("mirai bench: deleted %d copies of %s whose editor ended%s",swept,folder,kept>0?fmt.tprintf("; %d could not be deleted while a process holds their files",kept):"")
-    }
+    scratch_sweep_say(folder,"bench")
     copy,copy_lock,copy_problem:=session_copy(folder)
     if copy_problem!="" {fmt.eprintfln("mirai bench: %s",copy_problem);return 1}
     if code,_,_:=build_project(root,.Editor,{copy},mode);code!=0 {

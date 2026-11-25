@@ -43,7 +43,7 @@ Gpu_Fixture :: struct {
 gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
-	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/tmp/foliage-test-shaders", root))
+	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/test-shaders/foliage", root))
 	if !testing.expect(t, problem == "", problem) {return false}
 	device := shared_device.take_or_skip(t)
 	if device == nil {

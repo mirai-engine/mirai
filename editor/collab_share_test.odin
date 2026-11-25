@@ -24,6 +24,7 @@ import "mirai:store"
 Share_End :: struct {
     using f:Prefab_Fixture,
     store_root:string,
+    away:bool, // its editor draws no frames: only the pump of its session runs
 }
 
 @(private="file")
@@ -94,7 +95,8 @@ share_cli_destroy :: proc(n:^Share_Net) {
 }
 
 // One millisecond of the network: each editor updates its session as a frame
-// does between frames, then its host sends, and the frame's temporary memory goes.
+// does between frames (one away pumps its node alone, as its thread does),
+// then its host sends, and the frame's temporary memory goes.
 @(private="file")
 share_step :: proc(n:^Share_Net) {
     context.temp_allocator=mem.arena_allocator(&n.frame)
@@ -103,10 +105,10 @@ share_step :: proc(n:^Share_Net) {
     for e in ([2]^Share_End{n.host,n.guest}) {
         if st:=collab_state(&e.s);st!=nil {
             st.now=n.now
-            collab_update(&e.s)
+            if e.away {share.node_pump(st.node,n.now)} else {collab_update(&e.s)}
         }
         if st:=collab_state(&e.s);st!=nil {wire.host_update(&st.host,n.now)}
-        prefab_fixture_step(&e.f)
+        if !e.away {prefab_fixture_step(&e.f)}
     }
     if cli:=n.cli;cli!=nil {
         share.node_pump(&cli.node,n.now)
@@ -170,7 +172,6 @@ share_join :: proc(t:^testing.T,n:^Share_Net,first:=0,folder:="") -> bool {
     context.temp_allocator=mem.arena_allocator(&n.frame)
     if !share_start_host(t,n,first) {return false}
     code:=wire.invite_encode(wire.invite_make(collab_state(&n.host.s).invite,COLLAB_PORT),context.temp_allocator)
-    testing.expect(t,!collab_transferring(&n.host.s),"a host without guests transfers nothing")
     error:=collab_join(&n.guest.s,code,"Ben",folder,at=wire.address_memory(first),
         transport=wire.sim_endpoint_transport(&n.sim,first+1))
     if !testing.expect_value(t,error,Collab_Error.None) {return false}
@@ -265,13 +266,50 @@ a_guest_with_an_empty_folder_joins_with_the_hosts_files_and_packages_then_its_sc
     testing.expect(t,api_entity(edited_world(&guest.s),crate)!=core.NONE,"the guest has the host's scene")
     state:=share.join_progress_read(&st.join.progress)
     testing.expect_value(t,state.phase,share.Join_Phase.Done)
-    // The chunks the host served keep its frames at full pace until the transfer is over;
-    // then both editors may slow down behind other windows again.
-    n.now+=0.1
-    share_step(n)
-    testing.expect(t,collab_transferring(&host.s),"the host serves the guest's join")
-    for _ in 0..<3 {n.now+=1;share_step(n)}
-    testing.expect(t,!collab_transferring(&host.s) && !collab_transferring(&guest.s),"an idle session transfers nothing")
+}
+
+// A join moves while neither editor draws a frame, as the pumps of their
+// sessions run on threads of their own: the guest gets the host's files with
+// its editor still Connecting, the session's own commands waiting in its node,
+// and enters the scene once it draws again.
+@(test)
+a_join_finishes_while_neither_editor_draws :: proc(t:^testing.T) {
+    n:=new(Share_Net);defer free(n)
+    host,guest:=new(Share_End),new(Share_End)
+    defer {free(host);free(guest)}
+    ok:=share_net_init(t,n,host,guest,"collab-share-away")
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
+    if !ok {return}
+    crate,made:=share_host_project(t,n)
+    if !made || !share_start_host(t,n,0) {return}
+    context.temp_allocator=mem.arena_allocator(&n.frame)
+    code:=wire.invite_encode(wire.invite_make(collab_state(&host.s).invite,COLLAB_PORT),context.temp_allocator)
+    error:=collab_join(&guest.s,code,"Ben",at=wire.address_memory(0),transport=wire.sim_endpoint_transport(&n.sim,1))
+    if !testing.expect_value(t,error,Collab_Error.None) {return}
+
+    host.away,guest.away=true,true
+    st:=collab_state(&guest.s)
+    j:=st.join
+    for steps:=0;!sync.atomic_load(&j.done); {
+        if !share.node_waiting(st.node) {
+            thread.yield()
+            continue
+        }
+        share_step(n)
+        steps+=1
+        if steps==600_000 {
+            testing.expect(t,false,"the join did not end in 600 virtual seconds")
+            share.node_stop(st.node)
+        }
+    }
+    testing.expectf(t,j.error=="","%s",j.error)
+    testing.expect_value(t,share_text(guest.root,"assets/notes.txt"),"host 1\n")
+    testing.expect_value(t,st.phase,Collab_Phase.Connecting)
+    testing.expect(t,!j.finished,"the guest's editor has not taken the join")
+
+    host.away,guest.away=false,false
+    if !share_until_ready(t,n) {return}
+    testing.expect(t,api_entity(edited_world(&guest.s),crate)!=core.NONE,"the guest has the host's scene")
 }
 
 @(test)

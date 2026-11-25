@@ -133,7 +133,8 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
     r.sent_edits,r.received_edits,r.sent_ops,r.received_ops=st.sent_edits,st.received_edits,st.sent_ops,st.received_ops
     if j:=st.join;j!=nil {api_collab_join_result(j,&r.join)}
     r.offers,r.updates=st.offers,st.updates
-    stats:=wire.host_stats(&st.host)
+    stats:=wire.host_stats(collab_host_lock(st))
+    collab_host_unlock(st)
     r.transport={
         connections=stats.connections,
         packets_sent=stats.packets_sent,packets_received=stats.packets_received,

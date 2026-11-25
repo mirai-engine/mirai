@@ -364,8 +364,8 @@ audit_post_layers :: proc(a:^Audit) {
     }
 }
 
-// Whether a scale draws a mesh in other units: mm.scale_beyond, the rule of
-// the import, growing it about as much on every axis.
+// Whether a scale draws a mesh in other units: beyond AUDIT_SCALE_UNITS
+// (mm.scale_beyond), growing it about as much on every axis.
 @(private)
 audit_scale_far :: proc "contextless" (scale:[3]f32) -> bool {
     far,beyond:=mm.scale_beyond(scale,AUDIT_SCALE_UNITS)
@@ -373,8 +373,8 @@ audit_scale_far :: proc "contextless" (scale:[3]f32) -> bool {
     return beyond && far>1 && far<=2*smallest
 }
 
-// Mesh entities drawn far from the size of their mesh (mm.scale_beyond, the
-// rule of the import) or from the others that draw the same mesh.
+// Mesh entities drawn far from the size of their mesh (audit_scale_far) or
+// from the others that draw the same mesh.
 @(private)
 audit_scales :: proc(a:^Audit) {
     renderers:=core.world_table_of(a.w,erender.Mesh_Renderer)
@@ -394,7 +394,7 @@ audit_scales :: proc(a:^Audit) {
     for &f in far {
         audit_add(a,{severity=.Error,area=.Render,code="render.scale_far",entity=audit_entity(a,f.entity),
             message=fmt.aprintf("It draws %s at %g times its size (%d entities): a scale of other units",editor.asset_path(a.s,f.id),f.scale,f.count,allocator=a.allocator),
-            fix="Give it the scale of its size, or import the mesh again with bake_scale (--bake-scale) so that its source units become meters"})
+            fix="Give it the scale of its size, or export its source in meters and import it again: the import puts only the scale of a file's root into its meshes"})
     }
     slice.sort_by(drawn[:],proc(x,y:Drawn) -> bool {return x.mesh[0]<y.mesh[0] || x.mesh[0]==y.mesh[0] && x.mesh[1]<y.mesh[1]})
     for first:=0;first<len(drawn);{

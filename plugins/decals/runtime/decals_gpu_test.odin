@@ -13,7 +13,7 @@ import mm "mirai:std/math"
 
 @(test)
 decals_blend_surface_properties_in_order :: proc(t:^testing.T) {
-    shaders,problem:=gpu.shader_assets_load(#directory+"/../../../.mirai/tmp/decals-test-shaders")
+    shaders,problem:=gpu.shader_assets_load(#directory+"/../../../.mirai/test-shaders/decals")
     if !testing.expect(t,problem=="",problem) {return}
     device:=shared_device.take_or_skip(t)
     if device==nil {gpu.shader_assets_destroy(&shaders);return}
