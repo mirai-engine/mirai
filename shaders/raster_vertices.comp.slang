@@ -181,7 +181,8 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
     Cluster_Block b = visible_block(mesh, c, entry);
     uint vertex_count = cluster_vertex_count(c), triangle_count = cluster_triangle_count(c);
     uint bin = cull_listed_bin(raster_entries[record + RASTER_ENTRY_BIN]);
-    bool mirrored = instance_mirrored(inst);
+    // What mirrors its mesh, or a view that mirrors the world, turns its winding around.
+    bool mirrored = instance_mirrored(inst) != view_mirrored();
 #ifdef MIRAI_RASTER_SHADOW
     // Where the page lies in the pool and the part of it the round draws;
     // a page with no place in the pool draws nothing.
@@ -233,7 +234,7 @@ void main(uint3 group : SV_GroupID, uint3 lane : SV_GroupThreadID) {
         uint t = lane.x + turn * MIRAI_GROUP_X;
         if (t >= triangle_count) continue;
         uint3 corners = block_triangle(b, t);
-        // An instance that mirrors its mesh draws its triangles the other way round (gbuffer_corner).
+        // Those draw their triangles the other way round, so that their front faces stay front.
         if (mirrored) corners = corners.xzy;
         if (corners.x == corners.y || corners.y == corners.z || corners.x == corners.z) continue;
         if (!raster_triangle_shows(clips[corners.x], clips[corners.y], clips[corners.z], two_sided, window, resolution, params.margin)) continue;

@@ -658,6 +658,8 @@ float3 tangent_frame_normal(float3 normal, float4 tangent, float3 tangent_normal
 }
 // Whether the transform of an instance turns the winding of its triangles around.
 bool instance_mirrored(Instance inst) { return dot(inst.world[0].xyz, cross(inst.world[1].xyz, inst.world[2].xyz)) < 0.0; }
+// Whether the view turns the winding of what it draws around: the nested view of a mirror.
+bool view_mirrored() { return dot(frame.view[0].xyz, cross(frame.view[1].xyz, frame.view[2].xyz)) < 0.0; }
 // A tangent of an instance in the world: a unit direction along its surface,
 // as long as the normal it is interpolated with (MikkTSpace), and the side
 // its bitangent is on, which a reflection turns around.

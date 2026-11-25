@@ -209,3 +209,51 @@ a_mirror_shows_the_body_of_the_player_and_never_its_viewmodel :: proc(t: ^testin
 	testing.expectf(t, drawn > 0, "the view draws its viewmodel: %d pixels", drawn)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
 }
+
+// A floor in the sun seen in a mirror is lit as the same floor seen directly:
+// the nested view, whose reflection turns the winding of what it draws around,
+// draws the top of the floor and not its underside, which the floor shades.
+@(test)
+a_lit_floor_seen_in_a_mirror_is_lit_as_seen_directly :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	if !gpu_fixture_init(t, f) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	gpu.scene_set_environment(r, {direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
+	gpu.scene_update(r, 0, {{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -4}, {20, 0.2, 20}), tint = {0.5, 0.5, 0.5}}}, true)
+	camera := gpu.Camera{position = {0, 1.6, 1}, forward = {0, -0.35, -1}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	state := new(Portals_Gpu)
+	defer free(state)
+	state.gates[0] = mirror_gate({position = {0, 1, -2}, rotation = 1, scale = {4, 2, 1}})
+	state.count = 1
+	state.constants.count = 1
+	for _ in 0 ..< 4 {
+		state.pipeline = gpu.stage_pipeline(r, {stage = .Mask, shader = "portal_mask", name = "portal masks"})
+		if !testing.expect(t, state.pipeline != 0, "the shaders of the plugin have the mask of portals") {return}
+		testing.expect(t, gpu.frame_pass(r, .Mask, portals_record, state))
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera}), r.error)
+	}
+	rhi.device_wait_idle(f.device)
+	targets := &r.targets
+	count := int(targets.width * targets.height)
+	display := make([]f16, count * 4, context.temp_allocator)
+	depths := make([]f32, count, context.temp_allocator)
+	testing.expect(t, rhi.texture_read(f.device, targets.display, ([^]u8)(raw_data(display))[:count * 8]) && rhi.texture_read(f.device, targets.linear_depth, ([^]u8)(raw_data(depths))[:count * 4]), rhi.device_error(f.device))
+	mirrored, direct: [dynamic]f32
+	mirrored.allocator, direct.allocator = context.temp_allocator, context.temp_allocator
+	for i in 0 ..< count {
+		l := 0.2126 * f32(display[i * 4]) + 0.7152 * f32(display[i * 4 + 1]) + 0.0722 * f32(display[i * 4 + 2])
+		// The floor of each: below the middle of the mirror, below the horizon of the view.
+		y := i / int(targets.width)
+		if depths[i] < 0 && y > int(targets.height) / 2 {append(&mirrored, l)}
+		if depths[i] > 0 && y > int(targets.height) * 3 / 4 {append(&direct, l)}
+	}
+	mean :: proc(values: []f32) -> (m: f32) {
+		for v in values {m += v}
+		return m / max(f32(len(values)), 1)
+	}
+	if !testing.expectf(t, len(mirrored) > 50 && len(direct) > 50, "the floor is seen in the mirror (%d pixels) and directly (%d)", len(mirrored), len(direct)) {return}
+	testing.expectf(t, abs(mean(mirrored[:]) - mean(direct[:])) <= 0.05 * mean(direct[:]), "the floor in the mirror is lit as the floor seen directly: %.4f, %.4f", mean(mirrored[:]), mean(direct[:]))
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
+}
