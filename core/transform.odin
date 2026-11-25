@@ -117,6 +117,7 @@ Propagation :: struct {
     dirty:[dynamic]Ordered,
     pass,ticks:u32,
     seen_locals:Seen,
+    seen_worlds:Seen,             // of World_Transform, after the last pass: what changed since, another put back
     seen_tree:u64,                // of the links of the Hierarchy that moved
 }
 
@@ -136,13 +137,16 @@ from_math :: #force_inline proc "contextless" (t:mm.Transform) -> Transform {ret
 // the previous of the tick. Only what changed since the last pass and what
 // hangs from it are computed again: the transforms written, the entities that
 // gained a Transform, those whose link in the Hierarchy moved and the children
-// of one that lost its Transform. All of them when the pass had not seen the
-// rows or the tree there are, as after a World was copied over. An entity
+// of one that lost its Transform, and those whose World_Transform a restore
+// put back, which the propagation of the later ticks no longer follows. All of
+// them when the pass had not seen the rows or the tree there are, as after a
+// World was copied over. An entity
 // hangs from its parent in the Hierarchy when that one has a Transform too.
 @(step="fixed late",loops="game editor",stage="end")
 transforms_propagate :: proc(locals:^Table(Transform,.Read),hierarchy:Ref(Hierarchy),worlds:^Table(World_Transform),propagation:^Propagation,jumps:^Jumps,frame:Frame_Time) {
     transforms_compute(locals,hierarchy,worlds,propagation,frame.phase==.Fixed)
     if frame.phase!=.Fixed {return}
+    defer _=changes(worlds,&propagation.seen_worlds)
     for jumped in take(&jumps.queue) {
         for e:=jumped.entity;e!=NONE; {
             if !has(locals,e) {
@@ -170,9 +174,14 @@ transforms_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^
         previous_moving=p.spare[:]
     }
     c:=changes(locals,&p.seen_locals)
+    put_back:=changes(worlds,&p.seen_worlds)
     moved:[]Entity
-    whole:bool
-    if h.ptr!=nil {moved,whole=log_since(h.moved,&p.seen_tree)}
+    whole:=put_back.all
+    if h.ptr!=nil {
+        tree_whole:bool
+        moved,tree_whole=log_since(h.moved,&p.seen_tree)
+        whole||=tree_whole
+    }
     if size:=raw_indices(raw(locals));len(p.worlds)<size && (resize(&p.worlds,size)!=nil || resize(&p.computed,size)!=nil || resize(&p.listed,size)!=nil) {
         p.seen_locals.gone=max(u64) // the next pass has not seen these rows
         return
@@ -195,6 +204,7 @@ transforms_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^
         }
         clear(&p.dirty)
         for row in each_changed(locals,&c) {dirty(locals,h,p,entity_at(locals,row))}
+        for row in each_changed(worlds,&put_back) {dirty(locals,h,p,entity_at(worlds,row))}
         for e in moved {dirty(locals,h,p,e)}
         for e in c.gone {
             if has(locals,e) {continue}
@@ -215,6 +225,7 @@ transforms_compute :: proc(locals:^Table(Transform,$A),h:Ref(Hierarchy),worlds:^
             world.previous=world.transform
         }
     }
+    _=changes(worlds,&p.seen_worlds)
 }
 
 @(private)

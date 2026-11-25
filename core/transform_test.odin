@@ -127,6 +127,46 @@ propagating_writes_only_the_world_transforms_that_change :: proc(t:^testing.T) {
     testing.expect(t,ok && world.position==[3]f32{1,0,0})
 }
 
+// A rollback brings back the World_Transform of the tick it goes to: what last
+// moved in that tick stops in the tick that runs again, as it did the first
+// time, though the propagation saw a later tick.
+@(test)
+a_restored_world_stops_what_last_moved_in_its_tick :: proc(t:^testing.T) {
+    worlds:[3]Hierarchy_Fixture
+    f,kept,stage:=&worlds[0],&worlds[1],&worlds[2]
+    for &w in worlds {if !test_world_init(t,&w) {return}}
+    defer for &w in worlds {test_world_destroy(&w)}
+    mover,parent,child:=create(&f.entities),create(&f.entities),create(&f.entities)
+    for e in ([]Entity{mover,parent,child}) {add(&f.locals,e,TRANSFORM_IDENTITY)}
+    add(&f.parents,child,Parent{entity=parent})
+    test_world_settle(f)
+    fixture_propagate(f,.Fixed)
+    fixture_propagate(f,.Fixed)
+    info:=test_world_info(f)
+    marks:=make([]Copy_Mark,copy_marks_count(info),context.temp_allocator)
+    testing.expect(t,world_copy_changed(info,kept,f,marks))
+    // The tick the rollback goes back to: they move, and what hangs from parent with it.
+    edit(&f.locals,mover).position={1,0,0}
+    edit(&f.locals,parent).position={0,2,0}
+    fixture_propagate(f,.Fixed)
+    fixture_propagate(f,.Late)
+    for e in ([]Entity{mover,child}) {
+        moved,_:=get(&f.worlds,e)
+        testing.expect(t,moved.previous!=moved.transform)
+    }
+    testing.expect(t,world_copy_changed(info,kept,f,marks))
+    fixture_propagate(f,.Fixed)
+    restored,mixed:=world_restore(info,f,kept,stage,marks)
+    testing.expect(t,restored)
+    if mixed {test_world_clear(stage)}
+    test_world_settle(f)
+    for phase in ([]Phase{.Late,.Fixed,.Late,.Fixed}) {fixture_propagate(f,phase)}
+    for e in ([]Entity{mover,child}) {
+        again,_:=get(&f.worlds,e)
+        testing.expect_value(t,again.previous,again.transform)
+    }
+}
+
 @(test)
 a_chain_of_parents_that_goes_round_ends_and_a_deep_one_composes_whole :: proc(t:^testing.T) {
     f:Hierarchy_Fixture
