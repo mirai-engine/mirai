@@ -6,12 +6,13 @@ import "mirai:core"
 import gpu "mirai:render"
 import mm "mirai:std/math"
 
-// The scale of the entity of a light sizes it: evenly, a larger sphere;
-// stretched, a capsule along the axis it stretches most; a rectangle is the
-// unit square of its entity. Every light shines toward -z of its entity, and
-// a spot lays the width of its texture along its +x.
+// A point or a spot takes its shape from its fields, never from the scale of
+// its entity: a sphere of its radius, a tube of its length along +x of its
+// entity, as long whatever its radius; a rectangle is the unit square of its
+// entity. Every light shines toward -z of its entity, and a spot lays the
+// width of its texture along its +x. A child of a tube keeps its own scale.
 @(test)
-lights_take_their_shape_from_the_scale_of_their_entity :: proc(t: ^testing.T) {
+lights_take_their_shape_from_their_fields_and_rectangles_from_their_entity :: proc(t: ^testing.T) {
 	f := new(Sync_Fixture)
 	defer free(f)
 	if !sync_fixture_init(t, f) {return}
@@ -28,13 +29,18 @@ lights_take_their_shape_from_the_scale_of_their_entity :: proc(t: ^testing.T) {
 		place := mm.Transform{position = {0, 1, 0}, rotation = rotation, scale = scale}
 		return {transform = place, previous = place}
 	}
-	sphere :: point_desc
 	near :: proc(a, b: [3]f32) -> bool {return abs(a.x - b.x) < 1e-5 && abs(a.y - b.y) < 1e-5 && abs(a.z - b.z) < 1e-5}
-	one, even, capsule := sphere(at(1, 1), point), sphere(at(1, 3), point), sphere(at(turned, {6, 2, 1}), point)
-	testing.expect(t, one.radius == 0.1 && one.length == 0, "at scale 1 a sphere of its radius")
-	testing.expect(t, abs(even.radius - 0.3) < 1e-6 && even.length == 0, "scaled evenly, a larger sphere")
-	testing.expectf(t, abs(capsule.radius - 0.2) < 1e-6 && abs(capsule.length - 0.8) < 1e-5, "stretched 6 by 2: radius 0.2 and a segment that ends 0.6 from its center, not %v and %v", capsule.radius, capsule.length)
-	testing.expectf(t, near(capsule.axis, mm.quat_rotate(turned, [3]f32{1, 0, 0})), "along the axis it stretches most, turned: %v", capsule.axis)
+	for scale in ([][3]f32{1, 3, {6, 2, 1}}) {
+		sphere := point_desc(at(turned, scale), point)
+		testing.expectf(t, sphere.radius == 0.1 && sphere.length == 0, "at scale %v a sphere of its radius: %v %v", scale, sphere.radius, sphere.length)
+		for radius in ([]f32{0.05, 0.2}) {
+			tube := point
+			tube.radius, tube.length = radius, 0.8
+			capsule := point_desc(at(turned, scale), tube)
+			testing.expectf(t, capsule.radius == radius && capsule.length == 0.8, "at scale %v with radius %v a tube of its length: %v", scale, radius, capsule.length)
+			testing.expectf(t, near(capsule.axis, mm.quat_rotate(turned, [3]f32{1, 0, 0})), "along +x of its entity: %v", capsule.axis)
+		}
+	}
 	rectangle := rect_desc(at(turned, {2, 0.5, 1}), Rect_Light{color = {1, 1, 1}, luminance = 2, range = 10}, nil)
 	testing.expectf(t, rectangle.size == {2, 0.5} && rectangle.radius == 0 && rectangle.intensity == 2, "the square of its entity, x by y: %v", rectangle.size)
 	testing.expectf(t, near(rectangle.direction, mm.quat_forward(turned)) && near(rectangle.axis, mm.quat_rotate(turned, [3]f32{-1, 0, 0})), "facing -z, wide along -x, its right seen from the side it lights: %v %v", rectangle.direction, rectangle.axis)

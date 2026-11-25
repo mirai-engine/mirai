@@ -3,8 +3,9 @@
 ## Local lights
 
 - **Geometry & units:** Local lights are evenly lit spheres of `radius` (`Point_Light`,
-  `Spot_Light`; 0 uses a minimum radius), capsules, or rectangles. All four types aim along `-Z`
-  and take shape from entity scale
+  `Spot_Light`; 0 uses a minimum radius), capsules (their `length` along `+X` of the entity), or
+  rectangles. All aim along `-Z`; points and spots never read the entity scale (`sphere_desc`),
+  so a child keeps its own, while a rectangle is the unit square of its entity
   ([components](../../mirai-gameplay/references/libraries.md#render)). Color is independent of
   entity mesh tint; a smooth window zeros intensity at `range`.
 - **Analytic shading:** Diffuse uses horizon-clipped sphere irradiance (Snyder; Lagarde-de
