@@ -1451,6 +1451,63 @@ a_source_starts_again_when_its_set_loads_again :: proc(t:^testing.T) {
     testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(5))
 }
 
+// A medium that names a snapshot of the settings blends the buses to it by
+// the share of the listeners under it, over REVERB_FADE, with no Audio_Mix:
+// one of two players under water is half of it. The snapshot Audio_Mix
+// names counts whole, and once when the medium names the same.
+@(test)
+the_medium_of_the_listeners_blends_the_buses_to_its_snapshot :: proc(t:^testing.T) {
+    f:Fixture
+    if !fixture_init(t,&f) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    settings:Audio_Settings
+    testing.expect(t,audio_bus_setting_set(&settings,{bus=BUS_MUSIC,filters={0={kind=.Lowpass,frequency=8000}}}))
+    base.text_set(settings.snapshots[0].name[:],"pause")
+    settings.snapshots[0].buses[0]={bus=BUS_MASTER,gain=-20}
+    base.text_set(settings.snapshots[1].name[:],"underwater")
+    settings.snapshots[1].buses[0]={bus=BUS_MUSIC,gain=-12,cutoffs={0=500}}
+    volumes:=AUDIO_VOLUMES_DEFAULT
+    revision:=u64(1)
+    applied:Mixer_Buses
+    problems:core.Problems
+    w:Audio_World
+    if !test_world_init(t,&w) {return}
+    defer test_world_destroy(&w)
+    for x in ([2]f32{0,5}) {
+        e:=core.create(&w.entities)
+        core.add(&w.listeners,e,Audio_Listener{})
+        placed:=mm.TRANSFORM_IDENTITY
+        placed.position.x=x
+        core.add(&w.worlds,e,core.World_Transform{placed,placed})
+    }
+    test_world_settle(&w)
+    water:=Medium{lowpass=800,weight=1}
+    base.text_set(water.snapshot[:],"underwater")
+    Step :: struct {what:string,under:[2]bool,mix:string,dt:f32,gain,cutoff,master:f32}
+    for step in ([?]Step{
+        {"both in the air",{false,false},"",0,0,8000,0},
+        {"both dive: halfway through the fade",{true,true},"",REVERB_FADE/2,-6,2000,0},
+        {"both under",{true,true},"",REVERB_FADE,-12,500,0},
+        {"one comes up: half",{true,false},"",REVERB_FADE,-6,2000,0},
+        {"the game names the same: once, whole",{true,false},"underwater",1,-12,500,0},
+        {"the game names another: both",{true,false},"pause",1,-6,2000,-20},
+        {"both up",{false,false},"",REVERB_FADE,0,8000,0},
+    }) {
+        medium:Audio_Medium
+        for under,i in step.under {
+            if under {medium.listeners[i]=water}
+        }
+        mix:Audio_Mix
+        snapshot_blend(&mix,step.mix,0)
+        audio_buses(core.ref(&settings),core.ref(&volumes),core.ref(&medium),core.ref(&mix),core.read(&w.worlds),core.read(&w.listeners),{},{&revision},{&revision},{dt=step.dt},&applied,m,{},&problems)
+        testing.expectf(t,abs(mixer.bus_volume(m,mixer.Bus(BUS_MUSIC))-db_volume(step.gain))<1e-4,"%s: music at %v, want %v dB",step.what,mixer.bus_volume(m,mixer.Bus(BUS_MUSIC)),step.gain)
+        testing.expectf(t,abs(mixer.bus_filter(m,mixer.Bus(BUS_MUSIC),0).frequency-step.cutoff)<0.5,"%s: cutoff %v, want %v",step.what,mixer.bus_filter(m,mixer.Bus(BUS_MUSIC),0).frequency,step.cutoff)
+        testing.expectf(t,abs(mixer.bus_volume(m,mixer.BUS_MASTER)-db_volume(step.master))<1e-4,"%s: master at %v, want %v dB",step.what,mixer.bus_volume(m,mixer.BUS_MASTER),step.master)
+    }
+    testing.expect(t,core.problem_find(&problems,core.NONE,"audio.snapshot")==nil)
+}
+
 // A Layered set without loop plays each layer once to its end, at its own
 // pitch and after its own delay, and ends with its last layer: a layer that
 // ends sooner than another one is not taken for a stolen one.

@@ -1,21 +1,27 @@
 package water
 
 import "mirai:core"
+import "mirai:std/base"
 import audio "mirai:engine/audio"
 import phys "plugins:physics/runtime"
 
 // A listener under the surface of a fluid, out of a dry box, hears through
 // the water: the highs die (UNDER_LOWPASS) and a small room of water rings
 // (UNDER_REVERB), which audio_reverb fades in and out as it does between rooms.
-// Each listener of a split screen hears through its own.
+// Each listener of a split screen hears through its own. A project shapes the
+// rest of its mix under water with a snapshot of its Audio_Settings named
+// UNDER_SNAPSHOT, which the buses blend to by the share of listeners under.
 
 UNDER_LOWPASS :: f32(800) // Hz
 UNDER_REVERB :: audio.Reverb{room_size=0.35,damping=0.85,wet=0.7,width=0.6}
+UNDER_SNAPSHOT :: "underwater"
 
 // The medium of a listener where the fluid at it is the one given, or none.
 medium_at :: proc "contextless" (sample:phys.Fluid_Sample,found:bool) -> audio.Medium {
     if !found || !(sample.density>0) {return {}}
-    return {lowpass=UNDER_LOWPASS,reverb=UNDER_REVERB,weight=1}
+    medium:=audio.Medium{lowpass=UNDER_LOWPASS,reverb=UNDER_REVERB,weight=1}
+    base.text_set(medium.snapshot[:],UNDER_SNAPSHOT)
+    return medium
 }
 
 @(step="late",stage="end",after="camera_view")

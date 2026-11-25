@@ -2,6 +2,7 @@ package water
 
 import "core:testing"
 import "mirai:core"
+import "mirai:std/base"
 import phys "plugins:physics/runtime"
 
 @(private="file")
@@ -76,7 +77,7 @@ a_body_that_leaves_the_water_stays_wet_and_dries_in_wet_seconds :: proc(t:^testi
 @(test)
 under_the_surface_the_listener_hears_through_the_water :: proc(t:^testing.T) {
     under:=medium_at({density=1025},true)
-    testing.expect(t,under.lowpass==UNDER_LOWPASS && under.weight==1 && under.reverb==UNDER_REVERB)
+    testing.expect(t,under.lowpass==UNDER_LOWPASS && under.weight==1 && under.reverb==UNDER_REVERB && base.text_get(under.snapshot[:])==UNDER_SNAPSHOT)
     testing.expect(t,medium_at({density=0},true)=={},"in a dry box or over the surface, the air")
     testing.expect(t,medium_at({},false)=={},"and where there is no fluid")
 }

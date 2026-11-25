@@ -165,7 +165,10 @@ Audio_Listener :: struct {}
 Medium :: struct {
     lowpass:f32 `mirai:"min=0,unit=Hz"`, // cutoff of the low-pass filter of what the listener hears; 0: none
     reverb:Reverb,
-    weight:f32 `mirai:"min=0,max=1"`,    // of its reverb over that of the room
+    weight:f32 `mirai:"min=0,max=1"`,    // how much it is in it: of its reverb over that of the room, and of its snapshot
+    // A snapshot of Audio_Settings the buses blend to while the listener is in
+    // it (medium_snapshots); empty, or one the settings lack: none.
+    snapshot:[AUDIO_SNAPSHOT_NAME]u8 `mirai:"text"`,
 }
 
 // The medium of each listener, by its slot (listener_positions). While every
@@ -173,8 +176,9 @@ Medium :: struct {
 // their lowpasses too, the lower of that and its own; while only some are,
 // the voices heard from those lose their highs through their EQ
 // (mixer.lowpass_bands). audio_reverb mixes the reverb of each by weight over
-// that of its room. One plugin writes it (water), before audio_reverb,
-// audio_buses and audio_sources; zero: the air.
+// that of its room, and audio_buses blends the buses to the snapshot each
+// names by its weight and share of the listeners. One plugin writes it
+// (water), before audio_reverb, audio_buses and audio_sources; zero: the air.
 @(storage)
 Audio_Medium :: struct {
     listeners:[AUDIO_LISTENERS_MAX]Medium,
@@ -643,8 +647,8 @@ reverb_mix :: proc(value:^Audio_Reverb,by:Audio_Reverb,weight:f32,add:bool) {
     volume.mix_linear((^[4]f32)(value),(^[4]f32)(&by)^,weight,add)
 }
 
-// The buses of the mixer as the settings, the snapshot Audio_Mix blends to
-// and the medium of the listeners say; only what differs is sent.
+// The buses of the mixer as the settings, the snapshots of Audio_Mix and of
+// the medium of the listeners and its lowpass say; only what differs is sent.
 @(step="late",stage="end")
 audio_buses :: proc(
     settings:core.Ref(Audio_Settings),volumes:core.Ref(Audio_Volumes),medium:core.Ref(Audio_Medium),mix:core.Ref(Audio_Mix),
@@ -664,10 +668,11 @@ audio_buses :: proc(
         }
         seconds=mix.blend_seconds
     }
+    _,count:=listener_positions(worlds,listeners,view)
+    weights:=medium_snapshots(settings.ptr,medium.ptr,count)
     blend:=&applied.blend
     blended:=false
-    if changed || !blend.set || snapshot!=blend.snapshot || blend.t<1 {blended=mix_blend_step(blend,settings.ptr,snapshot,seconds,frame.dt)}
-    _,count:=listener_positions(worlds,listeners,view)
+    if changed || !blend.set || snapshot!=blend.snapshot || weights!=blend.medium || blend.t<1 {blended=mix_blend_step(blend,settings.ptr,snapshot,seconds,frame.dt,weights)}
     lowpass:=medium_lowpass(medium.ptr,count)
     if applied.set && applied.world==id && !changed && !blended && applied.count==mixer.bus_count(m) && applied.lowpass==lowpass {return}
     applied.set=buses_apply(m,settings.ptr,volumes.ptr,lowpass,problems,&blend.now)
