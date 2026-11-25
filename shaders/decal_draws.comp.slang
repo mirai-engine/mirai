@@ -36,7 +36,8 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint index = entries[k].x;
     Instance inst = scene_instance(index);
     Mesh mesh = meshes[instance_mesh(inst)];
-    bool faded = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
+    bool faded = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0
+        || instance_batched(index) && batch_faded(batch_row(batch_of(index)), inst.bounds_min.xyz, inst.bounds_max.xyz) >= 1.0;
     bool shown = (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !faded && mesh.draw_first != INVALID
         && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
         && decal_frustum(inst.bounds_min.xyz, inst.bounds_max.xyz)

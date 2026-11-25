@@ -239,9 +239,10 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
   `opacity * alpha`, which a program may write as for a blend. The row keeps writes and order in
   `Gpu_Material_Volume.flags` (`MATERIAL_DECAL_SHIFT`, `MATERIAL_DECAL_ORDER_SHIFT`); an instance
   that shows another row as a decal writes `DECAL_WRITES_DEFAULT`.
-- **Order:** `Scene_State.decals` is (instance, slot) of every decal slot, sorted only when it
-  changes (`decals_stale`: classification, instances with `INSTANCE_FLAG_DECAL` that come, go or
-  change mesh or materials) by order, program, instance, slot: the same in every view, no
+- **Order:** `Scene_State.decals` is (instance, slot) of every decal slot, of the scene and of
+  each instance of the batches drawn, sorted only when it changes (`decals_stale`:
+  classification, instances with `INSTANCE_FLAG_DECAL` that come, go or change mesh or materials;
+  the tables of the batches built again) by order, program, instance, slot: the same in every view, no
   per-instance order. A frame looks at no entry: `decal_draws.comp` culls (hidden, layers, fade,
   frustum, this frame's pyramid) and writes one indirect draw each; a run of one program is one
   multi-draw (`Scene_State.decal_runs`).
@@ -260,7 +261,9 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
 - **Zero cost:** no decal and no `Decal` stage: no target, no pass, the resolve without the
   constant (`a_scene_without_decals_draws_no_decal_pass_and_the_same_image`).
 - **Limits:** rays, probes and glass do not see decals; surfaces of the `Gbuffer` stage (grass,
-  mesh particles) take none and cover them; decal slots of batches and far meshes are not drawn.
+  mesh particles) take none and cover them. Far meshes leave decal slots out: past the distance
+  a section shows its far mesh the surface shows without them (it pops there), and `mirai scene
+  check` names each such entity.
 - **Focal tests (`render`, GPU):** `a_decal_changes_only_what_it_writes_of_the_surface_under_it`,
   `a_decal_in_the_shadow_of_a_wall_takes_the_light_of_the_floor`,
   `decal_layers_compose_in_their_order_from_every_side`; CPU:
