@@ -14,7 +14,7 @@ import "mirai:project"
 // that make the deleting ones ask (AI_CODEX_RULES) and is trusted so that
 // Codex reads them; the requests they cause reach the user, not the policy.
 
-AI_CLAUDE_SESSION_META :: `{"claudeCode":{"options":{"allowedTools":["mcp__mirai"],"settings":{"permissions":{"ask":["Bash(rm:*)","Bash(rmdir:*)","Bash(unlink:*)","Bash(shred:*)","Bash(git rm:*)","Bash(git clean:*)","mcp__mirai__asset_delete","mcp__mirai__panel_delete","mcp__mirai__git_discard"],"allow":["Bash(mv:*)","Bash(git mv:*)"]}}}}}`
+AI_CLAUDE_SESSION_META :: `{"claudeCode":{"options":{"allowedTools":["mcp__mirai"],"settings":{"permissions":{"ask":["Bash(rm:*)","Bash(rmdir:*)","Bash(unlink:*)","Bash(shred:*)","Bash(git rm:*)","Bash(git clean:*)","mcp__mirai__asset_delete","mcp__mirai__panel_delete","mcp__mirai__kai_restore","mcp__mirai__kai_undo","mcp__mirai__kai_prune","mcp__mirai__kai_resolve"],"allow":["Bash(mv:*)","Bash(git mv:*)"]}}}}}`
 
 AI_CODEX_RULES_PATH :: ".codex/rules/mirai.rules"
 AI_CODEX_RULES :: `# Written by the Mirai editor: deleting files asks the user.
@@ -24,7 +24,7 @@ prefix_rule(pattern=["git", ["rm", "clean"]], decision="prompt", justification="
 
 // The commands that delete files, lowercase, and the tools of the editor that do.
 AI_DELETING_COMMANDS :: [?]string{"rm","rmdir","unlink","shred","del","erase","rd","ri","remove-item"}
-AI_DELETING_TOOLS :: [?]string{"asset_delete","panel_delete","git_discard","asset.delete","panel.delete","git.discard"}
+AI_DELETING_TOOLS :: [?]string{"asset_delete","panel_delete","kai_restore","kai_undo","kai_prune","kai_resolve","asset.delete","panel.delete","kai.restore","kai.undo","kai.prune","kai.resolve"}
 AI_SHELLS :: [?]string{"powershell","pwsh","cmd","bash","sh","zsh"}
 
 // The settings of a Codex session, with the project trusted so that its rules load.

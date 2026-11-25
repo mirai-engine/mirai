@@ -14,7 +14,9 @@ import "core:unicode/utf8"
 import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/install"
+import ka "mirai:cook/kai"
 import "mirai:cook/textures"
+import vcs "mirai:kai"
 import wire "mirai:net"
 import "mirai:platform"
 import "mirai:project"
@@ -71,9 +73,8 @@ Projects_Plugin :: struct {
 Projects_Row :: struct {
     path:[project.RECENT_PATH]u8,
     name:[64]u8,
-    branch:[64]u8,  // checked out in its repository; empty without one or detached
-    repository:bool,
     missing:bool,   // the folder or its project.mirai is gone
+    kai:[64]u8,     // what its workspace is on: a bookmark or the working change
     opened:[32]u8,  // when an editor last opened it, as the list says it
     recent_index:int, // index in p.recent.projects, or -1 when discovered on disk
     thumbnail:u64,  // the key of the image its tile shows in the atlas of previews; 0: its letter
@@ -103,9 +104,7 @@ Projects :: struct {
     templates:[PROJECTS_TEMPLATES][32]u8,
     template_count:int,
     template:int,
-    lfs:bool,
-    remote:[256]u8,
-    remote_length:int,
+    kai:bool,       // the new project is a Kai workspace of its own; off: no version control
     plugins:[PROJECTS_PLUGINS]Projects_Plugin, // of the engine and the template the new project can get
     plugin_count:int,
     picked:[project.MAX_CATALOG]bool,   // plugins of the catalog the new project gets
@@ -116,7 +115,6 @@ Projects :: struct {
     add_scroll:f32,                     // of the catalog in the popup of Add plugin
     // The project being opened: built on a background thread, then started.
     opening:[project.RECENT_PATH]u8,
-    git_init:bool,  // the editor started on it makes its repository with git, lfs and remote
     install:^install.Job, // its plugins from git, before the build
     from_git:bool,        // this opening started with install: the dialog shows its step
     run:^Build_Run,       // the editor build, package refresh and shaders running off the UI thread
@@ -253,7 +251,7 @@ projects_row_fill :: proc(s:^Session,folder:string,opened:i64,recent_index:int,n
         }
     }
     base.text_set(row.name[:],name)
-    row.repository,row.branch=projects_branch(folder)
+    if !row.missing {base.text_set(row.kai[:],ka.working_text(&s.store,folder))}
     base.text_set(row.opened[:],projects_when(opened,now,region))
     return
 }
@@ -410,7 +408,7 @@ projects_recent_save :: proc(s:^Session) {
 // Builds the editor library of a project and starts the editor on it; first
 // the steps given and the checkouts of its plugins from git, when it has some
 // missing or at another commit.
-projects_open :: proc(s:^Session,folder:string,git_init:=false,steps:[]install.Step={}) -> string {
+projects_open :: proc(s:^Session,folder:string,steps:[]install.Step={}) -> string {
     p:=s.projects
     if p==nil {return "The editor has no projects screen"}
     if projects_opening(p) || p.next {return "A project is being opened"}
@@ -422,7 +420,6 @@ projects_open :: proc(s:^Session,folder:string,git_init:=false,steps:[]install.S
     }
     if !os.is_file(project.path(absolute,project.PROJECT_FILE,allocator=context.temp_allocator)) {return fmt.tprintf("%s is not a project: it has no %s",absolute,project.PROJECT_FILE)}
     base.text_set(p.opening[:],absolute)
-    p.git_init=git_init
     p.error_length=0
     p.cancelling=false
     p.from_git=len(steps)>0 || install.sync_needed(absolute)
@@ -532,11 +529,6 @@ projects_start :: proc(s:^Session) -> bool {
     command:=make([dynamic]string,context.temp_allocator)
     append(&command,exe,"--project",base.text_get(p.opening[:]))
     if p.launcher {append(&command,"--from-launcher")}
-    if p.git_init {
-        append(&command,"--git-init")
-        if p.lfs {append(&command,"--git-lfs")}
-        if remote:=strings.trim_space(string(p.remote[:p.remote_length]));remote!="" {append(&command,"--git-remote",remote)}
-    }
     for arg in s.args {append(&command,arg)}
     if code:=base.text_get(p.join[:]);code!="" {
         append(&command,"--join",code)
@@ -617,21 +609,8 @@ projects_cancel :: proc(s:^Session) {
 @(private)
 projects_create :: proc(s:^Session) -> string {
     p:=s.projects
-    name:=strings.trim_space(string(p.name[:p.name_length]))
-    location:=strings.trim_space(string(p.location[:p.location_length]))
-    if name=="" {return "Give the project a name"}
-    if strings.contains_any(name,"/\\:*?\"<>|") {return "The name is the name of its folder: it cannot have / \\ : * ? \" < > |"}
-    if location=="" {return "Choose where the project goes"}
-    if p.template<0 || p.template>=p.template_count {return "Choose a template"}
-    folder:=project.path(location,name,allocator=context.temp_allocator)
-    template:=build.template_folder(s.engine_root,base.text_get(p.templates[p.template][:]),context.temp_allocator)
-    switch build.project_create(template,folder,name,s.engine_root) {
-    case .None:
-    case .Template_Missing: return "The template has no project.mirai"
-    case .Folder_Not_Empty: return fmt.tprintf("%s is not an empty folder",folder)
-    case .Copy_Failed:      return fmt.tprintf("%s could not be written",folder)
-    case .Manifest_Failed:  return "The name does not fit in the manifest of the project"
-    }
+    folder,message:=projects_make(s)
+    if message!="" {return message}
     p.creating=false
     if p.plugin_count>0 {
         file:=project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)
@@ -652,7 +631,40 @@ projects_create :: proc(s:^Session) -> string {
     for i in 0..<p.link_count {
         if p.links_on[i] {append(&steps,install.Step{kind=.Add,text=base.text_get(p.links[i][:])})}
     }
-    return projects_open(s,folder,true,steps[:])
+    return projects_open(s,folder,steps[:])
+}
+
+// Makes the folder of the project the dialog describes, from its template, and
+// its Kai workspace when Version control (Kai) is checked: the folder, or why not.
+@(private)
+projects_make :: proc(s:^Session) -> (folder,message:string) {
+    p:=s.projects
+    name:=strings.trim_space(string(p.name[:p.name_length]))
+    location:=strings.trim_space(string(p.location[:p.location_length]))
+    if name=="" {return "","Give the project a name"}
+    if strings.contains_any(name,"/\\:*?\"<>|") {return "","The name is the name of its folder: it cannot have / \\ : * ? \" < > |"}
+    if location=="" {return "","Choose where the project goes"}
+    if p.template<0 || p.template>=p.template_count {return "","Choose a template"}
+    if p.kai && s.store.root=="" {return "","Version control needs a store, where Kai keeps the changes: start the editor with --store <folder>, or uncheck Version control (Kai)"}
+    folder=project.path(location,name,allocator=context.temp_allocator)
+    template:=build.template_folder(s.engine_root,base.text_get(p.templates[p.template][:]),context.temp_allocator)
+    switch build.project_create(template,folder,name) {
+    case .None:
+    case .Template_Missing: return "","The template has no project.mirai"
+    case .Folder_Not_Empty: return "",fmt.tprintf("%s is not an empty folder",folder)
+    case .Copy_Failed:      return "",fmt.tprintf("%s could not be written",folder)
+    case .Manifest_Failed:  return "","The name does not fit in the manifest of the project"
+    }
+    if p.kai {
+        // Its files are the first change of a Kai workspace of its own.
+        k:=new(ka.Project,context.temp_allocator)
+        if k==nil {return "","No memory for the Kai workspace of the project"}
+        if e:=ka.project_create(k,project.path_absolute(folder,context.temp_allocator),&s.store);e!=.None {
+            return "",fmt.tprintf("The project was made in %s, but its Kai workspace was not: %s",folder,vcs.error_text(e))
+        }
+        ka.project_close(k)
+    }
+    return folder,""
 }
 
 // Fills the form of a new project; template: the one chosen, or the default when negative.
@@ -661,7 +673,8 @@ projects_new_start :: proc(s:^Session,template:int) {
     p:=s.projects
     p.creating=true
     p.name_length=copy(p.name[:],"new_project")
-    p.lfs,p.remote_length,p.template=true,0,0
+    p.template=0
+    p.kai=true
     p.picked,p.link_count,p.plugins_scroll={},0,0
     for i in 0..<p.template_count {
         if base.text_get(p.templates[i][:])==build.TEMPLATE_DEFAULT {p.template=i}
@@ -946,16 +959,14 @@ projects_row :: proc(s:^Session,index:int,row:^Projects_Row,folder:string,busy,o
             ui.label(ctx,projects_doing(s.projects),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
             if ui.button(ctx,ui.id(ctx,"project_cancel"),{label="Cancel",variant="field",height=28,size=ui.metric(ctx,"font_small"),disabled=p.cancelling}).clicked {projects_cancel_request(s)}
         } else {
-            chip,chip_color,chip_fill:="",ui.tone(ctx,"text_muted"),ui.tone(ctx,"card")
-            switch {
-            case row.missing:     chip,chip_color,chip_fill="Folder not found",ui.tone(ctx,"danger"),GIT_REMOVED_FILL
-            case !row.repository: chip="No repository"
-            case:                 chip=base.text_get(row.branch[:])
-            }
-            if chip!="" {
-                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=chip_fill,radius=11}) {
-                    if row.repository && !row.missing {ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),chip_color,12)}
-                    ui.label(ctx,chip,ui.metric(ctx,"font_small"),chip_color)
+            if row.missing {
+                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"danger_soft"),radius=11}) {
+                    ui.label(ctx,"Folder not found",ui.metric(ctx,"font_small"),ui.tone(ctx,"danger"))
+                }
+            } else if on:=base.text_get(row.kai[:]);on!="" {
+                if ui.box(ctx,{width=ui.FIT,height=ui.fixed(22),gap=5,padding={8,0,8,0},align_y=.Center,fill=ui.tone(ctx,"card"),radius=11}) {
+                    ui.icon(ctx,ui.icon_user(u8(User_Icon.Branch)),ui.tone(ctx,"text_muted"),12)
+                    ui.label(ctx,on,ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
                 }
             }
             if row.missing && ui.button(ctx,ui.id(ctx,"project_remove",index),{label="Remove",variant="ghost",height=24,size=ui.metric(ctx,"font_small"),disabled=busy}).clicked {remove=true}
@@ -1047,7 +1058,7 @@ projects_loading_build :: proc(s:^Session) {
 }
 
 // The form of a new project in place of the list: its template, name and
-// folder, and its repository beside the plugins it gets.
+// folder beside the plugins it gets.
 @(private)
 projects_new_build :: proc(s:^Session) {
     p:=s.projects
@@ -1077,19 +1088,9 @@ projects_new_build :: proc(s:^Session) {
                     if !platform.dialog_show(s.app.platform,{kind=.Open_Folder,tag=DIALOG_PROJECT_LOCATION,location=os.is_dir(location)?location:""}) {notify(s,"A file dialog is already open")}
                 }
             }
-            if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10,padding={14,12,14,12},fill=ui.tone(ctx,"well"),stroke=ui.tone(ctx,"divider"),stroke_width=1,radius=ui.metric(ctx,"radius_panel")}) {
-                ui.label(ctx,"Git repository",ui.metric(ctx,"font"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
-                {
-                    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=10}) {
-                        if kit.property(ctx,"Remote",30) {
-                            ui.text_field(ctx,ui.id(ctx,"new_project_remote"),p.remote[:],&p.remote_length,{placeholder="https://github.com/user/repo.git",live=true,height=30,size=ui.metric(ctx,"font")})
-                        }
-                        if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
-                            ui.checkbox(ctx,ui.id(ctx,"new_project_lfs"),&p.lfs)
-                            ui.label(ctx,"Use Git LFS for textures, meshes and sounds",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_label"),0,fade=true)
-                        }
-                    }
-                }
+            if ui.box(ctx,{width=ui.GROW,height=ui.fixed(20),gap=8,align_y=.Center}) {
+                ui.checkbox(ctx,ui.id(ctx,"new_project_kai"),&p.kai)
+                ui.label(ctx,"Version control (Kai)",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"),0,fade=true)
             }
         }
         projects_new_plugins(s)

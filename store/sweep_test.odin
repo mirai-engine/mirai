@@ -116,6 +116,30 @@ compaction_keeps_every_live_chunk_and_drops_the_dead :: proc(t:^testing.T) {
     again,again_error:=sweep(&s,{addresses[2]},now)
     testing.expect(t,again_error==.None && again.chunks==0,"nothing more is dropped")
     for a in addresses[:3] {testing.expect(t,chunk_has(&fresh,a))}
+
+    // With reclaim, what this value wrote and no root reaches goes however
+    // fresh, also from a pack mostly live; another writer's fresh chunks stay.
+    other,_:=test_store(t,folder)
+    theirs:=test_bytes(30000,700)
+    theirs_address,_:=put(&other,theirs,now)
+    testing.expect_value(t,commit(&other,now),Error.None)
+    close(&other)
+    kept:=test_bytes(90000,701)
+    kept_address,_:=put(&s,kept,now)
+    dropped:=test_bytes(30000,702)
+    dropped_address,_:=put(&s,dropped,now)
+    testing.expect_value(t,commit(&s,now),Error.None)
+    before_reclaim,_:=usage(&s)
+    reclaimed,reclaim_error:=sweep(&s,{addresses[2],kept_address},now,reclaim=true)
+    testing.expect_value(t,reclaim_error,Error.None)
+    after_reclaim,_:=usage(&s)
+    testing.expect(t,reclaimed.chunks>0 && after_reclaim.bytes<before_reclaim.bytes,"the dead chunks of a pack mostly live leave the disk")
+    reread,_:=test_store(t,folder)
+    defer close(&reread)
+    testing.expect(t,!chunk_has(&reread,dropped_address),"what this value wrote and nothing reaches goes")
+    test_object_bytes(t,&reread,kept_address,kept)
+    test_object_bytes(t,&reread,theirs_address,theirs)
+    for a,i in addresses[:3] {test_object_bytes(t,&reread,a,datas[i])}
 }
 
 // A retired pack that will not delete (one a process maps on Windows) is

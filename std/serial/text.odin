@@ -89,24 +89,35 @@ text_write_break :: proc(w:^Writer,depth:int) {
     }
 }
 
-text_write_string :: proc(w:^Writer,text:string) {
+// A JSON string of text. Embeddable also escapes <, >, &, U+2028, U+2029 and bytes that are
+// not UTF-8 (as U+FFFD), so that no byte of untrusted text closes a string, a script or a page.
+text_write_string :: proc(w:^Writer,text:string,embeddable:=false) {
     HEX:="0123456789abcdef"
     write_u8(w,'"')
     start:=0
-    for i in 0..<len(text) {
+    for i:=0;i<len(text); {
         c:=text[i]
-        if c>=0x20 && c!='"' && c!='\\' {continue}
+        r,width:=rune(c),1
+        if embeddable && c>=0x80 {r,width=utf8.decode_rune_in_string(text[i:])}
+        plain:=c>=0x20 && c!='"' && c!='\\'
+        if embeddable {plain&&=c!='<' && c!='>' && c!='&' && r!=0x2028 && r!=0x2029 && !(r==utf8.RUNE_ERROR && width==1)}
+        if plain {
+            i+=width
+            continue
+        }
         text_write_raw(w,text[start:i])
-        start=i+1
-        switch c {
-        case '"': text_write_raw(w,`\"`)
-        case '\\': text_write_raw(w,`\\`)
-        case '\n': text_write_raw(w,`\n`)
-        case '\r': text_write_raw(w,`\r`)
-        case '\t': text_write_raw(w,`\t`)
+        start=i+width
+        i+=width
+        switch {
+        case c=='"': text_write_raw(w,`\"`)
+        case c=='\\': text_write_raw(w,`\\`)
+        case c=='\n': text_write_raw(w,`\n`)
+        case c=='\r': text_write_raw(w,`\r`)
+        case c=='\t': text_write_raw(w,`\t`)
         case:
-            text_write_raw(w,`\u00`)
-            write_u8(w,HEX[c>>4]);write_u8(w,HEX[c&15])
+            code:=u32(r) if r!=utf8.RUNE_ERROR else 0xfffd
+            text_write_raw(w,`\u`)
+            for shift:=12;shift>=0;shift-=4 {write_u8(w,HEX[(code>>uint(shift))&15])}
         }
     }
     text_write_raw(w,text[start:])

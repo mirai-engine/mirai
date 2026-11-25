@@ -76,3 +76,49 @@ a_host_name_resolves_on_its_own_thread :: proc(t:^testing.T) {
     testing.expect(t,done && len(addresses)==1 && addresses[0]==address_loopback6(9))
     resolve_end(&literal)
 }
+
+// A relay address keeps its node, IPv4 or IPv6, and the key of the peer behind it; it is another
+// address for each peer, and only a node with a port and a peer make one.
+@(test)
+relay_addresses_round_trip_their_node_and_peer :: proc(t:^testing.T) {
+    peer,other:Key
+    for &b,i in peer {b=u8(i+1)}
+    other=peer
+    other[0]~=1
+    v6,_:=address_parse("[2001:db8::7]:4000")
+    for node in ([2]Address{address_ip4(203,0,113,9,4000),v6}) {
+        relay,ok:=address_relay(node,peer)
+        testing.expect(t,ok && relay.kind==.Relay)
+        back,behind,is_relay:=address_relay_node(relay)
+        testing.expect(t,is_relay && back==node && behind==peer)
+        second,_:=address_relay(node,other)
+        testing.expect(t,second!=relay)
+    }
+    no_port:=address_ip4(1,2,3,4,0)
+    relay,_:=address_relay(v6,peer)
+    for node in ([4]Address{{},address_memory(1),no_port,relay}) {
+        _,made:=address_relay(node,peer)
+        testing.expectf(t,!made,"%v makes no relay",node)
+    }
+    _,made:=address_relay(v6,{})
+    testing.expect(t,!made)
+    _,_,is_relay:=address_relay_node(v6)
+    testing.expect(t,!is_relay)
+}
+
+// Only a public IPv4 address or a global unicast IPv6 one reaches across the internet; what this
+// machine finds as its global IPv6 address is one, or none.
+@(test)
+global_addresses_are_public_ipv4_and_global_unicast_ipv6 :: proc(t:^testing.T) {
+    cases:=[]struct{text:string,global:bool}{
+        {"8.8.8.8:1",true},{"10.0.0.1:1",false},{"192.168.1.2:1",false},{"100.64.0.1:1",false},
+        {"[2606:4700::1111]:1",true},{"[::1]:1",false},{"[fe80::1]:1",false},{"[fd00::1]:1",false},
+        {"[::ffff:8.8.8.8]:1",true},{"[ff02::1]:1",false},
+    }
+    for c in cases {
+        a,ok:=address_parse(c.text)
+        testing.expectf(t,ok && address_global(a)==c.global,"%s",c.text)
+    }
+    found:=address_global6(7777)
+    testing.expectf(t,found.kind==.None || found.kind==.IP6 && found.port==7777 && address_global(found),"%v",found)
+}

@@ -325,7 +325,6 @@ confirm_open :: proc(s:^Session,pending:Pending) {
 modal_close :: proc(g:^Editor_Ui) {
     g.modal=.None
     g.delete_asset={}
-    g.discard_path={}
     g.import_source={}
     clear(&g.import_changed)
 }
@@ -491,8 +490,6 @@ document_opened :: proc(s:^Session) {
     // What Play will play compresses meanwhile.
     play_animations_load(s,wait=false)
     ai_reviews_reconcile(s,s.ai)
-    // A scene a merge waits for shows the choices made.
-    if s.git!=nil && s.git.merge.loaded {git_merge_preview(s)}
 }
 
 document_source_stamp :: proc(s:^Session) {

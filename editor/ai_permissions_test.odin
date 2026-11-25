@@ -34,6 +34,9 @@ deleting_files_is_asked_of_the_user_and_moving_them_is_not :: proc(t:^testing.T)
     testing.expect(t,ai_permission_deletes(parse(`{"_meta":{"is_mcp_tool_approval":true},"toolCall":{"toolCallId":"7"}}`),"mirai.asset_delete"))
     testing.expect(t,ai_permission_deletes(parse(`{"_meta":{"is_mcp_tool_approval":true},"toolCall":{"title":"MCP tool call approval","rawInput":{"description":"Allow the mirai MCP server to run tool \"panel_delete\"?"}}}`),""))
     testing.expect(t,!ai_permission_deletes(parse(`{"_meta":{"is_mcp_tool_approval":true},"toolCall":{"toolCallId":"8"}}`),"mirai.scene_delete"))
+    for tool in ([?]string{"mirai.kai_prune","mirai.kai_resolve","mirai.kai_restore","mirai.kai_undo"}) {
+        testing.expectf(t,ai_permission_deletes(parse(`{"_meta":{"is_mcp_tool_approval":true},"toolCall":{"toolCallId":"9"}}`),tool),"%s asks the user",tool)
+    }
 }
 
 @(test)
@@ -48,6 +51,11 @@ codex_trusts_the_project_to_read_its_rules_and_claude_gets_them_as_settings :: p
     testing.expect_value(t,meta_error,json.Error.None)
     ask,_:=acp.at(meta,"claudeCode","options","settings","permissions","ask").(json.Array)
     testing.expect(t,len(ask)>0 && acp.text(ask[0])=="Bash(rm:*)")
+    for tool in ([?]string{"mcp__mirai__kai_prune","mcp__mirai__kai_resolve"}) {
+        found:=false
+        for x in ask {found||=acp.text(x)==tool}
+        testing.expectf(t,found,"Claude asks before %s",tool)
+    }
     folder:=base.test_folder(t,"codex-rules");if folder=="" {return}
     testing.expect(t,ai_codex_rules_write(folder))
     data,read_error:=os.read_entire_file(project.path(folder,AI_CODEX_RULES_PATH,allocator=context.temp_allocator),context.temp_allocator)

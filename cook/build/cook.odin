@@ -135,6 +135,8 @@ Cook_Report :: struct {
     far_meshes:int,           // far meshes written beside the scenes sections reference
     retargets:int,            // retargets of an .anim onto a skeleton written beside the .anim
     unretargeted:[]string,    // the .anim and skeletons played together that could not be, and why
+    peers:bool,               // the cook took from and gave to the peers of the project's org (Cook_Desc.cache_source)
+    peers_taken,peers_published:int, // results of the texture cache taken from them and published to them
     source_bytes:i64,         // of the whole assets folder
     output_bytes:i64,         // of what was written, with the index
     seconds:f64,
@@ -281,8 +283,15 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     // What a package was imported from, inside a root, is not for the game.
     source:=make([]bool,len(files),temp)
     owners:=make(map[base.Asset_Id]string,temp)
+    made_from:=make(map[base.Asset_Id][]string,temp)
     for &found in packages {
-        for &l in found.listed {owners[l.id]=found.name}
+        made:[]string
+        if found.source!="" {
+            made=make([]string,len(found.inputs)+1,temp)
+            made[0]=found.source
+            copy(made[1:],found.inputs)
+        }
+        for &l in found.listed {owners[l.id],made_from[l.id]=found.name,made}
         if found.source=="" {continue}
         path:=asset.registry_relative(&registry,found.source) or_continue
         for input in found.inputs {
@@ -392,7 +401,7 @@ cook_run :: proc(desc:Cook_Desc) -> (report:Cook_Report) {
     }
     defer if on.system==&own {jobs.system_destroy(&own)}
     work:=Cook_Work{
-        desc=desc,registry=&registry,files=files,owners=owners,textures=manifest.textures,drawn=drawn,shown=shown,pieces=pieces_wanted(&registry,reached,left,temp),
+        desc=desc,registry=&registry,files=files,owners=owners,made_from=made_from,textures=manifest.textures,drawn=drawn,shown=shown,pieces=pieces_wanted(&registry,reached,left,temp),
         on=on,allocator=on.system.allocator,first_error=len(files),
         results=make([]Cook_Result,len(files),temp),
         types=make([]asset.Types,jobs.worker_count(on.system),temp),
@@ -483,6 +492,7 @@ Cook_Work :: struct {
     registry:^asset.Registry,
     files:[]asset.Registry_File,
     owners:map[base.Asset_Id]string, // the name of the package each listed output is of
+    made_from:map[base.Asset_Id][]string, // the source and inputs of the package each listed output is of, absolute
     textures:Cook_Textures,
     drawn,shown:[]bool,
     pieces:[]bool, // a mesh written with the convex pieces a moving body collides as
@@ -858,8 +868,15 @@ texture_cook :: proc(work:^Cook_Work,source,target:string,types:^asset.Types,wor
     view,error:=asset.texture_view(&file,types)
     if error!=.None {return false,fmt.tprintf("open texture: %v",error)}
     if view.info.format!=.RGBA8 {return false,""}
-    // The pass looked up the cache for every texture at once (textures_lookup): no texture asks the source.
-    kept:=cache.Cache{store=work.desc.store}
+    // The pass looked up the cache for every texture at once (textures_lookup): no texture asks the
+    // source, which is told what is kept, made from the file of the texture.
+    from,listed:=work.made_from[file.blob.header.id]
+    if !listed {
+        disk:=new([1]string,context.temp_allocator)
+        disk[0]=asset.registry_file_path(work.registry,source,context.temp_allocator)
+        from=disk[:]
+    }
+    kept:=cache.Cache{store=work.desc.store,source={kept=work.desc.cache_source.kept,user=work.desc.cache_source.user},from=from}
     // Blocks that nothing compresses keep the least error.
     rdo:=work.desc.codecs!=.None
     key:=textures.cache_key_blocks(file.blob.header.content_hash,rdo)
@@ -944,6 +961,7 @@ cook_summary :: proc(report:^Cook_Report,allocator:=context.allocator) -> string
     if report.reparented>0 {fmt.sbprintf(&b,", %d entities they added under members their prefabs removed under the nearest member left (an edit of them in the editor writes that)",report.reparented)}
     if report.removed>0 {fmt.sbprintf(&b,", %d files of an earlier cook removed",report.removed)}
     if report.reused>0 {fmt.sbprintf(&b,", %d files kept from an earlier cook: what they are made of did not change",report.reused)}
+    if report.peers {fmt.sbprintf(&b,", kai: %d results taken from peers, %d published to them",report.peers_taken,report.peers_published)}
     strings.write_byte(&b,'\n')
     for shown in ([2]bool{false,true}) {
         bytes,count:=i64(0),0

@@ -454,14 +454,14 @@ session_close :: proc(folder:string,file:api.Port_File,force:bool,command:="sess
 SESSION_COPY_PREFIX :: "session-copy-"
 
 // Whether a path relative to the project, with forward slashes, stays out of
-// a copy: the history of git and the generated folder except its caches, its
-// thumbnails and what the builds of the project left (build.build_state_kept),
-// so that neither the port file, the record, the locks nor the libraries the
-// editor that holds the project loaded go with it.
+// a copy: what is not the project's (project.own_path) and the generated folder
+// except its caches, its thumbnails and what the builds of the project left
+// (build.build_state_kept), so that neither the port file, the record,
+// the locks nor the libraries of the editor that holds the project go with it.
 session_copy_skips :: proc(relative:string) -> bool {
     first,_,rest:=strings.partition(relative,"/")
-    if first==".git" {return true}
-    if first!=project.FOLDER_NAMES[.Generated] || rest=="" {return false}
+    if first!=project.FOLDER_NAMES[.Generated] {return !project.own_path(relative)}
+    if rest=="" {return false}
     if build.build_state_kept(rest) {return false}
     kept,_,_:=strings.partition(rest,"/")
     if kept!=project.CACHE_FOLDER && kept!=project.THUMBNAIL_FOLDER {return true}

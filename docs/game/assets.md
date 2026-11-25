@@ -34,9 +34,9 @@ mirai import assets/player/step.wav     # assets/player/step.sound
   `_ao`, `height`, `mask`); force it with `--srgb`, `--data`, `--normal`, `--normal-green-down`.
 - An import leaves the source where it is and pins its package in `packages.mirai`, manifest in
   `packages/` (flags, folder, asset ids): importing again keeps ids and material edits, another
-  edit stops it until `--discard-changes`; a renamed part is a new asset. Commit both.
-- Meshes, textures, sounds and fonts are built into the machine's store, never committed: `mirai
-  build` makes them again on a fresh clone. Edit their source, not them.
+  edit stops it until `--discard-changes`; a renamed part is a new asset. History keeps both.
+- Meshes, textures, sounds and fonts are built into the machine's store, never into history:
+  `mirai build` makes them again on a machine that receives the project. Edit their source.
 - A mesh keeps only the colliders its source brings; placed, it collides only with them. An `Auto`
   `Collider` without them is its triangles when still, convex pieces of them when it moves.
 - A model without a skeleton that must animate: `--rig` with the template that fits it. Clips of

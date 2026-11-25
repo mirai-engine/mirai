@@ -113,14 +113,13 @@ Engine_Range :: struct {
 }
 
 // A kind of asset a plugin adds, by the extension of its files: its one
-// declaration. Git, the cook and the editor read it without building the
+// declaration. The cook and the editor read it without building the
 // plugin, and the build generates from it the constants the plugin's code
 // names (cook/build kinds.odin).
 Asset_Kind :: struct {
     extension:[32]u8 `mirai:"text"`, // with the dot, in lowercase: ".particle"
     kind:[5]u8 `mirai:"text"`,       // the four letters its files begin with (asset.Fourcc)
     version:u16,                     // of its files, which the plugin writes and reads alone (asset.kind_check); raised when what the kind stores changes
-    merged:bool,                     // a document of rows that are edited, which git merges row by row and diffs by value through mirai, as asset.Kind_Info.merged says of a kind of the engine; false: bulk that an import, a bake or a recording makes, a whole file to git
     folder:[64]u8 `mirai:"text"`,    // of the package its constants are generated in, relative to the plugin; empty: runtime
     label:[32]u8 `mirai:"text"`,     // the kind as the content browser says it and the name of its filter; empty: the browser does not list it
     color:[3]u8,                     // of its cards, fields, rows and tabs
@@ -321,10 +320,7 @@ plugin_validate :: proc(m:^Plugin_Manifest) -> (result:Error) {
     if icon:=base.text_get(m.icon[:]);icon!="" && !png_path_valid(icon) {return error_about(.Icon_Invalid,icon)}
     for &kind,i in m.asset_kinds {
         extension:=base.text_get(kind.extension[:])
-        if extension=="" {
-            if kind.merged {return error_about(.Asset_Kind_Invalid,extension)}
-            continue
-        }
+        if extension=="" {continue}
         if extension[0]!='.' || !name_valid(extension[1:]) {return error_about(.Asset_Kind_Invalid,extension)}
         if base.text_len(kind.kind[:])!=4 || kind.version==0 {return error_about(.Asset_Kind_Invalid,extension)}
         for letter in kind.kind[:4] {

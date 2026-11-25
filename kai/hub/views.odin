@@ -1,0 +1,1041 @@
+package hub
+
+import "core:mem/virtual"
+import "core:slice"
+import "core:strings"
+import "core:unicode/utf8"
+import "mirai:kai"
+import "mirai:std/diff"
+import "mirai:store"
+
+// The read routes. A project is what an org the node serves lists; its
+// revisions are those its bookmarks reach, indexed in one graph per project
+// and audience, so a revision of another project is never answered through
+// it, and only what the caller could be served over the mesh in its class
+// (served) is: a ref that names another org's change names nothing here. A member reads the shared bookmarks, the device refs of the members and
+// the proposals' stacks; anyone else only the shared bookmarks, the moves of
+// the project's log a writer signed and the policy allowed. A path a scope of
+// the org takes is left out of every listing, though public trees never hold
+// one.
+
+FILE_MAX :: 8<<20        // bytes of a file the file route answers
+DIFF_FILE_MAX :: 1<<20   // bytes of each side a diff reads
+DIFF_LINES_MAX :: 20000
+CHANGES_PAGE_MAX :: 200
+CHANGES_PAGE :: 50
+README_MAX :: 256<<10
+GRAPHS_MAX :: 16
+EVOLUTION_MAX :: 64
+STACK_CHANGES_MAX :: kai.STACK_MAX
+
+Bookmark_View :: struct {
+    name:string,
+    revision:kai.Revision,
+    landed:bool,      // a move of the project's log, not a device's ref
+    device:kai.Key,
+    time:i64,
+}
+
+// A project as one request sees it.
+Project_View :: struct {
+    org:^kai.Runner_Org,
+    id:kai.Log_Id,
+    public:bool,
+    member:bool, // the session's user is a member of the org
+    name:string,
+    log:^kai.Log,
+    bookmarks:[]Bookmark_View, // of the org's views: read only
+    main:int, // index of the main bookmark, -1 without bookmarks
+    graph:^kai.Graph_Index,
+}
+
+Project_Graph :: struct {
+    project:kai.Log_Id,
+    member:bool,
+    sum:store.Hash, // of the targets it was extended with last
+    graph:kai.Graph_Index,
+    used:f64,
+    seen:[2]int,    // the views' stamps it was extended at
+}
+
+// What the read routes take of an org, made when its agent changes and not on
+// each request: the bookmarks of each project for anyone and for a member. A fold of the logs makes it again at
+// the next request that reads it; refs or objects that came make it again at
+// most once per step of the hub. So a flood of requests folds nothing.
+Org_Views :: struct {
+    org:kai.Log_Id,
+    stamps:[2]int, // the agent's refolds, and the refs it took and objects it fetched
+    made:f64,      // the hub's time it was made at
+    arena:virtual.Arena,
+    projects:[dynamic]Project_Bookmarks,
+}
+
+// The bookmarks of a project: the moves its log keeps, and for a member also
+// each name a device publishes that no move keeps.
+Project_Bookmarks :: struct {
+    project:kai.Log_Id,
+    shared,member:[]Bookmark_View,
+    shared_main,member_main:int,
+}
+
+@(private)
+runner_of :: proc(h:^Hub) -> ^kai.Runner {return h.desc.runner}
+
+@(private)
+store_of :: proc(h:^Hub) -> ^store.Store {return &h.desc.runner.machine.store}
+
+// The role of the session's user in org; None without a session.
+session_role :: proc(c:^Call,o:^kai.Runner_Org) -> kai.Role {
+    if c.session==nil || !o.agent.folded {return .None}
+    return kai.org_role(&o.agent.org,c.session.user)
+}
+
+// Whether a caller of org o, a member of it or not, could be served the object
+// at address over the mesh: a member what the org's members' set holds,
+// anyone else what its public closure holds. Every address a route takes or
+// reaches passes it; the sets are the agent's, kept as refs move.
+served :: proc(o:^kai.Runner_Org,member:bool,address:store.Hash) -> bool {
+    if member {return address in o.agent.members.chunks}
+    return kai.closure_has(o.agent.closure.public[:],address)
+}
+
+org_find :: proc(h:^Hub,id:kai.Log_Id) -> ^kai.Runner_Org {
+    for o in runner_of(h).orgs {
+        if o.id==id && o.agent.folded {return o}
+    }
+    return nil
+}
+
+// The project of the path's {project}, if this caller may read it; else the
+// answer is set: 404 alike for what does not exist and what is private.
+project_open :: proc(c:^Call,id_text:string) -> (v:Project_View,ok:bool) {
+    id,parsed:=hash_parse(id_text)
+    if !parsed {
+        fail(c,400,"a project is named by its id, 64 hex")
+        return
+    }
+    for o in runner_of(c.h).orgs {
+        if !o.agent.folded {continue}
+        for p in o.agent.org.projects {
+            if p.id!=id {continue}
+            member:=session_role(c,o)!=.None
+            if !p.public && !member {break}
+            v={org=o,id=id,public=p.public,member=member,main=-1}
+            v.log=kai.agent_log(&o.agent,id)
+            v.name=project_name(v.log)
+            if w:=org_views(c.h,o);w!=nil {
+                for &b in w.projects {
+                    if b.project!=id {continue}
+                    v.bookmarks,v.main=member?b.member:b.shared,member?b.member_main:b.shared_main
+                }
+            }
+            v.graph=project_graph(c.h,&v)
+            return v,true
+        }
+    }
+    fail(c,404,"no such project on this node, or it is private: sign in as a member of its org")
+    return
+}
+
+@(private)
+project_name :: proc(l:^kai.Log) -> string {
+    if l==nil {return ""}
+    for &item in l.items {
+        if item.entry.type!=.Project_Genesis {continue}
+        _,tail,ok:=kai.body_head(item.entry.body,kai.Project_Genesis_Body)
+        if ok {return string(tail)}
+    }
+    return ""
+}
+
+@(private)
+views_stamps :: proc(o:^kai.Runner_Org) -> [2]int {
+    s:=o.agent.stats
+    return {s.refolds,s.refs_accepted+s.objects_fetched}
+}
+
+// The views of org o, made again when its agent changed; nil without memory.
+// The views of an org the node left go when another's are made.
+org_views :: proc(h:^Hub,o:^kai.Runner_Org) -> ^Org_Views {
+    stamps:=views_stamps(o)
+    w:^Org_Views
+    for x in h.views {
+        if x.org==o.id {w=x}
+    }
+    if w==nil {
+        for k:=0;k<len(h.views); {
+            if org_find(h,h.views[k].org)!=nil {
+                k+=1
+                continue
+            }
+            virtual.arena_destroy(&h.views[k].arena)
+            free(h.views[k],h.allocator)
+            unordered_remove(&h.views,k)
+        }
+        w=new(Org_Views,h.allocator)
+        if w==nil {return nil}
+        if virtual.arena_init_growing(&w.arena)!=nil {
+            free(w,h.allocator)
+            return nil
+        }
+        if _,e:=append(&h.views,w);e!=nil {
+            virtual.arena_destroy(&w.arena)
+            free(w,h.allocator)
+            return nil
+        }
+        w.org=o.id
+    } else if stamps[0]==w.stamps[0] && (stamps[1]==w.stamps[1] || w.made==h.now) {
+        return w
+    }
+    h.stats.folds+=1
+    virtual.arena_free_all(&w.arena)
+    w.stamps,w.made=stamps,h.now
+    context.allocator=virtual.arena_allocator(&w.arena)
+    w.projects=make([dynamic]Project_Bookmarks)
+    for p in o.agent.org.projects {
+        shared:=make([dynamic]kai.Bookmark_Target,context.temp_allocator)
+        kai.agent_shared_bookmarks(&o.agent,p.id,&shared)
+        b:=Project_Bookmarks{project=p.id}
+        b.shared,b.shared_main=project_bookmarks(h,o,shared[:],p.id,false)
+        b.member,b.member_main=project_bookmarks(h,o,shared[:],p.id,true)
+        append(&w.projects,b)
+    }
+    return w
+}
+
+// The bookmarks of a project, in the views' arena: its shared ones, as the
+// project's fold holds them, then for a member each name a device publishes
+// that no move keeps, at its newest record; and the index of main, -1 without
+// bookmarks.
+@(private)
+project_bookmarks :: proc(h:^Hub,o:^kai.Runner_Org,shared:[]kai.Bookmark_Target,project:kai.Log_Id,member:bool) -> (bookmarks:[]Bookmark_View,main:int) {
+    s:=store_of(h)
+    out:=make([dynamic]Bookmark_View)
+    for b in shared {
+        if served(o,member,b.target) {append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,landed=true})}
+    }
+    ns:[len(kai.REFS_PREFIX)+64]u8
+    refs,e:=store.ref_list(s,kai.refs_namespace(project,&ns),context.temp_allocator)
+    if e==.None && member {
+        for ref in refs {
+            bytes,ge:=kai.object_get(s,ref.hash,.Device_Refs,context.temp_allocator)
+            if ge!=.None {continue}
+            d,de:=kai.device_refs_decode(bytes,context.temp_allocator)
+            if de!=.None || d.project!=project {continue}
+            names: for b in d.refs {
+                if !served(o,member,b.target) {continue}
+                for &held in out {
+                    if held.name!=b.name {continue}
+                    if held.landed {continue names}
+                    if held.time<d.time {held.revision,held.device,held.time=b.target,d.device,d.time}
+                    continue names
+                }
+                append(&out,Bookmark_View{name=strings.clone(b.name),revision=b.target,device=d.device,time=d.time})
+            }
+        }
+    }
+    slice.sort_by(out[:],proc(a,b:Bookmark_View) -> bool {return a.name<b.name})
+    main=-1
+    for b,i in out {
+        if b.name=="main" {main=i}
+    }
+    if main<0 && len(out)>0 {main=0}
+    return out[:],main
+}
+
+// The proposals of a project, folded and settled, from the org's views.
+@(private)
+project_proposals :: proc(h:^Hub,o:^kai.Runner_Org,project:kai.Log_Id,out:^[dynamic]^kai.Proposal_Fold) {
+    kai.agent_proposals_open(&o.agent,project)
+    for l in o.agent.logs {
+        if l.kind!=.Proposal || len(l.items)==0 || proposal_project(l)!=project {continue}
+        f:=new(kai.Proposal_Fold,context.temp_allocator)
+        if kai.proposal_fold(f,l,&o.agent.org,context.temp_allocator)!=.None {continue}
+        _=kai.proposal_settle(store_of(h),f)
+        append(out,f)
+    }
+}
+
+@(private)
+proposal_project :: proc(l:^kai.Log) -> kai.Log_Id {
+    k:=kai.log_find(l,l.id)
+    if k<0 {return {}}
+    b,_,ok:=kai.body_head(l.items[k].entry.body,kai.Proposal_Open_Body)
+    return ok?b.project:{}
+}
+
+// The graph of the revisions a project's bookmarks reach, and for a member
+// its proposals, extended when they change. A revision whose objects are not
+// here yet is left out until they are.
+@(private)
+project_graph :: proc(h:^Hub,v:^Project_View) -> ^kai.Graph_Index {
+    stamps:=views_stamps(v.org)
+    for &x in h.graphs {
+        if x.project==v.id && x.member==v.member && x.seen==stamps {
+            x.used=h.now
+            return &x.graph
+        }
+    }
+    targets:=make([dynamic]kai.Revision,context.temp_allocator)
+    for b in v.bookmarks {append(&targets,b.revision)}
+    for l in v.org.agent.logs {
+        if !v.member || l.kind!=.Proposal || proposal_project(l)!=v.id {continue}
+        for &item in l.items {
+            if item.entry.type!=.Proposal_Revise {continue}
+            _,tail,ok:=kai.body_head(item.entry.body,kai.Proposal_Revise_Body)
+            if !ok || len(tail)%size_of(kai.Stack_Item)!=0 {continue}
+            for s in slice.reinterpret([]kai.Stack_Item,tail) {
+                if served(v.org,true,s.revision) {append(&targets,s.revision)}
+            }
+        }
+    }
+    slice.sort_by(targets[:],hash_less)
+    sum:=store.address_of_bytes(slice.to_bytes(targets[:]))
+    g:^Project_Graph
+    for &x in h.graphs {
+        if x.project==v.id && x.member==v.member {g=&x}
+    }
+    if g==nil {
+        if len(h.graphs)>=GRAPHS_MAX {
+            oldest:=0
+            for x,i in h.graphs {
+                if x.used<h.graphs[oldest].used {oldest=i}
+            }
+            kai.graph_destroy(&h.graphs[oldest].graph)
+            unordered_remove(&h.graphs,oldest)
+        }
+        append(&h.graphs,Project_Graph{project=v.id,member=v.member})
+        g=&h.graphs[len(h.graphs)-1]
+        kai.graph_init(&g.graph,h.allocator)
+    }
+    g.used,g.seen=h.now,stamps
+    if g.sum!=sum {
+        g.sum=sum
+        for t in targets {_=kai.graph_extend(&g.graph,store_of(h),{t})}
+    }
+    return &g.graph
+}
+
+// A revision the project's graph holds, from a revision's hex or a bookmark's
+// name; the main bookmark when text is empty.
+revision_resolve :: proc(c:^Call,v:^Project_View,text:string) -> (r:kai.Revision,ok:bool) {
+    if text=="" {
+        if v.main<0 {
+            fail(c,404,"the project has no bookmark yet")
+            return
+        }
+        r=v.bookmarks[v.main].revision
+    } else if x,is_hex:=hash_parse(text);is_hex {
+        r=x
+    } else {
+        found:=false
+        for b in v.bookmarks {
+            if b.name==text {r,found=b.revision,true}
+        }
+        if !found {
+            fail(c,404,"no such bookmark or revision in this project")
+            return
+        }
+    }
+    if r not_in v.graph.lookup || !served(v.org,v.member,r) {
+        fail(c,404,"that revision is not one of this project's, or its objects have not reached this node yet")
+        return
+    }
+    return r,true
+}
+
+// Whether a path is one a scope of the project's org takes.
+scoped :: proc(v:^Project_View,path:string) -> bool {
+    _,taken:=kai.scope_of(&v.org.agent.org,v.id,path)
+    return taken
+}
+
+// Whether a folder is one a scope takes whole, as secrets/** takes secrets.
+scoped_folder :: proc(v:^Project_View,path:string) -> bool {
+    return scoped(v,path) || scoped(v,strings.concatenate({path,"/_"},context.temp_allocator))
+}
+
+hash_less :: proc(a,b:store.Hash) -> bool {
+    for k in 0..<len(a) {
+        if a[k]!=b[k] {return a[k]<b[k]}
+    }
+    return false
+}
+
+@(private)
+user_name :: proc(u:^kai.User_Fold) -> string {return kai.user_name(u)}
+
+// The user a device or passkey key belongs to in the org's agent, and its
+// name and the device's.
+key_owner :: proc(o:^kai.Runner_Org,key:kai.Key) -> (user:^kai.User_Fold,device_name:string) {
+    for u in o.agent.user_list {
+        for d,k in u.devices {
+            if d.key==key {return u,kai.device_name(u,k)}
+        }
+        for w in u.web_keys {
+            if w.key==key {return u,"passkey"}
+        }
+    }
+    return nil,""
+}
+
+@(private)
+summary_line :: proc(text:string) -> string {
+    line:=text
+    if cut:=strings.index_byte(line,'\n');cut>=0 {line=line[:cut]}
+    if len(line)>200 {
+        cut:=200
+        for cut>0 && !utf8.rune_start(line[cut]) {cut-=1}
+        line=line[:cut]
+    }
+    return line
+}
+
+// --- /api/node and /api/projects ---
+
+@(private)
+route_node :: proc(c:^Call) {
+    h:=c.h
+    r:=runner_of(h)
+    j:=json_make()
+    json_object(&j)
+    key,dh:=r.machine.identity.key,r.machine.dh.public
+    json_member_hex(&j,"device",key[:])
+    json_member_hex(&j,"dh",dh[:])
+    json_key(&j,"addresses")
+    json_array(&j)
+    for a in node_addresses(h) {
+        json_object(&j)
+        json_member_int(&j,"kind",i64(a.kind))
+        json_member_int(&j,"port",i64(a.port))
+        ip:=a.ip
+        json_member_hex(&j,"ip",ip[:])
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_key(&j,"modes")
+    json_array(&j)
+    modes:=MODE_TEXT
+    for m in kai.Node_Mode {
+        if m in r.desc.modes {json_string(&j,modes[m])}
+    }
+    json_end_array(&j)
+    json_member_string(&j,"rp_id",h.desc.rp_id)
+    json_member_string(&j,"origin",h.origin)
+    json_member_int(&j,"orgs",i64(len(r.orgs)))
+    json_member_bool(&j,"passkeys_work",strings.has_prefix(h.origin,"https://"))
+    json_key(&j,"hosting")
+    json_object(&j)
+    json_member_int(&j,"orgs",i64(hosting_max(h)))
+    json_member_int(&j,"quota",r.desc.hosted_quota>0?r.desc.hosted_quota:kai.HOSTED_QUOTA)
+    json_end_object(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+MODE_TEXT :: [kai.Node_Mode]string{.Relay="relay",.Seed="seed",.DDC="ddc"}
+
+@(private)
+route_projects :: proc(c:^Call) {
+    j:=json_make()
+    json_object(&j)
+    json_key(&j,"projects")
+    json_array(&j)
+    for o in runner_of(c.h).orgs {
+        if !o.agent.folded {continue}
+        member:=session_role(c,o)!=.None
+        for p in o.agent.org.projects {
+            if !p.public && !member {continue}
+            json_object(&j)
+            json_member_hash(&j,"id",p.id)
+            json_member_hash(&j,"org",o.id)
+            json_member_string(&j,"org_name",org_name(o))
+            json_member_string(&j,"name",project_name(kai.agent_log(&o.agent,p.id)))
+            json_member_bool(&j,"public",p.public)
+            json_end_object(&j)
+        }
+    }
+    json_end_array(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+@(private)
+route_project :: proc(c:^Call) {
+    v,ok:=project_open(c,path_param(c,"project"))
+    if !ok {return}
+    s:=store_of(c.h)
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"id",v.id)
+    json_member_hash(&j,"org",v.org.id)
+    json_member_string(&j,"org_name",org_name(v.org))
+    json_member_string(&j,"name",v.name)
+    json_member_bool(&j,"public",v.public)
+    json_key(&j,"main")
+    if v.main>=0 {json_string(&j,v.bookmarks[v.main].name)} else {json_null(&j)}
+    json_key(&j,"bookmarks")
+    json_array(&j)
+    for b in v.bookmarks {
+        json_object(&j)
+        json_member_string(&j,"name",b.name)
+        json_member_hash(&j,"revision",b.revision)
+        if ch,e:=kai.change_get(s,b.revision,context.temp_allocator);e==.None {
+            id:=ch.id
+            json_member_hex(&j,"change",id[:])
+        } else {
+            json_key(&j,"change")
+            json_null(&j)
+        }
+        json_member_bool(&j,"landed",b.landed)
+        if !b.landed {
+            d:=b.device
+            json_member_hex(&j,"device",d[:])
+            if u,device_name:=key_owner(v.org,b.device);u!=nil {
+                json_member_string(&j,"owner_name",user_name(u))
+                json_member_string(&j,"device_name",device_name)
+            }
+            json_member_int(&j,"time",b.time)
+        }
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_key(&j,"readme")
+    readme_write(&j,&v,s)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+@(private)
+readme_write :: proc(j:^Json,v:^Project_View,s:^store.Store) {
+    if v.main<0 {
+        json_null(j)
+        return
+    }
+    ch,e:=kai.change_get(s,v.bookmarks[v.main].revision,context.temp_allocator)
+    if e!=.None {
+        json_null(j)
+        return
+    }
+    for name in ([?]string{"README.md","README","readme.md","README.txt","Readme.md"}) {
+        if scoped(v,name) {continue}
+        entry,found,_:=kai.tree_file(s,ch.tree,name)
+        if !found {continue}
+        o,oe:=store.object_open(s,entry.address)
+        if oe!=.None {break}
+        size:=min(store.object_size(&o),README_MAX)
+        bytes:=make([]u8,int(size),context.temp_allocator)
+        re:=store.object_read(&o,0,bytes)
+        store.object_close(&o)
+        if re!=.None {break}
+        text:=string(bytes)
+        for !utf8.valid_string(text) && len(text)>0 {text=text[:len(text)-1]}
+        json_object(j)
+        json_member_string(j,"path",name)
+        json_member_string(j,"text",text)
+        json_member_bool(j,"truncated",entry.size>README_MAX)
+        json_end_object(j)
+        return
+    }
+    json_null(j)
+}
+
+// --- tree and file ---
+
+@(private)
+ENTRY_KIND_TEXT :: [kai.Entry_Kind]string{.File="file",.Executable="executable",.Folder="folder",.Conflict="conflict"}
+
+// The entries of the folder at path of the tree at root.
+folder_at :: proc(s:^store.Store,root:store.Hash,path:string,out:^[dynamic]kai.Tree_Entry) -> (found:bool,error:kai.Error) {
+    address,rest:=root,path
+    for depth in 0..=kai.DEPTH_MAX {
+        clear(out)
+        kai.folder_get(s,address,out,nil,context.temp_allocator) or_return
+        if rest=="" {return true,.None}
+        if depth==kai.DEPTH_MAX {break}
+        slash:=strings.index_byte(rest,'/')
+        name:=slash<0?rest:rest[:slash]
+        next:store.Hash
+        has:=false
+        for e in out {
+            if e.name==name && e.kind==.Folder {next,has=e.address,true}
+        }
+        if !has {return false,.None}
+        address,rest=next,slash<0?"":rest[slash+1:]
+    }
+    return false,.Corrupt
+}
+
+@(private)
+route_tree :: proc(c:^Call) {
+    v,ok:=project_open(c,path_param(c,"project"))
+    if !ok {return}
+    rev_text,_:=query_param(c,"rev")
+    path,_:=query_param(c,"path")
+    path=strings.trim(path,"/")
+    if path!="" && (!kai.path_valid(path) || scoped_folder(&v,path)) {
+        fail(c,404,"no such folder in this revision")
+        return
+    }
+    r,rok:=revision_resolve(c,&v,rev_text)
+    if !rok {return}
+    s:=store_of(c.h)
+    ch,e:=kai.change_get(s,r,context.temp_allocator)
+    if e!=.None {
+        fail(c,404,"the change is not on this node yet")
+        return
+    }
+    entries:=make([dynamic]kai.Tree_Entry,context.temp_allocator)
+    found,fe:=folder_at(s,ch.tree,path,&entries)
+    if fe!=.None || !found {
+        fail(c,404,"no such folder in this revision")
+        return
+    }
+    kinds:=ENTRY_KIND_TEXT
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"revision",r)
+    json_member_string(&j,"path",path)
+    json_key(&j,"entries")
+    json_array(&j)
+    for entry in entries {
+        full:=path==""?entry.name:strings.concatenate({path,"/",entry.name},context.temp_allocator)
+        if scoped(&v,full) || (entry.kind==.Folder && scoped_folder(&v,full)) {continue}
+        json_object(&j)
+        json_member_string(&j,"name",entry.name)
+        json_member_string(&j,"kind",kinds[entry.kind])
+        json_member_int(&j,"size",i64(entry.size))
+        json_member_int(&j,"files",i64(entry.files))
+        json_member_int(&j,"conflicts",i64(entry.conflicts))
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+// Whether bytes read as text: UTF-8 without NUL.
+text_like :: proc(bytes:[]u8) -> bool {
+    _,nul:=slice.linear_search(bytes,0)
+    return !nul && utf8.valid_string(string(bytes))
+}
+
+@(private)
+route_file :: proc(c:^Call) {
+    v,ok:=project_open(c,path_param(c,"project"))
+    if !ok {return}
+    rev_text,_:=query_param(c,"rev")
+    path,_:=query_param(c,"path")
+    if !kai.path_valid(path) || scoped(&v,path) {
+        fail(c,404,"no such file in this revision")
+        return
+    }
+    r,rok:=revision_resolve(c,&v,rev_text)
+    if !rok {return}
+    s:=store_of(c.h)
+    ch,e:=kai.change_get(s,r,context.temp_allocator)
+    if e!=.None {
+        fail(c,404,"the change is not on this node yet")
+        return
+    }
+    entry,found,_:=kai.tree_file(s,ch.tree,path)
+    if !found {
+        fail(c,404,"no such file in this revision")
+        return
+    }
+    if entry.size>FILE_MAX {
+        fail(c,413,"the file is larger than FILE_MAX: fetch it with mirai kai from a member's machine")
+        return
+    }
+    bytes,be:=kai.file_bytes(s,entry.address,context.temp_allocator)
+    if be!=.None {
+        fail(c,404,"the file's bytes are not on this node yet")
+        return
+    }
+    c.response={status=200,body=bytes,cache="private, max-age=31536000, immutable"}
+    name:=path
+    if cut:=strings.last_index_byte(name,'/');cut>=0 {name=name[cut+1:]}
+    disposition:=strings.concatenate({"Content-Disposition: attachment; filename=\"",safe_name(name),"\"\r\n"},context.temp_allocator)
+    if text_like(bytes) {
+        c.response.content_type="text/plain; charset=utf-8"
+        c.response.headers=SANDBOX_HEADER
+    } else {
+        c.response.content_type="application/octet-stream"
+        c.response.headers=strings.concatenate({SANDBOX_HEADER,disposition},context.temp_allocator)
+    }
+    if x,is_hex:=hash_parse(rev_text);!is_hex || x!=r {c.response.cache="no-store"}
+}
+
+// A file name a header can carry: printable ASCII without quotes or backslashes.
+@(private)
+safe_name :: proc(name:string) -> string {
+    out:=make([dynamic]u8,0,len(name),context.temp_allocator)
+    for c in transmute([]u8)name {
+        append(&out,(c>=0x20 && c<0x7f && c!='"' && c!='\\')?c:'_')
+    }
+    return string(out[:])
+}
+
+// --- changes ---
+
+@(private)
+route_changes :: proc(c:^Call) {
+    v,ok:=project_open(c,path_param(c,"project"))
+    if !ok {return}
+    rev_text,_:=query_param(c,"rev")
+    page_text,_:=query_param(c,"page")
+    limit_text,_:=query_param(c,"limit")
+    page,limit:=0,CHANGES_PAGE
+    if page_text!="" {
+        n,parsed:=parse_count(page_text)
+        if !parsed {fail(c,400,"page is a count from 0");return}
+        page=n
+    }
+    if limit_text!="" {
+        n,parsed:=parse_count(limit_text)
+        if !parsed || n==0 || n>CHANGES_PAGE_MAX {fail(c,400,"limit is from 1 to CHANGES_PAGE_MAX");return}
+        limit=n
+    }
+    r,rok:=revision_resolve(c,&v,rev_text)
+    if !rok {return}
+    g:=v.graph
+    // The ancestors of r by the graph's order, which puts a change after its parents: newest first.
+    start:=g.lookup[r]
+    seen:=make([]bool,len(g.revisions),context.temp_allocator)
+    stack:=make([dynamic]u32,context.temp_allocator)
+    list:=make([dynamic]u32,context.temp_allocator)
+    append(&stack,start)
+    seen[start]=true
+    for len(stack)>0 {
+        n:=pop(&stack)
+        append(&list,n)
+        for p in kai.graph_parents(g,n) {
+            if seen[p] {continue}
+            seen[p]=true
+            append(&stack,p)
+        }
+    }
+    slice.sort_by(list[:],proc(a,b:u32) -> bool {return a>b})
+    first:=min(page*limit,len(list))
+    last:=min(first+limit,len(list))
+    s:=store_of(c.h)
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"revision",r)
+    json_member_int(&j,"page",i64(page))
+    json_member_bool(&j,"more",last<len(list))
+    json_key(&j,"changes")
+    json_array(&j)
+    for n in list[first:last] {
+        revision:=g.revisions[n]
+        ch,e:=kai.change_get(s,revision,context.temp_allocator)
+        json_object(&j)
+        json_member_hash(&j,"revision",revision)
+        id:=g.change_id[n]
+        json_member_hex(&j,"change",id[:])
+        if e==.None {
+            author:=ch.author
+            json_member_hex(&j,"author",author[:])
+            if u,_:=key_owner(v.org,ch.author);u!=nil {json_member_string(&j,"author_name",user_name(u))}
+            json_member_int(&j,"written",ch.written)
+            json_member_string(&j,"summary",summary_line(ch.description))
+        }
+        json_key(&j,"parents")
+        json_array(&j)
+        for p in kai.graph_parents(g,n) {json_hash(&j,g.revisions[p])}
+        json_end_array(&j)
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+@(private)
+parse_count :: proc(text:string) -> (n:int,ok:bool) {
+    if len(text)==0 || len(text)>9 {return}
+    for ch in transmute([]u8)text {
+        if ch<'0' || ch>'9' {return}
+        n=n*10+int(ch-'0')
+    }
+    return n,true
+}
+
+@(private)
+diff_status :: proc(d:kai.Diff) -> string {
+    switch kai.diff_mark(d) {
+    case 'C': return "conflict"
+    case 'A': return "added"
+    case 'D': return "removed"
+    }
+    return "modified"
+}
+
+// The files a change edits from its first parent, without scoped ones.
+change_edits :: proc(s:^store.Store,v:^Project_View,ch:^kai.Change,out:^[dynamic]kai.Diff) -> kai.Error {
+    base:store.Hash // none: the change adds every file
+    if len(ch.parents)>0 {
+        p,e:=kai.change_get(s,ch.parents[0],context.temp_allocator)
+        if e!=.None {return e}
+        base=p.tree
+    }
+    all:=make([dynamic]kai.Diff,context.temp_allocator)
+    kai.tree_diff(s,base,ch.tree,&all,context.temp_allocator) or_return
+    for d in all {
+        if !scoped(v,d.path) {append(out,d)}
+    }
+    return .None
+}
+
+@(private)
+route_change :: proc(c:^Call) {
+    v,ok:=project_open(c,path_param(c,"project"))
+    if !ok {return}
+    r,rok:=revision_resolve(c,&v,path_param(c,"revision"))
+    if !rok {return}
+    s:=store_of(c.h)
+    ch,e:=kai.change_get(s,r,context.temp_allocator)
+    if e!=.None {
+        fail(c,404,"the change is not on this node yet")
+        return
+    }
+    edits:=make([dynamic]kai.Diff,context.temp_allocator)
+    ee:=change_edits(s,&v,&ch,&edits)
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"revision",r)
+    id:=ch.id
+    json_member_hex(&j,"change",id[:])
+    author:=ch.author
+    json_member_hex(&j,"author",author[:])
+    if u,_:=key_owner(v.org,ch.author);u!=nil {json_member_string(&j,"author_name",user_name(u))}
+    json_member_int(&j,"created",ch.created)
+    json_member_int(&j,"written",ch.written)
+    json_key(&j,"parents")
+    json_array(&j)
+    for p in ch.parents {json_hash(&j,p)}
+    json_end_array(&j)
+    json_member_string(&j,"description",ch.description)
+    json_key(&j,"coauthors")
+    json_array(&j)
+    for k in ch.coauthors {
+        json_object(&j)
+        key:=k
+        json_member_hex(&j,"key",key[:])
+        if u,_:=key_owner(v.org,k);u!=nil {json_member_string(&j,"name",user_name(u))}
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_key(&j,"attachments")
+    json_array(&j)
+    for a in ch.attachments {
+        json_object(&j)
+        json_member_string(&j,"type",kai.attachment_type_text(a.type))
+        object:=a.object
+        json_member_hex(&j,"object",object[:])
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_key(&j,"files")
+    json_array(&j)
+    for d in edits {
+        json_object(&j)
+        json_member_string(&j,"path",d.path)
+        json_member_string(&j,"status",diff_status(d))
+        for side,k in ([2]kai.File{d.before,d.after}) {
+            json_key(&j,k==0?"before":"after")
+            if side.address=={} {
+                json_null(&j)
+                continue
+            }
+            json_object(&j)
+            json_member_hash(&j,"address",side.address)
+            json_member_int(&j,"size",i64(side.size))
+            json_end_object(&j)
+        }
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_member_bool(&j,"files_complete",ee==.None)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+// --- diff ---
+
+@(private)
+DIFF_OP_TEXT :: [diff.Op]string{.Same="same",.Add="add",.Remove="remove"}
+
+@(private)
+route_diff :: proc(c:^Call) {
+    v,ok:=project_open(c,path_param(c,"project"))
+    if !ok {return}
+    from_text,_:=query_param(c,"from")
+    to_text,_:=query_param(c,"to")
+    path,_:=query_param(c,"path")
+    if !kai.path_valid(path) || scoped(&v,path) {
+        fail(c,404,"no such file in these revisions")
+        return
+    }
+    if from_text=="" || to_text=="" {
+        fail(c,400,"from and to name the two revisions")
+        return
+    }
+    from,fok:=revision_resolve(c,&v,from_text)
+    if !fok {return}
+    to,tok:=revision_resolve(c,&v,to_text)
+    if !tok {return}
+    s:=store_of(c.h)
+    texts:[2]string
+    sizes:[2]i64={-1,-1}
+    binary,too_large:=false,false
+    for revision,k in ([2]kai.Revision{from,to}) {
+        ch,e:=kai.change_get(s,revision,context.temp_allocator)
+        if e!=.None {
+            fail(c,404,"a change is not on this node yet")
+            return
+        }
+        entry,found,_:=kai.tree_file(s,ch.tree,path)
+        if !found {continue}
+        sizes[k]=i64(entry.size)
+        if entry.size>DIFF_FILE_MAX {
+            too_large=true
+            continue
+        }
+        bytes,be:=kai.file_bytes(s,entry.address,context.temp_allocator)
+        if be!=.None {
+            fail(c,404,"the file's bytes are not on this node yet")
+            return
+        }
+        if !text_like(bytes) {binary=true}
+        texts[k]=string(bytes)
+    }
+    if sizes[0]<0 && sizes[1]<0 {
+        fail(c,404,"no such file in these revisions")
+        return
+    }
+    lines:=make([dynamic]diff.Line,context.temp_allocator)
+    stats:diff.Stats
+    if !binary && !too_large {
+        de:diff.Error
+        stats,de=diff.lines(texts[0],texts[1],&lines,context.temp_allocator)
+        if de!=.None {
+            too_large=true
+            clear(&lines)
+        }
+    }
+    j:=json_make()
+    json_object(&j)
+    json_member_string(&j,"path",path)
+    json_member_bool(&j,"binary",binary)
+    json_member_bool(&j,"too_large",too_large)
+    for size,k in sizes {
+        json_key(&j,k==0?"before":"after")
+        if size<0 {json_null(&j);continue}
+        json_object(&j)
+        json_member_int(&j,"size",size)
+        json_end_object(&j)
+    }
+    json_member_int(&j,"added",i64(stats.added))
+    json_member_int(&j,"removed",i64(stats.removed))
+    json_member_bool(&j,"truncated",len(lines)>DIFF_LINES_MAX)
+    json_key(&j,"lines")
+    json_array(&j)
+    ops:=DIFF_OP_TEXT
+    for l in lines[:min(len(lines),DIFF_LINES_MAX)] {
+        text:=l.op==.Remove?texts[0]:texts[1]
+        json_object(&j)
+        json_member_string(&j,"op",ops[l.op])
+        json_member_int(&j,"old",i64(l.old))
+        json_member_int(&j,"new",i64(l.new))
+        json_member_string(&j,"text",text[l.start:l.end])
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+// --- evolution ---
+
+@(private)
+route_evolution :: proc(c:^Call) {
+    v,ok:=project_open(c,path_param(c,"project"))
+    if !ok {return}
+    id:kai.Change_Id
+    if !hex_parse(path_param(c,"change"),id[:]) {
+        fail(c,400,"a change is named by its id, 32 hex")
+        return
+    }
+    s:=store_of(c.h)
+    g:=v.graph
+    Rev :: struct {revision:kai.Revision,written:i64,change:kai.Change}
+    revs:=make([dynamic]Rev,context.temp_allocator)
+    for cid,n in g.change_id {
+        if cid!=id || len(revs)>=EVOLUTION_MAX {continue}
+        ch,e:=kai.change_get(s,g.revisions[n],context.temp_allocator)
+        if e!=.None {continue}
+        append(&revs,Rev{g.revisions[n],ch.written,ch})
+    }
+    if len(revs)==0 {
+        fail(c,404,"no revision of that change is in this project")
+        return
+    }
+    slice.sort_by(revs[:],proc(a,b:Rev) -> bool {return a.written<b.written || a.written==b.written && hash_less(a.revision,b.revision)})
+    edits:=make([][dynamic]kai.Diff,len(revs),context.temp_allocator)
+    j:=json_make()
+    json_object(&j)
+    json_member_hex(&j,"change",id[:])
+    json_key(&j,"revisions")
+    json_array(&j)
+    for &x,i in revs {
+        edits[i]=make([dynamic]kai.Diff,context.temp_allocator)
+        change_edits(s,&v,&x.change,&edits[i])
+        json_object(&j)
+        json_member_hash(&j,"revision",x.revision)
+        json_member_int(&j,"written",x.written)
+        author:=x.change.author
+        json_member_hex(&j,"author",author[:])
+        if u,_:=key_owner(v.org,x.change.author);u!=nil {json_member_string(&j,"author_name",user_name(u))}
+        json_member_string(&j,"summary",summary_line(x.change.description))
+        json_key(&j,"files")
+        json_array(&j)
+        for d in edits[i] {json_string(&j,d.path)}
+        json_end_array(&j)
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_key(&j,"interdiffs")
+    json_array(&j)
+    for i in 1..<len(revs) {
+        a,b:=&revs[i-1],&revs[i]
+        paths:=make([dynamic]string,context.temp_allocator)
+        for d in edits[i-1] {append(&paths,d.path)}
+        for d in edits[i] {
+            if !slice.contains(paths[:],d.path) {append(&paths,d.path)}
+        }
+        slice.sort(paths[:])
+        json_object(&j)
+        json_member_hash(&j,"from",a.revision)
+        json_member_hash(&j,"to",b.revision)
+        json_key(&j,"files")
+        json_array(&j)
+        for path in paths {
+            before,in_before,_:=kai.tree_file(s,a.change.tree,path)
+            after,in_after,_:=kai.tree_file(s,b.change.tree,path)
+            if in_before==in_after && before.address==after.address {continue}
+            json_object(&j)
+            json_member_string(&j,"path",path)
+            json_key(&j,"before")
+            if in_before {json_hash(&j,before.address)} else {json_null(&j)}
+            json_key(&j,"after")
+            if in_after {json_hash(&j,after.address)} else {json_null(&j)}
+            json_end_object(&j)
+        }
+        json_end_array(&j)
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}

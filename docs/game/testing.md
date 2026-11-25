@@ -31,8 +31,8 @@ runs the step and checks them; `mirai test game` (or `mirai test` inside the pro
 - The world is a struct marked `@(test_world)` at the top of the test file, which starts with
   `using world:Test_World` and has a `core.Table(T)` per component and the value of each storage:
   `mirai test` writes what the attributes of its types say into `worlds_gen_test.odin` of the
-  package (not for git), `test_world_init(t,&w)` makes the world and `test_world_destroy(&w)`
-  frees it.
+  package (made again on each run: never edit it), `test_world_init(t,&w)` makes the world and
+  `test_world_destroy(&w)` frees it.
 - A path in a test is relative to the root of the engine, not of the project.
 
 ## Look

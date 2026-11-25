@@ -319,18 +319,30 @@ a_peer_without_sources_lists_and_loads_and_nothing_is_removed_or_built :: proc(t
     for file in before {testing.expectf(t,after[file],"%s stays",file)}
 
     // With a store that has them, the builds are fetched: listed where the project lists them, loaded.
-    // The builds of both packages are asked together, in one call of the source.
-    Counted :: struct {inner:cache.Source,calls,names:int}
-    counted:=Counted{inner=cache.store_source(here)}
-    fetching:=alone
-    fetching.source={user=&counted,fetch=proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
+    // The builds of both packages are asked together, in one call of the source. A share session
+    // and the mesh of the project's org are asked as one chain: the session first, which has
+    // none of them here, then the mesh, for what the session did not give.
+    Counted :: struct {inner:cache.Source,calls,names:int,order:^[dynamic]string,label:string}
+    order:=make([dynamic]string,context.temp_allocator)
+    session_store:=test_store(t,fmt.tprintf("%s/session",top))
+    if session_store==nil {return}
+    session:=Counted{inner=cache.store_source(session_store),order=&order,label="session"}
+    counted:=Counted{inner=cache.store_source(here),order=&order,label="mesh"}
+    count :: proc(user:rawptr,into:^store.Store,namespace:string,names:[]string,given:[]bool) {
         c:=(^Counted)(user)
-        if namespace==asset.REF_IMPORTS {c.calls,c.names=c.calls+1,c.names+len(names)}
+        if namespace==asset.REF_IMPORTS {
+            c.calls,c.names=c.calls+1,c.names+len(names)
+            append(c.order,c.label)
+        }
         c.inner.fetch(c.inner.user,into,namespace,names,given)
-    }}
+    }
+    chain:=cache.Chain{first={user=&session,fetch=count},second={user=&counted,fetch=count}}
+    fetching:=alone
+    fetching.source=cache.chain_source(&chain)
     fetched:=project_refresh(peer,fetching,context.temp_allocator)
     testing.expectf(t,fetched.fetched==2 && fetched.ingested==0,"%v",fetched)
     testing.expectf(t,counted.calls==1 && counted.names==2,"%d calls for %d builds",counted.calls,counted.names)
+    testing.expectf(t,session.calls==1 && session.names==2 && len(order)==2 && order[0]=="session" && order[1]=="mesh","the session is asked first, the mesh for what it lacked: %v",order[:])
     if !report_clean(t,fetched) {return}
     seen:=listed_of(t,there,peer)
     testing.expect_value(t,len(seen),len(listed))

@@ -562,8 +562,9 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="open",view=file_open,label="Open...",icon=user(.Scene),shortcut=key(.O,{.Primary}),menu=.File,group=0,modes=edit},
         {name="projects",view=projects_show,label="Open project...",icon=user(.Folder),menu=.File,group=0,modes=edit,state=state_projects},
         {name="keep_file",view=proc(s:^Session) {dialog_new(s,true)},label="Keep in a file...",icon=user(.Save),menu=.File,group=1,modes=edit,scene=true,state=state_keep_file},
-        {name="keep",view=proc(s:^Session) {if message:=git_keep_front(s);message!="" {notify(s,message)}},label="Keep",icon=.Check,shortcut=key(.S,{.Primary}),menu=.File,group=1,modes=edit},
-        {name="keep_all",method="git.keep",label="Keep all",icon=.Check,shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,modes=edit},
+        {name="kai_snapshot",method="kai.snapshot",label="Snapshot",icon=.Check,shortcut=key(.S,{.Primary}),menu=.File,group=1,modes=edit,state=state_kai},
+        {name="kai_new",method="kai.new",label="New change",icon=user(.Branch),shortcut=key(.S,{.Primary,.Shift}),menu=.File,group=1,modes=edit,state=state_kai},
+        {name="kai_undo",method="kai.undo",label="Undo operation",icon=.Revert,menu=.File,group=1,modes=edit,state=state_kai},
         {name="make_prefab",method="scene.write",params=`{"kind":"Prefab","entities":[]}`,label="Make prefab",icon=.Prefab,menu=.File,group=1,modes=edit,scene=true},
         {name="make_scene",method="scene.write",params=`{"kind":"Scene","entities":[]}`,label="Make scene",icon=user(.Scene),menu=.File,group=1,modes=edit,scene=true},
         {name="import",view=import_ask,label="Import...",icon=.Import,menu=.File,group=2,modes=edit},
@@ -602,7 +603,7 @@ commands_register :: proc(s:^Session,st:^Api_State) {
         {name="build_panel",preference=LAYOUT,on=`"bottom_open":true,"bottom_tab":"Build"`,off=`"bottom_open":false`,label="Build output",icon=user(.Hammer),menu=.View,group=2},
         {name="library_panel",preference=LAYOUT,on=`"left_open":true`,off=`"left_open":false`,label="Content Browser",icon=.Layers,shortcut=key(.Tab)},
         {name="hierarchy_panel",view=proc(s:^Session) {library_select(s,.Editor if state_hierarchy_panel(s,nil).checked else .Hierarchy)},label="Hierarchy",icon=user(.List),state=state_hierarchy_panel},
-        {name="source_control",view=proc(s:^Session) {library_select(s,.Content if state_source_control(s,nil).checked else .Git)},label="Source control",icon=user(.Branch),state=state_source_control},
+        {name="kai",view=proc(s:^Session) {library_select(s,.Content if state_kai_tab(s,nil).checked else .Kai)},label="Kai",icon=user(.Branch),state=state_kai_tab},
         {name="ai_chat",view=chat_toggle,label="AI tasks",icon=.Sparkle,state=state_ai_chat},
         {name="shortcuts",view=shortcuts_show,label="Keyboard shortcuts",icon=user(.Command),menu=.View,group=MENU_GROUP_PLUGINS+1},
         {name="find",view=finder_open,label="Find object",icon=user(.Search),shortcut=key(.Space),scene=true},
@@ -698,7 +699,8 @@ state_redo :: proc(s:^Session,b:^Binding) -> (state:Command_State) {
 @(private="file") state_hierarchy_panel :: proc(s:^Session,b:^Binding) -> Command_State {return {checked=s.gui.layout.left_open && s.gui.layout.library_tab==.Hierarchy}}
 @(private="file") state_release_input :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!player_processes_captured(s) && (s.mode!=.Play || s.play_input_released)}}
 @(private="file") state_ai_chat :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.mode==.Play,checked=ai_chat_open(s.ai) && (s.gui.layout.left_open || play_shown(s))}}
-@(private="file") state_source_control :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.layout.left_open && s.gui.layout.library_tab==.Git}}
+@(private="file") state_kai_tab :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.layout.left_open && s.gui.layout.library_tab==.Kai}}
+@(private="file") state_kai :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=kai_workspace(s)==nil}}
 @(private="file") state_keep_file :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=document_file(s.document)!=""}}
 @(private="file") state_projects :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=s.engine_root=="" || s.projects==nil}}
 @(private="file") state_settings :: proc(s:^Session,b:^Binding) -> Command_State {return {disabled=!s.has_project,checked=s.gui.modal==.Settings}}

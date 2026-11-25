@@ -268,36 +268,6 @@ cli_reads_and_edits_assets_of_every_kind :: proc(t:^testing.T) {
     lone:=expect_run(&cli,1,"","dump",file(&cli,"level.scene"))
     testing.expect(t,strings.contains(lone.err,"is in no project"),lone.err)
 
-    // dump --textconv, what git diffs: a file it cannot show, as a scene of no project or a file
-    // that does not read, in one line.
-    for name in ([]string{"level.scene","not.scene"}) {
-        if name=="not.scene" {serial.file_write_atomic(file(&cli,name),transmute([]u8)string("not an asset"))}
-        unread:=expect_run(&cli,0,ANY,"dump",file(&cli,name),"--textconv")
-        testing.expect(t,strings.has_prefix(unread.out,"mirai asset dump: ") && strings.count(unread.out,"\n")==1,unread.out)
-    }
-
-    // merge: rows of one table that name rows of another by what they hold. Ours removed a bone
-    // and theirs hung a socket from it: the result breaks the rules of a skeleton and is not written.
-    {
-        bones:=[2]Skeleton_Bone{{parent=-1,rotation=1,scale={1,1,1}},{parent=0,rotation=1,scale={1,1,1}}}
-        text_set(bones[0].name[:],"root");text_set(bones[0].path[:],"root");bones[0].target=base.name_hash("root")
-        text_set(bones[1].name[:],"arm");text_set(bones[1].path[:],"root/arm");bones[1].target=base.name_hash("root/arm")
-        socket:=Skeleton_Socket{bone=bones[1].path,offset={rotation=1,scale={1,1,1}}};text_set(socket.name[:],"hand")
-        testing.expect_value(t,skeleton_save(file(&cli,"base.skeleton"),&types,{id={0x5e1,1},bones=bones[:]}),Error.None)
-        testing.expect_value(t,skeleton_save(file(&cli,"ours.skeleton"),&types,{id={0x5e1,1},bones=bones[:1]}),Error.None)
-        testing.expect_value(t,skeleton_save(file(&cli,"theirs.skeleton"),&types,{id={0x5e1,1},bones=bones[:],sockets={socket}}),Error.None)
-        testing.expect_value(t,skeleton_save(file(&cli,"kept.skeleton"),&types,{id={0x5e1,1},bones=bones[:1]}),Error.None)
-        refused:=expect_run(&cli,2,"","merge",file(&cli,"base.skeleton"),file(&cli,"ours.skeleton"),file(&cli,"theirs.skeleton"))
-        testing.expect(t,strings.contains(refused.err,"the result is not valid: skeleton"),refused.err)
-        same_bytes(&cli,file(&cli,"ours.skeleton"),file(&cli,"kept.skeleton"))
-        // What each side changed in a table of its own goes together.
-        testing.expect_value(t,skeleton_save(file(&cli,"ours.skeleton"),&types,{id={0x5e1,1},bones=bones[:]}),Error.None)
-        expect_run(&cli,0,"","set",file(&cli,"ours.skeleton"),"bones[1].translation[1]=2")
-        expect_run(&cli,0,"","merge",file(&cli,"base.skeleton"),file(&cli,"ours.skeleton"),file(&cli,"theirs.skeleton"))
-        expect_run(&cli,0,"2\n","get",file(&cli,"ours.skeleton"),"bones[1].translation[1]")
-        expect_run(&cli,0,"\"hand\"\n","get",file(&cli,"ours.skeleton"),"sockets[0].name")
-    }
-
     // verify finds what is wrong with a file.
     bytes,_:=serial.file_read(file(&cli,"plant.mesh"),context.temp_allocator)
     bytes[len(bytes)-3]~=0x40

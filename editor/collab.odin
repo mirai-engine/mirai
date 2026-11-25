@@ -2,6 +2,7 @@ package editor
 
 import "base:runtime"
 import "core:crypto"
+import "core:crypto/ed25519"
 import "core:fmt"
 import "core:log"
 import "core:mem"
@@ -9,11 +10,13 @@ import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import ka "mirai:cook/kai"
 import "mirai:cook/share"
 import "mirai:core"
 import "mirai:editor/history"
 import scene "mirai:engine/scene"
 import "mirai:host"
+import vcs "mirai:kai"
 import "mirai:platform"
 import wire "mirai:net"
 import gpu "mirai:render"
@@ -43,7 +46,10 @@ import "mirai:ui"
 // its address on its network and on its router, and the key of the session.
 
 COLLAB_PORT :: share.PORT
-COLLAB_VERSION :: 8 // of the messages: an editor of another one has another version of the project
+COLLAB_VERSION :: 10 // of the messages: an editor of another one has another version of the project
+// What a guest signs with its Kai key, with the host's challenge, to be its coauthor.
+COLLAB_KEY_PROOF :: "mirai collab key proof v1"
+COLLAB_CHALLENGE :: 32
 COLLAB_PEERS :: share.PEERS
 COLLAB_NAME_BYTES :: 32
 COLLAB_SELECTION :: 16
@@ -95,8 +101,7 @@ Collab_Message :: enum u8 {
     Play_Mark,Play_Scene_Request,Play_Scene,           // the scene of a game of the host on the network (collab_play.odin)
     Agents,                                            // the agents of an editor (collab_agents.odin)
     Ping,                                              // a point of the scene an editor pinged (collab_ping.odin)
-    File,                                              // an asset file an editor changed (collab_files.odin)
-    File_Unsent,                                       // an asset file an editor changed that is too large to travel
+    File,                                              // an asset file an editor changed, by its address (collab_files.odin)
     Project,                                           // the host offers a new snapshot of its project (collab_project.odin)
 }
 
@@ -113,6 +118,9 @@ Collab_Peer :: struct {
     name:[COLLAB_NAME_BYTES]u8,
     name_length:int,
     client:u64,          // Collab.client of the editor
+    key:vcs.Key,         // the identity its changes are recorded under (Kai): proven by signing the challenge; zero until then
+    claimed:vcs.Key,     // the key its Hello says, not proven yet
+    challenge:[COLLAB_CHALLENGE]u8, // the host's: what Welcome asks it to sign
     orbit:Orbit,
     has_pose:bool,
     playing:bool,        // is inside a Play or a Simulate of their own
@@ -180,6 +188,7 @@ Collab_State :: struct {
     invite:wire.Invite_Key, // of the session: the host's, with its private key
     invitation:wire.Invitation, // a guest: of the host
     self:u8,
+    challenge:[COLLAB_CHALLENGE]u8, // a guest: what the host's Welcome asks its key to sign
     peers:[COLLAB_PEERS]Collab_Peer,
     layout:u32,
     tables:[]Collab_Table,
@@ -204,8 +213,7 @@ Collab_State :: struct {
     agents_at:f64,
     files_out:[dynamic]string, // asset files changed here since the last update, by their paths in the registry
     applying_file:bool,        // a file of another end is being put: its change is not this end's
-    unsent:[COLLAB_UNSENT]Collab_Unsent, // the files that did not travel; the first unsent_count
-    unsent_count:int,
+    fetches:[dynamic]Collab_Fetch, // files of other ends whose chunks are being fetched
     virtual:bool,      // on the network of a test, whose clock is now
     now:f64,
     node_jobs:^jobs.Job_System, // of the exchange of node
@@ -492,6 +500,8 @@ collab_destroy :: proc(s:^Session) {
     for &peer in st.peers {collab_peer_free(&peer)}
     for path in st.files_out {delete(path)}
     delete(st.files_out)
+    for &f in st.fetches {collab_fetch_free(st,&f)}
+    delete(st.fetches)
     delete(st.reason,runtime.heap_allocator())
     collab_tables_free(st)
     history.journal_reading(s.edits,false)
@@ -643,6 +653,7 @@ collab_update :: proc(s:^Session) {
         collab_edits_send(s,st)
         collab_files_send(s,st)
     }
+    if st.phase==.Joined {collab_files_poll(s,st)}
     if st.phase==.Joined && now-st.presence_at>=COLLAB_PRESENCE_INTERVAL {
         st.presence_at=now
         collab_presence_send(s,st)
@@ -717,7 +728,7 @@ collab_command :: proc(s:^Session,st:^Collab_State,command:wire.Command,now:f64)
         if !whole {return}
         collab_receive(s,st,from,message,now)
         if st.phase!=.Ended {clear(&sender.incoming)}
-    case .Object_Created,.Object_Updated,.Object_Destroyed,.Role_Changed,.Event,.Input,.Authority_Requested,.Authority_Changed:
+    case .Object_Created,.Object_Updated,.Object_Destroyed,.Role_Changed,.Event,.Input,.Authority_Requested,.Authority_Changed,.Authorized:
     }
 }
 
@@ -749,6 +760,8 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         layout:=serial.read_u32(&r)
         name:=serial.read_string(&r)
         client:=serial.read_u64(&r)
+        key:vcs.Key
+        copy(key[:],serial.read_bytes(&r,len(key)))
         if r.failed || client==0 {return}
         if layout!=st.layout {
             collab_disconnect(st,st.peers[from].connection,.Denied_Version)
@@ -767,17 +780,23 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             break
         }
         peer:=&st.peers[from]
-        peer.client=client
+        peer.client,peer.claimed,peer.key=client,key,{}
         peer.name_length=copy(peer.name[:COLLAB_NAME_BYTES-1],name)
+        crypto.rand_bytes(peer.challenge[:])
         w:serial.Writer
         collab_begin(&w,.Welcome)
         serial.write_scalar(&w,u8(from))
+        serial.write_bytes(&w,peer.challenge[:])
         collab_queue(peer,serial.writer_bytes(&w))
         if collab_snapshot_send(s,st,peer) {collab_files_join(s,st,peer)}
     case .Welcome:
         if st.role!=.Guest {return}
         id:=serial.read_u8(&r)
-        if !r.failed {st.self=id}
+        challenge:=serial.read_bytes(&r,COLLAB_CHALLENGE)
+        if !r.failed {
+            st.self=id
+            copy(st.challenge[:],challenge)
+        }
     case .Snapshot:
         if st.role!=.Guest {return}
         if !collab_snapshot_load(s,st,data[1:]) {
@@ -785,11 +804,16 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             return
         }
         st.phase=.Joined
-        ready:=[1]u8{u8(Collab_Message.Ready)}
-        collab_queue(&st.peers[0],ready[:])
+        ready:[1+size_of(vcs.Signature)]u8
+        ready[0]=u8(Collab_Message.Ready)
+        proven:=collab_key_sign(s,st.challenge,ready[1:])
+        collab_queue(&st.peers[0],ready[:proven?len(ready):1])
     case .Ready:
         if st.role!=.Host || from<0 || st.peers[from].client==0 {return}
-        st.peers[from].joined=true
+        peer:=&st.peers[from]
+        peer.joined=true
+        // A key is recorded as a coauthor only when the guest signed the challenge with it.
+        if len(data)==1+size_of(vcs.Signature) && collab_key_valid(peer.claimed,peer.challenge,data[1:]) {peer.key=peer.claimed}
         collab_roster_send(st)
     case .Edit:
         if st.role==.Host && (from<0 || !st.peers[from].joined) {return}
@@ -799,8 +823,11 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         // What this end edited goes before what it applies, so the edits of the others are not taken for its own.
         collab_edits_send(s,st)
         collab_edit_apply(s,st,data,own)
-        // The host sends what a guest edited to everybody, the sender included.
-        if st.role==.Host {collab_broadcast(st,data)}
+        // The host sends what a guest edited to everybody, the sender included, and records who changed it.
+        if st.role==.Host {
+            collab_broadcast(st,data)
+            kai_coauthor(s,st.peers[from].key)
+        }
         st.received_edits+=1
     case .Presence:
         id:=int(serial.read_u8(&r))
@@ -855,7 +882,6 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
             peer.used,peer.joined=true,true
             peer.name_length=copy(peer.name[:COLLAB_NAME_BYTES-1],name)
         }
-        collab_unsent_prune(st)
     case .Reject:
         if st.role==.Guest {collab_end(st,"the host ended the session");return}
         // A guest that leaves frees its place now, and what it selected with it.
@@ -883,9 +909,43 @@ collab_receive :: proc(s:^Session,st:^Collab_State,from:int,data:[]u8,now:f64) {
         if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_file_receive(s,st,from,data,&r)}
     case .Project:
         if st.role==.Guest {collab_update_request(st)}
-    case .File_Unsent:
-        if st.phase==.Joined && (st.role==.Guest || from>=0 && st.peers[from].joined) {collab_unsent_receive(s,st,from,&r)}
     }
+}
+
+// What a key signs to prove it to the host: the domain and the host's challenge.
+@(private)
+collab_key_message :: proc(challenge:[COLLAB_CHALLENGE]u8) -> (message:[len(COLLAB_KEY_PROOF)+COLLAB_CHALLENGE]u8) {
+    copy(message[:],COLLAB_KEY_PROOF)
+    c:=challenge
+    copy(message[len(COLLAB_KEY_PROOF):],c[:])
+    return
+}
+
+// A guest: signs the host's challenge with the identity of its store, when
+// that is the key its Hello said. False when it has none to sign with.
+@(private)
+collab_key_sign :: proc(s:^Session,challenge:[COLLAB_CHALLENGE]u8,signature:[]u8) -> bool {
+    if s.kai==nil || s.kai.key==({}) || s.store.root=="" || challenge==({}) {return false}
+    identity,e:=ka.identity_load(&s.store)
+    defer crypto.zero_explicit(&identity,size_of(identity))
+    if e!=.None || identity.key!=s.kai.key {return false}
+    private:ed25519.Private_Key
+    if !ed25519.private_key_set_bytes(&private,identity.seed[:]) {return false}
+    defer ed25519.private_key_clear(&private)
+    message:=collab_key_message(challenge)
+    ed25519.sign(&private,message[:],signature)
+    return true
+}
+
+// The host: whether signature is key's over the challenge it sent.
+@(private)
+collab_key_valid :: proc(key:vcs.Key,challenge:[COLLAB_CHALLENGE]u8,signature:[]u8) -> bool {
+    if key==({}) || challenge==({}) {return false}
+    public:ed25519.Public_Key
+    k:=key
+    if !ed25519.public_key_set_bytes(&public,k[:]) {return false}
+    message:=collab_key_message(challenge)
+    return ed25519.verify(&public,message[:],signature)
 }
 
 // A guest whose folder has the host's snapshot asks for the scene.
@@ -898,13 +958,23 @@ collab_hello :: proc(s:^Session,st:^Collab_State) {
     serial.write_scalar(&w,st.layout)
     serial.write_string(&w,string(c.name[:c.name_length]))
     serial.write_scalar(&w,collab_client(c))
+    key:vcs.Key
+    if s.kai!=nil {
+        // A guest opens no workspace, so its key is read here: what it proves at Ready.
+        if s.kai.key==({}) && s.store.root!="" {
+            identity,e:=ka.identity_load(&s.store)
+            if e==.None {s.kai.key=identity.key}
+            crypto.zero_explicit(&identity,size_of(identity))
+        }
+        key=s.kai.key
+    }
+    serial.write_bytes(&w,key[:])
     collab_queue(&st.peers[0],serial.writer_bytes(&w))
 }
 
 @(private)
 collab_roster_send :: proc(st:^Collab_State) {
     if st.role!=.Host {return}
-    collab_unsent_prune(st)
     w:serial.Writer
     collab_begin(&w,.Roster)
     count:=0

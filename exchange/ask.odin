@@ -689,3 +689,14 @@ on_names :: proc(x:^Exchange,i:int,data:[]u8) {
     }
 }
 
+
+// A peer told of a change of one of its refs: the owner hears it at once.
+@(private)
+on_ref_changed :: proc(x:^Exchange,i:int,data:[]u8) {
+    r:=Reader{data=data[1:],ok=true}
+    namespace:=read_name(&r)
+    name:=read_name(&r)
+    address:=read_hash(&r)
+    if !read_end(&r) {peer_bad(x,i);return}
+    if x.desc.hint!=nil {x.desc.hint(x.desc.user,peer_id(&x.peers[i]),namespace,name,address)}
+}

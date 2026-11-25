@@ -1,0 +1,272 @@
+---
+name: mirai-kai
+description: Kai, the native version control and peer-to-peer distribution of Mirai - `std/diff`
+  (line diff and three-way merge), `kai` (changes, trees, conflicts as values, the operation log and
+  undo, workspaces, drivers), identity, orgs, pairing, grants and the signed logs, the mesh (LAN
+  beacon, relay, seed and derived-data nodes, derived data shared between machines),
+  private files in encrypted overlays, proposals and review with policies and checks, `kai/hub`
+  (the node `mirai kai serve`, its web view and passkey sign-in), `net/tls` (TLS 1.3 and ACME),
+  `cook/kai` (the Mirai asset driver), the `mirai kai` commands and the `kai.*` methods. Use when
+  versioning or sharing a project, merging or resolving a conflict, undoing, pairing a machine,
+  creating an org, a grant, a private scope, a proposal or a check, running or deploying a node or
+  its web view, serving HTTPS, or diagnosing why a change, a peer or a signature is refused.
+---
+
+# Mirai Kai
+
+Kai is the version control of a Mirai project and how its teams reach each other: changes
+and operations in the machine's [store](../mirai-store/SKILL.md), identities and orgs as signed
+logs, and a mesh of the machines of an org that finds its peers, syncs by
+[exchange](../mirai-store/references/exchange.md#what-the-owner-calls) and reviews work through
+proposals.
+There is no account, no central server and no Git: a node is an optional machine of the org that
+is always on. Kai itself is optional per project: a project without `.mirai/kai` has no history
+until it is [enabled](#start-a-project-on-kai). It is used from the Kai tab of the
+[editor](../mirai-editor/references/kai.md), from `mirai kai`, from the `kai.*` methods and, for
+review, from a browser.
+
+- `std/diff` (layer 0): line diff and three-way merge; imports nothing of Mirai.
+- `kai` (layer 4): records, trees, conflicts, operations, workspaces, the logs, pairing, the mesh,
+  overlays and proposals. It imports `std/*`, `store`, `exchange`, `net` and `core:` alone.
+- `kai/hub` (layer 5): the node's commands, HTTPS server, JSON API and web frontend. It imports
+  `kai`, `net`, `net/tls`, `store` and `std/*`. `tools/kai` is `mirai-kai`, which imports
+  `kai/hub` alone.
+- `net/tls` (layer 2): TLS 1.3 and an ACME client, without I/O.
+- `cook/kai` (layer 7): what Kai knows of Mirai, the asset driver and the project filter, and the
+  operations that need a workspace. `editor` and `tools/mirai` call it and `kai` alike.
+
+## Map
+
+- Changes, trees, how records are stored and checked:
+  [records](references/model.md#records) and [trees](references/model.md#trees).
+- Conflicts, merging, the drivers and `std/diff`:
+  [conflicts](references/model.md#conflicts) and
+  [drivers](references/model.md#drivers-and-diff).
+- Operations, undo, split, bookmarks, the graph, retention and `mirai kai prune`:
+  [operations](references/model.md#operations-and-undo).
+- Working copy, snapshots, checkout and what the editor pushes:
+  [workspaces](references/model.md#workspaces); who calls what:
+  [surfaces](references/model.md#surfaces).
+- Users, devices, the recovery key, orgs, roles and rights:
+  [keys](references/identity.md#keys), [the logs](references/identity.md#the-signed-logs),
+  [folding, removals and witnesses](references/identity.md#folding-and-revocation) and
+  [roles](references/identity.md#roles-and-rights).
+- Pairing a device, a member or a node: [pairing](references/identity.md#pairing); recovering a
+  user whose devices were lost: [keys](references/identity.md#keys).
+- Access for someone outside the org: [grants](references/identity.md#grants); what a device
+  publishes: [device refs](references/identity.md#device-refs).
+- The runner, who reads what, how peers find each other, relay, beacon and nodes:
+  [runner](references/mesh.md#the-runner), [access](references/mesh.md#who-reads-what),
+  [ladder](references/mesh.md#the-connection-ladder) and [nodes](references/mesh.md#nodes); a peer
+  fed a stale org log: [behind](references/mesh.md#behind).
+- Derived data a cook takes from a peer: [derived data](references/mesh.md#derived-data); the
+  summaries, thumbnails and asset diffs of the web view: [previews](references/node.md#previews).
+- Private files, scopes, keys, deny set and the publish scanner:
+  [scopes](references/private.md#scopes-and-routing),
+  [keys](references/private.md#keyrings-and-epochs), [sealing](references/private.md#sealing) and
+  [guardrails](references/private.md#leak-guardrails).
+- Proposals, comments, approvals, policies, checks and landing:
+  [proposals](references/proposals.md#proposals) and
+  [landing](references/proposals.md#policy-and-landing).
+- The node `mirai kai serve`, its deployment and its web view:
+  [node](references/node.md#the-node), [hosted orgs](references/node.md#hosted-orgs),
+  [deployment](references/node.md#deployment),
+  [API](references/node.md#the-api), [sign in](references/node.md#sign-in-and-writes) and
+  [frontend](references/node.md#the-frontend).
+- TLS 1.3, certificates and ACME: [TLS](references/tls.md#tls-13) and
+  [ACME](references/tls.md#acme).
+- The Kai tab and the editor's part: [editor](../mirai-editor/references/kai.md#working-copy);
+  the commands:
+  [common commands](../mirai-projects/references/projects.md#common-commands); merging assets:
+  [merge](../mirai-assets/references/cli.md#merge); the ports and transports:
+  [networking](../mirai-networking/SKILL.md).
+
+## Workflow
+
+### Start a project on Kai
+
+1. `mirai new` makes the project a workspace of a repository in the machine's store, unless
+   `--no-kai` (the editor's New Project dialog: "Version control (Kai)"). A project that has none
+   takes `mirai kai init`, or in the editor the tab's Enable Kai or `kai.init`. The editor opens
+   a project with `.mirai/kai` as its workspace and never makes one by itself.
+2. Work in the files. `mirai kai status` snapshots and lists what changed; `new`, `describe`,
+   `split`, `undo` and `conflicts` act on the working change `@`.
+3. To share it: `mirai kai identity` makes this machine's user (the recovery key is shown once,
+   keep it offline), `mirai kai org new <name> --project P` makes an org, `mirai kai org add
+   public|org` puts the project in it.
+
+### Pair a machine
+
+1. A machine of the org runs a Kai agent (the open editor, or `mirai kai agent`).
+2. `mirai kai pair offer device|member|node` prints a ticket; the other machine runs `mirai kai
+   pair join <ticket>`. Both show the same eight digits: the person on the offering machine
+   compares them and runs `mirai kai pair approve --code <digits>`, or `--deny`.
+3. A node is paired the same way from its own machine (`mirai-kai pair join`). When the node is
+   in the cloud and the offering machine behind a router, offer with `--at <node address:port>`:
+   the offering machine knocks there and the node asks it back the way the knocks opened.
+4. Pairing a user who is a member already changes no role: it brings its machine to the other
+   again, which is how a machine that lost the org (it has its id and not its log) gets it back.
+5. On the paired machine, `mirai kai init <project> --project <folder>` makes a folder, empty or
+   not there yet, a workspace of the org's project; `mirai kai new <bookmark>` writes its files.
+
+### Recover an identity
+
+1. On a machine of one of the user's orgs (a teammate's, a node: a user alone in its org keeps a
+   seed node for this), `mirai kai pair offer recover --org O`; on the fresh machine, with a Kai
+   agent running, `mirai kai pair join <ticket>`, and the other approves the code. The agent
+   fetches the org's user logs.
+2. `mirai kai identity recover <user>` takes the recovery key as printed (the editor: Recover in
+   the Team view). The new device is in, the lost ones are revoked, and the agents admit it; it
+   waits for the orgs' logs and opens the private scopes with the recovery key, or says which ones
+   no key left opens. Run again with the key, it opens what the agent fetched since.
+3. If the key may have been seen, rotate it: `mirai kai identity recovery`.
+
+### Review and land
+
+1. Publish a stack: `mirai kai proposal open <target> -m title` on the working change's parent.
+2. Reviewers `comment`, `approve` or `changes`; a check runs `mirai kai check <name> -- <command>`
+   in a working copy of the final revision and signs what it found.
+3. `mirai kai proposal land <proposal>` moves the target when its policy holds. A guarded
+   bookmark moves by no other way (`mirai kai bookmarks policy <name> --approvals N --checks a,b`).
+
+### Add a private scope
+
+1. An admin runs `mirai kai scope add <pattern...> --readers writer [--history]` for the project.
+2. The next snapshot of every reader routes the matching files into an encrypted overlay. A device
+   that cannot read the scope keeps its last copy out of its snapshots and loses the files.
+3. After a member or a device leaves, the next write waits for `mirai kai scope rotate <scope>`.
+
+### Run a node
+
+1. `mirai build kai --target linux_arm64`, copy `bin/mirai-kai-linux-arm64` to the machine and
+   follow [deployment](references/node.md#deployment).
+2. Pair it as a node (`pair offer node --org O --modes relay,seed,ddc`, then `pair join` there).
+3. `mirai kai web approve <link>` signs a browser in or links a passkey from a device.
+4. A user born on the web view links a machine (`mirai kai web approve`, which sets its recovery
+   key), makes an org and its projects there, and `mirai kai web join <origin>` on the machine
+   takes them. The node hosts those orgs: no derived data, `--hosted-quota` each, `--hosted-orgs`
+   per user.
+
+### Add a check
+
+A check is a name a policy requires and a command a peer runs: `mirai kai bookmarks policy main
+--checks test` requires `test`; any writer or holder of a `check` grant runs `mirai kai check
+test -- mirai test <package>` against the proposal's final revision. Nothing runs on a node.
+
+### Change Kai
+
+1. A new kind of record or log entry changes the stored layout: raise the kind's line in
+   `VERSIONS` (`kai/types.odin`), the one place an object of another version is refused (a log
+   entry follows `Log_Page`), add its bounds and its hostile-input test; there is no migration.
+2. An operation the CLI and the editor both need goes into `kai` (no workspace) or `cook/kai`
+   (workspace), never into `editor` or `tools/mirai`; it reports through `m.why` what failed and
+   how to fix it.
+3. A route of the node goes into the table of `kai/hub/api.odin`, which dispatches and describes.
+4. Update the reference that owns the topic in the same task.
+
+## Invariants
+
+- `kai` imports nothing of the engine (`core`, `asset`, `project`, `host`, `engine/*`, `cook/*`,
+  `editor`): Mirai enters as a `Driver` and a `Filter` from `cook/kai`.
+- A record is one object of the store with its kind and version in its meta; hostile bytes are
+  `Corrupt`, another version is refused without migration. A signature is checked when a record
+  comes from a peer and by `verify`, never on a local read.
+- One operation is one store commit and one undo; each workspace writes only its own ref in the
+  `kai-local-*` namespaces, which no peer is served.
+- A conflict is a value in a tree, never a state that blocks work; a checkout writes its partial
+  result and the next edit of the file resolves it.
+- The editor, `mirai kai` and the `kai.*` methods run the same procedures; a refusal says what
+  failed and how to fix it.
+- Nothing is decided by a server. Membership, roles, policies and landings are folds of signed
+  logs that every peer computes alike; a node holds no org key and signs for no user.
+- An entry holds if its author held the right when it signed (the org entry it names) and no
+  witness of a later removal in its log leaves it out: removing a member or a device never undoes
+  what it signed before, and stops what it signs after, backdated or not.
+- A removal names no other log: a user's log tells no reader which orgs, projects or proposals its
+  devices signed in.
+- The browser signs only what it computed: the server drafts the bytes of an entry and gives no
+  challenge for a write, the page checks every field and signs the BLAKE3 of the bytes itself. A
+  user born in a browser is its passkey alone: the page makes no recovery or device key.
+- A recovery key is shown once and never crosses an API or a result; a method of an editor with no
+  window refuses to make or rotate one.
+- An epoch key is wrapped for each device and each reader's recovery key under X25519 and
+  ML-KEM-768 at once; nothing else of Kai is post-quantum, on purpose
+  ([why](references/private.md#keyrings-and-epochs)).
+- A rotation is for whoever loses access: a reader that comes is given the newest key.
+- An agent that lacks an org entry a writer's record or a member's witness names takes no write
+  until it comes or `BEHIND_SECONDS` let it go; each user's devices stall it once.
+- A run of the editor that ends by itself (a check of a build, a capture) and a guest of a session
+  open no workspace: only an editor someone drives records history.
+- The plaintext of a scoped file never enters the public store, a public change never names an
+  overlay, and a node or seed never holds a scope key.
+- A peer reads a set of addresses and nothing else of the store: what its org reaches, from
+  roots that came from the org, as a member or a node, the user logs while pending, what the
+  shared bookmarks of public projects reach while anonymous (never a device's refs or a
+  proposal), what its grant covers.
+- Nothing polls: a ref that moved is told to the peers that may read it.
+- A stable frame or tick allocates nothing; what peers, browsers and sockets send is bounded and
+  refused with a reason, never trusted.
+- A node on Linux runs confined, or refuses to start unless it is told `--no-sandbox`.
+- A node keeps no derived data of an org a user made on its web view and stores at most its bound
+  of it; an org its operator paired it into is bound by neither.
+- Kai is the only version control of a project that has it: its snapshots track what
+  `project.own_path` accepts (never `.mirai` nor a `.git`, `.hg`, `.svn` or `.jj` at any depth)
+  and nothing else decides which files are the project's. A project without it records nothing.
+
+## Verification
+
+- `mirai check` of each touched package (`std/diff`, `kai`, `kai/hub`, `net/tls`, `cook/kai`,
+  `tools/kai`) and `mirai test <package>` of it. A change of `tools/mirai/kai*.odin` or of the
+  node also needs `mirai build kai --target linux_arm64` once.
+- Model: `a_snapshot_rehashes_only_changed_files`, `hostile_kai_records_are_refused`,
+  `conflicts_simplify_and_resolve_by_edit`, `every_operation_undoes`,
+  `a_prune_drops_old_operations_and_the_sweep_reclaims_what_only_they_reached`,
+  `op_heads_of_two_workspaces_merge`, `a_switch_cut_midway_recovers_on_status`,
+  `a_change_splits_by_paths_and_undoes_in_one_operation` and `kai_imports_stay_engine_agnostic`
+  in `kai`; `histogram_diff_and_merge3_cases` in `std/diff`;
+  `a_scene_merges_by_field_through_the_driver` in `cook/kai`.
+- Identity: `revocation_witness_rejects_backdated_entries`, `a_removed_writer_keeps_its_past`,
+  `concurrent_admin_removals_fold_deterministically`, `pairing_rejects_mitm_label_grinding`,
+  `grants_verify_against_the_org`, `a_grant_signs_checks_only_while_it_holds`,
+  `a_log_of_100000_entries_folds_and_appends_in_bounds` (prints the fold's time),
+  `pairing_links_a_device_and_adds_a_member`, `hostile_log_entries_are_refused`,
+  `a_user_recovers_onto_a_new_device_with_its_recovery_key` and `device_refs_reject_rollback` in
+  `kai`.
+- Mesh: `org_members_sync_refs_and_ddc_over_sim_network`,
+  `a_member_gets_only_what_its_org_reaches`,
+  `a_settled_proposal_stays_in_the_store_until_asked_for`,
+  `anonymous_peer_gets_only_the_public_closure`,
+  `a_grant_holder_reads_and_writes_only_its_scope_until_it_ends`,
+  `two_agents_pair_and_sync_a_change_over_loopback_udp`,
+  `a_relay_node_joins_two_agents_that_cannot_reach_each_other`,
+  `runner_refuses_hostile_datagrams`, `a_ddc_node_drops_least_used_outputs_past_its_quota`,
+  `a_peer_fed_a_stale_org_log_learns_it_is_behind` and
+  `a_forged_org_head_stalls_a_peer_no_longer_than_its_bound` in `kai`;
+  `asset_summaries_are_stable_and_follow_their_bytes` in `cook/kai`;
+  `a_cook_takes_derived_data_a_peer_built` in `cook/import/sources`.
+- Private files: `scoped_plaintext_never_enters_public_store`,
+  `removed_member_cannot_decrypt_post_rotation_epoch`, `removing_a_keyring_signer_keeps_its_epochs`,
+  `envelope_adds_give_the_newest_key_to_readers_alone`,
+  `a_recovered_device_takes_the_scope_keys_its_recovery_key_opens`,
+  `an_epoch_key_opens_only_with_both_device_secrets` (prints a device's entry, an envelope and an
+  epoch of 10 devices),
+  `public_peer_sees_zero_overlay_metadata_or_chunks` and `deny_set_and_publish_scanner_block_leaks`.
+- Proposals: `proposal_comments_reanchor_across_rewrites`,
+  `landing_enforces_policy_and_zero_conflicts`,
+  `a_project_of_10000_landed_moves_folds_without_reading_its_proposals` (prints the folds' times)
+  and
+  `a_team_reviews_and_lands_a_proposal_through_the_shared_operations` (`cook/kai`).
+- Node: `hub_serves_public_and_member_views`, `hub_hosts_the_orgs_its_users_make`,
+  `a_hosted_org_keeps_no_derived_data_and_stops_at_its_bound` (`kai`),
+  `hub_api_describes_every_route`,
+  `hub_http_refuses_hostile_requests`, `webauthn_login_and_signed_verdict_verify_offline`,
+  `hub_web_modules_agree_with_the_node` (runs under the system's `node`, skipped without it),
+  `hub_seccomp_program_refuses_what_the_node_does_not_do` and
+  `headless_arm64_server_builds_and_serves_public_and_member_views` (builds the static
+  executable and runs it where a linux/arm64 runtime exists).
+- TLS: `tls13_known_answer_vectors`, `tls13_refuses_hostile_and_downgraded_input`,
+  `tls13_interoperates_with_system_tools`,
+  `acme_orders_a_certificate_by_tls_alpn_from_a_fake_directory` and
+  `hub_serves_while_an_acme_order_dials` (skipped where no route makes a connect wait).
+- Editor: [its focal tests](../mirai-editor/references/kai.md#verification).
+- Documentation: `uv run scripts/check_docs.py`.

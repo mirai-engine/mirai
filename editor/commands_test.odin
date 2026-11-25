@@ -72,7 +72,7 @@ COMMANDS_OF_THE_ACTIONS :: [?]string{
     "focus","reset_camera","scene_thumbnail","grid","indicators","output_frame","game_detail","studio_light","hierarchy_panel","inspector_panel","console_panel","build_panel","library_panel",
     "play","play_from_camera","simulate","apply_simulation","pause","stop","release_input",
     "shortcuts",
-    "find","import","ai_chat","source_control","graphics","settings","projects",
+    "find","import","ai_chat","kai","graphics","settings","projects",
     "prefab_create","prefab_apply","prefab_revert","prefab_unlink","prefab_apply_base",
     "camera_preview","camera_keep","camera_discard",
     "asset_delete","asset_rename","asset_duplicate","asset_copy","asset_cut","asset_paste",

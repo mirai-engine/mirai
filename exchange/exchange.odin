@@ -54,9 +54,30 @@ NAMES_PER_REPLY :: 128
 @(private) WALK_SLOTS :: 4     // walks reading the store at once
 @(private) SEND_BYTES :: 1<<20      // answers of a peer read and not yet sent, in a ring
 @(private) CHECK_SLOTS :: 4    // reports of damage being checked at once
+@(private) HINT_ROOM :: 4<<10  // bytes of the control queue of a peer below which hints join it: they never take the room of asks and answers
 
-// Whether peers may read the refs of namespace.
-Expose :: #type proc(user:rawptr,namespace:string) -> bool
+// A connected peer, as its owner gave it to peer_add: the host of this end,
+// the connection and the owner's tag.
+Peer_Id :: struct {host:^wire.Host,connection:wire.Connection,tag:u64}
+
+// Whether peer may read the refs of namespace and hears when they change. Runs
+// under the lock of the Exchange, on the thread that calls into it.
+Expose :: #type proc(user:rawptr,peer:Peer_Id,namespace:string) -> bool
+
+// Whether a restricted peer may get the chunk at address, as an entry of its
+// ask or as a descendant. Runs on the serve jobs, concurrently and without the
+// lock of the Exchange, so it reads only what does not change while the
+// exchange runs, or guards it itself.
+Serve_Filter :: #type proc(user:rawptr,peer:Peer_Id,address:store.Hash) -> bool
+
+// A peer asked for the chunk at address, as an entry of an ask. Runs inside
+// receive, under the lock of the Exchange, so it does not call the exchange.
+Ask_Hint :: #type proc(user:rawptr,peer:Peer_Id,address:store.Hash)
+
+// A peer said its ref namespace and name now names address, {} once removed.
+// Runs inside receive, under the lock of the Exchange, so it does not call the
+// exchange; the strings live during the call.
+Ref_Hint :: #type proc(user:rawptr,peer:Peer_Id,namespace,name:string,address:store.Hash)
 
 Desc :: struct {
     store:^store.Store,
@@ -66,8 +87,12 @@ Desc :: struct {
     queries:int, // ref questions at once, default 16
     needs:int,   // chunks known missing at once over every want, default 8192
     worker:jobs.Worker_Ref, // of the thread that pumps: reading, hashing, storing and committing run as its jobs; zero: on the pump
-    expose:Expose, // nil exposes no namespace
-    expose_user:rawptr,
+    hints:int,   // ref changes being told to peers at once, default 64
+    expose:Expose,      // nil exposes no namespace
+    serve:Serve_Filter, // nil serves a restricted peer nothing
+    hint:Ref_Hint,      // nil ignores the ref changes peers tell
+    asked:Ask_Hint,     // nil: what peers ask is not told
+    user:rawptr,        // of expose, serve, hint and asked
     allocator:runtime.Allocator,
 }
 
@@ -192,12 +217,23 @@ Serve_Kind :: enum u8 {Ask,Done}
 @(private)
 Serve :: struct {kind:Serve_Kind,address:store.Hash,budget:u32}
 
+// A ref change being told to the peers that may read its namespace.
+@(private)
+Hint_Slot :: struct {
+    pending:u64, // peers it is still to be sent to; free when none
+    namespace,name:[store.NAME_MAX]u8,
+    namespace_len,name_len:int,
+    address:store.Hash,
+}
+
 @(private)
 Peer :: struct {
     used,bad:bool,
     exchange:^Exchange,
     host:^wire.Host,
     connection:wire.Connection,
+    tag:u64,
+    restricted:bool, // served only what Desc.serve lets it get
     // Asking: the entries of the asks in flight, oldest first.
     flights:[]Flight,
     flight_head,flight_count:int,
@@ -280,6 +316,7 @@ Exchange :: struct {
     rootless:int,     // wants whose root waits for room in the table of needs
     peers:[]Peer,
     queries:[]Query_Slot,
+    hints:[]Hint_Slot,
     want_slots:[]i32, // open addressing by address, -1 empty
     settling:int,
     commit_time:f64,
@@ -318,6 +355,7 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
     if d.peers<=0 {d.peers=8}
     if d.wants<=0 {d.wants=256}
     if d.queries<=0 {d.queries=16}
+    if d.hints<=0 {d.hints=64}
     if d.needs<=0 {d.needs=8192}
     if d.peers>MAX_PEERS || d.needs>1<<24 || d.wants>1<<24 {return .Invalid}
     failed:=false
@@ -339,6 +377,7 @@ init :: proc(x:^Exchange,desc:Desc) -> Error {
     make_into(x,&x.need_free,d.needs,&failed)
     make_into(x,&x.peers,d.peers,&failed)
     make_into(x,&x.queries,d.queries,&failed)
+    make_into(x,&x.hints,d.hints,&failed)
     make_into(x,&x.receives,RECEIVE_SLOTS,&failed)
     make_into(x,&x.receive_bytes,RECEIVE_BYTES,&failed)
     make_into(x,&x.walkers,RECEIVE_WALKERS,&failed)
@@ -414,15 +453,17 @@ destroy :: proc(x:^Exchange) {
     for k in x.walks {delete(k.walk.buffer,x.allocator);delete(k.walk.found,x.allocator)}
     delete(x.wants,x.allocator);delete(x.order,x.allocator);delete(x.want_slots,x.allocator);delete(x.attention,x.allocator);delete(x.peers,x.allocator)
     delete(x.needs,x.allocator);delete(x.need_slots,x.allocator);delete(x.need_free,x.allocator)
-    delete(x.queries,x.allocator);delete(x.receives,x.allocator);delete(x.walks,x.allocator)
+    delete(x.queries,x.allocator);delete(x.hints,x.allocator);delete(x.receives,x.allocator);delete(x.walks,x.allocator)
     delete(x.checks,x.allocator);delete(x.found,x.allocator);delete(x.commit.items,x.allocator)
     x^={}
 }
 
 // Starts exchanging with a connection of h from its start, when its Connected
 // command comes: a message on it that began before is not read from its middle.
-// The host must carry the channels of the exchange at Desc.channel.
-peer_add :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> Error {
+// The host must carry the channels of the exchange at Desc.channel. tag is the
+// owner's, given back in every Peer_Id; a restricted peer is served only the
+// chunks Desc.serve lets it get, and the others are lacked as if missing.
+peer_add :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection,tag:=u64(0),restricted:=false) -> Error {
     sync.mutex_guard(&x.lock)
     if h==nil || connection==0 || x.desc.channel+CHANNELS>h.channel_count {return .Invalid}
     for lane in 0..<CHANNELS {
@@ -432,12 +473,26 @@ peer_add :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection) -> Error {
     for &p,i in x.peers {
         if p.used {continue}
         peer_reset(&p)
-        p.used,p.host,p.connection=true,h,connection
+        p.used,p.host,p.connection,p.tag,p.restricted=true,h,connection,tag,restricted
         clear_peer_bits(x,i)
         x.dirty,x.ask_due=true,true
         return .None
     }
     return .Full
+}
+
+// Gives a peer another tag and restriction in place, as its owner learns who
+// it is: what it was asked and the answers on their way stay its own, so
+// nothing it sends later reads as unasked. Removing it and adding it again
+// would start the connection over in its middle.
+peer_set :: proc(x:^Exchange,h:^wire.Host,connection:wire.Connection,tag:u64,restricted:bool) -> Error {
+    sync.mutex_guard(&x.lock)
+    i:=peer_find(x,h,connection)
+    if i<0 {return .Invalid}
+    p:=&x.peers[i]
+    p.tag,p.restricted=tag,restricted
+    x.dirty,x.ask_due=true,true
+    return .None
 }
 
 // Stops exchanging with a connection: what it gave stays, what it was asked goes to others.
@@ -499,7 +554,11 @@ clear_peer_bits :: proc(x:^Exchange,i:int) {
     }
     for &n in x.needs {n.lack&=mask}
     for &q in x.queries {q.asked&=mask;q.answered&=mask}
+    for &h in x.hints {h.pending&=mask}
 }
+
+@(private)
+peer_id :: proc(p:^Peer) -> Peer_Id {return {host=p.host,connection=p.connection,tag=p.tag}}
 
 // A peer that sent what no peer sends: neither asked nor served any more.
 @(private)
@@ -561,6 +620,7 @@ update :: proc(x:^Exchange,now:f64) {
     rootless_ask(x)
     asking(x)
     settle(x)
+    hints_send(x)
     queries_send(x)
     rates(x)
     signal(x)
@@ -873,6 +933,60 @@ queries_send :: proc(x:^Exchange) {
         if targets&~q.answered==0 {
             q.state=.Not_Found
             x.dirty=true
+        }
+    }
+}
+
+// Tells the connected peers that may read namespace that its ref name now
+// names address, {} once removed, so they need not ask again. A change not yet
+// sent replaces the one before it of the same ref; Full while Desc.hints
+// changes wait to be sent.
+ref_changed :: proc(x:^Exchange,namespace,name:string,address:store.Hash) -> Error {
+    sync.mutex_guard(&x.lock)
+    if !store.name_valid(namespace) || !store.name_valid(name) {return .Invalid}
+    targets:u64
+    for &p,i in x.peers {
+        if p.used && !p.bad && !p.draining && exposed(x,i,namespace) {targets|=1<<uint(i)}
+    }
+    if targets==0 {return .None}
+    free:^Hint_Slot
+    for &h in x.hints {
+        if h.pending==0 {
+            if free==nil {free=&h}
+            continue
+        }
+        if string(h.namespace[:h.namespace_len])==namespace && string(h.name[:h.name_len])==name {
+            h.address=address
+            h.pending|=targets
+            return .None
+        }
+    }
+    if free==nil {return .Full}
+    free^={pending=targets,namespace_len=len(namespace),name_len=len(name),address=address}
+    copy(free.namespace[:],namespace)
+    copy(free.name[:],name)
+    return .None
+}
+
+@(private)
+hints_send :: proc(x:^Exchange) {
+    connected:u64
+    for &p,i in x.peers {
+        if p.used && !p.bad && !p.draining {connected|=1<<uint(i)}
+    }
+    for &h in x.hints {
+        h.pending&=connected
+        if h.pending==0 {continue}
+        buffer:[MSG_REF_CHANGED_MAX]u8
+        w:=Writer{data=buffer[:]}
+        write_u8(&w,MSG_REF_CHANGED)
+        write_name(&w,string(h.namespace[:h.namespace_len]))
+        write_name(&w,string(h.name[:h.name_len]))
+        write_bytes(&w,h.address[:])
+        for &p,i in x.peers {
+            bit:=u64(1)<<uint(i)
+            if h.pending&bit==0 || p.control_end-p.control_start+2+w.n>HINT_ROOM {continue}
+            if control_append(&p,buffer[:w.n]) {h.pending&=~bit}
         }
     }
 }

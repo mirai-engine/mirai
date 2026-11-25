@@ -10,9 +10,12 @@ import "mirai:std/base"
 // once IP and UDP headers are added, so no hop fragments it.
 PACKET_BYTES :: 1200
 
-Address_Kind :: enum u8 {None,IP4,IP6,Memory}
-// Memory addresses name an endpoint of a Sim_Network by its index in port.
-Address :: struct {kind:Address_Kind,port:u16,ip:[16]u8}
+Address_Kind :: enum u8 {None,IP4,IP6,Memory,Relay}
+// Memory addresses name an endpoint of a Sim_Network by its index in port. A Relay address is a
+// peer that a relay node forwards to: ip and port are the node's (an IPv4 node as ::ffff:a.b.c.d)
+// and peer is the static key of the peer behind it; peer is zero in every other kind. zone is the
+// interface a link-local or multicast IPv6 address is on (its scope id), zero for any other.
+Address :: struct {kind:Address_Kind,port:u16,ip:[16]u8,peer:Key,zone:u32}
 
 address_ip4 :: proc "contextless" (a,b,c,d:u8,port:int) -> Address {
     return {kind=.IP4,port=u16(port),ip={0=a,1=b,2=c,3=d}}
@@ -22,6 +25,48 @@ address_loopback6 :: proc "contextless" (port:int) -> Address {return {kind=.IP6
 // Every interface: bound with udp_open, it takes IPv6 and IPv4 peers on one socket.
 address_any6 :: proc "contextless" (port:int) -> Address {return {kind=.IP6,port=u16(port)}}
 address_memory :: proc "contextless" (endpoint:int) -> Address {return {kind=.Memory,port=u16(endpoint)}}
+// The peer of static key peer through the relay node at node, which is IPv4 or IPv6 with a port.
+address_relay :: proc "contextless" (node:Address,peer:Key) -> (relay:Address,ok:bool) {
+    if node.kind!=.IP4 && node.kind!=.IP6 || node.port==0 || peer==(Key{}) {return}
+    relay={kind=.Relay,port=node.port,ip=node.ip,peer=peer}
+    if node.kind==.IP4 {relay.ip={10=0xff,11=0xff,12=node.ip[0],13=node.ip[1],14=node.ip[2],15=node.ip[3]}}
+    return relay,true
+}
+// The relay node of a Relay address and the static key of the peer behind it.
+address_relay_node :: proc "contextless" (relay:Address) -> (node:Address,peer:Key,ok:bool) {
+    if relay.kind!=.Relay {return}
+    return address_unmap(relay.ip,relay.port),relay.peer,true
+}
+// Whether an address is reachable across the internet: a public IPv4 address, or a global
+// unicast IPv6 one (2000::/3).
+address_global :: proc "contextless" (a:Address) -> bool {
+    if a.kind==.IP4 {
+        ip:=a.ip
+        return ip[0]!=0 && ip[0]!=10 && ip[0]!=127 && ip[0]<224 &&
+            !(ip[0]==100 && ip[1]>=64 && ip[1]<=127) && !(ip[0]==169 && ip[1]==254) &&
+            !(ip[0]==172 && ip[1]>=16 && ip[1]<=31) && !(ip[0]==192 && ip[1]==168) &&
+            !(ip[0]==192 && ip[1]==0 && (ip[2]==0 || ip[2]==2)) &&
+            !(ip[0]==198 && ((ip[1]==18 || ip[1]==19) || (ip[1]==51 && ip[2]==100))) &&
+            !(ip[0]==203 && ip[1]==0 && ip[2]==113)
+    }
+    return a.kind==.IP6 && a.ip[0]&0xe0==0x20
+}
+// A global IPv6 address of this machine with a port: the first global unicast one of an interface
+// that is up, which reaches it without a mapping; none without one.
+address_global6 :: proc(port:int) -> Address {
+    interfaces,error:=cnet.enumerate_interfaces(context.temp_allocator)
+    if error!=nil {return {}}
+    for interface in interfaces {
+        if cnet.Link_States.Up not_in interface.link.state {continue}
+        for lease in interface.unicast {
+            ip,is_ip6:=lease.address.(cnet.IP6_Address)
+            if !is_ip6 {continue}
+            a:=Address{kind=.IP6,port=u16(port),ip=transmute([16]u8)ip}
+            if address_global(a) {return a}
+        }
+    }
+    return {}
+}
 
 // "1.2.3.4:7777", "[::1]:7777" or "[2001:db8::1]:7777". A host name is not an address: see resolve_start.
 address_parse :: proc(text:string) -> (Address,bool) {
@@ -36,18 +81,18 @@ address_from_endpoint :: proc "contextless" (endpoint:cnet.Endpoint) -> Address 
         address.kind=.IP4
         for b,i in ip {address.ip[i]=b}
     case cnet.IP6_Address:
-        address.kind=.IP6
-        address.ip=transmute([16]u8)ip
-        // An IPv4 peer of a dual-stack socket, ::ffff:a.b.c.d, is that IPv4 address.
-        mapped:=true
-        for b in address.ip[:10] {mapped&&=b==0}
-        if mapped && address.ip[10]==0xff && address.ip[11]==0xff {
-            address.kind=.IP4
-            copy(address.ip[:4],address.ip[12:])
-            for &b in address.ip[4:] {b=0}
-        }
+        address=address_unmap(transmute([16]u8)ip,address.port)
     }
     return address
+}
+// An IPv6 address with a port; ::ffff:a.b.c.d, as a dual-stack socket shows an IPv4 peer, is that
+// IPv4 address.
+@(private)
+address_unmap :: proc "contextless" (ip:[16]u8,port:u16) -> Address {
+    mapped:=ip[10]==0xff && ip[11]==0xff
+    for i in 0..<10 {mapped&&=ip[i]==0}
+    if mapped {return address_ip4(ip[12],ip[13],ip[14],ip[15],int(port))}
+    return {kind=.IP6,port=port,ip=ip}
 }
 address_to_endpoint :: proc "contextless" (address:Address) -> (endpoint:cnet.Endpoint,ok:bool) {
     #partial switch address.kind {

@@ -139,7 +139,7 @@ saved with the chat.
   without more changes, a returned deletion stays selected.
 - **Over the composer**, the review of the unit shown, folded, says how many changes remain, with
   Revert all and Accept all. A finished subagent also offers it in its report card, and the
-  status line, the bar and the expanded chat count it. Unfolded, one row per change with git's
+  status line, the bar and the expanded chat count it. Unfolded, one row per change with its
   letter (A created, M changed, D deleted), up to `AI_CHANGE_ROWS` and the rest with scroll. A click
   on a row walks to it; with the
   pointer over the row or with the walkthrough on it appear its ↶, which reverts only that change,
@@ -166,12 +166,12 @@ it was already confirmed, it repeats without reverting. It also reverts the reco
 ## The record and its capacity
 
 - The record of a turn lives in memory, with the history it was taken from: closing the editor
-  ends the review, and what the turn wrote is then pending in git like any other change
-  ([pending and kept](git.md#pending-and-kept)). A chat restored from its history comes back
-  without a record. Accepting a turn ends its review and keeps nothing in git.
+  ends the review, and what the turn wrote is then in the working change like any other change,
+  with the turn recorded in it ([authors](kai.md#authors)). A chat restored from its history comes
+  back without a record. Accepting a turn ends its review and records nothing else.
 - `ai_review_reconcile`, on each `document_opened`, follows the scene (values and off state) and
-  the files it is read with: with what the turn had before (the files went back, as with a git
-  discard) it is left declined with `AI_UNDONE_NOTE` and Restore; with what the turn left it
+  the files it is read with: with what the turn had before (the files went back, as with a Kai
+  restore) it is left declined with `AI_UNDONE_NOTE` and Restore; with what the turn left it
   returns to review even if it was declined; with part, it stays as the record says.
 - A `running` or `queued` turn returns as `failed` and starts no process; a subagent the editor
   closed on returns `interrupted` ([reopening](ai-tasks.md#compaction-and-handoff)). If the editor

@@ -49,8 +49,9 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
   as in `mirai share`. Session leases hold what it serves and what it fetches.
 - **Joining** first runs the join of `cook/share` (phase `Updating`), and only then says Hello and
   receives the scene. Into the open project (Session > Join, or `collab.join` without `folder`) it
-  is the three-way update: a file both changed stays the guest's and is listed as kept, never
-  overwritten. Into another `folder` (new, or joined before), once the files and the packages are
+  is the three-way update: a file both changed is merged by the drivers of Kai when they resolve
+  it, and otherwise stays the guest's and is listed as kept, never overwritten. Into another
+  `folder` (new, or joined before), once the files and the packages are
   there the editor opens that folder as File > Open project does, and the editor started on it
   joins the session again with the same invitation, which then finds nothing to fetch. A guest
   needs none of the files beforehand.
@@ -140,15 +141,14 @@ Code: `collab.odin`, `collab_api.odin`, `collab_project.odin` (the project that 
 - **Pings** (`collab_ping.odin`): [figures](editor.md#pings).
 - **Asset files** (`collab_files.odin`, one `File` message): what changes an asset file in
   an editor (an agent's material, a painted texture, an undo) travels to the others (`file_changed`,
-  `file_set`). The host writes it with its step and forwards it; a guest keeps it in the memory of
-  its registry while it is in the session and forgets it when it leaves. To whoever enters, the
-  host sends after the scene the files its registry holds and those git lists as changed since
-  its last commit, which the checkout of the guest lacks.
-- **A file that cannot travel** (larger than `COLLAB_FILE_BYTES`) stays where it was edited and
-  every editor is told (`File_Unsent`, `Collab_State.unsent`): a toast when it happens, a line of
-  Session while it lasts and `unsent` of `collab.status`, with the file, who changed it and what
-  makes it the same for all: committing it and sharing it through the project's repository. It
-  leaves the list when it travels or when whoever changed it leaves.
+  `file_set`) by its address: the sender puts it in its store and the message carries its path,
+  address, size and whether it is there; the others fetch over the exchange of the session only
+  the chunks their stores lack, so a file of any size travels. The host takes it once it has it
+  whole, writes it with its step, records who changed it ([authors](kai.md#authors)) and passes
+  it on; a guest keeps it in the memory of its registry while it is in the session and forgets it
+  when it leaves. To whoever enters, the host sends after the scene the files its registry holds,
+  which the folder the guest joined with lacks. `fetching` of `collab.status` counts those on
+  their way; one whose sender left before it arrived is told.
 - Bar avatars in [panels](panels.md#layout).
 
 Edits:
@@ -174,7 +174,8 @@ Edits:
 
 - The handshake carries `COLLAB_WIRE`, the version of the messages and of `cook/share`, so a guest
   built from another project still gets the host's files. Its Hello carries the world layout: a
-  hash of `COLLAB_VERSION` and of names and sizes of the `World` tables.
+  hash of `COLLAB_VERSION` and of names and sizes of the `World` tables, and the key of its
+  editor, which the host records the guest's changes under.
 - If the layout differs, the host refuses the Hello (`Denied_Version`) and the guest's session
   ends saying to build its editor, whose files are the host's by then, and join again. A guest
   that joins into another folder never meets it: the editor opened there is built from the host's

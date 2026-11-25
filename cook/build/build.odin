@@ -9,6 +9,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/cache"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/subprocess"
@@ -81,6 +82,7 @@ Desc :: struct {
     test:Test_Options,           // Test: how its executable runs
     store_root:string,           // the store the packages of the project and its plugins are refreshed in and listed from; "": the machine's (store.default_root)
     refresh_skip:bool,           // Build: the packages are left as they are, for a caller that refreshes them with the library built (a join, with its peers)
+    peers:cache.Peers_Open,      // Game: what gives its cook what the peers of the project's org built and takes what it builds (cook/kai.peers_open); nil: none
     allocator:runtime.Allocator, // of the job. Unset: context.allocator
 }
 
@@ -120,6 +122,7 @@ Job :: struct {
     refresh:Import_Refresh,
     compiled_status:Status,
     store_root:string,          // Desc.store_root, or the machine's
+    peers:cache.Peers_Open,     // Desc.peers
     compiler:string,
     flags:[]string,             // what identifies the build besides its sources
     staged:string,              // what the compiler writes
@@ -229,6 +232,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
     job.engine=desc.engine
     job.store_root=strings.clone(desc.store_root!=""?desc.store_root:store.default_root(context.temp_allocator),a)
+    job.peers=desc.peers
     if desc.action==.Build && !desc.refresh_skip {
         roots:=imports_roots(p)
         job.imports=make([]string,len(roots),a)

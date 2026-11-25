@@ -139,9 +139,6 @@ Options :: struct {
     join:string,     // an address: enters the session of another editor
     launcher:bool,   // only the projects of the machine, to open one (projects.odin)
     from_launcher:bool, // a launcher opened it: a Cancel of the shaders it starts with goes back to one
-    git_init:bool,   // the project becomes a repository once git answers, with git_lfs and git_remote
-    git_lfs:bool,
-    git_remote:string,
     gpu_turn:uintptr, // the handle of the turn of the GPU the tool gave it (gpu_turn.odin)
 }
 
@@ -260,7 +257,8 @@ Session :: struct {
     processes:^Player_Processes,
     view_modes:^View_Modes,
     panels:^Project_Panels,
-    git:^Git,
+    kai:^Kai,
+    kai_authorship:^Kai_Authorship,
     projects:^Projects,
     api:^Api,
     profiles:Profiles,
@@ -495,7 +493,6 @@ open :: proc(info:^core.World_Info,args:[]string) -> (s:^Session,code:int) {
     events_open(s)
     s.projects.launcher=options.launcher
     if options.launcher {projects_show(s)} else if has_project && !options.headless {projects_remember(s)}
-    if options.git_init && has_project {git_init_later(s,options.git_remote,options.git_lfs)}
 
     if !options.check_api {
         if options.view!="" {view_parse(&s.viewport.orbit,options.view)}
@@ -798,7 +795,7 @@ between_frames :: proc(s:^Session) {
     asset_document_between(s)
     build_poll(s)
     import_poll(s)
-    git_poll(s)
+    kai_poll(s)
     projects_poll(s)
     plugins_git_poll(s)
     requests_run(s)
@@ -1229,10 +1226,11 @@ session_bind :: proc(s:^Session) -> bool {
     s.processes=core.world_storage_of(ref,Player_Processes)
     s.view_modes=core.world_storage_of(ref,View_Modes)
     s.panels=core.world_storage_of(ref,Project_Panels)
-    s.git=core.world_storage_of(ref,Git)
+    s.kai=core.world_storage_of(ref,Kai)
+    s.kai_authorship=core.world_storage_of(ref,Kai_Authorship)
     s.projects=core.world_storage_of(ref,Projects)
     s.api=core.world_storage_of(ref,Api)
-    return !(s.selection==nil || s.edits==nil || s.document==nil || s.viewport==nil || s.gui==nil || s.console==nil || s.build==nil || s.outliner==nil || s.inspector==nil || s.content==nil || s.materials==nil || s.thumbnails==nil || s.graphics==nil || s.preferences==nil || s.importer==nil || s.finder==nil || s.ai==nil || s.play_players==nil || s.play_history==nil || s.processes==nil || s.view_modes==nil || s.panels==nil || s.git==nil || s.projects==nil)
+    return !(s.selection==nil || s.edits==nil || s.document==nil || s.viewport==nil || s.gui==nil || s.console==nil || s.build==nil || s.outliner==nil || s.inspector==nil || s.content==nil || s.materials==nil || s.thumbnails==nil || s.graphics==nil || s.preferences==nil || s.importer==nil || s.finder==nil || s.ai==nil || s.play_players==nil || s.play_history==nil || s.processes==nil || s.view_modes==nil || s.panels==nil || s.kai==nil || s.kai_authorship==nil || s.projects==nil)
 }
 
 // What Session holds that core.value_free cannot free: the arenas of the
@@ -1257,7 +1255,7 @@ session_destroy :: proc(s:^Session) {
     import_end(s)
     projects_cancel(s)
     plugins_git_free(s)
-    if s.git!=nil {git_entities_free(&s.git.entities)}
+    kai_close(s)
     ai_destroy(s)
     thumbnails_destroy(s)
     gui_destroy(s.gui)
@@ -1334,9 +1332,6 @@ options_read :: proc(args:[]string) -> (o:Options,ok:bool) {
         case "--name":       o.name=value(args,&i) or_return
         case "--launcher":   o.launcher=true
         case "--from-launcher": o.from_launcher=true
-        case "--git-init":   o.git_init=true
-        case "--git-lfs":    o.git_lfs=true
-        case "--git-remote": o.git_remote=value(args,&i) or_return
         case "--join":       o.join=value(args,&i) or_return
         case "--share":
             o.share=-1

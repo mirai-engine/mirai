@@ -1,9 +1,9 @@
 ---
 name: mirai-editor
-description: The Mirai editor (package `editor`, with `editor/acp`, `editor/ai_store`,
-  `editor/git` and `editor/history`) - session, Play, Simulate and networked
-  Play, undo (`edits_*`, the journal), viewport and tools (`tool_set`/`tool_on`), inspector,
-  content browser, prefabs, collaboration (`--share`, `--join`), AI chats and extensions. Use when
+description: The Mirai editor (package `editor`, with `editor/acp`, `editor/ai_store` and
+  `editor/history`) - session, Play, Simulate and networked Play, undo (`edits_*`, the journal),
+  viewport and tools (`tool_set`/`tool_on`), inspector, content browser, prefabs, collaboration
+  (`--share`, `--join`), the Kai tab and `kai.*` methods, AI chats and extensions. Use when
   changing the editor, adding a tool or panel of a plugin, editing the scene from editor code or
   driving an open editor.
 ---
@@ -87,8 +87,11 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   [change sets](references/ai-review.md#change-sets),
   [finish, revert and retry](references/ai-review.md#finish-revert-and-retry) and
   [the record](references/ai-review.md#the-record-and-its-capacity).
-- **Git** (Git tab, init, commit, push, pull, merge mode, `git.*` methods):
-  [operations](references/git.md#operations) and [merge mode](references/git.md#merge-mode).
+- **Kai in the editor** (Kai tab, what the editor pushes to the workspace, `kai.*` methods,
+  dialogs, conflicts by field, coauthors): [working copy](references/kai.md#working-copy),
+  [team](references/kai.md#team), [conflicts](references/kai.md#conflicts) and
+  [authors](references/kai.md#authors). What Kai is (changes, operations, orgs, pairing,
+  proposals, private files, the node) is [mirai-kai](../mirai-kai/SKILL.md).
 - **Tools, panels, cards, inspection modes, API methods, inspector, asset types and thumbnails of
   a plugin**: [package rules](references/extensions.md#package-rules),
   [viewport tool](references/extensions.md#a-viewport-tool),
@@ -168,9 +171,9 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   `packages.mirai` and its documents, never a blob of the store nor a source outside the project.
 - State located according to [the session](references/editor.md#the-session). `Api` keeps only a
   pointer because the server must stay where it was born.
-- A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Git`, `^Edits`),
-  not the `Session`, when it needs nothing else. What does not need the `Session` is its own
-  package under `editor/` (`acp`, `ai_store`, `diff`, `git`, `history`, `records`), and `editor`
+- A procedure takes the storage it reads and writes (`^Ai`, the chat store, `^Edits`), not the
+  `Session`, when it needs nothing else. What does not need the `Session` is its own package under
+  `editor/` (`acp`, `ai_store`, `history`, `records`) or in `cook/kai`, and `editor`
   keeps the thin part that reaches the session; `history` declares the storages `Edits` and
   `Selection`. Files outside `ai_*.odin` do not reach the
   fields of `Ai`: they go through `editor/ai_outside.odin` and the procedures of the tasks.
@@ -253,10 +256,10 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
 ## Verification
 
 - `mirai check editor` and the `editor/` of the affected plugin; `mirai test editor <names>` with
-  the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; git commands
-  and what they print: `mirai test editor/git`; the journal and undo without a session:
+  the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; Kai:
+  [its focal tests](references/kai.md#verification); the journal and undo without a session:
   `mirai test editor/history`; the rows and texts of a table of game data:
-  `mirai test cook/records`; the line diff: `mirai test editor/diff`. The editor's tests need
+  `mirai test cook/records`; the line diff: `mirai test std/diff`. The editor's tests need
   more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
 - Commands: `editor/commands_test.odin` (every entry calls a registered method with params it
   takes or only changes what the person sees, a gesture runs between frames as a step of the

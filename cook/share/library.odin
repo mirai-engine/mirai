@@ -6,7 +6,9 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "mirai:asset"
+import "mirai:cook/cache"
 import "mirai:cook/import/sources"
+import kai_assets "mirai:cook/kai"
 import "mirai:cook/textures"
 import "mirai:exchange"
 import "mirai:project"
@@ -261,7 +263,12 @@ package_take :: proc(
     if os.make_directory_all(scratch)!=nil {return fmt.tprintf("%s could not be made: give this user access to %s",scratch,root)}
     defer base.remove_all(scratch)
     fetching:=Node_Fetching{node=n,cancel=cancel}
-    options:=sources.Library_Options{store=s,source=node_source_cancellable(&fetching),fast_textures=true,root=root,plugins=library,worker=worker,gpu=gpu}
+    // The session's peers first: they hold what this session offers and answer at once, while the
+    // mesh of the project's org waits for its peers on a miss.
+    shared,close:=kai_assets.peers_open(s.root,root)
+    defer if close!=nil {close(shared)}
+    chain:=cache.Chain{first=node_source_cancellable(&fetching),second=shared}
+    options:=sources.Library_Options{store=s,source=cache.chain_source(&chain),fast_textures=true,root=root,plugins=library,worker=worker,gpu=gpu}
     report:=sources.project_add(scratch,manifest,"",nil,options,context.temp_allocator)
     if take_cancelled(cancel) {return TAKE_CANCELLED}
     if len(report.failures)>0 {return report.failures[0]}

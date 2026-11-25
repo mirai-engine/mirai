@@ -73,7 +73,8 @@ mirai agent updates all
 5. **Permissions (`ai_permissions.odin`):** `mirai` tools auto-allow. Codex (`ai_permission_policy`)
    rejects outside-sandbox/project actions. Claude sets `_meta.claudeCode.options.allowedTools`
    (`mcp__mirai`) and `_meta.claudeCode.options.settings` (`AI_CLAUDE_SESSION_META`: `ask` on
-   deletes, `asset_delete`, `panel_delete`, `git_discard`; `allow` on `mv`). Codex writes
+   deletes, `asset_delete`, `panel_delete`, `kai_restore`, `kai_undo`; `allow` on `mv`). Codex
+   writes
    `.codex/rules/mirai.rules` (`prefix_rule` `decision="prompt"`) + trusts project in
    `CODEX_CONFIG` (`ai_permission_deletes`); `apply_patch` deletes and full-path Git Bash on
    Windows bypass rules; approving a Codex delete runs unsandboxed. Pending prompts answer

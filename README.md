@@ -136,8 +136,8 @@ That builds and opens the editor with the included [demo](demo). To play it inst
 platform from the [releases](https://github.com/mirai-engine/mirai/releases).
 
 Building needs Odin `dev-2026-11` and the platform's graphics driver; `./mirai doctor` says what is
-missing. `./mirai setup git`, once per clone, makes git merge and diff scenes and other
-documents. Platform setup, templates and commands are in
+missing. A project's version control is Kai, in the editor and in `./mirai kai`. Platform setup,
+templates and commands are in
 [projects](.agents/skills/mirai-projects/references/projects.md#common-commands).
 
 ## Documentation
@@ -165,6 +165,7 @@ with a map from tasks to references.
 | Standard library | [mirai-std](.agents/skills/mirai-std/SKILL.md) |
 | Platform and audio | [mirai-platform](.agents/skills/mirai-platform/SKILL.md) |
 | Content-addressed store | [mirai-store](.agents/skills/mirai-store/SKILL.md) |
+| Version control, teams and the Kai node | [mirai-kai](.agents/skills/mirai-kai/SKILL.md) |
 
 The layers and contracts are in [ARCHITECTURE.md](docs/ARCHITECTURE.md) and the project rules in
 [AGENTS.md](AGENTS.md).

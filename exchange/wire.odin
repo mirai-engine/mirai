@@ -2,7 +2,7 @@ package exchange
 
 import "mirai:store"
 
-// Messages of exchange protocol 6, little endian, a kind byte first. Names are
+// Messages of exchange protocol 7, little endian, a kind byte first. Names are
 // a length byte and their bytes.
 //
 // Control channel:
@@ -13,6 +13,8 @@ import "mirai:store"
 //   Ref       namespace, name, found u8, address
 //   Names_Get namespace, after
 //   Names     namespace, after, more u8, count u16, entries of name and address
+//   Ref_Changed namespace, name, address: a ref of this end now names address,
+//             zero once removed
 // Data channel, the answers to asks in the order asked:
 //   Chunk     address, codec u8, raw u32, bytes as stored in the sender's frame.
 //             The receiver hashes all raw bytes after decoding.
@@ -25,6 +27,7 @@ import "mirai:store"
 @(private) MSG_NAMES_GET :: 4
 @(private) MSG_NAMES :: 5
 @(private) MSG_BAD :: 6
+@(private) MSG_REF_CHANGED :: 7
 
 @(private) MSG_CHUNK :: 1
 @(private) MSG_LACK :: 2
@@ -38,6 +41,7 @@ import "mirai:store"
 @(private) MSG_ADDRESS_BYTES :: 1+32 // Lack and Bad
 @(private) MSG_NAMES_GET_MAX :: 1+2*(1+store.NAME_MAX)
 @(private) MSG_REF_MAX :: MSG_NAMES_GET_MAX+1+32
+@(private) MSG_REF_CHANGED_MAX :: MSG_NAMES_GET_MAX+32
 @(private) MSG_NAMES_MAX :: MSG_NAMES_GET_MAX+3+NAMES_REPLY_BYTES
 
 @(private)
@@ -157,6 +161,7 @@ message :: proc(x:^Exchange,i:int,lane:int,data:[]u8) {
     case MSG_NAMES_GET: on_names_get(x,i,data)
     case MSG_REF: on_ref(x,i,data)
     case MSG_NAMES: on_names(x,i,data)
+    case MSG_REF_CHANGED: on_ref_changed(x,i,data)
     case: peer_bad(x,i)
     }
 }

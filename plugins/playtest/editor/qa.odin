@@ -192,7 +192,7 @@ qa_arm :: proc(s:^editor.Session,r:^editor.Run,limits:Qa_Limits) -> ^Run_Qa {
     q.stuck,q.fell=false,false
     _,body:=editor.play_focused(w)
     if problems:=host.app_world_storage(s.app,w.data,core.Problems);problems!=nil {q.serial=problems.serial}
-    q.memory_base=platform.process_memory().private
+    q.memory_base=base.process_memory().private
     q.memory_next=q.ran+QA_MEMORY_EVERY
     if q.broken=="" {
         if e:=qa_entry_next(q);e!=nil {e.kind,q.armed_at=.Monitors,q.log_count-1}
@@ -387,7 +387,7 @@ qa_tick :: proc(s:^editor.Session,r:^editor.Run) {
     }
     if limits.memory_mb>0 && q.ran>=q.memory_next {
         q.memory_next=q.ran+QA_MEMORY_EVERY
-        now:=platform.process_memory().private
+        now:=base.process_memory().private
         grown:=now>q.memory_base?f32(now-q.memory_base)/(1024*1024):0
         if grown>limits.memory_mb {qa_violation_add(q,{kind=.Memory,severity=.Warning,tick=tick,position=at,value=grown,limit=limits.memory_mb},true)}
     }

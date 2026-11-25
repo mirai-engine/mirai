@@ -10,9 +10,11 @@ import "core:testing"
 import "core:thread"
 import "mirai:asset"
 import "mirai:cook/import/sources"
+import ka "mirai:cook/kai"
 import "mirai:cook/share"
 import "mirai:core"
 import "mirai:editor/history"
+import vcs "mirai:kai"
 import wire "mirai:net"
 import "mirai:std/base"
 import "mirai:std/serial"
@@ -389,6 +391,8 @@ the_command_joins_an_editors_project_without_entering_its_scene :: proc(t:^testi
     serial.write_scalar(&hello,st.layout)
     serial.write_string(&hello,"Ben")
     serial.write_scalar(&hello,u64(1))
+    identity:vcs.Key
+    serial.write_bytes(&hello,identity[:])
     collab_receive(&host.s,st,1,serial.writer_bytes(&hello),n.now)
     pending:=len(peer.out)
     if !testing.expect(t,pending>0 && !peer.joined) {return}
@@ -510,4 +514,140 @@ what_the_host_changes_in_the_session_reaches_the_guest_by_three_ways :: proc(t:^
     testing.expectf(t,update>0 && update<first/2,"only what differs travels: %d bytes after %d",update,first)
     testing.expect(t,api_entity(edited_world(&guest.s),lamp)!=core.NONE,"the live edit arrived")
     testing.expect_value(t,guest.world.entities.alive,host.world.entities.alive)
+}
+
+// A file an editor of the session changes travels by its address, whatever
+// its size: the message carries the address, and the other end fetches the
+// chunks over the exchange of the session.
+@(test)
+a_large_file_travels_in_a_session_by_address :: proc(t:^testing.T) {
+    n:=new(Share_Net);defer free(n)
+    host,guest:=new(Share_End),new(Share_End)
+    defer {free(host);free(guest)}
+    ok:=share_net_init(t,n,host,guest,"collab-share-large")
+    defer {share_end_destroy(guest);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
+    if !ok {return}
+    if _,made:=share_host_project(t,n);!made || !share_join(t,n) {return}
+
+    SIZE :: 33<<20 // past what a session once carried in one message
+    data:=make([]u8,SIZE);defer delete(data)
+    for &b,i in data {b=u8(i*131+i>>11)}
+    if !testing.expect(t,file_set(&guest.s,fmt.tprintf("%s/assets/large.bin",guest.root),data)) {return}
+    gst:=collab_state(&guest.s)
+    collab_files_send(&guest.s,gst)
+    out:=gst.peers[0].out[:]
+    if !testing.expect(t,len(out)>0) {return}
+    testing.expectf(t,len(out[len(out)-1])<256,"the message carries the address, not the bytes: %d bytes",len(out[len(out)-1]))
+    arrived:=false
+    for _ in 0..<200_000 {
+        share_step(n)
+        if held,found:=asset.registry_memory_find(&host.assets.registry,"large.bin");found {
+            arrived=len(held.data)==SIZE && mem.compare(held.data,data)==0
+            break
+        }
+    }
+    testing.expect(t,arrived,"the host has the whole file")
+    testing.expect_value(t,len(collab_state(&host.s).fetches),0)
+}
+
+// The host records in the working change of its Kai workspace the editors
+// of the session whose edits it applied, by the key each said hello with,
+// and the turns of agents that edited.
+@(test)
+collab_coauthorship_and_agent_turns_record_in_change :: proc(t:^testing.T) {
+    n:=new(Share_Net);defer free(n)
+    host,guest:=new(Share_End),new(Share_End)
+    defer {free(host);free(guest)}
+    ok:=share_net_init(t,n,host,guest,"collab-share-authors")
+    kais:=new([2]Kai);defer free(kais)
+    authorship:=new([2]Kai_Authorship)
+    defer {
+        for &q in authorship {delete(q.items);delete(q.waiting)}
+        free(authorship)
+    }
+    host.s.kai,host.s.kai_authorship=&kais[0],&authorship[0]
+    guest.s.kai,guest.s.kai_authorship=&kais[1],&authorship[1]
+    defer {share_end_destroy(guest);kai_close(&host.s);share_end_destroy(host);wire.sim_network_destroy(&n.sim);delete(n.frame_bytes)}
+    if !ok {return}
+    if _,made:=share_host_project(t,n);!made {return}
+    guest_identity,identity_error:=ka.identity_load(&guest.s.store)
+    if !testing.expect_value(t,identity_error,vcs.Error.None) {return}
+    guest_key:=guest_identity.key
+    testing.expect_value(t,kai_enable(&host.s),"")
+    w:=kai_workspace(&host.s)
+    if !testing.expectf(t,w!=nil,"the host's workspace opens: %v",host.s.kai.error) {return}
+    if !share_join(t,n) {return}
+    testing.expect(t,kai_workspace(&guest.s)==nil,"a guest keeps no workspace")
+    // The guest proves its key with its Ready, after it has the scene.
+    for _ in 0..<2000 {
+        if collab_state(&host.s).peers[1].joined {break}
+        share_step(n)
+    }
+    testing.expect(t,collab_state(&host.s).peers[1].key==guest_key,"the guest proved its key by signing the host's challenge")
+
+    // The guest edits: the host applies it.
+    made:=entity_create(&guest.s,{name="Lamp",named=true})
+    prefab_fixture_step(&guest.f)
+    lamp:=api_entity_id(edited_world(&guest.s),made)
+    for _ in 0..<2000 {
+        share_step(n)
+        if api_entity(edited_world(&host.s),lamp)!=core.NONE {break}
+    }
+    if !testing.expect(t,api_entity(edited_world(&host.s),lamp)!=core.NONE,"the host applied the guest's edit") {return}
+
+    // An agent of the host edits in a turn of its own.
+    TASK :: 7
+    host.edits.author=history.Edit_Author(TASK)
+    entity_create(&host.s,{name="Crate 2",named=true})
+    prefab_fixture_step(&host.f)
+    host.edits.author=history.EDIT_AUTHOR_USER
+
+    testing.expect_value(t,kai_snapshot(&host.s),"")
+    c,e:=vcs.change_get(w.repo.s,vcs.repo_working(&w.repo),context.temp_allocator)
+    if !testing.expect_value(t,e,vcs.Error.None) {return}
+    testing.expectf(t,len(c.coauthors)==1 && c.coauthors[0]==guest_key,"the guest is a coauthor: %v",c.coauthors)
+    task:u64
+    read:bool
+    if len(c.attachments)==1 && c.attachments[0].type==KAI_TURN {task,read=kai_turn_read(w.repo.s,c.attachments[0].object)}
+    testing.expectf(t,read && task==TASK,"the agent's turn is recorded: %v",c.attachments)
+    testing.expect(t,c.author==host.s.kai.key,"the host signs the change")
+    // Once recorded, nothing is recorded twice.
+    testing.expect_value(t,kai_snapshot(&host.s),"")
+    again,_:=vcs.change_get(w.repo.s,vcs.repo_working(&w.repo),context.temp_allocator)
+    testing.expect(t,len(again.coauthors)==1 && len(again.attachments)==1)
+}
+
+// A key a guest claims is a coauthor only when it signed the host's
+// challenge with it: someone else's key, another challenge or no signature
+// records nothing.
+@(test)
+a_guest_proves_its_key_before_it_is_a_coauthor :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"collab-key-proof");if folder=="" {return}
+    opened,error:=store.open(folder)
+    if !testing.expect_value(t,error,store.Error.None) {return}
+    s:=new(Session);defer free(s)
+    s.store=opened
+    defer store.close(&s.store)
+    k:=new(Kai);defer free(k)
+    s.kai=k
+    identity,_:=ka.identity_load(&s.store)
+    k.key=identity.key
+    challenge,other:[COLLAB_CHALLENGE]u8
+    challenge[0],other[0]=1,2
+    signature:[size_of(vcs.Signature)]u8
+    if !testing.expect(t,collab_key_sign(s,challenge,signature[:])) {return}
+    stranger:=vcs.identity_make().key
+    cases:=[]struct{key:vcs.Key,challenge:[COLLAB_CHALLENGE]u8,signature:[]u8,valid:bool}{
+        {identity.key,challenge,signature[:],true},
+        {stranger,challenge,signature[:],false},
+        {identity.key,other,signature[:],false},
+        {identity.key,challenge,make([]u8,len(signature),context.temp_allocator),false},
+        {{},challenge,signature[:],false},
+    }
+    for c,i in cases {
+        testing.expectf(t,collab_key_valid(c.key,c.challenge,c.signature)==c.valid,"case %d",i)
+    }
+    // A guest whose store is not the key it said signs nothing.
+    k.key=stranger
+    testing.expect(t,!collab_key_sign(s,challenge,signature[:]))
 }
