@@ -77,7 +77,7 @@ bool fade_pixel_left(uint2 pixel, float fade) {
 [[vk::binding(SLOT_SURFACE, 0)]] Texture2D<float4> surface_specular : register(MIRAI_REGISTER(t, SLOT_SURFACE), space0);
 // The views target of the view while it has nested views (FRAME_FLAG_NESTED):
 // 1 + the nested view of each pixel, 0 for the view itself (pixel_view).
-[[vk::binding(SLOT_VIEWS, 0)]] Texture2D<uint> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
+[[vk::binding(SLOT_VIEWS, 0)]] [[vk::image_format("r8ui")]] Texture2D<uint> pixel_views : register(MIRAI_REGISTER(t, SLOT_VIEWS), space0);
 #include "brdf.slang"
 #include "air.slang"
 

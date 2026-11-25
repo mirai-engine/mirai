@@ -73,9 +73,11 @@ camera and visible scene since last frame, reprojecting histories instead of cut
   G-buffer (and the `Gbuffer` stage) the viewmodel is culled (`FRAME_FLAG_FOREGROUND`), rastered
   above 15/16 and resolved over the G-buffer with its projection and its previous one (motion).
   The pyramid keeps the world alone: the next frame culls nothing behind the weapon.
-- **Tag:** `foreground_tag.frag` writes `VIEWS_FOREGROUND` and the kept share (`VIEWS_KEPT`) into
-  the views target: `min(1, (world depth - FOREGROUND_CLEARANCE) / its depth)`, from the world
-  depth before the resolve. `pixel_at` returns the cleared place, `Pixel.true_position` the drawn
+- **Tag:** `foreground_kept.comp` takes the least over its pixels of `min(1, (world depth -
+  FOREGROUND_CLEARANCE) / its depth)`, from the world depth before the resolve: one share for the
+  view, as a share of each pixel shows the edge of a wall behind part of the weapon on it.
+  `foreground_tag.frag` writes `VIEWS_FOREGROUND` and that share (`VIEWS_KEPT`) into the views
+  target. `pixel_at` returns the cleared place, `Pixel.true_position` the drawn
   one; `pixel_side` keeps it apart in spatial filters, `pixel_across` takes the maps of the world
   at `FOREGROUND_MARK_DEPTH` or farther, `pixel_rays_omitted` leaves `RAY_BODY`/`RAY_BODY_SMALL`
   out of its rays, contact occlusion skips it. A mask of nested views keeps the tags.

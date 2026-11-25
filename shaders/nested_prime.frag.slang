@@ -7,7 +7,7 @@
 
 struct Params_Block { uint index; uint pad0; uint pad1; uint pad2; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
-[[vk::binding(SLOT_PASS0, 0)]] Texture2D<uint> views : register(MIRAI_REGISTER(t, SLOT_PASS0), space0); // 1 + the nested view of each pixel
+[[vk::binding(SLOT_PASS0, 0)]] [[vk::image_format("r8ui")]] Texture2D<uint> views : register(MIRAI_REGISTER(t, SLOT_PASS0), space0); // 1 + the nested view of each pixel
 
 [shader("fragment")]
 float main(float4 pixel : SV_Position) : SV_Depth {

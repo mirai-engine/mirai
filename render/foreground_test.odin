@@ -353,7 +353,8 @@ the_shadow_of_the_body_is_the_same_with_a_viewmodel :: proc(t: ^testing.T) {
 	scene_given(r, {s.floor, body}, nil, sun, {})
 	scene_foreground_bodies(r, 0, {1}, 1)
 	without := ground(t, &f)
-	testing.expect(t, r.targets.views == 0, "without a viewmodel the view has no views target")
+	// Without a viewmodel nothing of it is made: no views target, no share, no maps below the pool.
+	testing.expect(t, r.targets.views == 0 && r.foreground_kept == 0 && r.targets.shadow_raster.body == 0, "without a viewmodel the view makes nothing of it")
 	scene_given(r, {s.floor, body, s.bar, s.mark}, nil, sun, {})
 	scene_foreground_bodies(r, 0, {1, 2, 3}, 1)
 	with := ground(t, &f)
