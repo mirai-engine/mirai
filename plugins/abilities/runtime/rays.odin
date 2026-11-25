@@ -142,14 +142,13 @@ rays :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Time,de
         #partial switch h.shape {
         case .Ray: shots_add(t,e,u,h,row,i)
         case .Self:
-            if !decides {continue}
+            // One without an effect only kicks the look: a recovery.
+            if !decides || h.effect=={} {continue}
             event_push(t,{kind=.Hit,entity=e,ability=u.state.ability,window=i8(i),zone=-1,cue=w.cue,target=e})
             if row<len(t.sheets.hit_channels) {cue_emit(t,h.effect.on_hit,t.sheets.hit_channels[row][0],e)}
-            if h.effect!={} {
-                effect:=h.effect
-                effect.target_tags={}
-                ability_effect(t.requests,e,effect,e)
-            }
+            effect:=h.effect
+            effect.target_tags={}
+            ability_effect(t.requests,e,effect,e)
         }
     }
 }
@@ -208,14 +207,23 @@ kicks :: proc(t:^Tick,u:^Actor,a:^Ability,before,at:Ability_Time) {
     }
 }
 
-// Plays the on_begin of window w where its hitbox says: at its socket, or at the user.
+// Plays the on_begin of window w where its hitbox says: at its socket, at the muzzle of a ray (its
+// center in the axes of the user), or at the user.
 @(private)
 window_cue :: proc(t:^Tick,e:core.Entity,u:^Actor,w:^Ability_Window,channel:core.Birth_Channel) {
     if w.on_begin.sound=={} && channel==0 {return}
-    if h:=record_sheet(t.hitboxes,w.hitbox);h!=nil && h.socket[0]!=0 {
-        if pose,placed:=socket_pose(t,e,u,base.text_get(h.socket[:]));placed {
-            audio.cue_play(t.w.sounds,t.w.births,w.on_begin,channel,pose,e)
-            return
+    if h:=record_sheet(t.hitboxes,w.hitbox);h!=nil {
+        if h.socket[0]!=0 {
+            if pose,placed:=socket_pose(t,e,u,base.text_get(h.socket[:]));placed {
+                audio.cue_play(t.w.sounds,t.w.births,w.on_begin,channel,pose,e)
+                return
+            }
+        } else if h.shape==.Ray {
+            if placed,found:=core.get(t.w.worlds,e);found {
+                center,rotation:=hitbox_world(h,placed.transform)
+                audio.cue_play(t.w.sounds,t.w.births,w.on_begin,channel,mm.Transform{center,rotation,1},e)
+                return
+            }
         }
     }
     cue_emit(t,w.on_begin,channel,e)
