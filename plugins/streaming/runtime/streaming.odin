@@ -84,9 +84,15 @@ Home :: struct {entity,section:core.Entity}
 // from a section that is loaded and on where it is. Only what moved, or what
 // a section that changed may hold, is looked at, and where each hangs is
 // looked up again only when the hierarchy changed.
-@(step="fixed")
+//
+// The other step that writes Parent is inp.input_mounts, which hangs a rider
+// from its mount and marks it core.Carried: the Parent of what is carried is
+// its own. This step reads Carried, so it runs after it (stage intent after
+// input), and touches no carried entity, even on the tick it mounts.
+@(step="fixed",stage="intent")
 streaming_crossings :: proc(
     motions:^core.Table(core.Motion,.Read),references:^core.Table(scene.Scene_Reference,.Read),worlds:^core.Table(core.World_Transform,.Read),roaming:^core.Table(scene.Roaming,.Read),
+    carried:^core.Table(core.Carried,.Read),
     hierarchy:core.Ref(core.Hierarchy),parents:^core.Table(core.Parent),transforms:^core.Table(core.Transform),places:^core.Places,members:^core.Table(scene.Section_Member),
     crossings:^Streaming_Crossings,problems:^core.Problems,
 ) {
@@ -112,7 +118,7 @@ streaming_crossings :: proc(
         if !core.at(motions,row).awake {continue}
         e:=core.entity_at(motions,row)
         at:=core.row_of(worlds,e)
-        if at<0 || !core.changed(worlds,moved,at) {continue}
+        if at<0 || !core.changed(worlds,moved,at) || core.has(carried,e) {continue}
         index:=core.entity_index(e)
         if index>=len(crossings.homes) && resize(&crossings.homes,index+1)!=nil {
             core.report(problems,e,"streaming.memory","out of memory to follow what moves between sections; this entity stays in the section it hangs from: free memory")
@@ -140,7 +146,7 @@ streaming_crossings :: proc(
     for row in 0..<core.raw_count(t) {
         e:=t.entities[row]
         at:=core.row_of(worlds,e)
-        if at<0 || core.raw_row(core.raw(parents),e)>=0 || !sections && !core.changed(worlds,moved,at) {continue}
+        if at<0 || core.raw_row(core.raw(parents),e)>=0 || core.has(carried,e) || !sections && !core.changed(worlds,moved,at) {continue}
         crossing_hang(crossings,worlds,hierarchy,parents,transforms,places,e,at,core.NONE,problems,false)
     }
 }

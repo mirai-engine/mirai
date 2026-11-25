@@ -205,7 +205,9 @@ mounts_upkeep :: proc(a:^Apply) {
 // at its place and is carried, and the seat that drives from it is in its
 // input context; a rider that left hangs from nothing at the first clear
 // exit. The seats that read the actions of a rider that keeps its input are
-// indexed here (seat_of).
+// indexed here (seat_of). The Parent of a carried entity is this step's alone:
+// the other step that writes Parent (streaming_crossings) reads Carried, runs
+// after it and leaves what is carried as it is.
 @(step="fixed",stage="input",after="input_drive")
 input_mounts :: proc(
     es:core.Ref(core.Entities),mounts:^core.Table(Mount,.Read),carried:^core.Table(core.Carried),parents:^core.Table(core.Parent),
