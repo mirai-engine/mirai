@@ -92,3 +92,41 @@ bench_place :: proc(i,run:int,far:bool) -> [3]f32 {
     near:=[3]f32{f32(i%5)*0.5-1+f32(run%100)*0.005,f32(i%3)*0.3-0.3,-1.5-f32(i%4)*0.25}
     return near*20 if far else near
 }
+
+// The time of the game thread of a tick that starts 1, 8 and 32 voices of a
+// loaded sound in one batch, on a mixer with a decoder thread: an Ogg Vorbis
+// at 44.1 kHz and a lossless sound at the rate of the mixer.
+@(test)
+benchmark_starts_on_one_tick :: proc(t:^testing.T) {
+    if !AUDIO_BENCHMARK {return}
+    RUNS :: 200
+    samples:=make([]i16,48000,context.temp_allocator)
+    for &sample,i in samples {sample=i16(9000*math.sin_f32(f32(i)*0.031))}
+    lossless,_:=lossless_encode(samples,1,MIXER_RATE,context.temp_allocator)
+    Named :: struct {name:string,file:[]u8}
+    times:=make([]f64,RUNS,context.temp_allocator)
+    for sound_file in ([?]Named{{"Ogg Vorbis",#load("testdata/sine_mono.ogg")},{"lossless",lossless}}) {
+        for count in ([?]int{1,8,32}) {
+            m:=test_mixer(t,{voice_capacity=64,decoder_thread=true})
+            sound,_:=sound_load(m,sound_file.file)
+            out:=make([]f32,CHUNK_FRAMES*8*2,context.temp_allocator)
+            for &sample in times {
+                start:=time.tick_now()
+                mixer_batch_begin(m)
+                for _ in 0..<count {voice_play(m,sound)}
+                mixer_batch_end(m)
+                sample=time.duration_microseconds(time.tick_since(start))
+                // Every voice ends before the next tick of the measure.
+                for &shadow,i in m.shadows {
+                    if shadow.active {command_push(m,{kind=.Voice_Stop,index=u32(i),generation=shadow.generation})}
+                }
+                mixer_render(m,out)
+                mixer_render(m,out)
+                for m.free_count<len(m.shadows) || m.free_feed_count<len(m.feeds) {mixer_render(m,out[:CHUNK_FRAMES*2]);mixer_update(m)}
+            }
+            mixer_destroy(m)
+            slice.sort(times)
+            fmt.printfln("%-10s %2d starts on one tick: median %7.1f us, 90th %7.1f us",sound_file.name,count,times[RUNS/2],times[RUNS*9/10])
+        }
+    }
+}

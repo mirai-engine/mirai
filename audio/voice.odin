@@ -135,7 +135,7 @@ voice_play :: proc(m:^Mixer,sound:Sound,desc:Voice_Desc=VOICE_DEFAULT) -> Voice 
         feed_prepare(f,sound_index,int(offset),int(slot.loop_start),desc.loop)
         m.free_feed_count-=1
         pitch:=clamp(desc.pitch if desc.pitch>0 else 1,PITCH_MIN,PITCH_MAX)
-        feed_hand_over(m,f,feed_start_frames(u64(f64(pitch)*rate/f64(m.sample_rate)*f64(ONE))))
+        feed_hand_over(m,f,slot.primed,feed_start_frames(u64(f64(pitch)*rate/f64(m.sample_rate)*f64(ONE))))
     }
     if !command_push(m,{kind=.Voice_Play,index=index,start=start}) {
         // The decoder lets go of the feed, which mixer_update takes back.

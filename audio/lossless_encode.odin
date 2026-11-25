@@ -2,6 +2,7 @@ package mirai_audio
 
 import "base:runtime"
 import "core:math"
+import mm "mirai:std/math"
 
 // The encoder of lossless.odin. For every block it tries the four stereo
 // pairs and, for each channel, a constant, the samples as they are, the
@@ -134,8 +135,9 @@ tukey :: proc(w:[]f64) {
     taper:=n/4
     for &value,i in w {
         value=1
-        if taper>1 && i<taper {value=0.5-0.5*math.cos(math.PI*f64(i)/f64(taper))}
-        if taper>1 && i>=n-taper {value=0.5-0.5*math.cos(math.PI*f64(n-1-i)/f64(taper))}
+        // The cosine of the engine: an import codes the same bytes on every target.
+        if taper>1 && i<taper {value=0.5-0.5*mm.cos_det_f64(math.PI*f64(i)/f64(taper))}
+        if taper>1 && i>=n-taper {value=0.5-0.5*mm.cos_det_f64(math.PI*f64(n-1-i)/f64(taper))}
     }
 }
 

@@ -278,7 +278,8 @@ a_set_that_plays_all_starts_every_layer_after_its_delay_to_the_sample :: proc(t:
     audio_requests(&sounds,core.Time{},{},nil,nil,&f.app,&problems)
     testing.expect_value(t,problems.count,0)
     testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(2))
-    for done:=0;done<1100;done+=125 {mixer.mixer_render(m,out[done*2:][:min(125,1100-done)*2])}
+    // A loaded sound decodes as it plays: here, before every render.
+    for done:=0;done<1100;done+=125 {mixer.mixer_decode(m);mixer.mixer_render(m,out[done*2:][:min(125,1100-done)*2])}
     testing.expect(t,m.voices[0].volume==0.5 && m.voices[0].pitch==1 && m.voices[1].volume==1 && m.voices[1].pitch==1.5)
     body:=out[0]
     testing.expect(t,body>0)
@@ -1350,6 +1351,7 @@ a_layered_set_plays_its_sounds_in_step_shaped_by_its_parameters :: proc(t:^testi
     // Each layer alone is level: from silence the mix goes straight to both.
     level:=f32(8000)/32768*math.SQRT_TWO/2
     out:=make([]f32,(LAYER_LEAD+2*mixer.CHUNK_FRAMES)*2,context.temp_allocator)
+    mixer.mixer_decode(m)
     mixer.mixer_render(m,out)
     first:=-1
     for k in 0..<len(out)/2 {
@@ -1378,6 +1380,7 @@ a_layered_set_plays_its_sounds_in_step_shaped_by_its_parameters :: proc(t:^testi
     // Retuned in one chunk, the layers keep in step: at the new pitch and
     // with the first layer silent, the mix is the second one alone.
     out=make([]f32,mixer.CHUNK_FRAMES*4*2,context.temp_allocator)
+    mixer.mixer_decode(m)
     mixer.mixer_render(m,out)
     testing.expect(t,abs(out[(len(out)/2-1)*2]-level)<1e-4)
     testing.expect_value(t,w.voices.stats.started,u64(1))

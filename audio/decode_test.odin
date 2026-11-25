@@ -108,7 +108,7 @@ wav_decodes_every_sample_format_it_names :: proc(t:^testing.T) {
         m:=test_mixer(t)
         defer mixer_destroy(m)
         sound,load_error:=sound_load(m,test_wav(1,1,RATE,8,u8_data))
-        testing.expect(t,load_error==.None && mixer_stats(m).sound_bytes==len(u8_data))
+        testing.expect(t,load_error==.None && mixer_stats(m).sound_bytes==len(u8_data)+min(len(u8_data),FEED_START_FRAMES)*2)
         voice_play(m,sound)
         out:=test_render(m,6)
         for value,i in want8 {test_near(t,out[i*2],value*f32(math.SQRT_TWO/2))}
@@ -265,8 +265,8 @@ sound_is_loaded_from_a_wav_or_an_ogg_file :: proc(t:^testing.T) {
     wav,error:=sound_load(m,test_wav(1,2,RATE,16,bytes_of(ramp)))
     testing.expect_value(t,error,Error.None)
     testing.expect(t,sound_frames(m,wav)==100 && sound_channels(m,wav)==2 && sound_sample_rate(m,wav)==RATE)
-    // A WAV of 16 bits keeps its samples as they are, which every voice decodes.
-    testing.expect_value(t,mixer_stats(m).sound_bytes,len(ramp)*2)
+    // A WAV of 16 bits keeps its samples as they are and the first of them decoded (primed).
+    testing.expect_value(t,mixer_stats(m).sound_bytes,len(ramp)*2*2)
     voice_play(m,wav)
     out:=test_render(m,120)
     for i in 0..<120 {

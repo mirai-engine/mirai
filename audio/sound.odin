@@ -35,6 +35,7 @@ Sound_Slot :: struct {
     samples:[]f32,  // owned: a sound made in memory
     encoded:[]u8,   // owned: the bytes of a file, or of a WAV its samples
     source:Decoder, // how a voice decodes them
+    primed:[]i16,   // owned: its first FEED_START_FRAMES frames decoded, or all of them (feed.odin)
     setup:i32,      // the Vorbis_Setup it decodes with; -1 for none
     frames:u32,
     loop_start:u32, // the frame a loop goes back to
@@ -58,7 +59,7 @@ sound_slot_take :: proc(m:^Mixer) -> (index:int,error:Error) {
 }
 @(private)
 sound_slot_bytes :: proc(slot:^Sound_Slot) -> int {
-    return len(slot.samples)*size_of(f32)+len(slot.encoded)
+    return len(slot.samples)*size_of(f32)+len(slot.encoded)+len(slot.primed)*size_of(i16)
 }
 @(private)
 sound_slot_free :: proc(m:^Mixer,slot:^Sound_Slot) {
@@ -66,6 +67,7 @@ sound_slot_free :: proc(m:^Mixer,slot:^Sound_Slot) {
     if slot.setup>=0 {vorbis_setup_release(m,int(slot.setup))}
     delete(slot.samples,m.allocator)
     delete(slot.encoded,m.allocator)
+    delete(slot.primed,m.allocator)
     slot^={generation=slot.generation+1}
     m.counters.sounds-=1
 }
@@ -144,9 +146,10 @@ sound_load :: proc(m:^Mixer,file:[]u8) -> (sound:Sound,error:Error) {
     if source.sample_rate<SOUND_RATE_MIN || source.sample_rate>SOUND_RATE_MAX {return 0,.Unsupported_Format}
     if source.frames<=0 || source.frames>=int(max(u32)) {return 0,.Invalid_Data}
     if setup>=0 {feeds_workspace_reserve(m,m.setups[setup].shared_bytes) or_return}
+    primed:=sound_prime(m,source,m.setups[setup].shared_bytes if setup>=0 else 0) or_return
     loaded=true
     return sound_slot_fill(m,index,{
-        encoded=encoded,source=source,setup=i32(setup),frames=u32(source.frames),
+        encoded=encoded,source=source,primed=primed,setup=i32(setup),frames=u32(source.frames),
         channels=u32(source.channels),rate=u32(source.sample_rate),
     }),.None
 }
