@@ -416,7 +416,7 @@ clip_slot_advance :: proc(playback:^Playback,state:^Playing,content:^host.Conten
     return true
 }
 
-Field_Kind :: enum u8 {Float,Bool,Signed,Unsigned,Bit}
+Field_Kind :: enum u8 {Float,Bool,Signed,Unsigned,Bit,Present} // Present: a component without fields, given from a half up and taken below
 
 // A field of a component that a curve of the clip of an entity writes.
 Field_Bound :: struct {
@@ -472,6 +472,10 @@ Field_Problem :: enum u8 {None,Component,Path,Type}
 field_resolve :: proc(world:core.World_Ref,schema:^serial.Schema,component,path:string,property:lib.Property) -> (bound:Field_Bound,problem:Field_Problem,error:serial.Path_Error) {
     _,table:=core.world_table_named(world,component)
     if table==nil {return bound,.Component,.None}
+    if path=="" {
+        bound={property=property,table=table,count=1,kind=.Present}
+        return bound,.None if table.info.size==0 && property==.Float else .Type,.None
+    }
     type,added:=serial.schema_add_type_info(schema,table.info)
     target:serial.Path_Target
     target,error,_=serial.path_resolve(schema,type,path)
@@ -532,6 +536,10 @@ fields_bind :: proc(fields:^Field_Playback,world:core.World_Ref,playback:core.Re
                 core.report(problems,state.entity,"animation.field_path","a track of its clip writes %s.%s, which is not a field of %s (%v); name one of its fields, with a dot for a field inside another and [n] for an element",component,path,component,error)
                 continue
             case .Type:
+                if path=="" {
+                    core.report(problems,state.entity,"animation.field_type","a track of its clip gives and takes %s, which has fields or is keyed by a %v track; only a Float track gives a component without fields (@field/Hidden), and a field of another is named after a dot",component,field.property)
+                    continue
+                }
                 core.report(problems,state.entity,"animation.field_type","a track of its clip writes %s.%s, which a %v track cannot write; a Float track writes a number, a flag or a member of a bit set, and a Vector track a vector or a color of 2 to 4 numbers",component,path,field.property)
                 continue
             }
@@ -550,6 +558,7 @@ field_read :: proc "contextless" (bound:Field_Bound,data:[^]u8) -> (value:mm.Vec
         case .Float: value[i]=intrinsics.unaligned_load((^f32)(at)) if bound.size==4 else f32(intrinsics.unaligned_load((^f64)(at)))
         case .Bool: value[i]=1 if at[0]!=0 else 0
         case .Bit: value[i]=1 if at[0]&(u8(1)<<bound.bit)!=0 else 0
+        case .Present: value[i]=1
         case .Signed,.Unsigned:
             number:u64
             intrinsics.mem_copy_non_overlapping(&number,at,int(bound.size))
@@ -578,6 +587,7 @@ field_write :: proc "contextless" (bound:Field_Bound,data:[^]u8,value:mm.Vec4) -
             mask:=u8(1)<<bound.bit
             now:=at[0]|mask if x>=0.5 else at[0]&~mask
             if at[0]!=now {at[0]=now;changed=true}
+        case .Present:
         case .Signed,.Unsigned:
             bits:=uint(bound.size)*8
             low,high:=f64(0),math.pow(2,f64(bits))-1
@@ -613,6 +623,12 @@ animation_fields :: proc(world:core.World_Ref,playback:core.Ref(Playback),fields
         if curve==nil || curve.weight<=0 {continue}
         table:=core.world_table_at(world,bound.table)
         row:=core.raw_row(table,bound.entity)
+        if bound.kind==.Present {
+            if on:=curve.value[0]/curve.weight>=0.5;on!=(row>=0) {
+                if on {core.raw_add(table,bound.table.info,bound.entity,nil)} else {core.raw_remove(table,bound.entity)}
+            }
+            continue
+        }
         if row<0 {continue}
         if field_write(bound,([^]u8)(core.raw_value(table,bound.table.info,row)),curve.value/curve.weight) {core.raw_touch(table,bound.entity)}
     }

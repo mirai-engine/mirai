@@ -75,7 +75,9 @@ Animation_Marker :: struct {
 
 // The parts of a track target that drives a field, "<path>/@field/<Component>.<field>" or, for
 // the entity that plays the clip, "@field/<Component>.<field>": the path of the entity, the name of
-// the component and the path of the field inside it. False for any other target.
+// the component and the path of the field inside it. "@field/<Component>" alone names a component
+// without fields (Hidden), which the track gives and takes: field is then empty. False for any
+// other target.
 animation_field_target :: proc "contextless" (target:string) -> (node,component,field:string,ok:bool) {
     at:=-1
     for i:=len(target)-len(ANIMATION_FIELD_PATH);i>=0;i-=1 {
@@ -85,7 +87,11 @@ animation_field_target :: proc "contextless" (target:string) -> (node,component,
     named:=target[at+len(ANIMATION_FIELD_PATH):]
     dot:=-1
     for i in 0..<len(named) {if named[i]=='.' {dot=i;break}}
-    if dot<=0 || dot==len(named)-1 || dot>=ANIMATION_NAME_CAPACITY || len(named)-dot-1>=ANIMATION_FIELD_CAPACITY {return}
+    if dot<0 {
+        if named=="" || len(named)>=ANIMATION_NAME_CAPACITY {return}
+        return target[:max(at-1,0)],named,"",true
+    }
+    if dot==0 || dot==len(named)-1 || dot>=ANIMATION_NAME_CAPACITY || len(named)-dot-1>=ANIMATION_FIELD_CAPACITY {return}
     return target[:max(at-1,0)],named[:dot],named[dot+1:],true
 }
 

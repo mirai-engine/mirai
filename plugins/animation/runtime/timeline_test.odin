@@ -39,6 +39,7 @@ Timeline_World :: struct {
     playback:Playback,
     fields:Field_Playback,
     lives:core.Table(erender.Material_Live),
+    hiddens:core.Table(erender.Hidden),
 }
 
 @(private)
@@ -120,6 +121,8 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
         {"actor/@field/Timeline_Lamp.on",.Float,flag},
         {"actor/@field/Timeline_Lamp.steps",.Float,dive},
         {"actor/@field/Timeline_Lamp.flags.Flickers",.Float,flag},
+        {"actor/@field/Hidden",.Float,flag},          // given from a half up, taken below
+        {"actor/@field/Timeline_Lamp",.Float,flag},   // a component with fields is not given
         {"actor/@field/Timeline_Lamp.mode",.Float,ramp},  // an enum
         {"actor/@field/Timeline_Lamp.color",.Float,ramp}, // a color from a Float track
         {"actor/@field/Timeline_Lamp.nothing",.Float,ramp},
@@ -164,6 +167,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect_value(t,progress.time,f32(3))
     lamp,_:=core.get(&w.lamps,actor)
     testing.expect_value(t,lamp,Timeline_Lamp{color={1.5,2,2.5,0},intensity=3,steps=-2,flags={.Lit}})
+    testing.expect(t,!core.has(&w.hiddens,actor),"shown before its key")
 
     // Paused it holds nothing; resumed it goes on from where it was, and reports the marker it crosses.
     animation_command(&w.requests,door,.Pause)
@@ -185,6 +189,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
         w.events.items[1].name==base.name_hash("half"))
     lamp,_=core.get(&w.lamps,actor)
     testing.expect(t,lamp.on && lamp.flags=={.Lit,.Flickers} && lamp.intensity==5,"a Float track sets a flag and a member of a bit set from a half up")
+    testing.expect(t,core.has(&w.hiddens,actor),"a Float track gives a component without fields from a half up")
 
     // An entity whose Transform another component owns is asked of its owner, at the place of the track.
     testing.expect(t,core.owner_set(&w.transforms,leaf,1))
@@ -205,6 +210,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     testing.expect(t,w.events.items[len(w.events.items)-1].kind==.Interrupted &&
         w.events.items[len(w.events.items)-1].clip==base.name_hash("open"))
     testing.expect_value(t,at(&w,leaf),[3]f32{0,0,0})
+    testing.expect(t,!core.has(&w.hiddens,actor),"and takes it below a half")
     // Animation.playing only starts it: once it plays, the game writing it changes nothing.
     core.edit(&w.animations,door).playing=true
     timeline_tick(&w,&app,&problems)
@@ -233,7 +239,7 @@ a_clip_drives_the_transforms_and_the_fields_it_is_bound_to_while_it_moves :: pro
     }
     lamp,_=core.get(&w.lamps,actor)
     testing.expect_value(t,lamp.steps,min(i16))
-    testing.expect_value(t,len(w.fields.fields),7)
+    testing.expect_value(t,len(w.fields.fields),8)
     // Resume at a negative speed takes it back from where it is.
     animation_command(&w.requests,door,.Resume,speed=-1)
     timeline_tick(&w,&app,&problems)
@@ -263,7 +269,9 @@ a_field_target_names_its_entity_component_and_field :: proc(t:^testing.T) {
         {"Lamp/@field/Point_Light.color","Lamp","Point_Light","color",true},
         {"Room/Lamp/@field/Camera.lens.fov","Room/Lamp","Camera","lens.fov",true},
         {"a/@field/b/@field/C.d[2]","a/@field/b","C","d[2]",true},
-        {target="Lamp"},{target=""},{target="@field/"},{target="@field/Light"},{target="@field/.x"},{target="@field/Light."},
+        {"@field/Hidden","","Hidden","",true},
+        {"Gun/Magazine/@field/Hidden","Gun/Magazine","Hidden","",true},
+        {target="Lamp"},{target=""},{target="@field/"},{target="@field/.x"},{target="@field/Light."},
         {target="Lamp@field/Light.x"},{target="Lamp/@morph/smile"},
     }
     for c in cases {

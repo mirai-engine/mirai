@@ -134,6 +134,7 @@ track_value :: proc(w:core.World_Ref,schema:^serial.Schema,e:core.Entity,propert
     if problem!=.None {return}
     table:=core.world_table_at(w,bound.table)
     row:=core.raw_row(table,e)
+    if bound.kind==.Present {return {1 if row>=0 else 0,0,0,0},true}
     if row<0 {return}
     return anim.field_read(bound,([^]u8)(core.raw_value(table,bound.table.info,row))),true
 }
