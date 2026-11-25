@@ -107,7 +107,7 @@ water_bodies :: proc(wet:^Water_Wet,physics:core.Ref(phys.Physics_State),births:
     } else if wet.motes>0 {
         wet.motes-=1
     } else {
-        core.push(&births.queue,core.Birth{channel=core.birth_channel(CHANNEL_MOTES),position=view.position,count=MOTE_COUNT})
+        core.birth(births,core.Birth{channel=core.birth_channel(CHANNEL_MOTES),position=view.position,count=MOTE_COUNT})
         wet.motes=MOTE_PAUSE
     }
 }
@@ -135,11 +135,11 @@ bodies_step :: proc(wet:^Water_Wet,found:[]phys.Fluid_Body,physics:core.Ref(phys
             pause=before.pause>0?before.pause-1:0,bubbles=before.bubbles>0?before.bubbles-1:0,
         }
         if birth,splashes:=splash_of(body,before.share);splashes && mark.pause==0 {
-            core.push(&births.queue,birth)
+            core.birth(births,birth)
             mark.pause=SPLASH_PAUSE
         }
         if birth,bubbles:=bubbles_of(body);bubbles && mark.bubbles==0 {
-            core.push(&births.queue,birth)
+            core.birth(births,birth)
             mark.bubbles=BUBBLE_PAUSE
         }
         marks[count]=mark

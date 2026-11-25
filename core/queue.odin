@@ -77,17 +77,25 @@ later :: proc(q:^Queue($T),time:Time,seconds:f32,item:T) {
     }
 }
 
-// Occurrences: the library that owns the log pushes what happened and never
-// clears it. A function that receives its storage to read (S or core.Ref(S))
-// finds in items what came since it last ran, whatever its cadence: the
-// generated call keeps its cursor. Code outside the loops keeps one and asks
-// log_since.
+// Occurrences: what happened is pushed and never cleared, by the library that
+// owns the log or, in a @(storage,shared) one such as Births, by any function
+// that writes it; whoever reads it only reads. A function that receives its
+// storage to read (S or core.Ref(S)) finds in items what came since it last
+// ran, whatever its cadence: the generated call keeps its cursor. Code outside
+// the loops keeps one and asks log_since.
 Events :: struct($T:typeid) {
     using log:Log(T),
     kept:int, // of items, how many came before the last events_age
+    lost:u64, // pushed with no room, ever: a reader that reports them keeps how many it saw
 }
 
-events_push :: proc(e:^Events($T),item:T) {log_push(&e.log,item)}
+// Appends item. room: full with that many, item is lost instead (counted in
+// lost); 0: it grows. Without memory item is lost, and what the log holds stays.
+events_push :: proc(e:^Events($T),item:T,room:=0) -> bool {
+    if room>0 && len(e.items)>=room {e.lost+=1;return false}
+    if _,error:=append(&e.items,item);error!=nil {e.lost+=1;return false}
+    return true
+}
 
 // Leaves in view, the copy of a log a reader is handed, what came since cursor.
 events_read :: proc "contextless" (view:^Events($T),cursor:^u64) -> bool {

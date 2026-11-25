@@ -83,11 +83,11 @@ lights_fixture_emitter :: proc(f:^Lights_Fixture,emitter:Particle_Emitter,positi
 lights_fixture_step :: proc(f:^Lights_Fixture,time:core.Time) {
     a:=&f.assets if f.has_assets else nil
     births:=f.births
-    core.events_read(&births.queue,&f.births_cursor)
+    core.events_read(&births.log,&f.births_cursor)
     particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),
         core.commands_of(test_world_ref(&f.w)),&f.clocks,&f.sync,&f.requests,core.ref(&births),
         core.read(&f.listeners),time,{dt=time.dt,alpha=1},a,&f.problems,core.ref(&f.sources))
-    core.events_age(&f.births.queue)
+    core.events_age(&f.births.log)
     test_world_settle(&f.w)
     f.extras.light_count=0
     particles_lights(core.read(&f.emitters),core.read(&f.overrides),
