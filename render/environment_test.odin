@@ -182,3 +182,54 @@ the_background_is_what_the_view_and_a_mirror_see_while_the_sky_lights :: proc(t:
     }
     testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
 }
+
+// A mirror reflects a sky with a sharp edge (white on one side of a column of
+// its image, black on the other) as a soft gradient, from the gloss of the
+// probes or without them from the sky as rays that gather light read it: the
+// edge spreads over at least 5 of the 64 columns of the middle of the mirror,
+// where a sharp reflection crosses it in one or two. A background with that
+// edge shows in the mirror as sharp as a camera sees it, with the probes and
+// without them.
+@(test)
+a_mirror_reflects_the_sky_soft_and_a_background_sharp :: proc(t:^testing.T) {
+    Case::struct {gi,background:bool}
+    for c in ([]Case{{false,false},{true,false},{false,true},{true,true}}) {
+        settings:=DEFAULT_SETTINGS;settings.gi_enabled=c.gi;settings.taa=false
+        f:Fixture
+        if !fixture_init(t,&f,128,64,settings,hardware_rt=false) {return}
+        defer fixture_destroy(&f)
+        r,device:=f.renderer,f.device
+        mirror:=DEFAULT_MATERIAL
+        mirror.base_color,mirror.metallic,mirror.roughness=1,1,0
+        materials_set(r,{mirror})
+        vertices:=[4]Mesh_Vertex{{position={-3,-1.5,0},normal={0,0,1},color={1,1,1},material=1},{position={3,-1.5,0},normal={0,0,1},color={1,1,1},material=1},{position={3,1.5,0},normal={0,0,1},color={1,1,1},material=1},{position={-3,1.5,0},normal={0,0,1},color={1,1,1},material=1}}
+        quad,made:=mesh_add(r,vertices[:],[]u32{0,1,2,0,2,3});testing.expect(t,made,r.error);if !made {return}
+        // White up to the column of the direction +z, which the mirror reflects from in front of it.
+        W::256;H::128
+        pixels:=make([]u8,W*H*4,context.temp_allocator)
+        for y in 0..<H {for x in 0..<W {i:=(y*W+x)*4;v:=u8(255) if x<W*3/4 else 0;pixels[i],pixels[i+1],pixels[i+2],pixels[i+3]=v,v,v,255}}
+        image,loaded:=texture_add(r,{pixels=pixels,width=W,height=H,srgb=true,name="sky with an edge"});testing.expect(t,loaded,r.error);if !loaded {return}
+        scene_given(r,{{object_id=1,mesh=quad,transform=Mat4(1),material=1,tint={1,1,1}}},nil,{},{})
+        environment:=Environment{sky={1,1,1},sky_texture=image}
+        if c.background {environment.background,environment.background_texture,environment.use_background={1,1,1},image,true}
+        scene_set_environment(r,{},environment)
+        camera:=Camera{position={0,0,5},forward={0,0,-1},up={0,1,0},fov_y=50,near=0.05,far=100,exposure=UNIT_EXPOSURE}
+        for _ in 0..<(60 if c.gi else 3) {testing.expect(t,renderer_frame(r,{camera=camera}),r.error)}
+        shown:=grid_read_hdr(t,r,r.targets.display);defer delete(shown)
+        width:=int(r.targets.width);y:=int(r.targets.height)/2
+        row:=make([]f32,width,context.temp_allocator)
+        most:f32
+        for x in 0..<width {i:=(y*width+x)*4;row[x]=f32(shown[i+1]);most=max(most,row[x])}
+        // Inside the mirror (its middle half), the columns between 10 % and 90 % of the white.
+        ramp,white,black:=0,0,0
+        for x in width/4..<width*3/4 {
+            if row[x]>0.1*most && row[x]<0.9*most {ramp+=1}
+            if row[x]>=0.9*most {white+=1}
+            if row[x]<=0.1*most {black+=1}
+        }
+        testing.expectf(t,white>0 && black>0,"%v: the mirror shows both sides of the edge: %v",c,row[width/4:width*3/4])
+        if c.background {testing.expectf(t,ramp<=2,"%v: and the background's sharp, over %d columns: %v",c,ramp,row[width/4:width*3/4])}
+        else {testing.expectf(t,ramp>=5,"%v: and spreads the sky's over %d columns, at least 5: %v",c,ramp,row[width/4:width*3/4])}
+        testing.expectf(t,rhi.device_validation_errors(device)==0,"validation: %s",rhi.device_validation_message(device))
+    }
+}

@@ -4,7 +4,8 @@
 // bilinear filtering). Its rays are the same every update. The rays and the
 // tiles hold the light encoded (probe_light_encode); this pass weighs,
 // filters and blends it decoded. The alpha of a texel is the share of its
-// light that comes from the sky, which a smooth lobe reads sharp (probe_specular).
+// light that comes from the sky, which a smooth lobe sees as the background a
+// frame shows (probe_specular).
 //
 // Each texel takes, with what its rays give, what the probes next to it along
 // the grid hold in the same direction, where they see what this probe would:
