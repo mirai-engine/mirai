@@ -26,12 +26,14 @@ import sdl "vendor:sdl3"
 Fixture :: struct {
     assets:host.Assets,
     app:host.App,
+    root:string,
 }
 
 @(private="file")
 fixture_init :: proc(t:^testing.T,f:^Fixture,set:asset.Sound_Set_Info=asset.SOUND_SET_DEFAULTS) -> bool {
     root:=base.test_folder(t,"engine-audio")
     if root=="" {return false}
+    f.root=root
     types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
     samples:=make([]i16,4800,context.temp_allocator)
     for &sample in samples {sample=8000}
@@ -105,7 +107,7 @@ world_destroy :: proc(w:^Heard_World) {
 
 @(private="file")
 world_run :: proc(w:^Heard_World,listener:^Mixer_Listeners,app:^host.App,dt:f32=1.0/60) {
-    hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
+    hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0,false}
     sources_update(core.read(&w.sources),&w.states,hearing,dt,&w.voices,listener,app,nil)
     test_world_settle(&w.data)
 }
@@ -1074,7 +1076,7 @@ the_loudest_sources_hold_the_voices_and_the_others_keep_their_time :: proc(t:^te
     mem.tracking_allocator_init(&track,context.allocator)
     defer mem.tracking_allocator_destroy(&track)
     for _ in 0..<100 {
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0,false}
         {
             context.allocator,context.temp_allocator=mem.tracking_allocator(&track),mem.tracking_allocator(&track)
             sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,&listener,&f.app,nil)
@@ -1182,7 +1184,7 @@ a_source_of_hostile_values_is_refused :: proc(t:^testing.T) {
         w:Heard_World
         e,made:=world_init(t,&w,source,{0,0,-2})
         if !made {return}
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),{},w.query,0,false}
         sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,&listener,&f.app,&problems)
         testing.expectf(t,core.entity_map_get(&w.voices.entries,e)==nil && core.problem_find(&problems,e,"audio.source")!=nil,"%s is refused",c.name)
         world_destroy(&w)
@@ -1260,7 +1262,7 @@ each_source_is_heard_from_its_nearest_listener_of_a_split_screen :: proc(t:^test
     w.query={user=&wall,probe=east_wall_probe}
     medium:Audio_Medium
     run :: proc(w:^Heard_World,listeners:^Mixer_Listeners,medium:^Audio_Medium,app:^host.App) {
-        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),core.ref(medium),w.query,0}
+        hearing:=Hearing{core.read(&w.worlds),core.read(&w.occlusions),core.read(&w.materials),core.read(&w.listeners),core.ref(&w.view),core.ref(medium),w.query,0,false}
         sources_update(core.read(&w.sources),&w.states,hearing,1.0/60,&w.voices,listeners,app,nil)
         test_world_settle(&w.data)
         out:[mixer.CHUNK_FRAMES*2]f32
@@ -1408,6 +1410,41 @@ a_layered_set_plays_its_sounds_in_step_shaped_by_its_parameters :: proc(t:^testi
     mixer.mixer_render(m,out)
     testing.expect(t,abs(out[(len(out)/2-1)*2]-level)<1e-4)
     testing.expect_value(t,w.voices.stats.started,u64(1))
+}
+
+// A source whose .sound_set loads again starts again with what it says, and
+// one whose set did not change goes on with its voices.
+@(test)
+a_source_starts_again_when_its_set_loads_again :: proc(t:^testing.T) {
+    set:=asset.SOUND_SET_DEFAULTS
+    set.mode=.Layered
+    f:Fixture
+    if !fixture_init(t,&f,set) {return}
+    defer fixture_destroy(&f)
+    m:=f.app.mixer
+    listener:Mixer_Listeners
+    source:=AUDIO_SOURCE_DEFAULT;source.sound,source.loop=STEPS,true
+    w:Heard_World
+    e,made:=world_init(t,&w,source);defer world_destroy(&w)
+    if !made {return}
+    world_run(&w,&listener,&f.app)
+    entry:=core.entity_map_get(&w.voices.entries,e)
+    if !testing.expect(t,entry!=nil && entry.real && entry.sound.count==2) {return}
+    voice:=entry.sound.voices[0]
+    // Content loads that are not of its set leave it alone.
+    testing.expect(t,host.content_sound(&f.app,HUM)!={})
+    world_run(&w,&listener,&f.app)
+    testing.expect(t,core.entity_map_get(&w.voices.entries,e).sound.voices[0]==voice)
+    // Its set gains a third layer.
+    set.sounds[0].sound,set.sounds[1].sound,set.sounds[2].sound=STEP_A,STEP_B,HUM
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    testing.expect_value(t,asset.sound_set_save(fmt.tprintf("%s/steps.sound_set",f.root),&types,{id=STEPS,info=set}),asset.Error.None)
+    testing.expect(t,host.assets_refresh(&f.assets,{"steps.sound_set"}))
+    testing.expect_value(t,host.content_refresh(&f.app),1)
+    world_run(&w,&listener,&f.app)
+    entry=core.entity_map_get(&w.voices.entries,e)
+    testing.expectf(t,entry!=nil && entry.sound.count==3 && entry.real && entry.sound.voices[0]!=voice,"%v %v %v",entry.sound.count,entry.real,entry.sound.voices)
+    testing.expect_value(t,mixer.mixer_stats(m).voices_played,u64(5))
 }
 
 // A Layered set without loop plays each layer once to its end, at its own

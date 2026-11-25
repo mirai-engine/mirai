@@ -289,6 +289,7 @@ Voices :: struct {
     seen:core.Seen, // of the sources: the voices of those that went stop
     stats:Audio_Stats,
     paused:bool,    // the voices of the sources were paused with the clock of the world
+    content:u32,    // host.content_generation at the last pass: what its sounds load as is looked at again when it changes
     ranks:[dynamic]Voice_Rank, // of a frame: the entries that are heard, which voices_assign orders
 }
 
@@ -375,7 +376,7 @@ audio_sources :: proc(
         }
     }
     if voices!=nil && voices.paused {return}
-    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,space.medium,core.world_query_read(space.world,space.queries),0},frame.dt,voices,listeners,app,problems)
+    sources_update(sources,states,{space.worlds,space.occlusions,space.materials,space.listeners,space.view,space.medium,core.world_query_read(space.world,space.queries),0,false},frame.dt,voices,listeners,app,problems)
 }
 
 VOICE_LEAD :: mixer.CHUNK_FRAMES
@@ -391,6 +392,7 @@ Hearing :: struct {
     medium:core.Ref(Audio_Medium),
     query:core.World_Query, // what hides a source
     now:u64, // mixer clock read once for the pass
+    loaded:bool, // content loaded since the last pass: entries see whether theirs loaded again
 }
 
 @(private)
@@ -403,6 +405,9 @@ sources_update :: proc(sources:^core.Table(Audio_Source,$A),states:^core.Table(A
     }
     hearing:=hearing
     hearing.now=mixer.mixer_clock(m)
+    content:=host.content_generation(app)
+    hearing.loaded=content!=voices.content
+    voices.content=content
     listener_update(listeners,m,&hearing,dt)
     // The voices of the sources that went stop.
     changes,at,left:=core.changes(sources,&voices.seen),0,Voice_Entry{}
@@ -1210,7 +1215,7 @@ hidden :: proc(h:^Hearing,listener:[3]f32,e:core.Entity,world:core.World_Transfo
 voice_follow :: proc(voices:^Voices,m:^Mixer,app:^host.App,h:^Hearing,listeners:^Mixer_Listeners,source:Audio_Source,e:core.Entity,dt:f32,state:^Audio_Source_State,problems:^core.Problems) {
     entry:=core.entity_map_get(&voices.entries,e)
     world,placed:=core.get(h.worlds,e)
-    if !voices_sounds_valid(m,&entry.sound) || entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
+    if !voices_sounds_valid(m,&entry.sound) || h.loaded && entry.generation!=host.content_sound_generation(app,source.sound) || entry.kind.spatial!=(source.spatial && placed) {
         sound_voices_stop(m,&entry.sound)
         core.entity_map_remove(&voices.entries,e)
         state.voice={}
