@@ -250,7 +250,7 @@ Child index of `Parent` in `order` order; written only by `core.settle` (read vi
 
 Downward via `Hierarchy` (`first_child`, `next_sibling`, `subtree_next`, zero-alloc); upward via
 `Parent` (`ancestor_with`, `is_under`, capped at `HIERARCHY_DEPTH`). World poses: `world_of`,
-`world_transform_or_compute`, `world_set` (preserves scale), `local_under`.
+`world_set` (preserves scale), `local_under`.
 
 ```odin
 for at := root; at != core.NONE; at = core.subtree_next(h, root, at) {

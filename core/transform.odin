@@ -287,15 +287,6 @@ world_of :: proc(locals:^Table(Transform,$A),parents:^Table(Parent,$B),e:Entity)
     return world,true
 }
 
-// Uses the propagated transform when it exists, or composes the settled locals.
-world_transform_or_compute :: proc(worlds:^Table(World_Transform,$W),
-    locals:^Table(Transform,$L),parents:^Table(Parent,$P),e:Entity) -> (mm.Transform,bool) {
-    if worlds!=nil {
-        if value,ok:=view(worlds,e);ok {return value.transform,true}
-    }
-    return world_of(locals,parents,e)
-}
-
 name_get :: proc(names:^Table(Name,$A),e:Entity) -> string {
     if row:=row_of(names,e);row>=0 {return base.text_get(names.values[row].text[:])}
     return ""
