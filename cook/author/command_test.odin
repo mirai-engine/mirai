@@ -333,18 +333,22 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
     p.info=&info
-    // Its own document writes a file back as it is, unless the file stores a component of the
-    // game with another layout (the Status of the template): then it is written as the game reads it.
+    // Its own document writes a file as the game reads it (the Status of the template is stored
+    // with another layout) and as every writer of the assets compresses it; written again, it
+    // writes nothing.
     arena:=slice.clone(file_bytes(&p,"arena/main.scene"),context.temp_allocator)
     for path in ([]string{"arena/main.scene","player/Player.scene"}) {
-        before:=slice.clone(file_bytes(&p,path),context.temp_allocator)
         out:serial.Writer
         serial.writer_init(&out,0,context.temp_allocator)
         if problem:=scene_read(&p,path,&out);!testing.expectf(t,problem=="","%s: %s",path,problem) {continue}
         written,problem:=scene_write(&p,path,string(serial.writer_bytes(&out)))
         relaid:=len(written.stored)>0
-        testing.expectf(t,problem=="" && written.same!=relaid && relaid==(path=="arena/main.scene"),"%s: %s %v",path,problem,written.stored)
-        testing.expectf(t,relaid || slice.equal(file_bytes(&p,path),before),"%s: its own document changes its bytes",path)
+        testing.expectf(t,problem=="" && relaid==(path=="arena/main.scene"),"%s: %s %v",path,problem,written.stored)
+        before:=slice.clone(file_bytes(&p,path),context.temp_allocator)
+        serial.writer_init(&out,0,context.temp_allocator)
+        if problem=scene_read(&p,path,&out);!testing.expectf(t,problem=="","%s: %s",path,problem) {continue}
+        again,again_problem:=scene_write(&p,path,string(serial.writer_bytes(&out)))
+        testing.expectf(t,again_problem=="" && again.same && slice.equal(file_bytes(&p,path),before),"%s: its own document changes its bytes",path)
         for entry in scene_stored(&p,path) {testing.expectf(t,entry.unknown,"%s: %s is still stored with another layout",path,entry.component)}
         testing.expectf(t,scene_verify(&p,path)=="","%s: %s",path,scene_verify(&p,path))
     }
