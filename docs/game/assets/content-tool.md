@@ -86,8 +86,8 @@ Write the WAV into the assets, where the sound goes, and import it, so the `.sou
 
 ```odin
 content.source_write(&w,"assets/arena/hum.wav",wav)   // written only when its bytes changed
-report,error:=importer.import_sound("assets/arena/hum.wav",{},{root="."})
-if error.code!=.None {fmt.eprintln(error.message);w.failed=true;return}
+report,imported:=content.import_source(&w,"assets/arena/hum.wav") // as mirai import does
+if !imported {return}
 defer importer.report_destroy(&report)
 hum:=report.assets[0].id // random the first time, kept after
 ```
@@ -95,8 +95,7 @@ hum:=report.assets[0].id // random the first time, kept after
 - `importer` is `mirai:cook/import`. The id an import returns is random the first time and kept
   after by the package of the source: read it with `asset.list`, never in a constant. Commit the
   WAV, `packages.mirai` and `packages/`. A sound set: `asset.sound_set_save` from
-  `asset.SOUND_SET_DEFAULTS` ([audio](../audio.md#sets)). Art: `sources.import_source(path)`
-  (`mirai:cook/import/sources`), as `mirai import` does.
+  `asset.SOUND_SET_DEFAULTS` ([audio](../audio.md#sets)). Art beside it imports the same way.
 
 ## What is not supported
 

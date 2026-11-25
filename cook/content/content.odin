@@ -8,6 +8,8 @@ import "core:strings"
 import "core:time"
 import "mirai:asset"
 import "mirai:cook/author"
+import importer "mirai:cook/import"
+import "mirai:cook/import/sources"
 import "mirai:cook/records"
 import "mirai:core"
 import "mirai:engine/input"
@@ -16,6 +18,7 @@ import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 import "mirai:std/serial"
+import "mirai:store"
 
 // What the content tool of a project (its tools/content, which mirai content
 // builds and runs in the root of the project) writes the assets it makes from
@@ -41,6 +44,8 @@ Writer :: struct {
     using project:author.Project, // the assets of the project (registry, types) and its root
     world:core.World_Info,        // of the generated world the tool was built with
     started:time.Time,
+    store:store.Store,            // the machine's, where an import puts what it builds
+    stored:bool,                  // store is open
     failed:bool,                  // something was not written: close returns 1
     written,unchanged:int,
 }
@@ -64,6 +69,9 @@ open :: proc(w:^Writer,world:core.World_Info,loc:=#caller_location) -> bool {
     // What the documents the tool writes compress with: what the project ships with.
     w.types.codecs=asset.project_codecs(w.root)
     w.info=&w.world
+    if root:=store.default_root(context.temp_allocator);root!="" {
+        if opened,error:=store.open(root);error==.None {w.store,w.stored=opened,true}
+    }
     return true
 }
 
@@ -72,6 +80,7 @@ open :: proc(w:^Writer,world:core.World_Info,loc:=#caller_location) -> bool {
 close :: proc(w:^Writer) -> int {
     fmt.printfln("content: %d written, %d unchanged%s",w.written,w.unchanged,w.failed?", failed":"")
     failed:=w.failed
+    if w.stored {store.close(&w.store)}
     author.project_close(&w.project)
     w^={}
     return 1 if failed else 0
@@ -90,6 +99,22 @@ check :: proc(w:^Writer,path:string,error:asset.Error,loc:=#caller_location) -> 
     if stat_error!=nil {return true}
     if time.diff(w.started,info.modification_time)<0 {w.unchanged+=1} else {note(w,path)}
     return true
+}
+
+// Imports a source of the project (a WAV, a glTF, an image the tool wrote or
+// art beside it, relative to the root of the project) as mirai import does,
+// with the store of the machine, keeping its settings and ids in the package
+// of the source. Its assets count as check counts them. The report is freed
+// by importer.report_destroy; on failure it is empty, said with the line of
+// the caller.
+import_source :: proc(w:^Writer,path:string,loc:=#caller_location) -> (report:importer.Import_Report,ok:bool) {
+    if !w.stored {return {},fail(w,loc,fmt.tprintf("%s: this machine has no store for what an import builds",path))}
+    error:importer.Error
+    if report,error=sources.import_source(path,{store=&w.store,root=w.root});error.code!=.None {return {},fail(w,loc,fmt.tprintf("%s: %s",path,error.message))}
+    for &a in report.assets {
+        if a.path!="" {check(w,a.path,.None,loc)}
+    }
+    return report,true
 }
 
 // Makes the folder of a file the tool is about to write.

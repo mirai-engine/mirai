@@ -54,13 +54,7 @@ write_hum :: proc(w:^content.Writer) {
     }
     // Written only when it differs, so that the import of an unchanged source is the same file.
     if !content.source_write(w,"assets/arena/hum.wav",file) {return}
-    report,error:=importer.import_sound("assets/arena/hum.wav",{},{root="."})
-    if error.code!=.None {
-        fmt.eprintfln("content: %s",error.message)
-        w.failed=true
-        return
-    }
-    importer.report_destroy(&report)
+    if report,imported:=content.import_source(w,"assets/arena/hum.wav");imported {importer.report_destroy(&report)}
 }
 
 main :: proc() {
