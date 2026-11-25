@@ -199,7 +199,7 @@ documents_changed :: proc(p:^asset.Package,written:[]asset.Package_Written,regis
     for &a in p.assets {
         recorded:=written_of(written,a.id)
         if recorded==0 || asset.import_cached(a.kind) {continue}
-        if file,found:=asset.registry_find(registry,a.id);found && file.kind==a.kind && file.content_hash!=recorded {append(&changed,a.id)}
+        if file,found:=asset.registry_find(registry,a.id);found && file.kind==a.kind && written_hash(asset.registry_file_path(registry,file.path,context.temp_allocator))!=recorded {append(&changed,a.id)}
     }
     return changed[:]
 }
@@ -234,13 +234,15 @@ writer_changed :: proc(w:^Writer) -> bool {
     return true
 }
 
-// What the file of a document holds: the content_hash of its header; 0 when
-// it is not an asset.
+// What the file of a document holds: the content_hash of its canonical form
+// (asset.document_written_as with Codecs.None), so a file written again with
+// other compression holds the same; 0 when it is not an asset.
 written_hash :: proc(file:string) -> u64 {
-    head:[asset.HEADER_SIZE]u8
-    bytes,_,read_error:=serial.file_read_head(file,head[:])
+    data,read_error:=serial.file_read(file,context.temp_allocator)
     if read_error!=.None {return 0}
-    header,header_error:=asset.header_read(bytes)
+    canonical,error:=asset.document_written_as(data,.None,context.temp_allocator)
+    if error!=.None {return 0}
+    header,header_error:=asset.header_read(canonical)
     return header.content_hash if header_error==.None else 0
 }
 

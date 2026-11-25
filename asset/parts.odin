@@ -45,7 +45,7 @@ object_put :: proc(s:^store.Store,original:[]u8) -> (address:store.Hash,error:Er
         if !blob_verify_hash(&arrived) {return {},.Hash}
     }
     if !(object_raw(data) or_return) {
-        data=object_raw_write(data) or_return
+        data=document_written_as(data,.None,context.temp_allocator) or_return
     }
     defer if raw_data(data)!=raw_data(original) {mem.free_bytes(data,context.temp_allocator)}
     a:Asset
@@ -106,17 +106,19 @@ object_raw :: proc(data:[]u8) -> (raw:bool,error:Error) {
     return true,.None
 }
 
-// A file written again as Codecs.None writes it, in the temporary allocator.
-@(private="file")
-object_raw_write :: proc(data:[]u8) -> (raw:[]u8,error:Error) {
+// A file written again with codecs as a working document is written (Profile.Fast): with
+// Codecs.None, the canonical form the store keeps of it; with WORKING_CODECS, what any writer
+// of the assets writes of the same content. In allocator.
+document_written_as :: proc(data:[]u8,codecs:Codecs,allocator:=context.allocator) -> (written:[]u8,error:Error) {
     header:=header_read(data) or_return
     if header.kind==KIND_TEXTURE {
         types:Types
         types_init(&types,context.temp_allocator)
         defer types_destroy(&types)
-        return texture_repack(data,&types,.Fast,context.temp_allocator)
+        types.codecs=codecs
+        return texture_repack(data,&types,.Fast,allocator)
     }
-    return document_repack(data,.Fast,.None,context.temp_allocator)
+    return document_repack(data,.Fast,codecs,allocator)
 }
 
 // object_put of the file at path.

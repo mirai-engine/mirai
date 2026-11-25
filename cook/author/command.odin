@@ -259,18 +259,10 @@ ui_apply :: proc(p:^Project,id:base.Asset_Id,r:^Records,text:string,texts:^Texts
     return
 }
 
-@(private)
-file_unchanged :: proc(current,bytes:[]u8) -> bool {
-    if slice.equal(current,bytes) {return true}
-    plain,error:=asset.document_repack(current,.Fast,.None,context.temp_allocator)
-    defer delete(plain,context.temp_allocator)
-    return error==.None && slice.equal(plain,bytes)
-}
-
 // Writes a changed asset and refreshes the registry.
 @(private)
 file_put :: proc(p:^Project,file,path:string,bytes:[]u8,written:^Written) -> (problem:string) {
-    if current,error:=os.read_entire_file(file,context.temp_allocator);error==nil && file_unchanged(current,bytes) {
+    if current,error:=os.read_entire_file(file,context.temp_allocator);error==nil && slice.equal(current,bytes) {
         written.same=true
         return ""
     }

@@ -597,10 +597,10 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
                 files+=1
                 written,texts,why:=ui_round_trip(&p,path,file.id)
                 if !testing.expectf(t,why=="","%s/%s: %s",folder,path,why) {continue}
-                testing.expectf(t,file_unchanged(file_bytes(&p,path),written),
+                testing.expectf(t,slice.equal(file_bytes(&p,path),written),
                     "%s/%s: its document writes other bytes",folder,path)
                 for touched in texts {
-                    testing.expectf(t,file_unchanged(file_bytes(&p,touched.path),touched.bytes),
+                    testing.expectf(t,slice.equal(file_bytes(&p,touched.path),touched.bytes),
                         "%s/%s: its document writes other texts in %s",folder,path,touched.path)
                 }
             case asset.KIND_SCENE:

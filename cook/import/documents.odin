@@ -250,8 +250,8 @@ document_follow :: proc(types:^asset.Types,kind:asset.Fourcc,baseline:[]u8,targe
         }
         return warning,asset.animation_save(target,types,{id=id,owner=owner,clips=clips,source=view.source})
     }
-    // Any other document is the baseline, with the owner of its file.
-    data:=asset.asset_bytes_clone(baseline,context.temp_allocator) or_return
+    // Any other document is the baseline, with the owner of its file, as a working document is written.
+    data:=asset.document_written_as(baseline,asset.WORKING_CODECS,context.temp_allocator) or_return
     if owner!=given.blob.header.owner {asset.header_owner_set(data,owner) or_return}
     if _,write_error:=serial.file_write_changed(target,data);write_error!=.None {return "",.IO}
     return "",.None

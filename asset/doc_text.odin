@@ -12,7 +12,6 @@ import "mirai:std/serial"
 //   {
 //     "mirai_asset": 1,
 //     "kind": "MESH", "kind_version": 1, "id": "<32 hex>", "owner": "<32 hex>", "flags": ["Cooked"],
-//     "codecs": "Compressed" (when written with a compressor; Codecs),
 //     "dependencies": ["<32 hex>", ...],
 //     "schema": [ {"kind": "Struct", "name": "...", "size": n, "align": n, "fields": [...]}, ... ],
 //     "tables": [
@@ -188,7 +187,6 @@ document_text_write :: proc(doc:^Document,w:^serial.Writer,options:=Text_Options
     write_key(w,1,"id");serial.write_u8(w,'"');serial.text_write_asset_id(w,doc.id);serial.write_u8(w,'"')
     if doc.owner!={} {write_key(w,1,"owner");serial.write_u8(w,'"');serial.text_write_asset_id(w,doc.owner);serial.write_u8(w,'"')}
     write_key(w,1,"flags");write_names(w,doc.flags)
-    if doc.codecs!=.None {write_key(w,1,"codecs");serial.text_write_string(w,"Compressed")}
     write_key(w,1,"dependencies");serial.write_u8(w,'[')
     for id,at in dependencies {
         if at>0 {serial.write_u8(w,',')}
@@ -260,7 +258,6 @@ Text_Rule :: enum u8 {
     Columns_Order,       // in a table, "name" comes before "columns", once
     Data_Order,          // in a table, "columns" comes before "data", once
     Column,              // a name, type or alignment that is not valid
-    Unknown_Codecs,      // "codecs" names no Codecs
     Unknown_Column,      // a row names a column its table does not have
     Unknown_Ref,         // a column refers to a table that is not there
     Key,                 // a key that is not a column of its table
@@ -683,13 +680,6 @@ document_text_parse :: proc(state:^Text_State) -> bool {
             if !valid {return fail(state,.Id,at)}
             doc.owner=owner
         case "flags": doc.flags=read_names(state,Header_Flags) or_return
-        case "codecs":
-            serial.text_space(r)
-            at:=r.offset
-            text:=serial.text_string(r) or_return
-            value,known:=reflect.enum_from_name(Codecs,text)
-            if !known {return fail(state,.Unknown_Codecs,at)}
-            doc.codecs=value
         case "schema":
             if state.has_schema {return fail(state,.Schema_First)}
             schema_text_read(state) or_return

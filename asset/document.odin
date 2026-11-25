@@ -63,11 +63,11 @@ Document :: struct {
     hashes:[dynamic]u64,
     tables:[dynamic]Doc_Table,
     allocator:runtime.Allocator,
-    codecs:Codecs,       // what its writes compress with: what the Types it was made with say
+    codecs:Codecs,       // what its writes compress with: WORKING_CODECS, or what the Types it was made with say
 }
 
 document_init :: proc(doc:^Document,kind:Fourcc,id:base.Asset_Id,allocator:=context.allocator) {
-    doc^={kind=kind,id=id,allocator=allocator}
+    doc^={kind=kind,id=id,allocator=allocator,codecs=WORKING_CODECS}
     serial.schema_init(&doc.schema,allocator)
     doc.hashes=make([dynamic]u64,allocator)
     doc.tables=make([dynamic]Doc_Table,allocator)
@@ -459,7 +459,7 @@ document_bytes :: proc(doc:^Document,allocator:=context.allocator,profile:=data.
 
 // A copy of an open asset that owns everything it holds.
 document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator) -> Error {
-    doc^={kind=a.blob.header.kind,kind_version=a.blob.header.kind_version,id=a.blob.header.id,owner=a.blob.header.owner,flags=a.blob.header.flags,allocator=allocator}
+    doc^={kind=a.blob.header.kind,kind_version=a.blob.header.kind_version,id=a.blob.header.id,owner=a.blob.header.owner,flags=a.blob.header.flags,allocator=allocator,codecs=WORKING_CODECS}
     if serial.schema_clone(&doc.schema,&a.schema,allocator)!=.None {document_destroy(doc);return .Out_Of_Memory}
     doc.hashes=make([dynamic]u64,allocator)
     if !serial.schema_hashes_update(&doc.schema,&doc.hashes) {document_destroy(doc);return .Out_Of_Memory}
@@ -480,8 +480,6 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
         for from,at in source.columns {
             entry:=blob_chunk(&a.blob,from.chunk)
             column:=Doc_Column{type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2}
-            // A file with a compressed column was written with a compressor: written again, it keeps it.
-            if entry.compression!=.None {doc.codecs=.Compressed}
             no_column_name:runtime.Allocator_Error
             column.name,no_column_name=strings.clone(from.name,allocator)
             error:=column_size(doc,&column,source.rows*from.size)

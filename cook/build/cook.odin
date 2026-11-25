@@ -1071,6 +1071,7 @@ mesh_pieces_cook :: proc(work:^Cook_Work,source:string,data:[]u8,types:^asset.Ty
     doc:asset.Document
     if asset.document_from_asset(&doc,&file,context.temp_allocator)!=.None {return}
     defer asset.document_destroy(&doc)
+    doc.codecs=work.desc.codecs
     if asset.mesh_pieces_put(&doc,types,points[:],sizes[:])!=.None {return}
     bytes,error:=asset.document_bytes(&doc,context.temp_allocator)
     return bytes,error==.None

@@ -481,9 +481,10 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
     return error
 }
 
-// The blocks of the pages of geometry mesh_build made, as a file holds them
-// (page_data): with them the renderer streams a mesh made in memory whose
-// root is not every page as it does one of a file. In allocator, with
+// The blocks of the pages of geometry mesh_build made, in the form a file holds
+// them (page_data), stored as they are: what a file holds compresses them as
+// WORKING_CODECS does, and reads the same. With them the renderer streams a
+// mesh made in memory whose root is not every page as it does one of a file. In allocator, with
 // scratch from the temporary allocator; false without memory.
 mesh_pages_pack :: proc(g:^Mesh_Geometry,allocator:=context.allocator) -> bool {
     pages,data,error:=pages_compress(g^,.Fast,.None,allocator)

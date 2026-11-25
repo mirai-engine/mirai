@@ -114,8 +114,14 @@ instances, registry).
   (`unpack`, `schema_read`, `text_read`) allocate no more than the input backs.
 - **Store objects have a canonical asset representation.** They are written with `Codecs.None`.
   The store compresses the chunks of that representation where bytes rest and the exchange sends
-  those frames. The tracked engine, demo and template assets use MDC2. A cook follows its
-  project's `build.compression`.
+  those frames (`document_written_as` with `Codecs.None`).
+- **One compression for every working document.** Whatever writes a document into the assets of
+  a project, a plugin or the engine (an import, the editor, `mirai scene`, `ui`, `records`,
+  `asset pack`, a content tool) writes it with `WORKING_CODECS` (MDC2) and `Profile.Fast`, which
+  every `Types` starts with (`types_init`): the same content is the same bytes, whoever wrote it
+  last, and no column is stored larger than raw. Only a cook writes with its project's
+  `build.compression` and profile; an import's pin hashes the canonical form, so a file written
+  again with other compression counts as unchanged.
 - **A stream says what decodes it**: a read needs no profile.
 - **Decoders are preallocated.** A `Stream_Decoder` holds the scratch allocated once by whoever
   reads. A decode never allocates or reads or writes outside its buffers.
