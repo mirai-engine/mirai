@@ -911,7 +911,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
     drawn:=false
     settle:=max(frames,1)
     count:=settle
-    gi_limit:=max(settle,CAPTURE_GI_MAX)
+    light_limit:=max(settle,CAPTURE_LIGHT_MAX)
     started:=time.tick_now()
     for frame:=0;frame<count;frame+=1 {
         if wait>0 {
@@ -941,7 +941,7 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
         if !drawn {break}
         if wait>0 {
             pending:=render.textures_update(r)+app_assets_arriving(app)
-            count=capture_frames_settle(count,frame,settle,pending,render.renderer_gi_settling(r),&gi_limit,time.tick_since(started),wait)
+            count=capture_frames_settle(count,frame,settle,pending,render.renderer_gi_settling(r) || render.renderer_exposure_settling(r),&light_limit,time.tick_since(started),wait)
         }
         // The last frame drew a program as its rows while its pipelines were made: one more with them.
         if frame==count-1 && render.renderer_pipelines_pending(r)>0 {
@@ -956,20 +956,21 @@ app_capture_world :: proc(app:^App,world:rawptr,frames:=8,size:=[2]i32{},editor:
 }
 
 // Maximum frames past texture streaming that an automatic capture (wait > 0)
-// waits for the probe volume to settle.
-CAPTURE_GI_MAX :: 48
+// waits for the probe volume and the exposure to settle.
+CAPTURE_LIGHT_MAX :: 48
 
 // The frames an automatic capture draws in all after frame: settle more after
 // the last frame that still found textures pending (while wait lasts), then
-// frames while GI probes still gather up to gi_limit in all.
-capture_frames_settle :: proc "contextless" (count,frame,settle,pending:int,gi_settling:bool,gi_limit:^int,waited,wait:time.Duration) -> int {
+// frames while GI probes still gather or the exposure still adapts
+// (light_settling) up to light_limit in all.
+capture_frames_settle :: proc "contextless" (count,frame,settle,pending:int,light_settling:bool,light_limit:^int,waited,wait:time.Duration) -> int {
     next:=count
     if pending>0 && waited<wait {
         next=max(next,frame+1+settle)
-        if gi_limit!=nil {gi_limit^=max(gi_limit^,next+CAPTURE_GI_MAX)}
+        if light_limit!=nil {light_limit^=max(light_limit^,next+CAPTURE_LIGHT_MAX)}
         return next
     }
-    if gi_settling && (gi_limit==nil || frame+1<gi_limit^) {
+    if light_settling && (light_limit==nil || frame+1<light_limit^) {
         next=max(next,frame+2)
     }
     return next

@@ -386,6 +386,8 @@ shared_constants :: proc(allocator:=context.temp_allocator) -> string {
     i(&b,"DISPLAY_LUT_SIZE",abi.DISPLAY_LUT_SIZE)
     f(&b,"MIDDLE_GRAY",abi.MIDDLE_GRAY)
     u(&b,"EXPOSURE_BINS",abi.EXPOSURE_BINS)
+    u(&b,"EXPOSURE_ESTIMATED",abi.EXPOSURE_ESTIMATED)
+    u(&b,"EXPOSURE_METERED",abi.EXPOSURE_METERED)
     i(&b,"DEPTH_PROBE_CAPACITY",abi.DEPTH_PROBE_CAPACITY)
     i(&b,"DEPTH_PROBE_CELLS",abi.DEPTH_PROBE_CELLS)
     f(&b,"DEPTH_PROBE_CELL",abi.DEPTH_PROBE_CELL)

@@ -10,9 +10,11 @@
 // params.speed, as in Bevy: params.adaptation seconds for each EV
 // it darkens, EXPOSURE_SPEED_UP times as fast when the light grows, and within
 // EXPOSURE_TRANSITION EV of it exponentially, at the rate it had there. The
-// first image of a view and the first after a discontinuity (a camera cut,
-// another world: params.generation) take it at once. Manual: the EV100 of the
-// camera. It clears the histogram for the next frame.
+// first frame of a view that meters something, and the first after a
+// discontinuity (a camera cut, another world: params.generation), take it at
+// once: a view adapts only from what it metered. Until then it is exposed for
+// a middle gray card under the sun and the sky (exposure_estimate). Manual:
+// the EV100 of the camera. It clears the histogram for the next frame.
 #include "scene.slang"
 #include "exposure.slang"
 #define MIRAI_GROUP_X 128
@@ -59,6 +61,15 @@ float sky_card() {
     return MIDDLE_GRAY * luminance(light) / params.light_scale;
 }
 
+// The EV100 of a view that has metered nothing in its generation: a middle
+// gray card under the sun and the sky, or, without them, under the strongest
+// light, which the light scale brings near one.
+float exposure_estimate() {
+    float card = sky_card();
+    if (card > 0.0) return clamp(log2(card * (100.0 / 12.5)), params.range.x, params.range.y);
+    return exposure_first(params.light_scale, params.range);
+}
+
 // From `current` toward `target`, EV100, over dt seconds.
 float exposure_adapt(float current, float target, float dt) {
     float apart = target - current;
@@ -85,8 +96,10 @@ void main(uint index : SV_GroupIndex) {
         if (nits > 0.0) counts[exposure_bin(nits)] += sky;
     }
     Exposure_State s = state[0];
-    bool held = s.valid != 0u && s.generation == params.generation;
+    bool held = s.source == EXPOSURE_METERED && s.generation == params.generation;
     float ev100 = params.ev100;
+    float target = ev100;
+    uint source = EXPOSURE_METERED;
     if (params.manual == 0u) {
         float total = 0.0;
         for (uint i = 0u; i < EXPOSURE_BINS; i++) total += float(counts[i]);
@@ -101,18 +114,24 @@ void main(uint index : SV_GroupIndex) {
             below += count;
         }
         if (weight > 0.0) {
-            ev100 = clamp(sum / weight + log2(100.0 / 12.5), params.range.x, params.range.y);
-            if (held && params.adaptation > 0.0) ev100 = exposure_adapt(s.ev100, ev100, params.dt);
-        } else {
+            target = clamp(sum / weight + log2(100.0 / 12.5), params.range.x, params.range.y);
+            ev100 = held && params.adaptation > 0.0 ? exposure_adapt(s.ev100, target, params.dt) : target;
+        } else if (!held) {
             // Nothing to meter (a backdrop, or what glows relative to the
-            // exposure): the exposure holds, or begins at a middle gray card
-            // under the strongest light, which the light scale brings near one.
-            ev100 = s.valid != 0u ? s.ev100 : exposure_first(params.light_scale, params.range);
+            // exposure) and nothing metered yet: the next frame that meters
+            // takes its value at once.
+            ev100 = exposure_estimate();
+            target = ev100;
+            source = EXPOSURE_ESTIMATED;
+        } else {
+            ev100 = s.ev100;
+            target = ev100;
         }
     }
     s.ev100 = ev100;
+    s.target = target;
     s.exposure = MIDDLE_GRAY * (100.0 / 12.5) * exp2(params.bias + params.compensation - ev100) / params.light_scale;
-    s.valid = 1u;
+    s.source = source;
     s.generation = params.generation;
     state[0] = s;
 }

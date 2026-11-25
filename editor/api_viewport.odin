@@ -311,17 +311,18 @@ api_capture_debug_draw :: proc(s:^Session,w:core.World_Ref,overlays:^Api_Capture
 
 // Window frames when capture leaves frames automatic (0): at least
 // API_CAPTURE_SETTLE for TAA, exposure and probe stats, then while textures
-// stream (up to wait) or GI probes still gather (up to host.CAPTURE_GI_MAX).
+// stream (up to wait) or GI probes still gather and the exposure still adapts
+// (up to host.CAPTURE_LIGHT_MAX).
 @(private)
 api_capture_settle :: proc(s:^Session,dt:f32,wait:time.Duration) {
     started:=time.tick_now()
     r:=s.app.renderer
     count:=API_CAPTURE_SETTLE
-    gi_limit:=max(API_CAPTURE_SETTLE,host.CAPTURE_GI_MAX)
+    light_limit:=max(API_CAPTURE_SETTLE,host.CAPTURE_LIGHT_MAX)
     for frame:=0;frame<count && !s.quit;frame+=1 {
         if api_frames(s,1,dt)==0 {return}
         pending:=gpu.textures_update(r)+host.app_assets_arriving(s.app)
-        count=host.capture_frames_settle(count,frame,API_CAPTURE_SETTLE,pending,gpu.renderer_gi_settling(r),&gi_limit,time.tick_since(started),wait)
+        count=host.capture_frames_settle(count,frame,API_CAPTURE_SETTLE,pending,gpu.renderer_gi_settling(r) || gpu.renderer_exposure_settling(r),&light_limit,time.tick_since(started),wait)
     }
 }
 

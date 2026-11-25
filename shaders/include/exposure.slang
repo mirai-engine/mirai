@@ -22,8 +22,9 @@ uint exposure_bin(float nits) {
 struct Exposure_State {
     float ev100;     // what the view is exposed at
     float exposure;  // the scene-linear value of one render unit
-    uint valid;      // 0 before the first image
+    uint source;     // 0 before the first image, EXPOSURE_ESTIMATED or EXPOSURE_METERED
     uint generation; // of the discontinuities of the view it belongs to
+    float target;    // EV100 ev100 comes to: what this frame metered
 };
 
 // The EV100 of a view with nothing to meter yet (render.exposure_first): a

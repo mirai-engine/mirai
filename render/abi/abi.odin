@@ -488,6 +488,10 @@ AIR_AERIAL_SLICES      :: 32
 DISPLAY_LUT_SIZE       :: 65
 MIDDLE_GRAY            :: f32(0.18)
 EXPOSURE_BINS          :: 128
+// Exposure_State.source: the exposure of a view's generation is an estimate
+// until a frame of it meters something.
+EXPOSURE_ESTIMATED     :: 1
+EXPOSURE_METERED       :: 2
 
 // The depth the CPU reads around a pixel.
 DEPTH_PROBE_CAPACITY :: 8

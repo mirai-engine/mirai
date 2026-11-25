@@ -28,7 +28,9 @@ Render units:
   with hysteresis; without lights it is one. This way the half floats of the targets store a noon
   and a night equally well.
 - A new scale is a change of units: the next frame carries the histories and the probe volume to
-  it, without starting over ([light of each world](gi.md#light-of-each-world)).
+  it, without starting over ([light of each world](gi.md#light-of-each-world)). A world shown
+  anew takes a scale of its own in its first frame from the lights, sun and sky the scene has
+  then, whether or not they are given again (Play copies a world with the same sun).
 - The absolute thresholds of the shaders are in render units: they hold the
   same by day and by night. The light that is not worth its shadow ray (`light_cutoff`) is
   measured exposed like the view: in render units, a distant light thousands of times stronger
@@ -66,8 +68,11 @@ of the display transform (`exposure_of_ev100`).
     light. In a parallel projection (`frame.eye.w` 0) it does not count: all its pixels show a
     single direction.
   - The background (`use_background`), the pixels without light and the almost black surfaces do
-    not count. A view that sees nothing that counts keeps its exposure; the first time it starts
-    at mid gray under the strongest light.
+    not count. A view that sees nothing that counts keeps what it metered; until it meters
+    something in its generation it is exposed for a mid gray card under the sun and the sky
+    (`exposure_estimate`; without them, under the strongest light), and the first frame that
+    meters takes its value at once: a view adapts only from a metered value
+    (`Exposure_State.source`).
   - Shade counts like any other light: a pixel in shadow meters what it receives, so a large
     shadow in view pulls the exposure up (the trimmed extremes of the histogram limit it).
   - `exposure_adapt.comp` brings to mid gray the geometric mean without the extremes of the
@@ -79,6 +84,9 @@ of the display transform (`exposure_of_ev100`).
     target at once: camera cut, another world or another scene in the same one (`scene_world`),
     another number of views, a shader reload that changes the scene image. `view_camera_cut`
     counts them (`exposure_generation`). Adaptation is left for light changes within a shot.
+  - **Captures.** An automatic capture draws on while the main view's exposure is more than
+    `EXPOSURE_SETTLED` from what it meters (`renderer_exposure_settling`), within
+    `host.CAPTURE_LIGHT_MAX` frames, as it does for the probes.
 - `compensation` adds EV in both modes: +1 doubles the light of the image.
 - **Who decides.** A single rule, from highest to lowest:
   1. The camera with its own exposure (the `Exposure` component; `Exposure.own` in `render`): it

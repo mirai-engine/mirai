@@ -271,6 +271,7 @@ Stats :: struct {
 	rays_per_frame:    u64,
 	gpu_ms:            f32, // of the last frame the GPU finished
 	ev100:             f32, // the main view is exposed at, before its compensation: what its meter took, as read back, or what its camera gives
+	exposure_settling: bool, // its auto exposure: nothing of its generation read back yet, or still coming to what it meters
 	timings:           []rhi.Gpu_Timing,
 	// Time of the calling thread in the parts of the last frame, in ms.
 	cpu_prepare_ms:    f32, // geometry commit, capacities and targets
@@ -553,6 +554,7 @@ View_State :: struct {
 	exposure_readback:[rhi.MAX_FRAMES_IN_FLIGHT]rhi.Buffer, // Gpu_Exposure of the frame of each slot, for the CPU
 	ev100:f32,              // read back from a frame before: what the view was exposed at
 	ev100_known:bool,
+	exposure_settling:bool, // nothing of its generation read back yet, or it was still coming to what it metered (EXPOSURE_SETTLED)
 	exposure_generation:u32, // counts its discontinuities (view_camera_cut): the first image after one takes the metered exposure at once
 	exposure_adapted:Exposure_Adapted, // what its last exposure pass adapted with
 }
@@ -568,6 +570,7 @@ view_camera_cut :: proc(v:^View_State) {
     v.has_previous=false
     v.turn=0
     v.exposure_generation+=1
+    v.exposure_settling=true
     v.prev_jitter={}
     t:=&v.targets
     t.taa_valid=false

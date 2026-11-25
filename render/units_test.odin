@@ -357,9 +357,9 @@ a_relative_emission_lights_nothing :: proc(t: ^testing.T) {
 
 // With nothing to meter, as when all the view glows relative to the exposure
 // in front of a backdrop, the exposure begins at a middle gray card under the
-// strongest light, and the glow shows its value.
+// sun and the sky, and the glow shows its value.
 @(test)
-with_nothing_to_meter_the_exposure_begins_at_the_strongest_light :: proc(t: ^testing.T) {
+with_nothing_to_meter_the_exposure_begins_at_a_card_under_the_sun_and_sky :: proc(t: ^testing.T) {
 	f: Units_Fixture
 	if !units_fixture(t, &f) {return}
 	defer fixture_destroy(&f)
@@ -369,14 +369,56 @@ with_nothing_to_meter_the_exposure_begins_at_the_strongest_light :: proc(t: ^tes
 	materials_set(r, {glow})
 	covering := f.floor
 	covering.material = 1
-	scene_given(r, {covering}, nil, {direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {background = {0, 0, 0}, use_background = true})
+	// 30 degrees above the horizon: half the light of the sun overhead, an EV below the strongest light.
+	scene_given(r, {covering}, nil, {direction = {0, 0.5, 0.8660254}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}, {sky = {1000, 1000, 1000}, background = {0, 0, 0}, use_background = true})
 	camera := DOWN
 	camera.exposure = {}
 	for _ in 0 ..< 4 {testing.expect(t, renderer_frame(r, {camera = camera, time = 0}), r.error)}
 	state := exposure_state(t, &f)
-	testing.expectf(t, abs(state.ev100 - math.log2(MIDDLE_GRAY / r.scene.light_scale * 100 / LIGHT_METER_K)) < 0.01, "EV100 %v under a light scale of %v", state.ev100, r.scene.light_scale)
+	card := MIDDLE_GRAY * (100000 * 0.5 / math.PI + 1000)
+	testing.expectf(t, abs(state.ev100 - math.log2(card * 100 / LIGHT_METER_K)) < 0.1, "EV100 %v for a card of %v nits", state.ev100, card)
 	shown := render_units_at(t, &f, r.targets.display, 0.5, 0.5) * state.exposure
 	testing.expectf(t, near(shown.x, 0.5, 0.02) && near(shown.y, 0.25, 0.02) && near(shown.z, 0.1, 0.03), "the glow shows %v", shown)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// A view adapts only from what it metered: the first frame that meters
+// something takes it at once, after frames that metered nothing.
+@(test)
+the_first_metered_frame_exposes_at_once_after_frames_that_metered_nothing :: proc(t: ^testing.T) {
+	f: Units_Fixture
+	if !units_fixture(t, &f) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	camera := DOWN
+	camera.exposure = {adaptation = 1, own = true}
+	overhead := Sun_Desc{direction = {0, 1, 0}, color = {1, 1, 1}, illuminance = 100000, enabled = true, indirect = 1, scattering = 1}
+	scene_given(r, nil, nil, overhead, {background = {0, 0, 0}, use_background = true})
+	time := f32(0)
+	for _ in 0 ..< 3 {
+		time += 1.0 / 60
+		testing.expect(t, renderer_frame(r, {camera = camera, time = time}), r.error)
+	}
+	low := overhead
+	low.direction = {0, 0.5, 0.8660254}
+	scene_given(r, {f.floor}, nil, low, {background = {0, 0, 0}, use_background = true})
+	time += 1.0 / 60
+	testing.expect(t, renderer_frame(r, {camera = camera, time = time}), r.error)
+	state := exposure_state(t, &f)
+	card := MIDDLE_GRAY * 100000 * 0.5 / math.PI
+	testing.expectf(t, abs(state.ev100 - math.log2(card * 100 / LIGHT_METER_K)) < 0.2, "the floor exposes at once at EV100 %v, for a card of %v nits", state.ev100, card)
+	// Twice the light: the view comes to it over its adaptation, and a capture waits for it to settle.
+	scene_given(r, {f.floor}, nil, overhead, {background = {0, 0, 0}, use_background = true})
+	adapting, settled := false, -1
+	for frame in 0 ..< 120 {
+		time += 1.0 / 60
+		testing.expect(t, renderer_frame(r, {camera = camera, time = time}), r.error)
+		adapting ||= renderer_exposure_settling(r)
+		if adapting && !renderer_exposure_settling(r) {settled = frame;break}
+	}
+	near_end := exposure_state(t, &f)
+	testing.expectf(t, adapting && settled > 0, "the exposure was seen adapting (%v) and then settled at frame %v", adapting, settled)
+	testing.expectf(t, abs(near_end.target - near_end.ev100) <= EXPOSURE_SETTLED + 0.05, "settled within a quarter stop of its target: %v and %v", near_end.ev100, near_end.target)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
