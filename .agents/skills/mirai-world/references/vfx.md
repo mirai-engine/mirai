@@ -214,12 +214,14 @@ depth.
 Game code pushes to `core.Births` without importing `vfx`. `Particle_Channel` listens by text name
 (Cone aligns to nonzero birth normal); `silent` skips auto-spawn so programs read `channel` alone.
 Non-silent emitters preview periodically in Edit (`channel_preview`). `particles_tick` keeps each
-listened channel's births in a host ring (`Channel_Ring`, `CHANNEL_BIRTHS`, never rolled back)
-with the tick that read them. A resimulated tick matches its births against those of the same
-tick within `BIRTH_SAME_DISTANCE` (each once per pass): a match is not started again, a new one
-is, and an unmatched one the GPU did not start is `gone`; a non-resimulated tick earlier than the
-last (a load) marks the unstarted later ones `gone`. A record that gives its place unstarted
-counts in `lost` (`vfx.births`), as do `core.Births.log.lost`.
+listened channel's births in a host ring (`Channel_Ring`, `CHANNEL_BIRTHS`, never rolled back,
+allocated when the listeners change) with the tick that read them. A resimulated tick pairs its
+births one to one with records of the same tick and channel (`channel_again`): the nearest of the
+same `Birth.by` with no distance cap, or for `by` `NONE` the nearest of `NONE` within
+`BIRTH_SAME_DISTANCE`. A pair is not started again and, if unstarted, takes the corrected birth;
+an unpaired birth starts; an unpaired unstarted record is `gone`. A non-resimulated tick earlier
+than the last (a load) empties the rings, as `audio_requests` forgets `Sounds_Played`. A record
+that gives its place unstarted counts in `lost` (`vfx.births`), as do `core.Births.log.lost`.
 
 ## UI effects
 

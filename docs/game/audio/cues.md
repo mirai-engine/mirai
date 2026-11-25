@@ -40,7 +40,8 @@ A prop that plays a plain `.anim` gets cues from a `.character` of its clips.
 - A cue's sound plays once per tick of the entity that plays it: a tick a rollback runs again
   neither repeats it nor misses one only the corrected tick asks, and two entities side by side
   both sound.
-- Its birth goes to `core.Births`; the particles of a tick run again are not drawn twice.
+- Its birth goes to `core.Births` by that entity: the particles of a tick run again are not drawn
+  twice, even where the correction moved it, and two entities side by side both spark.
 - Playing cues allocates nothing in a tick.
 
 ## When it is not a cue

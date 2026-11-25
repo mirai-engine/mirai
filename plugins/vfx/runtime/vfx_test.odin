@@ -790,6 +790,78 @@ channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
     }
 }
 
+// A tick run again pairs its births with those of the run it corrects by the
+// entity that causes each, one to one and the nearest first; births of no
+// entity pair with the nearest of none within BIRTH_SAME_DISTANCE. A paired
+// birth the GPU did not start takes the corrected place; a load forgets what
+// was kept. The ticks allocate nothing.
+@(test)
+channel_births_pair_by_what_causes_them :: proc(t:^testing.T) {
+    // by: 0 none, 1 and 2 two entities.
+    Pushed :: struct {by:int,x:f32}
+    Case :: struct {name:string,first,corrected:[]Pushed,started,loaded:bool,expected:[]f32}
+    cases:=[?]Case{
+        {"two entities side by side both start",{{1,0}},{{2,0.2},{1,0}},true,false,{0.2}},
+        {"another entity in the place of one starts",{{1,0}},{{2,0.2}},true,false,{0.2}},
+        {"an entity corrected by 5 m is not drawn twice",{{1,0}},{{1,5}},true,false,nil},
+        {"an entity corrected before it started takes the corrected place",{{1,0}},{{1,0.5}},false,false,{0.5}},
+        {"an entity corrected by 5 m before it started",{{1,0}},{{1,5}},false,false,{5}},
+        {"two births of one entity pair one to one",{{1,0},{1,3}},{{1,10},{1,11},{1,12}},true,false,{12}},
+        {"two births of one entity pair the nearest",{{1,0},{1,0.8}},{{1,0.7},{1,-0.1}},false,false,{-0.1,0.7}},
+        {"births of none pair the nearest",{{0,0},{0,0.9}},{{0,0.8},{0,0.05}},false,false,{0.05,0.8}},
+        {"a birth of none farther than the distance starts",{{0,0}},{{0,1.5}},true,false,{1.5}},
+        {"a birth of none is not one of an entity",{{1,0}},{{0,0}},true,false,{0}},
+        {"a load forgets the births kept",{{1,0}},{{1,0}},true,true,{0}},
+    }
+    tracker:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&tracker,context.allocator)
+    defer mem.tracking_allocator_destroy(&tracker)
+    for c in cases {
+        f:=new(Emitters_Fixture)
+        defer free(f)
+        if !fixture_init(t,f) {return}
+        e:=fixture_emitter(f,Particle_Emitter{})
+        listener:Particle_Channel
+        base.text_set(listener.name[:],"impacts")
+        core.add(&f.listeners,e,listener)
+        fixture_settle(f)
+        f.app.assets=nil
+        by:=[3]core.Entity{core.NONE,core.create(&f.entities),core.create(&f.entities)}
+        Tick :: struct {f:^Emitters_Fixture,by:[3]core.Entity,tracker:^mem.Tracking_Allocator}
+        tick :: proc(k:Tick,at:u64,pushed:[]Pushed,again:bool) {
+            for p in pushed {core.birth(&k.f.births,core.Birth{channel=core.birth_channel("impacts"),by=k.by[p.by],position={p.x,0,0}})}
+            time:=TICK
+            time.tick,time.resimulating=at,again
+            context.allocator=mem.tracking_allocator(k.tracker)
+            fixture_tick(k.f,time)
+        }
+        // A birth to a channel nobody listens to makes the room of the log.
+        core.birth(&f.births,core.Birth{channel=core.birth_channel("nobody")})
+        fixture_tick(f,TICK)
+        k:=Tick{f,by,&tracker}
+        id:=core.World_Id{0,1}
+        mem.tracking_allocator_reset(&tracker)
+        saved:Particle_Clocks
+        testing.expect(t,core.value_copy(&saved,&f.clocks,type_info_of(Particle_Clocks)))
+        tick(k,1,c.first,false)
+        if c.started {fixture_sync(f,id,TICK)}
+        if c.loaded {
+            tick(k,0,nil,false)
+            tick(k,1,nil,false)
+        }
+        testing.expect(t,core.value_copy(&f.clocks,&saved,type_info_of(Particle_Clocks)))
+        core.value_free(&saved,type_info_of(Particle_Clocks))
+        tick(k,1,c.corrected,true)
+        testing.expectf(t,tracker.total_allocation_count==0,"%s: the ticks allocated %d times",c.name,tracker.total_allocation_count)
+        fixture_sync(f,id,TICK)
+        got:=make([dynamic]f32,context.temp_allocator)
+        for b in f.sync.births {append(&got,b.position.x)}
+        slice.sort(got[:])
+        testing.expectf(t,slice.equal(got[:],c.expected),"%s: the GPU starts %v, not %v",c.name,got[:],c.expected)
+        fixture_destroy(f)
+    }
+}
+
 // Births that find no room are reported, never dropped in silence: those past
 // core.BIRTHS_CAPACITY in the log, and those a channel gives up before the
 // GPU started them.

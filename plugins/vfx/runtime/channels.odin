@@ -1,6 +1,5 @@
 package vfx
 
-import "base:runtime"
 import "core:math"
 import "core:math/linalg"
 import "core:slice"
@@ -15,14 +14,18 @@ import "mirai:std/base"
 // kind channel with its name (`//! resource name channel`).
 // particles_tick keeps the births of each channel with the tick that read
 // them, and particles_sync starts on the GPU those it did not start. A tick
-// that a rollback runs again finds its births by tick and place: one it pushes
-// again is not drawn twice, one only it pushes is drawn, and one only the run
-// it corrects pushed is not drawn if the GPU did not start it yet. A channel
-// keeps CHANNEL_BIRTHS births; one that gives its place before the GPU started
-// it is lost and reported.
+// that a rollback runs again pairs each birth it pushes with one the run it
+// corrects pushed in that tick and channel, one to one: the nearest by the
+// same entity (Birth.by), or with none, the nearest with none within
+// BIRTH_SAME_DISTANCE. A paired one is not drawn twice and, if the GPU did not
+// start it yet, takes what the corrected tick says; one only it pushes is
+// drawn, and one only the run it corrects pushed is not drawn if the GPU did
+// not start it yet. A clock that goes back without running ticks again (a
+// load) forgets the births kept. A channel keeps CHANNEL_BIRTHS births; one
+// that gives its place before the GPU started it is lost and reported.
 
 CHANNEL_BIRTHS :: 1024
-BIRTH_SAME_DISTANCE :: f32(1) // m: a birth a tick run again pushes this near one it pushed before is that one
+BIRTH_SAME_DISTANCE :: f32(1) // m: a birth of no entity a tick run again pushes this near one it pushed before can be that one
 
 // The channel an emitter starts particles of its effect from: at each birth
 // pushed to it, count of them where the birth is, besides its own. A silent
@@ -66,7 +69,7 @@ Channel_Record :: struct {
 #assert(size_of(Channel_Clock)<=32)
 
 @(private)
-channels_step :: proc(clocks:^Particle_Clocks,sync:^Particle_Sync,pushed:[]core.Birth,listeners:^core.Table(Particle_Channel,$A),time:core.Time) {
+channels_step :: proc(clocks:^Particle_Clocks,sync:^Particle_Sync,pushed:[]core.Birth,listeners:^core.Table(Particle_Channel,$A),time:core.Time,problems:^core.Problems) {
     if core.touched(listeners,&clocks.seen_channels) {
         names:=make([dynamic]core.Birth_Channel,context.temp_allocator)
         for row in 0..<core.count(listeners) {
@@ -93,12 +96,27 @@ channels_step :: proc(clocks:^Particle_Clocks,sync:^Particle_Sync,pushed:[]core.
             free(sync.channels[name])
             delete_key(&sync.channels,name)
         }
+        // The births of a channel are kept from when it is listened to: a tick does not allocate.
+        for clock in clocks.channels {
+            if clock.name in sync.channels {continue}
+            ring,err:=new(Channel_Ring)
+            if err==nil {
+                if _,err=map_insert(&sync.channels,clock.name,ring);err!=nil {free(ring)}
+            }
+            if err!=nil {
+                core.report(problems,core.NONE,"vfx.memory","out of memory for the births of a channel; they are dropped until there is: free memory")
+                clocks.seen_channels={}
+                break
+            }
+        }
     }
     at:=time.playing?time.seconds+f64(time.dt):-1
     sync.passes+=1
     again:=time.playing && time.resimulating
-    // What a run whose clock went back (a load) pushed and the GPU did not start is not started.
-    if time.playing && !time.resimulating && time.tick<sync.births_tick {channels_gone(sync,time.tick,false)}
+    // The clock went back without running ticks again (a load): what was kept is of another run.
+    if time.playing && !time.resimulating && time.tick<sync.births_tick {
+        for _,ring in sync.channels {ring.oldest,ring.started=ring.next,ring.next}
+    }
     if time.playing {sync.births_tick=time.tick}
     for &birth in pushed {
         if clock:=channel_clock(clocks,birth.channel);clock!=nil {
@@ -109,33 +127,36 @@ channels_step :: proc(clocks:^Particle_Clocks,sync:^Particle_Sync,pushed:[]core.
         }
     }
     // What only the run this tick corrects pushed, and the GPU did not start, is not started.
-    if again {channels_gone(sync,time.tick,true)}
-}
-
-@(private)
-channels_gone :: proc(sync:^Particle_Sync,tick:u64,again:bool) {
-    for _,ring in sync.channels {
-        for number in max(ring.oldest,ring.started)..<ring.next {
-            record:=&ring.records[number%CHANNEL_BIRTHS]
-            if again ? record.tick==tick && record.pass!=sync.passes : record.tick>=tick {record.gone=true}
+    if again {
+        for _,ring in sync.channels {
+            for number in max(ring.oldest,ring.started)..<ring.next {
+                record:=&ring.records[number%CHANNEL_BIRTHS]
+                if record.tick==time.tick && record.pass!=sync.passes {record.gone=true}
+            }
         }
     }
 }
 
-// Whether birth was pushed by the run of tick that this one corrects: then it
-// is kept for this pass, and not pushed again.
+// Whether birth pairs with one the run of tick that this one corrects pushed,
+// not paired yet in this pass: the nearest by the same entity or, by none, the
+// nearest by none within BIRTH_SAME_DISTANCE. Then that one is kept for this
+// pass and, if the GPU did not start it, takes what birth says.
 @(private)
 channel_again :: proc(sync:^Particle_Sync,name:core.Birth_Channel,birth:core.Birth,tick:u64) -> bool {
     ring:=sync.channels[name]
     if ring==nil {return false}
+    nearest:=max(u64)
+    distance:=BIRTH_SAME_DISTANCE*BIRTH_SAME_DISTANCE if birth.by==core.NONE else max(f32)
     for number in ring.oldest..<ring.next {
         record:=&ring.records[number%CHANNEL_BIRTHS]
-        if record.tick!=tick || record.pass==sync.passes || record.gone && number<ring.started {continue}
-        if linalg.length2(record.birth.position-birth.position)>BIRTH_SAME_DISTANCE*BIRTH_SAME_DISTANCE {continue}
-        record.pass,record.gone=sync.passes,false
-        return true
+        if record.tick!=tick || record.birth.by!=birth.by || record.pass==sync.passes || record.gone && number<ring.started {continue}
+        if d:=linalg.length2(record.birth.position-birth.position);d<=distance {nearest,distance=number,d}
     }
-    return false
+    if nearest==max(u64) {return false}
+    record:=&ring.records[nearest%CHANNEL_BIRTHS]
+    record.pass,record.gone=sync.passes,false
+    if nearest>=ring.started {record.birth=birth}
+    return true
 }
 
 @(private)
@@ -149,14 +170,11 @@ channel_clock :: proc(clocks:^Particle_Clocks,name:core.Birth_Channel) -> ^Chann
     return nil
 }
 
+// A ring is missing only while memory for it runs out, which channels_step reported.
 @(private)
 channel_record :: proc(sync:^Particle_Sync,name:core.Birth_Channel,birth:core.Birth,at:f64,tick:u64) {
     ring:=sync.channels[name]
-    if ring==nil {
-        err:runtime.Allocator_Error
-        if ring,err=new(Channel_Ring);err!=nil {return}
-        if _,err:=map_insert(&sync.channels,name,ring);err!=nil {free(ring);return}
-    }
+    if ring==nil {return}
     if ring.next-ring.oldest==CHANNEL_BIRTHS {
         if ring.oldest>=ring.started && !ring.records[ring.oldest%CHANNEL_BIRTHS].gone {ring.lost+=1}
         ring.oldest+=1
