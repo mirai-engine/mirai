@@ -1266,12 +1266,12 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
     for m in f.moves.queue.items {if m.entity==f.player && m.kind==.Remove_Moves && m.move.id==MOVE_ID {move_removed=true}}
     testing.expect(t,move_removed,"layered move removed on Span_End")
 
-    // Re-opening, world_copy round-trip preserves span_open/span_start/regen_at/air_ticks,
+    // Re-opening, world_copy round-trip preserves span_open/span_start/regen_at/end_ticks,
     // and canceling before .Span_End closes cleanly.
     append(&f.anim_events.items,anim.Animation_Event{entity=f.player,kind=.Span_Begin,action=base.name_hash("slash_1"),name=base.name_hash("active")})
     step(f)
     testing.expect(t,ability_has(user(f,f.player).state,CHARGING))
-    core.edit(&f.states,f.player).air_ticks=7
+    core.edit(&f.states,f.player).end_ticks=7
     core.edit(&f.tracking,f.player).regen_at[0]=999
     test_world_settle(&f.w)
     snap:Abilities_World
@@ -1281,7 +1281,7 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
     snap_state,_:=core.get(&snap.states,f.player)
     snap_track,_:=core.get(&snap.tracking,f.player)
     testing.expect_value(t,snap_state.span_open,user(f,f.player).span_open)
-    testing.expect_value(t,snap_state.air_ticks,u16(7))
+    testing.expect_value(t,snap_state.end_ticks,u16(7))
     testing.expect_value(t,snap_track.span_start[0],user(f,f.player).span_start[0])
     testing.expect_value(t,snap_track.regen_at[0],u64(999))
 
@@ -1297,4 +1297,42 @@ clip_span_bound_windows_open_and_close_on_animation_events :: proc(t:^testing.T)
     bad.windows[0]={from=0.1,to=0.5}
     base.text_set(bad.windows[0].span[:],"active")
     testing.expect(t,ability_check(&bad,buf[:])!="")
+}
+
+// A running ability's per_second costs take nothing while its user's Character is in one of its
+// pause_modes, and it completes once the Character has been end_grace seconds in a row in one of
+// its end_modes; leaving them before that starts the grace again.
+@(test)
+costs_pause_and_abilities_end_by_the_mode_of_the_character :: proc(t:^testing.T) {
+    Phase :: struct {mode:locomotion.Locomotion_Mode,ticks:int}
+    Case :: struct {phases:[3]Phase,running:bool,spent:f32}
+    walking,falling:=locomotion.MODE_WALKING,locomotion.MODE_FALLING
+    for c in ([]Case{
+        {phases={{walking,60},{},{}},running=true,spent=10},
+        {phases={{falling,24},{walking,30},{falling,24}},running=true,spent=5},
+        {phases={{walking,30},{falling,45},{}},running=false,spent=5},
+    }) {
+        f:=new(Fixture);defer free(f)
+        if !fixture_make(t,f) {return}
+        defer fixture_destroy(f)
+        core.edit(&f.users,f.player).attributes[0]={attribute=HEALTH,base=100,max=100}
+        core.add(&f.locomotions,f.player,locomotion.Locomotion_State{mode=walking})
+        run:=&f.sheets[SLASH_1]
+        run^={duration=100,pause_modes=Ability_Modes(1<<u32(falling)),end_modes=Ability_Modes(1<<u32(falling)),end_grace=0.5}
+        run.costs[0]={attribute=HEALTH,per_second=10}
+        test_world_settle(&f.w)
+        ability_use(&f.requests,f.player,ref(SLASH_1))
+        step(f)
+        testing.expectf(t,user(f,f.player).ability==ref(SLASH_1),"%v: it starts",c)
+        for p in c.phases {
+            if p.ticks==0 {continue}
+            core.edit(&f.locomotions,f.player).mode=p.mode
+            test_world_settle(&f.w)
+            step(f,p.ticks)
+        }
+        testing.expectf(t,(user(f,f.player).ability==ref(SLASH_1))==c.running,"%v: running %v",c,user(f,f.player).ability)
+        spent:=100-user(f,f.player).attributes[0].base
+        testing.expectf(t,abs(spent-c.spent)<0.4,"%v: spent %v",c,spent)
+        testing.expect_value(t,f.problems.count,0)
+    }
 }

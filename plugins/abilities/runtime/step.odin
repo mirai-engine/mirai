@@ -22,7 +22,7 @@ Ability_World :: struct {
     seat_states:core.Ref(inp.Seat_States),
     characters:^core.Table(phys.Character,.Read),
     locomotions:^core.Table(locomotion.Locomotion_State,.Read), // the modes the characters are in
-    grounds:^core.Table(phys.Character_State,.Read), // what Speed and Ledge_Ahead conditions measure from
+    grounds:^core.Table(phys.Character_State,.Read), // what Speed conditions measure from
     motions:^core.Table(core.Motion,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
     remotes:^core.Table(core.Remote,.Read),
@@ -485,80 +485,35 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     held_attach(t,e,active,at)
 }
 
-// Whether e's Character is airborne (falling, not standing, and not flying or swimming).
+// Whether e's Character is in one of modes.
 @(private)
-character_airborne :: proc(t:^Tick,e:core.Entity) -> bool {
-    if t.w.grounds!=nil {
-        if ground,has:=core.get(t.w.grounds,e);has {
-            if ground.standing {return false}
-            if t.w.locomotions!=nil {
-                if loco,has_loco:=core.get(t.w.locomotions,e);has_loco {
-                    return loco.mode==locomotion.MODE_FALLING
-                }
-            }
-            return true
-        }
-    }
-    if t.w.locomotions!=nil {
-        if loco,has:=core.get(t.w.locomotions,e);has {
-            return loco.mode==locomotion.MODE_FALLING
-        }
-    }
-    return false
+mode_in :: proc(t:^Tick,e:core.Entity,modes:Ability_Modes) -> bool {
+    if modes==0 || t.w.locomotions==nil {return false}
+    loco,found:=core.get(t.w.locomotions,e)
+    return found && u32(loco.mode)<32 && modes&Ability_Modes(u32(1)<<u32(loco.mode))!=0
 }
 
-// Whether an airborne Character is descending along its up (or lacks motion data).
-@(private)
-character_falling :: proc(t:^Tick,e:core.Entity) -> bool {
-    if t.w.motions==nil {return true}
-    motion,has:=core.get(t.w.motions,e)
-    if !has {return true}
-    up:=mm.Vec3{0,1,0}
-    if t.w.physics.ptr!=nil {
-        if capsule,made:=phys.character_capsule(t.w.physics,e);made {
-            up=mm.quat_rotate(capsule.up_frame,mm.Vec3{0,1,0})
-        }
-    }
-    return linalg.dot(motion.linear,up)<0
-}
-
-// Takes what the running ability costs every second for this tick; false when an attribute cannot
-// pay it or fall_grace is exceeded, which completes the ability.
+// Takes what the running ability costs every second for this tick, unless its Character is in one
+// of its pause_modes; false when an attribute cannot pay it or the Character has been end_grace in
+// its end_modes, which completes the ability.
 @(private)
 costs_pay :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability) -> bool {
-    airborne_checked,airborne,has_grace:=false,false,false
-    for c in a.costs {
-        if c.pause_falling && c.fall_grace>0 {has_grace=true;break}
-    }
-    if has_grace {
-        airborne_checked,airborne=true,character_airborne(t,e)
-        falling:=airborne && character_falling(t,e)
-        ticks:=u.state.air_ticks
-        if falling {
+    if a.end_modes!=0 {
+        ticks:=u.state.end_ticks
+        if mode_in(t,e,a.end_modes) {
             if ticks<max(u16) {ticks+=1}
-        } else {
-            ticks=0
-        }
-        if ticks!=u.state.air_ticks {core.edit_at(t.states,u.state_row).air_ticks=ticks}
-        if falling {
-            for c in a.costs {
-                if c.pause_falling && c.fall_grace>0 && u64(ticks)>ticks_of(c.fall_grace,t.dt) {return false}
-            }
-        }
+        } else {ticks=0}
+        if ticks!=u.state.end_ticks {core.edit_at(t.states,u.state_row).end_ticks=ticks}
+        if ticks>0 && u64(ticks)>ticks_of(a.end_grace,t.dt) {return false}
     }
+    if mode_in(t,e,a.pause_modes) {return true}
     for c in a.costs {
         if c.attribute==ATTRIBUTE_NONE || !(c.per_second>0) {continue}
-        if c.pause_falling {
-            if !airborne_checked {airborne_checked,airborne=true,character_airborne(t,e)}
-            if airborne {continue}
-        }
-        amount:=c.per_second*t.dt
         value,found:=ability_value(u.user,u.state,c.attribute)
-        if !found || value<amount {return false}
+        if !found || value<c.per_second*t.dt {return false}
     }
     for c in a.costs {
         if c.attribute==ATTRIBUTE_NONE || !(c.per_second>0) {continue}
-        if c.pause_falling && airborne {continue}
         for entry,i in u.user.attributes {
             if entry.attribute==c.attribute {base_add(t,e,u,i,-c.per_second*t.dt,spend=true)}
         }
@@ -716,7 +671,7 @@ condition_holds :: proc(w:^Ability_World,e:core.Entity,user:^Ability_User,state:
         if c.attribute==ATTRIBUTE_NONE {return true}
         value,found:=ability_value(user,state,c.attribute)
         return found && within(value,c)
-    case .Speed,.Ledge_Ahead:
+    case .Speed:
         if w.grounds==nil || w.motions==nil {return false}
         ground,_:=core.get(w.grounds,e)
         motion,_:=core.get(w.motions,e)
@@ -725,31 +680,22 @@ condition_holds :: proc(w:^Ability_World,e:core.Entity,user:^Ability_User,state:
         up:=mm.quat_rotate(capsule.up_frame,mm.Vec3{0,1,0})
         going:=motion.linear-ground.ground_velocity if ground.standing else motion.linear
         going-=up*linalg.dot(going,up)
-        if c.kind==.Speed {return within(linalg.length(going),c)}
-        if !ground.standing {return false}
-        if linalg.length(going)<1e-3 {
-            pose,_:=core.get(w.worlds,e)
-            going=mm.quat_forward(pose.rotation)
-        }
-        return locomotion.ledge_ahead(w.physics,capsule,going,c.reach,c.at_least)
+        return within(linalg.length(going),c)
     }
     return false
 }
 
 @(private)
 ability_start :: proc(t:^Tick,e:core.Entity,u:^Actor,ref:core.Record(Ability),a:^Ability) {
-    airborne_checked,airborne:=false,false
+    paused:=mode_in(t,e,a.pause_modes)
     for c in a.costs {
         if c.attribute==ATTRIBUTE_NONE || (c.amount==0 && !(c.per_second>0)) {continue}
         for entry,i in u.user.attributes {
             if entry.attribute!=c.attribute {continue}
             if c.amount>0 {
                 base_add(t,e,u,i,-c.amount,spend=true)
-            } else if c.per_second>0 && entry.regen_delay>0 {
-                if c.pause_falling && !airborne_checked {airborne_checked,airborne=true,character_airborne(t,e)}
-                if !(c.pause_falling && airborne) {
-                    core.edit_at(t.tracking,u.track_row).regen_at[i]=core.deadline(t.w.time,entry.regen_delay)
-                }
+            } else if c.per_second>0 && entry.regen_delay>0 && !paused {
+                core.edit_at(t.tracking,u.track_row).regen_at[i]=core.deadline(t.w.time,entry.regen_delay)
             }
         }
     }
@@ -765,7 +711,7 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Actor,ref:core.Record(Ability),a:
         if b.ability==ref {core.edit_at(t.tracking,u.track_row).buffer[i]={}}
     }
     state:=core.edit_at(t.states,u.state_row)
-    state.ability,state.start,state.own,state.span_open,state.air_ticks=ref,t.tick,0,0,0
+    state.ability,state.start,state.own,state.span_open,state.end_ticks=ref,t.tick,0,0,0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
     if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,e,name)}
 }
@@ -788,7 +734,7 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time,ki
         }
     }
     state:=core.edit_at(t.states,u.state_row)
-    state.ability,state.start,state.own,state.span_open,state.air_ticks={},0,0,0,0
+    state.ability,state.start,state.own,state.span_open,state.end_ticks={},0,0,0,0
     if u.track.hit_count!=0 {
         track:=core.edit_at(t.tracking,u.track_row)
         track.hit_count,track.targets,track.windows=0,{},{}

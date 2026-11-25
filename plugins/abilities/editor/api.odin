@@ -279,7 +279,6 @@ block_text :: proc(s:^editor.Session,block:ab.Ability_Block,index:int,a:^ab.Abil
             name,value:=attribute(s,user,state,c.attribute)
             return fmt.tprintf("condition %d: %s is %s and has to be %s",index,name,value,bounds)
         case .Speed: return fmt.tprintf("condition %d: the speed of its Character over the ground has to be %s m/s",index,bounds)
-        case .Ledge_Ahead: return fmt.tprintf("condition %d: its Character stands with no ledge at least %g m deep within %g m ahead",index,c.at_least,c.reach)
         }
     case .Cost:
         if index<0 || index>=len(a.costs) {break}

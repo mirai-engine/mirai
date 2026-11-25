@@ -12,6 +12,9 @@ Ability :: struct {
     requires:Ability_Statuses, // all of them
     blocked_by:Ability_Statuses, // any of them
     modes:Ability_Modes, // of the user's Character; none: any
+    pause_modes:Ability_Modes, // its per_second costs take nothing while the user's Character is in one of them
+    end_modes:Ability_Modes, // it completes once the user's Character has been end_grace seconds in a row in one of them
+    end_grace:f32 `mirai:"min=0,unit=s"`,
     conditions:[4]Ability_Condition,
     costs:[4]Ability_Cost,
     cooldown:f32 `mirai:"min=0,unit=s"`,

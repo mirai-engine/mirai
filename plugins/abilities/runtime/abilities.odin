@@ -65,7 +65,8 @@ Ability_Attribute :: distinct u8
 Ability_Cue :: distinct u16
 @(name="none") CUE_NONE :: Ability_Cue(0)
 
-// Locomotion modes of the Character an ability may start in.
+// Locomotion modes of the Character of a user: those an ability may start in, pauses its costs in
+// or ends in.
 @(name_bits="locomotion.Locomotion_Mode")
 Ability_Modes :: distinct u32
 
@@ -91,11 +92,12 @@ Ability_Input :: struct {
     wait:Ability_Wait,
 }
 
-// What a condition measures.
+// What a condition measures. What the game decides about the world (a ledge ahead, a target in
+// sight) is not a condition: a step of the game asks its query and uses the ability, or gives the
+// user a status the ability requires.
 Ability_Condition_Kind :: enum u8 {
-    Attribute,   // the current value of attribute
-    Speed,       // m/s of the user's Character across its up, relative to the ground it stands on
-    Ledge_Ahead, // standing, the ground falls away ahead along where its Character goes: none within at_least m under its feet reach ahead (locomotion.ledge_ahead); at_most stays 0
+    Attribute, // the current value of attribute
+    Speed,     // m/s of the user's Character across its up, relative to the ground it stands on
 }
 
 // It holds while what kind measures is within at_least..at_most.
@@ -104,15 +106,12 @@ Ability_Condition :: struct {
     at_least:f32,
     at_most:f32, // 0: no limit
     kind:Ability_Condition_Kind,
-    reach:f32 `mirai:"min=0,unit=m"`, // of Ledge_Ahead: how far ahead of the feet the ground has to fall away
 }
 
 Ability_Cost :: struct {
     attribute:Ability_Attribute,
     amount:f32 `mirai:"min=0"`, // taken from its base when the ability starts; it cannot start with less
-    per_second:f32 `mirai:"min=0,unit=1/s"`, // taken from its base every second it runs after its start; it completes when the attribute cannot pay the tick
-    fall_grace:f32 `mirai:"min=0,unit=s"`, // with pause_falling: falling longer than this completes the ability; 0: no limit
-    pause_falling:bool, // pauses per_second drain while the user's Character is airborne/falling
+    per_second:f32 `mirai:"min=0,unit=1/s"`, // taken from its base every second it runs after its start, but in the pause_modes of the ability; it completes when the attribute cannot pay the tick
 }
 
 // value = (base + add) * (1 + more), summed over the modifiers in force.
@@ -232,7 +231,7 @@ Ability_State :: struct {
     values:[ATTRIBUTE_ENTRIES]f32 `mirai:"transient,readonly,local"`,
     own:f32 `mirai:"readonly,hidden"`, // ticks on the user's own clock
     span_open:u16 `mirai:"readonly,hidden"`, // bit i: clip-span-bound window i is open
-    air_ticks:u16 `mirai:"readonly,hidden"`, // consecutive falling ticks while running an ability with fall_grace
+    end_ticks:u16 `mirai:"readonly,hidden"`, // ticks in a row its Character has been in an end_modes of the running ability
 }
 
 @(component,replicated,description="The pending inputs, cooldowns, and effects of an ability user.")

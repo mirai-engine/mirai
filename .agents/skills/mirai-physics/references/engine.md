@@ -150,9 +150,10 @@ Optional `locomotion` plugin (`Character` + capsule `Collider` + `Walk`/`Swim`/`
   mode; root motion of the climb is an `Override` layered move from `animation_physics`, and
   `Mantle_State.to` is its warp target, with `from` for callers). Both are written only on the
   custom-mode extension point.
-- **Tier 3 (game rules):** stamina, tactical sprints and ledge jumps are `abilities` data (speed
-  attribute -> `set_speed_scale`, `per_second` costs, `Speed`/`Ledge_Ahead` conditions, window
-  moves) ([abilities](../../mirai-abilities/SKILL.md)); locomotion holds no economy.
+- **Tier 3 (game rules):** stamina, sprints with an energy bar and ledge jumps are `abilities`
+  data (speed attribute -> `set_speed_scale`, `per_second` costs paused and ended by locomotion
+  mode, `Speed` conditions, window moves) plus a game step that asks `ledge_ahead`
+  ([abilities](../../mirai-abilities/SKILL.md)); locomotion holds no economy.
 - **Fly & Swim:** 3D flight without gravity; swimming enters/exits at `Swim.depth` (`Float` at
   surface, 3D underwater with buoyancy/current, surface jump-out `Override`).
 - **Layered moves (`Layered_Move`):** `add_move`/`remove_moves` (`Additive` velocity or `Override`
