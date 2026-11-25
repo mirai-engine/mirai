@@ -92,13 +92,10 @@ defer importer.report_destroy(&report)
 hum:=report.assets[0].id // random the first time, kept after
 ```
 
-- Write the WAV only when its bytes differ from the file on disk, so an unchanged source is
-  imported as the same file.
-- `importer` is `mirai:cook/import`. The id an import returns is random the first time and the one
-  the package of the source keeps from then on: read it with `asset.list`; never in a constant. The
-  WAV, `packages.mirai` and `packages/` are files of the project, which its history keeps; the
-  `.sound` is built again from them. A sound set: `asset.sound_set_save` from
-  `asset.SOUND_SET_DEFAULTS` ([audio](../audio.md#sets)). Art beside it imports the same way.
+- `importer` is `mirai:cook/import`; write the WAV only when its bytes differ. An import's id is
+  random once, then kept by the source's package: read it with `asset.list`, never a constant. The
+  WAV, `packages.mirai` and `packages/` are kept by the project's history; the `.sound` is built
+  from them. Sets: `asset.sound_set_save` ([audio](../audio.md#sets)). Art imports the same way.
 
 ## What is not supported
 
