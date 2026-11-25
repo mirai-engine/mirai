@@ -101,7 +101,7 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
     p,error:=project.open(root,"")
     defer project.close(&p)
     testing.expect_value(t,error.code,project.Error_Code.None)
-    uses,_,problem:=program_uses(&p,context.temp_allocator)
+    uses,problem:=program_uses(&p,context.temp_allocator)
     testing.expect_value(t,problem,"")
     want:=[]struct{program:string,uses:abi.Program_Uses}{{"Ember",{.Opaque,.Particle_Sprite}},{"Glass",{.Blend}},{"Moss",{.Opaque,.Overlay}},{"Rune",{.Opaque,.Overlay}},{"Stone",{.Opaque}},{"Tile",{.Opaque,.Blend}}}
     testing.expect_value(t,len(uses),len(want))
@@ -109,58 +109,5 @@ program_uses_are_what_the_assets_draw_each_program_as :: proc(t:^testing.T) {
         if i>=len(uses) {break}
         testing.expect_value(t,uses[i].program,each.program)
         testing.expect_value(t,uses[i].uses,each.uses)
-    }
-}
-
-// The stages draw viewmodels when a scene or a prefab of the project or of a
-// plugin holds a Viewmodel, or when the code of the game names
-// render.Viewmodel; without either the project has no generation and runs the
-// shaders of the engine, a struct of its own of that name aside.
-@(test)
-a_viewmodel_in_the_assets_or_the_code_asks_the_stages_for_it :: proc(t:^testing.T) {
-    Case :: struct {name:string,prefab:bool,code:string,viewmodel:bool}
-    cases:=[]Case{
-        {"a prefab of a plugin",true,"",true},
-        {"the code of the game",false,"package game\nimport erender \"mirai:engine/render\"\nrifle :: proc() -> erender.Viewmodel {return {fov=1}}\n",true},
-        {"neither",false,"package game\nimport \"mirai:core\"\nViewmodel :: struct {fov:f32}\nlook :: proc(c:core.Commands) -> Viewmodel {return {}}\n",false},
-    }
-    for c in cases {
-        root:=base.test_folder(t,"build-viewmodel")
-        if root=="" {return}
-        m:=project.manifest_default("Viewmodel Game")
-        base.text_set(m.plugins[0][:],"arms")
-        uses_write(t,root,project.PROJECT_FILE,text=project.manifest_text(&m,context.temp_allocator))
-        plugin:project.Plugin_Manifest
-        base.text_set(plugin.name[:],"arms")
-        base.text_set(plugin.version[:],"1.0.0")
-        plugin.parts={.Assets}
-        uses_write(t,root,"plugins","arms",project.PLUGIN_FILE,text=project.plugin_text(&plugin,context.temp_allocator))
-        types:asset.Types
-        asset.types_init(&types,context.temp_allocator)
-        scene:asset.Scene
-        testing.expect_value(t,asset.scene_init(&scene,&types,{2,1},context.temp_allocator),asset.Error.None)
-        asset.scene_entity_add(&scene,1,0,"rifle")
-        Viewmodel :: struct {fov:f32}
-        Light :: struct {intensity:f32}
-        if c.prefab {
-            testing.expect_value(t,asset.scene_set(&scene,1,"Viewmodel",&Viewmodel{1}),asset.Error.None)
-        } else {
-            testing.expect_value(t,asset.scene_set(&scene,1,"Point_Light",&Light{1}),asset.Error.None)
-        }
-        rifle:=project.path(root,"plugins/arms/assets/Rifle.scene",allocator=context.temp_allocator)
-        uses_write(t,rifle,text="")
-        testing.expect_value(t,asset.scene_save(&scene,rifle),asset.Error.None)
-        if c.code!="" {uses_write(t,root,"game","rifle.odin",text=c.code)}
-
-        p,error:=project.open(root,"")
-        defer project.close(&p)
-        testing.expect_value(t,error.code,project.Error_Code.None)
-        _,viewmodel,problem:=shaders_uses(&p,nil,context.temp_allocator)
-        testing.expect_value(t,problem,"")
-        testing.expectf(t,viewmodel==c.viewmodel,"%s: viewmodel %v",c.name,viewmodel)
-        // Without the root of the engine a generation cannot be made: one that is wanted fails.
-        job:=shaders_run(&p)
-        testing.expectf(t,(job.result.status==.None)==!c.viewmodel,"%s: %v",c.name,job.result.status)
-        shaders_destroy(job)
     }
 }

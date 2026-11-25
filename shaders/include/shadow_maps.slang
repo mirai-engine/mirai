@@ -409,11 +409,6 @@ Shadow_Map shadow_map_coarser(Shadow_Map m, uint coarser, inout int2 texel) {
     return c;
 }
 
-// A map of a viewmodel (FOREGROUND_MAP_SLOT, render/foreground.odin): a
-// square of the atlas whose first texel is at the pages of rect.y, every
-// texel of it drawn.
-bool shadow_map_plain(Shadow_Map m) { return m.rect.x == FOREGROUND_MAP_SLOT; }
-
 // The entry of the table a texel of map m lies at; false past its square.
 bool shadow_texel_entry(Shadow_Map m, int2 texel, out uint e) {
     e = 0u;
@@ -430,10 +425,6 @@ bool shadow_texel(Shadow_Map m, int2 texel, out int2 at, out Shadow_Map held, ou
     at = int2(0);
     held = m;
     coarser = 0u;
-    if (shadow_map_plain(m)) {
-        at = int2(m.rect.y & 0xFFu, (m.rect.y >> 8u) & 0xFFu) * int(SHADOW_PAGE) + texel;
-        return all(texel >= 0) && all(texel < int(m.rect.z));
-    }
     uint e;
     if (!shadow_texel_entry(m, texel, e)) return false;
     if (!shadow_entry_ready(e)) {
@@ -453,8 +444,7 @@ struct Shadow_Near {
     uint4 e;    // their entries, row by row; 0 past the square of the map
 };
 Shadow_Near shadow_near(Shadow_Map m, float2 texel, float reach) {
-    Shadow_Near n = (Shadow_Near)0;
-    if (shadow_map_plain(m)) return n;
+    Shadow_Near n;
     int pages = int(m.rect.z / SHADOW_PAGE);
     n.first = clamp(int2(floor(texel - reach)) / int(SHADOW_PAGE), 0, max(pages - 2, 0));
     uint e[4];
@@ -489,7 +479,6 @@ bool shadow_texel_near(Shadow_Map m, Shadow_Near n, int2 texel, out int2 at, out
 // point reads a blocker, else the nearest coarser one so drawn; false where
 // none is, and the light of the point is then traced.
 bool shadow_map_held_unit(inout Shadow_Map m, float2 unit) {
-    if (shadow_map_plain(m)) return true;
     unit = clamp(unit, -0.9999, 0.9999);
     int2 texel = int2(floor(float2(unit.x * 0.5 + 0.5, 0.5 - unit.y * 0.5) * float(m.rect.z)));
     uint e;
@@ -587,30 +576,6 @@ float shadow_texel_seen(Shadow_Map m, Shadow_Taps t) {
     float b = shadow_map_distance(held, view_shadow_atlas.Load(int3(at, 0)).r) + dot(held.origin - m.origin, m.forward);
     return shadow_blocks(t, b, float2(0.0), coarser) ? 0.0 : 1.0;
 }
-
-#ifdef MIRAI_VIEWMODEL
-// A layer of the maps of the viewmodel of the view (Frame.viewmodel), of the
-// sun (light 0) or of Frame.viewmodel.light (1), of the weapon or of the
-// body; false where the view has none or it holds nothing of the point.
-bool foreground_map(uint light, bool weapon, float3 position, out Shadow_Map m) {
-    uint at = (light * 2u + (weapon ? 0u : 1u)) * SHADOW_MAP_ROWS;
-    m = shadow_map_from(frame.viewmodel.maps[at], frame.viewmodel.maps[at + 1u], frame.viewmodel.maps[at + 2u],
-        frame.viewmodel.maps[at + 3u], frame.viewmodel.maps[at + 4u], frame.viewmodel.maps[at + 5u]);
-    if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u || m.rect.z == 0u) return false;
-    float3 local = shadow_map_local(m, position);
-    return local.z > m.near && local.z < m.far && all(abs(shadow_map_unit(m, local)) < 1.0);
-}
-
-// How much of that light reaches a pixel of the weapon at its true place
-// past what the layer of the weapon holds; 1 where it holds nothing of the
-// point. toward: the light from the point.
-float weapon_shadow_seen(uint light, float3 position, float3 n, float3 toward) {
-    Shadow_Map m;
-    Shadow_Taps t;
-    if (!foreground_map(light, true, position, m) || !shadow_map_point(m, light == 0u, toward, position, n, 0.0, 1.0, t)) return 1.0;
-    return shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t);
-}
-#endif
 
 // How much of the sun reaches a point past what the maps of the view hold;
 // -1 where no level drawn holds the point, or the view drew none: a ray

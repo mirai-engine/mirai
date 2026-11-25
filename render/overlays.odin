@@ -29,14 +29,12 @@ overlay_pipeline_id :: proc(blend:asset.Overlay_Blend) -> Pipeline_Id {
     switch blend {case .Alpha:return .Overlay_Alpha;case .Additive:return .Overlay_Additive;case .Multiply:return .Overlay_Multiply}
     return .Overlay_Alpha
 }
-// foreground: the overlays of the viewmodel of the view, with its constants
-// bound; else those of the world.
-overlay_pass :: proc(p:^Pass,foreground:=false) {
+overlay_pass :: proc(p:^Pass) {
     r,cmd,instance_count:=p.r,p.cmd,p.instance_count
     s,t:=&r.scene,p.t
     if s.overlay_count==0 {return}
-    rhi.cmd_timestamp(cmd,"viewmodel overlays" if foreground else "overlays")
-    pass:=rhi.Render_Pass_Desc{color_count=1,name="viewmodel overlays" if foreground else "surface overlays"}
+    rhi.cmd_timestamp(cmd,"overlays")
+    pass:=rhi.Render_Pass_Desc{color_count=1,name="surface overlays"}
     pass.colors[0]={texture=t.display,load=.Load,store=.Store}
     pass.depth={texture=t.depth,load=.Load,store=.Store}
     rhi.cmd_bind_index_buffer(cmd,s.mesh_draws)
@@ -48,7 +46,8 @@ overlay_pass :: proc(p:^Pass,foreground:=false) {
         // Mixed transparent meshes are currently excluded too: they require
         // interleaving overlays with the glass layer resolve rather than Equal.
         if inst.meta.w & (INSTANCE_FLAG_HIDDEN|INSTANCE_FLAG_TRANSLUCENT)!=0 {continue}
-        if (inst.meta.w & INSTANCE_FLAG_FOREGROUND!=0)!=foreground || foreground && inst.meta.w>>INSTANCE_OWNER_SHIFT&3+1!=u32(p.camera.own) {continue}
+        // A viewmodel over the view of its body alone.
+        if inst.meta.w & INSTANCE_FLAG_VIEWMODEL!=0 && inst.meta.w>>INSTANCE_OWNER_SHIFT&3+1!=p.frame.own&0xff {continue}
         for layer_index in 0..<int(layers.count) {layer:=layers.entries[layer_index]
             if !layer.enabled || int(layer.blend)>int(max(asset.Overlay_Blend)) {continue}
             params:=Params{material=u32(layer.material),blend=u32(layer.blend),light_budget=r.settings.light_budget}

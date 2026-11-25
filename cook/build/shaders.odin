@@ -113,9 +113,9 @@ shaders_start :: proc(
     sources,own:=shader_sources(p,a)
     job.package_roots=shaders_package_roots(p,a)
     job.own=own
-    uses,viewmodel,problem:=shaders_uses(p,previews,a)
+    uses,problem:=shaders_uses(p,previews,a)
     if problem!="" {return finish(job,.Failed,problem)}
-    if !own && len(sources)==0 && len(job.package_roots)==0 && !shaders_have_generated(uses) && !viewmodel {
+    if !own && len(sources)==0 && len(job.package_roots)==0 && !shaders_have_generated(uses) {
         if os.is_file(project.path(job.result.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)) {
             if base.remove_all(job.result.output)!=nil {return finish(job,.Failed,"the generation of an earlier build could not be removed")}
         }
@@ -125,7 +125,7 @@ shaders_start :: proc(
     job.store_root=strings.clone(store_root,a)
     job.options={
         root=strings.clone(p.engine_root,a),project=strings.clone(p.root,a),sources=sources,output=job.result.output,
-        progress=&job.progress,uses=uses,viewmodel=viewmodel,
+        progress=&job.progress,uses=uses,
     }
     if len(first)>0 {
         folder,error:=os.make_directory_temp("","mirai-shaders-first-*",a)
@@ -153,17 +153,17 @@ shaders_start :: proc(
 shaders_current :: proc(p:^project.Project,previews:[]string={},store_root:="") -> bool {
     sources,own:=shader_sources(p,context.temp_allocator)
     output:=project.shader_generation(p.root,context.temp_allocator)
-    uses,viewmodel,problem:=shaders_uses(p,previews,context.temp_allocator)
+    uses,problem:=shaders_uses(p,previews,context.temp_allocator)
     if problem!="" {return false}
     roots:=shaders_package_roots(p,context.temp_allocator)
     generated,reason:=shaders_generated(uses,store_root,roots,context.temp_allocator)
     if reason!="" {return false}
-    if !own && len(sources)==0 && len(generated)==0 && !viewmodel {
+    if !own && len(sources)==0 && len(generated)==0 {
         return !os.is_file(project.path(output,project.SHADERS_MANIFEST,allocator=context.temp_allocator))
     }
     return p.engine_root!="" && shaders.current({
         root=p.engine_root,project=p.root,sources=sources,output=output,uses=uses,
-        generated=generated,viewmodel=viewmodel,
+        generated=generated,
     })
 }
 
@@ -243,13 +243,9 @@ shaders_generated :: proc(
 // What the generation of a project compiles its Surface programs for: what
 // its assets draw them as (program_uses) and, for the programs named, the
 // previews of the editor, which compiles them when it first shows one.
-// viewmodel: its stages draw viewmodels (shaders.Options.viewmodel), since a
-// scene or a prefab of the project or of its plugins holds a render.Viewmodel
-// or their code names it (code_names_viewmodel).
-shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,viewmodel:bool,problem:string) {
+shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,problem:string) {
     drawn:[]shaders.Program_Uses_Of
-    if drawn,viewmodel,problem=program_uses(p,context.temp_allocator);problem!="" {return nil,false,strings.clone(problem,allocator)}
-    viewmodel||=code_names_viewmodel(p)
+    if drawn,problem=program_uses(p,context.temp_allocator);problem!="" {return nil,strings.clone(problem,allocator)}
     list:=make([dynamic]shaders.Program_Uses_Of,0,len(drawn)+len(previews),allocator)
     for each in drawn {append(&list,shaders.Program_Uses_Of{strings.clone(each.program,allocator),each.uses})}
     outer: for name in previews {
@@ -257,7 +253,7 @@ shaders_uses :: proc(p:^project.Project,previews:[]string,allocator:=context.all
         append(&list,shaders.Program_Uses_Of{strings.clone(name,allocator),{.Preview}})
     }
     slice.sort_by(list[:],proc(a,b:shaders.Program_Uses_Of) -> bool {return a.program<b.program})
-    return list[:],viewmodel,""
+    return list[:],""
 }
 
 @(private)
@@ -271,7 +267,7 @@ shaders_work :: proc(job:^Shaders_Job) {
         r.status,r.message=.Failed,problem
         return
     }
-    if !job.own && len(job.options.sources)==0 && len(generated)==0 && !job.options.viewmodel {
+    if !job.own && len(job.options.sources)==0 && len(generated)==0 {
         r.status=.None
         manifest:=project.path(r.output,project.SHADERS_MANIFEST,allocator=context.temp_allocator)
         if os.is_file(manifest) && base.remove_all(r.output)!=nil {

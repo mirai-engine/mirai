@@ -84,7 +84,6 @@ Frame_Layout :: struct {
     size:int,
     nested:bool,
     instance_ids:bool, // the G-buffer keeps the instance that drew each pixel (Surface_Source.Instance)
-    viewmodel:int, // where Gpu_Viewmodel lies in the constants of a view, bytes; 0: the shaders draw no viewmodel
     extensions:[FRAME_EXTENSION_CAPACITY]Frame_Extension,
     extension_count:int,
 }
@@ -96,10 +95,9 @@ frame_layout_of :: proc(assets:^Shader_Assets) -> Frame_Layout {
     catalog:abi.Shader_Catalog
     if len(assets.catalog)==0 || serial.text_decode(string(assets.catalog),&catalog,context.temp_allocator)!="" {return layout}
     frame:=catalog.frame
-    viewmodel:=size_of(Gpu_Frame)+(NESTED_VIEW_CAPACITY*size_of(Gpu_Nested) if frame.nested else 0)
-    core:=viewmodel+(size_of(Gpu_Viewmodel) if frame.viewmodel else 0)
+    core:=size_of(Gpu_Frame)+(NESTED_VIEW_CAPACITY*size_of(Gpu_Nested) if frame.nested else 0)
     size:=frame.size
-    if size==0 && !frame.nested && !frame.viewmodel {size=core}
+    if size==0 && !frame.nested {size=core}
     if size<core || size>65536 || len(frame.extensions)>FRAME_EXTENSION_CAPACITY {return layout}
     for extension,i in frame.extensions {
         // The name lives as long as the catalog of the generation: find it there.
@@ -111,7 +109,6 @@ frame_layout_of :: proc(assets:^Shader_Assets) -> Frame_Layout {
         layout.extensions[i]={string(assets.catalog[at:][:len(extension.name)]),extension.offset,extension.size}
     }
     layout.size,layout.nested,layout.instance_ids,layout.extension_count=size,frame.nested,frame.instance_ids,len(frame.extensions)
-    layout.viewmodel=viewmodel if frame.viewmodel else 0
     return layout
 }
 

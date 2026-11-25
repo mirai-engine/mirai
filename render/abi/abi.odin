@@ -101,22 +101,6 @@ FRAME_FLAG_REFLECTANCE  :: 64  // the G-buffer keeps what each pixel reflects (s
 FRAME_FLAG_NEUTRAL      :: 128 // the display transform is PBR Neutral, computed (display_encode); else the display LUT
 FRAME_FLAG_SWAY         :: 256 // a batch drawn gives the vertex hook values: the resolve leaves where each pixel rests (SLOT_REST)
 FRAME_FLAG_NESTED       :: 512 // the view added nested views: the views target names the view of each pixel (pixel_view)
-FRAME_FLAG_VIEWMODEL    :: 1024 // the view drew the viewmodel of its body: the views target tags its pixels (VIEWS_FOREGROUND)
-FRAME_FLAG_FOREGROUND   :: 2048 // the constants of the pass that draws that viewmodel: its cull takes those instances alone
-FRAME_FLAG_BODY         :: 4096 // the constants of a map of that viewmodel of the rest of its body: its cull takes those instances alone
-
-// The viewmodel of a view (render/foreground.odin): the depth target holds the
-// world below FOREGROUND_DEPTH and the viewmodel above it. The views target
-// tags its pixels with VIEWS_FOREGROUND and, in VIEWS_KEPT, how much of the
-// way from the eye its light is taken at, in 127ths: in front of the world
-// under it by FOREGROUND_CLEARANCE metres.
-FOREGROUND_DEPTH     :: f32(15.0 / 16)
-FOREGROUND_CLEARANCE :: f32(0.02)
-FOREGROUND_MAP_SIDE  :: u32(1024) // a map of a viewmodel (render/foreground.odin), texels a side
-FOREGROUND_MAPS      :: 4
-FOREGROUND_MARK_DEPTH :: f32(2) // the pixels of the viewmodel take the maps of the world at the level of a pixel this far, metres, or farther: the coarsest whose edges are as sharp as on a wall 1 m away
-VIEWS_FOREGROUND     :: 128
-VIEWS_KEPT           :: 127
 
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
@@ -133,10 +117,10 @@ INSTANCE_FLAG_BLENDED       :: 32
 INSTANCE_FLAG_TRANSLUCENT   :: 64
 INSTANCE_FLAG_OUTLINE_ONLY  :: 128
 INSTANCE_HIGHLIGHT_SHIFT    :: 8
-// Drawn by the view of its owner alone, over the world with the field of
-// view of its viewmodel (Scene_State.foreground), and in no cull, map or ray
-// of the world.
-INSTANCE_FLAG_FOREGROUND    :: u32(1) << 12
+// Of the viewmodel of a local body, which the view of that body alone draws,
+// at the place render.Gpu_Frame.viewmodel gives it, and which casts no shadow
+// and is in no ray structure.
+INSTANCE_FLAG_VIEWMODEL     :: u32(1) << 12
 INSTANCE_FLAG_OWNED         :: u32(1) << 13
 INSTANCE_OWNER_SHIFT        :: 14
 INSTANCE_LAYERS_SHIFT       :: 16
@@ -191,8 +175,6 @@ RAY_GLASS       :: 2
 RAY_SMALL       :: 4
 RAY_SHADOW_ONLY :: 8
 RAY_UNSHADOWED  :: 16
-RAY_BODY        :: 32 // a solid of a local body (INSTANCE_FLAG_OWNED), which the rays of its viewmodel's pixels omit
-RAY_BODY_SMALL  :: 64 // a small one: the rays that leave out RAY_SMALL leave it out too
 TLAS_REF_GLASS  :: u32(1) << 31
 
 // Local lights and their tree.
@@ -266,7 +248,6 @@ SHADOW_POOL_PAGES          :: u32(4096)
 SHADOW_LIGHT_SLOTS         :: 7
 SHADOW_RASTER_LIGHTS       :: 32
 SHADOW_SLOTS               :: SHADOW_SUN_MAPS + SHADOW_RASTER_LIGHTS * SHADOW_LIGHT_SLOTS
-FOREGROUND_MAP_SLOT        :: SHADOW_SLOTS // the slot of a map of a viewmodel, past those of the table: a square of the atlas, read as it is
 SHADOW_LOCAL_SLOTS         :: SHADOW_SLOTS - SHADOW_SUN_MAPS
 // The entries of the table of a slot, its mips the coarsest first; the first of the finest.
 SHADOW_SLOT_ENTRIES        :: (SHADOW_MAP_PAGES * SHADOW_MAP_PAGES * 4 - 1) / 3
@@ -711,7 +692,7 @@ Shader_Entry :: struct {
 // by its id and gives it up to PROGRAM_PARAMETER_BYTES of parameters, laid
 // out as the program reflects them.
 SHADER_CATALOG :: "catalog.json"
-SHADER_CATALOG_VERSION :: 8
+SHADER_CATALOG_VERSION :: 7
 
 Shader_Catalog :: struct {
     version:int,
@@ -743,14 +724,13 @@ program_use_named :: proc(name:string) -> (use:Program_Use,ok:bool) {
 // its name in the manifest without a program (vis_resolve_plain.frag).
 Surface_Stage :: struct {name:string,uses:Program_Uses}
 
-// The constants of a view: Gpu_Frame, then the nested views and the
-// viewmodel when the generation has them, then the struct each extension
-// declared. size 0 without either: Gpu_Frame alone.
+// The constants of a view: Gpu_Frame, then the nested views when the
+// generation has them, then the struct each extension declared. size 0
+// without nested views: Gpu_Frame alone.
 Frame_Catalog :: struct {
     size:int,
     nested:bool,
     instance_ids:bool, // the G-buffer keeps the instance that drew each pixel
-    viewmodel:bool,    // the stages draw the viewmodel of a view (render/foreground.odin)
     extensions:[]Frame_Extension,
 }
 Frame_Extension :: struct {name:string,offset,size:int}

@@ -106,9 +106,6 @@ Pass :: struct {
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
 	nested:       [NESTED_VIEW_CAPACITY]Nested_View,
 	nested_count: int,
-	foreground:   f32,  // the vertical field of view, radians, of the viewmodel the view draws (foreground.odin); 0: none
-	foreground_unjittered: Mat4, // its projection from the eye, which the next frame takes as the previous one
-	viewmodel:    Gpu_Viewmodel, // what its constants hold of it
 	cost:         rhi.Buffer, // the count of a request the view adds to (cost.odin); 0: none
 }
 
@@ -254,13 +251,8 @@ visibility_pass :: proc(p: ^Pass, round: u32, ids, depth: rhi.Load_Op, depth_tar
 // which runs where that depth is its own. A nested view resolves its own
 // pixels over those of its view.
 #assert(POINTS_PROGRAM_CAPACITY < 65534, "the 16-bit program depth holds a step for each program and one for none")
-// Of the G-buffer a resolve writes: the view's, a nested view's over it, or
-// the viewmodel's over it (foreground.odin).
-Resolve_Over :: enum u8 {View, Nested, Foreground}
-
 @(private)
-resolve_pass :: proc(p: ^Pass, over: Resolve_Over) {
-	nested := over == .Nested
+resolve_pass :: proc(p: ^Pass, nested: bool) {
 	r, cmd, t := p.r, p.cmd, p.t
 	render_zone(r, "material resolve")
 	s := &r.scene
@@ -275,10 +267,9 @@ resolve_pass :: proc(p: ^Pass, over: Resolve_Over) {
 	}
 	rhi.cmd_end_render_pass(cmd)
 	targets, count := gbuffer_targets(p)
-	names := [Resolve_Over]string{.View = "resolve", .Nested = "nested view resolve", .Foreground = "viewmodel resolve"}
-	pass := rhi.Render_Pass_Desc{color_count = count, name = names[over]}
+	pass := rhi.Render_Pass_Desc{color_count = count, name = "nested view resolve" if nested else "resolve"}
 	for target, i in targets[:count] {
-		pass.colors[i] = {texture = target, load = .Clear if over == .View else .Load, store = .Store}
+		pass.colors[i] = {texture = target, load = .Load if nested else .Clear, store = .Store}
 	}
 	pass.depth = {texture = t.program_depth, load = .Load, store = .Dont_Care}
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -289,12 +280,12 @@ resolve_pass :: proc(p: ^Pass, over: Resolve_Over) {
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[id])
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
-		// A nested view and the viewmodel count with their cull, apart.
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.stats_buffer if over == .View else r.scratch_buffer)
+		// A nested view counts with its cull, apart.
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.visible_moved)
-		// The decals of the view, which a nested view and the viewmodel do not show.
-		decals := p.decals && over == .View
+		// The decals of the view, which a nested view does not show.
+		decals := p.decals && !nested
 		textures, _ := decal_textures(p)
 		for texture, target in textures {
 			rhi.cmd_bind_texture(cmd, SLOT_PASS5 + u32(target), texture if decals && texture != 0 else r.dummy_texture)
@@ -800,9 +791,9 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     if view.carried!={} && state.has_previous {
         back:=linalg.inverse(view.carried)
         state.prev_view_proj=state.prev_view_proj*matrix_from_eye(back)
-        state.prev_foreground=state.prev_foreground*matrix_from_eye(back)
         state.prev_eye=point_carried(view.carried,state.prev_eye)
         state.prev_depth_plane=plane_carried(state.prev_depth_plane,back)
+        state.prev_viewmodel={}
     }
     zone:=render_zone_begin(r,"view plan")
     handle,plan:=view_plan(r,view.pipeline,view.texture==0)
@@ -846,11 +837,10 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         if !ok {return false}
     }
     if generate {overlays_pass(&p,frame,ui_written,shown)}
-    if p.foreground>0 {rhi.cmd_set_depth_range(cmd,0,1)}
     state.generated=shown
-    state.prev_foreground,state.foreground_previous=p.foreground_unjittered,p.foreground>0
     state.prev_view_proj=p.unjittered
     state.prev_eye=p.camera.position
+    state.prev_viewmodel=p.frame.viewmodel
     state.prev_jitter=p.jitter
     state.prev_depth_plane=p.frame.depth_plane
     state.has_previous=true
@@ -895,6 +885,8 @@ sky_map :: proc(r: ^Renderer, texture: Texture_Handle, atmosphere: bool) -> Vec4
 // The constants of the view and what it decides for all its passes.
 @(private)
 view_begin :: proc(p: ^Pass) -> bool {
+	// A camera that draws a viewmodel sees as near as its parts are drawn.
+	if viewmodel_fov(p.r, p.camera) > 0 {p.camera.near = min(p.camera.near, VIEWMODEL_NEAR)}
 	r, cmd, t, camera := p.r, p.cmd, p.t, p.camera
 	d := r.device
 	s := &r.scene
@@ -961,6 +953,9 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if !p.view.has_previous {p.view.prev_view_proj, p.view.prev_depth_plane, p.view.prev_eye = unjittered, f.depth_plane, camera.position}
 	f.prev_view_proj, f.prev_depth_plane = p.view.prev_view_proj, p.view.prev_depth_plane
 	f.prev_eye = {p.view.prev_eye.x, p.view.prev_eye.y, p.view.prev_eye.z, 0}
+	f.viewmodel = viewmodel_rows(r, camera, forward)
+	if !p.view.has_previous || p.view.prev_viewmodel == {} {p.view.prev_viewmodel = f.viewmodel}
+	f.prev_viewmodel = p.view.prev_viewmodel
 	// The clip plane of the view in place of the near one: what is all behind it is not drawn.
 	if camera.clip_plane != {} {
 		length := linalg.length(camera.clip_plane.xyz)
@@ -1003,12 +998,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if r.hardware_rt {f.flags |= FRAME_FLAG_HW_RT}
 	if s.environment.ground_grid && !p.texture {f.flags |= FRAME_FLAG_GRID}
 	if r.resolve_counted {f.flags |= FRAME_FLAG_RESOLVE_COUNTED}
-	// A viewmodel puts the world below its depth, in every pass into the depth of the view.
-	p.foreground = view_foreground(r, camera) if p.draw else 0
-	if p.foreground > 0 {
-		foreground_view_constants(p, &f, reach)
-		foreground_world_depth(p)
-	}
 	p.reflectance, p.layered, p.subsurface = reflectance_in_frustum(r, f.frustum)
 	// A mode of inspection shows each pixel as the G-buffer and the lights give it.
 	p.subsurface &&= p.inspection.mode == .None
@@ -1037,7 +1026,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	}
 	p.frame = f
 	frame_constants_write(p)
-	foreground_block_write(p)
 
 	rhi.cmd_timestamp(cmd, "upload")
 	frame_exposure_copy(p, p.constants)
@@ -1340,7 +1328,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	if p.cost != 0 && p.draw {cost_pixels(p)}
 	if p.decals {pass_decals(p)}
 	rhi.cmd_timestamp(cmd, "resolve")
-	resolve_pass(p, .View)
+	resolve_pass(p, false)
 	rest_pass(p)
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}
 	if stage_asked(r, .Gbuffer) {stage_run(p, .Gbuffer)}
@@ -1349,7 +1337,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		rhi.cmd_timestamp(cmd, "highlight")
 		highlight_pass(p)
 	}
-	return foreground_record(p)
+	return true
 }
 
 // The masks extensions draw in the Mask stage and the G-buffers of the nested
@@ -1489,7 +1477,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 				visibility_pass(p, round, .Load, .Load, t.nested_depth, false, true)
 			}
 		}
-		resolve_pass(p, .Nested)
+		resolve_pass(p, true)
 	}
 	bind_scene_table(p)
 	return true
@@ -1536,7 +1524,6 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	zone := render_zone_begin(r, "shadow maps")
 	params.shadow = shadow_maps_pass(p, &params, scale, grid)
 	base.profile_end(zone)
-	if params.shadow.on != 0 && !foreground_maps_record(p) {return false}
 	atlas := t.shadow_raster.atlas if params.shadow.on != 0 else r.dummy_texture
 	table := r.shadow_buffers.table if params.shadow.on != 0 else r.dummy_buffer
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
@@ -1803,7 +1790,6 @@ pass_transparent :: proc(p: ^Pass) -> bool {
 		translucent_forward(p, 0, 0)
 		if p.blend {side_run(p, .Blend, .All)}
 	}
-	if !foreground_over_record(p) {return false}
 	// Without a Blend pass the mask of the frame is zero, as a pass that replaces the Resolve stage reads it.
 	if p.blended {p.t.reactive_drawn = true} else if p.t.reactive_drawn {
 		clear_textures(p.cmd, p.t.reactive)

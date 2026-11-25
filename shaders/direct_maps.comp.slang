@@ -104,19 +104,6 @@ float shadow_map_seen(Shadow_Map m, Shadow_Taps t, Shadow_Near near, bool sun, f
     return inside > 0u ? float(lit) / float(inside) : 1.0;
 }
 
-#ifdef MIRAI_VIEWMODEL
-// What the layer of the body of the viewmodel of the view says of a point of
-// the world, for the sun (light 0) or Frame.viewmodel.light (1), as
-// shadow_map_seen says it of the maps of the world, which leave the body out.
-float body_shadow_seen(uint light, float3 position, float3 n, float3 toward, float radius, float spin, float across, out float spread) {
-    spread = 0.0;
-    Shadow_Map m;
-    Shadow_Taps t;
-    if (!foreground_map(light, false, position, m) || !shadow_map_taps(m, light == 0u, toward, position, n, radius, across, 1.0, t)) return 1.0;
-    return shadow_map_seen(m, t, shadow_near(m, t.texel, shadow_taps_reach(t)), light == 0u, radius, spin, across, spread);
-}
-#endif
-
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 dispatch_id : SV_DispatchThreadID) {
@@ -141,9 +128,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 origin = offset_origin(pixel.position - swayed, normal, view_bias(pixel.distance));
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
-    float across = float(scale) * pixel_across(source, depth);
+    float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     // The width of a pixel of the view at the point, which picks the level or mip of a map.
-    float pixel_width = pixel_across(source, depth);
+    float pixel_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
     bool changes = frame.moved.x > 0u;
     float spin = direct_spin(p);
     bool marked = false;
@@ -152,7 +139,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float sun = direct_sun_weight(pixel.position, normal);
     float sun_part = -1.0, sun_wide = 0.0;
     Sun_Pick pick;
-    if (sun > 0.0 && sun_pick(pixel.position, pixel_width, pick, swayed)) {
+    if (sun > 0.0 && sun_pick(pixel.position, pixel_across, pick, swayed)) {
         // Its level, or the coarser one drawn where its page is not; over the
         // top of the octave of its level, blended into the next.
         Shadow_Map held = sun_level(pick.level);
@@ -179,18 +166,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     } else if (sun > 0.0) {
         rest = true;
     }
-#ifdef MIRAI_VIEWMODEL
-    // The maps of the viewmodel: the weapon shades itself where it is drawn,
-    // the body the world as the maps of the world do, with its penumbra.
-    bool weapon = pixel_foreground(source) != 0u;
-    float3 drawn = weapon ? pixel_drawn(source, uv, depth) : pixel.position;
-    if (sun_part >= 0.0) {
-        float wide = 0.0;
-        sun_part *= weapon ? weapon_shadow_seen(0u, drawn, normal, frame.sun_direction.xyz)
-            : body_shadow_seen(0u, drawn, normal, frame.sun_direction.xyz, params.sun_radius, spin, across, wide);
-        sun_wide = max(sun_wide, wide);
-    }
-#endif
     float3 open = float3(0.0), lit = float3(0.0);
     float wide = 0.0, hid = 0.0;
     for (uint i = 0u; i < count; i++) {
@@ -199,7 +174,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         // page is not; over the top of the octave of the mip, blended into the next.
         Shadow_Map m;
         Sun_Pick mip;
-        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, pixel_width, m, mip, swayed)) {
+        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, pixel_across, m, mip, swayed)) {
             rest = rest || direct_item_weight(row, item, pixel.position, normal) > 0.0;
             continue;
         }
@@ -225,14 +200,6 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             part = lerp(part, next_part, mip.blend);
             spread = lerp(spread, next_spread, mip.blend);
         }
-#ifdef MIRAI_VIEWMODEL
-        if (item == frame.viewmodel.light) {
-            float3 toward = normalize(chosen.position_range.xyz - drawn);
-            float wide = 0.0;
-            part *= weapon ? weapon_shadow_seen(1u, drawn, normal, toward) : body_shadow_seen(1u, drawn, normal, toward, radius, spin, across, wide);
-            spread = max(spread, wide);
-        }
-#endif
         lit += radiance * part;
         // Within the penumbra of what its taps met, on its lit side as on the other.
         if (spread > 0.0) {
@@ -245,7 +212,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     out_samples[p] = float4(finite_or_zero(open / reflectance), (isfinite(part) ? part : 1.0) + (marked ? 2.0 : 0.0));
     out_sun[p] = isfinite(sun_part) ? sun_part : 1.0;
     // The reach of the spread over each penumbra, in points, and half a point.
-    float width = float(scale) * pixel_across(source, depth);
+    float width = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     float sun_radius = sun_part >= 0.0 && sun_wide > 0.0 ? min(DIRECT_SPREAD_REACH * sun_wide / width + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
     sun_radius = isfinite(sun_radius) ? sun_radius : 0.0;
     if (rest) {

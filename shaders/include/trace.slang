@@ -97,14 +97,11 @@ bool trace_step() {
 // blended are a class apart, so a ray that goes through glass never visits
 // them (RAY_SOLID, RAY_GLASS and RAY_SMALL, the mask of an instance).
 // The solid instances a ray meets: every one, or, in the passes of the probe
-// volume (MIRAI_TRACE_PROBES), all but the small ones. Those of the local
-// bodies are a class apart (RAY_BODIES), which the rays of a viewmodel's
-// pixels leave out: there the eye is inside its own body.
-#define RAY_BODIES (RAY_BODY | RAY_BODY_SMALL)
+// volume (MIRAI_TRACE_PROBES), all but the small ones.
 #ifdef MIRAI_TRACE_PROBES
-#define RAY_OPAQUE (RAY_SOLID | RAY_BODY)
+#define RAY_OPAQUE RAY_SOLID
 #else
-#define RAY_OPAQUE (RAY_SOLID | RAY_SMALL | RAY_BODIES)
+#define RAY_OPAQUE (RAY_SOLID | RAY_SMALL)
 #endif
 // The instances of a batch that casts shadows and that no other ray sees,
 // and those of one rays see and that casts none (render.Batch_Flags):
@@ -358,11 +355,10 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
                     continue;
                 }
                 Instance inst = instances[instance_index];
-                if ((inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_FOREGROUND)) != 0u) continue;
+                if ((inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_VIEWMODEL)) != 0u) continue;
                 // Its class, as render.ray_class gives it: one of glass the reference let in.
                 bool unshadowed = (inst.meta.x & INSTANCE_UNSHADOWED) != 0u && (ref & TLAS_REF_GLASS) == 0u;
                 if (unshadowed ? (classes & RAY_UNSHADOWED) == 0u : ((inst.meta.w & INSTANCE_FLAG_SMALL) != 0u && (classes & RAY_SMALL) == 0u)) continue;
-                if (!unshadowed && (ref & TLAS_REF_GLASS) == 0u && (inst.meta.w & INSTANCE_FLAG_OWNED) != 0u && (classes & RAY_BODY) == 0u) continue;
                 // The object-space direction is not renormalized, so t stays in
                 // world units across instances.
                 float3 o = transform_point(inst.world_inv, origin);

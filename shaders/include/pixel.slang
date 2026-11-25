@@ -15,28 +15,11 @@ uint pixel_view(int2 p) {
 #endif
 }
 
-// The tag of a pixel of the viewmodel of the view (FRAME_FLAG_VIEWMODEL):
-// VIEWS_FOREGROUND with its kept share in VIEWS_KEPT; 0 for another pixel.
-// Only a generation that draws the viewmodel has any (MIRAI_VIEWMODEL).
-uint pixel_foreground(int2 p) {
-#ifdef MIRAI_VIEWMODEL
-    if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u) return 0u;
-    uint tag = pixel_views.Load(int3(p, 0));
-    return (tag & VIEWS_FOREGROUND) != 0u ? tag : 0u;
-#else
-    return 0u;
-#endif
-}
 // The ray of the view of pixel p through uv, as view_origin and view_ray, in
 // the world that view shows.
 void pixel_ray(int2 p, float2 uv, float depth, out float3 origin, out float3 ray) {
     origin = view_origin(uv);
     ray = view_ray(uv);
-#ifdef MIRAI_VIEWMODEL
-    // Of the viewmodel: its own ray, shortened to where its light is taken.
-    uint tag = pixel_foreground(p);
-    if (tag != 0u) ray = (frame.viewmodel.ray[0].xyz + frame.viewmodel.ray[1].xyz * uv.x + frame.viewmodel.ray[2].xyz * uv.y) * (float(max(tag & VIEWS_KEPT, 1u)) / float(VIEWS_KEPT));
-#endif
 #ifdef MIRAI_NESTED_VIEWS
     if (depth_nested(depth)) {
         Nested_View nested = frame.nested[max(pixel_view(p), 1u) - 1u];
@@ -45,10 +28,6 @@ void pixel_ray(int2 p, float2 uv, float depth, out float3 origin, out float3 ray
     }
 #endif
 }
-// A pixel of the G-buffer in the world. One of the viewmodel sees along the
-// ray of the viewmodel, and its place is where its light is taken: the one
-// it is drawn at (pixel_drawn) pulled toward the eye by the share its tag
-// keeps, in front of the world under it.
 Pixel pixel_at(int2 p, float2 uv, float depth) {
     float3 origin, ray;
     pixel_ray(p, uv, depth, origin, ray);
@@ -59,36 +38,6 @@ Pixel pixel_at(int2 p, float2 uv, float depth) {
     px.distance = depth_distance(depth) * reach;
     return px;
 }
-#ifdef MIRAI_VIEWMODEL
-// Where a pixel of the viewmodel is drawn, as the world is; of another, its place.
-float3 pixel_drawn(int2 p, float2 uv, float depth) {
-    uint tag = pixel_foreground(p);
-    float3 ray = tag != 0u ? frame.viewmodel.ray[0].xyz + frame.viewmodel.ray[1].xyz * uv.x + frame.viewmodel.ray[2].xyz * uv.y : view_ray(uv);
-    return view_origin(uv) + ray * depth_distance(depth);
-}
-#endif
-// The width of a pixel at p of the view where it takes the maps of the
-// shadows: at its depth, or of a pixel of the viewmodel no nearer than
-// FOREGROUND_MARK_DEPTH, so its light comes from the levels the world near
-// the eye reads.
-float pixel_across(int2 p, float depth) {
-    float d = depth_distance(depth);
-#ifdef MIRAI_VIEWMODEL
-    if (pixel_foreground(p) != 0u) d = max(d, FOREGROUND_MARK_DEPTH);
-#endif
-    return frame.footprint.x + frame.footprint.y * d;
-}
-// The surface a pixel is on as spatial filters keep it apart: 1 that of the
-// view, 2 one a nested view drew, 3 the viewmodel's.
-float pixel_side(int2 p, float depth) {
-#ifdef MIRAI_VIEWMODEL
-    if (pixel_foreground(p) != 0u) return 3.0;
-#endif
-    return depth_nested(depth) ? 2.0 : 1.0;
-}
-// The classes of rays a pixel leaves out: those of a viewmodel the local
-// bodies (RAY_BODIES of trace.slang), as its eye is inside its body.
-uint pixel_rays_omitted(int2 p) { return pixel_foreground(p) != 0u ? RAY_BODY | RAY_BODY_SMALL : 0u; }
 // The direction the view of pixel p looks in: what a unit along it adds to the linear depth.
 float3 pixel_forward(int2 p, float depth) {
 #ifdef MIRAI_NESTED_VIEWS

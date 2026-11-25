@@ -15,18 +15,14 @@ forward is where it looks.
 ### The weapon in view
 
 Hang the weapon and the arms under the camera and put `render.Viewmodel{fov}` on their root (the
-vertical field of view, radians: 55 degrees is `0.96`); nothing else. The build finds it in a scene,
-a prefab or the code of the game or of a plugin (the editor builds again once one is saved), and a
-game without one pays nothing. The view of that player draws them over its world with that field of
-view: they never sink into a wall, keep their size
-whatever the `fov` of the camera, take their light in front of the wall they would be inside, shade
-themselves, and the body keeps its shadow on the ground. Mirrors and the views of other players show
-the body and never the weapon, and the weapon casts no shadow on the world. What is drawn in the
-world at a point of the weapon, as a flash at its muzzle, goes at
+vertical field of view, radians: 55 degrees is `0.96`); nothing else, and a game without one pays
+nothing. The view of that player draws them nearer its eye, as wide as that field of view shows
+them whatever the `fov` of the camera, so a wall the body stands against does not reach them; they
+are lit there as any mesh, by the lights and shadows of the world. Mirrors and the views of other
+players show the body and never the weapon, the weapon casts no shadow, and the body keeps its
+shadow on the ground. Its overlays, blends and glass are drawn on it. What is drawn in the world at
+a point of the weapon, as a flash at its muzzle, goes at
 `render.viewmodel_world_place(view, viewmodel, muzzle)`, where the view shows that point.
-
-Its overlays and blends (a reticle, a lens tint) are drawn over it; glass is not, and a problem
-names the mesh. It shades itself and the body the world for the sun and the strongest local light.
 
 ## Third person
 

@@ -608,9 +608,8 @@ program_check :: proc(options:Check_Options,allocator:=context.allocator) -> (re
         return
     }
     copies:=[]Base{{path_parent(path),path_parent(copy_path)}}
-    // What the extensions of the project add to the frame, as its generation has it;
-    // without the viewmodel, whose place in the frame changes no diagnostic of a program.
-    if _,problem:=extensions_generate(&runner,options.root,options.project,temporary,slangc,options.sources,&files,false,context.temp_allocator);problem!="" {
+    // What the extensions of the project add to the frame, as its generation has it.
+    if _,problem:=extensions_generate(&runner,options.root,options.project,temporary,slangc,options.sources,&files,context.temp_allocator);problem!="" {
         result.error=fmt.aprintf("the extensions of the project could not be read: %s",problem,allocator=allocator)
         return
     }

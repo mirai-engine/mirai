@@ -2,9 +2,6 @@ package build
 
 import "core:fmt"
 import "core:mem"
-import "core:odin/ast"
-import "core:odin/parser"
-import "core:odin/tokenizer"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -22,9 +19,9 @@ import "mirai:std/base"
 // gives overlays and those whose alpha its values change. An asset of a kind whose plugin declares program_uses
 // (project.Asset_Kind) draws so the programs of the materials it depends on,
 // and of those the meshes it depends on name. What a program says of itself
-// (`//! use`) the generation adds. Sorted by program; viewmodel: a scene or a
-// prefab holds a Viewmodel; problem: a plugin names a use that does not exist.
-program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,viewmodel:bool,problem:string) {
+// (`//! use`) the generation adds. Sorted by program; problem: a plugin
+// names a use that does not exist.
+program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[]shaders.Program_Uses_Of,problem:string) {
     Material :: struct {program:string,info:asset.Material_Info,overlays:[]base.Asset_Id}
     Drawing :: struct {dependencies:[]base.Asset_Id,uses:abi.Program_Uses}
     // An entity whose Material_Values give it overlays or values of its own.
@@ -47,7 +44,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
                 use,known:=abi.program_use_named(word)
                 if !known {
                     names:=abi.PROGRAM_USE_NAMES
-                    return nil,false,fmt.aprintf("the plugin %s says its %s assets draw programs as %s, which is no use: the uses are %s",base.text_get(plugin.manifest.name[:]),extension,word,strings.join(slice.enumerated_array(&names),", ",context.temp_allocator),allocator=allocator)
+                    return nil,fmt.aprintf("the plugin %s says its %s assets draw programs as %s, which is no use: the uses are %s",base.text_get(plugin.manifest.name[:]),extension,word,strings.join(slice.enumerated_array(&names),", ",context.temp_allocator),allocator=allocator)
                 }
                 drawn+={use}
             }
@@ -56,7 +53,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
     }
     types:asset.Types
     asset.types_init(&types,context.temp_allocator)
-    visit :: proc(path:string,types:^asset.Types,kinds:map[string]abi.Program_Uses,materials:^map[base.Asset_Id]Material,meshes:^map[base.Asset_Id][]base.Asset_Id,drawings:^[dynamic]Drawing,looks:^[dynamic]Look,viewmodel:^bool) {
+    visit :: proc(path:string,types:^asset.Types,kinds:map[string]abi.Program_Uses,materials:^map[base.Asset_Id]Material,meshes:^map[base.Asset_Id][]base.Asset_Id,drawings:^[dynamic]Drawing,looks:^[dynamic]Look) {
         extension:=path[strings.last_index_byte(path,'.'):] if strings.last_index_byte(path,'.')>=0 else ""
         switch extension {
         case ".mat":
@@ -74,7 +71,6 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
             defer asset.asset_close(&file)
             view,error:=asset.scene_view(&file,types)
             if error!=.None {return}
-            for &component in view.components {viewmodel^||=component.name=="Viewmodel" && len(component.entities)>0}
             renderers,drawn:=scene_column(&file,&view,types,"Mesh_Renderer",Uses_Renderer)
             values,given:=scene_column(&file,&view,types,"Material_Values",Uses_Values)
             for row in 0..<len(view.ids) {
@@ -94,7 +90,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
         if os.is_dir(folder.path) {
             w:=os.walker_create(folder.path)
             for info in os.walker_walk(&w) {
-                if info.type==.Regular {visit(strings.clone(info.fullpath,context.temp_allocator),&types,kinds,&materials,&meshes,&drawings,&looks,&viewmodel)}
+                if info.type==.Regular {visit(strings.clone(info.fullpath,context.temp_allocator),&types,kinds,&materials,&meshes,&drawings,&looks)}
             }
             os.walker_destroy(&w)
         }
@@ -154,52 +150,7 @@ program_uses :: proc(p:^project.Project,allocator:=context.allocator) -> (uses:[
     list:=make([dynamic]shaders.Program_Uses_Of,0,len(found),allocator)
     for name,drawn in found {append(&list,shaders.Program_Uses_Of{strings.clone(name,allocator),drawn})}
     slice.sort_by(list[:],proc(a,b:shaders.Program_Uses_Of) -> bool {return a.program<b.program})
-    return list[:],viewmodel,""
-}
-
-// Whether the code of the game of a project or of the runtime of an active
-// plugin names render.Viewmodel (of mirai:engine/render), its tests aside:
-// what adds the component at run time.
-code_names_viewmodel :: proc(p:^project.Project) -> bool {
-    names:=project.FOLDER_NAMES
-    parts:=project.PART_NAMES
-    folders:=make([dynamic]string,context.temp_allocator)
-    append(&folders,project.path(p.root,names[.Game],allocator=context.temp_allocator))
-    for index in p.active {append(&folders,project.path(p.plugins[index].folder,parts[.Runtime],allocator=context.temp_allocator))}
-    Walk :: struct {alias:string,found:bool}
-    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
-        w:=(^Walk)(v.data)
-        if node==nil || w.found {return nil}
-        if s,is:=node.derived.(^ast.Selector_Expr);is && s.field!=nil && s.field.name=="Viewmodel" {
-            if id,named:=s.expr.derived.(^ast.Ident);named && id.name==w.alias {w.found=true}
-        }
-        return v
-    }
-    for folder in folders {
-        if !os.is_dir(folder) {continue}
-        w:=os.walker_create(folder)
-        defer os.walker_destroy(&w)
-        for info in os.walker_walk(&w) {
-            if info.type==.Directory && (strings.has_prefix(info.name,".") || strings.has_prefix(info.name,"testdata")) {os.walker_skip_dir(&w);continue}
-            if info.type!=.Regular || !strings.has_suffix(info.name,".odin") || strings.has_suffix(info.name,"_test.odin") {continue}
-            text,error:=os.read_entire_file(info.fullpath,context.temp_allocator)
-            if error!=nil || !strings.contains(string(text),"Viewmodel") {continue}
-            context.allocator=context.temp_allocator
-            file:=ast.File{src=string(text),fullpath=info.fullpath}
-            parser_:=parser.default_parser()
-            parser_.err=proc(pos:tokenizer.Pos,format:string,args:..any) {}
-            parser_.warn=parser_.err
-            if !parser.parse_file(&parser_,&file) {continue}
-            for imp in file.imports {
-                if strings.trim(imp.relpath.text,"\"`")!="mirai:engine/render" {continue}
-                walk:=Walk{alias=imp.name.text if imp.name.text!="" else "render"}
-                visitor:=ast.Visitor{visit=visit,data=&walk}
-                for decl in file.decls {ast.walk(&visitor,decl)}
-                if walk.found {return true}
-            }
-        }
-    }
-    return false
+    return list[:],""
 }
 
 // The fields of the Mesh_Renderer and the Material_Values of engine/render

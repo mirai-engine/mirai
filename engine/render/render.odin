@@ -192,12 +192,12 @@ Camera :: struct {
 
 // The weapon and arms its player sees in first person: put on their root,
 // under the camera of the body of a player of this machine. The view of that
-// player draws them over its world with this field of view, so they never
-// sink into a wall in front of the eye; they cast no shadow on the world and
+// player draws them nearer its eye, as wide as this field of view shows them,
+// so walls in front of the eye do not reach them; they cast no shadow and
 // rays, mirrors and the views of other players do not see them, while the
 // body keeps its own shadow. Without such a body (in the editor, of the
 // players of other machines) they are drawn as other meshes.
-@(component,description="Draws the weapon and arms under the camera of a local player over the world, with their own field of view, so they never go into walls.")
+@(component,description="Draws the weapon and arms under the camera of a local player near the eye, with their own field of view, so they never go into walls.")
 Viewmodel :: struct {
     fov:f32 `mirai:"angle,min=0"`, // vertical
 }
@@ -422,7 +422,6 @@ Render_Sync :: struct {
     changed:[dynamic]core.Entity, // scratch: what may come, go or be made again in the frame
     under:[dynamic]core.Entity,   // scratch: the entities a table changed, and what hangs from them
     made:[dynamic]u32,            // scratch: the instances made again in the frame
-    bodies:[dynamic]u32,          // scratch: the instances of a local body with a viewmodel
     shown:[dynamic]gpu.Instance_Desc, // scratch: a run of them, as the renderer takes it
     lerping:[dynamic]core.Entity,  // drawn between their previous place and their transform (Drawn.lerp)
     deriving:[dynamic]core.Entity, // their rows derive from the values of their materials (Drawn.derives)
@@ -438,7 +437,6 @@ Render_Sync :: struct {
     extra_lights:int, // slots of the lights of the frame (Frame_Extras), the first of the renderer: the most a frame gave
     sun:gpu.Sun_Desc,
     owned:[VIEW_SLOTS]core.Entity, // the bodies of View_Bodies the instances are marked with
-    foreground:bool, // the shaders the instances were marked for draw viewmodels (Sync_Tables.foreground)
     round:u32, // of the frame: Drawn.replaced of what a visual instance replaces in it
     assets_structure,assets_appearance:u64,
     derived:int, // the derived rows there were after the last round of them
@@ -617,10 +615,8 @@ render_sync :: proc(
     a:=app.assets
     r:=app.renderer
     if a==nil || r==nil || app.ui_only {return}
-    t:=Sync_Tables{worlds,meshes,values,lives,hidden,carried,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{},viewmodels,false}
+    t:=Sync_Tables{worlds,meshes,values,lives,hidden,carried,elsewhere,parents,highlights,outlines,offsets,layers,locals,cameras,points,spots,rects,emissions,posed,{},viewmodels}
     if bodies.ptr!=nil {t.owned=bodies.bodies}
-    // Shaders that draw no viewmodel draw it as other meshes (viewmodels_settle says so).
-    t.foreground=r.frame_layout.viewmodel!=0
     releases,local_assets:=host.assets_structure_changes(a,sync.assets_structure)
     for change in releases {if change.id=={} {local_assets=false}}
     reloaded:=!local_assets || a.appearance!=sync.assets_appearance
@@ -677,12 +673,8 @@ render_sync :: proc(
         bodies_changed=true
     }
     sync.owned=t.owned
-    // Shaders that start or stop drawing viewmodels (a rebuild) mark what hangs from them again.
-    redrawn:=t.foreground!=sync.foreground
-    if redrawn {for row in 0..<core.count(viewmodels) {subtree_gather(sync,hierarchy,core.entity_at(viewmodels,row))}}
-    sync.foreground=t.foreground
     // What names the field of view of a body's viewmodel: the Viewmodels and, while there is one, where it hangs.
-    if whole || bodies_changed || redrawn || c.viewmodels.written || len(c.viewmodels.gone)>0 || core.count(viewmodels)>0 && (c.parents.written || len(c.parents.gone)>0) {viewmodels_settle(r,t,viewmodels,problems)}
+    if whole || bodies_changed || c.viewmodels.written || len(c.viewmodels.gone)>0 || viewmodels!=nil && core.count(viewmodels)>0 && (c.parents.written || len(c.parents.gone)>0) {viewmodels_settle(r,t,viewmodels)}
     for e in sync.under {instance_changed(sync,e)}
     for e in c.values.gone {instance_changed(sync,e)}
     for e in c.lives.gone {instance_changed(sync,e)}
@@ -767,7 +759,6 @@ render_sync :: proc(
         sync.shown=nil
     }
     instances_moved(sync,t,c.worlds,frame)
-    if whole || bodies_changed || c.worlds.written || len(sync.made)>0 {bodies_settle(sync,r,hierarchy,t,problems)}
     // The renderer leaves where it is what did not move, and as it is what has the same tint.
     if len(sync.moved)>0 {gpu.scene_move(r,sync.moved[:],sync.moved_transforms[:],sync.moved_anchors[:])}
     if len(sync.tinted)>0 {gpu.scene_tint(r,sync.tinted[:],sync.tinted_colors[:],sync.tinted_emissions[:],sync.tinted_values[:])}
@@ -859,7 +850,6 @@ Sync_Tables :: struct {
     posed:^Posed_Meshes,
     owned:[VIEW_SLOTS]core.Entity, // View_Bodies
     viewmodels:^core.Table(Viewmodel,.Read),
-    foreground:bool, // the shaders in use draw viewmodels (the build saw a Viewmodel)
 }
 
 // What each table was when the sync last looked, and what it changed since.
@@ -982,54 +972,26 @@ extras_inherit :: proc(t:Sync_Tables,extras:[]gpu.Instance_Desc) {
         e:=core.Entity(extra.object_id)
         if in_layers,has_layers:=core.get(t.layers,e);has_layers && extra.layers==0 {extra.layers=in_layers.mask}
         if extra.owner==0 {extra.owner=body_owner(t,e)}
-        extra.foreground||=in_viewmodel(t,extra.owner,e)
+        extra.viewmodel||=in_viewmodel(t,extra.owner,e)
     }
 }
 
 // Whether e, of the body of owner (body_owner), is or hangs from a Viewmodel.
 @(private)
 in_viewmodel :: proc(t:Sync_Tables,owner:u8,e:core.Entity) -> bool {
-    return owner!=0 && t.foreground && t.viewmodels!=nil && core.count(t.viewmodels)>0 && core.ancestor_with(t.parents,t.viewmodels,e)!=core.NONE
-}
-
-// What the renderer fits the maps of the viewmodel of each local body
-// around: the instances of the body and what hangs from it, and the turn of
-// its Viewmodel.
-@(private)
-bodies_settle :: proc(sync:^Render_Sync,r:^gpu.Renderer,h:core.Ref(core.Hierarchy),t:Sync_Tables,problems:^core.Problems) {
-    for slot in 0..<gpu.OWNER_SLOTS {
-        if r.scene.foreground[slot].fov<=0 || slot>=len(t.owned) || t.owned[slot]==core.NONE {continue}
-        clear(&sync.bodies)
-        turn:mm.Quat=1
-        for at:=t.owned[slot];at!=core.NONE;at=core.subtree_next(h,t.owned[slot],at) {
-            if core.has(t.viewmodels,at) {
-                if world,placed:=core.get(t.worlds,at);placed {turn=world.rotation}
-            }
-            if instance:=instance_of(sync,at);instance>=0 {push(sync,&sync.bodies,u32(instance))}
-        }
-        gpu.scene_foreground_bodies(r,slot,sync.bodies[:],turn)
-        if glass:=r.scene.foreground[slot].glass;glass!=0 {
-            core.report(problems,core.Entity(glass),"render.viewmodel_glass","this mesh of the Viewmodel shows glass, which a viewmodel does not draw: give it a blended material without transmission (Alpha_Mode Blend), or hang it outside the Viewmodel")
-        }
-    }
+    return owner!=0 && t.viewmodels!=nil && core.count(t.viewmodels)>0 && core.ancestor_with(t.parents,t.viewmodels,e)!=core.NONE
 }
 
 // The field of view the renderer draws the viewmodel of each local body
 // with: that of a Viewmodel in it.
 @(private)
-viewmodels_settle :: proc(r:^gpu.Renderer,t:Sync_Tables,viewmodels:^core.Table(Viewmodel,.Read),problems:^core.Problems) {
+viewmodels_settle :: proc(r:^gpu.Renderer,t:Sync_Tables,viewmodels:^core.Table(Viewmodel,.Read)) {
     fovs:[gpu.OWNER_SLOTS]f32
-    for row in 0..<core.count(viewmodels) {
-        e:=core.entity_at(viewmodels,row)
-        slot:=body_owner(t,e)
-        if slot==0 || int(slot)>len(fovs) {continue}
-        if !t.foreground {
-            core.report(problems,e,"render.viewmodel_shaders","the Viewmodel is drawn as other meshes until the project is built again: its build saw no Viewmodel in its scenes, prefabs or code (the editor builds again once one is saved; an API call or a scene from outside the assets adds one it cannot see)")
-            continue
-        }
-        fovs[slot-1]=core.at(viewmodels,row).fov
+    for row in 0..<(core.count(viewmodels) if viewmodels!=nil else 0) {
+        slot:=body_owner(t,core.entity_at(viewmodels,row))
+        if slot!=0 && int(slot)<=len(fovs) {fovs[slot-1]=core.at(viewmodels,row).fov}
     }
-    gpu.scene_set_foreground(r,fovs)
+    gpu.scene_set_viewmodels(r,fovs)
 }
 
 // 1 + the local slot whose body e is or hangs from; 0: none.
@@ -1090,7 +1052,7 @@ instance_make :: proc(a:^host.Assets,t:Sync_Tables,e:core.Entity,static:Mesh_Ren
     if !instance.hidden {instance.highlight=instance_outline(t.highlights,t.outlines,e)}
     if in_layers,has_layers:=core.get(t.layers,e);has_layers {instance.layers=in_layers.mask}
     instance.owner=body_owner(t,e)
-    instance.foreground=in_viewmodel(t,instance.owner,e)
+    instance.viewmodel=in_viewmodel(t,instance.owner,e)
     return instance,!material_values_plain(&values) || live!={} || instance.overlays.count>0,true
 }
 

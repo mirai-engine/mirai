@@ -18,10 +18,16 @@ bool view_owns(uint flags) {
     return slot != 0u && (flags & INSTANCE_FLAG_OWNED) != 0u && ((flags >> INSTANCE_OWNER_SHIFT) & 3u) == slot - 1u;
 }
 
-// How much of an instance the view fades out: of its own body, 1 all of it; of another, 0.
+// How much of an instance the view fades out: of its own body but its viewmodel, 1 all of it; of another, 0.
 float view_body_fade(uint flags) {
-    return view_owns(flags) ? float(frame.own >> 16u) / 65535.0 : 0.0;
+    return view_owns(flags) && (flags & INSTANCE_FLAG_VIEWMODEL) == 0u ? float(frame.own >> 16u) / 65535.0 : 0.0;
 }
+
+// Whether the view draws an instance as its viewmodel (INSTANCE_FLAG_VIEWMODEL of
+// its own body, render/viewmodel.odin), and whether it draws it: no other view
+// draws a viewmodel.
+bool view_viewmodel(uint flags) { return (flags & INSTANCE_FLAG_VIEWMODEL) != 0u && view_owns(flags); }
+bool view_draws_viewmodel(uint flags) { return (flags & INSTANCE_FLAG_VIEWMODEL) == 0u || view_owns(flags); }
 
 // Whether the view draws what is in these layers (16 bits), of an instance with these flags:
 // it draws its layers, and of its own body, not those it leaves out (bits 16-31 of frame.layers).
@@ -110,6 +116,25 @@ float eye_distance(float3 world) { return frame.eye.w > 0.5 ? length(frame.eye.x
 float4 view_clip(float3 world) { return mul(frame.view_proj, float4(world - frame.camera_position.xyz, 1.0)); }
 float4 view_clip_unjittered(float3 world) { return mul(frame.view_proj_unjittered, float4(world - frame.camera_position.xyz, 1.0)); }
 float4 view_clip_previous(float3 world) { return mul(frame.prev_view_proj, float4(world - frame.prev_eye.xyz, 1.0)); }
+// Where the view draws a place of its viewmodel (frame.viewmodel), now or in
+// the frame before; a direction along its surface and a normal of it there,
+// not of unit length.
+float3 viewmodel_place(float3 world, bool now) {
+    float3 eye = now ? frame.camera_position.xyz : frame.prev_eye.xyz, d = world - eye;
+    if (now) return eye + float3(dot(frame.viewmodel[0].xyz, d), dot(frame.viewmodel[1].xyz, d), dot(frame.viewmodel[2].xyz, d));
+    return eye + float3(dot(frame.prev_viewmodel[0].xyz, d), dot(frame.prev_viewmodel[1].xyz, d), dot(frame.prev_viewmodel[2].xyz, d));
+}
+float3 viewmodel_along(float3 v) { return float3(dot(frame.viewmodel[0].xyz, v), dot(frame.viewmodel[1].xyz, v), dot(frame.viewmodel[2].xyz, v)); }
+float3 viewmodel_normal(float3 n) { return n + frame.viewmodel[0].w * dot(n, frame.camera_forward.xyz) * frame.camera_forward.xyz; }
+// The box the view draws an instance with these flags in: of its viewmodel,
+// around where it draws it.
+void view_drawn_box(uint flags, inout float3 low, inout float3 high) {
+    if (!view_viewmodel(flags)) return;
+    float3 center = viewmodel_place(0.5 * (low + high), true), half_size = 0.5 * (high - low);
+    float3 reach = float3(dot(abs(frame.viewmodel[0].xyz), half_size), dot(abs(frame.viewmodel[1].xyz), half_size), dot(abs(frame.viewmodel[2].xyz), half_size));
+    low = center - reach;
+    high = center + reach;
+}
 // How far a ray goes before it leaves the box of what rays meet
 // (frame.scene_box), a little past it: all a ray that looks for the scene
 // alone needs, as one towards the sun. 0 for one that does not cross it.

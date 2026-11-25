@@ -38,7 +38,7 @@ struct Params_Block { uint axis; uint scale; uint samples; uint even; };
 // local lights (direct_samples.comp).
 [[vk::binding(SLOT_PASS6, 0)]] Texture2D<float4> point_depth : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
 
-groupshared float4 spread_points[SPREAD_TILE];  // w the side of its surface (pixel_side), 0 none
+groupshared float4 spread_points[SPREAD_TILE];  // w 1 for a surface, 2 for one a nested view drew
 groupshared float4 spread_normals[SPREAD_TILE]; // w the width of a point there, metres
 groupshared float2 spread_parts[SPREAD_TILE];
 groupshared float2 spread_radii[SPREAD_TILE];   // of the penumbrae of the local lights and of the sun, points
@@ -86,8 +86,8 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
             float depth = g_depth.Load(int3(source, 0)).r;
             if (!depth_empty(depth)) {
                 Pixel pixel = pixel_at(source, (float2(source) + 0.5) * frame.inv_resolution, depth);
-                point = float4(pixel.position, pixel_side(source, depth));
-                normal = float4(gbuffer_normal(source), float(scale) * pixel_across(source, depth));
+                point = float4(pixel.position, depth_nested(depth) ? 2.0 : 1.0);
+                normal = float4(gbuffer_normal(source), float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth)));
                 parts = columns ? out_parts[q] : float2(out_points[q].a, out_sun[q]);
                 float4 held = point_depth.Load(int3(q, 0));
                 radii = min(float2(held.w, held.y), float2(DIRECT_SPREAD_MAX));

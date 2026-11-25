@@ -324,9 +324,6 @@ Pipeline_Id :: enum {
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines, Debug_Triangles,
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
-	Foreground_Kept, Foreground_Tag, // the share of the way the light of the viewmodel of a view is taken at, and the tags of its pixels (foreground.odin)
-	// The depth of the maps of the viewmodel by raster bin, as the visibility target draws it, and the clear of a map.
-	Foreground_Map, Foreground_Map_Two_Sided, Foreground_Map_Tested, Foreground_Map_Tested_Two_Sided, Foreground_Map_Clear,
 	Debug_Views,
 	History_Scale,
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
@@ -549,8 +546,7 @@ View_State :: struct {
 	resources_frames:u32, // the frames drawn since its resources hold a history
 	extension_textures:[EXTENSION_TEXTURE_CAPACITY]Extension_Texture, // of pass_texture
 	prev_view_proj:Mat4, // from prev_eye, as Gpu_Frame.prev_view_proj
-	prev_foreground:Mat4, // the same of the viewmodel it drew (foreground.odin), while foreground_previous
-	foreground_previous:bool,
+	prev_viewmodel:[3]Vec4, // as Gpu_Frame.prev_viewmodel
 	prev_eye:Vec3,
 	prev_jitter:Vec2,
 	has_previous:bool,
@@ -582,7 +578,6 @@ renderer_camera_cut :: proc(r:^Renderer) {
 @(private)
 view_camera_cut :: proc(v:^View_State) {
     v.has_previous=false
-    v.foreground_previous=false
     v.turn=0
     v.exposure_generation+=1
     v.exposure_settling=true
@@ -657,7 +652,6 @@ Renderer :: struct {
 	debug_capacity:  int,
 	stats_buffer:    rhi.Buffer,
 	scratch_buffer:  rhi.Buffer, // what a pass writes and nobody reads
-	foreground_kept: rhi.Buffer, // the share of the way of the viewmodel of the view being recorded (foreground.odin); made by the first that has one
 	light_changes:        rhi.Buffer, // Scene_State.changes of the frame, for the probes
 	probe_hits:           Probe_Hits, // what the probes of ddgi keep of their rays, and the changes they check it against
 	frame_changes:        Light_Changes, // those of this frame, for the views after the first
@@ -779,7 +773,7 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.dummy_views = rhi.texture_create(device, {width = 1, height = 1, format = .R8_Uint, usage = {.Sampled, .Color_Target}, name = "dummy views"})
 	r.dummy_rest = rhi.texture_create(device, {width = 1, height = 1, format = .RG32_Uint, usage = {.Sampled, .Storage}, name = "dummy rest"})
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
-	// Also the counts of a cull no frame reads (the nested views, the viewmodel).
+	// Also the counts of a cull no frame reads (the nested views).
 	r.scratch_buffer = rhi.buffer_create(device, {size = u64(max(256, size_of(Gpu_Cull_Stats))), usage = {.Storage}, name = "scratch"})
 	r.glass_dispatch = rhi.buffer_create(device, {size = 16, usage = {.Storage, .Indirect}, name = "glass dispatch"})
 	r.dispatch_start = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "dispatch start"})
@@ -868,7 +862,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
 	cost_destroy(r)
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.foreground_kept, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dummy_views, r.dummy_rest, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
@@ -1019,7 +1013,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Subsurface, .Subsurface_Comp)
 	compute(list, r, .Taa, .Taa_Comp)
 	compute(list, r, .Hiz, .Hiz_Comp)
-	compute(list, r, .Foreground_Kept, .Foreground_Kept_Comp)
 	compute(list, r, .Exposure_Histogram, .Exposure_Histogram_Comp)
 	compute(list, r, .Exposure_Adapt, .Exposure_Adapt_Comp)
 	compute(list, r, .History_Scale, .History_Scale_Comp)
@@ -1052,19 +1045,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 			cull = .None if bin & RASTER_BIN_TWO_SIDED != 0 else .Back, name = "visibility",
 		})
 	}
-	for id in Pipeline_Id.Foreground_Map ..= Pipeline_Id.Foreground_Map_Tested_Two_Sided {
-		bin := int(id) - int(Pipeline_Id.Foreground_Map)
-		tested := bin & RASTER_BIN_TESTED != 0
-		graphics(list, r, id, {
-			vertex = &r.shader_codes[.Vis_Raster_Tested_Vert if tested else .Vis_Raster_Vert], fragment = &r.shader_codes[.Vis_Raster_Tested_Depth_Frag if tested else .Vis_Raster_Depth_Frag],
-			depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater,
-			cull = .None if bin & RASTER_BIN_TWO_SIDED != 0 else .Back, name = "viewmodel map",
-		})
-	}
-	graphics(list, r, .Foreground_Map_Clear, {
-		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Foreground_Clear_Frag],
-		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "viewmodel map clear",
-	})
 	graphics(list, r, .Program_Depth, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Vis_Classify_Frag],
 		depth_format = .D16_Unorm, depth_test = true, depth_write = true, depth_compare = .Always, name = "program depth",
@@ -1092,10 +1072,6 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Nested_Prime, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Prime_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "nested view pixels",
-	})
-	graphics(list, r, .Foreground_Tag, {
-		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Foreground_Tag_Frag],
-		color_formats = {0 = .R8_Uint}, color_count = 1, name = "viewmodel tags",
 	})
 	graphics(list, r, .Nested_Reflectance, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Reflectance_Frag],

@@ -87,7 +87,5 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 normal = gbuffer_normal(p);
     // Its rays leave from where the point rests: what they meet rests there.
     float3 rest = pixel.position - pixel_rest(p, depth);
-    // The viewmodel is near the eye and in front of the world under it: nothing around it occludes it.
-    float occlusion = pixel_foreground(p) != 0u ? 1.0 : contact_occlusion(q, rest, normal, pixel.distance);
-    out_contact[q] = float4(occlusion, depth_distance(depth), oct_encode(normal));
+    out_contact[q] = float4(contact_occlusion(q, rest, normal, pixel.distance), depth_distance(depth), oct_encode(normal));
 }

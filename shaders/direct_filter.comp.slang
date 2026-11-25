@@ -64,7 +64,7 @@ float3 filter_light(int2 p, Pixel pixel, Shading s, float depth, float3 normal, 
         float3 irradiance = sun_light(pixel.position) * cosine;
         if (luminance(irradiance) > 0.0) {
             // Where no point of its surface tells, its map does, as it tells the points.
-            float seen = sun < 0.0 ? sun_shadow_seen(pixel.position, normal, pixel_across(p, depth), false, swayed) : sun;
+            float seen = sun < 0.0 ? sun_shadow_seen(pixel.position, normal, frame.footprint.x + frame.footprint.y * pixel.distance, false, swayed) : sun;
             irradiance *= seen < 0.0 ? 1.0 : seen;
             light += irradiance * shading_response(s, frame.sun_direction.xyz);
             known += luminance(irradiance);
@@ -97,7 +97,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     int scale = int(max(params.scale, 1u));
     int2 points = direct_points(scale);
     Pixel pixel = pixel_at(p, (float2(p) + 0.5) * frame.inv_resolution, depth);
-    float4 normal = float4(gbuffer_normal(p), pixel_across(p, depth));
+    float4 normal = float4(gbuffer_normal(p), frame.footprint.x + frame.footprint.y * depth_distance(depth));
     float2 at = (float2(p) + 0.5) / float(scale) - 0.5;
     int2 low = int2(floor(at));
     float2 f = at - float2(low);
@@ -113,8 +113,8 @@ void main(uint3 id : SV_DispatchThreadID) {
         float tap_depth = g_depth.Load(int3(source, 0)).r;
         if (depth_empty(tap_depth)) continue;
         float4 texel = points_in.Load(int3(q, 0));
-        // Across the opening of a nested view or the edge of the viewmodel only where no point on its side is.
-        if (pixel_side(source, tap_depth) != pixel_side(p, depth)) {
+        // Across the opening of a nested view only where no point on its side is.
+        if (!depth_same_side(tap_depth, depth)) {
             if (best < 0.0) nearest = float4(texel.rgb, texel.a >= 1.5 ? texel.a - 2.0 : texel.a);
             continue;
         }
