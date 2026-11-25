@@ -662,6 +662,13 @@ scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
             if flat:=far.far_flat_blends(&run.p.registry,found.id);flat>0 {
                 fmt.sbprintfln(&said,"%s: advice: %d blended surfaces lie flat on opaque ones: give their materials alpha_mode Decal, which changes the surface under them before it is lit, in one pass, shadowed as it is",scene.shown,flat)
             }
+            left:=make([dynamic]far.Far_Left_Out,context.temp_allocator)
+            far.far_decals_left_out(&run.p.registry,found.id,&left,context.temp_allocator)
+            for each in left {
+                section:="?"
+                if record,known:=asset.registry_find(&run.p.registry,each.section);known {section=record.path}
+                fmt.sbprintfln(&said,"%s: advice: %s, in the section %s, shows a decal, which the far mesh of the section leaves out: past the distance the section is drawn by its far mesh the surface under it shows without the decal. To see it from far, paint it into the material of that surface",scene.shown,each.entity,section)
+            }
         }
         fmt.wprint(run.output,strings.to_string(said))
         append(&checked,Scene_Checked{scene.shown,key,problems,strings.to_string(said)})
@@ -673,7 +680,7 @@ scene_check :: proc(run:^Run,args:[]string) -> (count:int) {
 
 // Raise it when the check says something else of the same scenes and types: every key moves.
 @(private="file")
-SCENE_KEYS_VERSION :: 2
+SCENE_KEYS_VERSION :: 3
 // In the build folder of the project: what the last check of all its scenes said of each.
 SCENE_KEYS_FILE :: "scenes.keys"
 

@@ -368,6 +368,7 @@ Scene_State :: struct {
 	decal_meshes:         [dynamic]u32,         // the meshes of its instances, each once
 	decals_stale:         bool, // an instance with a decal came, went or changed its mesh or materials, or the classes of rows did
 	decal_emission:       bool, // a decal of the scene emits
+	decal_batch_tables:   u64,  // the tables of the batches (Batches.tables) the list holds the slots of
 	decal_entries:        rhi.Buffer, // [2]u32 of each decal: its instance and the slot of its mesh
 	decal_draws:          rhi.Buffer, // rhi.Draw_Indexed_Indirect of each, of the view drawn last (decal_draws.comp)
 	decal_capacity:       int,

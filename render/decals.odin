@@ -17,8 +17,9 @@ import "mirai:std/base"
 // the scene has a decal or an extension asks for the stage; the emission
 // target only while one of them emits.
 //
-// The decals of the scene are a list of its instances and the slots of their
-// meshes that are decals, ordered once, when it changes, by the order of
+// The decals of the scene are a list of its instances, and of the instances
+// of the batches drawn, and the slots of their meshes that are decals,
+// ordered once, when it changes, by the order of
 // their materials (asset.Material_Decal.order), their program, their
 // instance and their slot: the same in every view. A frame looks at no entry
 // of it: decal_draws.comp culls each, and the entries of one program in a
@@ -29,8 +30,9 @@ import "mirai:std/base"
 Decal_Entry :: struct {
 	order:    i16,
 	program:  u32,
-	instance: u32,
+	instance: u32, // of the scene, or past them the slot of an instance of a batch (scene_instance)
 	slot:     u32,
+	mesh:     u32,
 }
 
 // Entries in a row of one Surface program: one draw of many.
@@ -48,14 +50,18 @@ DECAL_FORMATS :: [Decal_Target]rhi.Format{.Color = .RGBA8_Srgb, .Normal = .RGBA1
 @(private)
 decals_order :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 	s := &r.scene
-	if !s.decals_stale {return true}
+	// The slots of the instances of batches move when their tables are built again.
+	if !s.decals_stale && s.decal_batch_tables == s.batch.tables {return true}
+	s.decal_batch_tables = s.batch.tables
 	clear(&s.decals)
 	clear(&s.decal_runs)
 	clear(&s.decal_meshes)
 	s.decal_emission = false
-	for &inst, index in s.instances {
-		if inst.meta.x & INSTANCE_FLAG_DECAL == 0 || int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
-		mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
+	// The decal slots of an instance into the list, those of first to first + count - 1 of a batch.
+	add :: proc(r: ^Renderer, inst: ^Gpu_Instance, first, count: u32) -> bool {
+		s := &r.scene
+		mesh_handle := inst.meta.x & INSTANCE_MESH_MASK
+		mesh := s.meshes[mesh_handle]
 		for packed, k in s.indices[mesh.slot_word:][:mesh.slot_count] {
 			row := instance_row(packed, inst.meta.y, &inst.slot_materials)
 			if int(row) >= len(s.materials) {continue}
@@ -65,12 +71,28 @@ decals_order :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 			writes := transmute(asset.Decal_Writes)u8(flags >> abi.MATERIAL_DECAL_SHIFT & u32(transmute(u8)asset.DECAL_WRITES_ALL))
 			if writes == {} {writes = asset.MATERIAL_DEFAULTS.decal.writes}
 			s.decal_emission ||= .Emission in writes
-			entry := Decal_Entry{order = i16(u16(flags >> abi.MATERIAL_DECAL_ORDER_SHIFT)), program = values.program_id, instance = u32(index), slot = u32(k)}
-			if _, error := append(&s.decals, entry); error != nil {
-				set_error(r, "decals of the scene: out of memory")
-				return false
+			entry := Decal_Entry{order = i16(u16(flags >> abi.MATERIAL_DECAL_ORDER_SHIFT)), program = values.program_id, slot = u32(k), mesh = mesh_handle}
+			for instance in first ..< first + count {
+				entry.instance = instance
+				if _, error := append(&s.decals, entry); error != nil {
+					set_error(r, "decals of the scene: out of memory")
+					return false
+				}
 			}
 		}
+		return true
+	}
+	for &inst, index in s.instances {
+		if inst.meta.x & INSTANCE_FLAG_DECAL == 0 || int(inst.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
+		if !add(r, &inst, u32(index), 1) {return false}
+	}
+	// A batch in no layer (Rays_Only) is drawn by no view.
+	for &row, drawn in s.batch.rows {
+		if row.meta.w >> INSTANCE_LAYERS_SHIFT == 0 || int(row.meta.x & INSTANCE_MESH_MASK) >= len(s.meshes) {continue}
+		record := &s.batch.records[s.batch.drawn[drawn]]
+		mesh := s.meshes[row.meta.x & INSTANCE_MESH_MASK]
+		if instance_alpha(s, mesh, row.meta.y, row.slot_materials).decals == 0 {continue}
+		if !add(r, &row, u32(len(s.instances)) + transmute(u32)row.world[0].z, record.count) {return false}
 	}
 	slice.sort_by(s.decals[:], proc(a, b: Decal_Entry) -> bool {
 		if a.order != b.order {return a.order < b.order}
@@ -79,8 +101,7 @@ decals_order :: proc(r: ^Renderer, cmd: ^rhi.Command_List) -> bool {
 		return a.slot < b.slot
 	})
 	for entry in s.decals {
-		mesh := s.instances[entry.instance].meta.x & INSTANCE_MESH_MASK
-		if _, error := append(&s.decal_meshes, mesh); error != nil {
+		if _, error := append(&s.decal_meshes, entry.mesh); error != nil {
 			set_error(r, "decals of the scene: out of memory")
 			return false
 		}

@@ -147,6 +147,16 @@ a_decal_changes_only_what_it_writes_of_the_surface_under_it :: proc(t: ^testing.
 				"half a red decal over gray: %v", seen)
 		}
 	}
+	// Decals placed as one batch are drawn as the same decals of the scene are, each of its instances.
+	batch, problem := batch_set(r, 0, r.world_key, {mesh = quad, material = 2, tint = 1}, {batch_instance({}, 1, 1), batch_instance(beside, 1, 1)})
+	testing.expect(t, batch != 0, problem)
+	testing.expect(t, scene_given(r, {ground}, nil, {}, {}), r.error)
+	for at in ([2]Vec3{under, beside}) {
+		seen := decal_seen(t, &f, DECAL_ABOVE, at)
+		testing.expectf(t, seen.albedo.rgb == {255, 0, 0} && seen.normal == bare.normal, "a decal of a batch at %v changes the color alone: %v", at, seen)
+	}
+	testing.expect_value(t, len(r.scene.decals), 2)
+	batch_remove(r, batch)
 	// The decals go: so do the targets, and the surface is as it was.
 	testing.expect(t, scene_given(r, {ground}, nil, {}, {}), r.error)
 	testing.expect(t, decal_seen(t, &f, DECAL_ABOVE, under) == bare && r.targets.decal_color == 0 && len(r.scene.decals) == 0)
