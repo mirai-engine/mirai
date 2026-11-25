@@ -1,33 +1,52 @@
 ---
 name: gameplay
-description: Entity tags, fixed-tick timers, interaction, and debug drawing.
+description: Named entity tags, interaction (focus, use and hold of targets) and debug drawing.
 ---
 
 # Gameplay helpers
 
-## Tags and deadlines
+Waits (cooldowns, countdowns) are fields of your components: [waiting.md](waiting.md).
 
-Add `scene.Tags` to classify an entity. Define tag indices in game code and use `scene.tag_set`
-and `scene.tag_clear` to edit membership. Query one bit with `scene.tag_has`, or match a mask with
-`scene.tag_has_all` or `scene.tag_has_any`.
+## Tags
 
-Add `scene.Cooldowns` for a wait that is ready by default, or `scene.Timers` for a wait with an
-explicit start and elapsed time. Name the slots in game code. Start a wait with the `core.Time`
-of the fixed step. Read the remaining or elapsed time when needed. Each component holds ticks,
-so a copied world resumes the same waits and a steady tick has no countdown writes.
+`scene.Tags` says what kinds of things an entity is (a player, a structure, an enemy class), for
+rules that match kinds: the `target_tags` of an ability effect, a game's own checks. Declare each
+tag once as a constant and use the constant in code; data, the inspector and the API show its
+name (`TAG_PLAYER` is `player`). Up to `scene.TAG_LIMIT` (64) tags.
+
+```odin
+TAG_PLAYER :: scene.Tag(0)
+TAG_STRUCTURE :: scene.Tag(1)
+
+if scene.tag_has(tags,TAG_STRUCTURE) {...}
+```
+
+`scene.tag_set` and `scene.tag_clear` change one tag (false past the limit); `scene.tag_has_all`
+and `scene.tag_has_any` match a set (`scene.Tags{bits=1<<TAG_PLAYER}`). The tags of an ability row
+(`Ability_Tag`) and its statuses are other data of the `abilities` plugin.
 
 ## Interaction
 
-Give the driven body `cam.Interactor` and targets `cam.Interactable`. Set reach and choose
-proximity or a look cone. Look mode uses the body's selected camera, with its transform as
-the fallback. Reach is measured from the body. Higher priority wins, then shorter distance,
-then entity order. Use the target's prompt for its focused HUD.
+A target the player uses where it stands (a door, a lever, a shop) is a `scene.Interactable`; the
+body that uses it is a `scene.Interactor` that names the action of the game that uses
+(`action:"use"`). The engine reads that action from the seat that drives the body, on every end,
+with no call from the game.
 
-In an intent step, call `cam.interaction_use(requests, body, pressed)` on each tick the use
-action is held. Pass the action's pressed edge in `pressed`. Releasing use or losing focus
-cancels an incomplete hold. A completed hold needs another press to start again. A react step
-can read `core.Ref(cam.Interaction_Events)` and handle `.Completed` for the target. Read the
-derived `cam.Interaction_State` for focus, availability and hold progress.
+- **Focus:** of the targets within `reach` of the body, the highest `priority`, then the nearest,
+  then the lowest entity. `Look` mode keeps it inside a cone of `look_angle` around where the
+  player aims (`inp.aim`), or where the body faces without a player. `sight` needs a clear line
+  from the eye: what physics says is in the way hides it (without physics nothing does).
+- **Use:** a press starts a hold of `hold_seconds` (0: the press uses it), its end completes it,
+  letting go or losing the focus cancels it, and a new press starts it again.
+- **Results:** `core.Ref(scene.Interaction_Events)` gives `Focused`, `Unfocused`, `Started`,
+  `Cancelled` and `Completed` with the actor and the target: a `server` step acts on `Completed`.
+  The derived `scene.Interaction_State` holds the focused `target` and its `hold`, written only
+  when they change; `scene.interaction_progress(state,time)` gives the hold 0 to 1 for a bar.
+- **Prompt:** the HUD is the game's. Show what the focused target offers from its own components
+  (a name, a price) and the binding of the action; the engine keeps no prompt text.
+
+The `templates/game` wall is an example: hold `E` at it to shatter it (`game_shatter`), and the HUD
+says so (`game_prompt`).
 
 ## Debug drawing
 

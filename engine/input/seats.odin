@@ -69,12 +69,15 @@ Seat :: struct {
 // when the tick began. It is of the tick as its actions are: this machine takes
 // it from the view it drew (Slot_Views), the network from the end of the
 // player, so every end moves the body toward the same forward (engine/camera)
-// whatever its own cameras did.
+// and aims from the same ray (aim) whatever its own cameras did.
 Seat_View :: struct {
     yaw:f32 `mirai:"min=-3.1416,max=3.1416,precision=0.0001"`, // radians in the frame of the vertical of its body (core.Vertical): left about its up, 0 along -Z
     pitch:f32 `mirai:"min=-1.6,max=1.6,precision=0.0001"`,     // radians up from across its up
+    eye:[3]f32 `mirai:"min=-16,max=16,precision=0.01,unit=m"`, // where the camera was from the body, in the frame of its vertical; 0 for a camera farther than VIEW_EYE_REACH
     kind:View_Kind `mirai:"bits=2"`,
 }
+
+VIEW_EYE_REACH :: 16 // m
 
 View_Kind :: enum u8 {
     None,  // it saw through no camera

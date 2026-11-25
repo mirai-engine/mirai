@@ -13,6 +13,7 @@ Test_Seats :: struct {
     seat_requests:Seat_Requests,
     moves:core.Table(Move_Input),
     worlds:core.Table(core.World_Transform),
+    verticals:core.Table(core.Vertical),
     remotes:core.Table(core.Remote),
     hold_requests:Hold_Requests,
     context_requests:Context_Requests,

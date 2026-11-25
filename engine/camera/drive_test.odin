@@ -236,34 +236,6 @@ each_orbit_turns_with_the_look_of_its_own_seat :: proc(t:^testing.T) {
     testing.expectf(t,abs(second.looking.x+10*input.LOOK_SPEED)<1e-5,"the second turns with its own pad: %v",second.looking)
 }
 
-// The aim of a player is the ray of the camera it sees through: that of its
-// body, or of an override (an aim camera) while it stands.
-@(test)
-aim_is_the_ray_of_the_camera_the_player_sees :: proc(t:^testing.T) {
-    w:=new(Drive_World)
-    defer free(w)
-    if !drive_init(t,w) {return}
-    defer test_world_destroy(w)
-    turn:=mm.quat_axis_angle({0,1,0},mm.PI/2)
-    seat,body,eye:=drive_body(w,turn,nil)
-    drive_settle(w)
-    core.edit(&w.worlds,eye).position={1,2,3}
-    scope:=core.create(&w.entities)
-    core.add(&w.cameras,scope,render.CAMERA_DEFAULT)
-    core.add(&w.worlds,scope,core.World_Transform{transform={position={4,5,6},rotation=1,scale=1}})
-    drive_settle(w)
-    input.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,nil)
-    sight:=Sight{core.ref(&w.shown),core.read(&w.seats),core.ref(&w.seat_state),core.read(&w.cameras),core.ref(&w.hierarchy),core.read(&w.worlds)}
-    origin,direction,rotation,ok:=aim(sight,body)
-    testing.expect(t,ok && origin==[3]f32{1,2,3} && rotation==turn,"it turns as the camera of the body")
-    testing.expectf(t,abs(direction.x+1)<1e-5 && abs(direction.z)<1e-5,"a quarter turn to the left looks along -X: %v",direction)
-    testing.expect(t,override_set(&w.shown,{owner=scope,seat=seat,camera=scope}))
-    origin,direction,rotation,ok=aim(sight,body)
-    testing.expect(t,ok && origin==[3]f32{4,5,6} && abs(direction.z+1)<1e-5 && rotation==1,"through the override it aims")
-    _,_,_,ok=aim(sight,core.create(&w.entities))
-    testing.expect(t,!ok,"a body nobody drives has no aim")
-}
-
 // In the Play of the editor, player 1 without a body flies a camera from where
 // the editor looked, until it drives a body of the game; never in a game, nor
 // with an active camera in the scene.

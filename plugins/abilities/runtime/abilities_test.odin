@@ -1109,10 +1109,10 @@ modifier_ramps_fade_in_and_out_on_windows_and_timers :: proc(t:^testing.T) {
 // to players vs 75 damage to structures/environment, default to untagged, 0 override to immune).
 @(test)
 hitbox_applies_per_target_class_effects_by_tags :: proc(t:^testing.T) {
-    TAG_PLAYER :: 0
-    TAG_STRUCTURE :: 1
-    TAG_ENVIRONMENT :: 2
-    TAG_IMMUNE_CLASS :: 3
+    TAG_PLAYER :: scene.Tag(0)
+    TAG_STRUCTURE :: scene.Tag(1)
+    TAG_ENVIRONMENT :: scene.Tag(2)
+    TAG_IMMUNE_CLASS :: scene.Tag(3)
 
     f:=new(Fixture);defer free(f)
     if !fixture_make(t,f) {return}
@@ -1125,19 +1125,19 @@ hitbox_applies_per_target_class_effects_by_tags :: proc(t:^testing.T) {
         shape=.Box,center={0,1,-1.5},size={2,2,2},
         effect={attribute=HEALTH,amount=-20},
         target_effects={
-            0={attribute=HEALTH,amount=-35,target_tags={bits=u64(1)<<TAG_PLAYER},knockback={0,4,-8},knockback_seconds=0.1},
-            1={attribute=HEALTH,amount=-75,target_tags={bits=(u64(1)<<TAG_STRUCTURE)|(u64(1)<<TAG_ENVIRONMENT)}},
-            2={target_tags={bits=u64(1)<<TAG_IMMUNE_CLASS}},
+            0={attribute=HEALTH,amount=-35,target_tags={bits=1<<TAG_PLAYER},knockback={0,4,-8},knockback_seconds=0.1},
+            1={attribute=HEALTH,amount=-75,target_tags={bits=(1<<TAG_STRUCTURE)|(1<<TAG_ENVIRONMENT)}},
+            2={target_tags={bits=1<<TAG_IMMUNE_CLASS}},
         },
     }
 
-    Target_Case :: struct {name:string,tag:int,want_health:f32,want_knockback:bool}
+    Target_Case :: struct {name:string,tag:scene.Tag,tagged:bool,want_health:f32,want_knockback:bool}
     cases:=[]Target_Case{
-        {"player",TAG_PLAYER,65,true},
-        {"structure",TAG_STRUCTURE,25,false},
-        {"environment",TAG_ENVIRONMENT,25,false},
-        {"untagged",-1,80,false},
-        {"immune_class",TAG_IMMUNE_CLASS,100,false},
+        {"player",TAG_PLAYER,true,65,true},
+        {"structure",TAG_STRUCTURE,true,25,false},
+        {"environment",TAG_ENVIRONMENT,true,25,false},
+        {"untagged",{},false,80,false},
+        {"immune_class",TAG_IMMUNE_CLASS,true,100,false},
     }
     entities:=make([]core.Entity,len(cases));defer delete(entities)
     // Move original dummy out of hitbox so only our table targets are tested.
@@ -1150,7 +1150,7 @@ hitbox_applies_per_target_class_effects_by_tags :: proc(t:^testing.T) {
         core.add(&f.users,e,u)
         core.add(&f.characters,e,phys.character_default())
         core.add(&f.worlds,e,core.World_Transform{transform={position={1.5,0,0},rotation=1,scale=1}})
-        if c.tag>=0 {
+        if c.tagged {
             tags:scene.Tags
             scene.tag_set(&tags,c.tag)
             core.add(&f.tags,e,tags)
@@ -1173,8 +1173,8 @@ hitbox_applies_per_target_class_effects_by_tags :: proc(t:^testing.T) {
     }
 
     // Standalone ability_effect with target_tags skips non-matching targets.
-    ability_effect(&f.requests,entities[1],{attribute=HEALTH,amount=-10,target_tags={bits=u64(1)<<TAG_PLAYER}})
-    ability_effect(&f.requests,entities[0],{attribute=HEALTH,amount=-10,target_tags={bits=u64(1)<<TAG_PLAYER}})
+    ability_effect(&f.requests,entities[1],{attribute=HEALTH,amount=-10,target_tags={bits=1<<TAG_PLAYER}})
+    ability_effect(&f.requests,entities[0],{attribute=HEALTH,amount=-10,target_tags={bits=1<<TAG_PLAYER}})
     step(f)
     testing.expectf(t,abs(user(f,entities[1]).attributes[0].base-25)<1e-3,"structure ignored player-only effect")
     testing.expectf(t,abs(user(f,entities[0]).attributes[0].base-55)<1e-3,"player took player-only effect")

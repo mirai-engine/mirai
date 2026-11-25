@@ -1,17 +1,17 @@
 package game
 
 import "mirai:core"
-import cam "mirai:engine/camera"
 import destruct "plugins:destruct/runtime"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import save "mirai:engine/save"
+import scene "mirai:engine/scene"
 import "mirai:std/base"
 
 // A small game built only with the public API of the engine, to copy from.
 // The player is a physics character driven by the input actions move, look,
-// jump, hit (breaks the wall in front of it), save and load (the slot
-// "quick"), bound in code. assets/arena/main.scene holds a floor, a
+// jump, hit (breaks the wall in front of it), use (held at the wall, shatters
+// it: an Interactable), save and load (the slot "quick"), bound in code. assets/arena/main.scene holds a floor, a
 // spawn point, a destructible wall, a speaker that plays a sound, a HUD
 // (UI_Screen) with a pulsing badge and a sign above the speaker
 // (World_Widget); both interfaces show the Status component of their entity.
@@ -27,6 +27,7 @@ import "mirai:std/base"
 HIT_REACH :: f32(3)                     // how far from the eye a hit lands
 HIT_RADIUS :: f32(0.6)
 HIT_IMPULSE :: f32(40)                  // N s, along the view
+SHATTER_RADIUS :: f32(3)                // around the wall a held use shatters
 SAVE_SLOT :: "quick"
 
 // On the character of a player.
@@ -43,13 +44,14 @@ Status :: struct {
 // The actions of the game; move and look are of the engine (inp.Move_Action, inp.Look_Action) and
 // jump of the locomotion plugin (Walk_Action).
 @(actions)
-Action :: enum u8 {Hit,Save,Load}
+Action :: enum u8 {Hit,Use,Save,Load}
 
 // Their bindings. The editor (Project Settings > Input), settings.set and the
 // player keep in Input_Settings of settings.mirai only what they change of these.
 action_defaults :: proc "contextless" () -> [Action]inp.Action_Bindings {
     return {
         .Hit=inp.action_default(.Button,inp.binding_mouse_button(.Left),inp.binding_gamepad_axis(.Right_Trigger)),
+        .Use=inp.action_default(.Button,inp.binding_key(.E),inp.binding_gamepad_button(.West)),
         .Save=inp.action_default(.Button,inp.binding_key(.F5),inp.binding_gamepad_button(.Dpad_Up)),
         .Load=inp.action_default(.Button,inp.binding_key(.F9),inp.binding_gamepad_button(.Back)),
     }
@@ -67,14 +69,40 @@ status_show :: proc(statuses:^core.Table(Status),message:string,hit:=false) {
 // wall or a piece of it. The server decides it, and a session alone.
 @(step="fixed",server)
 game_hit :: proc(
-    players:^core.Table(Player,.Read),sight:cam.Sight,
+    players:^core.Table(Player,.Read),aims:inp.Aims,
     actions:inp.Input_Of(Action),physics:core.Ref(phys.Physics_State),damage:^destruct.Destruct_Requests,
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        eye,ahead,_,aimed:=cam.aim(sight,e)
+        eye,ahead,_,aimed:=inp.aim(aims,e)
         if !aimed || !inp.pressed(actions,e,.Hit) {continue}
         if hit,found:=phys.raycast(physics,eye,ahead,HIT_REACH,e);found {destruct.damage(damage,hit.entity,hit.point,HIT_RADIUS,ahead*HIT_IMPULSE)}
+    }
+}
+
+// The wall is an Interactable and the player an Interactor of the action
+// use: a use held at the wall to its end shatters what is left of it. The
+// server decides it, as a hit.
+@(step="fixed",server)
+game_shatter :: proc(used:core.Ref(scene.Interaction_Events),aims:inp.Aims,damage:^destruct.Destruct_Requests) {
+    for event in used.items {
+        if event.kind!=.Completed {continue}
+        wall,placed:=core.get(aims.worlds,event.target)
+        if !placed {continue}
+        _,ahead,_,_:=inp.aim(aims,event.actor)
+        destruct.damage(damage,event.target,wall.position,SHATTER_RADIUS,ahead*HIT_IMPULSE*4)
+    }
+}
+
+// Every end tells its player what the use does at what it focuses.
+@(step="fixed")
+game_prompt :: proc(statuses:^core.Table(Status),used:core.Ref(scene.Interaction_Events)) {
+    for event in used.items {
+        #partial switch event.kind {
+        case .Focused:   status_show(statuses,"Hold E to shatter the wall")
+        case .Cancelled: status_show(statuses,"Let go too soon")
+        case .Completed: status_show(statuses,"Shattered!")
+        }
     }
 }
 

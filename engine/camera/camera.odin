@@ -181,17 +181,6 @@ Sight :: struct {
     worlds:^core.Table(core.World_Transform,.Read),
 }
 
-// The view of the player who drives a body: from the camera it sees through,
-// where it looks and how that camera is turned, whatever its mode. False
-// without a camera.
-aim :: proc(sight:Sight,body:core.Entity) -> (origin,direction:[3]f32,rotation:mm.Quat,ok:bool) {
-    seat:=input.seat_of(sight.seat_state,body)
-    if seat==core.NONE {return}
-    camera,_:=camera_selected(sight.shown,sight.seats,sight.cameras,sight.hierarchy,seat)
-    placed:=core.get(sight.worlds,camera) or_return
-    return placed.position,mm.quat_forward(placed.rotation),placed.rotation,true
-}
-
 // The camera a seat sees through: its latest override, and otherwise the
 // camera of its body; none without a valid one. With the blend an override asked for.
 camera_selected :: proc(cameras_state:core.Ref(Cameras),seats:^core.Table(input.Seat,.Read),cameras:^core.Table(render.Camera,.Read),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> (core.Entity,Camera_Blend) {

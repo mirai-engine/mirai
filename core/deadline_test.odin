@@ -74,3 +74,83 @@ a_deadline_on_the_own_time_of_an_entity_counts_its_pace :: proc(t:^testing.T) {
     time.tick=40
     testing.expect(t,abs(elapsed(own_time(time,clock,&w.paces,fast),10)-2)<1e-4)
 }
+
+// A Cooldown and a Countdown asked in seconds last the same at any tick rate:
+// ready, running, due and progress follow the seconds, not the ticks.
+@(test)
+cooldowns_and_countdowns_last_the_same_seconds_at_any_tick_rate :: proc(t:^testing.T) {
+    Case :: struct {seconds:f32,at:f32,ready,running,ended:bool,progress:f32}
+    cases:=[]Case{
+        {seconds=1,at=0.5,ready=false,running=true,ended=false,progress=0.5},
+        {seconds=1,at=0.25,ready=false,running=true,ended=false,progress=0.25},
+        {seconds=1,at=1,ready=true,running=false,ended=true,progress=1},
+        {seconds=0.5,at=2,ready=true,running=false,ended=true,progress=1},
+        {seconds=0,at=0,ready=true,running=false,ended=true,progress=1},
+    }
+    for c in cases {
+        for rate in ([]f32{30,60,120,240}) {
+            time:=Time{tick=500,dt=1/rate,playing=true}
+            cooldown:Cooldown
+            countdown:Countdown
+            cooldown_start(&cooldown,time,c.seconds)
+            countdown_start(&countdown,time,c.seconds)
+            time.tick+=u64(math.round(c.at*rate))
+            testing.expectf(t,cooldown_ready(cooldown,time)==c.ready,"%v at %v Hz: ready",c,rate)
+            testing.expectf(t,countdown_running(countdown,time)==c.running,"%v at %v Hz: running",c,rate)
+            testing.expectf(t,countdown_ended(countdown,time)==c.ended,"%v at %v Hz: ended",c,rate)
+            near:=0.5/rate+1e-4 // the seconds round to whole ticks
+            testing.expectf(t,abs(countdown_progress(countdown,time)-c.progress)<=near,"%v at %v Hz: progress %v",c,rate,countdown_progress(countdown,time))
+            testing.expectf(t,abs(countdown_elapsed(countdown,time)-min(c.at,c.seconds))<=near,"%v at %v Hz: elapsed",c,rate)
+            left:=max(c.seconds-c.at,0)
+            testing.expectf(t,abs(cooldown_remaining(cooldown,time)-left)<=near && abs(countdown_remaining(countdown,time)-left)<=near,"%v at %v Hz: remaining",c,rate)
+        }
+    }
+}
+
+// The zero values wait for nothing: a Cooldown is ready and a Countdown is not
+// running, ended, due or progressing; a stopped Countdown is its zero value.
+@(test)
+cooldown_and_countdown_zero_values_are_ready_and_not_running :: proc(t:^testing.T) {
+    for tick in ([]u64{0,1,1000,NEVER-1}) {
+        time:=Time{tick=tick,dt=1.0/60}
+        testing.expect(t,cooldown_ready(Cooldown{},time) && cooldown_remaining(Cooldown{},time)==0)
+        zero:Countdown
+        testing.expect(t,!countdown_running(zero,time) && !countdown_due(zero,time) && !countdown_ended(zero,time))
+        testing.expect(t,countdown_progress(zero,time)==0 && countdown_elapsed(zero,time)==0 && countdown_remaining(zero,time)==0)
+        countdown_start(&zero,time,1)
+        countdown_stop(&zero)
+        testing.expect_value(t,zero,Countdown{})
+    }
+    cooldown_start(nil,{},1)
+    countdown_start(nil,{},1)
+    countdown_stop(nil)
+}
+
+// A wait is plain data: a copy taken mid-wait (a world copy, a snapshot a
+// rollback restores) answers as the original at every tick, the tick it ends
+// is due once, and no answer changes the value.
+@(test)
+cooldowns_and_countdowns_survive_a_copy_and_a_rollback :: proc(t:^testing.T) {
+    time:=Time{tick=10,dt=0.125,playing=true}
+    cooldown:Cooldown
+    countdown:Countdown
+    cooldown_start(&cooldown,time,0.5)
+    countdown_start(&countdown,time,0.5)
+    time_advance(&time)
+    time_advance(&time)
+    kept_cooldown,kept_countdown:=cooldown,countdown
+    due_ticks:=0
+    for tick in u64(12)..=u64(20) {
+        time.tick=tick
+        testing.expect_value(t,cooldown_ready(kept_cooldown,time),cooldown_ready(cooldown,time))
+        testing.expect_value(t,countdown_progress(kept_countdown,time),countdown_progress(countdown,time))
+        if countdown_due(countdown,time) {due_ticks+=1}
+    }
+    testing.expect_value(t,due_ticks,1)
+    testing.expect(t,kept_cooldown==cooldown && kept_countdown==countdown)
+    // Rolled back to the tick of the copy, the waits answer as they did then.
+    time.tick,time.resimulating=12,true
+    testing.expect(t,!cooldown_ready(kept_cooldown,time) && countdown_running(kept_countdown,time))
+    testing.expect_value(t,countdown_progress(kept_countdown,time),f32(0.5))
+    testing.expect(t,countdown_due(kept_countdown,{tick=14,dt=0.125}) && cooldown_ready(kept_cooldown,{tick=14,dt=0.125}))
+}

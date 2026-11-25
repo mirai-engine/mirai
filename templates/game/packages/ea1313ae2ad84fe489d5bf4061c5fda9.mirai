@@ -2,6 +2,7 @@
   "version": 1,
   "id": "ea1313ae2ad84fe489d5bf4061c5fda9",
   "name": "hum",
+  "catalog_path": "Game/arena",
   "origin": {"path": "assets/arena/hum.wav", "folder": false, "importer": "sound"},
   "identity": "e309f8873a2e4ee2e258c6d26d667da121324047c403dcbe0b87ee4376231c53",
   "inputs": [],

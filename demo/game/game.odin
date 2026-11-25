@@ -6,7 +6,6 @@ import "core:math"
 import "core:math/linalg"
 import "core:strings"
 import "mirai:core"
-import cam "mirai:engine/camera"
 import destruct "plugins:destruct/runtime"
 import gui "mirai:engine/gui"
 import inp "mirai:engine/input"
@@ -204,7 +203,7 @@ swatch_index :: proc(swatch:Swatch) -> int {return int(swatch.index)%%len(SWATCH
 
 @(params)
 Demo_Controls :: struct {
-    sight:cam.Sight,
+    aims:inp.Aims,
     actions:inp.Input_Of(Action),
 }
 
@@ -216,26 +215,26 @@ game_use :: proc(
 ) {
     for row in 0..<core.count(players) {
         e:=core.entity_at(players,row)
-        placed,has_world:=core.get(controls.sight.worlds,e)
+        placed,has_world:=core.get(controls.aims.worlds,e)
         if !has_world {continue}
         feet:=placed.position
         if inp.pressed(controls.actions,e,.Use) {
             for at in 0..<core.count(doors) {
                 other:=core.entity_at(doors,at)
                 // A door that has not taken its place yet (game_doors) does not open.
-                if !core.has(door_states,other) || !in_reach(controls.sight.worlds,feet,other,core.at(doors,at).reach) {continue}
+                if !core.has(door_states,other) || !in_reach(controls.aims.worlds,feet,other,core.at(doors,at).reach) {continue}
                 door:=core.edit(door_states,other)
                 door.open=!door.open
                 log.infof("%s %s",core.name_get(names,other),door.open?"opened":"closed")
             }
             for at in 0..<core.count(swatches) {
                 swatch:=core.at(swatches,at)
-                if in_reach(controls.sight.worlds,feet,core.entity_at(swatches,at),swatch.reach) {
+                if in_reach(controls.aims.worlds,feet,core.entity_at(swatches,at),swatch.reach) {
                     core.edit_at(swatches,at).index=i32((swatch_index(swatch)+1)%len(SWATCH_MATERIALS))
                 }
             }
         }
-        if origin,aim,turn,aimed:=cam.aim(controls.sight,e);aimed && inp.pressed(controls.actions,e,.Throw) {
+        if origin,aim,turn,aimed:=inp.aim(controls.aims,e);aimed && inp.pressed(controls.actions,e,.Throw) {
             from:=origin+aim*0.8
             scene.spawn(spawner,THROWN_CUBE,{from,turn,THROWN_CUBE_SIZE},transient=true)
             if state:=demo_state(player_states,e,Player_State{},spawner.problems);state!=nil {state.thrown+=1}

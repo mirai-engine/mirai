@@ -136,8 +136,13 @@ for row in core.each_changed(sources, &c) {
 
 ## Waiting
 
-Waits store a target tick (plain data, copied/rolled back/saved); no coroutines or `await`:
+Waits store a target tick (plain data, copied/rolled back/saved); no coroutines or `await`.
+Game docs: `docs/game/core/waiting.md`.
 
+- Typed fields of a component: `Cooldown` (`ready_at`; zero is ready: `cooldown_start`, `_ready`,
+  `_remaining`) and `Countdown` (`started`, `ends`, `active`; zero is not running:
+  `countdown_start`, `_stop`, `_running`, `_due` on its one end tick, `_ended`, `_elapsed`,
+  `_remaining`, `_progress`).
 - `deadline(time, seconds)`, `due(time, at)` (0 = due, `NEVER` = never), `elapsed(time, since)`,
   `ticks_of`, `seconds_of`. Write rows only at start and end—never count down per tick.
 - `Own_Pace` entities use `own_time(time, clock, paces, e)` (accumulate per tick if pace
@@ -147,12 +152,11 @@ Waits store a target tick (plain data, copied/rolled back/saved); no coroutines 
   needed).
 
 ```odin
-for row in 0..<core.count(timers) {
-    t := core.at(timers, row)
-    if core.added(timers, row) {
-        core.edit_at(timers, row).end_tick = core.deadline(time, t.duration)
-    } else if core.due(time, t.end_tick) {
-        core.edit_at(timers, row).end_tick = core.NEVER
+for row in 0..<core.count(fuses) {
+    if core.added(fuses, row) {
+        core.countdown_start(&core.edit_at(fuses, row).fuse, time, core.at(fuses, row).seconds)
+    } else if core.countdown_due(core.at(fuses, row).fuse, time) {
+        core.destroy(commands, core.entity_at(fuses, row))
     }
 }
 ```
