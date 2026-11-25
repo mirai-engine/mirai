@@ -15,11 +15,21 @@ uint pixel_view(int2 p) {
 #endif
 }
 
+// The tag of a pixel of the viewmodel of the view (FRAME_FLAG_VIEWMODEL):
+// VIEWS_FOREGROUND with its kept share in VIEWS_KEPT; 0 for another pixel.
+uint pixel_foreground(int2 p) {
+    if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u) return 0u;
+    uint tag = pixel_views.Load(int3(p, 0));
+    return (tag & VIEWS_FOREGROUND) != 0u ? tag : 0u;
+}
 // The ray of the view of pixel p through uv, as view_origin and view_ray, in
 // the world that view shows.
 void pixel_ray(int2 p, float2 uv, float depth, out float3 origin, out float3 ray) {
     origin = view_origin(uv);
     ray = view_ray(uv);
+    // Of the viewmodel: its own ray, shortened to where its light is taken.
+    uint tag = pixel_foreground(p);
+    if (tag != 0u) ray = (frame.foreground_ray[0].xyz + frame.foreground_ray[1].xyz * uv.x + frame.foreground_ray[2].xyz * uv.y) * (float(max(tag & VIEWS_KEPT, 1u)) / float(VIEWS_KEPT));
 #ifdef MIRAI_NESTED_VIEWS
     if (depth_nested(depth)) {
         Nested_View nested = frame.nested[max(pixel_view(p), 1u) - 1u];
@@ -28,33 +38,25 @@ void pixel_ray(int2 p, float2 uv, float depth, out float3 origin, out float3 ray
     }
 #endif
 }
-// The tag of a pixel of the viewmodel of the view (FRAME_FLAG_VIEWMODEL):
-// VIEWS_FOREGROUND with its kept share in VIEWS_KEPT; 0 for another pixel.
-uint pixel_foreground(int2 p) {
-    if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u) return 0u;
-    uint tag = pixel_views.Load(int3(p, 0));
-    return (tag & VIEWS_FOREGROUND) != 0u ? tag : 0u;
-}
-// A pixel of the G-buffer in the world. One of the viewmodel is drawn with
-// its own field of view: it sees along the ray of the viewmodel, and its
-// place is the true one pulled toward the eye by the share its tag keeps,
-// which keeps it in front of the world under it.
+// A pixel of the G-buffer in the world. One of the viewmodel sees along the
+// ray of the viewmodel, and its place is where its light is taken: the one
+// it is drawn at (pixel_drawn) pulled toward the eye by the share its tag
+// keeps, in front of the world under it.
 Pixel pixel_at(int2 p, float2 uv, float depth) {
     float3 origin, ray;
     pixel_ray(p, uv, depth, origin, ray);
-    float kept = 1.0;
-    uint tag = pixel_foreground(p);
-    if (tag != 0u) {
-        ray = frame.foreground_ray[0].xyz + frame.foreground_ray[1].xyz * uv.x + frame.foreground_ray[2].xyz * uv.y;
-        kept = float(tag & VIEWS_KEPT) / float(VIEWS_KEPT);
-    }
     float reach = length(ray);
     Pixel px;
-    px.position = origin + ray * (depth_distance(depth) * kept);
-    px.true_position = origin + ray * depth_distance(depth);
+    px.position = origin + ray * depth_distance(depth);
     px.view = ray / reach;
-    px.distance = depth_distance(depth) * kept * reach;
+    px.distance = depth_distance(depth) * reach;
     return px;
+}
+// Where a pixel of the viewmodel is drawn, as the world is; of another, its place.
+float3 pixel_drawn(int2 p, float2 uv, float depth) {
+    uint tag = pixel_foreground(p);
+    float3 ray = tag != 0u ? frame.foreground_ray[0].xyz + frame.foreground_ray[1].xyz * uv.x + frame.foreground_ray[2].xyz * uv.y : view_ray(uv);
+    return view_origin(uv) + ray * depth_distance(depth);
 }
 // The width of a pixel at p of the view where it takes the maps of the
 // shadows: at its depth, or of a pixel of the viewmodel no nearer than

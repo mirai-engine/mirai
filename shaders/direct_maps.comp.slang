@@ -168,7 +168,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     }
     // The maps of the viewmodel: the weapon shades itself where it is drawn, the body the world.
     bool weapon = pixel_foreground(source) != 0u;
-    float3 drawn = weapon ? pixel.true_position : pixel.position;
+    float3 drawn = weapon ? pixel_drawn(source, uv, depth) : pixel.position;
     if (sun_part >= 0.0) sun_part *= foreground_shadow_seen(0u, weapon, drawn, normal, frame.sun_direction.xyz);
     float3 open = float3(0.0), lit = float3(0.0);
     float wide = 0.0, hid = 0.0;

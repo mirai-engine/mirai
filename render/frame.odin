@@ -132,7 +132,7 @@ bind_scene_table :: proc(p: ^Pass) {
 	rhi.cmd_bind_buffer(cmd, SLOT_INDICES, or_dummy(r, s.index_buffer))
 	rhi.cmd_bind_buffer(cmd, SLOT_MATERIALS, or_dummy(r, s.material_buffer))
 	rhi.cmd_bind_texture(cmd, SLOT_SURFACE, texture_or_dummy(r, p.t.surface))
-	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.views if p.t.views != 0 else r.dummy_uint)
+	rhi.cmd_bind_texture(cmd, SLOT_VIEWS, p.t.views if p.t.views != 0 else r.dummy_views)
 	rhi.cmd_bind_texture(cmd, SLOT_LAYERS, p.t.layers if p.t.layers != 0 else r.dummy_layers)
 	rhi.cmd_bind_texture(cmd, SLOT_REST, p.t.rest if p.t.rest != 0 else r.dummy_rest)
 	// Without an atmosphere no pass reads the aerial perspective: any volume stands for it.
@@ -1040,7 +1040,7 @@ view_begin :: proc(p: ^Pass) -> bool {
 	rhi.cmd_timestamp(cmd, "upload")
 	frame_exposure_copy(p, p.constants)
 	if t.needs_clear {
-		clear_textures(cmd, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.reactive, r.dummy_texture, r.dummy_layers, r.dummy_uint)
+		clear_textures(cmd, t.taa[0], t.taa[1], t.taa_frames[0], t.taa_frames[1], t.reactive, r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dummy_views)
 		t.needs_clear = false
 	}
 	bind_scene_table(p)
