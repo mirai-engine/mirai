@@ -169,13 +169,11 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
   back to the author.
 - **Closed scope & dependencies.** Batch upfront questions with defaults; check
   [workarounds](docs/ODIN_WORKAROUNDS.md) before debugging Odin/Slang/SDL.
-- **Subagent verification & sessions.** Subagents that write code MAY and SHOULD open
-  `mirai session start --copy` / `mirai-editor` to visually and interactively verify their changes
-  (`capture`, `play.step`, `play.audit`, `playtester`, `render.inspect_entity`). Subagents must NOT
-  run heavy performance runs concurrently (`mirai render check`, `mirai bench compare`, full-GPU
-  benchmark sweeps), which serialize through the workspace measurement lock
-  (`workspace.measurement_wait`) or run at integration/close. Research subagents do not edit
-  versioned files.
+- **Subagent verification & sessions.** Subagents that write code verify their changes live in
+  `mirai session start --copy` (`capture`, `play.step`, `play.audit`, `playtester`,
+  `render.inspect_entity`) and stop the session when done. Heavy performance runs (`mirai render
+  check`, `mirai bench compare`, full-GPU benchmark sweeps) run at integration or close, never in
+  a subagent. Research subagents do not edit versioned files.
 - **Machines.** At most three agents compile on one machine at once, and one agent uses its GPU at
   a time (GPU tests, `play test`, captures, live sessions, timings): the GPU turn queues the others
   ([turns](.agents/skills/mirai-projects/references/build.md#turns-between-processes)). GPU
