@@ -764,9 +764,9 @@ render_session :: proc(root:string,report:^Render_Report,r:^Render_Run,target:Re
     // The load matters only to the cost.
     if !r.quality {
         measure=measure_lock(root,"render check")
-        r.loaded||=workspace.gpu_load(&report.warnings,{e.process.pid},fmt.tprintf("%s at %dx%d, at the start",label,size.x,size.y),true)
+        if workspace.gpu_load(&report.warnings,{e.process.pid},fmt.tprintf("%s at %dx%d, at the start",label,size.x,size.y),true) {r.loaded=true}
     }
-    defer if !r.quality {r.loaded||=workspace.gpu_load(&report.warnings,{e.process.pid},fmt.tprintf("%s at %dx%d, at the end",label,size.x,size.y),false)}
+    defer if !r.quality && workspace.gpu_load(&report.warnings,{e.process.pid},fmt.tprintf("%s at %dx%d, at the end",label,size.x,size.y),false) {r.loaded=true}
     measured:=time.now()
     defer if !r.quality && workspace.builds_since(target.checkout,measured) {
         append(&report.warnings,fmt.aprintf("%s at %dx%d: a build ran at low priority while it measured: the CPU cost may be noisy",label,size.x,size.y))
