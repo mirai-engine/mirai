@@ -106,6 +106,8 @@ Pass :: struct {
 	shown: rhi.Texture, // the image so far: the Display or the Taa a pass last wrote, which the Output stage finishes
 	nested:       [NESTED_VIEW_CAPACITY]Nested_View,
 	nested_count: int,
+	foreground:   f32,  // the vertical field of view, radians, of the viewmodel the view draws (foreground.odin); 0: none
+	foreground_unjittered: Mat4, // its projection from the eye, which the next frame takes as the previous one
 	cost:         rhi.Buffer, // the count of a request the view adds to (cost.odin); 0: none
 }
 
@@ -251,8 +253,13 @@ visibility_pass :: proc(p: ^Pass, round: u32, ids, depth: rhi.Load_Op, depth_tar
 // which runs where that depth is its own. A nested view resolves its own
 // pixels over those of its view.
 #assert(POINTS_PROGRAM_CAPACITY < 65534, "the 16-bit program depth holds a step for each program and one for none")
+// Of the G-buffer a resolve writes: the view's, a nested view's over it, or
+// the viewmodel's over it (foreground.odin).
+Resolve_Over :: enum u8 {View, Nested, Foreground}
+
 @(private)
-resolve_pass :: proc(p: ^Pass, nested: bool) {
+resolve_pass :: proc(p: ^Pass, over: Resolve_Over) {
+	nested := over == .Nested
 	r, cmd, t := p.r, p.cmd, p.t
 	render_zone(r, "material resolve")
 	s := &r.scene
@@ -267,9 +274,10 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 	}
 	rhi.cmd_end_render_pass(cmd)
 	targets, count := gbuffer_targets(p)
-	pass := rhi.Render_Pass_Desc{color_count = count, name = "nested view resolve" if nested else "resolve"}
+	names := [Resolve_Over]string{.View = "resolve", .Nested = "nested view resolve", .Foreground = "viewmodel resolve"}
+	pass := rhi.Render_Pass_Desc{color_count = count, name = names[over]}
 	for target, i in targets[:count] {
-		pass.colors[i] = {texture = target, load = .Load if nested else .Clear, store = .Store}
+		pass.colors[i] = {texture = target, load = .Clear if over == .View else .Load, store = .Store}
 	}
 	pass.depth = {texture = t.program_depth, load = .Load, store = .Dont_Care}
 	rhi.cmd_begin_render_pass(cmd, &pass)
@@ -280,12 +288,12 @@ resolve_pass :: proc(p: ^Pass, nested: bool) {
 		rhi.cmd_bind_pipeline(cmd, r.pipelines[id])
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS0, s.visible_buffer)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.visibility)
-		// A nested view counts with its cull, apart.
-		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.scratch_buffer if nested else r.stats_buffer)
+		// A nested view and the viewmodel count with their cull, apart.
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.stats_buffer if over == .View else r.scratch_buffer)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.program_draws)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, s.visible_moved)
-		// The decals of the view, which a nested view does not show.
-		decals := p.decals && !nested
+		// The decals of the view, which a nested view and the viewmodel do not show.
+		decals := p.decals && over == .View
 		textures, _ := decal_textures(p)
 		for texture, target in textures {
 			rhi.cmd_bind_texture(cmd, SLOT_PASS5 + u32(target), texture if decals && texture != 0 else r.dummy_texture)
@@ -791,6 +799,7 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     if view.carried!={} && state.has_previous {
         back:=linalg.inverse(view.carried)
         state.prev_view_proj=state.prev_view_proj*matrix_from_eye(back)
+        state.prev_foreground=state.prev_foreground*matrix_from_eye(back)
         state.prev_eye=point_carried(view.carried,state.prev_eye)
         state.prev_depth_plane=plane_carried(state.prev_depth_plane,back)
     }
@@ -836,7 +845,9 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         if !ok {return false}
     }
     if generate {overlays_pass(&p,frame,ui_written,shown)}
+    if p.foreground>0 {rhi.cmd_set_depth_range(cmd,0,1)}
     state.generated=shown
+    state.prev_foreground,state.foreground_previous=p.foreground_unjittered,p.foreground>0
     state.prev_view_proj=p.unjittered
     state.prev_eye=p.camera.position
     state.prev_jitter=p.jitter
@@ -991,6 +1002,12 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if r.hardware_rt {f.flags |= FRAME_FLAG_HW_RT}
 	if s.environment.ground_grid && !p.texture {f.flags |= FRAME_FLAG_GRID}
 	if r.resolve_counted {f.flags |= FRAME_FLAG_RESOLVE_COUNTED}
+	// A viewmodel puts the world below its depth, in every pass of the view.
+	p.foreground = view_foreground(r, camera) if p.draw else 0
+	if p.foreground > 0 {
+		foreground_view_constants(p, &f, reach)
+		rhi.cmd_set_depth_range(cmd, 0, FOREGROUND_DEPTH)
+	}
 	p.reflectance, p.layered, p.subsurface = reflectance_in_frustum(r, f.frustum)
 	// A mode of inspection shows each pixel as the G-buffer and the lights give it.
 	p.subsurface &&= p.inspection.mode == .None
@@ -1321,7 +1338,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	if p.cost != 0 && p.draw {cost_pixels(p)}
 	if p.decals {pass_decals(p)}
 	rhi.cmd_timestamp(cmd, "resolve")
-	resolve_pass(p, false)
+	resolve_pass(p, .View)
 	rest_pass(p)
 	if p.first && stage_asked(r, .Simulate) {stage_run(p, .Simulate)}
 	if stage_asked(r, .Gbuffer) {stage_run(p, .Gbuffer)}
@@ -1330,7 +1347,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 		rhi.cmd_timestamp(cmd, "highlight")
 		highlight_pass(p)
 	}
-	return true
+	return foreground_record(p)
 }
 
 // The masks extensions draw in the Mask stage and the G-buffers of the nested
@@ -1470,7 +1487,7 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 				visibility_pass(p, round, .Load, .Load, t.nested_depth, false, true)
 			}
 		}
-		resolve_pass(p, true)
+		resolve_pass(p, .Nested)
 	}
 	bind_scene_table(p)
 	return true

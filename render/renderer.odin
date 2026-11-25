@@ -324,6 +324,7 @@ Pipeline_Id :: enum {
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines, Debug_Triangles,
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
+	Foreground_Tag, // the tags of the pixels of the viewmodel of a view (foreground.odin)
 	Debug_Views,
 	History_Scale,
 	Air_Transmittance, Air_Scattering, Air_Sky, Air_Aerial,
@@ -546,6 +547,8 @@ View_State :: struct {
 	resources_frames:u32, // the frames drawn since its resources hold a history
 	extension_textures:[EXTENSION_TEXTURE_CAPACITY]Extension_Texture, // of pass_texture
 	prev_view_proj:Mat4, // from prev_eye, as Gpu_Frame.prev_view_proj
+	prev_foreground:Mat4, // the same of the viewmodel it drew (foreground.odin), while foreground_previous
+	foreground_previous:bool,
 	prev_eye:Vec3,
 	prev_jitter:Vec2,
 	has_previous:bool,
@@ -577,6 +580,7 @@ renderer_camera_cut :: proc(r:^Renderer) {
 @(private)
 view_camera_cut :: proc(v:^View_State) {
     v.has_previous=false
+    v.foreground_previous=false
     v.turn=0
     v.exposure_generation+=1
     v.exposure_settling=true
@@ -770,7 +774,8 @@ renderer_init :: proc(r: ^Renderer, desc: Renderer_Desc) -> bool {
 	r.dummy_uint = rhi.texture_create(device, {width = 1, height = 1, format = .R32_Uint, usage = {.Sampled, .Color_Target}, name = "dummy uint"})
 	r.dummy_rest = rhi.texture_create(device, {width = 1, height = 1, format = .RG32_Uint, usage = {.Sampled, .Storage}, name = "dummy rest"})
 	r.stats_buffer = rhi.buffer_create(device, {size = size_of(Gpu_Cull_Stats), usage = {.Storage}, name = "cull stats"})
-	r.scratch_buffer = rhi.buffer_create(device, {size = 256, usage = {.Storage}, name = "scratch"})
+	// Also the counts of a cull no frame reads (the nested views, the viewmodel).
+	r.scratch_buffer = rhi.buffer_create(device, {size = u64(max(256, size_of(Gpu_Cull_Stats))), usage = {.Storage}, name = "scratch"})
 	r.glass_dispatch = rhi.buffer_create(device, {size = 16, usage = {.Storage, .Indirect}, name = "glass dispatch"})
 	r.dispatch_start = rhi.buffer_create(device, {size = 16, usage = {.Storage}, name = "dispatch start"})
 	r.light_changes = rhi.buffer_create(device, {size = LIGHT_CHANGES_MAX * size_of(Vec4), usage = {.Storage}, name = "light changes"})
@@ -1068,6 +1073,10 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	graphics(list, r, .Nested_Prime, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Prime_Frag],
 		depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Always, name = "nested view pixels",
+	})
+	graphics(list, r, .Foreground_Tag, {
+		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Foreground_Tag_Frag],
+		color_formats = {0 = .R8_Uint}, color_count = 1, name = "viewmodel tags",
 	})
 	graphics(list, r, .Nested_Reflectance, {
 		vertex = &r.shader_codes[.Fullscreen_Vert], fragment = &r.shader_codes[.Nested_Reflectance_Frag],

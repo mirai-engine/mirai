@@ -104,6 +104,16 @@ FRAME_FLAG_NESTED       :: 512 // the view added nested views: the views target 
 FRAME_FLAG_VIEWMODEL    :: 1024 // the view drew the viewmodel of its body: the views target tags its pixels (VIEWS_FOREGROUND)
 FRAME_FLAG_FOREGROUND   :: 2048 // the constants of the pass that draws that viewmodel: its cull takes those instances alone
 
+// The viewmodel of a view (render/foreground.odin): the depth target holds the
+// world below FOREGROUND_DEPTH and the viewmodel above it. The views target
+// tags its pixels with VIEWS_FOREGROUND and, in VIEWS_KEPT, how much of the
+// way from the eye its light is taken at, in 127ths: in front of the world
+// under it by FOREGROUND_CLEARANCE metres.
+FOREGROUND_DEPTH     :: f32(15.0 / 16)
+FOREGROUND_CLEARANCE :: f32(0.02)
+VIEWS_FOREGROUND     :: 128
+VIEWS_KEPT           :: 127
+
 // Gpu_Instance.meta: the mesh and the cut rays trace in x, the flags in w.
 INSTANCE_MESH_MASK          :: u32(0xffffff)
 INSTANCE_RAY_SHIFT          :: 24

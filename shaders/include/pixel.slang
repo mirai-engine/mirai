@@ -28,14 +28,31 @@ void pixel_ray(int2 p, float2 uv, float depth, out float3 origin, out float3 ray
     }
 #endif
 }
+// The tag of a pixel of the viewmodel of the view (FRAME_FLAG_VIEWMODEL):
+// VIEWS_FOREGROUND with its kept share in VIEWS_KEPT; 0 for another pixel.
+uint pixel_foreground(int2 p) {
+    if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u) return 0u;
+    uint tag = pixel_views.Load(int3(p, 0));
+    return (tag & VIEWS_FOREGROUND) != 0u ? tag : 0u;
+}
+// A pixel of the G-buffer in the world. One of the viewmodel is drawn with
+// its own field of view: it sees along the ray of the viewmodel, and its
+// place is the true one pulled toward the eye by the share its tag keeps,
+// which keeps it in front of the world under it.
 Pixel pixel_at(int2 p, float2 uv, float depth) {
     float3 origin, ray;
     pixel_ray(p, uv, depth, origin, ray);
+    float kept = 1.0;
+    uint tag = pixel_foreground(p);
+    if (tag != 0u) {
+        ray = frame.foreground_ray[0].xyz + frame.foreground_ray[1].xyz * uv.x + frame.foreground_ray[2].xyz * uv.y;
+        kept = float(tag & VIEWS_KEPT) / float(VIEWS_KEPT);
+    }
     float reach = length(ray);
     Pixel px;
-    px.position = origin + ray * depth_distance(depth);
+    px.position = origin + ray * (depth_distance(depth) * kept);
     px.view = ray / reach;
-    px.distance = depth_distance(depth) * reach;
+    px.distance = depth_distance(depth) * kept * reach;
     return px;
 }
 // The direction the view of pixel p looks in: what a unit along it adds to the linear depth.

@@ -73,6 +73,7 @@ Gpu_Frame :: struct {
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
 	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
+	foreground_ray:   [3]Vec4, // with FRAME_FLAG_VIEWMODEL: the ray of a pixel of the viewmodel, as ray_origin, ray_du and ray_dv are of the view
 	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the texels of their atlas from top to bottom (abi.SHADOW_POOL across) while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
 }
@@ -211,6 +212,9 @@ INSTANCE_FLAG_TRANSLUCENT :: abi.INSTANCE_FLAG_TRANSLUCENT
 INSTANCE_FLAG_OWNED :: abi.INSTANCE_FLAG_OWNED
 INSTANCE_FLAG_FOREGROUND :: abi.INSTANCE_FLAG_FOREGROUND
 OWNER_SLOTS :: 4 // the local slots the owner of an instance names, in its two bits
+FOREGROUND_DEPTH :: abi.FOREGROUND_DEPTH
+VIEWS_FOREGROUND :: abi.VIEWS_FOREGROUND
+VIEWS_KEPT :: abi.VIEWS_KEPT
 INSTANCE_OWNER_SHIFT :: abi.INSTANCE_OWNER_SHIFT
 // Bits 16-31: the layers the instance is in. A view draws those that share one with its own.
 INSTANCE_LAYERS_SHIFT :: abi.INSTANCE_LAYERS_SHIFT
