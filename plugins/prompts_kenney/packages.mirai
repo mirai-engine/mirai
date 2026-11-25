@@ -1,6 +1,6 @@
 {
   "version": 2,
   "packages": [
-    {"id": "18e1ec191e6b7a7386eba31ba4c8e829", "manifest": "f268bd4d578161613590410938762579f4ab68f33dfab2be955f84500b07c098", "folder": "", "assets": [], "written": [{"id": "81aa127badfbdbeb988b5d3a1c12ab30", "hash": "b776f202cefca201"}]}
+    {"id": "18e1ec191e6b7a7386eba31ba4c8e829", "manifest": "e8cc22c90a5f6882e21ac1e5453e46542a29be12c9b39e4720cb9d575e782e49", "folder": "", "assets": [], "written": [{"id": "81aa127badfbdbeb988b5d3a1c12ab30", "hash": "b776f202cefca201"}]}
   ]
 }
