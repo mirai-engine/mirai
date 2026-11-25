@@ -232,4 +232,9 @@ a_far_mesh_leaves_out_what_a_masked_material_does_not_cover :: proc(t:^testing.T
     covered:=Far_Texture{1,1,[][4]f32{{1,1,1,0.9}}}
     parts[0].materials[0]=far_material(info,&covered,nil,nil)
     testing.expect(t,mesh_build_far(parts[:],0,&far,context.temp_allocator) && far.levels[0].triangle_count==sheet.levels[0].triangle_count)
+    // A decal changes the surface under it: the far mesh has none of it.
+    decal:=info
+    decal.alpha_mode=.Decal
+    parts[0].materials[0]=far_material(decal,&covered,nil,nil)
+    testing.expect(t,!mesh_build_far(parts[:],0,&far,context.temp_allocator),"a decal alone makes no far mesh")
 }

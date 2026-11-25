@@ -701,10 +701,10 @@ Shader_Catalog :: struct {
 // Opaque: the rows of opaque and masked materials; Blend: those of blended
 // ones; Overlay: an overlay layer; Particle_Sprite and Particle_Mesh: the
 // particles of an effect; Preview: the previews and thumbnails of the editor;
-// Impostor: the frames of a far impostor.
-Program_Use :: enum u8 {Opaque,Blend,Overlay,Particle_Sprite,Particle_Mesh,Preview,Impostor}
+// Impostor: the frames of a far impostor; Decal: the rows of decal materials.
+Program_Use :: enum u8 {Opaque,Blend,Overlay,Particle_Sprite,Particle_Mesh,Preview,Impostor,Decal}
 Program_Uses :: bit_set[Program_Use;u8]
-PROGRAM_USE_NAMES :: [Program_Use]string{.Opaque="opaque",.Blend="blend",.Overlay="overlay",.Particle_Sprite="particle_sprite",.Particle_Mesh="particle_mesh",.Preview="preview",.Impostor="impostor"}
+PROGRAM_USE_NAMES :: [Program_Use]string{.Opaque="opaque",.Blend="blend",.Overlay="overlay",.Particle_Sprite="particle_sprite",.Particle_Mesh="particle_mesh",.Preview="preview",.Impostor="impostor",.Decal="decal"}
 
 program_use_named :: proc(name:string) -> (use:Program_Use,ok:bool) {
     for text,each in PROGRAM_USE_NAMES {if text==name {return each,true}}

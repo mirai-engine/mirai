@@ -83,6 +83,7 @@ Far_Material :: struct {
     base_color:[4]f32, // linear, and its opacity
     masked:bool,       // its alpha covers: what it does not cover counts less in the mean
     cutoff:f32,        // masked: a triangle whose points cover less on average is left out (leaves of a card)
+    decal:bool,        // it changes the surface under it, too finely to keep far: its triangles are left out
     roughness,metallic:f32,
     emission:[3]f32,   // nits
     base_map,metallic_roughness_map,emission_map:Far_Map,
@@ -138,6 +139,7 @@ far_material :: proc(info:Material_Info,base,metallic_roughness,emission:^Far_Te
         base_color={info.base_color.r,info.base_color.g,info.base_color.b,info.opacity},
         masked=info.alpha_mode!=.Opaque,
         cutoff=info.alpha_cutoff if info.alpha_mode==.Mask else 0,
+        decal=info.alpha_mode==.Decal,
         roughness=info.roughness,metallic=info.metallic,
     }
     if info.emission_mode==.Physical {out.emission=info.emission}
@@ -236,6 +238,7 @@ mesh_build_far :: proc(parts:[]Far_Part,error:f32,out:^Mesh_Geometry,allocator:=
             if !(c.error<=local && c.parent_error>local) {continue}
             slot:=cluster_slot(c)
             material:=part.materials[slot] if slot<MESH_MAX_SLOTS else Far_Material{}
+            if material.decal {continue}
             corners:[CLUSTER_VERTICES]u32
             for k in 0..<cluster_vertex_count(c) {
                 at:=c.vertex_first+k

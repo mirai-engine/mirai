@@ -30,7 +30,7 @@ import "mirai:std/serial"
 // A source gives the values of the standard model and of the parameters of
 // its program; overlays and hidden names are always the material's own.
 
-MATERIAL_VERSION :: 6
+MATERIAL_VERSION :: 7
 MATERIAL_MAX_PARAMETERS :: 32
 MATERIAL_MAX_OVERLAYS :: 4
 MATERIAL_NAME_BYTES :: 64
@@ -42,11 +42,28 @@ Alpha_Mode :: enum u8 {
     Mask,     // points whose mask (maps.mask) is below alpha_cutoff are holes, for the camera, the shadows and rays
     Blend,    // drawn over the scene after it is lit
     Additive, // drawn over the scene after it is lit, adding its light by opacity and hiding nothing; no transmission
+    Decal,    // changes the surface under it before it is lit (Material_Decal), never lit itself; no transmission
 }
 
 // Whether a mode draws the material over the lit scene: apart from the opaque
 // surfaces, casting no shadow and invisible to rays.
 alpha_blended :: proc "contextless" (mode:Alpha_Mode) -> bool {return mode==.Blend || mode==.Additive}
+
+// What a decal changes of the surface under it, each by its coverage (opacity
+// times alpha): its base color; its normal, by the difference of its shading
+// normal from its smooth one (its normal map); its roughness, metallic and
+// occlusion together; its emission.
+Decal_Write :: enum u8 {Color,Normal,Surface,Emission}
+Decal_Writes :: bit_set[Decal_Write;u8]
+DECAL_WRITES_ALL :: Decal_Writes{.Color,.Normal,.Surface,.Emission}
+
+// A material of Alpha_Mode.Decal: what it writes, and its place among the
+// decals over one surface, the lower order first; of one order, those of a
+// program together, then by instance and slot of the mesh.
+Material_Decal :: struct {
+    writes:Decal_Writes,
+    order:i32,
+}
 
 // One map of a material: its texture and how it reads the UVs. The only
 // transform of the UVs a material has: one that tiles gives each of its maps
@@ -209,6 +226,7 @@ Material_Info :: struct {
     diffuse_transmission:Material_Diffuse_Transmission,
     subsurface:Material_Subsurface,
     unlit:bool, // it reflects no light and shows its emission alone; base color and opacity still cover
+    decal:Material_Decal, // of Alpha_Mode.Decal
     maps:Material_Maps,
     program:[MATERIAL_NAME_BYTES]u8 `mirai:"text"`, // generated program id, authored name, or ""
 }
@@ -240,7 +258,7 @@ MATERIAL_DEFAULTS :: Material_Info{
     base_color={1,1,1},opacity=1,alpha_cutoff=0.5,roughness=1,normal_scale=1,occlusion_strength=1,
     specular_factor=1,specular_color={1,1,1},ior=1.5,attenuation_color={1,1,1},
     coat={color={1,1,1},ior=1.6,normal_scale=1},fuzz={color={1,1,1},roughness=0.5},diffuse_transmission={color={1,1,1}},
-    subsurface={color={1,0.5,0.25},radius=0.005},
+    subsurface={color={1,0.5,0.25},radius=0.005},decal={writes={.Color,.Normal,.Surface}},
     maps={
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
         MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,MATERIAL_MAP_DEFAULT,
@@ -480,6 +498,8 @@ material_problem :: proc(view:Material_View) -> string {
     at_least(p,"ior",m.ior,1);at_least(p,"thickness",m.thickness,0);at_least(p,"attenuation_distance",m.attenuation_distance,0)
     if problem=="" && m.alpha_mode>max(Alpha_Mode) {problem=fmt.tprintf("alpha_mode is %d; it takes 0 to %d",m.alpha_mode,max(Alpha_Mode))}
     if problem=="" && m.emission_mode>max(Emission_Mode) {problem=fmt.tprintf("emission_mode is %d; it takes 0 to %d",m.emission_mode,max(Emission_Mode))}
+    if problem=="" && transmute(u8)m.decal.writes&~transmute(u8)DECAL_WRITES_ALL!=0 {problem=fmt.tprintf("decal.writes is %d; it takes the bits of %v",transmute(u8)m.decal.writes,DECAL_WRITES_ALL)}
+    if problem=="" && m.alpha_mode==.Decal && m.decal.writes=={} {problem="a decal writes nothing: give decal.writes its color, normal, surface or emission"}
     if problem=="" && !text_valid(m.program[:]) {problem=fmt.tprintf("program is longer than %d bytes",MATERIAL_NAME_BYTES-1)}
     coat,fuzz:=&m.coat,&m.fuzz
     unit_range(p,"coat.weight",coat.weight);unit_range(p,"coat.roughness",coat.roughness);color_range(p,"coat.color",coat.color)

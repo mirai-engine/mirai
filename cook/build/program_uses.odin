@@ -172,9 +172,10 @@ Uses_Values :: struct {
 }
 
 // What a material is drawn as by its values: a transmissive one is drawn
-// blended unless it is masked; an additive one is blended.
+// blended unless it is masked; an additive one is blended; a decal is a decal.
 @(private="file")
 drawn_as :: proc(info:asset.Material_Info) -> abi.Program_Uses {
+    if info.alpha_mode==.Decal {return {.Decal}}
     return {.Blend} if asset.alpha_blended(info.alpha_mode) || info.transmission>0 && info.alpha_mode==.Opaque else {.Opaque}
 }
 
