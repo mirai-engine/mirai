@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math/linalg"
 import "core:os"
 import "mirai:asset"
+import "mirai:cook/content"
 import importer "mirai:cook/import"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -41,7 +42,7 @@ gallery_spider :: proc(o:^Out) {
         if bone.parent>=0 {rest[i]=mm.transform_compose(rest[bone.parent],rest[i])}
         joints[i]={node=u32(i),inverse_bind=linalg.inverse(mm.transform_matrix(rest[i]))}
     }
-    asset.content_check(&o.content,"spider.skeleton",asset.skeleton_save(path(o,fmt.tprintf("%s/spider.skeleton",folder)),&o.content.types,{id=skeleton_id,bones=bones[:]}))
+    content.check(&o.w,path(o,fmt.tprintf("%s/spider.skeleton",folder)),asset.skeleton_save(path(o,fmt.tprintf("%s/spider.skeleton",folder)),&o.w.types,{id=skeleton_id,bones=bones[:]}))
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube,context.temp_allocator);geom.cube_build(&cube)
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator);indices:=make([dynamic]u32,context.temp_allocator);skin:=make([dynamic]asset.Skin_Vertex,context.temp_allocator)
     gallery_skin_box(&cube,&vertices,&indices,&skin,{rest[0].position,1,{.5,.24,1.1}},0,0xff70b3e6)
@@ -53,7 +54,7 @@ gallery_spider :: proc(o:^Out) {
         }
         foot:=3+i*3;gallery_skin_box(&cube,&vertices,&indices,&skin,{rest[foot].position,1,{.14,.06,.14}},u16(foot),0xff39302d)
     }
-    if !asset.mesh_tangents(&vertices,indices[:],&skin) {asset.content_check(&o.content,"spider.mesh",.Out_Of_Memory);return}
+    if !asset.mesh_tangents(&vertices,indices[:],&skin) {content.check(&o.w,"spider.mesh",.Out_Of_Memory);return}
     mesh_write_built(o,"spider.mesh",fmt.tprintf("%s/spider.mesh",folder),{id=mesh_id,joints=joints[:],skeleton=skeleton_id},{vertices=vertices[:],skin=skin[:]},indices[:])
     grounding:=anim.FOOT_GROUNDING_DEFAULT;grounding.mode=.Procedural;grounding.legs=make([]anim.Grounded_Leg,8,context.temp_allocator);grounding.body=anim.bone_ref("body")
     grounding.cycle_duration=.6;grounding.prediction=.12;grounding.body_height=.57;grounding.trace_above=.6;grounding.trace_below=1.2;grounding.max_swinging=4;grounding.max_drop=.25;grounding.max_rise=.25
@@ -88,7 +89,7 @@ gallery_retarget :: proc(o:^Out,model:^importer.Imported_Model,source:string) {
     rig,valid:=mirai_rig(model)
     body:=-1
     for node in model.nodes {if node.mesh>=0 {body=node.mesh;break}}
-    if !valid || body<0 {o.content.failed=true;return}
+    if !valid || body<0 {o.w.failed=true;return}
     bones:=make([]asset.Skeleton_Bone,len(model.skeletons[0].bones),context.temp_allocator);copy(bones,model.skeletons[0].bones)
     world:=make([]mm.Transform,len(bones),context.temp_allocator);copy(world,rig.rest_world)
     for &placed in world {placed.position.y*=GALLERY_TALL}
@@ -97,7 +98,7 @@ gallery_retarget :: proc(o:^Out,model:^importer.Imported_Model,source:string) {
         parent:=world[bone.parent]
         bone.translation=mm.quat_rotate(mm.quat_inverse(parent.rotation),world[i].position-parent.position)/parent.scale
     }
-    asset.content_check(&o.content,"tall_mirai.skeleton",asset.skeleton_save(path(o,fmt.tprintf("%s/tall_mirai.skeleton",folder)),&o.content.types,{id=skeleton_id,bones=bones}))
+    content.check(&o.w,path(o,fmt.tprintf("%s/tall_mirai.skeleton",folder)),asset.skeleton_save(path(o,fmt.tprintf("%s/tall_mirai.skeleton",folder)),&o.w.types,{id=skeleton_id,bones=bones}))
     mesh:=model.meshes[body]
     vertices:=make([]asset.Vertex,len(mesh.vertices),context.temp_allocator);copy(vertices,mesh.vertices)
     joints:=make([]asset.Rig_Joint,len(mesh.joints),context.temp_allocator);copy(joints,mesh.joints)
@@ -120,18 +121,18 @@ gallery_retarget :: proc(o:^Out,model:^importer.Imported_Model,source:string) {
     levels:=importer.mesh_levels(vertices,mesh.indices,mesh.skin,mesh.submeshes,true,context.temp_allocator,mesh.morphs,mesh.morph_deltas)
     desc:=asset.Mesh_Desc{id=mesh_id,joints=joints,skeleton=skeleton_id,slots=slots}
     if importer.levels_geometry(levels,mesh.flags,&desc.geometry,context.temp_allocator) {
-        asset.content_check(&o.content,"tall_mirai.mesh",asset.mesh_save(path(o,fmt.tprintf("%s/tall_mirai.mesh",folder)),&o.content.types,desc))
-    } else {asset.content_check(&o.content,"tall_mirai.mesh",.Invalid)}
+        content.check(&o.w,path(o,fmt.tprintf("%s/tall_mirai.mesh",folder)),asset.mesh_save(path(o,fmt.tprintf("%s/tall_mirai.mesh",folder)),&o.w.types,desc))
+    } else {content.check(&o.w,"tall_mirai.mesh",.Invalid)}
     input:asset.Asset
-    if error:=asset.asset_load(&input,path(o,"assets/characters/mirai/mirai_gallery.anim"));error!=.None {asset.content_check(&o.content,"mirai retarget input",error);return}
+    if error:=asset.asset_load(&input,path(o,"assets/characters/mirai/mirai_gallery.anim"));error!=.None {content.check(&o.w,"mirai retarget input",error);return}
     defer asset.asset_close(&input)
-    clips,read:=asset.animation_view(&input,&o.content.types)
-    if read!=.None {asset.content_check(&o.content,"mirai retarget clips",read);return}
+    clips,read:=asset.animation_view(&input,&o.w.types)
+    if read!=.None {content.check(&o.w,"mirai retarget clips",read);return}
     source_info:=asset.Skeleton_Info{u32(len(model.skeletons[0].bones))};target_info:=asset.Skeleton_Info{u32(len(bones))}
     baked:asset.Document
     baked_id:=asset.content_id(PROJECT,"animation","tall_mirai")
-    error:=animation_editor.retarget_bake(&baked,&o.content.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},skeleton=skeleton_id)
-    if error!=.None {asset.content_check(&o.content,"mirai retarget bake",error);return}
+    error:=animation_editor.retarget_bake(&baked,&o.w.types,baked_id,clips,{info=&source_info,bones=model.skeletons[0].bones},{info=&target_info,bones=bones},skeleton=skeleton_id)
+    if error!=.None {content.check(&o.w,"mirai retarget bake",error);return}
     defer asset.document_destroy(&baked)
-    asset.content_check(&o.content,"tall_mirai.anim",asset.document_save(&baked,path(o,"assets/characters/tall_mirai/tall_mirai.anim")))
+    content.check(&o.w,path(o,"assets/characters/tall_mirai/tall_mirai.anim"),asset.document_save(&baked,path(o,"assets/characters/tall_mirai/tall_mirai.anim")))
 }

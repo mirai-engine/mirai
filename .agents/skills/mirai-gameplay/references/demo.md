@@ -103,7 +103,7 @@ refresh only when `records_generation` or language changes:
 ## Generated content
 
 Authored assets (scenes, prefabs, materials, particles, `.records`, `.ui`) are edited via API/CLI
-or editor. Code-generated assets are deterministic via `tools/demo_content/main.odin`:
+or editor. Code-generated assets are deterministic via `demo/tools/content/main.odin`:
 
 ```sh
 mirai content demo
@@ -155,7 +155,7 @@ cleanup follows disconnect. Clients predict only their own person; doors/swatche
 
 ```sh
 mirai check demo/game -collection:plugins=plugins
-mirai check tools/demo_content -collection:plugins=plugins
+mirai check demo
 mirai play demo --headless --validation --frames 64 --capture bin/play-demo.png
 mirai play demo --headless --scene showcase/showcase.scene --frames 120 \
   --capture bin/play-showcase.png
@@ -169,4 +169,5 @@ mirai play demo --connect 127.0.0.1:27500 --headless --players 1 --frames 600 \
 - `demo/game` tests: `animation_gallery_controls_test.odin`,
   `animation_gallery_matching_test.odin`, `root_motion_test.odin`, `portal_game_test.odin`,
   `grounding_physics_test.odin` (needs `animation` + `physics`).
-- Determinism: run `tools/demo_content` and verify `git status demo/assets` is clean.
+- Determinism: run `mirai content demo` twice; the second compiles and writes nothing and
+  `git status demo/assets` stays clean.

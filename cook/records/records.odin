@@ -551,6 +551,34 @@ id_new :: proc(ids:^u64,taken:[]u64) -> u64 {
     }
 }
 
+// The id of a row made from its name, the same on every run: not 0, within
+// ID_BITS, and not one of taken (the next made from it when it is).
+id_of_name :: proc(name:string,taken:[]u64) -> u64 {
+    id:=base.name_hash(name)
+    for {
+        id&=1<<ID_BITS-1
+        if id!=0 && !slice.contains(taken,id) {return id}
+        id=base.hash_combine(id,1)
+    }
+}
+
+// Adds a row at the end with its id, its name and the bytes of its value;
+// false without memory.
+row_put :: proc(e:^Edit,id:u64,name:string,value:[]u8) -> bool {
+    rows:=len(e.ids)
+    if !values_grow(e,rows+1) {return false}
+    size:=row_size(e)
+    copy(e.values[rows*size:][:size],value)
+    name_bytes:asset.Records_Name
+    base.text_set(name_bytes[:],name)
+    if _,error:=append(&e.ids,id);error!=nil {return false}
+    if _,error:=append(&e.names,name_bytes);error!=nil {
+        pop(&e.ids)
+        return false
+    }
+    return true
+}
+
 // Why a name cannot be the one of a row other than except; "" when it can.
 name_refusal :: proc(e:^Edit,name:string,except:=-1) -> string {
     if !asset.records_name_valid(name) || len(name)>=asset.RECORDS_NAME {return fmt.tprintf("%q is not a name of a row: a word of ASCII letters, digits and _, shorter than %d bytes",name,asset.RECORDS_NAME)}

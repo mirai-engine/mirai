@@ -19,6 +19,12 @@ assets, and assembles shipped games. See [engine binaries](projects.md#engine-bi
   `--release`, else `-o:minimal`) into `.mirai/game` or `--out`. `Desc.server` builds the
   [dedicated server](#dedicated-server) (`.mirai/server`).
 
+- **`Program` action (of `Editor`):** a `package main` of the project (`tools/content`) built as
+  a test executable is (`test_build_plan` with `tests=false`, probe flags, fingerprint) into
+  `.mirai/build/programs`; `mirai content` runs it in the project root with
+  `program_environment`. `Check` with `package_folder` checks that package alone
+  (`mirai check <project>` does it for the content tool).
+
 ## Flags and environment
 
 - All targets/checks/tests apply manifest `defines` (engine libs take only `#config` ones),
@@ -46,7 +52,10 @@ worktree):
 OS-released locks live in `<main>/.mirai/cache/locks/` (`<lock>.owner` shown by `mirai locks`).
 
 - **Build turns:** Up to 4 (`build.lock`, `build-1.lock`..., 1 per 2 physical cores, extra turns
-  require 4 GB free) + per-folder `.mirai/build-turn.lock`. `shaders.lock` is independent. Commands
+  require 4 GB free) + `.mirai/build-turn.lock` of each folder it writes: the engine's only while
+  engine binaries build (`project_engine_ready`) or a game compiles the engine from its sources,
+  the project's for its libraries, tests and content tool, so two projects build side by side
+  (`two_projects_build_side_by_side`). `shaders.lock` is independent. Commands
   check currency unlocked (`engine_current`, `shaders_current`, `target_state`) and print
   "unchanged" without waiting (`build game` always locks). `workspace.builds_since` detects builds
   during measurements; editor builds neither lock nor annotate.

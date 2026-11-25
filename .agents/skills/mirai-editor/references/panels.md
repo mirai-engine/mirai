@@ -200,7 +200,7 @@ on release; imported fields offer revert. Feeds `Ai.material` context chips.
 
 ### Records document
 
-`records_document.odin` over `editor/records`. Grid of `.records` rows/columns with inline editors
+`records_document.odin` over `cook/records`. Grid of `.records` rows/columns with inline editors
 and right-side inspector (`held_schema_row`) for selected row, column or table. `rows_of` tables
 show declaring columns read-only with jump link. Edits flush as one undo step when UI rests (bad
 edits like duplicate names revert with warning). `Asset_Document.part` jumps to a row name.

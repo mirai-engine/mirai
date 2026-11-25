@@ -5,22 +5,50 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "mirai:cook/build"
 import "mirai:cook/workspace"
 import "mirai:project"
 import "mirai:std/subprocess"
 
 // The compilations of every checkout of the repository share a few turns,
-// as many as the memory holds, and go one at a time within a checkout or a
-// project (workspace.build_acquire). One that waits says for whom. A
-// measurement does not stop them: what they compile while it runs runs at low
-// priority (build.compiler_limits), and it can tell that they ran
+// as many as the memory holds, and go one at a time within a folder they write
+// (workspace.build_acquire). One that waits says for whom. A measurement does
+// not stop them: what they compile while it runs runs at low priority
+// (build.compiler_limits), and it can tell that they ran
 // (workspace.builds_since). When the lock cannot be taken the build goes on
-// without it. also: the folders of what it writes besides root.
-build_lock :: proc(root,what:string,also:=[]string{}) -> workspace.Lock {
+// without it. This one writes the engine: its folder is held.
+build_lock :: proc(root,what:string) -> workspace.Lock {return build_lock_folders(root,what,{root})}
+
+// The turn of a build of a project, which holds the folder of the project:
+// the engine only for its game, which compiles the engine from its sources and
+// writes the test worlds of its packages. A library, a test or a program of
+// the project builds against binaries of the engine project_engine_ready made
+// current first, so two projects build side by side.
+project_lock :: proc(root,what,project_root:string,target:build.Target) -> workspace.Lock {
+    if target==.Game {return build_lock_folders(root,what,{root,project_root})}
+    return build_lock_folders(root,what,{project_root})
+}
+
+@(private="file")
+build_lock_folders :: proc(root,what:string,folders:[]string) -> workspace.Lock {
     holder:=fmt.tprintf("pid %d, mirai %s in %s",os.get_pid(),what,root)
-    lock,_:=workspace.build_acquire(root,holder,build_wait_notice,also)
+    lock,_:=workspace.build_acquire(root,holder,folders,build_wait_notice)
     build_lock_measured(root)
     return lock
+}
+
+// Builds the binaries of the engine a project's libraries link, with the
+// defines of the project, unless they are current: in a turn of their own that
+// holds the folder of the engine only while they build, so the build of a
+// project that follows holds its own folder alone and another project builds
+// beside it. What the build says goes to stderr; false when it failed.
+project_engine_ready :: proc(root:string,p:^project.Project,mode:build.Engine_Mode,what:string) -> bool {
+    engine:=build.project_engine(p,mode,context.temp_allocator)
+    if c_libraries_current(root) && build.engine_current(root,mode,engine.defines) {return true}
+    lock:=build_lock(root,fmt.tprintf("%s: build engine",what))
+    defer workspace.lock_release(&lock)
+    if !ensure_runtime_dependencies(root) {return false}
+    return engine_report(build.engine_build({engine_root=root,mode=mode,defines=engine.defines}),root,os.stderr)==0
 }
 
 // The turn of a generation of shaders, which waits for no compilation of

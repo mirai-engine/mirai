@@ -55,9 +55,10 @@ instances, registry).
 2. **Editing an existing asset.** `mirai asset set` or `unpack`/`pack`; a scene or a `.ui`, by
    its document (`mirai scene|ui read` and `write`), its only text: `dump` and the diffs of git
    print it ([CLI](references/cli.md)). From code: `asset.Document`, or `asset.Scene` for
-   scenes. Scenes and prefabs, the demo's too, are files of `assets/` written by `scene.write`,
-   `mirai scene write` or the editor; no code builds them. Meshes from code go through
-   `asset.content_mesh` over the shapes of `std/geom`
+   scenes. Scenes and prefabs are files of `assets/` written by `scene.write`, `mirai scene
+   write`, the editor or a project's content tool (`cook/content`, `content.scene_write`, the same
+   validation); tables of game data by `records.*`, `mirai records` or `content.records_write`.
+   Meshes from code go through `content.mesh` over the shapes of `std/geom`
    ([content tool](../../../docs/game/assets/content-tool.md)).
 3. **Changing a serialized struct.** A component or a record of a game changes without a version
    or a converter: the reader migrates its rows by field name.

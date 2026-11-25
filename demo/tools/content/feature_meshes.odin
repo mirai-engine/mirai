@@ -5,6 +5,7 @@ import "core:math"
 import "core:math/linalg"
 import "core:os"
 import "mirai:asset"
+import "mirai:cook/content"
 import "mirai:std/geom"
 import mm "mirai:std/math"
 
@@ -156,7 +157,7 @@ mesh_write :: proc(o:^Out,name:string,m:^Feature_Mesh) {
     folder:="blockout"
     switch name {case "blob","flag","hose","membrane","post","reed": folder="deform"}
     file:=fmt.tprintf("assets/%s/%s.mesh",folder,name)
-    if !asset.mesh_tangents(&m.vertices,m.indices[:]) {asset.content_check(&o.content,file,.Out_Of_Memory);return}
+    if !asset.mesh_tangents(&m.vertices,m.indices[:]) {content.check(&o.w,file,.Out_Of_Memory);return}
     mesh_write_built(o,file,file,{id=id},{vertices=m.vertices[:],flags={.Has_Colors}},m.indices[:])
 }
 

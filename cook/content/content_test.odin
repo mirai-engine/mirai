@@ -1,17 +1,26 @@
-package asset
+package content
 
 import "core:fmt"
 import "core:os"
 import "core:testing"
-import "mirai:std/geom"
+import "core:time"
+import "mirai:asset"
 import "mirai:std/base"
+import "mirai:std/geom"
+
+// A writer with the types alone, as a test makes one: no project.
+@(private="file")
+writer_test :: proc(w:^Writer,name:string) {
+    w.name,w.started=name,time.now()
+    asset.types_init(&w.types)
+}
 
 @(test)
 a_mesh_buffer_is_written_as_a_mesh_with_the_colors_of_its_parts :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"content-mesh")
-    c:Content
-    content_init(&c,"content_test")
-    defer content_destroy(&c)
+    w:Writer
+    writer_test(&w,"content_test")
+    defer asset.types_destroy(&w.types)
     m:geom.Mesh_Buffer
     geom.mesh_buffer_init(&m,context.temp_allocator)
     trunk:=[2]geom.Vec3{{0,0,0},{0,2,0}}
@@ -19,23 +28,28 @@ a_mesh_buffer_is_written_as_a_mesh_with_the_colors_of_its_parts :: proc(t:^testi
     geom.mesh_buffer_paint(&m,{0.4,0.2,0.1,1})
     geom.fan_build(&m,{0,2,0},5,{length=1,width=0.3,rise=0.2,droop=0.5,belly=0.3})
     path:=fmt.tprintf("%s/woods/palm.mesh",folder)
-    id:=content_mesh(&c,path,&m)
-    testing.expect(t,!c.failed)
-    testing.expect_value(t,id,content_id("content_test","mesh",path))
+    made:=mesh(&w,path,&m)
+    testing.expect(t,!w.failed && w.written==1)
+    testing.expect_value(t,made,asset.content_id("content_test","mesh",path))
     data,error:=os.read_entire_file(path,context.temp_allocator)
     if !testing.expect_value(t,error,nil) {return}
-    file:Asset
-    if !testing.expect_value(t,asset_open(&file,data),Error.None) {return}
-    defer asset_close(&file)
-    view,viewed:=mesh_view(&file,&c.types)
-    if !testing.expect_value(t,viewed,Error.None) {return}
+    file:asset.Asset
+    if !testing.expect_value(t,asset.asset_open(&file,data),asset.Error.None) {return}
+    defer asset.asset_close(&file)
+    view,viewed:=asset.mesh_view(&file,&w.types)
+    if !testing.expect_value(t,viewed,asset.Error.None) {return}
     testing.expect(t,.Has_Colors in view.flags,"the paint of a part keeps the colors of its vertices")
     testing.expect(t,view.info.triangle_count>=cast(u32)(len(m.indices)/3),"the mesh keeps its triangles")
+
+    // The same mesh again leaves its file as it is.
+    w.started=time.now()
+    mesh(&w,path,&m)
+    testing.expect(t,!w.failed && w.written==1 && w.unchanged==1,"a file that holds its bytes is not written")
 
     // What is not a mesh says so and writes nothing.
     empty:geom.Mesh_Buffer
     geom.mesh_buffer_init(&empty,context.temp_allocator)
     other:=fmt.tprintf("%s/woods/none.mesh",folder)
-    content_mesh(&c,other,&empty)
-    testing.expect(t,c.failed && !os.exists(other))
+    mesh(&w,other,&empty)
+    testing.expect(t,w.failed && !os.exists(other))
 }

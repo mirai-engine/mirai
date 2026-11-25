@@ -19,7 +19,7 @@ a_compilation_counts_from_when_it_takes_its_turn :: proc(t:^testing.T) {
     testing.expect(t,!builds_since(root,before))
     // File times can lag the precise clock by a tick of the system.
     time.sleep(50*time.Millisecond)
-    lock,ok:=build_acquire(root,fmt.tprintf("pid %d, mirai test",os.get_pid()))
+    lock,ok:=build_acquire(root,fmt.tprintf("pid %d, mirai test",os.get_pid()),{root})
     testing.expect(t,ok)
     testing.expect(t,builds_since(root,before))
     lock_release(&lock)
@@ -83,14 +83,14 @@ a_measurement_does_not_wait_for_its_own_turn :: proc(t:^testing.T) {
     lock_release(&alone)
 }
 
-// Two compilations of a checkout do not run at once, and what a compilation
-// holds of its checkout goes with its turn.
+// A compilation holds the folders it writes, the checkout when it builds the
+// engine and the project it builds, and they go with its turn.
 @(test)
 a_compilation_holds_its_checkout_and_the_project_it_builds :: proc(t:^testing.T) {
     root:=base.test_folder(t,"workspace")
     if root=="" {return}
     game:=join(root,"game")
-    lock,ok:=build_acquire(root,"build",nil,{game})
+    lock,ok:=build_acquire(root,"build",{root,game,root})
     testing.expect(t,ok)
     paths:=[2]string{join(root,".mirai","build-turn.lock"),join(game,".mirai","build-turn.lock")}
     for path in paths {

@@ -144,7 +144,17 @@ Server reserved params (sent by `--select` and `--wait-until`):
 
 Calls `engine.describe`: no args -> core index + plugin list; plugin/`editor`/prefix -> area
 summaries; method(s) -> flags, params (type/bounds/unit/default/required), example, result fields.
-Unknown name -> `-32602` with suggestions.
+A name no method starts with -> the word search below.
+
+- **No editor running:** with a project (`--project` or the current folder) and no open editor,
+  the import program registers the methods over the project's library (built first if stale) and
+  answers the same (`editor.describe_command`); nothing starts a session.
+- **`--search <word>...`:** methods by what they do (`api.methods_doing`: the words of the query
+  and those alike in names and summaries), then components, record types, named values, input
+  actions and presets that say the words.
+- **Unknown method** (RPC, MCP, `batch`): the message names the method that does what the name
+  asks (`entity.create` -> `scene.write`) and `error.data.usage` carries its params with an
+  example; bad params carry their own `usage` the same way.
 
 ## `mirai mcp`
 

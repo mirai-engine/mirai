@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "mirai:asset"
+import "mirai:cook/content"
 
 // The images of the decals of decals/decals.scene.
 
@@ -31,7 +32,7 @@ write_decal_image :: proc(o:^Out,name:string,shade:proc(x,y:f32) -> [4]f32) {
         }
     }
     file:=fmt.tprintf("assets/decals/%s.tex",name)
-    asset.content_check(&o.content,file,asset.texture_save(path(o,file),&o.content.types,{id=id,width=DECAL_SIZE,height=DECAL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
+    content.check(&o.w,path(o,file),asset.texture_save(path(o,file),&o.w.types,{id=id,width=DECAL_SIZE,height=DECAL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
 @(private)

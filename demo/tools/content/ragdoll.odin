@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math/linalg"
 import "core:os"
 import "mirai:asset"
+import "mirai:cook/content"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -32,12 +33,12 @@ physics_ragdoll :: proc(o:^Out) {
         shape:=world[i];shape.scale=sizes[i]
         gallery_skin_box(&cube,&vertices,&indices,&skin,shape,u16(i),colors[i])
     }
-    asset.content_check(&o.content,"physics-ragdoll.skeleton",asset.skeleton_save(path(o,folder+"/rig.skeleton"),&o.content.types,{id=skeleton_id,bones=bones[:]}))
-    if !asset.mesh_tangents(&vertices,indices[:],&skin) {asset.content_check(&o.content,"physics-ragdoll.mesh",.Out_Of_Memory);return}
+    content.check(&o.w,path(o,folder+"/rig.skeleton"),asset.skeleton_save(path(o,folder+"/rig.skeleton"),&o.w.types,{id=skeleton_id,bones=bones[:]}))
+    if !asset.mesh_tangents(&vertices,indices[:],&skin) {content.check(&o.w,"physics-ragdoll.mesh",.Out_Of_Memory);return}
     mesh_write_built(o,"physics-ragdoll.mesh",folder+"/rig.mesh",{id=mesh_id,joints=joints[:],skeleton=skeleton_id},{vertices=vertices[:],skin=skin[:]},indices[:])
     keys:[5]lib.Keyframe
     for &key,i in keys {angle:f32=.6 if i%2==1 else -.6;q:=mm.quat_axis_angle({0,0,1},angle);key={time=f32(i)*.5,value={q.x,q.y,q.z,q.w},interpolation=.Linear}}
     track:=asset.Animation_Track_Desc{target=base.text_get(bones[3].path[:]),property=.Rotation,keys=keys[:]}
     clip:=asset.Animation_Clip_Desc{name="wave",tracks={track},skeleton=skeleton_id}
-    asset.content_check(&o.content,"physics-ragdoll.anim",asset.animation_save(path(o,folder+"/wave.anim"),&o.content.types,{id=clip_id,clips={clip}}))
+    content.check(&o.w,path(o,folder+"/wave.anim"),asset.animation_save(path(o,folder+"/wave.anim"),&o.w.types,{id=clip_id,clips={clip}}))
 }

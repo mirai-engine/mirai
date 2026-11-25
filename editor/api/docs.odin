@@ -15,7 +15,7 @@ import "mirai:std/serial"
 DOCS_FOLDER :: "docs/game"
 DOCS_INSTRUCTION :: "The game documentation, by topic and its sub-pages. Read with the docs tool (or mirai docs) what the step at hand needs, with section for part of a topic (core prefabs is topic core, section prefabs); do not sweep it in advance:"
 MCP_DOCS_TOOL :: "docs"
-MCP_DOCS_ENTRY :: `{"name":"docs","description":"Reads the game documentation of this engine, with or without an editor. Without arguments, the index of topics and their sub-pages; with topic, that topic; with section too, one heading of it by its anchor or one of its task files (a link core/wiring.md is topic core, section wiring).","inputSchema":{"type":"object","properties":{"topic":{"type":"string"},"section":{"type":"string"}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}`
+MCP_DOCS_ENTRY :: `{"name":"docs","description":"Reads the game documentation of this engine, with or without an editor. Without arguments, the index of topics and their sub-pages; with topic, that topic; with section too, one heading of it by its anchor or one of its task files (a link core/wiring.md is topic core, section wiring); with search, the sections that say its words, best first, with the topic and section that read each.","inputSchema":{"type":"object","properties":{"topic":{"type":"string"},"section":{"type":"string"},"search":{"type":"string"}},"additionalProperties":false},"annotations":{"readOnlyHint":true,"openWorldHint":false}}`
 
 // A topic or, in pages, one of its sub-pages, whose description is its title.
 Docs_Topic :: struct {name,description:string,pages:[]Docs_Topic}
@@ -33,10 +33,10 @@ docs_tool_write :: proc(w:^serial.Writer,root,arguments:string) {
 
 @(private)
 docs_tool_answer :: proc(root,arguments:string) -> (text:string,ok:bool) {
-    fields:=[2]string{"topic","section"}
-    values:[2]string
+    fields:=[3]string{"topic","section","search"}
+    values:[3]string
     if arguments!="" {
-        object:[2]string
+        object:[3]string
         if !object_values(context.temp_allocator,arguments,fields[:],object[:]) {return "arguments must be an object",false}
         for field,i in fields {
             if object[i]=="" || object[i]=="null" {continue}
@@ -44,8 +44,70 @@ docs_tool_answer :: proc(root,arguments:string) -> (text:string,ok:bool) {
             if values[i],valid=string_value(context.temp_allocator,object[i]);!valid {return fmt.tprintf("%s must be a string",field),false}
         }
     }
+    if values[2]!="" {return docs_search(root,values[2])}
     return docs_answer(root,values[0],values[1])
 }
+
+// The sections of the documentation that say the words of query, best
+// first: those that say more of its words, then those that say them more
+// often, at most DOCS_FOUND, each with what reads it and its first line that
+// says one. text says there is none when not ok.
+docs_search :: proc(root,query:string) -> (text:string,ok:bool) {
+    words:=strings.fields(strings.to_lower(query,context.temp_allocator),context.temp_allocator)
+    if len(words)==0 {return "give the words to look for",false}
+    folder:=project.path(root,DOCS_FOLDER,allocator=context.temp_allocator)
+    Found :: struct {read,title,line:string,words,count:int}
+    found:=make([dynamic]Found,context.temp_allocator)
+    look :: proc(found:^[dynamic]Found,words:[]string,body,read_topic,read_page:string) {
+        headings:=docs_headings(body)
+        for heading,i in headings {
+            end:=len(body)
+            if i+1<len(headings) {end=headings[i+1].start}
+            part:=body[heading.start:end]
+            lower:=strings.to_lower(part,context.temp_allocator)
+            said,count:=0,0
+            for word in words {
+                n:=strings.count(lower,word)
+                if n>0 {said+=1;count+=n}
+            }
+            if said==0 {continue}
+            title:=part
+            if cut:=strings.index_byte(title,'\n');cut>=0 {title=title[:cut]}
+            title=strings.trim_space(strings.trim_left(title,"#"))
+            line:=""
+            rest:=part
+            for each in strings.split_lines_iterator(&rest) {
+                each_lower:=strings.to_lower(each,context.temp_allocator)
+                for word in words {
+                    if strings.contains(each_lower,word) && !strings.has_prefix(strings.trim_space(each),"#") {line=strings.trim_space(each);break}
+                }
+                if line!="" {break}
+            }
+            read:=read_page!="" ? fmt.tprintf("mirai docs %s %s",read_topic,read_page) : heading.level>1 ? fmt.tprintf("mirai docs %s %s",read_topic,heading.slug) : fmt.tprintf("mirai docs %s",read_topic)
+            append(found,Found{read,title,line,said,count})
+        }
+    }
+    for topic in docs_names(folder) {
+        body,_:=docs_read(project.path(folder,fmt.tprintf("%s.md",topic),allocator=context.temp_allocator))
+        look(&found,words,body,topic,"")
+        pages:=project.path(folder,topic,allocator=context.temp_allocator)
+        for page in docs_names(pages) {
+            text,_:=docs_read(project.path(pages,fmt.tprintf("%s.md",page),allocator=context.temp_allocator))
+            look(&found,words,text,topic,page)
+        }
+    }
+    if len(found)==0 {return fmt.tprintf("no section of the documentation says %s; mirai docs lists the topics",query),false}
+    slice.stable_sort_by(found[:],proc(a,b:Found) -> bool {return a.words>b.words || a.words==b.words && a.count>b.count})
+    b:=strings.builder_make(context.temp_allocator)
+    for f,i in found[:min(len(found),DOCS_FOUND)] {
+        fmt.sbprintf(&b,"%s%s: %s",i>0?"\n":"",f.read,f.title)
+        if f.line!="" {fmt.sbprintf(&b,"\n    %s",f.line if len(f.line)<=160 else fmt.tprintf("%s...",f.line[:157]))}
+    }
+    return strings.to_string(b),true
+}
+
+// The most sections a search of the documentation gives.
+DOCS_FOUND :: 12
 
 // The documentation of the engine at root: the index without a topic, a
 // topic, or one section of it. text says what is valid when not ok. Names are

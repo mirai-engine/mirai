@@ -1,45 +1,83 @@
 # Content tool: write assets from code
 
-A content tool is a program of the project (`tools/content`, an `odin run` target) that writes
-the generated assets of a game from code, so the same bytes come out every run and the game can be
-rebuilt from source. Use it for what no art source holds: procedural textures, generated sounds,
-sets of sounds and meshes made from code. Art files go through `mirai import`
-([assets](../assets.md#import)); a scene is a file of `assets/`, written through the
-API or in the editor, never by a tool ([whole-scene](whole-scene.md)). `mirai content <project>`
-runs a project's tool; what goes after `--` reaches it as its arguments.
+The content tool of a project is the package `tools/content` (a `package main`) that writes what
+the game makes from code: tables of game data, scenes and prefabs laid out by rules, procedural
+textures, generated sounds and meshes. `mirai content <project>` builds it the way the tests of
+the project build (the engine and plugin libraries, its game, the generated world, its attributes
+and defines) and runs it in the root of the project; what goes after `--` reaches it as its
+arguments. An unchanged tool compiles nothing, and an unchanged run writes nothing. A tool that
+does not compile does not stop the editor from building; `mirai check <project>` checks it.
+
+Art files go through `mirai import` ([assets](../assets.md#import)); a scene edited by hand goes
+through `scene.write` or the editor ([whole-scene](whole-scene.md)), and one the tool writes is
+checked the same way and stays editable; the next run writes it over.
 
 ## Skeleton
 
 ```odin
-PROJECT :: "game_content"
+package main
+
+import "core:os"
+import "mirai:cook/content"
+import game "project:game"
+import world "generated:editor_world"
+
 main :: proc() {
-    c:asset.Content
-    asset.content_init(&c,PROJECT)
-    defer asset.content_destroy(&c)
-    os.make_directory_all("assets/textures")
-    // ... write assets
-    if c.failed {os.exit(1)}
+    w:content.Writer
+    if !content.open(&w,world.info()) {os.exit(1)}
+    content.records_write(&w,"data/weapons.records",[]content.Row(game.Weapon){
+        {"pistol",{damage=8,fire=content.action(&w,game.Combat_Action.Fire)}},
+    })
+    content.scene_write(&w,"arena/crates.scene",`{"entities":[{"name":"Crate","prefab":"props/crate.scene"}]}`)
+    os.exit(content.close(&w))
 }
 ```
 
-- `asset.content_id(PROJECT,kind,name)` is the same on every run, so what the tool writes keeps
-  naming the same assets.
-- Every `*_save(path,&c.types,desc)` returns `asset.Error`: pass it to
-  `asset.content_check(&c,path,error)`, which prints the path or the error and sets `c.failed`.
-- The tool writes the same bytes twice: do not add time or random numbers to what it writes.
+- The tool imports the game (`project:game`) and the world generated for the project
+  (`generated:editor_world`): the record types, components, `@(names)` constants and `@(actions)`
+  enums of the game are its own names, never numbers or strings repeated by hand.
+- A call that fails says so with the file and line of the tool, as the compiler says an error, and
+  `close` returns 1; a file that already holds what a call writes is left untouched. Run it twice:
+  the second run says `0 written` (no time or random numbers in what it writes).
+
+## Tables of game data
+
+`content.records_write(&w,path,rows)` makes the table at `path` (under `assets/`, `.records`
+added when missing) hold those rows of the record type, in that order, and no others:
+
+- The type is one a `.records` declares (`mirai records create`, [records](../core/records.md)),
+  whose struct the build generates into `game/`. A new table holds rows of it beside the one that
+  declares it. A row keeps its id by its name; a new row takes an id made from its name.
+- `content.record(&w,game.Ammo,"data/ammo.records","shell")` is the `core.Record` of a row of
+  another table (write that one first); `content.action(&w,game.Combat_Action.Fire)` the input
+  action of a member of an `@(actions)` enum, which the file keeps by its name.
+- Rows as text (a spreadsheet): `content.table_write(&w,path,type,names,values)`, as `records.set`.
+
+## Scenes and prefabs
+
+`content.scene_write(&w,path,document)` makes the scene or prefab at `path` say what the document
+declares: the document of `mirai scene` and `scene.write` ([text-sources](text-sources.md#a-scene)),
+validated by the same code. `content.component(&w,value)` writes a component of the game as that
+document takes it:
+
+```odin
+crate:=content.component(&w,game.Crate{weight=3})
+content.scene_write(&w,"arena/crates.scene",fmt.tprintf(`{{"entities":[{{"name":"Crate","components":{{"Crate":%s}}}}]}}`,crate))
+```
 
 ## Texture
 
 ```odin
 pixels:=make([]u8,64*64*4,context.temp_allocator) // RGBA8, rows from the top
 // fill pixels
-err:=asset.texture_save("assets/hud/badge.tex",&c.types,
-    {id=asset.content_id(PROJECT,"texture","badge"),width=64,height=64,format=.RGBA8,
-     flags={.Srgb},mips={pixels}})
+content.check(&w,"assets/hud/badge.tex",asset.texture_save("assets/hud/badge.tex",&w.types,
+    {id=content.id(&w,"texture","badge"),width=64,height=64,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 ```
 
-- `flags={.Srgb}` for color; leave it off for data maps; `.Normal_Map` for normals.
-- `mips` is level 0 first; one level is valid.
+- Every `asset.*_save(path,&w.types,desc)` (texture, material, mesh, sound set, animation...)
+  returns `asset.Error`: `content.check(&w,path,error)` counts the file or says the error.
+- `content.id(&w,kind,name)` is the same on every run. `flags={.Srgb}` for color, `.Normal_Map`
+  for normals; `mips` is level 0 first. `content.mesh(&w,path,&buffer)`: [props](props.md).
 
 ## Sound
 
@@ -47,51 +85,35 @@ Write the WAV into the assets, where the sound goes, and import it, so the `.sou
 `mirai import` makes:
 
 ```odin
-report,error:=importer.import_sound("assets/arena/hum.wav",{},{root="."})
-if error.code!=.None {fmt.eprintln(error.message);return}
+content.source_write(&w,"assets/arena/hum.wav",wav)   // written only when its bytes changed
+report,imported:=content.import_source(&w,"assets/arena/hum.wav") // as mirai import does
+if !imported {return}
 defer importer.report_destroy(&report)
 hum:=report.assets[0].id // random the first time, kept after
 ```
 
-- Write the WAV only when its bytes differ from the file on disk, so an unchanged source is
-  imported as the same file.
-- The id an import returns is random the first time and the one the package of the source keeps
-  from then on: read it with `asset.list`; never in a constant. Commit the WAV, `packages.mirai`
-  and `packages/`; the `.sound` is built again from them.
+- `importer` is `mirai:cook/import`. The id an import returns is random the first time and kept
+  after by the package of the source: read it with `asset.list`, never in a constant. Commit the
+  WAV, `packages.mirai` and `packages/`. A sound set: `asset.sound_set_save` from
+  `asset.SOUND_SET_DEFAULTS` ([audio](../audio.md#sets)). Art beside it imports the same way.
 
-## Sound set
+## What is not supported
 
-```odin
-info:=asset.SOUND_SET_DEFAULTS
-info.sounds[0],info.sounds[1]={sound=step_a},{sound=step_b}
-err:=asset.sound_set_save("assets/player/steps.sound_set",&c.types,
-    {id=asset.content_id(PROJECT,"sound_set","steps"),info=info})
-```
-
-`Sound_Set_Info` also has its `mode` (`Random` or `Layered`), the volume and pitch ranges,
-`no_repeat`, a `weight` per sound, `hearing` (how `audio.play` hears it), and `parameters` and
-`curves` ([audio](../audio.md#sets)). A set that is invalid returns `.Invalid`.
-
-## Import
-
-A tool can import art too, with the function `mirai import` calls:
-
-```odin
-report,error:=sources.import_source("assets/arena/crate.glb")
-```
-
-`sources` is `mirai:cook/import/sources`. It keeps the settings and the ids in the package of the
-source, so a tool and `mirai import` give the same assets.
+- Raw `odin build` or `odin run` in a project: its collections, attributes and defines come from
+  `mirai content`, `mirai test` and `mirai build`, against the libraries of the engine.
+- Scripts that wrap the API to write content (a Python loop of `mirai rpc` calls): what the tool
+  needs is a procedure of `content`, `asset` or the game.
+- Text patches over assets (`sed`, `perl -i` on a `.scene` or a `.records`): a file is changed
+  through its document (`mirai scene write`, `mirai records write`), the API or this tool.
 
 ## Pitfalls that fail silently
 
-- Materials a terrain layer names can be written in the tool too:
-  `info:=asset.MATERIAL_DEFAULTS;info.maps.base_color.texture=tex`, then
-  `asset.material_save(path,&c.types,{id=...,info=info})`; the maps are `base_color`,
-  `metallic_roughness`, `normal`, `emission` and `occlusion`.
+- Materials a terrain layer names: `info:=asset.MATERIAL_DEFAULTS`, its `maps` (`base_color`,
+  `metallic_roughness`, `normal`, `emission`, `occlusion`), then `asset.material_save`.
 - A masked material (`info.alpha_mode=.Mask`) is cut by its mask map, `info.maps.mask`: the alpha
   of its texture times `opacity`, against `alpha_cutoff`; without a texture there, the alpha of
   `base_color`. Leaves, grates and fences declare it whether or not a Surface program shades
   them: a program never cuts a material, and one that sets `s.alpha` on a masked one is an error
   of that material (`engine.diagnostics` says it).
-- Rerunning the tool rewrites the same files: an open editor picks them up at its next call.
+- An edit made in the editor to a table or scene the tool writes is overwritten the next time the
+  tool runs: change the tool instead. An open editor picks up what a run wrote at its next call.
