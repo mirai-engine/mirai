@@ -326,10 +326,8 @@ progress_write :: proc(progress:^core.Table(Animation_Progress),animations:^core
     }
     for row in 0..<core.count(animations) {
         e:=core.entity_at(animations,row)
-        clip_time,_,_,ok:=animation_progress(core.ref(playback),e)
+        now,ok:=animation_progress_now(core.ref(playback),e)
         if !ok {continue}
-        state:=constraint_playing(core.ref(playback),e)
-        now:=Animation_Progress{time=clip_time,selection=state.selection,speed=state.speed,playing=state.playing}
         if at:=core.row_of(progress,e);at<0 {
             if !core.add(progress,e,now) {return false}
         } else if core.at(progress,at)!=now {
