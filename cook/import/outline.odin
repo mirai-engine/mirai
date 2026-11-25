@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:math"
 import "core:mem"
 import "mirai:std/geom"
+import mm "mirai:std/math"
 
 // Outlines of what a mask keeps of a card: the polygons a masked card is cut
 // to so it is drawn opaque, without the alpha test, from the finest the
@@ -156,7 +157,7 @@ outline_ladder :: proc(mask:Outline_Mask,allocator:=context.allocator) -> (ladde
     }
     coarsest:=f32(max(mask.width,mask.height))*OUTLINE_COARSEST
     for k in 0..<OUTLINE_STEPS {
-        tolerance:=OUTLINE_FINEST*f32(math.pow(f64(2),f64(k)*0.5))
+        tolerance:=OUTLINE_FINEST*f32(mm.pow_det_f64(2,f64(k)*0.5))
         if k>0 && tolerance>coarsest {break}
         // A tolerance that would lose a texel the mask keeps is halved until none is lost.
         candidate:Outline

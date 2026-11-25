@@ -6,6 +6,7 @@ import "core:math/linalg"
 import "mirai:asset"
 import "mirai:cook/textures"
 import "mirai:std/base"
+import mm "mirai:std/math"
 
 // Which assets of a model are parts of its prefab (asset.Header.owner): what
 // the content browser shows inside the model. Only what surely is of this
@@ -130,7 +131,7 @@ material_verdict :: proc(model:^Imported_Model,m:int,pixels:[]u8,width,height:in
 // rotation * (map scale * uv) + map offset.
 @(private="file")
 map_uv :: proc(shown:asset.Material_Map,uv:[2]f32) -> [2]f32 {
-    sine,cosine:=math.sin(shown.rotation),math.cos(shown.rotation)
+    sine,cosine:=mm.sincos_det(shown.rotation)
     p:=uv*shown.scale
     return {cosine*p.x-sine*p.y,sine*p.x+cosine*p.y}+shown.offset
 }

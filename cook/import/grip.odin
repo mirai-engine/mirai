@@ -26,7 +26,7 @@ hand_grip :: proc(points:[]mm.Vec3,allocator:=context.temp_allocator) -> (grip:m
     for p in points {spread+=linalg.outer_product(p-center,p-center)}
     // The length of the hand is the main axis of its spread, away from the wrist.
     along:=linalg.normalize0(mm.Vec3{1,.7,.4})
-    for _ in 0..<128 {along=linalg.normalize0(spread*along)}
+    for _ in 0..<128 {along=linalg.normalize0(mm.mat3_mul_vec_det(spread,along))}
     if along=={} {return}
     if linalg.dot(along,center)<0 {along=-along}
     hi:=-f32(math.F32_MAX)

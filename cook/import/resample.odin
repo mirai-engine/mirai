@@ -3,6 +3,7 @@ package importer
 import "base:runtime"
 import "core:math"
 import audio "mirai:audio"
+import mm "mirai:std/math"
 
 // Band-limited resampling of a sound to the rate of the mixer, once, when it
 // is imported, so that a voice at its own pitch plays it by copying. Each
@@ -47,7 +48,7 @@ resample :: proc(samples:[]f32,channels,from,to,loop_start:int,allocator:=contex
         x:=f64(j)/f64(steps)
         r:=x/f64(half)
         if r>=1 {h=0;continue}
-        sinc:=2*cutoff if x==0 else math.sin(2*math.PI*cutoff*x)/(math.PI*x)
+        sinc:=2*cutoff if x==0 else mm.sin_det_f64(2*math.PI*cutoff*x)/(math.PI*x)
         h=sinc*bessel_i0(beta*math.sqrt(1-r*r))/bessel_i0(beta)
     }
     for n in 0..<count {

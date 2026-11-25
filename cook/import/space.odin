@@ -287,7 +287,8 @@ space_map :: proc(space:Source_Space,mapping:^asset.Material_Map) {
     if space.v_origin==.Top {return}
     angle:=mapping.rotation
     mapping.rotation=0-angle
-    mapping.offset={mapping.offset.x-mapping.scale.y*math.sin(angle),1-mapping.scale.y*math.cos(angle)-mapping.offset.y}
+    sine,cosine:=mm.sincos_det(angle)
+    mapping.offset={mapping.offset.x-mapping.scale.y*sine,1-mapping.scale.y*cosine-mapping.offset.y}
 }
 
 // The mappings of the maps of a material, with v from the top.

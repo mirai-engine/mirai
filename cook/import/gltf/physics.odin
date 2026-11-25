@@ -4,6 +4,7 @@ import "core:encoding/json"
 import "core:math"
 import cg "vendor:cgltf"
 import importer "mirai:cook/import"
+import mm "mirai:std/math"
 
 // The collision a glTF authors, as the colliders of the meshes it is for:
 // KHR_physics_rigid_bodies with the shapes of KHR_implicit_shapes, and
@@ -162,7 +163,8 @@ round_points :: proc(shape:Physics_Shape) -> [][3]f32 {
         }
         for k in 0..<ROUND_SEGMENTS {
             angle:=f32(k)*2*math.PI/ROUND_SEGMENTS
-            append(out,[3]f32{radius*math.cos(angle),y,radius*math.sin(angle)})
+            sine,cosine:=mm.sincos_det(angle)
+            append(out,[3]f32{radius*cosine,y,radius*sine})
         }
     }
     if shape.kind==.Cylinder {
@@ -175,7 +177,8 @@ round_points :: proc(shape:Physics_Shape) -> [][3]f32 {
         y,radius:=(f32(side)*2-1)*half,side==0?shape.radius_bottom:shape.radius_top
         for step in 0..=ROUND_SEGMENTS/4 {
             latitude:=f32(step)*math.PI*0.5/(ROUND_SEGMENTS/4)
-            ring(&out,y+(f32(side)*2-1)*radius*math.sin(latitude),radius*math.cos(latitude))
+            sine,cosine:=mm.sincos_det(latitude)
+            ring(&out,y+(f32(side)*2-1)*radius*sine,radius*cosine)
         }
     }
     return out[:]

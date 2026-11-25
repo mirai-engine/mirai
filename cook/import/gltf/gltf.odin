@@ -580,7 +580,7 @@ gltf_anisotropy :: proc(roughness,strength:f32) -> (openpbr_roughness,anisotropy
     along_tangent:=math.lerp(along_bitangent,1,strength*strength)
     if along_tangent<=0 {return roughness,0}
     anisotropy=1-along_bitangent/along_tangent
-    openpbr_roughness=math.pow((along_tangent*along_tangent+along_bitangent*along_bitangent)*0.5,0.25)
+    openpbr_roughness=math.sqrt(math.sqrt((along_tangent*along_tangent+along_bitangent*along_bitangent)*0.5))
     return
 }
 
