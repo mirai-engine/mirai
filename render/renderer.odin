@@ -324,7 +324,7 @@ Pipeline_Id :: enum {
 	Ui_World, Ui_Composite, Ui_Blur, Debug_Lines, Debug_Triangles,
 	Skin, Skin_Triangles, Skin_Refit,
 	Nested_Prime, Nested_Reflectance, // of the nested views of a view
-	Foreground_Tag, // the tags of the pixels of the viewmodel of a view (foreground.odin)
+	Foreground_Kept, Foreground_Tag, // the share of the way the light of the viewmodel of a view is taken at, and the tags of its pixels (foreground.odin)
 	// The depth of the maps of the viewmodel by raster bin, as the visibility target draws it, and the clear of a map.
 	Foreground_Map, Foreground_Map_Two_Sided, Foreground_Map_Tested, Foreground_Map_Tested_Two_Sided, Foreground_Map_Clear,
 	Debug_Views,
@@ -656,6 +656,7 @@ Renderer :: struct {
 	debug_capacity:  int,
 	stats_buffer:    rhi.Buffer,
 	scratch_buffer:  rhi.Buffer, // what a pass writes and nobody reads
+	foreground_kept: rhi.Buffer, // the share of the way of the viewmodel of the view being recorded (foreground.odin); made by the first that has one
 	light_changes:        rhi.Buffer, // Scene_State.changes of the frame, for the probes
 	probe_hits:           Probe_Hits, // what the probes of ddgi keep of their rays, and the changes they check it against
 	frame_changes:        Light_Changes, // those of this frame, for the views after the first
@@ -865,7 +866,7 @@ renderer_destroy :: proc(r: ^Renderer) {
 	for b in r.font_staging {if b != 0 {rhi.buffer_destroy(d, b)}}
 	for b in r.stats_readback {if b != 0 {rhi.buffer_destroy(d, b)}}
 	cost_destroy(r)
-	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
+	for b in ([]rhi.Buffer{r.stats_buffer, r.scratch_buffer, r.foreground_kept, r.glass_dispatch, r.dispatch_start, r.dummy_buffer, r.shadow_buffers.state, r.shadow_buffers.table}) {if b != 0 {rhi.buffer_destroy(d, b)}}
 	if r.light_changes != 0 {rhi.buffer_destroy(d, r.light_changes)}
 	for t in ([]rhi.Texture{r.dummy_texture, r.dummy_layers, r.dummy_uint, r.dummy_rest, r.dfg, r.display_lut, r.font, r.thumbnails}) {if t != 0 {rhi.texture_destroy(d, t)}}
 	air_destroy(r)
@@ -1016,6 +1017,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Subsurface, .Subsurface_Comp)
 	compute(list, r, .Taa, .Taa_Comp)
 	compute(list, r, .Hiz, .Hiz_Comp)
+	compute(list, r, .Foreground_Kept, .Foreground_Kept_Comp)
 	compute(list, r, .Exposure_Histogram, .Exposure_Histogram_Comp)
 	compute(list, r, .Exposure_Adapt, .Exposure_Adapt_Comp)
 	compute(list, r, .History_Scale, .History_Scale_Comp)

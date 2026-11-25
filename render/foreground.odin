@@ -131,18 +131,26 @@ foreground_record :: proc(p: ^Pass) -> bool {
 	}
 	foreground_world_depth(p)
 
-	// The tags, from the depth of the viewmodel and the linear depth of the world before it is resolved.
+	// Its share of the way, from the depth of the viewmodel and the linear
+	// depth of the world before it is resolved, then the tags.
 	Params :: struct {along, by: Vec4, size, pad: Vec2}
 	m, forward := f.inv_view_proj, f.camera_forward.xyz
 	params := Params{by = {m[3, 0], m[3, 1], m[3, 2], m[3, 3]}, size = {f32(t.width), f32(t.height)}}
 	for i in 0 ..< 3 {params.along += forward[i] * Vec4{m[i, 0], m[i, 1], m[i, 2], m[i, 3]}}
+	if made, _ := ensure_buffer(r, &r.foreground_kept, 16, {.Storage, .Transfer_Dst}, "viewmodel share"); !made {return false}
+	rhi.cmd_fill_buffer(cmd, r.foreground_kept, 0, 4, 0xff)
+	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Foreground_Kept])
+	set_params(cmd, &params)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)
+	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS2, r.foreground_kept)
+	rhi.cmd_dispatch(cmd, groups(t.width, 8), groups(t.height, 8))
 	tags := rhi.Render_Pass_Desc{color_count = 1, name = "viewmodel tags"}
 	tags.colors[0] = {texture = t.views, load = .Clear, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &tags)
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Foreground_Tag])
-	set_params(cmd, &params)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.depth)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS1, r.foreground_kept)
 	rhi.cmd_draw(cmd, 3)
 	rhi.cmd_end_render_pass(cmd)
 	resolve_pass(p, .Foreground)

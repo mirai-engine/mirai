@@ -175,6 +175,17 @@ a_wall_nearer_than_the_viewmodel_neither_hides_nor_darkens_it :: proc(t: ^testin
 	testing.expectf(t, open.pixels > 0 && walled.pixels == open.pixels, "the wall hides none of the viewmodel: %d pixels, %d without it", walled.pixels, open.pixels)
 	testing.expectf(t, walled.light.g > open.light.g * 0.8, "the sun lights it in front of the wall: %v, %v without it", walled.light, open.light)
 	testing.expectf(t, walled.light.r < walled.light.g * 1.2, "the light beyond the wall does not reach it: %v", walled.light)
+	// Past the edge of a wall that is behind part of it, the weapon is lit as one piece: its pixels keep one share.
+	edge := s.wall
+	edge.transform = placed(EYE + {-2.8, 0, -0.325}, {6, 6, 0.05})
+	scene_given(r, {s.floor, s.bar, s.mark, edge}, nil, sun, {})
+	look(t, &f)
+	_, tags := tagged(t, &f)
+	shares: [VIEWS_KEPT + 1]int
+	for tag in tags {if tag & VIEWS_FOREGROUND != 0 {shares[tag & VIEWS_KEPT] += 1}}
+	kinds, share := 0, 0
+	for count, k in shares {if count > 0 {kinds += 1; share = k}}
+	testing.expectf(t, kinds == 1 && share < VIEWS_KEPT, "the pixels of the viewmodel keep one share, pulled in front of the wall: %d of them, the last %d", kinds, share)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
