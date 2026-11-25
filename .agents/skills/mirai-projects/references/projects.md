@@ -95,7 +95,15 @@ preferences. Layered bottom to top (`SETTINGS_FROM_TOP`: `.Player`, `.Project`, 
 
 - Files store only diffs against lower layers; `keyed` struct arrays layer by first text field.
   Unknown fields are ignored on read; inactive-plugin sections are preserved on write.
-  `MIRAI_NO_MACHINE_SETTINGS` skips `.Engine` layer.
+  `MIRAI_NO_MACHINE_SETTINGS` skips `.Engine` layer. Writes go through a synced temporary file
+  renamed into place: a crash leaves the old file or the new one, whole.
+- **Only a person writes the machine's files.** An editor with a window (`editor.machine_kept`)
+  writes the `.Engine` layer, `projects.mirai`, `editor.mirai` and the AI agents; a game in its
+  own window that no `--frames`/`--input`/`--capture` drives (`App.options_kept`) writes the
+  `.Player` layer. Every other run (headless editors, so every `mirai session` with or without
+  `--copy`, scripted players, tests) reads them and keeps its changes in memory until it ends:
+  the engine layer as the text its file would have (`settings_text_of`, `settings_load`
+  `machine`). `editor.show` hands a session to a person and drops that text.
 - Shipped games merge `.Engine` machine sections + `.Project` (`settings_merge`); malformed JSON
   fails with `Settings_Invalid`.
 - **API (`project`):** `Setting`, `Settings_Layer`, `shared_root`, `machine_folder`,

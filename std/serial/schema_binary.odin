@@ -1,6 +1,7 @@
 package serial
 
 import "base:runtime"
+import "core:mem"
 import "core:slice"
 import "core:strings"
 import "mirai:std/base"
@@ -420,4 +421,130 @@ schema_clone :: proc(dst:^Schema,src:^Schema,allocator:=context.allocator) -> Sc
         return .Out_Of_Memory
     }
     return .None
+}
+
+// What a file stores of the values of src of the types roots names: those types and the ones
+// they hold, each before the first type that holds it and in the order roots reaches them, so
+// the same values give the same schema whatever else src holds; without the transient fields.
+// A struct that has one, or holds a type that changed, is laid out again over the fields it
+// keeps, in their order (a field of no bytes goes too), and an array of a type that changed is
+// sized again: changed says which. remap gives the index in dst of each type of src
+// (TYPE_NONE: not stored), and a value passes from src to dst by a Migration. A default is
+// converted with its type. Without memory dst is left with nothing.
+schema_persistent :: proc(dst:^Schema,src:^Schema,roots:[]Type_Index,remap:^[dynamic]Type_Index,changed:^[dynamic]bool,allocator:=context.allocator) -> Schema_Error {
+    schema_init(dst,allocator)
+    count:=len(src.types)
+    sizes,no_sizes:=make([]Persistent_Bytes,count,context.temp_allocator)
+    defer delete(sizes,context.temp_allocator)
+    if no_sizes!=nil || resize(remap,count)!=nil || resize(changed,count)!=nil || reserve(&dst.types,count)!=nil {
+        schema_destroy(dst)
+        return .Out_Of_Memory
+    }
+    slice.fill(remap[:],TYPE_NONE)
+    for type,index in src.types {
+        changed[index]=false
+        sizes[index]={type.size,type.align}
+        #partial switch type.kind {
+        case .Struct:
+            fields:=src.fields[type.first:][:type.count]
+            for field in fields {
+                if .Transient in field.flags || changed[field.type] {changed[index]=true;break}
+            }
+            if !changed[index] {continue}
+            end,align:=u32(0),u32(1)
+            for field in fields {
+                if persistent_dropped(field,sizes) {continue}
+                held:=sizes[field.type]
+                end,align=persistent_align(end,held.align)+held.size,max(align,held.align)
+            }
+            sizes[index]={persistent_align(end,align),align}
+        case .Array:
+            if !changed[type.elem] {continue}
+            changed[index]=true
+            held:=sizes[type.elem]
+            sizes[index]={held.size==0?0:type.count*held.size,held.align}
+        }
+    }
+    for root in roots {
+        if int(root)>=count {schema_destroy(dst);return .Invalid_Type}
+        if !persistent_add(dst,src,root,sizes,remap[:],changed[:]) {schema_destroy(dst);return .Out_Of_Memory}
+    }
+    // Defaults last: a migration walks the whole of both schemas.
+    for type,index in src.types {
+        if remap[index]==TYPE_NONE || type.default==nil {continue}
+        if !changed[index] {
+            if !schema_default_set(dst,remap[index],type.default) {schema_destroy(dst);return .Out_Of_Memory}
+            continue
+        }
+        image,no_image:=make([]u8,dst.types[remap[index]].size,allocator)
+        if no_image!=nil {schema_destroy(dst);return .Out_Of_Memory}
+        defer delete(image,allocator)
+        m:Migration
+        error:=migration_init(&m,src,Type_Index(index),dst,remap[index],allocator)
+        if error==.None {migration_apply(&m,image,type.default,1)}
+        migration_destroy(&m)
+        if error==.None && len(image)>0 && !schema_default_set(dst,remap[index],image) {error=.Out_Of_Memory}
+        if error!=.None {schema_destroy(dst);return error}
+    }
+    return .None
+}
+
+@(private="file") Persistent_Bytes :: struct {size,align:u32}
+
+@(private="file")
+persistent_align :: proc(value,align:u32) -> u32 {return u32(mem.align_forward_int(int(value),int(max(align,1))))}
+
+// Whether a struct that changed leaves a field out.
+@(private="file")
+persistent_dropped :: proc(field:Field,sizes:[]Persistent_Bytes) -> bool {return .Transient in field.flags || sizes[field.type].size==0}
+
+// Adds a type of src after the types it holds. False without memory.
+@(private="file")
+persistent_add :: proc(dst,src:^Schema,index:Type_Index,sizes:[]Persistent_Bytes,remap:[]Type_Index,changed:[]bool) -> bool {
+    if remap[index]!=TYPE_NONE {return true}
+    type:=src.types[index]
+    #partial switch type.kind {
+    case .Struct:
+        for field in src.fields[type.first:][:type.count] {
+            if changed[index] && persistent_dropped(field,sizes) {continue}
+            persistent_add(dst,src,field.type,sizes,remap,changed) or_return
+        }
+    case .Array:
+        persistent_add(dst,src,type.elem,sizes,remap,changed) or_return
+    }
+    copied:=type
+    copied.default=nil
+    copied.size,copied.align=sizes[index].size,sizes[index].align
+    if changed[index] {copied.id=nil}
+    whole:=true
+    #partial switch type.kind {
+    case .Struct:
+        copied.first,copied.count=u32(len(dst.fields)),0
+        end:=u32(0)
+        for field in src.fields[type.first:][:type.count] {
+            added:=field
+            if changed[index] {
+                if persistent_dropped(field,sizes) {continue}
+                held:=sizes[field.type]
+                added.offset=persistent_align(end,held.align)
+                end=added.offset+held.size
+            }
+            added.type=remap[field.type]
+            if !schema_field_keep(dst,&added) {whole=false}
+            if _,no_room:=append(&dst.fields,added);no_room!=nil {schema_field_free(dst,added);whole=false;break}
+            copied.count+=1
+        }
+    case .Enum,.Bit_Set,.Int,.Uint:
+        copied.first=u32(len(dst.choices))
+        for choice in src.choices[type.first:][:type.count] {
+            if !schema_choice_add(dst,choice.name,choice.value) {whole=false;break}
+        }
+    case .Array:
+        copied.elem=remap[type.elem]
+    }
+    copied.name,copied.was=schema_string(dst,type.name),schema_string(dst,type.was)
+    if _,no_room:=append(&dst.types,copied);no_room!=nil {schema_type_drop(dst,copied);return false}
+    if !whole || len(copied.name)!=len(type.name) || len(copied.was)!=len(type.was) {return false}
+    remap[index]=Type_Index(len(dst.types)-1)
+    return true
 }

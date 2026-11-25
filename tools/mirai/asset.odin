@@ -163,6 +163,7 @@ rule_text :: proc(rule:asset.Text_Rule) -> string {
     case .Columns_Order: return "in a table, \"name\" goes before \"columns\", only once"
     case .Data_Order: return "in a table, \"columns\" goes before \"data\", only once"
     case .Column: return "a column with an invalid name, type or alignment"
+    case .Unknown_Codecs: return "unknown codecs"
     case .Unknown_Column: return "the table has no such column"
     case .Unknown_Ref: return "\"ref\" names a table that does not exist"
     case .Key: return "\"key\" is not a column of the table"

@@ -314,5 +314,5 @@ ai_settings_save :: proc(s:^Session) -> bool {
     folder:=project.path(s.project_root,".mirai","ai",allocator=context.temp_allocator)
     if os.make_directory_all(folder)!=nil && !os.is_dir(folder) {return false}
     if serial.file_write_atomic(project.path(folder,"connections.json",allocator=context.temp_allocator),data)!=.None {return false}
-    return ai_agents_write(s.ai)
+    return ai_agents_write(s)
 }

@@ -18,7 +18,8 @@ import "mirai:ui"
 // fields that differ from the code. Each area keeps its struct in its own
 // storage; this file only reads and writes them, once the UI rests after
 // they changed (project.Rest), and when the editor closes or restarts. A
-// --headless editor neither reads nor writes them, unless --preferences.
+// --headless editor does not read them, unless --preferences, and writes them
+// only while a person drives it (machine_kept).
 // What a user marks in the browser of a project (Content_Marks) and where
 // they left it (Content_Navigation) are kept the same way, in MARKS_FILE in
 // the .mirai folder of that project.
@@ -116,7 +117,7 @@ preferences_save :: proc(s:^Session,resting:=false) {
         navigation:=content_navigation(s.content)
         write(s,p.marks_file,marks_list(s,&navigation),&p.marks,resting)
     }
-    if p.file!="" {write(s,p.file,preferences_list(s),&p.kept,resting)}
+    if p.file!="" && machine_kept(s) {write(s,p.file,preferences_list(s),&p.kept,resting)}
 }
 
 // Once a frame: what changed is written once the UI rests after the last gesture.

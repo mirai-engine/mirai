@@ -71,20 +71,15 @@ Gallery_Panel_Button :: struct {label:[20]u8 `mirai:"text"`}
 
 // The 3D panel of a station. It shows what its station does now and, while E frames it, its
 // sliders and buttons ask the station for changes. The rows and buttons are those of the kind of
-// its station (gallery_controls).
+// its station (gallery_controls), which gallery_panels fills for its interface.
 @(component,description="An adjustable panel of an animation gallery station: E at the station frames it and frees the pointer for its sliders and buttons.")
-Gallery_Panel_Setup :: struct {
+Gallery_Panel :: struct {
     station,camera:core.Entity,
     title:[64]u8 `mirai:"text"`,
-}
-
-@(component,derived)
-Gallery_Panel :: struct {
-    title:[64]u8 `mirai:"text"`,
-    hint:[48]u8 `mirai:"text,hidden,readonly"`,
-    rows:[GALLERY_PANEL_ROWS]Gallery_Panel_Row `mirai:"hidden,readonly"`,
-    buttons:[GALLERY_PANEL_BUTTONS]Gallery_Panel_Button `mirai:"hidden,readonly"`,
-    row_count,button_count:i32 `mirai:"hidden,readonly"`,
+    hint:[48]u8 `mirai:"text,transient,hidden,readonly"`,
+    rows:[GALLERY_PANEL_ROWS]Gallery_Panel_Row `mirai:"transient,hidden,readonly"`,
+    buttons:[GALLERY_PANEL_BUTTONS]Gallery_Panel_Button `mirai:"transient,hidden,readonly"`,
+    row_count,button_count:i32 `mirai:"transient,hidden,readonly"`,
 }
 
 // A slider of a panel: the command it asks with the value between min and max.
@@ -130,7 +125,7 @@ gallery_controls :: proc(kind:Gallery_Kind) -> (rows:[GALLERY_PANEL_ROWS]Gallery
 // What a slider or a button of a panel asked becomes a command of its station; Play / pause asks
 // for the other of what its clip does.
 @(step="fixed")
-gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),gallery:^core.Table(Animation_Gallery,.Read),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
+gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel,.Read),gallery:^core.Table(Animation_Gallery,.Read),ui_events:core.Ref(gui.UI_Events),playback:core.Ref(anim.Playback),panel:^Gallery_UI) {
     for event in ui_events.items {
         value,found:=core.get(panels,event.entity)
         if !found || event.item<0 {continue}
@@ -152,18 +147,16 @@ gallery_panel_input :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),galler
 
 // Fills each panel with the rows and buttons of its station and what the station does now.
 @(step="fixed",stage="react")
-gallery_panels :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),outputs:^core.Table(Gallery_Panel),gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),problems:^core.Problems) {
+gallery_panels :: proc(panels:^core.Table(Gallery_Panel),gallery:^core.Table(Animation_Gallery,.Read),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime)) {
     for row in 0..<core.count(panels) {
         current:=core.at(panels,row)
-        item,exists:=core.get(gallery,current.station)
+        state,exists:=core.view(gallery,current.station)
         if !exists {continue}
+        item:=state
         progress,_:=anim.animation_progress_now(playback,current.station)
         rows,row_count,buttons,button_count:=gallery_controls(item.kind)
-        state,ready:=core.view(states,current.station)
-        empty:Animation_Gallery_State
-        if !ready {state=core.ref(&empty)}
-        next:Gallery_Panel
-        next.title=current.title
+        next:=current
+        next.rows,next.buttons={},{}
         next.row_count,next.button_count=i32(row_count),i32(button_count)
         for control,i in rows[:row_count] {
             value,high:f32=0,control.max
@@ -185,11 +178,6 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),outputs:^co
         hint:="manual    E: back" if state.manual else "automatic    E: back"
         if item.kind==.Sequence {hint="playing    E: back" if progress.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
-        e:=core.entity_at(panels,row)
-        if old,shown:=core.get(outputs,e);shown {
-            if old!=next {core.edit(outputs,e)^=next}
-        } else if !core.add(outputs,e,next) {
-            core.report(problems,e,"demo.gallery","out of memory for what the panel of a gallery station shows")
-        }
+        if next!=current {core.edit_at(panels,row)^=next}
     }
 }

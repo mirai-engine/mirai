@@ -50,7 +50,7 @@ what_moves_without_memory_to_follow_it_stays_where_it_hangs_with_a_problem :: pr
             crossings.worlds={}
             limit.remaining=served
             context.allocator={memory_limit_proc,&limit}
-            streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.places,&w.members,&crossings,&problems)
+            streaming_crossings(core.read(&w.motions),core.read(&w.references),core.read(&w.worlds),core.read(&w.roaming),core.read(&w.carried),core.ref(&w.hierarchy),&w.parents,&w.transforms,&w.places,&w.members,&crossings,&problems)
             context.allocator=owner
             limit.remaining=max(int)
             if followed=index<len(crossings.homes) && crossings.homes[index].entity==mover;followed {

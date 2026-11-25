@@ -10,7 +10,9 @@ the language and scale of interfaces (`UI_Preferences`).
 
 From the bottom: the default in code (graphics start at what suits the GPU); the engine file of
 this machine (machine settings only, shared by every project); `settings.mirai` of the project
-(any setting); in a shipped or played game, the player's options file (machine settings only). The
+(any setting); in a shipped or played game, the player's options file (machine settings only). Only
+a person changes the engine file and the player's options: a headless editor (every agent session)
+or a game that `--frames`, `--input` or `--capture` drive keeps its changes until it ends. The
 top layer that sets a field wins. A file stores only what differs from the layers below. The
 machine and player files start with `"version"`: one of another version is left unread and the next
 save writes it anew, with no migration. The player's options and rebinds live in the project's user

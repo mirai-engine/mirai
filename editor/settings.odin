@@ -118,7 +118,7 @@ settings_load :: proc(s:^Session) {
     if !s.has_project {return}
     all:=settings_all(s)
     layers:=project.settings_layers_of_process()
-    if error,layer:=project.settings_load(all,s.project_root,s.engine_root,layers);error.code!=.None {notify(s,settings_error_text(s,error,layer))}
+    if error,layer:=project.settings_load(all,s.project_root,s.engine_root,layers,machine=s.settings_machine);error.code!=.None {notify(s,settings_error_text(s,error,layer))}
     if .Engine not_in layers {return}
     if misplaced:=project.settings_misplaced(all,s.project_root,s.engine_root);len(misplaced)>0 {
         notify(s,fmt.tprintf("%s: settings of the project, which %s does not read; move them to the settings of the project",strings.join(misplaced,", ",context.temp_allocator),project.settings_file(.Engine,s.project_root,s.engine_root,context.temp_allocator)))
@@ -151,13 +151,35 @@ settings_file_error_text :: proc(file:string,error:project.Error) -> string {
     return fmt.tprintf("%s could not be written",file)
 }
 
-// Writes the values of a layer into its file. The engine layer lies under the
-// project: the edited World takes it again with the project over it.
+// Whether a person drives this editor: one with a window that no count of
+// frames ends. Only such an editor writes the files of the machine (the engine
+// layer, the recent projects, the preferences and the AI agents); any other
+// reads them and keeps what it changes of them until it ends (settings_machine).
+machine_kept :: proc(s:^Session) -> bool {return !s.headless && !s.hidden && s.frames==0}
+
+// A person takes the editor (editor.show): the engine layer is the one of its
+// file again, and what the editor kept of it in memory ends.
+settings_machine_drop :: proc(s:^Session) {
+    if s.settings_machine=="" {return}
+    delete(s.settings_machine)
+    s.settings_machine=""
+    settings_engine_free(s)
+    settings_load(s)
+}
+
+// Writes the values of a layer into its file, or keeps the engine layer in
+// memory (machine_kept). The engine layer lies under the project: the edited
+// World takes it again with the project over it.
 @(private)
 settings_store :: proc(s:^Session,values:[]project.Setting,layer:project.Settings_Layer) -> (message:string) {
     if !s.has_project {return "There is no project to keep the settings in"}
     if layer==.Engine && s.engine_root=="" {return "The root of the engine is not known: only the project layer can be written"}
-    if error,failed:=project.settings_save(values,layer,s.project_root,s.engine_root);error.code!=.None {return settings_error_text(s,error,failed)}
+    if layer==.Engine && !machine_kept(s) {
+        text,error,failed:=project.settings_text_of(values,layer,s.project_root,s.engine_root)
+        if error.code!=.None {return settings_error_text(s,error,failed)}
+        delete(s.settings_machine)
+        s.settings_machine=text
+    } else if error,failed:=project.settings_save(values,layer,s.project_root,s.engine_root);error.code!=.None {return settings_error_text(s,error,failed)}
     if layer==.Engine {settings_load(s)}
     return ""
 }
@@ -180,7 +202,7 @@ settings_save :: proc(s:^Session,layer:=project.Settings_Layer.Project) -> bool 
 settings_engine_load :: proc(s:^Session) {
     settings_engine_free(s)
     s.settings_engine=project.settings_clone(settings_all(s))
-    if error,layer:=project.settings_load(s.settings_engine,s.project_root,s.engine_root,{.Engine});error.code!=.None {notify(s,settings_error_text(s,error,layer))}
+    if error,layer:=project.settings_load(s.settings_engine,s.project_root,s.engine_root,{.Engine},machine=s.settings_machine);error.code!=.None {notify(s,settings_error_text(s,error,layer))}
 }
 
 @(private)
@@ -917,7 +939,7 @@ api_settings_write :: proc(s:^Session,call:^api.Call,keep:[]bool) {
         return
     }
     project.settings_default(code)
-    if error,layer:=project.settings_load(engine,s.project_root,s.engine_root,{.Engine});error.code!=.None {
+    if error,layer:=project.settings_load(engine,s.project_root,s.engine_root,{.Engine},machine=s.settings_machine);error.code!=.None {
         api.call_fail(call,api.SERVER_ERROR,settings_error_text(s,error,layer))
         return
     }
@@ -986,7 +1008,7 @@ api_settings_set :: proc(s:^Session,call:^api.Call) {
                 return
             }
         }
-        if error,failed:=project.settings_load(next,s.project_root,s.engine_root,{.Engine});error.code!=.None {
+        if error,failed:=project.settings_load(next,s.project_root,s.engine_root,{.Engine},machine=s.settings_machine);error.code!=.None {
             api.call_fail(call,api.SERVER_ERROR,settings_error_text(s,error,failed))
             return
         }

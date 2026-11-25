@@ -26,6 +26,14 @@ import "mirai:std/serial"
 // not set that field. A shipped game has no engine: it carries both files
 // merged (settings_merge).
 //
+// Only a program a person drives writes the files of the machine (the engine
+// layer, and the player layer of a game): an editor with a window, a game
+// played in its own. Any other, which a script or an agent drives (a headless
+// editor, every mirai session, a player run by --frames, --input or --capture,
+// a test), reads them and keeps its changes in memory until it ends: the text
+// its file would have, which settings_load takes in place of the file
+// (machine). So nothing but a person changes what a person chose.
+//
 // A section no setting of the layer names, of a plugin that is not active or
 // of the project in the file of the engine, is kept as it is and not read; a
 // field the type no longer has is left out.
@@ -160,13 +168,19 @@ settings_default :: proc(settings:[]Setting) {
 // the layers asked for, from the bottom, each into the settings it holds; the
 // one of the player from its folder. On an error they keep what was read until
 // it, and layer is the one whose file has it.
-settings_load :: proc(settings:[]Setting,root,engine_root:string,layers:=Settings_Layers{.Player,.Project,.Engine},player:="") -> (error:Error,layer:Settings_Layer) {
+// machine, when it is not "", is the text of the engine layer a program keeps
+// in memory (settings_text_of), in place of its file.
+settings_load :: proc(settings:[]Setting,root,engine_root:string,layers:=Settings_Layers{.Player,.Project,.Engine},player:="",machine:="") -> (error:Error,layer:Settings_Layer) {
     settings_default(settings)
     if len(settings)==0 {return}
     order:=SETTINGS_FROM_TOP
     #reverse for at in order {
         layer=at
         if layer not_in layers {continue}
+        if layer==.Engine && machine!="" {
+            if error=settings_parse(machine,settings_held(settings,layer));error.code!=.None {return}
+            continue
+        }
         if file:=settings_file(layer,root,engine_root,context.temp_allocator,player);file!="" {
             if error=settings_read(file,settings_held(settings,layer),layer!=.Project);error.code!=.None {return}
         }
@@ -285,7 +299,8 @@ settings_write :: proc(path:string,settings,below:[]Setting,version:=0) -> Error
     }
     text:=settings_text(settings,below,kept[:],context.temp_allocator,version)
     if cut:=strings.last_index_byte(path,'/');cut>0 {_=os.make_directory_all(path[:cut])}
-    return {code=serial.file_write_atomic(path,transmute([]u8)text)==.None?.None:.Write_Failed}
+    // Whole or not at all, also after a crash: a temporary file, on disk before it takes its name.
+    return {code=serial.file_write_atomic(path,transmute([]u8)text,sync=true)==.None?.None:.Write_Failed}
 }
 
 // Writes the settings the file of a layer holds as that file: the fields that
@@ -294,11 +309,28 @@ settings_write :: proc(path:string,settings,below:[]Setting,version:=0) -> Error
 settings_save :: proc(settings:[]Setting,layer:Settings_Layer,root,engine_root:string,player:="") -> (error:Error,failed:Settings_Layer) {
     file:=settings_file(layer,root,engine_root,context.temp_allocator,player)
     if file=="" {return {code=.Write_Failed},layer}
-    held:=settings_held(settings,layer)
-    below:=settings_clone(held,context.temp_allocator)
-    if len(below)!=len(held) {return {code=.Write_Failed},layer}
-    if error,failed=settings_load(below,root,engine_root,settings_under(layer),player);error.code!=.None {return}
+    held,below:[]Setting
+    if held,below,error,failed=settings_layer_values(settings,layer,root,engine_root,player);error.code!=.None {return}
     return settings_write(file,held,below,layer==.Project?0:SETTINGS_VERSION),layer
+}
+
+// The text the file of a layer would have after settings_save, for a program
+// that keeps it in memory (settings_load, machine). Sections of the file that
+// no setting names are not in it.
+settings_text_of :: proc(settings:[]Setting,layer:Settings_Layer,root,engine_root:string,player:="",allocator:=context.allocator) -> (text:string,error:Error,failed:Settings_Layer) {
+    held,below:[]Setting
+    if held,below,error,failed=settings_layer_values(settings,layer,root,engine_root,player);error.code!=.None {return}
+    return settings_text(held,below,{},allocator,layer==.Project?0:SETTINGS_VERSION),{},layer
+}
+
+// What the file of a layer holds and the values the layers under it give.
+@(private="file")
+settings_layer_values :: proc(settings:[]Setting,layer:Settings_Layer,root,engine_root,player:string) -> (held,below:[]Setting,error:Error,failed:Settings_Layer) {
+    held=settings_held(settings,layer)
+    below=settings_clone(held,context.temp_allocator)
+    if len(below)!=len(held) {return nil,nil,{code=.Write_Failed},layer}
+    error,failed=settings_load(below,root,engine_root,settings_under(layer),player)
+    return
 }
 
 // The files of the project and of the engine as one, for a game that ships

@@ -66,7 +66,7 @@ Gallery_Warp :: struct {share,direction:f32,turn,start:bool}
 
 // values of the warp station: [0] the share of its stride, [1] the age at which the panel asked
 // for one (0: none), [2] the direction of the last one.
-gallery_warp :: proc(state:core.Ref(Animation_Gallery_State),dt:f32) -> (warp:Gallery_Warp) {
+gallery_warp :: proc(state:core.Ref(Animation_Gallery),dt:f32) -> (warp:Gallery_Warp) {
     last:=state.values[2] if state.values[2]!=0 else -1
     if state.manual {
         warp={share=state.values[0],direction=last}
@@ -100,16 +100,13 @@ Animation_Gallery :: struct {
     origin:mm.Vec3,
     stride:f32 `mirai:"unit=m"`, // what the clip of the warp station covers unwarped
     indicator,target:core.Entity,
-}
-
-@(component,derived)
-Animation_Gallery_State :: struct {
-    diagnostics:Animation_Gallery_Diagnostics `mirai:"hidden,readonly"`,
-    age:f32 `mirai:"hidden,readonly"`,
-    speed:f32 `mirai:"hidden,readonly"`, // m/s the matching station is asked
-    values:[4]f32 `mirai:"hidden,readonly"`, // what its panel adjusts that is not on its Animation: the target of the IK, the distance of the warp
-    grounded:bool `mirai:"hidden,readonly"`,
-    manual:bool `mirai:"hidden,readonly"`,
+    // What it measures and is asked while it plays (gallery_observe).
+    diagnostics:Animation_Gallery_Diagnostics `mirai:"transient,hidden,readonly"`,
+    age:f32 `mirai:"transient,hidden,readonly"`,
+    speed:f32 `mirai:"transient,hidden,readonly"`, // m/s the matching station is asked
+    values:[4]f32 `mirai:"transient,hidden,readonly"`, // what its panel adjusts that is not on its Animation: the target of the IK, the distance of the warp
+    grounded:bool `mirai:"transient,hidden,readonly"`,
+    manual:bool `mirai:"transient,hidden,readonly"`,
 }
 
 Animation_Gallery_Diagnostics :: struct {
@@ -129,13 +126,11 @@ Animation_Gallery_Diagnostics :: struct {
 // The bodies of the gallery that walk on their own go back and forth along the walkway; the jumper
 // jumps its obstacle. One that fell or wandered off goes back to its station.
 @(step="fixed",stage="apply")
-gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),moves:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seat_state:core.Ref(inp.Seats),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
-    empty:Animation_Gallery_State
+gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),moves:^core.Table(inp.Move_Input),walks:^core.Table(locomotion.Walk,.Read),worlds:^core.Table(core.World_Transform,.Read),placer:core.Placer,seat_state:core.Ref(inp.Seats),walk_actions:inp.Input_Of(locomotion.Walk_Action),time:core.Time) {
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
-        state,ready:=core.view(states,entity)
-        if !ready {state=core.ref(&empty)}
+        state:=core.view_at(gallery,row)
         placed,exists:=core.get(worlds,entity)
         if !exists {continue}
         home:=gallery_warp_start(item) if item.kind==.Warp else item.origin+(mm.Vec3{} if item.kind==.Actions else mm.Vec3{0,.05,1.2})
@@ -177,14 +172,13 @@ gallery_move_inputs :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:
     }
 }
 
-gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
+gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation,.Read),playback:core.Ref(anim.Playback),requests:^anim.Animation_Requests,commands:[]Gallery_Command) {
     for row in 0..<core.count(gallery) {
         item:=core.at(gallery,row)
         entity:=core.entity_at(gallery,row)
-        state,_:=core.get(states,entity)
-        if item.kind!=.Direct || gallery_manual(state.manual,entity,commands) {continue}
+        if item.kind!=.Direct || gallery_manual(item.manual,entity,commands) {continue}
         if !core.has(animations,entity) {continue}
-        phase:=int(state.age/3)%3
+        phase:=int(item.age/3)%3
         wanted:="wave" if phase==1 else "walk"
         speed:=f32(-1) if phase==2 else f32(1)
         progress,_:=anim.animation_progress_now(playback,entity)
@@ -197,7 +191,7 @@ gallery_direct_clips :: proc(gallery:^core.Table(Animation_Gallery,.Read),states
 // body, faded in and out over it; the additive, greeting and synchronized stations set
 // their parameter; the actions station greets and steps; the warp station strides to its goal.
 @(step="fixed")
-gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State,.Read),animations:^core.Table(anim.Animation,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,playback:core.Ref(anim.Playback),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights)) {
+gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),animations:^core.Table(anim.Animation,.Read),worlds:^core.Table(core.World_Transform,.Read),time:core.Time,requests:^anim.Animation_Requests,playback:core.Ref(anim.Playback),ui_events:core.Ref(gui.UI_Events),names:^core.Table(core.Name,.Read),panel:core.Ref(Gallery_UI),morphs:^core.Table(Morph_Playground,.Read),morph_weights:^core.Table(anim.Morph_Weights)) {
     if morphs!=nil && morph_weights!=nil {morph_playground_animate(morphs,requests,morph_weights,time)}
     for event in ui_events.items {
         if event.kind!=.Clicked || event.name!=base.name_hash("toggle") {continue}
@@ -206,13 +200,11 @@ gallery_animate :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^cor
     }
     commands:=panel.commands[:panel.count]
     gallery_playback_commands(commands,requests,playback)
-    gallery_direct_clips(gallery,states,animations,playback,requests,commands)
+    gallery_direct_clips(gallery,animations,playback,requests,commands)
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.view_at(gallery,row)
-        state,ready:=core.view(states,entity)
-        empty:Animation_Gallery_State
-        if !ready {state=core.ref(&empty)}
+        state:=item
         if item.target!=core.NONE {
             anim.modifier(requests,{rig=entity,kind=.IK,target=anim.spatial_entity(item.target),weight=1,enabled=true,goal=true},"RightHand")
             anim.look(requests,entity,anim.spatial_entity(item.target),name="Head")
@@ -272,23 +264,19 @@ gallery_root_motion :: proc(gallery:^core.Table(Animation_Gallery,.Read),transfo
 
 // Where the IK station puts its target, in the frame of its actor: the panel's height and reach
 // when adjusted, a slow circle in front of the hand otherwise.
-gallery_ik_target :: proc(state:core.Ref(Animation_Gallery_State)) -> mm.Vec3 {
+gallery_ik_target :: proc(state:core.Ref(Animation_Gallery)) -> mm.Vec3 {
     if state.manual {return {.42,state.values[0],-state.values[1]}}
     return {.42-.15*math.sin(state.age),1.3+.12*math.cos(state.age),-.42}
 }
 
 @(step="fixed",stage="react")
-gallery_observe :: proc(gallery:^core.Table(Animation_Gallery,.Read),states:^core.Table(Animation_Gallery_State),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI,sets:core.Ref(anim.Character_Assets),problems:^core.Problems) {
+gallery_observe :: proc(gallery:^core.Table(Animation_Gallery),transforms:^core.Table(core.Transform),characters:^core.Table(phys.Character_State,.Read),moving:^core.Table(core.Motion,.Read),events:core.Ref(anim.Animation_Events),playback:core.Ref(anim.Playback),modifiers:core.Ref(anim.Modifier_Runtime),time:core.Time,panel:^Gallery_UI,sets:core.Ref(anim.Character_Assets)) {
     if !time.playing {return}
     commands:=panel.commands[:panel.count]
     for row in 0..<core.count(gallery) {
         entity:=core.entity_at(gallery,row)
         item:=core.at(gallery,row)
-        if !core.has(states,entity) && !core.add(states,entity,Animation_Gallery_State{}) {
-            core.report(problems,entity,"demo.gallery","out of memory for the measurements of a gallery station")
-            continue
-        }
-        state:=core.staged(states,entity)
+        state:=core.edit_at(gallery,row)
         // The warp asks with the age gallery_animate saw, before it advances.
         if item.kind==.Warp {
             if warp:=gallery_warp(core.ref(state),time.dt);warp.start {state.values[0],state.values[1],state.values[2]=warp.share,0,warp.direction}

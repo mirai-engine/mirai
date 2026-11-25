@@ -10,7 +10,8 @@ binary schemas (`schema_binary.odin`), value image and migration (`value.odin`),
   following return zero; `read_count` rejects a count that the remaining input cannot back.
 - `text_write` omits `Transient` fields by default; `omit_fields={}` includes everything for
   inspection and `{.Transient,.Hidden}` gives the public view of components, also inside structs and
-  arrays. Binary persistence does not change.
+  arrays. A file leaves them out too: `schema_persistent` gives the types a document writes, without
+  them (see Image).
 
 **Schema read from a file.** `schema_read` validates that a type only refers to earlier types (up
 to `SCHEMA_MAX_DEPTH`), that fields follow one another without overlapping inside the struct, that
@@ -56,7 +57,10 @@ assignments and the inspector filters candidates.
 
 **Image.** The stored value is its memory under its schema, with padding, `transient` fields and
 text tail at zero. If the stored type and the program's have the same `schema_layout_hash`, it is
-copied as a block or used in place.
+copied as a block or used in place. What a file stores is the image of `schema_persistent`: only
+the types its roots reach, each before the first that holds it, and a struct with a `transient`
+field (or holding one) laid out again without it, so a field computed at run time takes no byte;
+a value goes there and back by a `Migration`.
 
 **Migration** (`Migration`, compiled once per pair of types and applied per row):
 

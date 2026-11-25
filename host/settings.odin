@@ -46,10 +46,12 @@ app_settings_load :: proc(app:^App,data:rawptr,place:core.Place) {
 
 // Writes the settings of the machine of the application and of a world, as
 // the player has them now, as the layer of the options of the player: the
-// fields that differ from what the layers under it give. False without
+// fields that differ from what the layers under it give. A game no person
+// plays (App.options_kept) keeps them as they are until it ends. False without
 // options or when the file could not be written.
 app_options_save :: proc(app:^App,world:rawptr) -> bool {
     if app.options=="" || app.info==nil {return false}
+    if !app.options_kept {return true}
     list:=make([dynamic]project.Setting,context.temp_allocator)
     for place in ([2]core.Place{.Shared,.World}) {
         data:=app.shared if place==.Shared else world
