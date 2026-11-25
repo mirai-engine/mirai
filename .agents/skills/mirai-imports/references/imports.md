@@ -165,18 +165,23 @@ manifest and override CLI options unless `ignore_stored` is set (invalid fields 
 - `rdo_lambda` (0 = default, negative via `--rdo-lambda 0` = lowest error).
 - `front` (`auto|negative_z|z|x|negative_x`); affects mesh hash.
 - `rig` (`Humanoid` or Mesh2Motion animal; `rig_crotch`/`rig_neck` override humanoid fit).
-- `bake_scale` (`--bake-scale`, `--no-bake-scale`; mesh hash): `model_scales`
-  (`cook/import/scale.odin`) pushes each positive uniform node scale down the hierarchy into the
-  non-skinned meshes the nodes draw (vertices, bounds, morph deltas, colliders; LODs and outlines
-  are built after), giving those nodes 1 and their children the scale and offset they lost, so
-  world transforms stay exact. It keeps, with a warning naming the reason, a negative or uneven
-  scale, a scale over a skin or a node a clip moves, and a mesh nodes of other scales draw. Never
-  decided by counts of instances. With or without it, a non-skinned mesh drawn beyond
-  `SCALE_LARGE`/`SCALE_SMALL` (2x, 0.5x) of its size by its node and those above warns once.
 - `skeleton` (`--skeleton <id>`): imports `.anim` only, bound to an existing skeleton (no meshes/
   materials/prefab).
 - `sound` (`--sound lossless|file`): `File` keeps the source file of a sound as it is
   ([sounds](#sounds)).
+
+### Root scale
+
+`model_scales` (`cook/import/scale.odin`), with no setting, after the space (whose
+`meters_per_unit` already turned the declared unit into meters): the positive uniform scale of a
+root node and of each node that is the only child of one of those that draws nothing (the groups an
+exporter adds to change units) goes down the hierarchy into every mesh one node alone draws
+(vertices, bounds, morph deltas, colliders; LODs and outlines are built after). The nodes above
+take 1 and their children the scale and offset they lost, so world transforms stay exact. It is
+never moved under a root that holds a skin or a node a clip moves, and a mesh other nodes also draw
+keeps it on its nodes; scales of nodes below the root are their own (a level's props). A
+non-skinned mesh still drawn at a factor of `UNIT_FACTORS` (10ⁿ, inches, feet) warns once, naming
+why it was not baked.
 
 ## The imported model
 
@@ -232,11 +237,6 @@ Import stores only source-authored `asset.Collider` rows (never auto-generates; 
 - glTF: `KHR_physics_rigid_bodies` / `KHR_implicit_shapes` and `OMI_physics_body`/`shape`.
 - USD: `PhysicsCollisionAPI` (`Mesh` approximation, `Cube`/`Sphere`/`Capsule`/`Cylinder`/`Cone`).
 - Plugins: fill `Imported_Mesh.collision` directly (e.g. Unreal `BodySetup`).
-- Settings: `Import_Settings.colliders` (up to `COLLIDER_SETTINGS`, by mesh name) replace the
-  source's colliders of the meshes they name, in the space of the written mesh (after front and
-  `bake_scale`): `Box`/`Sphere`/`Capsule` (center, rotation, size), `Points` (a hull of up to
-  `COLLIDER_SETTING_POINTS`), `Hull`/`Decompose`/`Mesh` of its geometry (`colliders_set`). They
-  are in the mesh hash and the package, so a reimport makes them again; a name no mesh has warns.
 
 ## Textures (`cook/textures`)
 

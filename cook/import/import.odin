@@ -50,7 +50,6 @@ import_model :: proc(path:string,formats:[]Format,options:Import_Options={},allo
     ok:=read_model(&r,formats,&model)
     if ok {model_front(&r)}
     if ok {model_scales(&r)}
-    if ok {colliders_set(&r)}
     if ok {ok=model_finish(&r,&model)}
     if !ok {
         mem.dynamic_arena_destroy(arena)

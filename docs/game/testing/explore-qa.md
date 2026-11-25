@@ -19,7 +19,7 @@ Both RPC calls return `{passed, flags: [{severity, area, code, entity, message, 
 Both flag a material, effect or post-process layer whose program the shaders do not have
 (`material.program_missing`, `render.particle_program`, `render.post_process_program`): it draws
 nothing and reports nothing else. They flag a mesh grown evenly 30 times its size or more, a
-source in other units (`render.scale_far`, the import's rule), or 10 times larger or smaller than
+source in other units (`render.scale_far`), or 10 times larger or smaller than
 the others of its mesh (`render.scale_odd`), and an attachment whose drawn box is farther from its
 bone than a quarter of its size (`animation.attachment_far`).
 
