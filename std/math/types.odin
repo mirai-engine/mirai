@@ -70,16 +70,8 @@ quat_nlerp :: proc "contextless" (a,b:Quat,t:f32) -> Quat {
     return quaternion(w=w/length,x=x/length,y=y/length,z=z/length)
 }
 // Interpolation at constant angular speed along the shortest arc.
-// linalg.quaternion_slerp with the sine of the engine.
 quat_slerp :: proc "contextless" (a,b:Quat,t:f32) -> Quat {
-    b:=b
-    cosine:=linalg.dot(a,b)
-    if cosine<0 {b,cosine=-b,-cosine}
-    if cosine>1-math.F32_EPSILON {return linalg.normalize(quaternion(w=a.w+(b.w-a.w)*t,x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t,z=a.z+(b.z-a.z)*t))}
-    angle:=math.acos(cosine)
-    sine:=sin_det(angle)
-    factor_a,factor_b:=sin_det((1-t)*angle)/sine,sin_det(t*angle)/sine
-    return linalg.normalize(quaternion(w=factor_a*a.w+factor_b*b.w,x=factor_a*a.x+factor_b*b.x,y=factor_a*a.y+factor_b*b.y,z=factor_a*a.z+factor_b*b.z))
+    return linalg.normalize(linalg.quaternion_slerp_f32(a,b,t))
 }
 // Angle in radians between two rotations.
 quat_angle :: proc "contextless" (a,b:Quat) -> f32 {

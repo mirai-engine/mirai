@@ -5,8 +5,7 @@ import "core:math/ease"
 
 // Easing curves: they take t from 0 to 1 and return the eased progress, which
 // starts at 0 and ends at 1. Back and elastic leave that range on the way.
-// The polynomial and circular curves are core's; the sine and exponential ones
-// are core's with the sine and pow of the engine (deterministic.odin); back,
+// The polynomial, sine, exponential and circular curves are core's; back,
 // elastic and bounce are Penner's, which core's are not.
 
 ease_quad_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quadratic_in(t)}
@@ -21,15 +20,12 @@ ease_quart_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return eas
 ease_quint_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quintic_in(t)}
 ease_quint_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quintic_out(t)}
 ease_quint_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.quintic_in_out(t)}
-ease_sine_in :: proc "contextless" (t:f32) -> f32 {return sin_det((t-1)*math.PI/2)+1}
-ease_sine_out :: proc "contextless" (t:f32) -> f32 {return sin_det(t*math.PI/2)}
-ease_sine_in_out :: proc "contextless" (t:f32) -> f32 {return 0.5*(1-cos_det(t*math.PI))}
-ease_expo_in :: proc "contextless" (t:f32) -> f32 {return t if t==0 else pow_det(2,10*(t-1))}
-ease_expo_out :: proc "contextless" (t:f32) -> f32 {return t if t==1 else 1-pow_det(2,-10*t)}
-ease_expo_in_out :: proc "contextless" (t:f32) -> f32 {
-    if t==0 || t==1 {return t}
-    return 0.5*pow_det(2,20*t-10) if t<0.5 else -0.5*pow_det(2,-20*t+10)+1
-}
+ease_sine_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.sine_in(t)}
+ease_sine_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.sine_out(t)}
+ease_sine_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.sine_in_out(t)}
+ease_expo_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.exponential_in(t)}
+ease_expo_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.exponential_out(t)}
+ease_expo_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.exponential_in_out(t)}
 ease_circ_in :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.circular_in(t)}
 ease_circ_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.circular_out(t)}
 ease_circ_in_out :: #force_inline proc "contextless" (t:f32) -> f32 {return ease.circular_in_out(t)}
@@ -53,19 +49,19 @@ ease_back_in_out :: proc "contextless" (t:f32) -> f32 {
 ease_elastic_in :: proc "contextless" (t:f32) -> f32 {
     if t<=0 {return 0}
     if t>=1 {return 1}
-    return -pow_det(2,10*t-10)*sin_det((10*t-10.75)*(TAU/3))
+    return -math.pow(2,10*t-10)*math.sin((10*t-10.75)*(TAU/3))
 }
 ease_elastic_out :: proc "contextless" (t:f32) -> f32 {
     if t<=0 {return 0}
     if t>=1 {return 1}
-    return pow_det(2,-10*t)*sin_det((10*t-0.75)*(TAU/3))+1
+    return math.pow(2,-10*t)*math.sin((10*t-0.75)*(TAU/3))+1
 }
 ease_elastic_in_out :: proc "contextless" (t:f32) -> f32 {
     if t<=0 {return 0}
     if t>=1 {return 1}
-    wave:=sin_det((20*t-11.125)*(TAU/4.5))
-    if t<0.5 {return -0.5*pow_det(2,20*t-10)*wave}
-    return 0.5*pow_det(2,-20*t+10)*wave+1
+    wave:=math.sin((20*t-11.125)*(TAU/4.5))
+    if t<0.5 {return -0.5*math.pow(2,20*t-10)*wave}
+    return 0.5*math.pow(2,-20*t+10)*wave+1
 }
 
 ease_bounce_out :: proc "contextless" (t:f32) -> f32 {
@@ -126,7 +122,12 @@ Ease :: enum u8 {
     Bounce_In_Out  = 30,
 }
 
-ease_apply :: proc "contextless" (kind:Ease,t:f32) -> f32 {
+ease_apply :: proc "contextless" (kind:Ease,t:f32) -> f32 {return ease_value(kind,t,false)}
+// ease_apply with the sine and pow of the engine (deterministic.odin): what an import computes.
+ease_apply_det :: proc "contextless" (kind:Ease,t:f32) -> f32 {return ease_value(kind,t,true)}
+
+@(private="file")
+ease_value :: #force_inline proc "contextless" (kind:Ease,t:f32,$DET:bool) -> f32 {
     switch kind {
     case .Linear:         return t
     case .Quad_In:        return ease_quad_in(t)
@@ -141,24 +142,33 @@ ease_apply :: proc "contextless" (kind:Ease,t:f32) -> f32 {
     case .Quint_In:       return ease_quint_in(t)
     case .Quint_Out:      return ease_quint_out(t)
     case .Quint_In_Out:   return ease_quint_in_out(t)
-    case .Sine_In:        return ease_sine_in(t)
-    case .Sine_Out:       return ease_sine_out(t)
-    case .Sine_In_Out:    return ease_sine_in_out(t)
-    case .Expo_In:        return ease_expo_in(t)
-    case .Expo_Out:       return ease_expo_out(t)
-    case .Expo_In_Out:    return ease_expo_in_out(t)
+    case .Sine_In:        when DET {return sin_det((t-1)*math.PI/2)+1} else {return ease_sine_in(t)}
+    case .Sine_Out:       when DET {return sin_det(t*math.PI/2)} else {return ease_sine_out(t)}
+    case .Sine_In_Out:    when DET {return 0.5*(1-cos_det(t*math.PI))} else {return ease_sine_in_out(t)}
+    case .Expo_In:        when DET {return t if t==0 else pow_det(2,10*(t-1))} else {return ease_expo_in(t)}
+    case .Expo_Out:       when DET {return t if t==1 else 1-pow_det(2,-10*t)} else {return ease_expo_out(t)}
+    case .Expo_In_Out:    when DET {return t if t==0 || t==1 else 0.5*pow_det(2,20*t-10) if t<0.5 else -0.5*pow_det(2,-20*t+10)+1} else {return ease_expo_in_out(t)}
     case .Circ_In:        return ease_circ_in(t)
     case .Circ_Out:       return ease_circ_out(t)
     case .Circ_In_Out:    return ease_circ_in_out(t)
     case .Back_In:        return ease_back_in(t)
     case .Back_Out:       return ease_back_out(t)
     case .Back_In_Out:    return ease_back_in_out(t)
-    case .Elastic_In:     return ease_elastic_in(t)
-    case .Elastic_Out:    return ease_elastic_out(t)
-    case .Elastic_In_Out: return ease_elastic_in_out(t)
+    case .Elastic_In:     when DET {return clamp(t,0,1) if t<=0 || t>=1 else -pow_det(2,10*t-10)*sin_det((10*t-10.75)*(TAU/3))} else {return ease_elastic_in(t)}
+    case .Elastic_Out:    when DET {return clamp(t,0,1) if t<=0 || t>=1 else pow_det(2,-10*t)*sin_det((10*t-0.75)*(TAU/3))+1} else {return ease_elastic_out(t)}
+    case .Elastic_In_Out: when DET {return elastic_in_out_det(t)} else {return ease_elastic_in_out(t)}
     case .Bounce_In:      return ease_bounce_in(t)
     case .Bounce_Out:     return ease_bounce_out(t)
     case .Bounce_In_Out:  return ease_bounce_in_out(t)
     }
     return t
+}
+
+@(private="file")
+elastic_in_out_det :: proc "contextless" (t:f32) -> f32 {
+    if t<=0 {return 0}
+    if t>=1 {return 1}
+    wave:=sin_det((20*t-11.125)*(TAU/4.5))
+    if t<0.5 {return -0.5*pow_det(2,20*t-10)*wave}
+    return 0.5*pow_det(2,-20*t+10)*wave+1
 }
