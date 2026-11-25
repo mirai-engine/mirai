@@ -46,9 +46,11 @@ and the tick it started, and derives everything else from the tick against the s
 3. Give the character an `Ability_User` with its kit and attribute entries; the seat that drives
    it fires the inputs. The animation of each ability is an action of the `.character` of its
    `Animation`.
-4. The game reacts to `Ability_Events` (cues for VFX, sound and camera; `Depleted` for death or a
-   broken weapon) and asks through `Ability_Requests` (`ability_use`, `ability_cancel`,
-   `ability_effect`, `ability_kit_set`).
+4. Sounds and particle births are data: `on_begin` of a window and `on_hit` of an effect
+   (`audio.Cue`, [cues](../../../docs/game/audio/cues.md)). The game reacts to `Ability_Events`
+   for the rest (cue ids for a camera shake or a decal; `Depleted` for death or a broken weapon)
+   and asks through `Ability_Requests` (`ability_use`, `ability_cancel`, `ability_effect`,
+   `ability_kit_set`).
 5. In Play, `abilities.inspect` says what runs, what is open and what blocks each candidate.
 
 ## Invariants
@@ -75,8 +77,9 @@ and the tick it started, and derives everything else from the tick against the s
 - **The end that decides an entity runs its abilities** (`core.owned`): a client predicts its
   own character and the server decides what hits others; a replica only derives statuses and
   window events.
-- **Presentation is not in the sheet.** A window carries a cue and the game plays it; the plugin
-  does not import audio or effects.
+- **One-shot presentation is a cue of the sheet.** A window's `on_begin` and an effect's `on_hit`
+  play through `audio.cue_play` by the entity (no per-tick resimulation guard: the audio dedup
+  keeps them once); the plugin never imports `vfx`. Anything else answers an `Ability_Cue` id.
 - Pace and gravity changes during an ability (slow motion while charging, low gravity) are not
   part of the plugin: the game sets `core.Own_Pace` from events, and gravity belongs to locomotion.
   The plugin reads the pace for `own` windows and `Animation_Events` (`.Span_Begin`/`.Span_End`)

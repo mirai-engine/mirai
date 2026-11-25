@@ -16,8 +16,8 @@ sends requests. Imports: `plugins:vfx/runtime` as `vfx`,
 - An effect once, at a point: [one-shot](#one-shot-effect).
 - Start, stop or burst an existing emitter: [requests](#control-an-emitter).
 - Other color or rate for one entity: [values](#values-of-one-instance).
-- Many hits per tick, each with its place and velocity: [channels](vfx/channels.md).
-- Many emitters of one effect far apart: [culling](vfx/culling.md).
+- Many hits per tick, each with its place and velocity: [channels](vfx/channels.md); at a marker
+  or an ability, with a sound: [cues](audio/cues.md). Far apart: [culling](vfx/culling.md).
 - A trail behind each spark: [trails](#trails); a sword trail or slash: [weapons](vfx/weapons.md).
 - Write or tune an effect: [authoring](#author-an-effect).
 

@@ -75,6 +75,7 @@ character_inspect :: proc(s:^editor.Session,call:^api.Call,p:^Asset_Inspect_Para
     }
     r.warp=set.motion.warp
     r.windows_total,r.windows=u32(len(set.motion.windows)),authoring_pages(call,set.motion.windows,o,l,anim.Motion_Window)
+    r.cues_total,r.cues=u32(len(set.cues)),authoring_pages(call,set.cues,o,l,anim.Marker_Cue)
     character_modifiers(call,set.pose,p.table,o,l,r)
 }
 

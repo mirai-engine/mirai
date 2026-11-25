@@ -45,7 +45,6 @@ import phys "plugins:physics/runtime"
 @(private="file") ABILITY_TABLE :: base.Asset_Id{1,1}
 @(private="file") KIT_TABLE :: base.Asset_Id{2,2}
 @(private="file") HITBOX_TABLE :: base.Asset_Id{3,3}
-@(private="file") FEEDBACK_TABLE :: base.Asset_Id{4,4}
 
 @(private="file")
 ref :: proc(i:int) -> core.Record(Ability) {return {ABILITY_TABLE,core.Record_Id(i+1)}}
@@ -90,9 +89,8 @@ Fixture :: struct {
     cache:Ability_Sheets,
     checks:Ability_Attributes,
     hitboxes:[3]Ability_Hitbox,
-    feedback:[3]Ability_Feedback,
-    hitbox_rows,feedback_rows:[3]core.Record_Row,
-    hitbox_set,feedback_set:core.Record_Set,
+    hitbox_rows:[3]core.Record_Row,
+    hitbox_set:core.Record_Set,
     aux_index:[3]u32,
     sheets:[SHEETS]Ability,
     sheet_rows:[SHEETS]core.Record_Row,
@@ -152,10 +150,8 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     for i in 0..<3 {
         f.aux_index[i]=u32(i)
         f.hitbox_rows[i]={table=HITBOX_TABLE,row=core.Record_Id(i+1)}
-        f.feedback_rows[i]={table=FEEDBACK_TABLE,row=core.Record_Id(i+1)}
     }
     f.hitbox_set={size=size_of(Ability_Hitbox),rows=f.hitbox_rows[:],index=f.aux_index[:],values=mem.slice_to_bytes(f.hitboxes[:])}
-    f.feedback_set={size=size_of(Ability_Feedback),rows=f.feedback_rows[:],index=f.aux_index[:],values=mem.slice_to_bytes(f.feedback[:])}
     f.player,f.seat,f.dummy=core.create(&f.entities),core.create(&f.entities),core.create(&f.entities)
     player:=Ability_User{kit={KIT_TABLE,1}}
     player.attributes[0]={attribute=HEALTH,base=100,max=100}
@@ -179,7 +175,8 @@ fixture_make :: proc(t:^testing.T,f:^Fixture) -> bool {
     f.time={tick=1,dt=1.0/RATE,playing=true}
     ability_rows(tables_of(f),&f.checks,&f.problems)
     test_world_settle(&f.w)
-    ability_room(&f.events,&f.sounds,16*EVENT_CAPACITY,&f.problems)
+    ability_room(&f.events,16*EVENT_CAPACITY,&f.problems)
+    _=reserve(&f.sounds.items,audio.SOUND_REQUESTS)
     return true
 }
 
@@ -221,7 +218,7 @@ tables_of :: proc(f:^Fixture) -> Ability_Tables {return {&f.users,&f.states,&f.t
 
 @(private="file")
 data_of :: proc(f:^Fixture) -> Ability_Data {
-    return {{&f.sheet_set},{&f.kit_set},{&f.hitbox_set},{&f.feedback_set}}
+    return {{&f.sheet_set},{&f.kit_set},{&f.hitbox_set}}
 }
 
 @(private="file")
@@ -741,8 +738,9 @@ lasting_effects_stack_by_tags_end_by_cleanse_and_skip_blocked_targets :: proc(t:
 authored_rows_and_frequently_written_state_stay_compact :: proc(t:^testing.T) {
     testing.expectf(t,size_of(Ability_User)<=192,"user setup is %d B",size_of(Ability_User))
     testing.expectf(t,size_of(Ability_State)<=80,"hot state is %d B",size_of(Ability_State))
-    testing.expectf(t,size_of(Ability_Window)<=144,"window is %d B",size_of(Ability_Window))
-    testing.expectf(t,size_of(Ability)<=2640,"ability is %d B",size_of(Ability))
+    // A window holds the cue it plays (audio.Cue) rather than a reference to a row of another table.
+    testing.expectf(t,size_of(Ability_Window)<=176,"window is %d B",size_of(Ability_Window))
+    testing.expectf(t,size_of(Ability)<=3128,"ability is %d B",size_of(Ability))
     size:=size_of(Ability_User)+size_of(Ability_State)+size_of(Ability_Tracking)
     testing.expectf(t,size<=1480,"total user state is %d B",size)
 }
@@ -824,43 +822,49 @@ kit_dispatch_respects_held_release_and_blocked_actions :: proc(t:^testing.T) {
     testing.expect_value(t,kit_inputs(&cache,&seat),inp.Action_Mask(0))
 }
 
+// The cues of an ability play by the entity that makes them: that of a window from 0 at the
+// start, that of another window when it opens, and that of the effect a hitbox applies at its
+// target. A tick a rollback runs again asks them again, and the audio dedup keeps them to once.
 @(test)
-feedback_rows_emit_once_at_start_window_and_hit :: proc(t:^testing.T) {
+ability_cues_play_at_the_start_a_window_and_a_hit :: proc(t:^testing.T) {
     f:=new(Fixture);defer free(f)
     if !fixture_make(t,f) {return}
     defer fixture_destroy(f)
     names:=[]string{"start","swing","impact"}
+    cues:[3]audio.Cue
     for name,i in names {
-        f.feedback[i].sound={u64(i+1),0}
-        base.text_set(f.feedback[i].channel[:],name)
+        cues[i].sound={u64(i+1),0}
+        base.text_set(cues[i].channel[:],name)
     }
-    f.sheets[SLASH_1].on_start={FEEDBACK_TABLE,1}
-    f.sheets[SLASH_1].windows[0].on_begin={FEEDBACK_TABLE,2}
-    f.hitboxes[0].on_hit={FEEDBACK_TABLE,3}
+    last:=&f.sheets[SLASH_1].windows[ABILITY_WINDOWS-1]
+    last^={from=0,to=0.05,on_begin=cues[0]}
+    f.sheets[SLASH_1].windows[0].on_begin=cues[1]
+    f.hitboxes[0].effect.on_hit=cues[2]
+    f.cache.ready=false
     f.down[0]=true
     step(f)
     testing.expect_value(t,len(f.sounds.queue.items),1)
-    testing.expect_value(t,len(f.births.queue.items),1)
+    testing.expect_value(t,len(f.births.log.items),1)
     step(f,seconds(0.4))
-    sounds,births:=f.sounds.queue.items[:],f.births.queue.items[:]
+    sounds,births:=f.sounds.queue.items[:],f.births.log.items[:]
     if !testing.expect(t,len(sounds)==len(names) && len(births)==len(names)) {return}
     for name,i in names {
         e:=f.player if i<2 else f.dummy
         pose,_:=core.get(&f.worlds,e)
-        testing.expect_value(t,sounds[i].sound,f.feedback[i].sound)
-        testing.expect(t,sounds[i].placed)
+        testing.expect_value(t,sounds[i].sound,cues[i].sound)
+        testing.expect(t,sounds[i].placed && sounds[i].by==e)
         testing.expect_value(t,sounds[i].at,pose.position)
         testing.expect_value(t,births[i].channel,core.birth_channel(name))
         testing.expect_value(t,births[i].position,pose.position)
     }
     core.take(&f.sounds.queue)
-    core.log_reset(&f.births.queue.log)
+    clear(&f.births.log.items)
     ability_cancel(&f.requests,f.player)
     ability_use(&f.requests,f.player,ref(SLASH_1))
     f.time.resimulating=true
     step(f)
-    testing.expect_value(t,len(f.sounds.queue.items),0)
-    testing.expect_value(t,len(f.births.queue.items),1)
+    testing.expect(t,len(f.sounds.queue.items)==1 && f.sounds.items[0].by==f.player,"the tick run again asks its sound again, by its entity")
+    testing.expect_value(t,len(f.births.log.items),1)
 }
 
 // A hitbox open on the tick before also touches what the user passed through since: a dash faster

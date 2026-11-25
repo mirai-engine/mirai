@@ -52,12 +52,12 @@ Ability_Tables :: struct {
 @(step="fixed",stage="begin",loops="game")
 abilities_prepare :: proc(
     tables:Ability_Tables,checks:^Ability_Attributes,events:^Ability_Events,
-    sounds:^audio.Sound_Requests,problems:^core.Problems,app:^host.App,
+    problems:^core.Problems,app:^host.App,
 ) {
     ability_rows(tables,checks,problems)
     if core.count(tables.users)==0 {return}
     // The log holds the preceding frame and every tick of this one until the next age.
-    ability_room(events,sounds,2*max(app.max_ticks,1)*EVENT_CAPACITY,problems)
+    ability_room(events,2*max(app.max_ticks,1)*EVENT_CAPACITY,problems)
 }
 
 @(step="fixed")
@@ -67,12 +67,9 @@ abilities_step :: proc(tables:Ability_Tables,data:Ability_Data,sheets:^Ability_S
 }
 
 @(private)
-ability_room :: proc(events:^Ability_Events,sounds:^audio.Sound_Requests,room:int,problems:^core.Problems) {
+ability_room :: proc(events:^Ability_Events,room:int,problems:^core.Problems) {
     if events!=nil && cap(events.queue.items)<room && reserve(&events.queue.items,room)!=nil {
         core.report(problems,core.NONE,"abilities.events","out of memory for ability events")
-    }
-    if sounds!=nil && cap(sounds.queue.items)<EVENT_CAPACITY && reserve(&sounds.queue.items,EVENT_CAPACITY)!=nil {
-        core.report(problems,core.NONE,"abilities.feedback","out of memory for ability feedback")
     }
 }
 
@@ -771,7 +768,6 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Actor,ref:core.Record(Ability),a:
     state:=core.edit_at(t.states,u.state_row)
     state.ability,state.start,state.own,state.span_open,state.air_ticks=ref,t.tick,0,0,0
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
-    feedback_emit(t,a.on_start,e)
     if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,e,name)}
 }
 
@@ -849,11 +845,12 @@ span_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at_local:i64) {
 // The windows that open or close at at, against before (the tick before).
 @(private)
 windows_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Time,replica:=false) {
+    row:=record_row(t.abilities,u.state.ability)
     for &w,i in a.windows {
         was,is:=ability_window_open(w,t.dt,before,i),ability_window_open(w,t.dt,at,i)
         if is && !was {
             event_push(t,{kind=.Window_Begin,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue})
-            feedback_emit(t,w.on_begin,e)
+            if row>=0 && row<len(t.sheets.ability_spans) {cue_emit(t,w.on_begin,t.sheets.ability_spans[row].channels[i],e)}
             if !replica && w.move.velocity!={} {
                 velocity:=w.move.velocity
                 if pose,found:=core.get(t.w.worlds,e);found {velocity=mm.quat_rotate(pose.rotation,velocity)}
@@ -881,12 +878,20 @@ windows_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Abil
 // whose target_tags share a bit with target_tags, else the hitbox's default effect (if its
 // target_tags are zero or match), else empty.
 hitbox_effect_for :: proc "contextless" (h:^Ability_Hitbox,target_tags:scene.Tags) -> Ability_Effect {
-    if h==nil {return {}}
-    for te in h.target_effects {
-        if te.target_tags.bits!=0 && scene.tag_has_any(target_tags,te.target_tags) {return te}
+    at:=hitbox_effect_at(h,target_tags)
+    return {} if at<0 else h.effect if at==0 else h.target_effects[at-1]
+}
+
+// Of the effects of h, the one hitbox_effect_for picks: 0 for its effect, 1 and on for its
+// target_effects; -1 for none.
+@(private)
+hitbox_effect_at :: proc "contextless" (h:^Ability_Hitbox,target_tags:scene.Tags) -> int {
+    if h==nil {return -1}
+    for te,i in h.target_effects {
+        if te.target_tags.bits!=0 && scene.tag_has_any(target_tags,te.target_tags) {return 1+i}
     }
-    if h.effect.target_tags.bits!=0 && !scene.tag_has_any(target_tags,h.effect.target_tags) {return {}}
-    return h.effect
+    if h.effect.target_tags.bits!=0 && !scene.tag_has_any(target_tags,h.effect.target_tags) {return -1}
+    return 0
 }
 
 // Each open hitbox touches each entity once: a Hit and the effect of the window, on the tick after.
@@ -900,8 +905,9 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
     if !found {placed.rotation,placed.previous.rotation=1,1}
     for &w,i in a.windows {
         if w.hitbox=={} || !ability_window_open(w,t.dt,at,i) || t.overlap==nil {continue}
-        h:=record_sheet(t.hitboxes,w.hitbox)
-        if h==nil {continue}
+        hrow:=record_row(t.hitboxes,w.hitbox)
+        h:=record_at(t.hitboxes,hrow)
+        if h==nil || hrow>=len(t.sheets.hit_channels) {continue}
         steps:=hitbox_steps(h,placed.previous,placed.transform) if ability_window_open(w,t.dt,before,i) else 1
         for step in 1..=steps {
             pose:=placed.transform
@@ -921,10 +927,13 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
                 track.targets[track.hit_count],track.windows[track.hit_count]=target,u8(i)
                 track.hit_count+=1
                 event_push(t,{kind=.Hit,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue,target=target})
-                feedback_emit(t,h.on_hit,target,e)
                 target_tags:scene.Tags
                 if t.w.tags!=nil {target_tags,_=core.get(t.w.tags,target)}
-                if effect:=hitbox_effect_for(h,target_tags);effect!={} {ability_effect(t.requests,target,effect,e)}
+                if at:=hitbox_effect_at(h,target_tags);at>=0 {
+                    effect:=h.effect if at==0 else h.target_effects[at-1]
+                    cue_emit(t,effect.on_hit,t.sheets.hit_channels[hrow][at],target,e)
+                    if effect!={} {ability_effect(t.requests,target,effect,e)}
+                }
             }
         }
     }
@@ -1042,27 +1051,13 @@ event_push :: proc(t:^Tick,event:Ability_Event) {
     core.push(&t.events.queue,event)
 }
 
+// Plays cue where entity is (where fallback is when entity is not placed), by entity.
 @(private)
-feedback_emit :: proc(t:^Tick,ref:core.Record(Ability_Feedback),entity:core.Entity,fallback:=core.NONE) {
-    row:=record_row(t.feedback,ref)
-    f:=record_at(t.feedback,row)
-    if f==nil {return}
+cue_emit :: proc(t:^Tick,cue:audio.Cue,channel:core.Birth_Channel,entity:core.Entity,fallback:=core.NONE) {
+    if cue.sound=={} && channel==0 {return}
     pose,placed:=core.get(t.w.worlds,entity)
     if !placed && fallback!=core.NONE {pose,placed=core.get(t.w.worlds,fallback)}
-    if t.w.sounds!=nil && f.sound!={} && !t.w.time.resimulating {
-        sounds:=t.w.sounds
-        if len(sounds.queue.items)<cap(sounds.queue.items) {
-            at:Maybe([3]f32)
-            if placed {at=pose.position}
-            audio.play_id(sounds,f.sound,at)
-        } else {feedback_full(t,entity)}
-    }
-    if t.w.births!=nil && placed && t.sheets.channels[row]!=0 {
-        core.push(&t.w.births.queue,core.Birth{channel=t.sheets.channels[row],position=pose.position})
-    }
-}
-
-@(private)
-feedback_full :: proc(t:^Tick,e:core.Entity) {
-    core.report(t.w.problems,e,"abilities.feedback","ability feedback queue is full: use fewer simultaneous cues")
+    at:Maybe(mm.Transform)
+    if placed {at=pose.transform}
+    audio.cue_play(t.w.sounds,t.w.births,cue,channel,at,entity)
 }
