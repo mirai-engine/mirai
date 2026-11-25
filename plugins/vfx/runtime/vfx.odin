@@ -118,6 +118,9 @@ Particle_Sync :: struct {
     births:[dynamic]Gpu_Birth,   // of the channels, those the GPU starts in this frame
     regions:[dynamic]Channel_Region,
     channels:map[core.Birth_Channel]^Channel_Ring,
+    passes:u64,        // calls of channels_step: what a birth a tick pushed again is kept for
+    births_tick:u64,   // the tick the births were last read in
+    births_lost:u64,   // of core.Births.log.lost, how many were reported
     world:u64,         // as the renderer names it (erender.world_key)
     world_id:core.World_Id,
     pool:Pool,
@@ -179,7 +182,13 @@ particles_tick :: proc(
         channels_clear(sync)
         clocks.playing=time.playing
     }
-    channels_step(clocks,sync,births.queue.items[:],listeners,time)
+    channels_step(clocks,sync,births.log.items[:],listeners,time)
+    if lost:=births.log.lost;lost!=sync.births_lost {
+        if lost>sync.births_lost {
+            core.report(problems,core.NONE,"vfx.births","%d births were lost: core.Births holds %d of a frame and the one before, or memory ran out; push fewer births in a frame",lost-sync.births_lost,core.BIRTHS_CAPACITY)
+        }
+        sync.births_lost=lost
+    }
     // The clocks of the emitters that went, or whose entity is no longer placed.
     c_emitters:=core.changes(emitters,&clocks.seen_emitters)
     c_worlds:=core.changes(worlds,&clocks.seen_worlds)

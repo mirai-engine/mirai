@@ -138,13 +138,19 @@ Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
   virtual to restart in step. `Audio_Source.parameters` (by name: `audio.parameter_set`) glide
   over the set's `glide`; its curves (`asset.sound_set_shape`) shape gain, pitch and low-pass of
   each layer when the values move.
-- **One-shots:** `audio.play` pushes `Sound_Requests` (`audio_requests` drains at end of `fixed`/
-  `late`; skipped past `max_distance` of every listener; heard from the nearest). A `fixed` tick of
-  the game loop plays a key once: `(tick, by, sound)`, or `(tick, sound, place)` within
-  `SOUND_SAME_DISTANCE` when `by` is `NONE`. `Sounds_Played` (`host,by_world`, a ring of
+- **One-shots:** `audio.play` offers to `Sound_Requests` within the room of `SOUND_REQUESTS` that
+  `audio_requests` keeps (more are dropped and reported as `audio.requests`; it drains at end of
+  `fixed`/`late`; skipped past `max_distance` of every listener; heard from the nearest). A
+  `fixed` tick of the game loop plays a key once: `(tick, by, sound)`, or `(tick, sound, place)`
+  within `SOUND_SAME_DISTANCE` when `by` is `NONE`. `Sounds_Played` (`host,by_world`, a ring of
   `SOUNDS_PLAYED_CAPACITY`, never rolled back) keeps the keys, so a resimulated tick skips what it
-  played and plays what only the correction asks; a clock that goes back clears it. A `Layered` set
-  starts every layer in one `mixer_batch_begin`/`mixer_batch_end` batch, each at its sample delay.
+  played and plays what only the correction asks; a clock that goes back clears it. A `Layered`
+  set starts every layer in one `mixer_batch_begin`/`mixer_batch_end` batch, each at its sample
+  delay.
+- **Cues:** `audio.Cue` (sound, birth channel, `align_up`) and `audio.cue_play` (by the entity,
+  through the keyed dedup, with a birth on the channel its owner resolved at load) are the one
+  path of the cues of a `.character` (`anim.Marker_Cue`) and of ability windows and effects
+  ([cues](../../../../docs/game/audio/cues.md)).
 - **Reverb & medium:** `Audio_Reverb` zone volume blends at each listener, averaged, onto
   `reverb_bus`; `Audio_Medium` (per listener slot, written by `water`) overlays underwater reverb.
   The master low-pass applies only while every listener is under a medium (`medium_lowpass`, the

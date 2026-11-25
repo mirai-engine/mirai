@@ -56,7 +56,7 @@ a_channel_without_memory_waits_with_its_births :: proc(t:^testing.T) {
     clock.name=core.birth_channel("impacts")
     sync:Particle_Sync
     defer particle_sync_free(&sync)
-    channel_record(&sync,clock,{},0)
+    channel_record(&sync,clock.name,{},0,0)
     ring:=sync.channels[clock.name]
     problems:core.Problems
     given,waited:=false,false

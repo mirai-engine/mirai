@@ -112,7 +112,7 @@ records :: proc(s:^editor.Session,$T:typeid) -> core.Records(T) {
 @(private)
 sets :: proc(s:^editor.Session) -> ab.Ability_Data {
     return {records(s,ab.Ability),records(s,ab.Ability_Kit),
-        records(s,ab.Ability_Hitbox),records(s,ab.Ability_Feedback)}
+        records(s,ab.Ability_Hitbox)}
 }
 
 @(private)

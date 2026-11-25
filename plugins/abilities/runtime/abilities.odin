@@ -1,6 +1,7 @@
 package abilities
 
 import "mirai:core"
+import audio "mirai:engine/audio"
 import inp "mirai:engine/input"
 import scene "mirai:engine/scene"
 import "mirai:std/base"
@@ -143,6 +144,7 @@ Ability_Effect :: struct {
     blocked_by:Ability_Statuses, // a target in any of them takes nothing: immune, unstoppable
     target_tags:scene.Tags,     // when non-zero, applies only to targets whose scene.Tags share at least one bit
     cue:Ability_Cue,            // carried by the events of the start and end of its timer
+    on_hit:audio.Cue,           // played at the target when a hitbox hits with this effect
     knockback:[3]f32 `mirai:"unit=m/s"`, // in the axes of the source: a velocity its Character takes
     knockback_seconds:f32 `mirai:"min=0,unit=s"`,
     use:core.Record(Ability), // the target starts it: a hit reaction
@@ -169,7 +171,7 @@ Ability_Window :: struct {
     cancel_into:Ability_Tags,
     statuses:Ability_Statuses,
     hitbox:core.Record(Ability_Hitbox),
-    on_begin:core.Record(Ability_Feedback),
+    on_begin:audio.Cue, // played at the user when it opens: a window from 0 plays at the start
     modify:Ability_Modifier,
     move:Ability_Move,
     cue:Ability_Cue,

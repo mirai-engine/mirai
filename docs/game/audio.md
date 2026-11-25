@@ -12,8 +12,9 @@ its `base.Asset_Id` (import: [assets](assets.md)).
 
 ## Map
 - Entity sound: [source](#a-source-on-an-entity); from code: [one-shots](#one-shots-from-code);
-  variations, layers, parameters: [sets](#sets). Levels, filters, ducking, snapshots, options:
-  [buses](#buses). Caves, walls: [rooms](#rooms-and-occlusion). Silence: [pitfalls](#pitfalls).
+  at a marker or an ability: [cues](audio/cues.md); variations, layers, parameters: [sets](#sets).
+  Levels, filters, ducking, snapshots, options: [buses](#buses). Caves, walls:
+  [rooms](#rooms-and-occlusion). Silence: [pitfalls](#pitfalls).
 
 ## A source on an entity
 ```odin

@@ -12,7 +12,8 @@ import "base:runtime"
 // A .character is everything a character plays and adapts, shared by every character of its body:
 // its locomotion by motion matching, the stack of layers over it and the actions play asks for,
 // the aim spaces its layers sample, the warping of its stride and of its moves to a target, and
-// the modifiers of its pose (IK, look, grounding, rigs, faces). Animation.asset names it. Its
+// the modifiers of its pose (IK, look, grounding, rigs, faces) and the cues its markers play.
+// Animation.asset names it. Its
 // limbs are those of the body of the skeleton (@foot_l, @pelvis); the sections and windows of its
 // actions and its warp windows are spans of its clips.
 
@@ -27,6 +28,7 @@ Character_Set :: struct {
     space_samples:[]Blend_Sample,
     motion:Motion_Profile,
     pose:Pose_Profile,
+    cues:[]Marker_Cue,
 }
 // A set over the clips of animation whose locomotion and warping take their defaults.
 character_set_make :: proc(animation:base.Asset_Id) -> Character_Set {
@@ -35,7 +37,7 @@ character_set_make :: proc(animation:base.Asset_Id) -> Character_Set {
 
 character_check :: proc(set:Character_Set) -> bool {
     clipless:=len(set.match.clips)+len(set.actions.actions)+len(set.actions.layers)+len(set.spaces)==0
-    if set.info.animation=={} && !clipless || !match_check(set.match) || !action_profile_check(set.actions) || !motion_profile_check(set.motion) || !pose_profile_check(set.pose) {return false}
+    if set.info.animation=={} && !clipless || !match_check(set.match) || !action_profile_check(set.actions) || !motion_profile_check(set.motion) || !pose_profile_check(set.pose) || !marker_cues_check(set.cues) {return false}
     if len(set.spaces)>STACK_LAYERS || len(set.space_samples)>lib.BLEND_MAX_SAMPLES*len(set.spaces) {return false}
     for &space,i in set.spaces {
         first,count:=character_space_samples(set,i)
@@ -98,6 +100,7 @@ character_tables :: proc(doc:^asset.Document,types:^asset.Types,set:Character_Se
     if len(pose.correctives)>0 {asset.document_put(doc,types,"correctives",pose.correctives) or_return}
     asset.document_put(doc,types,"follow",pose.follow) or_return
     asset.document_put(doc,types,"curve_poses",pose.curve_poses) or_return
+    asset.document_put(doc,types,"cues",set.cues) or_return
     return .None
 }
 @(private)
@@ -176,6 +179,7 @@ character_view :: proc(file:^asset.Asset,types:^asset.Types) -> (set:Character_S
     }
     pose.follow=asset.asset_rows(file,types,"follow","",Follow_Constraint) or_return
     pose.curve_poses=asset.asset_rows(file,types,"curve_poses","",Curve_Pose) or_return
+    set.cues=asset.asset_rows(file,types,"cues","",Marker_Cue) or_return
     if !character_check(set) {return {},.Corrupt}
     return set,.None
 }
@@ -191,12 +195,14 @@ MATCH_TURNED :: 8
 // and more when others did not fit.
 Match_Turned :: struct {names:[MATCH_TURNED][asset.ANIMATION_NAME_CAPACITY]u8,count:int,more:bool}
 // What a set reads into while it is the asset: the open file its tables are views into, its
-// spaces ready to sample and the motion matching databases built for it.
+// spaces ready to sample, its cues by the hashes of their names (one per row of set.cues) and
+// the motion matching databases built for it.
 Character_Content :: struct {
     id:base.Asset_Id,checked,revision:u64,stamp:[2]i64,valid:bool,error:asset.Error,
     file:asset.Asset,
     set:Character_Set,
     spaces:[]Space_Ready,
+    cues:[]Cue_Ready,
     databases:[dynamic]Match_Built,
 }
 @(storage,host,free="character_assets_free")
@@ -210,10 +216,11 @@ character_assets_free :: proc(cache:^Character_Assets) {
 character_content_release :: proc(content:^Character_Content) {
     for &ready in content.spaces {lib.blend_space_destroy(&ready.space);delete(ready.names)}
     delete(content.spaces)
+    delete(content.cues)
     for &built in content.databases {lib.match_database_free(&built.database)}
     delete(content.databases)
     asset.asset_close(&content.file)
-    content.file,content.set,content.spaces,content.databases={},{},nil,nil
+    content.file,content.set,content.spaces,content.cues,content.databases={},{},nil,nil,nil
 }
 
 // The set id names, read again when its file changes; nil while it cannot be read (content_error
@@ -252,6 +259,10 @@ character_read :: proc(content:^Character_Content,assets:^host.Assets,allocator:
     spaces,error:=make([]Space_Ready,len(set.spaces),allocator)
     if error!=nil {return .Out_Of_Memory}
     content.spaces=spaces
+    cues,cued:=make([]Cue_Ready,len(set.cues),allocator)
+    if cued!=nil {return .Out_Of_Memory}
+    content.cues=cues
+    marker_cues_ready(set.cues,cues)
     for &space,i in set.spaces {
         ready:=&content.spaces[i]
         first,count:=character_space_samples(set,i)

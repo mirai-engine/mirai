@@ -20,9 +20,15 @@ fx.render, fx.ribbon_axis, fx.ribbon_tile, fx.blend = .Ribbon, .Emitter_Up, 0.5,
 err:=effect.particle_save("assets/particles/sword_trail.particle", &types, {id=id, info=fx})
 ```
 
-Start it at the swing and stop it after (`vfx.start`, `vfx.stop`): each time it starts again it
-begins another ribbon, so two swings never join, and neither do the points before and after a
-teleport (`core.Jump`). Each birth of a [channel](channels.md) starts a ribbon of its own.
+Start it at the swing and stop it after: each time it starts again it begins another ribbon, so
+two swings never join, and neither do the points before and after a teleport (`core.Jump`). Each
+birth of a [channel](channels.md) starts a ribbon of its own.
+
+The swing of a clip starts and stops it as data: `vfx_animation.Particle_Animation_Span` on the
+emitter entity names a span of the clips of its animated parent (`span`), or two markers (`span`
+and `end_marker`), and optionally the action they count for. The trail runs while the span lasts
+and stops when the clip ends or is interrupted. A one-shot sound or burst at a marker is a
+[cue](../audio/cues.md).
 
 ## Slash arcs and charge cones
 

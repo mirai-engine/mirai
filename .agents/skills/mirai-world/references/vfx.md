@@ -75,7 +75,7 @@ vfx.burst(requests, emitter_entity, 32)
 _ = vfx.request_value(requests, emitter_entity, "colors.0", [4]f32{1, 0.4, 0.1, 1})
 _ = vfx.request_value(requests, emitter_entity, "layers.1.rate", f32(40))
 _ = vfx.request_value(requests, emitter_entity, "parameters.speed", f32(6.0)) // every layer
-core.push(&births.queue, core.Birth{
+core.birth(births, core.Birth{
     channel = core.birth_channel("impacts"), position = hit_pos, normal = hit_n, count = 12,
 })
 ```
@@ -112,7 +112,11 @@ local lights without GPU readback or single-writer conflicts:
   filters to one action name; `restart_on_begin` restarts generation on start.
 - `vfx_animation_spans` (`fixed`, `stage="react"`, after `animation_advance`, before
   `particles_tick`) applies requests in the same tick and stops active emitters on `.Interrupted`,
-  `.Ended`, span removal, or source entity destruction so trails never stick on.
+  `.Ended` (of the action that opened it; of an unnamed clip, of the same clip), span removal, or
+  source entity destruction so trails never stick on. The source is found again only when spans,
+  emitters, `core.Parent` or `anim.Animation` change (`Span_Active.resolved`).
+- One-shot sounds and births at markers are cues of the `.character`, not spans
+  ([cues](../../../../docs/game/audio/cues.md)).
 
 ## Culling
 
@@ -209,9 +213,13 @@ depth.
 
 Game code pushes to `core.Births` without importing `vfx`. `Particle_Channel` listens by text name
 (Cone aligns to nonzero birth normal); `silent` skips auto-spawn so programs read `channel` alone.
-Non-silent emitters preview periodically in Edit (`channel_preview`). `particles_tick` numbers
-channel births for rollback dedup; host ring discards replaced future on replay and drops
-unlistened channels.
+Non-silent emitters preview periodically in Edit (`channel_preview`). `particles_tick` keeps each
+listened channel's births in a host ring (`Channel_Ring`, `CHANNEL_BIRTHS`, never rolled back)
+with the tick that read them. A resimulated tick matches its births against those of the same
+tick within `BIRTH_SAME_DISTANCE` (each once per pass): a match is not started again, a new one
+is, and an unmatched one the GPU did not start is `gone`; a non-resimulated tick earlier than the
+last (a load) marks the unstarted later ones `gone`. A record that gives its place unstarted
+counts in `lost` (`vfx.births`), as do `core.Births.log.lost`.
 
 ## UI effects
 

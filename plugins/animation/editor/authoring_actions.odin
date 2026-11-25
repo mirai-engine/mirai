@@ -34,6 +34,28 @@ action_write_defaults :: proc() -> ^Action_Write_Params {
 authoring_actions_register :: proc(s:^editor.Session) {
     defaults:=action_write_defaults()
     editor.api_method_register(s,{params=type_info_of(Action_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.action.set",summary="Replaces what plays over the base of a .character that entities share: the stack of layers (a clip or a space of the set each, over a branch or the whole body, replacing or adding) and the named actions of clips with their layer, priorities, cancel policies, entry and exit, and sections, spans of their clips. In Edit.",defaults=defaults,run=authoring_action_set})
+    editor.api_method_register(s,{params=type_info_of(Cue_Write_Params),result=type_info_of(Authoring_Write_Result),name="animation.cue.set",summary="Replaces the cues of a .character: the sound and the particle birth each marker of its clips plays every time a clip crosses it, at the entity or at a bone or a socket of its skeleton, one row per marker name. In Edit.",defaults=new(Cue_Write_Params,context.temp_allocator),run=authoring_cue_set})
+}
+Cue_Write_Params :: struct {
+    path:[1024]u8 `mirai:"text,label=Ending in .character: its cues are replaced, its other parts kept"`,
+    animation:base.Asset_Id `mirai:"optional,label=The .anim of its clips; needed for a new .character"`,
+    cues:[anim.CHARACTER_CUES]anim.Marker_Cue `mirai:"optional,label=One row per marker name: the marker, where it plays (at the entity, or at the bone or the socket named in at) and its cue (a .sound or .sound_set, a birth channel a Particle_Channel emitter listens to, and whether the birth's normal is the up of where it plays)"`,
+    dry_run:bool `mirai:"optional,label=Validates and answers without writing"`,
+}
+@(private)
+authoring_cue_set :: proc(s:^editor.Session,call:^api.Call) {
+    p:=api.call_params(call,Cue_Write_Params);if !authoring_editable(s,call) {return}
+    count,_:=api.params_array_count(call,"cues")
+    if count>anim.CHARACTER_CUES {authoring_failure(call,"cues","Capacity",fmt.tprintf("at most %d cues",anim.CHARACTER_CUES),fmt.tprint(count),"Cue capacity exceeded");return}
+    for &row,i in p.cues[:count] {
+        if row.marker[0]==0 {authoring_failure(call,fmt.tprintf("cues[%d].marker",i),"Required","the name of a marker of its clips","empty","A cue plays at a marker; name it");return}
+        if row.anchor!=.Entity && row.at[0]==0 {authoring_failure(call,fmt.tprintf("cues[%d].at",i),"Required","the bone or the socket of its anchor","empty",fmt.tprintf("A cue at a %v names it in at",row.anchor));return}
+        for &other in p.cues[:i] {if other.marker==row.marker {authoring_failure(call,fmt.tprintf("cues[%d].marker",i),"Duplicate_Name","a marker no other cue has",base.text_get(row.marker[:]),"Two cues have this marker: one cue per marker");return}}
+    }
+    file:Authoring_File;defer asset.asset_close(&file.file)
+    set,id,ok:=character_target(s,call,base.text_get(p.path[:]),p.animation,&file);if !ok {return}
+    set.cues=p.cues[:count]
+    _=character_publish(s,call,file,id,set)
 }
 @(private)
 action_named_index :: proc(values:[]anim.Action_Definition,name:[64]u8) -> int {for value,i in values {if value.name==name {return i}};return -1}

@@ -101,7 +101,7 @@ vfx_gallery_impacts :: proc(impacts:^core.Table(Vfx_Impacts,.Read),states:^core.
             state.hits+=1
             u,v:=vfx_gallery_random(state.hits,1),vfx_gallery_random(state.hits,2)
             at:=mm.transform_point(world.transform,{(u-0.5)*wall.size.x,(v-0.5)*wall.size.y,0})
-            core.push(&births.queue,core.Birth{channel=core.birth_channel(base.text_get(wall.channel[:])),position=at,velocity=out*wall.speed,count=wall.count})
+            core.birth(births,core.Birth{channel=core.birth_channel(base.text_get(wall.channel[:])),position=at,velocity=out*wall.speed,count=wall.count})
         }
     }
 }

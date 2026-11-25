@@ -134,7 +134,7 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:^core.Table(Imprint_Stamp,.Re
             if press<=0 {stride.travelled=0;continue}
             print,ok:=stride_print(stride,stamp,hit.point,forward,moved)
             if !ok {continue}
-            core.push(&births.queue,core.Birth{
+            core.birth(births,core.Birth{
                 channel=core.birth_channel(CHANNEL_STAMPS),position=print,velocity=forward,size=stamp.radius,count=1,
                 values={press,stamp.berm,STAMP_PRINT,max(stamp.length,2*stamp.radius)},
             })
@@ -142,7 +142,7 @@ imprint_stamps :: proc(steps:^Imprint_Steps,stamps:^core.Table(Imprint_Stamp,.Re
             continue
         }
         if press<=0 {continue}
-        core.push(&births.queue,core.Birth{
+        core.birth(births,core.Birth{
             channel=core.birth_channel(CHANNEL_STAMPS),position=hit.point,velocity=motion/dt,size=stamp.radius,count=1,values={press,stamp.berm,STAMP_RUT,0},
         })
         steps.pressed+=1

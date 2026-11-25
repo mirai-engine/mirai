@@ -3,8 +3,9 @@ package core
 import "mirai:std/base"
 
 // Births of effects by channel, for whoever shows them without knowing who
-// asks: a library pushes them to the log, and what shows effects (vfx) reads
-// what came since it last ran. A birth nobody reads ages out with the log.
+// asks: any function that writes Births pushes to its log with birth, and
+// what shows effects (vfx) reads what came since it last ran and reports
+// those that found no room. A birth nobody reads ages out with the log.
 
 // A channel of births is a name (birth_channel): whoever pushes and whoever
 // listens say the same text, as the data channels of vfx are named, and
@@ -30,7 +31,22 @@ Birth :: struct {
     values:[4]f32,
 }
 
+// Births the log holds: those of the frame before and of every tick of this
+// one, until the end of the frame ages them.
+BIRTHS_CAPACITY :: 4096
+
 @(storage,shared)
 Births :: struct {
-    queue:Events(Birth),
+    log:Events(Birth),
+}
+
+// Pushes b, in a fixed step so a rollback repeats it (the reader does not draw
+// it twice). False when the log is full or without memory: b is counted in
+// log.lost, which the reader reports.
+birth :: proc(births:^Births,b:Birth) -> bool {
+    if cap(births.log.items)<BIRTHS_CAPACITY && reserve(&births.log.items,BIRTHS_CAPACITY)!=nil {
+        births.log.lost+=1
+        return false
+    }
+    return events_push(&births.log,b,BIRTHS_CAPACITY)
 }

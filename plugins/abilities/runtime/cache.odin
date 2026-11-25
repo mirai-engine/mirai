@@ -2,6 +2,7 @@ package abilities
 
 import "core:fmt"
 import "mirai:core"
+import audio "mirai:engine/audio"
 import inp "mirai:engine/input"
 import "mirai:std/base"
 
@@ -10,7 +11,6 @@ Ability_Data :: struct {
     abilities:core.Records(Ability),
     kits:core.Records(Ability_Kit),
     hitboxes:core.Records(Ability_Hitbox),
-    feedback:core.Records(Ability_Feedback),
 }
 
 Sheet_Problem :: [core.PROBLEM_TEXT]u8
@@ -31,17 +31,18 @@ Kit_Cache :: struct {
 Ability_Span_Cache :: struct {
     action:u64,
     windows:[ABILITY_WINDOWS]u64,
+    channels:[ABILITY_WINDOWS]core.Birth_Channel, // of the on_begin of each window
     any:bool,
 }
 
 @(storage,host)
 Ability_Sheets :: struct {
-    generation:[4]u32,
+    generation:[3]u32,
     ready:bool,
     abilities,hitboxes:[dynamic]Sheet_Problem,
     ability_spans:[dynamic]Ability_Span_Cache,
     kits:[dynamic]Kit_Cache,
-    channels:[dynamic]core.Birth_Channel,
+    hit_channels:[dynamic][1+len(Ability_Hitbox{}.target_effects)]core.Birth_Channel, // of the on_hit of each effect of a hitbox: effect, then target_effects
 }
 
 Attribute_Check :: struct {
@@ -58,9 +59,9 @@ Ability_Attributes :: struct {
 }
 
 sheets_refresh :: proc(cache:^Ability_Sheets,data:Ability_Data) -> bool {
-    generation:=[4]u32{
+    generation:=[3]u32{
         core.records_generation(data.abilities),core.records_generation(data.kits),
-        core.records_generation(data.hitboxes),core.records_generation(data.feedback),
+        core.records_generation(data.hitboxes),
     }
     if cache.ready && cache.generation==generation {return true}
     cache.ready=false
@@ -68,11 +69,13 @@ sheets_refresh :: proc(cache:^Ability_Sheets,data:Ability_Data) -> bool {
        resize(&cache.ability_spans,core.records_count(data.abilities))!=nil ||
        resize(&cache.kits,core.records_count(data.kits))!=nil ||
        resize(&cache.hitboxes,core.records_count(data.hitboxes))!=nil ||
-       resize(&cache.channels,core.records_count(data.feedback))!=nil {return false}
-    for &channel,i in cache.channels {
-        f:=record_at(data.feedback,i)
-        channel=0
-        if f!=nil {channel=core.birth_channel(base.text_get(f.channel[:]))}
+       resize(&cache.hit_channels,core.records_count(data.hitboxes))!=nil {return false}
+    for &channels,i in cache.hit_channels {
+        channels={}
+        h:=record_at(data.hitboxes,i)
+        if h==nil {continue}
+        channels[0]=audio.cue_channel(h.effect.on_hit)
+        for te,j in h.target_effects {channels[1+j]=audio.cue_channel(te.on_hit)}
     }
     text:[512]u8
     for &problem,i in cache.hitboxes {
@@ -89,9 +92,6 @@ sheets_refresh :: proc(cache:^Ability_Sheets,data:Ability_Data) -> bool {
                 }
             }
         }
-        if message=="" && ref_missing(data.feedback,h.on_hit) {
-            message="on_hit names a missing Ability_Feedback row: pick another row or none"
-        }
         base.text_set(problem[:],message)
     }
     for &problem,i in cache.abilities {
@@ -104,6 +104,7 @@ sheets_refresh :: proc(cache:^Ability_Sheets,data:Ability_Data) -> bool {
                     spans.windows[j]=base.name_hash(text)
                     spans.any=true
                 }
+                spans.channels[j]=audio.cue_channel(w.on_begin)
             }
         }
         cache.ability_spans[i]=spans
@@ -152,9 +153,6 @@ ability_links :: proc(a:^Ability,data:Ability_Data,cache:^Ability_Sheets,out:[]u
     if ref_missing(data.abilities,a.next) {
         return "next names a missing Ability row: pick another row or none"
     }
-    if ref_missing(data.feedback,a.on_start) {
-        return "on_start names a missing Ability_Feedback row: pick another row or none"
-    }
     for &w,i in a.windows {
         if w.hitbox!={} {
             row:=record_row(data.hitboxes,w.hitbox)
@@ -162,9 +160,6 @@ ability_links :: proc(a:^Ability,data:Ability_Data,cache:^Ability_Sheets,out:[]u
             if problem:=base.text_get(cache.hitboxes[row][:]);problem!="" {
                 return fmt.bprintf(out,"windows[%d].hitbox %s",i,problem)
             }
-        }
-        if ref_missing(data.feedback,w.on_begin) {
-            return fmt.bprintf(out,"windows[%d].on_begin names a missing Ability_Feedback row",i)
         }
     }
     return ""

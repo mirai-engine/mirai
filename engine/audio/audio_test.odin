@@ -176,6 +176,8 @@ a_sound_request_plays_once_and_not_again_when_its_tick_runs_again :: proc(t:^tes
     play(&sounds,STEPS,at=[3]f32{1,0,0})
     copied:Sound_Requests
     defer core.value_free(&copied,type_info_of(Sound_Requests))
+    // A rollback copies into the queue of the world, which keeps the room audio_requests served.
+    testing.expect(t,reserve(&copied.items,SOUND_REQUESTS)==nil)
     testing.expect(t,core.value_copy(&copied,&sounds,type_info_of(Sound_Requests)))
     testing.expect(t,len(copied.items)==1 && copied.items[0].sound==STEPS && copied.items[0].placed,"a copy of the world carries what waits")
     audio_requests(&sounds,tick,fixed,&played,nil,&f.app,&problems)
@@ -318,6 +320,49 @@ a_rollback_plays_each_sound_of_a_tick_once_and_what_only_the_correction_asks :: 
         audio_requests(&sounds,time,core.Frame_Time{phase=.Fixed},&played,nil,&f.app,nil)
         testing.expectf(t,mixer.mixer_stats(m).voices_played==step.played,"%s: %d played, wants %d",step.what,mixer.mixer_stats(m).voices_played,step.played)
         mixer.mixer_update(m)
+    }
+}
+
+// A cue plays its sound by the entity that makes it, through the rollback
+// dedup: a sound only the corrected tick asks plays once, one both runs ask
+// plays once, and the cues of two entities a metre apart both play. Its birth
+// goes where it plays, every run of a tick.
+@(test)
+a_cue_plays_its_sound_once_per_entity_and_tick_through_a_rollback :: proc(t:^testing.T) {
+    E,OTHER:=core.entity_make(5,1),core.entity_make(6,1)
+    Ask :: struct {by:core.Entity,x:f32}
+    Run :: struct {again:bool,asks:[]Ask}
+    Case :: struct {name:string,runs:[]Run,played:u64}
+    cases:=[]Case{
+        {"a sound only the corrected tick asks plays once",{{false,{}},{true,{{E,0}}},{true,{{E,0}}}},1},
+        {"a sound both runs ask plays once",{{false,{{E,0}}},{true,{{E,0}}}},1},
+        {"two entities a metre apart both play",{{false,{{E,0},{OTHER,1}}},{true,{{E,0},{OTHER,1}}}},2},
+    }
+    cue:=Cue{sound=HUM,align_up=true}
+    base.text_set(cue.channel[:],"dust")
+    channel:=cue_channel(cue)
+    testing.expect(t,channel==core.birth_channel("dust"))
+    for c in cases {
+        f:Fixture
+        if !fixture_init(t,&f) {return}
+        played:Sounds_Played
+        sounds:Sound_Requests
+        births:core.Births
+        for run in c.runs {
+            for ask in run.asks {
+                cue_play(&sounds,&births,cue,channel,mm.Transform{position={ask.x,0,0},rotation=1,scale=1},ask.by)
+            }
+            audio_requests(&sounds,core.Time{tick=10,dt=1.0/60,playing=true,resimulating=run.again},core.Frame_Time{phase=.Fixed},&played,nil,&f.app,nil)
+            mixer.mixer_update(f.app.mixer)
+        }
+        testing.expectf(t,mixer.mixer_stats(f.app.mixer).voices_played==c.played,"%s: %d played, wants %d",c.name,mixer.mixer_stats(f.app.mixer).voices_played,c.played)
+        asked:=0
+        for run in c.runs {asked+=len(run.asks)}
+        testing.expectf(t,len(births.log.items)==asked,"%s: %d births, wants one per cue played in a run",c.name,len(births.log.items))
+        for b in births.log.items {testing.expect(t,b.channel==channel && b.normal=={0,1,0})}
+        core.value_free(&sounds,type_info_of(Sound_Requests))
+        core.value_free(&births,type_info_of(core.Births))
+        fixture_destroy(&f)
     }
 }
 

@@ -12,7 +12,7 @@ A channel is only its name: the same text in the code that pushes and in the emi
 impacts :: proc(hits:^core.Table(Hit,.Read), births:^core.Births) {
     for i in 0..<core.count(hits) {
         hit:=core.at(hits, i)
-        core.push(&births.queue, core.Birth{
+        core.birth(births, core.Birth{
             channel=core.birth_channel("impacts"), position=hit.point, velocity=hit.normal*6,
             count=12,
         })
@@ -22,7 +22,7 @@ impacts :: proc(hits:^core.Table(Hit,.Read), births:^core.Births) {
 
 - `core.Birth`: `channel`, `position`, `velocity` (added to the effect's), `color` and `size`
   (multiply the effect's; zero means white and one), `count` (zero is one), `values` for the
-  effect's program. The queue is in `core`: code that pushes births does not import `vfx`.
+  effect's program. `core.Births` is a log of `core`: code that pushes births does not import `vfx`.
 - The emitter that listens is in the scene (a prefab or the editor); `Particle_Channel` has
   `silent` for an effect whose program reads the births itself instead of starting particles.
 
@@ -30,5 +30,7 @@ impacts :: proc(hits:^core.Table(Hit,.Read), births:^core.Births) {
 
 - A birth to a channel that no emitter listens to is dropped without a message.
 - A name spelled differently in the emitter and in the code is another channel.
-- A channel keeps only the births of its last ticks; thousands in one tick lose the oldest.
-- Push in `fixed`: a rollback repeats the births without drawing them twice.
+- `core.Births` holds `core.BIRTHS_CAPACITY` births of a frame and the one before, and a channel
+  1024 the GPU has not started; what does not fit is lost and reported (`vfx.births`).
+- Push in `fixed`: a rollback repeats the births without drawing them twice, draws one only the
+  corrected tick pushes, and does not draw one it lacks if the GPU had not started it.

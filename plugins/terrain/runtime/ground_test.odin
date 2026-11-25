@@ -245,7 +245,7 @@ a_dig_raises_the_dust_of_the_material_of_each_layer_it_took_wherever_the_layer_i
     core.push(&w.digs.digs,Terrain_Dig{owner=dusty,center={1,2,3},volume=1,layers={0=0.25,1=0.25,2=0.5},materials={0=ore,1=gravel,2=soil}})
     core.push(&w.digs.digs,Terrain_Dig{owner=bare,volume=1,layers={0=1},materials={0=soil}})
     terrain_dust(core.ref(&w.digs),core.read(&w.dusts),&w.births)
-    births:=w.births.queue.items[:]
+    births:=w.births.log.items[:]
     if !testing.expect_value(t,len(births),4) {return}
     for dig in 0..<2 {
         soil_birth,gravel_birth:core.Birth

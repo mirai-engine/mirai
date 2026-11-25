@@ -1,5 +1,6 @@
 package anim
 
+import "core:fmt"
 import "core:mem"
 import "core:testing"
 import "mirai:core"
@@ -10,54 +11,70 @@ import "mirai:std/base"
 @(test_world)
 Cue_World :: struct {
     using world:Test_World,
-    bindings:core.Table(Animation_Cues),
+    animations:core.Table(Animation),
     worlds:core.Table(core.World_Transform),
     events:Animation_Events,
     sounds:audio.Sound_Requests,
     births:core.Births,
 }
 
+// Every marker the cues of a .character name plays its cue, however many the
+// rig has, once per crossing, at the entity, by the hashes the set resolved
+// when it loaded: no allocation in the tick, and a marker it does not name
+// plays nothing.
 @(test)
-a_crossed_marker_emits_one_spatial_cue_and_replay_keeps_only_the_birth :: proc(t:^testing.T) {
+every_marker_cue_of_a_character_plays_without_allocating :: proc(t:^testing.T) {
     w:=new(Cue_World)
     defer free(w)
     if !test_world_init(t,w) {return}
     defer test_world_destroy(w)
+    CUES :: 20
+    Case :: struct {name:string,markers:[]string,plays:int}
+    cases:=[]Case{
+        {"one marker",{"step_0"},1},
+        {"every marker of twenty",nil,CUES},
+        {"a marker no cue names",{"other"},0},
+    }
+    rows:=make([]Marker_Cue,CUES);defer delete(rows)
+    for &row,i in rows {
+        base.text_set(row.marker[:],fmt.tprintf("step_%d",i))
+        row.cue.sound={1,u64(i+1)}
+        base.text_set(row.cue.channel[:],"dust")
+    }
+    testing.expect(t,marker_cues_check(rows))
+    characters:Character_Assets
+    defer delete(characters.contents)
+    id:=base.Asset_Id{7,7}
+    content:=Character_Content{id=id,valid=true,set={cues=rows}}
+    content.cues=make([]Cue_Ready,CUES);defer delete(content.cues)
+    marker_cues_ready(rows,content.cues)
+    append(&characters.contents,content)
     entity:=core.create(&w.entities)
-    config:Animation_Cues
-    config.bindings[0].sound={1,2}
-    config.bindings[0].align_up=true
-    base.text_set(config.bindings[0].marker[:],"step")
-    base.text_set(config.bindings[0].channel[:],"dust")
-    core.add(&w.bindings,entity,config)
+    core.add(&w.animations,entity,Animation{asset=id})
     core.add(&w.worlds,entity,core.World_Transform{transform={position={2,3,4},rotation=1,scale=1}})
     test_world_settle(w)
-    core.push(&w.events.queue,Animation_Event{entity=entity,kind=.Span_Begin,
-        name=base.name_hash("step")})
-    core.push(&w.events.queue,Animation_Event{entity=entity,kind=.Marker,
-        name=base.name_hash("other")})
-    core.push(&w.events.queue,Animation_Event{entity=entity,kind=.Marker,
-        name=base.name_hash("step")})
-    tick :: proc(w:^Cue_World,replay:bool) {
-        animation_cues(core.read(&w.bindings),core.ref(&w.events),{},{},nil,nil,
-            core.read(&w.worlds),&w.sounds,&w.births,{playing=true,resimulating=replay},nil)
+    // The room audio_requests and the first birth keep.
+    testing.expect(t,reserve(&w.sounds.items,audio.SOUND_REQUESTS)==nil && reserve(&w.births.log.items,core.BIRTHS_CAPACITY)==nil)
+    for c in cases {
+        clear(&w.events.items)
+        if c.markers==nil {
+            for i in 0..<CUES {core.push(&w.events.queue,Animation_Event{entity=entity,kind=.Marker,name=base.name_hash(fmt.tprintf("step_%d",i))})}
+        }
+        for name in c.markers {core.push(&w.events.queue,Animation_Event{entity=entity,kind=.Marker,name=base.name_hash(name)})}
+        core.push(&w.events.queue,Animation_Event{entity=entity,kind=.Span_Begin,name=base.name_hash("step_0")})
+        _=core.take(&w.sounds.queue)
+        clear(&w.births.log.items)
+        tracker:mem.Tracking_Allocator
+        mem.tracking_allocator_init(&tracker,context.allocator)
+        {
+            context.allocator=mem.tracking_allocator(&tracker)
+            animation_cues(core.read(&w.animations),core.ref(&w.events),{},core.ref(&characters),{},nil,nil,
+                core.read(&w.worlds),&w.sounds,&w.births,{playing=true},nil)
+        }
+        testing.expectf(t,tracker.total_allocation_count==0,"%s: the tick allocates",c.name)
+        mem.tracking_allocator_destroy(&tracker)
+        testing.expectf(t,len(w.sounds.items)==c.plays && len(w.births.log.items)==c.plays,"%s: %d sounds and %d births, wants %d",c.name,len(w.sounds.items),len(w.births.log.items),c.plays)
+        for s in w.sounds.items {testing.expect(t,s.placed && s.at=={2,3,4} && s.by==entity)}
+        for b in w.births.log.items {testing.expect(t,b.channel==core.birth_channel("dust") && b.position=={2,3,4})}
     }
-    tick(w,false)
-    if !testing.expect(t,len(w.sounds.items)==1 && len(w.births.queue.items)==1) {return}
-    testing.expect(t,w.sounds.items[0].placed && w.sounds.items[0].at=={2,3,4})
-    birth:=w.births.queue.items[0]
-    testing.expect(t,birth.channel==core.birth_channel("dust") && birth.normal=={0,1,0} &&
-        birth.position=={2,3,4})
-    core.log_reset(&w.births.queue.log)
-    _=core.take(&w.sounds.queue)
-    tracker:mem.Tracking_Allocator
-    mem.tracking_allocator_init(&tracker,context.allocator)
-    defer mem.tracking_allocator_destroy(&tracker)
-    {
-        context.allocator=mem.tracking_allocator(&tracker)
-        tick(w,true)
-    }
-    testing.expect_value(t,tracker.total_allocation_count,i64(0))
-    testing.expect(t,len(w.sounds.items)==0 && len(w.births.queue.items)==1 &&
-        w.births.queue.items[0]==birth)
 }

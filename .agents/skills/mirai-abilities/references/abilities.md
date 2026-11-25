@@ -44,7 +44,9 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
   one of its attributes (with optional `ramp_in`/`ramp_out` durations), carry a hitbox with its
   effect (and per-target-class `target_effects` matched against `scene.Tags`), move its `Character`
   with a layered move along the axes it faces when the window opens, hold the user's `Ability_Held`
-  at its socket (`attach`), and carry a cue. A window with empty `span` and `to` at 0 is unused.
+  at its socket (`attach`), carry a cue id (`cue`) for the game, and play `on_begin`
+  (`audio.Cue`) at the user when it opens: a window from 0 plays at the start. A window with
+  empty `span` and `to` at 0 is unused.
 - `next`: a candidate when it completes (a charge that ends in its dash). It is checked in the
   statuses the windows gave on the last tick the ability ran, so a dash that `requires` the
   charging status of its charge (and so never starts while idle) still starts as its `next`.
@@ -111,7 +113,8 @@ reports for each ability of the kit.
   `scene.Tags` (`target_tags`); and may ask the target to `use` an ability (a hit reaction, which
   reaches a running ability through the kit's `interrupts`). An `Ability_Hitbox` may declare up to
   four `target_effects` matched in order against the target's `scene.Tags` before falling back to
-  its default `effect` (`hitbox_effect_for`).
+  its default `effect` (`hitbox_effect_for`). The `on_hit` cue of the effect it picks plays at
+  the target on the hit tick.
 - What lasts is a timer of the target. Its `tags` say what it is: an effect with the same tags
   applied again stacks up to `max_stacks` (its modifier and periodic amount count once per stack)
   and lasts `seconds` from then, keeping the phase of its period. `remove` ends the timers with

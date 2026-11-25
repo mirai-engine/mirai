@@ -62,7 +62,7 @@ terrain_dust :: proc(digs:core.Ref(Terrain_Digs),dusts:^core.Table(Terrain_Dust,
             if channel==0 {continue}
             count:=u32(budget*taken/dig.volume+0.5)
             if count==0 {continue}
-            core.push(&births.queue,core.Birth{channel=channel,position=dig.center,velocity={0,dust.speed,0},color=dust.materials[entry].color,size=dust.size,count=count})
+            core.birth(births,core.Birth{channel=channel,position=dig.center,velocity={0,dust.speed,0},color=dust.materials[entry].color,size=dust.size,count=count})
         }
     }
 }

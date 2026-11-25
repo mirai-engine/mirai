@@ -1338,7 +1338,10 @@ Sound_Request :: struct {
 }
 
 // Requests: any step pushes with play; audio_requests starts them at the end
-// of the tick that asked and at the end of every frame.
+// of the tick that asked and at the end of every frame, and keeps room for
+// SOUND_REQUESTS of them: what does not fit is dropped and reported.
+SOUND_REQUESTS :: 256
+
 @(storage,queue)
 Sound_Requests :: struct {using queue:core.Queue(Sound_Request)}
 
@@ -1351,7 +1354,7 @@ play :: proc{play_path,play_id}
 
 play_id :: proc(sounds:^Sound_Requests,sound:base.Asset_Id,at:Maybe([3]f32)=nil,bus:=BUS_EFFECTS,volume:f32=1,pitch:f32=1,by:=core.NONE) {
     position,placed:=at.?
-    core.push(&sounds.queue,Sound_Request{sound=sound,at=position,placed=placed,bus=bus,volume=volume,pitch=pitch,by=by})
+    core.offer(&sounds.queue,Sound_Request{sound=sound,at=position,placed=placed,bus=bus,volume=volume,pitch=pitch,by=by})
 }
 
 // A path that does not fit SOUND_PATH_CAPACITY plays as one the assets do not have.
@@ -1359,7 +1362,7 @@ play_path :: proc(sounds:^Sound_Requests,path:string,at:Maybe([3]f32)=nil,bus:=B
     position,placed:=at.?
     r:=Sound_Request{at=position,placed=placed,bus=bus,volume=volume,pitch=pitch,by=by}
     if len(path)<SOUND_PATH_CAPACITY {base.text_set(r.path[:],path)}
-    core.push(&sounds.queue,r)
+    core.offer(&sounds.queue,r)
 }
 
 SOUNDS_PLAYED_CAPACITY :: 512
@@ -1431,6 +1434,8 @@ played_add :: proc "contextless" (played:^Sounds_Played,key:Sound_Played) {
 @(step="fixed late",stage="end",loops="game editor")
 audio_requests :: proc(sounds:^Sound_Requests,time:core.Time,frame:core.Frame_Time,played:^Sounds_Played,listeners:^Mixer_Listeners,app:^host.App,problems:^core.Problems) {
     requests:=core.take(&sounds.queue)
+    // After the requests are read: making room may move them.
+    defer core.queue_serve(&sounds.queue,SOUND_REQUESTS,problems,"audio.requests","sound requests","audio.SOUND_REQUESTS")
     if app.mixer==nil {return}
     // The ticks of the game; those of the editor loop do not advance.
     keyed:=played!=nil && frame.phase==.Fixed && time.playing

@@ -84,6 +84,8 @@ Asset_Inspect_Result :: struct {
     warp:anim.Pose_Warp_Profile `mirai:"optional,label=.character: pose warping"`,
     windows_total:u32 `mirai:"optional,label=.character"`,
     windows:[]Authoring_Page(anim.Motion_Window) `mirai:"optional,label=.character: warp windows, each over the spans of its name on the clips"`,
+    cues_total:u32 `mirai:"optional,label=.character"`,
+    cues:[]Authoring_Page(anim.Marker_Cue) `mirai:"optional,label=.character: what each marker of its clips plays (animation.cue.set)"`,
     counts:Profile_Counts `mirai:"optional,label=.character: the rows of each table of its modifiers"`,
     table:Profile_Table `mirai:"optional,label=.character: the table read; only its field has rows"`,
     ik:[]Authoring_Page(anim.IK_Constraint) `mirai:"optional"`,

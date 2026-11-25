@@ -211,9 +211,12 @@ for navigation). `ground_query` probes highest ground along a line (`Ground`, `N
 
 ## Births
 
-`core/births.odin`: `Births` queue keyed by `birth_channel` (`base.name_hash`); emitters push
-without knowing `vfx`, which consumes in `fixed`
-([channels](../../mirai-world/references/vfx.md#channels)).
+`core/births.odin`: `Births` is a `@(storage,shared)` `Events` log (`log`) keyed by
+`birth_channel` (`base.name_hash`): any fixed step pushes with `core.birth` without knowing `vfx`,
+which reads by cursor ([channels](../../mirai-world/references/vfx.md#channels)). It holds
+`BIRTHS_CAPACITY` (a frame and the one before) and never grows past it; a birth without room or
+memory counts in `log.lost`, which `vfx` reports as `vfx.births`. `events_push` with a `room`
+refuses instead of resetting, the rule for any `Events` many push to.
 
 ## Transform and hierarchy
 

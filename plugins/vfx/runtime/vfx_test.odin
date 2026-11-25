@@ -3,6 +3,7 @@ package vfx
 import "core:math"
 import "core:mem"
 import "core:reflect"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
@@ -76,9 +77,9 @@ fixture_emitter :: proc(f:^Emitters_Fixture,emitter:Particle_Emitter,position:[3
 @(private="file")
 fixture_tick :: proc(f:^Emitters_Fixture,time:core.Time,frame:=FRAME) {
     births:=f.births
-    core.events_read(&births.queue,&f.births_cursor)
+    core.events_read(&births.log,&f.births_cursor)
     particles_tick(&f.emitters,&f.overrides,core.read(&f.worlds),core.ref(&f.hierarchy),{entities=&f.entities},&f.clocks,&f.sync,&f.requests,core.ref(&births),core.read(&f.listeners),time,frame,f.app.assets,&f.problems,core.ref(&f.sources))
-    core.events_age(&f.births.queue)
+    core.events_age(&f.births.log)
     fixture_settle(f)
 }
 
@@ -729,46 +730,97 @@ done_effects_take_their_entity_with_them :: proc(t:^testing.T) {
     testing.expect(t,!core.alive(&f.entities,e))
 }
 
-// The births a game gives a channel are numbered in the world: a rollback
-// that pushes them again does not start them twice, and a channel no emitter
-// listens to keeps none.
+// The births of a channel start once through a rollback: a tick run again
+// that pushes a birth again does not start it twice, one only the corrected
+// tick pushes starts at its place, one only the corrected run lacks is not
+// started if the GPU had not started it, and the births after it keep theirs.
+// A channel no emitter listens to keeps none.
 @(test)
 channel_births_start_once_through_a_rollback :: proc(t:^testing.T) {
-    f:Emitters_Fixture
-    if !fixture_init(t,&f) {return}
-    defer fixture_destroy(&f)
-    e:=fixture_emitter(&f,Particle_Emitter{})
-    IMPACTS,NOBODY:=core.birth_channel("impacts"),core.birth_channel("nobody")
-    listener:Particle_Channel
-    base.text_set(listener.name[:],"impacts")
-    core.add(&f.listeners,e,listener)
-    fixture_settle(&f)
-    f.app.assets=nil
-    id:=core.World_Id{0,1}
-    tick :: proc(f:^Emitters_Fixture,at:int,impacts,nobody:core.Birth_Channel) {
-        if at%2==0 {core.push(&f.births.queue,core.Birth{channel=impacts,position={f32(at),0,0},count=3})}
-        core.push(&f.births.queue,core.Birth{channel=nobody,count=1})
-        fixture_tick(f,TICK)
+    // Births of ticks 4 to 7 by slot (bit i: one at x = 10*tick+i), in the first run and in the
+    // corrected one; started: the GPU started the first run before the rollback.
+    Case :: struct {name:string,first,corrected:[4]u8,started:bool,expected:[]f32}
+    cases:=[?]Case{
+        {"the same births",{1,1,1,1},{1,1,1,1},true,nil},
+        {"a birth only the corrected tick pushes",{1,1,1,1},{1,3,1,1},true,{51}},
+        {"a birth the corrected tick lacks, started",{3,1,1,1},{1,1,1,1},true,nil},
+        {"a birth the corrected tick lacks, not started",{3,1,1,1},{1,1,1,1},false,{40,50,60,70}},
+        {"a birth only the corrected tick pushes, not started",{1,1,1,1},{1,3,1,1},false,{40,50,51,60,70}},
+        {"a birth the correction moves a metre is the same",{1,1,1,1},{1,2,1,1},true,nil},
     }
-    for at in 0..<4 {tick(&f,at,IMPACTS,NOBODY)}
-    saved:Particle_Clocks
-    defer core.value_free(&saved,type_info_of(Particle_Clocks))
-    testing.expect(t,core.value_copy(&saved,&f.clocks,type_info_of(Particle_Clocks)))
-    for at in 4..<8 {tick(&f,at,IMPACTS,NOBODY)}
-    testing.expect_value(t,len(f.clocks.channels),1)
-    testing.expect(t,size_of(f.clocks.channels[0])<size_of(Channel_Record))
-    fixture_sync(&f,id,TICK)
-    testing.expect_value(t,len(f.sync.births),4)
-    testing.expect(t,f.sync.births[3].position=={6,0,0} && f.sync.births[3].count==3 && f.sync.births[3].number==3)
-    // The rollback: four ticks in, and the same ticks again.
-    testing.expect(t,core.value_copy(&f.clocks,&saved,type_info_of(Particle_Clocks)))
-    for at in 4..<8 {tick(&f,at,IMPACTS,NOBODY)}
-    fixture_sync(&f,id,TICK)
-    testing.expect_value(t,len(f.sync.births),0)
-    tick(&f,8,IMPACTS,NOBODY)
-    fixture_sync(&f,id,TICK)
-    testing.expect_value(t,len(f.sync.births),1)
-    testing.expect_value(t,f.sync.births[0].number,u32(4))
+    for c in cases {
+        f:Emitters_Fixture
+        if !fixture_init(t,&f) {return}
+        e:=fixture_emitter(&f,Particle_Emitter{})
+        IMPACTS,NOBODY:=core.birth_channel("impacts"),core.birth_channel("nobody")
+        listener:Particle_Channel
+        base.text_set(listener.name[:],"impacts")
+        core.add(&f.listeners,e,listener)
+        fixture_settle(&f)
+        f.app.assets=nil
+        id:=core.World_Id{0,1}
+        tick :: proc(f:^Emitters_Fixture,at:int,slots:u8,again:bool,impacts,nobody:core.Birth_Channel) {
+            for i in 0..<8 {
+                if slots&(1<<u8(i))!=0 {core.birth(&f.births,core.Birth{channel=impacts,position={f32(10*at+i),0,0},count=3})}
+            }
+            core.birth(&f.births,core.Birth{channel=nobody,count=1})
+            time:=TICK
+            time.tick,time.resimulating=u64(at),again
+            fixture_tick(f,time)
+        }
+        for at in 0..<4 {tick(&f,at,1,false,IMPACTS,NOBODY)}
+        fixture_sync(&f,id,TICK)
+        saved:Particle_Clocks
+        testing.expect(t,core.value_copy(&saved,&f.clocks,type_info_of(Particle_Clocks)))
+        for at in 4..<8 {tick(&f,at,c.first[at-4],false,IMPACTS,NOBODY)}
+        testing.expect_value(t,len(f.clocks.channels),1)
+        if c.started {fixture_sync(&f,id,TICK)}
+        testing.expect(t,core.value_copy(&f.clocks,&saved,type_info_of(Particle_Clocks)))
+        core.value_free(&saved,type_info_of(Particle_Clocks))
+        for at in 4..<8 {tick(&f,at,c.corrected[at-4],true,IMPACTS,NOBODY)}
+        fixture_sync(&f,id,TICK)
+        got:=make([dynamic]f32,context.temp_allocator)
+        for b in f.sync.births {append(&got,b.position.x)}
+        slice.sort(got[:])
+        testing.expectf(t,slice.equal(got[:],c.expected),"%s: the GPU starts %v, not %v",c.name,got[:],c.expected)
+        tick(&f,8,1,false,IMPACTS,NOBODY)
+        fixture_sync(&f,id,TICK)
+        testing.expectf(t,len(f.sync.births)==1 && f.sync.births[0].position.x==80,"%s: the birth after the rollback starts once at its place, not %v",c.name,f.sync.births[:])
+        fixture_destroy(&f)
+    }
+}
+
+// Births that find no room are reported, never dropped in silence: those past
+// core.BIRTHS_CAPACITY in the log, and those a channel gives up before the
+// GPU started them.
+@(test)
+births_without_room_are_reported :: proc(t:^testing.T) {
+    Case :: struct {name:string,pushed:int,want:string}
+    cases:=[?]Case{
+        {"within the room of the log and of the channel",CHANNEL_BIRTHS,""},
+        {"past the room of a channel",CHANNEL_BIRTHS+6,"6 births of a channel were lost"},
+        {"past the room of the log",core.BIRTHS_CAPACITY+3,"3 births were lost"},
+    }
+    for c in cases {
+        f:Emitters_Fixture
+        if !fixture_init(t,&f) {return}
+        e:=fixture_emitter(&f,Particle_Emitter{})
+        listener:Particle_Channel
+        base.text_set(listener.name[:],"impacts")
+        core.add(&f.listeners,e,listener)
+        fixture_settle(&f)
+        f.app.assets=nil
+        for i in 0..<c.pushed {core.birth(&f.births,core.Birth{channel=core.birth_channel("impacts"),position={f32(i),0,0}})}
+        fixture_tick(&f,TICK)
+        fixture_sync(&f,core.World_Id{0,1},TICK)
+        problem:=core.problem_find(&f.problems,core.NONE,"vfx.births")
+        if c.want=="" {
+            testing.expectf(t,problem==nil,"%s: a problem was reported",c.name)
+        } else {
+            testing.expectf(t,problem!=nil && strings.contains(base.text_get(problem.text[:]),c.want),"%s: no problem says %q",c.name,c.want)
+        }
+        fixture_destroy(&f)
+    }
 }
 
 // The textures of the world reach a view relative to its origin: the region
