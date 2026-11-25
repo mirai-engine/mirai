@@ -170,6 +170,12 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
   benchmark sweeps), which serialize through the workspace measurement lock
   (`workspace.measurement_wait`) or run at integration/close. Research subagents do not edit
   versioned files.
+- **Machines.** At most three agents compile on one machine at once, and one agent uses its GPU at
+  a time (GPU tests, `play test`, captures, live sessions, timings): the GPU turn queues the others
+  ([turns](.agents/skills/mirai-projects/references/build.md#turns-between-processes)). GPU
+  captures, timings and Vulkan runs go to the Windows PC by default when it is reachable
+  ([eco](.agents/skills/mirai-agent-api/SKILL.md#5-remote-windows-sessions-eco)); the Mac's GPU is
+  for Metal verification.
 - **Processes.** Never kill a process you did not start, nor any by name (`pkill`, `killall`,
   `taskkill //IM`). Idle sessions and editors that hold the GPU are ended by the tool: the editor's
   own idle close and `mirai session stop --orphans`.
