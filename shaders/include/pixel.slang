@@ -55,6 +55,23 @@ Pixel pixel_at(int2 p, float2 uv, float depth) {
     px.distance = depth_distance(depth) * kept * reach;
     return px;
 }
+// The width of a pixel at p of the view where it takes the maps of the
+// shadows: at its depth, or of a pixel of the viewmodel no nearer than
+// FOREGROUND_MARK_DEPTH, so its light comes from the levels the world near
+// the eye reads.
+float pixel_across(int2 p, float depth) {
+    float d = depth_distance(depth);
+    if (pixel_foreground(p) != 0u) d = max(d, FOREGROUND_MARK_DEPTH);
+    return frame.footprint.x + frame.footprint.y * d;
+}
+// The surface a pixel is on as spatial filters keep it apart: 1 that of the
+// view, 2 one a nested view drew, 3 the viewmodel's.
+float pixel_side(int2 p, float depth) {
+    return depth_nested(depth) ? 2.0 : pixel_foreground(p) != 0u ? 3.0 : 1.0;
+}
+// The classes of rays a pixel leaves out: those of a viewmodel the local
+// bodies (RAY_BODIES of trace.slang), as its eye is inside its body.
+uint pixel_rays_omitted(int2 p) { return pixel_foreground(p) != 0u ? RAY_BODY | RAY_BODY_SMALL : 0u; }
 // The direction the view of pixel p looks in: what a unit along it adds to the linear depth.
 float3 pixel_forward(int2 p, float depth) {
 #ifdef MIRAI_NESTED_VIEWS

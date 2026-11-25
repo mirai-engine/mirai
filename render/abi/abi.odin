@@ -111,6 +111,7 @@ FRAME_FLAG_FOREGROUND   :: 2048 // the constants of the pass that draws that vie
 // under it by FOREGROUND_CLEARANCE metres.
 FOREGROUND_DEPTH     :: f32(15.0 / 16)
 FOREGROUND_CLEARANCE :: f32(0.02)
+FOREGROUND_MARK_DEPTH :: f32(1) // the pixels of the viewmodel take the maps of the world at the level of a pixel this far, metres, or farther
 VIEWS_FOREGROUND     :: 128
 VIEWS_KEPT           :: 127
 

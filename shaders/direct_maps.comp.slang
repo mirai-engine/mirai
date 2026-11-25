@@ -128,9 +128,9 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 origin = offset_origin(pixel.position - swayed, normal, view_bias(pixel.distance));
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
-    float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
+    float across = float(scale) * pixel_across(source, depth);
     // The width of a pixel of the view at the point, which picks the level or mip of a map.
-    float pixel_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
+    float pixel_width = pixel_across(source, depth);
     bool changes = frame.moved.x > 0u;
     float spin = direct_spin(p);
     bool marked = false;
@@ -139,7 +139,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float sun = direct_sun_weight(pixel.position, normal);
     float sun_part = -1.0, sun_wide = 0.0;
     Sun_Pick pick;
-    if (sun > 0.0 && sun_pick(pixel.position, pixel_across, pick, swayed)) {
+    if (sun > 0.0 && sun_pick(pixel.position, pixel_width, pick, swayed)) {
         // Its level, or the coarser one drawn where its page is not; over the
         // top of the octave of its level, blended into the next.
         Shadow_Map held = sun_level(pick.level);
@@ -174,7 +174,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         // page is not; over the top of the octave of the mip, blended into the next.
         Shadow_Map m;
         Sun_Pick mip;
-        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, pixel_across, m, mip, swayed)) {
+        if (item == DIRECT_CELL_TABLE || !light_map_given(item, pixel.position, pixel_width, m, mip, swayed)) {
             rest = rest || direct_item_weight(row, item, pixel.position, normal) > 0.0;
             continue;
         }
@@ -212,7 +212,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     out_samples[p] = float4(finite_or_zero(open / reflectance), (isfinite(part) ? part : 1.0) + (marked ? 2.0 : 0.0));
     out_sun[p] = isfinite(sun_part) ? sun_part : 1.0;
     // The reach of the spread over each penumbra, in points, and half a point.
-    float width = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
+    float width = float(scale) * pixel_across(source, depth);
     float sun_radius = sun_part >= 0.0 && sun_wide > 0.0 ? min(DIRECT_SPREAD_REACH * sun_wide / width + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
     sun_radius = isfinite(sun_radius) ? sun_radius : 0.0;
     if (rest) {

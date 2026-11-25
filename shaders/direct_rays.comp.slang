@@ -51,7 +51,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint4 row = direct_cell(pixel.position);
     uint count = direct_items(row);
     // The weights of the items and of the sun, the sun last; none for one a map holds here.
-    direct_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
+    direct_across = pixel_across(source, depth);
     float sun = direct_sun_weight(pixel.position, normal);
     Shadow_Map held;
     if (sun > 0.0 && sun_map_given(pixel.position, direct_across, swayed)) sun = 0.0;
@@ -101,7 +101,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     float3 direction;
     float reach;
     direct_ray(light, rest, origin, direct_point(place, m, traced), direct_spin(p), params.sun_radius, direction, reach);
-    Hit hit = trace_ray_impl(origin, direction, 0.0, reach, true, BLEND_PASSES, RAY_SHADOWS);
+    Hit hit = trace_ray_impl(origin, direction, 0.0, reach, true, BLEND_PASSES, RAY_SHADOWS & ~pixel_rays_omitted(source));
     bool changed = occluder_changed(origin, direction, reach, hit.instance, hit.instance == INVALID ? reach : hit.t) || (light != INVALID && light_moved(light));
     out_blockers[p] = (hit.instance == INVALID ? DIRECT_NONE : min(hit.instance, DIRECT_NONE - 1u)) | (changed ? DIRECT_CHANGED : 0u);
 }

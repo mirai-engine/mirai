@@ -74,6 +74,7 @@ groupshared uint list_count;
 groupshared uint list_ids[DIRECT_LIST_MAX];
 groupshared uint list_mesh[DIRECT_LIST_MAX];
 groupshared uint list_tested[DIRECT_LIST_MAX];
+groupshared uint list_flags[DIRECT_LIST_MAX]; // Instance.meta.w
 groupshared float4 list_spheres[DIRECT_LIST_MAX];
 groupshared float4 list_lo[DIRECT_LIST_MAX];
 groupshared float4 list_hi[DIRECT_LIST_MAX];
@@ -96,6 +97,7 @@ void list_add(uint id) {
         list_ids[entry] = id;
         list_mesh[entry] = inst.meta.x;
         list_tested[entry] = inst.tested;
+        list_flags[entry] = inst.meta.w;
         list_lo[entry] = float4(lo, 0.0);
         list_hi[entry] = float4(hi, 0.0);
         list_spheres[entry] = float4(0.5 * (lo + hi), 0.5 * length(hi - lo));
@@ -127,10 +129,11 @@ uint2 list_all() {
 #endif
 
 // How far from o what stands between o and o + w * reach is, -1 for nothing:
-// of the entries of the list `mask` keeps, or with ray queries anything.
-float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
+// of the entries of the list `mask` keeps, or with ray queries anything, but
+// of the classes omitted (pixel_rays_omitted).
+float direct_hit(float3 o, float3 w, float reach, uint2 mask, uint omitted) {
 #ifdef MIRAI_HW_RT
-    Hit found = trace_ray_impl(o, w, 0.0, reach, true, BLEND_PASSES, RAY_SHADOWS);
+    Hit found = trace_ray_impl(o, w, 0.0, reach, true, BLEND_PASSES, RAY_SHADOWS & ~omitted);
     return found.instance != INVALID ? found.t : -1.0;
 #else
     trace_steps = 0u;
@@ -140,6 +143,7 @@ float direct_hit(float3 o, float3 w, float reach, uint2 mask) {
         while (bits != 0u) {
             uint i = word * 32u + firstbitlow(bits);
             bits &= bits - 1u;
+            if ((omitted & RAY_BODY) != 0u && (list_flags[i] & INSTANCE_FLAG_OWNED) != 0u) continue;
             float4 sphere = list_spheres[i];
             float3 to = sphere.xyz - o;
             float3 off = to - w * clamp(dot(to, w), 0.0, reach);
@@ -236,7 +240,8 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     float sun = direct_sun_weight(pixel.position, normal);
     float sun_part = -1.0, sun_wide = 0.0;
     bool sun_given = false;
-    direct_across = frame.footprint.x + frame.footprint.y * depth_distance(depth);
+    direct_across = pixel_across(source, depth);
+    uint omitted = pixel_rays_omitted(source);
     if (sun > 0.0) {
         sun_given = sun_map_given(pixel.position, direct_across, swayed);
         if (sun_given) sun = 0.0;
@@ -342,7 +347,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                             if (traced_open) seen += 1.0;
                             continue;
                         }
-                        float near = direct_hit(origin, direction, reach, mask);
+                        float near = direct_hit(origin, direction, reach, mask, omitted);
                         if (near < 0.0) {
                             seen += 1.0;
                         } else {
@@ -378,7 +383,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
                     if (!(luminance(add) > 0.0)) continue;
                     open += add;
                     if (changes && !marked) marked = light_moved(light) || (q != traced && occluder_changed(origin, direction, reach, INVALID, reach));
-                    float near = q == traced ? -1.0 : direct_hit(origin, direction, reach, mask);
+                    float near = q == traced ? -1.0 : direct_hit(origin, direction, reach, mask, omitted);
                     if (near >= 0.0) {
                         wide += luminance(add) * direct_penumbra(light, reach, near, params.sun_radius);
                         hid += luminance(add);
@@ -408,7 +413,7 @@ void main(uint3 group : SV_GroupID, uint index : SV_GroupIndex) {
     float part = luminance(open) > 0.0 ? saturate(seen / luminance(open)) : 1.0;
     out_samples[p] = float4(finite_or_zero(open / reflectance), (isfinite(part) ? part : 1.0) + (marked ? 2.0 : 0.0));
     // The reach of the spread over each penumbra, in points, and half a point.
-    float width = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
+    float width = float(scale) * pixel_across(source, depth);
     float radius = hid > 0.0 ? min(DIRECT_SPREAD_REACH * wide / (hid * width) + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
     float sun_radius = sun_part >= 0.0 && sun_wide > 0.0 ? min(DIRECT_SPREAD_REACH * sun_wide / width + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
     // The sun a map holds, as direct_maps.comp left it.
