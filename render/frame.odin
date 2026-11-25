@@ -375,7 +375,7 @@ highlight_pass :: proc(p: ^Pass) {
 	rhi.cmd_bind_index_buffer(cmd, s.mesh_draws)
 	rhi.cmd_begin_render_pass(cmd, &pass)
 	for inst, index in s.instances {
-		if !highlight_drawn(inst.meta.w) {continue}
+		if !highlight_drawn(inst.meta.w) || viewmodel_elsewhere(&p.frame, inst.meta.w) {continue}
 		instance_programs_draw(r, cmd, &r.pipelines[.Highlight], u32(index), true, blended = true)
 	}
 	rhi.cmd_end_render_pass(cmd)
@@ -384,14 +384,14 @@ highlight_pass :: proc(p: ^Pass) {
 // Outlines only sample within a few pixels of highlighted silhouettes. Use
 // conservative projected world bounds to avoid running the neighborhood
 // filter over the rest of the drawable. Camera motion changes only this
-// small calculation, never the scene or its acceleration structures.
-// view_projection takes a point from eye.
-highlight_screen_bounds :: proc(instances: []Gpu_Instance, view_projection: Mat4, eye: Vec3, points, render_size: Vec2, glow: f32) -> Vec4 {
+// small calculation, never the scene or its acceleration structures. The
+// boxes are where the view of f draws them (drawn_box).
+highlight_screen_bounds :: proc(instances: []Gpu_Instance, f: ^Gpu_Frame, points, render_size: Vec2, glow: f32) -> Vec4 {
 	lo, hi := Vec2{1e30, 1e30}, Vec2{-1e30, -1e30}
 	found := false
-	for inst in instances {
-		if !highlight_drawn(inst.meta.w) {continue}
-		rect := projected_box({inst.bounds_min.xyz, inst.bounds_max.xyz}, view_projection, eye)
+	for &inst in instances {
+		if !highlight_drawn(inst.meta.w) || viewmodel_elsewhere(f, inst.meta.w) {continue}
+		rect := projected_box(drawn_box(f, &inst), f.view_proj_unjittered, f.camera_position.xyz)
 		lo, hi, found = linalg.min(lo, rect.xy), linalg.max(hi, rect.zw), true
 	}
 	if !found {return {1, 1, 0, 0}}
@@ -1853,7 +1853,7 @@ pass_output :: proc(p: ^Pass, frame: Frame_Desc, ui_written: ^int, overlays := t
 	highlight_bounds := Vec4{1, 1, 0, 0}
 	outline := highlight_drawn_in(p) && highlight_outlined(r)
 	glow := max(r.highlight.width, r.outlines.width)
-	if s.highlighted > 0 && !p.texture {highlight_bounds = highlight_screen_bounds(s.instances[:], p.unjittered, p.camera.position, points, {f32(t.highlight_width), f32(t.highlight_height)}, glow)}
+	if s.highlighted > 0 && !p.texture {highlight_bounds = highlight_screen_bounds(s.instances[:], &p.frame, points, {f32(t.highlight_width), f32(t.highlight_height)}, glow)}
 	if outline {
 		rhi.cmd_timestamp(cmd, "highlight filter")
 		highlight_filter_pass(p, points, highlight_bounds)

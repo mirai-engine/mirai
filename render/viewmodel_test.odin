@@ -60,9 +60,7 @@ held :: proc(center, size: Vec3, yaw: f32 = 0) -> Mat4 {
 	return m
 }
 
-// Where the muzzle of the weapon is, from the eye; its mark is on it.
-@(private = "file")
-MUZZLE :: Vec3{0.12, -0.12, -0.66}
+// Where the mark on the muzzle of the weapon is, from the eye.
 @(private = "file")
 MARK :: Vec3{0.12, -0.095, -0.66}
 
@@ -158,7 +156,8 @@ the_viewmodel_is_drawn_nearer_with_its_own_field_of_view :: proc(t: ^testing.T) 
 }
 
 // A wall as near as the capsule of a character lets it, 0.3 m ahead of the
-// eye, hides none of the weapon; nearer walls cut its far end.
+// eye, hides none of the weapon; it is cut from where a wall reaches its
+// drawn muzzle, VIEWMODEL_SCALE as far as it is.
 @(test)
 a_wall_as_near_as_a_character_goes_hides_none_of_the_viewmodel :: proc(t: ^testing.T) {
 	f: Fixture
@@ -169,17 +168,25 @@ a_wall_as_near_as_a_character_goes_hides_none_of_the_viewmodel :: proc(t: ^testi
 	scene_given(r, {s.floor, s.bar, s.mark}, nil, SUN, {})
 	draw(t, &f, FIRST_PERSON)
 	open := weapon_seen(t, &f).pixels
-	counts: [3]int
-	for distance, i in ([3]f32{0.3, 0.15, 0.05}) {
+	seen :: proc(t: ^testing.T, f: ^Fixture, s: Viewmodel_Scene, distance: f32) -> int {
 		wall := s.wall
 		wall.transform = held({0, 0, -distance - 0.025}, {6, 6, 0.05})
-		scene_given(r, {s.floor, s.bar, s.mark, wall}, nil, SUN, {})
-		draw(t, &f, FIRST_PERSON)
-		counts[i] = weapon_seen(t, &f).pixels
+		scene_given(f.renderer, {s.floor, s.bar, s.mark, wall}, nil, SUN, {})
+		draw(t, f, FIRST_PERSON)
+		return weapon_seen(t, f).pixels
 	}
-	fmt.printfln("viewmodel pixels: %d in the open, %v with a wall at 0.30, 0.15 and 0.05 m", open, counts)
+	counts: [3]int
+	for distance, i in ([3]f32{0.3, 0.15, 0.06}) {counts[i] = seen(t, &f, s, distance)}
+	// The first centimetre a wall cuts it at, coming from 0.3 m.
+	cut := f32(0)
+	for step := 29; step > 5 && cut == 0; step -= 1 {
+		if seen(t, &f, s, f32(step) * 0.01) < open {cut = f32(step) * 0.01}
+	}
+	fmt.printfln("viewmodel pixels: %d in the open, %v with a wall at 0.30, 0.15 and 0.06 m; cut from %.2f m", open, counts, cut)
 	testing.expectf(t, open > 100 && counts[0] == open, "a wall at 0.3 m hides none of the weapon: %d pixels, %d without it", counts[0], open)
-	testing.expectf(t, counts[1] < open, "a wall at 0.15 m, within the capsule, cuts its far end: %d of %d", counts[1], open)
+	muzzle := VIEWMODEL_SCALE * (-MARK.z + 0.005)
+	testing.expectf(t, cut <= muzzle && cut >= muzzle - 0.015, "a wall cuts the weapon from %.2f m, its drawn muzzle is %.3f m away", cut, muzzle)
+	testing.expectf(t, counts[1] < open && counts[2] < counts[1], "nearer walls cut more of it: %v of %d", counts, open)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
@@ -344,5 +351,76 @@ a_view_without_a_viewmodel_draws_as_if_there_were_none :: proc(t: ^testing.T) {
 	different := 0
 	for value, i in with {if value != without[i] {different += 1}}
 	testing.expectf(t, different == 0, "%d values of the image differ", different)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// With the history of the view, the weapon held as the camera turns keeps
+// its colour, and where it was before a move shows what is behind it, with
+// no trail of it (red on a grey floor).
+@(test)
+the_history_of_the_view_leaves_no_trail_of_the_viewmodel :: proc(t: ^testing.T) {
+	settings := viewmodel_settings()
+	settings.taa = true
+	f: Fixture
+	if !fixture_init(t, &f, WIDTH, HEIGHT, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	s := viewmodel_scene(r)
+	turned :: proc(yaw: f32) -> Camera {
+		c := FIRST_PERSON
+		c.forward = {-math.sin(yaw), 0, -math.cos(yaw)}
+		return c
+	}
+	place :: proc(r: ^Renderer, s: ^Viewmodel_Scene, yaw: f32, step: Vec3) {
+		s.bar.transform = held(Vec3{0.12, -0.12, -0.455} + step, {0.04, 0.04, 0.41}, yaw)
+		s.mark.transform = held(MARK + step, {0.01, 0.01, 0.01}, yaw)
+		scene_given(r, {s.floor, s.bar, s.mark}, nil, SUN, {})
+	}
+	// The share of a channel in the light of the pixels of a mask: at most and in the mean.
+	share_of :: proc(t: ^testing.T, f: ^Fixture, mask: []bool, channel: int) -> (most: f32, mean: f32) {
+		display := read_target(t, f, f.renderer.targets.display, f16, 4)
+		count := 0
+		for inside, i in mask {
+			if !inside {continue}
+			red, green, blue := f32(display[i * 4]), f32(display[i * 4 + 1]), f32(display[i * 4 + 2])
+			share := f32(display[i * 4 + channel]) / max(red + green + blue, 1e-6)
+			most, mean, count = max(most, share), mean + share, count + 1
+		}
+		return most, mean / f32(max(count, 1))
+	}
+	// The pixels of the red bar, or of the green mark on it.
+	weapon_mask :: proc(t: ^testing.T, f: ^Fixture, mark := false) -> []bool {
+		albedo := read_target(t, f, f.renderer.targets.albedo, u8, 4)
+		mask := make([]bool, WIDTH * HEIGHT, context.temp_allocator)
+		for &inside, i in mask {
+			red, green := albedo[i * 4], albedo[i * 4 + 1]
+			inside = green > 200 && red < 60 if mark else red > 200 && green < 60
+		}
+		return mask
+	}
+	place(r, &s, 0, {})
+	draw(t, &f, turned(0), 16)
+	for frame in 1 ..= 8 {
+		yaw := f32(frame) * 0.04
+		place(r, &s, yaw, {})
+		draw(t, &f, turned(yaw), 1)
+	}
+	_, turning := share_of(t, &f, weapon_mask(t, &f, true), 1)
+	draw(t, &f, turned(8 * 0.04), 16)
+	_, still := share_of(t, &f, weapon_mask(t, &f, true), 1)
+	testing.expectf(t, still > 0.5 && abs(turning - still) < 0.05, "the mark on the weapon held as the camera turns keeps its green: %.3f, %.3f held still there", turning, still)
+	before := weapon_mask(t, &f)
+	place(r, &s, 8 * 0.04, {0.06, 0.05, 0})
+	draw(t, &f, turned(8 * 0.04), 1)
+	moved := weapon_mask(t, &f)
+	left := make([]bool, WIDTH * HEIGHT, context.temp_allocator)
+	count := 0
+	for &inside, i in left {
+		inside = before[i] && !moved[i]
+		if inside {count += 1}
+	}
+	most, _ := share_of(t, &f, left, 0)
+	testing.expectf(t, count > 20 && most < 0.45, "where the weapon was the frame before shows the floor: a share of red of %.3f at most, over %d pixels", most, count)
+	fmt.printfln("viewmodel history: green of the mark %.3f still, %.3f turning; red %.3f at most where the bar was, of %d pixels", still, turning, most, count)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }

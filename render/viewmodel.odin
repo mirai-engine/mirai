@@ -53,12 +53,19 @@ viewmodel_rows :: proc(r: ^Renderer, camera: Camera, forward: Vec3) -> (rows: [3
 	return
 }
 
+// Whether an instance of these flags is of a viewmodel the view of f does
+// not draw: that of another body than its own.
+@(private)
+viewmodel_elsewhere :: proc "contextless" (f: ^Gpu_Frame, flags: u32) -> bool {
+	return flags & INSTANCE_FLAG_VIEWMODEL != 0 && f.own & 0xff != (flags >> INSTANCE_OWNER_SHIFT & 3) + 1
+}
+
 // The box a view draws an instance in: that of the viewmodel of its body
 // around where it draws it.
 @(private)
 drawn_box :: proc "contextless" (f: ^Gpu_Frame, inst: ^Gpu_Instance) -> mm.Aabb {
 	low, high, flags := inst.bounds_min.xyz, inst.bounds_max.xyz, inst.meta.w
-	if flags & INSTANCE_FLAG_VIEWMODEL == 0 || f.own & 0xff != (flags >> INSTANCE_OWNER_SHIFT & 3) + 1 {return {low, high}}
+	if flags & INSTANCE_FLAG_VIEWMODEL == 0 || viewmodel_elsewhere(f, flags) {return {low, high}}
 	eye := f.camera_position.xyz
 	center, half := (low + high) * 0.5 - eye, (high - low) * 0.5
 	drawn, reach: Vec3

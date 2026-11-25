@@ -75,15 +75,15 @@ camera and visible scene since last frame, reprojecting histories instead of cut
   applies it to every corner (now and before, for motion), normal and tangent of those instances,
   so the visibility raster, resolve, forward, glass, overlays and outlines draw them at that place
   and the lights, probes and maps of the world light them there like any surface.
-- **Cull:** the frustum tests take the box around the drawn place (`view_drawn_box`, `drawn_box` on
-  the CPU); the occlusion tests leave those instances out (nothing is between them and the eye);
-  the cut of the levels and the back-face cones keep the true box (facing is the same at both
-  places).
-- **Near plane:** a view that draws a viewmodel sees from `VIEWMODEL_NEAR` (0.1 m of the weapon) if
-  its camera's is farther. `VIEWMODEL_SCALE` keeps what is within 1 m of the eye within the 0.3 m
-  of the template's capsule.
-- **Not drawn right:** an outline of a highlighted viewmodel is filtered within its true box
-  (`highlight_screen_bounds`).
+- **Cull:** the frustum tests take the box around the drawn place (`view_drawn_box`; on the CPU
+  `drawn_box` for glass order and the outline region, `viewmodel_elsewhere` for what another view
+  leaves out); the occlusion tests leave those instances out (nothing is between them and the eye);
+  the cut of the levels and the back-face cones keep the true box (facing from the eye is the same
+  at both places).
+- **Near plane:** a view that draws a viewmodel sees from `VIEWMODEL_NEAR` (what of the weapon is
+  10 cm or more from the eye) if its camera's is farther; other views keep theirs.
+  `VIEWMODEL_SCALE` keeps what is within 1 m ahead of the eye within the 0.3 m of a character's
+  capsule (the template's rifle, 0.275 to 0.825 m ahead, is drawn 8 to 25 cm ahead).
 
 ## Texture views
 
