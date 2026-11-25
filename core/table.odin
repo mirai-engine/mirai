@@ -266,6 +266,12 @@ table_edit_reserve :: proc(t:^Table($T),rows:int) -> bool {
 // Whether rows were asked for to write since the table last settled.
 table_has_edits :: #force_inline proc "contextless" (t:^Table($T,$A)) -> bool {return len(t.edits)>0}
 
+// Whether the row still holds the value it had before the edits of the table began, so the next
+// edit_at of it is its first.
+row_unedited :: #force_inline proc "contextless" (t:^Table($T,$A),row:int) -> bool {
+    return len(t.edits)==0 || t.stamps[row]<=t.edit_from
+}
+
 // An empty table: it asks its allocator for nothing until it has rows.
 table_init :: proc(t:^Table($T),name:string,allocator:=context.allocator) {raw_init(raw(t),name,allocator)}
 

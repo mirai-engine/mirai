@@ -172,8 +172,7 @@ actor_at :: proc(t:^Tick,e:core.Entity,row:int) -> (u:Actor,ok:bool) {
 
 @(private)
 user_edit :: proc(t:^Tick,u:^Actor) -> ^Ability_User {
-    stamp:=core.stamp(t.users,u.user_row)
-    if !core.table_has_edits(t.users) || stamp<=t.users.edit_from {u.setup_check.stamp=stamp}
+    if core.row_unedited(t.users,u.user_row) {u.setup_check.stamp=core.stamp(t.users,u.user_row)}
     value:=core.edit_at(t.users,u.user_row)
     u.setup_check.write=core.stamp(t.users,u.user_row)
     return value
