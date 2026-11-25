@@ -155,8 +155,12 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
 
 ## Parallel work
 
-- **Integration branch.** Branch from `main` (or named integration branch); rebase before editing
-  and merge updates during long tasks. Land shared contracts (types, APIs, formats) first.
+- **Integration branch.** Branch from the integration branch the brief names (else `main`) and
+  update from it once, at hand-off, not at every step. Land shared contracts (types, APIs,
+  formats) first.
+- **Integrator.** Integrate branches in batches of three to five that are ready together. Fix
+  merge and call-site fallout of about 20 lines or less in place and say so; send larger defects
+  back to the author.
 - **Closed scope & dependencies.** Batch upfront questions with defaults; check
   [workarounds](docs/ODIN_WORKAROUNDS.md) before debugging Odin/Slang/SDL.
 - **Subagent verification & sessions.** Subagents that write code MAY and SHOULD open
