@@ -58,7 +58,7 @@ interaction_tick :: proc(f:^Interaction_Test,tick:u64,use:input.Action_State={})
     state.actions.count=u32(USE)+1
     state.actions.states[USE]=use
     test_world_settle(&f.w)
-    queries:=core.World_Queries{open=proc(w:core.World_Ref) -> (core.World_Query,bool) {
+    queries:=core.World_Queries{open=proc(w:core.World_Read) -> (core.World_Query,bool) {
         return {user=w.data,probe=proc(user:rawptr,origin,direction:[3]f32,length,radius:f32,ignore:core.Entity,mask:u32) -> (core.World_Hit,bool) {
             walls:=(cast(^Interaction_Test)user).walls
             return len(walls)>0?core.World_Hit{entity=walls[0],distance=length/2}:{},len(walls)>0

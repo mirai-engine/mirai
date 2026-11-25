@@ -361,36 +361,37 @@ world_read :: #force_inline proc "contextless" (w:World_Ref) -> World_Read {
     return World_Read(w)
 }
 
-world_entities_read :: proc "contextless" (w:World_Read) -> Ref(Entities) {
-    if w.data==nil || w.info==nil || w.place!=.World {return {}}
-    return ref(world_entities(World_Ref(w)))
-}
-
 world_table_read :: proc(w:World_Read,$T:typeid) -> ^Table(T,.Read) {
     if w.data==nil || w.info==nil {return nil}
-    return read(world_table_of(World_Ref(w),T))
+    table,_:=world_table_readable(w,T)
+    return cast(^Table(T,.Read))table
 }
 
 world_entities :: proc "contextless" (w:World_Ref) -> ^Entities {
     return cast(^Entities)(uintptr(w.data)+w.info.entities)
 }
 
-world_table :: proc(w:World_Ref,type:typeid) -> (table:^Raw_Table,info:^Table_Info) {
-    place:=Place(u8(w.place)&~QUERY_READ_ONLY)
+// The table of a type in the place of w, and what it is; nil without one.
+world_table :: proc{world_table_writable,world_table_readable}
+
+world_table_writable :: proc(w:World_Ref,type:typeid) -> (table:^Raw_Table,info:^Table_Info) {return world_table_readable(world_read(w),type)}
+
+world_table_readable :: proc(w:World_Read,type:typeid) -> (table:^Raw_Table,info:^Table_Info) {
     if w.info.tables_by_type!=nil {
         at,found:=w.info.tables_by_type[type]
-        if !found || w.info.tables[at].place!=place {return nil,nil}
-        return world_table_at(w,&w.info.tables[at]),&w.info.tables[at]
+        if !found || w.info.tables[at].place!=w.place {return nil,nil}
+        info=&w.info.tables[at]
+        return cast(^Raw_Table)(uintptr(w.data)+info.offset),info
     }
     for &t in w.info.tables {
-        if t.type==type && t.place==place {return world_table_at(w,&t),&t}
+        if t.type==type && t.place==w.place {return cast(^Raw_Table)(uintptr(w.data)+t.offset),&t}
     }
     return nil,nil
 }
 
 world_table_named :: proc(w:World_Ref,name:string) -> (table:^Raw_Table,info:^Table_Info) {
     for &t in w.info.tables {
-        if t.place==Place(u8(w.place)&~QUERY_READ_ONLY) && strings.equal_fold(t.name,name) {return cast(^Raw_Table)(uintptr(w.data)+t.offset),&t}
+        if t.place==w.place && strings.equal_fold(t.name,name) {return cast(^Raw_Table)(uintptr(w.data)+t.offset),&t}
     }
     return nil,nil
 }
@@ -402,12 +403,12 @@ world_table_at :: proc "contextless" (w:World_Ref,t:^Table_Info) -> ^Raw_Table {
 // A storage of a World, to read or to write: its revision moves, so the next
 // copy of what changed takes it again.
 world_storage :: proc(w:World_Ref,type:typeid) -> rawptr {
-    at:=world_storage_index(w,type)
+    at:=world_storage_index(world_read(w),type)
     return at<0?nil:world_storage_at(w,at)
 }
 
 world_storage_read :: proc(w:World_Read,type:typeid) -> rawptr {
-    at:=world_storage_index(World_Ref(w),type)
+    at:=world_storage_index(w,type)
     return at<0?nil:rawptr(uintptr(w.data)+w.info.storages[at].offset)
 }
 
@@ -416,16 +417,15 @@ world_storage_read_of :: proc(w:World_Read,$T:typeid) -> Ref(T) {
 }
 
 @(private)
-world_storage_index :: proc(w:World_Ref,type:typeid) -> int {
+world_storage_index :: proc(w:World_Read,type:typeid) -> int {
     if w.info==nil || w.data==nil {return -1}
-    place:=Place(u8(w.place)&~QUERY_READ_ONLY)
     if w.info.storages_by_type!=nil {
         at,found:=w.info.storages_by_type[type]
-        if !found || w.info.storages[at].place!=place {return -1}
+        if !found || w.info.storages[at].place!=w.place {return -1}
         return at
     }
     for s,at in w.info.storages {
-        if s.type==type && s.place==place && !s.by_world {return at}
+        if s.type==type && s.place==w.place && !s.by_world {return at}
     }
     return -1
 }
@@ -516,31 +516,10 @@ type_has_entity :: proc(info:^runtime.Type_Info) -> bool {
     return false
 }
 
-@(private)
-table_value_info :: proc(info:^runtime.Type_Info) -> (elem:^runtime.Type_Info,ok:bool) {
-    base:=runtime.type_info_base(info)
-    s,is_struct:=base.variant.(runtime.Type_Info_Struct)
-    if !is_struct || base.size!=size_of(Raw_Table) || s.field_count<2 || s.names[0]!="values" ||
-       s.names[1]!="aux" || s.offsets[1]!=offset_of(Raw_Table,aux) {return nil,false}
-    ptr,is_ptr:=runtime.type_info_base(s.types[1]).variant.(runtime.Type_Info_Pointer)
-    if !is_ptr {return nil,false}
-    named,is_named:=ptr.elem.variant.(runtime.Type_Info_Named)
-    if !is_named || named.name!="Table_Aux" {return nil,false}
-    arr,is_arr:=runtime.type_info_base(s.types[0]).variant.(runtime.Type_Info_Dynamic_Array)
-    if !is_arr {return nil,false}
-    return arr.elem,true
-}
-
 // Copies a value with what its dynamic arrays and slices hold. Pointers,
 // maps and procedures are copied as they are.
 value_copy :: proc(dst,src:rawptr,info:^runtime.Type_Info) -> bool {
     if dst==src {return true}
-    if elem,is_table:=table_value_info(info);is_table {
-        d,s:=cast(^Raw_Table)dst,cast(^Raw_Table)src
-        if !raw_copy(d,s,elem,value_flat(elem)) {return false}
-        d.base,d.single,d.name,d.lock_plan=s.base,s.single,s.name,s.lock_plan
-        return true
-    }
     if value_flat(info) {
         mem.copy(dst,src,info.size)
         return true
@@ -696,16 +675,6 @@ bytes_hash :: proc(bytes:[]u8,seed:u64) -> u64 {return len(bytes)==0?seed:xxhash
 // Frees what the dynamic arrays and slices of a value hold.
 value_free :: proc(data:rawptr,info:^runtime.Type_Info) {
     if value_flat(info) {return}
-    if elem,is_table:=table_value_info(info);is_table {
-        t:=cast(^Raw_Table)data
-        if !value_flat(elem) {
-            for values in ([2]runtime.Raw_Dynamic_Array{t.values,t.added}) {
-                for i in 0..<values.len {value_free(rawptr(uintptr(values.data)+uintptr(i*elem.size)),elem)}
-            }
-        }
-        raw_destroy(t,elem.size)
-        return
-    }
     base:=runtime.type_info_base(info)
     #partial switch v in base.variant {
     case runtime.Type_Info_Struct:

@@ -56,7 +56,7 @@ Pcg_Test :: struct {
 }
 
 @(private="file")
-test_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+test_open :: proc(w:core.World_Read) -> (core.Ground_Query,bool) {
     probe :: proc(user:rawptr,origin,down:[3]f32) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
         f:=cast(^Pcg_Test)user
         f.probes+=1
@@ -681,7 +681,7 @@ hostile_inputs_place_nothing_and_never_crash :: proc(t:^testing.T) {
 }
 
 @(private="file")
-hills_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+hills_open :: proc(w:core.World_Read) -> (core.Ground_Query,bool) {
     probe :: proc(user:rawptr,origin,down:[3]f32) -> (hit:core.Ground_Hit,found:core.Ground_Found) {
         f:=cast(^Pcg_Test)user
         f.probes+=1

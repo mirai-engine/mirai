@@ -147,9 +147,7 @@ place_migrate :: proc(m:^World_Migration,place:Place,data,fresh:rawptr,allocator
         old:=&m.from.tables[m.table_sources[i]]
         src,dst:=cast(^Raw_Table)(uintptr(data)+old.offset),cast(^Raw_Table)(uintptr(fresh)+t.offset)
         table_take(dst,src)
-        if aux:=dst.aux;aux!=nil {
-            for &owner in aux.owners {owner.id=lock_id_map(locks_from,locks_to,owner.id)}
-        }
+        for &owner in dst.owners {owner.id=lock_id_map(locks_from,locks_to,owner.id)}
         if m.tables[i]==.Convert {table_convert(m,old,&t,dst,src)}
     }
     for &s,i in m.to.storages {
@@ -234,7 +232,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     when CHECK_WRITES {clear(&t.settled.values)}
     if top:=version_top(t);top>t.version {t.version=top+1}
     t.added,old_table.added=old_table.added,t.added
-    t.edits,old_table.edits=old_table.edits,t.edits
+    t.edited,old_table.edited=old_table.edited,t.edited
     count:=t.values.len
     old:=t.values
     size,align:=to.info.size,to.info.align
@@ -246,9 +244,7 @@ table_convert :: proc(m:^World_Migration,from,to:^Table_Info,t,old_table:^Raw_Ta
     if values.data!=nil {values_convert(m,from.info,to.info,to.default,(cast([^]u8)values.data)[:size*count],(cast([^]u8)old.data)[:from.info.size*count],count)}
     if values.data==nil && count>0 {
         // The rows cannot stay without values: they go, as with a table that is gone.
-        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps)
-        aux_clear_rows(t)
-        if t.aux!=nil {clear(&t.aux.owners)}
+        clear(&t.entities);clear(&t.stamps);clear(&t.page_stamps);clear(&t.off);clear(&t.turns);clear(&t.owners)
         rows_zero(t)
         t.on=0
         t.version=version_top(t)+1

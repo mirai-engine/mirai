@@ -58,7 +58,7 @@ the_progress_of_the_player_comes_back_from_the_profile :: proc(t:^testing.T) {
 
     testing.expect_value(t,profile_read(ref,&app,&state),Error.Not_Found)
     w.progress={level=3,best=41.5}
-    if !testing.expect_value(t,profile_write(ref,&app,&state),Error.None) {return}
+    if !testing.expect_value(t,profile_write(core.world_read(ref),&app,&state),Error.None) {return}
     path,_:=profile_path(&state,&app)
     testing.expect(t,os.is_file(path))
 
@@ -126,13 +126,13 @@ the_profile_names_a_storage_it_cannot_hold :: proc(t:^testing.T) {
     problems:core.Problems
 
     w.kept={level=2,shown=9}
-    if !testing.expect_value(t,profile_write(test_world_ref(&w),&app,&state,&problems),Error.None) {return}
+    if !testing.expect_value(t,profile_write(core.world_read(test_world_ref(&w)),&app,&state,&problems),Error.None) {return}
     w.kept={}
     testing.expect_value(t,profile_read(test_world_ref(&w),&app,&state,&problems),Error.None)
     testing.expect_value(t,w.kept,Progress_Kept{level=2})
 
     both.kept={level=5}
-    testing.expect_value(t,profile_write(test_world_ref(&both),&app,&state,&problems),Error.Failed)
+    testing.expect_value(t,profile_write(core.world_read(test_world_ref(&both)),&app,&state,&problems),Error.Failed)
     testing.expect_value(t,problems.count,1)
     text:=core.problem_text(&problems.entries[0])
     testing.expectf(t,strings.contains(text,"game/Named") && strings.contains(text,"name"),"%s",text)

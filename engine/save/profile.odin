@@ -57,8 +57,8 @@ kept_hashes :: proc(w:core.World_Read,app:^host.App) -> (hashes:[Kept_File]u64) 
 kept_write :: proc(file:Kept_File,w:core.World_Read,app:^host.App,state:^Save_State,problems:^core.Problems) {
     error:Error
     switch file {
-    case .Profile: error=profile_write(core.World_Ref(w),app,state,problems)
-    case .Options: error=options_write(core.World_Ref(w),app)
+    case .Profile: error=profile_write(w,app,state,problems)
+    case .Options: error=options_write(w,app)
     }
     if error==.None || error==.Unavailable {return}
     core.report(problems,core.NONE,"save.kept","the %v of the player was not written: %s; it is written again when it changes, or check the permissions of its folder",file,error_text(error))
@@ -93,7 +93,7 @@ kept_flush :: proc(work:^Save_Work,w:core.World_Read,app:^host.App,state:^Save_S
 }
 
 // The options of the player to their file; Unavailable without them (the editor).
-options_write :: proc(w:core.World_Ref,app:^host.App) -> Error {
+options_write :: proc(w:core.World_Read,app:^host.App) -> Error {
     if app.options=="" {return .Unavailable}
     return host.app_options_save(app,w.data)?.None:.Write_Failed
 }
@@ -130,7 +130,7 @@ profile_unkept :: proc(ws:^core.World_Schema,i:int,storage:core.Storage_Info) ->
 
 // Writes the persist storages of the world to the profile, replacing it. A
 // storage the profile cannot hold writes none, and is a problem that names it.
-profile_write :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,problems:^core.Problems=nil) -> Error {
+profile_write :: proc(w:core.World_Read,app:^host.App,state:^Save_State,problems:^core.Problems=nil) -> Error {
     path:=profile_path(state,app) or_return
     ws:=w.info.schema if w.info.schema!=nil else core.world_schema_make(w.info,context.temp_allocator)
     if ws==nil {return .Failed}

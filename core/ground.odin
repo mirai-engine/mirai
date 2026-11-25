@@ -32,13 +32,13 @@ Ground_Query :: struct {
 // Not shared: its one writer runs before its readers in each stage.
 @(storage)
 Ground_Queries :: struct {
-    open:proc(w:World_Ref) -> (Ground_Query,bool),
+    open:proc(w:World_Read) -> (Ground_Query,bool),
     changed:Events(mm.Aabb),  // where its surface changed, in the world
     unloaded:Events(mm.Aabb), // where whether its collision is loaded changed (Ground_Query.unloaded)
 }
 
 // The ground of the world w; one without a probe when no library makes it.
-ground_query :: proc(w:World_Ref,queries:Ref(Ground_Queries)) -> Ground_Query {
+ground_query :: proc(w:World_Read,queries:Ref(Ground_Queries)) -> Ground_Query {
     if queries.ptr==nil || queries.open==nil || w.data==nil {return {}}
     query,_:=queries.open(w)
     return query

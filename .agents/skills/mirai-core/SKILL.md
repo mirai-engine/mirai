@@ -28,7 +28,7 @@ A game is a struct in memory and a list of functions that transform it
   to the network: [network](references/core.md#network).
 - Teleporting or placing an entity without knowing who owns its `Transform` (`place`, `Places`):
   [requested places](references/core.md#requested-places).
-- Rays and spheres against the world regardless of physics (`World_Queries`, `world_query`):
+- Rays and spheres against the world regardless of physics (`World_Queries`, `world_query_read`):
   [world queries](references/core.md#world-queries); the ground regardless of terrain
   (`Ground_Queries`, `ground_query`, the boxes where it changed or is not loaded):
   [ground](references/core.md#ground); births of effects regardless of vfx (`Births`,

@@ -79,7 +79,7 @@ nav_test_init :: proc(t:^testing.T,f:^Nav_Test,threads:=0) -> bool {
     f.settings={bodies=64,shapes=64,contacts=256,joints=4,characters=8}
     f.nav_settings.tile_cells=48
     jobs.system_init(&f.app.jobs,{threads=threads})
-    f.ground.open=proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
+    f.ground.open=proc(w:core.World_Read) -> (core.Ground_Query,bool) {
         f:=cast(^Nav_Test)w.data
         return {unloaded=f.unloaded[:]},true
     }

@@ -517,7 +517,7 @@ navigation_build :: proc(
         sections_gather(&b.sections,references,worlds,ids,problems)
         b.looked+=u64(core.count(references))
     }
-    q:=core.ground_query(world,ground)
+    q:=core.ground_query(core.world_read(world),ground)
     gone:=Unloaded{q.unloaded,&b.sections,base.hash_combine(b.unloaded,b.sections.hash)}
     fresh,reset:=false,false
     // A class is made again when it changes, or when what blocks its agents does (Collision_Settings).

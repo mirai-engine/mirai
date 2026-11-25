@@ -23,7 +23,7 @@ ground_step :: proc(w:^Ground_World,resident:^Terrain_Resident,focus:=Terrain_Fo
     clear(&w.ground_queries.changed.items);clear(&w.ground_queries.unloaded.items)
     ground_update(&w.terrain_ground,resident,&w.data,core.read(&w.terrains),&w.colliders,core.read(&w.worlds),focus,&w.ground_queries)
     w.ground_queries.open=ground_open
-    return core.ground_query(test_world_ref(w),core.ref(&w.ground_queries))
+    return core.ground_query(core.world_read(test_world_ref(w)),core.ref(&w.ground_queries))
 }
 
 @(private="file")

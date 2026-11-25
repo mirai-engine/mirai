@@ -634,20 +634,21 @@ frame_begin :: proc(args:Frame_Begin,preview:bool) {
     }
 }
 
-// Builds what gui_frame_begin planned in the contexts it opened.
+// Builds what gui_frame_begin planned in the contexts it opened. A control
+// bound to a storage writes it.
 @(step="ui")
-gui_widgets :: proc(world:core.World_Read,gui:^Gui,app:^host.App,problems:^core.Problems) {
+gui_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
     widgets_build(world,gui,app,problems)
 }
 
 @(step="ui",loops="editor")
-gui_preview_widgets :: proc(world:core.World_Read,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
+gui_preview_widgets :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,time:core.Time,problems:^core.Problems) {
     if time.playing {return}
     widgets_build(world,gui,app,problems)
 }
 
 @(private)
-widgets_build :: proc(world:core.World_Read,gui:^Gui,app:^host.App,problems:^core.Problems) {
+widgets_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,problems:^core.Problems) {
     if gui==nil {return}
     for &s,p in gui.surfaces {
         if !s.open {continue}

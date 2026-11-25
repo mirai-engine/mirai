@@ -106,6 +106,38 @@ import "mirai:core"
     testing.expectf(t,loose && twice && !pushes && itself,"%v",errors)
 }
 
+// A step that declares core.World_Read only reads: one that makes a
+// core.World_Ref of it, by itself or in a helper, is told to receive it.
+@(test)
+a_step_that_reads_the_world_cannot_write_through_it :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"params")
+    if folder=="" {return}
+    p,ok:=params_project(t,folder,PARAMS_CORE+"World_Ref :: struct {data:rawptr}\nWorld_Read :: distinct World_Ref\n","package game\n")
+    if !ok {return}
+    errors:=params_errors(t,&p,`package game
+import "mirai:core"
+@(params) Viewer :: struct {world:core.World_Read}
+replace :: proc(w:core.World_Ref) {}
+hand :: proc(w:core.World_Read) {replace(core.World_Ref(w))}
+look :: proc(w:core.World_Read) {}
+@(step="frame") game_cast :: proc(world:core.World_Read) {replace(core.World_Ref(world))}
+@(step="frame") game_transmute :: proc(world:core.World_Read) {w:=transmute(core.World_Ref)world;replace(w)}
+@(step="frame") game_helper :: proc(world:core.World_Read) {hand(world)}
+@(step="frame") game_grouped :: proc(view:Viewer) {hand(view.world)}
+@(step="frame") game_reads :: proc(world:core.World_Read) {look(world)}
+@(step="frame") game_writes :: proc(world:core.World_Ref) {replace(world)}
+`)
+    told:=map[string]bool{}
+    defer delete(told)
+    for message in errors {
+        for name in ([]string{"game_cast","game_transmute","game_helper","game_grouped","game_reads","game_writes"}) {
+            if strings.contains(message,name) && strings.contains(message,"receive core.World_Ref") {told[name]=true}
+        }
+    }
+    testing.expectf(t,told["game_cast"] && told["game_transmute"] && told["game_helper"] && told["game_grouped"],"%v",errors)
+    testing.expectf(t,!told["game_reads"] && !told["game_writes"],"%v",errors)
+}
+
 // A @(params) groups step parameters by value. A cycle, a pointer, or
 // a field that cannot be bound has a diagnostic.
 @(test)

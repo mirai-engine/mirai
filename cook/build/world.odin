@@ -1657,6 +1657,32 @@ queue_path :: proc(expr:^ast.Expr) -> string {
     return ""
 }
 
+// How the body of a step names a parameter: through the @(params) it is in.
+@(private="file")
+param_path :: proc(p:Param) -> string {
+    path:=strings.builder_make(context.temp_allocator)
+    strings.write_string(&path,p.root)
+    for nested in p.path {fmt.sbprintf(&path,".%s",nested.name)}
+    if p.bundle!=nil {fmt.sbprintf(&path,".%s",p.name)}
+    return strings.to_string(path)
+}
+
+// The parameter of a procedure an argument binds: by its name, or by its
+// position i; "" when it binds none.
+@(private="file")
+param_of :: proc(fn:Queue_Proc,named:string,i:int) -> string {
+    if fn.literal==nil || fn.literal.type.params==nil {return ""}
+    at:=0
+    for field in fn.literal.type.params.list {
+        for n in field.names {
+            name:=ident_name(n)
+            if named!=""?named==name:at==i {return name}
+            at+=1
+        }
+    }
+    return ""
+}
+
 // Follows a named queue through calls that forward it or its containing storage.
 @(private="file")
 queue_uses :: proc(g:^Generator,procs:map[string]Queue_Proc,seen:^map[[2]string]bool,
@@ -1704,23 +1730,12 @@ queue_uses :: proc(g:^Generator,procs:map[string]Queue_Proc,seen:^map[[2]string]
                 case "append","append_elem","append_elems": w.uses+={.Push}
                 }
             }
-            if next.literal==nil || next.literal.type.params==nil ||
-               path!=w.path && !strings.has_prefix(w.path,fmt.tprintf("%s.",path)) {
-                continue
-            }
-            at:=0
-            for field in next.literal.type.params.list {
-                for n in field.names {
-                    name:=ident_name(n)
-                    if named!=""?named==name:at==i {
-                        inner:=fmt.tprintf("%s%s",name,w.path[len(path):])
-                        visit_key:=[2]string{key,inner}
-                        if visit_key not_in w.seen^ {
-                            w.seen^[visit_key]=true
-                            w.uses+=queue_uses(w.g,w.procs,w.seen,next,inner)
-                        }
-                    }
-                    at+=1
+            if path!=w.path && !strings.has_prefix(w.path,fmt.tprintf("%s.",path)) {continue}
+            if name:=param_of(next,named,i);name!="" {
+                inner:=fmt.tprintf("%s%s",name,w.path[len(path):])
+                if visit_key:=([2]string{key,inner});visit_key not_in w.seen^ {
+                    w.seen^[visit_key]=true
+                    w.uses+=queue_uses(w.g,w.procs,w.seen,next,inner)
                 }
             }
         }
@@ -1732,8 +1747,9 @@ queue_uses :: proc(g:^Generator,procs:map[string]Queue_Proc,seen:^map[[2]string]
     return walk.uses
 }
 
+// The procedures of every package, by key, that a walk follows into.
 @(private="file")
-queues_check :: proc(g:^Generator) {
+package_procs :: proc(g:^Generator) -> map[string]Queue_Proc {
     procs:=make(map[string]Queue_Proc,context.temp_allocator)
     for pkg in g.packages {
         for file in pkg.files {
@@ -1747,6 +1763,74 @@ queues_check :: proc(g:^Generator) {
             }
         }
     }
+    return procs
+}
+
+// Whether a procedure makes a core.World_Ref of the core.World_Read at path,
+// itself or in a procedure it hands it to.
+@(private="file")
+world_read_writes :: proc(g:^Generator,procs:map[string]Queue_Proc,seen:^map[[2]string]bool,
+                          fn:Queue_Proc,path:string) -> bool {
+    if fn.literal==nil || fn.literal.body==nil {return false}
+    Walk :: struct {g:^Generator,procs:map[string]Queue_Proc,seen:^map[[2]string]bool,fn:Queue_Proc,path:string,writes:bool}
+    reaches :: proc(w:^Walk,expr:^ast.Expr) -> bool {
+        at:=queue_path(expr)
+        return at==w.path || strings.has_prefix(at,fmt.tprintf("%s.",w.path))
+    }
+    visit :: proc(v:^ast.Visitor,node:^ast.Node) -> ^ast.Visitor {
+        if node==nil {return nil}
+        w:=cast(^Walk)v.data
+        #partial switch n in node.derived {
+        case ^ast.Type_Cast:
+            if type_key(w.g,w.fn.file,w.fn.pkg,n.type)=="mirai:core.World_Ref" && reaches(w,n.expr) {w.writes=true}
+        case ^ast.Call_Expr:
+            key:=type_key(w.g,w.fn.file,w.fn.pkg,n.expr)
+            next:=w.procs[key]
+            for expr,i in n.args {
+                arg,named:=expr,""
+                if field,ok:=arg.derived.(^ast.Field_Value);ok {named,arg=ident_name(field.field),field.value}
+                if key=="mirai:core.World_Ref" || key=="mirai:core.world_ref" {
+                    if reaches(w,arg) {w.writes=true}
+                    continue
+                }
+                if queue_path(arg)!=w.path {continue}
+                if name:=param_of(next,named,i);name!="" {
+                    if visit_key:=([2]string{key,name});visit_key not_in w.seen^ {
+                        w.seen^[visit_key]=true
+                        w.writes||=world_read_writes(w.g,w.procs,w.seen,next,name)
+                    }
+                }
+            }
+        }
+        return v
+    }
+    walk:=Walk{g=g,procs=procs,seen=seen,fn=fn,path=path}
+    visitor:=ast.Visitor{visit=visit,data=&walk}
+    ast.walk(&visitor,fn.literal.body)
+    return walk.writes
+}
+
+// A step that declares core.World_Read only reads: one that makes a
+// core.World_Ref of it to write would skip the check of its writes, its
+// order and the settle after it.
+@(private="file")
+world_read_check :: proc(g:^Generator,procs:map[string]Queue_Proc) {
+    seen:=make(map[[2]string]bool,context.temp_allocator)
+    for s in g.steps {
+        if s.literal==nil {continue}
+        for p in s.params {
+            if p.kind!=.World_Read {continue}
+            path:=param_path(p)
+            clear(&seen)
+            if world_read_writes(g,procs,&seen,{s.source,s.pkg,s.literal},path) {
+                append(&g.errors,fmt.aprintf("%s: %s receives %s as core.World_Read and makes a core.World_Ref of it to write; receive core.World_Ref so that its writes are checked, ordered and settled",s.where_,s.name,path))
+            }
+        }
+    }
+}
+
+@(private="file")
+queues_check :: proc(g:^Generator,procs:map[string]Queue_Proc) {
     Access :: struct {type:^Type,step:^Step,uses:bit_set[Queue_Use]}
     accesses:=make([dynamic]Access,context.temp_allocator)
     seen:=make(map[[2]string]bool,context.temp_allocator)
@@ -1754,15 +1838,11 @@ queues_check :: proc(g:^Generator) {
         if s.literal==nil {continue}
         for p in s.params {
             if p.kind!=.Storage_Write || !p.type.queue || len(p.type.queues)==0 {continue}
-            path:=strings.builder_make(context.temp_allocator)
-            strings.write_string(&path,p.root)
-            for nested in p.path {fmt.sbprintf(&path,".%s",nested.name)}
-            if p.bundle!=nil {fmt.sbprintf(&path,".%s",p.name)}
+            path:=param_path(p)
             uses:bit_set[Queue_Use]
             for field in p.type.queues {
                 clear(&seen)
-                uses+=queue_uses(g,procs,&seen,{s.source,s.pkg,s.literal},
-                                 fmt.tprintf("%s.%s",strings.to_string(path),field))
+                uses+=queue_uses(g,procs,&seen,{s.source,s.pkg,s.literal},fmt.tprintf("%s.%s",path,field))
             }
             if uses!={} {append(&accesses,Access{p.type,s,uses})}
         }
@@ -1800,7 +1880,9 @@ queues_check :: proc(g:^Generator) {
 
 @(private="file")
 rules_check :: proc(g:^Generator) {
-    queues_check(g)
+    procs:=package_procs(g)
+    queues_check(g,procs)
+    world_read_check(g,procs)
     for t in g.types {
         if t.by_world && "mirai:core.World_Id" not_in g.by_key {
             append(&g.errors,fmt.aprintf("%s: %s is by_world, and the world has no core.World_Id to know whose value a function gets",t.where_,t.name))

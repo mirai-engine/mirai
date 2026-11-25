@@ -73,7 +73,7 @@ players_frame :: proc(f:^Players_Fixture) {
         requests=&f.requests,effects=&f.effects,sounds=&f.sounds,gui=&f.gui,app=&f.app,
         problems=&f.problems,
     },false)
-    widgets_build(world,&f.gui,&f.app,&f.problems)
+    widgets_build(test_world_ref(w),&f.gui,&f.app,&f.problems)
 }
 
 @(private="file")

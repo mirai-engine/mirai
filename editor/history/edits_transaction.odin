@@ -2,7 +2,6 @@ package history
 
 import "base:runtime"
 import "core:mem"
-import "core:slice"
 import "mirai:core"
 import "mirai:std/base"
 
@@ -243,7 +242,7 @@ edits_cancel_prepare :: proc(edits:^Edits,w:core.World_Ref,additional_entities:i
         rows:=max(len(image.entities),len(current.entities)+missing)+additional_entities
         size:=table.info.size
         if size>0 && rows>max(int)/size {return .Memory}
-        if !core.raw_rows_reserve(current,size,table.info.align,rows,slice.contains(image.off[:],true)) || reserve(&current.pending,len(current.entities)+additional_entities)!=nil {return .Memory}
+        if !core.raw_rows_reserve(current,size,table.info.align,rows) || reserve(&current.pending,len(current.entities)+additional_entities)!=nil {return .Memory}
         if !core.raw_room(current,len(image.entities)>0?limit:0) {return .Memory}
         if len(image.entities)>0 && !core.raw_locks_reserve(current,limit) {return .Memory}
         if resize(&edits.cancel_scratch,max(len(edits.cancel_scratch),size))!=nil {return .Memory}
@@ -275,7 +274,7 @@ edits_step_prepare :: proc(edits:^Edits,w:core.World_Ref,step:^Edit_Step,selecti
         table:=&w.info.tables[rows.table]
         current:=core.world_table_at(w,table)
         count:=len(current.entities)+len(rows.entities)
-        if !core.raw_rows_reserve(current,table.info.size,table.info.align,count,slice.contains(rows.off[:],true)) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || !core.raw_room(current,edits.cancel_limit) {return .Memory}
+        if !core.raw_rows_reserve(current,table.info.size,table.info.align,count) || !runtime.__dynamic_array_reserve(&current.added,table.info.size,table.info.align,len(rows.entities)) || reserve(&current.pending,len(current.pending)+2*len(rows.entities))!=nil || !core.raw_room(current,edits.cancel_limit) {return .Memory}
         if !core.raw_locks_reserve(current,edits.cancel_limit) {return .Memory}
     }
     return .None

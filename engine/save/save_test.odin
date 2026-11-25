@@ -328,7 +328,7 @@ a_save_hook_writes_a_snapshot_of_its_components_without_copying_the_world :: pro
         core.disable(&w.capture_values,off)
         core.settle(&f.info,w,nil)
         testing.expect(t,core.table_edit_reserve(&w.capture_values,4))
-        aux,edits:=w.capture_values.aux,w.capture_values.edits
+        off_rows,edit_room:=raw_data(w.capture_values.off),cap(w.capture_values.edits)
         if c.pending {core.add(&w.ids,core.create(&w.entities),{2})}
         w.capture_source={entity=e,value=21,op=c.op}
         ref:=host.app_world_ref(&f.app,w)
@@ -341,7 +341,7 @@ a_save_hook_writes_a_snapshot_of_its_components_without_copying_the_world :: pro
         live,found:=core.get(&w.capture_values,e)
         testing.expectf(t,found==(c.live!=nil) && (!found || live.value==c.live.?),"case %d: the World keeps its value",i)
         testing.expectf(t,w.capture_values.version==values && len(w.capture_values.pending)==0 && w.transforms.version==transforms,"case %d: the World is not written",i)
-        testing.expectf(t,w.capture_values.aux==aux && w.capture_values.edits==edits && aux!=nil && edits!=nil && core.count(&w.capture_values)==(c.live!=nil?1:0),"case %d: the table keeps what it holds besides its rows",i)
+        testing.expectf(t,raw_data(w.capture_values.off)==off_rows && cap(w.capture_values.edits)==edit_room && edit_room>=4 && core.count(&w.capture_values)==(c.live!=nil?1:0),"case %d: the table keeps what it holds besides its rows",i)
         testing.expectf(t,len(w.ids.pending)==(c.pending?1:0),"case %d: what the World has pending stays its own",i)
         if !testing.expectf(t,restore(ref,&f.app,serial.writer_bytes(&out))==.None,"case %d: restored",i) {continue}
         saved,kept:=core.get(&w.capture_values,core.entity_of(&w.entities,1))
@@ -395,7 +395,7 @@ serve_destroy :: proc(f:^Save_Test,s:^Serve) {
 serve :: proc(f:^Save_Test,s:^Serve) {
     clear(&s.results.queue.items) // the log of a frame, as its readers are handed it
     saves_serve(
-        core.world_read(host.app_world_ref(&f.app,f.w)),&f.app,&s.requests,&s.results,&s.state,&s.work,&s.thumbnails,&s.game,
+        host.app_world_ref(&f.app,f.w),&f.app,&s.requests,&s.results,&s.state,&s.work,&s.thumbnails,&s.game,
         {core.ref(&s.settings),&s.profile,core.ref(&s.network),core.ref(&s.frame),core.ref(&s.clock),core.read(&f.w.references)},
         s.problems,
     )
@@ -1006,3 +1006,56 @@ a_slot_without_memory_is_refused_and_leaves_nothing :: proc(t:^testing.T) {
     }
 }
 
+
+// A load replaces every table of the world in the step that serves it, which
+// receives core.World_Ref: the settle after it leaves nothing for the next
+// tick, which finds the loaded world whole.
+@(test)
+a_world_loaded_from_a_slot_is_settled_for_the_next_tick :: proc(t:^testing.T) {
+    f:Save_Test
+    if !save_test_init(t,&f) {return}
+    defer save_test_destroy(&f)
+    s:Serve
+    if !serve_init(t,&f,&s) {return}
+    defer serve_destroy(&f,&s)
+    w:=f.w
+    save_test_entity(&f,5,{1,2,3})
+    parent:=core.entity_of(&w.entities,5)
+    child,lent:=core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.ids,child,core.Id{6})
+    core.add(&w.transforms,child,core.TRANSFORM_IDENTITY)
+    core.add(&w.parents,child,core.Parent{entity=parent})
+    core.add(&w.transforms,lent,core.TRANSFORM_IDENTITY)
+    core.add(&w.disabled,lent,{})
+    core.settle(&f.info,w,nil)
+    ref:=host.app_world_ref(&f.app,w)
+    out:serial.Writer
+    serial.writer_init(&out,0,context.allocator)
+    defer serial.writer_destroy(&out)
+    if !testing.expect_value(t,capture(ref,f.app.assets,f.app.allocator,&out),Error.None) {return}
+    path,_:=slot_path(&s.state,&f.app,"settled")
+    if !testing.expect_value(t,slot_file_write(path,serial.writer_bytes(&out),nil),Error.None) {return}
+    place(w,5,{9,9,9})
+    core.destroy(&w.entities,child)
+    core.settle(&f.info,w,nil)
+
+    request_load(&s.requests,"settled")
+    serve(&f,&s)
+    if !testing.expect(t,len(s.results.queue.items)==1 && s.results.queue.items[0].error==.None) {return}
+    waiting:=0
+    for &table in f.info.tables {
+        if table.place==.World && len(core.world_table_at(ref,&table).pending)>0 {waiting+=1}
+    }
+    marked:=0
+    for mark in w.entities.pending {if mark {marked+=1}}
+    testing.expect(t,waiting==0 && marked==0 && len(w.entities.doomed)==0 && len(w.entities.turned)==0,"the load leaves nothing waiting")
+    versions:=make([]u64,len(f.info.tables),context.temp_allocator)
+    for &table,i in f.info.tables {if table.place==.World {versions[i]=core.world_table_at(ref,&table).layout}}
+    core.settle(&f.info,w,nil)
+    for &table,i in f.info.tables {
+        if table.place==.World {testing.expectf(t,core.world_table_at(ref,&table).layout==versions[i],"the settle after the step leaves %s as the load did",table.name)}
+    }
+    testing.expect_value(t,placed_at(w,5),[3]f32{1,2,3})
+    under,found:=core.get(&w.parents,core.entity_of(&w.entities,6))
+    testing.expect(t,found && under.entity==core.entity_of(&w.entities,5),"the child is back under its parent")
+}

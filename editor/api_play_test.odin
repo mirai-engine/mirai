@@ -74,7 +74,7 @@ probe_level_top :: proc(w:^Probe_World,x,from:f32) -> (top:f32,entity:core.Entit
 }
 
 @(private="file")
-probe_query_open :: proc(w:core.World_Ref) -> (core.World_Query,bool) {
+probe_query_open :: proc(w:core.World_Read) -> (core.World_Query,bool) {
     return {user=w.data,probe=probe_query_probe},true
 }
 
