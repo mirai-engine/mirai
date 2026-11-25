@@ -80,7 +80,7 @@ timing_fixed :: proc(world,shared,editor,application:rawptr) {
         core.revisions_moved(w.storage_revisions[:])
         net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
         core.settle(sh.info,w,nil)
-        core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
+        core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places,nil)
         core.settle(sh.info,w,nil)
         outbox:Net_Outbox
         net_tick_tail(ref,sh.session,&outbox,&w.made,sh.session.problems)

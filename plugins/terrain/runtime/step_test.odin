@@ -470,7 +470,7 @@ terrain_test_physics :: proc(w:^Terrain_Test_World,app:^host.App,time:core.Time=
     if m:=&w.collision_meshes;m.js!=nil && jobs.pending(&m.counter) {jobs.wait(m.js,jobs.OWNER,&m.counter)}
     phys.physics_step(&w.state,core.ref(&w.settings),&w.requests,&w.events,&w.collision_meshes,app,time,
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),&w.moves,&w.joints,
-        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{},{},{},{},{})
+        core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),&w.character_states,&w.joint_states,{},nil,{},{},nil,nil,&w.problems,{},{},{},{},{},{},{},{},{},{},nil)
 }
 
 @(test)

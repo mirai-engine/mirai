@@ -172,7 +172,7 @@ net_test_physics :: proc(w:^$W,shared:^Net_Test_Shared,app:^host.App) {
     core.revisions_moved(w.storage_revisions[:])
     phys.physics_pose_targets(&w.state,core.read(&w.replicas),&w.transforms,core.read(&w.parents),core.read(&w.rigids),core.read(&w.characters))
     core.settle(shared.info,w,nil)
-    core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
+    core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places,nil)
     core.settle(shared.info,w,nil)
     for value,index in w.values.values {
         w.force.total+=value.force
@@ -184,7 +184,7 @@ net_test_physics :: proc(w:^$W,shared:^Net_Test_Shared,app:^host.App) {
         core.read(&w.rigids),core.read(&w.colliders),core.read(&w.characters),&w.moves,&w.joints,
         core.read(&w.statics),core.read(&w.parents),core.read(&w.names),&w.transforms,&w.bodies,core.read(&w.replicas),
         &w.character_states,&w.joint_states,{},nil,{},core.ref(&w.sync_check),&w.simulation_hash,nil,nil,
-        core.read(&w.gravities),core.read(&w.volumes),core.read(&w.worlds),{},{},core.ref(&w.hierarchy),{},{},{},{})
+        core.read(&w.gravities),core.read(&w.volumes),core.read(&w.worlds),{},{},core.ref(&w.hierarchy),{},{},{},{},nil)
     core.settle(shared.info,w,nil)
 }
 

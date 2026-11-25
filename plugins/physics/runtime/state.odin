@@ -330,6 +330,9 @@ Body_Info :: struct {
     angular:[3]f32 `mirai:"unit=rad/s"`,
     awake:bool,
     contacts:int, // the shapes an awake body touches after the last step
+    mass:f32 `mirai:"unit=kg"`, // 0 for one that does not move by forces
+    center:[3]f32 `mirai:"unit=m"`, // of mass, in the axes of the body
+    inertia:mm.Mat3,                // about the center of mass, in the axes of the body: what turns it by a torque
 }
 
 // False for a body that is gone, or while the simulation is not ready.
@@ -337,10 +340,12 @@ body_info :: proc(physics:core.Ref(Physics_State),body:Body_Handle) -> (info:Bod
     if physics.ptr==nil || !physics.ready || !sim.body_valid(&physics.world,body) {return}
     w:=&physics.world
     pose:=sim.body_transform(w,body)
+    mass,center,inertia:=sim.body_mass_properties(w,body)
     return {
         type=sim.body_type(w,body),pose={pose.p,pose.q,{1,1,1}},
         linear=sim.body_linear_velocity(w,body),angular=sim.body_angular_velocity(w,body),
         awake=sim.body_is_awake(w,body),contacts=sim.body_contacts(w,body,nil),
+        mass=mass,center=center,inertia=inertia,
     },true
 }
 

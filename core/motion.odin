@@ -76,11 +76,12 @@ Pose_Target :: struct {
 Pose_Target_Places :: struct {seen:Seen}
 
 // The pose a target asks of a Transform no component owns, at the start of
-// the tick.
+// the tick. A rider (Carried) is placed by its mount, not by a target.
 @(step="fixed",loops="game",stage="begin")
-pose_targets_place :: proc(targets:^Table(Pose_Target,.Read),transforms:^Table(Transform),places:^Pose_Target_Places) {
+pose_targets_place :: proc(targets:^Table(Pose_Target,.Read),transforms:^Table(Transform),places:^Pose_Target_Places,carried:^Table(Carried,.Read)) {
     c:=changes(targets,&places.seen)
     for row in each_changed(targets,&c) {
+        if carried!=nil && has(carried,entity_at(targets,row)) {continue}
         local:=free(transforms,entity_at(targets,row))
         if local==nil {continue}
         target:=at(targets,row)
