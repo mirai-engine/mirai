@@ -185,8 +185,11 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
 - **Waits.** Wait on a build or a test suite in the foreground for up to 15 min; run what takes
   longer in the background and read it when it completes, never polling with `sleep`/`until`/
   `tail -f`. Never end a turn or report while work you started still runs.
-- **Closed assignments.** Specify concrete deliverable, done criteria and proving test. Keep final
-  reports <= 150 words without pasted diffs or raw logs.
+- **Briefs.** State the owner's taste and constraints, ask for the simplest form first, and give
+  the concrete deliverable, done criteria and proving test.
+- **Reports.** A delegate's report is its final reply, never a side channel the coordinator cannot
+  read: <= 150 words without pasted diffs or raw logs, naming every failing test and whether it
+  fails on the base.
 - **Child sessions & models.** Child sessions avoid spawning subagents except for large independent
   slices. Use cheaper/medium effort for research/audits/docs/clean merges, high for implementation,
   xhigh only for architecture design.
