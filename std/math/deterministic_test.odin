@@ -39,6 +39,48 @@ deterministic_exp_ln_sin_and_cos_stay_within_a_unit_in_the_last_place :: proc(t:
 }
 
 @(test)
+deterministic_f64_pow_and_products_round_the_same_on_every_target :: proc(t:^testing.T) {
+    worst:f64
+    for i in 0..<20000 {
+        x:=f64(i)/20000*1400-700
+        worst=max(worst,abs(exp_det_f64(x)-math.exp(x))/math.exp(x))
+        y:=math.pow(10,f64(i)/20000*600-300)
+        worst=max(worst,abs(ln_det_f64(y)-math.ln(y))/max(abs(math.ln(y)),1))
+        z:=f64(i)/20000*2000-1000
+        s,c:=sincos_det_f64(z)
+        worst=max(worst,abs(s-math.sin(z)),abs(c-math.cos(z)))
+        a,b:=f32(i)/20000*8,f32(i%97)/16-3
+        if a>0 {testing.expectf(t,ulps(pow_det(a,b),f32(math.pow(f64(a),f64(b))))<=1,"pow(%v,%v)",a,b)}
+    }
+    testing.expectf(t,worst<1e-13,"f64 error %v",worst)
+    testing.expect(t,exp_det_f64(-746)==0 && exp_det_f64(710)>1e308 && exp_det_f64(-740)>0 && ln_det_f64(5e-324)<-744)
+    Pow :: struct {x,y,want:f32}
+    for c in ([]Pow{{2,10,1024},{-2,3,-8},{-2,2,4},{0,2,0},{5,0,1},{1,1e30,1},{0,-1,math.INF_F32}}) {
+        testing.expectf(t,pow_det(c.x,c.y)==c.want,"pow(%v,%v)=%v",c.x,c.y,pow_det(c.x,c.y))
+    }
+    testing.expect(t,pow_det(-2,0.5)!=pow_det(-2,0.5))
+    // Each product and each sum rounded on its own, in order: what `*` gives where the target does not fuse.
+    r:=rng_make(7,1)
+    for _ in 0..<1000 {
+        m,n:matrix[3,3]f32
+        v:[3]f32
+        for i in 0..<3 {
+            v[i]=random_range(&r,-1,1)
+            for j in 0..<3 {m[i,j],n[i,j]=random_range(&r,-1,1),random_range(&r,-1,1)}
+        }
+        mv,mn:=mat3_mul_vec_det(m,v),mat3_mul_det(m,n)
+        for i in 0..<3 {
+            x:=m[i,0]*v[0];x+=m[i,1]*v[1];x+=m[i,2]*v[2]
+            testing.expect(t,mv[i]==x)
+            for j in 0..<3 {
+                y:=m[i,0]*n[0,j];y+=m[i,1]*n[1,j];y+=m[i,2]*n[2,j]
+                testing.expect(t,mn[i,j]==y)
+            }
+        }
+    }
+}
+
+@(test)
 ray_against_four_boxes_agrees_with_the_test_of_one :: proc(t:^testing.T) {
     r:=rng_make(31,1)
     for _ in 0..<500 {
