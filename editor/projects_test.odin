@@ -10,9 +10,11 @@ import "core:time"
 import "mirai:asset"
 import img "mirai:cook/image"
 import "mirai:cook/install"
+import ka "mirai:cook/kai"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
+import "mirai:store"
 
 @(test)
 projects_say_when_each_was_opened :: proc(t:^testing.T) {
@@ -252,4 +254,37 @@ all_projects_discovers_siblings_and_skips_temporary_copies :: proc(t:^testing.T)
     testing.expect_value(t,base.text_get(p.rows[1].name[:]),"Alpha")
     testing.expect_value(t,base.text_get(p.rows[2].name[:]),"Beta")
     testing.expect_value(t,base.text_get(p.rows[3].name[:]),"Demo")
+}
+
+// The New Project dialog has Version control (Kai) checked: the project is a
+// Kai workspace of its own whose first change holds its files. Unchecked, the
+// project has no version control and the store is not touched.
+@(test)
+a_new_project_is_a_kai_workspace_unless_unchecked :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"projects-kai")
+    if folder=="" {return}
+    root:=project.path_absolute(folder,context.temp_allocator)
+    engine:=project.path(root,"engine",allocator=context.temp_allocator)
+    template:=project.path(engine,"templates","empty",allocator=context.temp_allocator)
+    testing.expect(t,base.make_directory_all(template)==nil)
+    m:=project.manifest_default("Template")
+    testing.expect_value(t,project.manifest_write(project.path(template,project.PROJECT_FILE,allocator=context.temp_allocator),&m).code,project.Error_Code.None)
+    opened,error:=store.open(project.path(root,"store",allocator=context.temp_allocator))
+    if !testing.expect_value(t,error,store.Error.None) {return}
+    defer store.close(&opened)
+    p:=new(Projects);defer free(p)
+    s:=Session{projects=p,engine_root=engine,store=opened}
+    projects_show(&s)
+    Case :: struct {name:string,kai:bool}
+    for c in ([]Case{{"checked",true},{"unchecked",false}}) {
+        projects_new_start(&s,-1)
+        testing.expect(t,p.kai,"Version control (Kai) starts checked")
+        p.kai=c.kai
+        p.name_length=copy(p.name[:],c.name)
+        p.location_length=copy(p.location[:],root)
+        made,message:=projects_make(&s)
+        if !testing.expectf(t,message=="","%s: %s",c.name,message) {continue}
+        testing.expect(t,os.is_file(project.path(made,project.PROJECT_FILE,allocator=context.temp_allocator)))
+        testing.expectf(t,ka.project_exists(made)==c.kai,"%s: a Kai workspace is %v",c.name,c.kai)
+    }
 }

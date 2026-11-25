@@ -40,7 +40,7 @@ BOTTOM_HEIGHT :: f32(220)
 BOTTOM_MIN :: f32(120)
 
 Library_Tab :: enum u8 {Editor,Content,Ai,Hierarchy,Kai,World}
-LIBRARY_TAB_NAMES :: [Library_Tab]string{.Editor="Create",.Content="Content Browser",.Ai="AI",.Hierarchy="Hierarchy",.Kai="Kai",.World="World"}
+LIBRARY_TAB_NAMES :: [Library_Tab]string{.Editor="Create",.Content="Content Browser",.Ai="AI",.Hierarchy="Hierarchy",.Kai="Version Control (Kai)",.World="World"}
 Library_Tabs :: bit_set[Library_Tab]
 
 // The sections of Keyboard shortcuts, each a run of the entries of the editor from its first to its

@@ -122,4 +122,7 @@ each_type_of_document_has_its_tabs_of_the_left_panel :: proc(t:^testing.T) {
     testing.expect_value(t,g.layout.library_tab,Library_Tab.Hierarchy)
     g.layout.library_tab=.Kai
     testing.expect_value(t,library_tab_shown(&s),Library_Tab.Kai)
+    // Every document has the project's version control, under the name a user looks for.
+    names:=LIBRARY_TAB_NAMES
+    testing.expect_value(t,names[.Kai],"Version Control (Kai)")
 }

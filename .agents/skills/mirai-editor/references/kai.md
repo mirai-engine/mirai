@@ -2,16 +2,18 @@
 
 Kai, the version control of a project and the mesh of its team, is owned by
 [mirai-kai](../../mirai-kai/SKILL.md): what a change, a conflict, an operation, an org or a proposal
-is, and why. This file is only the editor's part: the Kai tab of the left panel
-(`editor/kai_panel.odin`, `editor/kai_team_panel.odin`, `editor/kai_detail.odin`), what the editor
-pushes to a workspace and the `kai.*` methods (`editor/api_kai.odin`, `editor/api_kai_team.odin`).
+is, and why. This file is only the editor's part: the Kai tab of the left panel, named
+Version Control (Kai) on its rail button and header (`editor/kai_panel.odin`,
+`editor/kai_team_panel.odin`, `editor/kai_detail.odin`), what the editor pushes to a workspace and
+the `kai.*` methods (`editor/api_kai.odin`, `editor/api_kai_team.odin`).
 Everything the tab does goes through `cook/kai` and `kai`, as `mirai kai` does with no editor
 ([commands](../../mirai-projects/references/projects.md#common-commands)): a procedure the editor
 needs from the command moves into `cook/kai`.
 
 The editor opens a project that has `.mirai/kai` as a workspace of its own repository in the
 machine's store (`editor/kai.odin`) and never makes one by itself: Kai is
-[optional](../../mirai-kai/SKILL.md#start-a-project-on-kai). Without one the tab shows "This
+[optional](../../mirai-kai/SKILL.md#start-a-project-on-kai). A project without one writes nothing
+of Kai, not even the machine's identity in the store. Without one the tab shows "This
 project does not use version control." and Enable Kai, which calls `kai.init`: it makes the
 workspace of the project's files and opens it, and is refused when one is open or the editor has
 no store. The New Project dialog's "Version control (Kai)" (on by default) is `mirai new`'s

@@ -866,7 +866,7 @@ editor_kai_team_methods_refuse_hostile_params :: proc(t:^testing.T) {
 @(private="file") Kai_None :: struct {}
 
 // A project without a Kai workspace uses no version control: opening and
-// polling it makes none, the editor edits as ever, the Kai tab offers Enable
+// polling it makes none, nor the machine's identity in the store, the editor edits as ever, the Kai tab offers Enable
 // Kai, which asks kai.init, and kai.init makes the workspace on demand, once;
 // it then opens with the project.
 @(test)
@@ -887,6 +887,7 @@ editor_kai_is_optional_until_enabled :: proc(t:^testing.T) {
     kai_open(s)
     kai_poll(s)
     testing.expect(t,kai_workspace(s)==nil && !ka.project_exists(k.root),"opening makes no workspace")
+    testing.expect(t,!os.exists(fmt.tprintf("%s/%s",s.store.root,vcs.IDENTITY_FILE)),"nor this machine's identity")
     testing.expect_value(t,s.kai.error,vcs.Error.Missing)
     testing.expect(t,strings.contains(kai_missing(s),"does not use version control"),kai_missing(s))
 

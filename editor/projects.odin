@@ -608,31 +608,8 @@ projects_cancel :: proc(s:^Session) {
 @(private)
 projects_create :: proc(s:^Session) -> string {
     p:=s.projects
-    name:=strings.trim_space(string(p.name[:p.name_length]))
-    location:=strings.trim_space(string(p.location[:p.location_length]))
-    if name=="" {return "Give the project a name"}
-    if strings.contains_any(name,"/\\:*?\"<>|") {return "The name is the name of its folder: it cannot have / \\ : * ? \" < > |"}
-    if location=="" {return "Choose where the project goes"}
-    if p.template<0 || p.template>=p.template_count {return "Choose a template"}
-    if p.kai && s.store.root=="" {return "Version control needs a store, where Kai keeps the changes: start the editor with --store <folder>, or uncheck Version control (Kai)"}
-    folder:=project.path(location,name,allocator=context.temp_allocator)
-    template:=build.template_folder(s.engine_root,base.text_get(p.templates[p.template][:]),context.temp_allocator)
-    switch build.project_create(template,folder,name) {
-    case .None:
-    case .Template_Missing: return "The template has no project.mirai"
-    case .Folder_Not_Empty: return fmt.tprintf("%s is not an empty folder",folder)
-    case .Copy_Failed:      return fmt.tprintf("%s could not be written",folder)
-    case .Manifest_Failed:  return "The name does not fit in the manifest of the project"
-    }
-    if p.kai {
-        // Its files are the first change of a Kai workspace of its own.
-        k:=new(ka.Project,context.temp_allocator)
-        if k==nil {return "No memory for the Kai workspace of the project"}
-        if e:=ka.project_create(k,project.path_absolute(folder,context.temp_allocator),&s.store);e!=.None {
-            return fmt.tprintf("The project was made in %s, but its Kai workspace was not: %s",folder,vcs.error_text(e))
-        }
-        ka.project_close(k)
-    }
+    folder,message:=projects_make(s)
+    if message!="" {return message}
     p.creating=false
     if p.plugin_count>0 {
         file:=project.path(folder,project.PROJECT_FILE,allocator=context.temp_allocator)
@@ -654,6 +631,39 @@ projects_create :: proc(s:^Session) -> string {
         if p.links_on[i] {append(&steps,install.Step{kind=.Add,text=base.text_get(p.links[i][:])})}
     }
     return projects_open(s,folder,steps[:])
+}
+
+// Makes the folder of the project the dialog describes, from its template, and
+// its Kai workspace when Version control (Kai) is checked: the folder, or why not.
+@(private)
+projects_make :: proc(s:^Session) -> (folder,message:string) {
+    p:=s.projects
+    name:=strings.trim_space(string(p.name[:p.name_length]))
+    location:=strings.trim_space(string(p.location[:p.location_length]))
+    if name=="" {return "","Give the project a name"}
+    if strings.contains_any(name,"/\\:*?\"<>|") {return "","The name is the name of its folder: it cannot have / \\ : * ? \" < > |"}
+    if location=="" {return "","Choose where the project goes"}
+    if p.template<0 || p.template>=p.template_count {return "","Choose a template"}
+    if p.kai && s.store.root=="" {return "","Version control needs a store, where Kai keeps the changes: start the editor with --store <folder>, or uncheck Version control (Kai)"}
+    folder=project.path(location,name,allocator=context.temp_allocator)
+    template:=build.template_folder(s.engine_root,base.text_get(p.templates[p.template][:]),context.temp_allocator)
+    switch build.project_create(template,folder,name) {
+    case .None:
+    case .Template_Missing: return "","The template has no project.mirai"
+    case .Folder_Not_Empty: return "",fmt.tprintf("%s is not an empty folder",folder)
+    case .Copy_Failed:      return "",fmt.tprintf("%s could not be written",folder)
+    case .Manifest_Failed:  return "","The name does not fit in the manifest of the project"
+    }
+    if p.kai {
+        // Its files are the first change of a Kai workspace of its own.
+        k:=new(ka.Project,context.temp_allocator)
+        if k==nil {return "","No memory for the Kai workspace of the project"}
+        if e:=ka.project_create(k,project.path_absolute(folder,context.temp_allocator),&s.store);e!=.None {
+            return "",fmt.tprintf("The project was made in %s, but its Kai workspace was not: %s",folder,vcs.error_text(e))
+        }
+        ka.project_close(k)
+    }
+    return folder,""
 }
 
 // Fills the form of a new project; template: the one chosen, or the default when negative.

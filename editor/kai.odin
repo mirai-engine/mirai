@@ -155,11 +155,12 @@ kai_open :: proc(s:^Session) {
     if k==nil || k.tried || k.state!=nil || !s.has_project || s.store.root=="" || s.frames>0 {return}
     if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return}
     k.tried=true
-    if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}
+    // A project without a workspace makes nothing of Kai, not even this machine's identity.
     if !ka.project_exists(s.project_root) {
         k.error=.Missing
         return
     }
+    if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}
     if e:=kai_attach(s,false);e!=.None {
         log.warnf("the Kai workspace of %s does not open: %s",s.project_root,vcs.error_text(e))
     }
