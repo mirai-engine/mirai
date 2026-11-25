@@ -185,10 +185,10 @@ choices ([`fsr`](../../mirai-plugins/references/render-plugins.md#fsr)).
 | Stage | Scope / Pipeline parent | Role and key `pass_*` calls |
 | --- | --- | --- |
 | `Geometry` | 1x/frame (no view) / `Geometry` | Deformable vertices: `pass_vertices_begin`, `pass_deformable`, `pass_dispatch`. |
+| `Decal` | Per view / `Geometry` | Before the resolve, after the decals of the scene: `pass_decal_targets`, `pass_decal_begin` (decal targets, no depth attached), `pass_surface_read .Depth`; `frame_decal_emission` asks for the emission target ([decals](materials.md#decals)). |
 | `Simulate` | 1st view (not `ui_only`) / `Geometry` | GPU sim with scene tables, HW rays, probes, `pass_surface_read` depth/normal. |
 | `Gbuffer` | Per view / `Geometry` | Lit custom geometry: `pass_gbuffer_begin`, `pass_gbuffer_pipeline`, `pass_depth_pyramid`, `pass_rest_write`. |
 | `Mask` | Per view / `Nested` | Nested views: `pass_nested_add`/`pass_nested_faces`, `pass_mask_begin`..`pass_end`. |
-| `Surface` | Per view / `Surface` | G-buffer edits (decals): `pass_surface_begin`/`pass_surface_targets`, compute + `pass_texture_sample`. |
 | `Lit` | Per view (no inspect) / `Lit` | Read-write `rgba16f` opaque image (`pass_image_bind`), runs `Behind`/`Front` if glass (`Glass_Depth`). |
 | `Blend` | Per view (no inspect) / `Transparency` | Forward blend (`pass_blend_begin`, TAA coverage), runs `Behind`/`Front` if glass (`Glass_Depth`). |
 | `Post` | Per view (no inspect) / `Output` | Output-size resolved image (`pass_image_write` ping-pong, never in-place; reads G-buffer). |
