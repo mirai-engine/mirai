@@ -332,9 +332,10 @@ the_viewmodel_shades_itself_as_the_rays_do :: proc(t: ^testing.T) {
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 
-// The body of the player around the eye casts its shadow on the ground in
-// front of it as without a viewmodel: with one the maps of the world leave
-// the body out and its own layer of the maps of the sun takes its place.
+// The body of the player under the eye casts its shadow on the ground in
+// front of it as without a viewmodel, its penumbra too, and its top in the sun
+// is lit: with one the maps of the world leave the body out and its own layer
+// of the maps of the sun takes its place, for the world and for the body.
 @(test)
 the_shadow_of_the_body_is_the_same_with_a_viewmodel :: proc(t: ^testing.T) {
 	f: Fixture
@@ -342,37 +343,59 @@ the_shadow_of_the_body_is_the_same_with_a_viewmodel :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	s := viewmodel_scene(r)
-	body := Instance_Desc{object_id = 5, mesh = s.floor.mesh, transform = placed({0, 0.85, 0.1}, {0.5, 1.7, 0.3}), tint = {1, 1, 1}, owner = 1}
+	// Its top 0.4 m under the eye, behind it; seen looking down.
+	body := Instance_Desc{object_id = 5, mesh = s.mark.mesh, transform = placed({0, 0.6, 0.15}, {0.5, 1.2, 0.3}), tint = {1, 1, 1}, owner = 1}
+	down := FIRST_PERSON
+	down.forward, down.up = {0, -0.95, -0.3}, {0, 0.3, -0.95}
 	sun := Sun_Desc{direction = {0.15, 0.55, 0.82}, color = {1, 1, 1}, illuminance = 10000, enabled = true}
-	ground :: proc(t: ^testing.T, f: ^Fixture) -> []f32 {
+	ground :: proc(t: ^testing.T, f: ^Fixture, camera: Camera) -> (light: []f32, green: []bool) {
 		r := f.renderer
 		// Until the pages of the maps made anew are drawn, rays shade what they do not hold.
-		for _ in 0 ..< 10 {testing.expect(t, renderer_frame(r, {camera = FIRST_PERSON}), r.error)}
-		return light_of(t, f)
+		for _ in 0 ..< 10 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+		albedo := read_target(t, f, r.targets.albedo, u8, 4)
+		green = make([]bool, WIDTH * HEIGHT, context.temp_allocator)
+		for &is, i in green {is = albedo[i * 4 + 1] > 150 && albedo[i * 4] < 90}
+		return light_of(t, f), green
 	}
 	scene_given(r, {s.floor, body}, nil, sun, {})
 	scene_foreground_bodies(r, 0, {1}, 1)
-	without := ground(t, &f)
+	without, top := ground(t, &f, down)
 	// Without a viewmodel nothing of it is made: no views target, no share, no maps below the pool.
 	testing.expect(t, r.targets.views == 0 && r.foreground_kept == 0 && r.targets.shadow_raster.body == 0, "without a viewmodel the view makes nothing of it")
 	scene_given(r, {s.floor, body, s.bar, s.mark}, nil, sun, {})
 	scene_foreground_bodies(r, 0, {1, 2, 3}, 1)
-	with := ground(t, &f)
+	with, _ := ground(t, &f, down)
 	_, tags := tagged(t, &f)
 	lit := f32(0)
-	for l in without {lit = max(lit, l)}
-	shaded, kept, same, both := 0, 0, 0, 0
+	for l, i in without {if !top[i] {lit = max(lit, l)}}
+	shaded, kept, same, both, apart := 0, 0, 0, 0, 0
+	soft_without, soft_with := 0, 0
+	body_without, body_with, body_seen := f32(0), f32(0), 0
 	for tag, i in tags {
 		if tag & VIEWS_FOREGROUND != 0 || without[i] <= 0 {continue}
+		if top[i] {
+			body_without += without[i]
+			body_with += with[i]
+			body_seen += 1
+			continue
+		}
 		dark, still_dark := without[i] < 0.5 * lit, with[i] < 0.5 * lit
 		if dark {shaded += 1}
 		if dark && still_dark {kept += 1}
 		if dark == still_dark {same += 1}
+		if abs(with[i] - without[i]) > 0.1 * lit {apart += 1}
+		if without[i] > 0.2 * lit && without[i] < 0.8 * lit {soft_without += 1}
+		if with[i] > 0.2 * lit && with[i] < 0.8 * lit {soft_with += 1}
 		both += 1
 	}
-	testing.expectf(t, shaded > 100, "the body shades the ground in front of the eye: %d pixels", shaded)
+	testing.expectf(t, shaded > 100, "the body shades the ground in front of it: %d pixels", shaded)
 	testing.expectf(t, f32(kept) >= 0.9 * f32(shaded), "%d of the %d pixels of its shadow stay shaded with a viewmodel", kept, shaded)
 	testing.expectf(t, f32(same) >= 0.99 * f32(both), "%d of %d pixels of the ground are shaded or lit as without a viewmodel", same, both)
+	// The layer of the body is finer than the maps of the world: its outline may move by a pixel.
+	testing.expectf(t, f32(apart) <= 0.01 * f32(both), "%d of %d pixels of the ground differ by a tenth of the sun from without a viewmodel", apart, both)
+	testing.expectf(t, f32(soft_with) >= 0.5 * f32(soft_without) && soft_without > 10, "the shadow has a penumbra as without a viewmodel: %d pixels of it, %d without", soft_with, soft_without)
+	testing.expectf(t, body_seen > 50 && body_without > 0.15 * lit * f32(body_seen), "the top of the body is lit by the sun: %d pixels, %.3f of the lit ground", body_seen, body_without / max(lit * f32(body_seen), 1e-6))
+	testing.expectf(t, abs(body_with - body_without) <= 0.05 * body_without, "its top is lit as without a viewmodel: %.3f, %.3f", body_with, body_without)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
 

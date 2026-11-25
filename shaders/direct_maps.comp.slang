@@ -104,6 +104,19 @@ float shadow_map_seen(Shadow_Map m, Shadow_Taps t, Shadow_Near near, bool sun, f
     return inside > 0u ? float(lit) / float(inside) : 1.0;
 }
 
+#ifdef MIRAI_VIEWMODEL
+// What the layer of the body of the viewmodel of the view says of a point of
+// the world, for the sun (light 0) or Frame.viewmodel.light (1), as
+// shadow_map_seen says it of the maps of the world, which leave the body out.
+float body_shadow_seen(uint light, float3 position, float3 n, float3 toward, float radius, float spin, float across, out float spread) {
+    spread = 0.0;
+    Shadow_Map m;
+    Shadow_Taps t;
+    if (!foreground_map(light, false, position, m) || !shadow_map_taps(m, light == 0u, toward, position, n, radius, across, 1.0, t)) return 1.0;
+    return shadow_map_seen(m, t, shadow_near(m, t.texel, shadow_taps_reach(t)), light == 0u, radius, spin, across, spread);
+}
+#endif
+
 [shader("compute")]
 [numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
 void main(uint3 dispatch_id : SV_DispatchThreadID) {
@@ -167,10 +180,16 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         rest = true;
     }
 #ifdef MIRAI_VIEWMODEL
-    // The maps of the viewmodel: the weapon shades itself where it is drawn, the body the world.
+    // The maps of the viewmodel: the weapon shades itself where it is drawn,
+    // the body the world as the maps of the world do, with its penumbra.
     bool weapon = pixel_foreground(source) != 0u;
     float3 drawn = weapon ? pixel_drawn(source, uv, depth) : pixel.position;
-    if (sun_part >= 0.0) sun_part *= foreground_shadow_seen(0u, weapon, drawn, normal, frame.sun_direction.xyz);
+    if (sun_part >= 0.0) {
+        float wide = 0.0;
+        sun_part *= weapon ? weapon_shadow_seen(0u, drawn, normal, frame.sun_direction.xyz)
+            : body_shadow_seen(0u, drawn, normal, frame.sun_direction.xyz, params.sun_radius, spin, across, wide);
+        sun_wide = max(sun_wide, wide);
+    }
 #endif
     float3 open = float3(0.0), lit = float3(0.0);
     float wide = 0.0, hid = 0.0;
@@ -207,7 +226,12 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
             spread = lerp(spread, next_spread, mip.blend);
         }
 #ifdef MIRAI_VIEWMODEL
-        if (item == frame.viewmodel.light) part *= foreground_shadow_seen(1u, weapon, drawn, normal, normalize(chosen.position_range.xyz - drawn));
+        if (item == frame.viewmodel.light) {
+            float3 toward = normalize(chosen.position_range.xyz - drawn);
+            float wide = 0.0;
+            part *= weapon ? weapon_shadow_seen(1u, drawn, normal, toward) : body_shadow_seen(1u, drawn, normal, toward, radius, spin, across, wide);
+            spread = max(spread, wide);
+        }
 #endif
         lit += radiance * part;
         // Within the penumbra of what its taps met, on its lit side as on the other.

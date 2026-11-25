@@ -589,20 +589,25 @@ float shadow_texel_seen(Shadow_Map m, Shadow_Taps t) {
 }
 
 #ifdef MIRAI_VIEWMODEL
-// How much of a light reaches a point past what a layer of the maps of the
-// viewmodel of the view holds (Frame.viewmodel): of the sun (light 0)
-// or of Frame.viewmodel.light (1), of the weapon for one of its pixels at
-// its true place, of the body for any other; 1 where the layer holds nothing
-// of the point. toward: the light from the point.
-float foreground_shadow_seen(uint light, bool weapon, float3 position, float3 n, float3 toward) {
-    if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u) return 1.0;
+// A layer of the maps of the viewmodel of the view (Frame.viewmodel), of the
+// sun (light 0) or of Frame.viewmodel.light (1), of the weapon or of the
+// body; false where the view has none or it holds nothing of the point.
+bool foreground_map(uint light, bool weapon, float3 position, out Shadow_Map m) {
     uint at = (light * 2u + (weapon ? 0u : 1u)) * SHADOW_MAP_ROWS;
-    Shadow_Map m = shadow_map_from(frame.viewmodel.maps[at], frame.viewmodel.maps[at + 1u], frame.viewmodel.maps[at + 2u],
+    m = shadow_map_from(frame.viewmodel.maps[at], frame.viewmodel.maps[at + 1u], frame.viewmodel.maps[at + 2u],
         frame.viewmodel.maps[at + 3u], frame.viewmodel.maps[at + 4u], frame.viewmodel.maps[at + 5u]);
-    if (m.rect.z == 0u) return 1.0;
+    if ((frame.flags & FRAME_FLAG_VIEWMODEL) == 0u || m.rect.z == 0u) return false;
     float3 local = shadow_map_local(m, position);
+    return local.z > m.near && local.z < m.far && all(abs(shadow_map_unit(m, local)) < 1.0);
+}
+
+// How much of that light reaches a pixel of the weapon at its true place
+// past what the layer of the weapon holds; 1 where it holds nothing of the
+// point. toward: the light from the point.
+float weapon_shadow_seen(uint light, float3 position, float3 n, float3 toward) {
+    Shadow_Map m;
     Shadow_Taps t;
-    if (!(local.z > m.near && local.z < m.far) || any(abs(shadow_map_unit(m, local)) >= 1.0) || !shadow_map_point(m, light == 0u, toward, position, n, 0.0, 1.0, t)) return 1.0;
+    if (!foreground_map(light, true, position, m) || !shadow_map_point(m, light == 0u, toward, position, n, 0.0, 1.0, t)) return 1.0;
     return shadow_hard_seen(m, shadow_near(m, t.texel, 1.0), t);
 }
 #endif
