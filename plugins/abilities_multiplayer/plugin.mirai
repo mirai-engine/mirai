@@ -1,0 +1,7 @@
+{
+  "name": "abilities_multiplayer",
+  "version": "0.1.0",
+  "dependencies": ["abilities", "multiplayer", "animation", "physics"],
+  "parts": ["Runtime"],
+  "automatic": true
+}

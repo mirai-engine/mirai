@@ -87,8 +87,9 @@ shot_event :: proc(events:^Ability_Events,event:Ability_Event,pushed:^int,proble
 
 // Where a pellet stops in the world as it is now: the nearest collider it reaches whose entity has
 // no placed hit zones, or the zone it meets of one that has them; it passes beside the zones of an
-// entity through its collider, up to RAY_PASSES colliders. Who aimed it (or its user) is not hit.
-shot_cast :: proc(w:^Shot_World,shot:^Ability_Shot) -> (hit:Shot_Hit) {
+// entity through its collider, and through the colliders of passes (what lag compensation judges
+// where it was), up to RAY_PASSES colliders. Who aimed it (or its user) is not hit.
+shot_cast :: proc(w:^Shot_World,shot:^Ability_Shot,passes:[]core.Entity=nil) -> (hit:Shot_Hit) {
     hit.zone=-1
     traveled:f32
     ignore:=shot.aim if shot.aim!=core.NONE else shot.user
@@ -98,6 +99,13 @@ shot_cast :: proc(w:^Shot_World,shot:^Ability_Shot) -> (hit:Shot_Hit) {
         from:=shot.origin+shot.direction*traveled
         found,ok:=ray_query(w.physics,from,shot.direction,left,shot.radius,ignore)
         if !ok {break}
+        passed:=false
+        for e in passes {if e==found.entity {passed=true;break}}
+        if passed {
+            traveled+=found.distance+RAY_STEP
+            ignore=found.entity
+            continue
+        }
         if found.entity!=core.NONE && anim.hit_zones_placed(w.zone_poses,found.entity) {
             if zone,met:=anim.hit_zones_ray(w.zone_poses,w.zone_sets,w.zones,found.entity,from,shot.direction,left,shot.radius);met {
                 return {entity=found.entity,point=zone.point,normal=zone.normal,distance=traveled+zone.distance,zone=i8(zone.zone),tags=zone.tags}
