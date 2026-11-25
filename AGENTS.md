@@ -142,7 +142,7 @@ editor UI; at most two self-iterations before showing the user; crop/zoom with `
   `mirai image`.
 - **New tests.** Extend existing tests first; one table-driven test per invariant in the owning
   layer, failing without the fix. Keep non-GPU tests in non-GPU files.
-- Never delete a failing test or widen a limit to land; distinguish product bugs from bad fixtures.
+- Never delete a failing test to land; distinguish product bugs from bad fixtures.
   Report platform-only paths with command and expected output.
 - Edits against an open editor write to disk immediately; experiment on a copy (`mirai session
   start --copy` or `asset.move` with `copy`).
