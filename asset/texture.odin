@@ -254,6 +254,7 @@ texture_repack :: proc(bytes:[]u8,types:^Types,profile:data.Profile,allocator:=c
         alpha_coverage=info.alpha_coverage,mips=mips,source=view.source}
     texture_document(&doc,types,desc,context.temp_allocator,profile) or_return
     defer document_destroy(&doc)
+    document_tables_carry(&doc,&file) or_return
     doc.flags=file.blob.header.flags
     return document_bytes(&doc,allocator,profile)
 }

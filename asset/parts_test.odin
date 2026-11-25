@@ -58,6 +58,10 @@ kind_files :: proc(t:^testing.T,types:^Types) -> (names:[dynamic]string,files:[d
         types.codecs=codecs
         defer types.codecs=.None
         testing.expect_value(t,texture_document(&doc,types,{id={2,2},width=SIDE,height=SIDE,format=.RGBA8,mips=levels},context.temp_allocator),Error.None)
+        // A row an importer adds beside the texture travels with it.
+        extra:=Texture_Mip{1,2,3,4}
+        _,put:=document_put_row(&doc,types,"extra",&extra)
+        testing.expect_value(t,put,Error.None)
         add(&names,&files,fmt.tprintf("texture %v",codecs),document_file(&doc))
     }
     {
@@ -134,6 +138,10 @@ every_kind_loads_equal_from_a_file_and_from_the_store :: proc(t:^testing.T) {
             testing.expectf(t,a_error==.None && b_error==.None && a.info.width==b.info.width && a.info.format==b.info.format && len(a.mips)==len(b.mips),"%s: the same texture",name)
             if a_error==.None && b_error==.None {
                 for _,level in a.mips {testing.expectf(t,mem.compare(texture_mip(a,level),texture_mip(b,level))==0,"%s: level %d",name,level)}
+            }
+            if strings.has_prefix(name,"texture ") {
+                extra,extra_error:=asset_row(&stored,&types,"extra",Texture_Mip,whole=true)
+                testing.expectf(t,extra_error==.None && extra^==Texture_Mip{1,2,3,4},"%s: the extra row is kept (%v)",name,extra_error)
             }
         case KIND_SOUND:
             a,a_error:=sound_view(&file,&types)
