@@ -109,7 +109,6 @@ Api_Audio_Bus :: struct {
     silent:bool `mirai:"label=Muted, or left out by the solo of another bus"`,
     meter:[2]f32 `mirai:"label=Level of its left and right channels, linear: the peak of what it played, falling 20 dB a second"`,
     filters:[mixer.BUS_FILTERS]mixer.Filter `mirai:"label=Its filters in order; Off: none"`,
-    delay:mixer.Delay `mirai:"label=Its echo; wet 0: none"`,
     duck_by:[NAME_CAPACITY]u8 `mirai:"text"`,
     duck_amount:f32,
     reverb_wet:f32 `mirai:"label=Of the reverb of the bus; 0: none"`,
@@ -194,7 +193,7 @@ api_audio_status :: proc(s:^Session,call:^api.Call) {
         entry:=&r.buses[index]
         name(s,bus,entry.bus[:])
         entry.volume,entry.muted,entry.soloed,entry.silent=mixer.bus_volume(m,bus),mixer.bus_muted(m,bus),mixer.bus_soloed(m,bus),mixer.bus_silent(m,bus)
-        entry.meter,entry.delay=mixer.bus_meter(m,bus),mixer.bus_delay(m,bus)
+        entry.meter=mixer.bus_meter(m,bus)
         for &f,band in entry.filters {f=mixer.bus_filter(m,bus,band)}
         entry.reverb_wet=mixer.bus_reverb(m,bus).wet
         if duck:=mixer.bus_duck(m,bus);duck.amount>0 {

@@ -73,7 +73,7 @@ Mixer_Stats :: struct {
 @(private)
 Command_Kind :: enum u8 {
     Voice_Play,Voice_Stop,Voice_Pause,Voice_Volume,Voice_Pitch,Voice_Pan,Voice_Loop,Voice_Fade,Voice_Place,Voice_Occlusion,Voice_Reverb,Voice_Listener,Voice_Lowpass,
-    Bus_Volume,Bus_Mute,Bus_Filter,Bus_Delay,Bus_Duck,Bus_Reverb,Bus_Send,
+    Bus_Volume,Bus_Mute,Bus_Filter,Bus_Effect,Bus_Effect_Params,Bus_Duck,Bus_Reverb,Bus_Send,
     Reverb,
     Listener,Listeners,
     Output,
@@ -91,7 +91,8 @@ Command :: struct {
     rotation:quaternion128,
     duck:Duck,
     filter:Filter,
-    delay_memory:[]f32,
+    effect:Bus_Effect,
+    serial:u64,     // of an effect
     start:Voice_Start,
 }
 // One producer (the game thread) and one consumer (the audio thread).
@@ -118,6 +119,8 @@ Mixer :: struct {
     sequence:u64,
     bus_count:int,
     bus_shadows:[]Bus_Shadow,
+    effect_shadows:[]Effect_Shadow, // BUS_EFFECT_SLOTS per bus
+    effect_serial:u64,              // of the last effect put in a slot
     reverb_shadow:Reverb_Shadow,
     free_feeds:[]u32,free_feed_count:int,
     setups:[]Vorbis_Setup, // per sound slot at most
@@ -145,7 +148,6 @@ Mixer :: struct {
     reverb:Reverb_Unit,  // the room
     reverb_bus:u16,      // where the room returns
     bus_reverbs:[]Reverb_Unit,
-    delay_memory:[][]f32, // per bus: game-thread owned delay lines freed on destroy; passed to audio thread via Command
     meter_fall:f32,       // precomputed per-CHUNK_FRAMES decay factor for bus meters
     limiter:Limiter,
     scratch:[]f32,     // source frames of a voice that plays from a feed, laid out in a row
@@ -177,6 +179,7 @@ Mixer :: struct {
     sound_released:[]u32,  // per sound slot: 1 once no voice plays it any more
     voices_active:i32,
     underruns:u64,
+    effects_applied:u64, // the serial of the last effect the audio thread put in its slot
     bus_meters:[][2]u32, // per bus and channel: Mix_Bus.meter, as the bits of an f32
 }
 
@@ -234,7 +237,7 @@ mixer_init :: proc(m:^Mixer,desc:Mixer_Desc) -> Error {
     if m.bus_shadows,failed=make([]Bus_Shadow,buses,allocator);failed!=nil {return .Out_Of_Memory}
     if m.buses,failed=make([]Mix_Bus,buses,allocator);failed!=nil {return .Out_Of_Memory}
     if m.bus_buffers,failed=make([]f32,buses*CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
-    if m.delay_memory,failed=make([][]f32,buses,allocator);failed!=nil {return .Out_Of_Memory}
+    if m.effect_shadows,failed=make([]Effect_Shadow,buses*BUS_EFFECT_SLOTS,allocator);failed!=nil {return .Out_Of_Memory}
     if m.bus_meters,failed=make([][2]u32,buses,allocator);failed!=nil {return .Out_Of_Memory}
     if m.voice_scratch,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
     if m.reverb_input,failed=make([]f32,CHUNK_FRAMES*2,allocator);failed!=nil {return .Out_Of_Memory}
@@ -323,8 +326,8 @@ mixer_destroy :: proc(m:^Mixer) {
     delete(m.shadows,allocator);delete(m.free_voices,allocator)
     delete(m.voices,allocator);delete(m.finished,allocator)
     delete(m.bus_shadows,allocator);delete(m.buses,allocator);delete(m.bus_buffers,allocator)
-    for memory in m.delay_memory {delete(memory,allocator)}
-    delete(m.delay_memory,allocator);delete(m.bus_meters,allocator)
+    for shadow in m.effect_shadows {delete(shadow.state,allocator);delete(shadow.retired,allocator)}
+    delete(m.effect_shadows,allocator);delete(m.bus_meters,allocator)
     delete(m.voice_scratch,allocator);delete(m.reverb_input,allocator);delete(m.reverb.memory,allocator)
     for unit in m.bus_reverbs {delete(unit.memory,allocator)}
     delete(m.bus_reverbs,allocator)
@@ -405,6 +408,7 @@ mixer_update :: proc(m:^Mixer) {
         voice_shadow_free(m,u32(i))
     }
     if m.feeder==nil {mixer_decode(m)}
+    effects_retire(m)
     for &f,i in m.feeds {
         if feed_phase(&f)!=.Done {continue}
         feed_workspace_free(m,&f,false)
@@ -496,9 +500,10 @@ commands_apply :: proc "contextless" (m:^Mixer) {
         case .Bus_Filter:
             b,on:=biquad_of(command.filter,f32(m.sample_rate))
             biquad_fade_set(&m.buses[command.index].filters[command.frames],b,on)
-        case .Bus_Delay:
-            d:=command.vectors[0]
-            delay_apply(&m.buses[command.index].delay,{d[0],d[1],d[2]},command.delay_memory,m.sample_rate)
+        case .Bus_Effect:
+            m.buses[command.index].effects[command.frames]=command.effect
+            sync.atomic_store_explicit(&m.effects_applied,command.serial,.Release)
+        case .Bus_Effect_Params:m.buses[command.index].effects[command.frames].params=command.effect.params
         case .Bus_Duck:
             bus:=&m.buses[command.index]
             bus.duck=command.duck

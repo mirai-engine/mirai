@@ -221,10 +221,9 @@ the_master_limiter_holds_a_loud_mix_under_full_scale :: proc(t:^testing.T) {
     }
 }
 
-// Nested batches hold commands until the outermost end; toggling a bus delay
-// from off to wet in one chunk delivers its line safely with the command.
+// Nested batches hold commands until the outermost end.
 @(test)
-nested_batches_flush_once_and_delay_toggle_is_safe :: proc(t:^testing.T) {
+nested_batches_flush_once :: proc(t:^testing.T) {
     m:=test_mixer(t)
     defer mixer_destroy(m)
     mixer_batch_begin(m)
@@ -234,11 +233,62 @@ nested_batches_flush_once_and_delay_toggle_is_safe :: proc(t:^testing.T) {
     // Inner end must not publish yet.
     test_render(m,CHUNK_FRAMES)
     testing.expect_value(t,m.buses[BUS_MASTER].volume,f32(1))
-    bus_set_delay(m,BUS_MASTER,{seconds=0.05,feedback=0,wet=0})
-    bus_set_delay(m,BUS_MASTER,{seconds=0.05,feedback=0.3,wet=0.5})
     mixer_batch_end(m)
     test_render(m,CHUNK_FRAMES)
     testing.expect_value(t,m.buses[BUS_MASTER].volume,f32(0.5))
-    testing.expect_value(t,m.buses[BUS_MASTER].delay.params.wet,f32(0.5))
-    testing.expect(t,len(m.buses[BUS_MASTER].delay.memory)>0)
+}
+
+// The effects of a bus run on what it plays in the order of their slots,
+// with their parameters from the next chunk; a bus without one plays as it
+// comes. The state an effect replaces is freed only once the audio thread
+// let go of it, and the mixer frees the states it holds when it goes.
+@(test)
+bus_effects_run_in_order_and_free_their_state_once_let_go :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    scale :: proc "contextless" (state:[]u8,params:[BUS_EFFECT_PARAMS]f32,frames:[^]f32,n,rate:int) {
+        (^int)(raw_data(state))^+=1
+        for i in 0..<n*2 {frames[i]*=params[0]}
+    }
+    offset :: proc "contextless" (state:[]u8,params:[BUS_EFFECT_PARAMS]f32,frames:[^]f32,n,rate:int) {
+        for i in 0..<n*2 {frames[i]+=params[0]}
+    }
+    state :: proc(m:^Mixer) -> []u8 {
+        bytes,_:=make([]u8,size_of(int),m.allocator)
+        return bytes
+    }
+    effected,_:=bus_create(m)
+    plain,_:=bus_create(m)
+    sound:=test_stereo(t,m,RATE,proc(i:int) -> f32 {return 0.125})
+    for bus in ([?]Bus{effected,plain}) {
+        desc:=VOICE_DEFAULT
+        desc.bus=bus
+        voice_play(m,sound,desc)
+    }
+    first:=state(m)
+    testing.expect(t,bus_set_effect(m,effected,1,{id=2,process=offset,params={0.25,0,0,0}}))
+    testing.expect(t,bus_set_effect(m,effected,0,{id=1,process=scale,state=first,params={2,0,0,0}}))
+    testing.expect(t,!bus_set_effect(m,effected,BUS_EFFECT_SLOTS,{id=1,process=scale}) && !bus_set_effect(m,effected,0,{id=1}))
+    out:=test_render(m,CHUNK_FRAMES)
+    // Both buses add up at the master: one with its effects, one as it comes.
+    test_near(t,out[0],0.125*2+0.25+0.125)
+    testing.expect_value(t,(^int)(raw_data(first))^,1)
+    testing.expect(t,bus_set_effect_params(m,effected,0,{3,0,0,0}) && bus_effect(m,effected,0).params[0]==3)
+    out=test_render(m,CHUNK_FRAMES)
+    test_near(t,out[0],0.125*3+0.25+0.125)
+    // Replaced: the old state is the audio thread's until it applied the change.
+    second:=state(m)
+    testing.expect(t,bus_set_effect(m,effected,0,{id=1,process=scale,state=second,params={1,0,0,0}}))
+    mixer_update(m)
+    testing.expect(t,m.effect_shadows[int(effected)*BUS_EFFECT_SLOTS].retired!=nil)
+    testing.expect(t,!bus_set_effect(m,effected,0,{}),"a slot waits for its last state to be let go of")
+    out=test_render(m,CHUNK_FRAMES)
+    test_near(t,out[0],0.125+0.25+0.125)
+    mixer_update(m)
+    testing.expect(t,m.effect_shadows[int(effected)*BUS_EFFECT_SLOTS].retired==nil)
+    // Taken out, the bus plays as it comes.
+    testing.expect(t,bus_set_effect(m,effected,1,{}))
+    out=test_render(m,CHUNK_FRAMES)
+    test_near(t,out[0],0.125+0.125)
+    testing.expect(t,bus_effect(m,plain,0).process==nil && bus_effect(m,effected,1).process==nil)
 }

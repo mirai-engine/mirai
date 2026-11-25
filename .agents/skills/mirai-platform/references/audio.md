@@ -151,17 +151,21 @@ game's named buses belong to [`engine/audio`](../../mirai-gameplay/references/li
   `LIMITER_CEILING` brings the gain down to it at once, which holds `LIMITER_HOLD` and comes back
   in `LIMITER_RELEASE`. A mix that never reaches full scale comes out as it is.
 
-- A bus runs its [reverb](#reverb), `BUS_FILTERS` filters in order, its delay and its volume.
+- A bus runs its [reverb](#reverb), `BUS_FILTERS` filters in order, its effects and its volume.
 - **Filters** (`filter.odin`, `bus_set_filter(m,bus,band,Filter)`): the Audio EQ Cookbook's
   biquads, `Lowpass`, `Highpass`, `Bandpass` (0 dB at its center) and `Peak` (`gain` dB), in
   transposed direct form II; `q` 0 is Butterworth. A low-pass or a peak at or above
   `FILTER_HZ_MAX` of the rate passes everything. A new filter runs beside the old one for a
   chunk, whose memory it takes, and the output crossfades, so a sweep has no steps. A value that
   is not a number is refused (`filter_valid`).
-- **Delay** (`delay.odin`, `bus_set_delay`): miniaudio's echo, `wet` times what came in
-  `seconds` ago, each echo `feedback` times the last; `wet` and `feedback` ramp across a chunk and
-  a new time crossfades the taps. Its line (`DELAY_SECONDS_MAX`) is reserved the first time the
-  bus has one; turned off, it forgets its echoes.
+- **Effects** (`effect.odin`, `bus_set_effect`): what a plugin adds to a bus, `BUS_EFFECT_SLOTS`
+  slots run in order: a `"contextless"` procedure on the stereo frames of the bus in place, with
+  its state and `BUS_EFFECT_PARAMS` parameters (`bus_set_effect_params`, from the next chunk).
+  The mixer owns the state (allocated with its allocator) and frees the one an effect replaces
+  once the audio thread applied the change; a slot whose last state is not freed yet refuses
+  another. A bus without effects runs no code and holds no memory for them. The echo of a bus is
+  the `echo` plugin ([plugins](../../mirai-plugins/references/plugins.md#first-party-plugins)).
+  Reverb, filters and ducking stay stages of every bus: snapshots blend their values.
 - **Mute and solo.** Volume and mute are ramped within a chunk; a muted bus keeps its volume. While
   any bus is soloed (`bus_set_solo`; never the master), only the soloed ones, those that play into
   them and those they play through are heard (Godot's solo, which silences what plays into a

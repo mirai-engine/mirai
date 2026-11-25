@@ -805,6 +805,10 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
     defer delete(out)
     // Headphones build their HRTF the first time they are chosen, a change of settings and not a steady frame.
     testing.expect(t,mixer_set_output(m,.Headphones) && mixer_set_output(m,.Speakers))
+    gain :: proc "contextless" (state:[]u8,params:[BUS_EFFECT_PARAMS]f32,frames:[^]f32,n,rate:int) {
+        for i in 0..<n*2 {frames[i]*=params[0]}
+    }
+    testing.expect(t,bus_set_effect(m,bus,0,{id=1,process=gain}))
     count:=0
     {
         context.allocator=test_no_allocator(&count)
@@ -824,7 +828,7 @@ steady_playback_allocates_nothing :: proc(t:^testing.T) {
             listener_set(m,{f32(frame%3),0,0},1,{1,0,0})
             bus_set_volume(m,bus,0.5+f32(frame%2)*0.5)
             bus_set_filter(m,bus,frame%BUS_FILTERS,{kind=Filter_Kind(frame%5),frequency=2000 if frame%10<5 else 0,q=1,gain=6})
-            bus_set_delay(m,bus,{seconds=0.01*f32(frame%3),feedback=0.5,wet=f32(frame%2)})
+            bus_set_effect_params(m,bus,0,{f32(frame%2),0,0,0})
             bus_set_solo(m,sent,frame%6==0)
             voice_set_lowpass(m,voice,f32(frame%4)*1000)
             bus_set_duck(m,bus,{source=BUS_MASTER,threshold=0.1,amount=0.5,attack=0.01,release=0.1})

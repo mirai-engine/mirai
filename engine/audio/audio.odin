@@ -46,6 +46,11 @@ Voice :: mixer.Voice
 Attenuation_Model :: mixer.Attenuation_Model
 Output_Kind :: mixer.Output_Kind
 Reverb :: mixer.Reverb
+Bus_Effect :: mixer.Bus_Effect
+Bus_Effect_Proc :: mixer.Bus_Effect_Proc
+BUS_EFFECT_SLOTS :: mixer.BUS_EFFECT_SLOTS
+BUS_EFFECT_PARAMS :: mixer.BUS_EFFECT_PARAMS
+BUS_EFFECT_FRAMES :: mixer.CHUNK_FRAMES // an effect is given at most these frames at a time
 
 #assert(len(asset.Attenuation_Model)==len(Attenuation_Model))
 
@@ -186,13 +191,13 @@ Audio_Medium :: struct {
 
 // How a bus sounds. A bus without an entry plays as its voices come into the
 // master; an entry of zeros says nothing. What plays into it goes through its
-// reverb, its filters in order, its delay and its gain.
+// reverb, its filters in order, the effects plugins add to it (bus_effect_set)
+// and its gain.
 Audio_Bus_Setting :: struct {
     bus:Audio_Bus,
     send:Audio_Bus, // the bus it plays into, with its gain, filter and ducking: the master, or one of a lower number (ambience into effects)
     gain:f32 `mirai:"min=-80,max=24,unit=dB"`, // 0: as it comes; AUDIO_SILENCE_DB or below: silent
     filters:[mixer.BUS_FILTERS]mixer.Filter,   // low-pass, high-pass, band-pass or peak bands; Off: none
-    delay:mixer.Delay,                         // an echo of all it plays; wet 0: none
     duck_by:Audio_Bus,                         // while it is louder than duck_threshold, this bus goes down by duck_amount
     duck_amount:f32 `mirai:"min=0,max=1"`,     // 0: not ducked
     duck_threshold:f32 `mirai:"min=0"`,        // linear peak
@@ -732,12 +737,6 @@ buses_apply :: proc(m:^Mixer,settings:^Audio_Settings,volumes:^Audio_Volumes=nil
         for f,band in filters {
             if mixer.bus_filter(m,mixer.Bus(bus),band)!=f {ok=mixer.bus_set_filter(m,mixer.Bus(bus),band,f) && ok}
         }
-        if delay:=delay_clean(setting.delay);mixer.bus_delay(m,mixer.Bus(bus))!=delay {
-            if !mixer.bus_set_delay(m,mixer.Bus(bus),delay) {
-                ok=false
-                core.report(problems,core.NONE,"audio.delay","Audio_Settings: the delay of bus %d did not start: out of memory for its line; free memory or take it out",int(bus))
-            }
-        }
         reverb:=reverb_clamp(setting.reverb)
         reverb.wet=max(level.wet,0)
         if mixer.bus_reverb(m,mixer.Bus(bus))!=reverb {ok=mixer.bus_set_reverb(m,mixer.Bus(bus),reverb) && ok}
@@ -771,13 +770,6 @@ filters_with_medium :: proc "contextless" (filters:[mixer.BUS_FILTERS]mixer.Filt
     }
     filters[mixer.BUS_FILTERS-1]={kind=.Lowpass,frequency=lowpass}
     return filters
-}
-
-// A delay as the mixer keeps it; one that is not a number is none.
-@(private)
-delay_clean :: proc "contextless" (d:mixer.Delay) -> mixer.Delay {
-    if !(abs(d.seconds)<=max(f32) && abs(d.feedback)<=max(f32) && abs(d.wet)<=max(f32)) {return {}}
-    return {clamp(d.seconds,0,mixer.DELAY_SECONDS_MAX),clamp(d.feedback,0,mixer.DELAY_FEEDBACK_MAX),max(d.wet,0)}
 }
 
 // Plays the mixer on the output of the settings when they change; while that
@@ -879,6 +871,21 @@ lowpass_lower :: proc "contextless" (a,b:f32) -> f32 {
 @(private)
 reverb_clamp :: proc "contextless" (r:Reverb) -> Reverb {
     return {clamp(r.room_size,0,1),clamp(r.damping,0,1),max(r.wet,0),clamp(r.width,0,1)}
+}
+
+// The effect a plugin put in a slot of a bus (mixer.bus_set_effect), whose
+// id says whose it is; zero when none.
+bus_effect :: proc(m:^Mixer,bus:Audio_Bus,slot:int) -> Bus_Effect {
+    return mixer.bus_effect(m,mixer.Bus(bus),slot) if m!=nil && int(bus)<AUDIO_BUS_CAPACITY else {}
+}
+// Puts an effect in a slot of a bus, the bus reserved if it was not yet, as
+// mixer.bus_set_effect: the mixer owns its state, allocated with the
+// allocator of the mixer, from then on.
+bus_effect_set :: proc(m:^Mixer,bus:Audio_Bus,slot:int,effect:Bus_Effect) -> bool {
+    return m!=nil && bus_ready(m,bus) && mixer.bus_set_effect(m,mixer.Bus(bus),slot,effect)
+}
+bus_effect_params_set :: proc(m:^Mixer,bus:Audio_Bus,slot:int,params:[BUS_EFFECT_PARAMS]f32) -> bool {
+    return m!=nil && int(bus)<AUDIO_BUS_CAPACITY && mixer.bus_set_effect_params(m,mixer.Bus(bus),slot,params)
 }
 
 // The bus of the mixer for a bus, reserved the first time one is named.

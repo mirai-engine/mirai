@@ -1,7 +1,7 @@
 ---
 name: audio
 description: Sound in a game - `.sound`, `.sound_set` (random, layered, parameters), `Audio_Source`,
-  `audio.play`, positional audio, buses, filters, EQ, delay, ducking, snapshots, limiter, volume
+  `audio.play`, positional audio, buses, filters, EQ, echo, ducking, snapshots, limiter, volume
   options, reverb volumes, occlusion, materials, music, ambience, engines.
 ---
 
@@ -55,10 +55,10 @@ drive `curves` (`Gain`/`Pitch`/`Lowpass`) per `layer` (`audio.parameter_set(app,
 ## Buses
 `BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI`, plus custom constants
 below `AUDIO_BUS_CAPACITY` (`BUS_AMBIENCE :: audio.Audio_Bus(5)`). `Audio_Settings` sets per-bus
-`gain` dB, `reverb`, 4 `filters` (`Lowpass`/`Highpass`/`Bandpass`/`Peak`), `delay`, ducking
-(`duck_by`, `duck_amount`), `send`, `snapshots` (`audio.snapshot_blend(
-mix,"pause",0.5)`; `water` blends `underwater` by listeners under it) and a master limiter. Edit in
-Project Settings, View > Audio Mixer or `audio.audio_bus_setting_set`.
+`gain` dB, `reverb`, 4 `filters` (`Lowpass`/`Highpass`/`Bandpass`/`Peak`), ducking (`duck_by`,
+`duck_amount`), `send`, `snapshots` (`audio.snapshot_blend(mix,"pause",0.5)`; `water` blends
+`underwater` by listeners under it) and a master limiter, in Project Settings, View > Audio Mixer
+or `audio.audio_bus_setting_set`. The `echo` plugin's `Bus_Echoes` gives a bus an echo.
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
 options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing. So is

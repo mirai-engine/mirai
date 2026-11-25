@@ -89,36 +89,6 @@ bus_filter_chain_sweeps_without_steps :: proc(t:^testing.T) {
     testing.expectf(t,swept<=unfiltered*1.5,"the sweep steps by %v, the sine by %v",swept,unfiltered)
 }
 
-// An impulse through the delay of a bus: itself, then echoes every delay,
-// each feedback times the last, scaled by wet.
-@(test)
-bus_delay_echoes_what_plays :: proc(t:^testing.T) {
-    m:=test_mixer(t)
-    defer mixer_destroy(m)
-    bus,_:=bus_create(m)
-    testing.expect(t,bus_set_delay(m,bus,{seconds=0.01,feedback=0.5,wet=0.8}))
-    testing.expect_value(t,bus_delay(m,bus),Delay{0.01,0.5,0.8})
-    click:=test_stereo(t,m,1,proc(i:int) -> f32 {return 0.5})
-    desc:=VOICE_DEFAULT
-    desc.bus=bus
-    voice_play(m,click,desc)
-    out:=test_render(m,1500)
-    Echo :: struct {frame:int,level:f32}
-    for echo in ([?]Echo{{0,0.5},{1,0},{479,0},{480,0.4},{481,0},{960,0.2},{1440,0.1}}) {
-        test_near(t,out[echo.frame*2],echo.level,1e-6)
-        test_near(t,out[echo.frame*2+1],-echo.level,1e-6)
-    }
-    // Out of range values are brought into it; one that is not a number is refused.
-    testing.expect(t,bus_set_delay(m,bus,{seconds=9,feedback=2,wet=-1}))
-    testing.expect_value(t,bus_delay(m,bus),Delay{DELAY_SECONDS_MAX,DELAY_FEEDBACK_MAX,0})
-    testing.expect(t,!bus_set_delay(m,bus,{seconds=math.nan_f32()}))
-    // Turned off, the line forgets its echoes: turned on again it starts clean.
-    test_render(m,CHUNK_FRAMES*2)
-    bus_set_delay(m,bus,{seconds=0.01,feedback=0.9,wet=1})
-    out=test_render(m,1000)
-    for x in out {testing.expect_value(t,x,f32(0))}
-}
-
 // Which buses are heard by their mutes and solos: a soloed bus, those that
 // play into it and those it plays through to the master; the master always.
 @(test)

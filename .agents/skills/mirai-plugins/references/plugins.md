@@ -178,6 +178,11 @@ demo enables. How an `editor/` adds steps, panels and tools:
   ([spawn points](../../mirai-gameplay/references/control.md#spawn-points)).
 - **`cinematics`** (depends on `animation`): the shots and the actions the markers of a clip stage
   ([cinematics](../../mirai-gameplay/references/cinematics.md)).
+- **`echo`** (`Runtime`): the echo of a bus, an effect of the mixer
+  ([bus effects](../../mirai-platform/references/audio.md#buses)) that `Bus_Echoes` in the
+  project settings gives to the buses that want it; `echo_buses` reserves the line of each, as
+  long as its seconds ask, when the settings change, fades it out before it frees it, and reports
+  `echo.memory` and `echo.slots`. Test: `a_bus_echoes_what_plays_and_one_without_reserves_nothing`.
 
 - **`paint`** (`Runtime`, `Editor`)
   - Game: `Painted{colors}` names a `.paint`, the colors of the entity over the shared mesh its

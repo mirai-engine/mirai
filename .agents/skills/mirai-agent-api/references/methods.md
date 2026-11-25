@@ -408,7 +408,7 @@ non-prefab scene, missing override, or non-instance entity -> `-32602`; other fa
   to disk; others undo steps). `asset.delete` (no undo, sends to trash with owned parts; package
   root unpins package; rejects open scenes and engine/plugin assets). `asset.move` (`copy:true`
   clones with fresh ids; no undo). `asset.users` lists dependent files.
-- Sound: `audio.status` (`mixer:false` headless; meters, solos, filters, delay per bus),
+- Sound: `audio.status` (`mixer:false` headless; meters, solos and filters per bus),
   `audio.play`/`stop` (`loop`, set `parameters`), `audio.snapshot` (blend to a snapshot outside
   Play), `sound_set.inspect`/`set`
   (undo; bad `.sound` or inverted range -> `-32602`).

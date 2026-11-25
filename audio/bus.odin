@@ -6,8 +6,9 @@ import "core:sync"
 // Buses: every voice plays into one, every bus but the master plays into
 // the one it sends to (the master unless bus_set_send says another), and the
 // master, through its limiter, is what mixer_render writes out. A bus has a
-// reverb, BUS_FILTERS filters, a delay, a volume and a mute, in that order,
-// can be ducked by another bus and soloed, and meters what it plays.
+// reverb, BUS_FILTERS filters, the effects plugins add to it (effect.odin), a
+// volume and a mute, in that order, can be ducked by another bus and soloed,
+// and meters what it plays.
 
 Bus :: distinct u16
 BUS_MASTER :: Bus(0)
@@ -32,7 +33,6 @@ Bus_Shadow :: struct {
     muted,soloed:bool,
     silent:bool, // what the audio thread was told: muted, or left out by a solo
     filters:[BUS_FILTERS]Filter,
-    delay:Delay,
     duck:Duck,reverb:Reverb,send:Bus,
 }
 @(private)
@@ -40,7 +40,7 @@ Mix_Bus :: struct {
     volume:f32,silent:bool,
     gain:f32, // applied at the end of the last chunk
     filters:[BUS_FILTERS]Biquad_Fade,
-    delay:Delay_Line,
+    effects:[BUS_EFFECT_SLOTS]Bus_Effect,
     duck:Duck,
     duck_gain,duck_gain_now:f32,
     peak:f32, // of the last chunk, before ducking
@@ -118,21 +118,6 @@ bus_set_filter :: proc(m:^Mixer,bus:Bus,band:int,filter:Filter) -> bool {
     m.bus_shadows[bus].filters[band]=filter
     return true
 }
-bus_delay :: proc(m:^Mixer,bus:Bus) -> Delay {return m.bus_shadows[bus].delay if bus_valid(m,bus) else {}}
-// Reserves the line of the bus the first time it is given a delay (a
-// transaction): false without memory for it, or for a value that is not a number.
-bus_set_delay :: proc(m:^Mixer,bus:Bus,delay:Delay) -> bool {
-    if !bus_valid(m,bus) || !finite(delay.seconds) || !finite(delay.feedback) || !finite(delay.wet) {return false}
-    delay:=delay_clamp(delay)
-    if m.delay_memory[bus]==nil && delay.wet>0 {
-        memory,failed:=make([]f32,delay_line_frames(m.sample_rate)*2,m.allocator)
-        if failed!=nil {return false}
-        m.delay_memory[bus]=memory
-    }
-    if !command_push(m,{kind=.Bus_Delay,index=u32(bus),vectors={{delay.seconds,delay.feedback,delay.wet},{},{}},delay_memory=m.delay_memory[bus]}) {return false}
-    m.bus_shadows[bus].delay=delay
-    return true
-}
 bus_duck :: proc(m:^Mixer,bus:Bus) -> Duck {return m.bus_shadows[bus].duck if bus_valid(m,bus) else {}}
 // A Duck with amount 0 stops the ducking. The master cannot be ducked, and a
 // bus cannot duck itself.
@@ -186,14 +171,14 @@ bus_on_solo :: proc(m:^Mixer,bus:Bus) -> bool {
     return false
 }
 
-// Filters, delay, volume, peak and meter of one bus over n frames of its buffer.
+// Filters, effects, volume, peak and meter of one bus over n frames of its buffer.
 @(private)
 bus_process :: proc "contextless" (m:^Mixer,index:int,buffer:[^]f32,n:int) {
     bus:=&m.buses[index]
     for &f in bus.filters {
         if f.on || f.fading {biquad_fade_run(&f,buffer,0,n)}
     }
-    delay_run(&bus.delay,buffer,n)
+    effects_run(m,index,buffer,n)
     target:=f32(0) if bus.silent else bus.volume
     gain,step:=bus.gain,(target-bus.gain)/f32(n)
     peaks:[2]f32
