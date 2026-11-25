@@ -465,6 +465,89 @@ render_shadow_maps_follow_what_moves_in_its_frame :: proc(t: ^testing.T) {
 	expect_clean(t, f.device)
 }
 
+// A skinned caster whose pose changes while its instance stays, after both
+// moved together, among other poses that change in the same frames: its
+// shadow follows its pose in the frame the pose changes, as it follows a
+// caster that moves.
+@(test)
+render_shadow_maps_follow_a_pose_in_its_frame :: proc(t: ^testing.T) {
+	f: Cube_Fixture
+	settings := test_settings()
+	settings.gi_enabled = false
+	settings.taa = false
+	if !cube_fixture_init(t, &f, 192, 128, settings) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	vertices, indices := cube_mesh()
+	source, origins, added := test_mesh_add(r, vertices[:], indices[:])
+	if !testing.expect(t, added) {return}
+	given: [len(vertices)]Skin_Influence
+	for &influence in given {influence = test_two_joints(0)}
+	// Another pose, made first, that changes in every frame too, far from the slab.
+	other, made := skin_create(r, source, test_by_cluster(origins, given[:]), 2)
+	if !testing.expect(t, made, r.error) {return}
+	skin, created := skin_create(r, source, test_by_cluster(origins, given[:]), 2)
+	if !testing.expect(t, created, r.error) {return}
+	// The slab 1.5 m under a light 3 m up, placed by its instance at `at` and
+	// moved from there along x by its pose.
+	place :: proc(at: f32) -> Mat4 {return trs({at, 1.5, 0}, {1, 0.2, 1})}
+	pose :: proc(r: ^Renderer, skin: Mesh_Handle, x: f32) -> bool {
+		shift := Mat4(1)
+		shift[0, 3] = x
+		palette := [2]Mat4{shift, shift}
+		return skin_update(r, skin, palette[:])
+	}
+	instances := []Instance_Desc{
+		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {16, 0.2, 16}), tint = {0.8, 0.8, 0.8}},
+		{object_id = 2, mesh = skin, transform = place(0), tint = {0.5, 0.5, 0.5}},
+		{object_id = 3, mesh = other, transform = trs({0, 0.5, -6}, {0.3, 0.3, 0.3}), tint = {0.5, 0.5, 0.5}},
+	}
+	light := Light_Desc{position = {0, 3, 0}, color = {1, 1, 1}, intensity = 30 * math.PI, range = 14, indirect = 1, scattering = 1}
+	testing.expect(t, scene_given(r, instances, []Light_Desc{light}, {}, {}))
+	camera := Camera{position = {0, 9, 0.001}, forward = {0, -9, -0.001}, up = {0, 0, -1}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}
+	frame := 0
+	// The other pose changes; after the frame, the floor at `dark` is in
+	// shadow and the one as far from the light at `lit` is not.
+	expect_shadow :: proc(t: ^testing.T, f: ^Cube_Fixture, camera: Camera, other: Mesh_Handle, frame: ^int, dark, lit: f32, what: string, loc := #caller_location) {
+		r := f.renderer
+		frame^ += 1
+		testing.expect(t, pose(r, other, 0.1 * f32(frame^ % 2)), loc = loc)
+		testing.expect(t, renderer_frame(r, {camera = camera}), r.error, loc = loc)
+		rhi.device_wait_idle(f.device)
+		pixels, w, _, ok := golden_capture(r)
+		testing.expect(t, ok, r.error, loc = loc)
+		if !ok {return}
+		defer delete(pixels)
+		shaded, open := pixel(pixels, w, project(r, camera, {dark, 0.001, 0}))[0], pixel(pixels, w, project(r, camera, {lit, 0.001, 0}))[0]
+		testing.expectf(t, open > 40 && shaded < 0.5 * open, "%s, frame %d: the floor at %v has %f against %f at %v", what, frame^, dark, shaded, open, lit, loc = loc)
+	}
+	testing.expect(t, pose(r, skin, -1))
+	for _ in 0 ..< SHADOW_MOVER_FRAMES + 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	expect_shadow(t, &f, camera, other, &frame, -2, 2, "still")
+	// It walks: the instance moves, and the pose with it.
+	for k in 0 ..< 6 {
+		at := 0.05 * f32(k + 1)
+		testing.expect(t, scene_move(r, {1}, {place(at)}))
+		x := f32(-1) if k % 2 == 0 else 1
+		testing.expect(t, pose(r, skin, x - at))
+		expect_shadow(t, &f, camera, other, &frame, 2 * x, -2 * x, "walking")
+	}
+	// It stops: the instance stays, and the pose goes on.
+	at, x := f32(0.3), f32(-1)
+	for _ in 0 ..< SHADOW_MOVER_FRAMES + 4 {
+		x = -x
+		testing.expect(t, pose(r, skin, x - at))
+		expect_shadow(t, &f, camera, other, &frame, 2 * x, -2 * x, "posed in place")
+	}
+	// Its pose stays: the shadow stays where it was last posed, and joins what stays.
+	for _ in 0 ..< SHADOW_MOVER_FRAMES + 2 {expect_shadow(t, &f, camera, other, &frame, 2 * x, -2 * x, "still again")}
+	// Once no pose changes, the maps draw no page again.
+	for _ in 0 ..< SHADOW_MOVER_FRAMES + 2 {testing.expect(t, renderer_frame(r, {camera = camera}), r.error)}
+	drawn, composed, _ := shadow_counts(r)
+	testing.expectf(t, drawn == 0 && composed == 0, "still poses: %d pages drawn again, %d composed", drawn, composed)
+	expect_clean(t, f.device)
+}
+
 // A batch of a deformable that casts shadows and sways (the wind), near the
 // eye: where its sway is wider than a texel of the maps they draw it as it is
 // each frame it sways; where it is narrower they draw it at rest and keep it,

@@ -230,6 +230,7 @@ mirai test render render_sun_shadow_is_ray_traced render_many_lights_match_their
   `render_an_edge_takes_no_light_from_the_face_beyond_it`,
   `render_moved_cascades_give_what_whole_ones_give`,
   `render_shadow_maps_follow_what_moves_in_its_frame`,
+  `render_shadow_maps_follow_a_pose_in_its_frame`,
   `render_a_swaying_batch_shades_where_it_is`,
   `render_a_batch_casts_no_shadow_past_its_cull_distance`,
   `render_a_page_first_read_is_drawn_in_its_frame`,
