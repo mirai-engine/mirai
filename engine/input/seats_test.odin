@@ -266,7 +266,7 @@ steady_input_keeps_the_authored_seats_clean_without_allocating :: proc(t:^testin
         input_seats({entities=&w.entities},nil,&w.seats,&w.seat_state,run,&w.runtime,device,core.ref(views),
             core.ref(bindings),core.ref(network),nil,time)
         input_drive(es,&w.moves,&w.seats,&w.seat_state,&w.runtime,&w.seat_requests,
-            core.ref(network),core.read(&w.remotes),problems)
+            core.ref(network),core.read(&w.remotes),nil,nil,{},problems)
         input_frame_actions_update(core.ref(bindings),frame,{input=device},core.ref(&w.seat_state),
             seats,core.ref(&w.runtime),{dt=time.dt})
     }

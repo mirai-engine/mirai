@@ -24,6 +24,7 @@ Drive_World :: struct {
     verticals:core.Table(core.Vertical),
     remotes:core.Table(core.Remote),
     hierarchy:core.Hierarchy,
+    carried:core.Table(core.Carried),
     seat_state:input.Seats,
     seat_runtime:input.Seat_States,
     shown:Cameras,
@@ -94,7 +95,7 @@ drive_run :: proc(w:^Drive_World,problems:^core.Problems) {
         {state=core.ref(&w.seat_state),runtime=core.ref(&w.seat_runtime),seats=core.read(&w.seats),base=DRIVE_LOOK},
         core.ref(&w.bindings),
         {sight={shown=core.ref(&w.shown),seats=core.read(&w.seats),cameras=core.read(&w.cameras),
-                hierarchy=core.ref(&w.hierarchy),worlds=core.read(&w.worlds)},
+                hierarchy=core.ref(&w.hierarchy),carried=core.read(&w.carried),worlds=core.read(&w.worlds)},
          follows=core.read(&w.follows),parents=core.read(&w.parents),
          locals=core.read(&w.transforms),verticals=core.read(&w.verticals)},
         core.read(&w.remotes),problems,
@@ -116,7 +117,7 @@ a_seat_drives_toward_the_forward_of_the_camera_it_sees :: proc(t:^testing.T) {
     with_body:=input.Seat_View{kind=.Body}
     // The camera of this end looks along -Z; the seat saw along +X.
     apart:=input.Seat_View{yaw=-math.PI/2,kind=.Apart}
-    Case :: struct {name:string,follow:Maybe(Camera_Follow),camera:bool,view:input.Seat_View,yaw:f32,remote:bool,turn:f32}
+    Case :: struct {name:string,follow:Maybe(Camera_Follow),camera:bool,view:input.Seat_View,yaw:f32,remote:bool,turn:f32,steers:bool}
     cases:=[]Case{
         {name="eyes",follow=Camera_Follow{mode=.Eyes},camera=true,view=with_body,yaw=turned},
         {name="an orbit that aims",follow=Camera_Follow{mode=.Orbit,aim=true},camera=true,view=with_body,yaw=turned},
@@ -126,19 +127,22 @@ a_seat_drives_toward_the_forward_of_the_camera_it_sees :: proc(t:^testing.T) {
         {name="no camera",yaw=0},
         {name="ground that turns",follow=Camera_Follow{mode=.Eyes},camera=true,view=with_body,yaw=turned+0.1,turn=0.1},
         {name="another end decides it",follow=Camera_Follow{mode=.Eyes},camera=true,view=with_body,yaw=0.5,remote=true},
+        // A boat behind its orbit: it looks where the view looks, and its move is its own to write.
+        {name="a body that steers itself",follow=Camera_Follow{mode=.Orbit,turn=true},camera=true,view=apart,yaw=-math.PI/2,steers=true},
     }
     bodies:=make([]core.Entity,len(cases),context.temp_allocator)
     for c,i in cases {
         _,bodies[i],_=drive_body(w,1,c.follow,c.camera,c.view)
         if c.remote {core.add(&w.remotes,bodies[i],core.Remote{})}
         if c.turn!=0 {core.add(&w.verticals,bodies[i],core.Vertical{frame=1,turn=c.turn})}
+        if c.steers {core.staged(&w.moves,bodies[i]).frame=.Body}
     }
     problems:core.Problems
     drive_run(w,&problems)
     for c,i in cases {
         move,_:=core.get(&w.moves,bodies[i])
         testing.expectf(t,abs(mm.angle_wrap(move.look_yaw-c.yaw))<1e-4,"%s: it looks at yaw %v, not %v",c.name,move.look_yaw,c.yaw)
-        ahead:=c.remote?[3]f32{}:mm.quat_rotate(mm.quat_axis_angle({0,1,0},c.yaw),[3]f32{0,0,-1})
+        ahead:=c.remote || c.steers?[3]f32{}:mm.quat_rotate(mm.quat_axis_angle({0,1,0},c.yaw),[3]f32{0,0,-1})
         testing.expectf(t,linalg_close(move.move,ahead),"%s: it goes %v, not %v",c.name,move.move,ahead)
     }
     testing.expect_value(t,problems.count,0)
@@ -180,7 +184,7 @@ the_view_each_slot_draws_is_the_view_its_seat_takes :: proc(t:^testing.T) {
     }
     drive_settle(w)
     input.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,nil)
-    camera_blend(&w.views,core.ref(&w.shown),core.ref(&w.seat_state),core.read(&w.seats),core.read(&w.parents),core.ref(&w.hierarchy),
+    camera_blend(&w.views,core.ref(&w.shown),core.ref(&w.seat_state),core.read(&w.seats),core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.carried),
         core.read(&w.cameras),core.read(&w.follows),core.read(&w.states),core.read(&w.worlds),&w.chosen,&w.view_bodies,&w.slot_views,core.read(&w.verticals),{dt=1.0/60,alpha=1})
     first,second:=w.slot_views.views[0],w.slot_views.views[1]
     testing.expectf(t,first.kind==.Apart && abs(mm.angle_wrap(first.yaw+math.PI/2))<1e-4 && abs(first.pitch)<1e-4,"the free orbit: %v",first)
@@ -278,4 +282,72 @@ player_1_without_a_body_flies_a_free_camera_in_play :: proc(t:^testing.T) {
     test_world_settle(w)
     run(w,commands)
     testing.expect(t,w.free.entity==core.NONE,"once it had a body, it gets no other free camera")
+}
+
+// A submarine with a dashboard camera and an active chase camera carries a
+// diver whose own camera is active too: the seat that drives the hull sees
+// through the chase camera, never the diver's. When the seat drives the hull
+// instead of the diver, the view comes into it over BODY_BLEND, and back.
+@(test)
+a_vehicle_shows_its_active_camera_and_the_body_change_blends :: proc(t:^testing.T) {
+    w:=new(Drive_World)
+    defer free(w)
+    if !drive_init(t,w) {return}
+    defer test_world_destroy(w)
+    w.seat_state.local_count=1
+    seat,diver,hull,hatch:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    dash,chase,eyes:=core.create(&w.entities),core.create(&w.entities),core.create(&w.entities)
+    core.add(&w.seats,seat,input.Seat{body=diver})
+    for e in ([7]core.Entity{seat,diver,hull,hatch,dash,chase,eyes}) {core.add(&w.worlds,e,core.World_Transform{transform={rotation=1,scale=1}})}
+    core.add(&w.worlds,chase,core.World_Transform{transform={position={0,3,8},rotation=1,scale=1}})
+    hang :: proc(w:^Drive_World,e,parent:core.Entity) {core.add(&w.parents,e,core.Parent{entity=parent})}
+    hang(w,dash,hull)
+    hang(w,hatch,hull)
+    hang(w,chase,hull)
+    hang(w,diver,hatch)
+    hang(w,eyes,diver)
+    core.add(&w.cameras,dash,render.Camera{fov=1,near=0.1})
+    core.add(&w.cameras,chase,render.CAMERA_DEFAULT)
+    core.add(&w.cameras,eyes,render.CAMERA_DEFAULT)
+    // The diver rides the hatch: the hull shows its active camera and none of what rides it.
+    core.add(&w.carried,diver,core.Carried{by=hatch})
+    drive_settle(w)
+    sight:=core.ref(&w.hierarchy)
+    testing.expect_value(t,body_camera(sight,core.read(&w.cameras),core.read(&w.carried),hull),chase)
+    testing.expect_value(t,body_camera(sight,core.read(&w.cameras),core.read(&w.carried),diver),eyes)
+    core.edit(&w.cameras,chase).active=false
+    drive_settle(w)
+    testing.expect_value(t,body_camera(sight,core.read(&w.cameras),core.read(&w.carried),hull),dash)
+    core.edit(&w.cameras,chase).active=true
+    drive_settle(w)
+
+    blend :: proc(w:^Drive_World) {
+        input.input_seat_index(core.ref(&w.entities),core.read(&w.seats),&w.seat_state,nil)
+        camera_blend(&w.views,core.ref(&w.shown),core.ref(&w.seat_state),core.read(&w.seats),core.read(&w.parents),core.ref(&w.hierarchy),core.read(&w.carried),
+            core.read(&w.cameras),core.read(&w.follows),core.read(&w.states),core.read(&w.worlds),&w.chosen,&w.view_bodies,&w.slot_views,core.read(&w.verticals),{dt=0.1,alpha=1})
+    }
+    core.remove(&w.carried,diver)
+    drive_settle(w)
+    blend(w)
+    testing.expect(t,w.chosen.entity==eyes && w.chosen.cut,"it starts through the eyes of the diver")
+    core.add(&w.carried,diver,core.Carried{by=hatch})
+    core.edit(&w.seats,seat).body=hull
+    drive_settle(w)
+    blend(w)
+    testing.expectf(t,w.chosen.entity==chase && !w.chosen.cut && w.chosen.posed,"entering, the view blends into the chase camera: %v",w.chosen)
+    testing.expectf(t,w.views.slots[0].blend==BODY_BLEND,"over BODY_BLEND: %v",w.views.slots[0].blend)
+    for _ in 0..<8 {blend(w)}
+    testing.expect(t,!w.chosen.posed,"and arrives")
+    core.edit(&w.seats,seat).body=diver
+    core.remove(&w.carried,diver)
+    drive_settle(w)
+    blend(w)
+    testing.expect(t,w.chosen.entity==eyes && !w.chosen.cut,"getting off blends back")
+
+    // Behind a hull that turned and rolls: the heading frame keeps its yaw and leaves the roll out.
+    hull_turn:=mm.quat_axis_angle({0,1,0},1)*mm.quat_axis_angle({0,0,1},0.4)
+    placed:=core.World_Transform{transform={rotation=hull_turn,scale=1},previous={rotation=hull_turn,scale=1}}
+    heading:=follow_frame(.Heading,mm.QUAT_IDENTITY,placed,1)
+    testing.expectf(t,abs(mm.angle_wrap(mm.yaw_of_direction(mm.quat_forward(heading))-1))<1e-4 && abs(mm.quat_rotate(heading,[3]f32{0,1,0}).y-1)<1e-4,"heading: %v",heading)
+    testing.expect(t,follow_frame(.Rotation,mm.QUAT_IDENTITY,placed,1)==hull_turn && follow_frame(.Vertical,mm.QUAT_IDENTITY,placed,1)==mm.QUAT_IDENTITY)
 }

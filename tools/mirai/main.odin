@@ -30,7 +30,7 @@ COMMANDS :: [?]Command{
     {"doctor",DOCTOR_USAGE,"Checks the machine and a project: what fails and how to fix it",cmd_doctor},
     {"test",TEST_USAGE,"Builds if needed and runs the tests of one or more packages",cmd_test},
     {"test",TEST_LIST_USAGE,"Lists the tests of a package or of a file without building",cmd_test},
-    {"check","check <package> [-flag...]","Checks the types of a package",cmd_check},
+    {"check","check <package> [-flag...] | check [project]","Checks the types of a package, or of a project with its plugins and content tool",cmd_check},
     {"locks",LOCKS_USAGE,"Says who holds the build, measurement and GPU turns of all checkouts and since when, or that they are free",cmd_locks},
     {"measure",MEASURE_USAGE,"Runs a command that measures times alone: waits for other measurements and for builds; what builds or tests meanwhile runs at low priority",cmd_measure},
     {"deps","deps","Builds the C dependencies pinned in third_party/",cmd_deps},
@@ -52,6 +52,7 @@ COMMANDS :: [?]Command{
     {"texts",TEXTS_USAGE,"Lists, sets and checks the texts of a project by key (its .strings, which its interfaces, its game data and its code show), and takes them to a CSV for translators and back, with no editor",cmd_texts},
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
     {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
+    {"records",RECORDS_USAGE,"Makes, reads, writes and checks the tables of game data of a project (its .records) as the records.* methods do, with no editor",cmd_records},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
     {"import","import <file> [--project P] [--folder F] [--store S] [settings] | import --refresh <root>... [--final] [--store S] [--from S]","Ingests a model, an image, a sound, a font or a prompts manifest from anywhere into the library of the machine store and adds it to a project; --refresh brings the packages a project or plugin pins to builds this engine reads",cmd_import},
     {"share",SHARE_USAGE,"Serves a project to whoever holds the invitation it prints, peer to peer, with the packages of the machine store, until stopped",cmd_share},
@@ -249,9 +250,10 @@ executable_publish :: proc(root,staging,final,staged_sources,sources:string) -> 
 // Checks the types of a package with the collections plugins and project it
 // reaches, like mirai test.
 cmd_check :: proc(root:string,args:[]string) -> int {
+    if len(args)==1 && os.is_file(join(args[0],project.PROJECT_FILE)) {return check_project(root,project.path_absolute(args[0],context.temp_allocator))}
     if len(args)==0 || strings.has_prefix(args[0],"-") {
         if owner:=project_of(project.path_absolute(".",context.temp_allocator));owner!="" && len(args)==0 {return check_project(root,owner)}
-        fmt.eprintln("Usage: mirai check [<package> [-flag...]]; without a package, inside a project: its game, editor and plugins")
+        fmt.eprintln("Usage: mirai check [<package> [-flag...]] | mirai check <project>; without a package, inside a project: its game, editor, plugins and content tool")
         return 2
     }
     if !engine_shaders(root,backends=target_backends(args[1:])) {return 1}
@@ -315,12 +317,23 @@ check_project :: proc(root,folder:string) -> int {
     job:=build.job_run({project=&opened,target=.Editor,action=.Check,engine=.Dev})
     defer build.job_destroy(job)
     for d in job.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
-    if job.result.status==.Built {
-        game:=join(folder,project.FOLDER_NAMES[.Game])
-        return 0 if lints_run(package_parse(game),alloc_lint_applies(root,game),true) && clean else 1
+    if job.result.status!=.Built {
+        if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
+        return 1
     }
-    if len(job.result.diagnostics)==0 {fmt.eprintln(job.result.text)}
-    return 1
+    game:=join(folder,project.FOLDER_NAMES[.Game])
+    clean=lints_run(package_parse(game),alloc_lint_applies(root,game),true) && clean
+    // Its content tool, as mirai content builds it; what fails there does not stop the editor building.
+    if tool:=join(opened.root,CONTENT_TOOL);os.is_dir(tool) {
+        checked:=build.job_run({project=&opened,target=.Editor,action=.Check,package_folder=tool,engine=.Dev})
+        defer build.job_destroy(checked)
+        for d in checked.result.diagnostics {fmt.eprintfln("%s(%d:%d) %v: %s",d.file,d.line,d.column,d.severity,d.message)}
+        if checked.result.status!=.Built {
+            if len(checked.result.diagnostics)==0 {fmt.eprintln(checked.result.text)}
+            clean=false
+        }
+    }
+    return 0 if clean else 1
 }
 
 cmd_deps :: proc(root:string,args:[]string) -> int {

@@ -1,7 +1,7 @@
 ---
 name: mirai-editor
 description: The Mirai editor (package `editor`, with `editor/acp`, `editor/ai_store`,
-  `editor/git`, `editor/history` and `editor/records`) - session, Play, Simulate and networked
+  `editor/git` and `editor/history`) - session, Play, Simulate and networked
   Play, undo (`edits_*`, the journal), viewport and tools (`tool_set`/`tool_on`), inspector,
   content browser, prefabs, collaboration (`--share`, `--join`), AI chats and extensions. Use when
   changing the editor, adding a tool or panel of a plugin, editing the scene from editor code or
@@ -256,7 +256,7 @@ of the `Editor_World` and its functions are `@(step)` of the `editor` loop, like
   the tests of the touched `<file>_test.odin`; transport: `mirai test editor/acp`; git commands
   and what they print: `mirai test editor/git`; the journal and undo without a session:
   `mirai test editor/history`; the rows and texts of a table of game data:
-  `mirai test editor/records`; the line diff: `mirai test editor/diff`. The editor's tests need
+  `mirai test cook/records`; the line diff: `mirai test editor/diff`. The editor's tests need
   more memory than the default limit (`MIRAI_COMPILER_MEMORY=14`).
 - Commands: `editor/commands_test.odin` (every entry calls a registered method with params it
   takes or only changes what the person sees, a gesture runs between frames as a step of the

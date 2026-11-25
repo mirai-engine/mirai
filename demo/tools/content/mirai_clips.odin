@@ -3,8 +3,9 @@ package main
 import "core:math"
 import "core:math/linalg"
 import "mirai:asset"
+import "mirai:cook/content"
 import importer "mirai:cook/import"
-import game "mirai:demo/game"
+import game "project:game"
 import lib "mirai:std/anim"
 import "mirai:std/base"
 import mm "mirai:std/math"
@@ -181,9 +182,9 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     idle,has_idle:=mirai_clip_find(locomotion,"idle")
     walk,has_walk:=mirai_clip_find(locomotion,"walk")
     left,right:=mirai_bone(model,"LeftFoot"),mirai_bone(model,"RightFoot")
-    if !valid || !has_idle || !has_walk || left<0 || right<0 {o.content.failed=true;return}
+    if !valid || !has_idle || !has_walk || left<0 || right<0 {o.w.failed=true;return}
     frames,times,sampled:=mirai_clip_frames(rig,walk,60)
-    if !sampled {o.content.failed=true;return}
+    if !sampled {o.w.failed=true;return}
     steps,advance:=mirai_steps(frames,times,left,right)
     duration:=times[len(times)-1]
     walk.markers=steps
@@ -193,7 +194,7 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     walk.tracks=tracks
     wave,waved:=mirai_wave(model,rig,idle)
     stride_clip,strode:=mirai_stride(model,rig,walk,advance)
-    if !waved || !strode {o.content.failed=true;return}
+    if !waved || !strode {o.w.failed=true;return}
     wave.markers=[]asset.Animation_Marker_Desc{{time=0,name="Greeting",duration=2}}
     stride_spans:=[]asset.Animation_Marker_Desc{{time=0,name="Advance",duration=1.5},{time=.3,name="Movement",duration=.9},{time=0,name=game.GALLERY_REACH,duration=duration}}
     stride_markers:=make([]asset.Animation_Marker_Desc,len(stride_clip.markers)+len(stride_spans),context.temp_allocator)
@@ -202,6 +203,6 @@ mirai_gallery_animation :: proc(o:^Out,model:^importer.Imported_Model,locomotion
     clips:=[]asset.Animation_Clip_Desc{idle,walk,mirai_clip_scaled(walk,"jog",.72,1.2),wave,stride_clip}
     for &clip in clips {clip.skeleton=idle.skeleton}
     file:="assets/characters/mirai/mirai_gallery.anim"
-    asset.content_check(&o.content,file,asset.animation_save(path(o,file),&o.content.types,{id=id,clips=clips}))
+    content.check(&o.w,path(o,file),asset.animation_save(path(o,file),&o.w.types,{id=id,clips=clips}))
     return id
 }

@@ -12,7 +12,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 
-RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...] [--project P|--port N] [--timeout S] [--client NAME]"
+RPC_USAGE :: "rpc <method> [key=value...|json|-|--file F] [--select FIELDS] [--wait-until CONDITION] | rpc describe [plugin|method|prefix|method...|--search word...] [--project P|--port N] [--timeout S] [--client NAME]"
 
 RPC_RESTART_PAUSE :: 250*time.Millisecond // between the calls of a --wait-until whose editor restarts
 RPC_WAIT_MARGIN_MS :: 5000 // a --wait-until reads the answer past its limit: the server says what it last saw
@@ -401,7 +401,8 @@ rpc_hint :: proc(err:api.Error) -> api.Error {
 // params and their result.
 @(private="file")
 rpc_describe :: proc(connection:Connection,args:[]string) -> int {
-    listing,err,called:=rpc_call_waiting(connection,"engine.describe","{}",1)
+    if len(args)>0 && args[0]=="--search" {return describe_search(connection,args[1:])}
+    listing,err,called:=describe_call(connection,"{}")
     if !called {return rpc_fail(err)}
     if len(args)==0 {
         fmt.print(rpc_describe_list_text(listing))
@@ -411,7 +412,7 @@ rpc_describe :: proc(connection:Connection,args:[]string) -> int {
     if len(args)>1 {
         names:=make([]string,len(args),context.temp_allocator)
         for arg,i in args {names[i]=serial.text_quote(arg)}
-        result,err,called=rpc_call_waiting(connection,"engine.describe",fmt.tprintf(`{{"methods":[%s]}}`,strings.join(names,",",context.temp_allocator)),1)
+        result,err,called=describe_call(connection,fmt.tprintf(`{{"methods":[%s]}}`,strings.join(names,",",context.temp_allocator)))
         if !called {return rpc_fail(err)}
         fmt.print(rpc_describe_text(result,""))
         return 0
@@ -420,12 +421,12 @@ rpc_describe :: proc(connection:Connection,args:[]string) -> int {
     key:=rpc_describe_is_plugin(listing,name)?"plugin":"prefix"
     params:=fmt.tprintf(`{{"%s":%s}}`,key,serial.text_quote(name))
     if slice.contains(rpc_listed_names(listing),name) {params=fmt.tprintf(`{{"methods":[%s]}}`,serial.text_quote(name))}
-    result,err,called=rpc_call_waiting(connection,"engine.describe",params,1)
+    result,err,called=describe_call(connection,params)
     if !called {
         if err.code!=api.INVALID_PARAMS || key=="plugin" {return rpc_fail(err)}
-        message:=fmt.tprintf("no method starts with '%s'",name)
-        if similar:=api.names_similar(rpc_listed_names(listing),name,context.temp_allocator);similar!="" {message=fmt.tprintf("%s; similar: %s",message,similar)}
-        return rpc_fail({api.INVALID_PARAMS,fmt.tprintf("%s; mirai rpc describe without an argument lists them all",message),""})
+        // No method is named so: what says the word.
+        fmt.eprintfln("mirai rpc describe: no method starts with '%s'; what says it:",name)
+        return describe_search(connection,{name})
     }
     fmt.print(rpc_describe_text(result,name))
     return 0

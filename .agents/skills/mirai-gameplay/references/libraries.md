@@ -170,9 +170,12 @@ Syncs mixer voices to `Audio_Source`s, listeners to `Audio_Listener`s (up to
   applied by `audio_buses`, which reports refused streams once per frame (`audio.streams`, from
   `streams_busy`).
 - **Snapshots (`snapshots.odin`):** `Audio_Settings.snapshots` name per-bus gain dB, filter cutoffs
-  and reverb wet dB; the game writes `Audio_Mix` (`audio.snapshot_blend(mix,"underwater",0.5)`)
-  and `audio_buses` blends `Mixer_Buses.blend` (`mix_blend_step`: dB and wet linear, cutoffs by
-  octaves) from where the buses are; an unknown name -> `audio.snapshot`.
+  and reverb wet dB. Weights add up as rooms do: the game's state whole (`Audio_Mix`,
+  `audio.snapshot_blend(mix,"pause",0.5)`; an unknown name -> `audio.snapshot`) and each
+  `Medium.snapshot` by weight and share of listeners (`medium_snapshots`; `water` names
+  `"underwater"`, absent from the settings: nothing). `audio_buses` blends `Mixer_Buses.blend`
+  (`mix_blend_step`: dB and wet linear, cutoffs by octaves; the medium over `REVERB_FADE`). Game
+  code never names a snapshot for where the listener is.
 - **Player options:** machine `Audio_Volumes` & `Audio_Output` (fallback + `audio.output` on
   unplug). `Voices` (`host,by_world`) isolates worlds; failures report
   `audio.{sound,bus,voices,memory}`.

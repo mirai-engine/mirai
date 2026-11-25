@@ -7,6 +7,7 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "mirai:asset"
+import "mirai:cook/content"
 import "mirai:std/base"
 import "mirai:std/geom"
 import mm "mirai:std/math"
@@ -101,7 +102,8 @@ morph_jelly_source :: proc(o:^Out) -> string {
     ibm:=morph_accessor(&gltf,mem.slice_data_cast([]u8,inverse_binds[:]),2,16)
     accessors:=strings.to_string(gltf.accessors)
     json:=fmt.tprintf(`{{"asset":{{"version":"2.0","generator":"Mirai Odin morph playground"}},"buffers":[{{"uri":"jelly.bin","byteLength":%d}}],"bufferViews":[%s],"accessors":[%s],"materials":[{{"name":"Candy","pbrMetallicRoughness":{{"metallicFactor":0,"roughnessFactor":0.42}}}}],"meshes":[{{"name":"Party Jelly","weights":[0,0,0,0],"extras":{{"targetNames":["Squash","Smile","Blink","Wobble"]}},"primitives":[{{"attributes":{{"POSITION":%d,"NORMAL":%d,"COLOR_0":%d,"JOINTS_0":%d,"WEIGHTS_0":%d}},"indices":%d,"material":0,"targets":[%s]}}]}}],"nodes":[{{"name":"Jelly","mesh":0}},{{"name":"JellySkinned","mesh":0,"skin":0}},{{"name":"Root","children":[3]}},{{"name":"Top","translation":[0,1.2,0]}}],"skins":[{{"name":"Jelly bones","joints":[2,3],"inverseBindMatrices":%d}}],"scenes":[{{"nodes":[0,1,2]}}],"scene":0,"animations":[%s]}}`,len(gltf.bytes),strings.to_string(gltf.views),accessors,p,n,color,joint,weight,index,strings.to_string(targets),ibm,strings.to_string(animations))
-    if os.write_entire_file(path(o,folder+"/jelly.bin"),gltf.bytes[:])!=nil || os.write_entire_file(path(o,folder+"/jelly.gltf"),json)!=nil {o.content.failed=true}
+    content.source_write(&o.w,path(o,folder+"/jelly.bin"),gltf.bytes[:])
+    content.source_write(&o.w,path(o,folder+"/jelly.gltf"),transmute([]u8)json)
     return folder+"/jelly.gltf"
 }
 
@@ -109,7 +111,7 @@ morph_jelly_source :: proc(o:^Out) -> string {
 // layer that mixes its clips of shapes and an additive layer over it.
 @(private)
 gallery_morphs :: proc(o:^Out) {
-    source:=morph_jelly_source(o);if o.content.failed {return}
+    source:=morph_jelly_source(o);if o.w.failed {return}
     animation:=imported_id(o,source,asset.KIND_ANIMATION,"jelly")
     // Its moods over the dance: how sleepy it is, and how much the rubber adds, by the weights the game sets.
     layers:=[2]anim.Stack_Layer{anim.STACK_LAYER_DEFAULT,anim.STACK_LAYER_DEFAULT}

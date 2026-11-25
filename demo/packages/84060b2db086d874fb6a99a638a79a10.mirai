@@ -2,6 +2,8 @@
   "version": 1,
   "id": "84060b2db086d874fb6a99a638a79a10",
   "name": "robot",
+  "catalog_path": "Demo/characters/robot",
+  "documents": "robot",
   "origin": {"path": "assets/characters/robot/robot.gltf", "folder": false, "importer": "glTF"},
   "identity": "4e42171c4b4f4eeb1e541f249c84ef5c3c9e2d15c0224e9dc3371ebbe5d37c53",
   "inputs": ["robot.bin"],

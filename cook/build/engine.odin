@@ -88,11 +88,11 @@ ENGINE_PACKAGES :: [?]Engine_Package{
     {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/far","cook"},
     {.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
     {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},
-    {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/author","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},
+    {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/records","cook"},{.Cook,"cook/author","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},{.Cook,"cook/content","cook"},
     {.Cook,"cook/share","cook"},{.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
     {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
-    {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor/kit","editor-parts"},{.Editor,"editor",""},
+    {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/kit","editor-parts"},{.Editor,"editor",""},
 }
 
 @(private)
@@ -173,7 +173,7 @@ Engine_Paths :: struct {
     stage:string,
     work:string,                      // what the compilers say while a build runs
     editor_program,player_program:string,
-    import_program:string,            // runs cook/import/sources.command, what mirai import does, and cook/share.command, mirai share and join
+    import_program:string,            // runs cook/import/sources.command, what mirai import does, cook/share.command, mirai share and join, and editor.describe_command, mirai rpc describe with no editor
     author_program:string,            // runs cook/author.command: what mirai ui and mirai scene do
     stamp:string,
     defines:[]string,                 // what the binaries are built with (engine_defines)
@@ -487,6 +487,7 @@ import "mirai:editor"
 main :: proc() {
     args:=os.args[1:]
     if len(args)>0 && (args[0]=="share" || args[0]=="join") {os.exit(share.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library_built))}
+    if len(args)>0 && args[0]=="describe" {os.exit(editor.describe_command(args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
     os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))
 }
 `,paths.import_program},

@@ -21,8 +21,8 @@ Voice_Desc :: struct {
     fade_in:f32,  // seconds
     offset:f64,   // seconds into the sound where it starts; a loop goes back to the loop start of the sound
     // Mixer clock (mixer_clock) of the frame in which the first sample
-    // plays. 0 starts as soon as possible. A frame already rendered plays
-    // where it would be had it started then.
+    // plays. 0, or a frame already rendered, starts as soon as possible, from
+    // offset: a late start loses none of its attack.
     start_frame:u64,
     // Seconds it starts after the start of the chunk its play reaches (or
     // after start_frame), exact to the sample: the layers of one cue sent

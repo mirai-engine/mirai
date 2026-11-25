@@ -41,7 +41,7 @@ view_net_fixed :: proc(world,shared,editor,application:rawptr) {
     core.revisions_moved(w.storage_revisions[:])
     net_tick_head(ref,app,sh.session,&w.remote,nil,nil,sh.session.problems)
     core.settle(sh.info,w,nil)
-    core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places)
+    core.pose_targets_place(core.read(&w.replicas),&w.transforms,&w.places,nil)
     net_seats({entities=&w.entities},&w.seats,&w.nets,&w.seat_runtime,&w.absents,&w.disabled,&w.objects,&w.transforms,nil,core.read(&w.links),core.read(&w.remotes),
         core.ref(&w.bindings),core.ref(&w.remote),core.ref(&w.network),{},w.time)
     core.settle(sh.info,w,nil)

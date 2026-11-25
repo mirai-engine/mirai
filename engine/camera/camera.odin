@@ -9,8 +9,9 @@ import mm "mirai:std/math"
 
 // The camera each player sees through, and cameras that follow. The camera a
 // seat sees through is its latest override, and otherwise the camera of its
-// body: the render.Camera on it or under it, first in the walk of its
-// hierarchy; the focused local player's is the view of the game
+// body: the active render.Camera on it or under it, first in the walk of its
+// hierarchy, or else the first one; what rides it (core.Carried, a mount's
+// rider) is not walked, so its own camera is not the vehicle's. The focused local player's is the view of the game
 // (render.View_Camera, view.odin). The lens of an override goes to its camera
 // while it stands. What the seat asks of its body comes from what it sees
 // (drive.odin).
@@ -24,7 +25,9 @@ import mm "mirai:std/math"
 // Orbit leads a target that moves (look_ahead) and lets it move inside a box
 // before it follows (dead_zone). Offset, orbit and look are in the frame of
 // the vertical of the target (core.Vertical): around a planet the camera turns
-// with the up of the character it follows. The component owns the Transform
+// with the up of the character it follows. With frame, they turn with the
+// heading of the target too (behind a boat), or with all of its rotation (on
+// a turret, a hull that rolls). The component owns the Transform
 // of its entity; what it is set to can change at run time (modes.odin).
 
 OVERRIDE_CAPACITY :: 64
@@ -34,11 +37,19 @@ RECENTER_RATE :: 2    // 1/seconds of the exponential turn back
 
 Camera_Mode :: enum u8 {Follow,Orbit,Eyes}
 
+// The axes offset, orbit and look of a Camera_Follow are in.
+Follow_Frame :: enum u8 {
+    Vertical, // the up of the target, world axes without one
+    Heading,  // and the yaw of the target about that up
+    Rotation, // the whole rotation of the target
+}
+
 @(component,locks="core.Transform")
 Camera_Follow :: struct {
     target:core.Entity `mirai:"section=Follow"`, // none: the body it hangs from (follow_target), or else the one of the focused local player
     mode:Camera_Mode,
-    offset:[3]f32 `mirai:"unit=m"`, // from the target to the pivot, in the axes of the vertical of the target: world axes without one
+    offset:[3]f32 `mirai:"unit=m"`, // from the target to the pivot, in the axes of its frame
+    frame:Follow_Frame,             // what of the target offset, orbit and look turn with
     distance:f32 `mirai:"min=0,unit=m,mode=Orbit"`, // from the pivot to the camera
     half_life:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // time the pivot takes to close half of its distance to the target; 0: rigid
     up_half_life:f32 `mirai:"min=0,unit=s,mode=Follow|Orbit"`, // the same along the up of the target; 0: half_life
@@ -178,24 +189,36 @@ Sight :: struct {
     seat_state:core.Ref(input.Seats),
     cameras:^core.Table(render.Camera,.Read),
     hierarchy:core.Ref(core.Hierarchy),
+    carried:^core.Table(core.Carried,.Read),
     worlds:^core.Table(core.World_Transform,.Read),
 }
 
 // The camera a seat sees through: its latest override, and otherwise the
 // camera of its body; none without a valid one. With the blend an override asked for.
-camera_selected :: proc(cameras_state:core.Ref(Cameras),seats:^core.Table(input.Seat,.Read),cameras:^core.Table(render.Camera,.Read),hierarchy:core.Ref(core.Hierarchy),seat:core.Entity) -> (core.Entity,Camera_Blend) {
+camera_selected :: proc(cameras_state:core.Ref(Cameras),seats:^core.Table(input.Seat,.Read),cameras:^core.Table(render.Camera,.Read),hierarchy:core.Ref(core.Hierarchy),carried:^core.Table(core.Carried,.Read),seat:core.Entity) -> (core.Entity,Camera_Blend) {
     if chosen:=override_chosen(cameras_state,cameras,seat);chosen!=nil {return chosen.camera,chosen.blend}
-    return body_camera(hierarchy,cameras,input.body_of(seats,seat)),{}
+    return body_camera(hierarchy,cameras,carried,input.body_of(seats,seat)),{}
 }
 
-// The camera of a body: a render.Camera on it or under it, the first in the
-// walk of its hierarchy; none without one.
-body_camera :: proc(hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,$A),body:core.Entity) -> core.Entity {
+// The camera of a body: the active render.Camera on it or under it, the
+// first in the walk of its hierarchy, or else the first one; none without
+// one. What rides it (core.Carried) and hangs from that is not walked.
+body_camera :: proc(hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,$A),carried:^core.Table(core.Carried,$B),body:core.Entity) -> core.Entity {
     if body==core.NONE {return core.NONE}
-    for at:=body;at!=core.NONE;at=core.subtree_next(hierarchy,body,at) {
-        if camera_valid(cameras,at) {return at}
+    first:=core.NONE
+    riders:=carried!=nil && core.count(carried)>0
+    for at:=body;at!=core.NONE; {
+        if at!=body && riders && core.has(carried,at) {
+            at=core.subtree_next(hierarchy,body,at,false)
+            continue
+        }
+        if camera,ok:=core.get(cameras,at);ok && camera_valid(cameras,at) {
+            if camera.active {return at}
+            if first==core.NONE {first=at}
+        }
+        at=core.subtree_next(hierarchy,body,at)
     }
-    return core.NONE
+    return first
 }
 
 // Whether an owner asks for a camera now.
@@ -368,9 +391,28 @@ camera_follow :: proc(
             }
         }
         vertical:=core.vertical_of(view.verticals,target)
-        if placed,ok:=core.get(view.worlds,target);ok && core.has(view.verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
+        if placed,ok:=core.get(view.worlds,target);ok {
+            if core.has(view.verticals,target) {vertical=vertical_between(vertical,placed,frame.alpha)}
+            vertical=follow_frame(follow.frame,vertical,placed,frame.alpha)
+        }
         follow_one(e,follow,state,target,transforms,view.worlds,view.parents,view.moves,vertical,query,frame,time.dt,core.edit(cameras,e))
     }
+}
+
+// The axes a Camera_Follow is in, from the frame of the vertical of its
+// target and where the target is between its last two ticks.
+follow_frame :: proc "contextless" (kind:Follow_Frame,vertical:mm.Quat,placed:core.World_Transform,alpha:f32) -> mm.Quat {
+    rotation:=placed.rotation
+    if alpha<1 {rotation=mm.quat_slerp(placed.previous.rotation,placed.rotation,max(alpha,0))}
+    switch kind {
+    case .Vertical:
+    case .Heading:
+        forward:=mm.quat_rotate(conj(vertical),mm.quat_forward(rotation))
+        if forward.x*forward.x+forward.z*forward.z>1e-8 {return vertical*mm.quat_axis_angle({0,1,0},mm.yaw_of_direction(forward))}
+    case .Rotation:
+        return rotation
+    }
+    return vertical
 }
 
 // The frame of the vertical of a body whose rotation has its up (a

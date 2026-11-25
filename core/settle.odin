@@ -7,13 +7,14 @@ import "base:intrinsics"
 // has it found each time.
 Settle_Info :: struct {
     disabled,parent,id:int, // their tables, by index; -1 without one
+    carried,transform:int,
     hierarchy,world_id:int, // their storages, by index; -1 without one
     editor:bool,            // the editor holds tables
     found:bool,
 }
 
 settle_info :: proc "contextless" (info:^World_Info) -> (s:Settle_Info) {
-    s={disabled=-1,parent=-1,id=-1,hierarchy=-1,world_id=-1,found=true}
+    s={disabled=-1,parent=-1,id=-1,carried=-1,transform=-1,hierarchy=-1,world_id=-1,found=true}
     for &t,i in info.tables {
         switch t.place {
         case .World:
@@ -21,6 +22,8 @@ settle_info :: proc "contextless" (info:^World_Info) -> (s:Settle_Info) {
             case Disabled: s.disabled=i
             case Parent:   s.parent=i
             case Id:       s.id=i
+            case Carried:  s.carried=i
+            case Transform: s.transform=i
             }
         case .Editor: s.editor=true
         case .Shared:
@@ -64,7 +67,9 @@ settle :: proc(info:^World_Info,world,editor:rawptr) -> (settled:int) {
         settle_table(info,world,s.parent,es,marks)
         settled+=1
     }
-    doomed:=s.parent>=0 && s.hierarchy>=0 && hierarchy_doom(cast(^Hierarchy)(uintptr(world)+info.storages[s.hierarchy].offset),cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset),es)
+    carried:=s.carried>=0?cast(^Table(Carried))(uintptr(world)+info.tables[s.carried].offset):nil
+    transforms:=s.transform>=0?cast(^Table(Transform))(uintptr(world)+info.tables[s.transform].offset):nil
+    doomed:=s.parent>=0 && s.hierarchy>=0 && hierarchy_doom(cast(^Hierarchy)(uintptr(world)+info.storages[s.hierarchy].offset),cast(^Table(Parent))(uintptr(world)+info.tables[s.parent].offset),es,carried,transforms)
     if linked {settle_mark(info,world,marks,es.doomed[:],false)}
     // Parent drops the rows of what was destroyed after it settled.
     if s.parent>=0 && (linked && marks[s.parent] || !linked && doomed) {

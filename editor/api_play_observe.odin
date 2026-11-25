@@ -78,7 +78,8 @@ Api_Play_Audio_Params :: struct {
 Api_Play_Audio :: struct {
     voices:[]Api_Play_Audio_Voice `mirai:"label=One per Audio_Source that plays"`,
     listeners:[][3]f32 `mirai:"label=Where the game hears from in meters: its first Audio_Listeners with a place, at most 4, or else its View"`,
-    one_shots:[]Api_Play_Audio_One_Shot `mirai:"label=The newest sounds audio.play asked for, oldest first, with what became of each"`,
+    one_shots:[]Api_Play_Audio_One_Shot `mirai:"label=The newest sounds the fixed ticks of the game asked audio.play for, oldest first, with what became of each"`,
+    deduped:u64 `mirai:"label=Sounds a tick that ran again asked again and that did not play twice"`,
     stats:Api_Play_Audio_Stats `mirai:"label=Of the voices of this game"`,
     mixer:Api_Play_Audio_Mixer `mirai:"optional,label=The mixer of the editor that every game and the editor share; absent without one and then nothing plays"`,
 }
@@ -127,7 +128,7 @@ Api_Play_Audio_Voice :: struct {
 play_observe_api_register :: proc(s:^Session,st:^Api_State) {
     api_register(s,st,{name="play.ui",summary="The live tree of the UI of the game of the caller as its last frame built it: each interface with its nodes and where they are in the window, and what has the hover and the focus.",params=type_info_of(Api_Play_Ui_Params),result=type_info_of(Api_Play_Ui),flags={.Read_Only},run=api_play_ui})
     audio_defaults:=Api_Play_Audio_Params{one_shots=API_ONE_SHOTS}
-    api_register(s,st,{name="play.audio",summary="The voices the sources of the game of the caller play: sound, bus, gain, pitch, place, distance and state of each (playing, virtual, fading or unloaded), where its listeners are, the newest one-shot sounds with what became of each (played, culled by distance, refused by the mixer, missing or deduplicated) and the counters of its voices and of the mixer.",params=type_info_of(Api_Play_Audio_Params),result=type_info_of(Api_Play_Audio),defaults=&audio_defaults,flags={.Read_Only},run=api_play_audio})
+    api_register(s,st,{name="play.audio",summary="The voices the sources of the game of the caller play: sound, bus, gain, pitch, place, distance and state of each (playing, virtual, fading or unloaded), where its listeners are, the newest one-shot sounds of its fixed ticks with what became of each (played, culled by distance, refused by the mixer or missing), how many a tick that ran again did not play twice, and the counters of its voices and of the mixer.",params=type_info_of(Api_Play_Audio_Params),result=type_info_of(Api_Play_Audio),defaults=&audio_defaults,flags={.Read_Only},run=api_play_audio})
 }
 
 @(private)
@@ -547,6 +548,7 @@ play_audio :: proc(s:^Session,heard:Play_Audio_Heard,allocator:=context.temp_all
         }
     }
     r.one_shots=play_audio_one_shots(s,heard.played,heard.one_shots,allocator)
+    if heard.played!=nil {r.deduped=heard.played.deduped}
     if m!=nil {
         c:=mixer.mixer_stats(m)
         r.mixer={c.voices_active,c.sounds,c.voices_played,c.voices_stolen,c.voices_rejected,c.commands_dropped,c.underruns,c.streams_busy,c.feeds_busy}

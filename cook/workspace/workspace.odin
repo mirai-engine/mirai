@@ -207,6 +207,11 @@ build_paths :: proc(root:string) -> []string {
     return paths
 }
 
+// How many builds take a turn at once now: one alone without the memory of another.
+build_turns_now :: proc() -> int {
+    return build_turns() if build_memory_free()>=BUILD_TURN_MEMORY else 1
+}
+
 // How many turns this machine has: one per two physical cores, and at least one.
 @(private)
 build_turns :: proc() -> int {
@@ -238,10 +243,10 @@ build_turn_try :: proc(root,what:string,turns:int,memory:i64) -> (lock:Lock,take
     return
 }
 
-// Takes what keeps the other compilations out of the files of root and of
-// also, one folder after the other: they are always taken in that order.
+// Takes what keeps the other compilations out of the files of each folder,
+// one after the other in the order given.
 @(private)
-build_folders_acquire :: proc(lock:^Lock,root,what:string,notice:proc(holder:string),also:[]string) {
+build_folders_acquire :: proc(lock:^Lock,folders:[]string,what:string,notice:proc(holder:string)) {
     take :: proc(lock:^Lock,folder,what:string,notice:proc(holder:string)) {
         taken,ok:=lock_acquire(join(folder,".mirai","build-turn.lock"),what,notice)
         if !ok {return}
@@ -250,9 +255,10 @@ build_folders_acquire :: proc(lock:^Lock,root,what:string,notice:proc(holder:str
         next.next=lock.next
         lock.next=next
     }
-    take(lock,root,what,notice)
-    for folder in also {
-        if !project.path_same(folder,root) {take(lock,folder,what,notice)}
+    for folder,i in folders {
+        repeated:=false
+        for other in folders[:i] {repeated||=project.path_same(folder,other)}
+        if !repeated {take(lock,folder,what,notice)}
     }
 }
 
@@ -261,13 +267,16 @@ build_note :: proc(root,what:string) {
     _=os.write_entire_file(lock_path(root,BUILD_NOTE,context.temp_allocator),transmute([]u8)what)
 }
 
-// Blocks until no other compilation writes the files of root or of the
-// folders of also and a turn is free, takes them and notes that a compilation
-// starts now: BUILD_NOTE holds what, and its modification time is when.
-// notice runs once for each thing it waits for, with who has it.
-build_acquire :: proc(root,what:string,notice:proc(holder:string)=nil,also:=[]string{}) -> (lock:Lock,ok:bool) {
+// Blocks until no other compilation writes the files of the folders it
+// writes and a turn of the checkouts of root is free, takes them and notes
+// that a compilation starts now: BUILD_NOTE holds what, and its modification
+// time is when. folders: the root of the engine when it builds the engine or
+// writes in it, a project alone when it builds against binaries that stand,
+// so the builds of two projects run side by side. notice runs once for each
+// thing it waits for, with who has it.
+build_acquire :: proc(root,what:string,folders:[]string,notice:proc(holder:string)=nil) -> (lock:Lock,ok:bool) {
     held:Lock
-    build_folders_acquire(&held,root,what,notice,also)
+    build_folders_acquire(&held,folders,what,notice)
     noticed:=false
     for {
         turn,taken,holder,failed:=build_turn_try(root,what,build_turns(),build_memory_free())
@@ -291,7 +300,7 @@ build_acquire :: proc(root,what:string,notice:proc(holder:string)=nil,also:=[]st
 // compilations: only one generation runs at a time.
 shaders_acquire :: proc(root,what:string,notice:proc(holder:string)=nil) -> (lock:Lock,ok:bool) {
     held:Lock
-    build_folders_acquire(&held,root,what,notice,nil)
+    build_folders_acquire(&held,{root},what,notice)
     lock,ok=lock_acquire(lock_path(root,SHADERS_LOCK,context.temp_allocator),what,notice)
     if ok {build_note(root,what)}
     lock.next=held.next

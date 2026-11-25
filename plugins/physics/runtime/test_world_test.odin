@@ -22,6 +22,7 @@ Test_Physics :: struct {
     disabled:core.Table(core.Disabled),
     section_held:core.Table(scene.Section_Held),
     parents:core.Table(core.Parent),
+    carried:core.Table(core.Carried),
     names:core.Table(core.Name),
     transforms:core.Table(core.Transform),
     bodies:core.Table(core.Motion),
@@ -110,6 +111,6 @@ test_step :: proc(p:^Test_Physics,h:^Test_Physics_Host,dt:f32) {
         core.read(&p.rigids),core.read(&p.colliders),core.read(&p.characters),&p.moves,
         &p.joints,core.read(&p.statics),core.read(&p.parents),core.read(&p.names),
         &p.transforms,&p.bodies,core.read(&p.replicas),&p.character_states,&p.joint_states,core.read(&p.fluids),&p.joint_requests,core.ref(&p.collision),core.ref(&p.sync_check),&p.simulation_hash,nil,&h.problems,
-        gravities,core.read(&p.volumes),worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),core.read(&p.splines),{},{},{},
+        gravities,core.read(&p.volumes),worlds,{},{},h.whole?{}:core.ref(&p.hierarchy),core.read(&p.splines),{},{},{},core.read(&p.carried),
     )
 }

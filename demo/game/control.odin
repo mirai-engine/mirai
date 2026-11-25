@@ -57,6 +57,7 @@ game_seats :: proc(
     seats:^core.Table(inp.Seat,.Read),actions:inp.Input_Of(Action),hierarchy:core.Ref(core.Hierarchy),names:^core.Table(core.Name,.Read),demos:^core.Table(Control_Demo,.Read),
     requests:^inp.Seat_Requests,shown:core.Ref(cam.Cameras),camera_requests:^cam.Camera_Requests,
     camera_changes:^cam.Camera_Changes,camera_follows:^core.Table(cam.Camera_Follow,.Read),cameras:^core.Table(render.Camera,.Read),
+    carried:^core.Table(core.Carried,.Read),
 ) {
     if core.count(demos)==0 {return}
     for row in 0..<core.count(follows) {
@@ -82,7 +83,7 @@ game_seats :: proc(
                 cam.camera_override(camera_requests,seat,seat,camera,blend=OVERHEAD_BLEND)
             }
         }
-        if camera:=cam.body_camera(hierarchy,cameras,body);camera!=core.NONE && inp.seat_pressed(actions,seat,.Camera_Mode) {
+        if camera:=cam.body_camera(hierarchy,cameras,carried,body);camera!=core.NONE && inp.seat_pressed(actions,seat,.Camera_Mode) {
             next:=cam.Camera_Preset.Third_Person
             if mode,preset:=cam.camera_preset_of(camera_follows,cameras,camera);preset {
                 cycle:=CAMERA_CYCLE

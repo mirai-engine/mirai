@@ -116,8 +116,9 @@ between it only sends those that moved one step of `WET_LEVELS`.
 `water_hearing` (`late`, before `audio_reverb` and `audio_buses`) writes the
 [`Audio_Medium`](../../mirai-gameplay/references/libraries.md#audio) from the fluid where the
 listener is (`audio.listener_position`, `phys.fluid_at`): under the surface of a fluid, outside a
-dry box, the master loses the highs (`UNDER_LOWPASS`) and the water reverb sounds
-(`UNDER_REVERB`); above, the air.
+dry box, the master loses the highs (`UNDER_LOWPASS`), the water reverb sounds (`UNDER_REVERB`) and
+the buses blend to the project's snapshot `UNDER_SNAPSHOT` (`"underwater"`), if its
+`Audio_Settings` has one; above, the air.
 
 ## Scene
 

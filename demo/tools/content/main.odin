@@ -4,7 +4,9 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "mirai:asset"
+import "mirai:cook/content"
 import "mirai:std/base"
+import world "generated:editor_world"
 
 // Writes the assets of the demo project that code computes: the images, clips,
 // meshes, sources, fractures and terrain its scenes use, with the same bytes
@@ -22,20 +24,20 @@ HUM_RATE :: 22050
 HUM_SECONDS :: 2
 
 Out :: struct {
-    root:string,
-    content:asset.Content,
+    root:string, // where the demo is; "": the folder the tool runs in
+    w:content.Writer,
 }
 
 @(private)
-path :: proc(o:^Out,relative:string) -> string {return fmt.tprintf("%s/demo/%s",o.root,relative)}
+path :: proc(o:^Out,relative:string) -> string {return relative if o.root=="" else fmt.tprintf("%s/%s",o.root,relative)}
 
 // Writes a mesh of one level of a source and its indices (asset.mesh_build)
 // to file, a path relative to the demo.
 @(private)
 mesh_write_built :: proc(o:^Out,what,file:string,desc:asset.Mesh_Desc,source:asset.Mesh_Source,indices:[]u32) {
     desc:=desc
-    if !asset.mesh_build(source,indices,nil,&desc.geometry,context.temp_allocator) {asset.content_check(&o.content,what,.Invalid);return}
-    asset.content_check(&o.content,what,asset.mesh_save(path(o,file),&o.content.types,desc))
+    if !asset.mesh_build(source,indices,nil,&desc.geometry,context.temp_allocator) {content.check(&o.w,what,.Invalid);return}
+    content.check(&o.w,path(o,file),asset.mesh_save(path(o,file),&o.w.types,desc))
 }
 
 // How much of a pixel a disc of a radius covers, from the distance of its center.
@@ -56,7 +58,7 @@ write_badge :: proc(o:^Out) {
             pixels[at+3]=u8(255*coverage(distance,30))
         }
     }
-    asset.content_check(&o.content,"assets/showcase/hud_badge.tex",asset.texture_save(path(o,"assets/showcase/hud_badge.tex"),&o.content.types,
+    content.check(&o.w,path(o,"assets/showcase/hud_badge.tex"),asset.texture_save(path(o,"assets/showcase/hud_badge.tex"),&o.w.types,
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
@@ -77,7 +79,7 @@ write_panel :: proc(o:^Out) {
             pixels[at+3]=u8(235*coverage(distance,RADIUS))
         }
     }
-    asset.content_check(&o.content,"assets/showcase/hud_panel.tex",asset.texture_save(path(o,"assets/showcase/hud_panel.tex"),&o.content.types,
+    content.check(&o.w,path(o,"assets/showcase/hud_panel.tex"),asset.texture_save(path(o,"assets/showcase/hud_panel.tex"),&o.w.types,
         {id=id,width=PANEL_SIZE,height=PANEL_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
@@ -96,15 +98,8 @@ write_hum :: proc(o:^Out) {
         tremolo:=0.75+0.25*math.sin(2*math.PI*1.5*t)
         le(file,44+frame*2,u32(u16(i16(wave*tremolo*20000))),2)
     }
-    source:=path(o,"assets/showcase/hum.wav")
     // Written only when it differs, so that the import of an unchanged source is the same file.
-    existing,read_error:=os.read_entire_file(source,context.temp_allocator)
-    if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file(source,file)!=nil {
-        fmt.eprintfln("demo_content: %s could not be written",source)
-        o.content.failed=true
-        return
-    }
-    fmt.println("wrote assets/showcase/hum.wav")
+    content.source_write(&o.w,path(o,"assets/showcase/hum.wav"),file)
 }
 
 // The id of the material <name>.mat of assets/surfaces: the one an import of its source once gave it.
@@ -115,10 +110,8 @@ material_id :: proc(name:string) -> base.Asset_Id {
 
 main :: proc() {
     o:Out
-    o.root=len(os.args)>1?os.args[1]:"."
-    asset.content_init(&o.content,PROJECT)
-    defer asset.content_destroy(&o.content)
-    switch len(os.args)>2?os.args[2]:"" {
+    if !content.open(&o.w,world.info()) {os.exit(1)}
+    switch len(os.args)>1?os.args[1]:"" {
     case "":
         write_badge(&o)
         write_panel(&o)
@@ -135,9 +128,9 @@ main :: proc() {
     case "--interface-only": write_interface_icons(&o)
     case "--dig-only":       write_dig_assets(&o)
     case:
-        fmt.eprintfln("demo_content: unknown option %s",os.args[2])
-        o.content.failed=true
+        fmt.eprintfln("demo_content: unknown option %s",os.args[1])
+        o.w.failed=true
     }
     free_all(context.temp_allocator)
-    if o.content.failed {os.exit(1)}
+    os.exit(content.close(&o.w))
 }

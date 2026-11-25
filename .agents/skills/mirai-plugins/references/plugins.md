@@ -136,6 +136,10 @@ demo enables. How an `editor/` adds steps, panels and tools:
   swimming of a `Character` by its `Walk`, `Fly` or `Swim`, the layered moves and the seat that
   drives it; it tells the editor's bots how fast a body walks
   ([locomotion](../../mirai-physics/references/engine.md#locomotion)).
+- **`vehicles`** (`Runtime`; depends on `physics`): bodies that steer themselves (boats,
+  submarines, hovercraft, turrets): `Vehicle`, `Thruster` and `Aim`, their actions in their own
+  input context and the `Body`-frame `Move_Input` they read; seats get in through the engine's
+  `inp.Mount` ([vehicles](../../../../docs/game/character/vehicles.md)).
 - **`destruct`**: destructibles, fracture and pieces
   ([destruction](../../mirai-physics/references/engine-destruct.md)).
 - **`shapes`** (`Runtime` and `Editor`; depends on `physics`): editable outlines and solids of

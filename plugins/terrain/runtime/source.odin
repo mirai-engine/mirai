@@ -181,7 +181,8 @@ source_read :: proc(s:^Source,file:^asset.Asset,types:^asset.Types,allocator:=co
 source_save :: proc(s:^Source,path:string,id:base.Asset_Id,types:^asset.Types,origin:=false) -> asset.Error {
     data:=source_bytes(s,id,types,s.allocator) or_return
     defer delete(data,s.allocator)
-    if serial.file_write_atomic(path,data)!=.None {return .IO}
+    // A file that already holds these bytes is left untouched.
+    if _,error:=serial.file_write_changed(path,data);error!=.None {return .IO}
     if origin {s.origin=asset.blob_hash(data)}
     return .None
 }

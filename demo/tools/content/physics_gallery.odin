@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "mirai:asset"
+import "mirai:cook/content"
 import destruct "plugins:destruct/runtime"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -17,7 +18,7 @@ write_physics_gallery :: proc(o:^Out) {
 @(private)
 physics_source_save :: proc(o:^Out,b:^destruct.Fracture_Builder,name:string) -> (fracture,mesh:base.Asset_Id) {
     fracture,mesh=asset.content_id(PROJECT,"fracture",name),asset.content_id(PROJECT,"mesh",name)
-    asset.content_check(&o.content,fmt.tprintf("%s.fracture",name),destruct.fracture_save(path(o,fmt.tprintf("assets/physics_gallery/%s.fracture",name)),&o.content.types,destruct.fracture_builder_desc(b,fracture,mesh)))
+    content.check(&o.w,path(o,fmt.tprintf("assets/physics_gallery/%s.fracture",name)),destruct.fracture_save(path(o,fmt.tprintf("assets/physics_gallery/%s.fracture",name)),&o.w.types,destruct.fracture_builder_desc(b,fracture,mesh)))
     indices:=make([dynamic]u32,context.temp_allocator)
     for piece in b.pieces {for index in b.indices[piece.first_index:][:piece.index_count] {append(&indices,piece.first_vertex+index)}}
     mesh_write_built(o,fmt.tprintf("%s.mesh",name),fmt.tprintf("assets/physics_gallery/%s.mesh",name),{id=mesh,slots={{id=0,material=material_id("Bricks")},{id=1,material=material_id("Cobblestone")}}},{vertices=b.vertices[:]},indices[:])
@@ -33,23 +34,23 @@ physics_sources :: proc(o:^Out) {
     for y in 0..<2 {for x in 0..<4 {
         pose:=mm.Transform{{f32(x)*.62-.93,f32(y)*.57+.285,0},1,{.6,.55,.65}}
         _,error:=destruct.fracture_piece_add(&b,geom.mesh_buffer_view(&cube),pose)
-        if error!=.None {o.content.failed=true;return}
+        if error!=.None {o.w.failed=true;return}
     }}
-    asset.content_check(&o.content,"bricks proximity",destruct.fracture_connect_proximity(&b,.04,.3,60))
+    content.check(&o.w,"bricks proximity",destruct.fracture_connect_proximity(&b,.04,.3,60))
     physics_source_save(o,&b,"bricks")
     destruct.fracture_cluster_add(&b,-1,150);destruct.fracture_cluster_add(&b,0,100);destruct.fracture_cluster_add(&b,0,100)
     for &piece,at in b.pieces {piece.cluster=1 if at%4<2 else 2}
     hierarchy,hierarchy_mesh:=physics_source_save(o,&b,"hierarchy")
     physics_cache_bake(o,hierarchy,hierarchy_mesh)
     mixed:destruct.Fracture_Builder;destruct.fracture_builder_init(&mixed);defer destruct.fracture_builder_destroy(&mixed)
-    if !physics_mixed_build(&mixed,geom.mesh_buffer_view(&cube)) {o.content.failed=true;return}
+    if !physics_mixed_build(&mixed,geom.mesh_buffer_view(&cube)) {o.w.failed=true;return}
     physics_source_save(o,&mixed,"mixed_bricks")
     clear(&b.vertices);clear(&b.indices);clear(&b.pieces);clear(&b.connections);clear(&b.clusters)
     for y in 0..<4 {for x in 0..<4 {
         _,error:=destruct.fracture_piece_add(&b,geom.mesh_buffer_view(&cube),{{f32(x)*.52-.78,f32(y)*.52+.26,0},1,{.5,.5,.4}},anchor=y==0)
-        if error!=.None {o.content.failed=true;return}
+        if error!=.None {o.w.failed=true;return}
     }}
-    asset.content_check(&o.content,"wall proximity",destruct.fracture_connect_proximity(&b,.04,.2,35))
+    content.check(&o.w,"wall proximity",destruct.fracture_connect_proximity(&b,.04,.2,35))
     physics_source_save(o,&b,"wall")
 }
 

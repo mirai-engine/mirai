@@ -483,16 +483,19 @@ voice_starts_on_the_frame_it_was_scheduled_for :: proc(t:^testing.T) {
     }
     mixer_update(m)
     testing.expect(t,!voice_valid(m,voice))
-    // A start in the past plays where it would be had it started then, in memory and from a stream.
-    desc.start_frame=mixer_clock(m)-40
+    // A start in the past, such as one that reaches the audio thread after the
+    // callback that should have played it, plays whole from its offset in the
+    // chunk its play reaches, in memory and from a stream.
+    desc.start_frame=mixer_clock(m)
     desc.offset=100.0/RATE
+    test_render(m,40)
     past:=voice_play(m,test_stereo(t,m,500,test_ramp),desc)
     out=test_render(m,4)
-    test_near(t,out[0],test_ramp(140),0)
+    test_near(t,out[0],test_ramp(100),0)
     voice_stop(m,past)
     test_render(m,CHUNK_FRAMES)
     mixer_update(m)
-    // A stream started in the past skips the same frames.
+    // A stream started in the past skips nothing either.
     {
         pcm:=make([]i16,500*2,context.temp_allocator)
         for i in 0..<500 {
@@ -503,11 +506,12 @@ voice_starts_on_the_frame_it_was_scheduled_for :: proc(t:^testing.T) {
         stream,err:=sound_stream(m,wav)
         if testing.expect_value(t,err,Error.None) {
             sdesc:=VOICE_DEFAULT
-            sdesc.start_frame=mixer_clock(m)-40
+            sdesc.start_frame=mixer_clock(m)
             sdesc.offset=100.0/RATE
+            test_render(m,40)
             sv:=voice_play(m,stream,sdesc)
             sout:=test_render(m,4)
-            test_near(t,sout[0],f32(pcm[140*2])/32768.0,1e-4)
+            test_near(t,sout[0],f32(pcm[100*2])/32768.0,1e-4)
             voice_stop(m,sv)
             test_render(m,CHUNK_FRAMES)
             mixer_update(m)
@@ -551,6 +555,37 @@ held_voices_keep_their_delays_apart_to_the_sample :: proc(t:^testing.T) {
     testing.expect_value(t,voice_play(m,body,desc),Voice(0))
     desc.delay=-1
     testing.expect_value(t,voice_play(m,body,desc),Voice(0))
+}
+
+// The layers of one start whose batch reaches the audio thread after the frame
+// it was scheduled for start whole, together, in the chunk the batch reaches,
+// and a delayed layer stays its delay after the others.
+@(test)
+late_layers_start_whole_and_keep_their_delays :: proc(t:^testing.T) {
+    m:=test_mixer(t)
+    defer mixer_destroy(m)
+    test_render(m,100)
+    body,tail:=test_stereo(t,m,4000,test_ramp),test_stereo(t,m,4000,test_ramp)
+    desc:=VOICE_DEFAULT
+    desc.start_frame=mixer_clock(m)+CHUNK_FRAMES
+    // A device callback longer than the lead runs before the batch is sent.
+    test_render(m,CHUNK_FRAMES*3)
+    mixer_batch_begin(m)
+    desc.volume=0.25
+    testing.expect(t,voice_play(m,body,desc)!=0)
+    desc.volume,desc.delay=0.5,300.0/RATE
+    testing.expect(t,voice_play(m,tail,desc)!=0)
+    mixer_batch_end(m)
+    out:=test_render(m,600)
+    // The tail plays its delay behind the body, wherever the body begins.
+    body_at:=int(math.round(out[0]*4*(1<<17)))-1
+    for i in 0..<600 {
+        tail:=body_at+i-300
+        want:=0.5*test_ramp(tail) if tail>=0 else 0
+        if !test_near(t,out[i*2]-0.25*test_ramp(body_at+i),want,1e-6) {break}
+    }
+    // And whole.
+    testing.expect_value(t,body_at,0)
 }
 
 @(test)

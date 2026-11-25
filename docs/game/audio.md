@@ -56,9 +56,9 @@ drive `curves` (`Gain`/`Pitch`/`Lowpass`) per `layer` (`audio.parameter_set(app,
 `BUS_MASTER`, `BUS_MUSIC`, `BUS_EFFECTS` (default), `BUS_VOICE`, `BUS_UI`, plus custom constants
 below `AUDIO_BUS_CAPACITY` (`BUS_AMBIENCE :: audio.Audio_Bus(5)`). `Audio_Settings` sets per-bus
 `gain` dB, `reverb`, 4 `filters` (`Lowpass`/`Highpass`/`Bandpass`/`Peak`), `delay`, ducking
-(`duck_by`, `duck_amount`), acyclic `send`, `stream_capacity` (0: 16, max 64) and `snapshots`
-(`audio.snapshot_blend(mix, "underwater", 0.5)` on `^audio.Audio_Mix`). A master limiter prevents
-clipping. Edit in Project Settings, View > Audio Mixer or `audio.audio_bus_setting_set`.
+(`duck_by`, `duck_amount`), `send`, `stream_capacity` (0: 16), `snapshots` (`audio.snapshot_blend(
+mix,"pause",0.5)`; `water` blends `underwater` by listeners under it) and a master limiter. Edit in
+Project Settings, View > Audio Mixer or `audio.audio_bus_setting_set`.
 
 `Audio_Volumes` is the player's choice per bus, 0 to 1 (`more[]` for added buses), kept with their
 options: a slider bound to `Audio_Volumes.music` writes it itself; the game writes nothing. So is

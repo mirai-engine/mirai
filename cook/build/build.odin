@@ -60,8 +60,9 @@ Failure :: enum u8 {
 // What a job does with its target.
 Action :: enum u8 {
     Build,
-    Check, // the types of the target with its plugins as declared: nothing is compiled, and only generated sources are written
-    Test,  // runs the @(test) procedures of a package of the project, compiled against the libraries the target links (tests.odin)
+    Check,   // the types of the target with its plugins as declared, or of Desc.package_folder against them: nothing is compiled, and only generated sources are written
+    Test,    // runs the @(test) procedures of a package of the project, compiled against the libraries the target links (tests.odin)
+    Program, // builds a main package of the project (its tools/content) into an executable against the libraries the target links; Result.output is the executable, which the caller runs (program_environment)
 }
 
 Desc :: struct {
@@ -75,8 +76,8 @@ Desc :: struct {
     dev:bool,                   // -o:minimal whatever the manifest says: for checking a change, not for shipping
     engine:Engine_Mode,          // the binaries of the engine a library is built against
     runs:string,                 // the folder of the binaries of the engine that load what is built; "": none runs yet
-    action:Action,               // Check and Test: of the Editor target
-    test_package:string,         // Test: the folder of the package, absolute
+    action:Action,               // Check, Test and Program: of the Editor target
+    package_folder:string,       // Test and Program, and Check of one package: its folder, absolute
     test:Test_Options,           // Test: how its executable runs
     store_root:string,           // the store the packages of the project and its plugins are refreshed in and listed from; "": the machine's (store.default_root)
     refresh_skip:bool,           // Build: the packages are left as they are, for a caller that refreshes them with the library built (a join, with its peers)
@@ -106,12 +107,12 @@ Job :: struct {
     arena:virtual.Arena,
     target:Target,
     action:Action,
-    test_package:string,
+    package_folder:string,
     test:Test_Options,
     test_build:Test_Build,
     test_run:Test_Run,
-    testing:bool,               // Test: its executable builds or runs; the plugin libraries stand
-    engine_folder:string,       // Test: the binaries of the engine its executable loads
+    testing:bool,               // Test and Program: its executable builds or runs; the plugin libraries stand
+    engine_folder:string,       // Test and Program: the binaries of the engine its executable loads
     root,engine_root:string,
     engine:Engine_Mode,
     imports:[]string,           // Build: the roots whose sources it imports once the target stands (imports_roots)
@@ -198,7 +199,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     p:=desc.project
     job.target=desc.target
     job.action=desc.action
-    job.test_package=strings.clone(desc.test_package,a)
+    job.package_folder=strings.clone(desc.package_folder,a)
     job.test=desc.test
     job.test.names=make([]string,len(desc.test.names),a)
     for name,i in desc.test.names {job.test.names[i]=strings.clone(name,a)}
@@ -242,7 +243,7 @@ job_start :: proc(desc:Desc) -> ^Job {
         }
         return job_fail(job,.Write_Failed)
     }
-    if errors:=build_test_worlds_write(p,desc.action,desc.target,desc.test_package);len(errors)>0 {
+    if errors:=build_test_worlds_write(p,desc.action,desc.target,desc.package_folder);len(errors)>0 {
         job.result.text=strings.join(errors,"\n",a)
         return job_fail(job,.Generate)
     }
@@ -288,7 +289,7 @@ job_start :: proc(desc:Desc) -> ^Job {
     }
 
     job.flags=target_flags(p,desc.target,desc.flags,a,desc.dev,desc.engine)
-    if desc.action==.Test {job.engine_folder=project_engine(p,desc.engine,a).folder}
+    if desc.action==.Test || desc.action==.Program {job.engine_folder=project_engine(p,desc.engine,a).folder}
     job.force=desc.force
     job.compiles=make([dynamic]Compile,a)
     if desc.target!=.Game {
@@ -303,7 +304,7 @@ job_start :: proc(desc:Desc) -> ^Job {
 // sources, which an installed engine ships without tests. The generated world
 // of the game is where it reads them from.
 @(private)
-build_test_worlds_write :: proc(p:^project.Project,action:Action,target:Target,test_package:string) -> []string {
+build_test_worlds_write :: proc(p:^project.Project,action:Action,target:Target,package_folder:string) -> []string {
     temp:=context.temp_allocator
     folders:=make([dynamic]string,temp)
     if action==.Build {
@@ -318,7 +319,7 @@ build_test_worlds_write :: proc(p:^project.Project,action:Action,target:Target,t
         if plugin.origin==.Engine {continue}
         for part in project.PART_NAMES {append(&folders,project.path(plugin.folder,part,allocator=temp))}
     }
-    if test_package!="" {append(&folders,test_package)}
+    if package_folder!="" {append(&folders,package_folder)}
     return test_worlds_write(p.engine_root,p.root,folders[:],false,project.path(project_tests_folder(p.root,temp),"worlds.stamp",allocator=temp),temp)
 }
 
@@ -608,28 +609,32 @@ job_project_start :: proc(job:^Job) -> ^Job {
 @(private)
 job_probe_start :: proc(job:^Job) -> ^Job {
     if os.make_directory_all(job.work)!=nil && !os.is_dir(job.work) {return job_fail(job,.Write_Failed)}
-    if job.action==.Test {return job_test_start(job)}
+    if job.action==.Test || job.action==.Program {return job_test_start(job)}
     command:=make([dynamic]string,context.temp_allocator)
-    append(&command,job.compiler,"check",job.flags[1])
+    append(&command,job.compiler,"check",job.package_folder if job.package_folder!="" else job.flags[1])
     // What only a build reads, odin check refuses.
     for flag in probe_flags(job) {
-        if flag=="-use-separate-modules" || strings.has_prefix(flag,"-o:") {continue}
+        if flag=="-use-separate-modules" || strings.has_prefix(flag,"-o:") || strings.has_prefix(flag,"-extra-linker-flags:") {continue}
         append(&command,flag)
     }
-    // The library has no main of its own.
-    append(&command,"-no-entry-point","-json-errors")
+    // The library has no main of its own; a package checked alone has its main.
+    if job.package_folder=="" {append(&command,"-no-entry-point")}
+    append(&command,"-json-errors")
     job.started=time.now()
     job_spawn(job,{library=-1,streams=job.stream_files},command[:])
     return job
 }
 
 // Plans the test executable of the package with the flags of the target, in
-// <project>/.mirai/build/tests, and starts its compiler unless it stands.
+// <project>/.mirai/build/tests, or the executable of a Program in
+// <project>/.mirai/build/programs, and starts its compiler unless it stands.
 @(private)
 job_test_start :: proc(job:^Job) -> ^Job {
     a:=virtual.arena_allocator(&job.arena)
-    executable:=test_executable(project_tests_folder(job.root,context.temp_allocator),job.root,job.test_package,a)
-    job.test_build=test_build_plan(job.engine_root,job.compiler,job.test_package,executable,probe_flags(job),a)
+    program:=job.action==.Program
+    folder:=project_programs_folder(job.root,context.temp_allocator) if program else project_tests_folder(job.root,context.temp_allocator)
+    executable:=test_executable(folder,job.root,job.package_folder,a)
+    job.test_build=test_build_plan(job.engine_root,job.compiler,job.package_folder,executable,probe_flags(job),a,tests=!program)
     job.started=time.now()
     job.testing=true
     if !test_build_start(&job.test_build,child_environment(job.engine_root,context.temp_allocator)) {
@@ -664,8 +669,15 @@ job_test_advance :: proc(job:^Job,wait:bool) {
             return
         }
         job.result.tests.compiled=true
-        environment:=child_environment(job.engine_root,context.temp_allocator,{job.engine_folder,plugins_libraries_folder(job.root,context.temp_allocator)})
-        if !test_run_start(&job.test_run,b,job.test_package,job.test,environment,a) {
+        if job.action==.Program {
+            job.result.output=b.executable
+            job.result.status=.Up_To_Date if len(b.command)==0 else .Built
+            job_files_remove(job)
+            job_done(job)
+            return
+        }
+        environment:=program_environment(job,context.temp_allocator)
+        if !test_run_start(&job.test_run,b,job.package_folder,job.test,environment,a) {
             job.result.text=strings.join(job.test_run.lines[:],"\n",a)
             job_fail(job,.Tests)
         }
@@ -682,6 +694,12 @@ job_test_advance :: proc(job:^Job,wait:bool) {
     job.result.status=.Built
     job_files_remove(job)
     job_done(job)
+}
+
+// The environment an executable a Test or a Program job built runs with: it
+// finds the binaries of the engine and the plugin libraries it links.
+program_environment :: proc(job:^Job,allocator:=context.allocator) -> []string {
+    return child_environment(job.engine_root,allocator,{job.engine_folder,plugins_libraries_folder(job.root,context.temp_allocator)})
 }
 
 // Takes what the compiler of a check left.

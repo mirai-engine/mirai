@@ -11,8 +11,9 @@ import "mirai:host"
 import mm "mirai:std/math"
 
 // The view of each local player is drawn from the camera its seat sees
-// through. When that changes with a blend (an override that asks for one, or
-// a mode its camera takes), the view does not cut: it starts from what it
+// through. When that changes with a blend (an override that asks for one, a
+// mode its camera takes, or the seat that drives another body: BODY_BLEND,
+// as when it enters a vehicle or gets off it), the view does not cut: it starts from what it
 // drew, which travels with the body of the seat and turns as the new camera
 // turns (a player looking around during the blend), and comes into the new
 // camera over the blend. Around the pivot of an Orbit it turns at a distance
@@ -23,8 +24,12 @@ import mm "mirai:std/math"
 // The narrowest field a dolly zoom reaches before the view turns orthographic.
 DOLLY_FOV :: 2.5*mm.RAD_PER_DEG
 
+// How the view comes into the camera of the body its seat drives now.
+BODY_BLEND :: Camera_Blend{seconds=0.6,ease=.Cubic_In_Out}
+
 Camera_View :: struct {
     camera:core.Entity,
+    body:core.Entity,      // what its seat drove
     changes:u32,           // the setups of camera it has seen
     through:Camera_Blend,  // of the override it sees camera through: it leaves with it too
     blend:Camera_Blend,
@@ -50,7 +55,7 @@ Camera_Views :: struct {
 @(step="late",stage="end")
 camera_blend :: proc(
     views:^Camera_Views,shown:core.Ref(Cameras),seat_state:core.Ref(input.Seats),seats:^core.Table(input.Seat,.Read),
-    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),states:^core.Table(Camera_Follow_State,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
+    parents:^core.Table(core.Parent,.Read),hierarchy:core.Ref(core.Hierarchy),carried:^core.Table(core.Carried,.Read),cameras:^core.Table(render.Camera,.Read),follows:^core.Table(Camera_Follow,.Read),states:^core.Table(Camera_Follow_State,.Read),worlds:^core.Table(core.World_Transform,.Read),chosen:^render.View_Camera,
     bodies:^render.View_Bodies,slot_views:^input.Slot_Views,verticals:^core.Table(core.Vertical,.Read),frame:core.Frame_Time,
 ) {
     player:=input.focused(seat_state,seats)
@@ -65,7 +70,7 @@ camera_blend :: proc(
             continue
         }
         seat:=seat_state.local_count>0?input.local_seat(seats,slot):core.NONE
-        camera,through:=camera_selected(shown,seats,cameras,hierarchy,seat)
+        camera,through:=camera_selected(shown,seats,cameras,hierarchy,carried,seat)
         body:=input.body_of(seats,seat)
         view_update(v,camera,through,body,cameras,follows,states,worlds,frame)
         slot_views.views[slot]=view_seen(v.camera,body,follows,parents,worlds,verticals)
@@ -130,9 +135,11 @@ view_update :: proc(
     }
     changes:=follows_it?state.changes:0
     if camera!=v.camera || changes!=v.changes {
-        // The same camera blends as its mode asked; another, as the override it enters or the one it leaves.
+        // The same camera blends as its mode asked; another, as the override it enters or the one it
+        // leaves, or as the seat comes to drive another body.
         blend:=state.blend
         if camera!=v.camera {blend=through.seconds>0?through:v.through}
+        if camera!=v.camera && blend.seconds<=0 && body!=v.body && v.body!=core.NONE && body!=core.NONE {blend=BODY_BLEND}
         v.blending=v.camera!=core.NONE && blend.seconds>0
         v.cut=!v.blending
         if v.blending {
@@ -146,7 +153,7 @@ view_update :: proc(
         }
         v.camera,v.changes=camera,changes
     }
-    v.through=through
+    v.through,v.body=through,body
     if v.blending {
         v.elapsed+=frame.dt
         if v.elapsed<v.blend.seconds {

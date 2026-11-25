@@ -18,9 +18,9 @@ A player is a seat (`inp.Seat`) that drives a body (`Seat.body`); a body that wa
 - First or third person, changing view, the sign of `pitch`: [camera.md](character/camera.md).
 - Lifts, moving floors, trigger zones: [platforms-triggers.md](character/platforms-triggers.md).
 - Water, swimming, the surface at a point: [swimming.md](character/swimming.md).
+- Boats, submarines, turrets, getting in and out of them: [vehicles.md](character/vehicles.md).
 - A gun, its magazine, headshots and recoil: [weapons.md](character/weapons.md).
-- Enemies: [ai](ai.md); clips following the speed:
-  [animation](animation.md); online:
+- Enemies: [ai](ai.md); clips following the speed: [animation](animation.md); online:
   [networking](networking.md).
 
 ## Body

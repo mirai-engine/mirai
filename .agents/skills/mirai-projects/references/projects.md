@@ -236,7 +236,7 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 | Generate / Content | `mirai generate [project] [--store dir]` / `mirai content [project] [-- args]` |
 | Import / Refresh | `mirai import <file> [--project P] [--folder F]` / `mirai import --refresh <root> [--final]` |
 | Share / Join | `mirai share [project] [--port N] [--store S]` / `mirai join <invite> [dir] [--address A]` |
-| Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
+| Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]`, `mirai records create\|read\|write\|check ...` |
 | Git plugins | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Typecheck + lints | `mirai check [<pkg> [-flag...]]` (alloc lint `tools/mirai/alloc_lint.odin`; solver/render lint `tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<pkg>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]` |
@@ -262,7 +262,8 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 
 - `mirai new [dir]` copies `templates/<T>` (`empty` default) + `templates/common`, writes
   `.gitattributes`, and runs `git init` if needed (`--list` lists templates).
-- `mirai docs [topic] [section]` (and MCP `docs`) serves `docs/game` from the engine root.
+- `mirai docs [topic] [section]` (and MCP `docs`) serves `docs/game` from the engine root;
+  `mirai docs --search <word>...` (MCP `docs` with `search`) gives the sections that say them.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` sharing `.deps` and caches.
 - `mirai doctor [project]` validates machine/project (exit 1 on error; requires `core.symlinks` and
   `.claude/skills` -> `.agents/skills`).

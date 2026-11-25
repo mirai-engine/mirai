@@ -74,8 +74,10 @@ camera_drive :: proc(
         move.world_velocity=false
         wish:=input.seat_vector(move_actions,seat,.Move)
         seen:=input.seat_view(move_actions.runtime,seat)
-        camera,_:=camera_selected(view.sight.shown,view.sight.seats,view.sight.cameras,view.sight.hierarchy,seat)
+        camera,_:=camera_selected(view.sight.shown,view.sight.seats,view.sight.cameras,view.sight.hierarchy,view.sight.carried,seat)
         follow,follows_it:=core.get(view.follows,camera)
+        // In its own axes what moves it reads its own actions: the seat gives it where it looks.
+        steers:=move.frame==.Body
         if looks_with(view.follows,view.parents,camera,body) {
             // Changing to it from one that turned apart, the body starts looking where that one looked.
             if seen.kind==.Apart {
@@ -91,7 +93,12 @@ camera_drive :: proc(
             }
             move.look_yaw=mm.angle_wrap(move.look_yaw-look.x)
             move.look_pitch=clamp(move.look_pitch+look.y,low,high)
-            move.move=mm.quat_rotate(vertical*mm.quat_axis_angle({0,1,0},move.look_yaw),[3]f32{wish.x,0,-wish.y})
+            if !steers {move.move=mm.quat_rotate(vertical*mm.quat_axis_angle({0,1,0},move.look_yaw),[3]f32{wish.x,0,-wish.y})}
+            continue
+        }
+        if steers {
+            // It looks where the view looks; without one, where it looked.
+            if seen.kind!=.None {move.look_yaw,move.look_pitch=seen.yaw,seen.pitch}
             continue
         }
         // Along where its view looks, -Z of the world without a camera; it faces where it goes.

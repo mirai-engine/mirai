@@ -2,6 +2,8 @@
   "version": 1,
   "id": "780bee6597fbb860e803d513bda2dee7",
   "name": "jelly",
+  "catalog_path": "Demo/characters/jelly",
+  "documents": "jelly",
   "origin": {"path": "assets/characters/jelly/jelly.gltf", "folder": false, "importer": "glTF"},
   "identity": "a8aa4182d7481e139c7925b475ece930212b1ddf640d0b4da7342ca25c2d26af",
   "inputs": ["jelly.bin"],

@@ -1,10 +1,10 @@
 package editor
 
-import "mirai:editor/records"
+import "mirai:cook/records"
 import "mirai:host"
 import "mirai:std/base"
 
-// What the tables of game data (package editor/records) need of the session:
+// What the tables of game data (package cook/records) need of the session:
 // the assets and the layout of the project, and the write of the file as an
 // edit, a step of the history like any other.
 

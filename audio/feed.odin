@@ -237,41 +237,6 @@ feed_voice_mix :: proc "contextless" (m:^Mixer,v:^Mix_Voice,out:[^]f32,from,to:i
     mask:=f.capacity-1
     channels:=u64(v.source.channels)
     available:=write-read
-    if v.skip>0 {
-        total:=u128(v.cursor)+u128(v.skip)
-        drop:=total>>32
-        if drop>u128(available) {
-            if available>0 {
-                last:=((read+available-1)&mask)*channels
-                if f.ring32!=nil {
-                    for c in 0..<channels {v.kept[c]=f.ring32[last+c]}
-                } else {
-                    for c in 0..<channels {v.kept[c]=f32(f.ring16[last+c])*(1.0/32768)}
-                }
-                read+=available
-                sync.atomic_store_explicit(&f.read,read,.Release)
-            }
-            if ended {return false}
-            rem:=total-(u128(available)<<32)+u128(to-from)*u128(step)
-            v.cursor=0
-            v.skip=u64(min(rem,u128(max(u64))))
-            return true
-        }
-        d:=u64(drop)
-        if d>0 {
-            last:=((read+d-1)&mask)*channels
-            if f.ring32!=nil {
-                for c in 0..<channels {v.kept[c]=f.ring32[last+c]}
-            } else {
-                for c in 0..<channels {v.kept[c]=f32(f.ring16[last+c])*(1.0/32768)}
-            }
-            read+=d
-            sync.atomic_store_explicit(&f.read,read,.Release)
-            available-=d
-        }
-        v.cursor=u64(total)&(ONE-1)
-        v.skip=0
-    }
     needed:=(u64(u32(v.cursor))+step*u64(to-from))>>32+3
     count:=min(available,needed)
     // The frame played last, then in two runs of samples: up to the end of the ring, and from its start.

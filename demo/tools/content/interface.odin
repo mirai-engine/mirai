@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "mirai:asset"
+import "mirai:cook/content"
 
 // The icons of the inventory the interfaces of the interface scene
 // (game/interface_demo.odin) show; the items of its table name them by their ids.
@@ -52,7 +53,7 @@ write_item_icon :: proc(o:^Out,shape:Icon_Shape,color:[3]f32) {
         }
     }
     file:=fmt.tprintf("assets/interface/item_%s.tex",names[shape])
-    asset.content_check(&o.content,file,asset.texture_save(path(o,file),&o.content.types,{id=id,width=ICON_SIZE,height=ICON_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
+    content.check(&o.w,path(o,file),asset.texture_save(path(o,file),&o.w.types,{id=id,width=ICON_SIZE,height=ICON_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
 write_interface_icons :: proc(o:^Out) {

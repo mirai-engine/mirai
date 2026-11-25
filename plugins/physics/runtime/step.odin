@@ -56,6 +56,7 @@ Sync :: struct {
     splines:^core.Table(volume.Spline,.Read), // whose points close the loop of an Outline
     statics:^core.Table(render.Mesh_Renderer,.Read),
     parents:^core.Table(core.Parent,.Read),
+    carried:^core.Table(core.Carried,.Read), // what rides a mount, and what hangs from it, has no body
     hierarchy:core.Ref(core.Hierarchy), // without it every sync is whole
     names:^core.Table(core.Name,.Read),
     collision:^Collision_Settings,
@@ -97,7 +98,7 @@ physics_step :: proc(
     gravities:^core.Table(volume.Gravity,.Read),volumes:^core.Table(volume.Volume,.Read),worlds:^core.Table(core.World_Transform,.Read),
     fluid_waves:^core.Table(Fluid_Waves,.Read),winds:^core.Table(volume.Wind,.Read),
     hierarchy:core.Ref(core.Hierarchy),splines:^core.Table(volume.Spline,.Read),ground:core.Ref(core.Ground_Queries),world:core.World_Ref,
-    sections:^core.Table(scene.Scene_Reference,.Read),
+    sections:^core.Table(scene.Scene_Reference,.Read),carried:^core.Table(core.Carried,.Read),
 ) {
     if !state_make(state,settings.ptr,&app.jobs,problems) {
         core.queue_clear(&requests.queue)
@@ -117,7 +118,7 @@ physics_step :: proc(
     state.pass+=1
     s:=Sync{
         state=state,app=app,meshes=meshes,playing=time.playing && time.dt>0,dt=time.dt,resimulating=time.resimulating,
-        rigids=rigids,colliders=colliders,characters=characters,volumes=volumes,splines=splines,statics=statics,parents=parents,hierarchy=hierarchy,names=names,
+        rigids=rigids,colliders=colliders,characters=characters,volumes=volumes,splines=splines,statics=statics,parents=parents,hierarchy=hierarchy,names=names,carried=carried,
         transforms=transforms,motions=motions,targets=targets,character_states=character_states,jumps=jumps,problems=problems,
         budget=BODIES_PER_TICK,
     }
@@ -172,7 +173,7 @@ physics_step :: proc(
         state.touched_all=true
         #reverse for &link,at in state.links.values {
             e:=state.links.entities[at]
-            if link.kind==.Proxy || core.has(rigids,e) || core.has(colliders,e) || core.has(characters,e) || zone_collider(&s,e).kind!=.External {continue}
+            if link.kind==.Proxy || !core.carried_under(carried,parents,e) && (core.has(rigids,e) || core.has(colliders,e) || core.has(characters,e) || zone_collider(&s,e).kind!=.External) {continue}
             if link.kind!=.None {
                 if s.budget==0 {
                     s.waiting=true
@@ -333,6 +334,7 @@ sync_structure :: proc(s:^Sync) -> u64 {
     seen+=core.version(s.statics)+core.layout(s.statics)+core.version(s.parents)+core.layout(s.parents)+core.layout(s.transforms)
     if s.volumes!=nil {seen+=core.version(s.volumes)+core.layout(s.volumes)}
     if s.splines!=nil {seen+=core.version(s.splines)+core.layout(s.splines)}
+    if s.carried!=nil {seen+=core.layout(s.carried)}
     return seen+u64(s.state.epoch)+(s.app.assets!=nil?s.app.assets.structure:0)
 }
 
@@ -581,6 +583,11 @@ entity_sync :: proc(s:^Sync,e:core.Entity) {
     defer if l^!=was {slot_stamp(state,state.link_stamps[:],at)}
     if world:=world_pose(s,e);!sim.finite(world.position,world.scale) || !sim.finite(world.rotation) {
         core.report(s.problems,e,"physics.transform","its world Transform is not finite (position %v, rotation %v, scale %v), so the simulation keeps its body as it was: write finite values to its Transform and to those of its parents",world.position,world.rotation,world.scale)
+        return
+    }
+    // A rider of a mount, and what hangs from it, rides with it: it has no body until it gets off.
+    if core.carried_under(s.carried,s.parents,e) {
+        if l.kind!=.None {link_release(s,l)}
         return
     }
     rigid,has_rigid:=core.get(s.rigids,e)
@@ -1264,7 +1271,20 @@ places_apply :: proc(s:^Sync,places:[]core.Place_Request) {
         }
         l:=link_find(s.state,e)
         if l==nil || !link_made(s.state,l) {
-            core.report(s.problems,e,"physics.place","its body was not made; read the problems of the entity about its body and fix them")
+            // Without a body (it rides a mount, or waits for its geometry) its Transform goes there, and its body
+            // is made there.
+            rotation:=request.rotation==0?mm.QUAT_IDENTITY:request.rotation
+            if row:=core.row_of(s.transforms,e);row>=0 {
+                if position,turned,ok:=local_of(s.transforms,s.parents,e,{request.position,rotation});ok {
+                    was,_:=core.world_of(s.transforms,s.parents,e)
+                    written:=core.edit_at(s.transforms,row)
+                    written.position,written.rotation=position,turned
+                    jumped(s,e,was.position,rotation*conj(was.rotation),request.position)
+                    if request.at_rest {motion_stop(s,e)}
+                    continue
+                }
+            }
+            core.report(s.problems,e,"physics.place","its body was not made and its Transform cannot hold the place; read the problems of the entity about its body and fix them")
             continue
         }
         rotation:=request.rotation==0?mm.QUAT_IDENTITY:request.rotation
