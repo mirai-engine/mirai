@@ -415,7 +415,7 @@ Render_Sync :: struct {
     derived:int, // the derived rows there were after the last round of them
     extra_rows:u64, // and what the rows the visual instances showed in it add up to
     environment:gpu.Environment,
-    postprocess:[POST_PROCESS_CAPACITY]Post_Process_Layer,
+    postprocess:View_Postprocess, // what the main view gave the renderer of its effects
     outline_styles:Outline_Styles, // the last ones applied
     graphics:Graphics_Settings, // the last ones applied
     graphics_applied:bool,
@@ -789,11 +789,7 @@ render_sync :: proc(
         gpu.renderer_set_outline_style(r,outline_style_of(outline_styles.ptr^))
         sync.outline_styles=outline_styles.ptr^
     }
-    stack:=look.layers
-    if whole || stack!=sync.postprocess {
-        gpu.renderer_set_postprocesses(r,postprocess_effects(a,stack))
-        sync.postprocess=stack
-    }
+    view_postprocess_sync(a,r,0,look.layers,&sync.postprocess,view_volumes,problems)
     if sync.starved {sync_fail(sync,r)}
 }
 

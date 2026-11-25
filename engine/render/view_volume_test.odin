@@ -1,10 +1,13 @@
 package render
 
+import "core:fmt"
 import "core:testing"
+import "mirai:asset"
 import "mirai:core"
 import volume "mirai:engine/volume"
 import "mirai:host"
 import gpu "mirai:render"
+import "mirai:render/abi"
 import "mirai:std/base"
 
 // The level exposes a stop under the meter; a tunnel replaces it inside its
@@ -66,21 +69,76 @@ a_local_view_gives_the_renderer_its_effects_when_they_change :: proc(t:^testing.
     layers[0]={material=base.Asset_Id{1,2},enabled=true}
     last:View_Postprocess
     r.view_postprocesses[1]=other
-    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,2,layers,&last,nil,nil)
     testing.expect(t,r.view_postprocesses[1].count==0 && last.layers==layers,"a material without a PostProcess program runs nothing")
     // Unchanged, it does nothing: what it gave stays.
     last.given=other
     r.view_postprocesses[1]=other
-    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,2,layers,&last,nil,nil)
     testing.expect_value(t,r.view_postprocesses[1].count,u32(1))
     // Another list in the renderer, or other layers, give it again.
     r.view_postprocesses[1]={}
-    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,2,layers,&last,nil,nil)
     testing.expect(t,r.view_postprocesses[1].count==0 && last.given.count==0)
     r.view_postprocesses[1]=other
     last.given=other
     layers[1]={material=base.Asset_Id{3,4},enabled=true,after_tonemap=true}
-    view_postprocess_sync(app.assets,app.renderer,1,layers,&last)
+    view_postprocess_sync(app.assets,app.renderer,2,layers,&last,nil,nil)
     testing.expect(t,r.view_postprocesses[1].count==0 && last.layers==layers)
     testing.expect(t,r.view_postprocesses[0].count==0 && r.postprocesses.count==0,"the other slots and the frame keep theirs")
+}
+
+// The effects of the main view follow their materials and programs: a reload
+// that gives the program another id is given to the renderer again. An
+// enabled layer that cannot draw is a problem of its View_Volume naming the
+// layer; one that is off is not.
+@(test)
+the_effects_of_the_view_follow_their_programs_and_report_a_layer_that_cannot_draw :: proc(t:^testing.T) {
+    root:=base.test_folder(t,"view-effects-programs")
+    if root=="" {return}
+    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+    programs:=[3]string{"Grade","","Missing"}
+    for program,i in programs {
+        info:=asset.MATERIAL_DEFAULTS
+        asset.text_set(info.program[:],program)
+        testing.expect_value(t,asset.material_save(fmt.tprintf("%s/m%d.mat",root,i),&types,{id={9,u64(i)},info=info}),asset.Error.None)
+    }
+    f:=new(Sync_Fixture);defer free(f)
+    if !sync_fixture_init(t,f,root) {return}
+    defer sync_fixture_destroy(f)
+    catalog :: proc(t:^testing.T,r:^gpu.Renderer,id:int) {
+        text:=fmt.tprintf(`{{"version":%d,"programs":[{{"id":%d,"name":"Grade","domain":"Postprocess","size":0,"parameters":[]}}]}}`,abi.SHADER_CATALOG_VERSION,id)
+        parsed,valid:=gpu.program_catalog_parse(transmute([]u8)text)
+        testing.expect(t,valid,"the catalog is read")
+        if r.programs.loaded {gpu.program_catalog_destroy(&r.programs)}
+        r.programs=parsed
+        r.programs.loaded=true
+    }
+    catalog(t,&f.renderer,1)
+    look:=VIEW_VOLUME_DEFAULT
+    look.layers[0]={material={9,0},enabled=true}
+    look.layers[1]={material={9,1},enabled=true}
+    look.layers[2]={material={9,2}}
+    e:=core.create(&f.world.entities)
+    core.add(&f.world.view_volumes,e,look)
+    problems:core.Problems
+    frame :: proc(f:^Sync_Fixture,problems:^core.Problems) {
+        test_world_settle(&f.world)
+        world_sync(&f.world,&f.sync,&f.app,{},problems=problems)
+    }
+    frame(f,&problems)
+    given:=f.renderer.postprocesses
+    testing.expectf(t,given.count==1 && given.entries[0].program==1,"the layer of Grade runs: %d effects, the first of program %d",given.count,given.entries[0].program)
+    reported:=""
+    for &p in problems.entries[:problems.count] {
+        if p.entity==e && base.text_get(p.code[:])=="render.postprocess" {reported=base.text_get(p.text[:])}
+    }
+    testing.expectf(t,reported!="" && problems.count==1,"the enabled layer without a program is a problem of its View_Volume: %q (%d problems)",reported,problems.count)
+    testing.expectf(t,len(reported)>0 && reported[:7]=="layer 1","naming the layer: %q",reported)
+    // The programs are made again: Grade is another id.
+    catalog(t,&f.renderer,4)
+    host.assets_programs_refresh(&f.assets)
+    frame(f,&problems)
+    given=f.renderer.postprocesses
+    testing.expectf(t,given.count==1 && given.entries[0].program==4,"the reloaded program is given again: %d effects, the first of program %d",given.count,given.entries[0].program)
 }
