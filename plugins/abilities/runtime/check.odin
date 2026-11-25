@@ -1,6 +1,7 @@
 package abilities
 
 import "core:fmt"
+import "core:math"
 import "mirai:core"
 import inp "mirai:engine/input"
 import locomotion "plugins:locomotion/runtime"
@@ -61,15 +62,27 @@ ability_check :: proc(a:^Ability,out:[]u8) -> string {
 
 hitbox_check :: proc(h:^Ability_Hitbox,out:[]u8) -> string {
     if h.shape==.None || h.shape>max(Hitbox_Shape) {
-        return "shape must be box, sphere or capsule"
+        return "shape must be box, sphere, capsule, ray or self"
     }
     for v in h.center {
         if !finite(v) {return "center is not a point: give finite metres"}
     }
-    used:=3 if h.shape==.Box else 2 if h.shape==.Capsule else 1
-    for i in 0..<used {
-        if !finite(h.size[i]) || h.size[i]<=0 {
-            return fmt.bprintf(out,"size[%d] must be finite and above 0 for a %v",i,h.shape)
+    for v in h.kick {if !finite(v) || abs(v)>math.PI {return fmt.bprintf(out,"kick turns the look by %v: give radians within half a turn",h.kick)}}
+    #partial switch h.shape {
+    case .Ray:
+        r:=h.ray
+        if !finite(r.range) || r.range<0 {return "ray.range must be 0 (the default range) or more metres"}
+        if !finite(r.radius) || r.radius<0 || r.radius>1 {return "ray.radius must be 0 (a thin ray) to 1 metre"}
+        if !finite(r.spread) || r.spread<0 || r.spread>1.5 {return "ray.spread must be 0 to 1.5 radians"}
+        if r.pellets>RAY_PELLETS {return fmt.bprintf(out,"ray.pellets is %d: cast at most %d at once",r.pellets,RAY_PELLETS)}
+        if r.from>max(Ability_Ray_From) {return "ray.from must be aim or body"}
+    case .Self:
+    case:
+        used:=3 if h.shape==.Box else 2 if h.shape==.Capsule else 1
+        for i in 0..<used {
+            if !finite(h.size[i]) || h.size[i]<=0 {
+                return fmt.bprintf(out,"size[%d] must be finite and above 0 for a %v",i,h.shape)
+            }
         }
     }
     if text:=effect_check(h.effect,out);text!="" {return fmt.bprintf(out,"effect %s",text)}

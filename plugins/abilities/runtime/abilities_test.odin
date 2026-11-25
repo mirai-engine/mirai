@@ -57,6 +57,7 @@ Abilities_World :: struct {
     states:core.Table(Ability_State),
     tracking:core.Table(Ability_Tracking),
     locals:core.Table(Ability_Local),
+    wielded:core.Table(Ability_Wielded),
     sounds:audio.Sound_Requests,
     births:core.Births,
     seats:core.Table(inp.Seat),
@@ -200,7 +201,7 @@ test_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transform,r
         local:=mm.quat_rotate(conj(pose.rotation),p-center)
         inside:=false
         switch hitbox.shape {
-        case .None:
+        case .None,.Ray,.Self:
         case .Box: inside=abs(local.x)<=hitbox.size.x && abs(local.y)<=hitbox.size.y && abs(local.z)<=hitbox.size.z
         case .Sphere, .Capsule: inside=local.x*local.x+local.y*local.y+local.z*local.z<=hitbox.size.x*hitbox.size.x
         }
@@ -215,7 +216,7 @@ world_of :: proc(f:^Fixture) -> Ability_World {
 }
 
 @(private="file")
-tables_of :: proc(f:^Fixture) -> Ability_Tables {return {&f.users,&f.states,&f.tracking,&f.locals}}
+tables_of :: proc(f:^Fixture) -> Ability_Tables {return {&f.users,&f.states,&f.tracking,&f.locals,&f.wielded}}
 
 @(private="file")
 data_of :: proc(f:^Fixture) -> Ability_Data {

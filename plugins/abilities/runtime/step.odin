@@ -37,6 +37,13 @@ Ability_World :: struct {
     problems:^core.Problems,
     sounds:^audio.Sound_Requests,
     births:^core.Births,
+    ids:^core.Table(core.Id,.Read), // what seeds the spread of a ray alike on every end
+    verticals:^core.Table(core.Vertical,.Read), // the frame the view of a seat is in, for its aim
+    attachments:^core.Table(anim.Bone_Attachment,.Read), // the rig a user hangs from, for a cue at a socket
+    playback:core.Ref(anim.Playback),
+    skeletons:core.Ref(anim.Skeleton_Assets),
+    kicks:^inp.Look_Kicks,
+    shots:^Ability_Shots,
 }
 
 // The entities a hitbox at pose touches, written into results.
@@ -48,6 +55,7 @@ Ability_Tables :: struct {
     states:^core.Table(Ability_State),
     tracking:^core.Table(Ability_Tracking),
     locals:^core.Table(Ability_Local),
+    wielded:^core.Table(Ability_Wielded),
 }
 
 @(step="fixed",stage="begin",loops="game")
@@ -117,7 +125,7 @@ physics_overlap :: proc(w:^Ability_World,hitbox:^Ability_Hitbox,pose:mm.Transfor
     center,_:=hitbox_world(hitbox,pose)
     count:int
     switch hitbox.shape {
-    case .None:
+    case .None,.Ray,.Self:
     case .Box: count,_=phys.overlap_box(w.physics,center,hitbox.size,pose.rotation,results)
     case .Sphere: count,_=phys.overlap_sphere(w.physics,center,hitbox.size.x,results)
     case .Capsule: count,_=phys.overlap_capsule(w.physics,center,hitbox.size.x,hitbox.size.y,pose.rotation,results)
@@ -148,6 +156,8 @@ Actor :: struct {
     track:^Ability_Tracking,
     local:^Ability_Local,
     user_row,state_row,track_row,local_row:int,
+    entity:core.Entity,
+    driver:core.Entity, // its wielder, or itself: whose seat, statuses, modes, animation and moves are its own
 }
 
 @(private)
@@ -156,6 +166,10 @@ actor_at :: proc(t:^Tick,e:core.Entity,row:int) -> (u:Actor,ok:bool) {
     if row<0 || sr<0 || tr<0 || lr<0 {return}
     u={user=&t.users.values[row],state=&t.states.values[sr],track=&t.tracking.values[tr],local=&t.locals.values[lr],
        user_row=row,state_row=sr,track_row=tr,local_row=lr}
+    u.entity,u.driver=e,e
+    if t.wielded!=nil {
+        if held,found:=core.get(t.wielded,e);found && held.wielder!=core.NONE {u.driver=held.wielder}
+    }
     stamp:=core.stamp(t.users,row)
     cached:=core.entity_map_get(&t.checks.entries,e)
     if cached==nil {
@@ -187,7 +201,7 @@ local_follow :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     if u.local.run==run {return}
     l:=local_edit(t,u)
     ticks:=f32(t.tick-u.state.start) if run!=0 && t.tick>u.state.start else 0
-    l.run,l.own,l.span_open,l.span_start,l.end_since=run,ticks*pace_tick(t,e),0,{},0
+    l.run,l.own,l.span_open,l.span_start,l.end_since=run,ticks*pace_tick(t,u.driver),0,{},0
     l.hit_count,l.targets,l.windows=0,{},{}
 }
 
@@ -226,6 +240,19 @@ request_apply :: proc(t:^Tick,r:Ability_Request) {
         }
     case .Kit:
         if u.user.kit!=r.kit {core.edit_at(t.users,u.user_row).kit=r.kit}
+        local_edit(t,&u).buffer={}
+    case .Wield:
+        if t.wielded==nil || r.source==r.entity || u.driver==(r.source if r.source!=core.NONE else r.entity) {return}
+        if u.state.ability!={} {
+            ability_end(t,r.entity,&u,record_sheet(t.abilities,u.state.ability),time_of(t,&u),.Canceled,nil)
+        }
+        if r.source==core.NONE {
+            core.remove(t.wielded,r.entity)
+        } else if held:=core.edit(t.wielded,r.entity);held!=nil {
+            held.wielder=r.source
+        } else if !core.add(t.wielded,r.entity,Ability_Wielded{r.source}) {
+            core.report(t.w.problems,r.entity,"abilities.state","out of memory for its wielder")
+        }
         local_edit(t,&u).buffer={}
     case .Effect:
     }
@@ -342,7 +369,7 @@ bases_set :: proc(t:^Tick,u:^Actor,rates:[ATTRIBUTE_ENTRIES]f32,drains:u8) {
 // base that a rate took to 0 since the tick before is Depleted.
 @(private)
 rates_update :: proc(t:^Tick,e:core.Entity,u:^Actor,active:^Ability) {
-    paused:=active!=nil && mode_in(t,e,active.pause_modes)
+    paused:=active!=nil && mode_in(t,u.driver,active.pause_modes)
     rates:[ATTRIBUTE_ENTRIES]f32
     drains:u8
     for entry,i in u.user.attributes {
@@ -468,7 +495,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     if u.state.ability!={} && active==nil {ability_end(t,e,u,nil,{},.Canceled,nil)}
     seat:^inp.Seat_State
     if t.w.seats.ptr!=nil && t.w.seat_states.ptr!=nil && (cached!=nil && cached.count>0 || active!=nil && active.hold) {
-        seat=inp.seat_runtime(t.w.seat_states,inp.seat_of(t.w.seats,e))
+        seat=inp.seat_runtime(t.w.seat_states,inp.seat_of(t.w.seats,u.driver))
     }
     if active!=nil {
         before=time_advance(t,e,u)
@@ -507,7 +534,7 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
     if best_sheet!=nil {
         // The next of a completed ability is its last branch: it starts in the statuses the
         // ability had then (a dash that requires the charging status of its charge).
-        if block,_:=start_block(t.w,t.tick,t.dt,e,u.user,u.local,u.track,u.local.statuses|handoff,kit,active,at,best_sheet,next);block!=.None {
+        if block,_:=start_block(t.w,t.tick,t.dt,u.driver,u.user,u.local,u.track,gate_statuses(t,u)|handoff,kit,active,at,best_sheet,next);block!=.None {
             best_sheet=nil
         }
     }
@@ -526,13 +553,27 @@ user_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
         active,at,before=best_sheet,{},TIME_BEFORE_START
         windows_advance(t,e,u,active,before,at)
     }
-    if active!=nil {hitboxes(t,e,u,active,before,at)}
+    if active!=nil {
+        hitboxes(t,e,u,active,before,at)
+        rays(t,e,u,active,before,at,true)
+        kicks(t,u,active,before,at)
+    }
     rates_update(t,e,u,active)
     if best_sheet!=nil {derive(t,e,u,active,at)}
     held_attach(t,e,u,active,at)
 }
 
 // Whether e's Character is in one of modes.
+// The statuses that gate what u starts: its own and those of its wielder.
+@(private)
+gate_statuses :: proc(t:^Tick,u:^Actor) -> Ability_Statuses {
+    statuses:=u.local.statuses
+    if u.driver!=u.entity {
+        if wielder,found:=core.get(t.locals,u.driver);found {statuses|=wielder.statuses}
+    }
+    return statuses
+}
+
 @(private)
 mode_in :: proc(t:^Tick,e:core.Entity,modes:Ability_Modes) -> bool {
     if modes==0 || t.w.locomotions==nil {return false}
@@ -546,7 +587,7 @@ mode_in :: proc(t:^Tick,e:core.Entity,modes:Ability_Modes) -> bool {
 @(private)
 costs_pay :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability) -> bool {
     if a.end_modes!=0 {
-        ending:=mode_in(t,e,a.end_modes)
+        ending:=mode_in(t,u.driver,a.end_modes)
         since:=u.local.end_since
         if ending!=(since!=0) {
             since=t.tick if ending else 0
@@ -578,6 +619,7 @@ replica_tick :: proc(t:^Tick,e:core.Entity,u:^Actor) {
         at=time_of(t,u)
         if at.local<ability_ticks(active,t.dt) {
             windows_advance(t,e,u,active,before,at,replica=true)
+            rays(t,e,u,active,before,at,false)
         } else {active=nil}
     }
     derive(t,e,u,active,at,replica=true)
@@ -674,7 +716,7 @@ Ability_Block :: enum u8 {
 
 @(private)
 can_start :: proc(t:^Tick,e:core.Entity,u:^Actor,kit:^Ability_Kit,active:^Ability,at:Ability_Time,a:^Ability,ref:core.Record(Ability)) -> bool {
-    block,_:=start_block(t.w,t.tick,t.dt,e,u.user,u.local,u.track,u.local.statuses,kit,active,at,a,ref)
+    block,_:=start_block(t.w,t.tick,t.dt,u.driver,u.user,u.local,u.track,gate_statuses(t,u),kit,active,at,a,ref)
     return block==.None
 }
 
@@ -759,7 +801,7 @@ ability_start :: proc(t:^Tick,e:core.Entity,u:^Actor,ref:core.Record(Ability),a:
     l.run,l.own,l.span_open,l.span_start,l.end_since=t.tick+1,0,0,{},0
     l.hit_count,l.targets,l.windows=0,{},{}
     event_push(t,{kind=.Started,entity=e,ability=ref,window=-1})
-    if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,e,name)}
+    if name:=ability_name_text(&a.action);name!="" {anim.play(t.w.animations,u.driver,name)}
 }
 
 // Ends the running ability at at: its open windows close, their moves stop and its animation
@@ -773,10 +815,10 @@ ability_end :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at:Ability_Time,ki
         for &w,i in a.windows {
             if !ability_window_open(w,t.dt,at,i) {continue}
             event_push(t,{kind=.Window_End,entity=e,ability=ref,window=i8(i),cue=w.cue})
-            if w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
+            if w.move.velocity!={} {locomotion.remove_moves(t.w.moves,u.driver,MOVE_ID+u32(i))}
         }
         if kind!=.Completed || a.hold {
-            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,e,name)}
+            if name:=ability_name_text(&a.action);name!="" && (next==nil || ability_name_text(&next.action)!=name) {anim.stop(t.w.animations,u.driver,name)}
         }
     }
     state:=core.edit_at(t.states,u.state_row)
@@ -798,7 +840,7 @@ time_advance :: proc(t:^Tick,e:core.Entity,u:^Actor) -> (before:Ability_Time) {
     before=time_of(t,u)
     if before.local<=0 {return TIME_BEFORE_START}
     before.local-=1
-    if pace:=pace_tick(t,e);pace!=0 {local_edit(t,u).own+=pace}
+    if pace:=pace_tick(t,u.driver);pace!=0 {local_edit(t,u).own+=pace}
     return
 }
 
@@ -814,7 +856,7 @@ span_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,at_local:i64) {
     if !cached.any {return}
     spans:=u.local.span_open
     for ev in t.w.anim_events.items {
-        if ev.entity!=e || (ev.kind!=.Span_Begin && ev.kind!=.Span_End) {continue}
+        if ev.entity!=u.driver || (ev.kind!=.Span_Begin && ev.kind!=.Span_End) {continue}
         if cached.action!=0 && ev.action!=cached.action {continue}
         for hash,i in cached.windows {
             if hash==0 || hash!=ev.name {continue}
@@ -840,10 +882,10 @@ windows_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Abil
         was,is:=ability_window_open(w,t.dt,before,i),ability_window_open(w,t.dt,at,i)
         if is && !was {
             event_push(t,{kind=.Window_Begin,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue})
-            if row>=0 && row<len(t.sheets.ability_spans) {cue_emit(t,w.on_begin,t.sheets.ability_spans[row].channels[i],e)}
+            if row>=0 && row<len(t.sheets.ability_spans) {window_cue(t,e,u,&w,t.sheets.ability_spans[row].channels[i])}
             if !replica && w.move.velocity!={} {
                 velocity:=w.move.velocity
-                if pose,found:=core.get(t.w.worlds,e);found {velocity=mm.quat_rotate(pose.rotation,velocity)}
+                if pose,found:=core.get(t.w.worlds,u.driver);found {velocity=mm.quat_rotate(pose.rotation,velocity)}
                 ticks:u32
                 if w.span[0]!=0 {
                     // Span-bound moves last until .Span_End or ability_end removes them.
@@ -852,14 +894,14 @@ windows_advance :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Abil
                     from,to:=window_ticks(w,t.dt)
                     ticks=u32(to-from)
                     // On the Own clock it lasts until the window closes, which removes it.
-                    if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,e),1.0/64)))}
+                    if w.clock==.Own {ticks=u32(math.ceil(f32(to-from)/max(pace_tick(t,u.driver),1.0/64)))}
                 }
-                locomotion.add_move(t.w.moves,e,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
+                locomotion.add_move(t.w.moves,u.driver,{velocity=velocity,ticks=ticks,mix=w.move.mix,id=MOVE_ID+u32(i)})
             }
         }
         if was && !is {
             event_push(t,{kind=.Window_End,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue})
-            if !replica && (w.clock==.Own || w.span[0]!=0) && w.move.velocity!={} {locomotion.remove_moves(t.w.moves,e,MOVE_ID+u32(i))}
+            if !replica && (w.clock==.Own || w.span[0]!=0) && w.move.velocity!={} {locomotion.remove_moves(t.w.moves,u.driver,MOVE_ID+u32(i))}
         }
     }
 }
@@ -897,7 +939,7 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
         if w.hitbox=={} || !ability_window_open(w,t.dt,at,i) || t.overlap==nil {continue}
         hrow:=record_row(t.hitboxes,w.hitbox)
         h:=record_at(t.hitboxes,hrow)
-        if h==nil || hrow>=len(t.sheets.hit_channels) {continue}
+        if h==nil || hrow>=len(t.sheets.hit_channels) || h.shape==.Ray || h.shape==.Self {continue}
         steps:=hitbox_steps(h,placed.previous,placed.transform) if ability_window_open(w,t.dt,before,i) else 1
         for step in 1..=steps {
             pose:=placed.transform
@@ -905,7 +947,7 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
             results:[HITBOX_RESULTS]core.Entity
             count:=clamp(t.overlap(t.w,h,pose,results[:]),0,HITBOX_RESULTS)
             each: for target in results[:count] {
-                if target==e || target==core.NONE {continue}
+                if target==e || target==u.driver || target==core.NONE {continue}
                 for j in 0..<min(int(u.local.hit_count),USER_HITS) {
                     if u.local.targets[j]==target && int(u.local.windows[j])==i {continue each}
                 }
@@ -916,7 +958,7 @@ hitboxes :: proc(t:^Tick,e:core.Entity,u:^Actor,a:^Ability,before,at:Ability_Tim
                 l:=local_edit(t,u)
                 l.targets[l.hit_count],l.windows[l.hit_count]=target,u8(i)
                 l.hit_count+=1
-                event_push(t,{kind=.Hit,entity=e,ability=u.state.ability,window=i8(i),cue=w.cue,target=target})
+                event_push(t,{kind=.Hit,entity=e,ability=u.state.ability,window=i8(i),zone=-1,cue=w.cue,target=target})
                 target_tags:scene.Tags
                 if t.w.tags!=nil {target_tags,_=core.get(t.w.tags,target)}
                 if at:=hitbox_effect_at(h,target_tags);at>=0 {
@@ -940,7 +982,7 @@ hitbox_world :: proc "contextless" (hitbox:^Ability_Hitbox,pose:mm.Transform) ->
 hitbox_steps :: proc "contextless" (h:^Ability_Hitbox,from,to:mm.Transform) -> int {
     least,reach:f32
     switch h.shape {
-    case .None: return 1
+    case .None,.Ray,.Self: return 1
     case .Box: least,reach=min(h.size.x,h.size.y,h.size.z),linalg.length(h.size)
     case .Sphere: least,reach=h.size.x,h.size.x
     case .Capsule: least,reach=h.size.x,h.size.x+h.size.y
@@ -1038,6 +1080,8 @@ event_push :: proc(t:^Tick,event:Ability_Event) {
         return
     }
     t.event_count+=1
+    event:=event
+    if event.kind!=.Hit && event.kind!=.Shot {event.zone=-1}
     core.push(&t.events.queue,event)
 }
 

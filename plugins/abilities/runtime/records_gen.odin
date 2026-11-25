@@ -33,6 +33,9 @@ Ability_Hitbox :: struct {
     size:[3]f32 `mirai:"min=0,unit=m"`, // Box half extents, sphere radius, or capsule radius and half height, in metres
     effect:Ability_Effect,
     target_effects:[4]Ability_Effect, // Per-target-class effects matched by target_tags before falling back to effect
+    ray:Ability_Ray, // Of a Ray hitbox: its range, thickness, spread, pellets and where it starts
+    socket:[32]u8 `mirai:"text"`, // A socket (or bone) of the user's skeleton, of the rig it hangs from or of its wielder: where the on_begin of its window plays (a muzzle flash) and where a ray from body starts
+    kick:[2]f32 `mirai:"min=-3.1416,max=3.1416,unit=rad"`, // Yaw (left) and pitch (up) the look of the body that aims turns by over its window: a recoil
 }
 ABILITY_HITBOX_DEFAULT :: Ability_Hitbox{shape=.Box,size={0=1,1=1,2=1}}
 

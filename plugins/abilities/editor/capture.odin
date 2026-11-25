@@ -65,5 +65,10 @@ hitbox_draw :: proc(lines:^erender.Debug_Lines,h:^ab.Ability_Hitbox,pose:mm.Tran
             offset:=mm.quat_rotate(rotation,side*h.size.x)
             erender.debug_line(lines,center+up+offset,center-up+offset,color)
         }
+    case .Ray:
+        // Along where the user faces, as far as its range: a ray from the aim casts from the view of its seat.
+        range:=h.ray.range if h.ray.range>0 else ab.RAY_RANGE
+        erender.debug_line(lines,center,center+mm.quat_rotate(rotation,mm.Vec3{0,0,-range}),color)
+    case .Self:
     }
 }

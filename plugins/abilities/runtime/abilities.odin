@@ -36,6 +36,12 @@ HITBOX_STEP_MIN :: 0.05
 MOVE_ID :: u32(0x4142_0000)
 // The knockback of an effect, as a layered move of its target.
 KNOCKBACK_ID :: u32(0x4142_ffff)
+// The pellets the rays of a tick can cast, the range of a ray that gives none and the colliders
+// without placed zones a ray passes through before it gives up.
+SHOTS :: 256
+RAY_RANGE :: f32(1000)
+RAY_PELLETS :: 16
+RAY_PASSES :: 4
 
 // A state an entity is in (stunned, invulnerable, armed): the game declares its values
 // (STATUS_STUNNED :: abilities.Ability_Status(1)) and the data names them.
@@ -149,7 +155,32 @@ Ability_Effect :: struct {
     use:core.Record(Ability), // the target starts it: a hit reaction
 }
 
-Hitbox_Shape :: enum u8 {None,Box,Sphere,Capsule}
+Hitbox_Shape :: enum u8 {
+    None,
+    Box,
+    Sphere,
+    Capsule,
+    Ray,  // cast once when its window opens, as its ray says: a shot
+    Self, // touches its own user once when its window opens: a reload that refills a magazine
+}
+
+// What a hitbox does to the look of the body that aims, the turn of its kick (yaw left, pitch up)
+// over the window that holds it: evenly by tick for a window on the world clock, at once for one
+// on a span or the own clock. A recoil; a later window with the opposite kick brings it back.
+
+Ability_Ray_From :: enum u8 {
+    Aim,  // the view of the seat that drives the user or its wielder (input.aim); without a seat (an AI), as Body
+    Body, // the user at the center of the hitbox, along its -Z
+}
+
+// What a Ray hitbox casts: through the physics query, then the hit zones of what it reaches.
+Ability_Ray :: struct {
+    range:f32 `mirai:"min=0,unit=m"`, // 0: RAY_RANGE
+    radius:f32 `mirai:"min=0,max=1,unit=m"`, // 0: a thin ray; else a sphere of this radius swept along it
+    spread:f32 `mirai:"min=0,max=1.5,unit=rad"`, // half angle of the cone around the aim each pellet takes its direction in, the same on every end and in every tick run again
+    pellets:u8 `mirai:"max=16"`, // rays it casts at once; 0 and 1: one
+    from:Ability_Ray_From,
+}
 
 Ability_Move :: struct {
     velocity:[3]f32 `mirai:"unit=m/s"`, // in the axes of the user when the window opens; zero: no move
@@ -212,6 +243,16 @@ Ability_User :: struct {
     acceleration:Ability_Attribute, // its current value is the acceleration scale of its locomotion (locomotion.set_acceleration_scale); none: abilities leave that scale
 }
 
+// The body that holds an Ability_User of its own (a weapon in a hand): the seat of that body drives
+// and aims it, its statuses gate it, the actions of its abilities play on it and their moves move
+// it, and it fires beside whatever the wielder's own abilities do. The attributes (a magazine),
+// cooldowns and durability stay the weapon's own rows, so they go with it from hand to hand.
+// ability_wield asks for it; a scene or a prefab may author it.
+@(component,replicated,description="The body that wields this ability user (a weapon): its seat drives and aims it, its statuses gate it, and its actions and moves are that body's. The weapon keeps its own attributes, cooldowns and durability.")
+Ability_Wielded :: struct {
+    wielder:core.Entity,
+}
+
 // What an Ability_User holds that the windows with attach of its abilities move: at socket while
 // one is open, and otherwise where its Bone_Attachment says (a sword drawn into the hand for a
 // combo, then back to the hip).
@@ -265,12 +306,12 @@ Ability_Local :: struct {
     held_at:bool `mirai:"transient,readonly,hidden"`,     // it was asked to the socket of a window
 }
 
-Ability_Request_Kind :: enum u8 {Use,Cancel,Effect,Kit}
+Ability_Request_Kind :: enum u8 {Use,Cancel,Effect,Kit,Wield}
 
 Ability_Request :: struct {
     kind:Ability_Request_Kind,
     entity:core.Entity, // who uses, cancels or receives
-    source:core.Entity, // of an effect: whose axes its knockback is in
+    source:core.Entity, // of an effect: whose axes its knockback is in; of a wield: the wielder
     ability:core.Record(Ability),
     effect:Ability_Effect,
     kit:core.Record(Ability_Kit),
@@ -287,7 +328,8 @@ Ability_Event_Kind :: enum u8 {
     Canceled,    // by a request, a missing sheet or the loss of its user
     Window_Begin,
     Window_End,
-    Hit,      // its window's hitbox touched target
+    Hit,      // its window's hitbox touched target; of a ray, at point with normal, distance along it and the zone of target (-1: none)
+    Shot,     // a pellet of a ray went from origin to point (where it hit target, or its range): a tracer
     Depleted, // the base of attribute fell to 0
     Effect_Begin, // a timer started on entity, with the cue of its effect
     Effect_End,   // it ran out or was removed
@@ -298,14 +340,52 @@ Ability_Event :: struct {
     entity:core.Entity,
     ability:core.Record(Ability),
     window:i8, // -1: none
+    zone:i8,   // of a ray's Hit and Shot: the hit zone of target, -1 for none
     cue:Ability_Cue,
     target:core.Entity,
     attribute:Ability_Attribute,
+    origin,point,normal:[3]f32, // of a ray's Hit and Shot
+    distance:f32,
 }
 
 // What the abilities did, appended by abilities_step and aged by the world.
 @(storage)
 Ability_Events :: struct {queue:core.Events(Ability_Event)}
+
+// What a pellet hit: the entity whose collider it reached, where, and its zone with the tags of the
+// zone; none: it went its whole range.
+Shot_Hit :: struct {
+    entity:core.Entity,
+    point,normal:[3]f32,
+    distance:f32,
+    zone:i8, // -1: none
+    tags:scene.Tags,
+}
+
+// A pellet a Ray hitbox cast in this tick, from where and toward where, which abilities_shots
+// resolves and applies after abilities_step. A library that sees the world as the player who aimed
+// it saw it (lag compensation) resolves it before: resolved.
+Ability_Shot :: struct {
+    user:core.Entity,
+    aim:core.Entity, // the body whose seat aimed it; none: it was not aimed by a seat
+    ability:core.Record(Ability),
+    hitbox:i32,      // its row among the Ability_Hitbox rows
+    window:i8,
+    origin,direction:[3]f32,
+    range,radius:f32,
+    resolved:bool,
+    hit:Shot_Hit,
+}
+
+// The pellets of a tick: written by abilities_step, resolved by lag compensation where it runs, and
+// applied and emptied by abilities_shots. Nothing lives past the tick, so a copy of the world
+// takes nothing of it.
+@(storage,shared,copy=false)
+Ability_Shots :: struct {
+    items:[SHOTS]Ability_Shot,
+    count:int,
+    dropped:int, // past SHOTS in this tick
+}
 
 // Asks entity to start ability as if its input fired: it waits for a moment it is valid as its
 // input.wait says (the kit's buffer, or also while the running ability goes on).
@@ -323,6 +403,13 @@ ability_cancel :: proc(requests:^Ability_Requests,entity:core.Entity) {
 // Applies effect to target on the next tick, where this end decides target (core.owned).
 ability_effect :: proc(requests:^Ability_Requests,target:core.Entity,effect:Ability_Effect,source:=core.NONE) {
     request_offer(requests,{kind=.Effect,entity=target,source=source,effect=effect})
+}
+
+// Makes wielder hold entity, a user of its own (a weapon): its seat drives and aims it, from the
+// next tick. none lets it go. The ability entity runs ends when its wielder changes; its
+// attributes, cooldowns and timers stay its own.
+ability_wield :: proc(requests:^Ability_Requests,entity,wielder:core.Entity) {
+    request_offer(requests,{kind=.Wield,entity=entity,source=wielder})
 }
 
 // Gives entity another kit (a weapon it takes); the running ability goes on.

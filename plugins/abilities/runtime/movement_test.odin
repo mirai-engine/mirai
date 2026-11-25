@@ -93,7 +93,7 @@ movement_init :: proc(t:^testing.T,f:^Movement,position:[3]f32) -> bool {
     core.add(&f.users,f.e,user)
     f.time={tick=1,dt=1.0/60,playing=true}
     test_world_settle(&f.w)
-    ability_rows({&f.users,&f.states,&f.tracking,&f.locals},&f.checks,&f.problems)
+    ability_rows({&f.users,&f.states,&f.tracking,&f.locals,nil},&f.checks,&f.problems)
     test_world_settle(&f.w)
     return true
 }
@@ -129,7 +129,7 @@ movement_tick :: proc(f:^Movement,move:[3]f32,ticks:=1,buttons:=inp.Action_Mask(
         core.edit(&f.inputs,f.e)^={move=move,buttons=buttons}
         test_world_settle(&f.w)
         w:=movement_world(f)
-        abilities_tick({&f.users,&f.states,&f.tracking,&f.locals},{abilities={&f.set}},&f.cache,&f.checks,&f.ability_requests,nil,&w,physics_overlap)
+        abilities_tick({&f.users,&f.states,&f.tracking,&f.locals,nil},{abilities={&f.set}},&f.cache,&f.checks,&f.ability_requests,nil,&w,physics_overlap)
         test_world_settle(&f.w)
         locomotion.locomotion_prepare(core.read(&f.characters),core.read(&f.colliders),&f.loco_states,&f.moves,core.read(&f.remotes),
             core.read(&f.walks),core.read(&f.flights),core.read(&f.swims),&f.loco_requests,f.time,&f.problems)
