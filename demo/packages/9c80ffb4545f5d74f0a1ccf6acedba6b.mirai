@@ -2,6 +2,8 @@
   "version": 1,
   "id": "9c80ffb4545f5d74f0a1ccf6acedba6b",
   "name": "tree_bush",
+  "catalog_path": "Demo/foliage_extreme",
+  "documents": "tree_bush",
   "origin": {"path": "assets/foliage_extreme/tree_bush.obj", "folder": false, "importer": "OBJ"},
   "identity": "ade0468efbb5b7d565235873a7fb3b8f09186d1e1c8ade8e4b8eaa226147f748",
   "inputs": ["trees.mtl"],

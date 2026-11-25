@@ -123,7 +123,8 @@ FIXTURE_REFUSED_LINE :: 26
 // member of its enum and ids that stand from one run to the next, and a scene
 // that mirai scene check passes; a scene the game refuses is said with the
 // line of the tool that wrote it; a second run writes nothing; mirai records
-// reads, checks and writes those tables.
+// reads, checks and writes those tables, and the methods, components and
+// actions of the project are described with no editor running.
 @(test)
 a_content_tool_writes_typed_rows_and_scenes_of_its_game :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -274,6 +275,13 @@ main :: proc() {
     shotgun:=first[strings.index(first,"data/weapons.records shotgun "):]
     shotgun=shotgun[:strings.index(shotgun," {")]
     testing.expectf(t,strings.contains(after,shotgun) && strings.contains(after,`"damage": 20`) && strings.contains(after,"data/weapons.records rifle "),"a row keeps its id by its name:\n%s",after)
+
+    // With no editor running, the methods of the project are described and searched by words.
+    describe:=[]string{engine_paths(root,.Dev).import_program,"describe","--project",folder,"--engine",root}
+    described,described_code:=program_output(t,folder,command(describe,"--params",`{"methods":["scene.write"]}`),child_environment(root,context.temp_allocator))
+    testing.expectf(t,described_code==0 && strings.contains(described,`"scene.write"`) && strings.contains(described,`"entities"`),"describe with no editor:\n%s",described)
+    found,found_code:=program_output(t,folder,command(describe,"--search","crate","dash"),child_environment(root,context.temp_allocator))
+    testing.expectf(t,found_code==0 && strings.contains(found,"Crate (game)") && strings.contains(found,"dash (Action"),"describe --search with no editor:\n%s",found)
 
     refused,refused_code:=program_output(t,folder,{tool,"--refused"},environment)
     testing.expectf(t,refused_code==1 && strings.contains(refused,fmt.tprintf("main.odin(%d:",FIXTURE_REFUSED_LINE)),"a refused scene names the line of the tool:\n%s",refused)

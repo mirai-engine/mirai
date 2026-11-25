@@ -247,7 +247,8 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 
 - `mirai new [dir]` copies `templates/<T>` (`empty` default) + `templates/common`, writes
   `.gitattributes`, and runs `git init` if needed (`--list` lists templates).
-- `mirai docs [topic] [section]` (and MCP `docs`) serves `docs/game` from the engine root.
+- `mirai docs [topic] [section]` (and MCP `docs`) serves `docs/game` from the engine root;
+  `mirai docs --search <word>...` (MCP `docs` with `search`) gives the sections that say them.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` sharing `.deps` and caches.
 - `mirai doctor [project]` validates machine/project (exit 1 on error; requires `core.symlinks` and
   `.claude/skills` -> `.agents/skills`).

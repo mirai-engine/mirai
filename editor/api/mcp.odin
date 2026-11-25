@@ -180,7 +180,7 @@ mcp_tools_call :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) 
         name,arguments=method_name,call[1]!=""?call[1]:"{}"
     }
     method:=tool_find(s,name)
-    if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q%s; engine_describe lists the methods",shorten(name),methods_similar(s,tool_as_method(name))),""},false}
+    if method==nil {return {INVALID_PARAMS,format_text(base.arena_allocator(&s.scratch),"unknown tool or method %q%s; engine_describe lists the methods",shorten(name),methods_similar(s,tool_as_method(name))),methods_doing_usage(s,tool_as_method(name))},false}
     serial.writer_reset(&s.stage)
     running_begin(s,req)
     err,ok,selected,note:=method_call(s,method,arguments,&s.stage)

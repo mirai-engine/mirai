@@ -216,15 +216,110 @@ process_one :: proc(s:^Server,r:^serial.Text_Reader,route:Route,comma:bool) -> b
     return true
 }
 
-// What an error adds about a method that is not there: the methods whose names look like name;
-// "" without one.
+// What an error adds about a method that is not there: the method that does
+// what its name asks (methods_doing), and the methods whose names look like
+// name; "" without either.
 @(private)
 methods_similar :: proc(s:^Server,name:string) -> string {
     allocator:=base.arena_allocator(&s.scratch)
     names:=make([]string,s.method_count,allocator)
     for &method,i in s.methods[:s.method_count] {names[i]=method.name}
     similar:=names_similar(names,name,allocator)
-    return similar!=""?format_text(allocator,"; similar: %s",similar):""
+    doing:=""
+    if best:=methods_doing(s,name,1,allocator);len(best)>0 {
+        summary:=best[0].summary
+        if cut:=strings.index(summary,". ");cut>0 {summary=summary[:cut]}
+        doing=format_text(allocator,"; what it asks is done by %s (%s): its params and an example are in the data of this error",best[0].name,summary)
+    }
+    return format_text(allocator,"%s%s",doing,similar!=""?format_text(allocator,"; similar: %s",similar):"")
+}
+
+// The data of an error about a method that is not there: the params of the
+// method that does what its name asks, with an example; "" without one.
+@(private)
+methods_doing_usage :: proc(s:^Server,name:string) -> string {
+    best:=methods_doing(s,name,1,base.arena_allocator(&s.scratch))
+    return params_usage(s,best[0]) if len(best)>0 else ""
+}
+
+// Words a method name or a query may use for what a summary says otherwise:
+// the words of a set are the same thing.
+WORDS_ALIKE :: [?][]string{
+    {"create","make","makes","made","add","adds","new","spawn","write","writes","place","places","instance"},
+    {"spawn","instance","instantiate"},
+    {"delete","remove","removes","destroy","away","forget"},
+    {"set","change","changes","write","writes","edit","update"},
+    {"get","read","reads","inspect","list","lists","find","query"},
+    {"entity","entities","node","nodes","object","objects","actor","actors"},
+    {"component","components"},
+    {"move","moves","place","translate","transform"},
+}
+
+// The methods that do what a name or a few words ask, best first, at most
+// count: each word of the query that its name or its summary says, or a word
+// alike (WORDS_ALIKE), counts, the last word of a dotted name (what it does)
+// and those before (what it does it to) alike; its name says more than its
+// summary, and a core method wins a tie. None when no word matches.
+methods_doing :: proc(s:^Server,query:string,count:int,allocator:runtime.Allocator) -> []^Method {
+    words:=query_words(query,allocator)
+    if len(words)==0 || count<=0 {return nil}
+    Ranked :: struct {method:^Method,score:int}
+    ranked:=make([dynamic]Ranked,allocator)
+    for &method in s.methods[:s.method_count] {
+        name_words:=query_words(method.name,allocator)
+        summary_words:=query_words(method.summary,allocator)
+        score:=0
+        for word in words {
+            alike:=words_alike(word,allocator)
+            in_name,in_summary:=false,false
+            for each in alike {
+                for w in name_words {in_name||=w==each}
+                for w in summary_words {in_summary||=w==each}
+            }
+            if in_name {score+=2}
+            if in_summary {score+=1}
+        }
+        if score==0 {continue}
+        if .Core in method.flags {score+=1}
+        append(&ranked,Ranked{&method,score})
+    }
+    for i in 1..<len(ranked) {
+        for j:=i;j>0 && ranked[j].score>ranked[j-1].score;j-=1 {ranked[j],ranked[j-1]=ranked[j-1],ranked[j]}
+    }
+    out:=make([]^Method,min(count,len(ranked)),allocator)
+    for &m,i in out {m=ranked[i].method}
+    return out
+}
+
+// The lower case words of a name or a text: what letters and digits make.
+@(private)
+query_words :: proc(text:string,allocator:runtime.Allocator) -> []string {
+    words:=make([dynamic]string,allocator)
+    start:=-1
+    for i in 0..=len(text) {
+        c:=text[i] if i<len(text) else ' '
+        letter:=c>='a' && c<='z' || c>='A' && c<='Z' || c>='0' && c<='9'
+        if letter && start<0 {start=i}
+        if !letter && start>=0 {
+            append(&words,strings.to_lower(text[start:i],allocator))
+            start=-1
+        }
+    }
+    return words[:]
+}
+
+// A word and those of every set of WORDS_ALIKE it is in.
+@(private)
+words_alike :: proc(word:string,allocator:runtime.Allocator) -> []string {
+    out:=make([dynamic]string,allocator)
+    append(&out,word)
+    sets:=WORDS_ALIKE
+    for set in sets {
+        for each in set {
+            if each==word {append(&out,..set);break}
+        }
+    }
+    return out[:]
 }
 
 // Up to a dozen of names that look like name: those that contain its last word
@@ -253,7 +348,7 @@ SIMILAR_NAMES :: 12
 rpc_dispatch :: proc(s:^Server,req:^Request,w:^serial.Writer) -> (Error,bool) {
     method:=method_find(s,req.method)
     if method==nil {
-        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q%s",shorten(req.method),methods_similar(s,req.method)),""},false
+        return {METHOD_NOT_FOUND,format_text(base.arena_allocator(&s.scratch),"unknown method %q%s",shorten(req.method),methods_similar(s,req.method)),methods_doing_usage(s,req.method)},false
     }
     start:=w.count
     err,ok,selected,note:=method_call(s,method,req.has_params?req.params:"{}",w)

@@ -173,7 +173,7 @@ Engine_Paths :: struct {
     stage:string,
     work:string,                      // what the compilers say while a build runs
     editor_program,player_program:string,
-    import_program:string,            // runs cook/import/sources.command, what mirai import does, and cook/share.command, mirai share and join
+    import_program:string,            // runs cook/import/sources.command, what mirai import does, cook/share.command, mirai share and join, and editor.describe_command, mirai rpc describe with no editor
     author_program:string,            // runs cook/author.command: what mirai ui and mirai scene do
     stamp:string,
     defines:[]string,                 // what the binaries are built with (engine_defines)
@@ -487,6 +487,7 @@ import "mirai:editor"
 main :: proc() {
     args:=os.args[1:]
     if len(args)>0 && (args[0]=="share" || args[0]=="join") {os.exit(share.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library_built))}
+    if len(args)>0 && args[0]=="describe" {os.exit(editor.describe_command(args[1:],os.to_writer(os.stdout),os.to_writer(os.stderr)))}
     os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))
 }
 `,paths.import_program},

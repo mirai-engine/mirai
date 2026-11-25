@@ -131,3 +131,37 @@ editor_plugin_methods_exist_before_frames_and_reload_from_current_metadata :: pr
     // The entries are those of the library in use: the new one gives none.
     testing.expect(t,command_binding(&session,"test.plugin")==nil && command_binding(&session,"undo")!=nil)
 }
+
+// The calls on guessed names of an agent porting a game, replayed: an unknown
+// method is answered with the method that does what its name asks, by what
+// the methods say they do, and the error carries the params of that method
+// with an example.
+@(test)
+an_unknown_method_names_the_method_that_does_what_it_asks :: proc(t:^testing.T) {
+    world:Api_Test_Editor
+    edits:history.Edits
+    info,described:=test_info(t,Api_Test_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    session:=Session{info=&info,editor_world=&world,edits=&edits}
+    api_opened,api_problem:=api_open(&session,0,true)
+    if !testing.expectf(t,api_opened==.None,"%v: %s",api_opened,api_problem) {return}
+    defer api_close(&session)
+    state:=api_state(&session)
+    state.poll_temp=context.temp_allocator
+    cases:=[?]struct{called,meant:string}{
+        {"entity.create","scene.write"},
+        {"scene.spawn","scene.write"},
+        {"entity.delete","scene.write"},
+        {"scene.add_entity","scene.write"},
+        {"prefab.make","prefab.create"},
+    }
+    for c in cases {
+        best:=api.methods_doing(&state.server,c.called,1,context.temp_allocator)
+        if !testing.expectf(t,len(best)==1,"%s: no method",c.called) {continue}
+        testing.expectf(t,best[0].name==c.meant,"%s: %s, not %s",c.called,best[0].name,c.meant)
+    }
+    testing.expect(t,api.process(&state.server,`{"jsonrpc":"2.0","id":1,"method":"entity.create","params":{}}`,.Rpc))
+    reply:=strings.clone(string(serial.writer_bytes(&state.server.out)),context.temp_allocator)
+    testing.expectf(t,strings.contains(reply,"done by scene.write") && strings.contains(reply,"usage") && strings.contains(reply,"example: mirai rpc scene.write"),"%s",reply)
+}

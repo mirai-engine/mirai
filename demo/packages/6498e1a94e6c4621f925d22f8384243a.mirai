@@ -2,6 +2,8 @@
   "version": 1,
   "id": "6498e1a94e6c4621f925d22f8384243a",
   "name": "plant",
+  "catalog_path": "Demo/gallery",
+  "documents": "plant",
   "origin": {"path": "assets/gallery/plant.gltf", "folder": false, "importer": "glTF"},
   "identity": "5d76a337b138857552efbbc0ff81c70d8e38cf597e18c05eaa8f03ac8b63b278",
   "inputs": ["leaves_color.png"],
