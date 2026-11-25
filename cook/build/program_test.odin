@@ -122,7 +122,8 @@ FIXTURE_REFUSED_LINE :: 26
 // reference to a row of another table, an input action by the name of the
 // member of its enum and ids that stand from one run to the next, and a scene
 // that mirai scene check passes; a scene the game refuses is said with the
-// line of the tool that wrote it; a second run writes nothing.
+// line of the tool that wrote it; a second run writes nothing; mirai records
+// reads, checks and writes those tables.
 @(test)
 a_content_tool_writes_typed_rows_and_scenes_of_its_game :: proc(t:^testing.T) {
     context.allocator=context.temp_allocator
@@ -252,6 +253,27 @@ main :: proc() {
 
     checked,checked_code:=program_output(t,folder,{engine_paths(root,.Dev).author_program,"--project",folder,"--engine",root,"scene","check","arena/crates.scene"},child_environment(root,context.temp_allocator))
     testing.expectf(t,checked_code==0,"mirai scene check of what the tool wrote:\n%s",checked)
+
+    // mirai records reads, checks and writes what the tool wrote, through the author program.
+    author:=[]string{engine_paths(root,.Dev).author_program,"--project",folder,"--engine",root,"records"}
+    command :: proc(head:[]string,rest:..string) -> []string {
+        out:=make([dynamic]string)
+        append(&out,..head)
+        append(&out,..rest)
+        return out[:]
+    }
+    read,read_code:=program_output(t,folder,command(author,"read","data/weapons.records"),child_environment(root,context.temp_allocator))
+    testing.expectf(t,read_code==0 && strings.contains(read,`"name": "shotgun"`) && strings.contains(read,`"action": "dash"`) && strings.contains(read,`"type": "Weapon"`),"mirai records read:\n%s",read)
+    listed,listed_code:=program_output(t,folder,command(author,"check"),child_environment(root,context.temp_allocator))
+    testing.expectf(t,listed_code==0,"mirai records check:\n%s",listed)
+    document:=project.path(folder,"weapons.json")
+    testing.expect(t,os.write_entire_file(document,`{"rows":[{"name":"shotgun","values":{"damage":20}},{"name":"rifle","values":{"ammo":"slug"}}]}`)==nil)
+    wrote,wrote_code:=program_output(t,folder,command(author,"write","data/weapons.records",document),child_environment(root,context.temp_allocator))
+    testing.expectf(t,wrote_code==0,"mirai records write:\n%s",wrote)
+    after,_:=program_output(t,folder,{tool,"--read"},environment)
+    shotgun:=first[strings.index(first,"data/weapons.records shotgun "):]
+    shotgun=shotgun[:strings.index(shotgun," {")]
+    testing.expectf(t,strings.contains(after,shotgun) && strings.contains(after,`"damage": 20`) && strings.contains(after,"data/weapons.records rifle "),"a row keeps its id by its name:\n%s",after)
 
     refused,refused_code:=program_output(t,folder,{tool,"--refused"},environment)
     testing.expectf(t,refused_code==1 && strings.contains(refused,fmt.tprintf("main.odin(%d:",FIXTURE_REFUSED_LINE)),"a refused scene names the line of the tool:\n%s",refused)

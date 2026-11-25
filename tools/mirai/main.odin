@@ -52,6 +52,7 @@ COMMANDS :: [?]Command{
     {"texts",TEXTS_USAGE,"Lists, sets and checks the texts of a project by key (its .strings, which its interfaces, its game data and its code show), and takes them to a CSV for translators and back, with no editor",cmd_texts},
     {"ui",UI_USAGE,"Reads, writes and checks the interfaces of a project as the documents ui.inspect gives and ui.write takes, with no editor",cmd_ui},
     {"scene",SCENE_USAGE,"Reads, writes and checks the scenes of a project as the documents scene.inspect gives with root and scene.write takes, with no editor",cmd_scene},
+    {"records",RECORDS_USAGE,"Makes, reads, writes and checks the tables of game data of a project (its .records) as the records.* methods do, with no editor",cmd_records},
     {"content",CONTENT_USAGE,"Runs the content tool of a project, which writes the assets it makes from code",cmd_content},
     {"import","import <file> [--project P] [--folder F] [--store S] [settings] | import --refresh <root>... [--final] [--store S] [--from S]","Ingests a model, an image, a sound, a font or a prompts manifest from anywhere into the library of the machine store and adds it to a project; --refresh brings the packages a project or plugin pins to builds this engine reads",cmd_import},
     {"share",SHARE_USAGE,"Serves a project to whoever holds the invitation it prints, peer to peer, with the packages of the machine store, until stopped",cmd_share},

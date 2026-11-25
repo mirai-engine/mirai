@@ -73,6 +73,19 @@ With an editor session: `records.types` lists the record types with their column
 name; `records.import` and `records.export` move a CSV whose header is `name` and the paths of
 the fields.
 
+Without an editor, `mirai records` does the same through the same code, against the types of the
+game as it was built last (`mirai build editor .` first):
+
+```sh
+mirai records create data/items.records items.json   # the params of records.create
+mirai records read data/items.records --out rows.json
+mirai records write data/items.records rows.json     # {"rows":[{"name":"sword","values":{...}}]}
+mirai records check
+```
+
+`write` makes the table hold the rows of the document, in its order: a row keeps its id by its
+name. A content tool writes typed rows the same way ([content tool](../assets/content-tool.md)).
+
 ## Pitfalls that fail silently
 
 - State that changes in play (stock, flags, progress) is a component that names rows, never a

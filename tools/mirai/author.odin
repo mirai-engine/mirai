@@ -9,10 +9,11 @@ import "mirai:project"
 UI_USAGE :: "ui read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P] [--store folder]"
 TEXTS_USAGE :: "texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--project P] [--store folder]"
 SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | check [<asset>...] [--project P] [--store folder]"
+RECORDS_USAGE :: "records create <table> [<document>] | read <table> [--out <file>] | write <table> <document> | check [<table>...] [--project P] [--store folder]"
 
-// mirai ui, mirai scene and mirai texts: the documents of the interfaces and
-// the scenes of a project and the texts of its .strings, read, checked and
-// written with no editor. They
+// mirai ui, mirai scene, mirai texts and mirai records: the documents of the
+// interfaces and the scenes of a project, the texts of its .strings and its
+// tables of game data, read, checked and written with no editor. They
 // run in the author program of the engine (cook/author.command), which the
 // build of the engine makes next to the editor and the player: the documents
 // and the assets they write are engine code, and the tool builds without it.
@@ -28,6 +29,7 @@ SCENE_USAGE :: "scene read <asset> [--out <file>] | write <asset> <document> | c
 cmd_ui :: proc(root:string,args:[]string) -> int {return author_run(root,"ui",UI_USAGE,args)}
 cmd_scene :: proc(root:string,args:[]string) -> int {return author_run(root,"scene",SCENE_USAGE,args)}
 cmd_texts :: proc(root:string,args:[]string) -> int {return author_run(root,"texts",TEXTS_USAGE,args)}
+cmd_records :: proc(root:string,args:[]string) -> int {return author_run(root,"records",RECORDS_USAGE,args)}
 
 // What the author program takes besides the arguments of the command: the
 // project, the engine it belongs to and the store of its packages ("": the machine's).

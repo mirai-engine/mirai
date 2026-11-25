@@ -4,7 +4,6 @@ import "base:intrinsics"
 import "base:runtime"
 import "core:fmt"
 import "core:os"
-import "core:slice"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
@@ -160,27 +159,8 @@ table_write :: proc(w:^Writer,path,type:string,names,values:[]string,loc:=#calle
     e:records.Edit
     if message:=table_open(w,path,type,&e);message!="" {return fail(w,loc,fmt.tprintf("%s: %s",path,message))}
     defer records.destroy(&e)
-    kept:=slice.clone(e.ids[:],context.temp_allocator)
-    old_names:=slice.clone(e.names[:],context.temp_allocator)
-    size:=records.row_size(&e)
-    clear(&e.ids);clear(&e.names)
-    e.values=e.values[:0]
-    files:=records.tables_scan(&w.registry,&w.types)
-    c,_:=records.context_make(&e,&w.world,&w.registry,&w.types,files)
-    taken:=make([dynamic]u64,context.temp_allocator)
-    for name,i in names {
-        if message:=records.name_refusal(&e,name);message!="" {return fail(w,loc,fmt.tprintf("%s: %s",path,message))}
-        id:u64
-        for &n,at in old_names {
-            if serial.text_field(n[:])==name {id=kept[at]}
-        }
-        if id==0 {id=records.id_of_name(name,taken[:])}
-        append(&taken,id)
-        bytes:=make([]u8,size,context.temp_allocator)
-        copy(bytes,e.defaults)
-        if message:=records.values_put(&c,bytes,values[i]);message!="" {return fail(w,loc,fmt.tprintf("%s: row %s: %s",path,name,message))}
-        if !records.row_put(&e,id,name,bytes) {return fail(w,loc,fmt.tprintf("%s: out of memory",path))}
-    }
+    c,_:=records.context_make(&e,&w.world,&w.registry,&w.types,records.tables_scan(&w.registry,&w.types))
+    if message:=records.rows_replace(&e,&c,names,values);message!="" {return fail(w,loc,fmt.tprintf("%s: %s",path,message))}
     bytes,problem:=records.file_bytes(&e,&w.types)
     if problem!="" {return fail(w,loc,fmt.tprintf("%s: %s",path,problem))}
     return file_write(w,path,e.file,bytes,loc)
@@ -192,23 +172,13 @@ table_write :: proc(w:^Writer,path,type:string,names,values:[]string,loc:=#calle
 table_open :: proc(w:^Writer,path,type:string,e:^records.Edit) -> (message:string) {
     if file,found:=asset.registry_find_path(&w.registry,path);found {
         if message=records.load(&w.registry,&w.types,&w.world,file.id,e,context.temp_allocator);message!="" {return}
-        if records.type_name(e)!=type {
+        if held:=records.type_name(e);held!=type {
+            message=fmt.tprintf("it holds rows of %s, not of %s",held,type)
             records.destroy(e)
-            return fmt.tprintf("it holds rows of %s, not of %s",records.type_name(e),type)
         }
-        return ""
+        return
     }
-    declaring,_:=records.declaring_find(&w.registry,&w.types,type)
-    if declaring=={} {return fmt.tprintf("no .records declares %s",type)}
-    if message=records.load(&w.registry,&w.types,&w.world,declaring,e,context.temp_allocator);message!="" {return}
-    e.id,e.declaring=table_id(w,path),declaring
-    e.file=fmt.aprintf("%s/%s",w.assets_root,path,allocator=context.temp_allocator)
-    e.folder=records.folder_of(path)
-    e.info.declares=false
-    e.info.description={}
-    clear(&e.ids);clear(&e.names)
-    e.values=e.values[:0]
-    return ""
+    return records.rows_of_make(&w.registry,&w.types,&w.world,type,table_id(w,path),fmt.tprintf("%s/%s",w.assets_root,path),path,e,context.temp_allocator)
 }
 
 // The id of the table at path: the one its file has, or the one it takes when the tool makes it.

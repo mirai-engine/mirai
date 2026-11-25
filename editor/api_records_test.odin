@@ -310,16 +310,16 @@ records_api_columns_read_their_kind_and_options :: proc(t:^testing.T) {
     if !testing.expect_value(t,records.create({1,2},"waves.records","","Wave",&e,context.temp_allocator),"") {return}
     defer records.destroy(&e)
     c:asset.Records_Column
-    p:=Api_Records_Column_Params{name="delay",kind="Float",min="0",unit="s"}
-    testing.expect_value(t,records_api_column_put(&c,&e,&p,nil,true),"")
+    p:=records.Column_Params{name="delay",kind="Float",min="0",unit="s"}
+    testing.expect_value(t,records.column_put(&c,&e,&p,nil,true),"")
     testing.expect(t,c.kind==.Float && c.has_min && c.min==0 && !c.has_max && serial.text_field(c.unit[:])=="s")
     rarity:asset.Records_Column
-    q:=Api_Records_Column_Params{name="rarity",kind="enum",values={"Common","Rare"}}
-    testing.expect_value(t,records_api_column_put(&rarity,&e,&q,nil,true),"")
+    q:=records.Column_Params{name="rarity",kind="enum",values={"Common","Rare"}}
+    testing.expect_value(t,records.column_put(&rarity,&e,&q,nil,true),"")
     testing.expect(t,serial.text_field(rarity.values[:])=="Common Rare" && serial.text_field(rarity.type[:])=="Wave_Rarity")
     wrong:asset.Records_Column
-    bad:=Api_Records_Column_Params{name="x",kind="number"}
-    testing.expectf(t,strings.contains(records_api_column_put(&wrong,&e,&bad,nil,true),"int, float"),"an unknown kind lists those there are")
-    bound:=Api_Records_Column_Params{name="x",kind="int",max="lots"}
-    testing.expect(t,strings.contains(records_api_column_put(&wrong,&e,&bound,nil,true),"not a number"))
+    bad:=records.Column_Params{name="x",kind="number"}
+    testing.expectf(t,strings.contains(records.column_put(&wrong,&e,&bad,nil,true),"int, float"),"an unknown kind lists those there are")
+    bound:=records.Column_Params{name="x",kind="int",max="lots"}
+    testing.expect(t,strings.contains(records.column_put(&wrong,&e,&bound,nil,true),"not a number"))
 }

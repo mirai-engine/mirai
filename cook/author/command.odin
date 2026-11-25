@@ -16,10 +16,10 @@ import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:ui"
 
-// The commands mirai ui, mirai scene and mirai texts, which the author
-// program of the engine runs: a project reads, checks and writes the
-// documents of its interfaces and scenes, and the texts of its .strings,
-// with no editor.
+// The commands mirai ui, mirai scene, mirai texts and mirai records, which
+// the author program of the engine runs: a project reads, checks and writes
+// the documents of its interfaces and scenes, the texts of its .strings and
+// its tables of game data (records_command.odin), with no editor.
 //
 //   read <asset> [--out <file>]   the document of the asset, as ui.inspect or
 //                                 scene.inspect with root give it
@@ -59,7 +59,8 @@ import "mirai:ui"
 COMMAND_USAGE :: `Usage: mirai ui|scene read <asset> [--out <file>] [--store <folder>]
        mirai ui|scene write <asset> <document file> [--store <folder>]
        mirai ui|scene check [<asset>...] [--store <folder>]
-       mirai texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--store <folder>]`
+       mirai texts list | missing | set <key> <language> <text> | export <file.csv> | import <file.csv> [--store <folder>]
+       mirai records create <table> [<document>] | read <table> [--out <file>] | write <table> <document> | check [<table>...] [--store <folder>]`
 
 // What a command reads and writes: the interfaces, or the scenes.
 Document_Kind :: enum u8 {Ui,Scene}
@@ -374,10 +375,10 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
         case: append(&rest,args[at])
         }
     }
-    if len(rest)<2 || rest[0]!="ui" && rest[0]!="scene" && rest[0]!="texts" {fmt.wprintln(errors,COMMAND_USAGE);return 2}
+    if len(rest)<2 || rest[0]!="ui" && rest[0]!="scene" && rest[0]!="texts" && rest[0]!="records" {fmt.wprintln(errors,COMMAND_USAGE);return 2}
     kind:=Document_Kind.Ui if rest[0]=="ui" else Document_Kind.Scene
     verb:=rest[1]
-    if rest[0]!="texts" && verb!="read" && verb!="write" && verb!="check" {
+    if rest[0]!="texts" && rest[0]!="records" && verb!="read" && verb!="write" && verb!="check" {
         fmt.wprintfln(errors,"mirai %s: there is no '%s'; it has read, write and check\n%s",rest[0],verb,COMMAND_USAGE)
         return 2
     }
@@ -392,6 +393,7 @@ command :: proc(args:[]string,output,errors:io.Writer) -> int {
     defer project_close(&p)
     for problem in p.package_problems {fmt.wprintfln(errors,"mirai %s %s: %s",rest[0],verb,problem)}
     if rest[0]=="texts" {return texts_command(&p,rest[1:],output,errors)}
+    if rest[0]=="records" {return records_command(&p,rest[1:],output,errors)}
     return project_run(&p,kind,verb,rest[2:],output,errors)
 }
 

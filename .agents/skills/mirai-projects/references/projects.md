@@ -221,7 +221,7 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 | Generate / Content | `mirai generate [project] [--store dir]` / `mirai content [project] [-- args]` |
 | Import / Refresh | `mirai import <file> [--project P] [--folder F]` / `mirai import --refresh <root> [--final]` |
 | Share / Join | `mirai share [project] [--port N] [--store S]` / `mirai join <invite> [dir] [--address A]` |
-| Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
+| Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]`, `mirai records create\|read\|write\|check ...` |
 | Git plugins | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Typecheck + lints | `mirai check [<pkg> [-flag...]]` (alloc lint `tools/mirai/alloc_lint.odin`; solver/render lint `tools/mirai/solver_lint.odin`) |
 | Run tests | `mirai test [<pkg>] [test\|file.odin...] [--list\|--failed\|--no-gpu\|--quiet] [-flag...]` |

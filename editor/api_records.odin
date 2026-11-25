@@ -117,21 +117,9 @@ Api_Records_Export :: struct {
     columns:int,
 }
 
-// A column as records.create, records.column.add and records.column.set take it.
-Api_Records_Column_Params :: struct {
-    name:string `mirai:"optional,label=The name of the field: a word of ASCII letters, digits and _ that starts with a letter; a new name keeps the values of the rows"`,
-    kind:string `mirai:"optional,label=int, float, bool, enum, asset, text (a key of the .strings of the game), string (a text of the row itself), record (a row of a table) or type (a type the code of its package declares)"`,
-    count:int `mirai:"optional,label=A fixed array of this many values; 0: one value"`,
-    length:int `mirai:"optional,label=Of a string: its bytes, its end included"`,
-    min:serial.Json `mirai:"optional,label=Of an int or a float: the least value; null: none"`,
-    max:serial.Json `mirai:"optional,label=Of an int or a float: the most value; null: none"`,
-    unit:string `mirai:"optional,label=Of an int or a float: what it counts, as s or m/s"`,
-    type:string `mirai:"optional,label=Of an enum: the name of its enum (Item_Rarity); of a record: the record type of the rows it names; of a type: a struct, enum or bit set the code of the package declares"`,
-    values:[]string `mirai:"optional,label=Of an enum: the names of its values, in order; a row keeps its value by its name"`,
-    asset_kind:string `mirai:"optional,label=Of an asset: the extensions it takes, separated by spaces (.tex)"`,
-    description:string `mirai:"optional"`,
-    default:serial.Json `mirai:"optional,label=What a new row holds in it, as records.set takes the field; a column added gives it to the rows there are too"`,
-}
+// A column as records.create, records.column.add and records.column.set take
+// it; named here, where the params have a field records.
+Api_Records_Column_Params :: records.Column_Params
 
 Api_Records_Create_Params :: struct {
     path:string `mirai:"label=Where the new table goes, under the assets folder; .records is added when missing"`,
@@ -267,10 +255,16 @@ records_api_open :: proc(s:^Session,call:^api.Call,name:string,e:^records.Edit) 
 // tables of every type a reference of them names.
 @(private)
 records_api_context :: proc(s:^Session,e:^records.Edit) -> (c:records.Context,leaves:[]records.Leaf) {
+    return records.context_make(e,s.app.info,&s.app.assets.registry,&s.app.assets.types,records_api_files(s))
+}
+
+// The .records of the assets, as the session keeps them.
+@(private)
+records_api_files :: proc(s:^Session) -> []records.Table_File {
     files:=host.app_record_files(s.app)
     tables:=make([]records.Table_File,len(files),context.temp_allocator)
     for &file,i in files {tables[i]={id=file.id,path=file.path,type=serial.text_field(file.type[:]),declares=file.declares}}
-    return records.context_make(e,s.app.info,&s.app.assets.registry,&s.app.assets.types,tables)
+    return tables
 }
 
 // The table as records.inspect gives it, with the rows at the places given;
@@ -332,13 +326,28 @@ records_api_register :: proc(s:^Session,st:^Api_State) {
 
 // ---------------------------------------------------------------- columns
 
+// The keys of the params of a call that changes a column, null ones among them.
 @(private)
-RECORDS_API_KINDS :: [asset.Records_Kind]string{.Int="int",.Float="float",.Bool="bool",.Enum="enum",.Asset="asset",.Text="text",.String="string",.Record="record",.Type="type"}
+records_api_given :: proc(call:^api.Call) -> []string {
+    keys:=[?]string{"name","kind","count","length","min","max","unit","type","values","asset_kind","description","default"}
+    given:=make([dynamic]string,context.temp_allocator)
+    for key in keys {
+        if api.json_member(call.raw,key)!="" {append(&given,key)}
+    }
+    return given[:]
+}
+
+// Puts the default params give a column into the defaults of the table; with
+// rows, the rows there are take it too.
+@(private)
+records_api_column_default :: proc(s:^Session,e:^records.Edit,name:string,value:serial.Json,rows:bool) -> (message:string) {
+    return records.column_default(e,s.app.info,&s.app.assets.registry,&s.app.assets.types,records_api_files(s),name,value,rows)
+}
 
 // The columns of a table as the methods answer them.
 @(private)
 records_api_columns :: proc(e:^records.Edit,allocator:=context.temp_allocator) -> []Api_Records_Column {
-    kinds:=RECORDS_API_KINDS
+    kinds:=records.KIND_NAMES
     out:=make([]Api_Records_Column,len(e.columns),allocator)
     for &c,at in e.columns {
         shown:=&out[at]
@@ -372,87 +381,6 @@ records_api_columns_result :: proc(s:^Session,call:^api.Call,e:^records.Edit) {
     api.call_result(call,Api_Records_Columns)^={e.id,asset_path(s,e.id),strings.clone(records.type_name(e),call.allocator),records_api_columns(e,call.allocator)}
 }
 
-// The options of params over a column, those given: by name in the call
-// (given), or set when the column is new. message says which does not fit
-// and how to fix it.
-@(private)
-records_api_column_put :: proc(c:^asset.Records_Column,e:^records.Edit,p:^Api_Records_Column_Params,call:^api.Call,new:bool) -> (message:string) {
-    given :: proc(call:^api.Call,name:string,new:bool,set:bool) -> bool {return new ? set : api.call_given(call,name)}
-    if given(call,"name",new,p.name!="") {
-        c.name={}
-        if !base.text_set(c.name[:],p.name) {return fmt.tprintf("name %q is longer than %d bytes",p.name,asset.RECORDS_NAME-1)}
-    }
-    if given(call,"kind",new,p.kind!="") {
-        kinds:=RECORDS_API_KINDS
-        found:=false
-        for name,kind in kinds {
-            if strings.equal_fold(name,strings.trim_space(p.kind)) {
-                records.kind_set(e,c,kind)
-                found=true
-            }
-        }
-        if !found {return fmt.tprintf("kind %q is not one there is: give int, float, bool, enum, asset, text, string, record or type",p.kind)}
-    }
-    if given(call,"count",new,p.count!=0) {
-        if p.count<0 || p.count>asset.RECORDS_COUNT {return fmt.tprintf("count %d is not from 0 (one value) to %d",p.count,asset.RECORDS_COUNT)}
-        c.count=u16(p.count)
-    }
-    if given(call,"length",new,p.length!=0) {
-        if p.length<2 || p.length>asset.RECORDS_LENGTH {return fmt.tprintf("length %d is not from 2 to %d bytes",p.length,asset.RECORDS_LENGTH)}
-        c.length=u16(p.length)
-    }
-    bound :: proc(text:serial.Json,has:^bool,value:^f64,name:string) -> string {
-        trimmed:=strings.trim_space(string(text))
-        if trimmed=="" || trimmed=="null" {
-            has^=false
-            return ""
-        }
-        number,ok:=strconv.parse_f64(trimmed)
-        if !ok {return fmt.tprintf("%s %s is not a number, nor null for none",name,trimmed)}
-        has^,value^=true,number
-        return ""
-    }
-    if new ? p.min!="" : json_member_given(call,"min") {
-        if message=bound(p.min,&c.has_min,&c.min,"min");message!="" {return}
-    }
-    if new ? p.max!="" : json_member_given(call,"max") {
-        if message=bound(p.max,&c.has_max,&c.max,"max");message!="" {return}
-    }
-    text :: proc(field:[]u8,value,name:string) -> string {
-        mem.zero_slice(field)
-        if !base.text_set(field,value) {return fmt.tprintf("%s is longer than %d bytes",name,len(field)-1)}
-        return ""
-    }
-    if given(call,"unit",new,p.unit!="") {if message=text(c.unit[:],p.unit,"unit");message!="" {return}}
-    if given(call,"type",new,p.type!="") {if message=text(c.type[:],p.type,"type");message!="" {return}}
-    if given(call,"values",new,len(p.values)>0) {if message=text(c.values[:],strings.join(p.values," ",context.temp_allocator),"values");message!="" {return}}
-    if given(call,"asset_kind",new,p.asset_kind!="") {if message=text(c.asset_kind[:],p.asset_kind,"asset_kind");message!="" {return}}
-    if given(call,"description",new,p.description!="") {if message=text(c.description[:],p.description,"description");message!="" {return}}
-    return ""
-}
-
-// Whether the params of the call have a key, also when it is null.
-@(private)
-json_member_given :: proc(call:^api.Call,name:string) -> bool {
-    return api.json_member(call.raw,name)!=""
-}
-
-// Puts the default params give a column in the defaults of the table; with
-// rows, the rows there are take it too.
-@(private)
-records_api_column_default :: proc(s:^Session,e:^records.Edit,name:string,value:serial.Json,rows:bool) -> (message:string) {
-    if strings.trim_space(string(value))=="" {return ""}
-    at:=records.column_find(e,name)
-    field,_:=records.column_field(e,at)
-    c,_:=records_api_context(s,e)
-    text:=fmt.tprintf(`{{%q:%s}}`,name,string(value))
-    if message=records.values_put(&c,e.defaults,text);message!="" {return fmt.tprintf("default: %s",message)}
-    if rows {
-        size:=int(e.schema.types[field.type].size)
-        for row in 0..<records.row_count(e) {copy(records.row_bytes(e,row)[field.offset:][:size],e.defaults[field.offset:][:size])}
-    }
-    return ""
-}
 
 // A table that declares its type; false with the call failed for one that
 // holds rows of another's.
@@ -484,7 +412,7 @@ api_records_column_add :: proc(s:^Session,call:^api.Call) {
         return
     }
     c:asset.Records_Column
-    if message:=records_api_column_put(&c,&e,&p.column,call,true);message!="" {
+    if message:=records.column_put(&c,&e,&p.column,nil,true);message!="" {
         api.call_fail(call,api.INVALID_PARAMS,message)
         return
     }
@@ -513,7 +441,7 @@ api_records_column_set :: proc(s:^Session,call:^api.Call) {
     at:=records_api_column_named(call,&e,p.column)
     if at<0 {return}
     c:=e.columns[at]
-    if message:=records_api_column_put(&c,&e,&p.change,call,false);message!="" {
+    if message:=records.column_put(&c,&e,&p.change,records_api_given(call),false);message!="" {
         api.call_failf(call,api.INVALID_PARAMS,"column %s: %s",p.column,message)
         return
     }
@@ -623,7 +551,7 @@ api_records_create :: proc(s:^Session,call:^api.Call) {
                 return
             }
             c:asset.Records_Column
-            message:=records_api_column_put(&c,&e,&column,call,true)
+            message:=records.column_put(&c,&e,&column,nil,true)
             if message=="" {message=records.column_add(&e,s.app.info,c)}
             if message=="" {message=records_api_column_default(s,&e,column.name,column.default,false)}
             if message!="" {
