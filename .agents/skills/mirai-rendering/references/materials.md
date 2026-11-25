@@ -242,10 +242,10 @@ Asset textures stream only sampled mips (`render/texture_residency.odin`,
 - **Order:** `Scene_State.decals` is (instance, slot) of every decal slot, of the scene and of
   each instance of the batches drawn, sorted only when it changes (`decals_stale`:
   classification, instances with `INSTANCE_FLAG_DECAL` that come, go or change mesh or materials;
-  the tables of the batches built again) by order, program, instance, slot: the same in every view, no
-  per-instance order. A frame looks at no entry: `decal_draws.comp` culls (hidden, layers, fade,
-  frustum, this frame's pyramid) and writes one indirect draw each; a run of one program is one
-  multi-draw (`Scene_State.decal_runs`).
+  the tables of the batches built again) by order, program, instance, slot: the same in every
+  view, no per-instance order. A frame looks at no entry: `decal_draws.comp` culls (hidden,
+  layers, fade, frustum, this frame's pyramid) and writes one indirect draw each; a run of one
+  program is one multi-draw (`Scene_State.decal_runs`).
 - **Draw:** after the depth pyramid, before the resolve, against `t.depth` (no write,
   `Greater_Equal`); `decal.vert` pulls clip depth toward the eye by `DECAL_SLACK` pixels of
   footprint over the facing (receivers drawn at another detail); the fragment evaluates the
