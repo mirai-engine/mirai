@@ -27,6 +27,9 @@ On an entity that poses no skeleton, each track of the clip is bound by the text
   to four floats. The load of the `.anim` lists them (`host.Content_Field`) and `animation_fields`
   (`timeline.odin`) binds each to its table once per binding and writes it after
   `animation_sample`.
+- **A component without fields**: a Float track whose target ends in `@field/<Component>` alone
+  (`Magazine/@field/Hidden`) gives the entity that component from a half up and takes it below: a
+  clip shows and hides an entity. A component with fields is a `animation.field_type` problem.
 
 ### Material values of a rig
 

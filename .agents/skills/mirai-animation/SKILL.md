@@ -6,11 +6,11 @@ description: Mirai animation - the `animation` plugin (`plugins/animation/runtim
   by motion matching with `match_goal` and inertialization, the layers over the matched pose and the
   actions of `play`, `stop`, `set`, `look`, aim offsets and additive spaces, warping, IK, look,
   grounding and rigs), root motion, retarget, mirroring, morph targets, budget, clips that move
-  props and fields, authoring by intent and by API, and the auto-rig of a character with no
-  skeleton. Use when animating characters or objects, building the locomotion or the actions of a
-  character, porting a character's or a weapon's motion and events from another engine's data,
-  looking for a state machine, an animation graph or a locomotion blend space (they do not exist),
-  touching those packages or their assets, or diagnosing a pose, a skinning or a clip.
+  props, fields and visibility, hit zones, authoring by intent and by API, and the auto-rig of a
+  character with no skeleton. Use when animating characters or objects, building the locomotion or
+  the actions of a character, porting a character's or a weapon's motion and events from another
+  engine's data, looking for a state machine, an animation graph or a blend space (they do not
+  exist), touching those packages or their assets, or diagnosing a pose, a skinning or a clip.
 ---
 
 # Mirai animation
@@ -42,8 +42,8 @@ automatic plugin `animation_physics` feeds the locomotion of each `Character`.
 - Sounds and particle births at markers (the cues of the `.character`, `animation.cue.set`, and
   the `Marker_Cue` components of a prop that plays a plain `.anim`):
   [cues](../../../docs/game/audio/cues.md).
-- Components and shared data, the one `.character` set:
-  [components](references/animation.md#components-and-shared-data);
+- Components and shared data, the one `.character` set, hit zones on bones (`Hit_Zone_Set`) that
+  rays test: [components](references/animation.md#components-and-shared-data);
   playback, outputs and order: [playback](references/animation.md#playback-outputs-and-order);
   [retarget](references/animation.md#retarget) and
   [mirroring](references/animation.md#mirroring); why an entity does not animate (asset, clip,

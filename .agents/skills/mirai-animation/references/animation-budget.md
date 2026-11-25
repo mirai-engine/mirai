@@ -21,7 +21,8 @@ copies, a server and its clients decide alike.
   (`Playing.skipped`, `waited`); springs and grounding start over from the pose after skipped ticks
   or when they come back on (`lod_restart`).
 - Gameplay-read rigs run everything, with their chain: an enabled `Bone_Attachment`, a pose or a
-  final pose asked of them, a field their curves write (`Field_Playback`) or `animation_read`
+  final pose asked of them, a field their curves write (`Field_Playback`), a `Hit_Zone_Set` or
+  `animation_read`
   (`Animation_Requests.reads`, which `ragdoll` sends for each of its rigs).
 - Where the game runs neither the phase Ui nor Render (`host.App.played`, a dedicated server),
   only those are posed; out of Play, without sources or with both distances 0, every rig runs

@@ -35,8 +35,10 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
   step of the game asks its query (`locomotion.ledge_ahead`) and uses the ability
   (`ability_use`), or gives the user a status the ability `requires` with an effect.
 - `duration` in seconds; `hold` ends it when its input is let go.
-- `action` names an action of the user's `.character`: in its layer over locomotion, or over the
-  whole body when it names no layer. Empty plays nothing.
+- `action` names an action of the user's `.character` (of its wielder's, for a weapon without an
+  `Animation`): in its layer over locomotion, or over the whole body when it names no layer; on a
+  user whose `Animation` plays a plain `.anim` (a weapon's reload), its clip of that name, once.
+  Empty plays nothing.
 - `windows`: spans `[from, to)` in seconds from the start inside the duration, or bound by clip
   span name (`span`, mutually exclusive with `from`/`to`) opened/closed by `Animation_Events`
   `.Span_Begin`/`.Span_End` of the ability's action (unnamed clips match only when `action` is
@@ -54,6 +56,39 @@ writes its rows in tables of its own (`records.create` with `rows_of`).
 - `next`: a candidate when it completes (a charge that ends in its dash). It is checked in the
   statuses the windows gave on the last tick the ability ran, so a dash that `requires` the
   charging status of its charge (and so never starts while idle) still starts as its `next`.
+
+## Rays and weapons
+
+- **Ray hitboxes** (`Hitbox_Shape.Ray`, `rays.odin`): cast once, the tick their window opens, as
+  `ray` says: `range` (0: `RAY_RANGE`), `radius` (a sphere swept along it), `spread` (half angle
+  of a cone) and `pellets` (up to `RAY_PELLETS`), `from` the aim of the seat that drives the user
+  (`input.aim`, never a camera) or from the user at `center` along its -Z. The spread is seeded
+  by the tick, the user's `core.Id`, the run's start tick and the pellet: every end and every
+  resimulation cast the same rays. `abilities_step` only writes the pellets in `Ability_Shots`
+  (`SHOTS` a tick); `abilities_shots`, after it, resolves each through the physics query and then
+  the hit zones of what it reaches (`anim.Hit_Zone_Set`), passing through a collider beside every
+  zone of its entity, and applies the effect the target's `scene.Tags` and the zone's tags pick
+  (`target_effects`): a headshot is a row. Each pellet is a `Shot` event (origin, point, normal,
+  distance, target or none, zone) and a `Hit` when it reached something; only the end that decides
+  the user applies effects, the others show them. Lag compensation fills `resolved` before:
+  [network](#network).
+- **Self hitboxes** touch their own user once when their window opens: a reload that refills a
+  magazine. One without an effect only kicks.
+- **Kick** (a hitbox field): yaw and pitch the look of the body that aims turns by over the window
+  that holds it (`input.look_kick`, evenly by tick, at once on a span or the own clock); a later
+  window with the opposite brings it back. It moves the aim through the `Move_Input` look that a
+  camera looking with the body follows.
+- **Muzzle**: `on_begin` of a window with a hitbox plays at its `socket` (a socket or bone of the
+  user's skeleton, of the rig its `Bone_Attachment` is on, or of its wielder), or at a ray's
+  `center` in the user's axes; a body ray starts at the socket too.
+- **A weapon is a user of its own** with `Ability_Wielded` (`ability_wield`, or authored in a
+  prefab): the wielder's seat drives and aims it, the wielder's statuses gate it, its moves move
+  the wielder and its actions play on it unless the weapon has an `Animation`. Its attributes (a
+  magazine), cooldowns, timers and durability are its own replicated rows, so they go with it from
+  hand to hand and roll back, and it fires beside whatever the wielder's own user runs. A change
+  of wielder cancels the ability the weapon runs.
+- The recipe: `templates/game` (`assets/weapon`, `game_equip`). Ammunition apart from the
+  magazine, fire modes beyond the triggers, and the HUD are the game's.
 
 An `Ability_Kit` lists the abilities a user starts by input, the seconds an input waits in the
 buffer and the tags that may `interrupt` any running ability (reactions, death). A weapon swap is
@@ -154,7 +189,8 @@ reports for each ability of the kit.
   move, not a teleport.
 - Hitboxes: `phys.overlap_box`, `overlap_sphere` and `overlap_capsule` at the user's
   `World_Transform` (and between it and its `previous`, above), against the physics of the tick
-  before. Tests pass their own overlap to `abilities_tick`.
+  before. Tests pass their own overlap to `abilities_tick`. Rays: `phys.raycast` or `phys.sweep`,
+  then `anim.hit_zones_ray` against the zones the animation placed on the pose of the tick before.
 - Held props: an `Ability_Held` on the user names an entity with a `Bone_Attachment` on it (a
   weapon), the `socket` the windows with `attach` hold it at and the `blend` (0 to 0.2 s). Each
   tick, on the owner and on replicas, the socket is derived from the running ability and asked with
@@ -171,7 +207,16 @@ reports for each ability of the kit.
   and the queues with the world and repeats the ticks; the sheets are the same rows in every world.
 - Only the end that decides a user (`core.owned`) applies requests to it, starts, ends and hits:
   a client predicts its own character, the server decides the rest. A replica derives its
-  statuses and the window events from the ability and start tick the network gives it.
+  statuses and the window events from the ability and start tick the network gives it, and casts
+  the rays of its windows only to show them.
+- `Ability_Wielded` is replicated: a weapon's rows go with it, and a client predicts the weapon
+  its connection owns as it predicts its character.
+- Lag compensation (`abilities_multiplayer`, an automatic bridge): on a server it keeps the hit
+  zones of every entity with `multiplayer.Rewind` per tick (464 bytes an entity, a ring as deep as
+  `Rewind_History`) and, between `abilities_step` and `abilities_shots`, judges each pellet a remote
+  seat aimed at the tick its player saw (`multiplayer.rewind_tick`): against those zones then
+  (interpolated), the colliders then without zones, and the rest of the world now. The game calls
+  nothing.
 
 ## API
 

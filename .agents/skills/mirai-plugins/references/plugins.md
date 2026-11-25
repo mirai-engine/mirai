@@ -143,7 +143,9 @@ demo enables. How an `editor/` adds steps, panels and tools:
   ([shapes](../../mirai-world/references/shapes.md)).
 - **`multiplayer`**: the game network, without physics, and the editor's networked Play
   ([multiplayer](../../mirai-networking/references/multiplayer.md)).
-- **Automatic bridges**: `destruct_multiplayer` (replicated fractures), `physics_cache_destruct`
+- **Automatic bridges**: `abilities_multiplayer` (the lag compensation of ray hitboxes and hit
+  zones, [abilities](../../mirai-abilities/references/abilities.md#network)),
+  `destruct_multiplayer` (replicated fractures), `physics_cache_destruct`
   (the [recording of destructibles](physics-cache.md#recording)), `terrain_multiplayer` (the
   [terrain edits](../../mirai-world/references/terrain.md#network) over the network) and
   `spawn_physics` (the body

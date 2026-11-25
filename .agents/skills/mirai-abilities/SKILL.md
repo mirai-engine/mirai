@@ -2,10 +2,13 @@
 name: mirai-abilities
 description: Mirai gameplay abilities - the `abilities` plugin (`plugins/abilities/runtime` and
   `plugins/abilities/editor`) with `Ability` and `Ability_Kit` rows of game data, `Ability_User`,
-  statuses, tags, attributes, effects, hitboxes, cancel windows, input buffer, cooldowns, charges
-  and durability, and the `abilities.*` methods. Use when building attacks, combos, dashes, blocks,
-  skills, spells, hit reactions, weapons or a gameplay ability system (GAS, Mantis, fighting-game
-  moves), when touching that plugin, or when diagnosing why an ability does not start.
+  statuses, tags, attributes, effects, hitboxes, ray hitboxes (hitscan, pellets, spread, hit zones,
+  headshots), wielded weapons with their own magazine, recoil kicks, cancel windows, input buffer,
+  cooldowns, charges and durability, the `abilities_multiplayer` lag compensation, and the
+  `abilities.*` methods. Use when building attacks, combos, dashes, blocks, skills, spells, hit
+  reactions, guns and other weapons, a shooter, or a gameplay ability system (GAS, Mantis,
+  fighting-game moves), when touching that plugin, or when diagnosing why an ability does not
+  start.
 ---
 
 # Mirai abilities
@@ -26,7 +29,12 @@ and the tick it started, and derives everything else from the tick against the s
 - Events, animation, layered moves, hitboxes against physics and a weapon drawn into the hand
   (`Ability_Held`): [what it asks of others](references/abilities.md#what-it-asks-of-others); fast
   dashes and swings that sweep between ticks: [selection](references/abilities.md#selection).
-- Network, rollback and replicas: [network](references/abilities.md#network).
+- Hitscan weapons: ray hitboxes, pellets and spread, hit zones and headshots, self hitboxes (a
+  reload), recoil kicks, the muzzle cue and a weapon wielded as a user of its own:
+  [rays and weapons](references/abilities.md#rays-and-weapons); the zones themselves:
+  [animation](../mirai-animation/SKILL.md).
+- Network, rollback, replicas and the lag compensation of rays:
+  [network](references/abilities.md#network).
 - `abilities.inspect`, `abilities.check`, `abilities.use`, and authoring with `records.*`:
   [API](references/abilities.md#api).
 - Rows of game data, `core.Record`, `@(names)` and `@(name_bits)`:
@@ -63,7 +71,7 @@ and the tick it started, and derives everything else from the tick against the s
   windows, granted statuses
   and modifiers (with optional `ramp_in`/`ramp_out`) are derived each tick from them against the
   immutable sheet: ending or rolling back an ability leaves nothing behind. One ability runs per
-  user.
+  user; a weapon is a user of its own (`Ability_Wielded`) that runs beside its wielder's.
 - **Combo input rules are data.** When a follow-up's input counts (`input.after`) and whether it
   waits for the branch of the running ability (`input.wait` `running`) are fields of its sheet; a
   branch that follows a clip in slow motion is a window on the `own` clock. The game does not
@@ -102,11 +110,16 @@ and the tick it started, and derives everything else from the tick against the s
 
 - Types: `mirai check plugins/abilities/runtime` and `plugins/abilities/editor` (with
   `-collection:plugins=plugins`).
-- Tests: `mirai test plugins/abilities/runtime` (`abilities_test.odin`: the blade kit combo,
+- Tests: `mirai test plugins/abilities/runtime` (`rays_test.odin`: a ray hits the nearest
+  collider once per pellet, a zone's tag picks the effect, the spread in a copy and a
+  resimulation, a weapon that fires while its wielder sprints until its magazine is empty, a
+  magazine through a swap and a rollback; `abilities_test.odin`: the blade kit combo,
   the input delay and the wait for the branch, a window on the own clock, the charged dash with
   charges, a copy halfway that runs the same future, a cancel that leaves
   nothing, replicas, lasting effects with stacks, cleanse and immunity, invalid sheets and
   requests, a stable tick without allocations, hitboxes that sweep between ticks but not when they
   open or across a teleport, and a held weapon in the hand while a window is open).
+- Lag compensation: `mirai test plugins/abilities_multiplayer/runtime` (a shooter 100 ms behind
+  hits where the target was). The recipe: `mirai play test templates/game rifle`.
 - Methods: `mirai generate demo`, `mirai build editor demo` and, in a session on a copy,
   `abilities.check`, `abilities.inspect` and `abilities.use` against rows written with `records.*`.

@@ -19,6 +19,8 @@ or animation graph ([what replaces them](#what-replaces-the-state-machine)).
 | `Morph_Weights` | Blendshape weights ([morphs](animation-morphs.md)) |
 | `Animation_Target` | Hidden imported rigid-target identity; survives entity renames |
 | `Skin_Part` | Collapses bone + subtree onto bone when camera excludes its layers (`own_hidden`); shadows/reflections stay whole ([own body](../../mirai-gameplay/references/control.md#following-cameras)) |
+| `Hit_Zone_Set` | Names a `Hit_Zones` row (`assets/hit_zones.records`): up to 16 capsules, spheres or boxes on bones (or `@head`) with an offset, a size and the `scene.Tags` a hit there takes |
+| `Hit_Zone_Pose` | Derived: where those zones are in the world, placed on the finished pose of each tick by `animation_hit_zones` |
 
 - **Rigs.** Entity with skinned `Mesh_Renderer` and no same-skeleton `Pose_Source`; needs no
   `Animation` for procedural poses. Each rig owns its pose; prefabs create no bone entities. Rig
@@ -34,6 +36,12 @@ or animation graph ([what replaces them](#what-replaces-the-state-machine)).
   revision). Contacts are IK rows with world [`Spatial_Target`][spatial]; Look aims from `offset`
   (e.g. eyes/muzzle). Modifiers are driven via `Animation_Requests` ([rigs][rig-req]);
   deactivating fades to zero then disables; repeating the same control does not restart fade.
+- **Hit zones.** Analytic shapes, not physics bodies: a ray reaches the collider of the entity
+  through the physics query, then `hit_zones_ray` (or `zones_ray` on places of another tick, as lag
+  compensation keeps them) tests its zones with the ray math of `std/math`, thin or thickened by a
+  radius. A rig with zones is read by gameplay: the far cadence never skips its pose. Nothing runs
+  in a world without zones. The rays of abilities use them
+  ([rays and weapons](../../mirai-abilities/references/abilities.md#rays-and-weapons)).
 - **Asset/memory contract.** Skeletons, skins, sets load via `host.assets_file` (sees unflushed
   assets) and refresh only on `assets_stamp` changes. Stable ticks and fades never allocate; OOM on
   load/reload keeps previous runtime and retries.

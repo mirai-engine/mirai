@@ -294,6 +294,10 @@ if tick, ok := multiplayer.rewind_tick(inputs, net.connection, time); ok {
 }
 ```
 
+The rays of abilities are judged this way by themselves, hit zones included: the
+`abilities_multiplayer` bridge
+([network of abilities](../../mirai-abilities/references/abilities.md#network)).
+
 ## Delegated authority
 
 `Simulation.Lent` entities simulate on server until lent via

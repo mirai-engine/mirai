@@ -166,7 +166,10 @@ inp.hold(hold_req, seat, inp.action_of(actions, .Use), {1, 0}, ticks=2)
 - `camera_selected` picks latest valid override else `body_camera` (first `render.Camera` on/under
   body). `inp.aim(aims, body)` (`engine/input/aim.odin`) is the seat's `Seat_View` placed on the
   body: origin, direction and rotation alike on every end (a server aims a remote seat by the view
-  it sent; `view_test.odin` in `plugins/multiplayer/runtime`).
+  it sent; `view_test.odin` in `plugins/multiplayer/runtime`). `inp.look_kick` (`look.odin`,
+  `Look_Kicks`) turns the `Move_Input` look of a body from the next fixed tick, which a camera that
+  looks with the body follows, so a recoil moves the view and the aim alike on every end; a camera
+  that turns apart is not turned.
 - **Free camera**: in editor Play (`Play_Origin`), if player 1 has no body and scene has no active
   `Camera`, `camera_free` spawns a flying camera; gone permanently once player 1 drives a body
   (never in shipped builds).

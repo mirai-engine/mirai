@@ -16,9 +16,9 @@ A player is a seat (`inp.Seat`) that drives a body (`Seat.body`); a body that wa
 - The prefab of a walking body: [Body](#body). Speed, jump, sprint, crouch: [Walk](#walk).
 - Your own actions, reading them, who drives what: [actions-seats.md](character/actions-seats.md).
 - First or third person, changing view, the sign of `pitch`: [camera.md](character/camera.md).
-- Lifts, moving floors, trigger zones, who is inside:
-  [platforms-triggers.md](character/platforms-triggers.md).
+- Lifts, moving floors, trigger zones: [platforms-triggers.md](character/platforms-triggers.md).
 - Water, swimming, the surface at a point: [swimming.md](character/swimming.md).
+- A gun, its magazine, headshots and recoil: [weapons.md](character/weapons.md).
 - Enemies: [ai](ai.md); clips following the speed:
   [animation](animation.md); online:
   [networking](networking.md).

@@ -65,7 +65,9 @@ The actions of a set are layers, definitions and sections over the `.anim` of th
 ## Requests and lifecycle
 
 `play`, `play_at`, `stop`, `set` and `look` write to `Animation_Requests`; the equivalent API asks
-for Play/Simulation. `animation_sample` serves them.
+for Play/Simulation. `animation_sample` serves them. On an entity whose `Animation` plays a plain
+`.anim` (a prop, a weapon), `play` plays its clip of that name once from its start and `stop`
+stops it, in the same tick.
 
 - **One priority rule.** `play` takes the slot of its action if nothing plays there, or if its
   priority reaches the one playing and that one allows it: Allow gives way at once, Finish_Section
