@@ -205,29 +205,46 @@ grounding, IK/Look, rigs, limits, final poses, attachments).
 
 ## Retarget
 
-A rig plays clips made on another skeleton (the `.skeleton` each clip of an `.anim` names) as clips
-of its own, retargeted once when a rig of its skeleton first plays the library, never per tick
-(`source_retarget`, `source_retarget.odin`):
+A rig plays clips made on another skeleton (the `.skeleton` each clip of an `.anim` names) as the
+retarget of that `.anim` onto its skeleton: an ordinary compressed `.anim` made once per `.anim`
+and skeleton, never in a tick (`asset.animation_retarget`, `asset/animation_retarget.odin`):
 
 - A clip binds by name as it is when every bone it moves has, on the rig, a bone of its path with
-  the same parent and rest: a skeleton variant with an extra bone or one imported twice costs no
-  copy and no resampling.
-- Otherwise the library is retargeted into a `Source_Retarget` of `Source_Assets`, keyed by library
-  and skeleton and shared by every rig and world of that skeleton. Bones pair by name or path, else
-  by the parts of the body both `.skeleton`s mark, the spine by its share of the chain
-  (`lib.retarget_map`); the crotch keeps off the floor when both bodies have pelvis, hips and feet.
-  Each clip is sampled at its own rate into raw keys the player reads as they are (no compression on
-  the simulation thread), skipping channels that stay at rest; curves, markers (with their `.anim`)
-  and names stay, the root bone follows its pair or its root flags turn off.
-- It is made before the [matching database](#locomotion-by-motion-matching) of a set's library is
-  built ahead (`match_prebuild`), so equipping a weapon of clips made on another skeleton builds
-  nothing in that tick.
-- A rig keeps only the generation it bound (`Playing.generation`, of `RETARGET_GENERATION`), never
-  a place in the cache: a snapshot restored after the entry was made again finds nothing of the old
-  one and binds the new one. An entry is made again when the library, the skeleton or a source
-  skeleton changes, and freed with the cache.
-- A source `.skeleton` that cannot be read, or that pairs no bone, leaves its clips at the rest pose
-  with their curves and markers, and reports `animation.retarget_skeleton` until it arrives.
+  the same parent and rest: a skeleton variant with an extra bone or one imported twice plays the
+  `.anim` itself (`direct`). Clips of no skeleton or of the rig's are never looked at.
+- Otherwise bones pair by name or path, else by the parts of the body both `.skeleton`s mark, the
+  spine by its share of the chain (`lib.retarget_map`); the crotch keeps off the floor when both
+  bodies have pelvis, hips and feet. Each clip is sampled at its own rate, channels that stay at
+  rest left out, and the result is compressed by `asset.animation_compress` like any `.anim`;
+  curves, markers (with their `.anim`) and names stay, the root bone follows its pair or its root
+  flags turn off.
+- **Cooked:** the cook writes the retarget of each `.anim` onto each skeleton a scene or prefab
+  plays it on (an entity with `Animation` naming it, its `.character` or library, and a
+  `Mesh_Renderer` of that skeleton), and of each pair `cook.mirai` declares in `retargets`
+  (`[["npc.character","guard.mesh"]]`, what only game code plays together), beside the `.anim` as
+  `<anim>.<skeleton id>.anim`, id `asset.animation_retarget_id`
+  ([build](../../mirai-projects/references/build.md)). A game reads it and plays it in the first
+  tick.
+- **Not cooked (editor, dev, or a pair a shipped game was not cooked for):**
+  `host.content_animation_retarget` makes it in a job, like the compression of an `.anim` (from
+  the streams of a cooked `.anim`, sampled at the rate of each clip), keeps it in
+  `App_Desc.animation_cache`, and the frame after takes it. The rig waits in
+  its rest pose meanwhile, as for a skeleton that loads. The plan of the rig (`Source_Key.skeleton`,
+  `Playing.rig`) resolves it when its library, its skeleton or the content changes; a tick only
+  looks its entry up. Every rig and world of that skeleton shares it; a joined set over retargets is
+  keyed by the skeleton and marks them used once a frame.
+- **Budget:** retargets held stay within `App_Desc.retarget_budget` (`CONTENT_RETARGET_BUDGET`,
+  64 MB): one that does not fit evicts those no rig asked for in `CONTENT_RETARGET_IDLE` frames and
+  otherwise fails with `Budget` until there is room.
+- **Never unretargeted:** a source `.skeleton` that cannot be read or pairs no bone, or a `Budget`
+  failure leaves the rig in its rest pose (nothing of the library plays) with
+  `animation.retarget_skeleton` or `animation.retarget_budget` naming the library, the skeleton and
+  the fix. It is made again when the `.anim` or a skeleton changes (`content_retarget_stamp`).
+- A rig keeps only the generation it bound (`Playing.generation`), never a place in a cache: a
+  snapshot restored after the retarget was made again finds nothing of the old one and binds the
+  new one; a world copy or rollback plays the same poses.
+- What retargets on load does not do: a pose made at run time (ragdoll, IK, another rig's result)
+  is not carried onto a rig of other proportions; `Pose_Source` follows only bones shared by name.
 
 `animation.retarget.bake` writes the same mapping into an editable `.anim`
 ([bake](animation-rigs.md#bake), compressed on load per
@@ -278,11 +295,13 @@ Run `mirai test plugins/animation/runtime` (CPU; GPU skinning needs validation +
   `layers_play_over_a_region_of_the_body_without_stable_allocations`,
   `body_labels_of_a_skeleton_without_body_say_how_to_give_it_one`,
   `skeleton_bone_find_takes_a_path_a_unique_name_or_a_part_of_the_body`.
-- Retarget (`source_retarget_test.odin`, `matching_test.odin`): one entry shared by library and
-  skeleton without stable allocations, freed on reload and with the cache; clips whose moved bones
-  match bind by name; an unreadable source holds the rest pose until it arrives; a restored
-  snapshot binds the new entry; and
-  `a_library_made_on_another_skeleton_is_retargeted_before_its_database_is_built_ahead`.
+- Retarget (`retarget_test.odin`, `matching_test.odin`, `cook/build/cook_test.odin`): one
+  retarget shared by rigs without stable allocations, made again when a skeleton changes; the
+  first play waits in the rest pose for a job; clips whose moved bones match bind by name; an
+  unreadable source holds the rest pose until it arrives; the budget evicts only what no rig plays;
+  a cooked retarget plays as the one a job makes; a restored copy plays the same poses;
+  `a_library_made_on_another_skeleton_builds_its_database_over_its_retarget_ahead` and
+  `a_cook_ships_the_retarget_of_an_animation_a_scene_plays_on_another_skeleton`.
 - Follow/GPU (`follow_test.odin`, `skin_bind_test.odin`):
   `followers_finish_after_their_leaders_in_the_order_found_once`,
   `rigs_at_the_bind_pose_share_their_mesh_until_a_pose_leaves_it`.

@@ -17,7 +17,7 @@ import "base:runtime"
 // skeleton shows the pose of rig instead of posing its own, and one of another skeleton (a modular
 // head) follows it on the bones they share by name or path, keeping its own animation on the
 // bones only it has. A character of other proportions plays the clips itself: they are retargeted
-// onto its skeleton when they load (source_retarget).
+// onto its skeleton (asset.animation_retarget).
 @(component,description="Takes the finished pose of another rig: clothing of its skeleton that shares it, or a head of another skeleton that follows it on the bones they share by name.")
 Pose_Source :: struct {rig:core.Entity}
 

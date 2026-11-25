@@ -66,6 +66,7 @@ App_Desc :: struct {
     store_root:string,           // the machine store the packages of the project root and its plugins list from (project_assets); "": the machine's. A shipped game opens none
     assets_cache:string,         // file where the registry of assets_root keeps what it saw; "": none
     animation_cache:string,      // folder where the content keeps the .anim it compressed; "": none
+    retarget_budget:int,         // bytes the content may hold of retargets it made (content_retarget.odin); 0: CONTENT_RETARGET_BUDGET
     collision_cache:string,      // folder where the convex pieces of meshes are kept (asset.mesh_collision_pieces); "": none
     shaders_root:string,         // folder whose shader generation is loaded; "": the one that holds assets_root
     pipeline_cache:string,       // file where Vulkan keeps compiled pipelines across runs; "": MIRAI_PIPELINES_PATH else user_folder/pipelines.bin
@@ -159,6 +160,7 @@ App :: struct {
     scratch_mixed:bool, // it holds parts of several Worlds, which a replacement of what changed left: to copy over or to clear, never to run
     root,engine_root,options:string, // those of App_Desc
     animation_cache:string,          // App_Desc.animation_cache
+    retarget_budget:int,             // App_Desc.retarget_budget
     collision_cache:string,          // App_Desc.collision_cache
     start_ns:u64,
     seconds:f64, // the frames so far, each as long as its dt: the fixed one in a manual run
@@ -276,6 +278,7 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
             return nil,.Out_Of_Memory
         }
     }
+    app.retarget_budget=desc.retarget_budget
     app.paced=desc.window && desc.fixed_dt<=0
     app.game_window=desc.window && desc.game_window
     app.window=desc.window_desc

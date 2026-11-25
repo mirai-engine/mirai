@@ -7,8 +7,8 @@ import "mirai:std/base"
 import mm "mirai:std/math"
 import anim "plugins:animation/runtime"
 
-// Bakes clips of source onto target as a rig retargets the clips of another skeleton when they load
-// (anim.source_retarget): each bone takes the bone of its name, or of its path when a name repeats,
+// Bakes clips of source onto target as a rig plays the clips of another skeleton
+// (asset.animation_retarget): each bone takes the bone of its name, or of its path when a name repeats,
 // else of the part of the body both .skeletons mark (lib.retarget_map). With legs in both bodies,
 // the feet of the target stay locked to the ground (lib.Lock_Feet) over the frames the feet of the
 // source stand; with crotch_floor, its crotch keeps off the floor as the source's does

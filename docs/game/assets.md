@@ -59,9 +59,9 @@ mirai import assets/player/step.wav     # assets/player/step.sound
 - The API takes an asset by its path under `assets/`, with or without its extension, or its id;
   code, by its path as the file is spelled, and a field it fills by `host.assets_id(assets,path)`.
   A constant id in code is only for assets your own tool writes with `asset.content_id`.
-- Scenes, `.records` and `.strings` ship. Other assets only code names need a root in
-  `cook.mirai`: `{"roots":["arena/Chrome.mat","player/"]}` (path under `assets/`, folder with
-  `/`, or id).
+- Scenes, `.records` and `.strings` ship; `cook.mirai` adds what only code names, `{"roots":
+  ["arena/Chrome.mat","player/"],"retargets":[["npc.character","guard.mesh"]]}`: roots by path,
+  folder or id, and what code plays on another skeleton ([rigs](animation/rigs.md)).
 - Texts: every `.strings` is one table of keys, which a node of a `.ui`, a `core.Text` of a row
   and `core.text(texts,"menu.start",language)` show: [texts](ui/texts.md).
 - Game data: a `.records` declares a catalog (items, dialogue, waves): its columns, from which the

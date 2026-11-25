@@ -271,6 +271,14 @@ id (never reused; input buffers freeable on return):
   Play ([scene](../../mirai-gameplay/references/libraries.md#scene),
   [play](../../mirai-editor/references/editor.md#play)); code-only ids load lazily and are not
   cooked.
+- **Retargets (`host/content_retarget.odin`):** `content_animation_retarget(app,id,skeleton)` is
+  the `.anim` played on a skeleton its clips were not made on: an animation entry under
+  `asset.animation_retarget_id`, whose `id` stays the `.anim`'s. It loads like an `.anim`: the
+  cooked file of that id (shipped game), else the cache, else a job (`asset.animation_retarget`
+  then compression), pending until adopted. Bounded by `App_Desc.retarget_budget`, evicting those
+  idle `CONTENT_RETARGET_IDLE` frames (`Content.frame`, advanced by `app_content_adopt`); failures
+  carry `Content_Retarget_Fault` and never fall back to the `.anim`; `content_refresh` remakes one
+  whose `content_retarget_stamp` changed.
 - Replay consistency: `Frame_Record.content` pins `Content.generations` for `app_game_frame`
   `replay` and `app_tick_replay`; `content_reloaded_after` flags post-load reloads.
 
