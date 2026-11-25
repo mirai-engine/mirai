@@ -51,6 +51,7 @@ Command_List :: struct {
 	labels:           [MAX_LABEL_DEPTH]^NS.String,
 	label_count:      int,
 	label_overflow:   int,
+	depth_range:      [2]f32, // what the viewports map depth 0 and 1 to (cmd_set_depth_range)
 }
 
 @(private)
@@ -73,6 +74,7 @@ mtl_list_reset :: proc(c: ^Command_List, cmd: ^MTL.CommandBuffer) {
 	c.scratch_used = 0
 	c.label_count = 0
 	c.label_overflow = 0
+	c.depth_range = {0, 1}
 }
 
 // Drops an open encoder without encoding anything else (device teardown).
@@ -321,7 +323,16 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 // directly (NDC y = +1 lands on row y).
 cmd_set_viewport :: proc(c: ^Command_List, x, y, width, height: f32) {
 	if c.render == nil {return}
-	MTL.RenderCommandEncoder_setViewport(c.render, MTL.Viewport{originX = f64(x), originY = f64(y), width = f64(width), height = f64(height), znear = 0, zfar = 1})
+	MTL.RenderCommandEncoder_setViewport(c.render, MTL.Viewport{originX = f64(x), originY = f64(y), width = f64(width), height = f64(height), znear = f64(c.depth_range[0]), zfar = f64(c.depth_range[1])})
+}
+
+// What depth 0 and 1 of the clip space are stored as by the render passes
+// that begin after it, and their viewports, until it is set again: a range
+// within 0 to 1, near not above far. A new list starts with 0 to 1.
+cmd_set_depth_range :: proc(c: ^Command_List, near, far: f32) {
+	if c.in_render_pass {set_error(c.device, "the depth range is set outside a render pass"); return}
+	if !(near >= 0 && near <= far && far <= 1) {set_error(c.device, "depth range %v to %v: it is within 0 to 1, near not above far", near, far); return}
+	c.depth_range = {near, far}
 }
 
 // Metal rejects scissor rectangles outside the render target, so the rectangle

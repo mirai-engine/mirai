@@ -313,6 +313,80 @@ rhi_raster_uses_y_up_clip_space :: proc(t: ^testing.T) {
 	expect_clean(t, d)
 }
 
+// The depth range of the command list places what a pass draws in a part of
+// the depth target: a triangle drawn in the top sixteenth hides one nearer
+// in clip space drawn below it, and a triangle drawn below cannot reach it.
+// It holds for the passes after it, not for one that began, and a range
+// outside 0 to 1 is refused.
+@(test)
+rhi_the_depth_range_places_the_draws_of_a_pass_in_part_of_the_depth :: proc(t: ^testing.T) {
+	d := test_device(t)
+	if d == nil {return}
+	defer rhi.device_destroy(d)
+	SIZE :: 16
+	target := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .RGBA8_Unorm, usage = {.Color_Target, .Sampled, .Transfer_Src}, name = "target"})
+	depth := rhi.texture_create(d, {width = SIZE, height = SIZE, format = .D32_Float, usage = {.Depth_Target}, name = "depth"})
+	pipeline := rhi.pipeline_create_graphics(d, {
+		vertex = rhi.test_shader("triangle.vert"), fragment = rhi.test_shader("triangle.frag"),
+		color_formats = {0 = .RGBA8_Unorm}, color_count = 1, depth_format = .D32_Float, depth_test = true, depth_write = true, depth_compare = .Greater,
+		name = "triangle in depth",
+	})
+	testing.expect(t, pipeline != 0 && target != 0 && depth != 0, rhi.device_error(d))
+	Vertex :: struct {position, color: [4]f32}
+	triangle :: proc(z: f32, color: [4]f32) -> [3]Vertex {return {{{-3, -1, z, 1}, color}, {{1, -1, z, 1}, color}, {{1, 3, z, 1}, color}}}
+	// Nearest in reverse depth, in clip space: red at 0.9 below 15/16, green
+	// at 0.1 above it, blue at 1 below it again.
+	vertices: [9]Vertex
+	for v, i in triangle(0.9, {1, 0, 0, 1}) {vertices[i] = v}
+	for v, i in triangle(0.1, {0, 1, 0, 1}) {vertices[3 + i] = v}
+	for v, i in triangle(1.0, {0, 0, 1, 1}) {vertices[6 + i] = v}
+	buffer := rhi.buffer_create(d, {size = size_of(vertices), usage = {.Storage}, memory = .GPU, name = "vertices"})
+	rhi.buffer_upload_slice(d, buffer, 0, vertices[:])
+	cmd, ok := rhi.frame_begin(d)
+	testing.expect(t, ok)
+	if !ok {return}
+	ranges := [3][2]f32{{0, 15.0 / 16}, {15.0 / 16, 1}, {0, 15.0 / 16}}
+	for range, i in ranges {
+		rhi.cmd_set_depth_range(cmd, range[0], range[1])
+		pass := rhi.Render_Pass_Desc{color_count = 1, name = "triangle in depth"}
+		pass.colors[0] = {texture = target, load = .Clear if i == 0 else .Load, store = .Store}
+		pass.depth = {texture = depth, load = .Clear if i == 0 else .Load, store = .Store, clear = 0}
+		rhi.cmd_begin_render_pass(cmd, &pass)
+		rhi.cmd_bind_pipeline(cmd, pipeline)
+		rhi.cmd_bind_buffer(cmd, 0, buffer)
+		rhi.cmd_draw(cmd, 3, 1, u32(3 * i))
+		rhi.cmd_end_render_pass(cmd)
+	}
+	rhi.cmd_set_depth_range(cmd, 0, 1)
+	testing.expect(t, rhi.frame_end(d, cmd), rhi.device_error(d))
+	rhi.device_wait_idle(d)
+	pixels: [SIZE * SIZE * 4]u8
+	testing.expect(t, rhi.texture_read(d, target, pixels[:]), rhi.device_error(d))
+	at := ((SIZE / 2) * SIZE + SIZE / 2) * 4
+	testing.expectf(t, pixels[at + 1] > 200 && pixels[at] < 50 && pixels[at + 2] < 50, "the triangle above 15/16 stays in front: %v", pixels[at:at + 4])
+	expect_clean(t, d)
+
+	// Refused: inside a pass, and outside 0 to 1.
+	cmd, ok = rhi.frame_begin(d)
+	if !ok {return}
+	pass := rhi.Render_Pass_Desc{color_count = 1, name = "range inside a pass"}
+	pass.colors[0] = {texture = target, load = .Load, store = .Store}
+	rhi.cmd_begin_render_pass(cmd, &pass)
+	rhi.cmd_set_depth_range(cmd, 0, 0.5)
+	rhi.cmd_end_render_pass(cmd)
+	testing.expect(t, strings.contains(rhi.device_error(d), "is set outside a render pass"), rhi.device_error(d))
+	rhi.cmd_set_depth_range(cmd, 0.5, 0.25)
+	testing.expect(t, strings.contains(rhi.device_error(d), "near not above far"), rhi.device_error(d))
+	rhi.cmd_set_depth_range(cmd, -1, 2)
+	testing.expect(t, strings.contains(rhi.device_error(d), "within 0 to 1"), rhi.device_error(d))
+	rhi.frame_end(d, cmd)
+	rhi.device_wait_idle(d)
+	rhi.buffer_destroy(d, buffer)
+	rhi.texture_destroy(d, target)
+	rhi.texture_destroy(d, depth)
+	rhi.pipeline_destroy(d, pipeline)
+}
+
 // A pass draws into one mip of a texture while it samples another, and into
 // one layer of an array while the others keep what they had.
 @(test)
