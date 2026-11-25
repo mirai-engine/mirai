@@ -1607,7 +1607,7 @@ material_glass_casts_no_shadow_in_rays :: proc(t:^testing.T) {
     opaque:=Instance_Desc{object_id=3,mesh=quad,transform=placed(2,2),tint={1,1,1}}
     camera:=OVERHEAD;camera.position.y=5
     sun:=Sun_Desc{direction={0,1,0},color={1,1,1},illuminance=1 * math.PI,enabled=true,indirect=1,scattering=1}
-    spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7,indirect=1,scattering=1}
+    spot:=Light_Desc{position={0,4,0},color={1,1,1},intensity=16 * math.PI,range=10,direction={0,-1,0},cone=0.7,inner=0.8,indirect=1,scattering=1}
     for provider in ([]Trace_Mode{.Software,.Hardware}) {
         if !fixture_traces(r,provider) {continue}
         for reference in ([2]bool{true,false}) {

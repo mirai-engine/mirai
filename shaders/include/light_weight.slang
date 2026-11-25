@@ -40,7 +40,7 @@ void light_weight_rows(Light l, out uint4 center, out uint4 shape) {
         cone = LIGHT_WEIGHT_RECT;
     } else if (l.direction_cone.w > 0.5 * LIGHT_POINT) {
         float outer = l.direction_cone.w;
-        float inner = cos(acos(outer) * LIGHT_SPOT_FULL);
+        float inner = light_spot_inner(l);
         cone = min(light_weight_unit(outer - 4e-4, true), 65534u) | (light_weight_unit(inner, false) << 16u);
     }
     float range = max(l.position_range.w, 1e-6);

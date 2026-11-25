@@ -3135,13 +3135,13 @@ render_groups_of_lights_give_what_their_lights_give :: proc(t: ^testing.T) {
 			// Downlights a metre apart over a ceiling of 15 by 15 m, of two widths.
 			for i in 0 ..< 256 {
 				x, z := f32(i % 16) - 7.5 + 0.1 * math.sin(f32(i) * 1.7), f32(i / 16) - 7.5 + 0.1 * math.cos(f32(i) * 2.3)
-				append(&lights, Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.1 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true})
+				append(&lights, Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.1 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, inner = 0.8, indirect = 1, scattering = 1, shadowless = true})
 			}
 		case .Lamps:
 			// Downlights a metre and a half apart, of two widths, and among them rectangles that face down and tubes.
 			for i in 0 ..< 16 {
 				x, z := (f32(i % 4) - 1.5) * 1.5 + 0.1 * math.sin(f32(i) * 1.7), (f32(i / 4) - 1.5) * 1.5 + 0.1 * math.cos(f32(i) * 2.3)
-				light := Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.4 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, indirect = 1, scattering = 1, shadowless = true}
+				light := Light_Desc{position = {x, 2.2 + 0.2 * f32(i % 3), z}, color = {0.5 + 0.5 * f32(i % 2), 0.7, 0.5 + 0.5 * f32(i % 3) / 2}, intensity = 0.4 * math.PI, range = 8, radius = 0.02, direction = {0, -1, 0}, cone = 0.55 if i % 2 == 0 else 0.75, inner = 0.8, indirect = 1, scattering = 1, shadowless = true}
 				switch i % 5 {
 				case 3: light.cone, light.axis, light.size, light.intensity = 0, {1, 0, 0}, {0.6, 0.4}, 1.5
 				case 4: light.cone, light.axis, light.length = 0, {1, 0, 0}, 1
@@ -3449,7 +3449,7 @@ render_spot_light_lights_only_its_cone :: proc(t: ^testing.T) {
 	defer fixture_destroy(&f)
 	r := f.renderer
 	// 2 m above the floor, a 20 degree cone lights a disc of radius ~0.73 m.
-	spot := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10, direction = {0, -1, 0}, cone = 20 * math.RAD_PER_DEG, indirect = 1, scattering = 1}
+	spot := Light_Desc{position = {0, 2, 0}, color = {1, 1, 1}, intensity = 8 * math.PI, range = 10, direction = {0, -1, 0}, cone = 20 * math.RAD_PER_DEG, inner = 0.8, indirect = 1, scattering = 1}
 	floor := Instance_Desc{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, 0}, {12, 0.2, 12}), tint = {1, 1, 1}}
 	scene_given(r, []Instance_Desc{floor}, []Light_Desc{spot}, {}, {})
 	camera := Camera{position = {0, 6, 0.01}, forward = {0, -6, -0.01}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = UNIT_EXPOSURE}

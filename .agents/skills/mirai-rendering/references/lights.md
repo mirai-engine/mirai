@@ -9,7 +9,9 @@
   entity mesh tint; a smooth window zeros intensity at `range`.
 - **Analytic shading:** Diffuse uses horizon-clipped sphere irradiance (Snyder; Lagarde-de
   Rousiers); specular uses nearest-point sphere approximation with energy-normalized lobe
-  widening (Karis). Spots shade a soft-edged cone of half-angle `angle`.
+  widening (Karis). Spots shine whole within `inner` of their half-angle `angle` and fade
+  smoothly (`spot_fade`) to its edge; `inner` 1 is a hard edge. It travels in the top byte of
+  `Gpu_Light.size.z` with the right of a projected texture (`light_spot_bits`).
 - **Projected textures (`Spot_Light.texture`, `Rect_Light.texture`, `Light_Desc.texture`):**
   Multiplies light color across the cone (`Light_Desc.texture_axis`, +X) or rectangle face
   (overrides `Light_Emission`); point lights ignore textures. Evaluated once in

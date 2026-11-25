@@ -288,8 +288,13 @@ gate_lights_add :: proc(g:^Gate_Lights,light:erender.Light_Desc,kind:Gate_Light_
         case .Point:
         case .Spot:
             cone={direction.x,direction.y,direction.z,math.cos(light.cone)}
-            // The right of the texture it projects, turned as its direction is.
-            if light.texture!=0 {size.zw={transmute(f32)mm.normal_pack(linalg.normalize(mm.quat_rotate(back,light.texture_axis))),transmute(f32)erender.light_image(light.texture,0)}}
+            // The right of the texture it projects, turned as its direction is, and where it shines whole.
+            right:[3]f32
+            if light.texture!=0 {
+                right=linalg.normalize(mm.quat_rotate(back,light.texture_axis))
+                size.w=transmute(f32)erender.light_image(light.texture,0)
+            }
+            size.z=transmute(f32)erender.light_spot_bits(right,light.inner)
         case .Rect:
             cone={direction.x,direction.y,direction.z,erender.LIGHT_RECT}
             size={0,0.5*light.size.x,0.5*light.size.y,transmute(f32)erender.light_image(light.texture,light.material)}

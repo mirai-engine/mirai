@@ -119,14 +119,15 @@ Spot_Light :: struct {
     intensity:f32 `mirai:"min=0,unit=cd"`,
     range:f32 `mirai:"min=0,unit=m"`,
     radius:f32 `mirai:"min=0,unit=m"`, // of the sphere that glows at scale 1; it softens shadows and widens highlights
-    angle:f32 `mirai:"angle,min=0.0174532,max=1.5533431"`, // from its axis to the edge, 1° to 89°; it fades out over the last fifth
+    angle:f32 `mirai:"angle,min=0.0174532,max=1.5533431"`, // from its axis to the edge, 1° to 89°
+    inner:f32 `mirai:"min=0,max=1"`, // the share of angle it shines whole within, fading out from there to the edge: 1 a hard edge, 0 a fade from its axis
     texture:base.Asset_Id `mirai:"kind=.tex"`, // an image across its cone, as a slide in a projector seen from behind it: it multiplies its color where it falls; none: its color alone
     shadows:bool, // it casts shadows; off, its light goes through everything and costs no shadow work
     indirect:f32 `mirai:"min=0"`,   // multiplies the part of its light that bounces (the GI): 1 as it gives it
     scattering:f32 `mirai:"min=0"`, // multiplies the part of its light a fog scatters
 }
 
-SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6,shadows=true,indirect=1,scattering=1}
+SPOT_LIGHT_DEFAULT :: Spot_Light{color={1,0.92,0.8},intensity=5000,range=20,radius=0.05,angle=mm.PI/6,inner=0.8,shadows=true,indirect=1,scattering=1}
 
 // The unit square of its entity, x by y; it lights the side its -z faces, so
 // a larger one gives more light.
@@ -1379,7 +1380,7 @@ point_desc :: proc(world:core.World_Transform,point:Point_Light) -> gpu.Light_De
 // cone, and its texture, the width of it along +X of its entity.
 spot_desc :: proc(world:core.World_Transform,spot:Spot_Light,a:^host.Assets) -> (desc:gpu.Light_Desc) {
     desc=sphere_desc(world,spot.color,spot.intensity,spot.range,spot.radius,spot.indirect,spot.scattering)
-    desc.direction,desc.cone,desc.shadowless=mm.quat_forward(world.rotation),spot.angle,!spot.shadows
+    desc.direction,desc.cone,desc.inner,desc.shadowless=mm.quat_forward(world.rotation),spot.angle,spot.inner,!spot.shadows
     desc.texture,desc.texture_axis=image_texture(a,spot.texture),mm.quat_rotate(world.rotation,[3]f32{1,0,0})
     return
 }

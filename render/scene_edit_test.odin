@@ -643,7 +643,7 @@ a_light_keeps_the_texture_it_projects_in_its_record :: proc(t: ^testing.T) {
 	r.allocator = context.allocator
 	scene_init(r)
 	defer scene_destroy(r)
-	spot := Light_Desc{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, radius = 0.1, direction = {0, -1, 0}, cone = 0.5, texture_axis = {1, 0.5, 0}, indirect = 1, scattering = 1}
+	spot := Light_Desc{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, radius = 0.1, direction = {0, -1, 0}, cone = 0.5, inner = 0.8, texture_axis = {1, 0.5, 0}, indirect = 1, scattering = 1}
 	rect := Light_Desc{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {1, 2}, material = 4, indirect = 1, scattering = 1}
 	point := Light_Desc{position = {0, 2, 0}, color = 1, intensity = 10, range = 5, radius = 0.1, texture_axis = {1, 0, 0}, indirect = 1, scattering = 1}
 	projected := GPU_LIGHT_TEXTURE | texture_entry(2)
@@ -661,10 +661,18 @@ a_light_keeps_the_texture_it_projects_in_its_record :: proc(t: ^testing.T) {
 		l := r.scene.lights[0]
 		testing.expectf(t, l.size.xy == c.size.xy && transmute(u32)l.size.w == c.image, "%s: size %v, image %x", c.name, l.size, transmute(u32)l.size.w)
 		if c.size.z != 0 {testing.expectf(t, l.size.z == c.size.z, "%s: the half height %v", c.name, l.size.z)}
-		// The right of the texture of a spot lies across its cone, along the right given.
-		if c.light.cone > 0 && c.texture != 0 {
-			right := mm.normal_unpack(transmute(u32)l.size.z)
-			testing.expectf(t, abs(right.x - 1) < 1e-3 && abs(right.y) < 1e-3 && abs(right.z) < 1e-3, "%s: its right %v", c.name, right)
+		// The right of the texture of a spot lies across its cone, along the right
+		// given, next to the share of its angle it shines whole within (light_spot_bits).
+		bits := transmute(u32)l.size.z
+		if c.light.cone > 0 {
+			testing.expectf(t, abs(light_spot_inner(l) - 0.8) < 1e-6, "%s: it shines whole within %v of its angle", c.name, light_spot_inner(l))
+			if c.texture != 0 {
+				axis :: proc(bits: u32) -> f32 {return f32(bits & 0xfff) / 4095 * 2 - 1}
+				right := mm.octahedral_decode({axis(bits), axis(bits >> 12)})
+				testing.expectf(t, abs(right.x - 1) < 1e-3 && abs(right.y) < 1e-3 && abs(right.z) < 1e-3, "%s: its right %v", c.name, right)
+			} else {
+				testing.expectf(t, bits & 0xffffff == 0, "%s: no right of a texture, %x", c.name, bits)
+			}
 		} else if c.size.z == 0 {
 			testing.expectf(t, l.size.z == 0, "%s: no right of a texture, %v", c.name, l.size.z)
 		}

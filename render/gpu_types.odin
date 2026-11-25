@@ -393,7 +393,7 @@ Gpu_Light :: struct {
 	position_range:  Vec4,
 	color_intensity: Vec4,
 	direction_cone:  Vec4, // spot: direction and cos(half-angle); a rectangle: the side it lights, w = GPU_LIGHT_RECT; w = GPU_LIGHT_POINT for the others
-	size:            Vec4, // x the radius of the sphere or the capsule, metres; y half the segment of a capsule, or half the width of a rectangle; z half its height, or the bits of the right of the texture a spot projects (math.normal_pack); w the bits of its image (light_image): the texture it projects, or the material row whose emission a rectangle shows (0: none)
+	size:            Vec4, // x the radius of the sphere or the capsule, metres; y half the segment of a capsule, or half the width of a rectangle; z half its height, or the bits of a spot (light_spot_bits): the right of the texture it projects and the share of its half-angle it shines whole within; w the bits of its image (light_image): the texture it projects, or the material row whose emission a rectangle shows (0: none)
 	axis:            Vec4, // xyz along the segment of a capsule, or the width of a rectangle; w the shares of its light (light_shares)
 }
 GPU_LIGHT_POINT :: abi.GPU_LIGHT_POINT

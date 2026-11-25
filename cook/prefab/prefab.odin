@@ -283,7 +283,12 @@ model_light :: proc(scene:^asset.Scene,info:^core.World_Info,entity:base.Entity_
         if angle!=light.outer_cone {
             append(&assets.warnings,fmt.aprintf("the spot of %s has an outer cone of %.1f°, out of 1° to 89°: it was given %.1f°",name,light.outer_cone*mm.DEG_PER_RAD,angle*mm.DEG_PER_RAD,allocator=assets.allocator))
         }
-        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=radius,angle=angle,shadows=shadows,indirect=indirect,scattering=scattering}
+        inner:=light.inner_cone/angle if light_finite(light.inner_cone) else 0
+        if inner<0 || inner>1 {
+            append(&assets.warnings,fmt.aprintf("the spot of %s has an inner cone of %.1f°, out of 0° to its outer cone of %.1f°: it was given %.1f°",name,light.inner_cone*mm.DEG_PER_RAD,angle*mm.DEG_PER_RAD,clamp(inner,0,1)*angle*mm.DEG_PER_RAD,allocator=assets.allocator))
+            inner=clamp(inner,0,1)
+        }
+        spot:=render.Spot_Light{color=light.color,intensity=light.intensity,range=light_range(light),radius=radius,angle=angle,inner=inner,shadows=shadows,indirect=indirect,scattering=scattering}
         return put(scene,info,entity,"Spot_Light",&spot)==.None
     case .Rect:
         rect:=render.Rect_Light{color=light.color,luminance=light.intensity,range=light_range(light),shadows=shadows,indirect=indirect,scattering=scattering}

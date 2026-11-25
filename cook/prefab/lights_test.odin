@@ -58,6 +58,7 @@ imported_lights_are_the_lights_of_their_entities :: proc(t:^testing.T) {
     testing.expectf(t,is_point && point.intensity==50 && abs(point.range-10)<1e-4,"a point in candela, as far as it gives 0.5 lux: %v",point)
     spot,is_spot:=asset.scene_get(&scene,entity_of(&scene,"Spot"),"Spot_Light",render.Spot_Light)
     testing.expectf(t,is_spot && spot.intensity==40 && spot.range==12 && spot.angle==render.SPOT_MAX,"a spot keeps its outer cone, cut to 89°: %v",spot)
+    testing.expectf(t,abs(spot.inner*spot.angle-0.2)<1e-5,"and its inner cone, as a share of the outer one: %v",spot.inner)
     testing.expect(t,len(assets.warnings)==1 && strings.contains(assets.warnings[0],"Spot"),"the cut cone is reported")
 }
 

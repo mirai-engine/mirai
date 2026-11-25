@@ -268,7 +268,8 @@ Uses cgltf (default scene, TRS/decomposed matrix, `NORMAL`/`TANGENT`/`TEXCOORD_0
 - Materials: metallic-roughness, relative emission, `alphaMode`, `doubleSided`,
   `KHR_texture_transform`, transmission/ior/volume/specular/clearcoat/diffuse-transmission/unlit;
   converts specular-glossiness, `ior=0`, sheen -> LTC fuzz, anisotropy -> OpenPBR.
-- Lights: `KHR_lights_punctual` (`Sun`, `Point_Light`, `Spot_Light`; missing range -> 0.5 lux).
+- Lights: `KHR_lights_punctual` (`Sun`, `Point_Light`, `Spot_Light` with `innerConeAngle` as
+  its `inner` share of the outer cone; missing range -> 0.5 lux).
 - Rejects Draco, compressed indices/normals/`OCTAHEDRAL`, GPU instancing, points/lines, shear,
   zero scale, missing `TEXCOORD`; skips cameras.
 

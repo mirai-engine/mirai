@@ -26,9 +26,9 @@ Gpu_Light_Node :: struct {
 	cone:          Vec4, // xyz the axis of the directions they face; w the half-angle around it that holds the directions they shine whole, radians; PI: any
 	// In steps of LIGHT_WIDTH_STEP: [0] the half-angle past the cone over which
 	// their light fades out, the widest of theirs: a spot the edge of its own
-	// cone past LIGHT_SPOT_FULL, a rectangle a quarter turn; [1] the half-angle
-	// around its own axis each of them shines whole, the narrowest of theirs: PI
-	// for a light that does every way.
+	// cone past where it shines whole (light_spot_inner), a rectangle a quarter
+	// turn; [1] the half-angle around its own axis each of them shines whole, the
+	// narrowest of theirs: PI for a light that does every way.
 	widths:        [2]u16,
 	range_low:     f32,  // the shortest of their ranges
 	range_high:    f32,  // the longest of their ranges
@@ -40,7 +40,6 @@ Gpu_Light_Node :: struct {
 }
 GPU_LIGHT_NODE_LEAF :: abi.GPU_LIGHT_NODE_LEAF
 GPU_LIGHT_NODE_COUNT_SHIFT :: abi.GPU_LIGHT_NODE_COUNT_SHIFT
-GPU_LIGHT_SPOT_FULL :: abi.GPU_LIGHT_SPOT_FULL
 
 // Below this depth the runs are split where they cost least; deeper, in
 // halves. A traversal never holds more than LIGHT_TREE_DEPTH nodes.
@@ -265,12 +264,14 @@ light_bounds_cost :: proc(b: Light_Bounds, diagonal: Vec3, dim: int) -> f32 {
 
 // The cone of directions a light shines whole and the widths of
 // Gpu_Light_Node: a point or a capsule shines every way; a spot around its
-// axis out to LIGHT_SPOT_FULL of its half-angle, fading out to its edge; a
-// rectangle on its side, as a cosine.
+// axis out to the share of its half-angle it shines whole within
+// (light_spot_inner), fading out to its edge; a rectangle on its side, as a
+// cosine.
 light_orientation :: proc(l: Gpu_Light) -> (cone: Vec4, widths: [2]u16) {
 	if light_spot(l) {
 		outer := math.acos(clamp(l.direction_cone.w, -1, 1))
-		return {l.direction_cone.x, l.direction_cone.y, l.direction_cone.z, outer * GPU_LIGHT_SPOT_FULL}, {light_width(outer * (1 - GPU_LIGHT_SPOT_FULL)), light_width(outer * GPU_LIGHT_SPOT_FULL)}
+		inner := light_spot_inner(l)
+		return {l.direction_cone.x, l.direction_cone.y, l.direction_cone.z, outer * inner}, {light_width(outer * (1 - inner)), light_width(outer * inner)}
 	}
 	if light_rect(l) {return {l.direction_cone.x, l.direction_cone.y, l.direction_cone.z, 0}, {LIGHT_WIDTHS_ANY[0], 0}}
 	return {0, 1, 0, math.PI}, LIGHT_WIDTHS_ANY

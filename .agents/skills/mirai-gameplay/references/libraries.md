@@ -87,8 +87,9 @@ navmesh and foliage collision.
   `Mesh_Renderer.shadows=false` skips shadow casting.
 - **Lights (shine `-Z`, `KHR_lights_punctual` units, `indirect`/`scattering` multipliers, `shadows`
   default on):** `Sun` (`@(component,single)`, lux, optional `height_fade`), `Point_Light`
-  (candelas, `radius` sphere/capsule), `Spot_Light` (`angle` 1..89 deg, optional projected
-  `texture`), `Rect_Light` (nits, entity XY scale, `texture` or `Light_Emission` from mesh slot),
+  (candelas, `radius` sphere/capsule), `Spot_Light` (`angle` 1..89 deg, `inner` share of it lit
+  whole before the fade, 0.8 by default and 1 a hard edge, optional projected `texture`),
+  `Rect_Light` (nits, entity XY scale, `texture` or `Light_Emission` from mesh slot),
   `Bounce_Light` (`@(component,single)` global indirect scale).
 - **Camera & exposure:** `Camera` (`View_Camera` overrides `active`, handles blends/fade/
   `own_hidden`); `Exposure` (`Auto`/`Manual` + EV `compensation`, overrides `View_Volume`).

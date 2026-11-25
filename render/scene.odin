@@ -99,6 +99,7 @@ Light_Desc :: struct {
 	range:     f32,
 	direction: Vec3, // spot lights: where the cone points; a rectangle: the side it lights
 	cone:      f32,  // spot lights: half-angle in radians; 0 for point lights
+	inner:     f32,  // spot lights: the share of cone it shines whole within, fading from there to its edge; 1 a hard edge, 0 from its axis
 	radius:    f32,  // of the sphere, or of the capsule, that gives the light, metres
 	axis:      Vec3, // a capsule: along its segment; a rectangle: along its width
 	length:    f32,  // a capsule: of its segment, metres; 0: a sphere
@@ -2284,6 +2285,21 @@ light_image :: proc "contextless" (texture: Texture_Handle, material: Material_H
 	return u32(material)
 }
 
+// The bits of size.z of a spot: the right of the texture it projects across
+// its cone (octahedral, 12 bits an axis; 0 without one) and, in the top
+// byte, the share of its half-angle it shines whole within
+// (Light_Desc.inner), as light_spot_inner and lighting.slang read them.
+light_spot_bits :: proc "contextless" (right: Vec3, inner: f32) -> u32 {
+	share := u32(math.round(clamp(inner, 0, 1) * 255)) if inner == inner else 0
+	if right == {} {return share << 24}
+	p := mm.octahedral_encode(right)
+	axis :: proc "contextless" (v: f32) -> u32 {return u32(math.round((clamp(v, -1, 1) * 0.5 + 0.5) * 4095))}
+	return axis(p.x) | axis(p.y) << 12 | share << 24
+}
+
+// The share of its half-angle a spot shines whole within.
+light_spot_inner :: proc "contextless" (l: Gpu_Light) -> f32 {return f32(transmute(u32)l.size.z >> 24) / 255}
+
 // The material row whose emission a rectangle that projects no texture
 // shows (0: none); false for the other lights.
 light_emission_row :: proc "contextless" (l: Gpu_Light) -> (row: u32, rect: bool) {
@@ -2311,10 +2327,9 @@ gpu_light :: proc(l: Light_Desc, scale: f32) -> Gpu_Light {
 		light.direction_cone = {direction.x, direction.y, direction.z, math.cos(clamp(l.cone, 0.001, math.PI * 0.5))}
 		// The right of its texture across the cone: without one, no texture.
 		right := l.texture_axis - linalg.dot(l.texture_axis, direction) * direction
-		if l.texture != 0 && linalg.length(right) > 1e-6 {
-			light.size.z = transmute(f32)mm.normal_pack(linalg.normalize(right))
-			light.size.w = transmute(f32)light_image(l.texture, 0)
-		}
+		projects := l.texture != 0 && linalg.length(right) > 1e-6
+		light.size.z = transmute(f32)light_spot_bits(linalg.normalize(right) if projects else {}, l.inner)
+		if projects {light.size.w = transmute(f32)light_image(l.texture, 0)}
 	}
 	if l.length > 0 && linalg.length(l.axis) > 1e-6 && light.direction_cone.w != GPU_LIGHT_RECT {
 		axis := linalg.normalize(l.axis)

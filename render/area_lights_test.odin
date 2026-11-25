@@ -200,7 +200,7 @@ lights_color_their_light_by_their_image :: proc(t: ^testing.T) {
 	screen.textures[.Emission] = texture
 	materials_set(r, {screen})
 	rect := Light_Desc{position = {0, 0.6, 0}, color = {1, 1, 1}, intensity = 3 * math.PI / 2.4, range = 20, direction = {0, -1, 0}, axis = {1, 0, 0}, size = {2.4, 1}, indirect = 1, scattering = 1}
-	spot := Light_Desc{position = {0, 1.2, 0}, color = {1, 1, 1}, intensity = 2 * math.PI, range = 20, radius = 0.02, direction = {0, -1, 0}, cone = 1.1, texture_axis = {1, 0, 0}, indirect = 1, scattering = 1}
+	spot := Light_Desc{position = {0, 1.2, 0}, color = {1, 1, 1}, intensity = 2 * math.PI, range = 20, radius = 0.02, direction = {0, -1, 0}, cone = 1.1, inner = 0.8, texture_axis = {1, 0, 0}, indirect = 1, scattering = 1}
 	shown, projected, aimed := rect, rect, spot
 	shown.material, projected.texture, aimed.texture = 1, texture, texture
 	// One color for the diffuse light of each point of a rectangle: off the edge of a texture of two colors it errs most.
@@ -237,5 +237,67 @@ lights_color_their_light_by_their_image :: proc(t: ^testing.T) {
 	plain.texture = blank
 	area_scene(&f, []Light_Desc{plain})
 	testing.expect(t, slice.equal(untextured, area_direct(t, &f, 2, false)), "a spot with a white texture gives what one without it gives")
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
+}
+
+// A spot shines whole within the share `inner` of its half-angle and fades
+// smoothly from there to its edge, between the cosines of both: by default
+// (0.8) as its fixed last fifth did, at once with 1 (a hard edge).
+@(test)
+area_spot_fades_from_its_inner_angle :: proc(t: ^testing.T) {
+	f: Area_Fixture
+	if !area_init(t, &f) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	HEIGHT :: f32(2)
+	OUTER :: f32(0.5)
+	point := Light_Desc{position = {0, HEIGHT, 0}, color = {1, 1, 1}, intensity = 4 * math.PI, range = 40, radius = 0.01, indirect = 1, scattering = 1, shadowless = true}
+	area_scene(&f, []Light_Desc{point})
+	whole := slice.clone(area_direct(t, &f, 1, false), context.temp_allocator)
+	width, height := int(r.main.targets.width), int(r.main.targets.height)
+	view, proj, _ := camera_matrices(f.camera, f32(width) / f32(height))
+	to_clip := proj * view
+	from_clip := linalg.inverse(to_clip)
+	origin := to_clip * Vec4{0, 0, 0, 1}
+	row := clamp(int((origin.y / origin.w * 0.5 + 0.5) * f32(height)), 0, height - 1)
+	// The angle from the axis of the spot of the floor under the center of a pixel of the row through it.
+	angle_of :: proc(from_clip: Mat4, x, width: int, y: f32) -> f32 {
+		ndc := (f32(x) + 0.5) / f32(width) * 2 - 1
+		near, far := from_clip * Vec4{ndc, y, 0, 1}, from_clip * Vec4{ndc, y, 1, 1}
+		a, b := near.xyz / near.w, far.xyz / far.w
+		floor := a + (b - a) * (a.y / (a.y - b.y))
+		return math.atan2(linalg.length(floor.xz), HEIGHT)
+	}
+	smooth :: proc(outer, inner, along: f32) -> f32 {
+		s := clamp((along - outer) / (inner - outer), 0, 1)
+		return s * s * (3 - 2 * s)
+	}
+	for inner in ([]f32{0.8, 1, 0.5}) {
+		spot := point
+		spot.direction, spot.cone, spot.inner = {0, -1, 0}, OUTER, inner
+		area_scene(&f, []Light_Desc{spot})
+		cone := area_direct(t, &f, 1, false)
+		checked, worst := 0, f32(0)
+		for x in 0 ..< width {
+			angle := angle_of(from_clip, x, width, origin.y / origin.w)
+			if angle > 1.2 * OUTER {continue}
+			// Of a hard edge, the pixels it splits.
+			if inner == 1 && abs(angle - OUTER) < 0.01 * OUTER {continue}
+			want: f32
+			switch {
+			case inner == 1: want = 1 if angle < OUTER else 0
+			// The fixed fade the spots had before inner: from 0.8 of the half-angle, as smoothstep.
+			case inner == 0.8: want = math.smoothstep(math.cos(OUTER), math.cos(0.8 * OUTER), math.cos(angle))
+			case: want = smooth(math.cos(OUTER), math.cos(inner * OUTER), math.cos(angle))
+			}
+			base := area_luminance(whole[row * width + x])
+			if !(base > 0) {continue}
+			got := area_luminance(cone[row * width + x]) / base
+			worst = max(worst, abs(got - want))
+			checked += 1
+		}
+		testing.expectf(t, checked > 10, "inner %v: %d pixels within the cone", inner, checked)
+		testing.expectf(t, worst < 0.02, "inner %v: the fade is up to %v from its curve", inner, worst)
+	}
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation reported %d errors; last: %s", rhi.device_validation_errors(f.device), rhi.device_validation_message(f.device))
 }
