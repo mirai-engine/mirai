@@ -108,10 +108,9 @@ temporal state. The world integration and the authoring are in
   acceleration that keeps it from crossing zero. A mask of weights regulates each bone (zero leaves
   the target exact). `inertial_curves_apply` does the same with floats and `filtered` leaves a curve
   at the target.
-- A capture that interrupts an unfinished transition keeps what that one left undone as its
-  deficit; when that one had interrupted another too, the new duration gives the deficit up, so
-  transitions that follow each other tick after tick do not pile up offsets. Finishing a transition
-  clears the deficit.
+- A capture that interrupts an unfinished transition starts from the pose shown and lasts the
+  duration it asks, however many it interrupts in a row: shortening it by what the one before left
+  undone made every third blend of chained interruptions land in a few ticks (a single-tick pop).
 - Applying before advancing keeps the capture pose exactly, and the target is evaluated on each tick
   without continuing to evaluate the outgoing clip.
 - Each output may coincide exactly with its target, not partially overlap. NaN, infinities,
@@ -161,7 +160,7 @@ rig; `fraction` is the part of the remaining time that this step consumes.
   `match_search_leaves_out_rows_near_the_playing_one_across_a_loop_seam_and_those_just_left`,
   `match_trajectory_follows_a_walk_that_accelerates_brakes_and_turns_at_its_rates`,
   `inertial_offsets_never_overshoot_and_drop_a_velocity_that_heads_away_from_the_target`,
-  `transitions_that_interrupt_each_other_give_up_the_time_the_one_before_left_undone` and
+  `a_transition_lasts_what_it_asks_also_when_it_interrupts_another` and
   `each_bone_closes_over_its_own_time_or_the_time_left_of_the_one_it_interrupts`.
 - The hostile cases accept `ANIM_INERTIAL_HOSTILE_ROUNDS` and `ANIM_WARP_HOSTILE_ROUNDS`; when
   changing validations or state, repeat them with `--release` and 20000 rounds.

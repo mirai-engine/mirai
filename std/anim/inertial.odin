@@ -4,9 +4,9 @@ import cmath "core:math"
 import "core:math/linalg"
 import math "mirai:std/math"
 
-// The time of a transition: elapsed of its duration, and deficit, the seconds an interrupted one
-// left undone, which a transition that interrupts again takes from its own duration.
-Inertial_State :: struct {elapsed,duration,deficit:f32,active:bool}
+// The time of a transition: elapsed of its duration. One that interrupts another lasts what it
+// asks, whatever the one it interrupts had left.
+Inertial_State :: struct {elapsed,duration:f32,active:bool}
 // The offset of a bone from its target per channel (position, rotation as the logarithm of the
 // residual, scale), the speed at which the length of each one closes (never away from the target:
 // x position, y rotation, z scale) and the seconds at which each one reaches its target.
@@ -50,31 +50,14 @@ inertial_input_valid :: proc "contextless" (input:Inertial_Input,bones,curves:in
 
 @(private)
 inertial_state_valid :: proc "contextless" (state:Inertial_State) -> bool {
-    return anim_finite(state.elapsed) && state.elapsed>=0 && anim_finite(state.duration) && state.duration>=0 && anim_finite(state.deficit) && state.deficit>=0
+    return anim_finite(state.elapsed) && state.elapsed>=0 && anim_finite(state.duration) && state.duration>=0
 }
 
-// The duration of a transition that starts now and the deficit it leaves: one that interrupts an
-// unfinished transition remembers what that one left undone and, when that one had interrupted
-// another too, gives it up from its own duration, so transitions that follow each other at every
-// tick do not pile up offsets on a target that does not hold still.
+// The seconds an unfinished transition has left.
 @(private)
-inertial_begin :: proc "contextless" (state:^Inertial_State,duration:f32) -> (length:f32) {
-    deficit,chained:=inertial_deficit(state^)
-    length=inertial_length(duration,deficit,chained)
-    state^={duration=length,deficit=deficit,active=length>0}
-    return
-}
-// The seconds an unfinished transition has left, and whether it had interrupted another too.
-@(private)
-inertial_deficit :: proc "contextless" (state:Inertial_State) -> (deficit:f32,chained:bool) {
-    if !state.active || !inertial_state_valid(state) || state.elapsed>=state.duration {return}
-    return state.duration-state.elapsed,state.deficit>0
-}
-// The length of a transition of duration that starts now: a negative duration keeps the deficit.
-@(private)
-inertial_length :: proc "contextless" (duration,deficit:f32,chained:bool) -> f32 {
-    if duration<0 {return deficit}
-    return max(duration-deficit,0) if chained else duration
+inertial_left :: proc "contextless" (state:Inertial_State) -> f32 {
+    if !state.active || !inertial_state_valid(state) || state.elapsed>=state.duration {return 0}
+    return state.duration-state.elapsed
 }
 
 // How fast the length of an offset closes given its velocity, never away from zero, and when it
@@ -119,13 +102,12 @@ inertial_offset :: #force_inline proc "contextless" (offset:math.Vec3,speed,t,en
 
 inertial_capture :: proc "contextless" (state:^Inertial_State,bones:[]Inertial_Bone,curves:[]Inertial_Curve,input:Inertial_Input) -> bool {
     if state==nil || !inertial_input_valid(input,len(bones),len(curves)) {return false}
-    probe:=state^
-    deficit,chained:=inertial_deficit(probe)
-    duration:=inertial_begin(&probe,max(input.duration,0))
+    left,duration:=inertial_left(state^),max(input.duration,0)
+    probe:=Inertial_State{duration=duration}
     for current,i in input.current {
         target:=input.target[i]
         duration:=duration
-        if len(input.durations)>0 {duration=inertial_length(input.durations[i],deficit,chained);probe.duration=max(probe.duration,duration)}
+        if len(input.durations)>0 {duration=input.durations[i] if input.durations[i]>=0 else left;probe.duration=max(probe.duration,duration)}
         value:=Inertial_Bone{position=current.position-target.position,rotation=inertial_rotation_delta(target.rotation,current.rotation),scale=current.scale-target.scale}
         position_velocity,rotation_velocity,scale_velocity:math.Vec3
         if input.dt>1e-8 {
@@ -168,7 +150,6 @@ inertial_capture :: proc "contextless" (state:^Inertial_State,bones:[]Inertial_B
 inertial_advance :: proc "contextless" (state:^Inertial_State,dt:f32) -> bool {
     if state==nil || !anim_finite(dt) || dt<0 || !inertial_state_valid(state^) {return false}
     state.elapsed=f32(min(f64(state.elapsed)+f64(dt),f64(state.duration)))
-    state.deficit=0 if state.elapsed>=state.duration else max(state.deficit-dt,0)
     state.active=state.elapsed<state.duration
     return true
 }

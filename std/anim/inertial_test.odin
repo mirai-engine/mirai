@@ -1,6 +1,7 @@
 package mirai_anim
 
 import "base:runtime"
+import cmath "core:math"
 import "core:testing"
 import "core:math/linalg"
 import math "mirai:std/math"
@@ -59,20 +60,37 @@ inertial_offsets_never_overshoot_and_drop_a_velocity_that_heads_away_from_the_ta
     }
 }
 
+// A transition lasts what it asks, also when it interrupts one that had interrupted another: a
+// target that turns 20 degrees further every 3 ticks, each at .4 s, never moves the pose by more
+// than SWITCH_STEP_MOST in a tick, and a single transition follows its curve to the target in .4 s.
 @(test)
-transitions_that_interrupt_each_other_give_up_the_time_the_one_before_left_undone :: proc(t:^testing.T) {
-    pose:=[1]math.Transform{math.TRANSFORM_IDENTITY};moved:=pose;moved[0].position.x=1
+a_transition_lasts_what_it_asks_also_when_it_interrupts_another :: proc(t:^testing.T) {
+    DT :: f32(1.0/60)
+    SWITCH_STEP_MOST :: f32(8*cmath.RAD_PER_DEG) // the target itself turns about 6.7 degrees a tick
+    angle :: proc(a,b:math.Quat) -> f32 {return 2*cmath.acos(min(abs(real(conj(a)*b)),1))}
+    turned:=math.quat_axis_angle({0,1,0},cmath.PI/2)
+    target,shown,before:[1]math.Transform
+    target[0],shown[0]=math.TRANSFORM_IDENTITY,math.TRANSFORM_IDENTITY
     bones:[1]Inertial_Bone;state:Inertial_State
-    input:=Inertial_Input{previous=moved[:],current=moved[:],target=pose[:],dt=.01,duration=.2}
-    durations:[4]f32
-    for i in 0..<4 {
-        testing.expect(t,inertial_capture(&state,bones[:],nil,input))
-        durations[i]=state.duration
-        testing.expect(t,inertial_advance(&state,.05 if i<2 else 1))
+    worst:f32
+    for tick in 0..<90 {
+        if tick%3==0 {
+            target[0].rotation=math.quat_axis_angle({0,1,0},f32(tick/3+1)*20*cmath.RAD_PER_DEG)
+            ok:=inertial_capture(&state,bones[:],nil,{previous=before[:] if tick>0 else shown[:],current=shown[:],target=target[:],dt=DT,duration=.4})
+            testing.expectf(t,ok && state.duration==.4,"tick %d: the transition lasts %v",tick,state.duration)
+        }
+        before=shown
+        testing.expect(t,inertial_pose_apply(state,bones[:],target[:],shown[:]) && inertial_advance(&state,DT))
+        worst=max(worst,angle(before[0].rotation,shown[0].rotation))
     }
-    // The second interrupts the first with .15 s left; the third interrupts it too and gives
-    // those up.
-    testing.expectf(t,durations[0]==.2 && durations[1]==.2 && abs(durations[2]-.05)<1e-6 && durations[3]==.2,"durations %v",durations)
+    testing.expectf(t,worst<=SWITCH_STEP_MOST,"a tick moves the pose by %v degrees",worst*cmath.DEG_PER_RAD)
+    // A single transition from rest: at .2 s it keeps inertial_remaining of its offset, at .4 s none.
+    target[0].rotation,shown[0].rotation,state=1,turned,{}
+    testing.expect(t,inertial_capture(&state,bones[:],nil,{previous=shown[:],current=shown[:],target=target[:],dt=DT,duration=.4}) && state.duration==.4)
+    out:[1]math.Transform
+    testing.expect(t,inertial_advance(&state,.2) && inertial_pose_apply(state,bones[:],target[:],out[:]))
+    testing.expectf(t,abs(angle(out[0].rotation,1)-cmath.PI/2*inertial_remaining(.2,.4))<1e-4,"at .2 s: %v",out[0].rotation)
+    testing.expect(t,inertial_advance(&state,.2) && inertial_pose_apply(state,bones[:],target[:],out[:]) && out[0].rotation==1 && !state.active)
 }
 
 // Each bone closes over its own time, and one given a negative time keeps what the transition it
