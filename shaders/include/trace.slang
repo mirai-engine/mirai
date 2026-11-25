@@ -355,7 +355,7 @@ Hit trace_ray_impl(float3 origin, float3 direction, float t_min, float t_max, bo
                     continue;
                 }
                 Instance inst = instances[instance_index];
-                if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u || (inst.meta.x & INSTANCE_VIEWMODEL) != 0u) continue;
+                if ((inst.meta.w & INSTANCE_FLAG_HIDDEN) != 0u) continue;
                 // Its class, as render.ray_class gives it: one of glass the reference let in.
                 bool unshadowed = (inst.meta.x & INSTANCE_UNSHADOWED) != 0u && (ref & TLAS_REF_GLASS) == 0u;
                 if (unshadowed ? (classes & RAY_UNSHADOWED) == 0u : ((inst.meta.w & INSTANCE_FLAG_SMALL) != 0u && (classes & RAY_SMALL) == 0u)) continue;

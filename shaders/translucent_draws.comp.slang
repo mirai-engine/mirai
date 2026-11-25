@@ -86,7 +86,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     uint index = drawn[k];
     Instance inst = scene_instance(index);
     Mesh mesh = meshes[instance_mesh(inst)];
-    bool hidden = params.occlusion != 0u && !view_viewmodel(inst) && pyramid_hides(hiz, params.hiz_levels, inst.bounds_min.xyz, inst.bounds_max.xyz,
+    bool hidden = params.occlusion != 0u && pyramid_hides(hiz, params.hiz_levels, inst.bounds_min.xyz, inst.bounds_max.xyz,
         frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane);
     uint2 clusters = instance_clusters(view_detail(), inst, mesh);
     bool shown = !hidden && mesh.draw_first != INVALID;

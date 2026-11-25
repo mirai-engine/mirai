@@ -424,3 +424,111 @@ the_history_of_the_view_leaves_no_trail_of_the_viewmodel :: proc(t: ^testing.T) 
 	fmt.printfln("viewmodel history: green of the mark %.3f still, %.3f turning; red %.3f at most where the bar was, of %d pixels", still, turning, most, count)
 	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
 }
+
+// The motion of the weapon at a pixel of the main view, pixels.
+@(private = "file")
+motion_at :: proc(t: ^testing.T, f: ^Fixture, at: int) -> Vec2 {
+	motion := read_target(t, f, f.renderer.targets.motion, f16, 2)
+	return Vec2{f32(motion[at * 2]), f32(motion[at * 2 + 1])} * Vec2{WIDTH, HEIGHT}
+}
+
+// What the weapon was drawn at the frame before follows a new origin, and a
+// cut that takes the eye and the weapon 40 m away leaves none: neither moves
+// the held weapon on the view.
+@(test)
+the_motion_of_the_viewmodel_stays_through_a_new_origin_and_a_cut :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	s := viewmodel_scene(r)
+	scene_given(r, {s.floor, s.bar, s.mark}, nil, SUN, {})
+	draw(t, &f, FIRST_PERSON, 3)
+	seen := weapon_seen(t, &f)
+	if !testing.expectf(t, seen.marks > 0, "the mark is drawn") {return}
+	renderer_origin_set(r, r.origin + {512, 0, 0})
+	draw(t, &f, FIRST_PERSON, 1)
+	rebased := motion_at(t, &f, seen.at)
+	testing.expectf(t, abs(rebased.x) < 0.25 && abs(rebased.y) < 0.25, "a new origin leaves the weapon still: its motion %v", rebased)
+	away := FIRST_PERSON
+	away.position.x += 40
+	moved := []^Instance_Desc{&s.floor, &s.bar, &s.mark}
+	for inst in moved {inst.transform[0, 3] += 40}
+	scene_given(r, {s.floor, s.bar, s.mark}, nil, SUN, {})
+	testing.expect(t, renderer_frame(r, {camera = away, camera_cut = true}), r.error)
+	cut := motion_at(t, &f, weapon_seen(t, &f).at)
+	testing.expectf(t, abs(cut.x) < 0.25 && abs(cut.y) < 0.25, "a cut leaves the weapon still: its motion %v", cut)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// The view of the window of the body draws its viewmodel, placed for its
+// camera, though a view into a texture of the same body comes first; one of
+// 0 degrees draws it where it is.
+@(test)
+the_viewmodel_is_of_the_view_of_the_window_and_one_of_no_field_of_view_is_where_it_is :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	s := viewmodel_scene(r)
+	scene_given(r, {s.floor, s.bar, s.mark}, nil, SUN, {})
+	image, made := view_texture_add(r, 32, 24, "another view of the body")
+	if !testing.expect(t, made, r.error) {return}
+	defer view_texture_remove(r, image)
+	aside := FIRST_PERSON
+	aside.forward = {1, 0, 0}
+	views := []Frame_View{{camera = aside, texture = image, rect = {0, 0, 32, 24}}, {camera = FIRST_PERSON, rect = {0, 0, WIDTH, HEIGHT}}}
+	for _ in 0 ..< 2 {testing.expect(t, renderer_frame(r, {camera = FIRST_PERSON, views = views}), r.error)}
+	seen := weapon_seen(t, &f)
+	own := project(MARK, VIEWMODEL_FOV)
+	testing.expectf(t, seen.marks > 0 && abs(seen.mark.x - own.x) < 0.75 && abs(seen.mark.y - own.y) < 0.75, "the window draws the mark at %v, its projection of 55 degrees at %v", seen.mark, own)
+	scene_set_viewmodels(r, {})
+	draw(t, &f, FIRST_PERSON)
+	plain := weapon_seen(t, &f)
+	world := project(MARK, math.to_radians(f32(70)))
+	testing.expectf(t, plain.marks > 0 && abs(plain.mark.x - world.x) < 0.75 && abs(plain.mark.y - world.y) < 0.75, "of 0 degrees the mark is at %v, where it is at %v", plain.mark, world)
+	depths := read_target(t, &f, r.targets.linear_depth, f32, 1)
+	testing.expectf(t, abs(depths[plain.at] - (-MARK.z - 0.005)) < 0.02, "and as far: %v", depths[plain.at])
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}
+
+// A blended sight before the muzzle is drawn in the frame the camera turns
+// with the weapon toward a wall a metre ahead.
+@(test)
+a_blended_sight_of_the_viewmodel_is_drawn_as_the_view_turns_to_a_wall :: proc(t: ^testing.T) {
+	f: Fixture
+	if !fixture_init(t, &f, WIDTH, HEIGHT, viewmodel_settings()) {return}
+	defer fixture_destroy(&f)
+	r := f.renderer
+	blend := DEFAULT_MATERIAL
+	blend.base_color, blend.alpha_mode, blend.opacity = {1, 0, 0}, .Blend, 0.8
+	s := viewmodel_scene(r, blend)
+	PANE :: Vec3{0.09, -0.09, -0.6}
+	turned :: proc(yaw: f32) -> Camera {
+		c := FIRST_PERSON
+		c.forward = {-math.sin(yaw), 0, -math.cos(yaw)}
+		return c
+	}
+	white := s.bar
+	white.mesh = s.floor.mesh
+	pane := s.mark
+	pane.object_id, pane.material = 6, 4
+	wall := s.wall
+	// The wall a metre ahead of the eye turned by a quarter.
+	wall.transform = held({1.025, 0, 0}, {0.05, 6, 6})
+	place :: proc(r: ^Renderer, white, pane: ^Instance_Desc, floor, wall: Instance_Desc, yaw: f32) {
+		white.transform = held({0.12, -0.12, -0.455}, {0.04, 0.04, 0.41}, yaw)
+		pane.transform = held(PANE, {0.06, 0.06, 0.005}, yaw)
+		scene_given(r, {floor, white^, pane^, wall}, nil, SUN, {sky = {1000, 1000, 1000}})
+	}
+	place(r, &white, &pane, s.floor, wall, 0)
+	draw(t, &f, turned(0), 3)
+	place(r, &white, &pane, s.floor, wall, -math.PI / 2)
+	draw(t, &f, turned(-math.PI / 2), 1)
+	at := project(PANE, VIEWMODEL_FOV)
+	pixel := int(at.y) * WIDTH + int(at.x)
+	display := read_target(t, &f, r.targets.display, f16, 4)
+	red, green := f32(display[pixel * 4]), f32(display[pixel * 4 + 1])
+	testing.expectf(t, red > green * 2, "the sight is drawn before the wall: red %v, green %v", red, green)
+	testing.expectf(t, rhi.device_validation_errors(f.device) == 0, "validation: %s", rhi.device_validation_message(f.device))
+}

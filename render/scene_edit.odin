@@ -86,6 +86,7 @@ scene_instances_clear :: proc(s: ^Scene_State) {
 	clear(&s.translucent)
 	s.decals_stale = true
 	clear(&s.instances)
+	clear(&s.viewmodel_instances)
 	clear(&s.instance_next)
 	clear(&s.instance_prev)
 	for &mesh in s.meshes {mesh.first_instance=-1}

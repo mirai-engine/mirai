@@ -63,24 +63,25 @@ camera and visible scene since last frame, reprojecting histories instead of cut
 ## Viewmodel
 
 - The sync flags what hangs from an `engine/render.Viewmodel` under a body of `View_Bodies`
-  (`Instance_Desc.viewmodel`: `INSTANCE_VIEWMODEL` in `Gpu_Instance.meta.x`, since the highlight
-  levels take bits 8-12 of `meta.w`, with the owner bits of `meta.w`) and gives each local slot its
-  field of view (`scene_set_viewmodels`). Only the view whose `Camera.own` is that slot draws those
-  instances (`view_draws_viewmodel` in the cull, `viewmodel_elsewhere` for glass, overlays and
-  outlines); nested views (`own` 0), texture views and other players never do. They are in no map
-  (`instance_casts`, `shadow_maps.comp`) and no ray structure (`ray_class`, `trace.slang`); the
-  body stays in both.
-- **Place:** `Gpu_Frame.viewmodel` (and `prev_viewmodel`, from `View_State`) is a 3x3 about the
-  eye: `VIEWMODEL_SCALE` toward it and across `camera_forward` by tan(camera fov/2) / tan(viewmodel
-  fov/2); the w of its first row is what a normal gains along `camera_forward`. `gbuffer_build`
-  applies it to every corner (now and before, for motion), normal and tangent of those instances,
-  so the visibility raster, resolve, forward, glass, overlays and outlines draw them at that place
-  and the lights, probes and maps of the world light them there like any surface.
-- **Cull:** the frustum tests take the box around the drawn place (`view_drawn_box`; on the CPU
-  `drawn_box` for glass order and the outline region, `viewmodel_elsewhere` for what another view
-  leaves out); the occlusion tests leave those instances out (nothing is between them and the eye);
-  the cut of the levels and the back-face cones keep the true box (facing from the eye is the same
-  at both places).
+  (`Instance_Desc.viewmodel`) and gives each local slot its field of view
+  (`scene_set_viewmodels`). `instance_write` writes such an instance in no layer and with
+  `INSTANCE_UNSHADOWED` and `INSTANCE_VIEWMODEL` (`meta.x`), keeping the owner bits without
+  `INSTANCE_FLAG_OWNED`, and lists it in `Scene_State.viewmodel_instances`: every view (mirrors,
+  other players, texture views), map and ray skips it by the tests each instance already takes;
+  `ray_class` gives it no class and `tlas_build` leaves it out of the software tree. **No shader
+  of an ordinary instance tests anything of it.**
+- **Place:** `viewmodels_place`, after `upload_scene`, writes into the GPU table, over what the
+  scene keeps, each listed instance where the window view of its body draws it:
+  `viewmodel_matrix · world` (about the eye `VIEWMODEL_SCALE`, across its forward
+  tan(camera fov/2) / tan(viewmodel fov/2); fov 0 is the identity), its inverse, its box, and as
+  `prev_world` where it drew it the frame before (`Viewmodel_Instance.drawn`, moved with the
+  origin, carried with the camera, cleared by a cut or while hidden). Cluster cull, raster,
+  resolve, normals and motion then need nothing of their own.
+- **Cull:** only that view's own cull (`cull_record` with `viewmodel`, phase 0, not its nested
+  views) dispatches `cull.comp` with the constant `viewmodel` over `viewmodel_list` (count, then
+  indices, bound in place of the candidates): no layer test, no instance occlusion. The pipeline of
+  every other cull compiles the constant away. Glass order, overlays and the outline region take
+  `viewmodel_drawn` / `viewmodel_elsewhere` on the CPU.
 - **Near plane:** a view that draws a viewmodel sees from `VIEWMODEL_NEAR` (what of the weapon is
   10 cm or more from the eye) if its camera's is farther; other views keep theirs.
   `VIEWMODEL_SCALE` keeps what is within 1 m ahead of the eye within the 0.3 m of a character's

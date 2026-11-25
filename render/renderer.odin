@@ -546,7 +546,6 @@ View_State :: struct {
 	resources_frames:u32, // the frames drawn since its resources hold a history
 	extension_textures:[EXTENSION_TEXTURE_CAPACITY]Extension_Texture, // of pass_texture
 	prev_view_proj:Mat4, // from prev_eye, as Gpu_Frame.prev_view_proj
-	prev_viewmodel:[3]Vec4, // as Gpu_Frame.prev_viewmodel
 	prev_eye:Vec3,
 	prev_jitter:Vec2,
 	has_previous:bool,
@@ -570,6 +569,7 @@ View_State :: struct {
 }
 
 renderer_camera_cut :: proc(r:^Renderer) {
+    for &v in r.scene.viewmodel_instances {v.drawn={}}
     view_camera_cut(&r.main)
     for &view in r.views {view_camera_cut(&view)}
     for &view in r.texture_views {view_camera_cut(&view)}
@@ -970,6 +970,7 @@ pipelines_list :: proc(r: ^Renderer, list: ^Pipeline_List) {
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp)
 	// The variants a pass has no stage to fall back to while they are made
 	// (pipeline_of without them `optional`) are listed: made with the stages.
+	compute(list, r, .Cull, .Cull_Comp, constants = {CULL_COMP_VIEWMODEL})
 	compute(list, r, .Cull_Clusters, .Cull_Clusters_Comp, constants = {CULL_CLUSTERS_COMP_CANDIDATES})
 	compute(list, r, .Cull_Bins, .Cull_Bins_Comp)
 	compute(list, r, .Cull_Stats_Fold, .Cull_Stats_Fold_Comp)

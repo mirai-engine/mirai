@@ -1,6 +1,7 @@
 package render
 
 import "core:fmt"
+import "core:mem"
 import "core:testing"
 import "mirai:asset"
 import "mirai:core"
@@ -96,49 +97,57 @@ a_local_view_gives_the_renderer_its_effects_when_they_change :: proc(t:^testing.
 the_effects_of_the_view_follow_their_programs_and_report_a_layer_that_cannot_draw :: proc(t:^testing.T) {
     root:=base.test_folder(t,"view-effects-programs")
     if root=="" {return}
-    types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
-    programs:=[3]string{"Grade","","Missing"}
-    for program,i in programs {
-        info:=asset.MATERIAL_DEFAULTS
-        asset.text_set(info.program[:],program)
-        testing.expect_value(t,asset.material_save(fmt.tprintf("%s/m%d.mat",root,i),&types,{id={9,u64(i)},info=info}),asset.Error.None)
+    // What the test takes it gives back, the catalogs it hands the renderer too.
+    track:mem.Tracking_Allocator
+    mem.tracking_allocator_init(&track,context.allocator)
+    defer mem.tracking_allocator_destroy(&track)
+    context.allocator=mem.tracking_allocator(&track)
+    {
+        types:asset.Types;asset.types_init(&types);defer asset.types_destroy(&types)
+        programs:=[3]string{"Grade","","Missing"}
+        for program,i in programs {
+            info:=asset.MATERIAL_DEFAULTS
+            asset.text_set(info.program[:],program)
+            testing.expect_value(t,asset.material_save(fmt.tprintf("%s/m%d.mat",root,i),&types,{id={9,u64(i)},info=info}),asset.Error.None)
+        }
+        f:=new(Sync_Fixture);defer free(f)
+        if !sync_fixture_init(t,f,root) {return}
+        defer sync_fixture_destroy(f)
+        catalog :: proc(t:^testing.T,r:^gpu.Renderer,id:int) {
+            text:=fmt.tprintf(`{{"version":%d,"programs":[{{"id":%d,"name":"Grade","domain":"Postprocess","size":0,"parameters":[]}}]}}`,abi.SHADER_CATALOG_VERSION,id)
+            parsed,valid:=gpu.program_catalog_parse(transmute([]u8)text)
+            testing.expect(t,valid,"the catalog is read")
+            if r.programs.loaded {gpu.program_catalog_destroy(&r.programs)}
+            r.programs=parsed
+            r.programs.loaded=true
+        }
+        catalog(t,&f.renderer,1)
+        look:=VIEW_VOLUME_DEFAULT
+        look.layers[0]={material={9,0},enabled=true}
+        look.layers[1]={material={9,1},enabled=true}
+        look.layers[2]={material={9,2}}
+        e:=core.create(&f.world.entities)
+        core.add(&f.world.view_volumes,e,look)
+        problems:core.Problems
+        frame :: proc(f:^Sync_Fixture,problems:^core.Problems) {
+            test_world_settle(&f.world)
+            world_sync(&f.world,&f.sync,&f.app,{},problems=problems)
+        }
+        frame(f,&problems)
+        given:=f.renderer.postprocesses
+        testing.expectf(t,given.count==1 && given.entries[0].program==1,"the layer of Grade runs: %d effects, the first of program %d",given.count,given.entries[0].program)
+        reported:=""
+        for &p in problems.entries[:problems.count] {
+            if p.entity==e && base.text_get(p.code[:])=="render.postprocess" {reported=base.text_get(p.text[:])}
+        }
+        testing.expectf(t,reported!="" && problems.count==1,"the enabled layer without a program is a problem of its View_Volume: %q (%d problems)",reported,problems.count)
+        testing.expectf(t,len(reported)>0 && reported[:7]=="layer 1","naming the layer: %q",reported)
+        // The programs are made again: Grade is another id.
+        catalog(t,&f.renderer,4)
+        host.assets_programs_refresh(&f.assets)
+        frame(f,&problems)
+        given=f.renderer.postprocesses
+        testing.expectf(t,given.count==1 && given.entries[0].program==4,"the reloaded program is given again: %d effects, the first of program %d",given.count,given.entries[0].program)
     }
-    f:=new(Sync_Fixture);defer free(f)
-    if !sync_fixture_init(t,f,root) {return}
-    defer sync_fixture_destroy(f)
-    catalog :: proc(t:^testing.T,r:^gpu.Renderer,id:int) {
-        text:=fmt.tprintf(`{{"version":%d,"programs":[{{"id":%d,"name":"Grade","domain":"Postprocess","size":0,"parameters":[]}}]}}`,abi.SHADER_CATALOG_VERSION,id)
-        parsed,valid:=gpu.program_catalog_parse(transmute([]u8)text)
-        testing.expect(t,valid,"the catalog is read")
-        if r.programs.loaded {gpu.program_catalog_destroy(&r.programs)}
-        r.programs=parsed
-        r.programs.loaded=true
-    }
-    catalog(t,&f.renderer,1)
-    look:=VIEW_VOLUME_DEFAULT
-    look.layers[0]={material={9,0},enabled=true}
-    look.layers[1]={material={9,1},enabled=true}
-    look.layers[2]={material={9,2}}
-    e:=core.create(&f.world.entities)
-    core.add(&f.world.view_volumes,e,look)
-    problems:core.Problems
-    frame :: proc(f:^Sync_Fixture,problems:^core.Problems) {
-        test_world_settle(&f.world)
-        world_sync(&f.world,&f.sync,&f.app,{},problems=problems)
-    }
-    frame(f,&problems)
-    given:=f.renderer.postprocesses
-    testing.expectf(t,given.count==1 && given.entries[0].program==1,"the layer of Grade runs: %d effects, the first of program %d",given.count,given.entries[0].program)
-    reported:=""
-    for &p in problems.entries[:problems.count] {
-        if p.entity==e && base.text_get(p.code[:])=="render.postprocess" {reported=base.text_get(p.text[:])}
-    }
-    testing.expectf(t,reported!="" && problems.count==1,"the enabled layer without a program is a problem of its View_Volume: %q (%d problems)",reported,problems.count)
-    testing.expectf(t,len(reported)>0 && reported[:7]=="layer 1","naming the layer: %q",reported)
-    // The programs are made again: Grade is another id.
-    catalog(t,&f.renderer,4)
-    host.assets_programs_refresh(&f.assets)
-    frame(f,&problems)
-    given=f.renderer.postprocesses
-    testing.expectf(t,given.count==1 && given.entries[0].program==4,"the reloaded program is given again: %d effects, the first of program %d",given.count,given.entries[0].program)
+    testing.expectf(t,len(track.allocation_map)==0,"%d allocations are left after the fixture is gone",len(track.allocation_map))
 }

@@ -146,6 +146,7 @@ renderer_origin_set :: proc(r: ^Renderer, origin: Vec3) {
 		if hw.transform == {} {continue}
 		for row in 0 ..< 3 {hw.transform[row].w = s.instances[i].world[row].w}
 	}
+	for &v in s.viewmodel_instances {if v.drawn != {} {for row in 0 ..< 3 {v.drawn[row, 3] -= d[row]}}}
 	for &item in s.tlas_items {item.min -= d; item.max -= d}
 	for &node in s.tlas_nodes {node.bounds_min -= d; node.bounds_max -= d}
 	if s.has_bounds {s.bounds_min -= d; s.bounds_max -= d}

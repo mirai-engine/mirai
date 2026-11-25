@@ -386,12 +386,12 @@ highlight_pass :: proc(p: ^Pass) {
 // filter over the rest of the drawable. Camera motion changes only this
 // small calculation, never the scene or its acceleration structures. The
 // boxes are where the view of f draws them (drawn_box).
-highlight_screen_bounds :: proc(instances: []Gpu_Instance, f: ^Gpu_Frame, points, render_size: Vec2, glow: f32) -> Vec4 {
+highlight_screen_bounds :: proc(s: ^Scene_State, f: ^Gpu_Frame, points, render_size: Vec2, glow: f32) -> Vec4 {
 	lo, hi := Vec2{1e30, 1e30}, Vec2{-1e30, -1e30}
 	found := false
-	for &inst in instances {
+	for &inst, index in s.instances {
 		if !highlight_drawn(inst.meta.w) || viewmodel_elsewhere(f, &inst) {continue}
-		rect := projected_box(drawn_box(f, &inst), f.view_proj_unjittered, f.camera_position.xyz)
+		rect := projected_box(drawn_box(s, f, u32(index)), f.view_proj_unjittered, f.camera_position.xyz)
 		lo, hi, found = linalg.min(lo, rect.xy), linalg.max(hi, rect.zw), true
 	}
 	if !found {return {1, 1, 0, 0}}
@@ -616,7 +616,7 @@ renderer_frame :: proc(r:^Renderer,frame:Frame_Desc) -> bool {
     recorded_ok:=renderer_commit_geometry(r,cmd,slot) && font_record(r,cmd,slot)
     base.profile_end(zone)
     zone=render_zone_begin(r,"scene tables")
-    recorded_ok=recorded_ok && upload_scene(r,cmd)
+    recorded_ok=recorded_ok && upload_scene(r,cmd) && viewmodels_place(r,cmd,frame)
     base.profile_end(zone)
     zone=render_zone_begin(r,"mesh draws")
     recorded_ok=recorded_ok && decals_order(r,cmd) && mesh_draws_record(r,cmd) && (frame.ui_only || air_frame(r,cmd))
@@ -793,7 +793,6 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
         state.prev_view_proj=state.prev_view_proj*matrix_from_eye(back)
         state.prev_eye=point_carried(view.carried,state.prev_eye)
         state.prev_depth_plane=plane_carried(state.prev_depth_plane,back)
-        state.prev_viewmodel={}
     }
     zone:=render_zone_begin(r,"view plan")
     handle,plan:=view_plan(r,view.pipeline,view.texture==0)
@@ -840,7 +839,6 @@ record_view :: proc(r:^Renderer,cmd:^rhi.Command_List,state:^View_State,view:Fra
     state.generated=shown
     state.prev_view_proj=p.unjittered
     state.prev_eye=p.camera.position
-    state.prev_viewmodel=p.frame.viewmodel
     state.prev_jitter=p.jitter
     state.prev_depth_plane=p.frame.depth_plane
     state.has_previous=true
@@ -953,9 +951,6 @@ view_begin :: proc(p: ^Pass) -> bool {
 	if !p.view.has_previous {p.view.prev_view_proj, p.view.prev_depth_plane, p.view.prev_eye = unjittered, f.depth_plane, camera.position}
 	f.prev_view_proj, f.prev_depth_plane = p.view.prev_view_proj, p.view.prev_depth_plane
 	f.prev_eye = {p.view.prev_eye.x, p.view.prev_eye.y, p.view.prev_eye.z, 0}
-	f.viewmodel = viewmodel_rows(r, camera, forward)
-	if !p.view.has_previous || p.view.prev_viewmodel == {} {p.view.prev_viewmodel = f.viewmodel}
-	f.prev_viewmodel = p.view.prev_viewmodel
 	// The clip plane of the view in place of the near one: what is all behind it is not drawn.
 	if camera.clip_plane != {} {
 		length := linalg.length(camera.clip_plane.xyz)
@@ -1232,7 +1227,7 @@ cull_bind :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats: rhi.Bu
 // the slots of the batches the view draws; by instance, which hands the
 // clusters of their cuts over in chunks; and by cluster over the chunks.
 @(private)
-cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer, cost: rhi.Buffer = 0) {
+cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glass: rhi.Buffer, cost: rhi.Buffer = 0, viewmodel := false) {
 	r, cmd := p.r, p.cmd
 	render_zone(r, "cull")
 	s := &r.scene
@@ -1251,6 +1246,21 @@ cull_record :: proc(p: ^Pass, params: Cull_Params, hiz: rhi.Texture, stats, glas
 	// After cull_bind, which binds the stamps of the pages in its place.
 	if cost != 0 {rhi.cmd_bind_buffer(cmd, SLOT_PASS8, cost)}
 	rhi.cmd_dispatch_indirect(cmd, s.cull_state_buffer, u64(offset_of(Gpu_Cull_State, instance_dispatch)))
+	// The viewmodel of the view, from its list, in front of all that could hide it (viewmodel.odin).
+	if viewmodel {
+		// Without room in the transient ring (set_error says so) the view draws none.
+		count, listed := viewmodel_list(p)
+		if pipeline := pipeline_of(r, .Cull, {CULL_COMP_VIEWMODEL})^; listed && count > 0 && pipeline != 0 {
+			rhi.cmd_bind_pipeline(cmd, pipeline)
+			viewmodel := params
+			viewmodel.occlusion = 0
+			cull_bind(p, viewmodel, hiz, stats)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.viewmodel_list)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS4, glass)
+			rhi.cmd_bind_buffer(cmd, SLOT_PASS6, s.depth_buckets)
+			rhi.cmd_dispatch(cmd, groups(count, 64))
+		}
+	}
 	rhi.cmd_bind_pipeline(cmd, r.pipelines[.Cull_Clusters])
 	cull_bind(p, params, hiz, stats)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS3, s.cluster_candidate_buffer)
@@ -1284,7 +1294,7 @@ pass_gbuffer :: proc(p: ^Pass) -> bool {
 	rhi.cmd_fill_buffer(cmd, p.view.glass_dispatch, 0, 16, 0)
 	if !cull_reset(r, cmd, p.instance_count) {return false}
 	if threads > 0 {
-		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch, p.cost)
+		cull_record(p, {phase = 0, occlusion = 1 if occlusion && t.hiz_valid else 0, hiz_levels = t.hiz_levels, glass_groups = glass_groups}, t.hiz[p.previous], r.stats_buffer, p.view.glass_dispatch, p.cost, viewmodel = true)
 	}
 	cull_bins_dispatch(r, cmd, 0)
 	rhi.cmd_timestamp(cmd, "visible triangles")
@@ -1853,7 +1863,7 @@ pass_output :: proc(p: ^Pass, frame: Frame_Desc, ui_written: ^int, overlays := t
 	highlight_bounds := Vec4{1, 1, 0, 0}
 	outline := highlight_drawn_in(p) && highlight_outlined(r)
 	glow := max(r.highlight.width, r.outlines.width)
-	if s.highlighted > 0 && !p.texture {highlight_bounds = highlight_screen_bounds(s.instances[:], &p.frame, points, {f32(t.highlight_width), f32(t.highlight_height)}, glow)}
+	if s.highlighted > 0 && !p.texture {highlight_bounds = highlight_screen_bounds(s, &p.frame, points, {f32(t.highlight_width), f32(t.highlight_height)}, glow)}
 	if outline {
 		rhi.cmd_timestamp(cmd, "highlight filter")
 		highlight_filter_pass(p, points, highlight_bounds)

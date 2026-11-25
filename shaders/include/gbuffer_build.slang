@@ -35,7 +35,6 @@ struct Gbuffer_Cluster {
     float along;
     uint flags;
     bool still;
-    bool viewmodel; // drawn as the viewmodel of the view (view_viewmodel), where it draws it
 #if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)
     float3 pivot;         // of the instance, in the world
     float4 moved, before; // mirai_batch_instance now and in the frame before; zero: at rest
@@ -61,8 +60,7 @@ Gbuffer_Cluster gbuffer_cluster_of(uint index, Instance inst, Mesh mesh, uint ma
     float fade = instance_fade(index, inst);
     k.flags = ((inst.meta.w >> INSTANCE_HIGHLIGHT_SHIFT) & RASTER_HIGHLIGHT_MASK)
         | (fade > 0.0 ? RASTER_FLAG_FADING | (uint(saturate(fade) * 65535.0 + 0.5) << RASTER_FADE_SHIFT) : 0u);
-    k.viewmodel = view_viewmodel(inst);
-    k.still = k.posed == INVALID && k.previous == INVALID && !k.viewmodel
+    k.still = k.posed == INVALID && k.previous == INVALID
         && all(inst.world[0] == inst.prev_world[0]) && all(inst.world[1] == inst.prev_world[1]) && all(inst.world[2] == inst.prev_world[2]);
 #if defined(MIRAI_BATCHES) && defined(MIRAI_HOOK_VERTEX)
     k.pivot = float3(inst.world[0].w, inst.world[1].w, inst.world[2].w);
@@ -124,10 +122,6 @@ Gbuffer_Corner gbuffer_local_place(Instance inst, Mesh mesh, Cluster c, Cluster_
     p.offset = k.along != 0.0 ? block_island_offset(mesh, c, b, p.local, k.along) : float3(0.0);
     p.rest = transform_point(inst.world, p.v.position + p.offset);
     p.world = gbuffer_hooked(k, p.rest, p.v.color, true);
-    if (k.viewmodel) {
-        p.world = viewmodel_place(p.world, true);
-        p.rest = p.world;
-    }
     return p;
 }
 Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint corner) {
@@ -139,14 +133,7 @@ Gbuffer_Corner gbuffer_corner_place(Instance inst, Mesh mesh, Cluster c, Cluster
 float3 gbuffer_corner_world_previous(Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, Gbuffer_Corner p) {
     if (k.still) return p.world;
     float3 before = block_position_previous(mesh, c, b, p.local, k.previous) + p.offset;
-    float3 world = gbuffer_hooked(k, transform_point(inst.prev_world, before), p.v.color, false);
-    return k.viewmodel ? viewmodel_place(world, false) : world;
-}
-
-// The normal and the tangent of a corner of the viewmodel of the view where it draws it.
-void gbuffer_viewmodel_frame(inout float3 normal, inout float4 tangent) {
-    normal = normalize(viewmodel_normal(normal));
-    if (any(tangent.xyz != 0.0)) tangent.xyz = normalize(viewmodel_along(tangent.xyz));
+    return gbuffer_hooked(k, transform_point(inst.prev_world, before), p.v.color, false);
 }
 
 Gbuffer_Vertex gbuffer_local_build(uint index, Instance inst, Mesh mesh, Cluster c, Cluster_Block b, Gbuffer_Cluster k, uint local) {
@@ -155,7 +142,6 @@ Gbuffer_Vertex gbuffer_local_build(uint index, Instance inst, Mesh mesh, Cluster
     Mesh_Point v = p.v;
     output.out_normal = transform_normal(inst.world_inv, v.normal);
     output.out_tangent = instance_tangent(inst, k.mirrored, v.tangent);
-    if (k.viewmodel) gbuffer_viewmodel_frame(output.out_normal, output.out_tangent);
     output.out_material = k.material;
     output.out_color = (k.tinted ? v.color.rgb : float3(1.0)) * inst.tint.rgb;
     output.out_vertex_color = v.color;

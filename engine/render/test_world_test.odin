@@ -85,6 +85,8 @@ sync_fixture_destroy :: proc(f:^Sync_Fixture) {
     host.extras_free(&f.app.extras)
     host.assets_destroy(&f.assets)
     gpu.scene_destroy(&f.renderer)
+    // What renderer_destroy frees of a renderer without a device: the catalog a test gave it.
+    gpu.program_catalog_destroy(&f.renderer.programs)
 }
 
 // A cube of the fixture's world at x.

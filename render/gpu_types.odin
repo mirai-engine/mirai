@@ -72,12 +72,6 @@ Gpu_Frame :: struct {
 	moved:            [4]u32, // what casts shadows and changed since the frame before (Occluder_Changes): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
-	// What takes a place of the viewmodel of the view (INSTANCE_VIEWMODEL of
-	// its body), from its eye, to where it draws it, from its eye: rows, and in the
-	// w of the first what a normal of it gains along camera_forward per unit along
-	// it (viewmodel.odin). The identity for a view that draws none.
-	viewmodel:        [3]Vec4,
-	prev_viewmodel:   [3]Vec4, // the same in the frame before, from prev_eye
 	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
 	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the texels of their atlas from top to bottom (abi.SHADOW_POOL across) while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
