@@ -20,8 +20,8 @@ Both flag a material, effect or post-process layer whose program the shaders do 
 (`material.program_missing`, `render.particle_program`, `render.post_process_program`): it draws
 nothing and reports nothing else. They flag a mesh grown evenly 30 times its size or more, a
 source in other units (`render.scale_far`, the import's rule), or 10 times larger or smaller than
-the others of its mesh (`render.scale_odd`), and an attachment whose drawn box is farther from its bone than a quarter of
-its size (`animation.attachment_far`).
+the others of its mesh (`render.scale_odd`), and an attachment whose drawn box is farther from its
+bone than a quarter of its size (`animation.attachment_far`).
 
 `play.audit` adds live UI cursor-capture and keyboard-focus checks, NaN/stuck checks, GPU/CPU
 frame budget checks and, with a GPU, the frame of the game measured:
