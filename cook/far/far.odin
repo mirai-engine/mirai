@@ -84,6 +84,7 @@ Far_Build :: struct {
     materials:map[base.Asset_Id]asset.Material_Info,
     textures:map[base.Asset_Id]^asset.Far_Texture,
     starved:bool, // something it read found no memory: no mesh is made of it
+    untextured:bool, // it asks for no texture: what it reads is the shape of the scene and its materials (far_flat_blends)
 }
 
 // A build of the far mesh of scene, in allocator (an arena: far_destroy
@@ -164,7 +165,7 @@ far_wanted :: proc(b:^Far_Build,out:^[dynamic]base.Asset_Id) {
             material:=part.materials[s] if s<abi.MATERIAL_SLOTS else {}
             if material=={} {material=slot.material}
             far_ask(b,material,out)
-            if info,known:=b.materials[material];known {
+            if info,known:=b.materials[material];known && !b.untextured {
                 far_ask(b,info.maps.base_color.texture,out)
                 far_ask(b,info.maps.metallic_roughness.texture,out)
                 far_ask(b,info.maps.emission.texture,out)
@@ -307,21 +308,78 @@ far_cook :: proc(registry:^asset.Registry,scene:base.Asset_Id,out:^asset.Mesh_Ge
     b:Far_Build
     far_init(&b,scene,base.dynamic_arena_allocator(&arena))
     defer far_destroy(&b)
+    far_registry_read(registry,&b)
+    return far_make(&b,out,allocator)
+}
+
+// A part no thicker than this, or than a fiftieth of its width, is flat, m.
+FAR_FLAT :: f32(0.01)
+// How near the box of an opaque part a flat one lies on it, m.
+FAR_ON :: f32(0.02)
+
+// The static parts of scene, with what it references, that are flat, of
+// blended materials without transmission, and lie on the box of an opaque
+// part: surfaces drawn over others that a material of Alpha_Mode.Decal draws
+// as part of them, lit and shadowed with them (mirai scene check).
+far_flat_blends :: proc(registry:^asset.Registry,scene:base.Asset_Id) -> (count:int) {
+    arena:mem.Dynamic_Arena
+    mem.dynamic_arena_init(&arena,context.allocator,context.allocator)
+    defer mem.dynamic_arena_destroy(&arena)
+    b:Far_Build
+    far_init(&b,scene,base.dynamic_arena_allocator(&arena))
+    defer far_destroy(&b)
+    b.untextured=true
+    far_registry_read(registry,&b)
+    context.allocator=b.allocator
+    parts:=make([dynamic]Far_Gathered)
+    far_expand(&b,b.scene,linalg.MATRIX4F32_IDENTITY,0,&parts)
+    Box :: struct {low,high:[3]f32}
+    flat,opaque:=make([dynamic]Box),make([dynamic]Box)
+    for part in parts {
+        m,read:=b.meshes[part.mesh]
+        if !read {continue}
+        box:=Box{max(f32),-max(f32)}
+        for corner in 0..<8 {
+            local:=[3]f32{m.view.bounds_max.x if corner&1!=0 else m.view.bounds_min.x,m.view.bounds_max.y if corner&2!=0 else m.view.bounds_min.y,m.view.bounds_max.z if corner&4!=0 else m.view.bounds_min.z}
+            at:=(part.placement*[4]f32{local.x,local.y,local.z,1}).xyz
+            box.low,box.high=linalg.min(box.low,at),linalg.max(box.high,at)
+        }
+        blended,solid:=false,len(m.view.slots)==0
+        for slot,s in m.view.slots {
+            material:=part.materials[s] if s<abi.MATERIAL_SLOTS else {}
+            if material=={} {material=slot.material}
+            info,known:=b.materials[material]
+            if !known {info=asset.MATERIAL_DEFAULTS}
+            if asset.alpha_blended(info.alpha_mode) {blended||=info.transmission<=0} else if info.alpha_mode!=.Decal {solid=true}
+        }
+        size:=box.high-box.low
+        if blended && !solid && min(size.x,size.y,size.z)<=max(FAR_FLAT,max(size.x,size.y,size.z)/50) {append(&flat,box)} else if solid {append(&opaque,box)}
+    }
+    for f in flat {
+        for o in opaque {
+            if f.low.x<=o.high.x+FAR_ON && f.low.y<=o.high.y+FAR_ON && f.low.z<=o.high.z+FAR_ON && f.high.x>=o.low.x-FAR_ON && f.high.y>=o.low.y-FAR_ON && f.high.z>=o.low.z-FAR_ON {count+=1;break}
+        }
+    }
+    return
+}
+
+// Reads from a registry what a build asks for, until it asks for nothing.
+@(private)
+far_registry_read :: proc(registry:^asset.Registry,b:^Far_Build) {
     wanted:=make([dynamic]base.Asset_Id,context.temp_allocator)
     for {
         clear(&wanted)
-        far_wanted(&b,&wanted)
+        far_wanted(b,&wanted)
         if len(wanted)==0 {break}
         for id in wanted {
             record,found:=asset.registry_find(registry,id)
             if !found {
-                far_take(&b,id,0,nil)
+                far_take(b,id,0,nil)
                 continue
             }
             file:asset.Asset
             opened:=asset.asset_load(&file,asset.registry_file_path(registry,record.path,context.temp_allocator),b.allocator)==.None
-            far_take(&b,id,record.content_hash,opened?&file:nil)
+            far_take(b,id,record.content_hash,opened?&file:nil)
         }
     }
-    return far_make(&b,out,allocator)
 }

@@ -12,6 +12,9 @@ import mm "mirai:std/math"
 @(private="file") FAR_INNER :: base.Asset_Id{0xfa,2}
 @(private="file") FAR_SHEET :: base.Asset_Id{0xfa,3}
 @(private="file") FAR_RED :: base.Asset_Id{0xfa,4}
+@(private="file") FAR_DECALS :: base.Asset_Id{0xfa,5}
+@(private="file") FAR_BLEND :: base.Asset_Id{0xfa,6}
+@(private="file") FAR_GLASS :: base.Asset_Id{0xfa,7}
 
 @(private="file")
 Far_Test_Body :: struct {kind:u8}
@@ -79,6 +82,25 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     asset.scene_set(&inner,1,"Mesh_Renderer",&Far_Renderer{mesh=FAR_SHEET})
     testing.expect_value(t,asset.scene_save(&inner,files[1].path),asset.Error.None)
     asset.scene_destroy(&inner)
+    // On a red sheet, a blended one lies flat and another floats above; a glass
+    // one lies on it too: only the first is a decal drawn as a blend.
+    blend,glass:=asset.MATERIAL_DEFAULTS,asset.MATERIAL_DEFAULTS
+    blend.alpha_mode,blend.opacity=.Blend,0.5
+    glass.alpha_mode,glass.transmission=.Blend,1
+    testing.expect_value(t,asset.material_save(fmt.tprintf("%s/blend.mat",folder),&types,{id=FAR_BLEND,info=blend}),asset.Error.None)
+    testing.expect_value(t,asset.material_save(fmt.tprintf("%s/glass.mat",folder),&types,{id=FAR_GLASS,info=glass}),asset.Error.None)
+    decals:asset.Scene;asset.scene_init(&decals,&types,FAR_DECALS)
+    for material,id in ([4]base.Asset_Id{{},FAR_BLEND,FAR_BLEND,FAR_GLASS}) {
+        entity:=base.Entity_Id(id+1)
+        asset.scene_entity_add(&decals,entity,0,fmt.tprintf("sheet %d",id))
+        pose:=core.Transform{position={0,5 if id==2 else 0.01*f32(id),0},rotation=1,scale={1,1,1}}
+        asset.scene_set(&decals,entity,"Transform",&pose)
+        renderer:=Far_Renderer{mesh=FAR_SHEET}
+        renderer.materials[0]=material
+        asset.scene_set(&decals,entity,"Mesh_Renderer",&renderer)
+    }
+    testing.expect_value(t,asset.scene_save(&decals,fmt.tprintf("%s/decals.scene",folder)),asset.Error.None)
+    asset.scene_destroy(&decals)
 
     registry:asset.Registry
     asset.registry_init(&registry,folder)
@@ -98,4 +120,6 @@ a_far_mesh_is_made_of_the_static_meshes_of_a_scene_and_of_the_scenes_it_referenc
     }
     // A scene without static meshes has none.
     testing.expect(t,!far_cook(&registry,{0xfa,9},&g,context.temp_allocator),"a scene that is not there gives none")
+    testing.expect_value(t,far_flat_blends(&registry,FAR_DECALS),1)
+    testing.expect_value(t,far_flat_blends(&registry,FAR_ROOT),0)
 }
