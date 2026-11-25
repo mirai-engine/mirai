@@ -1,6 +1,7 @@
 {
   "version": 2,
   "packages": [
-    {"id": "ea1313ae2ad84fe489d5bf4061c5fda9", "manifest": "620cee4bde4680369a0b50b311cf10c34d15bd0e34c1d94962fe5719f592ef14", "folder": "arena", "assets": [], "written": []}
+    {"id": "ea1313ae2ad84fe489d5bf4061c5fda9", "manifest": "620cee4bde4680369a0b50b311cf10c34d15bd0e34c1d94962fe5719f592ef14", "folder": "arena", "assets": [], "written": []},
+    {"id": "e0e6902b23dfea13e6eb389518aa4930", "manifest": "88043f8c7d9cb9c644519b2c042b776bbec56e176926c13c58c6cc7f14bdb313", "folder": "weapon", "assets": [], "written": []}
   ]
 }

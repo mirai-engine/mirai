@@ -2,12 +2,17 @@ package main
 
 import "core:fmt"
 import "core:math"
+import "core:math/linalg"
 import "core:os"
 import "mirai:asset"
 import importer "mirai:cook/import"
+import lib "mirai:std/anim"
+import "mirai:std/base"
+import mm "mirai:std/math"
 
-// Writes what no art source holds: a badge (.tex) and a hum (.sound, imported
-// from the WAV this writes into source/). The scene, the prefabs and the .ui of
+// Writes what no art source holds: a badge (.tex), a hum and a shot (.sound,
+// imported from the WAVs this writes), the rig of the target dummy (.skeleton,
+// .mesh and its sway, .anim) and the reload clip of the rifle (.anim). The scene, the prefabs and the .ui of
 // assets/ are their own source: the API and the editor edit those files and
 // nothing here writes them. mirai content runs it.
 
@@ -15,6 +20,7 @@ PROJECT :: "game_content"
 BADGE_SIZE :: 64
 HUM_RATE :: 22050
 HUM_SECONDS :: 2
+SHOT_FRAMES :: HUM_RATE/4 // a quarter of a second
 
 // An orange disc with a white core, transparent around it.
 write_badge :: proc(c:^asset.Content) {
@@ -35,29 +41,30 @@ write_badge :: proc(c:^asset.Content) {
         {id=id,width=BADGE_SIZE,height=BADGE_SIZE,format=.RGBA8,flags={.Srgb},mips={pixels}}))
 }
 
-// Two seconds of a low hum that loops without a click: every partial fits a
-// whole number of times. The WAV is the source; the .sound is its import.
-write_hum :: proc(c:^asset.Content) {
-    FRAMES :: HUM_RATE*HUM_SECONDS
-    file:=make([]u8,44+FRAMES*2,context.temp_allocator)
+// A mono 16-bit WAV.
+@(private="file")
+wav_of :: proc(samples:[]i16) -> []u8 {
+    file:=make([]u8,44+len(samples)*2,context.temp_allocator)
     le :: proc(file:[]u8,at:int,value:u32,size:int) {for i in 0..<size {file[at+i]=u8(value>>uint(8*i))}}
     copy(file,"RIFF");le(file,4,u32(len(file)-8),4);copy(file[8:],"WAVEfmt ")
     le(file,16,16,4);le(file,20,1,2);le(file,22,1,2);le(file,24,HUM_RATE,4);le(file,28,HUM_RATE*2,4);le(file,32,2,2);le(file,34,16,2)
-    copy(file[36:],"data");le(file,40,FRAMES*2,4)
-    for frame in 0..<FRAMES {
-        t:=f64(frame)/HUM_RATE
-        wave:=0.5*math.sin(2*math.PI*110*t)+0.25*math.sin(2*math.PI*220*t)+0.12*math.sin(2*math.PI*330*t)
-        tremolo:=0.75+0.25*math.sin(2*math.PI*1.5*t)
-        le(file,44+frame*2,u32(u16(i16(wave*tremolo*20000))),2)
-    }
+    copy(file[36:],"data");le(file,40,u32(len(samples)*2),4)
+    for sample,frame in samples {le(file,44+frame*2,u32(u16(sample)),2)}
+    return file
+}
+
+// Writes a WAV source and imports it to the .sound next to it.
+@(private="file")
+sound_write :: proc(c:^asset.Content,path:string,samples:[]i16) {
+    file:=wav_of(samples)
     // Written only when it differs, so that the import of an unchanged source is the same file.
-    existing,read_error:=os.read_entire_file("assets/arena/hum.wav",context.temp_allocator)
-    if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file("assets/arena/hum.wav",file)!=nil {
-        fmt.eprintln("content: assets/arena/hum.wav could not be written")
+    existing,read_error:=os.read_entire_file(path,context.temp_allocator)
+    if (read_error!=nil || string(existing)!=string(file)) && os.write_entire_file(path,file)!=nil {
+        fmt.eprintfln("content: %s could not be written",path)
         c.failed=true
         return
     }
-    report,error:=importer.import_sound("assets/arena/hum.wav",{},{root="."})
+    report,error:=importer.import_sound(path,{},{root="."})
     if error.code!=.None {
         fmt.eprintfln("content: %s",error.message)
         c.failed=true
@@ -67,13 +74,133 @@ write_hum :: proc(c:^asset.Content) {
     fmt.printfln("imported %s",report.assets[0].path)
 }
 
+// Two seconds of a low hum that loops without a click: every partial fits a
+// whole number of times. The WAV is the source; the .sound is its import.
+write_hum :: proc(c:^asset.Content) {
+    samples:=make([]i16,HUM_RATE*HUM_SECONDS,context.temp_allocator)
+    for &sample,frame in samples {
+        t:=f64(frame)/HUM_RATE
+        wave:=0.5*math.sin(2*math.PI*110*t)+0.25*math.sin(2*math.PI*220*t)+0.12*math.sin(2*math.PI*330*t)
+        tremolo:=0.75+0.25*math.sin(2*math.PI*1.5*t)
+        sample=i16(wave*tremolo*20000)
+    }
+    sound_write(c,"assets/arena/hum.wav",samples)
+}
+
+// A shot: a crack of noise over a thump, gone in a quarter of a second. The
+// noise is a fixed sequence, so the file is the same every time.
+write_shot :: proc(c:^asset.Content) {
+    samples:=make([]i16,SHOT_FRAMES,context.temp_allocator)
+    state:=u64(0x5307)
+    for &sample,frame in samples {
+        t:=f64(frame)/HUM_RATE
+        noise:=f64(base.splitmix_next(&state)>>40)/f64(1<<24)*2-1
+        level:=f32(0.8*noise*math.exp(-t*40)+0.6*math.sin(2*math.PI*70*t)*math.exp(-t*18))
+        sample=i16(clamp(level,-1,1)*20000)
+    }
+    sound_write(c,"assets/weapon/shot.wav",samples)
+}
+
+// The target dummy: hips, spine and head bones, a box on each bone (legs on
+// the hips) and a sway of its spine that loops. Its hit zones are rows of
+// assets/weapon/zones.records on those bones.
+DUMMY_BONES :: [3]struct {name,path:string,parent:i32,at:[3]f32}{
+    {"hips","hips",-1,{0,0.95,0}},
+    {"spine","hips/spine",0,{0,0.15,0}},
+    {"head","hips/spine/head",1,{0,0.5,0}},
+}
+
+write_dummy :: proc(c:^asset.Content) {
+    skeleton_id:=asset.content_id(PROJECT,"skeleton","dummy")
+    bones:[3]asset.Skeleton_Bone
+    world:[3][3]f32
+    for b,i in DUMMY_BONES {
+        bones[i]={parent=b.parent,translation=b.at,rotation=1,scale={1,1,1},target=base.name_hash(b.path)}
+        base.text_set(bones[i].name[:],b.name);base.text_set(bones[i].path[:],b.path)
+        world[i]=b.at+(world[b.parent] if b.parent>=0 else {})
+    }
+    asset.content_check(c,"assets/target/dummy.skeleton",asset.skeleton_save("assets/target/dummy.skeleton",&c.types,{id=skeleton_id,bones=bones[:]}))
+    // A box per bone, in the space the skeleton is bound in.
+    Box :: struct {center,half:[3]f32,bone:u16,color:u32}
+    boxes:=[3]Box{
+        {{0,0.47,0},{0.18,0.47,0.12},0,0xff3a4a5a},
+        {{0,1.32,0},{0.24,0.24,0.14},1,0xff4a6a8a},
+        {{0,1.72,0},{0.13,0.14,0.13},2,0xff8aa0c0},
+    }
+    vertices:=make([dynamic]asset.Vertex,context.temp_allocator)
+    skin:=make([dynamic]asset.Skin_Vertex,context.temp_allocator)
+    indices:=make([dynamic]u32,context.temp_allocator)
+    faces:=[6][3]f32{{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}}
+    for box in boxes {
+        for n in faces {
+            // Two axes across the face with u x v along n: its corners go round counterclockwise
+            // seen from outside.
+            u:=[3]f32{n.y,n.z,n.x}
+            v:=linalg.cross(n,u)
+            first:=u32(len(vertices))
+            for corner in ([4][2]f32{{-1,-1},{1,-1},{1,1},{-1,1}}) {
+                p:=box.center+(n+u*corner.x+v*corner.y)*box.half
+                append(&vertices,asset.Vertex{position=p,normal=mm.normal_pack(n),color=box.color})
+                influence:asset.Skin_Vertex
+                influence.joints[0],influence.weights[0]=box.bone,255
+                append(&skin,influence)
+            }
+            append(&indices,first,first+1,first+2,first,first+2,first+3)
+        }
+    }
+    joints:[3]asset.Rig_Joint
+    for i in 0..<3 {joints[i]={node=u32(i),inverse_bind=mm.transform_matrix({-world[i],1,1})}}
+    desc:=asset.Mesh_Desc{id=asset.content_id(PROJECT,"mesh","dummy"),skeleton=skeleton_id,joints=joints[:]}
+    if !asset.mesh_build({vertices=vertices[:],skin=skin[:],flags={.Has_Colors}},indices[:],nil,&desc.geometry,context.temp_allocator) {
+        fmt.eprintln("content: the mesh of the dummy could not be built")
+        c.failed=true
+        return
+    }
+    asset.content_check(c,"assets/target/dummy.mesh",asset.mesh_save("assets/target/dummy.mesh",&c.types,desc))
+    sway:=[]lib.Keyframe{
+        {time=0,value=lib.quat_vec4(1)},
+        {time=1,value=lib.quat_vec4(mm.quat_axis_angle({0,0,1},0.12))},
+        {time=2,value=lib.quat_vec4(1)},
+        {time=3,value=lib.quat_vec4(mm.quat_axis_angle({0,0,1},-0.12))},
+        {time=4,value=lib.quat_vec4(1)},
+    }
+    tracks:=[1]asset.Animation_Track_Desc{{target="hips/spine",property=.Rotation,keys=sway}}
+    clip:=asset.Animation_Clip_Desc{name="sway",tracks=tracks[:],skeleton=skeleton_id}
+    asset.content_check(c,"assets/target/dummy.anim",asset.animation_save("assets/target/dummy.anim",&c.types,{id=asset.content_id(PROJECT,"animation","dummy"),clips={clip}}))
+}
+
+// The reload of the rifle, a clip of the rifle itself: its magazine drops,
+// hides while the hand is away and comes back up (the Hidden component, given
+// and taken by a track). The ability reload plays it (rifle.records).
+write_rifle :: proc(c:^asset.Content) {
+    rest:=[3]f32{0,-0.1,-0.15}
+    away:=rest+{0,-0.3,0.1}
+    drop:=[]lib.Keyframe{
+        {time=0,value={rest.x,rest.y,rest.z,0}},{time=0.25,value={away.x,away.y,away.z,0}},
+        {time=0.75,value={away.x,away.y,away.z,0}},{time=1,value={rest.x,rest.y,rest.z,0}},
+    }
+    hidden:=[]lib.Keyframe{
+        {time=0,value={0,0,0,0},interpolation=.Step},{time=0.3,value={1,0,0,0},interpolation=.Step},
+        {time=0.7,value={0,0,0,0},interpolation=.Step},{time=1,value={0,0,0,0}},
+    }
+    tracks:=[2]asset.Animation_Track_Desc{
+        {target="Magazine",property=.Position,keys=drop},
+        {target="Magazine/@field/Hidden",property=.Float,keys=hidden},
+    }
+    clip:=asset.Animation_Clip_Desc{name="reload",tracks=tracks[:]}
+    asset.content_check(c,"assets/weapon/rifle.anim",asset.animation_save("assets/weapon/rifle.anim",&c.types,{id=asset.content_id(PROJECT,"animation","rifle"),clips={clip}}))
+}
+
 main :: proc() {
     c:asset.Content
     asset.content_init(&c,PROJECT)
     defer asset.content_destroy(&c)
-    for folder in ([]string{"assets/arena","assets/hud"}) {os.make_directory_all(folder)}
+    for folder in ([]string{"assets/arena","assets/hud","assets/target","assets/weapon"}) {os.make_directory_all(folder)}
     write_badge(&c)
     write_hum(&c)
+    write_shot(&c)
+    write_dummy(&c)
+    write_rifle(&c)
     free_all(context.temp_allocator)
     if c.failed {os.exit(1)}
 }

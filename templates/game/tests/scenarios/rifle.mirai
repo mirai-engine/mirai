@@ -1,0 +1,38 @@
+{
+  "scene": "arena/main.scene",
+  "steps": [
+    {"name": "the game opens", "method": "play.step", "params": {"for": 30}},
+    {"name": "Enter presses Play", "method": "play.step",
+     "params": {"segments": [{"for": 2, "keys": ["Enter"]}, {"for": 10}]}},
+    {"name": "the rifle is in the player's hands and the dummy's zones are placed", "method": "play.check", "params": {"conditions": [
+      {"entity": "Rifle", "field": "Ability_Wielded", "compare": "Exists"},
+      {"entity": "Target dummy", "field": "Hit_Zone_Pose", "compare": "Exists"},
+      {"entity": "Rifle", "field": "Ability_State.bases.0", "compare": "Equal", "number": 30}]}},
+
+    {"name": "aim at the chest", "method": "play.step",
+     "params": {"look_at": {"position": [2.5, 1.3, 1.5]}, "for": 20}},
+    {"name": "fire at the chest", "method": "play.step",
+     "params": {"segments": [{"for": 2, "mouse_buttons": ["Left"]}, {"for": 20}]}},
+    {"name": "the body takes 25 and the magazine a round", "method": "play.check", "params": {"conditions": [
+      {"entity": "Target dummy", "field": "Ability_State.bases.0", "compare": "Equal", "number": 75},
+      {"entity": "Rifle", "field": "Ability_State.bases.0", "compare": "Equal", "number": 29}]}},
+
+    {"name": "aim at the head", "method": "play.step",
+     "params": {"look_at": {"position": [2.5, 1.72, 1.5]}, "for": 20}},
+    {"name": "fire at the head", "method": "play.step",
+     "params": {"segments": [{"for": 2, "mouse_buttons": ["Left"]}, {"for": 20}]}},
+    {"name": "the head takes the headshot row: 100", "method": "play.check", "params": {"conditions": [
+      {"entity": "Target dummy", "field": "Ability_State.bases.0", "compare": "Equal", "number": 0},
+      {"entity": "Rifle", "field": "Ability_State.bases.0", "compare": "Equal", "number": 28}]}},
+
+    {"name": "R reloads: the clip of the rifle hides its magazine", "method": "play.step",
+     "params": {"segments": [{"for": 2, "keys": ["R"]}, {"for": 30}]}},
+    {"name": "the magazine is away", "method": "play.check", "params": {"conditions": [
+      {"entity": "Magazine", "field": "Hidden", "compare": "Exists"}]}},
+    {"name": "the reload ends", "method": "play.step", "params": {"for": "1s"}},
+    {"name": "the magazine is back and full", "method": "play.check", "params": {"conditions": [
+      {"entity": "Magazine", "field": "Hidden", "compare": "Gone"},
+      {"entity": "Rifle", "field": "Ability_State.bases.0", "compare": "Equal", "number": 30},
+      {"no_problems": true}]}}
+  ]
+}

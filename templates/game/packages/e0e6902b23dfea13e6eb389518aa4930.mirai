@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "id": "e0e6902b23dfea13e6eb389518aa4930",
+  "name": "shot",
+  "catalog_path": "Game/weapon",
+  "origin": {"path": "assets/weapon/shot.wav", "folder": false, "importer": "sound"},
+  "identity": "133a475b1a5eefcd44a756d3ece8fcb2c965431a8250bda8507f39382bb92172",
+  "inputs": [],
+  "assets": [
+    {"kind": "SND", "name": "shot", "index": 0, "id": "aa71d5d260b7a5d7b674e38860732456"}
+  ]
+}
