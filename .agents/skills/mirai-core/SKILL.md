@@ -19,7 +19,7 @@ A game is a struct in memory and a list of functions that transform it
 - Finding an entity by `Id` and giving new `Id`s:
   [identity](references/core.md#persistent-identity).
 - Queues, requests and events: [queues](references/core.md#queues-and-references).
-- Waiting some seconds and cooldowns (`deadline`, `due`):
+- Waiting some seconds, cooldowns and countdowns (`Cooldown`, `Countdown`, `deadline`, `due`):
   [waiting](references/core.md#waiting).
 - `Time`, `Frame_Time`, `Input`, `View`, `Jumps`, pause and slow motion (`Clock`) and an entity
   that keeps its pace in it (`Own_Pace`, bullet time):
@@ -102,8 +102,8 @@ A game is a struct in memory and a list of functions that transform it
    functions from what they read, write, push and take; `after="a b"` or `before="c"` say only
    what the parameters do not ([order](references/generator.md#order)). Function names are unique
    across the whole world. What only a lone game or a server decides carries `server`.
-8. What waits keeps the tick it waits for: `core.deadline` and `core.due`, or a request pushed
-   with `core.later` ([waiting](references/core.md#waiting)).
+8. What waits keeps the tick it waits for: a `core.Cooldown` or `core.Countdown` field of a
+   component, or a request pushed with `core.later` ([waiting](references/core.md#waiting)).
 9. `mirai generate` lists the generator errors; the generated code is read in
    `<project>/.mirai/gen/` and is never edited.
 
@@ -139,8 +139,9 @@ A game is a struct in memory and a list of functions that transform it
   it, and whoever writes a table or a storage before whoever reads it. `after` and `before` name
   functions of the engine or of the plugins a library depends on, only for what its parameters do
   not say; a cycle is a generator error that one name settles.
-- **A wait is a tick.** What waits keeps the tick it is due at (`core.deadline`, `core.due`), or
-  is a request that carries it (`core.later`, `core.take_due`): plain data that a rollback keeps,
+- **A wait is a tick.** What waits keeps the tick it is due at in a named field (`core.Cooldown`,
+  `core.Countdown`, made of `core.deadline` and `core.due`), never a numbered slot, or is a request
+  that carries it (`core.later`, `core.take_due`): plain data that a rollback keeps,
   the same seconds at any tick rate. No countdown written every tick, no count of ticks in code,
   no coroutines ([waiting](references/core.md#waiting)).
 - **A function touches only what it receives.** Its parameters say what it reads and writes:
@@ -280,7 +281,7 @@ A game is a struct in memory and a list of functions that transform it
 - `Id` index or new `Id`s: also `mirai test engine/save` (borrowed `Id`s),
   `plugins/multiplayer/runtime` (rollback and adoption), `plugins/destruct/runtime` (groups) and
   `editor` (API and collaboration).
-- Deadlines: `mirai test core` (`deadline_test.odin`) and
+- Deadlines, cooldowns and countdowns: `mirai test core` (`deadline_test.odin`) and
   `engine/save` (a checkpoint brings the clock back).
 - Authority and requested places: `mirai test core` (`place_test.odin`) and
   `plugins/multiplayer/runtime` (`authority_test.odin`).

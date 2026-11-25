@@ -135,6 +135,8 @@ a_free_orbit_turned_by_its_player_moves_the_body_alike_on_both_ends :: proc(t:^t
     server,client:=&worlds[0],&worlds[1]
     connected:Connection
     drove,held:=0,0
+    // A quarter turn to the right, a little up, from a camera behind and above the body.
+    sent:=inp.Seat_View{yaw=-math.PI/2,pitch=0.25,eye={0,1.5,2},kind=.Apart}
     for tick in 1..<360 {
         now:=f64(tick)/60
         wire.sim_network_advance(&network,now)
@@ -160,7 +162,7 @@ a_free_orbit_turned_by_its_player_moves_the_body_alike_on_both_ends :: proc(t:^t
         client.input.keys_down={}
         client.slot_views.views[0]={}
         if driving {
-            client.slot_views.views[0]={yaw=-math.PI/2,kind=.Apart}
+            client.slot_views.views[0]=sent
             drove+=1
             if drove>60 && held<60 {
                 client.input.keys_down={.W}
@@ -181,6 +183,25 @@ a_free_orbit_turned_by_its_player_moves_the_body_alike_on_both_ends :: proc(t:^t
     // A second at VIEW_SPEED along +X, the input delay and the lead aside.
     testing.expectf(t,server_pose.position.x>0.8*VIEW_SPEED && abs(server_pose.position.z)<0.01,"the server moved the body along where its player looked: %v",server_pose.position)
     testing.expectf(t,linalg.length(server_pose.position-client_pose.position)<0.01,"server %v client %v",server_pose.position,client_pose.position)
+    // The server aims for the remote seat along the view its client sent, from where its camera was,
+    // as the client aims for its own: its cameras never turned.
+    aim_of :: proc(w:^View_Net_World,body:core.Entity) -> (origin,direction:[3]f32,ok:bool) {
+        origin,direction,_,ok=inp.aim({core.ref(&w.seat_state),core.ref(&w.seat_runtime),core.read(&w.worlds),core.read(&w.verticals)},body)
+        return
+    }
+    // Where each body is, as propagation leaves it.
+    for &world,index in worlds {
+        pose,_:=core.get(&world.transforms,bodies[index])
+        core.add(&world.worlds,bodies[index],core.World_Transform{transform={position=pose.position,rotation=pose.rotation,scale=1}})
+        core.settle(&info,&world,nil)
+    }
+    server_origin,server_direction,server_aimed:=aim_of(server,bodies[0])
+    client_origin,client_direction,client_aimed:=aim_of(client,bodies[1])
+    server_body,_:=core.get(&server.worlds,bodies[0])
+    wanted:=[3]f32{math.cos(sent.pitch),math.sin(sent.pitch),0}
+    testing.expectf(t,server_aimed && linalg.length(server_direction-wanted)<1e-3,"the server aims along the sent view: %v, not %v",server_direction,wanted)
+    testing.expectf(t,linalg.length(server_origin-(server_body.position+sent.eye))<0.01,"the server aims from the sent eye: %v from the body at %v",server_origin,server_body.position)
+    testing.expectf(t,client_aimed && linalg.length(client_direction-server_direction)<1e-3 && linalg.length(client_origin-server_origin)<0.02,"both ends aim alike: client %v %v, server %v %v",client_origin,client_direction,server_origin,server_direction)
     testing.expect_value(t,sessions[1].stats.corrected,u64(0))
     testing.expect(t,sessions[1].stats.confirmed>0,"the client compared its prediction")
     testing.expect_value(t,sessions[1].diagnostics.correction_count,u64(0))

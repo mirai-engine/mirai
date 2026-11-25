@@ -3,7 +3,6 @@ package game
 import "core:math"
 import "core:math/linalg"
 import "mirai:core"
-import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import phys "plugins:physics/runtime"
 import render "mirai:engine/render"
@@ -203,18 +202,18 @@ portal_gun :: proc(
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
         gun,_:=core.get(states,player)
-        eye,aim,_,ok:=cam.aim(controls.sight,player)
+        eye,aim,_,ok:=inp.aim(controls.aims,player)
         if !ok {continue}
         blue:=inp.pressed(controls.actions,player,.Portal_Blue)
         orange:=inp.pressed(controls.actions,player,.Portal_Orange)
         grab:=inp.pressed(controls.actions,player,.Grab)
         held:=gun.held
         if held!=core.NONE {
-            cube,placed:=core.get(controls.sight.worlds,held)
-            target,facing,carry:=hold_place(openings,controls.sight.worlds,eye,aim,cube.position)
+            cube,placed:=core.get(controls.aims.worlds,held)
+            target,facing,carry:=hold_place(openings,controls.aims.worlds,eye,aim,cube.position)
             dropped:=!placed || linalg.distance(cube.position,target)>HOLD_REACH || grab
             // Standing on what it carries would lift the player with it.
-            feet,_:=core.get(controls.sight.worlds,player)
+            feet,_:=core.get(controls.aims.worlds,player)
             if under,found:=phys.raycast(physics,feet.position+[3]f32{0,0.2,0},{0,-1,0},0.5,player);found && under.entity==held {dropped=true}
             if blue {
                 walking,_:=core.get(characters,player)
@@ -247,13 +246,13 @@ portal_gun :: proc(
         if !blue && !orange {continue}
         color:=blue?Portal_Color.Blue:Portal_Color.Orange
         if state:=demo_state(states,player,Portal_Gun_State{},problems);state!=nil {state.shots+=1}
-        hit,found:=portal_ray(physics,openings,controls.sight.worlds,eye,aim,player)
+        hit,found:=portal_ray(physics,openings,controls.aims.worlds,eye,aim,player)
         if !found {continue}
         wall:=hit.collider
         if rim,lines:=core.get(rims,wall);lines {
             if opening,has:=core.get(openings,rim.portal);has {wall=opening.wall}
         }
-        wall_world,has_wall:=core.get(controls.sight.worlds,wall)
+        wall_world,has_wall:=core.get(controls.aims.worlds,wall)
         box,boxed:=surface_box(colliders,wall)
         if !core.has(surfaces,wall) || !has_wall || !boxed {continue}
         up:=[3]f32{0,1,0}
@@ -267,7 +266,7 @@ portal_gun :: proc(
             if mouth.color==color {mine=core.entity_at(mouths,at);continue}
             if !mouth.placed {continue}
             if portal,has:=core.get(openings,mouth.opening);has && portal.wall==wall {
-                if there,seen:=core.get(controls.sight.worlds,core.entity_at(mouths,at));seen {other=there.transform}
+                if there,seen:=core.get(controls.aims.worlds,core.entity_at(mouths,at));seen {other=there.transform}
             }
         }
         if mine==core.NONE {continue}

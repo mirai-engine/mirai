@@ -2,8 +2,6 @@ package game
 
 import "core:testing"
 import "mirai:core"
-import cam "mirai:engine/camera"
-import render "mirai:engine/render"
 import inp "mirai:engine/input"
 import terrain "plugins:terrain/runtime"
 
@@ -15,11 +13,7 @@ Dig_World :: struct {
     sites_state:core.Table(Dig_Site_State),
     pickups:core.Table(Dig_Pickup),
     players:core.Table(Player),
-    seats:core.Table(inp.Seat),
-    cameras:core.Table(render.Camera),
     worlds:core.Table(core.World_Transform),
-    hierarchy:core.Hierarchy,
-    shown:cam.Cameras,
     inventories:core.Table(Dig_Inventory),
     keeps:core.Table(core.Keep),
     requests:terrain.Terrain_Requests,
@@ -27,8 +21,8 @@ Dig_World :: struct {
 }
 
 @(private="file")
-dig_sight :: proc(w:^Dig_World) -> cam.Sight {
-    return {core.ref(&w.shown),core.read(&w.seats),{},core.read(&w.cameras),core.ref(&w.hierarchy),core.read(&w.worlds)}
+dig_aims :: proc(w:^Dig_World) -> inp.Aims {
+    return {worlds=core.read(&w.worlds)}
 }
 
 // What the players take is run state: a component on a core.Keep root, which
@@ -49,7 +43,7 @@ the_inventory_of_the_dig_lives_on_a_root_that_keeps :: proc(t:^testing.T) {
     core.add(&w.worlds,drop,core.World_Transform{})
     test_world_settle(w)
     tick :: proc(w:^Dig_World,commands:core.Commands) {
-        dig_site(commands,core.read(&w.sites),&w.sites_state,core.read(&w.pickups),core.read(&w.players),{sight=dig_sight(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=1,dt=1.0/60,playing=true},nil)
+        dig_site(commands,core.read(&w.sites),&w.sites_state,core.read(&w.pickups),core.read(&w.players),{aims=dig_aims(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=1,dt=1.0/60,playing=true},nil)
         test_world_settle(w)
     }
     tick(w,commands)
@@ -69,7 +63,7 @@ the_pit_digs_by_seconds_and_a_copy_digs_on :: proc(t:^testing.T) {
     dug :: proc(w:^Dig_World,hz,from,to:u64) -> u32 {
         commands:=core.commands(w,test_world_info(w))
         for tick in from..<to {
-            dig_site(commands,core.read(&w.sites),&w.sites_state,core.read(&w.pickups),core.read(&w.players),{sight=dig_sight(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=tick,dt=1/f32(hz),playing=true},nil)
+            dig_site(commands,core.read(&w.sites),&w.sites_state,core.read(&w.pickups),core.read(&w.players),{aims=dig_aims(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=tick,dt=1/f32(hz),playing=true},nil)
             test_world_settle(w)
         }
         return core.at(&w.sites_state,0).dug

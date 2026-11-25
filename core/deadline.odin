@@ -41,3 +41,67 @@ own_time :: proc "contextless" (time:Time,clock:Clock,paces:^Table(Own_Pace,$A),
     own.dt*=pace_of(clock,paces,e)
     return own
 }
+
+// A wait that is ready at a tick, as a named field of a component (a gun's
+// next shot, a dash): ready by its zero value, written when it starts.
+Cooldown :: struct {
+    ready_at:u64 `mirai:"readonly"`, // the tick it is ready at; 0: ready
+}
+
+cooldown_start :: proc "contextless" (c:^Cooldown,time:Time,seconds:f32) {
+    if c!=nil {c.ready_at=deadline(time,seconds)}
+}
+
+cooldown_ready :: proc "contextless" (c:Cooldown,time:Time) -> bool {return due(time,c.ready_at)}
+
+// The seconds until it is ready; 0 when it is.
+cooldown_remaining :: proc "contextless" (c:Cooldown,time:Time) -> f32 {
+    return due(time,c.ready_at)?0:seconds_of(time,c.ready_at-time.tick)
+}
+
+// A wait with a start and an end, as a named field of a component (a hold,
+// a fuse, a round): not running by its zero value, written when it starts and
+// when it is stopped, never while it runs. Once its end comes it stays ended
+// until it is started again or stopped.
+Countdown :: struct {
+    started:u64 `mirai:"readonly"`, // the tick it started at
+    ends:u64 `mirai:"readonly"`,    // the tick it ends at
+    active:bool `mirai:"readonly"`, // started and not stopped
+}
+
+countdown_start :: proc "contextless" (c:^Countdown,time:Time,seconds:f32) {
+    if c!=nil {c^={started=time.tick,ends=deadline(time,seconds),active=true}}
+}
+
+countdown_stop :: proc "contextless" (c:^Countdown) {
+    if c!=nil {c^={}}
+}
+
+// Started and its end has not come.
+countdown_running :: proc "contextless" (c:Countdown,time:Time) -> bool {return c.active && time.tick<c.ends}
+
+// The one tick it ends at: what runs every tick sees it once, with no write.
+countdown_due :: proc "contextless" (c:Countdown,time:Time) -> bool {return c.active && time.tick==c.ends}
+
+// Its end has come, from that tick until it is started again or stopped.
+countdown_ended :: proc "contextless" (c:Countdown,time:Time) -> bool {return c.active && time.tick>=c.ends}
+
+// The seconds it has run, up to its end; 0 when it is not active.
+countdown_elapsed :: proc "contextless" (c:Countdown,time:Time) -> f32 {
+    if !c.active || time.tick<=c.started {return 0}
+    return seconds_of(time,min(time.tick,c.ends)-c.started)
+}
+
+// The seconds until its end; 0 when it is not running.
+countdown_remaining :: proc "contextless" (c:Countdown,time:Time) -> f32 {
+    return countdown_running(c,time)?seconds_of(time,c.ends-time.tick):0
+}
+
+// How far it has run, from 0 at its start to 1 at its end; 0 when it is not
+// active.
+countdown_progress :: proc "contextless" (c:Countdown,time:Time) -> f32 {
+    if !c.active {return 0}
+    if time.tick>=c.ends {return 1}
+    if time.tick<=c.started {return 0}
+    return f32(f64(time.tick-c.started)/f64(c.ends-c.started))
+}

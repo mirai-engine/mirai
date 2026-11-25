@@ -100,7 +100,8 @@ or unchorded bindings.
   changes and report problems (`input.body_taken`, `body_gone`, `server_decides`).
 - **Forward**: `camera_drive` (`fixed`, `input`, after `camera_select` + `input_drive`) writes
   `Move_Input` from seat actions in the `core.Vertical` frame (+ `Vertical.turn`) toward the
-  seat's tick view (`input.Seat_View`: `camera_blend` writes `Slot_Views` as it draws,
+  seat's tick view (`input.Seat_View`: yaw, pitch and the eye from the body; `camera_blend` writes
+  `Slot_Views` as it draws,
   `input_seats` gives it to the seat, the network to remote seats), never camera transforms.
   Look-with-body cameras (`Eyes`, aiming `Orbit`, body camera without `Camera_Follow`) turn body
   look, from the view when the seat comes from an `Apart` camera; others face movement along the
@@ -163,7 +164,9 @@ inp.hold(hold_req, seat, inp.action_of(actions, .Use), {1, 0}, ticks=2)
 ## Cameras
 
 - `camera_selected` picks latest valid override else `body_camera` (first `render.Camera` on/under
-  body). `cam.aim(sight, body)` returns the seen camera's origin, direction and rotation.
+  body). `inp.aim(aims, body)` (`engine/input/aim.odin`) is the seat's `Seat_View` placed on the
+  body: origin, direction and rotation alike on every end (a server aims a remote seat by the view
+  it sent; `view_test.odin` in `plugins/multiplayer/runtime`).
 - **Free camera**: in editor Play (`Play_Origin`), if player 1 has no body and scene has no active
   `Camera`, `camera_free` spawns a flying camera; gone permanently once player 1 drives a body
   (never in shipped builds).

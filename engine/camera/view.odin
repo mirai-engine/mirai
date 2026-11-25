@@ -96,10 +96,15 @@ camera_blend :: proc(
 view_seen :: proc(camera,body:core.Entity,follows:^core.Table(Camera_Follow,$A),parents:^core.Table(core.Parent,$B),worlds:^core.Table(core.World_Transform,$C),verticals:^core.Table(core.Vertical,$D)) -> (seen:input.Seat_View) {
     placed,ok:=core.get(worlds,camera)
     if !ok {return}
-    forward:=mm.quat_rotate(conj(core.vertical_of(verticals,body)),mm.quat_forward(placed.rotation))
+    vertical:=core.vertical_of(verticals,body)
+    forward:=mm.quat_rotate(conj(vertical),mm.quat_forward(placed.rotation))
     seen.yaw=mm.yaw_of_direction(forward)
     seen.pitch=math.asin(clamp(forward.y,-1,1))
     seen.kind=looks_with(follows,parents,camera,body)?.Body:.Apart
+    if at,found:=core.get(worlds,body);found {
+        eye:=mm.quat_rotate(conj(vertical),placed.position-at.position)
+        if linalg.dot(eye,eye)<=input.VIEW_EYE_REACH*input.VIEW_EYE_REACH {seen.eye=eye}
+    }
     return
 }
 

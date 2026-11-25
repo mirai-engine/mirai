@@ -1,7 +1,6 @@
 package game
 
 import "mirai:core"
-import cam "mirai:engine/camera"
 import inp "mirai:engine/input"
 import render "mirai:engine/render"
 import mm "mirai:std/math"
@@ -78,7 +77,7 @@ horror_switches :: proc(
 horror_lights :: proc(
     lamps:^core.Table(House_Lamp,.Read),states:^core.Table(House_Lamp_State),switches:^core.Table(Light_Switch,.Read),points:^core.Table(render.Point_Light),
     flashlights:^core.Table(Flashlight,.Read),spots:^core.Table(render.Spot_Light),transforms:^core.Table(core.Transform),
-    players:^core.Table(Player,.Read),sight:cam.Sight,time:core.Time,problems:^core.Problems,
+    players:^core.Table(Player,.Read),aims:inp.Aims,time:core.Time,problems:^core.Problems,
 ) {
     seconds:=f32(time.seconds)
     for row in 0..<core.count(lamps) {
@@ -102,7 +101,7 @@ horror_lights :: proc(
     }
     player,found:=core.first(players)
     if !found {return}
-    origin,_,turn,aimed:=cam.aim(sight,player)
+    origin,_,turn,aimed:=inp.aim(aims,player)
     if !aimed {return}
     eye:=origin+mm.quat_rotate(turn,FLASHLIGHT_OFFSET)
     for row in 0..<core.count(flashlights) {

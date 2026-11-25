@@ -53,7 +53,7 @@ cam.camera_mode(changes,camera,.Third_Person) // in a fixed step, changes:^cam.C
   change `setup.follow`, pass `setup`. Asking for the mode it has does nothing, so it may repeat.
 - Aim as a second camera: a `cam.Camera_Activation` (its `action`, set in the inspector) on a
   camera that follows the same body; players see through it while they hold the action, and
-  `cam.aim(sight,body)` gives the ray of the camera they see through.
+  `inp.aim(aims,body)` gives the ray of the camera they see through.
 - `cam.camera_override(requests,owner,seat,camera,blend={seconds,ease})` shows another camera (a
   security feed) until `cam.camera_override_remove(requests,owner)`; asked again with another
   camera, the view cuts or blends to it. A cutscene does not call it: the markers of its clip on

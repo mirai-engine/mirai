@@ -129,8 +129,9 @@ terrain digs). Library supplies `Journal_Op.body` + region/checksum and applies 
   made before its own arrived.
 - **View as input:** `input.Seat_View` (where the seat's camera looked as the tick began, from
   `input.Slot_Views` that `camera_blend` writes) travels in `Remote_Actions` with the actions, is
-  kept in `Taken` and runs again in corrections: `camera_drive` moves bodies by it on every end,
-  never by this end's camera transforms.
+  kept in `Taken` and runs again in corrections: `camera_drive` moves bodies by it and `inp.aim`
+  aims from it (its `eye` is where the camera was from the body) on every end, never by this
+  end's camera transforms.
 
 ## Opening and closing
 

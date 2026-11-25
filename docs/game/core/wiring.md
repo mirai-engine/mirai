@@ -113,7 +113,8 @@ keeps it, so a row edited before Play is still new to the game.
   pushes a request.
 - A function that receives the storage of events to write (`^Events`) sees the whole log, not
   what is new to it: read with `core.Ref(Events)`.
-- Waiting is a deadline tick, never a countdown: [waiting.md](waiting.md).
+- Waiting is a `core.Cooldown` or `core.Countdown` field, never `-=dt` each tick:
+  [waiting.md](waiting.md).
 - A request names a `core.Entity`: if it died before the owner ran, the request does nothing.
   Report it with `core.report(problems,e,"game.cause","what failed and how to fix it")`.
 - A queue nobody takes grows: the owner's step must run on every end that pushes (not `server`).
