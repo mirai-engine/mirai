@@ -2,6 +2,7 @@
   "version": 1,
   "id": "7572bd9ffa0dd2354005eff39b25f1bb",
   "name": "hum",
+  "catalog_path": "Demo/showcase",
   "origin": {"path": "assets/showcase/hum.wav", "folder": false, "importer": "sound"},
   "identity": "a136b93fa9f126831d67ac5f21d3453fd3c404372406ad7cbbca848e5f8cf9db",
   "inputs": [],

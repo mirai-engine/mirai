@@ -2,6 +2,8 @@
   "version": 1,
   "id": "81dd55e2e057dae790850f4a006dce86",
   "name": "tree_broad",
+  "catalog_path": "Demo/foliage_extreme",
+  "documents": "tree_broad",
   "origin": {"path": "assets/foliage_extreme/tree_broad.obj", "folder": false, "importer": "OBJ"},
   "identity": "6d2d4abbfd3f449acaf45b90767efd7adebd784081516a03ba0eff0df68583ff",
   "inputs": ["trees.mtl"],

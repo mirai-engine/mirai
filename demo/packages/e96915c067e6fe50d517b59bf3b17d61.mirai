@@ -2,6 +2,7 @@
   "version": 1,
   "id": "e96915c067e6fe50d517b59bf3b17d61",
   "name": "planks_color",
+  "catalog_path": "Demo/surfaces/wood",
   "origin": {"path": "assets/surfaces/wood/planks_color.png", "folder": false, "importer": "image"},
   "identity": "49264e2dfeefc900bf103a7d93f6c80ec28d75a409eb86d103cdf0c1313bf953",
   "settings": {

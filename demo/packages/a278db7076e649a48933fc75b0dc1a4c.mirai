@@ -2,6 +2,7 @@
   "version": 1,
   "id": "a278db7076e649a48933fc75b0dc1a4c",
   "name": "cobblestone_normal",
+  "catalog_path": "Demo/surfaces/cobblestone",
   "origin": {"path": "assets/surfaces/cobblestone/cobblestone_normal.png", "folder": false, "importer": "image"},
   "identity": "c96c505d447b06db5058734fe8e034334fba141d57eaeca7f85ae25802a45f68",
   "settings": {

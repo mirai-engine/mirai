@@ -2,6 +2,7 @@
   "version": 1,
   "id": "26356114f7faffcfafff109308dd9a32",
   "name": "bricks_orm",
+  "catalog_path": "Demo/surfaces/bricks",
   "origin": {"path": "assets/surfaces/bricks/bricks_orm.png", "folder": false, "importer": "image"},
   "identity": "b5b53e22299c99493478359f1e2936970ca5191915b380c995ea296bd95458fe",
   "inputs": [],

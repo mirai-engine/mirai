@@ -2,6 +2,7 @@
   "version": 1,
   "id": "856074124b2e8924607a1e79488b6abd",
   "name": "neon_emission",
+  "catalog_path": "Demo/surfaces/neon",
   "origin": {"path": "assets/surfaces/neon/neon_emission.png", "folder": false, "importer": "image"},
   "identity": "e7133ec38468f5414b4e8f8a65e57e4e065b176b21049819ef50ca0a852eed76",
   "settings": {

@@ -2,6 +2,7 @@
   "version": 1,
   "id": "0b5202b0a19887317347ddcbfdcad5f6",
   "name": "tiles_normal",
+  "catalog_path": "Demo/surfaces/tiles",
   "origin": {"path": "assets/surfaces/tiles/tiles_normal.png", "folder": false, "importer": "image"},
   "identity": "fab044b54421b971441925ac3cd28572d405557ff481d49e448e1604c2842e2c",
   "settings": {

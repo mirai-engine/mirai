@@ -2,6 +2,7 @@
   "version": 1,
   "id": "81d18317bfbbf0851f30ebcb2de41b67",
   "name": "grate_orm",
+  "catalog_path": "Demo/surfaces/metal",
   "origin": {"path": "assets/surfaces/metal/grate_orm.png", "folder": false, "importer": "image"},
   "identity": "a135326e4f00d4d96a7c4e6b64637be8940ab66db13f2d4747db018ce7c753f3",
   "inputs": [],

@@ -2,6 +2,7 @@
   "version": 1,
   "id": "c0d7666d947e65fc7dd68a31013c0939",
   "name": "cobblestone_color",
+  "catalog_path": "Demo/surfaces/cobblestone",
   "origin": {"path": "assets/surfaces/cobblestone/cobblestone_color.png", "folder": false, "importer": "image"},
   "identity": "4bf20aa0c9be138d32c781598a709118b64335c81d7d9b86aec7b3ddf9efbf07",
   "settings": {

@@ -2,6 +2,7 @@
   "version": 1,
   "id": "f4ccf188ab1bf19a62c53faaef829fba",
   "name": "planks_normal",
+  "catalog_path": "Demo/surfaces/wood",
   "origin": {"path": "assets/surfaces/wood/planks_normal.png", "folder": false, "importer": "image"},
   "identity": "be4569af461f13cc92440f370b2e097d6c0e4fd8119656525b343b7695c98dcc",
   "settings": {

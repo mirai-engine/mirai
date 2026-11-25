@@ -2,6 +2,7 @@
   "version": 1,
   "id": "6cc37d40c23ded0fb9cc963a4dec2fbb",
   "name": "stained_glass_color",
+  "catalog_path": "Demo/surfaces/glass",
   "origin": {"path": "assets/surfaces/glass/stained_glass_color.png", "folder": false, "importer": "image"},
   "identity": "d5232abb2f9a961f16fd3e896f55ae94418df3baa00ced6f3ed776b29c4e34cc",
   "settings": {
