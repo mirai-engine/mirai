@@ -12,8 +12,11 @@ This is a Mirai game project.
   Extend it instead of studying the engine.
 - A scene (a prefab is one whose kind is Prefab, with one root) and a `.ui` are files of
   `assets/`, the source of the game: change them with
-  `scene.write` (or `ui.write`) or in the editor, which write the file at once. Only
-  generated assets (`tools/content`) come from code, and nothing writes over what the API wrote.
+  `scene.write` (or `ui.write`) or in the editor, which write the file at once. What code
+  generates (textures, sounds, meshes, tables of game data, scenes laid out by rules) comes from
+  the content tool `tools/content`, built and run by `mirai content .`: `mirai docs assets
+  content-tool`. No raw `odin` in the project, no scripts around `mirai rpc`, no text patches over
+  assets.
 - Engine sources are not the documentation. Do not read them to learn the API.
 
 ## Verify

@@ -2,13 +2,13 @@
 
 A prop is a `geom.Mesh_Buffer` (import `geom "mirai:std/geom"`) built in a few calls in the
 [content tool](content-tool.md): every `geom.*_build` appends to the buffer, parts merge into one
-mesh, each part is painted with one color and `asset.content_mesh` writes the `.mesh`. No OBJ, no
+mesh, each part is painted with one color and `content.mesh` writes the `.mesh`. No OBJ, no
 import.
 
 A palm:
 
 ```odin
-palm_mesh :: proc(c:^asset.Content) -> base.Asset_Id {
+palm_mesh :: proc(w:^content.Writer) -> base.Asset_Id {
     m:geom.Mesh_Buffer
     geom.mesh_buffer_init(&m,context.temp_allocator)
     trunk:=[3]geom.Vec3{{0,0,0},{0.3,3.5,0.1},{1.1,7.2,0.3}}
@@ -17,12 +17,12 @@ palm_mesh :: proc(c:^asset.Content) -> base.Asset_Id {
     geom.fan_build(&m,trunk[2],10,{length=4.6,width=1.1,rise=1.6,droop=4,belly=0.25,fold=0.06},seed=5)
     geom.mesh_buffer_paint(&m,{0.20,0.52,0.14,1})
     geom.mesh_buffer_flatten(&m)                           // cut facets instead of smooth shading
-    return asset.content_mesh(c,"assets/island/palm.mesh",&m)
+    return content.mesh(w,"assets/island/palm.mesh",&m)
 }
 ```
 
 Put a prop in the scene as a layer of a `.pcg` ([whole-scene.md](whole-scene.md)) or on an entity
-with `render.Mesh_Renderer{mesh=palm_mesh(c),shape=.None,shadows=true}`. The asset folder is the
+with `render.Mesh_Renderer{mesh=palm_mesh(w),shape=.None,shadows=true}`. The asset folder is the
 theme of what it belongs to (`assets/island/`), never its kind.
 
 | Call | Makes |

@@ -28,7 +28,7 @@ mirai rpc --project . batch --file island.json
   or from brushes (`terrain.edit`: `noise`, `raise`, `ramp`...), in the same file.
 - A generated mesh, material or `.pcg` (a palm, the sand, where palms grow) is an asset a
   [content tool](content-tool.md) wrote; its path or id is what a layer and a graph name. The
-  tool runs before this file; it never writes a scene.
+  tool runs before this file; a scene laid out by rules is one it can write too.
 - `scene.write` is how entities are made and changed, with the document of
   [a scene as text](text-sources.md#a-scene); what the call does not name stays. An
   entity with `prefab` is a linked instance of that one-root `.scene`: what the call leaves out

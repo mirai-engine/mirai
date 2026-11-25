@@ -19,6 +19,12 @@ assets, and assembles shipped games. See [engine binaries](projects.md#engine-bi
   `--release`, else `-o:minimal`) into `.mirai/game` or `--out`. `Desc.server` builds the
   [dedicated server](#dedicated-server) (`.mirai/server`).
 
+- **`Program` action (of `Editor`):** a `package main` of the project (`tools/content`) built as
+  a test executable is (`test_build_plan` with `tests=false`, probe flags, fingerprint) into
+  `.mirai/build/programs`; `mirai content` runs it in the project root with
+  `program_environment`. `Check` with `package_folder` checks that package alone
+  (`mirai check <project>` does it for the content tool).
+
 ## Flags and environment
 
 - All targets/checks/tests apply manifest `defines` (engine libs take only `#config` ones),
