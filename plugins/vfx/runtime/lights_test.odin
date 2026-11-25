@@ -394,7 +394,7 @@ a_channel_emitter_lights_from_the_births_of_its_channel :: proc(t:^testing.T) {
     now:=core.Time{playing=true,dt=1.0/60}
     lights_fixture_step(f,now)
     testing.expect_value(t,len(host.extras_lights(&f.extras)),0)
-    core.push(&f.births.queue,core.Birth{channel=core.birth_channel("impacts"),position={0,1,2},count=4})
+    core.birth(&f.births,core.Birth{channel=core.birth_channel("impacts"),position={0,1,2},count=4})
     now.seconds+=f64(now.dt)
     lights_fixture_step(f,now)
     lights:=host.extras_lights(&f.extras)
