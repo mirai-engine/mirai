@@ -75,8 +75,8 @@ Ground_View :: struct {
 }
 
 @(private)
-ground_open :: proc(w:core.World_Ref) -> (core.Ground_Query,bool) {
-    g:=core.world_storage_of(w,Terrain_Ground)
+ground_open :: proc(w:core.World_Read) -> (core.Ground_Query,bool) {
+    g:=core.world_storage_read_of(w,Terrain_Ground).ptr
     if g==nil {return {},false}
     return {user=g,probe=ground_probe,spacing=g.spacing,unloaded=g.unloaded[:]},true
 }

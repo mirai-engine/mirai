@@ -13,8 +13,8 @@ query_of :: proc(state:^Physics_State) -> (core.World_Query,bool) {
 }
 
 @(private)
-query_open :: proc(w:core.World_Ref) -> (core.World_Query,bool) {
-    return query_of(core.world_storage_of(w,Physics_State))
+query_open :: proc(w:core.World_Read) -> (core.World_Query,bool) {
+    return query_of(core.world_storage_read_of(w,Physics_State).ptr)
 }
 
 @(private)

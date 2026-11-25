@@ -245,7 +245,7 @@ paths_read_the_components_and_storages_of_the_world_by_name :: proc(t:^testing.T
     gui:Gui
     gui.allocator=context.allocator
     defer gui_free(&gui)
-    b:=Bind{gui=&gui,world=core.world_read(test_world_ref(&w))}
+    b:=Bind{gui=&gui,world=core.world_read(test_world_ref(&w)),write=test_world_ref(&w)}
     host:=bind_host(&b)
     // A component, by its name, is the row of the entity with its stamp.
     _,storage,found:=host.source(host.user,base.name_hash("Bind_Test_Health"))

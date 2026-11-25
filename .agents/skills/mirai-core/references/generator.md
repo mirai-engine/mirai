@@ -86,7 +86,9 @@ Bound by type in any order:
   `core.Stamp(S)` (for `core.touched`).
 - World & entities: `core.Ref(core.Entities)`, `core.Commands`
   ([commands](core.md#creating-with-components-of-other-libraries)), `core.World_Ref`,
-  `core.World_Read` (read-only reflection/queries, no settle or revision bump).
+  `core.World_Read` (read-only reflection/queries, no settle or revision bump). A step that
+  makes a `core.World_Ref` of its `World_Read`, itself or in a helper it hands it to, is a
+  generator error: it writes, so it receives `core.World_Ref`.
 - App & data: `^host.Assets`, `^render.Renderer` (plugins via `engine/render`),
   `^host.Frame_Extras`, `^audio.Mixer` (games via `engine/audio`), `^jobs.Job_System`,
   `runtime.Allocator` / `mem.Allocator`, `^core.Texts`, `^host.App`, `core.Records(T)`,

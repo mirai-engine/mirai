@@ -30,7 +30,7 @@ Presence_Space :: struct {
 @(private)
 presence_space :: proc(w:core.World_Ref,low,high:[3]f32) -> Presence_Space {
     query:core.World_Query
-    if w.data!=nil {query=core.world_query(w,{core.world_storage_of(w,core.World_Queries)})}
+    if w.data!=nil {query=core.world_query_read(core.world_read(w),core.world_storage_read_of(core.world_read(w),core.World_Queries))}
     half:=(high-low)*0.5
     radius:=max(half.x,half.y,half.z)
     return {query,{(low.x+high.x)*0.5,low.y+PRESENCE_REST+radius,(low.z+high.z)*0.5},radius,high.y}

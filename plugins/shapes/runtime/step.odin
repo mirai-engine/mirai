@@ -143,7 +143,7 @@ shapes_update :: proc(
     following:=core.count(brushes)>0 || len(cache.brushes.values)>0
     // Splines lie where their entity is and on the ground: | runs both, so each keeps what it saw.
     lying:=core.count(splines)>0
-    q:=lying?core.ground_query(world,ground):{}
+    q:=lying?core.ground_query(core.world_read(world),ground):{}
     placed:=lying && (core.touched(transforms,&cache.places_seen) | core.touched(parents,&cache.parents_seen))
     under:=lying && ground.ptr!=nil?ground.changed.items[:]:nil
     grounded:=len(under)>0

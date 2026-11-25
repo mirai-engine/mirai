@@ -352,13 +352,13 @@ Save_Watch :: struct {
 
 @(step="input",loops="game")
 saves_serve :: proc(
-    world:core.World_Read,app:^host.App,requests:^Save_Requests,results:^Save_Results,
+    world:core.World_Ref,app:^host.App,requests:^Save_Requests,results:^Save_Results,
     state:^Save_State,work:^Save_Work,thumbnails:^Save_Thumbnails,game:^Save_Game,
     watch:Save_Watch,problems:^core.Problems,
 ) {
     if !watch.profile.read {
         watch.profile.read=true
-        if error:=profile_read(core.World_Ref(world),app,state);error!=.None && error!=.Not_Found && error!=.Unavailable {
+        if error:=profile_read(world,app,state);error!=.None && error!=.Not_Found && error!=.Unavailable {
             path,_:=profile_path(state,app)
             core.report(problems,core.NONE,"save.profile","the profile of the player %s did not read: %s; the progress starts from its defaults until the game writes it again, or delete the file",path,error_text(error))
         }
@@ -388,8 +388,8 @@ saves_serve :: proc(
             queued,result.error=slot_save(world,app,state,work,game,result,slot,game_label(game,&r))
         case r.op==.Load:
             writes_flush(work,&app.jobs,results)
-            result.error=read(core.World_Ref(world),app,state,base.text_get(r.slot[:]),game)
-            if result.error==.None {autosave_settle(work,core.world_storage_read_of(world,scene.Scene_Root).ptr)}
+            result.error=read(world,app,state,base.text_get(r.slot[:]),game)
+            if result.error==.None {autosave_settle(work,core.world_storage_read_of(core.world_read(world),scene.Scene_Root).ptr)}
         case r.op==.Delete:
             writes_flush(work,&app.jobs,results)
             result.error=delete_slot(state,app,base.text_get(r.slot[:]))
@@ -398,9 +398,9 @@ saves_serve :: proc(
         if !queued {core.push(&results.queue,result)}
     }
     if work==nil {return}
-    kept_watch(work,world,app,state,watch.frame.dt,problems)
+    kept_watch(work,core.world_read(world),app,state,watch.frame.dt,problems)
     root:scene.Scene_Root
-    if r:=core.world_storage_read_of(world,scene.Scene_Root).ptr;r!=nil {root=r^}
+    if r:=core.world_storage_read_of(core.world_read(world),scene.Scene_Root).ptr;r!=nil {root=r^}
     due:=autosave_watch(work,game,watch.settings.ptr^,root,watch.references)
     if game.off || watch.authority.role==.Client {work.due=false} else {work.due||=due}
     if work.due {
@@ -420,12 +420,12 @@ saves_serve :: proc(
 // Captures the world into a slot: queued to be written with its thumbnail in
 // a world of the application, at once in another. Busy keeps it uncaptured.
 @(private)
-slot_save :: proc(w:core.World_Read,app:^host.App,state:^Save_State,work:^Save_Work,game:^Save_Game,result:Result,slot,label:string) -> (queued:bool,error:Error) {
+slot_save :: proc(w:core.World_Ref,app:^host.App,state:^Save_State,work:^Save_Work,game:^Save_Game,result:Result,slot,label:string) -> (queued:bool,error:Error) {
     path:=slot_path(state,app,slot) or_return
     if work!=nil && len(work.writes)>=WRITES_CAPACITY {return false,.Busy}
     out:serial.Writer
     serial.writer_init(&out,0,app.allocator)
-    if error=capture(core.World_Ref(w),app.assets,app.allocator,&out,result.kind,label,game.played);error!=.None {
+    if error=capture(w,app.assets,app.allocator,&out,result.kind,label,game.played);error!=.None {
         serial.writer_destroy(&out)
         return
     }

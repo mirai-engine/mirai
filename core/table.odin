@@ -603,42 +603,20 @@ join2 :: proc "contextless" (a:^Table($X,$AX),b:^Table($Y,$AY)) -> Join2(X,Y) {r
 join3 :: proc "contextless" (a:^Table($X,$AX),b:^Table($Y,$AY),c:^Table($Z,$AZ)) -> Join3(X,Y,Z) {return {raw_typed(a),raw_typed(b),raw_typed(c),-1}}
 join :: proc{join2,join3}
 
-joined_ptr2 :: proc "contextless" (j:^Join2($X,$Y)) -> (e:Entity,a:^X,b:^Y,ok:bool) {
+joined2 :: proc "contextless" (j:^Join2($X,$Y)) -> (e:Entity,a:X,b:Y,ok:bool) {
     for j.row+=1;j.row<j.a.on;j.row+=1 {
         e=j.a.entities[j.row]
-        if rb:=row_of(j.b,e);rb>=0 {return e,&j.a.values[j.row],&j.b.values[rb],true}
+        if rb:=row_of(j.b,e);rb>=0 {return e,j.a.values[j.row],j.b.values[rb],true}
     }
     return
 }
-joined_ptr3 :: proc "contextless" (j:^Join3($X,$Y,$Z)) -> (e:Entity,a:^X,b:^Y,c:^Z,ok:bool) {
+joined3 :: proc "contextless" (j:^Join3($X,$Y,$Z)) -> (e:Entity,a:X,b:Y,c:Z,ok:bool) {
     for j.row+=1;j.row<j.a.on;j.row+=1 {
         e=j.a.entities[j.row]
         rb:=row_of(j.b,e)
         if rb<0 {continue}
-        if rc:=row_of(j.c,e);rc>=0 {return e,&j.a.values[j.row],&j.b.values[rb],&j.c.values[rc],true}
+        if rc:=row_of(j.c,e);rc>=0 {return e,j.a.values[j.row],j.b.values[rb],j.c.values[rc],true}
     }
-    return
-}
-joined_ref2 :: proc "contextless" (j:^Join2($X,$Y)) -> (e:Entity,a:Ref(X),b:Ref(Y),ok:bool) {
-    entity,x,y,found:=joined_ptr2(j)
-    return entity,ref(x),ref(y),found
-}
-
-joined_ref3 :: proc "contextless" (j:^Join3($X,$Y,$Z)) -> (e:Entity,a:Ref(X),b:Ref(Y),c:Ref(Z),ok:bool) {
-    entity,x,y,z,found:=joined_ptr3(j)
-    return entity,ref(x),ref(y),ref(z),found
-}
-each_joined_ref :: proc{joined_ref2,joined_ref3}
-
-joined2 :: proc "contextless" (j:^Join2($X,$Y)) -> (e:Entity,a:X,b:Y,ok:bool) {
-    entity,x,y,found:=joined_ptr2(j)
-    if found {return entity,x^,y^,true}
-    return
-}
-
-joined3 :: proc "contextless" (j:^Join3($X,$Y,$Z)) -> (e:Entity,a:X,b:Y,c:Z,ok:bool) {
-    entity,x,y,z,found:=joined_ptr3(j)
-    if found {return entity,x^,y^,z^,true}
     return
 }
 each_joined :: proc{joined2,joined3}

@@ -47,8 +47,7 @@ sections.
 - **Access in type:** `^Table(T)` writes; `^Table(T,.Read)` reads (compile error on write); read
   helpers take `^Table(T,$A)`.
 - **Reads stamp nothing:** `get`, `at`, `row_of`, `has`, `view`/`view_at` (borrowed read-only
-  refs valid until settle), `join` + `each_joined` (copies) / `each_joined_ref` (refs, follows
-  first table's order).
+  refs valid until settle), `join` + `each_joined` (copies, in the first table's order).
 - **Writes stamp rows:** `edit`, `edit_at`, `free` (on `shared` tables) return `^T`, stamp with
   a new `version` and snapshot original bytes on first request; settle restores the old stamp
   (and `version` if nothing changed) when bytes are unchanged. `edit_dirty`/`edit_dirty_at`
@@ -199,16 +198,16 @@ for row in 0..<core.count(timers) {
 
 ## World queries
 
-`core/query.odin`: physics sets `World_Queries.open` once; `world_query` opens a `World_Query`
-(no-op if none) for cameras/rigs without importing physics. `support` tracks moving ground. Pass
-`World_Read` or `World_Ref` for another world.
+`core/query.odin`: physics sets `World_Queries.open` once; `world_query_read` opens a
+`World_Query` (no-op if none) for cameras/rigs without importing physics. `support` tracks moving
+ground. Queries only read: `open` and `world_query_read` take `World_Read` (`world_read(ref)`).
 
 ## Ground
 
 `core/ground.odin`: single writer (terrain in `terrain_update`) sets `Ground_Queries.open` and
 pushes world-box `Events`: `changed` (surface, for foliage) and `unloaded` (collision residency,
 for navigation). `ground_query` probes highest ground along a line (`Ground`, `None`, `Empty`,
-`Unloaded`); valid during the opening step and safe inside its jobs.
+`Unloaded`); valid during the opening step and safe inside its jobs. It takes `World_Read`.
 
 ## Births
 

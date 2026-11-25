@@ -285,7 +285,7 @@ pcg_ground :: proc(
 ) {
     asked:=core.take(&requests.cells)
     if data.ptr==nil {return}
-    q:=core.ground_query(world,queries)
+    q:=core.ground_query(core.world_read(world),queries)
     exclusions:=make([dynamic]Exclusion,context.temp_allocator)
     changes:=make([dynamic]mm.Aabb,context.temp_allocator)
     if queries.ptr!=nil {append(&changes,..queries.changed.items[:])}

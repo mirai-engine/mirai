@@ -461,9 +461,10 @@ instance_free :: proc(gui:^Gui,instance:^Instance) {
 }
 
 // What the paths of the interfaces of a world read: its components and
-// storages, by their names.
+// storages, by their names. write: the world whose storages a control
+// commits to, only where controls commit.
 @(private)
-Bind :: struct {gui:^Gui,app:^host.App,world:core.World_Read}
+Bind :: struct {gui:^Gui,app:^host.App,world:core.World_Read,write:core.World_Ref}
 
 @(private)
 bind_host :: proc(b:^Bind) -> ui.Bind_Host {
@@ -526,7 +527,7 @@ bind_fetch :: proc(user:rawptr,name:u64,entity:base.Entity) -> (data:rawptr,stam
     source:=bind_named(b,name)
     if source==nil {return}
     if source.storage {return core.world_storage_read(b.world,source.type),0}
-    table,_:=core.world_table(core.World_Ref(b.world),source.type)
+    table,_:=core.world_table(b.world,source.type)
     if table==nil {return}
     row:=core.raw_row(table,core.Entity(entity))
     if row<0 {return}
@@ -538,7 +539,7 @@ bind_fetch_write :: proc(user:rawptr,name:u64,_:base.Entity) -> (data:rawptr,sta
     b:=(^Bind)(user)
     source:=bind_named(b,name)
     if source==nil || !source.storage {return}
-    return core.world_storage(core.World_Ref(b.world),source.type),0
+    return core.world_storage(b.write,source.type),0
 }
 
 // The rows on of the table of a component: a List that names it shows them.
@@ -547,7 +548,7 @@ bind_rows :: proc(user:rawptr,name:u64) -> (data:rawptr,count,stride:int,stamp:u
     b:=(^Bind)(user)
     source:=bind_named(b,name)
     if source==nil || source.storage {return}
-    table,_:=core.world_table(core.World_Ref(b.world),source.type)
+    table,_:=core.world_table(b.world,source.type)
     if table==nil || table.on<=0 {return}
     // The version only grows, with every write and every row that comes, goes or moves.
     return core.raw_value(table,source.info,0),table.on,source.info.size,table.version
@@ -587,7 +588,7 @@ values_refresh :: proc(gui:^Gui,app:^host.App,world:core.World_Read,instance:^In
 // storage writes it itself, and one bound to a component asks the game, which
 // writes it. The event is queued all the same.
 @(private)
-screen_build :: proc(world:core.World_Read,gui:^Gui,app:^host.App,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
+screen_build :: proc(world:core.World_Ref,gui:^Gui,app:^host.App,ctx:^ui.Context,s:^Surface,instance:^Instance,entry:^Planned,problems:^core.Problems,area:ui.Id=0,area_rect:ui.Rect={}) {
     content:=entry.content
     focus_restore(ctx,instance,entry.top)
     requests_apply(gui,ctx,instance,content,problems)
@@ -607,7 +608,7 @@ screen_build :: proc(world:core.World_Read,gui:^Gui,app:^host.App,ctx:^ui.Contex
     if built.dropped>0 {
         core.report(problems,entry.entity,"gui.events","%d events of the interface of this entity were lost in a frame: its widgets gave more than %d at once; give the interface fewer widgets that change in one frame",built.dropped,EVENT_BATCH)
     }
-    bind:=Bind{gui=gui,app=app,world=world}
+    bind:=Bind{gui=gui,app=app,world=core.world_read(world),write=world}
     host_of:=bind_host(&bind)
     host_of.fetch=bind_fetch_write
     for event in events[:built.count] {

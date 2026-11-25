@@ -27,8 +27,8 @@ rows_written_take_a_stamp_above_the_version_a_reader_saw :: proc(t:^testing.T) {
     testing.expect(t,found_view && item.ptr==view_at(&names,row_of(&names,a)).ptr)
     testing.expect(t,view_at(&names,-1).ptr==nil && view_at(&names,count(&names)).ptr==nil)
     j:=join(&names,read(&names))
-    joined,a_view,b_view,matched:=each_joined_ref(&j)
-    testing.expect(t,matched && joined==a && a_view.ptr==item.ptr && b_view.ptr==item.ptr)
+    joined,a_value,b_value,matched:=each_joined(&j)
+    testing.expect(t,matched && joined==a && a_value==item.ptr^ && b_value==item.ptr^)
     testing.expect_value(t,names.version,seen)
     testing.expect(t,!touched(&names,&looked) && !reshaped(&names,&shape))
 

@@ -188,7 +188,7 @@ play_focused :: proc(w:core.World_Ref) -> (seat,body:core.Entity) {
 // What collides in w: of its simulation, or nothing without one.
 @(private)
 api_drive_query :: proc(w:core.World_Ref) -> core.World_Query {
-    return core.world_query(w,core.Ref(core.World_Queries){core.world_storage_of(w,core.World_Queries)})
+    return core.world_query_read(core.world_read(w),core.world_storage_read_of(core.world_read(w),core.World_Queries))
 }
 
 // The height of what collides down from origin within reach, not counting body;

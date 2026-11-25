@@ -326,11 +326,10 @@ a_copy_of_what_changed_takes_the_storages_written_and_equals_a_whole_copy :: pro
         {"reflection and collision providers read without revisions",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {
             read:=world_read(ref)
             assert(world_storage_read_of(read,Rev_Count).ptr==&w.count)
-            queries:=World_Queries{open=proc(w:World_Ref) -> (World_Query,bool) {
-                return {user=world_storage_of(w,Rev_List)},true
+            queries:=World_Queries{open=proc(w:World_Read) -> (World_Query,bool) {
+                return {user=world_storage_read_of(w,Rev_List).ptr},true
             }}
-            assert(world_query(read,{&queries}).user==&w.list)
-            assert(world_query(ref,{&queries}).user==&w.list)
+            assert(world_query_read(read,{&queries}).user==&w.list)
         },{}},
         {"a function received a storage to write",proc(w:^Rev_World,ref:World_Ref,root,child:Entity) {
             w.storage_revisions[1]+=1 // as its call_ does before it runs
