@@ -1317,14 +1317,15 @@ ribbons_begin_again_where_emission_starts_again_or_the_emitter_jumps :: proc(t:^
 }
 
 // Mesh particles blend as the alpha mode of their material says: Opaque and
-// Mask go into the G-buffer, Blend and Additive over the lit scene.
+// Mask go into the G-buffer, Blend and Additive over the lit scene; a Decal
+// changes no surface of theirs and draws neither.
 @(test)
 mesh_particles_blend_as_the_alpha_mode_of_their_material :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"vfx-mesh-blend")
     types:asset.Types
     asset.types_init(&types)
     defer asset.types_destroy(&types)
-    modes:=[asset.Alpha_Mode]bool{.Opaque=false,.Mask=false,.Blend=true,.Additive=true}
+    modes:=[asset.Alpha_Mode]bool{.Opaque=false,.Mask=false,.Blend=true,.Additive=true,.Decal=false}
     for mode in asset.Alpha_Mode {
         info:=asset.MATERIAL_DEFAULTS
         info.alpha_mode=mode
