@@ -1770,7 +1770,7 @@ scene_tint :: proc(r: ^Renderer, descs: []u32, tints, emissions: []Vec3, values:
 			mesh := s.meshes[inst.meta.x & INSTANCE_MESH_MASK]
 			was := instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values)
 			fade := instance_values_fade(s, inst.material_values)
-			changed ||= instance_material_values_give(r, inst, &given)
+			if instance_material_values_give(r, inst, &given) {changed = true}
 			classify ||= instance_alpha(s, mesh, inst.meta.y, inst.slot_materials, inst.material_values) != was
 			// The pattern of its fade is in the maps of the shadows that hold it.
 			if fade != instance_values_fade(s, inst.material_values) {occluder_moved(s, u32(index), inst^, inst^)}
