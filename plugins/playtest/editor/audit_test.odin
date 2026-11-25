@@ -3,6 +3,8 @@ package playtest_editor
 import "core:testing"
 import "mirai:asset"
 import img "mirai:cook/image"
+import "mirai:core"
+import mm "mirai:std/math"
 
 // What the audit flags is a trap and not what a game means: a black that no
 // texture, light or metal changes, a scene nearly all blended, a cursor hidden
@@ -44,10 +46,12 @@ the_audit_tells_a_trap_from_what_a_game_means :: proc(t:^testing.T) {
     Frame_Case :: struct {stats:img.Image_Stats,dark,blown:bool,what:string}
     for c in ([]Frame_Case{
         {{black_percent=99.5,mean_luma=0.001},true,false,"a camera inside a wall"},
+        {{black_percent=93,mean_luma=0.004,p95=0.03},true,false,"an interior whose exposure is far too low"},
         {{black_percent=60,mean_luma=0.03,p5=0,p95=0.2},false,false,"a night scene with its lights"},
-        {{saturated_percent=99,p5=0.95,mean_luma=0.99},false,true,"a sun a thousand times too strong"},
-        {{saturated_percent=99,p5=0.05,mean_luma=0.2},false,false,"a red that saturates one channel"},
-        {{saturated_percent=40,p5=0.5,mean_luma=0.8},false,false,"snow under a bright sky"},
+        {{saturated_percent=99,p5=0.95,p50=0.99,mean_luma=0.99},false,true,"a sun a thousand times too strong"},
+        {{saturated_percent=72,p5=0.3,p50=0.92,mean_luma=0.8},false,true,"daylight at the exposure of an interior"},
+        {{saturated_percent=99,p5=0.05,p50=0.2,mean_luma=0.2},false,false,"a red that saturates one channel"},
+        {{saturated_percent=40,p5=0.5,p50=0.75,mean_luma=0.8},false,false,"snow under a bright sky"},
     }) {
         dark,blown:=audit_exposure(c.stats)
         testing.expectf(t,dark==c.dark && blown==c.blown,"%s: dark %v blown %v",c.what,dark,blown)
@@ -70,4 +74,44 @@ the_audit_tells_a_trap_from_what_a_game_means :: proc(t:^testing.T) {
     }
     _,headless_bone:=audit_bones_moved(rest,headless)
     testing.expect_value(t,headless_bone,2)
+}
+
+// An effect in view that changes a spot of pixels or more is seen; one off
+// the image, behind the camera or that changes a few pixels is not checked or
+// is unseen.
+@(test)
+an_effect_in_view_that_changes_no_pixel_is_unseen :: proc(t:^testing.T) {
+    view:=core.View{position={0,0,0},rotation=1,fov=1,near=0.1,far=100,size={256,144}}
+    Box_Case :: struct {low,high:[3]f32,shown:bool,what:string}
+    for c in ([]Box_Case{
+        {{-1,-1,-6},{1,1,-4},true,"ahead"},
+        {{-1,-1,4},{1,1,6},false,"behind the camera"},
+        {{40,-1,-6},{42,1,-4},false,"far to the right"},
+        {{-0.5,-0.5,-0.5},{0.5,0.5,0.5},true,"around the camera"},
+        {{-50,-1,-6},{50,1,-4},true,"wider than the image"},
+    }) {
+        testing.expectf(t,audit_box_in_view(view,c.low,c.high)==c.shown,"%s: in view %v",c.what,!c.shown)
+    }
+    Pixels_Case :: struct {pixels:int,unseen:bool}
+    for c in ([]Pixels_Case{{0,true},{AUDIT_UNSEEN_PIXELS-1,true},{AUDIT_UNSEEN_PIXELS,false},{2000,false}}) {
+        testing.expectf(t,audit_unseen(c.pixels)==c.unseen,"%v",c)
+    }
+}
+
+// A mesh in other units is drawn far from its size; one a level scales by a
+// few times is not; one far from the others of its mesh is out of place.
+@(test)
+a_mesh_drawn_far_from_its_size_is_flagged :: proc(t:^testing.T) {
+    Scale_Case :: struct {scale:[3]f32,limit:f32,far:bool,what:string}
+    for c in ([]Scale_Case{
+        {{100,100,100},AUDIT_SCALE_UNITS,true,"a fish in centimeters for meters"},
+        {{0.01,0.01,0.01},AUDIT_SCALE_UNITS,true,"meters for centimeters"},
+        {{3,3,3},AUDIT_SCALE_UNITS,false,"a rock three times its size"},
+        {{1,-1,1},AUDIT_SCALE_UNITS,false,"a mirrored prop"},
+        {{12,12,12},AUDIT_SCALE_KIN,true,"a fish twelve times its school"},
+        {{4,4,4},AUDIT_SCALE_KIN,false,"a fish four times its school"},
+    }) {
+        _,far:=mm.scale_beyond(c.scale,c.limit)
+        testing.expectf(t,far==c.far,"%s: far %v",c.what,!c.far)
+    }
 }

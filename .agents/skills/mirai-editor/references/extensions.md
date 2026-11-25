@@ -229,6 +229,11 @@ my_register :: proc(s: ^editor.Session) {
   `editor.play_body_measure` (fallback: `Unknown`, `BODY_PERSON`).
 - Bot navigation: `editor.play_drive_to`, `play_drive_steer`, `play_drive_end`, routed by
   `editor.Route_Provider`.
+- `editor.Audit_Provider` (`audit`, `shown`, `leave_out`): what `scene.audit` / `play.audit` ask a
+  plugin of what it simulates. `audit` appends `Audit_Finding`s (vfx: missing Vfx program;
+  animation: attachment far from its bone). `shown` lists what should be visible with its world box,
+  and `leave_out` drops one entity from the next frames (renderer-side state, never the simulated
+  world) so the audit counts its pixels by difference.
 
 ## Importers of a plugin
 

@@ -336,6 +336,7 @@ Pool :: struct {
     step:u64,                // steps simulated: the half of the events each one writes
     made:bool,               // the buffers have the size of capacity
     origin:[3]f32,           // what the places its buffers keep are relative to: the origin of the renderer when they last moved
+    left_out:core.Entity,    // the views draw none of its emitters: an audit counts the pixels they drew; NONE: none is left out
     gpu:[]Gpu_Emitter,       // the rows of the table of emitters, as the GPU has them once those of dirty are written
     frame_bytes:[dynamic]u8, // header, bones, grids, volumes, resources, stages and channel births
     draws:[]Pool_Draw,
@@ -581,6 +582,20 @@ spawn_youngest :: proc "contextless" (s:Particle_Spawn) -> f32 {
 pool_slot_find :: proc(p:^Pool,id:u64) -> int {
     if slot,found:=base.hash_map_get(&p.by_id,id);found {return int(slot)}
     return -1
+}
+
+// The box in the world the particles of the emitter at e and of its layers
+// and sub effect are drawn in, as the views cull them; false when the pool
+// holds none of them or one is unbounded.
+emitter_box :: proc(p:^Pool,e:core.Entity) -> (low,high:[3]f32,ok:bool) {
+    low,high={max(f32),max(f32),max(f32)},{min(f32),min(f32),min(f32)}
+    for at in p.order[:p.order_count] {
+        s:=&p.slots[at]
+        if s.desc.owner!=e {continue}
+        if s.unbounded {return {},{},false}
+        low,high,ok=linalg.min(low,s.bounds_min),linalg.max(high,s.bounds_max),true
+    }
+    return
 }
 
 pool_slot_take :: proc(p:^Pool,id:u64,capacity:u32,stride:u32=0) -> int {
@@ -1331,7 +1346,7 @@ draw_list :: proc(pool:^Pool,pass:^erender.Pass,meshes:bool,view:erender.Texture
     frustum:=mm.frustum_from_matrix(pass.view_projection)
     for at in pool.order[:pool.order_count] {
         s:=&pool.slots[at]
-        if s.desc.view!=view || s.desc.culled {continue}
+        if s.desc.view!=view || s.desc.culled || s.desc.owner==pool.left_out && pool.left_out!=core.NONE {continue}
         mesh:=s.desc.info.render==.Mesh
         if meshes && (!mesh || s.desc.blended) ||
             !meshes && mesh && !s.desc.blended && !s.desc.mixed {continue}

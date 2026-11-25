@@ -169,6 +169,39 @@ Rig_Pose :: struct {
     names:[]string,  // of each bone, "" when unknown
 }
 
+// What the plugins that draw or place things in a game say is wrong with them
+// (vfx: an effect whose program is missing; animation: an attachment far from
+// its bone), for the audit of the playtest plugin, never by the name of a
+// component. A nil procedure is a point it does not take.
+Audit_Provider :: struct {
+    // Appends what is wrong in w, in allocator; without a GPU too.
+    audit:proc(s:^Session,w:core.World_Ref,out:^[dynamic]Audit_Finding,allocator:runtime.Allocator),
+    // Appends what of w should show in the frames drawn now (an emitter with
+    // particles alive), with its box in the world, in allocator.
+    shown:proc(s:^Session,w:core.World_Ref,out:^[dynamic]Audit_Shown,allocator:runtime.Allocator),
+    // The frames drawn next leave out what e draws, NONE none of it: the audit
+    // counts the pixels e drew by the difference. What it keeps lives with the
+    // renderer, never in the simulated world.
+    leave_out:proc(s:^Session,w:core.World_Ref,e:core.Entity),
+}
+
+Audit_Severity :: enum u8 {Error,Warn}
+Audit_Area :: enum u8 {Input,Ui,Render,Material,Animation,Physics,Performance,Problems}
+
+Audit_Finding :: struct {
+    severity:Audit_Severity,
+    area:Audit_Area,
+    entity:core.Entity, // NONE: about the world
+    code:string,        // <area>.<cause>
+    message,fix:string,
+}
+
+Audit_Shown :: struct {
+    entity:core.Entity,
+    low,high:[3]f32, // m, the box in the world it draws in
+    what:string,     // what it draws, as the message names it (an effect asset)
+}
+
 // The body what steers is told for when none says its own: the character physics makes by default.
 BODY_PERSON :: Body_Measure{height=1.8,step_height=0.3,speed=5,jump_height=1.2}
 

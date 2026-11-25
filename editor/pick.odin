@@ -274,12 +274,11 @@ project_box :: proc(v:^Viewport,m:mm.Mat4,low,high:[3]f32) -> (rect:ui.Rect,ok:b
 }
 
 // The world box of the selected entities and of what hangs from them. An
-// entity without a body counts as a small box.
+// entity without a body counts as a small box; entities_bounds is that of others.
 selection_bounds :: proc(s:^Session,w:core.World_Ref) -> (low,high:[3]f32,found:bool) {
     return entities_bounds(s,w,s.selection.entities[:])
 }
 
-@(private)
 entities_bounds :: proc(s:^Session,w:core.World_Ref,entities:[]core.Entity) -> (low,high:[3]f32,found:bool) {
     low,high={1e30,1e30,1e30},{-1e30,-1e30,-1e30}
     items:=scene_items(s,w,ghosts_shown(s))
