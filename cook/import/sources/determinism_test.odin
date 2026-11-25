@@ -48,15 +48,9 @@ main :: proc() {os.exit(sources.command(os.args[1:],os.to_writer(os.stdout),os.t
         if testing.expect(t,read_error==nil) {append(&texts,string(data))}
     }
     for found in ir_platform_math(texts[:],context.temp_allocator) {
-        if slice.contains(PLATFORM_MATH_PENDING,found.function) {continue}
         testing.expectf(t,false,"%s computes with %s, which rounds differently by target: use the math of mirai:std/math (sin_det, pow_det, mat3_mul_det...)",found.function,found.what)
     }
 }
-
-// The window of the lossless encoder of audio/ takes the cosine of the C library; its owner moves
-// it to cos_det_f64.
-@(private="file")
-PLATFORM_MATH_PENDING :: []string{"mirai_audio::[lossless_encode.odin]::tukey"}
 
 @(test)
 ir_platform_math_names_the_procedures_of_the_engine_that_reach_it :: proc(t:^testing.T) {
