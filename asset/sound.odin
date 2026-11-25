@@ -42,7 +42,6 @@ Sound_Desc :: struct {
     file:[]u8,     // File
     flags:Sound_Flags,
     source:^Import_Info,
-    compression:Compression,
 }
 
 Sound_View :: struct {
@@ -69,9 +68,9 @@ sound_tables :: proc(doc:^Document,types:^Types,info:^Sound_Info,desc:Sound_Desc
     document_put_row(doc,types,"sound",info) or_return
     import_put(doc,types,desc.source) or_return
     if info.encoding==.File {
-        document_put(doc,types,"file",desc.file,{.Bulk},desc.compression,SOUND_BULK_ALIGNMENT) or_return
+        document_put(doc,types,"file",desc.file,{.Bulk},SOUND_BULK_ALIGNMENT) or_return
     } else {
-        document_put(doc,types,"lossless",desc.lossless,{.Bulk},desc.compression,SOUND_BULK_ALIGNMENT) or_return
+        document_put(doc,types,"lossless",desc.lossless,{.Bulk},SOUND_BULK_ALIGNMENT) or_return
     }
     return .None
 }

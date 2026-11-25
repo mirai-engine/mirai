@@ -70,7 +70,7 @@ kind_files :: proc(t:^testing.T,types:^Types) -> (names:[dynamic]string,files:[d
     }
     {
         doc:Document
-        testing.expect_value(t,font_document(&doc,types,{id={4,4},file=#load("../assets/fixtures/cff.otf"),compression=.Stream},context.temp_allocator),Error.None)
+        testing.expect_value(t,font_document(&doc,types,{id={4,4},file=#load("../assets/fixtures/cff.otf")},context.temp_allocator),Error.None)
         add(&names,&files,"font",document_file(&doc))
     }
     for file in ([]string{"blockout/column.mesh","gallery/plant/Leaves.mat","showcase/hud_badge.tex","showcase/showcase.scene","showcase/hud.ui","showcase/lift.anim","characters/spider/spider.skeleton","characters/jelly/jelly_moods.character","vfx_gallery/smoke_plume.particle","interface/merchant_answers.records","physics_gallery/bricks.fracture","forest/Hills.terrain","texts.strings","forest/Woods.pcg","physics_gallery/recorded.physics_cache","../../plugins/prompts_kenney/assets/kenney.prompts"}) {

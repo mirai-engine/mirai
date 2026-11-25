@@ -37,7 +37,7 @@ tool_document :: proc(doc:^Document,types:^Types) {
     document_column_put(doc,types,uses,"count",counts[:])
     doc.tables[uses].columns[ref].ref=table
     blob:=[5]u8{1,2,3,4,5}
-    document_put(doc,types,"blob",blob[:],{.Bulk},.None,16)
+    document_put(doc,types,"blob",blob[:],{.Bulk},16)
 }
 
 @(private="file")
@@ -79,7 +79,7 @@ GOLDEN :: `{
       "rows": 1,
       "key": -1,
       "columns": [
-        {"name": "", "type": 3, "type_name": "Tool_Info", "size": 24, "alignment": 8, "compression": "None", "flags": [], "ref": ""}
+        {"name": "", "type": 3, "type_name": "Tool_Info", "size": 24, "alignment": 8, "flags": [], "ref": ""}
       ],
       "data": [
         {"count": 2, "shade": "Smooth", "material": "00000000000000050000000000000006"}
@@ -91,9 +91,9 @@ GOLDEN :: `{
       "rows": 2,
       "key": 0,
       "columns": [
-        {"name": "id", "type": 4, "size": 8, "alignment": 8, "compression": "None", "flags": [], "ref": ""},
-        {"name": "name", "type": 6, "size": 8, "alignment": 1, "compression": "None", "flags": ["Text"], "ref": ""},
-        {"name": "value", "type": 10, "type_name": "Tool_Item", "size": 16, "alignment": 4, "compression": "None", "flags": [], "ref": ""}
+        {"name": "id", "type": 4, "size": 8, "alignment": 8, "flags": [], "ref": ""},
+        {"name": "name", "type": 6, "size": 8, "alignment": 1, "flags": ["Text"], "ref": ""},
+        {"name": "value", "type": 10, "type_name": "Tool_Item", "size": 16, "alignment": 4, "flags": [], "ref": ""}
       ],
       "data": [
         {"id": "0x000000000000001f", "name": "axe", "value": {"weight": 1.5, "tags": ["Hot"], "offset": [0, 1]}},
@@ -106,8 +106,8 @@ GOLDEN :: `{
       "rows": 2,
       "key": -1,
       "columns": [
-        {"name": "item", "type": 0, "size": 4, "alignment": 4, "compression": "None", "flags": [], "ref": "items"},
-        {"name": "count", "type": 11, "size": 2, "alignment": 2, "compression": "None", "flags": [], "ref": ""}
+        {"name": "item", "type": 0, "size": 4, "alignment": 4, "flags": [], "ref": "items"},
+        {"name": "count", "type": 11, "size": 2, "alignment": 2, "flags": [], "ref": ""}
       ],
       "data": [
         {"item": 1, "count": 7},
@@ -120,7 +120,7 @@ GOLDEN :: `{
       "rows": 5,
       "key": -1,
       "columns": [
-        {"name": "", "type": 5, "size": 1, "alignment": 16, "compression": "None", "flags": [], "ref": "", "file": "blob.bin"}
+        {"name": "", "type": 5, "size": 1, "alignment": 16, "flags": [], "ref": "", "file": "blob.bin"}
       ]
     }
   ]
@@ -295,7 +295,6 @@ document_text_says_what_is_wrong_and_where :: proc(t:^testing.T) {
     refuse(t,&doc,`"name": "uses"`,`"name": "items"`,.None,.Table_Name)
     refuse(t,&doc,`"ref": "items"`,`"ref": "nothing"`,.None,.Unknown_Ref)
     refuse(t,&doc,`"type": 11,`,`"type": 99,`,.None,.Column)
-    refuse(t,&doc,`"compression": "None", "flags": ["Text"]`,`"compression": "Zip", "flags": ["Text"]`,.None,.Unknown_Compression)
     refuse(t,&doc,`"file": "blob.bin"`,`"file": "other.bin"`,.None,.Bulk_File)
     refuse(t,&doc,`"rows": 5,`,`"rows": 4,`,.None,.Bulk_File)
     refuse(t,&doc,`, "file": "blob.bin"`,``,.None,.Bulk_File)

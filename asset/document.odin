@@ -23,7 +23,6 @@ Doc_Column :: struct {
     flags:serial.Field_Flags,
     ref:int,  // the table whose rows its values index, or -1
     alignment:int,
-    compression:Compression,
     data:[]u8,    // rows*size, aligned to alignment and to 16
     capacity:int, // bytes reserved behind data
 }
@@ -151,7 +150,7 @@ document_table_remove :: proc(doc:^Document,table:int) {
 
 // Adds a column of a type of the schema of the document, with every row zero.
 // alignment 0 is the one of the type.
-document_column_add :: proc(doc:^Document,table:int,name:string,type:serial.Type_Index,flags:=serial.Field_Flags{},compression:=Compression.None,alignment:=0) -> (column:int,error:Error) {
+document_column_add :: proc(doc:^Document,table:int,name:string,type:serial.Type_Index,flags:=serial.Field_Flags{},alignment:=0) -> (column:int,error:Error) {
     target:=&doc.tables[table]
     if int(type)>=len(doc.schema.types) || len(target.columns)>=MAX_COLUMNS {return -1,.Invalid}
     if name=="" ? len(target.columns)!=0 : !name_valid(name) {return -1,.Invalid}
@@ -162,7 +161,7 @@ document_column_add :: proc(doc:^Document,table:int,name:string,type:serial.Type
     if wanted&(wanted-1)!=0 || wanted>1<<MAX_ALIGNMENT_LOG2 {return -1,.Invalid}
     copied,no_name:=strings.clone(name,doc.allocator)
     if no_name!=nil {return -1,.Out_Of_Memory}
-    added:=Doc_Column{name=copied,type=type,size=int(stored.size),flags=flags,ref=-1,alignment=wanted,compression=compression}
+    added:=Doc_Column{name=copied,type=type,size=int(stored.size),flags=flags,ref=-1,alignment=wanted}
     if error=column_size(doc,&added,target.rows*added.size);error!=.None {
         delete(added.name,doc.allocator)
         return -1,error
@@ -220,10 +219,10 @@ document_cell :: #force_inline proc(doc:^Document,table,column,row:int) -> []u8 
 }
 
 // A table of one column without name: the images of values, one per row.
-document_put :: proc(doc:^Document,types:^Types,name:string,values:[]$T,flags:=Table_Flags{},compression:=Compression.None,alignment:=0) -> (table:int,error:Error) {
+document_put :: proc(doc:^Document,types:^Types,name:string,values:[]$T,flags:=Table_Flags{},alignment:=0) -> (table:int,error:Error) {
     table=document_table_add(doc,name,flags) or_return
     error=document_resize(doc,table,len(values))
-    if error==.None {_,error=document_column_put(doc,types,table,"",values,{},compression,alignment)}
+    if error==.None {_,error=document_column_put(doc,types,table,"",values,{},alignment)}
     if error!=.None {
         document_table_remove(doc,table)
         return -1,error
@@ -235,14 +234,14 @@ document_put_row :: proc(doc:^Document,types:^Types,name:string,value:^$T,flags:
     return document_put(doc,types,name,([^]T)(value)[:1],flags+{.Single})
 }
 // Adds a column with one value per row of its table.
-document_column_put :: proc(doc:^Document,types:^Types,table:int,name:string,values:[]$T,flags:=serial.Field_Flags{},compression:=Compression.None,alignment:=0) -> (column:int,error:Error) {
+document_column_put :: proc(doc:^Document,types:^Types,table:int,name:string,values:[]$T,flags:=serial.Field_Flags{},alignment:=0) -> (column:int,error:Error) {
     if len(values)!=doc.tables[table].rows {return -1,.Invalid}
     index,known:=types_index(types,T)
     if !known {return -1,types.error}
     type,imported:=document_type(doc,types,T)
     layout:=types_layout(types,index)
     if !imported || layout==nil {return -1,.Out_Of_Memory}
-    column=document_column_add(doc,table,name,type,flags,compression,alignment) or_return
+    column=document_column_add(doc,table,name,type,flags,alignment) or_return
     serial.value_write(layout,doc.tables[table].columns[column].data,raw_data(values),len(values))
     return column,.None
 }
@@ -311,8 +310,18 @@ document_choice_rename :: proc(doc:^Document,old,name:string) -> int {
     return renamed
 }
 
+// What a column of a table is stored as when the codecs of its document compress, the one rule
+// of a save and of a repack: a stream where that shrinks it, but what is read by offset: the
+// page_data of a mesh, which holds streams of its own, and the blocks of a table of blocks, which
+// their kind codes.
+@(private)
+column_compression :: proc(doc:^Document,table:string) -> Compression {
+    if doc.kind==KIND_MESH && table=="page_data" || strings.has_suffix(table,"_blocks") {return .None}
+    return .Stream
+}
+
 // Writes the document as a file into w, which has to be empty, compressed with profile as its
-// codecs allow.
+// codecs allow (column_compression).
 document_write :: proc(doc:^Document,w:^serial.Writer,profile:=data.Profile.Fast,worker:=jobs.Worker_Ref{}) -> Error {
     document_check(doc) or_return
     allocator:=doc.allocator
@@ -362,7 +371,7 @@ document_write :: proc(doc:^Document,w:^serial.Writer,profile:=data.Profile.Fast
             else if bulk {tag,counter=TAG_BULK,1}
             first_chunk[t]=len(chunks)
             for column in table.columns {
-                append(&chunks,Build_Chunk{tag=tag,index=counts[counter],alignment=column.alignment,compression=column.compression,data=column.data})
+                append(&chunks,Build_Chunk{tag=tag,index=counts[counter],alignment=column.alignment,compression=column_compression(doc,table.name),data=column.data})
                 counts[counter]+=1
             }
         }
@@ -432,7 +441,7 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
         target:=&doc.tables[len(doc.tables)-1]
         for from,at in source.columns {
             entry:=blob_chunk(&a.blob,from.chunk)
-            column:=Doc_Column{type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2,compression=entry.compression}
+            column:=Doc_Column{type=from.type,size=from.size,flags=from.flags,ref=from.ref,alignment=1<<entry.alignment_log2}
             no_column_name:runtime.Allocator_Error
             column.name,no_column_name=strings.clone(from.name,allocator)
             error:=column_size(doc,&column,source.rows*from.size)
@@ -448,23 +457,15 @@ document_from_asset :: proc(doc:^Document,a:^Asset,allocator:=context.allocator)
     return .None
 }
 
-// The file bytes are, written again with profile as codecs allow: the same content with its
-// chunks and the pages of a mesh compressed again. A file written without a compressor
-// (Codecs.None) does not say which chunks its writer meant to compress: with codecs, every column
-// becomes a stream where that shrinks it, but those read by offset: the page_data of a mesh,
-// which holds streams of its own, and the blocks of a table of blocks, which their kind codes. With a
-// worker, the pieces of a large chunk are compressed on the workers of its job system.
+// The file bytes are, written again with profile as codecs allow (column_compression): the same
+// content with its chunks and the pages of a mesh compressed again, the bytes a save of the same
+// document with those codecs writes. With a worker, the pieces of a large chunk are compressed on
+// the workers of its job system.
 document_repack :: proc(bytes:[]u8,profile:data.Profile,codecs:Codecs,allocator:=context.allocator,worker:=jobs.Worker_Ref{}) -> (repacked:[]u8,error:Error) {
     doc:Document
     document_read(&doc,bytes,allocator) or_return
     defer document_destroy(&doc)
     doc.codecs=codecs
-    if codecs!=.None {
-        for &table in doc.tables {
-            if doc.kind==KIND_MESH && table.name=="page_data" || strings.has_suffix(table.name,"_blocks") {continue}
-            for &column in table.columns {column.compression=.Stream}
-        }
-    }
     if doc.kind==KIND_MESH {mesh_pages_repack(&doc,profile) or_return}
     return document_bytes(&doc,allocator,profile,worker)
 }
@@ -526,7 +527,7 @@ document_column_retype :: proc(doc:^Document,table,column:int,source:^serial.Sch
     rows:=doc.tables[table].rows
     stored:=doc.schema.types[imported]
     size:=int(stored.size)
-    converted:=Doc_Column{name=target.name,type=imported,size=size,flags=target.flags,ref=target.ref,alignment=max(target.alignment,int(stored.align)),compression=target.compression}
+    converted:=Doc_Column{name=target.name,type=imported,size=size,flags=target.flags,ref=target.ref,alignment=max(target.alignment,int(stored.align))}
     column_size(doc,&converted,rows*size) or_return
     migration:serial.Migration
     migration_error:=serial.migration_init(&migration,&doc.schema,target.type,&doc.schema,imported,doc.allocator)

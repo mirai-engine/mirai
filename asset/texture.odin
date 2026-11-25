@@ -181,7 +181,7 @@ texture_tables :: proc(doc:^Document,types:^Types,info:^Texture_Info,mips:[]Text
     }
     texels:=document_table_add(doc,"texels",{.Bulk}) or_return
     document_resize(doc,texels,total) or_return
-    column:=document_column_add(doc,texels,"",byte,{},.Stream,TEXTURE_BULK_ALIGNMENT) or_return
+    column:=document_column_add(doc,texels,"",byte,{},TEXTURE_BULK_ALIGNMENT) or_return
     bytes:=doc.tables[texels].columns[column].data[:]
     if .Fields in info.flags {
         if split!=nil {copy(bytes,split)}

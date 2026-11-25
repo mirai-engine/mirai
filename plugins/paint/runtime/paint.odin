@@ -41,8 +41,8 @@ paint_document :: proc(doc:^asset.Document,types:^asset.Types,id:base.Asset_Id,v
 paint_tables :: proc(doc:^asset.Document,types:^asset.Types,view:Paint_View) -> asset.Error {
     info:=view.info
     asset.document_put_row(doc,types,"paint",&info) or_return
-    asset.document_put(doc,types,"positions",view.positions,{.Bulk},.Stream) or_return
-    asset.document_put(doc,types,"colors",view.colors,{.Bulk},.Stream) or_return
+    asset.document_put(doc,types,"positions",view.positions,{.Bulk}) or_return
+    asset.document_put(doc,types,"colors",view.colors,{.Bulk}) or_return
     return .None
 }
 

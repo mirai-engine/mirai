@@ -823,7 +823,7 @@ grid_put_document :: proc(document:^asset.Document,types:^asset.Types,g:^Grid($T
         if append(&blocks,..block)!=len(block) {return .Out_Of_Memory}
     }
     asset.document_put(document,types,pages_name,runs[:]) or_return
-    asset.document_put(document,types,blocks_name,blocks[:],{.Bulk},.None) or_return
+    asset.document_put(document,types,blocks_name,blocks[:],{.Bulk}) or_return
     return .None
 }
 

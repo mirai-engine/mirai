@@ -448,7 +448,7 @@ mesh_document :: proc(doc:^Document,types:^Types,desc:Mesh_Desc,allocator:=conte
 @(private="file")
 mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,desc:Mesh_Desc) -> Error {
     bulk :: proc(doc:^Document,types:^Types,name:string,values:[]$T) -> Error {
-        _,error:=document_put(doc,types,name,values,{.Bulk},.Stream,MESH_BULK_ALIGNMENT)
+        _,error:=document_put(doc,types,name,values,{.Bulk},MESH_BULK_ALIGNMENT)
         return error
     }
     document_put_row(doc,types,"mesh",info) or_return
@@ -472,12 +472,12 @@ mesh_tables :: proc(doc:^Document,types:^Types,info:^Mesh_Info,view:Mesh_View,de
     if len(view.skin)>0 {
         vertices:=document_table_add(doc,"vertices",{.Bulk}) or_return
         document_resize(doc,vertices,len(view.skin)) or_return
-        document_column_put(doc,types,vertices,"skin",view.skin,{},.Stream,MESH_BULK_ALIGNMENT) or_return
+        document_column_put(doc,types,vertices,"skin",view.skin,{},MESH_BULK_ALIGNMENT) or_return
     }
     pages,data:=pages_compress(view.geometry,.Fast,doc.codecs,doc.allocator) or_return
     defer {delete(pages,doc.allocator);delete(data)}
     bulk(doc,types,"pages",pages) or_return
-    _,error:=document_put(doc,types,"page_data",data[:],{.Bulk},.None,MESH_BULK_ALIGNMENT)
+    _,error:=document_put(doc,types,"page_data",data[:],{.Bulk},MESH_BULK_ALIGNMENT)
     return error
 }
 
@@ -546,7 +546,7 @@ mesh_pieces_put :: proc(doc:^Document,types:^Types,points:[][3]f32,sizes:[]u32) 
         if table,found:=document_table(doc,name);found {document_table_remove(doc,table)}
     }
     if len(sizes)==0 {return .None}
-    document_put(doc,types,"piece_points",points,{.Bulk},.Stream,MESH_BULK_ALIGNMENT) or_return
+    document_put(doc,types,"piece_points",points,{.Bulk},MESH_BULK_ALIGNMENT) or_return
     _,error:=document_put(doc,types,"piece_sizes",sizes)
     return error
 }

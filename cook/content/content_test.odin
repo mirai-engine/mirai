@@ -5,6 +5,7 @@ import "core:os"
 import "core:testing"
 import "core:time"
 import "mirai:asset"
+import "mirai:cook/records"
 import "mirai:std/base"
 import "mirai:std/geom"
 
@@ -52,4 +53,44 @@ a_mesh_buffer_is_written_as_a_mesh_with_the_colors_of_its_parts :: proc(t:^testi
     other:=fmt.tprintf("%s/woods/none.mesh",folder)
     mesh(&w,other,&empty)
     testing.expect(t,w.failed && !os.exists(other))
+}
+
+// What the writer writes with the codecs of a project is the file the cook's
+// repack writes of it, the same chunks compressed the same way: a mesh and a
+// table of game data.
+@(test)
+what_the_writer_writes_is_what_the_repack_of_the_cook_writes :: proc(t:^testing.T) {
+    context.allocator=context.temp_allocator
+    folder:=base.test_folder(t,"content-repack")
+    w:Writer
+    writer_test(&w,"content_test")
+    defer asset.types_destroy(&w.types)
+    w.types.codecs=.Compressed
+    m:geom.Mesh_Buffer
+    geom.mesh_buffer_init(&m)
+    // Enough clusters that the tables of the mesh shrink when compressed.
+    geom.icosphere_build(&m,1,5)
+    path:=fmt.tprintf("%s/ball.mesh",folder)
+    mesh(&w,path,&m)
+    if !testing.expect(t,!w.failed) {return}
+    e:records.Edit
+    if !testing.expect_value(t,records.create({7,7},fmt.tprintf("%s/items.records",folder),"","Item",&e),"") {return}
+    defer records.destroy(&e)
+    column:asset.Records_Column
+    base.text_set(column.name[:],"stack")
+    column.kind=.Int
+    if !testing.expect_value(t,records.column_add(&e,nil,column),"") {return}
+    for name in ([]string{"sword","shield","potion"}) {
+        row:=make([]u8,records.row_size(&e))
+        copy(row,e.defaults)
+        testing.expect(t,records.row_put(&e,records.id_of_name(name,e.ids[:]),name,row))
+    }
+    table,problem:=records.file_bytes(&e,&w.types)
+    if !testing.expect_value(t,problem,"") {return}
+    saved,_:=os.read_entire_file(path,context.temp_allocator)
+    for bytes,what in ([2][]u8{saved,table}) {
+        repacked,error:=asset.document_repack(bytes,.Fast,.Compressed)
+        testing.expect_value(t,error,asset.Error.None)
+        testing.expectf(t,string(bytes)==string(repacked),"%s: the writer and a repack write other bytes (%d and %d)",what==0?"mesh":"records",len(bytes),len(repacked))
+    }
 }

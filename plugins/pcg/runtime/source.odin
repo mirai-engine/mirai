@@ -467,8 +467,8 @@ source_bytes :: proc(s:^Pcg_Source,id:base.Asset_Id,types:^asset.Types,allocator
     asset.document_put(&document,types,"layers",rows) or_return
     asset.document_put(&document,types,"symbols",defs[:]) or_return
     asset.document_put(&document,types,"cells",cells) or_return
-    asset.document_put(&document,types,"text",text[:],{.Bulk},.Stream) or_return
-    asset.document_put(&document,types,"paint",painted[:],{.Bulk},.Stream) or_return
+    asset.document_put(&document,types,"text",text[:],{.Bulk}) or_return
+    asset.document_put(&document,types,"paint",painted[:],{.Bulk}) or_return
     asset.import_put(&document,types,import_info) or_return
     return asset.document_bytes(&document,allocator)
 }

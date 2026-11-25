@@ -139,7 +139,7 @@ document_table_take :: proc(dst,src:^Document,name:string) -> Error {
     for &column in source.columns {
         type:=document_import(dst,&link,column.type)
         if type==serial.TYPE_NONE {return .Out_Of_Memory}
-        added:=document_column_add(dst,table,column.name,type,column.flags,column.compression,column.alignment) or_return
+        added:=document_column_add(dst,table,column.name,type,column.flags,column.alignment) or_return
         copy(dst.tables[table].columns[added].data,column.data)
         if column.ref>=0 {dst.tables[table].columns[added].ref,_=document_table(dst,src.tables[column.ref].name)}
     }
@@ -189,7 +189,7 @@ tables_add :: proc(g:^Merger) -> Error {
         for &column in source.columns {
             type:=document_import(ours,&link,column.type)
             if type==serial.TYPE_NONE {return .Out_Of_Memory}
-            document_column_add(ours,table,column.name,type,column.flags,column.compression,column.alignment) or_return
+            document_column_add(ours,table,column.name,type,column.flags,column.alignment) or_return
         }
         ours.tables[table].key=source.key
     }

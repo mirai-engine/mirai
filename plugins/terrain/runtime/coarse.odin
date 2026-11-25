@@ -88,13 +88,13 @@ coarse_put :: proc(document:^asset.Document,types:^asset.Types,c:^Coarse) -> ass
     }}
     grid:=asset.document_table_add(document,COARSE_TABLE) or_return
     asset.document_resize(document,grid,count) or_return
-    asset.document_column_put(document,types,grid,"heights",heights,{},.Stream) or_return
-    asset.document_column_put(document,types,grid,"weights",weights,{},.Stream) or_return
-    asset.document_column_put(document,types,grid,"holes",holes,{},.Stream) or_return
-    asset.document_column_put(document,types,grid,"paint",paint,{},.Stream) or_return
+    asset.document_column_put(document,types,grid,"heights",heights,{}) or_return
+    asset.document_column_put(document,types,grid,"weights",weights,{}) or_return
+    asset.document_column_put(document,types,grid,"holes",holes,{}) or_return
+    asset.document_column_put(document,types,grid,"paint",paint,{}) or_return
     pieces:=asset.document_table_add(document,PIECES_TABLE) or_return
     asset.document_resize(document,pieces,len(c.ranges)) or_return
-    asset.document_column_put(document,types,pieces,"ranges",c.ranges,{},.Stream) or_return
+    asset.document_column_put(document,types,pieces,"ranges",c.ranges,{}) or_return
     return .None
 }
 

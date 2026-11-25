@@ -17,7 +17,7 @@ import "mirai:std/serial"
 //     "tables": [
 //       {"name": "...", "flags": [...], "rows": n, "key": column or -1,
 //        "columns": [{"name": "...", "type": index, "type_name": "...", "size": n, "alignment": n,
-//                     "compression": "None", "flags": [...], "ref": "table or empty"}],
+//                     "flags": [...], "ref": "table or empty"}],
 //        "data": [ row, ... ]}
 //     ]
 //   }
@@ -217,7 +217,6 @@ document_text_write :: proc(doc:^Document,w:^serial.Writer,options:=Text_Options
             if name:=doc.schema.types[column.type].name;name!="" {write_key(w,-1,"type_name");serial.text_write_string(w,name)}
             write_key(w,-1,"size");serial.text_write_uint(w,u64(column.size))
             write_key(w,-1,"alignment");serial.text_write_uint(w,u64(column.alignment))
-            write_key(w,-1,"compression");serial.text_write_string(w,reflect.enum_string(column.compression))
             write_key(w,-1,"flags");write_names(w,column.flags)
             write_key(w,-1,"ref");serial.text_write_string(w,column.ref>=0?doc.tables[column.ref].name:"")
             if .Bulk in table.flags && options.bulk==.Files {
@@ -259,7 +258,6 @@ Text_Rule :: enum u8 {
     Columns_Order,       // in a table, "name" comes before "columns", once
     Data_Order,          // in a table, "columns" comes before "data", once
     Column,              // a name, type or alignment that is not valid
-    Unknown_Compression,
     Unknown_Column,      // a row names a column its table does not have
     Unknown_Ref,         // a column refers to a table that is not there
     Key,                 // a key that is not a column of its table
@@ -566,7 +564,6 @@ column_read :: proc(state:^Text_State,table:int,declared:int) -> bool {
     name,ref,file:string
     type:=u64(max(u64))
     alignment:=u64(0)
-    compression:=Compression.None
     flags:serial.Field_Flags
     for {
         key:=serial.text_string(r) or_return
@@ -576,13 +573,6 @@ column_read :: proc(state:^Text_State,table:int,declared:int) -> bool {
         case "name": name=strings.clone(serial.text_string(r) or_return,context.temp_allocator)
         case "type": type=read_uint(state,u64(serial.TYPE_NONE)-1) or_return
         case "alignment": alignment=read_uint(state,1<<MAX_ALIGNMENT_LOG2) or_return
-        case "compression":
-            serial.text_space(r)
-            at:=r.offset
-            text:=serial.text_string(r) or_return
-            value,known:=reflect.enum_from_name(Compression,text)
-            if !known {return fail(state,.Unknown_Compression,at)}
-            compression=value
         case "flags": flags=read_names(state,serial.Field_Flags) or_return
         case "ref": ref=strings.clone(serial.text_string(r) or_return,context.temp_allocator)
         case "file": file=strings.clone(serial.text_string(r) or_return,context.temp_allocator)
@@ -593,7 +583,7 @@ column_read :: proc(state:^Text_State,table:int,declared:int) -> bool {
         break
     }
     if !state.has_schema {return fail(state,.Schema_First,start)}
-    column,error:=document_column_add(doc,table,name,serial.Type_Index(min(type,u64(serial.TYPE_NONE))),flags,compression,int(alignment))
+    column,error:=document_column_add(doc,table,name,serial.Type_Index(min(type,u64(serial.TYPE_NONE))),flags,int(alignment))
     if error!=.None {return fail(state,.Column,start)}
     if ref!="" {append(&state.refs,Pending_Ref{table,column,ref,start})}
     if file=="" {return true}
