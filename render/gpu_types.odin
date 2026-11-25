@@ -72,6 +72,12 @@ Gpu_Frame :: struct {
 	moved:            [4]u32, // what casts shadows and changed since the frame before (Occluder_Changes): x the boxes of moved_boxes, y the lights of moved_lights, z MOVED_* bits
 	moved_boxes:      [OCCLUDER_CHANGES_MAX][2]Vec4, // low (w: the instance, as bits; OCCLUDERS_MANY: several) and high, relative to the origin
 	moved_lights:     [LIGHT_MOVES_MAX / 4][4]u32,
+	// What takes a place of the viewmodel of the view (INSTANCE_VIEWMODEL of
+	// its body), from its eye, to where it draws it, from its eye: rows, and in the
+	// w of the first what a normal of it gains along camera_forward per unit along
+	// it (viewmodel.odin). The identity for a view that draws none.
+	viewmodel:        [3]Vec4,
+	prev_viewmodel:   [3]Vec4, // the same in the frame before, from prev_eye
 	sun_shares:       Vec4, // x what of the light of the sun the probes gather, y what of it media scatter (Sun_Desc.indirect and scattering); zw 0
 	sun_maps:         [4]u32, // x the maps of the shadows of the sun the view drew this frame, the nearest cascade first (shadow_maps_pass), 0: none; y where the rows of the maps start in their buffer; z the texels of their atlas from top to bottom (abi.SHADOW_POOL across) while the view drew maps, else 0; w the bits of the texel of a point at the reach of what sways (shadow_sway_texel): a map no wider where it reads a point draws what sways as it sways
 	sun_map_rows:     [abi.SUN_MAP_ROWS][4]u32,
@@ -89,15 +95,6 @@ Gpu_Nested :: struct {
 	opening:             Vec4, // the plane its pixels are seen through, in the world of the view; zero: none known
 }
 
-// The viewmodel of a view in its constants (Viewmodel_Frame of common.slang),
-// after the nested views, in a generation that needs it (Frame_Layout.viewmodel).
-Gpu_Viewmodel :: struct {
-	ray:   [3]Vec4, // the ray of a pixel of it, as ray_origin, ray_du and ray_dv are of the view
-	maps:  [FOREGROUND_MAPS]Gpu_Shadow_Map, // foreground.odin; rect.z 0: none
-	light: u32, // the local light of maps 2 and 3; max(u32): none
-	pad:   [3]u32,
-}
-
 FRAME_FLAG_GI           :: abi.FRAME_FLAG_GI
 FRAME_FLAG_GI_GIVEN     :: abi.FRAME_FLAG_GI_GIVEN
 FRAME_FLAG_HW_RT        :: abi.FRAME_FLAG_HW_RT
@@ -108,9 +105,6 @@ FRAME_FLAG_REFLECTANCE  :: abi.FRAME_FLAG_REFLECTANCE
 FRAME_FLAG_NEUTRAL      :: abi.FRAME_FLAG_NEUTRAL
 FRAME_FLAG_SWAY         :: abi.FRAME_FLAG_SWAY
 FRAME_FLAG_NESTED       :: abi.FRAME_FLAG_NESTED
-FRAME_FLAG_VIEWMODEL    :: abi.FRAME_FLAG_VIEWMODEL
-FRAME_FLAG_FOREGROUND   :: abi.FRAME_FLAG_FOREGROUND
-FRAME_FLAG_BODY         :: abi.FRAME_FLAG_BODY
 
 // A whole vertex, which thumbnails and previews upload for themselves; the
 // scene keeps its vertices in clusters (Gpu_Cluster).
@@ -219,11 +213,8 @@ INSTANCE_FLAG_TRANSLUCENT :: abi.INSTANCE_FLAG_TRANSLUCENT
 // Bit 13: the instance is of the body of a local player, whose slot is in bits 14-15: a
 // view of that slot (Gpu_Frame.own) fades it out and leaves out the layers it does not draw of it.
 INSTANCE_FLAG_OWNED :: abi.INSTANCE_FLAG_OWNED
-INSTANCE_FLAG_FOREGROUND :: abi.INSTANCE_FLAG_FOREGROUND
+INSTANCE_VIEWMODEL :: abi.INSTANCE_VIEWMODEL
 OWNER_SLOTS :: 4 // the local slots the owner of an instance names, in its two bits
-FOREGROUND_DEPTH :: abi.FOREGROUND_DEPTH
-VIEWS_FOREGROUND :: abi.VIEWS_FOREGROUND
-VIEWS_KEPT :: abi.VIEWS_KEPT
 INSTANCE_OWNER_SHIFT :: abi.INSTANCE_OWNER_SHIFT
 // Bits 16-31: the layers the instance is in. A view draws those that share one with its own.
 INSTANCE_LAYERS_SHIFT :: abi.INSTANCE_LAYERS_SHIFT
@@ -243,9 +234,7 @@ RAY_SOLID :: abi.RAY_SOLID
 RAY_GLASS :: abi.RAY_GLASS
 RAY_SMALL :: abi.RAY_SMALL // the solid instances of INSTANCE_FLAG_SMALL
 RAY_SHADOW_ONLY :: abi.RAY_SHADOW_ONLY // the instances of a batch that casts shadows and that other rays do not see
-RAY_UNSHADOWED :: abi.RAY_UNSHADOWED
-RAY_BODY :: abi.RAY_BODY
-RAY_BODY_SMALL :: abi.RAY_BODY_SMALL // what rays see and casts no shadow: the instances of a batch without Casts_Shadow, and those of INSTANCE_UNSHADOWED
+RAY_UNSHADOWED :: abi.RAY_UNSHADOWED // what rays see and casts no shadow: the instances of a batch without Casts_Shadow, and those of INSTANCE_UNSHADOWED
 // Set in the reference of a RAY_GLASS instance in the software TLAS.
 TLAS_REF_GLASS :: abi.TLAS_REF_GLASS
 

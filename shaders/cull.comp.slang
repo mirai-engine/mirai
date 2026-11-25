@@ -54,14 +54,6 @@ void cull_start(uint i) {
     for (uint word = i; word < CULL_DEPTH_WORDS; word += threads) depth_buckets[word] = 0u;
 }
 
-// Whether the pass draws an instance by its flags: what is not of a
-// viewmodel, or in the pass of the viewmodel of the view's body, that alone.
-bool pass_draws(uint flags) {
-    bool weapon = (frame.flags & FRAME_FLAG_FOREGROUND) != 0u, body = (frame.flags & FRAME_FLAG_BODY) != 0u;
-    if (!weapon && !body) return (flags & INSTANCE_FLAG_FOREGROUND) == 0u;
-    return view_owns(flags) && ((flags & INSTANCE_FLAG_FOREGROUND) != 0u) == weapon;
-}
-
 // What the view draws of what has that box: in its layers, not of the body it
 // leaves out nor faded out whole by its values or, of a batch, by its
 // distance and size (batch_faded of its row), in its frustum and not all
@@ -69,9 +61,9 @@ bool pass_draws(uint flags) {
 // where it fails, every instance fails.
 bool view_draws_box(Instance inst, bool batched, Instance row, float3 low, float3 high) {
     float3 clipped = lerp(low, high, step(float3(0.0), frame.clip_plane.xyz));
-    bool own = max(view_body_fade(inst.meta.w), material_values_fade(inst.material_values)) >= 1.0;
+    bool own = max(view_body_fade(inst), material_values_fade(inst.material_values)) >= 1.0;
     bool gone = batched && batch_faded(row, low, high) >= 1.0;
-    return (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && pass_draws(inst.meta.w) && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w)
+    return (inst.meta.w & INSTANCE_FLAG_HIDDEN) == 0u && !own && !gone && view_draws_layers(inst.meta.w >> INSTANCE_LAYERS_SHIFT, inst.meta.w) && view_draws_viewmodel(inst)
         && dot(frame.clip_plane.xyz, clipped) + frame.clip_plane.w >= 0.0 && frustum_visible(low, high);
 }
 
@@ -121,25 +113,29 @@ void main(uint3 dispatch_id : SV_DispatchThreadID, uint3 group_id : SV_GroupID, 
         inst.bounds_min.xyz -= batch_reach(row);
         inst.bounds_max.xyz += batch_reach(row);
     }
+    // The viewmodel of the view where it draws it, in front of all that could hide it.
+    bool viewmodel = view_viewmodel(inst);
+    float3 low = inst.bounds_min.xyz, high = inst.bounds_max.xyz;
+    view_drawn_box(inst, low, high);
     // A blended instance has nothing for the G-buffer: its own passes draw it.
     bool blended = (inst.meta.w & INSTANCE_FLAG_BLENDED) != 0u;
     bool visible = false;
     bool probed = !batched && params.probe == i + 1u;
     if (params.phase == 0u) {
-        bool in_frustum = view_draws_box(inst, batched, row, inst.bounds_min.xyz, inst.bounds_max.xyz);
+        bool in_frustum = view_draws_box(inst, batched, row, low, high);
         if (probed) {
-            uint seen = CULL_PROBE_TESTED | (in_frustum ? CULL_PROBE_DRAWS : 0u) | (frustum_visible(inst.bounds_min.xyz, inst.bounds_max.xyz) ? CULL_PROBE_FRUSTUM : 0u);
+            uint seen = CULL_PROBE_TESTED | (in_frustum ? CULL_PROBE_DRAWS : 0u) | (frustum_visible(low, high) ? CULL_PROBE_FRUSTUM : 0u);
             InterlockedOr(stats[0].probe[0], seen);
         }
         float3 before_low, before_high;
         box_before(inst, inst.bounds_min.xyz, inst.bounds_max.xyz, before_low, before_high);
-        bool hidden = in_frustum && params.occlusion != 0u && occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
+        bool hidden = in_frustum && params.occlusion != 0u && !viewmodel && occluded(before_low, before_high, frame.prev_view_proj, frame.prev_eye.xyz, frame.prev_depth_plane);
         visible = in_frustum && !hidden;
         candidates[i] = hidden ? 1u : 0u;
         if (!in_frustum && !blended) InterlockedAdd(stats[0].culled_instances, 1u);
     } else {
         bool candidate = candidates[i] != 0u;
-        visible = candidate && !(params.occlusion != 0u && occluded(inst.bounds_min.xyz, inst.bounds_max.xyz, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane));
+        visible = candidate && !(params.occlusion != 0u && occluded(low, high, frame.view_proj_unjittered, frame.camera_position.xyz, frame.depth_plane));
         if (candidate && !visible && !blended) InterlockedAdd(stats[0].occluded_instances, 1u);
     }
     if (probed && visible) {

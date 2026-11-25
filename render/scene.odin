@@ -74,19 +74,8 @@ Instance_Desc :: struct {
 	outline_only: bool,        // with a highlight: only its outline is drawn, as of something that is not there
 	layers: u32,               // the layers it is in (16 of them), which a view draws or not; 0: the first one alone
 	owner: u8,                 // 1 + the local slot whose body it is: a view of that slot that hides its body fades it out; 0: none
-	foreground: bool,          // with an owner: of its viewmodel, which the view of that slot alone draws over its world (Scene_State.foreground)
+	viewmodel: bool,           // with an owner: of its viewmodel, which the view of that slot alone draws (viewmodel.odin)
 	shadowless: bool,          // it casts no shadow: the rays that see surfaces meet it, the shadow rays and the maps do not
-}
-
-// The viewmodel of a local slot: its instances (INSTANCE_FLAG_FOREGROUND of
-// that owner), which the view of the slot draws over its world with this
-// vertical field of view, radians (scene_set_foreground).
-Foreground :: struct {
-	instances:    int,
-	fov:          f32,
-	weapon, body: [2]Vec3, // the boxes of its instances and of the rest of the body, low then high (scene_foreground_bodies)
-	turn:         quaternion128, // of its Viewmodel
-	glass:        u64, // the object of an instance of it with glass, which is not drawn; 0: none
 }
 
 // An instance whose materials need more of the G-buffer than base color and metallic.
@@ -308,7 +297,7 @@ occluder_moved :: proc(s: ^Scene_State, index: u32, before, after: Gpu_Instance)
 // Whether an instance is drawn in the depth of the maps of the shadows and stops their rays.
 @(private)
 instance_casts :: proc "contextless" (inst: Gpu_Instance) -> bool {
-	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED | INSTANCE_FLAG_FOREGROUND) == 0 && inst.meta.x & INSTANCE_UNSHADOWED == 0
+	return inst.meta.w & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_BLENDED) == 0 && inst.meta.x & (INSTANCE_UNSHADOWED | INSTANCE_VIEWMODEL) == 0
 }
 
 // A light of the set that moved or changed its shape: what it shades is new.
@@ -422,7 +411,7 @@ Scene_State :: struct {
 	instance_keys:        [dynamic]Instance_Key,
 	instance_revision:    u64, // counts the updates that gave an index another instance, or another number of them
 	highlighted:          int,          // instances with a highlight level
-	foreground:           [OWNER_SLOTS]Foreground, // the viewmodel of each local slot
+	viewmodels:           [OWNER_SLOTS]f32, // the field of view of the viewmodel of each local slot (scene_set_viewmodels)
 	displaced:            map[Instance_Key]Mesh_Handle, // the poses of the instances whose material programs move their vertices (displace.odin)
 	displaced_stale:      bool, // an instance may need a pose it lacks or have one it no longer needs: displaced_reconcile
 	material_versions:    [dynamic]u32, // of each row of the table, counted up whenever its values change
@@ -1180,12 +1169,10 @@ instance_tlas_flags :: proc "contextless" (s: ^Scene_State, inst: Gpu_Instance) 
 
 @(private = "file")
 ray_class :: proc "contextless" (mesh_word, flags: u32) -> u8 {
-	if flags & (INSTANCE_FLAG_HIDDEN | INSTANCE_FLAG_FOREGROUND) != 0 {return 0}
+	if flags & INSTANCE_FLAG_HIDDEN != 0 || mesh_word & INSTANCE_VIEWMODEL != 0 {return 0}
 	if flags & INSTANCE_FLAG_BLENDED != 0 {return RAY_GLASS}
 	if mesh_word & INSTANCE_UNSHADOWED != 0 {return RAY_UNSHADOWED}
-	small := flags & INSTANCE_FLAG_SMALL != 0
-	if flags & INSTANCE_FLAG_OWNED != 0 {return RAY_BODY_SMALL if small else RAY_BODY}
-	return RAY_SMALL if small else RAY_SOLID
+	return RAY_SMALL if flags & INSTANCE_FLAG_SMALL != 0 else RAY_SOLID
 }
 
 // ---------------------------------------------------------------- meshes
@@ -2086,6 +2073,7 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		kept := s.instances[index].meta.x & INSTANCE_MESH_MASK == u32(desc.mesh) && int(desc.mesh) < len(s.meshes) && was < max(mesh.ray_count, 1) && (mesh.stream == nil || mesh.stream.cut_missing[was] == 0)
 		cut := was << INSTANCE_RAY_SHIFT if kept else u32(ray_cut_always(mesh)) << INSTANCE_RAY_SHIFT
 		if desc.shadowless {cut |= INSTANCE_UNSHADOWED}
+		if desc.owner != 0 && desc.viewmodel {cut |= INSTANCE_VIEWMODEL}
 		reach := pose_reach(mesh)
 		inverse, bmin, bmax, invertible := instance_placement(desc.transform, mesh.bounds_min - reach, mesh.bounds_max + reach)
 		key := Instance_Key{desc.object_id, desc.copy_owner, desc.copy_variant}
@@ -2100,7 +2088,6 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		flags |= highlight_flags(desc.highlight)
 		flags |= (desc.layers & LAYERS_ALL if desc.layers & LAYERS_ALL != 0 else 1) << INSTANCE_LAYERS_SHIFT
 		if desc.owner != 0 {flags |= INSTANCE_FLAG_OWNED | (u32(desc.owner - 1) & 3) << INSTANCE_OWNER_SHIFT}
-		if desc.owner != 0 && desc.foreground {flags |= INSTANCE_FLAG_FOREGROUND}
 		if desc.highlight != 0 {s.highlighted += 1}
 		if hidden {s.hidden_count += 1}
 		material := u32(desc.material) if desc.material != 0 && int(desc.material) < len(s.materials) else GPU_NONE
@@ -2131,7 +2118,6 @@ instance_write :: proc(r:^Renderer,index:u32,desc:Instance_Desc,previous:Mat4,gi
 		s.instances[index].meta.w, s.instances[index].tested = flags, a.tested
 		if a.reflectance && !hidden {append(&s.reflective, Reflective_Instance{index, a.layered, a.subsurface})}
 		if a.blended && !hidden {append(&s.translucent, a.translucent)}
-		if flags & INSTANCE_FLAG_FOREGROUND != 0 {s.foreground[flags >> INSTANCE_OWNER_SHIFT & 3].instances += 1}
 		head:=s.meshes[desc.mesh].first_instance
 		s.instance_next[index],s.instance_prev[index]=head,-1
 		if head>=0 {s.instance_prev[head]=i32(index)}
@@ -2163,17 +2149,10 @@ instance_unlink :: proc(s:^Scene_State,index:u32) {
     if after>=0 {s.instance_prev[after]=before}
     if inst.meta.w&INSTANCE_FLAG_HIDDEN!=0 {s.hidden_count-=1}
     if inst.meta.w&INSTANCE_HIGHLIGHT_MASK!=0 {s.highlighted-=1}
-    if inst.meta.w&INSTANCE_FLAG_FOREGROUND!=0 {s.foreground[inst.meta.w>>INSTANCE_OWNER_SHIFT&3].instances-=1}
     if inst.meta.w&(INSTANCE_FLAG_HIDDEN|INSTANCE_FLAG_TRANSLUCENT)==0 {
         for layer in s.overlays[index].entries[:s.overlays[index].count] {if layer.enabled {s.overlay_count-=1}}
     }
     instance_material_values_release(s,&s.instances[index])
-}
-
-// The vertical field of view, radians, the viewmodel of each local slot is
-// drawn with by the view of that slot; one at 0 or past PI draws none.
-scene_set_foreground :: proc(r: ^Renderer, fovs: [OWNER_SLOTS]f32) {
-	for fov, slot in fovs {r.scene.foreground[slot].fov = fov}
 }
 
 // Replaces a range of the instances, optionally appending or truncating its

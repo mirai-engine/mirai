@@ -62,46 +62,29 @@ camera and visible scene since last frame, reprojecting histories instead of cut
 
 ## Viewmodel
 
-- `Scene_State.foreground[slot]`: the instances of `INSTANCE_FLAG_FOREGROUND` of a local slot
-  (`Instance_Desc.foreground`, set by the sync on what hangs from an `engine/render.Viewmodel`
-  under a body of `View_Bodies`), their field of view (`scene_set_foreground`) and the boxes of
-  the weapon and the body (`scene_foreground_bodies`). A view whose `Camera.own` has one draws it
-  (`render/foreground.odin`); no other view, cull, map or ray structure meets those instances.
-- **Switch:** only a generation with `shaders.Options.viewmodel` (`MIRAI_VIEWMODEL`, the
-  `Viewmodel_Frame` block after the nested views, `Frame_Layout.viewmodel`) draws one: in any
-  other the stages are the source of before, byte for byte, and the sync reports
-  `render.viewmodel_shaders`. The build sets it when a scene or prefab of the project or its
-  plugins holds a `Viewmodel` or their code names it (`build.shaders_uses`); the editor publishes
-  again when the world shows one first (`programs_missing`), and the sync marks again when the
-  shaders change. Tests: a test file that names `<package>_viewmodel` gets that generation
-  (`VIEWMODEL_GENERATION`).
-- **Depth:** the world of that view is drawn below `FOREGROUND_DEPTH` (15/16) of its depth and of
-  `glass_zbuffer` (`rhi.cmd_set_depth_range` names the targets it holds for); `inv_view_proj`
-  takes the stored depth, so the pyramid and what decodes the depth target follow. After the
-  G-buffer (and the `Gbuffer` stage) the viewmodel is culled (`FRAME_FLAG_FOREGROUND`), rastered
-  above 15/16 and resolved over the G-buffer with its projection and its previous one (motion).
-  The pyramid keeps the world alone: the next frame culls nothing behind the weapon.
-- **Tag:** `foreground_kept.comp` takes the least over its pixels of `min(1, (world depth -
-  FOREGROUND_CLEARANCE) / its depth)`, from the world depth before the resolve: one share for the
-  view, as a share of each pixel shows the edge of a wall behind part of the weapon on it.
-  `foreground_tag.frag` writes `VIEWS_FOREGROUND` and that share (`VIEWS_KEPT`) into the views
-  target. `pixel_at` returns the cleared place (`pixel_ray` shortens the ray of the viewmodel by
-  it), `pixel_drawn` the drawn one; `pixel_side` keeps it apart in spatial filters, `pixel_across`
-  takes the maps of the world at `FOREGROUND_MARK_DEPTH` or farther, `pixel_rays_omitted` leaves
-  `RAY_BODY`/`RAY_BODY_SMALL` out of its rays, contact occlusion skips it. A mask of nested views
-  keeps the tags.
-- **Maps:** `FOREGROUND_MAPS` squares of `FOREGROUND_MAP_SIDE` below the pool in the atlas
-  (`FOREGROUND_MAP_SLOT`, read by the shared filter as they are): the weapon and the body
-  (`FRAME_FLAG_BODY`) for the sun and `Gpu_Viewmodel.light`. The maps of the world of the
-  view leave out its body (`Shadow_Raster.body`: made anew when it changes, its moves stale
-  nothing there); `direct_maps` multiplies a weapon pixel by its layer at its true place and a
-  world pixel by the body layer.
-- **Over it:** `foreground_over_record`, after the blends of the world, draws its overlays and
-  its forward blends (its entries of `Scene_State.translucent`, past those `glass_visible` gives)
-  with its constants above 15/16. Its glass is not drawn: `Foreground.glass`, which the sync
-  reports (`render.viewmodel_glass`).
-- **Not yet:** its glass; maps for more than the sun and one light; hardware rays from its pixels
-  leave out every local body.
+- The sync flags what hangs from an `engine/render.Viewmodel` under a body of `View_Bodies`
+  (`Instance_Desc.viewmodel`: `INSTANCE_VIEWMODEL` in `Gpu_Instance.meta.x`, since the highlight
+  levels take bits 8-12 of `meta.w`, with the owner bits of `meta.w`) and gives each local slot its
+  field of view (`scene_set_viewmodels`). Only the view whose `Camera.own` is that slot draws those
+  instances (`view_draws_viewmodel` in the cull, `viewmodel_elsewhere` for glass, overlays and
+  outlines); nested views (`own` 0), texture views and other players never do. They are in no map
+  (`instance_casts`, `shadow_maps.comp`) and no ray structure (`ray_class`, `trace.slang`); the
+  body stays in both.
+- **Place:** `Gpu_Frame.viewmodel` (and `prev_viewmodel`, from `View_State`) is a 3x3 about the
+  eye: `VIEWMODEL_SCALE` toward it and across `camera_forward` by tan(camera fov/2) / tan(viewmodel
+  fov/2); the w of its first row is what a normal gains along `camera_forward`. `gbuffer_build`
+  applies it to every corner (now and before, for motion), normal and tangent of those instances,
+  so the visibility raster, resolve, forward, glass, overlays and outlines draw them at that place
+  and the lights, probes and maps of the world light them there like any surface.
+- **Cull:** the frustum tests take the box around the drawn place (`view_drawn_box`; on the CPU
+  `drawn_box` for glass order and the outline region, `viewmodel_elsewhere` for what another view
+  leaves out); the occlusion tests leave those instances out (nothing is between them and the eye);
+  the cut of the levels and the back-face cones keep the true box (facing from the eye is the same
+  at both places).
+- **Near plane:** a view that draws a viewmodel sees from `VIEWMODEL_NEAR` (what of the weapon is
+  10 cm or more from the eye) if its camera's is farther; other views keep theirs.
+  `VIEWMODEL_SCALE` keeps what is within 1 m ahead of the eye within the 0.3 m of a character's
+  capsule (the template's rifle, 0.275 to 0.825 m ahead, is drawn 8 to 25 cm ahead).
 
 ## Texture views
 

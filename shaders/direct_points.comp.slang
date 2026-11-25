@@ -35,7 +35,7 @@ struct Params_Block { uint scale; uint samples; uint pad0; uint pad1; };
 // The points a group holds, its own and one to each side.
 #define FILTER_APRON 1
 #define FILTER_TILE (MIRAI_GROUP_X + 2 * FILTER_APRON)
-groupshared float4 filter_points[FILTER_TILE * FILTER_TILE];  // w the side of its surface (pixel_side), 0 none
+groupshared float4 filter_points[FILTER_TILE * FILTER_TILE];  // w 1 for a surface, 2 for one a nested view drew
 groupshared float4 filter_normals[FILTER_TILE * FILTER_TILE]; // w the width of a point there, metres
 groupshared float4 filter_samples[FILTER_TILE * FILTER_TILE];
 groupshared float filter_suns[FILTER_TILE * FILTER_TILE];
@@ -109,8 +109,8 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index :
             float depth = g_depth.Load(int3(source, 0)).r;
             if (!depth_empty(depth)) {
                 Pixel pixel = pixel_at(source, (float2(source) + 0.5) * frame.inv_resolution, depth);
-                point = float4(pixel.position, pixel_side(source, depth));
-                normal = float4(gbuffer_normal(source), float(scale) * pixel_across(source, depth));
+                point = float4(pixel.position, depth_nested(depth) ? 2.0 : 1.0);
+                normal = float4(gbuffer_normal(source), float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth)));
                 texel = samples_in.Load(int3(q, 0));
                 sun = sun_in.Load(int3(q, 0));
             }

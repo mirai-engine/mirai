@@ -133,7 +133,6 @@ Options :: struct {
     progress:^Progress, // nil: none. One for each generation
     uses:    []Program_Uses_Of, // what the assets draw Surface programs as (build.program_uses), besides what their sources declare
     every:   abi.Program_Uses,  // uses of every Surface program: the tests of a package draw theirs every way
-    viewmodel:bool,             // the stages draw the viewmodel of a view: the project uses render.Viewmodel (build.shaders_viewmodel)
 }
 
 // What a Surface program is drawn as by the assets of a project.
@@ -1204,7 +1203,7 @@ generation_setup :: proc(g:^Generation,options:Options,scratch:runtime.Allocator
         }
     }
     request=request_digest(g,options.sources,odin,options.uses,options.every,scratch,
-        options.generated,options.viewmodel)
+        options.generated)
     return odin,request,""
 }
 
@@ -1295,7 +1294,7 @@ generate_staged :: proc(options:Options,scratch:runtime.Allocator) -> (result:Re
         return
     }
     result.reflection=time.duration_seconds(time.tick_since(reflection_started))
-    extensions,extensions_error:=extensions_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],options.sources,&g.sources,options.viewmodel,scratch)
+    extensions,extensions_error:=extensions_generate(g.runner,g.root,g.project,staging,g.tools[.Slangc],options.sources,&g.sources,scratch)
     if extensions_error!="" {fail(&result,allocator,"%s",extensions_error);return}
     catalog.extensions=extensions
     result.refused=strings.join(catalog.refused,"\n",allocator)

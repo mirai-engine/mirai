@@ -51,9 +51,6 @@ Command_List :: struct {
 	labels:           [MAX_LABEL_DEPTH]^NS.String,
 	label_count:      int,
 	label_overflow:   int,
-	depth_range:      [2]f32, // what the viewports of the passes into depth_ranged map depth 0 and 1 to (cmd_set_depth_range)
-	depth_ranged:     [DEPTH_RANGE_TARGETS]Texture,
-	pass_range:       [2]f32, // of the pass begun
 }
 
 @(private)
@@ -76,7 +73,6 @@ mtl_list_reset :: proc(c: ^Command_List, cmd: ^MTL.CommandBuffer) {
 	c.scratch_used = 0
 	c.label_count = 0
 	c.label_overflow = 0
-	c.depth_range, c.depth_ranged, c.pass_range = {0, 1}, {}, {0, 1}
 }
 
 // Drops an open encoder without encoding anything else (device teardown).
@@ -239,7 +235,6 @@ mtl_store_action :: proc "contextless" (op: Store_Op) -> MTL.StoreAction {
 cmd_begin_render_pass :: proc(c: ^Command_List, desc: ^Render_Pass_Desc) {
 	d := c.device
 	assert(!c.in_render_pass, "rhi: nested render pass")
-	c.pass_range = depth_range_of(c.depth_range, c.depth_ranged, desc.depth.texture)
 	mtl_end_encoder(c)
 	rpd := MTL.RenderPassDescriptor.alloc()->init()
 	defer mtl_release(rpd)
@@ -326,19 +321,7 @@ cmd_end_render_pass :: proc(c: ^Command_List) {
 // directly (NDC y = +1 lands on row y).
 cmd_set_viewport :: proc(c: ^Command_List, x, y, width, height: f32) {
 	if c.render == nil {return}
-	MTL.RenderCommandEncoder_setViewport(c.render, MTL.Viewport{originX = f64(x), originY = f64(y), width = f64(width), height = f64(height), znear = f64(c.pass_range[0]), zfar = f64(c.pass_range[1])})
-}
-
-// What depth 0 and 1 of the clip space are stored as by the render passes
-// that begin after it whose depth target is one of `targets` (at most
-// DEPTH_RANGE_TARGETS), until it is set again: a range within 0 to 1, near
-// not above far. The other passes, and all of a new list, store it as it is.
-cmd_set_depth_range :: proc(c: ^Command_List, near, far: f32, targets: ..Texture) {
-	if c.in_render_pass {set_error(c.device, "the depth range is set outside a render pass"); return}
-	if !(near >= 0 && near <= far && far <= 1) {set_error(c.device, "depth range %v to %v: it is within 0 to 1, near not above far", near, far); return}
-	if len(targets) > DEPTH_RANGE_TARGETS {set_error(c.device, "a depth range of %d targets: %d at most", len(targets), DEPTH_RANGE_TARGETS); return}
-	c.depth_range, c.depth_ranged = {near, far}, {}
-	copy(c.depth_ranged[:], targets)
+	MTL.RenderCommandEncoder_setViewport(c.render, MTL.Viewport{originX = f64(x), originY = f64(y), width = f64(width), height = f64(height), znear = 0, zfar = 1})
 }
 
 // Metal rejects scissor rectangles outside the render target, so the rectangle

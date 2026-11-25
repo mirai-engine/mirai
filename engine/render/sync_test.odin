@@ -448,11 +448,11 @@ extra_lights_keep_their_slots_while_they_end_and_entity_lights_change :: proc(t:
 }
 
 // A Viewmodel under the body of a local player marks its meshes as the
-// foreground of that player's slot, which no ray meets, and gives the
-// renderer its field of view; the body stays in the rays as a body. Without
-// the body, or without the Viewmodel, they are ordinary meshes.
+// viewmodel of that player's slot, which no ray meets, and gives the
+// renderer its field of view; the body stays in the rays. Without the body,
+// or without the Viewmodel, they are ordinary meshes.
 @(test)
-a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
+a_viewmodel_under_a_local_body_marks_its_meshes :: proc(t:^testing.T) {
     f:=new(Sync_Fixture);defer free(f)
     if !sync_fixture_init(t,f) {return}
     defer sync_fixture_destroy(f)
@@ -462,41 +462,27 @@ a_viewmodel_under_a_local_body_is_its_foreground :: proc(t:^testing.T) {
     core.add(&f.world.viewmodels,rifle,Viewmodel{fov=1})
     s:=&f.renderer.scene
     flags :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.instances[instance_of(&f.sync,e)].meta.w}
-    mask :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.hw_instances[instance_of(&f.sync,e)].mask_flags & 255}
+    word :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.instances[instance_of(&f.sync,e)].meta.x}
+    mask :: proc(f:^Sync_Fixture,e:core.Entity) -> u32 {return f.renderer.scene.hw_instances[instance_of(&f.sync,e)].mask_flags&255}
     sync_frame(f)
-    for e in ([]core.Entity{body,rifle,hand}) {testing.expect(t,flags(f,e)&(gpu.INSTANCE_FLAG_FOREGROUND|gpu.INSTANCE_FLAG_OWNED)==0 && mask(f,e)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)==0,"without a local body nothing is marked")}
-    testing.expect_value(t,s.foreground[1],gpu.Foreground{})
+    for e in ([]core.Entity{body,rifle,hand}) {testing.expect(t,flags(f,e)&gpu.INSTANCE_FLAG_OWNED==0 && word(f,e)&gpu.INSTANCE_VIEWMODEL==0 && mask(f,e)!=0,"without a local body nothing is marked")}
+    testing.expect_value(t,s.viewmodels,[gpu.OWNER_SLOTS]f32{})
 
-    // Shaders that draw no viewmodel draw it as other meshes of the body, and say what to add.
     bodies:=View_Bodies{bodies={1=body}}
-    problems:core.Problems
-    sync_frame(f,bodies=&bodies,problems=&problems)
-    testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && s.foreground[1].fov==0,"the shaders draw no viewmodel: none is marked")
-    testing.expect(t,problems.count==1 && problems.entries[0].entity==rifle && string(cstring(&problems.entries[0].code[0]))=="render.viewmodel_shaders","the Viewmodel says what the shaders lack")
-
-    // Shaders built again with the viewmodel mark what hangs from it, with nothing else changed.
-    f.renderer.frame_layout.viewmodel=size_of(gpu.Gpu_Frame)
     sync_frame(f,bodies=&bodies)
-    testing.expect(t,flags(f,body)&gpu.INSTANCE_FLAG_FOREGROUND==0 && flags(f,body)&gpu.INSTANCE_FLAG_OWNED!=0 && mask(f,body)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)!=0,"the body is a body of the rays")
+    testing.expect(t,word(f,body)&gpu.INSTANCE_VIEWMODEL==0 && flags(f,body)&gpu.INSTANCE_FLAG_OWNED!=0 && mask(f,body)!=0,"the body is in the rays")
     for e in ([]core.Entity{rifle,hand}) {
-        testing.expect(t,flags(f,e)&gpu.INSTANCE_FLAG_FOREGROUND!=0 && flags(f,e)>>gpu.INSTANCE_OWNER_SHIFT&3==1,"the viewmodel and what hangs from it are of slot 1")
+        testing.expect(t,word(f,e)&gpu.INSTANCE_VIEWMODEL!=0 && flags(f,e)>>gpu.INSTANCE_OWNER_SHIFT&3==1,"the viewmodel and what hangs from it are of slot 1")
         testing.expect_value(t,mask(f,e),u32(0))
     }
-    testing.expect(t,s.foreground[1].instances==2 && s.foreground[1].fov==1,"the slot has its viewmodel and its field of view")
-    testing.expect_value(t,len(s.translucent),0)
-
-    f.renderer.frame_layout.viewmodel=0
-    sync_frame(f,bodies=&bodies)
-    testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && s.foreground[1].fov==0,"shaders built again without it unmark it")
-    f.renderer.frame_layout.viewmodel=size_of(gpu.Gpu_Frame)
-    sync_frame(f,bodies=&bodies)
+    testing.expect_value(t,s.viewmodels,[gpu.OWNER_SLOTS]f32{0,1,0,0})
     core.edit(&f.world.viewmodels,rifle).fov=0.5
     sync_frame(f,bodies=&bodies)
-    testing.expect_value(t,s.foreground[1].fov,f32(0.5))
+    testing.expect_value(t,s.viewmodels[1],f32(0.5))
     core.remove(&f.world.viewmodels,rifle)
     sync_frame(f,bodies=&bodies)
-    testing.expect(t,s.foreground[1].instances==0 && s.foreground[1].fov==0,"without its Viewmodel the slot has none")
-    testing.expect(t,flags(f,rifle)&gpu.INSTANCE_FLAG_FOREGROUND==0 && mask(f,rifle)&(gpu.RAY_BODY|gpu.RAY_BODY_SMALL)!=0,"without its Viewmodel it is of the body")
+    testing.expect_value(t,s.viewmodels,[gpu.OWNER_SLOTS]f32{})
+    testing.expect(t,word(f,rifle)&gpu.INSTANCE_VIEWMODEL==0 && mask(f,rifle)!=0,"without its Viewmodel it is of the body")
 }
 
 // The place of the world a viewmodel's point shows at: on the axis of the

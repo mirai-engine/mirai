@@ -72,6 +72,7 @@ Resolve_Corner resolve_corner(Instance inst, Mesh mesh, Cluster c, Cluster_Block
     r.before = gbuffer_corner_world_previous(inst, mesh, c, b, k, p);
     r.normal = transform_normal(inst.world_inv, p.v.normal);
     r.tangent = tangents ? instance_tangent(inst, k.mirrored, block_tangent_at(mesh, c, b, p.local, k.posed)) : float4(0.0);
+    if (k.viewmodel) gbuffer_viewmodel_frame(r.normal, r.tangent);
     r.uv = p.v.uv;
     r.uv1 = p.v.uv1;
     r.color = p.v.color;

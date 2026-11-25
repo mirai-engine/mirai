@@ -4,10 +4,8 @@ import "core:log"
 import "core:strings"
 import "core:time"
 import "mirai:asset"
-import "mirai:core"
 import "mirai:cook/build"
 import "mirai:cook/shaders"
-import erender "mirai:engine/render"
 import "mirai:host"
 import "mirai:project"
 import gpu "mirai:render"
@@ -30,8 +28,6 @@ import "mirai:render/abi"
 // a preview of the editor is added to what the generation compiles, and any
 // other use is taken from the files once each time they change, since an edit
 // may have made it; without one, the problem of the frame says how to have it.
-// So is a Viewmodel the world shows while the shaders draw none: the build
-// looks for one in the files (build.shaders_uses), once for each revision.
 
 Programs_Publication :: struct {
     job:^build.Shaders_Job,
@@ -50,7 +46,6 @@ Programs_Publication :: struct {
     message:string,
     previews:[dynamic]string, // the programs the previews of the editor drew: compiled for them too
     tried:[dynamic]Program_Tried, // the other uses a draw missed and a publication looked for in the files
-    viewmodel_tried:u64,          // 1 + the revision of the files a publication looked in for the Viewmodel the world shows; 0: none
 }
 
 // A use of a program a publication looked for in the files, at their revision.
@@ -153,12 +148,6 @@ programs_missing :: proc(s:^Session) {
         if at>=0 && p.tried[at].revision==revision {continue}
         if at<0 {append(&p.tried,Program_Tried{strings.clone(program.name),miss.uses,revision})} else {p.tried[at].revision=revision}
         publish=true
-    }
-    if s.app.renderer.frame_layout.viewmodel==0 && p.viewmodel_tried!=revision+1 && !programs_publishing(s) {
-        if table:=core.world_table_of(shown_world(s),erender.Viewmodel);table!=nil && core.count(core.read(table))>0 {
-            p.viewmodel_tried=revision+1
-            publish=true
-        }
     }
     if publish {programs_publish_request(s)}
 }

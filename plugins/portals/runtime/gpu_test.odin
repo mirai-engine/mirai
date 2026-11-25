@@ -33,11 +33,10 @@ Gpu_Fixture :: struct {
 }
 
 @(private = "file")
-gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, generation := "portals") -> bool {
+gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
-	// portals_viewmodel: with the stages that draw a viewmodel.
-	output := fmt.tprintf("%s/.mirai/test-shaders/%s", root, generation)
+	output := fmt.tprintf("%s/.mirai/test-shaders/portals", root)
 	loaded, problem := gpu.shader_assets_load(output)
 	if !testing.expect(t, problem == "", problem) {return false}
 	device := shared_device.take_or_skip(t)
@@ -158,13 +157,13 @@ a_surface_seen_only_in_a_mirror_keeps_its_reflectance_and_layers :: proc(t: ^tes
 }
 
 // A mirror in front of a player in first person shows its body and never its
-// viewmodel: the view draws the weapon over its world, the nested view of the
-// mirror the body alone.
+// viewmodel: the view draws the weapon, the nested view of the mirror the body
+// alone.
 @(test)
 a_mirror_shows_the_body_of_the_player_and_never_its_viewmodel :: proc(t: ^testing.T) {
 	f := new(Gpu_Fixture)
 	defer free(f)
-	if !gpu_fixture_init(t, f, "portals_viewmodel") {return}
+	if !gpu_fixture_init(t, f) {return}
 	defer gpu_fixture_destroy(f)
 	r := &f.renderer
 	gpu.scene_set_environment(r, {direction = {0.2, 1, 0.3}, color = {1, 1, 1}, illuminance = math.PI, enabled = true}, {sky = {0.3, 0.4, 0.6}})
@@ -173,9 +172,9 @@ a_mirror_shows_the_body_of_the_player_and_never_its_viewmodel :: proc(t: ^testin
 		{object_id = 1, mesh = f.cube, transform = trs({0, -0.1, -4}, {20, 0.2, 20}), tint = {0.5, 0.5, 0.5}},
 		// The body around the eye, blue, and the weapon under it, red.
 		{object_id = 2, mesh = f.cube, transform = trs({0, 0.85, 0.05}, {0.5, 1.7, 0.3}), tint = {0, 0, 1}, owner = 1},
-		{object_id = 3, mesh = f.cube, transform = trs(eye + {0.12, -0.12, -0.45}, {0.05, 0.05, 0.4}), tint = {1, 0, 0}, owner = 1, foreground = true},
+		{object_id = 3, mesh = f.cube, transform = trs(eye + {0.12, -0.12, -0.45}, {0.05, 0.05, 0.4}), tint = {1, 0, 0}, owner = 1, viewmodel = true},
 	}, true)
-	gpu.scene_set_foreground(r, {55 * math.RAD_PER_DEG, 0, 0, 0})
+	gpu.scene_set_viewmodels(r, {55 * math.RAD_PER_DEG, 0, 0, 0})
 	camera := gpu.Camera{position = eye, forward = {0, 0, -1}, up = {0, 1, 0}, fov_y = 90, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE, own = 1}
 	state := new(Portals_Gpu)
 	defer free(state)
@@ -193,8 +192,7 @@ a_mirror_shows_the_body_of_the_player_and_never_its_viewmodel :: proc(t: ^testin
 	count := int(targets.width * targets.height)
 	albedo := make([]u8, count * 4, context.temp_allocator)
 	depths := make([]f32, count, context.temp_allocator)
-	views := make([]u8, count, context.temp_allocator)
-	testing.expect(t, rhi.texture_read(f.device, targets.albedo, albedo) && rhi.texture_read(f.device, targets.linear_depth, ([^]u8)(raw_data(depths))[:count * 4]) && rhi.texture_read(f.device, targets.views, views), rhi.device_error(f.device))
+	testing.expect(t, rhi.texture_read(f.device, targets.albedo, albedo) && rhi.texture_read(f.device, targets.linear_depth, ([^]u8)(raw_data(depths))[:count * 4]), rhi.device_error(f.device))
 	body, weapon, nested, drawn := 0, 0, 0, 0
 	for i in 0 ..< count {
 		red, blue := albedo[i * 4] > 150 && albedo[i * 4 + 2] < 60, albedo[i * 4 + 2] > 150 && albedo[i * 4] < 60
@@ -202,7 +200,7 @@ a_mirror_shows_the_body_of_the_player_and_never_its_viewmodel :: proc(t: ^testin
 			nested += 1
 			if blue {body += 1}
 			if red {weapon += 1}
-		} else if views[i] & gpu.VIEWS_FOREGROUND != 0 && red {drawn += 1}
+		} else if red {drawn += 1}
 	}
 	testing.expectf(t, nested > 0 && body > 0, "the mirror shows the body: %d of its %d pixels", body, nested)
 	testing.expectf(t, weapon == 0, "the mirror never shows the viewmodel: %d pixels", weapon)

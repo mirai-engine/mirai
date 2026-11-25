@@ -268,9 +268,6 @@ Shadow_Raster :: struct {
 	cull:     [3]i32, // the cell of the world of the eye its maps leave out the batches past their cull distance from (SHADOW_CULL_STEP)
 	culled:   bool,   // its maps were drawn from that cell
 	sway:     f32,    // the texel of a point at the reach of what sways, its maps drawn with (shadow_sway_texel)
-	// 1 + the local slot whose body its maps leave out, as the view draws its
-	// viewmodel; its atlas has the maps of that below the pool (foreground.odin). 0: none.
-	body:     u8,
 }
 
 // What the marks of the points of a view depend on besides the maps and the
@@ -727,20 +724,14 @@ shadow_movers_update :: proc(r: ^Renderer) {
 		s.shadow_sway_tables = b.tables
 	}
 	if stale.count == 0 && !stale.covers && moved.count == 0 {return}
-	// Of the body the maps of a view leave out, nothing they hold changes.
-	give :: proc "contextless" (s: ^Scene_State, to: ^Shadow_Raster, stale, moved: ^Occluder_Changes) {
-		left :: proc "contextless" (s: ^Scene_State, to: ^Shadow_Raster, instance: u32) -> bool {
-			if to.body == 0 || int(instance) >= len(s.instances) {return false}
-			flags := s.instances[instance].meta.w
-			return flags & INSTANCE_FLAG_OWNED != 0 && flags >> INSTANCE_OWNER_SHIFT & 3 + 1 == u32(to.body)
-		}
+	give :: proc "contextless" (to: ^Shadow_Raster, stale, moved: ^Occluder_Changes) {
 		to.stale.covers ||= stale.covers
-		for box in stale.boxes[:stale.count] {if !left(s, to, box.instance) {occluder_add(&to.stale, box.instance, box.low, box.high, box.fine, box.error)}}
-		for box in moved.boxes[:moved.count] {if !left(s, to, box.instance) {occluder_add(&to.moved, box.instance, box.low, box.high, box.fine, box.error)}}
+		for box in stale.boxes[:stale.count] {occluder_add(&to.stale, box.instance, box.low, box.high, box.fine, box.error)}
+		for box in moved.boxes[:moved.count] {occluder_add(&to.moved, box.instance, box.low, box.high, box.fine, box.error)}
 	}
-	give(s, &r.main.targets.shadow_raster, &stale, &moved)
-	for &view in r.views {give(s, &view.targets.shadow_raster, &stale, &moved)}
-	for &view in r.texture_views {if view.texture != 0 {give(s, &view.targets.shadow_raster, &stale, &moved)}}
+	give(&r.main.targets.shadow_raster, &stale, &moved)
+	for &view in r.views {give(&view.targets.shadow_raster, &stale, &moved)}
+	for &view in r.texture_views {if view.texture != 0 {give(&view.targets.shadow_raster, &stale, &moved)}}
 }
 
 // The maps of this frame and what a frame draws of them.
@@ -1831,10 +1822,6 @@ shadow_draw :: proc(p: ^Pass, plan: Shadow_Plan, params: Shadow_Params, atlas: r
 	pass := rhi.Render_Pass_Desc{name = name}
 	pass.depth = {texture = atlas, load = .Load, store = .Store}
 	rhi.cmd_begin_render_pass(cmd, &pass)
-	// The pool, above the maps of a viewmodel the atlas may hold below it (foreground.odin).
-	height := p.t.shadow_raster.rows * SHADOW_PAGE
-	rhi.cmd_set_viewport(cmd, 0, 0, f32(SHADOW_POOL), f32(height))
-	rhi.cmd_set_scissor(cmd, 0, 0, SHADOW_POOL, height)
 	if cache {
 		square(p, params, .Shadow_Map_Clear, abi.SHADOW_WORDS_JOBS, 0, 0, 0)
 		rhi.cmd_draw_indirect(cmd, pages, draws, 1)
@@ -1882,11 +1869,6 @@ shadow_maps_pass :: proc(p: ^Pass, mark: ^$T, scale: u32, grid: rhi.Buffer) -> (
 	b, d := &t.shadow_raster, &r.shadow_buffers
 	pool := b.pool if b.pool != 0 else shadow_pool_pages(t.width, t.height)
 	rows := (pool + abi.SHADOW_POOL_ROW - 1) / abi.SHADOW_POOL_ROW
-	// The maps leave out the body of a view with a viewmodel, or keep it: they are made anew.
-	if body := p.camera.own if p.foreground > 0 else 0; body != b.body {
-		destroy_shadow_maps(r, t)
-		b.body = body
-	}
 	if b.cache != 0 && rows != b.rows && !shadow_pool_resize(r, cmd, b, rows) {b.forget = true; return}
 	// The cache holds nothing it can keep when it is new or the cut changed.
 	fresh := b.cache == 0 || b.cut != r.settings.lod_error_pixels
@@ -2015,7 +1997,7 @@ shadow_pool_textures :: proc(r: ^Renderer, cmd: ^rhi.Command_List, b: ^Shadow_Ra
 	}
 	b.rows = rows
 	return target(r, cmd, &b.cache, SHADOW_POOL, height, .D32_Float, {.Depth_Target, .Sampled}, "shadow cache") &&
-	       target(r, cmd, &b.atlas, SHADOW_POOL, height + (FOREGROUND_MAP_SIDE if b.body != 0 else 0), .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
+	       target(r, cmd, &b.atlas, SHADOW_POOL, height, .D32_Float, {.Depth_Target, .Sampled}, "shadow atlas") &&
 	       target(r, cmd, &b.layer, SHADOW_POOL >> shadow_coarser(b), height >> shadow_coarser(b), .D32_Float, {.Depth_Target, .Sampled}, "shadow layer")
 }
 

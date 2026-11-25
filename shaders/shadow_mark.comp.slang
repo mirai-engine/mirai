@@ -87,7 +87,7 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
     Pixel pixel = pixel_at(source, uv, depth);
     float3 normal = gbuffer_normal(source);
     float3 swayed = pixel_rest(source, depth);
-    float across = float(scale) * pixel_across(source, depth);
+    float across = float(scale) * (frame.footprint.x + frame.footprint.y * depth_distance(depth));
     Shadow_Map m;
     Sun_Pick pick;
     float pixel_across = across / float(scale);

@@ -103,15 +103,14 @@ glass_visible :: proc(s: ^Scene_State, frame: ^Gpu_Frame) -> []Translucent {
 		flags := inst.meta.w
 		layers := flags >> INSTANCE_LAYERS_SHIFT
 		owner := frame.own & 0xff
-		// A viewmodel blends over its view alone (foreground_over_record).
-		if flags & INSTANCE_FLAG_FOREGROUND != 0 {continue}
 		own := owner != 0 && flags & INSTANCE_FLAG_OWNED != 0 &&
 		       (flags >> INSTANCE_OWNER_SHIFT) & 3 == owner - 1
-		if layers & frame.layers & LAYERS_ALL == 0 ||
-		   own && (layers & (frame.layers >> 16) != 0 || frame.own >> 16 == 65535) ||
+		if layers & frame.layers & LAYERS_ALL == 0 || viewmodel_elsewhere(frame, inst) ||
+		   own && (layers & (frame.layers >> 16) != 0 || frame.own >> 16 == 65535 && inst.meta.x & INSTANCE_VIEWMODEL == 0) ||
 		   instance_values_fade(s, inst.material_values) >= 1 {continue}
-		if !mm.frustum_overlaps_aabb(frustum, {inst.bounds_min.xyz, inst.bounds_max.xyz}) {continue}
-		offset := (inst.bounds_min.xyz + inst.bounds_max.xyz) * 0.5 - frame.camera_position.xyz
+		box := drawn_box(frame, inst)
+		if !mm.frustum_overlaps_aabb(frustum, box) {continue}
+		offset := (box.min + box.max) * 0.5 - frame.camera_position.xyz
 		entry.distance = linalg.dot(offset, offset)
 		s.translucent[count], s.translucent[i] = s.translucent[i], s.translucent[count]
 		count += 1
@@ -151,7 +150,7 @@ translucent_before_glass :: proc(p: ^Pass, f: ^Gpu_Frame) {
 	margin := 2 / linalg.max(f.resolution, Vec2{1, 1})
 	// The nearest and farthest view depth (fragment_depth) of a box and the tiles it covers.
 	span :: proc(inst: ^Gpu_Instance, f: ^Gpu_Frame, eye, forward: Vec3, margin: Vec2) -> (near, far: f32, lo, hi: [2]int) {
-		box := mm.Aabb{inst.bounds_min.xyz, inst.bounds_max.xyz}
+		box := drawn_box(f, inst)
 		along := linalg.dot((box.min + box.max) * 0.5 - eye, forward)
 		reach := linalg.dot((box.max - box.min) * 0.5, linalg.abs(forward))
 		rect := projected_box(box, f.view_proj, eye)

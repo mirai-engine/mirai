@@ -57,7 +57,7 @@ file_state :: proc(path:string) -> (state:Stamp_File) {
 @(private)
 request_digest :: proc(
     g:^Generation,sources:[]Source,odin:bool,uses:[]Program_Uses_Of,every:abi.Program_Uses,
-    allocator:=context.allocator,generated:[]Generated_Program=nil,viewmodel:=false,
+    allocator:=context.allocator,generated:[]Generated_Program=nil,
 ) -> string {
     hash:Sha256
     sha_begin(&hash)
@@ -81,11 +81,6 @@ request_digest :: proc(
         sha_text(&hash,source.id)
         sha_bytes(&hash,zero[:])
         sha_text(&hash,sha_of(transmute([]u8)source.text,context.temp_allocator))
-        sha_bytes(&hash,zero[:])
-    }
-    // A generation without the viewmodel is asked for what it was before there was one.
-    if viewmodel {
-        sha_text(&hash,"viewmodel")
         sha_bytes(&hash,zero[:])
     }
     sha_text(&hash,fmt.tprint(transmute(u8)every))

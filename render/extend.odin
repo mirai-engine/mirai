@@ -417,8 +417,7 @@ pass_nested_add :: proc(s: ^Stage_Pass, nested: Nested_View) -> u32 {
 	if p.view == nil || !p.r.frame_layout.nested || p.nested_count >= NESTED_VIEW_CAPACITY || p.r.pipelines[.Resolve_Nested] == 0 {return 0}
 	if p.nested_count == 0 {
 		if !target(p.r, nil, &t.views, t.width, t.height, .R8_Uint, {.Color_Target, .Sampled}, "nested views", shared = true) {return 0}
-		// The tags of a viewmodel stay, where no mask is drawn.
-		if p.frame.flags & FRAME_FLAG_VIEWMODEL == 0 {clear_textures(p.cmd, t.views)}
+		clear_textures(p.cmd, t.views)
 		p.frame.flags |= FRAME_FLAG_NESTED
 		if p.constants.ptr != nil {(^Gpu_Frame)(p.constants.ptr).flags = p.frame.flags}
 	}

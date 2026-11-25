@@ -9,11 +9,7 @@
 // tested: those of a masked material or of an instance that fades, whose
 // pixels its fade and the mask map of its material alone decide; no program
 // runs. The material runs once per pixel later (vis_resolve.frag).
-// depth: the depth alone, of a pass without the visibility target (the maps
-// of a viewmodel, render/foreground.odin).
 //! variant tested MIRAI_VISIBILITY_TESTED=1
-//! variant depth MIRAI_VISIBILITY_DEPTH=1
-//! variant tested_depth MIRAI_VISIBILITY_TESTED=1 MIRAI_VISIBILITY_DEPTH=1
 #define MIRAI_VISIBILITY
 #ifdef MIRAI_VISIBILITY_TESTED
 #define MATERIAL_RASTER
@@ -39,32 +35,19 @@ bool vis_covers(Stage_Input input, uint2 pixel) {
     return material_covers(m, material_mask(m, input.in_uv, input.in_uv, float2(frame.texturing.x), false));
 }
 
-#ifdef MIRAI_VISIBILITY_DEPTH
-[shader("fragment")]
-void main(Stage_Input input, float4 pixel : SV_Position) {
-    if (!vis_covers(input, uint2(pixel.xy))) discard;
-}
-#else
 [shader("fragment")]
 uint main(Stage_Input input, float4 pixel : SV_Position, uint primitive : SV_PrimitiveID) : SV_Target0 {
     if (!vis_covers(input, uint2(pixel.xy))) discard;
     return raster_ids[input.in_first + primitive];
 }
-#endif
 #else
 struct Stage_Input {
     [[vk::location(0)]] nointerpolation uint in_first : TEXCOORD0;
 };
 
-#ifdef MIRAI_VISIBILITY_DEPTH
-[shader("fragment")]
-[earlydepthstencil]
-void main(Stage_Input input) {}
-#else
 [shader("fragment")]
 [earlydepthstencil]
 uint main(Stage_Input input, uint primitive : SV_PrimitiveID) : SV_Target0 {
     return raster_ids[input.in_first + primitive];
 }
-#endif
 #endif
