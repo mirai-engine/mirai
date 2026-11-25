@@ -62,6 +62,7 @@ App_Desc :: struct {
     root:string,                 // the project: its manifest and its settings
     engine_root:string,          // the engine whose general settings lie under those of the project; empty: only the project's, as in a shipped game
     options:string,              // folder of the options the player chose (settings of the machine and input bindings) over those of the project; "": none, as in the editor
+    options_kept:bool,           // a person plays: what they change of the options is written to that folder; else it lasts until the game ends (project/settings.odin)
     assets_root:string,          // folder of cooked assets; its changes are reloaded
     store_root:string,           // the machine store the packages of the project root and its plugins list from (project_assets); "": the machine's. A shipped game opens none
     assets_cache:string,         // file where the registry of assets_root keeps what it saw; "": none
@@ -159,6 +160,7 @@ App :: struct {
     scratch:rawptr,  // a World app_world_replace prepares the replacements in; made the first time
     scratch_mixed:bool, // it holds parts of several Worlds, which a replacement of what changed left: to copy over or to clear, never to run
     root,engine_root,options:string, // those of App_Desc
+    options_kept:bool,               // App_Desc.options_kept
     animation_cache:string,          // App_Desc.animation_cache
     retarget_budget:int,             // App_Desc.retarget_budget
     collision_cache:string,          // App_Desc.collision_cache
@@ -270,6 +272,7 @@ app_create :: proc(desc:App_Desc) -> (app:^App,error:App_Error) {
     app.root,texts[0]=strings.clone(desc.root,allocator)
     app.engine_root,texts[1]=strings.clone(desc.engine_root,allocator)
     app.options,texts[2]=strings.clone(desc.options,allocator)
+    app.options_kept=desc.options_kept
     app.animation_cache,texts[3]=strings.clone(desc.animation_cache,allocator)
     app.collision_cache,texts[4]=strings.clone(desc.collision_cache,allocator)
     for text in texts {

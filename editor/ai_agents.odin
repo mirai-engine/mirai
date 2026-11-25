@@ -81,7 +81,10 @@ ai_agents_read :: proc(m:^Ai) {
     }
 }
 
-ai_agents_write :: proc(m:^Ai) -> bool {
+// An editor no person drives keeps them in memory (machine_kept).
+ai_agents_write :: proc(s:^Session) -> bool {
+    m:=s.ai
+    if !machine_kept(s) {return true}
     home:=ai_agents_home(m)
     if home=="" || os.make_directory_all(home)!=nil && !os.is_dir(home) {return false}
     entries:[2]Ai_Agent_Disk
@@ -125,7 +128,7 @@ ai_agent_announced :: proc(s:^Session,provider:Ai_Provider,client:^acp.Client,va
     c.known_capabilities=capabilities
     if base.text_get(c.latest[:])==version {c.latest={}}
     ai_agent_outdated(c)
-    if !ai_agents_write(m) {notify(s,"What the agent announced could not be saved")}
+    if !ai_agents_write(s) {notify(s,"What the agent announced could not be saved")}
 }
 
 // Whether a version is older than another: their numbers compared in order.

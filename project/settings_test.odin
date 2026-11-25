@@ -2,6 +2,7 @@ package project
 
 import "core:log"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:testing"
 import "mirai:std/serial"
@@ -358,4 +359,46 @@ a_process_told_so_reads_no_file_of_the_machine :: proc(t:^testing.T) {
     os.set_env(SETTINGS_NO_MACHINE_ENV,"1")
     defer os.unset_env(SETTINGS_NO_MACHINE_ENV)
     testing.expect_value(t,settings_layers_of_process(),Settings_Layers{.Player,.Project})
+}
+
+// A program no person drives holds the engine layer as the text its file would have, and reads
+// it in place of the file; the file only changes by a write, which is whole or nothing.
+@(test)
+settings_of_the_machine_are_kept_in_memory_and_written_whole :: proc(t:^testing.T) {
+    folder,_:=os.make_directory_temp("","mirai-machine",context.temp_allocator)
+    defer base.remove_all(folder)
+    root,engine:=path(folder,"project",allocator=context.temp_allocator),path(folder,"engine",allocator=context.temp_allocator)
+    testing.expect(t,os.make_directory_all(root)==nil)
+    engine_file:=settings_file(.Engine,root,engine,context.temp_allocator)
+    sample:=Sample{count=1,scale=3}
+    settings:=[]Setting{{name="Sample",info=type_info_of(Sample),value=&sample,default=sample_default,machine=true}}
+    error,_:=settings_save(settings,.Engine,root,engine)
+    testing.expect_value(t,error.code,Error_Code.None)
+    before:=file_text(engine_file)
+
+    sample.scale=8
+    machine,text_error,_:=settings_text_of(settings,.Engine,root,engine,allocator=context.temp_allocator)
+    testing.expect_value(t,text_error.code,Error_Code.None)
+    testing.expect(t,strings.contains(machine,`"scale": 8`),machine)
+    sample={}
+    error,_=settings_load(settings,root,engine,machine=machine)
+    testing.expect_value(t,error.code,Error_Code.None)
+    testing.expect_value(t,sample.scale,f32(8))
+    testing.expect_value(t,file_text(engine_file),before)
+    error,_=settings_load(settings,root,engine)
+    testing.expect_value(t,sample.scale,f32(3))
+
+    // The temporary file a write goes through cannot be made: the file keeps all it had.
+    staging:=strings.concatenate({engine_file,".",fmt_pid(),".tmp"},context.temp_allocator)
+    testing.expect(t,os.make_directory_all(staging)==nil)
+    sample.scale=9
+    error,_=settings_save(settings,.Engine,root,engine)
+    testing.expect_value(t,error.code,Error_Code.Write_Failed)
+    testing.expect_value(t,file_text(engine_file),before)
+}
+
+@(private="file")
+fmt_pid :: proc() -> string {
+    buffer:=make([]u8,20,context.temp_allocator)
+    return strconv.write_int(buffer,i64(os.get_pid()),10)
 }

@@ -163,6 +163,35 @@ settings_are_written_by_layer_and_the_project_wins :: proc(t:^testing.T) {
     testing.expect_value(t,world.setting,Layer_Setting{quality=6,scale=7})
     testing.expect(t,!strings.contains(layer_text(.Project,root,engine),`"Layer_Setting"`))
 
+    // An editor no person drives (--headless: every mirai session) keeps the engine layer in
+    // memory: its file stays byte for byte, and the editor reads its own layer until it ends.
+    engine_file:=project.settings_file(.Engine,root,engine,context.temp_allocator)
+    before,_:=os.read_entire_file(engine_file,context.temp_allocator)
+    session.headless=true
+    error=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"quality":2}}}`)
+    testing.expect_value(t,error.code,0)
+    testing.expect_value(t,world.setting,Layer_Setting{quality=2,scale=7})
+    after,_:=os.read_entire_file(engine_file,context.temp_allocator)
+    testing.expect(t,string(after)==string(before),"a headless editor leaves the file of the machine as it was")
+    settings_load(&session)
+    testing.expect_value(t,world.setting.quality,2)
+    // A second change keeps the first: each starts from the layer the editor keeps.
+    error=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"scale":4}}}`)
+    testing.expect_value(t,error.code,0)
+    error=execute(state,&out,"settings.get",`{"sections":["Layer_Setting"]}`)
+    text=string(serial.writer_bytes(&out))
+    at_engine,at_project=strings.index(text,`"engine": `),strings.index(text,`"project": `)
+    testing.expect(t,at_engine>0 && at_project>at_engine && strings.contains(text[at_engine:at_project],`"quality": 2`) && strings.contains(text[at_engine:at_project],`"scale": 4`),text)
+    after,_=os.read_entire_file(engine_file,context.temp_allocator)
+    testing.expect(t,string(after)==string(before),"a headless editor leaves the file of the machine as it was")
+    // A window a person drives writes it again, from the file it reads once it takes the editor.
+    session.headless=false
+    settings_machine_drop(&session)
+    testing.expect_value(t,world.setting.quality,6)
+    error=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"quality":8}}}`)
+    testing.expect_value(t,error.code,0)
+    testing.expect(t,strings.contains(layer_text(.Engine,root,engine),`"quality": 8`))
+
     session.engine_root=""
     error=execute(state,&out,"settings.set",`{"layer":"engine","settings":{"Layer_Setting":{"scale":1}}}`)
     testing.expect_value(t,error.code,api.INVALID_PARAMS)
