@@ -235,9 +235,7 @@ session_start :: proc(root,folder:string,args:[]string) -> int {
     copy_lock:workspace.Lock
     defer workspace.lock_release(&copy_lock)
     if options.copy {
-        if swept,kept:=session_copies_sweep(folder);swept>0 || kept>0 {
-            fmt.eprintfln("mirai session: deleted %d copies of %s whose editor ended%s",swept,folder,kept>0?fmt.tprintf("; %d could not be deleted while a process holds their files",kept):"")
-        }
+        scratch_sweep_say(folder,"session")
         copy,lock,copy_problem:=session_copy(folder)
         if copy_problem!="" {fmt.eprintfln("mirai session: %s",copy_problem);return 1}
         opened,copy_lock=copy,lock
@@ -471,11 +469,9 @@ session_copy_skips :: proc(relative:string) -> bool {
 }
 
 // <copy>/.mirai/<SESSION_COPY_LOCK>: held by the session start that makes a copy, from before its
-// first file until its editor answers or start gives up, so that a sweep leaves it alone.
-// <project>/.mirai/tmp/<SESSION_COPIES_LOCK>: held while a copy is created and its lock taken,
-// and while the copies are swept, so that a sweep never sees a copy before its lock.
+// first file until its editor answers or start gives up, so that a sweep (scratch_sweep) leaves
+// it alone.
 SESSION_COPY_LOCK :: "copy.lock"
-SESSION_COPIES_LOCK :: "session-copies.lock"
 
 // A fresh copy of the project at folder under its .mirai/tmp/, without what
 // session_copy_skips leaves out, with what the builds of the project left
@@ -487,7 +483,7 @@ session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:
     if error:=os.make_directory_all(temporary);error!=nil && error!=.Exist {
         return "",{},fmt.tprintf("could not create %s (%v); check that the project folder is writable",temporary,error)
     }
-    copies,copies_locked:=workspace.lock_acquire(project.path(temporary,SESSION_COPIES_LOCK,allocator=context.temp_allocator),fmt.tprintf("pid %d, mirai session start --copy",os.get_pid()))
+    copies,copies_locked:=workspace.lock_acquire(project.path(temporary,SCRATCH_LOCK,allocator=context.temp_allocator),fmt.tprintf("pid %d, mirai session start --copy",os.get_pid()))
     created,error:=os.make_directory_temp(temporary,SESSION_COPY_PREFIX+"*",context.temp_allocator)
     if error==nil {
         copy=project.path_absolute(created)
@@ -531,28 +527,6 @@ session_copy :: proc(folder:string) -> (copy:string,lock:workspace.Lock,problem:
         return "",{},fmt.tprintf("%s; free the disk or close what holds the file, and start again",problem)
     }
     return copy,lock,""
-}
-
-// Deletes the copies of the project at folder whose editor ended: no session
-// start holds their SESSION_COPY_LOCK nor opens them, and neither their port
-// file nor their record names an editor of theirs that runs. A run that is
-// killed leaves its copy behind. kept counts those that could not be deleted.
-session_copies_sweep :: proc(folder:string) -> (swept,kept:int) {
-    temporary:=project.path(folder,".mirai","tmp",allocator=context.temp_allocator)
-    if !os.is_dir(temporary) {return}
-    copies,locked:=workspace.lock_acquire(project.path(temporary,SESSION_COPIES_LOCK,allocator=context.temp_allocator),fmt.tprintf("pid %d, mirai session sweeping copies",os.get_pid()))
-    if !locked {return}
-    defer workspace.lock_release(&copies)
-    entries,error:=os.read_directory_by_path(temporary,-1,context.temp_allocator)
-    if error!=nil {return}
-    for entry in entries {
-        if entry.type!=.Directory || !strings.has_prefix(entry.name,SESSION_COPY_PREFIX) {continue}
-        copy:=project.path_absolute(entry.fullpath)
-        if session_copy_live(copy) {continue}
-        if base.remove_all(copy)!=nil {kept+=1;continue}
-        swept+=1
-    }
-    return
 }
 
 // Whether a copy is being made or opened, or an editor of it runs.
@@ -708,11 +682,11 @@ session_stop_orphans :: proc(root,folder:string) -> int {
     }
     if closed+kept+failed==0 {fmt.println("There are no orphan editors.")}
     if folder!="" {
-        swept,held:=session_copies_sweep(folder)
-        if swept>0 {fmt.printfln("Deleted %d copies of %s whose editor ended.",swept,folder)}
+        swept,held:=scratch_sweep(folder)
+        if swept>0 {fmt.printfln("Deleted %d entries of %s that no process holds.",swept,scratch_folder(folder))}
         if held>0 {
             failed+=1
-            fmt.eprintfln("mirai session: %d copies of %s whose editor ended could not be deleted while a process holds their files",held,folder)
+            fmt.eprintfln("mirai session: %d entries of %s that no process holds could not be deleted while a process holds their files",held,scratch_folder(folder))
         }
     }
     return failed>0?1:0

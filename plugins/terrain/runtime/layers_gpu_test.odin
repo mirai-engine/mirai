@@ -152,7 +152,7 @@ largest_step :: proc(results: [][4]f32, second: bool) -> (largest: f32) {
 terrain_layers_blend_two_at_a_time_without_a_step :: proc(t: ^testing.T) {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
-	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/tmp/terrain-test-shaders", root))
+	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/test-shaders/terrain", root))
 	if !testing.expect(t, problem == "", problem) {return}
 	device := shared_device.take_or_skip(t)
 	if device == nil {

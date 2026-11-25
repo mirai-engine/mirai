@@ -19,11 +19,26 @@ Build targets, jobs, fingerprint, shaders, cooking, and shipping (`cook/build`):
   panels/             chat-built editor panels (engine-time)
   tests/scenarios/    mirai play test scenarios (optional)
   .mirai/             generated (git-ignored): gen/, plugins/, editor<ext>, play<ext>,
-                      *-live-<pid>-*, game/, shaders/, build/, cache/, share/, thumbs/
+                      *-live-<pid>-*, game/, shaders/, build/, cache/, share/, thumbs/,
+                      tmp/ (scratch)
 ```
 
 First-party plugins live in `<engine>/plugins/<name>/`; engine binaries in
-`<engine>/.mirai/engine/<dev|release>/`. Constants: `project/project.odin`.
+`<engine>/.mirai/engine/<dev|release>/`; the shaders GPU tests load in
+`<engine>/.mirai/test-shaders/<package>`. Constants: `project/project.odin`.
+
+### Scratch
+
+`<folder>/.mirai/tmp` of a project or the engine is scratch (`tools/mirai/scratch.odin`). What a
+command makes there for its own run it removes when it ends: a session copy at `session stop`, the
+scenes `render check` edits (`render-<pid>`) when its editor closes, a package take's project and
+a join's temporary files. `scratch_sweep` removes what outlives its command or a killed one: `mirai
+test` runs it for the engine, `session start --copy`, `session stop --orphans`, `play audit --copy`
+and `bench flight` for their project. A session copy goes once no start holds it and no editor of
+it runs; any other entry once no lock keeps it (a held `.lock` at its top or in its `.mirai/`, or
+`<name>.lock` beside a file) and nothing in it changed for `SCRATCH_AGE` (three days). Results
+meant to stay go to `bin/` or a folder of the project; what must outlive three days unchanged
+while in use holds a lock in its entry.
 
 ## Manifests
 
@@ -320,7 +335,7 @@ engine dependency). Wrap timed scripts with `mirai measure -- uv run scripts/<sc
   `README.md` skill table, and `CLAUDE.md` `@AGENTS.md`.
 - `scripts/bench_compare.py`: custom benchmarks (`mirai bench compare`/`flight` handle standard).
 - `scripts/video_frames.py` (Windows): extracts reference strips/audio into
-  `.mirai/tmp/video_frames`.
+  `.mirai/tmp/video_frames` ([scratch](#scratch)).
 
 ## ACP agents
 

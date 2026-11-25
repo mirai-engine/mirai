@@ -203,13 +203,13 @@ a_sweep_deletes_only_the_copies_whose_editor_ended :: proc(t:^testing.T) {
     }
     // No process opens a copy as its project: this test's own pid stands for a pid taken again.
     testing.expect(t,record(killed,1<<30) && record(reused,os.get_pid()))
-    swept,kept:=session_copies_sweep(folder)
+    swept,kept:=scratch_sweep(folder)
     testing.expect_value(t,swept,2)
     testing.expect_value(t,kept,0)
     testing.expect(t,os.is_dir(opening),"a copy still being opened stays")
     testing.expect(t,!os.exists(killed) && !os.exists(reused))
     workspace.lock_release(&opening_lock)
-    swept,kept=session_copies_sweep(folder)
+    swept,kept=scratch_sweep(folder)
     testing.expect(t,swept==1 && !os.exists(opening),"once its start ends without an editor, it goes")
     testing.expect(t,os.is_file(project.path(folder,project.PROJECT_FILE)),"the project stays")
 }

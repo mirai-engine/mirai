@@ -17,7 +17,7 @@ Fixture :: struct {
 // The generation with the Surface programs of testdata/ (Grid and Pieces) and
 // the stages of the references, which `mirai test` makes before the tests run:
 // the engine has neither.
-TEST_GENERATION :: #directory + "/../.mirai/tmp/render-test-shaders"
+TEST_GENERATION :: #directory + "/../.mirai/test-shaders/render"
 
 // False with the test told why: there is no device (shared_device.take_or_skip)
 // or the renderer does not start. desc gives what a test sets besides the size

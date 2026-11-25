@@ -15,7 +15,8 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
 
 ## Map
 
-- Folders of a project: [layout](references/projects.md#layout).
+- Folders of a project: [layout](references/projects.md#layout); what removes the scratch of
+  `.mirai/tmp`: [scratch](references/projects.md#scratch).
 - `project.mirai` and `plugin.mirai`: [manifests](references/projects.md#manifests);
   `settings.mirai`: [settings](references/projects.md#project-settings).
 - Plugin discovery and order: [package](references/projects.md#the-project-package); which folders
@@ -159,9 +160,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   fingerprint, engine modes, `declare`, the IR without stores of aggregates of more than 64 bytes,
   and the test runner: currency of an executable and what it reads from the output of
   `core:testing`) and `mirai test tools/mirai` (ACP installer, C library cache, tests that declare
-  the sources, known failures); `mirai check cook/build` and `mirai check
-  tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who holds a
-  lock, GPU turns by the room of the card, a person and a measurement) and `mirai test
+  the sources, known failures, the scratch a sweep removes); `mirai check cook/build` and `mirai
+  check tools/mirai` if they change. Turns: `mirai test cook/workspace` (annotation of builds, who
+  holds a lock, GPU turns by the room of the card, a person and a measurement) and `mirai test
   std/subprocess` (low priority of a child, handles it inherits). GPU turns with real editors:
   two sessions at once on a heavy scene both run or the second waits naming the first, and
   killing the editor of one frees its turn (`mirai locks`). Sharing: `mirai test cook/share`

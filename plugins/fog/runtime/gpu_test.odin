@@ -42,7 +42,7 @@ HEIGHT :: 128
 gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture) -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
 	// mirai test generates them: cook is not shipped, and the game compiles its test files.
-	output := fmt.tprintf("%s/.mirai/tmp/fog-test-shaders", root)
+	output := fmt.tprintf("%s/.mirai/test-shaders/fog", root)
 	loaded, problem := gpu.shader_assets_load(output)
 	if !testing.expect(t, problem == "", problem) {return false}
 	device := shared_device.take_or_skip(t)

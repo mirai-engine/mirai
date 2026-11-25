@@ -319,7 +319,7 @@ does not reach G-buffer meshes. Local-space meshes take motion vectors from the 
 - `mirai test plugins/vfx/runtime` (`MIRAI_VALIDATION=1`, `-define:ODIN_TEST_THREADS=1`): CPU
   (`vfx_test.odin`: animated values without allocations or regrouping, layer paths and parameter
   propagation over a device-less catalog, analytical bounds, culling) and GPU (`gpu_test.odin`,
-  shaders in `.mirai/tmp/vfx-test-shaders`): births/steps/pause/events/pools/capacity, ribbons
+  shaders in `.mirai/test-shaders/vfx`): births/steps/pause/events/pools/capacity, ribbons
   (`two_ribbons.slang`), `Surface` on a posed skin (`testdata/stick.slang`), `World`
   hits/friction, sprite Surface programs (`hand_over.slang`, `particle_data.slang`), grid
   stages/splats (`tally.slang`, `spread.slang`), weighted velocity-facing meshes, stage rays

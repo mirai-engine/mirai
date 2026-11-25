@@ -41,7 +41,7 @@ Gpu_Fixture :: struct {
 @(private = "file")
 gpu_fixture_init :: proc(t: ^testing.T, f: ^Gpu_Fixture, window := false) -> bool {
 	root, _ := filepath.clean(ROOT, context.temp_allocator)
-	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/tmp/fsr-test-shaders", root))
+	loaded, problem := gpu.shader_assets_load(fmt.tprintf("%s/.mirai/test-shaders/fsr", root))
 	if !testing.expect(t, problem == "", problem) {return false}
 	// Without the probes and their rays the image is the same from one frame
 	// to the next; without the shadows of the sun no lit pixel is black.
