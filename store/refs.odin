@@ -33,8 +33,23 @@ ref_get_locked :: proc(s:^Store,namespace,name:string) -> (hash:Hash,error:Error
 
 // Points the ref at hash and commits.
 ref_set :: proc(s:^Store,namespace,name:string,hash:Hash,now:Maybe(time.Time)=nil) -> Error {
-    if !name_valid(namespace) || hash=={} {return .Invalid_Argument}
-    return ref_frame_commit(s,namespace,name,hash,now)
+    if hash=={} {return .Invalid_Argument}
+    return ref_frames_commit(s,{{namespace,name,hash}},now)
+}
+
+// A ref and the address it is pointed at.
+Ref_Set :: struct {
+    namespace,name:string,
+    hash:Hash,
+}
+
+// Points every ref of sets at its hash in one commit: a reader, and a crash at
+// any point, sees all of them moved or none.
+refs_set :: proc(s:^Store,sets:[]Ref_Set,now:Maybe(time.Time)=nil) -> Error {
+    for x in sets {
+        if x.hash=={} {return .Invalid_Argument}
+    }
+    return ref_frames_commit(s,sets,now)
 }
 
 // Removes the ref and commits; Missing when it was not set.
@@ -45,16 +60,20 @@ ref_remove :: proc(s:^Store,namespace,name:string,now:Maybe(time.Time)=nil) -> E
     if error==.None {_,error=ref_get_locked(s,namespace,name)}
     sync.mutex_unlock(&s.state.lock)
     if error!=.None {return error}
-    return ref_frame_commit(s,namespace,name,{},now)
+    return ref_frames_commit(s,{{namespace,name,{}}},now)
 }
 
+// The frames of sets, a zero hash removing its ref, written and committed at once.
 @(private)
-ref_frame_commit :: proc(s:^Store,namespace,name:string,hash:Hash,now:Maybe(time.Time)) -> Error {
-    if s==nil || s.state==nil || !name_valid(name) {return .Invalid_Argument}
+ref_frames_commit :: proc(s:^Store,sets:[]Ref_Set,now:Maybe(time.Time)) -> Error {
+    if s==nil || s.state==nil {return .Invalid_Argument}
+    for x in sets {
+        if !name_valid(x.namespace) || !name_valid(x.name) {return .Invalid_Argument}
+    }
     at:=(now.? or_else time.now())._nsec
     st:=stage_take(s) or_return
     defer stage_give(s,st)
-    ref_stage(st,namespace,name,hash,at) or_return
+    for x in sets {ref_stage(st,x.namespace,x.name,x.hash,at) or_return}
     stage_write(s,st,at) or_return
     return commit(s,time.Time{_nsec=at})
 }

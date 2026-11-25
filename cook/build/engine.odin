@@ -77,22 +77,22 @@ Engine_Package :: struct {
 ENGINE_PACKAGES :: [?]Engine_Package{
     {.Base,"std/base","std"},{.Base,"std/subprocess","std"},{.Base,"std/math","std"},{.Base,"std/geom","std"},{.Base,"std/serial","std"},
     {.Base,"std/spatial","std"},{.Base,"std/jobs","std"},{.Base,"std/anim","std"},{.Base,"std/ai","std"},{.Base,"std/pcg","std"},{.Base,"std/input","std"},
-    {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},{.Base,"std/compressor/data","std"},
+    {.Base,"std/ui_format","std"},{.Base,"std/blake3","std"},{.Base,"std/compressor/data","std"},{.Base,"std/diff","std"},
     {.Base,"audio","system"},{.Base,"platform","system"},{.Base,"rhi","system"},
     {.Base,"project","system"},{.Base,"store","system"},{.Base,"core",""},
 
-    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"exchange",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
+    {.Engine,"asset",""},{.Engine,"net",""},{.Engine,"exchange",""},{.Engine,"kai",""},{.Engine,"render/abi","render"},{.Engine,"render","render"},{.Engine,"third_party/freetype","freetype"},
     {.Engine,"ui","ui"},{.Engine,"host",""},{.Engine,"engine/input","engine"},{.Engine,"engine/scene","engine"},{.Engine,"engine/volume","engine"},
     {.Engine,"engine/render","engine"},{.Engine,"engine/audio","engine"},{.Engine,"engine/gui","engine"},{.Engine,"engine/camera","engine"},{.Engine,"engine/save","engine"},
 
-    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/far","cook"},
+    {.Cook,"third_party/ufbx","ufbx"},{.Cook,"cook/workspace","cook"},{.Cook,"cook/cache","cook"},{.Cook,"cook/kai","cook"},{.Cook,"cook/far","cook"},
     {.Cook,"cook/textures","cook"},{.Cook,"cook/image","cook"},{.Cook,"cook/movie","cook"},{.Cook,"cook/rig","cook"},
     {.Cook,"cook/import","cook"},{.Cook,"cook/import/obj","cook"},{.Cook,"cook/import/gltf","cook"},{.Cook,"cook/import/usd","cook"},
     {.Cook,"cook/import/fbx","cook"},{.Cook,"cook/shaders","cook"},{.Cook,"cook/author","cook"},{.Cook,"cook/prefab","cook"},{.Cook,"cook/import/sources","cook"},
     {.Cook,"cook/share","cook"},{.Cook,"cook/install","cook"},{.Cook,"cook/build",""},
 
-    {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/diff","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
-    {.Editor,"editor/git","editor-parts"},{.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor/kit","editor-parts"},{.Editor,"editor",""},
+    {.Editor,"third_party/sqlite","sqlite"},{.Editor,"editor/api","editor-parts"},{.Editor,"editor/acp","editor-parts"},{.Editor,"editor/ai_store","editor-parts"},
+    {.Editor,"editor/history","editor-parts"},{.Editor,"editor/records","editor-parts"},{.Editor,"editor/kit","editor-parts"},{.Editor,"editor",""},
 }
 
 @(private)
@@ -481,13 +481,14 @@ engine_program_sources :: proc(paths:Engine_Paths) -> [4]Engine_Program {
 
 import "core:os"
 import "mirai:cook/import/sources"
+import ka "mirai:cook/kai"
 import "mirai:cook/share"
 import "mirai:editor"
 
 main :: proc() {
     args:=os.args[1:]
     if len(args)>0 && (args[0]=="share" || args[0]=="join") {os.exit(share.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library_built))}
-    os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library))
+    os.exit(sources.command(args,os.to_writer(os.stdout),os.to_writer(os.stderr),editor.import_library,ka.peers_open))
 }
 `,paths.import_program},
         {"author program","author",`package main

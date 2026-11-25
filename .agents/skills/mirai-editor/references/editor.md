@@ -34,8 +34,7 @@ Unknown arguments print `USAGE_TEXT`. Exit codes: `EDITOR_*` in `editor/editor.o
 - `--no-gpu` and `--density` require `--headless`. `--hidden` runs a hidden continuous window;
   `--width`/`--height` set size in points (omitted = maximized).
 - Internal flags: `--documents` (restart manifest), `--gpu-lost`, `--view`, `--select`,
-  `--launcher` ([projects](panels.md#projects)), `--git-init`, `--git-lfs`, `--git-remote`
-  ([git](git.md#operations)).
+  `--launcher` ([projects](panels.md#projects)).
 
 ```sh
 mirai-editor --project ./demo --scene main.scene --headless --density 1.5 --frames 8 \

@@ -125,7 +125,7 @@ ai_task_revert :: proc(s:^Session,m:^Ai,task:^Ai_Task) -> string {
     if task==nil {return "This task is unavailable"}
     if !ai_task_finished(task) {return "Wait for the agent to finish before reverting"}
     if task.document_closed || task.world!=nil && task.world!=s.edit_world || !ai_task_current(s,task) {return "Open the task's document before reverting"}
-    if task.files_changed {return "This task changed files of the project its review could not keep (larger than 1 MB or past its capacity): revert them by hand or with git"}
+    if task.files_changed {return "This task changed files of the project its review could not keep (larger than 1 MB or past its capacity): revert them by hand or restore them from a change in the Kai tab"}
     if !task.review.pending {ai_task_finish(s,m,task);return ""}
     if !ai_review_revertible(s,&task.review) {return "The task outgrew its review and the history no longer holds all its steps; use scene history to revert"}
     if s.mode!=.Edit {return "Stop Play before reverting scene changes"}

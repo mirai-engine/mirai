@@ -148,7 +148,9 @@ reports per-zone timings (`importer.profile_totals`). Refreshes share one `Impor
 `cook/textures/cache.odin` caches encoded textures in store `cache-textures` (`cook/cache`) keyed
 by `textures.cache_key_build` (source bytes/texels + `settings_hash`) or `cache_key_blocks` (for
 RGBA8 cooking). Shared across projects/worktrees; `cache.lookup` batches remote `cache.Source`
-fetches before jobs run. `fast_textures` prefers an existing Final cache hit, else writes Fast and
+fetches before jobs run (in a Kai org project with a running agent, `cook/kai.peers_open` fetches
+and publishes keyed results; scoped inputs seal outputs for scope readers). `fast_textures` prefers
+an existing Final cache hit, else writes Fast and
 caches lossless texels under the Final key for later finalization. `--rebuild` bypasses reads.
 
 ### Mesh cache

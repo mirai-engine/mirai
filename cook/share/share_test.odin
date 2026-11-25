@@ -4,6 +4,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:mem"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:testing"
@@ -13,7 +14,7 @@ import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
 import "mirai:exchange"
-import "mirai:platform"
+import vcs "mirai:kai"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:store"
@@ -299,7 +300,7 @@ host_offer :: proc(t:^testing.T,w:^Test_Net,root:string) -> bool {
     snap,address,_,error:=snapshot_take(s,root,"game",&folders,allocator=context.temp_allocator,built=&built)
     if !testing.expectf(t,error=="","%s",error) {return false}
     digits:[64]u8
-    if !testing.expect_value(t,offer_set(s,root,offer_name(w.peers[0].key.secret,&digits),address),.None) {return false}
+    if !testing.expect_value(t,offer_set(s,root,offer_name(w.peers[0].key.secret,&digits),address,"game"),.None) {return false}
     node_serve(&w.peers[0].n,..folders[:])
     for e in snap.entries {node_serve(&w.peers[0].n,e.address)}
     return true
@@ -335,27 +336,26 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     run,_:=snapshot_find(&snap,"tools/run.sh")
     b,_:=snapshot_find(&snap,"assets/b.txt")
     empty,_:=snapshot_find(&snap,"assets/empty.txt")
-    testing.expect(t,run.executable && !b.executable && b.size==1 && store.chunk_has(&s,b.address) && b.address==bytes_address(transmute([]u8)string("b")))
-    testing.expect(t,empty.address==empty_address() && empty.address==bytes_address(nil))
+    run_kind:=vcs.Entry_Kind.File when ODIN_OS==.Windows else vcs.Entry_Kind.Executable
+    testing.expect(t,run.kind==run_kind && b.kind==.File && b.size==1 && store.chunk_has(&s,b.address) && b.address==bytes_address(transmute([]u8)string("b")))
+    testing.expect(t,empty.address==vcs.empty_address() && empty.address==bytes_address(nil))
     testing.expect_value(t,report.put,5)
 
     // The tree reads back as the files, and the flat base a joiner keeps too.
-    again,read_error:=snapshot_read(&s,address,allocator=context.temp_allocator)
-    testing.expect_value(t,read_error,Snapshot_Error.None)
+    again,read_error:=snapshot_read(&s,address,"game",allocator=context.temp_allocator)
+    testing.expect_value(t,read_error,vcs.Error.None)
     testing.expect(t,again.name=="game" && len(again.entries)==len(snap.entries))
     for e,at in again.entries {testing.expectf(t,e==snap.entries[at],"%s round-trips",e.path)}
-    name,name_error:=snapshot_name(&s,address,context.temp_allocator)
-    testing.expect(t,name_error==.None && name=="game")
-    bytes,_:=snapshot_encode(snap,context.temp_allocator)
-    based,decode_error:=snapshot_decode(bytes,context.temp_allocator)
-    testing.expect_value(t,decode_error,Snapshot_Error.None)
+    bytes:=snapshot_encode(snap,context.temp_allocator)
+    based,decoded:=snapshot_decode(bytes,context.temp_allocator)
+    testing.expect(t,decoded && based.name=="game")
     for e,at in based.entries {testing.expectf(t,e==snap.entries[at],"%s round-trips in the base",e.path)}
     for cut in 0..<len(bytes) {
-        _,cut_error:=snapshot_decode(bytes[:cut],context.temp_allocator)
-        testing.expectf(t,cut_error!=.None,"a base cut at %d is refused",cut)
+        _,cut_decoded:=snapshot_decode(bytes[:cut],context.temp_allocator)
+        testing.expectf(t,!cut_decoded,"a base cut at %d is refused",cut)
     }
     // The same files put again give the same tree.
-    rebuilt,_,_:=snapshot_put(&s,&based)
+    rebuilt,_:=snapshot_put(&s,&based)
     testing.expect(t,rebuilt==address,"the tree is a function of the files")
 
     // Taken again with nothing changed, nothing is read into the store and the tree is the same.
@@ -385,120 +385,61 @@ the_snapshot_leaves_out_what_the_layout_says_and_round_trips :: proc(t:^testing.
     testing.expect(t,"assets/growing.txt" not_in index,"what changed while it was read is read again next time")
 }
 
-// An entry of a folder as a hostile peer writes it.
-@(private="file")
-Raw :: struct {kind:u8,name:string,address:store.Hash,size:u64,files:u32}
-
-// A folder object of records as given, with the meta of a snapshot and name.
-@(private="file")
-raw_folder :: proc(s:^store.Store,records:[]Raw,name:="",magic:=SNAPSHOT_MAGIC,cut:=0) -> store.Hash {
-    bytes:=make([dynamic]u8,context.temp_allocator)
-    for r in records {
-        r:=r
-        append(&bytes,r.kind,u8(len(r.name)))
-        append(&bytes,..transmute([]u8)r.name)
-        append(&bytes,..r.address[:])
-        for k in 0..<8 {append(&bytes,u8(r.size>>(8*uint(k))))}
-        if r.kind==KIND_FOLDER {for k in 0..<4 {append(&bytes,u8(r.files>>(8*uint(k))))}}
-    }
-    meta:=fmt.tprintf("%s%c%s",magic,rune(len(name)),name)
-    p,_:=store.put_begin(s)
-    store.put_write(&p,bytes[:len(bytes)-cut])
-    address,_,_:=store.put_finish(&p,transmute([]u8)meta)
-    store.commit(s)
-    return address
-}
-
+// A tree is checked by Kai (hostile_kai_records_are_refused); a snapshot also
+// refuses a file that is not the project's own, a conflict, and an offer that
+// is not one.
 @(test)
-hostile_trees_are_refused_without_a_crash :: proc(t:^testing.T) {
+hostile_snapshots_and_offers_are_refused :: proc(t:^testing.T) {
     folder:=base.test_folder(t,"share-hostile")
     if folder=="" {return}
     s,open_error:=store.open(fmt.tprintf("%s/store",folder))
     if !testing.expect_value(t,open_error,store.Error.None) {return}
     defer store.close(&s)
-    put :: proc(s:^store.Store,text:string) -> store.Hash {
-        address,_:=store.put(s,transmute([]u8)text)
-        return address
-    }
-    x:=put(&s,"x")
-    empty:=empty_address()
-    inner:=raw_folder(&s,{{name="f",address=x,size=1}})
-    Case :: struct {records:[]Raw,error:Snapshot_Error}
+    x,_:=store.put(&s,transmute([]u8)string("x"))
+    conflict,_:=store.put(&s,transmute([]u8)string("not a conflict"))
+    Case :: struct {files:[]vcs.File,error:vcs.Error}
     cases:=[?]Case{
-        {{{name="..",address=x,size=1}},.Path},
-        {{{name=".",address=x,size=1}},.Path},
-        {{{name="a/b",address=x,size=1}},.Path},
-        {{{name="a\\b",address=x,size=1}},.Path},
-        {{{name="",address=x,size=1}},.Path},
-        {{{name="nul",address=x,size=1}},.Path},
-        {{{name="Com1.txt",address=x,size=1}},.Path},
-        {{{name="name.",address=x,size=1}},.Path},
-        {{{name="a:b",address=x,size=1}},.Path},
-        {{{kind=KIND_FOLDER,name=".mirai",address=inner,size=1,files=1}},.Path},
-        {{{kind=KIND_FOLDER,name=".git",address=inner,size=1,files=1}},.Path},
-        {{{name="a",address=x,size=1},{name="a",address=x,size=1}},.Duplicate},
-        {{{name="b",address=x,size=1},{name="a",address=x,size=1}},.Duplicate},
-        {{{name="A.txt",address=x,size=1},{name="a.txt",address=x,size=1}},.Duplicate},
-        {{{name="a",address=x,size=0}},.Size},
-        {{{name="a",address=x,size=1<<63}},.Size},
-        {{{name="a",address=x,size=max(u64)/2},{name="b",address=x,size=max(u64)/2}},.Size},
-        {{{kind=KIND_FOLDER,name="a",address=inner,size=1,files=0}},.Size},
-        {{{kind=KIND_FOLDER,name="a",address=inner,size=1,files=2}},.Size},
-        {{{kind=KIND_FOLDER,name="a",address=inner,size=2,files=1}},.Size},
-        {{{kind=3,name="a",address=x,size=1}},.Not_Snapshot},
-        {{{kind=KIND_FOLDER,name="a",address=x,size=1,files=1}},.Not_Snapshot},
-        {{{kind=KIND_FOLDER,name="a",address=put(&s,"none"),size=1,files=1}},.Not_Snapshot},
-        {{{name="a",address=empty,size=0},{name="b",address=x,size=1},{kind=KIND_FOLDER,name="c",address=inner,size=1,files=1}},.None},
+        {{{path=".mirai/build/out.o",kind=.File,address=x,size=1}},.Corrupt},
+        {{{path=".git/HEAD",kind=.File,address=x,size=1}},.Corrupt},
+        {{{path="a.txt",kind=.Conflict,address=conflict}},.Corrupt},
+        {{{path="a.txt",kind=.File,address=x,size=1},{path="tools/run",kind=.Executable,address=x,size=1}},.None},
     }
     for c in cases {
-        root:=raw_folder(&s,c.records,"game")
-        _,error:=snapshot_read(&s,root,allocator=context.temp_allocator)
-        testing.expectf(t,error==c.error,"%v: %v, not %v",c.records,error,c.error)
-        free_all(context.temp_allocator)
+        root,_:=vcs.tree_build(&s,c.files)
+        _,error:=snapshot_read(&s,root,"game",allocator=context.temp_allocator)
+        testing.expectf(t,error==c.error,"%v: %v, not %v",c.files,error,c.error)
     }
-    read :: proc(s:^store.Store,root:store.Hash) -> Snapshot_Error {
-        _,error:=snapshot_read(s,root,allocator=context.temp_allocator)
-        return error
+    _,missing:=snapshot_read(&s,store.address_of_bytes(transmute([]u8)string("?")),"game",allocator=context.temp_allocator)
+    testing.expect_value(t,missing,vcs.Error.Missing)
+    _,plain:=snapshot_read(&s,x,"game",allocator=context.temp_allocator)
+    testing.expect_value(t,plain,vcs.Error.Corrupt)
+
+    root,_:=vcs.tree_build(&s,{{path="a.txt",kind=.File,address=x,size=1}})
+    testing.expect_value(t,offer_set(&s,folder,"offer",root,"game"),store.Error.None)
+    testing.expect_value(t,offer_set(&s,folder,"offer",root,".."),store.Error.Invalid_Argument)
+    object,_:=store.ref_get(&s,NAMESPACE,"offer")
+    address,kind,name,read_error:=offer_read(&s,object,context.temp_allocator)
+    testing.expect(t,read_error==.None && address==root && kind==.Project && name=="game")
+    good:=make([]u8,2+32+1+4,context.temp_allocator)
+    o,_:=store.object_open(&s,object)
+    testing.expect_value(t,store.object_read(&o,0,good),store.Error.None)
+    store.object_close(&o)
+    // Another version, an unknown kind, no root, a name length that lies, a name that is no folder's, cut or longer.
+    Edit :: struct {at:int,value:u8,size:int}
+    for edit in ([?]Edit{{0,2,0},{1,2,0},{2+32,3,0},{2+32,5,0},{2+32+1,'/',0},{0,3,-1},{0,3,+1}}) {
+        bad:=make([]u8,len(good)+max(edit.size,0),context.temp_allocator)
+        copy(bad,good)
+        bad=bad[:len(good)+edit.size]
+        bad[edit.at]=edit.value
+        hostile,_:=store.put(&s,bad)
+        _,_,_,hostile_error:=offer_read(&s,hostile,context.temp_allocator)
+        testing.expectf(t,hostile_error!=.None,"an offer edited by %v is refused",edit)
     }
-    good:=[]Raw{{name="a",address=x,size=1},{kind=KIND_FOLDER,name="b",address=inner,size=1,files=1}}
-    // The meta: a root needs a folder's name, a folder below none; another magic is not a snapshot.
-    testing.expect_value(t,read(&s,raw_folder(&s,good,"..")),Snapshot_Error.Name)
-    testing.expect_value(t,read(&s,raw_folder(&s,good,"")),Snapshot_Error.Name)
-    testing.expect_value(t,read(&s,raw_folder(&s,good,"game",magic="mirai snapshot 1\n")),Snapshot_Error.Not_Snapshot)
-    named:=raw_folder(&s,{{name="f",address=x,size=1}},"inside")
-    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="b",address=named,size=1,files=1}},"game")),Snapshot_Error.Not_Snapshot)
-    for cut in 1..<45 {testing.expectf(t,read(&s,raw_folder(&s,good,"game",cut=cut))==.Truncated,"a listing cut by %d is refused",cut)}
-    // What is not in the store is unavailable, never a crash.
-    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="b",address=store.address_of_bytes(transmute([]u8)string("?")),size=1,files=1}},"game")),Snapshot_Error.Unavailable)
-    // Folders nested deeper than the bound.
-    deep:=inner
-    for _ in 0..<DEPTH_MAX {deep=raw_folder(&s,{{kind=KIND_FOLDER,name="d",address=deep,size=1,files=1}})}
-    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="d",address=deep,size=1,files=1}},"game")),Snapshot_Error.Depth)
-    // A folder repeated under many names declares more files than a snapshot holds; one that lies about them is refused where it lies.
-    wide:=raw_folder(&s,{{kind=KIND_FOLDER,name="x",address=inner,size=1,files=FILES_MAX/2}})
-    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="a",address=wide,size=1,files=FILES_MAX/2},{kind=KIND_FOLDER,name="b",address=wide,size=1,files=FILES_MAX/2},{kind=KIND_FOLDER,name="c",address=wide,size=1,files=1}},"game")),Snapshot_Error.Too_Large)
-    testing.expect_value(t,read(&s,raw_folder(&s,{{kind=KIND_FOLDER,name="a",address=wide,size=1,files=FILES_MAX/2}},"game")),Snapshot_Error.Size)
-    // More entries in a folder than a folder holds, and an object larger than a folder can be.
-    many:=make([]Raw,FOLDER_ENTRIES_MAX+1,context.temp_allocator)
-    for &r,k in many {r={name=fmt.tprintf("f%06d",k),address=empty}}
-    testing.expect_value(t,read(&s,raw_folder(&s,many,"game")),Snapshot_Error.Too_Large)
-    huge:=make([]u8,LISTING_MAX+1,context.temp_allocator)
-    p,_:=store.put_begin(&s)
-    store.put_write(&p,huge)
-    meta:=fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4))
-    large,_,_:=store.put_finish(&p,transmute([]u8)meta)
-    store.commit(&s)
-    testing.expect_value(t,read(&s,large),Snapshot_Error.Too_Large)
-    free_all(context.temp_allocator)
-    // Random listings, some under the magic.
-    for seed in 0..<64 {
-        random:=noise(int(seed)*37,u64(seed))
-        p,_:=store.put_begin(&s)
-        store.put_write(&p,random)
-        address,_,_:=store.put_finish(&p,transmute([]u8)fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4)) if seed%2==0 else random[:min(len(random),16)])
-        read(&s,address)
-    }
-    store.commit(&s)
+    no_root:=slice.clone(good,context.temp_allocator)
+    for &b in no_root[2:2+32] {b=0}
+    hostile,_:=store.put(&s,no_root)
+    _,_,_,no_root_error:=offer_read(&s,hostile,context.temp_allocator)
+    testing.expect(t,no_root_error!=.None,"an offer of no root is refused")
 }
 
 @(test)
@@ -555,6 +496,7 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
         file_put(root,fmt.tprintf("files/%s.txt",name),transmute([]u8)fmt.tprintf("%s 1",name))
     }
     file_put(root,"Folder/inside.txt",transmute([]u8)string("inside 1"))
+    file_put(root,"files/both_merge.txt",transmute([]u8)string("a\nb\nc\n"))
     if !host_offer(t,&w,root) {return}
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
@@ -570,6 +512,9 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     file_put(joined,"files/host_removes_joiner_changes.txt",transmute([]u8)string("joiner 2"))
     os.remove(fmt.tprintf("%s/files/joiner_removes_host_changes.txt",joined))
     file_put(joined,"files/joiner_changes.txt",transmute([]u8)string("joiner 2"))
+    // Both changed other lines: the text merges.
+    file_put(root,"files/both_merge.txt",transmute([]u8)string("A\nb\nc\n"))
+    file_put(joined,"files/both_merge.txt",transmute([]u8)string("a\nb\nC\n"))
     // Renames that change only the case: of a file, of a file with its bytes, of a folder.
     os.rename(fmt.tprintf("%s/files/Case_only.txt",root),fmt.tprintf("%s/files/case_only.txt",root))
     os.rename(fmt.tprintf("%s/files/Case_changed.txt",root),fmt.tprintf("%s/files/case_changed.txt",root))
@@ -590,9 +535,11 @@ a_second_join_updates_the_folder_by_three_ways :: proc(t:^testing.T) {
     testing.expect_value(t,read(joined,"joiner_removes_host_changes.txt"),"(none)")
     testing.expect_value(t,read(joined,"joiner_changes.txt"),"joiner 2")
     testing.expect_value(t,read(joined,"same.txt"),"same 1")
+    testing.expect_value(t,read(joined,"both_merge.txt"),"A\nb\nC\n")
+    testing.expect_value(t,report.merged,1)
     // Where case folds, a rename by case is one file renamed in place; elsewhere one removed and one written.
     folds:=folds_case(joined)
-    testing.expectf(t,report.written==(folds?3:5) && report.removed==(folds?1:4),"the host's changes and its new file are written, its removals applied: %d, %d",report.written,report.removed)
+    testing.expectf(t,report.written==(folds?4:6) && report.removed==(folds?1:4),"the host's changes and its new file are written, its removals applied: %d, %d",report.written,report.removed)
     names :: proc(folder:string) -> string {
         listed,_:=os.read_all_directory_by_path(folder,context.temp_allocator)
         list:=make([dynamic]string,context.temp_allocator)
@@ -630,7 +577,7 @@ a_join_keeps_what_the_joiner_changes_while_it_runs :: proc(t:^testing.T) {
     d:=Join_Desc{node=&n}
     joined:=fmt.tprintf("%s/joined",folder)
     bytes :: proc(text:string) -> []u8 {return transmute([]u8)text}
-    entries:=make([]Entry,3,context.temp_allocator)
+    entries:=make([]vcs.File,3,context.temp_allocator)
     for name,k in ([3]string{"a","b","c"}) {
         address,_:=store.put(&s,bytes(fmt.tprintf("host %s",name)))
         entries[k]={path=fmt.tprintf("%s.txt",name),address=address,size=6}
@@ -691,14 +638,18 @@ a_join_never_follows_a_link_inside_its_folder :: proc(t:^testing.T) {
     file_put(outside,"old.txt",bytes("old"))
     file_put(outside,"target.txt",bytes("target"))
     file_put(joined,"plain.txt",bytes("plain 1"))
-    if !testing.expect(t,os.symlink(outside,fmt.tprintf("%s/linked",joined))==nil,"a link can be made here") {return}
-    os.symlink(fmt.tprintf("%s/target.txt",outside),fmt.tprintf("%s/file.txt",joined))
-    entry :: proc(s:^store.Store,path,text:string) -> Entry {
-        address,_:=store.put(s,transmute([]u8)text)
-        return {path=path,address=address,size=i64(len(text))}
+    if os.symlink(outside,fmt.tprintf("%s/linked",joined))!=nil {
+        when ODIN_OS==.Windows {return}
+        testing.expect(t,false,"a link can be made here")
+        return
     }
-    last_entries:=[]Entry{entry(&s,"file.txt","target"),entry(&s,"linked/old.txt","old"),entry(&s,"plain.txt","plain 1")}
-    snap_entries:=[]Entry{entry(&s,"file.txt","host"),entry(&s,"linked/deep/new.txt","host"),entry(&s,"plain.txt","plain 2")}
+    os.symlink(fmt.tprintf("%s/target.txt",outside),fmt.tprintf("%s/file.txt",joined))
+    entry :: proc(s:^store.Store,path,text:string) -> vcs.File {
+        address,_:=store.put(s,transmute([]u8)text)
+        return {path=path,address=address,size=u64(len(text))}
+    }
+    last_entries:=[]vcs.File{entry(&s,"file.txt","target"),entry(&s,"linked/old.txt","old"),entry(&s,"plain.txt","plain 1")}
+    snap_entries:=[]vcs.File{entry(&s,"file.txt","host"),entry(&s,"linked/deep/new.txt","host"),entry(&s,"plain.txt","plain 2")}
     store.commit(&s)
     last:=Snapshot{name="game",entries=last_entries}
     snap:=Snapshot{name="game",entries=snap_entries}
@@ -740,14 +691,13 @@ a_join_writes_what_it_can_and_running_it_again_completes_it :: proc(t:^testing.T
     os.remove(fmt.tprintf("%s/files/gone.txt",root))
     file_put(root,"shut/new.txt",transmute([]u8)string("new"))
     if !host_offer(t,&w,root) {return}
-    read_only:=os.Permissions_Read_All
-    os.change_mode(fmt.tprintf("%s/files/locked.txt",joined),read_only)
-    os.change_mode(fmt.tprintf("%s/files/gone.txt",joined),read_only)
-    os.change_mode(fmt.tprintf("%s/shut",joined),read_only+os.Permissions_Execute_All)
+    writable_set(fmt.tprintf("%s/files/locked.txt",joined),false)
+    writable_set(fmt.tprintf("%s/files/gone.txt",joined),false)
+    when ODIN_OS!=.Windows {writable_set(fmt.tprintf("%s/shut",joined),false)}
     fix :: proc(joined:string) {
-        os.change_mode(fmt.tprintf("%s/files/locked.txt",joined),os.Permissions_Default_File)
-        os.change_mode(fmt.tprintf("%s/files/gone.txt",joined),os.Permissions_Default_File)
-        os.change_mode(fmt.tprintf("%s/shut",joined),os.Permissions_Default_Directory)
+        writable_set(fmt.tprintf("%s/files/locked.txt",joined),true)
+        writable_set(fmt.tprintf("%s/files/gone.txt",joined),true)
+        when ODIN_OS!=.Windows {writable_set(fmt.tprintf("%s/shut",joined),true)}
     }
     defer fix(joined)
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
@@ -755,15 +705,21 @@ a_join_writes_what_it_can_and_running_it_again_completes_it :: proc(t:^testing.T
     testing.expect_value(t,read_text(joined,"files/a.txt"),"a 2")
     testing.expect_value(t,read_text(joined,"files/locked.txt"),"files/locked.txt 1")
     testing.expect_value(t,read_text(joined,"files/gone.txt"),"files/gone.txt 1")
-    testing.expect_value(t,read_text(joined,"shut/new.txt"),"(none)")
     listed:=strings.join(report.failed[:],"\n",context.temp_allocator)
-    testing.expectf(t,len(report.failed)==3 && strings.contains(listed,"locked.txt is read-only") && strings.contains(listed,"gone.txt is read-only") && strings.contains(listed,"shut is read-only"),"each failure by path, with how to fix it: %s",listed)
-    testing.expect(t,report.written==1 && report.removed==0)
+    when ODIN_OS==.Windows {
+        testing.expectf(t,len(report.failed)==2 && strings.contains(listed,"locked.txt is read-only") && strings.contains(listed,"gone.txt is read-only"),"each failure by path, with how to fix it: %s",listed)
+        testing.expect(t,report.written==2 && report.removed==0)
+    } else {
+        testing.expect_value(t,read_text(joined,"shut/new.txt"),"(none)")
+        testing.expectf(t,len(report.failed)==3 && strings.contains(listed,"locked.txt is read-only") && strings.contains(listed,"gone.txt is read-only") && strings.contains(listed,"shut is read-only"),"each failure by path, with how to fix it: %s",listed)
+        testing.expect(t,report.written==1 && report.removed==0)
+    }
 
     fix(joined)
     again,again_error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,again_error=="","%s",again_error) {return}
-    testing.expectf(t,len(again.failed)==0 && len(again.kept)==0 && again.written==2 && again.removed==1,"%v",again)
+    want_written:=1 when ODIN_OS==.Windows else 2
+    testing.expectf(t,len(again.failed)==0 && len(again.kept)==0 && again.written==want_written && again.removed==1,"%v",again)
     same_files(t,root,joined)
 }
 
@@ -783,12 +739,12 @@ a_join_with_files_not_written_refreshes_no_package :: proc(t:^testing.T) {
     file_put(root,"assets/deep/a/b/c.txt",transmute([]u8)string("changed"))
     if !host_offer(t,&w,root) {return}
     locked:=fmt.tprintf("%s/assets/deep/a/b/c.txt",joined)
-    os.change_mode(locked,os.Permissions_Read_All)
-    defer os.change_mode(locked,os.Permissions_Default_File)
+    writable_set(locked,false)
+    defer writable_set(locked,true)
     report,error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,error=="","%s",error) {return}
     testing.expectf(t,len(report.failed)==1 && report.packages.packages==0,"no package is refreshed: %v",report)
-    os.change_mode(locked,os.Permissions_Default_File)
+    writable_set(locked,true)
     again,again_error:=test_join(t,&w,1,join_desc(&w,0,joined))
     if !testing.expectf(t,again_error=="","%s",again_error) {return}
     testing.expectf(t,len(again.failed)==0 && again.packages.packages==1 && len(again.packages.missing)==0 && len(again.packages.failures)==0,"%v",again)
@@ -870,7 +826,7 @@ a_downstream_peer_cannot_substitute_the_snapshot :: proc(t:^testing.T) {
     snap,address,_,error:=snapshot_take(&w.peers[2].s,fake,"game",&folders,allocator=context.temp_allocator)
     if !testing.expectf(t,error=="","%s",error) {return}
     digits:[64]u8
-    if !testing.expect_value(t,offer_set(&w.peers[2].s,fake,offer_name(w.peers[0].key.secret,&digits),address),.None) {return}
+    if !testing.expect_value(t,offer_set(&w.peers[2].s,fake,offer_name(w.peers[0].key.secret,&digits),address,"game"),.None) {return}
     node_serve(&w.peers[2].n,..folders[:])
     for e in snap.entries {node_serve(&w.peers[2].n,e.address)}
     // The downstream peer is connected to the joiner first, and the host answers late.
@@ -894,9 +850,9 @@ a_host_that_withholds_ends_the_join_in_bounded_time :: proc(t:^testing.T) {
     here,_:=store.put(s,transmute([]u8)string("here"))
     gone:=bytes_address(noise(1000,9))
     withheld:=Snapshot{name="game",entries={{path="assets/gone.bin",address=gone,size=1000},{path="here.txt",address=here,size=4}}}
-    snapshot,_,_:=snapshot_put(s,&withheld)
+    snapshot,_:=snapshot_put(s,&withheld)
     digits:[64]u8
-    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),snapshot),.None) {return}
+    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),snapshot,"game"),.None) {return}
     test_connect(&w,1,0)
     started:=w.now
     report,error:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/joined",w.folder)))
@@ -919,22 +875,19 @@ a_lying_size_and_an_oversized_folder_are_refused :: proc(t:^testing.T) {
     s:=&w.peers[0].s
     address,_:=store.put(s,noise(200<<10,5))
     lying:=Snapshot{name="game",entries={{path="a.bin",address=address,size=100}}}
-    snapshot,_,_:=snapshot_put(s,&lying)
+    snapshot,_:=snapshot_put(s,&lying)
     digits:[64]u8
-    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),snapshot),.None) {return}
+    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),snapshot,"game"),.None) {return}
     test_connect(&w,1,0)
     joined:=fmt.tprintf("%s/joined",w.folder)
     lied,error:=test_join(t,&w,1,join_desc(&w,0,joined))
     testing.expectf(t,error=="" && len(lied.failed)==1 && strings.contains(lied.failed[0],"not honest"),"%s %v",error,lied.failed)
     testing.expect(t,!os.exists(fmt.tprintf("%s/a.bin",joined)))
 
-    huge:=make([]u8,LISTING_MAX+1,context.temp_allocator)
-    p,_:=store.put_begin(s)
-    store.put_write(&p,huge)
-    meta:=fmt.tprintf("%s%cgame",SNAPSHOT_MAGIC,rune(4))
-    large,_,_:=store.put_finish(&p,transmute([]u8)meta)
+    huge:=make([]u8,vcs.FOLDER_BYTES_MAX+1,context.temp_allocator)
+    large,_:=store.put(s,huge)
     store.commit(s)
-    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),large),.None) {return}
+    if !testing.expect_value(t,offer_set(s,w.folder,offer_name(w.peers[0].key.secret,&digits),large,"game"),.None) {return}
     _,refused:=test_join(t,&w,1,join_desc(&w,0,fmt.tprintf("%s/other",w.folder)))
     testing.expectf(t,strings.contains(refused,"more than"),"%s",refused)
     testing.expectf(t,node_totals(&w.peers[1].n).received<4<<20,"the folder was refused before it came: %d bytes",node_totals(&w.peers[1].n).received)
@@ -1071,12 +1024,12 @@ a_large_file_joins_within_bounded_memory :: proc(t:^testing.T) {
         sample :: proc(data:rawptr) {
             s:=(^Sampler)(data)
             for !sync.atomic_load(&s.stop) {
-                sync.atomic_store(&s.peak,max(sync.atomic_load(&s.peak),i64(platform.process_memory().private)))
+                sync.atomic_store(&s.peak,max(sync.atomic_load(&s.peak),i64(base.process_memory().private)))
                 time.sleep(5*time.Millisecond)
             }
         }
         measured :: proc(t:^testing.T,what:string,run:proc(data:rawptr),data:rawptr) -> i64 {
-            s:=Sampler{base=i64(platform.process_memory().private)}
+            s:=Sampler{base=i64(base.process_memory().private)}
             s.peak=s.base
             th:=thread.create_and_start_with_data(&s,sample)
             started:=time.tick_now()

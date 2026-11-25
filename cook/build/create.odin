@@ -4,7 +4,6 @@ import "core:os"
 import "core:strings"
 import "mirai:project"
 import "mirai:std/base"
-import "mirai:std/serial"
 
 Create_Error :: enum u8 {
     None,
@@ -62,11 +61,9 @@ template_common_copy :: proc(template,root:string) -> bool {
 }
 
 // A new project: the tree of the template with every folder of the layout,
-// the files all the templates share, the .gitattributes of the kinds of asset
-// of the engine and of the plugins it uses (git_attributes), and name in its
-// manifest. An empty name is the name of the folder. engine_root: where the
-// plugins of the engine it names are.
-project_create :: proc(template,folder,name:string,engine_root:="") -> Create_Error {
+// the files all the templates share, and name in its manifest. An empty name
+// is the name of the folder.
+project_create :: proc(template,folder,name:string) -> Create_Error {
     if !os.is_file(project.path(template,project.PROJECT_FILE,allocator=context.temp_allocator)) {return .Template_Missing}
     root:=project.path_absolute(folder,context.temp_allocator)
     if os.exists(root) {
@@ -86,9 +83,5 @@ project_create :: proc(template,folder,name:string,engine_root:="") -> Create_Er
     if error.code!=.None {return .Manifest_Failed}
     title:=name!=""?name:root[strings.last_index_byte(root,'/')+1:]
     if !base.text_set(m.name[:],title) || project.manifest_write(file,&m).code!=.None {return .Manifest_Failed}
-    attributes:=project.path(root,".gitattributes",allocator=context.temp_allocator)
-    existing,_:=os.read_entire_file(attributes,context.temp_allocator)
-    kinds,_:=git_plugin_kinds(engine_root,{root},context.temp_allocator)
-    if text,changed:=git_attributes(kinds,false,string(existing),context.temp_allocator);changed && serial.file_write_atomic(attributes,transmute([]u8)text)!=.None {return .Copy_Failed}
     return .None
 }

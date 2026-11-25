@@ -14,6 +14,7 @@ import erender "mirai:engine/render"
 import scene "mirai:engine/scene"
 import "mirai:host"
 import "mirai:std/base"
+import "mirai:store"
 import "mirai:std/serial"
 import "mirai:ui"
 
@@ -1308,9 +1309,13 @@ prefab_apply_writes_fields_the_file_of_the_prefab_did_not_have :: proc(t:^testin
     testing.expect_value(t,bulb,Prefab_Test_Lamp{intensity=3,range=10})
 }
 
-// The editors of a shared session, each over its own copy of the assets.
+// The editors of a shared session, each over its own copy of the assets and
+// over the one store of the machine, where the files they send are.
 @(private="file")
-prefab_collab_join :: proc(f:^Prefab_Fixture,role:Collab_Role) {
+prefab_collab_join :: proc(t:^testing.T,f:^Prefab_Fixture,role:Collab_Role,store_root:string) {
+    opened,error:=store.open(store_root)
+    testing.expect_value(t,error,store.Error.None)
+    f.s.store=opened
     w:=edited_world(&f.s)
     core.world_settle(w)
     history.edits_reset(&f.edits,w)
@@ -1336,6 +1341,7 @@ prefab_collab_leave :: proc(f:^Prefab_Fixture) {
     history.journal_reading(&f.edits,false)
     free(st)
     f.collab.state=nil
+    store.close(&f.s.store)
 }
 
 // An update of the session at one end, and what it queued for its peer
@@ -1363,9 +1369,10 @@ prefab_instances_travel_a_session_as_rows_and_their_prefab_as_a_held_file :: pro
     guest:=new(Prefab_Fixture);defer free(guest)
     if !testing.expect(t,prefab_fixture_init(t,guest,"collab-guest")) {return}
     defer prefab_fixture_destroy(guest)
-    prefab_collab_join(host,.Host)
+    store_root:=base.test_folder(t,"prefabs-collab-store")
+    prefab_collab_join(t,host,.Host,store_root)
     defer prefab_collab_leave(host)
-    prefab_collab_join(guest,.Guest)
+    prefab_collab_join(t,guest,.Guest,store_root)
     defer prefab_collab_leave(guest)
     hw,gw:=edited_world(&host.s),edited_world(&guest.s)
 

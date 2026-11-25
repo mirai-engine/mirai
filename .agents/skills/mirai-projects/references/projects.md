@@ -181,7 +181,9 @@ failure) and compiles into `<engine>/.mirai/engine/<mode>/`.
 
 Assembled by `mirai package engine --out <folder>` (CI `.github/workflows/release.yml` on tag
 `v<ENGINE_VERSION>`), marked by `engine.mirai` (`project.ENGINE_FILE`). Compiles projects, never
-itself.
+itself. The same release attaches `mirai-kai-<version>-linux-arm64`, the static
+[node](../../mirai-kai/references/node.md#deployment) that the Linux job cross-builds with
+`mirai build kai --target linux_arm64`.
 
 - **Root lookup (`project.engine_root_find`):** `--engine`, `MIRAI_ROOT`, or nearest ancestor with
   `engine.mirai` (or `AGENTS.md` + `tools/mirai`). CLI propagates `MIRAI_ROOT`.
@@ -217,10 +219,11 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 | --- | --- |
 | New worktree | `mirai worktree new <name> [--from <branch>]` |
 | Edit / Play | `mirai edit\|play [project] [--release] [--store dir] [args]` |
-| Build targets | `mirai build editor\|game\|server\|engine [project] [--release] [--out dir] [--store dir] [--force]` |
+| Build targets | `mirai build editor\|game\|server\|engine\|kai [project] [--target linux_arm64] [--release] [--out dir] [--store dir] [--force]` |
 | Generate / Content | `mirai generate [project] [--store dir]` / `mirai content [project] [-- args]` |
 | Import / Refresh | `mirai import <file> [--project P] [--folder F]` / `mirai import --refresh <root> [--final]` |
 | Share / Join | `mirai share [project] [--port N] [--store S]` / `mirai join <invite> [dir] [--address A]` |
+| Kai VCS & mesh | `mirai kai init\|status\|snapshot\|new\|describe\|split\|log\|diff\|undo\|restore\|conflicts\|verify\|bookmarks\|identity\|agent\|pair\|org\|grant\|scope\|public\|proposal\|check\|serve\|web ...` |
 | Docs without editor | `mirai ui\|scene read\|write\|check ... [--project P]` |
 | Git plugins | `mirai plugin add\|update\|remove\|sync\|list\|catalog\|check ...` |
 | Typecheck + lints | `mirai check [<pkg> [-flag...]]` (alloc lint `tools/mirai/alloc_lint.odin`; solver/render lint `tools/mirai/solver_lint.odin`) |
@@ -228,7 +231,7 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 | Editor session | `mirai session start\|restart\|stop\|status [project] [--release] [--copy] [--store dir]` |
 | RPC / Capture | `mirai rpc <method> [k=v\|json] [--select c] [--wait-until c=v]` / `mirai capture [P] --out x.png [--camera N] [--reference r.png]` |
 | Perf / Images | `mirai render check` / `mirai bench compare --base main` / `mirai bench flight\|pipelines` / `mirai image ...` |
-| Locks / Measure | `mirai measure -- <cmd>` / `mirai locks` / `mirai doctor [project]` / `mirai setup git\|path\|rg` / `mirai package engine --out dir` |
+| Locks / Measure | `mirai measure -- <cmd>` / `mirai locks` / `mirai doctor [project]` / `mirai setup path\|rg` / `mirai package engine --out dir` |
 
 ```sh
 ./mirai session start demo
@@ -245,8 +248,10 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 
 ## Project
 
-- `mirai new [dir]` copies `templates/<T>` (`empty` default) + `templates/common`, writes
-  `.gitattributes`, and runs `git init` if needed (`--list` lists templates).
+- `mirai new [dir]` copies `templates/<T>` (`empty` default) + `templates/common` and initializes a
+  [Kai](../../mirai-kai/SKILL.md) workspace in the store; `--no-kai` makes a project with no
+  version control, which [can take it later](../../mirai-kai/SKILL.md#start-a-project-on-kai)
+  (`--list` lists templates).
 - `mirai docs [topic] [section]` (and MCP `docs`) serves `docs/game` from the engine root.
 - `mirai worktree new` creates `<main>/.worktrees/<name>` sharing `.deps` and caches.
 - `mirai doctor [project]` validates machine/project (exit 1 on error; requires `core.symlinks` and
@@ -277,8 +282,7 @@ PowerShell/cmd/Python. Builds default to dev (`--release` only when requested/ne
 
 ## Tool and machine
 
-- `mirai setup git [dir]` installs asset git drivers; `mirai setup path` prepends `bin/` to `PATH`;
-  `mirai setup rg` installs pinned ripgrep in `.deps`.
+- `mirai setup path` prepends `bin/` to `PATH`; `mirai setup rg` installs pinned ripgrep in `.deps`.
 - **Launcher:** `mirai` (sh / Git Bash) builds `bin/mirai` only if missing `bin/mirai` or
   `bin/mirai[.exe].sources.json` (Odin from `MIRAI_ODIN`, `.deps`, or `PATH`), replacing
   atomically. `mirai.cmd` invokes Git for Windows `bash.exe` (avoiding WSL).

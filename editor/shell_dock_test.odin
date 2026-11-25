@@ -111,15 +111,15 @@ each_type_of_document_has_its_tabs_of_the_left_panel :: proc(t:^testing.T) {
     g:=Editor_Ui{ctx=&ctx,layout=LAYOUT_DEFAULT}
     m:=new(Ai);defer free(m)
     s:=Session{gui=&g,ai=m}
-    testing.expect_value(t,library_tabs(&s),Library_Tabs{.Editor,.Content,.Hierarchy,.World,.Ai,.Git})
+    testing.expect_value(t,library_tabs(&s),Library_Tabs{.Editor,.Content,.Hierarchy,.World,.Ai,.Kai})
     g.layout.library_tab=.Hierarchy
     testing.expect_value(t,library_tab_shown(&s),Library_Tab.Hierarchy)
     // An asset document in front has no Hierarchy of the scene: the first tab it has shows.
     append(&s.asset_documents,Asset_Document{kind=asset.KIND_MATERIAL});defer delete(s.asset_documents)
     s.asset_shown=1
-    testing.expect_value(t,library_tabs(&s),Library_Tabs{.Content,.Ai,.Git})
+    testing.expect_value(t,library_tabs(&s),Library_Tabs{.Content,.Ai,.Kai})
     testing.expect_value(t,library_tab_shown(&s),Library_Tab.Content)
     testing.expect_value(t,g.layout.library_tab,Library_Tab.Hierarchy)
-    g.layout.library_tab=.Git
-    testing.expect_value(t,library_tab_shown(&s),Library_Tab.Git)
+    g.layout.library_tab=.Kai
+    testing.expect_value(t,library_tab_shown(&s),Library_Tab.Kai)
 }

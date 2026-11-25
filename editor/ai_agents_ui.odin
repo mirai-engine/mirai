@@ -416,7 +416,7 @@ ai_pointer_on :: proc(ctx:^ui.Context,id:ui.Id) -> bool {
     return found && p.x>=rect.x && p.x<rect.x+rect.w && p.y>=rect.y && p.y<rect.y+rect.h
 }
 
-// One change of the turn, as git says it (A created, M changed, D deleted),
+// One change of the turn, by its letter (A created, M changed, D deleted),
 // and its name, which walks to it; putting it back and keeping it show while
 // the pointer is on the row or the walk is on it. True when the list changed
 // under it.

@@ -9,14 +9,17 @@ import "core:time"
 import "mirai:asset"
 import "mirai:cook/build"
 import "mirai:cook/install"
+import kai_assets "mirai:cook/kai"
 import "mirai:cook/workspace"
+import vcs "mirai:kai"
 import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:std/subprocess"
+import "mirai:store"
 
-NEW_USAGE :: "new <folder> [--name N] [--template T] | new --list"
-BUILD_USAGE :: "build tools [--debug]"
+NEW_USAGE :: "new <folder> [--name N] [--template T] [--store S] [--no-kai] | new --list"
+BUILD_USAGE :: "build tools|kai [--target linux_arm64] [--debug]"
 BUILD_ENGINE_USAGE :: "build engine [--release] [--force]"
 BUILD_PROJECT_USAGE :: "build <editor|game|server> [project] [--release] [--out folder] [--store folder]"
 GENERATE_USAGE :: "generate [project] [--store folder]"
@@ -64,10 +67,18 @@ store_root_take :: proc(args:^[]string,command:string) -> (store_root:string,ok:
 
 cmd_new :: proc(root:string,args:[]string) -> int {
     folder,name,template:="","",build.TEMPLATE_DEFAULT
+    kai:=true
+    store_root,list,store_ok:=store_take(args)
+    if !store_ok {fmt.eprintln("mirai new: --store needs the folder of a store");return 2}
+    args:=list
     for i:=0;i<len(args);i+=1 {
         if args[i]=="--list" {
             for found in build.templates_list(root) {fmt.printfln("  %-12s %s",found.name,found.summary)}
             return 0
+        }
+        if args[i]=="--no-kai" {
+            kai=false
+            continue
         }
         if value,matched,ok:=option_value(args,&i,"--name");matched {
             if !ok || value=="" {fmt.eprintln("mirai new: --name needs a name");return 2}
@@ -84,7 +95,7 @@ cmd_new :: proc(root:string,args:[]string) -> int {
         }
     }
     if folder=="" {fmt.eprintfln("Usage: mirai %s",NEW_USAGE);return 2}
-    switch build.project_create(build.template_folder(root,template),folder,name,root) {
+    switch build.project_create(build.template_folder(root,template),folder,name) {
     case .None:
     case .Template_Missing: fmt.eprintfln("mirai new: there is no template %q in %s; mirai new --list shows them",template,build.template_folder(root,template));return 1
     case .Folder_Not_Empty: fmt.eprintfln("mirai new: %s already exists and is not an empty folder",folder);return 1
@@ -93,18 +104,17 @@ cmd_new :: proc(root:string,args:[]string) -> int {
     }
     absolute:=project.path_absolute(folder)
     fmt.printfln("Project created in %s.",absolute)
-    // The editor keeps the changes of a project with git: one in no repository becomes its own.
-    if _,repository,_:=build.git_wiring(root,absolute);repository=="" {
-        ignore:=project.path(absolute,".gitignore",allocator=context.temp_allocator)
-        if !os.exists(ignore) {_=serial.file_write_atomic(ignore,transmute([]u8)string(".mirai/\n"))}
-        if run(root,{"git","-C",absolute,"init","--quiet","-b","main"})!=0 {
-            fmt.eprintfln("mirai new: git did not make %s a repository, which the editor needs: install git, run `git init` there and `mirai setup git %s`",absolute,folder)
-            return 1
-        }
-        if code:=setup_git(root,{absolute});code!=0 {return code}
-        // What the template gave is the base: nothing of it is pending.
-        return run(root,{"git","-C",absolute,"add","-A"})
+    if !kai {return 0}
+    // Its files are the first change of a Kai workspace of its own.
+    s,store_error:=store.open(store_root!=""?store_root:store.default_root(context.temp_allocator))
+    if store_error!=.None {fmt.eprintfln("mirai new: the store does not open (%v): mirai kai init --project %s --store <folder> makes the workspace",store_error,folder);return 1}
+    defer store.close(&s)
+    p:=new(kai_assets.Project,context.temp_allocator)
+    if e:=kai_assets.project_create(p,absolute,&s);e!=.None {
+        fmt.eprintfln("mirai new: the Kai workspace of %s was not made: %s",absolute,vcs.error_text(e))
+        return 1
     }
+    kai_assets.project_close(p)
     return 0
 }
 
@@ -428,7 +438,7 @@ build_project_run :: proc(root:string,p:^project.Project,target:build.Target,out
     rebuilt:bool
     {
         job:=build.job_run({project=p,target=target,output=out,server=server,dev=mode==.Dev,
-            engine=engine.mode,store_root=store_root,refresh_skip=library_only})
+            engine=engine.mode,store_root=store_root,refresh_skip=library_only,peers=kai_assets.peers_open})
         defer build.job_destroy(job)
         result:=&job.result
         for diagnostic in result.diagnostics {

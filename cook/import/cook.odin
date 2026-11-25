@@ -154,7 +154,7 @@ mesh_cook :: proc(mesh:^Imported_Mesh,settings:Import_Settings,options:Import_Op
 
 // The caches of the store an import reads and fills.
 import_cache :: proc(options:Import_Options) -> cache.Cache {
-    return {store=options.store,source=options.cache_source}
+    return {store=options.store,source=options.cache_source,from=options.cache_from}
 }
 
 // Builds the levels of a texture, or reads them from the texture cache, into

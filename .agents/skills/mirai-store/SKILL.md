@@ -39,6 +39,9 @@ derived data cache that use it decide what a ref means and what is live.
   [verification](references/exchange.md#verification).
 - Sharing a whole project over the exchange (`mirai share`, `mirai join`):
   [sharing](../mirai-projects/references/projects.md#sharing-a-project).
+- The records, logs and derived data of Kai (version control and the mesh of an org), which keep
+  their state as objects and refs of this store in namespaces of their own:
+  [Kai](../mirai-kai/SKILL.md).
 
 ## Workflow
 
@@ -121,7 +124,10 @@ derived data cache that use it decide what a ref means and what is live.
   freed, and a value closes the gone packs it never lent when it reads a new generation. What
   other processes map is invisible to it and stays on disk until they close it.
 - The store never decides what is live: refs, leases and what its caller names are, and what was
-  written or touched within `GRACE`. A process that uses addresses holds a lease that names its
+  written or touched within `GRACE`. A sweep with `reclaim` (a ddc node over its quota) takes the
+  bytes of the dead off the disk at once: it compacts every sealed pack holding a dead chunk and
+  keeps what its own value wrote only when a root reaches it, so its caller names all it needs;
+  other writers keep their `GRACE`. A process that uses addresses holds a lease that names its
   machine, pid and process start: on that machine it holds while the process runs, whatever the
   clock or a suspend did, and stops at once when the process ends; one of another machine on a
   shared root holds while it is younger than `LEASE_MAX_AGE`.

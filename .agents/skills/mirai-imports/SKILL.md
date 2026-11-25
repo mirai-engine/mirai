@@ -59,7 +59,8 @@ the assets.
 1. **Importing a file.** An import takes the store (`Import_Options.store`) and puts in it the
    package of the source and a build of its objects; given `documents`, it also writes or follows
    the documents in that folder of a project. Review the assets with `mirai asset verify`, `ls`
-   and `info`; commit `packages.mirai` and the documents, never the objects. The editor, the CLI,
+   and `info`; `packages.mirai` and the documents are files of the project that
+   [Kai](../mirai-kai/SKILL.md) snapshots, the objects stay in the store. The editor, the CLI,
    the library and the content tools import with the same `sources.import_source`: same assets,
    prefab included. `mirai import <file>` ingests it and adds it to a project
    ([library](references/imports.md#library)).

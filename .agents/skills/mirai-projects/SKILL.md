@@ -40,7 +40,9 @@ description: Mirai projects and plugins - `project` (manifests, plugin discovery
   [turns](references/build.md#turns-between-processes) and
   [layers](references/build.md#implicit-vulkan-layers).
 - Sharing a project peer to peer (`cook/share`, `mirai share` and `mirai join`), its snapshot and
-  updating a folder joined before: [sharing](references/projects.md#sharing-a-project).
+  updating a folder joined before: [sharing](references/projects.md#sharing-a-project). Version
+  control, teams, orgs and the Kai node (`mirai kai`, `mirai build kai`):
+  [Kai](../mirai-kai/SKILL.md).
 - `mirai` launcher, `mirai worktree` and `mirai doctor`:
   [tool and machine](references/projects.md#tool-and-machine).
 - `mirai` subcommands (their usage, with `mirai <command>` without arguments):

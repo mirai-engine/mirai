@@ -51,8 +51,9 @@ instances and rereads clean open prefabs if changed on disk. Restart tabs:
 ### Quitting, New and Open with agents working
 
 `Pending.Quit` confirms while agents work; New/Open confirm while agents work or collab is active;
-closing a tab never confirms. Pending git changes list to keep/discard
-([git](git.md#pending-and-kept)). Accepting runs `ai_working_stop` (API rejects agent calls at once)
+closing a tab never confirms; quitting asks nothing of files since the
+[Kai](kai.md#working-copy) working copy holds them. Accepting runs `ai_working_stop` (API rejects
+agent calls at once)
 and ends [review records](ai-review.md#the-record-and-its-capacity).
 
 ## Sections

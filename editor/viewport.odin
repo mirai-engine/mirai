@@ -1059,7 +1059,6 @@ highlight_sync :: proc(s:^Session,w:core.World_Ref) {
     if !key.isolated {
         collab_highlights(s,w,v.levels[:])
         ai_scene_highlights(s,w,v.levels[:])
-        git_highlights(s,w,v.levels[:])
     }
     if table==nil {return}
     for e,row in table.entities[:core.count(table)] {

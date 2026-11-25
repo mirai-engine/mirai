@@ -16,8 +16,10 @@ import "mirai:core"
 import "mirai:cook/build"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
+import ka "mirai:cook/kai"
 import "mirai:cook/textures"
 import "mirai:host"
+import vcs "mirai:kai"
 import "mirai:platform"
 import "mirai:project"
 import "mirai:std/base"
@@ -50,6 +52,7 @@ import "mirai:ui"
 DIALOG_IMPORT :: u32(0x4d494d50)
 DIALOG_AI_REFERENCE :: u32(0x4d414952)
 IMPORT_MESSAGE_BYTES :: 192
+IMPORT_CHANGED_ROWS :: 6 // documents the question lists; the rest is a count
 
 @(storage)
 Importer :: struct {
@@ -323,6 +326,13 @@ import_run :: proc(job:^Import_Job) {
     defer if threaded {jobs.system_destroy(&js)}
     if threaded {job.options.worker={system=&js,worker=jobs.OWNER}}
     defer job.options.worker={}
+    // What the peers of the project's org built is taken, and what the import builds is published.
+    shared,close:=ka.peers_open(job.store.root,job.root)
+    if close!=nil {job.options.source=shared}
+    defer if close!=nil {
+        close(shared)
+        job.options.source={}
+    }
     if job.profiled {
         timed:=importer.Import_Options{worker=job.options.worker}
         if importer.profile_begin(&job.profile,&timed,job.allocator) {job.options.worker=timed.worker} else {job.profiled=false}
@@ -523,11 +533,11 @@ import_changes_modal :: proc(s:^Session) {
         ui.label(ctx,changed==1?"Discard a change?":fmt.tprintf("Discard %d changes?",changed),ui.metric(ctx,"font_heading"),ui.tone(ctx,"text"),font=ui.FONT_SEMIBOLD)
         if ui.box(ctx,{width=ui.GROW,height=ui.FIT,direction=.Column,gap=2}) {
             ui.label(ctx,fmt.tprintf("Changed since %s was imported",filepath.base(source)),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
-            for id in g.import_changed[:min(changed,GIT_DISCARD_ROWS)] {
+            for id in g.import_changed[:min(changed,IMPORT_CHANGED_ROWS)] {
                 if r==nil {break}
                 if file,found:=asset.registry_find(r,id);found {modal_asset_row(s,ctx,file)}
             }
-            if changed>GIT_DISCARD_ROWS {ui.label(ctx,fmt.tprintf("and %d more",changed-GIT_DISCARD_ROWS),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
+            if changed>IMPORT_CHANGED_ROWS {ui.label(ctx,fmt.tprintf("and %d more",changed-IMPORT_CHANGED_ROWS),ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))}
         }
         if ui.box(ctx,{width=ui.GROW,height=ui.fixed(ui.metric(ctx,"control")),gap=8,align_x=.End,align_y=.Center}) {
             if ui.button(ctx,shell_id(g,"import_changes_cancel"),{label="Cancel",variant="field",width=90,height=ui.metric(ctx,"control"),center=true}).clicked {closed=true}

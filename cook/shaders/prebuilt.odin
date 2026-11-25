@@ -18,6 +18,7 @@ Prebuilt :: struct {
     sha256:string,
     top:string,     // the folder of the archive whose contents are the package; "" for its root
     required:string, // a file the package must have, relative to it
+    concatenated:bool, // the archive is several tar streams one after another (an Alpine package)
 }
 
 // Installs a prebuilt package into the deps of root. Nothing is compiled: it
@@ -80,13 +81,20 @@ prebuilt_install_archive :: proc(target,archive:string,p:Prebuilt,allocator:=con
     os.make_directory(unpacked)
     runner:Runner
     tar:=system_tool("tar")
-    listing,listed:=tool_run(&runner,{tar,"-tf",archive},context.temp_allocator)
+    // GNU tar stops at the end of the first stream unless told; bsdtar takes the same flag.
+    list_command:=[]string{tar,"-tf",archive}
+    extract_command:=[]string{tar,"-xf",archive,"-C",unpacked}
+    if p.concatenated {
+        list_command={tar,"--ignore-zeros","-tf",archive}
+        extract_command={tar,"--ignore-zeros","-xf",archive,"-C",unpacked}
+    }
+    listing,listed:=tool_run(&runner,list_command,context.temp_allocator)
     if !listed {return fmt.aprintf("tar could not read %s: %s",p.asset,strings.trim_space(listing),allocator=allocator),false}
     entries:=listing
     for entry in strings.split_lines_iterator(&entries) {
         if !archive_entry_confined(entry) {return fmt.aprintf("The package holds a path outside its destination: %s",entry,allocator=allocator),false}
     }
-    if output,extracted:=tool_run(&runner,{tar,"-xf",archive,"-C",unpacked},context.temp_allocator);!extracted {
+    if output,extracted:=tool_run(&runner,extract_command,context.temp_allocator);!extracted {
         return fmt.aprintf("tar could not extract %s: %s",p.asset,strings.trim_space(output),allocator=allocator),false
     }
     staged:=p.top!=""?path_join(unpacked,p.top,allocator=context.temp_allocator):unpacked

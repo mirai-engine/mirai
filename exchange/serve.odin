@@ -7,7 +7,7 @@ import wire "mirai:net"
 
 // An ask is taken whole or refused whole: a peer keeps at most BATCHES in
 // flight, so one with more is not one this end needs to answer. Nothing is
-// checked on serve: the receiver checks every chunk and reports a bad one.
+// verified on serve: the receiver checks every chunk and reports a bad one.
 @(private)
 on_ask :: proc(x:^Exchange,i:int,data:[]u8) {
     p:=&x.peers[i]
@@ -20,6 +20,7 @@ on_ask :: proc(x:^Exchange,i:int,data:[]u8) {
         address:=read_hash(&r)
         budget:=read_u32(&r)
         p.serve[(tail+k)%len(p.serve)]={kind=.Ask,address=address,budget=budget}
+        if x.desc.asked!=nil {x.desc.asked(x.desc.user,peer_id(p),address)}
     }
     p.serve[(tail+count)%len(p.serve)]={kind=.Done}
     sync.atomic_store(&p.serve_tail,tail+count+1)
@@ -51,8 +52,8 @@ serve_pop :: proc(p:^Peer) {
 }
 
 @(private)
-exposed :: proc(x:^Exchange,namespace:string) -> bool {
-    return x.desc.expose!=nil && x.desc.expose(x.desc.expose_user,namespace)
+exposed :: proc(x:^Exchange,i:int,namespace:string) -> bool {
+    return x.desc.expose!=nil && x.desc.expose(x.desc.user,peer_id(&x.peers[i]),namespace)
 }
 
 // An answer that finds no room is dropped: a peer keeps at most
@@ -65,7 +66,7 @@ on_ref_get :: proc(x:^Exchange,i:int,data:[]u8) {
     if !read_end(&r) {peer_bad(x,i);return}
     address:store.Hash
     found:=false
-    if exposed(x,namespace) {
+    if exposed(x,i,namespace) {
         hash,error:=store.ref_get(x.desc.store,namespace,name)
         address,found=hash,error==.None
     }
@@ -88,7 +89,7 @@ on_names_get :: proc(x:^Exchange,i:int,data:[]u8) {
     after:=read_name(&r,empty=true)
     if !read_end(&r) {peer_bad(x,i);return}
     refs:[]store.Ref
-    if exposed(x,namespace) {
+    if exposed(x,i,namespace) {
         listed,error:=store.ref_list(x.desc.store,namespace,x.allocator)
         if error==.None {refs=listed}
     }
@@ -177,9 +178,11 @@ serve_job :: proc(data:rawptr,worker:int) {
     }
 }
 
-// Reads a chunk's stored frame into the message.
+// Reads a chunk's stored frame into the message. One a restricted peer may not
+// get is missing, before the store is read, so its answer tells nothing of it.
 @(private)
-serve_read :: proc(x:^Exchange,out:[]u8,address:store.Hash) -> (size:int,error:store.Error) {
+serve_read :: proc(x:^Exchange,p:^Peer,out:[]u8,address:store.Hash) -> (size:int,error:store.Error) {
+    if p.restricted && (x.desc.serve==nil || !x.desc.serve(x.desc.user,peer_id(p),address)) {return 0,.Missing}
     room:=out[MSG_CHUNK_HEAD:]
     bytes,codec,raw:=store.chunk_read_frame(x.desc.store,address,room) or_return
     if raw_data(bytes)!=raw_data(room) {copy(room,bytes)}
@@ -220,7 +223,7 @@ serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
             return 1
         }
         if !p.started {
-            size,error:=serve_read(x,out,e.address)
+            size,error:=serve_read(x,p,out,e.address)
             p.started=true
             if error!=.None {
                 n:=encode_address(out,MSG_LACK,e.address)
@@ -245,7 +248,7 @@ serve_build :: proc(x:^Exchange,p:^Peer,out:[]u8) -> int {
             }
             child:=n.entries[f.index]
             f.index+=1
-            size,read_error:=serve_read(x,out,child.address)
+            size,read_error:=serve_read(x,p,out,child.address)
             if read_error!=.None || p.sent_under+i64(size-MSG_CHUNK_HEAD)>i64(e.budget) {
                 p.depth=0
                 break

@@ -83,12 +83,12 @@ portmap_worker :: proc(m:^Port_Mapping) {
     if gateway.port==0 {gateway.port=5351}
     probe,error:=cnet.make_unbound_udp_socket(.IP4)
     if error!=nil {portmap_publish(m,{phase=.Unavailable});return}
-    if !portmap_socket_connect(cnet.Socket(probe),gateway) {cnet.close(probe);portmap_publish(m,{phase=.Unavailable});return}
+    if !socket_connect(cnet.Socket(probe),gateway) {cnet.close(probe);portmap_publish(m,{phase=.Unavailable});return}
     endpoint,ep_error:=cnet.bound_endpoint(probe)
     cnet.close(probe)
     local:=address_from_endpoint(endpoint)
     if ep_error!=nil || local.kind!=.IP4 {portmap_publish(m,{phase=.Unavailable});return}
-    if portmap_public(local) {
+    if address_global(local) {
         local.port=m.port
         portmap_publish(m,{phase=.Mapped,method=.Direct,external=local})
         return
@@ -106,7 +106,7 @@ portmap_worker :: proc(m:^Port_Mapping) {
         portmap_publish(m,{phase=portmap_stopped(m)?.Closed:.Unavailable})
         return
     }
-    if !portmap_public(lease.external) {
+    if !address_global(lease.external) {
         portmap_release(m,&udp,gateway,local,&lease)
         portmap_publish(m,{phase=.Unavailable})
         return
@@ -127,7 +127,7 @@ portmap_worker :: proc(m:^Port_Mapping) {
             case: break
             }
             now=portmap_seconds(clock)
-            if ok && !portmap_public(lease.external) {
+            if ok && !address_global(lease.external) {
                 portmap_publish(m,{phase=.Unavailable})
                 break
             } else if ok {
@@ -158,22 +158,6 @@ portmap_release :: proc(m:^Port_Mapping,u:^Udp,gateway,local:Address,lease:^Port
     case .UPnP: portmap_upnp_release(m,local,lease)
     case: break
     }
-}
-
-@(private)
-portmap_public :: proc(a:Address) -> bool {
-    if a.port==0 && a.kind==.None {return false}
-    if a.kind==.IP4 {
-        ip:=a.ip
-        return ip[0]!=0 && ip[0]!=10 && ip[0]!=127 && ip[0]<224 &&
-            !(ip[0]==100 && ip[1]>=64 && ip[1]<=127) && !(ip[0]==169 && ip[1]==254) &&
-            !(ip[0]==172 && ip[1]>=16 && ip[1]<=31) && !(ip[0]==192 && ip[1]==168) &&
-            !(ip[0]==192 && ip[1]==0 && (ip[2]==0 || ip[2]==2)) &&
-            !(ip[0]==198 && ((ip[1]==18 || ip[1]==19) || (ip[1]==51 && ip[2]==100))) &&
-            !(ip[0]==203 && ip[1]==0 && ip[2]==113)
-    }
-    if a.kind==.IP6 {return a.ip[0]&0xe0==0x20}
-    return false
 }
 
 @(private)

@@ -287,6 +287,8 @@ writer_publish :: proc(w:^Writer,name,importer:string) -> bool {
             return writer_fail(w,.Write,"the ref %s/%s of the package of %s could not be set in the store at %s: %v",ref.namespace,ref.name,w.path,s.root,error)
         }
     }
+    // The build is shared as the cache keeps a result: under its key, Final or Fast.
+    if source:=w.options.cache_source;source.kept!=nil {source.kept(source.user,refs[2].namespace,refs[2].name,build,w.options.cache_from)}
     w.report.package_id,w.report.manifest,w.report.build,w.report.key,w.report.final=w.package_id,manifest,build,w.key,b.final
     return true
 }
@@ -406,6 +408,10 @@ writer_identity :: proc(w:^Writer) {
     slice.sort(w.inputs[:])
     w.identity=identity_of(w.package_id,w.origin,w.inputs[:],w.report.settings,w.options.importer_code,w.options.hashes)
     w.key=build_key(w.identity,w.version,w.options.importer_code)
+    from:=make([]string,len(w.inputs)+1,w.keep)
+    from[0]=w.origin
+    for input,at in w.inputs {from[at+1],_=filepath.join({filepath.dir(w.origin),input},w.keep)}
+    w.options.cache_from=from
 }
 
 // The key of the build of a package of identity (asset.import_key): the

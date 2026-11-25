@@ -97,6 +97,7 @@ editor_panels :: proc(s:^Session,g:^Editor_Ui,world:core.World_Ref,app:^host.App
 escape_run :: proc(s:^Session,g:^Editor_Ui,v:^Viewport,selection:^history.Selection) {
     switch {
     case g.modal==.Confirm:   confirm_resolve(s,false)
+    case g.modal==.Kai:       kai_dialog_escape(s)
     case g.modal!=.None:      modal_close(g)
     case s.projects!=nil && s.projects.creating: s.projects.creating=false
     case s.projects!=nil && s.projects.shown:    projects_hide(s)

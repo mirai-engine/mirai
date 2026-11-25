@@ -462,8 +462,9 @@ Serves all domains (Surface, PostProcess, Vfx, UI) by `program` name/path or `ma
 ## Collaboration
 
 [Collaboration](../../mirai-editor/references/collaboration.md): `collab.status` reports `peers`
-(`playing`, `serving`), `unsent` oversized files, `join` sync progress, `project` transfer bytes
-and bad peers, and `offers`/`updates`. Invalid code -> `-32602`. `collab.join` returns immediately.
+(`playing`, `serving`), `fetching` incoming changed files, `join` sync progress, `project` transfer
+bytes and bad peers, and `offers`/`updates`. Invalid code -> `-32602`. `collab.join` returns
+immediately.
 
 ## Project panels
 

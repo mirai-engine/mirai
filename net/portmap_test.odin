@@ -54,7 +54,7 @@ port_mapping_upnp_parsers_bound_addresses_headers_and_xml :: proc(t:^testing.T) 
     testing.expect(t,found && value=="725")
     _,_,found=portmap_xml("<serviceType>unterminated","serviceType");testing.expect(t,!found)
     testing.expect(t,portmap_header("HTTP/1.1 200 OK\r\nlOcAtIoN: http://192.168.1.1/root.xml\r\n\r\n","Location")=="http://192.168.1.1/root.xml")
-    for a in ([]Address{address_ip4(10,0,0,1,7950),address_loopback(7950),address_ip4(100,64,0,1,7950),address_ip4(192,168,1,1,7950),address_ip4(224,0,0,1,7950)}) {testing.expect(t,!portmap_public(a))}
+    for a in ([]Address{address_ip4(10,0,0,1,7950),address_loopback(7950),address_ip4(100,64,0,1,7950),address_ip4(192,168,1,1,7950),address_ip4(224,0,0,1,7950)}) {testing.expect(t,!address_global(a))}
     random:[1024]u8;seed:=u64(5)
     for _ in 0..<1000 {
         for &byte in random {byte=u8(base.splitmix_next(&seed))}

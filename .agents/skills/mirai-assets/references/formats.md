@@ -174,6 +174,6 @@ Import records in the [machine store](../../mirai-store/SKILL.md) (`asset/packag
 `document_text_write` emits JSON (`mirai asset dump`/`unpack`, all kinds except scene/`.ui` which
 use document JSON; [CLI](cli.md#subcommands)): `mirai_asset`, header (`kind`, `kind_version`,
 `id`, optional `owner`, `flags`), `dependencies`, optional `schema` (`Text_Options.schema`), and
-`tables` (1 row/line; `Bulk` omits `data`, `bulk=.Files` names files; `Text_Options.diff` for
-[git diffs](cli.md#git)). `document_text_read` uses `Bulk_Loader` and reports
+`tables` (1 row/line; `Bulk` omits `data`, `bulk=.Files` names files; `Text_Options.diff` omits
+column type indices). `document_text_read` uses `Bulk_Loader` and reports
 `Text_Problem{code, rule, offset}`.

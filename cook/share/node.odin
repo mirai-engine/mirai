@@ -8,6 +8,7 @@ import "core:sync"
 import "mirai:asset"
 import "mirai:cook/cache"
 import "mirai:exchange"
+import vcs "mirai:kai"
 import "mirai:std/jobs"
 import "mirai:store"
 import wire "mirai:net"
@@ -22,7 +23,7 @@ import wire "mirai:net"
 
 NAMESPACE :: "shares"      // <hash of the secret of an invitation>: the offer under it
 PROTOCOL_ID :: 0x4d495348  // of the hosts of sharing: datagrams of any other application are ignored
-VERSION :: 6               // the project offer, snapshot and exchange
+VERSION :: 7               // the project offer, snapshot and exchange
 PEERS :: 8                 // connections of a node at once
 CONTROL_CHANNEL :: 0
 PRESENCE_CHANNEL :: 1
@@ -89,7 +90,7 @@ Node :: struct {
     lease_at:f64,
     lease_due:bool,
     stopped:bool,
-    hooks:^Join_Hooks,
+    hooks:[vcs.TEST_ONLY]^Join_Hooks,
     offer_lease:store.Lease, // owned by the thread that offers the project
 }
 
@@ -107,7 +108,7 @@ node_init :: proc(n:^Node,s:^store.Store,allocator:=context.allocator,worker:=jo
     n.served=make([dynamic]store.Hash,allocator)
     return exchange.init(&n.x,{
         store=s,channel=EXCHANGE_CHANNEL,peers=PEERS,wants=WANTS,
-        expose=node_expose,expose_user=n,allocator=allocator,worker=worker,
+        expose=node_expose,user=n,allocator=allocator,worker=worker,
     })
 }
 
@@ -152,7 +153,7 @@ node_host :: proc(n:^Node,h:^wire.Host) -> bool {
 // key), and the results of cook/cache. Never the origins or the sources of
 // this machine.
 @(private)
-node_expose :: proc(user:rawptr,namespace:string) -> bool {
+node_expose :: proc(user:rawptr,peer:exchange.Peer_Id,namespace:string) -> bool {
     switch namespace {
     case NAMESPACE,asset.REF_PACKAGES,asset.REF_MANIFESTS,asset.REF_IMPORTS,asset.REF_IMPORTS_FAST,asset.REF_BUILDS: return true
     }

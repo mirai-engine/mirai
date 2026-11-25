@@ -56,7 +56,7 @@ Profile_Frame :: struct {
 // else the editor's), as core.world_memory measures it.
 Profile_Memory :: struct {
     world:i64,
-    process:platform.Process_Memory,
+    process:base.Process_Memory,
     gpu:u64, // of the device, as its driver says
 }
 
@@ -303,7 +303,7 @@ profile_memory_sample :: proc(app:^App) -> (m:Profile_Memory) {
     if world:=app.profiler.memory_world;world!=nil && app.info!=nil {
         m.world=i64(core.world_memory(app.info,world))
     }
-    m.process=platform.process_memory()
+    m.process=base.process_memory()
     if app.device!=nil {m.gpu,_=rhi.device_memory(app.device)}
     return
 }

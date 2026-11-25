@@ -34,6 +34,7 @@ udp_sockaddr :: proc "contextless" (u:^Udp,to:Address,out:^posix.sockaddr_storag
         a.sin6_family=.INET6
         a.sin6_port=u16be(target.port)
         a.sin6_addr=transmute(posix.in6_addr)target.ip
+        a.sin6_scope_id=target.zone
         size=size_of(posix.sockaddr_in6)
     case:
         return 0,false
@@ -50,7 +51,9 @@ udp_from_sockaddr :: proc "contextless" (from:^posix.sockaddr_storage) -> Addres
         return address_ip4(ip[0],ip[1],ip[2],ip[3],int(a.sin_port))
     case .INET6:
         a:=(^posix.sockaddr_in6)(from)
-        return address_from_endpoint({transmute(cnet.IP6_Address)a.sin6_addr,int(a.sin6_port)})
+        address:=address_from_endpoint({transmute(cnet.IP6_Address)a.sin6_addr,int(a.sin6_port)})
+        if address.kind==.IP6 {address.zone=a.sin6_scope_id}
+        return address
     }
     return {}
 }

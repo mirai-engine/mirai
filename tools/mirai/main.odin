@@ -23,7 +23,11 @@ COMMANDS :: [?]Command{
     {"play",PLAY_USAGE,"Generates, builds and plays a project without cooking its assets",cmd_play},
     {"play",PLAY_TEST_USAGE,"Plays the scenarios of a project (gameplay tests in tests/scenarios) in a headless editor and says which pass",cmd_play},
     {"play",PLAY_AUDIT_USAGE,"Plays a project in a headless editor and audits it (problems, materials, animations, a cursor hidden over a menu, frame time): one line per red flag with its fix, PASS or FAIL",cmd_play},
-    {"new",NEW_USAGE,"Creates a project from a template of templates/",cmd_new},
+    {"new",NEW_USAGE,"Creates a project from a template of templates/, a Kai workspace of its own unless --no-kai",cmd_new},
+    {"kai",KAI_USAGE,"The version control of a project: its working change, the log, new changes, undo, conflicts and bookmarks",cmd_kai},
+    {"kai",KAI_MESH_USAGE,"The identity of this machine's user and devices, and its agent: pairing devices, members and nodes, and the peers it reaches",cmd_kai},
+    {"kai",KAI_TEAM_USAGE,"The orgs this machine serves: members and roles, projects, grants for those outside the org, private scopes and public paths",cmd_kai},
+    {"kai",KAI_REVIEW_USAGE,"Proposals that land changes on a shared bookmark: comments, verdicts, checks run here, and landing under the bookmark's policy",cmd_kai},
     {"plugin",PLUGIN_USAGE,"Adds, updates or removes the plugins from Git of a project, by address or from the catalog",cmd_plugin},
     {"package",PACKAGE_USAGE,"Packages this checkout as an installed engine, built --release with its tool, compiler, shader tools and plugin libraries, for building projects without building the engine",cmd_package},
     {"worktree",WORKTREE_USAGE,"Creates a git worktree ready to build, with the dependencies and binaries of the main checkout",cmd_worktree},
@@ -38,7 +42,7 @@ COMMANDS :: [?]Command{
     {"image",IMAGE_USAGE,"Compares PNG captures (SSIM, PSNR, MAE, RMSE), measures light mottling, describes them, puts them side by side, crops them, zooms them or reads their pixels",cmd_image},
     {"agent",AGENT_USAGE,"Installs and manages the ACP adapters of the editor in the folder of the user; requires an explicit action",cmd_agent},
     {"shaders",SHADERS_USAGE,"Generates SPIR-V, MSL and Odin tables from Slang",cmd_shaders},
-    {"setup",SETUP_USAGE,"Installs Slang or ripgrep pinned in .deps, adds mirai and ripgrep to the PATH, or sets the git of a clone to merge and diff its assets through mirai",cmd_setup},
+    {"setup",SETUP_USAGE,"Installs Slang or ripgrep pinned in .deps, or adds mirai and ripgrep to the PATH",cmd_setup},
     {"session",SESSION_USAGE,"Opens a headless editor of the project in the background for rpc, capture and mcp, or closes it",cmd_session},
     {"capture",CAPTURE_USAGE,"Captures the world of the project without the editor UI, with its validation errors and image statistics",cmd_capture},
     {"record",RECORD_USAGE,"Records the game of the project frame after frame at a fixed rate as 16-bit PNG or EXR images and a WAV, with a contact sheet and a manifest of its frames and its validation errors",cmd_record},
@@ -173,6 +177,7 @@ odin_command :: proc(root:string,verb,target:string,attributes:=true) -> [dynami
 Build_Target :: struct {name,package_path,output:string}
 BUILD_TARGETS :: [?]Build_Target{
     {"tools","tools/mirai","mirai"},
+    {"kai","tools/kai","mirai-kai"}, // the headless node: mirai kai serve with what the node needs only
 }
 
 cmd_build :: proc(root:string,args:[]string) -> int {
@@ -181,13 +186,23 @@ cmd_build :: proc(root:string,args:[]string) -> int {
     if args[0]=="engine" {return cmd_build_engine(root,args[1:])}
     if !positional(args[0]) {return argument_unknown("build",args[0])}
     debug:=false
-    for arg in args[1:] {
-        if arg!="--debug" {return argument_unknown("build",arg)}
+    cross:=""
+    for i:=1;i<len(args);i+=1 {
+        if value,matched,ok:=option_value(args,&i,"--target");matched {
+            if !ok || value!="linux_arm64" {fmt.eprintln("mirai build: --target is linux_arm64, a static executable of the headless node");return 2}
+            cross=value
+            continue
+        }
+        if args[i]!="--debug" {return argument_unknown("build",args[i])}
         debug=true
+    }
+    if cross!="" {
+        if args[0]!="kai" {fmt.eprintln("mirai build: --target builds the kai target only");return 2}
+        return build_static_linux_arm64(root,"tools/kai","mirai-kai",debug)
     }
     for target in BUILD_TARGETS {
         if target.name!=args[0] {continue}
-        if target.name!="tools" {
+        if target.name!="tools" && target.name!="kai" {
             if !ensure_runtime_dependencies(root) {return 1}
             ensure_sdl(root,join(root,"bin"))
         }

@@ -7,7 +7,7 @@ import "core:sync"
 import "core:testing"
 import "core:thread"
 import "core:time"
-import "mirai:platform"
+import "mirai:std/base"
 import "mirai:store"
 import wire "mirai:net"
 
@@ -273,7 +273,7 @@ a_peer_still_receiving_an_object_serves_its_chunks_to_a_third :: proc(t:^testing
 }
 
 @(private)
-test_expose_lib :: proc(user:rawptr,namespace:string) -> bool {return namespace=="lib"}
+test_expose_lib :: proc(user:rawptr,peer:Peer_Id,namespace:string) -> bool {return namespace=="lib"}
 
 @(test)
 refs_are_asked_and_listed_and_a_namespace_not_exposed_gives_nothing :: proc(t:^testing.T) {
@@ -843,21 +843,21 @@ a_ten_gigabyte_object_moves_within_bounded_memory :: proc(t:^testing.T) {
     testing.expect(t,error==.None && total==SIZE,"the object is built")
     testing.expect_value(t,store.commit(s),store.Error.None)
     free_all(context.temp_allocator)
-    base:=platform.process_memory().private
-    peak:=base
+    base_mem:=base.process_memory().private
+    peak:=base_mem
     x:=&w.nodes[1].x
     want(x,root)
     for step:=0;w.now<600 && test_state(x,root)!=.Complete;step+=1 {
         test_step(&w)
         if step%100==0 {
-            peak=max(peak,platform.process_memory().private)
+            peak=max(peak,base.process_memory().private)
             free_all(context.temp_allocator)
         }
     }
     p,_:=progress(x,root)
     testing.expectf(t,p.state==.Complete && p.total==i64(SIZE),"the object arrives: %v",p)
     got:=test_peer(&w.nodes[1])
-    fmt.printfln("10 GB object: %d bytes received, peak growth %d bytes on both sides together",got.received,peak-base)
+    fmt.printfln("10 GB object: %d bytes received, peak growth %d bytes on both sides together",got.received,peak-base_mem)
     // The footprint is the process's, where other tests running beside this one count:
     // the bound is checked with -define:ODIN_TEST_THREADS=1.
     when #config(ODIN_TEST_THREADS,0)==1 {
@@ -931,4 +931,175 @@ wants_past_a_full_table_of_needs_complete_whole :: proc(t:^testing.T) {
     for root in all {testing.expect_value(t,want(&w.nodes[1].x,root),Error.None)}
     testing.expect(t,test_until_complete(&w,1,all[:],60),"every want completes")
     for root,k in all {testing.expectf(t,test_whole(&w.nodes[1].s,root),"object %d reads whole once complete",k)}
+}
+
+// A server node 0 and clients 1 and 2 connected in that order, which the
+// server tags 1 and 2; restricted: the tags it adds restricted, a bit each.
+@(private)
+test_star :: proc(t:^testing.T,w:^Test_World,name:string,desc:Desc,restricted:=u64(0)) -> bool {
+    if !test_world(t,w,name,3,desc=desc) {return false}
+    w.nodes[0].restricted=restricted
+    server:=test_host(w,0,.Server)
+    a:=test_host(w,1,.Client)
+    b:=test_host(w,2,.Client)
+    if server==nil || a==nil || b==nil {return testing.expect(t,false,"the hosts open")}
+    return testing.expect(t,test_connect(w,a,w.nodes[0].endpoints[0]) && test_connect(w,b,w.nodes[0].endpoints[0]),"the peers connect")
+}
+
+@(private)
+test_query :: proc(w:^Test_World,x:^Exchange,q:Query) -> Query_Result {
+    for _ in 0..<2000 {
+        test_step(w)
+        if r,_:=query_result(x,q);r.state!=.Waiting {return r}
+    }
+    return {}
+}
+
+// lib for every peer, team only for the first one added.
+@(private)
+test_expose_by_tag :: proc(user:rawptr,peer:Peer_Id,namespace:string) -> bool {
+    return namespace=="lib" || namespace=="team" && peer.tag==1
+}
+
+// Keeps what a peer told in the node whose host heard it; user is the Test_World.
+@(private)
+test_hint :: proc(user:rawptr,peer:Peer_Id,namespace,name:string,address:store.Hash) {
+    w:=(^Test_World)(user)
+    for &n in w.nodes[:w.count] {
+        for h in n.hosts[:n.host_count] {
+            if h!=peer.host || n.heard_count==len(n.heard) {continue}
+            n.heard[n.heard_count]={peer.tag,strings.clone(namespace,context.temp_allocator),strings.clone(name,context.temp_allocator),address}
+            n.heard_count+=1
+        }
+    }
+}
+
+@(test)
+peer_aware_expose_gates_namespaces_by_peer :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_star(t,&w,"exchange-expose-peer",{expose=test_expose_by_tag}) {return}
+    s:=&w.nodes[0].s
+    blob:=test_put(t,s,1000,1)
+    store.ref_set(s,"lib","a",blob)
+    store.ref_set(s,"team","a",blob)
+    for k in 1..=2 {
+        x:=&w.nodes[k].x
+        h:=w.nodes[k].hosts[0]
+        q,_:=ref_ask(x,"team","a")
+        r:=test_query(&w,x,q)
+        testing.expectf(t,(r.state==.Found)==(k==1),"client %d reads team: %v",k,r.state)
+        query_end(x,q)
+        q,_=names_ask(x,h,h.connection_handles[0],"team")
+        r=test_query(&w,x,q)
+        testing.expectf(t,r.state==.Found && len(r.names)==(k==1?1:0),"client %d lists %d names of team",k,len(r.names))
+        query_end(x,q)
+        q,_=ref_ask(x,"lib","a")
+        testing.expectf(t,test_query(&w,x,q).state==.Found,"client %d reads lib",k)
+        query_end(x,q)
+    }
+}
+
+// A change reaches the peers that may read its namespace, and no other, as
+// soon as it is told; changes of one ref not yet sent go as the last. The
+// peer fetches what the hint names without asking for the ref.
+@(test)
+ref_changed_hint_wakes_peer :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    if !test_star(t,&w,"exchange-hint",{expose=test_expose_by_tag,hint=test_hint,user=&w}) {return}
+    x:=&w.nodes[0].x
+    s:=&w.nodes[0].s
+    old:=test_put(t,s,1000,1)
+    blob:=test_put(t,s,3*store.CHUNK_MAX+5,2)
+    testing.expect_value(t,ref_changed(x,"lib","a",old),Error.None)
+    testing.expect_value(t,ref_changed(x,"lib","a",blob),Error.None)
+    testing.expect_value(t,ref_changed(x,"team","b",blob),Error.None)
+    testing.expect_value(t,ref_changed(x,"Team","b",blob),Error.Invalid)
+    testing.expect_value(t,ref_changed(x,"lib","",blob),Error.Invalid)
+    a,b:=&w.nodes[1],&w.nodes[2]
+    steps:=0
+    for ;steps<1000 && (a.heard_count<2 || b.heard_count<1);steps+=1 {test_step(&w)}
+    testing.expectf(t,steps<200,"the hints arrive in %d ms",steps)
+    test_step(&w,200)
+    testing.expect(t,a.heard_count==2 && a.heard[0]==Test_Heard{1,"lib","a",blob} && a.heard[1]==Test_Heard{1,"team","b",blob},"a peer that may read both namespaces hears the last change of each")
+    testing.expect(t,b.heard_count==1 && b.heard[0]==Test_Heard{1,"lib","a",blob},"a peer that may not read a namespace hears nothing of it")
+    testing.expect_value(t,w.nodes[0].heard_count,0)
+    want(&a.x,a.heard[0].address)
+    testing.expect(t,test_until_complete(&w,1,{blob},5),"the peer fetches what the hint names")
+}
+
+// Allowed addresses of test_serve, fixed while the exchange runs.
+@(private)
+Test_Allowed :: struct {addresses,asked:[dynamic]store.Hash}
+
+@(private)
+test_asked :: proc(user:rawptr,peer:Peer_Id,address:store.Hash) {
+    append(&(^Test_Allowed)(user).asked,address)
+}
+
+@(private)
+test_serve :: proc(user:rawptr,peer:Peer_Id,address:store.Hash) -> bool {
+    for a in (^Test_Allowed)(user).addresses {
+        if a==address {return true}
+    }
+    return false
+}
+
+// The root and every chunk under it.
+@(private)
+test_closure :: proc(s:^store.Store,root:store.Hash,out:^[dynamic]store.Hash) {
+    append(out,root)
+    bytes,error:=store.chunk_read(s,root,make([]u8,store.CHUNK_MAX,context.temp_allocator))
+    if error!=.None {return}
+    n,parse_error:=store.node_parse(bytes)
+    if parse_error!=.None {return}
+    for e in n.entries {
+        if n.level>0 {test_closure(s,e.address,out)} else {append(out,e.address)}
+    }
+}
+
+// A restricted peer gets only what the serve filter allows, also as a
+// descendant streamed under an allowed root; the rest is lacked as if
+// missing and never reaches its store. A peer that is not restricted gets all.
+@(test)
+anonymous_peer_cannot_fetch_unexposed_chunks :: proc(t:^testing.T) {
+    w:Test_World
+    defer test_world_destroy(&w)
+    allowed:Test_Allowed
+    allowed.addresses=make([dynamic]store.Hash,context.temp_allocator)
+    allowed.asked=make([dynamic]store.Hash,context.temp_allocator)
+    if !test_star(t,&w,"exchange-serve",{serve=test_serve,asked=test_asked,user=&allowed},restricted=1<<1) {return}
+    s:=&w.nodes[0].s
+    public:=test_put(t,s,200<<10,1)
+    private:=test_put(t,s,200<<10,2)
+    half:=test_put(t,s,200<<10,3) // its root alone is allowed
+    test_closure(s,public,&allowed.addresses)
+    append(&allowed.addresses,half)
+    hidden:=make([dynamic]store.Hash,context.temp_allocator)
+    test_closure(s,private,&hidden)
+    under:=len(hidden)
+    test_closure(s,half,&hidden)
+    testing.expect(t,len(hidden)-under>2,"the root that is allowed has chunks under it")
+    anonymous:=&w.nodes[1]
+    want(&anonymous.x,public)
+    testing.expect(t,test_until_complete(&w,1,{public},5),"what the filter allows arrives whole")
+    want(&anonymous.x,private)
+    want(&anonymous.x,half)
+    for _ in 0..<5000 {
+        test_step(&w)
+        if test_state(&anonymous.x,private)!=.Asking && test_state(&anonymous.x,half)!=.Asking {break}
+    }
+    testing.expect_value(t,test_state(&anonymous.x,private),State.Missing)
+    testing.expect_value(t,test_state(&anonymous.x,half),State.Missing)
+    for a,k in hidden {
+        if a==half {continue}
+        testing.expectf(t,!store.chunk_has(&anonymous.s,a),"chunk %d the filter does not allow stays out of the store",k)
+    }
+    want(&w.nodes[2].x,private)
+    want(&w.nodes[2].x,half)
+    testing.expect(t,test_until_complete(&w,2,{private,half},5),"a peer that is not restricted gets every chunk")
+    told:=false
+    for a in allowed.asked {told||=a==private}
+    testing.expect(t,told,"the end that serves is told what its peers ask")
 }

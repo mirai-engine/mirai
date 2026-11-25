@@ -101,7 +101,7 @@ document_activate :: proc(s:^Session,index:int) -> bool {
 }
 
 // The file of the document in front is not the one it read or wrote: it
-// changed outside the editor (git, a tool, another tab that wrote the prefab),
+// changed outside the editor (a switch of Kai, a tool, another tab that wrote the prefab),
 // and the document reads it again, with a new history.
 document_file_follow :: proc(s:^Session) {
     d:=s.document
@@ -217,24 +217,21 @@ document_close_active :: proc(s:^Session) {
 }
 
 // The editor ends, and the editor of the project asked for next starts;
-// while agents work it asks first, and then about the pending changes, which
-// it keeps or discards before it ends.
-documents_quit :: proc(s:^Session,agents_asked:=false,pending_asked:=false) {
+// while agents work it asks first.
+documents_quit :: proc(s:^Session,agents_asked:=false) {
     if !agents_asked && ai_working_count(s)>0 {confirm_open(s,.Quit);return}
-    if !pending_asked && git_quit_ask(s) {return}
     if projects_next_start(s) {s.quit=true}
 }
 
-// The dot of a tab whose file has what is not kept.
-PENDING_DOT :: 5
-PENDING_COLOR :: ui.Color{201,181,239,255}
+// The dot of a tab whose scene loads.
+LOADING_DOT :: 5
 
 // A tab of the strip: those of the scenes first, then those of the assets.
 @(private)
 Strip_Tab :: struct {
     label:string,
     icon:ui.Icon,
-    pending,active:bool, // pending: its file has what is not kept
+    active:bool,
     loading:bool,        // its scene loads, until it is resident
     asset:int, // the index of its asset document; -1 for a scene
 }
@@ -250,17 +247,12 @@ strip_tab :: proc(s:^Session,index:int) -> (tab:Strip_Tab) {
         d:=&s.asset_documents[tab.asset]
         tab.label,tab.icon=asset_document_title(s,d),asset_document_icon(s,d)
         tab.active=s.asset_shown==tab.asset+1
-        if path:=asset_document_path(s,d);path!="" {
-            if r:=files_registry(s);r!=nil && !asset.registry_outside(path) {path=asset.registry_file_path(r,path,context.temp_allocator)}
-            tab.pending=git_pending(s,path)
-        }
         return
     }
     tab.asset=-1
     d:=s.document
     if index!=s.active_document && index<len(s.documents) {d=&s.documents[index].document}
     tab.label=document_title(d)
-    tab.pending=git_pending(s,document_file(d))
     tab.loading=index==document_loading_tab(s)
     // Until it is read, the tab of a scene that opens is named after it.
     if tab.loading && .Open in s.requests && open_replaces(s) {tab.label=scene_title(string(s.open_path[:s.open_length]))}
@@ -289,7 +281,7 @@ document_loading_tab :: proc(s:^Session) -> int {
 @(private)
 document_tab_width :: proc(s:^Session,tab:Strip_Tab,room:f32) -> f32 {
     width:=ui.text_width(&s.gui.ctx.font,tab.label,ui.metric(s.gui.ctx,"font"))+54
-    if tab.pending || tab.loading {width+=PENDING_DOT+18}
+    if tab.loading {width+=LOADING_DOT+18}
     return clamp(width,90,max(room,90))
 }
 
@@ -368,10 +360,7 @@ documents_build :: proc(s:^Session) {
                             }
                         }
                         if tab.loading {
-                            pulse_dot(ctx,ui.tone(ctx,"accent"),true,PENDING_DOT)
-                            ui.spacer(ctx,5,1)
-                        } else if tab.pending {
-                            if ui.box(ctx,{width=ui.fixed(PENDING_DOT),height=ui.fixed(PENDING_DOT),fill=PENDING_COLOR,radius=PENDING_DOT*0.5}) {}
+                            pulse_dot(ctx,ui.tone(ctx,"accent"),true,LOADING_DOT)
                             ui.spacer(ctx,5,1)
                         }
                         close:=ui.Node_Style{fill=ctx.hot==close_id?ui.color_alpha(ui.tone(ctx,"text"),65):ui.Color{},radius=12,text={color=text_color}}

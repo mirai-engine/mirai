@@ -37,6 +37,8 @@ bytes := serial.bit_writer_flush(&w)
   `udp_send_batch`/`udp_receive_batch`. `wait` polls socket + `127.0.0.1` waker. Binding
   `address_any6` disables `IPV6_V6ONLY` (`udp_dual_stack`); IPv4-mapped peers normalize to IPv4 via
   `address_from_endpoint`.
+- **`Relay` & IPv6 addresses:** `address_relay(node, peer_dh)` / `address_relay_node` address a peer
+  behind a relay node; `address_global` / `address_global6` detect globally routable endpoints.
 - **DNS:** Async `resolve_start` / `resolve_poll` (IPv6 first) / `resolve_end`. `address_parse`
   accepts literal IPs only.
 - **`Sim_Network`:** Deterministic, thread-safe in-memory transport driven by `sim_network_advance`;
@@ -90,6 +92,10 @@ wire.host_update(&host, wire.host_time(&host))
     capacity/history/slot). Denials end the attempt only after every candidate denies.
   - Without invite: padded *Hello* -> stateless *Key* (`s`, version, SipHash cookie) -> *Initiate*
     with cookie and zero PSK.
+  - **Identity (`host_connect_identity`):** Noise `IK` (`Noise_IK_25519_ChaChaPoly_SHA256`) using
+    `Host_Desc.identity` (`Dh_Key`), keyed MAC (`BLAKE3("kai-1/mac" || server identity)`), and
+    `Host_Desc.authorize` (`Refuse` / `Pending` / `Accept`) run only after client confirmation;
+    `host_authorize` re-evaluates live peers (`Revoked` on refusal).
 - **Anti-DoS & replay:** Trailing HMAC-SHA256 filters strays without DH (invited servers ignore
   unauthenticated packets and *Hello*). Server stores seen `e` keys in Bloom filters (lifetime of
   `s` without cookie; rotating `COOKIE_SECONDS` generations with cookie, cap `SEEN_LIMIT`). Full

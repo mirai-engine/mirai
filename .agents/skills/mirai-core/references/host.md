@@ -101,7 +101,7 @@ app_frame_end     mixer, drawing, pacing
   zones, renderer stats, and per-pass GPU timestamps (completed `rhi.MAX_FRAMES_IN_FLIGHT`
   submissions later; zero-alloc after first reserve; overflow in `lost`). Live readers call
   `profile_request` each frame. Optional `memory` samples `core.world_memory` (container
-  capacities, not string bytes or non-storage allocs), `platform.process_memory`, and device
+  capacities, not string bytes or non-storage allocs), `base.process_memory`, and device
   memory ([`profile.*`](../../mirai-agent-api/references/methods.md#profiling)).
 - **Load profiling (`load_profile.odin`):** always-on last load per kind (`load_open`,
   `load_ready`, `load_report`, `Load_Tally`, `LOAD_NO_ZONE`). Resident after first drawn frame

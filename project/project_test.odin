@@ -111,7 +111,6 @@ a_plugin_manifest_round_trips_as_json :: proc(t:^testing.T) {
     base.text_set(m.asset_kinds[1].kind[:],"BIOM")
     m.asset_kinds[1].version=1
     base.text_set(m.asset_kinds[1].folder[:],"runtime/biome")
-    m.asset_kinds[1].merged=true
     text:=plugin_text(&m,context.temp_allocator)
     testing.expect(t,strings.contains(text,`"extension": ".biome"`) && !strings.contains(text,`"extension": ""`),text)
     testing.expect(t,strings.contains(text,`"dependencies": ["noise", "streaming"]`),text)
@@ -231,8 +230,7 @@ a_bad_plugin_manifest_is_refused_with_what_and_where :: proc(t:^testing.T) {
         {`{"name": "a", "version": "1.0.0", "icon": "icon.svg"}`,.Icon_Invalid,.None,"icon.svg"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": "biome"}]}`,.Asset_Kind_Invalid,.None,"biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".Biome"}]}`,.Asset_Kind_Invalid,.None,".Biome"},
-        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}, {"extension": ".biome", "merged": true}]}`,.Asset_Kind_Invalid,.None,".biome"},
-        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"merged": true}]}`,.Asset_Kind_Invalid,.None,""},
+        {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}, {"extension": ".biome"}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome"}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM"}]}`,.Asset_Kind_Invalid,.None,".biome"},
         {`{"name": "a", "version": "1.0.0", "asset_kinds": [{"extension": ".biome", "kind": "BIOM", "version": 1}, {"extension": ".zone", "kind": "BIOM", "version": 1}]}`,.Asset_Kind_Invalid,.None,".zone"},
@@ -390,6 +388,29 @@ paths_are_the_same_file_as_their_system_tells_them_apart :: proc(t:^testing.T) {
         {"","",true},
     }
     for c in cases {testing.expectf(t,path_same(c.a,c.b)==c.same && path_same(c.b,c.a)==c.same,"%q and %q",c.a,c.b)}
+}
+
+@(test)
+own_paths_leave_out_generated_and_version_control_folders :: proc(t:^testing.T) {
+    cases:=[?]struct{relative:string,own:bool}{
+        {"assets/a.scene",true},
+        {"project.mirai",true},
+        {"plugins/terrain/runtime/terrain.odin",true},
+        {"assets/.gitignore",true},
+        {"assets/.jjx/a",true},
+        {".mirai/kai/head",false},
+        {".mirai",false},
+        {".git/HEAD",false},
+        {".jj",false},
+        {"plugins/terrain/.git/HEAD",false},
+        {"a/b/.jj",false},
+        {"a/.hg/store",false},
+        {"a/.svn/",false},
+        {"A/.Git/config",ODIN_OS!=.Windows && ODIN_OS!=.Darwin},
+        {"",false},
+        {"/a",false},
+    }
+    for c in cases {testing.expectf(t,own_path(c.relative)==c.own,"%q",c.relative)}
 }
 
 @(test)

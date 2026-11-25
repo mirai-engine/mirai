@@ -7,7 +7,6 @@ import "core:path/filepath"
 import "core:strings"
 import "mirai:asset"
 import "mirai:core"
-import "mirai:editor/git"
 import "mirai:editor/history"
 import "mirai:host"
 import "mirai:platform"
@@ -40,8 +39,8 @@ RIGHT_WIDTH :: Panel_Width{0,312,312}
 BOTTOM_HEIGHT :: f32(220)
 BOTTOM_MIN :: f32(120)
 
-Library_Tab :: enum u8 {Editor,Content,Ai,Hierarchy,Git,World}
-LIBRARY_TAB_NAMES :: [Library_Tab]string{.Editor="Create",.Content="Content Browser",.Ai="AI",.Hierarchy="Hierarchy",.Git="Source control",.World="World"}
+Library_Tab :: enum u8 {Editor,Content,Ai,Hierarchy,Kai,World}
+LIBRARY_TAB_NAMES :: [Library_Tab]string{.Editor="Create",.Content="Content Browser",.Ai="AI",.Hierarchy="Hierarchy",.Kai="Kai",.World="World"}
 Library_Tabs :: bit_set[Library_Tab]
 
 // The sections of Keyboard shortcuts, each a run of the entries of the editor from its first to its
@@ -53,12 +52,12 @@ SHORTCUTS_WIDTH :: f32(640)
 // The tabs of the left panel each type of document has: what can be shown
 // beside it. An asset document has Hierarchy too when its plugin builds one.
 DOCUMENT_LIBRARY_TABS :: [Document_Type]Library_Tabs{
-    .Scene={.Editor,.Content,.Hierarchy,.World,.Ai,.Git},
-    .Prefab={.Editor,.Content,.Hierarchy,.Ai,.Git},
-    .Asset={.Content,.Ai,.Git},
+    .Scene={.Editor,.Content,.Hierarchy,.World,.Ai,.Kai},
+    .Prefab={.Editor,.Content,.Hierarchy,.Ai,.Kai},
+    .Asset={.Content,.Ai,.Kai},
 }
 Bottom_Tab :: enum u8 {Console,Build}
-Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Git_Discard,Pending,No_Repository,Import_Changes}
+Modal :: enum u8 {None,Confirm,Shortcuts,Settings,Delete_Asset,Import_Changes,Kai}
 
 Splitter :: enum u8 {None,Bottom,Right}
 
@@ -77,7 +76,6 @@ Layout :: struct {
     run_kind:Run_Kind,  // what the Play button starts
     bottom_tab:Bottom_Tab,
     bottom_height:f32,
-    git_history:f32, // the height of the history of the Git tab; 0: GIT_HISTORY_DEFAULT
     right_mode:Panel_Mode,
     right_modes:[Document_Type]Panel_Choice,
     right_width:f32, // docked, as its edge was dragged
@@ -139,7 +137,6 @@ Editor_Ui :: struct {
     bar_height:f32,     // of the theme, before bars_snap puts its bottom on a whole pixel
     pending:Pending,
     delete_asset:base.Asset_Id,     // what Modal.Delete_Asset asks about
-    discard_path:[git.PATH_BYTES]u8, // what Modal.Git_Discard asks about; empty: every change
     import_source:[API_PATH_BYTES]u8,   // what Modal.Import_Changes asks about: a source to import again
     import_changed:[dynamic]base.Asset_Id, // its documents that changed since its import wrote them
     drag:Drag,
@@ -177,7 +174,7 @@ User_Icon :: enum u8 {
     Star,Star_Filled,Collapse,Users,
     Expand, // two chevrons apart: open everything, as Collapse closes it
     Panel_Close,Panel_Open, // a panel on the left with an arrow that folds it, or that brings it back
-    Branch,        // three commits of git and the branch between them
+    Branch,        // three changes and the branch between them
     Back,          // a chevron to the left: the previous one
     Down,          // an arrow down, as Up
     Arrow_Left,Arrow_Right,Arrow_Up_Left,Arrow_Up_Right,Arrow_Down_Right,Arrow_Down_Left, // the sides and corners of a box
@@ -721,7 +718,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
                 else if ui.box(ctx,{id=shell_id(g,"hierarchy_room"),width=ui.GROW,height=ui.fixed(room),track=true}) {}
             case .Content: content_build(s,w,room,left_width-2*PANEL_PADDING)
             case .World: world_map_build(s,w,left_width-2*PANEL_PADDING,room)
-            case .Git: git_panel_build(s,left_width-2*PANEL_PADDING,room)
+            case .Kai: kai_panel_build(s,left_width-2*PANEL_PADDING,room)
             case .Ai:
                 if expanded {ai_chat_expanded_build(s,left_width,height)}
                 else {ai_chat_content_build(s,left_width-2*PANEL_PADDING,room)}
@@ -771,7 +768,7 @@ shell_build :: proc(s:^Session,w:core.World_Ref) {
     g.tool_top,g.tool_width,g.tool_dock=top,right_width,0
     if right_dock>0 {g.tool_top,g.tool_dock=bars,ctx.size.y-bars}
     // Docked, Details stays with nothing selected: the scene does not change size with the selection.
-    content:=len(s.selection.entities)>0 || deletion || git_review_shown(s)
+    content:=len(s.selection.entities)>0 || deletion
     if details && document==nil && l.right_open && ctx.size.x>=760 && (content || right_dock>0) && !s.viewport.pick.active && !tool_panel_shown(s) {
         max_height:=bottom_limit-top
         if l.bottom_open {max_height-=bottom_height+ui.metric(ctx,"margin")}
@@ -816,15 +813,13 @@ rail_build :: proc(s:^Session,shown_tab:Library_Tab,bars:f32) {
     l:=&g.layout
     play:=play_shown(s)
     tabs:=library_tabs(s)
-    icons:=[Library_Tab]ui.Icon{.Editor=.Cube,.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Git=ui.icon_user(u8(User_Icon.Branch))}
+    icons:=[Library_Tab]ui.Icon{.Editor=.Cube,.Content=ui.icon_user(u8(User_Icon.Folder)),.Hierarchy=ui.icon_user(u8(User_Icon.List)),.World=.Layers,.Ai=.Sparkle,.Kai=ui.icon_user(u8(User_Icon.Branch))}
     tips:=LIBRARY_TAB_NAMES
     if ui.box(ctx,{id=shell_id(g,"rail"),width=ui.fixed(RAIL_WIDTH),height=ui.fixed(max(ctx.size.y-bars,1)),padding={0,8,0,8},gap=4,direction=.Column,align_x=.Center,float={to=.Surface,offset={0,bars},layer=ui.LAYER_BAR},fill=ui.tone(ctx,"bar_top"),block=true}) {
-        for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Git}) {
+        for tab in ([]Library_Tab{.Editor,.Content,.Hierarchy,.World,.Ai,.Kai}) {
             if tab not_in tabs {continue}
             shown:=play?tab==.Ai && s.play_chat_open:l.left_open && shown_tab==tab
             color:=shown?ui.tone(ctx,"text"):ui.tone(ctx,"text_muted")
-            // A merge that waits for its conflicts marks the tab while it lasts.
-            if tab==.Git && s.git!=nil && s.git.merging {color=ui.tone(ctx,"danger")}
             if !ui.button(ctx,shell_id(g,"library_tab",int(tab)+1),{icon=icons[tab],tip=tips[tab],variant="toggle",active=shown,icon_color=color,width=RAIL_BUTTON,height=RAIL_BUTTON,icon_size=17,disabled=play && (tab!=.Ai || s.mode==.Play)}).clicked {continue}
             switch {
             case play:  play_chat_set(s,!s.play_chat_open)
@@ -910,7 +905,7 @@ library_tabs :: proc(s:^Session) -> Library_Tabs {
 library_tab_shown :: proc(s:^Session) -> Library_Tab {
     tabs:=library_tabs(s)
     if s.gui.layout.library_tab in tabs {return s.gui.layout.library_tab}
-    for tab in ([]Library_Tab{.Content,.Ai,.Git,.Editor,.Hierarchy,.World}) {if tab in tabs {return tab}}
+    for tab in ([]Library_Tab{.Content,.Ai,.Kai,.Editor,.Hierarchy,.World}) {if tab in tabs {return tab}}
     return .Content
 }
 
@@ -1600,10 +1595,8 @@ modal_build :: proc(s:^Session) {
         }
     case .Settings: settings_modal(s)
     case .Delete_Asset: asset_delete_modal(s)
-    case .Git_Discard:  git_discard_modal(s)
     case .Import_Changes: import_changes_modal(s)
-    case .Pending:      git_pending_modal(s)
-    case .No_Repository: git_missing_modal(s)
+    case .Kai: kai_dialog_build(s)
     }
 }
 

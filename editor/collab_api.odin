@@ -68,12 +68,6 @@ Api_Collab_Peer :: struct {
     in_game:bool `mirai:"label=A guest playing the game the host serves"`,
 }
 
-Api_Collab_Unsent :: struct {
-    path:[COLLAB_UNSENT_PATH]u8 `mirai:"text,label=The asset file, too large to travel: whoever changed it saves it and shares it through the repository of the project"`,
-    peer:u8 `mirai:"label=The id of the editor that changed it"`,
-    bytes:u64,
-}
-
 Api_Collab_Status :: struct {
     role:Collab_Role,
     phase:Collab_Phase,
@@ -82,8 +76,7 @@ Api_Collab_Status :: struct {
     reason:[96]u8 `mirai:"text,label=Why the session ended"`,
     peers:[COLLAB_PEERS]Api_Collab_Peer `mirai:"label=The first count are in the session"`,
     count:int,
-    unsent:[COLLAB_UNSENT]Api_Collab_Unsent `mirai:"label=The first unsent_count are files changed in the session that the others do not have"`,
-    unsent_count:int,
+    fetching:int `mirai:"label=Files other editors changed whose chunks are on their way"`,
     join:Api_Collab_Join `mirai:"label=A guest: how its folder is brought to the host's snapshot before it enters the scene"`,
     project:Api_Collab_Project `mirai:"label=What the session moved of the project and its builds"`,
     transport:Api_Collab_Transport `mirai:"label=Datagrams and handshakes of the local session socket"`,
@@ -126,10 +119,7 @@ api_collab_result :: proc(s:^Session,call:^api.Call) {
         base.text_set(r.peers[r.count].name[:],string(peer.name[:peer.name_length]))
         r.count+=1
     }
-    for unsent in st.unsent[:st.unsent_count] {
-        r.unsent[r.unsent_count]={path=unsent.path,peer=unsent.peer,bytes=unsent.bytes}
-        r.unsent_count+=1
-    }
+    r.fetching=len(st.fetches)
     r.sent_edits,r.received_edits,r.sent_ops,r.received_ops=st.sent_edits,st.received_edits,st.sent_ops,st.received_ops
     if j:=st.join;j!=nil {api_collab_join_result(j,&r.join)}
     r.offers,r.updates=st.offers,st.updates
@@ -335,7 +325,6 @@ share_build :: proc(s:^Session) {
                     ui.label(ctx,i==0?"Host":"Guest",ui.metric(ctx,"font_label"),ui.tone(ctx,"text_muted"))
                 }
             }
-            for &unsent in st.unsent[:st.unsent_count] {ui.text(ctx,collab_unsent_text(st,&unsent),ui.prose(ctx,ui.metric(ctx,"font_label"),ui.tone(ctx,"danger_soft")))}
             label:=st.role==.Host?"Stop":"Leave"
             if st.phase==.Ended {label="Close"}
             if ui.button(ctx,shell_id(g,"share_leave"),{label=label,variant="accent",width=-1,height=ui.metric(ctx,"control"),size=11,center=true}).clicked {collab_leave(s)}

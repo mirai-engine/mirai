@@ -1,0 +1,1026 @@
+package hub
+
+import "core:crypto"
+import "core:crypto/ed25519"
+import "core:encoding/base64"
+import "core:strings"
+import "mirai:kai"
+import "mirai:store"
+
+// Sessions and approvals. A session is a random token in an HttpOnly cookie
+// that only this site gets; it reads, and a write still needs a signature of
+// the user's own. A browser signs in with its passkey's assertion of a
+// challenge of this server, used once; a browser without a passkey asks a
+// device of the user to approve, by a link that `mirai kai web approve`
+// opens: the device signs the login, a write, or the Web_Key_Add of a new
+// passkey, and the browser that asked learns it by polling with a secret
+// only it holds.
+
+LABEL_WEB_LOGIN :: "kai-1/web-login"
+
+Approval_Kind :: enum u8 {None,Login,Entry,Web_Key,Device}
+Approval_State :: enum u8 {Waiting,Approved,Denied,Expired}
+
+Approval :: struct {
+    used:bool,
+    kind:Approval_Kind,
+    state:Approval_State,
+    id:[16]u8,
+    secret:[32]u8,
+    challenge:[32]u8,
+    created:f64,
+    user:kai.Log_Id,     // Entry and Web_Key: whose; Login: who approved
+    device:kai.Key,      // the device that approved
+    type:kai.Entry_Type, // Entry
+    log:kai.Log_Id,
+    body:[dynamic]u8,
+    credential:[255]u8,  // Web_Key
+    credential_len:int,
+    cose:[kai.COSE_KEY_MAX]u8,
+    cose_len:int,
+    address:store.Hash,  // the entry kept
+    taken:bool,          // Login: the session was given
+    asker:[16]u8,        // the address of the browser that asked
+    serial:u64,          // the order approvals were made in
+    offered:bool,        // Device: a machine offered itself
+    offer:kai.Device_Add_Body,
+    offer_name:[kai.NAME_MAX]u8,
+    offer_name_len:int,
+}
+
+approval_clear :: proc(a:^Approval) {
+    delete(a.body)
+    crypto.zero_explicit(a,size_of(Approval))
+}
+
+@(private)
+APPROVAL_KIND_TEXT :: [Approval_Kind]string{.None="",.Login="login",.Entry="entry",.Web_Key="passkey",.Device="device"}
+@(private)
+APPROVAL_STATE_TEXT :: [Approval_State]string{.Waiting="waiting",.Approved="approved",.Denied="denied",.Expired="expired"}
+
+// --- sessions ---
+
+session_of :: proc(h:^Hub,r:^Request) -> ^Session {
+    cookie,found:=request_header(r,"cookie")
+    if !found {return nil}
+    for part in strings.split_iterator(&cookie,";") {
+        item:=strings.trim_space(part)
+        if !strings.has_prefix(item,COOKIE+"=") {continue}
+        token,ok:=base64_parse(item[len(COOKIE)+1:],32)
+        if !ok || len(token)!=32 {return nil}
+        for &s in h.sessions {
+            if !s.used || crypto.compare_constant_time(s.token[:],token)!=1 {continue}
+            if h.now-s.created>SESSION_SECONDS || h.now-s.seen>SESSION_IDLE_SECONDS || !session_holds(h,&s) {
+                crypto.zero_explicit(&s,size_of(Session))
+                return nil
+            }
+            s.seen=h.now
+            return &s
+        }
+        return nil
+    }
+    return nil
+}
+
+// Whether what started a session still holds in the user's fold: its passkey,
+// or the device that approved it, not revoked.
+@(private)
+session_holds :: proc(h:^Hub,s:^Session) -> bool {
+    u:=user_fold_of(h,s.user)
+    if u==nil {return false}
+    if s.web_key=={} {return kai.user_device_active(u,s.device)}
+    p,found:=passkey_of(h,u,s.credential[:s.credential_len])
+    return found && p.key==s.web_key
+}
+
+// A new session for user, by its passkey or by the device that approved it;
+// the oldest goes when all are taken.
+session_new :: proc(h:^Hub,user:kai.Log_Id,web_key:kai.Key,credential:[]u8,device:kai.Key={}) -> (s:^Session,cookie:string) {
+    slot:=0
+    for x,i in h.sessions {
+        if !x.used {
+            slot=i
+            break
+        }
+        if x.seen<h.sessions[slot].seen {slot=i}
+    }
+    s=&h.sessions[slot]
+    s^={used=true,user=user,web_key=web_key,device=device,created=h.now,seen=h.now}
+    s.credential_len=copy(s.credential[:],credential)
+    crypto.rand_bytes(s.token[:])
+    token:=base64.encode(s.token[:],base64.ENC_URL_TABLE,context.temp_allocator,{.No_Padding})
+    cookie=strings.concatenate({"Set-Cookie: ",COOKIE,"=",token,"; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=43200\r\n"},context.temp_allocator)
+    return
+}
+
+@(private)
+route_session :: proc(c:^Call) {
+    s:=c.session
+    roles:=ROLE_TEXT
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"user",s.user)
+    name:=""
+    recovered:=false
+    if u:=user_fold_of(c.h,s.user);u!=nil {name,recovered=user_name(u),u.recovery!={}}
+    json_member_string(&j,"name",name)
+    json_key(&j,"passkey")
+    if s.web_key=={} {json_null(&j)} else {
+        key:=s.web_key
+        json_hex(&j,key[:])
+    }
+    json_member_bool(&j,"recovered",recovered)
+    json_key(&j,"devices")
+    json_array(&j)
+    if u:=user_fold_of(c.h,s.user);u!=nil {
+        for d,k in u.devices {
+            json_object(&j)
+            key:=d.key
+            json_member_hex(&j,"key",key[:])
+            json_member_string(&j,"name",kai.device_name(u,k))
+            json_member_bool(&j,"revoked",d.revoked)
+            json_end_object(&j)
+        }
+    }
+    json_end_array(&j)
+    json_key(&j,"hosting")
+    json_object(&j)
+    json_member_int(&j,"made",i64(kai.store_hosted_count(store_of(c.h),s.user)))
+    json_member_int(&j,"max",i64(hosting_max(c.h)))
+    json_end_object(&j)
+    json_key(&j,"orgs")
+    json_array(&j)
+    for o in runner_of(c.h).orgs {
+        role:=session_role(c,o)
+        if role==.None {continue}
+        json_object(&j)
+        json_member_hash(&j,"org",o.id)
+        json_member_string(&j,"name",org_name(o))
+        json_member_string(&j,"role",roles[role])
+        json_member_bool(&j,"hosted",o.agent.desc.hosted)
+        json_member_int(&j,"bytes",o.agent.members.stored)
+        json_member_int(&j,"quota",o.agent.desc.quota)
+        json_member_bool(&j,"full",kai.agent_full(&o.agent))
+        json_member_bool(&j,"served",node_added(runner_of(c.h),o))
+        json_end_object(&j)
+    }
+    json_end_array(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+@(private)
+route_challenge :: proc(c:^Call) {
+    h:=c.h
+    slot:=0
+    for x,i in h.challenges {
+        if !x.used || x.expires<h.now {
+            slot=i
+            break
+        }
+        if x.expires<h.challenges[slot].expires {slot=i}
+    }
+    ch:=&h.challenges[slot]
+    ch^={used=true,expires=h.now+CHALLENGE_SECONDS}
+    crypto.rand_bytes(ch.value[:])
+    j:=json_make()
+    json_object(&j)
+    json_key(&j,"challenge")
+    json_base64(&j,ch.value[:])
+    json_member_string(&j,"rp_id",h.desc.rp_id)
+    json_member_int(&j,"timeout_ms",i64(CHALLENGE_SECONDS*1000))
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+// Takes a challenge this server gave and has not taken back: once.
+@(private)
+challenge_take :: proc(h:^Hub,value:[]u8) -> bool {
+    if len(value)!=32 {return false}
+    for &x in h.challenges {
+        if !x.used || crypto.compare_constant_time(x.value[:],value)!=1 {continue}
+        alive:=x.expires>=h.now
+        x={}
+        return alive
+    }
+    return false
+}
+
+Assertion_Body :: struct {
+    credential,authenticator_data,client_data_json,signature:string,
+}
+
+@(private)
+assertion_parse :: proc(c:^Call,b:Assertion_Body) -> (credential:[]u8,a:kai.Web_Assertion,ok:bool) {
+    credential,ok=base64_parse(b.credential,255)
+    data,ok1:=base64_parse(b.authenticator_data,kai.AUTHENTICATOR_DATA_MAX)
+    client,ok2:=base64_parse(b.client_data_json,kai.CLIENT_DATA_MAX)
+    signature,ok3:=base64_parse(b.signature,kai.WEBAUTHN_SIGNATURE_MAX)
+    if !ok || !ok1 || !ok2 || !ok3 || len(credential)==0 {
+        fail(c,400,"the assertion's fields are base64url of the browser's bytes: credential, authenticator_data, client_data_json, signature")
+        return nil,{},false
+    }
+    return credential,{data,client,signature},true
+}
+
+// A passkey of this relying party some user's log added, by its credential id.
+Passkey :: struct {
+    user:^kai.User_Fold,
+    key:kai.Key,
+    cose:[]u8,
+    added:store.Hash, // its Web_Key_Add
+}
+
+// The passkey of user u with that credential id, not revoked. A credential id
+// is the browser's word only: another user may record the same one.
+passkey_of :: proc(h:^Hub,u:^kai.User_Fold,credential:[]u8) -> (p:Passkey,found:bool) {
+    for w in u.web_keys {
+        if w.revoked {continue}
+        item:=&u.log.items[w.added]
+        id,cose,rp,_,ok:=kai.passkey_parts(item.entry.body)
+        if !ok || rp!=h.desc.rp_id || string(id)!=string(credential) {continue}
+        return {user=u,key=w.key,cose=cose,added=item.address},true
+    }
+    return
+}
+
+@(private)
+route_sign_in :: proc(c:^Call) {
+    Body :: struct {challenge:string,assertion:Assertion_Body}
+    b:Body
+    if !body_parse(c,&b) {return}
+    challenge,cok:=base64_parse(b.challenge,32)
+    credential,a,ok:=assertion_parse(c,b.assertion)
+    if !ok {return}
+    if !cok || !challenge_take(c.h,challenge) {
+        fail(c,401,"the challenge is not one this server gave, it expired or it was used: ask for a new one")
+        return
+    }
+    // Every user that records the credential id is tried: the one whose key signed is the one.
+    p:Passkey
+    failure:=kai.Webauthn_Failure.None
+    found:=false
+    users: for o in runner_of(c.h).orgs {
+        for u in o.agent.user_list {
+            candidate,has:=passkey_of(c.h,u,credential)
+            if !has {continue}
+            key,parsed:=kai.cose_key_parse(candidate.cose)
+            if !parsed {continue}
+            failure=kai.webauthn_verify(&key,c.h.desc.rp_id,challenge,&a,false)
+            if failure==.None {
+                p,found=candidate,true
+                break users
+            }
+        }
+    }
+    // A user no org of the node admitted yet signs in too: it links its first device, or makes an org here.
+    if !found {
+        waiting_load(c.h)
+        waiting: for w in c.h.waiting {
+            if !w.used || user_synced(c.h,w.user)!=nil {continue}
+            u:=waiting_fold(c.h,w.user)
+            if u==nil {continue}
+            candidate,has:=passkey_of(c.h,u,credential)
+            if !has {continue}
+            key,parsed:=kai.cose_key_parse(candidate.cose)
+            if !parsed {continue}
+            failure=kai.webauthn_verify(&key,c.h.desc.rp_id,challenge,&a,false)
+            if failure==.None {
+                p,found=candidate,true
+                break waiting
+            }
+        }
+    }
+    if !found {
+        fail(c,401,failure==.None?"no user of this node has that passkey: register it first":kai.webauthn_failure_text(failure))
+        return
+    }
+    _,cookie:=session_new(c.h,p.user.log.id,p.key,credential)
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"user",p.user.log.id)
+    json_member_string(&j,"name",user_name(p.user))
+    json_end_object(&j)
+    json_response(c,&j)
+    c.response.headers=cookie
+}
+
+// A device of a user signs in, as it signs an approved login: what `mirai kai
+// web join` does to read the orgs of its user the node hosts.
+@(private)
+route_sign_in_device :: proc(c:^Call) {
+    Body :: struct {device,challenge,signature:string}
+    b:Body
+    if !body_parse(c,&b) {return}
+    device:kai.Key
+    challenge,cok:=base64_parse(b.challenge,32)
+    signature,sok:=base64_parse(b.signature,64)
+    if !hex_parse(b.device,device[:]) || !cok || len(challenge)!=32 || !sok || len(signature)!=64 {
+        fail(c,400,"device is the device key (64 hex), challenge the one given and signature base64url of its Ed25519 signature over 'kai-1/web-login' || rp_id || challenge")
+        return
+    }
+    if !challenge_take(c.h,challenge) {
+        fail(c,401,"the challenge is not one this server gave, it expired or it was used: ask for a new one")
+        return
+    }
+    given:[32]u8
+    copy(given[:],challenge)
+    public:ed25519.Public_Key
+    if !ed25519.public_key_set_bytes(&public,device[:]) || !ed25519.verify(&public,login_message(c.h.desc.rp_id,given),signature) {
+        fail(c,401,"the signature is not the device's over this challenge")
+        return
+    }
+    user:^kai.User_Fold
+    for o in runner_of(c.h).orgs {
+        for u in o.agent.user_list {
+            if kai.user_device_active(u,device) {user=u}
+        }
+    }
+    if user==nil {
+        fail(c,403,"the device is no active device of a user of an org this node serves: link it from the browser first (mirai kai web approve)")
+        return
+    }
+    _,cookie:=session_new(c.h,user.log.id,{},nil,device)
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"user",user.log.id)
+    json_member_string(&j,"name",user_name(user))
+    json_end_object(&j)
+    json_response(c,&j)
+    c.response.headers=cookie
+}
+
+USER_ENTRIES_MAX :: 256 // entries of a user's log one request gives
+
+// Entries of a user's log a device of it signed, as its own log holds them:
+// the node keeps those its fold takes. What `mirai kai web approve` sends
+// once it set the first recovery key of the user it linked.
+@(private)
+route_user_entries :: proc(c:^Call) {
+    user,uok:=hash_parse(path_param(c,"user"))
+    if !uok {
+        fail(c,400,"a user is named by its id, 64 hex")
+        return
+    }
+    Body :: struct {entries:[]string}
+    b:Body
+    if !body_parse(c,&b) {return}
+    if len(b.entries)==0 || len(b.entries)>USER_ENTRIES_MAX {
+        fail(c,400,"entries is 1 to 256 base64url entries of the user's log")
+        return
+    }
+    if user_fold_of(c.h,user)==nil {
+        fail(c,404,"no such user on this node: make it here, or have an org this node serves add it")
+        return
+    }
+    kept:=0
+    for text in b.entries {
+        bytes,ok:=base64_parse(text,kai.ENTRY_BODY_MAX+4096)
+        e,de:=kai.entry_decode(bytes)
+        if !ok || de!=.None || e.type==.User_Genesis || e.type==.Passkey_Genesis {continue}
+        if e.log_id!=user {
+            fail(c,400,"an entry is of another log than the user's")
+            return
+        }
+        _,status,why:=entry_keep(c,bytes,user)
+        if status==409 {continue}
+        if status!=0 {
+            fail(c,status,why)
+            return
+        }
+        kept+=1
+    }
+    j:=json_make()
+    json_object(&j)
+    json_member_int(&j,"kept",i64(kept))
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+@(private)
+route_sign_out :: proc(c:^Call) {
+    if c.session!=nil {crypto.zero_explicit(c.session,size_of(Session))}
+    j:=json_make()
+    json_object(&j)
+    json_end_object(&j)
+    json_response(c,&j)
+    c.response.headers=COOKIE+"=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0\r\n"
+    c.response.headers=strings.concatenate({"Set-Cookie: ",c.response.headers},context.temp_allocator)
+}
+
+// --- a user born of a passkey ---
+
+// A user no org admitted yet waits on the node that made it, apart from the
+// user logs peers sync, until a member adds it (Member_Add): then its log
+// joins them. The oldest waiting goes when WAITING_MAX are.
+WAITING_MAX :: 256
+WAITING_NAMESPACE :: "kai-local-waiting"
+
+Waiting :: struct {
+    used:bool,
+    user:kai.Log_Id,
+    made:f64,
+}
+
+@(private)
+waiting_load :: proc(h:^Hub) {
+    if h.waiting_loaded {return}
+    h.waiting_loaded=true
+    refs,e:=store.ref_list(store_of(h),WAITING_NAMESPACE,context.temp_allocator)
+    if e!=.None {return}
+    k:=0
+    for r in refs {
+        id,ok:=store.parse_hex(r.name)
+        if !ok || k>=WAITING_MAX {continue}
+        h.waiting[k]={used=true,user=id}
+        k+=1
+    }
+}
+
+// The waiting user of id, opened; false when none waits.
+@(private)
+waiting_open :: proc(h:^Hub,id:kai.Log_Id,l:^kai.Log) -> bool {
+    name:[64]u8
+    address,e:=store.ref_get(store_of(h),WAITING_NAMESPACE,kai.log_name(id,&name))
+    if e!=.None {return false}
+    kai.log_init(l,id,context.temp_allocator)
+    _,le:=kai.log_load(store_of(h),l,address,false)
+    return le==.None
+}
+
+// Moves each waiting user an org of the node now counts as a member among
+// the user logs its peers sync.
+@(private)
+waiting_step :: proc(h:^Hub) {
+    if !h.waiting_loaded || h.now-h.waiting_checked<1 {return}
+    h.waiting_checked=h.now
+    s:=store_of(h)
+    for &w in h.waiting {
+        if !w.used {continue}
+        admitted:=false
+        for o in runner_of(h).orgs {
+            if !o.agent.folded {continue}
+            for m in o.agent.org.members {admitted||=m.user==w.user}
+        }
+        if !admitted {continue}
+        l:kai.Log
+        name:[64]u8
+        if waiting_open(h,w.user,&l) {
+            if _,e:=kai.log_save(s,&l);e!=.None {continue}
+        }
+        store.ref_remove(s,WAITING_NAMESPACE,kai.log_name(w.user,&name))
+        if store.commit(s)!=.None {continue}
+        kai.runner_changed(runner_of(h),kai.USER_NAMESPACE,kai.log_name(w.user,&name))
+        w={}
+    }
+}
+
+// The fold of the waiting user of id, in the temp allocator; nil when none waits.
+@(private)
+waiting_fold :: proc(h:^Hub,id:kai.Log_Id) -> ^kai.User_Fold {
+    l:=new(kai.Log,context.temp_allocator)
+    if !waiting_open(h,id,l) {return nil}
+    f:=new(kai.User_Fold,context.temp_allocator)
+    if kai.user_fold(f,l,context.temp_allocator)!=.None {return nil}
+    return f
+}
+
+// Keeps an entry of a waiting user's log when its fold takes it.
+@(private)
+waiting_entry_keep :: proc(h:^Hub,bytes:[]u8,user:kai.Log_Id) -> (address:store.Hash,status:int,why:string) {
+    l:kai.Log
+    if !waiting_open(h,user,&l) {return {},404,"the entry's log is not one of a user of this node"}
+    added,ae:=kai.log_add(&l,bytes,true)
+    if ae!=.None {return {},400,"the entry does not hold: its signature or its log is wrong"}
+    if !added {return {},409,"the entry is in the log already: a signed entry counts once"}
+    address=store.address_of_bytes(bytes)
+    f:kai.User_Fold
+    if kai.user_fold(&f,&l,context.temp_allocator)!=.None || !f.valid[kai.log_find(&l,address)] {return {},403,"the user's log does not take the entry: its author lacks the right, or its parents are not in the log yet"}
+    s:=store_of(h)
+    if _,se:=kai.log_save_in(s,&l,WAITING_NAMESPACE);se!=.None || store.commit(s)!=.None {return {},500,"the store does not take the entry: see the node's disk"}
+    return address,0,""
+}
+
+// Moves a waiting user among the user logs the node syncs, at once: an org
+// it made here counts it.
+@(private)
+waiting_admit :: proc(h:^Hub,user:kai.Log_Id) -> bool {
+    l:kai.Log
+    if !waiting_open(h,user,&l) {return true}
+    s:=store_of(h)
+    name:[64]u8
+    if _,e:=kai.log_save(s,&l);e!=.None {return false}
+    store.ref_remove(s,WAITING_NAMESPACE,kai.log_name(user,&name))
+    if store.commit(s)!=.None {return false}
+    for &w in h.waiting {
+        if w.used && w.user==user {w={}}
+    }
+    kai.runner_changed(runner_of(h),kai.USER_NAMESPACE,kai.log_name(user,&name))
+    return true
+}
+
+// Whether a waiting user was born of the passkey with that credential id, or
+// of the web key key when it is given: what tells a browser that signs in
+// before an admin added it to wait, and refuses a second user of one passkey.
+@(private)
+waiting_passkey :: proc(h:^Hub,credential:[]u8,key:=kai.Key{}) -> bool {
+    waiting_load(h)
+    for w in h.waiting {
+        if !w.used {continue}
+        l:kai.Log
+        if !waiting_open(h,w.user,&l) {continue}
+        if k:=kai.log_find(&l,w.user);k>=0 {
+            id,cose,rp,_,ok:=kai.passkey_parts(l.items[k].entry.body)
+            if !ok {continue}
+            if key!={} ? kai.web_key_id(cose,rp)==key : string(id)==string(credential) {return true}
+        }
+    }
+    return false
+}
+
+@(private)
+route_user_create :: proc(c:^Call) {
+    Body :: struct {unsigned:string,assertion:Assertion_Body}
+    b:Body
+    if !body_parse(c,&b) {return}
+    unsigned,uok:=base64_parse(b.unsigned,kai.ENTRY_BODY_MAX+4096)
+    credential,a,ok:=assertion_parse(c,b.assertion)
+    if !ok {return}
+    if !uok {
+        fail(c,400,"unsigned is base64url of the genesis's bytes before its assertion")
+        return
+    }
+    // The genesis's body names the passkey that signs it; the bytes say the rest.
+    head:=kai.Entry_Head{}
+    if len(unsigned)>=size_of(kai.Entry_Head) {head=(^kai.Entry_Head)(raw_data(unsigned))^}
+    body:=len(unsigned)>=size_of(kai.Entry_Head)?unsigned[size_of(kai.Entry_Head):]:nil
+    id,cose,rp,_,parts:=kai.passkey_parts(body)
+    if head.kind!=.Passkey_Genesis || !parts || string(id)!=string(credential) {
+        fail(c,400,"the entry is a Passkey_Genesis of the passkey that signs it, as kai/log.odin lays it out")
+        return
+    }
+    if rp!=c.h.desc.rp_id {
+        fail(c,400,"the passkey is for another relying party: register it for this site's rp_id")
+        return
+    }
+    bytes,_,e:=kai.entry_webauthn_finish(unsigned,cose,rp,&a,context.temp_allocator)
+    if e!=.None {
+        if e==.Unauthorized {
+            key,_:=kai.cose_key_parse(cose)
+            challenge:=store.address_of_bytes(unsigned)
+            fail(c,401,kai.webauthn_failure_text(kai.webauthn_verify(&key,rp,challenge[:],&a,true)))
+        } else {
+            fail(c,400,"the genesis does not read: build it as Passkey_Genesis_Body of kai/log.odin lays it out")
+        }
+        return
+    }
+    l:kai.Log
+    kai.log_init(&l,{},context.temp_allocator)
+    if added,ae:=kai.log_add(&l,bytes,true);!added || ae!=.None {
+        fail(c,400,"the genesis is not signed by its passkey")
+        return
+    }
+    f:kai.User_Fold
+    if kai.user_fold(&f,&l,context.temp_allocator)!=.None || !f.valid[0] || len(f.web_keys)!=1 {
+        fail(c,400,"the new user's log does not hold: its genesis is signed by the passkey it names")
+        return
+    }
+    s:=store_of(c.h)
+    name:[64]u8
+    _,synced:=store.ref_get(s,kai.USER_NAMESPACE,kai.log_name(l.id,&name))
+    // A passkey makes one user: a user of this node, or one waiting here, holds it already.
+    taken:=synced==.None || waiting_passkey(c.h,credential,f.web_keys[0].key)
+    for o in runner_of(c.h).orgs {
+        for u in o.agent.user_list {taken||=kai.user_web_key_index(u,f.web_keys[0].key)>=0}
+    }
+    if taken {
+        fail(c,409,"this passkey has a user on this node already: sign in with it, or make another passkey")
+        return
+    }
+    slot:=-1
+    for w,i in c.h.waiting {
+        if !w.used {
+            slot=i
+            break
+        }
+        if slot<0 || w.made<c.h.waiting[slot].made {slot=i}
+    }
+    if old:=&c.h.waiting[slot];old.used {store.ref_remove(s,WAITING_NAMESPACE,kai.log_name(old.user,&name))}
+    if _,se:=kai.log_save_in(s,&l,WAITING_NAMESPACE);se!=.None || store.commit(s)!=.None {
+        fail(c,500,"the store does not take the user: see the node's disk")
+        return
+    }
+    c.h.waiting[slot]={used=true,user=l.id,made=c.h.now}
+    // The genesis's assertion is the passkey's, made for this user alone and
+    // kept once: it signs the user in, with no further prompt.
+    _,cookie:=session_new(c.h,l.id,f.web_keys[0].key,credential)
+    j:=json_make()
+    json_object(&j)
+    json_member_hash(&j,"user",l.id)
+    json_member_string(&j,"name",user_name(&f))
+    json_end_object(&j)
+    json_response(c,&j,201)
+    c.response.headers=cookie
+}
+
+// Saves a log with the entries the store keeps of it already, so a log from a
+// browser only adds to the stored one, and tells the peers of the runner.
+@(private)
+log_keep :: proc(h:^Hub,l:^kai.Log) -> string {
+    s:=store_of(h)
+    name:[64]u8
+    if address,e:=store.ref_get(s,kai.log_namespace(l.kind),kai.log_name(l.id,&name));e==.None {
+        if _,le:=kai.log_load(s,l,address,false);le!=.None {return "the store's copy of the log does not read: see the node's disk"}
+    }
+    if _,e:=kai.log_save(s,l);e!=.None {return "the store does not take the log: see the node's disk"}
+    if store.commit(s)!=.None {return "the store does not commit: see the node's disk"}
+    kai.runner_changed(runner_of(h),kai.log_namespace(l.kind),store.hex(l.id,&name))
+    return ""
+}
+
+// --- approvals ---
+
+// A new approval. One a browser asks without a session (a login, a passkey
+// link) takes the place of the oldest of its address past
+// APPROVALS_PER_ADDRESS, or of the oldest of all when the table is full.
+@(private)
+approval_new :: proc(c:^Call,kind:Approval_Kind) -> ^Approval {
+    h:=c.h
+    asker:[16]u8
+    if c.conn!=nil {asker=c.conn.address}
+    anonymous:=kind!=.Entry && kind!=.Device
+    slot,mine,oldest,oldest_mine:=-1,0,-1,-1
+    for &a,i in h.approvals {
+        if a.used && h.now-a.created>APPROVAL_SECONDS {approval_clear(&a)}
+        if !a.used {
+            if slot<0 {slot=i}
+            continue
+        }
+        if a.kind==.Entry || a.kind==.Device {continue}
+        if oldest<0 || a.serial<h.approvals[oldest].serial {oldest=i}
+        if a.asker==asker {
+            mine+=1
+            if oldest_mine<0 || a.serial<h.approvals[oldest_mine].serial {oldest_mine=i}
+        }
+    }
+    if anonymous && mine>=APPROVALS_PER_ADDRESS {slot=oldest_mine}
+    if slot<0 && anonymous {slot=oldest}
+    if slot<0 {
+        fail(c,503,"too many approvals wait: try again in a few minutes")
+        return nil
+    }
+    a:=&h.approvals[slot]
+    if a.used {approval_clear(a)}
+    h.approvals_made+=1
+    a^={used=true,kind=kind,created=h.now,asker=asker,serial=h.approvals_made}
+    crypto.rand_bytes(a.id[:])
+    crypto.rand_bytes(a.secret[:])
+    crypto.rand_bytes(a.challenge[:])
+    a.body=make([dynamic]u8,h.allocator)
+    return a
+}
+
+@(private)
+approval_answer :: proc(c:^Call,a:^Approval) {
+    link:=approval_link(c.h,a)
+    j:=json_make()
+    json_object(&j)
+    json_member_hex(&j,"id",a.id[:])
+    json_key(&j,"secret")
+    json_base64(&j,a.secret[:])
+    json_member_string(&j,"link",link)
+    json_member_string(&j,"command",strings.concatenate({"mirai kai web approve '",link,"'"},context.temp_allocator))
+    json_end_object(&j)
+    json_response(c,&j,201)
+}
+
+approval_link :: proc(h:^Hub,a:^Approval) -> string {
+    id:[2*len(a.id)]u8
+    return strings.concatenate({"kai://approve?origin=",percent_encode(h.origin),"&id=",kai.hex_text(a.id[:],id[:])},context.temp_allocator)
+}
+
+HEX_UPPER :: [16]u8{'0','1','2','3','4','5','6','7','8','9','A','B','C','D','E','F'}
+
+percent_encode :: proc(text:string) -> string {
+    out:=make([dynamic]u8,0,len(text)*3,context.temp_allocator)
+    for ch in transmute([]u8)text {
+        switch ch {
+        case 'a'..='z','A'..='Z','0'..='9','-','.','_','~': append(&out,ch)
+        case:
+            digits:=HEX_UPPER
+            append(&out,'%',digits[ch>>4],digits[ch&15])
+        }
+    }
+    return string(out[:])
+}
+
+@(private)
+approval_find :: proc(c:^Call) -> ^Approval {
+    id:[16]u8
+    if !hex_parse(path_param(c,"id"),id[:]) {
+        fail(c,400,"an approval is named by its id, 32 hex")
+        return nil
+    }
+    for &a in c.h.approvals {
+        if !a.used || a.id!=id {continue}
+        if c.h.now-a.created>APPROVAL_SECONDS && a.state==.Waiting {a.state=.Expired}
+        return &a
+    }
+    fail(c,404,"no such approval: it expired or was never made; ask again in the browser")
+    return nil
+}
+
+@(private)
+route_passkey_link :: proc(c:^Call) {
+    Body :: struct {user,credential,cose:string}
+    b:Body
+    if !body_parse(c,&b) {return}
+    user,uok:=hash_parse(b.user)
+    credential,cok:=base64_parse(b.credential,255)
+    cose,kok:=base64_parse(b.cose,kai.COSE_KEY_MAX)
+    if !uok || !cok || !kok || len(credential)==0 {
+        fail(c,400,"user is 64 hex; credential and cose are base64url of the new credential's id and COSE key")
+        return
+    }
+    if _,parsed:=kai.cose_key_parse(cose);!parsed {
+        fail(c,400,"the passkey is not an Ed25519, P-256 or RSA-256 COSE key: register a passkey of those")
+        return
+    }
+    if user_fold_of(c.h,user)==nil {
+        fail(c,404,"no such user on this node: its devices sync it here once its org lists the node")
+        return
+    }
+    a:=approval_new(c,.Web_Key)
+    if a==nil {return}
+    a.user=user
+    a.credential_len=copy(a.credential[:],credential)
+    a.cose_len=copy(a.cose[:],cose)
+    approval_answer(c,a)
+}
+
+// The fold of user as the node holds it: among the user logs its agents
+// sync, or waiting here, folded in the temp allocator.
+user_fold_of :: proc(h:^Hub,user:kai.Log_Id) -> ^kai.User_Fold {
+    if u:=user_synced(h,user);u!=nil {return u}
+    return waiting_fold(h,user)
+}
+
+// The fold of user among the user logs the node's agents sync.
+user_synced :: proc(h:^Hub,user:kai.Log_Id) -> ^kai.User_Fold {
+    for o in runner_of(h).orgs {
+        for u in o.agent.user_list {
+            if u.log.id==user {return u}
+        }
+    }
+    return nil
+}
+
+@(private)
+route_approval_new :: proc(c:^Call) {
+    Body :: struct {kind:string,draft:Draft_Body}
+    b:Body
+    if !body_parse(c,&b) {return}
+    switch b.kind {
+    case "login":
+        a:=approval_new(c,.Login)
+        if a==nil {return}
+        approval_answer(c,a)
+    case "device":
+        // A browser links a machine to its user: the machine offers itself, the passkey signs its Device_Add.
+        if c.session==nil {
+            fail(c,401,"linking a device is asked from a session: sign in first")
+            return
+        }
+        a:=approval_new(c,.Device)
+        if a==nil {return}
+        a.user=c.session.user
+        approval_answer(c,a)
+    case "entry":
+        if c.session==nil {
+            fail(c,401,"a write's approval is asked from a session: sign in first")
+            return
+        }
+        d,ok:=draft_build(c,&b.draft)
+        if !ok {return}
+        a:=approval_new(c,.Entry)
+        if a==nil {return}
+        a.user,a.type,a.log=c.session.user,d.type,d.log
+        append(&a.body,..d.body)
+        approval_answer(c,a)
+    case:
+        fail(c,400,"kind is login, entry or device")
+    }
+}
+
+@(private)
+route_approval_get :: proc(c:^Call) {
+    a:=approval_find(c)
+    if a==nil {return}
+    kinds:=APPROVAL_KIND_TEXT
+    states:=APPROVAL_STATE_TEXT
+    j:=json_make()
+    json_object(&j)
+    json_member_string(&j,"kind",kinds[a.kind])
+    json_member_string(&j,"state",states[a.state])
+    json_member_string(&j,"rp_id",c.h.desc.rp_id)
+    json_member_string(&j,"origin",c.h.origin)
+    switch a.kind {
+    case .None:
+    case .Login:
+        json_key(&j,"challenge")
+        json_base64(&j,a.challenge[:])
+    case .Entry:
+        json_member_hash(&j,"user",a.user)
+        types:=TYPE_TEXT
+        json_member_string(&j,"type",types[a.type])
+        json_member_hash(&j,"log",a.log)
+        json_key(&j,"body")
+        json_base64(&j,a.body[:])
+    case .Web_Key:
+        json_member_hash(&j,"user",a.user)
+        json_key(&j,"credential")
+        json_base64(&j,a.credential[:a.credential_len])
+        json_key(&j,"cose")
+        json_base64(&j,a.cose[:a.cose_len])
+    case .Device:
+        json_member_hash(&j,"user",a.user)
+        // Linked once the user's log names the device: the device then takes the log.
+        if u:=user_fold_of(c.h,a.user);u!=nil && a.offered && kai.user_device_active(u,a.offer.device) {
+            a.state=.Approved
+            states:=APPROVAL_STATE_TEXT
+            json_member_string(&j,"linked",states[a.state])
+            json_key(&j,"entries")
+            json_array(&j)
+            for i in u.log.order {json_base64(&j,u.log.items[i].bytes)}
+            json_end_array(&j)
+        }
+    }
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+// The offer of a machine to be linked, as the browser that links it reads it.
+@(private)
+offer_write :: proc(j:^Json,a:^Approval) {
+    json_key(j,"offer")
+    json_object(j)
+    device,dh,kem,proof:=a.offer.device,a.offer.dh,a.offer.kem,a.offer.proof
+    json_member_hex(j,"device",device[:])
+    json_member_hex(j,"dh",dh[:])
+    json_key(j,"kem")
+    json_base64(j,kem[:])
+    json_key(j,"proof")
+    json_base64(j,proof[:])
+    json_member_string(j,"name",string(a.offer_name[:a.offer_name_len]))
+    code:[9]u8
+    json_member_string(j,"code",kai.device_link_code(device,&code))
+    json_end_object(j)
+}
+
+// What a device signs to let a browser in: the label, the relying party and the challenge.
+login_message :: proc(rp_id:string,challenge:[32]u8) -> []u8 {
+    x:=challenge
+    return transmute([]u8)strings.concatenate({LABEL_WEB_LOGIN,rp_id,string(x[:])},context.temp_allocator)
+}
+
+@(private)
+route_approval_answer :: proc(c:^Call) {
+    a:=approval_find(c)
+    if a==nil {return}
+    if a.state!=.Waiting {
+        fail(c,409,"the approval is answered or expired already")
+        return
+    }
+    Body :: struct {device,signature,entry,dh,kem,proof,name:string}
+    b:Body
+    if !body_parse(c,&b) {return}
+    switch a.kind {
+    case .None:
+    case .Device:
+        offer:kai.Device_Add_Body
+        proof,pok:=base64_parse(b.proof,64)
+        kem,kok:=base64_parse(b.kem,kai.KEM_PUBLIC)
+        if !hex_parse(b.device,offer.device[:]) || !hex_parse(b.dh,offer.dh[:]) || !pok || len(proof)!=64 || !kok || !kai.kem_valid(kem) || len(b.name)==0 || len(b.name)>kai.NAME_MAX {
+            fail(c,400,"device and dh are the machine's keys (64 hex each), kem base64url of its ML-KEM-768 key, proof base64url of its signature over LABEL_DEVICE || the user's log id || dh || BLAKE3(kem), name 1 to 64 bytes")
+            return
+        }
+        copy(offer.proof[:],proof)
+        copy(offer.kem[:],kem)
+        if !kai.device_proof_valid(offer.device,transmute([32]u8)a.user,offer.dh,offer.kem[:],offer.proof) {
+            fail(c,401,"the proof is not the device's over this user")
+            return
+        }
+        if a.offered {
+            fail(c,409,"a machine offered itself to this link already: ask a new link in the browser")
+            return
+        }
+        a.offered,a.offer=true,offer
+        a.offer_name_len=copy(a.offer_name[:],b.name)
+        j:=json_make()
+        json_object(&j)
+        code:[9]u8
+        json_member_string(&j,"code",kai.device_link_code(offer.device,&code))
+        json_end_object(&j)
+        json_response(c,&j)
+        return
+    case .Login:
+        device:kai.Key
+        signature,sok:=base64_parse(b.signature,64)
+        if !hex_parse(b.device,device[:]) || !sok || len(signature)!=64 {
+            fail(c,400,"device is the device key (64 hex) and signature base64url of its Ed25519 signature")
+            return
+        }
+        public:ed25519.Public_Key
+        if !ed25519.public_key_set_bytes(&public,device[:]) || !ed25519.verify(&public,login_message(c.h.desc.rp_id,a.challenge),signature) {
+            fail(c,401,"the signature is not the device's over this approval")
+            return
+        }
+        user:^kai.User_Fold
+        for o in runner_of(c.h).orgs {
+            for u in o.agent.user_list {
+                if kai.user_device_active(u,device) {user=u}
+            }
+        }
+        if user==nil {
+            fail(c,403,"the device is no active device of a user this node knows")
+            return
+        }
+        a.user,a.device,a.state=user.log.id,device,.Approved
+    case .Entry,.Web_Key:
+        bytes,ok:=base64_parse(b.entry,kai.ENTRY_BODY_MAX+4096)
+        if !ok {
+            fail(c,400,"entry is base64url of the signed entry")
+            return
+        }
+        e,de:=kai.entry_decode(bytes)
+        if de!=.None || e.sig_kind!=.Ed25519 {
+            fail(c,400,"the entry does not read, or it is not signed by a device")
+            return
+        }
+        expected_type,expected_log,expected_body:=a.type,a.log,a.body[:]
+        if a.kind==.Web_Key {
+            body,be:=kai.web_key_add_body(a.credential[:a.credential_len],a.cose[:a.cose_len],c.h.desc.rp_id)
+            if be!=.None {
+                fail(c,400,"the passkey does not make a Web_Key_Add")
+                return
+            }
+            expected_type,expected_log,expected_body=.Web_Key_Add,a.user,body
+        }
+        if e.type!=expected_type || e.log_id!=expected_log || string(e.body)!=string(expected_body) {
+            fail(c,400,"the entry is not the one the approval asks for")
+            return
+        }
+        u:=user_fold_of(c.h,a.user)
+        if u==nil || !kai.user_device_active(u,e.author) {
+            fail(c,403,"the entry is not signed by an active device of the user")
+            return
+        }
+        // The device tells its peers of the entry as it signs it: the node may hold it already.
+        address,status,why:=entry_keep(c,bytes,a.user)
+        if status==409 {
+            address=store.address_of_bytes(bytes)
+        } else if status!=0 {
+            fail(c,status,why)
+            return
+        }
+        a.address,a.device,a.state=address,e.author,.Approved
+    }
+    states:=APPROVAL_STATE_TEXT
+    j:=json_make()
+    json_object(&j)
+    json_member_string(&j,"state",states[a.state])
+    json_end_object(&j)
+    json_response(c,&j)
+}
+
+@(private)
+route_approval_state :: proc(c:^Call) {
+    a:=approval_find(c)
+    if a==nil {return}
+    Body :: struct {secret:string}
+    b:Body
+    if !body_parse(c,&b) {return}
+    secret,ok:=base64_parse(b.secret,32)
+    if !ok || len(secret)!=32 || crypto.compare_constant_time(secret,a.secret[:])!=1 {
+        fail(c,403,"the secret is not this approval's")
+        return
+    }
+    states:=APPROVAL_STATE_TEXT
+    j:=json_make()
+    json_object(&j)
+    json_member_string(&j,"state",states[a.state])
+    if a.state==.Approved && a.address!={} {json_member_hash(&j,"address",a.address)}
+    if a.kind==.Device && a.offered {
+        offer_write(&j,a)
+        recovered:=false
+        if u:=user_fold_of(c.h,a.user);u!=nil {recovered=u.recovery!={}}
+        json_member_bool(&j,"recovered",recovered)
+    }
+    json_end_object(&j)
+    json_response(c,&j)
+    if a.kind==.Login && a.state==.Approved && !a.taken {
+        a.taken=true
+        _,cookie:=session_new(c.h,a.user,{},nil,a.device)
+        c.response.headers=cookie
+    }
+}

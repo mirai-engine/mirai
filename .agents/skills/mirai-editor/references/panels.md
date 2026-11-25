@@ -18,10 +18,10 @@ or console; component/field help lives only in [inspector](inspector.md#descript
   omit scene graphics and add variants/Preview sunlight; Watch hides edit tools.
   `Graphics_Settings.show_fps` sits beside Graphics (top-right in standalone).
 - **Rail (44 pt) & left panel (320 pt):** Create, Content Browser (startup default), Hierarchy
-  (scene outliner or `Asset_Document_Provider.hierarchy`), World, AI, Source Control. Scene draws
-  16 pt behind rounded right corners. `DOCUMENT_LIBRARY_TABS` filters tabs per document type (prefab
-  omits World; asset doc keeps Content/AI/Git + optional Hierarchy). In Play the panel minimizes
-  (only AI opens when paused).
+  (scene outliner or `Asset_Document_Provider.hierarchy`), World, AI, [Kai](kai.md#working-copy).
+  Scene draws 16 pt behind rounded right corners. `DOCUMENT_LIBRARY_TABS` filters tabs per document
+  type (prefab omits World; asset doc keeps Content/AI/Kai + optional Hierarchy). In Play the panel
+  minimizes (only AI opens when paused).
 - **Details (right panel):** shown on selection (or deleted-entity review); replaced by an active
   plugin tool or open project panel (`tool_panel_shown`, closed by Escape or selection change).
   **Floating** (default, 8 pt inset) or **Docked** (`Layout` preference, global or per doc type;
@@ -136,9 +136,8 @@ emitter section:
 in open project; full window in `--launcher` (`mirai edit` without project, unless "Open last
 project"). Opening builds editor lib, packages and shaders on a background thread (cancellable) and
 hands off (`--from-launcher` returns to launcher if shader compile is cancelled). New project copies
-a template (`build.project_create`, optional `--git-init` + LFS) and writes/installs chosen engine,
-catalog or git plugins. Rows read `.git` branch without spawning git (`--headless` skips recent
-list) and show manifest `thumbnail`, captured scene preview, or initial.
+a template (`build.project_create`) and writes/installs chosen engine, catalog or git plugins. Rows
+show manifest `thumbnail`, captured scene preview, or initial (`--headless` skips recent list).
 
 ## Content browser
 

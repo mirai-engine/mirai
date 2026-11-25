@@ -15,7 +15,7 @@ import "mirai:std/serial"
 // type: a build generates into the package its assets go with (game/ for the
 // project, runtime/ for a plugin) the struct of its rows, its <NAME>_DEFAULT
 // and the enums of its enum columns, in one file per package. The file is
-// kept by git, so the package compiles and tests without a build, and a build
+// kept under version control, so the package compiles and tests without a build, and a build
 // writes it only when a table says something else. The generator reads the
 // struct back as a record type by the attribute it writes on it.
 
