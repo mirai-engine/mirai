@@ -53,12 +53,12 @@ only on change (`Player_Hud`, `Portal_Hud`, `Raft_Hud`, `Dig_Hud`, `Vfx_Gallery_
 
 | File | Key components & steps |
 | --- | --- |
-| `game.odin` | `@(actions) Action`, `game_use` (doors/swatches/cube throw), `game_projectiles` (`react`, `destruct.damage`), `game_glow` (sole writer of `Material_Values`) |
+| `game.odin` | `@(actions) Action`, `game_doors`/`game_swatches` (their `Interactable` used by the player's `Interactor`, `Interaction_Events`), `game_throw`, `game_projectiles` (`react`, `destruct.damage`), `game_glow` |
 | `control.odin` | `Follow`, `game_dogs` (`server`), `game_seats`, `game_follow` (`input.move_set`), `game_barker` (`bark` / `intro.bark`) |
 | `raft.odin` | `Diver` oxygen over `head_depth`, `raft_breath` respawn on `Raft_Game`, `raft_hud` |
 | `portal_game.odin` | `Portal_Gun`/`Portal_Mouth`/`Portal_Surface`/`Portal_Cube`/`Grill`/`Floor_Button`/`Grill_Passes`; `portal_links` sole writer of `Portal` and `Hidden` |
 | `dig_site.odin` | `Dig_Site`, `dig_site` (`react`, server-only: `terrain.dig`, `Dig_Inventory` from `Terrain_Digs`, `Dig_Pickup`), `dig_hud` |
-| `horror.odin` | `Light_Switch`, `House_Lamp`, `Flashlight`, `horror_switches`, `horror_lights` (`react`), `horror_glow` |
+| `horror.odin` | `Light_Switch` (an `Interactable`), `House_Lamp`, `Flashlight`, `horror_switches`, `horror_lights` (`react`, lights and globes) |
 | `ai_arena.odin` | [AI arenas](#ai-arenas): `arena_think`, `arena_targets`, `arena_carts` |
 | `showcase.odin` | `Showcase`, `game_showcase` (`UI_Events`, `Animation_Events` `top` marker) |
 | `animation_gallery*.odin` | [Animation gallery](animation-gallery.md#code-demogame); `gallery_move_inputs` (`after="gallery_player_move"`) |

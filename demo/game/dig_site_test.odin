@@ -10,7 +10,6 @@ import terrain "plugins:terrain/runtime"
 Dig_World :: struct {
     using world:Test_World,
     sites:core.Table(Dig_Site),
-    sites_state:core.Table(Dig_Site_State),
     pickups:core.Table(Dig_Pickup),
     players:core.Table(Player),
     worlds:core.Table(core.World_Transform),
@@ -43,7 +42,7 @@ the_inventory_of_the_dig_lives_on_a_root_that_keeps :: proc(t:^testing.T) {
     core.add(&w.worlds,drop,core.World_Transform{})
     test_world_settle(w)
     tick :: proc(w:^Dig_World,commands:core.Commands) {
-        dig_site(commands,core.read(&w.sites),&w.sites_state,core.read(&w.pickups),core.read(&w.players),{aims=dig_aims(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=1,dt=1.0/60,playing=true},nil)
+        dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),{aims=dig_aims(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=1,dt=1.0/60,playing=true})
         test_world_settle(w)
     }
     tick(w,commands)
@@ -63,10 +62,10 @@ the_pit_digs_by_seconds_and_a_copy_digs_on :: proc(t:^testing.T) {
     dug :: proc(w:^Dig_World,hz,from,to:u64) -> u32 {
         commands:=core.commands(w,test_world_info(w))
         for tick in from..<to {
-            dig_site(commands,core.read(&w.sites),&w.sites_state,core.read(&w.pickups),core.read(&w.players),{aims=dig_aims(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=tick,dt=1/f32(hz),playing=true},nil)
+            dig_site(commands,&w.sites,core.read(&w.pickups),core.read(&w.players),{aims=dig_aims(w)},&w.requests,core.ref(&w.digs),&w.inventories,{tick=tick,dt=1/f32(hz),playing=true})
             test_world_settle(w)
         }
-        return core.at(&w.sites_state,0).dug
+        return core.at(&w.sites,0).dug
     }
     for hz in ([]u64{60,120}) {
         w:=new(Dig_World)

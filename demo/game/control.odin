@@ -39,7 +39,7 @@ FOLLOW_DEFAULT :: Follow{distance=2}
 @(component,replicated)
 Barker :: struct {
     count:u32,
-    flash_until:u64, // the tick its nose stops glowing at
+    flash:core.Countdown, // its nose glows while it runs
 }
 
 BARK_FLASH_SECONDS :: 0.3
@@ -162,7 +162,7 @@ game_barker :: proc(
         if intro_bark || inp.pressed(actions,core.entity_at(barkers,row),.Bark) {
             barker:=core.edit_at(barkers,row)
             barker.count+=1
-            barker.flash_until=core.deadline(time,BARK_FLASH_SECONDS)
+            core.countdown_start(&barker.flash,time,BARK_FLASH_SECONDS)
         }
     }
 }

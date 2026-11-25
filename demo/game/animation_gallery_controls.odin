@@ -186,9 +186,10 @@ gallery_panels :: proc(panels:^core.Table(Gallery_Panel_Setup,.Read),outputs:^co
         if item.kind==.Sequence {hint="playing    E: back" if progress.playing else "paused    E: back"}
         base.text_set(next.hint[:],hint)
         e:=core.entity_at(panels,row)
-        old,shown:=core.get(outputs,e)
-        if !shown || old!=next {
-            if output:=demo_state(outputs,e,Gallery_Panel{},problems);output!=nil {output^=next}
+        if old,shown:=core.get(outputs,e);shown {
+            if old!=next {core.edit(outputs,e)^=next}
+        } else if !core.add(outputs,e,next) {
+            core.report(problems,e,"demo.gallery","out of memory for what the panel of a gallery station shows")
         }
     }
 }

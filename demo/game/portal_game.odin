@@ -34,12 +34,9 @@ FALL_LIMIT :: f32(-30)          // m: a cube below this height goes back to wher
 Portal_Color :: enum u8 {Blue,Orange}
 
 @(component,description="The portal gun of the player: it opens the two portals and carries a cube.")
-Portal_Gun :: struct {}
-
-@(component,derived)
-Portal_Gun_State :: struct {
-    held:core.Entity, // the cube it carries
-    shots:u32,
+Portal_Gun :: struct {
+    held:core.Entity `mirai:"transient"`, // the cube it carries
+    shots:u32 `mirai:"transient"`,
 }
 
 @(component,description="One of the two portals of the gun: the entity it moves, its opening and the film that shows while the other one is not placed.")
@@ -55,10 +52,9 @@ Portal_Mouth :: struct {
 Portal_Surface :: struct {}
 
 @(component,description="A cube of the chamber. It goes back to where it started when it passes a grill or falls out of the chamber.")
-Portal_Cube :: struct {}
-
-@(component,derived)
-Portal_Cube_State :: struct {home:[3]f32}
+Portal_Cube :: struct {
+    home:[3]f32 `mirai:"transient"`,
+}
 
 @(component,description="A grill of light: who walks through it loses the portals, and a cube that goes through it goes back to where it started.")
 Grill :: struct {}
@@ -67,10 +63,8 @@ Grill :: struct {}
 Floor_Button :: struct {
     door:core.Entity,
     plate:core.Entity, // glows while pressed
+    pressed:bool `mirai:"transient"`,
 }
-
-@(component,derived)
-Floor_Button_State :: struct {pressed:bool}
 
 // A ray of the gun: it goes through a portal that leads somewhere, once, and on from its exit.
 portal_ray :: proc(physics:core.Ref(phys.Physics_State),openings:^core.Table(portals.Portal,$A),worlds:^core.Table(core.World_Transform,$B),origin,direction:[3]f32,ignore:core.Entity) -> (hit:phys.Hit,ok:bool) {
@@ -180,20 +174,18 @@ portal_fit :: proc(wall:mm.Transform,box:Surface_Box,point,normal,up:[3]f32,othe
 // The shots, the carried cube and the throws of whoever has a portal gun.
 @(step="fixed")
 portal_gun :: proc(
-    guns:^core.Table(Portal_Gun,.Read),states:^core.Table(Portal_Gun_State),mouths:^core.Table(Portal_Mouth),surfaces:^core.Table(Portal_Surface,.Read),cubes:^core.Table(Portal_Cube,.Read),
+    guns:^core.Table(Portal_Gun),mouths:^core.Table(Portal_Mouth),surfaces:^core.Table(Portal_Surface,.Read),cubes:^core.Table(Portal_Cube,.Read),
     rims:^core.Table(portals.Portal_Rim,.Read),openings:^core.Table(portals.Portal,.Read),
     colliders:^core.Table(phys.Collider,.Read),controls:Demo_Controls,
     transforms:^core.Table(core.Transform),physics:core.Ref(phys.Physics_State),bodies:^phys.Body_Requests,
-    characters:^core.Table(core.Motion,.Read),passes:core.Ref(Grill_Passes),problems:^core.Problems,
+    characters:^core.Table(core.Motion,.Read),passes:core.Ref(Grill_Passes),
 ) {
     // A player that went through a grill loses the portals and what it carries; a cube that did is let go.
     for passed in passes.queue.items {
         for row in 0..<core.count(guns) {
-            player:=core.entity_at(guns,row)
-            gun,_:=core.get(states,player)
-            if player!=passed && gun.held!=passed {continue}
-            if gun.held!=core.NONE {core.edit(states,player).held=core.NONE}
-            if player!=passed {continue}
+            if core.entity_at(guns,row)!=passed && core.at(guns,row).held!=passed {continue}
+            if core.at(guns,row).held!=core.NONE {core.edit_at(guns,row).held=core.NONE}
+            if core.entity_at(guns,row)!=passed {continue}
             for at in 0..<core.count(mouths) {
                 if core.at(mouths,at).placed {core.edit_at(mouths,at).placed=false}
             }
@@ -201,7 +193,7 @@ portal_gun :: proc(
     }
     for row in 0..<core.count(guns) {
         player:=core.entity_at(guns,row)
-        gun,_:=core.get(states,player)
+        gun:=core.at(guns,row)
         eye,aim,_,ok:=inp.aim(controls.aims,player)
         if !ok {continue}
         blue:=inp.pressed(controls.actions,player,.Portal_Blue)
@@ -218,11 +210,11 @@ portal_gun :: proc(
             if blue {
                 walking,_:=core.get(characters,player)
                 phys.set_velocity(bodies,held,mm.quat_rotate(carry,aim*THROW_CUBE_SPEED+walking.linear))
-                core.edit(states,player).held=core.NONE
+                core.edit_at(guns,row).held=core.NONE
                 continue
             }
             if dropped {
-                core.edit(states,player).held=core.NONE
+                core.edit_at(guns,row).held=core.NONE
                 continue
             }
             gap:=target-cube.position
@@ -238,14 +230,12 @@ portal_gun :: proc(
             continue
         }
         if grab {
-            if hit,found:=phys.raycast(physics,eye,aim,HOLD_REACH,player);found && core.has(cubes,hit.entity) {
-                if state:=demo_state(states,player,Portal_Gun_State{},problems);state!=nil {state.held=hit.entity}
-            }
+            if hit,found:=phys.raycast(physics,eye,aim,HOLD_REACH,player);found && core.has(cubes,hit.entity) {core.edit_at(guns,row).held=hit.entity}
             continue
         }
         if !blue && !orange {continue}
         color:=blue?Portal_Color.Blue:Portal_Color.Orange
-        if state:=demo_state(states,player,Portal_Gun_State{},problems);state!=nil {state.shots+=1}
+        core.edit_at(guns,row).shots+=1
         hit,found:=portal_ray(physics,openings,controls.aims.worlds,eye,aim,player)
         if !found {continue}
         wall:=hit.collider
@@ -313,27 +303,28 @@ portal_links :: proc(mouths:^core.Table(Portal_Mouth,.Read),openings:^core.Table
 // buttons that something stands on, and the cubes that fell out.
 @(step="fixed",stage="react")
 portal_chamber :: proc(
-    cubes:^core.Table(Portal_Cube,.Read),homes:^core.Table(Portal_Cube_State),buttons:^core.Table(Floor_Button,.Read),states:^core.Table(Floor_Button_State),grills:^core.Table(Grill,.Read),guns:^core.Table(Portal_Gun,.Read),
+    cubes:^core.Table(Portal_Cube),buttons:^core.Table(Floor_Button),grills:^core.Table(Grill,.Read),guns:^core.Table(Portal_Gun,.Read),
     colliders:^core.Table(phys.Collider,.Read),worlds:^core.Table(core.World_Transform,.Read),events:core.Ref(phys.Physics_Events),
-    physics:core.Ref(phys.Physics_State),passes:^Grill_Passes,placer:core.Placer,problems:^core.Problems,
+    physics:core.Ref(phys.Physics_State),passes:^Grill_Passes,placer:core.Placer,
 ) {
+    home :: proc(cubes:^core.Table(Portal_Cube),placer:core.Placer,e:core.Entity) {
+        cube,_:=core.get(cubes,e)
+        core.place(placer,e,cube.home,at_rest=true)
+    }
     for row in 0..<core.count(cubes) {
         e:=core.entity_at(cubes,row)
         placed,has:=core.get(worlds,e)
         if !has {continue}
-        home,ready:=core.get(homes,e)
-        if !ready {
-            demo_state(homes,e,Portal_Cube_State{home=placed.position},problems)
+        if core.added(cubes,row) {
+            core.edit_at(cubes,row).home=placed.position
         } else if placed.position.y<FALL_LIMIT {
-            core.place(placer,e,home.home,at_rest=true)
+            home(cubes,placer,e)
         }
     }
     for event in events.overlap_begin.items {
         if !core.has(grills,event.collider) && !core.has(grills,event.entity) {continue}
         if core.has(cubes,event.other) {
-            if home:=core.staged(homes,event.other);home!=nil {
-                core.place(placer,event.other,home.home,at_rest=true)
-            }
+            home(cubes,placer,event.other)
             core.push(&passes.queue,event.other)
         } else if core.has(guns,event.other) {
             core.push(&passes.queue,event.other)
@@ -351,20 +342,18 @@ portal_chamber :: proc(
             count,_:=phys.overlap_box(physics,mm.transform_point(placed.transform,zone.center),zone.size*placed.scale,placed.rotation,found[:],filter)
             for other in found[:min(count,len(found))] {pressed||=core.has(cubes,other) || core.has(guns,other)}
         }
-        old,_:=core.get(states,e)
-        if old.pressed!=pressed {
-            if state:=demo_state(states,e,Floor_Button_State{},problems);state!=nil {state.pressed=pressed}
-        }
+        if core.at(buttons,row).pressed!=pressed {core.edit_at(buttons,row).pressed=pressed}
     }
 }
 
 // A door with buttons is open while one of them is pressed, besides when it was opened by hand.
-door_opened :: proc(open:bool,buttons:^core.Table(Floor_Button,.Read),states:^core.Table(Floor_Button_State,.Read),e:core.Entity) -> bool {
-    if open {return true}
+door_opened :: proc(doors:^core.Table(Door,$A),buttons:^core.Table(Floor_Button,$B),e:core.Entity) -> bool {
+    door,has:=core.get(doors,e)
+    if !has {return false}
+    if door.open {return true}
     for row in 0..<core.count(buttons) {
-        if core.at(buttons,row).door!=e {continue}
-        state,_:=core.get(states,core.entity_at(buttons,row))
-        if state.pressed {return true}
+        button:=core.at(buttons,row)
+        if button.door==e && button.pressed {return true}
     }
     return false
 }
@@ -382,14 +371,13 @@ Portal_Hud :: struct {
 
 @(step="frame")
 portal_hud :: proc(
-    huds:^core.Table(Portal_Hud),guns:^core.Table(Portal_Gun,.Read),states:^core.Table(Portal_Gun_State,.Read),mouths:^core.Table(Portal_Mouth,.Read),exhibits:^core.Table(Exhibit,.Read),
+    huds:^core.Table(Portal_Hud),guns:^core.Table(Portal_Gun,.Read),mouths:^core.Table(Portal_Mouth,.Read),exhibits:^core.Table(Exhibit,.Read),
     worlds:^core.Table(core.World_Transform,.Read),names:^core.Table(core.Name,.Read),
 ) {
     for row in 0..<core.count(huds) {
         body:=core.entity_at(huds,row)
         next:Portal_Hud
-        has_gun:=core.has(guns,body)
-        gun,_:=core.get(states,body)
+        gun,has_gun:=core.get(guns,body)
         if placed,has_world:=core.get(worlds,body);has_world && has_gun {
             next.holding,next.aiming=gun.held!=core.NONE,gun.held==core.NONE
             for at in 0..<core.count(mouths) {

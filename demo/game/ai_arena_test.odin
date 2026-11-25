@@ -15,7 +15,6 @@ import phys "plugins:physics/runtime"
 Arena_World :: struct {
     using world:Test_World,
     arenas:core.Table(AI_Arena),
-    built:core.Table(AI_Arena_State),
     worlds:core.Table(core.World_Transform),
     ids:core.Table(core.Id),
     names:core.Table(core.Name),
@@ -35,8 +34,7 @@ Arena_World :: struct {
     zombies:core.Table(Zombie),
 }
 
-// An arena is built once: the ticks after the first add no agents, though nothing writes the
-// AI_Arena that the scene authored.
+// An arena is built once: the ticks after the first add no agents.
 @(test)
 an_arena_builds_its_agents_once :: proc(t:^testing.T) {
     w:=new(Arena_World)
@@ -48,10 +46,10 @@ an_arena_builds_its_agents_once :: proc(t:^testing.T) {
     core.add(&w.arenas,arena,AI_Arena{kind=.Horde,agents=4})
     test_world_settle(w)
     for tick in u64(1)..=3 {
-        arena_build(commands,core.read(&w.arenas),&w.built,core.read(&w.worlds),{tick=tick,dt=1.0/60,playing=true},nil)
+        arena_build(commands,&w.arenas,core.read(&w.worlds),{tick=tick,dt=1.0/60,playing=true})
         test_world_settle(w)
         testing.expectf(t,core.count(&w.zombies)==4 && core.count(&w.characters)==5,"after tick %d: %d zombies and %d characters, want 4 and 5 (the runner)",tick,core.count(&w.zombies),core.count(&w.characters))
-        testing.expect(t,core.has(&w.built,arena))
+        testing.expect(t,core.at(&w.arenas,0).built)
     }
 }
 
