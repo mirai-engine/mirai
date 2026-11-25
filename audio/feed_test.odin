@@ -46,9 +46,9 @@ whole_sound :: proc(t:^testing.T,m:^Mixer,file:[]u8) -> Sound {
     return sound
 }
 
-// A loaded sound holds its bytes as they came, of a WAV its samples, and of
-// an Ogg Vorbis one setup for every sound encoded alike: less than
-// VORBIS_SETUP_BYTES. A feed holds its ring and, once a Vorbis sound is
+// A loaded sound holds its bytes as they came, of a WAV its samples, its
+// first FEED_START_FRAMES frames decoded (primed), and of an Ogg Vorbis one
+// setup for every sound encoded alike: less than VORBIS_SETUP_BYTES. A feed holds its ring and, once a Vorbis sound is
 // loaded, a workspace of a few tens of KB; nothing else grows with the sound.
 @(test)
 a_loaded_sound_holds_its_file_and_what_its_setup_shares :: proc(t:^testing.T) {
@@ -67,24 +67,25 @@ a_loaded_sound_holds_its_file_and_what_its_setup_shares :: proc(t:^testing.T) {
     error:Error
     sounds[0],error=sound_load(m,lossless)
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,mixer_stats(m).sound_bytes,len(lossless))
+    primed:=FEED_START_FRAMES*2*2
+    testing.expect_value(t,mixer_stats(m).sound_bytes,len(lossless)+primed)
     sounds[1],error=sound_load(m,wav)
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,mixer_stats(m).sound_bytes,len(lossless)+5000*2*2)
+    testing.expect_value(t,mixer_stats(m).sound_bytes,len(lossless)+5000*2*2+2*primed)
     testing.expect_value(t,mixer_stats(m).feed_bytes,feeds)
     before:=mixer_stats(m).sound_bytes
     sounds[2],error=sound_load(m,CLICK)
     testing.expect_value(t,error,Error.None)
-    setup:=mixer_stats(m).sound_bytes-before-len(CLICK)
+    setup:=mixer_stats(m).sound_bytes-before-len(CLICK)-FEED_START_FRAMES*2
     testing.expectf(t,setup>0 && setup<VORBIS_SETUP_BYTES,"a Vorbis setup holds %d bytes",setup)
     workspace:=m.feed_workspace
     testing.expectf(t,workspace>0 && workspace<48*1024,"the Vorbis workspace of a feed is %d bytes",workspace)
     testing.expect_value(t,mixer_stats(m).feed_bytes,feeds+workspace*len(m.feeds))
-    // Encoded alike: it adds its file alone.
+    // Encoded alike: it adds its file and its primed frames alone.
     before=mixer_stats(m).sound_bytes
     sounds[3],error=sound_load(m,SINE)
     testing.expect_value(t,error,Error.None)
-    testing.expect_value(t,mixer_stats(m).sound_bytes,before+len(SINE))
+    testing.expect_value(t,mixer_stats(m).sound_bytes,before+len(SINE)+FEED_START_FRAMES*2)
     for sound in sounds {voice_play(m,sound)}
     play_along(m,RATE/10)
     testing.expect_value(t,mixer_stats(m).feed_bytes,feeds+workspace*len(m.feeds))
@@ -164,6 +165,10 @@ a_storm_of_starts_places_every_voice_at_its_scheduled_sample :: proc(t:^testing.
         }
         mixer_batch_end(m)
         if threaded {fmt.printfln("a storm of %d starts decodes their first frames in %v",VOICES,time.tick_since(started))}
+        // From the beginning: the primed frames, and nothing decoded on this thread.
+        for &f in m.feeds[:VOICES] {
+            testing.expect(t,feed_phase(&f)==.Starting && f.decoder.vorbis==nil && sync.atomic_load(&f.write)==FEED_START_FRAMES)
+        }
         got:=test_render(m,FEED_START_FRAMES)
         pump_unlock(m)
         desc.volume=1.0/VOICES
@@ -178,6 +183,34 @@ a_storm_of_starts_places_every_voice_at_its_scheduled_sample :: proc(t:^testing.
         testing.expect_value(t,mixer_stats(m).voices_active,VOICES)
         testing.expect_value(t,mixer_stats(m).underruns,u64(0))
         mixer_destroy(m);mixer_destroy(reference)
+    }
+}
+
+// A start that the primed frames do not cover, from an offset, decodes its
+// first chunk on the thread that asks for it, and sounds at its sample too.
+@(test)
+a_start_from_an_offset_decodes_its_first_chunk_where_it_is_asked :: proc(t:^testing.T) {
+    defer free_all(context.temp_allocator)
+    m:=test_mixer(t,{decoder_thread=true})
+    defer mixer_destroy(m)
+    reference:=test_mixer(t)
+    defer mixer_destroy(reference)
+    sound,_:=sound_load(m,TONE_LONG)
+    whole:=whole_sound(t,reference,TONE_LONG)
+    pump_lock(m)
+    desc:=VOICE_DEFAULT
+    desc.offset=0.5
+    desc.start_frame=mixer_clock(m)+77
+    voice_play(m,sound,desc)
+    f:=&m.feeds[0]
+    testing.expect(t,feed_phase(f)==.Running && f.decoder.vorbis!=nil && sync.atomic_load(&f.write)>=FEED_START_FRAMES)
+    got:=test_render(m,FEED_START_FRAMES)
+    pump_unlock(m)
+    desc.start_frame=mixer_clock(reference)+77
+    voice_play(reference,whole,desc)
+    want:=test_render(reference,FEED_START_FRAMES)
+    for i in 0..<len(want) {
+        if !test_near(t,got[i],want[i],0) {break}
     }
 }
 

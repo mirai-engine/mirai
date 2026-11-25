@@ -155,8 +155,8 @@ lossless_voices_and_their_offsets_play_the_whole_decode :: proc(t:^testing.T) {
         sound,error:=sound_load(m,file)
         testing.expect_value(t,error,Error.None)
         testing.expect(t,sound_frames(m,sound)==FRAMES && sound_channels(m,sound)==2 && sound_sample_rate(m,sound)==RATE)
-        // What stays in memory is the file, not its decode.
-        testing.expect_value(t,mixer_stats(m).sound_bytes,len(file))
+        // What stays in memory is the file and its first frames decoded, not its decode.
+        testing.expect_value(t,mixer_stats(m).sound_bytes,len(file)+FEED_START_FRAMES*2*2)
         voice:=voice_play(m,sound)
         // Loading a Vorbis sound gives every feed a workspace and leaves the playing lossless decoder intact.
         _,load_error:=sound_load(m,TONE_LONG)

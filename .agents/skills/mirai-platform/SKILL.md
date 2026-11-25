@@ -90,7 +90,9 @@ SDL; `platform/audio_device.odin` is the only thing that joins the two.
   generated once and not regenerated. Mixers of tests have no decoder thread, so the output is
   exact; a test that uses one decodes with `mixer_decode` before each render.
 - Feeds: `audio/feed_test.odin` (memory held, a voice against the whole decode of its file with
-  loop, seek and pitch 2, a storm of starts at their scheduled samples, the same mix rendered
+  loop, seek and pitch 2, a storm of starts at their scheduled samples from the primed frames, a
+  start from an offset, a storm against the whole decode summed apart
+  (`audio/reference_test.odin`), the same mix rendered
   twice with and without a lagging decoder thread, a dry ring, refused files, and the audio and
   game threads sharing a mixer with the decoder thread) and `audio/lossless_test.odin`
   (lossless voices and offsets, damaged input).
