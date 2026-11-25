@@ -273,7 +273,8 @@ Play and Simulate run in-process on world copies
 ```
 
 - `play.audit`: live health check (same result shape as `scene.audit`; adds live UI cursor-capture
-  and keyboard-focus checks, NaN/stuck checks, and GPU/CPU frame budget checks). CLI gate:
+  and keyboard-focus checks, NaN/stuck checks, GPU/CPU frame budget checks and the visual checks of
+  the [audit gate](../../../../docs/game/testing/explore-qa.md#audit-gate)). CLI gate:
   `mirai play audit [project] [--ticks N] [--explore] [--copy]`.
 
 ```json

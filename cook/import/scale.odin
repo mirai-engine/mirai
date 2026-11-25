@@ -1,10 +1,11 @@
 package importer
 
 import "core:fmt"
+import mm "mirai:std/math"
 
 // The scale of a node is how big what it draws is, as the source says it.
 // A drawn mesh whose node and the nodes above it make it more than
-// SCALE_LARGE or less than SCALE_SMALL times its size is warned of: a source
+// SCALE_LARGE times larger or smaller than its size is warned of: a source
 // in other units (centimeters for meters gives a prop of 100 times its size).
 // With Import_Settings.bake_scale the import puts that scale into the mesh
 // instead: its vertices, bounds and colliders grow by it, its node takes a
@@ -20,7 +21,6 @@ import "core:fmt"
 // says why.
 
 SCALE_LARGE :: f32(2)
-SCALE_SMALL :: f32(0.5)
 // Of a scale: how far its axes may be from each other, and from 1, and still be the same.
 @(private="file") SCALE_TOLERANCE :: f32(1e-4)
 
@@ -51,10 +51,8 @@ model_scales :: proc(r:^Reader) {
         world[i]=node.transform.scale
         if node.parent>=0 && node.parent<i {world[i]*=world[node.parent]}
         if node.mesh<0 || len(r.meshes[node.mesh].skin)>0 {continue}
-        s:=world[i]
-        largest,smallest:=max(abs(s.x),abs(s.y),abs(s.z)),min(abs(s.x),abs(s.y),abs(s.z))
-        if largest<=SCALE_LARGE && smallest>=SCALE_SMALL {continue}
-        far:=largest if largest>SCALE_LARGE else smallest
+        far,beyond:=mm.scale_beyond(world[i],SCALE_LARGE)
+        if !beyond {continue}
         if extreme.count==0 {extreme.node,extreme.scale=i,far}
         extreme.count+=1
     }

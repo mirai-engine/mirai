@@ -12,6 +12,18 @@ Transform :: struct {
 
 TRANSFORM_IDENTITY :: Transform{{0,0,0},1,{1,1,1}}
 
+// How far a scale draws what it scales from its size: beyond when one of its
+// axes makes it more than limit times larger or smaller; far is that axis, the
+// largest when it grows and the smallest when it shrinks. One rule for the
+// import (a source in other units) and the audit of a scene (a prop at a
+// hundred times its size).
+scale_beyond :: proc "contextless" (s:Vec3,limit:f32) -> (far:f32,beyond:bool) {
+    largest,smallest:=max(abs(s.x),abs(s.y),abs(s.z)),min(abs(s.x),abs(s.y),abs(s.z))
+    if largest>limit {return largest,true}
+    if smallest<1/limit {return smallest,true}
+    return 1,false
+}
+
 // Mirai's hierarchy composition: the world transform of a child from the world
 // transform of its parent. Position, rotation and scale stay separate. The
 // child's position goes through the parent's rotation and scale, rotations

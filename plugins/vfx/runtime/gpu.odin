@@ -336,6 +336,7 @@ Pool :: struct {
     step:u64,                // steps simulated: the half of the events each one writes
     made:bool,               // the buffers have the size of capacity
     origin:[3]f32,           // what the places its buffers keep are relative to: the origin of the renderer when they last moved
+    left_out:core.Entity,    // the views draw none of its emitters: an audit counts the pixels they drew; NONE: none is left out
     gpu:[]Gpu_Emitter,       // the rows of the table of emitters, as the GPU has them once those of dirty are written
     frame_bytes:[dynamic]u8, // header, bones, grids, volumes, resources, stages and channel births
     draws:[]Pool_Draw,
@@ -1331,7 +1332,7 @@ draw_list :: proc(pool:^Pool,pass:^erender.Pass,meshes:bool,view:erender.Texture
     frustum:=mm.frustum_from_matrix(pass.view_projection)
     for at in pool.order[:pool.order_count] {
         s:=&pool.slots[at]
-        if s.desc.view!=view || s.desc.culled {continue}
+        if s.desc.view!=view || s.desc.culled || s.desc.owner==pool.left_out && pool.left_out!=core.NONE {continue}
         mesh:=s.desc.info.render==.Mesh
         if meshes && (!mesh || s.desc.blended) ||
             !meshes && mesh && !s.desc.blended && !s.desc.mixed {continue}

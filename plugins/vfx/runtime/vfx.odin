@@ -879,6 +879,7 @@ Particle_Status :: struct {
     generation:u32,
     emitted:u64,    // births since it began
     layers:u8,      // of its effect, the primary one among them
+    alive:bool,     // it started a particle within the life of its longest one, or its program starts them now: some show
 }
 
 // The status of the emitter at e, of the layer it names (0 the primary); of
@@ -906,6 +907,7 @@ status :: proc(clocks:^Particle_Clocks,emitter:Particle_Emitter,e:core.Entity,la
         if clock==nil {continue}
         each:=clock_status(clocks,emitter,clock,false)
         s.emitted+=each.emitted
+        s.alive||=each.alive
         if rank[each.state]>rank[s.state] {s.state=each.state}
     }
     return s,true
@@ -914,6 +916,7 @@ status :: proc(clocks:^Particle_Clocks,emitter:Particle_Emitter,e:core.Entity,la
 @(private)
 clock_status :: proc(clocks:^Particle_Clocks,emitter:Particle_Emitter,clock:^Emitter_Clock,culled:bool) -> (s:Particle_Status) {
     s={time=clock.time,generation=clock.generation,emitted=clock.emitted}
+    s.alive=clock.emitted>clock.first && clock.time-clock.last<f64(clock.emission.longest) || clock.time<clock.program_until
     emitting:=clocks.playing?emitter.active:emitter.preview
     over:=!emitter.loop && clock.time>=f64(clock.emission.duration) || !emitting
     switch {

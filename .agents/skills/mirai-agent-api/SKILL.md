@@ -89,9 +89,11 @@ mirai rpc --project . scene.audit '{"world":"Auto","blend_ratio_warn":0.35}'
 mirai rpc --project . play.audit '{"ticks":60,"frame_ms_budget":16.7}'
 ```
 
-Both return `{passed, flags: [{severity, area, code, entity, message, fix}], summary}`. `play.audit`
-adds live UI/input cursor-capture & keyboard-focus checks, NaN/stuck checks, and GPU/CPU frame
-budget checks.
+Both return `{passed, flags: [{severity, area, code, entity, message, fix}], summary}`, including
+missing programs, implausible scales and floating attachments. `play.audit` adds live UI/input,
+NaN/stuck and frame budget checks and, with a GPU, a frame mostly clipped or crushed, an exposure
+still adapting and an effect in view that draws no pixel. Codes and rules:
+[audit gate](../../../docs/game/testing/explore-qa.md#audit-gate).
 
 ### 2. Animation verification in Play vs isolated preview
 
