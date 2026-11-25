@@ -363,7 +363,10 @@ Numbered layers; a package only imports lower layers.
   `cook/author` is what an interface or a
   scene is authored with as a nested document, between its text and the file of the asset, on top of
   `asset`, `ui`, `core`, `host` and `engine/*`: the editor's `ui.*` methods and `mirai ui` and
-  `mirai scene` go through it, and the presets an entity is made from are there.
+  `mirai scene` go through it, and the presets an entity is made from are there. `cook/records`
+  is a table of game data (`.records`) as it is edited and its rows as text, which the editor's
+  `records.*` methods, `mirai records` and content tools share; `cook/content` is the writer of the
+  content tool of a project (`tools/content`, built and run by `mirai content`).
 - **7** `editor` and `editor/*`: engine-time; the editor, the JSON-RPC and MCP API,
   collaboration, prefabs and AI, whose chat search uses the C library of `third_party/sqlite`.
   `editor/kit` holds the widgets only the editor and its plugins use and reads its theme, a style

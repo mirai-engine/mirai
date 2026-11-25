@@ -14,7 +14,7 @@ import "mirai:std/base"
 // what the source names name.
 @(private)
 imported_id :: proc(o:^Out,source:string,kind:asset.Fourcc,name:string) -> base.Asset_Id {
-    root:=o.root
+    root:=o.root if o.root!="" else "."
     list,_,_:=asset.packages_load(root,context.temp_allocator)
     for &entry in list.packages {
         text,read_error:=os.read_entire_file(asset.package_file(root,entry.id),context.temp_allocator)
@@ -27,6 +27,6 @@ imported_id :: proc(o:^Out,source:string,kind:asset.Fourcc,name:string) -> base.
     }
     known,_:=asset.kind_info(kind)
     fmt.eprintfln("demo_content: the package the demo pins for %s has no %s named %s",source,known.name,name)
-    o.content.failed=true
+    o.w.failed=true
     return {}
 }

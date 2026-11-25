@@ -1,6 +1,7 @@
 package main
 
 import "mirai:asset"
+import "mirai:cook/content"
 import "core:fmt"
 import "mirai:core"
 import destruct "plugins:destruct/runtime"
@@ -51,10 +52,10 @@ physics_bake_free :: proc(w:^Physics_Bake) {
 physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
     id:=asset.content_id(PROJECT,"physics_cache","recorded")
     assets:host.Assets
-    if !host.assets_init(&assets,{root=path(o,"assets"),capacity=128}) {o.content.failed=true;return}
+    if !host.assets_init(&assets,{root=path(o,"assets"),capacity=128}) {o.w.failed=true;return}
     defer host.assets_destroy(&assets)
     app:=host.App{allocator=context.allocator,assets=&assets}
-    if !jobs.system_init(&app.jobs,{threads=0}) {o.content.failed=true;return}
+    if !jobs.system_init(&app.jobs,{threads=0}) {o.w.failed=true;return}
     defer jobs.system_destroy(&app.jobs)
     world:Physics_Bake;core.entities_init(&world.entities);defer physics_bake_free(&world)
     tables:=[3]core.Table_Info{
@@ -67,7 +68,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
     settings:=phys.Physics_Settings{bodies=128,shapes=256,contacts=1024,joints=1,hulls=128,breakables=1,pieces=128,bonds=512}
     problems:core.Problems
     defer core.value_free(&problems,type_info_of(core.Problems))
-    if !phys.state_make(&physics,&settings,&app.jobs,&problems) {o.content.failed=true;return}
+    if !phys.state_make(&physics,&settings,&app.jobs,&problems) {o.w.failed=true;return}
     bodies:phys.Body_Requests
     defer core.value_free(&bodies,type_info_of(phys.Body_Requests))
     // The pieces float for the cuts and fall from the strain on.
@@ -79,7 +80,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
     defer core.value_free(&events,type_info_of(destruct.Destruct_Events))
     collision:=phys.COLLISION_SETTINGS_DEFAULT
     floor,_:=phys.owned_body_create(&physics,{owner=1},{0,-.25,0},1)
-    if phys.owned_shape_create(&physics,&collision,floor,{collider=phys.collider_box({4,.25,4}),rotation=1})==0 {o.content.failed=true;return}
+    if phys.owned_shape_create(&physics,&collision,floor,{collider=phys.collider_box({4,.25,4}),rotation=1})==0 {o.w.failed=true;return}
     owner:=core.create(&world.entities)
     core.add(&world.transforms,owner,core.Transform{position={0,2,0},rotation=1,scale={1,1,1}})
     core.add(&world.meshes,owner,render.Mesh_Renderer{mesh=mesh,shape=.None,shadows=true})
@@ -87,7 +88,7 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
     config.interior=material_id("Cobblestone");core.add(&world.configs,owner,config);dense:=phys.COLLIDER_DEFAULT;dense.density=2000;core.add(&world.colliders,owner,dense)
     physics_bake_settle(&world,nil,nil)
     record:cache.Cache_Recorder
-    if error:=cache.record_init(&record,{frames=151,tracks=128,samples=151*128,vertices=32768,indices=65536,origin=mm.TRANSFORM_IDENTITY});error!=.None {o.content.failed=true;return}
+    if error:=cache.record_init(&record,{frames=151,tracks=128,samples=151*128,vertices=32768,indices=65536,origin=mm.TRANSFORM_IDENTITY});error!=.None {o.w.failed=true;return}
     defer cache.record_destroy(&record)
     source:=[1]capture.Capture_Source{{entity=owner,object=1}}
     source[0].materials[0],source[0].materials[1]=material_id("Bricks"),material_id("Cobblestone")
@@ -118,8 +119,8 @@ physics_cache_bake :: proc(o:^Out,fracture,mesh:base.Asset_Id) {
         physics_bake_settle(&world,nil,nil)
         if frame==15 || frame==30 {phys.apply_area(&bodies,volume.sphere(4),{position={0,2.5,0}},.6,impulse=true,per_mass=true)}
         error:=capture.capture_destructible(&record,f32(frame)/30,source[:],destruct.Destruct_View{core.ref(&physics),core.read(&world.states),core.read(&world.groups)},core.ref(&geometry))
-        if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.content.failed=true;return}
-        if frame<150 && !phys.simulate(&physics,&bodies,&app.jobs,1.0/30,gravity,&problems) {o.content.failed=true;return}
+        if error!=.None {fmt.eprintfln("demo_content: geometry bake frame %d: %v",frame,error);o.w.failed=true;return}
+        if frame<150 && !phys.simulate(&physics,&bodies,&app.jobs,1.0/30,gravity,&problems) {o.w.failed=true;return}
     }
-    asset.content_check(&o.content,"recorded.physics_cache",cache.cache_save(path(o,"assets/physics_gallery/recorded.physics_cache"),&o.content.types,id,cache.record_view(&record)))
+    content.check(&o.w,path(o,"assets/physics_gallery/recorded.physics_cache"),cache.cache_save(path(o,"assets/physics_gallery/recorded.physics_cache"),&o.w.types,id,cache.record_view(&record)))
 }

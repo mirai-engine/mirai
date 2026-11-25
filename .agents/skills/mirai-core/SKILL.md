@@ -295,7 +295,7 @@ A game is a struct in memory and a list of functions that transform it
   `plugins/terrain/runtime` (their `copy` and `swap`) and `editor` (opening a document and edit
   transaction). The copy of what changed: `core/world_copy_test.odin` and
   `plugins/multiplayer/runtime/world_copy_test.odin`.
-- Game data: `mirai test core`, `asset`, `cook/build`, `host` and `editor/records` (their
+- Game data: `mirai test core`, `asset`, `cook/build`, `host` and `cook/records` (their
   `records_test.odin`) and `editor` (`api_records_test.odin`: CSV, references by name and the
   columns the API takes); the grid, its columns and `records.*` in a session of the demo.
 - Meshes with UV1 on GPU: `mirai test engine/render` in the

@@ -1,6 +1,7 @@
 package main
 
 import "mirai:asset"
+import "mirai:cook/content"
 import "core:fmt"
 import importer "mirai:cook/import"
 import game "project:game"
@@ -17,7 +18,7 @@ gallery_set :: proc(o:^Out,folder,name:string,animation:base.Asset_Id,set:anim.C
     if set.match.info==({}) {set.match.info=anim.MATCH_INFO_DEFAULT}
     if set.motion.warp==({}) {set.motion.warp=anim.POSE_WARP_PROFILE_DEFAULT}
     file:=fmt.tprintf("assets/%s/%s.character",folder,name)
-    asset.content_check(&o.content,file,anim.character_save(path(o,file),&o.content.types,id,set))
+    content.check(&o.w,path(o,file),anim.character_save(path(o,file),&o.w.types,id,set))
 }
 
 // The .character sets of the gallery's Mirai over mirai_gallery.anim: its locomotion by matching

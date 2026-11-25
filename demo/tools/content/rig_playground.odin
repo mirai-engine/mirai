@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:math/linalg"
 import "core:os"
 import "mirai:asset"
+import "mirai:cook/content"
 import game "project:game"
 import "mirai:std/base"
 import "mirai:std/geom"
@@ -24,7 +25,7 @@ gallery_rigs :: proc(o:^Out) {
         world[i]={bone.translation,bone.rotation,bone.scale};if i>0 {world[i]=mm.transform_compose(world[i-1],world[i])}
         joints[i]={node=u32(i),inverse_bind=linalg.inverse(mm.transform_matrix(world[i]))}
     }
-    asset.content_check(&o.content,"rig-playground.skeleton",asset.skeleton_save(path(o,fmt.tprintf("%s/chain.skeleton",folder)),&o.content.types,{id=skeleton,bones=bones[:]}))
+    content.check(&o.w,path(o,fmt.tprintf("%s/chain.skeleton",folder)),asset.skeleton_save(path(o,fmt.tprintf("%s/chain.skeleton",folder)),&o.w.types,{id=skeleton,bones=bones[:]}))
     cube:geom.Mesh_Buffer;geom.mesh_buffer_init(&cube,context.temp_allocator);geom.cube_build(&cube)
     vertices:=make([dynamic]asset.Vertex,context.temp_allocator);indices:=make([dynamic]u32,context.temp_allocator);skin:=make([dynamic]asset.Skin_Vertex,context.temp_allocator)
     for i in 0..<8 {gallery_skin_box(&cube,&vertices,&indices,&skin,{{0,f32(i)*.28+.14,0},1,{.18,.25,.18}},u16(i),0xff6dbfe8 if i%2==0 else 0xffdaab4d)}

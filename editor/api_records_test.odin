@@ -5,7 +5,7 @@ import "core:testing"
 import "mirai:asset"
 import importer "mirai:cook/import"
 import "mirai:core"
-import "mirai:editor/records"
+import "mirai:cook/records"
 import "mirai:std/base"
 import "mirai:std/serial"
 
@@ -32,14 +32,14 @@ Csv_Weapon :: struct {
 // (small, big) and crates (small).
 @(private="file")
 Csv_Fixture :: struct {
-    refs:[1]Records_Api_Ref_Type,
+    refs:[1]records.Ref_Type,
     pouch_ids:[2]u64,
     pouch_names:[2]asset.Records_Name,
     crate_ids:[1]u64,
     crate_names:[1]asset.Records_Name,
-    tables:[2]Records_Api_Rows,
+    tables:[2]records.Rows,
     edit:records.Edit,
-    c:Records_Api_Context,
+    c:records.Context,
     session:Session,
 }
 
@@ -70,13 +70,13 @@ csv_fixture :: proc(f:^Csv_Fixture) {
 
 @(private="file")
 csv_import :: proc(f:^Csv_Fixture,text:string) -> (updated,added:int,rejected:[]Records_Api_Rejected,message:string) {
-    records,lines,failure:=importer.csv_records(text,context.temp_allocator)
+    cells,lines,failure:=importer.csv_records(text,context.temp_allocator)
     if failure!="" {return 0,0,nil,failure}
-    leaves:=records_api_leaves(&f.c)
-    columns:[]Records_Api_Column
-    if columns,message=records_api_header(&f.c,leaves,records[0]);message!="" {return}
+    leaves:=records.leaves_of(&f.c)
+    columns:[]records.Csv_Column
+    if columns,message=records.csv_header(&f.c,leaves,cells[0]);message!="" {return}
     default:=make([]u8,size_of(Csv_Weapon),context.temp_allocator)
-    updated,added,rejected=records_api_import_rows(&f.session,&f.c,leaves,columns,records[1:],lines[1:],default)
+    updated,added,rejected=records_api_import_rows(&f.session,&f.c,leaves,columns,cells[1:],lines[1:],default)
     return
 }
 
@@ -95,7 +95,7 @@ records_csv_columns_are_the_leaf_paths_of_the_row :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
     paths:=make([dynamic]string,context.temp_allocator)
-    for leaf in records_api_leaves(&f.c) {append(&paths,leaf.path)}
+    for leaf in records.leaves_of(&f.c) {append(&paths,leaf.path)}
     testing.expect_value(t,strings.join(paths[:],",",context.temp_allocator),"damage,rarity,stats.speed,stats.weight,position[0],position[1],title.key,lines[0].text.key,lines[0].pause,lines[1].text.key,lines[1].pause,ammo,label,tags.Fire,tags.Ice,sharp")
 }
 
@@ -133,9 +133,9 @@ records_csv_reads_quotes_line_breaks_and_empty_cells :: proc(t:^testing.T) {
 records_csv_header_names_the_wrong_column :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
-    leaves:=records_api_leaves(&f.c)
-    header :: proc(f:^Csv_Fixture,leaves:[]Records_Api_Leaf,columns:..string) -> string {
-        _,message:=records_api_header(&f.c,leaves,columns)
+    leaves:=records.leaves_of(&f.c)
+    header :: proc(f:^Csv_Fixture,leaves:[]records.Leaf,columns:..string) -> string {
+        _,message:=records.csv_header(&f.c,leaves,columns)
         return message
     }
     testing.expect_value(t,header(&f,leaves,"name","damage","title.key","lines[1].text.key","tags.Fire","position[1]","ammo"),"")
@@ -198,8 +198,8 @@ records_csv_export_reads_back :: proc(t:^testing.T) {
     csv_fixture(&f)
     _,_,_,message:=csv_import(&f,"name,damage,rarity,stats.weight,lines[1].pause,ammo,label,tags.Fire,title.key,lines[0].text.key\nsword,7,Epic,0.1,3,data/crates/small,\"x,y\",true,item.sword,lines.hi\naxe,1,,,,,,,,\n")
     testing.expect_value(t,message,"")
-    leaves:=records_api_leaves(&f.c)
-    text,columns:=records_api_csv(&f.c,leaves)
+    leaves:=records.leaves_of(&f.c)
+    text,columns:=records.csv_text(&f.c,leaves)
     testing.expect_value(t,columns,len(leaves)+1)
     testing.expectf(t,strings.has_prefix(text,"name,damage,rarity,stats.speed,stats.weight,position[0],position[1],title.key,lines[0].text.key,"),"%s",text)
     testing.expectf(t,strings.contains(text,"sword,7,Epic,0,0.1,0,0,item.sword,lines.hi,0,,3,data/crates/small,\"x,y\",true,false,false"),"%s",text)
@@ -229,22 +229,22 @@ records_csv_export_reads_back :: proc(t:^testing.T) {
 records_ref_names_a_row_by_name_or_table_and_name :: proc(t:^testing.T) {
     f:Csv_Fixture
     csv_fixture(&f)
-    big,message:=records_api_ref_parse(&f.c,"Ammo","big")
-    testing.expect(t,message=="" && big==Records_Api_Ref{POUCHES,12})
-    crate,_:=records_api_ref_parse(&f.c,"Ammo","data/crates/small")
-    testing.expect_value(t,crate,Records_Api_Ref{CRATES,21})
-    _,ambiguous:=records_api_ref_parse(&f.c,"Ammo","small")
+    big,message:=records.ref_parse(&f.c,"Ammo","big")
+    testing.expect(t,message=="" && big==records.Ref{POUCHES,12})
+    crate,_:=records.ref_parse(&f.c,"Ammo","data/crates/small")
+    testing.expect_value(t,crate,records.Ref{CRATES,21})
+    _,ambiguous:=records.ref_parse(&f.c,"Ammo","small")
     testing.expectf(t,strings.contains(ambiguous,"2 tables") && strings.contains(ambiguous,"data/pouches/small"),"%s",ambiguous)
-    _,missing:=records_api_ref_parse(&f.c,"Ammo","data/crates/big")
+    _,missing:=records.ref_parse(&f.c,"Ammo","data/crates/big")
     testing.expectf(t,strings.contains(missing,"has no row big") && strings.contains(missing,"records.inspect"),"%s",missing)
-    _,table:=records_api_ref_parse(&f.c,"Ammo","boxes/big")
+    _,table:=records.ref_parse(&f.c,"Ammo","boxes/big")
     testing.expectf(t,strings.contains(table,"data/pouches, data/crates"),"%s",table)
-    testing.expect_value(t,records_api_ref_text(&f.c,"Ammo",big),"big")
-    testing.expect_value(t,records_api_ref_text(&f.c,"Ammo",crate),"data/crates/small")
-    testing.expect_value(t,records_api_ref_text(&f.c,"Ammo",{}),"")
-    lost:=records_api_ref_text(&f.c,"Ammo",{POUCHES,99})
-    back,unread:=records_api_ref_parse(&f.c,"Ammo",lost)
-    testing.expectf(t,unread=="" && back==Records_Api_Ref{POUCHES,99},"A row no table has keeps its serial form: %s %v %s",lost,back,unread)
+    testing.expect_value(t,records.ref_text(&f.c,"Ammo",big),"big")
+    testing.expect_value(t,records.ref_text(&f.c,"Ammo",crate),"data/crates/small")
+    testing.expect_value(t,records.ref_text(&f.c,"Ammo",{}),"")
+    lost:=records.ref_text(&f.c,"Ammo",{POUCHES,99})
+    back,unread:=records.ref_parse(&f.c,"Ammo",lost)
+    testing.expectf(t,unread=="" && back==records.Ref{POUCHES,99},"A row no table has keeps its serial form: %s %v %s",lost,back,unread)
 }
 
 // The values of records.set and records.add take a core.Record by the name of
@@ -259,7 +259,7 @@ records_values_take_row_names_and_text_keys :: proc(t:^testing.T) {
     default:=Csv_Weapon{stats={weight=9}}
     f.c.default=([^]u8)(&default)[:size_of(default)]
     row.lines[1].pause=3
-    message:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"damage": 7, "ammo": "data/crates/small", "title": {"key": "item.sword"}, "stats": {"speed": 2}, "lines": [{"pause": 1.5}, {"text": {"key": "lines.bye"}}]}`)
+    message:=records.values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"damage": 7, "ammo": "data/crates/small", "title": {"key": "item.sword"}, "stats": {"speed": 2}, "lines": [{"pause": 1.5}, {"text": {"key": "lines.bye"}}]}`)
     testing.expect_value(t,message,"")
     testing.expect_value(t,row.damage,7)
     testing.expect_value(t,row.stats,Csv_Stats{2,9})
@@ -267,17 +267,17 @@ records_values_take_row_names_and_text_keys :: proc(t:^testing.T) {
     testing.expect_value(t,row.lines[0].pause,1.5)
     testing.expect_value(t,row.ammo,core.Record(Csv_Ammo){CRATES,21})
     testing.expect(t,serial.text_field(row.title.key[:])=="item.sword" && serial.text_field(row.lines[1].text.key[:])=="lines.bye")
-    unknown:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"dmg": 3}`)
+    unknown:=records.values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"dmg": 3}`)
     testing.expectf(t,strings.contains(unknown,"dmg") && strings.contains(unknown,"damage"),"%s",unknown)
-    named:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"ammo": "small"}`)
+    named:=records.values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"ammo": "small"}`)
     testing.expectf(t,strings.has_prefix(named,"values.ammo: small is a row of 2 tables"),"%s",named)
     testing.expect_value(t,row.damage,7)
     // A path changes only its part.
-    testing.expect_value(t,records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.weight": 4, "lines[1].pause": 2}`),"")
+    testing.expect_value(t,records.values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.weight": 4, "lines[1].pause": 2}`),"")
     testing.expect_value(t,row.stats,Csv_Stats{2,4})
     testing.expect_value(t,row.lines[1].pause,2)
     testing.expect_value(t,row.lines[0].pause,1.5)
-    nested:=records_api_values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.wait": 1}`)
+    nested:=records.values_put(&f.c,([^]u8)(&row)[:size_of(row)],`{"stats.wait": 1}`)
     testing.expectf(t,strings.contains(nested,"stats.wait") && strings.contains(nested,"speed, weight"),"%s",nested)
 }
 

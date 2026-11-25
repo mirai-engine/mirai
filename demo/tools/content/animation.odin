@@ -3,6 +3,7 @@ package main
 import "core:fmt"
 import "core:math/linalg"
 import "mirai:asset"
+import "mirai:cook/content"
 import importer "mirai:cook/import"
 import "mirai:cook/import/sources"
 import lib "mirai:std/anim"
@@ -78,8 +79,8 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
     rig,valid:=mirai_rig(model)
     ground_bones:=[4]int{mirai_bone(model,"LeftFoot"),mirai_bone(model,"LeftToeBase"),mirai_bone(model,"RightFoot"),mirai_bone(model,"RightToeBase")}
     hips:=mirai_bone(model,"Hips")
-    if hips<0 || !valid {o.content.failed=true;return}
-    for bone in ground_bones {if bone<0 {o.content.failed=true;return}}
+    if hips<0 || !valid {o.w.failed=true;return}
+    for bone in ground_bones {if bone<0 {o.w.failed=true;return}}
     clips=make([]asset.Animation_Clip_Desc,len(model.animations),context.temp_allocator)
     copy(clips,model.animations)
     skeleton:=imported_id(o,"assets/characters/mirai/mirai.glb",asset.KIND_SKELETON,model.skeletons[0].name)
@@ -89,9 +90,9 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
         if clip.name!="idle" && clip.name!="walk" && clip.name!="land" {continue}
         hip_track:=-1
         for track,i in clip.tracks {if track.target==rig_path(model,"Hips") && track.property==.Position {hip_track=i}}
-        if hip_track<0 {o.content.failed=true;return}
+        if hip_track<0 {o.w.failed=true;return}
         frames,times,sampled:=mirai_clip_frames(rig,clip,60)
-        if !sampled {o.content.failed=true;return}
+        if !sampled {o.w.failed=true;return}
         keys:=make([]lib.Keyframe,len(frames),context.temp_allocator)
         for world,frame in frames {
             // The lowest ankle or toe stays at its rest height without changing X/Z.
@@ -105,7 +106,7 @@ mirai_animation :: proc(o:^Out,model:^importer.Imported_Model) -> (id:base.Asset
         adjusted:=make([]asset.Animation_Track_Desc,len(clip.tracks),context.temp_allocator)
         copy(adjusted,clip.tracks);adjusted[hip_track].keys=keys;clip.tracks=adjusted
     }
-    asset.content_check(&o.content,"assets/characters/mirai/mirai_locomotion.anim",asset.animation_save(path(o,"assets/characters/mirai/mirai_locomotion.anim"),&o.content.types,{id=id,clips=clips}))
+    content.check(&o.w,path(o,"assets/characters/mirai/mirai_locomotion.anim"),asset.animation_save(path(o,"assets/characters/mirai/mirai_locomotion.anim"),&o.w.types,{id=id,clips=clips}))
     return
 }
 
@@ -139,13 +140,13 @@ mirai_feet :: proc(model:^importer.Imported_Model) -> anim.Foot_Grounding {
 // (animation_gallery/animation.scene), made from the import of Mirai.
 write_animation_assets :: proc(o:^Out) {
     source:="assets/characters/mirai/mirai.glb"
-    model,error:=importer.import_model(path(o,source),sources.FORMATS[:],{root=o.root})
-    if error.code!=.None {fmt.eprintln(error.message);o.content.failed=true;return}
+    model,error:=importer.import_model(path(o,source),sources.FORMATS[:],{root=o.root if o.root!="" else "."})
+    if error.code!=.None {fmt.eprintln(error.message);o.w.failed=true;return}
     defer importer.model_destroy(&model)
     locomotion,locomotion_clips:=mirai_animation(o,&model)
-    if o.content.failed {return}
+    if o.w.failed {return}
     clip:=mirai_gallery_animation(o,&model,locomotion_clips)
-    if o.content.failed {return}
+    if o.w.failed {return}
     gallery_program_assets(o,&model,clip)
     gallery_mirai_matching(o,&model,locomotion)
     mirai_constraints(o,&model,clip)
