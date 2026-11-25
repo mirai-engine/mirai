@@ -215,8 +215,8 @@ a_slot_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^testing.T) {
     entry:asset.Chunk_Entry
     if chunk>=0 {entry=asset.blob_chunk(&file.blob,chunk)}
     asset.asset_close(&file)
-    // Stored as they are, the bytes are made a stream that does not decode: the directory says so.
-    if !testing.expect(t,chunk>=0 && entry.compression==.None && entry.size>=64) {return}
+    // The bytes of the chunk are made garbage its directory calls a stream: it does not decode.
+    if !testing.expect(t,chunk>=0 && entry.size>0) {return}
     mem.set(&body[entry.offset],0xff,int(entry.size))
     entry.compression=.Stream
     intrinsics.unaligned_store((^asset.Chunk_Entry)(&body[asset.HEADER_SIZE+chunk*asset.CHUNK_ENTRY_SIZE]),entry)

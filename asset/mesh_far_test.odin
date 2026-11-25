@@ -80,9 +80,10 @@ a_far_mesh_joins_its_parts_in_one_slot_with_the_mean_of_their_materials :: proc(
     view,error:=mesh_view(&a,&types)
     testing.expect_value(t,error,Error.None)
     testing.expect(t,.Has_Surface in view.info.flags && len(view.surfaces)==len(far.surfaces) && view.surfaces[0]==far.surfaces[0])
-    // Its pages and their blocks are those it was made with, and its streams come back from them whole.
+    // Its pages are those it was made with, their blocks no larger compressed as a file holds
+    // them, and its streams come back from them whole.
     testing.expect(t,far.root_page>0 && view.root_page==far.root_page && len(view.pages)==len(far.pages))
-    testing.expect(t,string(view.page_data)==string(far.page_data),"the file holds the blocks made in memory")
+    testing.expect(t,len(view.page_data)<=len(far.page_data),"the file holds the blocks compressed")
     for s,at in far.surfaces {
         if view.surfaces[at]!=s || view.colors[at]!=far.colors[at] || view.vertices[at]!=far.vertices[at] {
             testing.expectf(t,false,"vertex %d of the far mesh comes back otherwise",at)

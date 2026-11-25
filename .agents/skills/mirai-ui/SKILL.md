@@ -62,8 +62,10 @@ description: Create and modify Mirai interfaces with the `ui` package (layout, f
 5. Update `references/ui.md` when a contract changes.
 6. In the editor and its plugins, colors, heights and sizes are tokens of the theme (`ui.tone`,
    `ui.metric`) and a button picks a variant of its style: a new look goes in
-   `assets/editor/theme.ui` with `mirai ui write`. `uv run scripts/check_ui_style.py` fails if a
-   hand-written color appears above what is still left to migrate.
+   `assets/editor/theme.ui` with `mirai ui write assets/editor/theme.ui <doc> --project demo`
+   (a .ui outside the assets of a project is written back to its own file).
+   `uv run scripts/check_ui_style.py` fails if a hand-written color appears above what is still
+   left to migrate.
 
 ## Invariants
 

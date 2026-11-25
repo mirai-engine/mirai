@@ -66,8 +66,6 @@ open :: proc(w:^Writer,world:core.World_Info,loc:=#caller_location) -> bool {
     if !found {return fail(w,loc,"the engine is unknown: a content tool runs with mirai content <project>, which builds it and names the engine")}
     root,_:=os.get_working_directory(context.temp_allocator)
     if problem:=author.project_open(&w.project,project.path_absolute(root,context.temp_allocator),engine,library=false);problem!="" {return fail(w,loc,problem)}
-    // What the documents the tool writes compress with: what the project ships with.
-    w.types.codecs=asset.project_codecs(w.root)
     w.info=&w.world
     if root:=store.default_root(context.temp_allocator);root!="" {
         if opened,error:=store.open(root);error==.None {w.store,w.stored=opened,true}

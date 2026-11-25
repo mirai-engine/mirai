@@ -202,8 +202,9 @@ Written :: struct {
 // same for that path every time. A document ui.write refuses is refused, and
 // the file stays as it was, and the files that use it as a widget follow
 // where its parameters go now. Its paths are checked against p.info: the
-// command refuses to write without it. problem: why.
-ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:string) {
+// command refuses to write without it. outside: the file of a .ui outside the
+// assets of the project, read in memory by its id, which the bytes go back to. problem: why.
+ui_write :: proc(p:^Project,named,text:string,outside:="") -> (written:Written,problem:string) {
     path:=asset_path(named)
     record,found:=asset.registry_find_path(&p.registry,path)
     fresh:=!found && strings.has_suffix(path,".ui") && !strings.contains_rune(path,':')
@@ -231,6 +232,7 @@ ui_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:strin
     if bytes,imports,problem=ui_apply(p,id,&r,text,&texts,&written);problem!="" {return {},problem}
     written.path,written.fresh=path,fresh
     file:=project.path(p.assets_root,path,allocator=context.temp_allocator) if fresh else asset.registry_file_path(&p.registry,path,context.temp_allocator)
+    if outside!="" {file,written.path=outside,outside}
     if problem=file_put(p,file,path,bytes,&written);problem!="" {return}
     if problem=texts_put(p,&texts);problem!="" {return}
     // What the files that use this widget gave follows where its parameters go now.
@@ -259,18 +261,10 @@ ui_apply :: proc(p:^Project,id:base.Asset_Id,r:^Records,text:string,texts:^Texts
     return
 }
 
-@(private)
-file_unchanged :: proc(current,bytes:[]u8) -> bool {
-    if slice.equal(current,bytes) {return true}
-    plain,error:=asset.document_repack(current,.Fast,.None,context.temp_allocator)
-    defer delete(plain,context.temp_allocator)
-    return error==.None && slice.equal(plain,bytes)
-}
-
 // Writes a changed asset and refreshes the registry.
 @(private)
 file_put :: proc(p:^Project,file,path:string,bytes:[]u8,written:^Written) -> (problem:string) {
-    if current,error:=os.read_entire_file(file,context.temp_allocator);error==nil && file_unchanged(current,bytes) {
+    if current,error:=os.read_entire_file(file,context.temp_allocator);error==nil && slice.equal(current,bytes) {
         written.same=true
         return ""
     }
@@ -433,10 +427,6 @@ asset_named :: proc(p:^Project,named:string,kind:Document_Kind,writing:bool) -> 
         if _,known:=asset.registry_find_path(&p.registry,relative);known || writing || !os.is_file(named) {return relative,""}
     }
     if !os.is_file(named) {return path,""}
-    // A .ui is written by the id the project knows it by; a scene, as a recipe, also where it is.
-    if writing && kind==.Ui {
-        return "",fmt.tprintf("%s is outside the assets of the project; name the .ui by its path under assets/ (with or without assets/), by its id, or by its file under the assets folder of the project or of a plugin",named)
-    }
     bytes,read:=os.read_entire_file(named,context.temp_allocator)
 
     if read!=nil {return "",fmt.tprintf("%s could not be read",named)}
@@ -445,12 +435,13 @@ asset_named :: proc(p:^Project,named:string,kind:Document_Kind,writing:bool) -> 
     id,file_kind:=file.blob.header.id,file.blob.header.kind
     asset.asset_close(&file)
     if file_kind!=(asset.KIND_UI if kind==.Ui else asset.KIND_SCENE) {return "",fmt.tprintf("%s is not a %s",named,kind_extension(kind))}
-    // Written, by its file, which the registry saves to; read, in place of the asset with its id, or as one
-    // more asset named by its id, which no file of the project is.
+    // A scene is written by its file, which the registry saves to; a .ui, and anything read, in place of
+    // the asset with its id, or as one more asset named by its id, which no file of the project is: a
+    // .ui written goes back to its file (command_write).
     buffer:[base.ASSET_ID_TEXT]u8
     path=strings.concatenate({base.asset_id_format(id,buffer[:]),kind_extension(kind)},context.temp_allocator)
     if record,known:=asset.registry_find(&p.registry,id);known {path=strings.clone(record.path,context.temp_allocator)}
-    if writing {path=absolute}
+    if writing && kind==.Scene {path=absolute}
 
     if asset.registry_memory_set(&p.registry,path,bytes)!=.None {return "",fmt.tprintf("%s could not be read: memory ran out",named)}
     return path,""
@@ -549,7 +540,13 @@ command_write :: proc(run:^Run,args:[]string) -> int {
     if problem!="" {run_fail(run,args[0],problem);return 1}
     written:Written
     switch run.kind {
-    case .Ui:    written,problem=ui_write(run.p,path,string(text))
+    case .Ui:
+        // A .ui outside the assets of the project is written back to its own file.
+        outside:=""
+        if absolute:=project.path_absolute(args[0],context.temp_allocator);os.is_file(args[0]) {
+            if _,under:=asset.registry_relative(&run.p.registry,absolute);!under {outside=absolute}
+        }
+        written,problem=ui_write(run.p,path,string(text),outside)
     case .Scene: written,problem=scene_write(run.p,path,string(text))
     }
     if problem!="" {run_fail(run,args[0],problem);return 1}

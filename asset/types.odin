@@ -14,7 +14,7 @@ Types :: struct {
     layouts:[dynamic]^serial.Layout, // how to save each type, built when first needed
     allocator:runtime.Allocator,
     error:Error,
-    codecs:Codecs,                   // what the documents made with these types compress with
+    codecs:Codecs,                   // what the documents made with these types compress with: WORKING_CODECS, but in a cook
     // What a value of each type starts as: a schema whose structs carry their
     // defaults, that of the world of the program (core.World_Schema). A struct
     // added here takes the default it has for the same Odin type, so a document
@@ -23,7 +23,7 @@ Types :: struct {
 }
 
 types_init :: proc(types:^Types,allocator:=context.allocator) {
-    types^={allocator=allocator}
+    types^={allocator=allocator,codecs=WORKING_CODECS}
     serial.schema_init(&types.schema,allocator)
     types.hashes=make([dynamic]u64,allocator)
     types.transient=make([dynamic]bool,allocator)

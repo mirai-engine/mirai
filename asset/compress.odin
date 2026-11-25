@@ -12,6 +12,13 @@ import "mirai:std/jobs"
 // The compression a document may use.
 Codecs :: enum u8 {None, Compressed}
 
+// What every document written into the assets of a project, a plugin or the engine compresses
+// with, whoever writes it (an import, the editor, mirai scene, ui and records, a content tool),
+// so the same content is the same bytes: the Types of every writer start with it (types_init),
+// and a document is written with Profile.Fast. Only a cook writes with the codecs and profile of
+// what a project ships (project_codecs), and the store keeps its objects as Codecs.None.
+WORKING_CODECS :: Codecs.Compressed
+
 // The compression a cook uses for the project's shipped files.
 project_codecs :: proc(root:string) -> Codecs {
     m,error:=project.manifest_read(project.path(root,project.PROJECT_FILE,allocator=context.temp_allocator))

@@ -470,11 +470,6 @@ scene_write :: proc(p:^Project,named,text:string) -> (written:Written,problem:st
         }
     }
     written.stored=relaid[:]
-    // A file that says the same and stores every component of the game as the game reads it stays as it is.
-    if exists && applied.made==0 && applied.removed==0 && !applied.changed && len(relaid)==0 {
-        written.same=true
-        return written,""
-    }
     if .Prefab in f.scene.doc.flags {
         if refused:=asset.prefab_refused(&f.scene);refused!="" {return {},fmt.tprintf("%s: %s",path,refused)}
     }

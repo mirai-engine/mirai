@@ -198,11 +198,7 @@ the_commands_read_write_and_check_the_document_of_an_asset :: proc(t:^testing.T)
             outside_read:=on(&q,named.kind,"read",outside,"--out",document)
             outside_write:=on(&q,named.kind,"write",outside,document)
             again:=on(&q,named.kind,"read",outside)
-            if named.kind==.Scene {
-                testing.expectf(t,outside_read.code==0 && outside_write.code==0 && again.code==0 && again.out==of_file.out,"%s%s%s",outside_write.out,outside_write.err,again.err)
-            } else {
-                testing.expectf(t,outside_write.code==1 && strings.contains(outside_write.err,"is outside the assets of the project"),"%s%s",outside_write.out,outside_write.err)
-            }
+            testing.expectf(t,outside_read.code==0 && outside_write.code==0 && again.code==0 && again.out==of_file.out,"%s%s%s",outside_write.out,outside_write.err,again.err)
 
 
         }
@@ -333,18 +329,22 @@ the_document_of_a_scene_writes_it_back_and_declares_what_its_file_has :: proc(t:
     if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
     defer project_close(&p)
     p.info=&info
-    // Its own document writes a file back as it is, unless the file stores a component of the
-    // game with another layout (the Status of the template): then it is written as the game reads it.
+    // Its own document writes a file as the game reads it (the Status of the template is stored
+    // with another layout) and as every writer of the assets compresses it; written again, it
+    // writes nothing.
     arena:=slice.clone(file_bytes(&p,"arena/main.scene"),context.temp_allocator)
     for path in ([]string{"arena/main.scene","player/Player.scene"}) {
-        before:=slice.clone(file_bytes(&p,path),context.temp_allocator)
         out:serial.Writer
         serial.writer_init(&out,0,context.temp_allocator)
         if problem:=scene_read(&p,path,&out);!testing.expectf(t,problem=="","%s: %s",path,problem) {continue}
         written,problem:=scene_write(&p,path,string(serial.writer_bytes(&out)))
         relaid:=len(written.stored)>0
-        testing.expectf(t,problem=="" && written.same!=relaid && relaid==(path=="arena/main.scene"),"%s: %s %v",path,problem,written.stored)
-        testing.expectf(t,relaid || slice.equal(file_bytes(&p,path),before),"%s: its own document changes its bytes",path)
+        testing.expectf(t,problem=="" && relaid==(path=="arena/main.scene"),"%s: %s %v",path,problem,written.stored)
+        before:=slice.clone(file_bytes(&p,path),context.temp_allocator)
+        serial.writer_init(&out,0,context.temp_allocator)
+        if problem=scene_read(&p,path,&out);!testing.expectf(t,problem=="","%s: %s",path,problem) {continue}
+        again,again_problem:=scene_write(&p,path,string(serial.writer_bytes(&out)))
+        testing.expectf(t,again_problem=="" && again.same && slice.equal(file_bytes(&p,path),before),"%s: its own document changes its bytes",path)
         for entry in scene_stored(&p,path) {testing.expectf(t,entry.unknown,"%s: %s is still stored with another layout",path,entry.component)}
         testing.expectf(t,scene_verify(&p,path)=="","%s: %s",path,scene_verify(&p,path))
     }
@@ -597,10 +597,10 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
                 files+=1
                 written,texts,why:=ui_round_trip(&p,path,file.id)
                 if !testing.expectf(t,why=="","%s/%s: %s",folder,path,why) {continue}
-                testing.expectf(t,file_unchanged(file_bytes(&p,path),written),
+                testing.expectf(t,slice.equal(file_bytes(&p,path),written),
                     "%s/%s: its document writes other bytes",folder,path)
                 for touched in texts {
-                    testing.expectf(t,file_unchanged(file_bytes(&p,touched.path),touched.bytes),
+                    testing.expectf(t,slice.equal(file_bytes(&p,touched.path),touched.bytes),
                         "%s/%s: its document writes other texts in %s",folder,path,touched.path)
                 }
             case asset.KIND_SCENE:
@@ -611,4 +611,49 @@ the_documents_of_the_tracked_assets_write_back_the_files_they_were_read_from :: 
         }
         testing.expectf(t,files>0,"%s has interfaces and scenes",folder)
     }
+}
+
+// A .ui outside the assets of the project (the theme of the editor) is
+// written back to its own file, in the working compression, and nothing is
+// made under the assets; written again, it writes nothing.
+@(test)
+a_ui_outside_the_assets_is_written_back_to_its_file :: proc(t:^testing.T) {
+    root,engine,copied:=template_copy(t,"outside-ui")
+    if !copied {return}
+    info,described:=test_info(t,Game_World)
+    if !described {return}
+    defer test_info_destroy(&info)
+    elsewhere:=base.test_folder(t,"author-outside-ui-file")
+    if elsewhere=="" {return}
+    outside:=project.path(elsewhere,"button.ui",allocator=context.temp_allocator)
+    original:=file_read_all(project.path(root,"assets/menu/button.ui",allocator=context.temp_allocator))
+    raw,raw_error:=asset.document_written_as(original,.None,context.temp_allocator)
+    if !testing.expect_value(t,raw_error,asset.Error.None) {return}
+    testing.expect(t,os.write_entire_file(outside,raw)==nil)
+    p:Project
+    if problem:=project_open(&p,root,engine,false);!testing.expect(t,problem=="",problem) {return}
+    defer project_close(&p)
+    out:serial.Writer
+    serial.writer_init(&out,0,context.temp_allocator)
+    read_path,read_problem:=asset_named(&p,outside,.Ui,false)
+    if !testing.expect(t,read_problem=="",read_problem) || !testing.expect_value(t,ui_read(&p,read_path,&out),"") {return}
+    document:=strings.clone(string(serial.writer_bytes(&out)),context.temp_allocator)
+    p.info=&info
+    for pass in 0..<2 {
+        path,problem:=asset_named(&p,outside,.Ui,true)
+        if !testing.expect(t,problem=="",problem) {return}
+        written,write_problem:=ui_write(&p,path,document,outside)
+        testing.expectf(t,write_problem=="" && written.path==outside && written.same==(pass==1),"pass %d: %s %v",pass,write_problem,written)
+    }
+    now:=file_read_all(outside)
+    working,_:=asset.document_written_as(raw,asset.WORKING_CODECS,context.temp_allocator)
+    testing.expect(t,slice.equal(now,working),"the file is in the working compression")
+    testing.expect(t,slice.equal(file_read_all(project.path(root,"assets/menu/button.ui",allocator=context.temp_allocator)),original),"the asset of the project stays as it was")
+    testing.expect(t,!os.exists(project.path(root,"assets",elsewhere[1:],allocator=context.temp_allocator)),"nothing is made under the assets")
+}
+
+@(private="file")
+file_read_all :: proc(path:string) -> []u8 {
+    data,_:=os.read_entire_file(path,context.temp_allocator)
+    return data
 }

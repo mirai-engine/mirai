@@ -90,9 +90,9 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     }
     good,error:=asset.scene_bytes(&host_scene,context.temp_allocator)
     if !testing.expect_value(t,error,asset.Error.None) {return}
-    // The transforms of the broken copy are a stream that does not decode: its directory says so
-    // of the bytes, stored as they are, of their chunk. The load meets it when it reads the
-    // components, as it met a stream a compressor wrote.
+    // The transforms of the broken copy are a stream that does not decode: the bytes of their
+    // chunk are garbage its directory calls a stream. The load meets it when it reads the
+    // components.
     broken:=make([]u8,len(good),context.temp_allocator)
     copy(broken,good)
     file:asset.Asset
@@ -106,7 +106,7 @@ a_scene_of_the_host_that_fails_halfway_leaves_the_world_as_it_was :: proc(t:^tes
     if chunk>=0 {entry=asset.blob_chunk(&file.blob,chunk)}
     asset.asset_close(&file)
     if !testing.expect(t,chunk>=0) {return}
-    if !testing.expect(t,entry.compression==.None && entry.size>=64) {return}
+    if !testing.expect(t,entry.size>0) {return}
     mem.set(&broken[entry.offset],0xff,int(entry.size))
     entry.compression=.Stream
     intrinsics.unaligned_store((^asset.Chunk_Entry)(&broken[asset.HEADER_SIZE+chunk*asset.CHUNK_ENTRY_SIZE]),entry)

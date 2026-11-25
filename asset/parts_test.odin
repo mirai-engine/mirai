@@ -333,6 +333,7 @@ texture_promotions_read_without_the_resident_mip_leaves :: proc(t:^testing.T) {
 texture_stream_promotions_read_only_the_covering_pieces :: proc(t:^testing.T) {
     types:Types
     types_init(&types)
+    types.codecs=.None // the planes of the store's canonical form
     defer types_destroy(&types)
     full,ok:=parts_store(t,"asset-stream-mip-range")
     if !ok {return}

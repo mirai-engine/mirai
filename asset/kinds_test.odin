@@ -681,6 +681,7 @@ kinds_are_found_by_extension :: proc(t:^testing.T) {
 mode_plane_mips_restore_independently :: proc(t:^testing.T) {
     types:Types
     types_init(&types)
+    types.codecs=.None // the planes of the store's canonical form
     defer types_destroy(&types)
     defer free_all(context.temp_allocator)
     WIDTH :: 43

@@ -163,7 +163,6 @@ rule_text :: proc(rule:asset.Text_Rule) -> string {
     case .Columns_Order: return "in a table, \"name\" goes before \"columns\", only once"
     case .Data_Order: return "in a table, \"columns\" goes before \"data\", only once"
     case .Column: return "a column with an invalid name, type or alignment"
-    case .Unknown_Codecs: return "unknown codecs"
     case .Unknown_Column: return "the table has no such column"
     case .Unknown_Ref: return "\"ref\" names a table that does not exist"
     case .Key: return "\"key\" is not a column of the table"
@@ -761,20 +760,12 @@ packages_beside :: proc(folder,store_root:string) -> asset.Root_Packages {
 asset_repack :: proc(root:string,args:[]string) -> int {
     if code:=positionals("repack",args);code!=0 {return code}
     if len(args)==0 {return misuse("repack")}
-    types:asset.Types
-    asset.types_init(&types)
     bad,written:=0,0
     for path in args {
         defer free_all(context.temp_allocator)
         data,error:=asset.asset_file_read(path,context.temp_allocator)
-        header:asset.Header
-        if error==.None {header,error=asset.header_read(data)}
         repacked:[]u8
-        switch {
-        case error!=.None:
-        case header.kind==asset.KIND_TEXTURE: repacked,error=asset.texture_repack(data,&types,.Fast,context.temp_allocator)
-        case: repacked,error=asset.document_repack(data,.Fast,.None,context.temp_allocator)
-        }
+        if error==.None {repacked,error=asset.document_written_as(data,.None,context.temp_allocator)}
         if error!=.None {
             bad+=failed("repack",path,error_text(error))
             continue
