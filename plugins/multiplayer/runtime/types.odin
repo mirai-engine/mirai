@@ -329,7 +329,7 @@ Predicted_Spawn :: struct {
 }
 
 // An entity a fixed function made in the tick that the replica of the
-// server's takes: one of a seat (peer: its Seat.peer), or one a library keeps,
+// server's takes: one of a seat (of the connection of its Net_Seat), or one a library keeps,
 // which has the Id both ends draw already.
 Spawn :: struct {
     entity:core.Entity,

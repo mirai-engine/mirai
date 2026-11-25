@@ -56,7 +56,7 @@ Inbox :: struct($T:typeid) {items:[]Message(T)}
 
 Message :: struct($T:typeid) {
     value:T,
-    sender:u64, // server: the connection of the client that sent it, as Seat.peer
+    sender:u64, // server: the connection of the client that sent it, as the Net_Seat of its seat holds it
     about:Entity,
 }
 

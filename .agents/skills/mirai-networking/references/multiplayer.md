@@ -283,7 +283,8 @@ fire_projectile :: proc(
 ```odin
 import pm "plugins:physics_multiplayer/runtime"
 
-if tick, ok := multiplayer.rewind_tick(inputs, multiplayer.Connection(seat.peer), time); ok {
+net, _ := core.get(net_seats, seat) // multiplayer.Net_Seat: the connection of a remote seat
+if tick, ok := multiplayer.rewind_tick(inputs, net.connection, time); ok {
     if hit, hit_ok := pm.rewind_raycast(
         history, physics, rewound, tick, origin, dir, 200, ignore=shooter,
     ); hit_ok {

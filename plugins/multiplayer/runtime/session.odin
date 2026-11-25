@@ -715,8 +715,8 @@ is_client :: proc(s:core.Ref(Net_Session)) -> bool {return s.host_ready && s.mod
 // client). 0 without a network.
 session_history :: proc(s:core.Ref(Net_Session)) -> int {return s.ptr!=nil && s.host_ready?wire.host_history(&s.host):0}
 
-// Client: its connection as the server names it, the peer of its seat
-// (input.Seat.peer); 0 until the server said it.
+// Client: its connection as the server names it, the one of the Net_Seat the
+// server keeps for its seat; 0 until the server said it.
 own_connection :: proc(s:core.Ref(Net_Session)) -> Connection {return s.host_ready && s.mode==.Client?s.client.connection:0}
 
 // Server: where a connection that owns no entity looks from. Entities of Near
