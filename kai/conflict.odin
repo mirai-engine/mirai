@@ -311,13 +311,14 @@ merge_file :: proc(m:^Merger,t:^Terms(Term),path:string,out:^[dynamic]u8) -> (re
     return
 }
 
-// The bytes of the file object at address, whole.
-file_bytes :: proc(s:^store.Store,address:store.Hash,allocator:=context.allocator) -> (bytes:[]u8,error:Error) {
+// The bytes of the file object at address, whole; Too_Large past limit bytes, read from the
+// object itself before anything is allocated.
+file_bytes :: proc(s:^store.Store,address:store.Hash,allocator:=context.allocator,limit:=i64(max(int)/2)) -> (bytes:[]u8,error:Error) {
     o,open:=store.object_open(s,address)
     if open!=.None {return nil,store_error(open)}
     defer store.object_close(&o)
     size:=store.object_size(&o)
-    if size>u64(max(int)/2) {return nil,.Too_Large}
+    if size>u64(limit) {return nil,.Too_Large}
     made,made_error:=make([]u8,int(size),allocator)
     if made_error!=nil {return nil,.Out_Of_Memory}
     if e:=store.object_read(&o,0,made);e!=.None {

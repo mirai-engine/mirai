@@ -66,7 +66,10 @@ tenants_destroy :: proc(tn:^Tenants) {
 }
 
 // The store that holds org: the machine's, or the org's own on a server.
-team_store :: proc(t:^Team,org:Org_Id) -> (s:^store.Store,error:Error) {
+// On a server, an org it keeps no folder of is Missing unless create, which
+// only making or joining an org passes: an id a stranger names never makes a
+// folder, a store or an open file.
+team_store :: proc(t:^Team,org:Org_Id,create:=false) -> (s:^store.Store,error:Error) {
     tn:=t.tenants
     if tn==nil {return t.store,.None}
     sync.mutex_lock(&tn.lock)
@@ -74,6 +77,7 @@ team_store :: proc(t:^Team,org:Org_Id) -> (s:^store.Store,error:Error) {
     if held,ok:=tn.stores[org];ok {return held,.None}
     name:[32]u8
     root:=strings.concatenate({tn.root,"/orgs/",org_ref_name(org,&name)},context.temp_allocator)
+    if !create && !os.exists(strings.concatenate({root,"/LAYOUT"},context.temp_allocator)) {return nil,.Missing}
     made,me:=new(store.Store,tn.allocator)
     if me!=nil {return nil,.Out_Of_Memory}
     opened,e:=store.open(root,tn.allocator)
@@ -161,7 +165,7 @@ team_org_create :: proc(t:^Team,name:string) -> (id:Org_Id,error:Error) {
     if !name_valid(name) {return {},team_fail(t,.Invalid_Argument,"an org's name has 1 to 64 bytes of UTF-8")}
     members:=[1]Member{{key=t.identity.key,role=.Admin,name=t.name,device=t.device}}
     o:=Org{id=random_id(Org_Id),version=1,name=name,members=members[:]}
-    s,se:=team_store(t,o.id)
+    s,se:=team_store(t,o.id,create=true)
     if se!=.None {return {},team_fail(t,se,"the org's store does not open: give this user access to the server's folder")}
     if _,e:=org_write(s,&o,&t.identity,time.now()._nsec);e!=.None {return {},team_fail(t,e,"the store refused the org's record: give this user access to the store")}
     return o.id,store_error(store.commit(s))
