@@ -154,7 +154,8 @@ Writer :: struct {
     fast:bool,                   // a texture taken or built is Fast
     owner:base.Asset_Id,         // of the parts: the prefab of a model
     whole:bool,                  // writes a model for Outputs: its prefab and clips are parts by their names
-    given:int,                   // of outputs, those a part of the same kind and name is (parts_plan)
+    given:int,                   // of outputs, those a part of the same kind, name and origin is (parts_plan)
+    origins:[dynamic]string,     // the origin of each of outputs (Part.origin)
     keeping:map[base.Asset_Id]u64, // the documents changed since the import wrote them that it leaves as they are (Changed.Keep), with what the pin recorded of each
     rng:base.Rng,
     allocator:mem.Allocator,
@@ -683,7 +684,18 @@ write_model :: proc(w:^Writer,model:^Imported_Model) -> bool {
         append(&jobs,job)
     }
     parts:=make([dynamic]Part,context.temp_allocator)
-    for job in jobs {append(&parts,Part{kind=asset.KIND_TEXTURE,name=job.name,index=job.index,extension=".tex"})}
+    // For Outputs, after those of the models before: an image file apart from
+    // one of theirs of the same name is another output, by an index of its own.
+    after:=0
+    if w.whole {
+        for output in w.outputs[:w.given] {
+            if output.kind==asset.KIND_TEXTURE {after=max(after,output.index+1)}
+        }
+    }
+    for job in jobs {
+        path:=model.images[job.index].path
+        append(&parts,Part{kind=asset.KIND_TEXTURE,name=job.name,index=after+job.index,extension=".tex",origin=path_key(path) if path!="" else ""})
+    }
     first_material:=len(parts)
     for material,i in model.materials {append(&parts,Part{kind=asset.KIND_MATERIAL,name=material.name,index=w.options.material_index+i,extension=".mat"})}
     first_skeleton:=len(parts)

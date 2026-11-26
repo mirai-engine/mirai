@@ -7,6 +7,7 @@ import "core:slice"
 import "core:strings"
 import "core:testing"
 import "mirai:asset"
+import cimage "mirai:cook/image"
 import "mirai:cook/textures"
 import "mirai:project"
 import "mirai:std/base"
@@ -264,6 +265,55 @@ the_models_of_an_import_share_their_parts_by_name :: proc(t:^testing.T) {
     testing.expect(t,before==manifest.identity,"the identity is that of the source, its input and its settings")
     testing.expect(t,os.write_entire_file(package_file,"other props")==nil)
     testing.expect(t,identity_of(manifest.id,path_key(source),manifest.inputs[:],settings,0)!=before,"the input counts in the identity")
+}
+
+// Image files of one name in other folders are other textures of an import
+// of several models, each listed by an index of its own; the same file asked
+// for again, by any path to it, is the texture given before. Imported again,
+// every texture keeps its asset.
+@(test)
+image_files_of_one_name_in_other_folders_are_other_textures :: proc(t:^testing.T) {
+    root,assets,s:=test_assets(t,"outputs-same-name")
+    if root=="" {return}
+    pixels:=make([]u8,4*4*4,context.temp_allocator)
+    for &texel,at in pixels {texel=u8(at*7)}
+    for folder in ([]string{"fx_a","fx_b"}) {
+        os.make_directory_all(fmt.tprintf("%s/%s",assets,folder))
+        testing.expect_value(t,cimage.image_write(fmt.tprintf("%s/%s/spark.png",assets,folder),{pixels=pixels,width=4,height=4}),cimage.Error.None)
+    }
+    source:=fmt.tprintf("%s/sparks.map",assets)
+    testing.expect(t,os.write_entire_file(source,"sparks")==nil)
+    Pass :: struct {images:[3]base.Asset_Id,textures:int,manifest:asset.Package}
+    pass :: proc(t:^testing.T,s:^store.Store,root,assets,source:string) -> (p:Pass) {
+        o:Outputs
+        error:=outputs_begin(&o,source,"sparks",6,base.hash64(transmute([]u8)string("sparks")),import_version(0),{store=s,root=root,textures=.Uncompressed},allocator=context.temp_allocator)
+        if !testing.expectf(t,error.code==.None,"%s",error.message) {return}
+        files:=[3]string{"fx_a/spark.png","fx_b/spark.png","fx_b/../fx_a/spark.png"}
+        for file in files[:2] {testing.expect_value(t,output_input(&o,fmt.tprintf("%s/%s",assets,file)).code,Error_Code.None)}
+        for file,at in files {
+            model:=model_of(fmt.tprintf("Spark%d",at),fmt.tprintf("SM_Spark%d",at),"spark",fmt.tprintf("M_Spark%d",at))
+            model.images[0]={name="spark",path=fmt.tprintf("%s/%s",assets,file),srgb=true}
+            report,model_error:=output_model(&o,&model,context.temp_allocator)
+            testing.expectf(t,model_error.code==.None,"%s",model_error.message)
+            if len(report.image_ids)>0 {p.images[at]=report.image_ids[0]}
+        }
+        report,end_error:=outputs_end(&o,false,context.temp_allocator)
+        testing.expectf(t,end_error.code==.None,"%s",end_error.message)
+        for written in report.assets {p.textures+=int(written.kind==asset.KIND_TEXTURE)}
+        p.manifest,_,_=test_package(t,s,report)
+        return
+    }
+    first:=pass(t,s,root,assets,source)
+    testing.expectf(t,first.images[0]!={} && first.images[1]!={} && first.images[0]!=first.images[1],"two files are two textures: %v",first.images)
+    testing.expect_value(t,first.images[2],first.images[0])
+    testing.expect_value(t,first.textures,2)
+    indices:=make([dynamic]int,context.temp_allocator)
+    for a in first.manifest.assets {
+        if a.kind==asset.KIND_TEXTURE && a.name=="spark" {append(&indices,a.index)}
+    }
+    testing.expectf(t,len(indices)==2 && indices[0]!=indices[1],"the package lists each by an index of its own: %v",indices)
+    again:=pass(t,s,root,assets,source)
+    testing.expect_value(t,again.images,first.images)
 }
 
 // An image only its format decodes is keyed by its data: a texture the
