@@ -15,6 +15,7 @@ import "mirai:project"
 import "mirai:std/base"
 import "mirai:std/serial"
 import "mirai:store"
+import "mirai:ui"
 
 @(test)
 projects_say_when_each_was_opened :: proc(t:^testing.T) {
@@ -286,5 +287,34 @@ a_new_project_is_a_kai_workspace_unless_unchecked :: proc(t:^testing.T) {
         if !testing.expectf(t,message=="","%s: %s",c.name,message) {continue}
         testing.expect(t,os.is_file(project.path(made,project.PROJECT_FILE,allocator=context.temp_allocator)))
         testing.expectf(t,ka.project_exists(made)==c.kai,"%s: a Kai workspace is %v",c.name,c.kai)
+    }
+}
+
+// The launcher's tabs and actions sit below the bar that drags the window on
+// every platform: the window takes a press there before any control sees it.
+@(test)
+the_launcher_keeps_its_tabs_below_the_bar_that_drags_the_window :: proc(t:^testing.T) {
+    f:=new(Prefab_Fixture);defer free(f)
+    if !prefab_fixture_init(t,f,"projects-bar") {return}
+    defer prefab_fixture_destroy(f)
+    s:=&f.s
+    ctx:ui.Context
+    if !testing.expect(t,test_ui_init(&ctx,{})) {return}
+    defer ui.context_destroy(&ctx)
+    f.gui.ctx,f.gui.begun=&ctx,true
+    p:=new(Projects);defer free(p)
+    s.projects=p
+    defer s.projects=nil
+    s.headless=false
+    size:=[2]f32{f32(PROJECTS_WINDOW.x),f32(PROJECTS_WINDOW.y)}
+    for _ in 0..<2 {
+        ui.frame_begin(&ctx,{size=size,pointer_absent=true})
+        if ui.box(&ctx,{width=ui.fixed(size.x),height=ui.fixed(size.y)}) {projects_body(s,false)}
+        ui.frame_end(&ctx)
+    }
+    bar:=ui.metric(&ctx,"bar_height")
+    for name in ([]string{"projects_tab_recent","projects_tab_all","projects_team","projects_search","projects_open"}) {
+        rect,found:=ui.widget_rect(&ctx,ui.id(&ctx,name))
+        testing.expectf(t,found && rect.y>=bar,"%s at %v is not below the bar of %v",name,rect,bar)
     }
 }
