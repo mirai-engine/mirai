@@ -916,6 +916,30 @@ authored_points_round_trip_emit_without_ground_and_occupy_micro :: proc(t:^testi
 }
 
 @(test)
+a_whole_rule_stands_at_every_chance_past_its_weight_and_a_weighed_one_as_much_as_it_weighs :: proc(t:^testing.T) {
+    grass:=base.Asset_Id{3,7}
+    // Every sample is 60% grass.
+    heights:=[4]f32{}
+    weights:=[4]Layer_Weights{}
+    for &w in weights {w={weights={153,102,0,0},layers=0}}
+    layers:=[1]Ground_Layers{{grass,{9,9},{},{}}}
+    cin:=Pcg_Cell_Input{ground={cell_size=32,samples=2,heights=heights[:],weights=weights[:],layers=layers[:]}}
+    cases:=[?]struct{whole:bool,weight,chance:f32,takes:bool}{
+        {false,0.5,0.3,true},  // the chance under what they weigh
+        {false,0.5,0.9,false}, // past what they weigh: they stand as densely as they weigh
+        {true,0.5,0.9,true},   // whole: every chance past the weight
+        {true,0.7,0.1,false},  // under the weight, none
+    }
+    for tc in cases {
+        l:Pcg_Layer
+        l.ground_rule={enabled=true,slope={0,math.PI/2},height={-10,10},layers={0=grass},weight=tc.weight,whole=tc.whole}
+        mask:=rule_mask(&cin,&l)
+        p:=Point{at={16,16},chance=tc.chance,normal={0,1,0}}
+        testing.expectf(t,rule_takes(&cin,&l,&mask,p)==tc.takes,"%v: takes %v",tc,!tc.takes)
+    }
+}
+
+@(test)
 ground_layers_canonical_and_reporting :: proc(t:^testing.T) {
     a,b,c:=base.Asset_Id{1,1},base.Asset_Id{1,2},base.Asset_Id{2,1}
     w1,l1:=ground_layers_canonical({200,55,0,0},{b,a,c,{}})

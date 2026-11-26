@@ -52,6 +52,7 @@ Agent_Options :: struct {
     peers:[]string, // host:port to dial besides the addresses it knows
     public:string,  // host:port where every member reaches this machine (a server's): what an org it joins lists
     portmap:bool,   // asks the router (PCP, NAT-PMP or UPnP) to forward its TCP port, so machines on other networks reach it with no server
+    gateway:string, // host:port of the router portmap asks: "" for the default route's
     web_login:proc(data:rawptr,org_member:Key,name,password:string) -> bool, // a server's web view: a member names its sign-in
     web_data:rawptr,
 }
@@ -175,7 +176,18 @@ agent_start :: proc(a:^Agent,team:^Team,options:Agent_Options,allocator:=context
         }
         a.listener,a.listening,a.listen_host=socket,true,host
         if bound,be:=net.bound_endpoint(socket);be==nil {a.port=bound.port}
-        if options.portmap {a.mapping_on=wire.mapping_start(&a.mapping,u16(a.port),allocator,protocol=.TCP)}
+        if options.portmap {
+            gateway:wire.Address
+            if options.gateway!="" {
+                ok:bool
+                if gateway,ok=wire.address_parse(options.gateway);!ok {
+                    net.close(socket)
+                    agent_free(a)
+                    return team_fail(&a.team,.Invalid_Argument,"the router's address is no host:port")
+                }
+            }
+            a.mapping_on=wire.mapping_start(&a.mapping,u16(a.port),allocator,gateway,protocol=.TCP)
+        }
         agent_thread(a,agent_accept_run)
     }
     agent_thread(a,agent_look_run)
@@ -287,6 +299,43 @@ agent_generation :: proc(a:^Agent) -> u64 {return sync.atomic_load(&a.generation
 
 @(private)
 agent_moved :: proc(a:^Agent) {sync.atomic_add(&a.generation,1)}
+
+// How machines on other networks reach this one.
+Reach :: enum u8 {
+    Local,      // only on its LAN: the router forwards no port, or was not asked
+    Connecting, // the router has not answered yet
+    Online,     // at the address the router forwards
+}
+
+// How machines on other networks reach this one, and where when Online:
+// host:port in allocator.
+agent_reach :: proc(a:^Agent,allocator:=context.allocator) -> (reach:Reach,at:string) {
+    if !a.listening || !a.mapping_on {return .Local,""}
+    status:=wire.mapping_poll(&a.mapping)
+    #partial switch status.phase {
+    case .Pending: return .Connecting,""
+    case .Mapped:
+        if status.external.kind!=.IP4 {break}
+        ip:=status.external.ip
+        bytes:[ADDRESS_MAX]u8
+        text,e:=strings.clone(fmt.bprintf(bytes[:],"%d.%d.%d.%d:%d",ip[0],ip[1],ip[2],ip[3],status.external.port),allocator)
+        return .Online,e==nil?text:""
+    }
+    return .Local,""
+}
+
+// Waits up to timeout while the router has not answered, or until the agent
+// stops: an invite made as the agent starts then carries the router's address.
+agent_reach_wait :: proc(a:^Agent,timeout:time.Duration) -> Reach {
+    started:=time.tick_now()
+    sync.mutex_lock(&a.lock)
+    for !a.stopping && a.listening && a.mapping_on && wire.mapping_poll(&a.mapping).phase==.Pending && time.tick_since(started)<timeout {
+        sync.cond_wait_with_timeout(&a.wake,&a.lock,20*time.Millisecond)
+    }
+    sync.mutex_unlock(&a.lock)
+    reach,_:=agent_reach(a,context.temp_allocator)
+    return reach
+}
 
 // Where this machine listens, host:port, in allocator: what an invite
 // carries. The router's address first when it forwards the port (portmap),
@@ -1255,7 +1304,7 @@ agent_join :: proc(a:^Agent,text:string) -> (org:Org_Id,error:Error) {
     }
     if p==nil {
         if e==.Unauthorized {return {},team_fail(&a.team,e,"the machine at the invite's address is not the one that invited: ask for a new invite")}
-        return {},team_fail(&a.team,.Unreachable,fmt.tprintf("no machine answered at %s: start the editor or mirai kai agent there, and on another network give its host:port the router forwards",strings.join(token.addresses,", ",context.temp_allocator)))
+        return {},team_fail(&a.team,.Unreachable,fmt.tprintf("Could not reach %s. Make sure the inviter has Mirai open and is reachable from your network.",len(token.addresses)>0?token.addresses[0]:"the inviting machine"))
     }
     defer peer_unpin(a,p)
     body:=make([dynamic]u8,context.temp_allocator)

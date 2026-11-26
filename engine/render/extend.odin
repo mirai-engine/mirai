@@ -481,14 +481,6 @@ skin_update :: proc(renderer:^Renderer,mesh:Mesh_Handle,palette:[]matrix[4,4]f32
     return renderer!=nil && gpu.skin_update(renderer,mesh,palette,reset_motion,morph_weights,part)
 }
 
-// The palette of a skin for the next frame and the one of the frame before,
-// as rows of 3x4 matrices by joint, into current and previous as many as fit;
-// count: its joints. False for a mesh without a skin of joints.
-skin_palette :: proc(renderer:^Renderer,mesh:Mesh_Handle,current,previous:[][3][4]f32) -> (count:int,ok:bool) {
-    if renderer==nil {return}
-    return gpu.skin_palette(renderer,mesh,current,previous)
-}
-
 Batch_Handle :: gpu.Batch_Handle
 Batch_Desc :: gpu.Batch_Desc
 Batch_Instance :: gpu.Batch_Instance

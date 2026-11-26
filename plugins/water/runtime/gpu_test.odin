@@ -84,6 +84,7 @@ gpu_fixture_destroy :: proc(f: ^Gpu_Fixture) {
 	f.state.frame += 1
 	ribbons_release(&f.state, &f.assets)
 	sheets_release(&f.state, &f.renderer)
+	water_gpu_free(&f.state)
 	phys.test_host_destroy(&f.host)
 	test_world_destroy(&f.world)
 	delete(f.media.queue.items)

@@ -79,13 +79,15 @@ Pcg_Layer_Kind :: enum u8 {
 
 // Where a layer stands: the slope and height of the ground in their ranges,
 // and the layers of the ground under it with at least weight of them. A
-// layer of the ground is named by its material.
+// layer of the ground is named by its material. Past that weight it stands
+// as densely as those layers weigh, or whole.
 Pcg_Ground_Rule :: struct {
     enabled:bool,
     slope:[2]f32 `mirai:"angle"`,   // from horizontal: lowest and highest
     height:[2]f32 `mirai:"unit=m"`, // of the ground in the frame: lowest and highest
     layers:[GROUND_RULE_LAYERS]base.Asset_Id, // the materials it stands on; none: any
     weight:f32 `mirai:"min=0,max=1"`, // of those layers together, at least
+    whole:bool, // past weight, all of its density; false: as much of it as they weigh
 }
 
 // A symbol of a grammar and what its module places.

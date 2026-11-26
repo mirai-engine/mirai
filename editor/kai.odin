@@ -13,6 +13,7 @@ import "mirai:host"
 import vcs "mirai:kai"
 import "mirai:platform"
 import "mirai:project"
+import "mirai:std/base"
 import "mirai:store"
 
 // Kai from the editor: the project is a workspace of its own repository in the
@@ -168,13 +169,20 @@ kai_open :: proc(s:^Session) {
 }
 
 // Makes the project a Kai workspace whose first change holds its files, and
-// opens it. "" or why it could not.
-kai_enable :: proc(s:^Session) -> string {
+// opens it. reset: a workspace of another store gives way to a new history
+// here. "" or why it could not.
+kai_enable :: proc(s:^Session,reset:=false) -> string {
     k:=s.kai
     if k==nil || !s.has_project {return "The editor has no project"}
     if k.state!=nil {return "The project already uses Kai"}
     if s.store.root=="" {return kai_missing(s)}
     if st:=collab_state(s);st!=nil && st.role==.Guest && st.phase!=.Ended {return kai_missing(s)}
+    if reset && k.error==.Other_Store {
+        if base.remove_all(project.path(s.project_root,vcs.STATE_FOLDER,allocator=context.temp_allocator))!=nil {
+            return "The Kai workspace of the other store could not be removed"
+        }
+        log.infof("%s leaves the Kai workspace of another store for a new history",s.project_root)
+    }
     if ka.project_exists(s.project_root) {return "The project already has a Kai workspace: it opens with the project"}
     k.tried=true
     if identity,e:=ka.identity_load(&s.store);e==.None {k.key=identity.key}

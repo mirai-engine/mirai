@@ -233,10 +233,14 @@ volume_gpu :: proc(state:^Fog_Gpu,fog:Fog_Volume,place:volume.Volume,at:mm.Trans
     state.count+=1
 }
 
-// The volumes of the state into the frame, at the time of the world it shows.
+// The volumes of the state into the frame, at the time of the world it shows;
+// none when no volume stops light: dry boxes and empty media leave the image
+// as it is, and a glow is given for what a medium stops.
 @(private)
 fog_submit :: proc(state:^Fog_Gpu,app:^host.App) {
-    if state.count==0 {return}
+    stops:=false
+    for v in state.volumes[:state.count] {stops||=v.medium.a>0}
+    if !stops {return}
     state.time=f64(app.time)
     // 0 while the shaders in use have no fog: a generation made without the plugin.
     state.pipelines={

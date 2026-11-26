@@ -314,7 +314,7 @@ project_ingest :: proc(root,origin:string,folder:Maybe(string),options:Library_O
     if p,_,found,_:=importer.package_previous(options.store,{},origin,context.temp_allocator);found {
         list,_,_:=asset.packages_load(top,context.temp_allocator)
         for &other in list.packages {
-            if other.id==p.id {entry.assets,entry.written=other.assets,other.written}
+            if other.id==p.id {entry.id,entry.assets,entry.written=p.id,other.assets,other.written}
         }
     }
     report,error=library_ingest(&l,origin,{},settings,documents if model else "",entry.written[:],l.options.changed,allocator)

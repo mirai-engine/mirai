@@ -370,6 +370,34 @@ Mirai_Vfx_Hit mirai_vfx_trace(Mirai_Vfx_Context ctx, float3 origin, float3 direc
 Mirai_Vfx_Hit mirai_vfx_trace(Mirai_Vfx_Context ctx, float3 origin, float3 direction, float distance) { return (Mirai_Vfx_Hit)0; }
 #endif
 
+uint mirai_vfx_bones_count(Mirai_Vfx_Context ctx, uint resource) {
+    Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
+    return r.kind == PARTICLE_RESOURCE_BONES ? r.count : 0u;
+}
+
+Mirai_Vfx_Bone mirai_vfx_bone(Mirai_Vfx_Context ctx, uint resource, uint index) {
+    Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
+    Mirai_Vfx_Bone bone = (Mirai_Vfx_Bone)0;
+    bone.parent = INVALID;
+    if (r.kind != PARTICLE_RESOURCE_BONES || index >= r.count) return bone;
+    uint at = r.mesh + index * PARTICLE_BONE_BYTES;
+    float4 world[3] = { particle_frame_row(at), particle_frame_row(at + 16u), particle_frame_row(at + 32u) };
+    float4 last = particle_frame_row(at + 48u);
+    bone.position = float3(world[0].w, world[1].w, world[2].w);
+    bone.rotation = particle_turn_of(world);
+    bone.scale = float3(length(float3(world[0].x, world[1].x, world[2].x)), length(float3(world[0].y, world[1].y, world[2].y)), length(float3(world[0].z, world[1].z, world[2].z)));
+    bone.velocity = last.xyz;
+    bone.parent = asuint(last.w);
+    bone.valid = true;
+    return bone;
+}
+
+Mirai_Vfx_Bone mirai_vfx_bone_sample(Mirai_Vfx_Context ctx, uint resource, inout uint seed) {
+    uint count = mirai_vfx_bones_count(ctx, resource);
+    if (count == 0u) return mirai_vfx_bone(ctx, resource, INVALID);
+    return mirai_vfx_bone(ctx, resource, min(uint(random01(seed) * float(count)), count - 1u));
+}
+
 uint mirai_vfx_channel_count(Mirai_Vfx_Context ctx, uint resource) {
     Particle_Resource r = particle_resource(ctx.emitter, 1u + resource);
     return r.kind == PARTICLE_RESOURCE_CHANNEL ? r.count : 0u;

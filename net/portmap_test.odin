@@ -234,97 +234,164 @@ port_mapping_http_uses_a_bounded_nonblocking_local_socket :: proc(t:^testing.T) 
     testing.expect(t,!ok && portmap_seconds(start)<1)
 }
 
+// A router on loopback that speaks UPnP alone: PCP and NAT-PMP get an error,
+// or no answer when silent. existing: it already forwards the port to this
+// machine under another owner's description, as a mapping the user made does.
+@(private="file")
+Upnp_Router :: struct {
+    router,discovery:Udp,
+    listener:cnet.TCP_Socket,
+    endpoint:cnet.Endpoint,
+    silent,existing:bool,
+    client:cnet.TCP_Socket,
+    have_client:bool,
+    read_bytes,response_bytes:[8192]u8,
+    xml_bytes:[4096]u8,
+    description:[64]u8,
+    description_len:int,
+    input_size,output_size,sent:int,
+    owned,added,deleted,unexpected:bool,
+}
+
+@(private="file")
+upnp_router_open :: proc(r:^Upnp_Router) -> bool {
+    if !udp_open(&r.router,address_loopback(0)) || !udp_open(&r.discovery,address_loopback(0)) {return false}
+    listener,error:=cnet.listen_tcp({address=cnet.IP4_Loopback,port=0})
+    if error!=nil {return false}
+    r.listener=listener
+    cnet.set_blocking(listener,false)
+    r.endpoint,_=cnet.bound_endpoint(listener)
+    return true
+}
+
+@(private="file")
+upnp_router_close :: proc(r:^Upnp_Router) {
+    if r.have_client {cnet.close(r.client)}
+    if r.listener!=0 {cnet.close(r.listener)}
+    udp_close(&r.router)
+    udp_close(&r.discovery)
+}
+
+// Answers what came since the last step.
+@(private="file")
+upnp_router_step :: proc(r:^Upnp_Router) {
+    packet:[1200]u8
+    if size,from,got:=udp_receive(&r.router,packet[:]);got && !r.silent {
+        if size==60 && packet[0]==2 {
+            failure:[24]u8;failure[0]=2;failure[1]=0x81;failure[3]=1
+            udp_send(&r.router,from,failure[:])
+        } else if size>=2 && packet[0]==0 {
+            failure:[8]u8;failure[1]=packet[1]|128;failure[3]=2
+            udp_send(&r.router,from,failure[:])
+        }
+    }
+    if _,from,got:=udp_receive(&r.discovery,packet[:]);got {
+        location_bytes:[256]u8
+        location:=fmt.bprintf(location_bytes[:],"HTTP/1.1 200 OK\r\nLocation: http://127.0.0.1:%d/root.xml\r\n\r\n",r.endpoint.port)
+        udp_send(&r.discovery,from,transmute([]u8)location)
+    }
+    if !r.have_client {
+        incoming,_,accept_error:=cnet.accept_tcp(r.listener)
+        if accept_error==nil {r.client=incoming;r.have_client=true;r.input_size,r.output_size,r.sent=0,0,0;cnet.set_blocking(r.client,false)}
+        return
+    }
+    if r.output_size>0 {
+        size,send_error:=cnet.send_tcp(r.client,r.response_bytes[r.sent:r.output_size])
+        r.sent+=size
+        if (send_error!=nil && send_error!=.Would_Block) || r.sent==r.output_size {cnet.close(r.client);r.have_client=false}
+        return
+    }
+    size,recv_error:=cnet.recv_tcp(r.client,r.read_bytes[r.input_size:])
+    r.input_size+=size
+    if recv_error!=nil && recv_error!=.Would_Block {cnet.close(r.client);r.have_client=false;return}
+    text:=string(r.read_bytes[:r.input_size])
+    header_end:=strings.index(text,"\r\n\r\n")
+    complete:=false
+    if header_end>=0 {
+        length,length_ok:=strconv.parse_uint(portmap_header(text[:header_end],"Content-Length"),10)
+        complete=length_ok && length<8192 && header_end+4+int(length)<=r.input_size
+    }
+    is_get:=strings.has_prefix(text,"GET ") && header_end>=0
+    if !is_get && !complete {return}
+    body:="";status:=200
+    switch {
+    case is_get:
+        body="<root><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>/control</controlURL></service></serviceList></device></root>"
+    case strings.contains(text,"#GetSpecificPortMappingEntry"):
+        switch {
+        case r.existing:
+            body="<s:Envelope><s:Body><NewInternalPort>7950</NewInternalPort><NewInternalClient>127.0.0.1</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>miniupnpd</NewPortMappingDescription><NewLeaseDuration>0</NewLeaseDuration></s:Body></s:Envelope>"
+        case r.owned:
+            body=fmt.bprintf(r.xml_bytes[:],"<s:Envelope><s:Body><NewInternalClient>127.0.0.1</NewInternalClient><NewInternalPort>7950</NewInternalPort><NewPortMappingDescription>%s</NewPortMappingDescription></s:Body></s:Envelope>",string(r.description[:r.description_len]))
+        case: status=500;body="<s:Envelope><s:Body><errorCode>714</errorCode></s:Body></s:Envelope>"
+        }
+    case strings.contains(text,"#AddPortMapping"):
+        value,_,found:=portmap_xml(text,"NewPortMappingDescription")
+        if found {r.description_len=copy(r.description[:],value)}
+        r.owned,r.added=true,true
+        body="<s:Envelope><s:Body><AddPortMappingResponse/></s:Body></s:Envelope>"
+    case strings.contains(text,"#GetExternalIPAddress"):
+        body="<s:Envelope><s:Body><NewExternalIPAddress>8.8.8.8</NewExternalIPAddress></s:Body></s:Envelope>"
+    case strings.contains(text,"#DeletePortMapping"):
+        r.owned,r.deleted=false,true
+        body="<s:Envelope><s:Body><DeletePortMappingResponse/></s:Body></s:Envelope>"
+    case: r.unexpected=true
+    }
+    response:=fmt.bprintf(r.response_bytes[:],"HTTP/1.1 %d Reply\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",status,len(body),body)
+    r.output_size=len(response)
+}
+
 @(test)
 port_mapping_worker_falls_back_to_upnp_and_releases_only_its_mapping :: proc(t:^testing.T) {
-    router,discovery:Udp
-    if !testing.expect(t,udp_open(&router,address_loopback(0))) {return}
-    defer udp_close(&router)
-    if !testing.expect(t,udp_open(&discovery,address_loopback(0))) {return}
-    defer udp_close(&discovery)
-    listener,error:=cnet.listen_tcp({address=cnet.IP4_Loopback,port=0})
-    if !testing.expect(t,error==nil) {return}
-    defer cnet.close(listener)
-    cnet.set_blocking(listener,false)
-    endpoint,_:=cnet.bound_endpoint(listener)
+    r:=new(Upnp_Router);defer free(r)
+    defer upnp_router_close(r)
+    if !testing.expect(t,upnp_router_open(r)) {return}
     m:Port_Mapping
-    if !testing.expect(t,mapping_start(&m,7950,context.allocator,router.address,discovery.address.port)) {return}
+    if !testing.expect(t,mapping_start(&m,7950,context.allocator,r.router.address,r.discovery.address.port)) {return}
     defer mapping_close(&m)
-    packet:[1200]u8
-    read_bytes:[8192]u8
-    response_bytes:[8192]u8
-    xml_bytes:[4096]u8
-    description:[64]u8;description_len:=0
-    client:cnet.TCP_Socket
-    have_client:=false
-    defer {if have_client {cnet.close(client)}}
-    input_size,output_size,sent:=0,0,0
-    owned,added,deleted,shared:=false,false,false,false
+    shared:=false
     start:=time.tick_now()
-    for portmap_seconds(start)<5 {
-        if size,from,got:=udp_receive(&router,packet[:]);got {
-            if size==60 && packet[0]==2 {
-                failure:[24]u8;failure[0]=2;failure[1]=0x81;failure[3]=1
-                udp_send(&router,from,failure[:])
-            } else if size>=2 && packet[0]==0 {
-                failure:[8]u8;failure[1]=packet[1]|128;failure[3]=2
-                udp_send(&router,from,failure[:])
-            }
-        }
-        if _,from,got:=udp_receive(&discovery,packet[:]);got {
-            location_bytes:[256]u8
-            location:=fmt.bprintf(location_bytes[:],"HTTP/1.1 200 OK\r\nLocation: http://127.0.0.1:%d/root.xml\r\n\r\n",endpoint.port)
-            udp_send(&discovery,from,transmute([]u8)location)
-        }
-        if !have_client {
-            incoming,_,accept_error:=cnet.accept_tcp(listener)
-            if accept_error==nil {client=incoming;have_client=true;input_size,output_size,sent=0,0,0;cnet.set_blocking(client,false)}
-        } else if output_size==0 {
-            size,recv_error:=cnet.recv_tcp(client,read_bytes[input_size:])
-            input_size+=size
-            if recv_error!=nil && recv_error!=.Would_Block {cnet.close(client);have_client=false;continue}
-            text:=string(read_bytes[:input_size])
-            header_end:=strings.index(text,"\r\n\r\n")
-            complete,valid:=false,false
-            if header_end>=0 {
-                length,length_ok:=strconv.parse_uint(portmap_header(text[:header_end],"Content-Length"),10)
-                valid=length_ok && length<8192
-                complete=valid && header_end+4+int(length)<=input_size
-            }
-            is_get:=strings.has_prefix(text,"GET ") && strings.contains(text,"\r\n\r\n")
-            if !is_get && (!complete || !valid) {time.sleep(time.Millisecond);continue}
-            body:="";status:=200
-            if is_get {
-                body="<root><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>/control</controlURL></service></serviceList></device></root>"
-            } else if strings.contains(text,"#GetSpecificPortMappingEntry") {
-                if !owned {status=500;body="<s:Envelope><s:Body><errorCode>714</errorCode></s:Body></s:Envelope>"} else {
-                    body=fmt.bprintf(xml_bytes[:],"<s:Envelope><s:Body><NewInternalClient>127.0.0.1</NewInternalClient><NewInternalPort>7950</NewInternalPort><NewPortMappingDescription>%s</NewPortMappingDescription></s:Body></s:Envelope>",string(description[:description_len]))
-                }
-            } else if strings.contains(text,"#AddPortMapping") {
-                value,_,found:=portmap_xml(text,"NewPortMappingDescription")
-                if found {description_len=copy(description[:],value)}
-                owned,added=true,true
-                body="<s:Envelope><s:Body><AddPortMappingResponse/></s:Body></s:Envelope>"
-            } else if strings.contains(text,"#GetExternalIPAddress") {
-                body="<s:Envelope><s:Body><NewExternalIPAddress>8.8.8.8</NewExternalIPAddress></s:Body></s:Envelope>"
-            } else if strings.contains(text,"#DeletePortMapping") {
-                owned,deleted=false,true
-                body="<s:Envelope><s:Body><DeletePortMappingResponse/></s:Body></s:Envelope>"
-            } else {testing.expect(t,false,"unexpected UPnP action");break}
-            response:=fmt.bprintf(response_bytes[:],"HTTP/1.1 %d Reply\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",status,len(body),body)
-            output_size=len(response)
-        } else {
-            size,send_error:=cnet.send_tcp(client,response_bytes[sent:output_size])
-            sent+=size
-            if (send_error!=nil && send_error!=.Would_Block) || sent==output_size {cnet.close(client);have_client=false}
-        }
+    for portmap_seconds(start)<5 && !r.unexpected {
+        upnp_router_step(r)
         status:=mapping_poll(&m)
         if status.phase==.Mapped {
             shared=true
             testing.expect(t,status.method==.UPnP && status.external==address_ip4(8,8,8,8,7950))
             mapping_stop(&m)
         }
-        if deleted && mapping_poll(&m).phase==.Closed {break}
+        if r.deleted && mapping_poll(&m).phase==.Closed {break}
         time.sleep(time.Millisecond)
     }
-    testing.expectf(t,added && deleted && shared && !owned,"added %v deleted %v shared %v status %v",added,deleted,shared,mapping_poll(&m))
+    testing.expectf(t,r.added && r.deleted && shared && !r.owned && !r.unexpected,"added %v deleted %v shared %v status %v",r.added,r.deleted,shared,mapping_poll(&m))
+}
+
+// A router whose PCP and NAT-PMP are silent and that already forwards the
+// port to this machine, under its own description: the mapping serves within
+// a second, and closing leaves the router's mapping in place.
+@(test)
+port_mapping_upnp_takes_an_existing_mapping_to_this_machine_and_leaves_it :: proc(t:^testing.T) {
+    r:=new(Upnp_Router);defer free(r)
+    defer upnp_router_close(r)
+    if !testing.expect(t,upnp_router_open(r)) {return}
+    r.silent,r.existing=true,true
+    m:Port_Mapping
+    if !testing.expect(t,mapping_start(&m,7950,context.allocator,r.router.address,r.discovery.address.port)) {return}
+    defer mapping_close(&m)
+    mapped:=-1.0
+    start:=time.tick_now()
+    for portmap_seconds(start)<5 && !r.unexpected {
+        upnp_router_step(r)
+        status:=mapping_poll(&m)
+        if mapped<0 && status.phase==.Mapped {
+            mapped=portmap_seconds(start)
+            testing.expect(t,status.method==.UPnP && status.external==address_ip4(8,8,8,8,7950) && status.lease_seconds==0)
+            mapping_stop(&m)
+        }
+        if status.phase==.Closed || status.phase==.Unavailable {break}
+        time.sleep(time.Millisecond)
+    }
+    // The release asks the router once more, which its steps answer.
+    for _ in 0..<200 {upnp_router_step(r);time.sleep(time.Millisecond)}
+    testing.expectf(t,mapped>=0 && mapped<1.5,"mapped after %.2f s: %v",mapped,mapping_poll(&m))
+    testing.expectf(t,!r.added && !r.deleted && !r.unexpected,"added %v deleted %v",r.added,r.deleted)
 }

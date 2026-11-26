@@ -80,3 +80,5 @@ $P foliage.query '{"entity":"Woods"}'
   graph without a `Foliage` places but nothing draws it.
 - Foliage placed away from the terrain or over a hole has no ground and generates nothing.
 - A `ground_rule` with `slope` but no `enabled` is ignored; `layers` none means any layer.
+- Past its `weight`, a layer stands as densely as its `layers` weigh there, or at all of its
+  density with `whole`.

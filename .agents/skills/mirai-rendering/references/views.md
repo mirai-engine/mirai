@@ -345,5 +345,4 @@ Load transactions: `mesh_triangles` (level-0 CPU copy), `texture_add` / `texture
 - `skin_create(renderer, source, influences, joint_count, morph={}, part=false)` registers a
   GPU-skinned copy (load transaction; large meshes stream over frames while `mesh_uploading`).
 - `skin_update(renderer, handle, palette, reset_motion=false, morph_weights=nil, part={})`
-  uploads bind-to-mesh matrices and morph weights; `skin_palette` reads current/previous 3x4
-  rows for extensions (e.g., particle bones); `mesh_remove` frees.
+  uploads bind-to-mesh matrices and morph weights; `mesh_remove` frees.

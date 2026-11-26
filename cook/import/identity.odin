@@ -29,6 +29,7 @@ Part :: struct {
     index:int,        // among those of its kind in the source
     extension:string,
     only:bool,        // the one of its kind, whatever its name, as the root (the clips of a model, named after it)
+    origin:string,    // the file it is made from apart from the source (an image file, path_key); "": the source
     output:int,       // what the manifest the import writes lists for it (Writer.outputs)
     given:bool,       // an output this import gave before (Writer.given), written then
     decided:bool,     // whether it is a part of the root was decided by an import before: part says it
@@ -55,6 +56,7 @@ writer_source :: proc(w:^Writer,path,folder:string) -> bool {
     w.outputs.allocator=context.temp_allocator
     w.targets.allocator=context.temp_allocator
     w.paths.allocator=context.temp_allocator
+    w.origins.allocator=context.temp_allocator
     w.objects.allocator=context.temp_allocator
     w.fixed=false
     s:=w.options.store
@@ -106,17 +108,17 @@ writer_input :: proc(w:^Writer,file:string) -> bool {
 // Gives each part its asset and its files: the asset of the previous manifest
 // of its kind and name (the one of its index first), or of its kind for the
 // only one of its kind, else a new id. What the import gives is listed in
-// w.outputs, the assets of the manifest it writes. A part of the kind and name
-// of one of the first w.given outputs, or of the kind, name and index of a
-// later one, is that one (given): an output is listed once however many times
-// it is asked for. Planning a part of the cache fixes what the import is made
+// w.outputs, the assets of the manifest it writes. A part of the kind, name
+// and origin of one of the first w.given outputs, or of the kind, name and
+// index of a later one, is that one (given): an output is listed once however
+// many times it is asked for. Planning a part of the cache fixes what the import is made
 // from.
 @(private)
 parts_plan :: proc(w:^Writer,parts:[]Part) {
     each: for &p in parts {
         if !p.only {
             for output,at in w.outputs {
-                if output.kind!=p.kind || output.name!=p.name || at>=w.given && output.index!=p.index {continue}
+                if output.kind!=p.kind || output.name!=p.name || at<w.given && w.origins[at]!=p.origin || at>=w.given && output.index!=p.index {continue}
                 p.id,p.output,p.path,p.target,p.given=output.id,at,w.paths[at],w.targets[at],true
                 continue each
             }
@@ -155,6 +157,7 @@ parts_plan :: proc(w:^Writer,parts:[]Part) {
         append(&w.outputs,asset.Package_Asset{kind=p.kind,name=strings.clone(p.name,w.keep),index=p.index,id=p.id})
         append(&w.paths,strings.clone(p.path,w.keep))
         append(&w.targets,strings.clone(p.target,w.keep))
+        append(&w.origins,strings.clone(p.origin,w.keep))
         append(&w.objects,store.Hash{})
     }
 }

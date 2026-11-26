@@ -168,29 +168,25 @@ kai_team_build :: proc(s:^Session) {
     f:=&t.fields
     kai_head(ctx,"THIS MACHINE",-1)
     if t.team.name=="" {
-        kai_line(ctx,"Name yourself and this machine: every org you make or join shows them.")
         kai_field(ctx,"kai_name",f.name[:],&f.name_length,"Your name")
-        kai_field(ctx,"kai_device",f.device[:],&f.device_length,"This machine, as Mac or Studio PC")
+        kai_field(ctx,"kai_device",f.device[:],&f.device_length,"This machine's name, as Mac or Studio PC")
         name,device:=kai_typed(f.name[:],f.name_length),kai_typed(f.device[:],f.device_length)
         if kai_buttons(s,"kai_profile",{"Save"},accent=0,disabled=name=="" || device=="")==0 {
             kai_ask(s,"kai.profile",`{{"name":%s,"device":%s}}`,kai_quote(name),kai_quote(device))
         }
         return
     }
-    kai_row_names(ctx,t.team.name,t.team.device,ui.tone(ctx,"text"))
-    switch {
-    case v.listening!="": kai_line(ctx,v.listening)
-    case t.why_length>0: kai_line(ctx,string(t.why[:t.why_length]),"danger")
-    case: kai_line(ctx,"The agent starts once this machine is in an org.")
-    }
+    status:=v.reach if t.running else "Offline" if t.why_length==0 else ""
+    kai_row_names(ctx,v.machine,status,ui.tone(ctx,"text"))
+    if !t.running && t.why_length>0 {kai_line(ctx,string(t.why[:t.why_length]),"danger")}
     for p in v.peer_lines {kai_row_names(ctx,p.name,p.rest,ui.tone(ctx,"text"))}
 
     kai_head(ctx,"JOIN AN ORG",-1)
-    kai_field(ctx,"kai_invite_in",f.invite[:],&f.invite_length,"Paste an invite: kai2...")
+    kai_field(ctx,"kai_invite_in",f.invite[:],&f.invite_length,"Paste an invite")
     invite:=kai_typed(f.invite[:],f.invite_length)
     joining:=&t.tasks[.Join]
     if kai_buttons(s,"kai_join",{"Join"},accent=0,disabled=invite=="" || joining.stage==.Waiting)==0 {kai_ask(s,"kai.join",`{{"invite":%s}}`,kai_quote(invite))}
-    kai_task_line(ctx,joining,"Reaching the machine that invited and waiting for the org's record...")
+    kai_task_line(ctx,joining,"Joining…")
 
     for &o,i in v.orgs {
         ui.id_push(ctx,ui.id(ctx,"org",i))
@@ -204,16 +200,15 @@ kai_team_build :: proc(s:^Session) {
     }
 
     kai_head(ctx,"NEW ORG",-1)
-    kai_field(ctx,"kai_org_name",f.org[:],&f.org_length,"Name of the org")
+    kai_field(ctx,"kai_org_name",f.org[:],&f.org_length,"Org name")
     org:=kai_typed(f.org[:],f.org_length)
     if kai_buttons(s,"kai_org_new",{"Make org"},disabled=org=="")==0 {kai_ask(s,"kai.org",`{{"new":%s}}`,kai_quote(org))}
 
     if len(v.orgs)>0 {
         kai_head(ctx,"WEB SIGN-IN",-1)
-        kai_line(ctx,"A Kai server of your org shows its repositories on the web: set the name and password this machine signs in with there.")
         kai_field(ctx,"kai_server",f.server[:],&f.server_length,"Server host:port")
-        kai_field(ctx,"kai_login",f.login[:],&f.login_length,"Name: a-z, 0-9, . _ -")
-        kai_field(ctx,"kai_password",f.password[:],&f.password_length,"Password, 8 or more",password=true)
+        kai_field(ctx,"kai_login",f.login[:],&f.login_length,"Sign-in name")
+        kai_field(ctx,"kai_password",f.password[:],&f.password_length,"Password, 8 or more characters",password=true)
         server,login:=kai_typed(f.server[:],f.server_length),kai_typed(f.login[:],f.login_length)
         signing:=&t.tasks[.Web_Login]
         if kai_buttons(s,"kai_web",{"Set sign-in"},disabled=server=="" || login=="" || f.password_length<8 || signing.stage==.Waiting)==0 {
@@ -222,19 +217,19 @@ kai_team_build :: proc(s:^Session) {
             crypto.zero_explicit(&f.password,size_of(f.password))
             f.password_length=0
         }
-        kai_task_line(ctx,signing,"Reaching the server...")
+        kai_task_line(ctx,signing,"Connecting…")
     }
 }
 
-// An admin's invite: who it is for, where the other machine reaches this
-// one, and the one-time invite it makes, to copy.
+// An admin's invite: who it is for, a public address only when the router
+// forwards none, and the one-time invite it makes, to select or copy.
 @(private)
 kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
     ctx:=s.gui.ctx
     t:=s.kai.team
     f:=&t.fields
-    labels:=[]string{"Writer","Reader","Server"}
-    roles:=[]vcs.Role{.Writer,.Reader,.Node}
+    labels:=[]string{"Writer","Reader"}
+    roles:=[]vcs.Role{.Writer,.Reader}
     active:=0
     for r,i in roles {if f.role==r {active=i}}
     if pick:=kai_buttons(s,"kai_invite_role",labels,active=active);pick>=0 {f.role=roles[pick]}
@@ -242,21 +237,42 @@ kai_invite_build :: proc(s:^Session,o:^ka.Org_View) {
         ui.checkbox(ctx,ui.id(ctx,"kai_invite_mine"),&f.mine)
         ui.label(ctx,"For another machine of mine",ui.metric(ctx,"font_small"),ui.tone(ctx,"text_muted"))
     }
-    kai_line(ctx,"On another network, the other machine reaches this one where the router forwards its port:","text_faint")
-    kai_field(ctx,"kai_invite_at",f.at[:],&f.at_length,"External host:port (optional)")
-    switch kai_buttons(s,"kai_invite",{"Make invite","Revoke open invites"},accent=0) {
-    case 0: kai_ask(s,"kai.invite",`{{"org":%s,"role":%s,"mine":%v,"at":%s}}`,kai_quote(org_hex(o.id)),kai_quote(ka.role_text(f.role)),f.mine,kai_quote(kai_typed(f.at[:],f.at_length)))
+    at:=""
+    if !t.view.online {
+        kai_field(ctx,"kai_invite_at",f.at[:],&f.at_length,"Public address, host:port (optional)")
+        at=kai_typed(f.at[:],f.at_length)
+    }
+    role:=roles[active]
+    switch kai_buttons(s,"kai_invite",{"Make invite","Revoke invites"},accent=0) {
+    case 0:
+        t.invite_asked=true
+        kai_ask(s,"kai.invite",`{{"org":%s,"role":%s,"mine":%v,"at":%s}}`,kai_quote(org_hex(o.id)),kai_quote(ka.role_text(role)),f.mine,kai_quote(at))
     case 1: kai_ask(s,"kai.invite",`{{"org":%s,"revoke":true}}`,kai_quote(org_hex(o.id)))
     }
     if t.invite_length==0 || t.invite_org!=o.id {return}
-    text:=string(t.invite[:t.invite_length])
-    kai_line(ctx,"One machine joins with this invite, within 3 days, while this editor runs:","text_faint")
-    // One word of some 200 letters: on one line, cut at the panel's edge, so it never widens the tab.
-    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,padding={KAI_ROW_PAD,2,KAI_ROW_PAD,2}}) {
-        size:=ui.metric(ctx,"font_small")
-        ui.text(ctx,text,{size=size,color=ui.tone(ctx,"text"),align_y=.Center,ellipsis=true},ui.GROW,ui.fixed(size+6))
+    // The invite is one word of some 200 letters: a read-only field cuts it at
+    // the panel's edge, and selects and copies it whole.
+    control:=ui.metric(ctx,"control")
+    if ui.box(ctx,{width=ui.GROW,height=ui.FIT,gap=6,align_y=.Center}) {
+        ui.text_field(ctx,ui.id(ctx,"kai_invite_text"),t.invite[:],&t.invite_length,{read_only=true,height=control})
+        size:=ui.metric(ctx,"font")
+        l:=ui.Layout{width=ui.fixed(ui.text_width(&ctx.font,"Copied",size)+2*KAI_BUTTON_SIDE),height=ui.fixed(control)}
+        if ui.button(ctx,ui.id(ctx,"kai_invite_copy"),{label=t.invite_copied?"Copied":"Copy",variant="accent",width=-1,center=true,layout=&l}).clicked {kai_invite_copy(s)}
     }
-    if kai_buttons(s,"kai_invite_copy",{"Copy invite"})==0 && s.app!=nil && s.app.platform!=nil {platform.clipboard_set(s.app.platform,text)}
+    if t.invite_local {
+        kai_line(ctx,"Local network only — add a public host:port above to invite over the internet.","danger")
+    } else {
+        #assert(vcs.INVITE_HOURS==72)
+        kai_line(ctx,"Valid for 3 days while Mirai is open.","text_faint")
+    }
+}
+
+// Puts the invite offered last on the clipboard: whether it went there.
+kai_invite_copy :: proc(s:^Session) -> bool {
+    t:=s.kai.team
+    if t==nil || t.invite_length==0 || s.app==nil || s.app.platform==nil {return false}
+    t.invite_copied=platform.clipboard_set(s.app.platform,string(t.invite[:t.invite_length]))
+    return t.invite_copied
 }
 
 // How a task goes: waiting while it runs, why when it failed.

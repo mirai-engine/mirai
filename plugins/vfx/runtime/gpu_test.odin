@@ -328,7 +328,7 @@ particle_rows_go_to_the_gpu_only_when_their_emitter_changes :: proc(t: ^testing.
 	problems: core.Problems
 	tell :: proc(f: ^Gpu_Fixture, w: ^Emitters_World, problems: ^core.Problems) {
 		drawn: erender.Render_Sync
-		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), nil, core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {})
+		particles_sync(core.read(&w.emitters), core.read(&w.overrides), core.read(&w.worlds), core.read(&w.hidden), core.read(&w.parents), core.ref(&w.hierarchy), core.read(&w.bindings), nil, core.read(&w.meshes), core.ref(&drawn), core.read(&w.listeners), core.read(&w.grids), core.read(&w.volumes), core.read(&w.textures), core.ref(&w.clocks), core.ref(&w.settings), &f.sync, nil, {}, {index = 1}, {}, {dt = 1.0 / 60, alpha = 1}, {}, problems, &f.app, {}, {}, {}, {}, {}, {})
 	}
 	for _ in 0 ..< 3 {
 		tell(f, w, &problems)
@@ -1305,6 +1305,82 @@ particle_surface_shape_starts_particles_on_the_posed_skin :: proc(t: ^testing.T)
 		testing.expectf(t, skin[0] > beside[0] + 60 && skin[0] > unposed[0] + 60, "the posed skin %v glows with its particles, its bind pose %v and the emitter %v do not", skin, unposed, beside)
 		delete(pixels)
 	}
+	expect_clean(t, f.device)
+}
+
+// A program reads the bones a resource binds as the frame gives them: each in
+// the world, moving at its velocity, with its parent, its scale and its turn,
+// those several emitters read gathered once; past the bones, or with none
+// bound, it reads none (testdata/bone_probe.slang).
+@(test)
+particle_programs_read_the_bones_of_a_skeleton :: proc(t: ^testing.T) {
+	f := new(Gpu_Fixture)
+	defer free(f)
+	settings := test_settings()
+	settings.taa = false
+	if !gpu_fixture_init(t, f, 96, 64, settings) {return}
+	defer gpu_fixture_destroy(f)
+	r := &f.renderer
+	camera := gpu.Camera{position = {0, 1, 5}, forward = {0, -0.5, -5}, up = {0, 1, 0}, fov_y = 60, near = 0.05, far = 100, exposure = gpu.UNIT_EXPOSURE}
+	program := erender.program_find(&f.assets, "Bone_Probe", .Vfx)
+	if !testing.expect(t, program != nil && len(program.resources) == 1 && program.resources[0].kind == .Bones, "testdata has the Vfx program Bone_Probe, which reads bones") {return}
+	// A root, a spine turned about z and a hand twice as large, 2 m higher after half a second.
+	rig := core.Entity(7)
+	bones: Particle_Bones
+	defer particle_bones_free(&bones)
+	pose := [3]mm.Transform{{{0, 1, 0}, 1, {1, 1, 1}}, {{0, 2, 0}, mm.quat_axis_angle({0, 0, 1}, 0.5), {1, 1, 1}}, {{1, 1, 0}, 1, {2, 2, 2}}}
+	for frame in 0 ..< 2 {
+		if frame == 1 {pose[2].position.y += 2}
+		bones_begin(&bones)
+		parents := bones_publish(&bones, rig, pose[:], 0.5)
+		if !testing.expect_value(t, len(parents), 3) {return}
+		parents[0], parents[1], parents[2] = max(u32), 0, 1
+	}
+	probe_emitter :: proc(t: ^testing.T, f: ^Gpu_Fixture, id: u64, at: [3]f32) -> (desc: Emitter_Desc, ok: bool) {
+		desc = test_emitter(id, at)
+		desc.info.lifetime = {100, 100}
+		base.text_set(desc.info.program[:], "Bone_Probe")
+		return desc, testing.expect_value(t, particle_program_check(&f.assets, &desc.info, nil, nil, &desc.program), "")
+	}
+	probe, probe_ok := probe_emitter(t, f, 1, {0, 5, 0})
+	unbound, unbound_ok := probe_emitter(t, f, 2, {10, 0, 0})
+	if !probe_ok || !unbound_ok || !testing.expect(t, probe.program.moves) {return}
+	DT :: f32(1.0 / 60)
+	for i in 0 ..< 4 {
+		clear(&f.sync.resources);clear(&f.sync.bones);clear(&f.sync.bone_sources)
+		body := bones_resource(&f.sync, &bones, rig)
+		testing.expect_value(t, bones_resource(&f.sync, &bones, rig), body)
+		testing.expect_value(t, len(f.sync.bones), 3)
+		probe.resources = test_resources(&f.sync, {}, body)
+		probe.spawns = test_burst(4) if i == 0 else {}
+		unbound.spawns = test_burst(2) if i == 0 else {}
+		testing.expect(t, frame_emitters(f, &f.sync, {probe, unbound}, DT))
+		testing.expect(t, gpu.renderer_frame(r, {camera = camera, time = f32(i) * DT}), r.error)
+	}
+	read := test_frame_read(t, f, {probe, unbound}, DT, camera, 4 * DT, {pool_buffer(&f.sync.pool, .Particles), {}})
+	if read[0] == nil {return}
+	seen: [3]bool
+	missing := 0
+	for p in mem.slice_data_cast([]Gpu_Particle, read[0]) {
+		if p.lifetime != 100 {continue}
+		if p.rotation == -2 {
+			testing.expectf(t, p.position == {0, 5, 0} && p.spin == 3 || p.position == {10, 0, 0}, "a bone past those of the resource or of none is not valid: %v", p)
+			missing += 1
+			continue
+		}
+		i := int(p.spin)
+		if !testing.expectf(t, i >= 0 && i < 3 && !seen[i], "bone %v once", p.spin) {continue}
+		seen[i] = true
+		uploaded := f.sync.bones[i]
+		at := [3]f32{uploaded.world[0][3], uploaded.world[1][3], uploaded.world[2][3]}
+		testing.expectf(t, linalg.length(p.position - at) < 1e-4 && at == pose[i].position, "bone %d is at %v, uploaded at %v", i, p.position, at)
+		testing.expectf(t, linalg.length(p.velocity - uploaded.velocity) < 1e-4, "bone %d moves at %v, uploaded %v", i, p.velocity, uploaded.velocity)
+		testing.expect_value(t, p.rotation, uploaded.parent == max(u32) ? f32(-1) : f32(uploaded.parent))
+		testing.expectf(t, abs(p.size - pose[i].scale.y) < 1e-4 && abs(p.age - 1 - pose[i].rotation.z) < 1e-4, "bone %d: scale %v and turn %v", i, p.size, p.age - 1)
+	}
+	testing.expect_value(t, seen, [3]bool{true, true, true})
+	testing.expect_value(t, missing, 3)
+	testing.expect(t, linalg.length(f.sync.bones[2].velocity - {0, 4, 0}) < 1e-4)
 	expect_clean(t, f.device)
 }
 

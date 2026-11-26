@@ -356,6 +356,7 @@ Pool :: struct {
     steps:u32,
     needs_reset,needs_clock:bool,
     grids_at:u32,            // bytes of the rows of the frame to those of the grids
+    bones_at:u32,            // and to the bones of the frame
     volumes_at:u32,          // and to those of the volumes
     volume_count:u32,
     volume_cells:u32,        // the most cells of a volume
@@ -675,6 +676,7 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
     bytes:=size_of(Gpu_Frame)
     bytes+=len(sync.grids.entries)*(size_of(Gpu_Grid)+size_of(Gpu_Volume))
     if len(sync.resources)>=RESOURCE_ROWS {bytes+=pool.order_count*RESOURCE_ROWS*size_of(Gpu_Resource)}
+    bytes+=len(sync.bones)*size_of(Gpu_Bone)
     if len(sync.stage_rows)>=erender.PROGRAM_STAGES {
         bytes+=pool.order_count*erender.PROGRAM_STAGES*size_of(Gpu_Stage)
     }
@@ -705,6 +707,13 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
         append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
         pool.volume_count+=1
         pool.volume_cells=max(pool.volume_cells,grid_cells(entry.cells))
+    }
+    // The skeletons the resources read, once each.
+    pool.bones_at=u32(len(pool.frame_bytes))
+    for bone in sync.bones {
+        row:=bone
+        row.world=erender.origin_to_world(bone.world,pass.origin)
+        append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])
     }
     pool.steps=u32(clamp(math.ceil(pool.dt/STEP),1,STEPS))
     header.step={pool.dt,pool.dt/f32(pool.steps),f32(pool.steps),pass.time}
@@ -786,6 +795,11 @@ pool_prepare :: proc(sync:^Particle_Sync,pass:^erender.Pass,reset:bool) -> bool 
                 case .Grid:
                     if int(resource.first)<len(sync.grids.entries) {
                         row.head={u32(Resource_Kind.Grid),pool.grids_at+resource.first*size_of(Gpu_Grid),0,0}
+                    }
+                case .Bones:
+                    // Of no place in an effect view.
+                    if d.view==0 && int(resource.first+resource.count)<=len(sync.bones) {
+                        row.head={u32(Resource_Kind.Bones),pool.bones_at+resource.first*size_of(Gpu_Bone),0,resource.count}
                     }
                 }
                 append(&pool.frame_bytes,..([^]u8)(&row)[:size_of(row)])

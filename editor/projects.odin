@@ -791,8 +791,8 @@ projects_body :: proc(s:^Session,popup:bool) {
         }
     }
     if ui.box(ctx,{width=ui.fixed(1),height=ui.GROW,fill=ui.tone(ctx,"divider")}) {}
-    // Below the buttons of the window at the right of the launcher.
-    head:=ui.metric(ctx,"bar_height") if !popup && !s.headless && platform.WINDOW_CONTROLS==.Right else 18
+    // Below the bar that drags the window, where no click reaches a control.
+    head:=ui.metric(ctx,"bar_height") if !popup && !s.headless else 18
     if ui.box(ctx,{width=ui.GROW,height=ui.GROW,direction=.Column,gap=14,padding={20,head,20,20}}) {
         if p.creating {projects_new_build(s)} else {projects_content(s,popup)}
     }

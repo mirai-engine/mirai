@@ -28,6 +28,7 @@ import "mirai:project"
 
 KAI_TEXT :: 256 // bytes of a text the editor keeps of the agent
 KAI_READ_EVERY :: 250*time.Millisecond // between two reads of what the agent moved: a pull moves it at every batch
+KAI_REACH_WAIT :: 1500*time.Millisecond // an invite waits for the router this long while it has not answered
 
 // What the Kai tab shows: the working copy and the log, or the team.
 Kai_Tab :: enum u8 {Changes,Team}
@@ -52,7 +53,9 @@ Kai_Org_Lines :: struct {
 // What the team views show, in the team's arena.
 Kai_Team_View :: struct {
     lines:[]Kai_Org_Lines, // of orgs
-    listening:string,      // where this machine listens, said whole
+    machine:string,        // "name (device)" of this machine
+    reach:string,          // how other networks reach this machine, in a few words
+    online:bool,           // they reach it at the router's address
     peer_lines:[]Kai_Line,
     publish:string,        // the Changes view's line over Publish to main
     orgs:[]ka.Org_View,
@@ -148,6 +151,9 @@ Kai_Team :: struct {
     clone:Kai_Clone,
     tasks:[Kai_Task_Kind]Kai_Task,
     invite_org:vcs.Org_Id, // whose invite was offered last
+    invite_asked:bool,     // the Team view asked for the next invite: it goes to the clipboard
+    invite_copied:bool,    // the invite offered last is on the clipboard
+    invite_local:bool,     // it carries no address another network reaches
     publish_org:int,       // of view.orgs, where a first publish goes
     scroll:[2]f32,
     width:f32,
@@ -319,6 +325,7 @@ kai_team_read :: proc(s:^Session) {
         append(&orgs,o)
     }
     v.orgs,v.repositories=orgs[:],repositories[:]
+    v.machine=fmt.aprintf("%s (%s)",t.team.name,t.team.device,allocator=a)
     v.lines=make([]Kai_Org_Lines,len(orgs),a)
     for &o,i in orgs {
         x:=&v.lines[i]
@@ -344,8 +351,14 @@ kai_team_read :: proc(s:^Session) {
         v.peers,v.pulls=peers[:],pulls[:]
         v.addresses=vcs.agent_addresses(&t.agent,a)
         v.peer_lines=make([]Kai_Line,len(peers),a)
-        for p,k in peers {v.peer_lines[k]={fmt.aprintf("%s (%s)",p.device,p.name,allocator=a),fmt.aprintf("connected, %s",p.address,allocator=a)}}
-        if len(v.addresses)>0 {v.listening=fmt.aprintf("Listening at %s. When the router opens its port (UPnP, NAT-PMP or PCP), the first is where machines on other networks reach it; otherwise they need a forwarded port or a Kai server.",strings.join(v.addresses,", ",context.temp_allocator),allocator=a)}
+        for p,k in peers {v.peer_lines[k]={fmt.aprintf("%s (%s)",p.device,p.name,allocator=a),"connected"}}
+        reach,at:=vcs.agent_reach(&t.agent,a)
+        v.online=reach==.Online
+        switch reach {
+        case .Online: v.reach=fmt.aprintf("Online · %s",at,allocator=a)
+        case .Connecting: v.reach="Connecting…"
+        case .Local: v.reach="Local network only"
+        }
         events:=make([dynamic]string,context.temp_allocator)
         vcs.agent_events(&t.agent,&events,context.temp_allocator)
         for e in events {log.infof("kai: %s",e)}

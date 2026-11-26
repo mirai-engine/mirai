@@ -138,11 +138,19 @@ clock does not advance; its slot stays with `FLAG_PAUSED` and `Emitter_Desc.cull
 ## Surfaces and resources
 
 Resource rows per emitter list the shape surface first, then `//! resource name
-surface|channel|grid` in declaration order.
+surface|channel|grid|bones` in declaration order.
 
 - **Surface**: rendered mesh (`Render_Sync`; skinned meshes move triangles with barycentrics).
   Triangle area CDF is built on GPU (`particle_surface.comp`, level-0 clusters via `geometry.slang`)
   once and rebuilt on `erender.vertices_made`.
+- **Bones**: the world pose of the skeleton the bound entity shows (`mirai_vfx_bone`, `_count`,
+  `_sample`: position, turn, scale, velocity, parent; `valid` false past the bones or unbound).
+  `vfx_animation_bones` (render, after `animation_skin`) publishes into `Particle_Bones`, only for
+  entities a `Particle_Binding` names, non-owning slices of `anim.animation_shown_pose` (the drawn
+  skin pose, else the rig's last tick; every bone, sockets included, not the skinning deltas)
+  without the pose's entity, with velocity from the previous frame; `particles_sync` gathers each
+  skeleton once into `Particle_Sync.bones`, uploaded once per frame in `particle_frame`
+  (`Gpu_Bone`, 64 bytes). Steady frames allocate nothing; entries go after two idle frames.
 - **Bindings**: `Particle_Bindings` selects the shape surface (default: own entity).
   `Particle_Binding` binds a named program resource to an entity or grid; missing target reads
   nothing (no fallback). Unbound grids default to own entity's grid for the first walked grid, else
@@ -345,13 +353,15 @@ Local-space meshes take motion vectors from the emitter's `previous` rows
   `particle_seen.slang`: life, color, mesh vertex color, view direction), grid
   stages/splats (`tally.slang`, `spread.slang`), weighted velocity-facing meshes, stage rays
   (`probe.slang`), program births (`sprinkle.slang`), volumes (`puff.slang`), world textures
-  (`count_ground.slang`), channel rollback (`testdata/gather.slang`), fog/glass sorting,
+  (`count_ground.slang`), channel rollback (`testdata/gather.slang`), bones
+  (`bone_probe.slang`), fog/glass sorting,
   zero-alloc frames, debugger (`glitch.slang`),
   additive meshes, `Multiply`, ribbon segments, `Emitter_Up` and tiles (`trail_stripes.slang`),
   `Emitter` facing with `scale`, program turn and scale of meshes (`lay_across.slang`),
   local-space motion vectors and inheritance.
 - `mirai test plugins/vfx/editor -collection:plugins=<root>/plugins`: `document_test.odin`.
 - `mirai test plugins/vfx_animation/runtime --no-gpu`: `span_test.odin` (duration spans, paired
-  markers, action filtering, interruption, source destruction, zero-alloc steady ticks).
+  markers, action filtering, interruption, source destruction, zero-alloc steady ticks),
+  `bones_test.odin` (published pose, parents, velocity, zero-alloc steady frames, pruning).
 - Demo editor (headless + validation): `physics_gallery/physics_burst.scene` (station 11),
   `particle.*`, and `Surface` + `Particle_Bindings` capture.

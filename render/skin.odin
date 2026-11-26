@@ -588,21 +588,6 @@ skin_create :: proc(r:^Renderer,source:Mesh_Handle,influences:[]Skin_Influence,j
     return handle,true
 }
 
-// The palette a skinned mesh deforms with in the next frame and the one it
-// deformed with in the frame before, as the rows of a 3x4 matrix by joint,
-// into current and previous, as many as fit; count: its joints.
-skin_palette :: proc(r:^Renderer,handle:Mesh_Handle,current,previous:[][3]Vec4)->(count:int,ok:bool) {
-    s:=&r.scene
-    if int(handle)>=len(s.meshes) {return}
-    skin:=s.meshes[handle].skin
-    if skin==nil || skin.external {return}
-    for joint,i in skin.joints {
-        if i<len(current) {current[i]=joint.current}
-        if i<len(previous) {previous[i]=joint.previous}
-    }
-    return len(skin.joints),true
-}
-
 // Palette maps bind vertices to current mesh space; inverse bind is already
 // composed. morph_weights: one per target of the pose, or none to keep them.
 // part: of a pose made with one; a palette of no joints keeps the one it has.
