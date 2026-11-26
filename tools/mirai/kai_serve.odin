@@ -7,14 +7,9 @@ import "mirai:cook/shaders"
 import "mirai:kai/hub"
 import "mirai:std/base"
 
-// mirai kai serve and mirai kai web: the node and the approvals of KaiHub,
-// the procedures the headless mirai-kai runs too.
-kai_node :: proc(verb,store_root:string,args:[]string) -> int {
-    switch verb {
-    case "serve": return hub.serve_command("mirai",args,store_root)
-    case "web": return hub.web_command("mirai",args,store_root)
-    }
-    return 2
+// mirai kai serve: the server KaiHub runs, as the headless mirai-kai does.
+kai_node :: proc(store_root:string,args:[]string) -> int {
+    return hub.serve_command("mirai",args,store_root)
 }
 
 // The C library the static linux_arm64 node links: musl, prebuilt, from the
