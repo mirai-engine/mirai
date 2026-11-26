@@ -267,6 +267,8 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
     org,ok:=api_kai_org_find(s,call,t,p.org)
     if !ok {return}
     k:=s.kai.team
+    asked:=k.invite_asked
+    k.invite_asked=false
     if p.revoke {
         if _,e:=vcs.team_invites_clear(t,org);e!=.None {
             api_kai_why(call,t,e)
@@ -289,7 +291,14 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
         return
     }
     addresses:=make([dynamic]string,call.allocator)
-    if at:=strings.trim_space(p.at);at!="" {append(&addresses,strings.clone(at,call.allocator))}
+    at:=strings.trim_space(p.at)
+    reach:vcs.Reach
+    if at!="" {
+        append(&addresses,strings.clone(at,call.allocator))
+    } else {
+        // Asked as the agent starts, the invite waits for the router's address.
+        reach=vcs.agent_reach_wait(&k.agent,KAI_REACH_WAIT)
+    }
     append(&addresses,..vcs.agent_addresses(&k.agent,call.allocator))
     text,e:=vcs.team_invite(t,org,role,p.mine?t.name:"",addresses[:],call.allocator)
     if e!=.None {
@@ -297,7 +306,8 @@ api_kai_invite :: proc(s:^Session,call:^api.Call) {
         return
     }
     k.invite_length=copy(k.invite[:],text)
-    k.invite_org=org
+    k.invite_org,k.invite_local,k.invite_copied=org,at=="" && reach!=.Online,false
+    if asked && kai_invite_copy(s) {notify(s,"Invite copied to clipboard")}
     r:=api.call_result(call,Api_Kai_Invite)
     r.invite,r.addresses=text,addresses[:]
 }

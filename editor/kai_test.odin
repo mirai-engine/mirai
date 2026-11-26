@@ -535,6 +535,33 @@ editor_kai_team_view_reads_only_when_the_agent_moves :: proc(t:^testing.T) {
     kai_poll(s)
     testing.expect_value(t,team.generation,generation)
     kai_panel_stable(t,s,"Team")
+    // An admin invites writers and readers, never a server; the invite shows
+    // in a read-only field with Copy on its row, and one no other network
+    // reaches says so.
+    ui.id_push(&ctx,ui.id(&ctx,"org",0))
+    make_invite,server,invite_text,invite_copy:=ui.id(&ctx,"kai_invite",0),ui.id(&ctx,"kai_invite_role",2),ui.id(&ctx,"kai_invite_text"),ui.id(&ctx,"kai_invite_copy")
+    ui.id_pop(&ctx)
+    _,has_server:=ui.widget_rect(&ctx,server)
+    testing.expect(t,!has_server,"the Team view invites no server")
+    if !kai_panel_click(t,s,make_invite) {return}
+    method,params=kai_panel_asked(s)
+    testing.expectf(t,method=="kai.invite" && team.invite_asked,"Make invite asks kai.invite: %s %s",method,params)
+    x:=Api_Kai_Invite_Params{org="studio",role="writer"}
+    call,_:=kai_call(s,api_kai_invite,&x,Api_Kai_Invite)
+    if !kai_ok(t,call,"invite") {return}
+    testing.expect(t,!team.invite_asked && team.invite_local && team.invite_length>0 && !team.invite_copied,"a loopback agent's invite reaches no other network")
+    kai_panel_still(t,s);kai_panel_still(t,s)
+    field,has_field:=ui.widget_rect(&ctx,invite_text)
+    copied,has_copy:=ui.widget_rect(&ctx,invite_copy)
+    testing.expectf(t,has_field && has_copy && abs(field.y-copied.y)<1 && field.x+field.w<=copied.x && copied.x+copied.w<=KAI_TAB+0.5,"the invite and Copy share a row inside the tab: %v %v",field,copied)
+    invite:=strings.clone(string(team.invite[:team.invite_length]),context.temp_allocator)
+    if !kai_panel_click(t,s,invite_text) {return}
+    typing:=ui.Input{size={900,900},pointer_absent=true,keys_pressed={.Backspace},keys_repeated={.Backspace}}
+    typing.text[0],typing.text_count='x',1
+    kai_panel_still(t,s,typing)
+    kai_panel_still(t,s,{size={900,900},pointer_absent=true,keys_pressed={.Enter}})
+    testing.expect_value(t,string(team.invite[:team.invite_length]),invite)
+    kai_panel_stable(t,s,"Team with an invite")
     s.kai.state.tab=.Changes
     kai_panel_stable(t,s,"Changes")
 }
