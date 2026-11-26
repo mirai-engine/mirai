@@ -255,6 +255,7 @@ portmap_natpmp_response :: proc(b:[]u8,port:u16,protocol:=Port_Protocol.UDP) -> 
 @(private)
 portmap_natpmp :: proc(m:^Port_Mapping,u:^Udp,gateway:Address,lease:^Portmap_Lease,seconds:u32) -> bool {
     request:=portmap_natpmp_request(m.port,lease.external.port==0?m.port:lease.external.port,seconds,m.protocol)
+    opcodes:=NATPMP_OPCODE
     granted:=false
     defer {
         if !granted && lease.method==.None {
@@ -278,7 +279,8 @@ portmap_natpmp :: proc(m:^Port_Mapping,u:^Udp,gateway:Address,lease:^Portmap_Lea
             b:=buffer[:size]
             if len(b)==12 && b[0]==0 && b[1]==128 && portmap_get16(b[2:4])==0 {ip=address_ip4(b[8],b[9],b[10],b[11],0)}
             if ep,sec,ok:=portmap_natpmp_response(b,m.port,m.protocol);ok {external,lifetime=ep,sec}
-            if len(b)>=4 && b[0]==0 && (b[1]==128 || b[1]==129) && portmap_get16(b[2:4])!=0 {return false}
+            // An error answer to the address request (128) or to the mapping's.
+            if len(b)>=4 && b[0]==0 && (b[1]==128 || b[1]==128+opcodes[m.protocol]) && portmap_get16(b[2:4])!=0 {return false}
             if ip.kind!=.None && external!=0 {granted=true;ip.port=external;lease.external,lease.seconds=ip,lifetime;return true}
         }
         portmap_pause()
