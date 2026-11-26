@@ -57,14 +57,14 @@ bindings_sync :: proc(sync:^Particle_Sync,bindings:^core.Table(Particle_Binding,
     }
 }
 
-Resource_Kind :: enum u32 {None,Surface,Channel,Grid}
+Resource_Kind :: enum u32 {None,Surface,Channel,Grid,Bones}
 
 // A resource of an emitter in a frame.
 Resource_Desc :: struct {
     kind:Resource_Kind,
     mesh:erender.Mesh_Handle,       // a surface: the mesh of the scene it is
     triangles:u32,                  // and its triangles
-    first,count:u32,                // a channel: its births among those of the frame; a grid: which of the world
+    first,count:u32,                // a channel: its births among those of the frame; a grid: which of the world; bones: in Particle_Sync.bones
     transform,previous:mm.Mat4,     // where it is this frame, and the frame before
 }
 
@@ -77,7 +77,7 @@ Resource_Need :: struct {
 
 // shaders/particles.slang: Particle_Resource.
 Gpu_Resource :: struct {
-    head:[4]u32, // kind; a surface: mesh, first triangle in the surfaces, triangles; a channel: 0, first birth, births; a grid: bytes to its row
+    head:[4]u32, // kind; a surface: mesh, first triangle in the surfaces, triangles; a channel: 0, first birth, births; a grid: bytes to its row; bones: bytes to the first, 0, bones
     world,previous:[3][4]f32,
 }
 #assert(size_of(Gpu_Resource)==112)
@@ -88,7 +88,7 @@ Gpu_Resource :: struct {
 @(private)
 emitter_resources :: proc(
     sync:^Particle_Sync,shown:^Emitter_Shown,bindings:^Particle_Bindings,
-    sources:^core.Table(Particle_Binding,.Read),
+    sources:^core.Table(Particle_Binding,.Read),bones:^Particle_Bones,
     e:core.Entity,extras:[]erender.Instance_Desc,drawn:^erender.Render_Sync,meshes:^core.Table(erender.Mesh_Renderer,.Read),worlds:^core.Table(core.World_Transform,.Read),id:core.World_Id,assets:^host.Assets,renderer:^erender.Renderer,
 ) -> (resources:[RESOURCE_ROWS]Resource_Desc) {
     source:=bindings.surface if bindings.surface!=core.NONE else e
@@ -121,6 +121,10 @@ emitter_resources :: proc(
             for region in sync.regions {
                 if region.name==need.channel {resources[1+at].first,resources[1+at].count=region.first,region.count}
             }
+            continue
+        }
+        if need.kind==.Bones {
+            resources[1+at]=bones_resource(sync,bones,source)
             continue
         }
         if need.kind==.Surface && source!=core.NONE {

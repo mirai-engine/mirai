@@ -153,6 +153,8 @@ struct Particle_Event {
 #define PARTICLE_RESOURCE_SURFACE 1u
 #define PARTICLE_RESOURCE_CHANNEL 2u
 #define PARTICLE_RESOURCE_GRID 3u
+#define PARTICLE_RESOURCE_BONES 4u
+#define PARTICLE_BONE_BYTES 64u // vfx.Gpu_Bone: the rows of its transform, its velocity and its parent
 // The stages of an emitter after its resources (vfx.Gpu_Stage).
 #define PARTICLE_STAGES 32u
 #define PARTICLE_STAGE_BYTES 32u
@@ -195,9 +197,9 @@ float particle_surface_area(uint at) { return asfloat(particle_world_bytes.Load(
 
 struct Particle_Resource {
     uint kind;
-    uint mesh;            // a surface: the mesh of the scene it is
+    uint mesh;            // a surface: the mesh of the scene it is; bones: bytes to the first in particle_frame
     uint first;           // a surface: the area of its first triangle in particle_surfaces; a channel: bytes to its first birth
-    uint count;           // a surface: its triangles by primitive (geometry.slang), CLUSTER_TRIANGLES a cluster of level 0, of no area past those of the cluster; a channel: its births
+    uint count;           // a surface: its triangles by primitive (geometry.slang), CLUSTER_TRIANGLES a cluster of level 0, of no area past those of the cluster; a channel: its births; bones: how many
     float4 world[3];      // where it is this frame
     float4 previous[3];   // and the frame before
 };

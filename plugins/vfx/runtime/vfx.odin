@@ -132,6 +132,8 @@ Particle_Sync :: struct {
     grids:Grids,
     stage_rows:[dynamic]Gpu_Stage, // of the emitters whose programs have stages, PROGRAM_STAGES each
     resources:[dynamic]Resource_Desc, // of the emitters that read some in this frame, RESOURCE_ROWS each
+    bones:[dynamic]Gpu_Bone,          // the skeletons bones resources read in this frame, in the world
+    bone_sources:[dynamic]Bone_Source, // whose they are
     pipelines:Particle_Pipelines,
     world_textures:[WORLD_TEXTURES]u64, // the names of the grids whose textures the renderer keeps
     world_texture_count:int,
@@ -161,6 +163,7 @@ particle_sync_free :: proc(sync:^Particle_Sync) {
     delete(sync.resource_bindings)
     grids_free(&sync.grids)
     delete(sync.resources);delete(sync.stage_rows)
+    delete(sync.bones);delete(sync.bone_sources)
     delete(sync.pipelines.groups);delete(sync.pipelines.by_program)
     sync^={}
 }
@@ -349,6 +352,7 @@ particles_sync :: proc(
     clocks:core.Ref(Particle_Clocks),settings:core.Ref(Particle_Settings),sync:^Particle_Sync,ui_effects:^UI_Particles,ui_requests:core.Ref(gui.UI_Effects),id:core.World_Id,time:core.Time,frame:core.Frame_Time,
     view:core.View,problems:^core.Problems,app:^host.App,
     winds:^core.Table(volume.Wind,.Read),places:^core.Table(volume.Volume,.Read),gravities:^core.Table(volume.Gravity,.Read),sections:^core.Table(scene.Scene_Reference,.Read),splines:^core.Table(volume.Spline,.Read),
+    bones:core.Ref(Particle_Bones),
 ) {
     if sync==nil {return}
     r,a:=app.renderer,app.assets
@@ -356,6 +360,7 @@ particles_sync :: proc(
     sync.world,sync.world_id=erender.world_key(id),id
     clear(&sync.resources)
     clear(&sync.stage_rows)
+    clear(&sync.bones);clear(&sync.bone_sources)
     bindings_sync(sync,sources,problems)
     grids_sync(&sync.grids,grids,volumes,textures,worlds,view,problems)
     fields_sync(sync,gravities,winds,{places,worlds,parents,sections,splines})
@@ -388,7 +393,7 @@ particles_sync :: proc(
         }
     }
     f:=Sync_Frame{
-        sync=sync,emitters=emitters,overrides=overrides,worlds=worlds,hidden=hidden,parents=parents,bindings=bindings,sources=sources,meshes=meshes,listeners=listeners,
+        sync=sync,emitters=emitters,overrides=overrides,worlds=worlds,hidden=hidden,parents=parents,bindings=bindings,sources=sources,bones=bones.ptr,meshes=meshes,listeners=listeners,
         drawn=drawn.ptr,clocks=clocks.ptr,frame=frame,problems=problems,app=app,id=id,shaders=app.shaders.reloads,pooled=pooled,
     }
     effects_read(sync,a)
@@ -418,6 +423,7 @@ Sync_Frame :: struct {
     parents:^core.Table(core.Parent,.Read),
     bindings:^core.Table(Particle_Bindings,.Read),
     sources:^core.Table(Particle_Binding,.Read),
+    bones:^Particle_Bones,
     meshes:^core.Table(erender.Mesh_Renderer,.Read),
     listeners:^core.Table(Particle_Channel,.Read),
     drawn:^erender.Render_Sync,
@@ -649,7 +655,7 @@ layer_tell :: proc(f:^Sync_Frame,e:core.Entity,emitter:Particle_Emitter,world:^c
     desc.resources,desc.stages,desc.births=0,0,{}
     if shown.desc.info.shape==.Surface || shown.needs.resources[0].kind!=.None || shown.needs.stages[0].kind!=.None {
         bound,_:=core.get(f.bindings,e)
-        rows:=emitter_resources(sync,shown,&bound,f.sources,e,host.extras_instances(&f.app.extras),f.drawn,f.meshes,f.worlds,f.id,a,r)
+        rows:=emitter_resources(sync,shown,&bound,f.sources,f.bones,e,host.extras_instances(&f.app.extras),f.drawn,f.meshes,f.worlds,f.id,a,r)
         desc.resources=u32(len(sync.resources))+1
         append(&sync.resources,..rows[:])
     }

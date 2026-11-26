@@ -53,7 +53,7 @@ particle_program_check :: proc(a:^host.Assets,info:^effect.Particle_Info,stored:
     program.attributes,program.moves,program.births,program.prepare=u32(found.attributes),found.moves,found.births,found.prepare
     if needs!=nil {
         for resource,at in found.resources[:min(len(found.resources),RESOURCES)] {
-            kinds:=[erender.Program_Resource_Kind]Resource_Kind{.Surface=.Surface,.Channel=.Channel,.Grid=.Grid}
+            kinds:=[erender.Program_Resource_Kind]Resource_Kind{.Surface=.Surface,.Channel=.Channel,.Grid=.Grid,.Bones=.Bones}
             needs.resources[at]={name=base.name_hash(resource.name),kind=kinds[resource.kind],channel=core.birth_channel(resource.name)}
             if resource.cleared {needs.cleared|=1<<u32(at)}
         }

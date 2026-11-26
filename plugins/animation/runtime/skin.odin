@@ -91,6 +91,27 @@ Skin_Instances :: struct {
     frame:u64,
 }
 
+// The pose of the skeleton an entity shows in the frame, in the world: the one
+// its skinned mesh is drawn with in it, between the poses of two ticks, or else
+// the pose of its rig, or of the rig its Pose_Source follows, at the last tick.
+// Index 0 is the entity of the pose and bone i of its skeleton is at i+1;
+// parents in the same order, -1 for none. Memory of the animation, valid in the
+// frame. ok false without a pose.
+animation_shown_pose :: proc(playback:core.Ref(Playback),instances:core.Ref(Skin_Instances),skins:^core.Table(Pose_Source,.Read),e:core.Entity) -> (world:[]mm.Transform,parents:[]i32,ok:bool) {
+    rig:=e
+    if skins!=nil {
+        if source,follows:=core.get(skins,e);follows {rig=source.rig}
+    }
+    pose:=constraint_playing(playback,rig)
+    if pose==nil || !pose.pose_ready {return}
+    world,parents=playing_pose(pose,.World),playing_topology(pose).parents[:]
+    if instances.ptr!=nil {
+        drawn:=core.entity_map_get(&instances.ptr.instances,e)
+        if drawn!=nil && drawn.copied && drawn.seen==instances.ptr.frame && drawn.pose==rig && len(drawn.world)==len(world) {world=drawn.world}
+    }
+    return world,parents,len(world)>1 && len(world)==len(parents)
+}
+
 // Ends what an instance holds; taking it out of the map is the caller's.
 @(private)
 skin_instance_free :: proc(renderer:^erender.Renderer,instance:^Skin_Instance) {
