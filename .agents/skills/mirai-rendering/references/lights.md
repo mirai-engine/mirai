@@ -148,6 +148,13 @@ The `direct` pass ([frame graph](frame-graph.md#passes)) distributes `direct_sam
   light over 3x3 pattern, filters visibility over blocker-derived penumbra width, then adds
   [shadowless lists](#lists-of-a-cell), [extension lights](views.md#extension-hooks-and-constants)
   (hard rays), and back-side `direct_lighting`.
+- **Tiles (`direct_maps`, `Targets.direct_tiles`, `abi.DIRECT_TILES_*`):** While a view draws
+  maps, `direct_maps` lists the 8x8 tiles with a sampled point, the 16x16 ray tiles over them and
+  their 3x3 neighbours (whose blockers `direct_samples` reads) and the 64x64 spread blocks with a
+  radius of a point or more plus the neighbour block within `DIRECT_SPREAD_MAX` of their border;
+  rays, samples and spread run by indirect dispatch over those alone, bit-exact with all tiles
+  (`Renderer.direct_every` lists every tile for the tests). A point without a surface leaves
+  `direct_points.a = -1`, as the spread does, so a block it skips needs no write.
 - **Shadow maps (`render/shadow_maps.odin`):** Built for large-screen local lights (cube faces
   or single spot cone) and sun cascades. Culled by map texel detail (`shadow_map_detail`,
   `shadow_map_unseen`, `shadow_culled` by eye cell), drawing opaque and masked clusters

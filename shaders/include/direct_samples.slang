@@ -29,6 +29,26 @@ float direct_start(uint place) { return (float(place) + 0.5) / 9.0; }
 // first of each `scale` x `scale` of them; what follows counts in points.
 int2 direct_points(int scale) { return (int2(frame.resolution) + scale - 1) / scale; }
 
+// While the view draws maps, direct_maps.comp lists the tiles of points the
+// passes after it take (render/abi DIRECT_TILES_REGIONS): the tiles of
+// DIRECT_TILE points a side across the view, where a region of their buffer
+// starts, and a tile listed in it.
+int2 direct_tiles_across(int scale) { return (direct_points(scale) + DIRECT_TILE - 1) / DIRECT_TILE; }
+uint direct_tiles_region(uint region, int scale) {
+    int2 tiles = direct_tiles_across(scale);
+    return DIRECT_TILES_HEADER + region * uint(tiles.x * tiles.y);
+}
+uint2 direct_tile_unpack(uint word) { return uint2(word & 0xFFFFu, word >> 16u); }
+#ifdef DIRECT_TILES_SLOT
+[[vk::binding(DIRECT_TILES_SLOT, 0)]] StructuredBuffer<uint> direct_tiles : register(MIRAI_REGISTER(t, DIRECT_TILES_SLOT), space0);
+// The tile a group takes: entry `entry` of the list while the view draws
+// maps, else the one its place in the dispatch gives (`own`).
+uint2 direct_tile(uint list, uint entry, uint2 own, int scale) {
+    if (frame.sun_maps.z == 0u) return own;
+    return direct_tile_unpack(direct_tiles[direct_tiles_region(list, scale) + entry]);
+}
+#endif
+
 #if defined(GBUFFER_ALBEDO) && defined(GBUFFER_NORMAL)
 // The G-buffer of the point at pixel `source`, which stands for `scale` x
 // `scale` pixels: its lobes widen by the spread of the normal over them, as

@@ -125,8 +125,9 @@ void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index :
     if (any(p >= size)) return;
     int2 at = int2(local.xy) + FILTER_APRON;
     int center = at.x + at.y * FILTER_TILE;
+    // As direct_spread.comp leaves a point without a surface.
     if (filter_points[center].w < 0.5) {
-        out_points[p] = float4(0.0, 0.0, 0.0, 1.0);
+        out_points[p] = float4(0.0, 0.0, 0.0, -1.0);
         out_sun[p] = -1.0;
         return;
     }

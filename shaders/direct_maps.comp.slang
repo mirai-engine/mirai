@@ -7,7 +7,8 @@
 // without samples or rays: its light with nothing in the way by the part its
 // map says gets there. A point some light no map holds lights is marked for
 // direct_samples.comp (out_depth.z below 0), which adds the light of its
-// samples to this; the others it leaves as they are.
+// samples to this; the others it leaves as they are. It lists the tiles the
+// passes after take (direct_tiles_list).
 #define GBUFFER_ALBEDO SLOT_PASS3
 #define GBUFFER_NORMAL SLOT_PASS0
 #define SUN_SHADOW_SLOT SLOT_PASS8
@@ -16,12 +17,13 @@
 #include "gbuffer.slang"
 #include "pixel.slang"
 #include "direct_samples.slang"
-#define MIRAI_GROUP_X 8
-#define MIRAI_GROUP_Y 8
+#define MIRAI_GROUP_X DIRECT_TILE
+#define MIRAI_GROUP_Y DIRECT_TILE
 #define MIRAI_GROUP_Z 1
 
 // Those of direct_samples.comp.
-struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uint hard; uint pad1; uint pad2; uint pad3; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells;
+// every: list every tile (render.Renderer.direct_every).
+struct Params_Block { uint every; uint samples; float sun_radius; uint scale; uint hard; uint pad1; uint pad2; uint pad3; float3 grid_origin; float grid_cell; uint3 grid_size; uint cells;
     uint shadow_on; uint shadow_rows; uint shadow_maps; uint shadow_sun; };
 [[vk::binding(SLOT_PARAMS, 0)]] ConstantBuffer<Params_Block> params : register(MIRAI_REGISTER(b, SLOT_PARAMS), space0);
 [[vk::binding(SLOT_PASS1, 0)]] Texture2D<float4> g_depth : register(MIRAI_REGISTER(t, SLOT_PASS1), space0);
@@ -32,6 +34,9 @@ struct Params_Block { uint pad0; uint samples; float sun_radius; uint scale; uin
 [[vk::binding(SLOT_PASS5, 0)]] [[vk::image_format("rgba16f")]] RWTexture2D<float4> out_depth : register(MIRAI_REGISTER(u, SLOT_PASS5), space0);
 [[vk::binding(SLOT_PASS6, 0)]] StructuredBuffer<uint4> light_grid : register(MIRAI_REGISTER(t, SLOT_PASS6), space0);
 [[vk::binding(SLOT_PASS7, 0)]] [[vk::image_format("r16f")]] RWTexture2D<float> out_sun : register(MIRAI_REGISTER(u, SLOT_PASS7), space0);
+// The tiles the passes after take (render/abi DIRECT_TILES_REGIONS), whose
+// dispatches the frame gives with none listed.
+[[vk::binding(SLOT_PASS4, 0)]] RWStructuredBuffer<uint> out_tiles : register(MIRAI_REGISTER(u, SLOT_PASS4), space0);
 #include "shadow_maps.slang"
 #include "direct_grid.slang"
 
@@ -104,20 +109,22 @@ float shadow_map_seen(Shadow_Map m, Shadow_Taps t, Shadow_Near near, bool sun, f
     return inside > 0u ? float(lit) / float(inside) : 1.0;
 }
 
-[shader("compute")]
-[numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
-void main(uint3 dispatch_id : SV_DispatchThreadID) {
+// What a point asks of the passes after: samples (direct_samples.comp), or a
+// penumbra that spreads it or the points beside it (direct_spread.comp).
+#define POINT_SAMPLED 1u
+#define POINT_SPREAD 2u
+
+uint maps_point(int2 p) {
     int scale = int(max(params.scale, 1u));
-    int2 p = int2(dispatch_id.xy);
     int2 size = direct_points(scale);
-    if (any(p >= size)) return;
+    if (any(p >= size)) return 0u;
     int2 source = p * scale;
     float depth = g_depth.Load(int3(source, 0)).r;
     if (depth_empty(depth)) {
         out_depth[p] = float4(0.0);
         out_samples[p] = float4(0.0, 0.0, 0.0, 1.0);
         out_sun[p] = -1.0;
-        return;
+        return 0u;
     }
     float2 uv = (float2(source) + 0.5) * frame.inv_resolution;
     Pixel pixel = pixel_at(source, uv, depth);
@@ -219,8 +226,65 @@ void main(uint3 dispatch_id : SV_DispatchThreadID) {
         float hidden = shown > 0.0 ? saturate(hid / shown) : 0.0;
         float mean = hid > 0.0 ? wide / hid : 0.0;
         out_depth[p] = float4(depth_distance(depth), sun_radius, -1.0 - (isfinite(hidden) ? hidden : 0.0), isfinite(mean) ? mean : 0.0);
-        return;
+        return POINT_SAMPLED;
     }
     float radius = hid > 0.0 ? min(DIRECT_SPREAD_REACH * wide / (hid * width) + 0.5, float(DIRECT_SPREAD_MAX)) : 0.0;
-    out_depth[p] = float4(depth_distance(depth), sun_radius, 0.0, isfinite(radius) ? radius : 0.0);
+    radius = isfinite(radius) ? radius : 0.0;
+    out_depth[p] = float4(depth_distance(depth), sun_radius, 0.0, radius);
+    // The spread takes a tap only within a radius of a point or more, as the
+    // half it is kept in rounds it.
+    return max(sun_radius, radius) > 0.999 ? POINT_SPREAD : 0u;
+}
+
+// Lists `at` once in list `list` and the dispatch at `args`, the first time a
+// tile asks for it: region `listed` holds whether it is, a word for each of
+// the `width` across.
+void tiles_add(uint listed, uint list, uint args, int2 at, int width, int scale) {
+    uint was;
+    InterlockedExchange(out_tiles[direct_tiles_region(listed, scale) + uint(at.y * width + at.x)], 1u, was);
+    if (was != 0u) return;
+    uint entry;
+    InterlockedAdd(out_tiles[args], 1u, entry);
+    out_tiles[direct_tiles_region(list, scale) + entry] = uint(at.x) | (uint(at.y) << 16u);
+}
+
+// What the passes after take for a tile whose points ask for it: where one
+// takes samples, the tile and the tiles of rays of 16x16 points over it and
+// the eight around, whose blockers direct_samples.comp reads; and the block of
+// the spread it lies in with the one beside it along each axis where the tile
+// lies within DIRECT_SPREAD_MAX points of their border. A point that takes
+// samples has the radii they give, which this pass does not know.
+void direct_tiles_list(int2 tile, uint asks) {
+    int scale = int(max(params.scale, 1u));
+    int2 across = direct_tiles_across(scale);
+    if ((asks & POINT_SAMPLED) != 0u) {
+        uint entry;
+        InterlockedAdd(out_tiles[DIRECT_TILES_SAMPLES], 1u, entry);
+        out_tiles[direct_tiles_region(DIRECT_TILES_SAMPLES_LIST, scale) + entry] = uint(tile.x) | (uint(tile.y) << 16u);
+        int2 low = max(tile - 1, int2(0)) / 2, high = min(tile + 1, across - 1) / 2;
+        for (int y = low.y; y <= high.y; y++) {
+            for (int x = low.x; x <= high.x; x++) tiles_add(DIRECT_TILES_RAYS_LISTED, DIRECT_TILES_RAYS_LIST, DIRECT_TILES_RAYS, int2(x, y), (across.x + 1) / 2, scale);
+        }
+    }
+    int run = DIRECT_SPREAD_RUN / DIRECT_TILE;
+    int2 blocks = (across + run - 1) / run;
+    int2 block = tile / run, within = (tile % run) * DIRECT_TILE;
+    int2 before = max(block - int2(within.x < DIRECT_SPREAD_MAX ? 1 : 0, within.y < DIRECT_SPREAD_MAX ? 1 : 0), int2(0));
+    int2 after = min(block + int2(within.x + DIRECT_TILE > DIRECT_SPREAD_RUN - DIRECT_SPREAD_MAX ? 1 : 0, within.y + DIRECT_TILE > DIRECT_SPREAD_RUN - DIRECT_SPREAD_MAX ? 1 : 0), blocks - 1);
+    int2 reached[5] = {block, int2(before.x, block.y), int2(after.x, block.y), int2(block.x, before.y), int2(block.x, after.y)};
+    for (uint i = 0u; i < 5u; i++) tiles_add(DIRECT_TILES_SPREAD_LISTED, DIRECT_TILES_SPREAD_LIST, DIRECT_TILES_SPREAD, reached[i], blocks.x, scale);
+}
+
+// What the points of the group ask for.
+groupshared uint group_asks;
+
+[shader("compute")]
+[numthreads(MIRAI_GROUP_X, MIRAI_GROUP_Y, MIRAI_GROUP_Z)]
+void main(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint index : SV_GroupIndex) {
+    if (index == 0u) group_asks = 0u;
+    GroupMemoryBarrierWithGroupSync();
+    uint asks = maps_point(int2(group.xy * uint(DIRECT_TILE) + local.xy));
+    if (asks != 0u) InterlockedOr(group_asks, asks);
+    GroupMemoryBarrierWithGroupSync();
+    if (index == 0u && (group_asks != 0u || params.every != 0u)) direct_tiles_list(int2(group.xy), params.every != 0u ? POINT_SAMPLED : group_asks);
 }

@@ -49,6 +49,7 @@ SLOT_SHADOW_TABLE   :: abi.SLOT_SHADOW_TABLE
 SLOT_LIGHT_LISTS    :: abi.SLOT_LIGHT_LISTS
 SLOT_REST           :: abi.SLOT_REST
 SLOT_AERIAL         :: abi.SLOT_AERIAL
+SLOT_DIRECT_BLOCKERS :: abi.SLOT_DIRECT_BLOCKERS
 // Of a draw of the clusters of an instance (gbuffer.vert): the Surface program
 // whose clusters it draws, 0 those without one, GPU_NONE all of them.
 SLOT_DRAW           :: abi.SLOT_DRAW
@@ -1500,6 +1501,16 @@ nested_views_record :: proc(p: ^Pass) -> bool {
 	return true
 }
 
+// The tiles of the direct light a view that draws maps takes after
+// direct_maps.comp (abi.DIRECT_TILES_REGIONS).
+DIRECT_TILE           :: abi.DIRECT_TILE
+DIRECT_SPREAD_RUN     :: abi.DIRECT_SPREAD_RUN
+DIRECT_TILES_SAMPLES  :: abi.DIRECT_TILES_SAMPLES
+DIRECT_TILES_RAYS     :: abi.DIRECT_TILES_RAYS
+DIRECT_TILES_SPREAD   :: abi.DIRECT_TILES_SPREAD
+DIRECT_TILES_HEADER   :: abi.DIRECT_TILES_HEADER
+DIRECT_TILES_REGIONS  :: abi.DIRECT_TILES_REGIONS
+
 // Shadow rays at a hit of a ray of the probe volume: what it gathers is
 // blurred over many rays and probes.
 PROBE_LIGHT_BUDGET :: u32(4)
@@ -1524,9 +1535,10 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		light_grid_record(r, cmd)
 		s.light_grid_dirty = false
 	}
-	Params :: struct {pad0, samples: u32, sun_radius: f32, scale, hard, pad1, pad2, pad3: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
+	Params :: struct {every, samples: u32, sun_radius: f32, scale, hard, pad1, pad2, pad3: u32, grid_origin: Vec3, grid_cell: f32, grid_size: [3]u32, cells: u32, shadow: Shadow_Maps}
 	cells := s.light_grid.size.x * s.light_grid.size.y * s.light_grid.size.z
 	params := Params{
+		every       = 1 if r.direct_every else 0,
 		scale       = scale,
 		samples     = clamp(settings.direct_samples, 1, DIRECT_SAMPLES_MAX),
 		sun_radius  = settings.sun_radius,
@@ -1546,9 +1558,16 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	unlayered := rhi.Shader_Constants{} if p.layered else {DIRECT_MAPS_COMP_UNLAYERED}
 	#assert(DIRECT_MAPS_COMP_UNLAYERED == DIRECT_SAMPLES_COMP_UNLAYERED && DIRECT_MAPS_COMP_UNLAYERED == DIRECT_FILTER_COMP_UNLAYERED)
 	// The light of what the maps hold, while the view drew them: the samples
-	// add the rest where it marks a point (Frame.sun_maps.z, direct_maps.comp).
-	if p.frame.sun_maps.z != 0 {
+	// add the rest where it marks a point (Frame.sun_maps.z, direct_maps.comp),
+	// and the passes after take only the tiles it lists; else all of them.
+	maps := p.frame.sun_maps.z != 0
+	tiles := t.direct_tiles
+	tiles_across := [2]u32{groups(points.x, DIRECT_TILE), groups(points.y, DIRECT_TILE)}
+	if maps {
 		rhi.cmd_timestamp(cmd, "direct maps")
+		header := [DIRECT_TILES_HEADER]u32{DIRECT_TILES_SAMPLES + 1 = 1, DIRECT_TILES_SAMPLES + 2 = 1, DIRECT_TILES_RAYS + 1 = 1, DIRECT_TILES_RAYS + 2 = 1, DIRECT_TILES_SPREAD + 1 = DIRECT_SPREAD_RUN, DIRECT_TILES_SPREAD + 2 = 1}
+		if !upload_transient(r, cmd, header[:], tiles) {return false}
+		rhi.cmd_fill_buffer(cmd, tiles, DIRECT_TILES_HEADER * size_of(u32), 2 * u64(tiles_across.x * tiles_across.y) * size_of(u32), 0)
 		rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Maps, unlayered, unlayered)^)
 		set_params(cmd, &params)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS0, t.normal)
@@ -1560,7 +1579,8 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 		rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
-		rhi.cmd_dispatch(cmd, groups(points.x, 8), groups(points.y, 8))
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS4, tiles)
+		rhi.cmd_dispatch(cmd, tiles_across.x, tiles_across.y)
 	}
 	rhi.cmd_timestamp(cmd, "direct rays")
 	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Rays)^)
@@ -1570,10 +1590,15 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_blockers)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, tiles)
 	// A thread for each square of 2x2 points, and a group of the samples for
-	// each 4x4 of them (direct_group_pixel).
+	// each 4x4 of them (direct_group_pixel), a tile.
 	squares := (points.x + 1) / 2
-	rhi.cmd_dispatch(cmd, groups(squares, 8), groups((points.y + 1) / 2, 8))
+	if maps {
+		rhi.cmd_dispatch_indirect(cmd, tiles, DIRECT_TILES_RAYS * size_of(u32))
+	} else {
+		rhi.cmd_dispatch(cmd, groups(squares, 8), groups((points.y + 1) / 2, 8))
+	}
 	rhi.cmd_timestamp(cmd, "direct samples")
 	rhi.cmd_bind_pipeline(cmd, pipeline_of(r, .Direct_Samples, unlayered, {DIRECT_SAMPLES_COMP_UNLAYERED})^)
 	set_params(cmd, &params)
@@ -1581,13 +1606,18 @@ pass_direct :: proc(p: ^Pass) -> bool {
 	rhi.cmd_bind_texture(cmd, SLOT_PASS1, t.linear_depth)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS2, t.direct_samples)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.albedo)
-	rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_blockers)
+	rhi.cmd_bind_texture(cmd, SLOT_DIRECT_BLOCKERS, t.direct_blockers)
+	rhi.cmd_bind_buffer(cmd, SLOT_PASS4, tiles)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS5, t.direct_depth)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS6, grid)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS7, t.direct_sun)
 	rhi.cmd_bind_texture(cmd, SLOT_PASS8, atlas)
 	rhi.cmd_bind_buffer(cmd, SLOT_PASS9, table)
-	rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
+	if maps {
+		rhi.cmd_dispatch_indirect(cmd, tiles, DIRECT_TILES_SAMPLES * size_of(u32))
+	} else {
+		rhi.cmd_dispatch(cmd, groups(squares, 4), groups(points.y, 8))
+	}
 	// What the window of the pattern gives each point.
 	rhi.cmd_timestamp(cmd, "direct points")
 	Window :: struct {scale, samples, pad0, pad1: u32}
@@ -1613,11 +1643,13 @@ pass_direct :: proc(p: ^Pass) -> bool {
 		rhi.cmd_bind_texture(cmd, SLOT_PASS3, t.direct_points)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS4, t.direct_sun_points)
 		rhi.cmd_bind_texture(cmd, SLOT_PASS6, t.direct_depth)
-		// A group for each run of 64 points along the axis.
-		if axis == 0 {
-			rhi.cmd_dispatch(cmd, groups(points.x, 64), points.y)
+		rhi.cmd_bind_buffer(cmd, SLOT_PASS5, tiles)
+		// A group for each run along the axis of each block of
+		// DIRECT_SPREAD_RUN points a side.
+		if maps {
+			rhi.cmd_dispatch_indirect(cmd, tiles, DIRECT_TILES_SPREAD * size_of(u32))
 		} else {
-			rhi.cmd_dispatch(cmd, points.x, groups(points.y, 64))
+			rhi.cmd_dispatch(cmd, groups(points.x, DIRECT_SPREAD_RUN), DIRECT_SPREAD_RUN, groups(points.y, DIRECT_SPREAD_RUN))
 		}
 	}
 	zone = render_zone_begin(r, "light lists")
