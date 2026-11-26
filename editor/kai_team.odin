@@ -231,7 +231,7 @@ kai_team_read :: proc(s:^Session) {
         x.repos=make([]Kai_Line,len(o.repos),a)
         for r,k in o.repos {
             state:="not published yet"
-            if r.main!="" {state=fmt.aprintf("main %s%s",r.main,r.here?"":", on its way",allocator=a)}
+            if r.published {state=r.main!=""?fmt.aprintf("main %s%s",r.main,r.here?"":", on its way",allocator=a):"main published"}
             x.repos[k]={r.name,fmt.aprintf("%s, %s",r.public?"public":"org only",state,allocator=a)}
         }
     }

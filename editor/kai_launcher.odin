@@ -106,7 +106,8 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
             case pulling && c.stage==.Waiting:
                 chunks,bytes:=kai_clone_progress(t)
                 what=fmt.tprintf("%s, %s: %d chunks, %s pulled",o.name,kind,chunks,base.bytes_text(bytes))
-            case x.main=="": what=fmt.tprintf("%s, %s: nobody published it yet",o.name,kind)
+            case !x.published: what=fmt.tprintf("%s, %s: nobody published it yet",o.name,kind)
+            case x.main=="": what=fmt.tprintf("%s, %s: main is published, Pull takes it",o.name,kind)
             case !x.here && !x.linked: what=fmt.tprintf("%s, %s: main %s",o.name,kind,x.main)
             case !x.here: what=fmt.tprintf("%s, %s: main %s is on its way from your org's machines",o.name,kind,x.main)
             case: what=fmt.tprintf("%s, %s: main %s",o.name,kind,x.main)
@@ -121,7 +122,7 @@ projects_repository_row :: proc(s:^Session,r:^Kai_Repository,busy:bool) {
         }
         if pulling && c.stage==.Failed && ui.button(ctx,ui.id(ctx,"repository_dismiss"),{label="Dismiss",variant="ghost",height=28,size=ui.metric(ctx,"font_small")}).clicked {kai_ask(s,"kai.clone",`{"cancel":true}`)}
         another:=c.stage==.Waiting && !pulling // one pull at a time
-        if ui.button(ctx,ui.id(ctx,"repository_pull"),{label=pulled?"Open":"Pull",variant="accent",width=72,height=30,center=true,disabled=busy || another || x.main==""}).clicked {
+        if ui.button(ctx,ui.id(ctx,"repository_pull"),{label=pulled?"Open":"Pull",variant="accent",width=72,height=30,center=true,disabled=busy || another || !x.published}).clicked {
             if pulled {
                 if message:=projects_open(s,folder);message!="" {notify(s,message)}
             } else {

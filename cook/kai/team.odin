@@ -281,7 +281,8 @@ Repo_View :: struct {
     id:vcs.Repo_Id,
     name:string,
     public:bool,
-    main:string,   // the change id main names, "" when nobody published it
+    main:string,   // the change id main names, "" while its change is not here
+    published:bool, // someone published main
     here:bool,     // every object main reaches is here
     linked:bool,   // a workspace of this machine is one of it
 }
@@ -320,8 +321,9 @@ org_view :: proc(t:^vcs.Team,id:vcs.Org_Id,v:^Org_View,allocator:=context.temp_a
         if refs,_,e:=vcs.repo_refs_head(s,id,r.id,context.temp_allocator);e==.None {
             for b in refs.bookmarks {
                 if b.name!=BOOKMARK_DEFAULT {continue}
+                x.published=true
                 c,ce:=vcs.change_get(s,b.target,context.temp_allocator)
-                if ce==.None {x.main=change_text(c.id,allocator)} else {x.main=clone("?",allocator) or_return}
+                if ce==.None {x.main=change_text(c.id,allocator)}
                 missing:=make([dynamic]store.Hash,context.temp_allocator)
                 vcs.closure_walk(s,{b.target},nil,&missing)
                 x.here=ce==.None && len(missing)==0
