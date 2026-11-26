@@ -1,6 +1,7 @@
 package kai
 
 import "core:slice"
+import "core:strings"
 import "core:unicode/utf8"
 import "mirai:store"
 
@@ -70,8 +71,37 @@ Org_Head :: struct #packed {
     repos:u16,
 } // + name, members × (Key, Role, name, device, address), repos × (Repo_Id, public u8, name), Signature; texts are a length byte and their bytes
 
+// Whether name is a name of an org, member, device or repository: 1 to
+// NAME_MAX bytes of UTF-8 without control characters.
 name_valid :: proc(name:string) -> bool {
-    return len(name)>0 && len(name)<=NAME_MAX && utf8.valid_string(name)
+    if len(name)==0 || len(name)>NAME_MAX || !utf8.valid_string(name) {return false}
+    for c in name {
+        if c<0x20 || c==0x7f || c>=0x80 && c<0xa0 {return false}
+    }
+    return true
+}
+
+// Whether name is a repository's: a name that is also a folder's on every
+// system, where a pull puts it: no separator, colon or wildcard, not . or ..,
+// no dot or space last and no name Windows keeps for a device.
+repo_name_valid :: proc(name:string) -> bool {
+    if !name_valid(name) || name=="." || name==".." {return false}
+    for c in transmute([]u8)name {
+        switch c {
+        case '/','\\',':','*','?','"','<','>','|': return false
+        }
+    }
+    last:=name[len(name)-1]
+    if last=='.' || last==' ' {return false}
+    stem:=name
+    if dot:=strings.index_byte(stem,'.');dot>=0 {stem=stem[:dot]}
+    stem=strings.trim_right_space(stem)
+    upper:=strings.to_upper(stem,context.temp_allocator)
+    switch upper {
+    case "CON","PRN","AUX","NUL": return false
+    }
+    if len(upper)==4 && (strings.has_prefix(upper,"COM") || strings.has_prefix(upper,"LPT")) && upper[3]>='0' && upper[3]<='9' {return false}
+    return true
 }
 
 // The signed bytes of o, whose signature it sets.
@@ -83,7 +113,7 @@ org_encode :: proc(o:^Org,identity:^Identity,allocator:=context.allocator) -> (b
         if i>0 && !key_less(o.members[i-1].key,m.key) {return nil,.Invalid_Argument}
     }
     for r,i in o.repos {
-        if !name_valid(r.name) || r.id=={} {return nil,.Invalid_Argument}
+        if !repo_name_valid(r.name) || r.id=={} {return nil,.Invalid_Argument}
         if i>0 && !repo_less(o.repos[i-1].id,r.id) {return nil,.Invalid_Argument}
     }
     w:=writer_make(allocator)
@@ -139,7 +169,7 @@ org_decode :: proc(bytes:[]u8,allocator:=context.allocator) -> (o:Org,error:Erro
         public:=read_value(&r,u8)
         x.public=public==1
         x.name=tail_string(&r)
-        ok&&=public<=1 && x.id!={} && name_valid(x.name) && (i==0 || repo_less(o.repos[i-1].id,x.id))
+        ok&&=public<=1 && x.id!={} && repo_name_valid(x.name) && (i==0 || repo_less(o.repos[i-1].id,x.id))
     }
     o.signature=read_value(&r,Signature)
     if !ok || r.short || r.at!=len(bytes) || !signature_valid(o.signer,bytes[:len(bytes)-size_of(Signature)],o.signature) {

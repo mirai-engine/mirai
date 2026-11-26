@@ -1,5 +1,6 @@
 package kai
 
+import "base:runtime"
 import "core:crypto"
 import "core:fmt"
 import "core:math/rand"
@@ -7,7 +8,10 @@ import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "core:net"
+import "core:sync"
 import "core:testing"
+import "core:thread"
 import "core:time"
 import "mirai:std/base"
 import "mirai:store"
@@ -112,10 +116,10 @@ noise_pq_handshake_proves_both_keys_and_refuses_tampering :: proc(t:^testing.T) 
         testing.expectf(t,ok==c.ok,"%s: the handshake %v",c.name,ok?"held":"failed")
         if ok && c.ok {
             testing.expect(t,i.peer==bob.key && r.peer==alice.key,"each end knows the other's key")
-            testing.expect(t,handshake_invited(&r,secret),"the invite's proof holds under its secret")
+            testing.expect(t,handshake_invited(r.proof,r.proved,secret),"the invite's proof holds under its secret")
             other:=secret
             other[0]~=1
-            testing.expect(t,!handshake_invited(&r,other),"and under no other")
+            testing.expect(t,!handshake_invited(r.proof,r.proved,other),"and under no other")
             is,ir:=handshake_split(&i)
             rs,rr:=handshake_split(&r)
             plain:=[]u8{1,2,3,4,5}
@@ -553,4 +557,282 @@ vcs_org :: proc(t:^testing.T,m:^Machine) -> (Org_Id,Error) {
     id,e:=team_org_create(&m.team,"studio")
     testing.expect_value(t,e,Error.None)
     return id,e
+}
+
+// A web sign-in goes to the org's server alone: a member's machine at the
+// address given proves another key, so the password never reaches it.
+@(test)
+a_web_sign_in_reaches_only_the_orgs_server :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-web-login")
+    if folder=="" {return}
+    mac,server,writer:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&server,folder,"cloud") || !machine_open(t,&writer,folder,"Eve") {return}
+    defer machine_close(&mac)
+    defer machine_close(&server)
+    defer machine_close(&writer)
+    org,_:=vcs_org(t,&mac)
+    Heard :: struct {passwords:int}
+    heard:Heard
+    listen :: proc(data:rawptr,key:Key,name,password:string) -> bool {
+        (^Heard)(data).passwords+=1
+        return true
+    }
+    if !machine_start(t,&mac,0) {return}
+    server.running=testing.expect_value(t,agent_start(&server.agent,&server.team,{port=0,host="127.0.0.1",node=true,public="127.0.0.1:1",web_login=listen,web_data=&heard}),Error.None)
+    writer.running=testing.expect_value(t,agent_start(&writer.agent,&writer.team,{port=0,host="127.0.0.1",web_login=listen,web_data=&heard}),Error.None)
+    if !server.running || !writer.running {return}
+    mac_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    node,_:=team_invite(&mac.team,org,.Node,"",{mac_address},context.temp_allocator)
+    if _,e:=agent_join(&server.agent,node);!testing.expect_value(t,e,Error.None) {return}
+    invite,_:=team_invite(&mac.team,org,.Writer,"",{mac_address},context.temp_allocator)
+    if _,e:=agent_join(&writer.agent,invite);!testing.expect_value(t,e,Error.None) {return}
+    writer_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&writer.agent))
+    e:=agent_web_login(&mac.agent,writer_address,"ana","a long password")
+    testing.expect_value(t,e,Error.Unauthorized)
+    testing.expect_value(t,heard.passwords,0)
+    server_address:=fmt.tprintf("127.0.0.1:%d",agent_port(&server.agent))
+    testing.expect_value(t,agent_web_login(&mac.agent,server_address,"ana","a long password"),Error.None)
+    testing.expect_value(t,heard.passwords,1)
+}
+
+// A handshake that fails leaves the accepted socket open and its caller's:
+// it is closed once, by whoever accepted it.
+@(test)
+a_failed_handshake_leaves_the_accepted_socket_to_its_caller :: proc(t:^testing.T) {
+    listener,le:=net.listen_tcp({net.IP4_Loopback,0})
+    if !testing.expect(t,le==nil,"listens") {return}
+    defer net.close(listener)
+    bound,_:=net.bound_endpoint(listener)
+    client,ce:=net.dial_tcp_from_address_and_port(net.IP4_Loopback,bound.port)
+    if !testing.expect(t,ce==nil,"dials") {return}
+    defer net.close(client)
+    socket,remote,ae:=net.accept_tcp(listener)
+    if !testing.expect(t,ae==nil,"accepts") {return}
+    garbage:[NOISE_MSG1]u8
+    net.send_tcp(client,garbage[:])
+    net.shutdown(client,.Send)
+    c,e:=conn_accept(socket,remote,identity_make())
+    testing.expect(t,c==nil && e==.Unauthorized,"the handshake fails")
+    testing.expect(t,net.set_option(socket,.TCP_Nodelay,true)==nil,"the socket is still open")
+    net.close(socket)
+}
+
+// An agent that stops while a dial to an address that never answers runs
+// returns at once, and that dial ends before it does.
+@(test)
+an_agent_stops_while_a_dial_hangs :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-stop-dial")
+    if folder=="" {return}
+    m:Machine
+    if !machine_open(t,&m,folder,"Ana") {return}
+    defer machine_close(&m)
+    // A documentation address (TEST-NET-1): nothing answers it.
+    m.running=testing.expect_value(t,agent_start(&m.agent,&m.team,{port=-1,peers={"192.0.2.1:7350"}}),Error.None)
+    if !m.running {return}
+    Dialing :: struct {a:^Agent}
+    d:=Dialing{&m.agent}
+    testing.expect(t,until(5,&d,proc(data:rawptr) -> bool {
+        a:=(^Dialing)(data).a
+        sync.mutex_lock(&a.lock)
+        defer sync.mutex_unlock(&a.lock)
+        return a.dials>0
+    }),"the dial runs")
+    started:=time.tick_now()
+    agent_stop(&m.agent)
+    m.running=false
+    testing.expectf(t,time.tick_since(started)<time.Second,"the agent stops in %v",time.tick_since(started))
+    testing.expect_value(t,m.agent.dials,0)
+}
+
+// A peer that asks and never reads is cut off once what it asked passes
+// REQUESTS_BYTES_MAX, instead of growing what the agent holds for it.
+@(test)
+a_peer_that_asks_and_never_reads_is_cut_off :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-requests")
+    if folder=="" {return}
+    mac,pc:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&pc,folder,"Ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc)
+    org,_:=vcs_org(t,&mac)
+    if !machine_start(t,&mac,0) || !machine_start(t,&pc,-1) {return}
+    address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    invite,_:=team_invite(&mac.team,org,.Reader,"",{address},context.temp_allocator)
+    if _,e:=agent_join(&pc.agent,invite);!testing.expect_value(t,e,Error.None) {return}
+    c,e:=conn_dial(address,pc.team.identity,mac.team.identity.key)
+    if !testing.expect_value(t,e,Error.None) {return}
+    defer conn_free(c)
+    head:=transmute([2]u8)u16le(WANT_MAX)
+    wants:=make([]store.Hash,WANT_MAX,context.temp_allocator)
+    for &w in wants {crypto.rand_bytes(w[:])}
+    o:=org
+    sent:=0
+    for sent<400 && conn_send(c,.Want,o[:],head[:],slice.to_bytes(wants)) {sent+=1}
+    // What it was sent, then the end: never an answer to each want.
+    buffer:=make([]u8,FRAME_MAX+NOISE_TAG,context.temp_allocator)
+    net.set_option(c.socket,.Receive_Timeout,10*time.Second)
+    lacks:=0
+    for {
+        kind,_,ok:=conn_receive(c,buffer)
+        if !ok {break}
+        if kind==.Lack {lacks+=1}
+    }
+    testing.expectf(t,lacks<sent,"the agent cut the connection: %d wants, %d answered",sent,lacks)
+}
+
+// What a joining machine names itself is checked before the invite is spent:
+// a Join without a device name leaves the invite for a good one.
+@(test)
+a_bad_join_does_not_spend_the_invite :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-bad-join")
+    if folder=="" {return}
+    mac,pc:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&pc,folder,"Ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&pc)
+    org,_:=vcs_org(t,&mac)
+    if !machine_start(t,&mac,0) || !machine_start(t,&pc,-1) {return}
+    address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    invite,_:=team_invite(&mac.team,org,.Writer,"",{address},context.temp_allocator)
+    token,_:=invite_parse(invite,context.temp_allocator)
+    c,e:=conn_dial(address,pc.team.identity,token.key,token.secret)
+    if !testing.expect_value(t,e,Error.None) {return}
+    body:=make([dynamic]u8,context.temp_allocator)
+    append(&body,..o_bytes(&org))
+    write_text(&body,"Ben")
+    write_text(&body,"")
+    write_text(&body,"")
+    conn_send(c,.Join,body[:])
+    buffer:=make([]u8,FRAME_MAX+NOISE_TAG,context.temp_allocator)
+    net.set_option(c.socket,.Receive_Timeout,5*time.Second)
+    for {
+        kind,_,ok:=conn_receive(c,buffer)
+        if !ok || kind==.Bye || kind==.Welcome {
+            testing.expect(t,kind!=.Welcome,"a nameless device is not welcomed")
+            break
+        }
+    }
+    conn_free(c)
+    joined,je:=agent_join(&pc.agent,invite)
+    testing.expectf(t,je==.None && joined==org,"the invite still joins: %v %s",je,pc.agent.team.why)
+}
+
+@(private="file")
+o_bytes :: proc(org:^Org_Id) -> []u8 {return org[:]}
+
+// What a machine takes from a peer is committed, and derived data is taken
+// only whole: a set whose output is not all there sets no ref on a server,
+// one whose output came does, and both those refs and the shared bookmarks a
+// member that keeps nothing whole takes read from another handle of its store
+// at once.
+@(test)
+what_a_server_takes_is_whole_and_committed :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-ddc-whole")
+    if folder=="" {return}
+    mac,server,pc:Machine
+    if !machine_open(t,&mac,folder,"Ana") || !machine_open(t,&server,folder,"cloud") || !machine_open(t,&pc,folder,"Ben") {return}
+    defer machine_close(&mac)
+    defer machine_close(&server)
+    defer machine_close(&pc)
+    org,_:=vcs_org(t,&mac)
+    if !machine_start(t,&mac,0) || !machine_start(t,&server,-1,node=true) || !machine_start(t,&pc,-1) {return}
+    address:=fmt.tprintf("127.0.0.1:%d",agent_port(&mac.agent))
+    node,_:=team_invite(&mac.team,org,.Node,"",{address},context.temp_allocator)
+    if _,e:=agent_join(&server.agent,node);!testing.expect_value(t,e,Error.None) {return}
+    reader,_:=team_invite(&mac.team,org,.Reader,"",{address},context.temp_allocator)
+    if _,e:=agent_join(&pc.agent,reader);!testing.expect_value(t,e,Error.None) {return}
+    // A set whose output names an object the mac does not have, and one whole.
+    lacking,whole:store.Hash
+    crypto.rand_bytes(lacking[:])
+    crypto.rand_bytes(whole[:])
+    missing:store.Hash
+    crypto.rand_bytes(missing[:])
+    present,_:=store.put(&mac.s,transmute([]u8)string("a derived result"))
+    _,de:=ddc_publish(&mac.s,org,&mac.team.identity,lacking,{missing},1)
+    testing.expect_value(t,de,Error.None)
+    _,we:=ddc_publish(&mac.s,org,&mac.team.identity,whole,{present},1)
+    testing.expect_value(t,we,Error.None)
+    store.commit(&mac.s)
+    // A repository the server is told of and does not keep whole.
+    repo:=random_id(Repo_Id)
+    team_repo_set(&mac.team,org,{id=repo,name="game"})
+    revision:=change_of(t,&mac.s,&mac.team.identity,{{"a.txt","one\n"}})
+    team_publish(&mac.team,org,repo,{{"main",revision}})
+    agent_changed(&mac.agent)
+    Taken :: struct {s:^store.Store,org:Org_Id,key:store.Hash}
+    w:=Taken{&server.s,org,whole}
+    if !testing.expect(t,until(20,&w,proc(data:rawptr) -> bool {
+        w:=(^Taken)(data)
+        records:=make([dynamic]DDC_Record,context.temp_allocator)
+        return ddc_lookup(w.s,w.org,w.key,&records)==.None
+    }),"the whole set is taken") {return}
+    records:=make([dynamic]DDC_Record,context.temp_allocator)
+    testing.expect_value(t,ddc_lookup(&server.s,org,lacking,&records),Error.Missing)
+    other,oe:=store.open(server.s.root)
+    if !testing.expect_value(t,oe,store.Error.None) {return}
+    defer store.close(&other)
+    testing.expect_value(t,ddc_lookup(&other,org,whole,&records),Error.None)
+    pc_other,pe:=store.open(pc.s.root)
+    if !testing.expect_value(t,pe,store.Error.None) {return}
+    defer store.close(&pc_other)
+    Refs :: struct {s:^store.Store,org:Org_Id,repo:Repo_Id}
+    r:=Refs{&pc_other,org,repo}
+    testing.expect(t,until(20,&r,proc(data:rawptr) -> bool {
+        r:=(^Refs)(data)
+        _,_,e:=repo_refs_head(r.s,r.org,r.repo,context.temp_allocator)
+        return e==.None
+    }),"the shared bookmarks read from another handle")
+}
+
+// Two processes that make a machine's key at once end with the same one.
+@(test)
+a_machine_key_made_twice_at_once_is_one :: proc(t:^testing.T) {
+    folder:=base.test_folder(t,"kai-secret-race")
+    if folder=="" {return}
+    for round in 0..<20 {
+        Maker :: struct {s:store.Store,key:Key,e:Error}
+        makers:[4]Maker
+        root:=fmt.tprintf("%s/round%d",folder,round)
+        for &m in makers {
+            e:store.Error
+            m.s,e=store.open(root)
+            if !testing.expect_value(t,e,store.Error.None) {return}
+        }
+        threads:[4]^thread.Thread
+        for &m,k in makers {
+            // Each thread its own temp allocator, as each process has.
+            c:=runtime.default_context()
+            c.allocator=context.allocator
+            threads[k]=thread.create_and_start_with_poly_data(&m,proc(m:^Maker) {
+                defer thread_end()
+                identity,e:=machine_identity(&m.s)
+                m.key,m.e=identity.key,e
+            },c)
+        }
+        for th in threads {
+            thread.join(th)
+            thread.destroy(th)
+        }
+        for &m in makers {
+            testing.expect_value(t,m.e,Error.None)
+            testing.expect(t,m.key==makers[0].key,"every maker has the same key")
+            store.close(&m.s)
+        }
+    }
+}
+
+// A repository's name is a folder's on every system.
+@(test)
+repository_names_are_folder_names_everywhere :: proc(t:^testing.T) {
+    Case :: struct {name:string,valid:bool}
+    cases:=[]Case{
+        {"game",true},{"My Game 2",true},{"juego-ñ",true},{"v1.2",true},
+        {"",false},{".",false},{"..",false},{"a/b",false},{"a\\b",false},{"../up",false},
+        {"c:",false},{"a*",false},{"a?",false},{"a|b",false},{"a<b",false},{"a\"b",false},
+        {"end.",false},{"end ",false},{"CON",false},{"nul",false},{"com1",false},{"LPT9.txt",false},
+        {"aux .x",false},{"COM",true},{"console",true},
+        {"tab\there",false},{"nul\x00byte",false},{"del\x7f",false},
+    }
+    for c in cases {testing.expectf(t,repo_name_valid(c.name)==c.valid,"%q: valid %v",c.name,c.valid)}
+    testing.expect(t,!name_valid("bell\x07"),"a member's name has no control character")
 }

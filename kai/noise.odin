@@ -158,11 +158,11 @@ handshake_read_3 :: proc(hs:^Handshake,message:[]u8) -> bool {
     return true
 }
 
-// Whether the initiator's proof is the HMAC of the handshake hash of message
-// 3 under secret.
-handshake_invited :: proc(hs:^Handshake,secret:[32]u8) -> bool {
-    k:=secret
-    return hmac.verify(.SHA256,hs.proof[:],hs.proved[:],k[:])
+// Whether proof is the HMAC of the handshake hash proved (what the initiator
+// sent in message 3 and the responder kept) under secret.
+handshake_invited :: proc(proof,proved,secret:[32]u8) -> bool {
+    p,h,k:=proof,proved,secret
+    return hmac.verify(.SHA256,p[:],h[:],k[:])
 }
 
 // The two directions of the session.
@@ -178,16 +178,19 @@ handshake_split :: proc(hs:^Handshake) -> (send,receive:Cipher) {
     return
 }
 
-// Seals plain into out (len(plain)+NOISE_TAG bytes).
-cipher_seal :: proc(c:^Cipher,plain,out:[]u8) {
+// Seals plain into out (len(plain)+NOISE_TAG bytes); false once the
+// counter is spent, which never wraps to a nonce used before.
+cipher_seal :: proc(c:^Cipher,plain,out:[]u8) -> bool {
+    if c.n==max(u64) {return false}
     iv:=nonce(c.n)
     c.n+=1
     chacha20poly1305.seal(&c.ctx,out[:len(plain)],out[len(plain):][:NOISE_TAG],iv[:],nil,plain)
+    return true
 }
 
 // Opens sealed into out (len(sealed)-NOISE_TAG bytes).
 cipher_open :: proc(c:^Cipher,sealed,out:[]u8) -> bool {
-    if len(sealed)<NOISE_TAG {return false}
+    if len(sealed)<NOISE_TAG || c.n==max(u64) {return false}
     iv:=nonce(c.n)
     c.n+=1
     n:=len(sealed)-NOISE_TAG

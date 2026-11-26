@@ -5,6 +5,7 @@ import "core:crypto"
 import "core:net"
 import "core:sync"
 import "core:time"
+import wire "mirai:net"
 import "mirai:store"
 
 // One Kai connection: a TCP stream between two machines, the same between two
@@ -34,7 +35,7 @@ Msg :: enum u8 {
     Join,    // org, name, device: the initiator proved an invite of org
     Welcome, // org, address: the org's record that now lists the joining device
     Bye,     // why, as text
-    Web_Login, // name, password: a server's web view signs in as this device
+    Web_Login, // name, password: a server's web view signs in as this device; a connection's first and only message
 }
 
 // A head one end holds: an org's record, a repository's shared bookmarks or
@@ -56,10 +57,15 @@ Conn :: struct {
     plain:[]u8, // FRAME_MAX bytes, under send_lock
     out:[]u8,   // FRAME_MAX+NOISE_TAG+4 bytes, under send_lock
     peer:Key,
-    hs:Handshake, // kept after it ends for its invite proof, its keys zeroed
+    proof:[32]u8,  // of the invite the initiator proved, zero when none (handshake_invited)
+    proved:[32]u8, // the handshake hash the proof covers
     remote:net.Endpoint,
-    closed:bool,
+    closed:bool,   // atomic: shut down, so a thread blocked on it wakes
 }
+
+DIAL_SECONDS :: 5    // a connect that takes longer is given up
+SEND_SECONDS :: 30   // a send the other end takes nothing of for this long ends the connection
+HANDSHAKE_SECONDS :: 10
 
 // The bytes a connection keeps.
 @(private)
@@ -70,24 +76,28 @@ conn_buffers :: proc(c:^Conn) -> bool {
     return pe==nil && oe==nil
 }
 
+// Frees a connection and closes its socket, once no thread uses it.
 conn_free :: proc(c:^Conn) {
-    if !c.closed {net.close(c.socket)}
+    net.close(c.socket)
+    conn_release(c)
+}
+
+// Frees a connection, leaving its socket to whoever gave it.
+@(private)
+conn_release :: proc(c:^Conn) {
     crypto.zero_explicit(&c.send,size_of(Cipher))
     crypto.zero_explicit(&c.receive,size_of(Cipher))
-    handshake_destroy(&c.hs)
+    crypto.zero_explicit(&c.proof,64)
     delete(c.plain)
     delete(c.out)
     free(c)
 }
 
-// Closes the socket, so a thread reading it wakes.
+// Shuts the socket down, so a thread reading or writing it wakes; conn_free
+// closes it. It takes no lock: a send blocked on a full window holds one.
 conn_close :: proc(c:^Conn) {
-    sync.mutex_lock(&c.send_lock)
-    defer sync.mutex_unlock(&c.send_lock)
-    if c.closed {return}
-    c.closed=true
+    if sync.atomic_exchange(&c.closed,true) {return}
     net.shutdown(c.socket,.Both)
-    net.close(c.socket)
 }
 
 @(private)
@@ -96,14 +106,46 @@ socket_tune :: proc(socket:net.TCP_Socket) {
     net.set_option(socket,.Keep_Alive,true)
     net.set_option(socket,.Send_Buffer_Size,4<<20)
     net.set_option(socket,.Receive_Buffer_Size,4<<20)
+    net.set_option(socket,.Send_Timeout,SEND_SECONDS*time.Second)
     when ODIN_OS==.Darwin {net.set_option(socket,.No_SIGPIPE_From_EPIPE,true)}
 }
 
+// Connects to address (host:port) within DIAL_SECONDS, sooner given up once
+// cancel is set.
+@(private)
+socket_dial :: proc(address:string,cancel:^bool) -> (socket:net.TCP_Socket,ok:bool) {
+    endpoint,re:=net.resolve_ip4(address)
+    if re!=nil {return}
+    any,ce:=net.create_socket(.IP4,.TCP)
+    if ce!=nil {return}
+    socket=any.(net.TCP_Socket)
+    if net.set_blocking(socket,false)!=nil || !wire.socket_connect(net.Socket(socket),wire.address_from_endpoint(endpoint)) {
+        net.close(socket)
+        return {},false
+    }
+    started:=time.tick_now()
+    for {
+        ready,connected:=wire.socket_connected(net.Socket(socket))
+        if ready && connected {break}
+        if ready || time.tick_since(started)>DIAL_SECONDS*time.Second || cancel!=nil && sync.atomic_load(cancel) {
+            net.close(socket)
+            return {},false
+        }
+        time.sleep(5*time.Millisecond)
+    }
+    if net.set_blocking(socket,true)!=nil {
+        net.close(socket)
+        return {},false
+    }
+    return socket,true
+}
+
 // Dials address (host:port) and runs the handshake as initiator: expect, when
-// not zero, is the key the other end must prove; secret, an invite's.
-conn_dial :: proc(address:string,identity:Identity,expect:Key,secret:[32]u8={},timeout:=10*time.Second) -> (c:^Conn,error:Error) {
-    socket,e:=net.dial_tcp_from_hostname_and_port_string(address)
-    if e!=nil {return nil,.Unreachable}
+// not zero, is the key the other end must prove; secret, an invite's. The
+// handshake's keys live on this stack and are zeroed before it returns.
+conn_dial :: proc(address:string,identity:Identity,expect:Key,secret:[32]u8={},cancel:^bool=nil) -> (c:^Conn,error:Error) {
+    socket,dialed:=socket_dial(address,cancel)
+    if !dialed {return nil,.Unreachable}
     socket_tune(socket)
     me:runtime.Allocator_Error
     if c,me=new(Conn);me!=nil {
@@ -116,47 +158,54 @@ conn_dial :: proc(address:string,identity:Identity,expect:Key,secret:[32]u8={},t
         conn_free(c)
         return nil,.Out_Of_Memory
     }
-    net.set_option(socket,.Receive_Timeout,timeout)
-    handshake_init(&c.hs,true,identity)
-    c.hs.secret=secret
+    net.set_option(socket,.Receive_Timeout,HANDSHAKE_SECONDS*time.Second)
+    hs:Handshake
+    handshake_init(&hs,true,identity)
+    defer handshake_destroy(&hs)
+    hs.secret=secret
     m1:[NOISE_MSG1]u8
     m2:[NOISE_MSG2]u8
     m3:[NOISE_MSG3]u8
-    ok:=handshake_write_1(&c.hs,m1[:]) && raw_send(socket,m1[:]) &&
-        raw_receive(socket,m2[:]) && handshake_read_2(&c.hs,m2[:],m3[:],expect) && raw_send(socket,m3[:])
+    ok:=handshake_write_1(&hs,m1[:]) && raw_send(socket,m1[:]) &&
+        raw_receive(socket,m2[:]) && handshake_read_2(&hs,m2[:],m3[:],expect) && raw_send(socket,m3[:])
     if !ok {
         conn_free(c)
         return nil,.Unauthorized
     }
-    c.peer=c.hs.peer
-    c.send,c.receive=handshake_split(&c.hs)
+    c.peer=hs.peer
+    c.send,c.receive=handshake_split(&hs)
     net.set_option(socket,.Receive_Timeout,time.Duration(0))
     return c,.None
 }
 
-// Runs the handshake as responder on an accepted socket.
-conn_accept :: proc(socket:net.TCP_Socket,remote:net.Endpoint,identity:Identity,timeout:=10*time.Second) -> (c:^Conn,error:Error) {
+// Runs the handshake as responder on an accepted socket, which stays its
+// caller's when it fails. The handshake's keys live on this stack and are
+// zeroed before it returns; what an invite needs is kept (proof, proved).
+conn_accept :: proc(socket:net.TCP_Socket,remote:net.Endpoint,identity:Identity) -> (c:^Conn,error:Error) {
     socket_tune(socket)
     me:runtime.Allocator_Error
     if c,me=new(Conn);me!=nil {return nil,.Out_Of_Memory}
     c.socket,c.remote=socket,remote
     if !conn_buffers(c) {
-        conn_free(c)
+        conn_release(c)
         return nil,.Out_Of_Memory
     }
-    net.set_option(socket,.Receive_Timeout,timeout)
-    handshake_init(&c.hs,false,identity)
+    net.set_option(socket,.Receive_Timeout,HANDSHAKE_SECONDS*time.Second)
+    hs:Handshake
+    handshake_init(&hs,false,identity)
+    defer handshake_destroy(&hs)
     m1:[NOISE_MSG1]u8
     m2:[NOISE_MSG2]u8
     m3:[NOISE_MSG3]u8
-    ok:=raw_receive(socket,m1[:]) && handshake_read_1(&c.hs,m1[:],m2[:]) && raw_send(socket,m2[:]) &&
-        raw_receive(socket,m3[:]) && handshake_read_3(&c.hs,m3[:])
+    ok:=raw_receive(socket,m1[:]) && handshake_read_1(&hs,m1[:],m2[:]) && raw_send(socket,m2[:]) &&
+        raw_receive(socket,m3[:]) && handshake_read_3(&hs,m3[:])
     if !ok {
-        conn_free(c)
+        conn_release(c)
         return nil,.Unauthorized
     }
-    c.peer=c.hs.peer
-    c.send,c.receive=handshake_split(&c.hs)
+    c.peer=hs.peer
+    c.proof,c.proved=hs.proof,hs.proved
+    c.send,c.receive=handshake_split(&hs)
     net.set_option(socket,.Receive_Timeout,time.Duration(0))
     return c,.None
 }
@@ -167,7 +216,7 @@ conn_send :: proc(c:^Conn,kind:Msg,body:..[]u8) -> bool {
     defer sync.mutex_unlock(&c.send_lock)
     n:=1
     for b in body {n+=len(b)}
-    if c.closed || n>FRAME_MAX {return false}
+    if sync.atomic_load(&c.closed) || n>FRAME_MAX {return false}
     c.plain[0]=u8(kind)
     at:=1
     for b in body {
@@ -176,7 +225,7 @@ conn_send :: proc(c:^Conn,kind:Msg,body:..[]u8) -> bool {
     }
     length:=u32(n+NOISE_TAG)
     for k in 0..<4 {c.out[k]=u8(length>>(8*uint(k)))}
-    cipher_seal(&c.send,c.plain[:n],c.out[4:][:n+NOISE_TAG])
+    if !cipher_seal(&c.send,c.plain[:n],c.out[4:][:n+NOISE_TAG]) {return false}
     return raw_send(c.socket,c.out[:4+n+NOISE_TAG])
 }
 

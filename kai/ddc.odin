@@ -76,6 +76,15 @@ ddc_producer_allowed :: proc(org:^Org,producer:Key) -> bool {
     return ok && role>=.Writer
 }
 
+// The record in bytes when it is of key in org, signed by a producer the org
+// allows.
+ddc_record_allowed :: proc(org:^Org,key:store.Hash,bytes:[]u8) -> (d:DDC_Record,allowed:bool) {
+    e:Error
+    d,e=ddc_record_decode(bytes)
+    allowed=e==.None && d.org==org.id && d.key==key && signed_valid(bytes,d.producer) && ddc_producer_allowed(org,d.producer)
+    return
+}
+
 // The records of the set at address, each one's bytes.
 @(private)
 ddc_set_read :: proc(s:^store.Store,address:store.Hash,out:^[dynamic][]u8) -> Error {
@@ -161,8 +170,7 @@ ddc_accept :: proc(s:^store.Store,org:^Org,key:store.Hash,address:store.Hash) ->
         return false,false,store_error(e)
     }
     for record in incoming {
-        d,e:=ddc_record_decode(record)
-        if e!=.None || d.org!=org.id || d.key!=key || !signed_valid(record,d.producer) || !ddc_producer_allowed(org,d.producer) {continue}
+        if _,allowed:=ddc_record_allowed(org,key,record);!allowed {continue}
         added:=ddc_set_add(&set,record) or_return
         changed|=added
     }

@@ -154,7 +154,7 @@ team_fail :: proc(t:^Team,e:Error,why:string) -> Error {
 
 // Names the person and this machine, which every org it joins or makes lists.
 team_profile_set :: proc(t:^Team,name,device:string) -> Error {
-    if !name_valid(name) || !name_valid(device) {return team_fail(t,.Invalid_Argument,"a name has 1 to 64 bytes of UTF-8: type your name and this machine's")}
+    if !name_valid(name) || !name_valid(device) {return team_fail(t,.Invalid_Argument,"a name has 1 to 64 bytes of UTF-8 without control characters: type your name and this machine's")}
     note_set(t.store,PROFILE_NAME,{name,device}) or_return
     return team_names(t,name,device)
 }
@@ -162,7 +162,7 @@ team_profile_set :: proc(t:^Team,name,device:string) -> Error {
 // Makes an org with this machine its first admin.
 team_org_create :: proc(t:^Team,name:string) -> (id:Org_Id,error:Error) {
     if t.name=="" {return {},team_fail(t,.Invalid_Argument,"name yourself and this machine first (Team, or mirai kai profile)")}
-    if !name_valid(name) {return {},team_fail(t,.Invalid_Argument,"an org's name has 1 to 64 bytes of UTF-8")}
+    if !name_valid(name) {return {},team_fail(t,.Invalid_Argument,"an org's name has 1 to 64 bytes of UTF-8 without control characters")}
     members:=[1]Member{{key=t.identity.key,role=.Admin,name=t.name,device=t.device}}
     o:=Org{id=random_id(Org_Id),version=1,name=name,members=members[:]}
     s,se:=team_store(t,o.id,create=true)
@@ -236,7 +236,7 @@ team_member_remove :: proc(t:^Team,org:Org_Id,key:Key) -> Error {
 
 // Adds a repository to org, or renames it and sets whether it is public.
 team_repo_set :: proc(t:^Team,org:Org_Id,repo:Org_Repo) -> Error {
-    if !name_valid(repo.name) || repo.id=={} {return team_fail(t,.Invalid_Argument,"a repository needs a name of 1 to 64 bytes")}
+    if !repo_name_valid(repo.name) || repo.id=={} {return team_fail(t,.Invalid_Argument,"a repository's name is a folder's: 1 to 64 bytes, no / \\ : * ? \" < > |, not . or .., no dot or space last and no CON, NUL, COM1 or the like")}
     r:=repo
     return team_org_edit(t,org,&r,proc(t:^Team,members:^[dynamic]Member,repos:^[dynamic]Org_Repo,data:rawptr) -> Error {
         r:=(^Org_Repo)(data)^
@@ -374,7 +374,7 @@ Invite_Head :: struct #packed {
 team_invite :: proc(t:^Team,org:Org_Id,role:Role,name:string,addresses:[]string,allocator:=context.allocator) -> (text:string,error:Error) {
     o,_:=team_org(t,org) or_return
     if r,ok:=org_role(&o,t.identity.key);!ok || r!=.Admin {return "",team_fail(t,.Unauthorized,"only an admin of the org invites: ask one")}
-    if name!="" && !name_valid(name) {return "",team_fail(t,.Invalid_Argument,"a name has 1 to 64 bytes of UTF-8")}
+    if name!="" && !name_valid(name) {return "",team_fail(t,.Invalid_Argument,"a name has 1 to 64 bytes of UTF-8 without control characters")}
     if len(addresses)==0 {return "",team_fail(t,.Invalid_Argument,"the invite needs an address this machine listens at: start its Kai agent (the editor, or mirai kai agent)")}
     head:=Invite_Head{magic=KAI_MAGIC,org=org,role=role,expires=time.now()._nsec+i64(INVITE_HOURS)*i64(time.Hour)}
     crypto.rand_bytes(head.secret[:])
@@ -392,9 +392,11 @@ team_invite :: proc(t:^Team,org:Org_Id,role:Role,name:string,addresses:[]string,
     return invite_text(&token,allocator)
 }
 
-// The open invite of org whose secret the initiator of hs proved, which it
-// removes: one invite, one device. Expired invites are removed on the way.
-team_invite_take :: proc(t:^Team,org:Org_Id,hs:^Handshake) -> (role:Role,name:string,error:Error) {
+// The open invite of org whose secret an initiator proved (proof over the
+// handshake hash proved), which it removes and commits first: one invite,
+// one device, and an invite whose removal does not hold admits nobody.
+// Expired invites are removed on the way.
+team_invite_take :: proc(t:^Team,org:Org_Id,proof,proved:[32]u8) -> (role:Role,name:string,error:Error) {
     refs,e:=store.ref_list(t.store,INVITE_NAMESPACE,context.temp_allocator)
     if e!=.None {return {},"",.Expired}
     now:=time.now()._nsec
@@ -409,13 +411,29 @@ team_invite_take :: proc(t:^Team,org:Org_Id,hs:^Handshake) -> (role:Role,name:st
             store.ref_remove(t.store,INVITE_NAMESPACE,ref.name)
             continue
         }
-        if head.org!=org || !handshake_invited(hs,head.secret) {continue}
-        store.ref_remove(t.store,INVITE_NAMESPACE,ref.name)
-        store.commit(t.store)
+        if head.org!=org || !handshake_invited(proof,proved,head.secret) {continue}
+        if re:=store.ref_remove(t.store,INVITE_NAMESPACE,ref.name);re!=.None {return {},"",store_error(re)}
+        if ce:=store.commit(t.store);ce!=.None {return {},"",store_error(ce)}
         return head.role,strings.clone(n,context.temp_allocator),.None
     }
     store.commit(t.store)
     return {},"",.Expired
+}
+
+// Removes every open invite of org: one that leaked admits nobody.
+team_invites_clear :: proc(t:^Team,org:Org_Id) -> (cleared:int,error:Error) {
+    refs,e:=store.ref_list(t.store,INVITE_NAMESPACE,context.temp_allocator)
+    if e!=.None {return 0,e==.Missing?.None:store_error(e)}
+    for ref in refs {
+        bytes,ge:=object_get(t.store,ref.hash,.Invite,context.temp_allocator)
+        if ge!=.None {continue}
+        r:=Reader{data=bytes}
+        head:=read_value(&r,Invite_Head)
+        if r.short || head.org!=org {continue}
+        if re:=store.ref_remove(t.store,INVITE_NAMESPACE,ref.name);re!=.None {return cleared,store_error(re)}
+        cleared+=1
+    }
+    return cleared,store_error(store.commit(t.store))
 }
 
 @(private)
@@ -525,30 +543,52 @@ machine_identity :: proc(s:^store.Store) -> (identity:Identity,error:Error) {
 
 // The secret bytes of the file name at the root of the store, as many as out
 // holds, random and owner-only the first time: only a file that is not there
-// is made, never one that does not read now (no right, no handle left).
+// is made, never one that does not read now (no right, no handle left). The
+// file is made exclusively, so of two processes that make it at once one
+// writes it and the other reads it, once whole: a file short for longer than
+// SECRET_WRITE_SECONDS is corrupt.
 @(private)
 machine_secret :: proc(s:^store.Store,name:string,out:[]u8) -> Error {
     file:=strings.concatenate({s.root,"/",name},context.temp_allocator)
-    bytes,read_error:=os.read_entire_file(file,context.temp_allocator)
-    if read_error==nil {
-        defer crypto.zero_explicit(raw_data(bytes),len(bytes))
-        if len(bytes)!=len(out) {return .Corrupt}
-        copy(out,bytes)
-        return .None
+    started:=time.tick_now()
+    for {
+        e:=secret_read(file,out)
+        #partial switch e {
+        case .None: return .None
+        case .Missing:
+            f,oe:=os.open(file,{.Write,.Create,.Excl},{.Read_User,.Write_User})
+            if oe==nil {
+                crypto.rand_bytes(out)
+                n,we:=os.write(f,out)
+                se:=os.sync(f)
+                os.close(f)
+                if we==nil && se==nil && n==len(out) {return .None}
+                os.remove(file)
+                return .Io
+            }
+            if general,is_general:=oe.(os.General_Error);!is_general || general!=.Exist {return .Io}
+        case .Corrupt:
+        case: return e
+        }
+        if time.tick_since(started)>SECRET_WRITE_SECONDS*time.Second {return .Corrupt}
+        time.sleep(10*time.Millisecond)
     }
-    if general,is_general:=read_error.(os.General_Error);!is_general || general!=.Not_Exist {return .Io}
-    crypto.rand_bytes(out)
-    temp:=strings.concatenate({file,".tmp"},context.temp_allocator)
-    if os.write_entire_file(temp,out,{.Read_User,.Write_User})!=nil {return .Io}
-    if os.rename(temp,file)!=nil {
-        os.remove(temp)
+}
+
+SECRET_WRITE_SECONDS :: 2
+
+// The bytes of file into out: Missing when it is not there, Corrupt when it
+// holds another count of bytes.
+@(private)
+secret_read :: proc(file:string,out:[]u8) -> Error {
+    bytes,e:=os.read_entire_file(file,context.temp_allocator)
+    if e!=nil {
+        if general,is_general:=e.(os.General_Error);is_general && general==.Not_Exist {return .Missing}
         return .Io
     }
-    // Two processes made one each at once: the one that won the rename counts.
-    won,won_error:=os.read_entire_file(file,context.temp_allocator)
-    if won_error!=nil || len(won)!=len(out) {return .Io}
-    copy(out,won)
-    crypto.zero_explicit(raw_data(won),len(won))
+    defer crypto.zero_explicit(raw_data(bytes),len(bytes))
+    if len(bytes)!=len(out) {return .Corrupt}
+    copy(out,bytes)
     return .None
 }
 
